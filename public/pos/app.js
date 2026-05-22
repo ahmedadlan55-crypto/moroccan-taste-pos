@@ -675,27 +675,81 @@ function _foodicsCartTotal() {
   return Math.max(0, sub - disc);
 }
 
-// ─── v5.11.4 — Hardcoded 3 payment methods (+ Split) with bilingual labels ───
-// The dynamic state.paymentMethods loader still runs so shift-close and
-// historical reports remain compatible — but the POS payment modal renders
-// only the three canonical buckets the owner asked for: Cash, Mada, Other.
-// Anything else the cashier needs (Apple Pay, voucher, transfer, …) goes
-// under "Other" and is captured in the free-text payment-notes field.
+// ─── v6.4.3 — Payment tiles now respect the owner's configured methods ───
+// History: v5.11.4 hardcoded 3 tiles (Cash / Mada / Other) per a one-time
+// owner request. The owner has since defined custom methods in
+// ERP → الإعدادات → طُرق الدفع (e.g. HungerStation, Kita, vouchers) and
+// rightfully expects them to appear at the till. So we now:
+//   1. Render whatever the owner configured (state.paymentMethods, loaded
+//      from /api/settings/payment-methods-full at app boot).
+//   2. Fall back to the FOODICS_PAY_METHODS defaults ONLY when no methods
+//      have been configured yet (fresh deployment).
+//   3. Always append the Split tile so cashiers can split any tender.
+//   4. Keep the "Other → notes" behaviour for the literal "Other" method
+//      (any future method that needs notes can be tagged on the backend).
 var FOODICS_PAY_METHODS = [
   { name: 'Cash',  ar: 'كاش',  en: 'Cash',  icon: 'fa-money-bill-wave' },
   { name: 'Mada',  ar: 'مدى',  en: 'Mada',  icon: 'fa-credit-card' },
   { name: 'Other', ar: 'أخرى', en: 'Other', icon: 'fa-ellipsis-h' }
 ];
 
+// Best-effort icon resolver — falls back to a generic credit-card glyph
+function _foodicsPayIcon(m) {
+  if (m && m.Icon)  return m.Icon;
+  if (m && m.icon)  return m.icon;
+  var n = String((m && (m.Name || m.name)) || '').toLowerCase();
+  if (n === 'cash' || n.indexOf('كاش') >= 0 || n.indexOf('نقد') >= 0)        return 'fa-money-bill-wave';
+  if (n === 'mada' || n.indexOf('مدى') >= 0 || n.indexOf('شبكة') >= 0)        return 'fa-credit-card';
+  if (n.indexOf('hunger') >= 0)                                              return 'fa-burger';
+  if (n === 'kita' || n.indexOf('كيتا') >= 0)                                return 'fa-utensils';
+  if (n.indexOf('voucher') >= 0 || n.indexOf('قسيمة') >= 0)                  return 'fa-ticket';
+  if (n.indexOf('transfer') >= 0 || n.indexOf('تحويل') >= 0)                 return 'fa-arrow-right-arrow-left';
+  if (n === 'other' || n.indexOf('أخرى') >= 0 || n.indexOf('اخرى') >= 0)     return 'fa-ellipsis-h';
+  return 'fa-credit-card';
+}
+
+// Returns the list of tiles to render. Uses configured methods when
+// present, falls back to the 3 defaults otherwise. Output shape:
+//   [{ name, ar, en, icon }, ...]
+function _foodicsActiveMethods() {
+  var pm = state.paymentMethods || [];
+  // Filter active methods. The backend exposes IsActive (true/false) or
+  // is_active (1/0); handle both. Also drop literal "Split" if a method
+  // with that name slipped in — we render Split as a separate tile.
+  var active = pm.filter(function (m) {
+    if (!m) return false;
+    var on = (m.IsActive !== false && m.IsActive !== 0 && m.IsActive !== 'FALSE' &&
+              m.is_active !== false && m.is_active !== 0);
+    var name = String(m.Name || m.name || '').trim();
+    return on && name && name.toLowerCase() !== 'split';
+  });
+  if (active.length) {
+    return active.map(function (m) {
+      var name = String(m.Name || m.name || '').trim();
+      var ar   = String(m.NameAR || m.name_ar || name).trim();
+      return {
+        name: name,
+        ar:   ar,
+        en:   name,            // The DB Name is already EN — show it next to AR
+        icon: _foodicsPayIcon(m)
+      };
+    });
+  }
+  // Fresh deployment — no methods configured yet
+  return FOODICS_PAY_METHODS.slice();
+}
+
 window.renderFoodicsPayTiles = function () {
   var host = q('#payTilesGrid');
   if (!host) return;
   var current = q('#posPayMethod') ? q('#posPayMethod').value : 'Cash';
-  var html = FOODICS_PAY_METHODS.map(function (m) {
+  var tiles = _foodicsActiveMethods();
+  var html = tiles.map(function (m) {
     var on = m.name === current ? ' is-active' : '';
-    return '<button type="button" class="pay-tile' + on + '" onclick="setFoodicsPay(\'' + m.name + '\')">' +
+    var label = (m.ar && m.en && m.ar !== m.en) ? (m.ar + ' · ' + m.en) : (m.ar || m.en);
+    return '<button type="button" class="pay-tile' + on + '" onclick="setFoodicsPay(\'' + String(m.name).replace(/'/g, "\\'") + '\')">' +
              '<i class="fas ' + m.icon + '"></i>' +
-             '<span>' + m.ar + ' · ' + m.en + '</span>' +
+             '<span>' + label + '</span>' +
            '</button>';
   }).join('');
   html += '<button type="button" class="pay-tile pay-tile-split' +
@@ -720,15 +774,19 @@ window.setFoodicsPay = function (name) {
 window.renderFoodicsSplitFields = function () {
   var host = q('#paySplitFields');
   if (!host) return;
-  // v5.11.4 — split inputs use the SAME 3 canonical methods.
-  // Inputs carry class "split-input" so legacy doCheckout extraction still works.
-  host.innerHTML = FOODICS_PAY_METHODS.map(function (m) {
+  // v6.4.3 — split inputs now mirror the same dynamic method list as the
+  // tiles. Inputs carry class "split-input" so legacy doCheckout
+  // extraction still works.
+  var tiles = _foodicsActiveMethods();
+  host.innerHTML = tiles.map(function (m) {
+    var label = (m.ar && m.en && m.ar !== m.en) ? (m.ar + ' · ' + m.en) : (m.ar || m.en);
+    var safeName = String(m.name).replace(/'/g, "\\'");
     return (
       '<div class="pay-split-row">' +
-        '<div class="pay-split-method"><i class="fas ' + m.icon + '"></i> ' + m.ar + ' · ' + m.en + '</div>' +
+        '<div class="pay-split-method"><i class="fas ' + m.icon + '"></i> ' + label + '</div>' +
         '<input type="number" data-vk="1" step="0.01" min="0" class="form-control pay-split-input split-input" ' +
-               'data-method="' + m.name + '" value="" placeholder="0.00" oninput="paySplitRecalc()">' +
-        '<button type="button" class="pay-split-rest" onclick="paySplitFillRest(\'' + m.name + '\')" title="املأ بالمتبقي · Fill remaining"><i class="fas fa-equals"></i></button>' +
+               'data-method="' + safeName + '" value="" placeholder="0.00" oninput="paySplitRecalc()">' +
+        '<button type="button" class="pay-split-rest" onclick="paySplitFillRest(\'' + safeName + '\')" title="املأ بالمتبقي · Fill remaining"><i class="fas fa-equals"></i></button>' +
       '</div>'
     );
   }).join('');

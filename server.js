@@ -2823,6 +2823,30 @@ async function runMigrations() {
   // JV-YYYYMMDD-NNNN numbers under concurrent checkouts.
   try { await db.query('ALTER TABLE gl_journals ADD UNIQUE KEY uq_journal_number (journal_number)'); } catch(e) {}
 
+  // ─── v6.4.3 — De-duplicate menu items + UNIQUE (brand_id, name) ───
+  // Older deployments accumulated duplicate menu rows when the same item
+  // was imported twice (each import generates a fresh Date.now() id, so
+  // the existing "INSERT … ON DUPLICATE KEY" was useless without a unique
+  // key on the natural identity (brand_id, name)). The owner reported the
+  // POS grid showing every product twice. Fix in two steps:
+  //   1. One-time dedupe: keep the oldest id per (brand_id, name), drop
+  //      the rest. inv_movements + sales_items keep the kept id so no
+  //      historical data is lost.
+  //   2. Add UNIQUE KEY (brand_id, name) so future imports collide and
+  //      hit the ON DUPLICATE KEY UPDATE path instead of inserting a copy.
+  try {
+    await db.query(`
+      DELETE m FROM menu m
+      INNER JOIN menu m2
+        ON COALESCE(m.brand_id,'') = COALESCE(m2.brand_id,'')
+       AND m.name = m2.name
+       AND m.id > m2.id
+    `);
+  } catch (e) { /* table may not exist on a fresh boot — ignore */ }
+  try {
+    await db.query('ALTER TABLE menu ADD UNIQUE KEY uq_menu_brand_name (brand_id, name)');
+  } catch (e) { /* already there — ignore */ }
+
   // ─── v6.4.2 — Reversing-entry linkage on gl_journals ───
   // Posted journals are immutable (SOCPA/IFRS); the only way to correct
   // them is to issue a new journal with debits + credits swapped. These

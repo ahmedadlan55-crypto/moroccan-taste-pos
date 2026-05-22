@@ -10189,71 +10189,14 @@ function _wfBulkUpdateBar(){
   if (cnt) cnt.textContent = ids.length;
   if (bar) bar.style.display = ids.length ? 'flex' : 'none';
 }
-// V5.7.2 — Developer-only: wipe ALL transactions in 4 stages with extreme safeguards.
-//   Stage 1: confirm intent
-//   Stage 2: dryRun preview shows exact counts (no destructive call yet)
-//   Stage 3: type "DELETE-ALL-FOREVER" to confirm
-//   Stage 4: execute + show summary
-window.wfWipeAllTransactions = async function(){
-  if (!((window.state && window.state.isDeveloper) || (typeof window._isDeveloperUser === 'function' && window._isDeveloperUser()))) {
-    showToast('هذه العملية للمطور فقط', true);
-    return;
-  }
-  // Stage 1
-  if (!confirm('⚠ تحذير: هذه عملية حذف شاملة لكل المعاملات!\n\nسيتم محو كل المعاملات + كل الردود + كل المرفقات + كل السجلات + كل الإشعارات من النظام بشكل نهائي وعند جميع المستخدمين.\n\nهل تريد المتابعة لمعاينة العدد قبل التنفيذ؟')) return;
-  // Stage 2: dry-run to get counts
-  var token = localStorage.getItem('pos_token');
-  var dryUrl = '/api/workflow/transactions/__wipe-all?dryRun=1';
-  showToast('جاري حساب البيانات المتأثرة...');
-  fetch(dryUrl, { method: 'DELETE', headers: { 'Authorization': 'Bearer '+token } })
-    .then(function(r){return r.json();})
-    .then(function(r){
-      if (!r || !r.success) { showToast((r && r.error) || 'فشل التحقق', true); return; }
-      var c = r.counts || {};
-      if (!c.transactions) {
-        alert('لا توجد معاملات في النظام للحذف.');
-        return;
-      }
-      // Stage 3: show preview + ask for typed confirmation
-      var preview =
-        '📊 سيتم حذف ما يلي نهائياً:\n\n' +
-        '• ' + (c.transactions||0) + ' معاملة\n' +
-        '• ' + (c.transaction_steps_log||0) + ' سجل إجراء\n' +
-        '• ' + (c.transaction_replies||0) + ' رد\n' +
-        '• ' + (c.txn_attachments||0) + ' مرفق\n' +
-        '• ' + (c.txn_recipients||0) + ' مستلم\n' +
-        '• ' + (c.notifications||0) + ' إشعار\n' +
-        '• ' + (c.payment_records_unlinked||0) + ' سند دفع (سيُفصل لا يُحذف)\n\n' +
-        '⚠ هذا الإجراء نهائي ولا يمكن التراجع عنه.\n\n' +
-        'اكتب: DELETE-ALL-FOREVER';
-      var typed = prompt(preview);
-      if (typed !== 'DELETE-ALL-FOREVER') {
-        showToast('تم الإلغاء — لم تتطابق كلمة التأكيد', true);
-        return;
-      }
-      // Stage 4: execute
-      showToast('جاري التنفيذ... قد يستغرق ثوانٍ');
-      fetch('/api/workflow/transactions/__wipe-all?confirm=DELETE-ALL-FOREVER', {
-        method: 'DELETE',
-        headers: { 'Authorization': 'Bearer '+token, 'Content-Type': 'application/json' },
-        body: JSON.stringify({ confirm: 'DELETE-ALL-FOREVER' })
-      })
-        .then(function(rr){return rr.json();})
-        .then(function(rr){
-          if (rr && rr.success) {
-            var summary = 'تم حذف ' + (rr.counts && rr.counts.transactions || 0) + ' معاملة + كل البيانات المرتبطة.';
-            alert('✓ ' + summary + '\n\n' + (rr.message || ''));
-            wfLoadInbox();
-            // Refresh counters
-            if (typeof wfLoadIncoming === 'function') try { wfLoadIncoming(); } catch(_){}
-          } else {
-            showToast((rr && rr.error) || 'فشل التنفيذ', true);
-          }
-        })
-        .catch(function(err){ showToast('فشل الاتصال: ' + (err && err.message), true); });
-    })
-    .catch(function(err){ showToast('فشل التحقق: ' + (err && err.message), true); });
-};
+// v6.6.1 — The legacy V5.7.2 wipe-all implementation that lived here
+// (native confirm() + prompt(), developer-only frontend check, fetch
+// straight to /api/workflow/transactions/__wipe-all) has been REMOVED.
+// The canonical implementation lives further down in this file, near
+// wfLoadOutbox, and uses WoModal.open + the api-bridge + the new
+// admin-only guard (guardAdmin in lib/transactionGuards.js). The two
+// definitions were colliding via last-wins assignment and the older
+// one was just dead code.
 
 window.wfBulkAction = async function(action){
   var ids = Object.keys(window._wfBulkSelected);
@@ -12788,6 +12731,8 @@ function wfResetDashFilters() {
 }
 
 function wfLoadDashboard() {
+  // v6.6.1 — Hide the wipe button if the current user isn't an admin.
+  try { _wfApplyAdminVisibility(); } catch (_) {}
   var cards = document.getElementById('wfDashCards');
   if (!cards) return;
   cards.innerHTML = '<div style="text-align:center;padding:40px;color:#94a3b8;grid-column:1/-1;"><i class="fas fa-spinner fa-spin"></i> جاري التحميل...</div>';
@@ -12829,6 +12774,8 @@ function wfLoadDashboard() {
 
 // ─── صندوق الوارد (Incoming) ───
 function wfLoadIncoming() {
+  // v6.6.1 — Hide the wipe button if the current user isn't an admin.
+  try { _wfApplyAdminVisibility(); } catch (_) {}
   var tb = document.getElementById('wfIncomingBody');
   if (!tb) return;
   tb.innerHTML = '<tr><td colspan="10" class="empty-msg"><i class="fas fa-spinner fa-spin"></i> جاري التحميل...</td></tr>';
@@ -12900,95 +12847,125 @@ function wfResetOutboxFilters() {
 }
 
 // ─────────────────────────────────────────────────────────────────
-// v6.6.0 — Developer-only NUCLEAR wipe of every transaction + trail
+// v6.6.0 — Admin-only NUCLEAR wipe of every transaction + trail
+// v6.6.1 — Rewritten with WoModal.open (previous version used
+//          erpConfirm(...).then(...) which doesn't work — erpConfirm
+//          is callback-style and doesn't return a promise, so the
+//          token input was never read and the wipe never fired).
+//          Guard on the backend also tightened from guardDeveloper
+//          to guardAdmin (literal admin role only).
 // ─────────────────────────────────────────────────────────────────
-// Drives the new "تَصفير البَيانات التَّجريبيَّة" button in the section
+// Drives the "تَصفير البَيانات التَّجريبيَّة" button in the section
 // headers of erpWfDashboard / erpWfIncoming / erpWfOutgoing.
 //
 // Two-stage confirm:
-//   1. dryRun=true preview — shows the counts of what would be deleted
-//      across transactions + steps_log + replies + attachments + recipients
-//      + read_receipts + notifications + payment_records_unlinked.
-//   2. Operator must literally type DELETE-ALL-FOREVER to authorize the
-//      real wipe (backend refuses any other body).
+//   1. dryRun=true preview — counts of what will be deleted
+//   2. Operator types DELETE-ALL-FOREVER into a token input which gates
+//      the OK button (disabled until exact match).
 //
-// On success: toast with deleted count + reload the active section so
-// the table empty state appears.
+// On success: toast + reload the active WF section so the empty state
+// appears.
 window.wfWipeAllTransactions = function() {
-  if (typeof window._apiBridge !== 'object' || !window._apiBridge.wipeAllTransactions) {
+  if (!window._apiBridge || !window._apiBridge.wipeAllTransactions) {
     showToast('api-bridge.wipeAllTransactions غير متاح', true);
     return;
+  }
+
+  // Helper — single-line stat row
+  function _wfWipeRow(label, n, primary) {
+    return '<div class="wf-wipe-row' + (primary ? ' is-primary' : '') + '">' +
+             '<span class="lbl">' + label + '</span>' +
+             '<b class="val">' + (Number(n) || 0).toLocaleString('en-US') + '</b>' +
+           '</div>';
   }
 
   // Stage 1 — dry-run preview
   window._apiBridge.withSuccessHandler(function(preview) {
     if (!preview || preview.error) {
-      var err = (preview && (preview.error || preview.hint)) || 'فشل قراءة الإحصائيات';
-      showToast(err, true);
+      showToast((preview && (preview.error || preview.hint)) || 'فشل قراءة الإحصائيات', true);
       return;
     }
-    if (!preview.counts || (preview.counts.transactions||0) === 0) {
+    if (!preview.counts || (preview.counts.transactions || 0) === 0) {
       showToast('لا توجد معاملات لِحذفها');
       return;
     }
-
     var c = preview.counts;
     var rowsHtml =
-      '<div style="display:grid;grid-template-columns:1fr auto;gap:6px 12px;font-size:13px;line-height:1.8;">' +
-        '<span>المعاملات</span><b style="color:#dc2626;">' + (c.transactions||0) + '</b>' +
-        '<span>سجل الخُطوات</span><b>' + (c.transaction_steps_log||0) + '</b>' +
-        '<span>الرُّدود</span><b>' + (c.transaction_replies||0) + '</b>' +
-        '<span>المُرفَقات</span><b>' + (c.txn_attachments||0) + '</b>' +
-        '<span>المُستَلمين</span><b>' + (c.txn_recipients||0) + '</b>' +
-        '<span>سجلات القراءة</span><b>' + (c.memo_read_receipts||0) + '</b>' +
-        '<span>التَّنبيهات</span><b>' + (c.notifications||0) + '</b>' +
-        '<span>روابط المَدفوعات (ستُفَكّ)</span><b>' + (c.payment_records_unlinked||0) + '</b>' +
+      '<div class="wf-wipe-stats">' +
+        _wfWipeRow('المعاملات',                  c.transactions || 0, true) +
+        _wfWipeRow('سجل الخُطوات',               c.transaction_steps_log || 0) +
+        _wfWipeRow('الرُّدود',                   c.transaction_replies || 0) +
+        _wfWipeRow('المُرفَقات',                 c.txn_attachments || 0) +
+        _wfWipeRow('المُستَلِمين',               c.txn_recipients || 0) +
+        _wfWipeRow('سجلات القراءة',              c.memo_read_receipts || 0) +
+        _wfWipeRow('التَّنبيهات',                c.notifications || 0) +
+        _wfWipeRow('روابِط مَدفوعات (سَتُفَكّ)',  c.payment_records_unlinked || 0) +
       '</div>';
 
-    if (typeof window.erpConfirm !== 'function') {
-      // Fallback if erpConfirm isn't available — use plain prompt
-      var tok = prompt('سَيتم حَذف ' + (c.transactions||0) + ' معامَلة بِجَميع آثارها.\n\nاكتُب DELETE-ALL-FOREVER لِلتَّأكيد:');
+    var body =
+      '<div class="wf-wipe-warning">' +
+        '<i class="fas fa-triangle-exclamation ico"></i>' +
+        '<div><b>تَحذير: عَمليَّة غَير قابِلة للتَّراجُع</b><br>' +
+          '<span style="font-size:12px;">سَتُحذَف كل المعاملات + كل آثارها.</span></div>' +
+      '</div>' +
+      '<div style="margin:14px 0 8px;font-weight:800;color:#0f172a;">ما سَيُحذَف:</div>' +
+      rowsHtml +
+      '<div style="margin-top:14px;font-size:12.5px;color:#475569;font-weight:700;">' +
+        'للتَّأكيد، اكتُب <code style="background:#fff;border:1px solid #fca5a5;padding:2px 6px;border-radius:4px;color:#dc2626;font-weight:900;">DELETE-ALL-FOREVER</code> في الحَقل:' +
+      '</div>' +
+      '<input id="wfWipeTokenInput" class="wf-wipe-token-input" type="text" ' +
+             'autocomplete="off" placeholder="DELETE-ALL-FOREVER">';
+
+    var footer =
+      '<button class="btn btn-light" id="wfWipeCancel">إلغاء</button>' +
+      '<button class="btn" id="wfWipeOk" disabled ' +
+              'style="background:var(--mt-danger,#dc2626);color:#fff;font-weight:800;opacity:.55;cursor:not-allowed;">' +
+        '<i class="fas fa-broom"></i> تَأكيد الحَذف' +
+      '</button>';
+
+    if (typeof WoModal === 'undefined' || !WoModal.open) {
+      // Fallback to plain prompt — preserves the wipe contract on legacy admin shells
+      var tok = prompt('سَيُحذَف ' + (c.transactions || 0) + ' معامَلة + كل آثارها.\n\nاكتُب DELETE-ALL-FOREVER للتَّأكيد:');
       if (tok !== 'DELETE-ALL-FOREVER') {
-        if (tok !== null) showToast('تَم الإلغاء', true);
+        if (tok !== null) showToast('تَم الإلغاء — لم تتطابق كلمة التَّأكيد', true);
         return;
       }
       _wfDoWipe();
       return;
     }
 
-    // Premium confirm modal with token input
-    var content =
-      '<div class="wf-wipe-confirm-modal">' +
-        '<div class="wf-wipe-warning">' +
-          '<i class="fas fa-triangle-exclamation ico"></i>' +
-          '<b>تَحذير: عَمليَّة غَير قابِلة للتَّراجُع</b><br>' +
-          '<span style="font-size:12px;color:#7f1d1d;">سَتُحذَف كل المعاملات الموجودة + كل آثارها (السجل، الرُّدود، المُرفَقات، التَّنبيهات).</span>' +
-        '</div>' +
-        '<div style="margin-bottom:10px;font-weight:700;color:#0f172a;">ما سَيُحذَف:</div>' +
-        rowsHtml +
-        '<div style="margin-top:14px;font-size:12px;color:#475569;font-weight:700;">للتَّأكيد، اكتُب <code style="background:#fff;border:1px solid #fca5a5;padding:2px 6px;border-radius:4px;color:#dc2626;font-weight:900;">DELETE-ALL-FOREVER</code> في الحَقل:</div>' +
-        '<input id="wfWipeTokenInput" class="wf-wipe-token-input" type="text" autocomplete="off" placeholder="DELETE-ALL-FOREVER" style="margin-top:8px;">' +
-      '</div>';
-
-    erpConfirm('تَصفير كل المعاملات', content, {
-      okLabel: 'تَأكيد الحَذف',
-      cancelLabel: 'إلغاء',
-      danger: true,
-      html: true
-    }).then(function(ok) {
-      if (!ok) return;
-      var inp = document.getElementById('wfWipeTokenInput');
-      var token = inp ? String(inp.value || '').trim() : '';
-      if (token !== 'DELETE-ALL-FOREVER') {
-        showToast('الرَّمز غَير صَحيح — لم يَتم الحَذف', true);
-        return;
-      }
-      _wfDoWipe();
+    var modal = WoModal.open({
+      icon: 'fa-triangle-exclamation',
+      iconColor: 'danger',
+      title: 'تَصفير كل المعاملات',
+      subtitle: 'عَدد المعاملات: ' + (c.transactions || 0),
+      body: body,
+      footer: footer,
+      size: 'sm'
     });
+    modal.el.classList.add('wf-wipe-confirm-modal');
+
+    var tokenInput = modal.el.querySelector('#wfWipeTokenInput');
+    var okBtn      = modal.el.querySelector('#wfWipeOk');
+    tokenInput.addEventListener('input', function() {
+      var valid = tokenInput.value.trim() === 'DELETE-ALL-FOREVER';
+      okBtn.disabled = !valid;
+      okBtn.style.opacity = valid ? '1' : '.55';
+      okBtn.style.cursor  = valid ? 'pointer' : 'not-allowed';
+    });
+    modal.el.querySelector('#wfWipeCancel').onclick = function() { modal.close(null); };
+    okBtn.onclick = function() {
+      if (tokenInput.value.trim() !== 'DELETE-ALL-FOREVER') return;
+      okBtn.disabled = true;
+      okBtn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> جارٍ الحَذف...';
+      _wfDoWipe(function() { modal.close(true); });
+    };
+    setTimeout(function() { try { tokenInput.focus(); } catch (_) {} }, 220);
   }).wipeAllTransactions({ dryRun: true });
 
-  function _wfDoWipe() {
+  function _wfDoWipe(onDone) {
     window._apiBridge.withSuccessHandler(function(res) {
+      if (typeof onDone === 'function') onDone();
       if (!res || res.error || !res.success) {
         showToast((res && res.error) || 'فَشِل الحَذف', true);
         return;
@@ -12997,14 +12974,31 @@ window.wfWipeAllTransactions = function() {
       showToast('✓ تَم حَذف ' + n + ' معامَلة');
       // Reload whichever WF section is currently visible
       try {
-        var visible = document.querySelector('#erpWfDashboard:not(.hidden), #erpWfIncoming:not(.hidden), #erpWfOutgoing:not(.hidden)');
+        var visible = document.querySelector(
+          '#erpWfDashboard:not(.hidden), #erpWfIncoming:not(.hidden), #erpWfOutgoing:not(.hidden)'
+        );
         if (visible && visible.id === 'erpWfDashboard' && typeof wfLoadDashboard === 'function') wfLoadDashboard();
         else if (visible && visible.id === 'erpWfIncoming' && typeof wfLoadIncoming === 'function') wfLoadIncoming();
         else if (typeof wfLoadOutbox === 'function') wfLoadOutbox();
-      } catch(_) {}
+      } catch (_) {}
     }).wipeAllTransactions({ confirm: 'DELETE-ALL-FOREVER' });
   }
 };
+
+// v6.6.1 — Hide the wipe button from non-admins. Owner spec: "الادمن
+// فقط يملك هذه الخاصية". Frontend visibility is a UX hint — the
+// authoritative gate is the backend's guardAdmin.
+function _wfApplyAdminVisibility() {
+  var isAdmin = false;
+  try {
+    var session = JSON.parse(localStorage.getItem('pos_session') || '{}');
+    var role = String((session.role || session.userRole || '')).toLowerCase();
+    isAdmin = session.username === 'admin' || role === 'admin';
+  } catch (_) {}
+  document.querySelectorAll('.wf-wipe-btn').forEach(function(b) {
+    b.style.display = isAdmin ? '' : 'none';
+  });
+}
 
 // V4: status palette — 8 lifecycle states (single source of truth for status display)
 var _wfOutStatusAr = {
@@ -13037,6 +13031,8 @@ var _wfOutImpClr = { critical:'#dc2626', high:'#ea580c', medium:'#16a34a', low:'
 
 function wfLoadOutbox() {
   _wfInitOutboxFilters();
+  // v6.6.1 — Hide the wipe button if the current user isn't an admin.
+  try { _wfApplyAdminVisibility(); } catch (_) {}
   var tb = document.getElementById('wfOutboxBody');
   if (!tb) return;
   tb.innerHTML = '<tr><td colspan="8" class="empty-msg"><i class="fas fa-spinner fa-spin"></i> جاري التحميل...</td></tr>';

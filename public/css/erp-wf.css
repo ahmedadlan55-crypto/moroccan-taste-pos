@@ -237,7 +237,91 @@
   box-shadow: 0 0 0 3px rgba(124, 58, 237, 0.16);
 }
 
-/* ── 9. Responsive header on small screens ───────────────────────── */
+/* ── 9. Filter panel skin (v6.6.1) ───────────────────────────────── */
+/* Replaces the inline-styled filter panel that lived in #erpWfOutgoing
+   before v6.6.1. The auto-fit grid removes the dangling empty cell that
+   sat in row 4 and makes the panel collapse cleanly down to a single
+   column on mobile. Labels sit above inputs instead of in a fixed 120px
+   left column — that pattern fights Arabic text rendering and made the
+   panel feel cramped at tablet widths. */
+.wf-filter-panel {
+  background: #fff;
+  border: 1px solid var(--mt-border, #e2e8f0);
+  border-radius: var(--mt-radius-lg, 18px);
+  padding: 18px 20px;
+  margin-bottom: 16px;
+  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04);
+}
+.wf-filter-panel .wf-filter-row {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 12px 16px;
+}
+.wf-filter-field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+.wf-filter-field > label {
+  font-size: 11.5px;
+  font-weight: 800;
+  color: var(--mt-text-muted, #64748b);
+  display: block;
+}
+.wf-filter-field .form-control-sm {
+  font-family: inherit;
+  width: 100%;
+}
+.wf-filter-field--date .wf-filter-date-pair {
+  display: grid;
+  grid-template-columns: 1fr auto 1fr;
+  gap: 6px;
+  align-items: center;
+}
+.wf-filter-field--date .wf-filter-date-sep {
+  color: var(--mt-text-light, #94a3b8);
+  font-weight: 800;
+  text-align: center;
+}
+.wf-filter-actions {
+  display: flex;
+  gap: 10px;
+  justify-content: center;
+  margin-top: 14px;
+}
+
+/* ── 10. Wipe-modal stats grid (v6.6.1) ──────────────────────────── */
+/* The dry-run preview shows row-by-row what's about to be deleted.
+   The "transactions" row is highlighted because it's the headline
+   number — everything else is dependent records that come along for
+   the ride. */
+.wf-wipe-stats {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 6px 16px;
+  background: var(--mt-surface-2, #f8fafc);
+  border: 1px solid var(--mt-border, #e2e8f0);
+  border-radius: var(--mt-radius-md, 14px);
+  padding: 12px 14px;
+}
+.wf-wipe-row {
+  display: flex;
+  justify-content: space-between;
+  font-size: 12.5px;
+  line-height: 1.7;
+}
+.wf-wipe-row .lbl  { color: var(--mt-text-muted, #64748b); }
+.wf-wipe-row .val  { color: var(--mt-primary-2, #0f172a); font-weight: 700; }
+.wf-wipe-row.is-primary {
+  grid-column: 1 / -1;
+  padding-bottom: 6px;
+  border-bottom: 1px dashed #cbd5e1;
+}
+.wf-wipe-row.is-primary .lbl { font-weight: 800; color: var(--mt-danger, #dc2626); font-size: 13.5px; }
+.wf-wipe-row.is-primary .val { font-weight: 900; color: var(--mt-danger, #dc2626); font-size: 16px; }
+
+/* ── 11. Responsive header on small screens ──────────────────────── */
 @media (max-width: 720px) {
   .wf-section-header {
     padding: 14px 16px;

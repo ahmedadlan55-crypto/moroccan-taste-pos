@@ -17,7 +17,7 @@ const db = require('../db/connection');
 const SM = require('../lib/transactionStateMachine');
 const PERMS = require('../lib/transactionPermissions');
 const SCHEMA = require('../lib/transactionSchema');
-const { guardTxnAccess, guardDeveloper } = require('../lib/transactionGuards');
+const { guardTxnAccess, guardDeveloper, guardAdmin } = require('../lib/transactionGuards');
 // v5.10.56 — SoD (Segregation of Duties) validator. Enforces
 //   SOD-1 Maker≠Approver · SOD-2 Approver≠Payer · SOD-3 Payer≠Reconciler
 //   SOD-4 Two distinct approvers when amount ≥ SOD_HIGH_AMOUNT_THRESHOLD
@@ -2121,7 +2121,13 @@ router.post('/transactions/:id/resubmit', SCHEMA.validateBody(SCHEMA.schemas.res
 //   payment_records.transaction_id ← NULL, txn_daily_counter (reset per-day serials),
 //   transactions row (last).
 // Audit log gets a 'developer_wipe_all' entry with the final counts.
-router.delete('/transactions/__wipe-all', guardDeveloper, async (req, res) => {
+//
+// v6.6.1 — Owner spec: "الادمن فقط يملك هذه الخاصية". Switched from
+// guardDeveloper (which also accepted is_developer flag + role='developer')
+// to guardAdmin (literal admin role only). Single-row delete + force-delete
+// below stay on guardDeveloper since they're scoped to one record and the
+// developer audience for those is intentional.
+router.delete('/transactions/__wipe-all', guardAdmin, async (req, res) => {
   try {
     const username = (req.user && req.user.username) || (req.body && req.body.username) || 'developer';
     const confirm = req.query.confirm || (req.body && req.body.confirm) || '';

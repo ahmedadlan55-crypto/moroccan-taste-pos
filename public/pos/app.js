@@ -774,10 +774,36 @@ window.setFoodicsPay = function (name) {
 window.renderFoodicsSplitFields = function () {
   var host = q('#paySplitFields');
   if (!host) return;
-  // v6.4.3 — split inputs now mirror the same dynamic method list as the
-  // tiles. Inputs carry class "split-input" so legacy doCheckout
-  // extraction still works.
-  var tiles = _foodicsActiveMethods();
+  // v6.4.3 — split inputs mirror the dynamic method list as the tiles.
+  //   Inputs carry class "split-input" so legacy doCheckout extraction
+  //   still works.
+  // v6.5.1 — Owner spec: "ازل كيتا وهانجر ستيشن من تجزئة واجعل مكانهم
+  //   OTHER فقط". Split is the partial-payment scenario (e.g. ‏SR 50
+  //   cash + ‏SR 30 mada + the rest "other"). Pay-by-app channels like
+  //   Kita and HungerStation deliver the FULL invoice through their
+  //   own gateway — they don't make sense as a split portion. We cap
+  //   the split inputs to the 3 essentials: Cash, Mada, Other.
+  var SPLIT_ALLOWED_RE = /^(cash|mada|card|other)$/i;
+  var tiles = _foodicsActiveMethods().filter(function (m) {
+    var n = String(m.name || '').toLowerCase();
+    if (SPLIT_ALLOWED_RE.test(n)) return true;
+    return n.indexOf('cash') >= 0 || n.indexOf('mada') >= 0 ||
+           n.indexOf('card') >= 0 || n.indexOf('other') >= 0;
+  });
+  // Defensive: guarantee Cash / Mada / Other are always present even
+  // if the operator only configured exotic methods.
+  var present = tiles.map(function (t) { return String(t.name || '').toLowerCase(); });
+  ['Cash', 'Mada', 'Other'].forEach(function (n) {
+    if (present.indexOf(n.toLowerCase()) === -1) {
+      tiles.push({
+        name: n,
+        ar:  ({ Cash: 'كاش', Mada: 'مدى', Other: 'أخرى' })[n],
+        en:  n,
+        icon: _foodicsPayIcon({ name: n })
+      });
+      present.push(n.toLowerCase());
+    }
+  });
   host.innerHTML = tiles.map(function (m) {
     var label = (m.ar && m.en && m.ar !== m.en) ? (m.ar + ' · ' + m.en) : (m.ar || m.en);
     var safeName = String(m.name).replace(/'/g, "\\'");
@@ -4230,8 +4256,12 @@ window.posClearInvoiceDiscount = function() {
 //     5. if variance != 0, MUST type a reason ≥10 chars to unlock the close button
 //   The close button is locked until the reveal happens AND (variance==0 OR
 //   reason is filled).
-// V5.7.15 — extended denomination set including ½ ر.س coin
-state._v3CashDenoms = [500, 200, 100, 50, 20, 10, 5, 1, 0.5];
+// V5.7.15 — extended denomination set including ½ SAR coin
+// v6.5.1 — Expanded to the full SAMA-circulating set so cash counts are
+// halala-accurate (owner spec: "يجب أن تكون أكثر دقَّة من هذا").
+// Banknotes (500 / 200 / 100 / 50 / 20 / 10 / 5 SAR) +
+// Coins (2 / 1 SAR, 50 / 25 / 10 / 5 halalas).
+state._v3CashDenoms = [500, 200, 100, 50, 20, 10, 5, 2, 1, 0.5, 0.25, 0.10, 0.05];
 
 // In-memory state for the modal session
 var _scExpectedTotal = 0;       // total expected from system (loaded but hidden)
@@ -4254,20 +4284,24 @@ window.shiftCloseStart = function() {
   if (q('#scComparePanel')) q('#scComparePanel').classList.add('hidden');
   if (q('#scVarianceAlert')) q('#scVarianceAlert').classList.add('hidden');
   if (q('#scVarianceNote')) q('#scVarianceNote').value = '';
-  _scLockClose('أنهِ العدّ أولاً', 'fa-lock');
+  _scLockClose('Finish counting first', 'fa-lock');
 
   // ── Cashier label ──
   var cashierName = (state.currentUser && state.currentUser.displayName) || state.user || '—';
   if (q('#scCashierLbl')) q('#scCashierLbl').textContent = cashierName;
 
   // ── Denomination cards ──
+  // v6.5.1 — denomination cards are now English-only ("SAR" / "halalas")
+  // per owner spec ("ارجو منك تحويله كامل للانجليزيه"). The full SAMA set
+  // (500 → 0.05 SAR) is rendered so the count is halala-accurate.
   var grid = q('#scDenomGrid');
   if (grid) {
     grid.innerHTML = state._v3CashDenoms.map(function(d) {
-      var label = d < 1 ? (d * 100) + ' هـ' : d + ' ر.س';
-      var unit  = d < 1 ? 'هللة' : (d <= 1 ? 'ريال' : 'فئة');
+      var isCoin = d < 1;
+      var faceLabel = isCoin ? (Math.round(d * 100) + ' h')  : (d + ' SAR');
+      var unitLabel = isCoin ? 'Halalas' : (d <= 2 ? 'Coin' : 'Note');
       return '<div class="sc-denom-card">' +
-               '<div class="sc-denom-card-top"><span class="sc-denom-face">' + label + '</span><span class="sc-denom-unit">' + unit + '</span></div>' +
+               '<div class="sc-denom-card-top"><span class="sc-denom-face">' + faceLabel + '</span><span class="sc-denom-unit">' + unitLabel + '</span></div>' +
                '<input type="number" inputmode="numeric" data-vk="1" min="0" step="1" class="sc-denom-input" data-denom="' + d + '" value="0" oninput="scV3Recalc()" onfocus="this.select()">' +
                '<div class="sc-denom-card-total" data-denom="' + d + '">0.00</div>' +
              '</div>';
@@ -4282,17 +4316,44 @@ window.shiftCloseStart = function() {
   // ── Fetch shift data (items + methods + expected) ──
   _posCallAPI('GET', '/shifts/closing-data/' + state.activeShiftId, null, function(d) {
     if (!d || d.error) {
-      glassToast((d && d.error) || 'فشل تحميل بيانات الوردية', true);
+      glassToast((d && d.error) || 'Failed to load shift data', true);
       return;
     }
 
     // ── Stash expected (will only be SHOWN after reveal) ──
     _scExpectedTotal = Number(d.totalTheoretical || 0);
     var methods = d.methods || [];
+    // v6.5.1 — Drop cash + unmatched as before, BUT also drop the legacy
+    // "Split" pseudo-row that the payment_methods seed inserted. Split is
+    // a UI feature (multi-tender checkout), not a real method — it must
+    // never appear as a tile in shift close.
     _scElecMethods = methods.filter(function(m) {
-      var gt = (m.groupType || '').toLowerCase();
-      return gt !== 'cash' && gt !== 'unmatched';
+      var gt   = (m.groupType || '').toLowerCase();
+      var name = (m.name || '').toLowerCase();
+      return gt !== 'cash' && gt !== 'unmatched' && name !== 'split';
     });
+
+    // v6.5.1 — Owner spec: "لماذا مدي ليست موجودة هنا ضمن طرق الدفع
+    // الالكترونية". If the deployment has no method that resolves to
+    // Mada/Card we surface a synthetic row so every closing has a
+    // dedicated card-payment input. Synthetic id is ignored by the
+    // backend matcher (it has no real expectedAmount) — the cashier
+    // just enters the actual counted amount and the variance shows in
+    // the comparison panel.
+    var hasMada = _scElecMethods.some(function(m) {
+      var n = (m.name   || '').toLowerCase();
+      var a = (m.nameAr || '').toLowerCase();
+      return n === 'mada' || n === 'card' ||
+             n.indexOf('mada') >= 0 || n.indexOf('card') >= 0 ||
+             a.indexOf('مدى')  >= 0 || a.indexOf('مدي') >= 0 ||
+             a.indexOf('شبكة') >= 0;
+    });
+    if (!hasMada) {
+      _scElecMethods.unshift({
+        id: '_synth_mada', name: 'Mada / Card', nameAr: 'Mada / Card',
+        groupType: 'electronic', icon: 'fa-credit-card', color: '#3b82f6'
+      });
+    }
     var cashSum = 0;
     methods.forEach(function(m) {
       var gt = (m.groupType || '').toLowerCase();
@@ -4312,7 +4373,7 @@ window.shiftCloseStart = function() {
     if (itemsBody) {
       var items = d.soldItems || [];
       if (!items.length) {
-        itemsBody.innerHTML = '<tr><td colspan="4" class="sc-empty">لا توجد أصناف مباعة في هذه الوردية</td></tr>';
+        itemsBody.innerHTML = '<tr><td colspan="4" class="sc-empty">No items sold in this shift</td></tr>';
       } else {
         itemsBody.innerHTML = items.map(function(it) {
           return '<tr>' +
@@ -4326,14 +4387,17 @@ window.shiftCloseStart = function() {
     }
 
     // ── Electronic methods cards (NO expected shown) ──
+    // v6.5.1 — Card heads now prefer the English `name`; Arabic falls
+    // back only when EN is empty. Owner spec: shift close fully in EN.
     var elecGrid = q('#scElecGrid');
     if (elecGrid) {
       if (!_scElecMethods.length) {
-        elecGrid.innerHTML = '<div class="sc-empty">لا توجد طرق دفع إلكترونية</div>';
+        elecGrid.innerHTML = '<div class="sc-empty">No electronic payment methods</div>';
       } else {
         elecGrid.innerHTML = _scElecMethods.map(function(m) {
+          var displayName = m.name || m.nameAr || '—';
           return '<div class="sc-elec-card">' +
-                   '<div class="sc-elec-card-head"><i class="fas ' + (m.icon || 'fa-credit-card') + '" style="color:' + (m.color || '#3b82f6') + ';"></i> <span>' + (m.nameAr || m.name) + '</span></div>' +
+                   '<div class="sc-elec-card-head"><i class="fas ' + (m.icon || 'fa-credit-card') + '" style="color:' + (m.color || '#3b82f6') + ';"></i> <span>' + displayName + '</span></div>' +
                    '<input type="number" inputmode="decimal" data-vk="1" min="0" step="0.01" class="sc-elec-input" data-pmid="' + m.id + '" data-pmname="' + (m.name || '').toLowerCase() + '" placeholder="0.00" oninput="scV3Recalc()" onfocus="this.select()">' +
                  '</div>';
         }).join('');
@@ -4361,7 +4425,7 @@ window.scV3Recalc = function() {
     if (totEl) totEl.textContent = _posFmt(sum);
     actualCash += sum;
   });
-  if (q('#scActualCash')) q('#scActualCash').textContent = _posFmt(actualCash) + ' ر.س';
+  if (q('#scActualCash')) q('#scActualCash').textContent = _posFmt(actualCash) + ' SAR';
 
   // Electronic actual sum
   var elecActual = 0;
@@ -4371,11 +4435,11 @@ window.scV3Recalc = function() {
     elecActual += v;
     elecActualByMethod[inp.dataset.pmid] = v;
   });
-  if (q('#scTotalElecActual')) q('#scTotalElecActual').textContent = _posFmt(elecActual) + ' ر.س';
+  if (q('#scTotalElecActual')) q('#scTotalElecActual').textContent = _posFmt(elecActual) + ' SAR';
 
   // Comparison panel — only render when revealed
   if (!_scRevealed) {
-    _scLockClose('أنهِ العدّ أولاً', 'fa-lock');
+    _scLockClose('Finish counting first', 'fa-lock');
     return;
   }
 
@@ -4394,13 +4458,13 @@ window.scV3Recalc = function() {
     diffCard.classList.remove('sc-cmp-diff-zero','sc-cmp-diff-pos','sc-cmp-diff-neg');
     if (absDiff < 0.01) {
       diffCard.classList.add('sc-cmp-diff-zero');
-      if (diffLbl) diffLbl.textContent = 'متطابق ✓';
+      if (diffLbl) diffLbl.textContent = 'Balanced ✓';
     } else if (totalDiff < 0) {
       diffCard.classList.add('sc-cmp-diff-neg');
-      if (diffLbl) diffLbl.textContent = 'عجز في الصندوق';
+      if (diffLbl) diffLbl.textContent = 'Cash drawer SHORT';
     } else {
       diffCard.classList.add('sc-cmp-diff-pos');
-      if (diffLbl) diffLbl.textContent = 'زيادة في الصندوق';
+      if (diffLbl) diffLbl.textContent = 'Cash drawer OVER';
     }
   }
 
@@ -4408,9 +4472,11 @@ window.scV3Recalc = function() {
   var pmd = q('#scPerMethodDiff');
   if (pmd) {
     var rows = [];
-    rows.push(_scPmdRow('💵 نقدي / كاش', _scExpectedCash, actualCash));
+    rows.push(_scPmdRow('💵 Cash', _scExpectedCash, actualCash));
     _scElecMethods.forEach(function(m) {
-      var label = '<i class="fas ' + (m.icon || 'fa-credit-card') + '" style="color:' + (m.color || '#3b82f6') + ';margin-inline-end:4px;"></i>' + (m.nameAr || m.name);
+      // Prefer English name; fall back to Arabic only when EN is empty.
+      var nameLabel = m.name || m.nameAr || '—';
+      var label = '<i class="fas ' + (m.icon || 'fa-credit-card') + '" style="color:' + (m.color || '#3b82f6') + ';margin-inline-end:4px;"></i>' + nameLabel;
       rows.push(_scPmdRow(label, _scExpectedElec[m.id] || 0, elecActualByMethod[m.id] || 0));
     });
     pmd.innerHTML = rows.join('');
@@ -4424,7 +4490,7 @@ window.scV3Recalc = function() {
     if (q('#scVarianceAlert')) q('#scVarianceAlert').classList.remove('hidden');
     var note = (q('#scVarianceNote') && q('#scVarianceNote').value || '').trim();
     if (note.length >= 10) _scUnlockClose();
-    else _scLockClose('اشرح الفرق أولاً (' + note.length + '/10)', 'fa-pen');
+    else _scLockClose('Explain the variance first (' + note.length + '/10)', 'fa-pen');
   }
 };
 
@@ -4435,8 +4501,8 @@ function _scPmdRow(label, exp, act) {
   return '<div class="sc-pmd-row">' +
            '<div class="sc-pmd-name">' + label + '</div>' +
            '<div class="sc-pmd-vals">' +
-             '<span class="sc-pmd-exp">المسجَّل: ' + _posFmt(exp) + '</span>' +
-             '<span class="sc-pmd-act">الفعلي: ' + _posFmt(act) + '</span>' +
+             '<span class="sc-pmd-exp">Expected: ' + _posFmt(exp) + '</span>' +
+             '<span class="sc-pmd-act">Actual: ' + _posFmt(act) + '</span>' +
              '<span class="sc-pmd-diff" style="color:' + clr + ';">' + sign + _posFmt(diff) + '</span>' +
            '</div>' +
          '</div>';
@@ -4460,7 +4526,7 @@ function _scUnlockClose() {
   btn.style.cursor = 'pointer';
   btn.style.background = '#16a34a';
   btn.style.borderColor = '#16a34a';
-  btn.innerHTML = '<i class="fas fa-check-double"></i> تأكيد إغلاق الوردية';
+  btn.innerHTML = '<i class="fas fa-check-double"></i> Confirm shift close';
 }
 
 // V5.7.15 — User ticked / unticked the "I'm done counting" checkbox

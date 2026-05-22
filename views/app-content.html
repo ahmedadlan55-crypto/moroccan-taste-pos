@@ -3822,16 +3822,14 @@
 <!-- WORKFLOW: Dashboard (لوحة معاملات مع كروت الأهمية) -->
 <!-- ══════════════════════════════════════════════════════════════ -->
 <div id="erpWfDashboard" class="dash-section hidden">
-  <div class="section-header" style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;flex-wrap:wrap;gap:10px;">
-    <h2 class="section-title" style="font-size:18px;font-weight:800;display:flex;align-items:center;gap:8px;"><i class="fas fa-th-large" style="color:#3b82f6;"></i> لوحة المعاملات الإدارية</h2>
-    <button class="btn btn-primary" onclick="wfOpenNewTxnModal()"><i class="fas fa-plus"></i> معاملة جديدة</button>
-  </div>
-
-  <!-- Quick-switch tabs between Dashboard / Incoming / Outgoing -->
-  <div class="wf-tabs" style="display:flex;gap:6px;margin-bottom:16px;background:#f1f5f9;padding:5px;border-radius:12px;width:fit-content;">
-    <button class="wf-tab-btn active" onclick="erpNav('erpWfDashboard')" style="padding:9px 18px;border:none;background:#fff;color:#0f172a;border-radius:8px;font-weight:800;font-size:13px;cursor:pointer;box-shadow:0 2px 6px rgba(0,0,0,.06);"><i class="fas fa-th-large" style="color:#3b82f6;"></i> اللوحة</button>
-    <button class="wf-tab-btn" onclick="erpNav('erpWfIncoming')" style="padding:9px 18px;border:none;background:transparent;color:#64748b;border-radius:8px;font-weight:700;font-size:13px;cursor:pointer;"><i class="fas fa-inbox"></i> الوارد <span id="wfTabInCount" style="background:#10b98120;color:#059669;padding:1px 6px;border-radius:8px;font-size:10px;margin-right:4px;display:none;"></span></button>
-    <button class="wf-tab-btn" onclick="erpNav('erpWfOutgoing')" style="padding:9px 18px;border:none;background:transparent;color:#64748b;border-radius:8px;font-weight:700;font-size:13px;cursor:pointer;"><i class="fas fa-paper-plane"></i> الصادر <span id="wfTabOutCount" style="background:#0ea5e920;color:#0369a1;padding:1px 6px;border-radius:8px;font-size:10px;margin-right:4px;display:none;"></span></button>
+  <!-- v6.6.0 — Premium brand header (purple/slate) + quick-switch tabs removed
+       (sidebar nav already covers Dashboard/Incoming/Outgoing). -->
+  <div class="wf-section-header">
+    <h2 class="wf-section-title"><i class="fas fa-th-large"></i> لوحة المعاملات الإدارية</h2>
+    <div class="wf-section-actions">
+      <button class="btn wf-wipe-btn" onclick="wfWipeAllTransactions()" title="تَصفير كل المعاملات (للمُطَوِّر فَقَط)"><i class="fas fa-broom"></i> تَصفير البَيانات التَّجريبيَّة</button>
+      <button class="btn btn-primary" onclick="wfOpenNewTxnModal()"><i class="fas fa-plus"></i> معاملة جديدة</button>
+    </div>
   </div>
 
   <!-- Importance summary strip -->
@@ -3875,16 +3873,13 @@
 <!-- WORKFLOW: صندوق الوارد (Incoming Box) -->
 <!-- ══════════════════════════════════════════════════════════════ -->
 <div id="erpWfIncoming" class="dash-section hidden">
-  <div class="section-header" style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;flex-wrap:wrap;gap:10px;">
-    <h2 class="section-title" style="font-size:18px;font-weight:800;display:flex;align-items:center;gap:8px;"><i class="fas fa-inbox" style="color:#10b981;"></i> صندوق الوارد — في انتظار إجراء</h2>
-    <button class="btn btn-light" onclick="wfLoadIncoming()"><i class="fas fa-sync"></i> تحديث</button>
-  </div>
-
-  <!-- Quick-switch tabs -->
-  <div class="wf-tabs" style="display:flex;gap:6px;margin-bottom:16px;background:#f1f5f9;padding:5px;border-radius:12px;width:fit-content;">
-    <button class="wf-tab-btn" onclick="erpNav('erpWfDashboard')" style="padding:9px 18px;border:none;background:transparent;color:#64748b;border-radius:8px;font-weight:700;font-size:13px;cursor:pointer;"><i class="fas fa-th-large"></i> اللوحة</button>
-    <button class="wf-tab-btn active" onclick="erpNav('erpWfIncoming')" style="padding:9px 18px;border:none;background:#fff;color:#0f172a;border-radius:8px;font-weight:800;font-size:13px;cursor:pointer;box-shadow:0 2px 6px rgba(0,0,0,.06);"><i class="fas fa-inbox" style="color:#10b981;"></i> الوارد</button>
-    <button class="wf-tab-btn" onclick="erpNav('erpWfOutgoing')" style="padding:9px 18px;border:none;background:transparent;color:#64748b;border-radius:8px;font-weight:700;font-size:13px;cursor:pointer;"><i class="fas fa-paper-plane"></i> الصادر</button>
+  <!-- v6.6.0 — Premium brand header (no quick-switch tabs; sidebar handles nav). -->
+  <div class="wf-section-header">
+    <h2 class="wf-section-title"><i class="fas fa-inbox"></i> صَندوق الوارد — في انتظار إجراء</h2>
+    <div class="wf-section-actions">
+      <button class="btn wf-wipe-btn" onclick="wfWipeAllTransactions()" title="تَصفير كل المعاملات (للمُطَوِّر فَقَط)"><i class="fas fa-broom"></i> تَصفير البَيانات التَّجريبيَّة</button>
+      <button class="btn btn-light" onclick="wfLoadIncoming()"><i class="fas fa-sync"></i> تحديث</button>
+    </div>
   </div>
 
   <div id="wfIncomingStats" style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:18px;"></div>
@@ -3900,15 +3895,13 @@
 <!-- WORKFLOW: صندوق الصادر (Outgoing Box) — enterprise layout -->
 <!-- ══════════════════════════════════════════════════════════════ -->
 <div id="erpWfOutgoing" class="dash-section hidden">
-  <div class="section-header" style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;flex-wrap:wrap;gap:10px;">
-    <h2 class="section-title" style="font-size:18px;font-weight:800;display:flex;align-items:center;gap:8px;"><i class="fas fa-paper-plane" style="color:#0ea5e9;"></i> المعاملات الصادرة</h2>
-  </div>
-
-  <!-- Quick-switch tabs -->
-  <div class="wf-tabs" style="display:flex;gap:6px;margin-bottom:16px;background:#f1f5f9;padding:5px;border-radius:12px;width:fit-content;">
-    <button class="wf-tab-btn" onclick="erpNav('erpWfDashboard')" style="padding:9px 18px;border:none;background:transparent;color:#64748b;border-radius:8px;font-weight:700;font-size:13px;cursor:pointer;"><i class="fas fa-th-large"></i> اللوحة</button>
-    <button class="wf-tab-btn" onclick="erpNav('erpWfIncoming')" style="padding:9px 18px;border:none;background:transparent;color:#64748b;border-radius:8px;font-weight:700;font-size:13px;cursor:pointer;"><i class="fas fa-inbox"></i> الوارد</button>
-    <button class="wf-tab-btn active" onclick="erpNav('erpWfOutgoing')" style="padding:9px 18px;border:none;background:#fff;color:#0f172a;border-radius:8px;font-weight:800;font-size:13px;cursor:pointer;box-shadow:0 2px 6px rgba(0,0,0,.06);"><i class="fas fa-paper-plane" style="color:#0ea5e9;"></i> الصادر</button>
+  <!-- v6.6.0 — Premium brand header (no quick-switch tabs; sidebar handles nav). -->
+  <div class="wf-section-header">
+    <h2 class="wf-section-title"><i class="fas fa-paper-plane"></i> المعاملات الصادرة</h2>
+    <div class="wf-section-actions">
+      <button class="btn wf-wipe-btn" onclick="wfWipeAllTransactions()" title="تَصفير كل المعاملات (للمُطَوِّر فَقَط)"><i class="fas fa-broom"></i> تَصفير البَيانات التَّجريبيَّة</button>
+      <button class="btn btn-primary" onclick="wfOpenNewTxnModal()"><i class="fas fa-plus"></i> إضافة معاملة داخلية</button>
+    </div>
   </div>
 
   <!-- Filter panel -->
@@ -3992,15 +3985,13 @@
     </div>
   </div>
 
-  <!-- Summary stats -->
-  <div id="wfOutboxSummary" style="display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin-bottom:14px;"></div>
+  <!-- Summary stats — v6.6.0: rendered via .wf-summary-grid by wfLoadOutbox -->
+  <div id="wfOutboxSummary" class="wf-summary-grid"></div>
 
-  <!-- Add + Table -->
-  <div style="display:flex;justify-content:flex-end;margin-bottom:10px;">
-    <button class="btn btn-primary" onclick="wfOpenNewTxnModal()"><i class="fas fa-plus"></i> إضافة معاملة داخلية</button>
-  </div>
-  <div class="erp-table-container" style="border-radius:14px;">
-    <table class="erp-table">
+  <!-- v6.6.0 — Add-button moved into the section header to remove the duplicate
+       "+ إضافة معاملة داخلية" that lived both above and below the filter panel. -->
+  <div class="erp-table-container wf-table-card">
+    <table class="erp-table wf-table">
       <thead>
         <tr>
           <th style="min-width:140px;">مسلسل المعاملة</th>

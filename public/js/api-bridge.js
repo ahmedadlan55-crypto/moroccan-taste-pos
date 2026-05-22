@@ -399,6 +399,11 @@
     updateWfOrg:         { method: 'PUT',  url: (id,d) => '/workflow/org-tree/' + id, body: (id,d) => d },
     getWfMyProfile:      { method: 'GET',  url: '/workflow/my-profile', query: (f) => f },
     getWfEligibleUsers:  { method: 'GET',  url: '/workflow/eligible-users', query: (f) => f },
+    // v6.6.0 — Developer-only NUCLEAR wipe of every transaction + its trail.
+    // Backend (routes/workflow.js:2124) refuses the request unless the body
+    // carries `confirm: 'DELETE-ALL-FOREVER'`. Pass `dryRun: true` to get the
+    // counts without deleting (preview mode).
+    wipeAllTransactions: { method: 'DELETE', url: '/workflow/transactions/__wipe-all', body: (d) => d },
   };
 
   function buildUrl(route, args) {

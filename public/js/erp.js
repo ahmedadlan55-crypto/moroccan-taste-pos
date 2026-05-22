@@ -12899,6 +12899,113 @@ function wfResetOutboxFilters() {
   wfLoadOutbox();
 }
 
+// ─────────────────────────────────────────────────────────────────
+// v6.6.0 — Developer-only NUCLEAR wipe of every transaction + trail
+// ─────────────────────────────────────────────────────────────────
+// Drives the new "تَصفير البَيانات التَّجريبيَّة" button in the section
+// headers of erpWfDashboard / erpWfIncoming / erpWfOutgoing.
+//
+// Two-stage confirm:
+//   1. dryRun=true preview — shows the counts of what would be deleted
+//      across transactions + steps_log + replies + attachments + recipients
+//      + read_receipts + notifications + payment_records_unlinked.
+//   2. Operator must literally type DELETE-ALL-FOREVER to authorize the
+//      real wipe (backend refuses any other body).
+//
+// On success: toast with deleted count + reload the active section so
+// the table empty state appears.
+window.wfWipeAllTransactions = function() {
+  if (typeof window._apiBridge !== 'object' || !window._apiBridge.wipeAllTransactions) {
+    showToast('api-bridge.wipeAllTransactions غير متاح', true);
+    return;
+  }
+
+  // Stage 1 — dry-run preview
+  window._apiBridge.withSuccessHandler(function(preview) {
+    if (!preview || preview.error) {
+      var err = (preview && (preview.error || preview.hint)) || 'فشل قراءة الإحصائيات';
+      showToast(err, true);
+      return;
+    }
+    if (!preview.counts || (preview.counts.transactions||0) === 0) {
+      showToast('لا توجد معاملات لِحذفها');
+      return;
+    }
+
+    var c = preview.counts;
+    var rowsHtml =
+      '<div style="display:grid;grid-template-columns:1fr auto;gap:6px 12px;font-size:13px;line-height:1.8;">' +
+        '<span>المعاملات</span><b style="color:#dc2626;">' + (c.transactions||0) + '</b>' +
+        '<span>سجل الخُطوات</span><b>' + (c.transaction_steps_log||0) + '</b>' +
+        '<span>الرُّدود</span><b>' + (c.transaction_replies||0) + '</b>' +
+        '<span>المُرفَقات</span><b>' + (c.txn_attachments||0) + '</b>' +
+        '<span>المُستَلمين</span><b>' + (c.txn_recipients||0) + '</b>' +
+        '<span>سجلات القراءة</span><b>' + (c.memo_read_receipts||0) + '</b>' +
+        '<span>التَّنبيهات</span><b>' + (c.notifications||0) + '</b>' +
+        '<span>روابط المَدفوعات (ستُفَكّ)</span><b>' + (c.payment_records_unlinked||0) + '</b>' +
+      '</div>';
+
+    if (typeof window.erpConfirm !== 'function') {
+      // Fallback if erpConfirm isn't available — use plain prompt
+      var tok = prompt('سَيتم حَذف ' + (c.transactions||0) + ' معامَلة بِجَميع آثارها.\n\nاكتُب DELETE-ALL-FOREVER لِلتَّأكيد:');
+      if (tok !== 'DELETE-ALL-FOREVER') {
+        if (tok !== null) showToast('تَم الإلغاء', true);
+        return;
+      }
+      _wfDoWipe();
+      return;
+    }
+
+    // Premium confirm modal with token input
+    var content =
+      '<div class="wf-wipe-confirm-modal">' +
+        '<div class="wf-wipe-warning">' +
+          '<i class="fas fa-triangle-exclamation ico"></i>' +
+          '<b>تَحذير: عَمليَّة غَير قابِلة للتَّراجُع</b><br>' +
+          '<span style="font-size:12px;color:#7f1d1d;">سَتُحذَف كل المعاملات الموجودة + كل آثارها (السجل، الرُّدود، المُرفَقات، التَّنبيهات).</span>' +
+        '</div>' +
+        '<div style="margin-bottom:10px;font-weight:700;color:#0f172a;">ما سَيُحذَف:</div>' +
+        rowsHtml +
+        '<div style="margin-top:14px;font-size:12px;color:#475569;font-weight:700;">للتَّأكيد، اكتُب <code style="background:#fff;border:1px solid #fca5a5;padding:2px 6px;border-radius:4px;color:#dc2626;font-weight:900;">DELETE-ALL-FOREVER</code> في الحَقل:</div>' +
+        '<input id="wfWipeTokenInput" class="wf-wipe-token-input" type="text" autocomplete="off" placeholder="DELETE-ALL-FOREVER" style="margin-top:8px;">' +
+      '</div>';
+
+    erpConfirm('تَصفير كل المعاملات', content, {
+      okLabel: 'تَأكيد الحَذف',
+      cancelLabel: 'إلغاء',
+      danger: true,
+      html: true
+    }).then(function(ok) {
+      if (!ok) return;
+      var inp = document.getElementById('wfWipeTokenInput');
+      var token = inp ? String(inp.value || '').trim() : '';
+      if (token !== 'DELETE-ALL-FOREVER') {
+        showToast('الرَّمز غَير صَحيح — لم يَتم الحَذف', true);
+        return;
+      }
+      _wfDoWipe();
+    });
+  }).wipeAllTransactions({ dryRun: true });
+
+  function _wfDoWipe() {
+    window._apiBridge.withSuccessHandler(function(res) {
+      if (!res || res.error || !res.success) {
+        showToast((res && res.error) || 'فَشِل الحَذف', true);
+        return;
+      }
+      var n = (res.counts && res.counts.transactions) || 0;
+      showToast('✓ تَم حَذف ' + n + ' معامَلة');
+      // Reload whichever WF section is currently visible
+      try {
+        var visible = document.querySelector('#erpWfDashboard:not(.hidden), #erpWfIncoming:not(.hidden), #erpWfOutgoing:not(.hidden)');
+        if (visible && visible.id === 'erpWfDashboard' && typeof wfLoadDashboard === 'function') wfLoadDashboard();
+        else if (visible && visible.id === 'erpWfIncoming' && typeof wfLoadIncoming === 'function') wfLoadIncoming();
+        else if (typeof wfLoadOutbox === 'function') wfLoadOutbox();
+      } catch(_) {}
+    }).wipeAllTransactions({ confirm: 'DELETE-ALL-FOREVER' });
+  }
+};
+
 // V4: status palette — 8 lifecycle states (single source of truth for status display)
 var _wfOutStatusAr = {
   draft:'مسودة', created:'جديدة', pending:'قيد الانتظار',
@@ -12947,36 +13054,54 @@ function wfLoadOutbox() {
   });
 
   // Summary cards — V3.1: includes "مرجعة للتعديل" card so the user spots returned items at a glance
+  // v6.6.0 — Repainted with .wf-summary-card (brand purple primary + status tints)
+  //   so the section finally matches Moroccan Taste identity (token: --mt-accent).
   window._apiBridge.withSuccessHandler(function(s) {
     var box = document.getElementById('wfOutboxSummary');
     if (!box) return;
-    var card = function(label, value, color, icon) {
-      var iconHtml = icon ? '<i class="fas '+icon+'" style="color:'+color+';margin-inline-end:6px;"></i>' : '';
-      return '<div style="background:#fff;border:1px solid '+color+'30;border-right:4px solid '+color+';border-radius:10px;padding:10px 14px;display:flex;justify-content:space-between;align-items:center;">' +
-        '<span style="font-size:12px;color:#64748b;font-weight:700;">' + iconHtml + label + '</span>' +
-        '<span style="font-size:22px;font-weight:900;color:'+color+';">' + (value||0) + '</span>' +
-      '</div>';
+    var card = function(label, value, variant, icon) {
+      // variant is one of '', 'warn', 'danger', 'success' — class prefix is added here
+      var cls = 'wf-summary-card' + (variant ? ' is-' + variant : '');
+      var iconHtml = icon ? '<i class="fas ' + icon + '"></i>' : '';
+      return '<div class="' + cls + '">' +
+               '<span class="lbl">' + iconHtml + ' ' + label + '</span>' +
+               '<span class="val">' + (Number(value || 0)).toLocaleString('en-US') + '</span>' +
+             '</div>';
     };
     var og = (s && s.outgoing) || {}, ig = (s && s.incoming) || {};
-    var html = card('مجموع المعاملات الصادرة', og.total||0, '#0ea5e9', 'fa-paper-plane') +
-      card('المعلقة', og.open||0, '#f59e0b', 'fa-clock');
-    // Show "مرجعة للتعديل" card only if there are any (so it stands out when relevant)
+    // Primary purple cards — outgoing totals (the "section identity")
+    var html = card('مجموع المعاملات الصادرة', og.total||0, '',       'fa-paper-plane') +
+               card('المُعلَّقة',                og.open ||0, 'warn',  'fa-clock');
+    // Returned-for-edit only shows when relevant — gets danger tint
     if ((og.returned||0) > 0) {
-      html += card('مرجعة للتعديل', og.returned, '#dc2626', 'fa-rotate-left');
+      html += card('مرجعة للتعديل', og.returned, 'danger', 'fa-rotate-left');
     }
-    html += card('مجموع المعاملات الواردة', ig.total||0, '#16a34a', 'fa-inbox') +
-      card('الواردة المعلقة', ig.open||0, '#ef4444', 'fa-bell');
+    html += card('مجموع المعاملات الواردة', ig.total||0, 'success', 'fa-inbox') +
+            card('الواردة المعلقة',         ig.open ||0, 'danger',  'fa-bell');
     box.innerHTML = html;
   }).getWfOutboxSummary({ username: currentUser });
 
   window._apiBridge.withSuccessHandler(function(list) {
     if (!list || !list.length) {
-      tb.innerHTML = '<tr><td colspan="8" class="empty-msg">لا توجد معاملات مطابقة</td></tr>';
+      // v6.6.0 — Premium empty state (icon + headline + body + CTA) instead of
+      // a flat "لا توجد معاملات مطابقة" string. Matches the Moroccan Taste
+      // brand identity (purple accent, slate type).
+      tb.innerHTML =
+        '<tr><td colspan="8" class="wf-empty-state">' +
+          '<i class="fas fa-inbox ico"></i>' +
+          '<h3>لا تُوجَد مُعاملات بَعد</h3>' +
+          '<p>ابدَأ بإنشاء أوَّل مُعامَلة داخِليَّة من الزِّر أعلاه.<br>' +
+            'سَتَظهَر هُنا فَور إرسالها مع كَافة بيانات سَير المُعامَلة.</p>' +
+          '<button class="btn btn-primary" onclick="wfOpenNewTxnModal()">' +
+            '<i class="fas fa-plus"></i> إنشاء مُعامَلة جَديدة' +
+          '</button>' +
+        '</td></tr>';
       return;
     }
     tb.innerHTML = list.map(function(t) {
       var dt = t.createdAt ? new Date(t.createdAt).toLocaleDateString('en-CA') : '';
-      var serialColor = t.isRead ? '#1e40af' : '#0ea5e9';
+      // v6.6.0 — Serial uses brand purple instead of generic blue/sky
+      var serialColor = t.isRead ? 'var(--mt-primary-2, #0f172a)' : 'var(--mt-accent, #7c3aed)';
       var statusAr = _wfOutStatusAr[t.status] || t.status;
       var statusClr = _wfOutStatusClr[t.status] || '#64748b';
       var statusIcon = _wfOutStatusIcon[t.status] || 'fa-circle';
@@ -13000,15 +13125,18 @@ function wfLoadOutbox() {
         // Returned: prominent "تعديل وإعادة إرسال" button
         actionBtn = '<button class="btn btn-sm" style="background:linear-gradient(135deg,#dc2626,#b91c1c);color:#fff;border:none;font-weight:800;padding:6px 12px;border-radius:8px;box-shadow:0 2px 4px rgba(220,38,38,.3);" onclick="event.stopPropagation();wfEditOutboxTxn(\''+t.id+'\')"><i class="fas fa-pen-to-square"></i> تعديل وإعادة إرسال</button>';
       } else {
-        actionBtn = '<button class="btn btn-sm" style="background:#eff6ff;color:#1e40af;border:1px solid #bfdbfe;" onclick="wfViewTxn(\''+t.id+'\')"><i class="fas fa-route"></i> سير المعاملة</button>';
+        // v6.6.0 — "سير المعاملة" button uses brand purple (was generic blue)
+        actionBtn = '<button class="btn btn-sm" style="background:var(--mt-accent-soft,#faf5ff);color:var(--mt-accent,#7c3aed);border:1px solid var(--mt-accent-soft-2,#f3e8ff);" onclick="wfViewTxn(\''+t.id+'\')"><i class="fas fa-route"></i> سير المعاملة</button>';
       }
+      // v6.6.0 — scope pill uses brand tokens
+      var scopeCls = t.scope === 'external' ? 'wf-pill--scope-external' : 'wf-pill--scope-internal';
       return '<tr style="'+rowStyle+'" onclick="wfViewTxn(\''+t.id+'\')">' +
-        '<td style="font-family:monospace;font-weight:800;color:'+serialColor+';font-size:11px;">'+(t.txnNumber||'')+unread+'</td>' +
+        '<td><span class="wf-row-serial" style="color:'+serialColor+';">'+(t.txnNumber||'')+'</span>'+unread+'</td>' +
         '<td style="font-size:12px;">'+dt+overdue+'</td>' +
         '<td style="font-size:12px;">'+(t.issuingEntityName || t.deptName || t.branchName || '—')+'</td>' +
-        '<td style="font-weight:700;max-width:280px;overflow:hidden;text-overflow:ellipsis;">'+(t.subject||t.title||'')+(t.expenseCategoryName?'<div style="font-size:10px;color:#8b5cf6;font-weight:700;"><i class="fas fa-tag" style="font-size:8px;"></i> '+t.expenseCategoryName+'</div>':'')+(isReturned && t.returnReason?'<div style="font-size:10px;color:#dc2626;font-weight:700;margin-top:3px;background:#fef2f2;padding:3px 6px;border-radius:6px;border-right:2px solid #dc2626;"><i class="fas fa-quote-right" style="font-size:8px;"></i> '+_woEscapeHtml(t.returnReason.substring(0,80))+(t.returnReason.length>80?'…':'')+'</div>':'')+'</td>' +
+        '<td style="font-weight:700;max-width:280px;overflow:hidden;text-overflow:ellipsis;">'+(t.subject||t.title||'')+(t.expenseCategoryName?'<div style="font-size:10px;color:var(--mt-accent,#7c3aed);font-weight:700;"><i class="fas fa-tag" style="font-size:8px;"></i> '+t.expenseCategoryName+'</div>':'')+(isReturned && t.returnReason?'<div style="font-size:10px;color:#dc2626;font-weight:700;margin-top:3px;background:#fef2f2;padding:3px 6px;border-radius:6px;border-right:2px solid #dc2626;"><i class="fas fa-quote-right" style="font-size:8px;"></i> '+_woEscapeHtml(t.returnReason.substring(0,80))+(t.returnReason.length>80?'…':'')+'</div>':'')+'</td>' +
         '<td style="font-weight:800;color:'+impClr+';">'+impAr+'</td>' +
-        '<td style="color:#0ea5e9;font-weight:700;">'+scopeAr+'</td>' +
+        '<td><span class="wf-pill '+scopeCls+'">'+scopeAr+'</span></td>' +
         '<td>'+statusCell+'</td>' +
         '<td onclick="event.stopPropagation();">'+actionBtn+'</td>' +
       '</tr>';

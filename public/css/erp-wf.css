@@ -1,0 +1,256 @@
+/* ═══════════════════════════════════════════════════════════════════
+   v6.6.0 — Workflow / Transactions section
+   ═══════════════════════════════════════════════════════════════════
+   Moroccan Taste brand skin (purple #7c3aed primary + slate #0f172a
+   text) for the three sections under "المعاملات الإدارية":
+     • #erpWfDashboard
+     • #erpWfIncoming
+     • #erpWfOutgoing
+   Loaded after admin-skin.css so the !important overrides remain safe.
+   Owner ask: "حسّن الواجهة والازرار وازل التكرارات بشكل يتناسب مع
+   هوية الشركة" — this file replaces the cyan/sky inline styles that
+   the section was rendered with (#0ea5e9 / #3b82f6) with the brand
+   tokens defined in public/shared/design-tokens.css.
+   ═══════════════════════════════════════════════════════════════════ */
+
+/* ── 1. Section header bar ───────────────────────────────────────── */
+.wf-section-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 14px;
+  flex-wrap: wrap;
+  margin-bottom: 20px;
+  padding: 16px 22px;
+  background: linear-gradient(135deg, var(--mt-accent-soft), #ffffff 75%);
+  border: 1px solid var(--mt-accent-soft-2, #f3e8ff);
+  border-radius: var(--mt-radius-lg, 18px);
+  box-shadow:
+    0 1px 2px rgba(15, 23, 42, 0.04),
+    0 4px 14px rgba(124, 58, 237, 0.06);
+}
+.wf-section-title {
+  font-size: 20px;
+  font-weight: 900;
+  color: var(--mt-primary-2, #0f172a);
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 0;
+}
+.wf-section-title i {
+  color: var(--mt-accent, #7c3aed);
+  font-size: 22px;
+}
+.wf-section-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+/* ── 2. Wipe button (developer-only — red outline) ───────────────── */
+.wf-wipe-btn {
+  background: #fff !important;
+  color: var(--mt-danger, #dc2626) !important;
+  border: 1px solid var(--mt-danger, #dc2626) !important;
+  font-weight: 700 !important;
+}
+.wf-wipe-btn:hover {
+  background: var(--mt-danger-soft, #fee2e2) !important;
+  color: var(--mt-danger-2, #b91c1c) !important;
+  border-color: var(--mt-danger-2, #b91c1c) !important;
+  transform: translateY(-1px);
+}
+
+/* ── 3. Summary stat cards (purple-accented) ─────────────────────── */
+.wf-summary-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 14px;
+  margin-bottom: 18px;
+}
+.wf-summary-card {
+  background: #fff;
+  border: 1px solid var(--mt-border, #e2e8f0);
+  border-right: 4px solid var(--mt-accent, #7c3aed);
+  border-radius: var(--mt-radius-md, 14px);
+  padding: 16px 18px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04);
+  transition: transform 0.16s, box-shadow 0.16s;
+}
+.wf-summary-card:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 8px 24px rgba(124, 58, 237, 0.15);
+}
+.wf-summary-card .lbl {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12.5px;
+  font-weight: 700;
+  color: var(--mt-text-muted, #64748b);
+}
+.wf-summary-card .lbl i {
+  color: var(--mt-accent, #7c3aed);
+  font-size: 14px;
+}
+.wf-summary-card .val {
+  font-size: 26px;
+  font-weight: 900;
+  color: var(--mt-accent, #7c3aed);
+  font-variant-numeric: tabular-nums;
+}
+
+/* Status-tinted variants */
+.wf-summary-card.is-warn          { border-right-color: var(--mt-warning, #f59e0b); }
+.wf-summary-card.is-warn .val,
+.wf-summary-card.is-warn .lbl i   { color: var(--mt-warning, #f59e0b); }
+.wf-summary-card.is-danger        { border-right-color: var(--mt-danger, #dc2626); }
+.wf-summary-card.is-danger .val,
+.wf-summary-card.is-danger .lbl i { color: var(--mt-danger, #dc2626); }
+.wf-summary-card.is-success       { border-right-color: var(--mt-success, #16a34a); }
+.wf-summary-card.is-success .val,
+.wf-summary-card.is-success .lbl i{ color: var(--mt-success, #16a34a); }
+
+/* ── 4. Table card chrome ────────────────────────────────────────── */
+.wf-table-card {
+  border-radius: var(--mt-radius-lg, 18px);
+  background: #fff;
+  border: 1px solid var(--mt-border, #e2e8f0);
+  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04);
+  overflow: hidden;
+}
+.wf-table thead th {
+  background: var(--mt-surface-2, #f8fafc) !important;
+  color: var(--mt-text, #0f172a) !important;
+  font-weight: 800 !important;
+  font-size: 12px !important;
+  padding: 14px 12px !important;
+  border-bottom: 1px solid var(--mt-border, #e2e8f0) !important;
+}
+.wf-table tbody tr {
+  transition: background 0.12s;
+}
+.wf-table tbody tr:hover {
+  background: var(--mt-accent-soft, #faf5ff) !important;
+}
+.wf-table tbody td {
+  padding: 14px 12px !important;
+  vertical-align: middle;
+}
+
+/* ── 5. Empty state (no transactions) ────────────────────────────── */
+.wf-empty-state {
+  padding: 60px 20px !important;
+  text-align: center !important;
+  background: linear-gradient(180deg, #ffffff, var(--mt-surface-2, #f8fafc));
+}
+.wf-empty-state .ico {
+  font-size: 64px;
+  color: var(--mt-text-light, #94a3b8);
+  margin-bottom: 16px;
+  display: block;
+}
+.wf-empty-state h3 {
+  margin: 12px 0 4px;
+  color: var(--mt-primary-2, #0f172a);
+  font-weight: 800;
+  font-size: 17px;
+}
+.wf-empty-state p {
+  color: var(--mt-text-muted, #64748b);
+  margin: 0 0 18px;
+  font-size: 13px;
+  line-height: 1.7;
+}
+.wf-empty-state .btn {
+  margin-top: 4px;
+}
+
+/* ── 6. Wipe-confirm modal — extra restraint required ────────────── */
+.wf-wipe-confirm-modal .wf-wipe-warning {
+  background: linear-gradient(135deg, #fff5f5, #ffffff);
+  border: 1.5px solid var(--mt-danger, #dc2626);
+  border-radius: var(--mt-radius-md, 14px);
+  padding: 14px 18px;
+  margin-bottom: 14px;
+}
+.wf-wipe-confirm-modal .wf-wipe-warning .ico {
+  color: var(--mt-danger, #dc2626);
+  font-size: 22px;
+  margin-inline-end: 10px;
+}
+.wf-wipe-confirm-modal .wf-wipe-warning b {
+  color: var(--mt-danger-2, #b91c1c);
+}
+.wf-wipe-confirm-modal .wf-wipe-token-input {
+  width: 100%;
+  padding: 12px 14px;
+  border: 2px solid var(--mt-danger, #dc2626);
+  border-radius: var(--mt-radius-md, 14px);
+  font-family: monospace;
+  font-size: 14px;
+  font-weight: 700;
+  letter-spacing: 1px;
+  background: #fff;
+  color: var(--mt-danger-2, #b91c1c);
+}
+.wf-wipe-confirm-modal .wf-wipe-token-input:focus {
+  outline: 0;
+  box-shadow: 0 0 0 3px rgba(220, 38, 38, 0.18);
+}
+
+/* ── 7. Row badges (status / scope / importance pills) ───────────── */
+.wf-row-serial {
+  font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace !important;
+  font-weight: 800 !important;
+  color: var(--mt-accent, #7c3aed) !important;
+  font-size: 11.5px !important;
+}
+.wf-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 3px 10px;
+  border-radius: 999px;
+  font-weight: 800;
+  font-size: 11px;
+}
+.wf-pill--scope-internal { background: var(--mt-accent-soft, #faf5ff); color: var(--mt-accent, #7c3aed); }
+.wf-pill--scope-external { background: #fff7ed; color: #c2410c; }
+
+/* ── 8. Filter panel polish ──────────────────────────────────────── */
+.wf-filter-panel,
+#erpWfOutgoing > div:nth-of-type(2) {
+  /* The existing inline-styled filter panel benefits from a softer
+     resting state — purple-tinted focus rings on its inputs. */
+}
+#erpWfOutgoing input.form-control-sm:focus,
+#erpWfOutgoing select.form-control-sm:focus,
+#erpWfIncoming input.form-control-sm:focus,
+#erpWfIncoming select.form-control-sm:focus {
+  outline: 0;
+  border-color: var(--mt-accent, #7c3aed);
+  box-shadow: 0 0 0 3px rgba(124, 58, 237, 0.16);
+}
+
+/* ── 9. Responsive header on small screens ───────────────────────── */
+@media (max-width: 720px) {
+  .wf-section-header {
+    padding: 14px 16px;
+  }
+  .wf-section-title {
+    font-size: 17px;
+  }
+  .wf-section-actions {
+    width: 100%;
+    justify-content: flex-end;
+  }
+  .wf-section-actions .btn {
+    flex: 1 1 auto;
+    min-width: 0;
+  }
+}

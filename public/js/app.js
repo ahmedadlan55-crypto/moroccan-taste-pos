@@ -815,7 +815,43 @@ function doLogin() {
 
   loader(true);
   api.withSuccessHandler(res => {
-    if (!res.success) { loader(false); showToast(res.error, true); return; }
+    if (!res.success) {
+      loader(false);
+      // v6.3.1 — defensive fallback: never surface a bare "undefined" toast.
+      // Falls back through a chain of hints (error → message → hint-by-flag →
+      // generic). Also routes the 2FA-code path through a native prompt() so
+      // existing 2FA users can complete login without a dedicated modal.
+      var msg = (res && (res.error || res.message))
+              || (res && res.requires2faCode  ? 'يَرجى إدخال رَمز التَّحقُّق الثُّنائي' : null)
+              || (res && res.requires2faSetup ? 'إعداد 2FA مَطلوب — يَتم تَفعيله من الإعدادات لاحقاً' : null)
+              || 'فَشل تسجيل الدخول';
+      showToast(msg, true);
+
+      if (res && res.requires2faCode) {
+        var code = window.prompt('أدخِل رَمز Google Authenticator (6 أرقام):', '');
+        if (code) {
+          var u2 = q("#lUser").value.trim();
+          var p2 = q("#lPass").value.trim();
+          loader(true);
+          fetch('/api/auth/login', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ username: u2, password: p2, totpCode: code })
+          }).then(function (r) { return r.json(); }).then(function (r2) {
+            loader(false);
+            if (r2 && r2.success) {
+              window.location.reload();
+            } else {
+              showToast((r2 && (r2.error || r2.message)) || 'رَمز التَّحقُّق غير صحيح', true);
+            }
+          }).catch(function (err) {
+            loader(false);
+            showToast('فشل الاتِّصال: ' + (err && err.message || ''), true);
+          });
+        }
+      }
+      return;
+    }
     state.user = res.username;
     state.role = res.role.toLowerCase();
     state.isDeveloper = !!res.isDeveloper;

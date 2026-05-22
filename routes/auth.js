@@ -120,40 +120,32 @@ router.post('/login', async (req, res) => {
     // V5.4.3: include isDeveloper in JWT + login response so frontend can gate UI buttons
     const isDev = !!user.is_developer || user.username === 'admin' || user.role === 'developer';
 
-    // v6.2.0 Wave F.5 — 2FA mandatory for admin + developer accounts.
-    // Three states the frontend has to handle:
-    //   1. Admin without a totp_secret  → requires2faSetup=true (one-time)
-    //   2. Admin with secret, no code   → requires2faCode=true
-    //   3. Admin with secret + bad code → success=false + 2FA error
-    // Non-admin roles are unaffected.
-    const requires2fa = (user.role === 'admin' || isDev);
-    if (requires2fa) {
-      const code = req.body.totpCode || req.body.code || '';
-      if (!user.totp_secret) {
-        // First-time admin login — issue a short-lived setup token so the
-        // frontend can call /2fa/setup, then /2fa/enroll with the secret
-        // + first valid code. JWT is NOT issued until enrollment.
-        const setupToken = jwt.sign(
-          { username: user.username, intent: '2fa-setup', id: user.id },
-          process.env.JWT_SECRET, { expiresIn: '10m' }
-        );
-        return res.json({
-          success: false,
-          requires2faSetup: true,
-          username: user.username,
-          setupToken
-        });
-      }
+    // v6.3.1 — 2FA is now OPT-IN, not mandatory.
+    // v6.2.0 forced every admin/developer through a mandatory enrollment
+    // flow (requires2faSetup + setupToken), but the front-end has no UI
+    // to complete that enrollment yet — the admin was locked out with a
+    // bare red "undefined" toast. Reverted to a simpler contract:
+    //   • If the user voluntarily set a totp_secret (via /2fa/setup
+    //     + /2fa/verify, or by an admin populating the field), the
+    //     login still requires the 6-digit code on every request.
+    //   • Otherwise login proceeds as it did before v6.2.0 — no
+    //     enrollment gate, no lock-out.
+    // When the dedicated Settings → Security UI is built, it will use
+    // the same /2fa/setup + /2fa/verify endpoints to enable the secret
+    // for anyone who wants the protection.
+    if (user.totp_secret) {
+      const code = (req.body && (req.body.totpCode || req.body.code)) || '';
       if (!code) {
         return res.json({
           success: false,
           requires2faCode: true,
-          username: user.username
+          username: user.username,
+          error: 'يَرجى إدخال رَمز التَّحقُّق الثُّنائي من Google Authenticator'
         });
       }
       try {
         if (!verifyTOTP(user.totp_secret, code)) {
-          return res.json({ success: false, error: 'رمز التَّحقُّق الثُّنائي غير صحيح' });
+          return res.json({ success: false, error: 'رَمز التَّحقُّق الثُّنائي غير صحيح' });
         }
       } catch (e) {
         return res.json({ success: false, error: 'فشل التَّحقُّق الثُّنائي: ' + e.message });

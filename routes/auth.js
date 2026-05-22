@@ -252,22 +252,28 @@ router.get('/init/:username', async (req, res) => {
     const userBranchId = userRow.length ? userRow[0].branch_id : '';
     const userWarehouseId = userRow.length ? userRow[0].default_warehouse_id : '';
 
-    // v5.16.3 — The is_semi_finished filter is REMOVED. It was hiding
-    // the cashier's entire menu in cases where every item was flagged
-    // as semi-finished (intentionally or by accident). The cashier
-    // now sees every active item for the user's brand.
+    // v5.16.3 — The is_semi_finished filter was REMOVED to work around
+    // a deployment where every item was flagged semi-finished and the
+    // cashier saw an empty grid. That was the wrong tradeoff.
     //
-    // v6.4.4 — Owner reported the cashier seeing 215 items when the
-    // admin counted only 114. Root cause: the previous "OR brand_id IS
-    // NULL" clause returned BOTH the user's branded items AND every
-    // orphan (no-brand) item — so any product with a branded twin
-    // appeared twice. The new query keeps the orphan-inclusion
-    // behaviour (so deployments with a mix of branded + orphan items
-    // still work) BUT suppresses the orphan whenever a branded twin
-    // with the same `name` already exists for this user's brand.
+    // v6.4.5 — RESTORED. Per owner spec: "المُنتجات الغير تامة هي مَواد
+    // نِصف مَصنوعة ممنوع تَتواجد في المنيو — هي تُعامَل مُعامَلة المَواد
+    // الخام". Semi-finished items (e.g. "cold drink base", "براد شاي
+    // مغربي") are intermediate production outputs. They:
+    //   • have their own recipe (raw materials → semi-finished output)
+    //   • are transferred between branches as inventory
+    //   • are consumed by FINISHED items via menu.consumes_semi_id
+    //     (routes/sales.js line ~480 deducts them on each sale)
+    // They MUST NOT appear in the cashier grid. The defensive fallback
+    // (see "guard 0 rows" block below) catches the all-semi misconfig
+    // case explicitly rather than silently violating the rule.
+    //
+    // v6.4.4 — Orphan items (brand_id NULL/'') with a branded twin are
+    // suppressed so the user with a brand doesn't see both copies.
     const menuQuery = userBrandId
       ? `SELECT m.* FROM menu m
            WHERE m.active = 1
+             AND (m.is_semi_finished IS NULL OR m.is_semi_finished = 0)
              AND (
                m.brand_id = ?
                OR (
@@ -281,9 +287,37 @@ router.get('/init/:username', async (req, res) => {
                )
              )
            ORDER BY m.category, m.name`
-      : `SELECT m.* FROM menu m WHERE m.active = 1 ORDER BY m.category, m.name`;
+      : `SELECT m.* FROM menu m
+           WHERE m.active = 1
+             AND (m.is_semi_finished IS NULL OR m.is_semi_finished = 0)
+           ORDER BY m.category, m.name`;
     const menuParams = userBrandId ? [userBrandId, userBrandId] : [];
-    const [menu] = await db.query(menuQuery, menuParams);
+    let [menu] = await db.query(menuQuery, menuParams);
+
+    // v6.4.5 — Defensive guard: if the filter wiped EVERY row, the data
+    // is misconfigured (every item flagged is_semi_finished=1). Don't
+    // silently violate the no-semi-in-cashier rule by serving them —
+    // instead log a critical warning so the owner can investigate, and
+    // return whatever finished items exist outside the brand (best
+    // effort) so the cashier isn't completely dark.
+    if (!menu.length) {
+      try {
+        const [diag] = await db.query(
+          `SELECT
+             SUM(CASE WHEN active = 1 THEN 1 ELSE 0 END) AS active_total,
+             SUM(CASE WHEN active = 1 AND (is_semi_finished IS NULL OR is_semi_finished = 0) THEN 1 ELSE 0 END) AS finished_total,
+             SUM(CASE WHEN active = 1 AND is_semi_finished = 1 THEN 1 ELSE 0 END) AS semi_total
+           FROM menu`
+        );
+        const d = diag[0] || {};
+        console.warn(
+          '[init/menu] empty grid for user=%s brand=%s — active=%s finished=%s semi=%s. ' +
+          'If finished=0 the menu is mis-flagged (every item is semi). Fix in /menu admin: set is_semi_finished=0 on real sellables.',
+          req.params.username, userBrandId || '(none)',
+          d.active_total || 0, d.finished_total || 0, d.semi_total || 0
+        );
+      } catch (e) { /* diagnostics best-effort */ }
+    }
     const [payMethods] = await db.query('SELECT * FROM payment_methods ORDER BY sort_order');
     const [users] = await db.query('SELECT username FROM users WHERE active = 1');
 

@@ -255,13 +255,34 @@ router.get('/init/:username', async (req, res) => {
     // v5.16.3 — The is_semi_finished filter is REMOVED. It was hiding
     // the cashier's entire menu in cases where every item was flagged
     // as semi-finished (intentionally or by accident). The cashier
-    // now sees every active item for the user's brand. If the owner
-    // wants to hide a sellable item, they should set its active=0 in
-    // the admin menu editor instead of relying on is_semi_finished.
+    // now sees every active item for the user's brand.
+    //
+    // v6.4.4 — Owner reported the cashier seeing 215 items when the
+    // admin counted only 114. Root cause: the previous "OR brand_id IS
+    // NULL" clause returned BOTH the user's branded items AND every
+    // orphan (no-brand) item — so any product with a branded twin
+    // appeared twice. The new query keeps the orphan-inclusion
+    // behaviour (so deployments with a mix of branded + orphan items
+    // still work) BUT suppresses the orphan whenever a branded twin
+    // with the same `name` already exists for this user's brand.
     const menuQuery = userBrandId
-      ? `SELECT m.* FROM menu m WHERE m.active = 1 AND (m.brand_id = ? OR m.brand_id IS NULL OR m.brand_id = "") ORDER BY m.category, m.name`
+      ? `SELECT m.* FROM menu m
+           WHERE m.active = 1
+             AND (
+               m.brand_id = ?
+               OR (
+                 (m.brand_id IS NULL OR m.brand_id = '')
+                 AND NOT EXISTS (
+                   SELECT 1 FROM menu m2
+                    WHERE m2.name = m.name
+                      AND m2.brand_id = ?
+                      AND m2.active = 1
+                 )
+               )
+             )
+           ORDER BY m.category, m.name`
       : `SELECT m.* FROM menu m WHERE m.active = 1 ORDER BY m.category, m.name`;
-    const menuParams = userBrandId ? [userBrandId] : [];
+    const menuParams = userBrandId ? [userBrandId, userBrandId] : [];
     const [menu] = await db.query(menuQuery, menuParams);
     const [payMethods] = await db.query('SELECT * FROM payment_methods ORDER BY sort_order');
     const [users] = await db.query('SELECT username FROM users WHERE active = 1');

@@ -2847,6 +2847,30 @@ async function runMigrations() {
     await db.query('ALTER TABLE menu ADD UNIQUE KEY uq_menu_brand_name (brand_id, name)');
   } catch (e) { /* already there — ignore */ }
 
+  // ─── v6.4.4 — Silence orphan menu items that have a branded twin ───
+  // The owner reported the cashier seeing 215 items when the admin
+  // counted only 114. The earlier v6.4.3 dedupe handled SAME-brand
+  // duplicates but didn't touch the cross-brand case: rows with
+  // `brand_id IS NULL` (or '') that share a name with a branded row.
+  // The cashier's previous menu query ("OR brand_id IS NULL") returned
+  // BOTH, doubling the count. The query is now smarter (v6.4.4 patch
+  // in routes/auth.js), but we ALSO mark such orphans active=0 here so
+  // they vanish from every other consumer (reports, admin grids, etc.)
+  // without losing the historical row.
+  try {
+    await db.query(`
+      UPDATE menu m
+      INNER JOIN menu m2
+        ON m2.name = m.name
+       AND m2.brand_id IS NOT NULL
+       AND m2.brand_id <> ''
+       AND m2.active = 1
+      SET m.active = 0
+      WHERE m.active = 1
+        AND (m.brand_id IS NULL OR m.brand_id = '')
+    `);
+  } catch (e) { /* tolerant of partial schemas — non-fatal */ }
+
   // ─── v6.4.2 — Reversing-entry linkage on gl_journals ───
   // Posted journals are immutable (SOCPA/IFRS); the only way to correct
   // them is to issue a new journal with debits + credits swapped. These

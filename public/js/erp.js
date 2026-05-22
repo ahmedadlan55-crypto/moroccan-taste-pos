@@ -177,6 +177,9 @@ function erpNav(sectionId) {
       // v5.11.1
       case 'erpHrHolidays': if (typeof erpLoadHrHolidays === 'function') erpLoadHrHolidays(); break;
       case 'erpHrWeeklyOff': if (typeof erpLoadHrWeeklyOff === 'function') erpLoadHrWeeklyOff(); break;
+      // v6.4.0 — ZATCA Phase 2 onboarding + 2FA settings
+      case 'erpZatcaOnboarding': if (typeof erpLoadZatcaOnboarding === 'function') erpLoadZatcaOnboarding(); break;
+      case 'erp2faSettings': if (typeof erpLoad2faStatus === 'function') erpLoad2faStatus(); break;
       case 'erpHrAttendanceReport': if (typeof erpInitHrAttendanceReport === 'function') erpInitHrAttendanceReport(); break;
       case 'erpCashDash': cashLoadDashboard(); break;
       case 'erpCashBoxes': cashLoadBoxes(); break;
@@ -32204,4 +32207,575 @@ window.erpResetEmployeeWeeklyOff = function (empId, fromModal) {
       showToast((r && r.error) || 'فشل الإلغاء', true);
     }
   }).setWeeklyOffEmployee(empId, { days: [] });
+};
+
+// ═══════════════════════════════════════════════════════════════════
+// v6.4.0 — Wire every v6.0-6.3 backend feature to an admin UI:
+//   • ZATCA Phase 2 onboarding (CSID + submission worker)
+//   • 2FA settings (Google Authenticator opt-in)
+//   • Audit chain verification (tamper detection)
+//   • Aging + Period Close — rewired to the new endpoints
+// ═══════════════════════════════════════════════════════════════════
+
+// ── Injected styles (one-time) ───────────────────────────────────────
+function _zoInjectStyles() {
+  if (document.getElementById('zoStyles')) return;
+  var st = document.createElement('style');
+  st.id = 'zoStyles';
+  st.textContent =
+    /* ZATCA Onboarding */
+    '#erpZatcaOnboarding .zo-header{display:flex;align-items:center;gap:18px;padding:20px 24px;background:linear-gradient(135deg,#eff6ff,#fff 60%);border:1.5px solid #bfdbfe;border-radius:18px;margin-bottom:18px;flex-wrap:wrap;box-shadow:0 8px 24px -8px rgba(59,130,246,0.18);}' +
+    '#erpZatcaOnboarding .zo-header-icon{width:58px;height:58px;border-radius:16px;background:linear-gradient(135deg,#3b82f6,#1d4ed8);color:#fff;display:flex;align-items:center;justify-content:center;font-size:24px;flex-shrink:0;box-shadow:0 8px 18px -4px rgba(59,130,246,0.4);}' +
+    '#erpZatcaOnboarding .zo-header-text{flex:1;min-width:0;}' +
+    '#erpZatcaOnboarding .zo-header-text h1{margin:0;font-size:22px;font-weight:900;color:#0f172a;}' +
+    '#erpZatcaOnboarding .zo-header-text p{margin:5px 0 0;font-size:13px;color:#64748b;line-height:1.55;}' +
+    '#erpZatcaOnboarding .zo-header-actions{flex-shrink:0;display:flex;gap:8px;}' +
+    '#erpZatcaOnboarding .zo-card{background:#fff;border:1.5px solid #e2e8f0;border-radius:14px;padding:18px 22px;margin-bottom:16px;box-shadow:0 1px 3px rgba(15,23,42,0.04);}' +
+    '#erpZatcaOnboarding .zo-card h3{margin:0 0 12px;font-size:15px;color:#0f172a;font-weight:900;display:flex;align-items:center;gap:8px;}' +
+    '#erpZatcaOnboarding .zo-hint{margin:0 0 14px;font-size:12.5px;color:#64748b;line-height:1.55;}' +
+    '#erpZatcaOnboarding .zo-hint a{color:#1d4ed8;font-weight:700;}' +
+    '#erpZatcaOnboarding .zo-status-row{display:flex;align-items:center;gap:14px;flex-wrap:wrap;margin-bottom:14px;}' +
+    '#erpZatcaOnboarding .zo-status-pill{padding:8px 18px;border-radius:99px;font-size:14px;font-weight:900;display:inline-flex;align-items:center;gap:6px;}' +
+    '#erpZatcaOnboarding .zo-status-pill.none{background:#f1f5f9;color:#64748b;}' +
+    '#erpZatcaOnboarding .zo-status-pill.compliance{background:linear-gradient(135deg,#fef3c7,#fde68a);color:#92400e;}' +
+    '#erpZatcaOnboarding .zo-status-pill.production{background:linear-gradient(135deg,#dcfce7,#bbf7d0);color:#15803d;}' +
+    '#erpZatcaOnboarding .zo-status-pill.revoked{background:linear-gradient(135deg,#fee2e2,#fecaca);color:#991b1b;}' +
+    '#erpZatcaOnboarding .zo-status-meta{font-size:12.5px;color:#64748b;}' +
+    '#erpZatcaOnboarding .zo-queue-stats{display:flex;gap:12px;flex-wrap:wrap;margin-top:14px;padding-top:14px;border-top:1.5px dashed #e2e8f0;}' +
+    '#erpZatcaOnboarding .zo-queue-stat{padding:8px 14px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:10px;font-size:12.5px;color:#475569;font-weight:700;}' +
+    '#erpZatcaOnboarding .zo-queue-stat strong{font-size:16px;font-weight:900;color:#0f172a;margin-inline-end:5px;font-variant-numeric:tabular-nums;}' +
+    '#erpZatcaOnboarding .zo-queue-stat.pending strong{color:#d97706;}' +
+    '#erpZatcaOnboarding .zo-queue-stat.done strong{color:#15803d;}' +
+    '#erpZatcaOnboarding .zo-queue-stat.failed strong{color:#b91c1c;}' +
+    '#erpZatcaOnboarding .zo-form-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px;margin-bottom:18px;}' +
+    '@media(max-width:680px){#erpZatcaOnboarding .zo-form-grid{grid-template-columns:1fr;}}' +
+    '#erpZatcaOnboarding .zo-field{display:flex;flex-direction:column;gap:6px;}' +
+    '#erpZatcaOnboarding .zo-field-full{grid-column:1/-1;}' +
+    '#erpZatcaOnboarding .zo-field label{font-size:12px;font-weight:800;color:#475569;}' +
+    '#erpZatcaOnboarding .zo-req{color:#dc2626;}' +
+    '#erpZatcaOnboarding .zo-field input{height:40px;padding:0 12px;border:1.5px solid #e2e8f0;border-radius:10px;font-family:inherit;font-size:13.5px;color:#0f172a;background:#fff;outline:none;transition:border-color .15s;}' +
+    '#erpZatcaOnboarding .zo-field input:focus{border-color:#3b82f6;box-shadow:0 0 0 3px rgba(59,130,246,0.15);}' +
+    '#erpZatcaOnboarding .zo-form-actions,#erpZatcaOnboarding .zo-test-actions{display:flex;gap:10px;justify-content:flex-end;flex-wrap:wrap;}' +
+    '#erpZatcaOnboarding .zo-btn{height:40px;padding:0 18px;border-radius:11px;border:1.5px solid transparent;font-family:inherit;font-size:13px;font-weight:800;cursor:pointer;display:inline-flex;align-items:center;gap:7px;white-space:nowrap;transition:all .15s;}' +
+    '#erpZatcaOnboarding .zo-btn.ghost,#erp2faSettings .zo-btn.ghost{background:#fff;border-color:#e2e8f0;color:#475569;}' +
+    '#erpZatcaOnboarding .zo-btn.ghost:hover{border-color:#cbd5e1;transform:translateY(-1px);}' +
+    '#erpZatcaOnboarding .zo-btn.primary,#erp2faSettings .zo-btn.primary{background:linear-gradient(135deg,#3b82f6,#1d4ed8);color:#fff;box-shadow:0 5px 14px -3px rgba(59,130,246,0.45);}' +
+    '#erpZatcaOnboarding .zo-btn.primary:hover{transform:translateY(-1px);box-shadow:0 8px 20px -3px rgba(59,130,246,0.55);}' +
+    '#erpZatcaOnboarding .zo-btn.danger,#erp2faSettings .zo-btn.danger{background:linear-gradient(135deg,#ef4444,#b91c1c);color:#fff;box-shadow:0 5px 14px -3px rgba(239,68,68,0.45);}' +
+    '#erpZatcaOnboarding .zo-test-result{margin-top:14px;padding:12px 16px;border-radius:10px;font-size:12.5px;font-family:ui-monospace,Menlo,monospace;background:#f8fafc;border:1px solid #e2e8f0;display:none;}' +
+    '#erpZatcaOnboarding .zo-test-result.ok{background:#dcfce7;border-color:#86efac;color:#15803d;display:block;}' +
+    '#erpZatcaOnboarding .zo-test-result.err{background:#fee2e2;border-color:#fca5a5;color:#991b1b;display:block;}' +
+    /* 2FA Settings */
+    '#erp2faSettings .tfa-header{display:flex;align-items:center;gap:18px;padding:20px 24px;background:linear-gradient(135deg,#f0fdf4,#fff 60%);border:1.5px solid #bbf7d0;border-radius:18px;margin-bottom:18px;flex-wrap:wrap;box-shadow:0 8px 24px -8px rgba(22,163,74,0.18);}' +
+    '#erp2faSettings .tfa-header-icon{width:58px;height:58px;border-radius:16px;background:linear-gradient(135deg,#16a34a,#15803d);color:#fff;display:flex;align-items:center;justify-content:center;font-size:24px;flex-shrink:0;box-shadow:0 8px 18px -4px rgba(22,163,74,0.4);}' +
+    '#erp2faSettings .tfa-header-text{flex:1;min-width:0;}' +
+    '#erp2faSettings .tfa-header-text h1{margin:0;font-size:22px;font-weight:900;color:#0f172a;}' +
+    '#erp2faSettings .tfa-header-text p{margin:5px 0 0;font-size:13px;color:#64748b;line-height:1.55;}' +
+    '#erp2faSettings .tfa-status-card{background:#fff;border:1.5px solid #e2e8f0;border-radius:14px;padding:22px 24px;box-shadow:0 1px 3px rgba(15,23,42,0.04);}' +
+    '#erp2faSettings .tfa-status-flex{display:flex;align-items:center;justify-content:space-between;gap:16px;flex-wrap:wrap;}' +
+    '#erp2faSettings .tfa-status-pill{padding:10px 22px;border-radius:99px;font-size:15px;font-weight:900;display:inline-flex;align-items:center;gap:8px;}' +
+    '#erp2faSettings .tfa-status-pill.on{background:linear-gradient(135deg,#dcfce7,#bbf7d0);color:#15803d;}' +
+    '#erp2faSettings .tfa-status-pill.off{background:#f1f5f9;color:#64748b;}' +
+    '#erp2faSettings .tfa-status-info h4{margin:0;font-size:18px;color:#0f172a;font-weight:900;}' +
+    '#erp2faSettings .tfa-status-info p{margin:4px 0 0;font-size:12.5px;color:#64748b;}' +
+    '#erp2faSettings .tfa-setup-step{margin-top:14px;font-size:13px;color:#0f172a;line-height:1.6;}' +
+    '#erp2faSettings .tfa-setup-step:first-of-type{margin-top:0;}' +
+    '#erp2faSettings .tfa-qr-box{margin:10px 0;padding:14px;background:#fff;border:1.5px solid #e2e8f0;border-radius:12px;text-align:center;}' +
+    '#erp2faSettings .tfa-qr-box img{display:inline-block;max-width:200px;max-height:200px;}' +
+    '#erp2faSettings .tfa-secret-box{margin:10px 0;padding:12px 14px;background:#f8fafc;border:1.5px dashed #cbd5e1;border-radius:10px;display:flex;align-items:center;justify-content:space-between;gap:10px;}' +
+    '#erp2faSettings .tfa-secret-box code{font-size:13.5px;color:#0f172a;font-family:ui-monospace,Menlo,monospace;word-break:break-all;}' +
+    '#erp2faSettings .tfa-copy-btn{background:#fff;border:1.5px solid #e2e8f0;color:#475569;border-radius:8px;padding:6px 10px;cursor:pointer;font-size:12px;}' +
+    '#erp2faSettings .tfa-copy-btn:hover{background:#f1f5f9;color:#0f172a;}' +
+    '#erp2faSettings .tfa-code-input{width:100%;height:50px;padding:0 14px;border:1.5px solid #e2e8f0;border-radius:10px;font-size:24px;font-weight:900;text-align:center;font-family:ui-monospace,Menlo,monospace;letter-spacing:8px;color:#0f172a;}' +
+    '#erp2faSettings .tfa-code-input:focus{outline:0;border-color:#16a34a;box-shadow:0 0 0 3px rgba(22,163,74,0.15);}' +
+    '#erp2faSettings .tfa-modal-actions{display:flex;gap:10px;justify-content:flex-end;margin-top:16px;}' +
+    '#erp2faSettings .zo-btn.primary{background:linear-gradient(135deg,#16a34a,#15803d);box-shadow:0 5px 14px -3px rgba(22,163,74,0.45);}' +
+    '';
+  document.head.appendChild(st);
+}
+
+// ── Helpers ──────────────────────────────────────────────────────────
+function _v64Esc(s) {
+  return String(s == null ? '' : s).replace(/[&<>"']/g, function(c) {
+    return { '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;' }[c];
+  });
+}
+function _v64Fmt(n) {
+  var v = Number(n || 0);
+  return v.toLocaleString('en', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// 1) ZATCA Phase 2 Onboarding
+// ═══════════════════════════════════════════════════════════════════
+
+window.erpLoadZatcaOnboarding = function () {
+  _zoInjectStyles();
+  api.withSuccessHandler(function (r) {
+    if (!r || !r.success) {
+      var pill = document.getElementById('zoStatusPill');
+      if (pill) { pill.className = 'zo-status-pill none'; pill.textContent = 'غير مَعروف'; }
+      var meta = document.getElementById('zoStatusMeta');
+      if (meta) meta.textContent = (r && r.error) || 'فَشل تَحميل الحالة';
+      return;
+    }
+    _zoRenderStatus(r);
+  }).zatcaStatus();
+};
+
+function _zoRenderStatus(r) {
+  var status = (r.csidStatus || 'none').toLowerCase();
+  var labels = { none: 'غير مُفعَّل', compliance: 'Compliance — اختبار', production: 'Production — مُفعَّل', revoked: 'مُلغى' };
+  var icons  = { none: 'fa-circle-minus', compliance: 'fa-flask', production: 'fa-circle-check', revoked: 'fa-circle-xmark' };
+  var pill = document.getElementById('zoStatusPill');
+  if (pill) {
+    pill.className = 'zo-status-pill ' + status;
+    pill.innerHTML = '<i class="fas ' + (icons[status] || 'fa-question') + '"></i> ' + (labels[status] || status);
+  }
+  var meta = document.getElementById('zoStatusMeta');
+  if (meta) {
+    var parts = [];
+    if (r.sellerName) parts.push(r.sellerName);
+    if (r.sellerVat) parts.push('VAT: ' + r.sellerVat);
+    if (r.csidObtainedAt) {
+      try { parts.push('CSID مُفعَّل في: ' + new Date(r.csidObtainedAt).toLocaleString('ar-SA')); } catch(_) {}
+    }
+    if (r.lastSubmittedAt) {
+      try { parts.push('آخر إرسال: ' + new Date(r.lastSubmittedAt).toLocaleString('ar-SA')); } catch(_) {}
+    }
+    meta.textContent = parts.length ? parts.join(' · ') : '—';
+  }
+  var qstats = document.getElementById('zoQueueStats');
+  if (qstats) {
+    var q = r.queueStats || {};
+    qstats.innerHTML =
+      '<div class="zo-queue-stat pending"><strong>' + (q.pending || 0) + '</strong>في الانتظار</div>' +
+      '<div class="zo-queue-stat"><strong>' + (q.running || 0) + '</strong>قَيد الإرسال</div>' +
+      '<div class="zo-queue-stat done"><strong>' + (q.done || 0) + '</strong>مَقبولة</div>' +
+      '<div class="zo-queue-stat failed"><strong>' + (q.failed || 0) + '</strong>فَشلت</div>';
+  }
+  // Show/hide cards based on status
+  var formCard = document.getElementById('zoFormCard');
+  var testCard = document.getElementById('zoTestCard');
+  var revokeCard = document.getElementById('zoRevokeCard');
+  if (formCard)   formCard.style.display   = (status === 'none' || status === 'revoked') ? '' : 'none';
+  if (testCard)   testCard.style.display   = (status === 'compliance' || status === 'production') ? '' : 'none';
+  if (revokeCard) revokeCard.style.display = (status !== 'none') ? '' : 'none';
+  // Pre-fill form from existing seller info
+  var orgEl = document.getElementById('zoOrgName');
+  var vatEl = document.getElementById('zoVat');
+  if (orgEl && r.sellerName && !orgEl.value) orgEl.value = r.sellerName;
+  if (vatEl && r.sellerVat  && !vatEl.value) vatEl.value = r.sellerVat;
+}
+
+window.erpZatcaStartOnboarding = function () {
+  var otp        = (document.getElementById('zoOtp')        || {}).value || '';
+  var vatNumber  = (document.getElementById('zoVat')        || {}).value || '';
+  var crNumber   = (document.getElementById('zoCr')         || {}).value || '';
+  var orgName    = (document.getElementById('zoOrgName')    || {}).value || '';
+  var commonName = (document.getElementById('zoCommonName') || {}).value || '';
+  var sellerLoc  = (document.getElementById('zoLocation')   || {}).value || '';
+  var industry   = (document.getElementById('zoIndustry')   || {}).value || '';
+  if (!otp)       return showToast('OTP مَطلوب — احصُل عليه من Fatoora portal', true);
+  if (!vatNumber) return showToast('الرَّقم الضَّريبي مَطلوب', true);
+  if (!confirm('بَدء Onboarding مع ZATCA الآن؟\nسَيتم تَوليد مَفتاح خاص + CSR + إرسالهما لِبَوَّابة فاتورة.')) return;
+  loader(true);
+  api.withSuccessHandler(function (r) {
+    loader(false);
+    if (r && r.success) {
+      showToast('✓ ' + (r.message || 'تَم تَفعيل CSID للاختبار'), false);
+      erpLoadZatcaOnboarding();
+    } else {
+      showToast((r && r.error) || 'فَشل Onboarding', true);
+      if (r && r.body) console.warn('[zatca onboard] ZATCA response:', r.body);
+    }
+  }).withFailureHandler(function (err) {
+    loader(false);
+    showToast('فَشل الاتِّصال: ' + ((err && err.message) || ''), true);
+  }).zatcaOnboardCompliance({
+    otp: otp, vatNumber: vatNumber, crNumber: crNumber,
+    commonName: commonName || vatNumber, organizationName: orgName,
+    sellerLocation: sellerLoc, industryCode: industry
+  });
+};
+
+window.erpZatcaTestSubmission = function () {
+  var resBox = document.getElementById('zoTestResult');
+  if (resBox) { resBox.className = 'zo-test-result'; resBox.textContent = 'جاري الإرسال...'; resBox.style.display = 'block'; }
+  loader(true);
+  api.withSuccessHandler(function (r) {
+    loader(false);
+    if (!resBox) return;
+    if (r && r.success) {
+      resBox.className = 'zo-test-result ok';
+      resBox.innerHTML = '✓ نَجاح — HTTP ' + r.httpStatus + '\nUUID: ' + r.invoiceUuid + '\nHash: ' + (r.invoiceHash || '').slice(0, 60) + '…';
+    } else {
+      resBox.className = 'zo-test-result err';
+      resBox.textContent = '✗ فَشل: ' + ((r && r.error) || 'unknown') + (r && r.httpStatus ? ' (HTTP ' + r.httpStatus + ')' : '');
+    }
+  }).zatcaTest();
+};
+
+window.erpZatcaGraduate = function () {
+  if (!confirm('Graduate لـ Production CSID؟\nبَعد ذلك كل فاتورة فِعلية ستُرسَل لـ ZATCA الحَقيقية، وَلن يُمكن التَّراجع بدون إلغاء + إعادة Onboarding.')) return;
+  loader(true);
+  api.withSuccessHandler(function (r) {
+    loader(false);
+    if (r && r.success) {
+      showToast('✓ ' + (r.message || 'تَم Graduate لـ Production'), false);
+      erpLoadZatcaOnboarding();
+    } else {
+      showToast((r && r.error) || 'فَشل Graduate', true);
+    }
+  }).zatcaOnboardProduction();
+};
+
+window.erpZatcaRevoke = function () {
+  if (!confirm('إلغاء CSID نِهائياً؟\nسَيُمسح المِفتاح الخاص + الـ token + الـ secret. لَن تُرسَل الفَواتير لـ ZATCA حتى يُعاد Onboarding من البِداية.')) return;
+  if (!confirm('تَأكيد ثانٍ: هل أنت مُتأكِّد؟ هذا الإجراء غَير قابل للتَّراجُع.')) return;
+  loader(true);
+  api.withSuccessHandler(function (r) {
+    loader(false);
+    if (r && r.success) {
+      showToast('تَم إلغاء CSID', false);
+      erpLoadZatcaOnboarding();
+    } else {
+      showToast((r && r.error) || 'فَشل الإلغاء', true);
+    }
+  }).zatcaRevoke();
+};
+
+// ═══════════════════════════════════════════════════════════════════
+// 2) Audit Chain Verify
+// ═══════════════════════════════════════════════════════════════════
+
+window.erpVerifyAuditChain = function () {
+  if (typeof showToast === 'function') showToast('جاري فَحص سَلامة السِّجل...', false);
+  api.withSuccessHandler(function (r) {
+    if (!r || !r.success) {
+      showToast((r && r.error) || 'فَشل التَّحقُّق', true);
+      return;
+    }
+    if (r.verified) {
+      var msg = '✓ سِجل التَّدقيق سَليم — تَم فَحص ' + (r.count || 0) + ' صَف بدون تَلاعُب';
+      if (typeof glassAlert === 'function') {
+        glassAlert('نَجاح التَّحقُّق', msg);
+      } else {
+        showToast(msg, false);
+      }
+    } else {
+      var body = 'تَم اكتشاف تَلاعُب في سِجل التَّدقيق!\n\n' +
+                 'الصَّف المُتأثِّر: #' + (r.brokenAt || '?') + '\n' +
+                 'الـ Hash المُتوقَّع: ' + ((r.expected || '').slice(0, 32)) + '…\n' +
+                 'الـ Hash الفِعلي: ' + ((r.actual || '').slice(0, 32)) + '…';
+      if (typeof glassAlert === 'function') {
+        glassAlert('⚠ تَلاعُب مَكشوف', body, { danger: true });
+      } else {
+        alert(body);
+      }
+    }
+  }).withFailureHandler(function (err) {
+    showToast('فَشل الاتِّصال: ' + ((err && err.message) || ''), true);
+  }).auditVerify({ limit: 10000 });
+};
+
+// ═══════════════════════════════════════════════════════════════════
+// 3) A/R + A/P Aging — rewire to v6.2.0 5-bucket endpoints
+// (Overrides the legacy erpLoadARAging / erpLoadAPAging defined earlier
+//  in this file; last-defined window.* wins because both attach to the
+//  global namespace via the original `function ...` declarations.)
+// ═══════════════════════════════════════════════════════════════════
+
+window.erpLoadARAging = function () {
+  // Pick up the asOf date input if it exists; default to today
+  var asOfEl = document.getElementById('arAgingAsOf');
+  var asOfDate = (asOfEl && asOfEl.value) || new Date().toISOString().slice(0, 10);
+  var tbody = document.getElementById('erpARAgingBody');
+  var tfoot = document.getElementById('erpARAgingFoot');
+  if (tbody) tbody.innerHTML = '<tr><td colspan="8" class="empty-msg">جاري التَّحميل...</td></tr>';
+  if (tfoot) tfoot.innerHTML = '';
+  api.withSuccessHandler(function (res) {
+    if (!res || !res.success) {
+      if (tbody) tbody.innerHTML = '<tr><td colspan="8" class="empty-msg">' + ((res && res.error) || 'فَشل التَّحميل') + '</td></tr>';
+      return;
+    }
+    _renderAgingTable('AR', res, tbody, tfoot);
+  }).arAgingReport({ asOfDate: asOfDate });
+};
+
+window.erpLoadAPAging = function () {
+  var asOfEl = document.getElementById('apAgingAsOf');
+  var asOfDate = (asOfEl && asOfEl.value) || new Date().toISOString().slice(0, 10);
+  var tbody = document.getElementById('erpAPAgingBody');
+  var tfoot = document.getElementById('erpAPAgingFoot');
+  if (tbody) tbody.innerHTML = '<tr><td colspan="8" class="empty-msg">جاري التَّحميل...</td></tr>';
+  if (tfoot) tfoot.innerHTML = '';
+  api.withSuccessHandler(function (res) {
+    if (!res || !res.success) {
+      if (tbody) tbody.innerHTML = '<tr><td colspan="8" class="empty-msg">' + ((res && res.error) || 'فَشل التَّحميل') + '</td></tr>';
+      return;
+    }
+    _renderAgingTable('AP', res, tbody, tfoot);
+  }).apAgingReport({ asOfDate: asOfDate });
+};
+
+function _renderAgingTable(kind, res, tbody, tfoot) {
+  var rows = kind === 'AR' ? res.customers : res.suppliers;
+  if (!tbody) return;
+  if (!rows || !rows.length) {
+    tbody.innerHTML = '<tr><td colspan="8" class="empty-msg">لا توجد ذِمم مُستحقَّة بتاريخ ' + (res.asOfDate || '') + '</td></tr>';
+    if (tfoot) tfoot.innerHTML = '';
+    return;
+  }
+  tbody.innerHTML = rows.map(function (r) {
+    var name = (kind === 'AR') ? (r.customerName || '—') : (r.supplierName || '—');
+    var b = r.buckets || {};
+    return '<tr>' +
+      '<td><strong>' + _v64Esc(name) + '</strong>' + (r.customerPhone ? '<br><small style="color:#94a3b8;">' + _v64Esc(r.customerPhone) + '</small>' : '') + '</td>' +
+      '<td></td>' +
+      '<td style="font-family:ui-monospace,monospace;">' + _v64Fmt(b['0-30'])  + '</td>' +
+      '<td style="font-family:ui-monospace,monospace;">' + _v64Fmt(b['31-60']) + '</td>' +
+      '<td style="font-family:ui-monospace,monospace;">' + _v64Fmt(b['61-90']) + '</td>' +
+      '<td style="font-family:ui-monospace,monospace;color:#92400e;">' + _v64Fmt(b['91-120']) + '</td>' +
+      '<td style="font-family:ui-monospace,monospace;color:#991b1b;">' + _v64Fmt(b['120+']) + '</td>' +
+      '<td style="font-family:ui-monospace,monospace;font-weight:900;color:#0f172a;">' + _v64Fmt(r.total) + '</td>' +
+    '</tr>';
+  }).join('');
+  var gb = res.grandBuckets || {};
+  if (tfoot) {
+    tfoot.innerHTML = '<tr style="font-weight:900;background:linear-gradient(180deg,#f1f5f9,#e2e8f0);">' +
+      '<td colspan="2">إجمالي (' + (rows.length || 0) + ') ' + (kind === 'AR' ? 'عميل' : 'مورد') + '</td>' +
+      '<td style="font-family:ui-monospace,monospace;">' + _v64Fmt(gb['0-30'])  + '</td>' +
+      '<td style="font-family:ui-monospace,monospace;">' + _v64Fmt(gb['31-60']) + '</td>' +
+      '<td style="font-family:ui-monospace,monospace;">' + _v64Fmt(gb['61-90']) + '</td>' +
+      '<td style="font-family:ui-monospace,monospace;color:#92400e;">' + _v64Fmt(gb['91-120']) + '</td>' +
+      '<td style="font-family:ui-monospace,monospace;color:#991b1b;">' + _v64Fmt(gb['120+']) + '</td>' +
+      '<td style="font-family:ui-monospace,monospace;color:#1e40af;">' + _v64Fmt(res.grandTotal) + '</td>' +
+    '</tr>';
+    // Overdue-90+ ratio line
+    if (res.overdue90PlusRatio != null) {
+      tfoot.innerHTML += '<tr><td colspan="8" style="text-align:center;background:#fef2f2;color:#991b1b;font-size:12px;font-weight:800;padding:8px;">' +
+        '⚠ نِسبة المُتأخِّر (91+ يوم): ' + res.overdue90PlusRatio + '%' +
+      '</td></tr>';
+    }
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// 4) Period Close — rewire to v6.2.0 4-state endpoints
+// ═══════════════════════════════════════════════════════════════════
+
+window.erpLoadPeriods = function () {
+  var yearEl = document.getElementById('periodsYear');
+  var year = (yearEl && yearEl.value) || new Date().getFullYear();
+  var tbody = document.getElementById('erpPeriodsBody');
+  if (tbody) tbody.innerHTML = '<tr><td colspan="5" class="empty-msg">جاري التَّحميل...</td></tr>';
+  api.withSuccessHandler(function (res) {
+    if (!res || !res.success) {
+      if (tbody) tbody.innerHTML = '<tr><td colspan="5" class="empty-msg">' + ((res && res.error) || 'فَشل التَّحميل') + '</td></tr>';
+      return;
+    }
+    _renderPeriodsTable(res.months || []);
+  }).periodsList({ year: year });
+};
+
+function _renderPeriodsTable(months) {
+  var tbody = document.getElementById('erpPeriodsBody');
+  if (!tbody) return;
+  if (!months.length) {
+    tbody.innerHTML = '<tr><td colspan="5" class="empty-msg">لا توجد فَترات</td></tr>';
+    return;
+  }
+  var pill = function (s) {
+    if (s === 'open')        return '<span class="badge" style="background:#dcfce7;color:#15803d;font-weight:800;"><i class="fas fa-lock-open"></i> مَفتوحة</span>';
+    if (s === 'soft_close')  return '<span class="badge" style="background:#fef3c7;color:#92400e;font-weight:800;"><i class="fas fa-shield-halved"></i> إقفال مَبدئي</span>';
+    if (s === 'closed')      return '<span class="badge" style="background:#fee2e2;color:#991b1b;font-weight:800;"><i class="fas fa-lock"></i> مُقفلة</span>';
+    if (s === 'locked')      return '<span class="badge" style="background:#1e293b;color:#fff;font-weight:800;"><i class="fas fa-shield"></i> مَقفولة نِهائياً</span>';
+    return '<span class="badge">' + (s || '') + '</span>';
+  };
+  tbody.innerHTML = months.map(function (m) {
+    var actions = '';
+    if (m.status === 'open') {
+      actions =
+        '<button class="btn btn-sm" style="background:#fef3c7;color:#92400e;border-radius:8px;font-weight:700;" onclick="erpPeriodAction(\'' + m.label + '\',\'soft-close\')"><i class="fas fa-shield-halved"></i> مَبدئي</button> ' +
+        '<button class="btn btn-sm btn-danger" onclick="erpPeriodAction(\'' + m.label + '\',\'close\')"><i class="fas fa-lock"></i> إقفال</button>';
+    } else if (m.status === 'soft_close') {
+      actions =
+        '<button class="btn btn-sm btn-success" onclick="erpPeriodAction(\'' + m.label + '\',\'reopen\')"><i class="fas fa-lock-open"></i> إعادة فَتح</button> ' +
+        '<button class="btn btn-sm btn-danger" onclick="erpPeriodAction(\'' + m.label + '\',\'close\')"><i class="fas fa-lock"></i> إقفال</button>';
+    } else if (m.status === 'closed') {
+      actions =
+        '<button class="btn btn-sm" style="background:#1e293b;color:#fff;border-radius:8px;font-weight:700;" onclick="erpPeriodAction(\'' + m.label + '\',\'lock\')"><i class="fas fa-shield"></i> قَفل نِهائي</button> ' +
+        '<button class="btn btn-sm btn-success" onclick="erpPeriodAction(\'' + m.label + '\',\'reopen\')"><i class="fas fa-lock-open"></i> فَتح</button>';
+    } else if (m.status === 'locked') {
+      actions = '<span style="color:#94a3b8;font-size:11px;">مَقفول — لا يُمكن إعادة فَتحه</span>';
+    }
+    return '<tr>' +
+      '<td><strong>' + _v64Esc(m.label) + '</strong></td>' +
+      '<td style="font-family:ui-monospace,monospace;">' + _v64Esc(m.startDate || '') + '</td>' +
+      '<td style="font-family:ui-monospace,monospace;">' + _v64Esc(m.endDate || '') + '</td>' +
+      '<td>' + pill(m.status) + '</td>' +
+      '<td>' + actions + '</td>' +
+    '</tr>';
+  }).join('');
+}
+
+window.erpPeriodAction = function (label, action) {
+  var labels = { 'close': 'إقفال', 'soft-close': 'إقفال مَبدئي', 'lock': 'قَفل نِهائي', 'reopen': 'إعادة فَتح' };
+  if (!confirm(labels[action] + ' فَترة ' + label + '؟')) return;
+  var fn = ({
+    'close':      api.closePeriod,
+    'soft-close': api.softClosePeriod,
+    'lock':       api.lockPeriod,
+    'reopen':     api.reopenPeriod
+  })[action];
+  if (!fn) return showToast('إجراء غير مَعروف', true);
+  api.withSuccessHandler(function (r) {
+    if (r && r.success) {
+      showToast('✓ تَم ' + labels[action], false);
+      erpLoadPeriods();
+    } else {
+      showToast((r && r.error) || 'فَشل ' + labels[action], true);
+    }
+  })[
+    action === 'close' ? 'closePeriod' :
+    action === 'soft-close' ? 'softClosePeriod' :
+    action === 'lock' ? 'lockPeriod' : 'reopenPeriod'
+  ](label, {});
+};
+
+// ═══════════════════════════════════════════════════════════════════
+// 5) 2FA Settings UI
+// ═══════════════════════════════════════════════════════════════════
+
+window.erpLoad2faStatus = function () {
+  _zoInjectStyles();
+  var card = document.getElementById('tfaStatusCard');
+  if (!card) return;
+  card.innerHTML = '<div style="text-align:center;padding:30px;color:#94a3b8;"><i class="fas fa-spinner fa-spin"></i> جاري التَّحميل...</div>';
+  // Best-effort: read current user's totp_secret from /auth/users (admin
+  // permissions required); fall back to "DISABLED" if we can't fetch.
+  api.withSuccessHandler(function (users) {
+    var me = (Array.isArray(users) ? users : []).find(function (u) {
+      return u.username === (state.currentUser && state.currentUser.username);
+    });
+    // The /auth/users endpoint doesn't return totp_secret directly for
+    // safety — instead we infer from the dedicated GET below.
+    fetch('/api/auth/2fa/status?username=' + encodeURIComponent((state.currentUser || {}).username || ''),
+          { headers: { 'Authorization': 'Bearer ' + localStorage.getItem('pos_token') } })
+      .then(function (r) { return r.json(); })
+      .catch(function () { return { enabled: false }; })
+      .then(function (s) {
+        var enabled = s && (s.enabled || s.has_2fa);
+        _render2faStatus(enabled);
+      });
+  }).withFailureHandler(function () {
+    _render2faStatus(false);
+  }).getUsers();
+};
+
+function _render2faStatus(enabled) {
+  var card = document.getElementById('tfaStatusCard');
+  if (!card) return;
+  if (enabled) {
+    card.innerHTML =
+      '<div class="tfa-status-flex">' +
+        '<div class="tfa-status-info">' +
+          '<h4><i class="fas fa-check-circle" style="color:#16a34a;"></i> 2FA مُفعَّل</h4>' +
+          '<p>سَيُطلَب رَمز Google Authenticator في كل تسجيل دخول.</p>' +
+        '</div>' +
+        '<div class="tfa-status-pill on"><i class="fas fa-shield-halved"></i> ENABLED</div>' +
+      '</div>' +
+      '<div style="margin-top:18px;text-align:end;">' +
+        '<button class="zo-btn danger" onclick="erpDisable2fa()"><i class="fas fa-power-off"></i> تَعطيل 2FA</button>' +
+      '</div>';
+  } else {
+    card.innerHTML =
+      '<div class="tfa-status-flex">' +
+        '<div class="tfa-status-info">' +
+          '<h4><i class="fas fa-circle-minus" style="color:#94a3b8;"></i> 2FA غير مُفعَّل</h4>' +
+          '<p>حِسابك يَستخدم كَلمة المرور فقط. يُنصح بِتَفعيل 2FA لِزيادة الأمان.</p>' +
+        '</div>' +
+        '<div class="tfa-status-pill off"><i class="fas fa-circle-minus"></i> DISABLED</div>' +
+      '</div>' +
+      '<div style="margin-top:18px;text-align:end;">' +
+        '<button class="zo-btn primary" onclick="erpEnable2faStart()"><i class="fas fa-qrcode"></i> تَفعيل 2FA</button>' +
+      '</div>';
+  }
+}
+
+window.erpEnable2faStart = function () {
+  var username = (state.currentUser || {}).username || '';
+  if (!username) return showToast('لا يُمكن تَحديد المُستخدم الحالي', true);
+  loader(true);
+  api.withSuccessHandler(function (r) {
+    loader(false);
+    if (!r || !r.success) return showToast((r && r.error) || 'فَشل بَدء الإعداد', true);
+    // Persist the secret temporarily on window for the confirm step
+    window._tfaPendingSecret = r.secret;
+    window._tfaPendingUsername = username;
+    var qrUrl = 'https://chart.googleapis.com/chart?cht=qr&chs=200x200&chl=' +
+                encodeURIComponent(r.uri || '');
+    var qrImg = document.getElementById('tfaQrImage');
+    var secEl = document.getElementById('tfaSecretText');
+    var codeEl = document.getElementById('tfaFirstCode');
+    if (qrImg) qrImg.src = qrUrl;
+    if (secEl) secEl.textContent = r.secret || '—';
+    if (codeEl) codeEl.value = '';
+    if (typeof openGlassModal === 'function') openGlassModal('#tfaSetupModal');
+    else { var m = document.getElementById('tfaSetupModal'); if (m) m.classList.remove('hidden'); }
+  }).withFailureHandler(function (err) {
+    loader(false);
+    showToast('فَشل الاتِّصال: ' + ((err && err.message) || ''), true);
+  }).enable2faSetup(username);
+};
+
+window.erp2faCopySecret = function () {
+  var sec = (document.getElementById('tfaSecretText') || {}).textContent || '';
+  try {
+    navigator.clipboard.writeText(sec).then(function () {
+      showToast('✓ تَم نَسخ السِّر', false);
+    }, function () {
+      showToast('فَشل النَّسخ — انسَخه يَدوياً', true);
+    });
+  } catch (_) {
+    showToast('انسَخ السِّر يَدوياً: ' + sec, false);
+  }
+};
+
+window.erpEnable2faConfirm = function () {
+  var code = (document.getElementById('tfaFirstCode') || {}).value || '';
+  var username = window._tfaPendingUsername;
+  if (!code || code.length !== 6) return showToast('الرَّمز يَجب أن يَكون 6 أرقام', true);
+  if (!username) return showToast('انتَهت صلاحية الجَلسة — أعد فَتح الإعداد', true);
+  loader(true);
+  api.withSuccessHandler(function (r) {
+    loader(false);
+    if (r && r.success) {
+      showToast('✓ تَم تَفعيل 2FA بِنَجاح', false);
+      if (typeof closeGlassModal === 'function') closeGlassModal('#tfaSetupModal');
+      else { var m = document.getElementById('tfaSetupModal'); if (m) m.classList.add('hidden'); }
+      delete window._tfaPendingSecret;
+      delete window._tfaPendingUsername;
+      erpLoad2faStatus();
+    } else {
+      showToast((r && r.error) || 'الرَّمز غير صَحيح', true);
+    }
+  }).verify2faCode(username, code);
+};
+
+window.erpDisable2fa = function () {
+  if (!confirm('تَعطيل 2FA؟\nسَيُمكن تسجيل الدخول بِكَلمة المرور فقط، ويَنخفض مُستوى الأمان.')) return;
+  var username = (state.currentUser || {}).username || '';
+  if (!username) return showToast('لا يُمكن تَحديد المُستخدم', true);
+  loader(true);
+  api.withSuccessHandler(function (r) {
+    loader(false);
+    if (r && r.success) {
+      showToast('✓ تَم تَعطيل 2FA', false);
+      erpLoad2faStatus();
+    } else {
+      showToast((r && r.error) || 'فَشل التَّعطيل', true);
+    }
+  }).disable2fa(username);
 };

@@ -312,6 +312,10 @@
     reopenPeriod:          { method: 'POST', url: (label) => '/erp/periods/' + encodeURIComponent(label) + '/reopen',     body: (label, d) => d || {} },
     auditVerify:           { method: 'GET',  url: '/auth/audit/verify', query: (f) => f },
     enroll2fa:             { method: 'POST', url: '/auth/2fa/enroll' },
+    // v6.4.0 — 2FA Settings UI
+    enable2faSetup:        { method: 'POST', url: '/auth/2fa/setup', body: (u) => ({ username: u }) },
+    verify2faCode:         { method: 'POST', url: '/auth/2fa/verify', body: (u, c) => ({ username: u, code: c }) },
+    disable2fa:            { method: 'POST', url: '/auth/2fa/disable', body: (u) => ({ username: u }) },
     getHrHolidayCalendar:{ method: 'GET',    url: (y) => '/hr/holidays/calendar/' + y, query: (y,f) => f },
     getHrMonthlyAttendance: { method: 'GET', url: (id) => '/hr/attendance/monthly/' + encodeURIComponent(id), query: (id, f) => f },
     importHrAttendance:  { method: 'POST', url: '/hr/attendance/import' },

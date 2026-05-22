@@ -821,6 +821,20 @@ router.post('/2fa/disable', async (req, res) => {
   } catch (e) { res.json({ success: false, error: e.message }); }
 });
 
+// v6.4.0 — GET /api/auth/2fa/status?username= — does this user have 2FA on?
+// Returns { enabled: bool, hasSecret: bool } without revealing the secret.
+router.get('/2fa/status', async (req, res) => {
+  try {
+    const username = (req.user && req.user.username) || req.query.username;
+    if (!username) return res.json({ enabled: false });
+    const [rows] = await db.query(
+      'SELECT totp_secret FROM users WHERE username = ? LIMIT 1', [username]
+    );
+    const enabled = rows.length && rows[0].totp_secret != null && rows[0].totp_secret !== '';
+    res.json({ enabled: !!enabled, hasSecret: !!enabled });
+  } catch (e) { res.json({ enabled: false, error: e.message }); }
+});
+
 // v6.2.0 Wave F.5 — Initial 2FA enrollment for admin / developer.
 // Flow:
 //   1. Admin logs in → backend responds requires2faSetup + setupToken.

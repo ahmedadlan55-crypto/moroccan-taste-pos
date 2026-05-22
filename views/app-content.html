@@ -181,6 +181,8 @@
         </div>
         <div class="submenu">
           <div class="nav-item" data-erp-nav="erpZATCA" onclick="erpNav('erpZATCA')"><i class="fas fa-stamp"></i><span data-i18n="nav.zatca">ZATCA — الفواتير المختومة</span></div>
+          <!-- v6.4.0 — ZATCA Phase 2 Onboarding (CSID + submission worker) -->
+          <div class="nav-item" data-erp-nav="erpZatcaOnboarding" onclick="erpNav('erpZatcaOnboarding')"><i class="fas fa-id-card"></i><span>ZATCA Phase 2 — Onboarding</span></div>
           <div class="nav-item" data-erp-nav="erpCreditNotes" onclick="erpNav('erpCreditNotes')"><i class="fas fa-file-alt"></i><span data-i18n="nav.creditNotes">الإشعارات الدائنة/المدينة</span></div>
         </div>
 
@@ -205,6 +207,8 @@
                item is no longer reachable from the navigation. -->
           <div class="nav-item" data-erp-nav="erpRoyaltyRuns" onclick="erpNav('erpRoyaltyRuns')"><i class="fas fa-receipt"></i><span data-i18n="nav.royaltyRuns">احتساب الفرانشايز</span></div>
           <div class="nav-item" data-erp-nav="erpAuditLog" onclick="erpNav('erpAuditLog')"><i class="fas fa-history"></i><span data-i18n="nav.auditLog">سجل العمليات</span></div>
+          <!-- v6.4.0 — 2FA settings (Google Authenticator) -->
+          <div class="nav-item" data-erp-nav="erp2faSettings" onclick="erpNav('erp2faSettings')"><i class="fas fa-shield-halved"></i><span>المُصادقة الثُّنائية (2FA)</span></div>
         </div>
 
         <!-- 14. المعاملات الإدارية (Workflow Engine) -->
@@ -2271,6 +2275,113 @@
 </div>
 
 <!-- ══════════════════════════════════════════════════════════════ -->
+<!-- v6.4.0 — ZATCA Phase 2 Onboarding (CSID + submission worker)   -->
+<!-- ══════════════════════════════════════════════════════════════ -->
+<div id="erpZatcaOnboarding" class="dash-section hidden">
+  <header class="zo-header">
+    <div class="zo-header-icon"><i class="fas fa-id-card"></i></div>
+    <div class="zo-header-text">
+      <h1>ZATCA Phase 2 — Onboarding</h1>
+      <p>إدارة شَهادة CSID والإرسال التلقائي لِبَوَّابة فاتورة. بَعد الإعداد، كل فاتورة + مُرتَجَع يَنحفظ ويُرسَل في الخَلفية.</p>
+    </div>
+    <div class="zo-header-actions">
+      <button class="zo-btn ghost" onclick="erpLoadZatcaOnboarding()"><i class="fas fa-rotate"></i> تَحديث</button>
+    </div>
+  </header>
+
+  <!-- 1. Status card -->
+  <section class="zo-card zo-status-card">
+    <h3><i class="fas fa-circle-info"></i> حالة CSID + قائمة الإرسال</h3>
+    <div class="zo-status-row">
+      <div class="zo-status-pill" id="zoStatusPill">…</div>
+      <div class="zo-status-meta" id="zoStatusMeta">جاري التَّحميل...</div>
+    </div>
+    <div class="zo-queue-stats" id="zoQueueStats"></div>
+  </section>
+
+  <!-- 2. Onboarding form (shown when status = none / revoked) -->
+  <section class="zo-card zo-form-card" id="zoFormCard" style="display:none;">
+    <h3><i class="fas fa-arrow-right-to-bracket"></i> بَدء Onboarding</h3>
+    <p class="zo-hint">احصُل على OTP بـ 6 أرقام من <a href="https://fatoora.zatca.gov.sa" target="_blank">بَوَّابة فاتورة</a> ثُم أكمِل الحُقول وضَع OTP.</p>
+    <div class="zo-form-grid">
+      <div class="zo-field"><label>الاسم التِّجاري (Organization Name)</label><input id="zoOrgName" type="text" placeholder="Moroccan Taste Restaurants"></div>
+      <div class="zo-field"><label>الفَرع (Common Name)</label><input id="zoCommonName" type="text" placeholder="Main Branch"></div>
+      <div class="zo-field"><label>الرَّقم الضَّريبي (VAT) <span class="zo-req">*</span></label><input id="zoVat" type="text" placeholder="3xxxxxxxxxx00003" maxlength="15"></div>
+      <div class="zo-field"><label>السِّجل التِّجاري (CR)</label><input id="zoCr" type="text" placeholder="1010xxxxxx"></div>
+      <div class="zo-field"><label>المَدينة (Location)</label><input id="zoLocation" type="text" placeholder="Riyadh"></div>
+      <div class="zo-field"><label>كود النَّشاط (Industry Code)</label><input id="zoIndustry" type="text" placeholder="0000" maxlength="4"></div>
+      <div class="zo-field zo-field-full"><label>OTP من Fatoora portal <span class="zo-req">*</span></label><input id="zoOtp" type="text" placeholder="6 أرقام" maxlength="6"></div>
+    </div>
+    <div class="zo-form-actions">
+      <button class="zo-btn primary" onclick="erpZatcaStartOnboarding()"><i class="fas fa-key"></i> بَدء Onboarding</button>
+    </div>
+  </section>
+
+  <!-- 3. Test + Graduate card (shown when status = compliance) -->
+  <section class="zo-card zo-test-card" id="zoTestCard" style="display:none;">
+    <h3><i class="fas fa-flask"></i> اختبار + Graduate لـ Production</h3>
+    <p class="zo-hint">أرسِل عَيِّنة فَواتير اختبارية للتَّحقُّق من تَوقيع XML + الـ chain. بَعد 3 اختبارات ناجحة على الأقل، اضغط Graduate للانتقال لـ Production.</p>
+    <div class="zo-test-actions">
+      <button class="zo-btn ghost" onclick="erpZatcaTestSubmission()"><i class="fas fa-paper-plane"></i> اختبار submission</button>
+      <button class="zo-btn primary" onclick="erpZatcaGraduate()" id="zoGraduateBtn"><i class="fas fa-graduation-cap"></i> Graduate لـ Production</button>
+    </div>
+    <div id="zoTestResult" class="zo-test-result"></div>
+  </section>
+
+  <!-- 4. Revoke (always available, hidden when status=none) -->
+  <section class="zo-card zo-revoke-card" id="zoRevokeCard" style="display:none;">
+    <h3><i class="fas fa-trash-alt"></i> إلغاء CSID</h3>
+    <p class="zo-hint">يُمسح المِفتاح الخاص + الـ CSID. لن تُرسَل الفَواتير لـ ZATCA بَعد ذلك. استَخدم فَقَط لِإعادة Onboarding من البِداية.</p>
+    <button class="zo-btn danger" onclick="erpZatcaRevoke()"><i class="fas fa-circle-xmark"></i> إلغاء CSID نِهائياً</button>
+  </section>
+</div>
+
+<!-- ══════════════════════════════════════════════════════════════ -->
+<!-- v6.4.0 — 2FA Settings (Google Authenticator opt-in)            -->
+<!-- ══════════════════════════════════════════════════════════════ -->
+<div id="erp2faSettings" class="dash-section hidden">
+  <header class="tfa-header">
+    <div class="tfa-header-icon"><i class="fas fa-shield-halved"></i></div>
+    <div class="tfa-header-text">
+      <h1>المُصادقة الثُّنائية (2FA)</h1>
+      <p>زِيادَة أمان حِسابك بِطَلب رَمز 6 أرقام من Google Authenticator عند كل تسجيل دخول. اختياري — يُمكن تَفعيله أو تَعطيله في أي وَقت.</p>
+    </div>
+  </header>
+
+  <section class="tfa-status-card" id="tfaStatusCard">
+    <div style="text-align:center;padding:40px;color:#94a3b8;"><i class="fas fa-spinner fa-spin"></i> جاري التَّحميل...</div>
+  </section>
+
+  <!-- Enable modal: QR + secret + first-code -->
+  <div id="tfaSetupModal" class="glass-modal hidden">
+    <div class="glass-modal-content" style="max-width:520px;">
+      <div class="glass-modal-title">
+        <span><i class="fas fa-qrcode" style="color:#16a34a;"></i> إعداد المُصادقة الثُّنائية</span>
+        <button class="glass-modal-close" onclick="closeGlassModal('#tfaSetupModal')">&times;</button>
+      </div>
+      <div class="glass-modal-body">
+        <div class="tfa-setup-step">
+          <strong>1.</strong> افتح Google Authenticator وامسَح هذا الـ QR Code:
+        </div>
+        <div class="tfa-qr-box"><img id="tfaQrImage" src="" alt="QR Code"></div>
+        <div class="tfa-setup-step">
+          <strong>2.</strong> أو أدخِل السِّر يَدوياً في التَّطبيق:
+        </div>
+        <div class="tfa-secret-box"><code id="tfaSecretText">—</code> <button class="tfa-copy-btn" onclick="erp2faCopySecret()"><i class="fas fa-copy"></i></button></div>
+        <div class="tfa-setup-step">
+          <strong>3.</strong> أدخِل أوَّل رَمز ظَهر في التَّطبيق (6 أرقام) للتَّأكيد:
+        </div>
+        <input id="tfaFirstCode" class="tfa-code-input" type="text" maxlength="6" placeholder="000000" inputmode="numeric">
+        <div class="tfa-modal-actions">
+          <button class="zo-btn ghost" onclick="closeGlassModal('#tfaSetupModal')">إلغاء</button>
+          <button class="zo-btn primary" onclick="erpEnable2faConfirm()"><i class="fas fa-check"></i> تَأكيد التَّفعيل</button>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ══════════════════════════════════════════════════════════════ -->
 <!-- INVENTORY METHOD & VALUATION (نوع الجرد والمخزون) -->
 <!-- ══════════════════════════════════════════════════════════════ -->
 <!-- ══════════════════════════════════════════════════════════════ -->
@@ -3012,8 +3123,10 @@
 <!-- AUDIT LOG (سجل العمليات) -->
 <!-- ══════════════════════════════════════════════════════════════ -->
 <div id="erpAuditLog" class="dash-section hidden">
-  <div class="section-header">
+  <div class="section-header" style="display:flex;justify-content:space-between;flex-wrap:wrap;gap:10px;">
     <h2 class="section-title"><i class="fas fa-history"></i> سجل العمليات (Audit Log)</h2>
+    <!-- v6.4.0 — Tamper-evident chain verification (hooked to /api/auth/audit/verify) -->
+    <button class="btn btn-sm" style="background:linear-gradient(135deg,#16a34a,#15803d);color:#fff;border-radius:10px;font-weight:800;" onclick="erpVerifyAuditChain()"><i class="fas fa-shield-check"></i> تَحقَّق من سَلامة السِّجل</button>
   </div>
   <div class="erp-filters">
     <input type="text" id="erpAuditUser" placeholder="المستخدم" class="form-control-sm">

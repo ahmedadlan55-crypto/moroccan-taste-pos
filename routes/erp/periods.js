@@ -82,15 +82,28 @@ router.get('/periods/check', async (req, res) => {
 });
 
 async function _statusAt(conn, date, brandId, branchId) {
-  const [rows] = await conn.query(
-    `SELECT status FROM accounting_periods
-     WHERE start_date <= ? AND end_date >= ?
-       AND (brand_id IS NULL OR brand_id = ? OR ? = '')
-       AND (branch_id IS NULL OR branch_id = ? OR ? = '')
-     ORDER BY status DESC LIMIT 1`,
-    [date, date, brandId || '', brandId || '', branchId || '', branchId || '']
-  );
-  return rows.length ? rows[0].status : 'open';
+  // v6.4.1 — defensive: an early deployment created accounting_periods
+  // without brand_id/branch_id, then the v6.2.0 createTableIfMissing was
+  // a no-op. The addColumnIfMissing in server.js backfills the columns,
+  // but if for any reason the schema is still partial we fall back to
+  // "open" — a missing/broken period table must NEVER block a sale.
+  try {
+    const [rows] = await conn.query(
+      `SELECT status FROM accounting_periods
+       WHERE start_date <= ? AND end_date >= ?
+         AND (brand_id IS NULL OR brand_id = ? OR ? = '')
+         AND (branch_id IS NULL OR branch_id = ? OR ? = '')
+       ORDER BY status DESC LIMIT 1`,
+      [date, date, brandId || '', brandId || '', branchId || '', branchId || '']
+    );
+    return rows.length ? rows[0].status : 'open';
+  } catch (e) {
+    // Schema mismatch or table missing — treat as no enforcement
+    if (process.env.NODE_ENV !== 'production') {
+      console.warn('[periods._statusAt] degraded to open:', e.message);
+    }
+    return 'open';
+  }
 }
 
 router.post('/periods', async (req, res) => {

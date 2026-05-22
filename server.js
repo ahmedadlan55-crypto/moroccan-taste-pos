@@ -2554,6 +2554,23 @@ async function runMigrations() {
       INDEX idx_dates (start_date, end_date)
     ) ENGINE=InnoDB
   `);
+  // v6.4.1 HOTFIX — earlier deployments created accounting_periods WITHOUT
+  // brand_id/branch_id/period_label, so the v6.2.0 createTableIfMissing
+  // below at line ~2886 was a no-op and the period-close guard in
+  // routes/sales.js threw "Unknown column 'brand_id'". Defensively add
+  // the missing columns + widen the status enum to include 'soft_close'
+  // (no 'd') and 'locked' that the v6.2.0 endpoints write.
+  await addColumnIfMissing('accounting_periods', 'period_label',  'VARCHAR(20) NULL');
+  await addColumnIfMissing('accounting_periods', 'brand_id',      'VARCHAR(50) NULL');
+  await addColumnIfMissing('accounting_periods', 'branch_id',     'VARCHAR(50) NULL');
+  await addColumnIfMissing('accounting_periods', 'closing_notes', 'TEXT NULL');
+  try {
+    await db.query(
+      "ALTER TABLE accounting_periods MODIFY COLUMN status ENUM('open','soft_close','soft_closed','closed','locked') NOT NULL DEFAULT 'open'"
+    );
+  } catch (e) { /* MySQL versions without MODIFY support — ignore */ }
+  try { await db.query('CREATE INDEX idx_ap_label ON accounting_periods(period_label)'); } catch (e) {}
+  try { await db.query('CREATE INDEX idx_ap_brand_branch ON accounting_periods(brand_id, branch_id)'); } catch (e) {}
 
   // 9) Royalty runs (franchise fee accruals)
   await createTableIfMissing('royalty_runs', `

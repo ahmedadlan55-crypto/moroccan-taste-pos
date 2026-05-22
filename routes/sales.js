@@ -514,39 +514,65 @@ router.post('/', async (req, res) => {
         continue;
       }
 
-      // ─── NEW PATH: semi-finished consumption ───
-      // If this finished product consumes from a semi-finished, deduct from the semi
-      // (in warehouse_stock keyed by the semi's menu.id) instead of raw recipe.
+      // ─── Legacy semi-finished consumption (v5.x → fallback as of v6.5.0) ───
+      // v6.5.0 — Semi-finished items moved from `menu` to `inv_items`
+      // (kind='semi'). The startup migration in server.js translates every
+      // `menu.consumes_semi_id` pointer into an equivalent `recipe` row
+      // (menu_id → INV-SEMI-x), so the unified raw-recipe deduction path
+      // below already handles the consumption.
+      //
+      // The branch is kept ONLY as a safety net for unmigrated rows (e.g.
+      // a fresh installation that hasn't booted v6.5.0 yet, or a
+      // consumer link the migration could not resolve). We skip it when
+      // a recipe row exists for this menu_id pointing to a semi item —
+      // otherwise we would double-deduct.
       if (semiConsumeMap[item.id]) {
         const sc = semiConsumeMap[item.id];
-        const consumed = sc.semiQty * item.qty;
-        // v5.10.19 — warehouse_stock is the source of truth. menu.stock for
-        // semi-finished products becomes a SUM(warehouse_stock.qty) rollup
-        // so multi-warehouse balances stay independent.
-        if (warehouseId) {
-          await db.query(
-            'UPDATE warehouse_stock SET qty = GREATEST(0, qty - ?) WHERE warehouse_id = ? AND item_id = ?',
-            [consumed, warehouseId, sc.semiId]
+
+        // Has the migration already wired a recipe row? If yes the raw
+        // loop below will handle it — skip this legacy branch.
+        let skipLegacy = false;
+        try {
+          const [recipeCheck] = await db.query(
+            `SELECT COUNT(*) AS c FROM recipe r
+               JOIN inv_items i ON i.id = r.inv_item_id
+              WHERE r.menu_id = ? AND i.kind = 'semi'`,
+            [item.id]
           );
-          await recomputeMenuStock(db, sc.semiId);
-        } else {
-          // Legacy fallback: no warehouse — deduct global menu.stock directly.
-          await db.query('UPDATE menu SET stock = GREATEST(0, stock - ?) WHERE id = ?', [consumed, sc.semiId]);
+          if (recipeCheck[0] && Number(recipeCheck[0].c) > 0) skipLegacy = true;
+        } catch (_) { /* inv_items.kind absent on very old DBs — fall through */ }
+
+        if (!skipLegacy) {
+          const consumed = sc.semiQty * item.qty;
+          // v5.10.19 — warehouse_stock is the source of truth. menu.stock for
+          // semi-finished products becomes a SUM(warehouse_stock.qty) rollup
+          // so multi-warehouse balances stay independent.
+          if (warehouseId) {
+            await db.query(
+              'UPDATE warehouse_stock SET qty = GREATEST(0, qty - ?) WHERE warehouse_id = ? AND item_id = ?',
+              [consumed, warehouseId, sc.semiId]
+            );
+            await recomputeMenuStock(db, sc.semiId);
+          } else {
+            // Legacy fallback: no warehouse — deduct global menu.stock directly.
+            await db.query('UPDATE menu SET stock = GREATEST(0, stock - ?) WHERE id = ?', [consumed, sc.semiId]);
+          }
+          // Movement log
+          const movId = 'MOV-SEMI-' + Date.now() + '-' + Math.random().toString(36).substr(2, 4);
+          await db.query(
+            'INSERT INTO inventory_movements (id, movement_date, item_id, item_name, type, qty, reason, username, notes, warehouse_id) VALUES (?,?,?,?,?,?,?,?,?,?)',
+            [movId, now, sc.semiId, semiNameMap[sc.semiId] || sc.semiId, 'out', consumed,
+             'مبيعات (نصف مصنع - legacy)', username, orderId + ' / ' + item.name, warehouseId || null]
+          );
+          semiDeductions.push({
+            menuId: item.id, menuName: item.name,
+            semiId: sc.semiId, semiName: semiNameMap[sc.semiId] || sc.semiId,
+            qty: consumed
+          });
+          // Skip the raw recipe deduction — semi covers it (legacy path)
+          continue;
         }
-        // Movement log
-        const movId = 'MOV-SEMI-' + Date.now() + '-' + Math.random().toString(36).substr(2, 4);
-        await db.query(
-          'INSERT INTO inventory_movements (id, movement_date, item_id, item_name, type, qty, reason, username, notes, warehouse_id) VALUES (?,?,?,?,?,?,?,?,?,?)',
-          [movId, now, sc.semiId, semiNameMap[sc.semiId] || sc.semiId, 'out', consumed,
-           'مبيعات (نصف مصنع)', username, orderId + ' / ' + item.name, warehouseId || null]
-        );
-        semiDeductions.push({
-          menuId: item.id, menuName: item.name,
-          semiId: sc.semiId, semiName: semiNameMap[sc.semiId] || sc.semiId,
-          qty: consumed
-        });
-        // Skip the raw recipe deduction — semi covers it
-        continue;
+        // skipLegacy=true → fall through to the unified raw-recipe loop
       }
 
       // V5.7 — For "imported" items (physically stocked goods like canned drinks),

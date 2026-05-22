@@ -29087,13 +29087,53 @@ window.erpQuickProduceModal = function(semiId) {
 function erpFilterSemiFinished() { _sfRender(); }
 
 function erpOpenSemiFinishedModal(id) {
-  // Make sure we have brands list for the dropdown
-  var brand = window._bmCurrentBrand;
-  callAPI('GET', '/erp/brands', null, function(brandsList) {
-    _mhLoadWarehouses(function() {
-      _openSemiFinishedInner(id, brandsList || [], brand);
+  // v6.5.0 — Semi-finished items moved out of `menu` into `inv_items`
+  // (kind='semi'). The owner spec: "المُنتجات الغير تامَّة هي مَواد نِصف
+  // مَصنوعة ممنوع تَتواجد في المنيو — هي تُعامَل مُعامَلة المَواد الخام".
+  //
+  // Edit mode: every legacy semi was migrated at server startup to a
+  // deterministic 'INV-SEMI-<baseId>' inv_items row. Translate the menu
+  // id to the inv id and open the raw-material editor (which already
+  // supports kind='semi' via opts).
+  //
+  // New mode (no id): open openRawModal in semi mode so the operator
+  // creates the semi in the correct table from the start.
+  var invId = null;
+  if (id) {
+    var baseId = String(id).replace(/^MENU-?/i, '');
+    invId = 'INV-SEMI-' + baseId;
+  }
+  // Best-effort UI hint so the operator understands the redirect.
+  try {
+    if (typeof _v3Toast === 'function') {
+      _v3Toast(id
+        ? 'هذا الصَّنف نِصف مَصنوع — تَم نَقله إلى "المَواد الخام" (kind=semi). فاتح المحرِّر الصَّحيح…'
+        : 'إنشاء نِصف مَصنوع جَديد يَتم من "المَواد الخام" مع نَوع semi. فاتح المحرِّر الصَّحيح…',
+        false, 5000);
+    }
+  } catch (_) {}
+
+  // Try the global openRawModal (defined in public/js/app.js). On pages
+  // that don't bundle app.js (rare, but the ERP iframe is a separate
+  // shell) we degrade to a clear in-place explanation modal.
+  if (typeof window.openRawModal === 'function') {
+    try { window.openRawModal(invId, { kind: 'semi' }); return; }
+    catch (e) { /* fall through to the explainer modal */ }
+  }
+  if (typeof WoModal !== 'undefined' && WoModal && typeof WoModal.alert === 'function') {
+    WoModal.alert({
+      icon: 'fa-arrow-right-arrow-left',
+      iconColor: '#f59e0b',
+      title: 'انتَقَلَت المُكوِّنات النِّصف مَصنوعة',
+      message: 'المُكوِّنات النِّصف مَصنوعة (مثل cold drink base، براد شاي) ' +
+               'لم تَعُد تُعرَّف في المنيو — صارت تُدار من قِسم "المَواد الخام" ' +
+               'مع نَوع <code>kind=semi</code>. افتَح صَفحة المَواد الخام واضغط ' +
+               '<strong>"إضافة مادَّة"</strong> ثم اختَر النَّوع نِصف مَصنوع.'
     });
-  });
+    return;
+  }
+  alert('المُكوِّنات النِّصف مَصنوعة انتَقَلَت إلى قِسم "المَواد الخام" (kind=semi). ' +
+        'افتَح صَفحة المَواد الخام لإدارتها.');
 }
 
 // v5.10.17 — global one-time defensive style: ensures <datalist> elements

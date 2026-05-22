@@ -96,39 +96,50 @@ router.get('/all', async (req, res) => {
 });
 
 // Get only semi-finished products (helper endpoint for production/sales pages)
+// v6.5.0 — Semi-finished items now live exclusively in inv_items
+// (kind='semi'). This endpoint becomes a thin proxy to the unified source
+// so legacy callers keep working against the new source of truth. The
+// recipeCount + consumerCount fields are computed against the recipe
+// table (which is the only consumer-link surface after v6.5.0).
 router.get('/semi-finished', async (req, res) => {
   try {
     const { brandId } = req.query;
-    // V3: include recipe count + consumer count (how many finished items use this semi)
     let sql = `
-      SELECT m.*, b.name AS brand_name,
-             (SELECT COUNT(*) FROM recipe r WHERE r.menu_id = m.id) AS recipe_count,
-             (SELECT COUNT(*) FROM menu c WHERE c.consumes_semi_id = m.id) AS consumer_count
-        FROM menu m
-        LEFT JOIN brands b ON b.id = m.brand_id
-       WHERE m.is_semi_finished = 1`;
+      SELECT i.id, i.name, i.category, i.cost, i.stock, i.min_stock,
+             i.unit, i.big_unit, i.conv_rate, i.brand_id,
+             b.name AS brand_name,
+             (SELECT COUNT(*) FROM recipe r WHERE r.inv_item_id = i.id) AS consumer_count
+        FROM inv_items i
+        LEFT JOIN brands b ON b.id = i.brand_id
+       WHERE i.kind = 'semi' AND COALESCE(i.active, 1) = 1`;
     const params = [];
-    if (brandId) { sql += ' AND m.brand_id = ?'; params.push(brandId); }
-    sql += ' ORDER BY m.name';
+    if (brandId) { sql += ' AND i.brand_id = ?'; params.push(brandId); }
+    sql += ' ORDER BY i.name';
     const [rows] = await db.query(sql, params);
-    res.json(rows.map(r => {
-      const base = _mapMenu(r);
-      base.recipeCount = Number(r.recipe_count || 0);
-      base.consumerCount = Number(r.consumer_count || 0);
-      base.hasBom = base.recipeCount > 0;
-      return base;
-    }));
+    res.json(rows.map(r => ({
+      id: r.id,
+      name: r.name,
+      nameEn: null,
+      category: r.category,
+      cost: Number(r.cost) || 0,
+      stock: Number(r.stock) || 0,
+      minStock: Number(r.min_stock) || 0,
+      unit: r.unit,
+      bigUnit: r.big_unit,
+      convRate: Number(r.conv_rate) || 1,
+      brandId: r.brand_id,
+      brandName: r.brand_name,
+      // Back-compat keys that callers expect
+      isSemiFinished: true,
+      productionUnit: r.unit || 'pcs',
+      consumerCount: Number(r.consumer_count || 0),
+      recipeCount: 0,
+      hasBom: false
+    })));
   } catch (e) {
-    // Fallback for old schemas without recipe/consumes_semi_id
-    try {
-      const { brandId } = req.query;
-      let sql = 'SELECT m.*, b.name AS brand_name FROM menu m LEFT JOIN brands b ON b.id = m.brand_id WHERE m.is_semi_finished = 1';
-      const params = [];
-      if (brandId) { sql += ' AND m.brand_id = ?'; params.push(brandId); }
-      sql += ' ORDER BY m.name';
-      const [rows] = await db.query(sql, params);
-      res.json(rows.map(_mapMenu));
-    } catch(e2) { res.json([]); }
+    // Fallback if inv_items.kind column is missing (very old schema):
+    // return empty array rather than crashing the production page.
+    res.json([]);
   }
 });
 
@@ -144,6 +155,20 @@ router.post('/', async (req, res) => {
       // v5.12.7 — optional product image (base64 data URL)
       imageData
     } = req.body;
+    // v6.5.0 — Semi-finished items live in inv_items now (kind='semi').
+    // Reject new writes that try to flag a menu row as semi; redirect the
+    // caller to the unified inventory editor. Existing menu rows that are
+    // still flagged are migrated at startup (see server.js runMigrations
+    // → unifySemiFinishedInventory block).
+    if (isSemiFinished) {
+      return res.status(410).json({
+        success: false,
+        error: 'semi-finished-moved-to-inv-items',
+        message: 'المُكوِّنات النِّصف مَصنوعة لم تَعُد تُنشَأ في المنيو. أنشئها كمادَّة من المَواد الخام مع kind=semi.',
+        hint: 'POST /api/inventory/items with { kind: "semi", ... }',
+        redirectTo: '/erp#inv-items?kind=semi'
+      });
+    }
     const id = 'MENU-' + Date.now();
     await db.query(
       `INSERT INTO menu (id, name, name_en, price, category, cost, stock, min_stock, active, pricing_mode, markup_pct, brand_id,
@@ -175,6 +200,18 @@ router.put('/:id', async (req, res) => {
       // v5.12.7 — optional product image (base64 data URL); '' clears it
       imageData
     } = req.body;
+    // v6.5.0 — Reject attempts to flag an existing menu row as semi.
+    // Operators editing a previously-semi item should manage it from the
+    // inv_items editor instead (the migration created an INV-SEMI-* row
+    // for every legacy semi at first boot of v6.5.0).
+    if (isSemiFinished) {
+      return res.status(410).json({
+        success: false,
+        error: 'semi-finished-moved-to-inv-items',
+        message: 'هذا الصَّنف من نَوع نِصف مَصنوع — يُدار من قِسم المَواد الخام (kind=semi)، لا من المنيو.',
+        redirectTo: '/erp#inv-items?kind=semi'
+      });
+    }
     // Price is ALWAYS manual (user sets it). pricing_mode only controls
     // whether the COST comes from recipes (variable) or manual input (fixed).
     // v5.12.7 — image_data is left untouched when undefined; explicit '' clears.

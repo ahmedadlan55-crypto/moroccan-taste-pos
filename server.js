@@ -4750,6 +4750,119 @@ async function runMigrations() {
   `);
 
   console.log('[v5.10.39] Multi-dimensional GL columns + projects table ready.');
+
+  // ─── v6.5.0 — Unify semi-finished inventory ───
+  // Owner spec: "المُنتجات الغير تامَّة هي مَواد نِصف مَصنوعة ممنوع تَتواجد في
+  // المنيو — هي تُعامَل مُعامَلة المَواد الخام". Before this release the
+  // system carried two parallel representations of every semi-finished
+  // item:
+  //   A. menu.is_semi_finished=1                 (v5.x legacy)
+  //   B. inv_items.kind='semi'                   (v5.16.0+ unified)
+  // This migration makes B the only source of truth:
+  //   1. Copy every active menu semi into inv_items (kind='semi') with
+  //      deterministic id 'INV-SEMI-<baseId>'.
+  //   2. Mirror its menu.stock into warehouse_stock at the original
+  //      production_warehouse_id (if any).
+  //   3. Translate every menu.consumes_semi_id pointer into a recipe row
+  //      (menu_id → INV-SEMI-x, qty_used=consumes_semi_qty) so the
+  //      existing raw-recipe deduction path in routes/sales.js handles
+  //      the consumption automatically — no special branch needed.
+  //   4. Soft-delete the menu copies (active=0) — preserves FK integrity
+  //      for historical sales_items + cached references.
+  // Idempotent: re-running is a no-op once the inv_items counterpart
+  // exists AND the menu copy is already deactivated. Wrapped in
+  // try/catch so partial schemas (fresh installs mid-migration) stay
+  // non-fatal.
+  try {
+    const [semis] = await db.query(`
+      SELECT id, name, category, cost, stock, brand_id,
+             production_unit, production_warehouse_id, min_stock
+      FROM menu
+      WHERE is_semi_finished = 1 AND COALESCE(active, 1) = 1
+    `);
+
+    if (semis.length) {
+      const semiIdMap = {}; // menuSemiId → invSemiId
+
+      // Step 1 + 2: copy each semi into inv_items + mirror stock
+      for (const s of semis) {
+        const baseId = String(s.id || '').replace(/^MENU-?/i, '');
+        const invId = 'INV-SEMI-' + baseId;
+        semiIdMap[s.id] = invId;
+
+        const [exists] = await db.query('SELECT id FROM inv_items WHERE id = ?', [invId]);
+        if (!exists.length) {
+          await db.query(`
+            INSERT INTO inv_items
+              (id, name, kind, category, cost, stock, min_stock, unit, brand_id, active)
+            VALUES (?, ?, 'semi', ?, ?, ?, ?, ?, ?, 1)
+          `, [
+            invId,
+            s.name,
+            s.category || 'نِصف مَصنوع',
+            Number(s.cost) || 0,
+            Number(s.stock) || 0,
+            Number(s.min_stock) || 0,
+            s.production_unit || 'pcs',
+            s.brand_id || null
+          ]);
+
+          if (s.production_warehouse_id && Number(s.stock) > 0) {
+            const wsId = 'WS-' + Date.now() + '-' + Math.random().toString(36).slice(2, 7);
+            const nowIso = new Date().toISOString().slice(0, 19).replace('T', ' ');
+            try {
+              await db.query(`
+                INSERT INTO warehouse_stock
+                  (id, warehouse_id, item_id, qty, added_at, first_added_date, added_by, last_updated)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                ON DUPLICATE KEY UPDATE qty = VALUES(qty), last_updated = VALUES(last_updated)
+              `, [wsId, s.production_warehouse_id, invId, Number(s.stock),
+                  nowIso, nowIso.slice(0, 10), 'migration-v6.5.0', nowIso]);
+            } catch (_) { /* warehouse_stock row may already exist with a different id */ }
+          }
+        }
+      }
+
+      // Step 3: translate consumes_semi_id → recipe rows
+      const [consumers] = await db.query(`
+        SELECT id, name, consumes_semi_id, consumes_semi_qty
+        FROM menu
+        WHERE consumes_semi_id IS NOT NULL AND consumes_semi_id <> ''
+      `);
+      let linkedCount = 0;
+      for (const c of consumers) {
+        const invSemiId = semiIdMap[c.consumes_semi_id];
+        if (!invSemiId) continue; // semi might have been inactive
+
+        const [existing] = await db.query(
+          'SELECT id FROM recipe WHERE menu_id = ? AND inv_item_id = ?',
+          [c.id, invSemiId]
+        );
+        if (existing.length) continue;
+
+        const [semiName] = await db.query('SELECT name FROM inv_items WHERE id = ?', [invSemiId]);
+        await db.query(`
+          INSERT INTO recipe (menu_id, menu_name, inv_item_id, inv_item_name, qty_used)
+          VALUES (?, ?, ?, ?, ?)
+        `, [c.id, c.name, invSemiId,
+            (semiName[0] && semiName[0].name) || invSemiId,
+            Number(c.consumes_semi_qty) || 0]);
+        linkedCount++;
+      }
+
+      // Step 4: soft-delete the menu copies
+      await db.query(`
+        UPDATE menu
+           SET active = 0
+         WHERE is_semi_finished = 1 AND active = 1
+      `);
+
+      console.log('[v6.5.0 semi-unify] migrated %d semi-finished items + %d consumer links',
+        semis.length, linkedCount);
+    }
+  } catch (e) {
+    console.error('[v6.5.0 semi-unify] migration failed (non-fatal):', e.message);
+  }
 }
 
 app.listen(PORT, async () => {

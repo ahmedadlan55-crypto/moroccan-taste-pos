@@ -42,6 +42,15 @@ INSERT INTO payment_methods (name, name_ar, icon, is_active, sort_order) VALUES
   ('Split','تجزئة','fa-divide',1,5);
 
 -- ─── Menu (Products) ───
+-- v6.5.0 NOTE — `menu` now holds FINISHED products only. Semi-finished
+-- intermediates (production outputs, e.g. "cold drink base") moved to
+-- `inv_items` with kind='semi'. The legacy is_semi_finished + the four
+-- production_*/consumes_semi_* columns are still added by the runtime
+-- migration in server.js for back-compat reads, but new writes that
+-- flag a menu row as semi are rejected at the API (HTTP 410, see
+-- routes/menu.js POST + PUT). The startup migration in server.js auto-
+-- copies any leftover semi-finished menu rows into inv_items and soft-
+-- deletes them here.
 CREATE TABLE menu (
   id VARCHAR(50) PRIMARY KEY,
   name VARCHAR(200) NOT NULL,
@@ -65,7 +74,12 @@ CREATE TABLE discounts (
   value DECIMAL(10,2) DEFAULT 0
 ) ENGINE=InnoDB;
 
--- ─── INV Items (Raw Materials) ───
+-- ─── INV Items (Raw Materials + Semi-Finished) ───
+-- v6.5.0 — `kind` makes inv_items the unified inventory home for BOTH
+-- raw materials AND semi-finished production outputs. Before v6.5.0
+-- semi-finished items lived in `menu` with is_semi_finished=1; the
+-- v6.5.0 startup migration in server.js copies them here and soft-
+-- deletes the menu copies.
 CREATE TABLE inv_items (
   id VARCHAR(50) PRIMARY KEY,
   name VARCHAR(200) NOT NULL,
@@ -77,7 +91,10 @@ CREATE TABLE inv_items (
   big_unit VARCHAR(50),
   conv_rate DECIMAL(10,2) DEFAULT 1,
   active BOOLEAN DEFAULT TRUE,
-  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+  -- v6.5.0 Wave — semi-finished items unified into inv_items
+  kind ENUM('raw','semi') NOT NULL DEFAULT 'raw',
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  INDEX idx_inv_items_kind (kind)
 ) ENGINE=InnoDB;
 
 -- ─── Recipe (Product Ingredients) ───

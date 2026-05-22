@@ -303,7 +303,7 @@
 <div class="toast" id="toast" role="status" aria-live="polite" aria-atomic="true"></div>
 <div id="loginPage" class="login-w">
   <div class="login-b">
-    <button type="button" onclick="toggleLang()" class="lang-btn" id="langToggleBtn" title="Language" aria-label="Toggle language"><i class="fas fa-globe" style="font-size:10px;opacity:.85;"></i> EN</button>
+    <button type="button" onclick="toggleLang()" class="lang-btn js-lang-toggle" id="langToggleBtnLogin" title="Language" aria-label="Toggle language"><i class="fas fa-globe" style="font-size:10px;opacity:.85;"></i> <span class="js-lang-label">EN</span></button>
     <div style="width:56px;height:56px;border-radius:14px;background:var(--mt-accent);color:#fff;display:flex;align-items:center;justify-content:center;font-size:24px;margin:0 auto 16px;"><i class="fas fa-user-tie"></i></div>
     <h1 data-i18n="login.title">بوابة الموظف</h1>
     <p style="color:#6b7280;font-size:12px;margin-bottom:24px;" data-i18n="login.sub">سجّل دخولك لتسجيل الحضور</p>
@@ -336,7 +336,7 @@ document.addEventListener('keydown',function(e){if(e.key==='Enter'&&document.get
   <div class="hdr">
     <div class="hdr-r"><div class="hdr-av"><i class="fas fa-user-tie"></i></div><div><div class="hdr-n" id="hdrName" data-i18n="header.employee">الموظف</div><div class="hdr-s" id="hdrSub"></div></div></div>
     <div class="hdr-b">
-      <button onclick="toggleLang()" class="lang-btn" id="langToggleBtn" title="Language">EN</button>
+      <button onclick="toggleLang()" class="lang-btn js-lang-toggle" id="langToggleBtnHeader" title="Language"><span class="js-lang-label">EN</span></button>
       <button onclick="doRefresh()" title="Refresh"><i class="fas fa-sync-alt"></i></button>
       <button style="background:rgba(239,68,68,.3);" onclick="doLogout()" title="Logout"><i class="fas fa-sign-out-alt"></i></button>
     </div>

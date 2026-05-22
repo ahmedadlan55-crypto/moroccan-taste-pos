@@ -811,8 +811,14 @@ function applyLangToStaticDOM() {
     el.setAttribute('placeholder', t(key));
   });
   // Toggle button label
-  var btn = document.getElementById('langToggleBtn');
-  if (btn) btn.textContent = currentLang === 'ar' ? 'EN' : 'ع';
+  var labels = document.querySelectorAll('.js-lang-toggle .js-lang-label');
+  var nextLabel = currentLang === 'ar' ? 'EN' : 'ع';
+  if (labels && labels.length) {
+    labels.forEach(function(span){ span.textContent = nextLabel; });
+  } else {
+    var legacyBtn = document.getElementById('langToggleBtn');
+    if (legacyBtn) legacyBtn.textContent = nextLabel;
+  }
 }
 
 function toggleLang() { setLang(currentLang === 'ar' ? 'en' : 'ar'); }

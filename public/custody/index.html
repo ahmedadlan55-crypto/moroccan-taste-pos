@@ -266,9 +266,9 @@
   <!-- Image/PDF Viewer -->
   <div id="viewer" class="img-viewer" style="display:none;">
     <div class="img-viewer-content" onclick="event.stopPropagation();">
-      <img id="viewerImg" src="">
+      <img id="viewerImg" src="" alt="معاينة الصورة">
     </div>
-    <button class="viewer-close" onclick="closeViewer()"><i class="fas fa-times"></i></button>
+    <button class="viewer-close" onclick="closeViewer()" title="إغلاق" aria-label="إغلاق"><i class="fas fa-times" aria-hidden="true"></i></button>
   </div>
 
   <!-- Toast -->

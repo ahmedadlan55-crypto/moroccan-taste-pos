@@ -810,12 +810,16 @@ function applyLangToStaticDOM() {
     var key = el.getAttribute('data-i18n-placeholder');
     el.setAttribute('placeholder', t(key));
   });
-  // Toggle button label
+  // Toggle button label — updates BOTH the login-screen button and the
+  // in-app header button. The two buttons used to share id="langToggleBtn"
+  // which is invalid HTML (duplicate IDs) — the header button never
+  // got its label refreshed. Now they have unique IDs and share a class.
   var labels = document.querySelectorAll('.js-lang-toggle .js-lang-label');
   var nextLabel = currentLang === 'ar' ? 'EN' : 'ع';
   if (labels && labels.length) {
     labels.forEach(function(span){ span.textContent = nextLabel; });
   } else {
+    // Back-compat for any legacy buttons still using the old id
     var legacyBtn = document.getElementById('langToggleBtn');
     if (legacyBtn) legacyBtn.textContent = nextLabel;
   }
@@ -3477,4 +3481,3 @@ window._doTxn = function(data) {
     return _legacy && _legacy(id);
   };
 })();
-

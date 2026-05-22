@@ -2194,6 +2194,16 @@ router.get('/gl/journals', async (req, res) => {
         brandName: j.brand_name || '', branchName: j.branch_name || '',
         projectName: j.project_name || '', costCenterName: j.cc_name || j.cost_center_name || '',
         createdAt: j.created_at,
+        // v6.4.2 — reversing-entry linkage (immutability via correction)
+        //   reversedByJournalId: id of the reversal that nullified this
+        //                        journal (set on the original).
+        //   reversesJournalId:   id of the original this journal nullifies
+        //                        (set on the reversal).
+        // Null-safe — older deployments without these columns return null.
+        reversedByJournalId: j.reversed_by_journal_id || null,
+        reversesJournalId:   j.reverses_journal_id    || null,
+        reversedAt:          j.reversed_at            || null,
+        reversedBy:          j.reversed_by            || null,
         entries: entries.map(e => {
           // Resolve display name: persisted (V5.7.18+) → joined Arabic →
           //                       joined English → fallback to code
@@ -2661,6 +2671,112 @@ router.post('/gl/journals/:id/unpost', async (req, res) => {
       [req.params.id]);
     res.json({ success: true });
   } catch (e) { res.json({ success: false, error: e.message }); }
+});
+
+// ─── v6.4.2 — Reversing Entry endpoint ──────────────────────────────
+// SOCPA + IFRS require that posted journals stay immutable. The only
+// accepted way to correct a posted journal is to issue a NEW journal
+// with debits + credits swapped — a "reversing entry" — that offsets
+// the original on the GL while keeping both rows in the audit trail.
+//
+// This endpoint does everything atomically inside one transaction:
+//   1. Lock the original posted journal (SELECT … FOR UPDATE).
+//   2. Refuse if not posted or if already reversed.
+//   3. Load gl_entries, build a mirrored set with debit ↔ credit
+//      swapped, preserving every dimension column.
+//   4. Use lib/glPosting.postJournal to create + auto-post the new
+//      journal (referenceType='reversal', referenceId=<original.id>).
+//   5. Stamp the linking columns on both rows so the UI can hide the
+//      Reverse button on already-reversed journals.
+router.post('/gl/journals/:id/reverse', async (req, res) => {
+  try {
+    const result = await db.withTransaction(async (conn) => {
+      // 1. Lock the original
+      const [orig] = await conn.query(
+        'SELECT * FROM gl_journals WHERE id = ? FOR UPDATE',
+        [req.params.id]
+      );
+      if (!orig.length) {
+        const err = new Error('original-not-found'); err.status = 404; throw err;
+      }
+      const j = orig[0];
+      if (j.status !== 'posted') {
+        const err = new Error('only-posted-journals-can-be-reversed');
+        err.status = 400; throw err;
+      }
+      if (j.reversed_by_journal_id) {
+        const err = new Error('already-reversed'); err.status = 400; throw err;
+      }
+
+      // 2. Load original entries
+      const [entries] = await conn.query(
+        'SELECT * FROM gl_entries WHERE journal_id = ? ORDER BY id',
+        [j.id]
+      );
+      if (!entries.length) {
+        const err = new Error('original-has-no-entries'); err.status = 400; throw err;
+      }
+
+      // 3. Build mirrored set — DEBIT ↔ CREDIT swap, dimensions preserved
+      const username = (req.user && req.user.username) ||
+                       (req.body && req.body.username) || 'system';
+      const reason = String((req.body && req.body.reason) || 'correction').slice(0, 200);
+      const reversedEntries = entries.map(function (e) {
+        return {
+          accountCode:  e.account_code,
+          debit:        Number(e.credit) || 0,
+          credit:       Number(e.debit)  || 0,
+          description:  'REVERSAL of ' + (j.journal_number || j.id) +
+                        (reason ? ' — ' + reason : ''),
+          brandId:      e.brand_id     || null,
+          branchId:     e.branch_id    || null,
+          projectId:    e.project_id   || null,
+          costCenterId: e.cost_center_id || null,
+          warehouseId:  e.warehouse_id || null
+        };
+      });
+
+      // 4. Post the reversal — use the existing helper so journal-number
+      //    sequencing, balance updates, and audit fields all flow the
+      //    same way real journals do.
+      const gl = require('../lib/glPosting');
+      const post = await gl.postJournal(conn, {
+        journalDate:   new Date().toISOString().slice(0, 10),
+        description:   'REVERSAL of ' + (j.journal_number || j.id) + ' — ' + reason,
+        referenceType: 'reversal',
+        referenceId:   j.id,
+        entries:       reversedEntries,
+        postedBy:      username
+      });
+      if (!post || !post.success) {
+        throw new Error('reversal-post-failed: ' + ((post && post.error) || 'unknown'));
+      }
+
+      // 5. Link both rows for the audit trail
+      try {
+        await conn.query(
+          'UPDATE gl_journals SET reversed_by_journal_id = ?, reversed_at = NOW(), reversed_by = ? WHERE id = ?',
+          [post.journalId, username, j.id]
+        );
+        await conn.query(
+          'UPDATE gl_journals SET reverses_journal_id = ? WHERE id = ?',
+          [j.id, post.journalId]
+        );
+      } catch (_) { /* schema may not have the columns on a very old deploy — non-fatal */ }
+
+      return {
+        originalJournalId:     j.id,
+        originalJournalNumber: j.journal_number,
+        newJournalId:          post.journalId,
+        newJournalNumber:      post.journalNumber,
+        reason:                reason
+      };
+    });
+    res.json({ success: true, ...result });
+  } catch (e) {
+    const status = e.status || 500;
+    res.status(status).json({ success: false, error: e.message });
+  }
 });
 
 // Get entries for a specific journal

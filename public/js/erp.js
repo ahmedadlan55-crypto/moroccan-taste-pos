@@ -3960,17 +3960,29 @@ function erpLoadJournals() {
       // v5.11.1 — every action button is a .jrn-action-btn variant. Hover
       // colors flow from the brand palette in journals.css. The single-click
       // approve+post combo lives on draft (success styling).
+      // v6.4.2 — Edit / Delete are HIDDEN once the journal is posted
+      // (SOCPA / IFRS immutability). The Reverse button replaces them
+      // for posted rows; Unpost stays developer-only as an emergency
+      // escape hatch.
+      var isPosted = j.status === 'posted';
       var actions = '<button class="jrn-action-btn jrn-action-btn--info" onclick="erpViewJournal(\'' + j.id + '\')" title="عرض"><i class="fas fa-eye"></i></button>';
       actions += '<button class="jrn-action-btn" onclick="erpPrintJournal(\'' + j.id + '\')" title="طباعة"><i class="fas fa-print"></i></button>';
-      actions += '<button class="jrn-action-btn jrn-action-btn--primary" onclick="erpEditJournal(\'' + j.id + '\')" title="تَعديل"><i class="fas fa-pen-to-square"></i></button>';
+      if (!isPosted) {
+        actions += '<button class="jrn-action-btn jrn-action-btn--primary" onclick="erpEditJournal(\'' + j.id + '\')" title="تَعديل"><i class="fas fa-pen-to-square"></i></button>';
+      }
       if (j.status === 'draft') {
         actions += '<button class="jrn-action-btn jrn-action-btn--success" onclick="erpApproveJournal(\'' + j.id + '\')" title="اعتماد + ترحيل (يُحدِّث الأرصدة فورًا)"><i class="fas fa-check-double"></i></button>';
         if (isDev) actions += '<button class="jrn-action-btn jrn-action-btn--danger" onclick="erpDeleteJournal(\'' + j.id + '\',\'' + (j.journalNumber||'') + '\')" title="حذف"><i class="fas fa-trash-can"></i></button>';
       } else if (j.status === 'approved') {
         actions += '<button class="jrn-action-btn jrn-action-btn--success" onclick="erpPostJournal(\'' + j.id + '\')" title="ترحيل"><i class="fas fa-share-from-square"></i></button>';
         if (isDev) actions += '<button class="jrn-action-btn jrn-action-btn--danger" onclick="erpDeleteJournal(\'' + j.id + '\',\'' + (j.journalNumber||'') + '\')" title="حذف"><i class="fas fa-trash-can"></i></button>';
-      } else if (j.status === 'posted') {
-        actions += '<button class="jrn-action-btn jrn-action-btn--warn" onclick="erpUnpostJournal(\'' + j.id + '\')" title="إلغاء الترحيل"><i class="fas fa-rotate-left"></i></button>';
+      } else if (isPosted) {
+        // Reverse — canonical correction for a posted journal
+        if (!j.reversedByJournalId) {
+          actions += '<button class="jrn-action-btn jrn-action-btn--warn" onclick="erpReverseJournal(\'' + j.id + '\',\'' + (j.journalNumber||'') + '\')" title="إنشاء قَيد عَكسي"><i class="fas fa-right-left"></i></button>';
+        }
+        // Unpost — developer escape hatch ONLY
+        if (isDev) actions += '<button class="jrn-action-btn" style="opacity:0.6;" onclick="erpUnpostJournal(\'' + j.id + '\')" title="إلغاء الترحيل (مُطوِّر فقط)"><i class="fas fa-rotate-left"></i></button>';
       }
 
       var chips = '';
@@ -4185,12 +4197,28 @@ function _renderJournalDetail(j) {
           '</tr>';
   html += '</tbody></table>';
 
-  // Action buttons
+  // v6.4.2 — Action buttons honour the IMMUTABILITY rule:
+  //   • Posted journals NEVER show Edit / Delete. The only way to
+  //     correct a posted journal is to issue a reversing entry — a
+  //     new journal with debits and credits swapped — which preserves
+  //     the audit trail and complies with SOCPA / IFRS guidance on
+  //     accounting record integrity.
+  //   • Draft + Approved journals retain Edit, Approve, Post as before.
+  //   • A muted notice tells the operator why Edit is hidden when posted.
   var isManual = !j.referenceType || j.referenceType === 'manual' || j.referenceType === 'opening';
+  var isPosted = j.status === 'posted';
+
+  if (isPosted) {
+    html += '<div style="margin-top:14px;padding:10px 14px;background:#f0fdf4;border:1.5px solid #bbf7d0;border-radius:10px;display:flex;align-items:center;gap:10px;font-size:12.5px;color:#15803d;">' +
+              '<i class="fas fa-lock" style="font-size:14px;"></i>' +
+              '<div>هذا القَيد <strong>مُرَحَّل ومَحفوظ</strong> — لا يَقبل التَّعديل أو الحذف حِفاظاً على سَلامة سجلات المحاسبة (SOCPA / IFRS). للتَّصحيح أنشِئ <strong>قَيداً عَكسياً</strong> يُلغي أثَره.</div>' +
+            '</div>';
+  }
+
   html += '<div style="display:flex;gap:8px;margin-top:14px;justify-content:flex-end;flex-wrap:wrap;">';
   html += '<button class="btn btn-sm btn-secondary" onclick="erpPrintJournal(\'' + j.id + '\')" style="border-radius:10px;"><i class="fas fa-print"></i> طباعة</button>';
-  // Show edit button for ALL manual/opening journals regardless of status
-  if (isManual) {
+  // Edit / Approve / Post — ONLY pre-posted lifecycle
+  if (isManual && !isPosted) {
     html += '<button class="btn btn-sm" onclick="erpEditJournal(\'' + j.id + '\')" style="border-radius:10px;background:#3b82f6;color:#fff;"><i class="fas fa-edit"></i> تعديل</button>';
   }
   if (j.status === 'draft') {
@@ -4198,6 +4226,10 @@ function _renderJournalDetail(j) {
   }
   if (j.status === 'approved') {
     html += '<button class="btn btn-sm" onclick="erpPostJournal(\'' + j.id + '\');erpCloseDetailModal();" style="border-radius:10px;background:#16a34a;color:#fff;"><i class="fas fa-share-square"></i> ترحيل</button>';
+  }
+  // Reversing Entry — only for posted journals (and only if no reversal exists yet).
+  if (isPosted && !j.reversedByJournalId) {
+    html += '<button class="btn btn-sm" onclick="erpReverseJournal(\'' + j.id + '\',\'' + (j.journalNumber || '') + '\')" style="border-radius:10px;background:linear-gradient(135deg,#f59e0b,#d97706);color:#fff;"><i class="fas fa-right-left"></i> إنشاء قَيد عَكسي</button>';
   }
   html += '</div>';
 
@@ -4216,30 +4248,70 @@ function erpEditJournal(journalId) {
   var j = window._viewingJournal || _jrnCache.find(function(x) { return x.id === journalId; });
   if (!j) return showToast('القيد غير موجود', true);
   var isManual = !j.referenceType || j.referenceType === 'manual' || j.referenceType === 'opening';
-  if (!isManual) return showToast('لا يمكن تعديل القيود التلقائية', true);
+  if (!isManual) return showToast('لا يمكن تعديل القيود التلقائية (مصدرها بَيع/مُشتريات/إلخ)', true);
 
-  // v5.11.0 — posted-lock: if the journal is posted, ask the user to
-  // confirm an unpost first, then open the editor. The backend PUT also
-  // refuses posted edits as a safety net.
+  // v6.4.2 — Posted journals are IMMUTABLE per SOCPA / IFRS. The legacy
+  // "unpost-then-edit" path is removed — it created the same audit-trail
+  // hole that the standards warn against. Operators must now correct
+  // posted journals via a reversing entry (erpReverseJournal), which
+  // preserves the original and links the correction to it.
   if (j.status === 'posted') {
     erpConfirm(
-      'القيد مرحَّل',
-      'هذا القيد مرحَّل ويُؤثِّر على أرصدة الحسابات. سيتم إلغاء الترحيل أوّلًا لتَتمكَّن من التَّعديل، وسيَبقى مسودة حتى تُعيد ترحيله يَدويًا.',
-      function(){
-        loader(true);
-        window._apiBridge.withSuccessHandler(function(res){
-          loader(false);
-          if (!res || !res.success) return showToast((res && res.error) || 'تعذَّر إلغاء الترحيل', true);
-          j.status = 'draft';
-          _openJournalEditor(j);
-        }).unpostGLJournal(j.id, currentUser);
-      },
-      { icon: 'fa-rotate-left', color: '#dc2626', okText: 'إلغاء الترحيل وتَعديل' }
+      'القَيد مُرَحَّل — لا يَقبل التَّعديل',
+      'هذا القَيد مُرَحَّل ويُؤثِّر على أرصدة الحِسابات. لا يُمكن تَعديله مُباشرة (مَبدأ السَّلامة المُحاسبية في SOCPA / IFRS).\n\nهل تُريد إنشاء قَيد عَكسي يُلغي أثَره؟ القَيد الأصلي يَبقى كَما هو في السِّجلات + يُرتبط بالعَكسي للمُراجعة.',
+      function () { erpReverseJournal(j.id, j.journalNumber || ''); },
+      { icon: 'fa-right-left', color: '#d97706', okText: 'إنشاء قَيد عَكسي', cancelText: 'إغلاق' }
     );
     return;
   }
   _openJournalEditor(j);
 }
+
+// v6.4.2 — Create a reversing entry for a posted journal.
+// Calls the new POST /api/erp/gl/journals/:id/reverse backend endpoint
+// which atomically: (1) loads the original posted journal,
+// (2) creates a new journal with debits + credits swapped,
+// (3) auto-posts it (so it immediately offsets the original on the GL),
+// (4) writes reversed_by_journal_id on the original + reverses_journal_id
+//     on the new row to lock the audit chain.
+window.erpReverseJournal = function (journalId, journalNumber) {
+  if (!journalId) return;
+  erpConfirm(
+    'إنشاء قَيد عَكسي',
+    'سَيُنشَأ قَيد جَديد بنَفس الأسطر ولكن مع تَبديل المَدين/الدائن. يُعتمَد ويُرَحَّل تلقائياً، ويُلغي أثَر القَيد ' + (journalNumber || journalId) + ' على الأرصدة.\n\nالقَيد الأصلي يَبقى ظاهراً في السِّجلات للمُراجعة. هل تَريد المُتابعة؟',
+    function () {
+      loader(true);
+      // Some api-bridge builds may not have a `reverseGLJournal` shortcut
+      // yet — fall back to a plain fetch in that case.
+      var reason = window.prompt('سَبب القَيد العَكسي (اختياري):', '') || '';
+      var url = '/api/erp/gl/journals/' + encodeURIComponent(journalId) + '/reverse';
+      fetch(url, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': 'Bearer ' + localStorage.getItem('pos_token')
+        },
+        body: JSON.stringify({ reason: reason, username: currentUser })
+      })
+        .then(function (r) { return r.json(); })
+        .then(function (res) {
+          loader(false);
+          if (res && res.success) {
+            showToast('✓ تَم إنشاء القَيد العَكسي ' + (res.newJournalNumber || ''), false);
+            if (typeof erpCloseDetailModal === 'function') erpCloseDetailModal();
+            if (typeof erpLoadJournals === 'function') erpLoadJournals();
+          } else {
+            showToast((res && res.error) || 'فَشل إنشاء القَيد العَكسي', true);
+          }
+        })
+        .catch(function (err) {
+          loader(false);
+          showToast('فَشل الاتِّصال: ' + ((err && err.message) || ''), true);
+        });
+    },
+    { icon: 'fa-right-left', color: '#d97706', okText: 'إنشاء العَكسي' }
+  );
+};
 
 // v5.11.0 — opens the SAME create form (so the new dim dropdowns are
 // available) and pre-fills it. Header + per-line dims are populated.

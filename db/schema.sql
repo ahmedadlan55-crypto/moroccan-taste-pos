@@ -375,7 +375,17 @@ CREATE TABLE gl_journals (
   period_id VARCHAR(50),
   status ENUM('posted','draft') DEFAULT 'posted',
   created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-  created_by VARCHAR(100)
+  created_by VARCHAR(100),
+  -- v6.4.2 — Reversing-entry linkage. Posted journals are immutable
+  -- (SOCPA/IFRS); the only valid correction is a new journal with
+  -- debits + credits swapped. These columns link original ↔ reversal.
+  reversed_by_journal_id VARCHAR(50) NULL,
+  reverses_journal_id    VARCHAR(50) NULL,
+  reversed_at            DATETIME NULL,
+  reversed_by            VARCHAR(100) NULL,
+  UNIQUE KEY uq_journal_number (journal_number),
+  INDEX idx_gl_reversed_by (reversed_by_journal_id),
+  INDEX idx_gl_reverses    (reverses_journal_id)
 ) ENGINE=InnoDB;
 
 -- ─── GL Entries ───

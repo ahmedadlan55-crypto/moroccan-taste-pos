@@ -2823,6 +2823,18 @@ async function runMigrations() {
   // JV-YYYYMMDD-NNNN numbers under concurrent checkouts.
   try { await db.query('ALTER TABLE gl_journals ADD UNIQUE KEY uq_journal_number (journal_number)'); } catch(e) {}
 
+  // ─── v6.4.2 — Reversing-entry linkage on gl_journals ───
+  // Posted journals are immutable (SOCPA/IFRS); the only way to correct
+  // them is to issue a new journal with debits + credits swapped. These
+  // four columns hold the two-way link between original ↔ reversal so
+  // the UI can hide the Reverse action on already-reversed journals.
+  await addColumnIfMissing('gl_journals', 'reversed_by_journal_id', 'VARCHAR(50) NULL');
+  await addColumnIfMissing('gl_journals', 'reverses_journal_id',    'VARCHAR(50) NULL');
+  await addColumnIfMissing('gl_journals', 'reversed_at',            'DATETIME NULL');
+  await addColumnIfMissing('gl_journals', 'reversed_by',            'VARCHAR(100) NULL');
+  try { await db.query('CREATE INDEX idx_gl_reversed_by ON gl_journals(reversed_by_journal_id)'); } catch(e) {}
+  try { await db.query('CREATE INDEX idx_gl_reverses    ON gl_journals(reverses_journal_id)');    } catch(e) {}
+
   // ─── v6.0.2 Wave B.3 — VAT category breakdown (S/Z/E/O) ───
   // ZATCA requires per-category tax subtotals in the UBL XML. Each menu
   // item now carries its own tax_category; the sale persists a JSON

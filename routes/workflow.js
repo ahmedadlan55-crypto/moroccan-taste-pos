@@ -18,6 +18,11 @@ const SM = require('../lib/transactionStateMachine');
 const PERMS = require('../lib/transactionPermissions');
 const SCHEMA = require('../lib/transactionSchema');
 const { guardTxnAccess, guardDeveloper, guardAdmin } = require('../lib/transactionGuards');
+// v6.8.0 Phase 1 — Service layer (Strangler Fig). Currently used by the
+// migrated `POST /transactions` and `DELETE /transactions/:id/force`
+// handlers. The remaining 52 endpoints in this file continue to use the
+// in-file SQL until later phases migrate them one at a time.
+const TxnService = require('../services/TransactionService');
 // v5.10.56 — SoD (Segregation of Duties) validator. Enforces
 //   SOD-1 Maker≠Approver · SOD-2 Approver≠Payer · SOD-3 Payer≠Reconciler
 //   SOD-4 Two distinct approvers when amount ≥ SOD_HIGH_AMOUNT_THRESHOLD
@@ -1158,226 +1163,26 @@ router.get('/eligible-users', async (req, res) => {
 // TRANSACTIONS — CORE CRUD
 // ═══════════════════════════════════════
 
-// Create new transaction
+// v6.8.0 Phase 1 — Migrated to TransactionService. The 220-line inline
+// handler that lived here is now in services/TransactionService.create().
+// This controller is the thin wrapper: pass the body + actor context to
+// the service, format the result. Validation, branch/dept resolution,
+// daily serial allocation, workflow step lookup, the 6-level assignee
+// fallback, the INSERT, recipient inserts, step log, audit, and the
+// post-create notification all live in the service now.
 router.post('/transactions', async (req, res) => {
   try {
-    const {
-      transactionTypeId, title, description, amount, branchId, brandId, username, attachment,
-      accountId, accountCode, accountName, costCenterId, costCenterName,
-      recipientUsername, senderName, senderPosition,
-      importance, deptId,
-      // Enterprise fields
-      subject, contentHtml, contentSecrecy, attachmentsSecrecy,
-      issuingEntityId, issuingEntityName, hijriDate,
-      recipients,              // [{ username?, positionId?, code?, name, needsResponse }]
-      saveAsDraft,             // if true, status = 'draft' regardless of routing
-      expenseCategoryId, expenseCategoryName,
-      dueDate, scope
-    } = req.body;
-
-    if (!transactionTypeId || !title) return res.json({ success: false, error: 'نوع المعاملة والعنوان مطلوبان' });
-
-    // Creation is OPEN to all departments/branches by design.
-    // Any employee can initiate any transaction type — routing happens
-    // downstream via workflow_definitions (role + branch/dept scoping).
-    // The only gate is an explicit per-employee `can_create_txn = false`
-    // flag (admin toggle on the Org Tree page).
-    const sender = await getPermissions(username);
-    if (sender && sender.canCreate === false) return res.json({ success: false, error: 'ليس لديك صلاحية إنشاء معاملة' });
-
-    // Resolve codes
-    const finalBranchId = branchId || sender.branchId || '';
-    const finalDeptId = deptId || sender.deptId || '';
-
-    let branchCode = '', branchName = '';
-    if (finalBranchId) {
-      const [br] = await db.query('SELECT name, code FROM branches WHERE id = ?', [finalBranchId]);
-      if (br.length) { branchCode = sanitizeCode(br[0].code || br[0].name, 'BR'); branchName = br[0].name || ''; }
-    }
-    if (!branchCode) branchCode = sanitizeCode(sender.branchCode || sender.branchName, 'BR');
-    if (!branchName) branchName = sender.branchName || '';
-
-    let deptCode = '', deptName = '';
-    if (finalDeptId) {
-      const [dp] = await db.query('SELECT name, code FROM hr_departments WHERE id = ?', [finalDeptId]);
-      if (dp.length) { deptCode = sanitizeCode(dp[0].code || dp[0].name, 'DEP'); deptName = dp[0].name || ''; }
-    }
-    if (!deptCode) deptCode = sanitizeCode(sender.deptCode || sender.deptName, 'DEP');
-    if (!deptName) deptName = sender.deptName || '';
-
-    // Type code
-    const [tt] = await db.query('SELECT code, name FROM transaction_types WHERE id = ?', [transactionTypeId]);
-    if (!tt.length) return res.json({ success: false, error: 'نوع المعاملة غير موجود' });
-    const typeCode = sanitizeCode(tt[0].code, 'TXN');
-
-    // Daily serial
-    const ymd = todayYmd();
-    const serial = await nextDailySerial(branchCode, deptCode, typeCode);
-    // Clamp each part so the full number always fits in a VARCHAR(80) column.
-    // Structured format: BR-DEP-TYP-YYYYMMDD-0001 (6 chars per code × 3 + 4 separators + 8 + 4 = 34 max)
-    const _clamp = (s, n) => String(s || '').slice(0, n);
-    const txnNumber = [
-      _clamp(branchCode, 6), _clamp(deptCode, 6), _clamp(typeCode, 6),
-      ymd, String(serial).padStart(4, '0')
-    ].join('-');
-    const id = 'TXN-' + Date.now() + '-' + Math.random().toString(36).substr(2,4);
-
-    // Resolve the workflow chain:
-    //   1. PRIMARY — initiator's position has its own chain (position_workflow_steps)
-    //   2. FALLBACK — legacy per-type chain (workflow_definitions)
-    let firstStep = null;
-    let stepSource = 'type';
-    const initiatorPositionId = sender.positionId || '';
-    if (initiatorPositionId) {
-      const posFirst = await getInitiatorFirstStep(initiatorPositionId);
-      if (posFirst) { firstStep = _normalizePositionStep(posFirst); stepSource = 'position'; }
-    }
-    if (!firstStep) {
-      const [firstStepRows] = await db.query(
-        `SELECT id, required_position_id, require_same_branch, require_same_department,
-                assignment_strategy, is_final_step, step_order
-         FROM workflow_definitions
-         WHERE transaction_type_id = ?
-         ORDER BY step_order LIMIT 1`,
-        [transactionTypeId]);
-      firstStep = firstStepRows.length ? firstStepRows[0] : null;
-    }
-    const currentStepId = firstStep ? firstStep.id : null;
-    const currentRoleId = firstStep ? (firstStep.required_position_id || null) : null;
-
-    // Determine initial assignee with a layered fallback so an explicit
-    // recipient selection ALWAYS wins over the position-chain default.
-    //   1. recipientUsername (top-level, explicit single pick from the modal)
-    //   2. recipients[0].username (multi-recipient payload; use the first)
-    //   3. recipients[0] lookup by code (employee_number) — handles UIs that
-    //      sent the employee number without a resolved username
-    //   4. recipients[0] lookup by full name — last-ditch
-    //   5. position-chain resolution (initiator's workflow default)
-    //   6. initiator's direct manager (ultimate fallback)
-    let currentAssignee = (recipientUsername || '').trim();
-    let currentRoleName = '';
-    if (!currentAssignee && Array.isArray(recipients) && recipients.length) {
-      const first = recipients[0] || {};
-      if (first.username && String(first.username).trim()) {
-        currentAssignee = String(first.username).trim();
-      } else if (first.code) {
-        // Employee number lookup
-        try {
-          const [u] = await db.query(
-            `SELECT linked_username FROM hr_employees
-             WHERE employee_number = ? AND linked_username IS NOT NULL AND linked_username != '' LIMIT 1`,
-            [first.code]);
-          if (u.length) currentAssignee = u[0].linked_username;
-        } catch(e) {}
-      }
-      if (!currentAssignee && first.name) {
-        // Full-name lookup against hr_employees
-        try {
-          const [u] = await db.query(
-            `SELECT linked_username FROM hr_employees
-             WHERE CONCAT(COALESCE(first_name,''), ' ', COALESCE(last_name,'')) LIKE ?
-               AND linked_username IS NOT NULL AND linked_username != '' LIMIT 1`,
-            ['%' + first.name + '%']);
-          if (u.length) currentAssignee = u[0].linked_username;
-        } catch(e) {}
-      }
-    }
-    if (!currentAssignee && firstStep && firstStep.required_position_id) {
-      const resolved = await resolveAssigneeForStep(firstStep, finalBranchId, finalDeptId);
-      currentAssignee = resolved.username;
-      currentRoleName = resolved.roleName;
-    }
-    if (!currentRoleName && currentRoleId) {
-      const [rn] = await db.query('SELECT name FROM positions WHERE id = ?', [currentRoleId]);
-      if (rn.length) currentRoleName = rn[0].name;
-    }
-    // If explicit recipient was used, stamp their current role for display
-    if (currentAssignee && !currentRoleName) {
-      try {
-        const [pr] = await db.query(
-          `SELECT p.name FROM hr_employees e
-           LEFT JOIN positions p ON e.position_id = p.id
-           WHERE e.linked_username = ? LIMIT 1`, [currentAssignee]);
-        if (pr.length && pr[0].name) currentRoleName = pr[0].name;
-      } catch(e) {}
-    }
-    if (!currentAssignee && sender.managerId) {
-      const [mgr] = await db.query('SELECT linked_username FROM hr_employees WHERE id = ?', [sender.managerId]);
-      if (mgr.length && mgr[0].linked_username) currentAssignee = mgr[0].linked_username;
-    }
-
-    const validImportance = ['critical','high','medium','low'].includes(importance) ? importance : 'medium';
-    const secrecyValues = ['normal','confidential','secret','top_secret'];
-    const finalContentSecrecy = secrecyValues.includes(contentSecrecy) ? contentSecrecy : 'normal';
-    const finalAttSecrecy     = secrecyValues.includes(attachmentsSecrecy) ? attachmentsSecrecy : 'normal';
-    const finalSubject = (subject || title || '').slice(0, 500);
-    const finalIssuingEntityId   = issuingEntityId || sender.deptId || sender.branchId || '';
-    const finalIssuingEntityName = issuingEntityName || sender.deptName || sender.branchName || '';
-    // Draft mode overrides routing — transaction parked in creator's outbox only
-    const initialStatus = saveAsDraft ? 'draft'
-                        : ((currentAssignee || currentStepId) ? 'pending' : 'draft');
-
-    await db.query(
-      `INSERT INTO transactions (
-         id, transaction_number, transaction_type_id, type_code, daily_serial,
-         created_by, branch_id, branch_code, branch_name, brand_id,
-         dept_id, dept_code, dept_name,
-         title, subject, description, content_html, amount, importance,
-         content_secrecy, attachments_secrecy, issuing_entity_id, issuing_entity_name, hijri_date,
-         status, current_step_id, current_role_id, current_role_name, current_assignee, attachment,
-         account_id, account_code, account_name, cost_center_id, cost_center_name,
-         recipient_username, sender_name, sender_position, initiator_position_id)
-       VALUES (?,?,?,?,?, ?,?,?,?,?, ?,?,?, ?,?,?,?,?,?, ?,?,?,?,?, ?,?,?,?,?,?, ?,?,?,?,?, ?,?,?, ?)`,
-      [id, txnNumber, transactionTypeId, typeCode, serial,
-       username||'', finalBranchId||null, branchCode, branchName, brandId||null,
-       finalDeptId||null, deptCode, deptName,
-       title, finalSubject, description||'', contentHtml||null, amount||0, validImportance,
-       finalContentSecrecy, finalAttSecrecy, finalIssuingEntityId||null, finalIssuingEntityName, hijriDate||'',
-       initialStatus, currentStepId, currentRoleId, currentRoleName, currentAssignee, attachment||null,
-       accountId||null, accountCode||'', accountName||'', costCenterId||null, costCenterName||'',
-       recipientUsername||'', senderName||'', senderPosition||'', initiatorPositionId||null]
-    );
-
-    // Expense category + due date + scope (optional — update after main insert to
-    // avoid ballooning the VALUES list and to keep this addition surgical)
-    if (expenseCategoryId || dueDate || scope) {
-      const sets = []; const vals = [];
-      if (expenseCategoryId !== undefined) {
-        sets.push('expense_category_id=?'); vals.push(expenseCategoryId || null);
-        sets.push('expense_category_name=?'); vals.push(expenseCategoryName || '');
-      }
-      if (dueDate) { sets.push('due_date=?'); vals.push(dueDate); }
-      if (scope)   { sets.push('transaction_scope=?'); vals.push(scope === 'external' ? 'external' : 'internal'); }
-      if (sets.length) {
-        vals.push(id);
-        try { await db.query(`UPDATE transactions SET ${sets.join(', ')} WHERE id = ?`, vals); } catch(e) {}
-      }
-    }
-
-    // Multi-recipients (optional)
-    if (Array.isArray(recipients) && recipients.length) {
-      for (const r of recipients) {
-        if (!r || (!r.username && !r.name && !r.positionId)) continue;
-        const recId = 'RCP-' + Date.now() + '-' + Math.random().toString(36).substr(2,5);
-        await db.query(
-          `INSERT INTO txn_recipients
-             (id, transaction_id, recipient_type, recipient_id, recipient_username,
-              recipient_code, recipient_name, needs_response)
-           VALUES (?,?,?,?,?,?,?,?)`,
-          [recId, id, r.type || (r.positionId ? 'position' : 'user'),
-           r.id || r.positionId || null, r.username || '',
-           r.code || '', r.name || '', r.needsResponse ? 1 : 0]);
-      }
-    }
-
-    // Log creation
-    const logId = 'LOG-' + Date.now() + '-' + Math.random().toString(36).substr(2,4);
-    await db.query(
-      'INSERT INTO transaction_steps_log (id, transaction_id, workflow_definition_id, action_by, action_type, action_note, position_name) VALUES (?,?,?,?,?,?,?)',
-      [logId, id, currentStepId, username||'', 'create', 'تم إنشاء المعاملة', senderPosition || sender.positionName || '']);
-
-    res.json({ success: true, id, txnNumber, currentAssignee });
-  } catch(e) { res.json({ success: false, error: e.message }); }
+    const actor = {
+      username: (req.body && req.body.username) || (req.user && req.user.username) || '',
+      role: req.user && req.user.role,
+      ip: req.ip || req.headers['x-forwarded-for'] || ''
+    };
+    const result = await TxnService.create(req.body || {}, actor);
+    res.json(result);
+  } catch (e) {
+    if (e && e.statusCode) return res.status(e.statusCode).json({ success: false, error: e.message });
+    res.json({ success: false, error: e.message });
+  }
 });
 
 // Helper — fetch transaction with joined metadata
@@ -2426,78 +2231,23 @@ router.post('/transactions/:id/restore', async (req, res) => {
 // single-row force-delete + the global wipe-all are both nuclear; they
 // should share the same audience (literal admin). guardDeveloper stays
 // available for diagnostic / debug-only endpoints elsewhere.
+// v6.8.0 Phase 1 — Migrated to TransactionService. The handler is now a
+// thin controller: validate inputs (already done by SCHEMA middleware) →
+// resolve actor → delegate → format response. Cascade delete + audit row
+// + DB transaction wrapping all live in TxnService.forceDelete() now.
 router.delete('/transactions/:id/force', guardAdmin, SCHEMA.validateBody(SCHEMA.schemas.forceDelete), async (req, res) => {
   try {
-    const username = req.query.username || (req.user && req.user.username) || (req.body && req.body.username) || '';
-    const { confirm, reason } = req.body || {};
-
-    const txnId = req.params.id;
-    const [txns] = await db.query(
-      'SELECT id, transaction_number, title, subject, created_by, amount FROM transactions WHERE id = ?',
-      [txnId]
-    );
-    if (!txns.length) return res.json({ success: false, error: 'المعاملة غير موجودة' });
-    const snap = txns[0];
-
-    // Cascade delete inside a transaction so we either delete everything or nothing
-    await db.withTransaction(async (conn) => {
-      // 1. Delete child rows from tables we know exist
-      // V5-SEC: include `notifications` to avoid orphaned notifications + info leaks
-      const childTables = [
-        'transaction_steps_log',
-        'transaction_replies',
-        'txn_attachments',
-        'txn_recipients',
-        'memo_read_receipts'
-      ];
-      for (const tbl of childTables) {
-        try {
-          await conn.query(`DELETE FROM ${tbl} WHERE transaction_id = ?`, [txnId]);
-        } catch(e) {
-          // Tolerate: table may not exist on this deploy
-        }
-      }
-      // V5-SEC: cascade-clear notifications referencing this transaction (they leak the title)
-      try {
-        await conn.query(
-          `DELETE FROM notifications WHERE link_id = ? AND link_type = 'transaction'`, [txnId]);
-      } catch(e) {
-        try {
-          await conn.query(`DELETE FROM notifications WHERE related_id = ?`, [txnId]);
-        } catch(e2) { /* schema variant */ }
-      }
-      // 2. Detach payment_records (don't delete payments; just unlink to preserve GL)
-      try {
-        await conn.query(
-          'UPDATE payment_records SET transaction_id = NULL WHERE transaction_id = ?',
-          [txnId]
-        );
-      } catch(e) { /* table may not exist */ }
-      // 3. Delete the transaction itself
-      await conn.query('DELETE FROM transactions WHERE id = ?', [txnId]);
-      // 4. Log to audit_logs if present
-      try {
-        await conn.query(
-          `INSERT INTO audit_logs (user_username, action, entity_type, entity_id, details, created_at)
-           VALUES (?, 'force_delete', 'transaction', ?, ?, NOW())`,
-          [username, txnId, JSON.stringify({
-            txnNumber: snap.transaction_number,
-            title: snap.subject || snap.title,
-            createdBy: snap.created_by,
-            amount: Number(snap.amount) || 0,
-            reason: String(reason).trim()
-          })]
-        );
-      } catch(e) { /* audit_logs may not exist or have a different schema */ }
-    });
-
-    res.json({
-      success: true,
-      deletedId: txnId,
-      txnNumber: snap.transaction_number || '',
-      message: 'تم الحذف النهائي للمعاملة + كل ما يرتبط بها'
-    });
-  } catch(e) { res.json({ success: false, error: e.message }); }
+    const actor = {
+      username: req.query.username || (req.user && req.user.username) || (req.body && req.body.username) || '',
+      role: req.user && req.user.role,
+      ip: req.ip || req.headers['x-forwarded-for'] || ''
+    };
+    const result = await TxnService.forceDelete(req.params.id, req.body || {}, actor);
+    res.json(result);
+  } catch (e) {
+    if (e && e.statusCode) return res.status(e.statusCode).json({ success: false, error: e.message });
+    res.json({ success: false, error: e.message });
+  }
 });
 
 // Take action on a transaction (approve / reject / return / forward / close)

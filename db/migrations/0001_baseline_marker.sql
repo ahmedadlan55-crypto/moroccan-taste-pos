@@ -1,0 +1,33 @@
+-- ════════════════════════════════════════════════════════════════════
+-- 0001_baseline_marker.sql
+-- ────────────────────────────────────────────────────────────────────
+-- v6.8.0 — Phase 0: Foundation
+--
+-- This migration is a NO-OP marker. It establishes the versioned
+-- migrations framework without altering the live schema. Every table
+-- existing on the database prior to this migration is considered part
+-- of the "baseline" managed by:
+--
+--   • db/schema.sql           (initial seed via `npm run db:init`)
+--   • server.js runMigrations (idempotent ALTER TABLE bootstraps on
+--                              every server start)
+--
+-- From this version onward, schema changes belong in numbered files
+-- under db/migrations/ — not in server.js. The legacy runMigrations()
+-- continues to run for backward compatibility but should be frozen for
+-- new changes (Phase 2 will start migrating its contents into versioned
+-- files).
+--
+-- Why this marker exists:
+--   1. It records version `0001` in the _migrations table so future
+--      runs of `db/migrate.js` know the framework is initialized.
+--   2. It gives Phase 2+ a known good starting point ("everything that
+--      existed before 0001 is the baseline").
+--
+-- This file MUST remain a no-op. Do not edit it after deployment —
+-- migrations are immutable history.
+-- ════════════════════════════════════════════════════════════════════
+
+-- A SELECT 1 produces no schema change but satisfies the migration
+-- runner's "must have at least one statement" expectation.
+SELECT 1 AS baseline_marker;

@@ -780,4 +780,27 @@ document.addEventListener('keydown',function(e){if(e.key==='Enter'&&document.get
     if (isIOS && !isStandalone() && !isDismissed() && iosHint) {
       // Show iOS hint after 10 seconds (gives user time to use the app first)
       setTimeout(function() {
-        if (!isStandalone() && !isDismissed()) iosHint.style.display = '
+        if (!isStandalone() && !isDismissed()) iosHint.style.display = '';
+      }, 10000);
+    }
+    if (iosDismissBtn) {
+      iosDismissBtn.addEventListener('click', function() {
+        iosHint.style.display = 'none';
+        markDismissed();
+      });
+    }
+
+    // 4. Track successful installation
+    window.addEventListener('appinstalled', function() {
+      console.log('[Employee PWA] App installed');
+      if (installBanner) installBanner.style.display = 'none';
+      if (iosHint) iosHint.style.display = 'none';
+      // One-time toast (if available)
+      if (typeof window.showToast === 'function') {
+        window.showToast('تم تثبيت التطبيق بنجاح ✓');
+      }
+    });
+  })();
+</script>
+</body>
+</html>

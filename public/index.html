@@ -270,4 +270,13 @@
        login too (whitelisted in #critical-auth-gate above). Tapping it
        opens the keyboard for the currently-focused data-vk="1" input
        (e.g. the password field on the login screen carries data-vk="1"
-       implicitly via the focus catch-all once it
+       implicitly via the focus catch-all once it's tagged — see TODO
+       at top of public/pos/keyboard.js). -->
+  <button id="vkToggleBtn" type="button"
+          class="vk-toggle-fab"
+          aria-label="إظهار/إخفاء لوحة المفاتيح"
+          onclick="vkToggle()">
+    <i class="fas fa-keyboard"></i>
+  </button>
+</body>
+</html>

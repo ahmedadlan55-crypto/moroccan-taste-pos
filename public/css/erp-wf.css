@@ -1,16 +1,23 @@
 /* ═══════════════════════════════════════════════════════════════════
-   v6.6.0 — Workflow / Transactions section
+   v6.7.0 — Workflow / Transactions — Filters & Actions refactor
    ═══════════════════════════════════════════════════════════════════
-   Moroccan Taste brand skin (purple #7c3aed primary + slate #0f172a
-   text) for the three sections under "المعاملات الإدارية":
+   Moroccan Taste brand skin (purple #7c3aed + slate #0f172a) for the
+   three workflow sections:
      • #erpWfDashboard
      • #erpWfIncoming
      • #erpWfOutgoing
-   Loaded after admin-skin.css so the !important overrides remain safe.
-   Owner ask: "حسّن الواجهة والازرار وازل التكرارات بشكل يتناسب مع
-   هوية الشركة" — this file replaces the cyan/sky inline styles that
-   the section was rendered with (#0ea5e9 / #3b82f6) with the brand
-   tokens defined in public/shared/design-tokens.css.
+
+   v6.7.0 consolidates the v6.6.1 → v6.6.6 layers (hotfix-on-hotfix
+   piles of !important) into ONE source of truth for the filters &
+   action chrome. Single 8pt rhythm: hero 52, filter inputs 44,
+   header CTA 40, shortcut pills 32. Primary CTA is solid purple +
+   soft brand shadow (Linear / Stripe pattern).
+
+   Sections kept verbatim from earlier versions: 1, 2, 3, 4, 5, 6, 7
+   (header chrome, wipe button, summary cards, table, empty state,
+   wipe-confirm modal, row badges). The old sections 8, 9 and the
+   v6.6.5+v6.6.6 hotfix blocks have been removed and replaced with
+   the unified v6.7.0 filter block at the bottom of this file.
    ═══════════════════════════════════════════════════════════════════ */
 
 /* ── 1. Section header bar ───────────────────────────────────────── */
@@ -39,38 +46,34 @@
   margin: 0;
 }
 .wf-section-title i {
-  /* v6.6.3 — Inherit the cascade-resolved --accent (same token
-     .btn-primary uses) instead of hardcoding purple. This keeps the
-     title icon visually aligned with whichever color wins for the
-     primary CTAs in the operator's deployment. */
-  color: var(--accent, var(--mt-accent, #7c3aed));
+  color: var(--mt-accent, #7c3aed);
   font-size: 22px;
 }
 .wf-section-actions {
   display: flex;
-  gap: 8px;
+  gap: 10px;
   flex-wrap: wrap;
+  align-items: center;
 }
 
 /* ── 2. Wipe button (developer-only — red outline) ───────────────── */
+/* v6.7.0 — Softened to red-ghost so it visually steps back behind
+   the primary purple CTA. !important kept to win over admin-skin's
+   .btn base; section 12 supplies the size override. */
 .wf-wipe-btn {
   background: #fff !important;
   color: var(--mt-danger, #dc2626) !important;
-  border: 1px solid var(--mt-danger, #dc2626) !important;
+  border: 1px solid var(--mt-danger-soft, #fee2e2) !important;
   font-weight: 700 !important;
 }
 .wf-wipe-btn:hover {
   background: var(--mt-danger-soft, #fee2e2) !important;
   color: var(--mt-danger-2, #b91c1c) !important;
-  border-color: var(--mt-danger-2, #b91c1c) !important;
+  border-color: var(--mt-danger, #dc2626) !important;
   transform: translateY(-1px);
 }
 
-/* v6.6.4 — Per-row admin-only delete button. Soft red-on-white at rest,
-   full red-on-red on hover so it reads as "destructive but safe to
-   leave alone". Hidden by default for non-admins by
-   _wfApplyAdminVisibility(); the backend gate is guardAdmin on the
-   /transactions/:id/force endpoint. */
+/* v6.6.4 — Per-row admin-only delete button. */
 .wf-row-delete-btn {
   background: #fff !important;
   color: var(--mt-danger, #dc2626) !important;
@@ -94,9 +97,7 @@
 .wf-summary-card {
   background: #fff;
   border: 1px solid var(--mt-border, #e2e8f0);
-  /* v6.6.3 — Border strip inherits brand --accent (was hardcoded purple)
-     so the strip changes color in sync with the primary CTA palette. */
-  border-right: 4px solid var(--accent, var(--mt-accent, #7c3aed));
+  border-right: 4px solid var(--mt-accent, #7c3aed);
   border-radius: var(--mt-radius-md, 14px);
   padding: 16px 18px;
   display: flex;
@@ -110,8 +111,6 @@
   box-shadow: 0 8px 24px rgba(15, 23, 42, 0.10);
 }
 .wf-summary-card .lbl {
-  /* v6.6.3 — Icons stripped (owner spec: "ازل الايقونات التي ليس لها داعي")
-     so .lbl is now just label text — no gap needed. */
   font-size: 12.5px;
   font-weight: 700;
   color: var(--mt-text-muted, #64748b);
@@ -119,14 +118,9 @@
 .wf-summary-card .val {
   font-size: 26px;
   font-weight: 900;
-  color: var(--accent, var(--mt-accent, #7c3aed));
+  color: var(--mt-accent, #7c3aed);
   font-variant-numeric: tabular-nums;
 }
-
-/* v6.6.3 — Status variants are now scoped to TRUE alerts only
-   (warn + danger). The "success" variant was dropped — the incoming-
-   totals card now uses the default accent so the palette is calm
-   rather than a 4-color rainbow. */
 .wf-summary-card.is-warn          { border-right-color: var(--mt-warning, #f59e0b); }
 .wf-summary-card.is-warn .val     { color: var(--mt-warning, #f59e0b); }
 .wf-summary-card.is-danger        { border-right-color: var(--mt-danger, #dc2626); }
@@ -187,7 +181,7 @@
   margin-top: 4px;
 }
 
-/* ── 6. Wipe-confirm modal — extra restraint required ────────────── */
+/* ── 6. Wipe-confirm modal ───────────────────────────────────────── */
 .wf-wipe-confirm-modal .wf-wipe-warning {
   background: linear-gradient(135deg, #fff5f5, #ffffff);
   border: 1.5px solid var(--mt-danger, #dc2626);
@@ -239,114 +233,7 @@
 .wf-pill--scope-internal { background: var(--mt-accent-soft, #faf5ff); color: var(--mt-accent, #7c3aed); }
 .wf-pill--scope-external { background: #fff7ed; color: #c2410c; }
 
-/* ── 8. Filter panel polish ──────────────────────────────────────── */
-.wf-filter-panel,
-#erpWfOutgoing > div:nth-of-type(2) {
-  /* The existing inline-styled filter panel benefits from a softer
-     resting state — purple-tinted focus rings on its inputs. */
-}
-#erpWfOutgoing input.form-control-sm:focus,
-#erpWfOutgoing select.form-control-sm:focus,
-#erpWfIncoming input.form-control-sm:focus,
-#erpWfIncoming select.form-control-sm:focus {
-  outline: 0;
-  border-color: var(--mt-accent, #7c3aed);
-  box-shadow: 0 0 0 3px rgba(124, 58, 237, 0.16);
-}
-
-/* ── 9. Filter panel skin (v6.6.1) ───────────────────────────────── */
-/* Replaces the inline-styled filter panel that lived in #erpWfOutgoing
-   before v6.6.1. The auto-fit grid removes the dangling empty cell that
-   sat in row 4 and makes the panel collapse cleanly down to a single
-   column on mobile. Labels sit above inputs instead of in a fixed 120px
-   left column — that pattern fights Arabic text rendering and made the
-   panel feel cramped at tablet widths. */
-.wf-filter-panel {
-  background: #fff;
-  border: 1px solid var(--mt-border, #e2e8f0);
-  border-radius: var(--mt-radius-lg, 18px);
-  padding: 18px 20px;
-  margin-bottom: 16px;
-  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04);
-}
-/* v6.6.6 — Selector relaxed: standalone .wf-filter-row no longer needs
-   .wf-filter-panel ancestor. The v6.6.5 restructure moved the grid
-   inside .wf-advanced-panel, which broke the old descendant rule and
-   stacked every field as a full-width row. */
-.wf-filter-row {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
-  gap: 12px 16px;
-}
-.wf-filter-field {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-  min-width: 0;
-}
-.wf-filter-field > label {
-  font-size: 11.5px;
-  font-weight: 800;
-  color: var(--mt-text-muted, #64748b);
-  display: block;
-}
-.wf-filter-field .form-control-sm {
-  font-family: inherit;
-  width: 100%;
-}
-/* v6.6.3 — The date-pair cell needs ~2x the width of a single field so
-   the two <input type="date"> inputs + their native calendar icons
-   render without colliding into the adjacent "تَصدير إلى جهة" column.
-   span 2 in the auto-fit grid gives it the breathing room it needs. */
-.wf-filter-field--date {
-  grid-column: span 2;
-}
-.wf-filter-field--date .wf-filter-date-pair {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 10px;
-  align-items: center;
-}
-/* The visible "→" between the two dates is redundant with the label
-   "من تاريخ — إلى" above. Owner asked to drop redundant icons; we hide
-   the span here (HTML is unchanged) so existing renders stop showing it. */
-.wf-filter-field--date .wf-filter-date-sep {
-  display: none;
-}
-/* Tame the native <input type="date"> calendar icon. Browser-default
-   black icon clashes with the brand palette; soften it. */
-.wf-filter-panel input[type="date"]::-webkit-calendar-picker-indicator {
-  opacity: 0.5;
-  cursor: pointer;
-  transition: opacity 0.12s;
-}
-.wf-filter-panel input[type="date"]:hover::-webkit-calendar-picker-indicator {
-  opacity: 1;
-}
-
-/* v6.6.3 — Cap the filter-action buttons so "بحث" doesn't stretch into
-   a half-page banner. Pre-v6.6.3 the flex container had no width cap
-   and inherited the default .btn padding, producing the huge red bar
-   the owner reported. */
-.wf-filter-actions {
-  display: flex;
-  gap: 10px;
-  justify-content: center;
-  margin-top: 16px;
-  flex-wrap: wrap;
-}
-.wf-filter-actions .btn {
-  min-width: 140px;
-  max-width: 220px;
-  padding: 10px 22px;
-  font-weight: 700;
-}
-
-/* ── 10. Wipe-modal stats grid (v6.6.1) ──────────────────────────── */
-/* The dry-run preview shows row-by-row what's about to be deleted.
-   The "transactions" row is highlighted because it's the headline
-   number — everything else is dependent records that come along for
-   the ride. */
+/* ── 8. Wipe-modal stats grid ────────────────────────────────────── */
 .wf-wipe-stats {
   display: grid;
   grid-template-columns: 1fr 1fr;
@@ -372,7 +259,7 @@
 .wf-wipe-row.is-primary .lbl { font-weight: 800; color: var(--mt-danger, #dc2626); font-size: 13.5px; }
 .wf-wipe-row.is-primary .val { font-weight: 900; color: var(--mt-danger, #dc2626); font-size: 16px; }
 
-/* ── 11. Responsive header on small screens ──────────────────────── */
+/* ── 9. Responsive header (small screens) ────────────────────────── */
 @media (max-width: 720px) {
   .wf-section-header {
     padding: 14px 16px;
@@ -391,421 +278,474 @@
 }
 
 /* ═══════════════════════════════════════════════════════════════════
-   v6.6.5 — Hero search + advanced collapsible + RTL date range
+   v6.7.0 — Filters & Actions (consolidated)
    ═══════════════════════════════════════════════════════════════════
-   Owner ask: "اعد هيكلة هذه الواجهة والفلاتر واجعلها مناسبة جدا.
-   امنع التراكبات. امنع الالوان المزعجة. اجعلها قوية. فلاترها اقوي.
-   امكانية البحث اليدوي ايضا. امكانية اختيار التواريخ"
+   Replaces sections 8/9 (filter panel base) and 12-22 (v6.6.5 hero
+   search + v6.6.6 hotfix overrides) from prior versions. Strict 8pt
+   rhythm; brand purple drives every interactive surface; no
+   competing !important wars.
 
-   Fixes 5 distinct issues observed in the latest screenshot:
-   1. Search button rendering as an empty red bar → force purple
-      via increased specificity scoped to WF sections.
-   2. English mm/dd/yyyy placeholders in RTL → custom text input with
-      "يوم/شهر/سنة" hint, native picker stays hidden but is the source
-      of truth.
-   3. Loud red primary buttons → re-themed to brand purple.
-   4. 11 cramped filter fields → collapse them under "فلاتر مُتقَدِّمة"
-      so the default view is just the big hero search bar.
-   5. No live search → hero input mirrors to #woxFSubject with 300ms
-      debounce + auto-reload.
+   Heights        Radius       Brand role
+     hero    52   14           primary entry point (search-first)
+     filter  44   12           uniform data fields
+     toggle  44   12           secondary navigation
+     reset   44   12           ghost action
+     header  40   12           page-level CTAs
+     chip    32   999          tertiary actions / shortcuts
+
+   Auto-apply: changes to any filter dispatch a 300ms-debounced
+   reload (see wfOutboxFiltersChanged in public/js/erp.js). No
+   manual "Apply" button — only "Reset".
    ═══════════════════════════════════════════════════════════════════ */
 
-/* ── 12. Force brand purple for primary buttons inside WF sections ── */
-/* admin-skin.css already aims --accent at purple, but the deployment
-   shipped is rendering .btn-primary as red. Raise specificity here so
-   every primary CTA inside the WF sections — search, add, empty-state
-   CTA — settles to brand purple. */
-#erpWfDashboard .btn.btn-primary,
-#erpWfIncoming  .btn.btn-primary,
-#erpWfOutgoing  .btn.btn-primary {
-  background: var(--mt-accent, #7c3aed) !important;
-  color: #fff !important;
-  border-color: var(--mt-accent, #7c3aed) !important;
-  box-shadow: 0 2px 6px rgba(124, 58, 237, 0.22) !important;
+/* ── 10. Header CTAs (إضافة معاملة / تَصفير البيانات) ─────────────── */
+/* Scoped to .wf-section-actions so we don't disturb .btn usage in
+   tables, modals, or other parts of the page. */
+.wf-section-actions .btn {
+  height: 40px;
+  padding: 0 18px;
+  font-size: 13px;
+  font-weight: 700;
+  border-radius: 12px;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  line-height: 1;
+  white-space: nowrap;
+  transition: transform 0.16s, box-shadow 0.16s, background 0.16s, border-color 0.16s;
 }
-#erpWfDashboard .btn.btn-primary:hover,
-#erpWfIncoming  .btn.btn-primary:hover,
-#erpWfOutgoing  .btn.btn-primary:hover {
-  background: var(--mt-accent-2, #6d28d9) !important;
-  border-color: var(--mt-accent-2, #6d28d9) !important;
-  box-shadow: 0 4px 14px rgba(124, 58, 237, 0.32) !important;
-}
-#erpWfDashboard .btn.btn-primary i,
-#erpWfIncoming  .btn.btn-primary i,
-#erpWfOutgoing  .btn.btn-primary i {
-  color: #fff !important;
-}
+.wf-section-actions .btn i { font-size: 12px; }
 
-/* Wipe button stays red-outline but smaller + ghost so it doesn't
-   compete with the primary CTA for attention. */
+/* Wipe button steps back: smaller padding, ghost-red */
 .wf-section-actions .wf-wipe-btn {
-  padding: 6px 12px !important;
-  font-size: 12px !important;
+  height: 38px !important;
+  padding: 0 14px !important;
+  font-size: 12.5px !important;
 }
 .wf-section-actions .wf-wipe-btn i { font-size: 11px; }
 
-/* ── 13. Hero search bar (always-visible, debounced) ─────────────── */
+/* Primary CTA — solid brand purple + soft brand shadow */
+#erpWfDashboard .wf-section-actions .btn.btn-primary,
+#erpWfIncoming  .wf-section-actions .btn.btn-primary,
+#erpWfOutgoing  .wf-section-actions .btn.btn-primary {
+  background: var(--mt-accent, #7c3aed) !important;
+  color: #fff !important;
+  border: 1px solid var(--mt-accent, #7c3aed) !important;
+  box-shadow: 0 2px 8px rgba(124, 58, 237, 0.28) !important;
+}
+#erpWfDashboard .wf-section-actions .btn.btn-primary:hover,
+#erpWfIncoming  .wf-section-actions .btn.btn-primary:hover,
+#erpWfOutgoing  .wf-section-actions .btn.btn-primary:hover {
+  background: var(--mt-accent-2, #6d28d9) !important;
+  border-color: var(--mt-accent-2, #6d28d9) !important;
+  box-shadow: 0 6px 18px rgba(124, 58, 237, 0.38) !important;
+  transform: translateY(-1px);
+}
+#erpWfDashboard .wf-section-actions .btn.btn-primary i,
+#erpWfIncoming  .wf-section-actions .btn.btn-primary i,
+#erpWfOutgoing  .wf-section-actions .btn.btn-primary i {
+  color: #fff !important;
+}
+
+/* ── 11. Hero search bar — premium 52px primary input ────────────── */
 .wf-hero-search {
   position: relative;
   margin-bottom: 14px;
 }
-.wf-hero-search input {
+.wf-hero-search > input,
+.wf-hero-search > input.wf-hero-input,
+.wf-hero-search > input[type="text"] {
   width: 100%;
-  padding: 14px 50px 14px 50px;
+  height: 52px;
+  padding: 0 56px;
   font-size: 15px;
   font-family: inherit;
+  font-weight: 500;
   border: 1.5px solid var(--mt-border, #e2e8f0);
   border-radius: 14px;
   background: #fff;
   color: var(--mt-text, #0f172a);
-  transition: border-color .12s, box-shadow .12s;
+  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04);
+  box-sizing: border-box;
+  outline: 0;
+  display: block;
+  transition: border-color 0.16s, box-shadow 0.16s;
 }
-.wf-hero-search input::placeholder {
+.wf-hero-search > input::placeholder {
   color: var(--mt-text-light, #94a3b8);
   font-weight: 500;
 }
-.wf-hero-search input:focus {
+.wf-hero-search > input:focus {
   border-color: var(--mt-accent, #7c3aed);
   box-shadow: 0 0 0 4px rgba(124, 58, 237, 0.14);
-  outline: 0;
 }
 .wf-hero-search .wf-hero-icon {
   position: absolute;
-  inset-inline-start: 18px;
-  top: 50%; transform: translateY(-50%);
+  inset-inline-start: 20px;
+  top: 50%;
+  transform: translateY(-50%);
   color: var(--mt-text-light, #94a3b8);
-  font-size: 16px;
+  font-size: 17px;
   pointer-events: none;
+  transition: color 0.16s;
+  z-index: 1;
+}
+.wf-hero-search:focus-within .wf-hero-icon {
+  color: var(--mt-accent, #7c3aed);
 }
 .wf-hero-search .wf-hero-clear {
   position: absolute;
   inset-inline-end: 12px;
-  top: 50%; transform: translateY(-50%);
-  background: transparent;
-  border: 0;
-  width: 30px; height: 30px;
-  border-radius: 50%;
-  color: var(--mt-text-muted, #64748b);
-  display: none;
-  align-items: center; justify-content: center;
-  cursor: pointer;
-  font-size: 14px;
-  padding: 0;
-}
-.wf-hero-search.has-value .wf-hero-clear { display: flex; }
-.wf-hero-search .wf-hero-clear:hover {
+  top: 50%;
+  transform: translateY(-50%);
+  width: 32px;
+  height: 32px;
+  border-radius: 999px;
   background: var(--mt-surface-2, #f8fafc);
-  color: var(--mt-text, #0f172a);
+  border: 0;
+  color: var(--mt-text-muted, #64748b);
+  cursor: pointer;
+  font-size: 12px;
+  padding: 0;
+  display: none;
+  align-items: center;
+  justify-content: center;
+  transition: background 0.12s, color 0.12s, transform 0.12s;
+  z-index: 1;
+}
+.wf-hero-search.has-value .wf-hero-clear {
+  display: inline-flex;
+}
+.wf-hero-search .wf-hero-clear:hover {
+  background: var(--mt-accent-soft, #faf5ff);
+  color: var(--mt-accent, #7c3aed);
+  transform: translateY(-50%) scale(1.05);
 }
 
-/* ── 14. Advanced filters toggle + collapsible panel ─────────────── */
+/* ── 12. Advanced filters toggle ──────────────────────────────────── */
 .wf-advanced-toggle {
   display: inline-flex;
   align-items: center;
-  gap: 8px;
-  padding: 10px 16px;
-  background: var(--mt-surface-2, #f8fafc);
-  border: 1px solid var(--mt-border, #e2e8f0);
+  gap: 10px;
+  height: 44px;
+  padding: 0 18px;
+  background: #fff;
+  border: 1.5px solid var(--mt-border, #e2e8f0);
   border-radius: 12px;
   font-weight: 700;
-  font-size: 13px;
+  font-size: 13.5px;
   font-family: inherit;
-  color: var(--mt-text-muted, #64748b);
+  color: var(--mt-text, #0f172a);
   cursor: pointer;
-  margin-bottom: 12px;
-  transition: background .12s, color .12s, border-color .12s;
+  margin-bottom: 14px;
+  line-height: 1;
+  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04);
+  transition: background 0.16s, border-color 0.16s, color 0.16s, box-shadow 0.16s;
 }
-.wf-advanced-toggle:hover,
+.wf-advanced-toggle > i:first-child {
+  color: var(--mt-text-muted, #64748b);
+  font-size: 14px;
+  transition: color 0.16s;
+}
+.wf-advanced-toggle:hover {
+  background: var(--mt-accent-soft, #faf5ff);
+  border-color: var(--mt-accent-soft-2, #ede9fe);
+  color: var(--mt-accent, #7c3aed);
+}
+.wf-advanced-toggle:hover > i:first-child,
+.wf-advanced-toggle.is-open > i:first-child {
+  color: var(--mt-accent, #7c3aed);
+}
 .wf-advanced-toggle.is-open {
   background: var(--mt-accent-soft, #faf5ff);
+  border-color: var(--mt-accent, #7c3aed);
   color: var(--mt-accent, #7c3aed);
-  border-color: var(--mt-accent-soft-2, #f3e8ff);
+  box-shadow: 0 2px 8px rgba(124, 58, 237, 0.16);
 }
 .wf-advanced-toggle .chevron {
-  transition: transform .18s;
   font-size: 11px;
+  margin-inline-start: 4px;
+  transition: transform 0.24s cubic-bezier(0.34, 1.56, 0.64, 1);
 }
-.wf-advanced-toggle.is-open .chevron { transform: rotate(180deg); }
+.wf-advanced-toggle.is-open .chevron {
+  transform: rotate(180deg);
+}
 .wf-advanced-toggle .count-chip {
   background: var(--mt-accent, #7c3aed);
   color: #fff;
-  font-size: 10.5px;
+  font-size: 11px;
   font-weight: 800;
-  padding: 1px 8px;
+  padding: 2px 9px;
   border-radius: 999px;
-  margin-inline-start: 4px;
   display: none;
+  line-height: 1.5;
+  font-variant-numeric: tabular-nums;
+  min-width: 22px;
+  text-align: center;
 }
-.wf-advanced-toggle.has-active .count-chip { display: inline-block; }
+.wf-advanced-toggle.has-active .count-chip {
+  display: inline-block;
+}
 
+/* ── 13. Advanced collapsible panel ──────────────────────────────── */
 .wf-advanced-panel {
   display: none;
   background: #fff;
   border: 1px solid var(--mt-border, #e2e8f0);
   border-radius: var(--mt-radius-lg, 18px);
-  padding: 18px 20px;
+  padding: 22px 22px 18px;
   margin-bottom: 16px;
-  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04);
+  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04), 0 8px 24px rgba(15, 23, 42, 0.04);
+  position: relative;
+  overflow: hidden;
 }
-.wf-advanced-panel.is-open { display: block; }
+.wf-advanced-panel.is-open {
+  display: block;
+  animation: wf-adv-fade 0.22s ease-out;
+}
+/* Top accent strip for hierarchy and brand presence */
+.wf-advanced-panel::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  inset-inline-start: 0;
+  inset-inline-end: 0;
+  height: 3px;
+  background: linear-gradient(90deg, var(--mt-accent, #7c3aed), var(--mt-accent-2, #6d28d9));
+  pointer-events: none;
+}
+@keyframes wf-adv-fade {
+  from { opacity: 0; transform: translateY(-4px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
 
-/* ── 15. RTL-friendly date range (no English mm/dd/yyyy) ────────── */
+/* ── 14. Filter grid + per-field chrome (unified 44px) ───────────── */
+.wf-filter-row {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 16px 16px;
+}
+.wf-filter-field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+  position: relative;
+}
+.wf-filter-field > label {
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--mt-text-muted, #64748b);
+  letter-spacing: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  user-select: none;
+}
+/* Active-value indicator: small purple dot before the label */
+.wf-filter-field.is-active > label::before {
+  content: '';
+  width: 6px;
+  height: 6px;
+  border-radius: 999px;
+  background: var(--mt-accent, #7c3aed);
+  box-shadow: 0 0 0 3px rgba(124, 58, 237, 0.18);
+  flex-shrink: 0;
+}
+.wf-filter-field.is-active > label {
+  color: var(--mt-accent, #7c3aed);
+}
+
+/* Unified input/select chrome — every field is 44px tall */
+.wf-filter-field .form-control-sm,
+.wf-filter-field input.form-control-sm,
+.wf-filter-field select.form-control-sm,
+.wf-filter-field input[type="text"],
+.wf-filter-field input[type="number"],
+.wf-filter-field input[type="date"] {
+  width: 100%;
+  height: 44px;
+  padding: 0 14px;
+  font-family: inherit;
+  font-size: 13.5px;
+  font-weight: 500;
+  border: 1.5px solid var(--mt-border, #e2e8f0);
+  border-radius: 12px;
+  background: #fff;
+  color: var(--mt-text, #0f172a);
+  box-sizing: border-box;
+  outline: 0;
+  transition: border-color 0.16s, box-shadow 0.16s;
+}
+/* Custom caret for selects (appearance:none required) */
+.wf-filter-field select.form-control-sm {
+  -webkit-appearance: none;
+  -moz-appearance: none;
+  appearance: none;
+  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'><path d='M3 5l3 3 3-3' stroke='%2364748b' stroke-width='1.6' stroke-linecap='round' stroke-linejoin='round' fill='none'/></svg>");
+  background-repeat: no-repeat;
+  background-position: left 14px center;
+  padding-inline-end: 14px;
+  padding-inline-start: 36px;
+  cursor: pointer;
+}
+.wf-filter-field input::placeholder {
+  color: var(--mt-text-light, #94a3b8);
+  font-weight: 400;
+}
+.wf-filter-field .form-control-sm:focus,
+.wf-filter-field input:focus,
+.wf-filter-field select:focus {
+  border-color: var(--mt-accent, #7c3aed);
+  box-shadow: 0 0 0 4px rgba(124, 58, 237, 0.14);
+}
+.wf-filter-field .form-control-sm:hover:not(:focus),
+.wf-filter-field input:hover:not(:focus),
+.wf-filter-field select:hover:not(:focus) {
+  border-color: var(--mt-text-light, #94a3b8);
+}
+
+/* ── 15. Date range — single visible <input type="date"> per side ── */
+.wf-filter-field--date {
+  grid-column: span 2;
+}
+@media (max-width: 540px) {
+  .wf-filter-field--date { grid-column: span 1; }
+}
 .wf-date-range {
   display: grid;
   grid-template-columns: 1fr auto 1fr;
-  gap: 8px;
+  gap: 10px;
   align-items: center;
 }
 .wf-date-range .sep {
-  color: var(--mt-text-light, #94a3b8);
-  font-size: 12px;
+  color: var(--mt-text-muted, #64748b);
+  font-size: 12.5px;
   font-weight: 700;
-  padding: 0 4px;
+  padding: 0 2px;
 }
 .wf-date-input {
   position: relative;
 }
-.wf-date-input input[type="text"] {
-  padding-inline-end: 38px;
-  font-family: inherit;
-}
-.wf-date-input .wf-date-trigger {
-  position: absolute;
-  inset-inline-end: 6px;
-  top: 50%; transform: translateY(-50%);
-  background: transparent;
-  border: 0;
-  width: 30px; height: 30px;
-  border-radius: 8px;
-  color: var(--mt-accent, #7c3aed);
-  cursor: pointer;
-  display: inline-flex;
-  align-items: center; justify-content: center;
-  padding: 0;
-}
-.wf-date-input .wf-date-trigger:hover {
-  background: var(--mt-accent-soft, #faf5ff);
-}
 .wf-date-input input[type="date"] {
-  position: absolute;
-  opacity: 0;
-  pointer-events: none;
-  inset-inline-end: 0;
-  width: 1px; height: 1px;
-  bottom: 0;
+  width: 100%;
+  cursor: pointer;
+}
+/* Style the native calendar picker indicator to brand purple */
+.wf-date-input input[type="date"]::-webkit-calendar-picker-indicator {
+  opacity: 0.55;
+  cursor: pointer;
+  filter: invert(35%) sepia(63%) saturate(2000%) hue-rotate(245deg) brightness(95%) contrast(95%);
+  transition: opacity 0.12s;
+}
+.wf-date-input input[type="date"]:hover::-webkit-calendar-picker-indicator,
+.wf-date-input input[type="date"]:focus::-webkit-calendar-picker-indicator {
+  opacity: 1;
 }
 
+/* Date shortcut chips — chips strip below the range */
 .wf-date-shortcuts {
   display: flex;
-  gap: 6px;
+  gap: 8px;
   flex-wrap: wrap;
-  margin-top: 8px;
+  margin-top: 12px;
+  align-items: center;
+}
+.wf-date-shortcuts::before {
+  content: 'اختصارات سريعة:';
+  font-size: 11.5px;
+  font-weight: 700;
+  color: var(--mt-text-light, #94a3b8);
+  margin-inline-end: 4px;
 }
 .wf-date-shortcut {
-  padding: 5px 12px;
+  height: 32px;
+  padding: 0 14px;
   background: var(--mt-surface-2, #f8fafc);
   border: 1px solid var(--mt-border, #e2e8f0);
   border-radius: 999px;
-  font-size: 11.5px;
+  font-size: 12px;
   font-weight: 700;
   font-family: inherit;
   color: var(--mt-text-muted, #64748b);
   cursor: pointer;
-  transition: background .12s, color .12s, border-color .12s;
+  display: inline-flex;
+  align-items: center;
+  line-height: 1;
+  transition: background 0.12s, color 0.12s, border-color 0.12s, transform 0.12s, box-shadow 0.12s;
 }
-.wf-date-shortcut:hover,
-.wf-date-shortcut.is-active {
+.wf-date-shortcut:hover {
   background: var(--mt-accent-soft, #faf5ff);
   color: var(--mt-accent, #7c3aed);
-  border-color: var(--mt-accent-soft-2, #f3e8ff);
+  border-color: var(--mt-accent-soft-2, #ede9fe);
+  transform: translateY(-1px);
+}
+.wf-date-shortcut.is-active {
+  background: var(--mt-accent, #7c3aed);
+  color: #fff;
+  border-color: var(--mt-accent, #7c3aed);
+  box-shadow: 0 2px 6px rgba(124, 58, 237, 0.28);
 }
 
-/* ═══════════════════════════════════════════════════════════════════
-   v6.6.6 — Forceful overrides for v6.6.5 layout regressions
-   ═══════════════════════════════════════════════════════════════════
-   The v6.6.5 restructure shipped but the screenshot showed:
-     1. Hero search input rendered without visible border/background
-     2. Native <input type="date"> still visible beside the custom
-        wrapper instead of hiding off-screen
-     3. Advanced panel children stacked vertically (grid CSS lost to
-        deployment overrides)
-     4. Date shortcut buttons rendered as plain text (no pill chrome)
-     5. Search button text invisible on red background
-
-   Root cause for #1, #2, #4: the deployment ships CSS rules with
-   higher specificity than the original v6.6.5 selectors. This block
-   rewrites the same rules with id-scoped selectors + !important so
-   they reliably win.
-
-   Color note: this deployment renders --accent as red (brand identity
-   the owner is keeping). We do NOT force purple here — we only ensure
-   primary button TEXT is legible (white + 13px + nowrap) so labels
-   render whatever the brand color happens to be.
-   ═══════════════════════════════════════════════════════════════════ */
-
-/* ── 16. Hero search input — forced visible chrome ───────────────── */
-#wfHeroSearch,
-#wfHeroSearch.wf-hero-input,
-.wf-hero-search > input.wf-hero-input,
-.wf-hero-search > input[type="text"] {
-  width: 100% !important;
-  height: 48px !important;
-  padding: 12px 52px !important;
-  font-size: 15px !important;
-  font-family: inherit !important;
-  border: 1.5px solid #e2e8f0 !important;
-  border-radius: 14px !important;
+/* ── 16. Filter actions footer (Reset only — auto-apply lives in JS) ─ */
+.wf-filter-actions {
+  display: flex;
+  gap: 12px;
+  justify-content: flex-end;
+  align-items: center;
+  margin-top: 18px;
+  padding-top: 16px;
+  border-top: 1px dashed var(--mt-border, #e2e8f0);
+}
+.wf-filter-status {
+  margin-inline-end: auto;
+  font-size: 12.5px;
+  font-weight: 700;
+  color: var(--mt-text-muted, #64748b);
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.wf-filter-status strong {
+  color: var(--mt-accent, #7c3aed);
+  font-weight: 800;
+  font-variant-numeric: tabular-nums;
+}
+.wf-filter-status i {
+  color: var(--mt-accent, #7c3aed);
+  font-size: 11px;
+}
+.wf-filter-actions .btn {
+  height: 44px;
+  padding: 0 22px;
+  font-size: 13px;
+  font-weight: 700;
+  border-radius: 12px;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  line-height: 1;
+  white-space: nowrap;
+  min-width: 140px;
+  justify-content: center;
+}
+.wf-filter-actions .btn-light {
   background: #fff !important;
-  color: #0f172a !important;
-  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04) !important;
-  box-sizing: border-box !important;
-  display: block !important;
-  outline: 0 !important;
+  border: 1.5px solid var(--mt-border, #e2e8f0) !important;
+  color: var(--mt-text-muted, #64748b) !important;
 }
-#wfHeroSearch:focus,
-.wf-hero-search > input.wf-hero-input:focus,
-.wf-hero-search > input[type="text"]:focus {
-  border-color: var(--accent, #7c3aed) !important;
-  box-shadow: 0 0 0 4px rgba(124, 58, 237, 0.14) !important;
+.wf-filter-actions .btn-light:hover {
+  background: var(--mt-surface-2, #f8fafc) !important;
+  color: var(--mt-text, #0f172a) !important;
+  border-color: var(--mt-text-light, #94a3b8) !important;
+  transform: translateY(-1px);
 }
 
-/* ── 17. Native date picker — guaranteed off-screen ──────────────── */
-/* The wrapper holds (text input, trigger button, hidden native date).
-   Earlier rules with no !important were losing to .form-control-sm.
-   Lock the native input to 1×1px in the corner with z-index -1. */
-.wf-date-input { position: relative !important; display: block !important; }
-.wf-date-input > input[type="date"] {
-  position: absolute !important;
-  inset-inline-end: 0 !important;
-  bottom: 0 !important;
-  width: 1px !important;
-  height: 1px !important;
-  opacity: 0 !important;
-  pointer-events: none !important;
-  padding: 0 !important;
-  margin: 0 !important;
-  border: 0 !important;
-  background: transparent !important;
-  z-index: -1 !important;
-  visibility: visible;     /* keep showPicker() working */
-}
-.wf-date-input > input[type="text"] {
-  width: 100% !important;
-  height: 40px !important;
-  padding: 8px 38px 8px 12px !important;
-  border: 1.5px solid #e2e8f0 !important;
-  border-radius: 10px !important;
-  background: #fff !important;
-  color: #0f172a !important;
-  font-family: inherit !important;
-  font-size: 13px !important;
-  cursor: pointer !important;
-  box-sizing: border-box !important;
-  outline: 0 !important;
-}
-.wf-date-input > input[type="text"]:focus {
-  border-color: var(--accent, #7c3aed) !important;
-}
-.wf-date-input > .wf-date-trigger {
-  position: absolute !important;
-  inset-inline-end: 6px !important;
-  top: 50%; transform: translateY(-50%);
-  background: transparent !important;
-  border: 0 !important;
-  width: 30px !important;
-  height: 30px !important;
-  border-radius: 8px !important;
-  color: var(--accent, #7c3aed) !important;
-  cursor: pointer !important;
-  display: inline-flex !important;
-  align-items: center !important;
-  justify-content: center !important;
-  padding: 0 !important;
-  z-index: 2;
-}
-
-/* ── 18. Date range layout (forced grid) ─────────────────────────── */
-.wf-date-range {
-  display: grid !important;
-  grid-template-columns: 1fr auto 1fr !important;
-  gap: 8px !important;
-  align-items: center !important;
-}
-.wf-date-range > .sep {
-  color: var(--mt-text-light, #94a3b8) !important;
-  font-size: 12px !important;
-  font-weight: 700 !important;
-  padding: 0 4px !important;
-}
-
-/* ── 19. Date shortcut pills — forced ────────────────────────────── */
-button.wf-date-shortcut,
-.wf-date-shortcuts > .wf-date-shortcut {
-  padding: 6px 14px !important;
-  background: #f8fafc !important;
-  border: 1px solid #e2e8f0 !important;
-  border-radius: 999px !important;
-  font-size: 12px !important;
-  font-weight: 700 !important;
-  font-family: inherit !important;
-  color: #64748b !important;
-  cursor: pointer !important;
-  display: inline-flex !important;
-  align-items: center !important;
-  height: auto !important;
-  line-height: 1.4 !important;
-  min-width: 0 !important;
-}
-button.wf-date-shortcut:hover,
-button.wf-date-shortcut.is-active,
-.wf-date-shortcuts > .wf-date-shortcut:hover,
-.wf-date-shortcuts > .wf-date-shortcut.is-active {
-  background: #faf5ff !important;
-  color: #7c3aed !important;
-  border-color: #f3e8ff !important;
-}
-.wf-date-shortcuts {
-  display: flex !important;
-  gap: 6px !important;
-  flex-wrap: wrap !important;
-  margin-top: 10px !important;
-}
-
-/* ── 20. Advanced toggle + count chip — forced pill ──────────────── */
-button.wf-advanced-toggle,
-.wf-advanced-toggle {
-  display: inline-flex !important;
-  align-items: center !important;
-  gap: 8px !important;
-  padding: 10px 16px !important;
-  background: #f8fafc !important;
-  border: 1px solid #e2e8f0 !important;
-  border-radius: 12px !important;
-  font-weight: 700 !important;
-  font-size: 13px !important;
-  font-family: inherit !important;
-  color: #64748b !important;
-  cursor: pointer !important;
-  margin-bottom: 12px !important;
-  height: auto !important;
-  line-height: 1.4 !important;
-}
-.wf-advanced-toggle .count-chip {
-  background: var(--accent, #7c3aed) !important;
-  color: #fff !important;
-  font-size: 10.5px !important;
-  font-weight: 800 !important;
-  padding: 2px 9px !important;
-  border-radius: 999px !important;
-  display: inline-block !important;
-  line-height: 1.4 !important;
-}
-.wf-advanced-toggle:not(.has-active) .count-chip { display: none !important; }
-.wf-advanced-panel { display: none !important; }
-.wf-advanced-panel.is-open { display: block !important; }
-/* Bonus: also style the .wf-advanced-panel as a card chrome since the
-   v6.6.6 HTML adds `wf-filter-panel` class to it too. */
-.wf-advanced-panel {
+/* ── 17. Dashboard filter bar — adopts same .wf-* chrome ──────────── */
+/* The dashboard section uses its own simpler layout (5 selects in a
+   row, no hero search, no collapsible). It gets the SAME .wf-filter-*
+   classes so styling is unified — see views/app-content.html L3838+ */
+#erpWfDashboard .wf-filter-panel {
   background: #fff;
   border: 1px solid var(--mt-border, #e2e8f0);
   border-radius: var(--mt-radius-lg, 18px);
@@ -814,57 +754,44 @@ button.wf-advanced-toggle,
   box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04);
 }
 
-/* ── 21. Primary button text guarantee (color-agnostic) ──────────── */
-/* Whatever colour the deployment paints .btn-primary, ensure the text
-   inside it is visible. Earlier v6.6.5 tried to force purple — we
-   removed that and only enforce text legibility now. */
-#erpWfDashboard .btn.btn-primary,
-#erpWfIncoming  .btn.btn-primary,
-#erpWfOutgoing  .btn.btn-primary {
-  color: #fff !important;
-  font-weight: 800 !important;
-  font-size: 13px !important;
-  padding: 10px 18px !important;
-  height: auto !important;
-  line-height: 1.4 !important;
-  display: inline-flex !important;
-  align-items: center !important;
-  gap: 8px !important;
-  white-space: nowrap !important;
-  min-width: 120px !important;
-}
-#erpWfDashboard .btn.btn-primary i,
-#erpWfIncoming  .btn.btn-primary i,
-#erpWfOutgoing  .btn.btn-primary i {
-  color: #fff !important;
-  font-size: 12px !important;
-}
-
-/* The filter actions bar still caps button widths so the primary CTA
-   doesn't stretch into a full-width banner. */
-#erpWfDashboard .wf-filter-actions,
-#erpWfIncoming  .wf-filter-actions,
-#erpWfOutgoing  .wf-filter-actions {
-  display: flex !important;
-  gap: 10px !important;
-  justify-content: center !important;
-  margin-top: 18px !important;
-  flex-wrap: wrap !important;
-}
-#erpWfDashboard .wf-filter-actions .btn,
-#erpWfIncoming  .wf-filter-actions .btn,
-#erpWfOutgoing  .wf-filter-actions .btn {
-  min-width: 150px !important;
-  max-width: 240px !important;
-  padding: 10px 22px !important;
-}
-
-/* ── 22. Hero clear button visibility ─────────────────────────────── */
-.wf-hero-search .wf-hero-clear {
-  display: none !important;
-}
-.wf-hero-search.has-value .wf-hero-clear {
-  display: inline-flex !important;
-  align-items: center !important;
-  justify-content: center !important;
+/* ── 18. Responsive treatment for filters ────────────────────────── */
+@media (max-width: 720px) {
+  .wf-hero-search > input {
+    height: 48px;
+    padding: 0 48px;
+    font-size: 14px;
+  }
+  .wf-hero-search .wf-hero-icon { font-size: 15px; inset-inline-start: 16px; }
+  .wf-advanced-toggle {
+    height: 42px;
+    padding: 0 14px;
+    font-size: 12.5px;
+    width: 100%;
+    justify-content: center;
+  }
+  .wf-advanced-panel { padding: 16px 14px 14px; }
+  .wf-filter-row { gap: 12px; }
+  .wf-filter-field .form-control-sm,
+  .wf-filter-field input,
+  .wf-filter-field select {
+    height: 42px;
+    font-size: 13px;
+  }
+  .wf-filter-actions { flex-wrap: wrap; }
+  .wf-filter-actions .wf-filter-status {
+    margin-inline-end: 0;
+    flex-basis: 100%;
+    order: -1;
+    justify-content: center;
+  }
+  .wf-filter-actions .btn {
+    flex: 1 1 auto;
+    min-width: 0;
+  }
+  .wf-date-range {
+    grid-template-columns: 1fr;
+    gap: 8px;
+  }
+  .wf-date-range .sep { display: none; }
+  .wf-date-shortcuts::before { display: none; }
 }

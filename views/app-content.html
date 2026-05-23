@@ -3835,32 +3835,51 @@
   <!-- Importance summary strip -->
   <div id="wfDashImportance" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:12px;margin-bottom:18px;"></div>
 
-  <!-- Filter bar -->
-  <div style="background:#fff;border:1px solid #e5e7eb;border-radius:14px;padding:14px;margin-bottom:16px;display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:10px;">
-    <div><label style="font-size:11px;font-weight:700;color:#64748b;">الفرع</label>
-      <select id="wfDashFBranch" class="form-control" onchange="wfLoadDashboard()"><option value="">كل الفروع</option></select></div>
-    <div><label style="font-size:11px;font-weight:700;color:#64748b;">القسم</label>
-      <select id="wfDashFDept" class="form-control" onchange="wfLoadDashboard()"><option value="">كل الأقسام</option></select></div>
-    <div><label style="font-size:11px;font-weight:700;color:#64748b;">درجة الأهمية</label>
-      <select id="wfDashFImp" class="form-control" onchange="wfLoadDashboard()">
-        <option value="">كل الدرجات</option>
-        <option value="critical">عاجل (Critical)</option>
-        <option value="high">عالي (High)</option>
-        <option value="medium">متوسط (Medium)</option>
-        <option value="low">منخفض (Low)</option>
-      </select></div>
-    <div><label style="font-size:11px;font-weight:700;color:#64748b;">نوع المعاملة</label>
-      <select id="wfDashFType" class="form-control" onchange="wfLoadDashboard()"><option value="">كل الأنواع</option></select></div>
-    <div><label style="font-size:11px;font-weight:700;color:#64748b;">الحالة</label>
-      <select id="wfDashFStatus" class="form-control" onchange="wfLoadDashboard()">
-        <option value="">مفتوحة فقط</option>
-        <option value="pending">قيد الانتظار</option>
-        <option value="in_progress">قيد التنفيذ</option>
-        <option value="approved">معتمدة</option>
-        <option value="rejected">مرفوضة</option>
-        <option value="closed">مغلقة</option>
-      </select></div>
-    <div style="display:flex;align-items:flex-end;"><button class="btn btn-light" onclick="wfResetDashFilters()" style="width:100%;"><i class="fas fa-redo"></i> إعادة</button></div>
+  <!-- v6.7.0 — Filter bar adopts unified .wf-filter-* chrome from
+       erp-wf.css (44px field height, brand purple focus, active-dot
+       indicator). Layout collapses to single column under 540px. The
+       inline reset button moves into .wf-filter-actions footer for
+       consistency with the Outbox section. -->
+  <div class="wf-filter-panel">
+    <div class="wf-filter-row">
+      <div class="wf-filter-field">
+        <label>الفرع</label>
+        <select id="wfDashFBranch" class="form-control-sm" onchange="wfLoadDashboard()"><option value="">كل الفروع</option></select>
+      </div>
+      <div class="wf-filter-field">
+        <label>القسم</label>
+        <select id="wfDashFDept" class="form-control-sm" onchange="wfLoadDashboard()"><option value="">كل الأقسام</option></select>
+      </div>
+      <div class="wf-filter-field">
+        <label>درجة الأهمية</label>
+        <select id="wfDashFImp" class="form-control-sm" onchange="wfLoadDashboard()">
+          <option value="">كل الدرجات</option>
+          <option value="critical">عاجل (Critical)</option>
+          <option value="high">عالي (High)</option>
+          <option value="medium">متوسط (Medium)</option>
+          <option value="low">منخفض (Low)</option>
+        </select>
+      </div>
+      <div class="wf-filter-field">
+        <label>نوع المعاملة</label>
+        <select id="wfDashFType" class="form-control-sm" onchange="wfLoadDashboard()"><option value="">كل الأنواع</option></select>
+      </div>
+      <div class="wf-filter-field">
+        <label>الحالة</label>
+        <select id="wfDashFStatus" class="form-control-sm" onchange="wfLoadDashboard()">
+          <option value="">مفتوحة فقط</option>
+          <option value="pending">قيد الانتظار</option>
+          <option value="in_progress">قيد التنفيذ</option>
+          <option value="approved">معتمدة</option>
+          <option value="rejected">مرفوضة</option>
+          <option value="closed">مغلقة</option>
+        </select>
+      </div>
+    </div>
+    <div class="wf-filter-actions">
+      <div class="wf-filter-status"><i class="fas fa-bolt"></i> تَطبيق تِلقائي عند التَّغيير</div>
+      <button class="btn btn-light" onclick="wfResetDashFilters()"><i class="fas fa-redo"></i> إعادة تَعيين</button>
+    </div>
   </div>
 
   <!-- Cards grid -->
@@ -3904,12 +3923,14 @@
     </div>
   </div>
 
-  <!-- v6.6.5 — Restructured filter UX:
-       1. Hero search bar (always-visible, debounced live search) at top
-       2. Date range shortcuts row (Today / 7d / 30d / MTD)
-       3. "فلاتر مُتقَدِّمة" collapsible holds the 11 legacy fields
-       The legacy #woxF* IDs are preserved so wfLoadOutbox() still reads
-       them via the same map. -->
+  <!-- v6.7.0 — Filter UX (refactor):
+       1. Hero search bar (always-visible, 300ms debounced live search)
+       2. "فلاتر مُتقَدِّمة" collapsible toggle holds 11 advanced fields
+       3. Auto-apply on any field change (no "Apply" button — only Reset)
+       4. Single visible <input type="date"> per side (was hidden +
+          mirrored text input in v6.6.5; that complexity is gone)
+       Legacy #woxF* IDs are preserved so wfLoadOutbox()'s filter map
+       still reads them via the same keys without rewiring. -->
   <div class="wf-hero-search">
     <i class="fas fa-search wf-hero-icon"></i>
     <input id="wfHeroSearch" class="wf-hero-input" type="text" autocomplete="off"
@@ -3931,7 +3952,8 @@
     <div class="wf-filter-row">
       <div class="wf-filter-field">
         <label>رقم المعاملة</label>
-        <input id="woxFTxnNumber" class="form-control-sm" placeholder="10/1031/25/...">
+        <input id="woxFTxnNumber" class="form-control-sm" placeholder="10/1031/25/..."
+               oninput="wfOutboxFiltersChanged()">
       </div>
       <div class="wf-filter-field" style="display:none;" aria-hidden="true">
         <!-- v6.6.5 — Hidden but kept in DOM: the hero search mirrors its
@@ -3941,46 +3963,40 @@
       </div>
       <div class="wf-filter-field">
         <label>معلَّقة عند</label>
-        <input id="woxFPendingAt" class="form-control-sm" placeholder="اسم مستخدم المسؤول الحالي">
+        <input id="woxFPendingAt" class="form-control-sm" placeholder="اسم مستخدم المسؤول الحالي"
+               oninput="wfOutboxFiltersChanged()">
       </div>
       <div class="wf-filter-field wf-filter-field--date">
         <label>الفَترة الزَّمنيَّة</label>
         <div class="wf-date-range">
-          <div class="wf-date-input" id="woxFFromWrap">
-            <input type="text" id="woxFFromText" class="form-control-sm"
-                   placeholder="يَوم/شَهر/سَنة" readonly
-                   onclick="wfDateOpen(this)">
-            <button type="button" class="wf-date-trigger" onclick="wfDateOpen(this)" aria-label="اختَر تاريخ البداية">
-              <i class="fas fa-calendar-days"></i>
-            </button>
-            <input type="date" id="woxFFrom" onchange="wfDateNativeChange(this)" aria-label="من تاريخ المعاملة">
+          <div class="wf-date-input">
+            <input type="date" id="woxFFrom" class="form-control-sm"
+                   aria-label="من تاريخ المعاملة"
+                   onchange="wfOutboxFiltersChanged()">
           </div>
-          <span class="sep">—</span>
-          <div class="wf-date-input" id="woxFToWrap">
-            <input type="text" id="woxFToText" class="form-control-sm"
-                   placeholder="يَوم/شَهر/سَنة" readonly
-                   onclick="wfDateOpen(this)">
-            <button type="button" class="wf-date-trigger" onclick="wfDateOpen(this)" aria-label="اختَر تاريخ النِّهاية">
-              <i class="fas fa-calendar-days"></i>
-            </button>
-            <input type="date" id="woxFTo" onchange="wfDateNativeChange(this)" aria-label="إلى تاريخ المعاملة">
+          <span class="sep">إلى</span>
+          <div class="wf-date-input">
+            <input type="date" id="woxFTo" class="form-control-sm"
+                   aria-label="إلى تاريخ المعاملة"
+                   onchange="wfOutboxFiltersChanged()">
           </div>
         </div>
         <div class="wf-date-shortcuts">
-          <button type="button" class="wf-date-shortcut" onclick="wfDateShortcut('today')">اليَوم</button>
-          <button type="button" class="wf-date-shortcut" onclick="wfDateShortcut('7d')">آخِر 7 أيَّام</button>
-          <button type="button" class="wf-date-shortcut" onclick="wfDateShortcut('30d')">آخِر 30 يَوم</button>
-          <button type="button" class="wf-date-shortcut" onclick="wfDateShortcut('mtd')">هذا الشَّهر</button>
-          <button type="button" class="wf-date-shortcut" onclick="wfDateShortcut('clear')">مَسح</button>
+          <button type="button" class="wf-date-shortcut" onclick="wfDateShortcut('today', event)">اليَوم</button>
+          <button type="button" class="wf-date-shortcut" onclick="wfDateShortcut('7d', event)">آخِر 7 أيَّام</button>
+          <button type="button" class="wf-date-shortcut" onclick="wfDateShortcut('30d', event)">آخِر 30 يَوم</button>
+          <button type="button" class="wf-date-shortcut" onclick="wfDateShortcut('mtd', event)">هذا الشَّهر</button>
+          <button type="button" class="wf-date-shortcut" onclick="wfDateShortcut('clear', event)">مَسح</button>
         </div>
       </div>
       <div class="wf-filter-field">
         <label>تَصدير إلى جِهة</label>
-        <input id="woxFRecipient" class="form-control-sm" placeholder="اسم المستخدم المستلم">
+        <input id="woxFRecipient" class="form-control-sm" placeholder="اسم المستخدم المستلم"
+               oninput="wfOutboxFiltersChanged()">
       </div>
       <div class="wf-filter-field">
         <label>درجة الأهمِّيَّة</label>
-        <select id="woxFImportance" class="form-control-sm">
+        <select id="woxFImportance" class="form-control-sm" onchange="wfOutboxFiltersChanged()">
           <option value="">كل الدَّرَجات</option>
           <option value="critical">عاجِل</option>
           <option value="high">عالي</option>
@@ -3990,7 +4006,7 @@
       </div>
       <div class="wf-filter-field">
         <label>حالة المعامَلة</label>
-        <select id="woxFStatus" class="form-control-sm">
+        <select id="woxFStatus" class="form-control-sm" onchange="wfOutboxFiltersChanged()">
           <option value="">كل الحالات</option>
           <option value="pending">قَيد الانتظار</option>
           <option value="in_progress">قَيد التَّشغيل</option>
@@ -4002,11 +4018,11 @@
       </div>
       <div class="wf-filter-field">
         <label>نَوع المعامَلة</label>
-        <select id="woxFType" class="form-control-sm"><option value="">كل الأنواع</option></select>
+        <select id="woxFType" class="form-control-sm" onchange="wfOutboxFiltersChanged()"><option value="">كل الأنواع</option></select>
       </div>
       <div class="wf-filter-field">
         <label>حالة القِراءة</label>
-        <select id="woxFRead" class="form-control-sm">
+        <select id="woxFRead" class="form-control-sm" onchange="wfOutboxFiltersChanged()">
           <option value="">الكُل</option>
           <option value="read">مَقروءة</option>
           <option value="unread">غَير مَقروءة</option>
@@ -4014,19 +4030,19 @@
       </div>
       <div class="wf-filter-field">
         <label>تَجاوَزَت المُدَّة؟</label>
-        <select id="woxFOverdue" class="form-control-sm">
+        <select id="woxFOverdue" class="form-control-sm" onchange="wfOutboxFiltersChanged()">
           <option value="">الكُل</option>
           <option value="1">نَعَم — مُتأخِّرة فَقَط</option>
         </select>
       </div>
       <div class="wf-filter-field">
         <label>نَوع المَصروف</label>
-        <select id="woxFExpense" class="form-control-sm"><option value="">كل الأنواع</option></select>
+        <select id="woxFExpense" class="form-control-sm" onchange="wfOutboxFiltersChanged()"><option value="">كل الأنواع</option></select>
       </div>
     </div>
     <div class="wf-filter-actions">
-      <button class="btn btn-primary" onclick="wfLoadOutbox()"><i class="fas fa-search"></i> تَطبيق الفلاتر</button>
-      <button class="btn btn-light"   onclick="wfResetOutboxFilters()"><i class="fas fa-redo"></i> إعادة تَعيين</button>
+      <div class="wf-filter-status"><i class="fas fa-bolt"></i> تَطبيق تِلقائي عند التَّغيير · <strong id="wfFilterStatusCount">0</strong> فلتر نشط</div>
+      <button class="btn btn-light" onclick="wfResetOutboxFilters()"><i class="fas fa-redo"></i> إعادة تَعيين</button>
     </div>
   </div>
 

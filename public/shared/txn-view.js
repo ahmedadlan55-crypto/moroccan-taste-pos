@@ -296,6 +296,28 @@
       .tv-btn.warning{background:#f59e0b;color:#fff;border-color:#f59e0b;}
       .tv-btn.purple{background:#8b5cf6;color:#fff;border-color:#8b5cf6;}
       .tv-btn.ghost{background:transparent;border:0;color:#64748b;}
+      /* v6.4 — admin-override style: dashed warning border + slight de-saturation */
+      .tv-btn.tv-btn-override{
+        position:relative;
+        outline:2px dashed rgba(245,158,11,.6);
+        outline-offset:2px;
+      }
+      .tv-btn.tv-btn-override::after{
+        content:'\\f3ed'; /* fa-shield-halved */
+        font-family:'Font Awesome 6 Free','Font Awesome 5 Free','FontAwesome';
+        font-weight:900;
+        font-size:9px;
+        position:absolute;
+        top:-6px;
+        inset-inline-end:-6px;
+        background:#f59e0b;
+        color:#fff;
+        border-radius:50%;
+        width:16px;
+        height:16px;
+        display:grid;
+        place-items:center;
+      }
 
       /* Empty state */
       .tv-empty{text-align:center;color:#94a3b8;padding:24px;font-size:13px;}
@@ -627,17 +649,32 @@
       btns.push('<button class="tv-btn" data-tv-act="reply"><i class="fas fa-comment"></i> رد</button>');
     }
     // Workflow actions — ONLY assignee/admin
+    // v6.4: when meIsAdmin acts on behalf of someone else, we mark the buttons
+    // with data-admin-override so the action handler can show a confirm modal
+    // explaining the override and logging it.
+    var isOverride = canActWorkflow && !isAssignee && meIsAdmin;
+    var overrideAttr = isOverride ? ' data-admin-override="true"' : '';
+    var overrideTitle = isOverride ? ' title="تجاوز أدمن — أنت لست المسؤول الحالي"' : '';
+    var overrideClass = isOverride ? ' tv-btn-override' : '';
     if (canActWorkflow) {
+      if (isOverride) {
+        // Visual hint above the buttons that this is an admin override
+        btns.push(
+          '<div style="margin-inline-end:auto;display:flex;align-items:center;gap:8px;padding:6px 12px;background:#fef3c7;border:1px dashed #f59e0b;border-radius:8px;color:#92400e;font-size:11.5px;font-weight:700;">' +
+          '<i class="fas fa-shield-halved"></i> وضع تجاوز الأدمن — كل إجراء سيُسجَّل' +
+          '</div>'
+        );
+      }
       if (opts.actions.includes('return') && (perms.canReturn !== false))
-        btns.push('<button class="tv-btn warning" data-tv-act="return"><i class="fas fa-undo"></i> إعادة للتعديل</button>');
+        btns.push('<button class="tv-btn warning'+overrideClass+'"'+overrideAttr+overrideTitle+' data-tv-act="return"><i class="fas fa-undo"></i> إعادة للتعديل</button>');
       if (opts.actions.includes('forward') && (perms.canForward !== false))
-        btns.push('<button class="tv-btn purple" data-tv-act="forward"><i class="fas fa-share"></i> تحويل</button>');
+        btns.push('<button class="tv-btn purple'+overrideClass+'"'+overrideAttr+overrideTitle+' data-tv-act="forward"><i class="fas fa-share"></i> تحويل</button>');
       if (opts.actions.includes('reject') && (perms.canReject !== false))
-        btns.push('<button class="tv-btn danger" data-tv-act="reject"><i class="fas fa-times"></i> رفض</button>');
+        btns.push('<button class="tv-btn danger'+overrideClass+'"'+overrideAttr+overrideTitle+' data-tv-act="reject"><i class="fas fa-times"></i> رفض</button>');
       if (opts.actions.includes('approve') && (perms.canApprove !== false))
-        btns.push('<button class="tv-btn success" data-tv-act="approve"><i class="fas fa-check"></i> اعتماد</button>');
+        btns.push('<button class="tv-btn success'+overrideClass+'"'+overrideAttr+overrideTitle+' data-tv-act="approve"><i class="fas fa-check"></i> اعتماد</button>');
       if (opts.actions.includes('close') && perms.canClose)
-        btns.push('<button class="tv-btn primary" data-tv-act="close-txn"><i class="fas fa-lock"></i> إغلاق نهائي</button>');
+        btns.push('<button class="tv-btn primary'+overrideClass+'"'+overrideAttr+overrideTitle+' data-tv-act="close-txn"><i class="fas fa-lock"></i> إغلاق نهائي</button>');
     } else if (!isTerminal && assignee && assignee !== meName) {
       // Show explainer message: "the txn is at X — only X can act"
       // V5.4.2: prefer full name + position over username
@@ -798,6 +835,37 @@
       if (!btn) return;
       var act = btn.getAttribute('data-tv-act');
       if (act === 'close') return close();
+      // v6.4 — admin override confirmation: when the button was rendered with
+      // data-admin-override="true" (meaning the current user is admin but NOT
+      // the assignee), require explicit confirmation before firing the action.
+      if (btn.getAttribute('data-admin-override') === 'true') {
+        var actLabel = (window.TxnConst && window.TxnConst.actionLabel)
+          ? window.TxnConst.actionLabel(act) : act;
+        var confirmMsg = 'أنت لست المسؤول الحالي عن هذه المعاملة.\n\n' +
+                        'استخدام صلاحيات الأدمن للتجاوز (override) سيُسجَّل في سجل المراجعة.\n\n' +
+                        'هل تريد المتابعة بـ "' + actLabel + '" نيابة عن المسؤول الحالي؟';
+        if (window.WoModal && typeof window.WoModal.confirm === 'function') {
+          window.WoModal.confirm({
+            title: 'تأكيد تجاوز الأدمن',
+            message: confirmMsg,
+            confirmText: 'متابعة • ' + actLabel,
+            cancelText: 'إلغاء',
+            danger: true
+          }).then(function(ok){
+            if (!ok) return;
+            if (typeof opts.onAction === 'function') {
+              var r = opts.onAction(act, { txnId: txnId, close: close, adminOverride: true });
+              if (r === true) close();
+            }
+          });
+        } else if (window.confirm(confirmMsg)) {
+          if (typeof opts.onAction === 'function') {
+            var r = opts.onAction(act, { txnId: txnId, close: close, adminOverride: true });
+            if (r === true) close();
+          }
+        }
+        return;
+      }
       if (typeof opts.onAction === 'function') {
         var r = opts.onAction(act, { txnId: txnId, close: close });
         if (r === true) close();

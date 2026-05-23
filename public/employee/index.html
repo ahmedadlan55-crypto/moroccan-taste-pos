@@ -290,6 +290,8 @@
     html[lang="en"] .hdr-n,html[lang="en"] .hdr-s{text-align:left;}
   </style>
   <script src="/shared/txn-constants.js?v=1"></script>
+  <script src="/shared/wf-mini-stepper.js?v=1"></script>
+  <script src="/shared/empty-state.js?v=1"></script>
   <script src="/shared/txn-letter.js?v=2"></script>
   <script src="/shared/txn-view.js?v=1"></script>
   <script src="/js/wo-modal.js?v=1"></script>
@@ -663,6 +665,20 @@ document.addEventListener('keydown',function(e){if(e.key==='Enter'&&document.get
 
 <style>
   @keyframes pwaSlideUp { from { transform: translateY(100%); opacity: 0; } to { transform: translateY(0); opacity: 1; } }
+  /* v6.4 — PWA install prompts are a mobile feature; hide on desktop where
+     the user can already access the page via a browser bookmark / tab. */
+  @media (min-width: 768px) {
+    #pwaInstallBanner, #pwaIOSHint { display: none !important; }
+  }
+  /* v6.4 — Constrain employee portal width on desktop. The mobile-first card
+     layout looks weird stretched to 1440px+. Center within a comfortable
+     reading column instead. */
+  @media (min-width: 768px) {
+    #app > .main, #app .page {
+      max-width: 720px;
+      margin-inline: auto;
+    }
+  }
 </style>
 
 <script>
@@ -764,27 +780,4 @@ document.addEventListener('keydown',function(e){if(e.key==='Enter'&&document.get
     if (isIOS && !isStandalone() && !isDismissed() && iosHint) {
       // Show iOS hint after 10 seconds (gives user time to use the app first)
       setTimeout(function() {
-        if (!isStandalone() && !isDismissed()) iosHint.style.display = '';
-      }, 10000);
-    }
-    if (iosDismissBtn) {
-      iosDismissBtn.addEventListener('click', function() {
-        iosHint.style.display = 'none';
-        markDismissed();
-      });
-    }
-
-    // 4. Track successful installation
-    window.addEventListener('appinstalled', function() {
-      console.log('[Employee PWA] App installed');
-      if (installBanner) installBanner.style.display = 'none';
-      if (iosHint) iosHint.style.display = 'none';
-      // One-time toast (if available)
-      if (typeof window.showToast === 'function') {
-        window.showToast('تم تثبيت التطبيق بنجاح ✓');
-      }
-    });
-  })();
-</script>
-</body>
-</html>
+        if (!isStandalone() && !isDismissed()) iosHint.style.display = '

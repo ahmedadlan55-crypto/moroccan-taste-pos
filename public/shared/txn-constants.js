@@ -70,19 +70,39 @@
     } catch(_) { return 'ar'; }
   }
 
-  function statusLabel(key, lang){ var s = STATUS[key]; if (!s) return key; return s[_lang(lang)] || s.ar; }
-  function actionLabel(key, lang){ var a = ACTION[key]; if (!a) return key; return a[_lang(lang)] || a.ar; }
-  function importanceLabel(key, lang){ var i = IMPORTANCE[key]; if (!i) return key; return i[_lang(lang)] || i.ar; }
+  // v6.4 — normalize key: server sometimes returns 'Pending' / 'In Progress'
+  // (PascalCase or with spaces) while the STATUS map uses snake_case lower.
+  // Normalize before lookup so badges always render the Arabic label.
+  function _normStatus(k){
+    if (k == null) return '';
+    return String(k).toLowerCase().trim().replace(/\s+/g, '_').replace(/-/g, '_');
+  }
+
+  function statusLabel(key, lang){
+    var s = STATUS[_normStatus(key)];
+    if (!s) return String(key||'');
+    return s[_lang(lang)] || s.ar;
+  }
+  function actionLabel(key, lang){
+    var a = ACTION[_normStatus(key)];
+    if (!a) return String(key||'');
+    return a[_lang(lang)] || a.ar;
+  }
+  function importanceLabel(key, lang){
+    var i = IMPORTANCE[_normStatus(key)];
+    if (!i) return String(key||'');
+    return i[_lang(lang)] || i.ar;
+  }
 
   function statusBadge(key, lang){
-    var s = STATUS[key];
-    if (!s) return '<span>'+_esc(key)+'</span>';
+    var s = STATUS[_normStatus(key)];
+    if (!s) return '<span style="display:inline-block;padding:3px 10px;border-radius:999px;font-size:11px;font-weight:700;background:#f1f5f9;color:#475569;">'+_esc(key)+'</span>';
     return '<span style="display:inline-block;padding:3px 10px;border-radius:999px;font-size:11px;font-weight:700;background:'+s.bg+';color:'+s.color+';" aria-label="'+_esc(statusLabel(key,lang))+'">'+_esc(statusLabel(key,lang))+'</span>';
   }
 
   function importanceBadge(key, lang){
-    var i = IMPORTANCE[key];
-    if (!i) return '<span>'+_esc(key)+'</span>';
+    var i = IMPORTANCE[_normStatus(key)];
+    if (!i) return '<span style="display:inline-block;padding:2px 8px;border-radius:6px;font-size:10px;font-weight:800;background:#f1f5f9;color:#475569;">'+_esc(key)+'</span>';
     return '<span style="display:inline-block;padding:2px 8px;border-radius:6px;font-size:10px;font-weight:800;background:'+i.bg+';color:'+i.color+';" aria-label="'+_esc(importanceLabel(key,lang))+'">'+_esc(importanceLabel(key,lang))+'</span>';
   }
 

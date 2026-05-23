@@ -422,10 +422,17 @@
   }
 
   function buildBody(route, args) {
-    if (route.method === 'GET' || route.method === 'DELETE') return undefined;
+    // GET never has a body.
+    if (route.method === 'GET') return undefined;
+    // Explicit body shape always wins — including for DELETE (e.g.
+    // forceDeleteWfTransaction needs to send { confirm, reason, username }
+    // for the backend schema validator to pass).
     if (route.body) return JSON.stringify(route.body(...args));
-    // Use the first object argument as the body — works for both single-arg
-    // calls like fn({...}) and multi-arg calls like fn({...}, currentUser).
+    // DELETE without an explicit body shape ships no body (preserves
+    // behavior for the dozens of `deleteFoo` routes that pass only an id).
+    if (route.method === 'DELETE') return undefined;
+    // POST/PUT/PATCH without explicit body — use the first object arg
+    // (handles both fn({...}) and fn({...}, username) call shapes).
     for (var i = 0; i < args.length; i++) {
       if (args[i] && typeof args[i] === 'object') return JSON.stringify(args[i]);
     }

@@ -39,7 +39,11 @@
   margin: 0;
 }
 .wf-section-title i {
-  color: var(--mt-accent, #7c3aed);
+  /* v6.6.3 — Inherit the cascade-resolved --accent (same token
+     .btn-primary uses) instead of hardcoding purple. This keeps the
+     title icon visually aligned with whichever color wins for the
+     primary CTAs in the operator's deployment. */
+  color: var(--accent, var(--mt-accent, #7c3aed));
   font-size: 22px;
 }
 .wf-section-actions {
@@ -72,7 +76,9 @@
 .wf-summary-card {
   background: #fff;
   border: 1px solid var(--mt-border, #e2e8f0);
-  border-right: 4px solid var(--mt-accent, #7c3aed);
+  /* v6.6.3 — Border strip inherits brand --accent (was hardcoded purple)
+     so the strip changes color in sync with the primary CTA palette. */
+  border-right: 4px solid var(--accent, var(--mt-accent, #7c3aed));
   border-radius: var(--mt-radius-md, 14px);
   padding: 16px 18px;
   display: flex;
@@ -83,37 +89,30 @@
 }
 .wf-summary-card:hover {
   transform: translateY(-2px);
-  box-shadow: 0 8px 24px rgba(124, 58, 237, 0.15);
+  box-shadow: 0 8px 24px rgba(15, 23, 42, 0.10);
 }
 .wf-summary-card .lbl {
-  display: flex;
-  align-items: center;
-  gap: 8px;
+  /* v6.6.3 — Icons stripped (owner spec: "ازل الايقونات التي ليس لها داعي")
+     so .lbl is now just label text — no gap needed. */
   font-size: 12.5px;
   font-weight: 700;
   color: var(--mt-text-muted, #64748b);
 }
-.wf-summary-card .lbl i {
-  color: var(--mt-accent, #7c3aed);
-  font-size: 14px;
-}
 .wf-summary-card .val {
   font-size: 26px;
   font-weight: 900;
-  color: var(--mt-accent, #7c3aed);
+  color: var(--accent, var(--mt-accent, #7c3aed));
   font-variant-numeric: tabular-nums;
 }
 
-/* Status-tinted variants */
+/* v6.6.3 — Status variants are now scoped to TRUE alerts only
+   (warn + danger). The "success" variant was dropped — the incoming-
+   totals card now uses the default accent so the palette is calm
+   rather than a 4-color rainbow. */
 .wf-summary-card.is-warn          { border-right-color: var(--mt-warning, #f59e0b); }
-.wf-summary-card.is-warn .val,
-.wf-summary-card.is-warn .lbl i   { color: var(--mt-warning, #f59e0b); }
+.wf-summary-card.is-warn .val     { color: var(--mt-warning, #f59e0b); }
 .wf-summary-card.is-danger        { border-right-color: var(--mt-danger, #dc2626); }
-.wf-summary-card.is-danger .val,
-.wf-summary-card.is-danger .lbl i { color: var(--mt-danger, #dc2626); }
-.wf-summary-card.is-success       { border-right-color: var(--mt-success, #16a34a); }
-.wf-summary-card.is-success .val,
-.wf-summary-card.is-success .lbl i{ color: var(--mt-success, #16a34a); }
+.wf-summary-card.is-danger .val   { color: var(--mt-danger, #dc2626); }
 
 /* ── 4. Table card chrome ────────────────────────────────────────── */
 .wf-table-card {
@@ -273,22 +272,52 @@
   font-family: inherit;
   width: 100%;
 }
+/* v6.6.3 — The date-pair cell needs ~2x the width of a single field so
+   the two <input type="date"> inputs + their native calendar icons
+   render without colliding into the adjacent "تَصدير إلى جهة" column.
+   span 2 in the auto-fit grid gives it the breathing room it needs. */
+.wf-filter-field--date {
+  grid-column: span 2;
+}
 .wf-filter-field--date .wf-filter-date-pair {
   display: grid;
-  grid-template-columns: 1fr auto 1fr;
-  gap: 6px;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
   align-items: center;
 }
+/* The visible "→" between the two dates is redundant with the label
+   "من تاريخ — إلى" above. Owner asked to drop redundant icons; we hide
+   the span here (HTML is unchanged) so existing renders stop showing it. */
 .wf-filter-field--date .wf-filter-date-sep {
-  color: var(--mt-text-light, #94a3b8);
-  font-weight: 800;
-  text-align: center;
+  display: none;
 }
+/* Tame the native <input type="date"> calendar icon. Browser-default
+   black icon clashes with the brand palette; soften it. */
+.wf-filter-panel input[type="date"]::-webkit-calendar-picker-indicator {
+  opacity: 0.5;
+  cursor: pointer;
+  transition: opacity 0.12s;
+}
+.wf-filter-panel input[type="date"]:hover::-webkit-calendar-picker-indicator {
+  opacity: 1;
+}
+
+/* v6.6.3 — Cap the filter-action buttons so "بحث" doesn't stretch into
+   a half-page banner. Pre-v6.6.3 the flex container had no width cap
+   and inherited the default .btn padding, producing the huge red bar
+   the owner reported. */
 .wf-filter-actions {
   display: flex;
   gap: 10px;
   justify-content: center;
-  margin-top: 14px;
+  margin-top: 16px;
+  flex-wrap: wrap;
+}
+.wf-filter-actions .btn {
+  min-width: 140px;
+  max-width: 220px;
+  padding: 10px 22px;
+  font-weight: 700;
 }
 
 /* ── 10. Wipe-modal stats grid (v6.6.1) ──────────────────────────── */

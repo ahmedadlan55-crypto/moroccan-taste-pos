@@ -13050,30 +13050,32 @@ function wfLoadOutbox() {
   });
 
   // Summary cards — V3.1: includes "مرجعة للتعديل" card so the user spots returned items at a glance
-  // v6.6.0 — Repainted with .wf-summary-card (brand purple primary + status tints)
-  //   so the section finally matches Moroccan Taste identity (token: --mt-accent).
+  // v6.6.0 — Repainted with .wf-summary-card so the section matches the
+  //          Moroccan Taste brand palette (--accent driven).
+  // v6.6.3 — Owner spec: "ازل الايقونات التي ليس لها داعي". Decorative
+  //          icons inside each card are removed; the card now shows only
+  //          label + count + a colour strip via the variant class. The
+  //          "success" variant is gone (was painting the incoming-totals
+  //          card a third color); incoming-total now uses the default
+  //          accent so the palette is calm.
   window._apiBridge.withSuccessHandler(function(s) {
     var box = document.getElementById('wfOutboxSummary');
     if (!box) return;
-    var card = function(label, value, variant, icon) {
-      // variant is one of '', 'warn', 'danger', 'success' — class prefix is added here
+    var card = function(label, value, variant) {
       var cls = 'wf-summary-card' + (variant ? ' is-' + variant : '');
-      var iconHtml = icon ? '<i class="fas ' + icon + '"></i>' : '';
       return '<div class="' + cls + '">' +
-               '<span class="lbl">' + iconHtml + ' ' + label + '</span>' +
+               '<span class="lbl">' + label + '</span>' +
                '<span class="val">' + (Number(value || 0)).toLocaleString('en-US') + '</span>' +
              '</div>';
     };
     var og = (s && s.outgoing) || {}, ig = (s && s.incoming) || {};
-    // Primary purple cards — outgoing totals (the "section identity")
-    var html = card('مجموع المعاملات الصادرة', og.total||0, '',       'fa-paper-plane') +
-               card('المُعلَّقة',                og.open ||0, 'warn',  'fa-clock');
-    // Returned-for-edit only shows when relevant — gets danger tint
-    if ((og.returned||0) > 0) {
-      html += card('مرجعة للتعديل', og.returned, 'danger', 'fa-rotate-left');
+    var html = card('مجموع المعاملات الصادرة', og.total || 0)             +  // default accent
+               card('المُعلَّقة',                og.open  || 0, 'warn');      // amber
+    if ((og.returned || 0) > 0) {
+      html += card('مرجعة للتعديل', og.returned, 'danger');                  // red — only when relevant
     }
-    html += card('مجموع المعاملات الواردة', ig.total||0, 'success', 'fa-inbox') +
-            card('الواردة المعلقة',         ig.open ||0, 'danger',  'fa-bell');
+    html += card('مجموع المعاملات الواردة', ig.total || 0)                +  // default accent
+            card('الواردة المُعلَّقة',         ig.open  || 0, 'danger');      // red
     box.innerHTML = html;
   }).getWfOutboxSummary({ username: currentUser });
 

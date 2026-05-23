@@ -3925,9 +3925,14 @@
       </div>
       <div class="wf-filter-field wf-filter-field--date">
         <label>من تاريخ — إلى</label>
+        <!-- v6.6.3 — Dropped the "→" separator between the two date
+             inputs. The label above already communicates the range
+             relationship; the arrow was visual noise (owner spec:
+             "ازل الايقونات التي ليس لها داعي"). The CSS class
+             .wf-filter-field--date now spans 2 grid cells so the pair
+             stops overlapping the adjacent "تَصدير إلى جهة" field. -->
         <div class="wf-filter-date-pair">
           <input type="date" id="woxFFrom" class="form-control-sm" title="من تاريخ" aria-label="من تاريخ المعاملة">
-          <span class="wf-filter-date-sep">→</span>
           <input type="date" id="woxFTo"   class="form-control-sm" title="إلى تاريخ" aria-label="إلى تاريخ المعاملة">
         </div>
       </div>

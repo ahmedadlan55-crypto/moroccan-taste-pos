@@ -325,9 +325,12 @@
 .wf-section-actions .wf-wipe-btn i { font-size: 11px; }
 
 /* Primary CTA — solid brand purple + soft brand shadow */
+/* v6.9.0 — #erpWfInbox added so "معاملة جديدة" in جميع المعاملات shares
+   the same brand-purple chrome as Outbox / Dashboard / Incoming. */
 #erpWfDashboard .wf-section-actions .btn.btn-primary,
 #erpWfIncoming  .wf-section-actions .btn.btn-primary,
-#erpWfOutgoing  .wf-section-actions .btn.btn-primary {
+#erpWfOutgoing  .wf-section-actions .btn.btn-primary,
+#erpWfInbox     .wf-section-actions .btn.btn-primary {
   background: var(--mt-accent, #7c3aed) !important;
   color: #fff !important;
   border: 1px solid var(--mt-accent, #7c3aed) !important;
@@ -335,7 +338,8 @@
 }
 #erpWfDashboard .wf-section-actions .btn.btn-primary:hover,
 #erpWfIncoming  .wf-section-actions .btn.btn-primary:hover,
-#erpWfOutgoing  .wf-section-actions .btn.btn-primary:hover {
+#erpWfOutgoing  .wf-section-actions .btn.btn-primary:hover,
+#erpWfInbox     .wf-section-actions .btn.btn-primary:hover {
   background: var(--mt-accent-2, #6d28d9) !important;
   border-color: var(--mt-accent-2, #6d28d9) !important;
   box-shadow: 0 6px 18px rgba(124, 58, 237, 0.38) !important;
@@ -343,7 +347,8 @@
 }
 #erpWfDashboard .wf-section-actions .btn.btn-primary i,
 #erpWfIncoming  .wf-section-actions .btn.btn-primary i,
-#erpWfOutgoing  .wf-section-actions .btn.btn-primary i {
+#erpWfOutgoing  .wf-section-actions .btn.btn-primary i,
+#erpWfInbox     .wf-section-actions .btn.btn-primary i {
   color: #fff !important;
 }
 
@@ -753,6 +758,27 @@
   margin-bottom: 16px;
   box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04);
 }
+
+/* v6.9.0 — Inbox-specific tweaks. The bulk-action bar inherited a
+   legacy blue from pre-v6.7.0; align it to the brand purple so it
+   doesn't fight the rest of the redesigned chrome. */
+#erpWfInbox #wfBulkBar {
+  background: var(--mt-accent, #7c3aed) !important;
+  color: #fff !important;
+  border: 1px solid var(--mt-accent-2, #6d28d9) !important;
+  box-shadow: 0 2px 8px rgba(124, 58, 237, 0.22);
+}
+#erpWfInbox #wfBulkBar .btn-light {
+  background: rgba(255, 255, 255, 0.16) !important;
+  color: #fff !important;
+  border-color: rgba(255, 255, 255, 0.24) !important;
+}
+#erpWfInbox #wfBulkBar .btn-light:hover {
+  background: rgba(255, 255, 255, 0.26) !important;
+}
+/* CSV button in the inbox header gets the same chip-style chrome as
+   .btn-light (since we relabel `.btn-secondary` → `.btn-light` in HTML).
+   Nothing to override here — generic .btn-light styles win. */
 
 /* ── 18. Responsive treatment for filters ────────────────────────── */
 @media (max-width: 720px) {

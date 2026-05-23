@@ -3781,34 +3781,170 @@
 <!-- WORKFLOW: جميع المعاملات (All Transactions) -->
 <!-- ══════════════════════════════════════════════════════════════ -->
 <div id="erpWfInbox" class="dash-section hidden">
-  <div class="section-header" style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;flex-wrap:wrap;gap:10px;">
-    <h2 class="section-title" style="font-size:18px;font-weight:800;display:flex;align-items:center;gap:8px;"><i class="fas fa-list" style="color:#3b82f6;"></i> جميع المعاملات</h2>
-    <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;">
-      <input type="text" id="wfInboxSearch" placeholder="بحث: عنوان/رقم/منشئ..." class="form-control" style="width:220px;" aria-label="بحث في المعاملات">
-      <select id="wfInboxStatusFilter" class="form-control" style="width:160px;" onchange="wfPersistFiltersAndLoad()" aria-label="تصفية بالحالة">
-        <option value="">كل الحالات</option>
-        <option value="pending">قيد الانتظار</option>
-        <option value="in_progress">قيد التنفيذ</option>
-        <option value="approved">معتمدة</option>
-        <option value="rejected">مرفوضة</option>
-        <option value="closed">مغلقة</option>
-      </select>
-      <button class="btn btn-secondary" onclick="wfExportInboxCsv()" title="تصدير القائمة الحالية لـ CSV" aria-label="تصدير CSV"><i class="fas fa-file-csv"></i> CSV</button>
+  <!-- v6.9.0 — Aligned with صندوق الصادر layout. Inbox is the broadest
+       admin-level listing so it has the widest filter set (13 fields)
+       and retains its existing power-features (CSV export, bulk actions,
+       wipe-all developer button). Legacy IDs (#wfInboxSearch,
+       #wfInboxStatusFilter) are kept inside the new structure so all
+       prior wfLoadInbox / wfPersistFiltersAndLoad call sites stay live. -->
+  <div class="wf-section-header">
+    <h2 class="wf-section-title"><i class="fas fa-list"></i> جميع المعاملات</h2>
+    <div class="wf-section-actions">
+      <button class="btn wf-wipe-btn" onclick="wfWipeAllTransactions()" title="تَصفير كل المعاملات (للمَسؤول فَقَط)"><i class="fas fa-broom"></i> تَصفير البَيانات التَّجريبيَّة</button>
+      <button class="btn btn-light" onclick="wfExportInboxCsv()" title="تصدير القائمة الحالية لـ CSV" aria-label="تصدير CSV"><i class="fas fa-file-csv"></i> تَصدير CSV</button>
       <!-- V5.7.2: Developer-only wipe-all button (hidden for non-developers via JS) -->
       <button id="wfWipeAllBtn" class="btn" style="display:none;background:linear-gradient(135deg,#7f1d1d,#450a0a);color:#fff;border:1.5px solid #7f1d1d;font-weight:800;" onclick="wfWipeAllTransactions()" title="حذف كل المعاملات (مطور فقط)"><i class="fas fa-skull-crossbones"></i> مسح شامل</button>
       <button class="btn btn-primary" onclick="wfOpenNewTxnModal()"><i class="fas fa-plus"></i> معاملة جديدة</button>
     </div>
   </div>
-  <!-- V5: bulk actions bar (hidden until rows selected) -->
+
+  <!-- Hero search (always visible, 300ms debounced) — mirrors to #wibFSubject -->
+  <div class="wf-hero-search">
+    <i class="fas fa-search wf-hero-icon"></i>
+    <input id="wfHeroSearchAll" class="wf-hero-input" type="text" autocomplete="off"
+           placeholder="ابحَث في رَقم المعامَلة أو الموضوع..."
+           oninput="wfHeroSearchInputAll(this.value)">
+    <button type="button" class="wf-hero-clear" onclick="wfHeroSearchClearAll()" aria-label="مَسح البَحث">
+      <i class="fas fa-times"></i>
+    </button>
+  </div>
+
+  <button type="button" class="wf-advanced-toggle" onclick="wfToggleAdvancedAll()">
+    <i class="fas fa-sliders"></i>
+    <span>فلاتر مُتقَدِّمة</span>
+    <span class="count-chip" id="wfAdvCountAll">0</span>
+    <i class="fas fa-chevron-down chevron"></i>
+  </button>
+
+  <div class="wf-advanced-panel wf-filter-panel" id="wfAdvancedPanelAll">
+    <div class="wf-filter-row">
+      <div class="wf-filter-field">
+        <label>رقم المعاملة</label>
+        <input id="wibFTxnNumber" class="form-control-sm" placeholder="10/1031/25/..."
+               oninput="wfAllFiltersChanged()">
+      </div>
+      <div class="wf-filter-field" style="display:none;" aria-hidden="true">
+        <input id="wibFSubject" class="form-control-sm" type="hidden">
+      </div>
+      <div class="wf-filter-field">
+        <label>المُنشِئ</label>
+        <input id="wibFCreatedBy" class="form-control-sm" placeholder="اسم مستخدم المُنشِئ"
+               oninput="wfAllFiltersChanged()">
+      </div>
+      <div class="wf-filter-field">
+        <label>المسؤول الحالي</label>
+        <input id="wibFAssignee" class="form-control-sm" placeholder="اسم مستخدم المسؤول"
+               oninput="wfAllFiltersChanged()">
+      </div>
+      <div class="wf-filter-field wf-filter-field--date">
+        <label>الفَترة الزَّمنيَّة</label>
+        <div class="wf-date-range">
+          <div class="wf-date-input">
+            <input type="date" id="wibFFrom" class="form-control-sm"
+                   aria-label="من تاريخ المعاملة"
+                   onchange="wfAllFiltersChanged()">
+          </div>
+          <span class="sep">إلى</span>
+          <div class="wf-date-input">
+            <input type="date" id="wibFTo" class="form-control-sm"
+                   aria-label="إلى تاريخ المعاملة"
+                   onchange="wfAllFiltersChanged()">
+          </div>
+        </div>
+        <div class="wf-date-shortcuts">
+          <button type="button" class="wf-date-shortcut" onclick="wfDateShortcutAll('today', event)">اليَوم</button>
+          <button type="button" class="wf-date-shortcut" onclick="wfDateShortcutAll('7d', event)">آخِر 7 أيَّام</button>
+          <button type="button" class="wf-date-shortcut" onclick="wfDateShortcutAll('30d', event)">آخِر 30 يَوم</button>
+          <button type="button" class="wf-date-shortcut" onclick="wfDateShortcutAll('mtd', event)">هذا الشَّهر</button>
+          <button type="button" class="wf-date-shortcut" onclick="wfDateShortcutAll('clear', event)">مَسح</button>
+        </div>
+      </div>
+      <div class="wf-filter-field">
+        <label>درجة الأهمِّيَّة</label>
+        <select id="wibFImportance" class="form-control-sm" onchange="wfAllFiltersChanged()">
+          <option value="">كل الدَّرَجات</option>
+          <option value="critical">عاجِل</option>
+          <option value="high">عالي</option>
+          <option value="medium">عادي</option>
+          <option value="low">مُنخفِض</option>
+        </select>
+      </div>
+      <div class="wf-filter-field">
+        <label>حالة المعامَلة</label>
+        <!-- v6.9.0 — Legacy ID #wfInboxStatusFilter preserved alongside the
+             new #wibFStatus so wfPersistFiltersAndLoad's older callers still
+             work. We sync the two on every change via _wfInitInboxFilters. -->
+        <select id="wibFStatus" class="form-control-sm" onchange="wfAllFiltersChanged()">
+          <option value="">كل الحالات</option>
+          <option value="pending">قَيد الانتظار</option>
+          <option value="in_progress">قَيد التَّشغيل</option>
+          <option value="approved">مُعتَمَدة</option>
+          <option value="rejected">مَطلوب التَّعديل</option>
+          <option value="returned">مُرجَعة</option>
+          <option value="closed">مُنتَهية</option>
+          <option value="draft">مُسَوَّدة</option>
+        </select>
+        <!-- Hidden legacy alias — wfPersistFiltersAndLoad reads this ID -->
+        <input id="wfInboxStatusFilter" type="hidden">
+      </div>
+      <div class="wf-filter-field">
+        <label>نَوع المعامَلة</label>
+        <select id="wibFType" class="form-control-sm" onchange="wfAllFiltersChanged()"><option value="">كل الأنواع</option></select>
+      </div>
+      <div class="wf-filter-field">
+        <label>الفَرع</label>
+        <select id="wibFBranch" class="form-control-sm" onchange="wfAllFiltersChanged()"><option value="">كل الفروع</option></select>
+      </div>
+      <div class="wf-filter-field">
+        <label>القِسم</label>
+        <select id="wibFDept" class="form-control-sm" onchange="wfAllFiltersChanged()"><option value="">كل الأقسام</option></select>
+      </div>
+      <div class="wf-filter-field">
+        <label>حالة القِراءة</label>
+        <select id="wibFRead" class="form-control-sm" onchange="wfAllFiltersChanged()">
+          <option value="">الكُل</option>
+          <option value="read">مَقروءة</option>
+          <option value="unread">غَير مَقروءة</option>
+        </select>
+      </div>
+      <div class="wf-filter-field">
+        <label>تَجاوَزَت المُدَّة؟</label>
+        <select id="wibFOverdue" class="form-control-sm" onchange="wfAllFiltersChanged()">
+          <option value="">الكُل</option>
+          <option value="1">نَعَم — مُتأخِّرة فَقَط</option>
+        </select>
+      </div>
+      <div class="wf-filter-field">
+        <label>نَوع المَصروف</label>
+        <select id="wibFExpense" class="form-control-sm" onchange="wfAllFiltersChanged()"><option value="">كل الأنواع</option></select>
+      </div>
+    </div>
+    <div class="wf-filter-actions">
+      <div class="wf-filter-status"><i class="fas fa-bolt"></i> تَطبيق تِلقائي عند التَّغيير · <strong id="wfFilterStatusCountAll">0</strong> فلتر نشط</div>
+      <button class="btn btn-light" onclick="wfResetAllFilters()"><i class="fas fa-redo"></i> إعادة تَعيين</button>
+    </div>
+  </div>
+
+  <!-- v6.9.0 — Legacy hero search alias kept (#wfInboxSearch was used by
+       the previous client-side filter code path). Mirror it to the new
+       hero so old callers still work without an extra read site. -->
+  <input type="hidden" id="wfInboxSearch">
+
+  <!-- V5: bulk actions bar (hidden until rows selected) — kept verbatim -->
   <div id="wfBulkBar" style="display:none;background:#1e40af;color:#fff;padding:10px 16px;border-radius:12px;margin-bottom:12px;align-items:center;gap:10px;flex-wrap:wrap;" role="region" aria-label="إجراءات جماعية">
     <span><strong id="wfBulkCount">0</strong> معاملة محددة</span>
     <button class="btn btn-success btn-sm" onclick="wfBulkAction('approve')" aria-label="اعتماد المحدد"><i class="fas fa-check"></i> اعتماد الكل</button>
     <button class="btn btn-danger  btn-sm" onclick="wfBulkAction('reject')"  aria-label="رفض المحدد"><i class="fas fa-times"></i> رفض الكل</button>
     <button class="btn btn-light   btn-sm" onclick="wfBulkClear()" aria-label="إلغاء التحديد">إلغاء</button>
   </div>
-  <div id="wfInboxStats" style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:18px;align-items:center;"></div>
-  <div class="erp-table-container" style="border-radius:14px;">
-    <table class="erp-table">
+
+  <!-- Summary stats — rendered by wfLoadInbox via wf-summary-grid -->
+  <div id="wfInboxSummary" class="wf-summary-grid"></div>
+  <!-- Legacy stats container kept for back-compat -->
+  <div id="wfInboxStats" style="display:none;"></div>
+
+  <div class="erp-table-container wf-table-card">
+    <table class="erp-table wf-table">
       <thead><tr>
         <th style="width:36px;"><input type="checkbox" id="wfInboxSelectAll" onclick="wfBulkToggleAll(this)" aria-label="تحديد الكل"></th>
         <th>الأهمية</th><th>الحالة</th><th>الرقم</th><th>النوع</th><th>الفرع</th><th>القسم</th><th>العنوان</th><th>المبلغ</th><th>المسؤول الحالي</th><th>التاريخ</th><th>إجراءات</th>
@@ -3892,18 +4028,136 @@
 <!-- WORKFLOW: صندوق الوارد (Incoming Box) -->
 <!-- ══════════════════════════════════════════════════════════════ -->
 <div id="erpWfIncoming" class="dash-section hidden">
-  <!-- v6.6.0 — Premium brand header (no quick-switch tabs; sidebar handles nav). -->
+  <!-- v6.9.0 — Aligned with صندوق الصادر layout: same hero search +
+       advanced collapsible + filter grid + summary + table card. The
+       only differences are: (a) "من المُرسِل" replaces "تَصدير إلى جهة"
+       since incoming is by definition assigned to the current user,
+       (b) the status filter is constrained to the four active lifecycle
+       states by default, and (c) recipients/scope fields are dropped as
+       they don't apply in the incoming context. -->
   <div class="wf-section-header">
     <h2 class="wf-section-title"><i class="fas fa-inbox"></i> صَندوق الوارد — في انتظار إجراء</h2>
     <div class="wf-section-actions">
       <button class="btn wf-wipe-btn" onclick="wfWipeAllTransactions()" title="تَصفير كل المعاملات (للمَسؤول فَقَط)"><i class="fas fa-broom"></i> تَصفير البَيانات التَّجريبيَّة</button>
-      <button class="btn btn-light" onclick="wfLoadIncoming()"><i class="fas fa-sync"></i> تحديث</button>
+      <button class="btn btn-light" onclick="wfLoadIncoming()" title="تحديث القائمة"><i class="fas fa-sync"></i> تحديث</button>
     </div>
   </div>
 
-  <div id="wfIncomingStats" style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:18px;"></div>
-  <div class="erp-table-container" style="border-radius:14px;">
-    <table class="erp-table">
+  <!-- Hero search (always visible, 300ms debounced) — mirrors to #winFSubject -->
+  <div class="wf-hero-search">
+    <i class="fas fa-search wf-hero-icon"></i>
+    <input id="wfHeroSearchInc" class="wf-hero-input" type="text" autocomplete="off"
+           placeholder="ابحَث في رَقم المعامَلة أو الموضوع أو اسم المُرسِل..."
+           oninput="wfHeroSearchInputInc(this.value)">
+    <button type="button" class="wf-hero-clear" onclick="wfHeroSearchClearInc()" aria-label="مَسح البَحث">
+      <i class="fas fa-times"></i>
+    </button>
+  </div>
+
+  <button type="button" class="wf-advanced-toggle" onclick="wfToggleAdvancedInc()">
+    <i class="fas fa-sliders"></i>
+    <span>فلاتر مُتقَدِّمة</span>
+    <span class="count-chip" id="wfAdvCountInc">0</span>
+    <i class="fas fa-chevron-down chevron"></i>
+  </button>
+
+  <div class="wf-advanced-panel wf-filter-panel" id="wfAdvancedPanelInc">
+    <div class="wf-filter-row">
+      <div class="wf-filter-field">
+        <label>رقم المعاملة</label>
+        <input id="winFTxnNumber" class="form-control-sm" placeholder="10/1031/25/..."
+               oninput="wfIncomingFiltersChanged()">
+      </div>
+      <div class="wf-filter-field" style="display:none;" aria-hidden="true">
+        <!-- Hidden mirror of the hero search so wfLoadIncoming() picks it
+             up through the same filter map without a separate code path. -->
+        <input id="winFSubject" class="form-control-sm" type="hidden">
+      </div>
+      <div class="wf-filter-field">
+        <label>مِن المُرسِل</label>
+        <input id="winFFromUser" class="form-control-sm" placeholder="اسم مستخدم المُنشِئ"
+               oninput="wfIncomingFiltersChanged()">
+      </div>
+      <div class="wf-filter-field wf-filter-field--date">
+        <label>الفَترة الزَّمنيَّة</label>
+        <div class="wf-date-range">
+          <div class="wf-date-input">
+            <input type="date" id="winFFrom" class="form-control-sm"
+                   aria-label="من تاريخ المعاملة"
+                   onchange="wfIncomingFiltersChanged()">
+          </div>
+          <span class="sep">إلى</span>
+          <div class="wf-date-input">
+            <input type="date" id="winFTo" class="form-control-sm"
+                   aria-label="إلى تاريخ المعاملة"
+                   onchange="wfIncomingFiltersChanged()">
+          </div>
+        </div>
+        <div class="wf-date-shortcuts">
+          <button type="button" class="wf-date-shortcut" onclick="wfDateShortcutInc('today', event)">اليَوم</button>
+          <button type="button" class="wf-date-shortcut" onclick="wfDateShortcutInc('7d', event)">آخِر 7 أيَّام</button>
+          <button type="button" class="wf-date-shortcut" onclick="wfDateShortcutInc('30d', event)">آخِر 30 يَوم</button>
+          <button type="button" class="wf-date-shortcut" onclick="wfDateShortcutInc('mtd', event)">هذا الشَّهر</button>
+          <button type="button" class="wf-date-shortcut" onclick="wfDateShortcutInc('clear', event)">مَسح</button>
+        </div>
+      </div>
+      <div class="wf-filter-field">
+        <label>درجة الأهمِّيَّة</label>
+        <select id="winFImportance" class="form-control-sm" onchange="wfIncomingFiltersChanged()">
+          <option value="">كل الدَّرَجات</option>
+          <option value="critical">عاجِل</option>
+          <option value="high">عالي</option>
+          <option value="medium">عادي</option>
+          <option value="low">مُنخفِض</option>
+        </select>
+      </div>
+      <div class="wf-filter-field">
+        <label>حالة المعامَلة</label>
+        <select id="winFStatus" class="form-control-sm" onchange="wfIncomingFiltersChanged()">
+          <option value="">كل الحالات النَّشِطة</option>
+          <option value="pending">قَيد الانتظار</option>
+          <option value="created">جَديدة</option>
+          <option value="in_progress">قَيد التَّشغيل</option>
+          <option value="replied">تَم الرَّد</option>
+        </select>
+      </div>
+      <div class="wf-filter-field">
+        <label>نَوع المعامَلة</label>
+        <select id="winFType" class="form-control-sm" onchange="wfIncomingFiltersChanged()"><option value="">كل الأنواع</option></select>
+      </div>
+      <div class="wf-filter-field">
+        <label>حالة القِراءة</label>
+        <select id="winFRead" class="form-control-sm" onchange="wfIncomingFiltersChanged()">
+          <option value="">الكُل</option>
+          <option value="read">مَقروءة</option>
+          <option value="unread">غَير مَقروءة</option>
+        </select>
+      </div>
+      <div class="wf-filter-field">
+        <label>تَجاوَزَت المُدَّة؟</label>
+        <select id="winFOverdue" class="form-control-sm" onchange="wfIncomingFiltersChanged()">
+          <option value="">الكُل</option>
+          <option value="1">نَعَم — مُتأخِّرة فَقَط</option>
+        </select>
+      </div>
+      <div class="wf-filter-field">
+        <label>نَوع المَصروف</label>
+        <select id="winFExpense" class="form-control-sm" onchange="wfIncomingFiltersChanged()"><option value="">كل الأنواع</option></select>
+      </div>
+    </div>
+    <div class="wf-filter-actions">
+      <div class="wf-filter-status"><i class="fas fa-bolt"></i> تَطبيق تِلقائي عند التَّغيير · <strong id="wfFilterStatusCountInc">0</strong> فلتر نشط</div>
+      <button class="btn btn-light" onclick="wfResetIncomingFilters()"><i class="fas fa-redo"></i> إعادة تَعيين</button>
+    </div>
+  </div>
+
+  <!-- Summary stats — rendered by wfLoadIncoming via wf-summary-grid -->
+  <div id="wfIncomingSummary" class="wf-summary-grid"></div>
+  <!-- Legacy stats container kept for back-compat with any code that still writes here -->
+  <div id="wfIncomingStats" style="display:none;"></div>
+
+  <div class="erp-table-container wf-table-card">
+    <table class="erp-table wf-table">
       <thead><tr><th>الأهمية</th><th>الرقم</th><th>النوع</th><th>المرسل</th><th>الفرع/القسم</th><th>العنوان</th><th>المبلغ</th><th>الخطوة</th><th>التاريخ</th><th>إجراءات</th></tr></thead>
       <tbody id="wfIncomingBody"><tr><td colspan="10" class="empty-msg">لا توجد معاملات بانتظارك</td></tr></tbody>
     </table>

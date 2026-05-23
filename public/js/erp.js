@@ -10031,6 +10031,9 @@ function wfLoadInbox() {
     var isDev = (window.state && window.state.isDeveloper) || (typeof window._isDeveloperUser === 'function' && window._isDeveloperUser());
     wipeBtn.style.display = isDev ? '' : 'none';
   }
+  // v6.9.0 — Lazy-init the type/expense/branch/dept dropdowns.
+  try { _wfInitInboxFilters(); } catch (_) {}
+
   var tb = document.getElementById('wfInboxBody');
   tb.innerHTML = '<tr><td colspan="12" class="empty-msg"><i class="fas fa-spinner fa-spin"></i> جاري التحميل...</td></tr>';
   // V5-UX: 12s timeout — show retry button if backend hangs
@@ -10041,36 +10044,66 @@ function wfLoadInbox() {
       '<button class="btn btn-sm btn-primary" style="margin-inline-start:10px;" onclick="wfLoadInbox()">إعادة المحاولة</button>' +
       '</td></tr>';
   }, TXN_TIMEOUT);
-  var status = (document.getElementById('wfInboxStatusFilter') || {}).value || '';
+
+  // v6.9.0 — Build the rich filter map from the new #wib* DOM IDs.
+  // Legacy #wfInboxStatusFilter is kept as a hidden alias so callers
+  // like wfPersistFiltersAndLoad (which still reads it) keep working.
+  var read = function(id) {
+    var el = document.getElementById(id);
+    var v = el && el.value ? String(el.value).trim() : '';
+    return v;
+  };
   var params = {};
-  if (status) params.status = status;
+  [
+    ['txnNumber',        'wibFTxnNumber'],
+    ['subject',          'wibFSubject'],
+    ['createdBy',        'wibFCreatedBy'],
+    ['currentAssignee',  'wibFAssignee'],
+    ['startDate',        'wibFFrom'],
+    ['endDate',          'wibFTo'],
+    ['importance',       'wibFImportance'],
+    ['status',           'wibFStatus'],
+    ['typeId',           'wibFType'],
+    ['branchId',         'wibFBranch'],
+    ['deptId',           'wibFDept'],
+    ['readStatus',       'wibFRead'],
+    ['overdue',          'wibFOverdue'],
+    ['expenseCategoryId','wibFExpense']
+  ].forEach(function(pair) {
+    var v = read(pair[1]);
+    if (v) params[pair[0]] = v;
+  });
+
   window._apiBridge.withSuccessHandler(function(list) {
     clearTimeout(fetchTimeout);
+    var legacyStats = document.getElementById('wfInboxStats');
+    var summary = document.getElementById('wfInboxSummary');
     if (!list || !list.length) {
       tb.innerHTML = '<tr><td colspan="12" class="empty-msg">لا توجد معاملات</td></tr>';
-      document.getElementById('wfInboxStats').innerHTML = '';
+      if (legacyStats) legacyStats.innerHTML = '';
+      if (summary) summary.innerHTML = '';
       return;
-    }
-    // V5: client-side search filter (in addition to server filter)
-    var q = ((document.getElementById('wfInboxSearch')||{}).value || '').trim().toLowerCase();
-    if (q) {
-      list = list.filter(function(t){
-        return (t.title||'').toLowerCase().indexOf(q) >= 0
-            || (t.txnNumber||'').toLowerCase().indexOf(q) >= 0
-            || (t.createdBy||'').toLowerCase().indexOf(q) >= 0
-            || (t.currentAssignee||'').toLowerCase().indexOf(q) >= 0;
-      });
     }
     var counts = { pending:0, in_progress:0, approved:0, rejected:0, closed:0 };
     list.forEach(function(t) { if (counts.hasOwnProperty(t.status)) counts[t.status]++; });
-    var statsHtml = '';
-    Object.keys(counts).forEach(function(k) {
-      statsHtml += '<div style="display:flex;align-items:center;gap:8px;padding:8px 16px;background:#fff;border:1px solid #e2e8f0;border-radius:10px;font-size:13px;font-weight:700;">' +
-        '<span style="width:10px;height:10px;border-radius:50%;background:' + (window._wfStatClrs[k]||'#94a3b8') + ';flex-shrink:0;"></span>' +
-        '<span>' + window._wfStatLbl[k] + '</span><span style="font-weight:900;color:#0f172a;">' + counts[k] + '</span></div>';
-    });
-    statsHtml += '<div style="margin-inline-start:auto;font-size:12px;color:#64748b;">الإجمالي: <strong>' + list.length.toLocaleString() + '</strong></div>';
-    document.getElementById('wfInboxStats').innerHTML = statsHtml;
+    // v6.9.0 — Render summary as wf-summary-grid cards
+    if (summary) {
+      var cards = [
+        { k: 'pending',     label: 'قَيد الانتظار', cls: 'is-warn' },
+        { k: 'in_progress', label: 'قَيد التَّشغيل', cls: '' },
+        { k: 'approved',    label: 'مُعتَمَدة',     cls: '' },
+        { k: 'rejected',    label: 'مَرفوضة',        cls: 'is-danger' },
+        { k: 'closed',      label: 'مُنتَهية',       cls: '' },
+        { k: '__total',     label: 'الإجمالي',       cls: '', isTotal: true }
+      ];
+      summary.innerHTML = cards.map(function(c) {
+        var val = c.isTotal ? list.length : (counts[c.k] || 0);
+        return '<div class="wf-summary-card ' + c.cls + '">' +
+                 '<span class="lbl">' + c.label + '</span>' +
+                 '<span class="val">' + val.toLocaleString('en-US') + '</span>' +
+               '</div>';
+      }).join('');
+    }
     // V5-PERF: cache full list for load-more, render only first PAGE
     window._wfInboxPagedList = list;
     window._wfInboxPagedShown = 0;
@@ -12776,33 +12809,69 @@ function wfLoadDashboard() {
 function wfLoadIncoming() {
   // v6.6.1 — Hide the wipe button if the current user isn't an admin.
   try { _wfApplyAdminVisibility(); } catch (_) {}
+  // v6.9.0 — Lazy-load type + expense category dropdowns the first time
+  // the panel mounts. Idempotent (guarded by _wfIncomingInitialized).
+  try { _wfInitIncomingFilters(); } catch (_) {}
+
   var tb = document.getElementById('wfIncomingBody');
   if (!tb) return;
   tb.innerHTML = '<tr><td colspan="10" class="empty-msg"><i class="fas fa-spinner fa-spin"></i> جاري التحميل...</td></tr>';
+
+  // v6.9.0 — Build the filter map from the new #win* DOM IDs. Empty
+  // values are skipped so the backend doesn't see e.g. `status=` (which
+  // would suppress its default "active inbox" constraint).
+  var read = function(id) {
+    var el = document.getElementById(id);
+    var v = el && el.value ? String(el.value).trim() : '';
+    return v;
+  };
+  var filters = { username: currentUser };
+  [
+    ['txnNumber', 'winFTxnNumber'],
+    ['subject',   'winFSubject'],
+    ['fromUsername', 'winFFromUser'],
+    ['startDate', 'winFFrom'],
+    ['endDate',   'winFTo'],
+    ['importance','winFImportance'],
+    ['status',    'winFStatus'],
+    ['typeId',    'winFType'],
+    ['readStatus','winFRead'],
+    ['overdue',   'winFOverdue'],
+    ['expenseCategoryId', 'winFExpense']
+  ].forEach(function(pair) {
+    var v = read(pair[1]);
+    if (v) filters[pair[0]] = v;
+  });
+
   window._apiBridge.withSuccessHandler(function(list) {
-    var stats = document.getElementById('wfIncomingStats');
+    var legacyStats = document.getElementById('wfIncomingStats');
+    var summary = document.getElementById('wfIncomingSummary');
     if (!list || !list.length) {
       tb.innerHTML = '<tr><td colspan="10" class="empty-msg">لا توجد معاملات بانتظارك</td></tr>';
-      if (stats) stats.innerHTML = '';
+      if (legacyStats) legacyStats.innerHTML = '';
+      if (summary) summary.innerHTML = '';
       return;
     }
-    // Importance stats
+    // v6.9.0 — Render summary as wf-summary-grid cards (same chrome as
+    // Outbox). The four importance buckets become four cards.
     var counts = { critical:0, high:0, medium:0, low:0 };
     list.forEach(function(t) { if (counts.hasOwnProperty(t.importance)) counts[t.importance]++; });
-    if (stats) {
-      stats.innerHTML = Object.keys(counts).map(function(k) {
-        var c = window._wfImpColors[k];
-        return '<div style="display:flex;align-items:center;gap:8px;padding:8px 16px;background:#fff;border:1px solid '+c+'30;border-radius:10px;font-size:13px;font-weight:700;">' +
-          '<span style="width:10px;height:10px;border-radius:50%;background:'+c+';"></span>' +
-          '<span>'+window._wfImpLabels[k]+'</span><span style="font-weight:900;color:#0f172a;">'+counts[k]+'</span></div>';
+    if (summary) {
+      var cardOrder = [
+        { k: 'critical', label: 'عاجِل',    cls: 'is-danger' },
+        { k: 'high',     label: 'عالي',     cls: 'is-warn' },
+        { k: 'medium',   label: 'عادي',     cls: '' },
+        { k: 'low',      label: 'مُنخفِض',  cls: '' }
+      ];
+      summary.innerHTML = cardOrder.map(function(c) {
+        return '<div class="wf-summary-card ' + c.cls + '">' +
+                 '<span class="lbl">' + c.label + '</span>' +
+                 '<span class="val">' + (counts[c.k] || 0) + '</span>' +
+               '</div>';
       }).join('');
     }
     tb.innerHTML = list.map(function(t) {
       var dt = t.createdAt ? new Date(t.createdAt).toLocaleDateString('en-GB') : '';
-      // v6.6.4 — Added per-row admin-only delete (.wf-row-delete-btn).
-      //   _wfApplyAdminVisibility() hides it for non-admins, the backend
-      //   guardAdmin enforces it as the authoritative gate. Cascade
-      //   delete also removes the row from the employee portal.
       var safeTxnNum = String(t.txnNumber || '').replace(/'/g, "\\'");
       var actions =
         '<button class="btn btn-sm btn-light" onclick="wfViewTxn(\''+t.id+'\')"><i class="fas fa-eye"></i></button> ' +
@@ -12824,7 +12893,7 @@ function wfLoadIncoming() {
         '<td>'+actions+'</td>' +
       '</tr>';
     }).join('');
-  }).getWfIncoming({ username: currentUser });
+  }).getWfIncoming(filters);
 }
 
 // ─── صندوق الصادر (Outgoing) — enterprise layout ───
@@ -13023,6 +13092,352 @@ function _wfUpdateAdvCount() {
     panel.addEventListener('input',  _wfUpdateAdvCount);
     panel.addEventListener('change', _wfUpdateAdvCount);
     _wfUpdateAdvCount();
+  }
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', init);
+  } else {
+    init();
+  }
+})();
+
+// ═══════════════════════════════════════════════════════════════════
+// v6.9.0 — Incoming (صندوق الوارد) filter helpers
+// ───────────────────────────────────────────────────────────────────
+// Mirror of the Outbox helpers above, with #win* IDs and a separate
+// debounce timer + localStorage key so the two panels' open/closed
+// state, hero search text, and active-filter dots evolve independently.
+// ═══════════════════════════════════════════════════════════════════
+
+var _wfHeroDebounceInc = null;
+var _wfFiltersDebounceInc = null;
+
+window.wfHeroSearchInputInc = function(val) {
+  var wrap = document.querySelector('#erpWfIncoming .wf-hero-search');
+  if (wrap) wrap.classList.toggle('has-value', !!val);
+  var subj = document.getElementById('winFSubject');
+  if (subj) subj.value = val || '';
+  if (_wfHeroDebounceInc) clearTimeout(_wfHeroDebounceInc);
+  _wfHeroDebounceInc = setTimeout(function() {
+    if (typeof wfLoadIncoming === 'function') wfLoadIncoming();
+  }, 300);
+};
+
+window.wfHeroSearchClearInc = function() {
+  var input = document.getElementById('wfHeroSearchInc');
+  if (input) {
+    input.value = '';
+    wfHeroSearchInputInc('');
+    try { input.focus(); } catch (_) {}
+  }
+};
+
+window.wfToggleAdvancedInc = function() {
+  var btn = document.querySelector('#erpWfIncoming .wf-advanced-toggle');
+  var panel = document.getElementById('wfAdvancedPanelInc');
+  if (!btn || !panel) return;
+  var open = !btn.classList.contains('is-open');
+  btn.classList.toggle('is-open', open);
+  panel.classList.toggle('is-open', open);
+  try { localStorage.setItem('wf-adv-open-inc', open ? '1' : '0'); } catch (_) {}
+};
+
+window.wfDateShortcutInc = function(kind, ev) {
+  var today = new Date();
+  var fromInp = document.getElementById('winFFrom');
+  var toInp   = document.getElementById('winFTo');
+  if (!fromInp || !toInp) return;
+  var iso = function(d) {
+    var y = d.getFullYear(), m = String(d.getMonth() + 1).padStart(2, '0'), day = String(d.getDate()).padStart(2, '0');
+    return y + '-' + m + '-' + day;
+  };
+  document.querySelectorAll('#erpWfIncoming .wf-date-shortcut.is-active').forEach(function(el) {
+    el.classList.remove('is-active');
+  });
+  if (kind === 'clear') {
+    fromInp.value = '';
+    toInp.value = '';
+  } else {
+    var from = new Date(today.getFullYear(), today.getMonth(), today.getDate());
+    var to   = new Date(today.getFullYear(), today.getMonth(), today.getDate());
+    if (kind === '7d')       from.setDate(today.getDate() - 6);
+    else if (kind === '30d') from.setDate(today.getDate() - 29);
+    else if (kind === 'mtd') from = new Date(today.getFullYear(), today.getMonth(), 1);
+    fromInp.value = iso(from);
+    toInp.value   = iso(to);
+    var target = (ev && ev.target && ev.target.closest) ? ev.target.closest('.wf-date-shortcut') : null;
+    if (target) target.classList.add('is-active');
+  }
+  wfIncomingFiltersChanged();
+};
+
+window.wfIncomingFiltersChanged = function() {
+  _wfUpdateIncAdvCount();
+  if (_wfFiltersDebounceInc) clearTimeout(_wfFiltersDebounceInc);
+  _wfFiltersDebounceInc = setTimeout(function() {
+    if (typeof wfLoadIncoming === 'function') wfLoadIncoming();
+  }, 300);
+};
+
+window.wfResetIncomingFilters = function() {
+  ['winFTxnNumber','winFSubject','winFFromUser','winFFrom','winFTo',
+   'winFImportance','winFStatus','winFType','winFRead','winFOverdue',
+   'winFExpense'].forEach(function(id) {
+    var el = document.getElementById(id); if (el) el.value = '';
+  });
+  var hero = document.getElementById('wfHeroSearchInc');
+  if (hero) hero.value = '';
+  var heroWrap = document.querySelector('#erpWfIncoming .wf-hero-search');
+  if (heroWrap) heroWrap.classList.remove('has-value');
+  document.querySelectorAll('#erpWfIncoming .wf-date-shortcut.is-active').forEach(function(el) {
+    el.classList.remove('is-active');
+  });
+  _wfUpdateIncAdvCount();
+  if (typeof wfLoadIncoming === 'function') wfLoadIncoming();
+};
+
+function _wfUpdateIncAdvCount() {
+  var ids = ['winFTxnNumber','winFFromUser','winFFrom','winFTo',
+             'winFImportance','winFStatus','winFType','winFRead',
+             'winFOverdue','winFExpense'];
+  var n = 0;
+  ids.forEach(function(id) {
+    var el = document.getElementById(id);
+    var hasValue = el && String(el.value || '').trim() !== '';
+    if (hasValue) n++;
+    if (el) {
+      var field = el.closest && el.closest('.wf-filter-field');
+      if (field) field.classList.toggle('is-active', !!hasValue);
+    }
+  });
+  var chip = document.getElementById('wfAdvCountInc');
+  var btn  = document.querySelector('#erpWfIncoming .wf-advanced-toggle');
+  var statusCount = document.getElementById('wfFilterStatusCountInc');
+  if (chip) chip.textContent = n;
+  if (btn)  btn.classList.toggle('has-active', n > 0);
+  if (statusCount) statusCount.textContent = n;
+}
+
+var _wfIncomingInitialized = false;
+function _wfInitIncomingFilters() {
+  if (_wfIncomingInitialized) return;
+  // Populate Type + Expense dropdowns — shared with Outbox source data
+  try {
+    window._apiBridge.withSuccessHandler(function(types) {
+      var sel = document.getElementById('winFType');
+      if (sel) sel.innerHTML = '<option value="">كل الأنواع</option>' +
+        (types || []).map(function(t){return '<option value="'+t.id+'">'+t.name+'</option>';}).join('');
+    }).getWfTypes();
+  } catch(_) {}
+  try {
+    window._apiBridge.withSuccessHandler(function(cats) {
+      var sel = document.getElementById('winFExpense');
+      if (sel) sel.innerHTML = '<option value="">كل الأنواع</option>' +
+        (cats || []).map(function(c){return '<option value="'+c.id+'">'+c.name+'</option>';}).join('');
+    }).getExpenseCategories();
+  } catch(_) {}
+  _wfIncomingInitialized = true;
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// v6.9.0 — Inbox (جميع المعاملات) filter helpers
+// ───────────────────────────────────────────────────────────────────
+// Same shape as Incoming but with #wib* IDs, broader filter set (13
+// fields including branch/dept), and bidirectional sync between the new
+// #wibFStatus + the legacy #wfInboxStatusFilter alias so old code paths
+// (wfPersistFiltersAndLoad, wfExportInboxCsv) continue to work.
+// ═══════════════════════════════════════════════════════════════════
+
+var _wfHeroDebounceAll = null;
+var _wfFiltersDebounceAll = null;
+
+window.wfHeroSearchInputAll = function(val) {
+  var wrap = document.querySelector('#erpWfInbox .wf-hero-search');
+  if (wrap) wrap.classList.toggle('has-value', !!val);
+  var subj = document.getElementById('wibFSubject');
+  if (subj) subj.value = val || '';
+  // Legacy alias — pre-v6.9.0 code reads this ID for client-side filtering
+  var legacy = document.getElementById('wfInboxSearch');
+  if (legacy) legacy.value = val || '';
+  if (_wfHeroDebounceAll) clearTimeout(_wfHeroDebounceAll);
+  _wfHeroDebounceAll = setTimeout(function() {
+    if (typeof wfLoadInbox === 'function') wfLoadInbox();
+  }, 300);
+};
+
+window.wfHeroSearchClearAll = function() {
+  var input = document.getElementById('wfHeroSearchAll');
+  if (input) {
+    input.value = '';
+    wfHeroSearchInputAll('');
+    try { input.focus(); } catch (_) {}
+  }
+};
+
+window.wfToggleAdvancedAll = function() {
+  var btn = document.querySelector('#erpWfInbox .wf-advanced-toggle');
+  var panel = document.getElementById('wfAdvancedPanelAll');
+  if (!btn || !panel) return;
+  var open = !btn.classList.contains('is-open');
+  btn.classList.toggle('is-open', open);
+  panel.classList.toggle('is-open', open);
+  try { localStorage.setItem('wf-adv-open-all', open ? '1' : '0'); } catch (_) {}
+};
+
+window.wfDateShortcutAll = function(kind, ev) {
+  var today = new Date();
+  var fromInp = document.getElementById('wibFFrom');
+  var toInp   = document.getElementById('wibFTo');
+  if (!fromInp || !toInp) return;
+  var iso = function(d) {
+    var y = d.getFullYear(), m = String(d.getMonth() + 1).padStart(2, '0'), day = String(d.getDate()).padStart(2, '0');
+    return y + '-' + m + '-' + day;
+  };
+  document.querySelectorAll('#erpWfInbox .wf-date-shortcut.is-active').forEach(function(el) {
+    el.classList.remove('is-active');
+  });
+  if (kind === 'clear') {
+    fromInp.value = '';
+    toInp.value = '';
+  } else {
+    var from = new Date(today.getFullYear(), today.getMonth(), today.getDate());
+    var to   = new Date(today.getFullYear(), today.getMonth(), today.getDate());
+    if (kind === '7d')       from.setDate(today.getDate() - 6);
+    else if (kind === '30d') from.setDate(today.getDate() - 29);
+    else if (kind === 'mtd') from = new Date(today.getFullYear(), today.getMonth(), 1);
+    fromInp.value = iso(from);
+    toInp.value   = iso(to);
+    var target = (ev && ev.target && ev.target.closest) ? ev.target.closest('.wf-date-shortcut') : null;
+    if (target) target.classList.add('is-active');
+  }
+  wfAllFiltersChanged();
+};
+
+window.wfAllFiltersChanged = function() {
+  // Sync the legacy hidden alias (#wfInboxStatusFilter) so any older
+  // callsite that reads it (wfPersistFiltersAndLoad) sees the same value.
+  var newStatus = document.getElementById('wibFStatus');
+  var legacyStatus = document.getElementById('wfInboxStatusFilter');
+  if (newStatus && legacyStatus) legacyStatus.value = newStatus.value || '';
+  _wfUpdateAllAdvCount();
+  if (_wfFiltersDebounceAll) clearTimeout(_wfFiltersDebounceAll);
+  _wfFiltersDebounceAll = setTimeout(function() {
+    if (typeof wfLoadInbox === 'function') wfLoadInbox();
+  }, 300);
+};
+
+window.wfResetAllFilters = function() {
+  ['wibFTxnNumber','wibFSubject','wibFCreatedBy','wibFAssignee',
+   'wibFFrom','wibFTo','wibFImportance','wibFStatus','wibFType',
+   'wibFBranch','wibFDept','wibFRead','wibFOverdue','wibFExpense',
+   'wfInboxStatusFilter','wfInboxSearch'].forEach(function(id) {
+    var el = document.getElementById(id); if (el) el.value = '';
+  });
+  var hero = document.getElementById('wfHeroSearchAll');
+  if (hero) hero.value = '';
+  var heroWrap = document.querySelector('#erpWfInbox .wf-hero-search');
+  if (heroWrap) heroWrap.classList.remove('has-value');
+  document.querySelectorAll('#erpWfInbox .wf-date-shortcut.is-active').forEach(function(el) {
+    el.classList.remove('is-active');
+  });
+  _wfUpdateAllAdvCount();
+  if (typeof wfLoadInbox === 'function') wfLoadInbox();
+};
+
+function _wfUpdateAllAdvCount() {
+  var ids = ['wibFTxnNumber','wibFCreatedBy','wibFAssignee','wibFFrom',
+             'wibFTo','wibFImportance','wibFStatus','wibFType','wibFBranch',
+             'wibFDept','wibFRead','wibFOverdue','wibFExpense'];
+  var n = 0;
+  ids.forEach(function(id) {
+    var el = document.getElementById(id);
+    var hasValue = el && String(el.value || '').trim() !== '';
+    if (hasValue) n++;
+    if (el) {
+      var field = el.closest && el.closest('.wf-filter-field');
+      if (field) field.classList.toggle('is-active', !!hasValue);
+    }
+  });
+  var chip = document.getElementById('wfAdvCountAll');
+  var btn  = document.querySelector('#erpWfInbox .wf-advanced-toggle');
+  var statusCount = document.getElementById('wfFilterStatusCountAll');
+  if (chip) chip.textContent = n;
+  if (btn)  btn.classList.toggle('has-active', n > 0);
+  if (statusCount) statusCount.textContent = n;
+}
+
+var _wfInboxInitialized = false;
+function _wfInitInboxFilters() {
+  if (_wfInboxInitialized) return;
+  // Types
+  try {
+    window._apiBridge.withSuccessHandler(function(types) {
+      var sel = document.getElementById('wibFType');
+      if (sel) sel.innerHTML = '<option value="">كل الأنواع</option>' +
+        (types || []).map(function(t){return '<option value="'+t.id+'">'+t.name+'</option>';}).join('');
+    }).getWfTypes();
+  } catch(_) {}
+  // Expense categories
+  try {
+    window._apiBridge.withSuccessHandler(function(cats) {
+      var sel = document.getElementById('wibFExpense');
+      if (sel) sel.innerHTML = '<option value="">كل الأنواع</option>' +
+        (cats || []).map(function(c){return '<option value="'+c.id+'">'+c.name+'</option>';}).join('');
+    }).getExpenseCategories();
+  } catch(_) {}
+  // Branches + departments — borrowed from the dashboard-filters endpoint
+  try {
+    window._apiBridge.withSuccessHandler(function(meta) {
+      var bSel = document.getElementById('wibFBranch');
+      if (bSel && meta && Array.isArray(meta.branches)) {
+        bSel.innerHTML = '<option value="">كل الفروع</option>' +
+          meta.branches.map(function(b){return '<option value="'+b.id+'">'+b.name+'</option>';}).join('');
+      }
+      var dSel = document.getElementById('wibFDept');
+      if (dSel && meta && Array.isArray(meta.departments)) {
+        dSel.innerHTML = '<option value="">كل الأقسام</option>' +
+          meta.departments.map(function(d){return '<option value="'+d.id+'">'+d.name+'</option>';}).join('');
+      }
+    }).getWfDashboardFilters();
+  } catch(_) {}
+  _wfInboxInitialized = true;
+}
+
+// ─── Combined bootstrap for both new panels ──────────────────────────
+(function _wfBootstrapMore() {
+  var tries = 0;
+  function init() {
+    var incBtn   = document.querySelector('#erpWfIncoming .wf-advanced-toggle');
+    var incPanel = document.getElementById('wfAdvancedPanelInc');
+    var allBtn   = document.querySelector('#erpWfInbox .wf-advanced-toggle');
+    var allPanel = document.getElementById('wfAdvancedPanelAll');
+    // Wait until at least one of the new panels is mounted
+    if (!incPanel && !allPanel) {
+      if (++tries < 40) return setTimeout(init, 250);
+      return;
+    }
+    // Restore open/closed state per panel
+    try {
+      if (incBtn && incPanel && localStorage.getItem('wf-adv-open-inc') === '1') {
+        incBtn.classList.add('is-open');
+        incPanel.classList.add('is-open');
+      }
+      if (allBtn && allPanel && localStorage.getItem('wf-adv-open-all') === '1') {
+        allBtn.classList.add('is-open');
+        allPanel.classList.add('is-open');
+      }
+    } catch(_) {}
+    // Wire panel-level listeners that refresh the count chips even when
+    // the per-field oninput handlers haven't fired yet (defensive).
+    if (incPanel) {
+      incPanel.addEventListener('input',  _wfUpdateIncAdvCount);
+      incPanel.addEventListener('change', _wfUpdateIncAdvCount);
+      _wfUpdateIncAdvCount();
+    }
+    if (allPanel) {
+      allPanel.addEventListener('input',  _wfUpdateAllAdvCount);
+      allPanel.addEventListener('change', _wfUpdateAllAdvCount);
+      _wfUpdateAllAdvCount();
+    }
   }
   if (document.readyState === 'loading') {
     document.addEventListener('DOMContentLoaded', init);

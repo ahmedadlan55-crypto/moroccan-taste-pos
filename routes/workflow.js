@@ -1352,14 +1352,32 @@ router.post('/transactions/:id/mark-read', async (req, res) => {
 // V3.1: Strictly "received from others". Items I created are NEVER shown here —
 // even if returned to me — they belong only in the outbox with a "مرجعة للتعديل" badge.
 // V4: Also excludes soft-deleted rows + includes new lifecycle states (created, replied)
+// v6.9.0: Extended with the same rich filter set as /outbox so the redesigned
+// صندوق الوارد UI (hero search + advanced collapsible filters) can drive
+// server-side filtering instead of relying on a single SELECT * scan.
 router.get('/incoming', async (req, res) => {
   try {
     const username = req.query.username || (req.user && req.user.username) || '';
     if (!username) return res.json([]);
     const perms = await getPermissions(username);
-    // V4: include all 8 lifecycle states that need attention (not just pending/in_progress)
-    const conditions = ["(t.status IN ('pending','created','in_progress','replied'))", "t.created_by != ?", "t.deleted_at IS NULL"];
-    const params = [username]; // first param for created_by exclusion
+
+    // v6.9.0 — Read optional filter params (all wired by the new UI; older
+    // callers that pass only `username` continue to work unchanged).
+    const {
+      txnNumber, subject,
+      fromUsername,           // "من المرسل" — created_by filter (incoming-specific)
+      startDate, endDate,
+      importance, status, typeId,
+      readStatus, overdue, expenseCategoryId
+    } = req.query;
+
+    // Build the dynamic WHERE — start with the hard-coded constraints that
+    // make this the *incoming* box rather than a generic listing.
+    const conditions = ["t.created_by != ?", "t.deleted_at IS NULL"];
+    const params = [username];
+
+    // The OR group that determines visibility (assigned to me / recipient /
+    // position-step inheritance / admin superuser-style unassigned bucket).
     const orParts = [];
     orParts.push('t.current_assignee = ?'); params.push(username);
     orParts.push('t.recipient_username = ?'); params.push(username);
@@ -1368,13 +1386,46 @@ router.get('/incoming', async (req, res) => {
       params.push(perms.positionId);
     }
     if (!perms.isEmployee && perms.positionName === 'مدير النظام') {
-      // admin superuser — also include anything unassigned
       orParts.push("(t.current_assignee = '' AND (t.recipient_username = '' OR t.recipient_username IS NULL))");
     }
     conditions.push('(' + orParts.join(' OR ') + ')');
+
+    // Status: caller-supplied OVERRIDES the default "active inbox" set so
+    // an operator can opt into seeing approved/rejected items they once
+    // owned. Defaults to the four lifecycle states that need attention.
+    if (status) {
+      conditions.push('t.status = ?');
+      params.push(status);
+    } else {
+      conditions.push("t.status IN ('pending','created','in_progress','replied')");
+    }
+
+    // Optional filters — all parameterized, all LIKE values bounded by `%`
+    if (txnNumber)         { conditions.push('t.transaction_number LIKE ?'); params.push('%' + txnNumber + '%'); }
+    if (subject)           { conditions.push('(t.subject LIKE ? OR t.title LIKE ?)'); params.push('%' + subject + '%', '%' + subject + '%'); }
+    if (fromUsername)      { conditions.push('t.created_by = ?'); params.push(fromUsername); }
+    if (startDate)         { conditions.push('DATE(t.created_at) >= ?'); params.push(startDate); }
+    if (endDate)           { conditions.push('DATE(t.created_at) <= ?'); params.push(endDate); }
+    if (importance)        { conditions.push('t.importance = ?'); params.push(importance); }
+    if (typeId)            { conditions.push('t.transaction_type_id = ?'); params.push(typeId); }
+    if (readStatus === 'read')   { conditions.push('t.is_read = 1'); }
+    if (readStatus === 'unread') { conditions.push('(t.is_read = 0 OR t.is_read IS NULL)'); }
+    if (overdue === '1')   { conditions.push("t.due_date IS NOT NULL AND t.due_date < CURDATE() AND t.status IN ('pending','in_progress')"); }
+    if (expenseCategoryId) { conditions.push('t.expense_category_id = ?'); params.push(expenseCategoryId); }
+
     const sql = _txnSelectSQL() + ' WHERE ' + conditions.join(' AND ') + ' ORDER BY FIELD(t.importance,\'critical\',\'high\',\'medium\',\'low\'), t.created_at DESC LIMIT 200';
     const [rows] = await db.query(sql, params);
-    res.json(rows.map(_mapTxn));
+    // v6.9.0 — Enrich each row with the same fields the redesigned UI
+    // expects (subject, isRead, dueDate, isOverdue, expense category names).
+    res.json(rows.map(r => Object.assign(_mapTxn(r), {
+      subject: r.subject || r.title,
+      expenseCategoryId: r.expense_category_id || '',
+      expenseCategoryName: r.expense_category_name || '',
+      isRead: !!r.is_read,
+      readAt: r.read_at,
+      dueDate: r.due_date,
+      isOverdue: r.due_date && new Date(r.due_date) < new Date() && (r.status === 'pending' || r.status === 'in_progress')
+    })));
   } catch(e) { res.json([]); }
 });
 
@@ -1429,18 +1480,50 @@ router.get('/dashboard-filters', async (req, res) => {
   } catch(e) { res.json({ branches: [], departments: [], types: [], counts: {} }); }
 });
 
-// Kept: generic list (admin-level)
+// Generic list (admin-level — "جميع المعاملات" / Inbox screen)
+// v6.9.0: Extended with the same rich filter set as /outbox + extra fields
+// that make sense at the admin level (createdBy, currentAssignee, branchId,
+// deptId). Soft-deleted rows are excluded by default.
 router.get('/transactions', async (req, res) => {
   try {
-    const { status, positionId, importance } = req.query;
-    let sql = _txnSelectSQL() + ' WHERE 1=1';
+    const {
+      status, positionId, importance, typeId,
+      txnNumber, subject,
+      createdBy, currentAssignee,
+      branchId, deptId,
+      startDate, endDate,
+      readStatus, overdue, expenseCategoryId
+    } = req.query;
+
+    let sql = _txnSelectSQL() + ' WHERE t.deleted_at IS NULL';
     const params = [];
-    if (status) { sql += ' AND t.status = ?'; params.push(status); }
-    if (positionId) { sql += ' AND wd.required_position_id = ?'; params.push(positionId); }
-    if (importance) { sql += ' AND t.importance = ?'; params.push(importance); }
+    if (status)            { sql += ' AND t.status = ?'; params.push(status); }
+    if (positionId)        { sql += ' AND wd.required_position_id = ?'; params.push(positionId); }
+    if (importance)        { sql += ' AND t.importance = ?'; params.push(importance); }
+    if (typeId)            { sql += ' AND t.transaction_type_id = ?'; params.push(typeId); }
+    if (txnNumber)         { sql += ' AND t.transaction_number LIKE ?'; params.push('%' + txnNumber + '%'); }
+    if (subject)           { sql += ' AND (t.subject LIKE ? OR t.title LIKE ?)'; params.push('%' + subject + '%', '%' + subject + '%'); }
+    if (createdBy)         { sql += ' AND t.created_by = ?'; params.push(createdBy); }
+    if (currentAssignee)   { sql += ' AND t.current_assignee = ?'; params.push(currentAssignee); }
+    if (branchId)          { sql += ' AND t.branch_id = ?'; params.push(branchId); }
+    if (deptId)            { sql += ' AND t.dept_id = ?'; params.push(deptId); }
+    if (startDate)         { sql += ' AND DATE(t.created_at) >= ?'; params.push(startDate); }
+    if (endDate)           { sql += ' AND DATE(t.created_at) <= ?'; params.push(endDate); }
+    if (readStatus === 'read')   { sql += ' AND t.is_read = 1'; }
+    if (readStatus === 'unread') { sql += ' AND (t.is_read = 0 OR t.is_read IS NULL)'; }
+    if (overdue === '1')   { sql += " AND t.due_date IS NOT NULL AND t.due_date < CURDATE() AND t.status IN ('pending','in_progress')"; }
+    if (expenseCategoryId) { sql += ' AND t.expense_category_id = ?'; params.push(expenseCategoryId); }
     sql += " ORDER BY FIELD(t.importance,'critical','high','medium','low'), t.created_at DESC LIMIT 200";
     const [rows] = await db.query(sql, params);
-    res.json(rows.map(_mapTxn));
+    res.json(rows.map(r => Object.assign(_mapTxn(r), {
+      subject: r.subject || r.title,
+      expenseCategoryId: r.expense_category_id || '',
+      expenseCategoryName: r.expense_category_name || '',
+      isRead: !!r.is_read,
+      readAt: r.read_at,
+      dueDate: r.due_date,
+      isOverdue: r.due_date && new Date(r.due_date) < new Date() && (r.status === 'pending' || r.status === 'in_progress')
+    })));
   } catch(e) { res.json([]); }
 });
 

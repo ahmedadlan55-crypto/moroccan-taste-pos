@@ -12845,12 +12845,170 @@ function _wfInitOutboxFilters() {
 
 function wfResetOutboxFilters() {
   ['woxFTxnNumber','woxFSubject','woxFPendingAt','woxFFrom','woxFTo',
+   'woxFFromText','woxFToText',
    'woxFRecipient','woxFImportance','woxFStatus','woxFType',
    'woxFRead','woxFOverdue','woxFExpense'].forEach(function(id) {
     var el = document.getElementById(id); if (el) el.value = '';
   });
+  // v6.6.5 — Also reset the hero search bar
+  var hero = document.getElementById('wfHeroSearch');
+  if (hero) hero.value = '';
+  var heroWrap = document.querySelector('.wf-hero-search');
+  if (heroWrap) heroWrap.classList.remove('has-value');
+  document.querySelectorAll('.wf-date-shortcut.is-active').forEach(function(el) {
+    el.classList.remove('is-active');
+  });
+  _wfUpdateAdvCount();
   wfLoadOutbox();
 }
+
+// ═══════════════════════════════════════════════════════════════════
+// v6.6.5 — Hero search + advanced collapsible + date helpers
+// ═══════════════════════════════════════════════════════════════════
+// Owner ask: "اعد هيكلة هذه الواجهة والفلاتر... فلاترها اقوي. امكانية
+//   البحث اليدوي ايضا. امكانية اختيار التواريخ".
+// The DOM layout (hero search + collapsible advanced + RTL date range)
+// lives in views/app-content.html. The legacy #woxF* element IDs are
+// preserved so wfLoadOutbox()'s filter map still works without any
+// rewiring on the read side.
+
+var _wfHeroDebounce = null;
+
+// Hero search — mirrors to legacy #woxFSubject, debounced 300ms so the
+// API isn't hit on every keystroke.
+window.wfHeroSearchInput = function(val) {
+  var heroWrap = document.querySelector('.wf-hero-search');
+  if (heroWrap) heroWrap.classList.toggle('has-value', !!val);
+  var subject = document.getElementById('woxFSubject');
+  if (subject) subject.value = val || '';
+  if (_wfHeroDebounce) clearTimeout(_wfHeroDebounce);
+  _wfHeroDebounce = setTimeout(function() {
+    if (typeof wfLoadOutbox === 'function') wfLoadOutbox();
+  }, 300);
+};
+window.wfHeroSearchClear = function() {
+  var input = document.getElementById('wfHeroSearch');
+  if (input) {
+    input.value = '';
+    wfHeroSearchInput('');
+    try { input.focus(); } catch(_) {}
+  }
+};
+
+// Advanced filters toggle — collapsed by default; remembers state.
+window.wfToggleAdvanced = function() {
+  var btn = document.querySelector('.wf-advanced-toggle');
+  var panel = document.getElementById('wfAdvancedPanel');
+  if (!btn || !panel) return;
+  var open = !btn.classList.contains('is-open');
+  btn.classList.toggle('is-open', open);
+  panel.classList.toggle('is-open', open);
+  try { localStorage.setItem('wf-adv-open', open ? '1' : '0'); } catch(_) {}
+};
+
+// Date input bridge — text input shows DD/MM/YYYY for the operator,
+// the hidden native <input type="date"> carries the ISO value that
+// the backend filter expects. wfDateOpen() triggers the native picker.
+window.wfDateOpen = function(triggerEl) {
+  var wrap = triggerEl.closest && triggerEl.closest('.wf-date-input');
+  if (!wrap) return;
+  var nativeInp = wrap.querySelector('input[type="date"]');
+  if (!nativeInp) return;
+  if (nativeInp.showPicker) {
+    try { nativeInp.showPicker(); return; } catch(_) {}
+  }
+  try { nativeInp.focus(); nativeInp.click(); } catch(_) {}
+};
+window.wfDateNativeChange = function(nativeInp) {
+  var wrap = nativeInp.closest && nativeInp.closest('.wf-date-input');
+  var textInp = wrap && wrap.querySelector('input[type="text"]');
+  if (textInp) {
+    if (nativeInp.value) {
+      var parts = String(nativeInp.value).split('-');  // YYYY-MM-DD
+      textInp.value = parts[2] + '/' + parts[1] + '/' + parts[0];  // DD/MM/YYYY
+    } else {
+      textInp.value = '';
+    }
+  }
+  if (typeof wfLoadOutbox === 'function') wfLoadOutbox();
+  _wfUpdateAdvCount();
+};
+window.wfDateShortcut = function(kind) {
+  var today = new Date();
+  var fromInp = document.getElementById('woxFFrom');
+  var toInp   = document.getElementById('woxFTo');
+  if (!fromInp || !toInp) return;
+  var iso = function(d) {
+    var y = d.getFullYear(), m = String(d.getMonth() + 1).padStart(2, '0'), day = String(d.getDate()).padStart(2, '0');
+    return y + '-' + m + '-' + day;
+  };
+  // Clear active state on all shortcuts, then mark this one
+  document.querySelectorAll('.wf-date-shortcut.is-active').forEach(function(el) { el.classList.remove('is-active'); });
+
+  if (kind === 'clear') {
+    fromInp.value = ''; toInp.value = '';
+  } else {
+    var from = new Date(today.getFullYear(), today.getMonth(), today.getDate());
+    var to   = new Date(today.getFullYear(), today.getMonth(), today.getDate());
+    if (kind === '7d')       from.setDate(today.getDate() - 6);
+    else if (kind === '30d') from.setDate(today.getDate() - 29);
+    else if (kind === 'mtd') from = new Date(today.getFullYear(), today.getMonth(), 1);
+    fromInp.value = iso(from);
+    toInp.value   = iso(to);
+    // Mark the clicked shortcut active (event.target is the button)
+    var ev = window.event && window.event.target && window.event.target.closest('.wf-date-shortcut');
+    if (ev) ev.classList.add('is-active');
+  }
+  // Dispatch change so wfDateNativeChange() updates the text mirror + reloads
+  fromInp.dispatchEvent(new Event('change'));
+  toInp.dispatchEvent(new Event('change'));
+};
+
+// Count active advanced filters → drives the purple count-chip on the
+// "فلاتر مُتقَدِّمة" toggle so the operator sees at a glance whether
+// hidden filters are narrowing the result set.
+function _wfUpdateAdvCount() {
+  var ids = ['woxFTxnNumber','woxFPendingAt','woxFFrom','woxFTo',
+             'woxFRecipient','woxFImportance','woxFStatus','woxFType',
+             'woxFRead','woxFOverdue','woxFExpense'];
+  var n = 0;
+  ids.forEach(function(id) {
+    var el = document.getElementById(id);
+    if (el && String(el.value || '').trim() !== '') n++;
+  });
+  var chip = document.getElementById('wfAdvCount');
+  var btn  = document.querySelector('.wf-advanced-toggle');
+  if (chip) chip.textContent = n;
+  if (btn)  btn.classList.toggle('has-active', n > 0);
+}
+
+// Restore last advanced-toggle state + wire change listeners that keep
+// the count chip in sync. Runs once after the page settles.
+(function _wfBootstrap() {
+  var tries = 0;
+  function init() {
+    var btn = document.querySelector('.wf-advanced-toggle');
+    var panel = document.getElementById('wfAdvancedPanel');
+    if (!btn || !panel) {
+      if (++tries < 40) return setTimeout(init, 250);  // wait up to ~10s for the section to mount
+      return;
+    }
+    try {
+      if (localStorage.getItem('wf-adv-open') === '1') {
+        btn.classList.add('is-open');
+        panel.classList.add('is-open');
+      }
+    } catch(_) {}
+    panel.addEventListener('input',  _wfUpdateAdvCount);
+    panel.addEventListener('change', _wfUpdateAdvCount);
+    _wfUpdateAdvCount();
+  }
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', init);
+  } else {
+    init();
+  }
+})();
 
 // ─────────────────────────────────────────────────────────────────
 // v6.6.0 — Admin-only NUCLEAR wipe of every transaction + trail

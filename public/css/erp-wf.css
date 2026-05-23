@@ -385,3 +385,233 @@
     min-width: 0;
   }
 }
+
+/* ═══════════════════════════════════════════════════════════════════
+   v6.6.5 — Hero search + advanced collapsible + RTL date range
+   ═══════════════════════════════════════════════════════════════════
+   Owner ask: "اعد هيكلة هذه الواجهة والفلاتر واجعلها مناسبة جدا.
+   امنع التراكبات. امنع الالوان المزعجة. اجعلها قوية. فلاترها اقوي.
+   امكانية البحث اليدوي ايضا. امكانية اختيار التواريخ"
+
+   Fixes 5 distinct issues observed in the latest screenshot:
+   1. Search button rendering as an empty red bar → force purple
+      via increased specificity scoped to WF sections.
+   2. English mm/dd/yyyy placeholders in RTL → custom text input with
+      "يوم/شهر/سنة" hint, native picker stays hidden but is the source
+      of truth.
+   3. Loud red primary buttons → re-themed to brand purple.
+   4. 11 cramped filter fields → collapse them under "فلاتر مُتقَدِّمة"
+      so the default view is just the big hero search bar.
+   5. No live search → hero input mirrors to #woxFSubject with 300ms
+      debounce + auto-reload.
+   ═══════════════════════════════════════════════════════════════════ */
+
+/* ── 12. Force brand purple for primary buttons inside WF sections ── */
+/* admin-skin.css already aims --accent at purple, but the deployment
+   shipped is rendering .btn-primary as red. Raise specificity here so
+   every primary CTA inside the WF sections — search, add, empty-state
+   CTA — settles to brand purple. */
+#erpWfDashboard .btn.btn-primary,
+#erpWfIncoming  .btn.btn-primary,
+#erpWfOutgoing  .btn.btn-primary {
+  background: var(--mt-accent, #7c3aed) !important;
+  color: #fff !important;
+  border-color: var(--mt-accent, #7c3aed) !important;
+  box-shadow: 0 2px 6px rgba(124, 58, 237, 0.22) !important;
+}
+#erpWfDashboard .btn.btn-primary:hover,
+#erpWfIncoming  .btn.btn-primary:hover,
+#erpWfOutgoing  .btn.btn-primary:hover {
+  background: var(--mt-accent-2, #6d28d9) !important;
+  border-color: var(--mt-accent-2, #6d28d9) !important;
+  box-shadow: 0 4px 14px rgba(124, 58, 237, 0.32) !important;
+}
+#erpWfDashboard .btn.btn-primary i,
+#erpWfIncoming  .btn.btn-primary i,
+#erpWfOutgoing  .btn.btn-primary i {
+  color: #fff !important;
+}
+
+/* Wipe button stays red-outline but smaller + ghost so it doesn't
+   compete with the primary CTA for attention. */
+.wf-section-actions .wf-wipe-btn {
+  padding: 6px 12px !important;
+  font-size: 12px !important;
+}
+.wf-section-actions .wf-wipe-btn i { font-size: 11px; }
+
+/* ── 13. Hero search bar (always-visible, debounced) ─────────────── */
+.wf-hero-search {
+  position: relative;
+  margin-bottom: 14px;
+}
+.wf-hero-search input {
+  width: 100%;
+  padding: 14px 50px 14px 50px;
+  font-size: 15px;
+  font-family: inherit;
+  border: 1.5px solid var(--mt-border, #e2e8f0);
+  border-radius: 14px;
+  background: #fff;
+  color: var(--mt-text, #0f172a);
+  transition: border-color .12s, box-shadow .12s;
+}
+.wf-hero-search input::placeholder {
+  color: var(--mt-text-light, #94a3b8);
+  font-weight: 500;
+}
+.wf-hero-search input:focus {
+  border-color: var(--mt-accent, #7c3aed);
+  box-shadow: 0 0 0 4px rgba(124, 58, 237, 0.14);
+  outline: 0;
+}
+.wf-hero-search .wf-hero-icon {
+  position: absolute;
+  inset-inline-start: 18px;
+  top: 50%; transform: translateY(-50%);
+  color: var(--mt-text-light, #94a3b8);
+  font-size: 16px;
+  pointer-events: none;
+}
+.wf-hero-search .wf-hero-clear {
+  position: absolute;
+  inset-inline-end: 12px;
+  top: 50%; transform: translateY(-50%);
+  background: transparent;
+  border: 0;
+  width: 30px; height: 30px;
+  border-radius: 50%;
+  color: var(--mt-text-muted, #64748b);
+  display: none;
+  align-items: center; justify-content: center;
+  cursor: pointer;
+  font-size: 14px;
+  padding: 0;
+}
+.wf-hero-search.has-value .wf-hero-clear { display: flex; }
+.wf-hero-search .wf-hero-clear:hover {
+  background: var(--mt-surface-2, #f8fafc);
+  color: var(--mt-text, #0f172a);
+}
+
+/* ── 14. Advanced filters toggle + collapsible panel ─────────────── */
+.wf-advanced-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 16px;
+  background: var(--mt-surface-2, #f8fafc);
+  border: 1px solid var(--mt-border, #e2e8f0);
+  border-radius: 12px;
+  font-weight: 700;
+  font-size: 13px;
+  font-family: inherit;
+  color: var(--mt-text-muted, #64748b);
+  cursor: pointer;
+  margin-bottom: 12px;
+  transition: background .12s, color .12s, border-color .12s;
+}
+.wf-advanced-toggle:hover,
+.wf-advanced-toggle.is-open {
+  background: var(--mt-accent-soft, #faf5ff);
+  color: var(--mt-accent, #7c3aed);
+  border-color: var(--mt-accent-soft-2, #f3e8ff);
+}
+.wf-advanced-toggle .chevron {
+  transition: transform .18s;
+  font-size: 11px;
+}
+.wf-advanced-toggle.is-open .chevron { transform: rotate(180deg); }
+.wf-advanced-toggle .count-chip {
+  background: var(--mt-accent, #7c3aed);
+  color: #fff;
+  font-size: 10.5px;
+  font-weight: 800;
+  padding: 1px 8px;
+  border-radius: 999px;
+  margin-inline-start: 4px;
+  display: none;
+}
+.wf-advanced-toggle.has-active .count-chip { display: inline-block; }
+
+.wf-advanced-panel {
+  display: none;
+  background: #fff;
+  border: 1px solid var(--mt-border, #e2e8f0);
+  border-radius: var(--mt-radius-lg, 18px);
+  padding: 18px 20px;
+  margin-bottom: 16px;
+  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04);
+}
+.wf-advanced-panel.is-open { display: block; }
+
+/* ── 15. RTL-friendly date range (no English mm/dd/yyyy) ────────── */
+.wf-date-range {
+  display: grid;
+  grid-template-columns: 1fr auto 1fr;
+  gap: 8px;
+  align-items: center;
+}
+.wf-date-range .sep {
+  color: var(--mt-text-light, #94a3b8);
+  font-size: 12px;
+  font-weight: 700;
+  padding: 0 4px;
+}
+.wf-date-input {
+  position: relative;
+}
+.wf-date-input input[type="text"] {
+  padding-inline-end: 38px;
+  font-family: inherit;
+}
+.wf-date-input .wf-date-trigger {
+  position: absolute;
+  inset-inline-end: 6px;
+  top: 50%; transform: translateY(-50%);
+  background: transparent;
+  border: 0;
+  width: 30px; height: 30px;
+  border-radius: 8px;
+  color: var(--mt-accent, #7c3aed);
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center; justify-content: center;
+  padding: 0;
+}
+.wf-date-input .wf-date-trigger:hover {
+  background: var(--mt-accent-soft, #faf5ff);
+}
+.wf-date-input input[type="date"] {
+  position: absolute;
+  opacity: 0;
+  pointer-events: none;
+  inset-inline-end: 0;
+  width: 1px; height: 1px;
+  bottom: 0;
+}
+
+.wf-date-shortcuts {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+  margin-top: 8px;
+}
+.wf-date-shortcut {
+  padding: 5px 12px;
+  background: var(--mt-surface-2, #f8fafc);
+  border: 1px solid var(--mt-border, #e2e8f0);
+  border-radius: 999px;
+  font-size: 11.5px;
+  font-weight: 700;
+  font-family: inherit;
+  color: var(--mt-text-muted, #64748b);
+  cursor: pointer;
+  transition: background .12s, color .12s, border-color .12s;
+}
+.wf-date-shortcut:hover,
+.wf-date-shortcut.is-active {
+  background: var(--mt-accent-soft, #faf5ff);
+  color: var(--mt-accent, #7c3aed);
+  border-color: var(--mt-accent-soft-2, #f3e8ff);
+}

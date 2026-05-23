@@ -269,7 +269,11 @@
   margin-bottom: 16px;
   box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04);
 }
-.wf-filter-panel .wf-filter-row {
+/* v6.6.6 — Selector relaxed: standalone .wf-filter-row no longer needs
+   .wf-filter-panel ancestor. The v6.6.5 restructure moved the grid
+   inside .wf-advanced-panel, which broke the old descendant rule and
+   stacked every field as a full-width row. */
+.wf-filter-row {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
   gap: 12px 16px;
@@ -614,4 +618,253 @@
   background: var(--mt-accent-soft, #faf5ff);
   color: var(--mt-accent, #7c3aed);
   border-color: var(--mt-accent-soft-2, #f3e8ff);
+}
+
+/* ═══════════════════════════════════════════════════════════════════
+   v6.6.6 — Forceful overrides for v6.6.5 layout regressions
+   ═══════════════════════════════════════════════════════════════════
+   The v6.6.5 restructure shipped but the screenshot showed:
+     1. Hero search input rendered without visible border/background
+     2. Native <input type="date"> still visible beside the custom
+        wrapper instead of hiding off-screen
+     3. Advanced panel children stacked vertically (grid CSS lost to
+        deployment overrides)
+     4. Date shortcut buttons rendered as plain text (no pill chrome)
+     5. Search button text invisible on red background
+
+   Root cause for #1, #2, #4: the deployment ships CSS rules with
+   higher specificity than the original v6.6.5 selectors. This block
+   rewrites the same rules with id-scoped selectors + !important so
+   they reliably win.
+
+   Color note: this deployment renders --accent as red (brand identity
+   the owner is keeping). We do NOT force purple here — we only ensure
+   primary button TEXT is legible (white + 13px + nowrap) so labels
+   render whatever the brand color happens to be.
+   ═══════════════════════════════════════════════════════════════════ */
+
+/* ── 16. Hero search input — forced visible chrome ───────────────── */
+#wfHeroSearch,
+#wfHeroSearch.wf-hero-input,
+.wf-hero-search > input.wf-hero-input,
+.wf-hero-search > input[type="text"] {
+  width: 100% !important;
+  height: 48px !important;
+  padding: 12px 52px !important;
+  font-size: 15px !important;
+  font-family: inherit !important;
+  border: 1.5px solid #e2e8f0 !important;
+  border-radius: 14px !important;
+  background: #fff !important;
+  color: #0f172a !important;
+  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04) !important;
+  box-sizing: border-box !important;
+  display: block !important;
+  outline: 0 !important;
+}
+#wfHeroSearch:focus,
+.wf-hero-search > input.wf-hero-input:focus,
+.wf-hero-search > input[type="text"]:focus {
+  border-color: var(--accent, #7c3aed) !important;
+  box-shadow: 0 0 0 4px rgba(124, 58, 237, 0.14) !important;
+}
+
+/* ── 17. Native date picker — guaranteed off-screen ──────────────── */
+/* The wrapper holds (text input, trigger button, hidden native date).
+   Earlier rules with no !important were losing to .form-control-sm.
+   Lock the native input to 1×1px in the corner with z-index -1. */
+.wf-date-input { position: relative !important; display: block !important; }
+.wf-date-input > input[type="date"] {
+  position: absolute !important;
+  inset-inline-end: 0 !important;
+  bottom: 0 !important;
+  width: 1px !important;
+  height: 1px !important;
+  opacity: 0 !important;
+  pointer-events: none !important;
+  padding: 0 !important;
+  margin: 0 !important;
+  border: 0 !important;
+  background: transparent !important;
+  z-index: -1 !important;
+  visibility: visible;     /* keep showPicker() working */
+}
+.wf-date-input > input[type="text"] {
+  width: 100% !important;
+  height: 40px !important;
+  padding: 8px 38px 8px 12px !important;
+  border: 1.5px solid #e2e8f0 !important;
+  border-radius: 10px !important;
+  background: #fff !important;
+  color: #0f172a !important;
+  font-family: inherit !important;
+  font-size: 13px !important;
+  cursor: pointer !important;
+  box-sizing: border-box !important;
+  outline: 0 !important;
+}
+.wf-date-input > input[type="text"]:focus {
+  border-color: var(--accent, #7c3aed) !important;
+}
+.wf-date-input > .wf-date-trigger {
+  position: absolute !important;
+  inset-inline-end: 6px !important;
+  top: 50%; transform: translateY(-50%);
+  background: transparent !important;
+  border: 0 !important;
+  width: 30px !important;
+  height: 30px !important;
+  border-radius: 8px !important;
+  color: var(--accent, #7c3aed) !important;
+  cursor: pointer !important;
+  display: inline-flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  padding: 0 !important;
+  z-index: 2;
+}
+
+/* ── 18. Date range layout (forced grid) ─────────────────────────── */
+.wf-date-range {
+  display: grid !important;
+  grid-template-columns: 1fr auto 1fr !important;
+  gap: 8px !important;
+  align-items: center !important;
+}
+.wf-date-range > .sep {
+  color: var(--mt-text-light, #94a3b8) !important;
+  font-size: 12px !important;
+  font-weight: 700 !important;
+  padding: 0 4px !important;
+}
+
+/* ── 19. Date shortcut pills — forced ────────────────────────────── */
+button.wf-date-shortcut,
+.wf-date-shortcuts > .wf-date-shortcut {
+  padding: 6px 14px !important;
+  background: #f8fafc !important;
+  border: 1px solid #e2e8f0 !important;
+  border-radius: 999px !important;
+  font-size: 12px !important;
+  font-weight: 700 !important;
+  font-family: inherit !important;
+  color: #64748b !important;
+  cursor: pointer !important;
+  display: inline-flex !important;
+  align-items: center !important;
+  height: auto !important;
+  line-height: 1.4 !important;
+  min-width: 0 !important;
+}
+button.wf-date-shortcut:hover,
+button.wf-date-shortcut.is-active,
+.wf-date-shortcuts > .wf-date-shortcut:hover,
+.wf-date-shortcuts > .wf-date-shortcut.is-active {
+  background: #faf5ff !important;
+  color: #7c3aed !important;
+  border-color: #f3e8ff !important;
+}
+.wf-date-shortcuts {
+  display: flex !important;
+  gap: 6px !important;
+  flex-wrap: wrap !important;
+  margin-top: 10px !important;
+}
+
+/* ── 20. Advanced toggle + count chip — forced pill ──────────────── */
+button.wf-advanced-toggle,
+.wf-advanced-toggle {
+  display: inline-flex !important;
+  align-items: center !important;
+  gap: 8px !important;
+  padding: 10px 16px !important;
+  background: #f8fafc !important;
+  border: 1px solid #e2e8f0 !important;
+  border-radius: 12px !important;
+  font-weight: 700 !important;
+  font-size: 13px !important;
+  font-family: inherit !important;
+  color: #64748b !important;
+  cursor: pointer !important;
+  margin-bottom: 12px !important;
+  height: auto !important;
+  line-height: 1.4 !important;
+}
+.wf-advanced-toggle .count-chip {
+  background: var(--accent, #7c3aed) !important;
+  color: #fff !important;
+  font-size: 10.5px !important;
+  font-weight: 800 !important;
+  padding: 2px 9px !important;
+  border-radius: 999px !important;
+  display: inline-block !important;
+  line-height: 1.4 !important;
+}
+.wf-advanced-toggle:not(.has-active) .count-chip { display: none !important; }
+.wf-advanced-panel { display: none !important; }
+.wf-advanced-panel.is-open { display: block !important; }
+/* Bonus: also style the .wf-advanced-panel as a card chrome since the
+   v6.6.6 HTML adds `wf-filter-panel` class to it too. */
+.wf-advanced-panel {
+  background: #fff;
+  border: 1px solid var(--mt-border, #e2e8f0);
+  border-radius: var(--mt-radius-lg, 18px);
+  padding: 18px 20px;
+  margin-bottom: 16px;
+  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04);
+}
+
+/* ── 21. Primary button text guarantee (color-agnostic) ──────────── */
+/* Whatever colour the deployment paints .btn-primary, ensure the text
+   inside it is visible. Earlier v6.6.5 tried to force purple — we
+   removed that and only enforce text legibility now. */
+#erpWfDashboard .btn.btn-primary,
+#erpWfIncoming  .btn.btn-primary,
+#erpWfOutgoing  .btn.btn-primary {
+  color: #fff !important;
+  font-weight: 800 !important;
+  font-size: 13px !important;
+  padding: 10px 18px !important;
+  height: auto !important;
+  line-height: 1.4 !important;
+  display: inline-flex !important;
+  align-items: center !important;
+  gap: 8px !important;
+  white-space: nowrap !important;
+  min-width: 120px !important;
+}
+#erpWfDashboard .btn.btn-primary i,
+#erpWfIncoming  .btn.btn-primary i,
+#erpWfOutgoing  .btn.btn-primary i {
+  color: #fff !important;
+  font-size: 12px !important;
+}
+
+/* The filter actions bar still caps button widths so the primary CTA
+   doesn't stretch into a full-width banner. */
+#erpWfDashboard .wf-filter-actions,
+#erpWfIncoming  .wf-filter-actions,
+#erpWfOutgoing  .wf-filter-actions {
+  display: flex !important;
+  gap: 10px !important;
+  justify-content: center !important;
+  margin-top: 18px !important;
+  flex-wrap: wrap !important;
+}
+#erpWfDashboard .wf-filter-actions .btn,
+#erpWfIncoming  .wf-filter-actions .btn,
+#erpWfOutgoing  .wf-filter-actions .btn {
+  min-width: 150px !important;
+  max-width: 240px !important;
+  padding: 10px 22px !important;
+}
+
+/* ── 22. Hero clear button visibility ─────────────────────────────── */
+.wf-hero-search .wf-hero-clear {
+  display: none !important;
+}
+.wf-hero-search.has-value .wf-hero-clear {
+  display: inline-flex !important;
+  align-items: center !important;
+  justify-content: center !important;
 }

@@ -3912,7 +3912,7 @@
        them via the same map. -->
   <div class="wf-hero-search">
     <i class="fas fa-search wf-hero-icon"></i>
-    <input id="wfHeroSearch" type="text" autocomplete="off"
+    <input id="wfHeroSearch" class="wf-hero-input" type="text" autocomplete="off"
            placeholder="ابحَث في رَقم المعامَلة أو الموضوع أو اسم المُستَلِم..."
            oninput="wfHeroSearchInput(this.value)">
     <button type="button" class="wf-hero-clear" onclick="wfHeroSearchClear()" aria-label="مَسح البَحث">
@@ -3927,7 +3927,7 @@
     <i class="fas fa-chevron-down chevron"></i>
   </button>
 
-  <div class="wf-advanced-panel" id="wfAdvancedPanel">
+  <div class="wf-advanced-panel wf-filter-panel" id="wfAdvancedPanel">
     <div class="wf-filter-row">
       <div class="wf-filter-field">
         <label>رقم المعاملة</label>

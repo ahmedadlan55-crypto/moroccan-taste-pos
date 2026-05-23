@@ -12985,6 +12985,18 @@ function _wfUpdateAdvCount() {
 // Restore last advanced-toggle state + wire change listeners that keep
 // the count chip in sync. Runs once after the page settles.
 (function _wfBootstrap() {
+  // v6.6.6 — Clear the stale "always open" preference left over from
+  // v6.6.5. The broken layout that shipped in v6.6.5 made operators
+  // keep the panel open by default; after the fix we want a clean
+  // closed state on first load. Tracked via a versioned marker so this
+  // one-shot reset doesn't fire again on subsequent visits.
+  try {
+    if (localStorage.getItem('wf-adv-open-v') !== '6.6.6') {
+      localStorage.removeItem('wf-adv-open');
+      localStorage.setItem('wf-adv-open-v', '6.6.6');
+    }
+  } catch(_) {}
+
   var tries = 0;
   function init() {
     var btn = document.querySelector('.wf-advanced-toggle');

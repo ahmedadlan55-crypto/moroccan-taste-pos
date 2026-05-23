@@ -12799,12 +12799,18 @@ function wfLoadIncoming() {
     }
     tb.innerHTML = list.map(function(t) {
       var dt = t.createdAt ? new Date(t.createdAt).toLocaleDateString('en-GB') : '';
+      // v6.6.4 — Added per-row admin-only delete (.wf-row-delete-btn).
+      //   _wfApplyAdminVisibility() hides it for non-admins, the backend
+      //   guardAdmin enforces it as the authoritative gate. Cascade
+      //   delete also removes the row from the employee portal.
+      var safeTxnNum = String(t.txnNumber || '').replace(/'/g, "\\'");
       var actions =
         '<button class="btn btn-sm btn-light" onclick="wfViewTxn(\''+t.id+'\')"><i class="fas fa-eye"></i></button> ' +
         '<button class="btn btn-sm btn-success" onclick="wfTxnAction(\''+t.id+'\',\'approve\')" title="موافقة"><i class="fas fa-check"></i></button> ' +
         '<button class="btn btn-sm btn-danger" onclick="wfTxnAction(\''+t.id+'\',\'reject\')" title="رفض"><i class="fas fa-times"></i></button> ' +
         '<button class="btn btn-sm" style="background:#fef3c7;color:#92400e;" onclick="wfTxnAction(\''+t.id+'\',\'return\')" title="إرجاع"><i class="fas fa-undo"></i></button> ' +
-        '<button class="btn btn-sm" style="background:#f3e8ff;color:#7c3aed;" onclick="wfForwardTxn(\''+t.id+'\')" title="تحويل"><i class="fas fa-share"></i></button>';
+        '<button class="btn btn-sm" style="background:#f3e8ff;color:#7c3aed;" onclick="wfForwardTxn(\''+t.id+'\')" title="تحويل"><i class="fas fa-share"></i></button> ' +
+        '<button class="btn btn-sm wf-row-delete-btn" onclick="event.stopPropagation();wfForceDeleteTxn(\''+t.id+'\',\''+safeTxnNum+'\')" title="حَذف نِهائي (admin only)"><i class="fas fa-trash"></i></button>';
       return '<tr>' +
         '<td>'+_wfImpBadge(t.importance||'medium')+'</td>' +
         '<td style="font-family:monospace;font-size:10px;">'+(t.txnNumber||'')+'</td>' +
@@ -12988,6 +12994,9 @@ window.wfWipeAllTransactions = function() {
 // v6.6.1 — Hide the wipe button from non-admins. Owner spec: "الادمن
 // فقط يملك هذه الخاصية". Frontend visibility is a UX hint — the
 // authoritative gate is the backend's guardAdmin.
+// v6.6.4 — Extended to also hide the per-row delete button
+// (.wf-row-delete-btn) so cashier / employee never even see the
+// trash icon next to inbox / outbox transactions.
 function _wfApplyAdminVisibility() {
   var isAdmin = false;
   try {
@@ -12995,8 +13004,125 @@ function _wfApplyAdminVisibility() {
     var role = String((session.role || session.userRole || '')).toLowerCase();
     isAdmin = session.username === 'admin' || role === 'admin';
   } catch (_) {}
-  document.querySelectorAll('.wf-wipe-btn').forEach(function(b) {
+  document.querySelectorAll('.wf-wipe-btn, .wf-row-delete-btn').forEach(function(b) {
     b.style.display = isAdmin ? '' : 'none';
+  });
+}
+
+// ─────────────────────────────────────────────────────────────────
+// v6.6.4 — Surgical admin-only force-delete of ONE transaction
+// ─────────────────────────────────────────────────────────────────
+// Drives the per-row trash button in #erpWfIncoming and #erpWfOutgoing.
+// Calls the backend endpoint DELETE /api/workflow/transactions/:id/force
+// (routes/workflow.js:2425) which cascades through every related table
+// inside a DB transaction (transaction_steps_log, transaction_replies,
+// txn_attachments, txn_recipients, memo_read_receipts, notifications),
+// detaches payment_records (preserves GL), and writes an audit_logs
+// entry. txn_recipients deletion is what makes the row disappear from
+// the employee portal as well — owner spec: "نِهائيا من هنا ومن
+// بوابة الموظف".
+//
+// FORCE_DELETE_SCHEMA in lib/transactionSchema.js:80 requires:
+//   confirm: 'DELETE-FOREVER' (literal token, single occurrence)
+//   reason:  5-500 char string  (this modal enforces ≥5 client-side)
+//   username: optional, sent from pos_session.
+window.wfForceDeleteTxn = function(txnId, txnNumber) {
+  if (!txnId) return;
+  if (!window._apiBridge || !window._apiBridge.forceDeleteWfTransaction) {
+    showToast('api-bridge.forceDeleteWfTransaction غير متاح', true);
+    return;
+  }
+
+  var displayNum = txnNumber || txnId;
+  var body =
+    '<div class="wf-wipe-warning">' +
+      '<i class="fas fa-triangle-exclamation ico"></i>' +
+      '<div><b>حَذف نِهائي</b><br>' +
+        '<span style="font-size:12px;">سَتُحذَف المُعامَلة ' +
+          '<code style="background:#fff;border:1px solid #fca5a5;padding:1px 6px;border-radius:4px;color:#dc2626;font-family:monospace;">' + displayNum + '</code> ' +
+          'مع كل سَجِلَّاتها (السِّجِل، الرُّدود، المُرفَقات، المُستَلِمين). تَختَفي من الـ ERP ومن بَوّابة المُوَظَّف.' +
+        '</span>' +
+      '</div>' +
+    '</div>' +
+    '<div style="margin-top:14px;font-size:12.5px;color:#475569;font-weight:700;">سَبَب الحَذف (5 أحرُف على الأقَل):</div>' +
+    '<textarea id="wfFdReason" class="form-control" rows="3" placeholder="مثال: اختبار، إدخال خاطئ، تَكرار..." style="margin-top:6px;font-family:inherit;"></textarea>' +
+    '<div id="wfFdReasonHint" style="font-size:11px;color:#94a3b8;margin-top:4px;">0 / 5</div>';
+
+  var footer =
+    '<button class="btn btn-light" id="wfFdCancel">إلغاء</button>' +
+    '<button class="btn" id="wfFdOk" disabled style="background:var(--mt-danger,#dc2626);color:#fff;font-weight:800;opacity:.55;cursor:not-allowed;">' +
+      '<i class="fas fa-trash"></i> حَذف نِهائي' +
+    '</button>';
+
+  if (typeof WoModal === 'undefined' || !WoModal.open) {
+    // Fallback for legacy shells without WoModal.
+    var r = prompt('حَذف نِهائي للمُعامَلة ' + displayNum + '\n\nاكتُب سَبَب الحَذف (5 أحرُف على الأقَل):');
+    if (!r || r.trim().length < 5) {
+      if (r !== null) showToast('السَّبَب قَصير — الحَذف أُلغي', true);
+      return;
+    }
+    _wfFdDoDelete(txnId, r.trim());
+    return;
+  }
+
+  var modal = WoModal.open({
+    icon: 'fa-trash', iconColor: 'danger',
+    title: 'حَذف مُعامَلة نِهائي',
+    subtitle: displayNum,
+    body: body, footer: footer, size: 'sm'
+  });
+  modal.el.classList.add('wf-wipe-confirm-modal');
+
+  var reasonInput = modal.el.querySelector('#wfFdReason');
+  var reasonHint  = modal.el.querySelector('#wfFdReasonHint');
+  var okBtn       = modal.el.querySelector('#wfFdOk');
+  reasonInput.addEventListener('input', function() {
+    var n = reasonInput.value.trim().length;
+    if (reasonHint) {
+      reasonHint.textContent = n + ' / 5';
+      reasonHint.style.color = n >= 5 ? '#16a34a' : '#dc2626';
+    }
+    var valid = n >= 5;
+    okBtn.disabled = !valid;
+    okBtn.style.opacity = valid ? '1' : '.55';
+    okBtn.style.cursor  = valid ? 'pointer' : 'not-allowed';
+  });
+  modal.el.querySelector('#wfFdCancel').onclick = function() { modal.close(null); };
+  okBtn.onclick = function() {
+    var reason = reasonInput.value.trim();
+    if (reason.length < 5) return;
+    okBtn.disabled = true;
+    okBtn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> جارٍ الحَذف...';
+    _wfFdDoDelete(txnId, reason, function() { modal.close(true); });
+  };
+  setTimeout(function() { try { reasonInput.focus(); } catch (_) {} }, 220);
+};
+
+function _wfFdDoDelete(txnId, reason, onDone) {
+  var username = '';
+  try {
+    var s = JSON.parse(localStorage.getItem('pos_session') || '{}');
+    username = s.username || 'admin';
+  } catch (_) { username = 'admin'; }
+  window._apiBridge.withSuccessHandler(function(res) {
+    if (typeof onDone === 'function') onDone();
+    if (!res || res.error || !res.success) {
+      showToast((res && res.error) || 'فَشِل الحَذف', true);
+      return;
+    }
+    showToast('✓ تَم الحَذف نِهائياً');
+    try {
+      var visible = document.querySelector(
+        '#erpWfDashboard:not(.hidden), #erpWfIncoming:not(.hidden), #erpWfOutgoing:not(.hidden)'
+      );
+      if (visible && visible.id === 'erpWfDashboard' && typeof wfLoadDashboard === 'function') wfLoadDashboard();
+      else if (visible && visible.id === 'erpWfIncoming' && typeof wfLoadIncoming === 'function') wfLoadIncoming();
+      else if (typeof wfLoadOutbox === 'function') wfLoadOutbox();
+    } catch (_) {}
+  }).forceDeleteWfTransaction(txnId, {
+    confirm: 'DELETE-FOREVER',
+    reason: reason,
+    username: username
   });
 }
 
@@ -13126,6 +13252,11 @@ function wfLoadOutbox() {
         // v6.6.0 — "سير المعاملة" button uses brand purple (was generic blue)
         actionBtn = '<button class="btn btn-sm" style="background:var(--mt-accent-soft,#faf5ff);color:var(--mt-accent,#7c3aed);border:1px solid var(--mt-accent-soft-2,#f3e8ff);" onclick="wfViewTxn(\''+t.id+'\')"><i class="fas fa-route"></i> سير المعاملة</button>';
       }
+      // v6.6.4 — Per-row admin-only "حَذف نِهائي" — hidden for non-admins by
+      // _wfApplyAdminVisibility, gated authoritatively by guardAdmin on the
+      // backend force-delete endpoint.
+      var safeTxnNumOut = String(t.txnNumber || '').replace(/'/g, "\\'");
+      var deleteBtn = ' <button class="btn btn-sm wf-row-delete-btn" onclick="event.stopPropagation();wfForceDeleteTxn(\''+t.id+'\',\''+safeTxnNumOut+'\')" title="حَذف نِهائي (admin only)"><i class="fas fa-trash"></i></button>';
       // v6.6.0 — scope pill uses brand tokens
       var scopeCls = t.scope === 'external' ? 'wf-pill--scope-external' : 'wf-pill--scope-internal';
       return '<tr style="'+rowStyle+'" onclick="wfViewTxn(\''+t.id+'\')">' +
@@ -13136,7 +13267,7 @@ function wfLoadOutbox() {
         '<td style="font-weight:800;color:'+impClr+';">'+impAr+'</td>' +
         '<td><span class="wf-pill '+scopeCls+'">'+scopeAr+'</span></td>' +
         '<td>'+statusCell+'</td>' +
-        '<td onclick="event.stopPropagation();">'+actionBtn+'</td>' +
+        '<td onclick="event.stopPropagation();">'+actionBtn+deleteBtn+'</td>' +
       '</tr>';
     }).join('');
   }).getWfOutbox(filters);

@@ -66,6 +66,24 @@
   transform: translateY(-1px);
 }
 
+/* v6.6.4 — Per-row admin-only delete button. Soft red-on-white at rest,
+   full red-on-red on hover so it reads as "destructive but safe to
+   leave alone". Hidden by default for non-admins by
+   _wfApplyAdminVisibility(); the backend gate is guardAdmin on the
+   /transactions/:id/force endpoint. */
+.wf-row-delete-btn {
+  background: #fff !important;
+  color: var(--mt-danger, #dc2626) !important;
+  border: 1px solid var(--mt-danger-soft, #fee2e2) !important;
+  padding: 5px 9px !important;
+  margin-inline-start: 4px;
+}
+.wf-row-delete-btn:hover {
+  background: var(--mt-danger, #dc2626) !important;
+  color: #fff !important;
+  border-color: var(--mt-danger, #dc2626) !important;
+}
+
 /* ── 3. Summary stat cards (purple-accented) ─────────────────────── */
 .wf-summary-grid {
   display: grid;

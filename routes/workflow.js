@@ -2422,7 +2422,11 @@ router.post('/transactions/:id/restore', async (req, res) => {
 //   2. Any user whose user_meta.isDeveloper === true
 // Body MUST include { confirm: 'DELETE-FOREVER', reason: '<text>' } so a stray
 // click cannot trigger this. The deletion is logged to audit_logs if available.
-router.delete('/transactions/:id/force', guardDeveloper, SCHEMA.validateBody(SCHEMA.schemas.forceDelete), async (req, res) => {
+// v6.6.4 — Force-delete now requires admin (was guardDeveloper). The
+// single-row force-delete + the global wipe-all are both nuclear; they
+// should share the same audience (literal admin). guardDeveloper stays
+// available for diagnostic / debug-only endpoints elsewhere.
+router.delete('/transactions/:id/force', guardAdmin, SCHEMA.validateBody(SCHEMA.schemas.forceDelete), async (req, res) => {
   try {
     const username = req.query.username || (req.user && req.user.username) || (req.body && req.body.username) || '';
     const { confirm, reason } = req.body || {};

@@ -4123,41 +4123,54 @@ window.toggleFloatActions = function() {
   }, true);
 })();
 
-// v6.17.3 — Wire the existing header "POS" nav link as the menu trigger.
-// The link is rendered async by /shared/header.js after auth + settings
-// load, so we attach attempt-once and then poll briefly as a fallback.
+// v6.17.4 — Wire the existing header "POS" nav link as the menu trigger
+// using EVENT DELEGATION on document.  The v6.17.3 polling-then-bind
+// approach broke because renderHeader is called multiple times on /pos/:
+//   1. sync on DOMContentLoaded
+//   2. async after the settings API resolves (replaces <nav>.innerHTML
+//      — destroying every event listener attached to the old link)
+//   3. again on language toggle (window.onLangChange)
+// Each re-render wipes the click handler, so by the time the user clicks
+// POS the link has its default <a href="/pos/"> behaviour and just reloads
+// the page.  Delegating on document survives all re-renders.
 //
 // Behaviour:
-//   • On /pos/ (link has class .active): intercept clicks, prevent the
-//     href navigation, and toggle the floating popover.
+//   • On /pos/: intercept clicks on the POS nav link, prevent default,
+//     and toggle the floating popover.
 //   • On any other page (/settings, /users, …) where the same link
 //     appears: do NOT intercept — let it navigate to /pos/ normally.
 (function setupPosNavLinkTrigger(){
-  function attach() {
+  document.addEventListener('click', function(e) {
+    var t = e.target;
+    if (!t || !t.closest) return;
+    var posLink = t.closest('.app-nav a[href="/pos/"]');
+    if (!posLink) return;
+    var onPos = /^\/pos\/?$/.test(window.location.pathname);
+    if (!onPos) return;
+    e.preventDefault();
+    e.stopPropagation();
+    window.toggleFloatActions();
+  }, true);  // capture so we run before any other handler
+
+  // ARIA hints — apply now and re-apply whenever the header is re-rendered
+  // (purely for screen readers; the click handler above already works
+  // regardless of when the link gets recreated).
+  function applyAria() {
     var posLink = document.querySelector('.app-nav a[href="/pos/"]');
-    if (!posLink) return false;
-    if (posLink.dataset.posTriggerBound === '1') return true;
-    posLink.dataset.posTriggerBound = '1';
+    if (!posLink) return;
     posLink.setAttribute('role', 'button');
     posLink.setAttribute('aria-haspopup', 'true');
-    posLink.setAttribute('aria-expanded', 'false');
-    posLink.addEventListener('click', function(e) {
-      // Only intercept when we're already on /pos/ — otherwise let the
-      // link navigate normally (e.g. clicking POS from /settings/).
-      var onPos = /^\/pos\/?$/.test(window.location.pathname);
-      if (!onPos) return;
-      e.preventDefault();
-      e.stopPropagation();
-      window.toggleFloatActions();
-    });
-    return true;
+    var el = document.getElementById('floatActions');
+    posLink.setAttribute('aria-expanded',
+      String(!!el && !el.classList.contains('collapsed')));
   }
-  // Header is rendered async after auth+settings load — poll briefly.
-  if (attach()) return;
-  var tries = 0;
-  var iv = setInterval(function(){
-    if (attach() || ++tries > 30) clearInterval(iv);
-  }, 100);
+  applyAria();
+  var host = document.getElementById('appHeader');
+  if (host && window.MutationObserver) {
+    try {
+      new MutationObserver(applyAria).observe(host, { childList: true, subtree: true });
+    } catch (e) { /* a11y nicety — never let it break the page */ }
+  }
 })();
 
 // Auto-collapse on mobile after 5 seconds (legacy behaviour, retained).

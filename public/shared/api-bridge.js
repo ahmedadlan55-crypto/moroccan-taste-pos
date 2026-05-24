@@ -73,6 +73,15 @@
     // ERP
     getERPDashboardData: { method: 'GET',  url: '/erp/dashboard' },
     getCustomers:        { method: 'GET',  url: '/erp/customers' },
+    // v6.15.2 — POS customer search modal (added in v6.15.0) calls this.
+    // Without this mapping the api-bridge proxy hits the "not-mapped"
+    // branch and silently returns null, so the POS modal renders an
+    // empty results list and the cashier sees "no results" for every
+    // search, including for customers they JUST added.  This is the
+    // root cause of the v6.15.0/v6.15.1 "added customer not found"
+    // complaint.  The same mapping has been in /public/js/api-bridge.js
+    // (the admin bundle) since v5.11.4.
+    searchCustomers:     { method: 'GET',  url: '/erp/customers/search', query: (q) => ({q:q}) },
     saveCustomer:        { method: 'POST', url: '/erp/customers' },
     deleteCustomer:      { method: 'DELETE',url: (id) => '/erp/customers/'+id },
     getSuppliers:        { method: 'GET',  url: '/erp/suppliers' },
@@ -256,8 +265,18 @@
           _failureFn = function(e){ console.error('API Error:', e); };
 
           if (!route) {
-            console.warn('API function not mapped:', prop);
-            successFn(null);
+            // v6.15.2 — Previously called successFn(null), which made
+            // every unmapped function call silently "succeed" with a
+            // null payload.  Callers that did `(rows || []).length`
+            // saw an empty list and never realised the API was never
+            // called.  This silently masked a real bug for months
+            // (POS searchCustomers was unmapped, so the search modal
+            // always showed "no results" without ever hitting the
+            // backend).  Switch to failureFn so future missing routes
+            // surface as a real, visible error.
+            var __errMsg = 'API function not mapped in /shared/api-bridge.js: ' + String(prop);
+            console.error('[api-bridge]', __errMsg);
+            try { failureFn(new Error(__errMsg)); } catch (_) {}
             return;
           }
 

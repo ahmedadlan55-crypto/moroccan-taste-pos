@@ -1140,7 +1140,18 @@ window.posOpenCustomerSearchModal = function (initialQuery) {
     debounceT = setTimeout(function () {
       console.log('[POS customer search] q=', qstr || '(empty → recent)');
       api.withSuccessHandler(function (rows) {
-        lastResults = rows || [];
+        // v6.15.2 — Paranoid null-check.  If api-bridge ever returns
+        // null for this call (e.g. a future route gets unmapped) we
+        // surface it as an explicit error instead of pretending "0
+        // results" — which is what masked the v6.15.0 bug for so long.
+        if (rows == null) {
+          console.error('[POS customer search] api returned null — searchCustomers route is missing from api-bridge');
+          lastResults = [];
+          setStatus('<i class="fas fa-triangle-exclamation"></i> فشل: استدعاء البحث لم يصل للخادم. حدّث الصفحة (Ctrl+Shift+R) وإن استمر أبلغ المطور.');
+          _posRenderCustSearchResults([], qstr);
+          return;
+        }
+        lastResults = rows;
         console.log('[POS customer search] returned ' + lastResults.length + ' rows', lastResults);
         if (!qstr) {
           setStatus('<i class="fas fa-clock-rotate-left"></i> آخر ' + lastResults.length + ' عميل تمت إضافتهم — اكتب للبحث في الكل');
@@ -1153,7 +1164,8 @@ window.posOpenCustomerSearchModal = function (initialQuery) {
       }).withFailureHandler(function (err) {
         console.error('[POS customer search] FAILED', err);
         lastResults = [];
-        setStatus('<i class="fas fa-triangle-exclamation"></i> فشل الاتصال بالخادم — حاول مجدداً');
+        var em = (err && err.message) ? err.message : 'فشل الاتصال بالخادم';
+        setStatus('<i class="fas fa-triangle-exclamation"></i> ' + _posEsc(em) + ' — حاول مجدداً');
         _posRenderCustSearchResults([], qstr);
       }).searchCustomers(qstr);
     }, delay);
@@ -1332,14 +1344,27 @@ window.posOpenCustomerAddModal = function (prefill) {
         // we just saved to PROVE it's in the DB and searchable.  If it
         // doesn't come back, alert the cashier loudly instead of failing
         // silently like before.
+        // v6.15.2 — Distinguish "API call never reached backend" (rows==null,
+        // route was unmapped) from "API returned an empty list" (rows==[]).
+        // The first means we have a bigger problem to surface; the second
+        // is the "saved but not searchable" case that warrants the toast.
         setTimeout(function () {
           api.withSuccessHandler(function (rows) {
-            var found = (rows || []).some(function (c) { return c.id === newId || c.phone === phone; });
+            if (rows == null) {
+              console.error('[POS customer add] readback returned null — search API not mapped');
+              if (typeof glassToast === 'function') {
+                glassToast('⚠ تعذّر التحقق من العميل (لم يتم استدعاء البحث) — حدّث الصفحة', true);
+              }
+              return;
+            }
+            var found = rows.some(function (c) { return c.id === newId || c.phone === phone; });
             console.log('[POS customer add] readback check (phone=' + phone + '): ' + (found ? 'FOUND ✓' : 'MISSING ✗'), rows);
             if (!found && typeof glassToast === 'function') {
               glassToast('⚠ تحذير: العميل لم يظهر في البحث بعد الإضافة — استخدم زر "🔄 تحديث" في نافذة البحث', true);
             }
-          }).withFailureHandler(function () {}).searchCustomers(phone);
+          }).withFailureHandler(function (err) {
+            console.error('[POS customer add] readback failed', err);
+          }).searchCustomers(phone);
         }, 400);
       } else {
         var err = (res && res.error) || 'فشل غير معروف';

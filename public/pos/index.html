@@ -364,7 +364,9 @@
             aria-expanded="false">
       <i class="fas fa-cash-register"></i>
       <span class="float-handle-label">POS</span>
-      <i class="fas fa-chevron-up float-handle-chev" id="floatHandleIcon"></i>
+      <!-- v6.17.2 — popover drops DOWN from the pill (was up in v6.17.0),
+           so the default chevron points down; rotates 180° when expanded. -->
+      <i class="fas fa-chevron-down float-handle-chev" id="floatHandleIcon"></i>
     </button>
     <div class="float-btns" id="floatBtns" role="menu">
       <button class="float-btn float-btn-success" onclick="shiftOpen()" title="فتح وردية"><i class="fas fa-play"></i></button>

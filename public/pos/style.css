@@ -2075,27 +2075,31 @@ body.foodics-mode .cart-footer { display: none !important; }
 }
 
 /* ═══════════════════════════════════════════════════════════════════
-   v6.17.0 — POS quick-actions: pill button + horizontal popover
+   v6.17.2 — POS quick-actions: pill button at TOP of page + dropdown popover
    ─────────────────────────────────────────────────────────────────────
-   Replaces the v5.x vertical sidebar (always-visible column of round
-   coloured buttons on the right edge).  Now:
-     • A purple "POS" pill button sits at the bottom-end of the screen
-       — same visual language as the header POS nav button.
-     • Clicking it expands a horizontal popover NEXT TO the pill,
-       containing the same 6 action buttons in a row.
+   Owner explicitly asked twice that the POS pill live at the TOP of
+   the page, not the bottom (v6.17.0 put it at bottom:20px which
+   visually sat above the cart and looked ugly — "فوق السله بشع").
+
+   Now:
+     • A purple "POS" pill button sits at the TOP-end of the screen
+       (top:8px) — overlapping the header bar's right edge.
+     • Clicking it expands a vertical popover BELOW the pill (drops
+       down), containing the same 6 action buttons.
+     • z-index 200 so it always sits above the .pos-top-bar (z:50).
      • Popover dismisses on Esc, click-outside, or after an action
-       button is clicked (see app.js IIFE in v6.17.0).
-     • Responsive: wraps on phones (<640px) and stacks vertically
-       on very narrow viewports (<380px).
+       button is clicked (see app.js IIFE in v6.17.0 — unchanged).
+     • Responsive: same dropdown behaviour on every viewport, the
+       popover wraps to multiple rows on narrow screens.
    ─────────────────────────────────────────────────────────────────── */
 .float-actions {
   position: fixed;
-  bottom: 20px;
-  inset-inline-end: 18px;      /* bidi-aware: right in LTR, left in RTL */
-  z-index: 100;
+  top: 8px;                     /* v6.17.2 — TOP of page (was bottom:20px) */
+  inset-inline-end: 18px;       /* bidi-aware: right in LTR, left in RTL */
+  z-index: 200;                 /* v6.17.2 — above .pos-top-bar (z-index:50) */
   display: flex;
-  flex-direction: row-reverse;  /* pill on the end, popover expands toward the start */
-  align-items: center;
+  flex-direction: column;       /* v6.17.2 — pill on top, popover drops below */
+  align-items: flex-end;        /* keep right-edge alignment */
   gap: 10px;
   pointer-events: none;         /* container is transparent — only children interactive */
 }
@@ -2136,10 +2140,11 @@ body.foodics-mode .cart-footer { display: none !important; }
 }
 .float-actions:not(.collapsed) .float-handle-chev { transform: rotate(180deg); }
 
-/* Horizontal popover container */
+/* Dropdown popover container (v6.17.2 — opens downward from the pill) */
 .float-btns {
   display: flex;
-  flex-direction: row;
+  flex-direction: row;          /* buttons still horizontally laid out */
+  flex-wrap: wrap;              /* wrap to multiple rows on narrow screens */
   gap: 8px;
   padding: 6px 10px;
   background: rgba(255, 255, 255, 0.95);
@@ -2148,21 +2153,21 @@ body.foodics-mode .cart-footer { display: none !important; }
   border: 1px solid rgba(124, 58, 237, 0.18);
   border-radius: 16px;
   box-shadow: 0 12px 32px -8px rgba(15, 23, 42, 0.22);
-  transform-origin: right center;
+  transform-origin: top right;  /* v6.17.2 — anchor to the pill above */
   transition: transform .25s cubic-bezier(.4,0,.2,1),
               opacity .2s,
               padding .25s;
 }
-[dir="rtl"] .float-btns { transform-origin: left center; }
+[dir="rtl"] .float-btns { transform-origin: top left; }
 .float-actions.collapsed .float-btns {
-  transform: scaleX(0);
+  transform: scaleY(0);         /* v6.17.2 — collapses UP into the pill */
   opacity: 0;
   pointer-events: none;
   padding: 0;
   border-width: 0;
   overflow: hidden;
-  width: 0;
-  max-width: 0;
+  height: 0;
+  max-height: 0;
 }
 
 /* Round action buttons (slightly smaller than v5 to fit the row better) */
@@ -2578,13 +2583,14 @@ body.foodics-mode .cart-footer { display: none !important; }
   }
   .mobile-cart-total { font-size: 18px; font-weight: 900; }
 
-  /* v6.17.0 — POS pill stays above the mobile-cart bar (mobile-cart-bar
-     is fixed at bottom:14px with z-index:100; lift the pill to clear it). */
-  .float-actions { bottom: 80px; inset-inline-end: 12px; }
-  .float-handle  { padding: 0 14px; height: 46px; font-size: 13px; }
+  /* v6.17.2 — POS pill at TOP of viewport on mobile (was bottom:80px in v6.17.0
+     to clear the mobile-cart bar; now the pill lives at the top so the cart
+     bar is irrelevant and there's no overlap). */
+  .float-actions { top: 6px; inset-inline-end: 12px; }
+  .float-handle  { padding: 0 14px; height: 42px; font-size: 13px; }
   .float-btn     { width: 40px; height: 40px; font-size: 15px; }
-  .float-btns    { gap: 7px; padding: 5px 8px; flex-wrap: wrap;
-                   max-width: calc(100vw - 110px - 24px);
+  .float-btns    { gap: 7px; padding: 5px 8px;
+                   max-width: calc(100vw - 24px);
                    justify-content: flex-end; }
 
   .glass-modal { padding: 12px; align-items: flex-end; }
@@ -2607,13 +2613,13 @@ body.foodics-mode .cart-footer { display: none !important; }
   .pos-item-price { font-size: 12px; padding: 3px 8px; }
 }
 
-/* v6.17.0 — Very narrow phones (<380px): stack the popover ABOVE the pill
-   so the buttons don't get crushed into a tiny side-row. */
+/* v6.17.2 — Very narrow phones (<380px): nothing special needed since the
+   v6.17.2 base style already stacks the popover BELOW the pill (flex
+   column, top:8px). Just shrink the pill label so the layout breathes. */
 @media (max-width: 380px) {
-  .float-actions { flex-direction: column-reverse; align-items: flex-end; }
-  .float-btns { transform-origin: bottom right; max-width: calc(100vw - 24px); }
-  [dir="rtl"] .float-btns { transform-origin: bottom left; }
-  .float-actions.collapsed .float-btns { transform: scaleY(0); }
+  .float-handle-label { display: none; }      /* hide "POS" text, keep icons */
+  .float-handle       { padding: 0 12px; gap: 6px; }
+  .float-btns         { max-width: calc(100vw - 24px); }
 }
 
 /* ═══════════════════════════════════════════════════════════════════

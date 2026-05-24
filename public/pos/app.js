@@ -1073,20 +1073,24 @@ function _posRenderCustSearchResults(rows, query) {
 }
 
 // ─── Search modal ──────────────────────────────────────────────────────
+// v6.15.1 — Opens with the 20 most-recent customers already loaded so
+// the cashier can see "the customer I just added" without typing.
+// Backend now supports empty-query → recent-list (routes/erp/customers.js).
 window.posOpenCustomerSearchModal = function (initialQuery) {
   var bodyHtml =
     '<input type="text" id="posCustSearchInput" class="pos-cust-modal-input" ' +
-           'placeholder="اكتب الاسم أو الهاتف (حرفين على الأقل)..." ' +
+           'placeholder="اكتب الاسم أو الهاتف للبحث (أو اترك فارغاً لرؤية آخر العملاء)..." ' +
            'data-vk="1" autocomplete="off" inputmode="text">' +
-    '<div id="posCustSearchResults" class="pos-cust-modal-results">' +
-      '<div class="pos-cust-modal-hint">' +
-        '<i class="fas fa-magnifying-glass"></i>' +
-        'ابدأ الكتابة للبحث... · Start typing to search' +
-      '</div>' +
-    '</div>';
+    '<div id="posCustSearchStatus" class="pos-cust-modal-status">' +
+      '<i class="fas fa-spinner fa-spin"></i> جارٍ تحميل آخر العملاء...' +
+    '</div>' +
+    '<div id="posCustSearchResults" class="pos-cust-modal-results"></div>';
   var footHtml =
     '<button type="button" class="pos-cust-modal-btn-cancel" data-pos-cust-close="1">' +
       '<i class="fas fa-times"></i> إغلاق' +
+    '</button>' +
+    '<button type="button" class="pos-cust-modal-btn-refresh" id="posCustSearchRefreshBtn" title="تحديث القائمة">' +
+      '<i class="fas fa-rotate"></i>' +
     '</button>' +
     '<button type="button" class="pos-cust-modal-btn-add" id="posCustSearchAddBtn">' +
       '<i class="fas fa-user-plus"></i> إضافة جديد' +
@@ -1115,42 +1119,55 @@ window.posOpenCustomerSearchModal = function (initialQuery) {
     }
   });
 
-  var input = q('#posCustSearchInput');
-  var addBtn = q('#posCustSearchAddBtn');
+  var input    = q('#posCustSearchInput');
+  var addBtn   = q('#posCustSearchAddBtn');
+  var refresh  = q('#posCustSearchRefreshBtn');
 
-  function doSearch() {
+  function setStatus(html) {
+    var el = q('#posCustSearchStatus');
+    if (el) el.innerHTML = html || '';
+  }
+
+  function doSearch(opts) {
     clearTimeout(debounceT);
     var qstr = String(input ? input.value : '').trim();
     lastQuery = qstr;
-    if (qstr.length < 2) {
-      _posRenderCustSearchResults([], qstr);
-      var host = q('#posCustSearchResults');
-      if (host) host.innerHTML =
-        '<div class="pos-cust-modal-hint">' +
-          '<i class="fas fa-magnifying-glass"></i>' +
-          'ابدأ الكتابة للبحث... · Start typing to search' +
-        '</div>';
-      return;
-    }
+    var isImmediate = opts && opts.immediate;
+    var delay = isImmediate ? 0 : 250;
+
+    setStatus('<i class="fas fa-spinner fa-spin"></i> جارٍ البحث...');
+
     debounceT = setTimeout(function () {
+      console.log('[POS customer search] q=', qstr || '(empty → recent)');
       api.withSuccessHandler(function (rows) {
         lastResults = rows || [];
+        console.log('[POS customer search] returned ' + lastResults.length + ' rows', lastResults);
+        if (!qstr) {
+          setStatus('<i class="fas fa-clock-rotate-left"></i> آخر ' + lastResults.length + ' عميل تمت إضافتهم — اكتب للبحث في الكل');
+        } else if (!lastResults.length) {
+          setStatus('<i class="fas fa-circle-info"></i> لا توجد نتائج لـ "' + _posEsc(qstr) + '" — اضغط "إضافة جديد" بالأسفل');
+        } else {
+          setStatus('<i class="fas fa-check"></i> ' + lastResults.length + ' نتيجة');
+        }
         _posRenderCustSearchResults(lastResults, qstr);
-      }).withFailureHandler(function () {
+      }).withFailureHandler(function (err) {
+        console.error('[POS customer search] FAILED', err);
         lastResults = [];
+        setStatus('<i class="fas fa-triangle-exclamation"></i> فشل الاتصال بالخادم — حاول مجدداً');
         _posRenderCustSearchResults([], qstr);
       }).searchCustomers(qstr);
-    }, 250);
+    }, delay);
   }
 
   if (input) {
-    input.addEventListener('input', doSearch);
+    input.addEventListener('input', function () { doSearch(); });
     setTimeout(function () { input.focus(); }, 60);
     if (initialQuery) {
       input.value = String(initialQuery);
-      doSearch();
     }
   }
+  // Always fire an initial search — empty query returns recent customers.
+  doSearch({ immediate: true });
 
   // Click delegation on result rows
   var resultsHost = q('#posCustSearchResults');
@@ -1164,9 +1181,16 @@ window.posOpenCustomerSearchModal = function (initialQuery) {
         phone:  row.dataset.phone || '',
         gender: row.dataset.gender || 'unknown'
       };
+      console.log('[POS customer search] picked', c);
       wrap.close();
       _posCustomerSelect(c);
     });
+  }
+
+  // Manual refresh button — useful if the cashier just added a customer
+  // in another tab/session and wants to see them.
+  if (refresh) {
+    refresh.addEventListener('click', function () { doSearch({ immediate: true }); });
   }
 
   // "Add new" button — close this modal and open the add modal pre-filled
@@ -1175,7 +1199,6 @@ window.posOpenCustomerSearchModal = function (initialQuery) {
       var prefill = {};
       var qstr = lastQuery || (input ? String(input.value || '').trim() : '');
       if (qstr) {
-        // If it looks like a phone (digits + maybe +), put it in phone; else name
         if (/^[+\d]/.test(qstr)) prefill.phone = qstr;
         else                      prefill.name  = qstr;
       }
@@ -1292,16 +1315,32 @@ window.posOpenCustomerAddModal = function (prefill) {
       username: (state.user && state.user.username) || (window.currentUser) || 'cashier'
     };
 
+    console.log('[POS customer add] saving →', payload);
     api.withSuccessHandler(function (res) {
+      console.log('[POS customer add] backend response:', res);
       if (btn) { btn.disabled = false; btn.innerHTML = '<i class="fas fa-floppy-disk"></i> حفظ وربط · Save & Link'; }
       if (res && res.success) {
+        var newId = res.id || ('CUST-' + Date.now());
         wrap.close();
         _posCustomerSelect({
-          id: res.id,
+          id: newId,
           name: name,
           phone: phone,
           gender: gender
-        }, { message: '✓ تم إنشاء العميل وربطه بالفاتورة · Customer created & linked' });
+        }, { message: '✓ تم إنشاء العميل [' + newId + '] وربطه · Saved & linked' });
+        // v6.15.1 — Confirm-via-readback: immediately query the customer
+        // we just saved to PROVE it's in the DB and searchable.  If it
+        // doesn't come back, alert the cashier loudly instead of failing
+        // silently like before.
+        setTimeout(function () {
+          api.withSuccessHandler(function (rows) {
+            var found = (rows || []).some(function (c) { return c.id === newId || c.phone === phone; });
+            console.log('[POS customer add] readback check (phone=' + phone + '): ' + (found ? 'FOUND ✓' : 'MISSING ✗'), rows);
+            if (!found && typeof glassToast === 'function') {
+              glassToast('⚠ تحذير: العميل لم يظهر في البحث بعد الإضافة — استخدم زر "🔄 تحديث" في نافذة البحث', true);
+            }
+          }).withFailureHandler(function () {}).searchCustomers(phone);
+        }, 400);
       } else {
         var err = (res && res.error) || 'فشل غير معروف';
         var isDup = /duplicate|ER_DUP_ENTRY|uq_customers_phone|already exists/i.test(String(err));
@@ -1316,10 +1355,11 @@ window.posOpenCustomerAddModal = function (prefill) {
             ]}
           );
         } else {
-          showError('<i class="fas fa-exclamation-triangle"></i> ' + _posEsc(err));
+          showError('<i class="fas fa-exclamation-triangle"></i> فشل الحفظ: ' + _posEsc(err));
         }
       }
     }).withFailureHandler(function (e) {
+      console.error('[POS customer add] network error:', e);
       if (btn) { btn.disabled = false; btn.innerHTML = '<i class="fas fa-floppy-disk"></i> حفظ وربط · Save & Link'; }
       showError('<i class="fas fa-exclamation-triangle"></i> خطأ في الاتصال: ' + _posEsc((e && e.message) || e));
     }).saveCustomer(payload, payload.username);

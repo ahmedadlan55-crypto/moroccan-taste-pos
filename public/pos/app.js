@@ -2849,12 +2849,26 @@ window.openCashierStocktake = function() {
   }).getInvItems();
 };
 
+// v6.12.1 — Whitelist clicks that originate inside the virtual keyboard.
+// The keyboard mounts at document.body (`#vkKeyboard`) — so a key tap
+// is "outside" both the search input AND the results dropdown. Without
+// this guard, every keypress fired `click` on body → outside-click
+// handler → dropdown hidden → next `input` event re-opened it. Result:
+// visible flicker. Selector list covers id + class + data-attribute so
+// future keyboard rebrands don't reintroduce the bug.
+function _vkContains(target) {
+  if (!target || !target.closest) return false;
+  return !!(target.closest('#vkKeyboard') ||
+            target.closest('.vk-keyboard') ||
+            target.closest('[data-vk-root]'));
+}
+
 function _closeCstDropdown(e) {
   var res = q('#cstSearchResults');
   var search = q('#cstSearch');
   if (!res || !search) return;
-  // If click is outside the search input and dropdown, hide it
-  if (!search.contains(e.target) && !res.contains(e.target)) {
+  // If click is outside the search input AND dropdown AND virtual keyboard, hide it
+  if (!search.contains(e.target) && !res.contains(e.target) && !_vkContains(e.target)) {
     res.style.display = 'none';
   }
 }
@@ -3512,7 +3526,11 @@ window.openShortageRequest = function() {
 function _closeShrDropdown(e) {
   var res = q('#shrSearchResults'), search = q('#shrSearch');
   if (!res || !search) return;
-  if (!search.contains(e.target) && !res.contains(e.target)) res.style.display = 'none';
+  // v6.12.1 — Same virtual-keyboard whitelist as _closeCstDropdown
+  // (see helper _vkContains defined earlier in the file).
+  if (!search.contains(e.target) && !res.contains(e.target) && !_vkContains(e.target)) {
+    res.style.display = 'none';
+  }
 }
 
 window.shrFilterItems = function(query) {

@@ -32861,7 +32861,11 @@ window.erpHrReportPrint = function() {
 var _woState = {
   defaultDays: new Set(),       // current org default
   defaultDirty: false,           // unsaved edits in the org pills
-  employees: []                  // [{ id, name, days, hasOverride, ... }]
+  employees: [],                 // [{ id, name, days, hasOverride, ... }]
+  // v6.10.0 — admin tooling state
+  filters: { search: '', branch: '', position: '', status: '' },
+  selected: new Set(),           // employee IDs ticked for bulk apply
+  _filterListenersWired: false   // one-shot guard for search input debounce
 };
 
 var WO_DAY_LABELS = ['الأحد','الاثنين','الثلاثاء','الأربعاء','الخميس','الجمعة','السبت'];
@@ -32871,7 +32875,11 @@ function _woInjectStyles() {
   if (document.getElementById('woStyles')) return;
   var st = document.createElement('style');
   st.id = 'woStyles';
+  // v6.10.0 — Brand-aligned palette (purple #7c3aed) + admin tooling
+  // (toolbar / summary / bulk bar). The structure stays SCA-compatible
+  // to match the rest of the HR module's chrome.
   st.textContent =
+    /* ─── Cards ─── */
     '#erpHrWeeklyOff .wo-default-card,#erpHrWeeklyOff .wo-employees-card{' +
       'background:#fff;border:1.5px solid #e2e8f0;border-radius:14px;' +
       'padding:18px 20px;margin-bottom:16px;' +
@@ -32880,38 +32888,106 @@ function _woInjectStyles() {
     '#erpHrWeeklyOff .wo-card-head{margin-bottom:14px;}' +
     '#erpHrWeeklyOff .wo-card-head h3{margin:0;font-size:15px;color:#0f172a;font-weight:900;display:inline-flex;align-items:center;gap:8px;}' +
     '#erpHrWeeklyOff .wo-card-sub{margin:5px 0 0;font-size:12px;color:#64748b;line-height:1.5;}' +
+
+    /* ─── Day pills (brand purple) ─── */
     '#erpHrWeeklyOff .wo-day-pills{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:14px;}' +
     '#erpHrWeeklyOff .wo-day-pill{' +
       'padding:10px 16px;border-radius:99px;border:1.5px solid #e2e8f0;background:#f8fafc;' +
       'cursor:pointer;font-size:13px;font-weight:800;color:#475569;' +
       'transition:all .15s;user-select:none;display:inline-flex;align-items:center;gap:6px;' +
     '}' +
-    '#erpHrWeeklyOff .wo-day-pill:hover{border-color:#cbd5e1;transform:translateY(-1px);}' +
-    '#erpHrWeeklyOff .wo-day-pill.is-on{background:linear-gradient(135deg,#dcfce7,#bbf7d0);border-color:#16a34a;color:#15803d;box-shadow:0 4px 10px -4px rgba(22,163,74,0.3);}' +
-    '#erpHrWeeklyOff .wo-day-pill.is-on::before{content:"✓ ";}' +
+    '#erpHrWeeklyOff .wo-day-pill:hover{border-color:#c4b5fd;background:#faf5ff;color:#6d28d9;transform:translateY(-1px);}' +
+    '#erpHrWeeklyOff .wo-day-pill.is-on{' +
+      'background:linear-gradient(135deg,#faf5ff,#ede9fe);' +
+      'border-color:#7c3aed;color:#6d28d9;' +
+      'box-shadow:0 4px 10px -4px rgba(124,58,237,0.30);' +
+    '}' +
+    '#erpHrWeeklyOff .wo-day-pill.is-on::before{content:"\\2713  ";font-weight:900;}' +
     '#erpHrWeeklyOff .wo-default-actions{text-align:end;}' +
+
+    /* ─── Employee day chips (in table) ─── */
     '#erpHrWeeklyOff .wo-emp-days{display:inline-flex;flex-wrap:wrap;gap:4px;}' +
     '#erpHrWeeklyOff .wo-emp-day{' +
       'padding:3px 9px;border-radius:99px;font-size:11px;font-weight:800;' +
-      'background:linear-gradient(135deg,#dbeafe,#bfdbfe);color:#1e40af;' +
+      'background:linear-gradient(135deg,#faf5ff,#ede9fe);color:#6d28d9;' +
+      'border:1px solid #ddd6fe;' +
     '}' +
+
+    /* ─── Status pills ─── */
     '#erpHrWeeklyOff .wo-status-pill{' +
       'display:inline-flex;align-items:center;gap:4px;font-size:11px;font-weight:800;padding:4px 10px;border-radius:99px;' +
     '}' +
     '#erpHrWeeklyOff .wo-status-pill.default{background:#f1f5f9;color:#64748b;}' +
     '#erpHrWeeklyOff .wo-status-pill.override{background:linear-gradient(135deg,#fef3c7,#fde68a);color:#92400e;}' +
-    /* Modal */
+
+    /* ─── v6.10.0 Summary row ─── */
+    '#erpHrWeeklyOff .wo-summary-row{' +
+      'display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:12px;margin-bottom:16px;' +
+    '}' +
+    '#erpHrWeeklyOff .wo-summary-card{' +
+      'background:#fff;border:1.5px solid #e2e8f0;border-right:4px solid #7c3aed;' +
+      'border-radius:14px;padding:14px 18px;' +
+      'display:flex;justify-content:space-between;align-items:center;gap:10px;' +
+      'box-shadow:0 1px 2px rgba(15,23,42,0.04);transition:transform .16s,box-shadow .16s;' +
+    '}' +
+    '#erpHrWeeklyOff .wo-summary-card:hover{transform:translateY(-2px);box-shadow:0 8px 22px -8px rgba(15,23,42,0.18);}' +
+    '#erpHrWeeklyOff .wo-summary-card .lbl{font-size:12.5px;font-weight:700;color:#64748b;}' +
+    '#erpHrWeeklyOff .wo-summary-card .val{font-size:24px;font-weight:900;color:#7c3aed;font-variant-numeric:tabular-nums;}' +
+    '#erpHrWeeklyOff .wo-summary-card.is-pattern .val{font-size:14px;line-height:1.3;color:#0f172a;text-align:end;}' +
+    '#erpHrWeeklyOff .wo-summary-card.is-pattern .val small{display:block;font-size:11px;color:#94a3b8;font-weight:700;margin-top:2px;}' +
+
+    /* ─── v6.10.0 Toolbar (search + filters) ─── */
+    '#erpHrWeeklyOff .wo-toolbar{' +
+      'display:grid;grid-template-columns:minmax(220px,2fr) repeat(3,minmax(150px,1fr)) auto;gap:10px;align-items:end;margin-bottom:14px;' +
+    '}' +
+    '#erpHrWeeklyOff .wo-toolbar .sca-input{' +
+      'height:42px;padding:0 14px;border:1.5px solid #e2e8f0;border-radius:11px;' +
+      'font-family:inherit;font-size:13.5px;color:#0f172a;background:#fff;outline:none;' +
+      'transition:border-color .15s,box-shadow .15s;width:100%;box-sizing:border-box;' +
+    '}' +
+    '#erpHrWeeklyOff .wo-toolbar .sca-input:focus{border-color:#7c3aed;box-shadow:0 0 0 4px rgba(124,58,237,0.14);}' +
+    '#erpHrWeeklyOff .wo-toolbar .sca-btn{height:42px;padding:0 16px;border-radius:11px;font-size:13px;font-weight:800;cursor:pointer;display:inline-flex;align-items:center;gap:7px;border:1.5px solid #e2e8f0;background:#fff;color:#64748b;transition:all .15s;}' +
+    '#erpHrWeeklyOff .wo-toolbar .sca-btn:hover{border-color:#cbd5e1;color:#0f172a;background:#f8fafc;}' +
+    '@media(max-width:720px){#erpHrWeeklyOff .wo-toolbar{grid-template-columns:1fr 1fr;}#erpHrWeeklyOff .wo-toolbar .sca-input:first-child,#erpHrWeeklyOff .wo-toolbar .sca-btn{grid-column:1/-1;}}' +
+    '@media(max-width:480px){#erpHrWeeklyOff .wo-toolbar{grid-template-columns:1fr;}}' +
+
+    /* ─── v6.10.0 Bulk action bar ─── */
+    '#erpHrWeeklyOff .wo-bulk-bar{' +
+      'display:none;align-items:center;gap:12px;flex-wrap:wrap;' +
+      'background:linear-gradient(135deg,#7c3aed,#6d28d9);color:#fff;' +
+      'padding:12px 18px;border-radius:14px;margin-bottom:14px;' +
+      'box-shadow:0 6px 18px -6px rgba(124,58,237,0.40);' +
+      'animation:woBulkSlide .22s ease-out;' +
+    '}' +
+    '#erpHrWeeklyOff .wo-bulk-bar.is-visible{display:flex;}' +
+    '#erpHrWeeklyOff .wo-bulk-bar strong{font-size:16px;font-weight:900;margin-inline-end:2px;}' +
+    '#erpHrWeeklyOff .wo-bulk-bar .sca-btn{height:36px;padding:0 16px;border-radius:10px;font-size:13px;font-weight:800;cursor:pointer;display:inline-flex;align-items:center;gap:6px;border:1.5px solid transparent;transition:all .15s;}' +
+    '#erpHrWeeklyOff .wo-bulk-bar .sca-btn.sca-btn-primary{background:#fff;color:#7c3aed;}' +
+    '#erpHrWeeklyOff .wo-bulk-bar .sca-btn.sca-btn-primary:hover{transform:translateY(-1px);box-shadow:0 4px 10px -2px rgba(0,0,0,0.18);}' +
+    '#erpHrWeeklyOff .wo-bulk-bar .sca-btn.sca-btn-ghost{background:rgba(255,255,255,0.16);color:#fff;border-color:rgba(255,255,255,0.24);}' +
+    '#erpHrWeeklyOff .wo-bulk-bar .sca-btn.sca-btn-ghost:hover{background:rgba(255,255,255,0.26);}' +
+    '@keyframes woBulkSlide{from{opacity:0;transform:translateY(-6px);}to{opacity:1;transform:translateY(0);}}' +
+
+    /* ─── v6.10.0 Checkbox column ─── */
+    '#erpHrWeeklyOff .wo-checkbox-cell{width:36px;text-align:center;}' +
+    '#erpHrWeeklyOff .wo-checkbox-cell input{width:16px;height:16px;cursor:pointer;accent-color:#7c3aed;}' +
+
+    /* ─── Modal (brand purple) ─── */
     '#woEmpModal{position:fixed;inset:0;background:rgba(15,23,42,0.55);backdrop-filter:blur(6px);z-index:10001;display:flex;align-items:center;justify-content:center;padding:20px;}' +
     '#woEmpModal .shell{background:#fff;border-radius:18px;max-width:520px;width:96%;box-shadow:0 30px 80px -20px rgba(15,23,42,0.45);overflow:hidden;}' +
-    '#woEmpModal .hero{padding:18px 22px;background:linear-gradient(135deg,#eff6ff,#fff 60%);border-bottom:1px solid #f1f5f9;}' +
-    '#woEmpModal .hero h3{margin:0;font-size:17px;font-weight:900;color:#0f172a;}' +
+    '#woEmpModal .hero{padding:18px 22px;background:linear-gradient(135deg,#faf5ff,#fff 60%);border-bottom:1px solid #f1f5f9;}' +
+    '#woEmpModal .hero h3{margin:0;font-size:17px;font-weight:900;color:#0f172a;display:inline-flex;align-items:center;gap:8px;}' +
+    '#woEmpModal .hero h3 i{color:#7c3aed;}' +
     '#woEmpModal .hero p{margin:4px 0 0;font-size:12px;color:#64748b;}' +
     '#woEmpModal .body{padding:20px 22px;}' +
     '#woEmpModal .foot{padding:14px 22px;background:#fafafa;border-top:1px solid #f1f5f9;display:flex;gap:10px;justify-content:flex-end;}' +
-    '#woEmpModal .foot button{height:38px;padding:0 18px;border-radius:10px;font-weight:800;cursor:pointer;border:1.5px solid transparent;font-size:13px;}' +
+    '#woEmpModal .foot button{height:38px;padding:0 18px;border-radius:10px;font-weight:800;cursor:pointer;border:1.5px solid transparent;font-size:13px;display:inline-flex;align-items:center;gap:6px;}' +
     '#woEmpModal .foot .ghost{background:#fff;border-color:#e2e8f0;color:#475569;}' +
+    '#woEmpModal .foot .ghost:hover{border-color:#cbd5e1;background:#f8fafc;}' +
     '#woEmpModal .foot .reset{background:#fff;border-color:#fdba74;color:#9a3412;}' +
-    '#woEmpModal .foot .primary{background:linear-gradient(135deg,#0ea5e9,#0284c7);color:#fff;}';
+    '#woEmpModal .foot .reset:hover{background:#fff7ed;}' +
+    '#woEmpModal .foot .primary{background:linear-gradient(135deg,#7c3aed,#6d28d9);color:#fff;box-shadow:0 4px 12px -3px rgba(124,58,237,0.40);}' +
+    '#woEmpModal .foot .primary:hover{transform:translateY(-1px);box-shadow:0 6px 16px -3px rgba(124,58,237,0.50);}';
   document.head.appendChild(st);
 }
 
@@ -32927,13 +33003,18 @@ window.erpLoadHrWeeklyOff = function () {
   }).getWeeklyOffDefault();
   // Employee table
   var tb = document.getElementById('woEmployeesBody');
-  if (tb) tb.innerHTML = '<tr><td colspan="6" class="sca-empty"><i class="fas fa-spinner fa-spin"></i><div>جاري التحميل...</div></td></tr>';
+  if (tb) tb.innerHTML = '<tr><td colspan="7" class="sca-empty"><i class="fas fa-spinner fa-spin"></i><div>جاري التحميل...</div></td></tr>';
   api.withSuccessHandler(function (r) {
     if (r && r.success) {
       _woState.employees = r.employees || [];
+      // v6.10.0 — Clear selection on every reload (IDs may have changed)
+      _woState.selected = new Set();
+      _woPopulateFilterDropdowns();
+      _woRenderSummary();
       _woRenderEmployees();
+      _woRenderBulkBar();
     } else if (tb) {
-      tb.innerHTML = '<tr><td colspan="6" class="sca-empty">' + ((r && r.error) || 'فشل التحميل') + '</td></tr>';
+      tb.innerHTML = '<tr><td colspan="7" class="sca-empty">' + ((r && r.error) || 'فشل التحميل') + '</td></tr>';
     }
   }).getWeeklyOffEmployees();
 };
@@ -32975,12 +33056,25 @@ window.erpSaveWeeklyOffDefault = function () {
 function _woRenderEmployees() {
   var tb = document.getElementById('woEmployeesBody');
   if (!tb) return;
-  var rows = _woState.employees;
+  // v6.10.0 — Render the filtered list (search + branch + position + status)
+  var rows = _woFilteredEmployees();
+  // Update the "select all" checkbox state based on the filtered slice
+  var selectAll = document.getElementById('woSelectAll');
+  if (selectAll) {
+    var visibleIds = rows.map(function (e) { return String(e.id); });
+    var allSelected = visibleIds.length > 0 && visibleIds.every(function (id) { return _woState.selected.has(id); });
+    selectAll.checked = allSelected;
+    selectAll.indeterminate = !allSelected && visibleIds.some(function (id) { return _woState.selected.has(id); });
+  }
   if (!rows.length) {
-    tb.innerHTML = '<tr><td colspan="6" class="sca-empty"><i class="fas fa-users"></i><div>لا يوجد موظفون نَشطون</div></td></tr>';
+    var noun = _woState.employees.length ? 'موظف يطابق الفلاتر' : 'موظف نَشط';
+    var icon = _woState.employees.length ? 'fa-filter-circle-xmark' : 'fa-users';
+    tb.innerHTML = '<tr><td colspan="7" class="sca-empty"><i class="fas ' + icon + '"></i><div>لا يوجد ' + noun + '</div></td></tr>';
     return;
   }
   tb.innerHTML = rows.map(function (e) {
+    var idEsc = String(e.id || '').replace(/'/g, "\\'");
+    var isSelected = _woState.selected.has(String(e.id));
     var daysHtml = '<span class="wo-emp-days">' + (e.days || []).map(function (d) {
       return '<span class="wo-emp-day">' + WO_DAY_SHORT[d] + '</span>';
     }).join('') + '</span>';
@@ -32988,15 +33082,16 @@ function _woRenderEmployees() {
       ? '<span class="wo-status-pill override"><i class="fas fa-user-pen"></i> استثناء فَردي</span>'
       : '<span class="wo-status-pill default"><i class="fas fa-globe"></i> الافتراضي</span>';
     return '<tr>' +
+      '<td class="wo-checkbox-cell"><input type="checkbox" data-emp-id="' + idEsc + '" ' + (isSelected ? 'checked' : '') + ' onclick="erpWoToggleSelect(\'' + idEsc + '\', this.checked)" aria-label="تحديد موظف"></td>' +
       '<td><strong>' + (e.name || '—') + '</strong></td>' +
       '<td>' + (e.branchName || '—') + '</td>' +
       '<td>' + (e.positionName || '—') + '</td>' +
       '<td>' + daysHtml + '</td>' +
       '<td>' + statusHtml + '</td>' +
       '<td class="actions">' +
-        '<button class="sca-row-btn" title="تَخصيص" onclick="erpOpenWeeklyOffModal(\'' + e.id + '\')"><i class="fas fa-edit"></i></button>' +
+        '<button class="sca-row-btn" title="تَخصيص" onclick="erpOpenWeeklyOffModal(\'' + idEsc + '\')"><i class="fas fa-edit"></i></button>' +
         (e.hasOverride
-          ? ' <button class="sca-row-btn is-danger" title="إعادة للافتراضي" onclick="erpResetEmployeeWeeklyOff(\'' + e.id + '\')"><i class="fas fa-rotate-left"></i></button>'
+          ? ' <button class="sca-row-btn is-danger" title="إعادة للافتراضي" onclick="erpResetEmployeeWeeklyOff(\'' + idEsc + '\')"><i class="fas fa-rotate-left"></i></button>'
           : '') +
       '</td>' +
     '</tr>';
@@ -33083,6 +33178,268 @@ window.erpResetEmployeeWeeklyOff = function (empId, fromModal) {
       showToast((r && r.error) || 'فشل الإلغاء', true);
     }
   }).setWeeklyOffEmployee(empId, { days: [] });
+};
+
+// ═══════════════════════════════════════════════════════════════════
+// v6.10.0 — Weekly-off admin tooling: filters + summary + bulk apply
+// ═══════════════════════════════════════════════════════════════════
+// All helpers stay scoped to the #erpHrWeeklyOff section. The DOM IDs
+// they touch are owned exclusively by that section (woSearch, woFilter*,
+// woSelectAll, woBulkBar, woBulkCount, woSummaryRow). The single source
+// of truth for state is window._woState — every render reads from it.
+
+// ── Helper: extract unique non-empty string values from employee list ─
+function _woUniqueValues(field) {
+  var seen = Object.create(null);
+  var out = [];
+  for (var i = 0; i < _woState.employees.length; i++) {
+    var v = _woState.employees[i] && _woState.employees[i][field];
+    if (v && !seen[v]) { seen[v] = true; out.push(v); }
+  }
+  out.sort(function (a, b) { return String(a).localeCompare(String(b), 'ar'); });
+  return out;
+}
+
+// ── Populate branch + position dropdowns from unique employee values ─
+// Preserves the currently-selected value when the option still exists.
+function _woPopulateFilterDropdowns() {
+  var bSel = document.getElementById('woFilterBranch');
+  var pSel = document.getElementById('woFilterPosition');
+  if (bSel) {
+    var prevB = bSel.value || '';
+    var branches = _woUniqueValues('branchName');
+    bSel.innerHTML = '<option value="">كل الفروع</option>' +
+      branches.map(function (b) {
+        var esc = String(b).replace(/"/g, '&quot;');
+        return '<option value="' + esc + '"' + (b === prevB ? ' selected' : '') + '>' + b + '</option>';
+      }).join('');
+  }
+  if (pSel) {
+    var prevP = pSel.value || '';
+    var positions = _woUniqueValues('positionName');
+    pSel.innerHTML = '<option value="">كل الوظائف</option>' +
+      positions.map(function (p) {
+        var esc = String(p).replace(/"/g, '&quot;');
+        return '<option value="' + esc + '"' + (p === prevP ? ' selected' : '') + '>' + p + '</option>';
+      }).join('');
+  }
+  // Restore current filter values into _woState (in case dropdowns repopulated
+  // and the old selection still exists — keeps filters consistent across reloads).
+  _woState.filters.branch   = (bSel && bSel.value) || '';
+  _woState.filters.position = (pSel && pSel.value) || '';
+}
+
+// ── Apply current filters to the employee list ───────────────────────
+function _woFilteredEmployees() {
+  var f = _woState.filters;
+  var q = (f.search || '').trim().toLowerCase();
+  return _woState.employees.filter(function (e) {
+    if (q && String(e.name || '').toLowerCase().indexOf(q) < 0) return false;
+    if (f.branch   && String(e.branchName   || '') !== f.branch)   return false;
+    if (f.position && String(e.positionName || '') !== f.position) return false;
+    if (f.status === 'default'  && e.hasOverride) return false;
+    if (f.status === 'override' && !e.hasOverride) return false;
+    return true;
+  });
+}
+
+// ── Render the 4 summary cards (total / default / override / pattern) ─
+function _woRenderSummary() {
+  var host = document.getElementById('woSummaryRow');
+  if (!host) return;
+  var all = _woState.employees || [];
+  var overrideCount = 0;
+  // Tally day-pattern frequency by signature "0,5,6"-style csv
+  var patternCount = Object.create(null);
+  for (var i = 0; i < all.length; i++) {
+    var e = all[i];
+    if (e.hasOverride) overrideCount++;
+    var sig = (e.days || []).slice().sort(function (a, b) { return a - b; }).join(',');
+    patternCount[sig] = (patternCount[sig] || 0) + 1;
+  }
+  var defaultCount = all.length - overrideCount;
+  // Find the most common pattern
+  var topSig = '', topCount = 0;
+  for (var k in patternCount) {
+    if (patternCount[k] > topCount) { topCount = patternCount[k]; topSig = k; }
+  }
+  var topLabel = '—';
+  if (topSig && topCount > 0) {
+    var parts = topSig === '' ? [] : topSig.split(',').map(Number);
+    if (parts.length) topLabel = parts.map(function (d) { return WO_DAY_LABELS[d] || ''; }).join(' + ');
+    else topLabel = 'لا يوجد';
+  }
+
+  host.innerHTML =
+    '<div class="wo-summary-card">' +
+      '<span class="lbl">إجمالي الموظفين النَّشطين</span>' +
+      '<span class="val">' + all.length.toLocaleString('en-US') + '</span>' +
+    '</div>' +
+    '<div class="wo-summary-card">' +
+      '<span class="lbl">بِالإعداد الافتراضي</span>' +
+      '<span class="val">' + defaultCount.toLocaleString('en-US') + '</span>' +
+    '</div>' +
+    '<div class="wo-summary-card">' +
+      '<span class="lbl">باستثناء فَردي</span>' +
+      '<span class="val">' + overrideCount.toLocaleString('en-US') + '</span>' +
+    '</div>' +
+    '<div class="wo-summary-card is-pattern">' +
+      '<span class="lbl">النَّمَط الأكثر شُيوعاً</span>' +
+      '<span class="val">' + topLabel + '<small>(' + topCount + ' موظف)</small></span>' +
+    '</div>';
+}
+
+// ── Show/hide the bulk action bar + update count ─────────────────────
+function _woRenderBulkBar() {
+  var bar = document.getElementById('woBulkBar');
+  var countEl = document.getElementById('woBulkCount');
+  var n = _woState.selected.size;
+  if (countEl) countEl.textContent = String(n);
+  if (bar) bar.classList.toggle('is-visible', n > 0);
+}
+
+// ── Handlers: filter change + reset ──────────────────────────────────
+window.erpWoFilterChanged = function () {
+  var searchEl = document.getElementById('woSearch');
+  var branchEl = document.getElementById('woFilterBranch');
+  var posEl    = document.getElementById('woFilterPosition');
+  var statEl   = document.getElementById('woFilterStatus');
+  _woState.filters.search   = searchEl ? searchEl.value : '';
+  _woState.filters.branch   = branchEl ? branchEl.value : '';
+  _woState.filters.position = posEl    ? posEl.value    : '';
+  _woState.filters.status   = statEl   ? statEl.value   : '';
+  _woRenderEmployees();
+};
+
+window.erpWoResetFilters = function () {
+  _woState.filters = { search: '', branch: '', position: '', status: '' };
+  ['woSearch', 'woFilterBranch', 'woFilterPosition', 'woFilterStatus'].forEach(function (id) {
+    var el = document.getElementById(id); if (el) el.value = '';
+  });
+  _woRenderEmployees();
+};
+
+// ── Selection handlers ──────────────────────────────────────────────
+window.erpWoToggleSelect = function (empId, checked) {
+  var id = String(empId);
+  if (checked) _woState.selected.add(id);
+  else         _woState.selected.delete(id);
+  _woRenderBulkBar();
+  // Refresh the select-all header checkbox state without rerendering rows
+  var rows = _woFilteredEmployees().map(function (e) { return String(e.id); });
+  var selectAll = document.getElementById('woSelectAll');
+  if (selectAll) {
+    var allSelected = rows.length > 0 && rows.every(function (id2) { return _woState.selected.has(id2); });
+    var someSelected = rows.some(function (id2) { return _woState.selected.has(id2); });
+    selectAll.checked = allSelected;
+    selectAll.indeterminate = !allSelected && someSelected;
+  }
+};
+
+window.erpWoSelectAll = function (checked) {
+  // Only add/remove IDs that match the current filter — never touch hidden rows
+  var visible = _woFilteredEmployees().map(function (e) { return String(e.id); });
+  if (checked) visible.forEach(function (id) { _woState.selected.add(id); });
+  else         visible.forEach(function (id) { _woState.selected.delete(id); });
+  _woRenderEmployees();
+  _woRenderBulkBar();
+};
+
+window.erpWoBulkClear = function () {
+  _woState.selected = new Set();
+  _woRenderEmployees();
+  _woRenderBulkBar();
+};
+
+// ── Bulk apply modal ────────────────────────────────────────────────
+window.erpWoBulkOpenModal = function () {
+  _woInjectStyles();
+  var n = _woState.selected.size;
+  if (n === 0) {
+    if (typeof showToast === 'function') showToast('لا يوجد موظفون محددون', true);
+    return;
+  }
+  var existing = document.getElementById('woEmpModal');
+  if (existing) existing.remove();
+  var workingSet = new Set();   // start empty — admin picks days fresh
+  var wrap = document.createElement('div');
+  wrap.id = 'woEmpModal';
+  wrap.onclick = function (ev) { if (ev.target === wrap) erpCloseWeeklyOffModal(); };
+  var pillsHtml = '';
+  for (var i = 0; i < 7; i++) {
+    pillsHtml += '<div class="wo-day-pill" data-day="' + i + '" onclick="_woBulkModalToggle(' + i + ')">' + WO_DAY_LABELS[i] + '</div>';
+  }
+  wrap.innerHTML =
+    '<div class="shell" onclick="event.stopPropagation();">' +
+      '<div class="hero">' +
+        '<h3><i class="fas fa-calendar-check"></i> تَطبيق أيام إجازة على ' + n + ' موظف</h3>' +
+        '<p>اختر أيام الإجازة الأسبوعية ثم اضغط "تَطبيق" — سيُحدَّث كل المحددين دفعة واحدة.</p>' +
+      '</div>' +
+      '<div class="body">' +
+        '<div class="wo-day-pills" id="woEmpModalPills">' + pillsHtml + '</div>' +
+      '</div>' +
+      '<div class="foot">' +
+        '<button class="ghost" onclick="erpCloseWeeklyOffModal()">إلغاء</button>' +
+        '<button class="primary" onclick="erpWoBulkApplyFromModal()"><i class="fas fa-check"></i> تَطبيق على ' + n + '</button>' +
+      '</div>' +
+    '</div>';
+  document.body.appendChild(wrap);
+  wrap._workingSet = workingSet;
+  wrap._bulkMode = true;
+};
+
+// Modal pill toggle for BOTH single-employee and bulk modes. The single-
+// employee modal already had its own _woModalToggle; we share the same
+// rendering logic here. The legacy function is kept untouched above.
+window._woBulkModalToggle = function (idx) {
+  var wrap = document.getElementById('woEmpModal');
+  if (!wrap || !wrap._workingSet) return;
+  if (wrap._workingSet.has(idx)) wrap._workingSet.delete(idx);
+  else wrap._workingSet.add(idx);
+  var pillsHost = document.getElementById('woEmpModalPills');
+  if (!pillsHost) return;
+  pillsHost.querySelectorAll('.wo-day-pill').forEach(function (p) {
+    var d = Number(p.dataset.day);
+    if (wrap._workingSet.has(d)) p.classList.add('is-on');
+    else p.classList.remove('is-on');
+  });
+};
+
+window.erpWoBulkApplyFromModal = function () {
+  var wrap = document.getElementById('woEmpModal');
+  if (!wrap || !wrap._workingSet) return;
+  var days = Array.from(wrap._workingSet).sort(function (a, b) { return a - b; });
+  erpWoBulkSave(days);
+};
+
+// ── Bulk save: fire one POST per selected employee in parallel ───────
+window.erpWoBulkSave = function (days) {
+  var ids = Array.from(_woState.selected);
+  if (ids.length === 0) return;
+  // Show a progress toast (best-effort)
+  if (typeof showToast === 'function') {
+    showToast('جاري التَّطبيق على ' + ids.length + ' موظف...');
+  }
+  // Wrap the legacy callback-based bridge in promises so Promise.all works
+  var jobs = ids.map(function (id) {
+    return new Promise(function (resolve) {
+      api.withSuccessHandler(function (r) {
+        resolve({ id: id, ok: !!(r && r.success), error: r && r.error });
+      }).withFailureHandler(function (err) {
+        resolve({ id: id, ok: false, error: (err && err.message) || String(err) });
+      }).setWeeklyOffEmployee(id, { days: days });
+    });
+  });
+  Promise.all(jobs).then(function (results) {
+    var ok = results.filter(function (r) { return r.ok; }).length;
+    var fail = results.length - ok;
+    var msg = '✓ تَم تطبيق الأيام على ' + ok + ' موظف';
+    if (fail > 0) msg += ' (فشل ' + fail + ')';
+    if (typeof showToast === 'function') showToast(msg, fail > 0);
+    erpCloseWeeklyOffModal();
+    _woState.selected = new Set();   // clear selection after a bulk run
+    erpLoadHrWeeklyOff();
+  });
 };
 
 // ═══════════════════════════════════════════════════════════════════

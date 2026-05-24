@@ -4661,9 +4661,12 @@
 <!-- v6.3.0 — HR: الإجازات الأسبوعية (Weekly Off Days) -->
 <!-- ══════════════════════════════════════════════════════════════ -->
 <div id="erpHrWeeklyOff" class="dash-section hidden">
+  <!-- v6.10.0 — Brand-aligned header gradient (purple matches adjacent
+       attendance report) + admin tooling (summary cards, toolbar with
+       search/filters, bulk-select column + bar). -->
   <header class="sca-header">
     <div class="sca-header-main">
-      <div class="sca-header-icon" style="background:linear-gradient(135deg,#0ea5e9,#0284c7);"><i class="fas fa-calendar-week"></i></div>
+      <div class="sca-header-icon" style="background:linear-gradient(135deg,#7c3aed,#6d28d9);"><i class="fas fa-calendar-week"></i></div>
       <div class="sca-header-text">
         <h1 class="sca-header-title">الإجازات الأسبوعية</h1>
         <p class="sca-header-sub">تَحديد أيام الراحة الأسبوعية على مُستوى الشَّركة + إمكانية تَخصيص استثناءات لكل موظف بشكل مُستقل.</p>
@@ -4674,10 +4677,13 @@
     </div>
   </header>
 
+  <!-- v6.10.0 — Summary cards (rendered by _woRenderSummary in erp.js) -->
+  <section class="wo-summary-row" id="woSummaryRow"></section>
+
   <!-- Org default card -->
   <section class="wo-default-card">
     <div class="wo-card-head">
-      <h3><i class="fas fa-globe" style="color:#0284c7;"></i> الإعداد الافتراضي للشَّركة</h3>
+      <h3><i class="fas fa-globe" style="color:#7c3aed;"></i> الإعداد الافتراضي للشَّركة</h3>
       <p class="wo-card-sub">يُطبَّق على كل موظَّف ليس عنده استثناء فَردي.</p>
     </div>
     <div class="wo-day-pills" id="woDefaultPills"></div>
@@ -4692,10 +4698,36 @@
       <h3><i class="fas fa-users-cog" style="color:#7c3aed;"></i> استثناءات الموظفين</h3>
       <p class="wo-card-sub">اضغط على "تَخصيص" لِتَعيين أيام مُختلفة لمُوظَّف، أو "إعادة للافتراضي" لِمَسح الاستثناء.</p>
     </div>
+
+    <!-- v6.10.0 — Toolbar (search + 3 filters + reset). Live as you type. -->
+    <div class="wo-toolbar" id="woToolbar">
+      <input id="woSearch" class="sca-input" placeholder="بحث عن موظف بالاسم..." oninput="erpWoFilterChanged()">
+      <select id="woFilterBranch" class="sca-input" onchange="erpWoFilterChanged()">
+        <option value="">كل الفروع</option>
+      </select>
+      <select id="woFilterPosition" class="sca-input" onchange="erpWoFilterChanged()">
+        <option value="">كل الوظائف</option>
+      </select>
+      <select id="woFilterStatus" class="sca-input" onchange="erpWoFilterChanged()">
+        <option value="">كل الحالات</option>
+        <option value="default">بالإعداد الافتراضي</option>
+        <option value="override">باستثناء فَردي</option>
+      </select>
+      <button class="sca-btn" onclick="erpWoResetFilters()"><i class="fas fa-redo"></i><span>إعادة تَعيين</span></button>
+    </div>
+
+    <!-- v6.10.0 — Bulk action bar (hidden until ≥1 selected) -->
+    <div class="wo-bulk-bar" id="woBulkBar" role="region" aria-label="إجراءات جماعية">
+      <span><strong id="woBulkCount">0</strong> موظف محدد</span>
+      <button class="sca-btn sca-btn-primary" onclick="erpWoBulkOpenModal()"><i class="fas fa-calendar-check"></i><span>تَطبيق أيام إجازة...</span></button>
+      <button class="sca-btn sca-btn-ghost" onclick="erpWoBulkClear()"><i class="fas fa-times"></i><span>إلغاء التحديد</span></button>
+    </div>
+
     <div class="sca-table-wrap">
       <table class="sca-table">
         <thead>
           <tr>
+            <th class="wo-checkbox-cell"><input type="checkbox" id="woSelectAll" onclick="erpWoSelectAll(this.checked)" aria-label="تحديد الكل"></th>
             <th>الموظف</th>
             <th>الفَرع</th>
             <th>الوظيفة</th>
@@ -4705,7 +4737,7 @@
           </tr>
         </thead>
         <tbody id="woEmployeesBody">
-          <tr><td colspan="6" class="sca-empty"><i class="fas fa-spinner fa-spin"></i><div>جاري التحميل...</div></td></tr>
+          <tr><td colspan="7" class="sca-empty"><i class="fas fa-spinner fa-spin"></i><div>جاري التحميل...</div></td></tr>
         </tbody>
       </table>
     </div>

@@ -2859,8 +2859,27 @@ function _closeCstDropdown(e) {
   }
 }
 
+// v6.12.0 — Normalize Arabic text for fuzzy search.
+// Without this, typing "ا" on the virtual keyboard fails to match items
+// stored as "أرز" / "إجازة" / "آبار" because the alif variants are
+// distinct Unicode codepoints. We also normalize ta-marbuta → ha,
+// alif-maqsura → ya, hamza-on-waw → waw, hamza-on-ya → ya, and strip
+// tashkeel diacritics. The transformation is applied to BOTH the query
+// and the candidate so any combination matches symmetrically.
+function _normalizeArabic(s) {
+  return String(s || '')
+    .toLowerCase()
+    .replace(/[ً-ْ]/g, '')   // strip tashkeel (fatha→sukun, shadda, tanwin)
+    .replace(/[ٱأإآ]/g, 'ا')  // ٱ أ إ آ → ا
+    .replace(/ة/g, 'ه')      // ة → ه
+    .replace(/ى/g, 'ي')      // ى → ي
+    .replace(/ؤ/g, 'و')      // ؤ → و
+    .replace(/ئ/g, 'ي');     // ئ → ي
+}
+
 window.filterCashierStItems = function() {
-  var search = (q('#cstSearch') ? q('#cstSearch').value : '').toLowerCase();
+  var rawSearch = (q('#cstSearch') ? q('#cstSearch').value : '');
+  var search = _normalizeArabic(rawSearch);
   var res = q('#cstSearchResults');
   if (!res) return;
   // Get IDs already in cart so we can hide them from the dropdown
@@ -2869,7 +2888,10 @@ window.filterCashierStItems = function() {
   // Filter: exclude items already in cart + apply search
   var available = _cstAllItems.filter(function(i) { return cartIds.indexOf(i.id) === -1; });
   var matches = search
-    ? available.filter(function(i) { return (i.name||'').toLowerCase().includes(search) || (i.id||'').toLowerCase().includes(search); })
+    ? available.filter(function(i) {
+        return _normalizeArabic(i.name || '').includes(search)
+            || _normalizeArabic(i.id   || '').includes(search);
+      })
     : available;
   // Show ALL available items (no limit) so user can scroll through everything
   if (!matches.length) { res.innerHTML = '<div style="padding:10px;color:#94a3b8;text-align:center;">' + t('stNoResults') + '</div>'; res.style.display = 'block'; return; }
@@ -3495,11 +3517,17 @@ function _closeShrDropdown(e) {
 
 window.shrFilterItems = function(query) {
   var box = q('#shrSearchResults');
-  var ql = (query||'').toLowerCase();
+  // v6.12.0 — Normalize so typing "ا" matches names stored with أ / إ / آ
+  // (same helper as filterCashierStItems above).
+  var ql = _normalizeArabic(query || '');
   var cartIds = _shrCart.map(function(c) { return c.id; });
   var available = _shrAllItems.filter(function(i) { return cartIds.indexOf(i.id) === -1; });
   var matches = ql
-    ? available.filter(function(i) { return (i.name||'').toLowerCase().indexOf(ql) >= 0 || (i.category||'').toLowerCase().indexOf(ql) >= 0 || (i.id||'').toLowerCase().indexOf(ql) >= 0; })
+    ? available.filter(function(i) {
+        return _normalizeArabic(i.name     || '').indexOf(ql) >= 0
+            || _normalizeArabic(i.category || '').indexOf(ql) >= 0
+            || _normalizeArabic(i.id       || '').indexOf(ql) >= 0;
+      })
     : available;
 
   if (!matches.length) { box.innerHTML = '<div style="padding:12px;color:#94a3b8;text-align:center;">' + t('stNoResults') + '</div>'; box.style.display = 'block'; return; }

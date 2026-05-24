@@ -170,7 +170,13 @@
         <span class="pos-channel-pricelist" id="posChannelPriceLabel"></span>
       </div>
 
-      <!-- ─── v5.11.4 — Customer capture panel (collapsible) ─── -->
+      <!-- ─── v5.11.4 / v6.13.0 — Customer capture panel ───
+           v6.13.0 changes:
+             • Auto-expands on first cart-add (handled in addToCart → _posCustomerEnsurePanelOpen)
+             • Status chip in the header reflects whether the sale will
+               link / create / be skipped (rendered by _posCustomerUpdateStatus)
+             • Inline hint under the name field appears when name is set
+               but phone is empty (the natural-key path requires phone) -->
       <div class="pos-customer-bar" id="posCustomerBar">
         <div class="pos-customer-header" onclick="posToggleCustomerPanel()">
           <span class="pos-customer-title">
@@ -191,7 +197,14 @@
           <div class="pos-cust-row">
             <label>الاسم · Name</label>
             <input id="posCustName" type="text" maxlength="120"
-                   placeholder="اسم العميل · Customer name" autocomplete="off" data-vk="1">
+                   placeholder="اسم العميل · Customer name" autocomplete="off" data-vk="1"
+                   oninput="_posCustomerUpdateStatus()">
+            <!-- v6.13.0 — Inline validation hint, hidden by default, shown
+                 by _posCustomerUpdateStatus when only the name is filled. -->
+            <div class="pos-cust-hint" id="posCustHint" style="display:none;">
+              <i class="fas fa-info-circle"></i>
+              <span>أدخل رقم الهاتف لحفظ بيانات العميل · Enter phone to save customer</span>
+            </div>
           </div>
           <div class="pos-cust-row pos-cust-gender">
             <label>الجنس · Gender</label>

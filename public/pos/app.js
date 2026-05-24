@@ -918,16 +918,68 @@ window.posToggleCustomerPanel = function () {
 
 // Render the chip in the panel header so the cashier can see at a glance
 // who the sale is linked to without expanding the panel.
-window._posCustomerRenderChip = function () {
+// v6.13.0 — Backward-compat shim: existing callers (pickSuggestion / Clear /
+// MarkNew) still call this name. It delegates to the richer status updater
+// that also paints validation hint + colour state.
+window._posCustomerRenderChip = function () { _posCustomerUpdateStatus(); };
+
+// v6.13.0 — Single source of truth for the customer panel's visual state.
+// Reads window.state.posCustomer + the live DOM inputs and paints:
+//   • Header chip: colour + label + icon based on save-intent
+//   • Inline hint: shown when name is filled but phone is empty
+// Called from every place that mutates the panel: lookup, pick, mark-new,
+// clear, name oninput, and after a sale's response (to reset cleanly).
+window._posCustomerUpdateStatus = function () {
   var chip = q('#posCustomerChip');
   if (!chip) return;
-  if (state.posCustomer && (state.posCustomer.name || state.posCustomer.phone)) {
-    chip.textContent = (state.posCustomer.name || state.posCustomer.phone || '');
-    chip.classList.add('is-set');
+  var s = state.posCustomer || {};
+  // Pull live DOM values too — covers the case where the user typed but
+  // we haven't sync'd to state.posCustomer yet (e.g. between keystrokes
+  // on the name field, which has no oninput → state update).
+  var phoneVal = (q('#posCustPhone') && q('#posCustPhone').value || s.phone || '').trim();
+  var nameVal  = (q('#posCustName')  && q('#posCustName').value  || s.name  || '').trim();
+  var hint = q('#posCustHint');
+
+  // Reset visual classes
+  chip.classList.remove('is-set', 'is-linked', 'is-new', 'is-warn', 'is-error');
+
+  if (s.id) {
+    // Linked to an existing customer (picked from suggestions or matched by phone)
+    chip.classList.add('is-set', 'is-linked');
+    chip.innerHTML = '<i class="fas fa-check-circle"></i>' + (s.name || phoneVal || 'مرتبط');
+    if (hint) hint.style.display = 'none';
+  } else if (phoneVal && (nameVal || phoneVal.length >= 7)) {
+    // Will be created as a new customer on checkout
+    chip.classList.add('is-set', 'is-new');
+    chip.innerHTML = '<i class="fas fa-plus-circle"></i>عميل جَديد · New';
+    if (hint) hint.style.display = 'none';
+  } else if (nameVal && !phoneVal) {
+    // Name without phone — the backend can't upsert; warn the cashier
+    chip.classList.add('is-set', 'is-warn');
+    chip.innerHTML = '<i class="fas fa-exclamation-circle"></i>يَحتاج هاتف';
+    if (hint) hint.style.display = 'flex';
+  } else if (state._posCustLastError) {
+    // Sticky error from the previous sale's response
+    chip.classList.add('is-set', 'is-error');
+    chip.innerHTML = '<i class="fas fa-times-circle"></i>فَشل الحَفظ';
+    if (hint) hint.style.display = 'none';
   } else {
-    chip.textContent = '';
-    chip.classList.remove('is-set');
+    // Empty — no customer attached
+    chip.innerHTML = '';
+    if (hint) hint.style.display = 'none';
   }
+};
+
+// v6.13.0 — Open the customer panel automatically the first time an item
+// is added to the cart. Called from addToCart. The chevron arrow rotates
+// to match the open state. Idempotent — if the panel is already open it
+// does nothing.
+window._posCustomerEnsurePanelOpen = function () {
+  var body = q('#posCustomerBody');
+  var chev = q('#posCustomerChevron');
+  if (!body || !body.classList.contains('hidden')) return;
+  body.classList.remove('hidden');
+  if (chev) chev.style.transform = 'rotate(180deg)';
 };
 
 window.posCustomerLookup = function () {
@@ -1053,6 +1105,7 @@ document.addEventListener('keydown', function (e) {
 // Cart
 // =========================================
 window.addToCart = function(item) {
+  var wasEmpty = !state.cart || state.cart.length === 0;
   var found = state.cart.find(function(c) { return c.id === item.id; });
   if (found) {
     found.qty++;
@@ -1060,6 +1113,12 @@ window.addToCart = function(item) {
     state.cart.push(Object.assign({}, item, { qty: 1, basePrice: item.price }));
   }
   updateCart();
+  // v6.13.0 — Auto-expand the customer panel on the first cart-add so the
+  // cashier sees the input fields without having to discover the collapsed
+  // header. No-op if the panel is already open or already has a customer.
+  if (wasEmpty) {
+    try { _posCustomerEnsurePanelOpen(); } catch(_) {}
+  }
 };
 
 window.decFromCart = function(itemId) {
@@ -1431,6 +1490,29 @@ window.doCheckout = function() {
       }
 
       glassToast(t('orderSaved'));
+      // v6.13.0 — Surface customer-save outcome to the cashier. The
+      // backend (routes/sales.js) now returns customerSaveOutcome on the
+      // create response. Categories are: linked-existing / created-new /
+      // skipped-no-data / skipped-no-phone / failed-insert / failed-other.
+      // We only show extra UI for outcomes the user actually cares about:
+      try {
+        var outcome = res.customerSaveOutcome;
+        if (outcome === 'created-new') {
+          glassToast('✓ تم إنشاء عميل جَديد وربطه بالفاتورة', false);
+          state._posCustLastError = null;
+        } else if (outcome === 'linked-existing') {
+          glassToast('✓ تم ربط الفاتورة بالعميل', false);
+          state._posCustLastError = null;
+        } else if (outcome === 'skipped-no-phone') {
+          // Cashier typed a name but didn't add a phone — silently warn,
+          // since the sale itself succeeded.
+          glassToast('⚠ لم يُحفظ العميل — رقم الهاتف مطلوب لحفظ بياناته', true);
+        } else if (outcome === 'failed-insert' || outcome === 'failed-other') {
+          var err = res.customerSaveError || 'سبب غير معروف';
+          glassToast('⚠ فشل حفظ بيانات العميل: ' + err, true);
+          state._posCustLastError = err;
+        }
+      } catch(_) {}
       // v5.14.0 — close the Foodics payment modal on successful sale
       if (typeof closeGlassModal === 'function') closeGlassModal('#modalPayment');
       printReceipt(res.orderId);

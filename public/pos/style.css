@@ -674,6 +674,35 @@ body.foodics-mode .cart-footer { display: none !important; }
   white-space: nowrap;
 }
 .pos-customer-chip.is-set { display: inline-block; }
+/* v6.13.0 — Status variants reflect _posCustomerUpdateStatus output:
+   .is-linked → green (existing customer matched by id/phone)
+   .is-new    → purple (will be created on checkout)
+   .is-warn   → amber (only name typed, no phone — won't persist)
+   .is-error  → red (last sale failed to save the customer) */
+.pos-customer-chip.is-linked { background:#dcfce7; color:#15803d; }
+.pos-customer-chip.is-new    { background:#ede9fe; color:#6d28d9; }
+.pos-customer-chip.is-warn   { background:#fef3c7; color:#92400e; }
+.pos-customer-chip.is-error  { background:#fee2e2; color:#b91c1c; }
+.pos-customer-chip i { font-size: 9px; margin-inline-end: 3px; }
+
+/* v6.13.0 — Inline validation hint shown under the name field when
+   the cashier has typed a name but no phone. Soft amber so it reads as
+   "tip" not "error". */
+.pos-cust-hint {
+  margin-top: 6px;
+  padding: 6px 9px;
+  background: #fef3c7;
+  border: 1px solid #fde68a;
+  border-radius: 8px;
+  color: #92400e;
+  font-size: 11.5px;
+  font-weight: 700;
+  line-height: 1.4;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.pos-cust-hint i { font-size: 13px; }
 .pos-customer-body {
   padding: 12px 14px 14px;
   border-top: 1px dashed #ddd6fe;

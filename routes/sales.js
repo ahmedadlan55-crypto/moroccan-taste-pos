@@ -311,7 +311,18 @@ router.post('/', async (req, res) => {
     // ─── v5.11.4: Resolve / upsert customer by phone, then link to the sale ───
     // Strategy: phone is the natural key. If the cashier sent a customer.id,
     // trust it. Otherwise look up by phone; create on the fly when missing.
+    //
+    // v6.13.0 — Surface failures via `customerSaveOutcome` so the cashier UI
+    // can tell the user what happened. Categories:
+    //   linked-existing     — found by id or phone, sale linked OK
+    //   created-new         — fresh insert succeeded
+    //   skipped-no-data     — payload missing both phone and name
+    //   skipped-no-phone    — name given but phone is the natural key
+    //   failed-insert       — INSERT exception (e.g. duplicate phone race)
+    //   failed-other        — anything else swallowed by the outer catch
     let resolvedCustomerId = null;
+    let customerSaveOutcome = null;
+    let customerSaveError = null;
     if (customerPayload && typeof customerPayload === 'object') {
       try {
         const cName  = String(customerPayload.name  || '').trim();
@@ -321,7 +332,10 @@ router.post('/', async (req, res) => {
         if (customerPayload.id) {
           // Trust the supplied id — confirm it exists then use it
           const [chk] = await db.query('SELECT id FROM customers WHERE id = ? AND is_active = 1 LIMIT 1', [customerPayload.id]);
-          if (chk.length) resolvedCustomerId = customerPayload.id;
+          if (chk.length) {
+            resolvedCustomerId = customerPayload.id;
+            customerSaveOutcome = 'linked-existing';
+          }
         }
         if (!resolvedCustomerId && cPhone) {
           const [existing] = await db.query(
@@ -330,6 +344,7 @@ router.post('/', async (req, res) => {
           );
           if (existing.length) {
             resolvedCustomerId = existing[0].id;
+            customerSaveOutcome = 'linked-existing';
             // Refresh name + gender if cashier provided more recent info
             try {
               await db.query(
@@ -345,12 +360,28 @@ router.post('/', async (req, res) => {
                  VALUES (?, ?, ?, ?, 'B2C', ?)`,
                 [resolvedCustomerId, cName || cPhone, cPhone, cGender, username || '']
               );
+              customerSaveOutcome = 'created-new';
             } catch(e) {
-              resolvedCustomerId = null; // failed insert — drop the link silently
+              resolvedCustomerId = null;
+              customerSaveOutcome = 'failed-insert';
+              customerSaveError = e.message || 'INSERT failed';
+              console.warn('[sales] customer INSERT failed:', customerSaveError);
             }
           }
         }
-      } catch(e) { /* never block a sale on customer-capture issues */ }
+        // v6.13.0 — Distinguish the two "nothing to save" paths so the UI
+        // can give a targeted hint instead of generic silence.
+        if (!resolvedCustomerId && !customerSaveOutcome) {
+          if (!cName && !cPhone)      customerSaveOutcome = 'skipped-no-data';
+          else if (cName && !cPhone)  customerSaveOutcome = 'skipped-no-phone';
+        }
+      } catch(e) {
+        // Never block a sale on customer-capture issues, but record the
+        // reason so the operator isn't left wondering.
+        customerSaveOutcome = customerSaveOutcome || 'failed-other';
+        customerSaveError   = customerSaveError   || (e && e.message) || 'unknown';
+        console.warn('[sales] customer upsert outer catch:', customerSaveError);
+      }
     }
 
     // ─── v5.11.4: Link customer + persist payment notes (post-insert update — tolerates pre-migration deploys) ───
@@ -828,6 +859,12 @@ router.post('/', async (req, res) => {
       // v6.11.0 — Human-readable invoice number (INV-YYYYMMDD-NNNN). Null
       // on legacy deploys; UI must fall back to displaying `orderId`.
       invoiceNumber: invoiceNumber,
+      // v6.13.0 — Tell the cashier what happened with the customer block.
+      // The POS shows a green toast for linked/created and a yellow
+      // warning toast for skipped/failed.
+      customerId: resolvedCustomerId || null,
+      customerSaveOutcome: customerSaveOutcome,    // one of the 6 enum values
+      customerSaveError:   customerSaveError,      // human-readable error or null
       recipesApplied: recipesApplied,
       itemsWithoutRecipe: itemsWithoutRecipe,
       semiDeductions: semiDeductions,

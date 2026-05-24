@@ -638,176 +638,394 @@ body.foodics-mode .cart-footer { display: none !important; }
 /* ═══════════════════════════════════════════════════════════════════
    v5.11.4 — Customer capture panel in cart sidebar
    ═══════════════════════════════════════════════════════════════════ */
+/* ═══════════════════════════════════════════════════════════════════
+   v6.15.0 — Customer bar (always-visible: status + 2 action buttons)
+   Replaces the v5.11.4/v6.13.0 collapsible panel.  See HTML comment in
+   public/pos/index.html for design rationale.
+   ─────────────────────────────────────────────────────────────────── */
 .pos-customer-bar {
   background: linear-gradient(180deg, #faf5ff 0%, #f5f3ff 100%);
   border: 1.5px solid #ddd6fe;
   border-radius: 14px;
   margin: 8px 12px 10px;
-  overflow: hidden;
+  padding: 10px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
 }
-.pos-customer-header {
-  display: flex; align-items: center; justify-content: space-between;
-  padding: 10px 14px;
-  cursor: pointer;
+
+/* Status row — always visible.  Shows the linked customer (green) or an
+   "empty" placeholder (slate). */
+.pos-customer-status {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 7px 11px;
+  border-radius: 10px;
+  background: #f1f5f9;
+  border: 1.5px dashed #cbd5e1;
+  font-size: 12.5px;
   font-weight: 800;
-  color: #5b21b6;
-  font-size: 13px;
-  user-select: none;
+  color: #475569;
+  min-height: 34px;
 }
-.pos-customer-header > i {
-  transition: transform 200ms;
-  color: #7c3aed;
-}
-.pos-customer-title { display: inline-flex; align-items: center; gap: 8px; flex: 1; min-width: 0; }
-.pos-customer-title > i:first-child { color: #7c3aed; font-size: 16px; }
-.pos-customer-chip {
-  display: none;
-  padding: 3px 9px;
-  border-radius: 99px;
-  background: #ede9fe;
-  color: #5b21b6;
-  font-size: 11px;
-  font-weight: 700;
-  max-width: 140px;
+.pos-customer-status > i { font-size: 14px; flex-shrink: 0; color: #94a3b8; }
+.pos-customer-status-label {
+  flex: 1;
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.pos-customer-chip.is-set { display: inline-block; }
-/* v6.13.0 — Status variants reflect _posCustomerUpdateStatus output:
-   .is-linked → green (existing customer matched by id/phone)
-   .is-new    → purple (will be created on checkout)
-   .is-warn   → amber (only name typed, no phone — won't persist)
-   .is-error  → red (last sale failed to save the customer) */
-.pos-customer-chip.is-linked { background:#dcfce7; color:#15803d; }
-.pos-customer-chip.is-new    { background:#ede9fe; color:#6d28d9; }
-.pos-customer-chip.is-warn   { background:#fef3c7; color:#92400e; }
-.pos-customer-chip.is-error  { background:#fee2e2; color:#b91c1c; }
-.pos-customer-chip i { font-size: 9px; margin-inline-end: 3px; }
-
-/* v6.13.0 — Inline validation hint shown under the name field when
-   the cashier has typed a name but no phone. Soft amber so it reads as
-   "tip" not "error". */
-.pos-cust-hint {
-  margin-top: 6px;
-  padding: 6px 9px;
-  background: #fef3c7;
-  border: 1px solid #fde68a;
+.pos-customer-status.is-linked {
+  background: #dcfce7;
+  border: 1.5px solid #86efac;
+  color: #166534;
+}
+.pos-customer-status.is-linked > i { color: #16a34a; }
+.pos-customer-unlink {
+  width: 28px; height: 28px;
+  border: 0;
+  background: rgba(255,255,255,0.7);
+  color: #b91c1c;
   border-radius: 8px;
-  color: #92400e;
-  font-size: 11.5px;
-  font-weight: 700;
-  line-height: 1.4;
+  font-size: 13px;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  transition: background 120ms, transform 120ms;
+}
+.pos-customer-unlink:hover { background: #fee2e2; transform: scale(1.08); }
+
+/* Two-button row — always visible.  Touch-friendly (44px min height). */
+.pos-customer-actions {
+  display: flex;
+  gap: 8px;
+}
+.pos-cust-btn {
+  flex: 1;
+  min-height: 44px;
+  border: 1.5px solid transparent;
+  border-radius: 11px;
+  cursor: pointer;
+  font-family: inherit;
+  font-size: 13px;
+  font-weight: 800;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  transition: transform 120ms, box-shadow 120ms, filter 120ms;
+  white-space: nowrap;
+  overflow: hidden;
+}
+.pos-cust-btn > i { font-size: 14px; }
+.pos-cust-btn:hover { transform: translateY(-1px); }
+.pos-cust-btn:active { transform: translateY(0); }
+
+.pos-cust-btn-search {
+  background: #ffffff;
+  border-color: #ddd6fe;
+  color: #5b21b6;
+  box-shadow: 0 2px 6px rgba(124, 58, 237, 0.08);
+}
+.pos-cust-btn-search:hover {
+  background: #f5f3ff;
+  box-shadow: 0 6px 14px rgba(124, 58, 237, 0.18);
+}
+.pos-cust-btn-add {
+  background: linear-gradient(135deg, #7c3aed, #6d28d9);
+  color: #fff;
+  box-shadow: 0 4px 12px -3px rgba(124, 58, 237, 0.45);
+}
+.pos-cust-btn-add:hover {
+  filter: brightness(1.05);
+  box-shadow: 0 6px 16px -3px rgba(124, 58, 237, 0.55);
+}
+
+/* ═══════════════════════════════════════════════════════════════════
+   v6.15.0 — Customer modals (search + add)
+   Same scaffold pattern as .pos-confirm-modal (v6.14.0):
+     • position:fixed inset:0 with rgba backdrop
+     • z-index 10010 (above all other POS overlays)
+     • Card animates in with translate+scale
+     • Esc / outside-click / Enter wired in JS
+   ─────────────────────────────────────────────────────────────────── */
+.pos-cust-modal {
+  position: fixed;
+  inset: 0;
+  background: rgba(15, 23, 42, 0.55);
+  backdrop-filter: blur(4px);
+  z-index: 10010;
   display: flex;
   align-items: center;
-  gap: 6px;
+  justify-content: center;
+  padding: 20px;
+  animation: posConfirmIn 0.15s ease-out;
 }
-.pos-cust-hint i { font-size: 13px; }
-.pos-customer-body {
-  padding: 12px 14px 14px;
-  border-top: 1px dashed #ddd6fe;
-  background: #ffffff;
+.pos-cust-modal-card {
+  background: #fff;
+  border-radius: 16px;
+  max-width: 520px;
+  width: 96%;
+  max-height: 92vh;
+  display: flex;
+  flex-direction: column;
+  box-shadow: 0 30px 80px -20px rgba(15, 23, 42, 0.45);
+  overflow: hidden;
+  animation: posConfirmCardIn 0.22s cubic-bezier(0.34, 1.56, 0.64, 1);
 }
-.pos-customer-body.hidden { display: none !important; }
-.pos-cust-row {
-  margin-bottom: 10px;
-  position: relative;
+.pos-cust-modal-card-lg { max-width: 680px; }
+.pos-cust-modal-head {
+  padding: 14px 18px;
+  background: linear-gradient(135deg, #faf5ff, #fff 65%);
+  border-bottom: 1px solid #f1f5f9;
+  display: flex;
+  align-items: center;
+  gap: 10px;
 }
-.pos-cust-row label {
-  display: block;
-  font-weight: 700;
-  font-size: 11px;
-  color: #6d28d9;
-  margin-bottom: 4px;
+.pos-cust-modal-head h3 {
+  margin: 0;
+  font-size: 15.5px;
+  font-weight: 900;
+  color: #0f172a;
+  flex: 1;
 }
-.pos-cust-row input[type="tel"],
-.pos-cust-row input[type="text"] {
-  width: 100%;
-  padding: 9px 11px;
-  border: 1.5px solid #ddd6fe;
-  border-radius: 10px;
-  background: #ffffff;
-  font-size: 13px;
+.pos-cust-modal-head h3 i {
+  color: #7c3aed;
+  margin-inline-end: 6px;
+}
+.pos-cust-modal-close {
+  width: 30px; height: 30px;
+  border: 0;
+  background: transparent;
+  color: #64748b;
+  border-radius: 8px;
+  font-size: 22px;
+  line-height: 1;
+  cursor: pointer;
   font-family: inherit;
 }
-.pos-cust-row input[type="tel"]:focus,
-.pos-cust-row input[type="text"]:focus {
+.pos-cust-modal-close:hover { background: #f1f5f9; color: #0f172a; }
+
+.pos-cust-modal-body {
+  padding: 16px 18px;
+  flex: 1;
+  overflow-y: auto;
+}
+
+/* Search modal — input + results list */
+.pos-cust-modal-input {
+  width: 100%;
+  padding: 11px 14px;
+  border: 1.5px solid #ddd6fe;
+  border-radius: 11px;
+  font-size: 14.5px;
+  font-family: inherit;
+  background: #ffffff;
+  box-sizing: border-box;
+}
+.pos-cust-modal-input:focus {
   outline: 0;
   border-color: #7c3aed;
   box-shadow: 0 0 0 3px rgba(124, 58, 237, 0.15);
 }
-.pos-cust-suggest {
-  position: absolute;
-  top: calc(100% + 4px);
-  left: 0; right: 0;
-  background: #ffffff;
-  border: 1.5px solid #ddd6fe;
-  border-radius: 10px;
-  box-shadow: 0 8px 24px rgba(91, 33, 182, 0.18);
-  max-height: 240px;
+.pos-cust-modal-results {
+  margin-top: 12px;
+  max-height: 380px;
   overflow-y: auto;
-  z-index: 20;
+  border-radius: 11px;
+  border: 1px solid #f1f5f9;
+  background: #fafafa;
 }
-.pos-cust-suggest:empty { display: none; }
-.pos-cust-suggest-item {
-  display: flex; align-items: center; gap: 10px;
-  padding: 9px 12px;
-  cursor: pointer;
-  border-bottom: 1px solid #f5f3ff;
+.pos-cust-modal-hint {
+  padding: 24px 16px;
+  text-align: center;
+  color: #94a3b8;
   font-size: 12.5px;
+  font-weight: 700;
+}
+.pos-cust-modal-hint i {
+  display: block;
+  font-size: 26px;
+  margin-bottom: 8px;
+  color: #cbd5e1;
+}
+.pos-cust-result {
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  padding: 11px 14px;
+  background: #ffffff;
+  border-bottom: 1px solid #f1f5f9;
+  cursor: pointer;
   transition: background 120ms;
 }
-.pos-cust-suggest-item:last-child { border-bottom: 0; }
-.pos-cust-suggest-item:hover { background: #f5f3ff; }
-.pos-cust-suggest-item.is-new { color: #15803d; background: #f0fdf4; font-weight: 700; }
-.pos-cust-suggest-item.is-new:hover { background: #dcfce7; }
-.pos-cust-suggest-item > i { color: #7c3aed; width: 18px; text-align: center; }
-.pos-cust-suggest-meta { display: flex; flex-direction: column; min-width: 0; }
-.pos-cust-suggest-meta strong { color: #1f2937; font-size: 12.5px; }
-.pos-cust-suggest-meta span {
-  font-size: 11px; color: #6b7280;
+.pos-cust-result:last-child { border-bottom: 0; }
+.pos-cust-result:hover { background: #f5f3ff; }
+.pos-cust-result-icon {
+  width: 36px; height: 36px;
+  border-radius: 10px;
+  background: #ede9fe;
+  color: #7c3aed;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 15px;
+  flex-shrink: 0;
+}
+.pos-cust-result-body { flex: 1; min-width: 0; }
+.pos-cust-result-name {
+  display: block;
+  font-size: 13.5px;
+  font-weight: 800;
+  color: #0f172a;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.pos-cust-result-phone {
+  display: block;
+  font-size: 11.5px;
+  color: #64748b;
   font-family: ui-monospace, monospace;
+  margin-top: 2px;
+}
+.pos-cust-result-type {
+  padding: 3px 9px;
+  border-radius: 99px;
+  background: #f1f5f9;
+  color: #475569;
+  font-size: 10.5px;
+  font-weight: 800;
+  flex-shrink: 0;
 }
 
-.pos-cust-gender-pills {
-  display: flex; gap: 8px;
+/* Add modal — form grid + inline error */
+.pos-cust-form-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px 14px;
 }
-.pos-cust-pill {
-  flex: 1;
-  position: relative;
-  display: flex; align-items: center; justify-content: center;
-  padding: 8px 10px;
+.pos-cust-form-grid label {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  font-size: 11.5px;
+  font-weight: 800;
+  color: #6d28d9;
+}
+.pos-cust-form-grid label.full { grid-column: 1 / -1; }
+.pos-cust-form-grid input,
+.pos-cust-form-grid select {
+  padding: 9px 11px;
   border: 1.5px solid #ddd6fe;
   border-radius: 10px;
+  font-size: 13.5px;
+  font-family: inherit;
   background: #ffffff;
+  color: #0f172a;
+  width: 100%;
+  box-sizing: border-box;
+}
+.pos-cust-form-grid input:focus,
+.pos-cust-form-grid select:focus {
+  outline: 0;
+  border-color: #7c3aed;
+  box-shadow: 0 0 0 3px rgba(124, 58, 237, 0.15);
+}
+.pos-cust-form-grid input[required] {
+  border-color: #c4b5fd;
+}
+.pos-cust-form-grid input:invalid {
+  border-color: #fda4af;
+}
+.pos-cust-form-error {
+  margin-top: 14px;
+  padding: 10px 12px;
+  background: #fee2e2;
+  border: 1px solid #fca5a5;
+  border-radius: 10px;
+  color: #991b1b;
   font-size: 12.5px;
   font-weight: 700;
-  cursor: pointer;
-  transition: all 120ms;
+  line-height: 1.5;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
 }
-.pos-cust-pill input { position: absolute; opacity: 0; pointer-events: none; }
-.pos-cust-pill:has(input:checked) {
-  background: #ede9fe;
-  border-color: #7c3aed;
-  color: #5b21b6;
-  box-shadow: 0 4px 12px rgba(124, 58, 237, 0.18);
+.pos-cust-form-error[hidden] { display: none; }
+.pos-cust-form-error-actions {
+  display: flex;
+  gap: 8px;
 }
-.pos-cust-pill > span { display: inline-flex; align-items: center; gap: 6px; }
-.pos-cust-pill i { font-size: 13px; }
-
-.pos-cust-actions { text-align: end; }
-.pos-cust-clear {
-  background: transparent;
-  border: 1.5px solid #fca5a5;
+.pos-cust-form-error-actions button {
+  background: #fff;
+  border: 1.5px solid #b91c1c;
   color: #b91c1c;
+  padding: 5px 10px;
   border-radius: 8px;
-  padding: 5px 11px;
   font-size: 11.5px;
-  font-weight: 700;
+  font-weight: 800;
   cursor: pointer;
-  display: inline-flex; align-items: center; gap: 5px;
+  font-family: inherit;
 }
-.pos-cust-clear:hover { background: #fee2e2; }
+.pos-cust-form-error-actions button:hover { background: #fef2f2; }
+
+.pos-cust-modal-foot {
+  padding: 12px 18px;
+  background: #fafafa;
+  border-top: 1px solid #f1f5f9;
+  display: flex;
+  gap: 9px;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+}
+.pos-cust-modal-foot button {
+  height: 40px;
+  padding: 0 18px;
+  border-radius: 11px;
+  font-family: inherit;
+  font-size: 13.5px;
+  font-weight: 800;
+  cursor: pointer;
+  border: 1.5px solid transparent;
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  transition: transform .15s, box-shadow .15s, background .15s;
+}
+.pos-cust-modal-btn-cancel {
+  background: #fff;
+  border-color: #e2e8f0;
+  color: #475569;
+}
+.pos-cust-modal-btn-cancel:hover { background: #f8fafc; border-color: #cbd5e1; }
+.pos-cust-modal-btn-add,
+.pos-cust-modal-btn-save {
+  background: linear-gradient(135deg, #7c3aed, #6d28d9);
+  color: #fff;
+  box-shadow: 0 4px 12px -3px rgba(124, 58, 237, 0.45);
+}
+.pos-cust-modal-btn-add:hover,
+.pos-cust-modal-btn-save:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 6px 16px -3px rgba(124, 58, 237, 0.55);
+}
+.pos-cust-modal-btn-save:disabled {
+  background: #cbd5e1;
+  cursor: not-allowed;
+  transform: none;
+  box-shadow: none;
+}
+
+/* Responsive — single column on very narrow viewports */
+@media (max-width: 480px) {
+  .pos-cust-form-grid { grid-template-columns: 1fr; }
+  .pos-customer-actions { flex-direction: column; }
+}
 
 /* ═══════════════════════════════════════════════════════════════════
    v5.11.4 — My Invoices modal (cashier-facing list of current-shift sales)

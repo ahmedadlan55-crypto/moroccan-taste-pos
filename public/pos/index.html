@@ -170,56 +170,45 @@
         <span class="pos-channel-pricelist" id="posChannelPriceLabel"></span>
       </div>
 
-      <!-- ─── v5.11.4 / v6.13.0 — Customer capture panel ───
-           v6.13.0 changes:
-             • Auto-expands on first cart-add (handled in addToCart → _posCustomerEnsurePanelOpen)
-             • Status chip in the header reflects whether the sale will
-               link / create / be skipped (rendered by _posCustomerUpdateStatus)
-             • Inline hint under the name field appears when name is set
-               but phone is empty (the natural-key path requires phone) -->
+      <!-- ─── v6.15.0 — Customer bar: status + two always-visible action buttons ───
+           Replaces the v6.13.0 collapsible panel (phone/name/gender inline).
+           The collapsed panel was undiscoverable and rejected by the owner:
+           "I can't add a customer and recall one."
+
+           New design:
+             • Status row (always visible) — shows current customer name + phone,
+               or "no customer" placeholder. X button appears when one is linked.
+             • Two large action buttons (always visible, touch-friendly):
+                 🔍 بحث عميل     → posOpenCustomerSearchModal()
+                 ➕ عميل جديد    → posOpenCustomerAddModal()
+             • Each button opens an independent DOM modal (same pattern as
+               _myInvConfirm in v6.14.0 — z-index 10010, no popup-blocker
+               dependency, Escape / outside-click / Enter to dismiss).
+             • The "add" modal saves immediately via POST /api/erp/customers
+               and auto-links the new customer to the current sale.  No more
+               waiting for checkout to discover the customer wasn't saved. -->
       <div class="pos-customer-bar" id="posCustomerBar">
-        <div class="pos-customer-header" onclick="posToggleCustomerPanel()">
-          <span class="pos-customer-title">
-            <i class="fas fa-user-circle"></i>
-            <span>العميل · Customer</span>
-            <span class="pos-customer-chip" id="posCustomerChip"></span>
+        <div class="pos-customer-status is-empty" id="posCustomerStatus">
+          <i class="fas fa-user-slash" id="posCustomerStatusIcon"></i>
+          <span class="pos-customer-status-label" id="posCustomerStatusLabel">
+            لا يوجد عميل · No customer
           </span>
-          <i class="fas fa-chevron-down" id="posCustomerChevron"></i>
+          <button type="button" id="posCustomerUnlink" class="pos-customer-unlink"
+                  onclick="posCustomerClear()" title="إزالة الربط · Unlink customer" hidden>
+            <i class="fas fa-times"></i>
+          </button>
         </div>
-        <div class="pos-customer-body hidden" id="posCustomerBody">
-          <div class="pos-cust-row">
-            <label>الهاتف · Phone</label>
-            <input id="posCustPhone" type="tel" inputmode="tel" maxlength="20"
-                   placeholder="05xxxxxxxx" oninput="posCustomerLookup()"
-                   autocomplete="off" data-vk="1">
-            <div class="pos-cust-suggest" id="posCustSuggest"></div>
-          </div>
-          <div class="pos-cust-row">
-            <label>الاسم · Name</label>
-            <input id="posCustName" type="text" maxlength="120"
-                   placeholder="اسم العميل · Customer name" autocomplete="off" data-vk="1"
-                   oninput="_posCustomerUpdateStatus()">
-            <!-- v6.13.0 — Inline validation hint, hidden by default, shown
-                 by _posCustomerUpdateStatus when only the name is filled. -->
-            <div class="pos-cust-hint" id="posCustHint" style="display:none;">
-              <i class="fas fa-info-circle"></i>
-              <span>أدخل رقم الهاتف لحفظ بيانات العميل · Enter phone to save customer</span>
-            </div>
-          </div>
-          <div class="pos-cust-row pos-cust-gender">
-            <label>الجنس · Gender</label>
-            <div class="pos-cust-gender-pills">
-              <label class="pos-cust-pill"><input type="radio" name="posCustGender" value="male" checked>
-                <span><i class="fas fa-mars"></i> ذكر · Male</span></label>
-              <label class="pos-cust-pill"><input type="radio" name="posCustGender" value="female">
-                <span><i class="fas fa-venus"></i> أنثى · Female</span></label>
-            </div>
-          </div>
-          <div class="pos-cust-actions">
-            <button type="button" class="pos-cust-clear" onclick="posCustomerClear()">
-              <i class="fas fa-times"></i> مَسح · Clear
-            </button>
-          </div>
+        <div class="pos-customer-actions">
+          <button type="button" class="pos-cust-btn pos-cust-btn-search"
+                  onclick="posOpenCustomerSearchModal()">
+            <i class="fas fa-search"></i>
+            <span>بحث عميل · Search</span>
+          </button>
+          <button type="button" class="pos-cust-btn pos-cust-btn-add"
+                  onclick="posOpenCustomerAddModal()">
+            <i class="fas fa-user-plus"></i>
+            <span>عميل جديد · Add New</span>
+          </button>
         </div>
       </div>
 

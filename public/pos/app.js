@@ -898,171 +898,449 @@ window.paySplitFillRest = function (methodName) {
 };
 
 // ═══════════════════════════════════════════════════════════════════
-// v5.11.4 — Customer capture panel (cart sidebar)
+// v6.15.0 — Customer module (modal-driven, always-visible buttons)
 // ═══════════════════════════════════════════════════════════════════
-// Tracks who the current sale is for. Lookup is by phone (the natural
-// key); typing 2+ chars hits /api/erp/customers/search and offers
-// suggestions. Picking a suggestion stores the resolved id so the
-// backend can skip the upsert. Typing without a match offers "new
-// customer" — the backend then creates the row at checkout.
+// Replaces the v5.11.4/v6.13.0 collapsible inline panel which the owner
+// rejected: "I can't add a customer and recall an existing one — you
+// keep wasting my time, nothing actually changes."
+//
+// The earlier panel was hidden by default (only opened on first cart-
+// add), had no explicit "Add new" button (creation was implicit via the
+// dropdown), and saved nothing until checkout — so the cashier never
+// saw a confirmation until it was too late.
+//
+// New design:
+//   • Two always-visible action buttons above the cart:
+//       🔍 بحث عميل   → posOpenCustomerSearchModal()
+//       ➕ عميل جديد  → posOpenCustomerAddModal()
+//   • Each opens a self-contained DOM modal (z-index 10010) using the
+//     same scaffold as _myInvConfirm in v6.14.0 — no popup-blocker
+//     dependency, Esc / outside-click / Enter wired manually.
+//   • Search modal: debounced GET /api/erp/customers/search, results
+//     rendered as a list, click = link.
+//   • Add modal: full 9-field form, POST /api/erp/customers, on success
+//     auto-link to current sale.  Duplicate-phone errors surface an
+//     inline "use existing" shortcut that switches to search pre-filled.
+//   • state.posCustomer shape is unchanged so doCheckout() keeps working.
+//
 state.posCustomer = state.posCustomer || { id:null, name:'', phone:'', gender:'unknown' };
-state._posCustLookupT = null;
 
-window.posToggleCustomerPanel = function () {
-  var body = q('#posCustomerBody');
-  var chev = q('#posCustomerChevron');
-  if (!body) return;
-  var open = body.classList.toggle('hidden') === false;
-  if (chev) chev.style.transform = open ? 'rotate(180deg)' : 'rotate(0deg)';
-};
+// ─── HTML escape helper (used by every modal body builder) ─────────────
+function _posEsc(s) {
+  return String(s == null ? '' : s)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
 
-// Render the chip in the panel header so the cashier can see at a glance
-// who the sale is linked to without expanding the panel.
-// v6.13.0 — Backward-compat shim: existing callers (pickSuggestion / Clear /
-// MarkNew) still call this name. It delegates to the richer status updater
-// that also paints validation hint + colour state.
-window._posCustomerRenderChip = function () { _posCustomerUpdateStatus(); };
-
-// v6.13.0 — Single source of truth for the customer panel's visual state.
-// Reads window.state.posCustomer + the live DOM inputs and paints:
-//   • Header chip: colour + label + icon based on save-intent
-//   • Inline hint: shown when name is filled but phone is empty
-// Called from every place that mutates the panel: lookup, pick, mark-new,
-// clear, name oninput, and after a sale's response (to reset cleanly).
-window._posCustomerUpdateStatus = function () {
-  var chip = q('#posCustomerChip');
-  if (!chip) return;
+// ─── Render the status bar (called on every customer state change) ────
+window._posCustomerRenderStatusBar = function () {
+  var bar    = q('#posCustomerStatus');
+  var iconEl = q('#posCustomerStatusIcon');
+  var label  = q('#posCustomerStatusLabel');
+  var unlink = q('#posCustomerUnlink');
+  if (!bar || !label) return;
   var s = state.posCustomer || {};
-  // Pull live DOM values too — covers the case where the user typed but
-  // we haven't sync'd to state.posCustomer yet (e.g. between keystrokes
-  // on the name field, which has no oninput → state update).
-  var phoneVal = (q('#posCustPhone') && q('#posCustPhone').value || s.phone || '').trim();
-  var nameVal  = (q('#posCustName')  && q('#posCustName').value  || s.name  || '').trim();
-  var hint = q('#posCustHint');
-
-  // Reset visual classes
-  chip.classList.remove('is-set', 'is-linked', 'is-new', 'is-warn', 'is-error');
-
-  if (s.id) {
-    // Linked to an existing customer (picked from suggestions or matched by phone)
-    chip.classList.add('is-set', 'is-linked');
-    chip.innerHTML = '<i class="fas fa-check-circle"></i>' + (s.name || phoneVal || 'مرتبط');
-    if (hint) hint.style.display = 'none';
-  } else if (phoneVal && (nameVal || phoneVal.length >= 7)) {
-    // Will be created as a new customer on checkout
-    chip.classList.add('is-set', 'is-new');
-    chip.innerHTML = '<i class="fas fa-plus-circle"></i>عميل جَديد · New';
-    if (hint) hint.style.display = 'none';
-  } else if (nameVal && !phoneVal) {
-    // Name without phone — the backend can't upsert; warn the cashier
-    chip.classList.add('is-set', 'is-warn');
-    chip.innerHTML = '<i class="fas fa-exclamation-circle"></i>يَحتاج هاتف';
-    if (hint) hint.style.display = 'flex';
-  } else if (state._posCustLastError) {
-    // Sticky error from the previous sale's response
-    chip.classList.add('is-set', 'is-error');
-    chip.innerHTML = '<i class="fas fa-times-circle"></i>فَشل الحَفظ';
-    if (hint) hint.style.display = 'none';
+  if (s.id && (s.name || s.phone)) {
+    bar.classList.remove('is-empty');
+    bar.classList.add('is-linked');
+    if (iconEl) iconEl.className = 'fas fa-user-check';
+    var display = _posEsc(s.name || s.phone);
+    if (s.phone && s.name) display += '  ·  <span style="font-family:ui-monospace,monospace;font-weight:700;opacity:.8;">' + _posEsc(s.phone) + '</span>';
+    label.innerHTML = display;
+    if (unlink) unlink.hidden = false;
   } else {
-    // Empty — no customer attached
-    chip.innerHTML = '';
-    if (hint) hint.style.display = 'none';
+    bar.classList.remove('is-linked');
+    bar.classList.add('is-empty');
+    if (iconEl) iconEl.className = 'fas fa-user-slash';
+    label.textContent = 'لا يوجد عميل · No customer';
+    if (unlink) unlink.hidden = true;
   }
 };
 
-// v6.13.0 — Open the customer panel automatically the first time an item
-// is added to the cart. Called from addToCart. The chevron arrow rotates
-// to match the open state. Idempotent — if the panel is already open it
-// does nothing.
-window._posCustomerEnsurePanelOpen = function () {
-  var body = q('#posCustomerBody');
-  var chev = q('#posCustomerChevron');
-  if (!body || !body.classList.contains('hidden')) return;
-  body.classList.remove('hidden');
-  if (chev) chev.style.transform = 'rotate(180deg)';
-};
-
-window.posCustomerLookup = function () {
-  clearTimeout(state._posCustLookupT);
-  var phoneEl = q('#posCustPhone'); if (!phoneEl) return;
-  var q_ = String(phoneEl.value || '').trim();
-  // Any edit invalidates a previously-selected customer id (the cashier
-  // is mid-typing — let the backend re-resolve at checkout).
-  state.posCustomer.id = null;
-  state.posCustomer.phone = q_;
-  _posCustomerRenderChip();
-  var sug = q('#posCustSuggest');
-  if (sug) sug.innerHTML = '';
-  if (q_.length < 2) return;
-  state._posCustLookupT = setTimeout(function () {
-    api.withSuccessHandler(function (rows) {
-      _posCustomerRenderSuggestions(rows || [], q_);
-    }).withFailureHandler(function () {
-      _posCustomerRenderSuggestions([], q_);
-    }).searchCustomers(q_);
-  }, 250);
-};
-
-window._posCustomerRenderSuggestions = function (rows, q_) {
-  var sug = q('#posCustSuggest');
-  if (!sug) return;
-  if (!rows.length) {
-    sug.innerHTML = '<div class="pos-cust-suggest-item is-new" onclick="posCustomerMarkNew()">' +
-      '<i class="fas fa-plus-circle"></i> عميل جديد · New customer: <strong>' + (q_ || '') + '</strong>' +
-    '</div>';
-    return;
-  }
-  sug.innerHTML = rows.map(function (c) {
-    var g = c.gender === 'male' ? 'fa-mars' : c.gender === 'female' ? 'fa-venus' : 'fa-user';
-    return '<div class="pos-cust-suggest-item" data-id="' + (c.id || '') + '" ' +
-                'data-name="' + (c.name || '').replace(/"/g, '&quot;') + '" ' +
-                'data-phone="' + (c.phone || '').replace(/"/g, '&quot;') + '" ' +
-                'data-gender="' + (c.gender || 'unknown') + '" ' +
-                'onclick="posCustomerPickSuggestion(this)">' +
-             '<i class="fas ' + g + '"></i>' +
-             '<div class="pos-cust-suggest-meta">' +
-               '<strong>' + (c.name || '—') + '</strong>' +
-               (c.phone ? '<span>' + c.phone + '</span>' : '') +
-             '</div>' +
-           '</div>';
-  }).join('');
-};
-
-window.posCustomerPickSuggestion = function (el) {
-  if (!el) return;
+// ─── Unified setter: writes state + repaints bar + emits toast ────────
+window._posCustomerSelect = function (c, opts) {
+  c = c || {};
   state.posCustomer = {
-    id: el.dataset.id || null,
-    name: el.dataset.name || '',
-    phone: el.dataset.phone || '',
-    gender: el.dataset.gender || 'unknown'
+    id:     c.id     || null,
+    name:   c.name   || '',
+    phone:  c.phone  || '',
+    gender: c.gender || 'unknown'
   };
-  var phoneEl = q('#posCustPhone'); if (phoneEl) phoneEl.value = state.posCustomer.phone;
-  var nameEl  = q('#posCustName');  if (nameEl)  nameEl.value  = state.posCustomer.name;
-  // Sync radio
-  qs('input[name="posCustGender"]').forEach(function (r) {
-    r.checked = (r.value === (state.posCustomer.gender === 'female' ? 'female' : 'male'));
-  });
-  var sug = q('#posCustSuggest'); if (sug) sug.innerHTML = '';
-  _posCustomerRenderChip();
-  if (typeof glassToast === 'function') glassToast('تم اختيار العميل · Customer selected', false);
+  state._posCustLastError = null;
+  _posCustomerRenderStatusBar();
+  if (opts && opts.silent) return;
+  var msg = (opts && opts.message) || '✓ تم ربط العميل بالفاتورة · Customer linked';
+  if (typeof glassToast === 'function') glassToast(msg, false);
 };
 
-window.posCustomerMarkNew = function () {
-  var sug = q('#posCustSuggest'); if (sug) sug.innerHTML = '';
-  var nameEl = q('#posCustName');
-  if (nameEl) { nameEl.focus(); nameEl.select && nameEl.select(); }
-  state.posCustomer.id = null;
-  _posCustomerRenderChip();
-};
-
+// ─── Clear (used by checkout-success + the X button on the status bar) ─
 window.posCustomerClear = function () {
   state.posCustomer = { id:null, name:'', phone:'', gender:'unknown' };
-  var phoneEl = q('#posCustPhone'); if (phoneEl) phoneEl.value = '';
-  var nameEl  = q('#posCustName');  if (nameEl)  nameEl.value  = '';
-  qs('input[name="posCustGender"]').forEach(function (r) { r.checked = (r.value === 'male'); });
-  var sug = q('#posCustSuggest'); if (sug) sug.innerHTML = '';
-  _posCustomerRenderChip();
+  state._posCustLastError = null;
+  _posCustomerRenderStatusBar();
 };
+
+// ─── Backward-compat shims (other callers in the codebase may invoke these) ─
+window._posCustomerUpdateStatus    = function () { _posCustomerRenderStatusBar(); };
+window._posCustomerRenderChip      = function () { _posCustomerRenderStatusBar(); };
+window._posCustomerEnsurePanelOpen = function () { /* no-op in v6.15.0 — bar is always visible */ };
+window.posToggleCustomerPanel      = function () { /* no-op — buttons replaced toggle */ };
+
+// ─── Generic DOM modal scaffolder for both search + add modals ────────
+// Returns the wrap element with .close() attached so callers can dismiss
+// programmatically (e.g. after a successful save).
+function _posBuildCustomerModal(opts) {
+  // opts: { id, title, icon, large, bodyHtml, footHtml, onKey }
+  var prev = document.getElementById(opts.id);
+  if (prev) prev.remove();
+
+  var wrap = document.createElement('div');
+  wrap.id = opts.id;
+  wrap.className = 'pos-cust-modal';
+  wrap.setAttribute('role', 'dialog');
+  wrap.setAttribute('aria-modal', 'true');
+
+  var cardCls = 'pos-cust-modal-card' + (opts.large ? ' pos-cust-modal-card-lg' : '');
+  wrap.innerHTML =
+    '<div class="' + cardCls + '" role="document">' +
+      '<div class="pos-cust-modal-head">' +
+        '<h3><i class="fas ' + _posEsc(opts.icon || 'fa-user') + '"></i> ' + _posEsc(opts.title || '') + '</h3>' +
+        '<button type="button" class="pos-cust-modal-close" data-pos-cust-close="1" aria-label="إغلاق">&times;</button>' +
+      '</div>' +
+      '<div class="pos-cust-modal-body">' + (opts.bodyHtml || '') + '</div>' +
+      '<div class="pos-cust-modal-foot">' + (opts.footHtml || '') + '</div>' +
+    '</div>';
+
+  function close() {
+    document.removeEventListener('keydown', onKey, true);
+    if (wrap.parentNode) wrap.parentNode.removeChild(wrap);
+  }
+  function onKey(e) {
+    if (e.key === 'Escape') { e.stopPropagation(); close(); return; }
+    if (opts.onKey) opts.onKey(e, close);
+  }
+
+  wrap.addEventListener('click', function (e) {
+    // X button OR cancel button (both carry data-pos-cust-close)
+    if (e.target && e.target.closest && e.target.closest('[data-pos-cust-close]')) {
+      e.stopPropagation();
+      close();
+      return;
+    }
+    // Outside-click on the dim backdrop
+    if (e.target === wrap) close();
+  });
+
+  document.addEventListener('keydown', onKey, true);
+  document.body.appendChild(wrap);
+  wrap.close = close;
+  return wrap;
+}
+
+// ─── Render search results inside the search modal ────────────────────
+function _posRenderCustSearchResults(rows, query) {
+  var host = q('#posCustSearchResults');
+  if (!host) return;
+  if (!rows || !rows.length) {
+    host.innerHTML =
+      '<div class="pos-cust-modal-hint">' +
+        '<i class="fas fa-user-slash"></i>' +
+        'لا توجد نتائج لـ "<strong>' + _posEsc(query) + '</strong>"' +
+        '<br><br>اضغط زر "إضافة جديد" بالأسفل لإنشاء عميل جديد بهذه البيانات.' +
+      '</div>';
+    return;
+  }
+  host.innerHTML = rows.map(function (c) {
+    var icon = c.gender === 'female' ? 'fa-venus' : c.gender === 'male' ? 'fa-mars' : 'fa-user';
+    var typeLabel = ({ B2C:'أفراد', B2B:'شركات', B2G:'حكومي' })[c.customerType] || 'أفراد';
+    return (
+      '<div class="pos-cust-result" data-id="' + _posEsc(c.id || '') + '" ' +
+            'data-name="' + _posEsc(c.name || '') + '" ' +
+            'data-phone="' + _posEsc(c.phone || '') + '" ' +
+            'data-gender="' + _posEsc(c.gender || 'unknown') + '">' +
+        '<div class="pos-cust-result-icon"><i class="fas ' + icon + '"></i></div>' +
+        '<div class="pos-cust-result-body">' +
+          '<span class="pos-cust-result-name">' + _posEsc(c.name || '—') + '</span>' +
+          (c.phone ? '<span class="pos-cust-result-phone">' + _posEsc(c.phone) + '</span>' : '') +
+        '</div>' +
+        '<span class="pos-cust-result-type">' + typeLabel + '</span>' +
+      '</div>'
+    );
+  }).join('');
+}
+
+// ─── Search modal ──────────────────────────────────────────────────────
+window.posOpenCustomerSearchModal = function (initialQuery) {
+  var bodyHtml =
+    '<input type="text" id="posCustSearchInput" class="pos-cust-modal-input" ' +
+           'placeholder="اكتب الاسم أو الهاتف (حرفين على الأقل)..." ' +
+           'data-vk="1" autocomplete="off" inputmode="text">' +
+    '<div id="posCustSearchResults" class="pos-cust-modal-results">' +
+      '<div class="pos-cust-modal-hint">' +
+        '<i class="fas fa-magnifying-glass"></i>' +
+        'ابدأ الكتابة للبحث... · Start typing to search' +
+      '</div>' +
+    '</div>';
+  var footHtml =
+    '<button type="button" class="pos-cust-modal-btn-cancel" data-pos-cust-close="1">' +
+      '<i class="fas fa-times"></i> إغلاق' +
+    '</button>' +
+    '<button type="button" class="pos-cust-modal-btn-add" id="posCustSearchAddBtn">' +
+      '<i class="fas fa-user-plus"></i> إضافة جديد' +
+    '</button>';
+
+  var lastResults = [];
+  var lastQuery   = '';
+  var debounceT   = null;
+
+  var wrap = _posBuildCustomerModal({
+    id:    'posCustomerSearchModal',
+    title: 'بحث عن عميل · Search Customer',
+    icon:  'fa-magnifying-glass',
+    bodyHtml: bodyHtml,
+    footHtml: footHtml,
+    onKey: function (e, close) {
+      // Enter on the input with exactly one result → auto-select
+      if (e.key === 'Enter' && document.activeElement && document.activeElement.id === 'posCustSearchInput') {
+        if (lastResults.length === 1) {
+          e.stopPropagation();
+          var c = lastResults[0];
+          close();
+          _posCustomerSelect(c);
+        }
+      }
+    }
+  });
+
+  var input = q('#posCustSearchInput');
+  var addBtn = q('#posCustSearchAddBtn');
+
+  function doSearch() {
+    clearTimeout(debounceT);
+    var qstr = String(input ? input.value : '').trim();
+    lastQuery = qstr;
+    if (qstr.length < 2) {
+      _posRenderCustSearchResults([], qstr);
+      var host = q('#posCustSearchResults');
+      if (host) host.innerHTML =
+        '<div class="pos-cust-modal-hint">' +
+          '<i class="fas fa-magnifying-glass"></i>' +
+          'ابدأ الكتابة للبحث... · Start typing to search' +
+        '</div>';
+      return;
+    }
+    debounceT = setTimeout(function () {
+      api.withSuccessHandler(function (rows) {
+        lastResults = rows || [];
+        _posRenderCustSearchResults(lastResults, qstr);
+      }).withFailureHandler(function () {
+        lastResults = [];
+        _posRenderCustSearchResults([], qstr);
+      }).searchCustomers(qstr);
+    }, 250);
+  }
+
+  if (input) {
+    input.addEventListener('input', doSearch);
+    setTimeout(function () { input.focus(); }, 60);
+    if (initialQuery) {
+      input.value = String(initialQuery);
+      doSearch();
+    }
+  }
+
+  // Click delegation on result rows
+  var resultsHost = q('#posCustSearchResults');
+  if (resultsHost) {
+    resultsHost.addEventListener('click', function (e) {
+      var row = e.target && e.target.closest && e.target.closest('.pos-cust-result');
+      if (!row) return;
+      var c = {
+        id:     row.dataset.id || null,
+        name:   row.dataset.name || '',
+        phone:  row.dataset.phone || '',
+        gender: row.dataset.gender || 'unknown'
+      };
+      wrap.close();
+      _posCustomerSelect(c);
+    });
+  }
+
+  // "Add new" button — close this modal and open the add modal pre-filled
+  if (addBtn) {
+    addBtn.addEventListener('click', function () {
+      var prefill = {};
+      var qstr = lastQuery || (input ? String(input.value || '').trim() : '');
+      if (qstr) {
+        // If it looks like a phone (digits + maybe +), put it in phone; else name
+        if (/^[+\d]/.test(qstr)) prefill.phone = qstr;
+        else                      prefill.name  = qstr;
+      }
+      wrap.close();
+      posOpenCustomerAddModal(prefill);
+    });
+  }
+};
+
+// ─── Add modal ─────────────────────────────────────────────────────────
+window.posOpenCustomerAddModal = function (prefill) {
+  prefill = prefill || {};
+  var bodyHtml =
+    '<div class="pos-cust-form-grid">' +
+      '<label>الاسم *<input id="posCustAddName" data-vk="1" autocomplete="off" required maxlength="200" value="' + _posEsc(prefill.name || '') + '"></label>' +
+      '<label>الاسم بالإنجليزية<input id="posCustAddNameEn" data-vk="1" autocomplete="off" maxlength="200"></label>' +
+      '<label>الهاتف *<input id="posCustAddPhone" type="tel" inputmode="tel" data-vk="1" autocomplete="off" required maxlength="20" value="' + _posEsc(prefill.phone || '') + '"></label>' +
+      '<label>البريد الإلكتروني<input id="posCustAddEmail" type="email" data-vk="1" autocomplete="off" maxlength="100"></label>' +
+      '<label class="full">العنوان<input id="posCustAddAddress" data-vk="1" autocomplete="off" maxlength="200"></label>' +
+      '<label>المدينة<input id="posCustAddCity" data-vk="1" autocomplete="off" maxlength="100"></label>' +
+      '<label>نوع العميل' +
+        '<select id="posCustAddType">' +
+          '<option value="B2C" selected>أفراد · B2C</option>' +
+          '<option value="B2B">شركات · B2B</option>' +
+          '<option value="B2G">حكومي · B2G</option>' +
+        '</select>' +
+      '</label>' +
+      '<label>الجنس' +
+        '<select id="posCustAddGender">' +
+          '<option value="unknown" selected>غير محدد</option>' +
+          '<option value="male">ذكر · Male</option>' +
+          '<option value="female">أنثى · Female</option>' +
+        '</select>' +
+      '</label>' +
+      '<label>حد الائتمان<input id="posCustAddCredit" type="number" min="0" step="0.01" value="0"></label>' +
+    '</div>' +
+    '<div id="posCustAddError" class="pos-cust-form-error" hidden></div>';
+
+  var footHtml =
+    '<button type="button" class="pos-cust-modal-btn-cancel" data-pos-cust-close="1">' +
+      '<i class="fas fa-times"></i> إلغاء' +
+    '</button>' +
+    '<button type="button" class="pos-cust-modal-btn-save" id="posCustAddSaveBtn">' +
+      '<i class="fas fa-floppy-disk"></i> حفظ وربط · Save & Link' +
+    '</button>';
+
+  var wrap = _posBuildCustomerModal({
+    id:    'posCustomerAddModal',
+    title: 'إضافة عميل جديد · Add New Customer',
+    icon:  'fa-user-plus',
+    large: true,
+    bodyHtml: bodyHtml,
+    footHtml: footHtml
+  });
+
+  var nameEl = q('#posCustAddName');
+  if (nameEl) setTimeout(function () { nameEl.focus(); }, 60);
+
+  function showError(html, opts) {
+    var box = q('#posCustAddError');
+    if (!box) return;
+    box.innerHTML = html;
+    if (opts && opts.actions) {
+      var actHtml = '<div class="pos-cust-form-error-actions">' +
+        opts.actions.map(function (a) {
+          return '<button type="button" data-pos-err-act="' + _posEsc(a.id) + '">' + _posEsc(a.label) + '</button>';
+        }).join('') + '</div>';
+      box.innerHTML += actHtml;
+      opts.actions.forEach(function (a) {
+        var b = box.querySelector('[data-pos-err-act="' + a.id + '"]');
+        if (b) b.addEventListener('click', a.onClick);
+      });
+    }
+    box.hidden = false;
+  }
+  function clearError() {
+    var box = q('#posCustAddError');
+    if (!box) return;
+    box.hidden = true;
+    box.innerHTML = '';
+  }
+
+  function doSave() {
+    clearError();
+    var name   = String((q('#posCustAddName')   || {}).value || '').trim();
+    var nameEn = String((q('#posCustAddNameEn') || {}).value || '').trim();
+    var phone  = String((q('#posCustAddPhone')  || {}).value || '').trim();
+    var email  = String((q('#posCustAddEmail')  || {}).value || '').trim();
+    var addr   = String((q('#posCustAddAddress')|| {}).value || '').trim();
+    var city   = String((q('#posCustAddCity')   || {}).value || '').trim();
+    var type   = String((q('#posCustAddType')   || {}).value || 'B2C');
+    var gender = String((q('#posCustAddGender') || {}).value || 'unknown');
+    var credit = Number((q('#posCustAddCredit') || {}).value || 0) || 0;
+
+    if (!name)  { showError('<i class="fas fa-exclamation-triangle"></i> اسم العميل مطلوب · Name is required'); var n = q('#posCustAddName'); if (n) n.focus(); return; }
+    if (!phone) { showError('<i class="fas fa-exclamation-triangle"></i> رقم الهاتف مطلوب · Phone is required'); var p = q('#posCustAddPhone'); if (p) p.focus(); return; }
+    if (phone.length < 5) { showError('<i class="fas fa-exclamation-triangle"></i> رقم الهاتف قصير جداً (5 أرقام على الأقل)'); var p2 = q('#posCustAddPhone'); if (p2) p2.focus(); return; }
+
+    var btn = q('#posCustAddSaveBtn');
+    if (btn) { btn.disabled = true; btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> جارٍ الحفظ...'; }
+
+    var payload = {
+      id: '',           // empty = INSERT
+      name: name,
+      nameEn: nameEn,
+      vatNumber: '',
+      phone: phone,
+      email: email,
+      address: addr,
+      city: city,
+      customerType: type,
+      creditLimit: credit,
+      gender: gender,
+      username: (state.user && state.user.username) || (window.currentUser) || 'cashier'
+    };
+
+    api.withSuccessHandler(function (res) {
+      if (btn) { btn.disabled = false; btn.innerHTML = '<i class="fas fa-floppy-disk"></i> حفظ وربط · Save & Link'; }
+      if (res && res.success) {
+        wrap.close();
+        _posCustomerSelect({
+          id: res.id,
+          name: name,
+          phone: phone,
+          gender: gender
+        }, { message: '✓ تم إنشاء العميل وربطه بالفاتورة · Customer created & linked' });
+      } else {
+        var err = (res && res.error) || 'فشل غير معروف';
+        var isDup = /duplicate|ER_DUP_ENTRY|uq_customers_phone|already exists/i.test(String(err));
+        if (isDup) {
+          showError(
+            '<i class="fas fa-exclamation-triangle"></i> ' +
+            'رقم الهاتف <strong>' + _posEsc(phone) + '</strong> موجود مسبقاً لعميل آخر.<br>' +
+            'استخدم الزر أدناه لاستدعاء العميل الموجود.',
+            { actions: [
+              { id: 'use-existing', label: '🔍 استدعاء العميل الموجود',
+                onClick: function () { wrap.close(); posOpenCustomerSearchModal(phone); } }
+            ]}
+          );
+        } else {
+          showError('<i class="fas fa-exclamation-triangle"></i> ' + _posEsc(err));
+        }
+      }
+    }).withFailureHandler(function (e) {
+      if (btn) { btn.disabled = false; btn.innerHTML = '<i class="fas fa-floppy-disk"></i> حفظ وربط · Save & Link'; }
+      showError('<i class="fas fa-exclamation-triangle"></i> خطأ في الاتصال: ' + _posEsc((e && e.message) || e));
+    }).saveCustomer(payload, payload.username);
+  }
+
+  var saveBtn = q('#posCustAddSaveBtn');
+  if (saveBtn) saveBtn.addEventListener('click', doSave);
+
+  // Enter inside any input (except select) → submit
+  var card = wrap.querySelector('.pos-cust-modal-card');
+  if (card) {
+    card.addEventListener('keydown', function (e) {
+      if (e.key !== 'Enter') return;
+      var t = e.target && e.target.tagName;
+      if (t === 'INPUT') { e.preventDefault(); doSave(); }
+    });
+  }
+};
+
+// ─── Initial paint when the script loads (in case state has prior data) ─
+try { _posCustomerRenderStatusBar(); } catch(_) {}
 
 window.posOpenPaymentModal = function () {
   if (!state.cart || !state.cart.length) {
@@ -1412,24 +1690,25 @@ window.doCheckout = function() {
     }
   }
 
-  // ─── v5.11.4 — Build the customer block from the cart-sidebar panel ───
+  // ─── v6.15.0 — Build the customer block from state.posCustomer ───
+  // The v5.11.4 inline-panel DOM fallback (q('#posCustPhone') etc.) is
+  // gone: the panel was replaced by two-button + modal UX, and modals
+  // write directly to state.posCustomer.  state IS the source of truth.
+  // If the cashier didn't pick/create a customer, we send null and the
+  // backend treats it as a walk-in sale (no customer_id).
   var customerOut = null;
   try {
-    if (state.posCustomer && state.posCustomer.id) {
-      customerOut = { id: state.posCustomer.id };
-    } else {
-      var phoneEl = q('#posCustPhone');
-      var nameEl  = q('#posCustName');
-      var genderEl = qs('input[name="posCustGender"]').filter(function(el){return el.checked;})[0];
-      var phoneVal = phoneEl ? String(phoneEl.value || '').trim() : '';
-      var nameVal  = nameEl  ? String(nameEl.value  || '').trim() : '';
-      if (phoneVal || nameVal) {
-        customerOut = {
-          phone: phoneVal,
-          name:  nameVal || phoneVal,
-          gender: genderEl ? genderEl.value : 'unknown'
-        };
-      }
+    var s = state.posCustomer || {};
+    if (s.id) {
+      // Linked to an existing customer (picked from search OR just created
+      // via the add-modal which auto-links).  Send only the id — backend
+      // skips the upsert and just FK-links.
+      customerOut = { id: s.id };
+    } else if (s.phone) {
+      // Defensive: should not happen in v6.15.0 (add-modal always returns
+      // an id), but if some flow ever leaves state in {phone,name} without
+      // id, fall back to letting the backend upsert by phone.
+      customerOut = { phone: s.phone, name: s.name || s.phone, gender: s.gender || 'unknown' };
     }
   } catch(_) { customerOut = null; }
 

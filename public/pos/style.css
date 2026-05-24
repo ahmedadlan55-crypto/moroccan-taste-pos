@@ -2089,31 +2089,32 @@ body.foodics-mode .cart-footer { display: none !important; }
 .float-actions {
   position: fixed;
   top: 60px;                    /* v6.17.3 — just below the header bar */
-  inset-inline-end: 18px;       /* bidi-aware: right in LTR, left in RTL */
+  inset-inline: 12px;           /* v6.17.5 — span the FULL viewport width with a 12px breathing margin on each edge */
   z-index: 200;                 /* above .pos-top-bar (z-index:50) */
   pointer-events: none;         /* container transparent — only children interactive */
 }
 .float-actions > * { pointer-events: auto; }
 
-/* Dropdown popover container (v6.17.3 — drops down from the header POS link) */
+/* Dropdown popover bar (v6.17.5 — full-width strip, icons distributed across) */
 .float-btns {
   display: flex;
-  flex-direction: row;          /* buttons still horizontally laid out */
-  flex-wrap: wrap;              /* wrap to multiple rows on narrow screens */
+  flex-direction: row;          /* buttons horizontally laid out */
+  flex-wrap: wrap;              /* wrap to multiple rows if the screen is too narrow */
+  width: 100%;                  /* v6.17.5 — fill the parent (= full page width minus 12px each side) */
   gap: 8px;
-  padding: 6px 10px;
+  padding: 10px 16px;           /* v6.17.5 — a little more breathing room for a full-width bar */
   background: rgba(255, 255, 255, 0.95);
   backdrop-filter: blur(10px);
   -webkit-backdrop-filter: blur(10px);
   border: 1px solid rgba(124, 58, 237, 0.18);
   border-radius: 16px;
   box-shadow: 0 12px 32px -8px rgba(15, 23, 42, 0.22);
-  transform-origin: top right;  /* v6.17.2 — anchor to the pill above */
+  justify-content: space-around;/* v6.17.5 — evenly distribute the 6 icons across the bar */
+  transform-origin: top center; /* v6.17.5 — collapse animation anchored to top middle */
   transition: transform .25s cubic-bezier(.4,0,.2,1),
               opacity .2s,
               padding .25s;
 }
-[dir="rtl"] .float-btns { transform-origin: top left; }
 .float-actions.collapsed .float-btns {
   transform: scaleY(0);         /* v6.17.2 — collapses UP into the pill */
   opacity: 0;
@@ -2538,14 +2539,12 @@ body.foodics-mode .cart-footer { display: none !important; }
   }
   .mobile-cart-total { font-size: 18px; font-weight: 900; }
 
-  /* v6.17.3 — On mobile the header height is smaller, so the dropdown
-     anchors slightly higher.  The trigger is the POS link inside the
-     hamburger drawer (rendered by /shared/header.js). */
-  .float-actions { top: 56px; inset-inline-end: 12px; }
+  /* v6.17.5 — Mobile: header is slightly shorter, edge breathing room is
+     tighter (8px). The full-width bar + space-around distribution from
+     the base style still applies — no overrides needed for justify. */
+  .float-actions { top: 56px; inset-inline: 8px; }
   .float-btn     { width: 40px; height: 40px; font-size: 15px; }
-  .float-btns    { gap: 7px; padding: 5px 8px;
-                   max-width: calc(100vw - 24px);
-                   justify-content: flex-end; }
+  .float-btns    { gap: 7px; padding: 8px 12px; }
 
   .glass-modal { padding: 12px; align-items: flex-end; }
   .glass-modal-content { padding: 18px 18px 14px; border-radius: 22px 22px 14px 14px; max-height: 92dvh; }
@@ -2567,12 +2566,9 @@ body.foodics-mode .cart-footer { display: none !important; }
   .pos-item-price { font-size: 12px; padding: 3px 8px; }
 }
 
-/* v6.17.3 — Very narrow phones (<380px): keep popover within viewport.
-   No pill rules anymore since v6.17.3 removed the floating pill — the
-   existing header POS link is the trigger. */
-@media (max-width: 380px) {
-  .float-btns { max-width: calc(100vw - 24px); }
-}
+/* v6.17.5 — Very narrow phones (<380px): nothing custom needed.
+   The full-width base style + flex-wrap already keep the icons within
+   the viewport (inset-inline:8px from the mobile media query above). */
 
 /* ═══════════════════════════════════════════════════════════════════
  * V3 — Channel selector + Discount actions + Shift close v3

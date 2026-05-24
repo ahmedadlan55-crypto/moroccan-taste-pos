@@ -1069,14 +1069,12 @@ window._posCustomerLoadSummary = function (id) {
     }
     state._posCustomerSummary = res;
     var kpi = res.kpi || {};
-    var parts = [
-      '<strong>' + _posFormatSAR(kpi.totalSpent) + '</strong> ر.س',
-      '<span>' + (Number(kpi.orderCount) || 0) + ' فاتورة</span>'
-    ];
-    if (kpi.lastVisit) {
-      parts.push('<span>آخر زيارة: ' + _posFormatDateOnly(kpi.lastVisit) + '</span>');
-    }
-    if (txt) txt.innerHTML = parts.join(' · ');
+    // v6.17.1 — Minimal strip: total spent only.  The owner explicitly
+    // asked to remove the "N فاتورة" and "آخر زيارة" badges so the
+    // strip takes less horizontal space.  All four KPIs (total, count,
+    // avg, last visit) still appear inside the history modal — opened
+    // via the "📊 السجل" button next to this strip.
+    if (txt) txt.innerHTML = '<strong>' + _posFormatSAR(kpi.totalSpent) + '</strong> ر.س';
   }).withFailureHandler(function (err) {
     console.error('[POS customer summary] failed:', err);
     if (txt) txt.innerHTML = '<i class="fas fa-triangle-exclamation"></i> تعذّر الاتصال';

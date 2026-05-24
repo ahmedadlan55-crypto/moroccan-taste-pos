@@ -1357,6 +1357,20 @@ async function runMigrations() {
   try { await db.query('CREATE INDEX idx_sales_channel ON sales(channel_id)'); } catch(e) {}
   try { await db.query('CREATE INDEX idx_sales_discount ON sales(discount_id)'); } catch(e) {}
 
+  // v6.17.1 — Defensive: ensure v6.11.0 sales numbering columns exist on
+  // every deployment, even if db/migrations/0002_sales_numbering.sql did
+  // not run (brand-new install, manual schema.sql load, replica drift, etc.).
+  // Symptoms before this fix: routes/erp/customers.js:/summary returns
+  // "Unknown column 'invoice_number'" which broke the customer totals
+  // strip in the POS sidebar.  addColumnIfMissing is idempotent — no-op
+  // when the column already exists.
+  await addColumnIfMissing('sales', 'invoice_number', "VARCHAR(40) NULL");
+  await addColumnIfMissing('sales', 'void_serial',    "VARCHAR(40) NULL");
+  await addColumnIfMissing('sales', 'return_serial',  "VARCHAR(40) NULL");
+  try { await db.query('CREATE INDEX idx_sales_invoice_number ON sales(invoice_number)'); } catch(e) {}
+  try { await db.query('CREATE INDEX idx_sales_void_serial    ON sales(void_serial)');    } catch(e) {}
+  try { await db.query('CREATE INDEX idx_sales_return_serial  ON sales(return_serial)');  } catch(e) {}
+
   // ─── V3 spec gap fixes ───
   // Warehouses: multi-brand allowed list (JSON array of brand IDs)
   await addColumnIfMissing('warehouses', 'allowed_brands', "LONGTEXT");

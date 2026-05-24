@@ -27,6 +27,15 @@
     saveOrder:           { method: 'POST', url: '/sales', body: (order,user,shift) => ({...order,username:user,shiftId:shift}) },
     getSalesListDetailed:{ method: 'GET',  url: '/sales', query: (p) => p },
     getInvoice:          { method: 'GET',  url: (id) => '/sales/invoice/'+id },
+    // v6.17.1 — POS "My Invoices" cashier actions (void + return).
+    // SAME v6.15.2 lesson as searchCustomers: every POS-side API call
+    // MUST be mapped here in /shared/api-bridge.js (POS bundle), not
+    // only in /js/api-bridge.js (admin bundle).  Without these the
+    // v6.15.2 fail-loud branch correctly catches the missing route
+    // and shows the cashier "API function not mapped: voidSale" —
+    // but the user just wants to cancel an invoice, so map it.
+    voidSale:            { method: 'POST', url: (id,u)   => '/sales/'+id+'/void',   body: (id,u)   => ({username:u}) },
+    returnSale:          { method: 'POST', url: (id,u,r) => '/sales/'+id+'/return', body: (id,u,r) => ({username:u, reason:r}) },
 
     // Shifts
     openShift:           { method: 'POST', url: '/shifts/open', body: (u,d) => Object.assign({username:u}, d||{}) },

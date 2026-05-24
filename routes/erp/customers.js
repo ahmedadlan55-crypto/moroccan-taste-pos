@@ -248,15 +248,43 @@ router.get('/customers/:id/summary', async (req, res) => {
     // 3. Recent invoices — ALL transactions including cancellations
     //    and refunds so the user sees the full timeline.  Light fields
     //    only (no items_json).
-    const [invRows] = await db.query(
-      `SELECT id, invoice_number, order_date, total_final, payment_method,
-              zatca_type, void_serial, return_serial, has_credit_note
-         FROM sales
-        WHERE customer_id = ?
-        ORDER BY order_date DESC
-        LIMIT 50`,
-      [customerId]
-    );
+    //
+    // v6.17.1 — Schema-tolerant: invoice_number / void_serial / return_serial
+    // were added in v6.11.0 migration 0002_sales_numbering.sql but are
+    // NOT in db/schema.sql baseline.  If migration 0002 didn't run on
+    // this deployment, the modern query fails with "Unknown column
+    // 'invoice_number'".  We fall back to a minimal SELECT and null-
+    // pad the missing fields so the response shape stays consistent.
+    // Same pattern as routes/sales.js:917-929 (legacy customer_id
+    // fallback).  Defensive-in-depth: server.js also runs
+    // addColumnIfMissing on boot to permanently fix this.
+    let invRows = [];
+    try {
+      [invRows] = await db.query(
+        `SELECT id, invoice_number, order_date, total_final, payment_method,
+                zatca_type, void_serial, return_serial, has_credit_note
+           FROM sales
+          WHERE customer_id = ?
+          ORDER BY order_date DESC
+          LIMIT 50`,
+        [customerId]
+      );
+    } catch (colErr) {
+      console.warn('[customers/:id/summary] schema fallback (missing numbering cols):', colErr.message);
+      const [legacyRows] = await db.query(
+        `SELECT id, order_date, total_final, payment_method, zatca_type, has_credit_note
+           FROM sales
+          WHERE customer_id = ?
+          ORDER BY order_date DESC
+          LIMIT 50`,
+        [customerId]
+      );
+      invRows = legacyRows.map(r => Object.assign({}, r, {
+        invoice_number: null,
+        void_serial:    null,
+        return_serial:  null
+      }));
+    }
 
     res.json({
       success: true,

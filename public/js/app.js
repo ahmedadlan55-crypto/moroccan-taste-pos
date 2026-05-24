@@ -3231,7 +3231,16 @@ function loadDashSales() {
       if (channelId && r.channelId && r.channelId !== channelId) return false;
       if (minAmt > 0 && Number(r.total) < minAmt) return false;
       if (maxAmt > 0 && Number(r.total) > maxAmt) return false;
-      if (invoiceNo && (r.orderId || '').toLowerCase().indexOf(invoiceNo.toLowerCase()) < 0) return false;
+      if (invoiceNo) {
+        // v6.11.0 — Search across the human invoice_number AND the
+        // legacy orderId so both old and new rows are findable.
+        var q = invoiceNo.toLowerCase();
+        var hit = (r.orderId || '').toLowerCase().indexOf(q) >= 0
+               || (r.invoiceNumber || '').toLowerCase().indexOf(q) >= 0
+               || (r.voidSerial || '').toLowerCase().indexOf(q) >= 0
+               || (r.returnSerial || '').toLowerCase().indexOf(q) >= 0;
+        if (!hit) return false;
+      }
       if (productIds.length && (!r.items || !r.items.some(function(it){ return productIds.indexOf(String(it.id||it.itemId)) >= 0; }))) return false;
       // v5.11.4 — customer filter (the server already filtered, but if a stale
       // page is showing old rows this guards them out)
@@ -3276,19 +3285,29 @@ function loadDashSales() {
               '</span>'
             : '<span style="color:#94a3b8;font-size:11px;">—</span>';
           // v5.11.4 — Reversed-sale status badge appended to payment chip
+          // v6.11.0 — Append the new void_serial / return_serial as a
+          // monospace chip next to the badge so it's copy-able.
           var statusBadge = '';
           if (s.zatcaType === 'cancellation') {
             statusBadge = ' <span class="badge red" style="font-size:10px;">ملغاة · Cancelled</span>';
+            if (s.voidSerial) statusBadge += ' <span style="font-family:ui-monospace,monospace;font-size:10px;font-weight:800;background:#fef2f2;color:#991b1b;padding:1px 6px;border-radius:4px;border:1px solid #fecaca;">'+s.voidSerial+'</span>';
           } else if (s.zatcaType === 'credit_note') {
             statusBadge = ' <span class="badge yellow" style="font-size:10px;">مرتجع · Returned</span>';
+            if (s.returnSerial) statusBadge += ' <span style="font-family:ui-monospace,monospace;font-size:10px;font-weight:800;background:#fff7ed;color:#9a3412;padding:1px 6px;border-radius:4px;border:1px solid #fed7aa;">'+s.returnSerial+'</span>';
           }
           // Strike-through total for reversed sales (visual cue)
           var totalStyle = (s.zatcaType === 'cancellation' || s.zatcaType === 'credit_note')
             ? 'font-weight:900;color:#94a3b8;text-decoration:line-through;font-size:14px;'
             : 'font-weight:900;color:var(--secondary);font-size:15px;';
+          // v6.11.0 — Show the human-readable invoice_number when present;
+          // fall back to the legacy long orderId for older rows.
+          var displayNumber = s.invoiceNumber || s.orderId || '';
+          var sysRefHtml = s.invoiceNumber
+            ? '<div style="font-family:monospace;font-size:9px;color:#94a3b8;font-weight:600;margin-top:2px;letter-spacing:0;word-break:break-all;">'+(s.orderId||'')+'</div>'
+            : '';
           h += '<tr>'+
             (state.isDeveloper ? '<td style="text-align:center;"><input type="checkbox" class="sale-chk" value="'+s.orderId+'" style="width:16px;height:16px;"></td>' : '<td></td>')+
-            '<td style="font-family:monospace;font-weight:bold;color:var(--primary);font-size:12px;">'+(s.orderId||'')+'</td>'+
+            '<td style="font-family:monospace;font-weight:bold;color:var(--primary);font-size:13px;letter-spacing:0.5px;">'+displayNumber+sysRefHtml+'</td>'+
             '<td style="font-size:12px;color:#64748b;">'+dateStr+'</td>'+
             '<td>'+chBadge+'</td>'+
             '<td style="font-weight:600;">'+userLabel(s.username)+'</td>'+

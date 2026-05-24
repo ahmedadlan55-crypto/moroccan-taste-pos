@@ -3,6 +3,10 @@ const db = require('../db/connection');
 const gl = require('../lib/glPosting');
 const zatca = require('../lib/zatca');
 const { recomputeInvItemStock, recomputeMenuStock } = require('../lib/stockRecompute');
+// v6.11.0 — Human-readable invoice / void / return numbering. Helpers
+// tolerate missing schema columns and return null silently so this
+// require stays safe on deploys that haven't run migration 0002 yet.
+const salesNumbering = require('../lib/salesNumbering');
 // v6.1.0 Wave E.6 — queue trigger for ZATCA submissions
 let zatcaWorker;
 try { zatcaWorker = require('../lib/zatca-worker'); } catch (_) { zatcaWorker = { enqueue: () => {} }; }
@@ -185,6 +189,16 @@ router.post('/', async (req, res) => {
     const orderId = shiftId + '-' + Date.now();
     const now = new Date();
 
+    // v6.11.0 — Reserve a human-readable invoice number (INV-YYYYMMDD-NNNN).
+    // Done up-front so it's part of the audit trail even on rollback;
+    // returns null gracefully when the schema migration hasn't run yet.
+    const _ymd = '' + now.getFullYear()
+      + String(now.getMonth() + 1).padStart(2, '0')
+      + String(now.getDate()).padStart(2, '0');
+    let invoiceNumber = null;
+    try { invoiceNumber = await salesNumbering.nextInvoiceNumber(db, _ymd); }
+    catch (_) { /* tolerate — falls back to orderId in UI */ }
+
     // ─── v6.2.0 Wave F.3 — Period close guard ───
     // Reject the sale up-front if the date falls in a closed/locked
     // accounting period. We do this before any inventory or GL writes
@@ -276,6 +290,14 @@ router.post('/', async (req, res) => {
     // Insert sale (legacy columns)
     await db.query('INSERT INTO sales (id, order_date, items_json, total_final, payment_method, username, shift_id, discount_name, discount_amount, kita_service_fee) VALUES (?,?,?,?,?,?,?,?,?,?)',
       [orderId, now, JSON.stringify(items), totalFinal, payStr, username, shiftId, discountName || '', discountAmount || 0, kitaServiceFee || 0]);
+
+    // v6.11.0 — Stamp the invoice_number on the freshly-inserted row.
+    // Separate UPDATE keeps the INSERT signature stable + makes the column
+    // optional on deploys that haven't applied migration 0002 yet.
+    if (invoiceNumber) {
+      try { await db.query('UPDATE sales SET invoice_number = ? WHERE id = ?', [invoiceNumber, orderId]); }
+      catch (_) { invoiceNumber = null; /* column missing — clear so we don't lie in the response */ }
+    }
 
     // ─── V3: Persist channel + discount metadata (post-insert update so it works on older deploys) ───
     try {
@@ -803,6 +825,9 @@ router.post('/', async (req, res) => {
     res.json({
       success: true,
       orderId,
+      // v6.11.0 — Human-readable invoice number (INV-YYYYMMDD-NNNN). Null
+      // on legacy deploys; UI must fall back to displaying `orderId`.
+      invoiceNumber: invoiceNumber,
       recipesApplied: recipesApplied,
       itemsWithoutRecipe: itemsWithoutRecipe,
       semiDeductions: semiDeductions,
@@ -880,7 +905,11 @@ router.get('/', async (req, res) => {
       paymentNotes:   r.payment_notes   || null,
       zatcaType:      r.zatca_type      || null,
       // v6.0.4 Wave D — flag set when a credit note exists for this sale
-      hasCreditNote:  !!r.has_credit_note
+      hasCreditNote:  !!r.has_credit_note,
+      // v6.11.0 — Human-readable identifiers (null on legacy rows)
+      invoiceNumber:  r.invoice_number  || null,
+      voidSerial:     r.void_serial     || null,
+      returnSerial:   r.return_serial   || null
     })));
   } catch (e) { res.json([]); }
 });
@@ -1023,7 +1052,11 @@ router.get('/invoice/:orderId', async (req, res) => {
       customerPhone: customerPhone,
       customerGender: customerGender,
       paymentNotes: sale.payment_notes || null,
-      zatcaType: sale.zatca_type || null
+      zatcaType: sale.zatca_type || null,
+      // v6.11.0 — Human-readable identifiers for printable receipts
+      invoiceNumber: sale.invoice_number || null,
+      voidSerial: sale.void_serial || null,
+      returnSerial: sale.return_serial || null
     });
   } catch (e) { res.json(null); }
 });
@@ -1158,12 +1191,22 @@ router.post('/:orderId/void', async (req, res) => {
         err.status = 400; err.zatcaType = existingType; throw err;
       }
       const r = await _reverseSaleEffects(conn, orderId, username, { deleteSale: wantDelete });
+      // v6.11.0 — Generate VOI-YYYYMMDD-NNNN for this void. Persist alongside
+      // the zatca_type='cancellation' flag so reports + the receipt have a
+      // single value to quote. Both updates are best-effort: missing columns
+      // (legacy deploys) just skip the stamp.
+      let voidSerial = null;
       if (!wantDelete) {
+        try { voidSerial = await salesNumbering.nextVoidSerial(conn); } catch (_) {}
         try {
           await conn.query("UPDATE sales SET zatca_type='cancellation' WHERE id = ?", [orderId]);
         } catch (_) { /* zatca_type column missing on very old deploy — ignore */ }
+        if (voidSerial) {
+          try { await conn.query('UPDATE sales SET void_serial = ? WHERE id = ?', [voidSerial, orderId]); }
+          catch (_) { voidSerial = null; /* column missing */ }
+        }
       }
-      return r;
+      return Object.assign({}, r, { voidSerial });
     };
 
     let result;
@@ -1178,7 +1221,11 @@ router.post('/:orderId/void', async (req, res) => {
       });
     }
 
-    res.json({ success: true, orderId, ...result, zatcaType: wantDelete ? null : 'cancellation' });
+    res.json({
+      success: true, orderId,
+      ...result,
+      zatcaType: wantDelete ? null : 'cancellation'
+    });
   } catch (e) {
     res.status(500).json({ success: false, error: e.message });
   }
@@ -1284,6 +1331,16 @@ router.post('/:orderId/return', async (req, res) => {
         await conn.query("UPDATE sales SET has_credit_note = 1 WHERE id = ?", [sale.id]);
       } catch (_) { /* column missing on very old deploy — ignore */ }
 
+      // v6.11.0 — Stamp a sequential return_serial (RET-YYYYMMDD-NNNN) on the
+      // original sale so the customer-facing return receipt + admin sales list
+      // can quote a short reference instead of the long credit-note UUID.
+      let returnSerial = null;
+      try { returnSerial = await salesNumbering.nextReturnSerial(conn); } catch (_) {}
+      if (returnSerial) {
+        try { await conn.query('UPDATE sales SET return_serial = ? WHERE id = ?', [returnSerial, sale.id]); }
+        catch (_) { returnSerial = null; /* column missing */ }
+      }
+
       // 7. Audit trail in payment_notes (non-critical)
       try {
         await conn.query(
@@ -1304,6 +1361,7 @@ router.post('/:orderId/return', async (req, res) => {
         totalFinal: totalFinalNum,
         net: cnNet,
         vat: cnVat,
+        returnSerial: returnSerial,
         ...reversal
       };
     };
@@ -1407,7 +1465,10 @@ router.get('/report/advanced', async (req, res) => {
     const { startDate, endDate, username, paymentMethod } = req.query;
 
     // Build WHERE clause for sales
-    let salesWhere = '1=1';
+    // v6.11.0 — Exclude voided + credit-note rows from headline totals so the
+    // "إجمالي المبيعات" figure reflects actual realised revenue. They're still
+    // queryable via the dedicated /sales endpoint for audit/listing purposes.
+    let salesWhere = "1=1 AND (zatca_type IS NULL OR zatca_type NOT IN ('cancellation','credit_note'))";
     const salesParams = [];
     if (startDate) { salesWhere += ' AND DATE(order_date) >= ?'; salesParams.push(startDate); }
     if (endDate)   { salesWhere += ' AND DATE(order_date) <= ?'; salesParams.push(endDate); }

@@ -83,8 +83,13 @@ async function aggregateShiftPayments(shiftId) {
   ensureSynth('_kita',       'Kita',       'كيتا / آجل', 'voucher');
 
   // 3. Pull sales for this shift + aggregate per method.id
+  // v6.11.0 — Exclude voided + credit-note rows so the shift's expected total
+  // matches what the cashier actually collected. Without this filter, a void
+  // would still count toward "expected cash" and the shift would never
+  // balance unless the cashier returned the money — which they didn't.
   const [sales] = await db.query(
-    'SELECT id, payment_method, total_final, kita_service_fee FROM sales WHERE shift_id = ?',
+    "SELECT id, payment_method, total_final, kita_service_fee FROM sales " +
+    "WHERE shift_id = ? AND (zatca_type IS NULL OR zatca_type NOT IN ('cancellation','credit_note'))",
     [shiftId]
   );
   const expectedById = {};

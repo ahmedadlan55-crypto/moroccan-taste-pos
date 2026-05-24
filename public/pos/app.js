@@ -1842,31 +1842,69 @@ window.printReceiptWindow = function() {
 
     '<div style="border-top:2px solid #000;margin:8px 0;"></div>' +
 
-    // ───── INVOICE BADGE ─────
+    // ───── v6.11.0 — VOIDED / RETURNED BANNER (only for reversed sales) ─────
+    // Thermal printers cannot render WHITE INK — so we rely on heavy borders
+    // + bold black text on a light fill rather than reversed text.
+    (r.inv.zatcaType === 'cancellation'
+      ? '<div style="text-align:center;margin:8px 0;padding:8px;background:#fff;border:3px double #000;border-radius:3px;">' +
+          '<div style="font-size:16px;font-weight:900;letter-spacing:2px;color:#000;">VOIDED · مَلغاة</div>' +
+          (r.inv.voidSerial ? '<div style="font-size:11px;font-family:ui-monospace,monospace;font-weight:800;color:#000;margin-top:3px;">' + esc(r.inv.voidSerial) + '</div>' : '') +
+        '</div>'
+      : (r.inv.zatcaType === 'credit_note' || r.inv.returnSerial
+          ? '<div style="text-align:center;margin:8px 0;padding:8px;background:#fff;border:3px double #000;border-radius:3px;">' +
+              '<div style="font-size:16px;font-weight:900;letter-spacing:2px;color:#000;">RETURNED · مُرتَجَع</div>' +
+              (r.inv.returnSerial ? '<div style="font-size:11px;font-family:ui-monospace,monospace;font-weight:800;color:#000;margin-top:3px;">' + esc(r.inv.returnSerial) + '</div>' : '') +
+            '</div>'
+          : '')
+    ) +
+
+    // ───── INVOICE BADGE (black-on-light for thermal compatibility) ─────
+    // v6.11.0 — Replaced "white text on black bg" with "bold black text on
+    // light bg + heavy border". White ink is impossible on thermal printers,
+    // and the global "@media print *{color:#000}" override turned the old
+    // white-on-black badge into invisible black-on-black.
     '<div style="text-align:center;margin-bottom:8px;">' +
-      '<div style="background:#000;color:#fff;text-align:center;padding:5px 14px;font-weight:800;font-size:13px;display:inline-block;border-radius:3px;letter-spacing:0.5px;">' +
+      '<div style="background:#f0f0f0;color:#000;text-align:center;padding:6px 16px;font-weight:800;font-size:13px;display:inline-block;border:2px solid #000;border-radius:3px;letter-spacing:0.5px;">' +
         'TAX INVOICE <span style="font-size:11px;direction:rtl;">| فاتورة ضريبية</span>' +
       '</div>' +
     '</div>' +
 
-    // ───── ORDER ID + DATE BOX ─────
-    '<div style="border:1.5px solid #000;border-radius:3px;padding:8px 10px;margin-bottom:8px;">' +
-      '<div style="display:flex;justify-content:space-between;align-items:baseline;font-size:11px;letter-spacing:0.05em;color:#000;margin-bottom:4px;">' +
-        '<span>ORDER ID <span style="direction:rtl;">| رقم الفاتورة</span></span>' +
-        '<span style="font-size:16px;font-weight:900;font-family:ui-monospace,SFMono-Regular,monospace;letter-spacing:0.5px;color:#000;">' + esc(r.inv.orderId) + '</span>' +
+    // ───── v6.11.0 — PROMINENT INVOICE NUMBER (the standard customer-facing #) ─────
+    // Falls back to the legacy long orderId when invoiceNumber is null
+    // (sales recorded before migration 0002).
+    '<div style="text-align:center;padding:10px 6px;border:2px solid #000;margin-bottom:8px;border-radius:3px;">' +
+      '<div style="font-size:10px;color:#000;letter-spacing:0.1em;font-weight:700;margin-bottom:2px;">' +
+        'INVOICE NO. <span style="direction:rtl;font-size:11px;">| رقم الفاتورة</span>' +
       '</div>' +
-      '<div style="display:flex;justify-content:space-between;align-items:baseline;font-size:11px;color:#000;border-top:1px dashed #000;padding-top:5px;">' +
+      '<div style="font-size:20px;font-weight:900;font-family:ui-monospace,SFMono-Regular,monospace;letter-spacing:1.5px;color:#000;">' +
+        esc(r.inv.invoiceNumber || r.inv.orderId) +
+      '</div>' +
+    '</div>' +
+
+    // ───── ORDER ID (technical, smaller — kept for support / ZATCA traceability) ─────
+    '<div style="border:1px solid #000;border-radius:3px;padding:6px 10px;margin-bottom:8px;">' +
+      (r.inv.invoiceNumber
+        ? '<div style="display:flex;justify-content:space-between;align-items:baseline;font-size:9px;letter-spacing:0.05em;color:#000;margin-bottom:3px;">' +
+            '<span>SYSTEM REF <span style="direction:rtl;">| المرجع</span></span>' +
+            '<span style="font-family:ui-monospace,SFMono-Regular,monospace;font-weight:700;color:#000;font-size:9px;word-break:break-all;text-align:end;">' + esc(r.inv.orderId) + '</span>' +
+          '</div>'
+        : ''
+      ) +
+      '<div style="display:flex;justify-content:space-between;align-items:baseline;font-size:11px;color:#000;' + (r.inv.invoiceNumber ? 'border-top:1px dashed #000;padding-top:4px;' : '') + '">' +
         '<span>DATE <span style="direction:rtl;">| التاريخ</span></span>' +
         '<span style="font-family:ui-monospace,SFMono-Regular,monospace;font-weight:700;color:#000;">' + esc(r.dateStr) + '</span>' +
       '</div>' +
     '</div>' +
 
     // ───── ITEMS TABLE ─────
+    // v6.11.0 — Header was "white text on black bg" → invisible after the
+    // global "@media print *{color:#000 !important}" override. Switched to
+    // black text on light grey with a strong border so labels actually print.
     '<table style="width:100%;border-collapse:collapse;direction:ltr;table-layout:fixed;">' +
-      '<thead><tr style="border-top:2px solid #000;border-bottom:2px solid #000;background:#000;color:#fff;">' +
-        '<th style="text-align:center;font-size:11px;padding:6px 2px;color:#fff;font-weight:800;letter-spacing:0.05em;width:40px;">QTY</th>' +
-        '<th style="text-align:left;font-size:11px;padding:6px 8px;color:#fff;font-weight:800;letter-spacing:0.05em;">ITEM</th>' +
-        '<th style="text-align:right;font-size:11px;padding:6px 2px;color:#fff;font-weight:800;letter-spacing:0.05em;width:66px;">TOTAL ' + esc(r.currency) + '</th>' +
+      '<thead><tr style="border-top:2px solid #000;border-bottom:2px solid #000;background:#f0f0f0;color:#000;">' +
+        '<th style="text-align:center;font-size:11px;padding:6px 2px;color:#000;font-weight:900;letter-spacing:0.05em;width:40px;">QTY</th>' +
+        '<th style="text-align:left;font-size:11px;padding:6px 8px;color:#000;font-weight:900;letter-spacing:0.05em;">ITEM</th>' +
+        '<th style="text-align:right;font-size:11px;padding:6px 2px;color:#000;font-weight:900;letter-spacing:0.05em;width:66px;">TOTAL ' + esc(r.currency) + '</th>' +
       '</tr></thead>' +
       '<tbody>' + itemsHtml + '</tbody>' +
     '</table>' +
@@ -1878,11 +1916,13 @@ window.printReceiptWindow = function() {
     '</div>' +
 
     // ───── VAT BREAKDOWN ─────
+    // v6.11.0 — Was white-on-black headers → invisible in print.
+    // Now black-on-light grey with strong borders for thermal compatibility.
     '<table style="width:100%;border-collapse:collapse;border:1.5px solid #000;margin:10px 0;">' +
-      '<tr style="background:#000;color:#fff;border-bottom:1.5px solid #000;">' +
-        '<td style="text-align:center;padding:6px 4px;border-right:1px solid #fff;font-size:11px;font-weight:800;color:#fff;">TOTAL<br>VALUE<div style="font-size:9px;color:#fff;direction:rtl;margin-top:2px;">إجمالي القيمة</div></td>' +
-        '<td style="text-align:center;padding:6px 4px;border-right:1px solid #fff;font-size:11px;font-weight:800;color:#fff;">NET<br>AMOUNT<div style="font-size:9px;color:#fff;direction:rtl;margin-top:2px;">قبل الضريبة</div></td>' +
-        '<td style="text-align:center;padding:6px 4px;font-size:11px;font-weight:800;color:#fff;">VAT<br>15%<div style="font-size:9px;color:#fff;direction:rtl;margin-top:2px;">ضريبة القيمة</div></td>' +
+      '<tr style="background:#f0f0f0;color:#000;border-bottom:1.5px solid #000;">' +
+        '<td style="text-align:center;padding:6px 4px;border-right:1px solid #000;font-size:11px;font-weight:900;color:#000;">TOTAL<br>VALUE<div style="font-size:9px;color:#000;direction:rtl;margin-top:2px;">إجمالي القيمة</div></td>' +
+        '<td style="text-align:center;padding:6px 4px;border-right:1px solid #000;font-size:11px;font-weight:900;color:#000;">NET<br>AMOUNT<div style="font-size:9px;color:#000;direction:rtl;margin-top:2px;">قبل الضريبة</div></td>' +
+        '<td style="text-align:center;padding:6px 4px;font-size:11px;font-weight:900;color:#000;">VAT<br>15%<div style="font-size:9px;color:#000;direction:rtl;margin-top:2px;">ضريبة القيمة</div></td>' +
       '</tr>' +
       '<tr>' +
         '<td style="text-align:center;padding:10px 4px;border-right:1px solid #000;font-size:16px;font-weight:900;font-family:ui-monospace,SFMono-Regular,monospace;">' + formatVal(r.inv.totalFinal) + '</td>' +
@@ -1891,11 +1931,11 @@ window.printReceiptWindow = function() {
       '</tr>' +
     '</table>' +
 
-    // ───── PAYMENT ROW ─────
-    '<div style="border:1.5px solid #000;border-radius:3px;padding:8px 10px;margin:10px 0;background:#000;color:#fff;">' +
-      '<div style="display:flex;justify-content:space-between;align-items:center;font-size:13px;font-weight:800;color:#fff;">' +
-        '<span style="color:#fff;"><i style="font-style:normal;">💳</i> ' + esc(r.inv.payment || 'CASH') + '</span>' +
-        '<span style="color:#fff;font-family:ui-monospace,SFMono-Regular,monospace;font-size:16px;">' + formatVal(r.inv.totalFinal) + ' ' + esc(r.currency) + '</span>' +
+    // ───── PAYMENT ROW (black-on-light, double-border for emphasis) ─────
+    '<div style="border:2.5px double #000;border-radius:3px;padding:8px 10px;margin:10px 0;background:#f0f0f0;color:#000;">' +
+      '<div style="display:flex;justify-content:space-between;align-items:center;font-size:13px;font-weight:900;color:#000;">' +
+        '<span style="color:#000;">PAYMENT · <span style="direction:rtl;">طريقة الدفع</span>: ' + esc(r.inv.payment || 'CASH') + '</span>' +
+        '<span style="color:#000;font-family:ui-monospace,SFMono-Regular,monospace;font-size:16px;">' + formatVal(r.inv.totalFinal) + ' ' + esc(r.currency) + '</span>' +
       '</div>' +
     '</div>' +
 
@@ -2601,8 +2641,16 @@ window.posLoadMyInvoices = function () {
 
 function _myInvStatusBadge(r) {
   var t_ = String(r.zatcaType || '').toLowerCase();
-  if (t_ === 'cancellation') return '<span class="my-inv-badge red"><i class="fas fa-ban"></i> ملغاة · Cancelled</span>';
-  if (t_ === 'credit_note')  return '<span class="my-inv-badge orange"><i class="fas fa-undo"></i> مرتجع · Returned</span>';
+  // v6.11.0 — Append the void/return serial under the badge when present so
+  // operators have a single, copy-friendly reference for the action.
+  if (t_ === 'cancellation') {
+    var ser = r.voidSerial ? '<div class="my-inv-serial">' + r.voidSerial + '</div>' : '';
+    return '<span class="my-inv-badge red"><i class="fas fa-ban"></i> ملغاة · Cancelled</span>' + ser;
+  }
+  if (t_ === 'credit_note') {
+    var ser2 = r.returnSerial ? '<div class="my-inv-serial">' + r.returnSerial + '</div>' : '';
+    return '<span class="my-inv-badge orange"><i class="fas fa-undo"></i> مرتجع · Returned</span>' + ser2;
+  }
   return '<span class="my-inv-badge green"><i class="fas fa-check"></i> سارية · Active</span>';
 }
 
@@ -2663,11 +2711,17 @@ function _myInvRender(rows) {
       prods += '<span class="my-inv-prod-more">+' + ((r.items || []).length - 3) + '</span>';
     }
     var safeId = String(r.orderId || '').replace(/'/g, "\\'");
+    // v6.11.0 — Show the human-readable invoice number when present, with
+    // the long technical orderId shown beneath as a smaller "system ref".
+    var displayNumber = r.invoiceNumber || r.orderId || '';
+    var sysRefHtml = r.invoiceNumber
+      ? '<div class="my-inv-sysref">' + (r.orderId || '') + '</div>'
+      : '';
     html +=
       '<tr class="my-inv-row' + (active ? '' : ' is-reversed') + '">' +
         '<td>' + _myInvStatusBadge(r) + '</td>' +
         '<td class="my-inv-time">' + _myInvFmtTime(r.date) + '</td>' +
-        '<td class="my-inv-id">' + (r.orderId || '') + '</td>' +
+        '<td class="my-inv-id">' + displayNumber + sysRefHtml + '</td>' +
         '<td class="my-inv-prods">' + (prods || '—') + '</td>' +
         '<td class="my-inv-total">' + (Number(r.total) || 0).toFixed(2) + ' ر.س</td>' +
         '<td class="my-inv-pay">' + (r.payment || '—') + (r.paymentNotes ? '<div class="my-inv-pay-notes">' + r.paymentNotes + '</div>' : '') + '</td>' +
@@ -2686,10 +2740,35 @@ function _myInvRender(rows) {
 // Reusable confirmation — accepts a callback; if glassConfirm exists we use
 // it (proper Arabic-friendly modal), else we fall back to window.confirm.
 function _myInvConfirm(title, body, cb) {
+  // v6.11.0 — Defensive: glassConfirm may exist but throw / fail silently
+  // on some deploys. Wrap in try/catch + idempotent callback guard so a
+  // broken glass modal degrades to the native confirm instead of locking
+  // the cashier out of void/return entirely.
+  var fired = false;
+  var safeCb = function () {
+    if (fired) return;
+    fired = true;
+    try { cb(); } catch (e) {
+      if (typeof glassToast === 'function') {
+        glassToast('خطأ غير متوقع: ' + (e && e.message || e), true);
+      } else {
+        alert('Unexpected error: ' + (e && e.message || e));
+      }
+    }
+  };
+  var triedGlass = false;
   if (typeof glassConfirm === 'function') {
-    glassConfirm(title, body, function (ok) { if (ok) cb(); });
-  } else {
-    if (window.confirm(title + '\n\n' + body)) cb();
+    try {
+      triedGlass = true;
+      glassConfirm(title, body, function (ok) { if (ok) safeCb(); });
+      return;
+    } catch (e) {
+      console.warn('[invConfirm] glassConfirm threw, falling back to native:', e && e.message);
+      triedGlass = false;
+    }
+  }
+  if (!triedGlass) {
+    if (window.confirm(title + '\n\n' + body)) safeCb();
   }
 }
 

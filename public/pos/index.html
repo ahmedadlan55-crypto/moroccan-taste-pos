@@ -347,28 +347,15 @@
     <div id="mobCartTotal" class="mobile-cart-total">0.00 ر.س</div>
   </div>
 
-  <!-- ─── v6.17.0 — POS quick-actions: pill button + horizontal popover ───
-       Replaces the v5.x vertical sidebar (always-visible column of circular
-       buttons on the right edge) that the owner found intrusive.  The pill
-       button always sits at the bottom-end of the screen; clicking it
-       expands a horizontal bar of action buttons next to it.
-
-       Default state is COLLAPSED so the screen edge is clean.  IDs and
-       onclick handlers preserved from the original markup so external
-       callers + the existing toggleFloatActions JS keep working. -->
+  <!-- ─── v6.17.3 — POS quick-actions: dropdown anchored to the existing
+       header "POS" nav link (NO floating pill).  The owner explicitly
+       asked twice for the existing nav link to be the trigger, not a
+       separate invented icon.  Now: clicking the POS link in the header
+       (rendered by /shared/header.js) toggles .collapsed on this container.
+       Container starts collapsed so nothing covers the screen edge.
+       IDs preserved so toggleFloatActions / auto-dismiss IIFE keep working. -->
   <div class="float-actions collapsed" id="floatActions">
-    <button class="float-handle" id="floatHandle"
-            type="button"
-            onclick="toggleFloatActions()"
-            aria-label="قائمة إجراءات الكاشير · POS Actions menu"
-            aria-expanded="false">
-      <i class="fas fa-cash-register"></i>
-      <span class="float-handle-label">POS</span>
-      <!-- v6.17.2 — popover drops DOWN from the pill (was up in v6.17.0),
-           so the default chevron points down; rotates 180° when expanded. -->
-      <i class="fas fa-chevron-down float-handle-chev" id="floatHandleIcon"></i>
-    </button>
-    <div class="float-btns" id="floatBtns" role="menu">
+    <div class="float-btns" id="floatBtns" role="menu" aria-label="إجراءات الكاشير · POS Actions menu">
       <button class="float-btn float-btn-success" onclick="shiftOpen()" title="فتح وردية"><i class="fas fa-play"></i></button>
       <button class="float-btn float-btn-danger" onclick="shiftCloseStart()" title="إغلاق الوردية"><i class="fas fa-stop"></i></button>
       <button class="float-btn float-btn-info no-print-on-kiosk" onclick="openPrinterSettings()" title="الطابعة" style="display:none;"><i class="fas fa-print"></i></button>

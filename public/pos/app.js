@@ -2453,8 +2453,16 @@ window.printReceiptWindow = function() {
       // Thermal-printer override (kept from v5.14.9). Forces every
       // element black + bold + thin stroke. Bumps tiny inline 9-10px
       // sizes to 11px so they survive on 80mm paper.
+      // v6.17.3 — was padding:6px 4px (only ~1mm right margin), which is
+      // smaller than the physical non-printable margin of 80mm thermal
+      // printers (typically 3-5mm).  The right border of every full-width
+      // element (item table, VAT table, payment box, QR border, etc.)
+      // landed in the printer's hardware-clipped zone and disappeared.
+      // 5mm padding on each side keeps all content + borders safely
+      // within the printable area (~70mm of the 80mm paper) on any
+      // mainstream thermal printer.
       '@media print{@page{margin:0;size:80mm auto;}' +
-        'body{padding:6px 4px;width:100%;font-weight:800;}' +
+        'body{padding:6px 5mm;width:100%;font-weight:800;}' +
         '*,*::before,*::after{color:#000 !important;font-weight:700 !important;-webkit-text-stroke:0.3px #000;text-shadow:0 0 0.4px #000;}' +
         '[style*="font-size:9px"],[style*="font-size:10px"]{font-size:11px !important;}' +
       '}' +
@@ -4057,37 +4065,42 @@ window.submitReceiveRequest = function() {
 };
 
 // ═══════════════════════════════════════
-// FLOAT ACTIONS TOGGLE (POS pill + horizontal popover, v6.17.0)
+// FLOAT ACTIONS TOGGLE (v6.17.3 — header POS nav link is the trigger)
 // ═══════════════════════════════════════
-// In v6.17.0 the old vertical sidebar was replaced by a purple POS pill
-// button at the bottom-end that expands a horizontal popover next to it.
-// The function name + behaviour (just toggling .collapsed) stay the same
-// so existing callers (and the HTML onclick handler) keep working.
+// In v6.17.0 we introduced a separate purple POS pill at the bottom-end.
+// v6.17.2 moved it to the top.  v6.17.3 REMOVED it entirely — the shared
+// header already shows a "POS" nav link (cashier-register icon + label),
+// and the owner asked for that existing link to be the dropdown trigger
+// instead of inventing a duplicate icon.
+//
+// toggleFloatActions() keeps its name + signature so the 6 action buttons'
+// onclick handlers and any external callers keep working.  It now updates
+// aria-expanded on the header link (the trigger), not on a non-existent pill.
 window.toggleFloatActions = function() {
   var el = document.getElementById('floatActions');
   if (!el) return;
-  var handle = document.getElementById('floatHandle');
   el.classList.toggle('collapsed');
-  // v6.17.0 — keep aria-expanded in sync so screen readers + assistive
-  // tech announce the state change.
-  if (handle) {
-    handle.setAttribute('aria-expanded',
+  // v6.17.3 — mirror state on the header nav link (the trigger) for a11y.
+  var trigger = document.querySelector('.app-nav a[href="/pos/"]');
+  if (trigger) {
+    trigger.setAttribute('aria-expanded',
       String(!el.classList.contains('collapsed')));
   }
 };
 
-// v6.17.0 — Auto-dismiss behaviour:
+// v6.17.3 — Auto-dismiss behaviour (formerly v6.17.0):
 //   • Escape closes the popover.
 //   • Clicking any action button inside it closes after the click runs
 //     (so the popover behaves like a real menu).
-//   • Clicking anywhere outside #floatActions closes.
+//   • Clicking anywhere outside #floatActions closes — EXCEPT clicks on
+//     the header POS nav link itself, which toggleFloatActions handles.
 (function setupPosFloatActionsAutoDismiss(){
   function closeMenu() {
     var el = document.getElementById('floatActions');
     if (!el || el.classList.contains('collapsed')) return;
     el.classList.add('collapsed');
-    var h = document.getElementById('floatHandle');
-    if (h) h.setAttribute('aria-expanded', 'false');
+    var trigger = document.querySelector('.app-nav a[href="/pos/"]');
+    if (trigger) trigger.setAttribute('aria-expanded', 'false');
   }
   document.addEventListener('keydown', function(e){
     if (e.key === 'Escape') closeMenu();
@@ -4103,11 +4116,48 @@ window.toggleFloatActions = function() {
     // Inside an action button → schedule dismiss after the action runs
     var insideBtn = t.closest && t.closest('#floatBtns .float-btn');
     if (insideBtn) { setTimeout(closeMenu, 0); return; }
-    // Inside the pill itself → toggleFloatActions handles it
-    if (t.closest && t.closest('#floatHandle')) return;
+    // v6.17.3 — Click on the header POS nav link → toggleFloatActions handles it
+    if (t.closest && t.closest('.app-nav a[href="/pos/"]')) return;
     // Anywhere else outside the container → dismiss
     if (!el.contains(t)) closeMenu();
   }, true);
+})();
+
+// v6.17.3 — Wire the existing header "POS" nav link as the menu trigger.
+// The link is rendered async by /shared/header.js after auth + settings
+// load, so we attach attempt-once and then poll briefly as a fallback.
+//
+// Behaviour:
+//   • On /pos/ (link has class .active): intercept clicks, prevent the
+//     href navigation, and toggle the floating popover.
+//   • On any other page (/settings, /users, …) where the same link
+//     appears: do NOT intercept — let it navigate to /pos/ normally.
+(function setupPosNavLinkTrigger(){
+  function attach() {
+    var posLink = document.querySelector('.app-nav a[href="/pos/"]');
+    if (!posLink) return false;
+    if (posLink.dataset.posTriggerBound === '1') return true;
+    posLink.dataset.posTriggerBound = '1';
+    posLink.setAttribute('role', 'button');
+    posLink.setAttribute('aria-haspopup', 'true');
+    posLink.setAttribute('aria-expanded', 'false');
+    posLink.addEventListener('click', function(e) {
+      // Only intercept when we're already on /pos/ — otherwise let the
+      // link navigate normally (e.g. clicking POS from /settings/).
+      var onPos = /^\/pos\/?$/.test(window.location.pathname);
+      if (!onPos) return;
+      e.preventDefault();
+      e.stopPropagation();
+      window.toggleFloatActions();
+    });
+    return true;
+  }
+  // Header is rendered async after auth+settings load — poll briefly.
+  if (attach()) return;
+  var tries = 0;
+  var iv = setInterval(function(){
+    if (attach() || ++tries > 30) clearInterval(iv);
+  }, 100);
 })();
 
 // Auto-collapse on mobile after 5 seconds (legacy behaviour, retained).
@@ -5687,7 +5737,9 @@ function _renderShiftThermalReport(d) {
       '*{margin:0;padding:0;box-sizing:border-box;-webkit-print-color-adjust:exact;print-color-adjust:exact;}' +
       'body{font-family:"Helvetica Neue",Arial,"Segoe UI",sans-serif;padding:10px;width:300px;margin:0 auto;font-size:12px;color:#000;background:#fff;}' +
       'table{border-collapse:collapse;}' +
-      '@media print{@page{margin:0;size:80mm auto;}body{padding:4px;width:100%;}}' +
+      // v6.17.3 — 5mm safe padding clears the thermal printer's physical
+      // non-printable margin so right-edge borders aren't clipped.
+      '@media print{@page{margin:0;size:80mm auto;}body{padding:4px 5mm;width:100%;}}' +
     '</style>' +
     // V5.7.21 — embed the translator so the new window can flip Arabic
     //   labels to English before printing (same /api/i18n/translate
@@ -5886,8 +5938,10 @@ function _openShiftPrintWindow(reportHtml) {
       // force every element to pure black + bold + a thin text-stroke
       // so light strokes and grey labels don't disappear on cheap
       // thermal heads. Tiny 9–10px text bumped to 11px.
+      // v6.17.3 — 5mm safe padding on left+right clears the thermal printer's
+      // physical non-printable margin (~3-5mm) so right-edge borders survive.
       '@media print{@page{margin:0;size:80mm auto;}' +
-        'body{padding:4px;width:100%;font-weight:700;}' +
+        'body{padding:4px 5mm;width:100%;font-weight:700;}' +
         '*,*::before,*::after{color:#000 !important;font-weight:700 !important;-webkit-text-stroke:0.25px #000;text-shadow:0 0 0.4px #000;}' +
         '[style*="font-size:9px"],[style*="font-size:10px"]{font-size:11px !important;}' +
       '}' +

@@ -2075,72 +2075,27 @@ body.foodics-mode .cart-footer { display: none !important; }
 }
 
 /* ═══════════════════════════════════════════════════════════════════
-   v6.17.2 — POS quick-actions: pill button at TOP of page + dropdown popover
+   v6.17.3 — POS quick-actions: dropdown anchored to the existing header POS link
    ─────────────────────────────────────────────────────────────────────
-   Owner explicitly asked twice that the POS pill live at the TOP of
-   the page, not the bottom (v6.17.0 put it at bottom:20px which
-   visually sat above the cart and looked ugly — "فوق السله بشع").
+   In v6.17.0/v6.17.2 we used a separate purple "POS" pill button as
+   the menu trigger.  Owner pushed back: the header already shows a
+   POS nav link (cashier-register icon + "POS" text), and an extra
+   pill duplicates it.  Now the floating pill is GONE — the existing
+   header link (.app-nav a[href="/pos/"]) is the trigger, and this
+   container only holds the popover that drops down below the header.
 
-   Now:
-     • A purple "POS" pill button sits at the TOP-end of the screen
-       (top:8px) — overlapping the header bar's right edge.
-     • Clicking it expands a vertical popover BELOW the pill (drops
-       down), containing the same 6 action buttons.
-     • z-index 200 so it always sits above the .pos-top-bar (z:50).
-     • Popover dismisses on Esc, click-outside, or after an action
-       button is clicked (see app.js IIFE in v6.17.0 — unchanged).
-     • Responsive: same dropdown behaviour on every viewport, the
-       popover wraps to multiple rows on narrow screens.
+   See setupPosNavLinkTrigger in public/pos/app.js for the click wiring.
    ─────────────────────────────────────────────────────────────────── */
 .float-actions {
   position: fixed;
-  top: 8px;                     /* v6.17.2 — TOP of page (was bottom:20px) */
+  top: 60px;                    /* v6.17.3 — just below the header bar */
   inset-inline-end: 18px;       /* bidi-aware: right in LTR, left in RTL */
-  z-index: 200;                 /* v6.17.2 — above .pos-top-bar (z-index:50) */
-  display: flex;
-  flex-direction: column;       /* v6.17.2 — pill on top, popover drops below */
-  align-items: flex-end;        /* keep right-edge alignment */
-  gap: 10px;
-  pointer-events: none;         /* container is transparent — only children interactive */
+  z-index: 200;                 /* above .pos-top-bar (z-index:50) */
+  pointer-events: none;         /* container transparent — only children interactive */
 }
 .float-actions > * { pointer-events: auto; }
 
-/* POS pill — matches the purple cashier-register button in the shared header */
-.float-handle {
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-  padding: 0 18px;
-  height: 50px;
-  border: 0;
-  border-radius: 14px;
-  background: linear-gradient(135deg, #7c3aed, #6d28d9);
-  color: #fff;
-  font-family: inherit;
-  font-size: 14px;
-  font-weight: 900;
-  cursor: pointer;
-  box-shadow: 0 8px 20px -2px rgba(124, 58, 237, 0.50);
-  transition: transform .15s, box-shadow .15s, filter .15s;
-  -webkit-tap-highlight-color: transparent;
-}
-.float-handle:hover  { transform: translateY(-1px); filter: brightness(1.05); }
-.float-handle:active { transform: translateY(0) scale(0.97); }
-.float-handle:focus-visible {
-  outline: 0;
-  box-shadow: 0 8px 20px -2px rgba(124, 58, 237, 0.50),
-              0 0 0 4px rgba(124, 58, 237, 0.30);
-}
-.float-handle > i:first-child { font-size: 16px; }
-.float-handle-label { letter-spacing: 0.5px; }
-.float-handle-chev {
-  font-size: 11px;
-  margin-inline-start: 4px;
-  transition: transform .2s;
-}
-.float-actions:not(.collapsed) .float-handle-chev { transform: rotate(180deg); }
-
-/* Dropdown popover container (v6.17.2 — opens downward from the pill) */
+/* Dropdown popover container (v6.17.3 — drops down from the header POS link) */
 .float-btns {
   display: flex;
   flex-direction: row;          /* buttons still horizontally laid out */
@@ -2583,11 +2538,10 @@ body.foodics-mode .cart-footer { display: none !important; }
   }
   .mobile-cart-total { font-size: 18px; font-weight: 900; }
 
-  /* v6.17.2 — POS pill at TOP of viewport on mobile (was bottom:80px in v6.17.0
-     to clear the mobile-cart bar; now the pill lives at the top so the cart
-     bar is irrelevant and there's no overlap). */
-  .float-actions { top: 6px; inset-inline-end: 12px; }
-  .float-handle  { padding: 0 14px; height: 42px; font-size: 13px; }
+  /* v6.17.3 — On mobile the header height is smaller, so the dropdown
+     anchors slightly higher.  The trigger is the POS link inside the
+     hamburger drawer (rendered by /shared/header.js). */
+  .float-actions { top: 56px; inset-inline-end: 12px; }
   .float-btn     { width: 40px; height: 40px; font-size: 15px; }
   .float-btns    { gap: 7px; padding: 5px 8px;
                    max-width: calc(100vw - 24px);
@@ -2613,13 +2567,11 @@ body.foodics-mode .cart-footer { display: none !important; }
   .pos-item-price { font-size: 12px; padding: 3px 8px; }
 }
 
-/* v6.17.2 — Very narrow phones (<380px): nothing special needed since the
-   v6.17.2 base style already stacks the popover BELOW the pill (flex
-   column, top:8px). Just shrink the pill label so the layout breathes. */
+/* v6.17.3 — Very narrow phones (<380px): keep popover within viewport.
+   No pill rules anymore since v6.17.3 removed the floating pill — the
+   existing header POS link is the trigger. */
 @media (max-width: 380px) {
-  .float-handle-label { display: none; }      /* hide "POS" text, keep icons */
-  .float-handle       { padding: 0 12px; gap: 6px; }
-  .float-btns         { max-width: calc(100vw - 24px); }
+  .float-btns { max-width: calc(100vw - 24px); }
 }
 
 /* ═══════════════════════════════════════════════════════════════════

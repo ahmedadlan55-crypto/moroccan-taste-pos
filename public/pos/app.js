@@ -961,6 +961,8 @@ window._posCustomerRenderStatusBar = function () {
 };
 
 // ─── Unified setter: writes state + repaints bar + emits toast ────────
+// v6.16.0 — Also auto-fetches the customer's purchase summary so the
+// totals strip + history modal are ready instantly.
 window._posCustomerSelect = function (c, opts) {
   c = c || {};
   state.posCustomer = {
@@ -971,16 +973,25 @@ window._posCustomerSelect = function (c, opts) {
   };
   state._posCustLastError = null;
   _posCustomerRenderStatusBar();
+  // v6.16.0 — Kick off the summary fetch (totals strip + history cache).
+  // Non-blocking — UI is already updated.
+  if (state.posCustomer.id) {
+    try { _posCustomerLoadSummary(state.posCustomer.id); } catch (_) {}
+  }
   if (opts && opts.silent) return;
   var msg = (opts && opts.message) || '✓ تم ربط العميل بالفاتورة · Customer linked';
   if (typeof glassToast === 'function') glassToast(msg, false);
 };
 
 // ─── Clear (used by checkout-success + the X button on the status bar) ─
+// v6.16.0 — Also hides the totals strip and clears the summary cache.
 window.posCustomerClear = function () {
   state.posCustomer = { id:null, name:'', phone:'', gender:'unknown' };
   state._posCustLastError = null;
+  state._posCustomerSummary = null;
   _posCustomerRenderStatusBar();
+  var totals = q('#posCustomerTotals');
+  if (totals) totals.hidden = true;
 };
 
 // ─── Backward-compat shims (other callers in the codebase may invoke these) ─
@@ -988,6 +999,213 @@ window._posCustomerUpdateStatus    = function () { _posCustomerRenderStatusBar()
 window._posCustomerRenderChip      = function () { _posCustomerRenderStatusBar(); };
 window._posCustomerEnsurePanelOpen = function () { /* no-op in v6.15.0 — bar is always visible */ };
 window.posToggleCustomerPanel      = function () { /* no-op — buttons replaced toggle */ };
+
+// ════════════════════════════════════════════════════════════════════
+// v6.16.0 — Customer summary (totals strip + history modal)
+// ════════════════════════════════════════════════════════════════════
+// _posCustomerLoadSummary(id) is called from _posCustomerSelect (above)
+// whenever a customer is linked.  It populates two things:
+//   1. The always-visible totals strip in the customer bar (a compact
+//      one-liner with total spent, order count, and last-visit date).
+//   2. state._posCustomerSummary cache, used by the history modal so
+//      opening it is instant (no second roundtrip).
+//
+// posOpenCustomerHistoryModal() reads the cache and renders a large
+// modal with 4 KPI cards + the last 50 invoices in a table.  Status
+// badges reflect zatca_type: standard/simplified are normal, voided
+// invoices get a red "ملغاة" badge with a strike-through total, and
+// credit_notes get a purple "مرتجع" badge.
+//
+// Endpoint: GET /api/erp/customers/:id/summary
+// (See routes/erp/customers.js for the SQL.)
+// ════════════════════════════════════════════════════════════════════
+
+// Format an ISO datetime as "yyyy-mm-dd HH:mm" (Saudi style, no tz noise).
+function _posFormatDate(iso) {
+  if (!iso) return '—';
+  try {
+    var d = (iso instanceof Date) ? iso : new Date(iso);
+    if (isNaN(d.getTime())) return '—';
+    var pad = function (n) { return n < 10 ? '0' + n : '' + n; };
+    return d.getFullYear() + '-' + pad(d.getMonth() + 1) + '-' + pad(d.getDate()) +
+           ' ' + pad(d.getHours()) + ':' + pad(d.getMinutes());
+  } catch (_) { return '—'; }
+}
+function _posFormatDateOnly(iso) {
+  if (!iso) return '—';
+  try {
+    var d = (iso instanceof Date) ? iso : new Date(iso);
+    if (isNaN(d.getTime())) return '—';
+    var pad = function (n) { return n < 10 ? '0' + n : '' + n; };
+    return d.getFullYear() + '-' + pad(d.getMonth() + 1) + '-' + pad(d.getDate());
+  } catch (_) { return '—'; }
+}
+
+// Format an amount as SAR with thousand separators.
+function _posFormatSAR(n) {
+  var v = Number(n) || 0;
+  return v.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+}
+
+// Load summary from backend + paint the totals strip.
+window._posCustomerLoadSummary = function (id) {
+  var totals = q('#posCustomerTotals');
+  var txt    = q('#posCustomerTotalsText');
+  if (!totals) return;
+  if (!id) { totals.hidden = true; return; }
+  totals.hidden = false;
+  if (txt) txt.innerHTML = '<i class="fas fa-spinner fa-spin"></i> جارٍ التحميل...';
+
+  console.log('[POS customer summary] fetching for', id);
+  api.withSuccessHandler(function (res) {
+    console.log('[POS customer summary] response:', res);
+    if (res == null) {
+      if (txt) txt.innerHTML = '<i class="fas fa-triangle-exclamation"></i> getCustomerSummary غير مُسجَّل — حدّث الصفحة';
+      return;
+    }
+    if (!res || !res.success) {
+      if (txt) txt.innerHTML = '<i class="fas fa-triangle-exclamation"></i> ' + _posEsc((res && res.error) || 'فشل تحميل السجل');
+      return;
+    }
+    state._posCustomerSummary = res;
+    var kpi = res.kpi || {};
+    var parts = [
+      '<strong>' + _posFormatSAR(kpi.totalSpent) + '</strong> ر.س',
+      '<span>' + (Number(kpi.orderCount) || 0) + ' فاتورة</span>'
+    ];
+    if (kpi.lastVisit) {
+      parts.push('<span>آخر زيارة: ' + _posFormatDateOnly(kpi.lastVisit) + '</span>');
+    }
+    if (txt) txt.innerHTML = parts.join(' · ');
+  }).withFailureHandler(function (err) {
+    console.error('[POS customer summary] failed:', err);
+    if (txt) txt.innerHTML = '<i class="fas fa-triangle-exclamation"></i> تعذّر الاتصال';
+  }).getCustomerSummary(id);
+};
+
+// Helper — KPI card HTML
+function _posKpiCard(label, value, unit, icon, kind) {
+  return (
+    '<div class="pos-cust-hist-kpi-card ' + (kind || '') + '">' +
+      '<i class="fas ' + (icon || 'fa-circle') + '" style="font-size:18px;color:#7c3aed;"></i>' +
+      '<div class="pos-cust-hist-kpi-value">' + _posEsc(value) + '</div>' +
+      (unit ? '<div class="pos-cust-hist-kpi-unit">' + _posEsc(unit) + '</div>' : '') +
+      '<div class="pos-cust-hist-kpi-label">' + _posEsc(label) + '</div>' +
+    '</div>'
+  );
+}
+
+// Open the history modal.  Requires state._posCustomerSummary to be
+// populated (it normally is, because _posCustomerSelect kicks the
+// fetch).  If the cache is empty we trigger a fresh fetch + retry.
+window.posOpenCustomerHistoryModal = function () {
+  var s = state._posCustomerSummary;
+  if (!s || !s.customer) {
+    // Not loaded yet — start fetch and retry once loaded.
+    var id = state.posCustomer && state.posCustomer.id;
+    if (!id) {
+      if (typeof glassToast === 'function') glassToast('لا يوجد عميل مختار', true);
+      return;
+    }
+    if (typeof glassToast === 'function') glassToast('جارٍ تحميل السجل...', false);
+    return _posCustomerLoadSummary(id), setTimeout(function () {
+      if (state._posCustomerSummary) posOpenCustomerHistoryModal();
+    }, 400);
+  }
+
+  var kpi = s.kpi || {};
+  var rows = s.recentInvoices || [];
+  var cust = s.customer || {};
+
+  // KPI strip
+  var kpiHtml =
+    '<div class="pos-cust-hist-kpi">' +
+      _posKpiCard('إجمالي المشتريات', _posFormatSAR(kpi.totalSpent), 'ر.س', 'fa-coins', 'is-primary') +
+      _posKpiCard('عدد الفواتير', (Number(kpi.orderCount) || 0), 'فاتورة', 'fa-receipt', 'is-info') +
+      _posKpiCard('متوسط الفاتورة', _posFormatSAR(kpi.avgInvoice), 'ر.س', 'fa-calculator', 'is-success') +
+      _posKpiCard('آخر زيارة', kpi.lastVisit ? _posFormatDateOnly(kpi.lastVisit) : '—', '', 'fa-calendar', 'is-warn') +
+    '</div>';
+
+  // Customer meta (small line under KPIs)
+  var metaParts = [];
+  if (cust.phone) metaParts.push('<i class="fas fa-phone"></i> ' + _posEsc(cust.phone));
+  if (kpi.firstVisit) metaParts.push('<i class="fas fa-user-clock"></i> أول زيارة: ' + _posFormatDateOnly(kpi.firstVisit));
+  if (cust.customerType) metaParts.push('<i class="fas fa-tag"></i> ' + _posEsc(cust.customerType));
+  var metaHtml = metaParts.length
+    ? '<div class="pos-cust-hist-meta">' + metaParts.join('  ·  ') + '</div>'
+    : '';
+
+  // Invoices table
+  var tableHtml;
+  if (!rows.length) {
+    tableHtml =
+      '<div class="pos-cust-modal-hint">' +
+        '<i class="fas fa-receipt"></i>' +
+        'لا توجد فواتير سابقة لهذا العميل — أكمل بيعاً الآن لتسجيل أول فاتورة.' +
+      '</div>';
+  } else {
+    var tbodyRows = rows.map(function (r) {
+      var rowCls = '';
+      var statusBadge = '';
+      if (r.zatcaType === 'cancellation') {
+        rowCls = 'is-voided';
+        statusBadge = '<span class="pos-cust-hist-badge red">ملغاة</span>';
+      } else if (r.zatcaType === 'credit_note') {
+        rowCls = 'is-refund';
+        statusBadge = '<span class="pos-cust-hist-badge purple">مرتجع</span>';
+      } else if (r.zatcaType === 'debit_note') {
+        statusBadge = '<span class="pos-cust-hist-badge purple">تعديل</span>';
+      } else if (r.hasCreditNote) {
+        statusBadge = '<span class="pos-cust-hist-badge purple">مرتجع جزئياً</span>';
+      } else {
+        statusBadge = '<span class="pos-cust-hist-badge green">مكتملة</span>';
+      }
+      var invNum = r.invoiceNumber || r.id;
+      var extraSerial = '';
+      if (r.voidSerial)   extraSerial = '<br><small style="color:#b91c1c;font-family:ui-monospace,monospace;">' + _posEsc(r.voidSerial) + '</small>';
+      if (r.returnSerial) extraSerial = '<br><small style="color:#6d28d9;font-family:ui-monospace,monospace;">' + _posEsc(r.returnSerial) + '</small>';
+      var totalDisplay = (r.zatcaType === 'credit_note' ? '−' : '') + _posFormatSAR(r.total) + ' ر.س';
+      return (
+        '<tr class="pos-cust-hist-row ' + rowCls + '">' +
+          '<td>' + _posFormatDate(r.date) + '</td>' +
+          '<td style="font-family:ui-monospace,monospace;font-size:11.5px;">' + _posEsc(invNum) + extraSerial + '</td>' +
+          '<td class="total-cell" style="text-align:end;font-weight:800;">' + totalDisplay + '</td>' +
+          '<td>' + _posEsc(r.payment || '—') + '</td>' +
+          '<td>' + statusBadge + '</td>' +
+        '</tr>'
+      );
+    }).join('');
+    tableHtml =
+      '<table class="pos-cust-hist-table">' +
+        '<thead><tr>' +
+          '<th>التاريخ</th>' +
+          '<th>رقم الفاتورة</th>' +
+          '<th style="text-align:end;">الإجمالي</th>' +
+          '<th>الدفع</th>' +
+          '<th>الحالة</th>' +
+        '</tr></thead>' +
+        '<tbody>' + tbodyRows + '</tbody>' +
+      '</table>';
+    if (rows.length >= 50) {
+      tableHtml += '<div class="pos-cust-hist-note">يُعرض آخر 50 فاتورة. للسجل الكامل راجع لوحة الأدمن.</div>';
+    }
+  }
+
+  var bodyHtml = kpiHtml + metaHtml + tableHtml;
+  var footHtml =
+    '<button type="button" class="pos-cust-modal-btn-cancel" data-pos-cust-close="1">' +
+      '<i class="fas fa-times"></i> إغلاق' +
+    '</button>';
+
+  _posBuildCustomerModal({
+    id:    'posCustomerHistoryModal',
+    title: 'سجل العميل · ' + (cust.name || ''),
+    icon:  'fa-clock-rotate-left',
+    large: true,
+    bodyHtml: bodyHtml,
+    footHtml: footHtml
+  });
+};
 
 // ─── Generic DOM modal scaffolder for both search + add modals ────────
 // Returns the wrap element with .close() attached so callers can dismiss
@@ -1894,6 +2112,13 @@ window.doCheckout = function() {
 window.printReceipt = function(orderId) {
   api.withSuccessHandler(function(inv) {
     if (!inv) return;
+    // v6.16.0 — Diagnostic log so we can verify customer linking is
+    // working end-to-end (cashier links a customer → save → /invoice/:id
+    // returns customerName/Phone → receipt prints the bilingual line).
+    // If this logs "customer: null" after the cashier picked someone,
+    // something between checkout and storage is still broken.
+    console.log('[receipt] orderId=' + orderId + ' customer:',
+      inv.customerId ? (inv.customerId + ' / ' + (inv.customerName || '(no name)') + ' / ' + (inv.customerPhone || '(no phone)')) : 'null (walk-in)');
     var dt = new Date(inv.date);
     // Match the printed sample's date format: "Apr 30, 2026 2:43:43 AM"
     var dateStr = dt.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) + ' ' +

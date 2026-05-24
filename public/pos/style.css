@@ -1060,6 +1060,213 @@ body.foodics-mode .cart-footer { display: none !important; }
 }
 
 /* ═══════════════════════════════════════════════════════════════════
+   v6.16.0 — Customer totals strip (visible when a customer is linked)
+   ─────────────────────────────────────────────────────────────────── */
+.pos-customer-totals {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 9px 12px;
+  background: linear-gradient(135deg, #ecfdf5 0%, #f5f3ff 100%);
+  border: 1.5px solid #a7f3d0;
+  border-radius: 11px;
+  font-size: 12.5px;
+  font-weight: 800;
+  animation: posTotalsIn 0.25s ease-out;
+}
+.pos-customer-totals[hidden] { display: none; }
+@keyframes posTotalsIn {
+  from { opacity: 0; transform: translateY(-4px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+.pos-customer-totals-info {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  color: #065f46;
+  min-width: 0;
+}
+.pos-customer-totals-info > i {
+  color: #16a34a;
+  font-size: 14px;
+  flex-shrink: 0;
+}
+.pos-customer-totals-info strong {
+  color: #064e3b;
+  font-size: 14px;
+}
+.pos-customer-totals-info span {
+  font-size: 11px;
+  font-weight: 700;
+  color: #475569;
+  padding: 2px 7px;
+  background: rgba(255,255,255,0.7);
+  border-radius: 99px;
+  white-space: nowrap;
+}
+
+/* History button (in the totals strip) */
+.pos-cust-btn-history {
+  min-height: 34px;
+  padding: 0 14px;
+  background: linear-gradient(135deg, #f59e0b, #d97706);
+  color: #fff;
+  border: 0;
+  border-radius: 9px;
+  font-family: inherit;
+  font-size: 12px;
+  font-weight: 800;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  cursor: pointer;
+  box-shadow: 0 3px 8px -2px rgba(217, 119, 6, 0.40);
+  transition: transform .15s, box-shadow .15s, filter .15s;
+  flex-shrink: 0;
+  white-space: nowrap;
+}
+.pos-cust-btn-history:hover {
+  transform: translateY(-1px);
+  filter: brightness(1.05);
+  box-shadow: 0 5px 12px -2px rgba(217, 119, 6, 0.55);
+}
+.pos-cust-btn-history:active { transform: translateY(0); }
+
+/* ═══════════════════════════════════════════════════════════════════
+   v6.16.0 — Customer history modal (KPI cards + invoices table)
+   ─────────────────────────────────────────────────────────────────── */
+.pos-cust-hist-kpi {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 10px;
+  margin-bottom: 16px;
+}
+.pos-cust-hist-kpi-card {
+  padding: 12px 8px;
+  border-radius: 11px;
+  background: #fff;
+  border: 1.5px solid #f1f5f9;
+  text-align: center;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+}
+.pos-cust-hist-kpi-card.is-primary { border-color: #c4b5fd; background: linear-gradient(135deg, #f5f3ff, #fff); }
+.pos-cust-hist-kpi-card.is-primary i { color: #7c3aed !important; }
+.pos-cust-hist-kpi-card.is-info    { border-color: #93c5fd; background: linear-gradient(135deg, #eff6ff, #fff); }
+.pos-cust-hist-kpi-card.is-info i { color: #2563eb !important; }
+.pos-cust-hist-kpi-card.is-success { border-color: #86efac; background: linear-gradient(135deg, #f0fdf4, #fff); }
+.pos-cust-hist-kpi-card.is-success i { color: #16a34a !important; }
+.pos-cust-hist-kpi-card.is-warn    { border-color: #fbbf24; background: linear-gradient(135deg, #fffbeb, #fff); }
+.pos-cust-hist-kpi-card.is-warn i { color: #d97706 !important; }
+.pos-cust-hist-kpi-value {
+  font-size: 17px;
+  font-weight: 900;
+  color: #0f172a;
+  line-height: 1.2;
+  margin-top: 2px;
+  word-break: break-all;
+}
+.pos-cust-hist-kpi-unit {
+  font-size: 9.5px;
+  color: #94a3b8;
+  font-weight: 700;
+}
+.pos-cust-hist-kpi-label {
+  font-size: 10.5px;
+  color: #6b7280;
+  font-weight: 700;
+  margin-top: 2px;
+}
+
+/* Meta line under KPIs (phone, first visit, type) */
+.pos-cust-hist-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px;
+  padding: 8px 12px;
+  margin-bottom: 12px;
+  background: #f8fafc;
+  border-radius: 10px;
+  color: #475569;
+  font-size: 12px;
+  font-weight: 700;
+}
+.pos-cust-hist-meta i {
+  color: #7c3aed;
+  font-size: 12px;
+  margin-inline-end: 3px;
+}
+
+/* Invoices table */
+.pos-cust-hist-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12.5px;
+  background: #fff;
+  border-radius: 11px;
+  overflow: hidden;
+  border: 1px solid #f1f5f9;
+}
+.pos-cust-hist-table th {
+  text-align: start;
+  padding: 10px 9px;
+  background: #f8fafc;
+  color: #475569;
+  font-weight: 800;
+  font-size: 11px;
+  border-bottom: 2px solid #e2e8f0;
+}
+.pos-cust-hist-table td {
+  padding: 10px 9px;
+  border-bottom: 1px solid #f1f5f9;
+  vertical-align: middle;
+}
+.pos-cust-hist-table tbody tr:last-child td { border-bottom: 0; }
+.pos-cust-hist-table tbody tr:hover { background: #f5f3ff; }
+.pos-cust-hist-row.is-voided td.total-cell { text-decoration: line-through; color: #b91c1c; }
+.pos-cust-hist-row.is-refund td.total-cell { color: #6d28d9; }
+.pos-cust-hist-row.is-voided { opacity: 0.78; }
+
+.pos-cust-hist-badge {
+  display: inline-block;
+  padding: 3px 9px;
+  border-radius: 99px;
+  font-size: 10.5px;
+  font-weight: 800;
+}
+.pos-cust-hist-badge.red    { background: #fee2e2; color: #b91c1c; }
+.pos-cust-hist-badge.purple { background: #ede9fe; color: #6d28d9; }
+.pos-cust-hist-badge.green  { background: #dcfce7; color: #16a34a; }
+
+.pos-cust-hist-note {
+  margin-top: 8px;
+  padding: 8px 12px;
+  background: #fffbeb;
+  border: 1px dashed #fcd34d;
+  border-radius: 8px;
+  color: #92400e;
+  font-size: 11px;
+  font-weight: 700;
+  text-align: center;
+}
+
+@media (max-width: 600px) {
+  .pos-cust-hist-kpi { grid-template-columns: 1fr 1fr; }
+  .pos-cust-hist-table { font-size: 11.5px; }
+  .pos-cust-hist-table th,
+  .pos-cust-hist-table td { padding: 8px 6px; }
+}
+@media (max-width: 480px) {
+  .pos-customer-totals { flex-direction: column; align-items: stretch; }
+  .pos-cust-btn-history { width: 100%; justify-content: center; }
+}
+
+/* ═══════════════════════════════════════════════════════════════════
    v5.11.4 — My Invoices modal (cashier-facing list of current-shift sales)
    ═══════════════════════════════════════════════════════════════════ */
 .my-inv-toolbar {

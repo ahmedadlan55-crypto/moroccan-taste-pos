@@ -84,6 +84,9 @@
     searchCustomers:     { method: 'GET',  url: '/erp/customers/search', query: (q) => ({q:q}) },
     saveCustomer:        { method: 'POST', url: '/erp/customers' },
     deleteCustomer:      { method: 'DELETE',url: (id) => '/erp/customers/'+id },
+    // v6.16.0 — Customer purchase summary (KPIs + last 50 invoices)
+    // for the POS customer-bar totals strip + history modal.
+    getCustomerSummary:  { method: 'GET',  url: (id) => '/erp/customers/' + encodeURIComponent(id) + '/summary' },
     getSuppliers:        { method: 'GET',  url: '/erp/suppliers' },
     saveSupplier:        { method: 'POST', url: '/erp/suppliers' },
     deleteSupplier:      { method: 'DELETE',url: (id) => '/erp/suppliers/'+id },

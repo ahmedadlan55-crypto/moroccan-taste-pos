@@ -198,6 +198,22 @@
             <i class="fas fa-times"></i>
           </button>
         </div>
+        <!-- v6.16.0 — Customer totals strip + history button.
+             Visible ONLY when a customer is linked (hidden attribute toggled
+             by _posCustomerLoadSummary / posCustomerClear).  Auto-populated
+             after _posCustomerSelect via GET /api/erp/customers/:id/summary. -->
+        <div class="pos-customer-totals" id="posCustomerTotals" hidden>
+          <div class="pos-customer-totals-info" id="posCustomerTotalsInfo">
+            <i class="fas fa-coins"></i>
+            <span id="posCustomerTotalsText">جارٍ تحميل البيانات...</span>
+          </div>
+          <button type="button" class="pos-cust-btn-history"
+                  onclick="posOpenCustomerHistoryModal()"
+                  title="عرض سجل المشتريات · View purchase history">
+            <i class="fas fa-clock-rotate-left"></i>
+            <span>السجل · History</span>
+          </button>
+        </div>
         <div class="pos-customer-actions">
           <button type="button" class="pos-cust-btn pos-cust-btn-search"
                   onclick="posOpenCustomerSearchModal()">

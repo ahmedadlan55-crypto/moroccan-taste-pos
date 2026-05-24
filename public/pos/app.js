@@ -2800,7 +2800,9 @@ function _myInvRender(rows) {
       ? '<div class="my-inv-sysref">' + (r.orderId || '') + '</div>'
       : '';
     html +=
-      '<tr class="my-inv-row' + (active ? '' : ' is-reversed') + '">' +
+      // v6.14.0 — data-order-id lets _posHighlightVoidedRow find this row
+      // after a successful void so we can flash + scroll it into view.
+      '<tr class="my-inv-row' + (active ? '' : ' is-reversed') + '" data-order-id="' + safeId + '">' +
         '<td>' + _myInvStatusBadge(r) + '</td>' +
         '<td class="my-inv-time">' + _myInvFmtTime(r.date) + '</td>' +
         '<td class="my-inv-id">' + displayNumber + sysRefHtml + '</td>' +
@@ -2819,39 +2821,92 @@ function _myInvRender(rows) {
   host.innerHTML = html;
 }
 
-// Reusable confirmation — accepts a callback; if glassConfirm exists we use
-// it (proper Arabic-friendly modal), else we fall back to window.confirm.
+// v6.14.0 — Self-contained DOM-built confirmation modal.
+//   v6.11.0/v6.12.1 used glassConfirm (UNDEFINED in POS — only glassToast +
+//   glassAlert exist) with a window.confirm() fallback. In kiosk browsers
+//   or popup-blocked environments the native confirm either never shows
+//   OR returns false immediately, so the void/return callback never ran
+//   and the cashier saw absolutely nothing happen.
+//
+// This rewrite removes both external dependencies. It builds a fixed-
+// position overlay + card directly in document.body with z-index 10010
+// (above other modals), wires the two buttons to known callbacks, and
+// supports Escape / outside-click to dismiss. The API stays identical:
+// `_myInvConfirm(title, body, cb)` — `cb` runs only on explicit confirm.
 function _myInvConfirm(title, body, cb) {
-  // v6.11.0 — Defensive: glassConfirm may exist but throw / fail silently
-  // on some deploys. Wrap in try/catch + idempotent callback guard so a
-  // broken glass modal degrades to the native confirm instead of locking
-  // the cashier out of void/return entirely.
   var fired = false;
   var safeCb = function () {
     if (fired) return;
     fired = true;
     try { cb(); } catch (e) {
-      if (typeof glassToast === 'function') {
-        glassToast('خطأ غير متوقع: ' + (e && e.message || e), true);
-      } else {
-        alert('Unexpected error: ' + (e && e.message || e));
-      }
+      if (typeof glassToast === 'function') glassToast('خطأ غير متوقع: ' + (e && e.message || e), true);
+      else alert('Unexpected error: ' + (e && e.message || e));
     }
   };
-  var triedGlass = false;
-  if (typeof glassConfirm === 'function') {
-    try {
-      triedGlass = true;
-      glassConfirm(title, body, function (ok) { if (ok) safeCb(); });
-      return;
-    } catch (e) {
-      console.warn('[invConfirm] glassConfirm threw, falling back to native:', e && e.message);
-      triedGlass = false;
+
+  // Remove any leftover modal from a previous canceled session
+  var prev = document.getElementById('posConfirmModal');
+  if (prev) prev.remove();
+
+  var wrap = document.createElement('div');
+  wrap.id = 'posConfirmModal';
+  wrap.className = 'pos-confirm-modal';
+  wrap.setAttribute('role', 'dialog');
+  wrap.setAttribute('aria-modal', 'true');
+  // Body may contain newlines — convert to <br> while escaping HTML
+  var safeBody = String(body || '')
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+    .replace(/\n/g, '<br>');
+  var safeTitle = String(title || '')
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+
+  wrap.innerHTML =
+    '<div class="pos-confirm-card" role="document">' +
+      '<div class="pos-confirm-head">' +
+        '<i class="fas fa-circle-exclamation"></i>' +
+        '<h3>' + safeTitle + '</h3>' +
+      '</div>' +
+      '<div class="pos-confirm-body">' + safeBody + '</div>' +
+      '<div class="pos-confirm-foot">' +
+        '<button type="button" class="pos-confirm-cancel" data-act="cancel">' +
+          '<i class="fas fa-times"></i> إلغاء · Cancel</button>' +
+        '<button type="button" class="pos-confirm-ok" data-act="ok">' +
+          '<i class="fas fa-check"></i> تأكيد · Confirm</button>' +
+      '</div>' +
+    '</div>';
+
+  function close() {
+    document.removeEventListener('keydown', onKey, true);
+    if (wrap.parentNode) wrap.parentNode.removeChild(wrap);
+  }
+  function onKey(e) {
+    if (e.key === 'Escape') { e.stopPropagation(); close(); }
+    else if (e.key === 'Enter') {
+      e.stopPropagation();
+      close(); safeCb();
     }
   }
-  if (!triedGlass) {
-    if (window.confirm(title + '\n\n' + body)) safeCb();
-  }
+
+  wrap.addEventListener('click', function (e) {
+    var act = e.target && e.target.closest && e.target.closest('[data-act]');
+    if (act) {
+      e.stopPropagation();
+      var which = act.getAttribute('data-act');
+      close();
+      if (which === 'ok') safeCb();
+      return;
+    }
+    // Outside-click on the dim backdrop closes without confirming
+    if (e.target === wrap) close();
+  });
+
+  document.addEventListener('keydown', onKey, true);
+  document.body.appendChild(wrap);
+  // Focus the confirm button so Enter immediately confirms
+  setTimeout(function () {
+    var ok = wrap.querySelector('.pos-confirm-ok');
+    if (ok) ok.focus();
+  }, 30);
 }
 
 window.posInvoiceVoid = function (orderId) {
@@ -2866,13 +2921,27 @@ window.posInvoiceVoid = function (orderId) {
       api.withSuccessHandler(function (res) {
         loader(false);
         if (res && res.success) {
-          glassToast('تم إلغاء الفاتورة ✓ · Invoice cancelled');
+          var msg = '✓ تم إلغاء الفاتورة · Invoice cancelled';
+          if (res.voidSerial) msg += ' (' + res.voidSerial + ')';
+          glassToast(msg);
+          // v6.14.0 — Reload, then flash + scroll-into-view the row that
+          // just got voided so the cashier has an unmistakable visual
+          // confirmation that "the thing I clicked is now cancelled".
           posLoadMyInvoices();
+          setTimeout(function () { _posHighlightVoidedRow(orderId); }, 250);
         } else {
-          var msg = (res && res.error === 'already-reversed')
-            ? 'هذه الفاتورة معكوسة بالفعل · This invoice was already reversed'
-            : ((res && res.error) || 'فشل الإلغاء · Cancel failed');
-          glassAlert('خطأ · Error', msg, { danger: true });
+          // v6.14.0 — Surface the new structured error from migration 0003
+          // so an operator with an outdated DB sees the actionable hint.
+          var err = (res && res.error) || '';
+          var emsg;
+          if (err === 'already-reversed') {
+            emsg = 'هذه الفاتورة معكوسة بالفعل · This invoice was already reversed';
+          } else if (/void-update-failed|enum_missing_cancellation/i.test(err)) {
+            emsg = 'فشل الإلغاء: قاعدة البيانات تحتاج لتحديث (migration 0003). أعِد تشغيل الخادم.';
+          } else {
+            emsg = err || 'فشل الإلغاء · Cancel failed';
+          }
+          glassAlert('خطأ · Error', emsg, { danger: true });
         }
       }).withFailureHandler(function (err) {
         loader(false);
@@ -2881,6 +2950,24 @@ window.posInvoiceVoid = function (orderId) {
     }
   );
 };
+
+// v6.14.0 — After posLoadMyInvoices repaints, find the just-voided row
+// by its data-order-id, add the .is-just-voided class (triggers the 2s
+// CSS animation), and scroll it into view if it's off-screen.
+function _posHighlightVoidedRow(orderId) {
+  if (!orderId) return;
+  var row = document.querySelector('.my-inv-row[data-order-id="' + String(orderId).replace(/"/g, '\\"') + '"]');
+  if (!row) return;
+  row.classList.add('is-just-voided');
+  try {
+    var rect = row.getBoundingClientRect();
+    var inView = rect.top >= 0 && rect.bottom <= (window.innerHeight || document.documentElement.clientHeight);
+    if (!inView) row.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  } catch (_) {}
+  // Auto-remove the class after the animation so it can re-fire if the
+  // operator voids another row.
+  setTimeout(function () { row.classList.remove('is-just-voided'); }, 2200);
+}
 
 window.posInvoiceReturn = function (orderId) {
   if (!orderId) return;

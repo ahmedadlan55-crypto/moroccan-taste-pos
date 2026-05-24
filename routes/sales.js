@@ -1228,19 +1228,32 @@ router.post('/:orderId/void', async (req, res) => {
         err.status = 400; err.zatcaType = existingType; throw err;
       }
       const r = await _reverseSaleEffects(conn, orderId, username, { deleteSale: wantDelete });
-      // v6.11.0 — Generate VOI-YYYYMMDD-NNNN for this void. Persist alongside
-      // the zatca_type='cancellation' flag so reports + the receipt have a
-      // single value to quote. Both updates are best-effort: missing columns
-      // (legacy deploys) just skip the stamp.
+      // v6.14.0 — Stamp zatca_type='cancellation' as a HARD requirement (was
+      // silently swallowed before). Migration 0003 widens the enum to accept
+      // the value. If the UPDATE doesn't take effect we throw, which rolls
+      // back the entire transaction (inventory + GL get restored) and the
+      // client receives a clear error instead of a fake success.
       let voidSerial = null;
       if (!wantDelete) {
         try { voidSerial = await salesNumbering.nextVoidSerial(conn); } catch (_) {}
-        try {
-          await conn.query("UPDATE sales SET zatca_type='cancellation' WHERE id = ?", [orderId]);
-        } catch (_) { /* zatca_type column missing on very old deploy — ignore */ }
+
+        const [updRes] = await conn.query(
+          "UPDATE sales SET zatca_type='cancellation' WHERE id = ?",
+          [orderId]
+        );
+        if (!updRes || updRes.affectedRows === 0) {
+          // The row exists (we SELECTed it above), so this only fires if
+          // the enum still rejects 'cancellation' — caller needs to apply
+          // migration 0003. Surface, don't hide.
+          const err = new Error('void-update-failed: zatca_type could not be set to cancellation');
+          err.code = 'enum_missing_cancellation';
+          err.hint = 'Run db/migrate.js to apply migration 0003_zatca_type_cancellation.sql';
+          throw err;
+        }
+
         if (voidSerial) {
           try { await conn.query('UPDATE sales SET void_serial = ? WHERE id = ?', [voidSerial, orderId]); }
-          catch (_) { voidSerial = null; /* column missing */ }
+          catch (_) { voidSerial = null; /* column missing — non-fatal, UI falls back to orderId */ }
         }
       }
       return Object.assign({}, r, { voidSerial });

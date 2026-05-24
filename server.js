@@ -2634,7 +2634,12 @@ async function runMigrations() {
   await addColumnIfMissing('sales', 'invoice_uuid', "VARCHAR(36)");
   await addColumnIfMissing('sales', 'invoice_hash', "VARCHAR(100)");
   await addColumnIfMissing('sales', 'previous_invoice_hash', "VARCHAR(100)");
-  await addColumnIfMissing('sales', 'zatca_type', "ENUM('standard','simplified','credit_note','debit_note') DEFAULT 'simplified'");
+  // v6.14.0 — Include 'cancellation' so POST /sales/:id/void can stamp
+  // the row when the cashier cancels an order. Without this value the
+  // UPDATE silently fails on STRICT_TRANS_TABLES MySQL deployments.
+  // addColumnIfMissing only runs the first time the column is absent;
+  // for existing deployments migration 0003 widens the enum in-place.
+  await addColumnIfMissing('sales', 'zatca_type', "ENUM('standard','simplified','credit_note','debit_note','cancellation') DEFAULT 'simplified'");
   await addColumnIfMissing('sales', 'zatca_submitted_at', "DATETIME");
   await addColumnIfMissing('sales', 'zatca_status', "ENUM('pending','submitted','accepted','rejected') DEFAULT 'pending'");
 

@@ -347,20 +347,34 @@
     <div id="mobCartTotal" class="mobile-cart-total">0.00 ر.س</div>
   </div>
 
-  <!-- Floating Actions — swipe handle + collapsible buttons -->
-  <div class="float-actions" id="floatActions">
-    <div class="float-handle" id="floatHandle" onclick="toggleFloatActions()">
-      <i class="fas fa-chevron-left" id="floatHandleIcon"></i>
-    </div>
-    <div class="float-btns" id="floatBtns">
+  <!-- ─── v6.17.0 — POS quick-actions: pill button + horizontal popover ───
+       Replaces the v5.x vertical sidebar (always-visible column of circular
+       buttons on the right edge) that the owner found intrusive.  The pill
+       button always sits at the bottom-end of the screen; clicking it
+       expands a horizontal bar of action buttons next to it.
+
+       Default state is COLLAPSED so the screen edge is clean.  IDs and
+       onclick handlers preserved from the original markup so external
+       callers + the existing toggleFloatActions JS keep working. -->
+  <div class="float-actions collapsed" id="floatActions">
+    <button class="float-handle" id="floatHandle"
+            type="button"
+            onclick="toggleFloatActions()"
+            aria-label="قائمة إجراءات الكاشير · POS Actions menu"
+            aria-expanded="false">
+      <i class="fas fa-cash-register"></i>
+      <span class="float-handle-label">POS</span>
+      <i class="fas fa-chevron-up float-handle-chev" id="floatHandleIcon"></i>
+    </button>
+    <div class="float-btns" id="floatBtns" role="menu">
       <button class="float-btn float-btn-success" onclick="shiftOpen()" title="فتح وردية"><i class="fas fa-play"></i></button>
       <button class="float-btn float-btn-danger" onclick="shiftCloseStart()" title="إغلاق الوردية"><i class="fas fa-stop"></i></button>
       <button class="float-btn float-btn-info no-print-on-kiosk" onclick="openPrinterSettings()" title="الطابعة" style="display:none;"><i class="fas fa-print"></i></button>
       <button class="float-btn float-btn-warn" onclick="openCashierStocktake()" title="جرد المخزون"><i class="fas fa-clipboard-check"></i></button>
       <button class="float-btn float-btn-purple" onclick="openShortageRequest()" title="طلب نواقص" data-i18n-title="shortageRequest"><i class="fas fa-exclamation-triangle"></i></button>
       <!-- v5.11.4 — My Invoices (current shift) — cashier-facing list with Cancel + Return actions -->
-      <button class="float-btn" style="background:linear-gradient(135deg,#0ea5e9,#0284c7);box-shadow:0 8px 20px rgba(14,165,233,0.4);" onclick="posOpenMyInvoices()" title="فواتيري · My Invoices"><i class="fas fa-file-invoice"></i></button>
-      <button class="float-btn" style="background:linear-gradient(135deg,#22c55e,#15803d);box-shadow:0 8px 20px rgba(34,197,94,0.4);" onclick="window.open('/employee/','_blank')" title="بوابة الموظف"><i class="fas fa-user-tie"></i></button>
+      <button class="float-btn float-btn-sky" onclick="posOpenMyInvoices()" title="فواتيري · My Invoices"><i class="fas fa-file-invoice"></i></button>
+      <button class="float-btn float-btn-green2" onclick="window.open('/employee/','_blank')" title="بوابة الموظف"><i class="fas fa-user-tie"></i></button>
     </div>
   </div>
 

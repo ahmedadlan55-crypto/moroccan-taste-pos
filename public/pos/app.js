@@ -4059,13 +4059,62 @@ window.submitReceiveRequest = function() {
 };
 
 // ═══════════════════════════════════════
-// FLOAT ACTIONS TOGGLE (إخفاء/إظهار الأزرار)
+// FLOAT ACTIONS TOGGLE (POS pill + horizontal popover, v6.17.0)
 // ═══════════════════════════════════════
+// In v6.17.0 the old vertical sidebar was replaced by a purple POS pill
+// button at the bottom-end that expands a horizontal popover next to it.
+// The function name + behaviour (just toggling .collapsed) stay the same
+// so existing callers (and the HTML onclick handler) keep working.
 window.toggleFloatActions = function() {
   var el = document.getElementById('floatActions');
-  if (el) el.classList.toggle('collapsed');
+  if (!el) return;
+  var handle = document.getElementById('floatHandle');
+  el.classList.toggle('collapsed');
+  // v6.17.0 — keep aria-expanded in sync so screen readers + assistive
+  // tech announce the state change.
+  if (handle) {
+    handle.setAttribute('aria-expanded',
+      String(!el.classList.contains('collapsed')));
+  }
 };
-// Auto-collapse on mobile after 5 seconds
+
+// v6.17.0 — Auto-dismiss behaviour:
+//   • Escape closes the popover.
+//   • Clicking any action button inside it closes after the click runs
+//     (so the popover behaves like a real menu).
+//   • Clicking anywhere outside #floatActions closes.
+(function setupPosFloatActionsAutoDismiss(){
+  function closeMenu() {
+    var el = document.getElementById('floatActions');
+    if (!el || el.classList.contains('collapsed')) return;
+    el.classList.add('collapsed');
+    var h = document.getElementById('floatHandle');
+    if (h) h.setAttribute('aria-expanded', 'false');
+  }
+  document.addEventListener('keydown', function(e){
+    if (e.key === 'Escape') closeMenu();
+  });
+  // Capture phase so we run before any inner handler that might
+  // stopPropagation.  But we DON'T cancel the click — we let the
+  // action's onclick run first, then dismiss on the next tick.
+  document.addEventListener('click', function(e){
+    var el = document.getElementById('floatActions');
+    if (!el || el.classList.contains('collapsed')) return;
+    var t = e.target;
+    if (!t) return;
+    // Inside an action button → schedule dismiss after the action runs
+    var insideBtn = t.closest && t.closest('#floatBtns .float-btn');
+    if (insideBtn) { setTimeout(closeMenu, 0); return; }
+    // Inside the pill itself → toggleFloatActions handles it
+    if (t.closest && t.closest('#floatHandle')) return;
+    // Anywhere else outside the container → dismiss
+    if (!el.contains(t)) closeMenu();
+  }, true);
+})();
+
+// Auto-collapse on mobile after 5 seconds (legacy behaviour, retained).
+// v6.17.0 — the menu is now collapsed by default in the HTML so this is
+// mostly a no-op, but kept in case external code expands it programmatically.
 setTimeout(function() {
   if (window.innerWidth < 768) {
     var el = document.getElementById('floatActions');

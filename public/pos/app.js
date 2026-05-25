@@ -4218,6 +4218,9 @@ window.toggleFloatActions = function() {
     }).join('');
     return '<div class="app-nav-pos-actions-title">إجراءات الكاشير</div>' + rows;
   }
+  // Helper: throw a friendly error when a target function isn't defined
+  // (lets the catch block surface it via toast instead of silent no-op).
+  function missingFn(name) { throw new Error('الدالة "' + name + '" غير متاحة'); }
   // Single delegated listener — survives every renderHeader re-render
   // because it's attached to document, not the buttons themselves.
   document.addEventListener('click', function(e) {
@@ -4228,21 +4231,37 @@ window.toggleFloatActions = function() {
     e.preventDefault();
     e.stopPropagation();
     var id = btn.getAttribute('data-action');
+    var labelEl = btn.querySelector('span');
+    var label = labelEl ? labelEl.textContent : id;
+    // v6.17.9 — Immediate visible feedback so the cashier knows the tap
+    // registered.  If the action itself never reaches a modal (e.g. no
+    // shift open, no user), the toast is still proof the click worked
+    // and points to the real problem instead of a silent "nothing".
+    try {
+      if (typeof glassToast === 'function') glassToast('جاري فتح: ' + label, false);
+    } catch (_) {}
     // Run the action FIRST so its modal starts mounting before we begin
     // the drawer's slide-out animation.  Wrapped in try/catch so a
-    // failing action still allows the drawer to close.
+    // failing action surfaces as an error toast instead of disappearing.
     try {
       switch (id) {
-        case 'shift-open':       if (typeof shiftOpen === 'function')             shiftOpen(); break;
-        case 'shift-close':      if (typeof shiftCloseStart === 'function')       shiftCloseStart(); break;
-        case 'stocktake':        if (typeof openCashierStocktake === 'function')  openCashierStocktake(); break;
-        case 'shortage':         if (typeof openShortageRequest === 'function')   openShortageRequest(); break;
-        case 'my-invoices':      if (typeof posOpenMyInvoices === 'function')     posOpenMyInvoices(); break;
+        case 'shift-open':       (typeof shiftOpen === 'function')            ? shiftOpen()            : missingFn('shiftOpen'); break;
+        case 'shift-close':      (typeof shiftCloseStart === 'function')      ? shiftCloseStart()      : missingFn('shiftCloseStart'); break;
+        case 'stocktake':        (typeof openCashierStocktake === 'function') ? openCashierStocktake() : missingFn('openCashierStocktake'); break;
+        case 'shortage':         (typeof openShortageRequest === 'function')  ? openShortageRequest()  : missingFn('openShortageRequest'); break;
+        case 'my-invoices':      (typeof posOpenMyInvoices === 'function')    ? posOpenMyInvoices()    : missingFn('posOpenMyInvoices'); break;
         // v6.17.8 — location.href instead of window.open: works in iOS PWA
         // standalone mode (which silently blocks window.open) and on Desktop.
         case 'employee-portal':  window.location.href = '/employee/'; break;
+        default:                 missingFn('action=' + id);
       }
     } catch (err) {
+      // v6.17.9 — Show the failure to the cashier instead of swallowing it.
+      try {
+        if (typeof glassToast === 'function') {
+          glassToast('تعذّر تنفيذ "' + label + '": ' + (err && err.message ? err.message : err), true);
+        }
+      } catch (_) {}
       try { console.error('[POS drawer action]', id, err); } catch (_) {}
     }
     // Close the drawer AFTER the action has had a tick to mount.

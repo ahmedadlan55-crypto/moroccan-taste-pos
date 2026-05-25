@@ -2501,6 +2501,17 @@ body.foodics-mode .cart-footer { display: none !important; }
 
 /* ─── Mobile ─── */
 @media (max-width: 768px) {
+  /* v6.18.6 — Hamburger drawer (.app-nav.open from shared/header.js) needs
+     to float above EVERYTHING on mobile.  The mobile .pos-cart-area sits at
+     z-index:2000 (full-screen cart overlay), and shared/header.css sets the
+     drawer at only 200.  Combined with the .pos-top-bar's backdrop-filter
+     trapping the drawer in the header's stacking context, the drawer was
+     rendering BEHIND the cart and unclickable.  The matching JS in pos/app.js
+     (_moveAppNavToBody) lifts the drawer out of the header to a body child
+     so this z-index actually takes effect against the viewport. */
+  .app-nav.open          { z-index: 2050 !important; }
+  .app-nav-backdrop.open { z-index: 2040 !important; }
+
   .pos-main { flex-direction: column; padding: 8px; gap: 8px; }
 
   .pos-products-area {

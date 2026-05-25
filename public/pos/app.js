@@ -4174,8 +4174,24 @@ window.toggleFloatActions = function() {
   var host = document.getElementById('appHeader');
   if (host && window.MutationObserver) {
     try {
-      new MutationObserver(applyAria).observe(host, { childList: true, subtree: true });
+      new MutationObserver(function(){ applyAria(); _moveAppNavToBody(); }).observe(host, { childList: true, subtree: true });
     } catch (e) { /* a11y nicety — never let it break the page */ }
+  }
+  _moveAppNavToBody();
+
+  // v6.18.6 — The POS top bar (.pos-top-bar) sets backdrop-filter,
+  // which per CSS spec creates a stacking context AND a containing
+  // block for any position:fixed descendant.  That trapped the
+  // hamburger drawer (#appNav) inside the header's box on mobile —
+  // its z-index couldn't push it above .pos-cart-area (z-index:2000)
+  // because it was no longer painting against the viewport.  Moving
+  // #appNav out to be a direct child of <body> (where the backdrop
+  // #appNavBackdrop already lives, per shared/header.js:68) lets it
+  // escape the trap and respect the mobile z-index:2050 from style.css.
+  function _moveAppNavToBody() {
+    var nav = document.getElementById('appNav');
+    if (!nav || nav.parentNode === document.body) return;
+    try { document.body.appendChild(nav); } catch (e) { /* DOM might be mid-rewrite */ }
   }
 })();
 

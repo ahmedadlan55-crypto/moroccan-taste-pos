@@ -660,56 +660,118 @@
             </div>
           </div>
 
-          <!-- ─── PAGE 5: ADVANCED REPORTS (NEW) ─── -->
+          <!-- ─── PAGE 5: ADVANCED REPORTS (NEW PREMIUM UI) ─── -->
+          <style>
+            #salesAdvanced { background: #f8fafc; padding-bottom: 30px; }
+            .sh-page-header { margin-bottom: 24px; }
+            .adv-premium-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 20px; margin-bottom: 24px; }
+            .adv-kpi-card { background: linear-gradient(135deg, #ffffff, #f1f5f9); border-radius: 12px; padding: 24px; box-shadow: 0 4px 6px -1px rgba(0,0,0,0.05), 0 2px 4px -1px rgba(0,0,0,0.03); border: 1px solid #e2e8f0; position: relative; overflow: hidden; transition: transform 0.2s ease, box-shadow 0.2s ease; }
+            .adv-kpi-card:hover { transform: translateY(-3px); box-shadow: 0 10px 15px -3px rgba(0,0,0,0.08), 0 4px 6px -2px rgba(0,0,0,0.04); }
+            .adv-kpi-card::before { content: ''; position: absolute; top: 0; left: 0; width: 4px; height: 100%; background: var(--card-color, #3b82f6); }
+            .adv-kpi-title { font-size: 13px; font-weight: 600; color: #64748b; margin-bottom: 8px; display: flex; justify-content: space-between; align-items: center; }
+            .adv-kpi-title i { font-size: 18px; color: var(--card-color, #3b82f6); opacity: 0.8; }
+            .adv-kpi-val { font-size: 26px; font-weight: 700; color: #0f172a; margin-bottom: 4px; }
+            .adv-kpi-sub { font-size: 12px; font-weight: 500; }
+            .adv-kpi-sub.positive { color: #16a34a; }
+            .adv-kpi-sub.negative { color: #dc2626; }
+            .adv-kpi-sub.neutral { color: #64748b; }
+            
+            .adv-chart-card { background: #fff; border-radius: 12px; padding: 20px; box-shadow: 0 1px 3px rgba(0,0,0,0.05); border: 1px solid #e2e8f0; margin-bottom: 24px; }
+            .adv-chart-title { font-size: 16px; font-weight: 700; color: #1e293b; margin-bottom: 20px; padding-bottom: 12px; border-bottom: 1px solid #f1f5f9; display: flex; align-items: center; gap: 8px; }
+            .adv-chart-title i { color: #3b82f6; }
+            
+            .adv-grid-half { display: grid; grid-template-columns: 1fr 1fr; gap: 24px; margin-bottom: 24px; }
+            @media (max-width: 992px) { .adv-grid-half { grid-template-columns: 1fr; } }
+            
+            .adv-table-modern { width: 100%; border-collapse: separate; border-spacing: 0; }
+            .adv-table-modern th { background: #f8fafc; padding: 12px 16px; text-align: right; font-size: 13px; font-weight: 600; color: #475569; border-bottom: 1px solid #e2e8f0; white-space: nowrap; }
+            .adv-table-modern td { padding: 14px 16px; font-size: 14px; color: #1e293b; border-bottom: 1px solid #f1f5f9; vertical-align: middle; }
+            .adv-table-modern tbody tr:hover { background: #fbfcfd; }
+            .adv-table-modern td.num { font-weight: 700; }
+            .adv-progress-bg { background: #e2e8f0; height: 6px; border-radius: 3px; width: 100%; overflow: hidden; margin-top: 6px; }
+            .adv-progress-bar { background: linear-gradient(90deg, #3b82f6, #60a5fa); height: 100%; border-radius: 3px; }
+            
+            .adv-insights-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); gap: 16px; }
+            .adv-insight-card { display: flex; align-items: flex-start; gap: 16px; background: #fff; padding: 20px; border-radius: 12px; border: 1px solid #e2e8f0; }
+            .adv-insight-card i { font-size: 24px; color: #f59e0b; background: #fef3c7; width: 48px; height: 48px; display: flex; align-items: center; justify-content: center; border-radius: 12px; flex-shrink: 0; }
+            .adv-insight-card b { display: block; font-size: 15px; color: #0f172a; margin-bottom: 4px; }
+            .adv-insight-card span { font-size: 13px; color: #64748b; line-height: 1.5; }
+          </style>
+
           <div id="salesAdvanced" class="sh-page hidden">
             <div class="sh-page-header">
               <button class="sh-back" onclick="salesGo('hub')"><i class="fas fa-arrow-right"></i> رجوع للمركز</button>
-              <h2><i class="fas fa-chart-line" style="color:#f59e0b;"></i> التقارير المتقدمة</h2>
+              <h2><i class="fas fa-chart-pie" style="color:#f59e0b;"></i> التقارير والتحليلات المتقدمة</h2>
+              <p style="font-size:13px; color:#64748b; margin-top:5px;">لوحة تحكم تفاعلية لتحليل المبيعات والأداء وفق الفلاتر المحددة</p>
             </div>
-            <div id="salesAdvFilter"></div>
+            
+            <!-- Filters -->
+            <div id="salesAdvFilter" style="margin-bottom: 24px;"></div>
 
-            <!-- Period comparison -->
-            <div class="adv-section">
-              <div class="adv-section-title"><i class="fas fa-arrow-right-arrow-left"></i> مقارنة الفترات</div>
-              <div class="adv-compare-grid" id="advCompareGrid">
-                <div class="adv-compare-card"><div class="ac-label">الفترة المختارة</div><div class="ac-value" id="advCurValue">— ر.س</div><div class="ac-sub" id="advCurSub">— فاتورة</div></div>
-                <div class="adv-compare-card"><div class="ac-label">الفترة السابقة (مماثلة)</div><div class="ac-value" id="advPrevValue">— ر.س</div><div class="ac-sub" id="advPrevSub">— فاتورة</div></div>
-                <div class="adv-compare-card adv-delta"><div class="ac-label">التغيّر</div><div class="ac-value" id="advDelta">— %</div><div class="ac-sub" id="advDeltaSub">—</div></div>
+            <!-- KPI Cards -->
+            <div class="adv-premium-grid">
+              <div class="adv-kpi-card" style="--card-color: #3b82f6;">
+                <div class="adv-kpi-title">إجمالي الإيرادات للفترة <i class="fas fa-wallet"></i></div>
+                <div class="adv-kpi-val" id="advCurValue">0.00 ر.س</div>
+                <div class="adv-kpi-sub" id="advCurSub">0 فاتورة مسجلة</div>
               </div>
-            </div>
-
-            <!-- Peak hours + top products -->
-            <div class="adv-grid-2">
-              <div class="adv-section">
-                <div class="adv-section-title"><i class="fas fa-clock"></i> ساعات الذروة</div>
-                <canvas id="advPeakChart" style="max-height:240px;"></canvas>
-                <div id="advPeakSummary" style="margin-top:8px;font-size:12px;color:#475569;"></div>
+              <div class="adv-kpi-card" style="--card-color: #64748b;">
+                <div class="adv-kpi-title">الفترة السابقة (مماثلة) <i class="fas fa-clock-rotate-left"></i></div>
+                <div class="adv-kpi-val" id="advPrevValue">0.00 ر.س</div>
+                <div class="adv-kpi-sub" id="advPrevSub">0 فاتورة مسجلة</div>
               </div>
-              <div class="adv-section">
-                <div class="adv-section-title"><i class="fas fa-trophy"></i> أعلى 10 منتجات</div>
-                <div class="adv-table-wrap"><table class="table"><thead><tr><th>#</th><th>المنتج</th><th>الكمية</th><th>الإيراد</th><th>%</th></tr></thead><tbody id="advTopProducts"></tbody></table></div>
-              </div>
-            </div>
-
-            <!-- Channels + payment methods distribution -->
-            <div class="adv-grid-2">
-              <div class="adv-section">
-                <div class="adv-section-title"><i class="fas fa-store"></i> توزيع المبيعات حسب القناة</div>
-                <canvas id="advChannelChart" style="max-height:240px;"></canvas>
-              </div>
-              <div class="adv-section">
-                <div class="adv-section-title"><i class="fas fa-credit-card"></i> توزيع طرق الدفع</div>
-                <canvas id="advPayChart" style="max-height:240px;"></canvas>
+              <div class="adv-kpi-card" style="--card-color: #10b981;">
+                <div class="adv-kpi-title">معدل التغيّر <i class="fas fa-chart-line"></i></div>
+                <div class="adv-kpi-val" id="advDelta">0%</div>
+                <div class="adv-kpi-sub neutral" id="advDeltaSub">لا يوجد فارق</div>
               </div>
             </div>
 
-            <!-- Smart insights -->
-            <div class="adv-section">
-              <div class="adv-section-title"><i class="fas fa-lightbulb" style="color:#f59e0b;"></i> رؤى ذكية</div>
-              <div id="advInsights" class="adv-insights">
-                <div class="adv-empty">حدّد الفترة واضغط "تحديث" لعرض التحليلات.</div>
+            <!-- Main Charts Row -->
+            <div class="adv-grid-half">
+              <!-- Peak Hours -->
+              <div class="adv-chart-card">
+                <div class="adv-chart-title"><i class="fas fa-fire"></i> إيرادات ساعات الذروة</div>
+                <canvas id="advPeakChart" style="max-height:260px;"></canvas>
+                <div id="advPeakSummary" style="margin-top:16px; font-size:13px; color:#475569; text-align:center; background:#f8fafc; padding:10px; border-radius:8px;"></div>
+              </div>
+              
+              <!-- Top Products Table -->
+              <div class="adv-chart-card">
+                <div class="adv-chart-title"><i class="fas fa-trophy" style="color:#eab308;"></i> أعلى 10 منتجات مبيعاً</div>
+                <div style="overflow-x:auto;">
+                  <table class="adv-table-modern">
+                    <thead><tr><th>المنتج</th><th>الكمية</th><th>الإيراد</th><th style="width:120px;">النسبة</th></tr></thead>
+                    <tbody id="advTopProducts"></tbody>
+                  </table>
+                </div>
               </div>
             </div>
+
+            <!-- Distribution Row -->
+            <div class="adv-grid-half">
+              <div class="adv-chart-card">
+                <div class="adv-chart-title"><i class="fas fa-store"></i> توزيع المبيعات حسب القناة</div>
+                <div style="position:relative; height:260px; display:flex; align-items:center; justify-content:center;">
+                  <canvas id="advChannelChart"></canvas>
+                </div>
+              </div>
+              <div class="adv-chart-card">
+                <div class="adv-chart-title"><i class="fas fa-credit-card"></i> توزيع طرق الدفع</div>
+                <div style="position:relative; height:260px; display:flex; align-items:center; justify-content:center;">
+                  <canvas id="advPayChart"></canvas>
+                </div>
+              </div>
+            </div>
+
+            <!-- Insights -->
+            <div class="adv-chart-card" style="background: linear-gradient(to right, #fff, #f8fafc);">
+              <div class="adv-chart-title"><i class="fas fa-lightbulb" style="color:#f59e0b;"></i> رؤى ذكية ومؤشرات الأداء</div>
+              <div id="advInsights" class="adv-insights-grid">
+                <div class="adv-insight-card" style="grid-column: 1 / -1;"><div class="adv-empty">الرجاء تحديث الفلاتر لعرض التحليلات الذكية...</div></div>
+              </div>
+            </div>
+
           </div>
         </div>
 

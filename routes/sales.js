@@ -946,7 +946,12 @@ router.get('/', async (req, res) => {
       // v6.11.0 — Human-readable identifiers (null on legacy rows)
       invoiceNumber:  r.invoice_number  || null,
       voidSerial:     r.void_serial     || null,
-      returnSerial:   r.return_serial   || null
+      returnSerial:   r.return_serial   || null,
+      // Add missing fields required by Advanced Reports filtering & UI
+      brandId:        r.brand_id        || null,
+      branchId:       r.branch_id       || null,
+      channelId:      r.channel_id      || null,
+      channelName:    r.channel_name    || null
     })));
   } catch (e) { res.json([]); }
 });

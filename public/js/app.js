@@ -15141,14 +15141,43 @@ window.loadSalesAdvancedReports = function() {
 
   // 3) Detailed sales for charts + insights
   var qs = [];
-  if (f.start) qs.push('startDate=' + encodeURIComponent(f.start));
-  if (f.end)   qs.push('endDate=' + encodeURIComponent(f.end));
+  var queryStart = localDateStr(new Date(f.start + 'T00:00:00').getTime() - 86400000);
+  var queryEnd   = localDateStr(new Date(f.end + 'T00:00:00').getTime() + 86400000);
+  if (f.start) qs.push('startDate=' + encodeURIComponent(queryStart));
+  if (f.end)   qs.push('endDate=' + encodeURIComponent(queryEnd));
+  if (f.cashier) qs.push('username=' + encodeURIComponent(f.cashier));
+  if (f.paymentMethod) qs.push('paymentMethod=' + encodeURIComponent(f.paymentMethod));
+  if (f.customerId) qs.push('customerId=' + encodeURIComponent(f.customerId));
+
   fetch('/api/sales' + (qs.length ? '?' + qs.join('&') : ''),
     { headers: { 'Authorization': 'Bearer ' + localStorage.getItem('pos_token') } })
     .then(function(r){return r.json();})
     .then(function(rows) {
-      // Defensive: API may return {error:...} on failure
       if (!Array.isArray(rows)) rows = [];
+      // Client-side filtering exactly like loadDashSales
+      var startMs = new Date(f.start + 'T00:00:00').getTime();
+      var endMs   = new Date(f.end   + 'T23:59:59.999').getTime();
+      rows = rows.filter(function(r) {
+        var t = new Date(r.date).getTime();
+        if (isNaN(t) || t < startMs || t > endMs) return false;
+        if (f.brandId && r.brandId && r.brandId !== f.brandId) return false;
+        if (f.branchId && r.branchId && r.branchId !== f.branchId) return false;
+        if (f.channelId && r.channelId && r.channelId !== f.channelId) return false;
+        if (f.minAmount > 0 && Number(r.total) < f.minAmount) return false;
+        if (f.maxAmount > 0 && Number(r.total) > f.maxAmount) return false;
+        if (f.invoiceNo) {
+          var qStr = f.invoiceNo.toLowerCase();
+          var hit = (r.orderId || '').toLowerCase().indexOf(qStr) >= 0
+                 || (r.invoiceNumber || '').toLowerCase().indexOf(qStr) >= 0
+                 || (r.voidSerial || '').toLowerCase().indexOf(qStr) >= 0
+                 || (r.returnSerial || '').toLowerCase().indexOf(qStr) >= 0;
+          if (!hit) return false;
+        }
+        if (f.productIds && f.productIds.length && (!r.items || !r.items.some(function(it){ return f.productIds.indexOf(String(it.id||it.itemId)) >= 0; }))) return false;
+        if (f.customerId && r.customerId !== f.customerId) return false;
+        return true;
+      });
+
       _renderPeakHours(rows);
       _renderTopProducts(rows);
       _renderChannelDistribution(rows);
@@ -15198,11 +15227,11 @@ function _renderPeakHours(rows) {
   var byHour = {};
   for (var h = 0; h < 24; h++) byHour[h] = { count:0, total:0 };
   rows.forEach(function(s) {
-    var d = new Date(s.orderDate || s.order_date);
+    var d = new Date(s.date);
     if (isNaN(d)) return;
     var h = d.getHours();
     byHour[h].count++;
-    byHour[h].total += Number(s.totalFinal || s.total_final || 0);
+    byHour[h].total += Number(s.total || 0);
   });
   var labels = Object.keys(byHour).map(function(h){ return h + ':00'; });
   var data = Object.keys(byHour).map(function(h){ return byHour[h].total; });
@@ -15224,8 +15253,7 @@ function _renderPeakHours(rows) {
 function _renderTopProducts(rows) {
   var tally = {}; // name → { qty, revenue }
   rows.forEach(function(s) {
-    var items = [];
-    try { items = JSON.parse(s.itemsJson || s.items_json || '[]'); } catch(e) {}
+    var items = s.items || [];
     items.forEach(function(it) {
       var key = it.name || 'غير معروف';
       if (!tally[key]) tally[key] = { qty: 0, revenue: 0 };
@@ -15243,11 +15271,15 @@ function _renderTopProducts(rows) {
   tbody.innerHTML = top.map(function(p, i) {
     var pct = totalRev > 0 ? (p.revenue / totalRev * 100) : 0;
     return '<tr>' +
-      '<td><b>#' + (i+1) + '</b></td>' +
-      '<td>' + p.name + '</td>' +
+      '<td class="num">#' + (i+1) + ' ' + p.name + '</td>' +
       '<td>' + p.qty + '</td>' +
-      '<td><b>' + p.revenue.toFixed(2) + '</b></td>' +
-      '<td style="color:#3b82f6;">' + pct.toFixed(1) + '%</td>' +
+      '<td class="num">' + p.revenue.toFixed(2) + '</td>' +
+      '<td>' +
+        '<div style="display:flex; justify-content:space-between; font-size:12px; margin-bottom:2px;">' +
+          '<span style="color:#3b82f6; font-weight:700;">' + pct.toFixed(1) + '%</span>' +
+        '</div>' +
+        '<div class="adv-progress-bg"><div class="adv-progress-bar" style="width:' + pct + '%"></div></div>' +
+      '</td>' +
     '</tr>';
   }).join('');
 }
@@ -15255,8 +15287,8 @@ function _renderTopProducts(rows) {
 function _renderChannelDistribution(rows) {
   var byCh = {};
   rows.forEach(function(s) {
-    var ch = s.channelName || s.channel_name || 'بدون قناة';
-    byCh[ch] = (byCh[ch] || 0) + Number(s.totalFinal || s.total_final || 0);
+    var ch = s.channelName || 'بدون قناة';
+    byCh[ch] = (byCh[ch] || 0) + Number(s.total || 0);
   });
   var ctx = document.getElementById('advChannelChart');
   if (!ctx || typeof Chart === 'undefined') return;
@@ -15273,15 +15305,17 @@ function _renderChannelDistribution(rows) {
 function _renderPayDistribution(rows) {
   var byPay = {};
   rows.forEach(function(s) {
-    var pm = (s.paymentMethod || s.payment_method || 'cash').toLowerCase();
-    if (pm.indexOf('/') >= 0) {
-      pm.split('/').forEach(function(part) {
+    var pm = (s.payment || 'cash').toLowerCase();
+    if (pm.indexOf('/') >= 0 || pm.indexOf(':') >= 0) {
+      // Handle split payments format
+      var parts = pm.indexOf('/') >= 0 ? pm.split('/') : [pm];
+      parts.forEach(function(part) {
         var p = part.split(':');
         var k = p[0]; var amt = Number(p[1]) || 0;
         byPay[k] = (byPay[k] || 0) + amt;
       });
     } else {
-      byPay[pm] = (byPay[pm] || 0) + Number(s.totalFinal || s.total_final || 0);
+      byPay[pm] = (byPay[pm] || 0) + Number(s.total || 0);
     }
   });
   var ctx = document.getElementById('advPayChart');
@@ -15303,32 +15337,32 @@ function _renderInsights(rows, filters) {
 
   var insights = [];
   // Insight 1: avg ticket
-  var total = rows.reduce(function(s,x){return s + Number(x.totalFinal || x.total_final || 0);}, 0);
+  var total = rows.reduce(function(s,x){return s + Number(x.total || 0);}, 0);
   var avg = total / rows.length;
   insights.push({ icon:'fa-calculator', title:'متوسط الفاتورة', text: avg.toFixed(2) + ' ر.س عبر ' + rows.length + ' فاتورة' });
 
   // Insight 2: best day
   var byDay = {};
   rows.forEach(function(s) {
-    var d = new Date(s.orderDate || s.order_date);
+    var d = new Date(s.date);
     if (isNaN(d)) return;
     var key = d.toISOString().slice(0,10);
-    byDay[key] = (byDay[key] || 0) + Number(s.totalFinal || s.total_final || 0);
+    byDay[key] = (byDay[key] || 0) + Number(s.total || 0);
   });
   var bestDay = ''; var bestVal = 0;
   Object.keys(byDay).forEach(function(k){ if (byDay[k] > bestVal) { bestVal = byDay[k]; bestDay = k; } });
   if (bestDay) insights.push({ icon:'fa-trophy', title:'أفضل يوم في الفترة', text: bestDay + ' بإيراد ' + bestVal.toFixed(2) + ' ر.س' });
 
   // Insight 3: discount usage
-  var withDisc = rows.filter(function(s){ return Number(s.discountAmount || s.discount_amount || 0) > 0; });
+  var withDisc = rows.filter(function(s){ return Number(s.discount || 0) > 0; });
   if (withDisc.length) {
-    var discSum = withDisc.reduce(function(s,x){return s + Number(x.discountAmount || x.discount_amount || 0);}, 0);
+    var discSum = withDisc.reduce(function(s,x){return s + Number(x.discount || 0);}, 0);
     insights.push({ icon:'fa-percent', title:'الخصومات المُطبَّقة', text: withDisc.length + ' فاتورة بخصم إجمالي ' + discSum.toFixed(2) + ' ر.س' });
   }
 
   // Insight 4: channels active
   var channels = {};
-  rows.forEach(function(s){ if (s.channelName || s.channel_name) channels[s.channelName || s.channel_name] = true; });
+  rows.forEach(function(s){ if (s.channelName) channels[s.channelName] = true; });
   var chCount = Object.keys(channels).length;
   if (chCount > 0) insights.push({ icon:'fa-store', title:'عدد القنوات النشطة', text: chCount + ' قناة بيع نشطة في هذه الفترة' });
 

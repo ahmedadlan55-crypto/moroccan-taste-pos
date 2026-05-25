@@ -696,6 +696,17 @@
             .adv-insight-card i { font-size: 24px; color: #f59e0b; background: #fef3c7; width: 48px; height: 48px; display: flex; align-items: center; justify-content: center; border-radius: 12px; flex-shrink: 0; }
             .adv-insight-card b { display: block; font-size: 15px; color: #0f172a; margin-bottom: 4px; }
             .adv-insight-card span { font-size: 13px; color: #64748b; line-height: 1.5; }
+            
+            /* Fix for filter buttons UI */
+            #salesAdvFilter .sf-actions { display: flex; justify-content: flex-start; align-items: center; gap: 12px; padding-top: 20px; border-top: 1px solid #e2e8f0; margin-top: 10px; flex-direction: row-reverse; }
+            #salesAdvFilter .sf-btn { min-width: 130px; height: 44px; display: inline-flex; align-items: center; justify-content: center; gap: 8px; font-size: 14px; border-radius: 10px; border: none; font-weight: 700; transition: all 0.2s; box-shadow: 0 2px 4px rgba(0,0,0,0.05); }
+            #salesAdvFilter .sf-btn-apply { background: linear-gradient(135deg, #4f46e5, #3b82f6); color: white; width: auto; padding: 0 30px; }
+            #salesAdvFilter .sf-btn-apply:hover { transform: translateY(-2px); box-shadow: 0 8px 16px rgba(59, 130, 246, 0.2); background: linear-gradient(135deg, #4338ca, #2563eb); }
+            #salesAdvFilter .sf-btn-reset { background: white; color: #64748b; border: 1px solid #cbd5e1; }
+            #salesAdvFilter .sf-btn-reset:hover { background: #f8fafc; color: #0f172a; }
+            #salesAdvFilter .sf-btn-export { background: #10b981; color: white; }
+            #salesAdvFilter .sf-btn-export:hover { background: #059669; transform: translateY(-2px); box-shadow: 0 8px 16px rgba(16, 185, 129, 0.2); }
+            #salesAdvFilter .sf-btn i { font-size: 16px; margin: 0; }
           </style>
 
           <div id="salesAdvanced" class="sh-page hidden">

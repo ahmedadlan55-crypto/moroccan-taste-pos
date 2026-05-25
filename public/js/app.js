@@ -15130,16 +15130,7 @@ function _fetchSalesSummary(from, to) {
 // ─── Advanced Reports loader ─────────────────────────────────────────────
 window.loadSalesAdvancedReports = function() {
   var f = getSalesFilters('advanced');
-  // 1) Current period summary
-  _fetchSalesSummary(f.start, f.end).then(function(cur) {
-    // 2) Previous-period summary (same length, immediately before)
-    var prevRange = _getPreviousPeriod(f.start, f.end);
-    _fetchSalesSummary(prevRange[0], prevRange[1]).then(function(prev) {
-      _renderAdvancedCompare(cur, prev);
-    });
-  });
-
-  // 3) Detailed sales for charts + insights
+  
   var qs = [];
   var queryStart = localDateStr(new Date(f.start + 'T00:00:00').getTime() - 86400000);
   var queryEnd   = localDateStr(new Date(f.end + 'T00:00:00').getTime() + 86400000);
@@ -15149,44 +15140,75 @@ window.loadSalesAdvancedReports = function() {
   if (f.paymentMethod) qs.push('paymentMethod=' + encodeURIComponent(f.paymentMethod));
   if (f.customerId) qs.push('customerId=' + encodeURIComponent(f.customerId));
 
+  var applyFilters = function(arr, startDt, endDt) {
+    var startMs = new Date(startDt + 'T00:00:00').getTime();
+    var endMs   = new Date(endDt   + 'T23:59:59.999').getTime();
+    return arr.filter(function(r) {
+      var t = new Date(r.date).getTime();
+      if (isNaN(t) || t < startMs || t > endMs) return false;
+      if (f.brandId && r.brandId && r.brandId !== f.brandId) return false;
+      if (f.branchId && r.branchId && r.branchId !== f.branchId) return false;
+      if (f.channelId && r.channelId && r.channelId !== f.channelId) return false;
+      if (f.minAmount > 0 && Number(r.total) < f.minAmount) return false;
+      if (f.maxAmount > 0 && Number(r.total) > f.maxAmount) return false;
+      if (f.invoiceNo) {
+        var qStr = f.invoiceNo.toLowerCase();
+        var hit = (r.orderId || '').toLowerCase().indexOf(qStr) >= 0
+               || (r.invoiceNumber || '').toLowerCase().indexOf(qStr) >= 0
+               || (r.voidSerial || '').toLowerCase().indexOf(qStr) >= 0
+               || (r.returnSerial || '').toLowerCase().indexOf(qStr) >= 0;
+        if (!hit) return false;
+      }
+      if (f.productIds && f.productIds.length && (!r.items || !r.items.some(function(it){ return f.productIds.indexOf(String(it.id||it.itemId)) >= 0; }))) return false;
+      if (f.customerId && r.customerId !== f.customerId) return false;
+      return true;
+    });
+  };
+
   fetch('/api/sales' + (qs.length ? '?' + qs.join('&') : ''),
     { headers: { 'Authorization': 'Bearer ' + localStorage.getItem('pos_token') } })
     .then(function(r){return r.json();})
     .then(function(rows) {
       if (!Array.isArray(rows)) rows = [];
-      // Client-side filtering exactly like loadDashSales
-      var startMs = new Date(f.start + 'T00:00:00').getTime();
-      var endMs   = new Date(f.end   + 'T23:59:59.999').getTime();
-      rows = rows.filter(function(r) {
-        var t = new Date(r.date).getTime();
-        if (isNaN(t) || t < startMs || t > endMs) return false;
-        if (f.brandId && r.brandId && r.brandId !== f.brandId) return false;
-        if (f.branchId && r.branchId && r.branchId !== f.branchId) return false;
-        if (f.channelId && r.channelId && r.channelId !== f.channelId) return false;
-        if (f.minAmount > 0 && Number(r.total) < f.minAmount) return false;
-        if (f.maxAmount > 0 && Number(r.total) > f.maxAmount) return false;
-        if (f.invoiceNo) {
-          var qStr = f.invoiceNo.toLowerCase();
-          var hit = (r.orderId || '').toLowerCase().indexOf(qStr) >= 0
-                 || (r.invoiceNumber || '').toLowerCase().indexOf(qStr) >= 0
-                 || (r.voidSerial || '').toLowerCase().indexOf(qStr) >= 0
-                 || (r.returnSerial || '').toLowerCase().indexOf(qStr) >= 0;
-          if (!hit) return false;
-        }
-        if (f.productIds && f.productIds.length && (!r.items || !r.items.some(function(it){ return f.productIds.indexOf(String(it.id||it.itemId)) >= 0; }))) return false;
-        if (f.customerId && r.customerId !== f.customerId) return false;
-        return true;
-      });
+      var filteredCur = applyFilters(rows, f.start, f.end);
+      
+      var curTotal = filteredCur.reduce(function(s,x){return s + Number(x.total || 0);}, 0);
+      var cur = { total: curTotal, count: filteredCur.length };
 
-      _renderPeakHours(rows);
-      _renderTopProducts(rows);
-      _renderChannelDistribution(rows);
-      _renderPayDistribution(rows);
-      _renderInsights(rows, f);
+      _renderPeakHours(filteredCur);
+      _renderTopProducts(filteredCur);
+      _renderChannelDistribution(filteredCur);
+      _renderPayDistribution(filteredCur);
+      _renderInsights(filteredCur, f);
+
+      // Fetch previous period for compare
+      var prevRange = _getPreviousPeriod(f.start, f.end);
+      var prevQs = [];
+      var pQueryStart = localDateStr(new Date(prevRange[0] + 'T00:00:00').getTime() - 86400000);
+      var pQueryEnd   = localDateStr(new Date(prevRange[1] + 'T00:00:00').getTime() + 86400000);
+      if (prevRange[0]) prevQs.push('startDate=' + encodeURIComponent(pQueryStart));
+      if (prevRange[1]) prevQs.push('endDate=' + encodeURIComponent(pQueryEnd));
+      if (f.cashier) prevQs.push('username=' + encodeURIComponent(f.cashier));
+      if (f.paymentMethod) prevQs.push('paymentMethod=' + encodeURIComponent(f.paymentMethod));
+      if (f.customerId) prevQs.push('customerId=' + encodeURIComponent(f.customerId));
+
+      fetch('/api/sales' + (prevQs.length ? '?' + prevQs.join('&') : ''),
+        { headers: { 'Authorization': 'Bearer ' + localStorage.getItem('pos_token') } })
+        .then(function(r2){return r2.json();})
+        .then(function(rows2) {
+          if (!Array.isArray(rows2)) rows2 = [];
+          var filteredPrev = applyFilters(rows2, prevRange[0], prevRange[1]);
+          var prevTotal = filteredPrev.reduce(function(s,x){return s + Number(x.total || 0);}, 0);
+          var prev = { total: prevTotal, count: filteredPrev.length };
+          _renderAdvancedCompare(cur, prev);
+        })
+        .catch(function(){ _renderAdvancedCompare(cur, { total:0, count:0 }); });
+
     })
     .catch(function(err) {
       console.error('[loadSalesAdvancedReports] fetch error:', err);
       showToast('فشل تحميل التقارير المتقدمة', true);
+      _renderAdvancedCompare({ total:0, count:0 }, { total:0, count:0 });
       _renderPeakHours([]); _renderTopProducts([]); _renderChannelDistribution([]); _renderPayDistribution([]); _renderInsights([], f);
     });
 };

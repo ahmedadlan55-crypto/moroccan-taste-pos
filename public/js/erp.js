@@ -38,7 +38,7 @@ const erpSections = [
   /* legacy warehouse sections removed */
   'erpARAging','erpAPAging','erpCustomerStatement','erpSupplierStatement',
   'erpWfPositions','erpWfTypes','erpWfDefs','erpWfInbox',
-  'erpHrDashboard','erpHrEmployees','erpHrDepartments','erpHrAttendance','erpHrLeave','erpHrPayroll','erpHrAdvances',
+  'erpHrDashboard','erpHrEmployees','erpHrJobTitles','erpHrDepartments','erpHrAttendance','erpHrLeave','erpHrPayroll','erpHrAdvances',
   'erpHrShifts','erpHrOvertime','erpHrExceptions',
   'erpCashDash','erpCashBoxes','erpBankAccounts','erpCashReceipts','erpCashPayments','erpCashTransfers',
   // Warehouse Phase 1/2/3
@@ -166,6 +166,7 @@ function erpNav(sectionId) {
       case 'erpWfOrgTree': wfLoadOrgTree(); break;
       case 'erpHrDashboard': hrLoadDashboard(); break;
       case 'erpHrEmployees': hrLoadEmployees(); break;
+      case 'erpHrJobTitles': hrLoadJobTitles(); break;  // v6.18.4 (Wave 5)
       case 'erpHrDepartments': hrLoadDepartments(); break;
       case 'erpHrAttendance': hrLoadAttendance(); break;
       case 'erpHrLeave': hrLoadLeaveRequests(); break;
@@ -11672,7 +11673,64 @@ function hrLoadEmployees() {
   window._apiBridge.withSuccessHandler(function(list) {
     _hrEmployees = list || [];
     hrRenderEmployees(list);
+    // v6.18.4 (Wave 5) — Surface the count of shell employees (from
+    // Wave 3 backfill) that still need their iqama / IBAN / real job
+    // title filled in.  Detected by the "بحاجة لتحديث" job_title that
+    // the migration assigned to shells.
+    var shellCount = (list||[]).filter(function(e){
+      return (e.jobTitle||'') === 'بحاجة لتحديث';
+    }).length;
+    var alert = document.getElementById('hrShellAlert');
+    var span  = document.getElementById('hrShellCount');
+    if (alert && span) {
+      if (shellCount > 0) { span.textContent = shellCount; alert.style.display = 'block'; }
+      else { alert.style.display = 'none'; }
+    }
   }).getHrEmployees(params);
+}
+
+// v6.18.4 (Wave 5) — Load + render the canonical job-titles taxonomy.
+function hrLoadJobTitles() {
+  var tb = document.getElementById('hrJobTitlesBody');
+  if (!tb) return;
+  tb.innerHTML = '<tr><td colspan="7" class="empty-msg"><i class="fas fa-spinner fa-spin"></i> جاري التحميل...</td></tr>';
+  fetch('/api/hr/job-titles?includeInactive=1', { credentials: 'include' })
+    .then(function(r){ return r.json(); })
+    .then(function(j){
+      var list = (j && j.jobTitles) || [];
+      if (!list.length) {
+        tb.innerHTML = '<tr><td colspan="7" class="empty-msg">لا توجد مسميات وظيفية. شغّل migration 0004_hr_job_titles.sql لإضافة القائمة المعتمدة.</td></tr>';
+        return;
+      }
+      // Group/sort visually by rank
+      var categoryLabels = {
+        management: 'إدارة', operations: 'عمليات', finance: 'مالي',
+        support: 'مساندة',  kitchen: 'مطبخ',    warehouse: 'مستودع',
+        hr: 'موارد بشرية',  it: 'تقنية'
+      };
+      var roleLabels = {
+        admin: 'مدير', manager: 'مشرف', cashier: 'كاشير',
+        custody: 'عهدة', employee: 'موظف'
+      };
+      var roleColors = {
+        admin: '#dc2626', manager: '#1e40af', cashier: '#0891b2',
+        custody: '#7c3aed', employee: '#0d9488'
+      };
+      tb.innerHTML = list.map(function(j) {
+        return '<tr>' +
+          '<td><span class="badge" style="background:#e0e7ff;color:#3730a3;font-weight:800;">' + (j.rank||7) + '</span></td>' +
+          '<td style="font-weight:800;color:#0f172a;">' + (j.nameAr||'') + '</td>' +
+          '<td style="color:#475569;font-style:italic;">' + (j.nameEn||'') + '</td>' +
+          '<td><code style="font-size:11px;color:#0d9488;font-weight:700;">' + (j.code||'') + '</code></td>' +
+          '<td>' + (categoryLabels[j.category] || j.category || '—') + '</td>' +
+          '<td><span class="badge" style="background:' + (roleColors[j.defaultRole]||'#64748b') + '15;color:' + (roleColors[j.defaultRole]||'#64748b') + ';font-weight:700;">' + (roleLabels[j.defaultRole]||j.defaultRole) + '</span></td>' +
+          '<td><span class="badge badge-' + (j.isActive ? 'green' : 'red') + '">' + (j.isActive ? 'فعّال' : 'مُعطَّل') + '</span></td>' +
+        '</tr>';
+      }).join('');
+    })
+    .catch(function(err){
+      tb.innerHTML = '<tr><td colspan="7" class="empty-msg" style="color:#dc2626;">تعذّر التحميل: ' + (err && err.message || err) + '</td></tr>';
+    });
 }
 
 function hrFilterEmployees() {

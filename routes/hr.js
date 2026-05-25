@@ -416,6 +416,48 @@ router.delete('/departments/:id', async (req, res) => {
 });
 
 // ═══════════════════════════════════════════════════════════════
+// JOB TITLES (v6.18.0+ — canonical Saudi-restaurant role catalog)
+// ═══════════════════════════════════════════════════════════════
+// Source of truth: hr_job_titles table (seeded by migration 0004 and
+// re-asserted defensively in server.js runMigrations).  The front-end
+// (users CRUD form, HR employee form) calls this to populate the
+// dropdown of allowed positions — replacing the legacy free-text
+// job_title column with a controlled vocabulary.
+router.get('/job-titles', async (req, res) => {
+  try {
+    const includeInactive = String(req.query.includeInactive || '') === '1';
+    let sql = `
+      SELECT id, code, name_ar, name_en, rank_level, category, default_role, is_active
+        FROM hr_job_titles
+    `;
+    if (!includeInactive) sql += ' WHERE is_active = 1';
+    sql += ' ORDER BY rank_level ASC, name_ar ASC';
+    const [rows] = await db.query(sql);
+    res.json({
+      success: true,
+      jobTitles: rows.map(r => ({
+        id: r.id,
+        code: r.code,
+        nameAr: r.name_ar,
+        nameEn: r.name_en,
+        rank: Number(r.rank_level) || 7,
+        category: r.category,
+        defaultRole: r.default_role,
+        isActive: r.is_active !== 0
+      }))
+    });
+  } catch (e) {
+    // Schema-tolerant: if the table doesn't exist yet on a brand-new
+    // install (migration framework hasn't run), return an empty list
+    // so the front-end falls back gracefully instead of erroring.
+    if (e && /doesn'?t exist/i.test(e.message || '')) {
+      return res.json({ success: true, jobTitles: [] });
+    }
+    res.json({ success: false, error: e.message });
+  }
+});
+
+// ═══════════════════════════════════════════════════════════════
 // EMPLOYEES
 // ═══════════════════════════════════════════════════════════════
 

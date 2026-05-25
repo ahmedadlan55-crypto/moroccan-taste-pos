@@ -108,6 +108,27 @@
           </div>
         </div>
 
+        <!-- v6.18.1 — HR people-record fields (Wave 2: soft-validated,
+             format-checked when provided; Wave 3 will make them required). -->
+        <div style="font-size:12px;font-weight:800;color:#0d9488;margin:12px 0 8px;padding-bottom:6px;border-bottom:1px dashed #e2e8f0;"><i class="fas fa-briefcase"></i> بيانات الموظف الرسمية (HR)</div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;">
+          <div class="form-group">
+            <label class="form-label">رقم الإقامة / الهوية الوطنية</label>
+            <input type="text" id="muIqama" class="form-control glass-input" placeholder="10 أرقام (مثال: 2123456789)" maxlength="10" inputmode="numeric" pattern="[0-9]{10}">
+            <div id="muIqamaHint" style="font-size:10px;color:#94a3b8;margin-top:3px;"><i class="fas fa-info-circle"></i> 10 أرقام بالضبط</div>
+          </div>
+          <div class="form-group">
+            <label class="form-label">المسمى الوظيفي الرسمي</label>
+            <select id="muJobTitle" class="form-control glass-input"><option value="">— اختر —</option></select>
+            <div style="font-size:10px;color:#94a3b8;margin-top:3px;"><i class="fas fa-info-circle"></i> القائمة الرسمية للسلم الوظيفي</div>
+          </div>
+        </div>
+        <div class="form-group">
+          <label class="form-label">رقم الـIBAN البنكي</label>
+          <input type="text" id="muIban" class="form-control glass-input" placeholder="SA0380000000608010167519" maxlength="24" style="font-family:ui-monospace,monospace;letter-spacing:1px;">
+          <div id="muIbanHint" style="font-size:10px;color:#94a3b8;margin-top:3px;"><i class="fas fa-info-circle"></i> يبدأ بـ SA ثم 22 رقماً (إجمالي 24 خانة)</div>
+        </div>
+
         <!-- Credentials -->
         <div style="font-size:12px;font-weight:800;color:#1e40af;margin:12px 0 8px;padding-bottom:6px;border-bottom:1px dashed #e2e8f0;"><i class="fas fa-key"></i> بيانات الدخول</div>
         <div class="form-group">

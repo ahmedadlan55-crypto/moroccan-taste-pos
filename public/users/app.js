@@ -84,23 +84,37 @@ window.loadUsers = function() {
   }).getUsers();
 };
 
-// Load branches, brands, positions for the dropdowns (cached after first call)
-var _muBranches = null, _muBrands = null, _muPositions = null;
+// Load branches, brands, positions, and (v6.18.1) job-titles for the
+// dropdowns.  Cached after first call.  All four fetches kick off in
+// parallel; `done()` only proceeds once all four have populated.
+var _muBranches = null, _muBrands = null, _muPositions = null, _muJobTitles = null;
 function _muLoadDropdowns(cb) {
   function done() {
-    if (_muBranches && _muBrands && _muPositions) {
+    if (_muBranches && _muBrands && _muPositions && _muJobTitles) {
       var brOpt = '<option value="">— بدون —</option>' + _muBranches.map(function(b){return '<option value="'+b.id+'">'+(b.name||'')+(b.code?' ['+b.code+']':'')+'</option>';}).join('');
       var bdOpt = '<option value="">— الكل —</option>' + _muBrands.map(function(b){return '<option value="'+b.id+'">'+(b.name||'')+'</option>';}).join('');
       var poOpt = '<option value="">— بدون —</option>' + _muPositions.map(function(p){return '<option value="'+p.id+'">'+(p.name||'')+'</option>';}).join('');
+      // v6.18.1 — job titles dropdown grouped by rank for the SR.
+      var jtOpt = '<option value="">— اختر —</option>' + _muJobTitles.map(function(j){
+        return '<option value="'+j.code+'">'+(j.nameAr||j.nameEn||j.code)+' · '+(j.nameEn||'')+'</option>';
+      }).join('');
       q('#muBranch').innerHTML = brOpt;
       q('#muBrand').innerHTML = bdOpt;
       q('#muPosition').innerHTML = poOpt;
+      q('#muJobTitle').innerHTML = jtOpt;
       if (cb) cb();
     }
   }
   api.withSuccessHandler(function(list){ _muBranches = list || []; done(); }).getBranchesFull();
   api.withSuccessHandler(function(list){ _muBrands = list || []; done(); }).getBrands();
   api.withSuccessHandler(function(list){ _muPositions = list || []; done(); }).getWfPositions();
+  // v6.18.1 — Fetch HR job titles directly (not yet in api-bridge).
+  // Defensive: on any error (404, schema not migrated, network) fall
+  // back to an empty list so the form still opens.
+  fetch('/api/hr/job-titles', { credentials: 'include' })
+    .then(function(r){ return r.json(); })
+    .then(function(j){ _muJobTitles = (j && j.jobTitles) || []; done(); })
+    .catch(function(){ _muJobTitles = []; done(); });
 }
 
 window.muTogglePass = function() {
@@ -122,8 +136,12 @@ window.openUserForm = function() {
   q('#muPass').placeholder = '******';
   q('#muRole').value = 'cashier';
   q('#muIsDeveloper').checked = false;
+  // v6.18.1 — reset the new HR people-record fields too
+  if (q('#muIqama'))    q('#muIqama').value = '';
+  if (q('#muIban'))     q('#muIban').value = '';
   _muLoadDropdowns(function() {
     q('#muBranch').value = ''; q('#muBrand').value = ''; q('#muPosition').value = '';
+    if (q('#muJobTitle')) q('#muJobTitle').value = '';
   });
   openGlassModal('#modalUserForm');
 };
@@ -144,10 +162,14 @@ window.editUser = function(username) {
   q('#muPass').placeholder = 'اتركها فارغة لعدم التغيير';
   q('#muRole').value = u.role || 'cashier';
   q('#muIsDeveloper').checked = !!u.isDeveloper;
+  // v6.18.1 — pre-fill the new HR fields
+  if (q('#muIqama')) q('#muIqama').value = u.iqamaNumber || '';
+  if (q('#muIban'))  q('#muIban').value  = u.iban || '';
   _muLoadDropdowns(function() {
     q('#muBranch').value = u.branchId || '';
     q('#muBrand').value = u.brandId || '';
     q('#muPosition').value = u.positionId || '';
+    if (q('#muJobTitle')) q('#muJobTitle').value = u.jobTitleCode || '';
   });
   openGlassModal('#modalUserForm');
 };
@@ -163,9 +185,22 @@ window.saveUser = function() {
   var brandId     = q('#muBrand').value || '';
   var branchId    = q('#muBranch').value || '';
   var positionId  = q('#muPosition').value || '';
+  // v6.18.1 — read the new HR people-record fields
+  var iqamaNumber  = (q('#muIqama')   ? q('#muIqama').value   : '').trim();
+  var iban         = (q('#muIban')    ? q('#muIban').value    : '').trim().toUpperCase();
+  var jobTitleCode = q('#muJobTitle') ? q('#muJobTitle').value : '';
 
   if (!username) return showToast('الرقم الوظيفي مطلوب', true);
   if (!_editingUsername && !password) return showToast('كلمة المرور مطلوبة عند إنشاء مستخدم', true);
+  // v6.18.1 — Front-end mirror of the back-end format checks.  Wave 2
+  // is "warning-only": empty values are accepted, only malformed ones
+  // are rejected here so the user sees feedback before the round-trip.
+  if (iqamaNumber && !/^\d{10}$/.test(iqamaNumber)) {
+    return showToast('رقم الإقامة/الهوية يجب أن يكون 10 أرقام', true);
+  }
+  if (iban && !/^SA\d{22}$/.test(iban)) {
+    return showToast('رقم الـIBAN يجب أن يبدأ بـSA و22 رقماً (إجمالي 24 خانة)', true);
+  }
 
   loader(true);
   var done = function(r) {
@@ -187,7 +222,9 @@ window.saveUser = function() {
     var payload = {
       displayName: displayName, role: role, isDeveloper: isDeveloper,
       email: email, phone: phone,
-      brandId: brandId || null, branchId: branchId || null, positionId: positionId || null
+      brandId: brandId || null, branchId: branchId || null, positionId: positionId || null,
+      // v6.18.1 — always send the new fields (empty string clears them server-side)
+      iqamaNumber: iqamaNumber, iban: iban, jobTitleCode: jobTitleCode
     };
     if (password) payload.password = password;
     // Rename username if changed and allowed
@@ -199,7 +236,9 @@ window.saveUser = function() {
     var data = {
       username: username, password: password, role: role, displayName: displayName,
       isDeveloper: isDeveloper, email: email, phone: phone,
-      brandId: brandId || null, branchId: branchId || null, positionId: positionId || null
+      brandId: brandId || null, branchId: branchId || null, positionId: positionId || null,
+      // v6.18.1 — same four fields on create
+      iqamaNumber: iqamaNumber, iban: iban, jobTitleCode: jobTitleCode
     };
     api.withFailureHandler(fail).withSuccessHandler(done).addUser(data);
   }

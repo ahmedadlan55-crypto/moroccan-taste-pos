@@ -412,29 +412,47 @@ router.get('/users', async (req, res) => {
   try {
     // Detect optional columns (phone/full_name were added via migration)
     let hasPhone = true, hasFullName = true, hasCanChange = true, hasDefBranch = true;
+    // v6.18.1 (Wave 2) — detect the new HR people-record columns too
+    let hasIqama = true, hasIban = true, hasJobTitle = true;
     try { const [c] = await db.query("SHOW COLUMNS FROM users LIKE 'phone'"); hasPhone = !!c.length; } catch(e) { hasPhone = false; }
     try { const [c] = await db.query("SHOW COLUMNS FROM users LIKE 'full_name'"); hasFullName = !!c.length; } catch(e) { hasFullName = false; }
     try { const [c] = await db.query("SHOW COLUMNS FROM users LIKE 'can_change_branch'"); hasCanChange = !!c.length; } catch(e) { hasCanChange = false; }
     try { const [c] = await db.query("SHOW COLUMNS FROM users LIKE 'default_branch_id'"); hasDefBranch = !!c.length; } catch(e) { hasDefBranch = false; }
+    try { const [c] = await db.query("SHOW COLUMNS FROM users LIKE 'iqama_number'");   hasIqama   = !!c.length; } catch(e) { hasIqama   = false; }
+    try { const [c] = await db.query("SHOW COLUMNS FROM users LIKE 'iban'");           hasIban    = !!c.length; } catch(e) { hasIban    = false; }
+    try { const [c] = await db.query("SHOW COLUMNS FROM users LIKE 'job_title_code'"); hasJobTitle= !!c.length; } catch(e) { hasJobTitle= false; }
 
     const extraCols = [
       hasPhone     ? 'u.phone'             : "'' AS phone",
       hasFullName  ? 'u.full_name'         : "'' AS full_name",
       hasCanChange ? 'u.can_change_branch' : '0 AS can_change_branch',
-      hasDefBranch ? 'u.default_branch_id' : 'NULL AS default_branch_id'
+      hasDefBranch ? 'u.default_branch_id' : 'NULL AS default_branch_id',
+      hasIqama     ? 'u.iqama_number'      : "'' AS iqama_number",
+      hasIban      ? 'u.iban'              : "'' AS iban",
+      hasJobTitle  ? 'u.job_title_code'    : "'' AS job_title_code"
     ];
+    // v6.18.1 — Join hr_job_titles for the canonical Arabic title.
+    // LEFT JOIN keeps users with no job_title_code visible (NULL → '').
+    const joinJobTitle = hasJobTitle
+      ? "LEFT JOIN hr_job_titles jt ON jt.code = u.job_title_code"
+      : "";
+    const jobTitleCol = hasJobTitle
+      ? "COALESCE(jt.name_ar,'') AS jobTitleName"
+      : "'' AS jobTitleName";
     const [users] = await db.query(`
       SELECT u.id, u.username, u.role, u.active, u.created_at, u.email,
         u.brand_id, u.branch_id, u.default_warehouse_id, u.position_id,
         ${extraCols.join(', ')},
         COALESCE(br.name,'') AS branchName, COALESCE(bd.name,'') AS brandName,
         COALESCE(p.name,'') AS positionName,
-        COALESCE(wh.name,'') AS warehouseName
+        COALESCE(wh.name,'') AS warehouseName,
+        ${jobTitleCol}
       FROM users u
       LEFT JOIN branches br ON u.branch_id = br.id
       LEFT JOIN brands bd ON u.brand_id = bd.id
       LEFT JOIN positions p ON u.position_id = p.id
       LEFT JOIN warehouses wh ON u.default_warehouse_id = wh.id
+      ${joinJobTitle}
       ORDER BY u.created_at DESC
     `);
     const meta = await getUserMeta();
@@ -452,6 +470,11 @@ router.get('/users', async (req, res) => {
         isDeveloper: !!m.isDeveloper || u.username === 'admin',
         email: u.email || '',
         phone: u.phone || '',
+        // v6.18.1 — new people-record fields
+        iqamaNumber: u.iqama_number || '',
+        iban: u.iban || '',
+        jobTitleCode: u.job_title_code || '',
+        jobTitleName: u.jobTitleName || '',
         brandId: u.brand_id || '', brandName: u.brandName || '',
         branchId: u.branch_id || '', branchName: u.branchName || '',
         defaultBranchId: u.default_branch_id || u.branch_id || '',
@@ -469,12 +492,35 @@ router.get('/users', async (req, res) => {
 router.post('/users', async (req, res) => {
   try {
     const { username, password, role, displayName, isDeveloper, email, brandId, branchId, phone } = req.body;
+    // v6.18.1 (Wave 2) — new HR people-record fields.  Soft-validated in
+    // this wave (format-checked when provided, but not yet required).
+    // Wave 3 will switch them to REQUIRED once existing users are
+    // backfilled with shell employee records.
+    const iqamaNumber  = (req.body.iqamaNumber  || req.body.iqama_number  || '').trim();
+    const iban         = (req.body.iban         || '').trim();
+    const jobTitleCode = (req.body.jobTitleCode || req.body.job_title_code || '').trim();
     if (!username || !password) return res.json({ success: false, error: 'اسم المستخدم وكلمة المرور مطلوبان' });
     // Password validation
     if (password.length < 6) return res.json({ success: false, error: 'كلمة المرور يجب أن تكون 6 أحرف على الأقل' });
     if (!/[a-zA-Z]/.test(password)) return res.json({ success: false, error: 'كلمة المرور يجب أن تحتوي على حروف' });
     if (!/[0-9]/.test(password)) return res.json({ success: false, error: 'كلمة المرور يجب أن تحتوي على أرقام' });
     if (!/[!@#$%^&*()_+\-=\[\]{};':"|,.<>\/?]/.test(password)) return res.json({ success: false, error: 'كلمة المرور يجب أن تحتوي على رمز خاص (!@#$...)' });
+    // v6.18.1 — Format checks (only when value is provided).  Saudi
+    // iqama / national ID is always 10 digits; SA IBAN is "SA" + 22
+    // digits.  Empty values are accepted in Wave 2 to keep backward
+    // compat with existing UIs.
+    if (iqamaNumber && !/^\d{10}$/.test(iqamaNumber)) {
+      return res.json({ success: false, error: 'رقم الإقامة/الهوية يجب أن يكون 10 أرقام' });
+    }
+    if (iban && !/^SA\d{22}$/i.test(iban)) {
+      return res.json({ success: false, error: 'رقم الـIBAN يجب أن يبدأ بـSA و22 رقماً (إجمالي 24 خانة)' });
+    }
+    if (jobTitleCode) {
+      try {
+        const [jt] = await db.query('SELECT 1 FROM hr_job_titles WHERE code = ? AND is_active = 1 LIMIT 1', [jobTitleCode]);
+        if (!jt.length) return res.json({ success: false, error: 'المسمى الوظيفي غير معرَّف في قائمة المسميات' });
+      } catch (jtErr) { /* table not yet migrated — tolerate */ }
+    }
 
     const hash = await bcrypt.hash(password, 10);
     const dbRole = ['admin', 'cashier', 'manager', 'custody', 'employee'].indexOf(role) >= 0 ? role : 'cashier';
@@ -495,6 +541,12 @@ router.post('/users', async (req, res) => {
     // Apply optional extras (phone + full_name) — tolerate old schemas without the columns
     if (phone) { try { await db.query('UPDATE users SET phone = ? WHERE username = ?', [phone, username]); } catch(e) {} }
     if (displayName) { try { await db.query('UPDATE users SET full_name = ? WHERE username = ?', [displayName, username]); } catch(e) {} }
+    // v6.18.1 — Persist the new HR fields when provided.  try/catch each
+    // separately so a single missing column on an old schema doesn't
+    // break the insert chain.
+    if (iqamaNumber)  { try { await db.query('UPDATE users SET iqama_number   = ? WHERE username = ?', [iqamaNumber,  username]); } catch(e) {} }
+    if (iban)         { try { await db.query('UPDATE users SET iban           = ? WHERE username = ?', [iban,         username]); } catch(e) {} }
+    if (jobTitleCode) { try { await db.query('UPDATE users SET job_title_code = ? WHERE username = ?', [jobTitleCode, username]); } catch(e) {} }
 
     if (displayName || isDeveloper) {
       const meta = await getUserMeta();
@@ -587,6 +639,31 @@ router.put('/users/:username', async (req, res) => {
     }
     if (displayName !== undefined) {
       try { await db.query('UPDATE users SET full_name = ? WHERE username = ?', [displayName || '', username]); } catch(e) {}
+    }
+    // v6.18.1 (Wave 2) — HR people-record fields, same format checks as POST.
+    if (req.body.iqamaNumber !== undefined || req.body.iqama_number !== undefined) {
+      const iqamaNumber = (req.body.iqamaNumber || req.body.iqama_number || '').trim();
+      if (iqamaNumber && !/^\d{10}$/.test(iqamaNumber)) {
+        return res.json({ success: false, error: 'رقم الإقامة/الهوية يجب أن يكون 10 أرقام' });
+      }
+      try { await db.query('UPDATE users SET iqama_number = ? WHERE username = ?', [iqamaNumber || null, username]); } catch(e) {}
+    }
+    if (req.body.iban !== undefined) {
+      const iban = (req.body.iban || '').trim();
+      if (iban && !/^SA\d{22}$/i.test(iban)) {
+        return res.json({ success: false, error: 'رقم الـIBAN يجب أن يبدأ بـSA و22 رقماً (إجمالي 24 خانة)' });
+      }
+      try { await db.query('UPDATE users SET iban = ? WHERE username = ?', [iban || null, username]); } catch(e) {}
+    }
+    if (req.body.jobTitleCode !== undefined || req.body.job_title_code !== undefined) {
+      const jobTitleCode = (req.body.jobTitleCode || req.body.job_title_code || '').trim();
+      if (jobTitleCode) {
+        try {
+          const [jt] = await db.query('SELECT 1 FROM hr_job_titles WHERE code = ? AND is_active = 1 LIMIT 1', [jobTitleCode]);
+          if (!jt.length) return res.json({ success: false, error: 'المسمى الوظيفي غير معرَّف في قائمة المسميات' });
+        } catch (jtErr) { /* table not yet migrated — tolerate */ }
+      }
+      try { await db.query('UPDATE users SET job_title_code = ? WHERE username = ?', [jobTitleCode || null, username]); } catch(e) {}
     }
 
     // Update brand + branch + warehouse (V3: explicit defaultWarehouseId from body, or auto-derive)

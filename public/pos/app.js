@@ -4189,29 +4189,70 @@ window.toggleFloatActions = function() {
 // Desktop is unchanged: the popover still appears when the POS nav link
 // is clicked (handled above in setupPosNavLinkTrigger).
 (function setupMobileDrawerActions(){
-  // Definition lives next to the original .float-btn markup in index.html.
-  // We mirror the same callbacks here so a single source of truth could be
-  // refactored later — for now this is the simplest, lowest-risk path.
+  // v6.17.8 — Switched from inline onclick to data-action + delegated
+  // listener for three reasons (each one painful on its own):
+  //   1. iOS Safari/Android Chrome cancel the rest of an inline onclick
+  //      chain when the first call (toggleAppNav) starts a CSS transition
+  //      on the element under the user's finger — the action() never ran.
+  //   2. Closing the drawer FIRST animated the modal out of sight before
+  //      it had a chance to render.  Now we run the action first, then
+  //      close the drawer after a 50ms tick so the modal is already
+  //      mounted when the drawer slides out from behind it.
+  //   3. iOS PWAs in standalone mode silently reject window.open() with
+  //      target=_blank — the "Employee portal" button was a no-op.  We
+  //      now use location.href instead (works on Desktop too).
   var ACTIONS = [
-    { cls: 'success', icon: 'fa-play',                 label: 'فتح وردية',     fn: 'shiftOpen()' },
-    { cls: 'danger',  icon: 'fa-stop',                 label: 'إغلاق الوردية', fn: 'shiftCloseStart()' },
-    { cls: 'warn',    icon: 'fa-clipboard-check',      label: 'جرد المخزون',   fn: 'openCashierStocktake()' },
-    { cls: 'purple',  icon: 'fa-exclamation-triangle', label: 'طلب نواقص',     fn: 'openShortageRequest()' },
-    { cls: 'sky',     icon: 'fa-file-invoice',         label: 'فواتيري',       fn: 'posOpenMyInvoices()' },
-    { cls: 'green2',  icon: 'fa-user-tie',             label: 'بوابة الموظف', fn: "window.open('/employee/','_blank')" }
+    { id: 'shift-open',      cls: 'success', icon: 'fa-play',                 label: 'فتح وردية' },
+    { id: 'shift-close',     cls: 'danger',  icon: 'fa-stop',                 label: 'إغلاق الوردية' },
+    { id: 'stocktake',       cls: 'warn',    icon: 'fa-clipboard-check',      label: 'جرد المخزون' },
+    { id: 'shortage',        cls: 'purple',  icon: 'fa-exclamation-triangle', label: 'طلب نواقص' },
+    { id: 'my-invoices',     cls: 'sky',     icon: 'fa-file-invoice',         label: 'فواتيري' },
+    { id: 'employee-portal', cls: 'green2',  icon: 'fa-user-tie',             label: 'بوابة الموظف' }
   ];
   function buildHtml() {
     var rows = ACTIONS.map(function(a){
-      // Each onclick first closes the drawer (toggleAppNav), then runs
-      // the action.  Closing first means the action's modal / window
-      // isn't visually blocked by the drawer overlay.
       return '<button type="button" class="app-nav-pos-action app-nav-pos-action-' + a.cls + '"' +
-             ' onclick="if(typeof window.toggleAppNav===\'function\')window.toggleAppNav(); ' + a.fn + ';">' +
+             ' data-action="' + a.id + '">' +
              '<i class="fas ' + a.icon + '"></i><span>' + a.label + '</span>' +
              '</button>';
     }).join('');
     return '<div class="app-nav-pos-actions-title">إجراءات الكاشير</div>' + rows;
   }
+  // Single delegated listener — survives every renderHeader re-render
+  // because it's attached to document, not the buttons themselves.
+  document.addEventListener('click', function(e) {
+    var t = e.target;
+    if (!t || !t.closest) return;
+    var btn = t.closest('.app-nav-pos-action');
+    if (!btn) return;
+    e.preventDefault();
+    e.stopPropagation();
+    var id = btn.getAttribute('data-action');
+    // Run the action FIRST so its modal starts mounting before we begin
+    // the drawer's slide-out animation.  Wrapped in try/catch so a
+    // failing action still allows the drawer to close.
+    try {
+      switch (id) {
+        case 'shift-open':       if (typeof shiftOpen === 'function')             shiftOpen(); break;
+        case 'shift-close':      if (typeof shiftCloseStart === 'function')       shiftCloseStart(); break;
+        case 'stocktake':        if (typeof openCashierStocktake === 'function')  openCashierStocktake(); break;
+        case 'shortage':         if (typeof openShortageRequest === 'function')   openShortageRequest(); break;
+        case 'my-invoices':      if (typeof posOpenMyInvoices === 'function')     posOpenMyInvoices(); break;
+        // v6.17.8 — location.href instead of window.open: works in iOS PWA
+        // standalone mode (which silently blocks window.open) and on Desktop.
+        case 'employee-portal':  window.location.href = '/employee/'; break;
+      }
+    } catch (err) {
+      try { console.error('[POS drawer action]', id, err); } catch (_) {}
+    }
+    // Close the drawer AFTER the action has had a tick to mount.
+    setTimeout(function() {
+      var nav = document.getElementById('appNav');
+      if (nav && nav.classList.contains('open') && typeof window.toggleAppNav === 'function') {
+        window.toggleAppNav();
+      }
+    }, 50);
+  });
   function injectMobileActions() {
     if (window.innerWidth >= 768) return;                     // mobile only
     var nav = document.getElementById('appNav');

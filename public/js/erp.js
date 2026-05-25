@@ -10186,8 +10186,13 @@ window._wfInboxRenderRow = function(t){
     '<td style="font-size:12px;">' + (t.deptName||t.deptCode||'—') + '</td>' +
     '<td style="font-weight:700;max-width:220px;overflow:hidden;text-overflow:ellipsis;">' + (t.title || '') + '</td>' +
     '<td><span class="wf-txn-amount">' + (Number(t.amount)||0).toLocaleString('en',{minimumFractionDigits:2}) + '</span></td>' +
-    '<td style="font-size:12px;"><div style="font-weight:700;color:#1e40af;">' + (t.currentAssignee||'—') + '</div>' +
-    (t.currentRoleName ? '<div style="font-size:10px;color:#8b5cf6;font-weight:700;"><i class="fas fa-id-badge" style="font-size:8px;"></i> ' + t.currentRoleName + '</div>' : '') + '</td>' +
+    // v6.18.3 (Wave 4) — Prefer the canonical full name from hr_employees
+    // (via the Wave 3 user<->employee link).  Fall back to the legacy
+    // current_assignee text only when the employee record is missing.
+    '<td style="font-size:12px;"><div style="font-weight:700;color:#1e40af;">' + (t.assigneeName||t.currentAssignee||'—') + '</div>' +
+    (t.assigneeJobTitle ? '<div style="font-size:10px;color:#0d9488;font-weight:700;">'+t.assigneeJobTitle+'</div>' : '') +
+    (t.currentRoleName ? '<div style="font-size:10px;color:#8b5cf6;font-weight:700;"><i class="fas fa-id-badge" style="font-size:8px;"></i> ' + t.currentRoleName + '</div>' : '') +
+    (t.sameOwner ? '<div style="font-size:9px;color:#94a3b8;font-weight:600;margin-top:2px;"><i class="fas fa-circle-check" style="color:#10b981;"></i> هو المُنشِئ نفسه</div>' : '') + '</td>' +
     '<td style="font-size:12px;color:#64748b;">' + dt + '</td>' +
     '<td>' + actions + '</td>' +
   '</tr>';
@@ -10854,8 +10859,18 @@ function wfViewTxn(id) {
       metaRow('النوع', esc(txn.typeName||'—')) +
       (txn.branchName ? metaRow('الفرع', esc(txn.branchName + (txn.branchCode?' ['+txn.branchCode+']':''))) : '') +
       (txn.deptName ? metaRow('القسم', esc(txn.deptName + (txn.deptCode?' ['+txn.deptCode+']':''))) : '') +
-      metaRow('المرسل', '<b>'+esc(txn.senderName||txn.createdBy||'—')+'</b>' + (txn.senderPosition?'<div style="color:#0ea5e9;font-size:11px;font-weight:700;margin-top:2px;">'+esc(txn.senderPosition)+'</div>':'')) +
-      (txn.currentAssignee ? metaRow('المسؤول الحالي', '<b style="color:#1e40af;">'+esc(txn.currentAssignee)+'</b>'+(txn.currentRoleName?' <span style="color:#8b5cf6;font-size:11px;">— '+esc(txn.currentRoleName)+'</span>':'')) : (txn.currentRoleName ? metaRow('المسمى الوظيفي الحالي', esc(txn.currentRoleName), '#8b5cf6') : '')) +
+      // v6.18.3 (Wave 4) — Show the canonical employee full name for
+      // both creator and assignee.  When they're the same person
+      // (txn.sameOwner === true), collapse into a single row so the
+      // owner doesn't see "أحمد" listed twice as if it were two people.
+      (txn.sameOwner
+        ? metaRow('المُنشِئ والمسؤول',
+            '<b>'+esc(txn.creatorName||txn.senderName||txn.createdBy||'—')+'</b>' +
+            (txn.creatorJobTitle?'<div style="color:#0d9488;font-size:11px;font-weight:700;margin-top:2px;">'+esc(txn.creatorJobTitle)+'</div>':'') +
+            '<div style="color:#94a3b8;font-size:10px;margin-top:2px;"><i class="fas fa-circle-check" style="color:#10b981;"></i> هو المُنشِئ والمسؤول الحالي معاً</div>')
+        : (metaRow('المُنشِئ', '<b>'+esc(txn.creatorName||txn.senderName||txn.createdBy||'—')+'</b>' + (txn.creatorJobTitle?'<div style="color:#0d9488;font-size:11px;font-weight:700;margin-top:2px;">'+esc(txn.creatorJobTitle)+'</div>':'')) +
+           ((txn.assigneeName||txn.currentAssignee) ? metaRow('المسؤول الحالي', '<b style="color:#1e40af;">'+esc(txn.assigneeName||txn.currentAssignee)+'</b>'+(txn.assigneeJobTitle?' <span style="color:#0d9488;font-size:11px;">— '+esc(txn.assigneeJobTitle)+'</span>':(txn.currentRoleName?' <span style="color:#8b5cf6;font-size:11px;">— '+esc(txn.currentRoleName)+'</span>':''))) : (txn.currentRoleName ? metaRow('المسمى الوظيفي الحالي', esc(txn.currentRoleName), '#8b5cf6') : '')))
+      ) +
       (Number(txn.amount) ? metaRow('المبلغ', Number(txn.amount).toLocaleString('en',{minimumFractionDigits:2}) + ' ر.س', '#16a34a') : '') +
       (txn.accountName ? metaRow('الحساب', esc((txn.accountCode||'')+' — '+txn.accountName)) : '') +
       (txn.costCenterName ? metaRow('مركز التكلفة', esc(txn.costCenterName)) : '') +
@@ -12884,7 +12899,8 @@ function wfLoadIncoming() {
         '<td>'+_wfImpBadge(t.importance||'medium')+'</td>' +
         '<td style="font-family:monospace;font-size:10px;">'+(t.txnNumber||'')+'</td>' +
         '<td><span class="badge badge-blue">'+(t.typeName||'')+'</span></td>' +
-        '<td style="font-size:12px;">'+(t.senderName||t.createdBy||'—')+'</td>' +
+        // v6.18.3 (Wave 4) — Prefer the canonical employee full name
+        '<td style="font-size:12px;">'+(t.creatorName||t.senderName||t.createdBy||'—')+(t.sameOwner?' <span style="color:#10b981;font-size:10px;" title="هو المسؤول نفسه"><i class="fas fa-circle-check"></i></span>':'')+'</td>' +
         '<td style="font-size:11px;">'+(t.branchName||'—')+'<div style="color:#94a3b8;font-size:10px;">'+(t.deptName||'')+'</div></td>' +
         '<td style="font-weight:700;max-width:220px;overflow:hidden;text-overflow:ellipsis;">'+t.title+'</td>' +
         '<td>'+Number(t.amount||0).toLocaleString('en',{minimumFractionDigits:2})+'</td>' +

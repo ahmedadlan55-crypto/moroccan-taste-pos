@@ -1186,21 +1186,49 @@ router.post('/transactions', async (req, res) => {
 });
 
 // Helper — fetch transaction with joined metadata
+// v6.18.3 (Wave 4) — Added LEFT JOINs to users + hr_employees so we
+// can resolve the canonical full_name of the CREATOR and the current
+// ASSIGNEE.  Both fields (`creator_full_name`, `assignee_full_name`)
+// fall back to NULL if the user has no employee record (will not
+// happen after Wave 3's backfill, but stay defensive).  This is how
+// we collapse the cashier-user / employee-user duplicate in the
+// transactions list: both come from the same hr_employees.first_name +
+// last_name now, not from two unrelated text columns.
 function _txnSelectSQL() {
   return `SELECT t.*, tt.name AS type_name, tt.code AS type_code_real,
                  wd.step_name AS current_step_name,
                  p.name AS current_position_name, p.level AS current_position_level,
                  br.name AS branch_name_resolved, br.code AS branch_code_resolved,
-                 d.name AS dept_name_resolved, d.code AS dept_code_resolved
+                 d.name AS dept_name_resolved, d.code AS dept_code_resolved,
+                 TRIM(CONCAT(COALESCE(eCreator.first_name,''), ' ',
+                             COALESCE(eCreator.last_name,'')))   AS creator_full_name,
+                 TRIM(CONCAT(COALESCE(eAssignee.first_name,''), ' ',
+                             COALESCE(eAssignee.last_name,'')))  AS assignee_full_name,
+                 jtCreator.name_ar  AS creator_job_title,
+                 jtAssignee.name_ar AS assignee_job_title
           FROM transactions t
           JOIN transaction_types tt ON t.transaction_type_id = tt.id
           LEFT JOIN workflow_definitions wd ON t.current_step_id = wd.id
           LEFT JOIN positions p ON wd.required_position_id = p.id
           LEFT JOIN branches br ON t.branch_id = br.id
-          LEFT JOIN hr_departments d ON t.dept_id = d.id`;
+          LEFT JOIN hr_departments d ON t.dept_id = d.id
+          LEFT JOIN users uCreator       ON uCreator.username = t.created_by
+          LEFT JOIN hr_employees eCreator ON eCreator.id = uCreator.employee_id
+          LEFT JOIN hr_job_titles jtCreator  ON jtCreator.code = uCreator.job_title_code
+          LEFT JOIN users uAssignee      ON uAssignee.username = t.current_assignee
+          LEFT JOIN hr_employees eAssignee ON eAssignee.id = uAssignee.employee_id
+          LEFT JOIN hr_job_titles jtAssignee ON jtAssignee.code = uAssignee.job_title_code`;
 }
 
 function _mapTxn(t) {
+  // v6.18.3 — Resolve display names through hr_employees and detect
+  // when creator and assignee are the same person so the front-end
+  // can collapse the duplicate column instead of repeating one name.
+  const creatorName  = (t.creator_full_name && String(t.creator_full_name).trim())
+                       || t.sender_name || t.created_by || '';
+  const assigneeName = (t.assignee_full_name && String(t.assignee_full_name).trim())
+                       || t.current_assignee || '';
+  const sameOwner    = !!creatorName && !!assigneeName && creatorName === assigneeName;
   return fixObj({
     id: t.id, txnNumber: t.transaction_number,
     typeId: t.transaction_type_id, typeName: t.type_name, typeCode: t.type_code || t.type_code_real,
@@ -1221,6 +1249,15 @@ function _mapTxn(t) {
     costCenterName: t.cost_center_name || '',
     recipientUsername: t.recipient_username || '',
     senderName: t.sender_name || '', senderPosition: t.sender_position || '',
+    // v6.18.3 (Wave 4) — canonical display names from hr_employees
+    // (single source of truth for "who is this person") + a flag that
+    // tells the UI when the creator and assignee are the same person
+    // so it can collapse the duplicate column.
+    creatorName: creatorName,
+    creatorJobTitle: t.creator_job_title || '',
+    assigneeName: assigneeName,
+    assigneeJobTitle: t.assignee_job_title || '',
+    sameOwner: sameOwner,
     // V3.1: returned-for-edit metadata
     returnedAt: t.returned_at || null,
     returnedBy: t.returned_by || null,

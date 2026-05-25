@@ -2333,6 +2333,64 @@ async function runMigrations() {
   await addColumnIfMissing('users', 'phone', "VARCHAR(30)");
   await addColumnIfMissing('users', 'full_name', "VARCHAR(200)");
 
+  // v6.18.0 (Wave 1) — HR people-record fields.  Mirrors what migration
+  // 0004_hr_job_titles.sql ALTERs.  Defensive: addColumnIfMissing is a
+  // no-op when the migration framework already applied it.  All four
+  // columns are NULL so existing users don't block startup; Wave 2 (a
+  // later migration) will start enforcing them on insert/update.
+  await addColumnIfMissing('users', 'iqama_number',   "VARCHAR(30)");
+  await addColumnIfMissing('users', 'iban',           "VARCHAR(50)");
+  await addColumnIfMissing('users', 'job_title_code', "VARCHAR(30)");
+
+  // v6.18.0 (Wave 1) — Canonical job-titles lookup table.  Same shape
+  // as migration 0004_hr_job_titles.sql so a brand-new database that
+  // skips the framework still gets the seed.  Idempotent.
+  try {
+    await db.query(`CREATE TABLE IF NOT EXISTS hr_job_titles (
+      id           VARCHAR(50)  NOT NULL PRIMARY KEY,
+      code         VARCHAR(30)  NOT NULL UNIQUE,
+      name_ar      VARCHAR(100) NOT NULL,
+      name_en      VARCHAR(100) NOT NULL,
+      rank_level   INT          NOT NULL DEFAULT 7,
+      category     ENUM('management','operations','finance','support','kitchen','warehouse','hr','it') NOT NULL DEFAULT 'operations',
+      default_role ENUM('admin','manager','cashier','custody','employee') NOT NULL DEFAULT 'employee',
+      is_active    BOOLEAN      NOT NULL DEFAULT TRUE,
+      created_at   TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      INDEX idx_jt_rank     (rank_level),
+      INDEX idx_jt_category (category),
+      INDEX idx_jt_active   (is_active)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`);
+
+    // Seed the 20 canonical Saudi-restaurant job titles.  INSERT IGNORE so
+    // a re-run doesn't error on the existing unique `code` constraint.
+    await db.query(`INSERT IGNORE INTO hr_job_titles
+      (id, code, name_ar, name_en, rank_level, category, default_role) VALUES
+      ('jt-owner',        'OWNER',        'المالك',                'Owner',               1,  'management', 'admin'),
+      ('jt-gm',           'GM',           'المدير العام',          'General Manager',     2,  'management', 'admin'),
+      ('jt-ops-mgr',      'OPS_MGR',      'مدير العمليات',         'Operations Manager',  3,  'management', 'manager'),
+      ('jt-branch-mgr',   'BRANCH_MGR',   'مدير فرع',              'Branch Manager',      4,  'management', 'manager'),
+      ('jt-shift-sup',    'SHIFT_SUP',    'مشرف وردية',            'Shift Supervisor',    5,  'operations', 'manager'),
+      ('jt-chef-head',    'CHEF_HEAD',    'رئيس الطباخين',         'Head Chef',           5,  'kitchen',    'manager'),
+      ('jt-accountant',   'ACCOUNTANT',   'محاسب',                 'Accountant',          6,  'finance',    'custody'),
+      ('jt-hr-officer',   'HR_OFFICER',   'مسؤول موارد بشرية',     'HR Officer',          6,  'hr',         'manager'),
+      ('jt-sr-cashier',   'SR_CASHIER',   'كاشير أول',             'Senior Cashier',      6,  'operations', 'cashier'),
+      ('jt-wh-keeper',    'WH_KEEPER',    'أمين مستودع',           'Warehouse Keeper',    6,  'warehouse',  'custody'),
+      ('jt-cashier',      'CASHIER',      'كاشير',                 'Cashier',             7,  'operations', 'cashier'),
+      ('jt-sr-server',    'SR_SERVER',    'نادل أول',              'Senior Server',       7,  'operations', 'employee'),
+      ('jt-chef-sous',    'CHEF_SOUS',    'طاهٍ ثانٍ',             'Sous Chef',           7,  'kitchen',    'employee'),
+      ('jt-it-tech',      'IT_TECH',      'فني تقنية',             'IT Technician',       7,  'it',         'employee'),
+      ('jt-server',       'SERVER',       'نادل',                  'Server',              8,  'operations', 'employee'),
+      ('jt-cook',         'COOK',         'طاهٍ',                  'Cook',                8,  'kitchen',    'employee'),
+      ('jt-stocktaker',   'STOCKTAKER',   'جردة',                  'Stocktaker',          8,  'warehouse',  'employee'),
+      ('jt-kitchen-help', 'KITCHEN_HELP', 'مساعد مطبخ',            'Kitchen Helper',      9,  'kitchen',    'employee'),
+      ('jt-delivery',     'DELIVERY',     'سائق توصيل',            'Delivery Driver',     9,  'operations', 'employee'),
+      ('jt-cleaner',      'CLEANER',      'عامل نظافة',            'Cleaner',             10, 'support',    'employee')`);
+  } catch (jtErr) {
+    console.warn('[startup] hr_job_titles seed skipped:', jtErr && jtErr.message);
+  }
+  try { await db.query('CREATE INDEX idx_users_iqama_number   ON users(iqama_number)');   } catch(e) {}
+  try { await db.query('CREATE INDEX idx_users_job_title_code ON users(job_title_code)'); } catch(e) {}
+
   // ═══════════════════════════════════════
   // WAREHOUSE-BASED INVENTORY RESTRUCTURE
   // ═══════════════════════════════════════

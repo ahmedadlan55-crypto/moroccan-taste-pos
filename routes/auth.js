@@ -765,6 +765,116 @@ router.delete('/users/:username', async (req, res) => {
   } catch (e) { res.json({ success: false, error: e.message }); }
 });
 
+// ═══════════════════════════════════════════════════════════════
+// v6.18.5 (Wave 6) — Per-user effective permissions + overrides
+// ═══════════════════════════════════════════════════════════════
+// The permissions_v3 + role_permissions + user_permission_overrides
+// tables have existed since v3 but had no UI to inspect or edit per-
+// user grants.  These three endpoints add:
+//
+//   GET    /users/:username/permissions          — read effective list
+//   POST   /users/:username/permissions/:permId  — override (grant/revoke)
+//   DELETE /users/:username/permissions/:permId  — clear override
+//
+// "Effective" = role_permissions ∪ {overrides where grant_type='grant'}
+//               \ {overrides where grant_type='revoke'}
+//
+// The GET endpoint returns every permission in the catalog so the UI
+// can render a complete checklist.  Each row carries:
+//   byRole:   true if the user's role grants this perm by default
+//   override: null | 'grant' | 'revoke'
+//   effective: boolean — what the system actually enforces
+// Front-end computes nothing; backend is the single source of truth.
+
+// GET — return the full permissions catalog with user-specific status.
+router.get('/users/:username/permissions', async (req, res) => {
+  try {
+    const username = req.params.username;
+    // Resolve the user's role (and catch missing users early).
+    const [users] = await db.query('SELECT role FROM users WHERE username = ? LIMIT 1', [username]);
+    if (!users.length) return res.json({ success: false, error: 'المستخدم غير موجود' });
+    const role = users[0].role || 'employee';
+
+    // Single query: catalog + role-default flag + per-user override.
+    const [rows] = await db.query(`
+      SELECT p.id, p.category, p.label_ar, p.label_en, p.is_sensitive, p.sort_order,
+             (rp.permission_id IS NOT NULL) AS by_role,
+             upo.grant_type                  AS override_type
+        FROM permissions_v3 p
+        LEFT JOIN role_permissions rp
+               ON rp.permission_id = p.id AND rp.role = ?
+        LEFT JOIN user_permission_overrides upo
+               ON upo.permission_id = p.id AND upo.username = ?
+       ORDER BY p.category ASC, p.sort_order ASC, p.id ASC
+    `, [role, username]);
+
+    const list = rows.map(r => {
+      const byRole = !!Number(r.by_role);
+      const override = r.override_type || null;
+      // Effective = (role default OR explicit grant) AND NOT explicit revoke
+      const effective = (byRole && override !== 'revoke') || override === 'grant';
+      return {
+        id: r.id,
+        category: r.category,
+        labelAr: r.label_ar || '',
+        labelEn: r.label_en || '',
+        isSensitive: !!r.is_sensitive,
+        sortOrder: Number(r.sort_order) || 0,
+        byRole: byRole,
+        override: override,
+        effective: effective
+      };
+    });
+
+    res.json({
+      success: true,
+      username: username,
+      role: role,
+      permissions: list
+    });
+  } catch (e) { res.json({ success: false, error: e.message }); }
+});
+
+// POST — set or update an override.  Body: { grantType: 'grant' | 'revoke' }
+router.post('/users/:username/permissions/:permId', async (req, res) => {
+  try {
+    const username = req.params.username;
+    const permId   = req.params.permId;
+    const grantType = (req.body && req.body.grantType) || '';
+    if (grantType !== 'grant' && grantType !== 'revoke') {
+      return res.json({ success: false, error: 'grantType يجب أن يكون grant أو revoke' });
+    }
+    // Confirm both the user and the permission exist before writing.
+    const [u] = await db.query('SELECT 1 FROM users WHERE username = ? LIMIT 1', [username]);
+    if (!u.length) return res.json({ success: false, error: 'المستخدم غير موجود' });
+    const [p] = await db.query('SELECT 1 FROM permissions_v3 WHERE id = ? LIMIT 1', [permId]);
+    if (!p.length) return res.json({ success: false, error: 'الصلاحية غير موجودة' });
+
+    const grantedBy = (req.user && req.user.username) || username;
+    await db.query(`
+      INSERT INTO user_permission_overrides (username, permission_id, grant_type, granted_by)
+      VALUES (?, ?, ?, ?)
+      ON DUPLICATE KEY UPDATE
+        grant_type = VALUES(grant_type),
+        granted_by = VALUES(granted_by),
+        granted_at = CURRENT_TIMESTAMP
+    `, [username, permId, grantType, grantedBy]);
+
+    res.json({ success: true, username: username, permId: permId, grantType: grantType });
+  } catch (e) { res.json({ success: false, error: e.message }); }
+});
+
+// DELETE — clear the override (fall back to role default).
+router.delete('/users/:username/permissions/:permId', async (req, res) => {
+  try {
+    await db.query(
+      'DELETE FROM user_permission_overrides WHERE username = ? AND permission_id = ?',
+      [req.params.username, req.params.permId]
+    );
+    res.json({ success: true });
+  } catch (e) { res.json({ success: false, error: e.message }); }
+});
+
 // V5.7.12 — Granular wipe sections
 // ────────────────────────────────────────────────────────────
 // Each section is an independently-checkable group. Tables are listed

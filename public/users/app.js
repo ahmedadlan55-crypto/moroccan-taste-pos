@@ -75,6 +75,8 @@ window.loadUsers = function() {
         '<td>' +
           '<div class="user-actions">' +
             '<button class="btn-edit"   onclick="editUser(\'' + u.username + '\')" title="تعديل"><i class="fas fa-edit"></i></button>' +
+            // v6.18.5 (Wave 6) — Permissions modal trigger
+            '<button class="btn-edit"   onclick="openUserPermsModal(\'' + u.username + '\')" title="الصلاحيات" style="background:#0d9488;"><i class="fas fa-shield-halved"></i></button>' +
             '<button class="btn-toggle" onclick="toggleUser(\'' + u.username + '\')" title="تفعيل / إيقاف"><i class="fas fa-power-off"></i></button>' +
             '<button class="btn-del"    onclick="deleteUser(\'' + u.username + '\')" title="حذف"><i class="fas fa-trash"></i></button>' +
           '</div>' +
@@ -265,4 +267,153 @@ window.deleteUser = function(username) {
           else showToast((r && r.error) || 'فشل الحذف', true);
        }).deleteUser(username);
   });
+};
+
+// ═══════════════════════════════════════════════════════════════
+// v6.18.5 (Wave 6) — Per-user effective permissions modal
+// ═══════════════════════════════════════════════════════════════
+// Backend endpoints (GET / POST / DELETE /users/:username/permissions)
+// expose role-default + per-user override semantics.  This modal
+// renders the full permission catalog grouped by category, with a
+// checkbox per row that the admin can toggle to override.  Sensitive
+// permissions are highlighted; the row also shows whether each value
+// comes from the user's role or from an explicit override.
+var _permsModalUsername = '';
+var _permsCategoryLabels = {
+  pos: 'نقطة البيع', sales: 'المبيعات', inventory: 'المخزون',
+  finance: 'المالية', hr: 'الموارد البشرية', workflow: 'سير العمل',
+  admin: 'الإدارة', txn: 'المعاملات', purchases: 'المشتريات',
+  warehouse: 'المستودع', reports: 'التقارير'
+};
+
+window.openUserPermsModal = function(username) {
+  _permsModalUsername = username;
+  // Build the modal lazily on first open so the markup doesn't bloat
+  // the initial page weight.
+  var modal = document.getElementById('modalUserPerms');
+  if (!modal) {
+    modal = document.createElement('div');
+    modal.id = 'modalUserPerms';
+    modal.className = 'glass-modal hidden';
+    modal.innerHTML =
+      '<div class="glass-modal-content" style="max-width:780px;max-height:90dvh;display:flex;flex-direction:column;">' +
+        '<div class="glass-modal-title">' +
+          '<span><i class="fas fa-shield-halved"></i> صلاحيات المستخدم — <span id="permsUserLabel" style="color:#0d9488;"></span></span>' +
+          '<button class="glass-modal-close" onclick="closeGlassModal(\'#modalUserPerms\')" aria-label="إغلاق">&times;</button>' +
+        '</div>' +
+        '<div class="glass-modal-body" id="permsModalBody" style="flex:1;overflow-y:auto;">' +
+          '<div style="text-align:center;padding:30px;color:#94a3b8;"><i class="fas fa-spinner fa-spin"></i> جاري التحميل...</div>' +
+        '</div>' +
+        '<div class="glass-modal-actions">' +
+          '<button class="btn btn-light" onclick="closeGlassModal(\'#modalUserPerms\')">إغلاق</button>' +
+        '</div>' +
+      '</div>';
+    document.body.appendChild(modal);
+  }
+  document.getElementById('permsUserLabel').textContent = username;
+  openGlassModal('#modalUserPerms');
+  _loadUserPerms(username);
+};
+
+function _loadUserPerms(username) {
+  var body = document.getElementById('permsModalBody');
+  body.innerHTML = '<div style="text-align:center;padding:30px;color:#94a3b8;"><i class="fas fa-spinner fa-spin"></i> جاري التحميل...</div>';
+  fetch('/api/auth/users/' + encodeURIComponent(username) + '/permissions', { credentials: 'include' })
+    .then(function(r){ return r.json(); })
+    .then(function(j){
+      if (!j || !j.success) {
+        body.innerHTML = '<div style="text-align:center;padding:30px;color:#dc2626;">' + ((j && j.error) || 'فشل التحميل') + '</div>';
+        return;
+      }
+      _renderPermsList(j);
+    })
+    .catch(function(err){
+      body.innerHTML = '<div style="text-align:center;padding:30px;color:#dc2626;">خطأ: ' + (err.message || err) + '</div>';
+    });
+}
+
+function _renderPermsList(data) {
+  var body = document.getElementById('permsModalBody');
+  // Group by category preserving order.
+  var groups = {};
+  var order = [];
+  (data.permissions || []).forEach(function(p) {
+    if (!groups[p.category]) { groups[p.category] = []; order.push(p.category); }
+    groups[p.category].push(p);
+  });
+  var html = '<div style="background:#f0f9ff;border:1px solid #bae6fd;padding:10px 14px;border-radius:10px;margin-bottom:14px;font-size:12px;color:#075985;line-height:1.7;">' +
+    '<i class="fas fa-info-circle"></i> ' +
+    'الدور الافتراضي: <b style="color:#0d9488;">' + (data.role||'—') + '</b>. ' +
+    'الصلاحيات المُؤشَّرة فعّالة الآن. ' +
+    'فك التأشير = منع (revoke override). تأشير صلاحية ليست من الدور = منح (grant override). ' +
+    'الصلاحيات الحساسة <i class="fas fa-triangle-exclamation" style="color:#dc2626;"></i> تحتاج حذراً إضافياً.' +
+  '</div>';
+  html += order.map(function(cat) {
+    var label = _permsCategoryLabels[cat] || cat;
+    var perms = groups[cat];
+    return '<details open style="margin-bottom:10px;border:1px solid #e2e8f0;border-radius:10px;padding:8px 12px;">' +
+      '<summary style="font-weight:800;color:#0f172a;cursor:pointer;padding:4px 0;">' +
+        '<i class="fas fa-folder-open" style="color:#0d9488;"></i> ' + label +
+        ' <span style="color:#94a3b8;font-weight:600;font-size:11px;">(' + perms.length + ')</span>' +
+      '</summary>' +
+      '<div style="margin-top:8px;">' +
+        perms.map(function(p) {
+          var checked = p.effective ? 'checked' : '';
+          var sourceBadge = p.override === 'grant'
+            ? ' <span style="background:#dcfce7;color:#166534;font-size:9px;padding:1px 6px;border-radius:6px;font-weight:700;">منح إضافي</span>'
+            : p.override === 'revoke'
+              ? ' <span style="background:#fee2e2;color:#991b1b;font-size:9px;padding:1px 6px;border-radius:6px;font-weight:700;">منع</span>'
+              : (p.byRole
+                  ? ' <span style="background:#dbeafe;color:#1e40af;font-size:9px;padding:1px 6px;border-radius:6px;font-weight:700;">من الدور</span>'
+                  : '');
+          var sensitiveIcon = p.isSensitive ? ' <i class="fas fa-triangle-exclamation" style="color:#dc2626;font-size:10px;" title="صلاحية حساسة"></i>' : '';
+          return '<label style="display:flex;align-items:center;gap:8px;padding:6px 4px;border-bottom:1px solid #f1f5f9;cursor:pointer;">' +
+            '<input type="checkbox" ' + checked + ' onchange="_togglePermOverride(\'' + p.id + '\', this.checked, ' + (p.byRole?1:0) + ')" data-perm-id="' + p.id + '">' +
+            '<span style="flex:1;font-size:13px;color:#1e293b;">' + (p.labelAr||p.id) + sensitiveIcon + '</span>' +
+            '<span><code style="font-size:10px;color:#64748b;">' + p.id + '</code>' + sourceBadge + '</span>' +
+          '</label>';
+        }).join('') +
+      '</div>' +
+    '</details>';
+  }).join('');
+  body.innerHTML = html;
+}
+
+window._togglePermOverride = function(permId, isChecked, byRole) {
+  var username = _permsModalUsername;
+  // Determine the action that maps user intent to a backend call:
+  //   role=YES, now unchecked → POST revoke
+  //   role=YES, now checked   → DELETE override (back to role default)
+  //   role=NO,  now checked   → POST grant
+  //   role=NO,  now unchecked → DELETE override (back to no-grant)
+  var url = '/api/auth/users/' + encodeURIComponent(username) + '/permissions/' + encodeURIComponent(permId);
+  var method, requestBody = null;
+  var byRoleBool = !!byRole;
+  if (isChecked && !byRoleBool) {
+    method = 'POST'; requestBody = JSON.stringify({ grantType: 'grant' });
+  } else if (!isChecked && byRoleBool) {
+    method = 'POST'; requestBody = JSON.stringify({ grantType: 'revoke' });
+  } else {
+    // Either checked-and-was-role, or unchecked-and-not-role → no override needed.
+    method = 'DELETE';
+  }
+  var opts = { method: method, credentials: 'include', headers: { 'Content-Type': 'application/json' } };
+  if (requestBody) opts.body = requestBody;
+  fetch(url, opts)
+    .then(function(r){ return r.json(); })
+    .then(function(j){
+      if (!j || !j.success) {
+        showToast((j && j.error) || 'فشل التحديث', true);
+        // Reload to recover the true server state on failure
+        _loadUserPerms(username);
+        return;
+      }
+      // Re-render so the source badges update without the user
+      // having to close/reopen the modal.
+      _loadUserPerms(username);
+    })
+    .catch(function(err){
+      showToast(err.message || 'خطأ', true);
+      _loadUserPerms(username);
+    });
 };

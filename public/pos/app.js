@@ -4150,6 +4150,14 @@ window.toggleFloatActions = function() {
     e.preventDefault();
     e.stopPropagation();
     window.toggleFloatActions();
+    // v6.17.6 — On mobile (PWA) the POS link lives inside the hamburger
+    // drawer. The popover opens but the drawer stays open at the same
+    // z-index and visually hides the popover. Close the drawer so the
+    // user actually sees the menu they just opened.
+    var nav = document.getElementById('appNav');
+    if (nav && nav.classList.contains('open') && typeof window.toggleAppNav === 'function') {
+      window.toggleAppNav();
+    }
   }, true);  // capture so we run before any other handler
 
   // ARIA hints — apply now and re-apply whenever the header is re-rendered

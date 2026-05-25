@@ -4147,17 +4147,15 @@ window.toggleFloatActions = function() {
     if (!posLink) return;
     var onPos = /^\/pos\/?$/.test(window.location.pathname);
     if (!onPos) return;
+    // v6.17.7 — On mobile the 6 action buttons are injected inline INSIDE
+    // the hamburger drawer (see setupMobileDrawerActions below).  We don't
+    // want to also pop a separate floating bar — so on phones we don't
+    // intercept the click at all.  The default href="/pos/" navigation
+    // is a no-op when we're already on /pos/.
+    if (window.innerWidth < 768) return;
     e.preventDefault();
     e.stopPropagation();
     window.toggleFloatActions();
-    // v6.17.6 — On mobile (PWA) the POS link lives inside the hamburger
-    // drawer. The popover opens but the drawer stays open at the same
-    // z-index and visually hides the popover. Close the drawer so the
-    // user actually sees the menu they just opened.
-    var nav = document.getElementById('appNav');
-    if (nav && nav.classList.contains('open') && typeof window.toggleAppNav === 'function') {
-      window.toggleAppNav();
-    }
   }, true);  // capture so we run before any other handler
 
   // ARIA hints — apply now and re-apply whenever the header is re-rendered
@@ -4179,6 +4177,73 @@ window.toggleFloatActions = function() {
       new MutationObserver(applyAria).observe(host, { childList: true, subtree: true });
     } catch (e) { /* a11y nicety — never let it break the page */ }
   }
+})();
+
+// v6.17.7 — Mobile drawer enrichment.  On phones (<768px) the hamburger
+// drawer is where the user goes to find ANY nav action; the v6.17.5
+// full-width popover at the top of the viewport added a second place
+// they had to learn about.  Instead, inject the 6 action buttons inline
+// inside the drawer — right under the POS link — so the user opens the
+// hamburger once and everything is reachable in a single tap.
+//
+// Desktop is unchanged: the popover still appears when the POS nav link
+// is clicked (handled above in setupPosNavLinkTrigger).
+(function setupMobileDrawerActions(){
+  // Definition lives next to the original .float-btn markup in index.html.
+  // We mirror the same callbacks here so a single source of truth could be
+  // refactored later — for now this is the simplest, lowest-risk path.
+  var ACTIONS = [
+    { cls: 'success', icon: 'fa-play',                 label: 'فتح وردية',     fn: 'shiftOpen()' },
+    { cls: 'danger',  icon: 'fa-stop',                 label: 'إغلاق الوردية', fn: 'shiftCloseStart()' },
+    { cls: 'warn',    icon: 'fa-clipboard-check',      label: 'جرد المخزون',   fn: 'openCashierStocktake()' },
+    { cls: 'purple',  icon: 'fa-exclamation-triangle', label: 'طلب نواقص',     fn: 'openShortageRequest()' },
+    { cls: 'sky',     icon: 'fa-file-invoice',         label: 'فواتيري',       fn: 'posOpenMyInvoices()' },
+    { cls: 'green2',  icon: 'fa-user-tie',             label: 'بوابة الموظف', fn: "window.open('/employee/','_blank')" }
+  ];
+  function buildHtml() {
+    var rows = ACTIONS.map(function(a){
+      // Each onclick first closes the drawer (toggleAppNav), then runs
+      // the action.  Closing first means the action's modal / window
+      // isn't visually blocked by the drawer overlay.
+      return '<button type="button" class="app-nav-pos-action app-nav-pos-action-' + a.cls + '"' +
+             ' onclick="if(typeof window.toggleAppNav===\'function\')window.toggleAppNav(); ' + a.fn + ';">' +
+             '<i class="fas ' + a.icon + '"></i><span>' + a.label + '</span>' +
+             '</button>';
+    }).join('');
+    return '<div class="app-nav-pos-actions-title">إجراءات الكاشير</div>' + rows;
+  }
+  function injectMobileActions() {
+    if (window.innerWidth >= 768) return;                     // mobile only
+    var nav = document.getElementById('appNav');
+    if (!nav) return;
+    if (nav.querySelector('.app-nav-pos-actions')) return;    // idempotent
+    var box = document.createElement('div');
+    box.className = 'app-nav-pos-actions';
+    box.innerHTML = buildHtml();
+    var posLink = nav.querySelector('a[href="/pos/"]');
+    if (posLink && posLink.parentNode === nav) {
+      nav.insertBefore(box, posLink.nextSibling);
+    } else {
+      nav.appendChild(box);
+    }
+  }
+  function removeMobileActions() {
+    var existing = document.querySelector('.app-nav-pos-actions');
+    if (existing && existing.parentNode) existing.parentNode.removeChild(existing);
+  }
+  injectMobileActions();
+  // Re-inject after every renderHeader (it wipes innerHTML of the host
+  // and recreates the <nav>).  MutationObserver picks up the rewrite.
+  var host = document.getElementById('appHeader');
+  if (host && window.MutationObserver) {
+    try { new MutationObserver(injectMobileActions).observe(host, { childList: true, subtree: true }); }
+    catch (e) { /* drawer enrichment is a nicety — never break the page */ }
+  }
+  // Adapt to viewport changes: tablet rotates, dev tools open/close, etc.
+  window.addEventListener('resize', function(){
+    if (window.innerWidth >= 768) removeMobileActions();
+    else injectMobileActions();
+  });
 })();
 
 // Auto-collapse on mobile after 5 seconds (legacy behaviour, retained).

@@ -2153,6 +2153,66 @@ body.foodics-mode .cart-footer { display: none !important; }
 .float-btn-sky     { background: linear-gradient(135deg, #0ea5e9, #0284c7); box-shadow: 0 6px 14px rgba(14,165,233,0.40); }
 .float-btn-green2  { background: linear-gradient(135deg, #22c55e, #15803d); box-shadow: 0 6px 14px rgba(34,197,94,0.40); }
 
+/* ─────────────────────────────────────────────────────────────────────
+   v6.17.7 — Mobile drawer inline action rows
+   ─────────────────────────────────────────────────────────────────────
+   On phones the hamburger drawer is the natural "menu", and asking the
+   cashier to first tap POS to reveal a separate floating popover was an
+   extra step.  These rows live INSIDE the drawer (injected by JS in
+   setupMobileDrawerActions) right after the POS link.  The colour
+   palette mirrors the .float-btn-* gradients so the icons stay visually
+   familiar.  Hidden on ≥768px — desktop keeps the v6.17.5 popover bar.
+   ───────────────────────────────────────────────────────────────────── */
+.app-nav-pos-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 14px 14px 18px;
+  margin-top: 6px;
+  border-top: 1px solid rgba(15, 23, 42, 0.08);
+}
+.app-nav-pos-actions-title {
+  font-size: 11px;
+  font-weight: 800;
+  color: rgba(15, 23, 42, 0.55);
+  letter-spacing: 0.6px;
+  text-transform: uppercase;
+  padding: 0 4px 4px;
+}
+.app-nav-pos-action {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  padding: 12px 14px;
+  border: 0;
+  border-radius: 12px;
+  font-family: inherit;
+  font-size: 14px;
+  font-weight: 800;
+  color: #fff;
+  cursor: pointer;
+  text-align: start;
+  -webkit-tap-highlight-color: transparent;
+  transition: transform .12s, filter .12s;
+}
+.app-nav-pos-action:active { transform: scale(0.97); filter: brightness(0.95); }
+.app-nav-pos-action i      { font-size: 16px; width: 22px; text-align: center; }
+.app-nav-pos-action span   { flex: 1; }
+
+.app-nav-pos-action-success { background: linear-gradient(135deg, #10b981, #059669); box-shadow: 0 6px 14px rgba(16,185,129,0.30); }
+.app-nav-pos-action-danger  { background: linear-gradient(135deg, var(--mt-danger), var(--mt-danger)); box-shadow: 0 6px 14px rgba(239,68,68,0.30); }
+.app-nav-pos-action-warn    { background: linear-gradient(135deg, var(--mt-warning), var(--mt-warning)); box-shadow: 0 6px 14px rgba(217,119,6,0.30); }
+.app-nav-pos-action-purple  { background: linear-gradient(135deg, #8b5cf6, var(--mt-accent-2)); box-shadow: 0 6px 14px rgba(139,92,246,0.30); }
+.app-nav-pos-action-sky     { background: linear-gradient(135deg, #0ea5e9, #0284c7); box-shadow: 0 6px 14px rgba(14,165,233,0.30); }
+.app-nav-pos-action-green2  { background: linear-gradient(135deg, #22c55e, #15803d); box-shadow: 0 6px 14px rgba(34,197,94,0.30); }
+
+/* v6.17.7 — On mobile the popover is replaced by the inline drawer rows
+   above.  Hide it explicitly so nothing flashes at top of viewport. */
+@media (max-width: 767px) {
+  .float-actions { display: none !important; }
+}
+
 /* ────────────────────────────────────────
    Printer settings modal — status box, tabs, panels
    ──────────────────────────────────────── */

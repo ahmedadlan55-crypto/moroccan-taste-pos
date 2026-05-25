@@ -355,6 +355,27 @@ async function addColumnIfMissing(table, column, definition) {
   }
 }
 
+// v6.18.8 — Reusable defensive helper for column DEFINITION changes
+// (extending an ENUM, widening a VARCHAR, changing a DEFAULT, etc.).
+// Unlike addColumnIfMissing (which only ADDs absent columns), this
+// runs ALTER TABLE MODIFY COLUMN unconditionally — but that's safe
+// because MODIFY COLUMN is a no-op when the definition already matches
+// the live column.  Use this whenever a column's shape needs to evolve
+// on production without depending on an external migration runner.
+//
+// Why it's needed: addColumnIfMissing returns early once the column
+// exists, so any subsequent change to its `definition` argument is
+// invisible to long-running databases.  That's how production drifted
+// onto the 4-value zatca_type ENUM forever, breaking POST /sales/:id/void
+// with "Data truncated for column 'zatca_type' at row 1".
+async function modifyColumnDefinition(table, column, definition) {
+  try {
+    await db.query(`ALTER TABLE ${table} MODIFY COLUMN ${column} ${definition}`);
+  } catch (e) {
+    console.log(`[DB] MODIFY warning (${table}.${column}):`, e.message.substring(0, 120));
+  }
+}
+
 async function createTableIfMissing(tableName, createSQL) {
   try {
     const [rows] = await db.query("SHOW TABLES LIKE ?", [tableName]);
@@ -2765,6 +2786,15 @@ async function runMigrations() {
   // addColumnIfMissing only runs the first time the column is absent;
   // for existing deployments migration 0003 widens the enum in-place.
   await addColumnIfMissing('sales', 'zatca_type', "ENUM('standard','simplified','credit_note','debit_note','cancellation') DEFAULT 'simplified'");
+  // v6.18.8 — Force-widen the ENUM on existing installs whose baseline
+  // created the column with only the original 4 values ('standard',
+  // 'simplified','credit_note','debit_note').  addColumnIfMissing above
+  // is a no-op once the column exists, so the production schema stayed
+  // at 4 values forever → POST /sales/:id/void failed with
+  // "Data truncated for column 'zatca_type' at row 1".  MODIFY COLUMN
+  // is idempotent (no-op when the definition already matches), so it's
+  // safe to run on every server start.
+  await modifyColumnDefinition('sales', 'zatca_type', "ENUM('standard','simplified','credit_note','debit_note','cancellation') DEFAULT 'simplified'");
   await addColumnIfMissing('sales', 'zatca_submitted_at', "DATETIME");
   await addColumnIfMissing('sales', 'zatca_status', "ENUM('pending','submitted','accepted','rejected') DEFAULT 'pending'");
 

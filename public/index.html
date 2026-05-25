@@ -30,22 +30,9 @@
        Fallback: if no saved session, show login form and hide everything else. -->
   <style id="critical-auth-gate">
     html, body { margin: 0; padding: 0; background: radial-gradient(circle at top right, #1e293b, #0f172a); }
-    /* v5.10.51 — whitelist BOTH the FAB and the keyboard panel itself
-       (#vkKeyboard) so the on-screen keyboard works at login. v5.10.50
-       missed #vkKeyboard which is the actual sliding panel — that's why
-       tapping the FAB did nothing visible during login (the panel was
-       created but immediately hidden by this gate). */
-    body:not(.authenticated) > *:not(#loginView):not(#loader):not(#toastContainer):not(#critical-auth-gate):not(#vkToggleBtn):not(#vkKeyboard) {
-      display: none !important;
-      visibility: hidden !important;
-    }
-    /* v5.10.54 — owner request: the on-screen keyboard belongs ONLY on
-       the login screen of the admin shell, not on any admin section
-       after login. Hide both the FAB and any open keyboard panel once
-       the user is authenticated. The cashier shell (/pos/) is a
-       separate page so this rule doesn't reach it. */
-    body.authenticated #vkToggleBtn,
-    body.authenticated #vkKeyboard {
+    /* v6.18.7 — Virtual keyboard removed entirely; the legacy whitelist
+       for #vkToggleBtn / #vkKeyboard is no longer needed. */
+    body:not(.authenticated) > *:not(#loginView):not(#loader):not(#toastContainer):not(#critical-auth-gate) {
       display: none !important;
       visibility: hidden !important;
     }
@@ -77,13 +64,10 @@
                 inherit + summary-card palette tuning
        v6.6.4 — bumped for .wf-row-delete-btn (per-row admin force-delete) -->
   <link rel="stylesheet" href="/css/erp-wf.css?v=6">
-  <!-- v5.10.50 — keyboard.css RESTORED to the admin shell. Safe to load
-       now that v5.10.49 made the keyboard manual-mode (no auto-show on
-       focus/click; only the floating FAB or vkShow() API opens it).
-       Needed so the on-screen keyboard FAB is available at login on
-       touch devices. The v5.10.36 worry — keyboard popping up unwanted
-       in admin — no longer applies. -->
-  <link rel="stylesheet" href="/pos/keyboard.css?v=10">
+  <!-- v6.18.7 — /pos/keyboard.css link removed; the on-screen keyboard
+       was deleted (owner request). iOS / Android surface their own
+       keyboards natively whenever an input gets focus. -->
+
 
   <!-- ═══════════════════════════════════════════════════════════════════
        v5.10.68 — Admin Skin (Drop-in Visual Upgrade)
@@ -172,17 +156,11 @@
       <p class="login-subtitle" data-i18n="login">تسجيل الدخول</p>
 
       <div class="login-field">
-        <!-- v5.10.50 — data-vk="1" so the on-screen keyboard FAB can
-             type into these login fields on touch devices. -->
-        <input type="text" id="lUser" class="form-control" placeholder="اسم المستخدم" autocomplete="username" autocapitalize="none" autocorrect="off" spellcheck="false" inputmode="text" data-vk="1" onkeypress="if(event.key==='Enter') doLogin()">
+        <input type="text" id="lUser" class="form-control" placeholder="اسم المستخدم" autocomplete="username" autocapitalize="none" autocorrect="off" spellcheck="false" inputmode="text" onkeypress="if(event.key==='Enter') doLogin()">
         <i class="fas fa-user login-field-icon"></i>
       </div>
       <div class="login-field">
-        <!-- v5.10.50 — data-vk="1" + explicit password opt-in (the
-             keyboard normally skips password fields for security; we
-             override for the login since the owner explicitly wants
-             touch entry here). -->
-        <input type="password" id="lPass" class="form-control" placeholder="كلمة المرور" autocomplete="current-password" data-vk="1" onkeypress="if(event.key==='Enter') doLogin()">
+        <input type="password" id="lPass" class="form-control" placeholder="كلمة المرور" autocomplete="current-password" onkeypress="if(event.key==='Enter') doLogin()">
         <i class="fas fa-lock login-field-icon"></i>
         <button type="button" class="login-pass-toggle" id="loginPassToggle" onclick="toggleLoginPass()" aria-label="Show/hide password" tabindex="-1">
           <i class="fas fa-eye" id="loginPassIcon"></i>
@@ -261,25 +239,10 @@
   <script src="/js/ent-ui.js?v=1"></script>
   <!-- V5.7.26 — reusable major+minor quantity input widget -->
   <script src="/js/wo-qty-input.js?v=1"></script>
-  <!-- v5.10.50 — keyboard.js RESTORED. Now safe to load on admin
-       because v5.10.49 made it manual-mode (FAB-only, no auto-show
-       on focus). The FAB button at the bottom of <body> is the only
-       trigger. -->
-  <script src="/pos/keyboard.js?v=12"></script>
+  <!-- v6.18.7 — /pos/keyboard.js removed (owner request).  The on-screen
+       virtual keyboard is gone permanently; native OS keyboards handle
+       all input now. -->
   <!-- v5.11.2 — erp-v5.js / erp-v54.js removed (advanced enterprise section deleted) -->
-  <script src="/js/app.js?v=76" defer></script>
-
-  <!-- v5.10.50 — Floating on-screen-keyboard toggle. Visible during
-       login too (whitelisted in #critical-auth-gate above). Tapping it
-       opens the keyboard for the currently-focused data-vk="1" input
-       (e.g. the password field on the login screen carries data-vk="1"
-       implicitly via the focus catch-all once it's tagged — see TODO
-       at top of public/pos/keyboard.js). -->
-  <button id="vkToggleBtn" type="button"
-          class="vk-toggle-fab"
-          aria-label="إظهار/إخفاء لوحة المفاتيح"
-          onclick="vkToggle()">
-    <i class="fas fa-keyboard"></i>
-  </button>
+  <script src="/js/app.js?v=77" defer></script>
 </body>
 </html>

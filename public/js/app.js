@@ -12936,14 +12936,8 @@ function _stInjectStyles() {
     '.st-body{display:grid;grid-template-columns:minmax(0,1.3fr) minmax(0,1fr);gap:14px;}' +
     '@media (max-width:1100px){.st-body{grid-template-columns:1fr;}}' +
     '.st-panel{background:#fff;border:1px solid #e2e8f0;border-radius:18px;display:flex;flex-direction:column;height:calc(100vh - 320px);min-height:480px;overflow:hidden;box-shadow:0 1px 3px rgba(15,23,42,0.04);}' +
-    /* v5.10.34 — When the on-screen keyboard is open, the body gets
-       padding-bottom:280px (from /pos/keyboard.css → body.vk-active).
-       The .st-panel kept its full calc(100vh - 320px) height, so the
-       items strip slid behind the keyboard — items appeared to vanish
-       when the cashier typed. Shrink the panel to fit above the
-       keyboard while it's active. The internal .st-picker-list still
-       scrolls inside. */
-    'body.vk-active .st-panel{height:calc(100vh - 320px - 280px);min-height:240px;}' +
+    /* v6.18.7 — Removed dead .vk-active override (virtual keyboard
+       was deleted; body.vk-active class is no longer set anywhere). */
     '.st-panel-head{padding:14px 18px;border-bottom:1px solid #e2e8f0;background:linear-gradient(180deg,#fff 0%,#f8fafc 100%);display:flex;justify-content:space-between;align-items:center;gap:10px;flex-shrink:0;}' +
     '.st-panel-head-left{display:flex;align-items:center;gap:11px;min-width:0;flex:1;}' +
     '.st-panel-icon{width:36px;height:36px;border-radius:10px;display:grid;place-items:center;flex-shrink:0;font-size:15px;}' +

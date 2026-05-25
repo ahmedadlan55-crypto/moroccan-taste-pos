@@ -810,7 +810,7 @@ window.renderFoodicsSplitFields = function () {
     return (
       '<div class="pay-split-row">' +
         '<div class="pay-split-method"><i class="fas ' + m.icon + '"></i> ' + label + '</div>' +
-        '<input type="number" data-vk="1" step="0.01" min="0" class="form-control pay-split-input split-input" ' +
+        '<input type="number" step="0.01" min="0" class="form-control pay-split-input split-input" ' +
                'data-method="' + safeName + '" value="" placeholder="0.00" oninput="paySplitRecalc()">' +
         '<button type="button" class="pay-split-rest" onclick="paySplitFillRest(\'' + safeName + '\')" title="املأ بالمتبقي · Fill remaining"><i class="fas fa-equals"></i></button>' +
       '</div>'
@@ -1296,7 +1296,7 @@ window.posOpenCustomerSearchModal = function (initialQuery) {
   var bodyHtml =
     '<input type="text" id="posCustSearchInput" class="pos-cust-modal-input" ' +
            'placeholder="اكتب الاسم أو الهاتف للبحث (أو اترك فارغاً لرؤية آخر العملاء)..." ' +
-           'data-vk="1" autocomplete="off" inputmode="text">' +
+           'autocomplete="off" inputmode="text">' +
     '<div id="posCustSearchStatus" class="pos-cust-modal-status">' +
       '<i class="fas fa-spinner fa-spin"></i> جارٍ تحميل آخر العملاء...' +
     '</div>' +
@@ -1441,12 +1441,12 @@ window.posOpenCustomerAddModal = function (prefill) {
   prefill = prefill || {};
   var bodyHtml =
     '<div class="pos-cust-form-grid">' +
-      '<label>الاسم *<input id="posCustAddName" data-vk="1" autocomplete="off" required maxlength="200" value="' + _posEsc(prefill.name || '') + '"></label>' +
-      '<label>الاسم بالإنجليزية<input id="posCustAddNameEn" data-vk="1" autocomplete="off" maxlength="200"></label>' +
-      '<label>الهاتف *<input id="posCustAddPhone" type="tel" inputmode="tel" data-vk="1" autocomplete="off" required maxlength="20" value="' + _posEsc(prefill.phone || '') + '"></label>' +
-      '<label>البريد الإلكتروني<input id="posCustAddEmail" type="email" data-vk="1" autocomplete="off" maxlength="100"></label>' +
-      '<label class="full">العنوان<input id="posCustAddAddress" data-vk="1" autocomplete="off" maxlength="200"></label>' +
-      '<label>المدينة<input id="posCustAddCity" data-vk="1" autocomplete="off" maxlength="100"></label>' +
+      '<label>الاسم *<input id="posCustAddName" autocomplete="off" required maxlength="200" value="' + _posEsc(prefill.name || '') + '"></label>' +
+      '<label>الاسم بالإنجليزية<input id="posCustAddNameEn" autocomplete="off" maxlength="200"></label>' +
+      '<label>الهاتف *<input id="posCustAddPhone" type="tel" inputmode="tel" autocomplete="off" required maxlength="20" value="' + _posEsc(prefill.phone || '') + '"></label>' +
+      '<label>البريد الإلكتروني<input id="posCustAddEmail" type="email" autocomplete="off" maxlength="100"></label>' +
+      '<label class="full">العنوان<input id="posCustAddAddress" autocomplete="off" maxlength="200"></label>' +
+      '<label>المدينة<input id="posCustAddCity" autocomplete="off" maxlength="100"></label>' +
       '<label>نوع العميل' +
         '<select id="posCustAddType">' +
           '<option value="B2C" selected>أفراد · B2C</option>' +
@@ -3593,26 +3593,14 @@ window.openCashierStocktake = function() {
   }).getInvItems();
 };
 
-// v6.12.1 — Whitelist clicks that originate inside the virtual keyboard.
-// The keyboard mounts at document.body (`#vkKeyboard`) — so a key tap
-// is "outside" both the search input AND the results dropdown. Without
-// this guard, every keypress fired `click` on body → outside-click
-// handler → dropdown hidden → next `input` event re-opened it. Result:
-// visible flicker. Selector list covers id + class + data-attribute so
-// future keyboard rebrands don't reintroduce the bug.
-function _vkContains(target) {
-  if (!target || !target.closest) return false;
-  return !!(target.closest('#vkKeyboard') ||
-            target.closest('.vk-keyboard') ||
-            target.closest('[data-vk-root]'));
-}
-
+// v6.18.7 — Virtual keyboard removed entirely (owner request); the
+// _vkContains guard is no longer needed.  Outside-click simply hides
+// the dropdown when the click lands outside search input + results.
 function _closeCstDropdown(e) {
   var res = q('#cstSearchResults');
   var search = q('#cstSearch');
   if (!res || !search) return;
-  // If click is outside the search input AND dropdown AND virtual keyboard, hide it
-  if (!search.contains(e.target) && !res.contains(e.target) && !_vkContains(e.target)) {
+  if (!search.contains(e.target) && !res.contains(e.target)) {
     res.style.display = 'none';
   }
 }
@@ -3720,14 +3708,14 @@ function renderCstCart() {
     // Column 1: المادة
     var nameCell = '<td style="font-weight:700;font-size:12px;">' + c.name + '</td>';
     // Column 2: الكبرى — input or dash
-    // v5.15.1 — data-vk="1" so the virtual keyboard auto-opens here.
+    // v5.15.1 — so the virtual keyboard auto-opens here.
     var bigCell = hasBig
-      ? '<td style="text-align:center;"><input type="number" data-vk="1" min="0" step="1" class="form-control glass-input" style="width:55px;margin:0 auto;padding:5px;text-align:center;font-weight:800;" value="' + (bigVal === '' ? '' : bigVal) + '" oninput="updateCstDual(' + i + ',this.value,null)" placeholder="0"></td>'
+      ? '<td style="text-align:center;"><input type="number" min="0" step="1" class="form-control glass-input" style="width:55px;margin:0 auto;padding:5px;text-align:center;font-weight:800;" value="' + (bigVal === '' ? '' : bigVal) + '" oninput="updateCstDual(' + i + ',this.value,null)" placeholder="0"></td>'
       : '<td style="text-align:center;color:#e2e8f0;">—</td>';
     // Column 3: وحدة كبرى
     var bigUnitCell = '<td style="text-align:center;font-size:11px;color:#64748b;">' + (hasBig ? c.bigUnit : '—') + '</td>';
     // Column 4: الصغرى — always has input
-    var smallCell = '<td style="text-align:center;"><input type="number" data-vk="1" min="0" step="0.01" class="form-control glass-input" style="width:60px;margin:0 auto;padding:5px;text-align:center;font-weight:800;" value="' + (smallVal === '' ? '' : smallVal) + '" oninput="updateCstDual(' + i + ',null,this.value)" placeholder="0"></td>';
+    var smallCell = '<td style="text-align:center;"><input type="number" min="0" step="0.01" class="form-control glass-input" style="width:60px;margin:0 auto;padding:5px;text-align:center;font-weight:800;" value="' + (smallVal === '' ? '' : smallVal) + '" oninput="updateCstDual(' + i + ',null,this.value)" placeholder="0"></td>';
     // Column 5: وحدة صغرى
     var unitCell = '<td style="text-align:center;font-size:11px;color:#64748b;">' + (c.unit || '') + '</td>';
     // Column 5: النظام — v5.12.7 hidden from cashier (blind count)
@@ -4188,9 +4176,41 @@ window.toggleFloatActions = function() {
   // #appNav out to be a direct child of <body> (where the backdrop
   // #appNavBackdrop already lives, per shared/header.js:68) lets it
   // escape the trap and respect the mobile z-index:2050 from style.css.
+  //
+  // v6.18.7 — Desktop fix.  The move was unconditional, which broke
+  // desktop layout: outside header's flex container the nav (display:
+  // flex; flex:1) lost its parent context and rendered as huge stacked
+  // blocks in the middle of the viewport.  Worse, each renderHeader
+  // cycle created a fresh #appNav inside header; the old one in body
+  // was not cleaned up → 3+ "POS" pills accumulated.  The fix:
+  //   1) Only relocate on mobile (<=768px) — desktop nav stays in
+  //      header's flex row.
+  //   2) Remove any orphan nav nodes already sitting in body before
+  //      moving the new one — prevents accumulation on both axes.
+  //   3) On desktop, sweep any orphans left behind from a previous
+  //      buggy state so users with stale PWA caches self-heal.
   function _moveAppNavToBody() {
+    if (window.innerWidth > 768) {
+      // Desktop: nav belongs in header.  Sweep any orphans from
+      // earlier buggy states or from a viewport that just resized up.
+      try {
+        var orphans = document.body.querySelectorAll(':scope > nav#appNav, :scope > nav.app-nav');
+        orphans.forEach(function(n){
+          if (n.parentNode === document.body) n.parentNode.removeChild(n);
+        });
+      } catch (e) { /* selector failures are non-fatal */ }
+      return;
+    }
     var nav = document.getElementById('appNav');
-    if (!nav || nav.parentNode === document.body) return;
+    if (!nav) return;
+    if (nav.parentNode === document.body) return;
+    // Prevent accumulation: remove any prior #appNav in body first.
+    try {
+      var prev = document.body.querySelectorAll(':scope > nav#appNav, :scope > nav.app-nav');
+      prev.forEach(function(n){
+        if (n !== nav && n.parentNode === document.body) n.parentNode.removeChild(n);
+      });
+    } catch (e) { /* legacy browsers — skip cleanup */ }
     try { document.body.appendChild(nav); } catch (e) { /* DOM might be mid-rewrite */ }
   }
 })();
@@ -4523,9 +4543,8 @@ window.openShortageRequest = function() {
 function _closeShrDropdown(e) {
   var res = q('#shrSearchResults'), search = q('#shrSearch');
   if (!res || !search) return;
-  // v6.12.1 — Same virtual-keyboard whitelist as _closeCstDropdown
-  // (see helper _vkContains defined earlier in the file).
-  if (!search.contains(e.target) && !res.contains(e.target) && !_vkContains(e.target)) {
+  // v6.18.7 — Virtual keyboard removed; outside-click logic simplified.
+  if (!search.contains(e.target) && !res.contains(e.target)) {
     res.style.display = 'none';
   }
 }
@@ -4625,12 +4644,12 @@ function _shrRenderCart() {
     var low = c.stock <= c.minStock;
 
     var nameCell = '<td style="font-weight:700;font-size:12px;">' + c.name + '</td>';
-    // v5.15.1 — data-vk="1" so the virtual keyboard auto-opens here.
+    // v5.15.1 — so the virtual keyboard auto-opens here.
     var bigQtyCell = hasBig
-      ? '<td style="text-align:center;"><input type="number" data-vk="1" min="0" step="1" class="form-control glass-input" style="width:55px;margin:0 auto;padding:5px;text-align:center;font-weight:800;" value="' + bigVal + '" oninput="shrUpdateDual(' + i + ',this.value,null)" placeholder="0"></td>'
+      ? '<td style="text-align:center;"><input type="number" min="0" step="1" class="form-control glass-input" style="width:55px;margin:0 auto;padding:5px;text-align:center;font-weight:800;" value="' + bigVal + '" oninput="shrUpdateDual(' + i + ',this.value,null)" placeholder="0"></td>'
       : '<td style="text-align:center;color:#e2e8f0;">—</td>';
     var bigUnitCell = '<td style="text-align:center;font-size:11px;color:#64748b;">' + (hasBig ? c.bigUnit : '—') + '</td>';
-    var smallQtyCell = '<td style="text-align:center;"><input type="number" data-vk="1" min="0" step="1" class="form-control glass-input" style="width:55px;margin:0 auto;padding:5px;text-align:center;font-weight:800;" value="' + smallVal + '" oninput="shrUpdateDual(' + i + ',null,this.value)" placeholder="0"></td>';
+    var smallQtyCell = '<td style="text-align:center;"><input type="number" min="0" step="1" class="form-control glass-input" style="width:55px;margin:0 auto;padding:5px;text-align:center;font-weight:800;" value="' + smallVal + '" oninput="shrUpdateDual(' + i + ',null,this.value)" placeholder="0"></td>';
     var smallUnitCell = '<td style="text-align:center;font-size:11px;color:#64748b;">' + (c.unit||'') + '</td>';
     var stockCell = '<td style="text-align:center;font-weight:700;color:' + (low?'#ef4444':'#16a34a') + ';font-size:12px;">' + c.stock + '</td>';
     var delCell = '<td style="text-align:center;"><button onclick="shrRemoveItem(' + i + ')" style="border:none;background:none;color:#ef4444;cursor:pointer;font-size:14px;"><i class="fas fa-trash"></i></button></td>';
@@ -5257,7 +5276,7 @@ window.posSelectLineForDiscount = function(idx) {
     '<div style="font-weight:800;margin-bottom:6px;">أو أدخل خصم يدوي:</div>' +
     '<div style="display:flex;gap:8px;align-items:center;">' +
       '<select id="posLineDiscType" class="form-control glass-input" style="flex:1;"><option value="percentage">نسبة %</option><option value="fixed">مبلغ ثابت</option></select>' +
-      '<input id="posLineDiscValue" type="number" data-vk="1" step="0.01" min="0" class="form-control glass-input" placeholder="القيمة" style="flex:1;">' +
+      '<input id="posLineDiscValue" type="number" step="0.01" min="0" class="form-control glass-input" placeholder="القيمة" style="flex:1;">' +
       '<button class="btn btn-primary" onclick="posApplyManualLineDiscount()">تطبيق</button>' +
     '</div>' +
     '<div style="font-size:11px;color:#94a3b8;margin-top:6px;">قد يتطلب الخصم اليدوي صلاحية المدير.</div>' +
@@ -5323,7 +5342,7 @@ window.posOpenInvoiceDiscountModal = function() {
     '<div style="font-weight:800;margin-bottom:6px;">أو أدخل خصم يدوي:</div>' +
     '<div style="display:flex;gap:8px;align-items:center;">' +
       '<select id="posInvDiscType" class="form-control glass-input" style="flex:1;"><option value="percentage">نسبة %</option><option value="fixed">مبلغ ثابت</option></select>' +
-      '<input id="posInvDiscValue" type="number" data-vk="1" step="0.01" min="0" class="form-control glass-input" placeholder="القيمة" style="flex:1;">' +
+      '<input id="posInvDiscValue" type="number" step="0.01" min="0" class="form-control glass-input" placeholder="القيمة" style="flex:1;">' +
       '<button class="btn btn-primary" onclick="posApplyManualInvoiceDiscount()">تطبيق</button>' +
     '</div>' +
   '</div>';
@@ -5424,7 +5443,7 @@ window.shiftCloseStart = function() {
       var unitLabel = isCoin ? 'Halalas' : (d <= 2 ? 'Coin' : 'Note');
       return '<div class="sc-denom-card">' +
                '<div class="sc-denom-card-top"><span class="sc-denom-face">' + faceLabel + '</span><span class="sc-denom-unit">' + unitLabel + '</span></div>' +
-               '<input type="number" inputmode="numeric" data-vk="1" min="0" step="1" class="sc-denom-input" data-denom="' + d + '" value="0" oninput="scV3Recalc()" onfocus="this.select()">' +
+               '<input type="number" inputmode="numeric" min="0" step="1" class="sc-denom-input" data-denom="' + d + '" value="0" oninput="scV3Recalc()" onfocus="this.select()">' +
                '<div class="sc-denom-card-total" data-denom="' + d + '">0.00</div>' +
              '</div>';
     }).join('');
@@ -5520,7 +5539,7 @@ window.shiftCloseStart = function() {
           var displayName = m.name || m.nameAr || '—';
           return '<div class="sc-elec-card">' +
                    '<div class="sc-elec-card-head"><i class="fas ' + (m.icon || 'fa-credit-card') + '" style="color:' + (m.color || '#3b82f6') + ';"></i> <span>' + displayName + '</span></div>' +
-                   '<input type="number" inputmode="decimal" data-vk="1" min="0" step="0.01" class="sc-elec-input" data-pmid="' + m.id + '" data-pmname="' + (m.name || '').toLowerCase() + '" placeholder="0.00" oninput="scV3Recalc()" onfocus="this.select()">' +
+                   '<input type="number" inputmode="decimal" min="0" step="0.01" class="sc-elec-input" data-pmid="' + m.id + '" data-pmname="' + (m.name || '').toLowerCase() + '" placeholder="0.00" oninput="scV3Recalc()" onfocus="this.select()">' +
                  '</div>';
         }).join('');
       }

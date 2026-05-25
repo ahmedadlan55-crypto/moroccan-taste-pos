@@ -2391,6 +2391,59 @@ async function runMigrations() {
   try { await db.query('CREATE INDEX idx_users_iqama_number   ON users(iqama_number)');   } catch(e) {}
   try { await db.query('CREATE INDEX idx_users_job_title_code ON users(job_title_code)'); } catch(e) {}
 
+  // v6.18.2 (Wave 3) — Backfill the users <-> hr_employees linkage so
+  // every user has a canonical "person" record.  Mirrors migration
+  // 0005_user_employee_link.sql for installs that bypass the framework.
+  // Every step is idempotent (re-running is safe and a no-op on already-
+  // linked rows).
+  try {
+    await db.query("ALTER TABLE hr_employees ADD COLUMN IF NOT EXISTS linked_username VARCHAR(100) NULL");
+  } catch(e) {}
+  try { await db.query("ALTER TABLE hr_employees ADD COLUMN IF NOT EXISTS linked_user_id INT NULL"); } catch(e) {}
+  try { await db.query('CREATE INDEX idx_hr_emp_linked_username ON hr_employees(linked_username)'); } catch(e) {}
+  try { await db.query('CREATE INDEX idx_users_employee_id ON users(employee_id)'); } catch(e) {}
+
+  // Step B: link users that already have a matching hr_employees row.
+  try {
+    await db.query(`UPDATE users u
+      JOIN hr_employees e ON e.linked_username = u.username
+      SET u.employee_id = e.id
+      WHERE (u.employee_id IS NULL OR u.employee_id = '')`);
+  } catch (e) { console.warn('[startup] backfill step B skipped:', e && e.message); }
+
+  // Step C: create shell employees for users without one.
+  try {
+    await db.query(`INSERT IGNORE INTO hr_employees
+      (id, employee_number, first_name, last_name, hire_date, status, job_title, linked_username, created_at)
+      SELECT
+        CONCAT('emp-shell-', u.username),
+        CONCAT('SHELL-', LPAD(u.id, 6, '0')),
+        COALESCE(NULLIF(TRIM(u.full_name), ''), u.username),
+        '',
+        COALESCE(DATE(u.created_at), CURDATE()),
+        'active',
+        'بحاجة لتحديث',
+        u.username,
+        COALESCE(u.created_at, NOW())
+      FROM users u
+      WHERE (u.employee_id IS NULL OR u.employee_id = '')`);
+  } catch (e) { console.warn('[startup] backfill step C skipped:', e && e.message); }
+
+  // Step D: point users at the newly created shells.
+  try {
+    await db.query(`UPDATE users u
+      JOIN hr_employees e ON e.id = CONCAT('emp-shell-', u.username)
+      SET u.employee_id = e.id
+      WHERE (u.employee_id IS NULL OR u.employee_id = '')`);
+  } catch (e) { console.warn('[startup] backfill step D skipped:', e && e.message); }
+
+  // Step E: nullify orphan employee_id references.
+  try {
+    await db.query(`UPDATE users SET employee_id = NULL
+      WHERE employee_id IS NOT NULL AND employee_id != ''
+        AND employee_id NOT IN (SELECT id FROM hr_employees)`);
+  } catch (e) { console.warn('[startup] backfill step E skipped:', e && e.message); }
+
   // ═══════════════════════════════════════
   // WAREHOUSE-BASED INVENTORY RESTRUCTURE
   // ═══════════════════════════════════════

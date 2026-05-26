@@ -7410,28 +7410,35 @@ function _importInvItemsExcelBody(input) {
       var rows = XLSX.utils.sheet_to_json(ws);
       if (!rows.length) { showToast("الملف فارغ", true); input.value = ''; return; }
 
-      var items = rows.filter(function(r) { 
-        var n = r['Name'] || r['الاسم'];
-        return n && n !== 'Sample Item' && n !== 'مثال للصنف'; 
-      }).map(function(r) {
-        var idVal = String(r['ID'] || '').trim();
-        if (idVal.indexOf('Leave') > -1 || idVal.indexOf('اتركه') > -1) idVal = '';
-        var kindStr = String(r['Kind'] || r['نوع المادة'] || '').trim().toLowerCase();
-        var n = r['Name'] || r['الاسم'] || '';
-        var cat = r['Category'] || r['التصنيف'] || '';
-        var cst = r['Cost'] || r['التكلفة'] || 0;
-        var st = r['Stock'] || r['الرصيد'] || 0;
-        var mSt = r['Min Stock'] || r['حد النواقص'] || 0;
-        var un = r['Unit'] || r['الوحدة الصغرى'] || '';
-        var bUn = r['Big Unit'] || r['الوحدة الكبرى'] || '';
-        var cr = r['Conversion Rate'] || r['معامل التحويل'] || 1;
-        var br = r['Brand ID'] || r['البراند'] || '';
+      var items = [];
+      rows.forEach(function(row) {
+        var r = {};
+        for (var k in row) r[k.trim().toLowerCase()] = row[k];
+        
+        var n = String(r['name'] || r['الاسم'] || '').trim();
+        var idVal = String(r['id'] || '').trim();
+        if (idVal.indexOf('leave') > -1 || idVal.indexOf('اتركه') > -1 || idVal.indexOf('Leave') > -1) idVal = '';
+        
+        if (!n || n === 'Sample Item' || n === 'مثال للصنف' || n === 'sample item') {
+           if (!idVal && !n) return;
+           if ((n === 'Sample Item' || n === 'مثال للصنف' || n === 'sample item') && !idVal) return; 
+        }
 
-        return {
+        var kindStr = String(r['kind'] || r['نوع المادة'] || '').trim().toLowerCase();
+        var cat = r['category'] || r['التصنيف'] || '';
+        var cst = r['cost'] || r['التكلفة'] || 0;
+        var st = r['stock'] || r['الرصيد'] || 0;
+        var mSt = r['min stock'] || r['حد النواقص'] || 0;
+        var un = r['unit'] || r['الوحدة الصغرى'] || '';
+        var bUn = r['big unit'] || r['الوحدة الكبرى'] || '';
+        var cr = r['conversion rate'] || r['معامل التحويل'] || 1;
+        var br = r['brand id'] || r['البراند'] || '';
+
+        items.push({
           id: idVal,
           kind: (kindStr === 'semi' || kindStr === 'غير تام') ? 'semi' : 'raw',
           brandId: String(br).trim() || null,
-          name: String(n).trim(),
+          name: n,
           category: String(cat).trim() || 'عام',
           cost: Number(cst) || 0,
           stock: Number(st) || 0,
@@ -7439,7 +7446,7 @@ function _importInvItemsExcelBody(input) {
           unit: String(un).trim() || 'حبة',
           bigUnit: String(bUn).trim() || null,
           convRate: Number(cr) || 1
-        };
+        });
       });
 
       if (!items.length) { showToast('لا توجد بيانات صالحة للاستيراد', true); input.value = ''; return; }

@@ -15,7 +15,7 @@
  * clients pick up the fresh shell on next load.
  */
 
-const CACHE_VERSION = 'mt-pos-v49-no-keyboard';
+const CACHE_VERSION = 'mt-pos-v50-unified-receipt';
 const CACHE_NAME = CACHE_VERSION;
 
 // App shell — pre-cached on install so the first launch works offline
@@ -34,6 +34,8 @@ const APP_SHELL = [
   '/shared/auth.js',
   '/shared/header.js',
   '/shared/api-bridge.js',
+  // v6.19.0 — Canonical receipt template, also loaded by admin shell.
+  '/shared/receipt-template.js',
   'https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css'
 ];
 

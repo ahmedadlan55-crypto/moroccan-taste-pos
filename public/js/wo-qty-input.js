@@ -83,8 +83,14 @@
              '</div>';
     })();
 
-    var majorVal = hasMajor && minorQty ? _trim(minorQty / convRate) : '';
+    var majorVal = '';
     var minorVal = minorQty ? _trim(minorQty) : '';
+    if (hasMajor && minorQty > 0) {
+      var maj = Math.floor(minorQty / convRate);
+      var min = minorQty - (maj * convRate);
+      majorVal = maj ? _trim(maj) : '';
+      minorVal = min ? _trim(min) : '';
+    }
 
     // Layout: compact = single row of inputs; default = grid + labels below
     var inputStyle = 'width:' + (compact ? '90px' : '100px') +
@@ -99,6 +105,7 @@
                    ' value="' + (majorVal === '' ? '' : majorVal) + '" placeholder="0" style="' + inputStyle + '">' +
                  '<div style="' + labelStyle + '">' + _esc(bigUnit) + '</div>' +
                '</div>';
+      inner += '<div style="display:flex;align-items:center;padding-top:10px;color:#cbd5e1;font-weight:900;font-size:18px;">+</div>';
     }
     inner += '<div class="wqty-cell">' +
                '<input type="number" step="any" min="0" class="wqty-minor" id="' + prefix + '-minor"' +
@@ -126,36 +133,37 @@
         );
     }
 
-    function _setMinor(v, opts) {
-      opts = opts || {};
+    function _setMinor(v) {
       var n = Number(v);
       if (isNaN(n) || n < 0) n = 0;
       minorQty = n;
-      // Keep the OTHER input in sync — but ONLY if it isn't focused
-      // (don't fight a user who is mid-type)
-      if (majorEl && document.activeElement !== majorEl && !opts.skipMajor) {
-        var maj = hasMajor ? (n / convRate) : 0;
-        majorEl.value = maj ? _trim(maj) : '';
-      }
-      if (minorEl && document.activeElement !== minorEl && !opts.skipMinor) {
-        minorEl.value = n ? _trim(n) : '';
+
+      if (hasMajor) {
+        var maj = Math.floor(n / convRate);
+        var min = n - (maj * convRate);
+        if (majorEl && document.activeElement !== majorEl) majorEl.value = maj ? _trim(maj) : '';
+        if (minorEl && document.activeElement !== minorEl) minorEl.value = min ? _trim(min) : '';
+      } else {
+        if (minorEl && document.activeElement !== minorEl) minorEl.value = n ? _trim(n) : '';
       }
       _refreshStockBadge();
     }
 
+    function _calcAdditive() {
+      var maj = majorEl ? Number(majorEl.value) || 0 : 0;
+      var min = minorEl ? Number(minorEl.value) || 0 : 0;
+      var total = (maj * convRate) + min;
+      if (total < 0) total = 0;
+      minorQty = total;
+      _refreshStockBadge();
+      try { onChange(minorQty); } catch (e) { console.warn('[WoQtyInput] onChange:', e); }
+    }
+
     if (majorEl) {
-      majorEl.addEventListener('input', function() {
-        var v = Number(majorEl.value);
-        if (isNaN(v) || v < 0) v = 0;
-        _setMinor(v * convRate, { skipMajor: true });
-        try { onChange(minorQty); } catch (e) { console.warn('[WoQtyInput] onChange:', e); }
-      });
+      majorEl.addEventListener('input', _calcAdditive);
     }
     if (minorEl) {
-      minorEl.addEventListener('input', function() {
-        _setMinor(Number(minorEl.value), { skipMinor: true });
-        try { onChange(minorQty); } catch (e) { console.warn('[WoQtyInput] onChange:', e); }
-      });
+      minorEl.addEventListener('input', _calcAdditive);
     }
 
     return {

@@ -7361,7 +7361,7 @@ function _exportInvItemsExcelBody() {
       'Brand ID': m.brandId || '',
       'Name': m.name || '',
       'Category': m.category || '',
-      'Cost': m.cost || 0,
+      'Cost': (m.cost || 0) * (m.convRate || 1),
       'Stock': m.globalStock || 0,
       'Min Stock': m.minStock || 0,
       'Unit': m.unit || '',
@@ -7426,12 +7426,17 @@ function _importInvItemsExcelBody(input) {
 
         var kindStr = String(r['kind'] || r['نوع المادة'] || '').trim().toLowerCase();
         var cat = r['category'] || r['التصنيف'] || '';
-        var cst = r['cost'] || r['التكلفة'] || 0;
         var st = r['stock'] || r['الرصيد'] || 0;
         var mSt = r['min stock'] || r['حد النواقص'] || 0;
         var un = r['unit'] || r['الوحدة الصغرى'] || '';
         var bUn = r['big unit'] || r['الوحدة الكبرى'] || '';
-        var cr = r['conversion rate'] || r['معامل التحويل'] || 1;
+        
+        var crStr = r['conversion rate'] || r['معامل التحويل'] || 1;
+        var crNum = Number(crStr) || 1;
+        
+        var cstStr = r['cost'] || r['التكلفة'] || 0;
+        var cstNum = Number(cstStr) || 0;
+        
         var br = r['brand id'] || r['البراند'] || '';
 
         items.push({
@@ -7440,12 +7445,12 @@ function _importInvItemsExcelBody(input) {
           brandId: String(br).trim() || null,
           name: n,
           category: String(cat).trim() || 'عام',
-          cost: Number(cst) || 0,
+          cost: Number((cstNum / crNum).toFixed(4)),
           stock: Number(st) || 0,
           minStock: Number(mSt) || 0,
           unit: String(un).trim() || 'حبة',
           bigUnit: String(bUn).trim() || null,
-          convRate: Number(cr) || 1
+          convRate: crNum
         });
       });
 

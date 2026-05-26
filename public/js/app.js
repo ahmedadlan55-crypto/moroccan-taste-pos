@@ -7410,22 +7410,35 @@ function _importInvItemsExcelBody(input) {
       var rows = XLSX.utils.sheet_to_json(ws);
       if (!rows.length) { showToast("الملف فارغ", true); input.value = ''; return; }
 
-      var items = rows.filter(function(r) { return r['Name'] && r['Name'] !== 'Sample Item'; }).map(function(r) {
+      var items = rows.filter(function(r) { 
+        var n = r['Name'] || r['الاسم'];
+        return n && n !== 'Sample Item' && n !== 'مثال للصنف'; 
+      }).map(function(r) {
         var idVal = String(r['ID'] || '').trim();
-        if (idVal.indexOf('Leave') > -1) idVal = '';
-        var kindStr = String(r['Kind'] || '').trim().toLowerCase();
+        if (idVal.indexOf('Leave') > -1 || idVal.indexOf('اتركه') > -1) idVal = '';
+        var kindStr = String(r['Kind'] || r['نوع المادة'] || '').trim().toLowerCase();
+        var n = r['Name'] || r['الاسم'] || '';
+        var cat = r['Category'] || r['التصنيف'] || '';
+        var cst = r['Cost'] || r['التكلفة'] || 0;
+        var st = r['Stock'] || r['الرصيد'] || 0;
+        var mSt = r['Min Stock'] || r['حد النواقص'] || 0;
+        var un = r['Unit'] || r['الوحدة الصغرى'] || '';
+        var bUn = r['Big Unit'] || r['الوحدة الكبرى'] || '';
+        var cr = r['Conversion Rate'] || r['معامل التحويل'] || 1;
+        var br = r['Brand ID'] || r['البراند'] || '';
+
         return {
           id: idVal,
-          kind: (kindStr === 'semi') ? 'semi' : 'raw',
-          brandId: String(r['Brand ID'] || '').trim() || null,
-          name: String(r['Name'] || '').trim(),
-          category: String(r['Category'] || '').trim() || 'عام',
-          cost: Number(r['Cost']) || 0,
-          stock: Number(r['Stock']) || 0,
-          minStock: Number(r['Min Stock']) || 0,
-          unit: String(r['Unit'] || '').trim() || 'حبة',
-          bigUnit: String(r['Big Unit'] || '').trim() || null,
-          convRate: Number(r['Conversion Rate']) || 1
+          kind: (kindStr === 'semi' || kindStr === 'غير تام') ? 'semi' : 'raw',
+          brandId: String(br).trim() || null,
+          name: String(n).trim(),
+          category: String(cat).trim() || 'عام',
+          cost: Number(cst) || 0,
+          stock: Number(st) || 0,
+          minStock: Number(mSt) || 0,
+          unit: String(un).trim() || 'حبة',
+          bigUnit: String(bUn).trim() || null,
+          convRate: Number(cr) || 1
         };
       });
 

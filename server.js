@@ -402,6 +402,7 @@ async function runMigrations() {
   await addColumnIfMissing('menu', 'markup_pct', "DECIMAL(5,2) DEFAULT 30");
   // V5.7.22 — bilingual product naming (printed on receipt + admin)
   await addColumnIfMissing('menu', 'name_en', "VARCHAR(200) DEFAULT NULL");
+  await addColumnIfMissing('inv_items', 'name_en', "VARCHAR(200) DEFAULT NULL");
 
   // ─── Semi-finished products (منتجات غير تامة / نصف مصنعة) ───
   // is_semi_finished = TRUE → this menu row is an intermediate (e.g. براد شاي مغربي)

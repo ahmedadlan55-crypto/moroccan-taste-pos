@@ -20172,29 +20172,65 @@ function erpLoadBOM() {
         '</td></tr>';
       return;
     }
-    body.innerHTML = list.map(function(b){
-      var isActive = !b.effectiveTo || new Date(b.effectiveTo) > new Date();
-      var statusChip = isActive ? '<span class="wo-chip success">فعّالة</span>' : '<span class="wo-chip neutral">منتهية</span>';
-      var from = (b.effectiveFrom||'').slice(0,10) || '—';
-      var to = (b.effectiveTo||'').slice(0,10) || '—';
-      return '<tr>' +
-        '<td data-label="المنتج"><b>'+esc(b.productName||b.productId)+'</b></td>' +
-        '<td data-label="الإصدار" class="num"><code>v'+(b.version||1)+'</code></td>' +
-        '<td data-label="الإنتاجية" class="num"><b>'+_erpFmt(b.yieldQuantity)+'</b> <span class="wo-text-subtle wo-text-caption">'+esc(b.yieldUnit||'')+'</span></td>' +
-        '<td data-label="المكونات" class="num"><span class="wo-chip info flat">'+(b.lineCount||0)+'</span></td>' +
-        '<td data-label="من تاريخ" class="wo-text-subtle wo-text-caption">'+from+'</td>' +
-        '<td data-label="إلى تاريخ" class="wo-text-subtle wo-text-caption">'+to+'</td>' +
-        '<td data-label="الحالة">'+statusChip+'</td>' +
-        '<td data-label="الإجراءات"><div class="wo-actions">' +
-          '<button class="wo-icon-btn info" onclick="erpViewBomLines(\''+esc(b.id)+'\',\''+esc((b.productName||'').replace(/\'/g,"\\\'"))+'\')" title="عرض المكونات" aria-label="المكونات"><i class="fas fa-list-ul"></i></button>' +
-          '<button class="wo-icon-btn" onclick="erpOpenBomModal(\''+esc(b.id)+'\')" title="تعديل الوصفة" aria-label="تعديل"><i class="fas fa-pen"></i></button>' +
-          '<button class="wo-icon-btn" onclick="erpCloneBom(\''+esc(b.id)+'\',\''+esc((b.productName||'').replace(/\'/g,"\\\'"))+'\')" title="استنساخ لمنتج آخر" aria-label="استنساخ" style="color:var(--wo-purple);"><i class="fas fa-clone"></i></button>' +
-          '<button class="wo-icon-btn danger" onclick="erpDeleteBom(\''+esc(b.id)+'\')" title="حذف" aria-label="حذف"><i class="fas fa-trash"></i></button>' +
-        '</div></td>' +
-      '</tr>';
-    }).join('');
+    window._bomListCache = list;
+    
+    // Populate categories
+    var catSelect = document.getElementById('bomCategoryFilter');
+    if (catSelect) {
+      var currentVal = catSelect.value;
+      var cats = [];
+      list.forEach(function(b){ if(b.category && cats.indexOf(b.category) === -1) cats.push(b.category); });
+      cats.sort();
+      var opts = '<option value="">كل التصنيفات</option>';
+      cats.forEach(function(c){ opts += '<option value="'+esc(c)+'">'+esc(c)+'</option>'; });
+      catSelect.innerHTML = opts;
+      catSelect.value = currentVal; // preserve selection
+    }
+    
+    window.erpRenderBOM();
   });
 }
+
+window.erpRenderBOM = function() {
+  var body = document.getElementById('bomBody');
+  if (!body) return;
+  var list = window._bomListCache || [];
+  var catFilter = (document.getElementById('bomCategoryFilter') || {}).value;
+  if (catFilter) {
+    list = list.filter(function(b){ return String(b.category || 'عام') === String(catFilter); });
+  }
+
+  if (!list.length) {
+    body.innerHTML = '<tr><td colspan="8"><div class="empty-msg">لا توجد وصفات تطابق الفلتر</div></td></tr>';
+    return;
+  }
+  
+  var esc = (typeof _woEscapeHtml === 'function') ? _woEscapeHtml : function(s){return String(s||'');};
+  body.innerHTML = list.map(function(b){
+    var isActive = !b.effectiveTo || new Date(b.effectiveTo) > new Date();
+    var statusChip = isActive ? '<span class="wo-chip success">فعّالة</span>' : '<span class="wo-chip neutral">منتهية</span>';
+    var from = (b.effectiveFrom||'').slice(0,10) || '—';
+    var to = (b.effectiveTo||'').slice(0,10) || '—';
+    var enNameHtml = b.productNameEn ? '<br><small class="wo-text-subtle" style="font-size:11px;">'+esc(b.productNameEn)+'</small>' : '';
+    var codeHtml = '<div style="font-size:10px; color:#64748b; margin-top:2px; font-family:monospace;">' + esc(b.id) + '</div>';
+
+    return '<tr>' +
+      '<td data-label="المنتج"><b>'+esc(b.productName||b.productId)+'</b>' + enNameHtml + codeHtml + '</td>' +
+      '<td data-label="الإصدار" class="num"><code>v'+(b.version||1)+'</code></td>' +
+      '<td data-label="الإنتاجية" class="num"><b>'+_erpFmt(b.yieldQuantity)+'</b> <span class="wo-text-subtle wo-text-caption">'+esc(b.yieldUnit||'')+'</span></td>' +
+      '<td data-label="المكونات" class="num"><span class="wo-chip info flat">'+(b.lineCount||0)+'</span></td>' +
+      '<td data-label="من تاريخ" class="wo-text-subtle wo-text-caption">'+from+'</td>' +
+      '<td data-label="إلى تاريخ" class="wo-text-subtle wo-text-caption">'+to+'</td>' +
+      '<td data-label="الحالة">'+statusChip+'</td>' +
+      '<td data-label="الإجراءات"><div class="wo-actions">' +
+        '<button class="wo-icon-btn info" onclick="erpViewBomLines(\''+esc(b.id)+'\',\''+esc((b.productName||'').replace(/\'/g,"\\\'"))+'\')" title="عرض المكونات" aria-label="المكونات"><i class="fas fa-list-ul"></i></button>' +
+        '<button class="wo-icon-btn" onclick="erpOpenBomModal(\''+esc(b.id)+'\')" title="تعديل الوصفة" aria-label="تعديل"><i class="fas fa-pen"></i></button>' +
+        '<button class="wo-icon-btn" onclick="erpCloneBom(\''+esc(b.id)+'\',\''+esc((b.productName||'').replace(/\'/g,"\\\'"))+'\')" title="استنساخ لمنتج آخر" aria-label="استنساخ" style="color:var(--wo-purple);"><i class="fas fa-clone"></i></button>' +
+        '<button class="wo-icon-btn danger" onclick="erpDeleteBom(\''+esc(b.id)+'\')" title="حذف" aria-label="حذف"><i class="fas fa-trash"></i></button>' +
+      '</div></td>' +
+    '</tr>';
+  }).join('');
+};
 
 // ═══════════════════════════════════════════════════════════════════
 // V5.7.38 — Recipe editor unification (single source of truth)
@@ -20325,8 +20361,9 @@ function erpViewBomLines(bomId, productName) {
   _erpGet('/erp/bom/'+bomId+'/lines', function(lines) {
     var esc = (typeof _woEscapeHtml === 'function') ? _woEscapeHtml : function(s){return String(s||'');};
     var rows = (lines||[]).map(function(l){
+      var enNameHtml = l.itemNameEn ? '<br><small class="wo-text-subtle" style="font-size:10px;">'+esc(l.itemNameEn)+'</small>' : '';
       return '<tr>' +
-        '<td><b>'+esc(l.itemName)+'</b></td>' +
+        '<td><b>'+esc(l.itemName)+'</b>'+enNameHtml+'</td>' +
         '<td class="num">'+_erpFmt(l.quantity)+'</td>' +
         '<td>'+esc(l.unit)+'</td>' +
         '<td class="num"><span class="wo-chip '+(l.wastePct>10?'warning':'neutral')+' flat">'+l.wastePct+'%</span></td>' +

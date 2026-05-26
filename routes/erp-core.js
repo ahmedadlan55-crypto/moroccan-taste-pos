@@ -775,6 +775,8 @@ router.get('/bom', async (req, res) => {
     // Pull product name from EITHER menu OR inv_items based on product_source
     let sql = `SELECT b.*,
                       COALESCE(m.name, i.name) AS product_name,
+                      COALESCE(m.name_en, i.name_en) AS product_name_en,
+                      COALESCE(m.category, i.category) AS category,
                       COALESCE(m.brand_id, i.brand_id) AS brand_id,
                       COALESCE(mb.name, ib.name) AS brand_name,
                       COALESCE(b.product_source, 'inv') AS resolved_source,
@@ -793,6 +795,8 @@ router.get('/bom', async (req, res) => {
     const [rows] = await db.query(sql, params);
     res.json(rows.map(b => ({
       id: b.id, productId: b.product_id, productName: b.product_name || '',
+      productNameEn: b.product_name_en || '',
+      category: b.category || 'عام',
       productSource: b.resolved_source || 'inv',
       brandId: b.brand_id || null, brandName: b.brand_name || '',
       version: b.version, yieldQuantity: Number(b.yield_quantity) || 1,
@@ -1046,12 +1050,12 @@ router.post('/bom', async (req, res) => {
 router.get('/bom/:id/lines', async (req, res) => {
   try {
     const [rows] = await db.query(
-      `SELECT bl.*, i.name AS item_name, i.id AS sku, COALESCE(i.cost,0) AS avg_cost
+      `SELECT bl.*, i.name AS item_name, i.name_en AS item_name_en, i.id AS sku, COALESCE(i.cost,0) AS avg_cost
        FROM bom_lines bl
        LEFT JOIN inv_items i ON bl.component_item_id = i.id
        WHERE bl.bom_id = ?`, [req.params.id]);
     res.json(rows.map(l => ({
-      id: l.id, componentItemId: l.component_item_id, itemName: l.item_name || '',
+      id: l.id, componentItemId: l.component_item_id, itemName: l.item_name || '', itemNameEn: l.item_name_en || '',
       sku: l.sku || '', quantity: Number(l.quantity), unit: l.unit || 'PCS',
       wastePct: Number(l.waste_pct) || 0, avgCost: Number(l.avg_cost) || 0,
       lineCost: (Number(l.quantity) || 0) * (Number(l.avg_cost) || 0) * (1 + (Number(l.waste_pct) || 0) / 100)

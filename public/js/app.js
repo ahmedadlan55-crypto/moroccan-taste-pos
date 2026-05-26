@@ -196,7 +196,7 @@ function paymentLabel(paymentStr) {
 function fetchAppTemplate() {
   var token = localStorage.getItem('pos_token');
   if (!token) return Promise.reject(new Error('NO_TOKEN'));
-  return fetch('/api/auth/template', {
+  return fetch('/api/auth/template?t=' + Date.now(), {
     headers: { 'Authorization': 'Bearer ' + token, 'Cache-Control': 'no-cache' }
   }).then(function(r) {
     if (r.status === 401) throw new Error('UNAUTHORIZED');

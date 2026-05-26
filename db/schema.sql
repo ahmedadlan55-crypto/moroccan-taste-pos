@@ -83,6 +83,7 @@ CREATE TABLE discounts (
 CREATE TABLE inv_items (
   id VARCHAR(50) PRIMARY KEY,
   name VARCHAR(200) NOT NULL,
+  name_en VARCHAR(200),
   category VARCHAR(100),
   cost DECIMAL(10,4) DEFAULT 0,
   stock DECIMAL(12,2) DEFAULT 0,

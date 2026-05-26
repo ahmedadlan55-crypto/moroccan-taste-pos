@@ -6168,6 +6168,7 @@ function loadInvCatalog() {
     var summary = out[0] || {};
     var payload = out[1] || {};
     var items = Array.isArray(payload) ? payload : (payload.items || []);
+    window.currentInvCatalog = items;
     var total = Array.isArray(payload) ? items.length : (Number(payload.total) || 0);
     s.lastTotal = total;
 
@@ -7352,20 +7353,20 @@ window.exportInvItemsExcel = function() {
   ensureXlsx().then(_exportInvItemsExcelBody).catch(function(e) { showToast(e.message || 'فشل تحميل XLSX', true); });
 };
 function _exportInvItemsExcelBody() {
-  var headers = ['ID', 'نوع المادة', 'البراند', 'الاسم', 'التصنيف', 'التكلفة', 'الرصيد', 'حد النواقص', 'الوحدة الصغرى', 'الوحدة الكبرى', 'معامل التحويل'];
+  var headers = ['ID', 'Kind', 'Brand ID', 'Name', 'Category', 'Cost', 'Stock', 'Min Stock', 'Unit', 'Big Unit', 'Conversion Rate'];
   var data = (window.currentInvCatalog || []).map(function(m) {
     return {
       'ID': m.id || '',
-      'نوع المادة': m.kind === 'semi' ? 'غير تام' : 'خام',
-      'البراند': m.brandId || '',
-      'الاسم': m.name || '',
-      'التصنيف': m.category || '',
-      'التكلفة': m.cost || 0,
-      'الرصيد': m.globalStock || 0,
-      'حد النواقص': m.minStock || 0,
-      'الوحدة الصغرى': m.unit || '',
-      'الوحدة الكبرى': m.bigUnit || '',
-      'معامل التحويل': m.convRate || 1
+      'Kind': m.kind === 'semi' ? 'semi' : 'raw',
+      'Brand ID': m.brandId || '',
+      'Name': m.name || '',
+      'Category': m.category || '',
+      'Cost': m.cost || 0,
+      'Stock': m.globalStock || 0,
+      'Min Stock': m.minStock || 0,
+      'Unit': m.unit || '',
+      'Big Unit': m.bigUnit || '',
+      'Conversion Rate': m.convRate || 1
     };
   });
   var ws;
@@ -7373,17 +7374,17 @@ function _exportInvItemsExcelBody() {
     ws = XLSX.utils.json_to_sheet(data);
   } else {
     var example = {
-      'ID': 'اتركه فارغاً للصنف الجديد',
-      'نوع المادة': 'خام',
-      'البراند': 'أدخل معرف البراند',
-      'الاسم': 'مثال للصنف',
-      'التصنيف': 'عام',
-      'التكلفة': 10,
-      'الرصيد': 50,
-      'حد النواقص': 5,
-      'الوحدة الصغرى': 'حبة',
-      'الوحدة الكبرى': 'كرتون',
-      'معامل التحويل': 12
+      'ID': 'Leave empty for new',
+      'Kind': 'raw',
+      'Brand ID': 'Enter Brand ID',
+      'Name': 'Sample Item',
+      'Category': 'General',
+      'Cost': 10,
+      'Stock': 50,
+      'Min Stock': 5,
+      'Unit': 'pcs',
+      'Big Unit': 'box',
+      'Conversion Rate': 12
     };
     ws = XLSX.utils.json_to_sheet([example]);
   }
@@ -7409,22 +7410,22 @@ function _importInvItemsExcelBody(input) {
       var rows = XLSX.utils.sheet_to_json(ws);
       if (!rows.length) { showToast("الملف فارغ", true); input.value = ''; return; }
 
-      var items = rows.filter(function(r) { return r['الاسم'] && r['الاسم'] !== 'مثال للصنف'; }).map(function(r) {
+      var items = rows.filter(function(r) { return r['Name'] && r['Name'] !== 'Sample Item'; }).map(function(r) {
         var idVal = String(r['ID'] || '').trim();
-        if (idVal.indexOf('اتركه') > -1) idVal = '';
-        var kindStr = String(r['نوع المادة'] || '').trim();
+        if (idVal.indexOf('Leave') > -1) idVal = '';
+        var kindStr = String(r['Kind'] || '').trim().toLowerCase();
         return {
           id: idVal,
-          kind: (kindStr === 'غير تام' || kindStr === 'semi') ? 'semi' : 'raw',
-          brandId: String(r['البراند'] || '').trim() || null,
-          name: String(r['الاسم'] || '').trim(),
-          category: String(r['التصنيف'] || '').trim() || 'عام',
-          cost: Number(r['التكلفة']) || 0,
-          stock: Number(r['الرصيد']) || 0,
-          minStock: Number(r['حد النواقص']) || 0,
-          unit: String(r['الوحدة الصغرى'] || '').trim() || 'حبة',
-          bigUnit: String(r['الوحدة الكبرى'] || '').trim() || null,
-          convRate: Number(r['معامل التحويل']) || 1
+          kind: (kindStr === 'semi') ? 'semi' : 'raw',
+          brandId: String(r['Brand ID'] || '').trim() || null,
+          name: String(r['Name'] || '').trim(),
+          category: String(r['Category'] || '').trim() || 'عام',
+          cost: Number(r['Cost']) || 0,
+          stock: Number(r['Stock']) || 0,
+          minStock: Number(r['Min Stock']) || 0,
+          unit: String(r['Unit'] || '').trim() || 'حبة',
+          bigUnit: String(r['Big Unit'] || '').trim() || null,
+          convRate: Number(r['Conversion Rate']) || 1
         };
       });
 

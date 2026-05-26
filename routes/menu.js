@@ -232,7 +232,23 @@ router.put('/:id', async (req, res) => {
        Number(yieldQuantity) || 1, yieldUnit || null];
     if (setImage) params.push(imageData || null);
     params.push(req.params.id);
-    await db.query(sql, params);
+    const [result] = await db.query(sql, params);
+    if (result.affectedRows === 0) {
+      await db.query(
+        `INSERT INTO menu (id, name, name_en, price, category, cost, stock, min_stock, active, pricing_mode, markup_pct, brand_id,
+                           is_semi_finished, production_unit, consumes_semi_id, consumes_semi_qty,
+                           production_warehouse_id, sales_warehouse_id,
+                           unit, big_unit, conv_rate, yield_quantity, yield_unit, image_data)
+         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+        [req.params.id, name, nameEn || null, price || 0, category || 'عام', cost || 0, stock || 0, minStock || 0, active !== false,
+         pricingMode || 'fixed', markupPct || 30, brandId || null,
+         isSemiFinished ? 1 : 0, productionUnit || 'pcs', consumesSemiId || null, consumesSemiQty || 0,
+         productionWarehouseId || null, salesWarehouseId || null,
+         unit || null, bigUnit || null, Number(convRate) || 1,
+         Number(yieldQuantity) || 1, yieldUnit || null,
+         imageData || null]
+      );
+    }
     // v5.10.16 — when this is a semi-finished product, mirror the unit/
     // conversion fields into inv_items so warehouse views, valuations, and
     // recipes that consume it see consistent metadata.

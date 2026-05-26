@@ -20425,6 +20425,18 @@ function erpDeleteBom(id) {
   });
 }
 
+window.erpDeleteAllBom = function() {
+  if (!confirm('هل أنت متأكد أنك تريد حذف جميع الوصفات نهائياً؟\n\nسيتم حذف كافة بيانات الوصفات وإلغاء ربطها بالمنتجات ولن تتمكن من التراجع.')) return;
+  _erpDelete('/erp/bom-all/clear', function(r) {
+    if (r && r.success) {
+      showToast('تم حذف جميع الوصفات بنجاح');
+      if (typeof erpLoadBOM === 'function') erpLoadBOM();
+    } else {
+      showToast((r && r.error) || 'فشل الحذف', true);
+    }
+  });
+};
+
 // V5.7 — Delete recipe directly from a menu item row (bypasses the BOM list).
 // Looks up the bom_id linked to this menu, then deletes via the cascade endpoint.
 window.erpDeleteMenuRecipe = function(menuId, menuName){

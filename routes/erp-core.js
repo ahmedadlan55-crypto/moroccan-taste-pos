@@ -1067,6 +1067,24 @@ router.get('/bom/:id/lines', async (req, res) => {
 // FIXES: previously this was a soft-delete (is_active=0) but menu.bom_id still
 // pointed to the now-inactive BOM, leaving the menu item in a broken state where
 // the recipe button wouldn't work. The new logic:
+// V5.9.1 — Delete ALL Recipes (BOMs) at once
+router.delete('/bom-all/clear', async (req, res) => {
+  try {
+    await db.withTransaction(async (conn) => {
+      // Unlink from all menu items
+      await conn.query('UPDATE menu SET bom_id = NULL WHERE bom_id IS NOT NULL');
+      // Delete all ingredients
+      await conn.query('DELETE FROM bom_lines');
+      // Delete all BOM records
+      await conn.query('DELETE FROM bom');
+    });
+    res.json({ success: true, message: 'تم حذف جميع الوصفات بنجاح' });
+  } catch (err) {
+    console.error('Error clearing all BOMs:', err);
+    res.json({ success: false, error: 'حدث خطأ أثناء حذف الوصفات: ' + err.message });
+  }
+});
+
 //   1. Read product_source + product_id BEFORE deletion
 //   2. Cascade-delete bom_lines (the recipe ingredients)
 //   3. Delete the BOM row itself

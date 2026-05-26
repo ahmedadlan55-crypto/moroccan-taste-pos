@@ -1732,16 +1732,18 @@ router.post('/items/import', async (req, res) => {
 
       if (existing.length) {
         await db.query(
-          `UPDATE inv_items SET name=?, category=?, cost=?, stock=?, min_stock=?, unit=?, big_unit=?, conv_rate=? WHERE id=?`,
+          `UPDATE inv_items SET name=?, category=?, cost=?, stock=?, min_stock=?, unit=?, big_unit=?, conv_rate=?, kind=?, brand_id=? WHERE id=?`,
           [item.name, item.category || '', item.cost || 0, item.stock || 0, item.minStock || 0,
-           item.unit || 'حبة', item.bigUnit || null, item.convRate || 1, existing[0].id]
+           item.unit || 'حبة', item.bigUnit || null, item.convRate || 1,
+           item.kind || 'raw', item.brandId || null, existing[0].id]
         );
         updated++;
       } else {
         await db.query(
-          `INSERT INTO inv_items (id, name, category, cost, stock, min_stock, unit, big_unit, conv_rate, active) VALUES (?,?,?,?,?,?,?,?,?,?)`,
+          `INSERT INTO inv_items (id, name, category, cost, stock, min_stock, unit, big_unit, conv_rate, active, kind, brand_id) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`,
           [id, item.name, item.category || '', item.cost || 0, item.stock || 0, item.minStock || 0,
-           item.unit || 'حبة', item.bigUnit || null, item.convRate || 1, true]
+           item.unit || 'حبة', item.bigUnit || null, item.convRate || 1, true,
+           item.kind || 'raw', item.brandId || null]
         );
         imported++;
       }

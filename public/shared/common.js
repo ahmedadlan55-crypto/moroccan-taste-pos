@@ -32,6 +32,46 @@ window.formatVal = function(v) {
   return n.toFixed(2);
 };
 
+// v6.20.0 — Whole-number formatter for tax-inclusive totals shown to the
+// customer (cart total, payment modal, mobile cart bar, menu price card).
+// Receipt VAT breakdown keeps decimal precision for ZATCA compliance;
+// use formatVal() there.
+window.formatWhole = function(v) {
+  return String(Math.round(Number(v) || 0));
+};
+
+// v6.20.0 — Resolve the active VAT rate.  Reads window.state.settings
+// (already loaded from /api/auth/initial); falls back to 15 when absent
+// or invalid.  Pure function — safe to call anywhere.
+window.getActiveVATRate = function() {
+  try {
+    var s = (window.state && window.state.settings) || {};
+    var raw = s.VATRate || s.vatRate;
+    if (raw === undefined || raw === null || raw === '') return 15;
+    var n = Number(raw);
+    if (!isFinite(n) || n < 0) return 15;
+    return n;
+  } catch (e) { return 15; }
+};
+
+// v6.20.0 — Per-unit gross (tax-inclusive) price for ONE unit of a menu
+// item, honoring its is_tax_inclusive flag.  Used by the POS menu grid,
+// cart line totals, payment modal, and any other "customer-facing"
+// display.  Returns a precise (decimal) value; round it via formatWhole
+// when displaying to the customer.
+window.computeGrossPerUnit = function(item) {
+  var price = Number(item && (item.price != null ? item.price : 0)) || 0;
+  // Legacy items (created pre-v6.20.0) carry isTaxInclusive=true (mapped
+  // from menu.is_tax_inclusive default 1).  Honor that default when the
+  // flag is absent entirely so old data never silently switches meaning.
+  var inclusive = (item && typeof item.isTaxInclusive !== 'undefined')
+    ? !!item.isTaxInclusive
+    : true;
+  if (inclusive) return price;
+  var rate = window.getActiveVATRate();
+  return price * (1 + rate / 100);
+};
+
 // ─── Locales Dictionary ───
 window.dict = {
   ar: {

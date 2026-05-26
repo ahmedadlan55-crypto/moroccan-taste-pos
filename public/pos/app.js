@@ -349,12 +349,19 @@ window.renderMenuGrid = function() {
         ? '<div style="position:absolute;top:6px;inset-inline-start:6px;background:#f59e0b;color:#fff;font-size:9px;font-weight:800;padding:2px 6px;border-radius:6px;z-index:1;">مُخصَّص</div>'
         : '';
       var safeJson = JSON.stringify(i).replace(/'/g, '&#39;');
+      // v6.20.0 — menu card price = the WHOLE tax-inclusive amount the
+      // customer will actually pay (regardless of whether the stored
+      // price is net or gross).  Uses computeGrossPerUnit helper from
+      // /shared/common.js so admin + POS render identically.
+      var _grossUnit = window.computeGrossPerUnit
+        ? window.computeGrossPerUnit(i)
+        : Number(i.price) || 0;
       h += '<div class="pos-item ' + (isSel ? 'selected' : '') + '" style="position:relative;">' +
         customBadge +
         imgHtml +
         '<div>' +
           '<div class="pos-item-name">' + (i.name || '') + '</div>' +
-          '<div class="pos-item-price">' + formatVal(i.price) + '</div>' +
+          '<div class="pos-item-price">' + window.formatWhole(_grossUnit) + '</div>' +
         '</div>' +
         '<div class="pos-item-actions">' +
           // v5.11.2 — FontAwesome icons instead of literal +/− glyphs.
@@ -1723,17 +1730,24 @@ window.updateCart = function() {
     state.cart.forEach(function(c) { c.price = c.basePrice; });
   }
 
+  // v6.20.0 — subtotal now sums the TAX-INCLUSIVE gross of each line
+  // (using computeGrossPerUnit which honors the item's is_tax_inclusive
+  // flag).  This matches what the customer will see on the receipt total.
   var h = '';
   state.cart.forEach(function(c, idx) {
-    subtotal += c.qty * c.price;
+    var grossUnit = window.computeGrossPerUnit
+      ? window.computeGrossPerUnit(c)
+      : Number(c.price) || 0;
+    var lineGross = grossUnit * c.qty;
+    subtotal += lineGross;
     var priceEditEl = payMethod === 'Kita'
       ? '<input type="number" step="0.01" value="' + c.price + '" class="price-edit-input" onchange="editCartPrice(' + idx + ', this.value)">'
-      : formatVal(c.price);
+      : window.formatWhole(grossUnit);
 
     h += '<div class="cart-item-row">' +
       '<div class="cart-item-info">' +
         '<div class="cart-item-title">' + c.name + '</div>' +
-        '<div class="cart-item-total">' + formatVal(c.qty * c.price) + '</div>' +
+        '<div class="cart-item-total">' + window.formatWhole(lineGross) + '</div>' +
       '</div>' +
       '<div class="cart-item-actions">' +
         '<div class="qty-control">' +
@@ -1770,14 +1784,17 @@ window.updateCart = function() {
   if (splitPanel) splitPanel.classList.toggle('hidden', payMethod !== 'Split');
   if (payMethod === 'Split') renderSplitFields(afterDiscount);
 
-  q('#cartSubtotalText').innerText = formatVal(subtotal);
-  q('#cartDiscText').innerText = formatVal(state.currentDiscount.amount);
-  q('#cartFinalTotal').innerText = formatVal(payMethod === 'Split' ? afterDiscount : finalTotal) + ' ' + state.settings.currency;
+  // v6.20.0 — Display all customer-facing totals as WHOLE numbers (no
+  // decimals).  The breakdown shown to the cashier (subtotal, discount)
+  // is also rounded to match the final total visually.
+  q('#cartSubtotalText').innerText = window.formatWhole(subtotal);
+  q('#cartDiscText').innerText = window.formatWhole(state.currentDiscount.amount);
+  q('#cartFinalTotal').innerText = window.formatWhole(payMethod === 'Split' ? afterDiscount : finalTotal) + ' ' + state.settings.currency;
 
   if (q('#mobCartCount')) {
     var mobileCount = state.cart.reduce(function(s, c) { return s + c.qty; }, 0);
     q('#mobCartCount').innerText = mobileCount;
-    q('#mobCartTotal').innerText = formatVal(finalTotal) + ' ' + state.settings.currency;
+    q('#mobCartTotal').innerText = window.formatWhole(finalTotal) + ' ' + state.settings.currency;
   }
 
   // Highlight active pay method

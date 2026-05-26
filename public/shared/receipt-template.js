@@ -107,12 +107,21 @@
     var logoUrl           = inv.receiptLogo       || inv.brandLogo || inv.companyLogo || settings.logo || '';
 
     var totalItems = (inv.items || []).reduce(function(s, i) { return s + (Number(i.qty) || 0); }, 0);
+    // v6.20.0 — totalFinal stored on the sale row is already the WHOLE
+    // SAR amount the customer paid (backend rounded it during INSERT).
+    // The net/vat extraction uses the LIVE VAT rate from settings (not
+    // hardcoded 1.15) so VAT report adjustments stay consistent.  Both
+    // values keep 2-decimal precision for ZATCA QR compliance.
     var totalFinal = Number(inv.totalFinal) || 0;
-    var netAmount  = totalFinal / 1.15;
+    var vatRate = (typeof window.getActiveVATRate === 'function')
+      ? window.getActiveVATRate()
+      : 15;
+    var netAmount  = totalFinal / (1 + vatRate / 100);
     var vatAmount  = totalFinal - netAmount;
 
     return {
       inv: inv,
+      vatRate: vatRate,
       companyName: companyName, companyNameAr: companyNameAr,
       taxNumber: taxNumber, currency: currency,
       companyPhone: companyPhone, companyEmail: companyEmail,
@@ -172,6 +181,12 @@
     var esc = _esc, formatVal = _formatVal;
 
     // Items table rows (3 columns: Qty | Item @unitPrice | Total)
+    // v6.20.0 — Per-line unit price + total shown as WHOLE numbers so
+    // they match what the cashier saw on the POS screen and what the
+    // customer expects (the same digits without decimal kopecks).  The
+    // VAT breakdown table below the items keeps decimal precision for
+    // ZATCA compliance.
+    var _whole = function(v) { return String(Math.round(Number(v) || 0)); };
     var itemsHtml = '';
     (r.inv.items || []).forEach(function(i) {
       var qty = Number(i.qty) || 0;
@@ -181,9 +196,9 @@
           '<td style="text-align:center;font-size:14px;padding:8px 2px;font-family:ui-monospace,SFMono-Regular,monospace;font-weight:800;vertical-align:top;width:40px;color:#000;">' + qty + '×</td>' +
           '<td style="text-align:left;font-size:13px;padding:8px 8px;font-weight:700;line-height:1.35;color:#000;">' +
             esc(i.name) +
-            '<div style="font-size:11px;color:#000;font-weight:600;font-family:ui-monospace,SFMono-Regular,monospace;margin-top:3px;letter-spacing:0.02em;">@ ' + formatVal(unitPrice) + '</div>' +
+            '<div style="font-size:11px;color:#000;font-weight:600;font-family:ui-monospace,SFMono-Regular,monospace;margin-top:3px;letter-spacing:0.02em;">@ ' + _whole(unitPrice) + '</div>' +
           '</td>' +
-          '<td style="text-align:right;font-size:14px;padding:8px 2px;font-family:ui-monospace,SFMono-Regular,monospace;font-weight:800;vertical-align:top;width:66px;color:#000;">' + formatVal(i.total) + '</td>' +
+          '<td style="text-align:right;font-size:14px;padding:8px 2px;font-family:ui-monospace,SFMono-Regular,monospace;font-weight:800;vertical-align:top;width:66px;color:#000;">' + _whole(i.total) + '</td>' +
         '</tr>';
     });
 
@@ -282,24 +297,29 @@
       '</div>' +
 
       // ───── VAT BREAKDOWN ─────
+      // v6.20.0 — TOTAL = whole SAR (what the customer paid).
+      //           NET + VAT = 2-decimal precision (ZATCA compliance).
+      //           The VAT header label uses the LIVE rate (e.g. "VAT 20%"
+      //           if the owner changes the settings).
       '<table style="width:100%;border-collapse:collapse;border:1.5px solid #000;margin:10px 0;">' +
         '<tr style="background:#f0f0f0;color:#000;border-bottom:1.5px solid #000;">' +
           '<td style="text-align:center;padding:6px 4px;border-right:1px solid #000;font-size:11px;font-weight:900;color:#000;">TOTAL<br>VALUE<div style="font-size:9px;color:#000;direction:rtl;margin-top:2px;">إجمالي القيمة</div></td>' +
           '<td style="text-align:center;padding:6px 4px;border-right:1px solid #000;font-size:11px;font-weight:900;color:#000;">NET<br>AMOUNT<div style="font-size:9px;color:#000;direction:rtl;margin-top:2px;">قبل الضريبة</div></td>' +
-          '<td style="text-align:center;padding:6px 4px;font-size:11px;font-weight:900;color:#000;">VAT<br>15%<div style="font-size:9px;color:#000;direction:rtl;margin-top:2px;">ضريبة القيمة</div></td>' +
+          '<td style="text-align:center;padding:6px 4px;font-size:11px;font-weight:900;color:#000;">VAT<br>' + esc(r.vatRate) + '%<div style="font-size:9px;color:#000;direction:rtl;margin-top:2px;">ضريبة القيمة</div></td>' +
         '</tr>' +
         '<tr>' +
-          '<td style="text-align:center;padding:10px 4px;border-right:1px solid #000;font-size:16px;font-weight:900;font-family:ui-monospace,SFMono-Regular,monospace;">' + formatVal(r.inv.totalFinal) + '</td>' +
+          '<td style="text-align:center;padding:10px 4px;border-right:1px solid #000;font-size:16px;font-weight:900;font-family:ui-monospace,SFMono-Regular,monospace;">' + _whole(r.inv.totalFinal) + '</td>' +
           '<td style="text-align:center;padding:10px 4px;border-right:1px solid #000;font-size:16px;font-weight:900;font-family:ui-monospace,SFMono-Regular,monospace;">' + r.netAmount.toFixed(2) + '</td>' +
           '<td style="text-align:center;padding:10px 4px;font-size:16px;font-weight:900;font-family:ui-monospace,SFMono-Regular,monospace;">' + r.vatAmount.toFixed(2) + '</td>' +
         '</tr>' +
       '</table>' +
 
       // ───── PAYMENT ROW ─────
+      // v6.20.0 — Customer-facing total = whole.
       '<div style="border:2.5px double #000;border-radius:3px;padding:8px 10px;margin:10px 0;background:#f0f0f0;color:#000;">' +
         '<div style="display:flex;justify-content:space-between;align-items:center;font-size:13px;font-weight:900;color:#000;">' +
           '<span style="color:#000;">PAYMENT · <span style="direction:rtl;">طريقة الدفع</span>: ' + esc(r.inv.payment || 'CASH') + '</span>' +
-          '<span style="color:#000;font-family:ui-monospace,SFMono-Regular,monospace;font-size:16px;">' + formatVal(r.inv.totalFinal) + ' ' + esc(r.currency) + '</span>' +
+          '<span style="color:#000;font-family:ui-monospace,SFMono-Regular,monospace;font-size:16px;">' + _whole(r.inv.totalFinal) + ' ' + esc(r.currency) + '</span>' +
         '</div>' +
       '</div>' +
 
@@ -345,8 +365,9 @@
         '<div style="font-size:13px;font-weight:800;color:#000;direction:rtl;margin-top:2px;">شُكرًا لِزيارَتِكم</div>' +
       '</div>' +
 
-      '<div style="text-align:center;font-size:10px;color:#000;margin-top:6px;">All Prices Include VAT (15%)</div>' +
-      '<div style="text-align:center;font-size:10px;color:#000;direction:rtl;margin-bottom:4px;">جميع الأسعار شاملة الضريبة المضافة (15%)</div>' +
+      // v6.20.0 — VAT rate label is dynamic (driven by settings.VATRate).
+      '<div style="text-align:center;font-size:10px;color:#000;margin-top:6px;">All Prices Include VAT (' + esc(r.vatRate) + '%)</div>' +
+      '<div style="text-align:center;font-size:10px;color:#000;direction:rtl;margin-bottom:4px;">جميع الأسعار شاملة الضريبة المضافة (' + esc(r.vatRate) + '%)</div>' +
 
       // ───── CONTACT ─────
       (r.companyPhone || r.companyEmail

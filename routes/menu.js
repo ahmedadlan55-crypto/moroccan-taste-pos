@@ -31,7 +31,14 @@ function _mapMenu(m) {
     yieldQuantity: Number(m.yield_quantity) || 1,
     yieldUnit: m.yield_unit || null,
     // v5.12.7 — optional product image (base64 data URL)
-    imageData: m.image_data || null
+    imageData: m.image_data || null,
+    // v6.20.0 — is the stored `price` already tax-inclusive (legacy/default)
+    // or net of tax (new owner preference)?  The frontend uses this to
+    // decide whether to display the price as-is or multiply by (1+VAT).
+    // Legacy rows default to true (preserves pre-v6.20.0 behavior).
+    isTaxInclusive: m.is_tax_inclusive === null || typeof m.is_tax_inclusive === 'undefined'
+      ? true
+      : !!Number(m.is_tax_inclusive)
   };
 }
 
@@ -170,13 +177,25 @@ router.post('/', async (req, res) => {
       });
     }
     const id = 'MENU-' + Date.now();
+    // v6.20.0 — taxInclusive flag.  Frontend sends true/false; if absent,
+    // fall back to the new-products default in settings.NewProductsTaxInclusive.
+    let taxInclusive = req.body.taxInclusive;
+    if (typeof taxInclusive === 'undefined') {
+      try {
+        const [rows] = await db.query(
+          "SELECT setting_value FROM settings WHERE setting_key = 'NewProductsTaxInclusive' LIMIT 1"
+        );
+        taxInclusive = rows.length ? String(rows[0].setting_value) === '1' : false;
+      } catch (_) { taxInclusive = false; }
+    }
     await db.query(
-      `INSERT INTO menu (id, name, name_en, price, category, cost, stock, min_stock, active, pricing_mode, markup_pct, brand_id,
+      `INSERT INTO menu (id, name, name_en, price, is_tax_inclusive, category, cost, stock, min_stock, active, pricing_mode, markup_pct, brand_id,
                          is_semi_finished, production_unit, consumes_semi_id, consumes_semi_qty,
                          production_warehouse_id, sales_warehouse_id,
                          unit, big_unit, conv_rate, yield_quantity, yield_unit, image_data)
-       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
-      [id, name, nameEn || null, price || 0, category || 'عام', cost || 0, stock || 0, minStock || 0, active !== false,
+       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+      [id, name, nameEn || null, price || 0, taxInclusive ? 1 : 0,
+       category || 'عام', cost || 0, stock || 0, minStock || 0, active !== false,
        pricingMode || 'fixed', markupPct || 30, brandId || null,
        isSemiFinished ? 1 : 0, productionUnit || 'pcs', consumesSemiId || null, consumesSemiQty || 0,
        productionWarehouseId || null, salesWarehouseId || null,
@@ -215,7 +234,10 @@ router.put('/:id', async (req, res) => {
     // Price is ALWAYS manual (user sets it). pricing_mode only controls
     // whether the COST comes from recipes (variable) or manual input (fixed).
     // v5.12.7 — image_data is left untouched when undefined; explicit '' clears.
+    // v6.20.0 — taxInclusive is left untouched when undefined (preserves
+    // legacy rows); explicit true/false overrides.
     const setImage = (typeof imageData !== 'undefined');
+    const setTaxIncl = (typeof req.body.taxInclusive !== 'undefined');
     const sql =
       `UPDATE menu SET name=?, name_en=?, price=?, category=?, cost=?, stock=?, min_stock=?, active=?,
                        pricing_mode=?, markup_pct=?, brand_id=?,
@@ -223,6 +245,7 @@ router.put('/:id', async (req, res) => {
                        production_warehouse_id=?, sales_warehouse_id=?,
                        unit=?, big_unit=?, conv_rate=?, yield_quantity=?, yield_unit=?` +
       (setImage ? ', image_data=?' : '') +
+      (setTaxIncl ? ', is_tax_inclusive=?' : '') +
       ` WHERE id=?`;
     const params = [name, nameEn || null, price || 0, category, cost || 0, stock, minStock, active, pricingMode || 'variable', markupPct || 0,
        brandId || null,
@@ -231,6 +254,7 @@ router.put('/:id', async (req, res) => {
        unit || null, bigUnit || null, Number(convRate) || 1,
        Number(yieldQuantity) || 1, yieldUnit || null];
     if (setImage) params.push(imageData || null);
+    if (setTaxIncl) params.push(req.body.taxInclusive ? 1 : 0);
     params.push(req.params.id);
     const [result] = await db.query(sql, params);
     if (result.affectedRows === 0) {

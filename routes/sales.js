@@ -3,6 +3,9 @@ const db = require('../db/connection');
 const gl = require('../lib/glPosting');
 const zatca = require('../lib/zatca');
 const { recomputeInvItemStock, recomputeMenuStock } = require('../lib/stockRecompute');
+// v6.20.0 — Central tax math.  Honors per-item is_tax_inclusive + reads
+// the live VAT rate from settings (not ENV anymore).
+const pricing = require('../lib/pricing');
 // v6.11.0 — Human-readable invoice / void / return numbering. Helpers
 // tolerate missing schema columns and return null silently so this
 // require stays safe on deploys that haven't run migration 0002 yet.
@@ -19,7 +22,10 @@ async function _assertPeriodOpen(conn, date, brandId, branchId) {
   }
 }
 
-const VAT_RATE = Number(process.env.VAT_RATE) || 15;
+// v6.20.0 — VAT_RATE is now resolved at REQUEST TIME from the settings
+// table (see pricing.getVatRateFromDb).  The legacy ENV fallback is
+// retained ONLY as a last-resort default if the settings query fails.
+const VAT_RATE_FALLBACK = Number(process.env.VAT_RATE) || 15;
 const SELLER_NAME_FALLBACK = process.env.COMPANY_NAME || 'Moroccan Taste';
 const SELLER_VAT_FALLBACK = process.env.TAX_NUMBER || '';
 
@@ -225,43 +231,86 @@ router.post('/', async (req, res) => {
       payStr = Object.entries(splitDetails).filter(([k,v]) => v > 0).map(([k,v]) => k+':'+Math.round(v)).join('/');
     }
 
-    // Compute net + VAT for ZATCA + accounting (invTotal = VAT-inclusive gross)
-    const invTotal = Number(totalFinal) || 0;
-    const net = Math.round((invTotal / (1 + VAT_RATE / 100)) * 100) / 100;
-    const vat = Math.round((invTotal - net) * 100) / 100;
+    // ───── v6.20.0 — Tax computation rewrite ─────
+    // Step A: Resolve the active VAT rate.  Reads settings.VATRate at
+    //         REQUEST TIME so changes via the settings page take effect
+    //         on the very next sale (no server restart needed).
+    const VAT_RATE = await pricing.getVatRateFromDb(db, VAT_RATE_FALLBACK);
 
-    // ─── v6.0.2 Wave B.3 — Per-category VAT subtotals (S/Z/E/O) ───
-    // Look up each item's tax_category from the menu and accumulate
-    // net + vat per category. This feeds the UBL XML when Phase 2
-    // ships and the VAT return today.
-    const taxSubtotals = {};
+    // Step B: Look up each item's tax_category + is_tax_inclusive flag
+    //         in a single round-trip.  Items missing from the menu
+    //         (rare: walk-in / custom line) fall back to 'S' + inclusive
+    //         (preserves pre-v6.20.0 semantics for any unknown line).
+    const _taxMeta = {};
     try {
       const itemIds = items.map(it => it.id).filter(Boolean);
-      let catMap = {};
       if (itemIds.length) {
         const ph = itemIds.map(() => '?').join(',');
         const [mrows] = await db.query(
-          'SELECT id, COALESCE(tax_category, \'S\') AS tax_category FROM menu WHERE id IN (' + ph + ')',
+          'SELECT id, COALESCE(tax_category, \'S\') AS tax_category, ' +
+          'COALESCE(is_tax_inclusive, 1) AS is_tax_inclusive ' +
+          'FROM menu WHERE id IN (' + ph + ')',
           itemIds
         );
-        mrows.forEach(m => { catMap[m.id] = m.tax_category; });
+        mrows.forEach(m => {
+          _taxMeta[m.id] = {
+            cat: m.tax_category || 'S',
+            inclusive: Number(m.is_tax_inclusive) === 1
+          };
+        });
       }
-      items.forEach(it => {
-        const cat = catMap[it.id] || 'S';
-        const rate = cat === 'S' ? VAT_RATE : 0;
-        const gross = Number(it.qty) * Number(it.price);
-        const lineNet = Math.round((gross / (1 + rate / 100)) * 100) / 100;
-        const lineVat = Math.round((gross - lineNet) * 100) / 100;
-        if (!taxSubtotals[cat]) taxSubtotals[cat] = { net: 0, vat: 0, rate };
-        taxSubtotals[cat].net += lineNet;
-        taxSubtotals[cat].vat += lineVat;
-      });
-      // Round each subtotal to 2 decimals to avoid floating-point drift
-      Object.keys(taxSubtotals).forEach(k => {
-        taxSubtotals[k].net = Math.round(taxSubtotals[k].net * 100) / 100;
-        taxSubtotals[k].vat = Math.round(taxSubtotals[k].vat * 100) / 100;
-      });
-    } catch (_) { /* menu.tax_category may be missing on older deploys — ignore */ }
+    } catch (_) { /* menu schema gaps on older deploys — fall through */ }
+
+    // Step C: For every line, split price into net + vat using the
+    //         per-item is_tax_inclusive flag.  Accumulate per-category
+    //         subtotals for ZATCA + accumulate a precise grand total.
+    //         The client-supplied `totalFinal` is IGNORED for the
+    //         authoritative total — the backend recomputes from line
+    //         items and rounds to a whole SAR for the customer-facing
+    //         amount (owner's v6.20.0 requirement).
+    const taxSubtotals = {};
+    let grandNet = 0, grandVat = 0;
+    items.forEach(it => {
+      const meta = _taxMeta[it.id] || { cat: 'S', inclusive: true };
+      const cat = meta.cat;
+      const isIncl = meta.inclusive;
+      const qty = Number(it.qty) || 0;
+      const unitPrice = Number(it.price) || 0;
+      const rate = cat === 'S' ? VAT_RATE : 0;
+      // splitLinePrice gives us per-unit net + vat; multiply by qty.
+      const split = pricing.splitLinePrice(unitPrice, isIncl, rate);
+      const lineNet = Math.round(split.net * qty * 100) / 100;
+      const lineVat = Math.round(split.vat * qty * 100) / 100;
+      grandNet += lineNet;
+      grandVat += lineVat;
+      if (!taxSubtotals[cat]) taxSubtotals[cat] = { net: 0, vat: 0, rate };
+      taxSubtotals[cat].net += lineNet;
+      taxSubtotals[cat].vat += lineVat;
+    });
+    Object.keys(taxSubtotals).forEach(k => {
+      taxSubtotals[k].net = Math.round(taxSubtotals[k].net * 100) / 100;
+      taxSubtotals[k].vat = Math.round(taxSubtotals[k].vat * 100) / 100;
+    });
+    grandNet = Math.round(grandNet * 100) / 100;
+    grandVat = Math.round(grandVat * 100) / 100;
+
+    // Apply cart-level discount to the NET (then VAT is re-extracted
+    // proportionally so the discount benefits both the customer AND
+    // shrinks the VAT due, as expected by Saudi accounting practice).
+    const cartDiscount = Math.max(0, Number(discountAmount) || 0);
+    const discountCapped = Math.min(cartDiscount, grandNet);
+    const netAfterDiscount = Math.round((grandNet - discountCapped) * 100) / 100;
+    const vatRatio = grandNet > 0 ? (netAfterDiscount / grandNet) : 0;
+    const vatAfterDiscount = Math.round(grandVat * vatRatio * 100) / 100;
+
+    const grossPrecise = Math.round((netAfterDiscount + vatAfterDiscount) * 100) / 100;
+    // The TOTAL stored on the sales row + shown to the customer is the
+    // WHOLE-SAR rounded amount.  The per-category breakdown above keeps
+    // its 2-decimal precision so the ZATCA QR / invoice XML validate.
+    const grossWhole = pricing.roundToWhole(grossPrecise);
+    const invTotal = grossWhole;
+    const net = netAfterDiscount;
+    const vat = vatAfterDiscount;
 
     // ═══ ZATCA Phase 2 stamp (UUID + hash chain + QR) ═══
     // Load seller details — company + branch names if available
@@ -288,8 +337,13 @@ router.post('/', async (req, res) => {
     }
 
     // Insert sale (legacy columns)
+    // v6.20.0 — total_final = invTotal (the backend-recomputed, whole-SAR
+    // rounded gross).  Pre-v6.20.0 stored the raw `totalFinal` from the
+    // POS payload, which could disagree with the per-line VAT breakdown.
+    // Now they're guaranteed to match: line sums (net + vat) round to
+    // grossPrecise; grossWhole = Math.round(grossPrecise) = total_final.
     await db.query('INSERT INTO sales (id, order_date, items_json, total_final, payment_method, username, shift_id, discount_name, discount_amount, kita_service_fee) VALUES (?,?,?,?,?,?,?,?,?,?)',
-      [orderId, now, JSON.stringify(items), totalFinal, payStr, username, shiftId, discountName || '', discountAmount || 0, kitaServiceFee || 0]);
+      [orderId, now, JSON.stringify(items), invTotal, payStr, username, shiftId, discountName || '', discountAmount || 0, kitaServiceFee || 0]);
 
     // v6.11.0 — Stamp the invoice_number on the freshly-inserted row.
     // Separate UPDATE keeps the INSERT signature stable + makes the column
@@ -1339,9 +1393,11 @@ router.post('/:orderId/return', async (req, res) => {
 
       // 3. Compute the credit note's own ZATCA stamp (own UUID, own hash
       //    chained off the most recent invoice hash in the system).
+      // v6.20.0 — VAT rate resolved at request time from settings, not ENV.
+      const _vatRateForReturn = await pricing.getVatRateFromDb(conn, VAT_RATE_FALLBACK);
       const itemsArr = sale.items_json ? JSON.parse(sale.items_json) : [];
       const totalFinalNum = Number(sale.total_final) || 0;
-      const cnNet = Math.round((totalFinalNum / (1 + VAT_RATE / 100)) * 100) / 100;
+      const cnNet = Math.round((totalFinalNum / (1 + _vatRateForReturn / 100)) * 100) / 100;
       const cnVat = Math.round((totalFinalNum - cnNet) * 100) / 100;
       const cnStamp = await zatca.stampSale(conn, {
         orderId: 'CN-' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 6),

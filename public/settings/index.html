@@ -102,6 +102,36 @@
       <small style="color:#94a3b8;font-size:11px;display:block;margin-top:-4px;"><i class="fas fa-info-circle"></i> يظهران أسفل كل فاتورة مطبوعة.</small>
     </div>
 
+    <!-- v6.20.0 — Sales tax (VAT) configuration -->
+    <div class="page-card">
+      <h3 class="card-title"><i class="fas fa-percent" style="color:#7c3aed;"></i> إعدادات ضريبة المبيعات</h3>
+      <p class="card-hint">تحديد نوع الضريبة ونسبتها. التغييرات تسري فوراً على المبيعات الجديدة (بدون الحاجة لإعادة تشغيل النظام).</p>
+      <div class="form-row">
+        <div class="form-group">
+          <label class="form-label"><i class="fas fa-tag"></i> اسم الضريبة (كما يظهر في الفاتورة)</label>
+          <input type="text" id="setSalesTaxName" class="form-control glass-input" placeholder="ضريبة القيمة المضافة 15%">
+        </div>
+        <div class="form-group">
+          <label class="form-label"><i class="fas fa-calculator"></i> النسبة (%)</label>
+          <input type="number" id="setVATRate" class="form-control glass-input" placeholder="15" min="0" max="100" step="0.01" dir="ltr">
+        </div>
+      </div>
+      <div class="form-group" style="margin-top:6px;">
+        <label class="form-label"><i class="fas fa-box"></i> الافتراضي للمنتجات الجديدة</label>
+        <div style="display:flex;gap:18px;flex-wrap:wrap;margin-top:6px;">
+          <label style="display:flex;align-items:center;gap:6px;font-weight:600;cursor:pointer;">
+            <input type="radio" name="newProductsTaxBasis" value="exclusive" id="setNewProdExclusive">
+            <span>السعر <strong>صافي</strong> (يضاف عليه الضريبة) — موصى به</span>
+          </label>
+          <label style="display:flex;align-items:center;gap:6px;font-weight:600;cursor:pointer;">
+            <input type="radio" name="newProductsTaxBasis" value="inclusive" id="setNewProdInclusive">
+            <span>السعر <strong>شامل</strong> للضريبة</span>
+          </label>
+        </div>
+        <small style="color:#94a3b8;font-size:11px;display:block;margin-top:6px;"><i class="fas fa-info-circle"></i> يمكن تجاوز هذا الافتراضي لكل منتج على حدة من شاشة إضافة/تعديل المنتج.</small>
+      </div>
+    </div>
+
     <!-- V5.7.11 — Payment-methods management moved to the dedicated admin
          section "إدارة الدفع والقنوات" (Admin sidebar → طرق الدفع).
          That screen has the full editor (V3): name, name_ar, icon, color,

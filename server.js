@@ -3050,6 +3050,26 @@ async function runMigrations() {
   await addColumnIfMissing('menu',  'tax_category',       "ENUM('S','Z','E','O') NOT NULL DEFAULT 'S'");
   await addColumnIfMissing('sales', 'tax_subtotals_json', 'LONGTEXT NULL');
 
+  // ─── v6.20.0 — Per-product tax-inclusive flag ───
+  // Owner wants to enter NEW products with their NET price (no VAT)
+  // and have the system add VAT on top, displaying a whole-SAR total
+  // to the customer.  Default 1 = legacy rows stay tax-inclusive
+  // (preserves pre-v6.20.0 behavior so old invoices reprint correctly).
+  // Mirrors db/migrations/0011_tax_inclusive.sql.
+  await addColumnIfMissing('menu', 'is_tax_inclusive', "BOOLEAN NOT NULL DEFAULT 1");
+  // Seed the matching settings keys (idempotent).  VATRate may already
+  // exist at 15 from baseline; INSERT IGNORE keeps the existing value.
+  try {
+    await db.query(
+      "INSERT IGNORE INTO settings (setting_key, setting_value) VALUES " +
+      "('VATRate', '15'), " +
+      "('SalesTaxName', 'ضريبة القيمة المضافة 15%'), " +
+      "('NewProductsTaxInclusive', '0')"
+    );
+  } catch (e) {
+    console.log('[DB] Tax settings seed warning:', e.message.substring(0, 120));
+  }
+
   // ─── v6.0.2 Wave B.6 — UNIQUE constraint on customers.phone ───
   // First deduplicate (keep the oldest row per phone), then enforce
   // UNIQUE so the upsert-by-phone flow can never produce siblings.

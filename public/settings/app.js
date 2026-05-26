@@ -35,6 +35,14 @@ document.addEventListener('DOMContentLoaded', function() {
     // V5.7.9 — phone + email (optional, used on printed receipt footer)
     if (q('#setPhone')) q('#setPhone').value = state.settings.companyPhone || '';
     if (q('#setEmail')) q('#setEmail').value = state.settings.companyEmail || '';
+    // v6.20.0 — tax settings: name + rate + new-product default basis
+    if (q('#setSalesTaxName')) q('#setSalesTaxName').value = state.settings.SalesTaxName || state.settings.salesTaxName || 'ضريبة القيمة المضافة 15%';
+    if (q('#setVATRate')) q('#setVATRate').value = state.settings.VATRate || state.settings.vatRate || '15';
+    var newProdIncl = String(state.settings.NewProductsTaxInclusive || state.settings.newProductsTaxInclusive || '0') === '1';
+    if (q('#setNewProdInclusive') && q('#setNewProdExclusive')) {
+      q('#setNewProdInclusive').checked = newProdIncl;
+      q('#setNewProdExclusive').checked = !newProdIncl;
+    }
     if (state.settings.logo) {
       q('#setLogoPreview').innerHTML = '<img src="' + state.settings.logo + '" alt="logo">';
     }
@@ -179,6 +187,11 @@ window.saveAllSettings = function() {
   // V5.7.9 — capture phone + email (optional)
   var phone   = (q('#setPhone') && q('#setPhone').value) || '';
   var email   = (q('#setEmail') && q('#setEmail').value) || '';
+  // v6.20.0 — capture tax settings
+  var salesTaxName  = (q('#setSalesTaxName') && q('#setSalesTaxName').value) || '';
+  var vatRateRaw    = (q('#setVATRate') && q('#setVATRate').value) || '';
+  var vatRate       = vatRateRaw === '' ? '' : String(Math.max(0, Math.min(100, Number(vatRateRaw) || 0)));
+  var newProdIncl   = !!(q('#setNewProdInclusive') && q('#setNewProdInclusive').checked);
 
   // Collect updated payment methods from the DOM
   var methods = (state.paymentMethods || []).map(function(m, i) {
@@ -212,6 +225,11 @@ window.saveAllSettings = function() {
         state.settings.taxNumber = taxNum;
         state.settings.companyPhone = phone;
         state.settings.companyEmail = email;
+        // v6.20.0 — mirror tax settings into local state so the next
+        // product-add modal reads the fresh default without a reload.
+        if (salesTaxName) state.settings.SalesTaxName = salesTaxName;
+        if (vatRate) state.settings.VATRate = vatRate;
+        state.settings.NewProductsTaxInclusive = newProdIncl ? '1' : '0';
         showToast('تم حفظ الإعدادات بنجاح');
         try { localStorage.setItem('pos_branding', JSON.stringify({ name: name, logo: logo })); } catch (e) {}
         renderHeader('settings');
@@ -237,7 +255,11 @@ window.saveAllSettings = function() {
       name: name, taxNumber: taxNum, logo: logo,
       // V5.7.9 — canonical keys matching what /api/auth/initial reads
       CompanyName: name, TaxNumber: taxNum,
-      CompanyPhone: phone, CompanyEmail: email
+      CompanyPhone: phone, CompanyEmail: email,
+      // v6.20.0 — tax configuration keys (persisted to settings table)
+      SalesTaxName: salesTaxName,
+      VATRate: vatRate,
+      NewProductsTaxInclusive: newProdIncl ? '1' : '0'
     });
 };
 

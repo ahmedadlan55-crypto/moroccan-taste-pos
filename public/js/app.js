@@ -3776,6 +3776,13 @@ function openInvM(mode, id = null) {
       q("#miComputedCost").value = "0"; q("#miMarkupPct").value = "30";
       q("#miPricingFixed").checked = true;
       if (q("#miBrand")) q("#miBrand").value = '';
+      // v6.20.0 — Default the tax-inclusive checkbox from settings.
+      //   NewProductsTaxInclusive='0' (the owner's preferred default) means
+      //   the cashier enters NET prices and the system adds VAT on top.
+      if (q("#miTaxInclusive")) {
+        var defIncl = String((state.settings && state.settings.NewProductsTaxInclusive) || '0') === '1';
+        q("#miTaxInclusive").checked = defIncl;
+      }
       // v5.12.7 — clear image preview/data on Add
       if (q("#miImageData")) q("#miImageData").value = '';
       if (q("#miImageFile")) q("#miImageFile").value = '';
@@ -3789,6 +3796,15 @@ function openInvM(mode, id = null) {
       q("#miComputedCost").value = d.computedCost || "0";
       q("#miMarkupPct").value = d.markupPct || "30";
       q("#miActive").checked = !!d.active;
+      // v6.20.0 — Preserve the stored is_tax_inclusive flag on edit.
+      //   Legacy rows (created before v6.20.0) carry isTaxInclusive=true,
+      //   matching pre-v6.20.0 semantics.
+      if (q("#miTaxInclusive")) {
+        var di = (typeof d.isTaxInclusive !== 'undefined')
+          ? !!d.isTaxInclusive
+          : true;
+        q("#miTaxInclusive").checked = di;
+      }
       if (q("#miBrand")) q("#miBrand").value = d.brandId || d.brand_id || '';
       // Set pricing mode radio
       if (d.pricingMode === 'variable') { q("#miPricingVariable").checked = true; }
@@ -3923,7 +3939,10 @@ function saveInv() {
     pricingMode: pricingMode,
     markupPct: q("#miMarkupPct") ? q("#miMarkupPct").value : 30,
     // v5.12.7 — optional product image (base64). Empty string clears.
-    imageData: q("#miImageData") ? q("#miImageData").value : ''
+    imageData: q("#miImageData") ? q("#miImageData").value : '',
+    // v6.20.0 — per-product tax-inclusive flag (drives whether stored price
+    // is treated as net or gross at sale time).
+    taxInclusive: q("#miTaxInclusive") ? !!q("#miTaxInclusive").checked : true
   };
   if (!d.name) return showToast("يرجى كتابة اسم المنتج", true);
   if (pricingMode === 'fixed' && !d.price) return showToast("يرجى إدخال سعر البيع", true);
@@ -7328,6 +7347,116 @@ window.invCatSetKind = function(kind) {
   if (s) { s.page = 1; s.selected = {}; }
   loadInvCatalog();
 };
+
+window.exportInvItemsExcel = function() {
+  ensureXlsx().then(_exportInvItemsExcelBody).catch(function(e) { showToast(e.message || 'فشل تحميل XLSX', true); });
+};
+function _exportInvItemsExcelBody() {
+  var headers = ['ID', 'نوع المادة', 'البراند', 'الاسم', 'التصنيف', 'التكلفة', 'الرصيد', 'حد النواقص', 'الوحدة الصغرى', 'الوحدة الكبرى', 'معامل التحويل'];
+  var data = (window.currentInvCatalog || []).map(function(m) {
+    return {
+      'ID': m.id || '',
+      'نوع المادة': m.kind === 'semi' ? 'غير تام' : 'خام',
+      'البراند': m.brandId || '',
+      'الاسم': m.name || '',
+      'التصنيف': m.category || '',
+      'التكلفة': m.cost || 0,
+      'الرصيد': m.globalStock || 0,
+      'حد النواقص': m.minStock || 0,
+      'الوحدة الصغرى': m.unit || '',
+      'الوحدة الكبرى': m.bigUnit || '',
+      'معامل التحويل': m.convRate || 1
+    };
+  });
+  var ws;
+  if (data.length) {
+    ws = XLSX.utils.json_to_sheet(data);
+  } else {
+    var example = {
+      'ID': 'اتركه فارغاً للصنف الجديد',
+      'نوع المادة': 'خام',
+      'البراند': 'أدخل معرف البراند',
+      'الاسم': 'مثال للصنف',
+      'التصنيف': 'عام',
+      'التكلفة': 10,
+      'الرصيد': 50,
+      'حد النواقص': 5,
+      'الوحدة الصغرى': 'حبة',
+      'الوحدة الكبرى': 'كرتون',
+      'معامل التحويل': 12
+    };
+    ws = XLSX.utils.json_to_sheet([example]);
+  }
+  ws['!cols'] = [{wch:25},{wch:10},{wch:20},{wch:25},{wch:15},{wch:10},{wch:10},{wch:10},{wch:15},{wch:15},{wch:15}];
+  var wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, 'مواد المخزون');
+  var today = new Date().toISOString().slice(0,10);
+  XLSX.writeFile(wb, 'inv-items-' + today + '.xlsx');
+  showToast(data.length ? 'تم تصدير ' + data.length + ' مادة بنجاح' : 'تم تصدير نموذج فارغ');
+}
+
+window.importInvItemsExcel = function(input) {
+  ensureXlsx().then(function() { _importInvItemsExcelBody(input); }).catch(function(e) { showToast(e.message || 'فشل تحميل XLSX', true); });
+};
+function _importInvItemsExcelBody(input) {
+  var file = input.files[0];
+  if (!file) return;
+  var reader = new FileReader();
+  reader.onload = function(e) {
+    try {
+      var wb = XLSX.read(e.target.result, { type: 'array' });
+      var ws = wb.Sheets[wb.SheetNames[0]];
+      var rows = XLSX.utils.sheet_to_json(ws);
+      if (!rows.length) { showToast("الملف فارغ", true); input.value = ''; return; }
+
+      var items = rows.filter(function(r) { return r['الاسم'] && r['الاسم'] !== 'مثال للصنف'; }).map(function(r) {
+        var idVal = String(r['ID'] || '').trim();
+        if (idVal.indexOf('اتركه') > -1) idVal = '';
+        var kindStr = String(r['نوع المادة'] || '').trim();
+        return {
+          id: idVal,
+          kind: (kindStr === 'غير تام' || kindStr === 'semi') ? 'semi' : 'raw',
+          brandId: String(r['البراند'] || '').trim() || null,
+          name: String(r['الاسم'] || '').trim(),
+          category: String(r['التصنيف'] || '').trim() || 'عام',
+          cost: Number(r['التكلفة']) || 0,
+          stock: Number(r['الرصيد']) || 0,
+          minStock: Number(r['حد النواقص']) || 0,
+          unit: String(r['الوحدة الصغرى'] || '').trim() || 'حبة',
+          bigUnit: String(r['الوحدة الكبرى'] || '').trim() || null,
+          convRate: Number(r['معامل التحويل']) || 1
+        };
+      });
+
+      if (!items.length) { showToast('لا توجد بيانات صالحة للاستيراد', true); input.value = ''; return; }
+
+      loader(true);
+      var token = localStorage.getItem('pos_token') || '';
+      fetch('/api/inventory/items/import', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + token },
+        body: JSON.stringify({ items: items })
+      }).then(function(res) { return res.json(); }).then(function(j) {
+        loader(false);
+        input.value = '';
+        if (j.success) {
+          showToast('تم بنجاح! مضافة: ' + (j.imported||0) + '، محدّثة: ' + (j.updated||0));
+          if (typeof loadInvCatalog === 'function') loadInvCatalog();
+        } else {
+          showToast(j.error || 'خطأ في الاستيراد', true);
+        }
+      }).catch(function(err) {
+        loader(false);
+        input.value = '';
+        showToast('خطأ في الاتصال', true);
+      });
+    } catch (err) {
+      showToast('الملف غير صالح أو تالف', true);
+      input.value = '';
+    }
+  };
+  reader.readAsArrayBuffer(file);
+}
 
 // v5.16.0 — Import legacy semi-finished menu items into inv_items so they
 // live in the unified inventory model alongside raw materials. The

@@ -944,7 +944,7 @@ router.post('/reset-db', async (req, res) => {
     // Verify developer flag from user_meta
     const meta = await getUserMeta();
     const userMeta = meta[username] || {};
-    const isDev = !!userMeta.isDeveloper || username === 'admin' || !!users[0].is_developer || users[0].role === 'developer';
+    const isDev = !!userMeta.isDeveloper || username === 'admin' || !!users[0].is_developer || users[0].role === 'developer' || users[0].role === 'admin';
     if (!isDev) {
       return res.json({ success: false, error: 'هذه العملية متاحة للمطور فقط' });
     }

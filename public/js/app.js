@@ -13380,7 +13380,7 @@ function confirmResetDb() {
         } else {
           showToast((r && r.error) || 'فشلت عملية التصفير', true);
         }
-     }).resetDatabase({ confirm: conf, username: state.user, password: pass });
+     }).resetDatabase({ confirm: conf, doubleConfirm: 'I_UNDERSTAND_DATA_WILL_BE_LOST', username: state.user, password: pass });
 }
 
 // Toggle the developer zone visibility based on the current user

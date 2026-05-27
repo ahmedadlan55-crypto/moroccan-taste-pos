@@ -20218,6 +20218,23 @@ window.erpDebouncedBomRender = function() {
   _bomRenderTimer = setTimeout(function() { erpRenderBOM(); }, 200);
 };
 
+// v6.23.1 — Arabic text normaliser for BOM search.
+// Mirrors _normalizeArabic in public/pos/app.js but scoped here so the
+// admin (erp.js) bundle does not depend on the POS bundle.
+// Strips tashkeel, unifies alef variants (أ/إ/آ/ٱ → ا), ta-marbuta,
+// alif-maqsura, hamza-on-waw, hamza-on-ya — makes search forgiving of
+// the user's keyboard method or the data entry style.
+function _bomNormAr(s) {
+  return String(s || '')
+    .toLowerCase()
+    .replace(/[ً-ْ]/g, '')       // strip tashkeel (diacritics)
+    .replace(/[ٱأإآ]/g, 'ا')     // unify alef variants
+    .replace(/ة/g, 'ه')           // ta-marbuta → ha
+    .replace(/ى/g, 'ي')           // alif-maqsura → ya
+    .replace(/ؤ/g, 'و')           // hamza-on-waw
+    .replace(/ئ/g, 'ي');          // hamza-on-ya
+}
+
 // Read all active filter values from DOM
 function _erpGetBomFilters() {
   var zeroChip = document.querySelector('#bomZeroChip');
@@ -20367,12 +20384,15 @@ window.erpRenderBOM = function() {
 
   // ── Apply filters ─────────────────────────────────────────────
   var list = all.filter(function(b) {
-    // Full-text search (Arabic name + English name + BOM id)
+    // Full-text search — Arabic name uses _bomNormAr so that ابو/أبو/آبو
+    // all match, and tashkeel is ignored.  English name + BOM code use
+    // simple toLowerCase (no Arabic normalisation needed there).
     if (f.search) {
-      var s = f.search.toLowerCase();
-      var hit = (b.productName||'').toLowerCase().indexOf(s) >= 0 ||
-                (b.productNameEn||'').toLowerCase().indexOf(s) >= 0 ||
-                (b.id||'').toLowerCase().indexOf(s) >= 0;
+      var normQ = _bomNormAr(f.search);
+      var rawQ  = f.search.toLowerCase();
+      var hit = _bomNormAr(b.productName).indexOf(normQ) >= 0 ||
+                (b.productNameEn||'').toLowerCase().indexOf(rawQ) >= 0 ||
+                (b.id||'').toLowerCase().indexOf(rawQ) >= 0;
       if (!hit) return false;
     }
     if (f.category && (b.category||'عام') !== f.category) return false;

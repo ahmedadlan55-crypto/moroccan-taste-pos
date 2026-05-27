@@ -5954,19 +5954,20 @@
   <div class="erp-table-container"><table class="erp-table"><thead><tr><th>الاسم</th><th>البراند</th><th>الفرع</th><th>افتراضية</th><th>الحالة</th><th>الأصناف</th><th>إجراءات</th></tr></thead><tbody id="priceListsBody"><tr><td colspan="7" class="empty-msg">جاري التحميل...</td></tr></tbody></table></div>
 </div>
 
-<!-- BOM (Recipes) -->
+<!-- BOM (Recipes) — v6.23.0 world-class redesign -->
 <div id="erpBOM" class="dash-section hidden wo-section">
+
+  <!-- ── Header ─────────────────────────────────────────────────── -->
   <header class="wo-header">
     <div class="wo-header-titles">
-      <h1><span class="wo-icon-slot purple"><i class="fas fa-blender"></i></span>الوصفات — المقادير (BOM)</h1>
-      <p class="wo-header-sub">كل وصفة تحدد المنتج النهائي + المواد الخام المستهلكة + الإنتاجية (Yield) + نسبة الهدر — يُستخدم لاحقاً في أوامر الإنتاج.</p>
+      <h1><span class="wo-icon-slot purple"><i class="fas fa-book-open"></i></span>الوصفات</h1>
+      <p class="wo-header-sub">تعريف مكوّنات كل منتج لسحب المخزون تلقائياً من مستودع الفرع عند البيع.</p>
     </div>
     <div class="wo-header-actions">
       <button class="wo-btn wo-btn-secondary" onclick="erpLoadBOM()"><i class="fas fa-rotate"></i><span>تحديث</span></button>
-      <!-- V5.7.25 — Excel export/import for recipes -->
-      <button class="wo-btn wo-btn-secondary" onclick="erpExportBomExcel()" title="تصدير كل الوصفات لإكسل"><i class="fas fa-file-excel" style="color:#16a34a;"></i><span>تصدير Excel</span></button>
+      <button class="wo-btn wo-btn-secondary" onclick="erpExportBomExcel()" title="تصدير كل الوصفات لإكسل"><i class="fas fa-file-excel" style="color:#16a34a;"></i><span>Excel</span></button>
       <label class="wo-btn wo-btn-secondary" style="cursor:pointer;margin:0;" title="استيراد وصفات من إكسل">
-        <i class="fas fa-file-upload" style="color:#3b82f6;"></i><span>استيراد Excel</span>
+        <i class="fas fa-file-upload" style="color:#3b82f6;"></i><span>استيراد</span>
         <input type="file" id="bomImportFile" accept=".xlsx,.xls,.csv" style="display:none;" onchange="erpImportBomExcel(this)">
       </label>
       <button class="wo-btn wo-btn-outline danger" onclick="erpDeleteAllBom()"><i class="fas fa-trash-alt"></i><span>حذف الكل</span></button>
@@ -5974,32 +5975,101 @@
     </div>
   </header>
 
-  <div class="wo-metric-strip" id="bomMetrics"></div>
-
-  <div class="wo-filter-bar" style="display:flex; gap:10px; padding:10px; background:#f8fafc; border-bottom:1px solid #e2e8f0; border-radius:8px 8px 0 0;">
-    <select id="bomCategoryFilter" class="wo-input" onchange="erpRenderBOM()" style="min-width:200px;">
-      <option value="">كل التصنيفات</option>
-    </select>
+  <!-- ── Stats bar ──────────────────────────────────────────────── -->
+  <div class="bom-stats" id="bomStats">
+    <div class="bom-stat-card" id="bomStatTotal">
+      <span class="bom-stat-icon"><i class="fas fa-book-open"></i></span>
+      <span class="bom-stat-label">إجمالي الوصفات</span>
+      <span class="bom-stat-value">—</span>
+    </div>
+    <div class="bom-stat-card danger" id="bomStatZero" onclick="erpToggleBomZeroFilter()" title="اضغط للتصفية" style="cursor:pointer;">
+      <span class="bom-stat-icon"><i class="fas fa-triangle-exclamation"></i></span>
+      <span class="bom-stat-label">بدون مكوّنات ⚠</span>
+      <span class="bom-stat-value">—</span>
+    </div>
+    <div class="bom-stat-card success" id="bomStatActive">
+      <span class="bom-stat-icon"><i class="fas fa-circle-check"></i></span>
+      <span class="bom-stat-label">نشطة</span>
+      <span class="bom-stat-value">—</span>
+    </div>
+    <div class="bom-stat-card muted" id="bomStatInactive">
+      <span class="bom-stat-icon"><i class="fas fa-circle-xmark"></i></span>
+      <span class="bom-stat-label">غير نشطة</span>
+      <span class="bom-stat-value">—</span>
+    </div>
   </div>
 
-  <div class="wo-table-surface" style="border-radius:0 0 8px 8px; border-top:none;">
-    <table class="wo-table" role="table">
+  <!-- ── Filter bar ─────────────────────────────────────────────── -->
+  <div class="bom-filterbar" id="bomFilterbar">
+
+    <!-- Row 1: search + dropdowns -->
+    <div class="bom-filterbar-row">
+      <div class="bom-search-wrap">
+        <i class="fas fa-search bom-search-icon"></i>
+        <input type="text" id="bomSearch" class="bom-search-input"
+               placeholder="ابحث بالاسم العربي أو الإنجليزي أو كود الوصفة..."
+               oninput="erpDebouncedBomRender()" autocomplete="off">
+      </div>
+      <select id="bomCategoryFilter" class="bom-select" onchange="erpRenderBOM()">
+        <option value="">كل الفئات</option>
+      </select>
+      <select id="bomBrandFilter" class="bom-select" onchange="erpRenderBOM()">
+        <option value="">كل البراندات</option>
+      </select>
+      <select id="bomSourceFilter" class="bom-select" onchange="erpRenderBOM()">
+        <option value="">المصدر: الكل</option>
+        <option value="menu">منيو</option>
+        <option value="inv">مواد خام</option>
+      </select>
+      <select id="bomSortFilter" class="bom-select" onchange="erpRenderBOM()">
+        <option value="name-ar">ترتيب: الاسم عربي أ→ي</option>
+        <option value="name-ar-desc">الاسم عربي ي→أ</option>
+        <option value="ingr-asc">الأقل مكوّنات أولاً</option>
+        <option value="ingr-desc">الأكثر مكوّنات أولاً</option>
+      </select>
+    </div>
+
+    <!-- Row 2: quick-filter chips -->
+    <div class="bom-chips-row">
+      <button class="bom-chip active" data-status="" onclick="erpBomStatusChip(this)">الكل</button>
+      <button class="bom-chip" data-status="active" onclick="erpBomStatusChip(this)"><i class="fas fa-circle-check" style="font-size:10px;"></i> نشطة</button>
+      <button class="bom-chip" data-status="inactive" onclick="erpBomStatusChip(this)"><i class="fas fa-circle-xmark" style="font-size:10px;"></i> غير نشطة</button>
+      <button class="bom-chip zero" id="bomZeroChip" data-zero="0" onclick="erpToggleBomZeroFilter()">
+        <i class="fas fa-triangle-exclamation" style="font-size:10px;"></i> صفر مكوّنات
+      </button>
+      <div id="bomActiveFilters" class="bom-active-filters" style="display:none;"></div>
+    </div>
+
+  </div>
+
+  <!-- ── Table ──────────────────────────────────────────────────── -->
+  <div class="wo-table-surface" style="border-radius:0 0 8px 8px;border-top:none;">
+    <table class="wo-table bom-table" role="table">
       <thead>
-        <!-- v6.22.0 — Removed production-only columns (الإصدار, الإنتاجية,
-             فعّالة من, إلى). Recipes here are ingredient pull lists for
-             inventory deduction on sale, not production BOMs. -->
         <tr>
-          <th scope="col">المنتج</th>
-          <th scope="col" class="num">المكونات</th>
+          <th scope="col" style="width:130px;">كود الوصفة</th>
+          <th scope="col">الاسم بالعربي</th>
+          <th scope="col">الاسم بالإنجليزي</th>
+          <th scope="col">الفئة / البراند</th>
+          <th scope="col" class="num">المكوّنات</th>
           <th scope="col">الحالة</th>
           <th scope="col">الإجراءات</th>
         </tr>
       </thead>
       <tbody id="bomBody">
-        <tr><td colspan="4"><div class="wo-empty"><i class="fas fa-spinner fa-spin"></i><span>جاري التحميل...</span></div></td></tr>
+        <tr><td colspan="7"><div class="wo-empty"><i class="fas fa-spinner fa-spin"></i><span>جاري التحميل...</span></div></td></tr>
       </tbody>
     </table>
   </div>
+
+  <!-- ── Footer ─────────────────────────────────────────────────── -->
+  <div class="bom-footer" id="bomFooter" style="display:none;">
+    <span id="bomFooterCount">—</span>
+    <button class="bom-clear-btn" id="bomClearBtn" onclick="erpClearBomFilters()" style="display:none;">
+      <i class="fas fa-filter-circle-xmark"></i> مسح الفلاتر
+    </button>
+  </div>
+
 </div>
 
 <!-- Waste Entries (v5.10.34 — enterprise rewrite) -->

@@ -20140,95 +20140,315 @@ window.plBulkUpdateChannelPrices = function(plId, isPreview){
   });
 };
 
-// ─── BOM ───
+// ─── BOM — v6.23.0 World-class redesign ────────────────────────────
+// Stats bar + 7 columns (code / ar-name / en-name / category+brand /
+// ingredients colour-coded / status / actions) + powerful filter bar
+// (search + category + brand + source + status chips + zero-filter +
+// sort) with active-filter tags and clear-all.
+
+(function _injectBomStyles() {
+  if (document.getElementById('bom-styles-v623')) return;
+  var s = document.createElement('style');
+  s.id = 'bom-styles-v623';
+  s.textContent =
+    /* ── Stats bar ── */
+    '.bom-stats{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:16px;}' +
+    '.bom-stat-card{background:#fff;border:1px solid #e2e8f0;border-radius:14px;padding:16px 18px;display:flex;flex-direction:column;gap:4px;transition:box-shadow .15s;}' +
+    '.bom-stat-card:hover{box-shadow:0 4px 12px rgba(0,0,0,.06);}' +
+    '.bom-stat-card.danger{border-color:#fecaca;background:#fef2f2;}' +
+    '.bom-stat-card.success{border-color:#bbf7d0;background:#f0fdf4;}' +
+    '.bom-stat-card.muted{border-color:#e2e8f0;background:#f8fafc;}' +
+    '.bom-stat-icon{font-size:18px;margin-bottom:2px;}' +
+    '.bom-stat-card.danger .bom-stat-icon{color:#dc2626;}' +
+    '.bom-stat-card.success .bom-stat-icon{color:#16a34a;}' +
+    '.bom-stat-card.muted .bom-stat-icon{color:#94a3b8;}' +
+    '.bom-stat-card:not(.danger):not(.success):not(.muted) .bom-stat-icon{color:#7c3aed;}' +
+    '.bom-stat-label{font-size:11px;color:#94a3b8;font-weight:600;letter-spacing:.4px;}' +
+    '.bom-stat-value{font-size:30px;font-weight:900;color:#0f172a;line-height:1;}' +
+    '.bom-stat-card.danger .bom-stat-value{color:#dc2626;}' +
+    '.bom-stat-card.success .bom-stat-value{color:#16a34a;}' +
+    '.bom-stat-card.muted .bom-stat-value{color:#64748b;}' +
+    /* ── Filter bar ── */
+    '.bom-filterbar{background:#f8fafc;border:1px solid #e2e8f0;border-radius:10px;padding:12px 14px;margin-bottom:0;display:flex;flex-direction:column;gap:8px;}' +
+    '.bom-filterbar-row{display:flex;flex-wrap:wrap;gap:8px;align-items:center;}' +
+    '.bom-search-wrap{flex:1;min-width:240px;position:relative;}' +
+    '.bom-search-icon{position:absolute;top:50%;transform:translateY(-50%);right:10px;color:#94a3b8;font-size:12px;pointer-events:none;}' +
+    '.bom-search-input{width:100%;padding:8px 32px 8px 12px;border:1.5px solid #e2e8f0;border-radius:8px;font-size:13px;background:#fff;transition:border-color .15s;}' +
+    '.bom-search-input:focus{border-color:#7c3aed;outline:none;box-shadow:0 0 0 3px rgba(124,58,237,.08);}' +
+    '.bom-select{padding:8px 12px;border:1.5px solid #e2e8f0;border-radius:8px;font-size:13px;background:#fff;cursor:pointer;min-width:130px;}' +
+    '.bom-select:focus{border-color:#7c3aed;outline:none;}' +
+    '.bom-chips-row{display:flex;flex-wrap:wrap;gap:6px;align-items:center;}' +
+    '.bom-chip{display:inline-flex;align-items:center;gap:5px;padding:5px 13px;border-radius:20px;font-size:12px;font-weight:600;border:1.5px solid #e2e8f0;background:#fff;cursor:pointer;transition:all .15s;line-height:1.4;}' +
+    '.bom-chip:hover{border-color:#7c3aed;color:#7c3aed;}' +
+    '.bom-chip.active{background:#7c3aed;border-color:#7c3aed;color:#fff;}' +
+    '.bom-chip.zero{border-color:#fecaca;color:#dc2626;background:#fef2f2;}' +
+    '.bom-chip.zero:hover{background:#fee2e2;border-color:#f87171;}' +
+    '.bom-chip.zero.active{background:#dc2626;border-color:#dc2626;color:#fff;}' +
+    /* ── Active filter tags ── */
+    '.bom-active-filters{display:flex;flex-wrap:wrap;gap:5px;align-items:center;}' +
+    '.bom-active-tag{display:inline-flex;align-items:center;gap:4px;padding:3px 6px 3px 10px;background:#ede9fe;color:#6d28d9;border-radius:20px;font-size:11px;font-weight:600;border:1px solid #ddd6fe;}' +
+    '.bom-active-tag button{border:none;background:none;cursor:pointer;color:#7c3aed;font-size:13px;padding:0 2px;line-height:1;display:flex;align-items:center;}' +
+    '.bom-active-tag button:hover{color:#dc2626;}' +
+    /* ── Ingredient chips ── */
+    '.bom-ingr{display:inline-flex;align-items:center;gap:4px;padding:3px 8px;border-radius:10px;font-size:12px;font-weight:700;border:1px solid;}' +
+    '.bom-ingr-zero{background:#fef2f2;color:#dc2626;border-color:#fecaca;}' +
+    '.bom-ingr-low{background:#fffbeb;color:#d97706;border-color:#fde68a;}' +
+    '.bom-ingr-ok{background:#f0fdf4;color:#16a34a;border-color:#bbf7d0;}' +
+    /* ── BOM code cell ── */
+    '.bom-code-cell{font-family:"Courier New",monospace;font-size:10px;color:#7c3aed;background:#ede9fe;padding:2px 7px;border-radius:5px;display:inline-block;max-width:130px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;vertical-align:middle;}' +
+    /* ── Table tweaks ── */
+    '.bom-table td{vertical-align:middle;}' +
+    '.bom-table .bom-name-ar{font-weight:700;color:#0f172a;font-size:13px;}' +
+    '.bom-table .bom-name-en{color:#64748b;font-size:12px;margin-top:1px;}' +
+    '.bom-row-zero{background:#fff8f8 !important;}' +
+    '.bom-row-zero:hover{background:#fef2f2 !important;}' +
+    /* ── Footer ── */
+    '.bom-footer{padding:10px 2px;font-size:12px;color:#94a3b8;display:flex;justify-content:space-between;align-items:center;border-top:1px solid #e2e8f0;margin-top:6px;}' +
+    '.bom-clear-btn{border:none;background:none;cursor:pointer;color:#7c3aed;font-size:12px;font-weight:600;display:flex;align-items:center;gap:5px;padding:4px 8px;border-radius:6px;}' +
+    '.bom-clear-btn:hover{background:#ede9fe;}' +
+    /* ── Responsive ── */
+    '@media(max-width:768px){.bom-stats{grid-template-columns:1fr 1fr;}.bom-filterbar-row{flex-direction:column;}.bom-search-wrap{min-width:100%;}}';
+  document.head.appendChild(s);
+})();
+
+// Debounced render trigger (search input doesn't re-render on every keystroke)
+var _bomRenderTimer = null;
+window.erpDebouncedBomRender = function() {
+  clearTimeout(_bomRenderTimer);
+  _bomRenderTimer = setTimeout(function() { erpRenderBOM(); }, 200);
+};
+
+// Read all active filter values from DOM
+function _erpGetBomFilters() {
+  var zeroChip = document.querySelector('#bomZeroChip');
+  var statusChip = document.querySelector('.bom-chip[data-status].active');
+  return {
+    search: ((document.getElementById('bomSearch') || {}).value || '').trim(),
+    category: (document.getElementById('bomCategoryFilter') || {}).value || '',
+    brand: (document.getElementById('bomBrandFilter') || {}).value || '',
+    source: (document.getElementById('bomSourceFilter') || {}).value || '',
+    status: statusChip ? (statusChip.dataset.status || '') : '',
+    zeroOnly: !!(zeroChip && zeroChip.dataset.zero === '1'),
+    sort: (document.getElementById('bomSortFilter') || {}).value || 'name-ar'
+  };
+}
+
+// Update the 4 stats cards from _bomListCache
+function _erpUpdateBomStats(list) {
+  var total = list.length;
+  var zeroCount = list.filter(function(b){ return (b.lineCount||0) === 0; }).length;
+  var activeCount = list.filter(function(b){ return !!b.isActive; }).length;
+  var inactiveCount = total - activeCount;
+  function setCard(id, val) {
+    var card = document.getElementById(id);
+    if (!card) return;
+    var v = card.querySelector('.bom-stat-value');
+    if (v) v.textContent = val;
+  }
+  setCard('bomStatTotal', total);
+  setCard('bomStatZero', zeroCount);
+  setCard('bomStatActive', activeCount);
+  setCard('bomStatInactive', inactiveCount);
+  // Pulse danger card if zero > 0
+  var dangerCard = document.getElementById('bomStatZero');
+  if (dangerCard) dangerCard.style.display = '';
+}
+
+// Render the active-filters tag row
+function _erpRenderBomActiveFilters(f) {
+  var wrap = document.getElementById('bomActiveFilters');
+  if (!wrap) return;
+  var tags = [];
+  if (f.search) tags.push({ label: '🔍 ' + f.search, clear: function(){ var el=document.getElementById('bomSearch'); if(el){el.value='';} erpRenderBOM(); } });
+  if (f.category) tags.push({ label: 'فئة: ' + f.category, clear: function(){ var el=document.getElementById('bomCategoryFilter'); if(el){el.value='';} erpRenderBOM(); } });
+  if (f.brand) tags.push({ label: 'براند', clear: function(){ var el=document.getElementById('bomBrandFilter'); if(el){el.value='';} erpRenderBOM(); } });
+  if (f.source) tags.push({ label: f.source === 'menu' ? 'منيو' : 'مواد خام', clear: function(){ var el=document.getElementById('bomSourceFilter'); if(el){el.value='';} erpRenderBOM(); } });
+  if (f.status === 'active') tags.push({ label: 'نشطة', clear: function(){ erpBomStatusChip(document.querySelector('.bom-chip[data-status=""]')); } });
+  if (f.status === 'inactive') tags.push({ label: 'غير نشطة', clear: function(){ erpBomStatusChip(document.querySelector('.bom-chip[data-status=""]')); } });
+  if (f.zeroOnly) tags.push({ label: 'صفر مكوّنات', clear: function(){ erpToggleBomZeroFilter(true); } });
+
+  if (!tags.length) {
+    wrap.style.display = 'none';
+    wrap.innerHTML = '';
+  } else {
+    wrap.style.display = 'flex';
+    wrap.innerHTML = tags.map(function(t, i){
+      return '<span class="bom-active-tag">' + t.label +
+        '<button onclick="('+t.clear.toString()+')()" title="إزالة الفلتر">×</button>' +
+        '</span>';
+    }).join('');
+  }
+
+  // Show/hide footer clear button
+  var clearBtn = document.getElementById('bomClearBtn');
+  if (clearBtn) clearBtn.style.display = tags.length ? 'inline-flex' : 'none';
+}
+
+// Status chip toggle (الكل / نشطة / غير نشطة)
+window.erpBomStatusChip = function(el) {
+  if (!el) return;
+  document.querySelectorAll('.bom-chip[data-status]').forEach(function(c){ c.classList.remove('active'); });
+  el.classList.add('active');
+  erpRenderBOM();
+};
+
+// Zero-ingredients quick filter toggle
+window.erpToggleBomZeroFilter = function(forceOff) {
+  var chip = document.getElementById('bomZeroChip');
+  if (!chip) return;
+  var newState = forceOff ? '0' : (chip.dataset.zero === '1' ? '0' : '1');
+  chip.dataset.zero = newState;
+  if (newState === '1') chip.classList.add('active'); else chip.classList.remove('active');
+  erpRenderBOM();
+};
+
+// Clear all filters
+window.erpClearBomFilters = function() {
+  var s = document.getElementById('bomSearch'); if (s) s.value = '';
+  var c = document.getElementById('bomCategoryFilter'); if (c) c.value = '';
+  var b = document.getElementById('bomBrandFilter'); if (b) b.value = '';
+  var src = document.getElementById('bomSourceFilter'); if (src) src.value = '';
+  var srt = document.getElementById('bomSortFilter'); if (srt) srt.value = 'name-ar';
+  var zc = document.getElementById('bomZeroChip'); if (zc){ zc.dataset.zero = '0'; zc.classList.remove('active'); }
+  document.querySelectorAll('.bom-chip[data-status]').forEach(function(ch){ ch.classList.remove('active'); });
+  var all = document.querySelector('.bom-chip[data-status=""]'); if (all) all.classList.add('active');
+  erpRenderBOM();
+};
+
 function erpLoadBOM() {
   var body = document.getElementById('bomBody');
   if (!body) return;
-  body.innerHTML = (typeof _woLoadingRow === 'function')
-    ? _woLoadingRow(8) + _woLoadingRow(8)
-    : '<tr><td colspan="8" class="empty-msg">جاري التحميل...</td></tr>';
+  // Inject styles once
+  (typeof _injectBomStyles === 'function') ? _injectBomStyles() : void(0);
+  body.innerHTML = '<tr><td colspan="7"><div class="wo-empty"><i class="fas fa-spinner fa-spin"></i><span>جاري التحميل...</span></div></td></tr>';
+
   _erpGet('/erp/bom', function(list){
     if (!Array.isArray(list)) list = [];
-    var esc = (typeof _woEscapeHtml === 'function') ? _woEscapeHtml : function(s){return String(s||'');};
-    // Metrics
-    var metrics = document.getElementById('bomMetrics');
-    if (metrics && typeof _woMetric === 'function') {
-      var activeBoms = list.filter(function(b){return !b.effectiveTo || new Date(b.effectiveTo) > new Date();}).length;
-      var totalComponents = list.reduce(function(s,b){return s + Number(b.lineCount||0);}, 0);
-      var avgYield = list.length ? list.reduce(function(s,b){return s + Number(b.yieldQuantity||1);}, 0)/list.length : 0;
-      metrics.innerHTML =
-        _woMetric('fa-blender', 'purple', 'إجمالي الوصفات', list.length, 'purple') +
-        _woMetric('fa-circle-check', 'success', 'فعّالة حالياً', activeBoms, 'success') +
-        _woMetric('fa-layer-group', 'info', 'إجمالي المكونات', totalComponents, 'info') +
-        _woMetric('fa-gauge-high', 'warning', 'متوسط الإنتاجية', avgYield.toFixed(2), 'warning');
-    }
+    var esc = (typeof _woEscapeHtml === 'function') ? _woEscapeHtml : function(s){ return String(s||''); };
+
     if (!list.length) {
-      body.innerHTML = '<tr><td colspan="8">' +
+      body.innerHTML = '<tr><td colspan="7">' +
         ((typeof _woEmpty === 'function')
-          ? _woEmpty('fa-blender', 'لا توجد وصفات بعد',
-              'ابدأ بإنشاء أول وصفة — حدّد المنتج النهائي ثم أضف مكوناته من المواد الخام.',
+          ? _woEmpty('fa-book-open', 'لا توجد وصفات بعد',
+              'ابدأ بإنشاء أول وصفة — حدّد المنتج ثم أضف مكوناته من المواد الخام.',
               '<button class="wo-btn wo-btn-primary" onclick="erpOpenBomModal()"><i class="fas fa-plus"></i><span>وصفة جديدة</span></button>')
-          : 'لا توجد وصفات') +
-        '</td></tr>';
+          : 'لا توجد وصفات') + '</td></tr>';
+      _erpUpdateBomStats([]);
       return;
     }
+
     window._bomListCache = list;
-    
-    // Populate categories
-    var catSelect = document.getElementById('bomCategoryFilter');
-    if (catSelect) {
-      var currentVal = catSelect.value;
-      var cats = [];
-      list.forEach(function(b){ if(b.category && cats.indexOf(b.category) === -1) cats.push(b.category); });
-      cats.sort();
-      var opts = '<option value="">كل التصنيفات</option>';
-      cats.forEach(function(c){ opts += '<option value="'+esc(c)+'">'+esc(c)+'</option>'; });
-      catSelect.innerHTML = opts;
-      catSelect.value = currentVal; // preserve selection
-    }
-    
-    window.erpRenderBOM();
+
+    // ── Populate dropdowns ────────────────────────────────────────
+    var preserve = function(id, val) { var el = document.getElementById(id); if (el) { var c = el.value; el.innerHTML = val; if (c) el.value = c; } };
+
+    // Categories
+    var cats = []; list.forEach(function(b){ var c = b.category||'عام'; if (cats.indexOf(c) === -1) cats.push(c); }); cats.sort();
+    preserve('bomCategoryFilter', '<option value="">كل الفئات</option>' + cats.map(function(c){ return '<option value="'+esc(c)+'">'+esc(c)+'</option>'; }).join(''));
+
+    // Brands
+    var brands = {}; list.forEach(function(b){ if (b.brandId && b.brandName) brands[b.brandId] = b.brandName; });
+    var brandOpts = '<option value="">كل البراندات</option>';
+    Object.keys(brands).sort().forEach(function(id){ brandOpts += '<option value="'+esc(id)+'">'+esc(brands[id])+'</option>'; });
+    preserve('bomBrandFilter', brandOpts);
+
+    // ── Stats + render ────────────────────────────────────────────
+    _erpUpdateBomStats(list);
+    erpRenderBOM();
   });
 }
 
 window.erpRenderBOM = function() {
   var body = document.getElementById('bomBody');
   if (!body) return;
-  var list = window._bomListCache || [];
-  var catFilter = (document.getElementById('bomCategoryFilter') || {}).value;
-  if (catFilter) {
-    list = list.filter(function(b){ return String(b.category || 'عام') === String(catFilter); });
-  }
+  var esc = (typeof _woEscapeHtml === 'function') ? _woEscapeHtml : function(s){ return String(s||''); };
+  var f = _erpGetBomFilters();
+  var all = window._bomListCache || [];
 
+  // ── Apply filters ─────────────────────────────────────────────
+  var list = all.filter(function(b) {
+    // Full-text search (Arabic name + English name + BOM id)
+    if (f.search) {
+      var s = f.search.toLowerCase();
+      var hit = (b.productName||'').toLowerCase().indexOf(s) >= 0 ||
+                (b.productNameEn||'').toLowerCase().indexOf(s) >= 0 ||
+                (b.id||'').toLowerCase().indexOf(s) >= 0;
+      if (!hit) return false;
+    }
+    if (f.category && (b.category||'عام') !== f.category) return false;
+    if (f.brand && (b.brandId||'') !== f.brand) return false;
+    if (f.source && (b.productSource||'') !== f.source) return false;
+    if (f.status === 'active'   && !b.isActive) return false;
+    if (f.status === 'inactive' &&  b.isActive) return false;
+    if (f.zeroOnly && (b.lineCount||0) > 0) return false;
+    return true;
+  });
+
+  // ── Sort ──────────────────────────────────────────────────────
+  list = list.slice().sort(function(a, b) {
+    switch (f.sort) {
+      case 'name-ar-desc': return (b.productName||'').localeCompare(a.productName||'', 'ar');
+      case 'ingr-asc': return (a.lineCount||0) - (b.lineCount||0);
+      case 'ingr-desc': return (b.lineCount||0) - (a.lineCount||0);
+      default: return (a.productName||'').localeCompare(b.productName||'', 'ar');
+    }
+  });
+
+  // ── Empty state ───────────────────────────────────────────────
   if (!list.length) {
-    body.innerHTML = '<tr><td colspan="4"><div class="empty-msg">لا توجد وصفات تطابق الفلتر</div></td></tr>';
+    var isFiltered = f.search || f.category || f.brand || f.source || f.status || f.zeroOnly;
+    body.innerHTML = '<tr><td colspan="7"><div class="wo-empty">' +
+      '<i class="fas ' + (isFiltered ? 'fa-filter-circle-xmark' : 'fa-book-open') + '"></i>' +
+      '<span>' + (isFiltered ? 'لا توجد وصفات تطابق الفلاتر المحددة' : 'لا توجد وصفات') + '</span>' +
+      (isFiltered ? '<button class="wo-btn wo-btn-secondary" onclick="erpClearBomFilters()" style="margin-top:8px;"><i class="fas fa-filter-circle-xmark"></i> مسح الفلاتر</button>' : '') +
+      '</div></td></tr>';
+    _erpRenderBomActiveFilters(f);
+    var footer = document.getElementById('bomFooter');
+    if (footer) { footer.style.display = ''; document.getElementById('bomFooterCount').textContent = '0 من ' + all.length + ' وصفة'; }
     return;
   }
-  
-  var esc = (typeof _woEscapeHtml === 'function') ? _woEscapeHtml : function(s){return String(s||'');};
-  body.innerHTML = list.map(function(b){
-    var isActive = !b.effectiveTo || new Date(b.effectiveTo) > new Date();
-    var statusChip = isActive ? '<span class="wo-chip success">فعّالة</span>' : '<span class="wo-chip neutral">منتهية</span>';
-    var from = (b.effectiveFrom||'').slice(0,10) || '—';
-    var to = (b.effectiveTo||'').slice(0,10) || '—';
-    var enNameHtml = b.productNameEn ? '<br><small class="wo-text-subtle" style="font-size:11px;">'+esc(b.productNameEn)+'</small>' : '';
-    var codeHtml = '<div style="font-size:10px; color:#64748b; margin-top:2px; font-family:monospace;">' + esc(b.id) + '</div>';
 
-    // v6.22.0 — Removed الإصدار, الإنتاجية, فعّالة من, إلى columns.
-    // Recipes here define ingredient pull lists for inventory deduction
-    // on sale, not production BOMs — those fields were irrelevant.
-    return '<tr>' +
-      '<td data-label="المنتج"><b>'+esc(b.productName||b.productId)+'</b>' + enNameHtml + codeHtml + '</td>' +
-      '<td data-label="المكونات" class="num"><span class="wo-chip info flat">'+(b.lineCount||0)+'</span></td>' +
+  // ── Render rows ───────────────────────────────────────────────
+  body.innerHTML = list.map(function(b) {
+    var cnt = b.lineCount || 0;
+    var ingrClass = cnt === 0 ? 'bom-ingr bom-ingr-zero'
+                 : cnt <= 2  ? 'bom-ingr bom-ingr-low'
+                 :              'bom-ingr bom-ingr-ok';
+    var ingrLabel = cnt === 0 ? '<i class="fas fa-triangle-exclamation" style="font-size:10px;"></i> لا مكوّنات'
+                  : cnt + ' مكوّن';
+    var statusChip = b.isActive
+      ? '<span class="wo-chip success" style="font-size:11px;">نشطة</span>'
+      : '<span class="wo-chip neutral" style="font-size:11px;">غير نشطة</span>';
+    var catLabel = esc(b.category || 'عام');
+    var brandHtml = b.brandName ? '<br><span style="font-size:10px;color:#94a3b8;">'+esc(b.brandName)+'</span>' : '';
+    var rowCls = cnt === 0 ? ' class="bom-row-zero"' : '';
+    // Safe title for BOM id (tooltip)
+    var shortId = (b.id||'').length > 16 ? (b.id||'').slice(0,16)+'…' : (b.id||'');
+    var pName = (b.productName||'').replace(/'/g, "\\'");
+    return '<tr' + rowCls + '>' +
+      '<td data-label="كود الوصفة"><span class="bom-code-cell" title="'+esc(b.id)+'">'+esc(shortId)+'</span></td>' +
+      '<td data-label="الاسم بالعربي"><span class="bom-name-ar">'+esc(b.productName||b.productId)+'</span></td>' +
+      '<td data-label="الاسم بالإنجليزي"><span class="bom-name-en">' + (b.productNameEn ? esc(b.productNameEn) : '<span style="color:#cbd5e1;">—</span>') + '</span></td>' +
+      '<td data-label="الفئة / البراند"><span class="wo-chip info flat" style="font-size:11px;">'+catLabel+'</span>'+brandHtml+'</td>' +
+      '<td data-label="المكوّنات" class="num"><span class="'+ingrClass+'">'+ingrLabel+'</span></td>' +
       '<td data-label="الحالة">'+statusChip+'</td>' +
       '<td data-label="الإجراءات"><div class="wo-actions">' +
-        '<button class="wo-icon-btn info" onclick="erpViewBomLines(\''+esc(b.id)+'\',\''+esc((b.productName||'').replace(/\'/g,"\\\'"))+'\')" title="عرض المكونات" aria-label="المكونات"><i class="fas fa-list-ul"></i></button>' +
+        '<button class="wo-icon-btn info" onclick="erpViewBomLines(\''+esc(b.id)+'\',\''+esc(pName)+'\')" title="عرض المكوّنات" aria-label="المكوّنات"><i class="fas fa-list-ul"></i></button>' +
         '<button class="wo-icon-btn" onclick="erpOpenBomModal(\''+esc(b.id)+'\')" title="تعديل الوصفة" aria-label="تعديل"><i class="fas fa-pen"></i></button>' +
-        '<button class="wo-icon-btn" onclick="erpCloneBom(\''+esc(b.id)+'\',\''+esc((b.productName||'').replace(/\'/g,"\\\'"))+'\')" title="استنساخ لمنتج آخر" aria-label="استنساخ" style="color:var(--wo-purple);"><i class="fas fa-clone"></i></button>' +
+        '<button class="wo-icon-btn" onclick="erpCloneBom(\''+esc(b.id)+'\',\''+esc(pName)+'\')" title="استنساخ لمنتج آخر" aria-label="استنساخ" style="color:var(--wo-purple);"><i class="fas fa-clone"></i></button>' +
         '<button class="wo-icon-btn danger" onclick="erpDeleteBom(\''+esc(b.id)+'\')" title="حذف" aria-label="حذف"><i class="fas fa-trash"></i></button>' +
       '</div></td>' +
     '</tr>';
   }).join('');
+
+  // ── Footer + active filters ───────────────────────────────────
+  var footer = document.getElementById('bomFooter');
+  if (footer) {
+    footer.style.display = '';
+    var countEl = document.getElementById('bomFooterCount');
+    if (countEl) countEl.textContent = 'عرض ' + list.length + ' من ' + all.length + ' وصفة';
+  }
+  _erpRenderBomActiveFilters(f);
 };
 
 // ═══════════════════════════════════════════════════════════════════

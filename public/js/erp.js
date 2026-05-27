@@ -32376,7 +32376,11 @@ window.erpImportBomExcel = function(input) {
           }
         });
 
-        var bomsToSave = Object.values(grouped).filter(function(b) { return b.lines.length > 0; });
+        // v6.24.1 — Keep ALL products from the Excel, even those whose
+        // ingredient lines are empty or all unknown.  The BOM header
+        // (product → recipe mapping) is still valuable to create even
+        // with 0 lines; the owner can add ingredients manually later.
+        var bomsToSave = Object.values(grouped);
         if (!bomsToSave.length) return _v3Toast('لا توجد وصفات صالحة للاستيراد', true);
 
         // Count unknowns across all BOMs
@@ -32397,15 +32401,16 @@ window.erpImportBomExcel = function(input) {
               delete l._unit;
               delete l._qty;
             });
-            // Remove lines with no resolved componentItemId
+            // Remove lines with no resolved componentItemId — but keep
+          // the BOM itself even if lines becomes [] (v6.24.1 fix).
             b.lines = b.lines.filter(function(l) { return !!l.componentItemId; });
           });
-          return boms.filter(function(b) { return b.lines.length > 0; });
+          return boms; // never discard a BOM just because it has 0 lines
         }
 
         function _confirmAndSave(boms) {
           var cleanBoms = _stripMeta(boms);
-          if (!cleanBoms.length) { _v3Toast('لا توجد مكوّنات صالحة — لم يُحفظ شيء', true); return; }
+          if (!cleanBoms.length) { _v3Toast('لا توجد وصفات للاستيراد', true); return; }
           WoModal.confirm({
             title: 'تأكيد استيراد ' + cleanBoms.length + ' وصفة',
             message: 'إجمالي ' + cleanBoms.reduce(function(s, b) { return s + b.lines.length; }, 0) +

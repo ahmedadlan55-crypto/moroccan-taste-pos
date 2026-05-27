@@ -20172,8 +20172,10 @@ window.plBulkUpdateChannelPrices = function(plId, isPreview){
     '.bom-filterbar{background:#f8fafc;border:1px solid #e2e8f0;border-radius:10px;padding:12px 14px;margin-bottom:0;display:flex;flex-direction:column;gap:8px;}' +
     '.bom-filterbar-row{display:flex;flex-wrap:wrap;gap:8px;align-items:center;}' +
     '.bom-search-wrap{flex:1;min-width:240px;position:relative;}' +
-    '.bom-search-icon{position:absolute;top:50%;transform:translateY(-50%);right:10px;color:#94a3b8;font-size:12px;pointer-events:none;}' +
-    '.bom-search-input{width:100%;padding:8px 32px 8px 12px;border:1.5px solid #e2e8f0;border-radius:8px;font-size:13px;background:#fff;transition:border-color .15s;}' +
+    /* v6.24.2 — icon moved to left:12px matching inventory-catalog search;
+       padding aligned (38px left, 14px right) to prevent text overlap. */
+    '.bom-search-icon{position:absolute;top:50%;transform:translateY(-50%);left:12px;color:#94a3b8;font-size:12px;pointer-events:none;}' +
+    '.bom-search-input{width:100%;padding:10px 14px 10px 38px;border:1.5px solid #e2e8f0;border-radius:10px;font-size:13px;background:#fff;transition:border-color .15s;}' +
     '.bom-search-input:focus{border-color:#7c3aed;outline:none;box-shadow:0 0 0 3px rgba(124,58,237,.08);}' +
     '.bom-select{padding:8px 12px;border:1.5px solid #e2e8f0;border-radius:8px;font-size:13px;background:#fff;cursor:pointer;min-width:130px;}' +
     '.bom-select:focus{border-color:#7c3aed;outline:none;}' +

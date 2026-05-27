@@ -422,7 +422,9 @@
 }
 .invc-filters__search > i {
   position: absolute;
-  inset-inline-start: 12px;
+  left: 12px; /* v6.24.2: fixed from inset-inline-start which placed icon on
+                 the physical RIGHT in RTL, covering typed text. left:12px
+                 places it on the physical LEFT matching the 38px left padding. */
   top: 50%;
   transform: translateY(-50%);
   color: var(--invc-slate-500);

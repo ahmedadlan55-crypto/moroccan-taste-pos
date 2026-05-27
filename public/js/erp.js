@@ -20201,7 +20201,7 @@ window.erpRenderBOM = function() {
   }
 
   if (!list.length) {
-    body.innerHTML = '<tr><td colspan="8"><div class="empty-msg">لا توجد وصفات تطابق الفلتر</div></td></tr>';
+    body.innerHTML = '<tr><td colspan="4"><div class="empty-msg">لا توجد وصفات تطابق الفلتر</div></td></tr>';
     return;
   }
   
@@ -20214,13 +20214,12 @@ window.erpRenderBOM = function() {
     var enNameHtml = b.productNameEn ? '<br><small class="wo-text-subtle" style="font-size:11px;">'+esc(b.productNameEn)+'</small>' : '';
     var codeHtml = '<div style="font-size:10px; color:#64748b; margin-top:2px; font-family:monospace;">' + esc(b.id) + '</div>';
 
+    // v6.22.0 — Removed الإصدار, الإنتاجية, فعّالة من, إلى columns.
+    // Recipes here define ingredient pull lists for inventory deduction
+    // on sale, not production BOMs — those fields were irrelevant.
     return '<tr>' +
       '<td data-label="المنتج"><b>'+esc(b.productName||b.productId)+'</b>' + enNameHtml + codeHtml + '</td>' +
-      '<td data-label="الإصدار" class="num"><code>v'+(b.version||1)+'</code></td>' +
-      '<td data-label="الإنتاجية" class="num"><b>'+_erpFmt(b.yieldQuantity)+'</b> <span class="wo-text-subtle wo-text-caption">'+esc(b.yieldUnit||'')+'</span></td>' +
       '<td data-label="المكونات" class="num"><span class="wo-chip info flat">'+(b.lineCount||0)+'</span></td>' +
-      '<td data-label="من تاريخ" class="wo-text-subtle wo-text-caption">'+from+'</td>' +
-      '<td data-label="إلى تاريخ" class="wo-text-subtle wo-text-caption">'+to+'</td>' +
       '<td data-label="الحالة">'+statusChip+'</td>' +
       '<td data-label="الإجراءات"><div class="wo-actions">' +
         '<button class="wo-icon-btn info" onclick="erpViewBomLines(\''+esc(b.id)+'\',\''+esc((b.productName||'').replace(/\'/g,"\\\'"))+'\')" title="عرض المكونات" aria-label="المكونات"><i class="fas fa-list-ul"></i></button>' +
@@ -31766,13 +31765,15 @@ window.erpExportBomExcel = function() {
 
     Promise.all(linesPromises).then(function(linesArr) {
       // Build wide rows: one per ingredient line
+      // v6.22.0 — Removed Yield Qty / Yield Unit columns (production
+      // fields not relevant for sale-time inventory deduction recipes).
+      // Import still works: erpImportBomExcel reads by column name and
+      // falls back to yieldQuantity=1 / yieldUnit='PCS' when absent.
       var header = [
         'BOM ID',                  // معرف الوصفة (لا تعدّل عند الاستيراد)
         'Product ID',              // معرف المنتج
         'Product Name',            // اسم المنتج
         'Product Source',          // menu / inv
-        'Yield Qty',               // الإنتاجية
-        'Yield Unit',              // وحدة الإنتاجية
         'Ingredient ID',           // معرف المكوّن
         'Ingredient Name',         // اسم المكوّن
         'Quantity',                // الكمية (بالوحدة الصغرى)
@@ -31787,7 +31788,6 @@ window.erpExportBomExcel = function() {
         var lines = linesArr[bi] || [];
         if (!lines.length) {
           rows.push([b.id, b.productId, b.productName || '', b.productSource || 'inv',
-                     Number(b.yieldQuantity) || 1, b.yieldUnit || 'PCS',
                      '', '— لا توجد مكوّنات —', 0, '', 0, 0, 0]);
           return;
         }
@@ -31802,8 +31802,6 @@ window.erpExportBomExcel = function() {
             b.productId,
             b.productName || '',
             b.productSource || 'inv',
-            Number(b.yieldQuantity) || 1,
-            b.yieldUnit || 'PCS',
             l.componentItemId,
             item.name || l.itemName || '',
             qty,
@@ -31817,9 +31815,10 @@ window.erpExportBomExcel = function() {
       });
 
       var ws = XLSX.utils.aoa_to_sheet(rows);
+      // v6.22.0 — 11 columns (was 13; Yield Qty + Yield Unit removed)
       ws['!cols'] = [
         { wch: 18 }, { wch: 18 }, { wch: 26 }, { wch: 12 },
-        { wch: 10 }, { wch: 10 }, { wch: 16 }, { wch: 26 },
+        { wch: 16 }, { wch: 26 },
         { wch: 10 }, { wch: 10 }, { wch: 9 }, { wch: 11 }, { wch: 11 }
       ];
       ws['!freeze'] = { xSplit: 0, ySplit: 1 };
@@ -31836,6 +31835,8 @@ window.erpExportBomExcel = function() {
         }
       }
 
+      // v6.22.0 — Removed Yield Qty / Yield Unit from instructions (fields
+      // no longer exported; import defaults to yieldQuantity=1 / unit=PCS).
       var ins = XLSX.utils.aoa_to_sheet([
         ['Moroccan Taste — تعليمات استيراد الوصفات (BOM)'],
         [''],
@@ -31844,8 +31845,6 @@ window.erpExportBomExcel = function() {
         ['Product ID', 'معرف المنتج (من المنيو أو من inv_items) — مطلوب', 'MENU-1234567890'],
         ['Product Name', 'للقراءة فقط — يُعرض لتسهيل التعرّف', 'كابتشينو 8 أونصة'],
         ['Product Source', 'menu (منتج من المنيو) أو inv (مادة خام نصف مصنعة)', 'menu'],
-        ['Yield Qty', 'كم وحدة من المنتج تنتجها هذه الوصفة', '1'],
-        ['Yield Unit', 'وحدة الإنتاجية', 'PCS / كوب / لتر'],
         ['Ingredient ID', 'معرف المكوّن من المخزون — مطلوب', 'INV-1234567890'],
         ['Ingredient Name', 'للقراءة فقط', 'حبوب قهوة'],
         ['Quantity', 'الكمية المستهلكة (بنفس الوحدة الصغرى لـ inv_items)', '12'],

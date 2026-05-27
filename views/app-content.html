@@ -5985,19 +5985,18 @@
   <div class="wo-table-surface" style="border-radius:0 0 8px 8px; border-top:none;">
     <table class="wo-table" role="table">
       <thead>
+        <!-- v6.22.0 — Removed production-only columns (الإصدار, الإنتاجية,
+             فعّالة من, إلى). Recipes here are ingredient pull lists for
+             inventory deduction on sale, not production BOMs. -->
         <tr>
           <th scope="col">المنتج</th>
-          <th scope="col" class="num">الإصدار</th>
-          <th scope="col" class="num">الإنتاجية</th>
           <th scope="col" class="num">المكونات</th>
-          <th scope="col">فعّالة من</th>
-          <th scope="col">إلى</th>
           <th scope="col">الحالة</th>
           <th scope="col">الإجراءات</th>
         </tr>
       </thead>
       <tbody id="bomBody">
-        <tr><td colspan="8"><div class="wo-empty"><i class="fas fa-spinner fa-spin"></i><span>جاري التحميل...</span></div></td></tr>
+        <tr><td colspan="4"><div class="wo-empty"><i class="fas fa-spinner fa-spin"></i><span>جاري التحميل...</span></div></td></tr>
       </tbody>
     </table>
   </div>

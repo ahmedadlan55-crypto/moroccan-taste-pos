@@ -3302,8 +3302,8 @@ window.submitCashierStocktake = function() {
         closeGlassModal('#modalCashierStocktake');
         glassToast(t('stSaved'));
         localStorage.removeItem('pos_stocktake_cart');
-        // Pass itemsToSend (which has name/sys/actual) not counted (which has systemQty/actualQty)
-        _showStocktakeWhatsApp(r.stocktakeId || '', itemsToSend);
+        // v6.21.0 — HTML-based report (replaces jsPDF which couldn't render Arabic)
+        _printStocktakeReport(r.stocktakeId || '', itemsToSend);
       } else {
         glassToast((r && r.error) || t('errorTitle'), true);
       }
@@ -3314,160 +3314,190 @@ window.submitCashierStocktake = function() {
   });
 };
 
-// Lazy-load jsPDF for PDF generation
-function ensureJsPDF() {
-  if (window.jspdf) return Promise.resolve();
-  return new Promise(function(resolve, reject) {
-    var s = document.createElement('script');
-    s.src = 'https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js';
-    s.onload = resolve;
-    s.onerror = function() { reject(new Error('Failed to load jsPDF')); };
-    document.head.appendChild(s);
-  });
-}
-
-// After save: generate PDF and share via WhatsApp using Web Share API
-function _showStocktakeWhatsApp(stId, items) {
+// v6.21.0 — HTML-based stocktake report.
+// Replaces jsPDF (which couldn't render Arabic — Helvetica font has no
+// Unicode support so every Arabic character showed as □).  Using the
+// browser's native print/PDF engine via window.open() + window.print()
+// gives full Arabic RTL support, Cairo font, and a professional design
+// that matches the app's purple brand — identical to how the sales
+// receipt works via receipt-template.js.
+//
+// Flow:
+//   1. Build an HTML string (A4 portrait, RTL, Cairo font, purple header)
+//   2. Open in a new window
+//   3. Trigger window.print() on desktop (shows print dialog / Save as PDF)
+//   4. On mobile the user taps the in-page "طباعة / PDF" button which
+//      also triggers window.print() — the OS share sheet appears and
+//      the user can pick WhatsApp, Drive, etc.
+function _printStocktakeReport(stId, items) {
   var cashier = (state.currentUser && state.currentUser.displayName) || state.user;
-  var dateStr = new Date().toLocaleString('en-GB');
+  var dateStr = new Date().toLocaleString('ar-SA', { dateStyle: 'full', timeStyle: 'medium' });
   var company = (state.settings && state.settings.name) || 'Moroccan Taste';
-  var isEn = state.lang === 'en';
-  var totalVar = items.reduce(function(s, c) { return s + ((Number(c.actual || c.actualQty) || 0) - (Number(c.sys || c.systemQty) || 0)); }, 0);
+  var branchName = (state.settings && state.settings.branchName) || '';
+  var taxNum = (state.settings && state.settings.taxNumber) || '';
+  var totalVar = items.reduce(function(s, c) {
+    return s + ((Number(c.actual || c.actualQty) || 0) - (Number(c.sys || c.systemQty) || 0));
+  }, 0);
 
-  var lblTitle = isEn ? 'Inventory Stocktake Report' : 'محضر جرد مخزون';
-  var lblTotal = isEn ? 'Total Variance' : 'إجمالي التباين';
-  var hSys = isEn ? 'System' : 'النظام';
-  var hAct = isEn ? 'Actual' : 'الفعلي';
-  var hVar = isEn ? 'Variance' : 'التباين';
-  var hItem = isEn ? 'Item' : 'المادة';
+  // ── Build table rows ──────────────────────────────────────────────
+  var rowsHtml = '';
+  items.forEach(function(c, idx) {
+    var sys = Number(c.sys || c.systemQty) || 0;
+    var act = Number(c.actual || c.actualQty) || 0;
+    var diff = act - sys;
+    var diffCls = diff < 0 ? 'neg' : (diff > 0 ? 'pos' : 'zero');
+    var sign = diff > 0 ? '+' : '';
+    rowsHtml +=
+      '<tr class="' + (idx % 2 === 0 ? 'even' : 'odd') + '">' +
+        '<td class="num">' + (idx + 1) + '</td>' +
+        '<td class="name">' + (c.name || c.id || '') + '</td>' +
+        '<td class="qty">' + sys.toFixed(2) + '</td>' +
+        '<td class="qty">' + act.toFixed(2) + '</td>' +
+        '<td class="diff ' + diffCls + '">' + sign + diff.toFixed(2) + '</td>' +
+      '</tr>';
+  });
 
-  loader(true);
-  ensureJsPDF().then(function() {
-    loader(false);
-    var doc = new jspdf.jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' });
+  var varCls  = totalVar < 0 ? 'neg' : (totalVar > 0 ? 'pos' : 'zero');
+  var varSign = totalVar > 0 ? '+' : '';
 
-    // Use default font (Helvetica) — works for English; Arabic shows as boxes
-    // but since user asked for English mode, this is fine
-    var pageW = doc.internal.pageSize.getWidth();
-    var y = 20;
+  // ── Build the full HTML document ──────────────────────────────────
+  var html =
+    '<!DOCTYPE html><html dir="rtl" lang="ar"><head>' +
+    '<meta charset="UTF-8">' +
+    '<meta name="viewport" content="width=device-width, initial-scale=1">' +
+    '<title>محضر جرد - ' + stId + '</title>' +
+    '<style>' +
+      '@import url(\'https://fonts.googleapis.com/css2?family=Cairo:wght@400;600;700;900&display=swap\');' +
+      '*{margin:0;padding:0;box-sizing:border-box;}' +
+      'body{font-family:\'Cairo\',\'Tahoma\',Arial,sans-serif;direction:rtl;background:#fff;color:#0f172a;padding:20px 16px;}' +
+      // ── Header ──
+      '.header{text-align:center;border-bottom:3px solid #7c3aed;padding-bottom:14px;margin-bottom:16px;}' +
+      '.company{font-size:22px;font-weight:900;color:#7c3aed;letter-spacing:-0.5px;}' +
+      '.branch{font-size:12px;color:#64748b;margin-top:2px;}' +
+      '.doc-title{background:linear-gradient(135deg,#7c3aed,#6d28d9);color:#fff;display:inline-block;padding:5px 20px;border-radius:20px;font-size:14px;font-weight:700;margin-top:8px;letter-spacing:0.3px;}' +
+      // ── Meta grid ──
+      '.meta{display:grid;grid-template-columns:1fr 1fr;gap:8px 16px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:10px;padding:12px 16px;margin-bottom:16px;}' +
+      '.meta-item{display:flex;flex-direction:column;gap:2px;}' +
+      '.meta-label{color:#94a3b8;font-size:10px;font-weight:600;letter-spacing:0.5px;text-transform:uppercase;}' +
+      '.meta-value{color:#0f172a;font-weight:700;font-size:12px;}' +
+      // ── Table ──
+      'table{width:100%;border-collapse:collapse;font-size:12px;margin-bottom:14px;}' +
+      'thead tr{background:linear-gradient(135deg,#7c3aed,#6d28d9);color:#fff;}' +
+      'thead th{padding:9px 8px;font-weight:700;text-align:center;letter-spacing:0.2px;}' +
+      'thead th:first-child{text-align:right;border-radius:0 8px 0 0;}' +
+      'thead th:last-child{border-radius:8px 0 0 0;}' +
+      'tbody tr.even{background:#fff;}' +
+      'tbody tr.odd{background:#fafafe;}' +
+      'tbody tr:hover{background:#ede9fe;}' +
+      'tbody td{padding:8px;border-bottom:1px solid #e2e8f0;text-align:center;}' +
+      'tbody td.name{text-align:right;font-weight:600;color:#1e293b;}' +
+      'tbody td.num{color:#94a3b8;font-size:11px;}' +
+      'tbody td.qty{font-family:\'Courier New\',monospace;font-weight:700;}' +
+      '.diff{font-weight:900;font-family:\'Courier New\',monospace;}' +
+      '.neg{color:#dc2626;}' +
+      '.pos{color:#16a34a;}' +
+      '.zero{color:#94a3b8;}' +
+      // ── Totals ──
+      '.total-box{border-radius:10px;padding:14px 20px;margin-bottom:20px;display:flex;justify-content:space-between;align-items:center;}' +
+      '.total-box.neg-bg{background:#fef2f2;border:1.5px solid #fecaca;}' +
+      '.total-box.pos-bg{background:#f0fdf4;border:1.5px solid #bbf7d0;}' +
+      '.total-box.zero-bg{background:#f8fafc;border:1.5px solid #e2e8f0;}' +
+      '.total-label{font-size:13px;font-weight:700;color:#374151;}' +
+      '.total-value{font-size:20px;font-weight:900;font-family:\'Courier New\',monospace;}' +
+      // ── Signatures ──
+      '.sigs{display:grid;grid-template-columns:1fr 1fr 1fr;gap:20px;margin-top:30px;page-break-inside:avoid;}' +
+      '.sig-block{text-align:center;}' +
+      '.sig-line{border-bottom:1.5px solid #94a3b8;margin-bottom:6px;height:36px;}' +
+      '.sig-label{font-size:11px;color:#64748b;font-weight:600;}' +
+      // ── Footer ──
+      '.footer{margin-top:16px;border-top:1px dashed #e2e8f0;padding-top:10px;text-align:center;font-size:10px;color:#94a3b8;}' +
+      '.vat-num{font-size:11px;color:#94a3b8;text-align:center;margin-top:4px;}' +
+      // ── Print overrides ──
+      '@media print{' +
+        '@page{size:A4 portrait;margin:10mm;}' +
+        'body{padding:0;}' +
+        '.no-print{display:none!important;}' +
+        'tbody tr:hover{background:inherit;}' +
+      '}' +
+    '</style>' +
+    '</head><body>' +
 
     // Header
-    doc.setFontSize(18);
-    doc.setFont('helvetica', 'bold');
-    doc.text(company, pageW / 2, y, { align: 'center' });
-    y += 8;
-    doc.setFontSize(12);
-    doc.setFont('helvetica', 'normal');
-    doc.setTextColor(100);
-    doc.text(lblTitle, pageW / 2, y, { align: 'center' });
-    y += 10;
+    '<div class="header">' +
+      '<div class="company">' + company + '</div>' +
+      (branchName ? '<div class="branch">' + branchName + '</div>' : '') +
+      '<div class="doc-title">📋 محضر جرد المخزون</div>' +
+    '</div>' +
 
-    // Meta info
-    doc.setFontSize(10);
-    doc.setTextColor(0);
-    doc.setFont('helvetica', 'bold');
-    doc.text((isEn ? 'Report No: ' : 'رقم المحضر: ') + stId, 15, y);
-    doc.text((isEn ? 'Date: ' : 'التاريخ: ') + dateStr, pageW - 15, y, { align: 'right' });
-    y += 6;
-    doc.text((isEn ? 'Counted by: ' : 'القائم بالجرد: ') + cashier, 15, y);
-    doc.text((isEn ? 'Items: ' : 'عدد الأصناف: ') + items.length, pageW - 15, y, { align: 'right' });
-    y += 10;
+    // Meta info grid
+    '<div class="meta">' +
+      '<div class="meta-item"><span class="meta-label">رقم المحضر</span><span class="meta-value">' + (stId || '—') + '</span></div>' +
+      '<div class="meta-item"><span class="meta-label">التاريخ والوقت</span><span class="meta-value">' + dateStr + '</span></div>' +
+      '<div class="meta-item"><span class="meta-label">القائم بالجرد</span><span class="meta-value">' + cashier + '</span></div>' +
+      '<div class="meta-item"><span class="meta-label">عدد الأصناف</span><span class="meta-value">' + items.length + '</span></div>' +
+    '</div>' +
 
-    // Table header
-    doc.setFillColor(241, 245, 249);
-    doc.rect(15, y, pageW - 30, 8, 'F');
-    doc.setFontSize(9);
-    doc.setFont('helvetica', 'bold');
-    doc.setTextColor(71, 85, 105);
-    doc.text('#', 18, y + 5.5);
-    doc.text(hItem, 28, y + 5.5);
-    doc.text(hSys, 110, y + 5.5);
-    doc.text(hAct, 135, y + 5.5);
-    doc.text(hVar, 160, y + 5.5);
-    y += 10;
-
-    // Table rows
-    doc.setFont('helvetica', 'normal');
-    doc.setTextColor(0);
-    items.forEach(function(c, idx) {
-      if (y > 270) { doc.addPage(); y = 20; }
-      var sysQty = Number(c.sys || c.systemQty) || 0;
-      var actQty = Number(c.actual || c.actualQty) || 0;
-      var diff = actQty - sysQty;
-      var sign = diff > 0 ? '+' : '';
-
-      doc.setFontSize(9);
-      doc.setTextColor(0);
-      doc.text(String(idx + 1), 18, y);
-      doc.setFont('helvetica', 'bold');
-      doc.text(String(c.name || c.id), 28, y);
-      doc.setFont('helvetica', 'normal');
-      doc.text(sysQty.toFixed(2), 110, y);
-      doc.text(actQty.toFixed(2), 135, y);
-      // Variance color
-      if (diff < 0) doc.setTextColor(239, 68, 68);
-      else if (diff > 0) doc.setTextColor(22, 163, 74);
-      else doc.setTextColor(100);
-      doc.setFont('helvetica', 'bold');
-      doc.text(sign + diff.toFixed(2), 160, y);
-      doc.setTextColor(0);
-      doc.setFont('helvetica', 'normal');
-
-      // Row line
-      y += 2;
-      doc.setDrawColor(226, 232, 240);
-      doc.line(15, y, pageW - 15, y);
-      y += 6;
-    });
+    // Items table
+    '<table>' +
+      '<thead><tr>' +
+        '<th style="width:30px">#</th>' +
+        '<th style="text-align:right">اسم المادة</th>' +
+        '<th>كمية النظام</th>' +
+        '<th>الكمية الفعلية</th>' +
+        '<th>الفرق</th>' +
+      '</tr></thead>' +
+      '<tbody>' + rowsHtml + '</tbody>' +
+    '</table>' +
 
     // Total variance box
-    y += 5;
-    if (totalVar < 0) { doc.setFillColor(254, 242, 242); doc.setTextColor(239, 68, 68); }
-    else { doc.setFillColor(240, 253, 244); doc.setTextColor(22, 163, 74); }
-    doc.roundedRect(15, y, pageW - 30, 12, 3, 3, 'F');
-    doc.setFontSize(12);
-    doc.setFont('helvetica', 'bold');
-    doc.text(lblTotal + ': ' + (totalVar >= 0 ? '+' : '') + totalVar.toFixed(2), pageW / 2, y + 8, { align: 'center' });
+    '<div class="total-box ' + (totalVar < 0 ? 'neg-bg' : totalVar > 0 ? 'pos-bg' : 'zero-bg') + '">' +
+      '<span class="total-label">إجمالي الفرق (جميع الأصناف)</span>' +
+      '<span class="total-value ' + varCls + '">' + varSign + totalVar.toFixed(2) + '</span>' +
+    '</div>' +
 
     // Signature lines
-    y += 25;
-    doc.setTextColor(0);
-    doc.setFontSize(9);
-    doc.setFont('helvetica', 'normal');
-    var sig1 = isEn ? 'Counted by' : 'القائم بالجرد';
-    var sig2 = isEn ? 'Warehouse Mgr' : 'مدير المستودع';
-    var sig3 = isEn ? 'General Mgr' : 'المدير العام';
-    [sig1, sig2, sig3].forEach(function(lbl, i) {
-      var x = 30 + i * 55;
-      doc.line(x - 10, y, x + 30, y);
-      doc.setTextColor(100);
-      doc.text(lbl, x + 10, y + 5, { align: 'center' });
-    });
+    '<div class="sigs">' +
+      '<div class="sig-block"><div class="sig-line"></div><div class="sig-label">القائم بالجرد</div></div>' +
+      '<div class="sig-block"><div class="sig-line"></div><div class="sig-label">مدير المستودع</div></div>' +
+      '<div class="sig-block"><div class="sig-line"></div><div class="sig-label">المدير العام</div></div>' +
+    '</div>' +
 
-    // Generate PDF blob
-    var pdfBlob = doc.output('blob');
-    var fileName = 'Stocktake-' + stId + '.pdf';
-    var pdfFile = new File([pdfBlob], fileName, { type: 'application/pdf' });
+    // VAT number (if available)
+    (taxNum ? '<div class="vat-num">الرقم الضريبي: ' + taxNum + '</div>' : '') +
 
-    // Try Web Share API (works on mobile — shares to WhatsApp, email, etc.)
-    if (navigator.share && navigator.canShare && navigator.canShare({ files: [pdfFile] })) {
-      navigator.share({
-        title: lblTitle,
-        text: lblTitle + ' - ' + stId,
-        files: [pdfFile]
-      }).catch(function() {
-        // User cancelled share — just download instead
-        doc.save(fileName);
-      });
-    } else {
-      // Fallback: download the PDF
-      doc.save(fileName);
-      glassToast(isEn ? 'PDF downloaded — share it via WhatsApp manually' : 'تم تنزيل PDF — شاركه عبر واتساب يدوياً');
+    // Footer
+    '<div class="footer">تم إنشاء هذا المحضر إلكترونياً بواسطة نظام Moroccan Taste POS</div>' +
+
+    // On-screen action buttons (hidden when printing)
+    '<div class="no-print" style="margin-top:24px;text-align:center;display:flex;gap:10px;justify-content:center;">' +
+      '<button onclick="window.print()" style="background:#7c3aed;color:#fff;border:none;padding:10px 28px;border-radius:8px;font-size:14px;font-weight:700;cursor:pointer;font-family:\'Cairo\',sans-serif;">' +
+        '🖨 طباعة / PDF' +
+      '</button>' +
+      '<button onclick="window.close()" style="background:#e2e8f0;color:#374151;border:none;padding:10px 28px;border-radius:8px;font-size:14px;font-weight:700;cursor:pointer;font-family:\'Cairo\',sans-serif;">' +
+        '✕ إغلاق' +
+      '</button>' +
+    '</div>' +
+
+    '</body></html>';
+
+  // ── Open in a new window ──────────────────────────────────────────
+  var win = window.open('', '_blank', 'width=820,height=900,scrollbars=yes');
+  if (!win) {
+    // Popup blocked by browser
+    glassToast('اسمح بالنوافذ المنبثقة لعرض التقرير', true);
+    return;
+  }
+  win.document.write(html);
+  win.document.close();
+  // Brief delay so Cairo font finishes loading before print dialog
+  setTimeout(function() {
+    win.focus();
+    // Desktop: auto-trigger print dialog (Save as PDF)
+    // Mobile:  user taps the on-screen "طباعة / PDF" button
+    if (!/Mobi|Android/i.test(navigator.userAgent)) {
+      win.print();
     }
-  }).catch(function(err) {
-    loader(false);
-    glassToast(err.message || 'Failed to generate PDF', true);
-  });
+  }, 700);
 }
 
 // ═══════════════════════════════════════

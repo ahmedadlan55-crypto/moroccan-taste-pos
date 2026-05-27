@@ -32112,12 +32112,212 @@ window.erpExportBomExcel = function() {
   });
 };
 
+// v6.24.0 — Smart BOM Excel import with 3-tier ingredient resolution:
+//   Tier 1: match by ID (exact)
+//   Tier 2: match by name (Arabic normalised + English exact)
+//   Tier 3: unknown → ask user to create new inventory items
+//
+// This replaces the naïve "pass raw ID to backend" approach that left
+// recipes with dangling componentItemIds whenever the Excel was built
+// without looking up real IDs.
+
 window.erpImportBomExcel = function(input) {
   var file = input && input.files && input.files[0];
   if (!file) return;
   input.value = '';
 
-  _erpEnsureXLSX().then(function(XLSX) {
+  // ── helper: read a field from a row by multiple possible column names
+  function _getF(row, names) {
+    for (var i = 0; i < names.length; i++) {
+      if (row[names[i]] != null && row[names[i]] !== '') return row[names[i]];
+    }
+    return '';
+  }
+
+  // ── helper: fetch all inventory items as a Promise
+  function _fetchInv() {
+    return new Promise(function(resolve) {
+      _erpGet('/inventory/items', function(list) {
+        resolve(Array.isArray(list) ? list : []);
+      });
+    });
+  }
+
+  // ── helper: resolve one ingredient row to a real inventory item id
+  function _resolveIngredient(ingredId, ingredName, byId, byNorm, byEn) {
+    // Tier 1 — exact ID match
+    if (ingredId && byId[ingredId]) {
+      return { resolvedId: byId[ingredId].id, how: 'id' };
+    }
+    // Tier 2a — Arabic name (normalised)
+    var arKey = (typeof _bomNormAr === 'function') ? _bomNormAr(ingredName) : (ingredName||'').toLowerCase();
+    if (arKey && byNorm[arKey]) {
+      return { resolvedId: byNorm[arKey].id, how: 'name-ar' };
+    }
+    // Tier 2b — English name (case-insensitive)
+    var enKey = (ingredName||'').trim().toLowerCase();
+    if (enKey && byEn[enKey]) {
+      return { resolvedId: byEn[enKey].id, how: 'name-en' };
+    }
+    // Tier 3 — unknown
+    return { resolvedId: null, how: 'unknown' };
+  }
+
+  // ── helper: save all BOMs sequentially then refresh the list
+  function _saveBoms(boms, cb) {
+    var ok_count = 0, fail_count = 0, errors = [];
+    var idx = 0;
+    loader(true);
+    function next() {
+      if (idx >= boms.length) {
+        loader(false);
+        _v3Toast('✓ ' + ok_count + ' وصفة' + (fail_count ? ' (فشل ' + fail_count + ')' : ''));
+        if (typeof erpLoadBOM === 'function') erpLoadBOM();
+        if (errors.length) console.warn('[bom import] errors:', errors);
+        if (cb) cb(ok_count, fail_count);
+        return;
+      }
+      var b = boms[idx++];
+      callAPI('POST', '/erp/bom', b, function(resp) {
+        if (resp && (resp.success || resp.id)) ok_count++;
+        else { fail_count++; errors.push({ productId: b.productId, error: (resp && resp.error) || 'unknown' }); }
+        next();
+      });
+    }
+    next();
+  }
+
+  // ── show the "unknown ingredients" decision modal
+  // Returns a Promise<'create'|'skip'|'cancel'>
+  function _showUnknownModal(unknowns) {
+    return new Promise(function(resolve) {
+      // Remove any leftover modal
+      var old = document.getElementById('bomUnknownModal');
+      if (old) old.parentNode.removeChild(old);
+
+      // Deduplicate unknowns by normalized name
+      var seen = {};
+      var unique = unknowns.filter(function(u) {
+        var k = (typeof _bomNormAr === 'function' ? _bomNormAr(u.rawName) : u.rawName.toLowerCase()) || u.rawId || u.rawName;
+        if (seen[k]) return false; seen[k] = true; return true;
+      });
+
+      var rowsHtml = unique.map(function(u) {
+        return '<tr style="border-bottom:1px solid #f1f5f9;">' +
+          '<td style="padding:7px 8px;font-weight:600;color:#0f172a;">' + (u.rawName || '—') + '</td>' +
+          '<td style="padding:7px 8px;text-align:center;color:#64748b;">' + (u.unit || 'PCS') + '</td>' +
+          '<td style="padding:7px 8px;text-align:center;color:#64748b;">' + (u.qty || '—') + '</td>' +
+        '</tr>';
+      }).join('');
+
+      var overlay = document.createElement('div');
+      overlay.id = 'bomUnknownModal';
+      overlay.style.cssText = 'position:fixed;inset:0;z-index:99999;background:rgba(0,0,0,.5);' +
+        'display:flex;align-items:center;justify-content:center;padding:16px;';
+      overlay.innerHTML =
+        '<div style="background:#fff;border-radius:16px;padding:24px 26px;max-width:560px;width:100%;' +
+        'max-height:80vh;overflow-y:auto;box-shadow:0 20px 60px rgba(0,0,0,.3);direction:rtl;">' +
+          '<div style="display:flex;align-items:center;gap:10px;margin-bottom:10px;">' +
+            '<span style="width:38px;height:38px;border-radius:10px;background:#fef2f2;display:flex;align-items:center;justify-content:center;flex-shrink:0;">' +
+              '<i class="fas fa-triangle-exclamation" style="color:#dc2626;"></i></span>' +
+            '<div>' +
+              '<h3 style="margin:0;font-size:16px;color:#0f172a;">' + unique.length + ' مكوّن غير موجود في المخزون</h3>' +
+              '<p style="margin:2px 0 0;font-size:12px;color:#94a3b8;">هذه المواد غير موجودة بالكود ولا بالاسم في إدارة المواد</p>' +
+            '</div>' +
+          '</div>' +
+          '<table style="width:100%;border-collapse:collapse;font-size:12px;border:1px solid #e2e8f0;border-radius:8px;overflow:hidden;margin-bottom:18px;">' +
+            '<thead><tr style="background:#f8fafc;">' +
+              '<th style="padding:7px 8px;text-align:right;color:#64748b;font-weight:600;">اسم المادة</th>' +
+              '<th style="padding:7px 8px;text-align:center;color:#64748b;font-weight:600;">الوحدة</th>' +
+              '<th style="padding:7px 8px;text-align:center;color:#64748b;font-weight:600;">الكمية في الوصفة</th>' +
+            '</tr></thead>' +
+            '<tbody>' + rowsHtml + '</tbody>' +
+          '</table>' +
+          '<div style="background:#fffbeb;border:1px solid #fde68a;border-radius:8px;padding:10px 12px;font-size:12px;color:#92400e;margin-bottom:18px;">' +
+            '<i class="fas fa-info-circle"></i> عند الإنشاء، تُضاف كمواد خام جديدة (تكلفة 0, رصيد 0) — يمكن تحديثها لاحقاً من إدارة مواد المخزون.' +
+          '</div>' +
+          '<div style="display:flex;flex-wrap:wrap;gap:8px;justify-content:flex-end;">' +
+            '<button id="_bomUnknCancel" class="wo-btn wo-btn-secondary">إلغاء الاستيراد</button>' +
+            '<button id="_bomUnknSkip" class="wo-btn wo-btn-outline">استيراد بدون هذه المواد</button>' +
+            '<button id="_bomUnknCreate" class="wo-btn wo-btn-primary">' +
+              '<i class="fas fa-plus"></i> إنشاء المواد وإضافتها' +
+            '</button>' +
+          '</div>' +
+        '</div>';
+
+      document.body.appendChild(overlay);
+
+      function close(choice) {
+        if (overlay.parentNode) overlay.parentNode.removeChild(overlay);
+        resolve(choice);
+      }
+      document.getElementById('_bomUnknCancel').onclick  = function() { close('cancel'); };
+      document.getElementById('_bomUnknSkip').onclick    = function() { close('skip'); };
+      document.getElementById('_bomUnknCreate').onclick  = function() { close('create'); };
+      overlay.addEventListener('click', function(e) {
+        if (e.target === overlay) close('cancel');
+      });
+    });
+  }
+
+  // ── helper: create missing items sequentially, return map rawName→newId
+  function _createMissingItems(unknowns, cb) {
+    var warehouseId = (window.state && state.warehouseId) || null;
+    // Deduplicate by raw name
+    var seen = {}; var unique = [];
+    unknowns.forEach(function(u) {
+      var k = (u.rawName||'').trim().toLowerCase();
+      if (!k) return;
+      if (!seen[k]) { seen[k] = true; unique.push(u); }
+    });
+
+    var nameToId = {};
+    var created = 0, failed = 0;
+    var idx = 0;
+    function next() {
+      if (idx >= unique.length) { cb(nameToId, created, failed); return; }
+      var u = unique[idx++];
+      callAPI('POST', '/inventory/items', {
+        name: u.rawName,
+        unit: u.unit || 'PCS',
+        kind: 'raw',
+        cost: 0, stock: 0, minStock: 0,
+        active: true,
+        warehouseId: warehouseId
+      }, function(resp) {
+        if (resp && (resp.id || resp.success)) {
+          var newId = resp.id || ('INV-' + Date.now());
+          nameToId[(u.rawName||'').trim().toLowerCase()] = newId;
+          created++;
+        } else {
+          console.warn('[bom import] create item failed:', u.rawName, resp);
+          failed++;
+        }
+        next();
+      });
+    }
+    next();
+  }
+
+  // ═══ MAIN FLOW ════════════════════════════════════════════════════
+  loader(true);
+
+  Promise.all([_erpEnsureXLSX(), _fetchInv()]).then(function(results) {
+    var XLSX    = results[0];
+    var invItems = results[1];
+    loader(false);
+
+    // Build lookup maps
+    var byId = {}, byNorm = {}, byEn = {};
+    invItems.forEach(function(it) {
+      byId[it.id] = it;
+      var arKey = (typeof _bomNormAr === 'function') ? _bomNormAr(it.name) : (it.name||'').toLowerCase();
+      if (arKey) byNorm[arKey] = it;
+      // English name (from name_en or nameEn)
+      var en = (it.name_en || it.nameEn || '').trim().toLowerCase();
+      if (en) byEn[en] = it;
+    });
+
     var reader = new FileReader();
     reader.onload = function(e) {
       try {
@@ -32126,79 +32326,150 @@ window.erpImportBomExcel = function(input) {
         var rows = XLSX.utils.sheet_to_json(ws, { defval: '', raw: false });
         if (!rows.length) return _v3Toast('الملف فارغ', true);
 
-        function getField(row, names) {
-          for (var i = 0; i < names.length; i++) {
-            if (row[names[i]] != null && row[names[i]] !== '') return row[names[i]];
-          }
-          return '';
-        }
+        // Parse + resolve ingredients
+        var grouped   = {};
+        var unknownSet = [];   // unresolved lines for modal
 
-        // Group rows by Product ID
-        var grouped = {};
         rows.forEach(function(row) {
-          var productId = String(getField(row, ['Product ID', 'productId', 'معرف المنتج']) || '').trim();
-          var ingredId  = String(getField(row, ['Ingredient ID', 'ingredientId', 'معرف المكوّن']) || '').trim();
-          var qty       = Number(getField(row, ['Quantity', 'quantity', 'الكمية'])) || 0;
-          if (!productId || !ingredId || qty <= 0) return; // skip incomplete rows
+          var productId  = String(_getF(row, ['Product ID', 'productId', 'معرف المنتج']) || '').trim();
+          var rawIngredId = String(_getF(row, ['Ingredient ID', 'ingredientId', 'معرف المكوّن']) || '').trim();
+          var rawIngredName = String(_getF(row, ['Ingredient Name', 'ingredientName', 'اسم المكوّن']) || '').trim();
+          var qty        = Number(_getF(row, ['Quantity', 'quantity', 'الكمية'])) || 0;
+          var unit       = String(_getF(row, ['Unit', 'unit', 'الوحدة']) || 'PCS').trim();
+
+          if (!productId) return;
+          // Allow rows where ingredId OR ingredName is present with qty>0
+          if ((!rawIngredId && !rawIngredName) || qty <= 0) return;
 
           if (!grouped[productId]) {
             grouped[productId] = {
-              id: String(getField(row, ['BOM ID', 'bomId', 'معرف الوصفة']) || '').trim() || null,
+              id: String(_getF(row, ['BOM ID', 'bomId', 'معرف الوصفة']) || '').trim() || null,
               productId: productId,
-              productSource: String(getField(row, ['Product Source', 'productSource', 'النوع']) || '').trim() || 'menu',
-              yieldQuantity: Number(getField(row, ['Yield Qty', 'yieldQuantity', 'الإنتاجية'])) || 1,
-              yieldUnit: String(getField(row, ['Yield Unit', 'yieldUnit', 'وحدة الإنتاجية']) || '').trim() || 'PCS',
+              productSource: String(_getF(row, ['Product Source', 'productSource', 'النوع']) || '').trim() || 'menu',
+              yieldQuantity: Number(_getF(row, ['Yield Qty', 'yieldQuantity', 'الإنتاجية'])) || 1,
+              yieldUnit: String(_getF(row, ['Yield Unit', 'yieldUnit', 'وحدة الإنتاجية']) || '').trim() || 'PCS',
               lines: []
             };
           }
+
+          var res = _resolveIngredient(rawIngredId, rawIngredName, byId, byNorm, byEn);
+
           grouped[productId].lines.push({
-            componentItemId: ingredId,
+            _resolveHow: res.how,
+            _rawIngredId: rawIngredId,
+            _rawIngredName: rawIngredName,
+            _unit: unit,
+            _qty: qty,
+            componentItemId: res.resolvedId || rawIngredId, // placeholder until resolved
             quantity: qty,
-            unit:    String(getField(row, ['Unit', 'unit', 'الوحدة']) || 'PCS').trim(),
-            wastePct: Number(getField(row, ['Waste %', 'wastePct', 'نسبة الهدر'])) || 0
+            unit: unit,
+            wastePct: Number(_getF(row, ['Waste %', 'wastePct', 'نسبة الهدر'])) || 0
           });
-        });
-        var bomsToSave = Object.values(grouped);
 
-        if (!bomsToSave.length) return _v3Toast('لا توجد وصفات صالحة للاستيراد', true);
-
-        WoModal.confirm({
-          title: 'تأكيد استيراد ' + bomsToSave.length + ' وصفة',
-          message: 'إجمالي ' + bomsToSave.reduce(function(s, b) { return s + b.lines.length; }, 0) +
-                   ' مكوّن. الوصفات الموجودة ستُحدَّث، الجديدة ستُنشأ. هل تتابع؟',
-          confirmText: 'استيراد ' + bomsToSave.length,
-          danger: false
-        }).then(function(ok) {
-          if (!ok) return;
-          var ok_count = 0, fail_count = 0;
-          var errors = [];
-          var idx = 0;
-          loader(true);
-          function processNext() {
-            if (idx >= bomsToSave.length) {
-              loader(false);
-              _v3Toast('✓ ' + ok_count + ' وصفة' + (fail_count ? ' (فشل ' + fail_count + ')' : ''));
-              if (typeof erpLoadBOM === 'function') erpLoadBOM();
-              if (errors.length) console.warn('[bom import] errors:', errors);
-              return;
-            }
-            var b = bomsToSave[idx++];
-            callAPI('POST', '/erp/bom', b, function(resp) {
-              if (resp && (resp.success || resp.id)) ok_count++;
-              else { fail_count++; errors.push({ productId: b.productId, error: (resp && resp.error) || 'unknown' }); }
-              processNext();
+          if (res.how === 'unknown') {
+            unknownSet.push({
+              rawName: rawIngredName || rawIngredId,
+              rawId:   rawIngredId,
+              unit:    unit,
+              qty:     qty
             });
           }
-          processNext();
         });
+
+        var bomsToSave = Object.values(grouped).filter(function(b) { return b.lines.length > 0; });
+        if (!bomsToSave.length) return _v3Toast('لا توجد وصفات صالحة للاستيراد', true);
+
+        // Count unknowns across all BOMs
+        var unknownLines = [];
+        bomsToSave.forEach(function(b) {
+          b.lines.forEach(function(l) {
+            if (l._resolveHow === 'unknown') unknownLines.push(l);
+          });
+        });
+
+        // Clean up internal tracking fields before saving
+        function _stripMeta(boms) {
+          boms.forEach(function(b) {
+            b.lines.forEach(function(l) {
+              delete l._resolveHow;
+              delete l._rawIngredId;
+              delete l._rawIngredName;
+              delete l._unit;
+              delete l._qty;
+            });
+            // Remove lines with no resolved componentItemId
+            b.lines = b.lines.filter(function(l) { return !!l.componentItemId; });
+          });
+          return boms.filter(function(b) { return b.lines.length > 0; });
+        }
+
+        function _confirmAndSave(boms) {
+          var cleanBoms = _stripMeta(boms);
+          if (!cleanBoms.length) { _v3Toast('لا توجد مكوّنات صالحة — لم يُحفظ شيء', true); return; }
+          WoModal.confirm({
+            title: 'تأكيد استيراد ' + cleanBoms.length + ' وصفة',
+            message: 'إجمالي ' + cleanBoms.reduce(function(s, b) { return s + b.lines.length; }, 0) +
+                     ' مكوّن. الوصفات الموجودة ستُحدَّث، الجديدة ستُنشأ. هل تتابع؟',
+            confirmText: 'استيراد ' + cleanBoms.length,
+            danger: false
+          }).then(function(ok) { if (ok) _saveBoms(cleanBoms); });
+        }
+
+        // No unknowns → go straight to confirm
+        if (!unknownLines.length) {
+          _confirmAndSave(bomsToSave);
+          return;
+        }
+
+        // Show unknown modal
+        _showUnknownModal(unknownSet).then(function(choice) {
+          if (choice === 'cancel') return;
+
+          if (choice === 'skip') {
+            // Remove unknown lines from all BOMs
+            bomsToSave.forEach(function(b) {
+              b.lines = b.lines.filter(function(l) { return l._resolveHow !== 'unknown'; });
+            });
+            _confirmAndSave(bomsToSave);
+            return;
+          }
+
+          // choice === 'create'
+          loader(true);
+          _createMissingItems(unknownSet, function(nameToId, created, failed) {
+            loader(false);
+            if (failed > 0) {
+              _v3Toast('تعذّر إنشاء ' + failed + ' مادة — استمرار بما تم', true);
+            }
+            // Update componentItemId for unknown lines that were now created
+            bomsToSave.forEach(function(b) {
+              b.lines.forEach(function(l) {
+                if (l._resolveHow === 'unknown') {
+                  var key = (l._rawIngredName||'').trim().toLowerCase();
+                  if (nameToId[key]) {
+                    l.componentItemId = nameToId[key];
+                    l._resolveHow = 'created';
+                  }
+                }
+              });
+            });
+            if (created > 0) {
+              _v3Toast('تم إنشاء ' + created + ' مادة خام جديدة في المخزون ✓');
+            }
+            _confirmAndSave(bomsToSave);
+          });
+        });
+
       } catch (err) {
+        loader(false);
         console.error('[importBomExcel]', err);
         _v3Toast('فشل قراءة الملف: ' + err.message, true);
       }
     };
     reader.readAsArrayBuffer(file);
   }).catch(function(e) {
-    _v3Toast('فشل تحميل مكتبة Excel: ' + e.message, true);
+    loader(false);
+    _v3Toast('فشل التحميل: ' + e.message, true);
   });
 };
 

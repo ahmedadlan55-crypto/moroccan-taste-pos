@@ -32150,12 +32150,60 @@ window.erpImportBomExcel = function(input) {
     });
   }
 
-  // ── helper: fetch warehouse list (needed because creating a new
-  //    inventory item REQUIRES a warehouseId — see routes/inventory.js).
-  function _fetchWarehouses() {
+  // ── helper: ask the user which warehouse the auto-created materials
+  //    should be registered in.  v6.25.2 — replaces the old silent
+  //    default-warehouse resolution (which failed with "no warehouse"
+  //    when no warehouse context was set in the ERP screen).  Loads the
+  //    list via the reliable cached _mhLoadWarehouses (callAPI-based,
+  //    proven in the menu hub) and returns Promise<warehouseId|null>.
+  function _pickWarehouseForImport(count, preselectId) {
     return new Promise(function(resolve) {
-      _erpGet('/erp/warehouses-list', function(list) {
-        resolve(Array.isArray(list) ? list : []);
+      _mhLoadWarehouses(function(list) {
+        list = Array.isArray(list) ? list : [];
+        var active = list.filter(function(w){ return w.isActive !== 0 && w.is_active !== 0; });
+        var whs = active.length ? active : list;
+
+        if (!whs.length) {
+          WoModal.confirm({
+            title: 'لا توجد مستودعات',
+            message: 'يجب إنشاء مستودع أولاً من «إدارة المستودعات» قبل إضافة مواد جديدة للوصفات.',
+            confirmText: 'حسناً', danger: true
+          }).then(function(){ resolve(null); });
+          return;
+        }
+
+        var pre = preselectId || (whs[0].id || whs[0].ID);
+        var optsHtml = whs.map(function(w){
+          var id = w.id || w.ID;
+          var label = (w.name || id) + (w.code ? ' (' + w.code + ')' : '');
+          var esc = (typeof _woEscapeHtml === 'function') ? _woEscapeHtml : function(s){return String(s||'');};
+          return '<option value="' + esc(id) + '"' + (id === pre ? ' selected' : '') + '>' + esc(label) + '</option>';
+        }).join('');
+
+        var overlay = document.createElement('div');
+        overlay.id = 'bomWhPicker';
+        overlay.style.cssText = 'position:fixed;inset:0;z-index:99999;background:rgba(0,0,0,.5);display:flex;align-items:center;justify-content:center;padding:16px;';
+        overlay.innerHTML =
+          '<div style="background:#fff;border-radius:16px;padding:24px 26px;max-width:460px;width:100%;box-shadow:0 20px 60px rgba(0,0,0,.3);direction:rtl;">' +
+            '<div style="display:flex;align-items:center;gap:10px;margin-bottom:8px;">' +
+              '<span style="width:38px;height:38px;border-radius:10px;background:#ede9fe;display:flex;align-items:center;justify-content:center;flex-shrink:0;">' +
+                '<i class="fas fa-warehouse" style="color:#7c3aed;"></i></span>' +
+              '<h3 style="margin:0;font-size:16px;color:#0f172a;">إنشاء ' + count + ' مادة خام جديدة</h3>' +
+            '</div>' +
+            '<p style="margin:0 0 14px;font-size:13px;color:#64748b;">اختر المستودع الذي ستُضاف إليه المواد الجديدة:</p>' +
+            '<select id="_bomWhSelect" style="width:100%;margin-bottom:18px;padding:9px 12px;border:1.5px solid #e2e8f0;border-radius:8px;font-size:13px;background:#fff;">' + optsHtml + '</select>' +
+            '<div style="display:flex;gap:8px;justify-content:flex-end;">' +
+              '<button id="_bomWhCancel" class="wo-btn wo-btn-secondary">إلغاء</button>' +
+              '<button id="_bomWhOk" class="wo-btn wo-btn-primary"><i class="fas fa-plus"></i> إنشاء وإضافة</button>' +
+            '</div>' +
+          '</div>';
+        document.body.appendChild(overlay);
+        function close(val){ if (overlay.parentNode) overlay.parentNode.removeChild(overlay); resolve(val); }
+        document.getElementById('_bomWhOk').onclick = function(){
+          close((document.getElementById('_bomWhSelect') || {}).value || null);
+        };
+        document.getElementById('_bomWhCancel').onclick = function(){ close(null); };
+        overlay.addEventListener('click', function(e){ if (e.target === overlay) close(null); });
       });
     });
   }
@@ -32249,20 +32297,13 @@ window.erpImportBomExcel = function(input) {
   // ═══ MAIN FLOW ════════════════════════════════════════════════════
   loader(true);
 
-  // v6.25.0 — load XLSX + inventory + warehouses in parallel.  The
-  // warehouse list is needed because creating a new inventory item
-  // REQUIRES a warehouseId (routes/inventory.js rejects null).
-  Promise.all([_erpEnsureXLSX(), _fetchInv(), _fetchWarehouses()]).then(function(results) {
+  // v6.25.2 — load XLSX + inventory in parallel.  Warehouses are loaded
+  // on demand by the warehouse picker (_pickWarehouseForImport) only when
+  // new materials actually need creating.
+  Promise.all([_erpEnsureXLSX(), _fetchInv()]).then(function(results) {
     var XLSX     = results[0];
     var invItems = results[1];
-    var warehouses = results[2] || [];
     loader(false);
-
-    // Resolve the warehouse to register auto-created materials in.
-    var defaultWh = (window._wmCurrentWarehouseId) ||
-                    (window.state && window.state.warehouseId) ||
-                    (warehouses[0] && (warehouses[0].id || warehouses[0].ID)) ||
-                    null;
 
     // Build lookup maps.  byName is keyed by _bomNormAr of BOTH the
     // Arabic name and the English name → one lookup covers either.
@@ -32365,34 +32406,33 @@ window.erpImportBomExcel = function(input) {
           return;
         }
 
-        // ── Unknowns exist → AUTO-CREATE (no prompt, owner request) ──
-        if (!defaultWh) {
-          // Can't create without a warehouse — import only matched lines.
-          _v3Toast('لا يوجد مستودع متاح لإنشاء المواد الجديدة — سيتم استيراد المكوّنات المطابَقة فقط', true);
-          _confirmAndSave(bomsToSave, 0);
-          return;
-        }
-
-        loader(true);
-        _autoCreateMissing(unknownSet, defaultWh, function(createdMap, created, failed) {
-          loader(false);
-          if (failed > 0) {
-            _v3Toast('تعذّر إنشاء ' + failed + ' مادة — استمرار بما تم', true);
-          }
-          // Re-link unknown lines using the SAME key derivation used at
-          // create time: _bomNormAr(name || id).  Fixes the v6.24.0 bug.
-          bomsToSave.forEach(function(b) {
-            b.lines.forEach(function(l) {
-              if (l._resolveHow === 'unknown') {
-                var key = _bomNormAr(l._rawIngredName || l._rawIngredId);
-                if (createdMap[key]) {
-                  l.componentItemId = createdMap[key];
-                  l._resolveHow = 'created';
+        // ── Unknowns exist → let the owner pick the warehouse, then
+        //    auto-create the missing materials there (v6.25.2). ──
+        var preselect = (window._wmCurrentWarehouseId) ||
+                        (window.state && window.state.warehouseId) || null;
+        _pickWarehouseForImport(unknownSet.length, preselect).then(function(chosenWh) {
+          if (!chosenWh) return;  // cancelled or no warehouses
+          loader(true);
+          _autoCreateMissing(unknownSet, chosenWh, function(createdMap, created, failed) {
+            loader(false);
+            if (failed > 0) {
+              _v3Toast('تعذّر إنشاء ' + failed + ' مادة — استمرار بما تم', true);
+            }
+            // Re-link unknown lines using the SAME key derivation used at
+            // create time: _bomNormAr(name || id).  Fixes the v6.24.0 bug.
+            bomsToSave.forEach(function(b) {
+              b.lines.forEach(function(l) {
+                if (l._resolveHow === 'unknown') {
+                  var key = _bomNormAr(l._rawIngredName || l._rawIngredId);
+                  if (createdMap[key]) {
+                    l.componentItemId = createdMap[key];
+                    l._resolveHow = 'created';
+                  }
                 }
-              }
+              });
             });
+            _confirmAndSave(bomsToSave, created);
           });
-          _confirmAndSave(bomsToSave, created);
         });
 
       } catch (err) {

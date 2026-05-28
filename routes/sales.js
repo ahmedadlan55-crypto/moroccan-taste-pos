@@ -309,8 +309,17 @@ router.post('/', async (req, res) => {
     // its 2-decimal precision so the ZATCA QR / invoice XML validate.
     const grossWhole = pricing.roundToWhole(grossPrecise);
     const invTotal = grossWhole;
-    const net = netAfterDiscount;
-    const vat = vatAfterDiscount;
+    // v6.25.1 — CRITICAL: re-derive net + vat FROM the whole-rounded total
+    // (invTotal) instead of the pre-rounding precise figures.  The GL
+    // journal debits the payment (= invTotal, whole) and credits
+    // revenue(net) + outputVAT(vat).  When net/vat kept their precise
+    // pre-rounding values, net+vat = grossPrecise != invTotal, so the
+    // journal was unbalanced → "القيد غير متوازن" → every sale failed.
+    // Deriving vat as the residual (invTotal - net) guarantees
+    // net + vat === invTotal exactly, so the journal always balances and
+    // the customer-facing whole total stays the single source of truth.
+    const net = Math.round((invTotal / (1 + VAT_RATE / 100)) * 100) / 100;
+    const vat = Math.round((invTotal - net) * 100) / 100;
 
     // ═══ ZATCA Phase 2 stamp (UUID + hash chain + QR) ═══
     // Load seller details — company + branch names if available
@@ -828,6 +837,24 @@ router.post('/', async (req, res) => {
         // V3: Build dynamic payment method → GL code map
         const pmGlMap = await _buildPmGlMap(db);
         const paymentDebits = _parseSplitPaymentsV3(payStr, invTotal, pmGlMap);
+
+        // v6.25.1 — Guarantee the payment debits sum EXACTLY to invTotal.
+        // Split payments are sent from the POS with per-leg amounts that
+        // can drift a few halalas from the backend-recomputed whole total
+        // (each leg was Math.round()-ed independently).  Absorb any
+        // residual into the largest leg so the journal's debit side ===
+        // credit side (net + vat = invTotal).
+        if (paymentDebits.length) {
+          let _pdSum = paymentDebits.reduce((s, p) => s + (Number(p.amount) || 0), 0);
+          let _pdDiff = Math.round((invTotal - _pdSum) * 100) / 100;
+          if (Math.abs(_pdDiff) >= 0.01) {
+            let _big = 0;
+            for (let _i = 1; _i < paymentDebits.length; _i++) {
+              if (paymentDebits[_i].amount > paymentDebits[_big].amount) _big = _i;
+            }
+            paymentDebits[_big].amount = Math.round((paymentDebits[_big].amount + _pdDiff) * 100) / 100;
+          }
+        }
 
         const entries = [];
         // Debit(s) — by payment method (one per split, GL routed dynamically)

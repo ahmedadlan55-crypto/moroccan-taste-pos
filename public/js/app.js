@@ -544,6 +544,14 @@ const api = window._apiBridge || window._apiBridge.withFailureHandler(err => {
   console.error("GAS Error:", err);
 });
 
+// v6.25.3 — Expose the bridge as window.api so shared modules can find
+// it.  The POS shell gets window.api via /shared/common.js, but the
+// admin shell does NOT load that file — only this app.js defines `api`
+// as a module-local const.  Without this global alias, the shared
+// receipt template (printInvoice → window.api) failed with
+// "API غير متاح لجلب الفاتورة" when reprinting from the sales log.
+window.api = api;
+
 // =========================================
 // 2. Authentication & Initialization
 // =========================================

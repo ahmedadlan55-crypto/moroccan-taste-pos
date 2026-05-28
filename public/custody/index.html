@@ -63,7 +63,7 @@
   <link rel="stylesheet" href="/custody/style.css?v=2">
 
   <script defer src="/shared/api-bridge.js"></script>
-  <script defer src="/custody/app.js"></script>
+  <script defer src="/custody/app.js?v=3"></script>
 </head>
 <body>
 
@@ -137,6 +137,13 @@
 
       <!-- Expenses List -->
       <div id="expList" class="exp-list"></div>
+
+      <!-- v6.27.0 — Custody History Section -->
+      <div class="list-header" style="margin-top:20px;" id="historyHeaderEl">
+        <h3><i class="fas fa-history"></i> سجل العهد</h3>
+        <span class="badge-count" id="historyBadge">0</span>
+      </div>
+      <div id="historyList" class="history-list"></div>
 
     </main>
 
@@ -259,6 +266,48 @@
       </div>
       <button class="save-btn" style="background:linear-gradient(135deg,var(--red),#b91c1c);margin-top:10px;" id="closeSaveBtn" onclick="confirmClose()">
         <i class="fas fa-lock"></i> تأكيد طلب الإقفال
+      </button>
+    </div>
+  </div>
+
+  <!-- v6.27.0 — Custody Detail Sheet (report + print) -->
+  <div id="detailSheet" class="bottom-sheet" style="display:none;">
+    <div class="sheet-overlay" onclick="closeDetailSheet()"></div>
+    <div class="sheet-content">
+      <div class="sheet-handle"></div>
+      <div class="sheet-title" id="detailSheetTitle">
+        <i class="fas fa-file-alt"></i> تفاصيل العهدة
+      </div>
+      <div id="detailBody" style="overflow-y:auto;max-height:55vh;"></div>
+      <div style="display:flex;gap:8px;margin-top:12px;">
+        <button class="save-btn" onclick="showPrintFilter()" style="flex:1;">
+          <i class="fas fa-print"></i> طباعة التقرير
+        </button>
+        <button style="flex:0 0 auto;padding:14px 20px;border:none;border-radius:14px;
+          background:rgba(100,116,139,0.1);color:var(--slate);font-size:14px;
+          font-weight:700;cursor:pointer;font-family:inherit;" onclick="closeDetailSheet()">إغلاق</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- v6.27.0 — Print Filter Sheet -->
+  <div id="printFilterSheet" class="bottom-sheet" style="display:none;">
+    <div class="sheet-overlay" onclick="closePrintFilter()"></div>
+    <div class="sheet-content">
+      <div class="sheet-handle"></div>
+      <div class="sheet-title"><i class="fas fa-print"></i> خيارات الطباعة</div>
+      <div style="display:flex;flex-direction:column;gap:12px;padding:12px 0;">
+        <label class="pf-option">
+          <input type="radio" name="pfMode" value="all" checked>
+          <span><strong>كل المصروفات</strong><br><small>طباعة جميع المصروفات بغض النظر عن حالتها</small></span>
+        </label>
+        <label class="pf-option">
+          <input type="radio" name="pfMode" value="accepted">
+          <span><strong>المقبولة فقط</strong><br><small>طباعة المصروفات المعتمدة والمرحّلة فقط</small></span>
+        </label>
+      </div>
+      <button class="save-btn" onclick="doPrintWithFilter()">
+        <i class="fas fa-print"></i> طباعة
       </button>
     </div>
   </div>

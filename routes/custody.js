@@ -247,6 +247,35 @@ router.get('/my-custody', async (req, res) => {
   } catch (e) { res.json({ error: e.message }); }
 });
 
+// v6.27.0 — All custodies for a user (history + active), newest first.
+// Used by the custody officer app to show the "سجل العهد" section.
+router.get('/my-history', async (req, res) => {
+  try {
+    const username = req.query.username;
+    if (!username) return res.json([]);
+    const [cuUsers] = await db.query(
+      'SELECT id FROM custody_users WHERE linked_username = ?', [username]
+    );
+    if (!cuUsers.length) return res.json([]);
+    const [rows] = await db.query(
+      `SELECT id, custody_number, status, created_date,
+              close_approved_at, balance, total_topups, total_expenses
+       FROM custodies WHERE user_id = ? ORDER BY created_at DESC`,
+      [cuUsers[0].id]
+    );
+    res.json(rows.map(c => ({
+      id: c.id,
+      custodyNumber: c.custody_number,
+      status: c.status,
+      createdDate: c.created_date,
+      closeApprovedAt: c.close_approved_at || null,
+      balance: Number(c.balance),
+      totalTopups: Number(c.total_topups),
+      totalExpenses: Number(c.total_expenses)
+    })));
+  } catch(e) { res.json([]); }
+});
+
 router.get('/:id', async (req, res) => {
   try {
     const [custs] = await db.query('SELECT * FROM custodies WHERE id = ?', [req.params.id]);

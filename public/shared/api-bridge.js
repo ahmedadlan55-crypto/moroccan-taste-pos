@@ -167,6 +167,7 @@
     getCustodyReport:    { method: 'GET',  url: (id) => '/custody/' + id + '/report' },
     getCustodyPending:   { method: 'GET',  url: '/custody/approval/pending' },
     getMyCustody:        { method: 'GET',  url: '/custody/my-custody', query: (u) => ({username:u}) },
+    getCustodyHistory:   { method: 'GET',  url: '/custody/my-history', query: (u) => ({username:u}) },
     deleteCustodyUser:   { method: 'DELETE', url: (id) => '/custody/users/' + id },
     deleteCustody:       { method: 'DELETE', url: (id) => '/custody/' + id },
     closeCustodyRequest: { method: 'POST', url: (id,d) => '/custody/' + id + '/close-request', body: (id,d) => d },

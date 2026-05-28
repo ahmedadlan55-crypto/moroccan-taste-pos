@@ -331,3 +331,56 @@ body{
 
 /* ─── Rotating refresh icon ─── */
 .refreshing .fa-sync-alt{animation:spin .6s linear infinite;}
+
+/* ─── v6.27.0 — Custody History ─── */
+.history-list{padding:0 14px 80px;}
+
+.hcard{
+  background:rgba(255,255,255,0.04);
+  border:1px solid rgba(255,255,255,0.08);
+  border-radius:16px;padding:16px;margin-bottom:10px;
+  cursor:pointer;position:relative;
+  transition:transform .15s,background .15s;
+}
+.hcard:active{transform:scale(.97);background:rgba(255,255,255,0.07);}
+.hcard-header{display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;}
+.hcard-num{font-size:14px;font-weight:800;color:#e2e8f0;}
+.hcard-status{font-size:11px;font-weight:700;padding:4px 10px;border-radius:20px;}
+.hs-active{background:rgba(22,163,74,.2);color:#4ade80;}
+.hs-pending{background:rgba(217,119,6,.2);color:#fbbf24;}
+.hs-closed{background:rgba(100,116,139,.2);color:#94a3b8;}
+.hcard-dates{display:flex;flex-wrap:wrap;gap:10px;font-size:11px;color:#64748b;margin-bottom:10px;}
+.hcard-dates span{display:flex;align-items:center;gap:5px;}
+.hcard-dates i{color:#475569;font-size:10px;}
+.hcard-amounts{display:flex;gap:6px;}
+.ha-item{flex:1;background:rgba(0,0,0,.2);border-radius:10px;padding:8px;text-align:center;}
+.ha-lbl{display:block;font-size:10px;color:#64748b;margin-bottom:3px;}
+.ha-val{font-size:13px;font-weight:800;color:#e2e8f0;}
+.ha-val.green{color:var(--green);}
+.ha-val.red{color:var(--red);}
+.hcard-tap{position:absolute;top:50%;right:14px;transform:translateY(-50%);color:#475569;font-size:12px;}
+
+/* ─── Detail sheet body ─── */
+.detail-meta{background:rgba(0,0,0,.2);border-radius:12px;padding:12px;margin-bottom:8px;}
+.dm-row{display:flex;justify-content:space-between;align-items:center;padding:8px 0;
+  border-bottom:1px solid rgba(255,255,255,.05);font-size:13px;color:#e2e8f0;}
+.dm-row:last-child{border-bottom:none;}
+.dm-lbl{color:#64748b;font-size:12px;}
+.detail-expenses{max-height:240px;overflow-y:auto;}
+.de-row{background:rgba(0,0,0,.15);border-radius:10px;padding:10px;margin-bottom:6px;}
+.de-desc{font-size:13px;font-weight:700;color:#e2e8f0;margin-bottom:5px;}
+.de-foot{display:flex;justify-content:space-between;align-items:center;font-size:11px;color:#64748b;gap:6px;}
+.de-amt{font-weight:800;color:var(--red);}
+.de-status{background:rgba(100,116,139,.2);padding:2px 8px;border-radius:10px;white-space:nowrap;}
+
+/* ─── Print filter ─── */
+.pf-option{
+  display:flex;align-items:flex-start;gap:12px;
+  padding:12px;background:rgba(0,0,0,.15);
+  border-radius:12px;cursor:pointer;font-size:13px;color:#e2e8f0;
+}
+.pf-option input[type="radio"]{
+  margin-top:2px;flex-shrink:0;width:18px;height:18px;
+  accent-color:var(--blue,#3b82f6);
+}
+.pf-option small{display:block;color:#64748b;font-size:11px;margin-top:3px;}

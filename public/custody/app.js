@@ -10,7 +10,10 @@
     balance: 0, topups: 0, expenses: 0, list: [], imgData: '',
     custodyStatus: 'active',
     expenseAccounts: [], branchName: '', companyName: '',
-    _pendingPayload: null
+    _pendingPayload: null,
+    // v6.27.0 — history & detail
+    historyList: [],
+    _detailData: null
   };
 
   var api;
@@ -58,6 +61,7 @@
       S.branchName = d.branchName || '';
       S.companyName = d.companyName || '';
       render();
+      loadHistory(); // v6.27.0 — load custody history after main load
     }).withFailureHandler(function() {
       hideLoader();
       toast('خطأ في الاتصال', 'err');
@@ -549,6 +553,209 @@
     localStorage.removeItem('pos_last_view');
     location.replace('/');
   };
+
+  // ─── v6.27.0 — Custody History ───────────────────────────────────────
+
+  function loadHistory() {
+    api.withSuccessHandler(function(list) {
+      S.historyList = Array.isArray(list) ? list : [];
+      renderHistory();
+    }).withFailureHandler(function() {
+      // Silently ignore — history is supplementary
+    }).getCustodyHistory(S.user);
+  }
+
+  function renderHistory() {
+    var box = el('historyList');
+    var badge = el('historyBadge');
+    if (!box) return;
+    // Exclude the current active custody (already shown at top)
+    var list = S.historyList.filter(function(c) { return c.id !== S.custodyId; });
+    if (badge) badge.textContent = list.length;
+    if (!list.length) {
+      box.innerHTML = '<div class="exp-empty" style="margin:10px 0;"><i class="fas fa-archive"></i><p>لا توجد عهد سابقة</p></div>';
+      return;
+    }
+    var statusMap = {
+      active:        { label: 'نشطة',             cls: 'hs-active'  },
+      close_pending: { label: 'بانتظار الإقفال',  cls: 'hs-pending' },
+      closed:        { label: 'مغلقة',            cls: 'hs-closed'  }
+    };
+    var h = '';
+    list.forEach(function(c) {
+      var st = statusMap[c.status] || { label: c.status, cls: '' };
+      var openDate = '', closeDate = '';
+      try { if (c.createdDate) openDate = new Date(c.createdDate).toLocaleDateString('en-GB'); } catch(x){}
+      try { if (c.closeApprovedAt) closeDate = new Date(c.closeApprovedAt).toLocaleDateString('en-GB'); } catch(x){}
+      var balColor = c.balance >= 0 ? 'var(--green)' : 'var(--red)';
+
+      h += '<div class="hcard" onclick="openCustodyDetail(\'' + esc(c.id) + '\')">';
+      h += '<div class="hcard-header">';
+      h += '<span class="hcard-num"><i class="fas fa-wallet"></i> ' + esc(c.custodyNumber) + '</span>';
+      h += '<span class="hcard-status ' + st.cls + '">' + st.label + '</span>';
+      h += '</div>';
+      h += '<div class="hcard-dates">';
+      if (openDate) h += '<span><i class="fas fa-calendar-plus"></i> فُتحت: ' + openDate + '</span>';
+      if (closeDate) h += '<span><i class="fas fa-calendar-check"></i> أُغلقت: ' + closeDate + '</span>';
+      h += '</div>';
+      h += '<div class="hcard-amounts">';
+      h += '<div class="ha-item"><span class="ha-lbl">التغذية</span><span class="ha-val green">' + fmt(c.totalTopups) + '</span></div>';
+      h += '<div class="ha-item"><span class="ha-lbl">المصروفات</span><span class="ha-val red">' + fmt(c.totalExpenses) + '</span></div>';
+      h += '<div class="ha-item"><span class="ha-lbl">الرصيد</span><span class="ha-val" style="color:' + balColor + ';">' + fmt(c.balance) + '</span></div>';
+      h += '</div>';
+      h += '<div class="hcard-tap"><i class="fas fa-chevron-left"></i></div>';
+      h += '</div>';
+    });
+    box.innerHTML = h;
+  }
+
+  window.openCustodyDetail = function(cusId) {
+    var titleEl = el('detailSheetTitle');
+    var bodyEl  = el('detailBody');
+    if (!titleEl || !bodyEl) return;
+    titleEl.innerHTML = '<i class="fas fa-spinner fa-spin"></i> جاري التحميل...';
+    bodyEl.innerHTML  = '';
+    el('detailSheet').style.display = 'flex';
+    S._detailData = null;
+
+    api.withSuccessHandler(function(data) {
+      if (!data || data.error) {
+        toast(data && data.error || 'خطأ في التحميل', 'err');
+        closeDetailSheet();
+        return;
+      }
+      S._detailData = data;
+      var c = data.custody;
+      titleEl.innerHTML = '<i class="fas fa-file-alt"></i> عهدة — ' + esc(c.custodyNumber);
+      var statusLabels = { active: 'نشطة', close_pending: 'بانتظار الإقفال', closed: 'مغلقة' };
+      var openDate = '';
+      try { if (c.createdDate) openDate = new Date(c.createdDate).toLocaleDateString('en-GB'); } catch(x){}
+
+      var h = '<div class="detail-meta">';
+      h += '<div class="dm-row"><span class="dm-lbl">الحالة</span><span>' + (statusLabels[c.status] || c.status) + '</span></div>';
+      h += '<div class="dm-row"><span class="dm-lbl">تاريخ الفتح</span><span>' + openDate + '</span></div>';
+      h += '<div class="dm-row"><span class="dm-lbl">إجمالي التغذية</span><span style="color:var(--green);font-weight:700;">' + fmt(c.totalTopups) + ' SAR</span></div>';
+      h += '<div class="dm-row"><span class="dm-lbl">إجمالي المصروفات</span><span style="color:var(--red);font-weight:700;">' + fmt(c.totalExpenses) + ' SAR</span></div>';
+      h += '<div class="dm-row"><span class="dm-lbl">الرصيد</span><span style="color:' + (c.balance >= 0 ? 'var(--green)' : 'var(--red)') + ';font-size:18px;font-weight:900;">' + fmt(c.balance) + ' SAR</span></div>';
+      h += '</div>';
+
+      var expenses = data.expenses || [];
+      if (expenses.length) {
+        h += '<div style="margin-top:14px;font-size:12px;font-weight:700;color:var(--slate);margin-bottom:6px;">المصروفات (' + expenses.length + ')</div>';
+        h += '<div class="detail-expenses">';
+        var sb = { pending:'بانتظار', approved:'معتمد', rejected:'مرفوض', posted:'مرحّل', returned:'مُرجع' };
+        expenses.forEach(function(e) {
+          var dt = '';
+          try { if (e.date) dt = new Date(e.date).toLocaleDateString('en-GB'); } catch(x){}
+          h += '<div class="de-row">';
+          h += '<div class="de-desc">' + esc(e.description || '') + '</div>';
+          h += '<div class="de-foot">';
+          h += '<span class="de-date">' + dt + '</span>';
+          h += '<span class="de-status">' + (sb[e.status] || e.status) + '</span>';
+          h += '<span class="de-amt">' + fmt(e.totalWithVat) + ' SAR</span>';
+          h += '</div></div>';
+        });
+        h += '</div>';
+      } else {
+        h += '<div class="exp-empty" style="margin:10px 0;"><i class="fas fa-inbox"></i><p>لا توجد مصروفات</p></div>';
+      }
+      bodyEl.innerHTML = h;
+    }).withFailureHandler(function() {
+      toast('فشل التحميل', 'err');
+      closeDetailSheet();
+    }).getCustodyReport(cusId);
+  };
+
+  window.closeDetailSheet = function() {
+    el('detailSheet').style.display = 'none';
+  };
+
+  window.showPrintFilter = function() {
+    if (!S._detailData) return;
+    // Reset to default
+    var defRadio = document.querySelector('input[name="pfMode"][value="all"]');
+    if (defRadio) defRadio.checked = true;
+    el('printFilterSheet').style.display = 'flex';
+  };
+
+  window.closePrintFilter = function() {
+    el('printFilterSheet').style.display = 'none';
+  };
+
+  window.doPrintWithFilter = function() {
+    var data = S._detailData;
+    if (!data) return;
+    var checked = document.querySelector('input[name="pfMode"]:checked');
+    var filterMode = checked ? checked.value : 'all';
+    closePrintFilter();
+    closeDetailSheet();
+    _doPrintCustody(data, filterMode);
+  };
+
+  function _doPrintCustody(data, mode) {
+    var c = data.custody, u = data.user;
+    var company = S.companyName || 'Moroccan Taste';
+    var allExp = data.expenses || [];
+    var filtered = mode === 'accepted'
+      ? allExp.filter(function(e) { return e.status === 'approved' || e.status === 'posted'; })
+      : allExp;
+
+    var sb = { pending:'بانتظار', approved:'معتمد', rejected:'مرفوض', posted:'مرحّل', returned:'مُرجع' };
+    var rows = filtered.map(function(e, i) {
+      var dt = '';
+      try { if (e.date) dt = new Date(e.date).toLocaleDateString('en-GB'); } catch(x){}
+      return '<tr><td>' + (i+1) + '</td><td>' + dt + '</td>' +
+        '<td style="font-weight:700;">' + esc(e.description || '') + '</td>' +
+        '<td>' + fmt(e.amount) + '</td><td>' + fmt(e.vatAmount) + '</td>' +
+        '<td style="font-weight:800;">' + fmt(e.totalWithVat) + '</td>' +
+        '<td>' + (sb[e.status] || e.status) + '</td></tr>';
+    }).join('');
+
+    var filterLabel = mode === 'accepted' ? ' (المصروفات المقبولة فقط)' : '';
+    var openDate = '';
+    try { if (c.createdDate) openDate = new Date(c.createdDate).toLocaleDateString('en-GB'); } catch(x){}
+
+    var w = window.open('', '_blank');
+    if (!w) { toast('اسمح بفتح نافذة جديدة للطباعة', 'err'); return; }
+    w.document.write(
+      '<html dir="rtl"><head><meta charset="UTF-8">' +
+      '<title>تقرير عهدة ' + esc(c.custodyNumber) + '</title>' +
+      '<style>*{margin:0;padding:0;box-sizing:border-box;}' +
+      'body{font-family:Arial,sans-serif;direction:rtl;padding:30px;color:#1e293b;font-size:13px;}' +
+      'h2{text-align:center;margin-bottom:4px;}h3{text-align:center;color:#64748b;margin-bottom:14px;}' +
+      '.meta{display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px;margin:14px 0;}' +
+      '.meta div{background:#f8fafc;padding:10px;border-radius:10px;border:1px solid #e2e8f0;}' +
+      '.meta .lbl{font-size:10px;color:#64748b;}.meta .val{font-weight:700;}' +
+      'table{width:100%;border-collapse:collapse;margin:12px 0;}' +
+      'th,td{border:1px solid #ddd;padding:8px;text-align:right;}th{background:#f1f5f9;font-weight:700;}' +
+      '.sig{display:flex;justify-content:space-around;margin-top:40px;}' +
+      '.sig div{text-align:center;}' +
+      '.sig .line{width:140px;border-bottom:1px solid #94a3b8;padding-top:40px;margin:0 auto;}' +
+      '.sig .cap{font-size:11px;color:#64748b;margin-top:4px;}' +
+      '@media print{body{padding:10px;}}</style></head><body>' +
+      '<h2>' + esc(company) + '</h2>' +
+      '<h3>تقرير عهدة — ' + esc(c.custodyNumber) + filterLabel + '</h3>' +
+      '<div class="meta">' +
+        '<div><div class="lbl">المسؤول</div><div class="val">' + esc(u ? u.name : c.userName) + '</div></div>' +
+        '<div><div class="lbl">الوظيفة</div><div class="val">' + esc(u ? (u.jobTitle || '—') : '—') + '</div></div>' +
+        '<div><div class="lbl">تاريخ الإنشاء</div><div class="val">' + openDate + '</div></div>' +
+        '<div><div class="lbl">إجمالي التغذية</div><div class="val" style="color:#16a34a;">' + fmt(c.totalTopups) + '</div></div>' +
+        '<div><div class="lbl">إجمالي المصروفات</div><div class="val" style="color:#ef4444;">' + fmt(c.totalExpenses) + '</div></div>' +
+        '<div><div class="lbl">الرصيد</div><div class="val" style="font-size:16px;color:' + (c.balance >= 0 ? '#16a34a' : '#ef4444') + ';">' + fmt(c.balance) + '</div></div>' +
+      '</div>' +
+      '<table><thead><tr><th>#</th><th>التاريخ</th><th>البيان</th><th>القيمة</th><th>الضريبة</th><th>الإجمالي</th><th>الحالة</th></tr></thead>' +
+      '<tbody>' + rows + '</tbody></table>' +
+      '<div class="sig">' +
+        '<div><div class="line"></div><div class="cap">مسؤول العهدة</div></div>' +
+        '<div><div class="line"></div><div class="cap">المدير المباشر</div></div>' +
+        '<div><div class="line"></div><div class="cap">المحاسب</div></div>' +
+        '<div><div class="line"></div><div class="cap">ختم الشركة</div></div>' +
+      '</div>' +
+      '</body></html>'
+    );
+    w.document.close();
+    setTimeout(function() { w.print(); }, 400);
+  }
 
   // ─── Utilities ───
   function el(id) { return document.getElementById(id); }

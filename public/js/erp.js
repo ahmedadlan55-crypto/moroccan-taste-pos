@@ -20226,6 +20226,9 @@ window.erpDebouncedBomRender = function() {
 // Strips tashkeel, unifies alef variants (أ/إ/آ/ٱ → ا), ta-marbuta,
 // alif-maqsura, hamza-on-waw, hamza-on-ya — makes search forgiving of
 // the user's keyboard method or the data entry style.
+// v6.25.0 — also collapse internal whitespace + trim ends so that
+// names differing only by extra spaces ("دقيق  ابيض" vs "دقيق ابيض")
+// still match during BOM Excel import resolution.
 function _bomNormAr(s) {
   return String(s || '')
     .toLowerCase()
@@ -20234,7 +20237,9 @@ function _bomNormAr(s) {
     .replace(/ة/g, 'ه')           // ta-marbuta → ha
     .replace(/ى/g, 'ي')           // alif-maqsura → ya
     .replace(/ؤ/g, 'و')           // hamza-on-waw
-    .replace(/ئ/g, 'ي');          // hamza-on-ya
+    .replace(/ئ/g, 'ي')           // hamza-on-ya
+    .replace(/\s+/g, ' ')         // v6.25.0: collapse multiple spaces → one
+    .trim();                       // v6.25.0: trim leading/trailing space
 }
 
 // Read all active filter values from DOM
@@ -32145,23 +32150,31 @@ window.erpImportBomExcel = function(input) {
     });
   }
 
-  // ── helper: resolve one ingredient row to a real inventory item id
-  function _resolveIngredient(ingredId, ingredName, byId, byNorm, byEn) {
-    // Tier 1 — exact ID match
+  // ── helper: fetch warehouse list (needed because creating a new
+  //    inventory item REQUIRES a warehouseId — see routes/inventory.js).
+  function _fetchWarehouses() {
+    return new Promise(function(resolve) {
+      _erpGet('/erp/warehouses-list', function(list) {
+        resolve(Array.isArray(list) ? list : []);
+      });
+    });
+  }
+
+  // ── helper: resolve one ingredient row to a real inventory item id.
+  //    Priority (owner request): 1) match by ID, 2) match by name.
+  //    byName is keyed by _bomNormAr() of BOTH the Arabic name and the
+  //    English name, so a single lookup covers either language.
+  function _resolveIngredient(ingredId, ingredName, byId, byName) {
+    // Tier 1 — exact ID match (highest priority)
     if (ingredId && byId[ingredId]) {
       return { resolvedId: byId[ingredId].id, how: 'id' };
     }
-    // Tier 2a — Arabic name (normalised)
-    var arKey = (typeof _bomNormAr === 'function') ? _bomNormAr(ingredName) : (ingredName||'').toLowerCase();
-    if (arKey && byNorm[arKey]) {
-      return { resolvedId: byNorm[arKey].id, how: 'name-ar' };
+    // Tier 2 — name match (Arabic or English, normalised)
+    var key = _bomNormAr(ingredName);
+    if (key && byName[key]) {
+      return { resolvedId: byName[key].id, how: 'name' };
     }
-    // Tier 2b — English name (case-insensitive)
-    var enKey = (ingredName||'').trim().toLowerCase();
-    if (enKey && byEn[enKey]) {
-      return { resolvedId: byEn[enKey].id, how: 'name-en' };
-    }
-    // Tier 3 — unknown
+    // Tier 3 — unknown (will be auto-created)
     return { resolvedId: null, how: 'unknown' };
   }
 
@@ -32189,95 +32202,28 @@ window.erpImportBomExcel = function(input) {
     next();
   }
 
-  // ── show the "unknown ingredients" decision modal
-  // Returns a Promise<'create'|'skip'|'cancel'>
-  function _showUnknownModal(unknowns) {
-    return new Promise(function(resolve) {
-      // Remove any leftover modal
-      var old = document.getElementById('bomUnknownModal');
-      if (old) old.parentNode.removeChild(old);
-
-      // Deduplicate unknowns by normalized name
-      var seen = {};
-      var unique = unknowns.filter(function(u) {
-        var k = (typeof _bomNormAr === 'function' ? _bomNormAr(u.rawName) : u.rawName.toLowerCase()) || u.rawId || u.rawName;
-        if (seen[k]) return false; seen[k] = true; return true;
-      });
-
-      var rowsHtml = unique.map(function(u) {
-        return '<tr style="border-bottom:1px solid #f1f5f9;">' +
-          '<td style="padding:7px 8px;font-weight:600;color:#0f172a;">' + (u.rawName || '—') + '</td>' +
-          '<td style="padding:7px 8px;text-align:center;color:#64748b;">' + (u.unit || 'PCS') + '</td>' +
-          '<td style="padding:7px 8px;text-align:center;color:#64748b;">' + (u.qty || '—') + '</td>' +
-        '</tr>';
-      }).join('');
-
-      var overlay = document.createElement('div');
-      overlay.id = 'bomUnknownModal';
-      overlay.style.cssText = 'position:fixed;inset:0;z-index:99999;background:rgba(0,0,0,.5);' +
-        'display:flex;align-items:center;justify-content:center;padding:16px;';
-      overlay.innerHTML =
-        '<div style="background:#fff;border-radius:16px;padding:24px 26px;max-width:560px;width:100%;' +
-        'max-height:80vh;overflow-y:auto;box-shadow:0 20px 60px rgba(0,0,0,.3);direction:rtl;">' +
-          '<div style="display:flex;align-items:center;gap:10px;margin-bottom:10px;">' +
-            '<span style="width:38px;height:38px;border-radius:10px;background:#fef2f2;display:flex;align-items:center;justify-content:center;flex-shrink:0;">' +
-              '<i class="fas fa-triangle-exclamation" style="color:#dc2626;"></i></span>' +
-            '<div>' +
-              '<h3 style="margin:0;font-size:16px;color:#0f172a;">' + unique.length + ' مكوّن غير موجود في المخزون</h3>' +
-              '<p style="margin:2px 0 0;font-size:12px;color:#94a3b8;">هذه المواد غير موجودة بالكود ولا بالاسم في إدارة المواد</p>' +
-            '</div>' +
-          '</div>' +
-          '<table style="width:100%;border-collapse:collapse;font-size:12px;border:1px solid #e2e8f0;border-radius:8px;overflow:hidden;margin-bottom:18px;">' +
-            '<thead><tr style="background:#f8fafc;">' +
-              '<th style="padding:7px 8px;text-align:right;color:#64748b;font-weight:600;">اسم المادة</th>' +
-              '<th style="padding:7px 8px;text-align:center;color:#64748b;font-weight:600;">الوحدة</th>' +
-              '<th style="padding:7px 8px;text-align:center;color:#64748b;font-weight:600;">الكمية في الوصفة</th>' +
-            '</tr></thead>' +
-            '<tbody>' + rowsHtml + '</tbody>' +
-          '</table>' +
-          '<div style="background:#fffbeb;border:1px solid #fde68a;border-radius:8px;padding:10px 12px;font-size:12px;color:#92400e;margin-bottom:18px;">' +
-            '<i class="fas fa-info-circle"></i> عند الإنشاء، تُضاف كمواد خام جديدة (تكلفة 0, رصيد 0) — يمكن تحديثها لاحقاً من إدارة مواد المخزون.' +
-          '</div>' +
-          '<div style="display:flex;flex-wrap:wrap;gap:8px;justify-content:flex-end;">' +
-            '<button id="_bomUnknCancel" class="wo-btn wo-btn-secondary">إلغاء الاستيراد</button>' +
-            '<button id="_bomUnknSkip" class="wo-btn wo-btn-outline">استيراد بدون هذه المواد</button>' +
-            '<button id="_bomUnknCreate" class="wo-btn wo-btn-primary">' +
-              '<i class="fas fa-plus"></i> إنشاء المواد وإضافتها' +
-            '</button>' +
-          '</div>' +
-        '</div>';
-
-      document.body.appendChild(overlay);
-
-      function close(choice) {
-        if (overlay.parentNode) overlay.parentNode.removeChild(overlay);
-        resolve(choice);
-      }
-      document.getElementById('_bomUnknCancel').onclick  = function() { close('cancel'); };
-      document.getElementById('_bomUnknSkip').onclick    = function() { close('skip'); };
-      document.getElementById('_bomUnknCreate').onclick  = function() { close('create'); };
-      overlay.addEventListener('click', function(e) {
-        if (e.target === overlay) close('cancel');
-      });
-    });
-  }
-
-  // ── helper: create missing items sequentially, return map rawName→newId
-  function _createMissingItems(unknowns, cb) {
-    var warehouseId = (window.state && state.warehouseId) || null;
-    // Deduplicate by raw name
+  // ── helper: auto-create missing items sequentially.
+  //    v6.25.0 — replaces the old "unknown materials" decision modal.
+  //    Per owner request, missing ingredients are created automatically
+  //    (no prompt) so recipes never import empty.
+  //    Returns via cb(createdMap, created, failed) where createdMap is
+  //    keyed by _bomNormAr(rawName) → newId.  Keying by the SAME
+  //    normaliser used at re-link time fixes the v6.24.0 bug where
+  //    id-only ingredients (empty name) never got linked.
+  function _autoCreateMissing(unknowns, warehouseId, cb) {
+    // Deduplicate by normalised key
     var seen = {}; var unique = [];
     unknowns.forEach(function(u) {
-      var k = (u.rawName||'').trim().toLowerCase();
+      var k = _bomNormAr(u.rawName);
       if (!k) return;
       if (!seen[k]) { seen[k] = true; unique.push(u); }
     });
 
-    var nameToId = {};
+    var createdMap = {};
     var created = 0, failed = 0;
     var idx = 0;
     function next() {
-      if (idx >= unique.length) { cb(nameToId, created, failed); return; }
+      if (idx >= unique.length) { cb(createdMap, created, failed); return; }
       var u = unique[idx++];
       callAPI('POST', '/inventory/items', {
         name: u.rawName,
@@ -32287,9 +32233,8 @@ window.erpImportBomExcel = function(input) {
         active: true,
         warehouseId: warehouseId
       }, function(resp) {
-        if (resp && (resp.id || resp.success)) {
-          var newId = resp.id || ('INV-' + Date.now());
-          nameToId[(u.rawName||'').trim().toLowerCase()] = newId;
+        if (resp && resp.id) {
+          createdMap[_bomNormAr(u.rawName)] = resp.id;
           created++;
         } else {
           console.warn('[bom import] create item failed:', u.rawName, resp);
@@ -32304,20 +32249,30 @@ window.erpImportBomExcel = function(input) {
   // ═══ MAIN FLOW ════════════════════════════════════════════════════
   loader(true);
 
-  Promise.all([_erpEnsureXLSX(), _fetchInv()]).then(function(results) {
-    var XLSX    = results[0];
+  // v6.25.0 — load XLSX + inventory + warehouses in parallel.  The
+  // warehouse list is needed because creating a new inventory item
+  // REQUIRES a warehouseId (routes/inventory.js rejects null).
+  Promise.all([_erpEnsureXLSX(), _fetchInv(), _fetchWarehouses()]).then(function(results) {
+    var XLSX     = results[0];
     var invItems = results[1];
+    var warehouses = results[2] || [];
     loader(false);
 
-    // Build lookup maps
-    var byId = {}, byNorm = {}, byEn = {};
+    // Resolve the warehouse to register auto-created materials in.
+    var defaultWh = (window._wmCurrentWarehouseId) ||
+                    (window.state && window.state.warehouseId) ||
+                    (warehouses[0] && (warehouses[0].id || warehouses[0].ID)) ||
+                    null;
+
+    // Build lookup maps.  byName is keyed by _bomNormAr of BOTH the
+    // Arabic name and the English name → one lookup covers either.
+    var byId = {}, byName = {};
     invItems.forEach(function(it) {
       byId[it.id] = it;
-      var arKey = (typeof _bomNormAr === 'function') ? _bomNormAr(it.name) : (it.name||'').toLowerCase();
-      if (arKey) byNorm[arKey] = it;
-      // English name (from name_en or nameEn)
-      var en = (it.name_en || it.nameEn || '').trim().toLowerCase();
-      if (en) byEn[en] = it;
+      var arKey = _bomNormAr(it.name);
+      if (arKey) byName[arKey] = it;
+      var enKey = _bomNormAr(it.name_en || it.nameEn || '');
+      if (enKey) byName[enKey] = it;
     });
 
     var reader = new FileReader();
@@ -32329,18 +32284,18 @@ window.erpImportBomExcel = function(input) {
         if (!rows.length) return _v3Toast('الملف فارغ', true);
 
         // Parse + resolve ingredients
-        var grouped   = {};
-        var unknownSet = [];   // unresolved lines for modal
+        var grouped    = {};
+        var unknownSet = [];   // unresolved lines → auto-create
 
         rows.forEach(function(row) {
-          var productId  = String(_getF(row, ['Product ID', 'productId', 'معرف المنتج']) || '').trim();
-          var rawIngredId = String(_getF(row, ['Ingredient ID', 'ingredientId', 'معرف المكوّن']) || '').trim();
+          var productId     = String(_getF(row, ['Product ID', 'productId', 'معرف المنتج']) || '').trim();
+          var rawIngredId   = String(_getF(row, ['Ingredient ID', 'ingredientId', 'معرف المكوّن']) || '').trim();
           var rawIngredName = String(_getF(row, ['Ingredient Name', 'ingredientName', 'اسم المكوّن']) || '').trim();
-          var qty        = Number(_getF(row, ['Quantity', 'quantity', 'الكمية'])) || 0;
-          var unit       = String(_getF(row, ['Unit', 'unit', 'الوحدة']) || 'PCS').trim();
+          var qty           = Number(_getF(row, ['Quantity', 'quantity', 'الكمية'])) || 0;
+          var unit          = String(_getF(row, ['Unit', 'unit', 'الوحدة']) || 'PCS').trim();
 
           if (!productId) return;
-          // Allow rows where ingredId OR ingredName is present with qty>0
+          // Need an ingredient (by id or name) + a positive quantity
           if ((!rawIngredId && !rawIngredName) || qty <= 0) return;
 
           if (!grouped[productId]) {
@@ -32354,15 +32309,13 @@ window.erpImportBomExcel = function(input) {
             };
           }
 
-          var res = _resolveIngredient(rawIngredId, rawIngredName, byId, byNorm, byEn);
+          var res = _resolveIngredient(rawIngredId, rawIngredName, byId, byName);
 
           grouped[productId].lines.push({
             _resolveHow: res.how,
             _rawIngredId: rawIngredId,
             _rawIngredName: rawIngredName,
-            _unit: unit,
-            _qty: qty,
-            componentItemId: res.resolvedId || rawIngredId, // placeholder until resolved
+            componentItemId: res.resolvedId || null,  // null until auto-created
             quantity: qty,
             unit: unit,
             wastePct: Number(_getF(row, ['Waste %', 'wastePct', 'نسبة الهدر'])) || 0
@@ -32370,7 +32323,7 @@ window.erpImportBomExcel = function(input) {
 
           if (res.how === 'unknown') {
             unknownSet.push({
-              rawName: rawIngredName || rawIngredId,
+              rawName: rawIngredName || rawIngredId,  // name preferred, id fallback
               rawId:   rawIngredId,
               unit:    unit,
               qty:     qty
@@ -32378,93 +32331,68 @@ window.erpImportBomExcel = function(input) {
           }
         });
 
-        // v6.24.1 — Keep ALL products from the Excel, even those whose
-        // ingredient lines are empty or all unknown.  The BOM header
-        // (product → recipe mapping) is still valuable to create even
-        // with 0 lines; the owner can add ingredients manually later.
         var bomsToSave = Object.values(grouped);
         if (!bomsToSave.length) return _v3Toast('لا توجد وصفات صالحة للاستيراد', true);
 
-        // Count unknowns across all BOMs
-        var unknownLines = [];
-        bomsToSave.forEach(function(b) {
-          b.lines.forEach(function(l) {
-            if (l._resolveHow === 'unknown') unknownLines.push(l);
-          });
-        });
-
-        // Clean up internal tracking fields before saving
+        // Strip internal tracking fields + drop lines still missing an id.
         function _stripMeta(boms) {
           boms.forEach(function(b) {
-            b.lines.forEach(function(l) {
-              delete l._resolveHow;
-              delete l._rawIngredId;
-              delete l._rawIngredName;
-              delete l._unit;
-              delete l._qty;
-            });
-            // Remove lines with no resolved componentItemId — but keep
-          // the BOM itself even if lines becomes [] (v6.24.1 fix).
             b.lines = b.lines.filter(function(l) { return !!l.componentItemId; });
+            b.lines.forEach(function(l) {
+              delete l._resolveHow; delete l._rawIngredId; delete l._rawIngredName;
+            });
           });
-          return boms; // never discard a BOM just because it has 0 lines
+          return boms;
         }
 
-        function _confirmAndSave(boms) {
+        function _confirmAndSave(boms, createdCount) {
           var cleanBoms = _stripMeta(boms);
           if (!cleanBoms.length) { _v3Toast('لا توجد وصفات للاستيراد', true); return; }
+          var totalLines = cleanBoms.reduce(function(s, b) { return s + b.lines.length; }, 0);
           WoModal.confirm({
-            title: 'تأكيد استيراد ' + cleanBoms.length + ' وصفة',
-            message: 'إجمالي ' + cleanBoms.reduce(function(s, b) { return s + b.lines.length; }, 0) +
-                     ' مكوّن. الوصفات الموجودة ستُحدَّث، الجديدة ستُنشأ. هل تتابع؟',
-            confirmText: 'استيراد ' + cleanBoms.length,
+            title: 'تأكيد الاستيراد',
+            message: 'سيتم استيراد ' + cleanBoms.length + ' وصفة (' + totalLines + ' مكوّن)' +
+                     (createdCount ? ' وإنشاء ' + createdCount + ' مادة خام جديدة في المخزون' : '') +
+                     '. الوصفات الموجودة ستُحدَّث. هل تتابع؟',
+            confirmText: 'استيراد',
             danger: false
           }).then(function(ok) { if (ok) _saveBoms(cleanBoms); });
         }
 
-        // No unknowns → go straight to confirm
-        if (!unknownLines.length) {
-          _confirmAndSave(bomsToSave);
+        // ── No unknowns → straight to confirm ──
+        if (!unknownSet.length) {
+          _confirmAndSave(bomsToSave, 0);
           return;
         }
 
-        // Show unknown modal
-        _showUnknownModal(unknownSet).then(function(choice) {
-          if (choice === 'cancel') return;
+        // ── Unknowns exist → AUTO-CREATE (no prompt, owner request) ──
+        if (!defaultWh) {
+          // Can't create without a warehouse — import only matched lines.
+          _v3Toast('لا يوجد مستودع متاح لإنشاء المواد الجديدة — سيتم استيراد المكوّنات المطابَقة فقط', true);
+          _confirmAndSave(bomsToSave, 0);
+          return;
+        }
 
-          if (choice === 'skip') {
-            // Remove unknown lines from all BOMs
-            bomsToSave.forEach(function(b) {
-              b.lines = b.lines.filter(function(l) { return l._resolveHow !== 'unknown'; });
-            });
-            _confirmAndSave(bomsToSave);
-            return;
+        loader(true);
+        _autoCreateMissing(unknownSet, defaultWh, function(createdMap, created, failed) {
+          loader(false);
+          if (failed > 0) {
+            _v3Toast('تعذّر إنشاء ' + failed + ' مادة — استمرار بما تم', true);
           }
-
-          // choice === 'create'
-          loader(true);
-          _createMissingItems(unknownSet, function(nameToId, created, failed) {
-            loader(false);
-            if (failed > 0) {
-              _v3Toast('تعذّر إنشاء ' + failed + ' مادة — استمرار بما تم', true);
-            }
-            // Update componentItemId for unknown lines that were now created
-            bomsToSave.forEach(function(b) {
-              b.lines.forEach(function(l) {
-                if (l._resolveHow === 'unknown') {
-                  var key = (l._rawIngredName||'').trim().toLowerCase();
-                  if (nameToId[key]) {
-                    l.componentItemId = nameToId[key];
-                    l._resolveHow = 'created';
-                  }
+          // Re-link unknown lines using the SAME key derivation used at
+          // create time: _bomNormAr(name || id).  Fixes the v6.24.0 bug.
+          bomsToSave.forEach(function(b) {
+            b.lines.forEach(function(l) {
+              if (l._resolveHow === 'unknown') {
+                var key = _bomNormAr(l._rawIngredName || l._rawIngredId);
+                if (createdMap[key]) {
+                  l.componentItemId = createdMap[key];
+                  l._resolveHow = 'created';
                 }
-              });
+              }
             });
-            if (created > 0) {
-              _v3Toast('تم إنشاء ' + created + ' مادة خام جديدة في المخزون ✓');
-            }
-            _confirmAndSave(bomsToSave);
           });
+          _confirmAndSave(bomsToSave, created);
         });
 
       } catch (err) {

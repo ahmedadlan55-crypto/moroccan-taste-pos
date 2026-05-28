@@ -4355,6 +4355,71 @@
   margin-bottom: 14px;
 }
 
+/* v6.26.0 — Header row: presets always visible + collapse toggle */
+.sf-bar-head {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  margin-bottom: 0;
+}
+.sf-bar-head .sf-date-presets {
+  flex: 1;
+  margin-bottom: 0;
+  padding-bottom: 10px;
+  border-bottom: none;
+}
+
+/* Collapse toggle button */
+.sf-collapse-btn {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 7px 14px;
+  background: var(--mt-surface-2);
+  border: 1.5px solid var(--mt-border);
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 700;
+  color: #475569;
+  cursor: pointer;
+  white-space: nowrap;
+  flex-shrink: 0;
+  transition: all 0.15s;
+  font-family: inherit;
+}
+.sf-collapse-btn:hover {
+  background: #ede9fe;
+  border-color: #7c3aed;
+  color: #7c3aed;
+}
+.sf-chevron {
+  transition: transform 0.35s cubic-bezier(0.4, 0, 0.2, 1);
+  font-size: 10px;
+}
+
+/* Collapsible body */
+.sf-body {
+  overflow: hidden;
+  max-height: 900px;
+  opacity: 1;
+  transition: max-height 0.35s cubic-bezier(0.4, 0, 0.2, 1), opacity 0.25s, padding-top 0.25s;
+  border-top: 1px dashed var(--mt-border);
+  padding-top: 12px;
+  margin-top: 2px;
+}
+
+/* Collapsed state */
+.sf-bar.sf-collapsed .sf-body {
+  max-height: 0;
+  opacity: 0;
+  border-top-color: transparent;
+  padding-top: 0;
+  margin-top: 0;
+}
+.sf-bar.sf-collapsed .sf-chevron {
+  transform: rotate(180deg);
+}
+
 /* Date preset chips (14 presets) */
 .sf-date-presets {
   display: flex;
@@ -4431,12 +4496,21 @@
   font-family: inherit;
   border: 1.5px solid;
 }
+/* v6.26.0 — Apply button redesigned: brand purple + fa-filter icon */
 .sf-btn-apply {
-  background: linear-gradient(135deg, var(--mt-accent), var(--mt-accent-2));
-  border-color: var(--mt-accent-2);
+  background: linear-gradient(135deg, #7c3aed, #6d28d9);
+  border-color: #6d28d9;
   color: #fff;
+  box-shadow: 0 4px 12px rgba(124, 58, 237, 0.25);
+  padding: 9px 20px;
+  font-size: 13.5px;
+  border-radius: 10px;
 }
-.sf-btn-apply:hover { transform: translateY(-1px); box-shadow: 0 6px 14px rgba(59,130,246,0.3); }
+.sf-btn-apply:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 7px 20px rgba(124, 58, 237, 0.4);
+  background: linear-gradient(135deg, #6d28d9, #5b21b6);
+}
 .sf-btn-reset {
   background: #fff; border-color: var(--mt-border); color: #475569;
 }

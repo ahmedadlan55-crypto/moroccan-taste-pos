@@ -14489,6 +14489,18 @@ window._applyDatePreset = function(prefix, key) {
   });
 };
 
+// ─── Collapse / expand the advanced-filter body ──────────────────────────
+window._toggleSalesFilter = function(btn) {
+  var bar = btn.closest('.sf-bar');
+  if (!bar) return;
+  var isNowCollapsed = bar.classList.toggle('sf-collapsed');
+  var label = btn.querySelector('.sf-collapse-label');
+  if (label) label.textContent = isNowCollapsed ? 'عرض الفلاتر' : 'الفلاتر';
+  try {
+    localStorage.setItem('sf_collapsed_' + (bar.dataset.sfPrefix || ''), isNowCollapsed ? '1' : '0');
+  } catch (e) {}
+};
+
 // ─── Mount filter bar for a page ─────────────────────────────────────────
 function _mountSalesFilter(hostId, prefix, applyFn) {
   var host = document.getElementById(hostId);
@@ -14497,6 +14509,18 @@ function _mountSalesFilter(hostId, prefix, applyFn) {
   host.dataset.mounted = '1';
 
   host.innerHTML = _buildSalesFilterHTML(prefix);
+
+  // v6.26.0 — Restore collapse state from localStorage
+  var savedCollapsed = null;
+  try { savedCollapsed = localStorage.getItem('sf_collapsed_' + prefix); } catch (e) {}
+  if (savedCollapsed === '1') {
+    var bar = host.querySelector('.sf-bar');
+    if (bar) {
+      bar.classList.add('sf-collapsed');
+      var label = bar.querySelector('.sf-collapse-label');
+      if (label) label.textContent = 'عرض الفلاتر';
+    }
+  }
 
   // Wire apply button
   var applyBtn = host.querySelector('.sf-btn-apply');
@@ -14535,49 +14559,64 @@ function _buildSalesFilterHTML(prefix) {
     return '<button class="sf-preset" data-prefix="' + prefix + '" data-preset="' + p[0] + '">' + p[1] + '</button>';
   }).join('');
 
-  return '<div class="sf-bar">' +
-    '<div class="sf-date-presets">' + presetsHtml + '</div>' +
+  // v6.26.0 — Restructured with collapsible body + redesigned apply button
+  return '<div class="sf-bar" data-sf-prefix="' + prefix + '">' +
 
-    '<div class="sf-row">' +
-      '<div class="sf-field"><label><i class="fas fa-calendar"></i> من تاريخ</label><input type="date" id="sf_' + prefix + '_start"></div>' +
-      '<div class="sf-field"><label><i class="fas fa-calendar-check"></i> إلى تاريخ</label><input type="date" id="sf_' + prefix + '_end"></div>' +
-      '<div class="sf-field"><label><i class="fas fa-tags"></i> البراند</label><select id="sf_' + prefix + '_brand"><option value="">الكل</option></select></div>' +
-      '<div class="sf-field"><label><i class="fas fa-code-branch"></i> الفرع</label><select id="sf_' + prefix + '_branch"><option value="">الكل</option></select></div>' +
-      '<div class="sf-field"><label><i class="fas fa-store"></i> القناة</label><select id="sf_' + prefix + '_channel"><option value="">الكل</option></select></div>' +
+    // ── Sticky header: always-visible presets + collapse toggle ──
+    '<div class="sf-bar-head">' +
+      '<div class="sf-date-presets">' + presetsHtml + '</div>' +
+      '<button class="sf-collapse-btn" onclick="_toggleSalesFilter(this)" title="إخفاء/إظهار الفلاتر المتقدمة">' +
+        '<i class="fas fa-sliders"></i>' +
+        '<span class="sf-collapse-label">الفلاتر</span>' +
+        '<i class="fas fa-chevron-up sf-chevron"></i>' +
+      '</button>' +
     '</div>' +
 
-    '<div class="sf-row">' +
-      '<div class="sf-field"><label><i class="fas fa-credit-card"></i> طريقة الدفع</label><select id="sf_' + prefix + '_pay"><option value="">الكل</option></select></div>' +
-      '<div class="sf-field"><label><i class="fas fa-user"></i> الكاشير</label><select id="sf_' + prefix + '_cashier"><option value="">الكل</option></select></div>' +
-      '<div class="sf-field"><label><i class="fas fa-money-bill-trend-up"></i> أدنى مبلغ</label><input type="number" step="0.01" id="sf_' + prefix + '_minAmt" placeholder="0.00"></div>' +
-      '<div class="sf-field"><label><i class="fas fa-money-bill-1-wave"></i> أقصى مبلغ</label><input type="number" step="0.01" id="sf_' + prefix + '_maxAmt" placeholder="∞"></div>' +
-      '<div class="sf-field"><label><i class="fas fa-receipt"></i> رقم الفاتورة</label><input type="text" id="sf_' + prefix + '_invoiceNo" placeholder="بحث برقم..."></div>' +
-    '</div>' +
+    // ── Collapsible body ──
+    '<div class="sf-body">' +
 
-    // ─── v5.11.4 — Customer autocomplete filter ──────────────────────────
-    '<div class="sf-row" style="grid-template-columns:1fr 1fr;">' +
-      '<div class="sf-field">' +
-        '<label><i class="fas fa-user-circle"></i> العميل · Customer</label>' +
-        '<div class="sf-cust-host" id="sf_' + prefix + '_custHost" style="position:relative;">' +
-          '<input type="text" class="sf-cust-input" id="sf_' + prefix + '_custInput" autocomplete="off"' +
-                 ' placeholder="بحث بالاسم أو الهاتف · Search by name or phone">' +
-          '<input type="hidden" id="sf_' + prefix + '_customerId" value="">' +
+      '<div class="sf-row">' +
+        '<div class="sf-field"><label><i class="fas fa-calendar"></i> من تاريخ</label><input type="date" id="sf_' + prefix + '_start"></div>' +
+        '<div class="sf-field"><label><i class="fas fa-calendar-check"></i> إلى تاريخ</label><input type="date" id="sf_' + prefix + '_end"></div>' +
+        '<div class="sf-field"><label><i class="fas fa-tags"></i> البراند</label><select id="sf_' + prefix + '_brand"><option value="">الكل</option></select></div>' +
+        '<div class="sf-field"><label><i class="fas fa-code-branch"></i> الفرع</label><select id="sf_' + prefix + '_branch"><option value="">الكل</option></select></div>' +
+        '<div class="sf-field"><label><i class="fas fa-store"></i> القناة</label><select id="sf_' + prefix + '_channel"><option value="">الكل</option></select></div>' +
+      '</div>' +
+
+      '<div class="sf-row">' +
+        '<div class="sf-field"><label><i class="fas fa-credit-card"></i> طريقة الدفع</label><select id="sf_' + prefix + '_pay"><option value="">الكل</option></select></div>' +
+        '<div class="sf-field"><label><i class="fas fa-user"></i> الكاشير</label><select id="sf_' + prefix + '_cashier"><option value="">الكل</option></select></div>' +
+        '<div class="sf-field"><label><i class="fas fa-money-bill-trend-up"></i> أدنى مبلغ</label><input type="number" step="0.01" id="sf_' + prefix + '_minAmt" placeholder="0.00"></div>' +
+        '<div class="sf-field"><label><i class="fas fa-money-bill-1-wave"></i> أقصى مبلغ</label><input type="number" step="0.01" id="sf_' + prefix + '_maxAmt" placeholder="∞"></div>' +
+        '<div class="sf-field"><label><i class="fas fa-receipt"></i> رقم الفاتورة</label><input type="text" id="sf_' + prefix + '_invoiceNo" placeholder="بحث برقم..."></div>' +
+      '</div>' +
+
+      // ─── v5.11.4 — Customer autocomplete filter ────────────────────────
+      '<div class="sf-row" style="grid-template-columns:1fr 1fr;">' +
+        '<div class="sf-field">' +
+          '<label><i class="fas fa-user-circle"></i> العميل · Customer</label>' +
+          '<div class="sf-cust-host" id="sf_' + prefix + '_custHost" style="position:relative;">' +
+            '<input type="text" class="sf-cust-input" id="sf_' + prefix + '_custInput" autocomplete="off"' +
+                   ' placeholder="بحث بالاسم أو الهاتف · Search by name or phone">' +
+            '<input type="hidden" id="sf_' + prefix + '_customerId" value="">' +
+          '</div>' +
+        '</div>' +
+        '<div class="sf-field">' +
+          '<label><i class="fas fa-cube"></i> المنتجات · Products (multi)</label>' +
+          '<div class="sf-products-host" id="sf_' + prefix + '_prodHost">' +
+            '<input type="text" class="sf-prod-input" id="sf_' + prefix + '_prodInput" placeholder="اكتب اسم منتج للبحث... · Type product name">' +
+          '</div>' +
+          '<input type="hidden" id="sf_' + prefix + '_prodIds" value="">' +
         '</div>' +
       '</div>' +
-      '<div class="sf-field">' +
-        '<label><i class="fas fa-cube"></i> المنتجات · Products (multi)</label>' +
-        '<div class="sf-products-host" id="sf_' + prefix + '_prodHost">' +
-          '<input type="text" class="sf-prod-input" id="sf_' + prefix + '_prodInput" placeholder="اكتب اسم منتج للبحث... · Type product name">' +
-        '</div>' +
-        '<input type="hidden" id="sf_' + prefix + '_prodIds" value="">' +
-      '</div>' +
-    '</div>' +
 
-    '<div class="sf-actions">' +
-      '<button class="sf-btn sf-btn-apply"><i class="fas fa-search"></i> تطبيق الفلاتر</button>' +
-      '<button class="sf-btn sf-btn-reset"><i class="fas fa-undo"></i> إعادة تعيين</button>' +
-      '<button class="sf-btn sf-btn-export" onclick="_exportSalesFiltered(\'' + prefix + '\')"><i class="fas fa-file-excel"></i> تصدير</button>' +
-    '</div>' +
+      '<div class="sf-actions">' +
+        '<button class="sf-btn sf-btn-apply"><i class="fas fa-filter"></i> تطبيق الفلاتر</button>' +
+        '<button class="sf-btn sf-btn-reset"><i class="fas fa-undo"></i> إعادة تعيين</button>' +
+        '<button class="sf-btn sf-btn-export" onclick="_exportSalesFiltered(\'' + prefix + '\')"><i class="fas fa-file-excel"></i> تصدير</button>' +
+      '</div>' +
+
+    '</div>' +  // end .sf-body
   '</div>';
 }
 

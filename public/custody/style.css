@@ -382,56 +382,67 @@ body{
   color:#64748b;
 }
 
-/* ─── v6.27.0 — Custody History ─── */
+/* ─── v6.27.3 — Custody History — matches light glass theme ─── */
 .history-list{padding:0 14px 80px;}
 
-/* v6.27.2 — improved contrast for history cards */
+/* History cards — same glass morphism as .ecard */
 .hcard{
-  background:rgba(255,255,255,0.07);
-  border:1px solid rgba(255,255,255,0.14);
-  border-radius:16px;padding:16px;margin-bottom:10px;
+  background:var(--glass);
+  backdrop-filter:var(--blur);-webkit-backdrop-filter:var(--blur);
+  border:1px solid var(--glass-border);
+  border-radius:var(--radius);
+  padding:16px;margin-bottom:10px;
   cursor:pointer;position:relative;
-  transition:transform .15s,background .15s;
+  box-shadow:0 2px 10px rgba(0,0,0,0.03);
+  transition:transform .15s;
+  animation:cardIn .3s ease both;
 }
-.hcard:active{transform:scale(.97);background:rgba(255,255,255,0.10);}
+.hcard:active{transform:scale(.985);}
 .hcard-header{display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;}
-.hcard-num{font-size:14px;font-weight:800;color:#f1f5f9;}
-.hcard-status{font-size:11px;font-weight:700;padding:4px 10px;border-radius:20px;border:1px solid;}
-.hs-active {background:rgba(22,163,74,.28);  color:#4ade80; border-color:rgba(74,222,128,.3);}
-.hs-pending{background:rgba(217,119,6,.28);  color:#fbbf24; border-color:rgba(251,191,36,.3);}
-.hs-closed {background:rgba(100,116,139,.25); color:#cbd5e1; border-color:rgba(203,213,225,.2);}
-.hcard-dates{display:flex;flex-wrap:wrap;gap:10px;font-size:11px;color:#94a3b8;margin-bottom:10px;}
+.hcard-num{font-size:14px;font-weight:800;color:var(--dark);}
+
+/* Status badges — same as .b-pending / .b-posted in expense cards */
+.hcard-status{font-size:10px;font-weight:800;padding:3px 10px;border-radius:999px;white-space:nowrap;}
+.hs-active {background:#dcfce7;color:#166534;}
+.hs-pending{background:#fef3c7;color:#92400e;}
+.hs-closed {background:#f1f5f9;color:#475569;}
+
+.hcard-dates{display:flex;flex-wrap:wrap;gap:10px;font-size:11px;color:var(--slate);margin-bottom:10px;}
 .hcard-dates span{display:flex;align-items:center;gap:5px;}
-.hcard-dates i{color:#94a3b8;font-size:10px;}
+.hcard-dates i{font-size:10px;}
+
+/* Amount boxes — light glass on light background */
 .hcard-amounts{display:flex;gap:6px;}
-.ha-item{flex:1;background:rgba(0,0,0,.3);border-radius:10px;padding:8px;text-align:center;}
-.ha-lbl{display:block;font-size:10px;color:#94a3b8;margin-bottom:3px;}
-.ha-val{font-size:13px;font-weight:800;color:#f1f5f9;}
+.ha-item{flex:1;background:rgba(255,255,255,0.7);border:1px solid rgba(0,0,0,0.06);border-radius:10px;padding:8px;text-align:center;}
+.ha-lbl{display:block;font-size:10px;color:var(--slate);font-weight:600;margin-bottom:3px;}
+.ha-val{font-size:13px;font-weight:800;color:var(--dark);}
 .ha-val.green{color:var(--green);}
 .ha-val.red{color:var(--red);}
-.hcard-tap{position:absolute;top:50%;right:14px;transform:translateY(-50%);color:#94a3b8;font-size:12px;}
+.hcard-tap{position:absolute;top:50%;right:14px;transform:translateY(-50%);color:var(--slate);font-size:12px;}
 
 /* ─── Detail sheet body ─── */
-.detail-meta{background:rgba(0,0,0,.2);border-radius:12px;padding:12px;margin-bottom:8px;}
-.dm-row{display:flex;justify-content:space-between;align-items:center;padding:8px 0;
-  border-bottom:1px solid rgba(255,255,255,.05);font-size:13px;color:#e2e8f0;}
+.detail-meta{background:rgba(255,255,255,0.65);border:1px solid rgba(0,0,0,0.06);border-radius:12px;padding:12px;margin-bottom:8px;}
+.dm-row{display:flex;justify-content:space-between;align-items:center;padding:7px 0;
+  border-bottom:1px solid rgba(0,0,0,0.05);font-size:13px;color:var(--dark);}
 .dm-row:last-child{border-bottom:none;}
-.dm-lbl{color:#94a3b8;font-size:12px;}
-.detail-expenses{max-height:240px;overflow-y:auto;}
-.de-row{background:rgba(0,0,0,.2);border:1px solid rgba(255,255,255,.06);border-radius:10px;padding:10px;margin-bottom:6px;}
-.de-desc{font-size:13px;font-weight:700;color:#e2e8f0;margin-bottom:5px;}
-.de-foot{display:flex;justify-content:space-between;align-items:center;font-size:11px;color:#94a3b8;gap:6px;}
+.dm-lbl{color:var(--slate);font-size:12px;}
+.detail-expenses{max-height:260px;overflow-y:auto;}
+.de-row{background:rgba(255,255,255,0.65);border:1px solid rgba(0,0,0,0.06);border-radius:10px;padding:10px;margin-bottom:6px;}
+.de-desc{font-size:13px;font-weight:700;color:var(--dark);margin-bottom:5px;}
+.de-foot{display:flex;justify-content:space-between;align-items:center;font-size:11px;color:var(--slate);gap:6px;}
 .de-amt{font-weight:800;color:var(--red);}
-.de-status{background:rgba(100,116,139,.28);color:#cbd5e1;padding:2px 8px;border-radius:10px;white-space:nowrap;}
+.de-status{background:#f1f5f9;color:#475569;padding:2px 8px;border-radius:10px;white-space:nowrap;font-weight:700;}
 
 /* ─── Print filter ─── */
 .pf-option{
   display:flex;align-items:flex-start;gap:12px;
-  padding:12px;background:rgba(0,0,0,.15);
-  border-radius:12px;cursor:pointer;font-size:13px;color:#e2e8f0;
+  padding:12px;background:rgba(255,255,255,0.65);
+  border:1px solid rgba(0,0,0,0.06);
+  border-radius:12px;cursor:pointer;font-size:13px;color:var(--dark);
 }
 .pf-option input[type="radio"]{
   margin-top:2px;flex-shrink:0;width:18px;height:18px;
-  accent-color:var(--blue,#3b82f6);
+  accent-color:var(--blue);
 }
-.pf-option small{display:block;color:#64748b;font-size:11px;margin-top:3px;}
+.pf-option strong{color:var(--dark);}
+.pf-option small{display:block;color:var(--slate);font-size:11px;margin-top:3px;}

@@ -3877,15 +3877,17 @@ function erpLoadJournals() {
   var fb = document.getElementById('erpJrnFilterBrand');
   var fbr= document.getElementById('erpJrnFilterBranch');
   var fp = document.getElementById('erpJrnFilterProject');
-  var fc = document.getElementById('erpJrnFilterCC');
-  if (s  && s.value)  filters.startDate    = s.value;
-  if (e  && e.value)  filters.endDate      = e.value;
-  if (st && st.value) filters.status       = st.value;
-  if (qS && qS.value) filters.q            = qS.value.trim();
-  if (fb && fb.value) filters.brandId      = fb.value;
-  if (fbr&& fbr.value)filters.branchId     = fbr.value;
-  if (fp && fp.value) filters.projectId    = fp.value;
-  if (fc && fc.value) filters.costCenterId = fc.value;
+  var fc  = document.getElementById('erpJrnFilterCC');
+  var frt = document.getElementById('erpJrnFilterRefType');
+  if (s  && s.value)   filters.startDate    = s.value;
+  if (e  && e.value)   filters.endDate      = e.value;
+  if (st && st.value)  filters.status       = st.value;
+  if (qS && qS.value)  filters.q            = qS.value.trim();
+  if (fb && fb.value)  filters.brandId      = fb.value;
+  if (fbr&& fbr.value) filters.branchId     = fbr.value;
+  if (fp && fp.value)  filters.projectId    = fp.value;
+  if (fc && fc.value)  filters.costCenterId = fc.value;
+  if (frt&& frt.value) filters.referenceType = frt.value;
 
   window._apiBridge.withSuccessHandler(function(list) {
     list = list || [];
@@ -4074,45 +4076,30 @@ window.erpBulkAction = function(action) {
   }, { icon: icons[action], color: colors[action], okText: labels[action] });
 };
 
-// v5.11.0 — injects an extended filter bar (search + 4 dim dropdowns)
-// alongside the existing date/status filters. Idempotent: only adds it
-// once per page load.
+// v7.0 — the filter bar HTML now lives in app-content.html as static markup.
+// This function only populates the <select> option lists and injects the
+// bulk-action bar once. Safe to call multiple times (idempotent).
 function _erpInjectJrnFilterBar() {
-  if (document.getElementById('jrnExtFilterBar')) return;
-  var container = document.querySelector('#erpGLJournals .filters') || document.querySelector('#erpGLJournals .jrn-filters');
-  if (!container) {
-    // Try to find the simple search input and wrap around it
-    var search = document.getElementById('erpJrnSearch');
-    if (!search) return;  // nothing to anchor onto
-    container = search.parentElement;
-  }
-  var bar = document.createElement('div');
-  bar.id = 'jrnExtFilterBar';
-  bar.style.cssText = 'display:grid;grid-template-columns:repeat(4, minmax(140px, 1fr));gap:8px;margin-top:10px;align-items:center;';
-  bar.innerHTML =
-    '<select id="erpJrnFilterBrand" class="form-control" style="font-size:12.5px;" onchange="erpLoadJournals()">' +
-      '<option value="">🏷️ كل البراندات</option>' +
-      _jrnBrands.map(function(b){return '<option value="'+b.id+'">'+(b.name||'')+'</option>';}).join('') +
-    '</select>' +
-    '<select id="erpJrnFilterBranch" class="form-control" style="font-size:12.5px;" onchange="erpLoadJournals()">' +
-      '<option value="">🏢 كل الفروع</option>' +
-      _jrnBranches.map(function(b){return '<option value="'+b.id+'">'+(b.name||'')+'</option>';}).join('') +
-    '</select>' +
-    '<select id="erpJrnFilterProject" class="form-control" style="font-size:12.5px;" onchange="erpLoadJournals()">' +
-      '<option value="">📋 كل المشاريع</option>' +
-      _jrnProjects.map(function(p){return '<option value="'+p.id+'">'+(p.nameAr||p.name||p.code||'')+'</option>';}).join('') +
-    '</select>' +
-    '<button onclick="_erpClearJrnFilters()" style="padding:7px 12px;border-radius:8px;border:1px solid #e5e7eb;background:#fff;color:#64748b;font-weight:700;font-size:12px;cursor:pointer;"><i class="fas fa-xmark"></i> مسح الفلاتر</button>';
-  container.appendChild(bar);
+  var populate = function(id, items, labelKey) {
+    var el = document.getElementById(id);
+    if (!el || el.options.length > 1) return;
+    items.forEach(function(item) {
+      var opt = document.createElement('option');
+      opt.value = item.id;
+      opt.textContent = item[labelKey] || item.name || item.id || '';
+      el.appendChild(opt);
+    });
+  };
+  populate('erpJrnFilterBrand',   _jrnBrands,      'name');
+  populate('erpJrnFilterBranch',  _jrnBranches,    'name');
+  populate('erpJrnFilterProject', _jrnProjects,    'nameAr');
+  populate('erpJrnFilterCC',      _jrnCostCenters, 'name');
 
-  // Bulk action bar — v5.11.1 styling via journals.css
+  // Bulk action bar — injected once, positioned before the table container
   if (!document.getElementById('jrnBulkBar')) {
-    // v5.11.3 — bulk delete is developer-only. The DELETE endpoint on
-    // the backend rejects non-dev callers too, but hiding the button
-    // keeps the UI honest.
     var isDev = state.currentUser && (state.currentUser.isDeveloper || state.role === 'admin');
     var deleteBtnHtml = isDev
-      ? '<button class="jrn-bulk-bar__btn jrn-bulk-bar__btn--delete"  onclick="erpBulkAction(\'delete\')"><i class="fas fa-trash-can"></i> حذف</button>'
+      ? '<button class="jrn-bulk-bar__btn jrn-bulk-bar__btn--delete" onclick="erpBulkAction(\'delete\')"><i class="fas fa-trash-can"></i> حذف</button>'
       : '';
     var bulkBar = document.createElement('div');
     bulkBar.id = 'jrnBulkBar';
@@ -4123,18 +4110,70 @@ function _erpInjectJrnFilterBar() {
         '<button class="jrn-bulk-bar__btn jrn-bulk-bar__btn--approve" onclick="erpBulkAction(\'approve_post\')"><i class="fas fa-check-double"></i> اعتماد + ترحيل</button>' +
         '<button class="jrn-bulk-bar__btn jrn-bulk-bar__btn--unpost"  onclick="erpBulkAction(\'unpost\')"><i class="fas fa-rotate-left"></i> إلغاء ترحيل</button>' +
         deleteBtnHtml +
-        '<button class="jrn-bulk-bar__btn jrn-bulk-bar__btn--ghost"   onclick="_erpClearJrnSel()">إلغاء</button>' +
+        '<button class="jrn-bulk-bar__btn jrn-bulk-bar__btn--ghost" onclick="_erpClearJrnSel()">إلغاء</button>' +
       '</div>';
-    bar.parentElement.appendChild(bulkBar);
+    var tableWrap = document.querySelector('#erpGLJournals .erp-table-container');
+    if (tableWrap) tableWrap.parentElement.insertBefore(bulkBar, tableWrap);
+    else { var sec = document.getElementById('erpGLJournals'); if (sec) sec.appendChild(bulkBar); }
   }
 }
 
 window._erpClearJrnFilters = function() {
   ['erpJrnStartDate','erpJrnEndDate','erpJrnStatusFilter','erpJrnSearch',
-   'erpJrnFilterBrand','erpJrnFilterBranch','erpJrnFilterProject','erpJrnFilterCC'
+   'erpJrnFilterBrand','erpJrnFilterBranch','erpJrnFilterProject','erpJrnFilterCC',
+   'erpJrnFilterRefType'
   ].forEach(function(id){ var el = document.getElementById(id); if (el) el.value = ''; });
+  // Clear preset active state
+  document.querySelectorAll('.jfb-preset-btn.is-active').forEach(function(b){ b.classList.remove('is-active'); });
   erpLoadJournals();
 };
+
+// Toggle the advanced filter panel open/closed
+function _erpToggleJrnAdvanced(btn) {
+  var adv = document.getElementById('jrnAdvancedFilters');
+  if (!adv) return;
+  var isOpen = adv.style.display === 'flex';
+  adv.style.display = isOpen ? 'none' : 'flex';
+  btn.classList.toggle('is-active', !isOpen);
+}
+
+// Quick date-range presets — sets from/to inputs and reloads
+function _erpJrnPreset(range) {
+  var now = new Date();
+  var y = now.getFullYear(), m = now.getMonth(), d = now.getDate();
+  var pad = function(n){ return String(n).padStart(2,'0'); };
+  var fmt = function(dt){ return dt.getFullYear()+'-'+pad(dt.getMonth()+1)+'-'+pad(dt.getDate()); };
+  var start, end;
+  if (range === 'today') {
+    start = end = fmt(now);
+  } else if (range === 'week') {
+    var dow = now.getDay(); // 0=Sun
+    start = fmt(new Date(y, m, d - dow));
+    end   = fmt(new Date(y, m, d - dow + 6));
+  } else if (range === 'month') {
+    start = fmt(new Date(y, m, 1));
+    end   = fmt(new Date(y, m + 1, 0));
+  } else if (range === 'last_month') {
+    start = fmt(new Date(y, m - 1, 1));
+    end   = fmt(new Date(y, m, 0));
+  } else if (range === 'quarter') {
+    var q = Math.floor(m / 3);
+    start = fmt(new Date(y, q * 3, 1));
+    end   = fmt(new Date(y, q * 3 + 3, 0));
+  } else if (range === 'year') {
+    start = y + '-01-01';
+    end   = y + '-12-31';
+  }
+  var sEl = document.getElementById('erpJrnStartDate');
+  var eEl = document.getElementById('erpJrnEndDate');
+  if (sEl) sEl.value = start || '';
+  if (eEl) eEl.value = end   || '';
+  // Toggle active style on preset buttons
+  document.querySelectorAll('.jfb-preset-btn').forEach(function(b){
+    b.classList.toggle('is-active', b.getAttribute('data-preset') === range);
+  });
+  erpLoadJournals();
+}
 
 function erpViewJournal(journalId) {
   // Always fetch fresh from full journal list to get all fields
@@ -4632,17 +4671,17 @@ var _jrnLineCounter = 0;
 var _jrnCostCenters = [];
 // v5.11.0 — full-dimension cache, used by both the create modal and the
 // list filter bar. Populated once per session via _erpLoadJrnDims().
-var _jrnBrands   = [];
-var _jrnBranches = [];
-var _jrnProjects = [];
+var _jrnBrands       = [];
+var _jrnBranches     = [];
+var _jrnProjects     = [];
+var _jrnCostCenters  = [];
 var _jrnEditingId = null;  // set by erpEditJournal so erpSaveJournal sends PUT
 var _jrnSelectedType = 'GL';
 var _jrnTypes = [{code:'GL',name:'يومية عامة'},{code:'OB',name:'افتتاحية'},{code:'RENT',name:'إدارة التأجير'}];
 
 function _erpLoadJrnDims(cb) {
-  // Three parallel fetches; we don't gate on any single one — the
-  // dropdowns degrade gracefully if a list fails to load.
-  var pending = 3;
+  // Four parallel fetches; each degrades gracefully on failure.
+  var pending = 4;
   function done() { if (--pending <= 0 && typeof cb === 'function') cb(); }
   var token = localStorage.getItem('pos_token') || '';
   var hdr = { 'Authorization': 'Bearer ' + token };
@@ -4652,10 +4691,12 @@ function _erpLoadJrnDims(cb) {
   fetch('/api/erp/branches-full', { headers: hdr }).then(function(r){ return r.json(); })
     .then(function(arr){ _jrnBranches = (arr || []).map(function(b){ return { id: b.id, name: b.name }; }); done(); })
     .catch(function(){ done(); });
-  // Projects table is optional — was added in v5.11.0; fall back to []
   fetch('/api/erp/projects', { headers: hdr }).then(function(r){ return r.json(); })
     .then(function(arr){ _jrnProjects = Array.isArray(arr) ? arr : []; done(); })
     .catch(function(){ _jrnProjects = []; done(); });
+  fetch('/api/erp/cost-centers', { headers: hdr }).then(function(r){ return r.json(); })
+    .then(function(arr){ _jrnCostCenters = Array.isArray(arr) ? arr : []; done(); })
+    .catch(function(){ _jrnCostCenters = []; done(); });
 }
 
 function erpOpenJournalModal() {

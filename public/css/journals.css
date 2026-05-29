@@ -420,3 +420,122 @@
   transition: background 0.12s, color 0.12s;
 }
 .gl-acct-chip i:hover { background: #ef4444; color: #fff; }
+
+/* ════════════════════════════════════════════════════════════════════
+   v7.0 — unified filter bar: basic row + advanced collapsible panel
+   ════════════════════════════════════════════════════════════════════ */
+
+/* الصف الرئيسي — يحمل حقل البحث + التواريخ + الحالة + الأزرار */
+.jfb-row--main {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 10px;
+  width: 100%;
+}
+
+/* حاوية الأزرار (بحث + تبديل متقدم) */
+.jfb-actions {
+  display: flex;
+  gap: 8px;
+  align-self: flex-end;
+  flex-shrink: 0;
+}
+
+/* زر البحث الرئيسي — نظيف بدون أيقونة */
+.jfb-btn-search {
+  height: 40px;
+  padding: 0 24px;
+  border-radius: 10px;
+  font-weight: 800;
+  font-size: 13.5px;
+  white-space: nowrap;
+}
+
+/* زر تبديل الفلاتر المتقدمة */
+.jfb-btn-advanced {
+  width: 40px;
+  height: 40px;
+  border-radius: 10px;
+  border: 1.5px solid var(--mt-border);
+  background: #fff;
+  color: var(--mt-text-muted);
+  cursor: pointer;
+  display: grid;
+  place-items: center;
+  font-size: 15px;
+  transition: border-color 0.15s, color 0.15s, background 0.15s;
+  flex-shrink: 0;
+}
+.jfb-btn-advanced:hover { border-color: var(--accent); color: var(--accent); }
+.jfb-btn-advanced.is-active { border-color: var(--accent); color: var(--accent); background: #eff6ff; }
+
+/* قسم الفلاتر المتقدمة القابل للطي */
+.jfb-advanced {
+  display: none;
+  flex-direction: column;
+  gap: 10px;
+  width: 100%;
+  border-top: 1px dashed var(--mt-border);
+  padding-top: 12px;
+  margin-top: 4px;
+}
+
+/* شريط الفترات السريعة */
+.jfb-presets {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+.jfb-preset-label {
+  font-size: 11px;
+  font-weight: 800;
+  color: var(--mt-text-muted);
+  margin-inline-end: 4px;
+  white-space: nowrap;
+}
+.jfb-preset-btn {
+  padding: 4px 13px;
+  border-radius: 999px;
+  border: 1.5px solid var(--mt-border);
+  background: #fff;
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--mt-text-muted);
+  cursor: pointer;
+  transition: border-color 0.12s, color 0.12s, background 0.12s;
+  white-space: nowrap;
+}
+.jfb-preset-btn:hover  { border-color: var(--accent); color: var(--accent); background: #eff6ff; }
+.jfb-preset-btn.is-active { border-color: var(--accent); color: #fff; background: var(--accent); }
+
+/* صف فلاتر الأبعاد (براند / فرع / مشروع / CC / نوع المرجع) */
+.jfb-advanced-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  align-items: flex-end;
+}
+.jfb-advanced-row .jfb-group { min-width: 140px; }
+.jfb-advanced-row .jfb-group label i { margin-inline-end: 4px; font-size: 10px; opacity: 0.7; }
+
+/* زر مسح الفلاتر */
+.jfb-group--clear { justify-content: flex-end; }
+.jfb-btn-clear {
+  height: 40px;
+  padding: 0 18px;
+  border-radius: 10px;
+  border: 1.5px solid #fecaca;
+  background: #fff5f5;
+  color: #dc2626;
+  font-weight: 800;
+  font-size: 12.5px;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  white-space: nowrap;
+  transition: background 0.12s, border-color 0.12s;
+}
+.jfb-btn-clear:hover { background: #fee2e2; border-color: #f87171; }

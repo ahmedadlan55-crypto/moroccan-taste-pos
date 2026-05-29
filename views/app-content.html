@@ -2154,34 +2154,91 @@
     <div class="jrn-stat-card"><div class="jsc-icon" style="color:#16a34a;"><i class="fas fa-check-double"></i></div><div class="jsc-body"><span class="jsc-label">مرحّل</span><span class="jsc-val" id="jrnStatPosted">0</span></div></div>
   </div>
 
-  <!-- Filters -->
-  <div class="jrn-filter-bar">
-    <div class="jfb-group jfb-group--search">
-      <label>بحث</label>
-      <div class="jfb-search">
-        <i class="fas fa-search"></i>
-        <input type="text" id="erpJrnSearch" class="form-control" placeholder="رقم القيد أو الوصف..."
+  <!-- Filters — v7.0 unified panel (basic row + advanced collapsible) -->
+  <div class="jrn-filter-bar" id="jrnFilterBar">
+    <!-- الصف الأول: دائماً ظاهر -->
+    <div class="jfb-row jfb-row--main">
+      <div class="jfb-group jfb-group--search">
+        <label>بحث</label>
+        <input type="text" id="erpJrnSearch" class="form-control" placeholder="رقم القيد أو الوصف أو المرجع..."
                onkeydown="if(event.key==='Enter')erpLoadJournals()">
       </div>
+      <div class="jfb-group">
+        <label>من</label>
+        <input type="date" id="erpJrnStartDate" class="form-control">
+      </div>
+      <div class="jfb-group">
+        <label>إلى</label>
+        <input type="date" id="erpJrnEndDate" class="form-control">
+      </div>
+      <div class="jfb-group">
+        <label>الحالة</label>
+        <select id="erpJrnStatusFilter" class="form-control">
+          <option value="">الكل</option>
+          <option value="draft">مسودة</option>
+          <option value="approved">معتمد</option>
+          <option value="posted">مرحَّل</option>
+        </select>
+      </div>
+      <div class="jfb-actions">
+        <button class="btn btn-primary jfb-btn-search" onclick="erpLoadJournals()">بحث</button>
+        <button class="jfb-btn-advanced" id="jrnAdvancedToggle" onclick="_erpToggleJrnAdvanced(this)" title="فلاتر متقدمة"><i class="fas fa-sliders"></i></button>
+      </div>
     </div>
-    <div class="jfb-group">
-      <label>من</label>
-      <input type="date" id="erpJrnStartDate" class="form-control">
+    <!-- الصف الثاني: فلاتر متقدمة قابلة للطي -->
+    <div class="jfb-advanced" id="jrnAdvancedFilters">
+      <div class="jfb-presets">
+        <span class="jfb-preset-label">فترة سريعة:</span>
+        <button class="jfb-preset-btn" data-preset="today"      onclick="_erpJrnPreset('today')">اليوم</button>
+        <button class="jfb-preset-btn" data-preset="week"       onclick="_erpJrnPreset('week')">هذا الأسبوع</button>
+        <button class="jfb-preset-btn" data-preset="month"      onclick="_erpJrnPreset('month')">هذا الشهر</button>
+        <button class="jfb-preset-btn" data-preset="last_month" onclick="_erpJrnPreset('last_month')">الشهر الماضي</button>
+        <button class="jfb-preset-btn" data-preset="quarter"    onclick="_erpJrnPreset('quarter')">هذا الربع</button>
+        <button class="jfb-preset-btn" data-preset="year"       onclick="_erpJrnPreset('year')">هذه السنة</button>
+      </div>
+      <div class="jfb-advanced-row">
+        <div class="jfb-group">
+          <label><i class="fas fa-tag"></i> البراند</label>
+          <select id="erpJrnFilterBrand" class="form-control" onchange="erpLoadJournals()">
+            <option value="">كل البراندات</option>
+          </select>
+        </div>
+        <div class="jfb-group">
+          <label><i class="fas fa-building"></i> الفرع</label>
+          <select id="erpJrnFilterBranch" class="form-control" onchange="erpLoadJournals()">
+            <option value="">كل الفروع</option>
+          </select>
+        </div>
+        <div class="jfb-group">
+          <label><i class="fas fa-clipboard-list"></i> المشروع</label>
+          <select id="erpJrnFilterProject" class="form-control" onchange="erpLoadJournals()">
+            <option value="">كل المشاريع</option>
+          </select>
+        </div>
+        <div class="jfb-group">
+          <label><i class="fas fa-bullseye"></i> مركز التكلفة</label>
+          <select id="erpJrnFilterCC" class="form-control" onchange="erpLoadJournals()">
+            <option value="">كل المراكز</option>
+          </select>
+        </div>
+        <div class="jfb-group">
+          <label><i class="fas fa-link"></i> نوع المرجع</label>
+          <select id="erpJrnFilterRefType" class="form-control" onchange="erpLoadJournals()">
+            <option value="">كل الأنواع</option>
+            <option value="sale">مبيعات</option>
+            <option value="purchase">مشتريات</option>
+            <option value="custody">عهدة</option>
+            <option value="payroll">رواتب</option>
+            <option value="manual">يدوي</option>
+            <option value="reversal">عكسي</option>
+            <option value="opening">رصيد افتتاحي</option>
+          </select>
+        </div>
+        <div class="jfb-group jfb-group--clear">
+          <button class="jfb-btn-clear" onclick="_erpClearJrnFilters()"><i class="fas fa-xmark"></i> مسح الفلاتر</button>
+        </div>
+      </div>
     </div>
-    <div class="jfb-group">
-      <label>إلى</label>
-      <input type="date" id="erpJrnEndDate" class="form-control">
-    </div>
-    <div class="jfb-group">
-      <label>الحالة</label>
-      <select id="erpJrnStatusFilter" class="form-control">
-        <option value="">الكل</option>
-        <option value="draft">مسودة</option>
-        <option value="approved">معتمد</option>
-        <option value="posted">مرحّل</option>
-      </select>
-    </div>
-    <button class="btn btn-primary" onclick="erpLoadJournals()" style="align-self:flex-end;border-radius:10px;height:38px;"><i class="fas fa-search"></i> بحث</button>
   </div>
 
   <!-- Journals Table -->

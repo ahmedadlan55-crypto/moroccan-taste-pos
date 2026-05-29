@@ -2794,31 +2794,30 @@ router.get('/gl/journals/:id/entries', async (req, res) => {
 // v5.17.2 — /reports/gl-ledger-multi moved to routes/erp/reports/gl-ledger.js
 
 
-// Update journal — edit posted/draft/approved journal entries
+// Update journal — edit draft / approved / posted journal entries.
+// v7.0 — posted journals are now editable in place: the OLD lines' impact on
+// gl_accounts.balance is reversed and the NEW lines' impact re-applied inside
+// one transaction, so balances stay correct and the journal keeps its
+// 'posted' status (net change per account = newNet − oldNet). Automatic
+// (sale/purchase/custody/…) journals are editable too — note this does NOT
+// touch the source document, so the ledger may diverge from it; the frontend
+// warns before proceeding. Both cases are audit-logged. The fully
+// IAS/SOCPA-compliant alternative remains the reversing entry
+// (POST /gl/journals/:id/reverse), still offered in the UI.
 router.put('/gl/journals/:id', async (req, res) => {
   try {
     const journalId = req.params.id;
     // v5.11.0 — accept all four header dimensions on edit too.
     const {
-      journalDate, description, notes, entries, username,
+      journalDate, description, notes, entries, username, force,
       brandId, branchId, projectId, costCenterId, costCenterName
     } = req.body;
 
     const [jrnRows] = await db.query('SELECT * FROM gl_journals WHERE id = ?', [journalId]);
     if (!jrnRows.length) return res.json({ success: false, error: 'القيد غير موجود' });
     const jrn = jrnRows[0];
-
-    // Only manual/opening journals can be edited
-    if (jrn.reference_type !== 'manual' && jrn.reference_type !== 'opening') {
-      return res.json({ success: false, error: 'لا يمكن تعديل القيود التلقائية' });
-    }
-    // v5.11.0 — BR-5: posted journals must be unposted first. The
-    // frontend triggers the unpost confirmation flow; this is the
-    // last-line server-side guard so even direct API calls can't
-    // mutate a posted journal.
-    if (jrn.status === 'posted') {
-      return res.json({ success: false, error: 'القيد مرحَّل — قم بإلغاء الترحيل أولًا (POST /gl/journals/:id/unpost)' });
-    }
+    const wasPosted = jrn.status === 'posted';
+    const isAuto = jrn.reference_type && jrn.reference_type !== 'manual' && jrn.reference_type !== 'opening';
 
     // Validate balance
     let totalDebit = 0, totalCredit = 0;
@@ -2834,6 +2833,15 @@ router.put('/gl/journals/:id', async (req, res) => {
       }
     }
 
+    // Editing a posted journal moves the ledger — refuse if the old or the
+    // new period is locked (unless explicitly forced).
+    if (wasPosted) {
+      const g1 = await _checkPeriodOpen(jrn.journal_date, !!force);
+      if (!g1.ok) return res.json({ success: false, error: g1.error });
+      const g2 = await _checkPeriodOpen(journalDate || jrn.journal_date, !!force);
+      if (!g2.ok) return res.json({ success: false, error: g2.error });
+    }
+
     // Effective header dims: incoming value if defined, else preserve existing
     const effBrand   = brandId    !== undefined ? (brandId    || null) : jrn.brand_id;
     const effBranch  = branchId   !== undefined ? (branchId   || null) : jrn.branch_id;
@@ -2841,47 +2849,66 @@ router.put('/gl/journals/:id', async (req, res) => {
     const effCC      = costCenterId    !== undefined ? (costCenterId    || null) : jrn.cost_center_id;
     const effCCName  = costCenterName  !== undefined ? (costCenterName  || '')   : jrn.cost_center_name;
 
-    // Delete old entries
-    await db.query('DELETE FROM gl_entries WHERE journal_id = ?', [journalId]);
+    await db.withTransaction(async (conn) => {
+      // 1. If posted, reverse the OLD entries' impact on stored balances.
+      if (wasPosted) {
+        const [oldE] = await conn.query('SELECT account_id, debit, credit FROM gl_entries WHERE journal_id = ?', [journalId]);
+        for (const e of oldE) {
+          if (e.account_id) {
+            const net = (Number(e.debit) || 0) - (Number(e.credit) || 0);
+            await conn.query('UPDATE gl_accounts SET balance = balance - ? WHERE id = ?', [net, e.account_id]);
+          }
+        }
+      }
 
-    // Update journal header (status stays 'draft' — caller must explicitly post)
-    await db.query(
-      `UPDATE gl_journals
-          SET journal_date=?, description=?, notes=?,
-              total_debit=?, total_credit=?,
-              brand_id=?, branch_id=?, project_id=?,
-              cost_center_id=?, cost_center_name=?
-        WHERE id=?`,
-      [journalDate || jrn.journal_date, description || jrn.description, notes || '',
-       totalDebit, totalCredit,
-       effBrand, effBranch, effProject, effCC, effCCName,
-       journalId]
-    );
-
-    // Insert new entries with full dim inheritance from the (possibly new) header
-    for (const entry of (entries || [])) {
-      const entryId = 'GLE-' + Date.now() + '-' + Math.random().toString(36).substr(2, 4);
-      await db.query(
-        `INSERT INTO gl_entries
-           (id, journal_id, account_id, account_code, account_name,
-            debit, credit, description,
-            cost_center_id, brand_id, branch_id, project_id, warehouse_id)
-         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)`,
-        [entryId, journalId, entry.accountId || null, entry.accountCode || '',
-         entry.accountName || '', entry.debit || 0, entry.credit || 0, entry.description || '',
-         (entry.costCenterId != null && entry.costCenterId !== '') ? entry.costCenterId : (effCC      || null),
-         (entry.brandId    != null && entry.brandId    !== '') ? entry.brandId    : (effBrand   || null),
-         (entry.branchId   != null && entry.branchId   !== '') ? entry.branchId   : (effBranch  || null),
-         (entry.projectId  != null && entry.projectId  !== '') ? entry.projectId  : (effProject || null),
-         entry.warehouseId || null]
+      // 2. Replace entries + header. Status is untouched (stays posted/draft).
+      await conn.query('DELETE FROM gl_entries WHERE journal_id = ?', [journalId]);
+      await conn.query(
+        `UPDATE gl_journals
+            SET journal_date=?, description=?, notes=?,
+                total_debit=?, total_credit=?,
+                brand_id=?, branch_id=?, project_id=?,
+                cost_center_id=?, cost_center_name=?
+          WHERE id=?`,
+        [journalDate || jrn.journal_date, description || jrn.description, notes || '',
+         totalDebit, totalCredit,
+         effBrand, effBranch, effProject, effCC, effCCName,
+         journalId]
       );
-    }
+      for (const entry of (entries || [])) {
+        const entryId = 'GLE-' + Date.now() + '-' + Math.random().toString(36).substr(2, 4);
+        await conn.query(
+          `INSERT INTO gl_entries
+             (id, journal_id, account_id, account_code, account_name,
+              debit, credit, description,
+              cost_center_id, brand_id, branch_id, project_id, warehouse_id)
+           VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+          [entryId, journalId, entry.accountId || null, entry.accountCode || '',
+           entry.accountName || '', entry.debit || 0, entry.credit || 0, entry.description || '',
+           (entry.costCenterId != null && entry.costCenterId !== '') ? entry.costCenterId : (effCC      || null),
+           (entry.brandId    != null && entry.brandId    !== '') ? entry.brandId    : (effBrand   || null),
+           (entry.branchId   != null && entry.branchId   !== '') ? entry.branchId   : (effBranch  || null),
+           (entry.projectId  != null && entry.projectId  !== '') ? entry.projectId  : (effProject || null),
+           entry.warehouseId || null]
+        );
+      }
 
-    await auditLog('update_journal', 'gl_journal', journalId, username || '',
-      { brandId: effBrand, branchId: effBranch, projectId: effProject, costCenterId: effCC,
+      // 3. If posted, re-apply the NEW entries' impact (status stays posted).
+      if (wasPosted) {
+        for (const entry of (entries || [])) {
+          if (entry.accountId) {
+            const net = (Number(entry.debit) || 0) - (Number(entry.credit) || 0);
+            await conn.query('UPDATE gl_accounts SET balance = balance + ? WHERE id = ?', [net, entry.accountId]);
+          }
+        }
+      }
+    });
+
+    await auditLog(wasPosted ? 'edit_posted_journal' : 'update_journal', 'gl_journal', journalId, username || '',
+      { isAuto, wasPosted, brandId: effBrand, branchId: effBranch, projectId: effProject, costCenterId: effCC,
         totalDebit, totalCredit, lineCount: (entries || []).length }, req.ip);
 
-    res.json({ success: true, journalNumber: jrn.journal_number });
+    res.json({ success: true, journalNumber: jrn.journal_number, reposted: wasPosted });
   } catch (e) { res.json({ success: false, error: e.message }); }
 });
 

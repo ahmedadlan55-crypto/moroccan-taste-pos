@@ -3963,15 +3963,18 @@ function erpLoadJournals() {
       // v5.11.1 — every action button is a .jrn-action-btn variant. Hover
       // colors flow from the brand palette in journals.css. The single-click
       // approve+post combo lives on draft (success styling).
-      // v6.4.2 — Edit / Delete are HIDDEN once the journal is posted
-      // (SOCPA / IFRS immutability). The Reverse button replaces them
-      // for posted rows; Unpost stays developer-only as an emergency
-      // escape hatch.
+      // v7.0 — Edit is now available on POSTED journals too, but restricted
+      // to admin/dev (like Unpost). The server reverses the old lines' balance
+      // impact and re-applies the new ones atomically, so the ledger stays
+      // correct and the journal keeps its 'posted' status. The Reverse button
+      // (IAS/SOCPA-compliant correction) stays available alongside it.
       var isPosted = j.status === 'posted';
       var actions = '<button class="jrn-action-btn jrn-action-btn--info" onclick="erpViewJournal(\'' + j.id + '\')" title="عرض"><i class="fas fa-eye"></i></button>';
       actions += '<button class="jrn-action-btn" onclick="erpPrintJournal(\'' + j.id + '\')" title="طباعة"><i class="fas fa-print"></i></button>';
       if (!isPosted) {
         actions += '<button class="jrn-action-btn jrn-action-btn--primary" onclick="erpEditJournal(\'' + j.id + '\')" title="تَعديل"><i class="fas fa-pen-to-square"></i></button>';
+      } else if (isDev) {
+        actions += '<button class="jrn-action-btn jrn-action-btn--warn" onclick="erpEditJournal(\'' + j.id + '\')" title="تَعديل قيد مُرحَّل (يُعاد ترحيله تلقائياً)"><i class="fas fa-pen-to-square"></i></button>';
       }
       if (j.status === 'draft') {
         actions += '<button class="jrn-action-btn jrn-action-btn--success" onclick="erpApproveJournal(\'' + j.id + '\')" title="اعتماد + ترحيل (يُحدِّث الأرصدة فورًا)"><i class="fas fa-check-double"></i></button>';
@@ -4308,25 +4311,32 @@ function _renderJournalDetail(j) {
 
 function erpCloseDetailModal() { document.getElementById('erpJournalDetailModal').classList.add('hidden'); }
 
-// ─── Edit Journal (draft only) ───
+// ─── Edit Journal (draft / approved / posted) ───
 var _editingJournalId = null;
 function erpEditJournal(journalId) {
   var j = window._viewingJournal || _jrnCache.find(function(x) { return x.id === journalId; });
   if (!j) return showToast('القيد غير موجود', true);
-  var isManual = !j.referenceType || j.referenceType === 'manual' || j.referenceType === 'opening';
-  if (!isManual) return showToast('لا يمكن تعديل القيود التلقائية (مصدرها بَيع/مُشتريات/إلخ)', true);
 
-  // v6.4.2 — Posted journals are IMMUTABLE per SOCPA / IFRS. The legacy
-  // "unpost-then-edit" path is removed — it created the same audit-trail
-  // hole that the standards warn against. Operators must now correct
-  // posted journals via a reversing entry (erpReverseJournal), which
-  // preserves the original and links the correction to it.
-  if (j.status === 'posted') {
+  var isAuto   = j.referenceType && j.referenceType !== 'manual' && j.referenceType !== 'opening';
+  var isPosted = j.status === 'posted';
+
+  // v7.0 — any journal can be re-edited. A posted journal is re-balanced
+  // server-side (old lines reversed, new lines applied) inside one
+  // transaction, so it keeps its 'posted' status with correct balances.
+  // Automatic journals (sale/purchase/custody/…) are editable too, but the
+  // edit changes ONLY the journal — not the source document — so the ledger
+  // may diverge. We surface a composite warning before opening the editor;
+  // the «قَيد عَكسي» (reversing entry) remains the compliant alternative.
+  var warn = [];
+  if (isPosted) warn.push('• القَيد مُرحَّل: ستُعاد مُعالجة أرصدة الحسابات تلقائياً بعد الحفظ (يَبقى مُرحَّلاً بالقيمة الجديدة).');
+  if (isAuto)   warn.push('• قَيد تلقائي (مصدره ' + (j.referenceType || '') + '): التعديل يُغيّر القَيد فقط ولا يُغيّر فاتورة المصدر — قد يَختلف دفتر الأستاذ عن المُستند الأصلي.');
+
+  if (warn.length) {
     erpConfirm(
-      'القَيد مُرَحَّل — لا يَقبل التَّعديل',
-      'هذا القَيد مُرَحَّل ويُؤثِّر على أرصدة الحِسابات. لا يُمكن تَعديله مُباشرة (مَبدأ السَّلامة المُحاسبية في SOCPA / IFRS).\n\nهل تُريد إنشاء قَيد عَكسي يُلغي أثَره؟ القَيد الأصلي يَبقى كَما هو في السِّجلات + يُرتبط بالعَكسي للمُراجعة.',
-      function () { erpReverseJournal(j.id, j.journalNumber || ''); },
-      { icon: 'fa-right-left', color: '#d97706', okText: 'إنشاء قَيد عَكسي', cancelText: 'إغلاق' }
+      'تأكيد تعديل القَيد ' + (j.journalNumber || ''),
+      warn.join('\n\n') + '\n\nالبديل الأكثر التزاماً محاسبياً هو «قَيد عَكسي» يَحفظ الأصل ويَربط التصحيح به.\n\nهل تُريد متابعة التعديل؟',
+      function () { _openJournalEditor(j); },
+      { icon: 'fa-pen-to-square', color: '#d97706', okText: 'متابعة التعديل', cancelText: 'إلغاء' }
     );
     return;
   }

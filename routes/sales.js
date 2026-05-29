@@ -1710,12 +1710,18 @@ router.get('/report/advanced', async (req, res) => {
     allSales.forEach(s => {
       try {
         const items = JSON.parse(s.items_json || '[]');
+        // v7.1 fix — pro-rate each product's share of the CHARGED total
+        // (total_final) by line value, so revenue reflects the actual amount
+        // (4) not the pre-rounding line-price sum (4.35).
+        const lineSum = items.reduce((t,it)=> t + (Number(it.qty)||0)*(Number(it.price)||0), 0);
+        const saleTotal = Number(s.total_final) || 0;
         const orderProducts = new Set();
         items.forEach(item => {
           const name = item.name || 'Unknown';
           if (!prodMap[name]) prodMap[name] = { qty: 0, revenue: 0, orders: 0 };
           prodMap[name].qty += Number(item.qty) || 0;
-          prodMap[name].revenue += (Number(item.qty) || 0) * (Number(item.price) || 0);
+          const lineVal = (Number(item.qty)||0)*(Number(item.price)||0);
+          prodMap[name].revenue += lineSum > 0 ? (saleTotal * lineVal / lineSum) : 0;
           orderProducts.add(name);
         });
         orderProducts.forEach(n => { prodMap[n].orders++; });

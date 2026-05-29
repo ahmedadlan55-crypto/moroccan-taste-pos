@@ -14441,17 +14441,19 @@ window.salesGo = function(page) {
     var el = document.getElementById(id);
     if (el) el.classList.toggle('hidden', id !== targetId);
   });
-  // Mount filter bar if not already mounted
-  if (page === 'log')      _mountSalesFilter('salesLogFilter', 'log', loadDashSales);
-  if (page === 'payments') _mountSalesFilter('salesPayFilter', 'payments', loadPayments);
-  if (page === 'reports')  _mountSalesFilter('salesReportsFilter', 'reports', function(){ loadSalesBreakdown(activeBreakdownType); });
-  if (page === 'advanced') _mountSalesFilter('salesAdvFilter', 'advanced', loadSalesAdvancedReports);
-  // Load data
-  if (page === 'hub')      loadSalesHubKpis();
-  if (page === 'log')      loadDashSales();
-  if (page === 'payments') loadPayments();
-  if (page === 'reports')  loadSalesBreakdown(activeBreakdownType);
-  if (page === 'advanced') loadSalesAdvancedReports();
+  // v7.1 — mount filter + load data inside try/catch so a single failing
+  // loader never aborts navigation (the page is already shown above).
+  try {
+    if (page === 'log')      _mountSalesFilter('salesLogFilter', 'log', loadDashSales);
+    if (page === 'payments') _mountSalesFilter('salesPayFilter', 'payments', loadPayments);
+    if (page === 'reports')  _mountSalesFilter('salesReportsFilter', 'reports', function(){ loadSalesBreakdown(activeBreakdownType); });
+    if (page === 'advanced') _mountSalesFilter('salesAdvFilter', 'advanced', loadSalesAdvancedReports);
+    if (page === 'hub')      loadSalesHubKpis();
+    if (page === 'log')      loadDashSales();
+    if (page === 'payments') loadPayments();
+    if (page === 'reports')  loadSalesBreakdown(activeBreakdownType);
+    if (page === 'advanced') loadSalesAdvancedReports();
+  } catch (e) { console.error('[salesGo] load error for', page, e); }
 };
 
 // ─── Date preset helpers ─────────────────────────────────────────────────
@@ -15091,7 +15093,9 @@ function _fetchSalesSummary(from, to) {
       .then(function(r){return r.json();})
       .then(function(rows) {
         var arr = Array.isArray(rows) ? rows : [];
-        var total = arr.reduce(function(s,x){return s + Number(x.totalFinal || x.total_final || 0);}, 0);
+        // v7.1 fix — /api/sales returns the charged amount as `total`; the old
+        // code read totalFinal/total_final (absent) so KPIs always showed 0.
+        var total = arr.reduce(function(s,x){return s + (Number(x.total || x.totalFinal || x.total_final || 0));}, 0);
         resolve({ total: total, count: arr.length });
       })
       .catch(function(){ resolve({ total:0, count:0 }); });
@@ -15247,11 +15251,16 @@ function _renderTopProducts(rows) {
   var tally = {}; // name → { qty, revenue }
   rows.forEach(function(s) {
     var items = s.items || [];
+    // v7.1 fix — pro-rate each product's share of the CHARGED total (s.total)
+    // so revenue reflects the actual amount (4) not the pre-rounding line sum (4.35).
+    var lineSum = items.reduce(function(t,it){ return t + (Number(it.price)||0)*(Number(it.qty)||0); }, 0);
+    var saleTotal = Number(s.total) || 0;
     items.forEach(function(it) {
       var key = it.name || 'غير معروف';
       if (!tally[key]) tally[key] = { qty: 0, revenue: 0 };
       tally[key].qty += Number(it.qty) || 0;
-      tally[key].revenue += (Number(it.qty) || 0) * (Number(it.price) || 0);
+      var lineVal = (Number(it.price)||0)*(Number(it.qty)||0);
+      tally[key].revenue += lineSum > 0 ? (saleTotal * lineVal / lineSum) : 0;
     });
   });
   var arr = Object.keys(tally).map(function(k){ return { name:k, qty:tally[k].qty, revenue:tally[k].revenue }; });
@@ -15560,12 +15569,18 @@ function _loadSalesBreakdownBody(type) {
       var dateKey = localDateStr(s.date);
 
       if (type === 'byProduct') {
+        // v7.1 fix — pro-rate each product's share of the CHARGED invoice
+        // total (s.total) by its line value, so per-product revenue sums to
+        // the actual charged amount (4) instead of the pre-rounding line-price
+        // sum (4.35). Consistent with byCashier/byDay which use s.total.
+        var _lineSum = (s.items || []).reduce(function(t,it){ return t + (Number(it.price)||0)*(Number(it.qty)||0); }, 0);
         (s.items || []).forEach(function(it) {
           var name = it.name || 'غير معروف';
           if (!aggregated[name]) aggregated[name] = { name: name, qty: 0, orders: 0, revenue: 0 };
           aggregated[name].qty += Number(it.qty) || 0;
           aggregated[name].orders += 1;
-          aggregated[name].revenue += (Number(it.price) || 0) * (Number(it.qty) || 0);
+          var _lineVal = (Number(it.price)||0)*(Number(it.qty)||0);
+          aggregated[name].revenue += _lineSum > 0 ? (amount * _lineVal / _lineSum) : 0;
         });
       } else if (type === 'byCashier') {
         var u = s.username || '—';

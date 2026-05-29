@@ -17487,24 +17487,20 @@ window.erpLoadFixedAssets = function() {
   if (!body) return;
   body.innerHTML = '<tr><td colspan="21" class="fa-empty"><i class="fas fa-spinner fa-spin"></i> جاري التحميل...</td></tr>';
 
+  // v7.0 — warm the FULL chart of accounts so the searchable account picker
+  // (_faAcctPicker) can reach EVERY account, not the old narrow filtered subset.
+  if (typeof erpGLLoadAccts === 'function') erpGLLoadAccts();
+
   var hdr = { 'Authorization': 'Bearer ' + (localStorage.getItem('pos_token')||'') };
-  // Hydrate assets + the 3 COA dropdowns in parallel.
-  Promise.all([
-    fetch('/api/work-orders/assets', { headers: hdr }).then(function(r){return r.json();}),
-    fetch('/api/work-orders/assets/coa-options?kind=asset',   { headers: hdr }).then(function(r){return r.json();}),
-    fetch('/api/work-orders/assets/coa-options?kind=expense', { headers: hdr }).then(function(r){return r.json();}),
-    fetch('/api/work-orders/assets/coa-options?kind=accum',   { headers: hdr }).then(function(r){return r.json();})
-  ]).then(function(results) {
-    var rows = Array.isArray(results[0]) ? results[0] : [];
-    _faCache.rows = rows;
-    _faCoaCache.asset   = (results[1] && results[1].accounts) || [];
-    _faCoaCache.expense = (results[2] && results[2].accounts) || [];
-    _faCoaCache.accum   = (results[3] && results[3].accounts) || [];
-    _faApplyClientFilters();
-    _faRenderKpis();
-  }).catch(function(e) {
-    body.innerHTML = '<tr><td colspan="21" class="fa-empty" style="color:#ef4444;">خطأ: ' + (e.message||e) + '</td></tr>';
-  });
+  fetch('/api/work-orders/assets', { headers: hdr })
+    .then(function(r){ return r.json(); })
+    .then(function(rows) {
+      _faCache.rows = Array.isArray(rows) ? rows : [];
+      _faApplyClientFilters();
+      _faRenderKpis();
+    }).catch(function(e) {
+      body.innerHTML = '<tr><td colspan="21" class="fa-empty" style="color:#ef4444;">خطأ: ' + (e.message||e) + '</td></tr>';
+    });
 };
 
 window._faApplyClientFilters = function() {
@@ -17744,47 +17740,77 @@ function _faCellMark(td, kind) {
 }
 
 // ─── COA picker (popover) ─────────────────────────────────────────────────
-window._faPickAccount = function(assetId, kind) {
-  var accounts = _faCoaCache[kind] || [];
-  if (!accounts.length) {
-    if (typeof showToast === 'function') showToast('لا توجد حسابات متاحة في شجرة الحسابات لهذا النوع — راجع شجرة الحسابات أولاً', true);
-    return;
-  }
-  // Close any open menu
-  var existing = document.getElementById('faAccPicker');
-  if (existing) existing.remove();
-
-  var labels = { asset: 'حساب الأصل الثابت', expense: 'حساب الإهلاك', accum: 'حساب الإهلاك المتراكم' };
-  var fieldMap = {
-    asset: 'gl_asset_account_id',
-    expense: 'gl_dep_expense_account_id',
-    accum: 'gl_accum_dep_account_id'
-  };
-  var menu = document.createElement('div');
-  menu.id = 'faAccPicker';
-  menu.className = 'fa-modal-overlay open';
-  menu.innerHTML =
-    '<div class="fa-modal" style="max-width:560px;">' +
-      '<div class="fa-modal-head"><h3><i class="fas fa-link"></i> ' + _faEsc(labels[kind]||kind) + '</h3>' +
-        '<button class="fa-modal-close" onclick="document.getElementById(\'faAccPicker\').remove()"><i class="fas fa-xmark"></i></button>' +
-      '</div>' +
-      '<div class="fa-modal-body">' +
-        '<input type="text" id="faAccSearch" placeholder="ابحث برقم أو اسم الحساب..." style="width:100%;padding:10px 12px;border:1.5px solid #e2e8f0;border-radius:8px;margin-bottom:12px;font-family:inherit;" oninput="_faAccFilter(this.value)">' +
-        '<div id="faAccList" style="max-height:50vh;overflow-y:auto;">' +
-          accounts.map(function(a){
-            return '<div class="fa-menu-item" onclick="_faAssignAccount(\'' + _faEsc(assetId) + '\',\'' + _faEsc(fieldMap[kind]) + '\',\'' + _faEsc(a.id) + '\')">' +
-              '<code style="background:#f1f5f9;padding:1px 6px;border-radius:4px;color:#475569;">' + _faEsc(a.code) + '</code> ' + _faEsc(a.nameAr) +
-            '</div>';
-          }).join('') +
+// v7.0 — searchable picker over the FULL chart of accounts (_erpAccounts),
+// shared by the grid cell picker and the editor-modal account fields. Lazily
+// loads the COA, lists EVERY active account (current one pinned first),
+// filters via _faAccFilter, and hands the chosen account (or null) to onPick.
+// Replaces the old narrow per-kind filtered list so any account is selectable.
+window._faAcctPicker = function(opts) {
+  opts = opts || {};
+  var currentId = opts.currentId || '';
+  var title  = opts.title || 'اختر حساباً';
+  var onPick = typeof opts.onPick === 'function' ? opts.onPick : function(){};
+  var build = function() {
+    var existing = document.getElementById('faAccPicker');
+    if (existing) existing.remove();
+    var accounts = (window._erpAccounts || []).filter(function(a){ return a.isActive !== false && !a.isFolder; });
+    accounts.sort(function(a, b) {
+      if (a.id === currentId) return -1;
+      if (b.id === currentId) return 1;
+      return String(a.code||'').localeCompare(String(b.code||''), undefined, { numeric: true });
+    });
+    var byId = {};
+    accounts.forEach(function(a){ byId[a.id] = a; });
+    var menu = document.createElement('div');
+    menu.id = 'faAccPicker';
+    menu.className = 'fa-modal-overlay open';
+    menu.innerHTML =
+      '<div class="fa-modal" style="max-width:560px;">' +
+        '<div class="fa-modal-head"><h3><i class="fas fa-link"></i> ' + _faEsc(title) + '</h3>' +
+          '<button class="fa-modal-close" onclick="document.getElementById(\'faAccPicker\').remove()"><i class="fas fa-xmark"></i></button>' +
         '</div>' +
-      '</div>' +
-      '<div class="fa-modal-foot">' +
-        '<button class="fa-btn" onclick="_faAssignAccount(\'' + _faEsc(assetId) + '\',\'' + _faEsc(fieldMap[kind]) + '\',null)"><i class="fas fa-unlink"></i> إلغاء الربط</button>' +
-        '<button class="fa-btn" onclick="document.getElementById(\'faAccPicker\').remove()">إغلاق</button>' +
-      '</div>' +
-    '</div>';
-  document.body.appendChild(menu);
-  setTimeout(function(){ var i = document.getElementById('faAccSearch'); if (i) i.focus(); }, 50);
+        '<div class="fa-modal-body">' +
+          '<input type="text" id="faAccSearch" placeholder="ابحث برقم أو اسم الحساب..." style="width:100%;padding:10px 12px;border:1.5px solid #e2e8f0;border-radius:8px;margin-bottom:12px;font-family:inherit;" oninput="_faAccFilter(this.value)">' +
+          '<div id="faAccList" style="max-height:50vh;overflow-y:auto;">' +
+            (accounts.length ? accounts.map(function(a){
+              var sel = a.id === currentId ? ' style="background:#eff6ff;"' : '';
+              return '<div class="fa-menu-item" data-acc-id="' + _faEsc(a.id) + '"' + sel + '>' +
+                '<code style="background:#f1f5f9;padding:1px 6px;border-radius:4px;color:#475569;">' + _faEsc(a.code) + '</code> ' + _faEsc(a.nameAr||'') +
+              '</div>';
+            }).join('') : '<div style="padding:18px;text-align:center;color:#94a3b8;">لا توجد حسابات في الشجرة</div>') +
+          '</div>' +
+        '</div>' +
+        '<div class="fa-modal-foot">' +
+          '<button class="fa-btn" id="faAccUnlink"><i class="fas fa-unlink"></i> إلغاء الربط</button>' +
+          '<button class="fa-btn" onclick="document.getElementById(\'faAccPicker\').remove()">إغلاق</button>' +
+        '</div>' +
+      '</div>';
+    document.body.appendChild(menu);
+    // Delegated click (data-acc-id) avoids quoting issues with names/ids.
+    var list = document.getElementById('faAccList');
+    if (list) list.addEventListener('click', function(ev){
+      var row = ev.target.closest('.fa-menu-item'); if (!row) return;
+      menu.remove();
+      onPick(byId[row.getAttribute('data-acc-id')] || null);
+    });
+    var unlink = document.getElementById('faAccUnlink');
+    if (unlink) unlink.addEventListener('click', function(){ menu.remove(); onPick(null); });
+    setTimeout(function(){ var i = document.getElementById('faAccSearch'); if (i) i.focus(); }, 50);
+  };
+  if (typeof erpGLLoadAccts === 'function') erpGLLoadAccts(build);
+  else build();
+};
+
+window._faPickAccount = function(assetId, kind) {
+  var labels   = { asset: 'حساب الأصل الثابت (PP&E)', expense: 'حساب مصروف الإهلاك', accum: 'حساب مجمع الإهلاك' };
+  var fieldMap = { asset: 'gl_asset_account_id', expense: 'gl_dep_expense_account_id', accum: 'gl_accum_dep_account_id' };
+  var row = (_faCache.rows||[]).find(function(x){ return x.id === assetId; }) || {};
+  var curMap = { asset: row.gl_asset_account_id, expense: row.gl_dep_expense_account_id, accum: row.gl_accum_dep_account_id };
+  _faAcctPicker({
+    currentId: curMap[kind] || '',
+    title: labels[kind] || kind,
+    onPick: function(acc) { _faAssignAccount(assetId, fieldMap[kind], acc ? acc.id : null); }
+  });
 };
 window._faAccFilter = function(q) {
   q = (q||'').toLowerCase();
@@ -17922,6 +17948,27 @@ window._faSetSort = function(col) {
 };
 
 // ─── New / edit modal ─────────────────────────────────────────────────────
+// Opens the searchable account picker for one editor-modal field and writes
+// the choice into the sibling hidden input + button label.
+window._faAcctPickField = function(btn, fieldName) {
+  var wrap = btn.parentElement;
+  var hidden = wrap.querySelector('input[name="' + fieldName + '"]');
+  var labelEl = btn.querySelector('.fa-acct-pick-label');
+  var titles = {
+    gl_asset_account_id: 'حساب الأصل الثابت (PP&E)',
+    gl_dep_expense_account_id: 'حساب مصروف الإهلاك',
+    gl_accum_dep_account_id: 'حساب مجمع الإهلاك'
+  };
+  _faAcctPicker({
+    currentId: hidden ? hidden.value : '',
+    title: titles[fieldName] || 'اختر حساباً',
+    onPick: function(acc) {
+      if (hidden) hidden.value = acc ? acc.id : '';
+      if (labelEl) labelEl.textContent = acc ? ('[' + (acc.code||'') + '] ' + (acc.nameAr||'')) : '— اختر حساب —';
+    }
+  });
+};
+
 window._faOpenEditor = function(id) {
   var asset = id ? (_faCache.rows||[]).find(function(x){return x.id===id;}) : {};
   asset = asset || {};
@@ -17929,9 +17976,22 @@ window._faOpenEditor = function(id) {
   if (!ov) return;
   ov.style.display = 'block';
   ov.classList.add('open');
-  var optsAsset   = (_faCoaCache.asset||[]).map(function(a){ return '<option value="'+a.id+'" '+(a.id===asset.gl_asset_account_id?'selected':'')+'>['+_faEsc(a.code)+'] '+_faEsc(a.nameAr)+'</option>'; }).join('');
-  var optsExpense = (_faCoaCache.expense||[]).map(function(a){ return '<option value="'+a.id+'" '+(a.id===asset.gl_dep_expense_account_id?'selected':'')+'>['+_faEsc(a.code)+'] '+_faEsc(a.nameAr)+'</option>'; }).join('');
-  var optsAccum   = (_faCoaCache.accum||[]).map(function(a){ return '<option value="'+a.id+'" '+(a.id===asset.gl_accum_dep_account_id?'selected':'')+'>['+_faEsc(a.code)+'] '+_faEsc(a.nameAr)+'</option>'; }).join('');
+  // v7.0 — render each GL-link field as a searchable picker button + hidden
+  // input. The hidden input keeps the field name so _faSaveAsset's
+  // form.elements collection works unchanged. Reaches the FULL chart of
+  // accounts (no more narrow per-kind filtering).
+  var acctField = function(label, fieldName, curId, curCode, curName, full) {
+    var disp = curId ? ('[' + _faEsc(curCode||'') + '] ' + _faEsc(curName||'')) : '— اختر حساب —';
+    return '<div class="fa-field' + (full ? ' fa-field-full' : '') + '">' +
+      '<label>' + label + '</label>' +
+      '<input type="hidden" name="' + fieldName + '" value="' + _faEsc(curId||'') + '">' +
+      '<button type="button" onclick="_faAcctPickField(this,\'' + fieldName + '\')" ' +
+        'style="width:100%;display:flex;align-items:center;justify-content:space-between;gap:8px;padding:9px 12px;border:1.5px solid #e2e8f0;border-radius:8px;background:#fff;cursor:pointer;font-family:inherit;font-size:13px;color:#0f172a;text-align:start;">' +
+        '<span class="fa-acct-pick-label" style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">' + disp + '</span>' +
+        '<i class="fas fa-magnifying-glass" style="color:#94a3b8;font-size:12px;"></i>' +
+      '</button>' +
+    '</div>';
+  };
   var statusOpts = [
     ['active','نشط'], ['under_maintenance','تحت الصيانة'],
     ['retired','مستبعد'], ['disposed','مُتلَف'], ['lost','مفقود']
@@ -17994,9 +18054,9 @@ window._faOpenEditor = function(id) {
       '<div class="fa-section">' +
         '<div class="fa-section-head"><i class="fas fa-link"></i> الربط المحاسبي + التصنيف</div>' +
         '<div class="fa-form-grid">' +
-          '<div class="fa-field fa-field-full"><label>حساب الأصل الثابت (PP&E)</label><select name="gl_asset_account_id"><option value="">— اختر حساب —</option>'+optsAsset+'</select></div>' +
-          '<div class="fa-field"><label>حساب مصروف الإهلاك</label><select name="gl_dep_expense_account_id"><option value="">— اختر حساب —</option>'+optsExpense+'</select></div>' +
-          '<div class="fa-field"><label>حساب مجمع الإهلاك</label><select name="gl_accum_dep_account_id"><option value="">— اختر حساب —</option>'+optsAccum+'</select></div>' +
+          acctField('حساب الأصل الثابت (PP&E)', 'gl_asset_account_id', asset.gl_asset_account_id, asset.gl_asset_account_code, asset.gl_asset_account_name, true) +
+          acctField('حساب مصروف الإهلاك', 'gl_dep_expense_account_id', asset.gl_dep_expense_account_id, asset.gl_dep_expense_account_code, asset.gl_dep_expense_account_name) +
+          acctField('حساب مجمع الإهلاك', 'gl_accum_dep_account_id', asset.gl_accum_dep_account_id, asset.gl_accum_dep_account_code, asset.gl_accum_dep_account_name) +
           '<div class="fa-field"><label>الفرع</label><input name="branch_id" value="'+_faEsc(asset.branch_id||'')+'" placeholder="معرّف الفرع"></div>' +
           '<div class="fa-field"><label>مركز التكلفة</label><input name="cost_center_id" value="'+_faEsc(asset.cost_center_id||'')+'" placeholder="معرّف مركز التكلفة"></div>' +
           '<div class="fa-field"><label>المشروع</label><input name="project_id" value="'+_faEsc(asset.project_id||'')+'"></div>' +

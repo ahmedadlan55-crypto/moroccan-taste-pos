@@ -63,7 +63,7 @@
   <link rel="stylesheet" href="/custody/style.css?v=2">
 
   <script defer src="/shared/api-bridge.js"></script>
-  <script defer src="/custody/app.js?v=3"></script>
+  <script defer src="/custody/app.js?v=4"></script>
 </head>
 <body>
 
@@ -129,21 +129,29 @@
         </div>
       </div>
 
-      <!-- Expenses Header -->
-      <div class="list-header">
-        <h3><i class="fas fa-list-alt"></i> سجل المصروفات</h3>
-        <span class="badge-count" id="expBadge">0</span>
+      <!-- v6.27.1 — Tab Navigation -->
+      <div class="cust-tabs">
+        <button class="cust-tab active" id="tabExpenses" onclick="custSwitchTab('expenses')">
+          <i class="fas fa-list-alt"></i>
+          <span>سجل المصروفات</span>
+          <span class="cust-tab-badge" id="expBadge">0</span>
+        </button>
+        <button class="cust-tab" id="tabHistory" onclick="custSwitchTab('history')">
+          <i class="fas fa-history"></i>
+          <span>سجل العهد</span>
+          <span class="cust-tab-badge" id="historyBadge">0</span>
+        </button>
       </div>
 
-      <!-- Expenses List -->
-      <div id="expList" class="exp-list"></div>
-
-      <!-- v6.27.0 — Custody History Section -->
-      <div class="list-header" style="margin-top:20px;" id="historyHeaderEl">
-        <h3><i class="fas fa-history"></i> سجل العهد</h3>
-        <span class="badge-count" id="historyBadge">0</span>
+      <!-- Panel: Expenses (default visible) -->
+      <div id="panelExpenses">
+        <div id="expList" class="exp-list"></div>
       </div>
-      <div id="historyList" class="history-list"></div>
+
+      <!-- Panel: History (hidden until tab clicked) -->
+      <div id="panelHistory" style="display:none;">
+        <div id="historyList" class="history-list"></div>
+      </div>
 
     </main>
 

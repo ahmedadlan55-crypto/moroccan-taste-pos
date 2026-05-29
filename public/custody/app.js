@@ -546,6 +546,18 @@
     el('viewer').onclick = closeViewer;
   };
 
+  // ─── Tab Navigation (v6.27.1) ───
+  window.custSwitchTab = function(tab) {
+    var pe = document.getElementById('panelExpenses');
+    var ph = document.getElementById('panelHistory');
+    var te = document.getElementById('tabExpenses');
+    var th = document.getElementById('tabHistory');
+    if (pe) pe.style.display = tab === 'expenses' ? '' : 'none';
+    if (ph) ph.style.display = tab === 'history'  ? '' : 'none';
+    if (te) te.classList.toggle('active', tab === 'expenses');
+    if (th) th.classList.toggle('active', tab === 'history');
+  };
+
   // ─── Logout ───
   window.doLogout = function() {
     localStorage.removeItem('pos_session');

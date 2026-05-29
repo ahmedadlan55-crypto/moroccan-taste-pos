@@ -14544,13 +14544,13 @@ window.erpGLAddAcct = function(id) {
   erpGLRenderAcctChips();
   var inp = document.getElementById('erpGLAcctInput'); if (inp) inp.value = '';
   var box = document.getElementById('erpGLAcctResults'); if (box) box.classList.remove('open');
-  erpLoadGLLedgerReport();
+  // v7.1 fix — do NOT auto-load; the user must click "عرض التقرير" explicitly.
 };
 
 window.erpGLRemoveAcct = function(id) {
   window._glAcctSel = (window._glAcctSel||[]).filter(function(s){ return String(s.id) !== String(id); });
   erpGLRenderAcctChips();
-  erpLoadGLLedgerReport();
+  // v7.1 fix — do NOT auto-load on chip removal.
 };
 
 function erpGLRenderAcctChips() {

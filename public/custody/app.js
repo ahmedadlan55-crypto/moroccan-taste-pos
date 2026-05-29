@@ -723,6 +723,28 @@
         '<td>' + (sb[e.status] || e.status) + '</td></tr>';
     }).join('');
 
+    // v6.27.2 — Invoice images (same pattern as admin printCustodyPDF)
+    var imgs = '';
+    filtered.forEach(function(e, i) {
+      if (e.invoiceImage) {
+        var isPdf = e.invoiceImage.indexOf('application/pdf') !== -1;
+        if (isPdf) {
+          imgs += '<div style="page-break-before:always;text-align:center;padding:20px;">' +
+            '<h4 style="margin-bottom:14px;">فاتورة #' + (i+1) + ' — ' + esc(e.description||'') + '</h4>' +
+            '<div style="margin:20px auto;padding:30px;background:#f8fafc;border:2px dashed #cbd5e1;border-radius:12px;max-width:400px;">' +
+            '<div style="font-size:48px;color:#ef4444;margin-bottom:10px;">&#128196;</div>' +
+            '<div style="font-size:16px;font-weight:700;color:#334155;">مرفق PDF</div>' +
+            '<div style="font-size:13px;color:#64748b;margin-top:6px;">' + esc(e.description||'فاتورة') + '</div>' +
+            '</div></div>';
+        } else {
+          imgs += '<div style="page-break-before:always;text-align:center;padding:20px;">' +
+            '<h4 style="margin-bottom:10px;">فاتورة #' + (i+1) + ' — ' + esc(e.description||'') + '</h4>' +
+            '<img src="' + e.invoiceImage + '" style="max-width:90%;max-height:80vh;border:1px solid #ddd;border-radius:8px;">' +
+            '</div>';
+        }
+      }
+    });
+
     var filterLabel = mode === 'accepted' ? ' (المصروفات المقبولة فقط)' : '';
     var openDate = '';
     try { if (c.createdDate) openDate = new Date(c.createdDate).toLocaleDateString('en-GB'); } catch(x){}
@@ -757,6 +779,7 @@
       '</div>' +
       '<table><thead><tr><th>#</th><th>التاريخ</th><th>البيان</th><th>القيمة</th><th>الضريبة</th><th>الإجمالي</th><th>الحالة</th></tr></thead>' +
       '<tbody>' + rows + '</tbody></table>' +
+      imgs +
       '<div class="sig">' +
         '<div><div class="line"></div><div class="cap">مسؤول العهدة</div></div>' +
         '<div><div class="line"></div><div class="cap">المدير المباشر</div></div>' +

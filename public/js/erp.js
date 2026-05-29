@@ -15496,6 +15496,9 @@ function wfSavePositionPath() {
 
 // Shared helpers
 function _erpFmt(n) { return Number(n||0).toLocaleString('en-US', {minimumFractionDigits:2, maximumFractionDigits:2}); }
+// v7.0 — whole-number format for gross/invoice amounts (no decimal fractions,
+// e.g. a 4 SAR sale shows "4" not "4.35").
+function _erpFmt0(n) { return Math.round(Number(n||0)).toLocaleString('en-US'); }
 function _erpKpi(label, value, color) {
   color = color || '#0f172a';
   return '<div class="erp-rpt-card"><span class="lbl">'+label+'</span><span class="val" style="color:'+color+';">'+value+'</span></div>';
@@ -18997,15 +19000,24 @@ function erpLoadSalesAnalytics() {
   var qs = new URLSearchParams({ from, to, branch, brand, groupBy: 'all' }).toString();
   _erpGet('/erp/reports/sales-analytics?' + qs, function(r) {
     if (!r.success) { showToast(r.error||'خطأ', true); return; }
-    var h = r.headline || {};
+    // v7.0 — the six owner-requested metrics, anchored on total_final (actual
+    // charged). Gross shown as whole SAR (no 4.35); net/VAT/cost/profit at 2dp.
+    var rev = r.revenue || {};
     document.getElementById('saHeadline').innerHTML =
-      _erpKpi('عدد الفواتير', (h.invoiceCount||0), '#0ea5e9') +
-      _erpKpi('الإجمالي', _erpFmt(h.total), '#16a34a') +
-      _erpKpi('متوسط الفاتورة', _erpFmt(h.avgTicket), '#8b5cf6');
-    document.getElementById('saDailyBody').innerHTML = (r.daily||[]).map(function(d){return '<tr><td>'+(d.date||'').slice(0,10)+'</td><td>'+d.count+'</td><td>'+_erpFmt(d.total)+'</td></tr>';}).join('') || '<tr><td colspan="3" class="empty-msg">—</td></tr>';
-    document.getElementById('saPayBody').innerHTML = (r.byPayment||[]).map(function(d){return '<tr><td>'+(d.method||'')+'</td><td>'+d.count+'</td><td>'+_erpFmt(d.total)+'</td></tr>';}).join('') || '<tr><td colspan="3" class="empty-msg">—</td></tr>';
-    document.getElementById('saCashierBody').innerHTML = (r.byCashier||[]).map(function(d){return '<tr><td>'+(d.cashier||'')+'</td><td>'+d.count+'</td><td>'+_erpFmt(d.avgTicket)+'</td><td>'+_erpFmt(d.total)+'</td></tr>';}).join('') || '<tr><td colspan="4" class="empty-msg">—</td></tr>';
-    document.getElementById('saTopBody').innerHTML = (r.topItems||[]).map(function(d,i){return '<tr><td>'+(i+1)+'</td><td>'+(d.name||'')+'</td><td>'+_erpFmt(d.qty)+'</td><td>'+_erpFmt(d.total)+'</td></tr>';}).join('') || '<tr><td colspan="4" class="empty-msg">—</td></tr>';
+      _erpKpi('الإجمالي شامل الضريبة', _erpFmt0(rev.grossInclVat), '#16a34a') +
+      _erpKpi('المبيعات بدون الضريبة', _erpFmt(rev.net), '#0ea5e9') +
+      _erpKpi('الضريبة (VAT)', _erpFmt(rev.vat), '#f59e0b') +
+      _erpKpi('الخصومات', _erpFmt(rev.discounts), '#ef4444') +
+      _erpKpi('التكلفة', _erpFmt(rev.cost), '#8b5cf6') +
+      _erpKpi('صافي الربح', _erpFmt(rev.profit), '#16a34a');
+    document.getElementById('saByProductBody').innerHTML = (r.byProduct||[]).map(function(d){
+      return '<tr><td style="text-align:start;">'+(d.name||'')+'</td><td>'+_erpFmt(d.qty)+'</td>'+
+        '<td>'+_erpFmt0(d.gross)+'</td><td>'+_erpFmt(d.net)+'</td><td>'+_erpFmt(d.vat)+'</td>'+
+        '<td>'+_erpFmt(d.cost)+'</td><td>'+_erpFmt(d.profit)+'</td><td>'+(d.margin!=null?d.margin+'%':'—')+'</td></tr>';
+    }).join('') || '<tr><td colspan="8" class="empty-msg">—</td></tr>';
+    document.getElementById('saDailyBody').innerHTML = (r.daily||[]).map(function(d){return '<tr><td>'+(d.date||'').slice(0,10)+'</td><td>'+d.count+'</td><td>'+_erpFmt0(d.total)+'</td></tr>';}).join('') || '<tr><td colspan="3" class="empty-msg">—</td></tr>';
+    document.getElementById('saPayBody').innerHTML = (r.byPayment||[]).map(function(d){return '<tr><td>'+(d.method||'')+'</td><td>'+d.count+'</td><td>'+_erpFmt0(d.total)+'</td></tr>';}).join('') || '<tr><td colspan="3" class="empty-msg">—</td></tr>';
+    document.getElementById('saCashierBody').innerHTML = (r.byCashier||[]).map(function(d){return '<tr><td>'+(d.cashier||'')+'</td><td>'+d.count+'</td><td>'+_erpFmt0(d.avgTicket)+'</td><td>'+_erpFmt0(d.total)+'</td></tr>';}).join('') || '<tr><td colspan="4" class="empty-msg">—</td></tr>';
   });
 }
 

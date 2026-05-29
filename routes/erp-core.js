@@ -2508,14 +2508,68 @@ router.get('/reports/sales-analytics', async (req, res) => {
 
     const out = { filters: { from: from || null, to: to || null, branch: branch || null, brand: brand || null } };
 
-    // Headline totals
+    // v7.0 — VAT rate from settings (single source of truth) + 2-dp helper.
+    let _rate = 15;
+    try { _rate = await require('../lib/pricing').getVatRateFromDb(db, 15); } catch(_) {}
+    const _div = 1 + (Number(_rate) || 15) / 100;
+    const r2 = n => Math.round((Number(n) || 0) * 100) / 100;
+
+    // Headline totals — gross is the ACTUAL charged amount (total_final, whole
+    // SAR). net/vat are DERIVED from it, so a 4 SAR sale reads 4 (not 4.35).
     const [hd] = await db.query(
-      `SELECT COUNT(*) AS cnt, COALESCE(SUM(total_final),0) AS total, COALESCE(AVG(total_final),0) AS avg_ticket
+      `SELECT COUNT(*) AS cnt, COALESCE(SUM(total_final),0) AS total,
+              COALESCE(AVG(total_final),0) AS avg_ticket,
+              COALESCE(SUM(discount_amount),0) AS discounts
        FROM sales s WHERE ${whereClause}`, params);
+    const _gross = Number(hd[0].total) || 0;
+    const _net = _gross / _div;
     out.headline = {
       invoiceCount: Number(hd[0].cnt) || 0,
-      total: Math.round(Number(hd[0].total) * 100) / 100,
-      avgTicket: Math.round(Number(hd[0].avg_ticket) * 100) / 100
+      total: r2(_gross),
+      avgTicket: r2(hd[0].avg_ticket)
+    };
+
+    // Per-product breakdown (sales_items only — no menu JOIN, to avoid row
+    // multiplication on duplicate names). Cost comes from a name→cost map so
+    // headline cost === sum of per-product cost (consistent).
+    let _costMap = {};
+    try {
+      const [mc] = await db.query('SELECT name, COALESCE(cost,0) AS cost FROM menu');
+      mc.forEach(m => { _costMap[m.name] = Number(m.cost) || 0; });
+    } catch(_) {}
+    const [prodRows] = await db.query(
+      `SELECT si.item_name AS name, SUM(si.qty) AS qty, COALESCE(SUM(si.total),0) AS gross
+       FROM sales_items si JOIN sales s ON si.order_id = s.id
+       WHERE ${whereClause}
+       GROUP BY si.item_name ORDER BY gross DESC`, params);
+    let _totalCost = 0;
+    out.byProduct = prodRows.map(r => {
+      const g = Number(r.gross) || 0;
+      const n = g / _div;
+      const q = Number(r.qty) || 0;
+      const c = r2(q * (_costMap[r.name] || 0));
+      _totalCost += c;
+      const p = n - c;
+      return {
+        name: r.name || '', qty: q,
+        gross: r2(g), net: r2(n), vat: r2(g - n),
+        cost: c, profit: r2(p),
+        margin: n > 0 ? Math.round((p / n) * 10000) / 100 : 0
+      };
+    });
+    _totalCost = r2(_totalCost);
+    // Back-compat alias (older consumers expect topItems: name/qty/total)
+    out.topItems = out.byProduct.map(p => ({ name: p.name, qty: p.qty, total: p.gross }));
+
+    // The six headline metrics the owner asked for.
+    out.revenue = {
+      invoiceCount: Number(hd[0].cnt) || 0,
+      grossInclVat: r2(_gross),
+      net: r2(_net),
+      vat: r2(_gross - _net),
+      discounts: r2(hd[0].discounts),
+      cost: _totalCost,
+      profit: r2(_net - _totalCost)
     };
 
     if (by === 'daily' || by === 'all') {
@@ -2550,14 +2604,7 @@ router.get('/reports/sales-analytics', async (req, res) => {
          GROUP BY HOUR(s.order_date) ORDER BY hr`, params);
       out.byHour = h.map(r => ({ hour: Number(r.hr), count: Number(r.cnt), total: Math.round(Number(r.total) * 100) / 100 }));
     }
-    if (by === 'top_items' || by === 'all') {
-      const [ti] = await db.query(
-        `SELECT si.item_name AS name, SUM(si.qty) AS qty, SUM(si.total) AS total
-         FROM sales_items si JOIN sales s ON si.order_id = s.id
-         WHERE ${whereClause}
-         GROUP BY si.item_name ORDER BY qty DESC LIMIT 25`, params);
-      out.topItems = ti.map(r => ({ name: r.name || '', qty: Number(r.qty) || 0, total: Math.round(Number(r.total) * 100) / 100 }));
-    }
+    // (top_items handled above as out.byProduct + out.topItems alias)
 
     res.json({ success: true, ...out });
   } catch(e) { res.json({ success: false, error: e.message }); }

@@ -6011,11 +6011,24 @@
     <div><button class="btn btn-primary btn-sm" onclick="erpLoadSalesAnalytics()"><i class="fas fa-search"></i> عرض</button></div>
   </div>
   <div id="saHeadline" class="erp-rpt-kpi"></div>
-  <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:12px;">
+  <!-- v7.0 — sales by product (gross incl VAT / net / VAT / cost / profit / margin) -->
+  <div style="margin-bottom:14px;">
+    <h4 style="margin:6px 0;"><i class="fas fa-box" style="color:#0ea5e9;"></i> المبيعات حسب المنتج</h4>
+    <div class="erp-table-container">
+      <table class="erp-table">
+        <thead><tr>
+          <th style="text-align:start;">المنتج</th><th>الكمية</th>
+          <th>شامل الضريبة</th><th>بدون الضريبة</th><th>الضريبة</th>
+          <th>التكلفة</th><th>الربح</th><th>الهامش%</th>
+        </tr></thead>
+        <tbody id="saByProductBody"></tbody>
+      </table>
+    </div>
+  </div>
+  <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px;margin-bottom:12px;">
     <div><h4>يومي</h4><div class="erp-table-container"><table class="erp-table"><thead><tr><th>التاريخ</th><th>الفواتير</th><th>الإجمالي</th></tr></thead><tbody id="saDailyBody"></tbody></table></div></div>
     <div><h4>طريقة الدفع</h4><div class="erp-table-container"><table class="erp-table"><thead><tr><th>الطريقة</th><th>الفواتير</th><th>الإجمالي</th></tr></thead><tbody id="saPayBody"></tbody></table></div></div>
     <div><h4>الكاشير</h4><div class="erp-table-container"><table class="erp-table"><thead><tr><th>الكاشير</th><th>الفواتير</th><th>متوسط</th><th>الإجمالي</th></tr></thead><tbody id="saCashierBody"></tbody></table></div></div>
-    <div><h4>أفضل الأصناف</h4><div class="erp-table-container"><table class="erp-table"><thead><tr><th>#</th><th>الصنف</th><th>الكمية</th><th>الإجمالي</th></tr></thead><tbody id="saTopBody"></tbody></table></div></div>
   </div>
 </div>
 

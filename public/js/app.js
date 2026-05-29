@@ -1386,10 +1386,22 @@ function renderMenuGrid() {
   catTabsEl.innerHTML = catHtml;
 
   // Render Items — explicit ± buttons (no full-card click)
-  const searchTerm = (q("#posSearchInput") ? q("#posSearchInput").value : '').toLowerCase();
+  // v7.0 — search across BOTH Arabic (name) and English (nameEn), with Arabic
+  // letter normalization (أ/إ/آ→ا، ة→ه، ى/ئ→ي، ؤ→و) + diacritics/tatweel
+  // stripped. Fixes "searching in Arabic OR English finds nothing".
+  const _posNorm = (s) => String(s == null ? '' : s).toLowerCase()
+    .replace(/ـ/g, '')               // tatweel ـ
+    .replace(/[ً-ْ]/g, '')      // harakat / diacritics
+    .replace(/[أإآ]/g, 'ا').replace(/ة/g, 'ه')
+    .replace(/[ىئ]/g, 'ي').replace(/ؤ/g, 'و')
+    .trim();
+  const searchTerm = _posNorm(q("#posSearchInput") ? q("#posSearchInput").value : '');
   let list = state.menu.filter(i => i.active);
   if (state.activeCat) list = list.filter(i => i.category === state.activeCat);
-  if (searchTerm) list = list.filter(i => (i.name || '').toLowerCase().includes(searchTerm) || String(i.id || '').toLowerCase().includes(searchTerm));
+  if (searchTerm) list = list.filter(i =>
+    _posNorm(i.name).includes(searchTerm) ||
+    _posNorm(i.nameEn).includes(searchTerm) ||
+    String(i.id || '').toLowerCase().includes(searchTerm));
 
   let h = "";
   list.forEach(i => {

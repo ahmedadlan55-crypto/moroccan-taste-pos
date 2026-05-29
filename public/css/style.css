@@ -2283,3 +2283,76 @@ body.en .report-kpi-card.kpi-daily { border-right: none; border-left: 4px solid 
 }
  
  
+
+/* ═══════════════════════════════════════════════════════════════════
+   Sales Analytics Report — v7.1
+   Premium KPI cards + filters + export buttons + print layout
+   ═══════════════════════════════════════════════════════════════════ */
+
+/* ── Report Header ── */
+.sa-report-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 16px 20px;
+  background: linear-gradient(135deg, #0f172a 0%, #1e3a5f 100%);
+  border-radius: 16px;
+  margin-bottom: 16px;
+  color: #fff;
+}
+.sa-report-title { display:flex; align-items:center; gap:14px; }
+.sa-report-icon { width:48px; height:48px; background:rgba(255,255,255,.15); border-radius:12px; display:grid; place-items:center; font-size:22px; flex-shrink:0; }
+.sa-report-title h2 { margin:0; font-size:18px; font-weight:900; color:#fff; }
+.sa-report-title span { font-size:12px; color:rgba(255,255,255,.65); display:block; margin-top:2px; }
+.sa-export-btns { display:flex; gap:8px; flex-shrink:0; }
+.sa-export-btns button { display:inline-flex; align-items:center; gap:6px; padding:9px 16px; border-radius:10px; border:1.5px solid rgba(255,255,255,.25); background:rgba(255,255,255,.12); color:#fff; font-size:13px; font-weight:700; cursor:pointer; font-family:inherit; transition:background .15s; }
+.sa-export-btns button:hover { background:rgba(255,255,255,.22); border-color:rgba(255,255,255,.5); }
+.sa-export-btns button.btn-excel { background:rgba(16,185,129,.25); border-color:rgba(16,185,129,.5); }
+.sa-export-btns button.btn-pdf   { background:rgba(239,68,68,.25);  border-color:rgba(239,68,68,.5); }
+
+/* ── Quick Preset Buttons ── */
+.sa-preset-bar { display:flex; flex-wrap:wrap; align-items:center; gap:6px; margin-bottom:8px; }
+.sa-preset-label { font-size:11px; font-weight:800; color:#64748b; margin-inline-end:4px; white-space:nowrap; }
+.sa-preset-btn { padding:5px 13px; border-radius:999px; border:1.5px solid #e2e8f0; background:#fff; font-size:12px; font-weight:700; color:#64748b; cursor:pointer; font-family:inherit; transition:all .12s; white-space:nowrap; }
+.sa-preset-btn:hover  { border-color:#3b82f6; color:#3b82f6; background:#eff6ff; }
+.sa-preset-btn.active { border-color:#3b82f6; color:#fff; background:#3b82f6; }
+
+/* ── KPI Grid ── */
+.sa-kpi-grid { display:grid; grid-template-columns:repeat(6,1fr); gap:12px; margin-bottom:18px; }
+.sa-kpi-card { background:#fff; border:1px solid #e8edf4; border-radius:14px; padding:16px; display:flex; align-items:center; gap:12px; box-shadow:0 2px 8px -4px rgba(15,23,42,.1); transition:transform .14s,box-shadow .14s; }
+.sa-kpi-card:hover { transform:translateY(-2px); box-shadow:0 8px 20px -6px rgba(15,23,42,.15); }
+.sa-kpi-icon { width:44px; height:44px; border-radius:11px; display:grid; place-items:center; font-size:18px; color:#fff; flex-shrink:0; }
+.sa-kpi-body { min-width:0; flex:1; }
+.sa-kpi-val { font-size:20px; font-weight:900; line-height:1.2; font-variant-numeric:tabular-nums; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.sa-kpi-lbl { font-size:10.5px; font-weight:700; color:#64748b; margin-top:2px; white-space:nowrap; }
+
+/* ── Section Heading ── */
+.sa-section-head { display:flex; align-items:center; gap:8px; font-size:14px; font-weight:800; color:#1e293b; margin-bottom:8px; }
+
+/* ── Product Table ── */
+.sa-product-table thead th { background:linear-gradient(180deg,#f8fafc,#f1f5f9); font-size:11px; font-weight:800; color:#64748b; letter-spacing:.04em; white-space:nowrap; }
+.sa-margin-bar { display:inline-block; height:8px; border-radius:999px; background:linear-gradient(90deg,#22c55e,#16a34a); vertical-align:middle; margin-inline-end:6px; }
+
+/* ── Sub-tables Grid ── */
+.sa-sub-grid { display:grid; grid-template-columns:repeat(3,1fr); gap:14px; margin-bottom:14px; }
+.sa-sub-card { background:#fff; border:1px solid #e8edf4; border-radius:14px; overflow:hidden; box-shadow:0 1px 4px -2px rgba(15,23,42,.08); }
+.sa-sub-card-head { padding:10px 14px; font-size:13px; font-weight:800; color:#1e293b; border-bottom:1px solid #f1f5f9; display:flex; align-items:center; gap:7px; }
+
+/* ── Print / PDF layout ── */
+@media print {
+  .sa-export-btns, .sa-preset-bar, .erp-rpt-filter { display:none !important; }
+  .sa-report-header { background:#1e293b !important; -webkit-print-color-adjust:exact; print-color-adjust:exact; }
+  .sa-kpi-grid { grid-template-columns:repeat(3,1fr) !important; }
+  .sa-sub-grid { grid-template-columns:1fr 1fr !important; }
+  .sa-kpi-card { break-inside:avoid; }
+  .erp-table-container { max-height:none !important; overflow:visible !important; }
+}
+
+/* ── Responsive ── */
+@media (max-width:1100px) { .sa-kpi-grid { grid-template-columns:repeat(3,1fr); } }
+@media (max-width:720px) {
+  .sa-kpi-grid { grid-template-columns:repeat(2,1fr); }
+  .sa-sub-grid { grid-template-columns:1fr; }
+  .sa-report-header { flex-direction:column; align-items:flex-start; }
+}

@@ -18989,37 +18989,185 @@ window.erpExportWarehouseLedger = function() {
   setTimeout(function(){ URL.revokeObjectURL(url); }, 1000);
 };
 
-// ─── Sales Analytics ───
+// ─── Sales Analytics v7.1 ───────────────────────────────────────────────────
+// KPI card with icon + gradient background (premium design)
+function _saKpi(icon, grad, label, val, sub) {
+  return '<div class="sa-kpi-card">' +
+    '<div class="sa-kpi-icon" style="background:'+grad+'"><i class="fas '+icon+'"></i></div>' +
+    '<div class="sa-kpi-body"><div class="sa-kpi-val">'+val+'</div><div class="sa-kpi-lbl">'+label+'</div>'+(sub?'<div style="font-size:10px;color:#94a3b8;margin-top:2px;">'+sub+'</div>':'')+'</div>' +
+  '</div>';
+}
+
+// Populate channel + payment-method dropdowns from server response
+function _saPopulateFilterDropdowns(r) {
+  var chSel = document.getElementById('saChannel');
+  if (chSel && (r.channels||[]).length && chSel.options.length <= 1) {
+    (r.channels||[]).forEach(function(c){ var o=document.createElement('option'); o.value=c; o.textContent=c; chSel.appendChild(o); });
+  }
+  var pmSel = document.getElementById('saPayMethod');
+  if (pmSel && (r.paymentMethods||[]).length && pmSel.options.length <= 1) {
+    (r.paymentMethods||[]).forEach(function(p){ var o=document.createElement('option'); o.value=p; o.textContent=p; pmSel.appendChild(o); });
+  }
+}
+
 function erpLoadSalesAnalytics() {
   _erpPopulateBranchOptions(['saBranch']);
   _erpPopulateBrandOptions(['saBrand']);
-  var from = (document.getElementById('saFrom')||{}).value || '';
-  var to   = (document.getElementById('saTo')||{}).value || '';
-  var branch = (document.getElementById('saBranch')||{}).value || '';
-  var brand  = (document.getElementById('saBrand')||{}).value || '';
-  var qs = new URLSearchParams({ from, to, branch, brand, groupBy: 'all' }).toString();
+  var from      = (document.getElementById('saFrom')||{}).value || '';
+  var to        = (document.getElementById('saTo')||{}).value || '';
+  var branch    = (document.getElementById('saBranch')||{}).value || '';
+  var brand     = (document.getElementById('saBrand')||{}).value || '';
+  var channel   = (document.getElementById('saChannel')||{}).value || '';
+  var payMethod = (document.getElementById('saPayMethod')||{}).value || '';
+  var qs = new URLSearchParams({ from, to, branch, brand, channel, paymentMethod: payMethod, groupBy: 'all' }).toString();
+  // Show loading state in headline
+  var hlEl = document.getElementById('saHeadline');
+  if (hlEl) hlEl.innerHTML = '<div style="grid-column:1/-1;text-align:center;padding:24px;color:#94a3b8;"><i class="fas fa-spinner fa-spin" style="font-size:22px;"></i></div>';
   _erpGet('/erp/reports/sales-analytics?' + qs, function(r) {
     if (!r.success) { showToast(r.error||'خطأ', true); return; }
-    // v7.0 — the six owner-requested metrics, anchored on total_final (actual
-    // charged). Gross shown as whole SAR (no 4.35); net/VAT/cost/profit at 2dp.
+    window._saLastData = r;  // stored for Excel/PDF export
+
+    // Populate channel & payment dropdowns from live data (once)
+    _saPopulateFilterDropdowns(r);
+
     var rev = r.revenue || {};
-    document.getElementById('saHeadline').innerHTML =
-      _erpKpi('الإجمالي شامل الضريبة', _erpFmt0(rev.grossInclVat), '#16a34a') +
-      _erpKpi('المبيعات بدون الضريبة', _erpFmt(rev.net), '#0ea5e9') +
-      _erpKpi('الضريبة (VAT)', _erpFmt(rev.vat), '#f59e0b') +
-      _erpKpi('الخصومات', _erpFmt(rev.discounts), '#ef4444') +
-      _erpKpi('التكلفة', _erpFmt(rev.cost), '#8b5cf6') +
-      _erpKpi('صافي الربح', _erpFmt(rev.profit), '#16a34a');
+    var invCount = (rev.invoiceCount||0).toLocaleString('en-US');
+
+    // ── KPI cards (6) with premium icons ──
+    if (hlEl) hlEl.innerHTML =
+      _saKpi('fa-dollar-sign',   'linear-gradient(135deg,#22c55e,#16a34a)', 'الإجمالي شامل الضريبة', _erpFmt0(rev.grossInclVat), invCount+' فاتورة') +
+      _saKpi('fa-receipt',       'linear-gradient(135deg,#3b82f6,#1d4ed8)', 'المبيعات بدون الضريبة', _erpFmt(rev.net)) +
+      _saKpi('fa-percent',       'linear-gradient(135deg,#f59e0b,#d97706)', 'الضريبة (VAT)',           _erpFmt(rev.vat)) +
+      _saKpi('fa-tag',           'linear-gradient(135deg,#ef4444,#dc2626)', 'الخصومات',               _erpFmt(rev.discounts)) +
+      _saKpi('fa-box',           'linear-gradient(135deg,#8b5cf6,#7c3aed)', 'التكلفة',                _erpFmt(rev.cost)) +
+      _saKpi('fa-chart-line',    'linear-gradient(135deg,#06b6d4,#0891b2)', 'صافي الربح',             _erpFmt(rev.profit));
+
+    // ── Products table ──
+    var maxMargin = Math.max.apply(null, (r.byProduct||[]).map(function(d){ return d.margin||0; }).concat([1]));
     document.getElementById('saByProductBody').innerHTML = (r.byProduct||[]).map(function(d){
-      return '<tr><td style="text-align:start;">'+(d.name||'')+'</td><td>'+_erpFmt(d.qty)+'</td>'+
-        '<td>'+_erpFmt0(d.gross)+'</td><td>'+_erpFmt(d.net)+'</td><td>'+_erpFmt(d.vat)+'</td>'+
-        '<td>'+_erpFmt(d.cost)+'</td><td>'+_erpFmt(d.profit)+'</td><td>'+(d.margin!=null?d.margin+'%':'—')+'</td></tr>';
+      var barW = Math.round(((d.margin||0)/maxMargin)*60);
+      var profitColor = (d.profit||0) >= 0 ? '#16a34a' : '#ef4444';
+      return '<tr>' +
+        '<td style="text-align:start;font-weight:600;">'+(d.name||'')+'</td>' +
+        '<td style="text-align:center;">'+_erpFmt(d.qty)+'</td>' +
+        '<td style="font-weight:700;">'+_erpFmt0(d.gross)+'</td>' +
+        '<td>'+_erpFmt(d.net)+'</td>' +
+        '<td>'+_erpFmt(d.vat)+'</td>' +
+        '<td>'+_erpFmt(d.cost)+'</td>' +
+        '<td style="color:'+profitColor+';font-weight:700;">'+_erpFmt(d.profit)+'</td>' +
+        '<td style="white-space:nowrap;">' +
+          '<span class="sa-margin-bar" style="width:'+barW+'px;"></span>' +
+          (d.margin!=null?d.margin+'%':'—') +
+        '</td>' +
+      '</tr>';
     }).join('') || '<tr><td colspan="8" class="empty-msg">—</td></tr>';
-    document.getElementById('saDailyBody').innerHTML = (r.daily||[]).map(function(d){return '<tr><td>'+(d.date||'').slice(0,10)+'</td><td>'+d.count+'</td><td>'+_erpFmt0(d.total)+'</td></tr>';}).join('') || '<tr><td colspan="3" class="empty-msg">—</td></tr>';
-    document.getElementById('saPayBody').innerHTML = (r.byPayment||[]).map(function(d){return '<tr><td>'+(d.method||'')+'</td><td>'+d.count+'</td><td>'+_erpFmt0(d.total)+'</td></tr>';}).join('') || '<tr><td colspan="3" class="empty-msg">—</td></tr>';
-    document.getElementById('saCashierBody').innerHTML = (r.byCashier||[]).map(function(d){return '<tr><td>'+(d.cashier||'')+'</td><td>'+d.count+'</td><td>'+_erpFmt0(d.avgTicket)+'</td><td>'+_erpFmt0(d.total)+'</td></tr>';}).join('') || '<tr><td colspan="4" class="empty-msg">—</td></tr>';
+
+    // ── Sub-tables ──
+    document.getElementById('saDailyBody').innerHTML = (r.daily||[]).map(function(d){
+      return '<tr><td>'+String(d.date||'').slice(0,10)+'</td><td>'+d.count+'</td><td style="font-weight:700;">'+_erpFmt0(d.total)+'</td></tr>';
+    }).join('') || '<tr><td colspan="3" class="empty-msg">—</td></tr>';
+    document.getElementById('saPayBody').innerHTML = (r.byPayment||[]).map(function(d){
+      return '<tr><td style="font-weight:600;">'+(d.method||'')+'</td><td>'+d.count+'</td><td style="font-weight:700;">'+_erpFmt0(d.total)+'</td></tr>';
+    }).join('') || '<tr><td colspan="3" class="empty-msg">—</td></tr>';
+    document.getElementById('saCashierBody').innerHTML = (r.byCashier||[]).map(function(d){
+      return '<tr><td style="font-weight:600;">'+(d.cashier||'')+'</td><td>'+d.count+'</td><td>'+_erpFmt0(d.avgTicket)+'</td><td style="font-weight:700;">'+_erpFmt0(d.total)+'</td></tr>';
+    }).join('') || '<tr><td colspan="4" class="empty-msg">—</td></tr>';
   });
 }
+
+// ── Quick date preset (reuses _erpJrnPreset date-range logic) ──
+window._saSetPreset = function(range) {
+  var now = new Date(), y=now.getFullYear(), m=now.getMonth(), d=now.getDate();
+  var pad=function(n){return String(n).padStart(2,'0');};
+  var fmt=function(dt){return dt.getFullYear()+'-'+pad(dt.getMonth()+1)+'-'+pad(dt.getDate());};
+  var start, end;
+  if (range==='today') {
+    start = end = fmt(now);
+  } else if (range==='week') {
+    var dow=now.getDay();
+    start=fmt(new Date(y,m,d-dow)); end=fmt(new Date(y,m,d-dow+6));
+  } else if (range==='month') {
+    start=fmt(new Date(y,m,1)); end=fmt(new Date(y,m+1,0));
+  } else if (range==='last_month') {
+    start=fmt(new Date(y,m-1,1)); end=fmt(new Date(y,m,0));
+  } else if (range==='quarter') {
+    var q=Math.floor(m/3);
+    start=fmt(new Date(y,q*3,1)); end=fmt(new Date(y,q*3+3,0));
+  } else if (range==='year') {
+    start=y+'-01-01'; end=y+'-12-31';
+  }
+  var sEl=document.getElementById('saFrom'), eEl=document.getElementById('saTo');
+  if (sEl) sEl.value=start||'';
+  if (eEl) eEl.value=end||'';
+  document.querySelectorAll('.sa-preset-btn').forEach(function(b){
+    b.classList.toggle('active', b.getAttribute('data-preset')===range);
+  });
+  erpLoadSalesAnalytics();
+};
+
+// ── Clear all filters ──
+window._saClearFilters = function() {
+  ['saFrom','saTo','saBranch','saBrand','saChannel','saPayMethod'].forEach(function(id){
+    var el=document.getElementById(id); if (el) el.value='';
+  });
+  document.querySelectorAll('.sa-preset-btn.active').forEach(function(b){ b.classList.remove('active'); });
+  erpLoadSalesAnalytics();
+};
+
+// ── Excel Export (SheetJS from CDN, lazy-loaded) ──
+window._saExportExcel = function() {
+  if (!window._saLastData) { showToast('قم بتشغيل التقرير أولاً', true); return; }
+  if (window.XLSX) { _saBuildXlsx(); return; }
+  showToast('جارٍ تحميل مكتبة Excel...', false);
+  var s=document.createElement('script');
+  s.src='https://cdn.sheetjs.com/xlsx-0.20.3/package/dist/xlsx.full.min.js';
+  s.onload=function(){ _saBuildXlsx(); };
+  s.onerror=function(){ showToast('تعذّر تحميل مكتبة Excel — تحقق من الاتصال بالإنترنت', true); };
+  document.head.appendChild(s);
+};
+window._saBuildXlsx = function() {
+  var d=window._saLastData, rev=d.revenue||{};
+  var wb=XLSX.utils.book_new();
+  // Sheet 1 — ملخص الإيرادات
+  var s1=[
+    ['المؤشر','القيمة (ر.س)'],
+    ['الإجمالي شامل الضريبة', rev.grossInclVat||0],
+    ['المبيعات بدون الضريبة', rev.net||0],
+    ['الضريبة (VAT)', rev.vat||0],
+    ['الخصومات', rev.discounts||0],
+    ['التكلفة', rev.cost||0],
+    ['صافي الربح', rev.profit||0],
+    ['عدد الفواتير', rev.invoiceCount||0]
+  ];
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(s1), 'ملخص الإيرادات');
+  // Sheet 2 — المنتجات
+  var h2=['المنتج','الكمية','شامل الضريبة','بدون الضريبة','الضريبة','التكلفة','الربح','الهامش%'];
+  var r2=(d.byProduct||[]).map(function(p){return [p.name,p.qty,p.gross,p.net,p.vat,p.cost,p.profit,p.margin];});
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet([h2].concat(r2)), 'المنتجات');
+  // Sheet 3 — يومي
+  var h3=['التاريخ','الفواتير','الإجمالي'];
+  var r3=(d.daily||[]).map(function(r){return [String(r.date||'').slice(0,10),r.count,r.total];});
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet([h3].concat(r3)), 'يومي');
+  // Sheet 4 — طريقة الدفع
+  var h4=['الطريقة','الفواتير','الإجمالي'];
+  var r4=(d.byPayment||[]).map(function(r){return [r.method,r.count,r.total];});
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet([h4].concat(r4)), 'طريقة الدفع');
+  // Sheet 5 — الكاشير
+  var h5=['الكاشير','الفواتير','متوسط الفاتورة','الإجمالي'];
+  var r5=(d.byCashier||[]).map(function(r){return [r.cashier,r.count,r.avgTicket,r.total];});
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet([h5].concat(r5)), 'الكاشير');
+  XLSX.writeFile(wb, 'تحليل-المبيعات-'+new Date().toISOString().slice(0,10)+'.xlsx');
+  showToast('تم تحميل ملف Excel بنجاح ✓', false);
+};
+
+// ── PDF Export (print dialog → Save as PDF) ──
+window._saPrintPdf = function() {
+  if (!window._saLastData) { showToast('قم بتشغيل التقرير أولاً', true); return; }
+  var prev = document.title;
+  document.title = 'تحليل المبيعات — ' + new Date().toLocaleDateString('ar-SA');
+  window.print();
+  document.title = prev;
+};
 
 // ─── Waste Analytics ───
 function erpLoadWasteAnalytics() {

@@ -6002,34 +6002,95 @@
 
 <!-- Sales Analytics -->
 <div id="erpRptSalesAnalytics" class="dash-section hidden">
-  <div class="section-header"><h2 class="section-title"><i class="fas fa-chart-bar"></i> تحليل المبيعات</h2></div>
-  <div class="erp-rpt-filter">
+
+  <!-- ── v7.1 Report Header ── -->
+  <div class="sa-report-header">
+    <div class="sa-report-title">
+      <div class="sa-report-icon"><i class="fas fa-chart-bar"></i></div>
+      <div>
+        <h2>تحليل المبيعات</h2>
+        <span>تقرير شامل للإيرادات والتكاليف والأرباح — وفق الفترة والبراند والفرع والقناة</span>
+      </div>
+    </div>
+    <div class="sa-export-btns">
+      <button class="btn-excel" onclick="_saExportExcel()"><i class="fas fa-file-excel"></i> Excel</button>
+      <button class="btn-pdf"   onclick="_saPrintPdf()"><i class="fas fa-file-pdf"></i> PDF</button>
+    </div>
+  </div>
+
+  <!-- ── Quick Date Presets ── -->
+  <div class="sa-preset-bar">
+    <span class="sa-preset-label">فترة سريعة:</span>
+    <button class="sa-preset-btn" data-preset="today"      onclick="_saSetPreset('today')">اليوم</button>
+    <button class="sa-preset-btn" data-preset="week"       onclick="_saSetPreset('week')">هذا الأسبوع</button>
+    <button class="sa-preset-btn" data-preset="month"      onclick="_saSetPreset('month')">هذا الشهر</button>
+    <button class="sa-preset-btn" data-preset="last_month" onclick="_saSetPreset('last_month')">الشهر الماضي</button>
+    <button class="sa-preset-btn" data-preset="quarter"    onclick="_saSetPreset('quarter')">هذا الربع</button>
+    <button class="sa-preset-btn" data-preset="year"       onclick="_saSetPreset('year')">هذه السنة</button>
+  </div>
+
+  <!-- ── Filters ── -->
+  <div class="erp-rpt-filter" style="margin-bottom:14px;">
     <div><label>من تاريخ</label><input type="date" id="saFrom" class="form-control-sm"></div>
     <div><label>إلى تاريخ</label><input type="date" id="saTo" class="form-control-sm"></div>
     <div><label>الفرع</label><select id="saBranch" class="form-control-sm"><option value="">الكل</option></select></div>
     <div><label>البراند</label><select id="saBrand" class="form-control-sm"><option value="">الكل</option></select></div>
-    <div><button class="btn btn-primary btn-sm" onclick="erpLoadSalesAnalytics()"><i class="fas fa-search"></i> عرض</button></div>
+    <div><label>قناة البيع</label><select id="saChannel" class="form-control-sm"><option value="">الكل</option></select></div>
+    <div><label>طريقة الدفع</label><select id="saPayMethod" class="form-control-sm"><option value="">الكل</option></select></div>
+    <div style="display:flex;gap:8px;">
+      <button class="btn btn-primary btn-sm" onclick="erpLoadSalesAnalytics()"><i class="fas fa-search"></i> عرض</button>
+      <button class="btn btn-sm" style="background:#f1f5f9;color:#64748b;" onclick="_saClearFilters()"><i class="fas fa-xmark"></i> مسح</button>
+    </div>
   </div>
-  <div id="saHeadline" class="erp-rpt-kpi"></div>
-  <!-- v7.0 — sales by product (gross incl VAT / net / VAT / cost / profit / margin) -->
-  <div style="margin-bottom:14px;">
-    <h4 style="margin:6px 0;"><i class="fas fa-box" style="color:#0ea5e9;"></i> المبيعات حسب المنتج</h4>
+
+  <!-- ── KPI Cards ── -->
+  <div id="saHeadline" class="sa-kpi-grid"></div>
+
+  <!-- ── Sales By Product ── -->
+  <div style="margin-bottom:16px;">
+    <div class="sa-section-head"><i class="fas fa-box-open" style="color:#0ea5e9;"></i> المبيعات حسب المنتج</div>
     <div class="erp-table-container">
-      <table class="erp-table">
+      <table class="erp-table sa-product-table">
         <thead><tr>
-          <th style="text-align:start;">المنتج</th><th>الكمية</th>
-          <th>شامل الضريبة</th><th>بدون الضريبة</th><th>الضريبة</th>
-          <th>التكلفة</th><th>الربح</th><th>الهامش%</th>
+          <th style="text-align:start;min-width:160px;">المنتج</th>
+          <th>الكمية</th>
+          <th>شامل الضريبة</th>
+          <th>بدون الضريبة</th>
+          <th>الضريبة</th>
+          <th>التكلفة</th>
+          <th>الربح</th>
+          <th>الهامش%</th>
         </tr></thead>
         <tbody id="saByProductBody"></tbody>
       </table>
     </div>
   </div>
-  <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px;margin-bottom:12px;">
-    <div><h4>يومي</h4><div class="erp-table-container"><table class="erp-table"><thead><tr><th>التاريخ</th><th>الفواتير</th><th>الإجمالي</th></tr></thead><tbody id="saDailyBody"></tbody></table></div></div>
-    <div><h4>طريقة الدفع</h4><div class="erp-table-container"><table class="erp-table"><thead><tr><th>الطريقة</th><th>الفواتير</th><th>الإجمالي</th></tr></thead><tbody id="saPayBody"></tbody></table></div></div>
-    <div><h4>الكاشير</h4><div class="erp-table-container"><table class="erp-table"><thead><tr><th>الكاشير</th><th>الفواتير</th><th>متوسط</th><th>الإجمالي</th></tr></thead><tbody id="saCashierBody"></tbody></table></div></div>
+
+  <!-- ── Sub-tables ── -->
+  <div class="sa-sub-grid">
+    <div class="sa-sub-card">
+      <div class="sa-sub-card-head"><i class="fas fa-calendar-day" style="color:#0ea5e9;"></i> المبيعات اليومية</div>
+      <div class="erp-table-container" style="max-height:320px;">
+        <table class="erp-table"><thead><tr><th>التاريخ</th><th>الفواتير</th><th>الإجمالي</th></tr></thead>
+        <tbody id="saDailyBody"></tbody></table>
+      </div>
+    </div>
+    <div class="sa-sub-card">
+      <div class="sa-sub-card-head"><i class="fas fa-wallet" style="color:#8b5cf6;"></i> طريقة الدفع</div>
+      <div class="erp-table-container" style="max-height:320px;">
+        <table class="erp-table"><thead><tr><th>الطريقة</th><th>الفواتير</th><th>الإجمالي</th></tr></thead>
+        <tbody id="saPayBody"></tbody></table>
+      </div>
+    </div>
+    <div class="sa-sub-card">
+      <div class="sa-sub-card-head"><i class="fas fa-cash-register" style="color:#f59e0b;"></i> الكاشير</div>
+      <div class="erp-table-container" style="max-height:320px;">
+        <table class="erp-table"><thead><tr><th>الكاشير</th><th>الفواتير</th><th>متوسط</th><th>الإجمالي</th></tr></thead>
+        <tbody id="saCashierBody"></tbody></table>
+      </div>
+    </div>
   </div>
+
 </div>
 
 <!-- ═══════════════════════════════════════════════════════════════════ -->

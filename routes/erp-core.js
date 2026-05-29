@@ -2490,20 +2490,24 @@ router.get('/reports/inventory-valuation', async (req, res) => {
  */
 router.get('/reports/sales-analytics', async (req, res) => {
   try {
-    const { from, to, branch, brand, groupBy } = req.query;
+    const { from, to, branch, brand, groupBy, channel, paymentMethod } = req.query;
     const by = groupBy || 'all';
 
-    // Detect fields we need
-    let hasBranch = true, hasBrand = true;
-    try { const [c] = await db.query("SHOW COLUMNS FROM sales LIKE 'branch_id'"); hasBranch = !!c.length; } catch(e) { hasBranch = false; }
-    try { const [c] = await db.query("SHOW COLUMNS FROM sales LIKE 'brand_id'"); hasBrand = !!c.length; } catch(e) { hasBrand = false; }
+    // Detect optional columns (backward-compat with very old deploys)
+    let hasBranch = true, hasBrand = true, hasChannel = false, hasDeleted = false;
+    try { const [c] = await db.query("SHOW COLUMNS FROM sales LIKE 'branch_id'");  hasBranch  = !!c.length; } catch(e) { hasBranch  = false; }
+    try { const [c] = await db.query("SHOW COLUMNS FROM sales LIKE 'brand_id'");   hasBrand   = !!c.length; } catch(e) { hasBrand   = false; }
+    try { const [c] = await db.query("SHOW COLUMNS FROM sales LIKE 'channel_name'"); hasChannel = !!c.length; } catch(e) { hasChannel = false; }
+    try { const [c] = await db.query("SHOW COLUMNS FROM sales LIKE 'deleted_at'"); hasDeleted = !!c.length; } catch(e) { hasDeleted = false; }
 
-    const where = ["(s.deleted_at IS NULL)"];
+    const where = hasDeleted ? ["(s.deleted_at IS NULL)"] : ["1=1"];
     const params = [];
-    if (from) { where.push('DATE(s.order_date) >= ?'); params.push(from); }
-    if (to)   { where.push('DATE(s.order_date) <= ?'); params.push(to); }
-    if (branch && hasBranch) { where.push('s.branch_id = ?'); params.push(branch); }
-    if (brand && hasBrand)   { where.push('s.brand_id = ?');  params.push(brand); }
+    if (from)  { where.push('DATE(s.order_date) >= ?'); params.push(from); }
+    if (to)    { where.push('DATE(s.order_date) <= ?'); params.push(to); }
+    if (branch && hasBranch)  { where.push('s.branch_id = ?');    params.push(branch); }
+    if (brand  && hasBrand)   { where.push('s.brand_id = ?');     params.push(brand); }
+    if (channel && hasChannel){ where.push('s.channel_name = ?'); params.push(channel); }
+    if (paymentMethod)        { where.push('s.payment_method = ?'); params.push(paymentMethod); }
     const whereClause = where.join(' AND ');
 
     const out = { filters: { from: from || null, to: to || null, branch: branch || null, brand: brand || null } };
@@ -2605,6 +2609,18 @@ router.get('/reports/sales-analytics', async (req, res) => {
       out.byHour = h.map(r => ({ hour: Number(r.hr), count: Number(r.cnt), total: Math.round(Number(r.total) * 100) / 100 }));
     }
     // (top_items handled above as out.byProduct + out.topItems alias)
+
+    // v7.1 — distinct channels + payment methods so the UI can populate dropdowns
+    if (hasChannel) {
+      try {
+        const [chRows] = await db.query("SELECT DISTINCT channel_name FROM sales WHERE channel_name IS NOT NULL AND channel_name <> '' ORDER BY channel_name");
+        out.channels = chRows.map(r => r.channel_name);
+      } catch(_) { out.channels = []; }
+    } else { out.channels = []; }
+    try {
+      const [pmRows] = await db.query("SELECT DISTINCT payment_method FROM sales WHERE payment_method IS NOT NULL AND payment_method <> '' ORDER BY payment_method");
+      out.paymentMethods = pmRows.map(r => r.payment_method);
+    } catch(_) { out.paymentMethods = []; }
 
     res.json({ success: true, ...out });
   } catch(e) { res.json({ success: false, error: e.message }); }

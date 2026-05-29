@@ -5389,3 +5389,135 @@
   font-weight: 800;
 }
 
+
+
+/* ═══════════════════════════════════════════════════════════════════
+   STOCK ISSUES (إذونات الصرف) — v7.1 visual polish
+   Root cause fix: auto-fit minmax(240px) was collapsing to 1 column
+   (documented in inventory-catalog.legacy.css:12-16). Force explicit
+   column count scoped to this section so other pages are unaffected.
+   ═══════════════════════════════════════════════════════════════════ */
+
+/* ─── KPI grid: explicit 4 columns ─── */
+#erpStockIssues .iv-items-kpis {
+  grid-template-columns: repeat(4, 1fr);
+  margin-bottom: 18px;
+}
+@media (max-width: 1000px) {
+  #erpStockIssues .iv-items-kpis { grid-template-columns: repeat(2, 1fr); }
+}
+@media (max-width: 540px) {
+  #erpStockIssues .iv-items-kpis { grid-template-columns: 1fr; }
+}
+
+/* ─── Header banner ─── */
+#erpStockIssues .wo-header {
+  background: linear-gradient(135deg, #0f172a 0%, #1e3a5f 100%);
+  border-radius: 16px;
+  padding: 18px 22px;
+  margin-bottom: 14px;
+  color: #fff;
+}
+#erpStockIssues .wo-header h1 { color: #fff; }
+#erpStockIssues .wo-header .wo-header-sub { color: rgba(255,255,255,.65); }
+#erpStockIssues .wo-header .wo-icon-slot.success {
+  background: rgba(255,255,255,.15);
+  color: #4ade80;
+}
+#erpStockIssues .wo-header .wo-btn-secondary {
+  background: rgba(255,255,255,.1);
+  color: #fff;
+  border-color: rgba(255,255,255,.25);
+}
+#erpStockIssues .wo-header .wo-btn-secondary:hover {
+  background: rgba(255,255,255,.2);
+  border-color: rgba(255,255,255,.5);
+}
+#erpStockIssues .wo-header .wo-btn-primary {
+  background: linear-gradient(135deg, #22c55e, #16a34a);
+  border-color: transparent;
+  box-shadow: 0 4px 12px -4px rgba(22,163,74,.5);
+}
+
+/* ─── Filter bar ─── */
+#erpStockIssues .wh-filter-bar {
+  background: #fff;
+  border: 1px solid #e2e8f0;
+  border-radius: 14px;
+  padding: 12px 16px;
+  gap: 10px;
+  box-shadow: 0 1px 4px rgba(15,23,42,.06);
+  margin-bottom: 14px;
+}
+#erpStockIssues .wh-fb-title { display: none; }
+#erpStockIssues .wh-fb-controls { flex: 1; gap: 8px; }
+#erpStockIssues .wh-fb-select {
+  background: #f8fafc;
+  border-color: #e2e8f0;
+  border-radius: 9px;
+  font-size: 13px;
+  height: 38px;
+  min-width: 140px;
+}
+#erpStockIssues .wh-fb-date {
+  height: 38px;
+  font-size: 13px;
+  border-radius: 9px;
+  border-color: #e2e8f0;
+  min-width: 130px;
+}
+#erpStockIssues .wh-fb-search input.form-control {
+  height: 38px;
+  font-size: 13px;
+  border-radius: 9px;
+}
+#erpStockIssues .wh-fb-clear {
+  width: 38px; height: 38px;
+  border-radius: 9px;
+  background: #f8fafc;
+  border: 1px solid #e2e8f0;
+  color: #94a3b8;
+}
+#erpStockIssues .wh-fb-clear:hover {
+  background: #fee2e2;
+  color: #dc2626;
+  border-color: #fca5a5;
+}
+
+/* ─── Date range: label wrapper ─── */
+#erpStockIssues .si-date-wrap {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+#erpStockIssues .si-date-wrap > label {
+  font-size: 10px;
+  font-weight: 700;
+  color: #94a3b8;
+  letter-spacing: .04em;
+  text-transform: uppercase;
+  line-height: 1;
+}
+
+/* ─── Table ─── */
+#erpStockIssues .wo-table-surface {
+  border-radius: 14px;
+  border-color: #e2e8f0;
+}
+#erpStockIssues .wo-table thead th {
+  background: linear-gradient(180deg, #f8fafc, #f1f5f9);
+  font-size: 11px;
+  font-weight: 800;
+  color: #64748b;
+  letter-spacing: .04em;
+  white-space: nowrap;
+  padding: 12px;
+  border-bottom: 2px solid #e2e8f0;
+}
+#erpStockIssues .wo-table tbody td {
+  padding: 11px 12px;
+  font-size: 13px;
+  border-bottom: 1px solid #f1f5f9;
+  vertical-align: middle;
+}
+#erpStockIssues .wo-table tbody tr:hover td { background: #f8fbff; }

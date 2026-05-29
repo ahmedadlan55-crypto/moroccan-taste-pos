@@ -3515,8 +3515,8 @@
       <select id="siFToWh" class="form-control wh-fb-select" onchange="siLoad()" title="المستودع الوجهة">
         <option value="">الوجهة — الكل</option>
       </select>
-      <input type="date" id="siFFrom" class="form-control wh-fb-date" title="من تاريخ" onchange="siLoad()">
-      <input type="date" id="siFTo" class="form-control wh-fb-date" title="إلى تاريخ" onchange="siLoad()">
+      <div class="si-date-wrap"><label for="siFFrom">من</label><input type="date" id="siFFrom" class="form-control wh-fb-date" onchange="siLoad()"></div>
+      <div class="si-date-wrap"><label for="siFTo">إلى</label><input type="date" id="siFTo" class="form-control wh-fb-date" onchange="siLoad()"></div>
       <button class="btn btn-light wh-fb-clear" onclick="whClearFilters('si')" title="مسح الفلاتر"><i class="fas fa-broom"></i></button>
     </div>
   </div>

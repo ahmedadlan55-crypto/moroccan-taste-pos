@@ -17452,7 +17452,7 @@ function _erpRenderCashFlowPrintWindow(from, to, r, cfg) {
 // v5.10.5 — Fixed Assets Registry (الأصول الثابتة)
 //
 // Reference: views/app-content.html#erpFixedAssets — 21-column grid that
-// hydrates from /api/erp/work-orders/assets and supports inline cell
+// hydrates from /api/work-orders/assets and supports inline cell
 // editing, full-modal editing, search/filter/sort, CSV import + export,
 // and a "احتساب الإهلاك للفترة" batch-journal poster.
 //
@@ -17480,10 +17480,10 @@ window.erpLoadFixedAssets = function() {
   var hdr = { 'Authorization': 'Bearer ' + (localStorage.getItem('pos_token')||'') };
   // Hydrate assets + the 3 COA dropdowns in parallel.
   Promise.all([
-    fetch('/api/erp/work-orders/assets', { headers: hdr }).then(function(r){return r.json();}),
-    fetch('/api/erp/work-orders/assets/coa-options?kind=asset',   { headers: hdr }).then(function(r){return r.json();}),
-    fetch('/api/erp/work-orders/assets/coa-options?kind=expense', { headers: hdr }).then(function(r){return r.json();}),
-    fetch('/api/erp/work-orders/assets/coa-options?kind=accum',   { headers: hdr }).then(function(r){return r.json();})
+    fetch('/api/work-orders/assets', { headers: hdr }).then(function(r){return r.json();}),
+    fetch('/api/work-orders/assets/coa-options?kind=asset',   { headers: hdr }).then(function(r){return r.json();}),
+    fetch('/api/work-orders/assets/coa-options?kind=expense', { headers: hdr }).then(function(r){return r.json();}),
+    fetch('/api/work-orders/assets/coa-options?kind=accum',   { headers: hdr }).then(function(r){return r.json();})
   ]).then(function(results) {
     var rows = Array.isArray(results[0]) ? results[0] : [];
     _faCache.rows = rows;
@@ -17697,7 +17697,7 @@ function _faCellCommit(td) {
     if (value && isNaN(parseInt(value))) { _faCellMark(td, 'error'); return; }
   }
   _faCellMark(td, 'saving');
-  fetch('/api/erp/work-orders/assets/' + encodeURIComponent(id) + '/cell', {
+  fetch('/api/work-orders/assets/' + encodeURIComponent(id) + '/cell', {
     method: 'PATCH',
     headers: { 'Content-Type':'application/json', 'Authorization':'Bearer ' + (localStorage.getItem('pos_token')||'') },
     body: JSON.stringify({ field: field, value: value })
@@ -17784,7 +17784,7 @@ window._faAccFilter = function(q) {
   });
 };
 window._faAssignAccount = function(assetId, field, accountId) {
-  fetch('/api/erp/work-orders/assets/' + encodeURIComponent(assetId) + '/cell', {
+  fetch('/api/work-orders/assets/' + encodeURIComponent(assetId) + '/cell', {
     method: 'PATCH',
     headers: { 'Content-Type':'application/json', 'Authorization':'Bearer ' + (localStorage.getItem('pos_token')||'') },
     body: JSON.stringify({ field: field, value: accountId || null })
@@ -18020,7 +18020,7 @@ window._faSaveAsset = function(id) {
     if (typeof showToast === 'function') showToast('الاسم مطلوب', true);
     return;
   }
-  var url = '/api/erp/work-orders/assets' + (id ? '/' + encodeURIComponent(id) : '');
+  var url = '/api/work-orders/assets' + (id ? '/' + encodeURIComponent(id) : '');
   var method = id ? 'PUT' : 'POST';
   fetch(url, {
     method: method,
@@ -18038,7 +18038,7 @@ window._faSaveAsset = function(id) {
 
 window._faDeleteAsset = function(id) {
   if (!confirm('هل تريد حذف هذا الأصل؟ سيتم تغيير حالته إلى "مُتلَف" (يحتفظ بالسجلات المحاسبية).')) return;
-  fetch('/api/erp/work-orders/assets/' + encodeURIComponent(id), {
+  fetch('/api/work-orders/assets/' + encodeURIComponent(id), {
     method: 'DELETE',
     headers: { 'Authorization':'Bearer ' + (localStorage.getItem('pos_token')||'') }
   }).then(function(r){return r.json();}).then(function(j) {
@@ -18066,13 +18066,17 @@ window._faPostDepreciation = function() {
     '<div class="fa-modal-body">' +
       '<div class="fa-section">' +
         '<div style="background:#f0f9ff;border:1px solid #bae6fd;border-radius:10px;padding:12px;margin-bottom:14px;font-size:12px;color:#0369a1;line-height:1.6;">' +
-          '<i class="fas fa-info-circle"></i> سيتم احتساب الإهلاك بطريقة <b>القسط الثابت</b> لكل أصل نشط له حسابات إهلاك مرتبطة، وإنشاء قيد محاسبي واحد متوازن:<br>' +
-          'مدين: <b>حساب مصروف الإهلاك</b> · دائن: <b>مجمع الإهلاك</b>' +
+          '<i class="fas fa-info-circle"></i> يُحتسب الإهلاك لكل أصل نشط له حسابات إهلاك مرتبطة، <b>وفق طريقة كل أصل</b> (قسط ثابت / متناقص)، ويُنشأ قيد محاسبي واحد متوازن:<br>' +
+          'مدين: <b>حساب مصروف الإهلاك</b> · دائن: <b>مجمع الإهلاك</b><br>' +
+          'الفترات المُرحَّلة سابقاً لا تتكرر، والإهلاك يتوقف عند بلوغ قيمة الخردة.' +
         '</div>' +
         '<div class="fa-form-grid">' +
-          '<div class="fa-field"><label>من تاريخ</label><input type="date" id="faDepFrom" value="'+fromDefault+'"></div>' +
-          '<div class="fa-field"><label>إلى تاريخ</label><input type="date" id="faDepTo" value="'+today+'"></div>' +
+          '<div class="fa-field"><label>من تاريخ</label><input type="date" id="faDepFrom" value="'+fromDefault+'" onchange="_faPreviewDepreciation()"></div>' +
+          '<div class="fa-field"><label>إلى تاريخ</label><input type="date" id="faDepTo" value="'+today+'" onchange="_faPreviewDepreciation()"></div>' +
           '<div class="fa-field fa-field-full"><label>إعداد بواسطة</label><input id="faDepBy" value="'+_faEsc((window.currentUser&&window.currentUser.username)||'')+'"></div>' +
+        '</div>' +
+        '<div id="faDepPreview" style="margin-top:12px;padding:11px 14px;border-radius:10px;background:#f8fafc;border:1px dashed #cbd5e1;font-size:12.5px;color:#475569;text-align:center;">' +
+          '<i class="fas fa-spinner fa-spin"></i> جارٍ حساب المعاينة...' +
         '</div>' +
       '</div>' +
     '</div>' +
@@ -18081,6 +18085,28 @@ window._faPostDepreciation = function() {
       '<button class="fa-btn fa-btn-primary" onclick="_faSubmitDepreciation()"><i class="fas fa-check"></i> ترحيل القيد</button>' +
     '</div>' +
   '</div>';
+  _faPreviewDepreciation();
+};
+// Dry-run the depreciation run for the chosen period and show the projected
+// asset count + total before the user commits (server ?preview=1, no writes).
+window._faPreviewDepreciation = function() {
+  var box = document.getElementById('faDepPreview');
+  if (!box) return;
+  var from = (document.getElementById('faDepFrom')||{}).value;
+  var to   = (document.getElementById('faDepTo')||{}).value;
+  if (!from || !to) { box.innerHTML = '<i class="fas fa-circle-info"></i> حدّد الفترة لعرض المعاينة'; return; }
+  box.innerHTML = '<i class="fas fa-spinner fa-spin"></i> جارٍ حساب المعاينة...';
+  fetch('/api/work-orders/assets/post-depreciation?preview=1', {
+    method: 'POST',
+    headers: { 'Content-Type':'application/json', 'Authorization':'Bearer ' + (localStorage.getItem('pos_token')||'') },
+    body: JSON.stringify({ from: from, to: to })
+  }).then(function(r){return r.json();}).then(function(j) {
+    if (!j.success) throw new Error(j.error||'فشل');
+    if (!j.lines) { box.innerHTML = '<i class="fas fa-circle-info"></i> لا توجد أصول قابلة للإهلاك خلال هذه الفترة'; return; }
+    box.innerHTML = '<i class="fas fa-calculator" style="color:#0ea5e9;"></i> سيُرحَّل إهلاك <b>' + j.lines + '</b> أصل بإجمالي <b style="direction:ltr;display:inline-block;">' + _faMoney(j.total) + '</b> ر.س';
+  }).catch(function(e) {
+    box.innerHTML = '<span style="color:#ef4444;"><i class="fas fa-triangle-exclamation"></i> تعذّرت المعاينة: ' + _faEsc(e.message||String(e)) + '</span>';
+  });
 };
 window._faSubmitDepreciation = function() {
   var from = (document.getElementById('faDepFrom')||{}).value;
@@ -18089,7 +18115,7 @@ window._faSubmitDepreciation = function() {
   if (!from || !to) {
     if (typeof showToast === 'function') showToast('حدد الفترة', true); return;
   }
-  fetch('/api/erp/work-orders/assets/post-depreciation', {
+  fetch('/api/work-orders/assets/post-depreciation', {
     method: 'POST',
     headers: { 'Content-Type':'application/json', 'Authorization':'Bearer ' + (localStorage.getItem('pos_token')||'') },
     body: JSON.stringify({ from: from, to: to, preparedBy: by })
@@ -18142,13 +18168,27 @@ window._faImportCsv = function(file) {
     if (text.charCodeAt(0) === 0xFEFF) text = text.slice(1);   // strip BOM
     var lines = text.split(/\r?\n/).filter(function(l){return l.trim();});
     if (lines.length < 2) { if (typeof showToast === 'function') showToast('الملف فارغ', true); return; }
-    // Use first row as field map (must match backend field names)
-    var fields = lines[0].split(',').map(function(s){return s.trim();});
+    // Header row maps columns to backend field names. Accept BOTH the raw
+    // English field names AND the Arabic labels our own export emits, so an
+    // exported file re-imports cleanly. (Account / cost-center / branch links
+    // export as name/code and need IDs to re-link — those columns don't
+    // round-trip; plain data fields do.)
+    var _labelToField = {
+      'رقم الأصل':'code', 'الاسم':'name', 'الفئة':'category', 'الحالة':'status',
+      'تاريخ الشراء':'purchase_date', 'كلفة الشراء':'purchase_cost', 'قيمة الخردة':'salvage_value',
+      'العمر الإنتاجي':'useful_life_years', 'شهر بدء الإهلاك':'dep_start_month',
+      'القيمة الدفترية':'current_value', 'مستهلك لغاية':'dep_until_date',
+      'ملاحظات':'notes', 'المشروع':'project_id', 'الرقم التعريفي':'serial_number'
+    };
+    var fields = _faParseCsvLine(lines[0]).map(function(s){
+      s = String(s).trim();
+      return _labelToField[s] || s;
+    });
     var promises = lines.slice(1).map(function(line) {
       var cells = _faParseCsvLine(line);
       var body = {};
       fields.forEach(function(f, i) { body[f] = cells[i] || null; });
-      return fetch('/api/erp/work-orders/assets', {
+      return fetch('/api/work-orders/assets', {
         method: 'POST',
         headers: { 'Content-Type':'application/json', 'Authorization':'Bearer ' + (localStorage.getItem('pos_token')||'') },
         body: JSON.stringify(body)

@@ -89,14 +89,22 @@ router.get('/assets', async (req,res)=>{
   } catch(e){ res.status(500).json({error:e.message}); }
 });
 
-// Helper — straight-line book value as of `asOf` (defaults to today).
-// book = cost − ((months_elapsed / total_months) × (cost − salvage)),
-// clamped to [salvage, cost].
+// Helper — book value as of `asOf` (defaults to today), per the asset's
+// depreciation method. Always clamped to [salvage, cost] and never begins
+// before dep_start_month (falls back to purchase_date).
+//   • none          → cost (explicitly not depreciated)
+//   • straight_line → cost − (months/total) × (cost − salvage)
+//   • declining     → double-declining-balance on a monthly grid, switching
+//                     to straight-line once that yields a larger charge,
+//                     capped at salvage (IAS 16 — never depreciate below
+//                     residual value).
 function _computeBookValue(a, asOf) {
   const cost    = Number(a.purchase_cost) || 0;
   const salvage = Number(a.salvage_value) || 0;
   const years   = Number(a.useful_life_years) || 0;
-  if (cost <= 0 || years <= 0) return cost; // can't depreciate
+  const method  = a.depreciation_method || 'straight_line';
+  if (method === 'none') return cost;        // explicitly not depreciated
+  if (cost <= 0 || years <= 0) return cost;  // can't depreciate
   const start = a.dep_start_month ? new Date(a.dep_start_month) :
                 a.purchase_date    ? new Date(a.purchase_date)    : null;
   if (!start) return cost;
@@ -105,8 +113,20 @@ function _computeBookValue(a, asOf) {
                       + (ref.getMonth() - start.getMonth());
   if (monthsElapsed <= 0) return cost;
   const totalMonths = years * 12;
-  const dep = Math.min(monthsElapsed, totalMonths) / totalMonths * (cost - salvage);
-  return Math.max(salvage, Math.min(cost, cost - dep));
+  const m = Math.min(monthsElapsed, totalMonths);
+  let book;
+  if (method === 'declining') {
+    book = cost;
+    for (let i = 0; i < m; i++) {
+      const ddb = book * (2 / years) / 12;                 // DDB monthly charge
+      const sl  = (book - salvage) / (totalMonths - i);    // SL on remaining life
+      book = Math.max(salvage, book - Math.max(ddb, sl));
+      if (book <= salvage) break;
+    }
+  } else {
+    book = cost - (m / totalMonths) * (cost - salvage);    // straight_line
+  }
+  return Math.max(salvage, Math.min(cost, book));
 }
 
 router.post('/assets', async (req,res)=>{
@@ -232,54 +252,110 @@ router.get('/assets/coa-options', async (req,res)=>{
   } catch(e){ res.status(500).json({error:e.message}); }
 });
 
-// v5.10.5 — Post one balanced depreciation journal across all eligible
-// assets for [from, to]. Writes DR dep_expense + CR accum_dep per asset
-// (each as a separate pair of lines), stamps dep_until_date on each
-// asset, returns the journal id + total amount.
+// Insert one gl_entries row, appending accounting-dimension columns when
+// present and falling back to the base column set if the DB predates them
+// (mirrors the defensive pattern in routes/cash.js).
+async function _insertGlEntry(row) {
+  const cols = ['id','journal_id','account_id','account_code','account_name','debit','credit','description'];
+  const vals = [row.id, row.journal_id, row.account_id, row.account_code||'', row.account_name||'',
+                Number(row.debit)||0, Number(row.credit)||0, row.description||''];
+  const dimCols = [], dimVals = [];
+  for (const [k, col] of [['brand_id','brand_id'],['branch_id','branch_id'],['cost_center_id','cost_center_id']]) {
+    if (row[k]) { dimCols.push(col); dimVals.push(row[k]); }
+  }
+  const allCols = cols.concat(dimCols), allVals = vals.concat(dimVals);
+  try {
+    await db.query('INSERT INTO gl_entries ('+allCols.join(',')+') VALUES ('+allCols.map(()=>'?').join(',')+')', allVals);
+  } catch (err) {
+    if (dimCols.length) await db.query('INSERT INTO gl_entries ('+cols.join(',')+') VALUES ('+cols.map(()=>'?').join(',')+')', vals);
+    else throw err;
+  }
+  // Keep the cached account balance in step (net = debit − credit).
+  if (row.account_id) {
+    const net = (Number(row.debit)||0) - (Number(row.credit)||0);
+    await db.query('UPDATE gl_accounts SET balance = balance + ? WHERE id = ?', [net, row.account_id]);
+  }
+}
+
+// v6.30.0 — Post one balanced depreciation journal across all eligible
+// assets for [from, to]. Per asset the period charge is the DROP in book
+// value over the period — book(effectiveStart) − book(to) — which by
+// construction:
+//   • is idempotent (effectiveStart is anchored at dep_until_date, so a
+//     re-run of an already-posted period charges 0),
+//   • respects each asset's depreciation_method (incl. declining / none),
+//   • honours dep_start_month (no charge before depreciation begins), and
+//   • is capped at the residual value (never depreciates below salvage).
+// Each line carries the asset's brand/branch/cost-center so depreciation
+// expense is analysable by dimension. Pass ?preview=1 for a dry-run that
+// returns the projected count + total without writing anything.
 router.post('/assets/post-depreciation', async (req,res)=>{
   try {
     const { from, to, preparedBy } = req.body || {};
+    const preview = req.query.preview === '1' || (req.body && req.body.preview === true);
     if (!from || !to) return res.status(400).json({error:'from + to required'});
-    // Period-lock guard (v5.10.0). Best-effort: skip if helper unavailable.
-    try {
-      const erpRouter = require('./erp');
-      if (erpRouter._checkPeriodOpen) {
-        const open = await erpRouter._checkPeriodOpen(to, false);
-        if (open && open.locked) return res.status(400).json({error:'period-locked', period: open.period});
-      }
-    } catch(_) { /* helper not exported — soft-skip */ }
+    // Period-lock guard (v5.10.0). Best-effort: skip if helper unavailable / preview.
+    if (!preview) {
+      try {
+        const erpRouter = require('./erp');
+        if (erpRouter._checkPeriodOpen) {
+          const open = await erpRouter._checkPeriodOpen(to, false);
+          if (open && open.locked) return res.status(400).json({error:'period-locked', period: open.period});
+        }
+      } catch(_) { /* helper not exported — soft-skip */ }
+    }
 
-    const monthsInPeriod = Math.max(1,
-      (new Date(to).getFullYear()  - new Date(from).getFullYear()) * 12 +
-      (new Date(to).getMonth()     - new Date(from).getMonth()) + 1);
+    // Eligible: active, fully GL-linked, depreciable, and NOT method='none'.
+    // JOIN the two posting accounts so each entry carries its code + name.
     const [assets] = await db.query(
-      `SELECT id, code, name, purchase_cost, salvage_value, useful_life_years,
-              dep_start_month, dep_until_date, gl_dep_expense_account_id, gl_accum_dep_account_id
-         FROM assets
-        WHERE status = 'active'
-          AND gl_dep_expense_account_id IS NOT NULL
-          AND gl_accum_dep_account_id   IS NOT NULL
-          AND useful_life_years > 0
-          AND purchase_cost > 0`);
+      `SELECT a.id, a.code, a.name, a.purchase_cost, a.salvage_value, a.useful_life_years,
+              a.depreciation_method, a.purchase_date, a.dep_start_month, a.dep_until_date,
+              a.gl_dep_expense_account_id, a.gl_accum_dep_account_id,
+              a.brand_id, a.branch_id, a.cost_center_id,
+              gde.code AS dep_expense_code, gde.name_ar AS dep_expense_name,
+              gad.code AS accum_code,       gad.name_ar AS accum_name
+         FROM assets a
+         LEFT JOIN gl_accounts gde ON gde.id = a.gl_dep_expense_account_id
+         LEFT JOIN gl_accounts gad ON gad.id = a.gl_accum_dep_account_id
+        WHERE a.status = 'active'
+          AND a.depreciation_method <> 'none'
+          AND a.gl_dep_expense_account_id IS NOT NULL
+          AND a.gl_accum_dep_account_id   IS NOT NULL
+          AND a.useful_life_years > 0
+          AND a.purchase_cost > 0`);
+
+    const toDate = new Date(to);
     const lines = [];
     let total = 0;
-    const stampIds = [];
+    const stamp = [];   // { id, bookValue }
     for (const a of assets) {
-      const cost  = Number(a.purchase_cost) || 0;
-      const salv  = Number(a.salvage_value) || 0;
-      const years = Number(a.useful_life_years) || 0;
-      const monthly = (cost - salv) / (years * 12);
-      const periodAmt = Math.round(monthly * monthsInPeriod * 100) / 100;
-      if (periodAmt <= 0) continue;
+      // effectiveStart = latest of (from, dep_until_date). Anchoring at
+      // dep_until_date is what makes re-running a period a no-op.
+      let effStart = new Date(from);
+      if (a.dep_until_date) {
+        const d = new Date(a.dep_until_date);
+        if (d > effStart) effStart = d;
+      }
+      if (toDate <= effStart) continue;                 // nothing new this period
+      const bvStart = _computeBookValue(a, effStart);
+      const bvEnd   = _computeBookValue(a, to);
+      const periodAmt = Math.round((bvStart - bvEnd) * 100) / 100;
+      if (periodAmt <= 0) continue;                     // not started / fully depreciated
       lines.push({
-        debit_account: a.gl_dep_expense_account_id, credit_account: a.gl_accum_dep_account_id,
+        debit_account: a.gl_dep_expense_account_id, debit_code: a.dep_expense_code, debit_name: a.dep_expense_name,
+        credit_account: a.gl_accum_dep_account_id,  credit_code: a.accum_code,      credit_name: a.accum_name,
         amount: periodAmt,
+        brand_id: a.brand_id, branch_id: a.branch_id, cost_center_id: a.cost_center_id,
         description: `إهلاك الأصل ${a.code || a.id} — ${a.name}`
       });
       total += periodAmt;
-      stampIds.push(a.id);
+      stamp.push({ id: a.id, bookValue: bvEnd });
     }
+    total = Math.round(total * 100) / 100;
     if (!lines.length) return res.json({ success:true, message:'لا توجد أصول قابلة للإهلاك خلال الفترة', total:0, lines:0 });
+
+    // Dry-run — report the projection without touching the ledger.
+    if (preview) return res.json({ success:true, preview:true, total, lines: lines.length });
 
     // Build a balanced journal — one DR + one CR per asset.
     const jrnId = 'JRN-DEP-' + Date.now();
@@ -300,21 +376,20 @@ router.post('/assets/post-depreciation', async (req,res)=>{
     let lineNo = 0;
     for (const l of lines) {
       lineNo++;
-      await db.query(
-        `INSERT INTO gl_entries (id, journal_id, line_no, account_id, debit, credit, description)
-         VALUES (?,?,?,?,?,?,?)`,
-        [`${jrnId}-D${lineNo}`, jrnId, lineNo*2-1, l.debit_account, l.amount, 0, l.description]);
-      await db.query(
-        `INSERT INTO gl_entries (id, journal_id, line_no, account_id, debit, credit, description)
-         VALUES (?,?,?,?,?,?,?)`,
-        [`${jrnId}-C${lineNo}`, jrnId, lineNo*2, l.credit_account, 0, l.amount, l.description]);
+      await _insertGlEntry({ id:`${jrnId}-D${lineNo}`, journal_id:jrnId,
+        account_id:l.debit_account, account_code:l.debit_code, account_name:l.debit_name,
+        debit:l.amount, credit:0, description:l.description,
+        brand_id:l.brand_id, branch_id:l.branch_id, cost_center_id:l.cost_center_id });
+      await _insertGlEntry({ id:`${jrnId}-C${lineNo}`, journal_id:jrnId,
+        account_id:l.credit_account, account_code:l.credit_code, account_name:l.credit_name,
+        debit:0, credit:l.amount, description:l.description,
+        brand_id:l.brand_id, branch_id:l.branch_id, cost_center_id:l.cost_center_id });
     }
-    // Stamp dep_until_date on every depreciated asset
-    if (stampIds.length) {
-      const placeholders = stampIds.map(()=>'?').join(',');
-      await db.query(`UPDATE assets SET dep_until_date=? WHERE id IN (${placeholders})`, [to, ...stampIds]);
+    // Stamp dep_until_date + refresh the cached book value on each asset.
+    for (const s of stamp) {
+      await db.query('UPDATE assets SET dep_until_date=?, current_value=? WHERE id=?', [to, s.bookValue, s.id]);
     }
-    res.json({ success:true, journalId: jrnId, journalNumber, total, lines: lines.length, monthsInPeriod });
+    res.json({ success:true, journalId: jrnId, journalNumber, total, lines: lines.length });
   } catch(e){ console.error('[post-depreciation]', e); res.status(500).json({error:e.message}); }
 });
 

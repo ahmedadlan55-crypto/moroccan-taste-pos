@@ -2137,6 +2137,15 @@
     </div>
   </div>
 
+  <!-- v6.29.0 — classic ledger banner -->
+  <div class="jrn-banner">
+    <div class="jrn-banner__mark"><i class="fas fa-feather-pointed"></i></div>
+    <div class="jrn-banner__text">
+      <h3>دفتر اليومية</h3>
+      <span>سِجلّ القيود المحاسبية — قيد مزدوج مُتوازن (مدين = دائن) وفق معايير SOCPA / IFRS</span>
+    </div>
+  </div>
+
   <!-- Stats Cards -->
   <div id="jrnStatsBar" style="display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin-bottom:14px;">
     <div class="jrn-stat-card"><div class="jsc-icon" style="color:#3b82f6;"><i class="fas fa-file-alt"></i></div><div class="jsc-body"><span class="jsc-label">إجمالي القيود</span><span class="jsc-val" id="jrnStatTotal">0</span></div></div>
@@ -2147,6 +2156,14 @@
 
   <!-- Filters -->
   <div class="jrn-filter-bar">
+    <div class="jfb-group jfb-group--search">
+      <label>بحث</label>
+      <div class="jfb-search">
+        <i class="fas fa-search"></i>
+        <input type="text" id="erpJrnSearch" class="form-control" placeholder="رقم القيد أو الوصف..."
+               onkeydown="if(event.key==='Enter')erpLoadJournals()">
+      </div>
+    </div>
     <div class="jfb-group">
       <label>من</label>
       <input type="date" id="erpJrnStartDate" class="form-control">
@@ -5169,15 +5186,24 @@
       </div>
       <div class="tb-field">
         <label>نوع الحساب:</label>
-        <select id="erpGLAccType2">
+        <select id="erpGLAccType2" onchange="erpGLOnAccTypeChange()">
           <option value="main">حساب رئيسي</option>
           <option value="sub">حساب فرعي</option>
           <option value="both" selected>الكل</option>
         </select>
       </div>
       <div class="tb-field" style="position:relative;">
-        <label>حساب رئيسي:</label>
-        <select id="erpGLParent"><option value="">الكل</option></select>
+        <label>الحساب: <small style="color:#94a3b8;font-weight:600;">(يمكن اختيار أكثر من حساب)</small></label>
+        <div class="search-dropdown-wrap" id="erpGLAcctWrap">
+          <div class="gl-acct-chips" id="erpGLAcctChips"></div>
+          <i class="fas fa-search sd-icon"></i>
+          <input type="text" id="erpGLAcctInput" class="sd-input" autocomplete="off"
+                 placeholder="ابحث بالاسم أو الرقم..."
+                 oninput="erpGLFilterAccts()" onfocus="erpGLFilterAccts()">
+          <div class="sd-results" id="erpGLAcctResults"></div>
+        </div>
+        <!-- v6.29.0 — kept for back-compat: holds comma-joined selected ids -->
+        <input type="hidden" id="erpGLParent">
       </div>
       <div class="tb-field">
         <label>أضيفت بواسطة:</label>

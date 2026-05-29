@@ -318,3 +318,105 @@
   .cv-grid-3   { grid-template-columns: 1fr; }
   .cv-tile-grid { grid-template-columns: 1fr; }
 }
+
+/* ════════════════════════════════════════════════════════════════════
+   v6.29.0 — دفتر اليومية: تهذيب كلاسيكي ومعياري
+   بطاقة لافتة + شريط فلاتر منظّم + جدول دفتر يومية رسمي
+   (رأس مهذّب، أعمدة مرتّبة، تخطيط zebra، صف مجاميع، رقم قيد قابل للنقر).
+   كل الألوان من متغيرات البراند (--accent / --primary / --mt-*).
+   ════════════════════════════════════════════════════════════════════ */
+
+/* ── لافتة كلاسيكية أعلى القسم ── */
+.jrn-banner {
+  display: flex; align-items: center; gap: 14px;
+  background: linear-gradient(135deg, #faf5ff, #ffffff);
+  border: 1px solid #e9d5ff;
+  border-radius: 16px;
+  padding: 15px 18px;
+  margin-bottom: 14px;
+}
+.jrn-banner__mark {
+  width: 46px; height: 46px; flex-shrink: 0;
+  display: grid; place-items: center;
+  border-radius: 12px; font-size: 20px; color: #fff;
+  background: linear-gradient(135deg, #a855f7, #7e22ce);
+  box-shadow: 0 6px 16px -6px rgba(126, 34, 206, 0.5);
+}
+.jrn-banner__text h3 { margin: 0; font-size: 17px; font-weight: 900; color: var(--primary); letter-spacing: 0.01em; }
+.jrn-banner__text span { display: block; margin-top: 3px; font-size: 11.5px; color: var(--mt-text-muted); font-weight: 600; }
+
+/* ── بطاقات إحصائية أنظف (تهدئة التدرّجات) ── */
+.jrn-stat-card { background: #fff; border-color: var(--mt-border); border-radius: 13px; box-shadow: 0 1px 3px rgba(15, 23, 42, 0.04); }
+.jrn-stat-card .jsc-icon { width: 40px; height: 40px; font-size: 16px; border-radius: 11px; }
+.jrn-stat-card .jsc-val { font-size: 20px; }
+
+/* ── شريط الفلاتر المنظّم (كان بلا تنسيق فيتراكم عمودياً) ── */
+.jrn-filter-bar {
+  display: flex; flex-wrap: wrap; align-items: flex-end; gap: 12px;
+  background: #fff; border: 1px solid var(--mt-border);
+  border-radius: 14px; padding: 14px 16px; margin-bottom: 14px;
+  box-shadow: 0 2px 10px -6px rgba(15, 23, 42, 0.12);
+}
+.jfb-group { display: flex; flex-direction: column; gap: 6px; }
+.jfb-group > label { font-size: 11px; font-weight: 800; color: var(--mt-text-muted); letter-spacing: 0.03em; }
+.jfb-group .form-control {
+  height: 40px; border: 1.5px solid var(--mt-border); border-radius: 10px;
+  padding: 0 12px; font-size: 13px; background: var(--mt-bg);
+  transition: border-color 0.15s, box-shadow 0.15s, background 0.15s;
+}
+.jfb-group .form-control:focus { border-color: var(--accent); box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.12); outline: none; background: #fff; }
+.jfb-group--search { flex: 1 1 240px; min-width: 200px; }
+.jfb-search { position: relative; }
+.jfb-search > i { position: absolute; top: 50%; transform: translateY(-50%); inset-inline-start: 12px; color: var(--mt-text-light); font-size: 13px; pointer-events: none; }
+.jfb-search .form-control { width: 100%; padding-inline-start: 34px; }
+
+/* ── جدول دفتر اليومية الكلاسيكي ── */
+#erpJournalsTable { border-collapse: collapse; width: 100%; background: #fff; font-variant-numeric: tabular-nums; }
+#erpJournalsTable thead th {
+  background: linear-gradient(180deg, #f8fafc, #f1f5f9);
+  color: var(--mt-text-muted);
+  font-size: 11px; font-weight: 800; letter-spacing: 0.05em;
+  padding: 12px; border-bottom: 2px solid var(--mt-border);
+  white-space: nowrap;
+}
+#erpJournalsTable tbody td { padding: 11px 12px; border-bottom: 1px solid #eef2f7; vertical-align: middle; font-size: 13px; }
+#erpJournalsTable tbody tr:nth-child(even):not(.jrn-foot-row) { background: #fbfcfe; }
+.jrn-row:hover { background: #f5f8ff !important; }
+/* أعمدة المبالغ (مدين/دائن) متمركزة وأرقامها LTR */
+#erpJournalsTable td:nth-child(5), #erpJournalsTable td:nth-child(6),
+#erpJournalsTable th:nth-child(5), #erpJournalsTable th:nth-child(6) { text-align: center; }
+.jrn-row .jrn-amt, .jrn-foot-row .jrn-amt { direction: ltr; display: inline-block; }
+
+/* ── رقم القيد كرابط واضح قابل للنقر ── */
+.jrn-num--link { text-decoration: none; cursor: pointer; transition: background 0.12s, color 0.12s; }
+.jrn-num--link:hover { background: var(--accent); color: #fff; }
+
+/* ── صف المجاميع الختامي (نمط دفتر يومية تقليدي) ── */
+.jrn-foot-row td {
+  border-top: 2px solid var(--mt-border) !important;
+  border-bottom: none !important;
+  background: #f8fafc;
+  font-weight: 900; color: var(--primary);
+  padding: 13px 12px !important; font-size: 13px;
+}
+.jrn-foot-row:hover { background: #f8fafc !important; }
+.jrn-foot-row .jrn-amt { font-size: 14px; }
+
+/* ── رقائق منتقي حسابات دفتر الأستاذ (متعدد الاختيار) ── */
+.gl-acct-chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.gl-acct-chips:not(:empty) { margin-bottom: 6px; }
+.gl-acct-chip {
+  display: inline-flex; align-items: center; gap: 6px;
+  background: #eef2ff; color: #3730a3;
+  border: 1px solid #c7d2fe; border-radius: 999px;
+  padding-block: 4px; padding-inline-start: 11px; padding-inline-end: 6px;
+  font-size: 12px; font-weight: 700; max-width: 100%;
+}
+.gl-acct-chip b { font-weight: 900; }
+.gl-acct-chip i {
+  cursor: pointer; width: 18px; height: 18px; flex-shrink: 0;
+  display: grid; place-items: center; border-radius: 50%;
+  background: rgba(55, 48, 163, 0.12); color: #3730a3; font-size: 10px;
+  transition: background 0.12s, color 0.12s;
+}
+.gl-acct-chip i:hover { background: #ef4444; color: #fff; }

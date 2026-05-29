@@ -15,7 +15,16 @@ const db = require('../../../db/connection');
 
 router.get('/reports/gl-ledger-multi', async (req, res) => {
   try {
-    const { from, to, parent, addedBy, scope, accType } = req.query;
+    const { from, to, parent, accounts, addedBy, scope, accType } = req.query;
+
+    // v6.29.0 — multi-account selection. The GL-ledger filter now lets the
+    // operator pick several specific accounts (comma-separated ids) and view
+    // them side-by-side. When `accounts` is provided it takes precedence over
+    // the single `parent` filter + scope/type filters, and renders EXACTLY
+    // the chosen accounts — including ones with no movement in the period.
+    const acctSet = new Set(
+      String(accounts || '').split(',').map(s => s.trim()).filter(Boolean)
+    );
 
     // Status filter — posted + approved by default
     const statusClause = "j.status IN ('posted','approved')";
@@ -84,17 +93,24 @@ router.get('/reports/gl-ledger-multi', async (req, res) => {
     accts.forEach(a => {
       const lines = linesByAccount[a.id] || [];
       const opening = Number(openingMap[a.id] || 0);
-      // Apply scope filter
-      if (scope === 'active' && lines.length === 0 && Math.abs(opening) < 0.005) return;
-      if (scope === 'leaf'   && !isLeaf(a)) return;
-      // Apply account type filter
-      if (accType === 'main' && !isMain(a)) return;
-      if (accType === 'sub'  &&  isMain(a)) return;
-      // Apply parent filter
-      if (parent && a.parent_id !== parent && a.id !== parent) return;
-      // Skip empty accounts unless 'all' scope (which is the default)
-      if (!scope || scope === 'all') {
-        if (lines.length === 0 && Math.abs(opening) < 0.005) return;
+      // v6.29.0 — explicit multi-account selection wins over every other
+      // filter: show exactly the chosen accounts (even empty ones) so the
+      // operator can compare two accounts side-by-side regardless of scope.
+      const picked = acctSet.size && acctSet.has(String(a.id));
+      if (acctSet.size && !picked) return;
+      if (!picked) {
+        // Apply scope filter
+        if (scope === 'active' && lines.length === 0 && Math.abs(opening) < 0.005) return;
+        if (scope === 'leaf'   && !isLeaf(a)) return;
+        // Apply account type filter
+        if (accType === 'main' && !isMain(a)) return;
+        if (accType === 'sub'  &&  isMain(a)) return;
+        // Apply parent filter (legacy single-parent, kept for back-compat)
+        if (parent && a.parent_id !== parent && a.id !== parent) return;
+        // Skip empty accounts unless 'all' scope (which is the default)
+        if (!scope || scope === 'all') {
+          if (lines.length === 0 && Math.abs(opening) < 0.005) return;
+        }
       }
 
       // Compute running balance + totals
@@ -126,7 +142,7 @@ router.get('/reports/gl-ledger-multi', async (req, res) => {
 
     res.json({
       success: true,
-      filters: { from: from || null, to: to || null, parent: parent || null, addedBy: addedBy || null, scope: scope || 'all', accType: accType || 'both' },
+      filters: { from: from || null, to: to || null, parent: parent || null, accounts: acctSet.size ? Array.from(acctSet) : null, addedBy: addedBy || null, scope: scope || 'all', accType: accType || 'both' },
       sections,
       grandTotals: sections.reduce((g, s) => ({
         debit:   g.debit   + s.totalDebit,

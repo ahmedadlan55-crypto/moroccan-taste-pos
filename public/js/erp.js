@@ -3996,7 +3996,7 @@ function erpLoadJournals() {
       var rowCls = 'jrn-row jrn-row--' + (j.status || 'draft');
       return '<tr class="' + rowCls + '">' +
         '<td style="text-align:center;width:36px;"><input type="checkbox" class="jrn-row-cb" data-id="' + j.id + '" ' + checked + ' onchange="_erpToggleJrnSel(\'' + j.id + '\', this.checked)"></td>' +
-        '<td><span class="jrn-num">' + esc(j.journalNumber || '') + '</span><div class="jrn-meta"><i class="fas fa-user"></i>' + esc(j.createdBy || '') + '</div></td>' +
+        '<td><a class="jrn-num jrn-num--link" href="javascript:void(0)" onclick="erpEditJournal(\'' + j.id + '\')" title="فتح القيد للتعديل">' + esc(j.journalNumber || '') + '</a><div class="jrn-meta"><i class="fas fa-user"></i>' + esc(j.createdBy || '') + '</div></td>' +
         '<td style="font-size:13px;font-variant-numeric:tabular-nums;">' + dt + '</td>' +
         '<td><div style="font-weight:600;color:var(--primary);">' + esc(j.description || '') + '</div>' +
           (chips ? '<div style="display:flex;flex-wrap:wrap;gap:5px;margin-top:6px;">' + chips + '</div>' : '') +
@@ -4006,6 +4006,18 @@ function erpLoadJournals() {
         '<td>' + statusBadge(j.status) + '</td>' +
         '<td style="white-space:nowrap;">' + actions + '</td></tr>';
     }).join('');
+
+    // v6.29.0 — classic daybook footer: grand totals of debit / credit
+    var sumD = list.reduce(function(s,j){ return s + (Number(j.totalDebit)||0); }, 0);
+    var sumC = list.reduce(function(s,j){ return s + (Number(j.totalCredit)||0); }, 0);
+    tbody.innerHTML +=
+      '<tr class="jrn-foot-row">' +
+        '<td></td>' +
+        '<td colspan="3" style="text-align:start;">الإجمالي العام · ' + list.length + ' قيد</td>' +
+        '<td><span class="jrn-amt jrn-amt--debit">' + fmt(sumD) + '</span></td>' +
+        '<td><span class="jrn-amt jrn-amt--credit">' + fmt(sumC) + '</span></td>' +
+        '<td colspan="2"></td>' +
+      '</tr>';
   }).getGLJournals(filters);
 }
 
@@ -4138,6 +4150,20 @@ function erpViewJournal(journalId) {
     }
   }).getGLJournals({});
 }
+
+// v6.29.0 — open a journal directly in the EDIT interface from any report
+// (e.g. clicking رقم القيد in the GL ledger). Fetches the full journal first
+// so erpEditJournal can apply its manual/posted guards + reversing-entry flow
+// even when _jrnCache isn't loaded (the journals list hasn't been opened yet).
+window.erpOpenJournalForEdit = function(journalId) {
+  if (!journalId) return;
+  window._apiBridge.withSuccessHandler(function(all) {
+    var j = (all || []).find(function(x){ return x.id === journalId; });
+    if (!j) return showToast('القيد غير موجود', true);
+    window._viewingJournal = j;   // so erpEditJournal can locate it
+    erpEditJournal(journalId);    // reuses manual/posted guards + reverse path
+  }).getGLJournals({});
+};
 
 function _renderJournalDetail(j) {
   var entries = j.entries || [];
@@ -14251,9 +14277,17 @@ function erpSelectGLAccount(id, code, name, type) {
 window._glLedgerCache = null;
 
 function erpResetGLLedger() {
-  ['erpGLAccType2','erpGLParent','erpGLAddedBy','erpGLScope'].forEach(function(id){
+  ['erpGLAddedBy','erpGLScope'].forEach(function(id){
     var el = document.getElementById(id); if (el) el.selectedIndex = 0;
   });
+  // accType back to "both" (its default), not index 0 (which is "main")
+  var at = document.getElementById('erpGLAccType2'); if (at) at.value = 'both';
+  // v6.29.0 — clear the multi-account picker
+  window._glAcctSel = [];
+  var chips = document.getElementById('erpGLAcctChips'); if (chips) chips.innerHTML = '';
+  var ai = document.getElementById('erpGLAcctInput'); if (ai) ai.value = '';
+  var ph = document.getElementById('erpGLParent'); if (ph) ph.value = '';
+  var ar = document.getElementById('erpGLAcctResults'); if (ar) ar.classList.remove('open');
   var dr = document.getElementById('erpGLDateRange'); if (dr) dr.value = '';
   var hf = document.getElementById('erpGLFrom'); if (hf) hf.value = '';
   var ht = document.getElementById('erpGLTo'); if (ht) ht.value = '';
@@ -14361,6 +14395,122 @@ window.erpGLPickAfter = function() {
   document.getElementById('erpGLDatePresets').classList.remove('open');
 };
 
+// ═══════════════════════════════════════════════════════════════════
+// v6.29.0 — دفتر الأستاذ: منتقي حسابات متعدد + بحث مرتبط بنوع الحساب.
+// الحقل "الحساب" أصبح بحثاً يعرض الحسابات حسب "نوع الحساب" المختار
+// (رئيسي = بلا أب، فرعي = له أب — مطابق لـ isMain في gl-ledger.js)،
+// ويسمح باختيار عدة حسابات (رقائق) لعرضها معاً في التقرير.
+// ═══════════════════════════════════════════════════════════════════
+window._glAcctSel = window._glAcctSel || [];   // [{id, code, nameAr}]
+
+// Make sure the accounts cache (_erpAccounts) is populated, then run cb.
+function erpGLLoadAccts(cb) {
+  if (Array.isArray(_erpAccounts) && _erpAccounts.length) { if (cb) cb(); return; }
+  window._apiBridge.withSuccessHandler(function(list) {
+    _erpAccounts = (list || []).map(function(a){
+      return { id: a.id, code: a.code, nameAr: a.nameAr, nameEn: a.nameEn,
+               type: a.type, parentId: a.parentId, level: Number(a.level)||1,
+               isFolder: !!a.isFolder, accountClass: a.accountClass || 'detail' };
+    });
+    if (cb) cb();
+  }).getGLAccounts();
+}
+
+// main = top-level (no parent) — matches backend isMain in gl-ledger.js
+function _glAcctMatchesType(a, accType) {
+  if (accType === 'main') return !a.parentId;
+  if (accType === 'sub')  return !!a.parentId;
+  return true; // both
+}
+
+function erpGLFilterAccts() {
+  var inp = document.getElementById('erpGLAcctInput');
+  var box = document.getElementById('erpGLAcctResults');
+  if (!inp || !box) return;
+  var run = function() {
+    var accType = (document.getElementById('erpGLAccType2')||{}).value || 'both';
+    var qRaw = (inp.value || '').trim();
+    var q = _bomNormAr(qRaw);
+    var selected = {};
+    (window._glAcctSel||[]).forEach(function(s){ selected[String(s.id)] = true; });
+    var matches = (_erpAccounts || []).filter(function(a){
+      if (selected[String(a.id)]) return false;            // already picked
+      if (!_glAcctMatchesType(a, accType)) return false;    // type cascade
+      if (!q) return true;                                  // empty → show all (of type)
+      var code = String(a.code || '');
+      return code.indexOf(qRaw) >= 0
+          || _bomNormAr(a.nameAr || '').indexOf(q) >= 0
+          || _bomNormAr(a.nameEn || '').indexOf(q) >= 0;
+    }).slice(0, 50);
+    if (!matches.length) {
+      box.innerHTML = '<div class="sd-result-item" style="justify-content:center;color:#94a3b8;cursor:default;">لا توجد حسابات مطابقة</div>';
+    } else {
+      box.innerHTML = matches.map(function(a){
+        var nm = (a.nameAr || a.nameEn || '').replace(/'/g, '&#39;');
+        return '<div class="sd-result-item" onclick="erpGLAddAcct(\'' + a.id + '\')">' +
+                 '<span class="sd-item-name">' + nm + '</span>' +
+                 '<span class="sd-item-meta">' + (a.code || '') + '</span>' +
+               '</div>';
+      }).join('');
+    }
+    box.classList.add('open');
+  };
+  if (!(Array.isArray(_erpAccounts) && _erpAccounts.length)) erpGLLoadAccts(run);
+  else run();
+}
+window.erpGLFilterAccts = erpGLFilterAccts;
+
+window.erpGLAddAcct = function(id) {
+  var a = (_erpAccounts || []).find(function(x){ return String(x.id) === String(id); });
+  if (!a) return;
+  if (!(window._glAcctSel||[]).some(function(s){ return String(s.id) === String(id); })) {
+    window._glAcctSel.push({ id: a.id, code: a.code, nameAr: a.nameAr || a.nameEn || '' });
+  }
+  erpGLRenderAcctChips();
+  var inp = document.getElementById('erpGLAcctInput'); if (inp) inp.value = '';
+  var box = document.getElementById('erpGLAcctResults'); if (box) box.classList.remove('open');
+  erpLoadGLLedgerReport();
+};
+
+window.erpGLRemoveAcct = function(id) {
+  window._glAcctSel = (window._glAcctSel||[]).filter(function(s){ return String(s.id) !== String(id); });
+  erpGLRenderAcctChips();
+  erpLoadGLLedgerReport();
+};
+
+function erpGLRenderAcctChips() {
+  var wrap = document.getElementById('erpGLAcctChips');
+  var hidden = document.getElementById('erpGLParent');
+  if (hidden) hidden.value = (window._glAcctSel||[]).map(function(s){ return s.id; }).join(',');
+  if (!wrap) return;
+  wrap.innerHTML = (window._glAcctSel||[]).map(function(s){
+    var nm = (s.nameAr || '').replace(/'/g, '&#39;');
+    return '<span class="gl-acct-chip">' +
+             '<b>' + (s.code || '') + '</b>' + (nm ? ' ' + nm : '') +
+             '<i class="fas fa-times" onclick="erpGLRemoveAcct(\'' + s.id + '\')" title="إزالة"></i>' +
+           '</span>';
+  }).join('');
+}
+window.erpGLRenderAcctChips = erpGLRenderAcctChips;
+
+window.erpGLOnAccTypeChange = function() {
+  // Changing the type invalidates the current selection (filtered for the
+  // previous type), so clear it and refresh the open dropdown. We do NOT
+  // auto-run the report here — picking an account (or the report button)
+  // does that — to avoid loading every account of a type unintentionally.
+  window._glAcctSel = [];
+  erpGLRenderAcctChips();
+  var box = document.getElementById('erpGLAcctResults');
+  if (box && box.classList.contains('open')) erpGLFilterAccts();
+};
+
+// Close the account dropdown when clicking outside of it.
+document.addEventListener('mousedown', function(e){
+  var wrap = document.getElementById('erpGLAcctWrap');
+  var box  = document.getElementById('erpGLAcctResults');
+  if (wrap && box && !wrap.contains(e.target)) box.classList.remove('open');
+});
+
 function erpLoadGLLedgerReport() {
   // Default to current month if no date set
   if (!document.getElementById('erpGLFrom').value && !document.getElementById('erpGLTo').value) {
@@ -14369,7 +14519,10 @@ function erpLoadGLLedgerReport() {
   var from    = document.getElementById('erpGLFrom').value || '';
   var to      = document.getElementById('erpGLTo').value || '';
   var accType = (document.getElementById('erpGLAccType2')||{}).value || 'both';
-  var parent  = (document.getElementById('erpGLParent')||{}).value || '';
+  // v6.29.0 — multi-account selection (comma-separated ids). Falls back to
+  // the hidden #erpGLParent value (kept in sync by the chip renderer).
+  var accounts = (window._glAcctSel||[]).map(function(a){ return a.id; }).join(',')
+              || ((document.getElementById('erpGLParent')||{}).value || '');
   var addedBy = (document.getElementById('erpGLAddedBy')||{}).value || '';
   var scope   = (document.getElementById('erpGLScope')||{}).value || 'all';
 
@@ -14379,7 +14532,7 @@ function erpLoadGLLedgerReport() {
       'جاري تحميل دفتر الأستاذ...' +
     '</div>';
 
-  var qs = new URLSearchParams({ from, to, parent, addedBy, scope, accType }).toString();
+  var qs = new URLSearchParams({ from, to, accounts, addedBy, scope, accType }).toString();
   fetch('/api/erp/reports/gl-ledger-multi?' + qs, {
     headers: { 'Authorization': 'Bearer ' + (localStorage.getItem('pos_token')||'') }
   }).then(function(r){return r.json();}).then(function(res){
@@ -14391,14 +14544,9 @@ function erpLoadGLLedgerReport() {
     }
     _glLedgerCache = res;
 
-    // Populate parent dropdown (top-level accounts) on first load
-    var psel = document.getElementById('erpGLParent');
-    if (psel && psel.options.length <= 1) {
-      var topAccts = (res.sections||[]).filter(function(s){ return !s.parentId; });
-      psel.innerHTML = '<option value="">الكل</option>' + topAccts.map(function(a){
-        return '<option value="'+a.accountId+'">'+(a.code||'')+' — '+(a.nameAr||'')+'</option>';
-      }).join('');
-    }
+    // v6.29.0 — warm the accounts cache so the multi-account picker is ready
+    // (the old single-parent <select> populate block was removed).
+    erpGLLoadAccts();
 
     // Populate addedBy dropdown
     var asel = document.getElementById('erpGLAddedBy');
@@ -14481,7 +14629,7 @@ function _renderGLLedgerMulti(res) {
             var balD = bal > 0 ? bal : 0, balC = bal < 0 ? -bal : 0;
             return '<tr>' +
               '<td>'+(i+1)+'</td>' +
-              '<td class="gl-jno"><a href="javascript:erpViewJournal(\''+l.journalId+'\')">'+_woEscapeHtml(l.journalNumber||'')+'</a></td>' +
+              '<td class="gl-jno"><a href="javascript:void(0)" onclick="erpOpenJournalForEdit(\''+l.journalId+'\')" title="فتح القيد للتعديل">'+_woEscapeHtml(l.journalNumber||'')+'</a></td>' +
               '<td>'+_woEscapeHtml(l.referenceId||'—')+'</td>' +
               '<td>'+dt(l.date)+'</td>' +
               (hideStaff ? '' : '<td class="gl-staff">'+_woEscapeHtml(l.addedBy||'—')+'</td>') +

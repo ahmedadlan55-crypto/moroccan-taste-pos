@@ -1203,6 +1203,7 @@
   color: var(--wo-on-surface-muted);
   line-height: 1.6;
   max-width: 380px;
+  white-space: pre-line; /* render \n as line-breaks (text is already esc()d) */
 }
 .wo-modal-message-input {
   width: 100%;

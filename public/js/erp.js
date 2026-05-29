@@ -4395,6 +4395,30 @@ function _openJournalEditor(j) {
   _jrnEditingId = j.id;
   _editingJournalId = j.id;  // legacy global referenced elsewhere
   erpCloseDetailModal();
+
+  // v7.0 fix — ensure #erpGLJournals is visible before rendering the form.
+  // When called from the GL Ledger report (حساب الأستاذ) or any other page,
+  // _renderJournalForm() writes into #erpGLJournals which is hidden, so the
+  // user sees nothing. We switch the section manually WITHOUT calling erpNav
+  // to avoid the async erpLoadJournals() it would trigger (race condition).
+  var journalsSection = document.getElementById('erpGLJournals');
+  if (journalsSection && journalsSection.classList.contains('hidden')) {
+    document.querySelectorAll('.dash-section').forEach(function(s){ s.classList.add('hidden'); });
+    journalsSection.classList.remove('hidden');
+    document.querySelectorAll('[data-erp-nav]').forEach(function(el){ el.classList.remove('active'); });
+    var navEl = document.querySelector('[data-erp-nav="erpGLJournals"]');
+    if (navEl) {
+      navEl.classList.add('active');
+      var parent = navEl.closest('.submenu');
+      if (parent) {
+        parent.classList.add('open');
+        var tog = parent.previousElementSibling;
+        if (tog && tog.classList.contains('has-submenu')) tog.classList.add('open');
+      }
+    }
+    try { localStorage.setItem('pos_last_section', 'erp:erpGLJournals'); } catch(_) {}
+  }
+
   // Make sure we have accounts + dim lists, then render
   var open = function(){
     _renderJournalForm();

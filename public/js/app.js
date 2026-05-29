@@ -2102,7 +2102,7 @@ function nav(sectionId) {
   if (sectionId === 'custodyUsers') { ensureCustodyJs().then(function() { loadCustodyUsers(); }); }
   if (sectionId === 'custodies') { ensureCustodyJs().then(function() { loadCustodies(); }); }
   if (sectionId === 'custodyApproval') { ensureCustodyJs().then(function() { loadCustodyApprovals(); }); }
-  if (sectionId === 'custodyReports') { ensureCustodyJs().then(function() { loadCustodies(); }); }
+  if (sectionId === 'custodyReports') { ensureCustodyJs().then(function() { loadCustodyReports(); }); }
 }
 
 // ═══════════════════════════════════════════════════════════════════

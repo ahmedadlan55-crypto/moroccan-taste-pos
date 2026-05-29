@@ -247,6 +247,44 @@ router.get('/my-custody', async (req, res) => {
   } catch (e) { res.json({ error: e.message }); }
 });
 
+// v6.28.0 — All expenses across all custodies with optional server-side
+// filters: status, date range, amount range, full-text search.
+router.get('/expenses/all', async (req, res) => {
+  try {
+    const { status, from, to, minAmt, maxAmt, search } = req.query;
+    let sql = `SELECT ce.id, ce.custody_id, ce.expense_date,
+                      ce.description, ce.amount, ce.vat_amount, ce.total_with_vat,
+                      ce.status, ce.gl_account_name, ce.rejection_reason,
+                      c.custody_number, c.user_name
+               FROM custody_expenses ce
+               JOIN custodies c ON ce.custody_id = c.id
+               WHERE 1=1`;
+    const params = [];
+    if (status) { sql += ' AND ce.status = ?'; params.push(status); }
+    if (from)   { sql += ' AND DATE(ce.expense_date) >= ?'; params.push(from); }
+    if (to)     { sql += ' AND DATE(ce.expense_date) <= ?'; params.push(to); }
+    if (minAmt) { sql += ' AND ce.total_with_vat >= ?'; params.push(Number(minAmt)); }
+    if (maxAmt) { sql += ' AND ce.total_with_vat <= ?'; params.push(Number(maxAmt)); }
+    if (search) {
+      const s = '%' + search + '%';
+      sql += ' AND (ce.description LIKE ? OR c.custody_number LIKE ? OR c.user_name LIKE ?)';
+      params.push(s, s, s);
+    }
+    sql += ' ORDER BY ce.expense_date DESC, ce.created_at DESC LIMIT 1000';
+    const [rows] = await db.query(sql, params);
+    res.json(rows.map(e => ({
+      id: e.id, custodyId: e.custody_id,
+      custodyNumber: e.custody_number, userName: e.user_name,
+      expenseDate: e.expense_date, description: e.description,
+      amount: Number(e.amount), vatAmount: Number(e.vat_amount),
+      totalWithVat: Number(e.total_with_vat),
+      status: e.status,
+      glAccountName: e.gl_account_name || '',
+      rejectionReason: e.rejection_reason || ''
+    })));
+  } catch(e) { res.json([]); }
+});
+
 // v6.27.0 — All custodies for a user (history + active), newest first.
 // Used by the custody officer app to show the "سجل العهد" section.
 router.get('/my-history', async (req, res) => {

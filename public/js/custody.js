@@ -610,3 +610,255 @@ window.printCustodyPDF = function() {
   w.document.close();
   setTimeout(function() { w.print(); }, 400);
 };
+
+// ═══════════════════════════════════════════════════════════════════════════
+// v6.28.0 — Custody Reports: Advanced UI with dual-view + powerful filters
+// ═══════════════════════════════════════════════════════════════════════════
+
+(function _injectCustodyReportStyles() {
+  if (document.getElementById('cr-styles-v628')) return;
+  var s = document.createElement('style');
+  s.id = 'cr-styles-v628';
+  s.textContent =
+    '.cr-root{padding:0;}' +
+    '.cr-stats{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:18px;}' +
+    '.cr-kpi{display:flex;align-items:center;gap:12px;background:#fff;border:1.5px solid #e2e8f0;border-radius:14px;padding:16px;transition:box-shadow .15s;}' +
+    '.cr-kpi:hover{box-shadow:0 4px 12px rgba(0,0,0,.06);}' +
+    '.cr-kpi i{font-size:22px;color:var(--primary);}' +
+    '.cr-kpi.warning{border-color:#fde68a;background:#fffbeb;}.cr-kpi.warning i{color:#d97706;}' +
+    '.cr-kpi.danger{border-color:#fecaca;background:#fef2f2;}.cr-kpi.danger i{color:#dc2626;}' +
+    '.cr-kpi-val{font-size:26px;font-weight:900;color:#0f172a;line-height:1.1;}' +
+    '.cr-kpi-lbl{font-size:11px;color:#94a3b8;font-weight:600;margin-top:2px;}' +
+    '.cr-tabs{display:flex;gap:0;margin-bottom:14px;border-bottom:2px solid #e2e8f0;}' +
+    '.cr-tab{padding:10px 22px;border:none;background:none;font-size:13px;font-weight:700;cursor:pointer;color:#64748b;border-bottom:2.5px solid transparent;margin-bottom:-2px;font-family:inherit;transition:all .15s;display:flex;align-items:center;gap:7px;}' +
+    '.cr-tab:hover{color:var(--primary);}' +
+    '.cr-tab.active{color:var(--primary);border-bottom-color:var(--primary);}' +
+    '.cr-filter-bar{display:flex;flex-wrap:wrap;gap:8px;align-items:center;padding:12px;background:#f8fafc;border:1.5px solid #e2e8f0;border-radius:12px;margin-bottom:10px;}' +
+    '.cr-search-wrap{flex:1;min-width:220px;position:relative;}' +
+    '.cr-search-icon{position:absolute;top:50%;transform:translateY(-50%);right:10px;color:#94a3b8;font-size:12px;pointer-events:none;}' +
+    '.cr-search-input{width:100%;padding:8px 32px 8px 10px;border:1.5px solid #e2e8f0;border-radius:8px;font-size:13px;background:#fff;transition:border-color .15s;}' +
+    '.cr-search-input:focus{border-color:var(--primary);outline:none;box-shadow:0 0 0 3px rgba(59,130,246,.08);}' +
+    '.cr-select{padding:8px 10px;border:1.5px solid #e2e8f0;border-radius:8px;font-size:13px;background:#fff;cursor:pointer;}' +
+    '.cr-select:focus{border-color:var(--primary);outline:none;}' +
+    '.cr-clear-btn{padding:8px 12px;border:1.5px solid #e2e8f0;border-radius:8px;background:#fff;cursor:pointer;color:#94a3b8;font-size:13px;transition:all .15s;}' +
+    '.cr-clear-btn:hover{color:#ef4444;border-color:#fca5a5;background:#fef2f2;}' +
+    '.cr-results-bar{display:flex;justify-content:space-between;align-items:center;font-size:12px;color:#94a3b8;margin-bottom:6px;padding:0 2px;}' +
+    '@media(max-width:768px){.cr-stats{grid-template-columns:1fr 1fr;}.cr-filter-bar{flex-direction:column;}.cr-search-wrap{min-width:100%;}}';
+  document.head.appendChild(s);
+})();
+
+var _crCustodiesCache = [];
+var _crExpDebounce    = null;
+
+window.loadCustodyReports = function() {
+  _injectCustodyReportStyles();
+  loader();
+  api.withSuccessHandler(function(list) {
+    loader(false);
+    _crCustodiesCache = list || [];
+    _crUpdateStats(list);
+    crFilterCustodies();
+  }).getCustodies();
+};
+
+function _crUpdateStats(list) {
+  var kc = q('#crKpiCustodies'); if (kc) kc.textContent = list.length;
+  // Pending count
+  api.withSuccessHandler(function(pending) {
+    var kp = q('#crKpiPending'); if (kp) kp.textContent = (pending || []).length;
+  }).getCustodyPending();
+  // Total + rejected counts from full expenses list
+  api.withSuccessHandler(function(allExp) {
+    var ke = q('#crKpiExpenses'); if (ke) ke.textContent = (allExp || []).length;
+    var kr = q('#crKpiRejected'); if (kr) kr.textContent = (allExp || []).filter(function(e){ return e.status === 'rejected'; }).length;
+  }).getCustodyAllExpenses({});
+}
+
+window.crFilterCustodies = function() {
+  var search  = ((q('#crCustSearch')||{}).value  || '').toLowerCase();
+  var statusF = (q('#crCustStatus')||{}).value   || '';
+  var from    = (q('#crCustFrom')||{}).value     || '';
+  var to      = (q('#crCustTo')||{}).value       || '';
+
+  var filtered = _crCustodiesCache.filter(function(c) {
+    if (search && (c.custodyNumber||'').toLowerCase().indexOf(search) < 0 &&
+                  (c.userName||'').toLowerCase().indexOf(search) < 0) return false;
+    if (statusF && c.status !== statusF) return false;
+    if (from && c.createdDate && new Date(c.createdDate).toISOString().slice(0,10) < from) return false;
+    if (to   && c.createdDate && new Date(c.createdDate).toISOString().slice(0,10) > to)   return false;
+    return true;
+  });
+
+  var cnt = q('#crCustCount');
+  if (cnt) cnt.textContent = 'عرض ' + filtered.length + ' من ' + _crCustodiesCache.length + ' عهدة';
+
+  var stBadge = {
+    active:        '<span class="badge green">نشطة</span>',
+    close_pending: '<span class="badge yellow">بانتظار الإقفال</span>',
+    closed:        '<span class="badge secondary">مغلقة</span>'
+  };
+  var h = '';
+  if (!filtered.length) {
+    h = '<tr><td colspan="8" style="text-align:center;padding:30px;color:#94a3b8;">لا توجد نتائج تطابق البحث</td></tr>';
+  } else {
+    filtered.forEach(function(c) {
+      var bc = c.balance > 0 ? '#16a34a' : (c.balance < 0 ? '#ef4444' : '#64748b');
+      var dt = c.createdDate ? new Date(c.createdDate).toLocaleDateString('en-GB') : '';
+      h += '<tr>' +
+        '<td><code style="font-weight:800;color:var(--primary);">' + esc(c.custodyNumber||'') + '</code></td>' +
+        '<td style="font-weight:700;">' + esc(c.userName||'') + '</td>' +
+        '<td style="font-size:12px;color:#64748b;">' + dt + '</td>' +
+        '<td style="color:#16a34a;font-weight:700;">' + formatVal(c.totalTopups) + '</td>' +
+        '<td style="color:#ef4444;font-weight:700;">' + formatVal(c.totalExpenses) + '</td>' +
+        '<td style="font-weight:900;color:' + bc + ';">' + formatVal(c.balance) + '</td>' +
+        '<td>' + (stBadge[c.status] || c.status) + '</td>' +
+        '<td style="white-space:nowrap;">' +
+          '<button class="btn btn-primary btn-sm" onclick="showCustodyReport(\'' + c.id + '\')" title="عرض التقرير"><i class="fas fa-eye"></i></button> ' +
+          '<button class="btn btn-light btn-sm" onclick="crPrintOne(\'' + c.id + '\')" title="طباعة"><i class="fas fa-print"></i></button>' +
+        '</td></tr>';
+    });
+  }
+  var body = q('#crCustBody'); if (body) body.innerHTML = h;
+};
+
+window.crClearCustodiesFilter = function() {
+  ['#crCustSearch','#crCustStatus','#crCustFrom','#crCustTo'].forEach(function(id){ var el=q(id); if(el) el.value=''; });
+  crFilterCustodies();
+};
+
+window.crSwitchTab = function(tab) {
+  q('#crPaneCustodies').style.display = tab === 'custodies' ? '' : 'none';
+  q('#crPaneExpenses').style.display  = tab === 'expenses'  ? '' : 'none';
+  q('#crTabCustodies').classList.toggle('active', tab === 'custodies');
+  q('#crTabExpenses').classList.toggle('active',  tab === 'expenses');
+  if (tab === 'expenses') crLoadExpenses();
+};
+
+window.crLoadExpenses = function() {
+  var params = {};
+  var flds = [
+    ['status','#crExpStatus'],['from','#crExpFrom'],['to','#crExpTo'],
+    ['minAmt','#crExpMinAmt'],['maxAmt','#crExpMaxAmt'],['search','#crExpSearch']
+  ];
+  flds.forEach(function(f){ var v=(q(f[1])||{}).value||''; if(v) params[f[0]]=v; });
+
+  var body = q('#crExpBody');
+  if (body) body.innerHTML = '<tr><td colspan="10" style="text-align:center;padding:20px;color:#94a3b8;"><i class="fas fa-spinner fa-spin"></i> جاري البحث...</td></tr>';
+
+  api.withSuccessHandler(function(list) {
+    _crRenderExpenses(list || []);
+  }).getCustodyAllExpenses(params);
+};
+
+window.crDebouncedExpenses = function() {
+  clearTimeout(_crExpDebounce);
+  _crExpDebounce = setTimeout(crLoadExpenses, 300);
+};
+
+window.crClearExpensesFilter = function() {
+  ['#crExpSearch','#crExpStatus','#crExpFrom','#crExpTo','#crExpMinAmt','#crExpMaxAmt'].forEach(function(id){
+    var el=q(id); if(el) el.value='';
+  });
+  crLoadExpenses();
+};
+
+function _crRenderExpenses(list) {
+  var cnt = q('#crExpCount'); if (cnt) cnt.textContent = 'عرض ' + list.length + ' فاتورة';
+  var stMap = {
+    pending:          '<span class="badge yellow">بانتظار</span>',
+    approved:         '<span class="badge green">معتمدة</span>',
+    rejected:         '<span class="badge red">مرفوضة</span>',
+    posted:           '<span class="badge blue">مرحّلة</span>',
+    returned:         '<span class="badge secondary">مُرجعة</span>',
+    override_pending: '<span class="badge orange">طلب تجاوز</span>'
+  };
+  var h = '';
+  if (!list.length) {
+    h = '<tr><td colspan="10" style="text-align:center;padding:30px;color:#94a3b8;">لا توجد نتائج تطابق الفلاتر</td></tr>';
+  } else {
+    list.forEach(function(e, i) {
+      var dt = e.expenseDate ? new Date(e.expenseDate).toLocaleDateString('en-GB') : '';
+      h += '<tr>' +
+        '<td style="color:#94a3b8;font-size:12px;">' + (i+1) + '</td>' +
+        '<td><code style="color:var(--primary);font-size:11px;font-weight:700;">' + esc(e.custodyNumber||'') + '</code></td>' +
+        '<td style="font-size:12px;">' + esc(e.userName||'') + '</td>' +
+        '<td style="font-size:12px;color:#64748b;">' + dt + '</td>' +
+        '<td style="font-weight:700;">' + esc(e.description||'') + '</td>' +
+        '<td style="font-size:11px;color:#8b5cf6;">' + esc(e.glAccountName||'—') + '</td>' +
+        '<td>' + formatVal(e.amount) + '</td>' +
+        '<td style="color:#94a3b8;font-size:12px;">' + formatVal(e.vatAmount) + '</td>' +
+        '<td style="font-weight:800;">' + formatVal(e.totalWithVat) + '</td>' +
+        '<td>' + (stMap[e.status] || esc(e.status)) + '</td>' +
+      '</tr>';
+      if (e.status === 'rejected' && e.rejectionReason) {
+        h += '<tr><td colspan="10" style="background:#fef2f2;font-size:11px;color:#dc2626;padding:5px 10px;">' +
+          '<i class="fas fa-exclamation-triangle"></i> سبب الرفض: ' + esc(e.rejectionReason) +
+          '</td></tr>';
+      }
+    });
+  }
+  var body = q('#crExpBody'); if (body) body.innerHTML = h;
+  window._crLastExpensesList = list;
+}
+
+window.crPrintExpensesReport = function() {
+  var list = window._crLastExpensesList || [];
+  if (!list.length) return showToast('لا توجد بيانات للطباعة', true);
+  var company = (state.settings && state.settings.name) || 'Moroccan Taste';
+  var statusF = (q('#crExpStatus')||{}).value || '';
+  var statusLblMap = { pending:'بانتظار', approved:'معتمدة', rejected:'مرفوضة', posted:'مرحّلة', returned:'مُرجعة' };
+  var filterLabel = statusF ? ' — ' + (statusLblMap[statusF] || statusF) : '';
+  var stLbl = { pending:'بانتظار', approved:'معتمدة', rejected:'مرفوضة', posted:'مرحّلة', returned:'مُرجعة' };
+  var rows = list.map(function(e, i) {
+    var dt = e.expenseDate ? new Date(e.expenseDate).toLocaleDateString('en-GB') : '';
+    return '<tr>' +
+      '<td>' + (i+1) + '</td>' +
+      '<td>' + esc(e.custodyNumber||'') + '</td>' +
+      '<td>' + esc(e.userName||'') + '</td>' +
+      '<td>' + dt + '</td>' +
+      '<td style="font-weight:700;">' + esc(e.description||'') + '</td>' +
+      '<td>' + formatVal(e.amount) + '</td>' +
+      '<td>' + formatVal(e.vatAmount) + '</td>' +
+      '<td style="font-weight:800;">' + formatVal(e.totalWithVat) + '</td>' +
+      '<td>' + (stLbl[e.status] || e.status) + '</td></tr>';
+  }).join('');
+  var total = list.reduce(function(s, e) { return s + (e.totalWithVat||0); }, 0);
+  var w = window.open('', '_blank');
+  if (!w) return showToast('اسمح بفتح نوافذ جديدة للطباعة', true);
+  w.document.write(
+    '<html dir="rtl"><head><meta charset="UTF-8"><title>تقرير الفواتير</title>' +
+    '<style>*{margin:0;padding:0;box-sizing:border-box;}body{font-family:Arial,sans-serif;direction:rtl;padding:30px;font-size:13px;color:#1e293b;}' +
+    'h2{text-align:center;margin-bottom:4px;}h3{text-align:center;color:#64748b;margin-bottom:14px;}' +
+    'table{width:100%;border-collapse:collapse;margin:12px 0;}th,td{border:1px solid #ddd;padding:8px;text-align:right;}th{background:#f1f5f9;font-weight:700;}' +
+    '.tot{margin-top:14px;font-size:15px;font-weight:900;border-top:2px solid #0f172a;padding-top:10px;display:flex;justify-content:space-between;}' +
+    '@media print{body{padding:10px;}}</style></head><body>' +
+    '<h2>' + esc(company) + '</h2><h3>تقرير الفواتير' + filterLabel + '</h3>' +
+    '<table><thead><tr><th>#</th><th>العهدة</th><th>الصاحب</th><th>التاريخ</th>' +
+    '<th>البيان</th><th>القيمة</th><th>الضريبة</th><th>الإجمالي</th><th>الحالة</th></tr></thead>' +
+    '<tbody>' + rows + '</tbody></table>' +
+    '<div class="tot"><span>إجمالي ' + list.length + ' فاتورة</span><span>' + formatVal(total) + ' SAR</span></div>' +
+    '</body></html>'
+  );
+  w.document.close();
+  setTimeout(function() { w.print(); }, 400);
+};
+
+window.crPrintOne = function(cusId) {
+  loader();
+  api.withSuccessHandler(function(data) {
+    loader(false);
+    if (!data || data.error) return showToast(data && data.error || 'خطأ', true);
+    state._lastCustodyReport = data;
+    printCustodyPDF();
+  }).withFailureHandler(function() {
+    loader(false);
+    showToast('فشل تحميل التقرير', true);
+  }).getCustodyReport(cusId);
+};
+
+// keep existing esc helper (or fallback to inline)
+function esc(s) {
+  var d = document.createElement('div');
+  d.appendChild(document.createTextNode(s || ''));
+  return d.innerHTML;
+}

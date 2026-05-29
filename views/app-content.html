@@ -1451,19 +1451,116 @@
           </div>
         </div>
 
-        <!-- Section: Custody Reports -->
-        <div id="sec_custodyReports" class="admin-section">
-          <div class="filter-bar" style="justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px;">
-            <h3 style="margin:0;color:var(--primary);"><i class="fas fa-file-invoice-dollar"></i> تقارير العهد</h3>
-            <div style="display:flex;gap:8px;align-items:center;">
-              <select id="custodyReportSelect" class="form-control" style="min-width:200px;" onchange="loadCustodyReport()">
-                <option value="">اختر عهدة...</option>
-              </select>
-              <button class="btn btn-primary" onclick="printCustodyPDF()"><i class="fas fa-print"></i> طباعة PDF</button>
+        <!-- Section: Custody Reports — v6.28.0 full redesign -->
+        <div id="sec_custodyReports" class="admin-section cr-root">
+
+          <!-- KPI Stats -->
+          <div class="cr-stats" id="crStats">
+            <div class="cr-kpi">
+              <i class="fas fa-wallet"></i>
+              <div><div class="cr-kpi-val" id="crKpiCustodies">—</div><div class="cr-kpi-lbl">العهد</div></div>
+            </div>
+            <div class="cr-kpi">
+              <i class="fas fa-receipt"></i>
+              <div><div class="cr-kpi-val" id="crKpiExpenses">—</div><div class="cr-kpi-lbl">الفواتير</div></div>
+            </div>
+            <div class="cr-kpi warning">
+              <i class="fas fa-clock"></i>
+              <div><div class="cr-kpi-val" id="crKpiPending">—</div><div class="cr-kpi-lbl">بانتظار الموافقة</div></div>
+            </div>
+            <div class="cr-kpi danger">
+              <i class="fas fa-times-circle"></i>
+              <div><div class="cr-kpi-val" id="crKpiRejected">—</div><div class="cr-kpi-lbl">مرفوضة</div></div>
             </div>
           </div>
-          <div id="custodyReportBody" style="padding:10px;"></div>
+
+          <!-- Tabs -->
+          <div class="cr-tabs">
+            <button class="cr-tab active" id="crTabCustodies" onclick="crSwitchTab('custodies')">
+              <i class="fas fa-wallet"></i> العهد
+            </button>
+            <button class="cr-tab" id="crTabExpenses" onclick="crSwitchTab('expenses')">
+              <i class="fas fa-receipt"></i> الفواتير
+            </button>
+          </div>
+
+          <!-- Tab 1: Custodies -->
+          <div id="crPaneCustodies" class="cr-pane">
+            <div class="cr-filter-bar">
+              <div class="cr-search-wrap">
+                <i class="fas fa-search cr-search-icon"></i>
+                <input type="text" id="crCustSearch" class="cr-search-input"
+                       placeholder="ابحث برقم العهدة أو اسم صاحبها..." oninput="crFilterCustodies()">
+              </div>
+              <select id="crCustStatus" class="cr-select" onchange="crFilterCustodies()">
+                <option value="">كل الحالات</option>
+                <option value="active">نشطة</option>
+                <option value="close_pending">بانتظار الإقفال</option>
+                <option value="closed">مغلقة</option>
+              </select>
+              <input type="date" id="crCustFrom" class="cr-select" onchange="crFilterCustodies()" title="من تاريخ">
+              <input type="date" id="crCustTo"   class="cr-select" onchange="crFilterCustodies()" title="إلى تاريخ">
+              <button class="cr-clear-btn" onclick="crClearCustodiesFilter()" title="مسح الفلاتر"><i class="fas fa-filter-circle-xmark"></i></button>
+            </div>
+            <div class="cr-results-bar"><span id="crCustCount">—</span></div>
+            <div class="table-wrapper">
+              <table class="table">
+                <thead><tr>
+                  <th>رقم العهدة</th><th>صاحب العهدة</th><th>تاريخ الإنشاء</th>
+                  <th>التغذية</th><th>المصروفات</th><th>الرصيد</th>
+                  <th>الحالة</th><th>إجراءات</th>
+                </tr></thead>
+                <tbody id="crCustBody"></tbody>
+              </table>
+            </div>
+          </div>
+
+          <!-- Tab 2: Expenses browser -->
+          <div id="crPaneExpenses" class="cr-pane" style="display:none;">
+            <div class="cr-filter-bar">
+              <div class="cr-search-wrap">
+                <i class="fas fa-search cr-search-icon"></i>
+                <input type="text" id="crExpSearch" class="cr-search-input"
+                       placeholder="ابحث في البيان أو رقم العهدة أو اسم الصاحب..."
+                       oninput="crDebouncedExpenses()">
+              </div>
+              <select id="crExpStatus" class="cr-select" onchange="crLoadExpenses()">
+                <option value="">كل الحالات</option>
+                <option value="pending">بانتظار الموافقة</option>
+                <option value="approved">معتمدة</option>
+                <option value="rejected">مرفوضة</option>
+                <option value="posted">مرحّلة</option>
+                <option value="returned">مُرجعة للتعديل</option>
+              </select>
+              <input type="date" id="crExpFrom" class="cr-select" onchange="crLoadExpenses()" title="من تاريخ">
+              <input type="date" id="crExpTo"   class="cr-select" onchange="crLoadExpenses()" title="إلى تاريخ">
+              <input type="number" id="crExpMinAmt" class="cr-select" style="max-width:110px;"
+                     placeholder="أدنى مبلغ" step="0.01" onchange="crLoadExpenses()">
+              <input type="number" id="crExpMaxAmt" class="cr-select" style="max-width:110px;"
+                     placeholder="أقصى مبلغ" step="0.01" onchange="crLoadExpenses()">
+              <button class="cr-clear-btn" onclick="crClearExpensesFilter()" title="مسح الفلاتر"><i class="fas fa-filter-circle-xmark"></i></button>
+            </div>
+            <div class="cr-results-bar">
+              <span id="crExpCount">—</span>
+              <button class="btn btn-sm btn-light" onclick="crPrintExpensesReport()">
+                <i class="fas fa-print"></i> طباعة التقرير
+              </button>
+            </div>
+            <div class="table-wrapper">
+              <table class="table" style="font-size:13px;">
+                <thead><tr>
+                  <th>#</th><th>العهدة</th><th>الصاحب</th><th>التاريخ</th>
+                  <th>البيان</th><th>نوع المصروف</th>
+                  <th>القيمة</th><th>الضريبة</th><th>الإجمالي</th><th>الحالة</th>
+                </tr></thead>
+                <tbody id="crExpBody"></tbody>
+              </table>
+            </div>
+          </div>
+
         </div>
+        <!-- preserved: custodyReportBody for backward compat with existing showCustodyReport -->
+        <div id="custodyReportBody" style="display:none;"></div>
 
         <!-- Section: Purchases (فواتير الشراء) — Enterprise redesign -->
         <div id="sec_purchases" class="admin-section">

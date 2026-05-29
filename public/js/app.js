@@ -4463,8 +4463,9 @@ function _invHubRenderBrandHub(brandId) {
         '</div>' +
         '<button class="iv-hub-btn iv-hub-btn-ghost" onclick="_invHubRefresh()" title="تحديث"><i class="fas fa-rotate"></i></button>' +
       '</header>' +
-      // v5.10.32 — date range strip (filters the badge counts on every card)
-      _invHubRenderDateStrip() +
+      // v7.1 — date strip removed: no CSS was defined for it so it rendered
+      // unstyled and overlapped the card grid. Badge counts now always reflect
+      // the full data-set; per-card date filtering is available inside each tab.
       '<div class="iv-hub-grid">' +
         _INV_HUB_TABS.map(function(t) {
           return '<button class="iv-hub-tile" data-tab="' + t.id + '" onclick="invHubGoToTab(\'' + _invHubEsc(brandId) + '\',\'' + t.id + '\',true)">' +

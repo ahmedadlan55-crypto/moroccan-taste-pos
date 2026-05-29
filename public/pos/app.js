@@ -2027,7 +2027,11 @@ window.doCheckout = function() {
     lineDiscounts: Object.keys(state.lineDiscounts || {}).length ? state.lineDiscounts : null,
     // ─── v5.11.4: customer link + payment notes ───
     customer: customerOut,
-    paymentNotes: paymentNotes || null
+    paymentNotes: paymentNotes || null,
+    // v7.1 fix — send the cashier's warehouse so the backend deducts from
+    // warehouse_stock for THIS branch instead of falling back to the global
+    // inv_items.stock only. state.warehouseId is set from the login response.
+    warehouseId: state.warehouseId || null
   };
 
   var send = function() {

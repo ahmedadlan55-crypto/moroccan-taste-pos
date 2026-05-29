@@ -227,13 +227,20 @@ router.post('/refresh-token', async (req, res) => {
     const oldToken = authHeader.split(' ')[1];
     const decoded = jwt.verify(oldToken, process.env.JWT_SECRET, { ignoreExpiration: true });
     // Verify user still exists and is active in database
-    const [users] = await db.query('SELECT id, username, role, active, brand_id, branch_id FROM users WHERE username = ?', [decoded.username]);
+    // v7.1 fix — include default_warehouse_id so sales.js can deduct from the
+    // correct branch warehouse after a token refresh (was missing before, causing
+    // inventory deductions to fall back to global inv_items.stock only).
+    const [users] = await db.query(
+      'SELECT id, username, role, active, brand_id, branch_id, default_warehouse_id FROM users WHERE username = ?',
+      [decoded.username]
+    );
     if (!users.length || !users[0].active) return res.json({ success: false, error: 'الحساب غير نشط أو محذوف' });
     const user = users[0];
-    // Issue new token with CURRENT role (not old one — in case role changed)
+    // Issue new token with CURRENT values (not old cached ones — role/branch/warehouse may have changed)
     const token = jwt.sign({
       id: user.id, username: user.username, role: user.role,
-      brandId: user.brand_id || '', branchId: user.branch_id || ''
+      brandId: user.brand_id || '', branchId: user.branch_id || '',
+      default_warehouse_id: user.default_warehouse_id || ''
     }, process.env.JWT_SECRET, { expiresIn: '24h' });
     res.json({ success: true, token, role: user.role });
   } catch (e) { res.json({ success: false }); }

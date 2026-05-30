@@ -172,8 +172,14 @@ router.get('/my-custody', async (req, res) => {
     }
     const cuUser = cuUsers[0];
 
-    // Find the active custody — auto-create if none exists
-    let [custodies] = await db.query('SELECT * FROM custodies WHERE user_id = ? AND status = "active" ORDER BY created_at DESC LIMIT 1', [cuUser.id]);
+    // v7.1 fix — return the latest ACTIVE *or* CLOSE_PENDING custody so the
+    // portal reflects the real status (بانتظار الإقفال → مغلقة after approval).
+    // The old `status = "active"` filter auto-created a NEW custody the moment
+    // one entered close_pending/closed, spawning silent duplicates and leaving
+    // the closure looking "stuck" because multiple pending custodies piled up.
+    // Auto-create now only fires when the user has NO active/pending custody
+    // (e.g. right after a closure is approved → fresh start).
+    let [custodies] = await db.query("SELECT * FROM custodies WHERE user_id = ? AND status IN ('active','close_pending') ORDER BY created_at DESC LIMIT 1", [cuUser.id]);
     if (!custodies.length) {
       const cusId = 'CUS-' + Date.now();
       const [last] = await db.query('SELECT custody_number FROM custodies ORDER BY created_at DESC LIMIT 1');

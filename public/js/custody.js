@@ -116,7 +116,7 @@ window.loadCustodies = function() {
           '<td style="color:#16a34a;font-weight:700;">' + formatVal(c.totalTopups) + '</td>' +
           '<td style="color:#ef4444;font-weight:700;">' + formatVal(c.totalExpenses) + '</td>' +
           '<td style="font-weight:900;color:' + balColor + ';">' + formatVal(c.balance) + '</td>' +
-          '<td>' + (c.status === 'active' ? '<span class="badge green">نشط</span>' : '<span class="badge red">مغلق</span>') + '</td>' +
+          '<td>' + ({ active: '<span class="badge green">نشط</span>', close_pending: '<span class="badge yellow">بانتظار الإقفال</span>', closed: '<span class="badge red">مغلق</span>' }[c.status] || '<span class="badge red">مغلق</span>') + '</td>' +
           '<td style="white-space:nowrap;">' +
             '<button class="btn btn-primary btn-sm" onclick="openCustodyDetail(\'' + c.id + '\')" title="تفاصيل"><i class="fas fa-eye"></i></button> ' +
             '<button class="btn btn-success btn-sm" onclick="openTopupModal(\'' + c.id + '\')" title="تغذية رصيد"><i class="fas fa-plus-circle"></i></button> ' +

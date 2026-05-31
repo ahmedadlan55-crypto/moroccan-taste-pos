@@ -196,6 +196,10 @@ router.post('/', verifyToken, async (req, res) => {
     // v7.1 — ZATCA tax category (S=standard 15%, Z=zero, E=exempt, O=out-of-scope)
     let taxCategory = String(req.body.taxCategory || 'S').toUpperCase();
     if (['S','Z','E','O'].indexOf(taxCategory) < 0) taxCategory = 'S';
+    // v7.1 — reject negative price/cost (0 allowed: free item / not-yet-costed).
+    if (Number(price) < 0 || Number(cost) < 0) {
+      return res.status(400).json({ success: false, error: 'السعر والتكلفة لا يمكن أن يكونا بالسالب' });
+    }
     await db.query(
       `INSERT INTO menu (id, name, name_en, price, is_tax_inclusive, tax_category, category, cost, stock, min_stock, active, pricing_mode, markup_pct, brand_id,
                          is_semi_finished, production_unit, consumes_semi_id, consumes_semi_qty,
@@ -239,6 +243,10 @@ router.put('/:id', verifyToken, async (req, res) => {
         redirectTo: '/erp#inv-items?kind=semi'
       });
     }
+    // v7.1 — reject negative price/cost (0 allowed). Mirrors the POST guard.
+    if (Number(price) < 0 || Number(cost) < 0) {
+      return res.status(400).json({ success: false, error: 'السعر والتكلفة لا يمكن أن يكونا بالسالب' });
+    }
     // Price is ALWAYS manual (user sets it). pricing_mode only controls
     // whether the COST comes from recipes (variable) or manual input (fixed).
     // v5.12.7 — image_data is left untouched when undefined; explicit '' clears.
@@ -252,7 +260,7 @@ router.put('/:id', verifyToken, async (req, res) => {
     if (['S','Z','E','O'].indexOf(_taxCat) < 0) _taxCat = 'S';
     const sql =
       `UPDATE menu SET name=?, name_en=?, price=?, category=?, cost=?, stock=?, min_stock=?, active=?,
-                       pricing_mode=?, markup_pct=?, brand_id=?,
+                       pricing_mode=COALESCE(?, pricing_mode), markup_pct=?, brand_id=?,
                        is_semi_finished=?, production_unit=?, consumes_semi_id=?, consumes_semi_qty=?,
                        production_warehouse_id=?, sales_warehouse_id=?,
                        unit=?, big_unit=?, conv_rate=?, yield_quantity=?, yield_unit=?` +
@@ -260,7 +268,7 @@ router.put('/:id', verifyToken, async (req, res) => {
       (setTaxIncl ? ', is_tax_inclusive=?' : '') +
       (setTaxCat ? ', tax_category=?' : '') +
       ` WHERE id=?`;
-    const params = [name, nameEn || null, price || 0, category, cost || 0, stock, minStock, active, pricingMode || 'variable', markupPct || 0,
+    const params = [name, nameEn || null, price || 0, category, cost || 0, stock, minStock, active, pricingMode || null, markupPct || 0,
        brandId || null,
        isSemiFinished ? 1 : 0, productionUnit || 'pcs', consumesSemiId || null, consumesSemiQty || 0,
        productionWarehouseId || null, salesWarehouseId || null,
@@ -451,8 +459,11 @@ router.post('/import', verifyToken, async (req, res) => {
 
     let imported = 0;
     let updated = 0;
+    const invalid = [];
 
     for (const item of items) {
+      // v7.1 — skip rows with negative price/cost rather than importing bad data.
+      if (Number(item.price) < 0 || Number(item.cost) < 0) { invalid.push(item.name || item.id || '?'); continue; }
       const id = item.id || 'MENU-' + Date.now() + '-' + Math.random().toString(36).substr(2, 4);
       const [existing] = await db.query('SELECT id FROM menu WHERE id = ? OR name = ?', [id, item.name]);
       // v7.1 — tax columns from the Excel sheet
@@ -475,7 +486,7 @@ router.post('/import', verifyToken, async (req, res) => {
       }
     }
 
-    res.json({ success: true, imported, updated, total: items.length });
+    res.json({ success: true, imported, updated, skipped: invalid.length, invalid, total: items.length });
   } catch (e) {
     res.json({ success: false, error: e.message });
   }
@@ -496,6 +507,20 @@ router.post('/recipes/:menuId', verifyToken, async (req, res) => {
   try {
     const { menuId } = req.params;
     const { menuName, ingredients } = req.body;
+    // v7.1 — validate BEFORE deleting the old recipe: every ingredient must have
+    // qty > 0 and reference an existing inv_item (prevents orphan rows / zero-deduction).
+    if (Array.isArray(ingredients) && ingredients.length) {
+      const badQty = ingredients.filter(ing => !(Number(ing.qtyUsed) > 0));
+      if (badQty.length) return res.status(400).json({ success: false, error: 'كمية كل مكوّن يجب أن تكون أكبر من صفر', items: badQty.map(b => b.invItemName || b.invItemId || '?') });
+      const ids = [...new Set(ingredients.map(i => i.invItemId).filter(Boolean))];
+      if (ids.length) {
+        const ph = ids.map(() => '?').join(',');
+        const [exist] = await db.query('SELECT id FROM inv_items WHERE id IN (' + ph + ')', ids);
+        const have = new Set(exist.map(r => r.id));
+        const missing = ids.filter(id => !have.has(id));
+        if (missing.length) return res.status(400).json({ success: false, error: 'مكوّنات غير موجودة في المخزون', items: missing });
+      }
+    }
     // Delete old
     await db.query('DELETE FROM recipe WHERE menu_id = ?', [menuId]);
     // Insert new
@@ -774,6 +799,20 @@ router.post('/:id/recipe-bom', verifyToken, async (req, res) => {
     const [menuRows] = await db.query('SELECT id, name, bom_id FROM menu WHERE id = ?', [menuId]);
     if (!menuRows.length) return res.status(404).json({ success: false, error: 'منتج غير موجود' });
     const menu = menuRows[0];
+
+    // v7.1 — validate lines before writing anything: qty > 0 and existing inv_item.
+    if (Array.isArray(b.lines) && b.lines.length) {
+      const badQ = b.lines.filter(ln => !(Number(ln.quantity) > 0));
+      if (badQ.length) return res.status(400).json({ success: false, error: 'كمية كل سطر يجب أن تكون أكبر من صفر' });
+      const cids = [...new Set(b.lines.map(ln => ln.componentItemId || ln.itemId).filter(Boolean))];
+      if (cids.length) {
+        const ph = cids.map(() => '?').join(',');
+        const [ex] = await db.query('SELECT id FROM inv_items WHERE id IN (' + ph + ')', cids);
+        const have = new Set(ex.map(r => r.id));
+        const missing = cids.filter(id => !have.has(id));
+        if (missing.length) return res.status(400).json({ success: false, error: 'مكوّنات غير موجودة في المخزون', items: missing });
+      }
+    }
 
     // Build/upsert BOM
     let bomId = menu.bom_id;

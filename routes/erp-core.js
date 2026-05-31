@@ -1561,6 +1561,9 @@ router.delete('/waste-entries/:id', async (req, res) => {
             'UPDATE warehouse_stock SET qty = qty + ? WHERE warehouse_id = ? AND item_id = ?',
             [Number(l.quantity) || 0, w.warehouse_id, l.item_id]);
         } catch (_) {}
+        // v7.1 — keep the global rollup (inv_items.stock) in sync after the
+        // restore, else inv_items.stock drifts from SUM(warehouse_stock.qty).
+        try { await recomputeInvItemStock(c, l.item_id); } catch (_) {}
       }
       // 2. Reverse GL journal
       try {

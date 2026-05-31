@@ -3775,13 +3775,27 @@ router.post('/receive-approve/:id', async (req, res) => {
       const currentCost = Number(inv.cost) || 0;
       let newCost = stockBefore === 0 ? netPrice : ((stockBefore * currentCost) + (qty * netPrice)) / (stockBefore + qty);
 
-      await db.query('UPDATE inv_items SET stock = stock + ?, cost = ? WHERE id = ?', [qty, newCost, inv.id]);
+      // v7.1 — warehouse-aware receive: add to warehouse_stock for the purchase's
+      // warehouse (atomic upsert) + recompute the global rollup, so the received
+      // qty is visible per-branch and inv_items.stock stays = SUM(warehouse_stock).
+      // Falls back to the legacy global write only when no warehouse is stamped.
+      const rcvWh = purchase.warehouse_id || null;
+      if (rcvWh) {
+        await db.query(
+          'INSERT INTO warehouse_stock (id, warehouse_id, item_id, qty, avg_cost, last_cost, last_updated) VALUES (?,?,?,?,?,?,NOW()) ' +
+          'ON DUPLICATE KEY UPDATE qty = qty + ?, avg_cost = ?, last_cost = ?, last_updated = NOW()',
+          ['WS-' + Date.now() + '-' + Math.random().toString(36).slice(2, 6), rcvWh, inv.id, qty, newCost, netPrice, qty, newCost, netPrice]);
+        await recomputeInvItemStock(db, inv.id);
+        await db.query('UPDATE inv_items SET cost = ? WHERE id = ?', [newCost, inv.id]);
+      } else {
+        await db.query('UPDATE inv_items SET stock = stock + ?, cost = ? WHERE id = ?', [qty, newCost, inv.id]);
+      }
 
-      // Record movement
+      // Record movement (with warehouse_id so the per-warehouse ledger shows it)
       const movId = 'MOV-RCV-' + Date.now() + '-' + Math.random().toString(36).substr(2, 4);
       await db.query(
-        'INSERT INTO inventory_movements (id, movement_date, item_id, item_name, type, qty, reason, username, notes) VALUES (?,?,?,?,?,?,?,?,?)',
-        [movId, now, inv.id, inv.name, 'in', qty, 'استلام نقص', username || '', 'PUR:' + req.params.id]
+        'INSERT INTO inventory_movements (id, movement_date, item_id, item_name, type, qty, reason, username, notes, warehouse_id) VALUES (?,?,?,?,?,?,?,?,?,?)',
+        [movId, now, inv.id, inv.name, 'in', qty, 'استلام نقص', username || '', 'PUR:' + req.params.id, rcvWh]
       );
 
       totalNet += netPrice * qty;

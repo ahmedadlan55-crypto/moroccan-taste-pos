@@ -3588,6 +3588,11 @@ async function runMigrations() {
   await addColumnIfMissing('warehouse_stock', 'first_added_date', "DATE NULL");
   await addColumnIfMissing('warehouse_stock', 'added_by', "VARCHAR(80)");
 
+  // v7.1 — the `bom` table never defined `product_source`, yet routes/menu.js
+  // INSERTs/UPDATEs it on every recipe-BOM save → "Unknown column" error that
+  // broke creating a menu item's BOM. Add it (idempotent) so the endpoint works.
+  await addColumnIfMissing('bom', 'product_source', "VARCHAR(20) DEFAULT 'menu'");
+
   // v5.10.7 — Self-heal ghost warehouse_stock rows that the old auto-
   // backfill polluted (qty=0, no first_added_date, no movement log).
   // The user reported "159 outside / 2 inside" — this was 157 ghost

@@ -16,6 +16,8 @@
  */
 const router = require('express').Router();
 const db = require('../db/connection');
+// v7.1 — sync the inv_items.stock rollup after a stocktake sets warehouse_stock.
+const { recomputeInvItemStock } = require('../lib/stockRecompute');
 
 function _id(p){ return p+'-'+Date.now()+'-'+Math.random().toString(36).slice(2,7); }
 
@@ -295,6 +297,8 @@ router.post('/:id/approve', async (req, res) => {
           VALUES (?, ?, ?, ?)
           ON DUPLICATE KEY UPDATE qty = VALUES(qty)`,
           [_id('WS'), h.warehouse_id, ln.inv_item_id, ln.actual_qty]);
+        // v7.1 — keep the global rollup in sync after the stocktake sets the count.
+        try { await recomputeInvItemStock(db, ln.inv_item_id); } catch (_e) {}
         try {
           await db.query(`
             INSERT INTO inventory_movements

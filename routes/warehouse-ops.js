@@ -7,6 +7,9 @@
 const router = require('express').Router();
 const db = require('../db/connection');
 const gl = require('../lib/glPosting');
+// v7.1 — keep the denormalized inv_items.stock rollup in sync after any
+// per-warehouse mutation (lot disposal etc.), same discipline as sales/purchases.
+const { recomputeInvItemStock } = require('../lib/stockRecompute');
 
 // ─── Helpers ──────────────────────────────────────────────────────────
 
@@ -1309,6 +1312,8 @@ router.post('/expiry-alerts/:lotId/dispose', async (req, res) => {
             'UPDATE warehouse_stock SET qty = qty - ? WHERE warehouse_id = ? AND item_id = ?',
             [qty, warehouse, itemId]);
         } catch (_) {}
+        // v7.1 — sync the global rollup so inv_items.stock = SUM(warehouse_stock).
+        try { await recomputeInvItemStock(c, itemId); } catch (_) {}
       }
       // 3. Movement log
       const movId = 'MOV-EXP-' + Date.now() + '-' + Math.random().toString(36).slice(2,5);

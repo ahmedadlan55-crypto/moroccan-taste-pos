@@ -1548,12 +1548,14 @@ router.delete('/waste-entries/:id', async (req, res) => {
       // 1. Reverse inventory_movements: insert opposite (positive) entries
       for (const l of lines) {
         try {
+          // v7.1 — STANDARD movement shape (type/qty/reason/warehouse_id) so the
+          // warehouse ledger actually shows the reversal. The old txn_type/quantity
+          // columns are not read by the ledger, so reversals were invisible there.
           await c.query(
-            `INSERT INTO inventory_movements (id, item_id, warehouse_id, txn_type, quantity, unit_cost, total_cost, reference_type, reference_id, created_by, created_at)
-             VALUES (?,?,?,?,?,?,?,?,?,?,NOW())`,
-            [genId('IM'), l.item_id, w.warehouse_id, 'waste_reversal',
-             Number(l.quantity) || 0, Number(l.unit_cost) || 0, Number(l.line_cost) || 0,
-             'WasteEntry', id, (req.user && req.user.username) || 'system']);
+            `INSERT INTO inventory_movements (id, movement_date, item_id, item_name, type, qty, reason, username, notes, warehouse_id, reference_type, reference_id)
+             VALUES (?,NOW(),?,?,?,?,?,?,?,?,?,?)`,
+            [genId('IM'), l.item_id, l.item_name || '', 'in', Number(l.quantity) || 0, 'عكس هدر',
+             (req.user && req.user.username) || 'system', 'عكس هدر ' + id, w.warehouse_id, 'waste_reversal', id]);
         } catch (_) {}
         // Restore warehouse_stock qty
         try {
@@ -2729,6 +2731,95 @@ router.get('/reports/sales-by-channel', async (req, res) => {
     res.json({ success: true, rows: out, totals: totals, filters: { from, to, brand } });
   } catch(e) {
     console.error('sales-by-channel error:', e);
+    res.json({ success: false, error: e.message, rows: [], totals: {} });
+  }
+});
+
+/**
+ * GET /erp/reports/channel-settlements?from=&to=&brand=&channelId=
+ * v7.1 — Settlement view per channel: orders, net sales, commission + service fee
+ * (from channel rates), net payout, AND the commission actually POSTED to GL
+ * (account 2320 via ChannelCommission journals) for reconciliation (expected vs posted).
+ */
+router.get('/reports/channel-settlements', async (req, res) => {
+  try {
+    const { from, to, brand, channelId } = req.query;
+    let hasChannel = true;
+    try { const [c] = await db.query("SHOW COLUMNS FROM sales LIKE 'channel_id'"); hasChannel = !!c.length; } catch (e) { hasChannel = false; }
+    if (!hasChannel) return res.json({ success: true, rows: [], totals: {}, note: 'channel_id column missing' });
+
+    const where = ["s.deleted_at IS NULL"];
+    const params = [];
+    if (from) { where.push('DATE(s.order_date) >= ?'); params.push(from); }
+    if (to) { where.push('DATE(s.order_date) <= ?'); params.push(to); }
+    if (channelId) { where.push('s.channel_id = ?'); params.push(channelId); }
+    if (brand) { try { const [c] = await db.query("SHOW COLUMNS FROM sales LIKE 'brand_id'"); if (c.length) { where.push('s.brand_id = ?'); params.push(brand); } } catch (e) {} }
+    const whereClause = where.length ? ('WHERE ' + where.join(' AND ')) : '';
+
+    const [rows] = await db.query(`
+      SELECT
+        COALESCE(s.channel_id, '__none__') AS channel_id,
+        COALESCE(s.channel_name, c.name, 'بدون قناة') AS channel_name,
+        COALESCE(c.channel_type, '') AS channel_type,
+        COALESCE(c.commission_pct, 0) AS commission_pct,
+        COALESCE(c.service_fee_pct, 0) AS service_fee_pct,
+        COUNT(*) AS order_count,
+        SUM(s.total_final) AS net_sales
+      FROM sales s
+      LEFT JOIN sales_channels c ON c.id = s.channel_id
+      ${whereClause}
+      GROUP BY s.channel_id, channel_name, channel_type, commission_pct, service_fee_pct
+      ORDER BY net_sales DESC
+    `, params);
+
+    // Commission actually POSTED to GL (Cr account 2320 via ChannelCommission journals)
+    const postedMap = {};
+    try {
+      const pParams = [].concat(from ? [from] : []).concat(to ? [to] : []);
+      const [pc] = await db.query(`
+        SELECT s.channel_id AS channel_id, SUM(COALESCE(e.credit,0)) AS posted
+        FROM gl_journals j
+        JOIN gl_entries e ON e.journal_id = j.id
+        JOIN gl_accounts a ON a.id = e.account_id
+        JOIN sales s ON s.id = j.reference_id
+        WHERE j.reference_type = 'ChannelCommission' AND a.code = '2320'
+          ${from ? 'AND DATE(s.order_date) >= ?' : ''}
+          ${to ? 'AND DATE(s.order_date) <= ?' : ''}
+        GROUP BY s.channel_id
+      `, pParams);
+      pc.forEach(r => { postedMap[r.channel_id || '__none__'] = Number(r.posted || 0); });
+    } catch (e) { /* GL tables/links may be absent — posted stays 0 */ }
+
+    const r2 = n => Math.round((Number(n) || 0) * 100) / 100;
+    const out = rows.map(r => {
+      const net = Number(r.net_sales || 0);
+      const commission = r2(net * (Number(r.commission_pct || 0) / 100));
+      const serviceFee = r2(net * (Number(r.service_fee_pct || 0) / 100));
+      const posted = Number(postedMap[r.channel_id] || 0);
+      return {
+        channelId: r.channel_id === '__none__' ? null : r.channel_id,
+        channelName: r.channel_name, channelType: r.channel_type,
+        orderCount: Number(r.order_count || 0),
+        netSales: net,
+        commissionPct: Number(r.commission_pct || 0), commission,
+        serviceFeePct: Number(r.service_fee_pct || 0), serviceFee,
+        platformDeduction: r2(commission + serviceFee),
+        netPayout: r2(net - commission - serviceFee),
+        commissionPostedToGL: r2(posted),
+        glVariance: r2(posted - (commission + serviceFee))
+      };
+    });
+
+    const totals = out.reduce((a, r) => {
+      a.net += r.netSales; a.commission += r.commission; a.serviceFee += r.serviceFee;
+      a.platformDeduction += r.platformDeduction; a.netPayout += r.netPayout;
+      a.commissionPostedToGL += r.commissionPostedToGL; a.count += r.orderCount; return a;
+    }, { net: 0, commission: 0, serviceFee: 0, platformDeduction: 0, netPayout: 0, commissionPostedToGL: 0, count: 0 });
+    Object.keys(totals).forEach(k => { if (k !== 'count') totals[k] = r2(totals[k]); });
+
+    res.json({ success: true, rows: out, totals, filters: { from, to, brand, channelId } });
+  } catch (e) {
+    console.error('channel-settlements error:', e);
     res.json({ success: false, error: e.message, rows: [], totals: {} });
   }
 });

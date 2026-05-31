@@ -71,25 +71,25 @@ async function _applyStockMovement(warehouseId, itemId, qtyDelta, unitCost, trig
     [warehouseId, itemId]);
   const oldQty = rows.length ? Number(rows[0].qty) : 0;
   const oldCost = rows.length ? Number(rows[0].avg_cost) : 0;
-  const newQty = oldQty + Number(qtyDelta);
   let newCost = oldCost;
   // WAC only recomputed when adding inventory (positive qtyDelta)
   if (Number(qtyDelta) > 0 && Number(unitCost) > 0) {
     newCost = _newWAC(oldQty, oldCost || unitCost, qtyDelta, unitCost);
   }
-  if (rows.length) {
-    await db.query(
-      `UPDATE warehouse_stock
-       SET qty=?, avg_cost=?, last_cost=?, last_updated=NOW()
-       WHERE warehouse_id=? AND item_id=?`,
-      [newQty, newCost, unitCost || oldCost, warehouseId, itemId]);
-  } else {
-    await db.query(
-      `INSERT INTO warehouse_stock (id, warehouse_id, item_id, qty, avg_cost, last_cost, last_updated)
-       VALUES (?,?,?,?,?,?,NOW())`,
-      ['WS-' + Date.now() + '-' + Math.random().toString(36).slice(2,6),
-       warehouseId, itemId, newQty, newCost, unitCost || 0]);
-  }
+  // v7.1 — ATOMIC qty delta via upsert on UNIQUE(warehouse_id,item_id), instead
+  // of writing an absolute newQty computed from a (possibly stale) prior read.
+  // Two concurrent movements on the same row can no longer lose a quantity
+  // update — the qty is always exact. avg_cost/last_cost are still set from the
+  // WAC read (cost is an approximation; qty is the figure that must never drift).
+  // Mirrors the deductWarehouseStock pattern. Allows negative balances.
+  const _wsId = 'WS-' + Date.now() + '-' + Math.random().toString(36).slice(2, 6);
+  await db.query(
+    `INSERT INTO warehouse_stock (id, warehouse_id, item_id, qty, avg_cost, last_cost, last_updated)
+     VALUES (?,?,?,?,?,?,NOW())
+     ON DUPLICATE KEY UPDATE qty = qty + ?, avg_cost = ?, last_cost = ?, last_updated = NOW()`,
+    [_wsId, warehouseId, itemId, Number(qtyDelta), newCost, unitCost || oldCost,
+     Number(qtyDelta), newCost, unitCost || oldCost]);
+  const newQty = oldQty + Number(qtyDelta);
   await _recordCostHistory(itemId, warehouseId, oldCost, newCost, oldQty, newQty, triggerType, refId, changedBy);
   return { oldQty, oldCost, newQty, newCost };
 }

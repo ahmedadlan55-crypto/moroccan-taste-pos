@@ -5085,6 +5085,42 @@ async function runMigrations() {
       console.log('[v6.5.0 semi-unify] migrated %d semi-finished items + %d consumer links',
         semis.length, linkedCount);
     }
+
+    // v7.1 — SECONDARY idempotent pass (runs EVERY boot, independent of the
+    // one-time block above): ensure EVERY menu.consumes_semi_id has a recipe row
+    // pointing to a kind='semi' inv_item, so the sales.js guard always detects it
+    // and skips the legacy path → prevents semi double-deduction. Fills only the
+    // genuinely-missing links (NOT EXISTS), so re-running creates no duplicates.
+    try {
+      const [unmapped] = await db.query(`
+        SELECT m.id, m.name, m.consumes_semi_id, m.consumes_semi_qty
+        FROM menu m
+        WHERE m.consumes_semi_id IS NOT NULL AND m.consumes_semi_id <> ''
+          AND NOT EXISTS (
+            SELECT 1 FROM recipe r JOIN inv_items i ON i.id = r.inv_item_id
+            WHERE r.menu_id = m.id AND i.kind = 'semi')
+      `);
+      let backfilled = 0;
+      for (const m of unmapped) {
+        let invSemiId = null;
+        const [direct] = await db.query("SELECT id FROM inv_items WHERE id = ? AND kind = 'semi'", [m.consumes_semi_id]);
+        if (direct.length) invSemiId = m.consumes_semi_id;
+        else {
+          const base = String(m.consumes_semi_id || '').replace(/^MENU-?/i, '');
+          const [alt] = await db.query("SELECT id FROM inv_items WHERE id = ? AND kind = 'semi'", ['INV-SEMI-' + base]);
+          if (alt.length) invSemiId = 'INV-SEMI-' + base;
+        }
+        if (!invSemiId) continue; // unresolvable — legacy path still single-deducts
+        const [exists] = await db.query('SELECT id FROM recipe WHERE menu_id = ? AND inv_item_id = ?', [m.id, invSemiId]);
+        if (exists.length) continue;
+        const [nm] = await db.query('SELECT name FROM inv_items WHERE id = ?', [invSemiId]);
+        await db.query(
+          'INSERT INTO recipe (menu_id, menu_name, inv_item_id, inv_item_name, qty_used) VALUES (?,?,?,?,?)',
+          [m.id, m.name, invSemiId, (nm[0] && nm[0].name) || invSemiId, Number(m.consumes_semi_qty) || 0]);
+        backfilled++;
+      }
+      if (backfilled > 0) console.log('[v7.1 semi-link backfill] created ' + backfilled + ' missing consumes_semi recipe rows');
+    } catch (e2) { console.warn('[v7.1 semi-link backfill] skipped:', e2.message); }
   } catch (e) {
     console.error('[v6.5.0 semi-unify] migration failed (non-fatal):', e.message);
   }

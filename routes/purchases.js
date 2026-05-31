@@ -301,9 +301,10 @@ router.post('/receive/:id', async (req, res) => {
     // ─── CASCADE: recompute menu costs for any affected products ───
     if (updated.length) {
       try {
-        const { recomputeMenuCostsForItems } = require('./pricing-utils');
-        const recomputed = await recomputeMenuCostsForItems(updated.map(u => u.invId));
-        // Production: removed debug log
+        // v7.1 — cascade: re-derive semi-finished costs from their BOM first,
+        // then finished menu costs, so a raw-material price change flows through.
+        const { recomputeSemiThenFinished } = require('./pricing-utils');
+        await recomputeSemiThenFinished(updated.map(u => u.invId));
       } catch (cascadeErr) { /* Production: removed debug log */ }
     }
 
@@ -426,10 +427,10 @@ router.post('/receive/:id/revert', async (req, res) => {
     // Delete purchase lots created by this receive
     try { await db.query('DELETE FROM purchase_lots WHERE purchase_id = ?', [id]); } catch(e) {}
 
-    // Cascade: recompute affected menu costs after stock rollback
+    // Cascade: recompute affected menu costs after stock rollback (semi → finished)
     try {
-      const { recomputeMenuCostsForItems } = require('./pricing-utils');
-      await recomputeMenuCostsForItems(resolved.map(r => r.inv.id));
+      const { recomputeSemiThenFinished } = require('./pricing-utils');
+      await recomputeSemiThenFinished(resolved.map(r => r.inv.id));
     } catch(e) {}
 
     // Flip the purchase back to draft

@@ -168,7 +168,7 @@ router.post('/', async (req, res) => {
     const { items, total, totalFinal, paymentMethod, discountName, discountAmount, kitaServiceFee, splitDetails } = req.body;
     const { username, shiftId, warehouseId: reqWhId } = req.body;
     // ─── V3: optional channel + discount metadata from POS ───
-    const { channelId, channelName, discountId, discountGlAccountId, lineDiscounts: lineDiscPayload } = req.body;
+    let { channelId, channelName, discountId, discountGlAccountId, lineDiscounts: lineDiscPayload } = req.body;
     // ─── v5.11.4: optional customer payload (id OR phone+name+gender) + Other-method notes ───
     const { customer: customerPayload, paymentNotes } = req.body;
     // V5.9.2 — 4-step fallback chain to resolve which warehouse the
@@ -214,6 +214,15 @@ router.post('/', async (req, res) => {
     } catch (periodErr) {
       // Bubble out of the transaction so the outer catch returns 403
       throw periodErr;
+    }
+
+    // v7.1 — default to the main dine-in channel when the POS omits the channel,
+    // so every sale is attributed (no NULL "بدون قناة" rows in channel reports).
+    if (!channelId) {
+      try {
+        const [_dc] = await db.query("SELECT id FROM sales_channels WHERE channel_type = 'dine_in' AND is_active = 1 ORDER BY display_order LIMIT 1");
+        channelId = _dc.length ? _dc[0].id : 'CH-MAIN';
+      } catch (_) { channelId = 'CH-MAIN'; }
     }
 
     // ─── V3: Resolve channel name from DB if id provided ───
@@ -929,11 +938,53 @@ router.post('/', async (req, res) => {
         if (!post.success) {
           throw new Error('GL_POSTING_FAILED: ' + (post.error || 'unknown'));
         }
+
+        // v7.1 — Channel commission + service fee as a SEPARATE journal.
+        // BEST-EFFORT: postJournal returns a success flag (never throws), and the
+        // whole block is wrapped so a missing account / any error only logs — the
+        // sale is NEVER lost. The journal is balanced (Dr expense = Cr payable).
+        try {
+          if (channelId && net > 0) {
+            const [chRow] = await db.query(
+              'SELECT commission_pct, service_fee_pct FROM sales_channels WHERE id = ? LIMIT 1', [channelId]);
+            const _pct = chRow.length
+              ? (Number(chRow[0].commission_pct) || 0) + (Number(chRow[0].service_fee_pct) || 0) : 0;
+            const _amt = Math.round(net * (_pct / 100) * 100) / 100;
+            if (_amt > 0) {
+              await gl.ensureCoreAccounts(db); // idempotent — seeds 5500 + 2320 if missing
+              const cPost = await gl.postJournal(db, {
+                journalDate: now.toISOString().slice(0, 10),
+                description: 'عمولة قناة ' + (resolvedChannelName || '') + ' — ' + orderId,
+                referenceType: 'ChannelCommission',
+                referenceId: orderId,
+                entries: [
+                  { accountCode: '5500', debit: _amt, credit: 0, description: 'عمولة منصة التوصيل', branchId: branchId || null, brandId: brandId || null },
+                  { accountCode: '2320', debit: 0, credit: _amt, description: 'مستحق للمنصة', branchId: branchId || null, brandId: brandId || null }
+                ],
+                postedBy: username || ''
+              });
+              if (!cPost.success) console.warn('[sale ' + orderId + '] channel commission GL not posted:', cPost.error);
+            }
+          }
+        } catch (commErr) { console.warn('[sale ' + orderId + '] channel commission GL skipped:', commErr.message); }
       }
     }
 
     // v6.0.1 Wave A — commit the transaction
     await _conn.commit();
+
+    // v7.1 — NON-BLOCKING cost audit: record (best-effort) when a sale had
+    // zero-cost components or items with no recipe, so the owner can review
+    // margins later. Never affects the sale (already committed).
+    try {
+      if (cogsWarning || (itemsWithoutRecipe && itemsWithoutRecipe.length)) {
+        await db.query(
+          'INSERT INTO audit_log (action, entity_type, entity_id, username, details, ip, created_at) VALUES (?,?,?,?,?,?,NOW())',
+          ['sale_cost_warning', 'sale', orderId, username || '',
+           JSON.stringify({ cogsWarning: cogsWarning || null, noRecipe: (itemsWithoutRecipe || []).map(x => x.name || x.id) }),
+           req.ip || '']);
+      }
+    } catch (_) { /* audit_log columns may differ — never block the sale */ }
 
     // v6.1.0 Wave E.6 — enqueue ZATCA submission AFTER commit. The
     // worker silently no-ops when CSID isn't onboarded yet, so this

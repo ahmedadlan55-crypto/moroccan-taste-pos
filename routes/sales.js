@@ -702,15 +702,18 @@ router.post('/', async (req, res) => {
       if (meta && meta.method === 'imported') {
         try {
           if (warehouseId) {
+            // v7.1 — never silently clamp at 0. Stock must reflect reality so
+            // an over-sale shows as NEGATIVE (visible shortage) instead of a
+            // misleading 0. (The register is never blocked.)
             await db.query(
-              `UPDATE warehouse_stock SET qty = ${meta.allowNegative ? 'qty - ?' : 'GREATEST(0, qty - ?)'} WHERE warehouse_id = ? AND item_id = ?`,
+              `UPDATE warehouse_stock SET qty = qty - ? WHERE warehouse_id = ? AND item_id = ?`,
               [item.qty, warehouseId, item.id]);
             // C.2 — always re-derive from sum, not GREATEST-clamp the global field
             await recomputeMenuStock(db, item.id);
           } else {
             // Legacy: no warehouse → write global menu.stock directly.
             await db.query(
-              `UPDATE menu SET stock = ${meta.allowNegative ? 'stock - ?' : 'GREATEST(0, stock - ?)'} WHERE id = ?`,
+              `UPDATE menu SET stock = stock - ? WHERE id = ?`,
               [item.qty, item.id]);
           }
         } catch(_) {}
@@ -732,8 +735,10 @@ router.post('/', async (req, res) => {
         // always equals SUM(warehouse_stock) without drift.
         let affected = 0;
         if (warehouseId) {
+          // v7.1 — allow negative: an over-sale shows the true (negative)
+          // shortage instead of being silently floored at 0.
           const [whRes] = await db.query(
-            'UPDATE warehouse_stock SET qty = GREATEST(0, qty - ?) WHERE warehouse_id = ? AND item_id = ?',
+            'UPDATE warehouse_stock SET qty = qty - ? WHERE warehouse_id = ? AND item_id = ?',
             [deduct, warehouseId, ing.invId]
           );
           affected = whRes.affectedRows;
@@ -747,11 +752,11 @@ router.post('/', async (req, res) => {
           affected = updateResult.affectedRows;
         }
 
-        // Record movement with warehouse reference
+        // Record movement, linked to the numbered invoice (reference_type='sale').
         const movId = 'MOV-' + Date.now() + '-' + Math.random().toString(36).substr(2, 4) + '-' + deductions.length;
         await db.query(
-          'INSERT INTO inventory_movements (id, movement_date, item_id, item_name, type, qty, reason, username, notes, warehouse_id) VALUES (?,?,?,?,?,?,?,?,?,?)',
-          [movId, now, ing.invId, ing.invName, 'out', deduct, 'مبيعات', username, orderId, warehouseId || null]
+          'INSERT INTO inventory_movements (id, movement_date, item_id, item_name, type, qty, reason, username, notes, warehouse_id, reference_type, reference_id) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)',
+          [movId, now, ing.invId, ing.invName, 'out', deduct, 'مبيعات', username, (invoiceNumber || orderId), warehouseId || null, 'sale', (invoiceNumber || orderId)]
         );
 
         deductions.push({

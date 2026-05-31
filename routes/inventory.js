@@ -1,6 +1,7 @@
 const router = require('express').Router();
 const db = require('../db/connection');
 const { recomputeInvItemStock, recomputeMenuStock, reconcileAllStock } = require('../lib/stockRecompute');
+const { nextDocNumber } = require('../lib/docNumber'); // v7.1 — ADJ-… numbering
 
 // v5.10.25 — Idempotent migration: add deleted_at column to inv_items so
 // the new "إدارة مواد المخزون" catalog page can soft-delete + restore.
@@ -1858,9 +1859,10 @@ router.post('/stock-update', async (req, res) => {
     if (warehouseId) {
       try {
         const wsId = 'WS-' + warehouseId + '-' + itemId;
+        // v7.1 — allow negative (no GREATEST clamp) so shortages stay visible.
         await db.query(
           `INSERT INTO warehouse_stock (id, warehouse_id, item_id, qty) VALUES (?,?,?,?)
-           ON DUPLICATE KEY UPDATE qty = GREATEST(0, qty + VALUES(qty))`,
+           ON DUPLICATE KEY UPDATE qty = qty + VALUES(qty)`,
           [wsId, warehouseId, itemId, delta]
         );
         await recomputeInvItemStock(db, itemId);
@@ -1870,7 +1872,7 @@ router.post('/stock-update', async (req, res) => {
       if (type === 'in') {
         await db.query('UPDATE inv_items SET stock = stock + ? WHERE id = ?', [qty, itemId]);
       } else {
-        await db.query('UPDATE inv_items SET stock = GREATEST(0, stock - ?) WHERE id = ?', [qty, itemId]);
+        await db.query('UPDATE inv_items SET stock = stock - ? WHERE id = ?', [qty, itemId]);
       }
     }
 
@@ -3482,15 +3484,18 @@ router.post('/adjustments', async (req, res) => {
 
     const now = new Date();
     const adjId = 'ADJ-' + Date.now();
+    // v7.1 — sequential human-readable document number (ADJ-YYYYMMDD-NNNN)
+    let adjNumber = '';
+    try { adjNumber = await nextDocNumber(db, 'ADJ'); } catch(_) { adjNumber = ''; }
     let totalCost = 0;
 
-    // Insert header first (FK). Best-effort warehouse_id/branch_id
-    // columns — if the schema is older and lacks them, fall back to the
-    // legacy column set.
+    // Insert header first (FK). Best-effort warehouse_id/branch_id +
+    // adjustment_number columns — if the schema is older and lacks them,
+    // fall back to the legacy column set.
     try {
       await db.query(
-        'INSERT INTO stock_adjustments (id, adjustment_date, reason, reason_notes, username, status, items_count, total_cost, warehouse_id, branch_id) VALUES (?,?,?,?,?,?,?,?,?,?)',
-        [adjId, now, reason || 'damaged', reasonNotes || '', username || '', 'pending', 0, 0, warehouseId || null, branchId || null]
+        'INSERT INTO stock_adjustments (id, adjustment_number, adjustment_date, reason, reason_notes, username, status, items_count, total_cost, warehouse_id, branch_id) VALUES (?,?,?,?,?,?,?,?,?,?,?)',
+        [adjId, adjNumber || null, now, reason || 'damaged', reasonNotes || '', username || '', 'pending', 0, 0, warehouseId || null, branchId || null]
       );
     } catch (_) {
       await db.query(
@@ -3545,14 +3550,15 @@ router.post('/adjustments/:id/approve', async (req, res) => {
       // (very old adjustments) so the behavior stays correct in both
       // cases.
       if (adjWarehouseId) {
+        // v7.1 — allow negative so an over-deduction shows the true shortage.
         await db.query(
-          'UPDATE warehouse_stock SET qty = GREATEST(0, qty - ?) WHERE warehouse_id = ? AND item_id = ?',
+          'UPDATE warehouse_stock SET qty = qty - ? WHERE warehouse_id = ? AND item_id = ?',
           [item.qty, adjWarehouseId, item.inv_item_id]);
         try {
           await recomputeInvItemStock(db, item.inv_item_id);
         } catch(_) { /* helper may be unavailable in very old deploys */ }
       } else {
-        await db.query('UPDATE inv_items SET stock = GREATEST(0, stock - ?) WHERE id = ?', [item.qty, item.inv_item_id]);
+        await db.query('UPDATE inv_items SET stock = stock - ? WHERE id = ?', [item.qty, item.inv_item_id]);
       }
 
       // v5.10.39 — Record movement WITH warehouse_id so per-warehouse

@@ -3074,6 +3074,19 @@ async function runMigrations() {
   // ─── v7.1 — ZATCA tax category column on menu (S/Z/E/O) ───
   await addColumnIfMissing('menu', 'tax_category', "ENUM('S','Z','E','O') DEFAULT 'S'");
 
+  // ─── v7.1 — unified document numbering (doc_counters) + per-op numbers ───
+  try {
+    await db.query(
+      "CREATE TABLE IF NOT EXISTS doc_counters (" +
+      "  counter_key VARCHAR(80) NOT NULL PRIMARY KEY," +
+      "  last_serial INT NOT NULL DEFAULT 0," +
+      "  updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP" +
+      ") ENGINE=InnoDB"
+    );
+  } catch (e) { console.log('[DB] doc_counters create warning:', e.message.substring(0, 120)); }
+  await addColumnIfMissing('waste_entries', 'waste_number', "VARCHAR(40)");
+  await addColumnIfMissing('stock_adjustments', 'adjustment_number', "VARCHAR(40)");
+
   // ─── v7.1 — One-time: treat ALL existing menu prices as NET (exclusive) ───
   // Owner confirmed every current price is net-of-tax; the cashier must add
   // 15% and show the inclusive amount. Legacy rows defaulted to inclusive

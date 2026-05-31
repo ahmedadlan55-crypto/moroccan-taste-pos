@@ -19,6 +19,9 @@
 const router = require('express').Router();
 const db = require('../db/connection');
 const gl = require('../lib/glPosting');
+// v7.1 — waste must actually deduct warehouse stock + carry a document number.
+const { recomputeInvItemStock } = require('../lib/stockRecompute');
+const { nextDocNumber } = require('../lib/docNumber');
 
 // ═══════════════════════════════════════
 // HELPERS
@@ -1602,28 +1605,44 @@ router.post('/waste-entries', async (req, res) => {
     total = Math.round(total * 100) / 100;
 
     const id = genId('WE');
+    // v7.1 — sequential document number (WST-YYYYMMDD-NNNN)
+    let wasteNumber = '';
+    try { wasteNumber = await nextDocNumber(db, 'WST'); } catch(_) { wasteNumber = ''; }
+    const _wasteNow = new Date();
     await db.query(
-      `INSERT INTO waste_entries (id, brand_id, branch_id, warehouse_id, cost_center_id, waste_date, reason, total_cost, notes, created_by)
-       VALUES (?,?,?,?,?,?,?,?,?,?)`,
-      [id, brandId||null, branchId||null, warehouseId, costCenterId||null,
+      `INSERT INTO waste_entries (id, waste_number, brand_id, branch_id, warehouse_id, cost_center_id, waste_date, reason, total_cost, notes, created_by)
+       VALUES (?,?,?,?,?,?,?,?,?,?,?)`,
+      [id, wasteNumber || null, brandId||null, branchId||null, warehouseId, costCenterId||null,
        wasteDate || new Date().toISOString().slice(0,10), reason || 'other', total, notes || '', createdBy || '']);
 
     for (const it of items) {
       const lineCost = (Number(it.quantity)||0) * (Number(it.unitCost)||0);
+      const _qty = Number(it.quantity) || 0;
       await db.query(
         `INSERT INTO waste_entry_items (id, waste_id, item_id, quantity, unit, unit_cost, line_cost)
          VALUES (?,?,?,?,?,?,?)`,
-        [genId('WEI'), id, it.itemId, Number(it.quantity)||0, it.unit||'PCS',
+        [genId('WEI'), id, it.itemId, _qty, it.unit||'PCS',
          Number(it.unitCost)||0, Math.round(lineCost * 100) / 100]);
-      // ═══ INVENTORY MOVEMENT (waste reduces stock) ═══
+
+      // v7.1 — ACTUALLY deduct from the warehouse stock (was missing → waste
+      // never reduced physical stock). Allow negative so shortages stay visible.
       try {
         await db.query(
-          `INSERT INTO inventory_movements (id, item_id, warehouse_id, txn_type, quantity, unit_cost, total_cost, reference_type, reference_id, created_by, created_at)
-           VALUES (?,?,?,?,?,?,?,?,?,?,NOW())`,
-          [genId('IM'), it.itemId, warehouseId, 'waste',
-           -(Number(it.quantity)||0), Number(it.unitCost)||0, -(Math.round(lineCost*100)/100),
-           'WasteEntry', id, createdBy||'']);
-      } catch(e) { /* older schema — inventory_movements may lack needed fields */ }
+          'UPDATE warehouse_stock SET qty = qty - ? WHERE warehouse_id = ? AND item_id = ?',
+          [_qty, warehouseId, it.itemId]);
+        await recomputeInvItemStock(db, it.itemId);
+      } catch(e) { /* warehouse_stock missing on very old deploy — non-fatal */ }
+
+      // v7.1 — movement in the STANDARD shape the warehouse ledger reads
+      // (type/qty/reason/warehouse_id/reference_*), replacing the old
+      // non-standard txn_type insert that silently failed.
+      try {
+        await db.query(
+          `INSERT INTO inventory_movements (id, movement_date, item_id, item_name, type, qty, reason, username, notes, warehouse_id, reference_type, reference_id)
+           VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`,
+          [genId('IM'), _wasteNow, it.itemId, it.itemName || '', 'out', _qty, 'هدر',
+           createdBy || '', wasteNumber || id, warehouseId, 'waste', id]);
+      } catch(e) { /* older schema — inventory_movements may lack columns */ }
     }
 
     // ═══ AUTO GL POSTING (v5.10.39 — granular by reason) ═══

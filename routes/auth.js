@@ -413,9 +413,37 @@ async function setUserMeta(meta) {
   );
 }
 
+// ─── v7.1 SECURITY — admin guard for user/permission management ───
+// The global /api guard (server.js) blanket-exempts ALL /auth/* paths so
+// login/refresh/init work without a token. That left user-management
+// endpoints fully PUBLIC (anyone could create an admin, list PII, delete
+// users, reset passwords). This middleware re-verifies the JWT locally and
+// requires an admin/developer for the sensitive management routes only.
+function requireAdmin(req, res, next) {
+  try {
+    const h = req.headers['authorization'] || '';
+    if (!h.startsWith('Bearer ')) return res.status(401).json({ success: false, error: 'غير مصرح — يجب تسجيل الدخول' });
+    const decoded = jwt.verify(h.split(' ')[1], process.env.JWT_SECRET);
+    req.user = decoded;
+    const isAdmin = decoded.role === 'admin' || decoded.isDeveloper === true || decoded.username === 'admin';
+    if (!isAdmin) return res.status(403).json({ success: false, error: 'هذه العملية تتطلب صلاحية مدير' });
+    next();
+  } catch (e) { return res.status(401).json({ success: false, error: 'جلسة غير صالحة — أعد تسجيل الدخول' }); }
+}
+
+// Best-effort audit logger for user-management ops (non-fatal).
+async function _auditUserOp(req, action, target, details) {
+  try {
+    await db.query(
+      'INSERT INTO audit_log (action, entity_type, entity_id, username, details, ip, created_at) VALUES (?,?,?,?,?,?,NOW())',
+      [action, 'user', target || '', (req.user && req.user.username) || '', JSON.stringify(details || {}), req.ip || '']
+    );
+  } catch (_) { /* table/columns may differ — never block the op */ }
+}
+
 // ─── Users CRUD ───
 // GET /api/auth/users — list users with display name + developer flag
-router.get('/users', async (req, res) => {
+router.get('/users', requireAdmin, async (req, res) => {
   try {
     // Detect optional columns (phone/full_name were added via migration)
     let hasPhone = true, hasFullName = true, hasCanChange = true, hasDefBranch = true;
@@ -496,7 +524,7 @@ router.get('/users', async (req, res) => {
 });
 
 // POST /api/auth/users — add new user (username = employee number)
-router.post('/users', async (req, res) => {
+router.post('/users', requireAdmin, async (req, res) => {
   try {
     const { username, password, role, displayName, isDeveloper, email, brandId, branchId, phone } = req.body;
     // v6.18.1 (Wave 2) — new HR people-record fields.  Soft-validated in
@@ -576,6 +604,7 @@ router.post('/users', async (req, res) => {
         );
       } catch(e) { /* ignore if custody_users table not yet created */ }
     }
+    _auditUserOp(req, 'create_user', username, { role: dbRole, brandId: brandId || null, branchId: branchId || null });
     res.json({ success: true });
   } catch (e) {
     res.json({ success: false, error: e.message });
@@ -583,7 +612,7 @@ router.post('/users', async (req, res) => {
 });
 
 // PUT /api/auth/users/:username — update display name, password, role, and everything else
-router.put('/users/:username', async (req, res) => {
+router.put('/users/:username', requireAdmin, async (req, res) => {
   try {
     let { username } = req.params;
     const {
@@ -731,6 +760,7 @@ router.put('/users/:username', async (req, res) => {
       }
       await setUserMeta(meta);
     }
+    _auditUserOp(req, 'update_user', username, { role: role || null });
     res.json({ success: true });
   } catch (e) {
     res.json({ success: false, error: e.message });
@@ -738,27 +768,33 @@ router.put('/users/:username', async (req, res) => {
 });
 
 // POST /api/auth/users/:username/toggle — toggle active
-router.post('/users/:username/toggle', async (req, res) => {
+router.post('/users/:username/toggle', requireAdmin, async (req, res) => {
   try {
     if (req.params.username === 'admin') return res.json({ success: false, error: 'لا يمكن إيقاف المستخدم admin' });
     await db.query('UPDATE users SET active = 1 - active WHERE username = ?', [req.params.username]);
+    _auditUserOp(req, 'toggle_user_active', req.params.username, {});
     res.json({ success: true });
   } catch (e) { res.json({ success: false, error: e.message }); }
 });
 
 // DELETE /api/auth/users/:username
 // Reset user password
-router.post('/users/:username/reset-password', async (req, res) => {
+router.post('/users/:username/reset-password', requireAdmin, async (req, res) => {
   try {
     const { password } = req.body;
-    if (!password || password.length < 4) return res.json({ success: false, error: 'كلمة المرور يجب أن تكون 4 أحرف على الأقل' });
+    // v7.1 — same complexity rules as user creation (was a weak 4-char min).
+    if (!password || password.length < 6) return res.json({ success: false, error: 'كلمة المرور يجب أن تكون 6 أحرف على الأقل' });
+    if (!/[a-zA-Z]/.test(password)) return res.json({ success: false, error: 'كلمة المرور يجب أن تحتوي على حروف' });
+    if (!/[0-9]/.test(password)) return res.json({ success: false, error: 'كلمة المرور يجب أن تحتوي على أرقام' });
+    if (!/[!@#$%^&*()_+\-=\[\]{};':"|,.<>\/?]/.test(password)) return res.json({ success: false, error: 'كلمة المرور يجب أن تحتوي على رمز خاص (!@#$...)' });
     const hashed = await bcrypt.hash(password, 10);
     await db.query('UPDATE users SET password = ?, failed_attempts = 0, locked_until = NULL WHERE username = ?', [hashed, req.params.username]);
+    _auditUserOp(req, 'reset_password', req.params.username, {});
     res.json({ success: true });
   } catch (e) { res.json({ success: false, error: e.message }); }
 });
 
-router.delete('/users/:username', async (req, res) => {
+router.delete('/users/:username', requireAdmin, async (req, res) => {
   try {
     if (req.params.username === 'admin') return res.json({ success: false, error: 'لا يمكن حذف المستخدم admin' });
     await db.query('DELETE FROM users WHERE username = ?', [req.params.username]);
@@ -768,6 +804,7 @@ router.delete('/users/:username', async (req, res) => {
       delete meta[req.params.username];
       await setUserMeta(meta);
     }
+    _auditUserOp(req, 'delete_user', req.params.username, {});
     res.json({ success: true });
   } catch (e) { res.json({ success: false, error: e.message }); }
 });
@@ -794,7 +831,7 @@ router.delete('/users/:username', async (req, res) => {
 // Front-end computes nothing; backend is the single source of truth.
 
 // GET — return the full permissions catalog with user-specific status.
-router.get('/users/:username/permissions', async (req, res) => {
+router.get('/users/:username/permissions', requireAdmin, async (req, res) => {
   try {
     const username = req.params.username;
     // Resolve the user's role (and catch missing users early).
@@ -843,7 +880,7 @@ router.get('/users/:username/permissions', async (req, res) => {
 });
 
 // POST — set or update an override.  Body: { grantType: 'grant' | 'revoke' }
-router.post('/users/:username/permissions/:permId', async (req, res) => {
+router.post('/users/:username/permissions/:permId', requireAdmin, async (req, res) => {
   try {
     const username = req.params.username;
     const permId   = req.params.permId;
@@ -872,7 +909,7 @@ router.post('/users/:username/permissions/:permId', async (req, res) => {
 });
 
 // DELETE — clear the override (fall back to role default).
-router.delete('/users/:username/permissions/:permId', async (req, res) => {
+router.delete('/users/:username/permissions/:permId', requireAdmin, async (req, res) => {
   try {
     await db.query(
       'DELETE FROM user_permission_overrides WHERE username = ? AND permission_id = ?',
@@ -1178,7 +1215,7 @@ router.get('/permissions/role/:role', async (req, res) => {
 });
 
 // PUT /auth/permissions/role/:role — replace role's permissions (atomic)
-router.put('/permissions/role/:role', async (req, res) => {
+router.put('/permissions/role/:role', requireAdmin, async (req, res) => {
   try {
     const grantedBy = (req.user && req.user.username) || '';
     // Only the primary 'admin' account can edit role permissions
@@ -1255,7 +1292,7 @@ router.get('/permissions/user/:username', async (req, res) => {
 });
 
 // PUT /auth/permissions/user/:username — replace user's overrides (admin only)
-router.put('/permissions/user/:username', async (req, res) => {
+router.put('/permissions/user/:username', requireAdmin, async (req, res) => {
   try {
     const grantedBy = (req.user && req.user.username) || '';
     if (grantedBy !== 'admin') {

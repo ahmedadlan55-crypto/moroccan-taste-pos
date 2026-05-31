@@ -3799,10 +3799,11 @@ function openInvM(mode, id = null) {
       // v6.20.0 — Default the tax-inclusive checkbox from settings.
       //   NewProductsTaxInclusive='0' (the owner's preferred default) means
       //   the cashier enters NET prices and the system adds VAT on top.
-      if (q("#miTaxInclusive")) {
+      if (q("#miTaxMode")) {
         var defIncl = String((state.settings && state.settings.NewProductsTaxInclusive) || '0') === '1';
-        q("#miTaxInclusive").checked = defIncl;
+        q("#miTaxMode").value = defIncl ? 'inclusive' : 'net';
       }
+      if (q("#miTaxCategory")) q("#miTaxCategory").value = 'S';
       // v5.12.7 — clear image preview/data on Add
       if (q("#miImageData")) q("#miImageData").value = '';
       if (q("#miImageFile")) q("#miImageFile").value = '';
@@ -3819,12 +3820,11 @@ function openInvM(mode, id = null) {
       // v6.20.0 — Preserve the stored is_tax_inclusive flag on edit.
       //   Legacy rows (created before v6.20.0) carry isTaxInclusive=true,
       //   matching pre-v6.20.0 semantics.
-      if (q("#miTaxInclusive")) {
-        var di = (typeof d.isTaxInclusive !== 'undefined')
-          ? !!d.isTaxInclusive
-          : true;
-        q("#miTaxInclusive").checked = di;
+      if (q("#miTaxMode")) {
+        var di = (typeof d.isTaxInclusive !== 'undefined') ? !!d.isTaxInclusive : true;
+        q("#miTaxMode").value = di ? 'inclusive' : 'net';
       }
+      if (q("#miTaxCategory")) q("#miTaxCategory").value = d.taxCategory || 'S';
       if (q("#miBrand")) q("#miBrand").value = d.brandId || d.brand_id || '';
       // Set pricing mode radio
       if (d.pricingMode === 'variable') { q("#miPricingVariable").checked = true; }
@@ -3960,9 +3960,9 @@ function saveInv() {
     markupPct: q("#miMarkupPct") ? q("#miMarkupPct").value : 30,
     // v5.12.7 — optional product image (base64). Empty string clears.
     imageData: q("#miImageData") ? q("#miImageData").value : '',
-    // v6.20.0 — per-product tax-inclusive flag (drives whether stored price
-    // is treated as net or gross at sale time).
-    taxInclusive: q("#miTaxInclusive") ? !!q("#miTaxInclusive").checked : true
+    // v7.1 — per-product tax mode (net/inclusive) + ZATCA category.
+    taxInclusive: q("#miTaxMode") ? (q("#miTaxMode").value === 'inclusive') : false,
+    taxCategory: q("#miTaxCategory") ? q("#miTaxCategory").value : 'S'
   };
   if (!d.name) return showToast("يرجى كتابة اسم المنتج", true);
   if (pricingMode === 'fixed' && !d.price) return showToast("يرجى إدخال سعر البيع", true);
@@ -3977,14 +3977,18 @@ function exportMenuExcel() {
   ensureXlsx().then(_exportMenuExcelBody).catch(function(e) { showToast(e.message || 'فشل تحميل XLSX', true); });
 }
 function _exportMenuExcelBody() {
-  var headers = ['الاسم', 'التصنيف', 'سعر البيع', 'التكلفة', 'فعال'];
+  // v7.1 — tax columns added (شامل الضريبة / فئة الضريبة)
+  var _catLbl = { S: 'قياسي 15%', Z: 'صفري 0%', E: 'معفى', O: 'خارج النطاق' };
+  var headers = ['الاسم', 'التصنيف', 'سعر البيع', 'التكلفة', 'فعال', 'شامل الضريبة', 'فئة الضريبة'];
   var data = (state.menu || []).map(function(m) {
     return {
       'الاسم': m.name || '',
       'التصنيف': m.category || '',
       'سعر البيع': m.price || 0,
       'التكلفة': m.cost || 0,
-      'فعال': m.active ? 'نعم' : 'لا'
+      'فعال': m.active ? 'نعم' : 'لا',
+      'شامل الضريبة': m.isTaxInclusive ? 'نعم' : 'لا',
+      'فئة الضريبة': _catLbl[m.taxCategory || 'S'] || 'قياسي 15%'
     };
   });
   var ws;
@@ -3993,7 +3997,7 @@ function _exportMenuExcelBody() {
   } else {
     ws = XLSX.utils.aoa_to_sheet([headers]);
   }
-  ws['!cols'] = [{wch:25},{wch:15},{wch:12},{wch:12},{wch:8}];
+  ws['!cols'] = [{wch:25},{wch:15},{wch:12},{wch:12},{wch:8},{wch:12},{wch:14}];
   var wb = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(wb, ws, 'المنيو');
   var today = new Date().toISOString().slice(0,10);
@@ -4016,6 +4020,12 @@ function _importMenuExcelBody(input) {
       var rows = XLSX.utils.sheet_to_json(ws);
       if (!rows.length) { showToast("الملف فارغ", true); input.value = ''; return; }
 
+      // v7.1 — parse tax columns. Inclusive: نعم/yes/1 → true. Category text → S/Z/E.
+      var _parseIncl = function(v){ var s=String(v==null?'':v).trim().toLowerCase(); return s==='نعم'||s==='yes'||s==='true'||s==='1'; };
+      var _parseCat = function(v){ var s=String(v==null?'':v).trim().toLowerCase();
+        if (s.indexOf('معف')>=0 || s==='e') return 'E';
+        if (s.indexOf('صفر')>=0 || s==='z' || s.indexOf('zero')>=0) return 'Z';
+        return 'S'; };
       var items = rows.map(function(r) {
         return {
           name: r['الاسم'] || r['name'] || r['Name'] || '',
@@ -4024,7 +4034,9 @@ function _importMenuExcelBody(input) {
           cost: Number(r['التكلفة'] || r['cost'] || r['Cost'] || 0),
           stock: 9999,
           minStock: 0,
-          active: r['فعال'] === 'لا' ? false : true
+          active: r['فعال'] === 'لا' ? false : true,
+          taxInclusive: _parseIncl(r['شامل الضريبة'] || r['taxInclusive'] || ''),
+          taxCategory: _parseCat(r['فئة الضريبة'] || r['taxCategory'] || 'S')
         };
       }).filter(function(i) { return i.name; });
 

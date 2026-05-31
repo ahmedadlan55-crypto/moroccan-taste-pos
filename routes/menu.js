@@ -188,13 +188,16 @@ router.post('/', async (req, res) => {
         taxInclusive = rows.length ? String(rows[0].setting_value) === '1' : false;
       } catch (_) { taxInclusive = false; }
     }
+    // v7.1 — ZATCA tax category (S=standard 15%, Z=zero, E=exempt, O=out-of-scope)
+    let taxCategory = String(req.body.taxCategory || 'S').toUpperCase();
+    if (['S','Z','E','O'].indexOf(taxCategory) < 0) taxCategory = 'S';
     await db.query(
-      `INSERT INTO menu (id, name, name_en, price, is_tax_inclusive, category, cost, stock, min_stock, active, pricing_mode, markup_pct, brand_id,
+      `INSERT INTO menu (id, name, name_en, price, is_tax_inclusive, tax_category, category, cost, stock, min_stock, active, pricing_mode, markup_pct, brand_id,
                          is_semi_finished, production_unit, consumes_semi_id, consumes_semi_qty,
                          production_warehouse_id, sales_warehouse_id,
                          unit, big_unit, conv_rate, yield_quantity, yield_unit, image_data)
-       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
-      [id, name, nameEn || null, price || 0, taxInclusive ? 1 : 0,
+       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+      [id, name, nameEn || null, price || 0, taxInclusive ? 1 : 0, taxCategory,
        category || 'عام', cost || 0, stock || 0, minStock || 0, active !== false,
        pricingMode || 'fixed', markupPct || 30, brandId || null,
        isSemiFinished ? 1 : 0, productionUnit || 'pcs', consumesSemiId || null, consumesSemiQty || 0,
@@ -238,6 +241,10 @@ router.put('/:id', async (req, res) => {
     // legacy rows); explicit true/false overrides.
     const setImage = (typeof imageData !== 'undefined');
     const setTaxIncl = (typeof req.body.taxInclusive !== 'undefined');
+    // v7.1 — tax_category, only updated when explicitly provided
+    const setTaxCat = (typeof req.body.taxCategory !== 'undefined');
+    let _taxCat = String(req.body.taxCategory || 'S').toUpperCase();
+    if (['S','Z','E','O'].indexOf(_taxCat) < 0) _taxCat = 'S';
     const sql =
       `UPDATE menu SET name=?, name_en=?, price=?, category=?, cost=?, stock=?, min_stock=?, active=?,
                        pricing_mode=?, markup_pct=?, brand_id=?,
@@ -246,6 +253,7 @@ router.put('/:id', async (req, res) => {
                        unit=?, big_unit=?, conv_rate=?, yield_quantity=?, yield_unit=?` +
       (setImage ? ', image_data=?' : '') +
       (setTaxIncl ? ', is_tax_inclusive=?' : '') +
+      (setTaxCat ? ', tax_category=?' : '') +
       ` WHERE id=?`;
     const params = [name, nameEn || null, price || 0, category, cost || 0, stock, minStock, active, pricingMode || 'variable', markupPct || 0,
        brandId || null,
@@ -255,6 +263,7 @@ router.put('/:id', async (req, res) => {
        Number(yieldQuantity) || 1, yieldUnit || null];
     if (setImage) params.push(imageData || null);
     if (setTaxIncl) params.push(req.body.taxInclusive ? 1 : 0);
+    if (setTaxCat) params.push(_taxCat);
     params.push(req.params.id);
     const [result] = await db.query(sql, params);
     if (result.affectedRows === 0) {
@@ -441,17 +450,21 @@ router.post('/import', async (req, res) => {
     for (const item of items) {
       const id = item.id || 'MENU-' + Date.now() + '-' + Math.random().toString(36).substr(2, 4);
       const [existing] = await db.query('SELECT id FROM menu WHERE id = ? OR name = ?', [id, item.name]);
+      // v7.1 — tax columns from the Excel sheet
+      const _incl = item.taxInclusive ? 1 : 0;
+      let _cat = String(item.taxCategory || 'S').toUpperCase();
+      if (['S','Z','E','O'].indexOf(_cat) < 0) _cat = 'S';
 
       if (existing.length) {
         await db.query(
-          `UPDATE menu SET name=?, price=?, category=?, cost=?, stock=?, min_stock=?, active=? WHERE id=?`,
-          [item.name, item.price || 0, item.category || 'عام', item.cost || 0, item.stock || 999, item.minStock || 5, item.active !== false, existing[0].id]
+          `UPDATE menu SET name=?, price=?, category=?, cost=?, stock=?, min_stock=?, active=?, is_tax_inclusive=?, tax_category=? WHERE id=?`,
+          [item.name, item.price || 0, item.category || 'عام', item.cost || 0, item.stock || 999, item.minStock || 5, item.active !== false, _incl, _cat, existing[0].id]
         );
         updated++;
       } else {
         await db.query(
-          `INSERT INTO menu (id, name, price, category, cost, stock, min_stock, active) VALUES (?,?,?,?,?,?,?,?)`,
-          [id, item.name, item.price || 0, item.category || 'عام', item.cost || 0, item.stock || 999, item.minStock || 5, item.active !== false]
+          `INSERT INTO menu (id, name, price, category, cost, stock, min_stock, active, is_tax_inclusive, tax_category) VALUES (?,?,?,?,?,?,?,?,?,?)`,
+          [id, item.name, item.price || 0, item.category || 'عام', item.cost || 0, item.stock || 999, item.minStock || 5, item.active !== false, _incl, _cat]
         );
         imported++;
       }

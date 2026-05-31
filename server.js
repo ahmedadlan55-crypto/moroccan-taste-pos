@@ -3071,6 +3071,25 @@ async function runMigrations() {
     console.log('[DB] Tax settings seed warning:', e.message.substring(0, 120));
   }
 
+  // ─── v7.1 — ZATCA tax category column on menu (S/Z/E/O) ───
+  await addColumnIfMissing('menu', 'tax_category', "ENUM('S','Z','E','O') DEFAULT 'S'");
+
+  // ─── v7.1 — One-time: treat ALL existing menu prices as NET (exclusive) ───
+  // Owner confirmed every current price is net-of-tax; the cashier must add
+  // 15% and show the inclusive amount. Legacy rows defaulted to inclusive
+  // (is_tax_inclusive=1) so the net price was shown as-is. This flips them
+  // ONCE (guarded by a settings flag) so per-item edits afterwards stick.
+  try {
+    const [done] = await db.query("SELECT setting_value FROM settings WHERE setting_key = 'MenuTaxNetMigration_v71' LIMIT 1");
+    if (!done.length) {
+      const [r] = await db.query("UPDATE menu SET is_tax_inclusive = 0");
+      await db.query("INSERT INTO settings (setting_key, setting_value) VALUES ('MenuTaxNetMigration_v71','1') ON DUPLICATE KEY UPDATE setting_value = '1'");
+      console.log('[DB] v7.1 menu-tax-net migration: flipped ' + (r.affectedRows || 0) + ' items to net (cashier now shows +15%).');
+    }
+  } catch (e) {
+    console.log('[DB] menu-tax-net migration warning:', e.message.substring(0, 120));
+  }
+
   // ─── v6.0.2 Wave B.6 — UNIQUE constraint on customers.phone ───
   // First deduplicate (keep the oldest row per phone), then enforce
   // UNIQUE so the upsert-by-phone flow can never produce siblings.

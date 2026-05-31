@@ -2,7 +2,7 @@ const router = require('express').Router();
 const db = require('../db/connection');
 const gl = require('../lib/glPosting');
 const zatca = require('../lib/zatca');
-const { recomputeInvItemStock, recomputeMenuStock } = require('../lib/stockRecompute');
+const { recomputeInvItemStock, recomputeMenuStock, deductWarehouseStock } = require('../lib/stockRecompute');
 // v6.20.0 — Central tax math.  Honors per-item is_tax_inclusive + reads
 // the live VAT rate from settings (not ENV anymore).
 const pricing = require('../lib/pricing');
@@ -664,12 +664,10 @@ router.post('/', async (req, res) => {
           // semi-finished products becomes a SUM(warehouse_stock.qty) rollup
           // so multi-warehouse balances stay independent.
           if (warehouseId) {
-            // v7.1 — allow negative so over-selling a semi-finished product shows
-            // the true shortage instead of silently flooring the balance at 0.
-            await db.query(
-              'UPDATE warehouse_stock SET qty = qty - ? WHERE warehouse_id = ? AND item_id = ?',
-              [consumed, warehouseId, sc.semiId]
-            );
+            // v7.1 — atomic upsert-deduct: creates a NEGATIVE row if the semi
+            // has none in this warehouse (empty branch) so the shortage is real
+            // and visible, instead of a 0-rows UPDATE that silently vanishes.
+            await deductWarehouseStock(db, warehouseId, sc.semiId, consumed);
             await recomputeMenuStock(db, sc.semiId);
           } else {
             // Legacy fallback: no warehouse — deduct global menu.stock directly.
@@ -708,9 +706,9 @@ router.post('/', async (req, res) => {
             // v7.1 — never silently clamp at 0. Stock must reflect reality so
             // an over-sale shows as NEGATIVE (visible shortage) instead of a
             // misleading 0. (The register is never blocked.)
-            await db.query(
-              `UPDATE warehouse_stock SET qty = qty - ? WHERE warehouse_id = ? AND item_id = ?`,
-              [item.qty, warehouseId, item.id]);
+            // v7.1 — atomic upsert-deduct (creates a negative row if missing so
+            // an over-sale from an empty warehouse shows the true shortage).
+            await deductWarehouseStock(db, warehouseId, item.id, item.qty);
             // C.2 — always re-derive from sum, not GREATEST-clamp the global field
             await recomputeMenuStock(db, item.id);
           } else {
@@ -740,11 +738,11 @@ router.post('/', async (req, res) => {
         if (warehouseId) {
           // v7.1 — allow negative: an over-sale shows the true (negative)
           // shortage instead of being silently floored at 0.
-          const [whRes] = await db.query(
-            'UPDATE warehouse_stock SET qty = qty - ? WHERE warehouse_id = ? AND item_id = ?',
-            [deduct, warehouseId, ing.invId]
-          );
-          affected = whRes.affectedRows;
+          // v7.1 — atomic upsert-deduct: never a 0-rows silent loss. If the raw
+          // material has no row in this warehouse (empty branch), a NEGATIVE row
+          // is created so the deficit is real and visible on the stock screen.
+          await deductWarehouseStock(db, warehouseId, ing.invId, deduct);
+          affected = 1; // deduction is now always applied (row created if missing)
           await recomputeInvItemStock(db, ing.invId);
         } else {
           // Legacy fallback: no warehouse context — direct global write.

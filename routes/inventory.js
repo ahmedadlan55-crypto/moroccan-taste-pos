@@ -1,6 +1,6 @@
 const router = require('express').Router();
 const db = require('../db/connection');
-const { recomputeInvItemStock, recomputeMenuStock, reconcileAllStock } = require('../lib/stockRecompute');
+const { recomputeInvItemStock, recomputeMenuStock, reconcileAllStock, deductWarehouseStock } = require('../lib/stockRecompute');
 const { nextDocNumber } = require('../lib/docNumber'); // v7.1 — ADJ-… numbering
 
 // v5.10.25 — Idempotent migration: add deleted_at column to inv_items so
@@ -734,8 +734,11 @@ router.get('/items', async (req, res) => {
             -- this warehouse only if it has REAL presence here. A
             -- warehouse_stock row alone is no longer enough (legacy backfills
             -- left ghost qty=0 rows that made every warehouse look identical).
-            -- Real presence = stock right now > 0  OR  any movement history.
-            ws.qty > 0
+            -- Real presence = NON-ZERO stock (positive OR negative deficit) OR
+            -- any movement history. v7.1 — was qty > 0, which HID negative
+            -- balances (a real shortage in an over-sold/empty warehouse). Using
+            -- <> 0 surfaces deficits while still suppressing ghost qty=0 rows.
+            ws.qty <> 0
             OR EXISTS(SELECT 1 FROM inventory_movements im2
                       WHERE im2.item_id = i.id AND im2.warehouse_id = w.id)
           )`;
@@ -3550,10 +3553,10 @@ router.post('/adjustments/:id/approve', async (req, res) => {
       // (very old adjustments) so the behavior stays correct in both
       // cases.
       if (adjWarehouseId) {
-        // v7.1 — allow negative so an over-deduction shows the true shortage.
-        await db.query(
-          'UPDATE warehouse_stock SET qty = qty - ? WHERE warehouse_id = ? AND item_id = ?',
-          [item.qty, adjWarehouseId, item.inv_item_id]);
+        // v7.1 — atomic upsert-deduct: allow negative AND create the row if the
+        // item has none in this warehouse, so the over-deduction can never be a
+        // silent 0-rows loss — the true shortage is recorded.
+        await deductWarehouseStock(db, adjWarehouseId, item.inv_item_id, item.qty);
         try {
           await recomputeInvItemStock(db, item.inv_item_id);
         } catch(_) { /* helper may be unavailable in very old deploys */ }

@@ -20,7 +20,7 @@ const router = require('express').Router();
 const db = require('../db/connection');
 const gl = require('../lib/glPosting');
 // v7.1 — waste must actually deduct warehouse stock + carry a document number.
-const { recomputeInvItemStock } = require('../lib/stockRecompute');
+const { recomputeInvItemStock, deductWarehouseStock } = require('../lib/stockRecompute');
 const { nextDocNumber } = require('../lib/docNumber');
 
 // ═══════════════════════════════════════
@@ -1627,9 +1627,10 @@ router.post('/waste-entries', async (req, res) => {
       // v7.1 — ACTUALLY deduct from the warehouse stock (was missing → waste
       // never reduced physical stock). Allow negative so shortages stay visible.
       try {
-        await db.query(
-          'UPDATE warehouse_stock SET qty = qty - ? WHERE warehouse_id = ? AND item_id = ?',
-          [_qty, warehouseId, it.itemId]);
+        // v7.1 — atomic upsert-deduct: creates a negative row if the item has
+        // none in this warehouse, so wasting from an empty warehouse records the
+        // true deficit instead of a silent 0-rows loss.
+        await deductWarehouseStock(db, warehouseId, it.itemId, _qty);
         await recomputeInvItemStock(db, it.itemId);
       } catch(e) { /* warehouse_stock missing on very old deploy — non-fatal */ }
 

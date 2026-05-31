@@ -8259,11 +8259,16 @@ function renderInvTable(list) {
         var cost  = Number(i.cost) || 0;
         var lineValue = stock * cost;
         grandTotal += lineValue;
-        var isOut = stock < EPS;
-        var stClass    = isOut ? 'red' : (stock <= minS && minS > 0 ? 'red' : 'green');
-        var statusLabel= isOut ? 'نفد' : (stock <= minS && minS > 0 ? 'منخفض' : 'متوفر');
-        var statusBg   = isOut ? '#fee2e2' : (stock <= minS && minS > 0 ? '#fef3c7' : '#dcfce7');
-        var statusFg   = isOut ? '#b91c1c' : (stock <= minS && minS > 0 ? '#92400e' : '#15803d');
+        // v7.1 — distinguish a real DEFICIT (negative = over-sold/withdrawn from
+        // an empty warehouse) from a plain depleted (≈0) item, and ALWAYS show
+        // the real number (incl. the negative) instead of clamping it to "0".
+        var isDeficit = stock < -EPS;
+        var isOut     = stock < EPS && !isDeficit;
+        var isLow     = !isDeficit && !isOut && stock <= minS && minS > 0;
+        var stClass    = (isDeficit || isOut || isLow) ? 'red' : 'green';
+        var statusLabel= isDeficit ? 'عجز' : (isOut ? 'نفد' : (isLow ? 'منخفض' : 'متوفر'));
+        var statusBg   = (isDeficit || isOut) ? '#fee2e2' : (isLow ? '#fef3c7' : '#dcfce7');
+        var statusFg   = (isDeficit || isOut) ? '#b91c1c' : (isLow ? '#92400e' : '#15803d');
         var brandHtml = i.brandName
           ? '<span class="badge" style="background:#ede9fe;color:#6d28d9;font-weight:700;"><i class="fas fa-store"></i> ' + (i.brandName || '') + '</span>'
           : '<span class="badge" style="background:#f1f5f9;color:#94a3b8;"><i class="fas fa-minus"></i> بدون</span>';
@@ -8295,7 +8300,7 @@ function renderInvTable(list) {
           '<td>' + brandHtml + '</td>' +
           '<td>' + whHtml + '</td>' +
           '<td><span class="badge" style="background:#e2e8f0;color:#475569;">' + (i.category || '') + '</span></td>' +
-          '<td style="font-weight:900;color:' + (isOut ? '#94a3b8' : '#0d47a1') + ';font-family:ui-monospace,monospace;">' + (isOut ? '0' : stock.toFixed(2)) + ' <span style="font-size:11px;color:#94a3b8;">' + (i.unit || '') + '</span></td>' +
+          '<td style="font-weight:900;color:' + (isDeficit ? '#b91c1c' : (isOut ? '#94a3b8' : '#0d47a1')) + ';font-family:ui-monospace,monospace;">' + stock.toFixed(2) + ' <span style="font-size:11px;color:#94a3b8;">' + (i.unit || '') + '</span></td>' +
           '<td style="font-family:ui-monospace,monospace;color:#475569;">' + cost.toFixed(4) + '</td>' +
           '<td style="font-weight:900;color:#7c3aed;font-family:ui-monospace,monospace;">' + lineValue.toFixed(2) + '</td>' +
           '<td><span class="badge ' + stClass + '">' + minS + '</span></td>' +

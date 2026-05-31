@@ -2471,6 +2471,13 @@ async function runMigrations() {
   // ═══════════════════════════════════════
   // Link all inventory operations to specific warehouses
   await addColumnIfMissing('inventory_movements', 'warehouse_id', "VARCHAR(50)");
+  // v7.1 — reference_type/reference_id link each movement to its SOURCE document
+  // (sale invoice, waste WST-, adjustment ADJ-, purchase…). db/schema.sql never
+  // defined these columns, yet routes/sales.js inserts into them WITHOUT a
+  // try/catch — so a fresh install would throw on every sale. Guarantee they
+  // exist on all deploys (idempotent: a no-op where they already exist).
+  await addColumnIfMissing('inventory_movements', 'reference_type', "VARCHAR(50)");
+  await addColumnIfMissing('inventory_movements', 'reference_id', "VARCHAR(100)");
   await addColumnIfMissing('stocktakes', 'warehouse_id', "VARCHAR(50)");
   await addColumnIfMissing('stocktakes', 'branch_id', "VARCHAR(50)");
   await addColumnIfMissing('shortage_requests', 'branch_id', "VARCHAR(50)");

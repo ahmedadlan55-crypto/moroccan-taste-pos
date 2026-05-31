@@ -405,7 +405,9 @@ router.post('/receive/:id/revert', async (req, res) => {
     for (const r of resolved) {
       if (purchaseWh) {
         await db.query(
-          'UPDATE warehouse_stock SET qty = GREATEST(0, qty - ?) WHERE warehouse_id = ? AND item_id = ?',
+          // v7.1 — allow negative: if a received purchase is reverted after some of
+          // its stock was already consumed, the balance must reflect the real deficit.
+          'UPDATE warehouse_stock SET qty = qty - ? WHERE warehouse_id = ? AND item_id = ?',
           [r.stockQty, purchaseWh, r.inv.id]
         );
         await recomputeInvItemStock(db, r.inv.id);

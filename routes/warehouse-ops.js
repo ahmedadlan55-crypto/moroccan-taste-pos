@@ -1304,7 +1304,9 @@ router.post('/expiry-alerts/:lotId/dispose', async (req, res) => {
       if (warehouse) {
         try {
           await c.query(
-            'UPDATE warehouse_stock SET qty = GREATEST(0, qty - ?) WHERE warehouse_id = ? AND item_id = ?',
+            // v7.1 — allow negative so disposing more than the recorded balance
+            // surfaces the discrepancy instead of silently flooring at 0.
+            'UPDATE warehouse_stock SET qty = qty - ? WHERE warehouse_id = ? AND item_id = ?',
             [qty, warehouse, itemId]);
         } catch (_) {}
       }

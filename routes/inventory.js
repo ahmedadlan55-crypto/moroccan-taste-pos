@@ -3565,11 +3565,14 @@ router.post('/adjustments/:id/approve', async (req, res) => {
       // reports show the row (was NULL previously, which orphaned every
       // adjustment entry in the admin view).
       const movId = 'MOV-' + Date.now() + '-' + Math.random().toString(36).substr(2, 4);
+      // v7.1 — link the movement to its adjustment document (reference_type/id) so
+      // the warehouse ledger can trace each row back to its ADJ- source. Columns
+      // are guaranteed by the inventory_movements migration in server.js.
       await db.query(
-        'INSERT INTO inventory_movements (id, movement_date, item_id, item_name, type, qty, reason, username, notes, warehouse_id) VALUES (?,?,?,?,?,?,?,?,?,?)',
+        'INSERT INTO inventory_movements (id, movement_date, item_id, item_name, type, qty, reason, username, notes, warehouse_id, reference_type, reference_id) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)',
         [movId, now, item.inv_item_id, item.inv_item_name, 'out', item.qty,
          REASON_LABELS[adj[0].reason] || 'تعديل كمية', username || '', 'ADJ: ' + id,
-         adjWarehouseId]
+         adjWarehouseId, 'adjustment', id]
       );
     }
 

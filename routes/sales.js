@@ -664,14 +664,17 @@ router.post('/', async (req, res) => {
           // semi-finished products becomes a SUM(warehouse_stock.qty) rollup
           // so multi-warehouse balances stay independent.
           if (warehouseId) {
+            // v7.1 — allow negative so over-selling a semi-finished product shows
+            // the true shortage instead of silently flooring the balance at 0.
             await db.query(
-              'UPDATE warehouse_stock SET qty = GREATEST(0, qty - ?) WHERE warehouse_id = ? AND item_id = ?',
+              'UPDATE warehouse_stock SET qty = qty - ? WHERE warehouse_id = ? AND item_id = ?',
               [consumed, warehouseId, sc.semiId]
             );
             await recomputeMenuStock(db, sc.semiId);
           } else {
             // Legacy fallback: no warehouse — deduct global menu.stock directly.
-            await db.query('UPDATE menu SET stock = GREATEST(0, stock - ?) WHERE id = ?', [consumed, sc.semiId]);
+            // v7.1 — allow negative (true shortage) instead of flooring at 0.
+            await db.query('UPDATE menu SET stock = stock - ? WHERE id = ?', [consumed, sc.semiId]);
           }
           // Movement log
           const movId = 'MOV-SEMI-' + Date.now() + '-' + Math.random().toString(36).substr(2, 4);

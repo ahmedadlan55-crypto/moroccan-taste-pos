@@ -1,5 +1,11 @@
 const router = require('express').Router();
 const db = require('../db/connection');
+// v7.1 SECURITY — the global /api guard (server.js) blanket-exempts /settings so
+// the login page can READ branding (company name/logo) before auth. That left
+// every settings WRITE (company info, tax number, payment methods, discounts,
+// service fees) fully public. Re-verify the JWT on writes only; GET routes stay
+// public so the login/branding flow is unaffected.
+const verifyToken = require('./authMiddleware');
 
 // Get all settings
 router.get('/', async (req, res) => {
@@ -14,7 +20,7 @@ router.get('/', async (req, res) => {
 });
 
 // Update settings
-router.put('/', async (req, res) => {
+router.put('/', verifyToken, async (req, res) => {
   try {
     const settings = req.body;
 
@@ -45,7 +51,7 @@ router.get('/payment-methods', async (req, res) => {
 });
 
 // Save payment methods
-router.put('/payment-methods', async (req, res) => {
+router.put('/payment-methods', verifyToken, async (req, res) => {
   try {
     const { methods } = req.body;
     if (!methods || !methods.length) return res.json({ success: false, error: 'No methods provided' });
@@ -71,7 +77,7 @@ router.put('/payment-methods', async (req, res) => {
 });
 
 // Delete a single payment method
-router.delete('/payment-methods/:id', async (req, res) => {
+router.delete('/payment-methods/:id', verifyToken, async (req, res) => {
   try {
     await db.query('DELETE FROM payment_methods WHERE id = ?', [req.params.id]);
     res.json({ success: true });
@@ -95,7 +101,7 @@ router.get('/discounts', async (req, res) => {
 });
 
 // Recompute all menu costs from current ingredient prices
-router.post('/recompute-costs', async (req, res) => {
+router.post('/recompute-costs', verifyToken, async (req, res) => {
   try {
     const { recomputeAllMenuCosts } = require('./pricing-utils');
     const count = await recomputeAllMenuCosts();
@@ -121,7 +127,7 @@ router.get('/discounts-v2', async (req, res) => {
   } catch(e) { res.json([]); }
 });
 
-router.post('/discounts-v2', async (req, res) => {
+router.post('/discounts-v2', verifyToken, async (req, res) => {
   try {
     const { id, name, type, value, maxAmount, minOrder, requireApproval, requireCode, code, enabled, displayOrder, validFrom, validTo, applyOn, color } = req.body;
     if (!name) return res.json({ success: false, error: 'الاسم مطلوب' });
@@ -141,7 +147,7 @@ router.post('/discounts-v2', async (req, res) => {
   } catch(e) { res.json({ success: false, error: e.message }); }
 });
 
-router.delete('/discounts-v2/:id', async (req, res) => {
+router.delete('/discounts-v2/:id', verifyToken, async (req, res) => {
   try {
     await db.query('DELETE FROM branch_discounts WHERE discount_id = ?', [req.params.id]);
     await db.query('DELETE FROM discounts_v2 WHERE id = ?', [req.params.id]);
@@ -173,7 +179,7 @@ router.get('/payment-methods-full', async (req, res) => {
   } catch(e) { res.json([]); }
 });
 
-router.post('/payment-methods-full', async (req, res) => {
+router.post('/payment-methods-full', verifyToken, async (req, res) => {
   try {
     const {
       id, name, nameAr, icon, isActive, serviceFeeRate, sortOrder, type,
@@ -223,7 +229,7 @@ router.post('/payment-methods-full', async (req, res) => {
 });
 
 // Single-method delete (v3)
-router.delete('/payment-methods-full/:id', async (req, res) => {
+router.delete('/payment-methods-full/:id', verifyToken, async (req, res) => {
   try {
     await db.query('DELETE FROM branch_payment_methods WHERE payment_method_id = ?', [req.params.id]);
     await db.query('DELETE FROM payment_methods WHERE id = ?', [req.params.id]);
@@ -255,7 +261,7 @@ router.get('/discounts-v2-full', async (req, res) => {
   } catch(e) { res.json([]); }
 });
 
-router.post('/discounts-v2-full', async (req, res) => {
+router.post('/discounts-v2-full', verifyToken, async (req, res) => {
   try {
     const {
       id, name, type, value, maxAmount, minOrder, requireApproval, requireCode, code,

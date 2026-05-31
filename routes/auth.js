@@ -368,7 +368,16 @@ router.get('/init/:username', async (req, res) => {
       menu: menu.map(m => ({
         id: m.id, name: m.name, price: Number(m.price), category: m.category,
         cost: Number(m.cost), stock: m.stock, minStock: m.min_stock, active: m.active,
-        brandId: m.brand_id || ''
+        brandId: m.brand_id || '',
+        // v7.1 TAX FIX — carry the tax flags so the cashier renders the GROSS
+        // (tax-inclusive) price.  The POS loads its menu from THIS endpoint
+        // (not /api/menu); without these fields computeGrossPerUnit() defaults
+        // to inclusive=true and shows the raw NET price (e.g. 15.65) instead of
+        // net×(1+VAT) = 18.  After the v7.1 net-migration all rows are
+        // is_tax_inclusive=0, so the POS now correctly adds 15% on display.
+        isTaxInclusive: (m.is_tax_inclusive === null || typeof m.is_tax_inclusive === 'undefined')
+          ? true : !!Number(m.is_tax_inclusive),
+        taxCategory: m.tax_category || 'S'
       })),
       activeShiftId: shifts.length ? shifts[0].id : '',
       usernames: users.map(u => u.username),
@@ -959,7 +968,10 @@ router.get('/reset-db/sections', (req, res) => {
 });
 
 // POST /api/auth/reset-db — DEVELOPER ONLY: wipe selected sections (or legacy full-wipe)
-router.post('/reset-db', async (req, res) => {
+// v7.1 SECURITY — require a valid admin JWT in addition to the password/double-confirm
+// checks below.  Previously this was reachable without any token (the global /api guard
+// exempts all /auth/*), so a leaked admin password alone could wipe production.
+router.post('/reset-db', requireAdmin, async (req, res) => {
   try {
     const { confirm, username, password, doubleConfirm, sections } = req.body;
 
@@ -1073,9 +1085,12 @@ const generateSecret = _genTotpSecret;
 const generateOTPAuthURI = _genOtpUri;
 
 // POST /api/auth/2fa/setup — generate 2FA secret for a user
-router.post('/2fa/setup', async (req, res) => {
+router.post('/2fa/setup', verifyToken, async (req, res) => {
   try {
-    const { username } = req.body;
+    // v7.1 SECURITY — was fully PUBLIC. Now requires login; a non-admin can
+    // only enroll 2FA for THEIR OWN account (admins may target any username).
+    const _isAdmin = req.user.role === 'admin' || req.user.isDeveloper === true || req.user.username === 'admin';
+    const username = (_isAdmin && req.body.username) ? req.body.username : req.user.username;
     if (!username) return res.json({ success: false, error: 'اسم المستخدم مطلوب' });
     const secret = generateSecret();
     // Store secret in users table
@@ -1087,9 +1102,12 @@ router.post('/2fa/setup', async (req, res) => {
 });
 
 // POST /api/auth/2fa/verify — verify a 2FA code
-router.post('/2fa/verify', async (req, res) => {
+router.post('/2fa/verify', verifyToken, async (req, res) => {
   try {
-    const { username, code } = req.body;
+    // v7.1 SECURITY — was fully PUBLIC (allowed TOTP brute-forcing for any user).
+    const _isAdmin = req.user.role === 'admin' || req.user.isDeveloper === true || req.user.username === 'admin';
+    const code = req.body.code;
+    const username = (_isAdmin && req.body.username) ? req.body.username : req.user.username;
     if (!username || !code) return res.json({ success: false, error: 'اسم المستخدم والرمز مطلوبان' });
     const [users] = await db.query('SELECT totp_secret FROM users WHERE username = ?', [username]);
     if (!users.length || !users[0].totp_secret) return res.json({ success: false, error: 'التحقق الثنائي غير مفعّل' });
@@ -1099,9 +1117,13 @@ router.post('/2fa/verify', async (req, res) => {
 });
 
 // POST /api/auth/2fa/disable — disable 2FA for a user
-router.post('/2fa/disable', async (req, res) => {
+router.post('/2fa/disable', verifyToken, async (req, res) => {
   try {
-    const { username } = req.body;
+    // v7.1 SECURITY — CRITICAL: was fully PUBLIC. Anyone could POST
+    // {username:'admin'} and strip 2FA off the admin account (account-takeover
+    // vector). Now requires login; a non-admin can only disable their OWN 2FA.
+    const _isAdmin = req.user.role === 'admin' || req.user.isDeveloper === true || req.user.username === 'admin';
+    const username = (_isAdmin && req.body.username) ? req.body.username : req.user.username;
     await db.query('UPDATE users SET totp_secret = NULL WHERE username = ?', [username]);
     res.json({ success: true });
   } catch (e) { res.json({ success: false, error: e.message }); }
@@ -1109,9 +1131,11 @@ router.post('/2fa/disable', async (req, res) => {
 
 // v6.4.0 — GET /api/auth/2fa/status?username= — does this user have 2FA on?
 // Returns { enabled: bool, hasSecret: bool } without revealing the secret.
-router.get('/2fa/status', async (req, res) => {
+router.get('/2fa/status', verifyToken, async (req, res) => {
   try {
-    const username = (req.user && req.user.username) || req.query.username;
+    // v7.1 SECURITY — token-derived user; admins may inspect another username.
+    const _isAdmin = req.user.role === 'admin' || req.user.isDeveloper === true || req.user.username === 'admin';
+    const username = (_isAdmin && req.query.username) ? req.query.username : req.user.username;
     if (!username) return res.json({ enabled: false });
     const [rows] = await db.query(
       'SELECT totp_secret FROM users WHERE username = ? LIMIT 1', [username]
@@ -1190,7 +1214,8 @@ async function addColumnIfMissing(table, column, definition) {
  * ═══════════════════════════════════════════════════════════════════ */
 
 // GET /auth/permissions/catalog — full list of available permissions (admin only)
-router.get('/permissions/catalog', async (req, res) => {
+// v7.1 SECURITY — require login (was public; leaked the full permission taxonomy).
+router.get('/permissions/catalog', verifyToken, async (req, res) => {
   try {
     const [rows] = await db.query("SELECT * FROM permissions_v3 ORDER BY sort_order, id");
     res.json(rows.map(r => ({
@@ -1204,7 +1229,8 @@ router.get('/permissions/catalog', async (req, res) => {
 });
 
 // GET /auth/permissions/role/:role — list permissions assigned to a role
-router.get('/permissions/role/:role', async (req, res) => {
+// v7.1 SECURITY — require login (was public; leaked role→permission mapping).
+router.get('/permissions/role/:role', verifyToken, async (req, res) => {
   try {
     const [rows] = await db.query(
       "SELECT permission_id FROM role_permissions WHERE role = ?",
@@ -1236,9 +1262,12 @@ router.put('/permissions/role/:role', requireAdmin, async (req, res) => {
 });
 
 // GET /auth/permissions/me — current user's effective permissions
-router.get('/permissions/me', async (req, res) => {
+router.get('/permissions/me', verifyToken, async (req, res) => {
   try {
-    const username = (req.user && req.user.username) || req.query.username;
+    // v7.1 SECURITY — derive the user from the verified token ONLY. The old
+    // `|| req.query.username` fallback let anyone probe any user's effective
+    // permissions (and the admin's isDeveloper flag) without authentication.
+    const username = req.user.username;
     if (!username) return res.json({ permissions: [], role: '' });
     const [u] = await db.query("SELECT role FROM users WHERE username = ? LIMIT 1", [username]);
     if (!u.length) return res.json({ permissions: [], role: '' });
@@ -1274,7 +1303,9 @@ router.get('/permissions/me', async (req, res) => {
 });
 
 // GET /auth/permissions/user/:username — get a specific user's overrides (admin only)
-router.get('/permissions/user/:username', async (req, res) => {
+// v7.1 SECURITY — enforce admin via middleware (returns 403) instead of the old
+// weak `{error:'admin only'}` body returned with HTTP 200 to anonymous callers.
+router.get('/permissions/user/:username', requireAdmin, async (req, res) => {
   try {
     const grantedBy = (req.user && req.user.username) || '';
     if (grantedBy !== 'admin') return res.json({ error: 'admin only' });

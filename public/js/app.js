@@ -4943,45 +4943,80 @@ function loadDashAdjustments() {
       _whRenderAdjustmentsKpis(res);
       var h = '';
       if (!res.length) {
-        var emptyMsg = (search || fromDate || toDate || reason || status || branchId)
-          ? 'لا توجد محاضر تطابق الفلاتر — جرّب توسيع نطاق البحث.'
-          : 'لا توجد محاضر تعديل سابقة';
-        h = '<tr><td colspan="10" style="text-align:center;padding:30px;color:#94a3b8;">' + emptyMsg + '</td></tr>';
+        // v7.1 — premium empty state (matches other sections)
+        var hasFilters = !!(search || fromDate || toDate || reason || status || branchId);
+        h = '<tr><td colspan="10" style="padding:0;">' +
+              '<div class="adj-empty-state">' +
+                '<div class="adj-empty-icon">' +
+                  '<i class="fas fa-' + (hasFilters ? 'filter' : 'clipboard-list') + '"></i>' +
+                '</div>' +
+                '<p>' + (hasFilters ? 'لا توجد محاضر تطابق الفلاتر' : 'لا توجد محاضر تعديل') + '</p>' +
+                '<small>' + (hasFilters ? 'جرّب توسيع نطاق البحث أو مسح الفلاتر' : 'اضغط "+ محضر تعديل جديد" لإنشاء أول تعديل') + '</small>' +
+              '</div>' +
+            '</td></tr>';
       } else {
+        // v7.1 — reason metadata (icon + colour class)
+        var _REASON = {
+          damaged:    { icon: 'fa-times-circle',   cls: 'adj-reason-damaged',    label: 'تالف' },
+          waste:      { icon: 'fa-trash-alt',       cls: 'adj-reason-waste',      label: 'هدر' },
+          admin:      { icon: 'fa-cog',             cls: 'adj-reason-admin',      label: 'إداري' },
+          settlement: { icon: 'fa-check-circle',    cls: 'adj-reason-settlement', label: 'تسوية' }
+        };
         res.forEach(function(a) {
-          var dateStr = a.date ? new Date(a.date).toLocaleString('ar-SA') : '';
-          var reasonBadge = '<span class="badge ' + (a.reason === 'damaged' ? 'red' : (a.reason === 'admin' ? 'blue' : 'yellow')) + '">' + (a.reasonLabel || a.reason) + '</span>';
+          // Date — compact Arabic format
+          var dateStr = '';
+          if (a.date) {
+            try {
+              dateStr = new Date(a.date).toLocaleDateString('ar-SA', { year:'numeric', month:'short', day:'numeric' });
+            } catch(e) { dateStr = a.date; }
+          }
+
+          // Reason badge
+          var rm = _REASON[a.reason] || { icon: 'fa-circle', cls: 'adj-reason-admin', label: a.reasonLabel || a.reason || '—' };
+          var reasonBadge = '<span class="adj-reason-badge ' + rm.cls + '"><i class="fas ' + rm.icon + '"></i>' + (a.reasonLabel || rm.label) + '</span>';
+
+          // Status badge
           var statusBadge = a.status === 'approved'
-            ? '<span class="badge green">معتمد ✓</span>'
-            : '<span class="badge yellow">بانتظار الاعتماد</span>';
-          // v5.10.38 — same "(من الفرع)" hint for orphan adjustments
+            ? '<span class="adj-status-badge adj-status-approved"><i class="fas fa-check-circle"></i>معتمد</span>'
+            : '<span class="adj-status-badge adj-status-pending"><i class="fas fa-hourglass-half"></i>بانتظار</span>';
+
+          // Warehouse pill
           var whHint = a.warehouseViaBranch
-            ? '<small style="font-size:9px;color:#92400e;margin-inline-start:4px;opacity:0.85;">(من الفرع)</small>'
-            : '';
+            ? '<small style="font-size:9px;color:#92400e;margin-inline-start:4px;">(من الفرع)</small>' : '';
           var whCell = a.warehouseName
-            ? '<span class="iv-live-pill" style="background:#ede9fe;color:#5b21b6;"><i class="fas fa-warehouse" style="font-size:9px;margin-inline-end:3px;"></i>' + _invHubEsc(a.warehouseName) + '</span>' + whHint
+            ? '<span class="iv-live-pill" style="background:#ede9fe;color:#5b21b6;font-size:11px;"><i class="fas fa-warehouse" style="font-size:9px;margin-inline-end:3px;"></i>' + _invHubEsc(a.warehouseName) + '</span>' + whHint
             : '<span style="color:#cbd5e1;font-size:11px;">—</span>';
-          // v5.10.32 — Branch pill (teal). Falls back to "—" for legacy
-          // adjustments created before branch_id was wired through.
+
+          // Branch pill
           var brCell = a.branchName
-            ? '<span class="iv-live-pill" style="background:#cffafe;color:#0e7490;"><i class="fas fa-code-branch" style="font-size:9px;margin-inline-end:3px;"></i>' + _invHubEsc(a.branchName) + '</span>'
+            ? '<span class="iv-live-pill" style="background:#cffafe;color:#0e7490;font-size:11px;"><i class="fas fa-code-branch" style="font-size:9px;margin-inline-end:3px;"></i>' + _invHubEsc(a.branchName) + '</span>'
             : '<span style="color:#cbd5e1;font-size:11px;">—</span>';
+
+          // Cost cell
+          var cost = Number(a.totalCost) || 0;
+          var costCell = cost > 0
+            ? '<span class="adj-cost-cell">' + _invHubFmtMoney(cost) + ' <span style="font-size:10px;font-weight:600;opacity:.7;">ر.س</span></span>'
+            : '<span class="adj-cost-zero">—</span>';
+
+          // Action buttons
+          var actBtns =
+            '<button class="adj-btn-icon adj-btn-view"    onclick="viewAdjustmentDetail(\'' + a.id + '\')" title="عرض التفاصيل"><i class="fas fa-eye"></i></button>' +
+            (a.status !== 'approved' ? '<button class="adj-btn-icon adj-btn-approve" onclick="approveAdjustment(\'' + a.id + '\')"   title="اعتماد"><i class="fas fa-check"></i></button>' : '') +
+            '<button class="adj-btn-icon adj-btn-print"   onclick="printAdjustment(\'' + a.id + '\')"   title="طباعة"><i class="fas fa-print"></i></button>' +
+            (a.status !== 'approved' || state.isDeveloper ? '<button class="adj-btn-icon adj-btn-delete" onclick="deleteAdjustment(\'' + a.id + '\')"  title="حذف"><i class="fas fa-trash"></i></button>' : '');
+
           h += '<tr>' +
-            '<td style="font-family:monospace;font-size:12px;color:#64748b;">' + a.id + '</td>' +
-            '<td>' + dateStr + '</td>' +
+            '<td><span class="adj-num-badge">' + _invHubEsc(a.adjustmentNumber || a.id) + '</span></td>' +
+            '<td style="color:#475569;font-size:12px;">' + dateStr + '</td>' +
             '<td>' + brCell + '</td>' +
             '<td>' + whCell + '</td>' +
             '<td>' + reasonBadge + '</td>' +
-            '<td style="font-weight:600;">' + a.username + '</td>' +
-            '<td style="text-align:center;">' + a.itemsCount + '</td>' +
-            '<td style="font-weight:800;color:#ef4444;">' + formatVal(a.totalCost) + ' SAR</td>' +
+            '<td style="font-weight:600;color:#1e293b;font-size:12px;">' + _invHubEsc(a.username || '—') + '</td>' +
+            '<td style="text-align:center;"><span style="background:#f1f5f9;color:#1e293b;font-weight:700;font-size:12px;padding:2px 9px;border-radius:999px;">' + (a.itemsCount || 0) + '</span></td>' +
+            '<td style="text-align:left;">' + costCell + '</td>' +
             '<td>' + statusBadge + '</td>' +
-            '<td style="white-space:nowrap;">' +
-              '<button class="btn btn-primary btn-sm" onclick="viewAdjustmentDetail(\'' + a.id + '\')" title="عرض"><i class="fas fa-eye"></i></button> ' +
-              (a.status !== 'approved' ? '<button class="btn btn-success btn-sm" onclick="approveAdjustment(\'' + a.id + '\')" title="اعتماد"><i class="fas fa-check"></i></button> ' : '') +
-              '<button class="btn btn-light btn-sm" onclick="printAdjustment(\'' + a.id + '\')" title="طباعة"><i class="fas fa-print"></i></button> ' +
-              (a.status !== 'approved' || state.isDeveloper ? '<button class="btn btn-danger btn-sm" onclick="deleteAdjustment(\'' + a.id + '\')" title="حذف"><i class="fas fa-trash"></i></button>' : '') +
-            '</td></tr>';
+            '<td style="text-align:center;white-space:nowrap;">' + actBtns + '</td>' +
+          '</tr>';
         });
       }
       q("#tbAdjustments").innerHTML = h;

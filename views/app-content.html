@@ -1274,44 +1274,285 @@
             </div>
           </div>
 
-          <!-- Tab: تعديل كمية -->
-          <!-- v5.10.20 — unified filter bar: search + date range + reason + status -->
+          <!-- Tab: تعديل كمية — v7.1 redesigned to match brand identity -->
           <div class="sales-tab-content" id="wh_adjustments">
-            <div class="wh-filter-bar">
-              <div class="wh-fb-title"><i class="fas fa-minus-circle"></i> محاضر تعديل الكمية</div>
-              <div class="wh-fb-controls">
-                <div class="wh-fb-search">
-                  <i class="fas fa-search"></i>
-                  <input type="text" id="adjSearch" class="form-control" placeholder="بحث في المحاضر..." oninput="loadDashAdjustments()">
+
+            <!-- ── Page Header ─────────────────────────────────────────── -->
+            <div class="adj-page-header">
+              <div style="display:flex;align-items:center;gap:14px;">
+                <div class="adj-icon-slot">
+                  <i class="fas fa-sliders-h"></i>
                 </div>
-                <input type="date" id="adjFromDate" class="form-control wh-fb-date" title="من تاريخ" onchange="loadDashAdjustments()">
-                <input type="date" id="adjToDate" class="form-control wh-fb-date" title="إلى تاريخ" onchange="loadDashAdjustments()">
-                <select id="adjReasonFilter" class="form-control wh-fb-select" onchange="loadDashAdjustments()">
-                  <option value="">كل الأسباب</option>
-                  <option value="damaged">تالف</option>
-                  <option value="admin">إداري</option>
-                  <option value="settlement">تسويات</option>
-                </select>
-                <select id="adjStatusFilter" class="form-control wh-fb-select" onchange="loadDashAdjustments()">
-                  <option value="">كل الحالات</option>
-                  <option value="pending">بانتظار الاعتماد</option>
-                  <option value="approved">معتمد</option>
-                </select>
-                <select id="adjBranchFilter" class="form-control wh-fb-select" onchange="loadDashAdjustments()">
-                  <option value="">🏬 كل الفروع</option>
-                </select>
-                <button class="btn btn-light wh-fb-clear" onclick="whClearFilters('adj')" title="مسح الفلاتر"><i class="fas fa-broom"></i></button>
-                <button class="btn btn-danger" onclick="openAdjustmentModal()"><i class="fas fa-plus"></i> محضر تعديل كمية</button>
+                <div>
+                  <div style="font-size:20px;font-weight:800;color:#0f172a;line-height:1.2;">محاضر تعديل الكمية</div>
+                  <div style="font-size:13px;color:#64748b;margin-top:2px;">سجّل وتتبّع تعديلات المخزون بدقة</div>
+                </div>
               </div>
+              <button class="adj-cta-btn" onclick="openAdjustmentModal()">
+                <i class="fas fa-plus"></i> محضر تعديل جديد
+              </button>
             </div>
-            <div id="adjKpis" class="iv-items-kpis"></div>
-            <div class="table-wrapper">
-              <table class="table">
-                <thead><tr><th>رقم المحضر</th><th>التاريخ</th><th>الفرع</th><th>المستودع</th><th>السبب</th><th>بواسطة</th><th>عدد الأصناف</th><th>إجمالي التكلفة</th><th>الحالة</th><th>إجراءات</th></tr></thead>
+
+            <!-- ── Filter Bar ───────────────────────────────────────────── -->
+            <div class="adj-filter-bar">
+              <div class="adj-search-wrap">
+                <i class="fas fa-search adj-search-icon"></i>
+                <input type="text" id="adjSearch" class="adj-input" placeholder="بحث برقم المحضر أو الاسم..." oninput="loadDashAdjustments()">
+              </div>
+              <div class="adj-date-group">
+                <i class="fas fa-calendar-alt" style="color:#94a3b8;font-size:13px;"></i>
+                <input type="date" id="adjFromDate" class="adj-input adj-date" title="من تاريخ" onchange="loadDashAdjustments()">
+                <span style="color:#94a3b8;font-size:11px;">—</span>
+                <input type="date" id="adjToDate" class="adj-input adj-date" title="إلى تاريخ" onchange="loadDashAdjustments()">
+              </div>
+              <select id="adjReasonFilter" class="adj-select" onchange="loadDashAdjustments()">
+                <option value="">كل الأسباب</option>
+                <option value="damaged">🔴 تالف</option>
+                <option value="waste">🟠 هدر</option>
+                <option value="admin">🟣 إداري</option>
+                <option value="settlement">🟢 تسويات</option>
+              </select>
+              <select id="adjStatusFilter" class="adj-select" onchange="loadDashAdjustments()">
+                <option value="">كل الحالات</option>
+                <option value="pending">⏳ بانتظار الاعتماد</option>
+                <option value="approved">✅ معتمد</option>
+              </select>
+              <select id="adjBranchFilter" class="adj-select" onchange="loadDashAdjustments()">
+                <option value="">🏬 كل الفروع</option>
+              </select>
+              <button class="adj-clear-btn" onclick="whClearFilters('adj')" title="مسح الفلاتر">
+                <i class="fas fa-broom"></i>
+              </button>
+            </div>
+
+            <!-- ── KPI Cards ────────────────────────────────────────────── -->
+            <div id="adjKpis" class="iv-items-kpis" style="padding:16px 20px 0;"></div>
+
+            <!-- ── Data Table ───────────────────────────────────────────── -->
+            <div class="adj-table-wrap">
+              <table class="adj-table">
+                <thead>
+                  <tr>
+                    <th>رقم المحضر</th>
+                    <th>التاريخ</th>
+                    <th>الفرع</th>
+                    <th>المستودع</th>
+                    <th>السبب</th>
+                    <th>بواسطة</th>
+                    <th style="text-align:center;">عدد الأصناف</th>
+                    <th style="text-align:left;">إجمالي التكلفة</th>
+                    <th>الحالة</th>
+                    <th style="text-align:center;">إجراءات</th>
+                  </tr>
+                </thead>
                 <tbody id="tbAdjustments"></tbody>
               </table>
             </div>
+
           </div>
+
+          <!-- ── Adjustment Section Styles ──────────────────────────────── -->
+          <style>
+            /* ─── Container ─── */
+            #wh_adjustments {
+              background: var(--mt-surface, #fff);
+              border-radius: var(--mt-radius-lg, 18px);
+              overflow: hidden;
+              box-shadow: var(--mt-shadow-sm, 0 2px 8px rgba(15,23,42,.06));
+            }
+
+            /* ─── Page Header ─── */
+            .adj-page-header {
+              display: flex;
+              align-items: center;
+              justify-content: space-between;
+              padding: 20px 24px;
+              background: #fff;
+              border-bottom: 1px solid var(--mt-border, #e2e8f0);
+            }
+            .adj-icon-slot {
+              width: 44px; height: 44px;
+              border-radius: var(--mt-radius-md, 14px);
+              background: linear-gradient(135deg, #7c3aed, #6d28d9);
+              display: flex; align-items: center; justify-content: center;
+              color: #fff; font-size: 18px; flex-shrink: 0;
+              box-shadow: 0 4px 12px rgba(124,58,237,.35);
+            }
+            .adj-cta-btn {
+              display: inline-flex; align-items: center; gap: 7px;
+              background: linear-gradient(135deg, #dc2626, #b91c1c);
+              color: #fff; border: none; border-radius: var(--mt-radius-sm, 10px);
+              padding: 10px 18px; font-size: 13px; font-weight: 700;
+              cursor: pointer; transition: all 150ms ease-out;
+              box-shadow: 0 3px 10px rgba(220,38,38,.35);
+            }
+            .adj-cta-btn:hover {
+              transform: translateY(-1px);
+              box-shadow: 0 6px 16px rgba(220,38,38,.45);
+            }
+
+            /* ─── Filter Bar ─── */
+            .adj-filter-bar {
+              display: flex; flex-wrap: wrap; gap: 10px; align-items: center;
+              padding: 14px 24px;
+              background: var(--mt-surface-2, #f8fafc);
+              border-bottom: 1px solid var(--mt-border, #e2e8f0);
+            }
+            .adj-search-wrap {
+              position: relative; display: flex; align-items: center;
+              min-width: 220px;
+            }
+            .adj-search-icon {
+              position: absolute; right: 10px;
+              color: #94a3b8; font-size: 12px; pointer-events: none;
+            }
+            .adj-input {
+              border: 1px solid var(--mt-border, #e2e8f0);
+              border-radius: var(--mt-radius-sm, 10px);
+              padding: 8px 32px 8px 12px;
+              font-size: 13px; background: #fff;
+              transition: border-color 150ms, box-shadow 150ms;
+              width: 100%;
+            }
+            .adj-input.adj-date { padding: 7px 10px; min-width: 130px; }
+            .adj-input:focus {
+              outline: none;
+              border-color: #7c3aed;
+              box-shadow: 0 0 0 3px rgba(124,58,237,.15);
+            }
+            .adj-select {
+              border: 1px solid var(--mt-border, #e2e8f0);
+              border-radius: var(--mt-radius-sm, 10px);
+              padding: 8px 12px; font-size: 13px; background: #fff;
+              cursor: pointer; min-width: 130px;
+              transition: border-color 150ms, box-shadow 150ms;
+            }
+            .adj-select:focus {
+              outline: none; border-color: #7c3aed;
+              box-shadow: 0 0 0 3px rgba(124,58,237,.15);
+            }
+            .adj-date-group {
+              display: flex; align-items: center; gap: 6px;
+              background: #fff; border: 1px solid var(--mt-border, #e2e8f0);
+              border-radius: var(--mt-radius-sm, 10px); padding: 4px 10px;
+            }
+            .adj-date-group .adj-input {
+              border: none; box-shadow: none; padding: 4px 6px;
+              min-width: 120px;
+            }
+            .adj-date-group .adj-input:focus { box-shadow: none; }
+            .adj-clear-btn {
+              width: 36px; height: 36px; border-radius: var(--mt-radius-sm, 10px);
+              background: #f1f5f9; border: 1px solid #e2e8f0;
+              color: #64748b; cursor: pointer; font-size: 13px;
+              display: flex; align-items: center; justify-content: center;
+              transition: all 150ms;
+            }
+            .adj-clear-btn:hover { background: #e2e8f0; color: #1e293b; }
+
+            /* ─── Table Wrapper ─── */
+            .adj-table-wrap {
+              overflow-x: auto;
+              padding: 16px 20px 20px;
+            }
+            .adj-table {
+              width: 100%; border-collapse: collapse;
+              font-size: 13px;
+            }
+            .adj-table thead th {
+              background: #1e293b; color: #e2e8f0;
+              font-size: 11px; font-weight: 700; letter-spacing: .4px;
+              text-transform: uppercase;
+              padding: 11px 14px; white-space: nowrap;
+              position: sticky; top: 0; z-index: 1;
+            }
+            .adj-table thead th:first-child { border-radius: 8px 0 0 8px; }
+            .adj-table thead th:last-child  { border-radius: 0 8px 8px 0; }
+            .adj-table tbody tr {
+              border-bottom: 1px solid #f1f5f9;
+              transition: background 120ms;
+            }
+            .adj-table tbody tr:last-child { border-bottom: none; }
+            .adj-table tbody tr:hover { background: #faf5ff; }
+            .adj-table tbody td {
+              padding: 12px 14px; vertical-align: middle; color: #1e293b;
+            }
+
+            /* ─── Number Badge ─── */
+            .adj-num-badge {
+              display: inline-block;
+              font-family: ui-monospace, monospace;
+              font-size: 10.5px; font-weight: 700;
+              background: #1e293b; color: #cbd5e1;
+              padding: 3px 8px; border-radius: 6px; letter-spacing: .5px;
+              white-space: nowrap;
+            }
+
+            /* ─── Reason Badges ─── */
+            .adj-reason-badge {
+              display: inline-flex; align-items: center; gap: 4px;
+              font-size: 11px; font-weight: 700;
+              padding: 3px 9px; border-radius: 999px;
+              white-space: nowrap;
+            }
+            .adj-reason-damaged  { background: #fee2e2; color: #b91c1c; }
+            .adj-reason-waste    { background: #ffedd5; color: #c2410c; }
+            .adj-reason-admin    { background: #ede9fe; color: #5b21b6; }
+            .adj-reason-settlement { background: #dcfce7; color: #15803d; }
+
+            /* ─── Status Badges ─── */
+            .adj-status-badge {
+              display: inline-flex; align-items: center; gap: 5px;
+              font-size: 11px; font-weight: 700;
+              padding: 4px 10px; border-radius: 999px;
+            }
+            .adj-status-approved { background: #dcfce7; color: #15803d; }
+            .adj-status-pending  {
+              background: #fef3c7; color: #92400e;
+              animation: adj-pulse-bg 2s ease-in-out infinite;
+            }
+            @keyframes adj-pulse-bg {
+              0%,100% { opacity:1; } 50% { opacity:.75; }
+            }
+
+            /* ─── Cost Cell ─── */
+            .adj-cost-cell {
+              font-family: ui-monospace, monospace;
+              font-weight: 800; font-size: 13px;
+              color: #dc2626;
+            }
+            .adj-cost-zero { color: #94a3b8; font-weight: 600; }
+
+            /* ─── Action Buttons ─── */
+            .adj-btn-icon {
+              width: 30px; height: 30px; border-radius: 50%;
+              border: none; cursor: pointer;
+              display: inline-flex; align-items: center; justify-content: center;
+              font-size: 12px; transition: all 150ms;
+              margin: 0 1px;
+            }
+            .adj-btn-view    { background: #eff6ff; color: #1d4ed8; }
+            .adj-btn-approve { background: #dcfce7; color: #15803d; }
+            .adj-btn-print   { background: #f1f5f9; color: #475569; }
+            .adj-btn-delete  { background: #fee2e2; color: #b91c1c; }
+            .adj-btn-icon:hover { transform: scale(1.15); box-shadow: 0 2px 8px rgba(0,0,0,.15); }
+
+            /* ─── Empty State ─── */
+            .adj-empty-state {
+              text-align: center; padding: 56px 24px;
+              color: #94a3b8;
+            }
+            .adj-empty-state .adj-empty-icon {
+              width: 72px; height: 72px; border-radius: 20px;
+              background: linear-gradient(135deg,#f1f5f9,#e2e8f0);
+              display: flex; align-items: center; justify-content: center;
+              margin: 0 auto 20px; font-size: 28px; color: #94a3b8;
+            }
+            .adj-empty-state p {
+              font-size: 16px; font-weight: 700; color: #475569; margin: 0 0 6px;
+            }
+            .adj-empty-state small { font-size: 13px; color: #94a3b8; }
+          </style>
 
           <!-- v5.10.58 — Tab "تحويلات الفرع" REMOVED.
                The whole flow is superseded by إذونات الصرف الرسمية (GL)

@@ -4950,12 +4950,12 @@ function loadDashAdjustments() {
               '<span>' + (hasFilters ? 'لا توجد محاضر تطابق الفلاتر — جرّب توسيع نطاق البحث' : 'لا توجد محاضر تعديل — اضغط "محضر تعديل جديد" لإنشاء أول تعديل') + '</span>' +
             '</div></td></tr>';
       } else {
-        // v7.1 — reason metadata (icon + colour class)
+        // v7.2 — reason metadata (uses short CSS classes from embedded <style>)
         var _REASON = {
-          damaged:    { icon: 'fa-times-circle',   cls: 'adj-reason-damaged',    label: 'تالف' },
-          waste:      { icon: 'fa-trash-alt',       cls: 'adj-reason-waste',      label: 'هدر' },
-          admin:      { icon: 'fa-cog',             cls: 'adj-reason-admin',      label: 'إداري' },
-          settlement: { icon: 'fa-check-circle',    cls: 'adj-reason-settlement', label: 'تسوية' }
+          damaged:    { icon: 'fa-times-circle',   cls: 'adj-r adj-r-d', label: 'تالف' },
+          waste:      { icon: 'fa-trash-alt',       cls: 'adj-r adj-r-w', label: 'هدر' },
+          admin:      { icon: 'fa-cog',             cls: 'adj-r adj-r-a', label: 'إداري' },
+          settlement: { icon: 'fa-check-circle',    cls: 'adj-r adj-r-s', label: 'تسوية' }
         };
         res.forEach(function(a) {
           // Date — compact Arabic format
@@ -4972,8 +4972,8 @@ function loadDashAdjustments() {
 
           // Status badge
           var statusBadge = a.status === 'approved'
-            ? '<span class="adj-status-badge adj-status-approved"><i class="fas fa-check-circle"></i>معتمد</span>'
-            : '<span class="adj-status-badge adj-status-pending"><i class="fas fa-hourglass-half"></i>بانتظار</span>';
+            ? '<span class="adj-s adj-s-ok"><i class="fas fa-check-circle"></i>معتمد</span>'
+            : '<span class="adj-s adj-s-pnd"><i class="fas fa-hourglass-half"></i>بانتظار</span>';
 
           // Warehouse pill
           var whHint = a.warehouseViaBranch
@@ -4993,15 +4993,15 @@ function loadDashAdjustments() {
             ? '<span class="adj-cost-cell">' + _invHubFmtMoney(cost) + ' <span style="font-size:10px;font-weight:600;opacity:.7;">ر.س</span></span>'
             : '<span class="adj-cost-zero">—</span>';
 
-          // Action buttons
+          // Action buttons (short class names)
           var actBtns =
-            '<button class="adj-btn-icon adj-btn-view"    onclick="viewAdjustmentDetail(\'' + a.id + '\')" title="عرض التفاصيل"><i class="fas fa-eye"></i></button>' +
-            (a.status !== 'approved' ? '<button class="adj-btn-icon adj-btn-approve" onclick="approveAdjustment(\'' + a.id + '\')"   title="اعتماد"><i class="fas fa-check"></i></button>' : '') +
-            '<button class="adj-btn-icon adj-btn-print"   onclick="printAdjustment(\'' + a.id + '\')"   title="طباعة"><i class="fas fa-print"></i></button>' +
-            (a.status !== 'approved' || state.isDeveloper ? '<button class="adj-btn-icon adj-btn-delete" onclick="deleteAdjustment(\'' + a.id + '\')"  title="حذف"><i class="fas fa-trash"></i></button>' : '');
+            '<button class="adj-ib" style="background:#eff6ff;color:#1d4ed8;" onclick="viewAdjustmentDetail(\'' + a.id + '\')" title="عرض التفاصيل"><i class="fas fa-eye"></i></button>' +
+            (a.status !== 'approved' ? '<button class="adj-ib" style="background:#dcfce7;color:#15803d;" onclick="approveAdjustment(\'' + a.id + '\')" title="اعتماد"><i class="fas fa-check"></i></button>' : '') +
+            '<button class="adj-ib" style="background:#f1f5f9;color:#475569;" onclick="printAdjustment(\'' + a.id + '\')" title="طباعة"><i class="fas fa-print"></i></button>' +
+            (a.status !== 'approved' || state.isDeveloper ? '<button class="adj-ib" style="background:#fee2e2;color:#b91c1c;" onclick="deleteAdjustment(\'' + a.id + '\')" title="حذف"><i class="fas fa-trash"></i></button>' : '');
 
           h += '<tr>' +
-            '<td><span class="adj-num-badge">' + _invHubEsc(a.adjustmentNumber || a.id) + '</span></td>' +
+            '<td><span class="adj-num">' + _invHubEsc(a.adjustmentNumber || a.id) + '</span></td>' +
             '<td style="color:#475569;font-size:12px;">' + dateStr + '</td>' +
             '<td>' + brCell + '</td>' +
             '<td>' + whCell + '</td>' +
@@ -11543,7 +11543,7 @@ function _whRenderStocktakeKpis(rows) {
 
 function _whRenderAdjustmentsKpis(rows) {
   var box = q('#adjKpis');
-  if (!box || typeof _invItemsKpi !== 'function') return;
+  if (!box) return;
   rows = rows || [];
   var totalCount = rows.length;
   var totalCost = 0, pendingCount = 0, todayCount = 0, damagedCount = 0;
@@ -11553,19 +11553,53 @@ function _whRenderAdjustmentsKpis(rows) {
     if (a.reason === 'damaged')  damagedCount++;
     if (_whIsToday(a.date))      todayCount++;
   });
+
+  // v7.2 — fully inline-styled KPI cards. No external CSS dependency.
+  function _adjKpi(color, gradFrom, icon, label, num, unit, footer) {
+    return '<div style="background:linear-gradient(160deg,'+gradFrom+' 0%,#fff 70%);border:1px solid #e2e8f0;' +
+      'border-radius:16px;padding:16px 18px;border-inline-start:4px solid '+color+';' +
+      'position:relative;overflow:hidden;box-sizing:border-box;">' +
+        '<div style="display:grid;grid-template-columns:auto 1fr;gap:8px 14px;">' +
+          '<div style="width:52px;height:52px;border-radius:14px;background:#fff;color:'+color+';' +
+            'display:flex;align-items:center;justify-content:center;font-size:22px;' +
+            'box-shadow:0 4px 12px -4px '+color+';grid-row:span 2;flex-shrink:0;">' +
+            '<i class="fas '+icon+'"></i>' +
+          '</div>' +
+          '<div style="min-width:0;align-self:center;">' +
+            '<div style="font-size:12px;color:#64748b;font-weight:600;margin-bottom:3px;">'+label+'</div>' +
+            '<div style="line-height:1;">' +
+              '<span style="font-size:26px;font-weight:800;color:#0f172a;">'+num+'</span>' +
+              ' <span style="font-size:12px;color:#94a3b8;font-weight:600;">'+unit+'</span>' +
+            '</div>' +
+          '</div>' +
+          '<div style="grid-column:1/-1;font-size:11.5px;color:#475569;font-weight:600;' +
+            'border-top:1px solid rgba(15,23,42,.06);padding-top:8px;margin-top:2px;">' +
+            footer +
+          '</div>' +
+        '</div>' +
+      '</div>';
+  }
+
+  var timeStr = new Date().toLocaleTimeString('ar-SA', {hour:'2-digit',minute:'2-digit'});
+  var costStr = typeof _invHubFmtMoney === 'function' ? _invHubFmtMoney(totalCost) : totalCost.toFixed(2);
+
   box.innerHTML =
-    _invItemsKpi({ label: 'إجمالي المحاضر',          num: totalCount.toLocaleString('ar-SA'), unit: 'محضر',
-                   icon: 'fa-minus-circle',    color: '#3b82f6', gradFrom: '#dbeafe', gradTo: '#eff6ff',
-                   footer: '<i class="fas fa-calendar-day"></i> اليوم: ' + todayCount }) +
-    _invItemsKpi({ label: 'إجمالي تكلفة التعديلات', num: _invHubFmtMoney(totalCost), unit: 'ر.س',
-                   icon: 'fa-sack-dollar',     color: '#ef4444', gradFrom: '#fee2e2', gradTo: '#fef2f2',
-                   footer: '<i class="fas fa-fire-flame-curved"></i> توالف: ' + damagedCount }) +
-    _invItemsKpi({ label: 'بانتظار الاعتماد',        num: pendingCount.toLocaleString('ar-SA'), unit: 'محضر',
-                   icon: 'fa-hourglass-half',  color: '#f59e0b', gradFrom: '#fef3c7', gradTo: '#fffbeb',
-                   footer: pendingCount > 0 ? '<i class="fas fa-bell"></i> يحتاج مراجعة المدير' : '<i class="fas fa-circle-check"></i> كل المحاضر معتمدة', pulse: pendingCount > 0 }) +
-    _invItemsKpi({ label: 'محاضر اليوم',             num: todayCount.toLocaleString('ar-SA'), unit: 'محضر',
-                   icon: 'fa-calendar-day',    color: '#8b5cf6', gradFrom: '#ede9fe', gradTo: '#f5f3ff',
-                   footer: '<i class="fas fa-clock"></i> آخر تحديث: ' + new Date().toLocaleTimeString('ar-SA', {hour:'2-digit',minute:'2-digit'}) });
+    '<div style="display:grid;grid-template-columns:repeat(4,1fr);gap:14px;margin:14px 0 10px;">' +
+      _adjKpi('#3b82f6','#dbeafe','fa-minus-circle','إجمالي المحاضر',
+        totalCount.toLocaleString('ar-SA'), 'محضر',
+        '<i class="fas fa-calendar-day" style="color:#3b82f6;margin-inline-end:4px;"></i> اليوم: <b>' + todayCount + '</b>') +
+      _adjKpi('#ef4444','#fee2e2','fa-sack-dollar','إجمالي تكلفة التعديلات',
+        costStr, 'ر.س',
+        '<i class="fas fa-fire-flame-curved" style="color:#ef4444;margin-inline-end:4px;"></i> توالف: <b>' + damagedCount + '</b>') +
+      _adjKpi('#f59e0b','#fef3c7','fa-hourglass-half','بانتظار الاعتماد',
+        pendingCount.toLocaleString('ar-SA'), 'محضر',
+        pendingCount > 0
+          ? '<i class="fas fa-bell" style="color:#f59e0b;margin-inline-end:4px;"></i> <b>' + pendingCount + '</b> يحتاج مراجعة'
+          : '<i class="fas fa-circle-check" style="color:#16a34a;margin-inline-end:4px;"></i> كل المحاضر معتمدة') +
+      _adjKpi('#8b5cf6','#ede9fe','fa-calendar-day','محاضر اليوم',
+        todayCount.toLocaleString('ar-SA'), 'محضر',
+        '<i class="fas fa-clock" style="color:#8b5cf6;margin-inline-end:4px;"></i> آخر تحديث: <b>' + timeStr + '</b>') +
+    '</div>';
 }
 
 function _whRenderShortageKpis(rows) {

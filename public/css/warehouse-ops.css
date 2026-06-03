@@ -5398,6 +5398,26 @@
    column count scoped to this section so other pages are unaffected.
    ═══════════════════════════════════════════════════════════════════ */
 
+/* ─── KPI grid: explicit 4 columns (adjustments) ─── */
+#wh_adjustments .iv-items-kpis {
+  grid-template-columns: repeat(4, 1fr);
+  margin: 0 0 16px;
+}
+@media (max-width: 1000px) {
+  #wh_adjustments .iv-items-kpis { grid-template-columns: repeat(2, 1fr); }
+}
+@media (max-width: 540px) {
+  #wh_adjustments .iv-items-kpis { grid-template-columns: 1fr; }
+}
+
+/* ─── Header banner (adjustments) ─── */
+#wh_adjustments .wo-header {
+  background: linear-gradient(135deg, #1e293b 0%, #312e81 100%);
+  border-radius: 16px;
+  padding: 18px 22px;
+  margin-bottom: 14px;
+}
+
 /* ─── KPI grid: explicit 4 columns ─── */
 #erpStockIssues .iv-items-kpis {
   grid-template-columns: repeat(4, 1fr);

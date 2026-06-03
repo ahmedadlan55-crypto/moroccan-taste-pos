@@ -4943,17 +4943,12 @@ function loadDashAdjustments() {
       _whRenderAdjustmentsKpis(res);
       var h = '';
       if (!res.length) {
-        // v7.1 — premium empty state (matches other sections)
+        // v7.1 — wo-empty state (matches other wo-section sections)
         var hasFilters = !!(search || fromDate || toDate || reason || status || branchId);
-        h = '<tr><td colspan="10" style="padding:0;">' +
-              '<div class="adj-empty-state">' +
-                '<div class="adj-empty-icon">' +
-                  '<i class="fas fa-' + (hasFilters ? 'filter' : 'clipboard-list') + '"></i>' +
-                '</div>' +
-                '<p>' + (hasFilters ? 'لا توجد محاضر تطابق الفلاتر' : 'لا توجد محاضر تعديل') + '</p>' +
-                '<small>' + (hasFilters ? 'جرّب توسيع نطاق البحث أو مسح الفلاتر' : 'اضغط "+ محضر تعديل جديد" لإنشاء أول تعديل') + '</small>' +
-              '</div>' +
-            '</td></tr>';
+        h = '<tr><td colspan="10"><div class="wo-empty">' +
+              '<i class="fas fa-' + (hasFilters ? 'filter' : 'clipboard-list') + '"></i>' +
+              '<span>' + (hasFilters ? 'لا توجد محاضر تطابق الفلاتر — جرّب توسيع نطاق البحث' : 'لا توجد محاضر تعديل — اضغط "محضر تعديل جديد" لإنشاء أول تعديل') + '</span>' +
+            '</div></td></tr>';
       } else {
         // v7.1 — reason metadata (icon + colour class)
         var _REASON = {

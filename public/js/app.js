@@ -11668,7 +11668,7 @@ function _whRenderTransfersKpis(rows) {
 // (the new aggregate columns added in v5.10.40 GET /stock-issues).
 function _whRenderStockIssuesKpis(rows) {
   var box = q('#siKpis');
-  if (!box || typeof _invItemsKpi !== 'function') return;
+  if (!box) return;
   rows = rows || [];
   var totalCount = rows.length;
   var draftCount = 0, issuedCount = 0, partialCount = 0, reversedCount = 0;
@@ -11687,21 +11687,31 @@ function _whRenderStockIssuesKpis(rows) {
     }
   });
   var movedFmt = movedValue.toLocaleString('en', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+
+  // v7.2 — use inline-styled _adjKpi (same as adjustments section) so cards
+  // always render regardless of which CSS files load in this context.
+  if (typeof _adjKpi !== 'function') return;
   box.innerHTML =
-    _invItemsKpi({ label: 'إجمالي الإذونات',  num: totalCount.toLocaleString('ar-SA'), unit: 'إذن',
-                   icon: 'fa-file-invoice',  color: '#3b82f6', gradFrom: '#dbeafe', gradTo: '#eff6ff',
-                   footer: '<i class="fas fa-list"></i> الفترة المعروضة' }) +
-    _invItemsKpi({ label: 'مسودات بانتظار اعتماد', num: draftCount.toLocaleString('ar-SA'), unit: 'إذن',
-                   icon: 'fa-pen-to-square', color: '#f59e0b', gradFrom: '#fef3c7', gradTo: '#fffbeb',
-                   footer: draftCount > 0 ? '<i class="fas fa-bell"></i> تحتاج مراجعة' : '<i class="fas fa-circle-check"></i> لا مسودات', pulse: draftCount > 0 }) +
-    _invItemsKpi({ label: 'قيد الاستلام',     num: issuedCount.toLocaleString('ar-SA'), unit: 'إذن',
-                   icon: 'fa-paper-plane',   color: '#8b5cf6', gradFrom: '#ede9fe', gradTo: '#f5f3ff',
-                   footer: partialCount > 0
-                     ? ('<i class="fas fa-exclamation-triangle" style="color:#d97706;"></i> ' + partialCount + ' باستلام جزئي')
-                     : '<i class="fas fa-truck"></i> أُرسلت ولم تُستلم بعد' }) +
-    _invItemsKpi({ label: 'القيمة المنقولة',  num: movedFmt, unit: 'ر.س',
-                   icon: 'fa-sack-dollar',   color: '#10b981', gradFrom: '#d1fae5', gradTo: '#ecfdf5',
-                   footer: reversedCount > 0 ? ('<i class="fas fa-rotate-left"></i> ' + reversedCount + ' مرجع') : '<i class="fas fa-check-double"></i> رصيد محاسبي محرَّك' });
+    '<div style="display:grid;grid-template-columns:repeat(4,1fr);gap:14px;margin:14px 0 10px;">' +
+    _adjKpi('#3b82f6','#dbeafe','fa-file-invoice','إجمالي الإذونات',
+      totalCount.toLocaleString('ar-SA'), 'إذن',
+      '<i class="fas fa-list" style="color:#3b82f6;margin-inline-end:4px;"></i> الفترة المعروضة') +
+    _adjKpi('#f59e0b','#fef3c7','fa-pen-to-square','مسودات بانتظار اعتماد',
+      draftCount.toLocaleString('ar-SA'), 'إذن',
+      draftCount > 0
+        ? '<i class="fas fa-bell" style="color:#f59e0b;margin-inline-end:4px;"></i> <b>' + draftCount + '</b> تحتاج مراجعة'
+        : '<i class="fas fa-circle-check" style="color:#16a34a;margin-inline-end:4px;"></i> لا مسودات') +
+    _adjKpi('#8b5cf6','#ede9fe','fa-paper-plane','قيد الاستلام',
+      issuedCount.toLocaleString('ar-SA'), 'إذن',
+      partialCount > 0
+        ? '<i class="fas fa-exclamation-triangle" style="color:#d97706;margin-inline-end:4px;"></i> ' + partialCount + ' باستلام جزئي'
+        : '<i class="fas fa-truck" style="color:#8b5cf6;margin-inline-end:4px;"></i> أُرسلت ولم تُستلم بعد') +
+    _adjKpi('#10b981','#d1fae5','fa-sack-dollar','القيمة المنقولة',
+      movedFmt, 'ر.س',
+      reversedCount > 0
+        ? '<i class="fas fa-rotate-left" style="color:#ef4444;margin-inline-end:4px;"></i> <b>' + reversedCount + '</b> مرجع'
+        : '<i class="fas fa-check-double" style="color:#10b981;margin-inline-end:4px;"></i> رصيد محاسبي محرَّك') +
+    '</div>';
 }
 
 // View stocktake detail in a modal

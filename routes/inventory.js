@@ -738,7 +738,12 @@ router.get('/items', async (req, res) => {
             -- any movement history. v7.1 — was qty > 0, which HID negative
             -- balances (a real shortage in an over-sold/empty warehouse). Using
             -- <> 0 surfaces deficits while still suppressing ghost qty=0 rows.
-            ws.qty <> 0
+            --
+            -- v7.2 forIssue mode: stock-issue pickers need ALL registered items
+            -- regardless of current qty (items with qty=0 are valid to issue since
+            -- we support negative stock). Use ws.id IS NOT NULL instead of <> 0
+            -- so depleted-but-registered items appear in the picker.
+            ${req.query.forIssue === '1' ? 'ws.id IS NOT NULL' : 'ws.qty <> 0'}
             OR EXISTS(SELECT 1 FROM inventory_movements im2
                       WHERE im2.item_id = i.id AND im2.warehouse_id = w.id)
           )`;

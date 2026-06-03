@@ -22679,7 +22679,9 @@ function _siReloadPoolForWarehouse(whId) {
   // Optional: filter the catalog to the warehouse's brand. Falls back to
   // unfiltered if the warehouse object doesn't carry brand info.
   var fromW = (s.whs || []).find(function(w){ return w.id === whId; }) || {};
-  var qs = '/inventory/items?warehouseId=' + encodeURIComponent(whId);
+  // v7.2 forIssue=1: show ALL registered items (incl. qty=0) so depleted items
+  // still appear in the picker — the system allows negative stock on issue.
+  var qs = '/inventory/items?warehouseId=' + encodeURIComponent(whId) + '&forIssue=1';
   if (fromW.brandId) qs += '&brandId=' + encodeURIComponent(fromW.brandId);
   // Mark loading so a second WH-change while in flight doesn't paint stale data.
   var token = ++s._poolReqToken;

@@ -3633,6 +3633,10 @@
   </div>
 
   <section class="wo-toolbar" role="search" aria-label="تصفية أوامر الإنتاج">
+    <div class="wo-field" style="flex:1.5;min-width:200px;">
+      <label class="wo-field-label" for="prdFSearch"><i class="fas fa-search"></i>بحث</label>
+      <input type="text" id="prdFSearch" class="wo-input" placeholder="اسم المنتج أو رقم الأمر..." oninput="prdOnSearchInput()">
+    </div>
     <div class="wo-field">
       <label class="wo-field-label" for="prdFStatus"><i class="fas fa-flag"></i>الحالة</label>
       <select id="prdFStatus" class="wo-select" onchange="prdLoad()">
@@ -3659,6 +3663,11 @@
     <div class="wo-field">
       <label class="wo-field-label" for="prdFTo"><i class="fas fa-calendar-check"></i>إلى تاريخ</label>
       <input type="date" id="prdFTo" class="wo-input" onchange="prdLoad()">
+    </div>
+    <div class="wo-field" style="align-self:flex-end;">
+      <button class="wo-btn wo-btn-ghost" onclick="prdResetFilters()" title="مسح كل الفلاتر">
+        <i class="fas fa-broom"></i><span>مسح</span>
+      </button>
     </div>
   </section>
 

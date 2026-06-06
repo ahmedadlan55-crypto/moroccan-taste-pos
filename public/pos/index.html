@@ -388,6 +388,13 @@
     </div>
   </div>
 
+  <!-- v7.3 — Offline pending-sales badge (tap to sync now) -->
+  <div id="posOfflineBadge" onclick="if(window._posOQSync)window._posOQSync()" title="مزامنة الآن · Sync now"
+       style="display:none;position:fixed;bottom:16px;inset-inline-start:16px;z-index:9998;align-items:center;gap:8px;background:#b45309;color:#fff;padding:9px 15px;border-radius:999px;box-shadow:0 6px 18px rgba(0,0,0,.25);font-size:13px;font-weight:800;cursor:pointer;">
+    <i class="fas fa-cloud-arrow-up"></i>
+    <span><span id="posOfflineBadgeCount">0</span> بيع غير مُزامَن · pending</span>
+  </div>
+
   <!-- Mobile Floating Cart Button -->
   <div class="mobile-cart-btn" id="mobileCartBtn" onclick="toggleMobileCart()">
     <div class="mobile-cart-info">

@@ -892,6 +892,79 @@ window._payCashRecalc = function () {
   if (confirmBtn) confirmBtn.disabled = (change < 0);
 };
 
+// ═══════════════════════════════════════════════════════════════════
+// v7.3 — OFFLINE SALE QUEUE (resilience for flaky networks)
+// On a TRUE transport failure during checkout (withFailureHandler = fetch
+// rejected), the order is saved locally with its idempotency key and
+// auto-replayed when connectivity returns. The backend's UNIQUE
+// client_order_id makes replay safe — a sale that actually reached the server
+// is de-duplicated, never double-charged. Server BUSINESS rejections
+// (res.success===false: total mismatch, validation, closed shift) arrive via
+// the SUCCESS handler and are NOT queued. Storage: localStorage (synchronous,
+// simple, robust) under one JSON array.
+// ═══════════════════════════════════════════════════════════════════
+var _POS_OQ_KEY = 'pos_offline_queue';
+function _posOQRead() {
+  try { return JSON.parse(localStorage.getItem(_POS_OQ_KEY) || '[]') || []; } catch (e) { return []; }
+}
+function _posOQWrite(arr) {
+  try { localStorage.setItem(_POS_OQ_KEY, JSON.stringify(arr || [])); } catch (e) {}
+}
+function _posOQCount() { return _posOQRead().length; }
+window._posOQCount = _posOQCount;
+function _posOQEnqueue(order, user, shiftId) {
+  if (!order) return;
+  var arr = _posOQRead();
+  var key = order.clientOrderId;
+  // De-dupe: a retry of the same attempt must not double-queue.
+  if (key && arr.some(function (e) { return e.order && e.order.clientOrderId === key; })) { _posOQUpdateBadge(); return; }
+  arr.push({ order: order, user: user, shiftId: shiftId, ts: Date.now() });
+  _posOQWrite(arr);
+  _posOQUpdateBadge();
+}
+function _posOQRemove(clientOrderId) {
+  var arr = _posOQRead().filter(function (e) { return !(e.order && e.order.clientOrderId === clientOrderId); });
+  _posOQWrite(arr);
+  _posOQUpdateBadge();
+}
+function _posOQUpdateBadge() {
+  var badge = q('#posOfflineBadge'); if (!badge) return;
+  var n = _posOQCount();
+  badge.style.display = n > 0 ? 'flex' : 'none';
+  var c = q('#posOfflineBadgeCount'); if (c) c.textContent = String(n);
+}
+var _posOQSyncing = false;
+window._posOQSync = function () {
+  if (_posOQSyncing) return;
+  var arr = _posOQRead();
+  if (!arr.length) return;
+  if (typeof navigator !== 'undefined' && navigator.onLine === false) return; // still offline
+  var entry = arr[0]; // oldest first, one at a time
+  if (!entry || !entry.order || !entry.order.clientOrderId) { _posOQWrite(arr.slice(1)); _posOQUpdateBadge(); return; }
+  _posOQSyncing = true;
+  api.withSuccessHandler(function (res) {
+    if (res && (res.success === true || res.idempotent || res.orderId)) {
+      _posOQRemove(entry.order.clientOrderId);
+      glassToast('✓ تمت مزامنة بيع محفوظ أوفلاين · Offline sale synced');
+      try { if (res.orderId) printReceipt(res.orderId); } catch (e) {}
+    } else if (res && res.success === false) {
+      // Server rejected the replay (closed shift, validation, …). Drop it to
+      // avoid an infinite retry loop and warn the cashier to handle manually.
+      _posOQRemove(entry.order.clientOrderId);
+      glassToast('⚠ تعذّرت مزامنة بيع محفوظ (رُفض): ' + ((res && res.error) || ''), true);
+    }
+    _posOQSyncing = false;
+    if (_posOQCount() > 0) setTimeout(window._posOQSync, 900);
+  }).withFailureHandler(function () {
+    _posOQSyncing = false; // still offline / transient — keep it queued for later
+  }).saveOrder(entry.order, entry.user, entry.shiftId);
+};
+try {
+  window.addEventListener('online', function () { setTimeout(window._posOQSync, 600); });
+  setInterval(function () { if (_posOQCount() > 0) window._posOQSync(); }, 20000);
+  setTimeout(function () { _posOQUpdateBadge(); window._posOQSync(); }, 2500);
+} catch (e) {}
+
 window.renderFoodicsSplitFields = function () {
   var host = q('#paySplitFields');
   if (!host) return;
@@ -2470,11 +2543,30 @@ window.doCheckout = function() {
       api.withSuccessHandler(function(m) { state.menu = m || []; renderMenuGrid(); }).getMenu();
     }).withFailureHandler(function(err) {
       loader(false);
-      // v7.2 — NETWORK FAILURE: release the lock + re-enable buttons, KEEP
-      // state._clientOrderId so a retry reuses the same idempotency key.
       state._checkoutInFlight = false;
       window._setCheckoutBusy(false);
-      glassAlert(t('connectionFailed'), (err && err.message) || t('connectionFailedMsg'), { danger: true });
+      // v7.3 — TRUE transport failure (fetch rejected): queue the sale offline
+      // with its idempotency key and move on, instead of losing it or making
+      // the cashier wait. The cart clears like a completed sale; the queued
+      // order auto-syncs when the network returns (backend de-dupes on
+      // client_order_id, so a sale that DID reach the server is never doubled).
+      // Business rejections come back via the SUCCESS handler and are NOT here.
+      try {
+        _posOQEnqueue(order, state.user, state.activeShiftId);
+        if (typeof closeGlassModal === 'function') closeGlassModal('#modalPayment');
+        state.cart = [];
+        state.currentDiscount = { name: '', amount: 0 };
+        state.lineDiscounts = {};
+        state._clientOrderId = null; // next sale gets a fresh key; queued one keeps its own
+        updateCart();
+        glassAlert('بيع محفوظ أوفلاين · Saved offline',
+          'تعذّر الاتصال بالخادم — حُفظ البيع محلياً وسيُرحَّل تلقائياً عند عودة الشبكة. لا تُعِد إدخال الطلب · Saved locally; it will sync automatically when you are back online.',
+          { danger: false });
+      } catch (e2) {
+        // Last-resort: if queuing itself failed, fall back to the old alert so
+        // the cashier knows the sale did NOT go through and can retry.
+        glassAlert(t('connectionFailed'), (err && err.message) || t('connectionFailedMsg'), { danger: true });
+      }
     }).saveOrder(order, state.user, state.activeShiftId);
   };
 
@@ -5246,6 +5338,15 @@ var _scRevealed      = false;   // has the cashier ticked the reveal box?
 
 window.shiftCloseStart = function() {
   if (!state.activeShiftId) return glassToast(t ? t('noActiveShift') : 'لا توجد وردية مفتوحة', true);
+  // v7.3 — don't close a shift while offline sales are still pending sync, or
+  // the drawer reconciliation would be computed against an incomplete sales
+  // set. Kick a sync attempt and ask the cashier to wait.
+  if (typeof _posOQCount === 'function' && _posOQCount() > 0) {
+    if (typeof window._posOQSync === 'function') window._posOQSync();
+    return glassAlert('بيوع غير مُزامَنة · Unsynced sales',
+      'هناك ' + _posOQCount() + ' بيع محفوظ أوفلاين لم يُرحَّل بعد. انتظر اكتمال المزامنة (تلقائياً عند عودة الشبكة) قبل إغلاق الوردية · Wait for offline sales to sync before closing the shift.',
+      { danger: true });
+  }
 
   // ── Reset session state ──
   _scExpectedTotal = 0;

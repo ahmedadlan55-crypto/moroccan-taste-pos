@@ -829,7 +829,67 @@ window.setFoodicsPay = function (name) {
   var panel = q('#paySplitFoodics');
   if (panel) panel.classList.toggle('hidden', name !== 'Split');
   if (name === 'Split') renderFoodicsSplitFields();
+  // v7.3 — Cash tendered → change panel: show for Cash, recompute; when
+  // switching AWAY from Cash, clear any leftover insufficient-cash disable
+  // so the confirm button isn't stuck disabled.
+  var cashPanel = q('#payCashFoodics');
+  if (cashPanel) cashPanel.classList.toggle('hidden', name !== 'Cash');
+  if (name === 'Cash') {
+    window._payCashRenderQuick();
+    window._payCashRecalc();
+  } else {
+    var cb = document.querySelector('.pay-confirm-btn'); if (cb) cb.disabled = false;
+  }
   _payNotesUpdate();
+};
+
+// v7.3 — Cash tendered → change due. Optional but always available: when the
+// cashier enters the amount received we compute + display the change and block
+// confirmation on an underpayment; left blank, it's treated as exact payment.
+window._payCashWholeTotal = function () {
+  var t = (typeof _foodicsCartTotal === 'function') ? _foodicsCartTotal() : 0;
+  return Math.round(Number(t) || 0);
+};
+window._payCashRenderQuick = function () {
+  var host = q('#payCashQuick'); if (!host) return;
+  var total = window._payCashWholeTotal();
+  var presets = [{ label: 'مضبوط · Exact', val: total }];
+  [50, 100, 200, 500].forEach(function (d) { if (d > total) presets.push({ label: String(d), val: d }); });
+  host.innerHTML = presets.map(function (p) {
+    return '<button type="button" onclick="_payCashQuick(' + p.val + ')" ' +
+      'style="flex:1 1 70px;min-width:64px;padding:9px 6px;border:1.5px solid rgba(124,58,237,.25);' +
+      'border-radius:10px;background:#fff;font-weight:800;font-size:13px;color:#5b21b6;cursor:pointer;">' +
+      _posEsc(p.label) + '</button>';
+  }).join('');
+};
+window._payCashQuick = function (val) {
+  var el = q('#payCashTendered'); if (!el) return;
+  el.value = String(val);
+  window._payCashRecalc();
+};
+window._payCashRecalc = function () {
+  var el = q('#payCashTendered');
+  var changeEl = q('#payCashChange');
+  var confirmBtn = document.querySelector('.pay-confirm-btn');
+  var cur = (state.settings && state.settings.currency) || 'ر.س';
+  var total = window._payCashWholeTotal();
+  var raw = el ? String(el.value).trim() : '';
+  if (raw === '' || !(Number(raw) > 0)) {
+    // No amount entered → treat as exact payment (non-blocking).
+    state._cashTendered = 0; state._cashChange = 0;
+    if (changeEl) { changeEl.textContent = '0.00 ' + cur; changeEl.style.color = '#16a34a'; }
+    if (confirmBtn) confirmBtn.disabled = false;
+    return;
+  }
+  var tendered = Number(raw);
+  var change = Math.round((tendered - total) * 100) / 100;
+  state._cashTendered = tendered;
+  state._cashChange = change > 0 ? change : 0;
+  if (changeEl) {
+    changeEl.textContent = change.toFixed(2) + ' ' + cur;
+    changeEl.style.color = change < 0 ? '#dc2626' : '#16a34a';
+  }
+  if (confirmBtn) confirmBtn.disabled = (change < 0);
 };
 
 window.renderFoodicsSplitFields = function () {
@@ -1700,6 +1760,13 @@ window.posOpenPaymentModal = function () {
   var splitPanel = q('#paySplitFoodics');
   if (splitPanel) splitPanel.classList.toggle('hidden', currentMethod !== 'Split');
   if (currentMethod === 'Split') renderFoodicsSplitFields();
+  // v7.3 — reset + show the cash tendered panel when Cash is the method.
+  var cashPanel = q('#payCashFoodics');
+  var cashInput = q('#payCashTendered');
+  if (cashInput) cashInput.value = '';
+  state._cashTendered = 0; state._cashChange = 0;
+  if (cashPanel) cashPanel.classList.toggle('hidden', currentMethod !== 'Cash');
+  if (currentMethod === 'Cash') { window._payCashRenderQuick(); window._payCashRecalc(); }
   openGlassModal('#modalPayment');
 };
 
@@ -2211,6 +2278,25 @@ window.doCheckout = function() {
     totalFinal = afterDiscount;
   }
 
+  // ─── v7.3 — Cash tendered → change due ───
+  // Optional: if the cashier entered the amount received, it must cover the
+  // total; capture the change for the receipt + drawer. Left blank → exact.
+  var cashTendered = 0, changeDue = 0;
+  if (payMethod === 'Cash') {
+    cashTendered = Number(state._cashTendered) || 0;
+    if (cashTendered > 0) {
+      var _wholeTotal = Math.round(afterDiscount);
+      if (cashTendered < _wholeTotal) {
+        return glassAlert(
+          'المبلغ المستلم غير كافٍ · Insufficient cash',
+          'المبلغ المستلم (' + cashTendered + ') أقل من الإجمالي (' + _wholeTotal + ' ' + ((state.settings && state.settings.currency) || 'ر.س') + ').',
+          { danger: true }
+        );
+      }
+      changeDue = Math.round((cashTendered - _wholeTotal) * 100) / 100;
+    }
+  }
+
   // ─── v5.11.4 — Validate payment notes whenever "Other" is involved ───
   var paymentNotes = '';
   var needsNote = (payMethod === 'Other') ||
@@ -2268,6 +2354,9 @@ window.doCheckout = function() {
     lineDiscountTotal: lineDiscTotal,
     kitaServiceFee: serviceFee,
     splitDetails: splitDetails,
+    // v7.3 — cash tendered + change due (for the receipt + drawer reconcile).
+    cashTendered: cashTendered,
+    changeDue: changeDue,
     // v7.2 — idempotency key the backend dedupes on.
     clientOrderId: state._clientOrderId,
     // ─── V3 metadata: channel + discount IDs (for reports + GL routing) ───

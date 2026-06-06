@@ -372,6 +372,22 @@
           '</div>'
         : '') +
 
+      // ───── CASH TENDERED → CHANGE (only on a cash sale with change) ─────
+      // v7.3 — print what the customer handed over and the change returned so
+      // both the drawer and the customer can verify the amount.
+      ((Number(r.inv.changeDue) > 0 || Number(r.inv.cashTendered) > 0)
+        ? '<div style="border:1px dashed #000;border-radius:3px;padding:6px 10px;margin:6px 0;font-family:ui-monospace,SFMono-Regular,monospace;">' +
+            '<div style="display:flex;justify-content:space-between;font-size:12px;color:#000;padding:1px 0;">' +
+              '<span>TENDERED · <span style="direction:rtl;">المستلم</span></span>' +
+              '<span style="font-weight:800;">' + _whole(r.inv.cashTendered) + ' ' + esc(r.currency) + '</span>' +
+            '</div>' +
+            '<div style="display:flex;justify-content:space-between;font-size:13px;color:#000;padding:1px 0;font-weight:900;">' +
+              '<span>CHANGE · <span style="direction:rtl;">الباقي</span></span>' +
+              '<span>' + _whole(r.inv.changeDue) + ' ' + esc(r.currency) + '</span>' +
+            '</div>' +
+          '</div>'
+        : '') +
+
       // ───── CASHIER / SERVER ─────
       '<div style="text-align:center;font-size:12px;color:#000;margin:8px 0;padding:6px;border-top:1px dashed #000;">' +
         '<div style="font-weight:700;">SERVED BY: <strong style="font-size:13px;">' + esc(r.cashierName) + (r.cashierEmpNo && r.cashierEmpNo !== r.cashierName ? ' (' + esc(r.cashierEmpNo) + ')' : '') + '</strong></div>' +

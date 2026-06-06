@@ -238,6 +238,9 @@ router.post('/', async (req, res) => {
     let { channelId, channelName, discountId, discountGlAccountId, lineDiscounts: lineDiscPayload } = req.body;
     // ─── v5.11.4: optional customer payload (id OR phone+name+gender) + Other-method notes ───
     const { customer: customerPayload, paymentNotes } = req.body;
+    // v7.3 — cash tendered + change due (optional; stored for receipt + drawer)
+    const cashTendered = Math.max(0, Number(req.body.cashTendered) || 0);
+    const changeDue    = Math.max(0, Number(req.body.changeDue) || 0);
 
     // ─── v7.2 HIGH: Cart validation (fail fast, before any writes) ───
     // An empty / malformed cart used to slip through and create a
@@ -831,6 +834,16 @@ router.post('/', async (req, res) => {
           [JSON.stringify(splitDetails), orderId]
         );
       } catch(e) { /* split_details_json missing on older deploy */ }
+    }
+
+    // ─── v7.3 — Persist cash tendered + change due (tolerant) ───
+    if (paymentMethod === 'Cash' && (cashTendered > 0 || changeDue > 0)) {
+      try {
+        await db.query(
+          'UPDATE sales SET cash_tendered = ?, change_due = ? WHERE id = ?',
+          [cashTendered, changeDue, orderId]
+        );
+      } catch (e) { /* cash_tendered/change_due missing on older deploy */ }
     }
 
     // Stamp ZATCA fields back (tolerate schemas without these columns)
@@ -1638,6 +1651,8 @@ router.get('/invoice/:orderId', async (req, res) => {
       // template itemizes these so SUBTOTAL − discounts === TOTAL on paper.
       lineDiscounts: (function () { try { return sale.line_discounts_json ? JSON.parse(sale.line_discounts_json) : null; } catch (e) { return null; } })(),
       splitDetails: (function () { try { return sale.split_details_json ? JSON.parse(sale.split_details_json) : null; } catch (e) { return null; } })(),
+      cashTendered: Number(sale.cash_tendered) || 0,
+      changeDue: Number(sale.change_due) || 0,
       items: items.map(i => ({ name: i.item_name, qty: i.qty, price: Number(i.price), total: Number(i.total) })),
       // V5.7.9 — receipt enrichment
       cashierName: cashierName,

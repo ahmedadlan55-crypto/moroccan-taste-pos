@@ -3070,6 +3070,13 @@ async function runMigrations() {
   // two non-NULL identical keys collide. Tolerate re-runs (key exists).
   try { await db.query('ALTER TABLE sales ADD UNIQUE KEY uq_sales_client_order_id (client_order_id)'); } catch(e) {}
 
+  // ─── v7.3 — Cash tendered → change due (world-class cashier UX) ───
+  // The POS now records how much cash the customer handed over and the
+  // change given back. Stored for the receipt, the drawer reconciliation at
+  // shift close, and the audit trail. NULL on card/split/legacy sales.
+  await addColumnIfMissing('sales', 'cash_tendered', 'DECIMAL(12,2) NULL');
+  await addColumnIfMissing('sales', 'change_due',    'DECIMAL(12,2) NULL');
+
   // ─── v6.20.0 — Per-product tax-inclusive flag ───
   // Owner wants to enter NEW products with their NET price (no VAT)
   // and have the system add VAT on top, displaying a whole-SAR total

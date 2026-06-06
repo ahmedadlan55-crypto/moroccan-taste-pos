@@ -311,6 +311,21 @@
       <!-- Big payment-method tiles (rendered by renderFoodicsPayTiles — 3 fixed: Cash/Mada/Other + Split) -->
       <div class="pay-tiles-grid" id="payTilesGrid"></div>
 
+      <!-- v7.3 — Cash tendered → change due (shown only when Cash is the active method) -->
+      <div class="pay-cash-foodics hidden" id="payCashFoodics" style="margin-top:14px;padding:14px;border:1.5px solid rgba(124,58,237,.18);border-radius:16px;background:rgba(124,58,237,.04);">
+        <label for="payCashTendered" style="display:flex;align-items:center;gap:8px;font-weight:700;font-size:13px;color:#4c1d95;margin-bottom:8px;">
+          <i class="fas fa-hand-holding-dollar"></i> المبلغ المستلم · Amount Tendered
+        </label>
+        <input type="number" id="payCashTendered" inputmode="decimal" min="0" step="0.01" placeholder="0"
+               oninput="_payCashRecalc()" aria-label="المبلغ المستلم · Amount tendered"
+               style="width:100%;padding:12px 14px;font-size:20px;font-weight:800;text-align:center;border:1.5px solid rgba(124,58,237,.25);border-radius:12px;font-family:ui-monospace,SFMono-Regular,monospace;box-sizing:border-box;">
+        <div class="pay-cash-quick" id="payCashQuick" style="display:flex;flex-wrap:wrap;gap:8px;margin-top:10px;"></div>
+        <div id="payCashChangeRow" style="display:flex;justify-content:space-between;align-items:center;margin-top:12px;padding:10px 14px;border-radius:12px;background:rgba(22,163,74,.08);">
+          <span style="font-weight:700;font-size:14px;color:#065f46;">الباقي · Change Due</span>
+          <strong id="payCashChange" style="font-size:22px;font-weight:900;color:#16a34a;font-family:ui-monospace,SFMono-Regular,monospace;">0.00 ر.س</strong>
+        </div>
+      </div>
+
       <!-- v5.11.4 — Notes block (auto-shown for Other or non-zero Other-row in Split) -->
       <div class="pay-notes-foodics hidden" id="payNotesBlock">
         <label class="pay-notes-label">

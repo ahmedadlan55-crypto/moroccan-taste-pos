@@ -97,7 +97,7 @@
   <div class="pos-action-bar" id="posActionBar">
     <div class="pos-action-channel">
       <i class="fas fa-store" style="color:#7c3aed;"></i>
-      <select id="posChannelSelTop" class="pos-action-select" onchange="posOnChannelTopChange()">
+      <select id="posChannelSelTop" class="pos-action-select" onchange="posOnChannelTopChange()" aria-label="قناة البيع · Sales channel">
         <option value="">— لم تُحمَّل —</option>
       </select>
       <span class="pos-action-pricelist" id="posChannelPriceLabelTop"></span>
@@ -165,7 +165,7 @@
 
       <!-- ─── V3: Sales Channel Selector ─── -->
       <div class="pos-channel-bar" id="posChannelBar">
-        <label class="pos-channel-label"><i class="fas fa-store"></i> قناة البيع:</label>
+        <label class="pos-channel-label" for="posChannelSel"><i class="fas fa-store" aria-hidden="true"></i> قناة البيع:</label>
         <select id="posChannelSel" class="pos-channel-select" onchange="posOnChannelChange()">
           <option value="">— لم تُحمَّل —</option>
         </select>
@@ -196,8 +196,9 @@
             لا يوجد عميل · No customer
           </span>
           <button type="button" id="posCustomerUnlink" class="pos-customer-unlink"
-                  onclick="posCustomerClear()" title="إزالة الربط · Unlink customer" hidden>
-            <i class="fas fa-times"></i>
+                  onclick="posCustomerClear()" title="إزالة الربط · Unlink customer"
+                  aria-label="إزالة الربط · Unlink customer" hidden>
+            <i class="fas fa-times" aria-hidden="true"></i>
           </button>
         </div>
         <!-- v6.16.0 — Customer totals strip + history button.
@@ -246,6 +247,12 @@
         <div class="cart-summary-line">
           <span data-i18n="subtotal">المجموع الفرعي:</span>
           <span id="cartSubtotalText">0.00</span>
+        </div>
+        <!-- Line-item discounts total (shown only when > 0). Bilingual
+             static label since the i18n dictionary lives in common.js. -->
+        <div class="cart-summary-line discount-line" id="cartLineDiscLine" style="display:none;">
+          <span>خصم الأصناف · Item Discounts:</span>
+          <span id="cartLineDiscText">0.00</span>
         </div>
         <div class="cart-summary-line discount-line">
           <span data-i18n="discount">الخصم:</span>
@@ -358,14 +365,14 @@
        IDs preserved so toggleFloatActions / auto-dismiss IIFE keep working. -->
   <div class="float-actions collapsed" id="floatActions">
     <div class="float-btns" id="floatBtns" role="menu" aria-label="إجراءات الكاشير · POS Actions menu">
-      <button class="float-btn float-btn-success" onclick="shiftOpen()" title="فتح وردية"><i class="fas fa-play"></i></button>
-      <button class="float-btn float-btn-danger" onclick="shiftCloseStart()" title="إغلاق الوردية"><i class="fas fa-stop"></i></button>
-      <button class="float-btn float-btn-info no-print-on-kiosk" onclick="openPrinterSettings()" title="الطابعة" style="display:none;"><i class="fas fa-print"></i></button>
-      <button class="float-btn float-btn-warn" onclick="openCashierStocktake()" title="جرد المخزون"><i class="fas fa-clipboard-check"></i></button>
-      <button class="float-btn float-btn-purple" onclick="openShortageRequest()" title="طلب نواقص" data-i18n-title="shortageRequest"><i class="fas fa-exclamation-triangle"></i></button>
+      <button class="float-btn float-btn-success" onclick="shiftOpen()" title="فتح وردية" aria-label="فتح وردية · Open shift"><i class="fas fa-play" aria-hidden="true"></i></button>
+      <button class="float-btn float-btn-danger" onclick="shiftCloseStart()" title="إغلاق الوردية" aria-label="إغلاق الوردية · Close shift"><i class="fas fa-stop" aria-hidden="true"></i></button>
+      <button class="float-btn float-btn-info no-print-on-kiosk" onclick="openPrinterSettings()" title="الطابعة" aria-label="الطابعة · Printer" style="display:none;"><i class="fas fa-print" aria-hidden="true"></i></button>
+      <button class="float-btn float-btn-warn" onclick="openCashierStocktake()" title="جرد المخزون" aria-label="جرد المخزون · Stocktake"><i class="fas fa-clipboard-check" aria-hidden="true"></i></button>
+      <button class="float-btn float-btn-purple" onclick="openShortageRequest()" title="طلب نواقص" data-i18n-title="shortageRequest" aria-label="طلب نواقص · Shortage request"><i class="fas fa-exclamation-triangle" aria-hidden="true"></i></button>
       <!-- v5.11.4 — My Invoices (current shift) — cashier-facing list with Cancel + Return actions -->
-      <button class="float-btn float-btn-sky" onclick="posOpenMyInvoices()" title="فواتيري · My Invoices"><i class="fas fa-file-invoice"></i></button>
-      <button class="float-btn float-btn-green2" onclick="window.open('/employee/','_blank')" title="بوابة الموظف"><i class="fas fa-user-tie"></i></button>
+      <button class="float-btn float-btn-sky" onclick="posOpenMyInvoices()" title="فواتيري · My Invoices" aria-label="فواتيري · My Invoices"><i class="fas fa-file-invoice" aria-hidden="true"></i></button>
+      <button class="float-btn float-btn-green2" onclick="window.open('/employee/','_blank')" title="بوابة الموظف" aria-label="بوابة الموظف · Employee portal"><i class="fas fa-user-tie" aria-hidden="true"></i></button>
     </div>
   </div>
 
@@ -507,7 +514,7 @@
       <div class="glass-modal-actions" style="flex-shrink:0;">
         <button class="btn btn-primary" style="flex:1;" onclick="submitCashierStocktake()"><i class="fas fa-check-double"></i> <span data-i18n="stSaveBtn">Save & Send Report</span></button>
         <button class="btn btn-light" onclick="closeGlassModal('#modalCashierStocktake')" data-i18n="stCloseBtn">Close (data saved)</button>
-        <button class="btn btn-danger btn-sm" onclick="clearCstCart()" style="padding:8px 12px;" title="Clear all"><i class="fas fa-trash"></i></button>
+        <button class="btn btn-danger btn-sm" onclick="clearCstCart()" style="padding:8px 12px;" title="Clear all" aria-label="مسح المحضر · Clear all"><i class="fas fa-trash" aria-hidden="true"></i></button>
       </div>
     </div>
   </div>

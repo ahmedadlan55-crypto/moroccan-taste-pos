@@ -336,7 +336,10 @@ window.renderMenuGrid = function() {
     }
   } else {
     list.forEach(function(i) {
-      var inCart = state.cart.find(function(c) { return c.id === i.id; });
+      // v7.2 — qty badge must reflect the cart line that matches THIS card's
+      // exact variant (id + effective price + modifiers), not just the id.
+      var _matchKey = _itemMatchKey(i);
+      var inCart = state.cart.find(function(c) { return _cartLineKey(c) === _matchKey; });
       var qty = inCart ? inCart.qty : 0;
       var isSel = !!inCart;
       // v5.12.7 — optional product image at the top of the card
@@ -348,7 +351,12 @@ window.renderMenuGrid = function() {
       var customBadge = i.__custom
         ? '<div style="position:absolute;top:6px;inset-inline-start:6px;background:#f59e0b;color:#fff;font-size:9px;font-weight:800;padding:2px 6px;border-radius:6px;z-index:1;">مُخصَّص</div>'
         : '';
-      var safeJson = JSON.stringify(i).replace(/'/g, '&#39;');
+      // v7.2 — XSS hardening: the item JSON embeds DB-sourced strings
+      // (name, etc.).  Escaping the whole serialized payload for the HTML
+      // attribute is safe — the browser decodes the entities back to the
+      // original characters before the JS parser sees the (still-valid)
+      // JSON, so addToCart receives an intact object.
+      var safeJson = _posEsc(JSON.stringify(i));
       // v6.20.0 — menu card price = the WHOLE tax-inclusive amount the
       // customer will actually pay (regardless of whether the stored
       // price is net or gross).  Uses computeGrossPerUnit helper from
@@ -356,11 +364,16 @@ window.renderMenuGrid = function() {
       var _grossUnit = window.computeGrossPerUnit
         ? window.computeGrossPerUnit(i)
         : Number(i.price) || 0;
+      // v7.2 — XSS: product name comes from the DB and must be escaped
+      // before it lands in innerHTML. _decKey is the URI-encoded composite
+      // line key passed to decFromCart (safe inside the single-quoted
+      // inline handler).
+      var _decKey = encodeURIComponent(_matchKey);
       h += '<div class="pos-item ' + (isSel ? 'selected' : '') + '" style="position:relative;">' +
         customBadge +
         imgHtml +
         '<div>' +
-          '<div class="pos-item-name">' + (i.name || '') + '</div>' +
+          '<div class="pos-item-name">' + _posEsc(i.name || '') + '</div>' +
           '<div class="pos-item-price">' + window.formatWhole(_grossUnit) + '</div>' +
         '</div>' +
         '<div class="pos-item-actions">' +
@@ -368,7 +381,7 @@ window.renderMenuGrid = function() {
           // The plain "+" was rendering as a near-invisible white character
           // inside the purple circle, so cashiers couldn't see the add
           // affordance. fa-plus/fa-minus are unambiguous and sized via CSS.
-          '<button class="qty-btn" ' + (qty <= 0 ? 'disabled' : '') + ' onclick="decFromCart(\'' + i.id + '\')" aria-label="' + t('decrease') + '"><i class="fas fa-minus"></i></button>' +
+          '<button class="qty-btn" ' + (qty <= 0 ? 'disabled' : '') + ' onclick="decFromCart(\'' + _decKey + '\')" aria-label="' + t('decrease') + '"><i class="fas fa-minus"></i></button>' +
           '<div class="qty-display">' + qty + '</div>' +
           '<button class="qty-btn add" onclick=\'addToCart(' + safeJson + ')\' aria-label="' + t('add') + '"><i class="fas fa-plus"></i></button>' +
         '</div>' +
@@ -674,12 +687,53 @@ window.posOnChannelTopChange = function () {
 // tiles + a smart split panel that pulls every active method, lets the
 // cashier auto-distribute the total equally or fill the remainder per
 // row. The legacy hidden #posPayMethod input still drives doCheckout.
-function _foodicsCartTotal() {
-  var sub = (state.cart || []).reduce(function (s, c) {
-    return s + (Number(c.qty) || 0) * (Number(c.price) || 0);
+// v7.2 — Canonical per-unit GROSS (tax-inclusive) price for a cart line.
+// One implementation shared by updateCart, the discount engines, the split
+// panel, and doCheckout so every total agrees to the riyal.  Honors the
+// item's is_tax_inclusive flag via computeGrossPerUnit.  Only Kita mode
+// reads the editable c.price; all other methods derive from the immutable
+// basePrice, so a stale Kita edit can't bleed into a Cash/Mada sale.
+window._posLineGrossUnit = function (c) {
+  if (!c) return 0;
+  var payInput = (typeof q === 'function') ? q('#posPayMethod') : null;
+  var payMethod = payInput ? payInput.value : 'Cash';
+  if (payMethod === 'Kita') {
+    return window.computeGrossPerUnit ? window.computeGrossPerUnit(c) : (Number(c.price) || 0);
+  }
+  var base = (c.basePrice != null ? c.basePrice : c.price);
+  var probe = { price: base, isTaxInclusive: c.isTaxInclusive };
+  return window.computeGrossPerUnit ? window.computeGrossPerUnit(probe) : (Number(base) || 0);
+};
+
+// v7.2 — Gross subtotal of the whole cart (sum of line gross).  Used as the
+// canonical discount BASE so both discount engines compute against the same
+// tax-inclusive number the customer actually pays.
+window._posCartGrossSubtotal = function () {
+  return (state.cart || []).reduce(function (s, c) {
+    return s + (Number(c.qty) || 0) * window._posLineGrossUnit(c);
   }, 0);
-  var disc = (state.currentDiscount && state.currentDiscount.amount) || 0;
-  return Math.max(0, sub - disc);
+};
+
+// v7.2 — Sum of all per-line discount amounts, clamped to the gross subtotal.
+window._posLineDiscountTotal = function () {
+  var sub = window._posCartGrossSubtotal();
+  var tot = 0;
+  Object.keys(state.lineDiscounts || {}).forEach(function (k) {
+    tot += Number(state.lineDiscounts[k] && state.lineDiscounts[k].amount) || 0;
+  });
+  return tot > sub ? sub : tot;
+};
+
+// v7.2 — The amount actually charged: gross subtotal − line discounts −
+// invoice discount, never below zero.  Drives the split panel + payment
+// modal so the "remaining" math matches the charged total exactly.
+function _foodicsCartTotal() {
+  var sub = window._posCartGrossSubtotal();
+  var afterLine = sub - window._posLineDiscountTotal();
+  var inv = window._posEffectiveInvoiceDiscount
+    ? window._posEffectiveInvoiceDiscount(afterLine)
+    : ((state.currentDiscount && state.currentDiscount.amount) || 0);
+  return Math.max(0, afterLine - inv);
 }
 
 // ─── v6.4.3 — Payment tiles now respect the owner's configured methods ───
@@ -1670,9 +1724,38 @@ document.addEventListener('keydown', function (e) {
 // =========================================
 // Cart
 // =========================================
+// v7.2 — Composite cart-line identity: the SAME menu id can legitimately
+// appear at DIFFERENT effective prices (channel override, custom price-list
+// row, manual price edit) or with different modifiers.  Matching on `id`
+// alone collapsed those into one line and corrupted qty badges + totals.
+// The key folds id + effective price + modifiers so each distinct variant
+// becomes its own line.  `_cartLineKey` works on a CART line (uses its own
+// stored price); `_itemMatchKey` works on a fresh menu item being added.
+function _cartModifiersKey(o) {
+  if (!o) return '';
+  var m = o.modifiers != null ? o.modifiers
+        : (o.selectedModifiers != null ? o.selectedModifiers : '');
+  if (m == null || m === '') return '';
+  try { return typeof m === 'string' ? m : JSON.stringify(m); }
+  catch (e) { return String(m); }
+}
+function _itemMatchKey(item) {
+  if (!item) return '';
+  var price = Number(item.price != null ? item.price : 0) || 0;
+  return String(item.id) + '|' + price + '|' + _cartModifiersKey(item);
+}
+function _cartLineKey(line) {
+  if (!line) return '';
+  // Prefer the immutable basePrice for identity so a transient render-time
+  // price tweak never re-buckets an existing line; fall back to price.
+  var price = Number(line.basePrice != null ? line.basePrice : line.price) || 0;
+  return String(line.id) + '|' + price + '|' + _cartModifiersKey(line);
+}
+
 window.addToCart = function(item) {
   var wasEmpty = !state.cart || state.cart.length === 0;
-  var found = state.cart.find(function(c) { return c.id === item.id; });
+  var key = _itemMatchKey(item);
+  var found = state.cart.find(function(c) { return _cartLineKey(c) === key; });
   if (found) {
     found.qty++;
   } else {
@@ -1687,17 +1770,48 @@ window.addToCart = function(item) {
   }
 };
 
-window.decFromCart = function(itemId) {
-  var idx = state.cart.findIndex(function(c) { return c.id === itemId; });
+window.decFromCart = function(itemKey) {
+  // v7.2 — match by composite line key (id+price+modifiers) so the right
+  // variant is decremented.  The key arrives URI-encoded from the grid to
+  // stay safe inside the inline handler; decode defensively (a raw key or
+  // legacy bare id still works because decodeURIComponent is idempotent on
+  // strings without %-escapes).
+  try { itemKey = decodeURIComponent(itemKey); } catch (e) {}
+  var idx = state.cart.findIndex(function(c) { return _cartLineKey(c) === itemKey; });
+  if (idx === -1) {
+    idx = state.cart.findIndex(function(c) { return String(c.id) === String(itemKey); });
+  }
   if (idx === -1) return;
   state.cart[idx].qty -= 1;
-  if (state.cart[idx].qty <= 0) state.cart.splice(idx, 1);
+  if (state.cart[idx].qty <= 0) {
+    state.cart.splice(idx, 1);
+    _reindexLineDiscountsAfterRemoval(idx);
+  }
   updateCart();
 };
 
+// v7.2 — state.lineDiscounts is keyed by CART INDEX.  When a line is spliced
+// out, every higher index shifts down by one — so the discount map must be
+// re-keyed or a discount silently re-attaches to the wrong item (and, since
+// v7.2, mischarges the total).  This drops the removed line's discount and
+// shifts the rest into their new positions.
+function _reindexLineDiscountsAfterRemoval(removedIdx) {
+  var src = state.lineDiscounts || {};
+  var next = {};
+  Object.keys(src).forEach(function(k) {
+    var i = Number(k);
+    if (i === removedIdx) return;            // discount on the removed line — drop it
+    next[i > removedIdx ? i - 1 : i] = src[k];
+  });
+  state.lineDiscounts = next;
+}
+
 window.modQty = function(idx, delta) {
   state.cart[idx].qty += delta;
-  if (state.cart[idx].qty <= 0) state.cart.splice(idx, 1);
+  if (state.cart[idx].qty <= 0) {
+    state.cart.splice(idx, 1);
+    _reindexLineDiscountsAfterRemoval(idx);
+  }
   updateCart();
 };
 
@@ -1708,6 +1822,7 @@ window.editCartPrice = function(idx, newPrice) {
 
 window.removeCartItem = function(idx) {
   state.cart.splice(idx, 1);
+  _reindexLineDiscountsAfterRemoval(idx);
   updateCart();
 };
 
@@ -1717,8 +1832,41 @@ window.clearCart = function() {
     if (!ok) return;
     state.cart = [];
     state.currentDiscount = { name: '', amount: 0 };
+    // v7.2 — STALE LINE DISCOUNTS: clearing the cart must clear them too,
+    // and drop the in-flight idempotency key so the next sale is fresh.
+    state.lineDiscounts = {};
+    state._clientOrderId = null;
     updateCart();
   });
+};
+
+// v7.2 — Single source of truth for the effective INVOICE discount.
+// Recomputes from the stored type/value against the given base (the gross
+// subtotal AFTER line discounts) and clamps the RESULT only — it never
+// writes back to state.currentDiscount, so the original intent survives
+// item add/remove.  Falls back to the stored amount when no type/value was
+// captured (legacy entries), still clamped to the base.
+window._posEffectiveInvoiceDiscount = function(base) {
+  base = Number(base) || 0;
+  var d = state.currentDiscount || {};
+  var amt;
+  var type = String(d.type || '').toLowerCase();
+  var val = Number(d.value);
+  if ((type === 'percent' || type === 'percentage') && isFinite(val)) {
+    amt = base * (val / 100);
+  } else if ((type === 'fixed' || type === 'amount') && isFinite(val)) {
+    amt = val;
+  } else if (isFinite(val) && d.value != null && type === '') {
+    // Type unknown but a value exists — treat as a fixed amount.
+    amt = val;
+  } else {
+    amt = Number(d.amount) || 0;
+  }
+  if (d.maxAmount && amt > Number(d.maxAmount)) amt = Number(d.maxAmount);
+  if (d.maxPerInvoice && amt > Number(d.maxPerInvoice)) amt = Number(d.maxPerInvoice);
+  if (amt > base) amt = base;
+  if (!(amt > 0)) amt = 0;
+  return amt;
 };
 
 window.updateCart = function() {
@@ -1726,28 +1874,32 @@ window.updateCart = function() {
   var payMethod = payInput ? payInput.value : 'Cash';
   var subtotal = 0;
 
-  if (payMethod !== 'Kita') {
-    state.cart.forEach(function(c) { c.price = c.basePrice; });
-  }
-
   // v6.20.0 — subtotal now sums the TAX-INCLUSIVE gross of each line
   // (using computeGrossPerUnit which honors the item's is_tax_inclusive
   // flag).  This matches what the customer will see on the receipt total.
+  // v7.2 — gross-per-unit is delegated to the shared _posLineGrossUnit
+  // helper so updateCart, the discount engines, the split panel and
+  // doCheckout all agree to the riyal and nobody mutates the cart line.
   var h = '';
   state.cart.forEach(function(c, idx) {
-    var grossUnit = window.computeGrossPerUnit
-      ? window.computeGrossPerUnit(c)
-      : Number(c.price) || 0;
+    var grossUnit = window._posLineGrossUnit(c);
     var lineGross = grossUnit * c.qty;
     subtotal += lineGross;
+    // v7.2 — show any per-line discount applied to this row.
+    var ld = state.lineDiscounts && state.lineDiscounts[idx];
+    var ldAmt = ld ? (Number(ld.amount) || 0) : 0;
+    var ldHtml = ldAmt > 0
+      ? '<div class="cart-item-line-disc" style="font-size:11px;color:#16a34a;font-weight:700;">- ' + window.formatWhole(ldAmt) + ' ' + (ld.name ? _posEsc(ld.name) : '') + '</div>'
+      : '';
     var priceEditEl = payMethod === 'Kita'
-      ? '<input type="number" step="0.01" value="' + c.price + '" class="price-edit-input" onchange="editCartPrice(' + idx + ', this.value)">'
+      ? '<input type="number" step="0.01" value="' + (Number(c.price) || 0) + '" class="price-edit-input" onchange="editCartPrice(' + idx + ', this.value)">'
       : window.formatWhole(grossUnit);
 
     h += '<div class="cart-item-row">' +
       '<div class="cart-item-info">' +
-        '<div class="cart-item-title">' + c.name + '</div>' +
+        '<div class="cart-item-title">' + _posEsc(c.name || '') + '</div>' +
         '<div class="cart-item-total">' + window.formatWhole(lineGross) + '</div>' +
+        ldHtml +
       '</div>' +
       '<div class="cart-item-actions">' +
         '<div class="qty-control">' +
@@ -1766,16 +1918,32 @@ window.updateCart = function() {
   if (state.cart.length === 0) {
     h = '<div class="cart-empty"><i class="fas fa-shopping-basket"></i><h3>' + t('emptyCart') + '</h3><p>' + t('emptyCartDesc') + '</p></div>';
   }
-  q('#cartItemsArea').innerHTML = h;
+  var cartArea = q('#cartItemsArea');
+  if (cartArea) cartArea.innerHTML = h;
   // V5.7.16 — translate cart items (product names from DB) on every render
   if (typeof window.translateNow === 'function') window.translateNow(q('#cartItemsArea'));
 
-  if (state.currentDiscount.amount > subtotal) state.currentDiscount.amount = subtotal;
-  var afterDiscount = subtotal - state.currentDiscount.amount;
+  // v7.2 — LINE discounts are subtracted FIRST (before the invoice
+  // discount), matching the order the backend totals the sale.
+  var lineDiscTotal = 0;
+  Object.keys(state.lineDiscounts || {}).forEach(function(k) {
+    lineDiscTotal += Number(state.lineDiscounts[k] && state.lineDiscounts[k].amount) || 0;
+  });
+  if (lineDiscTotal > subtotal) lineDiscTotal = subtotal;
+  var afterLineDisc = subtotal - lineDiscTotal;
+
+  // v7.2 — Recompute the INVOICE discount fresh every render from its stored
+  // type/value against the CURRENT (post-line-discount) base, clamping only
+  // the effective value — never mutating state.currentDiscount.  This way,
+  // removing then re-adding items restores the full discount instead of
+  // permanently clamping a fixed amount to a smaller cart.
+  var invDiscEffective = _posEffectiveInvoiceDiscount(afterLineDisc);
+  var afterDiscount = afterLineDisc - invDiscEffective;
+  if (afterDiscount < 0) afterDiscount = 0;
 
   // V5.7.15 — service-fee functionality REMOVED from the cashier UI per user
   //   request ("don't want this box at all"). Fees are now uniformly zero
-  //   regardless of payment method. Order totals = subtotal − discount.
+  //   regardless of payment method. Order totals = subtotal − discounts.
   var serviceFee = 0;
   var finalTotal = afterDiscount;
 
@@ -1787,9 +1955,15 @@ window.updateCart = function() {
   // v6.20.0 — Display all customer-facing totals as WHOLE numbers (no
   // decimals).  The breakdown shown to the cashier (subtotal, discount)
   // is also rounded to match the final total visually.
-  q('#cartSubtotalText').innerText = window.formatWhole(subtotal);
-  q('#cartDiscText').innerText = window.formatWhole(state.currentDiscount.amount);
-  q('#cartFinalTotal').innerText = window.formatWhole(payMethod === 'Split' ? afterDiscount : finalTotal) + ' ' + state.settings.currency;
+  var subEl = q('#cartSubtotalText'); if (subEl) subEl.innerText = window.formatWhole(subtotal);
+  // v7.2 — line-discount summary row (only visible when non-zero)
+  var ldLine = q('#cartLineDiscLine');
+  var ldText = q('#cartLineDiscText');
+  if (ldText) ldText.innerText = '- ' + window.formatWhole(lineDiscTotal);
+  if (ldLine) ldLine.style.display = lineDiscTotal > 0 ? '' : 'none';
+  var discEl = q('#cartDiscText'); if (discEl) discEl.innerText = window.formatWhole(invDiscEffective);
+  var finalEl = q('#cartFinalTotal');
+  if (finalEl) finalEl.innerText = window.formatWhole(payMethod === 'Split' ? afterDiscount : finalTotal) + ' ' + state.settings.currency;
 
   if (q('#mobCartCount')) {
     var mobileCount = state.cart.reduce(function(s, c) { return s + c.qty; }, 0);
@@ -1821,7 +1995,8 @@ window.toggleMobileCart = function() {
 };
 
 window.setPayMethod = function(m) {
-  q('#posPayMethod').value = m;
+  var el = q('#posPayMethod');
+  if (el) el.value = m;
   updateCart();
 };
 // V5.7.15 — kept as no-op for back-compat; the input no longer exists in the UI
@@ -1892,8 +2067,9 @@ window.renderSplitFields = function(total) {
 };
 
 window.calcSplitRemaining = function() {
-  var sub = state.cart.reduce(function(s, c) { return s + c.qty * c.price; }, 0);
-  var afterDiscount = sub - state.currentDiscount.amount;
+  // v7.2 — use the canonical charged total (gross − line discounts −
+  // invoice discount) so the remaining figure matches doCheckout exactly.
+  var afterDiscount = _foodicsCartTotal();
   var paid = 0;
   qs('.split-input').forEach(function(el) { paid += Number(el.value) || 0; });
   var rem = afterDiscount - paid;
@@ -1913,14 +2089,18 @@ window.openDiscountModal = function() {
   api.withSuccessHandler(function(discs) {
     loader(false);
     discs = discs || [];
+    // v7.2 — stash the list and dispatch by index so the DB-sourced
+    // discount name never has to be inlined (and escaped) into an onclick
+    // JS-string — closes the XSS hole entirely.
+    state._legacyDiscList = discs;
     var h = '';
     if (!discs.length) h = '<p style="text-align:center;color:#94a3b8;padding:20px;">' + t('noDiscounts') + '</p>';
-    discs.forEach(function(d) {
+    discs.forEach(function(d, idx) {
       var valStr = d.type === 'PERCENT' ? d.value + '%' : d.value + ' ' + state.settings.currency;
-      h += '<div class="card" style="margin-bottom:12px;cursor:pointer;padding:16px;background:rgba(255,255,255,0.7);border:1px solid rgba(226,232,240,0.6);border-radius:14px;" onclick="applyDiscount(\'' + d.name + '\',\'' + d.type + '\',' + d.value + ')">' +
+      h += '<div class="card" style="margin-bottom:12px;cursor:pointer;padding:16px;background:rgba(255,255,255,0.7);border:1px solid rgba(226,232,240,0.6);border-radius:14px;" onclick="applyDiscountByIdx(' + idx + ')">' +
         '<div style="display:flex;justify-content:space-between;align-items:center;">' +
-          '<h4 style="margin:0;font-weight:800;">' + d.name + '</h4>' +
-          '<strong style="color:var(--secondary);font-size:18px;">' + valStr + '</strong>' +
+          '<h4 style="margin:0;font-weight:800;">' + _posEsc(d.name || '') + '</h4>' +
+          '<strong style="color:var(--secondary);font-size:18px;">' + _posEsc(valStr) + '</strong>' +
         '</div>' +
       '</div>';
     });
@@ -1929,10 +2109,23 @@ window.openDiscountModal = function() {
   }).getDiscounts();
 };
 
+// v7.2 — index-based dispatcher for openDiscountModal cards.
+window.applyDiscountByIdx = function(idx) {
+  var d = (state._legacyDiscList || [])[idx];
+  if (!d) return;
+  applyDiscount(d.name, d.type, d.value);
+};
+
 window.applyDiscount = function(name, type, val) {
-  var sub = state.cart.reduce(function(s, c) { return s + c.qty * c.price; }, 0);
-  var calc = type === 'PERCENT' ? sub * (val / 100) : val;
-  state.currentDiscount = { name: name, amount: calc };
+  // v7.2 — Discount base is the GROSS (tax-inclusive) subtotal AFTER line
+  // discounts, so the legacy engine agrees with the V3 engine and with the
+  // total the customer pays.  type+value are stored so updateCart can
+  // recompute the effective amount on every render (item add/remove safe).
+  var base = window._posCartGrossSubtotal() - window._posLineDiscountTotal();
+  if (base < 0) base = 0;
+  var calc = type === 'PERCENT' ? base * (val / 100) : Number(val);
+  if (calc > base) calc = base;
+  state.currentDiscount = { name: name, type: type, value: Number(val), amount: calc };
   updateCart();
   closeGlassModal('#modalDiscount');
   glassToast(t('discountApplied'));
@@ -1941,16 +2134,44 @@ window.applyDiscount = function(name, type, val) {
 // =========================================
 // Checkout
 // =========================================
+// v7.2 — Toggle every checkout affordance (cart-sidebar button, Foodics
+// modal confirm button, and the clickable cart footer) so a second tap
+// during an in-flight POST is physically impossible.
+window._setCheckoutBusy = function(busy) {
+  try {
+    var sels = ['.pay-confirm-btn', '.checkout-btn', '.cart-footer-foodics'];
+    sels.forEach(function(sel) {
+      qs(sel).forEach(function(el) {
+        el.disabled = !!busy;
+        el.style.pointerEvents = busy ? 'none' : '';
+        el.style.opacity = busy ? '0.6' : '';
+        el.setAttribute('aria-disabled', busy ? 'true' : 'false');
+      });
+    });
+  } catch (e) {}
+};
+
 window.doCheckout = function() {
+  // v7.2 — DOUBLE-CHARGE GUARD: bail immediately if a checkout is already
+  // posting.  Set BEFORE any await/async so a double-tap can't slip through.
+  if (state._checkoutInFlight) return;
   if (!state.activeShiftId) return glassToast(t('shiftRequired'), true);
   if (!state.cart.length) return glassToast(t('emptyCart'), true);
 
-  var sub = state.cart.reduce(function(s, c) { return s + c.qty * c.price; }, 0);
-  var afterDiscount = sub - state.currentDiscount.amount;
-  var payMethod = q('#posPayMethod').value;
+  // v7.2 — Canonical GROSS (tax-inclusive) math, identical to updateCart
+  // and the payment modal, so the amount SHOWN equals the amount CHARGED.
+  var sub = window._posCartGrossSubtotal();
+  var lineDiscTotal = window._posLineDiscountTotal();
+  var afterLineDisc = sub - lineDiscTotal;
+  if (afterLineDisc < 0) afterLineDisc = 0;
+  var invDiscEffective = window._posEffectiveInvoiceDiscount(afterLineDisc);
+  var afterDiscount = afterLineDisc - invDiscEffective;
+  if (afterDiscount < 0) afterDiscount = 0;
+  var payInput = q('#posPayMethod');
+  var payMethod = payInput ? payInput.value : 'Cash';
 
   // V5.7.15 — service fee removed from cashier UI (user request).
-  //   Order total is just subtotal − discount. Split payments still validated.
+  //   Order total is subtotal − line discounts − invoice discount.
   var serviceFee = 0;
   var totalFinal = afterDiscount;
   var splitDetails = null;
@@ -1961,6 +2182,7 @@ window.doCheckout = function() {
       var val = Number(el.value) || 0;
       if (val > 0) { splitDetails[el.dataset.method] = val; totalPaid += val; }
     });
+    // v7.2 — validate the split against the GROSS charged total.
     if (Math.abs(totalPaid - afterDiscount) > 0.01) {
       return glassAlert(
         t('splitMismatchTitle'),
@@ -2010,15 +2232,26 @@ window.doCheckout = function() {
     }
   } catch(_) { customerOut = null; }
 
+  // v7.2 — IDEMPOTENCY KEY: generate ONCE per cart-attempt.  Reused on
+  // retry after a failure (so the backend dedupes), cleared on success
+  // (so the next sale gets a fresh key).
+  state._clientOrderId = state._clientOrderId ||
+    (Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 10));
+
   var order = {
     items: state.cart,
+    // v7.2 — GROSS (tax-inclusive) totals so SHOWN === CHARGED.
     total: sub,
     totalFinal: totalFinal,
     paymentMethod: payMethod,
     discountName: state.currentDiscount.name,
-    discountAmount: state.currentDiscount.amount,
+    discountAmount: invDiscEffective,
+    // v7.2 — line discounts now flow through to the charged total.
+    lineDiscountTotal: lineDiscTotal,
     kitaServiceFee: serviceFee,
     splitDetails: splitDetails,
+    // v7.2 — idempotency key the backend dedupes on.
+    clientOrderId: state._clientOrderId,
     // ─── V3 metadata: channel + discount IDs (for reports + GL routing) ───
     channelId: state.activeChannel ? state.activeChannel.id : null,
     channelName: state.activeChannel ? state.activeChannel.name : null,
@@ -2038,6 +2271,8 @@ window.doCheckout = function() {
     // Hard sanity check — the backend requires a valid shift_id FK. If the
     // cashier's localStorage got desynced from the DB, bail here with a
     // clear message instead of failing silently in the backend.
+    // (Guards run BEFORE we arm the in-flight lock so a failed precheck
+    //  doesn't strand the buttons disabled.)
     if (!state.user) {
       return glassAlert(t('errorTitle'), t('userNotRecognized'), { danger: true });
     }
@@ -2045,12 +2280,22 @@ window.doCheckout = function() {
       return glassAlert(t('noShiftTitle'), t('noShiftBodyMsg'), { danger: true });
     }
 
+    // v7.2 — ARM the double-charge lock + disable the buttons just before
+    // the POST leaves the device.  Reset on EVERY terminal path below.
+    state._checkoutInFlight = true;
+    window._setCheckoutBusy(true);
+
     loader();
     api.withSuccessHandler(function(res) {
       loader(false);
       // Backend returns { success: true, orderId, recipesApplied, itemsWithoutRecipe }
       // on success or { success: false, error } on any DB/FK/validation failure.
       if (!res || res.success === false || !res.orderId) {
+        // v7.2 — FAILURE: release the lock + re-enable buttons, but KEEP
+        // state._clientOrderId so a retry reuses the same idempotency key
+        // (the backend dedupes on it — no double charge on retry).
+        state._checkoutInFlight = false;
+        window._setCheckoutBusy(false);
         var msg = (res && res.error) ? res.error : t('invoiceSaveErrorDefault');
         return glassAlert(t('invoiceSaveFailed'), msg, { danger: true });
       }
@@ -2099,6 +2344,14 @@ window.doCheckout = function() {
       printReceipt(res.orderId);
       state.cart = [];
       state.currentDiscount = { name: '', amount: 0 };
+      // v7.2 — STALE LINE DISCOUNTS: wipe them with the cart so the next
+      // sale starts clean (they otherwise leaked into the following order).
+      state.lineDiscounts = {};
+      // v7.2 — SUCCESS: release the lock + re-enable buttons, and CLEAR the
+      // idempotency key so the NEXT sale gets a fresh one.
+      state._checkoutInFlight = false;
+      state._clientOrderId = null;
+      window._setCheckoutBusy(false);
       // v5.11.4 — reset Other-method notes + customer panel after a successful sale
       try {
         var noteIn = q('#payNotesInput'); if (noteIn) { noteIn.value = ''; }
@@ -2110,6 +2363,10 @@ window.doCheckout = function() {
       api.withSuccessHandler(function(m) { state.menu = m || []; renderMenuGrid(); }).getMenu();
     }).withFailureHandler(function(err) {
       loader(false);
+      // v7.2 — NETWORK FAILURE: release the lock + re-enable buttons, KEEP
+      // state._clientOrderId so a retry reuses the same idempotency key.
+      state._checkoutInFlight = false;
+      window._setCheckoutBusy(false);
       glassAlert(t('connectionFailed'), (err && err.message) || t('connectionFailedMsg'), { danger: true });
     }).saveOrder(order, state.user, state.activeShiftId);
   };
@@ -2169,6 +2426,17 @@ window.shiftOpen = function() {
           ? window.formatDevice(device.brand, device.model, device.os)
           : (device.ua || navigator.userAgent || '')
       };
+      // v7.2 — Item 14: GEOLOCATION DOUBLE SHIFT-OPEN guard.  The success
+      // path resolves _doOpenShift from a fetch().finally() while the error
+      // path resolves it directly; if both ever fire (slow/racey geolocation
+      // implementations) the shift would be opened twice.  A one-shot latch
+      // guarantees exactly one openShift POST.
+      var opened = false;
+      var openOnce = function () {
+        if (opened) return;
+        opened = true;
+        _doOpenShift(extraData);
+      };
       // Capture geolocation
       if (navigator.geolocation) {
         navigator.geolocation.getCurrentPosition(function(pos) {
@@ -2178,9 +2446,9 @@ window.shiftOpen = function() {
             .then(function(r) { return r.json(); })
             .then(function(data) { extraData.geoAddress = data.display_name || ''; })
             .catch(function() {})
-            .finally(function() { _doOpenShift(extraData); });
-        }, function() { _doOpenShift(extraData); }, { timeout: 5000 });
-      } else { _doOpenShift(extraData); }
+            .finally(function() { openOnce(); });
+        }, function() { openOnce(); }, { timeout: 5000 });
+      } else { openOnce(); }
     });
   });
 };
@@ -2719,7 +2987,7 @@ function _myInvRender(rows) {
     var t_ = String(r.zatcaType || '').toLowerCase();
     var active = !(t_ === 'cancellation' || t_ === 'credit_note');
     var prods = (r.items || []).slice(0, 3).map(function (it) {
-      return '<span class="my-inv-prod-chip">' + (it.qty || 1) + '× ' + (it.name || '—') + '</span>';
+      return '<span class="my-inv-prod-chip">' + (it.qty || 1) + '× ' + _posEsc(it.name || '—') + '</span>';
     }).join(' ');
     if ((r.items || []).length > 3) {
       prods += '<span class="my-inv-prod-more">+' + ((r.items || []).length - 3) + '</span>';
@@ -2740,7 +3008,7 @@ function _myInvRender(rows) {
         '<td class="my-inv-id">' + displayNumber + sysRefHtml + '</td>' +
         '<td class="my-inv-prods">' + (prods || '—') + '</td>' +
         '<td class="my-inv-total">' + (Number(r.total) || 0).toFixed(2) + ' ر.س</td>' +
-        '<td class="my-inv-pay">' + (r.payment || '—') + (r.paymentNotes ? '<div class="my-inv-pay-notes">' + r.paymentNotes + '</div>' : '') + '</td>' +
+        '<td class="my-inv-pay">' + _posEsc(r.payment || '—') + (r.paymentNotes ? '<div class="my-inv-pay-notes">' + _posEsc(r.paymentNotes) + '</div>' : '') + '</td>' +
         '<td class="my-inv-actions">' +
           (active
             ? '<button class="my-inv-btn red"    onclick="posInvoiceVoid(\''   + safeId + '\')"><i class="fas fa-ban"></i> إلغاء · Cancel</button>' +
@@ -3063,7 +3331,7 @@ function renderCstCart() {
     // hidden here so the cashier counts blind (proper audit practice).
     var diffHtml = '<span style="color:#cbd5e1;">—</span>';
     // Column 1: المادة
-    var nameCell = '<td style="font-weight:700;font-size:12px;">' + c.name + '</td>';
+    var nameCell = '<td style="font-weight:700;font-size:12px;">' + _posEsc(c.name || '') + '</td>';
     // Column 2: الكبرى — input or dash
     // v5.15.1 — so the virtual keyboard auto-opens here.
     var bigCell = hasBig
@@ -3216,7 +3484,7 @@ function _printStocktakeReport(stId, items) {
     rowsHtml +=
       '<tr class="' + (idx % 2 === 0 ? 'even' : 'odd') + '">' +
         '<td class="num">' + (idx + 1) + '</td>' +
-        '<td class="name">' + (c.name || c.id || '') + '</td>' +
+        '<td class="name">' + _posEsc(c.name || c.id || '') + '</td>' +
         '<td class="qty">' + sys.toFixed(2) + '</td>' +
         '<td class="qty">' + act.toFixed(2) + '</td>' +
         '<td class="diff ' + diffCls + '">' + sign + diff.toFixed(2) + '</td>' +
@@ -3402,10 +3670,10 @@ function _renderReceiveForm() {
     var diff = it.receivedQty - it.qty;
     var diffColor = diff === 0 ? '#64748b' : (diff < 0 ? '#ef4444' : '#16a34a');
     html += '<tr>' +
-      '<td style="font-weight:700;">' + it.name + '</td>' +
+      '<td style="font-weight:700;">' + _posEsc(it.name || '') + '</td>' +
       '<td style="text-align:center;font-weight:700;color:#3b82f6;">' + it.qty + '</td>' +
       '<td style="text-align:center;"><input type="number" min="0" step="1" value="' + it.receivedQty + '" style="width:60px;padding:5px;border:1.5px solid #e2e8f0;border-radius:8px;text-align:center;font-weight:800;" onchange="rcvUpdateQty(' + i + ',this.value)"></td>' +
-      '<td style="text-align:center;font-size:11px;color:#64748b;">' + it.unit + '</td>' +
+      '<td style="text-align:center;font-size:11px;color:#64748b;">' + _posEsc(it.unit || '') + '</td>' +
       '<td style="text-align:center;font-weight:800;color:' + diffColor + ';">' + (diff > 0 ? '+' : '') + diff + '</td>' +
     '</tr>';
   });
@@ -4568,10 +4836,11 @@ function _posApplyChannelPrices() {
   // V5.7.11/.15 — re-stamp every existing cart-line's unit price from the new
   //   channel's price list. Match by id first (canonical), fall back to name.
   //
-  //   IMPORTANT: ALSO update line.basePrice. The legacy updateCart() does
-  //   `c.price = c.basePrice` whenever payment method != 'Kita' to revert any
-  //   per-line edits — without this, the channel switch silently reverted the
-  //   cart back to the pre-switch price on the very next render.
+  //   IMPORTANT: ALSO update line.basePrice. Since v7.2, updateCart derives
+  //   the displayed/charged gross for non-Kita methods from line.basePrice
+  //   (it no longer mutates line.price on render).  Keeping basePrice in sync
+  //   here is what makes a channel switch actually take effect on the next
+  //   render instead of snapping back to the pre-switch price.
   (state.cart || []).forEach(function(line) {
     var newPrice = null;
     if (state.channelOverrideMap && line.id != null && state.channelOverrideMap[String(line.id)] != null) {
@@ -4624,9 +4893,10 @@ window.posOpenLineDiscountModal = function() {
   var cartHtml = '<div style="font-weight:800;margin-bottom:10px;">اختر الصنف من السلة:</div>';
   cartHtml += '<div class="pos-line-disc-list">' + state.cart.map(function(c, i){
     var existing = state.lineDiscounts[i];
-    var price = posGetItemPrice(c);
+    // v7.2 — show GROSS per-unit so the picker matches the cart totals.
+    var price = window._posLineGrossUnit(c);
     return '<div class="pos-line-disc-row" onclick="posSelectLineForDiscount(' + i + ')">' +
-      '<div><div style="font-weight:700;">' + c.name + '</div><div style="font-size:11px;color:#64748b;">' + c.qty + ' × ' + _posFmt(price) + '</div></div>' +
+      '<div><div style="font-weight:700;">' + _posEsc(c.name || '') + '</div><div style="font-size:11px;color:#64748b;">' + c.qty + ' × ' + _posFmt(price) + '</div></div>' +
       '<div>' + (existing ? '<span style="color:#22c55e;font-weight:700;"><i class="fas fa-check"></i> -' + _posFmt(existing.amount) + '</span>' : '<i class="fas fa-arrow-left"></i>') + '</div>' +
     '</div>';
   }).join('') + '</div>';
@@ -4641,10 +4911,11 @@ window.posSelectLineForDiscount = function(idx) {
   state._lineDiscountIdx = idx;
   var lineDiscounts = state._lineDiscountList || [];
   var c = state.cart[idx];
-  var lineTotal = c.qty * posGetItemPrice(c);
+  // v7.2 — GROSS line total to match the cart.
+  var lineTotal = c.qty * window._posLineGrossUnit(c);
 
   var html = '<div style="background:#dbeafe;padding:10px;border-radius:10px;margin-bottom:14px;">' +
-    '<div style="font-weight:800;">' + c.name + '</div>' +
+    '<div style="font-weight:800;">' + _posEsc(c.name || '') + '</div>' +
     '<div style="font-size:12px;color:#1e3a8a;">إجمالي السطر: ' + _posFmt(lineTotal) + ' ر.س</div>' +
   '</div>';
 
@@ -4653,8 +4924,8 @@ window.posSelectLineForDiscount = function(idx) {
     html += lineDiscounts.map(function(d){
       var valStr = d.type === 'percentage' ? d.value + '%' : _posFmt(d.value) + ' ر.س';
       var canApply = !d.minOrder || lineTotal >= d.minOrder;
-      return '<div class="pos-disc-card' + (canApply?'':' disabled') + '" onclick="' + (canApply?"posApplyLineDiscount('"+d.id+"')":'') + '">' +
-        '<div><i class="fas ' + (d.icon||'fa-tag') + '" style="color:' + (d.color||'#8b5cf6') + ';"></i> <b>' + d.name + '</b></div>' +
+      return '<div class="pos-disc-card' + (canApply?'':' disabled') + '" onclick="' + (canApply?"posApplyLineDiscount('"+_posEsc(String(d.id))+"')":'') + '">' +
+        '<div><i class="fas ' + (d.icon||'fa-tag') + '" style="color:' + (d.color||'#8b5cf6') + ';"></i> <b>' + _posEsc(d.name || '') + '</b></div>' +
         '<div style="color:' + (d.color||'#8b5cf6') + ';font-weight:800;">' + valStr + '</div>' +
       '</div>';
     }).join('');
@@ -4678,7 +4949,9 @@ window.posApplyLineDiscount = function(discId) {
   if (!d) return;
   var idx = state._lineDiscountIdx;
   var c = state.cart[idx];
-  var lineTotal = c.qty * posGetItemPrice(c);
+  // v7.2 — line discount base is this line's GROSS (tax-inclusive) total so
+  // it agrees with the cart subtotal and the V3/legacy invoice engines.
+  var lineTotal = c.qty * window._posLineGrossUnit(c);
   var amt = d.type === 'percentage' ? lineTotal * (d.value/100) : Number(d.value);
   if (d.maxAmount && amt > d.maxAmount) amt = d.maxAmount;
   if (amt > lineTotal) amt = lineTotal;
@@ -4694,7 +4967,8 @@ window.posApplyManualLineDiscount = function() {
   if (val <= 0) return glassToast('أدخل قيمة موجبة', true);
   var idx = state._lineDiscountIdx;
   var c = state.cart[idx];
-  var lineTotal = c.qty * posGetItemPrice(c);
+  // v7.2 — gross line base (see posApplyLineDiscount).
+  var lineTotal = c.qty * window._posLineGrossUnit(c);
   var amt = type === 'percentage' ? lineTotal * (val/100) : val;
   if (amt > lineTotal) amt = lineTotal;
   state.lineDiscounts[idx] = { name: 'يدوي', type: type, value: val, amount: amt, discountId: null, glAccountId: null };
@@ -4708,7 +4982,10 @@ window.posOpenInvoiceDiscountModal = function() {
   var invDiscounts = (state.discountsV3 || []).filter(function(d){
     return d.enabled && d.showInPos !== false && (d.discountScope === 'invoice' || d.discountScope === 'preset' || d.discountScope === 'manual');
   });
-  var subtotal = state.cart.reduce(function(s, c){ return s + (c.qty * posGetItemPrice(c)); }, 0);
+  // v7.2 — base shown to the cashier = GROSS subtotal AFTER line discounts,
+  // matching what the invoice engine actually discounts.
+  var subtotal = window._posCartGrossSubtotal() - window._posLineDiscountTotal();
+  if (subtotal < 0) subtotal = 0;
 
   var html = '<div style="background:#fef3c7;padding:10px;border-radius:10px;margin-bottom:14px;">' +
     '<div style="font-weight:800;">إجمالي الفاتورة: ' + _posFmt(subtotal) + ' ر.س</div>' +
@@ -4719,8 +4996,8 @@ window.posOpenInvoiceDiscountModal = function() {
     html += invDiscounts.map(function(d){
       var valStr = d.type === 'percentage' ? d.value + '%' : _posFmt(d.value) + ' ر.س';
       var canApply = !d.minOrder || subtotal >= d.minOrder;
-      return '<div class="pos-disc-card' + (canApply?'':' disabled') + '" onclick="' + (canApply?"posApplyInvoiceDiscount('"+d.id+"')":'') + '">' +
-        '<div><i class="fas ' + (d.icon||'fa-receipt') + '" style="color:' + (d.color||'#8b5cf6') + ';"></i> <b>' + d.name + '</b>' + (d.minOrder ? ' <small style="color:#94a3b8;">(حد أدنى: '+_posFmt(d.minOrder)+')</small>':'') + '</div>' +
+      return '<div class="pos-disc-card' + (canApply?'':' disabled') + '" onclick="' + (canApply?"posApplyInvoiceDiscount('"+_posEsc(String(d.id))+"')":'') + '">' +
+        '<div><i class="fas ' + (d.icon||'fa-receipt') + '" style="color:' + (d.color||'#8b5cf6') + ';"></i> <b>' + _posEsc(d.name || '') + '</b>' + (d.minOrder ? ' <small style="color:#94a3b8;">(حد أدنى: '+_posFmt(d.minOrder)+')</small>':'') + '</div>' +
         '<div style="color:' + (d.color||'#8b5cf6') + ';font-weight:800;">' + valStr + '</div>' +
       '</div>';
     }).join('');
@@ -4745,12 +5022,20 @@ window.posOpenInvoiceDiscountModal = function() {
 window.posApplyInvoiceDiscount = function(discId) {
   var d = (state._discListSnapshot || []).find(function(x){return x.id===discId;});
   if (!d) return;
-  var subtotal = state.cart.reduce(function(s, c){ return s + (c.qty * posGetItemPrice(c)); }, 0);
+  // v7.2 — GROSS base after line discounts; persist type+value+caps so
+  // updateCart recomputes the effective amount on every render.
+  var subtotal = window._posCartGrossSubtotal() - window._posLineDiscountTotal();
+  if (subtotal < 0) subtotal = 0;
   var amt = d.type === 'percentage' ? subtotal * (d.value/100) : Number(d.value);
   if (d.maxAmount && amt > d.maxAmount) amt = d.maxAmount;
   if (d.maxPerInvoice && amt > d.maxPerInvoice) amt = d.maxPerInvoice;
   if (amt > subtotal) amt = subtotal;
-  state.currentDiscount = { name: d.name, amount: amt, discountId: d.id, glAccountId: d.glAccountId };
+  state.currentDiscount = {
+    name: d.name, type: d.type, value: Number(d.value), amount: amt,
+    maxAmount: (d.maxAmount != null ? Number(d.maxAmount) : null),
+    maxPerInvoice: (d.maxPerInvoice != null ? Number(d.maxPerInvoice) : null),
+    discountId: d.id, glAccountId: d.glAccountId
+  };
   closeGlassModal('#modalDiscount');
   glassToast('تم تطبيق خصم: ' + d.name + ' (' + _posFmt(amt) + ' ر.س)');
   updateCart();
@@ -4760,10 +5045,12 @@ window.posApplyManualInvoiceDiscount = function() {
   var type = q('#posInvDiscType').value;
   var val = Number(q('#posInvDiscValue').value) || 0;
   if (val <= 0) return glassToast('أدخل قيمة موجبة', true);
-  var subtotal = state.cart.reduce(function(s, c){ return s + (c.qty * posGetItemPrice(c)); }, 0);
+  // v7.2 — GROSS base after line discounts; persist type+value.
+  var subtotal = window._posCartGrossSubtotal() - window._posLineDiscountTotal();
+  if (subtotal < 0) subtotal = 0;
   var amt = type === 'percentage' ? subtotal * (val/100) : val;
   if (amt > subtotal) amt = subtotal;
-  state.currentDiscount = { name: 'يدوي', amount: amt, discountId: null, glAccountId: null };
+  state.currentDiscount = { name: 'يدوي', type: type, value: Number(val), amount: amt, discountId: null, glAccountId: null };
   closeGlassModal('#modalDiscount');
   glassToast('تم تطبيق خصم يدوي');
   updateCart();
@@ -4905,7 +5192,7 @@ window.shiftCloseStart = function() {
       } else {
         itemsBody.innerHTML = items.map(function(it) {
           return '<tr>' +
-                   '<td>' + (it.name || '—') + '</td>' +
+                   '<td>' + _posEsc(it.name || '—') + '</td>' +
                    '<td><strong>' + Number(it.qty || 0) + '</strong></td>' +
                    '<td>' + _posFmt(Number(it.price || 0)) + '</td>' +
                    '<td><strong style="color:#16a34a;">' + _posFmt(Number(it.total || 0)) + '</strong></td>' +
@@ -5172,7 +5459,7 @@ function _renderShiftThermalReport(d) {
                    '</tr></thead><tbody>';
     items.forEach(function(it) {
       itemsHtml += '<tr>' +
-                     '<td style="padding:2px 0;">' + (it.name || '—') + '</td>' +
+                     '<td style="padding:2px 0;">' + _posEsc(it.name || '—') + '</td>' +
                      '<td style="text-align:center;padding:2px 0;">' + (Number(it.qty) || 0) + '</td>' +
                      '<td style="text-align:center;padding:2px 0;font-family:monospace;">' + fmt(it.price) + '</td>' +
                      '<td style="text-align:left;padding:2px 0;font-family:monospace;font-weight:700;">' + fmt(it.total) + '</td>' +
@@ -5346,17 +5633,45 @@ window.scV3ConfirmClose = function() {
   //   stable across name changes — fixes the bug where "هانجر ستيشن"
   //   amounts didn't show in the report (the old by-name key didn't
   //   roundtrip through the broken matcher).
+  // v7.2 — Item 12: send ONLY id-keyed totals.  The redundant lowercased
+  //   data-pmname key collided across methods (e.g. an empty name, or two
+  //   methods sharing a lowercased name) and could OVERWRITE a real id key.
+  //   We keep a name fallback ONLY when the row has no id, and never let it
+  //   clobber an existing key.
   var paymentTotals = {};
   document.querySelectorAll('.sc-elec-input').forEach(function(inp) {
     var v = Number(inp.value) || 0;
-    if (inp.dataset.pmid) paymentTotals[String(inp.dataset.pmid)] = v;
-    // Also include by-name as a redundant key (defensive — if backend
-    // somehow can't find the id, name still resolves)
-    if (inp.dataset.pmname) paymentTotals[inp.dataset.pmname] = v;
+    var pmid  = inp.dataset.pmid ? String(inp.dataset.pmid) : '';
+    var pmname = (inp.dataset.pmname || '').trim();
+    if (pmid) {
+      paymentTotals[pmid] = v;
+    } else if (pmname && !Object.prototype.hasOwnProperty.call(paymentTotals, pmname)) {
+      // No canonical id on this row — fall back to a non-empty name key
+      // without overwriting anything already recorded.
+      paymentTotals[pmname] = v;
+    }
   });
   var generalNotes  = (q('#scNotes') && q('#scNotes').value || '').trim();
   var varianceNote  = (q('#scVarianceNote') && q('#scVarianceNote').value || '').trim();
   var combinedNotes = generalNotes + (varianceNote ? (generalNotes ? '\n\n[سبب الفرق]: ' : '[سبب الفرق]: ') + varianceNote : '');
+
+  // v7.2 — Item 15: VARIANCE GATE defended server-of-truth-side.  Do not
+  //   trust the close button's disabled state — recompute the variance here
+  //   from the same inputs and HARD-REQUIRE a ≥10-char reason whenever the
+  //   absolute difference is material (≥ 0.01).
+  var _actualCash = 0;
+  document.querySelectorAll('.sc-denom-input').forEach(function(inp) {
+    _actualCash += (Number(inp.dataset.denom) || 0) * (Number(inp.value) || 0);
+  });
+  var _actualElec = 0;
+  document.querySelectorAll('.sc-elec-input').forEach(function(inp) {
+    _actualElec += Number(inp.value) || 0;
+  });
+  var _absDiff = Math.abs((_actualCash + _actualElec) - (Number(_scExpectedTotal) || 0));
+  if (_absDiff >= 0.01 && varianceNote.length < 10) {
+    if (q('#scVarianceNote')) { try { q('#scVarianceNote').focus(); } catch(_) {} }
+    return glassToast('يجب كتابة سبب الفرق (١٠ أحرف على الأقل) قبل الإغلاق', true);
+  }
 
   var payload = {
     shiftId: state.activeShiftId,
@@ -5395,6 +5710,10 @@ window.scV3ConfirmClose = function() {
 };
 
 window.scV3Print = function() {
+  // v7.2 — Item 16: null-check the modal BEFORE opening a window so we never
+  // crash on `.innerHTML` of a missing node (and don't leave a blank popup).
+  var modalEl = document.querySelector('.sc-v3-modal');
+  if (!modalEl) return glassToast('تعذّر إيجاد محتوى التقرير للطباعة', true);
   var w = window.open('', '_blank');
   if (!w) return glassToast('تعذّر فتح نافذة الطباعة', true);
   var title = 'تقرير إغلاق الوردية - ' + (state.activeShiftId || '');
@@ -5402,8 +5721,8 @@ window.scV3Print = function() {
     '<style>body{font-family:Arial,sans-serif;padding:20px;}h2{color:#1e3a8a;border-bottom:2px solid #1e3a8a;padding-bottom:6px;}table{width:100%;border-collapse:collapse;margin:10px 0;}th,td{border:1px solid #cbd5e1;padding:6px 10px;text-align:right;}th{background:#dbeafe;}</style>' +
     '</head><body>' +
     '<h2>تقرير إغلاق الوردية</h2>' +
-    '<p>الكاشير: ' + (state.user || '—') + ' | التاريخ: ' + new Date().toLocaleString('ar-SA') + '</p>' +
-    document.querySelector('.sc-v3-modal').innerHTML.replace(/<button[^>]*>.*?<\/button>/g,'') +
+    '<p>الكاشير: ' + _posEsc(state.user || '—') + ' | التاريخ: ' + new Date().toLocaleString('ar-SA') + '</p>' +
+    modalEl.innerHTML.replace(/<button[^>]*>.*?<\/button>/g,'') +
     '</body></html>';
   w.document.write(html);
   w.document.close();

@@ -3058,6 +3058,18 @@ async function runMigrations() {
   await addColumnIfMissing('menu',  'tax_category',       "ENUM('S','Z','E','O') NOT NULL DEFAULT 'S'");
   await addColumnIfMissing('sales', 'tax_subtotals_json', 'LONGTEXT NULL');
 
+  // ─── v7.2 — Checkout idempotency key (client_order_id) ───
+  // The POS now generates a stable clientOrderId per checkout attempt and
+  // sends it on every (re)try of the same sale. A UNIQUE index makes a
+  // double-POST safe: the second insert hits ER_DUP_ENTRY and the handler
+  // returns the original sale's success response instead of duplicating
+  // the invoice, GL journal, and stock deductions.
+  await addColumnIfMissing('sales', 'client_order_id', 'VARCHAR(80) NULL');
+  // Partial-unique semantics: many NULL rows are allowed (legacy sales +
+  // any sale where the POS omitted the key) per ANSI NULL handling, but
+  // two non-NULL identical keys collide. Tolerate re-runs (key exists).
+  try { await db.query('ALTER TABLE sales ADD UNIQUE KEY uq_sales_client_order_id (client_order_id)'); } catch(e) {}
+
   // ─── v6.20.0 — Per-product tax-inclusive flag ───
   // Owner wants to enter NEW products with their NET price (no VAT)
   // and have the system add VAT on top, displaying a whole-SAR total

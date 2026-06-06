@@ -124,6 +124,60 @@ function _parseSplitPayments(payStr, total) {
   return _parseSplitPaymentsV3(payStr, total, null);
 }
 
+// v7.2 (#8) — Route split-payment GL legs from the STRUCTURED splitDetails
+// object instead of re-parsing the lossy "Cash:80/Mada:20" string. A method
+// name containing '/' (e.g. "شبكة/مدى") corrupts the string parse and dumps
+// the amount into the wrong GL account. The object's keys are the exact
+// method names the cashier picked, so we map each one through pmGlMap (with
+// the same normalization the map build uses) and fall back to the legacy
+// payToAccountCode heuristic only when a method isn't configured.
+//   splitDetails: { Cash: 80, Mada: 20, ... }  →  [{code, amount}, ...]
+function _parseSplitFromDetails(splitDetails, pmGlMap) {
+  const out = [];
+  const lookup = (name) => {
+    const k = _normPmName(name);
+    return (pmGlMap && pmGlMap[k]) || _payToAccountCode(name);
+  };
+  if (!splitDetails || typeof splitDetails !== 'object') return out;
+  Object.keys(splitDetails).forEach(name => {
+    const amt = Math.round((Number(splitDetails[name]) || 0) * 100) / 100;
+    if (amt > 0) out.push({ code: lookup(name), amount: amt });
+  });
+  return out;
+}
+
+// v7.2 (#9) — Resolve the sale's standard GL account codes from settings
+// (key/value, same table getVatRateFromDb reads) so a chart-of-accounts
+// import that renumbers Revenue / Output-VAT / COGS / Inventory doesn't make
+// EVERY sale roll back with "حساب غير موجود". Each key is optional; when
+// absent we keep the canonical core code (which gl.ensureCoreAccounts seeds
+// on first post, so a standard account can never be missing). Returns:
+//   { revenue, outputVat, cogs, inventory }
+async function _resolveSaleGlCodes(db) {
+  const codes = { revenue: '4100', outputVat: '2210', cogs: '5100', inventory: '1200' };
+  const keyMap = {
+    revenue:   'GL_SALES_REVENUE_CODE',
+    outputVat: 'GL_OUTPUT_VAT_CODE',
+    cogs:      'GL_COGS_CODE',
+    inventory: 'GL_INVENTORY_CODE'
+  };
+  try {
+    const wantedKeys = Object.values(keyMap);
+    const ph = wantedKeys.map(() => '?').join(',');
+    const [rows] = await db.query(
+      `SELECT setting_key, setting_value FROM settings WHERE setting_key IN (${ph})`,
+      wantedKeys
+    );
+    const settings = {};
+    rows.forEach(r => { settings[r.setting_key] = r.setting_value; });
+    for (const [field, key] of Object.entries(keyMap)) {
+      const v = settings[key];
+      if (v != null && String(v).trim() !== '') codes[field] = String(v).trim();
+    }
+  } catch (e) { /* settings table missing on legacy deploys — keep core codes */ }
+  return codes;
+}
+
 // v6.0.2 Wave B.2 — Invoice immutability guard.
 // Per ZATCA BR-KSA-08, once an invoice has been submitted to the ZATCA
 // reporting/clearance gateway (zatca_submitted_at set), it cannot be
@@ -166,11 +220,102 @@ router.post('/', async (req, res) => {
     const db = _conn; // local shadow — every db.query() below routes through _conn
 
     const { items, total, totalFinal, paymentMethod, discountName, discountAmount, kitaServiceFee, splitDetails } = req.body;
-    const { username, shiftId, warehouseId: reqWhId } = req.body;
+    const { shiftId, warehouseId: reqWhId } = req.body;
+    // v7.2 — HIGH: the actor is the AUTHENTICATED user, never the body.
+    // The route is behind the global JWT gate (server.js), so req.user is
+    // populated with the verified token claims. Trusting req.body.username
+    // let a caller post a sale under any cashier's name (audit forgery +
+    // wrong shift/commission attribution). We take the username from the
+    // token and keep the body value only as a last-resort fallback for the
+    // theoretical case where req.user is somehow absent.
+    const username = (req.user && req.user.username) || req.body.username || '';
+    // v7.2 — CRITICAL idempotency key. The POS sends a stable clientOrderId
+    // per checkout attempt and re-sends it on every retry of the SAME sale.
+    const clientOrderId = (req.body.clientOrderId != null && String(req.body.clientOrderId).trim() !== '')
+      ? String(req.body.clientOrderId).trim().slice(0, 80)
+      : null;
     // ─── V3: optional channel + discount metadata from POS ───
     let { channelId, channelName, discountId, discountGlAccountId, lineDiscounts: lineDiscPayload } = req.body;
     // ─── v5.11.4: optional customer payload (id OR phone+name+gender) + Other-method notes ───
     const { customer: customerPayload, paymentNotes } = req.body;
+
+    // ─── v7.2 HIGH: Cart validation (fail fast, before any writes) ───
+    // An empty / malformed cart used to slip through and create a
+    // zero-value invoice with no GL journal. Reject up-front with 400.
+    // We DO NOT override legitimate client prices (channel / price-list
+    // overrides are valid) — we only reject prices that are not a finite
+    // number >= 0. Same for qty (must be > 0) and id (must be present).
+    if (!Array.isArray(items) || items.length === 0) {
+      const err = new Error('السلة فارغة — لا يمكن إتمام عملية بيع بدون أصناف');
+      err.status = 400; err.code = 'empty_cart';
+      throw err;
+    }
+    for (let _vi = 0; _vi < items.length; _vi++) {
+      const _it = items[_vi];
+      if (!_it || typeof _it !== 'object') {
+        const err = new Error('سطر غير صالح في السلة (#' + (_vi + 1) + ')');
+        err.status = 400; err.code = 'invalid_line'; throw err;
+      }
+      if (_it.id == null || String(_it.id).trim() === '') {
+        const err = new Error('صنف بدون مُعرّف (id) في السلة (#' + (_vi + 1) + ')');
+        err.status = 400; err.code = 'invalid_item_id'; throw err;
+      }
+      const _q = Number(_it.qty);
+      if (!Number.isFinite(_q) || _q <= 0) {
+        const err = new Error('كمية غير صالحة للصنف "' + (_it.name || _it.id) + '" — يجب أن تكون أكبر من صفر');
+        err.status = 400; err.code = 'invalid_qty'; throw err;
+      }
+      const _p = Number(_it.price);
+      if (!Number.isFinite(_p) || _p < 0) {
+        const err = new Error('سعر غير صالح للصنف "' + (_it.name || _it.id) + '" — يجب أن يكون رقماً صفر أو أكثر');
+        err.status = 400; err.code = 'invalid_price'; throw err;
+      }
+    }
+
+    // ─── v7.2 CRITICAL: Idempotency guard (double-POST safety) ───
+    // If the POS already created this sale (same clientOrderId), return the
+    // ORIGINAL success response with HTTP 200 WITHOUT inserting anything
+    // again. This makes network retries / double-taps safe (no duplicate
+    // invoice, GL journal, or stock relief). The UNIQUE index on
+    // sales.client_order_id is the final race-safety net (see the
+    // ER_DUP_ENTRY handler around the sales INSERT).
+    if (clientOrderId) {
+      try {
+        const [dup] = await db.query(
+          'SELECT id, invoice_number, total_final, invoice_uuid, invoice_hash, ' +
+          'previous_invoice_hash, customer_id FROM sales WHERE client_order_id = ? LIMIT 1',
+          [clientOrderId]
+        );
+        if (dup.length) {
+          // Already processed — release the (untouched) transaction and
+          // echo the original sale so the POS reconciles to the same order.
+          try { await _conn.rollback(); } catch (_) {}
+          try { _conn.release(); } catch (_) {}
+          _conn = null;
+          return res.status(200).json({
+            success: true,
+            idempotent: true,
+            orderId: dup[0].id,
+            invoiceNumber: dup[0].invoice_number || null,
+            customerId: dup[0].customer_id || null,
+            zatca: {
+              uuid: dup[0].invoice_uuid || null,
+              invoiceHash: dup[0].invoice_hash || null,
+              previousInvoiceHash: dup[0].previous_invoice_hash || null,
+              qrBase64: null
+            },
+            totals: { total: Number(dup[0].total_final) || 0 }
+          });
+        }
+      } catch (dupErr) {
+        // client_order_id column may be missing on a not-yet-migrated
+        // deploy — fall through and process normally (no idempotency).
+        if (dupErr && dupErr.code && dupErr.code !== 'ER_BAD_FIELD_ERROR') {
+          // unexpected DB error — surface it, don't silently proceed
+          throw dupErr;
+        }
+      }
+    }
     // V5.9.2 — 4-step fallback chain to resolve which warehouse the
     //   cashier's sale should deduct from:
     //     1. Explicit warehouseId in the request body (POS override)
@@ -318,17 +463,65 @@ router.post('/', async (req, res) => {
     // its 2-decimal precision so the ZATCA QR / invoice XML validate.
     const grossWhole = pricing.roundToWhole(grossPrecise);
     const invTotal = grossWhole;
-    // v6.25.1 — CRITICAL: re-derive net + vat FROM the whole-rounded total
-    // (invTotal) instead of the pre-rounding precise figures.  The GL
-    // journal debits the payment (= invTotal, whole) and credits
-    // revenue(net) + outputVAT(vat).  When net/vat kept their precise
-    // pre-rounding values, net+vat = grossPrecise != invTotal, so the
-    // journal was unbalanced → "القيد غير متوازن" → every sale failed.
-    // Deriving vat as the residual (invTotal - net) guarantees
-    // net + vat === invTotal exactly, so the journal always balances and
-    // the customer-facing whole total stays the single source of truth.
-    const net = Math.round((invTotal / (1 + VAT_RATE / 100)) * 100) / 100;
-    const vat = Math.round((invTotal - net) * 100) / 100;
+
+    // ─── v7.2 CRITICAL (#1): derive net + vat PER-CATEGORY, not flat ───
+    // The legacy line recomputed `net = invTotal / 1.15` and `vat = total
+    // - net`, applying the standard 15% rate to the WHOLE invoice. That
+    // over-charged VAT on zero-rated/exempt lines and ignored the discount
+    // mix. We instead build net/vat from the per-category POST-DISCOUNT
+    // buckets:
+    //   • netAfterDiscount  = Σ (category net × discount ratio)   — all cats
+    //   • vatAfterDiscount  = Σ (category vat × discount ratio)   — S only,
+    //                         because Z/E/O categories were split at rate 0
+    //                         so their vat contribution is already 0.
+    // Then we absorb the whole-SAR rounding delta (invTotal vs grossPrecise)
+    // so the journal invariant net + vat === invTotal holds EXACTLY and the
+    // 2210 Output-VAT credit + totals.vat returned to the POS are correct.
+    const _roundDelta = Math.round((invTotal - grossPrecise) * 100) / 100;
+    // Push the (tiny) rounding delta onto the NET side, then make VAT the
+    // residual. This keeps Output-VAT tied to the actual taxable base and
+    // never invents VAT on a zero-rated cart (vat stays 0 when no S lines).
+    let net = Math.round((netAfterDiscount + _roundDelta) * 100) / 100;
+    let vat = Math.round((invTotal - net) * 100) / 100;
+    // Guard: if the cart is entirely zero-rated/exempt (vatAfterDiscount is
+    // 0), force vat to 0 and let net carry the full total so we never credit
+    // 2210 for an exempt sale. net + vat === invTotal is preserved.
+    if (vatAfterDiscount <= 0) {
+      vat = 0;
+      net = invTotal;
+    }
+
+    // ─── v7.2 CRITICAL (#2): reconcile taxSubtotals to the POST-DISCOUNT
+    // figures before persisting. taxSubtotals was built PRE-discount, so
+    // sum(net)/sum(vat) wouldn't tie to the GL/total after a discount and
+    // the ZATCA UBL XML (which sums these buckets) would fail validation.
+    // Scale every bucket by the same discount ratio used above, then make
+    // the LAST standard bucket absorb the rounding residual so the buckets
+    // sum EXACTLY to the persisted net/vat.
+    {
+      const _cats = Object.keys(taxSubtotals);
+      let _accNet = 0, _accVat = 0;
+      _cats.forEach(k => {
+        const b = taxSubtotals[k];
+        b.net = Math.round((b.net * vatRatio) * 100) / 100;
+        b.vat = Math.round((b.vat * vatRatio) * 100) / 100;
+        _accNet += b.net;
+        _accVat += b.vat;
+      });
+      _accNet = Math.round(_accNet * 100) / 100;
+      _accVat = Math.round(_accVat * 100) / 100;
+      // Reconcile bucket sums to the authoritative net/vat (which include
+      // the whole-SAR rounding delta). Prefer a standard-rated bucket for
+      // the VAT residual; net residual can land on any bucket.
+      if (_cats.length) {
+        const _netResidual = Math.round((net - _accNet) * 100) / 100;
+        const _vatResidual = Math.round((vat - _accVat) * 100) / 100;
+        const _stdCat = _cats.find(k => Number(taxSubtotals[k].rate) > 0) || _cats[0];
+        const _netCat = _cats[_cats.length - 1];
+        taxSubtotals[_netCat].net = Math.round((taxSubtotals[_netCat].net + _netResidual) * 100) / 100;
+        taxSubtotals[_stdCat].vat = Math.round((taxSubtotals[_stdCat].vat + _vatResidual) * 100) / 100;
+      }
+    }
 
     // ═══ ZATCA Phase 2 stamp (UUID + hash chain + QR) ═══
     // Load seller details — company + branch names if available
@@ -340,6 +533,30 @@ router.post('/', async (req, res) => {
         if (cRow[0].tax_number) sellerVat = cRow[0].tax_number;
       }
     } catch(e) {}
+
+    // ─── v7.2 CRITICAL (#4): serialize the ZATCA hash-chain head ───
+    // getLastInvoiceHash() does SELECT … ORDER BY created_at DESC LIMIT 1
+    // FOR UPDATE, which locks the *previous* invoice row — but on GENESIS
+    // (zero invoices) that query matches no rows and acquires NO lock, so
+    // two concurrent first-sales can both read prev=null and fork the chain.
+    // It also can't serialize the very first link otherwise. We take an
+    // explicit row lock on a stable sentinel row (settings key) on the SAME
+    // _conn inside this txn BEFORE reading the chain head. Every concurrent
+    // checkout must queue on this single row, so the read→stamp→insert of
+    // the chain head is strictly serialized (held until commit/rollback).
+    // Defensive: tolerates a missing settings table (older deploys) — in
+    // that case we lose the extra guard but the per-row FOR UPDATE still
+    // serializes the common (non-genesis) path.
+    try {
+      await db.query(
+        "INSERT IGNORE INTO settings (setting_key, setting_value) VALUES ('zatca_chain_lock', '1')"
+      );
+      await db.query(
+        "SELECT setting_value FROM settings WHERE setting_key = 'zatca_chain_lock' FOR UPDATE"
+      );
+    } catch (lockErr) {
+      console.warn('[sale ' + orderId + '] zatca chain lock unavailable:', lockErr.message);
+    }
 
     let zatcaStamp = {};
     try {
@@ -360,8 +577,58 @@ router.post('/', async (req, res) => {
     // POS payload, which could disagree with the per-line VAT breakdown.
     // Now they're guaranteed to match: line sums (net + vat) round to
     // grossPrecise; grossWhole = Math.round(grossPrecise) = total_final.
-    await db.query('INSERT INTO sales (id, order_date, items_json, total_final, payment_method, username, shift_id, discount_name, discount_amount, kita_service_fee) VALUES (?,?,?,?,?,?,?,?,?,?)',
-      [orderId, now, JSON.stringify(items), invTotal, payStr, username, shiftId, discountName || '', discountAmount || 0, kitaServiceFee || 0]);
+    // v7.2 — store the idempotency key on insert. We try the wide INSERT
+    // (with client_order_id) first; on a not-yet-migrated deploy the column
+    // is absent → ER_BAD_FIELD_ERROR → fall back to the legacy INSERT. On a
+    // concurrent double-POST the UNIQUE index throws ER_DUP_ENTRY → we
+    // rollback this (uncommitted) attempt and return the original sale's
+    // success response so the second request is a safe no-op.
+    try {
+      if (clientOrderId) {
+        await db.query('INSERT INTO sales (id, order_date, items_json, total_final, payment_method, username, shift_id, discount_name, discount_amount, kita_service_fee, client_order_id) VALUES (?,?,?,?,?,?,?,?,?,?,?)',
+          [orderId, now, JSON.stringify(items), invTotal, payStr, username, shiftId, discountName || '', discountAmount || 0, kitaServiceFee || 0, clientOrderId]);
+      } else {
+        await db.query('INSERT INTO sales (id, order_date, items_json, total_final, payment_method, username, shift_id, discount_name, discount_amount, kita_service_fee) VALUES (?,?,?,?,?,?,?,?,?,?)',
+          [orderId, now, JSON.stringify(items), invTotal, payStr, username, shiftId, discountName || '', discountAmount || 0, kitaServiceFee || 0]);
+      }
+    } catch (insErr) {
+      if (insErr && insErr.code === 'ER_DUP_ENTRY' && clientOrderId) {
+        // Lost the race — another request already committed this sale.
+        try { await _conn.rollback(); } catch (_) {}
+        let _orig = null;
+        try {
+          const [rows] = await _conn.query(
+            'SELECT id, invoice_number, total_final, invoice_uuid, invoice_hash, ' +
+            'previous_invoice_hash, customer_id FROM sales WHERE client_order_id = ? LIMIT 1',
+            [clientOrderId]
+          );
+          if (rows.length) _orig = rows[0];
+        } catch (_) {}
+        try { _conn.release(); } catch (_) {}
+        _conn = null;
+        return res.status(200).json({
+          success: true,
+          idempotent: true,
+          orderId: _orig ? _orig.id : orderId,
+          invoiceNumber: _orig ? (_orig.invoice_number || null) : null,
+          customerId: _orig ? (_orig.customer_id || null) : null,
+          zatca: {
+            uuid: _orig ? (_orig.invoice_uuid || null) : null,
+            invoiceHash: _orig ? (_orig.invoice_hash || null) : null,
+            previousInvoiceHash: _orig ? (_orig.previous_invoice_hash || null) : null,
+            qrBase64: null
+          },
+          totals: { total: _orig ? (Number(_orig.total_final) || 0) : invTotal }
+        });
+      }
+      if (insErr && insErr.code === 'ER_BAD_FIELD_ERROR' && clientOrderId) {
+        // client_order_id column not present on this deploy — insert without it.
+        await db.query('INSERT INTO sales (id, order_date, items_json, total_final, payment_method, username, shift_id, discount_name, discount_amount, kita_service_fee) VALUES (?,?,?,?,?,?,?,?,?,?)',
+          [orderId, now, JSON.stringify(items), invTotal, payStr, username, shiftId, discountName || '', discountAmount || 0, kitaServiceFee || 0]);
+      } else {
+        throw insErr;
+      }
+    }
 
     // v6.11.0 — Stamp the invoice_number on the freshly-inserted row.
     // Separate UPDATE keeps the INSERT signature stable + makes the column
@@ -627,6 +894,12 @@ router.post('/', async (req, res) => {
     const recipesApplied = []; // [{ menuId, menuName, deductions: [{invId, invName, deducted, affected}] }]
     const itemsWithoutRecipe = []; // menu items that have no recipe attached
     const semiDeductions = []; // [{ menuId, menuName, semiId, semiName, qty }]
+    // v7.2 (#7) — imported finished goods physically relieve warehouse stock
+    // but are NOT in recipeMap, so without this they would book revenue with
+    // ZERO COGS (inventory never relieved in the GL). Track each imported
+    // deduction so we can value it at menu.cost and post the COGS/Inventory
+    // legs alongside the recipe-driven COGS.
+    const importedDeductions = []; // [{ menuId, menuName, qty }]
 
     for (const item of items) {
       // sales_items log row
@@ -726,6 +999,10 @@ router.post('/', async (req, res) => {
               `UPDATE menu SET stock = stock - ? WHERE id = ?`,
               [item.qty, item.id]);
           }
+          // v7.2 (#7) — record the imported relief so its cost flows into
+          // the COGS/Inventory GL legs below (otherwise revenue posts with
+          // zero COGS and inventory is never relieved in the ledger).
+          importedDeductions.push({ menuId: item.id, menuName: item.name, qty: Number(item.qty) || 0 });
         } catch(_) {}
       }
 
@@ -829,6 +1106,30 @@ router.post('/', async (req, res) => {
             }
           });
         });
+        // v7.2 (#7) — value imported finished-goods relief at menu.cost and
+        // fold it into totalCogs so the COGS/Inventory legs are posted for
+        // physically-stocked items (which never appear in recipesApplied).
+        if (importedDeductions.length) {
+          const impIds = [...new Set(importedDeductions.map(d => d.menuId))];
+          const impCost = {};
+          try {
+            const ph = impIds.map(() => '?').join(',');
+            const [crows] = await db.query(
+              `SELECT id, COALESCE(computed_cost, 0) AS cc, COALESCE(cost, 0) AS c FROM menu WHERE id IN (${ph})`,
+              impIds);
+            // Prefer the computed (recipe-rolled) cost; fall back to the
+            // manually-entered cost. Either way imported items now relieve
+            // inventory in the ledger instead of booking 100% margin.
+            crows.forEach(r => { impCost[r.id] = Number(r.cc) > 0 ? Number(r.cc) : (Number(r.c) || 0); });
+          } catch (_) { /* menu.computed_cost/cost gaps on older deploys */ }
+          importedDeductions.forEach(d => {
+            const unitCost = impCost[d.menuId] || 0;
+            totalCogs += (Number(d.qty) || 0) * unitCost;
+            if (unitCost === 0 && (Number(d.qty) || 0) > 0) {
+              zeroCostComponents.push(d.menuName || d.menuId);
+            }
+          });
+        }
         totalCogs = Math.round(totalCogs * 100) / 100;
         if (zeroCostComponents.length) {
           const names = [...new Set(zeroCostComponents)].slice(0, 5);
@@ -836,9 +1137,13 @@ router.post('/', async (req, res) => {
           cogsWarning = 'تَنبيه: ' + zeroCostComponents.length + ' مُكوِّن بتَكلفة صفر — هامش الرِّبح قد يَكون مَغلوط. حَدِّث تَكلفة: ' + names.join('، ');
         }
 
-        // Pull brand + branch from the user context (best-effort)
-        let brandId = req.body.brandId || (req.user && req.user.brand_id) || null;
-        let branchId = req.body.branchId || (req.user && req.user.branch_id) || null;
+        // Pull brand + branch from the user context (best-effort).
+        // v7.2 (#5) — prefer the AUTHENTICATED token claims (brandId/branchId
+        // are camelCase in the JWT payload, see routes/auth.js) over body so
+        // the GL dimensions can't be spoofed. Body + DB lookup remain as
+        // fallbacks for tokens issued before these claims existed.
+        let brandId = (req.user && (req.user.brandId || req.user.brand_id)) || req.body.brandId || null;
+        let branchId = (req.user && (req.user.branchId || req.user.branch_id)) || req.body.branchId || null;
         if (!brandId || !branchId) {
           try {
             const [u] = await db.query('SELECT brand_id, branch_id FROM users WHERE username = ? LIMIT 1', [username]);
@@ -851,7 +1156,24 @@ router.post('/', async (req, res) => {
 
         // V3: Build dynamic payment method → GL code map
         const pmGlMap = await _buildPmGlMap(db);
-        const paymentDebits = _parseSplitPaymentsV3(payStr, invTotal, pmGlMap);
+        // v7.2 (#9) — resolve standard sale account codes from settings so a
+        // renumbered chart-of-accounts can't hard-fail the journal.
+        const saleGl = await _resolveSaleGlCodes(db);
+        // v7.2 (#8) — for split payments, route legs from the STRUCTURED
+        // splitDetails object (unambiguous) rather than re-parsing payStr,
+        // whose '/' separator collides with method names like "شبكة/مدى".
+        // Falls back to the string parser for non-split / legacy payloads.
+        let paymentDebits;
+        if (paymentMethod === 'Split' && splitDetails && typeof splitDetails === 'object') {
+          paymentDebits = _parseSplitFromDetails(splitDetails, pmGlMap);
+          if (!paymentDebits.length) {
+            // Defensive: structured object had no positive legs — fall back
+            // so we never post a sale with zero payment debits.
+            paymentDebits = _parseSplitPaymentsV3(payStr, invTotal, pmGlMap);
+          }
+        } else {
+          paymentDebits = _parseSplitPaymentsV3(payStr, invTotal, pmGlMap);
+        }
 
         // v6.25.1 — Guarantee the payment debits sum EXACTLY to invTotal.
         // Split payments are sent from the POS with per-leg amounts that
@@ -883,7 +1205,7 @@ router.post('/', async (req, res) => {
         });
         // Credit Sales Revenue (net) — GROSS revenue (post-discount net) at minimum
         entries.push({
-          accountCode: '4100',
+          accountCode: saleGl.revenue,
           debit: 0, credit: net,
           description: 'Sales revenue — ' + orderId + (resolvedChannelName ? ' (' + resolvedChannelName + ')' : ''),
           branchId: branchId || null, brandId: brandId || null
@@ -891,7 +1213,7 @@ router.post('/', async (req, res) => {
         // Credit Output VAT (if any)
         if (vat > 0) {
           entries.push({
-            accountCode: '2210',
+            accountCode: saleGl.outputVat,
             debit: 0, credit: vat,
             description: 'Output VAT — ' + orderId,
             branchId: branchId || null, brandId: brandId || null
@@ -910,14 +1232,14 @@ router.post('/', async (req, res) => {
         // COGS leg (if any cost)
         if (totalCogs > 0) {
           entries.push({
-            accountCode: '5100',
+            accountCode: saleGl.cogs,
             debit: totalCogs, credit: 0,
             description: 'COGS — ' + orderId,
             branchId: branchId || null, brandId: brandId || null,
             warehouseId: warehouseId || null
           });
           entries.push({
-            accountCode: '1200',
+            accountCode: saleGl.inventory,
             debit: 0, credit: totalCogs,
             description: 'Inventory reduction (sale) — ' + orderId,
             branchId: branchId || null, brandId: brandId || null,
@@ -1019,14 +1341,39 @@ router.post('/', async (req, res) => {
       totals: { total: invTotal, net, vat }
     });
   } catch (e) {
-    // v6.0.1 Wave A — roll back the transaction on any error
+    // v6.0.1 Wave A — roll back the transaction on any error.
+    // (If we already rolled back + released for an idempotent short-circuit,
+    // _conn was set to null and these are safe no-ops.)
     if (_conn) {
       try { await _conn.rollback(); } catch (_) {}
     }
-    console.warn('[POST /sales] tx rollback:', e.message);
-    // v6.2.0 Wave F.3 — period-locked errors surface as 403
-    const status = e.status || (e.code === 'period_locked' ? 403 : 200);
-    res.status(status).json({ success: false, error: e.message, code: e.code || undefined });
+    // v7.2 (#11) — log the FULL detail server-side only; never leak raw
+    // e.message (it can expose SQL / account codes / internal structure).
+    console.error('[POST /sales] tx rollback:', e.code || '', e.message, e.stack || '');
+
+    // v7.2 (#10) — correct HTTP status. 200 is RESERVED for real success.
+    //   • explicit e.status (our 400 validation / 403 immutability) wins
+    //   • period-locked / invoice-immutable → 403
+    //   • everything else unexpected → 500
+    let status = e.status;
+    if (!status) {
+      if (e.code === 'period_locked' || e.code === 'invoice_immutable') status = 403;
+      else status = 500;
+    }
+
+    // v7.2 (#11) — only surface the message for client-safe (4xx) errors we
+    // raised on purpose (validation, period lock, immutability). For 5xx we
+    // return a generic message + a stable error code so the cashier sees a
+    // useful toast while the detail stays in the server log.
+    if (status >= 500) {
+      res.status(status).json({
+        success: false,
+        error: 'تعذّر إتمام عملية البيع بسبب خطأ داخلي. حاول مرة أخرى أو تواصل مع الدعم.',
+        code: 'sale_failed'
+      });
+    } else {
+      res.status(status).json({ success: false, error: e.message, code: e.code || undefined });
+    }
   } finally {
     if (_conn) {
       try { _conn.release(); } catch (_) {}

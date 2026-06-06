@@ -1753,6 +1753,24 @@ function _cartLineKey(line) {
 }
 
 window.addToCart = function(item) {
+  if (!item) return;
+  // v7.3 — stale-cache guard. In MAIN / full-menu mode the grid is driven by
+  // state.menu (cached in localStorage). If an item's id is no longer in the
+  // current menu it was deleted/disabled server-side after the cache was
+  // built — block the phantom add with a clear toast instead of selling a
+  // ghost item. Channel rows (__fromChannel) and channel-specific menus are
+  // exempt: they legitimately carry items that aren't in the base menu.
+  try {
+    var _inChannelOwnMenu = !!(state.activeChannel && !state.activeChannel.useFullMenu);
+    if (!item.__fromChannel && !_inChannelOwnMenu &&
+        Array.isArray(state.menu) && state.menu.length && item.id != null) {
+      var _stillThere = state.menu.some(function (m) { return String(m.id) === String(item.id); });
+      if (!_stillThere) {
+        glassToast(t('itemUnavailable') || 'هذا الصنف لم يعد متاحاً — اضغط «تحديث» لتحديث القائمة', true);
+        return;
+      }
+    }
+  } catch (_) {}
   var wasEmpty = !state.cart || state.cart.length === 0;
   var key = _itemMatchKey(item);
   var found = state.cart.find(function(c) { return _cartLineKey(c) === key; });

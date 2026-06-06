@@ -219,7 +219,7 @@ router.post('/', async (req, res) => {
     // eslint-disable-next-line no-shadow
     const db = _conn; // local shadow — every db.query() below routes through _conn
 
-    const { items, total, totalFinal, paymentMethod, discountName, discountAmount, kitaServiceFee, splitDetails } = req.body;
+    const { items, total, totalFinal, paymentMethod, discountName, discountAmount, lineDiscountTotal, kitaServiceFee, splitDetails } = req.body;
     const { shiftId, warehouseId: reqWhId } = req.body;
     // v7.2 — HIGH: the actor is the AUTHENTICATED user, never the body.
     // The route is behind the global JWT gate (server.js), so req.user is
@@ -316,6 +316,43 @@ router.post('/', async (req, res) => {
         }
       }
     }
+    // ─── v7.3 HIGH: server-side shift integrity (not just the POS guard) ──
+    // The POS blocks checkout without an open shift, but that guard reads
+    // localStorage and can desync (cleared session, second tab, a stale id
+    // after the shift was closed elsewhere). Every sale MUST FK to a REAL
+    // OPEN shift owned by this cashier, or the shift-close cash
+    // reconciliation and the audit trail silently break. Placed AFTER the
+    // idempotency short-circuit (so a legit retry of an already-posted sale
+    // still echoes success even if the shift has since closed) and BEFORE
+    // any writes. Tolerant of a missing/legacy shifts schema (skips the
+    // check rather than blocking the sale).
+    if (!shiftId || String(shiftId).trim() === '') {
+      const err = new Error('لا توجد وردية مفتوحة — افتح وردية قبل تسجيل المبيعات');
+      err.status = 400; err.code = 'shift_required'; throw err;
+    }
+    let _shiftRow = null, _shiftCheckable = true;
+    try {
+      const [shiftRows] = await db.query('SELECT id, status, username FROM shifts WHERE id = ? LIMIT 1', [shiftId]);
+      _shiftRow = shiftRows.length ? shiftRows[0] : null;
+    } catch (shErr) {
+      if (shErr && (shErr.code === 'ER_NO_SUCH_TABLE' || shErr.code === 'ER_BAD_FIELD_ERROR')) _shiftCheckable = false;
+      else throw shErr;
+    }
+    if (_shiftCheckable) {
+      if (!_shiftRow) {
+        const err = new Error('الوردية غير موجودة — ربما أُغلقت. افتح وردية جديدة وأعد المحاولة');
+        err.status = 400; err.code = 'shift_not_found'; throw err;
+      }
+      if (String(_shiftRow.status || '').toUpperCase() !== 'OPEN') {
+        const err = new Error('الوردية مغلقة — لا يمكن تسجيل مبيعات على وردية مغلقة');
+        err.status = 400; err.code = 'shift_closed'; throw err;
+      }
+      if (_shiftRow.username && username && _shiftRow.username !== username) {
+        const err = new Error('هذه الوردية تخص مستخدماً آخر — افتح وردية باسمك');
+        err.status = 400; err.code = 'shift_owner_mismatch'; throw err;
+      }
+    }
+
     // V5.9.2 — 4-step fallback chain to resolve which warehouse the
     //   cashier's sale should deduct from:
     //     1. Explicit warehouseId in the request body (POS override)
@@ -448,14 +485,33 @@ router.post('/', async (req, res) => {
     grandNet = Math.round(grandNet * 100) / 100;
     grandVat = Math.round(grandVat * 100) / 100;
 
-    // Apply cart-level discount to the NET (then VAT is re-extracted
-    // proportionally so the discount benefits both the customer AND
-    // shrinks the VAT due, as expected by Saudi accounting practice).
-    const cartDiscount = Math.max(0, Number(discountAmount) || 0);
-    const discountCapped = Math.min(cartDiscount, grandNet);
-    const netAfterDiscount = Math.round((grandNet - discountCapped) * 100) / 100;
-    const vatRatio = grandNet > 0 ? (netAfterDiscount / grandNet) : 0;
-    const vatAfterDiscount = Math.round(grandVat * vatRatio * 100) / 100;
+    // ─── v7.3 CRITICAL: discounts in GROSS (tax-inclusive) space ───────
+    // The POS computes the customer-facing total ENTIRELY in gross:
+    //   totalFinal = grossSubtotal − lineDiscountTotal − invoiceDiscount.
+    // The backend MUST mirror that exact space or the recorded total
+    // diverges from what the cashier showed (→ cash-drawer mismatch at
+    // shift close). The old code applied ONLY the invoice discount, to the
+    // NET, and IGNORED line discounts entirely. We now reduce the GROSS
+    // subtotal by BOTH the line-discount total AND the invoice discount,
+    // then scale net + vat TOGETHER by the post-discount ratio so
+    // per-category VAT stays correct and net + vat === invTotal holds.
+    // Both discounts arrive from the POS as GROSS figures.
+    const grossSubtotal = Math.round((grandNet + grandVat) * 100) / 100;
+    const invoiceDiscountGross = Math.max(0, Number(discountAmount) || 0);
+    const lineDiscountGross    = Math.max(0, Number(lineDiscountTotal) || 0);
+    // Line discounts first (mirrors the POS order + per-line persistence),
+    // invoice discount on the remainder; each capped so the total can never
+    // go negative or invent a credit.
+    const lineDiscCapped     = Math.min(lineDiscountGross, grossSubtotal);
+    const grossAfterLine     = Math.round((grossSubtotal - lineDiscCapped) * 100) / 100;
+    const invDiscCapped      = Math.min(invoiceDiscountGross, grossAfterLine);
+    const grossAfterDiscount = Math.round((grossAfterLine - invDiscCapped) * 100) / 100;
+    // ONE ratio scales NET and VAT together (gross-proportional). A
+    // zero-rated bucket (vat already 0) stays 0, and the VAT-factor skew the
+    // old net-space discount caused is gone.
+    const discountRatio    = grossSubtotal > 0 ? (grossAfterDiscount / grossSubtotal) : 0;
+    const netAfterDiscount = Math.round(grandNet * discountRatio * 100) / 100;
+    const vatAfterDiscount = Math.round(grandVat * discountRatio * 100) / 100;
 
     const grossPrecise = Math.round((netAfterDiscount + vatAfterDiscount) * 100) / 100;
     // The TOTAL stored on the sales row + shown to the customer is the
@@ -491,6 +547,31 @@ router.post('/', async (req, res) => {
       net = invTotal;
     }
 
+    // ─── v7.3 CRITICAL: money-safety reconciliation guard ──────────────
+    // The recorded total MUST equal what the cashier displayed. Both sides
+    // now compute the customer-facing total in the SAME gross space with the
+    // SAME discounts and round to a whole SAR, so they can only differ by
+    // sub-riyal rounding. If the client total is present and off by MORE than
+    // 1 SAR, something is wrong (a dropped discount, a tampered price, a stale
+    // cart, a contract drift) — REJECT the sale inside the transaction
+    // (rollback: no sale, no GL, no ZATCA serial) rather than silently
+    // charging a different amount. We always record the SERVER figure
+    // (invTotal); within tolerance, displayed == recorded == charged.
+    // Skipped when the client omits totalFinal (legacy POS builds) so the
+    // server recompute still governs with no regression.
+    const clientTotalFinal = Math.round(Number(totalFinal) || 0);
+    if (Number.isFinite(clientTotalFinal) && clientTotalFinal > 0 &&
+        Math.abs(invTotal - clientTotalFinal) > 1) {
+      const mmErr = new Error(
+        'تعذّر إتمام البيع: الإجمالي المعروض (' + clientTotalFinal +
+        ') لا يطابق الإجمالي المحسوب (' + invTotal +
+        '). يرجى تحديث السلة وإعادة المحاولة · Displayed total does not match the computed total.'
+      );
+      mmErr.status = 400;
+      mmErr.code = 'total_mismatch';
+      throw mmErr;
+    }
+
     // ─── v7.2 CRITICAL (#2): reconcile taxSubtotals to the POST-DISCOUNT
     // figures before persisting. taxSubtotals was built PRE-discount, so
     // sum(net)/sum(vat) wouldn't tie to the GL/total after a discount and
@@ -503,8 +584,8 @@ router.post('/', async (req, res) => {
       let _accNet = 0, _accVat = 0;
       _cats.forEach(k => {
         const b = taxSubtotals[k];
-        b.net = Math.round((b.net * vatRatio) * 100) / 100;
-        b.vat = Math.round((b.vat * vatRatio) * 100) / 100;
+        b.net = Math.round((b.net * discountRatio) * 100) / 100;
+        b.vat = Math.round((b.vat * discountRatio) * 100) / 100;
         _accNet += b.net;
         _accVat += b.vat;
       });
@@ -1553,6 +1634,10 @@ router.get('/invoice/:orderId', async (req, res) => {
       orderId: sale.id, date: sale.order_date, payment: sale.payment_method,
       totalFinal: Number(sale.total_final), username: sale.username,
       discountName: sale.discount_name, discountAmount: Number(sale.discount_amount),
+      // v7.3 — discount + split transparency for reprints; the receipt
+      // template itemizes these so SUBTOTAL − discounts === TOTAL on paper.
+      lineDiscounts: (function () { try { return sale.line_discounts_json ? JSON.parse(sale.line_discounts_json) : null; } catch (e) { return null; } })(),
+      splitDetails: (function () { try { return sale.split_details_json ? JSON.parse(sale.split_details_json) : null; } catch (e) { return null; } })(),
       items: items.map(i => ({ name: i.item_name, qty: i.qty, price: Number(i.price), total: Number(i.total) })),
       // V5.7.9 — receipt enrichment
       cashierName: cashierName,

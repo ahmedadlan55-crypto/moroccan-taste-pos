@@ -119,6 +119,20 @@
     var netAmount  = totalFinal / (1 + vatRate / 100);
     var vatAmount  = totalFinal - netAmount;
 
+    // v7.3 — discount + split transparency (auditable receipt). Derive the
+    // pre-discount subtotal back from the recorded total + discounts so the
+    // printed math always ties exactly: SUBTOTAL − discounts === TOTAL.
+    var _lineDiscTotal = Number(inv.lineDiscountTotal) || 0;
+    if (!_lineDiscTotal && inv.lineDiscounts) {
+      try {
+        var _ld = (typeof inv.lineDiscounts === 'string') ? JSON.parse(inv.lineDiscounts) : inv.lineDiscounts;
+        Object.keys(_ld || {}).forEach(function (k) { _lineDiscTotal += Number(_ld[k] && _ld[k].amount) || 0; });
+      } catch (e) {}
+    }
+    var _invoiceDiscount = Number(inv.discountAmount) || 0;
+    var _splitDetails = inv.splitDetails;
+    if (typeof _splitDetails === 'string') { try { _splitDetails = JSON.parse(_splitDetails); } catch (e) { _splitDetails = null; } }
+
     return {
       inv: inv,
       vatRate: vatRate,
@@ -129,7 +143,10 @@
       cashierName: cashierName, cashierEmpNo: cashierEmpNo,
       logoUrl: logoUrl,
       dateStr: _formatDate(inv.date),
-      totalItems: totalItems, netAmount: netAmount, vatAmount: vatAmount
+      totalItems: totalItems, netAmount: netAmount, vatAmount: vatAmount,
+      subtotal: totalFinal + _lineDiscTotal + _invoiceDiscount,
+      lineDiscTotal: _lineDiscTotal, invoiceDiscount: _invoiceDiscount,
+      discountName: inv.discountName || '', splitDetails: _splitDetails
     };
   }
 
@@ -296,6 +313,24 @@
         '<span style="font-size:18px;font-weight:900;font-family:ui-monospace,SFMono-Regular,monospace;color:#000;">' + esc(r.totalItems) + '</span>' +
       '</div>' +
 
+      // ───── SUBTOTAL + DISCOUNTS (only when a discount applies) ─────
+      // v7.3 — itemize line + invoice discounts so SUBTOTAL − discounts ===
+      // the TOTAL in the VAT box below; keeps the printed receipt auditable.
+      ((r.lineDiscTotal > 0 || r.invoiceDiscount > 0)
+        ? '<table style="width:100%;border-collapse:collapse;margin:8px 0;font-family:ui-monospace,SFMono-Regular,monospace;">' +
+            '<tr><td style="text-align:left;font-size:12px;padding:3px 2px;color:#000;">SUBTOTAL · <span style="direction:rtl;">الإجمالي الفرعي</span></td>' +
+              '<td style="text-align:right;font-size:13px;font-weight:800;padding:3px 2px;color:#000;">' + _whole(r.subtotal) + ' ' + esc(r.currency) + '</td></tr>' +
+            (r.lineDiscTotal > 0
+              ? '<tr><td style="text-align:left;font-size:12px;padding:3px 2px;color:#000;">LINE DISCOUNTS · <span style="direction:rtl;">خصم الأصناف</span></td>' +
+                  '<td style="text-align:right;font-size:13px;font-weight:800;padding:3px 2px;color:#000;">- ' + _whole(r.lineDiscTotal) + '</td></tr>'
+              : '') +
+            (r.invoiceDiscount > 0
+              ? '<tr><td style="text-align:left;font-size:12px;padding:3px 2px;color:#000;">INVOICE DISCOUNT' + (r.discountName ? ' (' + esc(r.discountName) + ')' : '') + ' · <span style="direction:rtl;">خصم الفاتورة</span></td>' +
+                  '<td style="text-align:right;font-size:13px;font-weight:800;padding:3px 2px;color:#000;">- ' + _whole(r.invoiceDiscount) + '</td></tr>'
+              : '') +
+          '</table>'
+        : '') +
+
       // ───── VAT BREAKDOWN ─────
       // v6.20.0 — TOTAL = whole SAR (what the customer paid).
       //           NET + VAT = 2-decimal precision (ZATCA compliance).
@@ -322,6 +357,20 @@
           '<span style="color:#000;font-family:ui-monospace,SFMono-Regular,monospace;font-size:16px;">' + _whole(r.inv.totalFinal) + ' ' + esc(r.currency) + '</span>' +
         '</div>' +
       '</div>' +
+
+      // ───── SPLIT PAYMENT BREAKDOWN (only when paid via split) ─────
+      // v7.3 — itemize each tender so a split sale is auditable on paper.
+      ((r.splitDetails && typeof r.splitDetails === 'object' && Object.keys(r.splitDetails).length)
+        ? '<div style="border:1px dashed #000;border-radius:3px;padding:6px 10px;margin:6px 0;font-family:ui-monospace,SFMono-Regular,monospace;">' +
+            '<div style="font-size:10px;color:#000;letter-spacing:0.05em;margin-bottom:3px;text-align:center;">SPLIT PAYMENT · <span style="direction:rtl;">دفع مقسّم</span></div>' +
+            Object.keys(r.splitDetails).map(function (m) {
+              return '<div style="display:flex;justify-content:space-between;font-size:12px;color:#000;padding:1px 0;">' +
+                '<span>' + esc(m) + '</span>' +
+                '<span style="font-weight:800;">' + _whole(r.splitDetails[m]) + ' ' + esc(r.currency) + '</span>' +
+              '</div>';
+            }).join('') +
+          '</div>'
+        : '') +
 
       // ───── CASHIER / SERVER ─────
       '<div style="text-align:center;font-size:12px;color:#000;margin:8px 0;padding:6px;border-top:1px dashed #000;">' +

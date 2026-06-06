@@ -1,5 +1,6 @@
 const router = require('express').Router();
 const db = require('../db/connection');
+const bcrypt = require('bcryptjs');
 const gl = require('../lib/glPosting');
 const zatca = require('../lib/zatca');
 const { recomputeInvItemStock, recomputeMenuStock, deductWarehouseStock } = require('../lib/stockRecompute');
@@ -1786,6 +1787,43 @@ async function _reverseSaleEffects(conn, orderId, username, opts) {
   return { restored, reversedGl, deletedSale };
 }
 
+// ─── v7.3 — Manager-approval gate for sensitive actions (void / return) ───
+// Privileged roles (admin/manager) act directly; ANY other role MUST supply a
+// valid admin/manager approver's credentials, verified server-side here so the
+// gate can never be bypassed from the client. Resolves silently when allowed,
+// or throws a 403 (the route's try/catch returns it as a clear client error).
+async function _requireManagerApproval(req) {
+  const PRIVILEGED = ['admin', 'manager'];
+  const actorRole = String((req.user && req.user.role) || '').toLowerCase();
+  if (PRIVILEGED.indexOf(actorRole) !== -1) return null; // already authorized
+  const approverUsername = req.body && req.body.approverUsername;
+  const approverPassword = req.body && req.body.approverPassword;
+  if (!approverUsername || !approverPassword) {
+    const err = new Error('هذا الإجراء يتطلب اعتماد مدير · Manager approval required');
+    err.status = 403; err.code = 'approval_required'; throw err;
+  }
+  let rows;
+  try {
+    [rows] = await db.query('SELECT username, password, role FROM users WHERE username = ? LIMIT 1', [String(approverUsername).trim()]);
+  } catch (e) {
+    const err = new Error('تعذّر التحقق من بيانات المدير · Could not verify approver');
+    err.status = 500; err.code = 'approval_check_failed'; throw err;
+  }
+  const mgr = rows && rows[0];
+  const mgrRole = mgr ? String(mgr.role || '').toLowerCase() : '';
+  if (!mgr || PRIVILEGED.indexOf(mgrRole) === -1) {
+    const err = new Error('المعتمِد غير موجود أو لا يملك صلاحية الاعتماد · Approver is not a manager/admin');
+    err.status = 403; err.code = 'approval_invalid'; throw err;
+  }
+  let okPw = false;
+  try { okPw = await bcrypt.compare(String(approverPassword), mgr.password || ''); } catch (e) { okPw = false; }
+  if (!okPw) {
+    const err = new Error('كلمة مرور المدير غير صحيحة · Invalid manager password');
+    err.status = 403; err.code = 'approval_invalid'; throw err;
+  }
+  return mgr.username; // approved — return the approver for audit if needed
+}
+
 // POST /sales/:orderId/void — reverse stock + GL but KEEP the sale row.
 // This is the recommended path when you need an audit trail (the sale
 // remains visible in reports as voided). Use ?delete=1 to also drop the row.
@@ -1794,6 +1832,8 @@ router.post('/:orderId/void', async (req, res) => {
     const orderId = req.params.orderId;
     const username = (req.user && req.user.username) || (req.body && req.body.username) || 'system';
     const wantDelete = req.query.delete === '1';
+    // v7.3 — gate: cashiers (and any non-privileged role) need manager approval.
+    await _requireManagerApproval(req);
 
     // v6.0.1 Wave A.4 — race-safe void: the lock + reversal happen inside
     // ONE transaction with SELECT … FOR UPDATE on the sale row.
@@ -1867,7 +1907,9 @@ router.post('/:orderId/void', async (req, res) => {
       zatcaType: wantDelete ? null : 'cancellation'
     });
   } catch (e) {
-    res.status(500).json({ success: false, error: e.message });
+    // v7.3 — honor e.status (e.g. 403 from the manager-approval gate) instead
+    // of always 500, and surface the error code so the POS can react.
+    res.status(e.status || 500).json({ success: false, error: e.message, code: e.code || undefined });
   }
 });
 
@@ -1891,6 +1933,8 @@ router.post('/:orderId/return', async (req, res) => {
     const username = (req.user && req.user.username) || (req.body && req.body.username) || 'system';
     const reason   = (req.body && String(req.body.reason || '').trim()) || 'customer return';
     const reasonCode = (req.body && String(req.body.reasonCode || '').trim()) || 'goods_returned';
+    // v7.3 — gate: cashiers (and any non-privileged role) need manager approval.
+    await _requireManagerApproval(req);
 
     const runner = async (conn) => {
       // 1. Lock the original sale row + load everything we need to clone
@@ -2025,7 +2069,8 @@ router.post('/:orderId/return', async (req, res) => {
 
     res.json({ success: true, orderId, reason, ...result });
   } catch (e) {
-    res.status(500).json({ success: false, error: e.message });
+    // v7.3 — honor e.status (e.g. 403 from the manager-approval gate).
+    res.status(e.status || 500).json({ success: false, error: e.message, code: e.code || undefined });
   }
 });
 

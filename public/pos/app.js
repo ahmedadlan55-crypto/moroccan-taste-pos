@@ -3216,6 +3216,42 @@ function _myInvConfirm(title, body, cb) {
   }, 30);
 }
 
+// v7.3 — Manager-approval gate for sensitive POS actions (void / return).
+// Privileged operators (admin/manager) proceed directly — the SERVER still
+// re-authorizes, so this is a UX shortcut, not the security boundary. Any
+// other role gets the approval modal; the entered manager credentials are
+// passed to the backend, which verifies them (bcrypt + role) before acting.
+var _mgrApprovalCtx = null;
+window._posRequireManagerApproval = function (opts, onProceed) {
+  opts = opts || {};
+  var role = (state.role || '').toLowerCase();
+  if (role === 'admin' || role === 'manager') { onProceed(null, null, null); return; }
+  _mgrApprovalCtx = { onProceed: onProceed, needsReason: !!opts.needsReason };
+  var msg = q('#mgrAuthMsg'); if (msg && opts.message) msg.textContent = opts.message;
+  var u = q('#mgrAuthUser'), p = q('#mgrAuthPass'), e = q('#mgrAuthError'),
+      rw = q('#mgrAuthReasonWrap'), rr = q('#mgrAuthReason');
+  if (u) u.value = ''; if (p) p.value = ''; if (rr) rr.value = '';
+  if (e) { e.style.display = 'none'; e.textContent = ''; }
+  if (rw) rw.style.display = opts.needsReason ? 'block' : 'none';
+  openGlassModal('#modalManagerAuth');
+  setTimeout(function () { if (u) u.focus(); }, 60);
+};
+window._posSubmitManagerAuth = function () {
+  if (!_mgrApprovalCtx) return;
+  var u = q('#mgrAuthUser'), p = q('#mgrAuthPass'), e = q('#mgrAuthError'), rr = q('#mgrAuthReason');
+  var user = u ? String(u.value).trim() : '';
+  var pass = p ? String(p.value) : '';
+  if (!user || !pass) {
+    if (e) { e.textContent = 'أدخل اسم المستخدم وكلمة المرور · Enter username and password'; e.style.display = 'block'; }
+    return;
+  }
+  var reason = (_mgrApprovalCtx.needsReason && rr) ? (String(rr.value).trim() || 'customer return') : null;
+  var cb = _mgrApprovalCtx.onProceed;
+  _mgrApprovalCtx = null;
+  closeGlassModal('#modalManagerAuth');
+  cb(user, pass, reason);
+};
+
 window.posInvoiceVoid = function (orderId) {
   if (!orderId) return;
   _myInvConfirm(
@@ -3224,6 +3260,9 @@ window.posInvoiceVoid = function (orderId) {
     'Stock will be restored and GL entries reversed. This action cannot be undone.\n\n' +
     'Invoice #: ' + orderId,
     function () {
+      _posRequireManagerApproval(
+        { message: 'إلغاء فاتورة يتطلب اعتماد مدير أو مشرف · Voiding an invoice requires manager approval.' },
+        function (approverUser, approverPass) {
       loader(true);
       api.withSuccessHandler(function (res) {
         loader(false);
@@ -3253,7 +3292,9 @@ window.posInvoiceVoid = function (orderId) {
       }).withFailureHandler(function (err) {
         loader(false);
         glassAlert('فشل الاتصال · Network error', (err && err.message) || '', { danger: true });
-      }).voidSale(orderId, state.user || 'system');
+      }).voidSale(orderId, state.user || 'system', approverUser, approverPass);
+        }
+      );
     }
   );
 };
@@ -3284,23 +3325,34 @@ window.posInvoiceReturn = function (orderId) {
     'A full customer return will be recorded: stock restored, ZATCA credit note issued, GL entries reversed.\n\n' +
     'Invoice #: ' + orderId,
     function () {
-      var reason = window.prompt('سبب الإرجاع (اختياري) · Return reason (optional)', 'customer return') || 'customer return';
-      loader(true);
-      api.withSuccessHandler(function (res) {
-        loader(false);
-        if (res && res.success) {
-          glassToast('تم تسجيل المرتجع ✓ · Return recorded');
-          posLoadMyInvoices();
-        } else {
-          var msg = (res && res.error === 'already-reversed')
-            ? 'هذه الفاتورة معكوسة بالفعل · This invoice was already reversed'
-            : ((res && res.error) || 'فشل تسجيل المرتجع · Return failed');
-          glassAlert('خطأ · Error', msg, { danger: true });
+      // v7.3 — manager approval + reason captured in one glass modal (no
+      // more native window.prompt). Privileged operators skip the modal and
+      // the return uses the default reason.
+      _posRequireManagerApproval(
+        {
+          message: 'تسجيل مرتجع يتطلب اعتماد مدير أو مشرف · Recording a return requires manager approval.',
+          needsReason: true
+        },
+        function (approverUser, approverPass, reason) {
+          var finalReason = reason || 'customer return';
+          loader(true);
+          api.withSuccessHandler(function (res) {
+            loader(false);
+            if (res && res.success) {
+              glassToast('تم تسجيل المرتجع ✓ · Return recorded');
+              posLoadMyInvoices();
+            } else {
+              var msg = (res && res.error === 'already-reversed')
+                ? 'هذه الفاتورة معكوسة بالفعل · This invoice was already reversed'
+                : ((res && res.error) || 'فشل تسجيل المرتجع · Return failed');
+              glassAlert('خطأ · Error', msg, { danger: true });
+            }
+          }).withFailureHandler(function (err) {
+            loader(false);
+            glassAlert('فشل الاتصال · Network error', (err && err.message) || '', { danger: true });
+          }).returnSale(orderId, state.user || 'system', finalReason, approverUser, approverPass);
         }
-      }).withFailureHandler(function (err) {
-        loader(false);
-        glassAlert('فشل الاتصال · Network error', (err && err.message) || '', { danger: true });
-      }).returnSale(orderId, state.user || 'system', reason);
+      );
     }
   );
 };

@@ -361,6 +361,33 @@
     </div>
   </div>
 
+  <!-- v7.3 — Manager approval modal (sensitive actions: void / return) -->
+  <div id="modalManagerAuth" class="glass-modal hidden">
+    <div class="glass-modal-content" style="max-width:440px;">
+      <div class="glass-modal-title">
+        <span><i class="fas fa-user-shield" style="color:#dc2626;"></i> اعتماد مدير · Manager Approval</span>
+        <button class="glass-modal-close" onclick="closeGlassModal('#modalManagerAuth')">&times;</button>
+      </div>
+      <p id="mgrAuthMsg" style="font-size:13px;color:#475569;margin:8px 0 14px;line-height:1.6;">هذا الإجراء حسّاس ويتطلب اعتماد مدير أو مشرف · This action requires a manager's approval.</p>
+      <label for="mgrAuthUser" style="font-size:12px;font-weight:700;color:#334155;display:block;margin-bottom:4px;">اسم المستخدم للمدير · Manager username</label>
+      <input id="mgrAuthUser" type="text" autocomplete="off" placeholder="manager"
+             style="width:100%;padding:11px 13px;border:1.5px solid #e2e8f0;border-radius:10px;margin-bottom:12px;box-sizing:border-box;font-size:15px;">
+      <label for="mgrAuthPass" style="font-size:12px;font-weight:700;color:#334155;display:block;margin-bottom:4px;">كلمة المرور · Password</label>
+      <input id="mgrAuthPass" type="password" autocomplete="off" placeholder="••••••••"
+             onkeydown="if(event.key==='Enter'){event.preventDefault();_posSubmitManagerAuth();}"
+             style="width:100%;padding:11px 13px;border:1.5px solid #e2e8f0;border-radius:10px;margin-bottom:12px;box-sizing:border-box;font-size:15px;">
+      <div id="mgrAuthReasonWrap" style="display:none;margin-bottom:12px;">
+        <label for="mgrAuthReason" style="font-size:12px;font-weight:700;color:#334155;display:block;margin-bottom:4px;">سبب الإرجاع · Return reason</label>
+        <input id="mgrAuthReason" type="text" placeholder="customer return"
+               style="width:100%;padding:11px 13px;border:1.5px solid #e2e8f0;border-radius:10px;box-sizing:border-box;font-size:15px;">
+      </div>
+      <div id="mgrAuthError" style="color:#dc2626;font-size:12.5px;font-weight:600;margin-bottom:10px;display:none;"></div>
+      <button class="pay-confirm-btn" id="mgrAuthSubmit" onclick="_posSubmitManagerAuth()" style="background:#dc2626;">
+        <i class="fas fa-check-circle"></i> اعتماد · Approve
+      </button>
+    </div>
+  </div>
+
   <!-- Mobile Floating Cart Button -->
   <div class="mobile-cart-btn" id="mobileCartBtn" onclick="toggleMobileCart()">
     <div class="mobile-cart-info">

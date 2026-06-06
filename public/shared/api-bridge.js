@@ -34,8 +34,11 @@
     // v6.15.2 fail-loud branch correctly catches the missing route
     // and shows the cashier "API function not mapped: voidSale" —
     // but the user just wants to cancel an invoice, so map it.
-    voidSale:            { method: 'POST', url: (id,u)   => '/sales/'+id+'/void',   body: (id,u)   => ({username:u}) },
-    returnSale:          { method: 'POST', url: (id,u,r) => '/sales/'+id+'/return', body: (id,u,r) => ({username:u, reason:r}) },
+    // v7.3 — optional approverUsername/approverPassword carry a manager's
+    // approval for the void/return when the cashier isn't privileged. The
+    // backend verifies them server-side (it never trusts the role alone).
+    voidSale:            { method: 'POST', url: (id,u,au,ap)   => '/sales/'+id+'/void',   body: (id,u,au,ap)   => ({username:u, approverUsername:au||null, approverPassword:ap||null}) },
+    returnSale:          { method: 'POST', url: (id,u,r,au,ap) => '/sales/'+id+'/return', body: (id,u,r,au,ap) => ({username:u, reason:r, approverUsername:au||null, approverPassword:ap||null}) },
 
     // Shifts
     openShift:           { method: 'POST', url: '/shifts/open', body: (u,d) => Object.assign({username:u}, d||{}) },

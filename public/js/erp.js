@@ -43,6 +43,9 @@ const erpSections = [
   'erpCashDash','erpCashBoxes','erpBankAccounts','erpCashReceipts','erpCashPayments','erpCashTransfers',
   // Warehouse Phase 1/2/3
   'erpWhHierarchy','erpStockIssues','erpProductionOrders','erpExpiryAlerts','erpSlowMoving','erpTurnover',
+  // v7.4 (G3) — analytics views already fully wired (nav + switch + render + backend);
+  // list them here for consistency (the array is currently informational only).
+  'erpReorderAlerts','erpDaysOfStock','erpAbcAnalysis',
   // v5.15.1 — erpPosTerminals removed from sections per owner request:
   // they don't want any POS/cashier item visible inside the admin
   // shell. The route handler is kept in the file in case it's needed
@@ -24513,6 +24516,20 @@ function prdView(id) {
     var planned = Number(d.qty_planned||0), produced = Number(d.qty_produced||0);
     var pct = planned > 0 ? Math.min(100, Math.round((produced/planned)*100)) : 0;
     var pctClr = pct >= 100 ? '#22c55e' : (pct >= 50 ? '#f59e0b' : '#94a3b8');
+    // v7.4 (G1) — yield % (uncapped, so over-production reads >100%) + scrap %.
+    var scrapQ = Number(d.qty_scrap||0);
+    var yieldPct = planned > 0 ? Math.round((produced/planned)*1000)/10 : 0;
+    var yieldClr = yieldPct >= 95 ? '#22c55e' : (yieldPct >= 75 ? '#f59e0b' : '#ef4444');
+    var scrapPct = (produced+scrapQ) > 0 ? Math.round((scrapQ/(produced+scrapQ))*1000)/10 : 0;
+    var yieldRows = (produced > 0)
+      ? ('<div style="display:flex;gap:24px;margin-top:12px;padding-top:12px;border-top:1px dashed #e2e8f0;">' +
+           '<div><div style="font-size:11px;color:#64748b;font-weight:700;"><i class="fas fa-seedling" style="color:'+yieldClr+';"></i> نسبة العائد</div>' +
+             '<div style="font-size:22px;font-weight:900;color:'+yieldClr+';">'+yieldPct+'%</div></div>' +
+           '<div><div style="font-size:11px;color:#64748b;font-weight:700;"><i class="fas fa-dumpster" style="color:#ef4444;"></i> نسبة الهدر</div>' +
+             '<div style="font-size:22px;font-weight:900;color:'+(scrapPct>5?'#ef4444':'#64748b')+';">'+scrapPct+'%</div>' +
+             '<div style="font-size:10px;color:#94a3b8;">'+scrapQ.toFixed(2)+' '+_woEscapeHtml(d.product_unit||'')+'</div></div>' +
+         '</div>')
+      : '';
 
     var consHtml = (d.consumption||[]).length
       ? (d.consumption||[]).map(function(c){
@@ -24561,6 +24578,7 @@ function prdView(id) {
           '<div style="background:#e2e8f0;border-radius:999px;height:10px;overflow:hidden;">' +
             '<div style="height:100%;background:'+pctClr+';width:'+pct+'%;transition:width .5s;border-radius:999px;"></div>' +
           '</div>' +
+          yieldRows +
         '</div>' +
         // Costs
         '<div style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:12px;padding:16px;">' +

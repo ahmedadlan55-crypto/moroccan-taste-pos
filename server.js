@@ -3529,6 +3529,8 @@ async function runMigrations() {
       INDEX idx_status (status)
     ) ENGINE=InnoDB
   `);
+  // v7.4 (G2) — store production yield % at completion (informational/reporting).
+  await addColumnIfMissing('production_orders', 'yield_pct', "DECIMAL(6,2) DEFAULT NULL");
   await createTableIfMissing('production_consumption', `
     CREATE TABLE production_consumption (
       id VARCHAR(60) PRIMARY KEY,

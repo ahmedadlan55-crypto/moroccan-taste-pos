@@ -1055,17 +1055,20 @@ router.post('/production-orders/:id/complete', BACKOFFICE, async (req, res) => {
         glId = glRes.journalId;
       }
 
+      // v7.4 (G2) — yield % = produced / planned (informational; never blocks).
+      const _plannedQ = Number(hdr.qty_planned) || 0;
+      const _yieldPct = _plannedQ > 0 ? Math.round((qtyOut / _plannedQ) * 10000) / 100 : null;
       await conn.query(
         `UPDATE production_orders
          SET status='completed', completed_by=?, completed_at=NOW(),
-             qty_produced=?, qty_scrap=?, unit_cost=?, gl_complete_id=?
+             qty_produced=?, qty_scrap=?, unit_cost=?, yield_pct=?, gl_complete_id=?
          WHERE id=?`,
-        [completedBy || '', qtyOut, qtyScrapped, unitCost, glId, id]);
+        [completedBy || '', qtyOut, qtyScrapped, unitCost, _yieldPct, glId, id]);
 
-      return { glId };
+      return { glId, yieldPct: _yieldPct };
     });
 
-    res.json({ success: true, qtyProduced: qtyOut, unitCost, totalCost: wipTotal, glJournalId: out.glId });
+    res.json({ success: true, qtyProduced: qtyOut, unitCost, totalCost: wipTotal, yieldPct: out.yieldPct, glJournalId: out.glId });
   } catch(e) { res.status(e.status || 500).json({ error: e.message }); }
 });
 

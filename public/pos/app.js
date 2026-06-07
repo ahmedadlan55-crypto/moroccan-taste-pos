@@ -162,6 +162,33 @@ document.addEventListener('DOMContentLoaded', function() {
   }).getInitialAppData(state.user);
 });
 
+// v7.4 (D3) — keep the POS menu in lock-step with admin edits during a long
+// shift. The boot fetch already refreshes on every reload; this covers sessions
+// kept open for hours. Re-pull the menu every 5 min and, ONLY if it actually
+// changed (id/price/active signature), refresh state.menu + cache + the product
+// grid — never the cart. A soft-deleted / deactivated item (excluded by the
+// backend GET active=1 AND is_deleted=0) thus vanishes within 5 minutes,
+// backing up the server-side ghost-item guard. Mirrors the getMenu() refresh
+// pattern already used elsewhere in this file.
+window._posRefreshMenu = function() {
+  if (!navigator.onLine) return;
+  if (!state || !state.user) return;
+  try {
+    api.withSuccessHandler(function(m) {
+      if (!Array.isArray(m)) return;
+      var sig = m.map(function(i){ return i.id + ':' + i.price + ':' + (i.active !== false ? 1 : 0); }).join('|');
+      if (sig === state._menuSig) return;            // unchanged → skip re-render
+      state._menuSig = sig;
+      state.menu = m;
+      state.categories = [...new Set(m.map(function(i){ return i.category; }))].filter(function(c){ return c && String(c).trim() !== ''; });
+      try { localStorage.setItem('pos_menu_cache', JSON.stringify({ ts: Date.now(), menu: m })); } catch (e) {}
+      if (typeof renderCategoryGrid === 'function') renderCategoryGrid();
+      if (typeof renderMenuGrid === 'function') renderMenuGrid();
+    }).withFailureHandler(function(){ /* transient/offline — keep current menu */ }).getMenu();
+  } catch (e) { /* api not ready yet */ }
+};
+setInterval(function(){ window._posRefreshMenu(); }, 300000);
+
 window.onLangChange = function() {
   // Re-render everything that depends on the language
   renderPayButtons();

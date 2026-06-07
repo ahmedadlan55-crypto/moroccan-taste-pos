@@ -70,7 +70,7 @@ const HIDE_INCOMPLETE_FRAGMENT = ' AND (m.is_semi_finished IS NULL OR m.is_semi_
 router.get('/', async (req, res) => {
   try {
     const { brandId, type, includeSemi } = req.query;
-    let sql = 'SELECT m.*, b.name AS brand_name FROM menu m LEFT JOIN brands b ON b.id = m.brand_id WHERE m.active = 1';
+    let sql = 'SELECT m.*, b.name AS brand_name FROM menu m LEFT JOIN brands b ON b.id = m.brand_id WHERE m.active = 1 AND COALESCE(m.is_deleted,0) = 0';
     const params = [];
     if (brandId) { sql += ' AND m.brand_id = ?'; params.push(brandId); }
     if (type === 'semi') {
@@ -446,11 +446,16 @@ router.get('/:id/price-history', async (req, res) => {
   } catch(e) { res.status(500).json({ error: e.message }); }
 });
 
-// Delete menu item
+// Delete menu item — v7.4 SOFT delete. A hard DELETE FROM menu orphaned sales
+// history / BOM lines / channel_menu refs and let stale POS caches sell a
+// "ghost" item. We now flag is_deleted=1 + active=0 so the row (and every FK
+// pointing at it) survives, while it disappears from POS + admin lists and the
+// checkout ghost-guard (active=0) refuses to invoice it.
 router.delete('/:id', verifyToken, MGR, async (req, res) => {
   try {
-    await db.query('DELETE FROM menu WHERE id = ?', [req.params.id]);
-    res.json({ success: true });
+    const [r] = await db.query('UPDATE menu SET is_deleted = 1, active = 0 WHERE id = ?', [req.params.id]);
+    if (!r.affectedRows) return res.status(404).json({ success: false, error: 'الصنف غير موجود' });
+    res.json({ success: true, softDeleted: true });
   } catch (e) { res.json({ success: false, error: e.message }); }
 });
 

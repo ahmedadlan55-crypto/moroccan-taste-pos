@@ -425,6 +425,10 @@ async function runMigrations() {
   await addColumnIfMissing('menu', 'conv_rate',     "DECIMAL(14,4) DEFAULT 1");       // small per big
   await addColumnIfMissing('menu', 'yield_quantity', "DECIMAL(14,4) DEFAULT 1");      // produced per batch
   await addColumnIfMissing('menu', 'yield_unit',    "VARCHAR(30) DEFAULT NULL");
+  // v7.4 — soft-delete flag. Menu rows are never hard-deleted any more (that
+  // orphaned sales history + BOM/channel refs and let stale POS caches sell a
+  // "ghost" item). is_deleted=1 hides the row from POS + admin everywhere.
+  await addColumnIfMissing('menu', 'is_deleted',    "TINYINT(1) NOT NULL DEFAULT 0");
 
   // Index for finding semi-finished consumers
   try { await db.query('CREATE INDEX idx_menu_semi_id ON menu(is_semi_finished)'); } catch(e) {}

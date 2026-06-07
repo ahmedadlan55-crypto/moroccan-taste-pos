@@ -349,94 +349,85 @@ router.post('/stock-issues/:id/issue', BACKOFFICE, async (req, res) => {
     const [items] = await db.query('SELECT * FROM stock_issue_items WHERE issue_id=?', [id]);
     if (!items.length) return res.status(400).json({ error: 'no items' });
 
-    // Verify sufficient stock at source
-    for (const it of items) {
-      const [stk] = await db.query(
-        'SELECT qty FROM warehouse_stock WHERE warehouse_id=? AND item_id=?',
-        [hdr.from_warehouse_id, it.item_id]);
-      const available = stk.length ? Number(stk[0].qty) : 0;
-      if (available < Number(it.qty_requested)) {
-        return res.status(400).json({ error: `insufficient stock for item ${it.item_id}: available ${available}, required ${it.qty_requested}` });
-      }
-    }
-
-    // Decrement source warehouse stock, set qty_issued
-    // v5.10.39 — Also write an inventory_movements row for each line.
-    // Pre-fix, stock-issues skipped the movement ledger entirely; the
-    // owner asked "هل التحويل يظهر بنفس التاريخ في الوجهة" — the answer
-    // was "no" because nothing was logged. Now: an 'out' row for every
-    // line of the issue, dated NOW(), referencing the issue header.
     const issueNow = new Date();
-    let totalCost = 0;
-    for (const it of items) {
-      const qty = Number(it.qty_requested);
-      await _applyStockMovement(hdr.from_warehouse_id, it.item_id, -qty, Number(it.unit_cost),
-                                'stock_issue_out', id, issuedBy || '');
-      const lineTotal = qty * Number(it.unit_cost);
-      totalCost += lineTotal;
-      await db.query(
-        `UPDATE stock_issue_items SET qty_issued=?, line_total=? WHERE id=?`,
-        [qty, lineTotal, it.id]);
-      // Ledger entry: "تحويل صادر" — the bucket() in /live-report
-      // classifies this as transferOut (v5.10.18 regex).
-      try {
+
+    // v7.4 — atomic issue: source-stock deduction + ledger rows + GL (Dr Branch
+    // Inventory / Cr Main Inventory) + status flip all commit together. GL is
+    // now FATAL (rolls back the stock move) instead of console.warn-swallowed,
+    // and availability is re-checked inside the transaction.
+    const out = await db.withTransaction(async (conn) => {
+      for (const it of items) {
+        const [stk] = await conn.query(
+          'SELECT qty FROM warehouse_stock WHERE warehouse_id=? AND item_id=?',
+          [hdr.from_warehouse_id, it.item_id]);
+        const available = stk.length ? Number(stk[0].qty) : 0;
+        if (available < Number(it.qty_requested)) {
+          const e = new Error(`insufficient stock for item ${it.item_id}: available ${available}, required ${it.qty_requested}`);
+          e.status = 400; throw e;
+        }
+      }
+
+      let totalCost = 0;
+      for (const it of items) {
+        const qty = Number(it.qty_requested);
+        await _applyStockMovement(hdr.from_warehouse_id, it.item_id, -qty, Number(it.unit_cost),
+                                  'stock_issue_out', id, issuedBy || '', conn);
+        const lineTotal = qty * Number(it.unit_cost);
+        totalCost += lineTotal;
+        await conn.query(
+          `UPDATE stock_issue_items SET qty_issued=?, line_total=? WHERE id=?`,
+          [qty, lineTotal, it.id]);
+        // Ledger entry: "تحويل صادر" (transferOut in /live-report bucket()).
         const movId = 'MOV-SI-OUT-' + Date.now() + '-' + Math.random().toString(36).substr(2, 4);
-        await db.query(
-          'INSERT INTO inventory_movements (id, movement_date, item_id, item_name, type, qty, reason, username, notes, warehouse_id, reference_type, reference_id) ' +
-          'VALUES (?,?,?,?,?,?,?,?,?,?,?,?)',
-          [movId, issueNow, it.item_id, it.item_name || '', 'out', qty,
-           'تحويل صادر', issuedBy || '', 'STOCK_ISSUE: ' + (hdr.issue_number || id),
-           hdr.from_warehouse_id, 'transfer', id]);
-      } catch(e) {
-        // reference_type/reference_id columns might not exist on older
-        // schemas; retry without them.
         try {
-          const movId = 'MOV-SI-OUT-' + Date.now() + '-' + Math.random().toString(36).substr(2, 4);
-          await db.query(
+          await conn.query(
+            'INSERT INTO inventory_movements (id, movement_date, item_id, item_name, type, qty, reason, username, notes, warehouse_id, reference_type, reference_id) ' +
+            'VALUES (?,?,?,?,?,?,?,?,?,?,?,?)',
+            [movId, issueNow, it.item_id, it.item_name || '', 'out', qty,
+             'تحويل صادر', issuedBy || '', 'STOCK_ISSUE: ' + (hdr.issue_number || id),
+             hdr.from_warehouse_id, 'transfer', id]);
+        } catch(e) {
+          await conn.query(
             'INSERT INTO inventory_movements (id, movement_date, item_id, item_name, type, qty, reason, username, notes, warehouse_id) VALUES (?,?,?,?,?,?,?,?,?,?)',
             [movId, issueNow, it.item_id, it.item_name || '', 'out', qty,
              'تحويل صادر', issuedBy || '', 'STOCK_ISSUE: ' + (hdr.issue_number || id),
              hdr.from_warehouse_id]);
-        } catch(_) { /* best effort */ }
+        }
       }
-    }
 
-    // Post GL: Dr Branch Inventory / Cr Main Inventory (at total cost)
-    let glId = null;
-    try {
-      const result = await gl.postJournal(db, {
-        referenceType: 'stock_issue',
-        referenceId: id,
-        description: `إذن صرف ${hdr.issue_number}: من ${hdr.from_warehouse_id} إلى ${hdr.to_warehouse_id}`,
-        postedBy: issuedBy || '',
-        entries: [
-          {
-            accountCode: gl.CORE_ACCOUNTS.BRANCH_INVENTORY.code,
-            debit: totalCost, credit: 0,
-            brandId: hdr.brand_id, branchId: hdr.branch_id,
-            warehouseId: hdr.to_warehouse_id
-          },
-          {
-            accountCode: gl.CORE_ACCOUNTS.INVENTORY.code,
-            debit: 0, credit: totalCost,
-            brandId: hdr.brand_id,
-            warehouseId: hdr.from_warehouse_id
-          }
-        ]
-      });
-      glId = result && result.journalId;
-    } catch(glErr) {
-      console.warn('[stock-issue] GL posting failed:', glErr.message);
-    }
+      // GL: Dr Branch Inventory / Cr Main Inventory — fatal when there's value.
+      let glId = null;
+      if (totalCost > 0.005) {
+        const glRes = await gl.postJournal(conn, {
+          referenceType: 'stock_issue',
+          referenceId: id,
+          description: `إذن صرف ${hdr.issue_number}: من ${hdr.from_warehouse_id} إلى ${hdr.to_warehouse_id}`,
+          postedBy: issuedBy || '',
+          entries: [
+            { accountCode: gl.CORE_ACCOUNTS.BRANCH_INVENTORY.code, debit: totalCost, credit: 0,
+              brandId: hdr.brand_id, branchId: hdr.branch_id, warehouseId: hdr.to_warehouse_id },
+            { accountCode: gl.CORE_ACCOUNTS.INVENTORY.code, debit: 0, credit: totalCost,
+              brandId: hdr.brand_id, warehouseId: hdr.from_warehouse_id }
+          ]
+        });
+        if (!glRes || !glRes.success) {
+          const e = new Error('فشل ترحيل قيد إذن الصرف: ' + ((glRes && glRes.error) || 'خطأ غير معروف'));
+          e.status = 400; throw e;
+        }
+        glId = glRes.journalId;
+      }
 
-    await db.query(
-      `UPDATE stock_issues
-       SET status='issued', issued_by=?, issued_at=NOW(), total_cost=?, gl_journal_id=?
-       WHERE id=?`,
-      [issuedBy || '', totalCost, glId, id]);
+      await conn.query(
+        `UPDATE stock_issues
+         SET status='issued', issued_by=?, issued_at=NOW(), total_cost=?, gl_journal_id=?
+         WHERE id=?`,
+        [issuedBy || '', totalCost, glId, id]);
 
-    res.json({ success: true, totalCost, glJournalId: glId });
-  } catch(e) { res.status(500).json({ error: e.message }); }
+      return { totalCost, glId };
+    });
+
+    res.json({ success: true, totalCost: out.totalCost, glJournalId: out.glId });
+  } catch(e) { res.status(e.status || 500).json({ error: e.message }); }
 });
 
 // Receive (increment destination warehouse)
@@ -482,40 +473,41 @@ router.post('/stock-issues/:id/receive', BACKOFFICE, async (req, res) => {
     // shows the transfer at the receive date (matches the issue-side
     // 'out' row with the same reference_id).
     const receiveNow = new Date();
-    for (const it of dbItems) {
-      const qtyReceived = qtyMap.hasOwnProperty(it.id) ? qtyMap[it.id] : Number(it.qty_issued);
-      if (qtyReceived <= 0) continue;
-      await _applyStockMovement(hdr.to_warehouse_id, it.item_id, qtyReceived, Number(it.unit_cost),
-                                'stock_issue_in', id, receivedBy || '');
-      await db.query('UPDATE stock_issue_items SET qty_received=? WHERE id=?', [qtyReceived, it.id]);
-      // Ledger entry — destination side. Same reference_id as the 'out'
-      // row so reports can pair them.
-      try {
+    // v7.4 — atomic receive: every destination stock increment + its ledger row
+    // + the status flip commit together, so a mid-failure can't leave a transfer
+    // half-received. No GL here — the value already moved to Branch Inventory at
+    // issue time. Over-receipt was already validated above (rolls back nothing).
+    await db.withTransaction(async (conn) => {
+      for (const it of dbItems) {
+        const qtyReceived = qtyMap.hasOwnProperty(it.id) ? qtyMap[it.id] : Number(it.qty_issued);
+        if (qtyReceived <= 0) continue;
+        await _applyStockMovement(hdr.to_warehouse_id, it.item_id, qtyReceived, Number(it.unit_cost),
+                                  'stock_issue_in', id, receivedBy || '', conn);
+        await conn.query('UPDATE stock_issue_items SET qty_received=? WHERE id=?', [qtyReceived, it.id]);
+        // Ledger entry — destination side, same reference_id as the 'out' row.
         const movId = 'MOV-SI-IN-' + Date.now() + '-' + Math.random().toString(36).substr(2, 4);
-        await db.query(
-          'INSERT INTO inventory_movements (id, movement_date, item_id, item_name, type, qty, reason, username, notes, warehouse_id, reference_type, reference_id) ' +
-          'VALUES (?,?,?,?,?,?,?,?,?,?,?,?)',
-          [movId, receiveNow, it.item_id, it.item_name || '', 'in', qtyReceived,
-           'تحويل وارد', receivedBy || '', 'STOCK_ISSUE: ' + (hdr.issue_number || id),
-           hdr.to_warehouse_id, 'transfer', id]);
-      } catch(e) {
         try {
-          const movId = 'MOV-SI-IN-' + Date.now() + '-' + Math.random().toString(36).substr(2, 4);
-          await db.query(
+          await conn.query(
+            'INSERT INTO inventory_movements (id, movement_date, item_id, item_name, type, qty, reason, username, notes, warehouse_id, reference_type, reference_id) ' +
+            'VALUES (?,?,?,?,?,?,?,?,?,?,?,?)',
+            [movId, receiveNow, it.item_id, it.item_name || '', 'in', qtyReceived,
+             'تحويل وارد', receivedBy || '', 'STOCK_ISSUE: ' + (hdr.issue_number || id),
+             hdr.to_warehouse_id, 'transfer', id]);
+        } catch(e) {
+          await conn.query(
             'INSERT INTO inventory_movements (id, movement_date, item_id, item_name, type, qty, reason, username, notes, warehouse_id) VALUES (?,?,?,?,?,?,?,?,?,?)',
             [movId, receiveNow, it.item_id, it.item_name || '', 'in', qtyReceived,
              'تحويل وارد', receivedBy || '', 'STOCK_ISSUE: ' + (hdr.issue_number || id),
              hdr.to_warehouse_id]);
-        } catch(_) { /* best effort */ }
+        }
       }
-    }
-
-    await db.query(
-      `UPDATE stock_issues SET status='received', received_by=?, received_at=NOW() WHERE id=?`,
-      [receivedBy || '', id]);
+      await conn.query(
+        `UPDATE stock_issues SET status='received', received_by=?, received_at=NOW() WHERE id=?`,
+        [receivedBy || '', id]);
+    });
 
     res.json({ success: true });
-  } catch(e) { res.status(500).json({ error: e.message }); }
+  } catch(e) { res.status(e.status || 500).json({ error: e.message }); }
 });
 
 // Cancel stock issue

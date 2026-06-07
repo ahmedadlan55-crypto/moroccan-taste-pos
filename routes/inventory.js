@@ -687,6 +687,48 @@ router.get('/warehouse-card-stats', async (req, res) => {
 //                        with qty=0 so the user can see what's available to
 //                        transfer/stock — they don't disappear.
 //   ?expandWarehouses=1 → one row per (item × warehouse_stock entry).
+// v7.4 (F1) — Low-stock & out-of-stock report. The dashboards already compute a
+// low_count but never listed WHICH items; this returns the actual at/under-min
+// lines so managers can reorder proactively, with a suggested reorder qty/value.
+// Optional ?warehouseId= and ?brandId= filters.
+router.get('/low-stock', async (req, res) => {
+  try {
+    const { warehouseId, brandId } = req.query;
+    const where = ['i.active = 1', 'i.deleted_at IS NULL', 'i.min_stock > 0', 'ws.qty <= i.min_stock'];
+    const params = [];
+    if (warehouseId) { where.push('ws.warehouse_id = ?'); params.push(warehouseId); }
+    if (brandId)     { where.push('i.brand_id = ?');      params.push(brandId); }
+    const [rows] = await db.query(
+      `SELECT i.id AS item_id, i.name, i.category, i.unit,
+              ws.warehouse_id, w.name AS warehouse_name,
+              ws.qty, i.min_stock, i.cost,
+              GREATEST(i.min_stock - ws.qty, 0) AS reorder_qty,
+              CASE WHEN ws.qty <= 0 THEN 'out' ELSE 'low' END AS severity
+         FROM warehouse_stock ws
+         JOIN inv_items i  ON i.id = ws.item_id
+         LEFT JOIN warehouses w ON w.id = ws.warehouse_id
+        WHERE ${where.join(' AND ')}
+        ORDER BY (ws.qty <= 0) DESC, (i.min_stock - ws.qty) DESC
+        LIMIT 500`, params);
+    const items = rows.map(r => ({
+      itemId: r.item_id, name: r.name, category: r.category, unit: r.unit,
+      warehouseId: r.warehouse_id, warehouseName: r.warehouse_name,
+      qty: Number(r.qty), minStock: Number(r.min_stock), cost: Number(r.cost),
+      reorderQty: Number(r.reorder_qty),
+      reorderValue: Math.round(Number(r.reorder_qty) * Number(r.cost) * 100) / 100,
+      severity: r.severity
+    }));
+    res.json({
+      success: true,
+      count: items.length,
+      outCount: items.filter(i => i.severity === 'out').length,
+      lowCount: items.filter(i => i.severity === 'low').length,
+      totalReorderValue: Math.round(items.reduce((s, i) => s + i.reorderValue, 0) * 100) / 100,
+      items
+    });
+  } catch (e) { res.status(500).json({ success: false, error: e.message }); }
+});
+
 router.get('/items', async (req, res) => {
   try {
     // v5.10.6 — DISABLED auto-backfill on read. The previous behavior

@@ -1081,6 +1081,102 @@ router.post('/production-orders/:id/cancel', MGR, async (req, res) => {
   } catch(e) { res.status(500).json({ error: e.message }); }
 });
 
+// v7.4 (F2) — Reverse a RELEASED production order. Closes the operational gap
+// where a mistakenly-released order (or an aborted production run) had no undo:
+// previously only 'planned' orders could be cancelled, trapping consumed stock.
+// This atomically PUTS BACK the consumed raw materials, posts a reversing GL
+// journal (Dr Inventory / Cr WIP for materials; Dr Labor/Overhead-Applied /
+// Cr WIP for the applied costs), and sets the order to 'cancelled'. Completed
+// orders are NOT reversible here (finished goods may already be sold) — they
+// require an explicit inventory/GL adjustment instead.
+router.post('/production-orders/:id/reverse', MGR, async (req, res) => {
+  try {
+    const id = req.params.id;
+    const { reversedBy, reason } = req.body || {};
+    const reasonText = String(reason || '').trim();
+    if (!reasonText) {
+      return res.status(400).json({ error: 'سبب الإرجاع مطلوب لإكمال سجل التدقيق.', code: 'REASON_REQUIRED' });
+    }
+    const [hdrRows] = await db.query('SELECT * FROM production_orders WHERE id=?', [id]);
+    if (!hdrRows.length) return res.status(404).json({ error: 'not found' });
+    const hdr = hdrRows[0];
+    if (hdr.status !== 'released') {
+      return res.status(400).json({ error: 'يمكن إرجاع أمر الإنتاج فقط وهو في حالة "مُطلَق" (released). الأوامر المكتملة تتطلب تسوية يدوية.' });
+    }
+    const [cons] = await db.query('SELECT * FROM production_consumption WHERE production_order_id=?', [id]);
+
+    const out = await db.withTransaction(async (conn) => {
+      const reverseNow = new Date();
+      const glLines = [];
+      let materialsCost = 0;
+      for (const c of cons) {
+        const qty = Number(c.qty_actual != null ? c.qty_actual : c.qty_planned) || 0;
+        if (qty <= 0) continue;
+        const unitCost = Number(c.unit_cost) || 0;
+        const lineTotal = qty * unitCost;
+        materialsCost += lineTotal;
+        // Put the raw material back into the consuming warehouse.
+        await _applyStockMovement(c.warehouse_id, c.item_id, qty, unitCost,
+                                  'production_reverse', id, reversedBy || '', conn);
+        const movId = 'MOV-PROD-REV-' + Date.now() + '-' + Math.random().toString(36).substr(2, 4);
+        try {
+          await conn.query(
+            'INSERT INTO inventory_movements (id, movement_date, item_id, item_name, type, qty, reason, username, notes, warehouse_id, reference_type, reference_id) ' +
+            'VALUES (?,?,?,?,?,?,?,?,?,?,?,?)',
+            [movId, reverseNow, c.item_id, '', 'in', qty, 'إرجاع إنتاج', reversedBy || '',
+             'REVERSE PRODUCTION: ' + (hdr.order_number || id) + ' · ' + reasonText.slice(0, 150),
+             c.warehouse_id, 'production_reverse', id]);
+        } catch(e) {
+          await conn.query(
+            'INSERT INTO inventory_movements (id, movement_date, item_id, item_name, type, qty, reason, username, notes, warehouse_id) VALUES (?,?,?,?,?,?,?,?,?,?)',
+            [movId, reverseNow, c.item_id, '', 'in', qty, 'إرجاع إنتاج', reversedBy || '',
+             'REVERSE PRODUCTION: ' + (hdr.order_number || id), c.warehouse_id]);
+        }
+        glLines.push({ accountCode: gl.CORE_ACCOUNTS.INVENTORY.code, debit: lineTotal, credit: 0,
+                       brandId: hdr.brand_id, warehouseId: c.warehouse_id });
+        glLines.push({ accountCode: gl.CORE_ACCOUNTS.WIP.code, debit: 0, credit: lineTotal,
+                       brandId: hdr.brand_id, branchId: hdr.branch_id, warehouseId: c.warehouse_id });
+      }
+      // Reverse the applied labor + overhead back out of WIP.
+      const labor = Number(hdr.labor_cost) || 0;
+      const overhead = Number(hdr.overhead_cost) || 0;
+      if (labor > 0) {
+        glLines.push({ accountCode: gl.CORE_ACCOUNTS.LABOR_APPLIED.code, debit: labor, credit: 0, brandId: hdr.brand_id });
+        glLines.push({ accountCode: gl.CORE_ACCOUNTS.WIP.code, debit: 0, credit: labor,
+                       brandId: hdr.brand_id, branchId: hdr.branch_id, warehouseId: hdr.warehouse_id });
+      }
+      if (overhead > 0) {
+        glLines.push({ accountCode: gl.CORE_ACCOUNTS.OVERHEAD_APPLIED.code, debit: overhead, credit: 0, brandId: hdr.brand_id });
+        glLines.push({ accountCode: gl.CORE_ACCOUNTS.WIP.code, debit: 0, credit: overhead,
+                       brandId: hdr.brand_id, branchId: hdr.branch_id, warehouseId: hdr.warehouse_id });
+      }
+
+      let glId = null;
+      if ((materialsCost + labor + overhead) > 0.005) {
+        const glRes = await gl.postJournal(conn, {
+          referenceType: 'production_reverse',
+          referenceId: id,
+          description: `إرجاع أمر إنتاج ${hdr.order_number} — ${reasonText.slice(0, 120)}`,
+          postedBy: reversedBy || '',
+          entries: glLines
+        });
+        if (!glRes || !glRes.success) {
+          const e = new Error('فشل ترحيل قيد إرجاع الإنتاج: ' + ((glRes && glRes.error) || 'خطأ غير معروف'));
+          e.status = 400; throw e;
+        }
+        glId = glRes.journalId;
+      }
+
+      // Roll the consumption rows back to "not consumed" and cancel the order.
+      await conn.query('UPDATE production_consumption SET qty_actual=0, total_cost=0, consumed_at=NULL WHERE production_order_id=?', [id]);
+      await conn.query(`UPDATE production_orders SET status='cancelled' WHERE id=?`, [id]);
+      return { glId, materialsCost };
+    });
+
+    res.json({ success: true, reversed: true, materialsRestored: out.materialsCost, glJournalId: out.glId });
+  } catch(e) { res.status(e.status || 500).json({ error: e.message }); }
+});
+
 // ═══════════════════════════════════════════════════════════════════════
 // PHASE 3 — COST & BATCH TRACKING
 // ═══════════════════════════════════════════════════════════════════════

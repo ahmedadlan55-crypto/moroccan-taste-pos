@@ -24611,6 +24611,8 @@ function prdView(id) {
     var footer = '';
     if (d.status === 'planned') footer += '<button class="wo-btn wo-btn-warning" onclick="loadingModal.close();prdRelease(\''+id+'\')"><i class="fas fa-play"></i><span>إطلاق الأمر</span></button>';
     if (d.status === 'released') footer += '<button class="wo-btn wo-btn-success" onclick="loadingModal.close();prdComplete(\''+id+'\')"><i class="fas fa-flag-checkered"></i><span>إتمام الإنتاج</span></button>';
+    // v7.4 (F2) — reverse a mistakenly-released order: restores raw materials + reverses GL.
+    if (d.status === 'released') footer += '<button class="wo-btn wo-btn-danger" onclick="window._prdViewModal && window._prdViewModal.close();prdReverse(\''+id+'\')"><i class="fas fa-rotate-left"></i><span>إرجاع الإطلاق</span></button>';
     footer += '<button class="wo-btn wo-btn-secondary" onclick="window._prdViewModal && window._prdViewModal.close()">إغلاق</button>';
 
     if (loadingModal) loadingModal.close();
@@ -24716,6 +24718,39 @@ function prdCompleteConfirm(id) {
   }, function(r){
     if (r.success) { showToast('تم الإنتاج — تكلفة الوحدة: '+Number(r.unitCost||0).toFixed(4)+' ر.س'); prdLoad(); }
     else showToast(r.error||'فشل الإتمام', true);
+  });
+}
+
+// v7.4 (F2) — Reverse a RELEASED production order: re-stocks the consumed raw
+// materials, posts a reversing GL journal, and cancels the order. Reason is
+// mandatory for the audit trail. Completed orders are not reversible here.
+function prdReverse(id) {
+  var body =
+    '<p style="color:#64748b;font-size:13px;margin-bottom:16px;"><i class="fas fa-triangle-exclamation" style="color:#ef4444;"></i> سيُعاد صرف المواد الخام إلى المستودع، ويُعكس القيد المحاسبي، ويُلغى أمر الإنتاج. هذه عملية لا يمكن التراجع عنها.</p>' +
+    '<div class="wo-label-stack">' +
+      '<label class="wo-field-label"><i class="fas fa-comment-dots" style="color:#ef4444;"></i> سبب الإرجاع <span style="color:#ef4444;">*</span></label>' +
+      '<textarea id="prdRvReason" class="wo-input" rows="3" placeholder="اشرح سبب إرجاع الإطلاق (إلزامي للتدقيق)"></textarea>' +
+    '</div>';
+  var footer =
+    '<button class="wo-btn wo-btn-secondary" onclick="window._prdRvModal && window._prdRvModal.close()">إلغاء</button>' +
+    '<button class="wo-btn wo-btn-danger" onclick="prdReverseConfirm(\''+id+'\')"><i class="fas fa-rotate-left"></i><span>تأكيد الإرجاع</span></button>';
+  window._prdRvModal = WoModal.open({
+    id: 'prdReverseModal', icon: 'fa-rotate-left', iconColor: 'danger',
+    title: 'إرجاع إطلاق أمر الإنتاج',
+    subtitle: 'إعادة المواد + عكس القيد + إلغاء الأمر',
+    body: body, footer: footer, size: 'sm'
+  });
+}
+function prdReverseConfirm(id) {
+  var reason = (document.getElementById('prdRvReason').value || '').trim();
+  if (!reason) return showToast('سبب الإرجاع مطلوب', true);
+  if (window._prdRvModal) window._prdRvModal.close();
+  _erpPost('/erp/production-orders/'+id+'/reverse', {
+    reversedBy: currentUser,
+    reason: reason
+  }, function(r){
+    if (r.success) { showToast('تم إرجاع الأمر — أُعيدت المواد بقيمة '+Number(r.materialsRestored||0).toFixed(2)+' ر.س'); prdLoad(); }
+    else showToast(r.error||'فشل الإرجاع', true);
   });
 }
 

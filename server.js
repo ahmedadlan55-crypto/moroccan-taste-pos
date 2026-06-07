@@ -98,7 +98,9 @@ app.use('/api/', function(req, res, next) {
   if (p.startsWith('/auth/')) return next();           // all auth endpoints
   if (p.startsWith('/settings')) return next();        // settings
   if (p.startsWith('/menu')) return next();            // menu
-  if (p.startsWith('/hr/my-')) return next();          // employee self-service
+  // v7.5 (H1 SECURITY) — /hr/my-* is NO LONGER public. It now passes through the
+  // JWT gate below so the employee is identified from their token, never from a
+  // spoofable ?username=. The employee portal already sends "Authorization: Bearer".
   if (p.startsWith('/workflow/')) return next();        // workflow (all public — auth checked inside)
   if (p.startsWith('/hr/leave-types')) return next();  // leave types list
   if (p.startsWith('/hr/departments')) return next();  // departments list

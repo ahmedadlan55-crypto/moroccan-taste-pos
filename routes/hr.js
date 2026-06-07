@@ -2054,7 +2054,8 @@ router.get('/dashboard', async (req, res) => {
 // GET my profile (employee linked to current user)
 router.get('/my-profile', async (req, res) => {
   try {
-    const username = req.user ? req.user.username : req.query.username;
+    const username = (req.user && req.user.username) || null;
+    if (!username) return res.status(401).json({ success:false, error:'غير مصرّح — يرجى تسجيل الدخول', code:'unauthorized' });
     if (!username) return res.json({ success: false, error: 'غير مسجل الدخول' });
     const [rows] = await db.query(`
       SELECT e.*, CONCAT(e.first_name, ' ', COALESCE(e.last_name, '')) as fullName,
@@ -2072,7 +2073,8 @@ router.get('/my-profile', async (req, res) => {
 // GET my attendance this month
 router.get('/my-attendance', async (req, res) => {
   try {
-    const username = req.user ? req.user.username : req.query.username;
+    const username = (req.user && req.user.username) || null;
+    if (!username) return res.status(401).json({ success:false, error:'غير مصرّح — يرجى تسجيل الدخول', code:'unauthorized' });
     const [emp] = await db.query('SELECT id FROM hr_employees WHERE linked_username = ?', [username]);
     if (!emp.length) return res.json([]);
     const month = req.query.month || new Date().getMonth() + 1;
@@ -2091,7 +2093,8 @@ router.get('/my-attendance', async (req, res) => {
 // which phone or tablet recorded each event.
 router.post('/my-clock', async (req, res) => {
   try {
-    const username = req.user ? req.user.username : req.body.username;
+    const username = (req.user && req.user.username) || null;
+    if (!username) return res.status(401).json({ success:false, error:'غير مصرّح — يرجى تسجيل الدخول', code:'unauthorized' });
     const { geoLat, geoLng, geoAddress, deviceName, device } = req.body;
     const [emp] = await db.query('SELECT e.id, e.first_name, e.branch_id, e.work_start, e.work_end FROM hr_employees e WHERE e.linked_username = ?', [username]);
     if (!emp.length) return res.json({ success: false, error: 'لا يوجد ملف موظف مرتبط بحسابك — تواصل مع الإدارة' });
@@ -2206,7 +2209,8 @@ router.post('/my-clock', async (req, res) => {
 // GET my leave balances
 router.get('/my-leave-balances', async (req, res) => {
   try {
-    const username = req.user ? req.user.username : req.query.username;
+    const username = (req.user && req.user.username) || null;
+    if (!username) return res.status(401).json({ success:false, error:'غير مصرّح — يرجى تسجيل الدخول', code:'unauthorized' });
     const [emp] = await db.query('SELECT id FROM hr_employees WHERE linked_username = ?', [username]);
     if (!emp.length) return res.json([]);
     const year = req.query.year || new Date().getFullYear();
@@ -2221,7 +2225,8 @@ router.get('/my-leave-balances', async (req, res) => {
 // POST my leave request
 router.post('/my-leave-request', async (req, res) => {
   try {
-    const username = req.user ? req.user.username : req.body.username;
+    const username = (req.user && req.user.username) || null;
+    if (!username) return res.status(401).json({ success:false, error:'غير مصرّح — يرجى تسجيل الدخول', code:'unauthorized' });
     const { leaveTypeId, startDate, endDate, reason } = req.body;
     const [emp] = await db.query('SELECT id, first_name, last_name FROM hr_employees WHERE linked_username = ?', [username]);
     if (!emp.length) return res.json({ success: false, error: 'لا يوجد ملف موظف مرتبط' });
@@ -2258,7 +2263,8 @@ router.post('/my-leave-request', async (req, res) => {
 // GET my leave requests
 router.get('/my-leave-requests', async (req, res) => {
   try {
-    const username = req.user ? req.user.username : req.query.username;
+    const username = (req.user && req.user.username) || null;
+    if (!username) return res.status(401).json({ success:false, error:'غير مصرّح — يرجى تسجيل الدخول', code:'unauthorized' });
     const [emp] = await db.query('SELECT id FROM hr_employees WHERE linked_username = ?', [username]);
     if (!emp.length) return res.json([]);
     const [rows] = await db.query(
@@ -2272,7 +2278,8 @@ router.get('/my-leave-requests', async (req, res) => {
 // GET my payslips
 router.get('/my-payslips', async (req, res) => {
   try {
-    const username = req.user ? req.user.username : req.query.username;
+    const username = (req.user && req.user.username) || null;
+    if (!username) return res.status(401).json({ success:false, error:'غير مصرّح — يرجى تسجيل الدخول', code:'unauthorized' });
     const [emp] = await db.query('SELECT id FROM hr_employees WHERE linked_username = ?', [username]);
     if (!emp.length) return res.json([]);
     const [rows] = await db.query(
@@ -2291,7 +2298,8 @@ router.get('/my-payslips', async (req, res) => {
 // GET /api/hr/my-salary-projection?year=&month= — employee self-service
 router.get('/my-salary-projection', async (req, res) => {
   try {
-    const username = req.user ? req.user.username : req.query.username;
+    const username = (req.user && req.user.username) || null;
+    if (!username) return res.status(401).json({ success:false, error:'غير مصرّح — يرجى تسجيل الدخول', code:'unauthorized' });
     const [emp] = await db.query(
       'SELECT id FROM hr_employees WHERE linked_username = ? LIMIT 1', [username]
     );
@@ -2698,7 +2706,8 @@ router.get('/attendance/calculate-monthly', async (req, res) => {
 // ═══════════════════════════════════════════════════════════════════
 router.get('/my-attendance-full', async (req, res) => {
   try {
-    const username = req.user ? req.user.username : req.query.username;
+    const username = (req.user && req.user.username) || null;
+    if (!username) return res.status(401).json({ success:false, error:'غير مصرّح — يرجى تسجيل الدخول', code:'unauthorized' });
     if (!username) return res.json({ success: false, error: 'غير مسجل الدخول' });
 
     const [empRows] = await db.query(
@@ -2881,7 +2890,8 @@ router.get('/my-attendance-full', async (req, res) => {
 // ═══════════════════════════════════════════════════════════════════
 router.get('/my-hours-summary', async (req, res) => {
   try {
-    const username = req.user ? req.user.username : req.query.username;
+    const username = (req.user && req.user.username) || null;
+    if (!username) return res.status(401).json({ success:false, error:'غير مصرّح — يرجى تسجيل الدخول', code:'unauthorized' });
     if (!username) return res.json({ success: false, error: 'غير مسجل الدخول' });
 
     // Resolve the employee row for this username

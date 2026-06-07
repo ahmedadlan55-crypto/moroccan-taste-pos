@@ -16,6 +16,7 @@
  */
 const router = require('express').Router();
 const db = require('../db/connection');
+const gl = require('../lib/glPosting');
 // v7.1 — sync the inv_items.stock rollup after a stocktake sets warehouse_stock.
 const { recomputeInvItemStock } = require('../lib/stockRecompute');
 
@@ -286,36 +287,101 @@ router.post('/:id/approve', async (req, res) => {
     if (h.workflow_status !== 'pending_approval') {
       return res.status(409).json({ error: 'الجرد ليس بانتظار الاعتماد' });
     }
-    const [items] = await db.query(`SELECT * FROM stocktake_items WHERE stocktake_id = ? AND ABS(variance) > 0.001`,
+
+    // v7.4 (B3a) — a physical count can never be negative. Block approval so a
+    // data-entry slip can't lock a negative on-hand into stock + GL.
+    const [negRows] = await db.query(
+      `SELECT COUNT(*) AS n FROM stocktake_items WHERE stocktake_id = ? AND actual_qty < 0`,
       [req.params.id]);
-    let movements = 0;
-    for (const ln of items) {
-      try {
-        // V5-FIX: legacy column inv_item_id — try insert-or-update warehouse_stock
-        await db.query(`
+    if (negRows[0] && Number(negRows[0].n) > 0) {
+      return res.status(400).json({ error: 'لا يمكن اعتماد جرد يحتوي على كمية فعلية سالبة. صحّح العدّ أولاً.' });
+    }
+
+    // Only changed lines drive adjustments. JOIN inv_items for the ledger name.
+    const [items] = await db.query(
+      `SELECT si.*, i.name AS item_name FROM stocktake_items si
+       LEFT JOIN inv_items i ON i.id = si.inv_item_id
+       WHERE si.stocktake_id = ? AND ABS(si.variance) > 0.001`,
+      [req.params.id]);
+
+    // v7.4 (B3b/c/d) — the whole approval is ATOMIC: warehouse_stock set +
+    // ledger rows (now with CORRECT columns & in/out type — the old insert used
+    // type='adjust' + ref_type/ref_id/created_at, which the 'in'/'out' ENUM and
+    // real column names rejected, so adjustments left NO trail) + a balanced GL
+    // variance journal (Dr inventory/gain, Cr loss/inventory) all commit or roll
+    // back together. GL failure aborts the whole approval (no silent drift).
+    const result = await db.withTransaction(async (conn) => {
+      let movements = 0;
+      const glLines = [];
+      for (const ln of items) {
+        await conn.query(`
           INSERT INTO warehouse_stock (id, warehouse_id, item_id, qty)
           VALUES (?, ?, ?, ?)
           ON DUPLICATE KEY UPDATE qty = VALUES(qty)`,
           [_id('WS'), h.warehouse_id, ln.inv_item_id, ln.actual_qty]);
-        // v7.1 — keep the global rollup in sync after the stocktake sets the count.
-        try { await recomputeInvItemStock(db, ln.inv_item_id); } catch (_e) {}
+        try { await recomputeInvItemStock(conn, ln.inv_item_id); } catch (_e) {}
+
+        const variance = Number(ln.variance) || 0;          // actual − system (signed)
+        const adjType  = variance >= 0 ? 'in' : 'out';
+        const adjQty   = Math.abs(variance);
+        const movId    = _id('MOV');
         try {
-          await db.query(`
+          await conn.query(`
             INSERT INTO inventory_movements
-              (id, item_id, warehouse_id, type, qty, unit_cost, ref_type, ref_id, notes, username, created_at)
-            VALUES (?, ?, ?, 'adjust', ?, ?, 'stocktake', ?, ?, ?, NOW())`,
-            [_id('MOV'), ln.inv_item_id, h.warehouse_id, ln.variance, ln.unit_cost,
-             req.params.id, 'Stocktake adjustment ' + (ln.reason_code || ''), username]);
-        } catch(_e) {}
+              (id, movement_date, item_id, item_name, type, qty, reason, username, notes, warehouse_id, reference_type, reference_id)
+            VALUES (?, NOW(), ?, ?, ?, ?, ?, ?, ?, ?, 'stocktake', ?)`,
+            [movId, ln.inv_item_id, ln.item_name || ln.inv_item_id, adjType, adjQty,
+             'تسوية جرد', username, ('Stocktake adjustment ' + (ln.reason_code || '')).trim(),
+             h.warehouse_id, req.params.id]);
+        } catch (_e) {
+          // Older deploys may lack warehouse_id/reference_* columns — minimal fallback.
+          await conn.query(`
+            INSERT INTO inventory_movements
+              (id, movement_date, item_id, item_name, type, qty, reason, username, notes)
+            VALUES (?, NOW(), ?, ?, ?, ?, ?, ?, ?)`,
+            [movId, ln.inv_item_id, ln.item_name || ln.inv_item_id, adjType, adjQty,
+             'تسوية جرد', username, 'Stocktake ' + req.params.id]);
+        }
+
+        // GL line(s): value the variance at the line cost. Gain → Dr Inventory /
+        // Cr Stock-Gain ; Loss → Dr Stock-Variance (expense) / Cr Inventory.
+        const val = Math.round(variance * (Number(ln.unit_cost) || 0) * 100) / 100;
+        if (val > 0.005) {
+          glLines.push({ accountCode: gl.CORE_ACCOUNTS.INVENTORY.code,  debit: val, credit: 0, warehouseId: h.warehouse_id });
+          glLines.push({ accountCode: gl.CORE_ACCOUNTS.STOCK_GAIN.code, debit: 0, credit: val, warehouseId: h.warehouse_id });
+        } else if (val < -0.005) {
+          const loss = Math.abs(val);
+          glLines.push({ accountCode: gl.CORE_ACCOUNTS.STOCK_VARIANCE.code, debit: loss, credit: 0, warehouseId: h.warehouse_id });
+          glLines.push({ accountCode: gl.CORE_ACCOUNTS.INVENTORY.code,      debit: 0, credit: loss, warehouseId: h.warehouse_id });
+        }
         movements++;
-      } catch(_e) {}
-    }
-    await db.query(`
-      UPDATE stocktakes SET workflow_status = 'approved', status = 'completed',
-        approved_by = ?, approved_at = NOW()
-      WHERE id = ?`, [username, req.params.id]);
-    res.json({ success: true, movements });
-  } catch(e) { res.status(500).json({ error: e.message }); }
+      }
+
+      let glId = null;
+      if (glLines.length) {
+        const glRes = await gl.postJournal(conn, {
+          referenceType: 'stocktake',
+          referenceId: req.params.id,
+          description: 'تسوية جرد مخزني — ' + (h.warehouse_id || ''),
+          postedBy: username,
+          entries: glLines
+        });
+        if (!glRes || !glRes.success) {
+          throw new Error('فشل ترحيل قيد تسوية الجرد: ' + ((glRes && glRes.error) || 'خطأ غير معروف'));
+        }
+        glId = glRes.journalId;
+      }
+
+      await conn.query(`
+        UPDATE stocktakes SET workflow_status = 'approved', status = 'completed',
+          approved_by = ?, approved_at = NOW()
+        WHERE id = ?`, [username, req.params.id]);
+
+      return { movements, glId };
+    });
+
+    res.json({ success: true, movements: result.movements, glJournalId: result.glId });
+  } catch(e) { res.status(e.status || 500).json({ error: e.message }); }
 });
 
 router.post('/:id/reject', async (req, res) => {

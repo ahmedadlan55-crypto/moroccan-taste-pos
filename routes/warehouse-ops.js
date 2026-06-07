@@ -52,9 +52,13 @@ async function _getEffectiveCost(itemId, warehouseId) {
 }
 
 // Record cost history row
-async function _recordCostHistory(itemId, warehouseId, oldCost, newCost, oldQty, newQty, triggerType, refId, changedBy) {
+// v7.4 — accepts an optional `conn` so it can run INSIDE a caller's
+// transaction (production release/complete). Falls back to the pool for
+// every legacy caller that passes no connection.
+async function _recordCostHistory(itemId, warehouseId, oldCost, newCost, oldQty, newQty, triggerType, refId, changedBy, conn) {
+  const q = conn || db;
   try {
-    await db.query(
+    await q.query(
       `INSERT INTO item_cost_history
        (id, item_id, warehouse_id, method, old_cost, new_cost, old_qty, new_qty, trigger_type, reference_id, changed_by)
        VALUES (?,?,?,?,?,?,?,?,?,?,?)`,
@@ -65,8 +69,11 @@ async function _recordCostHistory(itemId, warehouseId, oldCost, newCost, oldQty,
 }
 
 // Update warehouse_stock with new qty + recompute WAC if adding stock
-async function _applyStockMovement(warehouseId, itemId, qtyDelta, unitCost, triggerType, refId, changedBy) {
-  const [rows] = await db.query(
+// v7.4 — optional trailing `conn` runs every write on the caller's
+// transaction connection so the stock move + ledger + GL are atomic.
+async function _applyStockMovement(warehouseId, itemId, qtyDelta, unitCost, triggerType, refId, changedBy, conn) {
+  const q = conn || db;
+  const [rows] = await q.query(
     'SELECT qty, avg_cost FROM warehouse_stock WHERE warehouse_id=? AND item_id=? LIMIT 1',
     [warehouseId, itemId]);
   const oldQty = rows.length ? Number(rows[0].qty) : 0;
@@ -83,14 +90,14 @@ async function _applyStockMovement(warehouseId, itemId, qtyDelta, unitCost, trig
   // WAC read (cost is an approximation; qty is the figure that must never drift).
   // Mirrors the deductWarehouseStock pattern. Allows negative balances.
   const _wsId = 'WS-' + Date.now() + '-' + Math.random().toString(36).slice(2, 6);
-  await db.query(
+  await q.query(
     `INSERT INTO warehouse_stock (id, warehouse_id, item_id, qty, avg_cost, last_cost, last_updated)
      VALUES (?,?,?,?,?,?,NOW())
      ON DUPLICATE KEY UPDATE qty = qty + ?, avg_cost = ?, last_cost = ?, last_updated = NOW()`,
     [_wsId, warehouseId, itemId, Number(qtyDelta), newCost, unitCost || oldCost,
      Number(qtyDelta), newCost, unitCost || oldCost]);
   const newQty = oldQty + Number(qtyDelta);
-  await _recordCostHistory(itemId, warehouseId, oldCost, newCost, oldQty, newQty, triggerType, refId, changedBy);
+  await _recordCostHistory(itemId, warehouseId, oldCost, newCost, oldQty, newQty, triggerType, refId, changedBy, conn);
   return { oldQty, oldCost, newQty, newCost };
 }
 
@@ -866,105 +873,109 @@ router.post('/production-orders/:id/release', async (req, res) => {
     const [cons] = await db.query('SELECT * FROM production_consumption WHERE production_order_id=?', [id]);
     if (!cons.length) return res.status(400).json({ error: 'no consumption lines' });
 
-    // Verify stock availability
-    for (const c of cons) {
-      const [stk] = await db.query(
-        'SELECT qty FROM warehouse_stock WHERE warehouse_id=? AND item_id=?',
-        [c.warehouse_id, c.item_id]);
-      const avail = stk.length ? Number(stk[0].qty) : 0;
-      if (avail < Number(c.qty_planned)) {
-        return res.status(400).json({ error: `insufficient stock for ${c.item_id}: avail ${avail}, need ${c.qty_planned}` });
-      }
-    }
-
-    // Consume raw materials
-    // v5.10.39 — log a 'out' inventory_movements row per consumption
-    // line with reason "إنتاج" so the bucket() regex classifies them as
-    // production movements in /live-report. Same reference_id as GL.
-    const releaseNow = new Date();
-    let materialsCost = 0;
-    const glLines = [];
-    for (const c of cons) {
-      const qty = Number(c.qty_planned);
-      const unitCost = Number(c.unit_cost);
-      const lineTotal = qty * unitCost;
-      materialsCost += lineTotal;
-      await _applyStockMovement(c.warehouse_id, c.item_id, -qty, unitCost,
-                                'production_release', id, releasedBy || '');
-      await db.query(
-        `UPDATE production_consumption SET qty_actual=?, total_cost=?, consumed_at=NOW() WHERE id=?`,
-        [qty, lineTotal, c.id]);
-      // Inventory movement: consumed-for-production
-      try {
-        const [itName] = await db.query('SELECT name FROM inv_items WHERE id = ?', [c.item_id]);
-        const movId = 'MOV-PROD-OUT-' + Date.now() + '-' + Math.random().toString(36).substr(2, 4);
-        await db.query(
-          'INSERT INTO inventory_movements (id, movement_date, item_id, item_name, type, qty, reason, username, notes, warehouse_id, reference_type, reference_id) ' +
-          'VALUES (?,?,?,?,?,?,?,?,?,?,?,?)',
-          [movId, releaseNow, c.item_id, (itName.length ? itName[0].name : ''), 'out', qty,
-           'إنتاج', releasedBy || '', 'PRODUCTION: ' + (hdr.order_number || id),
-           c.warehouse_id, 'production', id]);
-      } catch(e) {
-        try {
-          const movId = 'MOV-PROD-OUT-' + Date.now() + '-' + Math.random().toString(36).substr(2, 4);
-          await db.query(
-            'INSERT INTO inventory_movements (id, movement_date, item_id, item_name, type, qty, reason, username, notes, warehouse_id) VALUES (?,?,?,?,?,?,?,?,?,?)',
-            [movId, releaseNow, c.item_id, '', 'out', qty, 'إنتاج', releasedBy || '',
-             'PRODUCTION: ' + (hdr.order_number || id), c.warehouse_id]);
-        } catch(_) { /* best effort */ }
-      }
-      glLines.push({
-        accountCode: gl.CORE_ACCOUNTS.WIP.code,
-        debit: lineTotal, credit: 0,
-        brandId: hdr.brand_id, branchId: hdr.branch_id, warehouseId: c.warehouse_id
-      });
-      glLines.push({
-        accountCode: gl.CORE_ACCOUNTS.INVENTORY.code,
-        debit: 0, credit: lineTotal,
-        brandId: hdr.brand_id, warehouseId: c.warehouse_id
-      });
-    }
-
-    // Add labor + overhead to WIP
     const labor = Number(laborCost) || 0;
     const overhead = Number(overheadCost) || 0;
-    if (labor > 0) {
-      glLines.push({ accountCode: gl.CORE_ACCOUNTS.WIP.code, debit: labor, credit: 0,
-                     brandId: hdr.brand_id, branchId: hdr.branch_id, warehouseId: hdr.warehouse_id });
-      glLines.push({ accountCode: gl.CORE_ACCOUNTS.LABOR_APPLIED.code, debit: 0, credit: labor,
-                     brandId: hdr.brand_id });
-    }
-    if (overhead > 0) {
-      glLines.push({ accountCode: gl.CORE_ACCOUNTS.WIP.code, debit: overhead, credit: 0,
-                     brandId: hdr.brand_id, branchId: hdr.branch_id, warehouseId: hdr.warehouse_id });
-      glLines.push({ accountCode: gl.CORE_ACCOUNTS.OVERHEAD_APPLIED.code, debit: 0, credit: overhead,
-                     brandId: hdr.brand_id });
-    }
+    const releaseNow = new Date();
 
-    let glId = null;
-    try {
-      const r = await gl.postJournal(db, {
-        referenceType: 'production_release',
-        referenceId: id,
-        description: `إطلاق أمر إنتاج ${hdr.order_number}`,
-        postedBy: releasedBy || '',
-        entries: glLines
-      });
-      glId = r && r.journalId;
-    } catch(glErr) {
-      console.warn('[production-release] GL failed:', glErr.message);
-    }
+    // v7.4 — the ENTIRE release is now ATOMIC: stock deduction + consumption
+    // rows + ledger movements + GL journal + status flip all commit together
+    // or not at all. Critically, a GL failure now ROLLS BACK the stock
+    // movement instead of being swallowed (console.warn) — so inventory can
+    // never drift away from the ledger. Availability is re-checked inside the
+    // transaction for a consistent snapshot.
+    const out = await db.withTransaction(async (conn) => {
+      for (const c of cons) {
+        const [stk] = await conn.query(
+          'SELECT qty FROM warehouse_stock WHERE warehouse_id=? AND item_id=?',
+          [c.warehouse_id, c.item_id]);
+        const avail = stk.length ? Number(stk[0].qty) : 0;
+        if (avail < Number(c.qty_planned)) {
+          const e = new Error(`insufficient stock for ${c.item_id}: avail ${avail}, need ${c.qty_planned}`);
+          e.status = 400; throw e;
+        }
+      }
 
-    const totalCost = materialsCost + labor + overhead;
-    await db.query(
-      `UPDATE production_orders
-       SET status='released', released_by=?, released_at=NOW(),
-           materials_cost=?, labor_cost=?, overhead_cost=?, total_cost=?, gl_release_id=?
-       WHERE id=?`,
-      [releasedBy || '', materialsCost, labor, overhead, totalCost, glId, id]);
+      let materialsCost = 0;
+      const glLines = [];
+      for (const c of cons) {
+        const qty = Number(c.qty_planned);
+        const unitCost = Number(c.unit_cost);
+        const lineTotal = qty * unitCost;
+        materialsCost += lineTotal;
+        await _applyStockMovement(c.warehouse_id, c.item_id, -qty, unitCost,
+                                  'production_release', id, releasedBy || '', conn);
+        await conn.query(
+          `UPDATE production_consumption SET qty_actual=?, total_cost=?, consumed_at=NOW() WHERE id=?`,
+          [qty, lineTotal, c.id]);
+        // Inventory movement: consumed-for-production (reason "إنتاج" so the
+        // /live-report bucket() classifies it as a production movement).
+        let _itnm = '';
+        try { const [itName] = await conn.query('SELECT name FROM inv_items WHERE id = ?', [c.item_id]); _itnm = itName.length ? itName[0].name : ''; } catch(_) {}
+        const movId = 'MOV-PROD-OUT-' + Date.now() + '-' + Math.random().toString(36).substr(2, 4);
+        try {
+          await conn.query(
+            'INSERT INTO inventory_movements (id, movement_date, item_id, item_name, type, qty, reason, username, notes, warehouse_id, reference_type, reference_id) ' +
+            'VALUES (?,?,?,?,?,?,?,?,?,?,?,?)',
+            [movId, releaseNow, c.item_id, _itnm, 'out', qty,
+             'إنتاج', releasedBy || '', 'PRODUCTION: ' + (hdr.order_number || id),
+             c.warehouse_id, 'production', id]);
+        } catch(e) {
+          await conn.query(
+            'INSERT INTO inventory_movements (id, movement_date, item_id, item_name, type, qty, reason, username, notes, warehouse_id) VALUES (?,?,?,?,?,?,?,?,?,?)',
+            [movId, releaseNow, c.item_id, _itnm, 'out', qty, 'إنتاج', releasedBy || '',
+             'PRODUCTION: ' + (hdr.order_number || id), c.warehouse_id]);
+        }
+        glLines.push({ accountCode: gl.CORE_ACCOUNTS.WIP.code, debit: lineTotal, credit: 0,
+                       brandId: hdr.brand_id, branchId: hdr.branch_id, warehouseId: c.warehouse_id });
+        glLines.push({ accountCode: gl.CORE_ACCOUNTS.INVENTORY.code, debit: 0, credit: lineTotal,
+                       brandId: hdr.brand_id, warehouseId: c.warehouse_id });
+      }
 
-    res.json({ success: true, materialsCost, laborCost: labor, overheadCost: overhead, totalCost, glJournalId: glId });
-  } catch(e) { res.status(500).json({ error: e.message }); }
+      if (labor > 0) {
+        glLines.push({ accountCode: gl.CORE_ACCOUNTS.WIP.code, debit: labor, credit: 0,
+                       brandId: hdr.brand_id, branchId: hdr.branch_id, warehouseId: hdr.warehouse_id });
+        glLines.push({ accountCode: gl.CORE_ACCOUNTS.LABOR_APPLIED.code, debit: 0, credit: labor,
+                       brandId: hdr.brand_id });
+      }
+      if (overhead > 0) {
+        glLines.push({ accountCode: gl.CORE_ACCOUNTS.WIP.code, debit: overhead, credit: 0,
+                       brandId: hdr.brand_id, branchId: hdr.branch_id, warehouseId: hdr.warehouse_id });
+        glLines.push({ accountCode: gl.CORE_ACCOUNTS.OVERHEAD_APPLIED.code, debit: 0, credit: overhead,
+                       brandId: hdr.brand_id });
+      }
+
+      // GL is fatal ONLY when there is a non-zero journal to post — a genuine
+      // zero-cost release (all materials cost 0, no labor/overhead) posts no
+      // journal and is allowed, preserving prior behavior.
+      let glId = null;
+      const totalCost = materialsCost + labor + overhead;
+      if (totalCost > 0.005) {
+        const glRes = await gl.postJournal(conn, {
+          referenceType: 'production_release',
+          referenceId: id,
+          description: `إطلاق أمر إنتاج ${hdr.order_number}`,
+          postedBy: releasedBy || '',
+          entries: glLines
+        });
+        if (!glRes || !glRes.success) {
+          const e = new Error('فشل ترحيل قيد إطلاق الإنتاج: ' + ((glRes && glRes.error) || 'خطأ غير معروف'));
+          e.status = 400; throw e;
+        }
+        glId = glRes.journalId;
+      }
+
+      await conn.query(
+        `UPDATE production_orders
+         SET status='released', released_by=?, released_at=NOW(),
+             materials_cost=?, labor_cost=?, overhead_cost=?, total_cost=?, gl_release_id=?
+         WHERE id=?`,
+        [releasedBy || '', materialsCost, labor, overhead, totalCost, glId, id]);
+
+      return { materialsCost, totalCost, glId };
+    });
+
+    res.json({ success: true, materialsCost: out.materialsCost, laborCost: labor, overheadCost: overhead, totalCost: out.totalCost, glJournalId: out.glId });
+  } catch(e) { res.status(e.status || 500).json({ error: e.message }); }
 });
 
 // Complete — transfer WIP to Finished Goods
@@ -981,77 +992,83 @@ router.post('/production-orders/:id/complete', async (req, res) => {
     const qtyScrapped = Number(qtyScrap) || 0;
     if (qtyOut <= 0) return res.status(400).json({ error: 'qtyProduced must be positive' });
 
-    const wipTotal = Number(hdr.total_cost);
+    const wipTotal = Number(hdr.total_cost) || 0;
     // Unit cost = total WIP / produced qty (scrap is absorbed — standard accounting)
     const unitCost = qtyOut > 0 ? (wipTotal / qtyOut) : 0;
     const outputWh = hdr.output_warehouse_id || hdr.warehouse_id;
-
-    // Add finished goods to inventory (WAC updated automatically)
-    await _applyStockMovement(outputWh, hdr.product_id, qtyOut, unitCost,
-                              'production_complete', id, completedBy || '');
-
-    // v5.10.39 — Inventory movement: production output. 'in' to the
-    // output warehouse with reason "إنتاج" so the destination ledger
-    // shows the finished good arriving.
     const completeNow = new Date();
-    try {
-      const [prodName] = await db.query('SELECT name FROM inv_items WHERE id = ? UNION ALL SELECT name FROM menu WHERE id = ?', [hdr.product_id, hdr.product_id]);
+
+    // v7.4 — atomic completion: finished-goods stock + ledger + output row +
+    // GL (Dr Finished Goods / Cr WIP) + status flip all commit together. A GL
+    // failure now rolls back the finished-goods movement (no ledger drift).
+    const out = await db.withTransaction(async (conn) => {
+      // Add finished goods to inventory (WAC updated automatically)
+      await _applyStockMovement(outputWh, hdr.product_id, qtyOut, unitCost,
+                                'production_complete', id, completedBy || '', conn);
+
+      // Inventory movement: production output ('in' to the output warehouse,
+      // reason "إنتاج" so the destination ledger shows the finished good).
+      let _prodNm = '';
+      try { const [prodName] = await conn.query('SELECT name FROM inv_items WHERE id = ? UNION ALL SELECT name FROM menu WHERE id = ?', [hdr.product_id, hdr.product_id]); _prodNm = prodName.length ? prodName[0].name : ''; } catch(_) {}
       const movId = 'MOV-PROD-IN-' + Date.now() + '-' + Math.random().toString(36).substr(2, 4);
-      await db.query(
-        'INSERT INTO inventory_movements (id, movement_date, item_id, item_name, type, qty, reason, username, notes, warehouse_id, reference_type, reference_id) ' +
-        'VALUES (?,?,?,?,?,?,?,?,?,?,?,?)',
-        [movId, completeNow, hdr.product_id, (prodName.length ? prodName[0].name : ''), 'in', qtyOut,
-         'إنتاج', completedBy || '', 'PRODUCTION: ' + (hdr.order_number || id),
-         outputWh, 'production', id]);
-    } catch(e) {
       try {
-        const movId = 'MOV-PROD-IN-' + Date.now() + '-' + Math.random().toString(36).substr(2, 4);
-        await db.query(
+        await conn.query(
+          'INSERT INTO inventory_movements (id, movement_date, item_id, item_name, type, qty, reason, username, notes, warehouse_id, reference_type, reference_id) ' +
+          'VALUES (?,?,?,?,?,?,?,?,?,?,?,?)',
+          [movId, completeNow, hdr.product_id, _prodNm, 'in', qtyOut,
+           'إنتاج', completedBy || '', 'PRODUCTION: ' + (hdr.order_number || id),
+           outputWh, 'production', id]);
+      } catch(e) {
+        await conn.query(
           'INSERT INTO inventory_movements (id, movement_date, item_id, item_name, type, qty, reason, username, notes, warehouse_id) VALUES (?,?,?,?,?,?,?,?,?,?)',
-          [movId, completeNow, hdr.product_id, '', 'in', qtyOut, 'إنتاج', completedBy || '',
+          [movId, completeNow, hdr.product_id, _prodNm, 'in', qtyOut, 'إنتاج', completedBy || '',
            'PRODUCTION: ' + (hdr.order_number || id), outputWh]);
-      } catch(_) { /* best effort */ }
-    }
+      }
 
-    // Record output row
-    await db.query(
-      `INSERT INTO production_output
-       (id, production_order_id, item_id, warehouse_id, qty, unit_cost, total_cost,
-        batch_number, expiry_date, produced_at)
-       VALUES (?,?,?,?,?,?,?,?,?,NOW())`,
-      ['POUT-' + Date.now() + '-' + Math.random().toString(36).slice(2,6),
-       id, hdr.product_id, outputWh, qtyOut, unitCost, wipTotal,
-       batchNumber || null, expiryDate || null]);
+      // Record output row
+      await conn.query(
+        `INSERT INTO production_output
+         (id, production_order_id, item_id, warehouse_id, qty, unit_cost, total_cost,
+          batch_number, expiry_date, produced_at)
+         VALUES (?,?,?,?,?,?,?,?,?,NOW())`,
+        ['POUT-' + Date.now() + '-' + Math.random().toString(36).slice(2,6),
+         id, hdr.product_id, outputWh, qtyOut, unitCost, wipTotal,
+         batchNumber || null, expiryDate || null]);
 
-    // GL: Dr Finished Goods / Cr WIP
-    let glId = null;
-    try {
-      const r = await gl.postJournal(db, {
-        referenceType: 'production_complete',
-        referenceId: id,
-        description: `إكمال إنتاج ${hdr.order_number} — كمية ${qtyOut}`,
-        postedBy: completedBy || '',
-        entries: [
-          { accountCode: gl.CORE_ACCOUNTS.FINISHED_GOODS.code, debit: wipTotal, credit: 0,
-            brandId: hdr.brand_id, branchId: hdr.branch_id, warehouseId: outputWh },
-          { accountCode: gl.CORE_ACCOUNTS.WIP.code, debit: 0, credit: wipTotal,
-            brandId: hdr.brand_id, branchId: hdr.branch_id, warehouseId: hdr.warehouse_id }
-        ]
-      });
-      glId = r && r.journalId;
-    } catch(glErr) {
-      console.warn('[production-complete] GL failed:', glErr.message);
-    }
+      // GL: Dr Finished Goods / Cr WIP — fatal only when there is value to move.
+      let glId = null;
+      if (wipTotal > 0.005) {
+        const glRes = await gl.postJournal(conn, {
+          referenceType: 'production_complete',
+          referenceId: id,
+          description: `إكمال إنتاج ${hdr.order_number} — كمية ${qtyOut}`,
+          postedBy: completedBy || '',
+          entries: [
+            { accountCode: gl.CORE_ACCOUNTS.FINISHED_GOODS.code, debit: wipTotal, credit: 0,
+              brandId: hdr.brand_id, branchId: hdr.branch_id, warehouseId: outputWh },
+            { accountCode: gl.CORE_ACCOUNTS.WIP.code, debit: 0, credit: wipTotal,
+              brandId: hdr.brand_id, branchId: hdr.branch_id, warehouseId: hdr.warehouse_id }
+          ]
+        });
+        if (!glRes || !glRes.success) {
+          const e = new Error('فشل ترحيل قيد إكمال الإنتاج: ' + ((glRes && glRes.error) || 'خطأ غير معروف'));
+          e.status = 400; throw e;
+        }
+        glId = glRes.journalId;
+      }
 
-    await db.query(
-      `UPDATE production_orders
-       SET status='completed', completed_by=?, completed_at=NOW(),
-           qty_produced=?, qty_scrap=?, unit_cost=?, gl_complete_id=?
-       WHERE id=?`,
-      [completedBy || '', qtyOut, qtyScrapped, unitCost, glId, id]);
+      await conn.query(
+        `UPDATE production_orders
+         SET status='completed', completed_by=?, completed_at=NOW(),
+             qty_produced=?, qty_scrap=?, unit_cost=?, gl_complete_id=?
+         WHERE id=?`,
+        [completedBy || '', qtyOut, qtyScrapped, unitCost, glId, id]);
 
-    res.json({ success: true, qtyProduced: qtyOut, unitCost, totalCost: wipTotal, glJournalId: glId });
-  } catch(e) { res.status(500).json({ error: e.message }); }
+      return { glId };
+    });
+
+    res.json({ success: true, qtyProduced: qtyOut, unitCost, totalCost: wipTotal, glJournalId: out.glId });
+  } catch(e) { res.status(e.status || 500).json({ error: e.message }); }
 });
 
 // Cancel
@@ -1303,37 +1320,51 @@ router.post('/expiry-alerts/:lotId/dispose', async (req, res) => {
       const c = conn || db;
       // 1. Zero the lot
       await c.query('UPDATE purchase_lots SET qty_remaining = 0 WHERE id = ?', [lotId]);
-      // 2. Decrement warehouse_stock by the disposed qty (best effort)
+      // 2. Decrement warehouse_stock by the disposed qty
       if (warehouse) {
-        try {
-          await c.query(
-            // v7.1 — allow negative so disposing more than the recorded balance
-            // surfaces the discrepancy instead of silently flooring at 0.
-            'UPDATE warehouse_stock SET qty = qty - ? WHERE warehouse_id = ? AND item_id = ?',
-            [qty, warehouse, itemId]);
-        } catch (_) {}
+        // v7.1 — allow negative so disposing more than the recorded balance
+        // surfaces the discrepancy instead of silently flooring at 0.
+        await c.query(
+          'UPDATE warehouse_stock SET qty = qty - ? WHERE warehouse_id = ? AND item_id = ?',
+          [qty, warehouse, itemId]);
         // v7.1 — sync the global rollup so inv_items.stock = SUM(warehouse_stock).
         try { await recomputeInvItemStock(c, itemId); } catch (_) {}
       }
       // 3. Movement log
       const movId = 'MOV-EXP-' + Date.now() + '-' + Math.random().toString(36).slice(2,5);
-      try {
-        await c.query(
-          `INSERT INTO inventory_movements
-            (id, movement_date, item_id, item_name, type, qty, reason, username, notes, warehouse_id)
-           VALUES (?,?,?,?,?,?,?,?,?,?)`,
-          [movId, nowIso, itemId, itemName, 'out', qty, reason, username,
-           notes || ('Lot #' + lotId + ' · batch ' + (lot.batch_number || '—')), warehouse || null]);
-      } catch (_) {}
+      await c.query(
+        `INSERT INTO inventory_movements
+          (id, movement_date, item_id, item_name, type, qty, reason, username, notes, warehouse_id)
+         VALUES (?,?,?,?,?,?,?,?,?,?)`,
+        [movId, nowIso, itemId, itemName, 'out', qty, reason, username,
+         notes || ('Lot #' + lotId + ' · batch ' + (lot.batch_number || '—')), warehouse || null]);
+      // 4. v7.4 — GL: Dr Waste (expired) / Cr Inventory at lot cost. Posting is
+      //    FATAL inside the transaction so a disposed lot can never reduce stock
+      //    without a matching expense journal (GL ↔ inventory stay in lockstep).
+      if (value > 0.005) {
+        const glRes = await gl.postJournal(c, {
+          referenceType: 'waste_disposal',
+          referenceId: lotId,
+          description: 'إتلاف مخزون منتهي الصلاحية — ' + itemName,
+          postedBy: username,
+          entries: [
+            { accountCode: gl.CORE_ACCOUNTS.WASTE_EXPIRED.code, debit: value, credit: 0, warehouseId: warehouse || undefined },
+            { accountCode: gl.CORE_ACCOUNTS.INVENTORY.code,    debit: 0,     credit: value, warehouseId: warehouse || undefined }
+          ]
+        });
+        if (!glRes || !glRes.success) {
+          throw new Error('فشل ترحيل قيد الإتلاف: ' + ((glRes && glRes.error) || 'خطأ غير معروف'));
+        }
+      }
     };
 
     try {
       if (typeof db.withTransaction === 'function') await db.withTransaction(runner);
       else await runner(null);
     } catch (txErr) {
-      try { await runner(null); } catch (_) {
-        return res.status(500).json({ success:false, error: txErr.message });
-      }
+      // v7.4 — never re-run the runner without a transaction (that would
+      // double-decrement). The tx already rolled back atomically — surface it.
+      return res.status(500).json({ success:false, error: txErr.message });
     }
 
     res.json({ success: true, lotId, qty, value, itemName });

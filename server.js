@@ -1,4 +1,18 @@
 require('dotenv').config();
+
+// v7.5 (H3) — surface a weak/missing JWT secret (forgeable tokens = full
+// compromise). WARN-only (never blocks boot) to stay safe on launch day; rotate
+// to a random 32+ char secret in the production environment, then restart during
+// a maintenance window (rotation logs everyone out).
+(function _checkJwtSecret(){
+  try {
+    var s = process.env.JWT_SECRET || '';
+    var weak = !s || s.length < 32 || /change_in_production|local_dev|secret_key|abc123|xyz789|placeholder|example|changeme/i.test(s);
+    if (weak) {
+      console.warn('\n[SECURITY WARNING] JWT_SECRET is missing or weak — set a random 32+ char JWT_SECRET in the production environment.\n');
+    }
+  } catch (_) {}
+})();
 // v6.0.2 Wave B.1 — Force Asia/Riyadh timezone for the entire Node process
 // so `new Date()`, MySQL CURRENT_TIMESTAMP fallbacks, and any log lines
 // all default to Saudi local time (ZATCA BR-DT-03). Honours an explicit
@@ -2456,6 +2470,20 @@ async function runMigrations() {
       FROM users u
       WHERE (u.employee_id IS NULL OR u.employee_id = '')`);
   } catch (e) { console.warn('[startup] backfill step C skipped:', e && e.message); }
+
+  // v7.5 (H2) Step D — populate hr_employees.linked_user_id from the matching
+  // user (Steps B/C set employee_id + linked_username but not the numeric id).
+  try {
+    await db.query(`UPDATE hr_employees e
+      JOIN users u ON u.username = e.linked_username
+      SET e.linked_user_id = u.id
+      WHERE e.linked_user_id IS NULL`);
+  } catch (e) { console.warn('[startup] backfill step D skipped:', e && e.message); }
+
+  // v7.5 (H2) — enforce 1:1 (at most one employee per login account). NULL links
+  // are exempt (MySQL allows multiple NULLs); pre-existing duplicates simply make
+  // the index creation fail and be skipped.
+  try { await db.query('CREATE UNIQUE INDEX uq_hr_emp_linked_username ON hr_employees(linked_username)'); } catch(e) {}
 
   // Step D: point users at the newly created shells.
   try {

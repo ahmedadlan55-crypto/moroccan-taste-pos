@@ -2235,29 +2235,42 @@ router.post('/my-leave-request', async (req, res) => {
     const start = new Date(startDate);
     const end = new Date(endDate);
     const days = Math.ceil((end - start) / (1000 * 60 * 60 * 24)) + 1;
-
-    // Check balance
     const year = start.getFullYear();
-    const [bal] = await db.query(
-      'SELECT remaining_days FROM hr_leave_balances WHERE employee_id = ? AND leave_type_id = ? AND year = ?',
-      [emp[0].id, leaveTypeId, year]
-    );
-    if (bal.length && bal[0].remaining_days < days) {
-      return res.json({ success: false, error: 'رصيد الإجازة غير كافٍ (المتبقي: ' + bal[0].remaining_days + ' يوم)' });
-    }
 
-    const id = 'LR-' + Date.now();
-    const [lastReq] = await db.query('SELECT request_number FROM hr_leave_requests ORDER BY created_at DESC LIMIT 1');
-    let num = 1;
-    if (lastReq.length && lastReq[0].request_number) { var m = lastReq[0].request_number.match(/(\d+)/); if (m) num = parseInt(m[1]) + 1; }
-    const reqNumber = 'LV-' + String(num).padStart(5, '0');
-
-    await db.query(
-      'INSERT INTO hr_leave_requests (id, request_number, employee_id, leave_type_id, start_date, end_date, days_count, reason, status) VALUES (?,?,?,?,?,?,?,?,?)',
-      [id, reqNumber, emp[0].id, leaveTypeId, startDate, endDate, days, reason || '', 'pending']
-    );
-    res.json({ success: true, id, requestNumber: reqNumber, message: 'تم تقديم طلب الإجازة — بانتظار الموافقة' });
-  } catch (e) { res.json({ success: false, error: e.message }); }
+    // v7.5 (H4) — atomic balance guard. The previous check-then-insert had a
+    // race (two concurrent submissions both pass), and it ignored already-pending
+    // requests (pending rows don't reduce remaining_days). Now: lock the balance
+    // row FOR UPDATE inside a transaction and subtract outstanding pending days,
+    // so an employee can never overbook.
+    const out = await db.withTransaction(async (conn) => {
+      const [bal] = await conn.query(
+        'SELECT remaining_days FROM hr_leave_balances WHERE employee_id = ? AND leave_type_id = ? AND year = ? FOR UPDATE',
+        [emp[0].id, leaveTypeId, year]
+      );
+      if (bal.length) {
+        const [pend] = await conn.query(
+          "SELECT COALESCE(SUM(days_count),0) AS d FROM hr_leave_requests WHERE employee_id = ? AND leave_type_id = ? AND YEAR(start_date) = ? AND status = 'pending'",
+          [emp[0].id, leaveTypeId, year]
+        );
+        const available = Number(bal[0].remaining_days) - Number(pend[0].d || 0);
+        if (available < days) {
+          const e = new Error('رصيد الإجازة غير كافٍ (المتاح بعد الطلبات المعلّقة: ' + available + ' يوم)');
+          e.status = 400; throw e;
+        }
+      }
+      const id = 'LR-' + Date.now();
+      const [lastReq] = await conn.query('SELECT request_number FROM hr_leave_requests ORDER BY created_at DESC LIMIT 1 FOR UPDATE');
+      let num = 1;
+      if (lastReq.length && lastReq[0].request_number) { var m = lastReq[0].request_number.match(/(\d+)/); if (m) num = parseInt(m[1]) + 1; }
+      const reqNumber = 'LV-' + String(num).padStart(5, '0');
+      await conn.query(
+        'INSERT INTO hr_leave_requests (id, request_number, employee_id, leave_type_id, start_date, end_date, days_count, reason, status) VALUES (?,?,?,?,?,?,?,?,?)',
+        [id, reqNumber, emp[0].id, leaveTypeId, startDate, endDate, days, reason || '', 'pending']
+      );
+      return { id, reqNumber };
+    });
+    res.json({ success: true, id: out.id, requestNumber: out.reqNumber, message: 'تم تقديم طلب الإجازة — بانتظار الموافقة' });
+  } catch (e) { res.status(e.status || 500).json({ success: false, error: e.message }); }
 });
 
 // GET my leave requests

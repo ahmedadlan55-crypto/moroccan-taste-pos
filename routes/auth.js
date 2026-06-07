@@ -566,8 +566,15 @@ router.post('/users', requireAdmin, async (req, res) => {
       } catch (jtErr) { /* table not yet migrated — tolerate */ }
     }
 
-    const hash = await bcrypt.hash(password, 10);
-    const dbRole = ['admin', 'cashier', 'manager', 'custody', 'employee'].indexOf(role) >= 0 ? role : 'cashier';
+    // v7.5 (H3) — reject a duplicate username up-front (the create path had no
+    // check; only rename did) + reject an invalid role instead of silently
+    // downgrading to cashier.
+    const [dupUser] = await db.query('SELECT 1 FROM users WHERE username = ? LIMIT 1', [username]);
+    if (dupUser.length) return res.status(409).json({ success: false, error: 'اسم المستخدم مستخدم بالفعل' });
+    const VALID_ROLES = ['admin', 'cashier', 'manager', 'custody', 'employee'];
+    if (role && VALID_ROLES.indexOf(role) < 0) return res.json({ success: false, error: 'الدور غير صالح: ' + String(role) });
+    const hash = await bcrypt.hash(password, 12);
+    const dbRole = VALID_ROLES.indexOf(role) >= 0 ? role : 'cashier';
 
     // V3: explicit defaultWarehouseId from request OR auto-derive from branch's warehouse
     let defaultWarehouseId = req.body.defaultWarehouseId || null;
@@ -612,6 +619,34 @@ router.post('/users', requireAdmin, async (req, res) => {
           [cuId, displayName || username, 'مسؤول عهدة', username]
         );
       } catch(e) { /* ignore if custody_users table not yet created */ }
+    }
+
+    // v7.5 (H2) — auto-provision + link an HR employee record for staff roles so
+    // the user↔employee link is never a forgotten second step, and the employee
+    // portal works immediately. Mirrors the custody auto-create above + the
+    // startup shell backfill. Idempotent; tolerant of schema gaps.
+    if (['employee', 'cashier', 'manager'].indexOf(dbRole) >= 0) {
+      try {
+        const [existingEmp] = await db.query('SELECT id FROM hr_employees WHERE linked_username = ? LIMIT 1', [username]);
+        let empId = existingEmp.length ? existingEmp[0].id : null;
+        if (!empId) {
+          empId = 'emp-' + Date.now() + '-' + Math.random().toString(36).slice(2, 6);
+          const dispName = String(displayName || username).trim();
+          const sp = dispName.indexOf(' ');
+          const fn = sp > 0 ? dispName.slice(0, sp) : dispName;
+          const ln = sp > 0 ? dispName.slice(sp + 1) : '';
+          await db.query(
+            `INSERT INTO hr_employees
+               (id, employee_number, first_name, last_name, full_name, hire_date, status, job_title, branch_id, brand_id, linked_username, created_by, created_at)
+             VALUES (?,?,?,?,?, CURDATE(), 'active', 'بحاجة لتحديث', ?, ?, ?, ?, NOW())`,
+            [empId, 'EMP-' + Date.now(), fn, ln, dispName, branchId || null, brandId || null, username,
+             (req.user && req.user.username) || 'system']);
+        }
+        // Link both directions (employee_id on the user, linked_user_id on the employee).
+        await db.query('UPDATE users SET employee_id = ? WHERE username = ?', [empId, username]);
+        const [u] = await db.query('SELECT id FROM users WHERE username = ? LIMIT 1', [username]);
+        if (u.length) await db.query('UPDATE hr_employees SET linked_user_id = ?, linked_username = ? WHERE id = ?', [u[0].id, username, empId]);
+      } catch (e) { /* tolerate hr_employees schema gaps on older deploys */ }
     }
     _auditUserOp(req, 'create_user', username, { role: dbRole, brandId: brandId || null, branchId: branchId || null });
     res.json({ success: true });
@@ -735,7 +770,7 @@ router.put('/users/:username', requireAdmin, async (req, res) => {
       if (!/[a-zA-Z]/.test(password)) return res.json({ success: false, error: 'كلمة المرور يجب أن تحتوي على حروف' });
       if (!/[0-9]/.test(password)) return res.json({ success: false, error: 'كلمة المرور يجب أن تحتوي على أرقام' });
       if (!/[!@#$%^&*()_+\-=\[\]{};':"|,.<>\/?]/.test(password)) return res.json({ success: false, error: 'كلمة المرور يجب أن تحتوي على رمز خاص' });
-      const hash = await bcrypt.hash(password, 10);
+      const hash = await bcrypt.hash(password, 12);
       await db.query('UPDATE users SET password = ? WHERE username = ?', [hash, username]);
     }
     if (role && ['admin', 'cashier', 'manager', 'custody', 'employee'].indexOf(role) >= 0) {
@@ -796,7 +831,7 @@ router.post('/users/:username/reset-password', requireAdmin, async (req, res) =>
     if (!/[a-zA-Z]/.test(password)) return res.json({ success: false, error: 'كلمة المرور يجب أن تحتوي على حروف' });
     if (!/[0-9]/.test(password)) return res.json({ success: false, error: 'كلمة المرور يجب أن تحتوي على أرقام' });
     if (!/[!@#$%^&*()_+\-=\[\]{};':"|,.<>\/?]/.test(password)) return res.json({ success: false, error: 'كلمة المرور يجب أن تحتوي على رمز خاص (!@#$...)' });
-    const hashed = await bcrypt.hash(password, 10);
+    const hashed = await bcrypt.hash(password, 12);
     await db.query('UPDATE users SET password = ?, failed_attempts = 0, locked_until = NULL WHERE username = ?', [hashed, req.params.username]);
     _auditUserOp(req, 'reset_password', req.params.username, {});
     res.json({ success: true });

@@ -2337,9 +2337,12 @@ window.doCheckout = function() {
     splitDetails = {};
     var totalPaid = 0;
     qs('.split-input').forEach(function(el) {
-      var val = Number(el.value) || 0;
+      // v7.4 — round each leg to halalas BEFORE summing so a clean split
+      // (e.g. 50.33 + 49.67) never fails the tolerance check on float drift.
+      var val = Math.round((Number(el.value) || 0) * 100) / 100;
       if (val > 0) { splitDetails[el.dataset.method] = val; totalPaid += val; }
     });
+    totalPaid = Math.round(totalPaid * 100) / 100;
     // v7.2 — validate the split against the GROSS charged total.
     if (Math.abs(totalPaid - afterDiscount) > 0.01) {
       return glassAlert(

@@ -443,18 +443,40 @@ router.post('/', async (req, res) => {
         const ph = itemIds.map(() => '?').join(',');
         const [mrows] = await db.query(
           'SELECT id, COALESCE(tax_category, \'S\') AS tax_category, ' +
-          'COALESCE(is_tax_inclusive, 1) AS is_tax_inclusive ' +
+          'COALESCE(is_tax_inclusive, 1) AS is_tax_inclusive, ' +
+          'COALESCE(active, 1) AS active ' +
           'FROM menu WHERE id IN (' + ph + ')',
           itemIds
         );
         mrows.forEach(m => {
           _taxMeta[m.id] = {
             cat: m.tax_category || 'S',
-            inclusive: Number(m.is_tax_inclusive) === 1
+            inclusive: Number(m.is_tax_inclusive) === 1,
+            active: Number(m.active) !== 0
           };
         });
       }
     } catch (_) { /* menu schema gaps on older deploys — fall through */ }
+
+    // ─── A1 (v7.4) — Ghost / disabled-item guard ───
+    // Defence-in-depth behind the POS add-to-cart guard: refuse to invoice a
+    // line whose menu item is DISABLED (active=0 / soft-deleted). We only
+    // reject items we can POSITIVELY confirm are disabled, so unknown ids
+    // (channel / walk-in / custom lines not present in `menu`) are never
+    // blocked and a valid channel sale is never rejected at the till. Custom
+    // lines may opt out explicitly via __custom. Thrown as a 400 → the outer
+    // catch rolls back the transaction and surfaces the message to the POS.
+    const _blockedLines = items.filter(it =>
+      it && it.id && !it.__custom &&
+      _taxMeta[it.id] && _taxMeta[it.id].active === false
+    );
+    if (_blockedLines.length) {
+      const _names = _blockedLines.map(it => it.name || it.id).join('، ');
+      const dErr = new Error('تعذّر إتمام البيع: أصناف لم تعد متاحة (' + _names + '). يرجى تحديث القائمة.');
+      dErr.status = 400;
+      dErr.code = 'item_unavailable';
+      throw dErr;
+    }
 
     // Step C: For every line, split price into net + vat using the
     //         per-item is_tax_inclusive flag.  Accumulate per-category

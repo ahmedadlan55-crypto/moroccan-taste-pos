@@ -1,6 +1,11 @@
 const router = require('express').Router();
 const db = require('../db/connection');
 const { recomputeInvItemStock } = require('../lib/stockRecompute');
+// v7.4 — RBAC: MGR for managerial actions (PO approve / revert / delete);
+// BACKOFFICE for operational receiving (any authenticated role but cashier).
+const requireRole = require('./authMiddleware').requireRole;
+const MGR = requireRole('admin', 'manager');
+const BACKOFFICE = requireRole('admin', 'manager', 'employee', 'custody');
 
 // ─── Purchases ───
 
@@ -159,7 +164,7 @@ async function resolveInvItem(item) {
 // toast can show how many items were actually received, how many were
 // skipped (no matching inv_items), and the input-VAT total when the user
 // ticks "includes VAT".
-router.post('/receive/:id', async (req, res) => {
+router.post('/receive/:id', BACKOFFICE, async (req, res) => {
   try {
     const { id } = req.params;
     const { username, includesVAT, warehouseId: reqWarehouseId } = req.body;
@@ -359,7 +364,7 @@ router.post('/receive/:id', async (req, res) => {
 // Revert a RECEIVED purchase — rolls back stock, deletes the "مشتريات"
 // movements we created on receive, and flips the purchase (and any linked
 // PO) back to 'draft' / 'approved' respectively.
-router.post('/receive/:id/revert', async (req, res) => {
+router.post('/receive/:id/revert', MGR, async (req, res) => {
   try {
     const { id } = req.params;
     const { username } = req.body;
@@ -454,7 +459,7 @@ router.post('/receive/:id/revert', async (req, res) => {
 });
 
 // Delete purchase
-router.delete('/:id', async (req, res) => {
+router.delete('/:id', MGR, async (req, res) => {
   try {
     // If this purchase is linked to a PO, reset the PO status back so it can be re-used
     const [pur] = await db.query('SELECT po_id, status FROM purchases WHERE id = ?', [req.params.id]);
@@ -658,7 +663,7 @@ router.put('/orders/:id', async (req, res) => {
 // The link between the PO and its generated purchase is kept via the
 // `po_id` column on the purchases table, so we can clean up on revert and
 // back-propagate status on receive.
-router.post('/orders/:id/approve', async (req, res) => {
+router.post('/orders/:id/approve', MGR, async (req, res) => {
   try {
     const { id } = req.params;
     const { username } = req.body;
@@ -735,7 +740,7 @@ router.post('/orders/:id/approve', async (req, res) => {
 // We refuse to revert if the linked purchase was already received (that
 // would require stock rollback, which is outside the scope of a simple
 // revert and should be handled by deleting the received purchase first).
-router.post('/orders/:id/revert', async (req, res) => {
+router.post('/orders/:id/revert', MGR, async (req, res) => {
   try {
     const { id } = req.params;
 
@@ -769,7 +774,7 @@ router.post('/orders/:id/revert', async (req, res) => {
 });
 
 // Delete PO
-router.delete('/orders/:id', async (req, res) => {
+router.delete('/orders/:id', MGR, async (req, res) => {
   try {
     const [existing] = await db.query('SELECT status FROM purchase_orders WHERE id = ?', [req.params.id]);
     if (!existing.length) return res.json({ success: false, error: 'PO not found' });

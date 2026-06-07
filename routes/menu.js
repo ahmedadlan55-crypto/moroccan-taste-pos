@@ -5,6 +5,9 @@ const db = require('../db/connection');
 // delete/price/import/recipes) fully public. Re-verify the JWT on writes only;
 // GET routes stay public so the cashier/login flow is unaffected.
 const verifyToken = require('./authMiddleware');
+// v7.4 — menu writes are pricing/tax-sensitive → managers/admins only (chained
+// AFTER verifyToken, which sets req.user since the global /api gate skips /menu).
+const MGR = verifyToken.requireRole('admin', 'manager');
 
 // ─── Helper: map a menu row to API response (includes semi-finished fields) ───
 function _mapMenu(m) {
@@ -156,7 +159,7 @@ router.get('/semi-finished', async (req, res) => {
 });
 
 // Add menu item
-router.post('/', verifyToken, async (req, res) => {
+router.post('/', verifyToken, MGR, async (req, res) => {
   try {
     const {
       name, nameEn, price, category, cost, stock, minStock, active, pricingMode, markupPct, brandId,
@@ -220,7 +223,7 @@ router.post('/', verifyToken, async (req, res) => {
 });
 
 // Update menu item
-router.put('/:id', verifyToken, async (req, res) => {
+router.put('/:id', verifyToken, MGR, async (req, res) => {
   try {
     const {
       name, nameEn, price, category, cost, stock, minStock, active, pricingMode, markupPct, brandId,
@@ -315,7 +318,7 @@ router.put('/:id', verifyToken, async (req, res) => {
 
 // Update price only
 // V5.7.4: now records price history for traceability + returns the new price + cost margin.
-router.patch('/:id/price', verifyToken, async (req, res) => {
+router.patch('/:id/price', verifyToken, MGR, async (req, res) => {
   try {
     const newPrice = Number(req.body.price);
     const reason = (req.body.reason || '').toString().slice(0, 200);
@@ -348,7 +351,7 @@ router.patch('/:id/price', verifyToken, async (req, res) => {
 //   - fixed_set     → newPrice = value (set to exact)
 //   - fixed_add     → newPrice = oldPrice + value
 // Returns: { affected, before, after, items: [...] }
-router.post('/bulk-price-update', verifyToken, async (req, res) => {
+router.post('/bulk-price-update', verifyToken, MGR, async (req, res) => {
   try {
     const b = req.body || {};
     const mode = b.mode || 'percent';
@@ -444,7 +447,7 @@ router.get('/:id/price-history', async (req, res) => {
 });
 
 // Delete menu item
-router.delete('/:id', verifyToken, async (req, res) => {
+router.delete('/:id', verifyToken, MGR, async (req, res) => {
   try {
     await db.query('DELETE FROM menu WHERE id = ?', [req.params.id]);
     res.json({ success: true });
@@ -452,7 +455,7 @@ router.delete('/:id', verifyToken, async (req, res) => {
 });
 
 // Bulk import menu items
-router.post('/import', verifyToken, async (req, res) => {
+router.post('/import', verifyToken, MGR, async (req, res) => {
   try {
     const { items } = req.body;
     if (!items || !items.length) return res.json({ success: false, error: 'No items provided' });
@@ -503,7 +506,7 @@ router.get('/recipes', async (req, res) => {
   } catch (e) { res.json([]); }
 });
 
-router.post('/recipes/:menuId', verifyToken, async (req, res) => {
+router.post('/recipes/:menuId', verifyToken, MGR, async (req, res) => {
   try {
     const { menuId } = req.params;
     const { menuName, ingredients } = req.body;
@@ -792,7 +795,7 @@ router.get('/availability/bulk', async (req, res) => {
 // Body: { lines: [{ componentItemId, quantity, unit, wastePct }],
 //         yieldQuantity?, yieldUnit?, productionMethod?, deductStrategy?,
 //         allowNegativeStock?, minStockAlert? }
-router.post('/:id/recipe-bom', verifyToken, async (req, res) => {
+router.post('/:id/recipe-bom', verifyToken, MGR, async (req, res) => {
   try {
     const menuId = req.params.id;
     const b = req.body || {};

@@ -19,6 +19,8 @@ const db = require('../db/connection');
 const gl = require('../lib/glPosting');
 // v7.1 — sync the inv_items.stock rollup after a stocktake sets warehouse_stock.
 const { recomputeInvItemStock } = require('../lib/stockRecompute');
+// v7.4 — stocktake approve/reject post stock + GL adjustments → managers only.
+const MGR = require('./authMiddleware').requireRole('admin', 'manager');
 
 function _id(p){ return p+'-'+Date.now()+'-'+Math.random().toString(36).slice(2,7); }
 
@@ -278,7 +280,7 @@ router.post('/:id/submit', async (req, res) => {
   } catch(e) { res.status(500).json({ error: e.message }); }
 });
 
-router.post('/:id/approve', async (req, res) => {
+router.post('/:id/approve', MGR, async (req, res) => {
   try {
     const username = (req.body && req.body.username) || (req.user && req.user.username) || 'system';
     const [hRows] = await db.query(`SELECT * FROM stocktakes WHERE id = ?`, [req.params.id]);
@@ -384,7 +386,7 @@ router.post('/:id/approve', async (req, res) => {
   } catch(e) { res.status(e.status || 500).json({ error: e.message }); }
 });
 
-router.post('/:id/reject', async (req, res) => {
+router.post('/:id/reject', MGR, async (req, res) => {
   try {
     const username = (req.body && req.body.username) || (req.user && req.user.username) || 'system';
     const reason = (req.body && req.body.reason) || '';

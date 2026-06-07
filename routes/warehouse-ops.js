@@ -10,6 +10,12 @@ const gl = require('../lib/glPosting');
 // v7.1 — keep the denormalized inv_items.stock rollup in sync after any
 // per-warehouse mutation (lot disposal etc.), same discipline as sales/purchases.
 const { recomputeInvItemStock } = require('../lib/stockRecompute');
+// v7.4 — RBAC. MGR = managerial (approve / cancel / reverse / dispose);
+// BACKOFFICE = any authenticated back-office role EXCEPT cashier (the
+// widely-distributed front-line credential and the documented fraud vector).
+const requireRole = require('./authMiddleware').requireRole;
+const MGR = requireRole('admin', 'manager');
+const BACKOFFICE = requireRole('admin', 'manager', 'employee', 'custody');
 
 // ─── Helpers ──────────────────────────────────────────────────────────
 
@@ -316,7 +322,7 @@ router.post('/stock-issues', async (req, res) => {
 });
 
 // Approve stock issue
-router.post('/stock-issues/:id/approve', async (req, res) => {
+router.post('/stock-issues/:id/approve', MGR, async (req, res) => {
   try {
     const id = req.params.id;
     const { approvedBy } = req.body;
@@ -331,7 +337,7 @@ router.post('/stock-issues/:id/approve', async (req, res) => {
 });
 
 // Issue (decrement source warehouse + post GL)
-router.post('/stock-issues/:id/issue', async (req, res) => {
+router.post('/stock-issues/:id/issue', BACKOFFICE, async (req, res) => {
   try {
     const id = req.params.id;
     const { issuedBy } = req.body;
@@ -434,7 +440,7 @@ router.post('/stock-issues/:id/issue', async (req, res) => {
 });
 
 // Receive (increment destination warehouse)
-router.post('/stock-issues/:id/receive', async (req, res) => {
+router.post('/stock-issues/:id/receive', BACKOFFICE, async (req, res) => {
   try {
     const id = req.params.id;
     const { receivedBy, items } = req.body;  // items optional — partial receive
@@ -513,7 +519,7 @@ router.post('/stock-issues/:id/receive', async (req, res) => {
 });
 
 // Cancel stock issue
-router.post('/stock-issues/:id/cancel', async (req, res) => {
+router.post('/stock-issues/:id/cancel', MGR, async (req, res) => {
   try {
     const id = req.params.id;
     const [hdrRows] = await db.query('SELECT status FROM stock_issues WHERE id=?', [id]);
@@ -531,7 +537,7 @@ router.post('/stock-issues/:id/cancel', async (req, res) => {
 // and posts a reversing GL journal mirroring the original posting. The
 // underlying stock_issue row keeps its line totals (audit trail) but moves
 // to status='reversed' with reversed_by / reversed_at / reverse_reason set.
-router.post('/stock-issues/:id/reverse', async (req, res) => {
+router.post('/stock-issues/:id/reverse', MGR, async (req, res) => {
   try {
     const id = req.params.id;
     const { reversedBy, reason } = req.body || {};
@@ -647,7 +653,7 @@ router.post('/stock-issues/:id/reverse', async (req, res) => {
 // V5.9.9 — Hard-delete a stock issue. Only allowed on drafts so the audit
 // trail of any approved/issued/received/cancelled/reversed row stays intact.
 // Cascade-delete the line items first (no FK CASCADE configured).
-router.delete('/stock-issues/:id', async (req, res) => {
+router.delete('/stock-issues/:id', MGR, async (req, res) => {
   try {
     const id = req.params.id;
     const [hdrRows] = await db.query('SELECT status FROM stock_issues WHERE id=?', [id]);
@@ -861,7 +867,7 @@ router.post('/production-orders', async (req, res) => {
 });
 
 // Release — consume raw materials, post to WIP
-router.post('/production-orders/:id/release', async (req, res) => {
+router.post('/production-orders/:id/release', BACKOFFICE, async (req, res) => {
   try {
     const id = req.params.id;
     const { releasedBy, laborCost, overheadCost } = req.body;
@@ -979,7 +985,7 @@ router.post('/production-orders/:id/release', async (req, res) => {
 });
 
 // Complete — transfer WIP to Finished Goods
-router.post('/production-orders/:id/complete', async (req, res) => {
+router.post('/production-orders/:id/complete', BACKOFFICE, async (req, res) => {
   try {
     const id = req.params.id;
     const { completedBy, qtyProduced, qtyScrap, batchNumber, expiryDate } = req.body;
@@ -1072,7 +1078,7 @@ router.post('/production-orders/:id/complete', async (req, res) => {
 });
 
 // Cancel
-router.post('/production-orders/:id/cancel', async (req, res) => {
+router.post('/production-orders/:id/cancel', MGR, async (req, res) => {
   try {
     const id = req.params.id;
     const [r] = await db.query('SELECT status FROM production_orders WHERE id=?', [id]);
@@ -1292,7 +1298,7 @@ router.get('/expiry-alerts/timeline', async (req, res) => {
 // صلاحية'), and optionally posts a GL waste entry.
 // Wrapped in a transaction so partial failure can never leave the batch
 // half-disposed.
-router.post('/expiry-alerts/:lotId/dispose', async (req, res) => {
+router.post('/expiry-alerts/:lotId/dispose', MGR, async (req, res) => {
   try {
     const lotId = req.params.lotId;
     const username = (req.user && req.user.username) || (req.body && req.body.username) || 'system';

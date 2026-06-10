@@ -815,6 +815,11 @@ router.get('/:shiftId/full-report-print', async (req, res) => {
     const totalVariance = totalActual - totalExpected;
 
     // Render the thermal HTML inline (mirror of POS-side printShiftThermalReport)
+    // v7.5 — XSS hardening: this endpoint is public (server.js whitelist for
+    //   print-in-new-tab), so EVERY db-sourced string must be entity-escaped
+    //   before interpolation into the HTML below.
+    const esc = v => String(v == null ? '' : v).replace(/[&<>"']/g, c => (
+      { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
     const fmt = v => Number(v || 0).toFixed(2);
     const fmtDt = v => { try { return new Date(v).toLocaleString('ar-SA'); } catch(e) { return v || '—'; } };
     const fmtDur = ms => {
@@ -835,19 +840,19 @@ router.get('/:shiftId/full-report-print', async (req, res) => {
     }
 
     const headerHtml =
-      (companyLogo ? `<div style="text-align:center;margin-bottom:6px;"><img src="${companyLogo}" style="max-width:90px;max-height:90px;object-fit:contain;"></div>` : '') +
+      (companyLogo ? `<div style="text-align:center;margin-bottom:6px;"><img src="${esc(companyLogo)}" style="max-width:90px;max-height:90px;object-fit:contain;"></div>` : '') +
       `<div style="text-align:center;font-size:13px;font-weight:700;direction:rtl;margin-bottom:1px;">المذاق المغربي</div>` +
-      `<div style="text-align:center;font-size:18px;font-weight:900;direction:ltr;margin-bottom:${branchCompanyName?'2':'6'}px;">${companyName}</div>` +
-      (branchCompanyName ? `<div style="text-align:center;font-size:12px;font-weight:700;color:#000;direction:rtl;margin-bottom:6px;border-bottom:1px solid #d4d4d4;padding-bottom:6px;">${branchCompanyName}</div>` : '') +
+      `<div style="text-align:center;font-size:18px;font-weight:900;direction:ltr;margin-bottom:${branchCompanyName?'2':'6'}px;">${esc(companyName)}</div>` +
+      (branchCompanyName ? `<div style="text-align:center;font-size:12px;font-weight:700;color:#000;direction:rtl;margin-bottom:6px;border-bottom:1px solid #d4d4d4;padding-bottom:6px;">${esc(branchCompanyName)}</div>` : '') +
       `<div style="text-align:center;font-size:11px;direction:rtl;margin-bottom:2px;">تقرير إقفال الوردية</div>` +
       `<div style="text-align:center;font-size:10px;color:#444;margin-bottom:6px;">SHIFT CLOSING REPORT</div>` +
-      (taxNumber ? `<div style="text-align:center;font-size:10px;font-family:monospace;color:#444;margin-bottom:4px;">${taxNumber}</div>` : '') +
-      (branchName ? `<div style="text-align:center;font-size:11px;font-weight:700;direction:ltr;">${branchName.toUpperCase()}</div>` : '') +
-      (branchAddress ? `<div style="text-align:center;font-size:9px;color:#666;direction:rtl;margin-bottom:4px;">${branchAddress}</div>` : '');
+      (taxNumber ? `<div style="text-align:center;font-size:10px;font-family:monospace;color:#444;margin-bottom:4px;">${esc(taxNumber)}</div>` : '') +
+      (branchName ? `<div style="text-align:center;font-size:11px;font-weight:700;direction:ltr;">${esc(String(branchName).toUpperCase())}</div>` : '') +
+      (branchAddress ? `<div style="text-align:center;font-size:9px;color:#666;direction:rtl;margin-bottom:4px;">${esc(branchAddress)}</div>` : '');
 
     const metaHtml = `<div style="border-top:1px dashed #000;border-bottom:1px dashed #000;padding:6px 0;margin:8px 0;">
       ${row('رقم الوردية', s.id, { bold: true })}
-      ${row('الكاشير', `${cashierName}${cashierEmpNo && cashierEmpNo !== cashierName ? ' (' + cashierEmpNo + ')' : ''}`, { bold: true })}
+      ${row('الكاشير', `${esc(cashierName)}${cashierEmpNo && cashierEmpNo !== cashierName ? ' (' + esc(cashierEmpNo) + ')' : ''}`, { bold: true })}
       ${row('وقت الفتح', fmtDt(s.start_time))}
       ${row('وقت الإغلاق', fmtDt(s.end_time))}
       ${row('مدة الوردية', fmtDur(durationMs))}
@@ -867,7 +872,7 @@ router.get('/:shiftId/full-report-print', async (req, res) => {
         </tr></thead><tbody>`;
       agg.soldItems.forEach(it => {
         itemsHtml += `<tr>
-          <td style="padding:2px 0;">${it.name || '—'}</td>
+          <td style="padding:2px 0;">${esc(it.name) || '—'}</td>
           <td style="text-align:center;padding:2px 0;">${Number(it.qty) || 0}</td>
           <td style="text-align:center;padding:2px 0;font-family:monospace;">${fmt(it.price)}</td>
           <td style="text-align:left;padding:2px 0;font-family:monospace;font-weight:700;">${fmt(it.total)}</td>
@@ -909,7 +914,7 @@ router.get('/:shiftId/full-report-print', async (req, res) => {
     methodsTable.forEach(m => {
       const diffPrefix = m.variance > 0 ? '+' : '';
       methodsHtml += `<tr>
-        <td style="padding:2px 0;font-weight:700;">${m.nameAr || m.name}</td>
+        <td style="padding:2px 0;font-weight:700;">${esc(m.nameAr || m.name)}</td>
         <td style="text-align:center;padding:2px 0;font-family:monospace;">${fmt(m.expected)}</td>
         <td style="text-align:center;padding:2px 0;font-family:monospace;font-weight:700;">${fmt(m.actual)}</td>
         <td style="text-align:left;padding:2px 0;font-family:monospace;font-weight:800;">${diffPrefix}${fmt(m.variance)}</td>
@@ -939,21 +944,21 @@ router.get('/:shiftId/full-report-print', async (req, res) => {
     const notesHtml = s.cashier_notes
       ? `<div style="margin-top:8px;padding:6px;border:1px dashed #999;font-size:10px;direction:rtl;">
            <div style="font-weight:700;margin-bottom:3px;">📝 ملاحظات:</div>
-           <div style="white-space:pre-wrap;">${s.cashier_notes}</div>
+           <div style="white-space:pre-wrap;">${esc(s.cashier_notes)}</div>
          </div>`
       : '';
 
     const sigHtml = `<div style="margin-top:12px;display:flex;gap:6px;justify-content:space-between;">
       <div style="flex:1;text-align:center;"><div style="border-top:1px solid #000;margin-top:24px;padding-top:3px;font-size:9.5px;font-weight:700;">المستلم</div></div>
-      <div style="flex:1;text-align:center;"><div style="border-top:1px solid #000;margin-top:24px;padding-top:3px;font-size:9.5px;font-weight:700;">${cashierName || s.username}</div></div>
+      <div style="flex:1;text-align:center;"><div style="border-top:1px solid #000;margin-top:24px;padding-top:3px;font-size:9.5px;font-weight:700;">${esc(cashierName || s.username)}</div></div>
       <div style="flex:1;text-align:center;"><div style="border-top:1px solid #000;margin-top:24px;padding-top:3px;font-size:9.5px;font-weight:700;">الإدارة</div></div>
     </div>`;
 
     const footerHtml = `<div style="text-align:center;margin-top:8px;font-size:9px;color:#444;border-top:1px dashed #000;padding-top:4px;">
       وثيقة موثّقة آلياً — Moroccan Taste POS<br>
       طُبع: ${fmtDt(new Date())}
-      ${companyPhone ? `<br>Tel: ${companyPhone}` : ''}
-      ${companyEmail ? `<br>Email: ${companyEmail}` : ''}
+      ${companyPhone ? `<br>Tel: ${esc(companyPhone)}` : ''}
+      ${companyEmail ? `<br>Email: ${esc(companyEmail)}` : ''}
     </div>`;
 
     // V5.7.21 — read user's language from query param OR cookie OR
@@ -963,7 +968,7 @@ router.get('/:shiftId/full-report-print', async (req, res) => {
     const dirAttr = userLang === 'en' ? 'ltr' : 'rtl';
     res.set('Content-Type', 'text/html; charset=utf-8');
     res.send(`<!DOCTYPE html><html lang="${userLang}" dir="${dirAttr}"><head><meta charset="UTF-8">
-      <title>Shift Report — ${s.id}</title>
+      <title>Shift Report — ${esc(s.id)}</title>
       <style>
         *{margin:0;padding:0;box-sizing:border-box;-webkit-print-color-adjust:exact;print-color-adjust:exact;}
         body{font-family:"Helvetica Neue",Arial,"Segoe UI",sans-serif;padding:10px;width:300px;margin:0 auto;font-size:12px;color:#000;background:#fff;}
@@ -990,7 +995,8 @@ router.get('/:shiftId/full-report-print', async (req, res) => {
       })();<\/script>
       </body></html>`);
   } catch (e) {
-    res.status(500).send('Error: ' + e.message);
+    // v7.5 — plain text so a reflected error message can never execute as HTML
+    res.status(500).type('text/plain').send('Error: ' + e.message);
   }
 });
 

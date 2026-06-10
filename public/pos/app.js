@@ -835,9 +835,9 @@ window.renderFoodicsPayTiles = function () {
   var html = tiles.map(function (m) {
     var on = m.name === current ? ' is-active' : '';
     var label = (m.ar && m.en && m.ar !== m.en) ? (m.ar + ' · ' + m.en) : (m.ar || m.en);
-    return '<button type="button" class="pay-tile' + on + '" onclick="setFoodicsPay(\'' + String(m.name).replace(/'/g, "\\'") + '\')">' +
-             '<i class="fas ' + m.icon + '"></i>' +
-             '<span>' + label + '</span>' +
+    return '<button type="button" class="pay-tile' + on + '" onclick="setFoodicsPay(\'' + _posEsc(String(m.name).replace(/'/g, "\\'")) + '\')">' +
+             '<i class="fas ' + _posEsc(m.icon) + '"></i>' +
+             '<span>' + _posEsc(label) + '</span>' +
            '</button>';
   }).join('');
   html += '<button type="button" class="pay-tile pay-tile-split' +
@@ -1030,10 +1030,10 @@ window.renderFoodicsSplitFields = function () {
     var safeName = String(m.name).replace(/'/g, "\\'");
     return (
       '<div class="pay-split-row">' +
-        '<div class="pay-split-method"><i class="fas ' + m.icon + '"></i> ' + label + '</div>' +
+        '<div class="pay-split-method"><i class="fas ' + _posEsc(m.icon) + '"></i> ' + _posEsc(label) + '</div>' +
         '<input type="number" step="0.01" min="0" class="form-control pay-split-input split-input" ' +
-               'data-method="' + safeName + '" value="" placeholder="0.00" oninput="paySplitRecalc()">' +
-        '<button type="button" class="pay-split-rest" onclick="paySplitFillRest(\'' + safeName + '\')" title="املأ بالمتبقي · Fill remaining"><i class="fas fa-equals"></i></button>' +
+               'data-method="' + _posEsc(String(m.name)) + '" value="" placeholder="0.00" oninput="paySplitRecalc()">' +
+        '<button type="button" class="pay-split-rest" onclick="paySplitFillRest(\'' + _posEsc(safeName) + '\')" title="املأ بالمتبقي · Fill remaining"><i class="fas fa-equals"></i></button>' +
       '</div>'
     );
   }).join('');
@@ -2219,7 +2219,7 @@ window.renderPayButtons = function() {
     } else {
       label = isEn ? (m.Name || m.NameAR) : (m.NameAR || m.Name);
     }
-    return '<button class="pay-btn' + (m.Name === defaultMethod ? ' active' : '') + '" id="payBtn' + m.Name + '" onclick="setPayMethod(\'' + m.Name + '\')"><i class="fas ' + (m.Icon || 'fa-money-bill') + '"></i> <span>' + label + '</span></button>';
+    return '<button class="pay-btn' + (m.Name === defaultMethod ? ' active' : '') + '" id="payBtn' + _posEsc(m.Name) + '" onclick="setPayMethod(\'' + _posEsc(String(m.Name || '').replace(/'/g, "\\'")) + '\')"><i class="fas ' + _posEsc(m.Icon || 'fa-money-bill') + '"></i> <span>' + _posEsc(label) + '</span></button>';
   }).join('');
 
   // Always-on Split feature
@@ -2246,7 +2246,7 @@ window.renderSplitFields = function(total) {
     } else {
       label = isEn ? (m.Name || m.NameAR) : (m.NameAR || m.Name);
     }
-    return '<div><label>' + label + '</label><input type="number" step="0.01" class="form-control split-input" data-method="' + m.Name + '" placeholder="0.00" value="" oninput="calcSplitRemaining()"></div>';
+    return '<div><label>' + _posEsc(label) + '</label><input type="number" step="0.01" class="form-control split-input" data-method="' + _posEsc(String(m.Name)) + '" placeholder="0.00" value="" oninput="calcSplitRemaining()"></div>';
   }).join('');
   q('#splitRemaining').textContent = formatVal(total);
 };

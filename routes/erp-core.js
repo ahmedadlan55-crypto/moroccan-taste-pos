@@ -1603,6 +1603,12 @@ router.post('/waste-entries', async (req, res) => {
     const { brandId, branchId, warehouseId, costCenterId, wasteDate, reason, notes, createdBy, items } = req.body;
     if (!warehouseId) return res.json({ success: false, error: 'المستودع مطلوب' });
     if (!Array.isArray(items) || !items.length) return res.json({ success: false, error: 'أصناف الهدر مطلوبة' });
+    // v7.5 — whitelist the reason: keeps the ENUM honest on non-strict MySQL
+    // and guarantees the frontend chip-map fallback never renders raw input.
+    const VALID_WASTE_REASONS = ['expired', 'damaged', 'spill', 'prep_loss', 'customer_return', 'other'];
+    if (reason && VALID_WASTE_REASONS.indexOf(String(reason)) < 0) {
+      return res.json({ success: false, error: 'سبب هدر غير صالح — القيم المسموحة: ' + VALID_WASTE_REASONS.join(', ') });
+    }
 
     // Compute total + insert header
     let total = 0;

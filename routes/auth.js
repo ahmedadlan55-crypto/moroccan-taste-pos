@@ -277,9 +277,12 @@ router.get('/init/:username', async (req, res) => {
     //
     // v6.4.4 — Orphan items (brand_id NULL/'') with a branded twin are
     // suppressed so the user with a brand doesn't see both copies.
+    // v7.5 — COALESCE(is_deleted,0)=0 mirrors routes/menu.js:73 so a
+    //   soft-deleted item can never ride the initial cache into the grid.
     const menuQuery = userBrandId
       ? `SELECT m.* FROM menu m
            WHERE m.active = 1
+             AND COALESCE(m.is_deleted, 0) = 0
              AND (m.is_semi_finished IS NULL OR m.is_semi_finished = 0)
              AND (
                m.brand_id = ?
@@ -290,12 +293,14 @@ router.get('/init/:username', async (req, res) => {
                     WHERE m2.name = m.name
                       AND m2.brand_id = ?
                       AND m2.active = 1
+                      AND COALESCE(m2.is_deleted, 0) = 0
                  )
                )
              )
            ORDER BY m.category, m.name`
       : `SELECT m.* FROM menu m
            WHERE m.active = 1
+             AND COALESCE(m.is_deleted, 0) = 0
              AND (m.is_semi_finished IS NULL OR m.is_semi_finished = 0)
            ORDER BY m.category, m.name`;
     const menuParams = userBrandId ? [userBrandId, userBrandId] : [];

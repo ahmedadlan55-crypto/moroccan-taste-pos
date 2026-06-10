@@ -21391,7 +21391,7 @@ function _weRenderRows(items){
       '<td><b>' + dt + '</b><br><small style="color:#94a3b8;font-size:10.5px;font-family:monospace;">' + esc(w.id) + '</small></td>' +
       '<td><b>' + esc(w.branchName||'—') + '</b><br><small style="color:#64748b;font-size:11px;">' + esc(w.brandName||'—') + '</small></td>' +
       '<td>' + esc(w.warehouseName||'—') + (w.warehouseCode ? ' <small style="color:#94a3b8;">(' + esc(w.warehouseCode) + ')</small>' : '') + '</td>' +
-      '<td><span class="exp-status-chip ' + (reasonCls[rs]||'all') + '"><i class="fas ' + (reasonIcon[rs]||'fa-circle') + '"></i> ' + (reasonMap[rs] || rs) + '</span></td>' +
+      '<td><span class="exp-status-chip ' + (reasonCls[rs]||'all') + '"><i class="fas ' + (reasonIcon[rs]||'fa-circle') + '"></i> ' + (reasonMap[rs] || _woEscapeHtml(rs)) + '</span></td>' +
       '<td style="font-size:11.5px;color:#475569;">' + esc(w.costCenterName||'—') + '</td>' +
       '<td style="font-size:11.5px;">' + esc(w.createdBy||'—') + '</td>' +
       '<td class="num"><b style="color:#b91c1c;">−' + fmt(w.totalCost) + '</b></td>' +
@@ -22259,7 +22259,7 @@ function siLoad() {
     }
     var statusMap = {draft:{t:'مسودة',c:'neutral'}, approved:{t:'معتمد',c:'info'}, issued:{t:'تم الصرف',c:'warning'}, received:{t:'تم الاستلام',c:'success'}, cancelled:{t:'ملغى',c:'danger'}, reversed:{t:'مرجع',c:'pink'}};
     body.innerHTML = rows.map(function(r){
-      var s = statusMap[r.status] || {t:r.status,c:'neutral'};
+      var s = statusMap[r.status] || {t:_woEscapeHtml(r.status),c:'neutral'};
       // v5.10.40 — partial-receipt detection at the issue level. Only marks
       // 'issued' issues where SOME (not all) qty has been received.
       var qIss = Number(r.qty_issued_total   || 0);
@@ -25337,7 +25337,7 @@ function reorderLoad() {
     }
     var statusChip = { out:{cls:'expired',label:'نفد'}, low:{cls:'critical',label:'تحت الحد'}, projected:{cls:'soon',label:'متوقع نفاد'} };
     body.innerHTML = items.map(function(r){
-      var sc = statusChip[r.status] || {cls:'soon',label:r.status};
+      var sc = statusChip[r.status] || {cls:'soon',label:_woEscapeHtml(r.status)};
       return '<tr>' +
         '<td><b>' + _woEscapeHtml(r.itemName) + '</b><br><small style="color:#94a3b8;font-size:10.5px;">' + _woEscapeHtml((r.brandName||'') + ' · ' + (r.category||'')) + '</small></td>' +
         '<td>' + _woEscapeHtml(r.warehouseName||'—') + '</td>' +
@@ -25407,7 +25407,7 @@ function dosLoad() {
       'no-movement':{cls:'monitor',  label:'بدون حركة'}
     };
     body.innerHTML = items.map(function(r){
-      var z = zoneChip[r.zone] || {cls:'soon',label:r.zone};
+      var z = zoneChip[r.zone] || {cls:'soon',label:_woEscapeHtml(r.zone)};
       return '<tr>' +
         '<td><b>' + _woEscapeHtml(r.itemName) + '</b><br><small style="color:#94a3b8;font-size:10.5px;">' + _woEscapeHtml(r.category||'') + '</small></td>' +
         '<td>' + _woEscapeHtml(r.warehouseName||'—') + '</td>' +

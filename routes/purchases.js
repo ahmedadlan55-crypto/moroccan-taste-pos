@@ -1,6 +1,10 @@
 const router = require('express').Router();
 const db = require('../db/connection');
 const { recomputeInvItemStock } = require('../lib/stockRecompute');
+// v7.5 — purchase receipts finally post GL (Dr Inventory + Input VAT /
+// Cr Cash|Bank|AP by payment method). Without it every receipt left the
+// balance sheet missing both the asset increase and the liability.
+const gl = require('../lib/glPosting');
 // v7.4 — RBAC: MGR for managerial actions (PO approve / revert / delete);
 // BACKOFFICE for operational receiving (any authenticated role but cashier).
 const requireRole = require('./authMiddleware').requireRole;
@@ -50,6 +54,19 @@ router.post('/', async (req, res) => {
     const { supplierName, supplierId, items, paymentMethod, username, notes, poId, brandId, branchId } = req.body;
     const now = new Date();
     const purchaseId = 'PUR-' + Date.now();
+
+    // v7.5 — reject non-positive quantities at the door (a direct API call
+    // could otherwise persist negative/zero lines into items_json).
+    if (Array.isArray(items)) {
+      for (const it of items) {
+        if ((Number(it.qty) || 0) <= 0) {
+          return res.status(400).json({
+            success: false, code: 'qty_must_be_positive',
+            error: 'كمية غير صالحة للصنف "' + (it.name || it.itemName || '؟') + '" — يجب أن تكون أكبر من صفر'
+          });
+        }
+      }
+    }
 
     // Resolve brand/branch from supplier if not provided
     let resolvedBrandId = brandId || null;
@@ -142,13 +159,14 @@ function computeStockQty(item, inv) {
 //   1. exact match on id
 //   2. case-insensitive exact match on name
 // Returns the inv_items row or null.
-async function resolveInvItem(item) {
+async function resolveInvItem(item, conn) {
+  const q = conn || db; // v7.5 — optional conn so lookups join the caller's transaction
   if (item.id) {
-    const [byId] = await db.query('SELECT * FROM inv_items WHERE id = ?', [item.id]);
+    const [byId] = await q.query('SELECT * FROM inv_items WHERE id = ?', [item.id]);
     if (byId.length) return byId[0];
   }
   if (item.name) {
-    const [byName] = await db.query('SELECT * FROM inv_items WHERE LOWER(TRIM(name)) = LOWER(TRIM(?)) LIMIT 1', [item.name]);
+    const [byName] = await q.query('SELECT * FROM inv_items WHERE LOWER(TRIM(name)) = LOWER(TRIM(?)) LIMIT 1', [item.name]);
     if (byName.length) return byName[0];
   }
   return null;
@@ -172,192 +190,259 @@ router.post('/receive/:id', BACKOFFICE, async (req, res) => {
     // Determine target warehouse (from request, user default, or null)
     const warehouseId = reqWarehouseId || (req.user && req.user.default_warehouse_id) || null;
 
-    const [purchases] = await db.query('SELECT * FROM purchases WHERE id = ?', [id]);
-    if (!purchases.length) return res.json({ success: false, error: 'Purchase not found' });
+    // v7.5 — the ENTIRE receive is ONE transaction: stock writes, lots,
+    // movements, GL journal and the status flip commit or roll back together.
+    // `const db = conn` shadows the pool so every query below joins it.
+    // FOR UPDATE on the purchase row closes the double-receive race (two
+    // concurrent receives both passing the status check and double-stocking).
+    const out = await db.withTransaction(async (conn) => {
+      const db = conn;
 
-    const purchase = purchases[0];
-    if (purchase.status === 'received') return res.json({ success: false, error: 'Already received' });
+      const [purchases] = await db.query('SELECT * FROM purchases WHERE id = ? FOR UPDATE', [id]);
+      if (!purchases.length) throw new Error('Purchase not found');
 
-    const rawItems = JSON.parse(purchase.items_json || '[]');
-    const items = rawItems.map(normPurchaseItem);
+      const purchase = purchases[0];
+      if (purchase.status === 'received') throw new Error('Already received');
 
-    // Production: removed debug log
+      const rawItems = JSON.parse(purchase.items_json || '[]');
+      const items = rawItems.map(normPurchaseItem);
 
-    let count = 0;
-    const skipped = [];
-    const updated = [];   // verbose list of what we actually did
-    let totalVat = 0;
+      let count = 0;
+      const skipped = [];
+      const updated = [];   // verbose list of what we actually did
+      let totalVat = 0;
+      let totalNetCost = 0; // v7.5 — VAT-exclusive cost actually received (drives the GL)
 
-    for (const item of items) {
-      if (item.qty <= 0) {
-        skipped.push({ name: item.name, reason: 'qty=0' });
-        // Production: removed debug log
-        continue;
-      }
+      for (const item of items) {
+        if (item.qty <= 0) {
+          skipped.push({ name: item.name, reason: 'qty=0' });
+          continue;
+        }
 
-      // Resolve to a real inv_items row (by id first, then by name)
-      const inv = await resolveInvItem(item);
-      if (!inv) {
-        skipped.push({ name: item.name, reason: 'not found in inventory' });
-        // Production: removed debug log
-        continue;
-      }
+        // Resolve to a real inv_items row (by id first, then by name)
+        const inv = await resolveInvItem(item, db);
+        if (!inv) {
+          skipped.push({ name: item.name, reason: 'not found in inventory' });
+          continue;
+        }
 
-      // VAT handling — if prices include VAT, net cost = gross / 1.15
-      let netUnitPrice = item.unitPrice;
-      if (includesVAT && item.unitPrice > 0) {
-        netUnitPrice = item.unitPrice / 1.15;
-        totalVat += (item.unitPrice - netUnitPrice) * item.qty;
-      }
+        // VAT handling — if prices include VAT, net cost = gross / 1.15
+        let netUnitPrice = item.unitPrice;
+        if (includesVAT && item.unitPrice > 0) {
+          netUnitPrice = item.unitPrice / 1.15;
+          totalVat += (item.unitPrice - netUnitPrice) * item.qty;
+        }
 
-      // ─── UNIT CONVERSION: if ordered in big units, multiply qty × convRate ───
-      const { stockQty, usedConvRate } = computeStockQty(item, inv);
+        // ─── UNIT CONVERSION: if ordered in big units, multiply qty × convRate ───
+        const { stockQty, usedConvRate } = computeStockQty(item, inv);
 
-      // Cost per small unit (e.g. 50 SAR/carton ÷ 28 = 1.79 SAR/piece)
-      const stockBefore = Number(inv.stock) || 0;
-      const currentCost = Number(inv.cost) || 0;
-      let costPerSmallUnit = netUnitPrice;
-      if (usedConvRate > 1 && netUnitPrice > 0) {
-        costPerSmallUnit = netUnitPrice / usedConvRate;
-      }
+        // Cost per small unit (e.g. 50 SAR/carton ÷ 28 = 1.79 SAR/piece)
+        const stockBefore = Number(inv.stock) || 0;
+        const currentCost = Number(inv.cost) || 0;
+        let costPerSmallUnit = netUnitPrice;
+        if (usedConvRate > 1 && netUnitPrice > 0) {
+          costPerSmallUnit = netUnitPrice / usedConvRate;
+        }
 
-      // ─── WEIGHTED AVERAGE COST ───
-      // new_cost = (old_stock × old_cost + new_qty × new_unit_cost) / (old_stock + new_qty)
-      let newCost;
-      if (stockBefore === 0) {
-        newCost = costPerSmallUnit;
-      } else if (costPerSmallUnit > 0) {
-        newCost = ((stockBefore * currentCost) + (stockQty * costPerSmallUnit)) / (stockBefore + stockQty);
-      } else {
-        newCost = currentCost;
-      }
+        // ─── WEIGHTED AVERAGE COST ───
+        // new_cost = (old_stock × old_cost + new_qty × new_unit_cost) / (old_stock + new_qty)
+        let newCost;
+        if (stockBefore === 0) {
+          newCost = costPerSmallUnit;
+        } else if (costPerSmallUnit > 0) {
+          newCost = ((stockBefore * currentCost) + (stockQty * costPerSmallUnit)) / (stockBefore + stockQty);
+        } else {
+          newCost = currentCost;
+        }
 
-      // v5.10.19 — warehouse_stock is the source of truth. Cost (WAC) is
-      // still global on inv_items.cost; quantity becomes a recomputed
-      // SUM(warehouse_stock.qty) rollup.
-      let affectedRows;
-      if (warehouseId) {
-        const wsId = 'WS-' + Date.now() + '-' + Math.random().toString(36).substr(2, 4);
+        // v5.10.19 — warehouse_stock is the source of truth. Cost (WAC) is
+        // still global on inv_items.cost; quantity becomes a recomputed
+        // SUM(warehouse_stock.qty) rollup.
+        let affectedRows;
+        if (warehouseId) {
+          const wsId = 'WS-' + Date.now() + '-' + Math.random().toString(36).substr(2, 4);
+          await db.query(
+            'INSERT INTO warehouse_stock (id, warehouse_id, item_id, qty) VALUES (?,?,?,?) ON DUPLICATE KEY UPDATE qty = qty + ?',
+            [wsId, warehouseId, inv.id, stockQty, stockQty]
+          );
+          // Update WAC + recompute the global stock rollup
+          const [costRes] = await db.query(
+            'UPDATE inv_items SET cost = ? WHERE id = ?',
+            [newCost, inv.id]
+          );
+          affectedRows = costRes.affectedRows;
+          await recomputeInvItemStock(db, inv.id);
+        } else {
+          // Legacy fallback: no warehouse — direct global write (qty + cost).
+          const [result] = await db.query(
+            'UPDATE inv_items SET stock = stock + ?, cost = ? WHERE id = ?',
+            [stockQty, newCost, inv.id]
+          );
+          affectedRows = result.affectedRows;
+        }
+
+        // ─── PURCHASE LOT (for future FIFO) ───
+        // v7.5 — also stamp warehouse_id on the lot (expiry disposal reads it;
+        // a NULL there used to skip the stock decrement and break GL dims).
+        try {
+          await db.query(
+            'INSERT INTO purchase_lots (inv_item_id, purchase_id, received_date, qty_received, qty_remaining, unit_cost, warehouse_id) VALUES (?,?,?,?,?,?,?)',
+            [inv.id, id, now, stockQty, stockQty, costPerSmallUnit, warehouseId || null]
+          );
+        } catch (lotErr) {
+          if (lotErr && lotErr.code === 'ER_BAD_FIELD_ERROR') {
+            try {
+              await db.query(
+                'INSERT INTO purchase_lots (inv_item_id, purchase_id, received_date, qty_received, qty_remaining, unit_cost) VALUES (?,?,?,?,?,?)',
+                [inv.id, id, now, stockQty, stockQty, costPerSmallUnit]
+              );
+            } catch (lotErr2) { /* lots table absent on very old deploys */ }
+          }
+        }
+
+        if (affectedRows === 0) {
+          // The UPDATE silently affected 0 rows — the WHERE clause didn't
+          // match. This shouldn't happen because we just SELECT'd it, but
+          // log it loudly so we catch any future drift.
+          skipped.push({ name: item.name, reason: 'UPDATE affected 0 rows for id=' + inv.id });
+          continue;
+        }
+
+        // Record movement — notes links back to purchase so we can roll it
+        // back on revert. Use the resolved inv.id + inv.name so the movement
+        // points to the real inventory row even if the purchase row had a
+        // stale/missing id.
+        const movId = 'MOV-' + Date.now() + '-' + Math.random().toString(36).substr(2, 4) + '-' + count;
         await db.query(
-          'INSERT INTO warehouse_stock (id, warehouse_id, item_id, qty) VALUES (?,?,?,?) ON DUPLICATE KEY UPDATE qty = qty + ?',
-          [wsId, warehouseId, inv.id, stockQty, stockQty]
+          'INSERT INTO inventory_movements (id, movement_date, item_id, item_name, type, qty, reason, username, notes, warehouse_id) VALUES (?,?,?,?,?,?,?,?,?,?)',
+          [movId, now, inv.id, inv.name, 'in', stockQty, 'مشتريات', username || '', 'PUR: ' + id, warehouseId || null]
         );
-        // Update WAC + recompute the global stock rollup
-        const [costRes] = await db.query(
-          'UPDATE inv_items SET cost = ? WHERE id = ?',
-          [newCost, inv.id]
-        );
-        affectedRows = costRes.affectedRows;
-        await recomputeInvItemStock(db, inv.id);
-      } else {
-        // Legacy fallback: no warehouse — direct global write (qty + cost).
-        const [result] = await db.query(
-          'UPDATE inv_items SET stock = stock + ?, cost = ? WHERE id = ?',
-          [stockQty, newCost, inv.id]
-        );
-        affectedRows = result.affectedRows;
+
+        totalNetCost += stockQty * costPerSmallUnit;
+
+        updated.push({
+          invId: inv.id,
+          invName: inv.name,
+          qtyOrdered: item.qty,
+          unitOrdered: item.unit || '',
+          convRate: usedConvRate,
+          stockQty: stockQty,
+          stockBefore: stockBefore,
+          stockAfter: stockBefore + stockQty
+        });
+
+        count++;
       }
 
-      // ─── PURCHASE LOT (for future FIFO) ───
-      try {
-        await db.query(
-          'INSERT INTO purchase_lots (inv_item_id, purchase_id, received_date, qty_received, qty_remaining, unit_cost) VALUES (?,?,?,?,?,?)',
-          [inv.id, id, now, stockQty, stockQty, costPerSmallUnit]
-        );
-      } catch (lotErr) { /* Production: removed debug log */ }
-
-      var convNote = usedConvRate > 1
-        ? item.qty + ' ' + (item.unit || 'big') + ' × ' + usedConvRate + ' = ' + stockQty + ' ' + (inv.unit || 'unit')
-        : '';
-      // Production: removed debug log
-
-      if (affectedRows === 0) {
-        // The UPDATE silently affected 0 rows — the WHERE clause didn't
-        // match. This shouldn't happen because we just SELECT'd it, but
-        // log it loudly so we catch any future drift.
-        skipped.push({ name: item.name, reason: 'UPDATE affected 0 rows for id=' + inv.id });
-        continue;
+      // If we skipped every item, abort (rollback) so nothing half-applies.
+      if (count === 0) {
+        let reason = 'لم يتم تحديث المخزون — لا توجد مواد مطابقة في قاعدة بيانات المخزون.\n\n';
+        reason += 'الأصناف الموجودة في الفاتورة:\n';
+        reason += items.map(function(it) {
+          return '• ' + (it.name || '—') + ' (id=' + (it.id || 'null') + ', qty=' + it.qty + ')';
+        }).join('\n');
+        reason += '\n\nالسبب الأكثر احتمالاً: المواد مكتوبة يدوياً وليست مختارة من قائمة المخزون. تأكد من إنشاء المواد في "إدارة المخزون" أولاً، ثم اختيارها من القائمة عند إنشاء أمر الشراء أو الفاتورة.';
+        const zeroErr = new Error(reason);
+        zeroErr.debugInfo = { items: items, skipped: skipped };
+        throw zeroErr;
       }
 
-      // Record movement — notes links back to purchase so we can roll it
-      // back on revert. Use the resolved inv.id + inv.name so the movement
-      // points to the real inventory row even if the purchase row had a
-      // stale/missing id.
-      const movId = 'MOV-' + Date.now() + '-' + Math.random().toString(36).substr(2, 4) + '-' + count;
-      await db.query(
-        'INSERT INTO inventory_movements (id, movement_date, item_id, item_name, type, qty, reason, username, notes, warehouse_id) VALUES (?,?,?,?,?,?,?,?,?,?)',
-        [movId, now, inv.id, inv.name, 'in', stockQty, 'مشتريات', username || '', 'PUR: ' + id, warehouseId || null]
-      );
+      // ─── v7.5 GL: Dr INVENTORY (net) [+ Dr INPUT_VAT] / Cr Cash|Bank|AP ───
+      // Credit account routed by payment_method ('آجل' default → AP). FATAL
+      // inside the transaction; the single exemption is a deploy whose GL
+      // tables don't exist yet (postJournal reports it — never throws).
+      const _r2 = v => Math.round((Number(v) || 0) * 100) / 100;
+      const glNet = _r2(totalNetCost);
+      const glVat = _r2(totalVat);
+      if (glNet > 0.005) {
+        const pm = String(purchase.payment_method || '').toLowerCase();
+        let creditCode = gl.CORE_ACCOUNTS.AP.code;
+        if (/cash|نقد|كاش/.test(pm)) creditCode = gl.CORE_ACCOUNTS.CASH.code;
+        else if (/transfer|تحويل|بنك|bank/.test(pm)) creditCode = gl.CORE_ACCOUNTS.BANK.code;
 
-      updated.push({
-        invId: inv.id,
-        invName: inv.name,
-        qtyOrdered: item.qty,
-        unitOrdered: item.unit || '',
-        convRate: usedConvRate,
-        stockQty: stockQty,
-        stockBefore: stockBefore,
-        stockAfter: stockBefore + stockQty
-      });
+        const entries = [{
+          accountCode: gl.CORE_ACCOUNTS.INVENTORY.code, debit: glNet, credit: 0,
+          description: 'استلام مشتريات — ' + id,
+          warehouseId: warehouseId || null,
+          brandId: purchase.brand_id || null, branchId: purchase.branch_id || null
+        }];
+        if (glVat > 0) {
+          entries.push({
+            accountCode: gl.CORE_ACCOUNTS.INPUT_VAT.code, debit: glVat, credit: 0,
+            description: 'ضريبة مدخلات — ' + id,
+            brandId: purchase.brand_id || null, branchId: purchase.branch_id || null
+          });
+        }
+        entries.push({
+          accountCode: creditCode, debit: 0, credit: _r2(glNet + glVat),
+          description: 'مقابل استلام مشتريات — ' + id,
+          brandId: purchase.brand_id || null, branchId: purchase.branch_id || null
+        });
 
-      count++;
-    }
+        const post = await gl.postJournal(db, {
+          journalDate: now.toISOString().slice(0, 10),
+          description: 'استلام فاتورة شراء ' + id + (purchase.supplier_name ? ' — ' + purchase.supplier_name : ''),
+          referenceType: 'PurchaseReceipt',
+          referenceId: id,
+          entries,
+          postedBy: username || ''
+        });
+        if (!post || !post.success) {
+          const perr = (post && post.error) || 'unknown';
+          if (/doesn't exist|ER_NO_SUCH_TABLE/i.test(perr)) {
+            console.warn('[purchases receive ' + id + '] GL skipped — gl tables absent:', perr);
+          } else {
+            throw new Error('GL_POSTING_FAILED: ' + perr);
+          }
+        }
+      }
+
+      // Mark the purchase itself as received — v7.5: STAMP the warehouse so
+      // revert targets the right warehouse_stock rows (a NULL here used to
+      // make the revert fall into the legacy global path and self-erase).
+      await db.query('UPDATE purchases SET status = "received", warehouse_id = ? WHERE id = ?',
+        [warehouseId || null, id]);
+
+      // Back-propagate to the linked PO (if any)
+      if (purchase.po_id) {
+        await db.query('UPDATE purchase_orders SET status = "received" WHERE id = ?', [purchase.po_id]);
+        for (const item of items) {
+          const inv = await resolveInvItem(item, db);
+          if (inv && item.qty > 0) {
+            // Match by either item_id OR item_name on po_lines (same fallback logic)
+            await db.query(
+              'UPDATE po_lines SET received_qty = received_qty + ? WHERE po_id = ? AND (item_id = ? OR (item_id IS NULL AND LOWER(TRIM(item_name)) = LOWER(TRIM(?))))',
+              [item.qty, purchase.po_id, inv.id, item.name]
+            );
+          }
+        }
+      }
+
+      return { count, skipped, updated, totalVat };
+    });
 
     // ─── CASCADE: recompute menu costs for any affected products ───
-    if (updated.length) {
+    // v7.5 — AFTER the commit: the helper reads through the pool (a different
+    // connection), so inside the transaction it would see pre-receive costs.
+    if (out.updated.length) {
       try {
         // v7.1 — cascade: re-derive semi-finished costs from their BOM first,
         // then finished menu costs, so a raw-material price change flows through.
         const { recomputeSemiThenFinished } = require('./pricing-utils');
-        await recomputeSemiThenFinished(updated.map(u => u.invId));
+        await recomputeSemiThenFinished(out.updated.map(u => u.invId));
       } catch (cascadeErr) { /* Production: removed debug log */ }
-    }
-
-    // Mark the purchase itself as received
-    await db.query('UPDATE purchases SET status = "received" WHERE id = ?', [id]);
-
-    // Back-propagate to the linked PO (if any)
-    if (purchase.po_id) {
-      await db.query('UPDATE purchase_orders SET status = "received" WHERE id = ?', [purchase.po_id]);
-      for (const item of items) {
-        const inv = await resolveInvItem(item);
-        if (inv && item.qty > 0) {
-          // Match by either item_id OR item_name on po_lines (same fallback logic)
-          await db.query(
-            'UPDATE po_lines SET received_qty = received_qty + ? WHERE po_id = ? AND (item_id = ? OR (item_id IS NULL AND LOWER(TRIM(item_name)) = LOWER(TRIM(?))))',
-            [item.qty, purchase.po_id, inv.id, item.name]
-          );
-        }
-      }
-    }
-
-    // Production: removed debug log
-
-    // If we skipped every item, return an error so the frontend shows it.
-    if (count === 0) {
-      let reason = 'لم يتم تحديث المخزون — لا توجد مواد مطابقة في قاعدة بيانات المخزون.\n\n';
-      reason += 'الأصناف الموجودة في الفاتورة:\n';
-      reason += items.map(function(it) {
-        return '• ' + (it.name || '—') + ' (id=' + (it.id || 'null') + ', qty=' + it.qty + ')';
-      }).join('\n');
-      reason += '\n\nالسبب الأكثر احتمالاً: المواد مكتوبة يدوياً وليست مختارة من قائمة المخزون. تأكد من إنشاء المواد في "إدارة المخزون" أولاً، ثم اختيارها من القائمة عند إنشاء أمر الشراء أو الفاتورة.';
-      return res.json({
-        success: false,
-        error: reason,
-        debug: { items: items, skipped: skipped }
-      });
     }
 
     res.json({
       success: true,
-      count,
-      skipped: skipped.length,
-      skippedDetails: skipped,
-      updated: updated,
-      vatAmount: Number(totalVat.toFixed(2))
+      count: out.count,
+      skipped: out.skipped.length,
+      skippedDetails: out.skipped,
+      updated: out.updated,
+      vatAmount: Number(out.totalVat.toFixed(2))
     });
   } catch (e) {
-    res.json({ success: false, error: e.message });
+    res.json({ success: false, error: e.message, debug: e.debugInfo || undefined });
   }
 });
 
@@ -367,90 +452,131 @@ router.post('/receive/:id', BACKOFFICE, async (req, res) => {
 router.post('/receive/:id/revert', MGR, async (req, res) => {
   try {
     const { id } = req.params;
-    const { username } = req.body;
 
-    const [purchases] = await db.query('SELECT * FROM purchases WHERE id = ?', [id]);
-    if (!purchases.length) return res.json({ success: false, error: 'Purchase not found' });
+    // v7.5 — atomic revert: stock rollback, movement/lot cleanup, GL reversal
+    // and the status flip commit or roll back together (FOR UPDATE serializes
+    // a double-revert).
+    const out = await db.withTransaction(async (conn) => {
+      const db = conn;
 
-    const purchase = purchases[0];
-    if (purchase.status !== 'received') {
-      return res.json({ success: false, error: 'هذه الفاتورة ليست مستلمة — لا يوجد ما يُلغى' });
-    }
+      const [purchases] = await db.query('SELECT * FROM purchases WHERE id = ? FOR UPDATE', [id]);
+      if (!purchases.length) throw new Error('Purchase not found');
 
-    const rawItems = JSON.parse(purchase.items_json || '[]');
-    const items = rawItems.map(normPurchaseItem);
-
-    // Pre-resolve items to their real inv rows + compute the converted qty
-    // (same logic as the receive endpoint — if the purchase was in big units,
-    // we need to subtract qty × convRate, not just qty).
-    const resolved = [];
-    for (const item of items) {
-      if (item.qty <= 0) continue;
-      const inv = await resolveInvItem(item);
-      if (!inv) continue;
-      const { stockQty } = computeStockQty(item, inv);
-      resolved.push({ item, inv, stockQty });
-    }
-
-    // Safety check — refuse if rolling back would make any item's stock go negative
-    for (const r of resolved) {
-      const currentStock = Number(r.inv.stock) || 0;
-      if (currentStock < r.stockQty) {
-        return res.json({
-          success: false,
-          error: 'لا يمكن التراجع: المخزون الحالي للمادة "' + r.inv.name + '" (' + currentStock + ') أقل من الكمية المستلمة (' + r.stockQty + '). ربما استُهلكت بعض الكمية في المبيعات.'
-        });
+      const purchase = purchases[0];
+      if (purchase.status !== 'received') {
+        throw new Error('هذه الفاتورة ليست مستلمة — لا يوجد ما يُلغى');
       }
-    }
 
-    // v5.10.19 — Roll back stock at the warehouse level first (the warehouse
-    // the purchase landed in), then recompute the global inv_items.stock.
-    // This keeps other warehouses' balances untouched if a purchase received
-    // in W1 is reverted; only W1's quantity is decreased.
-    const purchaseWh = purchase.warehouse_id || null;
-    for (const r of resolved) {
-      if (purchaseWh) {
-        await db.query(
-          // v7.1 — allow negative: if a received purchase is reverted after some of
-          // its stock was already consumed, the balance must reflect the real deficit.
-          'UPDATE warehouse_stock SET qty = qty - ? WHERE warehouse_id = ? AND item_id = ?',
-          [r.stockQty, purchaseWh, r.inv.id]
-        );
-        await recomputeInvItemStock(db, r.inv.id);
-      } else {
-        // Legacy purchase with no warehouse_id stamped — fall back to global.
-        await db.query('UPDATE inv_items SET stock = stock - ? WHERE id = ?', [r.stockQty, r.inv.id]);
+      const rawItems = JSON.parse(purchase.items_json || '[]');
+      const items = rawItems.map(normPurchaseItem);
+
+      // Pre-resolve items to their real inv rows + compute the converted qty
+      // (same logic as the receive endpoint — if the purchase was in big units,
+      // we need to subtract qty × convRate, not just qty).
+      const resolved = [];
+      for (const item of items) {
+        if (item.qty <= 0) continue;
+        const inv = await resolveInvItem(item, db);
+        if (!inv) continue;
+        const { stockQty } = computeStockQty(item, inv);
+        resolved.push({ item, inv, stockQty });
       }
-    }
 
-    // Delete the movements created by the receive
-    await db.query(
-      'DELETE FROM inventory_movements WHERE notes = ? AND type = ? AND reason = ?',
-      ['PUR: ' + id, 'in', 'مشتريات']
-    );
+      // Safety check — refuse if rolling back would make any item's stock go negative
+      for (const r of resolved) {
+        const currentStock = Number(r.inv.stock) || 0;
+        if (currentStock < r.stockQty) {
+          throw new Error('لا يمكن التراجع: المخزون الحالي للمادة "' + r.inv.name + '" (' + currentStock + ') أقل من الكمية المستلمة (' + r.stockQty + '). ربما استُهلكت بعض الكمية في المبيعات.');
+        }
+      }
 
-    // Delete purchase lots created by this receive
-    try { await db.query('DELETE FROM purchase_lots WHERE purchase_id = ?', [id]); } catch(e) {}
+      // v7.5 — resolve the warehouse PER ITEM from the receive movements
+      // (they carry warehouse_id). This fixes BOTH legacy purchases whose
+      // warehouse_id column was never stamped AND keeps working for new ones.
+      // Falling back to the legacy global path while the receive actually
+      // wrote warehouse_stock made the revert SELF-ERASE: the next
+      // recomputeInvItemStock (rollup = SUM(warehouse_stock)) restored the
+      // quantity that was just subtracted from inv_items.stock.
+      const movWh = {};
+      try {
+        const [movRows] = await db.query(
+          "SELECT item_id, warehouse_id FROM inventory_movements WHERE notes = ? AND type = 'in' AND reason = 'مشتريات'",
+          ['PUR: ' + id]);
+        movRows.forEach(m => { if (m.warehouse_id && movWh[m.item_id] == null) movWh[m.item_id] = m.warehouse_id; });
+      } catch (_) {}
 
-    // Cascade: recompute affected menu costs after stock rollback (semi → finished)
+      // v5.10.19 — Roll back stock at the warehouse level first (the warehouse
+      // the purchase landed in), then recompute the global inv_items.stock.
+      const purchaseWh = purchase.warehouse_id || null;
+      for (const r of resolved) {
+        const wh = movWh[r.inv.id] || purchaseWh || null;
+        if (wh) {
+          await db.query(
+            // v7.1 — allow negative: if a received purchase is reverted after some of
+            // its stock was already consumed, the balance must reflect the real deficit.
+            'UPDATE warehouse_stock SET qty = qty - ? WHERE warehouse_id = ? AND item_id = ?',
+            [r.stockQty, wh, r.inv.id]
+          );
+          await recomputeInvItemStock(db, r.inv.id);
+        } else {
+          // Truly legacy receive with no warehouse trace anywhere — global.
+          await db.query('UPDATE inv_items SET stock = stock - ? WHERE id = ?', [r.stockQty, r.inv.id]);
+        }
+      }
+
+      // Delete the movements created by the receive
+      await db.query(
+        'DELETE FROM inventory_movements WHERE notes = ? AND type = ? AND reason = ?',
+        ['PUR: ' + id, 'in', 'مشتريات']
+      );
+
+      // Delete purchase lots created by this receive
+      try { await db.query('DELETE FROM purchase_lots WHERE purchase_id = ?', [id]); } catch(e) {}
+
+      // v7.5 — reverse the receipt GL exactly like the sales void does:
+      // restore account balances, then drop the journal (so valuation mirrors
+      // what was actually posted, immune to WAC drift since the receipt).
+      try {
+        const [journals] = await db.query(
+          "SELECT id FROM gl_journals WHERE reference_type = 'PurchaseReceipt' AND reference_id = ?", [id]);
+        for (const j of journals) {
+          const [jEntries] = await db.query('SELECT * FROM gl_entries WHERE journal_id = ?', [j.id]);
+          for (const e2 of jEntries) {
+            if (e2.account_id) {
+              const reverseAmount = (Number(e2.credit) || 0) - (Number(e2.debit) || 0);
+              await db.query('UPDATE gl_accounts SET balance = balance + ? WHERE id = ?',
+                [reverseAmount, e2.account_id]);
+            }
+          }
+          await db.query('DELETE FROM gl_entries WHERE journal_id = ?', [j.id]);
+          await db.query('DELETE FROM gl_journals WHERE id = ?', [j.id]);
+        }
+      } catch (glErr) {
+        if (!glErr || glErr.code !== 'ER_NO_SUCH_TABLE') throw glErr;
+      }
+
+      // Flip the purchase back to draft (clear the warehouse stamp with it)
+      await db.query('UPDATE purchases SET status = "draft", warehouse_id = NULL WHERE id = ?', [id]);
+
+      // Back-propagate to linked PO: unset received, return to approved, zero received_qty
+      if (purchase.po_id) {
+        await db.query('UPDATE purchase_orders SET status = "approved" WHERE id = ?', [purchase.po_id]);
+        for (const r of resolved) {
+          await db.query(
+            'UPDATE po_lines SET received_qty = GREATEST(0, received_qty - ?) WHERE po_id = ? AND (item_id = ? OR (item_id IS NULL AND LOWER(TRIM(item_name)) = LOWER(TRIM(?))))',
+            [r.item.qty, purchase.po_id, r.inv.id, r.item.name]
+          );
+        }
+      }
+
+      return { invIds: resolved.map(r => r.inv.id) };
+    });
+
+    // Cascade AFTER commit (helper reads through the pool — see receive)
     try {
       const { recomputeSemiThenFinished } = require('./pricing-utils');
-      await recomputeSemiThenFinished(resolved.map(r => r.inv.id));
+      await recomputeSemiThenFinished(out.invIds);
     } catch(e) {}
-
-    // Flip the purchase back to draft
-    await db.query('UPDATE purchases SET status = "draft" WHERE id = ?', [id]);
-
-    // Back-propagate to linked PO: unset received, return to approved, zero received_qty
-    if (purchase.po_id) {
-      await db.query('UPDATE purchase_orders SET status = "approved" WHERE id = ?', [purchase.po_id]);
-      for (const r of resolved) {
-        await db.query(
-          'UPDATE po_lines SET received_qty = GREATEST(0, received_qty - ?) WHERE po_id = ? AND (item_id = ? OR (item_id IS NULL AND LOWER(TRIM(item_name)) = LOWER(TRIM(?))))',
-          [r.item.qty, purchase.po_id, r.inv.id, r.item.name]
-        );
-      }
-    }
 
     res.json({ success: true });
   } catch (e) {
@@ -539,6 +665,16 @@ router.post('/orders', async (req, res) => {
     const expectedDate = req.body.expectedDate;
     // Support both `lines` (legacy) and `items` (ERP UI)
     const lines = req.body.lines || req.body.items || [];
+
+    // v7.5 — reject non-positive quantities (they feed purchases via approve)
+    for (const line of lines) {
+      if ((Number(line.qty) || 0) <= 0) {
+        return res.status(400).json({
+          success: false, code: 'qty_must_be_positive',
+          error: 'كمية غير صالحة للصنف "' + (line.itemName || line.name || '؟') + '" — يجب أن تكون أكبر من صفر'
+        });
+      }
+    }
 
     const poId = 'PO-' + Date.now();
 

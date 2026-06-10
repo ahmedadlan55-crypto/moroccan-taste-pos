@@ -15,7 +15,7 @@
  * clients pick up the fresh shell on next load.
  */
 
-const CACHE_VERSION = 'mt-pos-v55-xss-hardening';
+const CACHE_VERSION = 'mt-pos-v56-watchdog-oq-shell';
 const CACHE_NAME = CACHE_VERSION;
 
 // App shell — pre-cached on install so the first launch works offline
@@ -36,6 +36,11 @@ const APP_SHELL = [
   '/shared/api-bridge.js',
   // v6.19.0 — Canonical receipt template, also loaded by admin shell.
   '/shared/receipt-template.js',
+  // v7.5 — index.html loads both of these; without precaching, a version
+  // bump while a terminal is offline silently drops EN translation +
+  // device detection until the next online load.
+  '/shared/dynamic-i18n.js',
+  '/shared/device-info.js',
   'https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css'
 ];
 

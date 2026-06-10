@@ -935,7 +935,19 @@ function _posOQRead() {
   try { return JSON.parse(localStorage.getItem(_POS_OQ_KEY) || '[]') || []; } catch (e) { return []; }
 }
 function _posOQWrite(arr) {
-  try { localStorage.setItem(_POS_OQ_KEY, JSON.stringify(arr || [])); } catch (e) {}
+  try {
+    localStorage.setItem(_POS_OQ_KEY, JSON.stringify(arr || []));
+  } catch (e) {
+    // v7.5 — a full localStorage used to be swallowed silently while the
+    // cashier was told "saved offline": the sale was actually LOST. Surface
+    // it and RETHROW quota errors so the enqueue caller falls back to its
+    // "sale did NOT go through — retry" alert instead of lying.
+    if (e && (e.name === 'QuotaExceededError' || e.code === 22)) {
+      try { console.error('[POS OQ] localStorage quota exceeded:', e); } catch (_) {}
+      try { glassToast('⚠ ذاكرة الجهاز ممتلئة — تعذّر حفظ البيع أوفلاين! حرّر مساحة أو زامِن فوراً · Device storage full — offline save failed', true); } catch (_) {}
+      throw e;
+    }
+  }
 }
 function _posOQCount() { return _posOQRead().length; }
 window._posOQCount = _posOQCount;
@@ -2358,7 +2370,10 @@ window.doCheckout = function() {
   // V5.7.15 — service fee removed from cashier UI (user request).
   //   Order total is subtotal − line discounts − invoice discount.
   var serviceFee = 0;
-  var totalFinal = afterDiscount;
+  // v7.5 — send the WHOLE-SAR figure the customer is actually charged (cash
+  // flow + server both work in whole SAR; sending the unrounded value left a
+  // silent ±1 SAR drift window inside the server's mismatch tolerance).
+  var totalFinal = Math.round(afterDiscount);
   var splitDetails = null;
   if (payMethod === 'Split') {
     splitDetails = {};
@@ -2378,7 +2393,7 @@ window.doCheckout = function() {
         { danger: true }
       );
     }
-    totalFinal = afterDiscount;
+    totalFinal = Math.round(afterDiscount);
   }
 
   // ─── v7.3 — Cash tendered → change due ───
@@ -2598,6 +2613,25 @@ window.doCheckout = function() {
         glassAlert(t('connectionFailed'), (err && err.message) || t('connectionFailedMsg'), { danger: true });
       }
     }).saveOrder(order, state.user, state.activeShiftId);
+
+    // v7.5 — watchdog: a hung fetch (connection accepted, no response, no
+    // rejection) fires NEITHER handler, leaving the PAY button locked
+    // forever. After 120s release the lock so the cashier can retry — the
+    // retry is safe: the same clientOrderId is deduped server-side. The key
+    // check ensures we never release a NEWER sale's lock by mistake.
+    var _wdKey = order && order.clientOrderId;
+    setTimeout(function () {
+      if (state._checkoutInFlight && state._clientOrderId === _wdKey) {
+        state._checkoutInFlight = false;
+        window._setCheckoutBusy(false);
+        try { loader(false); } catch (_) {}
+        try {
+          glassAlert(t('connectionFailed'),
+            'انتهت مهلة الاتصال (120 ثانية) — أعد المحاولة بأمان؛ إن كان البيع وصل للخادم فلن يتكرر · Request timed out; retry safely (duplicate-protected).',
+            { danger: true });
+        } catch (_) {}
+      }
+    }, 120000);
   };
 
   // V5.7.15 — service fee removed; always send directly

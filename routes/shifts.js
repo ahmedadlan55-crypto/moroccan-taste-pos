@@ -166,17 +166,12 @@ async function aggregateShiftPayments(shiftId) {
 // Open shift
 router.post('/open', async (req, res) => {
   try {
-    const { username, geoLat, geoLng, geoAddress, deviceInfo, device } = req.body;
+    // v7.5 — identity from the VERIFIED token first (body kept as a legacy
+    // fallback only) so a request can't open a shift under another cashier.
+    const username = (req.user && req.user.username) || req.body.username;
+    const { geoLat, geoLng, geoAddress, deviceInfo, device } = req.body;
+    if (!username) return res.status(400).json({ success: false, error: 'username مطلوب' });
     const ip = req.ip || req.headers['x-forwarded-for'] || req.connection.remoteAddress || '';
-
-    // Check if user already has an open shift
-    const [existing] = await db.query('SELECT id FROM shifts WHERE username = ? AND status = "OPEN"', [username]);
-    if (existing.length) {
-      return res.json({ success: true, shiftId: existing[0].id });
-    }
-
-    const shiftId = 'SH-' + Date.now();
-    const now = new Date();
 
     // v5.12.2 — accept structured device { brand, model, os, ua, mobile }
     // sent by /shared/device-info.js, fall back to legacy raw deviceInfo
@@ -184,21 +179,37 @@ router.post('/open', async (req, res) => {
     const dev = device && typeof device === 'object' ? device : {};
     const rawUA = (dev.ua || deviceInfo || '').toString();
 
-    await db.query(
-      'INSERT INTO shifts (id, username, start_time, status, geo_lat, geo_lng, geo_address, device_info, device_brand, device_model, device_os, ip_address) ' +
-      'VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
-      [
-        shiftId, username, now, 'OPEN',
-        geoLat || null, geoLng || null, geoAddress || '',
-        rawUA,
-        (dev.brand || '').toString().slice(0, 50),
-        (dev.model || '').toString().slice(0, 120),
-        (dev.os    || '').toString().slice(0, 80),
-        ip
-      ]
-    );
+    // v7.5 — TOCTOU fix: the old check-then-insert let two concurrent
+    // requests (double-tap / network retry) create two OPEN shifts for one
+    // cashier. Lock the user row as a per-user mutex (users.username is
+    // UNIQUE NOT NULL and every caller is authenticated), then re-check +
+    // insert inside ONE transaction. MySQL has no partial unique indexes,
+    // so this row lock is the serialization point.
+    const out = await db.withTransaction(async (conn) => {
+      await conn.query('SELECT id FROM users WHERE username = ? FOR UPDATE', [username]);
+      const [existing] = await conn.query(
+        'SELECT id FROM shifts WHERE username = ? AND status = "OPEN" LIMIT 1', [username]);
+      if (existing.length) return { shiftId: existing[0].id };
 
-    res.json({ success: true, shiftId });
+      const shiftId = 'SH-' + Date.now();
+      const now = new Date();
+      await conn.query(
+        'INSERT INTO shifts (id, username, start_time, status, geo_lat, geo_lng, geo_address, device_info, device_brand, device_model, device_os, ip_address) ' +
+        'VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+        [
+          shiftId, username, now, 'OPEN',
+          geoLat || null, geoLng || null, geoAddress || '',
+          rawUA,
+          (dev.brand || '').toString().slice(0, 50),
+          (dev.model || '').toString().slice(0, 120),
+          (dev.os    || '').toString().slice(0, 80),
+          ip
+        ]
+      );
+      return { shiftId };
+    });
+
+    res.json({ success: true, shiftId: out.shiftId });
   } catch (e) {
     res.json({ success: false, error: e.message });
   }
@@ -211,7 +222,12 @@ router.post('/close', async (req, res) => {
     const now = new Date();
 
     // Get theoretical totals from sales
-    const [sales] = await db.query('SELECT payment_method, total_final, kita_service_fee FROM sales WHERE shift_id = ?', [shiftId]);
+    // v7.5 — exclude voided / credit-note sales (same filter as
+    // aggregateShiftPayments) so a void doesn't inflate the expected cash
+    // and leave the shift permanently "short".
+    const [sales] = await db.query(
+      "SELECT payment_method, total_final, kita_service_fee FROM sales WHERE shift_id = ? AND (zatca_type IS NULL OR zatca_type NOT IN ('cancellation','credit_note'))",
+      [shiftId]);
 
     let theoreticalCash = 0;
     let theoreticalCard = 0;
@@ -245,16 +261,28 @@ router.post('/close', async (req, res) => {
     const diffCard = (Number(actualCard) || 0) - theoreticalCard;
     const diffKita = (Number(actualKita) || 0) - theoreticalKita;
 
-    await db.query(
-      `UPDATE shifts SET end_time = ?, status = 'closed',
-       total_theoretical = ?, theoretical_cash = ?, theoretical_card = ?, theoretical_kita = ?,
-       actual_cash = ?, actual_card = ?, actual_kita = ?,
-       diff_cash = ?, diff_card = ?, diff_kita = ?
-       WHERE id = ?`,
-      [now, totalTheoretical, theoreticalCash, theoreticalCard, theoreticalKita,
-       actualCash || 0, actualCard || 0, actualKita || 0,
-       diffCash, diffCard, diffKita, shiftId]
-    );
+    // v7.5 — atomic close: lock the row, refuse to close a non-OPEN shift
+    // (a network-retry double-close used to silently overwrite the actuals).
+    await db.withTransaction(async (conn) => {
+      const [rows] = await conn.query('SELECT status FROM shifts WHERE id = ? FOR UPDATE', [shiftId]);
+      if (!rows.length) {
+        const e = new Error('الوردية غير موجودة · Shift not found'); e.status = 404; throw e;
+      }
+      if (String(rows[0].status).toUpperCase() !== 'OPEN') {
+        const e = new Error('الوردية مغلقة مسبقاً · Shift already closed');
+        e.status = 400; e.code = 'shift_already_closed'; throw e;
+      }
+      await conn.query(
+        `UPDATE shifts SET end_time = ?, status = 'closed',
+         total_theoretical = ?, theoretical_cash = ?, theoretical_card = ?, theoretical_kita = ?,
+         actual_cash = ?, actual_card = ?, actual_kita = ?,
+         diff_cash = ?, diff_card = ?, diff_kita = ?
+         WHERE id = ?`,
+        [now, totalTheoretical, theoreticalCash, theoreticalCard, theoreticalKita,
+         actualCash || 0, actualCard || 0, actualKita || 0,
+         diffCash, diffCard, diffKita, shiftId]
+      );
+    });
 
     res.json({
       success: true,
@@ -262,7 +290,7 @@ router.post('/close', async (req, res) => {
       diffCash, diffCard, diffKita, totalTheoretical
     });
   } catch (e) {
-    res.json({ success: false, error: e.message });
+    res.status(e.status || 500).json({ success: false, error: e.message, code: e.code || undefined });
   }
 });
 
@@ -355,19 +383,33 @@ router.post('/close-v3', async (req, res) => {
       variance: (actualsById[m.id] || 0) - (expectedById[m.id] || 0)
     }));
 
-    // ── 6. Persist denominations ──
-    await db.query('DELETE FROM shift_close_denominations WHERE shift_id = ?', [shiftId]);
-    for (let i = 0; i < denomList.length; i++) {
-      const d = denomList[i];
-      const cnt = Number(d.count) || 0;
-      if (cnt > 0) {
-        const did = 'DEN-' + shiftId + '-' + i;
-        await db.query(
-          'INSERT INTO shift_close_denominations (id, shift_id, denomination, kind, count) VALUES (?,?,?,?,?)',
-          [did, shiftId, Number(d.value) || 0, d.kind || 'note', cnt]
-        );
+    // ── 6+8. Persist denominations + close the shift ATOMICALLY ──
+    // v7.5 — one transaction with a status guard: a re-POST after close
+    // (network retry / stale client) used to silently overwrite the saved
+    // reconciliation; now it gets 400 shift_already_closed and the original
+    // close survives intact.
+    await db.withTransaction(async (conn) => {
+      const [stRows] = await conn.query('SELECT status FROM shifts WHERE id = ? FOR UPDATE', [shiftId]);
+      if (!stRows.length) {
+        const e = new Error('الوردية غير موجودة · Shift not found'); e.status = 404; throw e;
       }
-    }
+      if (String(stRows[0].status).toUpperCase() !== 'OPEN') {
+        const e = new Error('الوردية مغلقة مسبقاً · Shift already closed');
+        e.status = 400; e.code = 'shift_already_closed'; throw e;
+      }
+
+      await conn.query('DELETE FROM shift_close_denominations WHERE shift_id = ?', [shiftId]);
+      for (let i = 0; i < denomList.length; i++) {
+        const d = denomList[i];
+        const cnt = Number(d.count) || 0;
+        if (cnt > 0) {
+          const did = 'DEN-' + shiftId + '-' + i;
+          await conn.query(
+            'INSERT INTO shift_close_denominations (id, shift_id, denomination, kind, count) VALUES (?,?,?,?,?)',
+            [did, shiftId, Number(d.value) || 0, d.kind || 'note', cnt]
+          );
+        }
+      }
 
     // ── 7. Compose payment_totals_json ──
     //   Stored shape (V5.7.17+ canonical):  { expectedById, actualsById, breakdown }
@@ -415,27 +457,28 @@ router.post('/close-v3', async (req, res) => {
     });
 
     // ── 8. Update the shift row (now writes ALL legacy per-group columns) ──
-    await db.query(
-      `UPDATE shifts SET
-         end_time = ?, status = 'closed',
-         opening_float = ?, expected_total = ?, actual_total = ?, variance_total = ?,
-         payment_totals_json = ?, denominations_json = ?, cashier_notes = ?,
-         total_theoretical = ?,
-         theoretical_cash = ?, theoretical_card = ?, theoretical_kita = ?,
-         actual_cash = ?,      actual_card = ?,      actual_kita = ?,
-         diff_cash = ?,        diff_card = ?,        diff_kita = ?
-       WHERE id = ?`,
-      [
-        now,
-        Number(openingFloat || 0), expectedTotal, actualTotal, variance,
-        paymentTotalsJson, JSON.stringify(denomList), notes || '',
-        expectedTotal,
-        cashExpected, cardExpected, kitaExpected,
-        cashActual,   cardActual,   kitaActual,
-        diffCash,     diffCard,     diffKita,
-        shiftId
-      ]
-    );
+      await conn.query(
+        `UPDATE shifts SET
+           end_time = ?, status = 'closed',
+           opening_float = ?, expected_total = ?, actual_total = ?, variance_total = ?,
+           payment_totals_json = ?, denominations_json = ?, cashier_notes = ?,
+           total_theoretical = ?,
+           theoretical_cash = ?, theoretical_card = ?, theoretical_kita = ?,
+           actual_cash = ?,      actual_card = ?,      actual_kita = ?,
+           diff_cash = ?,        diff_card = ?,        diff_kita = ?
+         WHERE id = ?`,
+        [
+          now,
+          Number(openingFloat || 0), expectedTotal, actualTotal, variance,
+          paymentTotalsJson, JSON.stringify(denomList), notes || '',
+          expectedTotal,
+          cashExpected, cardExpected, kitaExpected,
+          cashActual,   cardActual,   kitaActual,
+          diffCash,     diffCard,     diffKita,
+          shiftId
+        ]
+      );
+    });
 
     res.json({
       success: true,
@@ -449,7 +492,7 @@ router.post('/close-v3', async (req, res) => {
       methods: agg.methods
     });
   } catch (e) {
-    res.json({ success: false, error: e.message });
+    res.status(e.status || 500).json({ success: false, error: e.message, code: e.code || undefined });
   }
 });
 
@@ -463,7 +506,11 @@ router.get('/closing-data-v3/:shiftId', async (req, res) => {
     const [methods] = await db.query(
       "SELECT id, name, name_ar, icon, color, group_type FROM payment_methods WHERE is_active = 1 AND show_in_shift_close != 0 ORDER BY sort_order, name"
     );
-    const [sales] = await db.query('SELECT payment_method, total_final FROM sales WHERE shift_id = ?', [shiftId]);
+    // v7.5 — exclude voided / credit-note sales so the reconciliation grid
+    // matches what aggregateShiftPayments computes at close time.
+    const [sales] = await db.query(
+      "SELECT payment_method, total_final FROM sales WHERE shift_id = ? AND (zatca_type IS NULL OR zatca_type NOT IN ('cancellation','credit_note'))",
+      [shiftId]);
 
     function norm(s) {
       return String(s || '').toLowerCase()

@@ -597,6 +597,15 @@ router.post('/', async (req, res) => {
       mmErr.code = 'total_mismatch';
       throw mmErr;
     }
+    // v7.5 — audit trail for sub-tolerance drift (0.5–1 SAR is accepted, but a
+    // recurring pattern means client/server math is drifting — catch it early).
+    if (Number.isFinite(clientTotalFinal) && clientTotalFinal > 0) {
+      const _tfDelta = Math.abs(invTotal - clientTotalFinal);
+      if (_tfDelta >= 0.5 && _tfDelta <= 1) {
+        console.warn('[sale ' + orderId + '] total drift within tolerance: client=' +
+          clientTotalFinal + ' server=' + invTotal + ' (delta ' + _tfDelta + ')');
+      }
+    }
 
     // ─── v7.2 CRITICAL (#2): reconcile taxSubtotals to the POST-DISCOUNT
     // figures before persisting. taxSubtotals was built PRE-discount, so
@@ -662,7 +671,11 @@ router.post('/', async (req, res) => {
         "SELECT setting_value FROM settings WHERE setting_key = 'zatca_chain_lock' FOR UPDATE"
       );
     } catch (lockErr) {
-      console.warn('[sale ' + orderId + '] zatca chain lock unavailable:', lockErr.message);
+      // v7.5 — FAIL-SAFE: proceeding without the chain lock can fork the
+      // ZATCA hash chain under concurrency (two genesis invoices with the
+      // same previousHash). Abort the sale (rollback) instead of continuing.
+      console.error('[sale ' + orderId + '] zatca chain lock FAILED — aborting sale:', lockErr.message);
+      throw lockErr;
     }
 
     let zatcaStamp = {};
@@ -1075,11 +1088,25 @@ router.post('/', async (req, res) => {
           }
           // Movement log
           const movId = 'MOV-SEMI-' + Date.now() + '-' + Math.random().toString(36).substr(2, 4);
-          await db.query(
-            'INSERT INTO inventory_movements (id, movement_date, item_id, item_name, type, qty, reason, username, notes, warehouse_id) VALUES (?,?,?,?,?,?,?,?,?,?)',
-            [movId, now, sc.semiId, semiNameMap[sc.semiId] || sc.semiId, 'out', consumed,
-             'مبيعات (نصف مصنع - legacy)', username, orderId + ' / ' + item.name, warehouseId || null]
-          );
+          // v7.5 — carry reference_type/reference_id like the raw-recipe path so
+          // every deduction is traceable to its invoice; graceful fallback for
+          // older schemas without the columns (mirrors the pattern below).
+          try {
+            await db.query(
+              'INSERT INTO inventory_movements (id, movement_date, item_id, item_name, type, qty, reason, username, notes, warehouse_id, reference_type, reference_id) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)',
+              [movId, now, sc.semiId, semiNameMap[sc.semiId] || sc.semiId, 'out', consumed,
+               'مبيعات (نصف مصنع - legacy)', username, orderId + ' / ' + item.name, warehouseId || null,
+               'sale', (invoiceNumber || orderId)]
+            );
+          } catch (refErr) {
+            if (refErr && refErr.code === 'ER_BAD_FIELD_ERROR') {
+              await db.query(
+                'INSERT INTO inventory_movements (id, movement_date, item_id, item_name, type, qty, reason, username, notes, warehouse_id) VALUES (?,?,?,?,?,?,?,?,?,?)',
+                [movId, now, sc.semiId, semiNameMap[sc.semiId] || sc.semiId, 'out', consumed,
+                 'مبيعات (نصف مصنع - legacy)', username, orderId + ' / ' + item.name, warehouseId || null]
+              );
+            } else { throw refErr; }
+          }
           semiDeductions.push({
             menuId: item.id, menuName: item.name,
             semiId: sc.semiId, semiName: semiNameMap[sc.semiId] || sc.semiId,
@@ -1198,7 +1225,11 @@ router.post('/', async (req, res) => {
     // ═══════════════════════════════════════════════════════════════
     let cogsWarning = null;
     {
-      if (invTotal > 0) {
+      // v7.5 — this block now runs for EVERY sale. A zero-total (100% comp /
+      // staff-meal) sale still relieves physical stock above, so the
+      // COGS/Inventory legs must post regardless of invTotal; only the
+      // payment/revenue/VAT legs stay gated on invTotal > 0 below.
+      {
         // Compute total COGS from deductions × avg_cost
         const invIds = [...new Set(recipesApplied.flatMap(r => r.deductions.map(d => d.invId)))];
         let costMap = {};
@@ -1280,61 +1311,74 @@ router.post('/', async (req, res) => {
         // splitDetails object (unambiguous) rather than re-parsing payStr,
         // whose '/' separator collides with method names like "شبكة/مدى".
         // Falls back to the string parser for non-split / legacy payloads.
-        let paymentDebits;
-        if (paymentMethod === 'Split' && splitDetails && typeof splitDetails === 'object') {
-          paymentDebits = _parseSplitFromDetails(splitDetails, pmGlMap);
-          if (!paymentDebits.length) {
-            // Defensive: structured object had no positive legs — fall back
-            // so we never post a sale with zero payment debits.
+        const entries = [];
+        if (invTotal > 0) {
+          let paymentDebits;
+          if (paymentMethod === 'Split' && splitDetails && typeof splitDetails === 'object') {
+            paymentDebits = _parseSplitFromDetails(splitDetails, pmGlMap);
+            if (!paymentDebits.length) {
+              // Defensive: structured object had no positive legs — fall back
+              // so we never post a sale with zero payment debits.
+              paymentDebits = _parseSplitPaymentsV3(payStr, invTotal, pmGlMap);
+            }
+          } else {
             paymentDebits = _parseSplitPaymentsV3(payStr, invTotal, pmGlMap);
           }
-        } else {
-          paymentDebits = _parseSplitPaymentsV3(payStr, invTotal, pmGlMap);
-        }
 
-        // v6.25.1 — Guarantee the payment debits sum EXACTLY to invTotal.
-        // Split payments are sent from the POS with per-leg amounts that
-        // can drift a few halalas from the backend-recomputed whole total
-        // (each leg was Math.round()-ed independently).  Absorb any
-        // residual into the largest leg so the journal's debit side ===
-        // credit side (net + vat = invTotal).
-        if (paymentDebits.length) {
-          let _pdSum = paymentDebits.reduce((s, p) => s + (Number(p.amount) || 0), 0);
-          let _pdDiff = Math.round((invTotal - _pdSum) * 100) / 100;
-          if (Math.abs(_pdDiff) >= 0.01) {
-            let _big = 0;
-            for (let _i = 1; _i < paymentDebits.length; _i++) {
-              if (paymentDebits[_i].amount > paymentDebits[_big].amount) _big = _i;
+          // v7.5 — Guarantee the payment debits sum EXACTLY to invTotal AFTER
+          // per-leg rounding. The previous order (absorb residual, THEN round
+          // each leg independently while building entries) could re-introduce
+          // a >0.01 imbalance and hard-fail the journal — e.g. 6 even legs on
+          // 100 SAR → 6 × 16.67 = 100.02 → GL rejects → the whole sale rolls
+          // back. Work in integer cents: round legs first, absorb the residual
+          // into the largest leg, then hard-assert the final sum.
+          if (paymentDebits.length) {
+            paymentDebits.forEach(pd => { pd.amount = Math.round((Number(pd.amount) || 0) * 100) / 100; });
+            const _totC = Math.round(invTotal * 100);
+            const _sumC = paymentDebits.reduce((s, p) => s + Math.round(p.amount * 100), 0);
+            const _diffC = _totC - _sumC;
+            if (_diffC !== 0) {
+              let _big = 0;
+              for (let _i = 1; _i < paymentDebits.length; _i++) {
+                if (paymentDebits[_i].amount > paymentDebits[_big].amount) _big = _i;
+              }
+              paymentDebits[_big].amount = (Math.round(paymentDebits[_big].amount * 100) + _diffC) / 100;
             }
-            paymentDebits[_big].amount = Math.round((paymentDebits[_big].amount + _pdDiff) * 100) / 100;
+            const _finC = paymentDebits.reduce((s, p) => s + Math.round(p.amount * 100), 0);
+            if (_finC !== _totC) {
+              const imbErr = new Error(
+                'دفع مقسّم غير متوازن: مجموع الأطراف (' + (_finC / 100) +
+                ') لا يساوي إجمالي الفاتورة (' + invTotal +
+                ') · Split legs do not sum to the invoice total');
+              imbErr.status = 400; imbErr.code = 'split_imbalance'; throw imbErr;
+            }
           }
-        }
 
-        const entries = [];
-        // Debit(s) — by payment method (one per split, GL routed dynamically)
-        paymentDebits.forEach(pd => {
+          // Debit(s) — by payment method (one per split, GL routed dynamically)
+          paymentDebits.forEach(pd => {
+            entries.push({
+              accountCode: pd.code,
+              debit: pd.amount, credit: 0,
+              description: 'Sale receipt — ' + orderId + (resolvedChannelName ? ' (' + resolvedChannelName + ')' : ''),
+              branchId: branchId || null, brandId: brandId || null
+            });
+          });
+          // Credit Sales Revenue (net) — GROSS revenue (post-discount net) at minimum
           entries.push({
-            accountCode: pd.code,
-            debit: Math.round(pd.amount * 100) / 100, credit: 0,
-            description: 'Sale receipt — ' + orderId + (resolvedChannelName ? ' (' + resolvedChannelName + ')' : ''),
+            accountCode: saleGl.revenue,
+            debit: 0, credit: net,
+            description: 'Sales revenue — ' + orderId + (resolvedChannelName ? ' (' + resolvedChannelName + ')' : ''),
             branchId: branchId || null, brandId: brandId || null
           });
-        });
-        // Credit Sales Revenue (net) — GROSS revenue (post-discount net) at minimum
-        entries.push({
-          accountCode: saleGl.revenue,
-          debit: 0, credit: net,
-          description: 'Sales revenue — ' + orderId + (resolvedChannelName ? ' (' + resolvedChannelName + ')' : ''),
-          branchId: branchId || null, brandId: brandId || null
-        });
-        // Credit Output VAT (if any)
-        if (vat > 0) {
-          entries.push({
-            accountCode: saleGl.outputVat,
-            debit: 0, credit: vat,
-            description: 'Output VAT — ' + orderId,
-            branchId: branchId || null, brandId: brandId || null
-          });
+          // Credit Output VAT (if any)
+          if (vat > 0) {
+            entries.push({
+              accountCode: saleGl.outputVat,
+              debit: 0, credit: vat,
+              description: 'Output VAT — ' + orderId,
+              branchId: branchId || null, brandId: brandId || null
+            });
+          }
         }
 
         // v6.0.1 Wave A.5 — Discount GL entries REMOVED (Net method per IFRS 15 §70).
@@ -1364,18 +1408,22 @@ router.post('/', async (req, res) => {
           });
         }
 
-        const post = await gl.postJournal(db, {
-          journalDate: now.toISOString().slice(0, 10),
-          description: 'Sale ' + orderId + ' (' + (payStr || '—') + ')',
-          referenceType: 'Sale',
-          referenceId: orderId,
-          entries,
-          postedBy: username || ''
-        });
-        // v6.0.1 Wave A.2 — GL posting failure is FATAL. Throws to roll back
-        // the entire transaction (sale row + inventory + ZATCA stamp).
-        if (!post.success) {
-          throw new Error('GL_POSTING_FAILED: ' + (post.error || 'unknown'));
+        // v7.5 — entries may legitimately be empty (comp sale whose components
+        // all carry zero cost): skip posting rather than fail on all-zero lines.
+        if (entries.length) {
+          const post = await gl.postJournal(db, {
+            journalDate: now.toISOString().slice(0, 10),
+            description: (invTotal > 0 ? 'Sale ' : 'Sale (comp — zero total) ') + orderId + ' (' + (payStr || '—') + ')',
+            referenceType: 'Sale',
+            referenceId: orderId,
+            entries,
+            postedBy: username || ''
+          });
+          // v6.0.1 Wave A.2 — GL posting failure is FATAL. Throws to roll back
+          // the entire transaction (sale row + inventory + ZATCA stamp).
+          if (!post.success) {
+            throw new Error('GL_POSTING_FAILED: ' + (post.error || 'unknown'));
+          }
         }
 
         // v7.1 — Channel commission + service fee as a SEPARATE journal.
@@ -1796,7 +1844,12 @@ async function _reverseSaleEffects(conn, orderId, username, opts) {
       await c.query('DELETE FROM gl_journals WHERE id = ?', [j.id]);
       reversedGl = true;
     }
-  } catch (_) { /* gl tables missing on stale deploy; non-fatal */ }
+  } catch (glErr) {
+    // v7.5 — ONLY a missing-GL-tables deploy is non-fatal. Anything else
+    // (lock timeout, constraint failure) must abort the void: otherwise it
+    // commits with stock restored but the GL journal left standing.
+    if (!glErr || glErr.code !== 'ER_NO_SUCH_TABLE') throw glErr;
+  }
 
   // 5. Optionally hard-delete the sale row + lines
   let deletedSale = false;
@@ -1814,6 +1867,10 @@ async function _reverseSaleEffects(conn, orderId, username, opts) {
 // valid admin/manager approver's credentials, verified server-side here so the
 // gate can never be bypassed from the client. Resolves silently when allowed,
 // or throws a 403 (the route's try/catch returns it as a clear client error).
+// v7.5 — DUMMY hash computed once at module load: bcrypt.compare always runs
+// (against this pad when the approver doesn't exist) so response timing can't
+// be used to enumerate manager usernames.
+const _APPROVAL_DUMMY_HASH = bcrypt.hashSync('approval-dummy-timing-pad', 12);
 async function _requireManagerApproval(req) {
   const PRIVILEGED = ['admin', 'manager'];
   const actorRole = String((req.user && req.user.role) || '').toLowerCase();
@@ -1833,14 +1890,15 @@ async function _requireManagerApproval(req) {
   }
   const mgr = rows && rows[0];
   const mgrRole = mgr ? String(mgr.role || '').toLowerCase() : '';
-  if (!mgr || PRIVILEGED.indexOf(mgrRole) === -1) {
-    const err = new Error('المعتمِد غير موجود أو لا يملك صلاحية الاعتماد · Approver is not a manager/admin');
-    err.status = 403; err.code = 'approval_invalid'; throw err;
-  }
+  // v7.5 — constant-time: ALWAYS run bcrypt.compare (against the dummy pad
+  // when the user is missing), judge role + password AFTER, and return one
+  // generic error so neither timing nor wording leaks which check failed.
   let okPw = false;
-  try { okPw = await bcrypt.compare(String(approverPassword), mgr.password || ''); } catch (e) { okPw = false; }
-  if (!okPw) {
-    const err = new Error('كلمة مرور المدير غير صحيحة · Invalid manager password');
+  try {
+    okPw = await bcrypt.compare(String(approverPassword), (mgr && mgr.password) || _APPROVAL_DUMMY_HASH);
+  } catch (e) { okPw = false; }
+  if (!mgr || PRIVILEGED.indexOf(mgrRole) === -1 || !okPw) {
+    const err = new Error('بيانات اعتماد المدير غير صحيحة · Invalid manager approval credentials');
     err.status = 403; err.code = 'approval_invalid'; throw err;
   }
   return mgr.username; // approved — return the approver for audit if needed

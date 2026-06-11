@@ -29274,6 +29274,7 @@ function _bmRender() {
   var typeFlt = (document.getElementById('bmType')||{}).value || '';
   var catFlt = (document.getElementById('bmCategory')||{}).value || '';
   var stFlt = (document.getElementById('bmStatus')||{}).value || '';
+  var recipeFlt = (document.getElementById('bmRecipe')||{}).value || '';
   var _bmNorm = function(v) {
     return String(v == null ? '' : v).toLowerCase()
       .replace(/ـ/g, '')
@@ -29296,6 +29297,8 @@ function _bmRender() {
     if (typeFlt === 'semi' && !m.isSemiFinished) return false;
     if (catFlt && (m.category||'') !== catFlt) return false;
     if (stFlt !== '' && ((m.active?'1':'0') !== stFlt)) return false;
+    if (recipeFlt === '1' && !m.bomId) return false;
+    if (recipeFlt === '0' && m.bomId) return false;
     return true;
   });
 

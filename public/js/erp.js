@@ -29429,6 +29429,10 @@ function _bmRender() {
           : '<button class="wo-btn wo-btn-sm" style="background:#fff;color:#7c3aed;font-weight:800;border:1.5px dashed #c4b5fd;" onclick="erpOpenRecipeEditor(\''+ m.id +'\')" title="إنشاء وصفة جديدة (شاشة كاملة)"><i class="fas fa-mortar-pestle"></i> + أضف وصفة</button> '
         ) +
         (hasRecipe ? '<button class="wo-btn wo-btn-sm" style="background:#fee2e2;color:#991b1b;" onclick="erpDeleteMenuRecipe(\''+ m.id +'\',\''+_v3EscapeHtml(m.name).replace(/\'/g,"\\'")+'\')" title="حذف الوصفة"><i class="fas fa-trash-can"></i></button> ' : '') +
+        // "اجعله عرض" — convert this product into a combo/offer in place. Hidden
+        // for semi-finished items (not sellable). Combos take the early-return
+        // branch above, so they never reach here.
+        (m.isSemiFinished ? '' : '<button class="wo-btn wo-btn-sm" style="background:#ede9fe;color:#6d28d9;border:1.5px solid #ddd6fe;font-weight:800;" onclick="erpConvertToCombo(\''+ m.id +'\')" title="حوّل هذا المنتج إلى عرض"><i class="fas fa-gift"></i> اجعله عرض</button> ') +
         '<button class="wo-btn wo-btn-sm wo-btn-secondary" onclick="erpEditBrandMenuItem(\''+ m.id +'\')" title="تعديل المنتج"><i class="fas fa-edit"></i></button> ' +
         '<button class="wo-btn wo-btn-sm wo-btn-danger" onclick="erpDeleteBrandMenuItem(\''+ m.id +'\')" title="حذف المنتج"><i class="fas fa-trash"></i></button>' +
       '</td>' +
@@ -30819,10 +30823,30 @@ window.erpOpenComboBuilder = function(comboId) {
   }
 };
 
+// Convert an EXISTING product (from the menu list) into an offer in place. The
+// builder opens pre-seeded with the product's name/price/category; on save it
+// flips is_combo=1 and writes the chosen makeup (POST /combos/convert/:id).
+window.erpConvertToCombo = function(menuId) {
+  if (!window._bmCurrentBrand) { _v3Toast('اختر براند أولاً', true); return; }
+  var m = (window._bmItemsCache || []).find(function(x){ return String(x.id) === String(menuId); });
+  if (!m) { _v3Toast('المنتج غير موجود', true); return; }
+  if (m.isCombo) { return window.erpOpenComboBuilder(menuId); } // already an offer → edit
+  var pool = _cbBuildPool().filter(function(p){ return String(p.id) !== String(menuId); }); // exclude self
+  if (!pool.length) { _v3Toast('لا توجد منتجات أخرى في هذا البراند لتكوين خيارات العرض — أضف منتجات أولاً', true); return; }
+  window._cb = {
+    editingId: menuId, convertMode: true,
+    name: m.name || '', nameEn: m.nameEn || '', category: m.category || 'عروض',
+    price: Number(m.price) || 0, active: m.active !== false,
+    fixed: [], groups: [{ name: 'اختر الصنف', minSelect: 1, maxSelect: 1, options: [] }],
+    products: pool
+  };
+  _cbOpenModal();
+};
+
 function _cbOpenModal() {
   WoModal.open({
     icon: 'fa-gift', iconColor: '#8b5cf6',
-    title: window._cb.editingId ? 'تعديل العرض' : 'عرض جديد',
+    title: window._cb.convertMode ? 'تحويل منتج إلى عرض' : (window._cb.editingId ? 'تعديل العرض' : 'عرض جديد'),
     subtitle: 'مكوّن ثابت + مجموعات اختيار — يُخصم من المخزون حسب وصفة كل صنف مختار',
     body: '<div id="cbBuilderBody"></div>',
     footer:
@@ -30842,6 +30866,12 @@ function _cbRender() {
   if (!host || !window._cb) return;
   var c = window._cb;
   var h = '';
+  if (c.convertMode) {
+    h += '<div style="background:#fef3c7;border:1.5px solid #fcd34d;color:#92400e;border-radius:12px;padding:11px 14px;margin-bottom:16px;font-size:13px;line-height:1.7;">' +
+      '<i class="fas fa-triangle-exclamation" style="margin-inline-end:6px;"></i>' +
+      'سيتحوّل «<strong>' + _v3EscapeHtml(c.name || '') + '</strong>» إلى عرض ويُدرَج في قسم العروض. لن يُباع كصنف مفرد بعد الآن، ويُخصم المخزون حسب وصفات المكوّنات المختارة بدل وصفته الأصلية.' +
+    '</div>';
+  }
   h += '<div style="display:grid;grid-template-columns:2fr 2fr 1fr;gap:12px;margin-bottom:14px;">';
   h += _cbField('اسم العرض', '<input id="cbName" class="wo-input" placeholder="أي سندوتش مع عصير" value="'+_v3EscapeHtml(c.name)+'">');
   h += _cbField('الاسم بالإنجليزية', '<input id="cbNameEn" class="wo-input" dir="ltr" placeholder="Any sandwich + juice" value="'+_v3EscapeHtml(c.nameEn)+'">');
@@ -30972,16 +31002,23 @@ window.cbSaveCombo = function() {
   };
   var btn = document.getElementById('cbSaveBtn');
   if (btn) { btn.disabled = true; btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> جارٍ الحفظ...'; }
-  var editing = c.editingId;
-  callAPI(editing ? 'PUT' : 'POST', editing ? '/menu/combos/'+encodeURIComponent(editing) : '/menu/combos', payload, function(r){
+  // Dispatch: convert (existing product → offer) · edit · create-new.
+  var method, url, isConvert = !!c.convertMode;
+  if (isConvert)        { method = 'POST'; url = '/menu/combos/convert/' + encodeURIComponent(c.editingId); }
+  else if (c.editingId) { method = 'PUT';  url = '/menu/combos/' + encodeURIComponent(c.editingId); }
+  else                  { method = 'POST'; url = '/menu/combos'; }
+  callAPI(method, url, payload, function(r){
     if (r && r.success) {
-      _v3Toast('تم حفظ العرض ✓');
+      _v3Toast(isConvert ? 'تم تحويل المنتج إلى عرض ✓' : 'تم حفظ العرض ✓');
       window._cb = null;
       WoModal.close();
-      erpLoadCombos();
+      // After a convert the user is on the brand-menu list → refresh it so the
+      // row shows its new "عرض" badge. Otherwise refresh the combos list.
+      if (isConvert && typeof erpLoadBrandMenu === 'function') erpLoadBrandMenu();
+      else erpLoadCombos();
     } else {
       if (btn) { btn.disabled = false; btn.innerHTML = '<i class="fas fa-save"></i> حفظ العرض'; }
-      _v3Toast((r && r.error) || 'فشل حفظ العرض', true);
+      _v3Toast((r && r.error) || (isConvert ? 'فشل تحويل المنتج' : 'فشل حفظ العرض'), true);
     }
   });
 };

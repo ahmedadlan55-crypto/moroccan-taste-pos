@@ -1118,4 +1118,43 @@ router.delete('/combos/:id', verifyToken, MGR, async (req, res) => {
   } catch (e) { res.json({ success: false, error: e.message }); }
 });
 
+// POST /api/menu/combos/convert/:id — turn an EXISTING normal product into a
+// combo (is_combo=1) in place, then write its groups. The is_combo flag flips
+// only here (atomically with the groups), so there is never a "flagged but
+// empty" combo that would sell with zero deduction. Reuses the same validation
+// + write helpers as POST/PUT /combos.
+router.post('/combos/convert/:id', verifyToken, MGR, async (req, res) => {
+  try {
+    const id = req.params.id;
+    const b = req.body || {};
+    const [rows] = await db.query(
+      'SELECT id, COALESCE(is_combo,0) AS is_combo, COALESCE(is_semi_finished,0) AS is_semi_finished, COALESCE(is_deleted,0) AS is_deleted FROM menu WHERE id = ?',
+      [id]);
+    if (!rows.length) return res.status(404).json({ success: false, error: 'المنتج غير موجود' });
+    const row = rows[0];
+    if (Number(row.is_combo) === 1) return res.status(400).json({ success: false, error: 'هذا المنتج عرض بالفعل — استخدم تعديل العرض' });
+    if (Number(row.is_semi_finished) === 1) return res.status(400).json({ success: false, error: 'لا يمكن تحويل منتج نصف-مصنّع إلى عرض' });
+    if (Number(row.is_deleted) === 1) return res.status(400).json({ success: false, error: 'المنتج محذوف' });
+    // Nesting guard: a product that is itself a choice/fixed item inside ANOTHER
+    // combo must not become a combo (would create a combo-inside-combo at sale).
+    const [used] = await db.query('SELECT 1 FROM combo_group_items WHERE menu_item_id = ? LIMIT 1', [id]);
+    if (used.length) return res.status(400).json({ success: false, error: 'هذا المنتج مستخدَم كخيار في عرض آخر؛ أزِله منه أولاً ثم حوّله' });
+
+    const v = await _validateCombo(b);
+    if (!v.ok) return res.status(400).json({ success: false, error: v.error, items: v.items });
+    // A combo must not contain itself.
+    const refsSelf = (b.groups || []).some(g => (g.items || []).some(it => it && String(it.menuItemId) === String(id)));
+    if (refsSelf) return res.status(400).json({ success: false, error: 'لا يمكن أن يحتوي العرض على نفسه' });
+
+    const cost = await _computeComboCost(b.groups);
+    let sql = 'UPDATE menu SET is_combo=1, name=?, name_en=?, price=?, category=?, cost=?, active=?';
+    const params = [b.name, b.nameEn || null, Number(b.price) || 0, b.category || 'عروض', cost, b.active !== false];
+    if (typeof b.taxInclusive !== 'undefined') { sql += ', is_tax_inclusive=?'; params.push(b.taxInclusive ? 1 : 0); }
+    sql += ' WHERE id=?'; params.push(id);
+    await db.query(sql, params);
+    await _writeComboGroups(id, b.groups);
+    res.json({ success: true, id, cost, converted: true });
+  } catch (e) { res.json({ success: false, error: e.message }); }
+});
+
 module.exports = router;

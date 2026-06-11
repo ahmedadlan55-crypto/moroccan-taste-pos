@@ -827,96 +827,236 @@ function _foodicsActiveMethods() {
   return FOODICS_PAY_METHODS.slice();
 }
 
-window.renderFoodicsPayTiles = function () {
-  var host = q('#payTilesGrid');
-  if (!host) return;
-  var current = q('#posPayMethod') ? q('#posPayMethod').value : 'Cash';
+// ═══════════════════════════════════════════════════════════════════
+// v8.0 — UNIFIED TENDER FLOW (world-class, Square/Foodics-style)
+// ──────────────────────────────────────────────────────────────────
+// One screen merges what used to be two disconnected panels ("Split"
+// and "Cash tendered → change"). The cashier sees an Amount Due that
+// shrinks as they add TENDERS. Each tender = a method + the amount the
+// customer hands over via it. Only CASH may exceed the remaining due —
+// the overage becomes change. Non-cash is capped at the remaining.
+//   state._tenders = [{ name, ar, en, icon, isCash, given }]
+//   given  = what the customer hands via this method
+//   applied (derived) = the bill portion this tender settles (→ splitDetails)
+//   change (derived)  = Σ(cash given − cash applied)
+// The bill portions always sum to the whole-SAR invoice total when settled,
+// satisfying the backend's integer-cents split assertion. Backward
+// compatible: doCheckout still emits paymentMethod / splitDetails /
+// cashTendered / changeDue exactly as before.
+// ═══════════════════════════════════════════════════════════════════
+
+// Cash detection — prefer the configured group_type, fall back to the name.
+function _tenderGroupType(name) {
+  var pm = (state.paymentMethods || []);
+  var hit = pm.filter(function (m) {
+    return String(m.Name || m.name || '').toLowerCase() === String(name || '').toLowerCase();
+  })[0];
+  return hit ? String(hit.GroupType || hit.groupType || hit.group_type || '').toLowerCase() : '';
+}
+function _tenderIsCash(name) {
+  var gt = _tenderGroupType(name);
+  if (gt) return gt === 'cash';
+  var n = String(name || '').toLowerCase();
+  return n === 'cash' || n.indexOf('كاش') >= 0 || n.indexOf('نقد') >= 0;
+}
+
+// Single source of truth — pure recompute. Sequential by tender order so
+// each tender applies against the running remaining (exactly how POS tills
+// behave). remaining never goes negative (cash overage routes to change).
+window._tenderDerive = function () {
+  var total = Math.round((typeof _foodicsCartTotal === 'function' ? _foodicsCartTotal() : 0) || 0);
+  var remaining = total, change = 0, cashHanded = 0;
+  var legs = [];
+  (state._tenders || []).forEach(function (tn) {
+    var given = Math.round((Number(tn.given) || 0) * 100) / 100;
+    var applied = given > remaining ? (remaining > 0 ? remaining : 0) : given;
+    if (applied < 0) applied = 0;
+    var legChange = tn.isCash ? Math.round((given - applied) * 100) / 100 : 0;
+    if (legChange < 0) legChange = 0;
+    remaining = Math.round((remaining - applied) * 100) / 100;
+    change += legChange;
+    if (tn.isCash) cashHanded += given;
+    legs.push({ name: tn.name, isCash: !!tn.isCash, given: given, applied: applied, change: legChange });
+  });
+  change = Math.round(change * 100) / 100;
+  return {
+    total: total,
+    remaining: remaining < 0 ? 0 : remaining,
+    settled: remaining < 0.005,
+    change: change > 0 ? change : 0,
+    cashTendered: Math.round(cashHanded * 100) / 100,
+    legs: legs
+  };
+};
+
+// Max a tender at index `idx` may APPLY = remaining after the tenders before it.
+window._tenderMaxFor = function (idx) {
+  var remaining = Math.round((typeof _foodicsCartTotal === 'function' ? _foodicsCartTotal() : 0) || 0);
+  for (var i = 0; i < idx; i++) {
+    var tn = state._tenders[i]; if (!tn) continue;
+    var given = Math.round((Number(tn.given) || 0) * 100) / 100;
+    var applied = Math.min(given, remaining); if (applied < 0) applied = 0;
+    remaining = Math.round((remaining - applied) * 100) / 100;
+  }
+  return remaining < 0 ? 0 : remaining;
+};
+
+// Keep #posPayMethod canonical: 'Split' when ≥2 tenders, else the single
+// method (or 'Cash' default). setPayMethod recomputes the cart so Kita
+// pricing stays coherent; only called when the primary string changes.
+window._tenderSyncPrimary = function () {
+  var tn = state._tenders || [];
+  var primary = tn.length === 0 ? 'Cash' : (tn.length === 1 ? tn[0].name : 'Split');
+  var el = q('#posPayMethod');
+  if (el && el.value !== primary && typeof setPayMethod === 'function') setPayMethod(primary);
+};
+
+// Method tiles — each ADDS a tender (no separate "Split" tile; splitting
+// is implicit once a second tender is added).
+window._tenderMethodPicker = function () {
+  var host = q('#payTilesGrid'); if (!host) return;
   var tiles = _foodicsActiveMethods();
-  var html = tiles.map(function (m) {
-    var on = m.name === current ? ' is-active' : '';
+  host.innerHTML = tiles.map(function (m) {
     var label = (m.ar && m.en && m.ar !== m.en) ? (m.ar + ' · ' + m.en) : (m.ar || m.en);
-    return '<button type="button" class="pay-tile' + on + '" onclick="setFoodicsPay(\'' + _posEsc(String(m.name).replace(/'/g, "\\'")) + '\')">' +
+    return '<button type="button" class="pay-tile" onclick="_tenderAddMethod(\'' + _posEsc(String(m.name).replace(/'/g, "\\'")) + '\')">' +
              '<i class="fas ' + _posEsc(m.icon) + '"></i>' +
              '<span>' + _posEsc(label) + '</span>' +
            '</button>';
   }).join('');
-  html += '<button type="button" class="pay-tile pay-tile-split' +
-          (current === 'Split' ? ' is-active' : '') +
-          '" onclick="setFoodicsPay(\'Split\')">' +
-            '<i class="fas fa-divide"></i>' +
-            '<span>تَجزئة · Split</span>' +
-          '</button>';
-  host.innerHTML = html;
 };
 
-window.setFoodicsPay = function (name) {
-  // Drives the existing hidden #posPayMethod field used by doCheckout.
-  if (typeof setPayMethod === 'function') setPayMethod(name);
-  renderFoodicsPayTiles();
-  var panel = q('#paySplitFoodics');
-  if (panel) panel.classList.toggle('hidden', name !== 'Split');
-  if (name === 'Split') renderFoodicsSplitFields();
-  // v7.3 — Cash tendered → change panel: show for Cash, recompute; when
-  // switching AWAY from Cash, clear any leftover insufficient-cash disable
-  // so the confirm button isn't stuck disabled.
-  var cashPanel = q('#payCashFoodics');
-  if (cashPanel) cashPanel.classList.toggle('hidden', name !== 'Cash');
-  if (name === 'Cash') {
-    window._payCashRenderQuick();
-    window._payCashRecalc();
+window._tenderAddMethod = function (name) {
+  if (!state._tenders) state._tenders = [];
+  // Already present → focus its amount instead of duplicating.
+  for (var i = 0; i < state._tenders.length; i++) {
+    if (state._tenders[i].name === name) { return window._tenderFocus(i); }
+  }
+  var meta = _foodicsActiveMethods().filter(function (m) { return m.name === name; })[0] ||
+             { name: name, ar: name, en: name, icon: _foodicsPayIcon({ name: name }) };
+  var d = window._tenderDerive();
+  var remaining = d.remaining > 0 ? d.remaining : 0;
+  state._tenders.push({
+    name: meta.name, ar: meta.ar, en: meta.en, icon: meta.icon,
+    isCash: _tenderIsCash(meta.name),
+    given: remaining   // default to settle the rest (exact); cashier can raise cash for change
+  });
+  state._keypadIdx = state._tenders.length - 1;
+  state._keypadBuf = '';
+  window._tenderSyncPrimary();
+  window._tenderRender();
+};
+
+window._tenderFocus = function (idx) {
+  state._keypadIdx = idx;
+  state._keypadBuf = '';
+  window._tenderRender();
+};
+
+window._tenderRemove = function (idx) {
+  if (!state._tenders) return;
+  state._tenders.splice(idx, 1);
+  if (state._keypadIdx === idx) state._keypadIdx = state._tenders.length ? state._tenders.length - 1 : null;
+  else if (state._keypadIdx != null && state._keypadIdx > idx) state._keypadIdx--;
+  state._keypadBuf = '';
+  window._tenderSyncPrimary();
+  window._tenderRender();
+};
+
+// Set a tender's `given`. Non-cash is clamped to what it can apply
+// (cannot overpay a card); cash may exceed → change.
+window._tenderSetGiven = function (idx, val) {
+  var tn = state._tenders[idx]; if (!tn) return;
+  var v = Math.max(0, Math.round((Number(val) || 0) * 100) / 100);
+  if (!tn.isCash) {
+    var max = window._tenderMaxFor(idx);
+    if (v > max) v = max;
+  }
+  tn.given = v;
+  window._tenderSyncPrimary();
+  window._tenderRender();
+};
+
+// On-screen numeric keypad — drives the focused tender's `given`.
+window._tenderKey = function (ch) {
+  if (state._keypadIdx == null || !state._tenders[state._keypadIdx]) return;
+  var buf = state._keypadBuf || '';
+  if (ch === 'back') {
+    buf = buf.slice(0, -1);
+  } else if (ch === '.') {
+    if (buf.indexOf('.') < 0) buf = (buf === '' ? '0.' : buf + '.');
   } else {
-    var cb = document.querySelector('.pay-confirm-btn'); if (cb) cb.disabled = false;
+    var parts = buf.split('.');
+    if (parts[1] && parts[1].length >= 2) return; // max 2 decimals
+    buf = buf + ch;
   }
-  _payNotesUpdate();
+  state._keypadBuf = buf;
+  window._tenderSetGiven(state._keypadIdx, buf === '' ? 0 : (Number(buf) || 0));
+};
+window._tenderQuick = function (val) {
+  if (state._keypadIdx == null) return;
+  state._keypadBuf = String(val);
+  window._tenderSetGiven(state._keypadIdx, Number(val) || 0);
+};
+window._tenderExact = function () {
+  if (state._keypadIdx == null) return;
+  var max = window._tenderMaxFor(state._keypadIdx);
+  state._keypadBuf = String(max);
+  window._tenderSetGiven(state._keypadIdx, max);
 };
 
-// v7.3 — Cash tendered → change due. Optional but always available: when the
-// cashier enters the amount received we compute + display the change and block
-// confirmation on an underpayment; left blank, it's treated as exact payment.
-window._payCashWholeTotal = function () {
-  var t = (typeof _foodicsCartTotal === 'function') ? _foodicsCartTotal() : 0;
-  return Math.round(Number(t) || 0);
-};
-window._payCashRenderQuick = function () {
-  var host = q('#payCashQuick'); if (!host) return;
-  var total = window._payCashWholeTotal();
-  var presets = [{ label: 'مضبوط · Exact', val: total }];
-  [50, 100, 200, 500].forEach(function (d) { if (d > total) presets.push({ label: String(d), val: d }); });
-  host.innerHTML = presets.map(function (p) {
-    return '<button type="button" onclick="_payCashQuick(' + p.val + ')" ' +
-      'style="flex:1 1 70px;min-width:64px;padding:9px 6px;border:1.5px solid rgba(124,58,237,.25);' +
-      'border-radius:10px;background:#fff;font-weight:800;font-size:13px;color:#5b21b6;cursor:pointer;">' +
-      _posEsc(p.label) + '</button>';
-  }).join('');
-};
-window._payCashQuick = function (val) {
-  var el = q('#payCashTendered'); if (!el) return;
-  el.value = String(val);
-  window._payCashRecalc();
-};
-window._payCashRecalc = function () {
-  var el = q('#payCashTendered');
-  var changeEl = q('#payCashChange');
-  var confirmBtn = document.querySelector('.pay-confirm-btn');
+// Repaint Amount Due + tender list + change + confirm-enabled. The keypad
+// itself is static HTML; we only flag idle and highlight the focused row.
+window._tenderRender = function () {
+  var d = window._tenderDerive();
   var cur = (state.settings && state.settings.currency) || 'ر.س';
-  var total = window._payCashWholeTotal();
-  var raw = el ? String(el.value).trim() : '';
-  if (raw === '' || !(Number(raw) > 0)) {
-    // No amount entered → treat as exact payment (non-blocking).
-    state._cashTendered = 0; state._cashChange = 0;
-    if (changeEl) { changeEl.textContent = '0.00 ' + cur; changeEl.style.color = '#16a34a'; }
-    if (confirmBtn) confirmBtn.disabled = false;
-    return;
+
+  var dueEl = q('#payTenderRemaining');
+  if (dueEl) {
+    dueEl.textContent = (d.remaining > 0 ? d.remaining : 0).toFixed(2) + ' ' + cur;
+    dueEl.style.color = d.settled ? '#16a34a' : '#b45309';
   }
-  var tendered = Number(raw);
-  var change = Math.round((tendered - total) * 100) / 100;
-  state._cashTendered = tendered;
-  state._cashChange = change > 0 ? change : 0;
-  if (changeEl) {
-    changeEl.textContent = change.toFixed(2) + ' ' + cur;
-    changeEl.style.color = change < 0 ? '#dc2626' : '#16a34a';
+
+  var host = q('#payTenderList');
+  if (host) {
+    if (!state._tenders || !state._tenders.length) {
+      host.innerHTML = '<div class="pay-tender-empty">اختر طريقة دفع لإضافتها · Tap a method to add a payment</div>';
+    } else {
+      host.innerHTML = state._tenders.map(function (tn, i) {
+        var label = (tn.ar && tn.en && tn.ar !== tn.en) ? (tn.ar + ' · ' + tn.en) : (tn.ar || tn.en || tn.name);
+        var leg = d.legs[i] || {};
+        var focused = state._keypadIdx === i ? ' is-focused' : '';
+        var changeNote = (tn.isCash && leg.change > 0)
+          ? '<span class="pay-tender-legchange">باقٍ · change ' + leg.change.toFixed(2) + '</span>' : '';
+        return '<div class="pay-split-row pay-tender-row' + focused + '">' +
+            '<div class="pay-split-method"><i class="fas ' + _posEsc(tn.icon) + '"></i> ' + _posEsc(label) + '</div>' +
+            '<button type="button" class="pay-tender-amount' + focused + '" onclick="_tenderFocus(' + i + ')">' +
+               (Number(tn.given) || 0).toFixed(2) + changeNote +
+            '</button>' +
+            '<button type="button" class="pay-split-rest pay-tender-remove" onclick="_tenderRemove(' + i + ')" title="حذف · remove"><i class="fas fa-times"></i></button>' +
+          '</div>';
+      }).join('');
+    }
   }
-  if (confirmBtn) confirmBtn.disabled = (change < 0);
+
+  var chRow = q('#payTenderChangeRow'), chVal = q('#payTenderChange');
+  if (chRow) chRow.style.display = d.change > 0 ? '' : 'none';
+  if (chVal) chVal.textContent = d.change.toFixed(2) + ' ' + cur;
+
+  var confirmBtn = document.querySelector('.pay-confirm-btn');
+  if (confirmBtn) confirmBtn.disabled = !(d.settled || d.total <= 0);
+
+  var kp = q('#payTenderKeypad');
+  if (kp) kp.classList.toggle('pay-keypad-idle', state._keypadIdx == null);
+
+  if (typeof _payNotesUpdate === 'function') _payNotesUpdate();
+
+  // Mirror the live cart summary into the modal header (handles Kita recompute).
+  try {
+    var sub = q('#cartSubtotalText'), disc = q('#cartDiscText'), tot = q('#cartFinalTotal');
+    if (sub && q('#payModalSubtotal')) q('#payModalSubtotal').textContent = sub.textContent;
+    if (disc && q('#payModalDiscount')) q('#payModalDiscount').textContent = disc.textContent;
+    if (tot && q('#payModalTotal')) q('#payModalTotal').textContent = tot.textContent;
+  } catch (e) {}
 };
 
 // ═══════════════════════════════════════════════════════════════════
@@ -1004,130 +1144,16 @@ try {
   setTimeout(function () { _posOQUpdateBadge(); window._posOQSync(); }, 2500);
 } catch (e) {}
 
-window.renderFoodicsSplitFields = function () {
-  var host = q('#paySplitFields');
-  if (!host) return;
-  // v6.4.3 — split inputs mirror the dynamic method list as the tiles.
-  //   Inputs carry class "split-input" so legacy doCheckout extraction
-  //   still works.
-  // v6.5.1 — Owner spec: "ازل كيتا وهانجر ستيشن من تجزئة واجعل مكانهم
-  //   OTHER فقط". Split is the partial-payment scenario (e.g. ‏SR 50
-  //   cash + ‏SR 30 mada + the rest "other"). Pay-by-app channels like
-  //   Kita and HungerStation deliver the FULL invoice through their
-  //   own gateway — they don't make sense as a split portion. We cap
-  //   the split inputs to the 3 essentials: Cash, Mada, Other.
-  var SPLIT_ALLOWED_RE = /^(cash|mada|card|other)$/i;
-  var tiles = _foodicsActiveMethods().filter(function (m) {
-    var n = String(m.name || '').toLowerCase();
-    if (SPLIT_ALLOWED_RE.test(n)) return true;
-    return n.indexOf('cash') >= 0 || n.indexOf('mada') >= 0 ||
-           n.indexOf('card') >= 0 || n.indexOf('other') >= 0;
-  });
-  // Defensive: guarantee Cash / Mada / Other are always present even
-  // if the operator only configured exotic methods.
-  var present = tiles.map(function (t) { return String(t.name || '').toLowerCase(); });
-  ['Cash', 'Mada', 'Other'].forEach(function (n) {
-    if (present.indexOf(n.toLowerCase()) === -1) {
-      tiles.push({
-        name: n,
-        ar:  ({ Cash: 'كاش', Mada: 'مدى', Other: 'أخرى' })[n],
-        en:  n,
-        icon: _foodicsPayIcon({ name: n })
-      });
-      present.push(n.toLowerCase());
-    }
-  });
-  host.innerHTML = tiles.map(function (m) {
-    var label = (m.ar && m.en && m.ar !== m.en) ? (m.ar + ' · ' + m.en) : (m.ar || m.en);
-    var safeName = String(m.name).replace(/'/g, "\\'");
-    return (
-      '<div class="pay-split-row">' +
-        '<div class="pay-split-method"><i class="fas ' + _posEsc(m.icon) + '"></i> ' + _posEsc(label) + '</div>' +
-        '<input type="number" step="0.01" min="0" class="form-control pay-split-input split-input" ' +
-               'data-method="' + _posEsc(String(m.name)) + '" value="" placeholder="0.00" oninput="paySplitRecalc()">' +
-        '<button type="button" class="pay-split-rest" onclick="paySplitFillRest(\'' + _posEsc(safeName) + '\')" title="املأ بالمتبقي · Fill remaining"><i class="fas fa-equals"></i></button>' +
-      '</div>'
-    );
-  }).join('');
-  paySplitRecalc();
-};
-
-// v5.11.4 — Show/hide the notes block based on either:
-//   • the current method = Other (full payment), or
-//   • the Other input in Split mode has a non-zero value.
-// Also keeps the character counter live.
+// v8.0 — Notes block visibility: shown when ANY tender uses the "Other"
+// method (a per-tender Other still requires a ≥3-char note in doCheckout).
 window._payNotesUpdate = function () {
   var block = q('#payNotesBlock');
   if (!block) return;
-  var current = q('#posPayMethod') ? q('#posPayMethod').value : 'Cash';
-  var needs = (current === 'Other');
-  if (!needs && current === 'Split') {
-    qs('.pay-split-input').forEach(function (el) {
-      if (el.dataset.method === 'Other' && Number(el.value) > 0) needs = true;
-    });
-  }
+  var needs = (state._tenders || []).some(function (tn) { return String(tn.name) === 'Other'; });
   block.classList.toggle('hidden', !needs);
   var ta  = q('#payNotesInput');
   var len = q('#payNotesLen');
   if (ta && len) len.textContent = String((ta.value || '').length);
-};
-
-window.paySplitRecalc = function () {
-  var total = _foodicsCartTotal();
-  var paid = 0;
-  qs('.pay-split-input').forEach(function (el) { paid += Number(el.value) || 0; });
-  var rem = total - paid;
-  var paidEl = q('#paySplitPaid'); if (paidEl) paidEl.textContent = paid.toFixed(2);
-  var remEl  = q('#paySplitRemaining');
-  if (remEl) {
-    remEl.textContent = rem.toFixed(2);
-    remEl.style.color = Math.abs(rem) < 0.01 ? '#16a34a' : (rem > 0 ? '#ef4444' : '#f59e0b');
-  }
-  // Mirror to legacy element for backward compat
-  var legacy = q('#splitRemaining');
-  if (legacy) legacy.textContent = rem.toFixed(2);
-  // v5.11.4 — re-evaluate the notes block (Other-row value may have changed)
-  if (typeof _payNotesUpdate === 'function') _payNotesUpdate();
-};
-
-window.paySplitAutoDistribute = function () {
-  var inputs = Array.prototype.slice.call(qs('.pay-split-input'));
-  if (!inputs.length) return;
-  var total = _foodicsCartTotal();
-  if (total <= 0) {
-    inputs.forEach(function (el) { el.value = ''; });
-    return paySplitRecalc();
-  }
-  var per = total / inputs.length;
-  inputs.forEach(function (el, idx) {
-    if (idx < inputs.length - 1) {
-      el.value = per.toFixed(2);
-    } else {
-      var sumOthers = (inputs.length - 1) * Number(per.toFixed(2));
-      el.value = Math.max(0, total - sumOthers).toFixed(2);
-    }
-  });
-  paySplitRecalc();
-};
-
-window.paySplitClear = function () {
-  qs('.pay-split-input').forEach(function (el) { el.value = ''; });
-  paySplitRecalc();
-};
-
-window.paySplitFillRest = function (methodName) {
-  var inputs = Array.prototype.slice.call(qs('.pay-split-input'));
-  var total = _foodicsCartTotal();
-  var otherSum = 0;
-  inputs.forEach(function (el) {
-    if (el.dataset.method !== methodName) otherSum += Number(el.value) || 0;
-  });
-  inputs.forEach(function (el) {
-    if (el.dataset.method === methodName) {
-      el.value = Math.max(0, total - otherSum).toFixed(2);
-    }
-  });
-  paySplitRecalc();
 };
 
 // ═══════════════════════════════════════════════════════════════════
@@ -1866,19 +1892,12 @@ window.posOpenPaymentModal = function () {
   if (sub)  q('#payModalSubtotal').textContent = sub.textContent;
   if (disc) q('#payModalDiscount').textContent = disc.textContent;
   if (tot)  q('#payModalTotal').textContent    = tot.textContent;
-  // Render tiles + reset split state
-  renderFoodicsPayTiles();
-  var currentMethod = q('#posPayMethod') ? q('#posPayMethod').value : 'Cash';
-  var splitPanel = q('#paySplitFoodics');
-  if (splitPanel) splitPanel.classList.toggle('hidden', currentMethod !== 'Split');
-  if (currentMethod === 'Split') renderFoodicsSplitFields();
-  // v7.3 — reset + show the cash tendered panel when Cash is the method.
-  var cashPanel = q('#payCashFoodics');
-  var cashInput = q('#payCashTendered');
-  if (cashInput) cashInput.value = '';
-  state._cashTendered = 0; state._cashChange = 0;
-  if (cashPanel) cashPanel.classList.toggle('hidden', currentMethod !== 'Cash');
-  if (currentMethod === 'Cash') { window._payCashRenderQuick(); window._payCashRecalc(); }
+  // v8.0 — fresh unified tender state every time the modal opens.
+  state._tenders = [];
+  state._keypadIdx = null;
+  state._keypadBuf = '';
+  window._tenderMethodPicker();
+  window._tenderRender();
   openGlassModal('#modalPayment');
 };
 
@@ -2144,10 +2163,8 @@ window.updateCart = function() {
   var serviceFee = 0;
   var finalTotal = afterDiscount;
 
-  // Split
-  var splitPanel = q('#splitPayPanel');
-  if (splitPanel) splitPanel.classList.toggle('hidden', payMethod !== 'Split');
-  if (payMethod === 'Split') renderSplitFields(afterDiscount);
+  // v8.0 — legacy cart-sidebar split panel removed; payment splitting now
+  // lives entirely in the unified tender modal (posOpenPaymentModal).
 
   // v6.20.0 — Display all customer-facing totals as WHOLE numbers (no
   // decimals).  The breakdown shown to the cashier (subtotal, discount)
@@ -2240,42 +2257,9 @@ window.renderPayButtons = function() {
   container.innerHTML = html + hiddenInput;
 };
 
-window.renderSplitFields = function(total) {
-  var container = q('#splitFields');
-  if (!container) return;
-  var isEn = state.lang === 'en';
-  // Split only between Cash and Card (مدى)
-  var methods = (state.paymentMethods || []).filter(function(m) {
-    var n = String(m.Name || '').toLowerCase();
-    return (n === 'cash' || n === 'card') && m.IsActive !== false && m.IsActive !== 'FALSE';
-  });
-  container.innerHTML = methods.map(function(m) {
-    // Prefer dict translation for core three methods (Cash/Card/Kita)
-    var lowerName = String(m.Name || '').toLowerCase();
-    var label;
-    if (lowerName === 'cash' || lowerName === 'card' || lowerName === 'kita') {
-      label = t(lowerName);
-    } else {
-      label = isEn ? (m.Name || m.NameAR) : (m.NameAR || m.Name);
-    }
-    return '<div><label>' + _posEsc(label) + '</label><input type="number" step="0.01" class="form-control split-input" data-method="' + _posEsc(String(m.Name)) + '" placeholder="0.00" value="" oninput="calcSplitRemaining()"></div>';
-  }).join('');
-  q('#splitRemaining').textContent = formatVal(total);
-};
-
-window.calcSplitRemaining = function() {
-  // v7.2 — use the canonical charged total (gross − line discounts −
-  // invoice discount) so the remaining figure matches doCheckout exactly.
-  var afterDiscount = _foodicsCartTotal();
-  var paid = 0;
-  qs('.split-input').forEach(function(el) { paid += Number(el.value) || 0; });
-  var rem = afterDiscount - paid;
-  var el = q('#splitRemaining');
-  if (el) {
-    el.textContent = formatVal(rem);
-    el.style.color = Math.abs(rem) < 0.01 ? '#16a34a' : '#ef4444';
-  }
-};
+// v8.0 — legacy renderSplitFields/calcSplitRemaining removed: the unified
+// tender modal (state._tenders + _tenderDerive/_tenderRender) is the sole
+// split-payment surface now.
 
 // =========================================
 // Discount modal
@@ -2364,61 +2348,45 @@ window.doCheckout = function() {
   var invDiscEffective = window._posEffectiveInvoiceDiscount(afterLineDisc);
   var afterDiscount = afterLineDisc - invDiscEffective;
   if (afterDiscount < 0) afterDiscount = 0;
-  var payInput = q('#posPayMethod');
-  var payMethod = payInput ? payInput.value : 'Cash';
-
-  // V5.7.15 — service fee removed from cashier UI (user request).
-  //   Order total is subtotal − line discounts − invoice discount.
+  // ─── v8.0 — UNIFIED TENDER: derive the payment outputs from state._tenders ───
+  // One model produces paymentMethod / splitDetails / cashTendered / changeDue,
+  // fully backward-compatible with the backend (splitDetails bill portions sum
+  // to the whole-SAR total; cash overage is change).
+  var _td = window._tenderDerive();
+  // v7.5 — WHOLE-SAR figure the customer is charged (shown === charged).
+  var totalFinal = _td.total;
+  if (_td.total > 0 && !_td.settled) {
+    return glassAlert(
+      'المبلغ غير مكتمل · Amount not settled',
+      'المتبقي ' + (_td.remaining > 0 ? _td.remaining : 0).toFixed(2) + ' ' +
+        ((state.settings && state.settings.currency) || 'ر.س') +
+        ' — أضف دفعة تُغطّي كامل الفاتورة · add a tender to cover the full amount.',
+      { danger: true }
+    );
+  }
+  var _tenders = (state._tenders || []).filter(function (tn) { return (Number(tn.given) || 0) > 0; });
   var serviceFee = 0;
-  // v7.5 — send the WHOLE-SAR figure the customer is actually charged (cash
-  // flow + server both work in whole SAR; sending the unrounded value left a
-  // silent ±1 SAR drift window inside the server's mismatch tolerance).
-  var totalFinal = Math.round(afterDiscount);
-  var splitDetails = null;
-  if (payMethod === 'Split') {
+  var payMethod, splitDetails = null, cashTendered = 0, changeDue = 0;
+  if (_tenders.length <= 1) {
+    // Single method (incl. a single cash tender that produced change).
+    var only = _tenders[0];
+    payMethod = only ? only.name : (((q('#posPayMethod') || {}).value) || 'Cash');
+    splitDetails = null;
+    if (only && only.isCash) { cashTendered = _td.cashTendered; changeDue = _td.change; }
+  } else {
+    // ≥2 tenders → Split. splitDetails carries each method's BILL portion.
+    payMethod = 'Split';
     splitDetails = {};
-    var totalPaid = 0;
-    qs('.split-input').forEach(function(el) {
-      // v7.4 — round each leg to halalas BEFORE summing so a clean split
-      // (e.g. 50.33 + 49.67) never fails the tolerance check on float drift.
-      var val = Math.round((Number(el.value) || 0) * 100) / 100;
-      if (val > 0) { splitDetails[el.dataset.method] = val; totalPaid += val; }
+    _td.legs.forEach(function (lg) {
+      if (lg.applied > 0) splitDetails[lg.name] = Math.round(((splitDetails[lg.name] || 0) + lg.applied) * 100) / 100;
     });
-    totalPaid = Math.round(totalPaid * 100) / 100;
-    // v7.2 — validate the split against the GROSS charged total.
-    if (Math.abs(totalPaid - afterDiscount) > 0.01) {
-      return glassAlert(
-        t('splitMismatchTitle'),
-        t('splitMismatchPre') + formatVal(totalPaid) + t('splitMismatchMid') + formatVal(afterDiscount) + t('splitMismatchSuf'),
-        { danger: true }
-      );
-    }
-    totalFinal = Math.round(afterDiscount);
+    cashTendered = _td.cashTendered;
+    changeDue = _td.change;
   }
 
-  // ─── v7.3 — Cash tendered → change due ───
-  // Optional: if the cashier entered the amount received, it must cover the
-  // total; capture the change for the receipt + drawer. Left blank → exact.
-  var cashTendered = 0, changeDue = 0;
-  if (payMethod === 'Cash') {
-    cashTendered = Number(state._cashTendered) || 0;
-    if (cashTendered > 0) {
-      var _wholeTotal = Math.round(afterDiscount);
-      if (cashTendered < _wholeTotal) {
-        return glassAlert(
-          'المبلغ المستلم غير كافٍ · Insufficient cash',
-          'المبلغ المستلم (' + cashTendered + ') أقل من الإجمالي (' + _wholeTotal + ' ' + ((state.settings && state.settings.currency) || 'ر.س') + ').',
-          { danger: true }
-        );
-      }
-      changeDue = Math.round((cashTendered - _wholeTotal) * 100) / 100;
-    }
-  }
-
-  // ─── v5.11.4 — Validate payment notes whenever "Other" is involved ───
+  // ─── Notes required whenever an "Other" tender is used ───
   var paymentNotes = '';
-  var needsNote = (payMethod === 'Other') ||
-                  (payMethod === 'Split' && splitDetails && Number(splitDetails.Other || 0) > 0);
+  var needsNote = _tenders.some(function (tn) { return String(tn.name) === 'Other'; });
   if (needsNote) {
     var noteEl = q('#payNotesInput');
     paymentNotes = noteEl ? String(noteEl.value || '').trim() : '';

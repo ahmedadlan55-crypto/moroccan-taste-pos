@@ -873,7 +873,11 @@ router.post('/', async (req, res) => {
     }
 
     // ─── v7.3 — Persist cash tendered + change due (tolerant) ───
-    if (paymentMethod === 'Cash' && (cashTendered > 0 || changeDue > 0)) {
+    // v8.0 — persist for ANY method that carried cash, including a Split whose
+    // cash leg gave change (the unified tender flow). splitDetails still holds
+    // the per-method BILL portions; these two fields are the cash-handling
+    // overlay for the receipt + drawer.
+    if (cashTendered > 0 || changeDue > 0) {
       try {
         await db.query(
           'UPDATE sales SET cash_tendered = ?, change_due = ? WHERE id = ?',

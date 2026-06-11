@@ -104,6 +104,18 @@ document.addEventListener('DOMContentLoaded', function() {
     }
   } catch (e) {}
 
+  // 1b. Restore cached combo definitions (for the chooser modal, incl. offline)
+  try {
+    var cbCache = localStorage.getItem('pos_combos_cache');
+    if (cbCache) {
+      var cbObj = JSON.parse(cbCache);
+      if (cbObj && Array.isArray(cbObj.combos)) {
+        state.combos = {};
+        cbObj.combos.forEach(function (c) { if (c && c.id) state.combos[c.id] = c; });
+      }
+    }
+  } catch (e) {}
+
   // 2. Render header + initial UI
   renderHeader('pos', { showShift: true });
   applyLang();
@@ -148,6 +160,9 @@ document.addEventListener('DOMContentLoaded', function() {
 
     // ─── V3: load richer payment methods + active channels + discounts ───
     posLoadV3Data();
+    // Combo definitions for the chooser modal (combo PRODUCTS already come in
+    // state.menu; this adds their fixed + choice makeup).
+    if (typeof posLoadCombos === 'function') posLoadCombos();
 
     renderPayButtons();
     // v5.14.0 — rebuild Foodics category grid with fresh menu
@@ -188,6 +203,23 @@ window._posRefreshMenu = function() {
   } catch (e) { /* api not ready yet */ }
 };
 setInterval(function(){ window._posRefreshMenu(); }, 300000);
+
+// Combo definitions (fixed + choice groups) for the chooser modal. The combo
+// PRODUCTS already arrive in state.menu (is_combo rows); this fetch adds their
+// makeup so the cashier can pick a variant. /api/menu GETs are public (no
+// token). Cached in localStorage for offline use.
+window.posLoadCombos = function() {
+  var url = '/api/menu/combos' + (state.brandId ? '?brandId=' + encodeURIComponent(state.brandId) : '');
+  fetch(url, { headers: { 'Accept': 'application/json' } })
+    .then(function(r){ return r.ok ? r.json() : []; })
+    .then(function(list){
+      if (!Array.isArray(list)) return;
+      state.combos = {};
+      list.forEach(function(c){ if (c && c.id) state.combos[c.id] = c; });
+      try { localStorage.setItem('pos_combos_cache', JSON.stringify({ ts: Date.now(), combos: list })); } catch (e) {}
+    })
+    .catch(function(){ /* offline — keep cached defs */ });
+};
 
 window.onLangChange = function() {
   // Re-render everything that depends on the language
@@ -378,6 +410,10 @@ window.renderMenuGrid = function() {
       var customBadge = i.__custom
         ? '<div style="position:absolute;top:6px;inset-inline-start:6px;background:#f59e0b;color:#fff;font-size:9px;font-weight:800;padding:2px 6px;border-radius:6px;z-index:1;">مُخصَّص</div>'
         : '';
+      // Combos (العروض) — tapping opens the variant chooser, not a direct add.
+      var comboBadge = i.isCombo
+        ? '<div style="position:absolute;top:6px;inset-inline-end:6px;background:#8b5cf6;color:#fff;font-size:9px;font-weight:800;padding:2px 6px;border-radius:6px;z-index:1;"><i class="fas fa-gift"></i> عرض</div>'
+        : '';
       // v7.2 — XSS hardening: the item JSON embeds DB-sourced strings
       // (name, etc.).  Escaping the whole serialized payload for the HTML
       // attribute is safe — the browser decodes the entities back to the
@@ -398,6 +434,7 @@ window.renderMenuGrid = function() {
       var _decKey = encodeURIComponent(_matchKey);
       h += '<div class="pos-item ' + (isSel ? 'selected' : '') + '" style="position:relative;">' +
         customBadge +
+        comboBadge +
         imgHtml +
         '<div>' +
           '<div class="pos-item-name">' + _posEsc(i.name || '') + '</div>' +
@@ -1952,6 +1989,10 @@ function _cartLineKey(line) {
 
 window.addToCart = function(item) {
   if (!item) return;
+  // Combos (العروض): tapping opens the variant chooser first. The finalized
+  // line comes back with __comboResolved set (carrying comboChoices), so this
+  // guard passes through on that second call and the line is added normally.
+  if (item.isCombo && !item.__comboResolved) { openComboChooser(item); return; }
   // v7.3 — stale-cache guard. In MAIN / full-menu mode the grid is driven by
   // state.menu (cached in localStorage). If an item's id is no longer in the
   // current menu it was deleted/disabled server-side after the cache was
@@ -2020,6 +2061,133 @@ function _reindexLineDiscountsAfterRemoval(removedIdx) {
     next[i > removedIdx ? i - 1 : i] = src[k];
   });
   state.lineDiscounts = next;
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// COMBO CHOOSER (العروض) — "أي سندوتش مع عصير"
+// Tap a combo tile → pick the variable item(s) → the finalized cart line
+// carries comboChoices. The backend (routes/sales.js) deducts the recipe
+// of each chosen item + every fixed component. Combo price is FIXED, so
+// the line always charges the combo's own price regardless of the pick.
+// ═══════════════════════════════════════════════════════════════════
+window.openComboChooser = function(item) {
+  var def = (state.combos && state.combos[item.id]) || null;
+  if (def && def.groups) { _comboOpenModal(item, def); return; }
+  // Definition not cached (cold start / partial cache) — fetch on demand.
+  if (navigator.onLine) {
+    fetch('/api/menu/combos/' + encodeURIComponent(item.id), { headers: { 'Accept': 'application/json' } })
+      .then(function(r){ return r.ok ? r.json() : null; })
+      .then(function(d){
+        if (d && d.groups) {
+          state.combos = state.combos || {};
+          state.combos[item.id] = d;
+          _comboOpenModal(item, d);
+        } else { glassToast('تعذّر تحميل خيارات العرض', true); }
+      })
+      .catch(function(){ glassToast('تعذّر تحميل خيارات العرض — تحقق من الاتصال', true); });
+  } else {
+    glassToast('خيارات العرض غير متوفرة دون اتصال — حدّث القائمة عند الاتصال', true);
+  }
+};
+
+function _comboOpenModal(item, def) {
+  var fixed   = (def.groups || []).filter(function(g){ return g.type === 'fixed'; });
+  var choices = (def.groups || []).filter(function(g){ return g.type === 'choice'; });
+  var selection = {};                                  // { groupId: [menuItemId, ...] }
+  choices.forEach(function(g){ selection[g.id] = []; });
+
+  function fixedHtml() {
+    var names = [];
+    fixed.forEach(function(g){ (g.options || []).forEach(function(o){ names.push(_posEsc(o.name) + (Number(o.qty) > 1 ? ' ×' + o.qty : '')); }); });
+    if (!names.length) return '';
+    return '<div class="combo-fixed"><i class="fas fa-thumbtack"></i> يشمل دائماً: <strong>' + names.join('، ') + '</strong></div>';
+  }
+  function groupHtml(g) {
+    var opts = (g.options || []).filter(function(o){ return o.active !== false; });
+    var cards = opts.map(function(o){
+      var picked = selection[g.id].indexOf(o.menuItemId) >= 0;
+      return '<button type="button" class="combo-opt' + (picked ? ' picked' : '') + '" data-grp="' + _posEsc(g.id) + '" data-item="' + _posEsc(o.menuItemId) + '">' +
+        '<i class="' + (picked ? 'fas fa-check-circle' : 'far fa-circle') + '"></i>' +
+        '<span class="combo-opt-name">' + _posEsc(o.name) + '</span>' +
+      '</button>';
+    }).join('');
+    var rule = (g.maxSelect > 1 ? ('اختر حتى ' + g.maxSelect) : 'اختر واحداً') + (g.minSelect > 0 ? ' · مطلوب' : ' · اختياري');
+    return '<div class="combo-group"><div class="combo-group-head">' + _posEsc(g.name) + ' <small>(' + rule + ')</small></div>' +
+      '<div class="combo-group-opts">' + (cards || '<div class="combo-empty">لا خيارات متاحة</div>') + '</div></div>';
+  }
+  function bodyHtml() { return fixedHtml() + (choices.length ? choices.map(groupHtml).join('') : '<div class="combo-empty">هذا العرض بلا خيارات</div>'); }
+
+  var grossUnit = window.computeGrossPerUnit ? window.computeGrossPerUnit(item) : (Number(item.price) || 0);
+  var modal = _posBuildCustomerModal({
+    id: 'posComboModal',
+    icon: 'fa-gift',
+    title: (item.name || 'عرض') + ' — ' + window.formatWhole(grossUnit) + ' ر.س',
+    large: true,
+    bodyHtml: '<div id="comboChooserBody">' + bodyHtml() + '</div>',
+    footHtml:
+      '<button type="button" data-pos-cust-close="1" style="padding:11px 18px;border-radius:12px;border:1.5px solid #e2e8f0;background:#fff;color:#475569;font-weight:800;font-family:inherit;cursor:pointer;">إلغاء</button>' +
+      '<button type="button" id="comboConfirmBtn" style="padding:11px 22px;border-radius:12px;border:0;background:linear-gradient(135deg,#8b5cf6,#7c3aed);color:#fff;font-weight:800;font-family:inherit;cursor:pointer;"><i class="fas fa-cart-plus"></i> أضف للسلة</button>'
+  });
+
+  function refresh() {
+    var host = modal.querySelector('#comboChooserBody');
+    if (host) host.innerHTML = bodyHtml();
+    var ok = choices.every(function(g){ return selection[g.id].length >= (g.minSelect || 0); });
+    var btn = modal.querySelector('#comboConfirmBtn');
+    if (btn) { btn.disabled = !ok; btn.style.opacity = ok ? '1' : '0.45'; btn.style.cursor = ok ? 'pointer' : 'not-allowed'; }
+  }
+
+  modal.addEventListener('click', function(e){
+    var opt = e.target.closest && e.target.closest('.combo-opt');
+    if (opt) {
+      var gid = opt.getAttribute('data-grp');
+      var iid = opt.getAttribute('data-item');
+      var g = choices.find(function(x){ return String(x.id) === String(gid); });
+      if (!g) return;
+      var arr = selection[gid];
+      var at = arr.indexOf(iid);
+      if (at >= 0) { arr.splice(at, 1); }                          // toggle off
+      else if ((g.maxSelect || 1) <= 1) { selection[gid] = [iid]; } // single-select
+      else if (arr.length < (g.maxSelect || 1)) { arr.push(iid); }
+      else { glassToast('الحد الأقصى ' + g.maxSelect + ' لهذه المجموعة', true); return; }
+      refresh();
+      return;
+    }
+    if (e.target.closest && e.target.closest('#comboConfirmBtn')) {
+      var allOk = choices.every(function(g){ return selection[g.id].length >= (g.minSelect || 0); });
+      if (!allOk) { glassToast('أكمل الاختيارات المطلوبة', true); return; }
+      _comboFinalize(item, selection, choices);
+      modal.close();
+    }
+  });
+
+  setTimeout(refresh, 20);
+}
+
+function _comboFinalize(item, selection, choices) {
+  var comboChoices = [];
+  var labels = [];
+  choices.forEach(function(g){
+    (selection[g.id] || []).forEach(function(iid){
+      comboChoices.push({ groupId: g.id, menuItemId: iid });
+      var o = (g.options || []).find(function(x){ return String(x.menuItemId) === String(iid); });
+      if (o) labels.push(o.name);
+    });
+  });
+  var label = labels.join(' + ');
+  var baseName = item.name || 'عرض';
+  // Bake the choice into name + modifiers: the cart line, receipt and
+  // sales_items log all read `name`; `modifiers` keeps each distinct pick on
+  // its own cart line (via _cartModifiersKey) while identical picks stack.
+  var line = Object.assign({}, item, {
+    __comboResolved: true,
+    isCombo: true,
+    name: label ? (baseName + ' (' + label + ')') : baseName,
+    price: Number(item.price) || 0,
+    modifiers: label || ('combo:' + (item.id || '')),
+    comboChoices: comboChoices
+  });
+  addToCart(line);
 }
 
 window.modQty = function(idx, delta) {

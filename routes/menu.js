@@ -46,7 +46,11 @@ function _mapMenu(m) {
     // Legacy rows default to true (preserves pre-v6.20.0 behavior).
     isTaxInclusive: m.is_tax_inclusive === null || typeof m.is_tax_inclusive === 'undefined'
       ? true
-      : !!Number(m.is_tax_inclusive)
+      : !!Number(m.is_tax_inclusive),
+    // Combos (العروض) — this menu row is a combo/offer with a variable choice.
+    // The POS opens a chooser modal on tap and expands it into its component
+    // recipes at sale time. Definition lives in combo_groups/combo_group_items.
+    isCombo: !!m.is_combo
   };
 }
 
@@ -879,6 +883,239 @@ router.post('/:id/recipe-bom', verifyToken, MGR, async (req, res) => {
 
     res.json({ success: true, bomId, computedCost });
   } catch(e) { res.status(500).json({ success: false, error: e.message }); }
+});
+
+// ═══════════════════════════════════════════════════════════════════
+// COMBOS / OFFERS (العروض) — e.g. "أي سندوتش مع عصير"
+// A combo is a menu row (is_combo=1) whose makeup REFERENCES other menu
+// rows (no recipe duplication):
+//   • combo_groups       — fixed components + choice groups
+//   • combo_group_items  — each referenced menu item (+ qty)
+// The cashier opens a chooser on tap; at sale time the combo line is
+// expanded into its components and the EXISTING recipe-deduction engine
+// runs per component (see routes/sales.js). Combo price is FIXED.
+// ═══════════════════════════════════════════════════════════════════
+
+// Load full combo definitions. filter: { brandId?, menuId? }
+async function _loadCombos(filter) {
+  let sql = `SELECT m.id, m.name, m.name_en, m.price, m.cost, m.category, m.brand_id, m.active
+             FROM menu m WHERE m.is_combo = 1 AND COALESCE(m.is_deleted,0) = 0`;
+  const params = [];
+  if (filter && filter.brandId) { sql += ' AND m.brand_id = ?'; params.push(filter.brandId); }
+  if (filter && filter.menuId)  { sql += ' AND m.id = ?'; params.push(filter.menuId); }
+  sql += ' ORDER BY m.category, m.name';
+  const [combos] = await db.query(sql, params);
+  if (!combos.length) return [];
+  const ids = combos.map(c => c.id);
+  const ph = ids.map(() => '?').join(',');
+  const [groups] = await db.query(
+    `SELECT * FROM combo_groups WHERE menu_id IN (${ph}) ORDER BY sort_order, id`, ids);
+  let items = [];
+  if (groups.length) {
+    const gids = groups.map(g => g.id);
+    const gph = gids.map(() => '?').join(',');
+    const [rows] = await db.query(
+      `SELECT cgi.*, mi.name AS item_name, mi.name_en AS item_name_en, mi.price AS item_price,
+              mi.active AS item_active, COALESCE(mi.bom_id,'') AS item_bom_id
+       FROM combo_group_items cgi
+       LEFT JOIN menu mi ON mi.id = cgi.menu_item_id
+       WHERE cgi.group_id IN (${gph}) ORDER BY cgi.sort_order, cgi.id`, gids);
+    items = rows;
+  }
+  const itemsByGroup = {};
+  items.forEach(it => { (itemsByGroup[it.group_id] = itemsByGroup[it.group_id] || []).push(it); });
+  const groupsByMenu = {};
+  groups.forEach(g => {
+    (groupsByMenu[g.menu_id] = groupsByMenu[g.menu_id] || []).push({
+      id: g.id,
+      type: g.group_type,
+      name: g.name,
+      minSelect: Number(g.min_select) || 0,
+      maxSelect: Number(g.max_select) || 1,
+      options: (itemsByGroup[g.id] || []).map(it => ({
+        menuItemId: it.menu_item_id,
+        name: it.item_name || it.menu_item_id,
+        nameEn: it.item_name_en || '',
+        price: Number(it.item_price) || 0,
+        qty: Number(it.qty) || 1,
+        hasRecipe: !!it.item_bom_id,
+        active: it.item_active == null ? true : !!it.item_active
+      }))
+    });
+  });
+  return combos.map(c => ({
+    id: c.id,
+    name: c.name,
+    nameEn: c.name_en || '',
+    price: Number(c.price) || 0,
+    cost: Number(c.cost) || 0,
+    category: c.category || 'عروض',
+    brandId: c.brand_id || '',
+    active: !!c.active,
+    isCombo: true,
+    groups: groupsByMenu[c.id] || []
+  }));
+}
+
+// Validate a combo write body. Returns { ok, error?, items? }.
+async function _validateCombo(b) {
+  if (!b || !b.name || !String(b.name).trim()) return { ok: false, error: 'اسم العرض مطلوب' };
+  if (isNaN(Number(b.price)) || Number(b.price) < 0) return { ok: false, error: 'سعر العرض يجب أن يكون صفراً أو أكثر' };
+  const groups = Array.isArray(b.groups) ? b.groups : [];
+  if (!groups.length) return { ok: false, error: 'أضف مكوّناً ثابتاً أو مجموعة اختيار واحدة على الأقل' };
+  const allItemIds = [];
+  for (const g of groups) {
+    const its = Array.isArray(g.items) ? g.items.filter(it => it && it.menuItemId) : [];
+    if (!its.length) return { ok: false, error: 'كل مجموعة يجب أن تحتوي عنصراً واحداً على الأقل: ' + (g.name || '') };
+    if (g.type === 'choice') {
+      const mn = Number(g.minSelect), mx = Number(g.maxSelect);
+      if (isNaN(mn) || isNaN(mx) || mn < 0 || mx < 1 || mn > mx) return { ok: false, error: 'حدود الاختيار غير صحيحة في: ' + (g.name || '') };
+      if (mx > its.length) return { ok: false, error: 'الحد الأقصى للاختيار أكبر من عدد الخيارات في: ' + (g.name || '') };
+    }
+    its.forEach(it => allItemIds.push(it.menuItemId));
+  }
+  const uniq = [...new Set(allItemIds)];
+  if (uniq.length) {
+    const ph = uniq.map(() => '?').join(',');
+    const [rows] = await db.query(
+      `SELECT id, COALESCE(is_combo,0) AS is_combo, COALESCE(is_deleted,0) AS is_deleted FROM menu WHERE id IN (${ph})`, uniq);
+    const map = {}; rows.forEach(r => { map[r.id] = r; });
+    const missing = uniq.filter(id => !map[id] || Number(map[id].is_deleted) === 1);
+    if (missing.length) return { ok: false, error: 'منتجات غير موجودة (أو محذوفة)', items: missing };
+    const nested = uniq.filter(id => map[id] && Number(map[id].is_combo) === 1);
+    if (nested.length) return { ok: false, error: 'لا يمكن إدراج عرض داخل عرض', items: nested };
+  }
+  return { ok: true };
+}
+
+// Replace all groups + items for a combo (DELETE then INSERT, like recipe-bom).
+async function _writeComboGroups(menuId, groups) {
+  const [old] = await db.query('SELECT id FROM combo_groups WHERE menu_id = ?', [menuId]);
+  if (old.length) {
+    const gids = old.map(g => g.id);
+    const ph = gids.map(() => '?').join(',');
+    await db.query(`DELETE FROM combo_group_items WHERE group_id IN (${ph})`, gids);
+    await db.query('DELETE FROM combo_groups WHERE menu_id = ?', [menuId]);
+  }
+  const list = Array.isArray(groups) ? groups : [];
+  for (let gi = 0; gi < list.length; gi++) {
+    const g = list[gi];
+    const type = g.type === 'fixed' ? 'fixed' : 'choice';
+    const gid = 'CG-' + Date.now() + '-' + Math.random().toString(36).slice(2, 6) + '-' + gi;
+    const minS = type === 'fixed' ? 0 : (Number(g.minSelect) || 0);
+    const maxS = type === 'fixed' ? 0 : (Number(g.maxSelect) || 1);
+    await db.query(
+      `INSERT INTO combo_groups (id, menu_id, group_type, name, min_select, max_select, sort_order) VALUES (?,?,?,?,?,?,?)`,
+      [gid, menuId, type, g.name || (type === 'fixed' ? 'مكوّن ثابت' : 'اختيار'), minS, maxS, gi]);
+    const its = Array.isArray(g.items) ? g.items.filter(it => it && it.menuItemId) : [];
+    for (let ii = 0; ii < its.length; ii++) {
+      await db.query(
+        `INSERT INTO combo_group_items (id, group_id, menu_item_id, qty, sort_order) VALUES (?,?,?,?,?)`,
+        ['CGI-' + Date.now() + '-' + Math.random().toString(36).slice(2, 6) + '-' + gi + '-' + ii,
+         gid, its[ii].menuItemId, Number(its[ii].qty) || 1, ii]);
+    }
+  }
+}
+
+// Representative cost for margin display. Actual COGS at sale = real chosen
+// components (routes/sales.js). Fixed comps at full cost; choice groups at the
+// AVERAGE option cost × minSelect (≥1) — a realistic mid estimate.
+async function _computeComboCost(groups) {
+  const list = Array.isArray(groups) ? groups : [];
+  const ids = [];
+  list.forEach(g => (g.items || []).forEach(it => { if (it && it.menuItemId) ids.push(it.menuItemId); }));
+  const uniq = [...new Set(ids)];
+  if (!uniq.length) return 0;
+  const costMap = {};
+  try {
+    const ph = uniq.map(() => '?').join(',');
+    const [rows] = await db.query(`SELECT id, COALESCE(cost,0) AS cost FROM menu WHERE id IN (${ph})`, uniq);
+    rows.forEach(r => { costMap[r.id] = Number(r.cost) || 0; });
+  } catch (_) {}
+  let total = 0;
+  list.forEach(g => {
+    const its = (g.items || []).filter(it => it && it.menuItemId);
+    if (!its.length) return;
+    if (g.type === 'fixed') {
+      its.forEach(it => { total += (costMap[it.menuItemId] || 0) * (Number(it.qty) || 1); });
+    } else {
+      const avg = its.reduce((s, it) => s + (costMap[it.menuItemId] || 0) * (Number(it.qty) || 1), 0) / its.length;
+      total += avg * Math.max(1, Number(g.minSelect) || 1);
+    }
+  });
+  return Math.round(total * 100) / 100;
+}
+
+// GET /api/menu/combos?brandId= — list combos (public: cashier reads it)
+router.get('/combos', async (req, res) => {
+  try {
+    res.json(await _loadCombos({ brandId: req.query.brandId || null }));
+  } catch (e) { res.json([]); }
+});
+
+// GET /api/menu/combos/:id — one combo (full definition)
+router.get('/combos/:id', async (req, res) => {
+  try {
+    const out = await _loadCombos({ menuId: req.params.id });
+    if (!out.length) return res.status(404).json({ error: 'العرض غير موجود' });
+    res.json(out[0]);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// POST /api/menu/combos — create a combo (+ its menu row)
+router.post('/combos', verifyToken, MGR, async (req, res) => {
+  try {
+    const b = req.body || {};
+    const v = await _validateCombo(b);
+    if (!v.ok) return res.status(400).json({ success: false, error: v.error, items: v.items });
+    let taxInclusive = b.taxInclusive;
+    if (typeof taxInclusive === 'undefined') {
+      try {
+        const [rows] = await db.query("SELECT setting_value FROM settings WHERE setting_key = 'NewProductsTaxInclusive' LIMIT 1");
+        taxInclusive = rows.length ? String(rows[0].setting_value) === '1' : false;
+      } catch (_) { taxInclusive = false; }
+    }
+    const cost = await _computeComboCost(b.groups);
+    const id = 'COMBO-' + Date.now();
+    await db.query(
+      `INSERT INTO menu (id, name, name_en, price, is_tax_inclusive, tax_category, category, cost,
+                         stock, min_stock, active, pricing_mode, markup_pct, brand_id,
+                         is_combo, production_method, deduct_strategy)
+       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+      [id, b.name, b.nameEn || null, Number(b.price) || 0, taxInclusive ? 1 : 0, 'S',
+       b.category || 'عروض', cost, 0, 0, b.active !== false, 'fixed', 30, b.brandId || null,
+       1, 'made_at_branch', 'on_sale']);
+    await _writeComboGroups(id, b.groups);
+    res.json({ success: true, id, cost });
+  } catch (e) { res.json({ success: false, error: e.message }); }
+});
+
+// PUT /api/menu/combos/:id — update a combo
+router.put('/combos/:id', verifyToken, MGR, async (req, res) => {
+  try {
+    const b = req.body || {};
+    const [exist] = await db.query('SELECT id FROM menu WHERE id = ? AND is_combo = 1', [req.params.id]);
+    if (!exist.length) return res.status(404).json({ success: false, error: 'العرض غير موجود' });
+    const v = await _validateCombo(b);
+    if (!v.ok) return res.status(400).json({ success: false, error: v.error, items: v.items });
+    const cost = await _computeComboCost(b.groups);
+    let sql = 'UPDATE menu SET name=?, name_en=?, price=?, category=?, cost=?, active=?, brand_id=?';
+    const params = [b.name, b.nameEn || null, Number(b.price) || 0, b.category || 'عروض', cost, b.active !== false, b.brandId || null];
+    if (typeof b.taxInclusive !== 'undefined') { sql += ', is_tax_inclusive=?'; params.push(b.taxInclusive ? 1 : 0); }
+    sql += ' WHERE id=?'; params.push(req.params.id);
+    await db.query(sql, params);
+    await _writeComboGroups(req.params.id, b.groups);
+    res.json({ success: true, cost });
+  } catch (e) { res.json({ success: false, error: e.message }); }
+});
+
+// DELETE /api/menu/combos/:id — soft-delete (mirrors DELETE /:id)
+router.delete('/combos/:id', verifyToken, MGR, async (req, res) => {
+  try {
+    const [r] = await db.query('UPDATE menu SET is_deleted = 1, active = 0 WHERE id = ? AND is_combo = 1', [req.params.id]);
+    if (!r.affectedRows) return res.status(404).json({ success: false, error: 'العرض غير موجود' });
+    res.json({ success: true, softDeleted: true });
+  } catch (e) { res.json({ success: false, error: e.message }); }
 });
 
 module.exports = router;

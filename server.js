@@ -2676,6 +2676,38 @@ async function runMigrations() {
     ) ENGINE=InnoDB
   `);
 
+  // 5b) Combos / Offers (العروض — "أي سندوتش مع عصير")
+  // A combo is a normal `menu` row flagged is_combo=1 (so it auto-appears in the
+  // cashier grid + inherits pricing/category/soft-delete/reporting). Its makeup
+  // lives in two child tables that REFERENCE other menu rows (no recipe
+  // duplication): `combo_groups` holds the fixed components + the choice groups,
+  // `combo_group_items` holds each referenced menu item. At sale time the combo
+  // line is expanded into its components and the existing recipe-deduction
+  // engine runs per component (see routes/sales.js).
+  await addColumnIfMissing('menu', 'is_combo', "TINYINT(1) DEFAULT 0");
+  await createTableIfMissing('combo_groups', `
+    CREATE TABLE combo_groups (
+      id VARCHAR(60) PRIMARY KEY,
+      menu_id VARCHAR(50) NOT NULL,
+      group_type ENUM('fixed','choice') NOT NULL DEFAULT 'choice',
+      name VARCHAR(200) NOT NULL,
+      min_select INT DEFAULT 1,
+      max_select INT DEFAULT 1,
+      sort_order INT DEFAULT 0,
+      INDEX idx_combo (menu_id)
+    ) ENGINE=InnoDB
+  `);
+  await createTableIfMissing('combo_group_items', `
+    CREATE TABLE combo_group_items (
+      id VARCHAR(60) PRIMARY KEY,
+      group_id VARCHAR(60) NOT NULL,
+      menu_item_id VARCHAR(50) NOT NULL,
+      qty DECIMAL(10,3) DEFAULT 1,
+      sort_order INT DEFAULT 0,
+      INDEX idx_group (group_id), INDEX idx_item (menu_item_id)
+    ) ENGINE=InnoDB
+  `);
+
   // 6) Purchase receipts (منفصل عن PO لدعم الاستلام الجزئي)
   await createTableIfMissing('purchase_receipts', `
     CREATE TABLE purchase_receipts (

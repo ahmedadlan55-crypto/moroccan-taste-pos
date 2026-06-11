@@ -29326,6 +29326,25 @@ function _bmRender() {
   rows.forEach(function(m){ nameById[m.id] = m.name; });
 
   tbody.innerHTML = filtered.map(function(m) {
+    // Combos (العروض) render as a distinct row: a "عرض" badge, no static recipe
+    // button, and the edit action routes to the dedicated combo builder.
+    if (m.isCombo) {
+      var safeNameC = _v3EscapeHtml(m.name).replace(/'/g, "\\'");
+      return '<tr>' +
+        '<td><span style="font-weight:800;">'+_v3EscapeHtml(m.name)+'</span>' +
+          (m.nameEn ? '<div style="font-size:11px;color:#64748b;direction:ltr;font-weight:500;margin-top:2px;">'+_v3EscapeHtml(m.nameEn)+'</div>' : '') +
+          '<div style="margin-top:4px;"><span class="wo-chip" style="background:#ede9fe;color:#6d28d9;font-weight:700;"><i class="fas fa-gift"></i> عرض / كومبو</span></div></td>' +
+        '<td><span class="wo-chip" style="background:#ede9fe;color:#6d28d9;font-weight:700;"><i class="fas fa-gift"></i> عرض</span></td>' +
+        '<td><span class="wo-chip">'+_v3EscapeHtml(m.category||'عروض')+'</span></td>' +
+        '<td class="num"><span style="font-weight:900;color:#0f172a;">'+_v3Fmt(Number(m.price)||0)+'</span> ر.س</td>' +
+        '<td><span style="color:#94a3b8;">—</span></td>' +
+        '<td>'+(m.active ? '<span class="wo-chip" style="background:#dcfce7;color:#15803d;font-weight:700;">مفعّل</span>' : '<span class="wo-chip" style="background:#fee2e2;color:#b91c1c;font-weight:700;">معطّل</span>')+'</td>' +
+        '<td>' +
+          '<button class="wo-btn wo-btn-sm wo-btn-secondary" onclick="erpOpenComboBuilder(\''+m.id+'\')" title="تعديل العرض"><i class="fas fa-gift"></i> تعديل العرض</button> ' +
+          '<button class="wo-btn wo-btn-sm wo-btn-danger" onclick="erpDeleteCombo(\''+m.id+'\',\''+safeNameC+'\')" title="حذف العرض"><i class="fas fa-trash"></i></button>' +
+        '</td>' +
+      '</tr>';
+    }
     var typeBadge = m.isSemiFinished
       ? '<span class="wo-chip" style="background:#fef3c7;color:#92400e;font-weight:700;"><i class="fas fa-blender"></i> غير تام</span>'
       : '<span class="wo-chip" style="background:#dcfce7;color:#15803d;font-weight:700;"><i class="fas fa-burger"></i> تام</span>';
@@ -30663,6 +30682,322 @@ window.reSaveRecipe = function() {
 };
 
 function erpFilterBrandMenu() { _bmRender(); }
+
+// ═══════════════════════════════════════════════════════════════════
+// العروض / الكومبو (Combos) — dedicated section + builder
+// A combo is a menu row (is_combo=1) that REFERENCES other menu items:
+//   • fixed components  → always served (e.g. عصير)
+//   • choice groups     → cashier picks (e.g. اختر السندوتش)
+// Backend: routes/menu.js /combos.  Sale-time recipe expansion: sales.js.
+// ═══════════════════════════════════════════════════════════════════
+
+window.erpOpenCombos = function() {
+  if (!window._bmCurrentBrand) { _v3Toast('اختر براند أولاً', true); return; }
+  var nm = document.getElementById('cbBrandName');
+  if (nm) nm.textContent = window._bmCurrentBrand.name || '—';
+  erpNav('erpCombos');
+  erpLoadCombos();
+};
+
+window.erpLoadCombos = function() {
+  if (!window._bmCurrentBrand) { erpNav('erpMenuHub'); return; }
+  var body = document.getElementById('cbBody');
+  if (body) body.innerHTML = '<tr><td colspan="5"><div class="wo-empty"><i class="fas fa-spinner fa-spin"></i><span>جاري التحميل...</span></div></td></tr>';
+  // Refresh the brand menu cache (the builder's product pool reads it), then combos.
+  callAPI('GET', '/menu/all?brandId=' + encodeURIComponent(window._bmCurrentBrand.id), null, function(rows) {
+    window._bmItemsCache = Array.isArray(rows) ? rows : (window._bmItemsCache || []);
+    callAPI('GET', '/menu/combos?brandId=' + encodeURIComponent(window._bmCurrentBrand.id), null, function(combos) {
+      window._cbList = Array.isArray(combos) ? combos : [];
+      _cbRenderList();
+    });
+  });
+};
+
+function _cbRenderList() {
+  var body = document.getElementById('cbBody');
+  if (!body) return;
+  var list = window._cbList || [];
+  var m = document.getElementById('cbMetrics');
+  if (m) {
+    var active = list.filter(function(c){ return c.active; }).length;
+    m.innerHTML =
+      _v3MetricCard('fa-gift', 'إجمالي العروض', list.length, '#8b5cf6') +
+      _v3MetricCard('fa-toggle-on', 'مفعّلة', active, '#22c55e');
+  }
+  if (!list.length) {
+    body.innerHTML = '<tr><td colspan="5"><div class="wo-empty"><i class="fas fa-gift"></i><div class="wo-empty-title">لا توجد عروض</div><div class="wo-empty-sub">اضغط "عرض جديد" لإنشاء أول عرض (مثل: أي سندوتش مع عصير).</div></div></td></tr>';
+    return;
+  }
+  body.innerHTML = list.map(function(c) {
+    var fixedCount = 0, choiceCount = 0, optionCount = 0;
+    (c.groups||[]).forEach(function(g){
+      if (g.type === 'fixed') fixedCount += (g.options||[]).length;
+      else { choiceCount++; optionCount += (g.options||[]).length; }
+    });
+    var makeup =
+      '<span class="wo-chip" style="background:#ede9fe;color:#6d28d9;font-weight:700;"><i class="fas fa-thumbtack"></i> ثابت: '+fixedCount+'</span> ' +
+      '<span class="wo-chip" style="background:#e0f2fe;color:#0369a1;font-weight:700;"><i class="fas fa-list-check"></i> '+choiceCount+' مجموعة · '+optionCount+' خيار</span>';
+    var safeName = _v3EscapeHtml(c.name).replace(/'/g, "\\'");
+    return '<tr>' +
+      '<td><span style="font-weight:800;">'+_v3EscapeHtml(c.name)+'</span>' +
+        (c.nameEn ? '<div style="font-size:11px;color:#64748b;direction:ltr;">'+_v3EscapeHtml(c.nameEn)+'</div>' : '') + '</td>' +
+      '<td>'+makeup+'</td>' +
+      '<td class="num"><span style="font-weight:900;color:#0f172a;">'+_v3Fmt(Number(c.price)||0)+'</span> ر.س' +
+        '<div style="font-size:10px;color:#64748b;">تكلفة تقديرية: '+_v3Fmt(Number(c.cost)||0)+'</div></td>' +
+      '<td>'+(c.active ? '<span class="wo-chip" style="background:#dcfce7;color:#15803d;font-weight:700;">مفعّل</span>' : '<span class="wo-chip" style="background:#fee2e2;color:#b91c1c;font-weight:700;">معطّل</span>')+'</td>' +
+      '<td>' +
+        '<button class="wo-btn wo-btn-sm wo-btn-secondary" onclick="erpOpenComboBuilder(\''+c.id+'\')" title="تعديل العرض"><i class="fas fa-edit"></i></button> ' +
+        '<button class="wo-btn wo-btn-sm wo-btn-danger" onclick="erpDeleteCombo(\''+c.id+'\',\''+safeName+'\')" title="حذف العرض"><i class="fas fa-trash"></i></button>' +
+      '</td>' +
+    '</tr>';
+  }).join('');
+}
+
+// Pickable product pool = the brand's finished, non-combo menu items.
+function _cbBuildPool() {
+  return (window._bmItemsCache||[]).filter(function(x){ return !x.isCombo && !x.isSemiFinished; })
+    .map(function(x){ return { id: x.id, name: x.name, price: Number(x.price)||0 }; });
+}
+function _cbNameOf(id) {
+  if (!id) return '';
+  var p = (window._cb && window._cb.products || []).find(function(x){ return String(x.id) === String(id); });
+  if (p) return p.name;
+  var found = '';
+  if (window._cb) {
+    (window._cb.fixed||[]).forEach(function(f){ if (String(f.menuItemId)===String(id) && f.name) found = f.name; });
+    (window._cb.groups||[]).forEach(function(g){ (g.options||[]).forEach(function(o){ if (String(o.menuItemId)===String(id) && o.name) found = o.name; }); });
+  }
+  return found || id;
+}
+function _cbProductOptions(selId) {
+  var opts = '<option value="">— اختر منتجاً —</option>';
+  var pool = (window._cb && window._cb.products) || [];
+  var found = false;
+  pool.forEach(function(p){
+    var sel = String(p.id) === String(selId) ? ' selected' : '';
+    if (sel) found = true;
+    opts += '<option value="'+_v3EscapeHtml(p.id)+'"'+sel+'>'+_v3EscapeHtml(p.name)+' — '+_v3Fmt(Number(p.price)||0)+'</option>';
+  });
+  if (selId && !found) {
+    opts += '<option value="'+_v3EscapeHtml(selId)+'" selected>'+_v3EscapeHtml(_cbNameOf(selId))+'</option>';
+  }
+  return opts;
+}
+
+window.erpOpenComboBuilder = function(comboId) {
+  if (!window._bmCurrentBrand) { _v3Toast('اختر براند أولاً', true); return; }
+  var pool = _cbBuildPool();
+  if (!pool.length) { _v3Toast('لا توجد منتجات في هذا البراند — أضف منتجات أولاً ثم أنشئ العرض', true); return; }
+  if (comboId) {
+    _v3Toast('جاري تحميل العرض...');
+    _erpGet('/menu/combos/' + encodeURIComponent(comboId), function(combo) {
+      if (!combo || !combo.id) { _v3Toast('تعذّر تحميل العرض', true); return; }
+      window._cb = {
+        editingId: comboId,
+        name: combo.name || '', nameEn: combo.nameEn || '',
+        category: combo.category || 'عروض', price: Number(combo.price)||0,
+        active: combo.active !== false, fixed: [], groups: [], products: pool
+      };
+      (combo.groups||[]).forEach(function(g){
+        if (g.type === 'fixed') {
+          (g.options||[]).forEach(function(o){ window._cb.fixed.push({ menuItemId:o.menuItemId, name:o.name, qty:Number(o.qty)||1 }); });
+        } else {
+          window._cb.groups.push({
+            name: g.name || 'اختيار', minSelect: Number(g.minSelect)||1, maxSelect: Number(g.maxSelect)||1,
+            options: (g.options||[]).map(function(o){ return { menuItemId:o.menuItemId, name:o.name, qty:Number(o.qty)||1 }; })
+          });
+        }
+      });
+      _cbOpenModal();
+    });
+  } else {
+    window._cb = {
+      editingId: null, name: '', nameEn: '', category: 'عروض', price: 0, active: true,
+      fixed: [], groups: [{ name: 'اختر الصنف', minSelect: 1, maxSelect: 1, options: [] }], products: pool
+    };
+    _cbOpenModal();
+  }
+};
+
+function _cbOpenModal() {
+  WoModal.open({
+    icon: 'fa-gift', iconColor: '#8b5cf6',
+    title: window._cb.editingId ? 'تعديل العرض' : 'عرض جديد',
+    subtitle: 'مكوّن ثابت + مجموعات اختيار — يُخصم من المخزون حسب وصفة كل صنف مختار',
+    body: '<div id="cbBuilderBody"></div>',
+    footer:
+      '<button class="wo-btn wo-btn-secondary" onclick="WoModal.close()">إلغاء</button>' +
+      '<button class="wo-btn wo-btn-primary" onclick="cbSaveCombo()" id="cbSaveBtn"><i class="fas fa-save"></i> حفظ العرض</button>',
+    size: 'xl'
+  });
+  setTimeout(_cbRender, 40);
+}
+
+function _cbField(label, control) {
+  return '<div><label class="wo-field-label" style="display:block;margin-bottom:5px;">'+_v3EscapeHtml(label)+'</label>'+control+'</div>';
+}
+
+function _cbRender() {
+  var host = document.getElementById('cbBuilderBody');
+  if (!host || !window._cb) return;
+  var c = window._cb;
+  var h = '';
+  h += '<div style="display:grid;grid-template-columns:2fr 2fr 1fr;gap:12px;margin-bottom:14px;">';
+  h += _cbField('اسم العرض', '<input id="cbName" class="wo-input" placeholder="أي سندوتش مع عصير" value="'+_v3EscapeHtml(c.name)+'">');
+  h += _cbField('الاسم بالإنجليزية', '<input id="cbNameEn" class="wo-input" dir="ltr" placeholder="Any sandwich + juice" value="'+_v3EscapeHtml(c.nameEn)+'">');
+  h += _cbField('السعر (ر.س)', '<input id="cbPrice" type="number" min="0" step="0.5" class="wo-input" value="'+(Number(c.price)||0)+'">');
+  h += '</div>';
+  h += '<div style="display:grid;grid-template-columns:2fr 1fr;gap:12px;margin-bottom:18px;">';
+  h += _cbField('الفئة', '<input id="cbCategory" class="wo-input" value="'+_v3EscapeHtml(c.category||'عروض')+'">');
+  h += _cbField('الحالة', '<label style="display:flex;align-items:center;gap:8px;height:38px;cursor:pointer;"><input type="checkbox" id="cbActive" '+(c.active?'checked':'')+' style="width:18px;height:18px;"> <span>مفعّل (يظهر في الكاشير)</span></label>');
+  h += '</div>';
+
+  // Fixed components
+  h += '<div class="cb-panel">';
+  h += '<div class="cb-panel-head"><span><i class="fas fa-thumbtack" style="color:#6d28d9;"></i> المكوّنات الثابتة <small style="color:#64748b;font-weight:500;">(تُضاف دائماً)</small></span>' +
+       '<button class="wo-btn wo-btn-sm wo-btn-secondary" onclick="cbAddFixed()"><i class="fas fa-plus"></i> مكوّن ثابت</button></div>';
+  h += '<div id="cbFixedList">';
+  if (!c.fixed.length) h += '<div class="cb-hint">لا يوجد مكوّن ثابت (اختياري) — مثال: عصير.</div>';
+  c.fixed.forEach(function(f, i){
+    h += '<div class="cb-row" data-cb-fix="'+i+'">' +
+      '<select class="wo-select cb-fix-item">'+_cbProductOptions(f.menuItemId)+'</select>' +
+      '<input type="number" min="0.001" step="0.5" class="wo-input cb-fix-qty" style="max-width:90px;" value="'+(Number(f.qty)||1)+'" title="الكمية">' +
+      '<button class="wo-btn wo-btn-sm wo-btn-danger" onclick="cbRemoveFixed('+i+')"><i class="fas fa-trash"></i></button>' +
+    '</div>';
+  });
+  h += '</div></div>';
+
+  // Choice groups
+  h += '<div class="cb-panel">';
+  h += '<div class="cb-panel-head"><span><i class="fas fa-list-check" style="color:#0369a1;"></i> مجموعات الاختيار <small style="color:#64748b;font-weight:500;">(يختار الكاشير منها)</small></span>' +
+       '<button class="wo-btn wo-btn-sm wo-btn-secondary" onclick="cbAddGroup()"><i class="fas fa-plus"></i> مجموعة اختيار</button></div>';
+  h += '<div id="cbGroupsList">';
+  if (!c.groups.length) h += '<div class="cb-hint">أضف مجموعة اختيار واحدة على الأقل (مثل: اختر السندوتش).</div>';
+  c.groups.forEach(function(g, gi){
+    h += '<div class="cb-group" data-cb-grp="'+gi+'">';
+    h += '<div class="cb-group-head">' +
+      '<input class="wo-input cb-grp-name" style="flex:1;font-weight:700;" placeholder="اسم المجموعة (اختر السندوتش)" value="'+_v3EscapeHtml(g.name||'')+'">' +
+      '<span style="font-size:12px;color:#64748b;">أدنى</span><input type="number" min="0" step="1" class="wo-input cb-grp-min" style="max-width:64px;" value="'+(Number(g.minSelect)||0)+'">' +
+      '<span style="font-size:12px;color:#64748b;">أقصى</span><input type="number" min="1" step="1" class="wo-input cb-grp-max" style="max-width:64px;" value="'+(Number(g.maxSelect)||1)+'">' +
+      '<button class="wo-btn wo-btn-sm wo-btn-danger" onclick="cbRemoveGroup('+gi+')" title="حذف المجموعة"><i class="fas fa-trash"></i></button>' +
+    '</div>';
+    h += '<div class="cb-group-body">';
+    if (!g.options.length) h += '<div class="cb-hint">أضف خيارات هذه المجموعة.</div>';
+    g.options.forEach(function(o, oi){
+      h += '<div class="cb-row" data-cb-opt="'+oi+'">' +
+        '<select class="wo-select cb-opt-item">'+_cbProductOptions(o.menuItemId)+'</select>' +
+        '<input type="number" min="0.001" step="0.5" class="wo-input cb-opt-qty" style="max-width:90px;" value="'+(Number(o.qty)||1)+'" title="الكمية">' +
+        '<button class="wo-btn wo-btn-sm wo-btn-danger" onclick="cbRemoveOption('+gi+','+oi+')"><i class="fas fa-trash"></i></button>' +
+      '</div>';
+    });
+    h += '<button class="wo-btn wo-btn-sm wo-btn-secondary" style="margin-top:6px;" onclick="cbAddOption('+gi+')"><i class="fas fa-plus"></i> خيار</button>';
+    h += '</div></div>';
+  });
+  h += '</div></div>';
+
+  h += '<style>' +
+    '.cb-panel{border:1px solid #e2e8f0;border-radius:14px;padding:14px;margin-bottom:16px;background:#fff;}' +
+    '.cb-panel-head{display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;font-weight:800;color:#0f172a;}' +
+    '.cb-row{display:flex;gap:8px;align-items:center;margin-bottom:8px;}' +
+    '.cb-row .wo-select{flex:1;}' +
+    '.cb-group{border:1px dashed #cbd5e1;border-radius:12px;padding:12px;margin-bottom:12px;background:#f8fafc;}' +
+    '.cb-group-head{display:flex;gap:8px;align-items:center;margin-bottom:10px;flex-wrap:wrap;}' +
+    '.cb-hint{font-size:12px;color:#94a3b8;padding:6px 2px;}' +
+  '</style>';
+
+  host.innerHTML = h;
+}
+
+// Read the live DOM back into window._cb (called before any structural change
+// + on save) so typed values survive add/remove re-renders.
+function _cbHarvest() {
+  if (!window._cb) return;
+  var c = window._cb;
+  c.name = (document.getElementById('cbName')||{}).value || '';
+  c.nameEn = (document.getElementById('cbNameEn')||{}).value || '';
+  c.category = (document.getElementById('cbCategory')||{}).value || '';
+  c.price = Number((document.getElementById('cbPrice')||{}).value) || 0;
+  c.active = !!((document.getElementById('cbActive')||{}).checked);
+  var fixed = [];
+  (document.querySelectorAll('#cbFixedList [data-cb-fix]')||[]).forEach(function(row){
+    var id = (row.querySelector('.cb-fix-item')||{}).value || '';
+    var qty = Number((row.querySelector('.cb-fix-qty')||{}).value) || 1;
+    fixed.push({ menuItemId: id, name: _cbNameOf(id), qty: qty });
+  });
+  c.fixed = fixed;
+  var groups = [];
+  (document.querySelectorAll('#cbGroupsList [data-cb-grp]')||[]).forEach(function(gEl){
+    var gname = (gEl.querySelector('.cb-grp-name')||{}).value || '';
+    var min = Number((gEl.querySelector('.cb-grp-min')||{}).value);
+    var max = Number((gEl.querySelector('.cb-grp-max')||{}).value);
+    var options = [];
+    (gEl.querySelectorAll('[data-cb-opt]')||[]).forEach(function(row){
+      var id = (row.querySelector('.cb-opt-item')||{}).value || '';
+      var qty = Number((row.querySelector('.cb-opt-qty')||{}).value) || 1;
+      options.push({ menuItemId: id, name: _cbNameOf(id), qty: qty });
+    });
+    groups.push({ name: gname, minSelect: isNaN(min)?1:min, maxSelect: isNaN(max)?1:max, options: options });
+  });
+  c.groups = groups;
+}
+
+window.cbAddFixed   = function()      { _cbHarvest(); window._cb.fixed.push({ menuItemId:'', name:'', qty:1 }); _cbRender(); };
+window.cbRemoveFixed= function(i)     { _cbHarvest(); window._cb.fixed.splice(i,1); _cbRender(); };
+window.cbAddGroup   = function()      { _cbHarvest(); window._cb.groups.push({ name:'', minSelect:1, maxSelect:1, options:[{menuItemId:'',name:'',qty:1}] }); _cbRender(); };
+window.cbRemoveGroup= function(gi)    { _cbHarvest(); window._cb.groups.splice(gi,1); _cbRender(); };
+window.cbAddOption  = function(gi)    { _cbHarvest(); if (window._cb.groups[gi]) window._cb.groups[gi].options.push({menuItemId:'',name:'',qty:1}); _cbRender(); };
+window.cbRemoveOption=function(gi,oi) { _cbHarvest(); if (window._cb.groups[gi]) window._cb.groups[gi].options.splice(oi,1); _cbRender(); };
+
+window.cbSaveCombo = function() {
+  _cbHarvest();
+  var c = window._cb;
+  if (!c.name.trim()) { _v3Toast('اكتب اسم العرض', true); return; }
+  if (isNaN(c.price) || c.price < 0) { _v3Toast('سعر غير صالح', true); return; }
+  var groups = [];
+  var fixedItems = c.fixed.filter(function(f){ return f.menuItemId; }).map(function(f){ return { menuItemId:f.menuItemId, qty:Number(f.qty)||1 }; });
+  if (fixedItems.length) groups.push({ type:'fixed', name:'مكوّنات ثابتة', items: fixedItems });
+  for (var gi = 0; gi < c.groups.length; gi++) {
+    var g = c.groups[gi];
+    var its = (g.options||[]).filter(function(o){ return o.menuItemId; }).map(function(o){ return { menuItemId:o.menuItemId, qty:Number(o.qty)||1 }; });
+    if (!its.length) { _v3Toast('المجموعة "'+(g.name||'')+'" بلا خيارات', true); return; }
+    var mn = Number(g.minSelect)||0, mx = Number(g.maxSelect)||1;
+    if (mn > mx) { _v3Toast('الحد الأدنى أكبر من الأقصى في "'+(g.name||'')+'"', true); return; }
+    if (mx > its.length) { _v3Toast('الحد الأقصى أكبر من عدد الخيارات في "'+(g.name||'')+'"', true); return; }
+    groups.push({ type:'choice', name: g.name||'اختيار', minSelect: mn, maxSelect: mx, items: its });
+  }
+  if (!groups.some(function(g){ return (g.items||[]).length; })) { _v3Toast('أضف مكوّناً ثابتاً أو خياراً واحداً على الأقل', true); return; }
+  var payload = {
+    name: c.name.trim(), nameEn: c.nameEn.trim(), category: c.category||'عروض',
+    price: Number(c.price)||0, active: c.active, brandId: window._bmCurrentBrand.id, groups: groups
+  };
+  var btn = document.getElementById('cbSaveBtn');
+  if (btn) { btn.disabled = true; btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> جارٍ الحفظ...'; }
+  var editing = c.editingId;
+  callAPI(editing ? 'PUT' : 'POST', editing ? '/menu/combos/'+encodeURIComponent(editing) : '/menu/combos', payload, function(r){
+    if (r && r.success) {
+      _v3Toast('تم حفظ العرض ✓');
+      window._cb = null;
+      WoModal.close();
+      erpLoadCombos();
+    } else {
+      if (btn) { btn.disabled = false; btn.innerHTML = '<i class="fas fa-save"></i> حفظ العرض'; }
+      _v3Toast((r && r.error) || 'فشل حفظ العرض', true);
+    }
+  });
+};
+
+window.erpDeleteCombo = function(id, name) {
+  var go = function(ok){
+    if (!ok) return;
+    callAPI('DELETE', '/menu/combos/'+encodeURIComponent(id), null, function(r){
+      if (r && r.success) { _v3Toast('تم حذف العرض'); erpLoadCombos(); }
+      else _v3Toast((r && r.error) || 'فشل الحذف', true);
+    });
+  };
+  if (window.WoModal && WoModal.confirm) {
+    WoModal.confirm({ title:'حذف العرض', message:'حذف العرض "'+name+'"؟ لن يظهر بعدها في الكاشير.', danger:true }).then(go);
+  } else if (confirm('حذف العرض "'+name+'"؟')) { go(true); }
+};
 
 // Choose between finished and semi-finished BEFORE opening the form
 function erpOpenAddProductChooser() {

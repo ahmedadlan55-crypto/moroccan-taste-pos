@@ -6959,6 +6959,7 @@
         <i class="fas fa-file-upload" style="color:#3b82f6;"></i><span>استيراد Excel</span>
         <input type="file" id="bmImportFile" accept=".xlsx,.xls,.csv" style="display:none;" onchange="erpImportBrandMenuExcel(this)">
       </label>
+      <button class="wo-btn wo-btn-secondary" onclick="erpOpenCombos()" title="العروض / الكومبو (أي سندوتش مع عصير)"><i class="fas fa-gift" style="color:#8b5cf6;"></i><span>العروض</span></button>
       <button class="wo-btn wo-btn-primary" onclick="erpOpenAddProductChooser()"><i class="fas fa-plus"></i><span>منتج جديد</span></button>
     </div>
   </header>
@@ -7000,6 +7001,43 @@
       </thead>
       <tbody id="bmBody">
         <tr><td colspan="7"><div class="wo-empty"><i class="fas fa-spinner fa-spin"></i><span>جاري التحميل...</span></div></td></tr>
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<!-- ═══════════════════════════════════════════════════════════════════ -->
+<!-- COMBOS / OFFERS (العروض) — per-brand combo list (e.g. أي سندوتش مع عصير) -->
+<!-- ═══════════════════════════════════════════════════════════════════ -->
+<div id="erpCombos" class="dash-section hidden wo-section">
+  <header class="wo-header">
+    <div class="wo-header-titles">
+      <h1>
+        <span class="wo-icon-slot purple"><i class="fas fa-gift"></i></span>
+        <span>عروض </span><span id="cbBrandName" style="color:#8b5cf6;">—</span>
+      </h1>
+      <p class="wo-header-sub">عروض الكومبو: مكوّن ثابت + مجموعة اختيار متغيّرة (مثل: أي سندوتش مع عصير). تظهر تلقائياً في الكاشير ويُخصم المخزون حسب وصفة كل صنف مختار.</p>
+    </div>
+    <div class="wo-header-actions">
+      <button class="wo-btn wo-btn-secondary" onclick="erpNav('erpBrandMenu')"><i class="fas fa-arrow-right"></i><span>رجوع للمنيو</span></button>
+      <button class="wo-btn wo-btn-secondary" onclick="erpLoadCombos()"><i class="fas fa-rotate"></i><span>تحديث</span></button>
+      <button class="wo-btn wo-btn-primary" onclick="erpOpenComboBuilder()"><i class="fas fa-plus"></i><span>عرض جديد</span></button>
+    </div>
+  </header>
+  <div class="wo-metric-strip" id="cbMetrics"></div>
+  <div class="wo-table-surface">
+    <table class="wo-table">
+      <thead>
+        <tr>
+          <th>اسم العرض</th>
+          <th>المكوّنات</th>
+          <th class="num">السعر</th>
+          <th>الحالة</th>
+          <th>إجراءات</th>
+        </tr>
+      </thead>
+      <tbody id="cbBody">
+        <tr><td colspan="5"><div class="wo-empty"><i class="fas fa-spinner fa-spin"></i><span>جاري التحميل...</span></div></td></tr>
       </tbody>
     </table>
   </div>

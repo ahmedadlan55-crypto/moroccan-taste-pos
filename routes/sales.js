@@ -1035,6 +1035,56 @@ router.post('/', async (req, res) => {
     // legs alongside the recipe-driven COGS.
     const importedDeductions = []; // [{ menuId, menuName, qty }]
 
+    // ─── Combos (العروض) — load definitions for any combo lines in this order ───
+    // A combo line carries no BOM of its own; its makeup is fixed components
+    // (always consumed) + choice groups (cashier-selected). We resolve the
+    // FIXED parts authoritatively from the DB and VALIDATE the client choices
+    // against the stored options (blocks a tampered client picking arbitrary
+    // deductions). Each resolved component then runs through the SAME deduction
+    // engine as a normal item, so COGS/GL stay correct with no engine changes.
+    const comboWarnings = [];          // [{ combo, group, choice?, reason }]
+    const comboDefMap = {};            // comboMenuId → { groups:[{id,type,items:[{menuItemId,qty}]}] }
+    const comboCompNameMap = {};       // componentMenuId → name (for logs/warnings)
+    try {
+      const lineIds = [...new Set(items.map(it => it.id).filter(Boolean))];
+      if (lineIds.length) {
+        const ph = lineIds.map(() => '?').join(',');
+        const [comboRows] = await db.query(
+          `SELECT id FROM menu WHERE id IN (${ph}) AND is_combo = 1`, lineIds);
+        if (comboRows.length) {
+          const cids = comboRows.map(r => r.id);
+          cids.forEach(cid => { comboDefMap[cid] = { groups: [] }; });
+          const cph = cids.map(() => '?').join(',');
+          const [grps] = await db.query(
+            `SELECT id, menu_id, group_type FROM combo_groups WHERE menu_id IN (${cph}) ORDER BY sort_order, id`, cids);
+          const gById = {};
+          grps.forEach(g => { gById[g.id] = { menuId: g.menu_id, type: g.group_type, items: [] }; });
+          if (grps.length) {
+            const gids = grps.map(g => g.id);
+            const gph = gids.map(() => '?').join(',');
+            const [gItems] = await db.query(
+              `SELECT group_id, menu_item_id, qty FROM combo_group_items WHERE group_id IN (${gph}) ORDER BY sort_order, id`, gids);
+            const compIds = [];
+            gItems.forEach(it => {
+              if (gById[it.group_id]) gById[it.group_id].items.push({ menuItemId: it.menu_item_id, qty: Number(it.qty) || 1 });
+              compIds.push(it.menu_item_id);
+            });
+            Object.keys(gById).forEach(gid => {
+              const g = gById[gid];
+              if (comboDefMap[g.menuId]) comboDefMap[g.menuId].groups.push({ id: gid, type: g.type, items: g.items });
+            });
+            // Component names for movement logs / warnings
+            const uniqComp = [...new Set(compIds)];
+            if (uniqComp.length) {
+              const ph2 = uniqComp.map(() => '?').join(',');
+              const [names] = await db.query(`SELECT id, name FROM menu WHERE id IN (${ph2})`, uniqComp);
+              names.forEach(r => { comboCompNameMap[r.id] = r.name; });
+            }
+          }
+        }
+      }
+    } catch (e) { console.warn('[sales] combo load failed:', e.message); }
+
     for (const item of items) {
       // sales_items log row
       await db.query('INSERT INTO sales_items (order_id, order_date, item_name, qty, price, total, payment_method, username, shift_id) VALUES (?,?,?,?,?,?,?,?,?)',
@@ -1043,6 +1093,72 @@ router.post('/', async (req, res) => {
       // Stock deduction
       if (!item.id) {
         itemsWithoutRecipe.push({ name: item.name, reason: 'no item id' });
+        continue;
+      }
+
+      // ─── Combo line: expand into components, deduct each, then skip the
+      // normal item paths (the combo row itself has no recipe/stock). ───
+      if (comboDefMap[item.id]) {
+        const def = comboDefMap[item.id];
+        // Build the consumed component list.
+        const components = []; // [{ menuId, qty }]
+        // 1) Fixed components — always consumed (authoritative from DB).
+        def.groups.filter(g => g.type === 'fixed').forEach(g => {
+          g.items.forEach(ci => components.push({ menuId: ci.menuItemId, qty: ci.qty }));
+        });
+        // 2) Choice components — from the cashier's validated selections.
+        const sel = Array.isArray(item.comboChoices) ? item.comboChoices : [];
+        def.groups.filter(g => g.type === 'choice').forEach(g => {
+          const picks = sel.filter(s => s && String(s.groupId) === String(g.id));
+          if (!picks.length) { comboWarnings.push({ combo: item.name, group: g.id, reason: 'no selection' }); return; }
+          picks.forEach(p => {
+            const opt = g.items.find(ci => String(ci.menuItemId) === String(p.menuItemId));
+            if (opt) components.push({ menuId: opt.menuItemId, qty: opt.qty });
+            else comboWarnings.push({ combo: item.name, group: g.id, choice: p.menuItemId, reason: 'invalid choice (not an option)' });
+          });
+        });
+
+        const deductions = [];
+        for (const comp of components) {
+          const compName = comboCompNameMap[comp.menuId] || comp.menuId;
+          const compMeta = productionMetaMap[comp.menuId];
+          // Imported/stocked component → relieve its own stock (valued at menu.cost in GL).
+          if (compMeta && compMeta.method === 'imported') {
+            const physQty = comp.qty * item.qty;
+            try {
+              if (warehouseId) {
+                await deductWarehouseStock(db, warehouseId, comp.menuId, physQty);
+                await recomputeMenuStock(db, comp.menuId);
+              } else {
+                await db.query('UPDATE menu SET stock = stock - ? WHERE id = ?', [physQty, comp.menuId]);
+              }
+              importedDeductions.push({ menuId: comp.menuId, menuName: compName, qty: physQty });
+            } catch (_) {}
+            continue;
+          }
+          // Made-to-order component → deduct its recipe (same engine as normal items).
+          const recipe = recipeMap[comp.menuId];
+          if (!recipe) {
+            itemsWithoutRecipe.push({ id: comp.menuId, name: compName, reason: 'combo component without recipe', combo: item.id });
+            continue;
+          }
+          for (const ing of recipe) {
+            const deduct = ing.qtyUsed * comp.qty * item.qty;
+            if (warehouseId) {
+              await deductWarehouseStock(db, warehouseId, ing.invId, deduct);
+              await recomputeInvItemStock(db, ing.invId);
+            } else {
+              await db.query('UPDATE inv_items SET stock = stock - ? WHERE id = ?', [deduct, ing.invId]);
+            }
+            const movId = 'MOV-' + Date.now() + '-' + Math.random().toString(36).substr(2, 4) + '-' + deductions.length;
+            await db.query(
+              'INSERT INTO inventory_movements (id, movement_date, item_id, item_name, type, qty, reason, username, notes, warehouse_id, reference_type, reference_id) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)',
+              [movId, now, ing.invId, ing.invName, 'out', deduct, 'مبيعات (عرض)', username, (invoiceNumber || orderId) + ' / ' + item.name + ' → ' + compName, warehouseId || null, 'sale', (invoiceNumber || orderId)]
+            );
+            deductions.push({ invId: ing.invId, invName: ing.invName, deducted: deduct, affected: 1 });
+          }
+        }
+        recipesApplied.push({ menuId: item.id, menuName: item.name, deductions: deductions, isCombo: true });
         continue;
       }
 
@@ -1497,6 +1613,9 @@ router.post('/', async (req, res) => {
       recipesApplied: recipesApplied,
       itemsWithoutRecipe: itemsWithoutRecipe,
       semiDeductions: semiDeductions,
+      // Combo selections that could not be resolved (missing/invalid choice).
+      // Non-blocking diagnostic — the sale still posts with what WAS valid.
+      comboWarnings: comboWarnings.length ? comboWarnings : undefined,
       // postingWarning kept for backward-compat; always null now (GL is fatal).
       postingWarning: null,
       // v6.0.3 Wave C.1 — zero-cost component warning (non-blocking)

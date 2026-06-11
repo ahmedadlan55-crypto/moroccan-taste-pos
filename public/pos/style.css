@@ -898,6 +898,57 @@ body.foodics-mode .cart-footer { display: none !important; }
   overflow-y: auto;
 }
 
+/* ─── Combo chooser (العروض) ─────────────────────────────────────── */
+.combo-fixed {
+  background: #f5f3ff;
+  border: 1.5px solid #ddd6fe;
+  color: #5b21b6;
+  border-radius: 12px;
+  padding: 11px 14px;
+  font-size: 13.5px;
+  margin-bottom: 16px;
+}
+.combo-fixed i { margin-inline-end: 6px; color: #7c3aed; }
+.combo-group { margin-bottom: 18px; }
+.combo-group-head {
+  font-weight: 800;
+  font-size: 14.5px;
+  color: #0f172a;
+  margin-bottom: 10px;
+}
+.combo-group-head small { font-weight: 600; color: #94a3b8; }
+.combo-group-opts {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+  gap: 10px;
+}
+.combo-opt {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 13px 14px;
+  border: 1.5px solid #e2e8f0;
+  border-radius: 13px;
+  background: #fff;
+  cursor: pointer;
+  font-family: inherit;
+  font-size: 14px;
+  font-weight: 700;
+  color: #1e293b;
+  text-align: start;
+  transition: all .14s ease;
+}
+.combo-opt:hover { border-color: #c4b5fd; background: #faf8ff; }
+.combo-opt i { font-size: 17px; color: #cbd5e1; flex-shrink: 0; }
+.combo-opt.picked {
+  border-color: #7c3aed;
+  background: linear-gradient(135deg, #f5f3ff, #ede9fe);
+  box-shadow: 0 2px 10px rgba(124, 58, 237, .18);
+}
+.combo-opt.picked i { color: #7c3aed; }
+.combo-opt-name { flex: 1; }
+.combo-empty { color: #94a3b8; font-size: 13px; padding: 8px 2px; }
+
 /* Search modal — input + results list */
 .pos-cust-modal-input {
   width: 100%;

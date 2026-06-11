@@ -3791,151 +3791,177 @@ router.get('/receive-requests', async (req, res) => {
 });
 
 // Approve receive — updates stock + creates GL journal
+// v7.6 — GL posting rewritten onto gl.postJournal with CORE_ACCOUNTS. The old
+// hand-rolled block targeted the pre-v5.11.8 chart: it debited '112%' as
+// "inventory" (112 is Accounts Receivable in the current template — inventory
+// lives under 113, core code 1200) and looked up Input VAT at '1430'/'213%'
+// (Output-VAT's parent) instead of core 1290. Journal shape now matches
+// purchases POST /receive/:id: Dr 1200 INVENTORY (+ Dr 1290 INPUT_VAT when
+// VAT applies) / Cr 2100 AP — or Cash/Bank by payment method. The whole
+// approve is ONE transaction (stock, movements, status flips, journal commit
+// or roll back together); GL failure is FATAL except on deploys whose GL
+// tables don't exist yet. FOR UPDATE serializes a double-approve.
 router.post('/receive-approve/:id', async (req, res) => {
   try {
     const { username } = req.body;
-    const [purchases] = await db.query('SELECT * FROM purchases WHERE id = ? AND receive_status = "pending"', [req.params.id]);
-    if (!purchases.length) return res.json({ success: false, error: 'طلب الاستلام غير موجود أو تم اعتماده بالفعل' });
+    // The approve UI sends only {username} and this flow has always treated
+    // prices as VAT-inclusive, so default true; callers may opt out with an
+    // explicit includesVAT:false (same flag as purchases receive).
+    const includesVAT = req.body.includesVAT !== false;
 
-    const purchase = purchases[0];
-    const receivedItems = JSON.parse(purchase.received_items_json || '[]');
-    if (!receivedItems.length) return res.json({ success: false, error: 'لا توجد مواد مستلمة' });
+    const out = await db.withTransaction(async (conn) => {
+      const db = conn;
 
-    const now = new Date();
-    let totalNet = 0, totalVat = 0;
+      const [purchases] = await db.query('SELECT * FROM purchases WHERE id = ? AND receive_status = "pending" FOR UPDATE', [req.params.id]);
+      if (!purchases.length) throw new Error('طلب الاستلام غير موجود أو تم اعتماده بالفعل');
 
-    // Process each received item — update stock
-    for (const item of receivedItems) {
-      const qty = Number(item.receivedQty) || 0;
-      if (qty <= 0) continue;
+      const purchase = purchases[0];
+      const receivedItems = JSON.parse(purchase.received_items_json || '[]');
+      if (!receivedItems.length) throw new Error('لا توجد مواد مستلمة');
 
-      const [invRows] = await db.query('SELECT * FROM inv_items WHERE id = ?', [item.invItemId || item.id]);
-      if (!invRows.length) continue;
-      const inv = invRows[0];
+      const now = new Date();
+      let totalNet = 0, totalVat = 0;
 
-      const unitPrice = Number(item.unitPrice) || Number(inv.cost) || 0;
-      const netPrice = unitPrice / 1.15; // remove VAT
-      const vatAmount = unitPrice - netPrice;
+      // Process each received item — update stock
+      for (const item of receivedItems) {
+        const qty = Number(item.receivedQty) || 0;
+        if (qty <= 0) continue;
 
-      // WAC
-      const stockBefore = Number(inv.stock) || 0;
-      const currentCost = Number(inv.cost) || 0;
-      let newCost = stockBefore === 0 ? netPrice : ((stockBefore * currentCost) + (qty * netPrice)) / (stockBefore + qty);
+        const [invRows] = await db.query('SELECT * FROM inv_items WHERE id = ?', [item.invItemId || item.id]);
+        if (!invRows.length) continue;
+        const inv = invRows[0];
 
-      // v7.1 — warehouse-aware receive: add to warehouse_stock for the purchase's
-      // warehouse (atomic upsert) + recompute the global rollup, so the received
-      // qty is visible per-branch and inv_items.stock stays = SUM(warehouse_stock).
-      // Falls back to the legacy global write only when no warehouse is stamped.
-      const rcvWh = purchase.warehouse_id || null;
-      if (rcvWh) {
+        const unitPrice = Number(item.unitPrice) || Number(inv.cost) || 0;
+        const netPrice = includesVAT ? unitPrice / 1.15 : unitPrice;
+        const vatAmount = unitPrice - netPrice;
+
+        // WAC
+        const stockBefore = Number(inv.stock) || 0;
+        const currentCost = Number(inv.cost) || 0;
+        let newCost = stockBefore === 0 ? netPrice : ((stockBefore * currentCost) + (qty * netPrice)) / (stockBefore + qty);
+
+        // v7.1 — warehouse-aware receive: add to warehouse_stock for the purchase's
+        // warehouse (atomic upsert) + recompute the global rollup, so the received
+        // qty is visible per-branch and inv_items.stock stays = SUM(warehouse_stock).
+        // Falls back to the legacy global write only when no warehouse is stamped.
+        const rcvWh = purchase.warehouse_id || null;
+        if (rcvWh) {
+          await db.query(
+            'INSERT INTO warehouse_stock (id, warehouse_id, item_id, qty, avg_cost, last_cost, last_updated) VALUES (?,?,?,?,?,?,NOW()) ' +
+            'ON DUPLICATE KEY UPDATE qty = qty + ?, avg_cost = ?, last_cost = ?, last_updated = NOW()',
+            ['WS-' + Date.now() + '-' + Math.random().toString(36).slice(2, 6), rcvWh, inv.id, qty, newCost, netPrice, qty, newCost, netPrice]);
+          await recomputeInvItemStock(db, inv.id);
+          await db.query('UPDATE inv_items SET cost = ? WHERE id = ?', [newCost, inv.id]);
+        } else {
+          await db.query('UPDATE inv_items SET stock = stock + ?, cost = ? WHERE id = ?', [qty, newCost, inv.id]);
+        }
+
+        // Record movement (with warehouse_id so the per-warehouse ledger shows it)
+        const movId = 'MOV-RCV-' + Date.now() + '-' + Math.random().toString(36).substr(2, 4);
         await db.query(
-          'INSERT INTO warehouse_stock (id, warehouse_id, item_id, qty, avg_cost, last_cost, last_updated) VALUES (?,?,?,?,?,?,NOW()) ' +
-          'ON DUPLICATE KEY UPDATE qty = qty + ?, avg_cost = ?, last_cost = ?, last_updated = NOW()',
-          ['WS-' + Date.now() + '-' + Math.random().toString(36).slice(2, 6), rcvWh, inv.id, qty, newCost, netPrice, qty, newCost, netPrice]);
-        await recomputeInvItemStock(db, inv.id);
-        await db.query('UPDATE inv_items SET cost = ? WHERE id = ?', [newCost, inv.id]);
-      } else {
-        await db.query('UPDATE inv_items SET stock = stock + ?, cost = ? WHERE id = ?', [qty, newCost, inv.id]);
+          'INSERT INTO inventory_movements (id, movement_date, item_id, item_name, type, qty, reason, username, notes, warehouse_id) VALUES (?,?,?,?,?,?,?,?,?,?)',
+          [movId, now, inv.id, inv.name, 'in', qty, 'استلام نقص', username || '', 'PUR:' + req.params.id, rcvWh]
+        );
+
+        totalNet += netPrice * qty;
+        totalVat += vatAmount * qty;
       }
 
-      // Record movement (with warehouse_id so the per-warehouse ledger shows it)
-      const movId = 'MOV-RCV-' + Date.now() + '-' + Math.random().toString(36).substr(2, 4);
-      await db.query(
-        'INSERT INTO inventory_movements (id, movement_date, item_id, item_name, type, qty, reason, username, notes, warehouse_id) VALUES (?,?,?,?,?,?,?,?,?,?)',
-        [movId, now, inv.id, inv.name, 'in', qty, 'استلام نقص', username || '', 'PUR:' + req.params.id, rcvWh]
-      );
+      // Record differences in PO notes
+      const originalItems = JSON.parse(purchase.items_json || '[]');
+      let diffNotes = '';
+      receivedItems.forEach(function(ri) {
+        const orig = originalItems.find(function(o) { return (o.id||o.itemId) === (ri.invItemId||ri.id); });
+        const ordered = orig ? (Number(orig.qty)||0) : 0;
+        const received = Number(ri.receivedQty) || 0;
+        const diff = received - ordered;
+        if (diff !== 0) {
+          diffNotes += (ri.invItemName||ri.name||'') + ' — Ordered ' + ordered + ' — Received ' + received + ' — Diff ' + (diff>0?'+':'') + diff + '\n';
+        }
+      });
 
-      totalNet += netPrice * qty;
-      totalVat += vatAmount * qty;
-    }
+      // Check if partial or full receive
+      const allReceived = receivedItems.every(function(ri) {
+        const orig = originalItems.find(function(o) { return (o.id||o.itemId) === (ri.invItemId||ri.id); });
+        return (Number(ri.receivedQty)||0) >= (orig ? Number(orig.qty)||0 : 0);
+      });
 
-    // Record differences in PO notes
-    const originalItems = JSON.parse(purchase.items_json || '[]');
-    let diffNotes = '';
-    receivedItems.forEach(function(ri) {
-      const orig = originalItems.find(function(o) { return (o.id||o.itemId) === (ri.invItemId||ri.id); });
-      const ordered = orig ? (Number(orig.qty)||0) : 0;
-      const received = Number(ri.receivedQty) || 0;
-      const diff = received - ordered;
-      if (diff !== 0) {
-        diffNotes += (ri.invItemName||ri.name||'') + ' — Ordered ' + ordered + ' — Received ' + received + ' — Diff ' + (diff>0?'+':'') + diff + '\n';
-      }
-    });
-
-    // Check if partial or full receive
-    const allReceived = receivedItems.every(function(ri) {
-      const orig = originalItems.find(function(o) { return (o.id||o.itemId) === (ri.invItemId||ri.id); });
-      return (Number(ri.receivedQty)||0) >= (orig ? Number(orig.qty)||0 : 0);
-    });
-
-    // Update purchase status
-    await db.query('UPDATE purchases SET status = "received", receive_status = "approved", receive_approved_by = ? WHERE id = ?', [username || '', req.params.id]);
-    if (purchase.po_id) {
-      const poStatus = allReceived ? 'received' : 'partially_received';
-      await db.query('UPDATE purchase_orders SET status = ? WHERE id = ?', [poStatus, purchase.po_id]);
-      // Save differences in PO notes
-      if (diffNotes) {
-        await db.query('UPDATE purchase_orders SET notes = CONCAT(COALESCE(notes,""), ?) WHERE id = ?', ['\n--- فروقات الاستلام ---\n' + diffNotes, purchase.po_id]);
-      }
-    }
-
-    // Update linked shortage request status
-    if (purchase.po_id) {
-      const shrStatus = allReceived ? 'fully_received' : 'partially_received';
-      await db.query("UPDATE shortage_requests SET status = ? WHERE po_id = ?", [shrStatus, purchase.po_id]);
-    }
-
-    // ─── GL Journal Entry ───
-    let journalNumber = '';
-    const totalGross = totalNet + totalVat;
-    if (totalGross > 0) {
-      const jrnId = 'JRN-RCV-' + Date.now();
-      const [lastJ] = await db.query('SELECT journal_number FROM gl_journals ORDER BY created_at DESC LIMIT 1');
-      let jrnNum = 1;
-      if (lastJ.length && lastJ[0].journal_number) { const m = lastJ[0].journal_number.match(/(\d+)/); if (m) jrnNum = parseInt(m[1]) + 1; }
-      journalNumber = 'JV-' + String(jrnNum).padStart(6, '0');
-      const desc = 'استلام مواد — ' + (purchase.supplier_name || '');
-
-      await db.query(
-        `INSERT INTO gl_journals (id, journal_number, journal_date, reference_type, reference_id, description, total_debit, total_credit, status, created_by, posted_by, posted_at)
-         VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`,
-        [jrnId, journalNumber, now, 'purchase_receive', req.params.id, desc, totalGross, totalGross, 'posted', username||'', username||'', now]
-      );
-
-      // Debit: Inventory account (112)
-      let invAccId = null;
-      const [invAcc] = await db.query("SELECT id FROM gl_accounts WHERE code LIKE '112%' AND type='asset' ORDER BY code LIMIT 1");
-      if (invAcc.length) invAccId = invAcc[0].id;
-      if (invAccId) {
-        await db.query('INSERT INTO gl_entries (id, journal_id, account_id, account_code, account_name, debit, credit, description) VALUES (?,?,?,?,?,?,?,?)',
-          ['GLE-RCV-' + Date.now() + '-D1', jrnId, invAccId, '112', 'المخزون', totalNet, 0, desc]);
-        await db.query('UPDATE gl_accounts SET balance = balance + ? WHERE id = ?', [totalNet, invAccId]);
-      }
-
-      // Debit: Input VAT (1430)
-      if (totalVat > 0) {
-        let vatAccId = null;
-        const [vatAcc] = await db.query("SELECT id FROM gl_accounts WHERE code = '1430' OR (code LIKE '213%' AND type='liability') ORDER BY code LIMIT 1");
-        if (vatAcc.length) vatAccId = vatAcc[0].id;
-        if (vatAccId) {
-          await db.query('INSERT INTO gl_entries (id, journal_id, account_id, account_code, account_name, debit, credit, description) VALUES (?,?,?,?,?,?,?,?)',
-            ['GLE-RCV-' + Date.now() + '-D2', jrnId, vatAccId, '1430', 'ضريبة المدخلات', totalVat, 0, 'ضريبة — ' + desc]);
-          await db.query('UPDATE gl_accounts SET balance = balance + ? WHERE id = ?', [totalVat, vatAccId]);
+      // Update purchase status
+      await db.query('UPDATE purchases SET status = "received", receive_status = "approved", receive_approved_by = ? WHERE id = ?', [username || '', req.params.id]);
+      if (purchase.po_id) {
+        const poStatus = allReceived ? 'received' : 'partially_received';
+        await db.query('UPDATE purchase_orders SET status = ? WHERE id = ?', [poStatus, purchase.po_id]);
+        // Save differences in PO notes
+        if (diffNotes) {
+          await db.query('UPDATE purchase_orders SET notes = CONCAT(COALESCE(notes,""), ?) WHERE id = ?', ['\n--- فروقات الاستلام ---\n' + diffNotes, purchase.po_id]);
         }
       }
 
-      // Credit: Suppliers/Payables (211)
-      let supAccId = null;
-      const [supAcc] = await db.query("SELECT id FROM gl_accounts WHERE code LIKE '211%' AND type='liability' ORDER BY code LIMIT 1");
-      if (supAcc.length) supAccId = supAcc[0].id;
-      if (supAccId) {
-        await db.query('INSERT INTO gl_entries (id, journal_id, account_id, account_code, account_name, debit, credit, description) VALUES (?,?,?,?,?,?,?,?)',
-          ['GLE-RCV-' + Date.now() + '-C', jrnId, supAccId, '211', 'الموردون والدائنون', 0, totalGross, desc]);
-        await db.query('UPDATE gl_accounts SET balance = balance - ? WHERE id = ?', [totalGross, supAccId]);
+      // Update linked shortage request status
+      if (purchase.po_id) {
+        const shrStatus = allReceived ? 'fully_received' : 'partially_received';
+        await db.query("UPDATE shortage_requests SET status = ? WHERE po_id = ?", [shrStatus, purchase.po_id]);
       }
-    }
 
-    res.json({ success: true, journalNumber, totalNet, totalVat, totalGross });
+      // ─── GL: Dr INVENTORY (net) [+ Dr INPUT_VAT] / Cr Cash|Bank|AP ───
+      // Same pattern as purchases receive: credit routed by payment_method
+      // ('آجل' default → AP). referenceType 'PurchaseReceipt' so the purchases
+      // revert flow finds and reverses this journal too.
+      const gl = require('../lib/glPosting');
+      const _r2 = v => Math.round((Number(v) || 0) * 100) / 100;
+      const glNet = _r2(totalNet);
+      const glVat = _r2(totalVat);
+      let journalNumber = '';
+      if (glNet > 0.005) {
+        const pm = String(purchase.payment_method || '').toLowerCase();
+        let creditCode = gl.CORE_ACCOUNTS.AP.code;
+        if (/cash|نقد|كاش/.test(pm)) creditCode = gl.CORE_ACCOUNTS.CASH.code;
+        else if (/transfer|تحويل|بنك|bank/.test(pm)) creditCode = gl.CORE_ACCOUNTS.BANK.code;
+
+        const desc = 'استلام مواد — ' + (purchase.supplier_name || '');
+        const entries = [{
+          accountCode: gl.CORE_ACCOUNTS.INVENTORY.code, debit: glNet, credit: 0,
+          description: desc,
+          warehouseId: purchase.warehouse_id || null,
+          brandId: purchase.brand_id || null, branchId: purchase.branch_id || null
+        }];
+        if (glVat > 0) {
+          entries.push({
+            accountCode: gl.CORE_ACCOUNTS.INPUT_VAT.code, debit: glVat, credit: 0,
+            description: 'ضريبة مدخلات — ' + desc,
+            brandId: purchase.brand_id || null, branchId: purchase.branch_id || null
+          });
+        }
+        entries.push({
+          accountCode: creditCode, debit: 0, credit: _r2(glNet + glVat),
+          description: 'مقابل ' + desc,
+          brandId: purchase.brand_id || null, branchId: purchase.branch_id || null
+        });
+
+        const post = await gl.postJournal(db, {
+          journalDate: now.toISOString().slice(0, 10),
+          description: desc,
+          referenceType: 'PurchaseReceipt',
+          referenceId: req.params.id,
+          entries,
+          postedBy: username || ''
+        });
+        if (!post || !post.success) {
+          const perr = (post && post.error) || 'unknown';
+          if (/doesn't exist|ER_NO_SUCH_TABLE/i.test(perr)) {
+            console.warn('[receive-approve ' + req.params.id + '] GL skipped — gl tables absent:', perr);
+          } else {
+            throw new Error('GL_POSTING_FAILED: ' + perr);
+          }
+        } else {
+          journalNumber = post.journalNumber || '';
+        }
+      }
+
+      return { journalNumber, totalNet: glNet, totalVat: glVat, totalGross: _r2(glNet + glVat) };
+    });
+
+    res.json({ success: true, journalNumber: out.journalNumber, totalNet: out.totalNet, totalVat: out.totalVat, totalGross: out.totalGross });
   } catch(e) { res.json({ success: false, error: e.message }); }
 });
 

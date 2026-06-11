@@ -30788,6 +30788,99 @@ function _cbProductOptions(selId) {
   return opts;
 }
 
+// ─── Searchable product picker (replaces the native <select>) ───────────
+// Keeps the selected id in a hidden <input> carrying the same class the old
+// <select> had (cb-fix-item / cb-opt-item), so _cbHarvest reads it unchanged.
+// Arabic-normalized type-ahead search (same logic as the menu search).
+function _cbNorm(v) {
+  return String(v == null ? '' : v).toLowerCase()
+    .replace(/ـ/g, '').replace(/[ً-ْ]/g, '')
+    .replace(/[أإآ]/g, 'ا').replace(/ة/g, 'ه').replace(/[ىئ]/g, 'ي').replace(/ؤ/g, 'و')
+    .trim();
+}
+function _cbPickerHtml(currentId, cls) {
+  var nm = currentId ? _cbNameOf(currentId) : '';
+  return '<div class="cb-pick" data-cb-pick>' +
+    '<input type="hidden" class="'+cls+'" value="'+_v3EscapeHtml(currentId||'')+'">' +
+    '<input type="text" class="cb-pick-search wo-input" autocomplete="off" placeholder="ابحث عن منتج..." value="'+_v3EscapeHtml(nm)+'">' +
+    '<div class="cb-pick-menu" hidden></div>' +
+  '</div>';
+}
+function _cbPickRenderMenu(pick, query) {
+  var menu = pick.querySelector('.cb-pick-menu');
+  if (!menu) return;
+  var pool = (window._cb && window._cb.products) || [];
+  var nq = _cbNorm(query), rawq = String(query || '').toLowerCase();
+  var matches = pool.filter(function(p){
+    if (!nq && !rawq) return true;
+    return _cbNorm(p.name).indexOf(nq) >= 0 || String(p.id).toLowerCase().indexOf(rawq) >= 0;
+  }).slice(0, 50);
+  var hidden = pick.querySelector('input[type=hidden]');
+  var curId = hidden ? hidden.value : '';
+  if (!matches.length) {
+    menu.innerHTML = '<div class="cb-pick-empty">لا نتائج</div>';
+  } else {
+    menu.innerHTML = matches.map(function(p){
+      var sel = String(p.id) === String(curId) ? ' is-sel' : '';
+      return '<div class="cb-pick-opt'+sel+'" data-id="'+_v3EscapeHtml(p.id)+'" data-name="'+_v3EscapeHtml(p.name)+'">' +
+        '<span class="cb-pick-opt-name">'+_v3EscapeHtml(p.name)+'</span>' +
+        '<span class="cb-pick-opt-price">'+_v3Fmt(Number(p.price)||0)+'</span>' +
+      '</div>';
+    }).join('');
+  }
+  menu.hidden = false;
+}
+// One-time delegated wiring (avoids per-instance listener leaks on re-render).
+function _cbWirePickers() {
+  if (window._cbPickerWired) return;
+  window._cbPickerWired = true;
+  document.addEventListener('input', function(e){
+    var inp = e.target.closest && e.target.closest('.cb-pick-search');
+    if (!inp) return;
+    var pick = inp.closest('.cb-pick');
+    if (pick) _cbPickRenderMenu(pick, inp.value);
+  });
+  document.addEventListener('focusin', function(e){
+    var inp = e.target.closest && e.target.closest('.cb-pick-search');
+    if (!inp) return;
+    var pick = inp.closest('.cb-pick');
+    if (!pick) return;
+    // Close any other open picker menu so only the focused one shows.
+    Array.prototype.forEach.call(document.querySelectorAll('.cb-pick-menu:not([hidden])'), function(menu){
+      if (menu.closest('.cb-pick') !== pick) menu.hidden = true;
+    });
+    try { inp.select(); } catch(_){}
+    _cbPickRenderMenu(pick, '');
+  });
+  document.addEventListener('click', function(e){
+    var opt = e.target.closest && e.target.closest('.cb-pick-opt');
+    if (!opt) return;
+    var pick = opt.closest('.cb-pick');
+    if (!pick) return;
+    var hidden = pick.querySelector('input[type=hidden]');
+    var search = pick.querySelector('.cb-pick-search');
+    var menu = pick.querySelector('.cb-pick-menu');
+    if (hidden) hidden.value = opt.getAttribute('data-id') || '';
+    if (search) search.value = opt.getAttribute('data-name') || '';
+    if (menu) menu.hidden = true;
+  });
+  // Close any open menu when clicking outside its picker; restore the search
+  // text to the currently-selected product so the box never shows a stale
+  // query that doesn't match the stored id.
+  document.addEventListener('mousedown', function(e){
+    var insidePick = e.target.closest && e.target.closest('.cb-pick');
+    var open = document.querySelectorAll('.cb-pick-menu:not([hidden])');
+    Array.prototype.forEach.call(open, function(menu){
+      var pk = menu.closest('.cb-pick');
+      if (pk && pk === insidePick) return;
+      menu.hidden = true;
+      var hidden = pk && pk.querySelector('input[type=hidden]');
+      var search = pk && pk.querySelector('.cb-pick-search');
+      if (hidden && search) search.value = hidden.value ? _cbNameOf(hidden.value) : '';
+    });
+  });
+}
+
 window.erpOpenComboBuilder = function(comboId) {
   if (!window._bmCurrentBrand) { _v3Toast('اختر براند أولاً', true); return; }
   var pool = _cbBuildPool();
@@ -30854,6 +30947,7 @@ function _cbOpenModal() {
       '<button class="wo-btn wo-btn-primary" onclick="cbSaveCombo()" id="cbSaveBtn"><i class="fas fa-save"></i> حفظ العرض</button>',
     size: 'xl'
   });
+  _cbWirePickers();
   setTimeout(_cbRender, 40);
 }
 
@@ -30890,7 +30984,7 @@ function _cbRender() {
   if (!c.fixed.length) h += '<div class="cb-hint">لا يوجد مكوّن ثابت (اختياري) — مثال: عصير.</div>';
   c.fixed.forEach(function(f, i){
     h += '<div class="cb-row" data-cb-fix="'+i+'">' +
-      '<select class="wo-select cb-fix-item">'+_cbProductOptions(f.menuItemId)+'</select>' +
+      _cbPickerHtml(f.menuItemId, 'cb-fix-item') +
       '<input type="number" min="0.001" step="0.5" class="wo-input cb-fix-qty" style="max-width:90px;" value="'+(Number(f.qty)||1)+'" title="الكمية">' +
       '<button class="wo-btn wo-btn-sm wo-btn-danger" onclick="cbRemoveFixed('+i+')"><i class="fas fa-trash"></i></button>' +
     '</div>';
@@ -30915,7 +31009,7 @@ function _cbRender() {
     if (!g.options.length) h += '<div class="cb-hint">أضف خيارات هذه المجموعة.</div>';
     g.options.forEach(function(o, oi){
       h += '<div class="cb-row" data-cb-opt="'+oi+'">' +
-        '<select class="wo-select cb-opt-item">'+_cbProductOptions(o.menuItemId)+'</select>' +
+        _cbPickerHtml(o.menuItemId, 'cb-opt-item') +
         '<input type="number" min="0.001" step="0.5" class="wo-input cb-opt-qty" style="max-width:90px;" value="'+(Number(o.qty)||1)+'" title="الكمية">' +
         '<button class="wo-btn wo-btn-sm wo-btn-danger" onclick="cbRemoveOption('+gi+','+oi+')"><i class="fas fa-trash"></i></button>' +
       '</div>';
@@ -30933,6 +31027,16 @@ function _cbRender() {
     '.cb-group{border:1px dashed #cbd5e1;border-radius:12px;padding:12px;margin-bottom:12px;background:#f8fafc;}' +
     '.cb-group-head{display:flex;gap:8px;align-items:center;margin-bottom:10px;flex-wrap:wrap;}' +
     '.cb-hint{font-size:12px;color:#94a3b8;padding:6px 2px;}' +
+    '.cb-pick{position:relative;flex:1;min-width:0;}' +
+    '.cb-pick-search{width:100%;box-sizing:border-box;}' +
+    '.cb-pick-menu{position:absolute;top:calc(100% + 4px);inset-inline-start:0;width:100%;max-height:240px;overflow-y:auto;background:#fff;border:1px solid #e2e8f0;border-radius:10px;box-shadow:0 12px 28px rgba(15,23,42,.14);z-index:50;}' +
+    '.cb-pick-opt{display:flex;justify-content:space-between;align-items:center;gap:10px;padding:9px 12px;cursor:pointer;font-size:13.5px;border-bottom:1px solid #f1f5f9;}' +
+    '.cb-pick-opt:last-child{border-bottom:0;}' +
+    '.cb-pick-opt:hover{background:#f5f3ff;}' +
+    '.cb-pick-opt.is-sel{background:#ede9fe;font-weight:700;}' +
+    '.cb-pick-opt-name{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}' +
+    '.cb-pick-opt-price{color:#64748b;font-size:12px;white-space:nowrap;}' +
+    '.cb-pick-empty{padding:12px;color:#94a3b8;font-size:13px;text-align:center;}' +
   '</style>';
 
   host.innerHTML = h;

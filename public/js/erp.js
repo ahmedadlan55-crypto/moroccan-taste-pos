@@ -29274,10 +29274,24 @@ function _bmRender() {
   var typeFlt = (document.getElementById('bmType')||{}).value || '';
   var catFlt = (document.getElementById('bmCategory')||{}).value || '';
   var stFlt = (document.getElementById('bmStatus')||{}).value || '';
-  var s = search.trim().toLowerCase();
+  var _bmNorm = function(v) {
+    return String(v == null ? '' : v).toLowerCase()
+      .replace(/ـ/g, '')
+      .replace(/[ً-ْ]/g, '')
+      .replace(/[أإآ]/g, 'ا')
+      .replace(/ة/g, 'ه')
+      .replace(/[ىئ]/g, 'ي')
+      .replace(/ؤ/g, 'و')
+      .trim();
+  };
+  var s = _bmNorm(search);
 
   var filtered = rows.filter(function(m) {
-    if (s && (m.name||'').toLowerCase().indexOf(s) < 0) return false;
+    if (s && !(
+      _bmNorm(m.name).includes(s) ||
+      _bmNorm(m.nameEn).includes(s) ||
+      String(m.id||'').toLowerCase().includes(s)
+    )) return false;
     if (typeFlt === 'finished' && m.isSemiFinished) return false;
     if (typeFlt === 'semi' && !m.isSemiFinished) return false;
     if (catFlt && (m.category||'') !== catFlt) return false;

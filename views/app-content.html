@@ -230,25 +230,14 @@
           <i class="fas fa-users-cog"></i><span data-i18n="nav.hr">الموارد البشرية</span><i class="fas fa-chevron-down submenu-indicator"></i>
         </div>
         <div class="submenu">
-          <div class="nav-item" data-erp-nav="erpHrDashboard" onclick="erpNav('erpHrDashboard')"><i class="fas fa-chart-pie"></i><span data-i18n="nav.hrDash">لوحة HR</span></div>
+          <!-- v6.19.2 — Hub restructure: 16 flat items → hub + 3 quick links.
+               All old erpNav section ids remain valid (deep links + the
+               pos_last_section restore keep working); the rest of the
+               screens are reached from inside مركز الموارد البشرية. -->
+          <div class="nav-item" data-erp-nav="erpHrHub" onclick="erpNav('erpHrHub')" style="background:linear-gradient(90deg,rgba(139,92,246,.15),transparent);font-weight:800;"><i class="fas fa-table-columns" style="color:#a78bfa;"></i><span data-i18n="nav.hrHub">مركز الموارد البشرية</span></div>
           <div class="nav-item" data-erp-nav="erpHrEmployees" onclick="erpNav('erpHrEmployees')"><i class="fas fa-users"></i><span data-i18n="nav.employees">الموظفون</span></div>
-          <!-- v6.18.4 (Wave 5) — canonical job-titles taxonomy management -->
-          <div class="nav-item" data-erp-nav="erpHrJobTitles" onclick="erpNav('erpHrJobTitles')"><i class="fas fa-id-badge"></i><span>المسميات الوظيفية</span></div>
-          <div class="nav-item" onclick="nav('users')"><i class="fas fa-user-shield"></i><span data-i18n="nav.usersPerms">المستخدمون والصلاحيات</span></div>
-          <div class="nav-item" data-erp-nav="erpPermsMatrix" onclick="erpNav('erpPermsMatrix')" data-requires-primary-admin="1"><i class="fas fa-shield-halved"></i><span data-i18n="nav.permsMatrix">مصفوفة الصلاحيات</span></div>
-          <div class="nav-item" data-erp-nav="erpHrDepartments" onclick="erpNav('erpHrDepartments')"><i class="fas fa-building"></i><span data-i18n="nav.departments">الأقسام</span></div>
           <div class="nav-item" data-erp-nav="erpHrAttendance" onclick="erpNav('erpHrAttendance')"><i class="fas fa-fingerprint"></i><span data-i18n="nav.attendance">الحضور والانصراف</span></div>
-          <!-- v5.11.1 — Monthly attendance report (per employee) -->
-          <div class="nav-item" data-erp-nav="erpHrAttendanceReport" onclick="erpNav('erpHrAttendanceReport')"><i class="fas fa-calendar-days"></i><span>تقرير الحضور الشَّهري</span></div>
-          <div class="nav-item" data-erp-nav="erpHrShifts" onclick="erpNav('erpHrShifts')"><i class="fas fa-clock"></i><span data-i18n="nav.workShifts">الشفتات</span></div>
-          <div class="nav-item" data-erp-nav="erpHrOvertime" onclick="erpNav('erpHrOvertime')"><i class="fas fa-business-time"></i><span data-i18n="nav.overtime">الإضافي</span></div>
-          <div class="nav-item" data-erp-nav="erpHrExceptions" onclick="erpNav('erpHrExceptions')"><i class="fas fa-exclamation-triangle"></i><span data-i18n="nav.exceptions">الاستثناءات</span></div>
-          <div class="nav-item" data-erp-nav="erpHrLeave" onclick="erpNav('erpHrLeave')"><i class="fas fa-calendar-check"></i><span data-i18n="nav.leave">الإجازات</span></div>
-          <!-- v5.11.1 — Official holidays + per-holiday OT policy -->
-          <div class="nav-item" data-erp-nav="erpHrHolidays" onclick="erpNav('erpHrHolidays')"><i class="fas fa-flag"></i><span>الإجازات الرسمية</span></div>
-          <div class="nav-item" data-erp-nav="erpHrWeeklyOff" onclick="erpNav('erpHrWeeklyOff')"><i class="fas fa-calendar-week"></i><span>الإجازات الأسبوعية</span></div>
           <div class="nav-item" data-erp-nav="erpHrPayroll" onclick="erpNav('erpHrPayroll')"><i class="fas fa-money-check-alt"></i><span data-i18n="nav.payroll">الرواتب</span></div>
-          <div class="nav-item" data-erp-nav="erpHrAdvances" onclick="erpNav('erpHrAdvances')"><i class="fas fa-hand-holding-usd"></i><span data-i18n="nav.advances">السلف</span></div>
         </div>
 
         <!-- 15.5 — V5 Enterprise group merged into الإدارة العامة (v5.9.12) -->
@@ -4849,9 +4838,148 @@
   </div>
 </div>
 
+<!-- ══════════════════════════════════════════════════════════════ -->
+<!-- HR HUB: مركز الموارد البشرية (v6.19.2)                          -->
+<!-- Hub-style landing for the whole HR section. Cards are static    -->
+<!-- HTML; KPI numbers + pending-count chips + alerts are filled by   -->
+<!-- hrLoadHub() from /api/hr/dashboard + /api/hr/dashboard/alerts.  -->
+<!-- ══════════════════════════════════════════════════════════════ -->
+<div id="erpHrHub" class="dash-section hidden wo-section">
+  <header class="wo-header">
+    <div class="wo-header-titles">
+      <h1><span class="wo-icon-slot purple"><i class="fas fa-users-cog"></i></span>مركز الموارد البشرية</h1>
+      <p class="wo-header-sub">نقطة الانطلاق لكل عمليات HR: الحضور، الطلبات، الرواتب، الموظفون، والإعدادات.</p>
+    </div>
+    <div class="wo-header-actions">
+      <button class="wo-btn wo-btn-secondary" onclick="hrLoadHub()"><i class="fas fa-rotate"></i><span>تحديث</span></button>
+      <button class="wo-btn wo-btn-primary" onclick="erpNav('erpHrDashboard')"><i class="fas fa-chart-pie"></i><span>اللوحة التفصيلية</span></button>
+    </div>
+  </header>
+
+  <div class="wo-metric-strip" id="hrHubMetrics"></div>
+
+  <h3 class="hub-sub-title"><i class="fas fa-calendar-day"></i> العمليات اليومية</h3>
+  <div class="hub-grid">
+    <div class="hub-card accent-blue" onclick="erpNav('erpHrAttendance')">
+      <div class="hub-card-icon"><i class="fas fa-fingerprint"></i></div>
+      <div class="hub-card-title">الحضور والانصراف</div>
+      <div class="hub-card-sub">سجلات اليوم، الإدخال اليدوي، الاستيراد، والتحقق الجغرافي.</div>
+      <div class="hub-card-footer"><i class="fas fa-arrow-left"></i> فتح</div>
+    </div>
+    <div class="hub-card accent-orange" onclick="erpNav('erpHrOvertime')">
+      <div class="hub-card-icon"><i class="fas fa-business-time"></i></div>
+      <div class="hub-card-title">الإضافي <span class="hub-card-chip zero" id="hrHubChipOT">0</span></div>
+      <div class="hub-card-sub">ساعات إضافية مرصودة آلياً من الحضور بانتظار الاعتماد.</div>
+      <div class="hub-card-footer"><i class="fas fa-arrow-left"></i> فتح</div>
+    </div>
+    <div class="hub-card accent-slate" onclick="erpNav('erpHrExceptions')">
+      <div class="hub-card-icon"><i class="fas fa-exclamation-triangle"></i></div>
+      <div class="hub-card-title">الاستثناءات</div>
+      <div class="hub-card-sub">تجاوز تأخير، عذر غياب، وتعديلات حضور مُعتمدة.</div>
+      <div class="hub-card-footer"><i class="fas fa-arrow-left"></i> فتح</div>
+    </div>
+  </div>
+
+  <h3 class="hub-sub-title"><i class="fas fa-envelope-open-text"></i> الطلبات</h3>
+  <div class="hub-grid">
+    <div class="hub-card accent-green" onclick="erpNav('erpHrLeave')">
+      <div class="hub-card-icon"><i class="fas fa-calendar-check"></i></div>
+      <div class="hub-card-title">الإجازات <span class="hub-card-chip zero" id="hrHubChipLeave">0</span></div>
+      <div class="hub-card-sub">طلبات الإجازة بمسار اعتماد ثنائي: الفرع ثم الموارد البشرية.</div>
+      <div class="hub-card-footer"><i class="fas fa-arrow-left"></i> فتح</div>
+    </div>
+    <div class="hub-card accent-teal" onclick="erpNav('erpHrAdvances')">
+      <div class="hub-card-icon"><i class="fas fa-hand-holding-usd"></i></div>
+      <div class="hub-card-title">السلف <span class="hub-card-chip zero" id="hrHubChipAdv">0</span></div>
+      <div class="hub-card-sub">طلبات السلف وأقساط الخصم الشهرية من الرواتب.</div>
+      <div class="hub-card-footer"><i class="fas fa-arrow-left"></i> فتح</div>
+    </div>
+  </div>
+
+  <h3 class="hub-sub-title"><i class="fas fa-money-check-alt"></i> الرواتب</h3>
+  <div class="hub-grid">
+    <div class="hub-card accent-purple" onclick="erpNav('erpHrPayroll')">
+      <div class="hub-card-icon"><i class="fas fa-money-check-alt"></i></div>
+      <div class="hub-card-title">مسيرات الرواتب</div>
+      <div class="hub-card-sub">احتساب، اعتماد (قيود تلقائية)، وصرف الرواتب الشهرية.</div>
+      <div class="hub-card-footer"><i class="fas fa-arrow-left"></i> فتح</div>
+    </div>
+    <div class="hub-card accent-blue" onclick="erpNav('erpHrAttendanceReport')">
+      <div class="hub-card-icon"><i class="fas fa-calendar-days"></i></div>
+      <div class="hub-card-title">تقرير الحضور الشهري</div>
+      <div class="hub-card-sub">التقرير الشهري التفصيلي لكل موظف مع الطباعة وExcel.</div>
+      <div class="hub-card-footer"><i class="fas fa-arrow-left"></i> فتح</div>
+    </div>
+  </div>
+
+  <h3 class="hub-sub-title"><i class="fas fa-users"></i> الموظفون والتنظيم</h3>
+  <div class="hub-grid hub-grid-sm">
+    <div class="hub-card accent-blue" onclick="erpNav('erpHrEmployees')">
+      <div class="hub-card-icon"><i class="fas fa-users"></i></div>
+      <div class="hub-card-title">الموظفون</div>
+      <div class="hub-card-sub">الملفات، التعيين، الإيقاف، وربط حسابات النظام.</div>
+      <div class="hub-card-footer"><i class="fas fa-arrow-left"></i> إدارة</div>
+    </div>
+    <div class="hub-card accent-slate" onclick="erpNav('erpHrDepartments')">
+      <div class="hub-card-icon"><i class="fas fa-building"></i></div>
+      <div class="hub-card-title">الأقسام</div>
+      <div class="hub-card-sub">الهيكل التنظيمي للأقسام حسب الفرع.</div>
+      <div class="hub-card-footer"><i class="fas fa-arrow-left"></i> إدارة</div>
+    </div>
+    <div class="hub-card accent-teal" onclick="erpNav('erpHrJobTitles')">
+      <div class="hub-card-icon"><i class="fas fa-id-badge"></i></div>
+      <div class="hub-card-title">المسميات الوظيفية</div>
+      <div class="hub-card-sub">التصنيف المعياري للمسميات والأدوار الافتراضية.</div>
+      <div class="hub-card-footer"><i class="fas fa-arrow-left"></i> إدارة</div>
+    </div>
+  </div>
+
+  <h3 class="hub-sub-title"><i class="fas fa-sliders"></i> الإعدادات</h3>
+  <div class="hub-grid hub-grid-sm">
+    <div class="hub-card accent-orange" onclick="erpNav('erpHrShifts')">
+      <div class="hub-card-icon"><i class="fas fa-clock"></i></div>
+      <div class="hub-card-title">الشفتات</div>
+      <div class="hub-card-sub">أوقات الدوام، السماحيات، وقواعد الإضافي.</div>
+      <div class="hub-card-footer"><i class="fas fa-arrow-left"></i> إدارة</div>
+    </div>
+    <div class="hub-card accent-red" onclick="erpNav('erpHrHolidays')">
+      <div class="hub-card-icon"><i class="fas fa-flag"></i></div>
+      <div class="hub-card-title">الإجازات الرسمية</div>
+      <div class="hub-card-sub">الأعياد والمناسبات + سياسة الإضافي عند العمل فيها.</div>
+      <div class="hub-card-footer"><i class="fas fa-arrow-left"></i> إدارة</div>
+    </div>
+    <div class="hub-card accent-purple" onclick="erpNav('erpHrWeeklyOff')">
+      <div class="hub-card-icon"><i class="fas fa-calendar-week"></i></div>
+      <div class="hub-card-title">الإجازات الأسبوعية</div>
+      <div class="hub-card-sub">الافتراضي العام + التخصيص الفردي لأيام الراحة.</div>
+      <div class="hub-card-footer"><i class="fas fa-arrow-left"></i> إدارة</div>
+    </div>
+  </div>
+
+  <h3 class="hub-sub-title"><i class="fas fa-shield-halved"></i> الصلاحيات</h3>
+  <div class="hub-grid hub-grid-sm">
+    <div class="hub-card accent-slate" onclick="nav('users')">
+      <div class="hub-card-icon"><i class="fas fa-user-shield"></i></div>
+      <div class="hub-card-title">المستخدمون والصلاحيات</div>
+      <div class="hub-card-sub">حسابات الدخول والأدوار وكلمات المرور.</div>
+      <div class="hub-card-footer"><i class="fas fa-arrow-left"></i> إدارة</div>
+    </div>
+    <div class="hub-card accent-red" id="hrHubPermsMatrixCard" onclick="erpNav('erpPermsMatrix')" style="display:none;">
+      <div class="hub-card-icon"><i class="fas fa-shield-halved"></i></div>
+      <div class="hub-card-title">مصفوفة الصلاحيات</div>
+      <div class="hub-card-sub">تحكم دقيق بصلاحيات كل دور (للمدير الرئيسي فقط).</div>
+      <div class="hub-card-footer"><i class="fas fa-arrow-left"></i> إدارة</div>
+    </div>
+  </div>
+
+  <h3 class="hub-sub-title"><i class="fas fa-bell"></i> تنبيهات تحتاج انتباهك</h3>
+  <div id="hrHubAlerts" style="background:#fff;border:1px solid #e2e8f0;border-radius:16px;padding:16px;font-size:13px;color:#64748b;">جاري التحميل...</div>
+</div>
+
 <div id="erpHrDashboard" class="dash-section hidden">
   <div class="section-header" style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;">
     <h2 class="section-title" style="font-size:18px;font-weight:800;display:flex;align-items:center;gap:8px;"><i class="fas fa-chart-pie" style="color:#3b82f6;"></i> لوحة الموارد البشرية</h2>
+    <button class="btn btn-light" onclick="erpNav('erpHrHub')"><i class="fas fa-arrow-right"></i> رجوع للمركز</button>
   </div>
   <div id="hrDashStats" style="display:grid;grid-template-columns:repeat(4,1fr);gap:14px;margin-bottom:20px;"></div>
   <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;">
@@ -4870,7 +4998,10 @@
 <div id="erpHrShifts" class="dash-section hidden">
   <div class="section-header" style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;">
     <h2 class="section-title" style="font-size:18px;font-weight:800;"><i class="fas fa-clock" style="color:#3b82f6;"></i> إدارة الشفتات</h2>
-    <button class="btn btn-primary" onclick="hrOpenShiftModal()" style="border-radius:12px;"><i class="fas fa-plus"></i> شفت جديد</button>
+    <div style="display:flex;gap:8px;">
+      <button class="btn btn-light" onclick="erpNav('erpHrHub')"><i class="fas fa-arrow-right"></i> رجوع للمركز</button>
+      <button class="btn btn-primary" onclick="hrOpenShiftModal()" style="border-radius:12px;"><i class="fas fa-plus"></i> شفت جديد</button>
+    </div>
   </div>
   <div id="hrShiftsList"></div>
 </div>
@@ -4880,6 +5011,7 @@
   <div class="section-header" style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;flex-wrap:wrap;gap:10px;">
     <h2 class="section-title" style="font-size:18px;font-weight:800;"><i class="fas fa-business-time" style="color:#f59e0b;"></i> ساعات الإضافي</h2>
     <div style="display:flex;gap:8px;align-items:center;">
+      <button class="btn btn-light" onclick="erpNav('erpHrHub')"><i class="fas fa-arrow-right"></i> رجوع للمركز</button>
       <select id="hrOtStatusFilter" class="form-control" style="width:150px;" onchange="hrLoadOvertimeEntries()">
         <option value="pending" selected>معلقة</option>
         <option value="approved">معتمدة</option>
@@ -4901,7 +5033,10 @@
 <div id="erpHrExceptions" class="dash-section hidden">
   <div class="section-header" style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;">
     <h2 class="section-title" style="font-size:18px;font-weight:800;"><i class="fas fa-exclamation-triangle" style="color:#f59e0b;"></i> الاستثناءات</h2>
-    <button class="btn btn-primary" onclick="hrOpenExceptionModal()" style="border-radius:12px;"><i class="fas fa-plus"></i> استثناء جديد</button>
+    <div style="display:flex;gap:8px;">
+      <button class="btn btn-light" onclick="erpNav('erpHrHub')"><i class="fas fa-arrow-right"></i> رجوع للمركز</button>
+      <button class="btn btn-primary" onclick="hrOpenExceptionModal()" style="border-radius:12px;"><i class="fas fa-plus"></i> استثناء جديد</button>
+    </div>
   </div>
   <div style="display:flex;gap:8px;margin-bottom:12px;flex-wrap:wrap;">
     <select id="hrExcTypeFilter" class="form-control" style="width:200px;" onchange="hrLoadExceptions()">
@@ -4930,6 +5065,7 @@
   <div class="section-header" style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;flex-wrap:wrap;gap:10px;">
     <h2 class="section-title" style="font-size:18px;font-weight:800;display:flex;align-items:center;gap:8px;"><i class="fas fa-users" style="color:#3b82f6;"></i> إدارة الموظفين</h2>
     <div style="display:flex;gap:8px;align-items:center;">
+      <button class="btn btn-light" onclick="erpNav('erpHrHub')"><i class="fas fa-arrow-right"></i> رجوع للمركز</button>
       <input type="text" id="hrEmpSearch" class="form-control" style="width:220px;" placeholder="بحث بالاسم أو الرقم..." oninput="hrFilterEmployees()">
       <select id="hrEmpStatusFilter" class="form-control" style="width:140px;" onchange="hrLoadEmployees()">
         <option value="">كل الحالات</option>
@@ -4961,7 +5097,10 @@
 <div id="erpHrJobTitles" class="dash-section hidden">
   <div class="section-header" style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;flex-wrap:wrap;gap:10px;">
     <h2 class="section-title" style="font-size:18px;font-weight:800;display:flex;align-items:center;gap:8px;"><i class="fas fa-id-badge" style="color:#0d9488;"></i> المسميات الوظيفية والسلم الوظيفي</h2>
-    <div style="font-size:12px;color:#64748b;">القائمة الرسمية المعتمدة لتعيين الموظفين والمستخدمين</div>
+    <div style="display:flex;gap:10px;align-items:center;">
+      <div style="font-size:12px;color:#64748b;">القائمة الرسمية المعتمدة لتعيين الموظفين والمستخدمين</div>
+      <button class="btn btn-light" onclick="erpNav('erpHrHub')"><i class="fas fa-arrow-right"></i> رجوع للمركز</button>
+    </div>
   </div>
   <div style="background:#f0fdfa;border:1px solid #99f6e4;padding:12px 16px;border-radius:12px;margin-bottom:14px;font-size:12px;color:#0f766e;line-height:1.7;">
     <i class="fas fa-info-circle"></i>
@@ -4988,7 +5127,10 @@
 <div id="erpHrDepartments" class="dash-section hidden">
   <div class="section-header" style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;">
     <h2 class="section-title" style="font-size:18px;font-weight:800;display:flex;align-items:center;gap:8px;"><i class="fas fa-building" style="color:#3b82f6;"></i> الأقسام</h2>
-    <button class="btn btn-primary" onclick="hrOpenDeptModal()" style="border-radius:12px;"><i class="fas fa-plus"></i> قسم جديد</button>
+    <div style="display:flex;gap:8px;">
+      <button class="btn btn-light" onclick="erpNav('erpHrHub')"><i class="fas fa-arrow-right"></i> رجوع للمركز</button>
+      <button class="btn btn-primary" onclick="hrOpenDeptModal()" style="border-radius:12px;"><i class="fas fa-plus"></i> قسم جديد</button>
+    </div>
   </div>
   <div id="hrDepartmentsGrid" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:14px;">
     <div style="text-align:center;padding:40px;color:#94a3b8;grid-column:1/-1;">جاري التحميل...</div>
@@ -5000,6 +5142,7 @@
   <div class="section-header" style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;flex-wrap:wrap;gap:10px;">
     <h2 class="section-title" style="font-size:18px;font-weight:800;display:flex;align-items:center;gap:8px;"><i class="fas fa-fingerprint" style="color:#3b82f6;"></i> الحضور والانصراف</h2>
     <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
+      <button class="btn btn-light" onclick="erpNav('erpHrHub')"><i class="fas fa-arrow-right"></i> رجوع للمركز</button>
       <input type="date" id="hrAttDate" class="form-control" style="width:160px;" onchange="hrLoadAttendance()">
       <select id="hrAttBranch" class="form-control" style="width:160px;" onchange="hrLoadAttendance()"><option value="">كل الفروع</option></select>
       <button class="btn btn-primary btn-sm" onclick="hrAddManualAttendance()" style="border-radius:10px;"><i class="fas fa-plus"></i> تسجيل يدوي</button>
@@ -5020,6 +5163,7 @@
   <div class="section-header" style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;flex-wrap:wrap;gap:10px;">
     <h2 class="section-title" style="font-size:18px;font-weight:800;display:flex;align-items:center;gap:8px;"><i class="fas fa-calendar-check" style="color:#3b82f6;"></i> إدارة الإجازات</h2>
     <div style="display:flex;gap:8px;">
+      <button class="btn btn-light" onclick="erpNav('erpHrHub')"><i class="fas fa-arrow-right"></i> رجوع للمركز</button>
       <select id="hrLeaveStatus" class="form-control" style="width:160px;" onchange="hrLoadLeaveRequests()">
         <option value="">كل الحالات</option>
         <option value="pending">معلّقة</option>
@@ -5042,7 +5186,10 @@
 <div id="erpHrPayroll" class="dash-section hidden">
   <div class="section-header" style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;flex-wrap:wrap;gap:10px;">
     <h2 class="section-title" style="font-size:18px;font-weight:800;display:flex;align-items:center;gap:8px;"><i class="fas fa-money-check-alt" style="color:#3b82f6;"></i> إدارة الرواتب</h2>
-    <button class="btn btn-primary" onclick="hrOpenPayrollRunModal()" style="border-radius:12px;"><i class="fas fa-plus"></i> دورة رواتب جديدة</button>
+    <div style="display:flex;gap:8px;">
+      <button class="btn btn-light" onclick="erpNav('erpHrHub')"><i class="fas fa-arrow-right"></i> رجوع للمركز</button>
+      <button class="btn btn-primary" onclick="hrOpenPayrollRunModal()" style="border-radius:12px;"><i class="fas fa-plus"></i> دورة رواتب جديدة</button>
+    </div>
   </div>
   <div class="erp-table-container" style="border-radius:14px;">
     <table class="erp-table">
@@ -5056,7 +5203,10 @@
 <div id="erpHrAdvances" class="dash-section hidden">
   <div class="section-header" style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;">
     <h2 class="section-title" style="font-size:18px;font-weight:800;display:flex;align-items:center;gap:8px;"><i class="fas fa-hand-holding-usd" style="color:#3b82f6;"></i> السلف</h2>
-    <button class="btn btn-primary" onclick="hrOpenAdvanceModal()" style="border-radius:12px;"><i class="fas fa-plus"></i> طلب سلفة</button>
+    <div style="display:flex;gap:8px;">
+      <button class="btn btn-light" onclick="erpNav('erpHrHub')"><i class="fas fa-arrow-right"></i> رجوع للمركز</button>
+      <button class="btn btn-primary" onclick="hrOpenAdvanceModal()" style="border-radius:12px;"><i class="fas fa-plus"></i> طلب سلفة</button>
+    </div>
   </div>
   <div class="erp-table-container" style="border-radius:14px;">
     <table class="erp-table">
@@ -5079,6 +5229,7 @@
       </div>
     </div>
     <div class="sca-header-actions">
+      <button class="sca-btn sca-btn-ghost" onclick="erpNav('erpHrHub')"><i class="fas fa-arrow-right"></i><span>رجوع للمركز</span></button>
       <button class="sca-btn sca-btn-ghost" onclick="erpLoadHrHolidays()"><i class="fas fa-rotate"></i><span>تحديث</span></button>
       <button class="sca-btn sca-btn-ghost" onclick="erpExportHolidaysExcel()"><i class="fas fa-file-excel"></i><span>تصدير Excel</span></button>
       <button class="sca-btn sca-btn-primary" onclick="erpOpenHolidayModal()"><i class="fas fa-plus"></i><span>إجازة جديدة</span></button>
@@ -5144,6 +5295,7 @@
       </div>
     </div>
     <div class="sca-header-actions">
+      <button class="sca-btn sca-btn-ghost" onclick="erpNav('erpHrHub')"><i class="fas fa-arrow-right"></i><span>رجوع للمركز</span></button>
       <button class="sca-btn sca-btn-ghost" onclick="erpLoadHrWeeklyOff()"><i class="fas fa-rotate"></i><span>تحديث</span></button>
     </div>
   </header>
@@ -5228,6 +5380,7 @@
       </div>
     </div>
     <div class="sca-header-actions">
+      <button class="sca-btn sca-btn-ghost" onclick="erpNav('erpHrHub')"><i class="fas fa-arrow-right"></i><span>رجوع للمركز</span></button>
       <button class="sca-btn sca-btn-ghost" onclick="erpHrReportPrint()"><i class="fas fa-print"></i><span>طباعة</span></button>
       <button class="sca-btn sca-btn-primary" onclick="erpHrReportExportExcel()"><i class="fas fa-file-excel"></i><span>تصدير Excel</span></button>
     </div>

@@ -168,6 +168,7 @@ function erpNav(sectionId) {
       case 'erpWfIncoming': wfLoadIncoming(); break;
       case 'erpWfOutgoing': wfLoadOutbox(); break;
       case 'erpWfOrgTree': wfLoadOrgTree(); break;
+      case 'erpHrHub': hrLoadHub(); break;   // v6.19.2 — HR hub landing
       case 'erpHrDashboard': hrLoadDashboard(); break;
       case 'erpHrEmployees': hrLoadEmployees(); break;
       case 'erpHrJobTitles': hrLoadJobTitles(); break;  // v6.18.4 (Wave 5)
@@ -11791,6 +11792,66 @@ function _hrStatCard(bg, iconBg, iconClr, icon, label, value) {
   return '<div style="background:' + bg + ';border:1px solid ' + iconBg + ';border-radius:16px;padding:20px;display:flex;align-items:center;gap:14px;">' +
     '<div style="width:48px;height:48px;border-radius:14px;background:' + iconBg + ';color:' + iconClr + ';display:flex;align-items:center;justify-content:center;font-size:20px;flex-shrink:0;"><i class="fas ' + icon + '"></i></div>' +
     '<div><div style="font-size:12px;font-weight:700;color:#64748b;margin-bottom:4px;">' + label + '</div><div style="font-size:26px;font-weight:900;color:#0f172a;">' + value + '</div></div></div>';
+}
+
+/* ── v6.19.2 — HR HUB (مركز الموارد البشرية) ─────────────────────────
+ * Cards are static HTML in #erpHrHub; this loader fills the KPI strip,
+ * the three pending-count chips, and the alerts panel from the two
+ * existing endpoints (/hr/dashboard + /hr/dashboard/alerts). */
+function _hrHubMetricCard(icon, label, value, accent, navId) {
+  return '<div class="wo-metric accent-' + accent + ' hub-metric-click" onclick="erpNav(\'' + navId + '\')">' +
+         '<div class="wo-metric-icon" style="background:var(--hub-icon-bg,#ede9fe);color:var(--hub-accent,#8b5cf6);"><i class="fas ' + icon + '"></i></div>' +
+         '<div class="wo-metric-body"><div class="wo-metric-value">' + value + '</div><div class="wo-metric-label">' + label + '</div></div></div>';
+}
+function hrLoadHub() {
+  var strip = document.getElementById('hrHubMetrics');
+  if (strip && !strip.innerHTML) {
+    strip.innerHTML =
+      _hrHubMetricCard('fa-users', 'موظفون نشطون', '—', 'info', 'erpHrEmployees') +
+      _hrHubMetricCard('fa-user-check', 'حاضر اليوم', '—', 'success', 'erpHrAttendance') +
+      _hrHubMetricCard('fa-user-clock', 'متأخر اليوم', '—', 'warning', 'erpHrAttendance') +
+      _hrHubMetricCard('fa-user-times', 'غائب اليوم', '—', 'danger', 'erpHrAttendance');
+  }
+  // مصفوفة الصلاحيات — primary admin only (backend also guards).
+  // NOTE: `state` is a top-level `let` in app.js — a global binding,
+  // NOT a window property, so it must be read as a bare identifier.
+  var pmCard = document.getElementById('hrHubPermsMatrixCard');
+  if (pmCard) pmCard.style.display = (typeof state !== 'undefined' && state.isPrimaryAdmin) ? '' : 'none';
+
+  if (!window._apiBridge) return;
+  window._apiBridge.withSuccessHandler(function(d) {
+    if (!d || d.error) return;
+    if (strip) {
+      strip.innerHTML =
+        _hrHubMetricCard('fa-users', 'موظفون نشطون', Number(d.totalActive) || 0, 'info', 'erpHrEmployees') +
+        _hrHubMetricCard('fa-user-check', 'حاضر اليوم', Number(d.presentToday) || 0, 'success', 'erpHrAttendance') +
+        _hrHubMetricCard('fa-user-clock', 'متأخر اليوم', Number(d.lateToday) || 0, 'warning', 'erpHrAttendance') +
+        _hrHubMetricCard('fa-user-times', 'غائب اليوم', Number(d.absentToday) || 0, 'danger', 'erpHrAttendance');
+    }
+    function chip(id, n) {
+      var el = document.getElementById(id);
+      if (!el) return;
+      el.textContent = n > 99 ? '99+' : n;
+      el.className = 'hub-card-chip' + (n > 0 ? '' : ' zero');
+    }
+    chip('hrHubChipOT', Number(d.pendingOT) || 0);
+    chip('hrHubChipLeave', Number(d.pendingLeave) || 0);
+    chip('hrHubChipAdv', Number(d.pendingAdv) || 0);
+  }).withFailureHandler(function(){}).getHrDashboardV2();
+
+  window._apiBridge.withSuccessHandler(function(alerts) {
+    var box = document.getElementById('hrHubAlerts');
+    if (!box) return;
+    if (!Array.isArray(alerts) || !alerts.length) {
+      box.innerHTML = '<div style="display:flex;align-items:center;gap:8px;color:#16a34a;font-weight:700;"><i class="fas fa-circle-check"></i> لا توجد تنبيهات حالياً</div>';
+      return;
+    }
+    box.innerHTML = alerts.slice(0, 10).map(function(a) {
+      return '<div style="display:flex;align-items:center;gap:10px;padding:8px 4px;border-bottom:1px solid #f1f5f9;">' +
+        '<i class="fas ' + (a.icon || 'fa-bell') + '" style="color:' + (a.color || '#f59e0b') + ';width:18px;text-align:center;"></i>' +
+        '<span style="color:#334155;font-weight:600;">' + (a.title || '') + '</span></div>';
+    }).join('');
+  }).withFailureHandler(function(){}).getHrDashboardAlerts();
 }
 
 // ─── Dashboard ───

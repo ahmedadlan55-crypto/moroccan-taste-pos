@@ -2008,6 +2008,43 @@ router.get('/dashboard', async (req, res) => {
       "SELECT COUNT(*) as cnt FROM hr_advances WHERE status = 'pending'"
     );
 
+    // v6.19.2 — flat fields the admin dashboard + HR hub read. These lived
+    // in a SECOND `GET /dashboard` declaration further down this file that
+    // Express never served (first registration wins) — so the HR dashboard
+    // KPIs rendered zeros in production. Merged here; the dead duplicate
+    // route is removed.
+    const monthStart = today.slice(0, 7) + '-01';
+    const [presentDistinct] = await db.query(
+      'SELECT COUNT(DISTINCT employee_id) as cnt FROM hr_attendance WHERE attendance_date = ?',
+      [today]
+    );
+    const [onLeaveTodayRow] = await db.query(
+      "SELECT COUNT(*) as cnt FROM hr_leave_requests WHERE status IN ('hr_approved','branch_approved') AND ? BETWEEN start_date AND end_date",
+      [today]
+    );
+    let pendingOT = 0, monthOTMin = 0;
+    try {
+      const [[ot]] = await db.query("SELECT COUNT(*) AS cnt FROM hr_overtime_entries WHERE status = 'pending'");
+      pendingOT = Number(ot.cnt) || 0;
+      const [[otMin]] = await db.query(
+        "SELECT COALESCE(SUM(minutes),0) AS m FROM hr_overtime_entries WHERE status = 'approved' AND entry_date >= ?",
+        [monthStart]);
+      monthOTMin = Number(otMin.m) || 0;
+    } catch (_e) {}
+    let monthLateMin = 0;
+    try {
+      const [[lateMin]] = await db.query(
+        'SELECT COALESCE(SUM(late_minutes),0) AS m FROM hr_attendance WHERE attendance_date >= ?',
+        [monthStart]);
+      monthLateMin = Number(lateMin.m) || 0;
+    } catch (_e) {}
+    const flatTotalActive = Number(activeEmps[0].cnt) || 0;
+    const flatPresent = Number(presentDistinct[0].cnt) || 0;
+    const flatOnLeave = Number(onLeaveTodayRow[0].cnt) || 0;
+    const [pendingLeaveStrict] = await db.query(
+      "SELECT COUNT(*) as cnt FROM hr_leave_requests WHERE status = 'pending'"
+    );
+
     // Upcoming contract expiry (next 30 days)
     const [expiringContracts] = await db.query(
       `SELECT id, employee_number, CONCAT(first_name, ' ', last_name) as fullName, contract_end_date
@@ -2028,6 +2065,7 @@ router.get('/dashboard', async (req, res) => {
     );
 
     res.json({
+      // Legacy keys — untouched for existing consumers
       totalEmployees: totalEmps[0].cnt,
       activeEmployees: activeEmps[0].cnt,
       onLeaveCount: onLeave[0].cnt,
@@ -2040,7 +2078,18 @@ router.get('/dashboard', async (req, res) => {
       pendingLeaveRequests: pendingLeave[0].cnt,
       pendingAdvances: pendingAdv[0].cnt,
       upcomingContractExpiry: expiringContracts,
-      departmentBreakdown: deptBreakdown
+      departmentBreakdown: deptBreakdown,
+      // v6.19.2 — flat fields (merged from the dead duplicate route)
+      totalActive: flatTotalActive,
+      presentToday: flatPresent,
+      absentToday: Math.max(0, flatTotalActive - flatPresent - flatOnLeave),
+      lateToday: Number(lateToday[0].cnt) || 0,
+      onLeaveToday: flatOnLeave,
+      pendingLeave: Number(pendingLeaveStrict[0].cnt) || 0,
+      pendingOT: pendingOT,
+      pendingAdv: Number(pendingAdv[0].cnt) || 0,
+      monthOvertimeHours: Math.round((monthOTMin / 60) * 100) / 100,
+      monthLateHours: Math.round((monthLateMin / 60) * 100) / 100
     });
   } catch (e) {
     res.json({ success: false, error: e.message });
@@ -2598,36 +2647,11 @@ router.delete('/exceptions/:id', async (req, res) => {
 
 // ═══════════════════════════════════════════════════════════════
 // HR DASHBOARD
+// v6.19.2 — the duplicate `GET /dashboard` that lived here was DEAD CODE:
+// Express serves the first registration (line ~1967), so this one never
+// ran while the frontend read ITS response shape → KPIs rendered zeros.
+// Its flat fields are now merged into the live route above.
 // ═══════════════════════════════════════════════════════════════
-router.get('/dashboard', async (req, res) => {
-  try {
-    const today = new Date().toISOString().slice(0,10);
-    const monthStart = today.slice(0,7) + '-01';
-
-    const [[{ totalActive }]] = await db.query("SELECT COUNT(*) AS totalActive FROM hr_employees WHERE status = 'active'");
-    const [[{ presentToday }]] = await db.query("SELECT COUNT(DISTINCT employee_id) AS presentToday FROM hr_attendance WHERE attendance_date = ?", [today]);
-    const [[{ lateToday }]] = await db.query("SELECT COUNT(*) AS lateToday FROM hr_attendance WHERE attendance_date = ? AND late_minutes > 0", [today]);
-    const [[{ onLeaveToday }]] = await db.query(
-      "SELECT COUNT(*) AS onLeaveToday FROM hr_leave_requests WHERE status IN ('hr_approved','branch_approved') AND ? BETWEEN start_date AND end_date", [today]);
-    const absentToday = Math.max(0, totalActive - presentToday - onLeaveToday);
-
-    const [[{ pendingLeave }]] = await db.query("SELECT COUNT(*) AS pendingLeave FROM hr_leave_requests WHERE status = 'pending'");
-    const [[{ pendingOT }]] = await db.query("SELECT COUNT(*) AS pendingOT FROM hr_overtime_entries WHERE status = 'pending'");
-    let pendingAdv = 0;
-    try { const [[r]] = await db.query("SELECT COUNT(*) AS pendingAdv FROM hr_advances WHERE status = 'pending'"); pendingAdv = r.pendingAdv; } catch(e) {}
-
-    const [[{ monthOTMin }]] = await db.query("SELECT COALESCE(SUM(minutes),0) AS monthOTMin FROM hr_overtime_entries WHERE status = 'approved' AND entry_date >= ?", [monthStart]);
-    const [[{ monthLateMin }]] = await db.query("SELECT COALESCE(SUM(late_minutes),0) AS monthLateMin FROM hr_attendance WHERE attendance_date >= ?", [monthStart]);
-
-    res.json({
-      totalActive, presentToday, absentToday, lateToday, onLeaveToday,
-      pendingLeave, pendingOT, pendingAdv,
-      monthOvertimeHours: Math.round((monthOTMin/60)*100)/100,
-      monthLateHours: Math.round((monthLateMin/60)*100)/100
-    });
-  } catch(e) { res.json({ success: false, error: e.message }); }
-});
-
 router.get('/dashboard/alerts', async (req, res) => {
   try {
     const alerts = [];

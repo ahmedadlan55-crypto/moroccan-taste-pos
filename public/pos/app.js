@@ -3516,6 +3516,13 @@ function _myInvConfirm(title, body, cb) {
 var _mgrApprovalCtx = null;
 window._posRequireManagerApproval = function (opts, onProceed) {
   opts = opts || {};
+  // Owner opt-out (VOID only): when settings.RequireManagerApprovalForVoid='0'
+  // any cashier cancels directly — the server skips the gate too. Returns are
+  // never opted out here (they pass no action).
+  if (opts.action === 'void' &&
+      String(state.settings && state.settings.requireManagerApprovalForVoid) === '0') {
+    onProceed(null, null, null); return;
+  }
   var role = (state.role || '').toLowerCase();
   if (role === 'admin' || role === 'manager') { onProceed(null, null, null); return; }
   _mgrApprovalCtx = { onProceed: onProceed, needsReason: !!opts.needsReason };
@@ -3553,7 +3560,7 @@ window.posInvoiceVoid = function (orderId) {
     'Invoice #: ' + orderId,
     function () {
       _posRequireManagerApproval(
-        { message: 'إلغاء فاتورة يتطلب اعتماد مدير أو مشرف · Voiding an invoice requires manager approval.' },
+        { action: 'void', message: 'إلغاء فاتورة يتطلب اعتماد مدير أو مشرف · Voiding an invoice requires manager approval.' },
         function (approverUser, approverPass) {
       loader(true);
       api.withSuccessHandler(function (res) {

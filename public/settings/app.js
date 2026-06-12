@@ -43,6 +43,10 @@ document.addEventListener('DOMContentLoaded', function() {
       q('#setNewProdInclusive').checked = newProdIncl;
       q('#setNewProdExclusive').checked = !newProdIncl;
     }
+    // Cashier permission: require manager approval to VOID an invoice (default ON).
+    if (q('#setRequireVoidApproval')) {
+      q('#setRequireVoidApproval').checked = String(state.settings.requireManagerApprovalForVoid) !== '0';
+    }
     if (state.settings.logo) {
       q('#setLogoPreview').innerHTML = '<img src="' + state.settings.logo + '" alt="logo">';
     }
@@ -192,6 +196,8 @@ window.saveAllSettings = function() {
   var vatRateRaw    = (q('#setVATRate') && q('#setVATRate').value) || '';
   var vatRate       = vatRateRaw === '' ? '' : String(Math.max(0, Math.min(100, Number(vatRateRaw) || 0)));
   var newProdIncl   = !!(q('#setNewProdInclusive') && q('#setNewProdInclusive').checked);
+  // Cashier permission: default ON (checked) when the row is absent.
+  var requireVoidApproval = q('#setRequireVoidApproval') ? !!q('#setRequireVoidApproval').checked : true;
 
   // Collect updated payment methods from the DOM
   var methods = (state.paymentMethods || []).map(function(m, i) {
@@ -230,6 +236,7 @@ window.saveAllSettings = function() {
         if (salesTaxName) state.settings.SalesTaxName = salesTaxName;
         if (vatRate) state.settings.VATRate = vatRate;
         state.settings.NewProductsTaxInclusive = newProdIncl ? '1' : '0';
+        state.settings.requireManagerApprovalForVoid = requireVoidApproval ? '1' : '0';
         showToast('تم حفظ الإعدادات بنجاح');
         try { localStorage.setItem('pos_branding', JSON.stringify({ name: name, logo: logo })); } catch (e) {}
         renderHeader('settings');
@@ -259,7 +266,9 @@ window.saveAllSettings = function() {
       // v6.20.0 — tax configuration keys (persisted to settings table)
       SalesTaxName: salesTaxName,
       VATRate: vatRate,
-      NewProductsTaxInclusive: newProdIncl ? '1' : '0'
+      NewProductsTaxInclusive: newProdIncl ? '1' : '0',
+      // Cashier permission: manager approval required to void an invoice.
+      RequireManagerApprovalForVoid: requireVoidApproval ? '1' : '0'
     });
 };
 

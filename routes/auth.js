@@ -367,13 +367,20 @@ router.get('/init/:username', async (req, res) => {
         companyPhone: settingsObj.CompanyPhone || '',
         companyEmail: settingsObj.CompanyEmail || '',
         // V5.7.9 — current user's branch address (for receipt header)
-        branchAddress: currentBranchAddress
+        branchAddress: currentBranchAddress,
+        // Cashier permission toggle: when '0', voiding an invoice no longer
+        // requires manager approval (server + POS both honor it). Default '1'.
+        requireManagerApprovalForVoid: (settingsObj.RequireManagerApprovalForVoid === '0' ? '0' : '1')
       },
       kitaFeeRate: Number(settingsObj.KitaServiceFee) || 0,
       menu: menu.map(m => ({
         id: m.id, name: m.name, price: Number(m.price), category: m.category,
         cost: Number(m.cost), stock: m.stock, minStock: m.min_stock, active: m.active,
         brandId: m.brand_id || '',
+        // Combos (العروض): the POS loads its menu from THIS endpoint, so the
+        // is_combo flag must ride along — without it addToCart never opens the
+        // variant chooser and the combo is added as a plain line.
+        isCombo: !!m.is_combo,
         // v7.1 TAX FIX — carry the tax flags so the cashier renders the GROSS
         // (tax-inclusive) price.  The POS loads its menu from THIS endpoint
         // (not /api/menu); without these fields computeGrossPerUnit() defaults

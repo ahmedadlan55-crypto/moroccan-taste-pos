@@ -1994,7 +1994,17 @@ async function _reverseSaleEffects(conn, orderId, username, opts) {
 // (against this pad when the approver doesn't exist) so response timing can't
 // be used to enumerate manager usernames.
 const _APPROVAL_DUMMY_HASH = bcrypt.hashSync('approval-dummy-timing-pad', 12);
-async function _requireManagerApproval(req) {
+async function _requireManagerApproval(req, action) {
+  // Optional opt-out (VOID only): owners can let cashiers cancel without a
+  // manager via settings.RequireManagerApprovalForVoid='0'. Returns stay gated
+  // (more sensitive — money out). Absent/'1' → enforce (preserves prior behavior).
+  if (action === 'void') {
+    try {
+      const [s] = await db.query(
+        "SELECT setting_value FROM settings WHERE setting_key = 'RequireManagerApprovalForVoid' LIMIT 1");
+      if (s.length && String(s[0].setting_value) === '0') return null; // approval disabled
+    } catch (_) { /* settings missing → fall through to enforce */ }
+  }
   const PRIVILEGED = ['admin', 'manager'];
   const actorRole = String((req.user && req.user.role) || '').toLowerCase();
   if (PRIVILEGED.indexOf(actorRole) !== -1) return null; // already authorized
@@ -2036,7 +2046,8 @@ router.post('/:orderId/void', async (req, res) => {
     const username = (req.user && req.user.username) || (req.body && req.body.username) || 'system';
     const wantDelete = req.query.delete === '1';
     // v7.3 — gate: cashiers (and any non-privileged role) need manager approval.
-    await _requireManagerApproval(req);
+    // Honors settings.RequireManagerApprovalForVoid='0' to skip (void only).
+    await _requireManagerApproval(req, 'void');
 
     // v6.0.1 Wave A.4 — race-safe void: the lock + reversal happen inside
     // ONE transaction with SELECT … FOR UPDATE on the sale row.
@@ -2137,7 +2148,8 @@ router.post('/:orderId/return', async (req, res) => {
     const reason   = (req.body && String(req.body.reason || '').trim()) || 'customer return';
     const reasonCode = (req.body && String(req.body.reasonCode || '').trim()) || 'goods_returned';
     // v7.3 — gate: cashiers (and any non-privileged role) need manager approval.
-    await _requireManagerApproval(req);
+    // Returns are ALWAYS gated (money out) — no settings opt-out for them.
+    await _requireManagerApproval(req, 'return');
 
     const runner = async (conn) => {
       // 1. Lock the original sale row + load everything we need to clone

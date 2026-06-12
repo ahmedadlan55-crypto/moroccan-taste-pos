@@ -2383,7 +2383,10 @@ router.delete('/transactions/:id/force', guardAdmin, SCHEMA.validateBody(SCHEMA.
 //   6. Invariant assertion (refuses to persist inconsistent state)
 //   7. Atomic UPDATE inside DB transaction
 // ═══════════════════════════════════════════════════════════════════
-router.post('/transactions/:id/action', SCHEMA.validateBody(SCHEMA.schemas.action), async (req, res) => {
+// v6.19.1 — handler extracted to a named const so the bulk-action endpoint
+// below can reuse the EXACT same code path (SoD, permissions, locking,
+// notifications, audit) via a mock req/res. Behavior unchanged.
+const _txnActionHandler = async (req, res) => {
   const txnId = req.params.id;
   const { action, username, note, attachment, newAmount, forwardTo, expectedVersion, idempotencyKey } = req.body;
   if (!action) return res.status(400).json({ success: false, error: 'الإجراء مطلوب' });
@@ -2773,6 +2776,84 @@ router.post('/transactions/:id/action', SCHEMA.validateBody(SCHEMA.schemas.actio
   } finally {
     conn.release();
   }
+};
+router.post('/transactions/:id/action', SCHEMA.validateBody(SCHEMA.schemas.action), _txnActionHandler);
+
+// ═══════════════════════════════════════════════════════════════════
+// v6.19.1 — BULK ACTION (موافقة/رفض جماعي)
+// Loops the proven single-action handler per id — SoD, permissions,
+// optimistic locking, notifications, audit and counter invalidation are
+// 100% the same code path as a human clicking N times.
+//   Request : { ids: string[], action: 'approve'|'reject', note?,
+//               username, batchKey? }
+//   Response: { success, total, succeeded, failed,
+//               results: [{ id, success, status, error?, code?, newStatus? }] }
+// Per-transaction atomicity; batch-level partial success is by design.
+// Idempotency: derived key `batchKey:txnId` → retrying the same batch
+// replays stored responses instead of double-acting.
+// ═══════════════════════════════════════════════════════════════════
+router.post('/transactions/bulk-action', async (req, res) => {
+  const { ids, action, note, username } = req.body || {};
+  if (!Array.isArray(ids) || !ids.length) {
+    return res.status(400).json({ success: false, error: 'حدد معاملة واحدة على الأقل' });
+  }
+  if (ids.length > 50) {
+    return res.status(400).json({ success: false, error: 'الحد الأقصى 50 معاملة في الدفعة الواحدة' });
+  }
+  if (!['approve', 'reject'].includes(action)) {
+    return res.status(400).json({ success: false, error: 'الإجراء الجماعي يدعم الموافقة أو الرفض فقط' });
+  }
+  if (action === 'reject' && (!note || String(note).trim().length < 10)) {
+    return res.status(400).json({ success: false, error: 'سبب الرفض الجماعي مطلوب (10 أحرف على الأقل)' });
+  }
+  if (!username) {
+    return res.status(401).json({ success: false, error: 'مستخدم غير معروف' });
+  }
+  const batchKey = String(req.body.batchKey || ('BLK-' + Date.now()));
+  const results = [];
+  // Sequential on purpose: avoids FOR UPDATE contention + pool exhaustion.
+  for (const rawId of ids.map(String)) {
+    try {
+      const out = await new Promise((resolve) => {
+        const fakeReq = {
+          params: { id: rawId },
+          headers: {},
+          user: req.user,
+          body: {
+            action,
+            username,
+            note: note || 'إجراء جماعي',
+            idempotencyKey: batchKey + ':' + rawId
+          }
+        };
+        const fakeRes = {
+          _s: 200,
+          status(n) { this._s = n; return this; },
+          json(o) { resolve({ status: this._s, body: o || {} }); }
+        };
+        Promise.resolve(_txnActionHandler(fakeReq, fakeRes))
+          .catch(e => resolve({ status: 500, body: { success: false, error: e.message } }));
+      });
+      results.push({
+        id: rawId,
+        success: !!out.body.success,
+        status: out.status,
+        error: out.body.error,
+        code: out.body.code,
+        newStatus: out.body.newStatus
+      });
+    } catch (e) {
+      results.push({ id: rawId, success: false, status: 500, error: e.message });
+    }
+  }
+  const succeeded = results.filter(r => r.success).length;
+  return res.json({
+    success: true,
+    total: results.length,
+    succeeded,
+    failed: results.length - succeeded,
+    results
+  });
 });
 
 // V4 helper: human-readable explanation for permission denials

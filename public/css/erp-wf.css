@@ -821,3 +821,23 @@
   .wf-date-range .sep { display: none; }
   .wf-date-shortcuts::before { display: none; }
 }
+
+/* ═══ v6.19.1 — Bulk action bar (صندوق الوارد) ═══ */
+.wf-bulk-bar {
+  display: none;
+  position: sticky;
+  bottom: 10px;
+  z-index: 30;
+  background: linear-gradient(135deg, #1e1b4b, #312e81);
+  color: #fff;
+  padding: 10px 16px;
+  border-radius: 14px;
+  margin-bottom: 12px;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  box-shadow: 0 10px 30px rgba(30, 27, 75, 0.35);
+  border: 1px solid rgba(167, 139, 250, 0.35);
+}
+.wf-bulk-bar span { font-size: 13px; font-weight: 700; }
+.wf-bulk-bar strong { font-size: 15px; color: #c4b5fd; }

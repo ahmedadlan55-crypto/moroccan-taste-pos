@@ -4578,10 +4578,19 @@
   <!-- Legacy stats container kept for back-compat with any code that still writes here -->
   <div id="wfIncomingStats" style="display:none;"></div>
 
+  <!-- v6.19.1 — bulk actions bar for the incoming box (single call to
+       POST /workflow/transactions/bulk-action; hidden until rows selected) -->
+  <div id="wfIncBulkBar" class="wf-bulk-bar" style="display:none;" role="region" aria-label="إجراءات جماعية">
+    <span><strong id="wfIncBulkCount">0</strong> معاملة محددة</span>
+    <button class="btn btn-success btn-sm" onclick="wfIncBulkAction('approve')" aria-label="اعتماد المحدد"><i class="fas fa-check"></i> موافقة جماعية</button>
+    <button class="btn btn-danger  btn-sm" onclick="wfIncBulkAction('reject')"  aria-label="رفض المحدد"><i class="fas fa-times"></i> رفض جماعي</button>
+    <button class="btn btn-light   btn-sm" onclick="wfIncBulkClear()" aria-label="إلغاء التحديد">إلغاء التحديد</button>
+  </div>
+
   <div class="erp-table-container wf-table-card">
     <table class="erp-table wf-table">
-      <thead><tr><th>الأهمية</th><th>الرقم</th><th>النوع</th><th>المرسل</th><th>الفرع/القسم</th><th>العنوان</th><th>المبلغ</th><th>الخطوة</th><th>التاريخ</th><th>إجراءات</th></tr></thead>
-      <tbody id="wfIncomingBody"><tr><td colspan="10" class="empty-msg">لا توجد معاملات بانتظارك</td></tr></tbody>
+      <thead><tr><th style="width:36px;"><input type="checkbox" id="wfIncSelectAll" onclick="wfIncBulkToggleAll(this)" aria-label="تحديد الكل"></th><th>الأهمية</th><th>الرقم</th><th>النوع</th><th>المرسل</th><th>الفرع/القسم</th><th>العنوان</th><th>المبلغ</th><th>الخطوة</th><th>التاريخ</th><th>إجراءات</th></tr></thead>
+      <tbody id="wfIncomingBody"><tr><td colspan="11" class="empty-msg">لا توجد معاملات بانتظارك</td></tr></tbody>
     </table>
   </div>
 </div>

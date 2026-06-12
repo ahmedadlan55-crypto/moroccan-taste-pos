@@ -10342,40 +10342,116 @@ function _wfBulkUpdateBar(){
 // definitions were colliding via last-wins assignment and the older
 // one was just dead code.
 
+// v6.19.1 — shared bulk plumbing. One POST to the new bulk endpoint
+// (server loops the proven single-action handler per id), then a summary
+// toast + a failure-details modal when some rows were blocked (e.g. SoD).
+window._wfBulkConfirm = async function(action, count) {
+  var actionLabel = (window.TxnConst && window.TxnConst.actionLabel(action)) || action;
+  if (action === 'reject') {
+    var note = window.WoModal
+      ? (await window.WoModal.prompt({ title: 'سبب الرفض الجماعي', label: 'سيُطبَّق على ' + count + ' معاملة', validate: function(v){ if (!v || v.trim().length < 10) return 'الحد الأدنى 10 أحرف'; } }))
+      : (window.prompt('سبب الرفض الجماعي (10 أحرف على الأقل):') || '').trim();
+    if (!note || note.trim().length < 10) return null;
+    return note.trim();
+  }
+  var ok = window.WoModal
+    ? await window.WoModal.confirm({ title: actionLabel + ' جماعي', message: 'سيتم تطبيق "' + actionLabel + '" على ' + count + ' معاملة. متابعة؟', danger: action !== 'approve' })
+    : window.confirm('تطبيق "' + actionLabel + '" على ' + count + ' معاملة؟');
+  return ok ? '' : null;
+};
+window._wfBulkSend = async function(ids, action, note) {
+  var token = localStorage.getItem('pos_token');
+  var batchKey = 'BLK-' + currentUser + '-' + Date.now();
+  var resp = await fetch('/api/workflow/transactions/bulk-action', {
+    method: 'POST',
+    headers: { 'Authorization': 'Bearer ' + token, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ ids: ids, action: action, note: note || undefined, username: currentUser, batchKey: batchKey })
+  }).then(function(r){ return r.json(); });
+  return resp || { success: false, error: 'فشل الاتصال' };
+};
+window._wfBulkReport = function(resp, txnNumberById) {
+  if (!resp || resp.success === false) {
+    if (typeof showToast === 'function') showToast(resp && resp.error || 'فشل الإجراء الجماعي', true);
+    return;
+  }
+  var msg = '✓ ' + (resp.succeeded || 0) + ' نجحت' + (resp.failed ? ' • ✗ ' + resp.failed + ' فشلت' : '');
+  if (window.WoModal && window.WoModal.toast) window.WoModal.toast({ message: msg, kind: resp.failed ? 'warning' : 'success' });
+  else if (typeof showToast === 'function') showToast(msg, !!resp.failed);
+  if (resp.failed && window.WoModal && window.WoModal.open) {
+    var failRows = (resp.results || []).filter(function(r){ return !r.success; });
+    var esc = function(s){ return String(s||'').replace(/[<>&"]/g, function(c){ return ({'<':'&lt;','>':'&gt;','&':'&amp;','"':'&quot;'})[c]; }); };
+    window.WoModal.open({
+      icon: 'fa-triangle-exclamation',
+      title: 'معاملات لم يكتمل إجراؤها (' + failRows.length + ')',
+      body: '<div style="max-height:320px;overflow:auto;display:flex;flex-direction:column;gap:8px;">' +
+        failRows.map(function(r){
+          var num = (txnNumberById && txnNumberById[r.id]) || r.id;
+          return '<div style="border:1px solid #fecaca;background:#fef2f2;border-radius:10px;padding:10px 12px;">' +
+            '<div style="font-weight:800;font-size:12px;font-family:monospace;color:#991b1b;">' + esc(num) + '</div>' +
+            '<div style="font-size:12px;color:#7f1d1d;margin-top:4px;">' + esc(r.error || 'خطأ غير معروف') + (r.code ? ' <span style="color:#b91c1c;font-size:10px;font-family:monospace;">[' + esc(r.code) + ']</span>' : '') + '</div>' +
+          '</div>';
+        }).join('') + '</div>'
+    });
+  }
+};
+
 window.wfBulkAction = async function(action){
   var ids = Object.keys(window._wfBulkSelected);
   if (!ids.length) return;
-  var actionLabel = (window.TxnConst && window.TxnConst.actionLabel(action)) || action;
-  var note = '';
-  if (action === 'reject') {
-    note = window.WoModal
-      ? (await window.WoModal.prompt({ title: 'سبب الرفض الجماعي', label: 'سيُطبَّق على ' + ids.length + ' معاملة', validate: function(v){ if (!v || v.trim().length < 10) return 'الحد الأدنى 10 أحرف'; } }))
-      : (window.prompt('سبب الرفض الجماعي (10 أحرف على الأقل):') || '').trim();
-    if (!note) return;
-  } else {
-    var ok = window.WoModal
-      ? await window.WoModal.confirm({ title: actionLabel + ' جماعي', message: 'سيتم تطبيق "' + actionLabel + '" على ' + ids.length + ' معاملة. متابعة؟', danger: action !== 'approve' })
-      : window.confirm('تطبيق "' + actionLabel + '" على ' + ids.length + ' معاملة؟');
-    if (!ok) return;
-  }
-  var token = localStorage.getItem('pos_token');
-  var done = 0, failed = 0;
-  for (var i = 0; i < ids.length; i++) {
-    try {
-      var idemKey = 'bulk-' + action + '-' + ids[i] + '-' + Date.now();
-      var resp = await fetch('/api/workflow/transactions/' + ids[i] + '/action', {
-        method: 'POST',
-        headers: { 'Authorization': 'Bearer '+token, 'Content-Type':'application/json', 'X-Idempotency-Key': idemKey },
-        body: JSON.stringify({ action: action, username: currentUser, note: note || actionLabel + ' جماعي', idempotencyKey: idemKey })
-      }).then(function(r){return r.json();});
-      if (resp && resp.success) done++; else failed++;
-    } catch(_) { failed++; }
-  }
-  var msg = '✓ ' + done + ' نجحت' + (failed ? ' • ✗ ' + failed + ' فشلت' : '');
-  if (window.WoModal && window.WoModal.toast) window.WoModal.toast({ message: msg, kind: failed?'warning':'success' });
-  else if (typeof showToast === 'function') showToast(msg, !!failed);
+  var note = await window._wfBulkConfirm(action, ids.length);
+  if (note === null) return;
+  var resp = await window._wfBulkSend(ids, action, note);
+  window._wfBulkReport(resp, null);
   window.wfBulkClear();
-  setTimeout(function(){ if (typeof wfLoadInbox === 'function') wfLoadInbox(); }, 400);
+  setTimeout(function(){
+    if (typeof wfLoadInbox === 'function') wfLoadInbox();
+    if (typeof wfRefreshCounters === 'function') wfRefreshCounters();
+  }, 400);
+};
+
+// v6.19.1 — bulk wiring for صندوق الوارد (namespaced from the inbox one)
+window._wfIncBulkSelected = {};
+window.wfIncBulkToggle = function(id, el){
+  if (el && el.checked) window._wfIncBulkSelected[id] = true;
+  else delete window._wfIncBulkSelected[id];
+  _wfIncBulkUpdateBar();
+};
+window.wfIncBulkToggleAll = function(el){
+  document.querySelectorAll('#wfIncomingBody input[data-inc-bulk-id]').forEach(function(cb){
+    cb.checked = !!el.checked;
+    var id = cb.getAttribute('data-inc-bulk-id');
+    if (el.checked) window._wfIncBulkSelected[id] = true;
+    else delete window._wfIncBulkSelected[id];
+  });
+  _wfIncBulkUpdateBar();
+};
+window.wfIncBulkClear = function(){
+  window._wfIncBulkSelected = {};
+  document.querySelectorAll('#wfIncomingBody input[data-inc-bulk-id]').forEach(function(cb){ cb.checked = false; });
+  var sa = document.getElementById('wfIncSelectAll'); if (sa) sa.checked = false;
+  _wfIncBulkUpdateBar();
+};
+function _wfIncBulkUpdateBar(){
+  var ids = Object.keys(window._wfIncBulkSelected);
+  var bar = document.getElementById('wfIncBulkBar');
+  var cnt = document.getElementById('wfIncBulkCount');
+  if (cnt) cnt.textContent = ids.length;
+  if (bar) bar.style.display = ids.length ? 'flex' : 'none';
+}
+window.wfIncBulkAction = async function(action){
+  var ids = Object.keys(window._wfIncBulkSelected);
+  if (!ids.length) return;
+  var note = await window._wfBulkConfirm(action, ids.length);
+  if (note === null) return;
+  var numById = {};
+  (window._wfIncListCache || []).forEach(function(t){ numById[t.id] = t.txnNumber; });
+  var resp = await window._wfBulkSend(ids, action, note);
+  window._wfBulkReport(resp, numById);
+  window.wfIncBulkClear();
+  setTimeout(function(){
+    if (typeof wfLoadIncoming === 'function') wfLoadIncoming();
+    if (typeof wfRefreshCounters === 'function') wfRefreshCounters();
+  }, 400);
 };
 
 // V5: filter persistence (sessionStorage) + search
@@ -13043,7 +13119,9 @@ function wfLoadIncoming() {
 
   var tb = document.getElementById('wfIncomingBody');
   if (!tb) return;
-  tb.innerHTML = '<tr><td colspan="10" class="empty-msg"><i class="fas fa-spinner fa-spin"></i> جاري التحميل...</td></tr>';
+  tb.innerHTML = '<tr><td colspan="11" class="empty-msg"><i class="fas fa-spinner fa-spin"></i> جاري التحميل...</td></tr>';
+  // v6.19.1 — reset bulk selection on every (re)load so stale ids never linger
+  if (typeof wfIncBulkClear === 'function') wfIncBulkClear();
 
   // v6.9.0 — Build the filter map from the new #win* DOM IDs. Empty
   // values are skipped so the backend doesn't see e.g. `status=` (which
@@ -13075,11 +13153,13 @@ function wfLoadIncoming() {
     var legacyStats = document.getElementById('wfIncomingStats');
     var summary = document.getElementById('wfIncomingSummary');
     if (!list || !list.length) {
-      tb.innerHTML = '<tr><td colspan="10" class="empty-msg">لا توجد معاملات بانتظارك</td></tr>';
+      tb.innerHTML = '<tr><td colspan="11" class="empty-msg">لا توجد معاملات بانتظارك</td></tr>';
       if (legacyStats) legacyStats.innerHTML = '';
       if (summary) summary.innerHTML = '';
       return;
     }
+    // v6.19.1 — keep the rendered list for bulk-failure reporting (id → txnNumber)
+    window._wfIncListCache = list;
     // v6.9.0 — Render summary as wf-summary-grid cards (same chrome as
     // Outbox). The four importance buckets become four cards.
     var counts = { critical:0, high:0, medium:0, low:0 };
@@ -13109,6 +13189,7 @@ function wfLoadIncoming() {
         '<button class="btn btn-sm" style="background:#f3e8ff;color:#7c3aed;" onclick="wfForwardTxn(\''+t.id+'\')" title="تحويل"><i class="fas fa-share"></i></button> ' +
         '<button class="btn btn-sm wf-row-delete-btn" onclick="event.stopPropagation();wfForceDeleteTxn(\''+t.id+'\',\''+safeTxnNum+'\')" title="حَذف نِهائي (admin only)"><i class="fas fa-trash"></i></button>';
       return '<tr>' +
+        '<td><input type="checkbox" data-inc-bulk-id="'+t.id+'" onchange="wfIncBulkToggle(\''+t.id+'\', this)" aria-label="تحديد المعاملة"></td>' +
         '<td>'+_wfImpBadge(t.importance||'medium')+'</td>' +
         '<td style="font-family:monospace;font-size:10px;">'+(t.txnNumber||'')+'</td>' +
         '<td><span class="badge badge-blue">'+(t.typeName||'')+'</span></td>' +

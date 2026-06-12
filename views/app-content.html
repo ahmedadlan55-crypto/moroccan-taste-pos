@@ -216,14 +216,13 @@
           <i class="fas fa-project-diagram"></i><span data-i18n="nav.workflow">المعاملات الإدارية</span><i class="fas fa-chevron-down submenu-indicator"></i>
         </div>
         <div class="submenu">
-          <div class="nav-item" data-erp-nav="erpWfDashboard" onclick="erpNav('erpWfDashboard')"><i class="fas fa-th-large"></i><span data-i18n="nav.wfDashboard">لوحة المعاملات</span></div>
-          <div class="nav-item" data-erp-nav="erpWfIncoming" onclick="erpNav('erpWfIncoming')"><i class="fas fa-inbox"></i><span data-i18n="nav.wfIncoming">صندوق الوارد</span></div>
+          <!-- v6.19.0 — Hub restructure: 8 flat items → hub + 2 quick links.
+               All old erpNav section ids remain valid (deep links + the
+               pos_last_section restore keep working); the rest of the
+               screens are reached from inside مركز المعاملات. -->
+          <div class="nav-item" data-erp-nav="erpWfHub" onclick="erpNav('erpWfHub')" style="background:linear-gradient(90deg,rgba(139,92,246,.15),transparent);font-weight:800;"><i class="fas fa-table-columns" style="color:#a78bfa;"></i><span data-i18n="nav.wfHub">مركز المعاملات</span></div>
+          <div class="nav-item" data-erp-nav="erpWfIncoming" onclick="erpNav('erpWfIncoming')"><i class="fas fa-inbox"></i><span data-i18n="nav.wfIncoming">صندوق الوارد</span><span id="navWfInboxBadge" class="nav-count-badge" style="display:none;">0</span></div>
           <div class="nav-item" data-erp-nav="erpWfOutgoing" onclick="erpNav('erpWfOutgoing')"><i class="fas fa-paper-plane"></i><span data-i18n="nav.wfOutgoing">صندوق الصادر</span></div>
-          <div class="nav-item" data-erp-nav="erpWfInbox" onclick="erpNav('erpWfInbox')"><i class="fas fa-list"></i><span data-i18n="nav.wfAll">جميع المعاملات</span></div>
-          <div class="nav-item" data-erp-nav="erpWfOrgTree" onclick="erpNav('erpWfOrgTree')"><i class="fas fa-sitemap"></i><span data-i18n="nav.wfOrgTree">الشجرة الإدارية</span></div>
-          <div class="nav-item" data-erp-nav="erpWfPositions" onclick="erpNav('erpWfPositions')"><i class="fas fa-id-badge"></i><span data-i18n="nav.wfPositions">المناصب</span></div>
-          <div class="nav-item" data-erp-nav="erpWfTypes" onclick="erpNav('erpWfTypes')"><i class="fas fa-list-alt"></i><span data-i18n="nav.wfTypes">أنواع المعاملات</span></div>
-          <div class="nav-item" data-erp-nav="erpWfDefs" onclick="erpNav('erpWfDefs')"><i class="fas fa-tasks"></i><span data-i18n="nav.wfSteps">خطوات سير العمل</span></div>
         </div>
 
         <!-- 15. الموارد البشرية (HR) -->
@@ -4064,12 +4063,91 @@
 </div>
 
 <!-- ══════════════════════════════════════════════════════════════ -->
+<!-- WORKFLOW HUB: مركز المعاملات الإدارية (v6.19.0)                -->
+<!-- Hub-style landing for the whole workflow section. Cards are     -->
+<!-- static HTML; KPI numbers are filled by wfLoadHub() from          -->
+<!-- /api/counters/me (same source as the sidebar badge).            -->
+<!-- ══════════════════════════════════════════════════════════════ -->
+<div id="erpWfHub" class="dash-section hidden wo-section">
+  <header class="wo-header">
+    <div class="wo-header-titles">
+      <h1><span class="wo-icon-slot purple"><i class="fas fa-project-diagram"></i></span>مركز المعاملات الإدارية</h1>
+      <p class="wo-header-sub">نقطة الانطلاق لكل المعاملات: الوارد، الصادر، اللوحة، والإعدادات التنظيمية.</p>
+    </div>
+    <div class="wo-header-actions">
+      <button class="wo-btn wo-btn-secondary" onclick="wfLoadHub()"><i class="fas fa-rotate"></i><span>تحديث</span></button>
+      <button class="wo-btn wo-btn-primary" onclick="wfOpenNewTxnModal()"><i class="fas fa-plus"></i><span>معاملة جديدة</span></button>
+    </div>
+  </header>
+
+  <div class="wo-metric-strip" id="wfHubMetrics"></div>
+
+  <div class="hub-grid">
+    <div class="hub-card accent-blue" onclick="erpNav('erpWfIncoming')">
+      <div class="hub-card-icon"><i class="fas fa-inbox"></i></div>
+      <div class="hub-card-title">صندوق الوارد <span class="hub-card-chip zero" id="wfHubChipInc">0</span></div>
+      <div class="hub-card-sub">المعاملات الموجهة إليك وبانتظار إجراءك — موافقة، رفض، إرجاع أو تحويل.</div>
+      <div class="hub-card-footer"><i class="fas fa-arrow-left"></i> فتح الصندوق</div>
+    </div>
+    <div class="hub-card accent-purple" onclick="erpNav('erpWfOutgoing')">
+      <div class="hub-card-icon"><i class="fas fa-paper-plane"></i></div>
+      <div class="hub-card-title">صندوق الصادر <span class="hub-card-chip zero" id="wfHubChipRet">0</span></div>
+      <div class="hub-card-sub">المعاملات التي أنشأتها — تابع سيرها، وأعد إرسال المُعاد منها بعد التعديل.</div>
+      <div class="hub-card-footer"><i class="fas fa-arrow-left"></i> فتح الصادر</div>
+    </div>
+    <div class="hub-card accent-slate" onclick="erpNav('erpWfInbox')">
+      <div class="hub-card-icon"><i class="fas fa-list"></i></div>
+      <div class="hub-card-title">جميع المعاملات</div>
+      <div class="hub-card-sub">العرض الإداري الشامل لكل المعاملات مع أوسع فلاتر بحث وتصدير CSV.</div>
+      <div class="hub-card-footer"><i class="fas fa-arrow-left"></i> فتح القائمة</div>
+    </div>
+    <div class="hub-card accent-green" onclick="erpNav('erpWfDashboard')">
+      <div class="hub-card-icon"><i class="fas fa-th-large"></i></div>
+      <div class="hub-card-title">لوحة المعاملات</div>
+      <div class="hub-card-sub">بطاقات المعاملات مجمعة حسب درجة الأهمية مع فلاتر الفرع والقسم والنوع.</div>
+      <div class="hub-card-footer"><i class="fas fa-arrow-left"></i> فتح اللوحة</div>
+    </div>
+  </div>
+
+  <h3 class="hub-sub-title"><i class="fas fa-sliders"></i> الإعدادات والتنظيم</h3>
+  <div class="hub-grid hub-grid-sm">
+    <div class="hub-card accent-teal" onclick="erpNav('erpWfPositions')">
+      <div class="hub-card-icon"><i class="fas fa-id-badge"></i></div>
+      <div class="hub-card-title">المناصب الإدارية</div>
+      <div class="hub-card-sub">تعريف المناصب التي تُبنى عليها مسارات الاعتماد.</div>
+      <div class="hub-card-footer"><i class="fas fa-arrow-left"></i> إدارة</div>
+    </div>
+    <div class="hub-card accent-orange" onclick="erpNav('erpWfTypes')">
+      <div class="hub-card-icon"><i class="fas fa-list-alt"></i></div>
+      <div class="hub-card-title">أنواع المعاملات</div>
+      <div class="hub-card-sub">كتالوج الأنواع: مالية، مخزنية، موارد بشرية، وإدارية.</div>
+      <div class="hub-card-footer"><i class="fas fa-arrow-left"></i> إدارة</div>
+    </div>
+    <div class="hub-card accent-purple" onclick="erpNav('erpWfDefs')">
+      <div class="hub-card-icon"><i class="fas fa-tasks"></i></div>
+      <div class="hub-card-title">مسارات سير العمل</div>
+      <div class="hub-card-sub">مسار اعتماد مستقل لكل منصب — من يبدأ، ومن يعتمد.</div>
+      <div class="hub-card-footer"><i class="fas fa-arrow-left"></i> إدارة</div>
+    </div>
+    <div class="hub-card accent-slate" onclick="erpNav('erpWfOrgTree')">
+      <div class="hub-card-icon"><i class="fas fa-sitemap"></i></div>
+      <div class="hub-card-title">الشجرة الإدارية</div>
+      <div class="hub-card-sub">المدراء المباشرون والمستويات وصلاحيات كل موظف.</div>
+      <div class="hub-card-footer"><i class="fas fa-arrow-left"></i> إدارة</div>
+    </div>
+  </div>
+</div>
+
+<!-- ══════════════════════════════════════════════════════════════ -->
 <!-- WORKFLOW: المناصب (Positions) -->
 <!-- ══════════════════════════════════════════════════════════════ -->
 <div id="erpWfPositions" class="dash-section hidden">
   <div class="section-header" style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;">
     <h2 class="section-title" style="font-size:18px;font-weight:800;display:flex;align-items:center;gap:8px;"><i class="fas fa-id-badge" style="color:#3b82f6;"></i> المناصب الإدارية</h2>
-    <button class="btn btn-primary" onclick="wfOpenPositionModal()"><i class="fas fa-plus"></i> منصب جديد</button>
+    <div style="display:flex;gap:8px;">
+      <button class="btn btn-light" onclick="erpNav('erpWfHub')"><i class="fas fa-arrow-right"></i> رجوع للمركز</button>
+      <button class="btn btn-primary" onclick="wfOpenPositionModal()"><i class="fas fa-plus"></i> منصب جديد</button>
+    </div>
   </div>
   <div id="wfPositionsGrid" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(250px,1fr));gap:14px;">
     <div style="text-align:center;padding:40px;color:#94a3b8;grid-column:1/-1;font-style:italic;">لا توجد مناصب</div>
@@ -4082,7 +4160,10 @@
 <div id="erpWfTypes" class="dash-section hidden">
   <div class="section-header" style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;">
     <h2 class="section-title" style="font-size:18px;font-weight:800;display:flex;align-items:center;gap:8px;"><i class="fas fa-list-alt" style="color:#3b82f6;"></i> أنواع المعاملات</h2>
-    <button class="btn btn-primary" onclick="wfOpenTypeModal()"><i class="fas fa-plus"></i> نوع جديد</button>
+    <div style="display:flex;gap:8px;">
+      <button class="btn btn-light" onclick="erpNav('erpWfHub')"><i class="fas fa-arrow-right"></i> رجوع للمركز</button>
+      <button class="btn btn-primary" onclick="wfOpenTypeModal()"><i class="fas fa-plus"></i> نوع جديد</button>
+    </div>
   </div>
   <div id="wfTypesGrid" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:14px;">
     <div style="text-align:center;padding:40px;color:#94a3b8;grid-column:1/-1;font-style:italic;">لا توجد أنواع</div>
@@ -4095,7 +4176,10 @@
 <div id="erpWfDefs" class="dash-section hidden">
   <div class="section-header" style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;flex-wrap:wrap;gap:10px;">
     <h2 class="section-title" style="font-size:18px;font-weight:800;display:flex;align-items:center;gap:8px;"><i class="fas fa-sitemap" style="color:#8b5cf6;"></i> مسارات المناصب الإدارية</h2>
-    <button class="btn btn-light btn-sm" onclick="wfLoadPositionSummary()"><i class="fas fa-sync"></i> تحديث</button>
+    <div style="display:flex;gap:8px;">
+      <button class="btn btn-light btn-sm" onclick="erpNav('erpWfHub')"><i class="fas fa-arrow-right"></i> رجوع للمركز</button>
+      <button class="btn btn-light btn-sm" onclick="wfLoadPositionSummary()"><i class="fas fa-sync"></i> تحديث</button>
+    </div>
   </div>
 
   <div style="padding:12px 16px;border-radius:12px;background:linear-gradient(135deg,#ede9fe,#ddd6fe);border:1px solid #a78bfa;margin-bottom:16px;font-size:12.5px;color:#5b21b6;line-height:1.7;">
@@ -4125,6 +4209,7 @@
   <div class="wf-section-header">
     <h2 class="wf-section-title"><i class="fas fa-list"></i> جميع المعاملات</h2>
     <div class="wf-section-actions">
+      <button class="btn btn-light" onclick="erpNav('erpWfHub')"><i class="fas fa-arrow-right"></i> رجوع للمركز</button>
       <button class="btn wf-wipe-btn" onclick="wfWipeAllTransactions()" title="تَصفير كل المعاملات (للمَسؤول فَقَط)"><i class="fas fa-broom"></i> تَصفير البَيانات التَّجريبيَّة</button>
       <button class="btn btn-light" onclick="wfExportInboxCsv()" title="تصدير القائمة الحالية لـ CSV" aria-label="تصدير CSV"><i class="fas fa-file-csv"></i> تَصدير CSV</button>
       <!-- V5.7.2: Developer-only wipe-all button (hidden for non-developers via JS) -->
@@ -4298,6 +4383,7 @@
   <div class="wf-section-header">
     <h2 class="wf-section-title"><i class="fas fa-th-large"></i> لوحة المعاملات الإدارية</h2>
     <div class="wf-section-actions">
+      <button class="btn btn-light" onclick="erpNav('erpWfHub')"><i class="fas fa-arrow-right"></i> رجوع للمركز</button>
       <button class="btn wf-wipe-btn" onclick="wfWipeAllTransactions()" title="تَصفير كل المعاملات (للمَسؤول فَقَط)"><i class="fas fa-broom"></i> تَصفير البَيانات التَّجريبيَّة</button>
       <button class="btn btn-primary" onclick="wfOpenNewTxnModal()"><i class="fas fa-plus"></i> معاملة جديدة</button>
     </div>
@@ -4373,6 +4459,7 @@
   <div class="wf-section-header">
     <h2 class="wf-section-title"><i class="fas fa-inbox"></i> صَندوق الوارد — في انتظار إجراء</h2>
     <div class="wf-section-actions">
+      <button class="btn btn-light" onclick="erpNav('erpWfHub')"><i class="fas fa-arrow-right"></i> رجوع للمركز</button>
       <button class="btn wf-wipe-btn" onclick="wfWipeAllTransactions()" title="تَصفير كل المعاملات (للمَسؤول فَقَط)"><i class="fas fa-broom"></i> تَصفير البَيانات التَّجريبيَّة</button>
       <button class="btn btn-light" onclick="wfLoadIncoming()" title="تحديث القائمة"><i class="fas fa-sync"></i> تحديث</button>
     </div>
@@ -4507,6 +4594,7 @@
   <div class="wf-section-header">
     <h2 class="wf-section-title"><i class="fas fa-paper-plane"></i> المعاملات الصادرة</h2>
     <div class="wf-section-actions">
+      <button class="btn btn-light" onclick="erpNav('erpWfHub')"><i class="fas fa-arrow-right"></i> رجوع للمركز</button>
       <button class="btn wf-wipe-btn" onclick="wfWipeAllTransactions()" title="تَصفير كل المعاملات (للمَسؤول فَقَط)"><i class="fas fa-broom"></i> تَصفير البَيانات التَّجريبيَّة</button>
       <button class="btn btn-primary" onclick="wfOpenNewTxnModal()"><i class="fas fa-plus"></i> إضافة معاملة داخلية</button>
     </div>
@@ -4665,7 +4753,10 @@
 <div id="erpWfOrgTree" class="dash-section hidden">
   <div class="section-header" style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;">
     <h2 class="section-title" style="font-size:18px;font-weight:800;display:flex;align-items:center;gap:8px;"><i class="fas fa-sitemap" style="color:#8b5cf6;"></i> الشجرة الإدارية</h2>
-    <button class="btn btn-light" onclick="wfLoadOrgTree()"><i class="fas fa-sync"></i> تحديث</button>
+    <div style="display:flex;gap:8px;">
+      <button class="btn btn-light" onclick="erpNav('erpWfHub')"><i class="fas fa-arrow-right"></i> رجوع للمركز</button>
+      <button class="btn btn-light" onclick="wfLoadOrgTree()"><i class="fas fa-sync"></i> تحديث</button>
+    </div>
   </div>
   <div style="background:#eff6ff;border:1px solid #bfdbfe;border-radius:12px;padding:12px;margin-bottom:14px;font-size:13px;color:#1e40af;">
     <i class="fas fa-info-circle"></i> إدارة المدراء المباشرين والمستويات الإدارية والصلاحيات لكل موظف. الصلاحيات: إنشاء، موافقة، رفض، إرجاع، تحويل، إغلاق.

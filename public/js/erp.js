@@ -162,6 +162,7 @@ function erpNav(sectionId) {
       case 'erpRoyaltyRuns':     erpLoadRoyaltyRuns(); break;
       // v5.15.1 — erpPosTerminals route removed; no admin entry point.
       case 'erpItemCategories':  erpLoadItemCategories(); break;
+      case 'erpWfHub': wfLoadHub(); break;   // v6.19.0 — hub landing
       case 'erpWfInbox': wfLoadInbox(); break;
       case 'erpWfDashboard': wfInitDashboard(); break;
       case 'erpWfIncoming': wfLoadIncoming(); break;
@@ -12885,6 +12886,56 @@ function hrDeleteException(id) {
 // ═════════════════════════════════════════════════════════════════════════════
 // WORKFLOW v2 — Dashboard / Incoming / Outgoing / Org Tree (Admin UI)
 // ═════════════════════════════════════════════════════════════════════════════
+
+/* ── v6.19.0 — WORKFLOW HUB (مركز المعاملات الإدارية) ─────────────────
+ * Cards are static HTML in #erpWfHub; this loader only fills the KPI
+ * strip + the two count chips from /api/counters/me (same source the
+ * sidebar badge uses, Redis-cached 30s server-side). */
+function _wfHubMetricCard(icon, label, value, accent, navId, preset) {
+  return '<div class="wo-metric accent-' + accent + ' hub-metric-click" onclick="_wfHubMetricGo(\'' + navId + '\'' + (preset ? ',\'' + preset + '\'' : '') + ')">' +
+         '<div class="wo-metric-icon" style="background:var(--hub-icon-bg,#ede9fe);color:var(--hub-accent,#8b5cf6);"><i class="fas ' + icon + '"></i></div>' +
+         '<div class="wo-metric-body"><div class="wo-metric-value">' + value + '</div><div class="wo-metric-label">' + label + '</div></div></div>';
+}
+function _wfHubMetricGo(navId, preset) {
+  erpNav(navId);
+  if (preset === 'overdue') {
+    // preset the overdue filter in the incoming box after it mounts
+    setTimeout(function() {
+      var el = document.getElementById('winFOverdue');
+      if (el) { el.value = '1'; if (typeof wfIncomingFiltersChanged === 'function') wfIncomingFiltersChanged(); }
+    }, 350);
+  }
+}
+function wfLoadHub() {
+  var strip = document.getElementById('wfHubMetrics');
+  if (strip && !strip.innerHTML) {
+    strip.innerHTML =
+      _wfHubMetricCard('fa-inbox', 'وارد بانتظار إجراء', '—', 'info', 'erpWfIncoming') +
+      _wfHubMetricCard('fa-hourglass-end', 'متأخرة عن موعدها', '—', 'danger', 'erpWfIncoming', 'overdue') +
+      _wfHubMetricCard('fa-rotate-left', 'مُعادة لي للتعديل', '—', 'warning', 'erpWfOutgoing') +
+      _wfHubMetricCard('fa-paper-plane', 'صادر قيد المعالجة', '—', 'purple', 'erpWfOutgoing');
+  }
+  if (!window._apiBridge || !currentUser) return;
+  window._apiBridge.withSuccessHandler(function(c) {
+    if (!c || c.error) return;
+    var inbox = c.inbox || {}, outbox = c.outbox || {};
+    if (strip) {
+      strip.innerHTML =
+        _wfHubMetricCard('fa-inbox', 'وارد بانتظار إجراء', Number(inbox.pendingAction) || 0, 'info', 'erpWfIncoming') +
+        _wfHubMetricCard('fa-hourglass-end', 'متأخرة عن موعدها', Number(inbox.overdue) || 0, 'danger', 'erpWfIncoming', 'overdue') +
+        _wfHubMetricCard('fa-rotate-left', 'مُعادة لي للتعديل', Number(inbox.returnedToMe) || 0, 'warning', 'erpWfOutgoing') +
+        _wfHubMetricCard('fa-paper-plane', 'صادر قيد المعالجة', Number(outbox.awaitingOthers) || 0, 'purple', 'erpWfOutgoing');
+    }
+    function chip(id, n) {
+      var el = document.getElementById(id);
+      if (!el) return;
+      el.textContent = n > 99 ? '99+' : n;
+      el.className = 'hub-card-chip' + (n > 0 ? '' : ' zero');
+    }
+    chip('wfHubChipInc', Number(inbox.pendingAction) || 0);
+    chip('wfHubChipRet', Number(inbox.returnedToMe) || 0);
+  }).withFailureHandler(function(){}).getMyCounters(currentUser);
+}
 
 window._wfDashDeptsAll = [];
 
@@ -32761,6 +32812,24 @@ window.wfRefreshCounters = function() {
         var nn = (c.notifications && c.notifications.unread) || 0;
         notifEl.textContent = nn;
         notifEl.className = 'wo-counter-badge ' + (nn === 0 ? 'empty' : '');
+      }
+      // v6.19.0 — live sidebar badge on صندوق الوارد (SSE handler calls
+      // wfRefreshCounters on every notification, so this updates in real time)
+      var navBadge = document.getElementById('navWfInboxBadge');
+      if (navBadge) {
+        var p = (c.inbox && c.inbox.pendingAction) || 0;
+        navBadge.textContent = p > 99 ? '99+' : p;
+        navBadge.style.display = p > 0 ? 'inline-flex' : 'none';
+      }
+      // refresh hub chips/KPIs if the hub is currently visible
+      var hubSec = document.getElementById('erpWfHub');
+      if (hubSec && !hubSec.classList.contains('hidden') && typeof wfLoadHub === 'function') {
+        var chipInc = document.getElementById('wfHubChipInc');
+        if (chipInc) {
+          var pi = (c.inbox && c.inbox.pendingAction) || 0;
+          chipInc.textContent = pi > 99 ? '99+' : pi;
+          chipInc.className = 'hub-card-chip' + (pi > 0 ? '' : ' zero');
+        }
       }
     }).withFailureHandler(function(){}).getMyCounters(currentUser);
   } catch(e) { console.warn('counters refresh:', e.message); }

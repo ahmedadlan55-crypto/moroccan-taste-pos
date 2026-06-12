@@ -30,6 +30,21 @@ var I18N = {
     'nav.txn': 'معاملات',
     'nav.leave': 'إجازات',
     'nav.me': 'ملفي',
+    // v6.19.3 — txn filters + quick actions
+    'txn.search.ph': 'ابحث بالعنوان أو الرقم أو النوع...',
+    'txn.chip.all': 'الكل',
+    'txn.chip.pending': 'معلقة',
+    'txn.chip.returned': 'مُعادة',
+    'txn.chip.approved': 'موافَق عليها',
+    'txn.chip.rejected': 'مرفوضة',
+    'txn.sortImp': 'الأهم أولاً',
+    'txn.noMatch': 'لا نتائج مطابقة للفلاتر',
+    'common.loadMore': 'عرض المزيد',
+    'home.qa.title': 'إجراءات سريعة',
+    'home.qa.clock': 'حضور / انصراف',
+    'home.qa.leave': 'طلب إجازة',
+    'home.qa.newTxn': 'معاملة جديدة',
+    'home.qa.salary': 'راتبي',
     // Home / Clock
     'home.recent': 'آخر الحضور',
     'clock.in': 'تسجيل حضور',
@@ -399,6 +414,21 @@ var I18N = {
     'nav.txn': 'Transactions',
     'nav.leave': 'Leaves',
     'nav.me': 'Profile',
+    // v6.19.3 — txn filters + quick actions
+    'txn.search.ph': 'Search by title, number or type...',
+    'txn.chip.all': 'All',
+    'txn.chip.pending': 'Pending',
+    'txn.chip.returned': 'Returned',
+    'txn.chip.approved': 'Approved',
+    'txn.chip.rejected': 'Rejected',
+    'txn.sortImp': 'Important first',
+    'txn.noMatch': 'No results match the filters',
+    'common.loadMore': 'Load more',
+    'home.qa.title': 'Quick actions',
+    'home.qa.clock': 'Clock in / out',
+    'home.qa.leave': 'Request leave',
+    'home.qa.newTxn': 'New transaction',
+    'home.qa.salary': 'My salary',
     'home.recent': 'Recent Attendance',
     'clock.in': 'Clock In',
     'clock.out': 'Clock Out',
@@ -1107,11 +1137,24 @@ function navTo(pg, el) {
   if (pageEl) pageEl.classList.add('active');
   if (el) el.classList.add('active');
   if (pg==='att') loadAttPage();
-  if (pg==='txn') { txnSwitchTab('inc'); loadIncomingTxns(); loadMyTransactions(); }
+  if (pg==='txn') {
+    // v6.19.3 — i18n for the search placeholder (no data-i18n-ph support)
+    var ts = document.getElementById('txnSearch');
+    if (ts) ts.placeholder = t('txn.search.ph');
+    txnSwitchTab('inc'); loadIncomingTxns(); loadMyTransactions();
+  }
   if (pg==='leave') loadLeavePage();
   if (pg==='me') loadProfilePage();
   if (pg==='home') loadHomeData();
   if (pg==='hours') loadHoursPage();
+}
+
+// v6.19.3 — quick actions (home grid): navigate to a tab, then optionally
+// run a follow-up (e.g. open the leave form / new-transaction modal) once
+// the page has mounted.
+function empQuick(pg, after) {
+  navTo(pg, document.querySelector('.nt[data-pg="' + pg + '"]'));
+  if (typeof after === 'function') setTimeout(after, 300);
 }
 
 // ═══════════════════════════════════════
@@ -1540,15 +1583,23 @@ function loadLeavePage() {
     var bals = rows||[]; if (!Array.isArray(bals)) bals = [];
     var c = document.getElementById('leaveBals');
     var html = yearsInfo;
-    html += bals.length ? bals.map(function(b) {
+    // v6.19.3 — balance cards with conic-gradient progress rings (2-col grid).
+    // Color thresholds unchanged: red ≤3, amber ≤7, green otherwise.
+    html += bals.length ? '<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;">' + bals.map(function(b) {
       var total = Number(b.total_days||0), used = Number(b.used_days||0), rem = Number(b.remaining_days||0);
-      var pct = total > 0 ? Math.round((used/total)*100) : 0;
-      var barClr = rem <= 3 ? '#ef4444' : rem <= 7 ? '#f59e0b' : '#10b981';
-      return '<div class="lc" style="flex-direction:column;align-items:stretch;gap:4px;">' +
-        '<div style="display:flex;justify-content:space-between;"><span style="font-weight:700;">' + (b.leaveTypeName||b.leave_type_name||'—') + '</span><span style="color:#0ea5e9;font-weight:800;">' + rem + ' / ' + total + ' ' + t('leave.days') + '</span></div>' +
-        '<div style="height:6px;background:#e5e7eb;border-radius:3px;overflow:hidden;"><div style="height:100%;width:' + pct + '%;background:' + barClr + ';border-radius:3px;"></div></div>' +
-        '</div>';
-    }).join('') : '<p class="empty">'+t('common.empty.balances')+'</p>';
+      var remPct = total > 0 ? Math.round((rem/total)*100) : 0;
+      var clr = rem <= 3 ? '#ef4444' : rem <= 7 ? '#f59e0b' : '#10b981';
+      return '<div style="background:#fff;border:1.5px solid #e5e7eb;border-radius:14px;padding:12px 10px;display:flex;flex-direction:column;align-items:center;gap:8px;text-align:center;">' +
+        '<div style="width:64px;height:64px;border-radius:50%;background:conic-gradient(' + clr + ' ' + remPct + '%, #e5e7eb 0);display:flex;align-items:center;justify-content:center;">' +
+          '<div style="width:50px;height:50px;border-radius:50%;background:#fff;display:flex;flex-direction:column;align-items:center;justify-content:center;">' +
+            '<span style="font-size:16px;font-weight:900;color:' + clr + ';line-height:1;">' + rem + '</span>' +
+            '<span style="font-size:8.5px;color:#94a3b8;font-weight:700;">' + t('leave.days') + '</span>' +
+          '</div>' +
+        '</div>' +
+        '<div style="font-size:12px;font-weight:800;color:#0f172a;line-height:1.3;">' + (b.leaveTypeName||b.leave_type_name||'—') + '</div>' +
+        '<div style="font-size:10.5px;color:#64748b;font-weight:700;">' + rem + ' / ' + total + ' ' + t('leave.days') + '</div>' +
+      '</div>';
+    }).join('') + '</div>' : '<p class="empty">'+t('common.empty.balances')+'</p>';
     c.innerHTML = html;
   });
   callAPI('GET', '/hr/my-leave-requests?username=' + currentUser, null, function(rows) {
@@ -1810,23 +1861,100 @@ function txnSwitchTab(which) {
   }
 }
 
+// ─── v6.19.3 — txn list filters (search + status chips + importance sort)
+// Client-side: both endpoints cap at a few hundred rows, so filtering in
+// the browser is instant and keeps the API contract untouched. The nav
+// badge always shows the UNFILTERED incoming count.
+window._empTxnState = { q: '', status: 'all', sortImp: false, incShown: 20, outShown: 20 };
+var _EMP_TXN_STATUS_MAP = {
+  pending:  ['pending', 'created', 'in_progress', 'replied'],
+  returned: ['returned'],
+  approved: ['approved', 'closed'],
+  rejected: ['rejected']
+};
+var _EMP_IMP_ORDER = { critical: 0, high: 1, medium: 2, low: 3 };
+function _empTxnApplyFilters(list) {
+  var s = window._empTxnState;
+  var out = list || [];
+  if (s.status !== 'all' && _EMP_TXN_STATUS_MAP[s.status]) {
+    out = out.filter(function(tx) { return _EMP_TXN_STATUS_MAP[s.status].indexOf(tx.status) >= 0; });
+  }
+  var q = (s.q || '').trim().toLowerCase();
+  if (q) {
+    out = out.filter(function(tx) {
+      return [tx.title, tx.txnNumber, tx.typeName, tx.senderName, tx.createdBy, tx.currentAssignee]
+        .some(function(v) { return v && String(v).toLowerCase().indexOf(q) >= 0; });
+    });
+  }
+  if (s.sortImp) {
+    out = out.slice().sort(function(a, b) {
+      return (_EMP_IMP_ORDER[a.importance] !== undefined ? _EMP_IMP_ORDER[a.importance] : 9) -
+             (_EMP_IMP_ORDER[b.importance] !== undefined ? _EMP_IMP_ORDER[b.importance] : 9);
+    });
+  }
+  return out;
+}
+function empTxnSetStatus(status, el) {
+  window._empTxnState.status = status;
+  window._empTxnState.incShown = 20;
+  window._empTxnState.outShown = 20;
+  document.querySelectorAll('[data-txnf]').forEach(function(ch) { ch.classList.remove('active'); });
+  if (el) el.classList.add('active');
+  _empRenderIncoming(); _empRenderOutgoing();
+}
+function empTxnToggleSort(el) {
+  window._empTxnState.sortImp = !window._empTxnState.sortImp;
+  if (el) el.classList.toggle('active', window._empTxnState.sortImp);
+  _empRenderIncoming(); _empRenderOutgoing();
+}
+var _empTxnSearchTimer = null;
+function empTxnFilterChanged() {
+  clearTimeout(_empTxnSearchTimer);
+  _empTxnSearchTimer = setTimeout(function() {
+    window._empTxnState.q = (document.getElementById('txnSearch') || {}).value || '';
+    window._empTxnState.incShown = 20;
+    window._empTxnState.outShown = 20;
+    _empRenderIncoming(); _empRenderOutgoing();
+  }, 250);
+}
+function _empLoadMoreBtn(kind, hiddenCount) {
+  return '<button onclick="window._empTxnState.' + kind + 'Shown += 20; ' +
+    (kind === 'inc' ? '_empRenderIncoming()' : '_empRenderOutgoing()') + ';" ' +
+    'style="width:100%;margin-top:8px;padding:11px;border:1.5px dashed #cbd5e1;background:#f8fafc;color:#475569;border-radius:10px;font-size:12.5px;font-weight:800;cursor:pointer;font-family:inherit;">' +
+    t('common.loadMore') + ' (' + hiddenCount + ')</button>';
+}
+
 // Incoming — transactions awaiting my action
 // V5-UX: preserves scroll position on refresh; escapes IDs in inline onclick
 //        (XSS-hardened); 44px touch targets on mobile.
+// v6.19.3 — fetch/render split: loadIncomingTxns() fetches + caches, the
+//           render applies the shared filter state + load-more pagination.
 function loadIncomingTxns() {
   var c = document.getElementById('incomingTxnList');
   if (!c) return;
-  // V5-UX: remember scroll position so re-render doesn't jump to top
-  var prevScroll = c.scrollTop;
   c.innerHTML = '<p class="empty"><i class="fas fa-spinner fa-spin"></i></p>';
   callAPI('GET', '/workflow/incoming?username=' + encodeURIComponent(currentUser), null, function(rows) {
     var list = rows || []; if (!Array.isArray(list)) list = [];
+    window._empIncList = list;
     var bd = document.getElementById('txnIncBadge');
     if (bd) { if (list.length) { bd.style.display = 'inline-block'; bd.textContent = list.length; } else { bd.style.display = 'none'; } }
-    if (!list.length) { c.innerHTML = '<p class="empty">'+t('common.empty.incoming')+'</p>'; return; }
-    var localeCode = currentLang === 'en' ? 'en-US' : 'ar-SA';
-    var isNarrow = window.innerWidth < 500;
-    c.innerHTML = list.map(function(tx) {
+    _empRenderIncoming();
+  });
+}
+function _empRenderIncoming() {
+  var c = document.getElementById('incomingTxnList');
+  if (!c) return;
+  var all = window._empIncList || [];
+  // V5-UX: remember scroll position so re-render doesn't jump to top
+  var prevScroll = c.scrollTop;
+  if (!all.length) { c.innerHTML = '<p class="empty">'+t('common.empty.incoming')+'</p>'; return; }
+  var filtered = _empTxnApplyFilters(all);
+  if (!filtered.length) { c.innerHTML = '<p class="empty">'+t('txn.noMatch')+'</p>'; return; }
+  var shown = window._empTxnState.incShown;
+  var page = filtered.slice(0, shown);
+  var localeCode = currentLang === 'en' ? 'en-US' : 'ar-SA';
+  var isNarrow = window.innerWidth < 500;
+  c.innerHTML = page.map(function(tx) {
       var dt = tx.createdAt ? new Date(tx.createdAt).toLocaleDateString(localeCode,{day:'numeric',month:'short'}) : '';
       // V5-SEC: escape IDs in inline onclick to prevent XSS via malicious id strings
       var idEsc = String(tx.id || '').replace(/'/g, '&#39;').replace(/"/g, '&quot;');
@@ -1852,10 +1980,9 @@ function loadIncomingTxns() {
         '</div>' +
         actionsHtml +
       '</div>';
-    }).join('');
+    }).join('') + (filtered.length > shown ? _empLoadMoreBtn('inc', filtered.length - shown) : '');
     // V5-UX: restore scroll position after render
     if (prevScroll > 0) { try { c.scrollTop = prevScroll; } catch(_){} }
-  });
 }
 
 function empAct(id, action) {
@@ -2097,15 +2224,28 @@ function empFwd(id) {
   });
 }
 
+// v6.19.3 — fetch/render split (same pattern as the incoming list)
 function loadMyTransactions() {
   var c = document.getElementById('myTxnList');
   if (!c) return;
   c.innerHTML = '<p class="empty"><i class="fas fa-spinner fa-spin"></i></p>';
   callAPI('GET', '/workflow/outbox?username=' + encodeURIComponent(currentUser), null, function(rows) {
     var txns = rows || []; if (!Array.isArray(txns)) txns = [];
-    if (!txns.length) { c.innerHTML = '<p class="empty">'+t('common.empty.txns')+'</p>'; return; }
-    var localeCode = currentLang === 'en' ? 'en-US' : 'ar-SA';
-    c.innerHTML = txns.map(function(tx) {
+    window._empOutList = txns;
+    _empRenderOutgoing();
+  });
+}
+function _empRenderOutgoing() {
+  var c = document.getElementById('myTxnList');
+  if (!c) return;
+  var all = window._empOutList || [];
+  if (!all.length) { c.innerHTML = '<p class="empty">'+t('common.empty.txns')+'</p>'; return; }
+  var filtered = _empTxnApplyFilters(all);
+  if (!filtered.length) { c.innerHTML = '<p class="empty">'+t('txn.noMatch')+'</p>'; return; }
+  var shown = window._empTxnState.outShown;
+  var page = filtered.slice(0, shown);
+  var localeCode = currentLang === 'en' ? 'en-US' : 'ar-SA';
+  c.innerHTML = page.map(function(tx) {
       var dt = tx.createdAt ? new Date(tx.createdAt).toLocaleDateString(localeCode,{day:'numeric',month:'short'}) : '';
       var isReturned = tx.status === 'returned';
       // V3.1: editable while pending/draft (workflow not started) OR while returned (creator must fix and resubmit)
@@ -2146,8 +2286,7 @@ function loadMyTransactions() {
         '</div>' +
         actBtns +
       '</div>';
-    }).join('');
-  });
+    }).join('') + (filtered.length > shown ? _empLoadMoreBtn('out', filtered.length - shown) : '');
 }
 
 // ─── Edit a sent transaction using the redesigned modal in edit mode ───
@@ -2369,18 +2508,20 @@ function openTxnModal() {
     document.getElementById('txnType').innerHTML = (types||[]).map(function(tt) { return '<option value="' + tt.id + '">' + tt.name + '</option>'; }).join('');
   });
   callAPI('GET', '/erp/cost-centers', null, function(ccs) {
-    _txnCostCenters = ccs || [];
+    // v6.19.3 — a failed endpoint returns {error}, not an array; don't crash
+    _txnCostCenters = Array.isArray(ccs) ? ccs : [];
     var sel = document.getElementById('txnCC');
     if (sel) sel.innerHTML = '<option value="">'+t('tm.noCC')+'</option>' + _txnCostCenters.map(function(c) { return '<option value="' + c.id + '" data-name="' + (c.name||'') + '">' + (c.code||'') + ' — ' + (c.name||'') + '</option>'; }).join('');
   });
   callAPI('GET', '/erp/gl/accounts', null, function(list) {
-    _txnAccounts = (list || []).filter(function(a) {
-      var ids = {}; (list||[]).forEach(function(x) { if (x.parentId) ids[x.parentId] = true; });
+    if (!Array.isArray(list)) list = [];
+    _txnAccounts = list.filter(function(a) {
+      var ids = {}; list.forEach(function(x) { if (x.parentId) ids[x.parentId] = true; });
       return !ids[a.id];
     });
   });
   callAPI('GET', '/workflow/eligible-users?sender=' + currentUser, null, function(users) {
-    _txnEligibleUsers = users || [];
+    _txnEligibleUsers = Array.isArray(users) ? users : [];
     var sel = document.getElementById('txnRecipient');
     if (sel) sel.innerHTML = '<option value="">'+t('tm.selectRecipient')+'</option>' + _txnEligibleUsers.map(function(u) { return '<option value="' + u.username + '">' + (u.fullName||u.username) + ' — ' + (u.positionName||'') + (u.branchName?' | '+u.branchName:'') + '</option>'; }).join('');
   });

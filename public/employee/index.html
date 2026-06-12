@@ -299,7 +299,7 @@
   <script defer src="/shared/dynamic-i18n.js?v=2"></script>
   <!-- v5.12.2 — device brand/model detector used at login -->
   <script defer src="/shared/device-info.js?v=1"></script>
-  <script defer src="/employee/app.js?v=34"></script>
+  <script defer src="/employee/app.js?v=35"></script>
 </head>
 <body>
 <div class="toast" id="toast" role="status" aria-live="polite" aria-atomic="true"></div>
@@ -344,7 +344,18 @@ document.addEventListener('keydown',function(e){if(e.key==='Enter'&&document.get
     </div>
   </div>
   <div class="main">
-    <div class="page active" id="pghome"><div id="clockSection"></div><div class="stats" id="homeStats"></div><div class="card"><div class="card-t"><i class="fas fa-history"></i> <span data-i18n="home.recent">آخر الحضور</span></div><div id="recentAtt"></div></div></div>
+    <div class="page active" id="pghome"><div id="clockSection"></div>
+      <!-- v6.19.3 — quick actions grid -->
+      <div class="card" style="padding:12px;">
+        <div class="card-t" style="margin-bottom:10px;"><i class="fas fa-bolt"></i> <span data-i18n="home.qa.title">إجراءات سريعة</span></div>
+        <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:8px;">
+          <button onclick="doClock()" style="display:flex;flex-direction:column;align-items:center;gap:6px;padding:12px 4px;border:none;background:#f0fdf4;color:#166534;border-radius:12px;font-size:10.5px;font-weight:800;cursor:pointer;font-family:inherit;min-height:64px;"><i class="fas fa-fingerprint" style="font-size:18px;"></i><span data-i18n="home.qa.clock">حضور / انصراف</span></button>
+          <button onclick="empQuick('leave', openLeaveForm)" style="display:flex;flex-direction:column;align-items:center;gap:6px;padding:12px 4px;border:none;background:#eff6ff;color:#1e40af;border-radius:12px;font-size:10.5px;font-weight:800;cursor:pointer;font-family:inherit;min-height:64px;"><i class="fas fa-calendar-plus" style="font-size:18px;"></i><span data-i18n="home.qa.leave">طلب إجازة</span></button>
+          <button onclick="empQuick('txn', openTxnModal)" style="display:flex;flex-direction:column;align-items:center;gap:6px;padding:12px 4px;border:none;background:#faf5ff;color:#7c3aed;border-radius:12px;font-size:10.5px;font-weight:800;cursor:pointer;font-family:inherit;min-height:64px;"><i class="fas fa-file-circle-plus" style="font-size:18px;"></i><span data-i18n="home.qa.newTxn">معاملة جديدة</span></button>
+          <button onclick="empQuick('me')" style="display:flex;flex-direction:column;align-items:center;gap:6px;padding:12px 4px;border:none;background:#fffbeb;color:#92400e;border-radius:12px;font-size:10.5px;font-weight:800;cursor:pointer;font-family:inherit;min-height:64px;"><i class="fas fa-money-bill-wave" style="font-size:18px;"></i><span data-i18n="home.qa.salary">راتبي</span></button>
+        </div>
+      </div>
+      <div class="stats" id="homeStats"></div><div class="card"><div class="card-t"><i class="fas fa-history"></i> <span data-i18n="home.recent">آخر الحضور</span></div><div id="recentAtt"></div></div></div>
     <div class="page" id="pgatt">
       <!-- Period chips -->
       <div class="card" style="padding:10px 12px;">
@@ -402,6 +413,22 @@ document.addEventListener('keydown',function(e){if(e.key==='Enter'&&document.get
         <button id="txnTabOut" onclick="txnSwitchTab('out')" style="flex:1;padding:10px;border:none;background:transparent;color:#64748b;border-radius:10px;font-weight:800;font-size:13px;cursor:pointer;">
           <i class="fas fa-paper-plane"></i> <span data-i18n="txn.tab.out" data-i18n-label>الصادر</span>
         </button>
+      </div>
+      <!-- v6.19.3 — shared search + status chips + importance sort (client-side,
+           applies to both subtabs; the nav badge keeps the UNFILTERED count) -->
+      <div class="card" style="padding:10px 12px;">
+        <div style="position:relative;margin-bottom:8px;">
+          <i class="fas fa-search" style="position:absolute;inset-inline-start:12px;top:50%;transform:translateY(-50%);color:#94a3b8;font-size:12px;"></i>
+          <input id="txnSearch" type="text" placeholder="ابحث بالعنوان أو الرقم أو النوع..." oninput="empTxnFilterChanged()" style="width:100%;padding:10px 34px;border:1.5px solid #e5e7eb;border-radius:10px;font-size:13px;font-family:inherit;box-sizing:border-box;">
+        </div>
+        <div style="display:flex;gap:6px;overflow-x:auto;padding-bottom:4px;">
+          <button class="hours-chip active" data-txnf="all" onclick="empTxnSetStatus('all',this)" data-i18n="txn.chip.all">الكل</button>
+          <button class="hours-chip" data-txnf="pending" onclick="empTxnSetStatus('pending',this)" data-i18n="txn.chip.pending">معلقة</button>
+          <button class="hours-chip" data-txnf="returned" onclick="empTxnSetStatus('returned',this)" data-i18n="txn.chip.returned">مُعادة</button>
+          <button class="hours-chip" data-txnf="approved" onclick="empTxnSetStatus('approved',this)" data-i18n="txn.chip.approved">موافَق عليها</button>
+          <button class="hours-chip" data-txnf="rejected" onclick="empTxnSetStatus('rejected',this)" data-i18n="txn.chip.rejected">مرفوضة</button>
+          <button class="hours-chip" id="txnSortImpChip" onclick="empTxnToggleSort(this)" data-i18n="txn.sortImp">الأهم أولاً</button>
+        </div>
       </div>
       <!-- Incoming subpage -->
       <div id="txnSubInc">
@@ -495,16 +522,16 @@ document.addEventListener('keydown',function(e){if(e.key==='Enter'&&document.get
     <div class="page" id="pgme"><div class="card"><div class="card-t"><i class="fas fa-id-card"></i> <span data-i18n="profile.info">بياناتي</span></div><div id="profileInfo"></div></div><div class="card"><div class="card-t"><i class="fas fa-money-bill-wave"></i> <span data-i18n="profile.salaries">الرواتب</span></div><div id="payslips"></div></div></div>
   </div>
   <nav class="bnav">
-    <div class="nt active" onclick="navTo('home',this)"><i class="fas fa-home"></i><span data-i18n="nav.home">الرئيسية</span></div>
-    <div class="nt" onclick="navTo('att',this)"><i class="fas fa-fingerprint"></i><span data-i18n="nav.att">البصمة</span></div>
-    <div class="nt" onclick="navTo('hours',this)"><i class="fas fa-clock-rotate-left"></i><span data-i18n="nav.hours">ساعاتي</span></div>
+    <div class="nt active" data-pg="home" onclick="navTo('home',this)"><i class="fas fa-home"></i><span data-i18n="nav.home">الرئيسية</span></div>
+    <div class="nt" data-pg="att" onclick="navTo('att',this)"><i class="fas fa-fingerprint"></i><span data-i18n="nav.att">البصمة</span></div>
+    <div class="nt" data-pg="hours" onclick="navTo('hours',this)"><i class="fas fa-clock-rotate-left"></i><span data-i18n="nav.hours">ساعاتي</span></div>
     <!-- V4: Counter badge on transactions tab -->
-    <div class="nt" onclick="navTo('txn',this)" style="position:relative;">
+    <div class="nt" data-pg="txn" onclick="navTo('txn',this)" style="position:relative;">
       <i class="fas fa-file-alt"></i><span data-i18n="nav.txn">معاملات</span>
       <span id="navTxnBadge" class="nav-badge" style="display:none;">0</span>
     </div>
-    <div class="nt" onclick="navTo('leave',this)"><i class="fas fa-calendar"></i><span data-i18n="nav.leave">إجازات</span></div>
-    <div class="nt" onclick="navTo('me',this)"><i class="fas fa-user"></i><span data-i18n="nav.me">ملفي</span></div>
+    <div class="nt" data-pg="leave" onclick="navTo('leave',this)"><i class="fas fa-calendar"></i><span data-i18n="nav.leave">إجازات</span></div>
+    <div class="nt" data-pg="me" onclick="navTo('me',this)"><i class="fas fa-user"></i><span data-i18n="nav.me">ملفي</span></div>
   </nav>
   <style>
     .nav-badge {

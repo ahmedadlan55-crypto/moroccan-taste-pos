@@ -4201,6 +4201,8 @@
       <button class="btn btn-light" onclick="erpNav('erpWfHub')"><i class="fas fa-arrow-right"></i> رجوع للمركز</button>
       <button class="btn wf-wipe-btn" onclick="wfWipeAllTransactions()" title="تَصفير كل المعاملات (للمَسؤول فَقَط)"><i class="fas fa-broom"></i> تَصفير البَيانات التَّجريبيَّة</button>
       <button class="btn btn-light" onclick="wfExportInboxCsv()" title="تصدير القائمة الحالية لـ CSV" aria-label="تصدير CSV"><i class="fas fa-file-csv"></i> تَصدير CSV</button>
+      <!-- v6.19.4: admin-only — recover transactions stuck as hidden drafts -->
+      <button id="wfRecoverDraftsBtn" class="btn" style="display:none;background:linear-gradient(135deg,#b45309,#92400e);color:#fff;border:1.5px solid #b45309;font-weight:800;" onclick="wfRecoverStuckDrafts()" title="استرجاع المعاملات العالقة كمسودات مخفية"><i class="fas fa-life-ring"></i> استرجاع المسودات العالقة</button>
       <!-- V5.7.2: Developer-only wipe-all button (hidden for non-developers via JS) -->
       <button id="wfWipeAllBtn" class="btn" style="display:none;background:linear-gradient(135deg,#7f1d1d,#450a0a);color:#fff;border:1.5px solid #7f1d1d;font-weight:800;" onclick="wfWipeAllTransactions()" title="حذف كل المعاملات (مطور فقط)"><i class="fas fa-skull-crossbones"></i> مسح شامل</button>
       <button class="btn btn-primary" onclick="wfOpenNewTxnModal()"><i class="fas fa-plus"></i> معاملة جديدة</button>

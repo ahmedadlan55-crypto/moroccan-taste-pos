@@ -283,6 +283,7 @@ var I18N = {
     'tm.attachment': 'مرفق',
     'tm.send': 'إرسال المعاملة',
     'tm.titleRequired': 'اختر النوع واكتب العنوان',
+    'tm.recipientRequired': 'اختر المستلم أولاً',
     'tm.fileLimit': 'الحد 5MB',
     'tm.sending': 'جاري الإرسال...',
     'tm.newAccountPrompt': 'اسم الحساب الجديد (سيُضاف تحت المصروفات):',
@@ -661,6 +662,7 @@ var I18N = {
     'tm.attachment': 'Attachment',
     'tm.send': 'Send',
     'tm.titleRequired': 'Select type and enter title',
+    'tm.recipientRequired': 'Please select a recipient first',
     'tm.fileLimit': '5MB limit',
     'tm.sending': 'Sending...',
     'tm.newAccountPrompt': 'New account name (under Expenses):',
@@ -2579,6 +2581,11 @@ window.txnAddNewAccount = function() {
 function submitTxn() {
   var title = document.getElementById('txnTitle').value, typeId = document.getElementById('txnType').value;
   if (!title || !typeId) return toast(t('tm.titleRequired'), true);
+  // v6.19.4 — recipient is REQUIRED. Without it the backend can't route the
+  // transaction (this system has no workflow steps) and it would be lost as
+  // a hidden draft. The backend also rejects un-routable txns as a guard.
+  var recipientVal = (document.getElementById('txnRecipient') || {}).value || '';
+  if (!recipientVal) return toast(t('tm.recipientRequired'), true);
   var ccSel = document.getElementById('txnCC');
   var impEl = document.getElementById('txnImportance');
   var data = {

@@ -183,10 +183,19 @@ async function create(payload, actor) {
   const finalIssuingEntityId   = payload.issuingEntityId   || sender.deptId   || sender.branchId   || '';
   const finalIssuingEntityName = payload.issuingEntityName || sender.deptName || sender.branchName || '';
 
+  // v6.19.4 — Routing guard. Previously an un-routable transaction (no
+  // resolvable assignee AND no workflow step) was silently saved as a
+  // 'draft', which is excluded from EVERY inbox/dashboard view — so it
+  // vanished while the create endpoint still returned success. That is
+  // the "issued transaction never appears" bug. We now REFUSE to create
+  // an un-routable transaction unless the caller explicitly asked for a
+  // draft. The error surfaces to the UI so the user picks a recipient.
+  if (!payload.saveAsDraft && !currentAssignee && !currentStepId) {
+    throw new ValidationError('تعذّر توجيه المعاملة: لم يُحدَّد مستلم ولا يوجد مسار سير عمل لهذا النوع. اختر مستلماً ثم أعد الإرسال.');
+  }
+
   // Draft mode overrides routing
-  const initialStatus = payload.saveAsDraft
-    ? 'draft'
-    : ((currentAssignee || currentStepId) ? 'pending' : 'draft');
+  const initialStatus = payload.saveAsDraft ? 'draft' : 'pending';
 
   // Atomic insert + children + step log
   await db.withTransaction(async (conn) => {

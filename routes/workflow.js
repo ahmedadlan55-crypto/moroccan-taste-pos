@@ -1564,6 +1564,79 @@ router.get('/transactions', async (req, res) => {
   } catch(e) { res.json([]); }
 });
 
+// ═══════════════════════════════════════════════════════════════════
+// v6.19.4 — STUCK-DRAFT RECOVERY
+// Transactions issued before the routing guard could be silently demoted
+// to 'draft' (no assignee + no step) and then never appear in any inbox.
+// These two admin-only routes preview and recover them by routing each to
+// a target user (default: the admin running recovery).
+// ═══════════════════════════════════════════════════════════════════
+const _STUCK_DRAFT_WHERE =
+  "status = 'draft' AND (current_assignee IS NULL OR current_assignee = '') " +
+  "AND current_step_id IS NULL AND deleted_at IS NULL";
+
+router.get('/stuck-drafts', async (req, res) => {
+  try {
+    const [rows] = await db.query(
+      `SELECT t.id, t.transaction_number, t.title, t.created_by, t.created_at,
+              tt.name AS type_name
+         FROM transactions t
+         LEFT JOIN transaction_types tt ON t.transaction_type_id = tt.id
+        WHERE ${_STUCK_DRAFT_WHERE}
+        ORDER BY t.created_at DESC LIMIT 500`);
+    res.json(rows.map(r => ({
+      id: r.id, txnNumber: r.transaction_number, title: r.title,
+      createdBy: r.created_by, createdAt: r.created_at, typeName: r.type_name || ''
+    })));
+  } catch(e) { res.json([]); }
+});
+
+router.post('/stuck-drafts/recover', async (req, res) => {
+  try {
+    const callerName = (req.user && req.user.username) || req.body.username || '';
+    if (!callerName) return res.status(401).json({ success: false, error: 'مستخدم غير معروف' });
+    const perms = await getPermissions(callerName);
+    const isAdmin = (perms.role === 'admin') || callerName === 'admin' || !!(req.user && req.user.isDeveloper);
+    if (!isAdmin) return res.status(403).json({ success: false, error: 'هذه العملية للمسؤول فقط' });
+
+    const target = (req.body.target && String(req.body.target).trim()) || callerName;
+    const ids = Array.isArray(req.body.ids) ? req.body.ids.map(String) : null;
+
+    let sql = `SELECT id, created_by FROM transactions WHERE ${_STUCK_DRAFT_WHERE}`;
+    const params = [];
+    if (ids && ids.length) {
+      sql += ` AND id IN (${ids.map(() => '?').join(',')})`;
+      params.push(...ids);
+    }
+    const [cands] = await db.query(sql, params);
+    const results = [];
+    for (const c of cands) {
+      try {
+        // Re-assert the stuck-draft WHERE so a concurrent/duplicate run is idempotent
+        await db.query(
+          `UPDATE transactions SET status = 'pending', current_assignee = ? WHERE id = ? AND ${_STUCK_DRAFT_WHERE}`,
+          [target, c.id]);
+        results.push({ id: c.id, success: true });
+        // Best-effort audit + counter refresh — never fail the recovery itself.
+        // action_type is an ENUM(create,approve,reject,return,forward,close);
+        // 'forward' fits the semantic (re-routing) and the note records intent.
+        try {
+          await db.query(
+            'INSERT INTO transaction_steps_log (id, transaction_id, action_by, action_type, action_note) VALUES (?,?,?,?,?)',
+            ['LOG-' + Date.now() + '-' + Math.random().toString(36).substr(2, 4), c.id, callerName, 'forward',
+             '[استرجاع مسودة عالقة] توجيه إلى ' + target]);
+        } catch (_) {}
+        try {
+          const counters = require('./counters');
+          if (counters && counters.invalidateCountersFor) await counters.invalidateCountersFor(c.created_by, target);
+        } catch (_) {}
+      } catch (e) { results.push({ id: c.id, success: false, error: e.message }); }
+    }
+    const recovered = results.filter(r => r.success).length;
+    res.json({ success: true, recovered, failed: results.length - recovered, target, results });
+  } catch (e) { res.status(500).json({ success: false, error: e.message }); }
+});
+
 // Single transaction with full workflow path + timeline
 router.get('/transactions/:id', async (req, res) => {
   try {

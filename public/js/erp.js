@@ -10131,12 +10131,81 @@ window._wfInboxPagedList = null;   // last full list — used for "load more"
 window._wfInboxPagedShown = 0;
 window._wfInboxRenderRow = null;   // hoisted row renderer (set below)
 
+// v6.19.4 — recover transactions stuck as hidden drafts (admin/dev only).
+// Lists candidates (status=draft, no assignee, no step) then routes them to
+// the current admin's inbox so they become visible/actionable.
+window.wfRecoverStuckDrafts = async function() {
+  var token = localStorage.getItem('pos_token');
+  var list;
+  try {
+    list = await fetch('/api/workflow/stuck-drafts', { headers: { 'Authorization': 'Bearer ' + token } })
+      .then(function(r){ return r.json(); });
+  } catch(e) { return showToast('تعذّر جلب المسودات العالقة', true); }
+  if (!Array.isArray(list) || !list.length) {
+    if (window.WoModal && window.WoModal.toast) window.WoModal.toast({ message: 'لا توجد مسودات عالقة 🎉', kind: 'success' });
+    else showToast('لا توجد مسودات عالقة');
+    return;
+  }
+  var esc = function(s){ return String(s||'').replace(/[<>&"]/g, function(c){ return ({'<':'&lt;','>':'&gt;','&':'&amp;','"':'&quot;'})[c]; }); };
+  var rowsHtml = list.map(function(d){
+    var dt = d.createdAt ? new Date(d.createdAt).toLocaleDateString('en-GB') : '';
+    return '<div style="border:1px solid #fde68a;background:#fffbeb;border-radius:10px;padding:8px 12px;margin-bottom:6px;">' +
+      '<div style="font-weight:800;font-size:12px;font-family:monospace;color:#92400e;">' + esc(d.txnNumber || d.id) + '</div>' +
+      '<div style="font-size:12px;color:#78350f;">' + esc(d.title || '') + (d.typeName ? ' — ' + esc(d.typeName) : '') + '</div>' +
+      '<div style="font-size:10.5px;color:#a16207;">المُنشئ: ' + esc(d.createdBy||'—') + ' · ' + dt + '</div>' +
+    '</div>';
+  }).join('');
+  var ids = list.map(function(d){ return d.id; });
+  if (!window.WoModal || !window.WoModal.open) {
+    if (!window.confirm('استرجاع ' + list.length + ' معاملة عالقة وتوجيهها إلى صندوق واردك؟')) return;
+    return _wfDoRecover(ids, token);
+  }
+  // erp.js WoModal API: open() returns { el, close() } and does NOT auto-wire
+  // footer buttons — we attach handlers on api.el ourselves.
+  var api = window.WoModal.open({
+    icon: 'fa-life-ring', iconColor: 'warn', size: 'md',
+    title: 'استرجاع المسودات العالقة (' + list.length + ')',
+    body: '<p style="font-size:13px;color:#475569;margin-bottom:10px;">معاملات عَلِقت كمسودات مخفية (بلا مستلم ولا مسار). سيتم توجيهها إلى صندوق واردك (' + esc(currentUser) + ') لتظهر:</p>' +
+          '<div style="max-height:300px;overflow:auto;">' + rowsHtml + '</div>',
+    footer: '<button class="wo-btn wo-btn-secondary" data-wm-cancel>إلغاء</button>' +
+            '<button class="wo-btn wo-btn-primary" data-wm-confirm>استرجاع الكل</button>'
+  });
+  var okBtn = api.el && api.el.querySelector('[data-wm-confirm]');
+  var cancelBtn = api.el && api.el.querySelector('[data-wm-cancel]');
+  if (okBtn) okBtn.addEventListener('click', function(){ api.close(); _wfDoRecover(ids, token); });
+  if (cancelBtn) cancelBtn.addEventListener('click', function(){ api.close(); });
+};
+async function _wfDoRecover(ids, token) {
+  if (typeof loader === 'function') loader(true);
+  try {
+    var resp = await fetch('/api/workflow/stuck-drafts/recover', {
+      method: 'POST',
+      headers: { 'Authorization': 'Bearer ' + token, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ids: ids, username: currentUser })
+    }).then(function(r){ return r.json(); });
+    if (typeof loader === 'function') loader(false);
+    if (resp && resp.success) {
+      showToast('تم استرجاع ' + (resp.recovered||0) + ' معاملة' + (resp.failed ? ' • فشل ' + resp.failed : ''));
+      if (typeof wfLoadInbox === 'function') wfLoadInbox();
+      if (typeof wfRefreshCounters === 'function') wfRefreshCounters();
+    } else {
+      showToast(resp && resp.error || 'فشل الاسترجاع', true);
+    }
+  } catch(e) { if (typeof loader === 'function') loader(false); showToast('فشل الاسترجاع: ' + e.message, true); }
+}
+
 function wfLoadInbox() {
   // V5.7.2: show "wipe all" button only for developers
   var wipeBtn = document.getElementById('wfWipeAllBtn');
+  var isDev = (window.state && window.state.isDeveloper) || (typeof window._isDeveloperUser === 'function' && window._isDeveloperUser());
   if (wipeBtn) {
-    var isDev = (window.state && window.state.isDeveloper) || (typeof window._isDeveloperUser === 'function' && window._isDeveloperUser());
     wipeBtn.style.display = isDev ? '' : 'none';
+  }
+  // v6.19.4: show "recover stuck drafts" for admin or developer
+  var recBtn = document.getElementById('wfRecoverDraftsBtn');
+  if (recBtn) {
+    var isAdminUser = isDev || (typeof state !== 'undefined' && (state.isPrimaryAdmin || state.role === 'admin'));
+    recBtn.style.display = isAdminUser ? '' : 'none';
   }
   // v6.9.0 — Lazy-init the type/expense/branch/dept dropdowns.
   try { _wfInitInboxFilters(); } catch (_) {}
@@ -10856,6 +10925,10 @@ function _wfSubmitNewTxn(asDraft) {
   var recipients = Object.values(_wfNewSelectedRecipients).map(function(r) {
     return { username: r.username, code: r.code, name: r.name, needsResponse: r.needsResponse };
   });
+  // v6.19.4 — a recipient is REQUIRED for a real send. Without one (and with
+  // no workflow steps configured) the txn would be saved as a hidden draft
+  // that never reaches any inbox. "حفظ كمسودة" (asDraft) is exempt.
+  if (!asDraft && recipients.length === 0) return showToast('اختر مستلماً واحداً على الأقل قبل الإرسال', true);
   var pickedRecipientUsername = recipients.length === 1 ? recipients[0].username : '';
 
   var contentEd = document.getElementById('wfnContentHtml');

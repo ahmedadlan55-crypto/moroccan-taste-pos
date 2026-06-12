@@ -97,9 +97,14 @@ router.HIDE_INCOMPLETE_FRAGMENT = HIDE_INCOMPLETE_FRAGMENT;
 // pages that genuinely need both finished + semi-finished pass ?type=all.
 router.get('/all', async (req, res) => {
   try {
-    const { brandId, type, includeSemi } = req.query;
+    const { brandId, type, includeSemi, includeDeleted } = req.query;
     let sql = 'SELECT m.*, b.name AS brand_name FROM menu m LEFT JOIN brands b ON b.id = m.brand_id WHERE 1=1';
     const params = [];
+    // v7.4 — soft-deleted rows (is_deleted=1) must NOT resurface in the admin
+    // list. Without this, deleting a product showed "تم الحذف" but the row came
+    // straight back on the next reload (delete looked broken). Opt out with
+    // ?includeDeleted=1 if a tool ever needs the tombstones.
+    if (includeDeleted !== '1') sql += ' AND COALESCE(m.is_deleted,0) = 0';
     if (brandId) { sql += ' AND m.brand_id = ?'; params.push(brandId); }
     if (type === 'semi') {
       sql += ' AND m.is_semi_finished = 1';

@@ -253,6 +253,44 @@ async function resolveAssigneeForStep(step, branchId, deptId) {
   return { username: '', employeeId: '', roleName, matchedAt: 'none' };
 }
 
+// v6.20.2 — Is there ANY eligible approver for this step OTHER than `excludeUsername`
+// (the maker)? Mirrors resolveAssigneeForStep's candidate matching (position +
+// branch/dept flags + users.position_id fallback) but only asks "does an
+// alternative exist?". Used to decide the SoD "sole approver" exception so a
+// transaction routed back to its own creator never deadlocks while a real
+// alternative still keeps Maker≠Approver strict.
+async function hasAlternativeApprover(step, branchId, deptId, excludeUsername) {
+  if (!step || !step.required_position_id) return false;
+  const roleId = step.required_position_id;
+  const excl = String(excludeUsername || '').trim().toLowerCase();
+  const needBranch = step.require_same_branch !== 0 && step.require_same_branch !== false;
+  const needDept   = step.require_same_department === 1 || step.require_same_department === true;
+  const attempts = [];
+  if (needBranch && needDept && branchId && deptId) attempts.push({ branch: branchId, dept: deptId });
+  if (needBranch && branchId) attempts.push({ branch: branchId, dept: null });
+  attempts.push({ branch: null, dept: null });
+  try {
+    for (const a of attempts) {
+      const params = [roleId];
+      let where = `e.position_id = ? AND e.status = 'active'`;
+      if (a.branch) { where += ' AND e.branch_id = ?'; params.push(a.branch); }
+      if (a.dept)   { where += ' AND e.department_id = ?'; params.push(a.dept); }
+      const [rows] = await db.query(
+        `SELECT e.linked_username FROM hr_employees e
+         WHERE ${where} AND e.linked_username IS NOT NULL AND e.linked_username <> ''`, params);
+      if (rows.some(r => String(r.linked_username).trim().toLowerCase() !== excl)) return true;
+    }
+    const [u] = await db.query(
+      'SELECT username FROM users WHERE position_id = ? AND active = 1', [roleId]);
+    if (u.some(r => String(r.username).trim().toLowerCase() !== excl)) return true;
+  } catch (_e) {
+    // On any lookup error, be CONSERVATIVE: assume an alternative exists
+    // (keeps SoD strict — never auto-relaxes due to a transient failure).
+    return true;
+  }
+  return false;
+}
+
 // Resolve employee profile by linked_username or user_id
 async function resolveEmployee(username) {
   if (!username) return null;
@@ -2677,14 +2715,27 @@ const _txnActionHandler = async (req, res) => {
     //     Runs AFTER PERMS + routing; on failure we rollback (undoing any
     //     step-7 newAmount UPDATE). Admin break-glass via SOD_OVERRIDE_REASON.
     const isFinalStep = !!(step && (step.is_final_step || !nextStepHasNext));
+    // v6.20.2 — "sole approver" detection for the SoD Maker≠Approver exception.
+    // Only relevant when the actor IS the maker and is approving; otherwise skip
+    // the lookup. soleApprover = no OTHER eligible approver exists for this step.
+    let soleApprover = false;
+    var _nrm = function(x){ return String(x || '').trim().toLowerCase(); };
+    if (action === 'approve' && step && _nrm(username) === _nrm(txn.created_by)) {
+      const altExists = await hasAlternativeApprover(step, txn.branch_id, txn.dept_id, txn.created_by);
+      soleApprover = !altExists;
+    }
     const sodResult = SOD.validate({
       transaction: txn,
       actor: user,
       action: action,
       actionLog: actionLog,
       isFinalStep: isFinalStep,
+      soleApprover: soleApprover,
       reqBody: req.body
     });
+    if (sodResult.soleApproverException) {
+      console.log('[sod] sole-approver self-approval allowed —', txnId, 'by', username, '(no alternative approver for step)');
+    }
     if (!sodResult.ok) {
       await conn.rollback();
       // Audit the blocked attempt (best-effort, never throws)

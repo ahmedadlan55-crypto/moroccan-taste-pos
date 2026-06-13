@@ -15,7 +15,7 @@
  * Bump CACHE_VERSION when shipping new assets.
  */
 
-const CACHE_VERSION = 'mt-emp-v4.2.0-netfirst';
+const CACHE_VERSION = 'mt-emp-v4.3.0-netfirst';
 const CACHE_NAME = CACHE_VERSION;
 
 // App shell — pre-cached on install so the first launch works offline

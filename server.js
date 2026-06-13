@@ -109,6 +109,7 @@ app.use('/api/', function(req, res, next) {
   var p = req.path || '';
 
   // FULLY PUBLIC — no token needed
+  if (p === '/version') return next();                 // v6.20.0 — deploy/version marker
   if (p.startsWith('/auth/')) return next();           // all auth endpoints
   if (p.startsWith('/settings')) return next();        // settings
   if (p.startsWith('/menu')) return next();            // menu
@@ -206,6 +207,22 @@ app.use(express.static(path.join(__dirname, 'public'), {
     }
   }
 }));
+
+// v6.20.0 — Deploy/version marker. Lets us confirm EXACTLY which commit is
+// live on production (ends the "is it actually deployed?" ambiguity). Railway
+// injects the RAILWAY_GIT_* vars at build time.
+const SERVER_BOOT_ISO = new Date().toISOString();
+app.get('/api/version', (req, res) => {
+  res.json({
+    commit:  process.env.RAILWAY_GIT_COMMIT_SHA || process.env.GIT_COMMIT || 'unknown',
+    branch:  process.env.RAILWAY_GIT_BRANCH || 'unknown',
+    message: process.env.RAILWAY_GIT_COMMIT_MESSAGE || '',
+    deployId: process.env.RAILWAY_DEPLOYMENT_ID || '',
+    env:     process.env.NODE_ENV || 'development',
+    startedAt: SERVER_BOOT_ISO,
+    now: new Date().toISOString()
+  });
+});
 
 // 8. Audit logging middleware — auto-logs all POST/PUT/DELETE operations
 const { auditMiddleware } = require('./lib/auditLogger');
@@ -340,6 +357,9 @@ async function autoInitDB() {
       }
       // Idempotent migrations — run on every startup, skip if already applied
       await runMigrations();
+      // v6.20.0 — unify collations AFTER all tables exist (fixes mixed
+      // utf8mb4_unicode_ci / utf8mb4_0900_ai_ci JOIN failures on MySQL 8).
+      await normalizeCollations();
       return; // success — exit retry loop
     } catch (e) {
       console.error(`[DB] Connection attempt ${attempt}/${MAX_RETRIES} failed: ${e.message}`);
@@ -401,6 +421,57 @@ async function createTableIfMissing(tableName, createSQL) {
     }
   } catch (e) {
     console.log(`[DB] Migration warning (${tableName}):`, e.message.substring(0, 120));
+  }
+}
+
+// v6.20.0 — Collation normalization (root-cause fix for the "created
+// transactions never appear" production bug). Railway's MySQL 8.0 defaults
+// new tables to utf8mb4_0900_ai_ci, while the app connects with
+// utf8mb4_unicode_ci (SET NAMES). Any JOIN comparing string columns across a
+// mixed-collation pair throws "Illegal mix of collations" — which the list
+// endpoints silently swallowed into an empty array, so creates succeeded but
+// nothing ever showed up. This converts every base table to ONE collation.
+// Idempotent: only tables that actually differ are touched (no-op afterwards).
+async function normalizeCollations() {
+  const TARGET = 'utf8mb4_unicode_ci';
+  let conn;
+  try {
+    const [[meta]] = await db.query('SELECT DATABASE() AS db');
+    const dbName = meta && meta.db;
+    if (!dbName) { console.warn('[collation] no current database — skipped'); return; }
+
+    const [badTables] = await db.query(
+      `SELECT TABLE_NAME FROM information_schema.TABLES
+        WHERE TABLE_SCHEMA = ? AND TABLE_TYPE = 'BASE TABLE' AND TABLE_COLLATION <> ?`,
+      [dbName, TARGET]);
+    const [badCols] = await db.query(
+      `SELECT DISTINCT TABLE_NAME FROM information_schema.COLUMNS
+        WHERE TABLE_SCHEMA = ? AND COLLATION_NAME IS NOT NULL AND COLLATION_NAME <> ?`,
+      [dbName, TARGET]);
+
+    const names = Array.from(new Set([
+      ...badTables.map(r => r.TABLE_NAME),
+      ...badCols.map(r => r.TABLE_NAME)
+    ]));
+    if (!names.length) { console.log('[collation] all tables already', TARGET); return; }
+
+    console.log(`[collation] normalizing ${names.length} table(s) to ${TARGET}: ${names.join(', ')}`);
+    conn = await db.getConnection();           // SET FOREIGN_KEY_CHECKS is session-scoped — keep one connection
+    try { await conn.query('SET FOREIGN_KEY_CHECKS = 0'); } catch (_) {}
+    for (const name of names) {
+      try {
+        await conn.query('ALTER TABLE `' + name + '` CONVERT TO CHARACTER SET utf8mb4 COLLATE ' + TARGET);
+        console.log('[collation] converted', name);
+      } catch (e) {
+        console.warn('[collation] FAILED to convert ' + name + ':', String(e.message).substring(0, 160));
+      }
+    }
+    try { await conn.query('SET FOREIGN_KEY_CHECKS = 1'); } catch (_) {}
+    console.log('[collation] normalization complete');
+  } catch (e) {
+    console.warn('[collation] normalization skipped:', String(e.message).substring(0, 160));
+  } finally {
+    if (conn) conn.release();
   }
 }
 

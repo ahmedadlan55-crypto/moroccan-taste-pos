@@ -356,7 +356,7 @@ router.get('/positions', async (req, res) => {
   try {
     const [rows] = await db.query('SELECT * FROM positions ORDER BY level');
     res.json(rows.map(p => ({ id: p.id, name: p.name, level: p.level, isActive: !!p.is_active })));
-  } catch(e) { res.json([]); }
+  } catch(e) { console.error('[wf]', req.method, req.path, '-> query failed:', e && e.message); res.json([]); }
 });
 
 router.post('/positions', async (req, res) => {
@@ -404,7 +404,7 @@ router.get('/transaction-types', async (req, res) => {
       description: t.description || '',
       sortOrder: t.sort_order || 100
     })));
-  } catch(e) { res.json([]); }
+  } catch(e) { console.error('[wf]', req.method, req.path, '-> query failed:', e && e.message); res.json([]); }
 });
 
 // Grouped by category — convenient for the "new transaction" wizard
@@ -447,7 +447,7 @@ router.get('/gl-templates', async (req, res) => {
   try {
     const [rows] = await db.query('SELECT * FROM transaction_gl_templates ORDER BY code');
     res.json(rows);
-  } catch(e) { res.json([]); }
+  } catch(e) { console.error('[wf]', req.method, req.path, '-> query failed:', e && e.message); res.json([]); }
 });
 
 // Default approval chain for a given transaction type
@@ -459,7 +459,7 @@ router.get('/transaction-types/:code/default-chain', async (req, res) => {
        ORDER BY step_order ASC, amount_from ASC`,
       [req.params.code]);
     res.json(rows);
-  } catch(e) { res.json([]); }
+  } catch(e) { console.error('[wf]', req.method, req.path, '-> query failed:', e && e.message); res.json([]); }
 });
 
 router.post('/transaction-types', async (req, res) => {
@@ -512,7 +512,7 @@ router.get('/workflow-definitions-by-role/:positionId', async (req, res) => {
       requireSameDepartment: !!w.require_same_department,
       assignmentStrategy: w.assignment_strategy || 'least_busy'
     })));
-  } catch(e) { res.json([]); }
+  } catch(e) { console.error('[wf]', req.method, req.path, '-> query failed:', e && e.message); res.json([]); }
 });
 
 router.get('/workflow-definitions/:typeId', async (req, res) => {
@@ -534,7 +534,7 @@ router.get('/workflow-definitions/:typeId', async (req, res) => {
       requireSameDepartment: !!w.require_same_department,
       assignmentStrategy: w.assignment_strategy || 'least_busy'
     })));
-  } catch(e) { res.json([]); }
+  } catch(e) { console.error('[wf]', req.method, req.path, '-> query failed:', e && e.message); res.json([]); }
 });
 
 router.post('/workflow-definitions', async (req, res) => {
@@ -715,7 +715,7 @@ router.get('/position-workflow/:initiatorPositionId', async (req, res) => {
       requireSameDepartment: !!w.require_same_department,
       assignmentStrategy: w.assignment_strategy || 'least_busy'
     })));
-  } catch(e) { res.json([]); }
+  } catch(e) { console.error('[wf]', req.method, req.path, '-> query failed:', e && e.message); res.json([]); }
 });
 
 // List ALL paths for an initiator position (one row per path_key)
@@ -737,7 +737,7 @@ router.get('/position-workflow/:initiatorPositionId/paths', async (req, res) => 
       description: r.description,
       stepCount: Number(r.step_count) || 0
     })));
-  } catch(e) { res.json([]); }
+  } catch(e) { console.error('[wf]', req.method, req.path, '-> query failed:', e && e.message); res.json([]); }
 });
 
 // List all initiator positions with step counts (summary)
@@ -753,7 +753,7 @@ router.get('/position-workflows-summary', async (req, res) => {
       id: r.id, name: r.name, level: Number(r.level) || 0,
       stepCount: Number(r.step_count) || 0
     })));
-  } catch(e) { res.json([]); }
+  } catch(e) { console.error('[wf]', req.method, req.path, '-> query failed:', e && e.message); res.json([]); }
 });
 
 // Replace the chain for a given initiator position + pathKey (atomic).
@@ -882,7 +882,7 @@ router.get('/default-workflow', async (req, res) => {
       requireSameDepartment: !!w.require_same_department,
       assignmentStrategy: w.assignment_strategy || 'least_busy'
     })));
-  } catch(e) { res.json([]); }
+  } catch(e) { console.error('[wf]', req.method, req.path, '-> query failed:', e && e.message); res.json([]); }
 });
 
 // ═══════════════════════════════════════
@@ -929,7 +929,7 @@ router.get('/org-tree', async (req, res) => {
         return: !!e.can_return_txn, forward: !!e.can_forward_txn, close: !!e.can_close_txn
       }
     })));
-  } catch(e) { res.json([]); }
+  } catch(e) { console.error('[wf]', req.method, req.path, '-> query failed:', e && e.message); res.json([]); }
 });
 
 // Update an employee's workflow settings (permissions / manager / level)
@@ -965,7 +965,7 @@ router.get('/expense-categories', async (req, res) => {
       glAccountId: r.gl_account_id || '', glAccountCode: r.gl_account_code || '',
       isActive: r.is_active !== false
     })));
-  } catch(e) { res.json([]); }
+  } catch(e) { console.error('[wf]', req.method, req.path, '-> query failed:', e && e.message); res.json([]); }
 });
 
 router.post('/expense-categories', async (req, res) => {
@@ -1025,7 +1025,7 @@ router.get('/recipients-directory', async (req, res) => {
         displayName: fullName + (position ? (' — ' + position) : '') + (r.branch_name ? (' | ' + r.branch_name) : '')
       };
     }));
-  } catch(e) { res.json([]); }
+  } catch(e) { console.error('[wf]', req.method, req.path, '-> query failed:', e && e.message); res.json([]); }
 });
 
 // Eligible recipients — users with positions (higher level than sender by default)
@@ -1315,7 +1315,7 @@ router.get('/outbox', async (req, res) => {
       scope: r.transaction_scope || 'internal',
       isOverdue: r.due_date && new Date(r.due_date) < new Date() && (r.status === 'pending' || r.status === 'in_progress')
     })));
-  } catch(e) { res.json([]); }
+  } catch(e) { console.error('[wf]', req.method, req.path, '-> query failed:', e && e.message); res.json([]); }
 });
 
 // Summary stats for the outbox bottom panel
@@ -1463,7 +1463,7 @@ router.get('/incoming', async (req, res) => {
       dueDate: r.due_date,
       isOverdue: r.due_date && new Date(r.due_date) < new Date() && (r.status === 'pending' || r.status === 'in_progress')
     })));
-  } catch(e) { res.json([]); }
+  } catch(e) { console.error('[wf]', req.method, req.path, '-> query failed:', e && e.message); res.json([]); }
 });
 
 // Kept for backward compatibility
@@ -1473,7 +1473,7 @@ router.get('/my-transactions', async (req, res) => {
     const sql = _txnSelectSQL() + ' WHERE t.created_by = ? ORDER BY t.created_at DESC LIMIT 100';
     const [rows] = await db.query(sql, [username]);
     res.json(rows.map(_mapTxn));
-  } catch(e) { res.json([]); }
+  } catch(e) { console.error('[wf]', req.method, req.path, '-> query failed:', e && e.message); res.json([]); }
 });
 
 // DASHBOARD — importance-based card listing for management
@@ -1494,7 +1494,7 @@ router.get('/dashboard-cards', async (req, res) => {
     sql += " ORDER BY FIELD(t.importance,'critical','high','medium','low'), t.created_at DESC LIMIT 300";
     const [rows] = await db.query(sql, params);
     res.json(rows.map(_mapTxn));
-  } catch(e) { res.json([]); }
+  } catch(e) { console.error('[wf]', req.method, req.path, '-> query failed:', e && e.message); res.json([]); }
 });
 
 // Dashboard filter metadata (branches, depts, types)
@@ -1561,7 +1561,7 @@ router.get('/transactions', async (req, res) => {
       dueDate: r.due_date,
       isOverdue: r.due_date && new Date(r.due_date) < new Date() && (r.status === 'pending' || r.status === 'in_progress')
     })));
-  } catch(e) { res.json([]); }
+  } catch(e) { console.error('[wf]', req.method, req.path, '-> query failed:', e && e.message); res.json([]); }
 });
 
 // ═══════════════════════════════════════════════════════════════════
@@ -1588,7 +1588,7 @@ router.get('/stuck-drafts', async (req, res) => {
       id: r.id, txnNumber: r.transaction_number, title: r.title,
       createdBy: r.created_by, createdAt: r.created_at, typeName: r.type_name || ''
     })));
-  } catch(e) { res.json([]); }
+  } catch(e) { console.error('[wf]', req.method, req.path, '-> query failed:', e && e.message); res.json([]); }
 });
 
 router.post('/stuck-drafts/recover', async (req, res) => {
@@ -3684,7 +3684,7 @@ router.get('/transactions/:id/memo-readers', async (req, res) => {
       username: r.username, fullName: r.full_name || r.username,
       role: r.role || '', readAt: r.read_at
     })));
-  } catch(e) { res.json([]); }
+  } catch(e) { console.error('[wf]', req.method, req.path, '-> query failed:', e && e.message); res.json([]); }
 });
 
 // GET /workflow/memos-inbox — list all memos (for the dedicated inbox tab)

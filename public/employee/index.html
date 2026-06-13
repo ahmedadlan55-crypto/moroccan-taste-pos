@@ -594,88 +594,193 @@ document.addEventListener('keydown',function(e){if(e.key==='Enter'&&document.get
 <!-- Leave Modal -->
 <div class="modal" id="leaveModal"><div class="modal-c"><div class="modal-h"><span><i class="fas fa-calendar-plus"></i> <span data-i18n="leave.modalTitle">طلب إجازة</span></span><button onclick="closeLeaveForm()">&times;</button></div><div class="fg"><label data-i18n="leave.type">النوع</label><select class="fi" id="lfType"></select></div><div class="fg"><label data-i18n="leave.from">من</label><input type="date" class="fi" id="lfStart"></div><div class="fg"><label data-i18n="leave.to">إلى</label><input type="date" class="fi" id="lfEnd"></div><div class="fg"><label data-i18n="leave.reason">السبب</label><textarea class="fi" id="lfReason" rows="2"></textarea></div><button class="btn-m" onclick="submitLeave()"><i class="fas fa-paper-plane"></i> <span data-i18n="leave.submit">تقديم</span></button></div></div>
 <!-- Transaction Modal — Enterprise redesign with sections + draft persistence + validation -->
-<div class="modal" id="txnModal"><div class="modal-c" style="max-height:90dvh;overflow-y:auto;">
-  <div class="modal-h">
+<!-- Transaction Modal — Enterprise redesign with sections + draft persistence + validation -->
+<div class="modal" id="txnModal"><div class="modal-c" style="max-height:90dvh;overflow-y:auto;padding:0;max-width:800px;background:#f8fafc;">
+  <div class="modal-h" style="padding:18px 24px;border-bottom:1px solid #e2e8f0;background:#fff;border-radius:14px 14px 0 0;">
     <span><i class="fas fa-file-alt" style="color:var(--mt-accent);"></i> <span data-i18n="tm.title">معاملة جديدة</span></span>
     <button onclick="closeTxnModal()">&times;</button>
   </div>
 
-  <!-- Draft restore banner (shown when localStorage has a saved draft) -->
-  <div id="txnDraftBanner" class="tm-draft-banner" style="display:none;">
-    <i class="fas fa-floppy-disk"></i>
-    <span style="flex:1;">تم استعادة مسودة محفوظة — يمكنك المتابعة من حيث توقفت</span>
-    <button type="button" onclick="txnDiscardDraft()" style="background:transparent;border:none;color:#9a3412;cursor:pointer;font-size:11px;font-weight:800;text-decoration:underline;">تفريغ</button>
-  </div>
+  <style>
+    .wf-stepper { display: flex; justify-content: space-between; align-items: center; margin-bottom: 24px; position: relative; padding: 0 40px; }
+    .wf-stepper::before { content: ""; position: absolute; top: 20px; left: 80px; right: 80px; height: 3px; background: #e2e8f0; z-index: 1; border-radius: 2px; }
+    .wf-step { position: relative; z-index: 2; display: flex; flex-direction: column; align-items: center; gap: 8px; cursor: pointer; width: 120px; }
+    .wf-step-circle { width: 42px; height: 42px; border-radius: 50%; background: #fff; border: 3px solid #e2e8f0; display: flex; align-items: center; justify-content: center; font-size: 15px; font-weight: 800; color: #94a3b8; transition: all 0.3s ease; }
+    .wf-step-label { font-size: 13px; font-weight: 700; color: #64748b; transition: color 0.3s ease; text-align: center; }
+    .wf-step.active .wf-step-circle { border-color: #7c3aed; background: #7c3aed; color: #fff; box-shadow: 0 0 0 6px rgba(124, 58, 237, 0.12); }
+    .wf-step.active .wf-step-label { color: #7c3aed; font-weight: 800; }
+    .wf-step.completed .wf-step-circle { border-color: #10b981; background: #10b981; color: #fff; }
+    .wf-step.completed .wf-step-label { color: #10b981; }
+    .wfnt-content { display: none; animation: wfFadeIn 0.4s ease; background: #fff; border: 1px solid #e2e8f0; border-radius: 12px; padding: 24px; box-shadow: 0 2px 4px rgba(0,0,0,0.02); }
+    @keyframes wfFadeIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
+    .wf-modal-footer-modern { display: flex; justify-content: space-between; align-items: center; padding-top: 16px; margin-top: 16px; width: 100%; }
+    .wf-footer-actions { display: flex; gap: 12px; }
+  </style>
 
-  <!-- ─── Section 1: Sender context ─── -->
-  <div class="tm-section">
-    <div class="tm-section-h"><i class="fas fa-user-circle"></i> <span>بيانات المُرسِل (تُملأ تلقائياً)</span></div>
-    <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;">
-      <div class="fg" style="margin:0;"><label><i class="fas fa-user"></i> <span data-i18n="tm.senderName">الاسم</span></label><input class="fi" id="txnSenderName" readonly style="background:#f0fdf4;color:#166534;font-weight:700;font-size:13px;"></div>
-      <div class="fg" style="margin:0;"><label><i class="fas fa-id-badge"></i> <span data-i18n="tm.jobTitle">المسمى</span></label><input class="fi" id="txnJobTitle" readonly style="background:#f3f4f6;color:#6b7280;font-size:13px;"></div>
-    </div>
-    <div style="margin-top:8px;display:flex;gap:6px;flex-wrap:wrap;" id="txnContextBadges">
-      <!-- Brand + Branch badges injected by openTxnModal() -->
-    </div>
-  </div>
+  <script>
+    function empGotoStep(step) {
+      window._empCurrentStep = step;
+      for(var i=1; i<=3; i++) {
+        var content = document.getElementById('empStep'+i);
+        if(content) content.style.display = (i===step) ? 'block' : 'none';
+        
+        var stepEl = document.getElementById('empStepBtn'+i);
+        if(stepEl) {
+          if(i===step) { stepEl.className = 'wf-step active'; }
+          else if (i<step) { stepEl.className = 'wf-step completed'; }
+          else { stepEl.className = 'wf-step'; }
+        }
+      }
+      var btnNext = document.getElementById('empNextBtn');
+      var btnPrev = document.getElementById('empPrevBtn');
+      var btnSubmit = document.getElementById('empSubmitBtn');
+      if(step === 1) { 
+        if(btnPrev) btnPrev.style.display = 'none'; 
+        if(btnNext) btnNext.style.display = 'inline-flex'; 
+        if(btnSubmit) btnSubmit.style.display = 'none'; 
+      } else if(step === 2) { 
+        if(btnPrev) btnPrev.style.display = 'inline-flex'; 
+        if(btnNext) btnNext.style.display = 'inline-flex'; 
+        if(btnSubmit) btnSubmit.style.display = 'none'; 
+      } else if(step === 3) { 
+        if(btnPrev) btnPrev.style.display = 'inline-flex'; 
+        if(btnNext) btnNext.style.display = 'none'; 
+        if(btnSubmit) btnSubmit.style.display = 'inline-flex'; 
+      }
+    }
+  </script>
 
-  <!-- ─── Section 2: Type + Importance ─── -->
-  <div class="tm-section">
-    <div class="tm-section-h"><i class="fas fa-layer-group"></i> <span>نوع المعاملة</span></div>
-    <div class="fg" style="margin:0 0 10px;"><label data-i18n="tm.type">نوع المعاملة <span class="tm-required-mark">*</span></label><select class="fi" id="txnType" onchange="txnSaveDraft()"></select></div>
-    <div class="fg" style="margin:0;">
-      <label data-i18n="tm.importance">درجة الأهمية <span class="tm-required-mark">*</span></label>
-      <input type="hidden" id="txnImportance" value="medium">
-      <div class="tm-imp-grid">
-        <div class="tm-imp-card" data-imp="low" onclick="txnSetImportance('low')"><i class="fas fa-leaf"></i><span>منخفض</span></div>
-        <div class="tm-imp-card active" data-imp="medium" onclick="txnSetImportance('medium')"><i class="fas fa-circle-dot"></i><span>متوسط</span></div>
-        <div class="tm-imp-card" data-imp="high" onclick="txnSetImportance('high')"><i class="fas fa-fire"></i><span>عالي</span></div>
-        <div class="tm-imp-card" data-imp="critical" onclick="txnSetImportance('critical')"><i class="fas fa-bolt"></i><span>عاجل</span></div>
+  <div style="padding:24px;">
+    <!-- Stepper Header -->
+    <div class="wf-stepper">
+      <div class="wf-step active" id="empStepBtn1" onclick="empGotoStep(1)">
+        <div class="wf-step-circle">1</div>
+        <div class="wf-step-label">التفاصيل الأساسية</div>
+      </div>
+      <div class="wf-step" id="empStepBtn2" onclick="empGotoStep(2)">
+        <div class="wf-step-circle">2</div>
+        <div class="wf-step-label">المحتوى والمالية</div>
+      </div>
+      <div class="wf-step" id="empStepBtn3" onclick="empGotoStep(3)">
+        <div class="wf-step-circle">3</div>
+        <div class="wf-step-label">التوجيه والمرفقات</div>
       </div>
     </div>
-  </div>
 
-  <!-- ─── Section 3: Subject + Description ─── -->
-  <div class="tm-section">
-    <div class="tm-section-h"><i class="fas fa-pen"></i> <span>محتوى المعاملة</span></div>
-    <div class="fg" style="margin:0 0 8px;">
-      <label data-i18n="tm.titleLabel">العنوان <span class="tm-required-mark">*</span></label>
-      <input class="fi" id="txnTitle" placeholder="وصف مختصر للمعاملة" data-i18n-placeholder="tm.titlePH" oninput="txnSaveDraft();txnValidateTitle()" maxlength="200">
-      <div id="txnTitleVal" class="tm-validation"></div>
+    <!-- Draft restore banner -->
+    <div id="txnDraftBanner" class="tm-draft-banner" style="display:none;margin-bottom:16px;">
+      <i class="fas fa-floppy-disk"></i>
+      <span style="flex:1;">تم استعادة مسودة محفوظة — يمكنك المتابعة من حيث توقفت</span>
+      <button type="button" onclick="txnDiscardDraft()" style="background:transparent;border:none;color:#9a3412;cursor:pointer;font-size:11px;font-weight:800;text-decoration:underline;">تفريغ</button>
     </div>
-    <div class="fg" style="margin:0;"><label data-i18n="tm.details">التفاصيل</label><textarea class="fi" id="txnDesc" rows="3" placeholder="تفاصيل إضافية..." data-i18n-placeholder="tm.detailsPH" oninput="txnSaveDraft()" maxlength="2000"></textarea>
-      <div id="txnDescCount" style="font-size:10px;color:#94a3b8;font-weight:600;margin-top:2px;text-align:left;">0 / 2000</div>
-    </div>
-  </div>
 
-  <!-- ─── Section 4: Financial (collapsible — only shown when type needs it) ─── -->
-  <div class="tm-section" id="txnFinSection">
-    <div class="tm-section-h"><i class="fas fa-money-bill-wave"></i> <span>الجانب المالي (اختياري)</span></div>
-    <div class="fg" style="position:relative;margin:0 0 8px;">
-      <label><i class="fas fa-sitemap"></i> <span data-i18n="tm.glAccount">الحساب المحاسبي</span></label>
-      <input class="fi" id="txnAccSearch" placeholder="ابحث برقم أو اسم الحساب..." data-i18n-placeholder="tm.glSearch" oninput="txnSearchAccount(this)" onfocus="txnSearchAccount(this)">
-      <input type="hidden" id="txnAccId"><input type="hidden" id="txnAccName">
-      <div id="txnAccDropdown" style="display:none;position:absolute;top:100%;right:0;left:0;z-index:200;background:#fff;border:1px solid #e5e7eb;border-radius:10px;max-height:180px;overflow-y:auto;box-shadow:0 4px 12px rgba(0,0,0,.1);"></div>
-    </div>
-    <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;">
-      <div class="fg" style="margin:0;"><label><i class="fas fa-building"></i> <span data-i18n="tm.costCenter">مركز التكلفة</span></label><select class="fi" id="txnCC" onchange="txnSaveDraft()"><option value="" data-i18n="tm.noCC">— بدون —</option></select></div>
-      <div class="fg" style="margin:0;"><label><i class="fas fa-coins"></i> <span data-i18n="tm.amount">المبلغ (SAR)</span></label><input type="number" class="fi" id="txnAmount" step="0.01" min="0" value="0" oninput="txnSaveDraft()"></div>
-    </div>
-  </div>
+    <!-- ─── Step 1: Sender context + Type + Importance ─── -->
+    <div id="empStep1" class="wfnt-content" style="display:block;">
+      <div class="tm-section" style="border:none;padding:0;box-shadow:none;">
+        <div class="tm-section-h"><i class="fas fa-user-circle"></i> <span>بيانات المُرسِل (تُملأ تلقائياً)</span></div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">
+          <div class="fg" style="margin:0;"><label><i class="fas fa-user"></i> <span data-i18n="tm.senderName">الاسم</span></label><input class="fi" id="txnSenderName" readonly style="background:#f0fdf4;color:#166534;font-weight:700;font-size:13px;height:42px;"></div>
+          <div class="fg" style="margin:0;"><label><i class="fas fa-id-badge"></i> <span data-i18n="tm.jobTitle">المسمى</span></label><input class="fi" id="txnJobTitle" readonly style="background:#f8fafc;color:#64748b;font-size:13px;height:42px;"></div>
+        </div>
+        <div style="margin-top:10px;display:flex;gap:6px;flex-wrap:wrap;" id="txnContextBadges">
+          <!-- Brand + Branch badges injected by openTxnModal() -->
+        </div>
+      </div>
 
-  <!-- ─── Section 5: Routing (recipient + attachment) ─── -->
-  <div class="tm-section">
-    <div class="tm-section-h"><i class="fas fa-route"></i> <span>التوجيه والمرفقات</span></div>
-    <div class="fg" style="margin:0 0 8px;"><label><i class="fas fa-user-check"></i> <span data-i18n="tm.recipient">إرسال إلى (المستلم) <span class="tm-required-mark">*</span></span></label><select class="fi" id="txnRecipient" onchange="txnSaveDraft()"><option value="" data-i18n="tm.selectRecipient">— اختر المستلم —</option></select></div>
-    <div class="fg" style="margin:0;"><label><i class="fas fa-paperclip"></i> <span data-i18n="tm.attachment">مرفق (PDF / صورة، حتى 5MB)</span></label><input type="file" class="fi" id="txnFile" accept=".pdf,.jpg,.jpeg,.png" style="padding:8px;"></div>
-  </div>
+      <div class="tm-section" style="border:none;padding:0;box-shadow:none;margin-top:20px;">
+        <div class="tm-section-h"><i class="fas fa-layer-group"></i> <span>نوع المعاملة والأهمية</span></div>
+        <div class="fg" style="margin:0 0 16px;"><label data-i18n="tm.type">نوع المعاملة <span class="tm-required-mark">*</span></label><select class="fi" id="txnType" onchange="txnSaveDraft()" style="height:46px;"></select></div>
+        <div class="fg" style="margin:0;">
+          <label data-i18n="tm.importance">درجة الأهمية <span class="tm-required-mark">*</span></label>
+          <input type="hidden" id="txnImportance" value="medium">
+          <div class="tm-imp-grid" style="gap:10px;">
+            <div class="tm-imp-card" data-imp="low" onclick="txnSetImportance('low')"><i class="fas fa-leaf"></i><span>منخفض</span></div>
+            <div class="tm-imp-card active" data-imp="medium" onclick="txnSetImportance('medium')"><i class="fas fa-circle-dot"></i><span>متوسط</span></div>
+            <div class="tm-imp-card" data-imp="high" onclick="txnSetImportance('high')"><i class="fas fa-fire"></i><span>عالي</span></div>
+            <div class="tm-imp-card" data-imp="critical" onclick="txnSetImportance('critical')"><i class="fas fa-bolt"></i><span>عاجل</span></div>
+          </div>
+        </div>
+      </div>
+    </div>
 
-  <!-- Action buttons -->
-  <div style="display:flex;gap:8px;margin-top:12px;">
-    <button class="btn-m" onclick="submitTxn()" style="flex:2;"><i class="fas fa-paper-plane"></i> <span data-i18n="tm.send">إرسال المعاملة</span></button>
-    <button class="btn-m" onclick="txnDiscardDraft()" style="flex:1;background:#f1f5f9;color:#475569;"><i class="fas fa-trash"></i> تفريغ</button>
+    <!-- ─── Step 2: Subject + Description + Financial ─── -->
+    <div id="empStep2" class="wfnt-content">
+      <div class="tm-section" style="border:none;padding:0;box-shadow:none;">
+        <div class="tm-section-h"><i class="fas fa-pen"></i> <span>محتوى المعاملة</span></div>
+        <div class="fg" style="margin:0 0 12px;">
+          <label data-i18n="tm.titleLabel">العنوان <span class="tm-required-mark">*</span></label>
+          <input class="fi" id="txnTitle" placeholder="وصف مختصر للمعاملة" data-i18n-placeholder="tm.titlePH" oninput="txnSaveDraft();txnValidateTitle()" maxlength="200" style="height:46px;">
+          <div id="txnTitleVal" class="tm-validation"></div>
+        </div>
+        <div class="fg" style="margin:0;"><label data-i18n="tm.details">التفاصيل</label><textarea class="fi" id="txnDesc" rows="4" placeholder="تفاصيل إضافية..." data-i18n-placeholder="tm.detailsPH" oninput="txnSaveDraft()" maxlength="2000" style="padding-top:12px;"></textarea>
+          <div id="txnDescCount" style="font-size:11px;color:#94a3b8;font-weight:600;margin-top:4px;text-align:left;">0 / 2000</div>
+        </div>
+      </div>
+
+      <div class="tm-section" id="txnFinSection" style="border:none;padding:0;box-shadow:none;margin-top:20px;">
+        <div class="tm-section-h"><i class="fas fa-money-bill-wave"></i> <span>الجانب المالي (اختياري)</span></div>
+        <div class="fg" style="position:relative;margin:0 0 12px;">
+          <label><i class="fas fa-sitemap"></i> <span data-i18n="tm.glAccount">الحساب المحاسبي</span></label>
+          <input class="fi" id="txnAccSearch" placeholder="ابحث برقم أو اسم الحساب..." data-i18n-placeholder="tm.glSearch" oninput="txnSearchAccount(this)" onfocus="txnSearchAccount(this)" style="height:46px;">
+          <input type="hidden" id="txnAccId"><input type="hidden" id="txnAccName">
+          <div id="txnAccDropdown" style="display:none;position:absolute;top:100%;right:0;left:0;z-index:200;background:#fff;border:1px solid #e5e7eb;border-radius:10px;max-height:180px;overflow-y:auto;box-shadow:0 4px 12px rgba(0,0,0,.1);"></div>
+        </div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">
+          <div class="fg" style="margin:0;"><label><i class="fas fa-building"></i> <span data-i18n="tm.costCenter">مركز التكلفة</span></label><select class="fi" id="txnCC" onchange="txnSaveDraft()" style="height:46px;"><option value="" data-i18n="tm.noCC">— بدون —</option></select></div>
+          <div class="fg" style="margin:0;"><label><i class="fas fa-coins"></i> <span data-i18n="tm.amount">المبلغ (SAR)</span></label><input type="number" class="fi" id="txnAmount" step="0.01" min="0" value="0" oninput="txnSaveDraft()" style="height:46px;"></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ─── Step 3: Routing + Attachment ─── -->
+    <div id="empStep3" class="wfnt-content">
+      <div class="tm-section" style="border:none;padding:0;box-shadow:none;">
+        <div class="tm-section-h"><i class="fas fa-route"></i> <span>التوجيه والمرفقات</span></div>
+        <div class="fg" style="margin:0 0 16px;"><label><i class="fas fa-user-check"></i> <span data-i18n="tm.recipient">إرسال إلى (المستلم) <span class="tm-required-mark">*</span></span></label><select class="fi" id="txnRecipient" onchange="txnSaveDraft()" style="height:46px;"><option value="" data-i18n="tm.selectRecipient">— اختر المستلم —</option></select></div>
+        <div class="fg" style="margin:0;">
+          <label><i class="fas fa-paperclip"></i> <span data-i18n="tm.attachment">مرفق (PDF / صورة، حتى 5MB)</span></label>
+          <div style="border:2px dashed #cbd5e1;border-radius:12px;padding:24px;text-align:center;background:#f8fafc;position:relative;">
+            <i class="fas fa-cloud-upload-alt" style="font-size:28px;color:#94a3b8;margin-bottom:8px;"></i>
+            <div style="font-size:13px;font-weight:700;color:#475569;margin-bottom:4px;">اضغط لاختيار ملف</div>
+            <input type="file" class="fi" id="txnFile" accept=".pdf,.jpg,.jpeg,.png" style="opacity:0;position:absolute;top:0;left:0;right:0;bottom:0;width:100%;height:100%;cursor:pointer;">
+            <div id="txnFileLabel" style="font-size:12px;color:#7c3aed;font-weight:800;margin-top:8px;"></div>
+          </div>
+          <script>
+            document.getElementById('txnFile').addEventListener('change', function(e) {
+              var lbl = document.getElementById('txnFileLabel');
+              if (e.target.files.length) lbl.textContent = e.target.files[0].name;
+              else lbl.textContent = '';
+            });
+          </script>
+        </div>
+      </div>
+    </div>
+
+    <!-- Action buttons -->
+    <div class="wf-modal-footer-modern">
+      <div class="wf-footer-actions">
+        <button class="btn-m" onclick="txnDiscardDraft()" style="background:#f1f5f9;color:#475569;height:40px;padding:0 16px;"><i class="fas fa-trash"></i> تفريغ المسودة</button>
+      </div>
+      <div class="wf-footer-actions">
+        <button class="btn-m" id="empPrevBtn" style="display:none;background:#64748b;height:40px;padding:0 20px;" onclick="empGotoStep(window._empCurrentStep - 1)"><i class="fas fa-arrow-right"></i> السابق</button>
+        <button class="btn-m" id="empNextBtn" style="background:#7c3aed;height:40px;padding:0 20px;" onclick="empGotoStep(window._empCurrentStep + 1)">التالي <i class="fas fa-arrow-left"></i></button>
+        <button class="btn-m" id="empSubmitBtn" onclick="submitTxn()" style="display:none;background:#10b981;height:40px;padding:0 20px;box-shadow:0 2px 8px rgba(16,185,129,0.3);"><i class="fas fa-paper-plane"></i> <span data-i18n="tm.send">إرسال المعاملة</span></button>
+      </div>
+    </div>
+
   </div>
 </div></div>
+<script>
+  // Ensure the modal resets to step 1 when opened
+  var _oldOpenTxnModal = window.openTxnModal;
+  if(typeof window.openTxnModal === 'function' && !window.openTxnModal._stepperPatched) {
+    window.openTxnModal = function() {
+      _oldOpenTxnModal.apply(this, arguments);
+      empGotoStep(1);
+    };
+    window.openTxnModal._stepperPatched = true;
+  }
+</script>
 <!-- Transaction Detail Modal -->
 <div class="modal" id="txnDetailModal"><div class="modal-c" style="max-height:90dvh;">
   <div class="modal-h"><span id="txnDetailTitle" data-i18n="td.title">تفاصيل المعاملة</span><button onclick="closeTxnDetail()">&times;</button></div>

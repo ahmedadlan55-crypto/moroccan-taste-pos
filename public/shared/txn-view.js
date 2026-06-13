@@ -346,6 +346,19 @@
     return { kind: 'other', icon: 'fa-file' };
   }
 
+  // v6.19.5 — attachments may be inline data: URLs OR cloud (Backblaze/S3) https
+  // URLs. Resolve a mime for icon/thumbnail purposes from either form.
+  function _guessMime(s){
+    if (typeof s !== 'string') return '';
+    var m = s.match(/^data:([^;,]+)/); if (m) return m[1];
+    var ext = (s.split(/[?#]/)[0].split('.').pop() || '').toLowerCase();
+    var map = { png:'image/png', jpg:'image/jpeg', jpeg:'image/jpeg', gif:'image/gif',
+      webp:'image/webp', bmp:'image/bmp', svg:'image/svg+xml', pdf:'application/pdf',
+      doc:'application/msword', docx:'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+      xls:'application/vnd.ms-excel', xlsx:'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' };
+    return map[ext] || '';
+  }
+
   function _renderAttGrid(attachments, lightboxFn){
     if (!attachments || !attachments.length) return '<div class="tv-empty"><i class="fas fa-paperclip"></i>لا توجد مرفقات.</div>';
     return '<div class="tv-att-grid">' + attachments.map((a, idx) => {
@@ -911,13 +924,12 @@
               '</div>';
       // Attachments — combine the legacy single + the multi-attachments table
       var allAtts = (t.attachments || []).slice();
-      if (t.attachmentDataUrl && typeof t.attachmentDataUrl === 'string' && t.attachmentDataUrl.startsWith('data:')) {
+      if (t.attachmentDataUrl && typeof t.attachmentDataUrl === 'string' && (t.attachmentDataUrl.startsWith('data:') || t.attachmentDataUrl.startsWith('http'))) {
         // Front-load the original creation attachment
-        var mime = t.attachmentDataUrl.match(/^data:([^;,]+)/);
         allAtts.unshift({
           id: '__creation__',
           fileName: 'مرفق إنشاء المعاملة',
-          mime: mime ? mime[1] : '',
+          mime: _guessMime(t.attachmentDataUrl),
           dataUrl: t.attachmentDataUrl,
           uploadedBy: t.createdBy,
           uploadedAt: t.createdAt
@@ -925,12 +937,11 @@
       }
       // Pull replies attachments (each reply's attachment) into the grid too
       (t.replies || []).forEach(function(r){
-        if (r.attachment && r.attachment.startsWith && r.attachment.startsWith('data:')) {
-          var m = r.attachment.match(/^data:([^;,]+)/);
+        if (r.attachment && r.attachment.startsWith && (r.attachment.startsWith('data:') || r.attachment.startsWith('http'))) {
           allAtts.push({
             id: 'reply-'+r.id,
             fileName: r.attachmentName || ('مرفق رد - ' + (r.authorName||r.authorUsername)),
-            mime: m ? m[1] : (r.attachmentMime||''),
+            mime: r.attachmentMime || _guessMime(r.attachment),
             dataUrl: r.attachment,
             uploadedBy: r.authorUsername,
             uploadedAt: r.createdAt

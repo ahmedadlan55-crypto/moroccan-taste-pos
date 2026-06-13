@@ -1952,7 +1952,20 @@ router.put('/transactions/:id', async (req, res) => {
       sets.push('importance=?'); params.push(importance);
     }
     if (attachment !== undefined && typeof attachment === 'string' && attachment.startsWith('data:')) {
-      sets.push('attachment=?'); params.push(attachment);
+      // v6.19.5 — offload to S3/Backblaze (store URL) or guard inline size,
+      // mirroring TransactionService.create(). Prevents a multi-MB base64
+      // UPDATE from blowing the DB max_allowed_packet and silently failing.
+      let attToStore = attachment;
+      const _mm = attachment.match(/^data:([^;,]+)/);
+      const _mime = _mm ? _mm[1] : '';
+      const _ext = (_mime.split('/')[1] || 'bin').replace(/[^a-z0-9]/gi, '').slice(0, 8) || 'bin';
+      if (S3.ENABLED) attToStore = await S3.maybeUpload(attachment, req.params.id + '-attachment.' + _ext, _mime);
+      if (typeof attToStore === 'string' && attToStore.startsWith('data:')) {
+        const _ab = Math.ceil((attToStore.length - attToStore.indexOf(',') - 1) * 0.75);
+        const _max = Number(process.env.MAX_INLINE_ATTACHMENT_BYTES) || 1500000;
+        if (_ab > _max) return res.json({ success: false, error: 'تعذّر حفظ المرفق: حجمه كبير على التخزين المباشر. فعّل التخزين السحابي (Backblaze) أو أرفق ملفاً أصغر.' });
+      }
+      sets.push('attachment=?'); params.push(attToStore);
     }
 
     // ─── V4.4: Full-edit fields (only when draft/returned) ───
@@ -3024,9 +3037,15 @@ router.post('/transactions/:id/attachments', async (req, res) => {
     }
 
     const id = 'ATT-' + Date.now() + '-' + Math.random().toString(36).substr(2,4);
+    // v6.19.5 — offload to S3/Backblaze when configured so the multi-MB base64
+    // never lands in the DB row (avoids max_allowed_packet failures + bloat).
+    let storedUrl = dataUrl;
+    if (S3.ENABLED && typeof dataUrl === 'string' && dataUrl.startsWith('data:')) {
+      storedUrl = await S3.maybeUpload(dataUrl, fileName || (id + '.bin'), cleanMime);
+    }
     await db.query(
       'INSERT INTO txn_attachments (id, transaction_id, log_id, file_name, mime_type, data_url, uploaded_by) VALUES (?,?,?,?,?,?,?)',
-      [id, req.params.id, logId || null, fileName || 'file', cleanMime || '', dataUrl, username || '']);
+      [id, req.params.id, logId || null, fileName || 'file', cleanMime || '', storedUrl, username || '']);
     res.json({ success: true, id });
   } catch(e) { res.status(500).json({ success: false, error: e.message }); }
 });

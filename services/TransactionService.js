@@ -24,6 +24,7 @@ const repos       = require('../repositories');
 const AssigneeR   = require('./AssigneeResolverService');
 const Audit       = require('./AuditService');
 const Notify      = require('./NotificationService');
+const S3          = require('../lib/s3Storage');
 const logger      = require('../lib/logger').child({ module: 'txn-svc' });
 
 // ─── Errors ─────────────────────────────────────────────────────────
@@ -197,6 +198,37 @@ async function create(payload, actor) {
   // Draft mode overrides routing
   const initialStatus = payload.saveAsDraft ? 'draft' : 'pending';
 
+  // v6.19.5 — Attachment storage. Previously the raw base64 data URL was
+  // written straight into transactions.attachment. A multi-MB attachment made
+  // the INSERT exceed the DB server's `max_allowed_packet` → the connection
+  // was reset (ECONNRESET) → withTransaction rolled back → the transaction
+  // silently VANISHED while the create endpoint never persisted it. That is
+  // the "uploaded transaction never appears anywhere" bug. We now:
+  //   (a) offload the attachment to S3/Backblaze when configured → store only
+  //       the (tiny) URL, so the INSERT can never blow the packet; and
+  //   (b) hard-cap any payload that is still inline (S3 disabled, or an upload
+  //       that failed and fell back) so an over-cap attachment surfaces a
+  //       clear error to the user instead of a silent rollback.
+  let finalAttachment = payload.attachment;
+  if (finalAttachment && typeof finalAttachment === 'string' && finalAttachment.startsWith('data:')) {
+    const mimeMatch = finalAttachment.match(/^data:([^;,]+)/);
+    const mime = mimeMatch ? mimeMatch[1] : '';
+    const ext = (mime.split('/')[1] || 'bin').replace(/[^a-z0-9]/gi, '').slice(0, 8) || 'bin';
+    if (S3.ENABLED) {
+      // maybeUpload never throws — it returns the URL on success, or the
+      // original data URL on failure (caught below by the size guard).
+      finalAttachment = await S3.maybeUpload(finalAttachment, `${txnNumber}-attachment.${ext}`, mime);
+    }
+    if (typeof finalAttachment === 'string' && finalAttachment.startsWith('data:')) {
+      const commaAt = finalAttachment.indexOf(',');
+      const approxBytes = Math.ceil((finalAttachment.length - commaAt - 1) * 0.75);
+      const MAX_INLINE = Number(process.env.MAX_INLINE_ATTACHMENT_BYTES) || 1500000; // ~1.5MB — safe under a 4MB packet
+      if (approxBytes > MAX_INLINE) {
+        throw new ValidationError('تعذّر حفظ المرفق: حجمه كبير على التخزين المباشر. حاول مرة أخرى أو فعّل التخزين السحابي (Backblaze) أو أرفق ملفاً أصغر.');
+      }
+    }
+  }
+
   // Atomic insert + children + step log
   await db.withTransaction(async (conn) => {
     await repos.tx.insertTx(conn, {
@@ -211,7 +243,7 @@ async function create(payload, actor) {
       hijriDate: payload.hijriDate,
       status: initialStatus,
       currentStepId, currentRoleId, currentRoleName, currentAssignee,
-      attachment: payload.attachment,
+      attachment: finalAttachment,
       accountId: payload.accountId, accountCode: payload.accountCode, accountName: payload.accountName,
       costCenterId: payload.costCenterId, costCenterName: payload.costCenterName,
       recipientUsername: payload.recipientUsername || '',

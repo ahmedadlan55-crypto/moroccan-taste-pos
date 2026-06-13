@@ -2620,6 +2620,10 @@ function _doTxn(data) {
   });
 }
 function _esc(s){ if (s==null) return ''; return String(s).replace(/[&<>"']/g, function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c];}); }
+// v6.19.5 — attachments may be inline data: URLs OR cloud (Backblaze/S3) https
+// URLs. Render both. Image preview works for data:image and image-extension URLs.
+function _attShow(a){ return !!a && typeof a === 'string' && (a.indexOf('data:') === 0 || a.indexOf('http') === 0); }
+function _attImg(a){ return _attShow(a) && (a.indexOf('data:image/') === 0 || /\.(png|jpe?g|gif|webp|bmp|svg)(\?|#|$)/i.test(a)); }
 // V5-SEC: minimal HTML sanitizer for contentHtml. Strips <script>, event handlers,
 // javascript: URLs, and any tag not in a safe whitelist. Use BEFORE injecting via innerHTML.
 function _sanitizeHtml(html){
@@ -2804,15 +2808,20 @@ function viewMyTxn(id) {
     } else {
       h += '<div style="font-size:13px;color:#94a3b8;font-style:italic;text-align:center;padding:14px;margin-top:6px;"><i class="fas fa-file-circle-question" style="font-size:24px;display:block;margin-bottom:8px;"></i>' + t('txn.noContent') + '</div>';
     }
-    if (txn.attachment && txn.attachment.startsWith && txn.attachment.startsWith('data:')) {
-      var isImg = txn.attachment.startsWith('data:image/');
+    // v6.19.5 — the detail endpoint returns the attachment VALUE in
+    // `attachmentDataUrl` (the bare `attachment` field is a boolean flag).
+    // Read the value field; tolerate either shape. Handles both inline data:
+    // URLs and cloud (Backblaze/S3) https URLs.
+    var _mainAtt = txn.attachmentDataUrl || (typeof txn.attachment === 'string' ? txn.attachment : '');
+    if (_attShow(_mainAtt)) {
+      var isImg = _attImg(_mainAtt);
       h += '<div style="margin-top:14px;display:flex;flex-direction:column;gap:8px;">';
       if (isImg) {
-        h += '<img src="'+txn.attachment+'" style="max-width:280px;max-height:180px;border-radius:8px;border:1px solid #bae6fd;display:block;cursor:zoom-in;" onclick="window.open(this.src,\'_blank\')">';
+        h += '<img src="'+_mainAtt+'" style="max-width:280px;max-height:180px;border-radius:8px;border:1px solid #bae6fd;display:block;cursor:zoom-in;" onclick="window.open(this.src,\'_blank\')">';
       }
       h += '<div style="display:flex;gap:8px;flex-wrap:wrap;">' +
-        '<button onclick="window.open(\''+txn.attachment+'\',\'_blank\')" style="display:inline-flex;align-items:center;gap:6px;color:#0ea5e9;font-size:12px;font-weight:800;padding:7px 14px;background:#fff;border:1.5px solid #0ea5e9;border-radius:10px;cursor:pointer;font-family:inherit;"><i class="fas fa-eye"></i> ' + t('txn.viewAttachOriginal') + '</button>' +
-        '<a href="'+txn.attachment+'" download style="display:inline-flex;align-items:center;gap:6px;color:#fff;font-size:12px;font-weight:800;padding:7px 14px;background:#0ea5e9;border:1.5px solid #0ea5e9;border-radius:10px;text-decoration:none;"><i class="fas fa-download"></i> ' + t('txn.downloadAttach') + '</a>' +
+        '<button onclick="window.open(\''+_mainAtt+'\',\'_blank\')" style="display:inline-flex;align-items:center;gap:6px;color:#0ea5e9;font-size:12px;font-weight:800;padding:7px 14px;background:#fff;border:1.5px solid #0ea5e9;border-radius:10px;cursor:pointer;font-family:inherit;"><i class="fas fa-eye"></i> ' + t('txn.viewAttachOriginal') + '</button>' +
+        '<a href="'+_mainAtt+'" download style="display:inline-flex;align-items:center;gap:6px;color:#fff;font-size:12px;font-weight:800;padding:7px 14px;background:#0ea5e9;border:1.5px solid #0ea5e9;border-radius:10px;text-decoration:none;"><i class="fas fa-download"></i> ' + t('txn.downloadAttach') + '</a>' +
       '</div></div>';
     }
     h += '</div>';
@@ -2948,7 +2957,7 @@ function viewMyTxn(id) {
         if (l.createdAt) { try { dt = new Date(l.createdAt).toLocaleString(dtLocale,{day:'2-digit',month:'short',hour:'2-digit',minute:'2-digit'}); } catch(_){} }
         var isLast = i === txn.logs.length - 1;
         // V4.2: paperclip badge on timeline circle if step has attachment
-        var hasAttach = l.attachment && l.attachment.startsWith && l.attachment.startsWith('data:');
+        var hasAttach = _attShow(l.attachment);
         h += '<div style="display:flex;gap:10px;position:relative;">';
         h += '<div style="display:flex;flex-direction:column;align-items:center;flex-shrink:0;position:relative;">' +
           '<div style="width:36px;height:36px;border-radius:50%;background:'+c+'18;display:flex;align-items:center;justify-content:center;border:2px solid '+c+';position:relative;"><i class="fas '+icon+'" style="font-size:14px;color:'+c+';"></i>' +
@@ -2967,8 +2976,8 @@ function viewMyTxn(id) {
             _esc(l.note) +
           '</div>';
         }
-        if (l.attachment && l.attachment.startsWith && l.attachment.startsWith('data:')) {
-          var attIsImg = l.attachment.startsWith('data:image/');
+        if (_attShow(l.attachment)) {
+          var attIsImg = _attImg(l.attachment);
           h += '<div style="margin-top:8px;display:flex;flex-direction:column;gap:6px;align-items:flex-start;">';
           if (attIsImg) {
             h += '<img src="'+l.attachment+'" style="max-width:200px;max-height:140px;border-radius:6px;border:1px solid #cbd5e1;cursor:zoom-in;" onclick="window.open(this.src,\'_blank\')">';
@@ -3101,8 +3110,8 @@ window.empLoadReplies = function(txnId, listElId, countElId) {
         var isMine = (r.authorUsername === currentUser);
         // Attachment block — image preview + view/download with i18n
         var att = '';
-        if (r.attachment && String(r.attachment).indexOf('data:') === 0) {
-          var isImg = String(r.attachment).indexOf('data:image/') === 0;
+        if (_attShow(r.attachment)) {
+          var isImg = _attImg(r.attachment);
           var fname = r.attachmentName ? _esc(r.attachmentName) : t('txn.attached');
           att = '<div style="margin-top:10px;padding:10px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:10px;">';
           if (isImg) {

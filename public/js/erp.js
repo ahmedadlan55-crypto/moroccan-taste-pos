@@ -11050,8 +11050,8 @@ function wfViewTxn(id) {
 
     // ─── INITIAL ATTACHMENT (the one uploaded by the creator at creation time) ───
     var initialAttach = '';
-    if (txn.attachmentDataUrl && typeof txn.attachmentDataUrl === 'string' && txn.attachmentDataUrl.startsWith('data:')) {
-      var isImg = txn.attachmentDataUrl.startsWith('data:image/');
+    if (txn.attachmentDataUrl && typeof txn.attachmentDataUrl === 'string' && (txn.attachmentDataUrl.startsWith('data:') || txn.attachmentDataUrl.startsWith('http'))) {
+      var isImg = txn.attachmentDataUrl.startsWith('data:image/') || /\.(png|jpe?g|gif|webp|bmp|svg)(\?|#|$)/i.test(txn.attachmentDataUrl);
       initialAttach =
         '<div style="background:#fff;border:1px solid #e5e7eb;border-radius:14px;padding:14px;">' +
           '<div style="font-size:12px;font-weight:800;color:#0f172a;margin-bottom:10px;display:flex;align-items:center;gap:6px;"><i class="fas fa-paperclip" style="color:#0ea5e9;"></i> المرفق المُرسَل مع المعاملة</div>' +
@@ -11074,8 +11074,8 @@ function wfViewTxn(id) {
         var c = aClr[actType]||'#6b7280';
         var bg = aBg[actType]||'#f3f4f6';
         var dt = l.createdAt ? new Date(l.createdAt).toLocaleString('ar-SA-u-nu-latn',{day:'2-digit',month:'short',hour:'2-digit',minute:'2-digit'}) : '';
-        var hasAttach = l.attachment && typeof l.attachment === 'string' && l.attachment.startsWith('data:');
-        var attachIsImg = hasAttach && l.attachment.startsWith('data:image/');
+        var hasAttach = l.attachment && typeof l.attachment === 'string' && (l.attachment.startsWith('data:') || l.attachment.startsWith('http'));
+        var attachIsImg = hasAttach && (l.attachment.startsWith('data:image/') || /\.(png|jpe?g|gif|webp|bmp|svg)(\?|#|$)/i.test(l.attachment));
         var actorName = l.actionBy || '—';
         timeline +=
           '<div class="wo-txn-actor ' + actType + '">' +
@@ -32590,8 +32590,8 @@ window.admLoadReplies = function(txnId) {
         var posLbl = r.authorPosition ? esc(r.authorPosition) : (r.authorRole || 'مستخدم');
         var isMine = (r.authorUsername === currentUser);
         var att = '';
-        if (r.attachment && String(r.attachment).indexOf('data:') === 0) {
-          var isImg = String(r.attachment).indexOf('data:image/') === 0;
+        if (r.attachment && (String(r.attachment).indexOf('data:') === 0 || String(r.attachment).indexOf('http') === 0)) {
+          var isImg = String(r.attachment).indexOf('data:image/') === 0 || /\.(png|jpe?g|gif|webp|bmp|svg)(\?|#|$)/i.test(String(r.attachment));
           var fname = r.attachmentName ? esc(r.attachmentName) : 'مرفق';
           att = '<div style="margin-top:10px;padding:10px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:10px;">';
           if (isImg) {

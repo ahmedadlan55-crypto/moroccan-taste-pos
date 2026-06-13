@@ -1315,7 +1315,13 @@ router.get('/outbox', async (req, res) => {
       scope: r.transaction_scope || 'internal',
       isOverdue: r.due_date && new Date(r.due_date) < new Date() && (r.status === 'pending' || r.status === 'in_progress')
     })));
-  } catch(e) { console.error('[wf]', req.method, req.path, '-> query failed:', e && e.message); res.json([]); }
+  } catch(e) {
+    // v6.20.1 — surface the failure (employee outbox). Returning [] here is what
+    // let the collation outage masquerade as "no transactions". The employee
+    // client now renders a retryable error state on this 500.
+    console.error('[wf]', req.method, req.path, '-> query failed:', e && e.message);
+    res.status(500).json({ error: e && e.message ? e.message : 'فشل تحميل الصادر' });
+  }
 });
 
 // Summary stats for the outbox bottom panel
@@ -1463,7 +1469,11 @@ router.get('/incoming', async (req, res) => {
       dueDate: r.due_date,
       isOverdue: r.due_date && new Date(r.due_date) < new Date() && (r.status === 'pending' || r.status === 'in_progress')
     })));
-  } catch(e) { console.error('[wf]', req.method, req.path, '-> query failed:', e && e.message); res.json([]); }
+  } catch(e) {
+    // v6.20.1 — surface the failure (employee inbox) instead of a silent [].
+    console.error('[wf]', req.method, req.path, '-> query failed:', e && e.message);
+    res.status(500).json({ error: e && e.message ? e.message : 'فشل تحميل الوارد' });
+  }
 });
 
 // Kept for backward compatibility

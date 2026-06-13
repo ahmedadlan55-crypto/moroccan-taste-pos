@@ -2581,51 +2581,10 @@ const _txnActionHandler = async (req, res) => {
       });
     }
 
-    // 6b. v5.10.56 — SoD enforcement. Runs AFTER PERMS so we only check
-    //     SoD when the user is otherwise authorized. SoD failure is a
-    //     conflict-of-interest block, distinct from "you can't act here".
-    //     Admin can break-glass with SOD_OVERRIDE_REASON ≥ 10 chars.
-    const isFinalStep = !!(step && (step.is_final_step || !nextStepHasNext));
-    const sodResult = SOD.validate({
-      transaction: txn,
-      actor: user,
-      action: action,
-      actionLog: actionLog,
-      isFinalStep: isFinalStep,
-      reqBody: req.body
-    });
-    if (!sodResult.ok) {
-      await conn.rollback();
-      // Audit the blocked attempt (best-effort, never throws)
-      try {
-        await db.query(
-          `INSERT INTO transaction_steps_log
-             (id, transaction_id, action_by, action_type, action_note, created_at)
-           VALUES (?, ?, ?, 'sod_blocked', ?, NOW())`,
-          ['SOD-BLK-' + Date.now() + '-' + Math.floor(Math.random()*1000),
-           txnId, username,
-           `[${sodResult.rule}] ${sodResult.code}: ${sodResult.message}`]);
-      } catch (_e) { /* tolerate */ }
-      return res.status(403).json({
-        success: false,
-        error: sodResult.message,
-        code: sodResult.code,
-        rule: sodResult.rule
-      });
-    }
-    // If admin used the override, log it explicitly so the audit trail
-    // shows who bypassed and why.
-    if (sodResult.override) {
-      try {
-        await db.query(
-          `INSERT INTO transaction_steps_log
-             (id, transaction_id, action_by, action_type, action_note, created_at)
-           VALUES (?, ?, ?, 'sod_override', ?, NOW())`,
-          ['SOD-OVR-' + Date.now() + '-' + Math.floor(Math.random()*1000),
-           txnId, username,
-           `Admin SoD override · reason: ${sodResult.reason}`]);
-      } catch (_e) { /* tolerate */ }
-    }
+    // 6b. SoD enforcement MOVED below step 8 (routing). It needs the computed
+    //     `nextStepHasNext` to decide isFinalStep; referencing it here caused a
+    //     TDZ crash ("Cannot access 'nextStepHasNext' before initialization")
+    //     that broke EVERY action. See the relocated block after step 8.
 
     // 7. Apply newAmount if step allows it (must happen before transition computation)
     if (newAmount !== undefined && (!step || step.can_edit_amount)) {
@@ -2710,6 +2669,53 @@ const _txnActionHandler = async (req, res) => {
       // Just transitions created → in_progress; no other changes
       extraUpdates.first_viewed_at = new Date();
       extraUpdates.first_viewed_by = username;
+    }
+
+    // 6b. v5.10.56 — SoD enforcement (RELOCATED here from before step 7). It
+    //     needs `nextStepHasNext` (computed in step 8) to know isFinalStep —
+    //     referencing it earlier caused a TDZ crash that broke every action.
+    //     Runs AFTER PERMS + routing; on failure we rollback (undoing any
+    //     step-7 newAmount UPDATE). Admin break-glass via SOD_OVERRIDE_REASON.
+    const isFinalStep = !!(step && (step.is_final_step || !nextStepHasNext));
+    const sodResult = SOD.validate({
+      transaction: txn,
+      actor: user,
+      action: action,
+      actionLog: actionLog,
+      isFinalStep: isFinalStep,
+      reqBody: req.body
+    });
+    if (!sodResult.ok) {
+      await conn.rollback();
+      // Audit the blocked attempt (best-effort, never throws)
+      try {
+        await db.query(
+          `INSERT INTO transaction_steps_log
+             (id, transaction_id, action_by, action_type, action_note, created_at)
+           VALUES (?, ?, ?, 'sod_blocked', ?, NOW())`,
+          ['SOD-BLK-' + Date.now() + '-' + Math.floor(Math.random()*1000),
+           txnId, username,
+           `[${sodResult.rule}] ${sodResult.code}: ${sodResult.message}`]);
+      } catch (_e) { /* tolerate */ }
+      return res.status(403).json({
+        success: false,
+        error: sodResult.message,
+        code: sodResult.code,
+        rule: sodResult.rule
+      });
+    }
+    // If admin used the override, log it explicitly so the audit trail
+    // shows who bypassed and why.
+    if (sodResult.override) {
+      try {
+        await db.query(
+          `INSERT INTO transaction_steps_log
+             (id, transaction_id, action_by, action_type, action_note, created_at)
+           VALUES (?, ?, ?, 'sod_override', ?, NOW())`,
+          ['SOD-OVR-' + Date.now() + '-' + Math.floor(Math.random()*1000),
+           txnId, username,
+           `Admin SoD override · reason: ${sodResult.reason}`]);
+      } catch (_e) { /* tolerate */ }
     }
 
     // 9. Compute next state via state machine

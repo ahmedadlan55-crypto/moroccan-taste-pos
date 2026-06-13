@@ -976,6 +976,15 @@ function callAPI(method, path, body, cb) {
     var parsed = null, parseErr = null;
     try { parsed = JSON.parse(xhr.responseText); }
     catch(e) { parseErr = 'HTTP ' + xhr.status; }
+    // v6.20.1 — Surface server-side failures (4xx/5xx, except 401 handled
+    // above) as an ERROR to the callback instead of passing the error body as
+    // if it were data. Without this a failed list load (HTTP 500 { error })
+    // reaches the renderer as a non-array and shows as "no transactions" —
+    // exactly how the collation outage stayed invisible.
+    if (!parseErr && xhr.status >= 400) {
+      parseErr = (parsed && (parsed.error || parsed.message)) || ('HTTP ' + xhr.status);
+      parsed = null;
+    }
     // Step 2: invoke the callback OUTSIDE the parse try/catch so that
     // bugs inside the caller's code don't masquerade as network errors.
     // Any crash inside cb is logged but swallowed (user sees no spurious toast).
@@ -1833,32 +1842,35 @@ function _impLabel(i) { return t('txn.imp.' + i) || i; }
 function _statLabel(s) { return t('txn.status.' + s) || s; }
 
 function _impBadge(i) {
-  var c = _impColors[i]||'#6b7280', bg = _impBgs[i]||'#f3f4f6';
-  return '<span style="padding:2px 8px;border-radius:6px;background:'+bg+';color:'+c+';font-size:10px;font-weight:800;"><i class="fas fa-circle" style="font-size:6px;margin-left:3px;"></i>'+_impLabel(i)+'</span>';
+  var icon = _impColors[i] ? 'fa-circle-exclamation' : 'fa-circle';
+  if (i === 'low') icon = 'fa-circle-check';
+  if (i === 'medium') icon = 'fa-circle';
+  if (i === 'high') icon = 'fa-arrow-up';
+  if (i === 'critical') icon = 'fa-triangle-exclamation';
+  return '<span class="txn-imp-badge imp-'+(i||'medium')+'"><i class="fas '+icon+'"></i>'+_impLabel(i||'medium')+'</span>';
 }
 
 function _statBadge(s) {
-  var c = _statClr[s]||'#94a3b8', bg = _statBg[s]||'#f3f4f6', icon = _statIcon[s]||'fa-circle';
-  return '<span style="padding:3px 10px;border-radius:999px;background:'+bg+';color:'+c+';font-size:10.5px;font-weight:800;border:1.5px solid '+c+';display:inline-flex;align-items:center;gap:4px;"><i class="fas '+icon+'" style="font-size:9px;"></i>'+_statLabel(s)+'</span>';
+  var icon = _statIcon[s]||'fa-circle';
+  return '<span class="txn-stat-badge stat-'+(s||'draft')+'"><i class="fas '+icon+'"></i>'+_statLabel(s||'draft')+'</span>';
 }
 
 function txnSwitchTab(which) {
   var inc = document.getElementById('txnSubInc'), out = document.getElementById('txnSubOut');
   var tInc = document.getElementById('txnTabInc'), tOut = document.getElementById('txnTabOut');
-  // Re-apply labels in the current language (in case badge span was reset)
-  var incLabel = tInc.querySelector('[data-i18n-label]');
-  var outLabel = tOut.querySelector('[data-i18n-label]');
+  var incLabel = tInc && tInc.querySelector('[data-i18n-label]');
+  var outLabel = tOut && tOut.querySelector('[data-i18n-label]');
   if (incLabel) incLabel.textContent = t('txn.tab.inc');
   if (outLabel) outLabel.textContent = t('txn.tab.out');
   if (which === 'inc') {
-    inc.style.display = ''; out.style.display = 'none';
-    tInc.style.background='#fff'; tInc.style.color='#0ea5e9'; tInc.style.boxShadow='0 1px 3px rgba(0,0,0,.05)';
-    tOut.style.background='transparent'; tOut.style.color='#64748b'; tOut.style.boxShadow='none';
+    if (inc) inc.style.display = ''; if (out) out.style.display = 'none';
+    if (tInc) { tInc.style.cssText = ''; tInc.classList.add('active'); }
+    if (tOut) { tOut.style.cssText = ''; tOut.classList.remove('active'); }
     loadIncomingTxns();
   } else {
-    inc.style.display = 'none'; out.style.display = '';
-    tOut.style.background='#fff'; tOut.style.color='#0ea5e9'; tOut.style.boxShadow='0 1px 3px rgba(0,0,0,.05)';
-    tInc.style.background='transparent'; tInc.style.color='#64748b'; tInc.style.boxShadow='none';
+    if (inc) inc.style.display = 'none'; if (out) out.style.display = '';
+    if (tOut) { tOut.style.cssText = ''; tOut.classList.add('active'); }
+    if (tInc) { tInc.style.cssText = ''; tInc.classList.remove('active'); }
     loadMyTransactions();
   }
 }
@@ -1920,10 +1932,9 @@ function empTxnFilterChanged() {
   }, 250);
 }
 function _empLoadMoreBtn(kind, hiddenCount) {
-  return '<button onclick="window._empTxnState.' + kind + 'Shown += 20; ' +
-    (kind === 'inc' ? '_empRenderIncoming()' : '_empRenderOutgoing()') + ';" ' +
-    'style="width:100%;margin-top:8px;padding:11px;border:1.5px dashed #cbd5e1;background:#f8fafc;color:#475569;border-radius:10px;font-size:12.5px;font-weight:800;cursor:pointer;font-family:inherit;">' +
-    t('common.loadMore') + ' (' + hiddenCount + ')</button>';
+  return '<button class="ep-load-more" onclick="window._empTxnState.' + kind + 'Shown += 20; ' +
+    (kind === 'inc' ? '_empRenderIncoming()' : '_empRenderOutgoing()') + ';">' +
+    '<i class="fas fa-chevron-down"></i> ' + t('common.loadMore') + ' (' + hiddenCount + ')</button>';
 }
 
 // Incoming — transactions awaiting my action
@@ -1931,15 +1942,50 @@ function _empLoadMoreBtn(kind, hiddenCount) {
 //        (XSS-hardened); 44px touch targets on mobile.
 // v6.19.3 — fetch/render split: loadIncomingTxns() fetches + caches, the
 //           render applies the shared filter state + load-more pagination.
+// v6.20.1 — Unified list-state renderer: loading / empty / error-with-retry.
+// Distinguishes a TRUE empty list from a FAILED load, so a backend error can
+// never again masquerade as "no transactions" (the root cause of the outage
+// staying invisible). Bilingual via currentLang; reuses the .empty CSS class.
+function _empListState(container, kind, opts) {
+  if (!container) return;
+  opts = opts || {};
+  var EN = (typeof currentLang !== 'undefined' && currentLang === 'en');
+  if (kind === 'loading') {
+    container.innerHTML = '<p class="empty"><i class="fas fa-spinner fa-spin"></i></p>';
+    return;
+  }
+  if (kind === 'empty') {
+    container.innerHTML = '<p class="empty">' + _esc(opts.message || (EN ? 'No transactions' : 'لا توجد معاملات')) + '</p>';
+    return;
+  }
+  // kind === 'error'
+  var rid = 'empRetry_' + Math.random().toString(36).slice(2, 8);
+  container.innerHTML =
+    '<div class="empty" style="display:flex;flex-direction:column;align-items:center;gap:12px;padding:28px 16px;">' +
+      '<i class="fas fa-triangle-exclamation" style="font-size:30px;color:#f59e0b;"></i>' +
+      '<div style="font-weight:800;color:#0f172a;font-size:14px;">' + (EN ? 'Couldn’t load transactions' : 'تعذّر تحميل المعاملات') + '</div>' +
+      (opts.detail ? '<div style="font-size:11px;color:#94a3b8;max-width:300px;text-align:center;word-break:break-word;">' + _esc(String(opts.detail)) + '</div>' : '') +
+      '<button id="' + rid + '" type="button" style="padding:9px 18px;border:none;background:linear-gradient(135deg,#0ea5e9,#0284c7);color:#fff;border-radius:10px;font-size:13px;font-weight:800;cursor:pointer;font-family:inherit;display:inline-flex;align-items:center;gap:6px;"><i class="fas fa-rotate-right"></i> ' + (EN ? 'Retry' : 'إعادة المحاولة') + '</button>' +
+    '</div>';
+  if (typeof opts.retry === 'function') {
+    var btn = document.getElementById(rid);
+    if (btn) btn.onclick = opts.retry;
+  }
+}
+
 function loadIncomingTxns() {
   var c = document.getElementById('incomingTxnList');
   if (!c) return;
-  c.innerHTML = '<p class="empty"><i class="fas fa-spinner fa-spin"></i></p>';
-  callAPI('GET', '/workflow/incoming?username=' + encodeURIComponent(currentUser), null, function(rows) {
-    var list = rows || []; if (!Array.isArray(list)) list = [];
-    window._empIncList = list;
+  _empListState(c, 'loading');
+  callAPI('GET', '/workflow/incoming?username=' + encodeURIComponent(currentUser), null, function(rows, err) {
+    // v6.20.1 — a failed load is shown as a retryable error, NOT as empty.
+    if (err || (rows && rows.error) || !Array.isArray(rows)) {
+      _empListState(c, 'error', { detail: err || (rows && rows.error) || '', retry: loadIncomingTxns });
+      return;
+    }
+    window._empIncList = rows;
     var bd = document.getElementById('txnIncBadge');
-    if (bd) { if (list.length) { bd.style.display = 'inline-block'; bd.textContent = list.length; } else { bd.style.display = 'none'; } }
+    if (bd) { if (rows.length) { bd.style.display = 'inline-block'; bd.textContent = rows.length; } else { bd.style.display = 'none'; } }
     _empRenderIncoming();
   });
 }
@@ -1947,7 +1993,6 @@ function _empRenderIncoming() {
   var c = document.getElementById('incomingTxnList');
   if (!c) return;
   var all = window._empIncList || [];
-  // V5-UX: remember scroll position so re-render doesn't jump to top
   var prevScroll = c.scrollTop;
   if (!all.length) { c.innerHTML = '<p class="empty">'+t('common.empty.incoming')+'</p>'; return; }
   var filtered = _empTxnApplyFilters(all);
@@ -1955,36 +2000,39 @@ function _empRenderIncoming() {
   var shown = window._empTxnState.incShown;
   var page = filtered.slice(0, shown);
   var localeCode = currentLang === 'en' ? 'en-US' : 'ar-SA';
-  var isNarrow = window.innerWidth < 500;
   c.innerHTML = page.map(function(tx) {
-      var dt = tx.createdAt ? new Date(tx.createdAt).toLocaleDateString(localeCode,{day:'numeric',month:'short'}) : '';
-      // V5-SEC: escape IDs in inline onclick to prevent XSS via malicious id strings
-      var idEsc = String(tx.id || '').replace(/'/g, '&#39;').replace(/"/g, '&quot;');
-      // V5-UX: on narrow phones (<500px) show only Approve/Reject in row 1, Return/Forward in row 2.
-      // 44px min-height per Apple HIG; 12px font instead of 11px for legibility.
-      var primaryRow =
-        '<button aria-label="'+t('txn.accept')+'" onclick="empAct(\''+idEsc+'\',\'approve\')" style="flex:1;min-height:44px;padding:10px 8px;border:none;background:#10b981;color:#fff;border-radius:10px;font-size:12px;font-weight:800;cursor:pointer;"><i class="fas fa-check"></i> '+t('txn.accept')+'</button>' +
-        '<button aria-label="'+t('txn.reject')+'" onclick="empAct(\''+idEsc+'\',\'reject\')" style="flex:1;min-height:44px;padding:10px 8px;border:none;background:#ef4444;color:#fff;border-radius:10px;font-size:12px;font-weight:800;cursor:pointer;"><i class="fas fa-times"></i> '+t('txn.reject')+'</button>';
-      var secondaryRow =
-        '<button aria-label="'+t('txn.return')+'" onclick="empAct(\''+idEsc+'\',\'return\')" style="flex:1;min-height:44px;padding:10px 8px;border:none;background:#f59e0b;color:#fff;border-radius:10px;font-size:12px;font-weight:800;cursor:pointer;"><i class="fas fa-undo"></i> '+t('txn.return')+'</button>' +
-        '<button aria-label="'+t('txn.forward')+'" onclick="empFwd(\''+idEsc+'\')" style="flex:1;min-height:44px;padding:10px 8px;border:none;background:#8b5cf6;color:#fff;border-radius:10px;font-size:12px;font-weight:800;cursor:pointer;"><i class="fas fa-share"></i> '+t('txn.forward')+'</button>';
-      var actionsHtml = isNarrow
-        ? '<div style="display:flex;gap:6px;margin-top:8px;">'+primaryRow+'</div>' +
-          '<div style="display:flex;gap:6px;margin-top:6px;">'+secondaryRow+'</div>'
-        : '<div style="display:flex;gap:6px;margin-top:6px;flex-wrap:wrap;">'+primaryRow+secondaryRow+'</div>';
-      return '<div class="emp-incoming-row" data-txn-id="'+idEsc+'" style="border-bottom:1px solid #f5f5f5;padding:10px 0;">' +
-        '<div style="display:flex;align-items:center;gap:6px;margin-bottom:4px;">' + _impBadge(tx.importance||'medium') + _statBadge(tx.status) + '</div>' +
-        '<div onclick="viewMyTxn(\''+idEsc+'\')" style="cursor:pointer;">' +
-          '<div style="font-weight:800;font-size:13px;color:#0f172a;">' + (tx.title||'') + '</div>' +
-          '<div style="font-size:10px;font-family:monospace;color:#64748b;margin-top:2px;">'+(tx.txnNumber||'')+'</div>' +
-          '<div class="meta">' + (tx.typeName||'') + ' • ' + (tx.senderName||tx.createdBy||'') + ' • ' + dt + '</div>' +
-          (Number(tx.amount) ? '<div style="margin-top:2px;color:#0ea5e9;font-weight:800;font-size:12px;">'+Number(tx.amount).toLocaleString('en',{minimumFractionDigits:2})+' '+t('units.sarCurrency')+'</div>' : '') +
+    var dt = tx.createdAt ? new Date(tx.createdAt).toLocaleDateString(localeCode,{day:'numeric',month:'short'}) : '';
+    var idEsc = String(tx.id || '').replace(/'/g, '&#39;').replace(/"/g, '&quot;');
+    var imp = tx.importance || 'medium';
+    var amountHtml = Number(tx.amount)
+      ? '<div class="ep-card-amount"><i class="fas fa-coins"></i>'+Number(tx.amount).toLocaleString('en',{minimumFractionDigits:2})+' '+t('units.sarCurrency')+'</div>'
+      : '';
+    return '<div class="ep-txn-card" data-imp="'+imp+'" data-txn-id="'+idEsc+'">' +
+      '<div class="ep-card-stripe"></div>' +
+      '<div class="ep-card-inner">' +
+        '<div class="ep-card-top">' +
+          '<div class="ep-card-badges">' + _impBadge(imp) + _statBadge(tx.status) + '</div>' +
+          '<span class="ep-card-serial">'+(tx.txnNumber||'')+'</span>' +
         '</div>' +
-        actionsHtml +
-      '</div>';
-    }).join('') + (filtered.length > shown ? _empLoadMoreBtn('inc', filtered.length - shown) : '');
-    // V5-UX: restore scroll position after render
-    if (prevScroll > 0) { try { c.scrollTop = prevScroll; } catch(_){} }
+        '<div class="ep-card-body" onclick="viewMyTxn(\''+idEsc+'\')" role="button" tabindex="0">' +
+          '<div class="ep-card-title">'+(tx.title||'')+'</div>' +
+          '<div class="ep-card-meta">' +
+            '<span><i class="fas fa-tag"></i>'+(tx.typeName||'')+'</span>' +
+            '<span><i class="fas fa-user"></i>'+(tx.senderName||tx.createdBy||'')+'</span>' +
+            (dt ? '<span><i class="fas fa-calendar-alt"></i>'+dt+'</span>' : '') +
+          '</div>' +
+          amountHtml +
+        '</div>' +
+        '<div class="ep-card-actions">' +
+          '<button class="ep-act approve" aria-label="'+t('txn.accept')+'" onclick="empAct(\''+idEsc+'\',\'approve\')"><i class="fas fa-check"></i> '+t('txn.accept')+'</button>' +
+          '<button class="ep-act reject"  aria-label="'+t('txn.reject')+'" onclick="empAct(\''+idEsc+'\',\'reject\')"><i class="fas fa-times"></i> '+t('txn.reject')+'</button>' +
+          '<button class="ep-act return"  aria-label="'+t('txn.return')+'" onclick="empAct(\''+idEsc+'\',\'return\')"><i class="fas fa-undo"></i> '+t('txn.return')+'</button>' +
+          '<button class="ep-act forward" aria-label="'+t('txn.forward')+'" onclick="empFwd(\''+idEsc+'\')"><i class="fas fa-share"></i> '+t('txn.forward')+'</button>' +
+        '</div>' +
+      '</div>' +
+    '</div>';
+  }).join('') + (filtered.length > shown ? _empLoadMoreBtn('inc', filtered.length - shown) : '');
+  if (prevScroll > 0) { try { c.scrollTop = prevScroll; } catch(_){} }
 }
 
 function empAct(id, action) {
@@ -2230,10 +2278,14 @@ function empFwd(id) {
 function loadMyTransactions() {
   var c = document.getElementById('myTxnList');
   if (!c) return;
-  c.innerHTML = '<p class="empty"><i class="fas fa-spinner fa-spin"></i></p>';
-  callAPI('GET', '/workflow/outbox?username=' + encodeURIComponent(currentUser), null, function(rows) {
-    var txns = rows || []; if (!Array.isArray(txns)) txns = [];
-    window._empOutList = txns;
+  _empListState(c, 'loading');
+  callAPI('GET', '/workflow/outbox?username=' + encodeURIComponent(currentUser), null, function(rows, err) {
+    // v6.20.1 — a failed load is shown as a retryable error, NOT as empty.
+    if (err || (rows && rows.error) || !Array.isArray(rows)) {
+      _empListState(c, 'error', { detail: err || (rows && rows.error) || '', retry: loadMyTransactions });
+      return;
+    }
+    window._empOutList = rows;
     _empRenderOutgoing();
   });
 }
@@ -2247,48 +2299,54 @@ function _empRenderOutgoing() {
   var shown = window._empTxnState.outShown;
   var page = filtered.slice(0, shown);
   var localeCode = currentLang === 'en' ? 'en-US' : 'ar-SA';
+  var isDevForRow = (typeof window._isDeveloperUser === 'function') && window._isDeveloperUser();
   c.innerHTML = page.map(function(tx) {
-      var dt = tx.createdAt ? new Date(tx.createdAt).toLocaleDateString(localeCode,{day:'numeric',month:'short'}) : '';
-      var isReturned = tx.status === 'returned';
-      // V3.1: editable while pending/draft (workflow not started) OR while returned (creator must fix and resubmit)
-      var canEdit = (tx.status==='pending' || tx.status==='draft' || isReturned);
-      var actBtns = '';
-      // V5.4.3: hide delete button for non-developers
-      var isDevForRow = (typeof window._isDeveloperUser === 'function') && window._isDeveloperUser();
-      var devDelBtn = isDevForRow
-        ? '<button onclick="event.stopPropagation();empCancelTxn(\''+tx.id+'\')" style="flex:1;padding:9px;border:none;background:linear-gradient(135deg,#7f1d1d,#450a0a);color:#fff;border-radius:8px;font-size:11px;font-weight:800;cursor:pointer;" title="حذف نهائي (مطور)"><i class="fas fa-skull-crossbones"></i></button>'
-        : '';
-      if (isReturned) {
-        // Prominent Resubmit button — the obvious next step for a returned txn
-        actBtns = '<div style="display:flex;gap:4px;margin-top:8px;">' +
-          '<button onclick="event.stopPropagation();empEditTxn(\''+tx.id+'\')" style="flex:2;padding:9px;border:none;background:linear-gradient(135deg,#dc2626,#b91c1c);color:#fff;border-radius:8px;font-size:12px;font-weight:900;cursor:pointer;box-shadow:0 2px 4px rgba(220,38,38,.3);"><i class="fas fa-pen-to-square"></i> تعديل وإعادة الإرسال</button>' +
-          devDelBtn +
-        '</div>';
-      } else if (canEdit) {
-        actBtns = '<div style="display:flex;gap:4px;margin-top:6px;">' +
-          '<button onclick="event.stopPropagation();empEditTxn(\''+tx.id+'\')" style="flex:1;padding:6px;border:none;background:#eff6ff;color:#1e40af;border-radius:8px;font-size:11px;font-weight:800;cursor:pointer;"><i class="fas fa-edit"></i> '+t('txn.edit')+'</button>' +
-          devDelBtn +
-        '</div>';
-      }
-      // Returned-state row treatment: red left border + soft tint
-      var rowStyle = isReturned
-        ? 'border-bottom:1px solid #f5f5f5;padding:10px 12px 10px 14px;background:linear-gradient(90deg,#fef2f2,#fff 30%);border-right:4px solid #dc2626;border-radius:8px;margin-bottom:4px;'
-        : 'border-bottom:1px solid #f5f5f5;padding:10px 0;';
-      // Status badge — for returned, use a distinctive red pill
-      var statusPill = isReturned
-        ? '<span style="display:inline-flex;align-items:center;gap:4px;padding:3px 9px;border-radius:999px;background:#fef2f2;color:#dc2626;border:1px solid #dc2626;font-size:10px;font-weight:900;"><i class="fas fa-rotate-left" style="font-size:9px;"></i> مرجعة للتعديل' + (tx.returnCount > 1 ? ' ×' + tx.returnCount : '') + '</span>'
-        : _statBadge(tx.status);
-      return '<div style="' + rowStyle + '">' +
-        '<div style="display:flex;align-items:center;gap:6px;margin-bottom:4px;">' + _impBadge(tx.importance||'medium') + statusPill + '</div>' +
-        '<div onclick="viewMyTxn(\''+tx.id+'\')" style="cursor:pointer;">' +
-          '<div style="font-weight:800;font-size:13px;color:#0f172a;">' + (tx.title||'') + '</div>' +
-          '<div style="font-size:10px;font-family:monospace;color:#64748b;margin-top:2px;">'+(tx.txnNumber||'')+'</div>' +
-          '<div class="meta">' + (tx.typeName||'') + ' • ' + dt + ' • '+t('txn.responsible')+': <b style="color:#1e40af;">' + (tx.currentAssignee||tx.currentPositionName||'—') + '</b></div>' +
-          (isReturned && tx.returnReason ? '<div style="margin-top:6px;padding:6px 10px;background:#fff;border:1px solid #fecaca;border-radius:6px;font-size:11px;color:#991b1b;line-height:1.5;"><i class="fas fa-quote-right" style="font-size:9px;margin-inline-end:4px;"></i>' + (tx.returnReason.length > 100 ? tx.returnReason.substring(0,100) + '…' : tx.returnReason) + '</div>' : '') +
-        '</div>' +
-        actBtns +
+    var dt = tx.createdAt ? new Date(tx.createdAt).toLocaleDateString(localeCode,{day:'numeric',month:'short'}) : '';
+    var isReturned = tx.status === 'returned';
+    var canEdit = (tx.status==='pending' || tx.status==='draft' || isReturned);
+    var imp = tx.importance || 'medium';
+    var statusBadge = isReturned
+      ? '<span class="txn-stat-badge stat-returned"><i class="fas fa-rotate-left"></i> مرجعة للتعديل'+(tx.returnCount > 1 ? ' ×'+tx.returnCount : '')+'</span>'
+      : _statBadge(tx.status);
+    var returnReasonHtml = (isReturned && tx.returnReason)
+      ? '<div class="ep-card-return-reason"><i class="fas fa-quote-right"></i>'+(tx.returnReason.length > 110 ? tx.returnReason.substring(0,110)+'…' : tx.returnReason)+'</div>'
+      : '';
+    var assignee = tx.currentAssignee || tx.currentPositionName || '—';
+    var devDelBtn = isDevForRow
+      ? '<button class="ep-act dev-del" onclick="event.stopPropagation();empCancelTxn(\''+tx.id+'\')" title="حذف نهائي (مطور)"><i class="fas fa-skull-crossbones"></i></button>'
+      : '';
+    var actionsHtml = '';
+    if (isReturned) {
+      actionsHtml = '<div class="ep-card-actions-2">' +
+        '<button class="ep-act resubmit" onclick="event.stopPropagation();empEditTxn(\''+tx.id+'\')"><i class="fas fa-pen-to-square"></i> تعديل وإعادة الإرسال</button>' +
+        devDelBtn +
       '</div>';
-    }).join('') + (filtered.length > shown ? _empLoadMoreBtn('out', filtered.length - shown) : '');
+    } else if (canEdit) {
+      actionsHtml = '<div class="ep-card-actions-2">' +
+        '<button class="ep-act edit" onclick="event.stopPropagation();empEditTxn(\''+tx.id+'\')"><i class="fas fa-edit"></i> '+t('txn.edit')+'</button>' +
+        devDelBtn +
+      '</div>';
+    }
+    return '<div class="ep-txn-card" data-imp="'+imp+'">' +
+      '<div class="ep-card-stripe"></div>' +
+      '<div class="ep-card-inner">' +
+        '<div class="ep-card-top">' +
+          '<div class="ep-card-badges">' + _impBadge(imp) + statusBadge + '</div>' +
+          '<span class="ep-card-serial">'+(tx.txnNumber||'')+'</span>' +
+        '</div>' +
+        '<div class="ep-card-body" onclick="viewMyTxn(\''+tx.id+'\')" role="button" tabindex="0">' +
+          '<div class="ep-card-title">'+(tx.title||'')+'</div>' +
+          '<div class="ep-card-meta">' +
+            '<span><i class="fas fa-tag"></i>'+(tx.typeName||'')+'</span>' +
+            (dt ? '<span><i class="fas fa-calendar-alt"></i>'+dt+'</span>' : '') +
+            '<span><i class="fas fa-user-check"></i>'+assignee+'</span>' +
+          '</div>' +
+          returnReasonHtml +
+        '</div>' +
+        actionsHtml +
+      '</div>' +
+    '</div>';
+  }).join('') + (filtered.length > shown ? _empLoadMoreBtn('out', filtered.length - shown) : '');
 }
 
 // ─── Edit a sent transaction using the redesigned modal in edit mode ───

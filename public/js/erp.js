@@ -10114,14 +10114,17 @@ window._wfStatLbl   = { pending:'قيد الانتظار', in_progress:'قيد �
 window._wfStatClrs  = { pending:'#f59e0b', in_progress:'#3b82f6', approved:'#10b981', rejected:'#ef4444', closed:'#6b7280', draft:'#94a3b8' };
 
 function _wfImpBadge(imp) {
-  var c = window._wfImpColors[imp] || '#6b7280';
-  var bg = window._wfImpBgs[imp] || '#f3f4f6';
-  return '<span style="padding:3px 10px;border-radius:8px;background:'+bg+';color:'+c+';font-size:11px;font-weight:800;"><i class="fas fa-circle" style="font-size:7px;margin-left:4px;"></i>'+(window._wfImpLabels[imp]||imp)+'</span>';
+  var icons = { critical:'fa-triangle-exclamation', high:'fa-arrow-up', medium:'fa-circle', low:'fa-circle-check' };
+  var icon = icons[imp] || 'fa-circle';
+  var lbl = window._wfImpLabels[imp] || imp;
+  return '<span class="wf-imp-badge imp-'+(imp||'medium')+'"><i class="fas '+icon+'"></i>'+lbl+'</span>';
 }
 
 function _wfStatBadge(s) {
-  var c = window._wfStatClrs[s] || '#94a3b8';
-  return '<span style="padding:3px 10px;border-radius:8px;background:'+c+'20;color:'+c+';font-size:11px;font-weight:800;">'+(window._wfStatLbl[s]||s)+'</span>';
+  var statIcons = { draft:'fa-pencil', created:'fa-file', pending:'fa-clock', in_progress:'fa-spinner', replied:'fa-reply', returned:'fa-rotate-left', approved:'fa-circle-check', rejected:'fa-circle-xmark', closed:'fa-lock', cancelled:'fa-ban' };
+  var icon = statIcons[s] || 'fa-circle';
+  var lbl = window._wfStatLbl[s] || s;
+  return '<span class="wf-stat-badge stat-'+(s||'draft')+'"><i class="fas '+icon+'"></i>'+lbl+'</span>';
 }
 
 // V5-PERF: pagination — render in chunks of 100 rows.
@@ -12002,6 +12005,70 @@ function hrLoadEmployees() {
       else { alert.style.display = 'none'; }
     }
   }).getHrEmployees(params);
+  hrLoadIdentityStatus();
+}
+
+// v7.6 — Identity governance: show whether every login account (admin, the
+// cashiers, managers) is represented by an employee record. This directly
+// answers "why can't I find the users in HR" by surfacing the unlinked ones.
+function hrLoadIdentityStatus() {
+  var banner = document.getElementById('hrIdentityBanner');
+  if (!banner) return;
+  fetch('/api/hr/identity-status', {
+    headers: { 'Authorization': 'Bearer ' + localStorage.getItem('pos_token') }
+  })
+  .then(function(r){ return r.json(); })
+  .then(function(s){
+    if (!s || !s.success) { banner.style.display = 'none'; return; }
+    if (s.orphanUsersCount > 0) {
+      var names = (s.orphanUsers||[]).map(function(u){
+        return '<code style="background:#fff;padding:1px 6px;border-radius:6px;margin:0 2px;">' + u.username + '</code>';
+      }).join(' ');
+      banner.style.background = '#fef2f2';
+      banner.style.border = '1px solid #fecaca';
+      banner.style.color = '#991b1b';
+      banner.innerHTML = '<i class="fas fa-triangle-exclamation"></i> ' +
+        'يوجد <b>' + s.orphanUsersCount + '</b> حساب دخول (مثل المدير والكاشيرات) بلا سجل موظف — لذلك لا يظهرون هنا: ' + names +
+        ' <button class="btn btn-sm" onclick="hrReconcileIdentities()" style="background:#dc2626;color:#fff;border-radius:8px;padding:4px 12px;margin-inline-start:8px;"><i class="fas fa-link"></i> مزامنة الآن</button>';
+      banner.style.display = 'block';
+    } else {
+      banner.style.background = '#f0fdf4';
+      banner.style.border = '1px solid #bbf7d0';
+      banner.style.color = '#166534';
+      banner.innerHTML = '<i class="fas fa-circle-check"></i> ' +
+        'كل حسابات الدخول مرتبطة بسجلات موظفين (' + s.linkedCount + ' من ' + s.usersTotal + ').' +
+        (s.orphanEmployeesCount > 0 ? ' — يوجد <b>' + s.orphanEmployeesCount + '</b> موظف بلا حساب دخول.' : '');
+      banner.style.display = 'block';
+    }
+  })
+  .catch(function(){ banner.style.display = 'none'; });
+}
+
+// v7.6 — On-demand reconciliation (idempotent). Creates + links a shell
+// employee for every login account that has none, then reloads the list.
+function hrReconcileIdentities() {
+  if (!confirm('سيتم إنشاء وربط سجل موظف لكل حساب دخول (المدير، الكاشيرات…) لا يملك سجلاً.\nالعملية آمنة ويمكن تكرارها. متابعة؟')) return;
+  var btn = document.getElementById('hrReconcileBtn');
+  if (btn) { btn.disabled = true; btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> جارٍ المزامنة...'; }
+  fetch('/api/hr/reconcile-identities', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + localStorage.getItem('pos_token') }
+  })
+  .then(function(r){ return r.json(); })
+  .then(function(res){
+    if (btn) { btn.disabled = false; btn.innerHTML = '<i class="fas fa-link"></i> مزامنة حسابات الدخول'; }
+    if (!res || !res.success) { showToast((res && res.error) || 'تعذّرت المزامنة', true); return; }
+    if (res.shellsCreated > 0 || res.linksAdded > 0) {
+      showToast('تمت المزامنة: أُنشئ ' + res.shellsCreated + ' سجل موظف وربط ' + res.linksAdded + ' حساب.');
+    } else {
+      showToast('كل الحسابات مرتبطة بالفعل — لا حاجة لتغيير.');
+    }
+    hrLoadEmployees();
+  })
+  .catch(function(err){
+    if (btn) { btn.disabled = false; btn.innerHTML = '<i class="fas fa-link"></i> مزامنة حسابات الدخول'; }
+    showToast('خطأ في الاتصال: ' + (err && err.message || err), true);
+  });
 }
 
 // v6.18.4 (Wave 5) — Load + render the canonical job-titles taxonomy.
@@ -12056,9 +12123,26 @@ function hrFilterEmployees() {
   hrRenderEmployees(filtered);
 }
 
+// v7.6 — login-account role badge for the employees list (so the admin can
+// instantly tell which employee row is the admin / a cashier / a manager).
+var HR_ROLE_LABELS = { admin:'مدير النظام', manager:'مشرف', cashier:'كاشير', custody:'عهدة', employee:'موظف' };
+var HR_ROLE_COLORS = { admin:'#dc2626', manager:'#1e40af', cashier:'#0891b2', custody:'#7c3aed', employee:'#0d9488' };
+function hrLoginBadge(e) {
+  if (!e.linkedUsername) {
+    return '<span class="badge" style="background:#f1f5f9;color:#94a3b8;font-weight:700;" title="لا يملك حساب دخول للنظام">بلا حساب</span>';
+  }
+  var role = (e.linkedRole || 'employee');
+  var col = HR_ROLE_COLORS[role] || '#64748b';
+  var lbl = HR_ROLE_LABELS[role] || role;
+  var inactive = (e.linkedActive === 0 || e.linkedActive === false) ? ' <span style="font-size:9px;color:#dc2626;">(معطّل)</span>' : '';
+  return '<div style="display:flex;flex-direction:column;gap:2px;line-height:1.3;">' +
+    '<span class="badge" style="background:' + col + '15;color:' + col + ';font-weight:800;"><i class="fas fa-key" style="font-size:9px;"></i> ' + lbl + '</span>' +
+    '<code style="font-size:10px;color:#94a3b8;">' + e.linkedUsername + inactive + '</code></div>';
+}
+
 function hrRenderEmployees(list) {
   var tb = document.getElementById('hrEmployeesBody');
-  if (!list||!list.length) { tb.innerHTML = '<tr><td colspan="8" class="empty-msg">لا يوجد موظفون</td></tr>'; return; }
+  if (!list||!list.length) { tb.innerHTML = '<tr><td colspan="9" class="empty-msg">لا يوجد موظفون</td></tr>'; return; }
   var statusLabels = {active:'نشط',suspended:'مجمد',terminated:'منتهي',on_leave:'في إجازة'};
   var statusColors = {active:'green',suspended:'orange',terminated:'red',on_leave:'blue'};
   var btnS = 'width:32px;height:32px;border-radius:8px;border:1px solid #e2e8f0;background:#f8fafc;display:inline-flex;align-items:center;justify-content:center;cursor:pointer;font-size:13px;';
@@ -12069,6 +12153,7 @@ function hrRenderEmployees(list) {
       '<td>' + (e.jobTitle||'—') + '</td>' +
       '<td>' + (e.departmentName||'—') + '</td>' +
       '<td>' + (e.branchName||'—') + '</td>' +
+      '<td>' + hrLoginBadge(e) + '</td>' +
       '<td style="font-weight:700;color:#1e40af;">' +
         '<div title="أساسي: ' + (Number(e.basicSalary)||0).toFixed(2) + '&#10;بدلات: ' + (Number(e.totalAllowances)||0).toFixed(2) + '">' +
           (Number(e.grossSalary != null ? e.grossSalary : e.basicSalary)||0).toLocaleString('en',{minimumFractionDigits:2}) +
@@ -14274,13 +14359,11 @@ function wfLoadOutbox() {
       var unread = t.isRead ? '' : ' <span style="background:#ef4444;color:#fff;border-radius:50%;width:7px;height:7px;display:inline-block;margin-right:3px;" title="غير مقروءة"></span>';
       // V3.1: returned-for-edit visual treatment — pulsing left border + amber row tint + inline Resubmit
       var isReturned = t.status === 'returned';
-      var rowStyle = isReturned
-        ? 'cursor:pointer;background:linear-gradient(90deg,#fef2f2 0%,#fff 30%);border-right:4px solid #dc2626;animation:wfReturnedPulse 2s ease-in-out infinite;'
-        : 'cursor:pointer;';
-      // Returned badge has its own pill style with a "rotate" icon to communicate "go back and fix"
+      var rowStyle = 'cursor:pointer;';
+      var rowClass = isReturned ? ' class="wf-row-returned"' : '';
       var statusCell = isReturned
-        ? '<span style="display:inline-flex;align-items:center;gap:6px;padding:4px 10px;border-radius:999px;background:#fef2f2;color:#dc2626;border:1.5px solid #dc2626;font-weight:900;font-size:11px;"><i class="fas fa-rotate-left" style="font-size:10px;"></i> '+statusAr+(t.returnCount && t.returnCount > 1 ? ' <span style="background:#dc2626;color:#fff;padding:1px 6px;border-radius:999px;font-size:9px;">×'+t.returnCount+'</span>' : '')+'</span>'
-        : '<span style="display:inline-flex;align-items:center;gap:5px;color:'+statusClr+';font-weight:800;"><i class="fas '+statusIcon+'" style="font-size:10px;"></i> '+statusAr+'</span>';
+        ? '<span class="wf-stat-badge stat-returned"><i class="fas fa-rotate-left"></i> '+statusAr+(t.returnCount && t.returnCount > 1 ? ' <span style="background:#dc2626;color:#fff;padding:1px 5px;border-radius:999px;font-size:9px;">×'+t.returnCount+'</span>' : '')+'</span>'
+        : _wfStatBadge(t.status);
       // Action buttons differ per status
       var actionBtn = '';
       if (isReturned) {
@@ -14297,12 +14380,12 @@ function wfLoadOutbox() {
       var deleteBtn = ' <button class="btn btn-sm wf-row-delete-btn" onclick="event.stopPropagation();wfForceDeleteTxn(\''+t.id+'\',\''+safeTxnNumOut+'\')" title="حَذف نِهائي (admin only)"><i class="fas fa-trash"></i></button>';
       // v6.6.0 — scope pill uses brand tokens
       var scopeCls = t.scope === 'external' ? 'wf-pill--scope-external' : 'wf-pill--scope-internal';
-      return '<tr style="'+rowStyle+'" onclick="wfViewTxn(\''+t.id+'\')">' +
+      return '<tr'+rowClass+' style="'+rowStyle+'" onclick="wfViewTxn(\''+t.id+'\')">' +
         '<td><span class="wf-row-serial" style="color:'+serialColor+';">'+(t.txnNumber||'')+'</span>'+unread+'</td>' +
         '<td style="font-size:12px;">'+dt+overdue+'</td>' +
         '<td style="font-size:12px;">'+(t.issuingEntityName || t.deptName || t.branchName || '—')+'</td>' +
         '<td style="font-weight:700;max-width:280px;overflow:hidden;text-overflow:ellipsis;">'+(t.subject||t.title||'')+(t.expenseCategoryName?'<div style="font-size:10px;color:var(--mt-accent,#7c3aed);font-weight:700;"><i class="fas fa-tag" style="font-size:8px;"></i> '+t.expenseCategoryName+'</div>':'')+(isReturned && t.returnReason?'<div style="font-size:10px;color:#dc2626;font-weight:700;margin-top:3px;background:#fef2f2;padding:3px 6px;border-radius:6px;border-right:2px solid #dc2626;"><i class="fas fa-quote-right" style="font-size:8px;"></i> '+_woEscapeHtml(t.returnReason.substring(0,80))+(t.returnReason.length>80?'…':'')+'</div>':'')+'</td>' +
-        '<td style="font-weight:800;color:'+impClr+';">'+impAr+'</td>' +
+        '<td>'+_wfImpBadge(t.importance||'medium')+'</td>' +
         '<td><span class="wf-pill '+scopeCls+'">'+scopeAr+'</span></td>' +
         '<td>'+statusCell+'</td>' +
         '<td onclick="event.stopPropagation();">'+actionBtn+deleteBtn+'</td>' +

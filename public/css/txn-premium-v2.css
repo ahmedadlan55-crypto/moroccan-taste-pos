@@ -1,0 +1,696 @@
+/* ═══════════════════════════════════════════════════════════════════
+   txn-premium-v2.css — Premium Transaction UI
+   Moroccan Taste POS/ERP — v2.0.0 — 2025-06-13
+
+   Coverage:
+     Employee Portal  (#pgTxn) — Mobile-first card-based layout
+     Admin Portal     (#erpWfIncoming, #erpWfInbox, #erpWfHub, Outbox)
+     Shared           — Unified importance + status badge system
+
+   Design principles:
+     • 8pt spacing grid (8, 16, 24, 32, 40)
+     • Brand purple #7c3aed as the primary interactive accent
+     • Semantic colour palette: importance + status
+     • Linear / Stripe visual language — minimal, high-contrast
+     • RTL-first; EN direction flips via html[lang="en"]
+   ═══════════════════════════════════════════════════════════════════ */
+
+/* ══════════════════════════════════════════════════════════════════
+   § 1  SHARED — Importance Badges
+   Used in every table, card, and list across admin + employee.
+   ══════════════════════════════════════════════════════════════════ */
+
+.txn-imp-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 9px;
+  border-radius: 7px;
+  font-size: 11px;
+  font-weight: 800;
+  white-space: nowrap;
+  letter-spacing: 0;
+  line-height: 1.4;
+}
+.txn-imp-badge i { font-size: 9px; }
+.txn-imp-badge.imp-critical { background: #fee2e2; color: #991b1b; }
+.txn-imp-badge.imp-high     { background: #ffedd5; color: #9a3412; }
+.txn-imp-badge.imp-medium   { background: #fef9c3; color: #854d0e; }
+.txn-imp-badge.imp-low      { background: #dcfce7; color: #166534; }
+
+/* ══════════════════════════════════════════════════════════════════
+   § 2  SHARED — Status Badges
+   ══════════════════════════════════════════════════════════════════ */
+
+.txn-stat-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 9px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 800;
+  border: 1.5px solid transparent;
+  white-space: nowrap;
+  line-height: 1.4;
+}
+.txn-stat-badge i { font-size: 9px; }
+
+.txn-stat-badge.stat-draft       { color: #94a3b8; background: #f8fafc;  border-color: #e2e8f0; }
+.txn-stat-badge.stat-created     { color: #0284c7; background: #e0f2fe;  border-color: #bae6fd; }
+.txn-stat-badge.stat-pending     { color: #b45309; background: #fef9c3;  border-color: #fde68a; }
+.txn-stat-badge.stat-in_progress { color: #6d28d9; background: #f5f3ff;  border-color: #c4b5fd; }
+.txn-stat-badge.stat-replied     { color: #0369a1; background: #e0f2fe;  border-color: #93c5fd; }
+.txn-stat-badge.stat-returned    { color: #dc2626; background: #fef2f2;  border-color: #dc2626; font-weight: 900; }
+.txn-stat-badge.stat-approved    { color: #15803d; background: #dcfce7;  border-color: #86efac; }
+.txn-stat-badge.stat-rejected    { color: #b91c1c; background: #fee2e2;  border-color: #fca5a5; }
+.txn-stat-badge.stat-closed      { color: #64748b; background: #f1f5f9;  border-color: #cbd5e1; }
+.txn-stat-badge.stat-cancelled   { color: #94a3b8; background: #f1f5f9;  border-color: #e2e8f0; }
+
+/* ══════════════════════════════════════════════════════════════════
+   § 3  EMPLOYEE PORTAL — Page Structure
+   ══════════════════════════════════════════════════════════════════ */
+
+/* ── 3.1 Segmented Tab Bar ───────────────────────────────────── */
+.ep-tab-bar {
+  display: flex;
+  gap: 4px;
+  background: #f1f5f9;
+  border-radius: 14px;
+  padding: 4px;
+  margin-bottom: 12px;
+}
+
+.ep-tab {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 10px 8px;
+  border: none;
+  background: transparent;
+  color: #64748b;
+  border-radius: 10px;
+  font-size: 13px;
+  font-weight: 800;
+  font-family: inherit;
+  cursor: pointer;
+  transition: background 0.2s, color 0.2s, box-shadow 0.2s;
+  white-space: nowrap;
+}
+.ep-tab:active { transform: scale(0.98); }
+.ep-tab.active {
+  background: #fff;
+  color: var(--mt-accent, #7c3aed);
+  box-shadow: 0 2px 8px rgba(124, 58, 237, 0.12), 0 1px 3px rgba(0, 0, 0, 0.06);
+}
+
+.ep-tab-count {
+  min-width: 18px;
+  height: 18px;
+  padding: 0 5px;
+  border-radius: 999px;
+  background: #dc2626;
+  color: #fff;
+  font-size: 10px;
+  font-weight: 900;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  line-height: 1;
+  border: 1.5px solid #fff;
+  animation: epTabBadgePop 0.3s cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+@keyframes epTabBadgePop {
+  from { transform: scale(0.5); opacity: 0; }
+  to   { transform: scale(1);   opacity: 1; }
+}
+
+/* ── 3.2 Search + Filter Panel ───────────────────────────────── */
+.ep-search-panel {
+  background: #fff;
+  border-radius: 16px;
+  border: 1px solid #f0f0f0;
+  padding: 10px 12px;
+  margin-bottom: 10px;
+  box-shadow: 0 1px 3px rgba(15, 23, 42, 0.04);
+}
+
+.ep-search-wrap {
+  position: relative;
+  margin-bottom: 8px;
+}
+.ep-search-icon {
+  position: absolute;
+  inset-inline-start: 12px;
+  top: 50%;
+  transform: translateY(-50%);
+  color: #94a3b8;
+  font-size: 12px;
+  pointer-events: none;
+  transition: color 0.15s;
+}
+.ep-search-wrap:focus-within .ep-search-icon {
+  color: var(--mt-accent, #7c3aed);
+}
+.ep-search-input {
+  width: 100%;
+  padding: 0 12px 0 36px;
+  border: 1.5px solid #e5e7eb;
+  border-radius: 10px;
+  font-size: 13px;
+  font-family: inherit;
+  box-sizing: border-box;
+  background: #f8fafc;
+  color: #0f172a;
+  height: 40px;
+  transition: border-color 0.15s, box-shadow 0.15s, background 0.15s;
+}
+/* RTL: icon is on the right (inline-start = right in RTL), padding accordingly */
+html[dir="ltr"] .ep-search-input { padding: 0 36px 0 12px; }
+.ep-search-input:focus {
+  border-color: var(--mt-accent, #7c3aed);
+  box-shadow: 0 0 0 3px rgba(124, 58, 237, 0.10);
+  background: #fff;
+  outline: none;
+}
+.ep-search-input::placeholder {
+  color: #94a3b8;
+  font-weight: 400;
+}
+
+.ep-chip-row {
+  display: flex;
+  gap: 5px;
+  overflow-x: auto;
+  padding-bottom: 2px;
+  scrollbar-width: none;
+}
+.ep-chip-row::-webkit-scrollbar { display: none; }
+
+.ep-chip {
+  height: 28px;
+  padding: 0 11px;
+  border-radius: 999px;
+  border: 1.5px solid #e5e7eb;
+  background: #fff;
+  font-size: 11px;
+  font-weight: 800;
+  font-family: inherit;
+  color: #64748b;
+  cursor: pointer;
+  white-space: nowrap;
+  flex-shrink: 0;
+  transition: all 0.15s;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  line-height: 1;
+}
+.ep-chip:hover {
+  border-color: #ede9fe;
+  color: var(--mt-accent, #7c3aed);
+  background: #faf5ff;
+}
+.ep-chip.active {
+  background: var(--mt-accent, #7c3aed);
+  color: #fff;
+  border-color: var(--mt-accent, #7c3aed);
+  box-shadow: 0 2px 6px rgba(124, 58, 237, 0.25);
+}
+.ep-chip.ep-chip-sort.active {
+  background: #0f172a;
+  border-color: #0f172a;
+  box-shadow: none;
+}
+
+/* ── 3.3 List Section Header ──────────────────────────────────── */
+.ep-list-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: 11.5px;
+  font-weight: 800;
+  color: #64748b;
+  margin-bottom: 8px;
+  padding: 0 2px;
+  gap: 8px;
+}
+.ep-list-header i {
+  color: var(--mt-accent, #7c3aed);
+  font-size: 11px;
+}
+
+/* ── 3.4 New Transaction Button ───────────────────────────────── */
+.ep-new-txn-btn {
+  width: 100%;
+  padding: 13px 16px;
+  border-radius: 14px;
+  border: none;
+  background: var(--mt-accent, #7c3aed);
+  color: #fff;
+  font-size: 14px;
+  font-weight: 800;
+  font-family: inherit;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  margin-bottom: 12px;
+  box-shadow: 0 4px 14px rgba(124, 58, 237, 0.30);
+  transition: transform 0.15s, box-shadow 0.15s;
+}
+.ep-new-txn-btn:active {
+  transform: scale(0.98);
+  box-shadow: 0 2px 6px rgba(124, 58, 237, 0.2);
+}
+
+/* ══════════════════════════════════════════════════════════════════
+   § 4  EMPLOYEE PORTAL — Transaction Cards
+   ══════════════════════════════════════════════════════════════════ */
+
+.ep-txn-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+/* ── 4.1 Card shell ──────────────────────────────────────────── */
+.ep-txn-card {
+  background: #fff;
+  border-radius: 14px;
+  border: 1px solid #f0f0f0;
+  overflow: hidden;
+  display: flex;
+  transition: box-shadow 0.15s;
+}
+.ep-txn-card:active { opacity: 0.97; }
+
+/* ── 4.2 Importance colour stripe (inline-start side) ───────── */
+.ep-card-stripe {
+  width: 4px;
+  flex-shrink: 0;
+  background: #e2e8f0;
+}
+.ep-txn-card[data-imp="critical"] .ep-card-stripe { background: #dc2626; }
+.ep-txn-card[data-imp="high"]     .ep-card-stripe { background: #ea580c; }
+.ep-txn-card[data-imp="medium"]   .ep-card-stripe { background: #d97706; }
+.ep-txn-card[data-imp="low"]      .ep-card-stripe { background: #16a34a; }
+
+/* Critical / high cards get a subtle tint on the card background */
+.ep-txn-card[data-imp="critical"] {
+  background: linear-gradient(105deg, #fff5f5 0%, #fff 45%);
+  border-color: #fecaca;
+}
+.ep-txn-card[data-imp="high"] {
+  background: linear-gradient(105deg, #fff7ed 0%, #fff 45%);
+  border-color: #fed7aa;
+}
+
+/* ── 4.3 Card inner container ────────────────────────────────── */
+.ep-card-inner {
+  flex: 1;
+  min-width: 0;
+  padding: 11px 12px 11px 10px;
+  display: flex;
+  flex-direction: column;
+}
+
+.ep-card-top {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 7px;
+}
+.ep-card-badges {
+  display: flex;
+  gap: 4px;
+  flex-wrap: wrap;
+  flex: 1;
+  min-width: 0;
+}
+.ep-card-serial {
+  font-size: 9.5px;
+  font-family: ui-monospace, 'SFMono-Regular', Menlo, monospace;
+  color: #94a3b8;
+  white-space: nowrap;
+  flex-shrink: 0;
+  padding-top: 3px;
+}
+
+/* ── 4.4 Card body (clickable area) ──────────────────────────── */
+.ep-card-body {
+  cursor: pointer;
+  margin-bottom: 9px;
+  flex: 1;
+}
+.ep-card-body:focus-visible {
+  outline: 2px solid var(--mt-accent, #7c3aed);
+  border-radius: 6px;
+}
+
+.ep-card-title {
+  font-size: 13.5px;
+  font-weight: 800;
+  color: #0f172a;
+  line-height: 1.4;
+  margin-bottom: 5px;
+  overflow: hidden;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+}
+
+.ep-card-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  font-size: 11px;
+  color: #64748b;
+  font-weight: 600;
+  line-height: 1;
+}
+.ep-card-meta span {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  white-space: nowrap;
+}
+.ep-card-meta i { font-size: 9.5px; color: #94a3b8; }
+
+.ep-card-amount {
+  margin-top: 5px;
+  color: #0284c7;
+  font-weight: 800;
+  font-size: 12px;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.ep-card-return-reason {
+  margin-top: 6px;
+  padding: 7px 10px;
+  background: #fef2f2;
+  border: 1px solid #fecaca;
+  border-radius: 8px;
+  font-size: 11px;
+  color: #991b1b;
+  line-height: 1.5;
+  display: flex;
+  gap: 6px;
+  align-items: flex-start;
+}
+.ep-card-return-reason i {
+  flex-shrink: 0;
+  font-size: 9px;
+  margin-top: 2px;
+  color: #dc2626;
+}
+
+/* ── 4.5 Action button grid ───────────────────────────────────── */
+.ep-card-actions {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 5px;
+}
+.ep-card-actions-2 {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 5px;
+}
+
+.ep-act {
+  min-height: 40px;
+  border: none;
+  border-radius: 10px;
+  font-size: 11.5px;
+  font-weight: 800;
+  font-family: inherit;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  transition: opacity 0.15s, transform 0.12s;
+  padding: 6px 4px;
+  white-space: nowrap;
+  overflow: hidden;
+}
+.ep-act:active { transform: scale(0.95); opacity: 0.85; }
+.ep-act i { font-size: 11px; }
+
+.ep-act.approve  { background: #10b981; color: #fff; }
+.ep-act.approve:hover  { background: #059669; }
+.ep-act.reject   { background: #ef4444; color: #fff; }
+.ep-act.reject:hover   { background: #dc2626; }
+.ep-act.return   { background: #f59e0b; color: #fff; }
+.ep-act.return:hover   { background: #d97706; }
+.ep-act.forward  { background: var(--mt-accent, #7c3aed); color: #fff; }
+.ep-act.forward:hover  { background: var(--mt-accent-2, #6d28d9); }
+.ep-act.edit     { background: #eff6ff; color: #1e40af; border: 1.5px solid #bfdbfe; }
+.ep-act.edit:hover { background: #dbeafe; }
+.ep-act.resubmit {
+  background: linear-gradient(135deg, #dc2626, #b91c1c);
+  color: #fff;
+  grid-column: span 3;
+  font-size: 12px;
+  font-weight: 900;
+  box-shadow: 0 2px 6px rgba(220, 38, 38, 0.28);
+}
+.ep-act.dev-del {
+  background: #f9f1f1;
+  color: #b91c1c;
+  border: 1.5px solid #fecaca;
+  min-width: 40px;
+  flex-shrink: 0;
+}
+
+/* ── 4.6 Load-more button ─────────────────────────────────────── */
+.ep-load-more {
+  width: 100%;
+  margin-top: 4px;
+  padding: 11px;
+  border: 1.5px dashed #cbd5e1;
+  background: #f8fafc;
+  color: #475569;
+  border-radius: 10px;
+  font-size: 12.5px;
+  font-weight: 800;
+  font-family: inherit;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  transition: background 0.15s, border-color 0.15s, color 0.15s;
+}
+.ep-load-more:hover {
+  background: #ede9fe;
+  border-color: var(--mt-accent, #7c3aed);
+  color: var(--mt-accent, #7c3aed);
+}
+
+/* ══════════════════════════════════════════════════════════════════
+   § 5  ADMIN PORTAL — Table Badge System
+   ══════════════════════════════════════════════════════════════════ */
+
+/* Importance badge — used in wf-table cells */
+.wf-imp-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 3px 10px;
+  border-radius: 7px;
+  font-size: 11px;
+  font-weight: 800;
+  white-space: nowrap;
+}
+.wf-imp-badge i { font-size: 9px; }
+.wf-imp-badge.imp-critical { background: #fee2e2; color: #991b1b; }
+.wf-imp-badge.imp-high     { background: #ffedd5; color: #9a3412; }
+.wf-imp-badge.imp-medium   { background: #fef9c3; color: #854d0e; }
+.wf-imp-badge.imp-low      { background: #dcfce7; color: #166534; }
+
+/* Status badge — used in wf-table cells */
+.wf-stat-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 3px 10px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 800;
+  border: 1.5px solid transparent;
+  white-space: nowrap;
+}
+.wf-stat-badge i { font-size: 9px; }
+.wf-stat-badge.stat-draft       { color: #94a3b8; background: #f8fafc;  border-color: #e2e8f0; }
+.wf-stat-badge.stat-created     { color: #0284c7; background: #e0f2fe;  border-color: #bae6fd; }
+.wf-stat-badge.stat-pending     { color: #b45309; background: #fef9c3;  border-color: #fde68a; }
+.wf-stat-badge.stat-in_progress { color: #6d28d9; background: #f5f3ff;  border-color: #c4b5fd; }
+.wf-stat-badge.stat-replied     { color: #0369a1; background: #e0f2fe;  border-color: #93c5fd; }
+.wf-stat-badge.stat-returned    { color: #dc2626; background: #fef2f2;  border-color: #dc2626; font-weight: 900; }
+.wf-stat-badge.stat-approved    { color: #15803d; background: #dcfce7;  border-color: #86efac; }
+.wf-stat-badge.stat-rejected    { color: #b91c1c; background: #fee2e2;  border-color: #fca5a5; }
+.wf-stat-badge.stat-closed      { color: #64748b; background: #f1f5f9;  border-color: #cbd5e1; }
+.wf-stat-badge.stat-cancelled   { color: #94a3b8; background: #f1f5f9;  border-color: #e2e8f0; }
+
+/* ── 5.1 Returned-row visual treatment in admin tables ───────── */
+.wf-table tbody tr.wf-row-returned {
+  background: linear-gradient(90deg, #fff5f5 0%, #fff 35%) !important;
+  border-inline-end: 4px solid #dc2626 !important;
+}
+
+/* ── 5.2 Unread + overdue indicators ─────────────────────────── */
+.wf-unread-dot {
+  display: inline-block;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--mt-accent, #7c3aed);
+  vertical-align: middle;
+  margin-inline-start: 5px;
+}
+.wf-overdue-icon {
+  color: #dc2626;
+  margin-inline-start: 4px;
+  font-size: 11px;
+  animation: wfOverduePulse 2s ease-in-out infinite;
+}
+@keyframes wfOverduePulse {
+  0%, 100% { opacity: 1; }
+  50%       { opacity: 0.5; }
+}
+
+/* ── 5.3 Admin compact action button group ────────────────────── */
+.wf-act-group {
+  display: flex;
+  gap: 4px;
+  flex-wrap: nowrap;
+  align-items: center;
+}
+.wf-act-btn {
+  min-height: 30px;
+  min-width: 30px;
+  border-radius: 7px;
+  border: 1.5px solid transparent;
+  font-size: 11.5px;
+  font-weight: 700;
+  font-family: inherit;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  padding: 4px 8px;
+  transition: opacity 0.12s, transform 0.12s;
+  white-space: nowrap;
+}
+.wf-act-btn:active { transform: scale(0.94); }
+.wf-act-btn.view    { background: #f8fafc; color: #475569;   border-color: #e2e8f0; }
+.wf-act-btn.approve { background: #dcfce7; color: #15803d;   border-color: #86efac; }
+.wf-act-btn.reject  { background: #fee2e2; color: #b91c1c;   border-color: #fca5a5; }
+.wf-act-btn.return  { background: #fef9c3; color: #92400e;   border-color: #fde68a; }
+.wf-act-btn.forward { background: #f5f3ff; color: #6d28d9;   border-color: #c4b5fd; }
+.wf-act-btn.delete  { background: #fff;    color: #dc2626;   border-color: #fecaca; }
+
+/* ══════════════════════════════════════════════════════════════════
+   § 6  ADMIN PORTAL — Hub Card System
+   ══════════════════════════════════════════════════════════════════ */
+
+/* Accent colour variants — override hub-ui.css CSS variables */
+.hub-card.accent-blue   { --hub-accent: #3b82f6; --hub-icon-bg: #eff6ff; }
+.hub-card.accent-purple { --hub-accent: #7c3aed; --hub-icon-bg: #ede9fe; }
+.hub-card.accent-green  { --hub-accent: #16a34a; --hub-icon-bg: #dcfce7; }
+.hub-card.accent-slate  { --hub-accent: #475569; --hub-icon-bg: #f1f5f9; }
+.hub-card.accent-teal   { --hub-accent: #0891b2; --hub-icon-bg: #ecfeff; }
+.hub-card.accent-orange { --hub-accent: #ea580c; --hub-icon-bg: #fff7ed; }
+
+/* Hub metric strip — fills #wfHubMetrics */
+.wo-metric-strip {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(130px, 1fr));
+  gap: 10px;
+  margin-bottom: 20px;
+}
+.wo-metric {
+  background: #fff;
+  border: 1px solid var(--mt-border, #e2e8f0);
+  border-radius: 14px;
+  padding: 14px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04);
+  transition: transform 0.15s, box-shadow 0.15s;
+}
+.wo-metric:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 6px 18px rgba(15, 23, 42, 0.08);
+}
+.wo-metric .lbl {
+  font-size: 11.5px;
+  font-weight: 700;
+  color: var(--mt-text-muted, #64748b);
+}
+.wo-metric .val {
+  font-size: 30px;
+  font-weight: 900;
+  color: var(--mt-accent, #7c3aed);
+  line-height: 1;
+  font-variant-numeric: tabular-nums;
+}
+.wo-metric.is-warn    .val { color: #d97706; }
+.wo-metric.is-danger  .val { color: #dc2626; }
+.wo-metric.is-success .val { color: #16a34a; }
+.wo-metric.is-info    .val { color: #0284c7; }
+
+/* Hub sub-section title */
+.hub-sub-title {
+  font-size: 13px;
+  font-weight: 800;
+  color: #64748b;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 22px 0 10px;
+  padding-bottom: 10px;
+  border-bottom: 1px solid #f0f0f0;
+}
+.hub-sub-title i {
+  color: var(--mt-accent, #7c3aed);
+  font-size: 13px;
+}
+
+/* ── 6.1 Summary card — importance-keyed variants ─────────────── */
+.wf-summary-card.is-critical {
+  border-inline-end-color: #dc2626 !important;
+}
+.wf-summary-card.is-critical .val {
+  color: #dc2626 !important;
+}
+
+/* ══════════════════════════════════════════════════════════════════
+   § 7  RESPONSIVE — Narrow phones (≤ 480px)
+   ══════════════════════════════════════════════════════════════════ */
+
+@media (max-width: 480px) {
+  .ep-card-actions {
+    grid-template-columns: repeat(2, 1fr);
+  }
+  .ep-card-title {
+    font-size: 13px;
+  }
+  .ep-tab {
+    font-size: 12px;
+    padding: 9px 6px;
+    gap: 5px;
+  }
+  .ep-act.resubmit {
+    grid-column: span 2;
+  }
+}

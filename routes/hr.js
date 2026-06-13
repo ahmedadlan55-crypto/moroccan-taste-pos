@@ -497,10 +497,12 @@ router.get('/employees', async (req, res) => {
         e.ignore_late_month AS ignoreLateMonth,
         e.department_id AS departmentId, e.branch_id AS branchId, e.brand_id AS brandId,
         e.employment_type AS employmentType, e.national_id AS nationalId,
-        e.linked_username AS linkedUsername
+        e.linked_username AS linkedUsername,
+        lu.role AS linkedRole, lu.active AS linkedActive
       FROM hr_employees e
       LEFT JOIN hr_departments d ON e.department_id = d.id
       LEFT JOIN branches b ON e.branch_id = b.id
+      LEFT JOIN users lu ON lu.id = e.linked_user_id
       WHERE 1=1
     `;
     const params = [];
@@ -542,6 +544,175 @@ router.get('/employees', async (req, res) => {
     }));
   } catch (e) {
     res.json({ success: false, error: e.message });
+  }
+});
+
+// ═══════════════════════════════════════════════════════════════════
+// IDENTITY GOVERNANCE (v7.6) — users ⇄ hr_employees reconciliation
+// ───────────────────────────────────────────────────────────────────
+// International HRIS practice (Workday / SAP SuccessFactors / Oracle HCM /
+// BambooHR): the EMPLOYEE record is the master "person"; a login account
+// is a credential provisioned FROM it. No login may exist without a worker
+// record (orphan accounts are an access-governance finding — ISO 27001
+// A.9.2 / SOX ITGC access control).
+//
+// The startup backfill (server.js) already enforces this on every boot, but
+// admins must not depend on a server restart to reconcile identity. These
+// two endpoints expose the same logic ON-DEMAND:
+//   • GET  /identity-status      → audit report of the current linkage
+//   • POST /reconcile-identities → idempotent fix (create + link shells)
+// Both are admin-only and the reconcile is audit-logged.
+// ═══════════════════════════════════════════════════════════════════
+
+// Admin-only guard (req.user is set by the global JWT gate in server.js).
+function _hrRequireAdmin(req, res) {
+  const role = (req.user && req.user.role) || '';
+  if (role !== 'admin') {
+    res.status(403).json({ success: false, error: 'هذه العملية متاحة للمدير (admin) فقط' });
+    return false;
+  }
+  return true;
+}
+
+// GET /api/hr/identity-status — governance snapshot of user⇄employee linkage
+router.get('/identity-status', async (req, res) => {
+  if (!_hrRequireAdmin(req, res)) return;
+  try {
+    const [[uTot]]   = await db.query('SELECT COUNT(*) AS cnt FROM users');
+    const [[eTot]]   = await db.query("SELECT COUNT(*) AS cnt FROM hr_employees WHERE deleted_at IS NULL");
+    // A soft-deleted (deleted_at) employee must NOT count as a valid link, else
+    // a user whose only record was deleted looks "healthy" yet is invisible in
+    // HR (the list filters deleted_at). Filter it everywhere consistently.
+    const [[linked]] = await db.query(
+      'SELECT COUNT(*) AS cnt FROM users u JOIN hr_employees e ON e.linked_username = u.username AND e.deleted_at IS NULL');
+    // Count of logins with NO live employee record (the gap that hides users).
+    const [[orphanCnt]] = await db.query(`
+      SELECT COUNT(*) AS cnt FROM users u
+      LEFT JOIN hr_employees e ON e.linked_username = u.username AND e.deleted_at IS NULL
+      WHERE e.id IS NULL`);
+    // Bounded sample of those logins for display (avoid shipping a huge array).
+    const [orphanUsers] = await db.query(`
+      SELECT u.username, u.role, u.active
+      FROM users u
+      LEFT JOIN hr_employees e ON e.linked_username = u.username AND e.deleted_at IS NULL
+      WHERE e.id IS NULL
+      ORDER BY u.username
+      LIMIT 200`);
+    // Employee records with NO login (active workers who can't sign in)
+    const [[orphanEmps]] = await db.query(`
+      SELECT COUNT(*) AS cnt FROM hr_employees
+      WHERE (linked_username IS NULL OR linked_username = '')
+        AND status <> 'terminated' AND deleted_at IS NULL`);
+    // Shells created by backfill that still need real HR data
+    const [[shells]] = await db.query(
+      "SELECT COUNT(*) AS cnt FROM hr_employees WHERE job_title = 'بحاجة لتحديث' AND deleted_at IS NULL");
+    res.json({
+      success: true,
+      usersTotal: uTot.cnt,
+      employeesTotal: eTot.cnt,
+      linkedCount: linked.cnt,
+      orphanUsers: orphanUsers,                 // bounded sample (<=200) of unlinked logins
+      orphanUsersCount: orphanCnt.cnt,          // true total (independent of the LIMIT)
+      orphanEmployeesCount: orphanEmps.cnt,     // employees missing a login
+      shellsPendingCount: shells.cnt            // shells needing data completion
+    });
+  } catch (e) {
+    console.error('[hr/identity-status]', e.message);
+    res.json({ success: false, error: 'تعذّر إنشاء تقرير الهوية' });
+  }
+});
+
+// POST /api/hr/reconcile-identities — idempotent on-demand reconciliation.
+// Mirrors the startup backfill (server.js steps B→D). Safe to re-run.
+router.post('/reconcile-identities', async (req, res) => {
+  if (!_hrRequireAdmin(req, res)) return;
+  try {
+    // Tolerate older schemas: make sure the linkage columns exist.
+    try { await db.query("ALTER TABLE hr_employees ADD COLUMN IF NOT EXISTS linked_username VARCHAR(100) NULL"); } catch (e) {}
+    try { await db.query("ALTER TABLE hr_employees ADD COLUMN IF NOT EXISTS linked_user_id INT NULL"); } catch (e) {}
+
+    const [[before]] = await db.query(`
+      SELECT COUNT(*) AS cnt FROM users u
+      LEFT JOIN hr_employees e ON e.linked_username = u.username
+      WHERE e.id IS NULL`);
+
+    // Step B — link users that already have a matching employee row.
+    await db.query(`UPDATE users u
+      JOIN hr_employees e ON e.linked_username = u.username
+      SET u.employee_id = e.id
+      WHERE (u.employee_id IS NULL OR u.employee_id = '')`);
+
+    // Step C — create a shell employee for every login that still has none
+    // (covers admin + cashiers + managers + custody + employee, all roles).
+    const [insRes] = await db.query(`INSERT IGNORE INTO hr_employees
+      (id, employee_number, first_name, last_name, hire_date, status, job_title, linked_username, created_at)
+      SELECT
+        CONCAT('emp-shell-', u.username),
+        CONCAT('SHELL-', LPAD(u.id, 6, '0')),
+        COALESCE(NULLIF(TRIM(u.full_name), ''), u.username),
+        '',
+        COALESCE(DATE(u.created_at), CURDATE()),
+        'active',
+        'بحاجة لتحديث',
+        u.username,
+        COALESCE(u.created_at, NOW())
+      FROM users u
+      WHERE (u.employee_id IS NULL OR u.employee_id = '')`);
+
+    // Step D — populate the numeric linked_user_id from the matching login.
+    const [linkRes] = await db.query(`UPDATE hr_employees e
+      JOIN users u ON u.username = e.linked_username
+      SET e.linked_user_id = u.id
+      WHERE e.linked_user_id IS NULL`);
+
+    // Point users at the freshly-created shells.
+    await db.query(`UPDATE users u
+      JOIN hr_employees e ON e.id = CONCAT('emp-shell-', u.username)
+      SET u.employee_id = e.id
+      WHERE (u.employee_id IS NULL OR u.employee_id = '')`);
+
+    const [[after]] = await db.query(`
+      SELECT COUNT(*) AS cnt FROM users u
+      LEFT JOIN hr_employees e ON e.linked_username = u.username AND e.deleted_at IS NULL
+      WHERE e.id IS NULL`);
+    const [[uTot]] = await db.query('SELECT COUNT(*) AS cnt FROM users');
+    // If any login is still unlinked after the run, a shell INSERT was silently
+    // dropped (e.g. an employee_number UNIQUE collision under INSERT IGNORE).
+    // Surface which accounts so the silent failure is never invisible.
+    let remaining = [];
+    if (after.cnt > 0) {
+      const [rem] = await db.query(`
+        SELECT u.username FROM users u
+        LEFT JOIN hr_employees e ON e.linked_username = u.username AND e.deleted_at IS NULL
+        WHERE e.id IS NULL ORDER BY u.username LIMIT 50`);
+      remaining = rem.map(r => r.username);
+    }
+
+    // Audit the governance action (uses the canonical hr_audit_log helper).
+    try {
+      const actor = (req.user && req.user.username) || 'system';
+      await hrRules.auditLog(actor, 'reconcile_identities', 'identity', null, {
+        shellsCreated: insRes.affectedRows || 0,
+        linksAdded: linkRes.affectedRows || 0,
+        orphansBefore: before.cnt,
+        orphansAfter: after.cnt
+      }, (req.ip || ''));
+    } catch (e) { /* audit is best-effort — never block the fix */ }
+
+    res.json({
+      success: true,
+      usersTotal: uTot.cnt,
+      shellsCreated: insRes.affectedRows || 0,
+      linksAdded: linkRes.affectedRows || 0,
+      orphansBefore: before.cnt,
+      orphansAfter: after.cnt,
+      warning: after.cnt > 0
+        ? ('بقي ' + after.cnt + ' حساب دون ربط (تعارض رقم وظيفي محتمل): ' + remaining.join(', '))
+        : null
+    });
+  } catch (e) {
+    console.error('[hr/reconcile-identities]', e.message);
+    res.json({ success: false, error: 'تعذّرت مزامنة الهوية' });
   }
 });
 

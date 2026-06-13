@@ -556,6 +556,14 @@ router.post('/users', requireAdmin, async (req, res) => {
     const iban         = (req.body.iban         || '').trim();
     const jobTitleCode = (req.body.jobTitleCode || req.body.job_title_code || '').trim();
     if (!username || !password) return res.json({ success: false, error: 'اسم المستخدم وكلمة المرور مطلوبان' });
+    // v7.6 (security) — enforce the SAME username whitelist the rename path uses
+    // (line ~683). Validating the RAW value (no trim) rejects whitespace/HTML, so
+    // the stored primary key is always clean: this closes the stored-XSS source in
+    // the HR governance views and guarantees safe shell-id construction during
+    // user↔employee reconciliation (CONCAT('emp-shell-', username)).
+    if (!/^[A-Za-z0-9_.@-]{2,50}$/.test(String(username))) {
+      return res.json({ success: false, error: 'اسم المستخدم غير صالح (أحرف/أرقام/نقطة/شرطة/@ فقط، 2-50 خانة، بلا مسافات)' });
+    }
     // Password validation
     if (password.length < 6) return res.json({ success: false, error: 'كلمة المرور يجب أن تكون 6 أحرف على الأقل' });
     if (!/[a-zA-Z]/.test(password)) return res.json({ success: false, error: 'كلمة المرور يجب أن تحتوي على حروف' });

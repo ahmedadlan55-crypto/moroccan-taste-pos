@@ -5066,7 +5066,7 @@
 <div id="erpHrEmployees" class="dash-section hidden">
   <div class="section-header" style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;flex-wrap:wrap;gap:10px;">
     <h2 class="section-title" style="font-size:18px;font-weight:800;display:flex;align-items:center;gap:8px;"><i class="fas fa-users" style="color:#3b82f6;"></i> إدارة الموظفين</h2>
-    <div style="display:flex;gap:8px;align-items:center;">
+    <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
       <button class="btn btn-light" onclick="erpNav('erpHrHub')"><i class="fas fa-arrow-right"></i> رجوع للمركز</button>
       <input type="text" id="hrEmpSearch" class="form-control" style="width:220px;" placeholder="بحث بالاسم أو الرقم..." oninput="hrFilterEmployees()">
       <select id="hrEmpStatusFilter" class="form-control" style="width:140px;" onchange="hrLoadEmployees()">
@@ -5075,9 +5075,15 @@
         <option value="suspended">مجمد</option>
         <option value="terminated">منتهي</option>
       </select>
+      <button class="btn btn-light" id="hrReconcileBtn" onclick="hrReconcileIdentities()" style="border-radius:12px;border-color:#c7d2fe;color:#4338ca;" title="إنشاء وربط سجل موظف لكل حساب دخول (admin، الكاشيرات…) لا يملك سجلاً — آمن للتكرار"><i class="fas fa-link"></i> مزامنة حسابات الدخول</button>
       <button class="btn btn-primary" onclick="hrOpenEmployeeModal()" style="border-radius:12px;"><i class="fas fa-user-plus"></i> إضافة موظف</button>
     </div>
   </div>
+  <!-- v7.6 — Identity-governance banner. Auto-loads from /api/hr/identity-status
+       and surfaces login accounts (admin / cashiers) that have no employee
+       record yet — the exact reason a user "can't find them in HR". One click
+       reconciles without needing a server restart. (ISO 27001 A.9.2 aligned) -->
+  <div id="hrIdentityBanner" style="display:none;margin-bottom:12px;padding:12px 16px;border-radius:12px;font-size:13px;font-weight:700;line-height:1.7;"></div>
   <!-- v6.18.4 (Wave 5) — Quick stat for shell employees that came from
        Wave 3 backfill and still need their HR data filled in.  Helps
        the admin discover incomplete records introduced by the migration. -->
@@ -5088,8 +5094,8 @@
   </div>
   <div class="erp-table-container" style="border-radius:14px;">
     <table class="erp-table">
-      <thead><tr><th>الرقم</th><th>الاسم</th><th>الوظيفة</th><th>القسم</th><th>الفرع</th><th>الراتب (شامل البدلات)</th><th>الحالة</th><th>إجراءات</th></tr></thead>
-      <tbody id="hrEmployeesBody"><tr><td colspan="8" class="empty-msg">جاري التحميل...</td></tr></tbody>
+      <thead><tr><th>الرقم</th><th>الاسم</th><th>الوظيفة</th><th>القسم</th><th>الفرع</th><th>حساب الدخول</th><th>الراتب (شامل البدلات)</th><th>الحالة</th><th>إجراءات</th></tr></thead>
+      <tbody id="hrEmployeesBody"><tr><td colspan="9" class="empty-msg">جاري التحميل...</td></tr></tbody>
     </table>
   </div>
 </div>

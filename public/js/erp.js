@@ -11984,7 +11984,7 @@ function hrLoadDashboard() {
 var _hrEmployees = [];
 function hrLoadEmployees() {
   var tb = document.getElementById('hrEmployeesBody');
-  tb.innerHTML = '<tr><td colspan="8" class="empty-msg"><i class="fas fa-spinner fa-spin"></i> جاري التحميل...</td></tr>';
+  tb.innerHTML = '<tr><td colspan="9" class="empty-msg"><i class="fas fa-spinner fa-spin"></i> جاري التحميل...</td></tr>';
   var params = {};
   var st = (document.getElementById('hrEmpStatusFilter')||{}).value;
   if (st) params.status = st;
@@ -12022,7 +12022,7 @@ function hrLoadIdentityStatus() {
     if (!s || !s.success) { banner.style.display = 'none'; return; }
     if (s.orphanUsersCount > 0) {
       var names = (s.orphanUsers||[]).map(function(u){
-        return '<code style="background:#fff;padding:1px 6px;border-radius:6px;margin:0 2px;">' + u.username + '</code>';
+        return '<code style="background:#fff;padding:1px 6px;border-radius:6px;margin:0 2px;">' + _hrEsc(u.username) + '</code>';
       }).join(' ');
       banner.style.background = '#fef2f2';
       banner.style.border = '1px solid #fecaca';
@@ -12058,7 +12058,9 @@ function hrReconcileIdentities() {
   .then(function(res){
     if (btn) { btn.disabled = false; btn.innerHTML = '<i class="fas fa-link"></i> مزامنة حسابات الدخول'; }
     if (!res || !res.success) { showToast((res && res.error) || 'تعذّرت المزامنة', true); return; }
-    if (res.shellsCreated > 0 || res.linksAdded > 0) {
+    if (res.warning) {
+      showToast(res.warning, true);
+    } else if (res.shellsCreated > 0 || res.linksAdded > 0) {
       showToast('تمت المزامنة: أُنشئ ' + res.shellsCreated + ' سجل موظف وربط ' + res.linksAdded + ' حساب.');
     } else {
       showToast('كل الحسابات مرتبطة بالفعل — لا حاجة لتغيير.');
@@ -12136,8 +12138,8 @@ function hrLoginBadge(e) {
   var lbl = HR_ROLE_LABELS[role] || role;
   var inactive = (e.linkedActive === 0 || e.linkedActive === false) ? ' <span style="font-size:9px;color:#dc2626;">(معطّل)</span>' : '';
   return '<div style="display:flex;flex-direction:column;gap:2px;line-height:1.3;">' +
-    '<span class="badge" style="background:' + col + '15;color:' + col + ';font-weight:800;"><i class="fas fa-key" style="font-size:9px;"></i> ' + lbl + '</span>' +
-    '<code style="font-size:10px;color:#94a3b8;">' + e.linkedUsername + inactive + '</code></div>';
+    '<span class="badge" style="background:' + col + '15;color:' + col + ';font-weight:800;"><i class="fas fa-key" style="font-size:9px;"></i> ' + _hrEsc(lbl) + '</span>' +
+    '<code style="font-size:10px;color:#94a3b8;">' + _hrEsc(e.linkedUsername) + inactive + '</code></div>';
 }
 
 function hrRenderEmployees(list) {

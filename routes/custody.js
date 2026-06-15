@@ -4,6 +4,43 @@
 const router = require('express').Router();
 const db = require('../db/connection');
 
+// ═══════════════════════════════════════════════════════════════════
+// v7.7 — AUTHORIZATION HELPERS (custody endpoints)
+// ───────────────────────────────────────────────────────────────────
+// req.user is populated by the global JWT gate in server.js for every
+// /api/custody/* request (these routes are NOT in the public passthrough
+// list). NEVER trust a username/id from the query/body for authorization —
+// always derive the actor from req.user and verify ownership/role here.
+//   • Holder endpoints  → actor = req.user.username, must OWN the custody.
+//   • Admin endpoints   → require admin/manager role (separation of duties:
+//                         the holder must not approve/post their own money).
+// ═══════════════════════════════════════════════════════════════════
+function _isAdmin(req) {
+  return ['admin', 'manager'].indexOf((req.user && req.user.role) || '') >= 0;
+}
+function _custodyRequireAdmin(req, res) {
+  if (_isAdmin(req)) return true;
+  res.status(403).json({ success: false, error: 'هذه العملية متاحة للمسؤول فقط' });
+  return false;
+}
+async function _ownsCustody(req, custodyId) {
+  const u = (req.user && req.user.username) || '';
+  if (!u || !custodyId) return false;
+  const [r] = await db.query(
+    `SELECT 1 FROM custodies c JOIN custody_users cu ON cu.id = c.user_id
+     WHERE c.id = ? AND cu.linked_username = ? AND cu.is_active = 1 LIMIT 1`, [custodyId, u]);
+  return r.length > 0;
+}
+async function _ownsExpense(req, expId) {
+  const u = (req.user && req.user.username) || '';
+  if (!u || !expId) return false;
+  const [r] = await db.query(
+    `SELECT 1 FROM custody_expenses ce JOIN custodies c ON c.id = ce.custody_id
+       JOIN custody_users cu ON cu.id = c.user_id
+     WHERE ce.id = ? AND cu.linked_username = ? AND cu.is_active = 1 LIMIT 1`, [expId, u]);
+  return r.length > 0;
+}
+
 // ═══════════════════════════════════════
 // GL ACCOUNT HELPERS — auto-create custody accounts in chart of accounts
 // ═══════════════════════════════════════
@@ -49,6 +86,7 @@ async function createCustodyUserGLAccount(custodyUserName) {
 // ═══════════════════════════════════════
 
 router.get('/users', async (req, res) => {
+  if (!_custodyRequireAdmin(req, res)) return;
   try {
     const [rows] = await db.query('SELECT * FROM custody_users ORDER BY name');
     res.json(rows.map(u => ({
@@ -60,6 +98,7 @@ router.get('/users', async (req, res) => {
 });
 
 router.post('/users', async (req, res) => {
+  if (!_custodyRequireAdmin(req, res)) return;
   try {
     const { id, name, idNumber, phone, jobTitle, notes, linkedUsername } = req.body;
     if (!name) return res.json({ success: false, error: 'Name required' });
@@ -83,6 +122,7 @@ router.post('/users', async (req, res) => {
 
 // Delete custody user
 router.delete('/users/:id', async (req, res) => {
+  if (!_custodyRequireAdmin(req, res)) return;
   try {
     // Check if has active custodies
     const [custs] = await db.query('SELECT id FROM custodies WHERE user_id = ? AND status = "active"', [req.params.id]);
@@ -93,6 +133,7 @@ router.delete('/users/:id', async (req, res) => {
 });
 
 router.post('/users/:id/toggle', async (req, res) => {
+  if (!_custodyRequireAdmin(req, res)) return;
   try {
     await db.query('UPDATE custody_users SET is_active = NOT is_active WHERE id = ?', [req.params.id]);
     res.json({ success: true });
@@ -104,6 +145,7 @@ router.post('/users/:id/toggle', async (req, res) => {
 // ═══════════════════════════════════════
 
 router.get('/list', async (req, res) => {
+  if (!_custodyRequireAdmin(req, res)) return;
   try {
     const [rows] = await db.query('SELECT * FROM custodies ORDER BY created_at DESC');
     res.json(rows.map(c => ({
@@ -115,8 +157,10 @@ router.get('/list', async (req, res) => {
 });
 
 router.post('/create', async (req, res) => {
+  if (!_custodyRequireAdmin(req, res)) return;
   try {
-    const { userId, userName, username } = req.body;
+    const { userId, userName } = req.body;
+    const username = (req.user && req.user.username) || ''; // actor from JWT, not client
     if (!userId) return res.json({ success: false, error: 'Select a custody user' });
     const cusId = 'CUS-' + Date.now();
     // Auto-generate sequential custody number
@@ -141,6 +185,7 @@ router.post('/create', async (req, res) => {
 
 // Delete custody (with all topups & expenses)
 router.delete('/:id', async (req, res) => {
+  if (!_custodyRequireAdmin(req, res)) return;
   try {
     // Delete related records (CASCADE should handle expenses & topups)
     await db.query('DELETE FROM custody_topups WHERE custody_id = ?', [req.params.id]);
@@ -152,15 +197,18 @@ router.delete('/:id', async (req, res) => {
 
 router.get('/my-custody', async (req, res) => {
   try {
-    const username = req.query.username;
+    // v7.7 — identity from the JWT, NEVER the spoofable ?username= query param.
+    const username = (req.user && req.user.username) || '';
     if (!username) return res.json({ error: 'Username required' });
 
     // Find custody user linked to this username — auto-create if missing
     let [cuUsers] = await db.query('SELECT * FROM custody_users WHERE linked_username = ? AND is_active = 1', [username]);
     if (!cuUsers.length) {
-      // Auto-create custody_users record for this custody-role user
-      const [userRow] = await db.query('SELECT role FROM users WHERE username = ?', [username]);
-      if (!userRow.length || userRow[0].role !== 'custody') {
+      // Auto-create only if the caller is authorized for the custody portal
+      // (legacy 'custody' role OR the new custody_portal capability flag).
+      const [userRow] = await db.query('SELECT role, custody_portal FROM users WHERE username = ?', [username]);
+      const eligible = userRow.length && (userRow[0].role === 'custody' || userRow[0].custody_portal === 1);
+      if (!eligible) {
         return res.json({ error: 'هذا الحساب ليس مسؤول عهدة', noCustody: true });
       }
       const cuId = 'CU-' + Date.now();
@@ -256,6 +304,7 @@ router.get('/my-custody', async (req, res) => {
 // v6.28.0 — All expenses across all custodies with optional server-side
 // filters: status, date range, amount range, full-text search.
 router.get('/expenses/all', async (req, res) => {
+  if (!_custodyRequireAdmin(req, res)) return;
   try {
     const { status, from, to, minAmt, maxAmt, search } = req.query;
     let sql = `SELECT ce.id, ce.custody_id, ce.expense_date,
@@ -295,7 +344,8 @@ router.get('/expenses/all', async (req, res) => {
 // Used by the custody officer app to show the "سجل العهد" section.
 router.get('/my-history', async (req, res) => {
   try {
-    const username = req.query.username;
+    // v7.7 — identity from the JWT, not the spoofable ?username= param.
+    const username = (req.user && req.user.username) || '';
     if (!username) return res.json([]);
     const [cuUsers] = await db.query(
       'SELECT id FROM custody_users WHERE linked_username = ?', [username]
@@ -321,6 +371,7 @@ router.get('/my-history', async (req, res) => {
 });
 
 router.get('/:id', async (req, res) => {
+  if (!_custodyRequireAdmin(req, res)) return;
   try {
     const [custs] = await db.query('SELECT * FROM custodies WHERE id = ?', [req.params.id]);
     if (!custs.length) return res.json({ error: 'Not found' });
@@ -353,8 +404,10 @@ router.get('/:id', async (req, res) => {
 // ═══════════════════════════════════════
 
 router.post('/:id/topup', async (req, res) => {
+  if (!_custodyRequireAdmin(req, res)) return;
   try {
-    const { amount, paymentMethod, glAccountId, receiptImage, notes, username } = req.body;
+    const { amount, paymentMethod, glAccountId, receiptImage, notes } = req.body;
+    const username = (req.user && req.user.username) || ''; // actor from JWT
     const amt = Number(amount) || 0;
     if (amt <= 0) return res.json({ success: false, error: 'Amount must be > 0' });
     const topupId = 'TOP-' + Date.now();
@@ -445,6 +498,9 @@ router.post('/:id/topup', async (req, res) => {
 
 router.get('/:id/expenses', async (req, res) => {
   try {
+    if (!_isAdmin(req) && !(await _ownsCustody(req, req.params.id))) {
+      return res.status(403).json({ error: 'غير مصرح' });
+    }
     const [rows] = await db.query('SELECT * FROM custody_expenses WHERE custody_id = ? ORDER BY created_at DESC', [req.params.id]);
     res.json(rows.map(e => ({
       id: e.id, expenseDate: e.expense_date, description: e.description,
@@ -458,7 +514,12 @@ router.get('/:id/expenses', async (req, res) => {
 
 router.post('/:id/expenses', async (req, res) => {
   try {
-    const { expenseDate, description, amount, hasVat, vatRate, invoiceImage, notes, username, overrideBalance, glAccountId, glAccountName, costCenterId, costCenterName, preApproval } = req.body;
+    // v7.7 — only the custody holder (or an admin) may add expenses to it.
+    if (!_isAdmin(req) && !(await _ownsCustody(req, req.params.id))) {
+      return res.status(403).json({ success: false, error: 'غير مصرح — ليست عهدتك' });
+    }
+    const { expenseDate, description, amount, hasVat, vatRate, invoiceImage, notes, overrideBalance, glAccountId, glAccountName, costCenterId, costCenterName, preApproval } = req.body;
+    const username = (req.user && req.user.username) || ''; // creator from JWT
     const amt = Number(amount) || 0;
     if (amt <= 0 || !description) return res.json({ success: false, error: 'Amount and description required' });
     const vRate = hasVat ? (Number(vatRate) || 15) : 0;
@@ -495,12 +556,17 @@ router.post('/:id/expenses', async (req, res) => {
 
 // Approve expense — deduct from custody balance
 router.post('/expenses/:expId/approve', async (req, res) => {
+  if (!_custodyRequireAdmin(req, res)) return;
   try {
-    const { username } = req.body;
+    const username = (req.user && req.user.username) || ''; // approver from JWT
     const [exps] = await db.query('SELECT * FROM custody_expenses WHERE id = ?', [req.params.expId]);
     if (!exps.length) return res.json({ success: false, error: 'Expense not found' });
     const exp = exps[0];
     if (exp.status !== 'pending') return res.json({ success: false, error: 'Only pending expenses can be approved' });
+    // Separation of duties: an approver cannot approve an expense they created.
+    if (exp.created_by && exp.created_by === username) {
+      return res.status(403).json({ success: false, error: 'لا يمكنك اعتماد مصروف أنشأته بنفسك (فصل الواجبات)' });
+    }
     const total = Number(exp.total_with_vat) || Number(exp.amount) || 0;
     await db.query('UPDATE custody_expenses SET status="approved", approved_by=?, approved_at=? WHERE id=?',
       [username || '', new Date(), req.params.expId]);
@@ -510,9 +576,12 @@ router.post('/expenses/:expId/approve', async (req, res) => {
   } catch (e) { res.json({ success: false, error: e.message }); }
 });
 
-// Delete expense (admin only — pending/override_pending/rejected only)
+// Delete expense — the custody holder (own) or an admin; non-posted/approved only
 router.delete('/expenses/:expId', async (req, res) => {
   try {
+    if (!_isAdmin(req) && !(await _ownsExpense(req, req.params.expId))) {
+      return res.status(403).json({ success: false, error: 'غير مصرح' });
+    }
     const [exps] = await db.query('SELECT * FROM custody_expenses WHERE id = ?', [req.params.expId]);
     if (!exps.length) return res.json({ success: false, error: 'المصروف غير موجود' });
     const exp = exps[0];
@@ -526,8 +595,10 @@ router.delete('/expenses/:expId', async (req, res) => {
 
 // Return expense to user for editing
 router.post('/expenses/:expId/return', async (req, res) => {
+  if (!_custodyRequireAdmin(req, res)) return;
   try {
-    const { username, reason } = req.body;
+    const { reason } = req.body;
+    const username = (req.user && req.user.username) || ''; // actor from JWT
     const [exps] = await db.query('SELECT * FROM custody_expenses WHERE id = ?', [req.params.expId]);
     if (!exps.length) return res.json({ success: false, error: 'المصروف غير موجود' });
     const exp = exps[0];
@@ -540,10 +611,13 @@ router.post('/expenses/:expId/return', async (req, res) => {
   } catch (e) { res.json({ success: false, error: e.message }); }
 });
 
-// Update returned expense (user edits and resubmits)
+// Update returned expense (the holder edits and resubmits — or an admin)
 router.put('/expenses/:expId', async (req, res) => {
   try {
-    const { expenseDate, description, amount, hasVat, vatRate, invoiceImage, notes, username } = req.body;
+    if (!_isAdmin(req) && !(await _ownsExpense(req, req.params.expId))) {
+      return res.status(403).json({ success: false, error: 'غير مصرح — ليس مصروفك' });
+    }
+    const { expenseDate, description, amount, hasVat, vatRate, invoiceImage, notes } = req.body;
     const [exps] = await db.query('SELECT * FROM custody_expenses WHERE id = ?', [req.params.expId]);
     if (!exps.length) return res.json({ success: false, error: 'المصروف غير موجود' });
     const exp = exps[0];
@@ -568,8 +642,10 @@ router.put('/expenses/:expId', async (req, res) => {
 
 // Reject expense
 router.post('/expenses/:expId/reject', async (req, res) => {
+  if (!_custodyRequireAdmin(req, res)) return;
   try {
-    const { username, reason } = req.body;
+    const { reason } = req.body;
+    const username = (req.user && req.user.username) || ''; // actor from JWT
     await db.query('UPDATE custody_expenses SET status="rejected", rejection_reason=?, approved_by=?, approved_at=? WHERE id=?',
       [reason || '', username || '', new Date(), req.params.expId]);
     res.json({ success: true });
@@ -578,8 +654,9 @@ router.post('/expenses/:expId/reject', async (req, res) => {
 
 // Post expense to GL — creates journal entry
 router.post('/expenses/:expId/post', async (req, res) => {
+  if (!_custodyRequireAdmin(req, res)) return;
   try {
-    const { username } = req.body;
+    const username = (req.user && req.user.username) || ''; // poster from JWT
     const [exps] = await db.query('SELECT ce.*, c.user_name, c.custody_number FROM custody_expenses ce JOIN custodies c ON ce.custody_id = c.id WHERE ce.id = ?', [req.params.expId]);
     if (!exps.length) return res.json({ success: false, error: 'Expense not found' });
     const exp = exps[0];
@@ -706,7 +783,12 @@ router.post('/expenses/:expId/post', async (req, res) => {
 // User submits close request
 router.post('/:id/close-request', async (req, res) => {
   try {
-    const { username, notes } = req.body;
+    // v7.7 — only the holder (or an admin) may request closing this custody.
+    if (!_isAdmin(req) && !(await _ownsCustody(req, req.params.id))) {
+      return res.status(403).json({ success: false, error: 'غير مصرح — ليست عهدتك' });
+    }
+    const { notes } = req.body;
+    const username = (req.user && req.user.username) || ''; // requester from JWT
     const [custs] = await db.query('SELECT * FROM custodies WHERE id = ?', [req.params.id]);
     if (!custs.length) return res.json({ success: false, error: 'العهدة غير موجودة' });
     const c = custs[0];
@@ -726,12 +808,17 @@ router.post('/:id/close-request', async (req, res) => {
 
 // Admin approves close request
 router.post('/:id/close-approve', async (req, res) => {
+  if (!_custodyRequireAdmin(req, res)) return;
   try {
-    const { username } = req.body;
+    const username = (req.user && req.user.username) || ''; // approver from JWT
     const [custs] = await db.query('SELECT * FROM custodies WHERE id = ?', [req.params.id]);
     if (!custs.length) return res.json({ success: false, error: 'العهدة غير موجودة' });
     const c = custs[0];
     if (c.status !== 'close_pending') return res.json({ success: false, error: 'لا يوجد طلب إقفال معلق' });
+    // Separation of duties: the closer cannot approve their own close request.
+    if (c.close_requested_by && c.close_requested_by === username) {
+      return res.status(403).json({ success: false, error: 'لا يمكنك اعتماد طلب إقفال قدّمته بنفسك (فصل الواجبات)' });
+    }
 
     await db.query(
       'UPDATE custodies SET status = "closed", close_approved_by = ?, close_approved_at = ? WHERE id = ?',
@@ -743,8 +830,10 @@ router.post('/:id/close-approve', async (req, res) => {
 
 // Admin rejects close request — back to active
 router.post('/:id/close-reject', async (req, res) => {
+  if (!_custodyRequireAdmin(req, res)) return;
   try {
-    const { username, reason } = req.body;
+    const { reason } = req.body;
+    const username = (req.user && req.user.username) || ''; // actor from JWT
     await db.query(
       'UPDATE custodies SET status = "active", close_notes = ? WHERE id = ?',
       [(reason || '') + ' [رفض بواسطة ' + (username || '') + ']', req.params.id]
@@ -755,8 +844,9 @@ router.post('/:id/close-reject', async (req, res) => {
 
 // Approve override expense (admin approves over-balance expense)
 router.post('/expenses/:expId/approve-override', async (req, res) => {
+  if (!_custodyRequireAdmin(req, res)) return;
   try {
-    const { username } = req.body;
+    const username = (req.user && req.user.username) || ''; // actor from JWT
     const [exps] = await db.query('SELECT * FROM custody_expenses WHERE id = ?', [req.params.expId]);
     if (!exps.length) return res.json({ success: false, error: 'المصروف غير موجود' });
     const exp = exps[0];
@@ -775,6 +865,10 @@ router.post('/expenses/:expId/approve-override', async (req, res) => {
 
 router.get('/:id/report', async (req, res) => {
   try {
+    // The custody holder may pull their OWN report (portal); admins any report.
+    if (!_isAdmin(req) && !(await _ownsCustody(req, req.params.id))) {
+      return res.status(403).json({ error: 'غير مصرح' });
+    }
     const [custs] = await db.query('SELECT * FROM custodies WHERE id = ?', [req.params.id]);
     if (!custs.length) return res.json({ error: 'Not found' });
     const c = custs[0];
@@ -800,6 +894,7 @@ router.get('/:id/report', async (req, res) => {
 
 // Get all pending expenses across all custodies (for approval screen)
 router.get('/approval/pending', async (req, res) => {
+  if (!_custodyRequireAdmin(req, res)) return;
   try {
     const [rows] = await db.query(
       `SELECT ce.*, c.custody_number, c.user_name FROM custody_expenses ce

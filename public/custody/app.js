@@ -22,13 +22,69 @@
   document.addEventListener('DOMContentLoaded', function() {
     waitApi(function() {
       api = window._apiBridge;
-      try {
-        var s = JSON.parse(localStorage.getItem('pos_session') || '{}');
-        S.user = s.username || s.user || '';
-      } catch(e) {}
-      if (!S.user) { toast('يرجى تسجيل الدخول', 'err'); setTimeout(function(){ location.replace('/'); }, 1200); return; }
+      // v7.7 — standalone portal: use our own session token.
+      window.__API_TOKEN_KEY = 'cust_token';
+      // One-time migration: a user who reached /custody/ via the main app keeps
+      // working — adopt the main-app session as the custody session once.
+      if (!localStorage.getItem('cust_token') && localStorage.getItem('pos_token')) {
+        try {
+          var ps = JSON.parse(localStorage.getItem('pos_session') || '{}');
+          if ((ps.role || '').toLowerCase() === 'custody') {
+            localStorage.setItem('cust_token', localStorage.getItem('pos_token'));
+            localStorage.setItem('cust_session', localStorage.getItem('pos_session'));
+          }
+        } catch(e) {}
+      }
+      var s = {};
+      try { s = JSON.parse(localStorage.getItem('cust_session') || '{}'); } catch(e) {}
+      S.user = s.username || s.user || '';
+      if (!S.user || !localStorage.getItem('cust_token')) { showLogin(); return; }
       load();
     });
+  });
+
+  // ─── v7.7 — Standalone login ───
+  function showLogin() {
+    var l = el('loader'); if (l) l.style.display = 'none';
+    var a = el('app');    if (a) a.style.display = 'none';
+    var lp = el('custLoginPage'); if (lp) lp.style.display = 'flex';
+  }
+  window.custDoLogin = function() {
+    var u = (el('clUser').value || '').trim(), p = el('clPass').value || '';
+    var errEl = el('clErr'); if (errEl) errEl.textContent = '';
+    if (!u || !p) { if (errEl) errEl.textContent = 'أدخل اسم المستخدم وكلمة المرور'; return; }
+    var btn = el('clBtn');
+    if (btn) { btn.disabled = true; btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> جارٍ الدخول...'; }
+    fetch('/api/auth/login', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ username: u, password: p, portal: 'custody' })
+    })
+    .then(function(r) { return r.json(); })
+    .then(function(r) {
+      if (btn) { btn.disabled = false; btn.innerHTML = '<i class="fas fa-sign-in-alt"></i> دخول'; }
+      if (r && r.success && r.token) {
+        localStorage.setItem('cust_token', r.token);
+        localStorage.setItem('cust_session', JSON.stringify({ username: r.username, role: r.role }));
+        S.user = r.username;
+        el('custLoginPage').style.display = 'none';
+        el('loader').style.display = 'flex';
+        history.pushState({ custody: true }, '', '/custody/');
+        load();
+      } else if (errEl) {
+        errEl.textContent = (r && r.error) || 'فشل الدخول';
+      }
+    })
+    .catch(function() {
+      if (btn) { btn.disabled = false; btn.innerHTML = '<i class="fas fa-sign-in-alt"></i> دخول'; }
+      if (errEl) errEl.textContent = 'خطأ في الاتصال';
+    });
+  };
+  // Submit on Enter from the login fields.
+  document.addEventListener('keydown', function(e) {
+    if (e.key === 'Enter') {
+      var lp = el('custLoginPage');
+      if (lp && lp.style.display !== 'none') custDoLogin();
+    }
   });
 
   function waitApi(cb) {
@@ -560,10 +616,10 @@
 
   // ─── Logout ───
   window.doLogout = function() {
-    localStorage.removeItem('pos_session');
-    localStorage.removeItem('pos_token');
-    localStorage.removeItem('pos_last_view');
-    location.replace('/');
+    // v7.7 — clear the standalone custody session and return to its own login.
+    localStorage.removeItem('cust_token');
+    localStorage.removeItem('cust_session');
+    location.replace('/custody/');
   };
 
   // ─── v6.27.0 — Custody History ───────────────────────────────────────

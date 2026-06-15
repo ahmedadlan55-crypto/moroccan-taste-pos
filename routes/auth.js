@@ -175,6 +175,18 @@ router.post('/login', async (req, res) => {
     // v5.11.6 — Login is OPEN to any user with valid credentials. The
     // geo-fence was relocated to the explicit clock-in/clock-out endpoint.
 
+    // v7.7 — per-portal access gating. The Employee Portal and the standalone
+    // Custody Portal each send their portal id; login to that portal is allowed
+    // only when the user holds the matching capability flag. The main app login
+    // sends no portal id and is unaffected (role still gates the UI inside).
+    const portal = (req.body && req.body.portal || '').toLowerCase();
+    if (portal === 'employee' && !user.employee_portal) {
+      return res.json({ success: false, error: 'هذا الحساب لا يملك صلاحية الدخول إلى بوابة الموظف' });
+    }
+    if (portal === 'custody' && !user.custody_portal) {
+      return res.json({ success: false, error: 'هذا الحساب لا يملك صلاحية الدخول إلى بوابة العهدة' });
+    }
+
     const token = jwt.sign({
       id: user.id, username: user.username, role: user.role,
       isDeveloper: isDev,
@@ -477,6 +489,10 @@ router.get('/users', requireAdmin, async (req, res) => {
     try { const [c] = await db.query("SHOW COLUMNS FROM users LIKE 'iqama_number'");   hasIqama   = !!c.length; } catch(e) { hasIqama   = false; }
     try { const [c] = await db.query("SHOW COLUMNS FROM users LIKE 'iban'");           hasIban    = !!c.length; } catch(e) { hasIban    = false; }
     try { const [c] = await db.query("SHOW COLUMNS FROM users LIKE 'job_title_code'"); hasJobTitle= !!c.length; } catch(e) { hasJobTitle= false; }
+    // v7.7 — portal-access capability columns
+    let hasEmpPortal = true, hasCustPortal = true;
+    try { const [c] = await db.query("SHOW COLUMNS FROM users LIKE 'employee_portal'"); hasEmpPortal = !!c.length; } catch(e) { hasEmpPortal = false; }
+    try { const [c] = await db.query("SHOW COLUMNS FROM users LIKE 'custody_portal'");  hasCustPortal = !!c.length; } catch(e) { hasCustPortal = false; }
 
     const extraCols = [
       hasPhone     ? 'u.phone'             : "'' AS phone",
@@ -485,7 +501,9 @@ router.get('/users', requireAdmin, async (req, res) => {
       hasDefBranch ? 'u.default_branch_id' : 'NULL AS default_branch_id',
       hasIqama     ? 'u.iqama_number'      : "'' AS iqama_number",
       hasIban      ? 'u.iban'              : "'' AS iban",
-      hasJobTitle  ? 'u.job_title_code'    : "'' AS job_title_code"
+      hasJobTitle  ? 'u.job_title_code'    : "'' AS job_title_code",
+      hasEmpPortal ? 'u.employee_portal'   : '0 AS employee_portal',
+      hasCustPortal? 'u.custody_portal'    : '0 AS custody_portal'
     ];
     // v6.18.1 — Join hr_job_titles for the canonical Arabic title.
     // LEFT JOIN keeps users with no job_title_code visible (NULL → '').
@@ -531,6 +549,9 @@ router.get('/users', requireAdmin, async (req, res) => {
         iban: u.iban || '',
         jobTitleCode: u.job_title_code || '',
         jobTitleName: u.jobTitleName || '',
+        // v7.7 — portal-access capabilities
+        employeePortal: !!u.employee_portal,
+        custodyPortal: !!u.custody_portal,
         brandId: u.brand_id || '', brandName: u.brandName || '',
         branchId: u.branch_id || '', branchName: u.branchName || '',
         defaultBranchId: u.default_branch_id || u.branch_id || '',
@@ -619,6 +640,17 @@ router.post('/users', requireAdmin, async (req, res) => {
     if (iban)         { try { await db.query('UPDATE users SET iban           = ? WHERE username = ?', [iban,         username]); } catch(e) {} }
     if (jobTitleCode) { try { await db.query('UPDATE users SET job_title_code = ? WHERE username = ?', [jobTitleCode, username]); } catch(e) {} }
 
+    // v7.7 — portal-access capabilities (role-independent). If the client sends
+    // the flags, honor them; otherwise fall back to the legacy role-based default
+    // so older callers keep working.
+    const employeePortal = (req.body.employeePortal != null)
+      ? (req.body.employeePortal ? 1 : 0)
+      : (['employee', 'cashier', 'manager'].indexOf(dbRole) >= 0 ? 1 : 0);
+    const custodyPortal = (req.body.custodyPortal != null)
+      ? (req.body.custodyPortal ? 1 : 0)
+      : (dbRole === 'custody' ? 1 : 0);
+    try { await db.query('UPDATE users SET employee_portal = ?, custody_portal = ? WHERE username = ?', [employeePortal, custodyPortal, username]); } catch(e) {}
+
     if (displayName || isDeveloper) {
       const meta = await getUserMeta();
       meta[username] = meta[username] || {};
@@ -630,22 +662,28 @@ router.post('/users', requireAdmin, async (req, res) => {
       await setUserMeta(meta);
     }
 
-    // Auto-create custody_users record when role is custody
-    if (dbRole === 'custody') {
+    // v7.7 — provision a custody account when the Custody Portal is enabled
+    // (any role, not only 'custody'). Idempotent: reuse/reactivate an existing
+    // row for this user instead of duplicating it.
+    if (custodyPortal) {
       try {
-        const cuId = 'CU-' + Date.now();
-        await db.query(
-          'INSERT INTO custody_users (id, name, job_title, linked_username) VALUES (?,?,?,?)',
-          [cuId, displayName || username, 'مسؤول عهدة', username]
-        );
+        const [existingCu] = await db.query('SELECT id FROM custody_users WHERE linked_username = ? LIMIT 1', [username]);
+        if (existingCu.length) {
+          await db.query('UPDATE custody_users SET is_active = 1, name = ? WHERE id = ?', [displayName || username, existingCu[0].id]);
+        } else {
+          const cuId = 'CU-' + Date.now();
+          await db.query(
+            'INSERT INTO custody_users (id, name, job_title, linked_username, is_active) VALUES (?,?,?,?,1)',
+            [cuId, displayName || username, 'مسؤول عهدة', username]
+          );
+        }
       } catch(e) { /* ignore if custody_users table not yet created */ }
     }
 
-    // v7.5 (H2) — auto-provision + link an HR employee record for staff roles so
-    // the user↔employee link is never a forgotten second step, and the employee
-    // portal works immediately. Mirrors the custody auto-create above + the
-    // startup shell backfill. Idempotent; tolerant of schema gaps.
-    if (['employee', 'cashier', 'manager'].indexOf(dbRole) >= 0) {
+    // v7.5 (H2) / v7.7 — auto-provision + link an HR employee record when the
+    // Employee Portal is enabled so the user↔employee link is never a forgotten
+    // second step and the portal works immediately. Idempotent; schema-tolerant.
+    if (employeePortal) {
       try {
         const [existingEmp] = await db.query('SELECT id FROM hr_employees WHERE linked_username = ? LIMIT 1', [username]);
         let empId = existingEmp.length ? existingEmp[0].id : null;
@@ -809,6 +847,50 @@ router.put('/users/:username', requireAdmin, async (req, res) => {
         } catch(e) {}
       }
     }
+    // v7.7 — portal-access capabilities. Enabling provisions the backing record;
+    // disabling is NON-DESTRUCTIVE (keeps HR data; just deactivates custody login).
+    if (req.body.employeePortal !== undefined) {
+      const ep = req.body.employeePortal ? 1 : 0;
+      try { await db.query('UPDATE users SET employee_portal = ? WHERE username = ?', [ep, username]); } catch(e) {}
+      if (ep) {
+        // Ensure a linked HR employee exists so the portal works immediately.
+        try {
+          const [existingEmp] = await db.query('SELECT id FROM hr_employees WHERE linked_username = ? LIMIT 1', [username]);
+          let empId = existingEmp.length ? existingEmp[0].id : null;
+          if (!empId) {
+            empId = 'emp-' + Date.now() + '-' + Math.random().toString(36).slice(2, 6);
+            const dispName = String(displayName || username).trim();
+            const sp = dispName.indexOf(' ');
+            const fn = sp > 0 ? dispName.slice(0, sp) : dispName;
+            const ln = sp > 0 ? dispName.slice(sp + 1) : '';
+            await db.query(
+              `INSERT INTO hr_employees
+                 (id, employee_number, first_name, last_name, full_name, hire_date, status, job_title, linked_username, created_by, created_at)
+               VALUES (?,?,?,?,?, CURDATE(), 'active', 'بحاجة لتحديث', ?, ?, NOW())`,
+              [empId, 'EMP-' + Date.now(), fn, ln, dispName, username, (req.user && req.user.username) || 'system']);
+          }
+          await db.query('UPDATE users SET employee_id = ? WHERE username = ?', [empId, username]);
+          const [u] = await db.query('SELECT id FROM users WHERE username = ? LIMIT 1', [username]);
+          if (u.length) await db.query('UPDATE hr_employees SET linked_user_id = ?, linked_username = ? WHERE id = ?', [u[0].id, username, empId]);
+        } catch(e) { /* schema-tolerant */ }
+      }
+    }
+    if (req.body.custodyPortal !== undefined) {
+      const cp = req.body.custodyPortal ? 1 : 0;
+      try { await db.query('UPDATE users SET custody_portal = ? WHERE username = ?', [cp, username]); } catch(e) {}
+      try {
+        const [existingCu] = await db.query('SELECT id FROM custody_users WHERE linked_username = ? LIMIT 1', [username]);
+        if (cp) {
+          if (existingCu.length) await db.query('UPDATE custody_users SET is_active = 1 WHERE id = ?', [existingCu[0].id]);
+          else await db.query('INSERT INTO custody_users (id, name, job_title, linked_username, is_active) VALUES (?,?,?,?,1)',
+            ['CU-' + Date.now(), displayName || username, 'مسؤول عهدة', username]);
+        } else if (existingCu.length) {
+          // Non-destructive: deactivate the custody login but keep balance/expense history.
+          await db.query('UPDATE custody_users SET is_active = 0 WHERE id = ?', [existingCu[0].id]);
+        }
+      } catch(e) { /* custody_users table optional */ }
+    }
+
     if (displayName !== undefined || isDeveloper !== undefined) {
       const meta = await getUserMeta();
       meta[username] = meta[username] || {};

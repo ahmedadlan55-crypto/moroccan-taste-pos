@@ -2571,6 +2571,51 @@ async function runMigrations() {
         AND employee_id NOT IN (SELECT id FROM hr_employees)`);
   } catch (e) { console.warn('[startup] backfill step E skipped:', e && e.message); }
 
+  // ═══════════════════════════════════════════════════════════════════
+  // v7.7 — PORTAL ACCESS FLAGS (employee portal / custody portal)
+  // ───────────────────────────────────────────────────────────────────
+  // Portal access becomes an explicit, role-independent capability so an
+  // admin can grant the Employee Portal and/or a standalone Custody Portal
+  // to ANY user (a cashier can also have a custody account, etc.). The
+  // login endpoint gates each portal by its flag. Backfill preserves the
+  // current behavior: employee portal ON for staff roles that already have
+  // an HR record; custody portal ON for anyone with an active custody_users
+  // row or the legacy 'custody' role.
+  // IMPORTANT: the backfill must run ONCE (when the column is first created),
+  // NOT on every boot — otherwise it would re-enable a portal an admin has
+  // intentionally turned off for a staff-role user. So detect prior existence.
+  async function _colExists(table, col) {
+    try {
+      const [c] = await db.query(
+        `SELECT 1 FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ? AND COLUMN_NAME = ?`,
+        [table, col]);
+      return c.length > 0;
+    } catch (e) { return true; /* assume exists → skip backfill on error */ }
+  }
+  const _empPortalExisted  = await _colExists('users', 'employee_portal');
+  const _custPortalExisted = await _colExists('users', 'custody_portal');
+  await addColumnIfMissing('users', 'employee_portal', "TINYINT(1) DEFAULT 0");
+  await addColumnIfMissing('users', 'custody_portal',  "TINYINT(1) DEFAULT 0");
+  // One-time backfill of employee_portal: staff roles OR users already linked to HR.
+  if (!_empPortalExisted) {
+    try {
+      await db.query(`UPDATE users SET employee_portal = 1
+        WHERE (role IN ('employee','cashier','manager')
+               OR (employee_id IS NOT NULL AND employee_id <> '')
+               OR username IN (SELECT linked_username FROM hr_employees WHERE linked_username IS NOT NULL))`);
+      console.log('[startup] employee_portal one-time backfill applied');
+    } catch (e) { console.warn('[startup] employee_portal backfill skipped:', e && e.message); }
+  }
+  // One-time backfill of custody_portal: legacy custody role OR an active custody row.
+  if (!_custPortalExisted) {
+    try {
+      await db.query(`UPDATE users SET custody_portal = 1
+        WHERE (role = 'custody'
+               OR username IN (SELECT linked_username FROM custody_users WHERE linked_username IS NOT NULL AND is_active = 1))`);
+      console.log('[startup] custody_portal one-time backfill applied');
+    } catch (e) { console.warn('[startup] custody_portal backfill skipped:', e && e.message); }
+  }
+
   // ═══════════════════════════════════════
   // WAREHOUSE-BASED INVENTORY RESTRUCTURE
   // ═══════════════════════════════════════

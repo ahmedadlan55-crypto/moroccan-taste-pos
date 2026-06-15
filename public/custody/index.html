@@ -9,52 +9,36 @@
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
   <meta name="apple-mobile-web-app-title" content="MT Custody">
 
-  <!-- Auth gate — custody role only + back button block -->
+  <!-- v7.7 — Standalone custody portal: its OWN session token (cust_token) and
+       its OWN login screen (like the employee portal). No longer piggybacks on
+       the main app's pos_token. app.js decides login-vs-app on boot. -->
   <script>
-    (function() {
-      try {
-        var token = localStorage.getItem('pos_token');
-        var session = localStorage.getItem('pos_session');
-        if (!token || !session) { window.location.replace('/'); return; }
-        var s = JSON.parse(session);
-        var role = (s.role || '').toLowerCase();
-        if (role !== 'custody') {
-          if (role === 'cashier') { window.location.replace('/pos/'); return; }
-          window.location.replace('/'); return;
-        }
-
-        // Block back button — replace entire history
-        history.replaceState({ custody: true }, '', '/custody/');
-        // Push extra state so back goes to our state, not another page
-        history.pushState({ custody: true }, '', '/custody/');
-        window.addEventListener('popstate', function(e) {
-          // Always push back to custody
-          history.pushState({ custody: true }, '', '/custody/');
-        });
-
-        // Handle bfcache (browser back/forward cache) — re-validates on pageshow
-        window.addEventListener('pageshow', function(e) {
-          if (e.persisted) {
-            // Page was restored from bfcache — re-check auth
-            var t = localStorage.getItem('pos_token');
-            var ss = localStorage.getItem('pos_session');
-            if (!t || !ss) { window.location.replace('/'); return; }
-            try {
-              var r = (JSON.parse(ss).role || '').toLowerCase();
-              if (r !== 'custody') { window.location.replace('/'); return; }
-            } catch(ex) { window.location.replace('/'); }
-          }
-        });
-
-        document.addEventListener('DOMContentLoaded', function() {
-          document.body.classList.add('authenticated');
-        });
-      } catch (e) { window.location.replace('/'); }
-    })();
+    // Route the shared api-bridge to the custody session key.
+    window.__API_TOKEN_KEY = 'cust_token';
+    document.addEventListener('DOMContentLoaded', function() {
+      document.body.classList.add('authenticated');
+    });
+    // Keep the user inside the portal while signed in.
+    window.addEventListener('popstate', function() {
+      if (localStorage.getItem('cust_token')) history.pushState({ custody: true }, '', '/custody/');
+    });
   </script>
   <style>
     html, body { background: #0f172a; }
     body:not(.authenticated) { visibility: hidden !important; }
+    /* v7.7 — standalone login screen */
+    #custLoginPage { min-height:100vh; display:flex; flex-direction:column; align-items:center; justify-content:center; padding:24px; gap:18px; background:linear-gradient(160deg,#0f172a,#1e1b4b); color:#fff; font-family:inherit; }
+    #custLoginPage .cl-logo { width:72px; height:72px; border-radius:20px; background:linear-gradient(135deg,#7c3aed,#a855f7); display:flex; align-items:center; justify-content:center; font-size:32px; box-shadow:0 12px 30px rgba(124,58,237,.4); }
+    #custLoginPage h1 { font-size:22px; font-weight:800; margin:4px 0 0; }
+    #custLoginPage p { font-size:13px; color:#cbd5e1; margin:0 0 8px; }
+    #custLoginPage .cl-card { width:100%; max-width:360px; display:flex; flex-direction:column; gap:12px; }
+    #custLoginPage .cl-field { display:flex; align-items:center; gap:10px; background:rgba(255,255,255,.08); border:1px solid rgba(255,255,255,.15); border-radius:14px; padding:14px 16px; }
+    #custLoginPage .cl-field i { color:#a78bfa; width:18px; text-align:center; }
+    #custLoginPage .cl-field input { flex:1; background:transparent; border:none; outline:none; color:#fff; font-size:15px; font-family:inherit; }
+    #custLoginPage .cl-field input::placeholder { color:#94a3b8; }
+    #custLoginPage .cl-btn { margin-top:6px; background:linear-gradient(135deg,#7c3aed,#a855f7); color:#fff; border:none; border-radius:14px; padding:15px; font-size:16px; font-weight:800; cursor:pointer; font-family:inherit; display:flex; align-items:center; justify-content:center; gap:8px; }
+    #custLoginPage .cl-btn:disabled { opacity:.6; }
+    #custLoginPage .cl-err { color:#fca5a5; font-size:13px; min-height:18px; text-align:center; font-weight:700; }
   </style>
 
   <link rel="preconnect" href="https://cdnjs.cloudflare.com" crossorigin>
@@ -71,6 +55,19 @@
   <div id="loader">
     <div class="loader-ring"></div>
     <p>جاري التحميل...</p>
+  </div>
+
+  <!-- v7.7 — Standalone login screen (shown by app.js when no custody session) -->
+  <div id="custLoginPage" style="display:none;">
+    <div class="cl-logo"><i class="fas fa-hand-holding-usd"></i></div>
+    <h1>بوابة العهدة</h1>
+    <p>سجّل دخولك لإدارة عهدتك ومصروفاتك</p>
+    <div class="cl-card">
+      <div class="cl-field"><i class="fas fa-user"></i><input type="text" id="clUser" placeholder="اسم المستخدم" autocomplete="username" dir="ltr" style="text-align:right;"></div>
+      <div class="cl-field"><i class="fas fa-lock"></i><input type="password" id="clPass" placeholder="كلمة المرور" autocomplete="current-password"></div>
+      <div class="cl-err" id="clErr"></div>
+      <button class="cl-btn" id="clBtn" onclick="custDoLogin()"><i class="fas fa-sign-in-alt"></i> دخول</button>
+    </div>
   </div>
 
   <!-- Main App Shell -->

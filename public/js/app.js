@@ -13143,6 +13143,9 @@ function tglUserM() {
   if (q("#muEmail")) q("#muEmail").value = '';
   if (q("#muIsDeveloper")) q("#muIsDeveloper").checked = false;
   if (q("#muCanChangeBranch")) q("#muCanChangeBranch").checked = false;
+  // v7.7 — new-user portal defaults: employee portal ON, custody OFF.
+  if (q("#muEmployeePortal")) q("#muEmployeePortal").checked = true;
+  if (q("#muCustodyPortal")) q("#muCustodyPortal").checked = false;
   if (q("#muPassHint")) q("#muPassHint").innerHTML = '';
   // V3 SECURITY: Developer checkbox visible ONLY when the current logged-in
   // user is the primary 'admin' account.
@@ -13245,6 +13248,9 @@ function editUsr(username) {
   if (q("#muEmail")) q("#muEmail").value = u.email || '';
   if (q("#muIsDeveloper")) q("#muIsDeveloper").checked = !!u.isDeveloper;
   if (q("#muCanChangeBranch")) q("#muCanChangeBranch").checked = !!u.canChangeBranch;
+  // v7.7 — populate portal-access toggles from the user record
+  if (q("#muEmployeePortal")) q("#muEmployeePortal").checked = !!u.employeePortal;
+  if (q("#muCustodyPortal")) q("#muCustodyPortal").checked = !!u.custodyPortal;
   if (q("#muPassHint")) q("#muPassHint").innerHTML = '';
   // V3 SECURITY: Show developer checkbox only for primary admin OR locked when editing primary admin
   _toggleDevCheckbox(username);
@@ -13286,6 +13292,9 @@ function saveUserFn() {
   // V3 spec fields
   var defaultWarehouseId = q("#muDefaultWarehouse") ? q("#muDefaultWarehouse").value : '';
   var canChangeBranch    = q("#muCanChangeBranch") ? q("#muCanChangeBranch").checked : false;
+  // v7.7 — portal-access capabilities
+  var employeePortal     = q("#muEmployeePortal") ? q("#muEmployeePortal").checked : false;
+  var custodyPortal      = q("#muCustodyPortal") ? q("#muCustodyPortal").checked : false;
 
   if (!username) return showToast('الرقم الوظيفي مطلوب', true);
   if (!_editingUsername && !password) return showToast('كلمة المرور مطلوبة عند إنشاء مستخدم', true);
@@ -13298,7 +13307,8 @@ function saveUserFn() {
   if (_editingUsername) {
     var payload = { displayName: displayName, role: role, isDeveloper: isDeveloper, email: email,
                     brandId: brandId, branchId: branchId, positionId: positionId,
-                    defaultWarehouseId: defaultWarehouseId, canChangeBranch: canChangeBranch };
+                    defaultWarehouseId: defaultWarehouseId, canChangeBranch: canChangeBranch,
+                    employeePortal: employeePortal, custodyPortal: custodyPortal };
     if (password) payload.password = password;
     // If the login username changed (and it's not 'admin'), request a cascade rename.
     if (username && username !== _editingUsername && _editingUsername !== 'admin') {
@@ -13313,7 +13323,8 @@ function saveUserFn() {
   } else {
     var data = { username: username, password: password, role: role, displayName: displayName, isDeveloper: isDeveloper, email: email,
                  brandId: brandId, branchId: branchId, positionId: positionId,
-                 defaultWarehouseId: defaultWarehouseId, canChangeBranch: canChangeBranch };
+                 defaultWarehouseId: defaultWarehouseId, canChangeBranch: canChangeBranch,
+                 employeePortal: employeePortal, custodyPortal: custodyPortal };
     api.withFailureHandler(function(err){loader(false); showToast(err.message, true);})
        .withSuccessHandler(function(r) {
           loader(false);

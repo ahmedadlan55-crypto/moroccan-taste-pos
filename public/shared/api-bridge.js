@@ -299,7 +299,9 @@
 
           const url = buildUrl(route, args);
           const options = { method: route.method, headers: { 'Content-Type': 'application/json' } };
-          const token = localStorage.getItem('pos_token');
+          // v7.7 — token source is configurable so standalone portals (custody)
+          // can use their own session key without clobbering the main app's.
+          const token = localStorage.getItem(window.__API_TOKEN_KEY || 'pos_token');
           if (token) options.headers['Authorization'] = 'Bearer ' + token;
           const body = buildBody(route, args);
           if (body) options.body = body;

@@ -1117,7 +1117,7 @@ function doLogin() {
     ? window.detectDevice()
     : Promise.resolve(null);
   devicePromise.then(function (device) {
-    callAPI('POST', '/auth/login', { username: u, password: p, device: device }, function(r, err) {
+    callAPI('POST', '/auth/login', { username: u, password: p, device: device, portal: 'employee' }, function(r, err) {
       btn.disabled = false; btn.innerHTML = '<i class="fas fa-sign-in-alt"></i> ' + t('login.btn');
       if (err) return toast(t('common.connError') + err, true);
       if (r && r.success && r.token) {

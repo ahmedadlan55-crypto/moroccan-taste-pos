@@ -103,6 +103,29 @@ body {
   background: var(--mt-surface-3) !important;
   border-color: var(--mt-border) !important;
 }
+/* v7.7 — outline + secondary skins. Without these, `.btn { border:1px solid
+   transparent }` above strips the outline border and no background is defined,
+   so .btn-outline / .btn-secondary render as invisible "text-only" chrome
+   (e.g. «التحميل كنموذج» / «استيراد» on the purchase-order form). */
+.btn-outline {
+  background: var(--white);
+  border: 1.5px solid var(--accent);
+  color: var(--accent);
+}
+.btn-outline:hover {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+}
+.btn-secondary {
+  background: var(--mt-surface-2, #f1f5f9);
+  border-color: var(--border, #e2e8f0);
+  color: var(--text-dark, #334155);
+}
+.btn-secondary:hover {
+  background: var(--mt-surface-3, #e2e8f0);
+  border-color: var(--mt-border, #cbd5e1);
+}
 
 /* ───────────── 4. Inputs ───────────── */
 .form-control {

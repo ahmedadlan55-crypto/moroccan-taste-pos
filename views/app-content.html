@@ -6247,14 +6247,15 @@
     </div>
 
     <!-- Date presets -->
-    <div class="wl-presets" id="wlPresets" role="tablist">
-      <button class="wl-preset" data-preset="today">اليوم</button>
-      <button class="wl-preset" data-preset="yesterday">أمس</button>
-      <button class="wl-preset" data-preset="week">هذا الأسبوع</button>
-      <button class="wl-preset" data-preset="month">هذا الشهر</button>
-      <button class="wl-preset" data-preset="quarter">هذا الربع</button>
-      <button class="wl-preset" data-preset="year">هذا العام</button>
-      <button class="wl-preset" data-preset="all">منذ البداية</button>
+    <div class="wl-presets" id="wlPresets" role="tablist" aria-label="اختصارات الفترة">
+      <span class="wl-presets-lbl"><i class="fas fa-bolt"></i> اختصارات الفترة:</span>
+      <button type="button" class="wl-preset" data-preset="today">اليوم</button>
+      <button type="button" class="wl-preset" data-preset="yesterday">أمس</button>
+      <button type="button" class="wl-preset" data-preset="week">هذا الأسبوع</button>
+      <button type="button" class="wl-preset" data-preset="month">هذا الشهر</button>
+      <button type="button" class="wl-preset" data-preset="quarter">هذا الربع</button>
+      <button type="button" class="wl-preset" data-preset="year">هذا العام</button>
+      <button type="button" class="wl-preset" data-preset="all">منذ البداية</button>
     </div>
 
     <!-- Advanced filters -->
@@ -6290,8 +6291,8 @@
     <div class="tb-filter-actions" style="display:flex;gap:8px;justify-content:space-between;align-items:center;flex-wrap:wrap;">
       <!-- View-mode toggle -->
       <div class="wl-mode" role="tablist" aria-label="نمط العرض">
-        <button class="wl-mode-btn is-active" data-mode="byItem" onclick="erpSetWlMode('byItem')"><i class="fas fa-layer-group"></i> حسب الصنف</button>
-        <button class="wl-mode-btn" data-mode="byDate" onclick="erpSetWlMode('byDate')"><i class="fas fa-stream"></i> حسب التاريخ</button>
+        <button type="button" class="wl-mode-btn is-active" data-mode="byItem" onclick="erpSetWlMode('byItem')"><i class="fas fa-layer-group"></i> حسب الصنف</button>
+        <button type="button" class="wl-mode-btn" data-mode="byDate" onclick="erpSetWlMode('byDate')"><i class="fas fa-stream"></i> حسب التاريخ</button>
       </div>
       <div style="display:flex;gap:8px;">
         <button class="tb-btn" onclick="erpResetWlFilters()" type="button"><i class="fas fa-broom"></i> مسح الفلاتر</button>

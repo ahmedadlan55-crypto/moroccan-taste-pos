@@ -3037,7 +3037,7 @@
 .tb-btn {
   background: #fff;
   color: var(--mt-primary);
-  border: 1.5px solid #fff;
+  border: 1.5px solid #e5e7eb;
   border-radius: var(--mt-radius-sm);
   padding: 8px 14px;
   font-size: 12.5px;
@@ -3541,6 +3541,99 @@
   padding-top: 14px;
   margin-top: 14px;
   border-top: 1px dashed #e5e7eb;
+}
+
+/* ═══════════════════════════════════════════════════════════════════
+   Warehouse-Ledger filter chrome — date-preset chips + view-mode toggle.
+   These wl-* classes were missing from the loaded stylesheet, so the chips
+   and the mode toggle rendered as raw, unstyled browser buttons. Defined
+   once here; reused by #wlPresets (ledger) and #wePresets (expiry).
+   ═══════════════════════════════════════════════════════════════════ */
+.wl-presets {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin-top: 12px;
+}
+.wl-presets-lbl {
+  font-size: 11.5px;
+  font-weight: 800;
+  color: var(--mt-text-muted, #64748b);
+  margin-inline-end: 2px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.wl-presets-lbl i { color: #0ea5e9; font-size: 12px; }
+.wl-preset {
+  appearance: none;
+  background: var(--mt-surface-2, #f8fafc);
+  color: var(--mt-text-muted, #64748b);
+  border: 1.5px solid var(--mt-border, #e5e7eb);
+  border-radius: 999px;
+  padding: 6px 14px;
+  font-size: 12.5px;
+  font-weight: 700;
+  font-family: inherit;
+  cursor: pointer;
+  white-space: nowrap;
+  line-height: 1.4;
+  transition: all 0.15s ease;
+}
+.wl-preset:hover { border-color: #0ea5e9; color: #0369a1; background: #f0f9ff; }
+.wl-preset:focus-visible { outline: none; box-shadow: 0 0 0 3px rgba(14,165,233,0.25); }
+.wl-preset.is-active {
+  background: linear-gradient(135deg, #0ea5e9, #0284c7);
+  border-color: #0284c7;
+  color: #fff;
+  box-shadow: 0 2px 8px rgba(2,132,199,0.30);
+}
+
+/* View-mode segmented control (حسب الصنف / حسب التاريخ) */
+.wl-mode {
+  display: inline-flex;
+  gap: 4px;
+  padding: 4px;
+  background: var(--mt-surface-2, #f1f5f9);
+  border: 1.5px solid var(--mt-border, #e5e7eb);
+  border-radius: 12px;
+}
+.wl-mode-btn {
+  appearance: none;
+  background: transparent;
+  border: none;
+  border-radius: 9px;
+  padding: 7px 16px;
+  font-size: 12.5px;
+  font-weight: 800;
+  font-family: inherit;
+  color: var(--mt-text-muted, #64748b);
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  transition: all 0.15s ease;
+}
+.wl-mode-btn i { font-size: 12px; }
+.wl-mode-btn:hover { color: var(--mt-primary-2, #1e293b); }
+.wl-mode-btn:focus-visible { outline: none; box-shadow: 0 0 0 3px rgba(14,165,233,0.25); }
+.wl-mode-btn.is-active {
+  background: #fff;
+  color: #0369a1;
+  box-shadow: 0 1px 4px rgba(15,23,42,0.12);
+}
+
+/* Visible keyboard focus + prominence for the toolbar buttons */
+.tb-btn:focus-visible { outline: none; box-shadow: 0 0 0 3px rgba(14,165,233,0.30); }
+.tb-btn-success { box-shadow: 0 2px 8px rgba(16,185,129,0.25); }
+
+/* Action row stacks cleanly on narrow screens */
+@media (max-width: 640px) {
+  .tb-filter-actions { flex-direction: column; align-items: stretch; }
+  .wl-mode { width: 100%; }
+  .wl-mode-btn { flex: 1; justify-content: center; }
+  .tb-filter-actions .tb-btn { width: 100%; justify-content: center; }
 }
 
 /* ─── v5.10.4 — Show-zero toggle (re-used by all financial reports) ─── */

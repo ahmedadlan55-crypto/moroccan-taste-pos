@@ -5367,8 +5367,8 @@ function erpRenderPOTable(list) {
       '<td><i class="fas fa-truck" style="color:var(--accent);margin-left:6px;font-size:11px;"></i>' + (po.supplierName || '—') + '</td>' +
       '<td>' + brandChip + '</td>' +
       '<td>' + (po.poDate ? new Date(po.poDate).toLocaleDateString('en-GB') : '—') + '</td>' +
-      '<td>' + (Number(po.totalBeforeVat) || 0).toFixed(2) + '</td>' +
-      '<td><strong>' + (Number(po.totalAfterVat) || 0).toFixed(2) + '</strong></td>' +
+      '<td style="text-align:right;white-space:nowrap;"><span dir="ltr" style="font-variant-numeric:tabular-nums;">' + (Number(po.totalBeforeVat)||0).toLocaleString('en',{minimumFractionDigits:2}) + '</span> <small style="font-size:10px;color:#94a3b8;">ر.س</small></td>' +
+      '<td style="text-align:right;white-space:nowrap;"><strong><span dir="ltr" style="font-variant-numeric:tabular-nums;">' + (Number(po.totalAfterVat)||0).toLocaleString('en',{minimumFractionDigits:2}) + '</span></strong> <small style="font-size:10px;color:#94a3b8;">ر.س</small></td>' +
       '<td><span class="badge badge-' + (sc[po.status] || 'blue') + '">' + (sl[po.status] || po.status) + '</span></td>' +
       '<td style="font-size:12px;color:#64748b;">' + (po.approvedBy || '—') + '</td>' +
       '<td style="white-space:nowrap;">' +
@@ -5399,8 +5399,12 @@ function erpShowPOForm() {
   // Ensure add row and save btn are enabled for new PO
   var addRow = document.querySelector('#erpPOFormView .po-add-row');
   if (addRow) addRow.style.display = 'flex';
-  var saveBtn = document.querySelector('#erpPOFormView .btn-primary');
-  if (saveBtn) { saveBtn.textContent = ' حفظ أمر الشراء'; saveBtn.disabled = false; }
+  var saveBtn = document.getElementById('erpPOSaveBtn') || document.querySelector('#erpPOFormView .btn-primary');
+  if (saveBtn) { saveBtn.innerHTML = '<i class="fas fa-check-circle" style="margin-inline-end:6px;"></i> حفظ أمر الشراء'; saveBtn.disabled = false; }
+  var _poTitle = document.getElementById('erpPOFormTitle');
+  var _poBadge = document.getElementById('erpPOFormBadge');
+  if (_poTitle) _poTitle.textContent = 'أمر شراء جديد';
+  if (_poBadge) { _poBadge.textContent = 'جديد'; _poBadge.className = 'po-form-badge new'; _poBadge.style.display = 'inline-flex'; }
   // Reset
   document.getElementById('erpPOSupplierInput').value = '';
   document.getElementById('erpPOSupplierId').value = '';
@@ -5593,7 +5597,7 @@ function erpAddPOItem() {
 function erpRenderPOCart() {
   const tb = document.getElementById('erpPOItemsBody');
   if (!_erpPOCart.length) {
-    tb.innerHTML = '<tr><td colspan="7" style="text-align:center;color:#94a3b8;padding:24px;font-style:italic;">لم تتم إضافة أصناف بعد</td></tr>';
+    tb.innerHTML = '<tr><td colspan="7" class="po-items-empty"><div class="po-items-empty-inner"><i class="fas fa-inbox"></i><span>لم تتم إضافة أصناف بعد</span><small>ابحث عن مادة في الحقل أعلاه وأضفها للقائمة</small></div></td></tr>';
     ['erpPOSubtotal','erpPOVATTotal','erpPOGrandTotal'].forEach(id=>{ const e=document.getElementById(id); if(e) e.textContent='0.00 ر.س'; });
     return;
   }
@@ -5858,10 +5862,20 @@ function erpViewPO(poId) {
   // Hide/show add-item row and save button based on status
   var addRow = document.querySelector('#erpPOFormView .po-add-row');
   if (addRow) addRow.style.display = isDraft ? 'flex' : 'none';
-  var saveBtn = document.querySelector('#erpPOFormView .btn-primary');
+  var saveBtn = document.getElementById('erpPOSaveBtn') || document.querySelector('#erpPOFormView .btn-primary');
   if (saveBtn) {
-    saveBtn.textContent = isDraft ? ' حفظ التعديلات' : ' عرض فقط (معتمد)';
+    saveBtn.innerHTML = isDraft
+      ? '<i class="fas fa-check-circle" style="margin-inline-end:6px;"></i> حفظ التعديلات'
+      : '<i class="fas fa-eye" style="margin-inline-end:6px;"></i> عرض فقط';
     saveBtn.disabled = !isDraft;
+  }
+  var _poTitle2 = document.getElementById('erpPOFormTitle');
+  var _poBadge2 = document.getElementById('erpPOFormBadge');
+  if (_poTitle2) _poTitle2.textContent = 'أمر الشراء ' + (po.poNumber || ('#' + poId));
+  if (_poBadge2) {
+    var _bMap = { draft: ['مسودة','draft'], approved: ['معتمد','view'], received: ['مستلم','received'], cancelled: ['ملغي','cancelled'] };
+    var _bd = _bMap[po.status] || ['—','view'];
+    _poBadge2.textContent = _bd[0]; _poBadge2.className = 'po-form-badge ' + _bd[1]; _poBadge2.style.display = 'inline-flex';
   }
 
   // Load suppliers + items for dropdowns (used when editing)

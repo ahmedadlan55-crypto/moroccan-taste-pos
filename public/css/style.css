@@ -1726,6 +1726,32 @@ body.ar .erp-filters .filter-search input { padding: 12px 40px 12px 14px; }
   .po-totals-box { padding: 20px; }
 }
 
+/* PO v2 — Summary Card Icon Wrappers */
+.po-sum-icon { width: 52px; height: 52px; border-radius: 14px; display: flex; align-items: center; justify-content: center; margin: 0 auto 14px; font-size: 22px; }
+.po-sum-card .po-sum-icon { background: linear-gradient(135deg, #eff6ff, #dbeafe); color: #3b82f6; }
+.po-sum-card.highlight-draft .po-sum-icon { background: linear-gradient(135deg, #fff7ed, #fed7aa); color: #d97706; }
+.po-sum-card.highlight-approved .po-sum-icon { background: linear-gradient(135deg, #eff6ff, #bfdbfe); color: #2563eb; }
+.po-sum-card.highlight-received .po-sum-icon { background: linear-gradient(135deg, #f0fdf4, #bbf7d0); color: #16a34a; }
+.po-sum-icon-value { background: linear-gradient(135deg, var(--mt-accent, #3b82f6), var(--mt-accent-2, #1d4ed8)) !important; color: #fff !important; }
+
+/* PO v2 — Items Empty State */
+.po-items-empty { padding: 48px 24px !important; text-align: center; }
+.po-items-empty-inner { display: inline-flex; flex-direction: column; align-items: center; gap: 8px; }
+.po-items-empty-inner i { font-size: 44px; color: #cbd5e1; margin-bottom: 6px; }
+.po-items-empty-inner span { font-size: 14.5px; font-weight: 600; color: #64748b; }
+.po-items-empty-inner small { font-size: 12px; color: #94a3b8; }
+
+/* PO v2 — Form Header Icon Badge */
+.po-form-icon-hd { width: 46px; height: 46px; border-radius: 12px; background: linear-gradient(135deg, var(--accent, #3b82f6), var(--mt-accent-2, #1d4ed8)); display: flex; align-items: center; justify-content: center; color: #fff; font-size: 18px; flex-shrink: 0; box-shadow: 0 4px 12px rgba(59,130,246,0.3); }
+
+/* PO v2 — Form Status Badge */
+.po-form-badge { display: inline-flex; align-items: center; font-size: 11px; font-weight: 700; padding: 3px 10px; border-radius: 999px; margin-top: 4px; }
+.po-form-badge.new      { background: #f0fdf4; color: #16a34a; border: 1px solid #86efac; }
+.po-form-badge.draft    { background: #fff7ed; color: #d97706; border: 1px solid #fdba74; }
+.po-form-badge.view     { background: #eff6ff; color: #2563eb; border: 1px solid #93c5fd; }
+.po-form-badge.received { background: #f0fdf4; color: #16a34a; border: 1px solid #86efac; }
+.po-form-badge.cancelled { background: #fef2f2; color: #dc2626; border: 1px solid #fca5a5; }
+
 /* =========================================
    12. Advanced Reports Section
    ========================================= */

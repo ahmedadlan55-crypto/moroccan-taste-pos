@@ -2318,23 +2318,43 @@
       <button class="btn btn-primary" onclick="erpShowPOForm()"><i class="fas fa-plus"></i> أمر شراء جديد</button>
     </div>
     <div id="erpPOSummary" class="po-summary-cards" style="display:none;">
-      <div class="po-sum-card"><span class="po-sum-label">إجمالي الأوامر</span><span class="po-sum-val" id="erpPOTotalCount">0</span></div>
-      <div class="po-sum-card highlight-draft"><span class="po-sum-label">مسودة</span><span class="po-sum-val" id="erpPODraftCount">0</span></div>
-      <div class="po-sum-card highlight-approved"><span class="po-sum-label">معتمد</span><span class="po-sum-val" id="erpPOApprovedCount">0</span></div>
-      <div class="po-sum-card highlight-received"><span class="po-sum-label">مستلم</span><span class="po-sum-val" id="erpPOReceivedCount">0</span></div>
-      <div class="po-sum-card"><span class="po-sum-label">إجمالي القيمة مع الضريبة</span><span class="po-sum-val" id="erpPOTotalValue">0.00</span></div>
+      <div class="po-sum-card">
+        <div class="po-sum-icon"><i class="fas fa-clipboard-list"></i></div>
+        <span class="po-sum-label">إجمالي الأوامر</span>
+        <span class="po-sum-val" id="erpPOTotalCount">0</span>
+      </div>
+      <div class="po-sum-card highlight-draft">
+        <div class="po-sum-icon"><i class="fas fa-file-lines"></i></div>
+        <span class="po-sum-label">مسودة</span>
+        <span class="po-sum-val" id="erpPODraftCount">0</span>
+      </div>
+      <div class="po-sum-card highlight-approved">
+        <div class="po-sum-icon"><i class="fas fa-check-circle"></i></div>
+        <span class="po-sum-label">معتمد</span>
+        <span class="po-sum-val" id="erpPOApprovedCount">0</span>
+      </div>
+      <div class="po-sum-card highlight-received">
+        <div class="po-sum-icon"><i class="fas fa-truck"></i></div>
+        <span class="po-sum-label">مستلم</span>
+        <span class="po-sum-val" id="erpPOReceivedCount">0</span>
+      </div>
+      <div class="po-sum-card po-sum-card-value">
+        <div class="po-sum-icon po-sum-icon-value"><i class="fas fa-receipt"></i></div>
+        <span class="po-sum-label">إجمالي القيمة مع الضريبة</span>
+        <span class="po-sum-val" id="erpPOTotalValue" style="font-size:22px;">0.00 ر.س</span>
+      </div>
     </div>
     <!-- Quick-filter chips (Odoo-style presets) -->
     <div class="wo-filterbar-row" style="padding:0 4px 10px;margin-bottom:6px;">
-      <button class="wo-quickfilter" data-po-qf="all"       onclick="erpPOQuickFilter('all')"><i class="fas fa-list"></i>الكل</button>
-      <button class="wo-quickfilter" data-po-qf="draft"     onclick="erpPOQuickFilter('draft')"><i class="fas fa-file-lines"></i>مسودة</button>
-      <button class="wo-quickfilter" data-po-qf="approved"  onclick="erpPOQuickFilter('approved')"><i class="fas fa-check"></i>معتمد</button>
-      <button class="wo-quickfilter" data-po-qf="received"  onclick="erpPOQuickFilter('received')"><i class="fas fa-truck"></i>مستلم</button>
-      <button class="wo-quickfilter" data-po-qf="today"     onclick="erpPOQuickFilter('today')"><i class="fas fa-calendar-day"></i>اليوم</button>
-      <button class="wo-quickfilter" data-po-qf="week"      onclick="erpPOQuickFilter('week')"><i class="fas fa-calendar-week"></i>آخر 7 أيام</button>
-      <button class="wo-quickfilter" data-po-qf="month"     onclick="erpPOQuickFilter('month')"><i class="fas fa-calendar"></i>هذا الشهر</button>
-      <button class="wo-quickfilter" data-po-qf="large"     onclick="erpPOQuickFilter('large')"><i class="fas fa-arrow-up-wide-short"></i>كبيرة القيمة (&gt;10k)</button>
-      <button class="wo-quickfilter" onclick="erpPOResetFilters()" style="border-style:dashed;"><i class="fas fa-xmark"></i>مسح</button>
+      <button type="button" class="wo-quickfilter" data-po-qf="all"       onclick="erpPOQuickFilter('all')"><i class="fas fa-list"></i>الكل</button>
+      <button type="button" class="wo-quickfilter" data-po-qf="draft"     onclick="erpPOQuickFilter('draft')"><i class="fas fa-file-lines"></i>مسودة</button>
+      <button type="button" class="wo-quickfilter" data-po-qf="approved"  onclick="erpPOQuickFilter('approved')"><i class="fas fa-check"></i>معتمد</button>
+      <button type="button" class="wo-quickfilter" data-po-qf="received"  onclick="erpPOQuickFilter('received')"><i class="fas fa-truck"></i>مستلم</button>
+      <button type="button" class="wo-quickfilter" data-po-qf="today"     onclick="erpPOQuickFilter('today')"><i class="fas fa-calendar-day"></i>اليوم</button>
+      <button type="button" class="wo-quickfilter" data-po-qf="week"      onclick="erpPOQuickFilter('week')"><i class="fas fa-calendar-week"></i>آخر 7 أيام</button>
+      <button type="button" class="wo-quickfilter" data-po-qf="month"     onclick="erpPOQuickFilter('month')"><i class="fas fa-calendar"></i>هذا الشهر</button>
+      <button type="button" class="wo-quickfilter" data-po-qf="large"     onclick="erpPOQuickFilter('large')"><i class="fas fa-arrow-up-wide-short"></i>كبيرة القيمة (&gt;10k)</button>
+      <button type="button" class="wo-quickfilter" onclick="erpPOResetFilters()" style="border-style:dashed;"><i class="fas fa-xmark"></i>مسح</button>
       <span id="erpPOResultsCount" class="wo-results-count" style="margin-inline-start:auto;"></span>
     </div>
     <div class="erp-filters">
@@ -2361,8 +2381,14 @@
   <!-- ═══ صفحة إنشاء أمر شراء (كاملة) ═══ -->
   <div id="erpPOFormView" class="hidden" style="animation: fadeIn 0.4s ease forwards;">
     <div class="section-header" style="background: var(--white); padding: 16px 20px; border-radius: 16px; box-shadow: 0 2px 10px rgba(0,0,0,0.02); border: 1px solid var(--border); margin-bottom: 24px; display: flex; justify-content: space-between; align-items: center;">
-      <h2 class="section-title" style="margin: 0;"><i class="fas fa-clipboard-list" style="background:#eff6ff; padding:8px; border-radius:8px; color:var(--accent);"></i> أمر شراء جديد</h2>
-      <button class="btn btn-secondary" style="font-weight:700; padding:8px 16px; border-radius:8px;" onclick="erpBackToPOList()"><i class="fas fa-arrow-right"></i> العودة للقائمة</button>
+      <div style="display:flex;align-items:center;gap:14px;">
+        <div class="po-form-icon-hd"><i class="fas fa-clipboard-list"></i></div>
+        <div>
+          <h2 class="section-title" style="margin:0;"><span id="erpPOFormTitle">أمر شراء جديد</span></h2>
+          <span id="erpPOFormBadge" class="po-form-badge new" style="display:none;"></span>
+        </div>
+      </div>
+      <button type="button" class="btn btn-secondary" style="font-weight:700; padding:8px 16px; border-radius:8px;" onclick="erpBackToPOList()"><i class="fas fa-arrow-right"></i> العودة للقائمة</button>
     </div>
 
     <div class="po-form-grid">
@@ -2410,7 +2436,7 @@
         <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:12px;margin-bottom:20px;">
           <h4 class="po-section-title" style="margin-bottom:0; border:none; padding:0;"><i class="fas fa-boxes"></i> الأصناف المطلوبة</h4>
           <div style="display:flex;gap:8px;">
-            <button class="btn btn-sm btn-outline" style="border-radius:8px; font-weight:700;" onclick="erpExportPOTemplate()"><i class="fas fa-file-excel"></i> التحميل كنموذج</button>
+            <button type="button" class="btn btn-sm btn-outline" style="border-radius:8px; font-weight:700;" onclick="erpExportPOTemplate()"><i class="fas fa-file-excel"></i> التحميل كنموذج</button>
             <label class="btn btn-sm btn-secondary" style="margin:0;cursor:pointer; border-radius:8px; font-weight:700; display:flex; align-items:center; gap:6px;"><i class="fas fa-file-upload"></i> استيراد
               <input type="file" id="erpPOImportFile" accept=".xlsx,.xls,.csv" style="display:none;" onchange="erpImportPOItems(this)">
             </label>
@@ -2444,7 +2470,7 @@
             <label class="form-label" style="font-size:12.5px;">سعـر الوحدة</label>
             <input type="number" step="0.01" id="erpPOItemPrice" class="form-control" placeholder="0.00" style="font-weight:700;">
           </div>
-          <button class="btn btn-success po-add-btn" onclick="erpAddPOItem()"><i class="fas fa-plus"></i> إضـافة</button>
+          <button type="button" class="btn btn-success po-add-btn" onclick="erpAddPOItem()"><i class="fas fa-plus"></i> إضـافة</button>
         </div>
         <div id="erpPOStockHint" style="display:none;font-size:12.5px;color:#0369a1;background:#e0f2fe;padding:8px 14px;border-radius:10px;margin-top:12px;font-weight:600;border:1px solid #bae6fd;"></div>
 
@@ -2461,7 +2487,7 @@
               <th style="width:50px; text-align:center;">إجراء</th>
             </tr></thead>
             <tbody id="erpPOItemsBody">
-              <tr><td colspan="7" style="text-align:center;color:#94a3b8;padding:30px;font-style:italic;font-size:14px;"><i class="fas fa-inbox" style="font-size:30px; color:#cbd5e1; margin-bottom:10px; display:block;"></i> لم تتم إضافة أصناف بعد</td></tr>
+              <tr><td colspan="7" class="po-items-empty"><div class="po-items-empty-inner"><i class="fas fa-inbox"></i><span>لم تتم إضافة أصناف بعد</span><small>ابحث عن مادة في الحقل أعلاه وأضفها للقائمة</small></div></td></tr>
             </tbody>
           </table>
         </div>
@@ -2477,8 +2503,8 @@
 
     <!-- أزرار الحفظ والإلغاء -->
     <div style="background: var(--white); padding: 18px 24px; border-radius: 16px; border: 1px solid var(--border); margin-top: 20px; display: flex; gap: 14px; justify-content: flex-end; box-shadow: 0 -4px 15px rgba(0,0,0,0.01);">
-      <button class="btn btn-secondary" style="padding: 14px 30px; font-size: 15.5px; font-weight: 700; border-radius: 12px; background: #f1f5f9; color: #475569; border: 1px solid #e2e8f0; transition:all 0.2s;" onmouseover="this.style.background='#e2e8f0';" onmouseout="this.style.background='#f1f5f9';" onclick="erpBackToPOList()">إلغاء الأمر</button>
-      <button class="btn btn-primary" style="padding: 14px 40px; font-size: 15.5px; font-weight: 800; border-radius: 12px; box-shadow: 0 6px 20px rgba(13, 71, 161, 0.25);" onclick="erpSavePO()">
+      <button type="button" class="btn btn-secondary" style="padding: 14px 30px; font-size: 15.5px; font-weight: 700; border-radius: 12px;" onclick="erpBackToPOList()"><i class="fas fa-xmark" style="margin-inline-end:6px;"></i>إلغاء الأمر</button>
+      <button type="button" id="erpPOSaveBtn" class="btn btn-primary" style="padding: 14px 40px; font-size: 15.5px; font-weight: 800; border-radius: 12px; box-shadow: 0 6px 20px rgba(13, 71, 161, 0.25);" onclick="erpSavePO()">
         <i class="fas fa-check-circle" style="margin-inline-end: 6px;"></i> حفظ أمر الشراء
       </button>
     </div>

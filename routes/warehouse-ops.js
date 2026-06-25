@@ -872,10 +872,88 @@ router.get('/production-orders/:id', async (req, res) => {
   } catch(e) { res.status(500).json({ error: e.message }); }
 });
 
+// v7.7 — Materials availability for an EXISTING order (read-only).
+// Compares each pre-populated planned consumption row against live warehouse
+// stock. Mirrors the availability check the RELEASE transaction enforces
+// (warehouse-ops.js release loop), so the preview matches what release will do.
+router.get('/production-orders/:id/availability', async (req, res) => {
+  try {
+    const [rows] = await db.query(`
+      SELECT pc.item_id, i.name AS item_name, i.unit AS item_unit,
+             pc.qty_planned AS required, pc.unit_cost, pc.warehouse_id,
+             COALESCE(ws.qty,0) AS available
+      FROM production_consumption pc
+      LEFT JOIN inv_items i ON i.id = pc.item_id
+      LEFT JOIN warehouse_stock ws ON ws.item_id = pc.item_id AND ws.warehouse_id = pc.warehouse_id
+      WHERE pc.production_order_id = ?`, [req.params.id]);
+    const items = rows.map(r => {
+      const required = Number(r.required) || 0;
+      const available = Number(r.available) || 0;
+      const unitCost = Number(r.unit_cost) || 0;
+      const delta = available - required;
+      return {
+        itemId: r.item_id, itemName: r.item_name || r.item_id, itemUnit: r.item_unit || '',
+        required, available, delta, unitCost, lineCost: required * unitCost,
+        warehouseId: r.warehouse_id, status: (delta >= 0 ? 'ok' : 'short')
+      };
+    });
+    items.sort((a, b) => a.delta - b.delta);
+    const shortageCount = items.filter(x => x.status === 'short').length;
+    const reservedValue = items.reduce((s, x) => s + x.lineCost, 0);
+    res.json({ items, summary: { shortageCount, allAvailable: shortageCount === 0, itemCount: items.length, reservedValue } });
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
+// v7.7 — Materials availability PREVIEW before an order exists (read-only).
+// Reuses the create-time expansion math (batches × line × (1+waste%)) then
+// LEFT JOINs live stock, so the create wizard's "materials" step works up front.
+router.post('/production-orders/preview-availability', async (req, res) => {
+  try {
+    const { bomId, qtyPlanned, warehouseId } = req.body;
+    if (!bomId) return res.status(400).json({ error: 'bomId required' });
+    if (!warehouseId) return res.status(400).json({ error: 'warehouseId required' });
+    const qtyPlan = Number(qtyPlanned) || 0;
+    if (qtyPlan <= 0) return res.status(400).json({ error: 'qtyPlanned must be positive' });
+
+    const [bomRows] = await db.query('SELECT id, yield_quantity FROM bom WHERE id=? AND is_active=1', [bomId]);
+    if (!bomRows.length) return res.status(404).json({ error: 'bom not found or inactive' });
+    const yieldQ = Number(bomRows[0].yield_quantity) || 1;
+    const batches = qtyPlan / yieldQ;
+    const [lines] = await db.query('SELECT * FROM bom_lines WHERE bom_id=?', [bomId]);
+    if (!lines.length) return res.status(400).json({ error: 'bom has no components' });
+
+    const items = [];
+    for (const l of lines) {
+      const qtyBase = Number(l.quantity) * batches;
+      const waste = Number(l.waste_pct || 0) / 100;
+      const required = qtyBase * (1 + waste);
+      const unitCost = await _getEffectiveCost(l.component_item_id, warehouseId);
+      const [stk] = await db.query(
+        'SELECT qty FROM warehouse_stock WHERE warehouse_id=? AND item_id=? LIMIT 1',
+        [warehouseId, l.component_item_id]);
+      const available = stk.length ? Number(stk[0].qty) : 0;
+      const [it] = await db.query('SELECT name, unit FROM inv_items WHERE id=? LIMIT 1', [l.component_item_id]);
+      const delta = available - required;
+      items.push({
+        itemId: l.component_item_id,
+        itemName: it.length ? it[0].name : l.component_item_id,
+        itemUnit: it.length ? (it[0].unit || '') : '',
+        required, available, delta, unitCost, lineCost: required * unitCost,
+        status: (delta >= 0 ? 'ok' : 'short')
+      });
+    }
+    items.sort((a, b) => a.delta - b.delta);
+    const shortageCount = items.filter(x => x.status === 'short').length;
+    const reservedValue = items.reduce((s, x) => s + x.lineCost, 0);
+    res.json({ items, summary: { shortageCount, allAvailable: shortageCount === 0, itemCount: items.length, reservedValue, batches } });
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
 // Create production order from BOM
 router.post('/production-orders', async (req, res) => {
   try {
-    const { bomId, warehouseId, outputWarehouseId, qtyPlanned, plannedDate, brandId, branchId, notes, createdBy } = req.body;
+    const { bomId, warehouseId, outputWarehouseId, qtyPlanned, plannedDate, brandId, branchId, notes, createdBy,
+            priority, allowedScrapPct, batchNumber, costBreakdown } = req.body;
     if (!bomId) return res.status(400).json({ error: 'bomId required' });
     if (!warehouseId) return res.status(400).json({ error: 'warehouseId (raw materials source) required' });
     if (!qtyPlanned || Number(qtyPlanned) <= 0) return res.status(400).json({ error: 'qtyPlanned must be positive' });
@@ -906,14 +984,25 @@ router.post('/production-orders', async (req, res) => {
     const yieldQ = Number(bom.yield_quantity) || 1;
     const batches = qtyPlan / yieldQ;  // how many BOM runs
 
+    // v7.7 — optional create-wizard metadata (all columns are nullable/defaulted)
+    let _cbJson = null;
+    if (costBreakdown != null) {
+      try { _cbJson = (typeof costBreakdown === 'string') ? costBreakdown : JSON.stringify(costBreakdown); } catch(_) { _cbJson = null; }
+    }
+    const _priority = (typeof priority === 'string' && priority) ? priority.slice(0,20) : 'normal';
+    const _scrapPct = (allowedScrapPct != null && !isNaN(Number(allowedScrapPct))) ? Number(allowedScrapPct) : 0;
+    const _batchNo  = (typeof batchNumber === 'string' && batchNumber.trim()) ? batchNumber.trim().slice(0,80) : null;
+
     await db.query(
       `INSERT INTO production_orders
        (id, order_number, bom_id, product_id, warehouse_id, output_warehouse_id, brand_id, branch_id,
-        qty_planned, status, notes, created_by, planned_date)
-       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+        qty_planned, status, notes, created_by, planned_date,
+        priority, allowed_scrap_pct, batch_number, cost_breakdown)
+       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
       [id, orderNumber, bomId, bom.product_id, warehouseId, outputWarehouseId || warehouseId,
        brandId || null, branchId || null, qtyPlan, 'planned', notes || '', createdBy || '',
-       plannedDate || new Date().toISOString().slice(0,10)]);
+       plannedDate || new Date().toISOString().slice(0,10),
+       _priority, _scrapPct, _batchNo, _cbJson]);
 
     // Pre-populate planned consumption rows
     for (const l of lines) {
@@ -937,11 +1026,16 @@ router.post('/production-orders', async (req, res) => {
 router.post('/production-orders/:id/release', BACKOFFICE, async (req, res) => {
   try {
     const id = req.params.id;
-    const { releasedBy, laborCost, overheadCost } = req.body;
+    const { releasedBy, laborCost, overheadCost, costBreakdown } = req.body;
     const [hdrRows] = await db.query('SELECT * FROM production_orders WHERE id=?', [id]);
     if (!hdrRows.length) return res.status(404).json({ error: 'not found' });
     const hdr = hdrRows[0];
     if (hdr.status !== 'planned') return res.status(400).json({ error: 'only planned can be released' });
+    // v7.7 — optional descriptive cost breakdown (display only; scalars below drive GL)
+    let _relCbJson;
+    if (costBreakdown != null) {
+      try { _relCbJson = (typeof costBreakdown === 'string') ? costBreakdown : JSON.stringify(costBreakdown); } catch(_) { _relCbJson = undefined; }
+    }
 
     const [cons] = await db.query('SELECT * FROM production_consumption WHERE production_order_id=?', [id]);
     if (!cons.length) return res.status(400).json({ error: 'no consumption lines' });
@@ -1043,9 +1137,12 @@ router.post('/production-orders/:id/release', BACKOFFICE, async (req, res) => {
       const [relRes] = await conn.query(
         `UPDATE production_orders
          SET status='released', released_by=?, released_at=NOW(),
-             materials_cost=?, labor_cost=?, overhead_cost=?, total_cost=?, gl_release_id=?
-         WHERE id=? AND status='planned'`,
-        [releasedBy || '', materialsCost, labor, overhead, totalCost, glId, id]);
+             materials_cost=?, labor_cost=?, overhead_cost=?, total_cost=?, gl_release_id=?` +
+             (_relCbJson !== undefined ? ', cost_breakdown=?' : '') +
+        ` WHERE id=? AND status='planned'`,
+        _relCbJson !== undefined
+          ? [releasedBy || '', materialsCost, labor, overhead, totalCost, glId, _relCbJson, id]
+          : [releasedBy || '', materialsCost, labor, overhead, totalCost, glId, id]);
       if (!relRes || relRes.affectedRows !== 1) {
         const e = new Error('سبق إطلاق هذا الأمر (طلب متزامن؟) — أعد التحميل');
         e.status = 409; throw e;

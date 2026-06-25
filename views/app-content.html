@@ -3628,9 +3628,18 @@
     </div>
     <div class="wo-header-actions">
       <button class="wo-btn wo-btn-secondary" onclick="prdLoad()"><i class="fas fa-rotate"></i><span>تحديث</span></button>
-      <button class="wo-btn wo-btn-primary" onclick="prdOpenNewModal()"><i class="fas fa-plus"></i><span>أمر جديد</span></button>
+      <button class="wo-btn wo-btn-primary" onclick="prdOpenNewModal()"><i class="fas fa-plus"></i><span>أمر إنتاج جديد</span></button>
     </div>
   </header>
+
+  <!-- Compact operational hero (light gradient) -->
+  <div class="prd-hero">
+    <div class="prd-hero-intro">
+      <div class="prd-hero-title"><i class="fas fa-gauge-high"></i> لوحة تشغيل الإنتاج</div>
+      <div class="prd-hero-sub">تابع الأوامر حسب الحالة والفرع والمستودع ونسبة اكتمال التصنيع.</div>
+    </div>
+    <div class="prd-hero-pulse" id="prdHeroPulse"></div>
+  </div>
 
   <div class="wo-metric-strip" id="prdMetrics"></div>
 
@@ -3690,13 +3699,13 @@
       <thead>
         <tr>
           <th scope="col">رقم الأمر</th>
-          <th scope="col">البراند</th>
           <th scope="col">المنتج</th>
+          <th scope="col">البراند</th>
+          <th scope="col">الفرع</th>
           <th scope="col" class="num">الكمية</th>
           <th scope="col">المستودع</th>
-          <th scope="col" class="num">المواد</th>
-          <th scope="col" class="num">العمالة + غير مباشرة</th>
-          <th scope="col" class="num">الإجمالي</th>
+          <th scope="col">حالة المواد</th>
+          <th scope="col" class="num">التكلفة</th>
           <th scope="col">الحالة</th>
           <th scope="col">الإجراءات</th>
         </tr>
@@ -3705,6 +3714,28 @@
         <tr><td colspan="10"><div class="wo-empty"><i class="fas fa-spinner fa-spin"></i><span>جاري التحميل...</span></div></td></tr>
       </tbody>
     </table>
+  </div>
+</div>
+
+<!-- ══════════════════════════════════════════════════════════════ -->
+<!-- PHASE 2 — PRODUCTION ORDER DETAIL (full page, tabbed) -->
+<!-- ══════════════════════════════════════════════════════════════ -->
+<div id="erpProductionOrderDetail" class="dash-section hidden wo-section" data-section-theme="warning">
+  <header class="wo-header">
+    <div class="wo-header-titles">
+      <h1><span class="wo-icon-slot warn"><i class="fas fa-industry"></i></span><span id="prdDetailTitle">تفاصيل أمر الإنتاج</span></h1>
+      <p class="wo-header-sub" id="prdDetailSub">—</p>
+    </div>
+    <div class="wo-header-actions" id="prdDetailHeaderActions">
+      <button class="wo-btn wo-btn-secondary" onclick="erpNav('erpProductionOrders')"><i class="fas fa-arrow-right"></i><span>رجوع للقائمة</span></button>
+    </div>
+  </header>
+
+  <div id="prdDetailStatusBar"></div>
+  <div id="prdDetailTimeline" class="prd-timeline-wrap"></div>
+  <div id="prdDetailTabs" class="prd-tabs" role="tablist"></div>
+  <div id="prdDetailBody" class="prd-detail-body">
+    <div class="wo-empty"><i class="fas fa-spinner fa-spin"></i><span>جاري التحميل...</span></div>
   </div>
 </div>
 

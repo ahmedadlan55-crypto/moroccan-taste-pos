@@ -42,7 +42,7 @@ const erpSections = [
   'erpHrShifts','erpHrOvertime','erpHrExceptions',
   'erpCashDash','erpCashBoxes','erpBankAccounts','erpCashReceipts','erpCashPayments','erpCashTransfers',
   // Warehouse Phase 1/2/3
-  'erpWhHierarchy','erpStockIssues','erpProductionOrders','erpExpiryAlerts','erpSlowMoving','erpTurnover',
+  'erpWhHierarchy','erpStockIssues','erpProductionOrders','erpProductionOrderDetail','erpExpiryAlerts','erpSlowMoving','erpTurnover',
   // v7.4 (G3) — analytics views already fully wired (nav + switch + render + backend);
   // list them here for consistency (the array is currently informational only).
   'erpReorderAlerts','erpDaysOfStock','erpAbcAnalysis',
@@ -197,6 +197,7 @@ function erpNav(sectionId) {
       case 'erpWhHierarchy':     if (typeof whhLoad === 'function') whhLoad(); break;
       case 'erpStockIssues':     if (typeof siLoad === 'function') siLoad(); break;
       case 'erpProductionOrders':if (typeof prdLoadInit === 'function') prdLoadInit(); break;
+      case 'erpProductionOrderDetail': if (typeof prdRenderDetail === 'function') prdRenderDetail(window._prdDetailId); break;
       case 'erpExpiryAlerts':    if (typeof expLoad === 'function') expLoad(); break;
       case 'erpSlowMoving':      if (typeof slowLoad === 'function') slowLoad(); break;
       case 'erpTurnover':        if (typeof turnLoad === 'function') turnLoad(); break;
@@ -24605,6 +24606,32 @@ function prdOnSearchInput() {
   _prdSearchTimer = setTimeout(prdLoad, 300);
 }
 
+// Shared status + materials palette (dashboard list + detail page) — v7.7
+function _prdStatusMeta(s) {
+  var m = {
+    planned:     { t:'مخطط',       c:'warning', hex:'#f59e0b', icon:'fa-clipboard-list' },
+    released:    { t:'مُطلق',       c:'info',    hex:'#0284c7', icon:'fa-play' },
+    in_progress: { t:'قيد التنفيذ', c:'purple',  hex:'#7c3aed', icon:'fa-gears' },
+    completed:   { t:'مكتمل',       c:'success', hex:'#16a34a', icon:'fa-circle-check' },
+    closed:      { t:'مغلق',        c:'neutral', hex:'#64748b', icon:'fa-lock' },
+    cancelled:   { t:'ملغى',        c:'danger',  hex:'#dc2626', icon:'fa-ban' }
+  };
+  return m[s] || { t:(s||'—'), c:'neutral', hex:'#64748b', icon:'fa-circle' };
+}
+function _prdMaterialsMeta(s) {
+  if (s === 'planned')   return { t:'بانتظار الصرف', c:'neutral', icon:'fa-hourglass-half' };
+  if (s === 'released' || s === 'in_progress') return { t:'مصروفة', c:'info', icon:'fa-truck-ramp-box' };
+  if (s === 'completed') return { t:'مكتملة', c:'success', icon:'fa-check-double' };
+  if (s === 'cancelled') return { t:'مُعادة', c:'danger', icon:'fa-rotate-left' };
+  return { t:'—', c:'neutral', icon:'fa-minus' };
+}
+function _prdMoney(n){ return Number(n||0).toLocaleString('en',{minimumFractionDigits:2,maximumFractionDigits:2}); }
+function _prdPrioMeta(p){
+  if (p === 'high' || p === 'urgent') return { t:'عاجل', cls:'high' };
+  if (p === 'low')  return { t:'منخفض', cls:'low' };
+  return null;
+}
+
 function prdLoad() {
   var body = document.getElementById('prdBody');
   if (!body) return;
@@ -24635,56 +24662,74 @@ function prdLoad() {
     });
     var rc = document.getElementById('prdResultsCount');
     if (rc) rc.innerHTML = '<i class="fas fa-circle-info"></i> <b>'+rows.length+'</b> أمر إنتاج';
-    // Metrics
+    // ─ KPI cards (lifecycle counts) ─
+    var planned = rows.filter(function(r){return r.status==='planned';}).length;
+    var inProg  = rows.filter(function(r){return ['released','in_progress'].indexOf(r.status)>=0;}).length;
+    var completedRows = rows.filter(function(r){return r.status==='completed';});
+    var completed = completedRows.length;
     var metrics = document.getElementById('prdMetrics');
     if (metrics) {
-      var planned = rows.filter(function(r){return r.status==='planned';}).length;
-      var inProg  = rows.filter(function(r){return ['released','in_progress'].indexOf(r.status)>=0;}).length;
-      var completed = rows.filter(function(r){return r.status==='completed';}).length;
-      var totalValue = rows.filter(function(r){return r.status==='completed';})
-                          .reduce(function(s,r){return s + Number(r.total_cost||0);}, 0);
       metrics.innerHTML =
         _woMetric('fa-industry', 'info', 'إجمالي الأوامر', rows.length, 'info') +
-        _woMetric('fa-clipboard-list', 'neutral', 'مخططة', planned, 'info') +
-        _woMetric('fa-gears', 'warning', 'قيد الإنتاج', inProg, 'warning') +
-        _woMetric('fa-circle-check', 'success', 'مكتملة · قيمة إنتاج', completed + ' · ' + totalValue.toLocaleString('en',{minimumFractionDigits:2}), 'success');
+        _woMetric('fa-clipboard-list', 'warning', 'مخططة', planned, 'warning') +
+        _woMetric('fa-gears', 'purple', 'قيد التنفيذ', inProg, 'purple') +
+        _woMetric('fa-circle-check', 'success', 'مكتملة', completed, 'success');
+    }
+    // ─ Hero pulse (operational, derived — no extra query) ─
+    var pulse = document.getElementById('prdHeroPulse');
+    if (pulse) {
+      var prodValue = completedRows.reduce(function(s,r){return s + Number(r.total_cost||0);},0);
+      var avgUnit = completed ? completedRows.reduce(function(s,r){return s + Number(r.unit_cost||0);},0)/completed : 0;
+      var compRate = rows.length ? Math.round((completed/rows.length)*100) : 0;
+      pulse.innerHTML =
+        '<div class="prd-pulse-box"><b>'+_prdMoney(prodValue)+'</b><span>قيمة الإنتاج المكتمل</span></div>' +
+        '<div class="prd-pulse-box"><b>'+avgUnit.toFixed(2)+'</b><span>متوسط تكلفة الوحدة</span></div>' +
+        '<div class="prd-pulse-box"><b>'+compRate+'%</b><span>نسبة الإكمال</span></div>';
     }
     if (!rows.length) {
       body.innerHTML = '<tr><td colspan="10">' + _woEmpty('fa-industry', 'لا توجد أوامر إنتاج', 'أنشئ أول أمر إنتاج من وصفة BOM لبدء احتساب التكاليف الفعلية.',
         '<button class="wo-btn wo-btn-primary" onclick="prdOpenNewModal()"><i class="fas fa-plus"></i><span>إنشاء أمر إنتاج</span></button>') + '</td></tr>';
       return;
     }
-    var sMap = {planned:{t:'مخطط',c:'neutral'}, released:{t:'مُطلق',c:'info'}, in_progress:{t:'قيد التنفيذ',c:'warning'}, completed:{t:'مكتمل',c:'success'}, closed:{t:'مغلق',c:'neutral'}, cancelled:{t:'ملغى',c:'danger'}};
     body.innerHTML = rows.map(function(r){
-      var s = sMap[r.status] || {t:r.status,c:'neutral'};
-      var actions = '<button class="wo-icon-btn info" onclick="prdView(\''+_woEscapeHtml(r.id)+'\')" title="عرض" aria-label="عرض"><i class="fas fa-eye"></i></button>';
-      if (r.status === 'planned') actions += '<button class="wo-icon-btn warning" onclick="prdRelease(\''+_woEscapeHtml(r.id)+'\')" title="إطلاق" aria-label="إطلاق"><i class="fas fa-play"></i></button>';
-      if (r.status === 'released') actions += '<button class="wo-icon-btn success" onclick="prdComplete(\''+_woEscapeHtml(r.id)+'\')" title="إكمال" aria-label="إكمال"><i class="fas fa-flag-checkered"></i></button>';
-      var ovhLabor = Number(r.labor_cost||0) + Number(r.overhead_cost||0);
+      var s = _prdStatusMeta(r.status);
+      var mat = _prdMaterialsMeta(r.status);
+      var idJs = _woEscapeHtml(r.id);
+      var actions = '<button class="wo-icon-btn info" onclick="prdOpenDetail(\''+idJs+'\')" title="عرض التفاصيل" aria-label="عرض"><i class="fas fa-eye"></i></button>';
+      if (r.status === 'planned') actions += '<button class="wo-icon-btn warning" onclick="prdRelease(\''+idJs+'\')" title="إطلاق" aria-label="إطلاق"><i class="fas fa-play"></i></button>';
+      if (r.status === 'released') actions += '<button class="wo-icon-btn success" onclick="prdComplete(\''+idJs+'\')" title="إكمال" aria-label="إكمال"><i class="fas fa-flag-checkered"></i></button>';
       var brandChip = r.brand_name
         ? '<span class="wo-chip purple"><i class="fas fa-store"></i> '+_woEscapeHtml(r.brand_name)+'</span>'
         : '<span class="wo-text-subtle wo-text-caption">—</span>';
-      return '<tr>' +
-        '<td data-label="رقم الأمر"><code>'+_woEscapeHtml(r.order_number||'')+'</code></td>' +
-        '<td data-label="البراند">'+brandChip+'</td>' +
+      var prio = _prdPrioMeta(r.priority);
+      var prioChip = prio ? ' <span class="prd-prio prd-prio-'+prio.cls+'">'+prio.t+'</span>' : '';
+      var branch = r.branch_name ? _woEscapeHtml(r.branch_name) : '<span class="wo-text-subtle wo-text-caption">—</span>';
+      return '<tr class="prd-row" onclick="prdOpenDetail(\''+idJs+'\')" style="cursor:pointer;">' +
+        '<td data-label="رقم الأمر"><code>'+_woEscapeHtml(r.order_number||'')+'</code>'+prioChip+'</td>' +
         '<td data-label="المنتج"><b>'+_woEscapeHtml(r.product_name||'')+'</b></td>' +
-        '<td data-label="الكمية" class="num">'+(r.qty_planned||0)+' <span class="wo-text-subtle wo-text-caption">'+_woEscapeHtml(r.product_unit||'')+'</span></td>' +
+        '<td data-label="البراند">'+brandChip+'</td>' +
+        '<td data-label="الفرع">'+branch+'</td>' +
+        '<td data-label="الكمية" class="num">'+(Number(r.qty_planned)||0)+' <span class="wo-text-subtle wo-text-caption">'+_woEscapeHtml(r.product_unit||'')+'</span></td>' +
         '<td data-label="المستودع">'+_woEscapeHtml(r.warehouse_name||'')+'</td>' +
-        '<td data-label="المواد" class="num">'+Number(r.materials_cost||0).toLocaleString('en',{minimumFractionDigits:2})+'</td>' +
-        '<td data-label="عمالة + غير مباشرة" class="num">'+ovhLabor.toLocaleString('en',{minimumFractionDigits:2})+'</td>' +
-        '<td data-label="الإجمالي" class="num strong">'+Number(r.total_cost||0).toLocaleString('en',{minimumFractionDigits:2})+'</td>' +
-        '<td data-label="الحالة"><span class="wo-chip '+s.c+'">'+s.t+'</span></td>' +
-        '<td data-label="الإجراءات"><div class="wo-actions">'+actions+'</div></td>' +
+        '<td data-label="حالة المواد"><span class="wo-chip '+mat.c+'"><i class="fas '+mat.icon+'"></i> '+mat.t+'</span></td>' +
+        '<td data-label="التكلفة" class="num"><b>'+_prdMoney(r.total_cost)+'</b><div class="wo-text-subtle wo-text-caption">مواد: '+_prdMoney(r.materials_cost)+'</div></td>' +
+        '<td data-label="الحالة"><span class="wo-chip '+s.c+'"><i class="fas '+s.icon+'"></i> '+s.t+'</span></td>' +
+        '<td data-label="الإجراءات" onclick="event.stopPropagation();"><div class="wo-actions">'+actions+'</div></td>' +
       '</tr>';
     }).join('');
   });
 }
 // ═══ Production Order — Foodics-style modal (brand-aware + searchable BOM picker + state persistence) ═══
-var _prdDraftKey = 'prd_draft_v2';
-var _prdState = { brandId:'', bomId:'', qty:'', whRaw:'', whOut:'', date:new Date().toISOString().slice(0,10), notes:'' };
+var _prdDraftKey = 'prd_draft_v3';
+function _prdBlankState(){ return { brandId:'', branchId:'', bomId:'', qty:'', whRaw:'', whOut:'', date:new Date().toISOString().slice(0,10), notes:'', priority:'normal', scrapPct:'', batchNo:'', laborMethod:'manual', overheadMethod:'manual', labor:{workers:'',hours:'',rate:''}, overhead:{electricity:'',equipment:'',packaging:'',other:''} }; }
+var _prdState = _prdBlankState();
+var _prdWizStep = 1;
+var _prdWzAvail = null;          // last availability preview (step 3)
+var _prdWzMatCost = 0;          // estimated materials cost (from availability preview)
 var _prdAllBoms = [];
 var _prdAllWhs = [];
 var _prdAllBrands = [];
+var _prdAllBranches = [];
 var _prdBomLines = [];          // loaded when a BOM is selected (for availability check)
 
 function _prdSaveDraft() { try { localStorage.setItem(_prdDraftKey, JSON.stringify(_prdState)); } catch(e) {} }
@@ -24699,124 +24744,132 @@ function _prdLoadDraft() {
 }
 function _prdClearDraft() {
   try { localStorage.removeItem(_prdDraftKey); } catch(e) {}
-  _prdState = { brandId:'', bomId:'', qty:'', whRaw:'', whOut:'', date:new Date().toISOString().slice(0,10), notes:'' };
+  _prdState = _prdBlankState();
 }
 
 function prdOpenNewModal() {
   _prdLoadDraft();
-  // Parallel load: brands, BOMs, warehouses
+  _prdWizStep = 1;
+  // Parallel load: brands, BOMs, warehouses (branches load independently, non-blocking)
   var pending = 3;
   var data = { brands:[], boms:[], whs:[] };
-  var done = function() { if (--pending === 0) _prdRenderModal(data); };
+  var done = function() { if (--pending === 0) _prdRenderWizard(data); };
   _erpGet('/erp/brands', function(r){ data.brands = r || []; done(); });
   _erpGet('/erp/bom',    function(r){ data.boms   = r || []; done(); });
   _erpGet('/erp/warehouses-list', function(r){ data.whs = r || []; done(); });
+  _erpGet('/erp/branches-full', function(r){
+    _prdAllBranches = r || [];
+    var sel = document.getElementById('prdBranch');
+    if (sel) { sel.innerHTML = _prdBranchOpts(); if (_prdState.branchId) sel.value = _prdState.branchId; }
+  });
 }
 
-function _prdRenderModal(data) {
-  _prdAllBrands = data.brands; _prdAllBoms = data.boms; _prdAllWhs = data.whs;
+// Keep legacy name as an alias in case any external caller references it
+function _prdRenderModal(data) { return _prdRenderWizard(data); }
 
+function _prdBranchOpts(){
+  return '<option value="">— عام —</option>' + (_prdAllBranches||[]).map(function(b){
+    var sel = (_prdState.branchId === b.id) ? ' selected' : '';
+    return '<option value="'+b.id+'"'+sel+'>'+_woEscapeHtml(b.name||'')+'</option>';
+  }).join('');
+}
+
+function _prdRenderWizard(data) {
+  _prdAllBrands = data.brands; _prdAllBoms = data.boms; _prdAllWhs = data.whs;
+  var esc = _woEscapeHtml;
   var brandOpts = '<option value="">— كل البراندات —</option>' +
-    _prdAllBrands.map(function(b){
-      var sel = (_prdState.brandId === b.id) ? ' selected' : '';
-      return '<option value="'+b.id+'"'+sel+'>'+_woEscapeHtml(b.name||'')+'</option>';
-    }).join('');
+    _prdAllBrands.map(function(b){ var sel=(_prdState.brandId===b.id)?' selected':''; return '<option value="'+b.id+'"'+sel+'>'+esc(b.name||'')+'</option>'; }).join('');
+  var ld = _prdState.labor||{}, od = _prdState.overhead||{};
+  var v = function(x){ return (x===0||x) ? esc(x) : ''; };
 
   var body =
-    '<div class="wo-section" style="padding:0;box-shadow:none;background:transparent;">' +
-      // Draft indicator
-      '<div id="prdDraftBadge" class="wo-chip info" style="margin-bottom:12px;display:none;">' +
-        '<i class="fas fa-floppy-disk"></i> مسودة محفوظة — سيتم استرجاع القيم تلقائياً' +
-      '</div>' +
+    '<div class="prd-wz">' +
+      '<div class="prd-wz-steps" id="prdWzSteps"></div>' +
+      '<div class="prd-wz-body">' +
 
-      // Brand selector (Foodics-style: choose brand first → filters everything else)
-      '<div class="wo-label-stack" style="margin-bottom:14px;">' +
-        '<label class="wo-field-label" for="prdBrand">' +
-          '<i class="fas fa-store" style="color:var(--wo-purple);"></i> البراند' +
-          ' <span class="wo-text-caption" style="color:var(--wo-on-surface-subtle);">— يحدد المواد والمستودعات المتاحة</span>' +
-        '</label>' +
-        '<select class="wo-select" id="prdBrand">'+brandOpts+'</select>' +
-      '</div>' +
+        // ─ STEP 1: basic data ─
+        '<div class="prd-wz-step" data-wz="1">' +
+          '<div class="prd-wz-grid2">' +
+            '<div class="wo-label-stack"><label class="wo-field-label"><i class="fas fa-store" style="color:#7c3aed"></i> البراند</label><select class="wo-select" id="prdBrand">'+brandOpts+'</select></div>' +
+            '<div class="wo-label-stack"><label class="wo-field-label"><i class="fas fa-code-branch" style="color:#0891b2"></i> الفرع</label><select class="wo-select" id="prdBranch">'+_prdBranchOpts()+'</select></div>' +
+            '<div class="wo-label-stack"><label class="wo-field-label"><i class="fas fa-warehouse" style="color:#f59e0b"></i> مستودع المواد الخام *</label><select class="wo-select" id="prdWhRaw"><option value="">— اختر المستودع —</option></select></div>' +
+            '<div class="wo-label-stack"><label class="wo-field-label"><i class="fas fa-check-double" style="color:#16a34a"></i> مستودع المنتج التام</label><select class="wo-select" id="prdWhOut"><option value="">(نفس مستودع المواد)</option></select></div>' +
+            '<div class="wo-label-stack"><label class="wo-field-label"><i class="fas fa-calendar-day"></i> تاريخ الإنتاج</label><input type="date" class="wo-input" id="prdDate" value="'+v(_prdState.date||new Date().toISOString().slice(0,10))+'"></div>' +
+            '<div class="wo-label-stack"><label class="wo-field-label"><i class="fas fa-flag" style="color:#dc2626"></i> الأولوية</label><select class="wo-select" id="prdPriority"><option value="normal">عادية</option><option value="high">عاجل</option><option value="low">منخفض</option></select></div>' +
+            '<div class="wo-label-stack"><label class="wo-field-label"><i class="fas fa-users" style="color:#7c3aed"></i> طريقة احتساب العمالة</label><select class="wo-select" id="prdLaborMethod"><option value="manual">يدوي / حسب ساعات العمل</option><option value="none">بدون</option></select></div>' +
+            '<div class="wo-label-stack"><label class="wo-field-label"><i class="fas fa-bolt" style="color:#0284c7"></i> طريقة التكاليف غير المباشرة</label><select class="wo-select" id="prdOverheadMethod"><option value="manual">إدخال يدوي</option><option value="none">بدون</option></select></div>' +
+          '</div>' +
+          '<div class="wo-label-stack" style="margin-top:12px;"><label class="wo-field-label"><i class="fas fa-note-sticky"></i> ملاحظات داخلية</label><textarea class="wo-textarea" id="prdNotes" rows="2" placeholder="ملاحظات على أمر الإنتاج...">'+esc(_prdState.notes||'')+'</textarea></div>' +
+          '<div class="prd-wz-hint"><i class="fas fa-lightbulb"></i> يُفضّل فصل مستودع المواد الخام عن مستودع المنتج التام لتوثيق حركتَي الصرف والاستلام بوضوح.</div>' +
+        '</div>' +
 
-      // BOM picker (searchable, brand-filtered)
-      '<div class="wo-label-stack" style="margin-bottom:14px;">' +
-        '<label class="wo-field-label">' +
-          '<i class="fas fa-book-open" style="color:var(--wo-info-fg);"></i> وصفة الإنتاج (BOM) *' +
-        '</label>' +
-        '<div id="prdBomPickerHost"></div>' +
-        '<div id="prdBomSelected" class="wo-chip success" style="display:none;margin-top:8px;">' +
-          '<i class="fas fa-check"></i> <span id="prdBomSelectedText"></span>' +
-          ' <button type="button" onclick="_prdClearBom()" class="wo-icon-btn danger" style="width:22px;height:22px;margin-inline-start:6px;" aria-label="مسح"><i class="fas fa-xmark"></i></button>' +
+        // ─ STEP 2: product + BOM ─
+        '<div class="prd-wz-step" data-wz="2" style="display:none;">' +
+          '<div class="wo-label-stack"><label class="wo-field-label"><i class="fas fa-book-open" style="color:#0284c7"></i> وصفة الإنتاج (BOM) *</label>' +
+            '<div id="prdBomPickerHost"></div>' +
+            '<div id="prdBomSelected" class="wo-chip success" style="display:none;margin-top:8px;"><i class="fas fa-check"></i> <span id="prdBomSelectedText"></span> <button type="button" onclick="_prdClearBom()" class="wo-icon-btn danger" style="width:22px;height:22px;margin-inline-start:6px;" aria-label="مسح"><i class="fas fa-xmark"></i></button></div>' +
+            '<div id="prdBomPreview" style="display:none;margin-top:10px;padding:10px;background:var(--wo-surface-2);border-radius:var(--wo-radius-md);border:1px solid var(--wo-border);"></div>' +
+          '</div>' +
+          '<div class="prd-wz-grid3" style="margin-top:12px;">' +
+            '<div class="wo-label-stack"><label class="wo-field-label"><i class="fas fa-boxes-stacked"></i> الكمية المراد إنتاجها *</label><input type="number" class="wo-input" id="prdQty" step="0.001" min="0" value="'+v(_prdState.qty||'')+'" placeholder="50" oninput="_prdState.qty=this.value;_prdSaveDraft();_prdUpdateYieldHint();"><span id="prdYieldHint" class="wo-text-caption" style="color:var(--wo-on-surface-subtle);min-height:14px;"></span></div>' +
+            '<div class="wo-label-stack"><label class="wo-field-label"><i class="fas fa-percent" style="color:#dc2626"></i> نسبة الهالك المسموح %</label><input type="number" class="wo-input" id="prdScrapPct" step="0.1" min="0" value="'+v(_prdState.scrapPct||'')+'" placeholder="0"></div>' +
+            '<div class="wo-label-stack"><label class="wo-field-label"><i class="fas fa-barcode" style="color:#7c3aed"></i> رقم الدفعة</label><input type="text" class="wo-input" id="prdBatchNo" value="'+v(_prdState.batchNo||'')+'" placeholder="Batch-..."></div>' +
+          '</div>' +
         '</div>' +
-        '<div id="prdBomPreview" style="display:none;margin-top:10px;padding:10px;background:var(--wo-surface-2);border-radius:var(--wo-radius-md);border:1px solid var(--wo-border);"></div>' +
-      '</div>' +
 
-      // Quantity + date row
-      '<div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:14px;">' +
-        '<div class="wo-label-stack">' +
-          '<label class="wo-field-label" for="prdQty"><i class="fas fa-boxes-stacked"></i> الكمية المراد إنتاجها *</label>' +
-          '<input type="number" class="wo-input" id="prdQty" step="0.001" min="0" value="'+_woEscapeHtml(_prdState.qty||'')+'" placeholder="مثلاً: 50">' +
-          '<span id="prdYieldHint" class="wo-text-caption" style="color:var(--wo-on-surface-subtle);min-height:14px;"></span>' +
+        // ─ STEP 3: materials availability ─
+        '<div class="prd-wz-step" data-wz="3" style="display:none;">' +
+          '<div class="prd-wz-rowhead"><div><b>فحص توفّر المواد</b><div class="wo-text-caption">يقارن المطلوب لكل مادة بالمتاح في مستودع المواد الخام.</div></div>' +
+            '<button type="button" class="wo-btn wo-btn-secondary" onclick="_prdWzCheckAvail()"><i class="fas fa-rotate"></i><span>إعادة الفحص</span></button></div>' +
+          '<div id="prdWzAvailHost"><div class="wo-empty"><i class="fas fa-clipboard-check"></i><span>سيُفحص التوفّر تلقائياً عند الوصول لهذه الخطوة.</span></div></div>' +
         '</div>' +
-        '<div class="wo-label-stack">' +
-          '<label class="wo-field-label" for="prdDate"><i class="fas fa-calendar-day"></i> تاريخ الإنتاج المخطط</label>' +
-          '<input type="date" class="wo-input" id="prdDate" value="'+_woEscapeHtml(_prdState.date||new Date().toISOString().slice(0,10))+'">' +
-        '</div>' +
-      '</div>' +
 
-      // Warehouses row (brand-filtered)
-      '<div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:14px;">' +
-        '<div class="wo-label-stack">' +
-          '<label class="wo-field-label" for="prdWhRaw"><i class="fas fa-warehouse" style="color:var(--wo-warning-fg);"></i> مستودع المواد الخام *</label>' +
-          '<select class="wo-select" id="prdWhRaw"><option value="">— اختر المستودع —</option></select>' +
-          '<span class="wo-text-caption" style="color:var(--wo-on-surface-subtle);">تُصرف منه المكونات</span>' +
+        // ─ STEP 4: costs ─
+        '<div class="prd-wz-step" data-wz="4" style="display:none;">' +
+          '<div class="prd-rl-section"><div class="prd-rl-h"><i class="fas fa-users" style="color:#7c3aed"></i> العمالة المباشرة</div>' +
+            '<div class="prd-rl-grid3">' +
+              '<div class="wo-label-stack"><label class="wo-field-label">عدد العمال</label><input type="number" id="prdWzWorkers" class="wo-input" min="0" step="1" value="'+v(ld.workers)+'" oninput="_prdWzCalc()" placeholder="0"></div>' +
+              '<div class="wo-label-stack"><label class="wo-field-label">عدد الساعات</label><input type="number" id="prdWzHours" class="wo-input" min="0" step="0.5" value="'+v(ld.hours)+'" oninput="_prdWzCalc()" placeholder="0"></div>' +
+              '<div class="wo-label-stack"><label class="wo-field-label">تكلفة الساعة</label><input type="number" id="prdWzRate" class="wo-input" min="0" step="0.01" value="'+v(ld.rate)+'" oninput="_prdWzCalc()" placeholder="0.00"></div>' +
+            '</div><div class="prd-rl-auto">إجمالي العمالة: <b id="prdWzLaborTotal">0.00 ر.س</b></div></div>' +
+          '<div class="prd-rl-section"><div class="prd-rl-h"><i class="fas fa-bolt" style="color:#0284c7"></i> التكاليف غير المباشرة</div>' +
+            '<div class="prd-rl-grid4">' +
+              '<div class="wo-label-stack"><label class="wo-field-label">كهرباء / غاز</label><input type="number" id="prdWzElec" class="wo-input" min="0" step="0.01" value="'+v(od.electricity)+'" oninput="_prdWzCalc()" placeholder="0.00"></div>' +
+              '<div class="wo-label-stack"><label class="wo-field-label">استهلاك معدات</label><input type="number" id="prdWzEquip" class="wo-input" min="0" step="0.01" value="'+v(od.equipment)+'" oninput="_prdWzCalc()" placeholder="0.00"></div>' +
+              '<div class="wo-label-stack"><label class="wo-field-label">تغليف عام</label><input type="number" id="prdWzPack" class="wo-input" min="0" step="0.01" value="'+v(od.packaging)+'" oninput="_prdWzCalc()" placeholder="0.00"></div>' +
+              '<div class="wo-label-stack"><label class="wo-field-label">مصروفات أخرى</label><input type="number" id="prdWzOther" class="wo-input" min="0" step="0.01" value="'+v(od.other)+'" oninput="_prdWzCalc()" placeholder="0.00"></div>' +
+            '</div><div class="prd-rl-auto">إجمالي غير المباشرة: <b id="prdWzOvhTotal">0.00 ر.س</b></div></div>' +
+          '<div class="prd-card"><div class="prd-card-h"><i class="fas fa-calculator"></i> ملخص التكلفة التقديرية</div>' +
+            '<div class="prd-cost-row"><span><i class="fas fa-boxes-stacked" style="color:#f59e0b"></i> مواد خام (مُقدّرة)</span><b id="prdWzSumMat">0.00</b></div>' +
+            '<div class="prd-cost-row"><span><i class="fas fa-users" style="color:#7c3aed"></i> عمالة</span><b id="prdWzSumLabor">0.00</b></div>' +
+            '<div class="prd-cost-row"><span><i class="fas fa-bolt" style="color:#0284c7"></i> غير مباشرة</span><b id="prdWzSumOvh">0.00</b></div>' +
+            '<div class="prd-cost-total"><span>إجمالي تقديري</span><b id="prdWzSumTotal">0.00 ر.س</b></div>' +
+            '<div class="prd-cost-unit"><span>تكلفة الوحدة المتوقعة</span><b id="prdWzSumUnit">0.0000 ر.س</b></div>' +
+          '</div>' +
         '</div>' +
-        '<div class="wo-label-stack">' +
-          '<label class="wo-field-label" for="prdWhOut"><i class="fas fa-check-double" style="color:var(--wo-success-fg);"></i> مستودع المنتج النهائي</label>' +
-          '<select class="wo-select" id="prdWhOut"><option value="">(نفس مستودع المواد الخام)</option></select>' +
-          '<span class="wo-text-caption" style="color:var(--wo-on-surface-subtle);">يودَع فيه المنتج بعد الإنتاج</span>' +
-        '</div>' +
-      '</div>' +
 
-      // Notes
-      '<div class="wo-label-stack">' +
-        '<label class="wo-field-label" for="prdNotes"><i class="fas fa-note-sticky"></i> ملاحظات (اختياري)</label>' +
-        '<textarea class="wo-textarea" id="prdNotes" rows="2" placeholder="ملاحظات على أمر الإنتاج...">'+_woEscapeHtml(_prdState.notes||'')+'</textarea>' +
+        // ─ STEP 5: review ─
+        '<div class="prd-wz-step" data-wz="5" style="display:none;"><div id="prdWzReview"></div></div>' +
+
       '</div>' +
+      '<div class="prd-wz-nav" id="prdWzNav"></div>' +
     '</div>';
 
-  var footer =
-    '<button class="wo-btn wo-btn-secondary" onclick="_prdDiscardDraft()"><i class="fas fa-trash"></i><span>تفريغ المسودة</span></button>' +
-    '<button class="wo-btn wo-btn-secondary" onclick="window._prdModalApi && window._prdModalApi.close()">إلغاء</button>' +
-    '<button class="wo-btn wo-btn-primary" onclick="prdSubmitNew()"><i class="fas fa-industry"></i><span>إنشاء أمر الإنتاج</span></button>';
-
   window._prdModalApi = WoModal.open({
-    id: 'prdNewModal',
-    icon: 'fa-industry', iconColor: 'warning',
-    title: 'أمر إنتاج جديد',
-    subtitle: 'اختر البراند لتصفية الوصفات والمستودعات المتاحة',
-    body: body, footer: footer, size: 'lg',
-    onClose: function() { _prdSaveDraft(); }
+    id: 'prdNewModal', icon: 'fa-industry', iconColor: 'warning',
+    title: 'أمر إنتاج جديد', subtitle: 'معالج من 5 خطوات — اختر البراند لتصفية الوصفات والمستودعات',
+    body: body, footer: '', size: 'lg',
+    onClose: function() { try { _prdWzSync(); } catch(e) { _prdSaveDraft(); } }
   });
 
-  // Apply draft restoration
-  var hasDraft = _prdState.bomId || _prdState.whRaw || _prdState.qty;
-  if (hasDraft) document.getElementById('prdDraftBadge').style.display = 'inline-flex';
+  // restore selects
+  var pSel=document.getElementById('prdPriority'); if(pSel) pSel.value=_prdState.priority||'normal';
+  var lSel=document.getElementById('prdLaborMethod'); if(lSel) lSel.value=_prdState.laborMethod||'manual';
+  var oSel=document.getElementById('prdOverheadMethod'); if(oSel) oSel.value=_prdState.overheadMethod||'manual';
 
-  // Wire brand change → re-populate BOMs + warehouses
-  document.getElementById('prdBrand').addEventListener('change', function(){
-    _prdState.brandId = this.value; _prdSaveDraft();
-    _prdMountBomPicker();
-    _prdPopulateWarehouses();
-    _prdClearBom();
-  });
-
-  // Quantity input → live yield hint + persist
-  document.getElementById('prdQty').addEventListener('input', function(){
-    _prdState.qty = this.value; _prdSaveDraft(); _prdUpdateYieldHint();
-  });
-  document.getElementById('prdDate').addEventListener('change', function(){ _prdState.date = this.value; _prdSaveDraft(); });
-  document.getElementById('prdNotes').addEventListener('input', function(){ _prdState.notes = this.value; _prdSaveDraft(); });
+  // Brand cascade (onchange — idempotent)
+  var brandEl=document.getElementById('prdBrand');
+  if (brandEl) brandEl.onchange = function(){ _prdState.brandId=this.value; _prdSaveDraft(); _prdMountBomPicker(); _prdPopulateWarehouses(); _prdClearBom(); };
 
   // Initial population
   _prdMountBomPicker();
@@ -24825,6 +24878,128 @@ function _prdRenderModal(data) {
     var pre = _prdAllBoms.find(function(b){ return b.id === _prdState.bomId; });
     if (pre) _prdApplyBomSelection(pre);
   }
+  _prdWzShow(1);
+}
+
+function _prdWzSync(){
+  var g=function(id){var e=document.getElementById(id); return e?e.value:undefined;};
+  var s=function(k,id){var val=g(id); if(val!==undefined) _prdState[k]=val;};
+  s('brandId','prdBrand'); s('branchId','prdBranch'); s('whRaw','prdWhRaw'); s('whOut','prdWhOut');
+  s('date','prdDate'); s('priority','prdPriority'); s('laborMethod','prdLaborMethod'); s('overheadMethod','prdOverheadMethod');
+  s('notes','prdNotes'); s('qty','prdQty'); s('scrapPct','prdScrapPct'); s('batchNo','prdBatchNo');
+  if(document.getElementById('prdWzWorkers')) _prdState.labor={workers:g('prdWzWorkers'),hours:g('prdWzHours'),rate:g('prdWzRate')};
+  if(document.getElementById('prdWzElec')) _prdState.overhead={electricity:g('prdWzElec'),equipment:g('prdWzEquip'),packaging:g('prdWzPack'),other:g('prdWzOther')};
+  _prdSaveDraft();
+}
+function _prdWzRenderSteps(){
+  var host=document.getElementById('prdWzSteps'); if(!host) return;
+  var labels=['البيانات الأساسية','المنتج والوصفة','المواد','التكاليف','المراجعة'];
+  host.innerHTML=labels.map(function(t,i){
+    var n=i+1; var cls='prd-wz-chip'+(n===_prdWizStep?' active':'')+(n<_prdWizStep?' done':'');
+    return '<div class="'+cls+'"><span class="prd-wz-num">'+(n<_prdWizStep?'<i class="fas fa-check"></i>':n)+'</span><span class="prd-wz-chip-t">'+t+'</span></div>';
+  }).join('<div class="prd-wz-sep"></div>');
+}
+function _prdWzRenderNav(){
+  var nav=document.getElementById('prdWzNav'); if(!nav) return;
+  var n=_prdWizStep;
+  var left = (n>1)
+    ? '<button type="button" class="wo-btn wo-btn-secondary" onclick="_prdWzBack()"><i class="fas fa-arrow-right"></i><span>السابق</span></button>'
+    : '<button type="button" class="wo-btn wo-btn-ghost" onclick="_prdDiscardDraft()"><i class="fas fa-trash"></i><span>تفريغ</span></button>';
+  var right = (n<5)
+    ? '<button type="button" class="wo-btn wo-btn-primary" onclick="_prdWzNext()"><span>التالي</span><i class="fas fa-arrow-left"></i></button>'
+    : '<button type="button" class="wo-btn wo-btn-success" onclick="prdSubmitNew()"><i class="fas fa-industry"></i><span>إنشاء أمر الإنتاج</span></button>';
+  nav.innerHTML = '<div class="prd-wz-nav-row">'+left+'<button type="button" class="wo-btn wo-btn-secondary" onclick="window._prdModalApi && window._prdModalApi.close()">إلغاء</button>'+right+'</div>';
+}
+function _prdWzShow(n){
+  _prdWizStep=n;
+  var steps=document.querySelectorAll('.prd-wz-step');
+  for(var i=0;i<steps.length;i++){ steps[i].style.display = (Number(steps[i].getAttribute('data-wz'))===n)?'block':'none'; }
+  _prdWzRenderSteps(); _prdWzRenderNav();
+  if(n===3) _prdWzCheckAvail();
+  if(n===4) _prdWzCalc();
+  if(n===5) _prdWzRenderReview();
+}
+function _prdWzBack(){ _prdWzSync(); if(_prdWizStep>1) _prdWzShow(_prdWizStep-1); }
+function _prdWzNext(){
+  _prdWzSync();
+  if(_prdWizStep===1 && !_prdState.whRaw) return showToast('اختر مستودع المواد الخام', true);
+  if(_prdWizStep===2){
+    if(!_prdState.bomId) return showToast('اختر وصفة إنتاج (BOM)', true);
+    if(!_prdState.qty || Number(_prdState.qty)<=0) return showToast('أدخل كمية إنتاج صحيحة', true);
+  }
+  if(_prdWizStep<5) _prdWzShow(_prdWizStep+1);
+}
+function _prdWzCheckAvail(){
+  _prdWzSync();
+  var host=document.getElementById('prdWzAvailHost'); if(!host) return;
+  if(!_prdState.bomId){ host.innerHTML='<div class="wo-empty"><i class="fas fa-circle-info"></i><span>اختر وصفة وكمية في الخطوة السابقة أولاً.</span></div>'; return; }
+  if(!_prdState.qty||Number(_prdState.qty)<=0){ host.innerHTML='<div class="wo-empty"><i class="fas fa-circle-info"></i><span>أدخل كمية إنتاج صحيحة.</span></div>'; return; }
+  if(!_prdState.whRaw){ host.innerHTML='<div class="wo-empty"><i class="fas fa-warehouse"></i><span>اختر مستودع المواد الخام في الخطوة الأولى.</span></div>'; return; }
+  host.innerHTML='<div class="wo-empty"><i class="fas fa-spinner fa-spin"></i><span>جارٍ الفحص...</span></div>';
+  _erpPost('/erp/production-orders/preview-availability', { bomId:_prdState.bomId, qtyPlanned:Number(_prdState.qty), warehouseId:_prdState.whRaw }, function(r){
+    var host2=document.getElementById('prdWzAvailHost'); if(!host2) return;
+    if(!r||r.error||!r.items){ host2.innerHTML='<div class="wo-empty"><i class="fas fa-triangle-exclamation"></i><span>'+_woEscapeHtml((r&&r.error)||'تعذّر الفحص')+'</span></div>'; return; }
+    _prdWzAvail=r; _prdWzMatCost=(r.summary&&r.summary.reservedValue)||0;
+    var sc=(r.summary&&r.summary.shortageCount)||0;
+    var banner = sc>0
+      ? '<div class="prd-wz-warn"><b><i class="fas fa-triangle-exclamation"></i> يوجد نقص في '+sc+' صنف.</b><div>يمكنك إنشاء الأمر كمخطط الآن ومعالجة النقص قبل الإطلاق: إنشاء طلب شراء، أو تقليل الكمية، أو اختيار مستودع بديل.</div></div>'
+      : '<div class="prd-wz-ok"><i class="fas fa-circle-check"></i> كل المواد متوفرة — الأمر جاهز للإطلاق بعد إنشائه.</div>';
+    host2.innerHTML = banner + _prdAvailTable(r.items);
+  });
+}
+function _prdWzCalc(){
+  var g=function(id){return Number((document.getElementById(id)||{}).value)||0;};
+  var labor=g('prdWzWorkers')*g('prdWzHours')*g('prdWzRate');
+  var ovh=g('prdWzElec')+g('prdWzEquip')+g('prdWzPack')+g('prdWzOther');
+  var mat=Number(_prdWzMatCost||0);
+  var total=mat+labor+ovh;
+  var qty=Number(_prdState.qty||0)||Number((document.getElementById('prdQty')||{}).value)||0;
+  var unit=qty>0?total/qty:0;
+  var set=function(id,val){var e=document.getElementById(id); if(e) e.textContent=val;};
+  set('prdWzLaborTotal',_prdMoney(labor)+' ر.س');
+  set('prdWzOvhTotal',_prdMoney(ovh)+' ر.س');
+  set('prdWzSumMat',_prdMoney(mat));
+  set('prdWzSumLabor',_prdMoney(labor));
+  set('prdWzSumOvh',_prdMoney(ovh));
+  set('prdWzSumTotal',_prdMoney(total)+' ر.س');
+  set('prdWzSumUnit',(qty>0?unit.toFixed(4):'0.0000')+' ر.س');
+}
+function _prdWzRenderReview(){
+  var host=document.getElementById('prdWzReview'); if(!host) return;
+  _prdWzSync();
+  var bom=_prdAllBoms.find(function(b){return b.id===_prdState.bomId;})||{};
+  var brand=(_prdAllBrands.find(function(b){return b.id===_prdState.brandId;})||{}).name||'عام';
+  var branch=(_prdAllBranches.find(function(b){return b.id===_prdState.branchId;})||{}).name||'—';
+  var whRawName=(_prdAllWhs.find(function(w){return w.id===_prdState.whRaw;})||{}).name||'—';
+  var whOutName=_prdState.whOut?((_prdAllWhs.find(function(w){return w.id===_prdState.whOut;})||{}).name||'—'):'(نفس مستودع المواد)';
+  var g=function(id){return Number((document.getElementById(id)||{}).value)||0;};
+  var labor=g('prdWzWorkers')*g('prdWzHours')*g('prdWzRate');
+  var ovh=g('prdWzElec')+g('prdWzEquip')+g('prdWzPack')+g('prdWzOther');
+  var mat=Number(_prdWzMatCost||0); var total=mat+labor+ovh;
+  var prio=_prdPrioMeta(_prdState.priority);
+  var row=function(lbl,val){ return '<div class="prd-rv-row"><span>'+lbl+'</span><b>'+val+'</b></div>'; };
+  host.innerHTML =
+    '<div class="prd-detail-grid">' +
+      '<div class="prd-card"><div class="prd-card-h"><i class="fas fa-circle-info"></i> بيانات الأمر</div>' +
+        row('المنتج / الوصفة', _woEscapeHtml(bom.productName||bom.productId||'—')) +
+        row('البراند', _woEscapeHtml(brand)) +
+        row('الفرع', _woEscapeHtml(branch)) +
+        row('مستودع المواد', _woEscapeHtml(whRawName)) +
+        row('مستودع المنتج', _woEscapeHtml(whOutName)) +
+        row('تاريخ الإنتاج', _woEscapeHtml(_prdState.date||'—')) +
+        row('الأولوية', prio?prio.t:'عادية') +
+        (_prdState.batchNo?row('رقم الدفعة', _woEscapeHtml(_prdState.batchNo)):'') +
+      '</div>' +
+      '<div class="prd-card"><div class="prd-card-h"><i class="fas fa-coins"></i> الكمية والتكلفة التقديرية</div>' +
+        row('الكمية', _woEscapeHtml(_prdState.qty||'0')+' '+_woEscapeHtml(bom.yieldUnit||'')) +
+        (_prdState.scrapPct?row('نسبة الهالك المسموح', _woEscapeHtml(_prdState.scrapPct)+'%'):'') +
+        '<div class="prd-cost-row"><span>مواد خام (مقدّرة)</span><b>'+_prdMoney(mat)+'</b></div>' +
+        '<div class="prd-cost-row"><span>عمالة</span><b>'+_prdMoney(labor)+'</b></div>' +
+        '<div class="prd-cost-row"><span>غير مباشرة</span><b>'+_prdMoney(ovh)+'</b></div>' +
+        '<div class="prd-cost-total"><span>إجمالي تقديري</span><b>'+_prdMoney(total)+' ر.س</b></div>' +
+      '</div>' +
+    '</div>' +
+    '<div class="prd-wz-hint" style="margin-top:14px;"><i class="fas fa-circle-info"></i> سيُنشأ الأمر بحالة «مخطط». التكاليف أعلاه تقديرية وتُملأ تلقائياً عند الإطلاق — لا يُصرَف المخزون ولا يُرحَّل أي قيد إلا عند الإطلاق.</div>';
 }
 
 function _prdFilteredBoms() {
@@ -24928,8 +25103,9 @@ function _prdPopulateWarehouses() {
   out.innerHTML = '<option value="">(نفس مستودع المواد الخام)</option>'+opts;
   if (_prdState.whRaw) raw.value = _prdState.whRaw;
   if (_prdState.whOut) out.value = _prdState.whOut;
-  raw.addEventListener('change', function(){ _prdState.whRaw = this.value; _prdSaveDraft(); });
-  out.addEventListener('change', function(){ _prdState.whOut = this.value; _prdSaveDraft(); });
+  // onchange (idempotent) — safe to call _prdPopulateWarehouses repeatedly without stacking listeners
+  raw.onchange = function(){ _prdState.whRaw = this.value; _prdSaveDraft(); };
+  out.onchange = function(){ _prdState.whOut = this.value; _prdSaveDraft(); };
 }
 
 function _prdDiscardDraft() {
@@ -24946,18 +25122,18 @@ function _prdDiscardDraft() {
 }
 
 function prdSubmitNew() {
-  // Read from state (persisted) + live DOM for final values
-  _prdState.qty   = document.getElementById('prdQty').value;
-  _prdState.whRaw = document.getElementById('prdWhRaw').value;
-  _prdState.whOut = document.getElementById('prdWhOut').value;
-  _prdState.date  = document.getElementById('prdDate').value;
-  _prdState.notes = document.getElementById('prdNotes').value;
-  _prdSaveDraft();
-
+  _prdWzSync();
   if (!_prdState.bomId) return showToast('اختر وصفة إنتاج (BOM)', true);
   var qty = Number(_prdState.qty);
   if (!qty || qty <= 0) return showToast('أدخل كمية إنتاج صحيحة', true);
   if (!_prdState.whRaw) return showToast('اختر مستودع المواد الخام', true);
+
+  var ld=_prdState.labor||{}, od=_prdState.overhead||{};
+  var labor = { workers:Number(ld.workers)||0, hours:Number(ld.hours)||0, rate:Number(ld.rate)||0 };
+  labor.total = labor.workers * labor.hours * labor.rate;
+  var overhead = { electricity:Number(od.electricity)||0, equipment:Number(od.equipment)||0, packaging:Number(od.packaging)||0, other:Number(od.other)||0 };
+  var costBreakdown = { labor:labor, overhead:overhead, materials:Number(_prdWzMatCost||0),
+                        laborMethod:_prdState.laborMethod||'manual', overheadMethod:_prdState.overheadMethod||'manual' };
 
   _erpPost('/erp/production-orders', {
     bomId: _prdState.bomId, qtyPlanned: qty,
@@ -24966,6 +25142,11 @@ function prdSubmitNew() {
     plannedDate: _prdState.date,
     notes: _prdState.notes,
     brandId: _prdState.brandId || null,
+    branchId: _prdState.branchId || null,
+    priority: _prdState.priority || 'normal',
+    allowedScrapPct: Number(_prdState.scrapPct) || 0,
+    batchNumber: _prdState.batchNo || '',
+    costBreakdown: costBreakdown,
     createdBy: currentUser
   }, function(r){
     if (r.success) {
@@ -25117,39 +25298,332 @@ function prdView(id) {
     });
   });
 }
-function prdRelease(id) {
-  var body =
-    '<p style="color:#64748b;font-size:13px;margin-bottom:16px;">سيتم صرف المواد الخام من المستودع وحجز التكاليف على أمر الإنتاج.</p>' +
-    '<div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">' +
-      '<div class="wo-label-stack">' +
-        '<label class="wo-field-label"><i class="fas fa-users" style="color:#f59e0b;"></i> تكلفة العمالة (ر.س)</label>' +
-        '<input type="number" id="prdRlLabor" class="wo-input" value="0" min="0" step="0.01" placeholder="0.00">' +
-      '</div>' +
-      '<div class="wo-label-stack">' +
-        '<label class="wo-field-label"><i class="fas fa-gears" style="color:#8b5cf6;"></i> تكاليف غير مباشرة (ر.س)</label>' +
-        '<input type="number" id="prdRlOvh" class="wo-input" value="0" min="0" step="0.01" placeholder="0.00">' +
-      '</div>' +
-    '</div>';
-  var footer =
-    '<button class="wo-btn wo-btn-secondary" onclick="window._prdRlModal && window._prdRlModal.close()">إلغاء</button>' +
-    '<button class="wo-btn wo-btn-primary" onclick="prdReleaseConfirm(\''+id+'\')"><i class="fas fa-play"></i><span>إطلاق الأمر</span></button>';
-  window._prdRlModal = WoModal.open({
-    id: 'prdReleaseModal', icon: 'fa-play', iconColor: 'warning',
-    title: 'إطلاق أمر الإنتاج',
-    subtitle: 'أدخل تكاليف العمالة والتكاليف غير المباشرة',
-    body: body, footer: footer, size: 'sm'
+// ═══════════════════════════════════════════════════════════════════
+// v7.7 — PRODUCTION ORDER DETAIL (full page, tabbed)
+// ═══════════════════════════════════════════════════════════════════
+var _prdDetail = { id:null, data:null, tab:'summary' };
+
+function prdOpenDetail(id) {
+  window._prdDetailId = id;
+  erpNav('erpProductionOrderDetail');
+}
+
+function prdRenderDetail(id) {
+  id = id || window._prdDetailId;
+  if (!id) { erpNav('erpProductionOrders'); return; }
+  _prdDetail = { id:id, data:null, tab:'summary' };
+  var bodyEl = document.getElementById('prdDetailBody');
+  if (bodyEl) bodyEl.innerHTML = '<div class="wo-empty"><i class="fas fa-spinner fa-spin"></i><span>جاري التحميل...</span></div>';
+  ['prdDetailTabs','prdDetailTimeline','prdDetailStatusBar'].forEach(function(eid){ var e=document.getElementById(eid); if(e) e.innerHTML=''; });
+  _erpGet('/erp/production-orders/'+id, function(d){
+    if (!d || d.error) {
+      if (bodyEl) bodyEl.innerHTML = _woEmpty('fa-triangle-exclamation','تعذّر تحميل الأمر', (d&&d.error)||'حدث خطأ', '<button class="wo-btn wo-btn-secondary" onclick="erpNav(\'erpProductionOrders\')">رجوع للقائمة</button>');
+      return;
+    }
+    _prdDetail.data = d;
+    _prdDetailRenderChrome();
+    _prdDetailRenderTabs();
+    _prdDetailRenderTab();
   });
 }
+
+function _prdDetailRenderChrome() {
+  var d = _prdDetail.data; if (!d) return;
+  var s = _prdStatusMeta(d.status);
+  var titleEl = document.getElementById('prdDetailTitle');
+  var subEl = document.getElementById('prdDetailSub');
+  if (titleEl) titleEl.textContent = 'أمر إنتاج ' + (d.order_number||'');
+  if (subEl) subEl.textContent = (d.product_name||'') + ' · ' + (d.warehouse_name||'') + (d.branch_name? ' · '+d.branch_name : '');
+  var ha = document.getElementById('prdDetailHeaderActions');
+  if (ha) {
+    var idJs = _woEscapeHtml(d.id);
+    var btns = '';
+    if (d.status === 'planned')  btns += '<button class="wo-btn wo-btn-warning" onclick="prdRelease(\''+idJs+'\')"><i class="fas fa-play"></i><span>إطلاق الأمر</span></button>';
+    if (d.status === 'released') btns += '<button class="wo-btn wo-btn-success" onclick="prdComplete(\''+idJs+'\')"><i class="fas fa-flag-checkered"></i><span>إقفال الأمر</span></button>';
+    if (d.status === 'released') btns += '<button class="wo-btn wo-btn-danger" onclick="prdReverse(\''+idJs+'\')"><i class="fas fa-rotate-left"></i><span>إرجاع الإطلاق</span></button>';
+    ha.innerHTML = btns + '<button class="wo-btn wo-btn-secondary" onclick="erpNav(\'erpProductionOrders\')"><i class="fas fa-arrow-right"></i><span>رجوع للقائمة</span></button>';
+  }
+  var sb = document.getElementById('prdDetailStatusBar');
+  if (sb) {
+    var planned = Number(d.qty_planned||0), produced = Number(d.qty_produced||0);
+    var pct = planned>0 ? Math.min(100, Math.round((produced/planned)*100)) : 0;
+    var prio = _prdPrioMeta(d.priority);
+    sb.innerHTML =
+      '<div class="prd-statusbar">' +
+        '<span class="wo-chip '+s.c+'"><i class="fas '+s.icon+'"></i> '+s.t+'</span>' +
+        (d.batch_number ? '<span class="wo-chip info"><i class="fas fa-barcode"></i> '+_woEscapeHtml(d.batch_number)+'</span>' : '') +
+        (prio ? '<span class="prd-prio prd-prio-'+prio.cls+'">أولوية: '+prio.t+'</span>' : '') +
+        '<span class="prd-statusbar-spacer"></span>' +
+        '<span class="prd-statusbar-pct">نسبة الاكتمال: <b>'+pct+'%</b></span>' +
+      '</div>';
+  }
+  _prdDetailRenderTimeline();
+}
+
+function _prdDetailRenderTimeline() {
+  var d = _prdDetail.data; var el = document.getElementById('prdDetailTimeline'); if (!el||!d) return;
+  var order  = ['created','planned','released','in_progress','completed'];
+  var labels = { created:'إنشاء', planned:'مخطط', released:'صرف المواد', in_progress:'قيد التنفيذ', completed:'مكتمل' };
+  var icons  = { created:'fa-file-circle-plus', planned:'fa-clipboard-list', released:'fa-truck-ramp-box', in_progress:'fa-gears', completed:'fa-circle-check' };
+  var cancelled = (d.status==='cancelled');
+  var reached;
+  if (d.status==='planned') reached = 2;
+  else if (d.status==='released' || d.status==='in_progress') reached = 3;
+  else if (d.status==='completed' || d.status==='closed') reached = 5;
+  else reached = 2;
+  var html = '<div class="prd-timeline'+(cancelled?' is-cancelled':'')+'">';
+  for (var i=0;i<order.length;i++){
+    var cls = 'prd-tl-node';
+    if (cancelled) cls += (i<=1 ? ' done' : ' pending');
+    else if (i < reached) cls += ' done';
+    else if (i === reached) cls += ' current';
+    else cls += ' pending';
+    html += '<div class="'+cls+'"><div class="prd-tl-dot"><i class="fas '+icons[order[i]]+'"></i></div><div class="prd-tl-lbl">'+labels[order[i]]+'</div></div>';
+    if (i < order.length-1) html += '<div class="prd-tl-line'+((!cancelled && i<reached)?' done':'')+'"></div>';
+  }
+  html += '</div>';
+  if (cancelled) html += '<div class="prd-cancel-banner"><i class="fas fa-ban"></i> هذا الأمر مُلغى / أُعيد إطلاقه — أُعيدت المواد إلى المستودع وعُكس القيد المحاسبي.</div>';
+  el.innerHTML = html;
+}
+
+function _prdDetailRenderTabs() {
+  var el = document.getElementById('prdDetailTabs'); if (!el) return;
+  var tabs = [
+    { k:'summary',     t:'ملخص',         i:'fa-gauge-high' },
+    { k:'materials',   t:'المواد',        i:'fa-boxes' },
+    { k:'costs',       t:'التكاليف',      i:'fa-coins' },
+    { k:'movements',   t:'حركات المخزون', i:'fa-right-left' },
+    { k:'journals',    t:'القيود',        i:'fa-book' },
+    { k:'attachments', t:'المرفقات',      i:'fa-paperclip' },
+    { k:'activity',    t:'سجل النشاط',    i:'fa-clock-rotate-left' }
+  ];
+  el.innerHTML = tabs.map(function(t){
+    return '<button type="button" role="tab" class="prd-tab'+(_prdDetail.tab===t.k?' active':'')+'" onclick="prdDetailTab(\''+t.k+'\')"><i class="fas '+t.i+'"></i> '+t.t+'</button>';
+  }).join('');
+}
+
+function prdDetailTab(tab) {
+  _prdDetail.tab = tab;
+  _prdDetailRenderTabs();
+  _prdDetailRenderTab();
+}
+
+function _prdDetailRenderTab() {
+  var el = document.getElementById('prdDetailBody'); var d = _prdDetail.data; if (!el||!d) return;
+  switch(_prdDetail.tab){
+    case 'materials':   el.innerHTML = _prdDetailMaterials(d); _prdDetailMaybeLoadAvailability(); break;
+    case 'costs':       el.innerHTML = _prdDetailCosts(d); break;
+    case 'movements':   el.innerHTML = _prdDetailMovements(d); break;
+    case 'journals':    el.innerHTML = _prdDetailJournals(d); break;
+    case 'attachments': el.innerHTML = _prdDetailPlaceholder('fa-paperclip','لا توجد مرفقات','لم تُرفق مستندات بهذا الأمر.'); break;
+    case 'activity':    el.innerHTML = _prdDetailActivity(d); break;
+    default:            el.innerHTML = _prdDetailSummary(d);
+  }
+}
+
+function _prdCostRow(icon,clr,label,val){
+  return '<div class="prd-cost-row"><span><i class="fas '+icon+'" style="color:'+clr+'"></i> '+label+'</span><b>'+_prdMoney(val)+'</b></div>';
+}
+function _prdDetailPlaceholder(icon,title,sub){ return '<div class="prd-card prd-card-muted">'+_woEmpty(icon,title,sub)+'</div>'; }
+function _prdFmtDate(s){ try { var d=new Date(s); if(isNaN(d.getTime())) return _woEscapeHtml(String(s)); return d.toLocaleString('en-GB'); } catch(e){ return _woEscapeHtml(String(s)); } }
+
+function _prdDetailSummary(d){
+  var planned=Number(d.qty_planned||0), produced=Number(d.qty_produced||0), scrap=Number(d.qty_scrap||0);
+  var remaining=Math.max(0, planned-produced);
+  var pct = planned>0?Math.min(100,Math.round((produced/planned)*100)):0;
+  var pctClr = pct>=100?'#16a34a':(pct>=50?'#f59e0b':'#94a3b8');
+  var ovhLabor = Number(d.labor_cost||0)+Number(d.overhead_cost||0);
+  var total = Number(d.total_cost||0) || (Number(d.materials_cost||0)+ovhLabor);
+  var unit = Number(d.unit_cost||0);
+  var scrapPct = (produced+scrap)>0?Math.round((scrap/(produced+scrap))*1000)/10:0;
+  return '<div class="prd-detail-grid">'+
+     '<div class="prd-card">'+
+       '<div class="prd-card-h"><i class="fas fa-gauge-high"></i> تقدم الإنتاج</div>'+
+       '<div class="prd-progress-num"><span style="color:'+pctClr+'">'+pct+'%</span> <small>'+produced+' / '+planned+' '+_woEscapeHtml(d.product_unit||'')+'</small></div>'+
+       '<div class="prd-progress"><div class="prd-progress-bar" style="width:'+pct+'%;background:'+pctClr+';"></div></div>'+
+       '<div class="prd-kpi-row">'+
+         '<div class="prd-kpi"><span>مخطط</span><b>'+planned+'</b></div>'+
+         '<div class="prd-kpi"><span>مُنتَج</span><b style="color:#16a34a">'+produced+'</b></div>'+
+         '<div class="prd-kpi"><span>متبقٍ</span><b>'+remaining+'</b></div>'+
+         '<div class="prd-kpi"><span>هدر ('+scrapPct+'%)</span><b style="color:'+(scrapPct>5?'#dc2626':'#64748b')+'">'+scrap+'</b></div>'+
+       '</div>'+
+     '</div>'+
+     '<div class="prd-card">'+
+       '<div class="prd-card-h"><i class="fas fa-coins"></i> ملخص التكلفة</div>'+
+       _prdCostRow('fa-boxes-stacked','#f59e0b','مواد خام', d.materials_cost)+
+       _prdCostRow('fa-users','#7c3aed','عمالة مباشرة', d.labor_cost)+
+       _prdCostRow('fa-bolt','#0284c7','تكاليف غير مباشرة', d.overhead_cost)+
+       '<div class="prd-cost-total"><span>الإجمالي</span><b>'+_prdMoney(total)+' ر.س</b></div>'+
+       (unit>0?'<div class="prd-cost-unit"><span>تكلفة الوحدة</span><b>'+unit.toFixed(4)+' ر.س</b></div>':'')+
+     '</div>'+
+   '</div>';
+}
+
+function _prdDetailMaterials(d){
+  var cons = d.consumption||[];
+  var rows = cons.length ? cons.map(function(c){
+    return '<tr><td><b>'+_woEscapeHtml(c.item_name||'')+'</b></td>'+
+      '<td class="num">'+Number(c.qty_planned||0).toFixed(3)+'</td>'+
+      '<td class="num">'+Number(c.qty_actual||0).toFixed(3)+'</td>'+
+      '<td class="num">'+Number(c.unit_cost||0).toFixed(4)+'</td>'+
+      '<td class="num"><b>'+_prdMoney(c.total_cost)+'</b></td></tr>';
+  }).join('') : '<tr><td colspan="5" class="prd-muted-cell">لا توجد مواد مُسجّلة</td></tr>';
+  var availHost = (d.status==='planned')
+    ? '<div class="prd-card" style="margin-top:16px;"><div class="prd-card-h"><i class="fas fa-clipboard-check"></i> فحص توفّر المواد <span id="prdAvailBadge" style="margin-inline-start:auto;"></span></div><div id="prdAvailHost"><div class="wo-empty"><i class="fas fa-spinner fa-spin"></i><span>جارٍ الفحص...</span></div></div></div>'
+    : '';
+  return '<div class="prd-card"><div class="prd-card-h"><i class="fas fa-boxes"></i> المواد المطلوبة ('+cons.length+')</div>'+
+    '<div class="prd-table-wrap"><table class="wo-table"><thead><tr><th>الصنف</th><th class="num">مخطط</th><th class="num">فعلي</th><th class="num">سعر الوحدة</th><th class="num">الإجمالي</th></tr></thead><tbody>'+rows+'</tbody></table></div></div>'+
+    availHost;
+}
+function _prdDetailMaybeLoadAvailability(){
+  var d=_prdDetail.data; if (!d || d.status!=='planned') return;
+  if (!document.getElementById('prdAvailHost')) return;
+  _erpGet('/erp/production-orders/'+d.id+'/availability', function(r){
+    var host=document.getElementById('prdAvailHost'); if(!host) return;
+    if(!r || r.error || !r.items){ host.innerHTML = '<div class="prd-muted-cell">تعذّر فحص التوفّر</div>'; return; }
+    var badge=document.getElementById('prdAvailBadge');
+    if(badge){ var sc=(r.summary&&r.summary.shortageCount)||0; badge.innerHTML = sc>0?'<span class="wo-chip warning"><i class="fas fa-triangle-exclamation"></i> '+sc+' صنف ناقص</span>':'<span class="wo-chip success"><i class="fas fa-check"></i> كل المواد متوفرة</span>'; }
+    host.innerHTML = _prdAvailTable(r.items);
+  });
+}
+function _prdAvailTable(items){
+  var rows=(items||[]).map(function(x){
+    var ok=x.status==='ok';
+    var req=Number(x.required||0), av=Number(x.available||0);
+    var pct = req>0 ? Math.min(100, Math.round((av/req)*100)) : 100;
+    var barClr = ok?'#16a34a':(pct>=50?'#f59e0b':'#dc2626');
+    return '<tr><td><b>'+_woEscapeHtml(x.itemName||'')+'</b></td>'+
+      '<td class="num">'+req.toFixed(3)+' '+_woEscapeHtml(x.itemUnit||'')+'</td>'+
+      '<td class="num">'+av.toFixed(3)+'</td>'+
+      '<td>'+(ok?'<span class="wo-chip success"><i class="fas fa-check"></i> متوفر</span>':'<span class="wo-chip warning"><i class="fas fa-triangle-exclamation"></i> نقص '+Math.abs(Number(x.delta||0)).toFixed(2)+'</span>')+'</td>'+
+      '<td><div class="prd-stockbar"><div style="width:'+pct+'%;background:'+barClr+';"></div></div></td></tr>';
+  }).join('');
+  return '<div class="prd-table-wrap"><table class="wo-table"><thead><tr><th>المادة</th><th class="num">مطلوب</th><th class="num">المتاح</th><th>الحالة</th><th>الرصيد</th></tr></thead><tbody>'+rows+'</tbody></table></div>';
+}
+
+function _prdDetailCosts(d){
+  var cb=null; try { cb = d.cost_breakdown ? (typeof d.cost_breakdown==='string'?JSON.parse(d.cost_breakdown):d.cost_breakdown) : null; } catch(e){ cb=null; }
+  var materials=Number(d.materials_cost||0), labor=Number(d.labor_cost||0), overhead=Number(d.overhead_cost||0);
+  var total=Number(d.total_cost||0)||(materials+labor+overhead);
+  var actBox = '<div class="prd-card"><div class="prd-card-h"><i class="fas fa-coins"></i> التكلفة الفعلية (المُرحّلة)</div>'+
+    _prdCostRow('fa-boxes-stacked','#f59e0b','مواد خام', materials)+
+    _prdCostRow('fa-users','#7c3aed','عمالة مباشرة', labor)+
+    _prdCostRow('fa-bolt','#0284c7','تكاليف غير مباشرة', overhead)+
+    '<div class="prd-cost-total"><span>الإجمالي</span><b>'+_prdMoney(total)+' ر.س</b></div>'+
+    (Number(d.unit_cost||0)>0?'<div class="prd-cost-unit"><span>تكلفة الوحدة الفعلية</span><b>'+Number(d.unit_cost).toFixed(4)+' ر.س</b></div>':'')+'</div>';
+  var estBox='';
+  if (cb){
+    var eLabor = cb.labor ? Number(cb.labor.total||0) : 0;
+    var eOvh = cb.overhead ? Object.keys(cb.overhead).reduce(function(s,k){return s+Number(cb.overhead[k]||0);},0) : 0;
+    var eMat = Number(cb.materials||0);
+    var eTotal = eMat+eLabor+eOvh;
+    estBox = '<div class="prd-card"><div class="prd-card-h"><i class="fas fa-calculator"></i> التقدير (وقت الإنشاء)</div>'+
+      (cb.labor?('<div class="prd-cost-row"><span><i class="fas fa-users" style="color:#7c3aed"></i> عمالة: '+(cb.labor.workers||0)+'×'+(cb.labor.hours||0)+'س×'+(cb.labor.rate||0)+'</span><b>'+_prdMoney(eLabor)+'</b></div>'):'')+
+      _prdCostRow('fa-bolt','#0284c7','غير مباشرة (مقدّرة)', eOvh)+
+      (eMat?_prdCostRow('fa-boxes-stacked','#f59e0b','مواد (مقدّرة)', eMat):'')+
+      '<div class="prd-cost-total"><span>إجمالي تقديري</span><b>'+_prdMoney(eTotal)+' ر.س</b></div></div>';
+  } else {
+    estBox = '<div class="prd-card prd-card-muted">'+_woEmpty('fa-calculator','لا يوجد تفصيل تقديري','لم يُسجَّل تفصيل تكلفة عند الإنشاء.')+'</div>';
+  }
+  return '<div class="prd-detail-grid">'+actBox+estBox+'</div>';
+}
+
+function _prdDetailMovements(d){
+  var cons=d.consumption||[], out=d.output||[];
+  var rows='';
+  cons.forEach(function(c){ if(Number(c.qty_actual||0)>0) rows+='<tr><td><span class="wo-chip danger"><i class="fas fa-arrow-up-from-bracket"></i> صرف</span></td><td>'+_woEscapeHtml(c.item_name||'')+'</td><td class="num">'+Number(c.qty_actual||0).toFixed(3)+'</td><td class="num">'+_prdMoney(c.total_cost)+'</td></tr>'; });
+  out.forEach(function(o){ rows+='<tr><td><span class="wo-chip success"><i class="fas fa-arrow-down-to-bracket"></i> استلام</span></td><td>'+_woEscapeHtml(o.item_name||'')+'</td><td class="num">'+Number(o.qty||0).toFixed(3)+'</td><td class="num">'+_prdMoney(o.total_cost)+'</td></tr>'; });
+  if(!rows) rows='<tr><td colspan="4" class="prd-muted-cell">لا توجد حركات مخزون بعد — الأمر لم يُطلق.</td></tr>';
+  return '<div class="prd-card"><div class="prd-card-h"><i class="fas fa-right-left"></i> حركات المخزون</div><div class="prd-table-wrap"><table class="wo-table"><thead><tr><th>الحركة</th><th>الصنف</th><th class="num">الكمية</th><th class="num">القيمة</th></tr></thead><tbody>'+rows+'</tbody></table></div></div>';
+}
+
+function _prdDetailJournals(d){
+  var items=[];
+  if(d.gl_release_id) items.push({t:'قيد إطلاق الإنتاج (مواد ← تحت التشغيل)', id:d.gl_release_id, icon:'fa-play', clr:'#0284c7'});
+  if(d.gl_complete_id) items.push({t:'قيد إتمام الإنتاج (تحت التشغيل ← منتج تام)', id:d.gl_complete_id, icon:'fa-flag-checkered', clr:'#16a34a'});
+  if(!items.length) return _prdDetailPlaceholder('fa-book','لا توجد قيود محاسبية','تُنشأ القيود تلقائياً عند إطلاق الأمر وإتمامه.');
+  var rows=items.map(function(x){return '<div class="prd-journal-row"><div class="prd-journal-icon" style="background:'+x.clr+'1a;color:'+x.clr+'"><i class="fas '+x.icon+'"></i></div><div class="prd-journal-body"><div class="prd-journal-t">'+x.t+'</div><div class="prd-journal-id"><code>'+_woEscapeHtml(x.id)+'</code></div></div></div>';}).join('');
+  return '<div class="prd-card"><div class="prd-card-h"><i class="fas fa-book"></i> القيود المحاسبية</div>'+rows+'</div>';
+}
+
+function _prdDetailActivity(d){
+  var ev=[];
+  if(d.created_at) ev.push({t:'إنشاء الأمر', u:d.created_by, at:d.created_at, icon:'fa-file-circle-plus', clr:'#64748b'});
+  if(d.released_at) ev.push({t:'إطلاق الأمر وصرف المواد', u:d.released_by, at:d.released_at, icon:'fa-play', clr:'#0284c7'});
+  if(d.completed_at) ev.push({t:'إتمام الإنتاج', u:d.completed_by, at:d.completed_at, icon:'fa-flag-checkered', clr:'#16a34a'});
+  if(!ev.length) return _prdDetailPlaceholder('fa-clock-rotate-left','لا يوجد نشاط','لم تُسجَّل أحداث بعد.');
+  var rows=ev.map(function(e){return '<div class="prd-activity-row"><div class="prd-activity-dot" style="background:'+e.clr+'"><i class="fas '+e.icon+'"></i></div><div><div class="prd-activity-t">'+e.t+'</div><div class="prd-activity-meta">'+(e.u?'<i class="fas fa-user"></i> '+_woEscapeHtml(e.u)+' · ':'')+_prdFmtDate(e.at)+'</div></div></div>';}).join('');
+  return '<div class="prd-card"><div class="prd-card-h"><i class="fas fa-clock-rotate-left"></i> سجل النشاط</div><div class="prd-activity">'+rows+'</div></div>';
+}
+
+// v7.7 — after a lifecycle action: refresh the detail page if open, else the list
+function _prdAfterLifecycle(id) {
+  var det = document.getElementById('erpProductionOrderDetail');
+  if (det && !det.classList.contains('hidden')) { prdRenderDetail(id); }
+  else if (typeof prdLoad === 'function') { prdLoad(); }
+}
+
+function prdRelease(id) {
+  _erpGet('/erp/production-orders/'+id, function(d){
+    if (!d || d.error) return showToast(d?d.error:'فشل تحميل البيانات', true);
+    var cb=null; try{ cb = d.cost_breakdown?(typeof d.cost_breakdown==='string'?JSON.parse(d.cost_breakdown):d.cost_breakdown):null; }catch(e){cb=null;}
+    // Materials cost on the header is 0 until release computes it; for a planned
+    // order fall back to the estimate captured at creation so the grand total reads sensibly.
+    window._prdRlMat = Number(d.materials_cost||0) || Number((cb&&cb.materials)||0) || 0;
+    var L = (cb&&cb.labor)||{}, O = (cb&&cb.overhead)||{};
+    var v = function(x){ return (x===0||x) ? x : ''; };
+    var body =
+      '<div class="prd-rl-matbox"><i class="fas fa-boxes-stacked"></i> تكلفة المواد الخام (محسوبة): <b>'+_prdMoney(d.materials_cost)+' ر.س</b> — ستُصرف من <b>'+_woEscapeHtml(d.warehouse_name||'')+'</b></div>' +
+      '<div class="prd-rl-section"><div class="prd-rl-h"><i class="fas fa-users" style="color:#7c3aed"></i> العمالة المباشرة</div>' +
+        '<div class="prd-rl-grid3">' +
+          '<div class="wo-label-stack"><label class="wo-field-label">عدد العمال</label><input type="number" id="prdRlWorkers" class="wo-input" min="0" step="1" value="'+v(L.workers)+'" oninput="_prdRlCalc()" placeholder="0"></div>' +
+          '<div class="wo-label-stack"><label class="wo-field-label">عدد الساعات</label><input type="number" id="prdRlHours" class="wo-input" min="0" step="0.5" value="'+v(L.hours)+'" oninput="_prdRlCalc()" placeholder="0"></div>' +
+          '<div class="wo-label-stack"><label class="wo-field-label">تكلفة الساعة</label><input type="number" id="prdRlRate" class="wo-input" min="0" step="0.01" value="'+v(L.rate)+'" oninput="_prdRlCalc()" placeholder="0.00"></div>' +
+        '</div>' +
+        '<div class="prd-rl-auto">إجمالي العمالة: <b id="prdRlLaborTotal">0.00 ر.س</b></div>' +
+      '</div>' +
+      '<div class="prd-rl-section"><div class="prd-rl-h"><i class="fas fa-bolt" style="color:#0284c7"></i> التكاليف غير المباشرة</div>' +
+        '<div class="prd-rl-grid4">' +
+          '<div class="wo-label-stack"><label class="wo-field-label">كهرباء / غاز</label><input type="number" id="prdRlElec" class="wo-input" min="0" step="0.01" value="'+v(O.electricity)+'" oninput="_prdRlCalc()" placeholder="0.00"></div>' +
+          '<div class="wo-label-stack"><label class="wo-field-label">استهلاك معدات</label><input type="number" id="prdRlEquip" class="wo-input" min="0" step="0.01" value="'+v(O.equipment)+'" oninput="_prdRlCalc()" placeholder="0.00"></div>' +
+          '<div class="wo-label-stack"><label class="wo-field-label">تغليف عام</label><input type="number" id="prdRlPack" class="wo-input" min="0" step="0.01" value="'+v(O.packaging)+'" oninput="_prdRlCalc()" placeholder="0.00"></div>' +
+          '<div class="wo-label-stack"><label class="wo-field-label">مصروفات أخرى</label><input type="number" id="prdRlOther" class="wo-input" min="0" step="0.01" value="'+v(O.other)+'" oninput="_prdRlCalc()" placeholder="0.00"></div>' +
+        '</div>' +
+        '<div class="prd-rl-auto">إجمالي غير المباشرة: <b id="prdRlOvhTotal">0.00 ر.س</b></div>' +
+      '</div>' +
+      '<div class="prd-rl-grand"><span>الإجمالي التقديري للأمر</span><b id="prdRlGrand">0.00 ر.س</b></div>';
+    var footer =
+      '<button class="wo-btn wo-btn-secondary" onclick="window._prdRlModal && window._prdRlModal.close()">إلغاء</button>' +
+      '<button class="wo-btn wo-btn-primary" onclick="prdReleaseConfirm(\''+_woEscapeHtml(id)+'\')"><i class="fas fa-play"></i><span>تأكيد الإطلاق وصرف المواد</span></button>';
+    window._prdRlModal = WoModal.open({
+      id:'prdReleaseModal', icon:'fa-play', iconColor:'warning',
+      title:'إطلاق أمر الإنتاج — '+_woEscapeHtml(d.order_number||''),
+      subtitle:'أدخل تفاصيل العمالة والتكاليف غير المباشرة قبل صرف المواد',
+      body:body, footer:footer, size:'lg'
+    });
+    _prdRlCalc();
+  });
+}
+function _prdRlCalc(){
+  var g=function(id){return Number((document.getElementById(id)||{}).value)||0;};
+  var labor = g('prdRlWorkers')*g('prdRlHours')*g('prdRlRate');
+  var ovh = g('prdRlElec')+g('prdRlEquip')+g('prdRlPack')+g('prdRlOther');
+  var mat = Number(window._prdRlMat||0);
+  var lt=document.getElementById('prdRlLaborTotal'); if(lt) lt.textContent=_prdMoney(labor)+' ر.س';
+  var ot=document.getElementById('prdRlOvhTotal'); if(ot) ot.textContent=_prdMoney(ovh)+' ر.س';
+  var gt=document.getElementById('prdRlGrand'); if(gt) gt.textContent=_prdMoney(mat+labor+ovh)+' ر.س';
+}
 function prdReleaseConfirm(id) {
-  var labor = Number(document.getElementById('prdRlLabor').value) || 0;
-  var overhead = Number(document.getElementById('prdRlOvh').value) || 0;
+  var g=function(idx){return Number((document.getElementById(idx)||{}).value)||0;};
+  var labor = g('prdRlWorkers')*g('prdRlHours')*g('prdRlRate');
+  var ovh = g('prdRlElec')+g('prdRlEquip')+g('prdRlPack')+g('prdRlOther');
+  var breakdown = { labor:{workers:g('prdRlWorkers'),hours:g('prdRlHours'),rate:g('prdRlRate'),total:labor},
+                    overhead:{electricity:g('prdRlElec'),equipment:g('prdRlEquip'),packaging:g('prdRlPack'),other:g('prdRlOther')} };
   if (window._prdRlModal) window._prdRlModal.close();
   _erpPost('/erp/production-orders/'+id+'/release', {
-    releasedBy: currentUser,
-    laborCost: labor,
-    overheadCost: overhead
+    releasedBy: currentUser, laborCost: labor, overheadCost: ovh, costBreakdown: breakdown
   }, function(r){
-    if (r.success) { showToast('تم الإطلاق — تكلفة المواد: '+Number(r.materialsCost||0).toFixed(2)+' ر.س'); prdLoad(); }
+    if (r.success) { showToast('تم الإطلاق — تكلفة المواد: '+_prdMoney(r.materialsCost)+' ر.س'); _prdAfterLifecycle(id); }
     else showToast(r.error||'فشل الإطلاق', true);
   });
 }
@@ -25158,42 +25632,57 @@ function prdComplete(id) {
   _erpGet('/erp/production-orders/'+id, function(d){
     if (!d || d.error) return showToast(d?d.error:'فشل تحميل البيانات', true);
     var planned = Number(d.qty_planned||0);
+    var mat=Number(d.materials_cost||0), labor=Number(d.labor_cost||0), ovh=Number(d.overhead_cost||0);
+    var total=Number(d.total_cost||0)||(mat+labor+ovh);
+    window._prdCpPlanned = planned; window._prdCpTotal = total; window._prdCpUnitLabel = _woEscapeHtml(d.product_unit||'');
     var body =
-      '<div style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:10px;padding:12px;margin-bottom:16px;display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;font-size:12px;">' +
-        '<div><div style="color:#64748b;">المنتج</div><div style="font-weight:700;">'+_woEscapeHtml(d.product_name||'')+'</div></div>' +
-        '<div><div style="color:#64748b;">الكمية المخططة</div><div style="font-weight:700;color:#f59e0b;">'+planned+' '+_woEscapeHtml(d.product_unit||'')+'</div></div>' +
-        '<div><div style="color:#64748b;">المستودع</div><div style="font-weight:700;">'+_woEscapeHtml(d.warehouse_name||'')+'</div></div>' +
+      '<div class="prd-cp-compare">' +
+        '<div class="prd-cp-col"><div class="prd-cp-col-h"><i class="fas fa-clipboard-list" style="color:#f59e0b"></i> المخطط</div>' +
+          '<div class="prd-cp-row"><span>كمية الإنتاج</span><b>'+planned+' '+_woEscapeHtml(d.product_unit||'')+'</b></div>' +
+          '<div class="prd-cp-row"><span>تكلفة المواد</span><b>'+_prdMoney(mat)+'</b></div>' +
+          '<div class="prd-cp-row"><span>عمالة</span><b>'+_prdMoney(labor)+'</b></div>' +
+          '<div class="prd-cp-row"><span>غير مباشرة</span><b>'+_prdMoney(ovh)+'</b></div>' +
+          '<div class="prd-cp-row total"><span>الإجمالي</span><b>'+_prdMoney(total)+'</b></div>' +
+        '</div>' +
+        '<div class="prd-cp-col actual"><div class="prd-cp-col-h"><i class="fas fa-circle-check" style="color:#16a34a"></i> الفعلي</div>' +
+          '<div class="prd-cp-row"><span>كمية مُنتجة</span><b id="prdCpQtyEcho" style="color:#16a34a">0</b></div>' +
+          '<div class="prd-cp-row"><span>هدر</span><b id="prdCpScrapEcho">0</b></div>' +
+          '<div class="prd-cp-row"><span>نسبة العائد</span><b id="prdCpYieldEcho">—</b></div>' +
+          '<div class="prd-cp-row total"><span>تكلفة الوحدة</span><b id="prdCpUnitEcho">—</b></div>' +
+        '</div>' +
       '</div>' +
-      '<div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:12px;">' +
-        '<div class="wo-label-stack">' +
-          '<label class="wo-field-label"><i class="fas fa-boxes-stacked" style="color:#22c55e;"></i> الكمية المُنتجة فعلياً <span style="color:#ef4444;">*</span></label>' +
-          '<input type="number" id="prdCpQty" class="wo-input" value="'+planned+'" min="0.001" step="0.001" placeholder="الكمية المنتجة">' +
-        '</div>' +
-        '<div class="wo-label-stack">' +
-          '<label class="wo-field-label"><i class="fas fa-dumpster" style="color:#ef4444;"></i> كمية الهدر (اختياري)</label>' +
-          '<input type="number" id="prdCpScrap" class="wo-input" value="0" min="0" step="0.001" placeholder="0">' +
-        '</div>' +
+      '<div class="prd-cp-inputs">' +
+        '<div class="wo-label-stack"><label class="wo-field-label"><i class="fas fa-boxes-stacked" style="color:#16a34a"></i> الكمية المُنتجة فعلياً <span style="color:#dc2626">*</span></label><input type="number" id="prdCpQty" class="wo-input" value="'+planned+'" min="0.001" step="0.001" oninput="_prdCpCalc()"></div>' +
+        '<div class="wo-label-stack"><label class="wo-field-label"><i class="fas fa-dumpster" style="color:#dc2626"></i> كمية الهدر</label><input type="number" id="prdCpScrap" class="wo-input" value="0" min="0" step="0.001" oninput="_prdCpCalc()"></div>' +
+        '<div class="wo-label-stack"><label class="wo-field-label"><i class="fas fa-barcode" style="color:#7c3aed"></i> رقم الدفعة</label><input type="text" id="prdCpBatch" class="wo-input" value="'+_woEscapeHtml(d.batch_number||'')+'" placeholder="BATCH-..."></div>' +
+        '<div class="wo-label-stack"><label class="wo-field-label"><i class="fas fa-calendar-xmark" style="color:#dc2626"></i> انتهاء الصلاحية</label><input type="date" id="prdCpExpiry" class="wo-input"></div>' +
       '</div>' +
-      '<div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">' +
-        '<div class="wo-label-stack">' +
-          '<label class="wo-field-label"><i class="fas fa-barcode" style="color:#8b5cf6;"></i> رقم الدفعة (اختياري)</label>' +
-          '<input type="text" id="prdCpBatch" class="wo-input" placeholder="مثال: BATCH-2026-001">' +
-        '</div>' +
-        '<div class="wo-label-stack">' +
-          '<label class="wo-field-label"><i class="fas fa-calendar-xmark" style="color:#ef4444;"></i> تاريخ انتهاء الصلاحية</label>' +
-          '<input type="date" id="prdCpExpiry" class="wo-input">' +
-        '</div>' +
-      '</div>';
+      '<div class="prd-cp-impact"><i class="fas fa-circle-info"></i> عند الإقفال: يُستلَم المنتج التام في <b>'+_woEscapeHtml(d.output_warehouse_name||d.warehouse_name||'')+'</b>، وتُسجَّل تكلفة الوحدة، ويُقفل الأمر (لا تعديل بعد الإقفال).</div>';
     var footer =
       '<button class="wo-btn wo-btn-secondary" onclick="window._prdCpModal && window._prdCpModal.close()">إلغاء</button>' +
-      '<button class="wo-btn wo-btn-primary" onclick="prdCompleteConfirm(\''+id+'\')"><i class="fas fa-flag-checkered"></i><span>إتمام الإنتاج</span></button>';
+      '<button class="wo-btn wo-btn-success" onclick="prdCompleteConfirm(\''+_woEscapeHtml(id)+'\')"><i class="fas fa-flag-checkered"></i><span>اعتماد الإقفال النهائي</span></button>';
     window._prdCpModal = WoModal.open({
       id: 'prdCompleteModal', icon: 'fa-flag-checkered', iconColor: 'success',
-      title: 'إتمام أمر الإنتاج',
-      subtitle: 'أدخل الكميات الفعلية المُنتجة لاحتساب تكلفة الوحدة',
-      body: body, footer: footer, size: 'md'
+      title: 'إقفال أمر الإنتاج — '+_woEscapeHtml(d.order_number||''),
+      subtitle: 'راجع المخطط مقابل الفعلي قبل اعتماد الاستلام النهائي',
+      body: body, footer: footer, size: 'lg'
     });
+    _prdCpCalc();
   });
+}
+function _prdCpCalc(){
+  var qty=Number((document.getElementById('prdCpQty')||{}).value)||0;
+  var scrap=Number((document.getElementById('prdCpScrap')||{}).value)||0;
+  var planned=Number(window._prdCpPlanned||0);
+  var total=Number(window._prdCpTotal||0);
+  var unit=qty>0?total/qty:0;
+  var yieldPct=planned>0?Math.round((qty/planned)*1000)/10:0;
+  var setT=function(id,v){var e=document.getElementById(id); if(e) e.textContent=v;};
+  setT('prdCpQtyEcho', qty+' '+(window._prdCpUnitLabel||''));
+  setT('prdCpScrapEcho', String(scrap));
+  setT('prdCpYieldEcho', (planned>0?yieldPct+'%':'—'));
+  setT('prdCpUnitEcho', (qty>0?unit.toFixed(4)+' ر.س':'—'));
+  var ye=document.getElementById('prdCpYieldEcho'); if(ye) ye.style.color = yieldPct>=95?'#16a34a':(yieldPct>=75?'#f59e0b':'#dc2626');
 }
 function prdCompleteConfirm(id) {
   var qty = Number(document.getElementById('prdCpQty').value);
@@ -25209,7 +25698,7 @@ function prdCompleteConfirm(id) {
     batchNumber: batch || '',
     expiryDate: expiry || null
   }, function(r){
-    if (r.success) { showToast('تم الإنتاج — تكلفة الوحدة: '+Number(r.unitCost||0).toFixed(4)+' ر.س'); prdLoad(); }
+    if (r.success) { showToast('تم الإنتاج — تكلفة الوحدة: '+Number(r.unitCost||0).toFixed(4)+' ر.س'); _prdAfterLifecycle(id); }
     else showToast(r.error||'فشل الإتمام', true);
   });
 }
@@ -25242,7 +25731,7 @@ function prdReverseConfirm(id) {
     reversedBy: currentUser,
     reason: reason
   }, function(r){
-    if (r.success) { showToast('تم إرجاع الأمر — أُعيدت المواد بقيمة '+Number(r.materialsRestored||0).toFixed(2)+' ر.س'); prdLoad(); }
+    if (r.success) { showToast('تم إرجاع الأمر — أُعيدت المواد بقيمة '+Number(r.materialsRestored||0).toFixed(2)+' ر.س'); _prdAfterLifecycle(id); }
     else showToast(r.error||'فشل الإرجاع', true);
   });
 }

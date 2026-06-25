@@ -3709,6 +3709,18 @@ async function runMigrations() {
   `);
   // v7.4 (G2) — store production yield % at completion (informational/reporting).
   await addColumnIfMissing('production_orders', 'yield_pct', "DECIMAL(6,2) DEFAULT NULL");
+  // v7.7 — UI redesign (production orders wizard). Additive, non-breaking columns:
+  //   • cost_breakdown : descriptive JSON of the labor (workers/hours/rate) +
+  //                      overhead (electricity/equipment/packaging/other) detail
+  //                      entered in the create wizard / release modal. The scalar
+  //                      labor_cost / overhead_cost remain the GL source of truth;
+  //                      this column is purely for display on the detail page.
+  //   • priority / allowed_scrap_pct / batch_number : create-time metadata so the
+  //                      mockup's richer create flow round-trips. All optional.
+  await addColumnIfMissing('production_orders', 'cost_breakdown',    "JSON DEFAULT NULL");
+  await addColumnIfMissing('production_orders', 'priority',          "VARCHAR(20) DEFAULT 'normal'");
+  await addColumnIfMissing('production_orders', 'allowed_scrap_pct', "DECIMAL(6,3) DEFAULT 0");
+  await addColumnIfMissing('production_orders', 'batch_number',      "VARCHAR(80) DEFAULT NULL");
   await createTableIfMissing('production_consumption', `
     CREATE TABLE production_consumption (
       id VARCHAR(60) PRIMARY KEY,

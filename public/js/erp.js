@@ -24811,8 +24811,8 @@ function _prdRenderWizard(data) {
             '<div id="prdBomPreview" style="display:none;margin-top:10px;padding:10px;background:var(--wo-surface-2);border-radius:var(--wo-radius-md);border:1px solid var(--wo-border);"></div>' +
           '</div>' +
           '<div class="prd-wz-grid3" style="margin-top:12px;">' +
-            '<div class="wo-label-stack"><label class="wo-field-label"><i class="fas fa-boxes-stacked"></i> الكمية المراد إنتاجها *</label><input type="number" class="wo-input" id="prdQty" step="0.001" min="0" value="'+v(_prdState.qty||'')+'" placeholder="50" oninput="_prdState.qty=this.value;_prdSaveDraft();_prdUpdateYieldHint();"><span id="prdYieldHint" class="wo-text-caption" style="color:var(--wo-on-surface-subtle);min-height:14px;"></span></div>' +
-            '<div class="wo-label-stack"><label class="wo-field-label"><i class="fas fa-percent" style="color:#dc2626"></i> نسبة الهالك المسموح %</label><input type="number" class="wo-input" id="prdScrapPct" step="0.1" min="0" value="'+v(_prdState.scrapPct||'')+'" placeholder="0"></div>' +
+            '<div class="wo-label-stack"><label class="wo-field-label"><i class="fas fa-boxes-stacked"></i> الكمية المراد إنتاجها *</label><div class="prd-input-unit-wrap"><input type="number" class="wo-input prd-input-sfx" id="prdQty" step="0.001" min="0" value="'+v(_prdState.qty||'')+'" placeholder="50" oninput="_prdState.qty=this.value;_prdSaveDraft();_prdUpdateYieldHint();"><span class="prd-input-unit-sfx" id="prdQtyUnit">وحدة</span></div><span id="prdYieldHint" class="wo-text-caption" style="color:var(--wo-on-surface-subtle);min-height:14px;"></span></div>' +
+            '<div class="wo-label-stack"><label class="wo-field-label"><i class="fas fa-percent" style="color:#dc2626"></i> نسبة الهالك المسموح %</label><div class="prd-input-unit-wrap"><input type="number" class="wo-input prd-input-sfx" id="prdScrapPct" step="0.1" min="0" value="'+v(_prdState.scrapPct||'')+'" placeholder="0"><span class="prd-input-unit-sfx">%</span></div></div>' +
             '<div class="wo-label-stack"><label class="wo-field-label"><i class="fas fa-barcode" style="color:#7c3aed"></i> رقم الدفعة</label><input type="text" class="wo-input" id="prdBatchNo" value="'+v(_prdState.batchNo||'')+'" placeholder="Batch-..."></div>' +
           '</div>' +
         '</div>' +
@@ -25040,6 +25040,8 @@ function _prdApplyBomSelection(bom) {
     selText.textContent = (bom.productName||bom.productId) + ' — v'+(bom.version||1) + ' (يُنتج '+(bom.yieldQuantity||1)+' '+(bom.yieldUnit||'')+')';
     sel.style.display = 'inline-flex';
   }
+  var _prdUnitBadge = document.getElementById('prdQtyUnit');
+  if (_prdUnitBadge) _prdUnitBadge.textContent = bom.yieldUnit || 'وحدة';
   // Load BOM lines for preview
   _erpGet('/erp/bom/'+bom.id+'/lines', function(lines){
     _prdBomLines = lines || [];
@@ -25074,6 +25076,8 @@ function _prdClearBom() {
   if (sel) sel.style.display = 'none';
   if (preview) preview.style.display = 'none';
   _prdBomLines = [];
+  var _prdUnitBadge = document.getElementById('prdQtyUnit');
+  if (_prdUnitBadge) _prdUnitBadge.textContent = 'وحدة';
   _prdUpdateYieldHint();
 }
 

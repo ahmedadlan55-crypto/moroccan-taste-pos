@@ -24721,7 +24721,7 @@ function prdLoad() {
 }
 // ═══ Production Order — Foodics-style modal (brand-aware + searchable BOM picker + state persistence) ═══
 var _prdDraftKey = 'prd_draft_v3';
-function _prdBlankState(){ return { brandId:'', branchId:'', bomId:'', qty:'', whRaw:'', whOut:'', date:new Date().toISOString().slice(0,10), notes:'', priority:'normal', scrapPct:'', batchNo:'', laborMethod:'manual', overheadMethod:'manual', labor:{workers:'',hours:'',rate:''}, overhead:{electricity:'',equipment:'',packaging:'',other:''} }; }
+function _prdBlankState(){ return { brandId:'', branchId:'', bomId:'', qty:'', whRaw:'', whOut:'', date:new Date().toISOString().slice(0,10), notes:'', priority:'normal', scrapPct:'', batchNo:'', laborMethod:'manual', overheadMethod:'manual', labor:{workers:'',hours:'',rate:''}, overhead:{electricity:'',equipment:'',packaging:'',other:''}, items:[] }; }
 var _prdState = _prdBlankState();
 var _prdWizStep = 1;
 var _prdWzAvail = null;          // last availability preview (step 3)
@@ -24741,6 +24741,7 @@ function _prdLoadDraft() {
       var d = JSON.parse(raw);
       Object.keys(d||{}).forEach(function(k){ if (d[k] !== undefined) _prdState[k] = d[k]; });
     }
+    if (!Array.isArray(_prdState.items)) _prdState.items = [];
   } catch(e) {}
 }
 function _prdClearDraft() {
@@ -24806,7 +24807,12 @@ function _prdRenderWizard(data) {
 
         // ─ STEP 2: product + BOM ─
         '<div class="prd-wz-step" data-wz="2" style="display:none;">' +
-          '<div class="wo-label-stack"><label class="wo-field-label"><i class="fas fa-book-open" style="color:#0284c7"></i> وصفة الإنتاج (BOM) *</label>' +
+          '<div class="wo-label-stack" style="margin-bottom:12px;">' +
+            '<label class="wo-field-label"><i class="fas fa-list-check" style="color:#0284c7"></i> المنتجات المراد إنتاجها *<span id="prdItemsCount" class="wo-chip info" style="font-size:11px;padding:2px 8px;margin-inline-start:6px;"></span></label>' +
+            '<div id="prdItemsList" class="prd-items-list"></div>' +
+          '</div>' +
+          '<div class="prd-add-divider">إضافة منتج</div>' +
+          '<div class="wo-label-stack"><label class="wo-field-label"><i class="fas fa-book-open" style="color:#0284c7"></i> وصفة الإنتاج (BOM)</label>' +
             '<div id="prdBomPickerHost"></div>' +
             '<div id="prdBomSelected" class="wo-chip success" style="display:none;margin-top:8px;"><i class="fas fa-check"></i> <span id="prdBomSelectedText"></span> <button type="button" onclick="_prdClearBom()" class="wo-icon-btn danger" style="width:22px;height:22px;margin-inline-start:6px;" aria-label="مسح"><i class="fas fa-xmark"></i></button></div>' +
             '<div id="prdBomPreview" style="display:none;margin-top:10px;padding:10px;background:var(--wo-surface-2);border-radius:var(--wo-radius-md);border:1px solid var(--wo-border);"></div>' +
@@ -24816,6 +24822,7 @@ function _prdRenderWizard(data) {
             '<div class="wo-label-stack"><label class="wo-field-label"><i class="fas fa-percent" style="color:#dc2626"></i> نسبة الهالك المسموح %</label><div class="prd-input-unit-wrap"><input type="number" class="wo-input prd-input-sfx" id="prdScrapPct" step="0.1" min="0" value="'+v(_prdState.scrapPct||'')+'" placeholder="0"><span class="prd-input-unit-sfx">%</span></div></div>' +
             '<div class="wo-label-stack"><label class="wo-field-label"><i class="fas fa-barcode" style="color:#7c3aed"></i> رقم الدفعة</label><input type="text" class="wo-input" id="prdBatchNo" value="'+v(_prdState.batchNo||'')+'" placeholder="Batch-..."></div>' +
           '</div>' +
+          '<button type="button" class="wo-btn wo-btn-secondary" onclick="_prdAddItemToList()" style="margin-top:10px;width:100%;"><i class="fas fa-plus"></i><span>إضافة هذا المنتج للقائمة</span></button>' +
         '</div>' +
 
         // ─ STEP 3: materials availability ─
@@ -24916,6 +24923,7 @@ function _prdWzShow(n){
   var steps=document.querySelectorAll('.prd-wz-step');
   for(var i=0;i<steps.length;i++){ steps[i].style.display = (Number(steps[i].getAttribute('data-wz'))===n)?'block':'none'; }
   _prdWzRenderSteps(); _prdWzRenderNav();
+  if(n===2) _prdRenderItemsList();
   if(n===3) _prdWzCheckAvail();
   if(n===4) _prdWzCalc();
   if(n===5) _prdWzRenderReview();
@@ -24925,36 +24933,52 @@ function _prdWzNext(){
   _prdWzSync();
   if(_prdWizStep===1 && !_prdState.whRaw) return showToast('اختر مستودع المواد الخام', true);
   if(_prdWizStep===2){
-    if(!_prdState.bomId) return showToast('اختر وصفة إنتاج (BOM)', true);
-    if(!_prdState.qty || Number(_prdState.qty)<=0) return showToast('أدخل كمية إنتاج صحيحة', true);
+    if(_prdState.bomId && Number(_prdState.qty)>0) _prdAddItemToList();
+    if(!_prdState.items||!_prdState.items.length) return showToast('أضف منتجاً واحداً على الأقل', true);
   }
   if(_prdWizStep<5) _prdWzShow(_prdWizStep+1);
 }
 function _prdWzCheckAvail(){
   _prdWzSync();
   var host=document.getElementById('prdWzAvailHost'); if(!host) return;
-  if(!_prdState.bomId){ host.innerHTML='<div class="wo-empty"><i class="fas fa-circle-info"></i><span>اختر وصفة وكمية في الخطوة السابقة أولاً.</span></div>'; return; }
-  if(!_prdState.qty||Number(_prdState.qty)<=0){ host.innerHTML='<div class="wo-empty"><i class="fas fa-circle-info"></i><span>أدخل كمية إنتاج صحيحة.</span></div>'; return; }
+  var items=_prdState.items||[];
+  if(!items.length){ host.innerHTML='<div class="wo-empty"><i class="fas fa-circle-info"></i><span>أضف منتجات في الخطوة السابقة أولاً.</span></div>'; return; }
   if(!_prdState.whRaw){ host.innerHTML='<div class="wo-empty"><i class="fas fa-warehouse"></i><span>اختر مستودع المواد الخام في الخطوة الأولى.</span></div>'; return; }
-  host.innerHTML='<div class="wo-empty"><i class="fas fa-spinner fa-spin"></i><span>جارٍ الفحص...</span></div>';
-  _erpPost('/erp/production-orders/preview-availability', { bomId:_prdState.bomId, qtyPlanned:Number(_prdState.qty), warehouseId:_prdState.whRaw }, function(r){
-    var host2=document.getElementById('prdWzAvailHost'); if(!host2) return;
-    if(!r||r.error||!r.items){ host2.innerHTML='<div class="wo-empty"><i class="fas fa-triangle-exclamation"></i><span>'+_woEscapeHtml((r&&r.error)||'تعذّر الفحص')+'</span></div>'; return; }
-    _prdWzAvail=r; _prdWzMatCost=(r.summary&&r.summary.reservedValue)||0;
-    var sc=(r.summary&&r.summary.shortageCount)||0;
-    var banner = sc>0
-      ? '<div class="prd-wz-warn"><b><i class="fas fa-triangle-exclamation"></i> يوجد نقص في '+sc+' صنف.</b><div>يمكنك إنشاء الأمر كمخطط الآن ومعالجة النقص قبل الإطلاق: إنشاء طلب شراء، أو تقليل الكمية، أو اختيار مستودع بديل.</div></div>'
-      : '<div class="prd-wz-ok"><i class="fas fa-circle-check"></i> كل المواد متوفرة — الأمر جاهز للإطلاق بعد إنشائه.</div>';
-    host2.innerHTML = banner + _prdAvailTable(r.items);
+  host.innerHTML='<div class="wo-empty"><i class="fas fa-spinner fa-spin"></i><span>جارٍ فحص '+items.length+' منتج...</span></div>';
+  var results=[]; var idx=0;
+  function checkNext(){
+    if(idx>=items.length){ _prdWzRenderCombinedAvail(results,host); return; }
+    var it=items[idx++];
+    _erpPost('/erp/production-orders/preview-availability',
+      {bomId:it.bomId,qtyPlanned:Number(it.qty),warehouseId:_prdState.whRaw},
+      function(r){ results.push({item:it,r:r}); checkNext(); });
+  }
+  checkNext();
+}
+function _prdWzRenderCombinedAvail(results,host){
+  var totalMat=0,totalShortage=0,html='';
+  results.forEach(function(entry){
+    var r=entry.r; var it=entry.item;
+    var mat=(r&&r.summary&&r.summary.reservedValue)||0;
+    var sc=(r&&r.summary&&r.summary.shortageCount)||0;
+    totalMat+=mat; totalShortage+=sc; it.matCost=mat;
+    html+='<div class="prd-avail-section-header"><i class="fas fa-book-open"></i> '+
+      _woEscapeHtml(it.productName||it.bomId)+' — '+it.qty+' '+_woEscapeHtml(it.yieldUnit||'وحدة')+'</div>';
+    html+=(r&&r.items)?_prdAvailTable(r.items):'<div class="wo-empty"><i class="fas fa-triangle-exclamation"></i><span>تعذّر الفحص</span></div>';
   });
+  _prdWzMatCost=totalMat;
+  var banner=totalShortage>0
+    ?'<div class="prd-wz-warn"><b><i class="fas fa-triangle-exclamation"></i> يوجد نقص في '+totalShortage+' صنف.</b><div>يمكنك إنشاء الأوامر كمخططة ومعالجة النقص قبل الإطلاق.</div></div>'
+    :'<div class="prd-wz-ok"><i class="fas fa-circle-check"></i> كل المواد متوفرة — الأوامر جاهزة للإطلاق.</div>';
+  host.innerHTML=banner+html;
 }
 function _prdWzCalc(){
   var g=function(id){return Number((document.getElementById(id)||{}).value)||0;};
   var labor=g('prdWzWorkers')*g('prdWzHours')*g('prdWzRate');
   var ovh=g('prdWzElec')+g('prdWzEquip')+g('prdWzPack')+g('prdWzOther');
-  var mat=Number(_prdWzMatCost||0);
+  var mat=(_prdState.items||[]).reduce(function(s,it){return s+(it.matCost||0);},0);
   var total=mat+labor+ovh;
-  var qty=Number(_prdState.qty||0)||Number((document.getElementById('prdQty')||{}).value)||0;
+  var qty=(_prdState.items||[]).reduce(function(s,it){return s+Number(it.qty||0);},0);
   var unit=qty>0?total/qty:0;
   var set=function(id,val){var e=document.getElementById(id); if(e) e.textContent=val;};
   set('prdWzLaborTotal',_prdMoney(labor)+' ر.س');
@@ -24979,28 +25003,35 @@ function _prdWzRenderReview(){
   var mat=Number(_prdWzMatCost||0); var total=mat+labor+ovh;
   var prio=_prdPrioMeta(_prdState.priority);
   var row=function(lbl,val){ return '<div class="prd-rv-row"><span>'+lbl+'</span><b>'+val+'</b></div>'; };
+  var rvItems=_prdState.items||[];
+  var itemsHtml=rvItems.map(function(it,i){
+    return '<tr><td>'+(i+1)+'</td><td>'+_woEscapeHtml(it.productName||it.bomId)+' <span style="color:#94a3b8;font-size:11px;">v'+(it.version||1)+'</span></td>'+
+      '<td class="num">'+it.qty+' '+_woEscapeHtml(it.yieldUnit||'وحدة')+'</td>'+
+      '<td class="num">'+(it.scrapPct||0)+'%</td>'+
+      '<td>'+_woEscapeHtml(it.batchNo||'—')+'</td></tr>';
+  }).join('');
   host.innerHTML =
+    '<div class="prd-card" style="margin-bottom:12px;"><div class="prd-card-h"><i class="fas fa-list-check"></i> المنتجات ('+rvItems.length+')</div>' +
+      '<table class="wo-table" style="font-size:12px;margin:0;"><thead><tr><th>#</th><th>المنتج / الوصفة</th><th class="num">الكمية</th><th class="num">هالك%</th><th>الدفعة</th></tr></thead>' +
+      '<tbody>'+itemsHtml+'</tbody></table>' +
+    '</div>' +
     '<div class="prd-detail-grid">' +
       '<div class="prd-card"><div class="prd-card-h"><i class="fas fa-circle-info"></i> بيانات الأمر</div>' +
-        row('المنتج / الوصفة', _woEscapeHtml(bom.productName||bom.productId||'—')) +
         row('البراند', _woEscapeHtml(brand)) +
         row('الفرع', _woEscapeHtml(branch)) +
         row('مستودع المواد', _woEscapeHtml(whRawName)) +
         row('مستودع المنتج', _woEscapeHtml(whOutName)) +
         row('تاريخ الإنتاج', _woEscapeHtml(_prdState.date||'—')) +
         row('الأولوية', prio?prio.t:'عادية') +
-        (_prdState.batchNo?row('رقم الدفعة', _woEscapeHtml(_prdState.batchNo)):'') +
       '</div>' +
-      '<div class="prd-card"><div class="prd-card-h"><i class="fas fa-coins"></i> الكمية والتكلفة التقديرية</div>' +
-        row('الكمية', _woEscapeHtml(_prdState.qty||'0')+' '+_woEscapeHtml(bom.yieldUnit||'')) +
-        (_prdState.scrapPct?row('نسبة الهالك المسموح', _woEscapeHtml(_prdState.scrapPct)+'%'):'') +
+      '<div class="prd-card"><div class="prd-card-h"><i class="fas fa-coins"></i> التكلفة التقديرية</div>' +
         '<div class="prd-cost-row"><span>مواد خام (مقدّرة)</span><b>'+_prdMoney(mat)+'</b></div>' +
         '<div class="prd-cost-row"><span>عمالة</span><b>'+_prdMoney(labor)+'</b></div>' +
         '<div class="prd-cost-row"><span>غير مباشرة</span><b>'+_prdMoney(ovh)+'</b></div>' +
         '<div class="prd-cost-total"><span>إجمالي تقديري</span><b>'+_prdMoney(total)+' ر.س</b></div>' +
       '</div>' +
     '</div>' +
-    '<div class="prd-wz-hint" style="margin-top:14px;"><i class="fas fa-circle-info"></i> سيُنشأ الأمر بحالة «مخطط». التكاليف أعلاه تقديرية وتُملأ تلقائياً عند الإطلاق — لا يُصرَف المخزون ولا يُرحَّل أي قيد إلا عند الإطلاق.</div>';
+    '<div class="prd-wz-hint" style="margin-top:14px;"><i class="fas fa-circle-info"></i> سيُنشأ '+rvItems.length+' أمر إنتاج بحالة «مخطط». التكاليف أعلاه تقديرية — لا يُصرَف المخزون ولا يُرحَّل أي قيد إلا عند الإطلاق.</div>';
 }
 
 function _prdFilteredBoms() {
@@ -25105,6 +25136,57 @@ function _prdBomKeyNav(e) {
   }
 }
 
+function _prdRenderItemsList() {
+  var list = document.getElementById('prdItemsList');
+  var count = document.getElementById('prdItemsCount');
+  if (!list) return;
+  var items = _prdState.items || [];
+  if (count) count.textContent = items.length ? items.length + ' منتج' : '';
+  if (!items.length) {
+    list.innerHTML = '<div class="prd-items-empty"><i class="fas fa-inbox"></i><span>أضف منتجاً واحداً على الأقل باستخدام النموذج أدناه</span></div>';
+    return;
+  }
+  list.innerHTML = items.map(function(it, i){
+    return '<div class="prd-item-row">' +
+      '<div class="prd-item-row-num">'+(i+1)+'</div>' +
+      '<div class="prd-item-row-main">' +
+        '<div class="prd-item-row-name">'+_woEscapeHtml(it.productName||it.bomId)+' <span style="color:#94a3b8;font-weight:400">v'+(it.version||1)+'</span></div>' +
+        '<div class="prd-item-row-meta">'+it.qty+' '+_woEscapeHtml(it.yieldUnit||'وحدة')+
+          (it.scrapPct?' · هالك '+it.scrapPct+'%':'')+
+          (it.batchNo?' · '+_woEscapeHtml(it.batchNo):'')+
+        '</div>' +
+      '</div>' +
+      '<button type="button" class="wo-icon-btn danger" onclick="_prdRemoveItem('+i+')" aria-label="حذف"><i class="fas fa-xmark"></i></button>' +
+    '</div>';
+  }).join('');
+}
+
+function _prdRemoveItem(i) {
+  (_prdState.items = _prdState.items || []).splice(i, 1);
+  _prdSaveDraft(); _prdRenderItemsList();
+}
+
+function _prdAddItemToList() {
+  _prdWzSync();
+  if (!_prdState.bomId) return showToast('اختر وصفة أولاً', true);
+  var qty = Number(_prdState.qty);
+  if (!qty || qty <= 0) return showToast('أدخل كمية صحيحة', true);
+  var bom = _prdAllBoms.find(function(b){ return b.id === _prdState.bomId; }) || {};
+  (_prdState.items = _prdState.items || []).push({
+    bomId: _prdState.bomId,
+    productName: bom.productName || bom.productId || _prdState.bomId,
+    yieldUnit: bom.yieldUnit || 'وحدة', version: bom.version || 1,
+    qty: qty, scrapPct: Number(_prdState.scrapPct)||0,
+    batchNo: _prdState.batchNo || '', matCost: 0
+  });
+  _prdSaveDraft(); _prdRenderItemsList();
+  _prdClearBom();
+  ['prdQty','prdScrapPct','prdBatchNo'].forEach(function(id){
+    var el=document.getElementById(id); if(el) el.value='';
+  });
+  _prdState.qty=''; _prdState.scrapPct=''; _prdState.batchNo='';
+}
+
 function _prdApplyBomSelection(bom) {
   if (!bom) return;
   _prdState.bomId = bom.id; _prdSaveDraft();
@@ -25202,38 +25284,28 @@ function _prdDiscardDraft() {
 
 function prdSubmitNew() {
   _prdWzSync();
-  if (!_prdState.bomId) return showToast('اختر وصفة إنتاج (BOM)', true);
-  var qty = Number(_prdState.qty);
-  if (!qty || qty <= 0) return showToast('أدخل كمية إنتاج صحيحة', true);
-  if (!_prdState.whRaw) return showToast('اختر مستودع المواد الخام', true);
+  var items=_prdState.items||[];
+  if(!items.length) return showToast('أضف منتجاً واحداً على الأقل', true);
+  if(!_prdState.whRaw) return showToast('اختر مستودع المواد الخام', true);
 
   var ld=_prdState.labor||{}, od=_prdState.overhead||{};
-  var labor = { workers:Number(ld.workers)||0, hours:Number(ld.hours)||0, rate:Number(ld.rate)||0 };
-  labor.total = labor.workers * labor.hours * labor.rate;
-  var overhead = { electricity:Number(od.electricity)||0, equipment:Number(od.equipment)||0, packaging:Number(od.packaging)||0, other:Number(od.other)||0 };
-  var costBreakdown = { labor:labor, overhead:overhead, materials:Number(_prdWzMatCost||0),
-                        laborMethod:_prdState.laborMethod||'manual', overheadMethod:_prdState.overheadMethod||'manual' };
+  var labor={workers:Number(ld.workers)||0,hours:Number(ld.hours)||0,rate:Number(ld.rate)||0};
+  labor.total=labor.workers*labor.hours*labor.rate;
+  var overhead={electricity:Number(od.electricity)||0,equipment:Number(od.equipment)||0,packaging:Number(od.packaging)||0,other:Number(od.other)||0};
+  var costBreakdown={labor:labor,overhead:overhead,materials:Number(_prdWzMatCost||0),
+                     laborMethod:_prdState.laborMethod||'manual',overheadMethod:_prdState.overheadMethod||'manual'};
 
-  _erpPost('/erp/production-orders', {
-    bomId: _prdState.bomId, qtyPlanned: qty,
-    warehouseId: _prdState.whRaw,
-    outputWarehouseId: _prdState.whOut || '',
-    plannedDate: _prdState.date,
-    notes: _prdState.notes,
-    brandId: _prdState.brandId || null,
-    branchId: _prdState.branchId || null,
-    priority: _prdState.priority || 'normal',
-    allowedScrapPct: Number(_prdState.scrapPct) || 0,
-    batchNumber: _prdState.batchNo || '',
-    costBreakdown: costBreakdown,
-    createdBy: currentUser
-  }, function(r){
-    if (r.success) {
-      showToast('تم إنشاء أمر الإنتاج '+r.orderNumber);
-      _prdClearDraft();
-      if (window._prdModalApi) window._prdModalApi.close();
-      prdLoad();
-    } else showToast(r.error||'فشل', true);
+  _erpPost('/erp/production-orders',{
+    items:items.map(function(it){return{bomId:it.bomId,qtyPlanned:Number(it.qty),allowedScrapPct:Number(it.scrapPct)||0,batchNumber:it.batchNo||''};}),
+    warehouseId:_prdState.whRaw,outputWarehouseId:_prdState.whOut||'',
+    plannedDate:_prdState.date,notes:_prdState.notes,
+    brandId:_prdState.brandId||null,branchId:_prdState.branchId||null,
+    priority:_prdState.priority||'normal',costBreakdown:costBreakdown,createdBy:currentUser
+  },function(r){
+    if(r.success){
+      showToast('تم إنشاء '+(r.count||1)+' أمر إنتاج بنجاح');
+      _prdClearDraft(); if(window._prdModalApi) window._prdModalApi.close(); prdLoad();
+    } else showToast(r.error||'فشل',true);
   });
 }
 function prdView(id) {

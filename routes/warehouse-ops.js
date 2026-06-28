@@ -13,7 +13,7 @@ const { recomputeInvItemStock } = require('../lib/stockRecompute');
 // v7.4 — RBAC. MGR = managerial (approve / cancel / reverse / dispose);
 // BACKOFFICE = any authenticated back-office role EXCEPT cashier (the
 // widely-distributed front-line credential and the documented fraud vector).
-const requireRole = require('./authMiddleware').requireRole;
+const requireRole = require('../middleware/auth').requireRole;
 const MGR = requireRole('admin', 'manager');
 const BACKOFFICE = requireRole('admin', 'manager', 'employee', 'custody');
 
@@ -952,6 +952,64 @@ router.post('/production-orders/preview-availability', async (req, res) => {
 // Create production order from BOM
 router.post('/production-orders', async (req, res) => {
   try {
+    // ── Multi-item batch (new format: items array) ──────────────────────────
+    if (req.body.items && Array.isArray(req.body.items) && req.body.items.length > 0) {
+      const { warehouseId, outputWarehouseId, plannedDate, brandId, branchId,
+              notes, createdBy, priority, costBreakdown } = req.body;
+      if (!warehouseId) return res.status(400).json({ error: 'warehouseId required' });
+      const whIds = [warehouseId];
+      if (outputWarehouseId && String(outputWarehouseId) !== String(warehouseId)) whIds.push(outputWarehouseId);
+      const [whRows] = await db.query('SELECT id FROM warehouses WHERE id IN (?)', [whIds]);
+      if (whRows.length !== whIds.length)
+        return res.status(400).json({ error: 'مستودع غير موجود — تحقق من مستودع المواد ومستودع الإخراج', code: 'warehouse-not-found' });
+      let _cbJson = null;
+      try { _cbJson = costBreakdown ? JSON.stringify(costBreakdown) : null; } catch(_) {}
+      const _priority = (typeof priority === 'string' && priority) ? priority.slice(0,20) : 'normal';
+      const orders = [];
+      for (const item of req.body.items) {
+        const { bomId: itemBomId, qtyPlanned: itemQty, allowedScrapPct: itemScrap, batchNumber: itemBatch } = item;
+        if (!itemBomId || !itemQty || Number(itemQty) <= 0) continue;
+        const [bomRows] = await db.query('SELECT id,product_id,yield_quantity FROM bom WHERE id=? AND is_active=1', [itemBomId]);
+        if (!bomRows.length) continue;
+        const bom = bomRows[0];
+        const [lines] = await db.query('SELECT * FROM bom_lines WHERE bom_id=?', [itemBomId]);
+        if (!lines.length) continue;
+        const ymd = _ymd();
+        const serial = await _nextSerial('production_counter', ymd);
+        const orderNumber = 'PRD-' + ymd + '-' + String(serial).padStart(4,'0');
+        const id = 'PO-' + Date.now() + '-' + Math.random().toString(36).slice(2,6);
+        const qtyPlan = Number(itemQty);
+        const batches = qtyPlan / (Number(bom.yield_quantity) || 1);
+        const _scrapPct = (itemScrap != null && !isNaN(Number(itemScrap))) ? Number(itemScrap) : 0;
+        const _batchNo  = (typeof itemBatch === 'string' && itemBatch.trim()) ? itemBatch.trim().slice(0,80) : null;
+        await db.query(
+          `INSERT INTO production_orders
+           (id,order_number,bom_id,product_id,warehouse_id,output_warehouse_id,brand_id,branch_id,
+            qty_planned,status,notes,created_by,planned_date,priority,allowed_scrap_pct,batch_number,cost_breakdown)
+           VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+          [id, orderNumber, itemBomId, bom.product_id, warehouseId, outputWarehouseId || warehouseId,
+           brandId||null, branchId||null, qtyPlan, 'planned', notes||'', createdBy||'',
+           plannedDate || new Date().toISOString().slice(0,10),
+           _priority, _scrapPct, _batchNo, _cbJson]);
+        for (const l of lines) {
+          const qtyBase = Number(l.quantity) * batches;
+          const waste   = Number(l.waste_pct || 0) / 100;
+          const qtyW    = qtyBase * (1 + waste);
+          const unitCost = await _getEffectiveCost(l.component_item_id, warehouseId);
+          await db.query(
+            `INSERT INTO production_consumption
+             (id,production_order_id,item_id,warehouse_id,qty_planned,unit_cost,total_cost)
+             VALUES (?,?,?,?,?,?,?)`,
+            ['PCC-'+Date.now()+'-'+Math.random().toString(36).slice(2,7),
+             id, l.component_item_id, warehouseId, qtyW, unitCost, qtyW*unitCost]);
+        }
+        orders.push({ id, orderNumber });
+      }
+      if (!orders.length)
+        return res.status(400).json({ error: 'لم يُنشأ أي أمر — تحقق من صحة BOMs والكميات' });
+      return res.json({ success: true, orders, count: orders.length, orderNumber: orders[0].orderNumber });
+    }
+    // ── Legacy single-item (backward compat) ───────────────────────────────
     const { bomId, warehouseId, outputWarehouseId, qtyPlanned, plannedDate, brandId, branchId, notes, createdBy,
             priority, allowedScrapPct, batchNumber, costBreakdown } = req.body;
     if (!bomId) return res.status(400).json({ error: 'bomId required' });

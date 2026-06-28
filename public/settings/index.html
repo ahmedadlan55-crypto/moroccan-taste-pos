@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <title>الإعدادات - Moroccan Taste</title>
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-  <meta name="theme-color" content="#0d47a1">
+  <meta name="theme-color" content="#0F766E">
 
   <!-- Synchronous auth gate — redirects to / if no token, otherwise releases the visibility gate when body parses -->
   <script>
@@ -44,7 +44,7 @@
 
   <div id="loader">
     <div class="spinner"></div>
-    <h3 style="margin-top:20px;color:#fff;font-weight:800;">جاري التحميل...</h3>
+    <h3 class="loader-text">جاري التحميل...</h3>
   </div>
 
   <header id="appHeader" class="app-header"></header>
@@ -59,7 +59,7 @@
       <h3 class="card-title"><i class="fas fa-store"></i> هوية الشركة</h3>
 
       <div class="form-group">
-        <label class="form-label">شعار الشركة (يظهر في تسجيل الدخول، الفواتير، تقارير الإغلاق)</label>
+        <label class="form-label" for="setLogoFile">شعار الشركة (يظهر في تسجيل الدخول، الفواتير، تقارير الإغلاق)</label>
         <div class="logo-row">
           <div id="setLogoPreview" class="logo-preview">
             <i class="fas fa-image"></i>
@@ -67,7 +67,7 @@
           <div class="logo-controls">
             <label class="btn btn-light logo-upload-btn">
               <i class="fas fa-upload"></i> اختر صورة
-              <input type="file" id="setLogoFile" accept="image/*" onchange="handleLogoUpload(this)">
+              <input type="file" id="setLogoFile" accept="image/*" aria-label="اختر صورة شعار الشركة" onchange="handleLogoUpload(this)">
             </label>
             <button type="button" class="btn btn-danger" onclick="removeLogo()">
               <i class="fas fa-trash"></i> إزالة الشعار
@@ -79,11 +79,11 @@
 
       <div class="form-row">
         <div class="form-group">
-          <label class="form-label">اسم الشركة المطبوع على الفاتورة</label>
+          <label class="form-label" for="setCompany">اسم الشركة المطبوع على الفاتورة</label>
           <input type="text" id="setCompany" class="form-control glass-input" placeholder="مثال: مطعم النخيل">
         </div>
         <div class="form-group">
-          <label class="form-label">الرقم الضريبي المعتمد لدى هيئة الزكاة والدخل</label>
+          <label class="form-label" for="setTax">الرقم الضريبي المعتمد لدى هيئة الزكاة والدخل</label>
           <input type="text" id="setTax" class="form-control glass-input" placeholder="1234567890">
         </div>
       </div>
@@ -91,56 +91,56 @@
       <!-- V5.7.9 — contact info shown at the bottom of every printed receipt -->
       <div class="form-row">
         <div class="form-group">
-          <label class="form-label"><i class="fas fa-phone"></i> رقم الهاتف للفاتورة</label>
+          <label class="form-label" for="setPhone"><i class="fas fa-phone"></i> رقم الهاتف للفاتورة</label>
           <input type="tel" id="setPhone" class="form-control glass-input" placeholder="مثال: 8002440170" dir="ltr">
         </div>
         <div class="form-group">
-          <label class="form-label"><i class="fas fa-envelope"></i> البريد الإلكتروني للفاتورة</label>
+          <label class="form-label" for="setEmail"><i class="fas fa-envelope"></i> البريد الإلكتروني للفاتورة</label>
           <input type="email" id="setEmail" class="form-control glass-input" placeholder="info@moroccantaste.com.sa" dir="ltr">
         </div>
       </div>
-      <small style="color:#94a3b8;font-size:11px;display:block;margin-top:-4px;"><i class="fas fa-info-circle"></i> يظهران أسفل كل فاتورة مطبوعة.</small>
+      <small class="field-note"><i class="fas fa-info-circle"></i> يظهران أسفل كل فاتورة مطبوعة.</small>
     </div>
 
     <!-- v6.20.0 — Sales tax (VAT) configuration -->
     <div class="page-card">
-      <h3 class="card-title"><i class="fas fa-percent" style="color:#7c3aed;"></i> إعدادات ضريبة المبيعات</h3>
+      <h3 class="card-title"><i class="fas fa-percent"></i> إعدادات ضريبة المبيعات</h3>
       <p class="card-hint">تحديد نوع الضريبة ونسبتها. التغييرات تسري فوراً على المبيعات الجديدة (بدون الحاجة لإعادة تشغيل النظام).</p>
       <div class="form-row">
         <div class="form-group">
-          <label class="form-label"><i class="fas fa-tag"></i> اسم الضريبة (كما يظهر في الفاتورة)</label>
+          <label class="form-label" for="setSalesTaxName"><i class="fas fa-tag"></i> اسم الضريبة (كما يظهر في الفاتورة)</label>
           <input type="text" id="setSalesTaxName" class="form-control glass-input" placeholder="ضريبة القيمة المضافة 15%">
         </div>
         <div class="form-group">
-          <label class="form-label"><i class="fas fa-calculator"></i> النسبة (%)</label>
+          <label class="form-label" for="setVATRate"><i class="fas fa-calculator"></i> النسبة (%)</label>
           <input type="number" id="setVATRate" class="form-control glass-input" placeholder="15" min="0" max="100" step="0.01" dir="ltr">
         </div>
       </div>
-      <div class="form-group" style="margin-top:6px;">
-        <label class="form-label"><i class="fas fa-box"></i> الافتراضي للمنتجات الجديدة</label>
-        <div style="display:flex;gap:18px;flex-wrap:wrap;margin-top:6px;">
-          <label style="display:flex;align-items:center;gap:6px;font-weight:600;cursor:pointer;">
+      <div class="form-group form-group-tight">
+        <span class="form-label" id="newProdBasisLabel"><i class="fas fa-box"></i> الافتراضي للمنتجات الجديدة</span>
+        <div class="choice-row" role="radiogroup" aria-labelledby="newProdBasisLabel">
+          <label class="choice-option">
             <input type="radio" name="newProductsTaxBasis" value="exclusive" id="setNewProdExclusive">
             <span>السعر <strong>صافي</strong> (يضاف عليه الضريبة) — موصى به</span>
           </label>
-          <label style="display:flex;align-items:center;gap:6px;font-weight:600;cursor:pointer;">
+          <label class="choice-option">
             <input type="radio" name="newProductsTaxBasis" value="inclusive" id="setNewProdInclusive">
             <span>السعر <strong>شامل</strong> للضريبة</span>
           </label>
         </div>
-        <small style="color:#94a3b8;font-size:11px;display:block;margin-top:6px;"><i class="fas fa-info-circle"></i> يمكن تجاوز هذا الافتراضي لكل منتج على حدة من شاشة إضافة/تعديل المنتج.</small>
+        <small class="field-note"><i class="fas fa-info-circle"></i> يمكن تجاوز هذا الافتراضي لكل منتج على حدة من شاشة إضافة/تعديل المنتج.</small>
       </div>
     </div>
 
     <!-- ─── Cashier permissions ─── -->
     <div class="page-card">
-      <h3 class="card-title"><i class="fas fa-user-shield" style="color:#7c3aed;"></i> صلاحيات الكاشير</h3>
-      <div class="form-group" style="margin-top:6px;">
-        <label style="display:flex;align-items:center;gap:10px;font-weight:600;cursor:pointer;">
-          <input type="checkbox" id="setRequireVoidApproval" style="width:18px;height:18px;cursor:pointer;flex-shrink:0;">
+      <h3 class="card-title"><i class="fas fa-user-shield"></i> صلاحيات الكاشير</h3>
+      <div class="form-group form-group-tight">
+        <label class="choice-option choice-option-block">
+          <input type="checkbox" id="setRequireVoidApproval" class="choice-check">
           <span>إلزام <strong>اعتماد المدير</strong> عند إلغاء الفاتورة</span>
         </label>
-        <small style="color:#94a3b8;font-size:11px;display:block;margin-top:6px;"><i class="fas fa-info-circle"></i> عند إيقاف الخيار يستطيع الكاشير إلغاء الفواتير مباشرةً دون اعتماد مدير. (المرتجع/الإرجاع يبقى دائماً يتطلب اعتماد مدير.)</small>
+        <small class="field-note"><i class="fas fa-info-circle"></i> عند إيقاف الخيار يستطيع الكاشير إلغاء الفواتير مباشرةً دون اعتماد مدير. (المرتجع/الإرجاع يبقى دائماً يتطلب اعتماد مدير.)</small>
       </div>
     </div>
 
@@ -151,21 +151,21 @@
          flags, and dynamic add/remove. Keeping the simple list here would
          duplicate state and sometimes desync with the V3 admin. Replaced
          with a clean redirect card. -->
-    <div class="page-card" style="background:linear-gradient(135deg,#eff6ff,#f0fdf4);border:1px solid #bfdbfe;">
-      <h3 class="card-title"><i class="fas fa-credit-card" style="color:#2563eb;"></i> طرق الدفع والقنوات</h3>
+    <div class="page-card redirect-card">
+      <h3 class="card-title"><i class="fas fa-credit-card"></i> طرق الدفع والقنوات</h3>
       <p class="card-hint">تمت ترقية إدارة طرق الدفع إلى قسم متخصص يحتوي على إعدادات أعمق (الحساب المحاسبي، مركز التكلفة، رسوم ثابتة/نسبية، نوع المجموعة، إلخ).</p>
-      <div style="display:flex;gap:10px;flex-wrap:wrap;margin-top:14px;">
-        <a class="btn btn-primary" href="/#admin?nav=erpPaymentMethodsV3" style="flex:1;min-width:200px;text-decoration:none;text-align:center;">
+      <div class="redirect-actions">
+        <a class="btn btn-primary" href="/#admin?nav=erpPaymentMethodsV3">
           <i class="fas fa-wallet"></i> إدارة طرق الدفع المتقدمة
         </a>
-        <a class="btn btn-light" href="/#admin?nav=erpSalesChannels" style="flex:1;min-width:200px;text-decoration:none;text-align:center;">
+        <a class="btn btn-light" href="/#admin?nav=erpSalesChannels">
           <i class="fas fa-store"></i> قنوات البيع
         </a>
-        <a class="btn btn-light" href="/#admin?nav=erpDiscountsV3" style="flex:1;min-width:200px;text-decoration:none;text-align:center;">
+        <a class="btn btn-light" href="/#admin?nav=erpDiscountsV3">
           <i class="fas fa-percent"></i> الخصومات
         </a>
       </div>
-      <small style="display:block;margin-top:10px;color:#64748b;font-size:11px;"><i class="fas fa-info-circle"></i> الإعدادات هنا مخصصة للهوية والاتصال فقط. كل ما يخص الدفع/القنوات/الخصومات في القسم المخصص.</small>
+      <small class="field-note field-note-muted"><i class="fas fa-info-circle"></i> الإعدادات هنا مخصصة للهوية والاتصال فقط. كل ما يخص الدفع/القنوات/الخصومات في القسم المخصص.</small>
     </div>
 
     <!-- ─── Save settings ─── -->
@@ -188,43 +188,43 @@
 
   <!-- V5.7.12 — Granular reset-DB modal: per-section checkboxes -->
   <div id="modalResetDb" class="glass-modal hidden">
-    <div class="glass-modal-content danger" style="max-width:680px;">
+    <div class="glass-modal-content danger rdb-modal">
       <div class="glass-modal-title">
         <span><i class="fas fa-exclamation-triangle"></i> مسح أقسام من قاعدة البيانات</span>
-        <button class="glass-modal-close" onclick="closeGlassModal('#modalResetDb')">&times;</button>
+        <button class="glass-modal-close" aria-label="إغلاق" onclick="closeGlassModal('#modalResetDb')">&times;</button>
       </div>
       <div class="glass-modal-body">
-        <div style="background:#fef3c7;border:1px solid #fcd34d;border-radius:10px;padding:12px 14px;margin-bottom:14px;color:#78350f;font-size:13px;line-height:1.7;">
+        <div class="rdb-warning">
           <strong><i class="fas fa-shield-alt"></i> سياسة الأمان:</strong>
           اختر بدقة الأقسام التي تريد مسحها فقط. الأقسام غير المحددة <b>لن تُمَس</b>.
           الأقسام التالية محمية ولا يمكن مسحها أبداً:
-          <span style="display:inline-block;margin-top:4px;color:#1e40af;font-weight:700;">
+          <span class="rdb-warning-protected">
             المستخدمون، الإعدادات، البراندات، الفروع، المستودعات، صلاحيات الموظفين.
           </span>
         </div>
 
         <div class="form-group">
-          <label class="form-label" style="display:flex;justify-content:space-between;align-items:center;">
+          <div class="form-label rdb-toolbar">
             <span><i class="fas fa-list-check"></i> اختر الأقسام التي تريد مسحها:</span>
-            <span style="display:flex;gap:6px;">
-              <button type="button" class="btn btn-light" style="padding:4px 10px;font-size:11px;" onclick="rdbSelectAll(true)">تحديد الكل</button>
-              <button type="button" class="btn btn-light" style="padding:4px 10px;font-size:11px;" onclick="rdbSelectAll(false)">إلغاء التحديد</button>
+            <span class="rdb-toolbar-actions">
+              <button type="button" class="btn btn-light btn-mini" onclick="rdbSelectAll(true)">تحديد الكل</button>
+              <button type="button" class="btn btn-light btn-mini" onclick="rdbSelectAll(false)">إلغاء التحديد</button>
             </span>
-          </label>
-          <div id="rdbSectionChecks" style="display:grid;grid-template-columns:1fr 1fr;gap:8px;max-height:300px;overflow-y:auto;border:1px solid #e2e8f0;border-radius:10px;padding:12px;background:#f8fafc;">
-            <div style="grid-column:1/-1;text-align:center;color:#94a3b8;padding:12px;">جاري تحميل قائمة الأقسام...</div>
           </div>
-          <small style="color:#64748b;font-size:11px;display:block;margin-top:6px;">
+          <div id="rdbSectionChecks" class="rdb-grid">
+            <div class="rdb-grid-loading">جاري تحميل قائمة الأقسام...</div>
+          </div>
+          <small class="field-note field-note-muted">
             <i class="fas fa-info-circle"></i> مسح "المنيو" بدون "الوصفات" قد يترك مراجع غير سليمة — يُنصح بمسحهما معاً.
           </small>
         </div>
 
         <div class="form-group">
-          <label class="form-label">أعد إدخال كلمة المرور للتأكيد</label>
+          <label class="form-label" for="rdbPass">أعد إدخال كلمة المرور للتأكيد</label>
           <input type="password" id="rdbPass" class="form-control glass-input" placeholder="كلمة المرور">
         </div>
         <div class="form-group">
-          <label class="form-label">اكتب <code>YES_RESET_ALL_DATA</code> للتأكيد</label>
+          <label class="form-label" for="rdbConfirm">اكتب <code>YES_RESET_ALL_DATA</code> للتأكيد</label>
           <input type="text" id="rdbConfirm" class="form-control glass-input" placeholder="YES_RESET_ALL_DATA" autocomplete="off">
         </div>
       </div>

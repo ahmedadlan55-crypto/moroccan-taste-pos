@@ -29,10 +29,11 @@
   --success:       var(--mt-success);
   --warning:       var(--mt-warning);
 
-  /* Extras the skin uses */
-  --mt-accent-soft:   #faf5ff;
-  --mt-accent-soft-2: #f3e8ff;
-  --mt-accent-fg:     #4c1d95;
+  /* Extras the skin uses — Wave1: aligned to Zellige Teal so the admin
+     doesn't end up half-teal / half-purple after the brand recolor. */
+  --mt-accent-soft:   #CCFBF1;
+  --mt-accent-soft-2: #99F6E4;
+  --mt-accent-fg:     #134E4A;
   --mt-success-soft:  #dcfce7;
   --mt-danger-soft:   #fee2e2;
   --mt-warning-soft:  #fef3c7;
@@ -41,7 +42,7 @@
   --mt-surface-3:     var(--mt-bg);
   --mt-surface-4:     var(--mt-border);
 
-  --mt-shadow-focus:  0 0 0 3px rgba(124, 58, 237, 0.18);
+  --mt-shadow-focus:  0 0 0 3px rgba(15, 118, 110, 0.20);   /* Wave1 — teal */
   --mt-r-md:          12px;
   --mt-r-lg:          16px;
 }

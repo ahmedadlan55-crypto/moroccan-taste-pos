@@ -32,6 +32,14 @@ input, select, textarea { outline: none; font-family: inherit; }
 /* ─── Buttons ─── */
 .btn { padding: 12px 20px; border-radius: var(--mt-radius-md); font-weight: bold; font-size: 14px; display: inline-flex; align-items: center; justify-content: center; gap: 8px; }
 .btn:active { transform: scale(0.96); }
+/* Wave1 — unified disabled state for every button variant */
+.btn:disabled, .btn[disabled], .btn[aria-disabled="true"] {
+  opacity: 0.55;
+  cursor: not-allowed;
+  box-shadow: none;
+  transform: none;
+  pointer-events: none;
+}
 .btn-primary { background: var(--secondary); color: var(--white); box-shadow: 0 4px 12px rgba(13, 71, 161, 0.2); }
 .btn-primary:hover { background: var(--mt-primary-2); }
 .btn-danger { background: var(--danger); color: var(--white); box-shadow: 0 4px 12px rgba(239, 68, 68, 0.2); }
@@ -46,10 +54,13 @@ input, select, textarea { outline: none; font-family: inherit; }
 .form-group { margin-bottom: 20px; }
 .form-label { display: block; margin-bottom: 8px; font-weight: 600; font-size: 14px; color: var(--text-dark); }
 .form-control { width: 100%; padding: 12px 16px; border: 1.5px solid var(--border); border-radius: var(--mt-radius-md); font-size: 15px; background: var(--white); transition: 0.2s; }
-.form-control:focus { border-color: var(--accent); box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.1); }
+/* Wave1 — focus halo reads the brand accent token (was a hardcoded blue) */
+.form-control:focus { border-color: var(--accent); box-shadow: 0 0 0 3px rgba(var(--mt-accent-rgb), 0.12); }
+/* Wave1 — unified disabled state for inputs */
+.form-control:disabled { background: var(--mt-surface-2); color: var(--mt-text-muted); cursor: not-allowed; }
 
 /* ─── Cards ─── */
-.card { background: var(--white); border-radius: 20px; padding: 25px; box-shadow: 0 10px 30px rgba(0,0,0,0.03); border: 1px solid rgba(0,0,0,0.02); }
+.card { background: var(--white); border-radius: 20px; padding: 25px; box-shadow: var(--mt-shadow-sm); border: 1px solid var(--mt-border); }
 
 /* ─── Loader ─── */
 #loader { position: fixed; inset: 0; background: rgba(255, 255, 255, 0.85); backdrop-filter: blur(10px); z-index: 9999; display: none; flex-direction: column; justify-content: center; align-items: center; }
@@ -138,7 +149,8 @@ input, select, textarea { outline: none; font-family: inherit; }
 
 .glass-modal-content.small  { max-width: 380px; }
 .glass-modal-content.large  { max-width: 640px; }
-.glass-modal-content.danger { border-color: rgba(239, 68, 68, 0.4); }
+/* Wave1 — danger border reads the danger token (was a hardcoded red) */
+.glass-modal-content.danger { border-color: rgba(var(--mt-danger-rgb), 0.4); }
 .glass-modal-content.danger .glass-modal-title { color: var(--danger); }
 
 .glass-modal-title {
@@ -191,7 +203,8 @@ input, select, textarea { outline: none; font-family: inherit; }
 .glass-input:focus {
   background: rgba(255, 255, 255, 0.98);
   border-color: var(--accent);
-  box-shadow: 0 0 0 4px rgba(59, 130, 246, 0.1);
+  /* Wave1 — focus halo reads the brand accent token (was a hardcoded blue) */
+  box-shadow: 0 0 0 4px rgba(var(--mt-accent-rgb), 0.12);
 }
 
 @media (max-width: 768px) {

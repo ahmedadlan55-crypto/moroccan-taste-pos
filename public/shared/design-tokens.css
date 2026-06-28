@@ -5,33 +5,50 @@
  * typography across every entry point: admin (/), cashier (/pos/),
  * employee portal (/employee/), and custody (/custody/).
  *
- * Three-colour brand system:
- *   • Slate   — primary surfaces, headers, app chrome
- *   • Purple  — interactive accent (hovers, active states, focus)
- *   • Green   — CTAs and success states (save, confirm, paid)
+ * Brand system — "Moroccan Taste Operations OS" (Wave 1, 2026-06):
+ *   • Ink/Slate   — primary surfaces, headers, app chrome
+ *   • Zellige Teal — interactive accent (hovers, active, focus, CTAs)
+ *   • Saffron     — warm highlights, badges, soft financial warnings
+ *   • Mint        — success states (save, confirm, paid)
+ *
+ * NOTE: the accent moved from Purple (#7c3aed) to Zellige Teal
+ * (#0F766E). Every module reads the accent through var(--mt-accent)
+ * so the whole product recolours from this one edit. Legacy variable
+ * NAMES are kept intact for backward compatibility — only values
+ * changed plus a few additive tokens were appended.
  *
  * Edit a value here once and every module follows.
  * Do NOT inline hex colours in component CSS — read from var()
  * so brand updates take one edit.
  * ──────────────────────────────────────────────────────────────── */
 :root {
-  /* Brand */
+  /* Brand — App chrome (Ink/Slate) */
   --mt-primary:     #1e293b;
   --mt-primary-rgb: 30, 41, 59;       /* v5.10.96 — for rgba() */
   --mt-primary-2:   #0f172a;
-  --mt-accent:      #7c3aed;
-  --mt-accent-rgb:  124, 58, 237;     /* v5.10.96 — for rgba() */
-  --mt-accent-2:    #6d28d9;
-  --mt-accent-soft: #faf5ff;
+  --mt-primary-soft:#CCFBF1;           /* Wave1 — soft fill for primary action */
+
+  /* Brand — Interactive accent (Zellige Teal) */
+  --mt-accent:      #0F766E;           /* Wave1 — was #7c3aed (purple) */
+  --mt-accent-rgb:  15, 118, 110;      /* Wave1 — for rgba() */
+  --mt-accent-2:    #115E59;           /* Wave1 — hover/active */
+  --mt-accent-soft: #CCFBF1;           /* Wave1 — teal-50 tint */
+
+  /* Brand — Warmth (Saffron) — Wave1 additive */
+  --mt-warm:        #D97706;
+  --mt-warm-soft:   #FEF3C7;
 
   /* Semantic */
   --mt-success:     #16a34a;
   --mt-success-2:   #15803d;
+  --mt-success-soft:#DCFCE7;           /* Wave1 additive */
   --mt-danger:      #dc2626;
   --mt-danger-rgb:  220, 38, 38;      /* v5.10.96 — for rgba() */
   --mt-danger-2:    #b91c1c;
+  --mt-danger-soft: #FEE2E2;           /* Wave1 additive */
   --mt-warning:     #f59e0b;
-  --mt-info:        #0284c7;
+  --mt-info:        #0369A1;           /* Wave1 — Atlas Blue (was #0284c7) */
+  --mt-info-soft:   #E0F2FE;           /* Wave1 additive */
 
   /* Neutrals */
   --mt-bg:          #f1f5f9;
@@ -45,11 +62,23 @@
   --mt-text-muted:  #64748b;
   --mt-text-light:  #94a3b8;
 
-  /* Geometry */
+  /* Geometry — DO NOT change sm/md/lg/xl (205 uses across the app) */
+  --mt-radius-xs:   4px;               /* Wave1 additive */
   --mt-radius-sm:   10px;
   --mt-radius-md:   14px;
   --mt-radius-lg:   18px;
   --mt-radius-xl:   24px;
+  --mt-radius-pill: 999px;             /* Wave1 additive */
+
+  /* Spacing — 8pt scale (Wave1 additive, no prior --mt-space-* existed) */
+  --mt-space-1:     4px;
+  --mt-space-2:     8px;
+  --mt-space-3:     12px;
+  --mt-space-4:     16px;
+  --mt-space-5:     20px;
+  --mt-space-6:     24px;
+  --mt-space-8:     32px;
+  --mt-space-10:    40px;
 
   /* Shadows */
   --mt-shadow-sm:   0 2px 8px rgba(15, 23, 42, 0.06);
@@ -67,7 +96,10 @@
  * including non-interactive containers — visually noisy. The new rule
  * targets the natural set (button/input/select/textarea + ARIA buttons)
  * and uses the design-token RGB variant for the halo so a brand recolor
- * propagates in one place. */
+ * propagates in one place.
+ * Wave1 — stronger teal halo + a transparent outline fallback so the
+ * focus indicator survives forced-colors / Windows high-contrast mode
+ * (where box-shadow is dropped). */
 button:focus-visible,
 input:focus-visible,
 select:focus-visible,
@@ -75,6 +107,20 @@ textarea:focus-visible,
 a:focus-visible,
 [role="button"]:focus-visible,
 [tabindex]:focus-visible {
-  outline: none;
-  box-shadow: 0 0 0 3px rgba(var(--mt-accent-rgb), 0.25);
+  outline: 2px solid transparent;
+  outline-offset: 2px;
+  box-shadow: 0 0 0 3px rgba(var(--mt-accent-rgb), 0.30);
+}
+
+@media (forced-colors: active) {
+  button:focus-visible,
+  input:focus-visible,
+  select:focus-visible,
+  textarea:focus-visible,
+  a:focus-visible,
+  [role="button"]:focus-visible,
+  [tabindex]:focus-visible {
+    outline: 2px solid Highlight;
+    outline-offset: 2px;
+  }
 }

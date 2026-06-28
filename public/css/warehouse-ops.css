@@ -1958,6 +1958,94 @@
   color: var(--wo-on-surface-muted);
 }
 
+/* ──────────────────────────────────────────────────────────────
+ * 21. BOM INLINE PICKER — production wizard step 2
+ *     Inline block layout — no absolute dropdown, no overflow-clip issues
+ * ────────────────────────────────────────────────────────────── */
+.prd-bom-search-wrap { position: relative; }
+.prd-bom-input {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 10px var(--wo-space-3) 10px 38px;
+  border: 1.5px solid var(--wo-border);
+  border-radius: var(--wo-radius);
+  font-size: var(--wo-text-body);
+  background: var(--wo-surface);
+  color: var(--wo-on-surface);
+  font-family: inherit;
+  transition: border-color var(--wo-dur-1), box-shadow var(--wo-dur-2);
+}
+.prd-bom-input::placeholder { color: var(--wo-on-surface-subtle); }
+.prd-bom-input:focus-visible {
+  outline: none;
+  border-color: var(--wo-info-ring);
+  box-shadow: var(--wo-elev-focus);
+}
+.prd-bom-input:disabled { background: var(--wo-surface-2); opacity: 0.7; }
+.prd-bom-search-icon {
+  position: absolute;
+  top: 50%;
+  inset-inline-end: 12px;
+  transform: translateY(-50%);
+  color: var(--wo-on-surface-subtle);
+  pointer-events: none;
+  font-size: 14px;
+}
+.prd-bom-list {
+  margin-top: 6px;
+  max-height: 240px;
+  overflow-y: auto;
+  border: 1.5px solid var(--wo-border);
+  border-radius: var(--wo-radius-md);
+  background: var(--wo-surface);
+  box-shadow: var(--wo-elev-2);
+}
+.prd-bom-option {
+  display: flex;
+  align-items: center;
+  gap: var(--wo-space-3);
+  padding: 10px var(--wo-space-3);
+  cursor: pointer;
+  border-bottom: 1px solid var(--wo-surface-3);
+  transition: background var(--wo-dur-1);
+}
+.prd-bom-option:last-child { border-bottom: none; }
+.prd-bom-option:hover,
+.prd-bom-option.keyboard-active { background: var(--wo-info-bg); }
+.prd-bom-option.keyboard-active { outline: 2px solid var(--wo-info); outline-offset: -2px; }
+.prd-bom-opt-icon {
+  width: 32px; height: 32px;
+  flex-shrink: 0;
+  border-radius: var(--wo-radius-sm);
+  background: var(--wo-surface-3);
+  color: var(--wo-info);
+  display: flex; align-items: center; justify-content: center;
+  font-size: 13px;
+}
+.prd-bom-opt-main { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.prd-bom-opt-title {
+  font-size: var(--wo-text-body);
+  font-weight: 700;
+  color: var(--wo-on-surface);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.prd-bom-opt-meta {
+  font-size: var(--wo-text-caption);
+  color: var(--wo-on-surface-subtle);
+  display: flex; gap: 6px; flex-wrap: wrap;
+}
+.prd-bom-opt-arrow { color: var(--wo-on-surface-subtle); font-size: 12px; flex-shrink: 0; }
+.prd-bom-empty {
+  padding: var(--wo-space-4) var(--wo-space-3);
+  text-align: center;
+  color: var(--wo-on-surface-subtle);
+  font-size: var(--wo-text-body);
+  font-style: italic;
+  display: flex; align-items: center; justify-content: center; gap: 8px;
+}
+
 /* Added-item chips list (after selecting from picker) */
 .wo-picker-chips {
   display: flex;

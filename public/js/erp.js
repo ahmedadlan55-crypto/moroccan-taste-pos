@@ -24731,6 +24731,7 @@ var _prdAllWhs = [];
 var _prdAllBrands = [];
 var _prdAllBranches = [];
 var _prdBomLines = [];          // loaded when a BOM is selected (for availability check)
+var _prdBomFiltered = [];       // cached filtered results for inline BOM picker keyboard nav
 
 function _prdSaveDraft() { try { localStorage.setItem(_prdDraftKey, JSON.stringify(_prdState)); } catch(e) {} }
 function _prdLoadDraft() {
@@ -25009,26 +25010,99 @@ function _prdFilteredBoms() {
 
 function _prdMountBomPicker() {
   var host = document.getElementById('prdBomPickerHost');
-  if (!host || !window.WoItemPicker) return;
-  var bomsAsItems = _prdFilteredBoms().map(function(b){
-    return {
-      id: b.id,
-      name: b.productName || b.productId || '',
-      category: 'BOM v' + (b.version||1),
-      unit: b.yieldUnit || 'PCS',
-      brandName: b.brandName || '',
-      stock: (b.yieldQuantity||1) + ' لكل دفعة',
-      cost: null,
-      _bom: b
-    };
-  });
-  WoItemPicker.mount(host, {
-    items: bomsAsItems,
-    placeholder: bomsAsItems.length
-      ? 'ابحث عن وصفة بالاسم أو الكود... ('+bomsAsItems.length+' وصفة متاحة)'
-      : (_prdState.brandId ? 'لا توجد وصفات لهذا البراند — اضف من قسم الوصفات' : 'لا توجد وصفات مُعرّفة'),
-    onSelect: function(item) { _prdApplyBomSelection(item._bom); }
-  });
+  if (!host) return;
+  var allBoms = _prdFilteredBoms();
+  _prdBomFiltered = allBoms.slice(0, 50);
+  var placeholder = allBoms.length
+    ? 'ابحث عن وصفة بالاسم أو الكود... (' + allBoms.length + ' وصفة متاحة)'
+    : (_prdState.brandId ? 'لا توجد وصفات لهذا البراند — اضف من قسم الوصفات' : 'لا توجد وصفات مُعرّفة');
+  host.innerHTML =
+    '<div class="prd-bom-search-wrap">' +
+      '<i class="fas fa-search prd-bom-search-icon"></i>' +
+      '<input type="text" class="prd-bom-input" id="prdBomInput" autocomplete="off"' +
+        ' placeholder="' + placeholder.replace(/"/g, '&quot;') + '"' +
+        ' oninput="_prdBomInputFilter(this.value)"' +
+        ' onkeydown="_prdBomKeyNav(event)">' +
+    '</div>' +
+    '<div class="prd-bom-list" id="prdBomList"></div>';
+  _prdBomRenderList(_prdBomFiltered);
+  if (_prdState.bomId) {
+    var preSelected = allBoms.find(function(b){ return b.id === _prdState.bomId; });
+    if (preSelected) _prdBomCollapseList(preSelected);
+  }
+}
+function _prdBomInputFilter(q) {
+  var all = _prdFilteredBoms();
+  if (!q || !q.trim()) {
+    _prdBomFiltered = all.slice(0, 50);
+  } else {
+    var lq = q.toLowerCase().replace(/\s+/g, '');
+    _prdBomFiltered = all.filter(function(b){
+      return (b.productName||'').toLowerCase().replace(/\s+/g,'').indexOf(lq) !== -1 ||
+             (b.productId||'').toLowerCase().indexOf(lq) !== -1;
+    }).slice(0, 50);
+  }
+  _prdBomRenderList(_prdBomFiltered);
+}
+function _prdBomRenderList(boms) {
+  var list = document.getElementById('prdBomList');
+  if (!list) return;
+  if (!boms.length) {
+    list.innerHTML = '<div class="prd-bom-empty"><i class="fas fa-circle-info"></i> لا توجد نتائج مطابقة</div>';
+    return;
+  }
+  list.innerHTML = boms.map(function(b, i){
+    return '<div class="prd-bom-option" data-bidx="' + i + '" tabindex="0"' +
+      ' onclick="_prdBomSelectIdx(' + i + ')"' +
+      ' onkeydown="if(event.key===\'Enter\')_prdBomSelectIdx(' + i + ')">' +
+      '<div class="prd-bom-opt-icon"><i class="fas fa-book-open"></i></div>' +
+      '<div class="prd-bom-opt-main">' +
+        '<div class="prd-bom-opt-title">' + _woEscapeHtml(b.productName || b.productId || '') + '</div>' +
+        '<div class="prd-bom-opt-meta">' +
+          '<span>v' + (b.version||1) + '</span>' +
+          (b.brandName ? '<span>· ' + _woEscapeHtml(b.brandName) + '</span>' : '') +
+          '<span>· يُنتج ' + (b.yieldQuantity||1) + ' ' + _woEscapeHtml(b.yieldUnit||'وحدة') + '</span>' +
+        '</div>' +
+      '</div>' +
+      '<i class="fas fa-arrow-left prd-bom-opt-arrow"></i>' +
+    '</div>';
+  }).join('');
+}
+function _prdBomSelectIdx(i) {
+  var bom = _prdBomFiltered[i];
+  if (!bom) return;
+  _prdApplyBomSelection(bom);
+  _prdBomCollapseList(bom);
+}
+function _prdBomCollapseList(bom) {
+  var list = document.getElementById('prdBomList');
+  if (list) list.style.display = 'none';
+  var inp = document.getElementById('prdBomInput');
+  if (inp) { inp.disabled = true; inp.value = bom ? (bom.productName || bom.productId || '') : ''; }
+}
+function _prdBomKeyNav(e) {
+  var list = document.getElementById('prdBomList');
+  if (!list || list.style.display === 'none') return;
+  var opts = list.querySelectorAll('.prd-bom-option');
+  if (!opts.length) return;
+  var active = list.querySelector('.prd-bom-option.keyboard-active');
+  var idx = active ? Number(active.getAttribute('data-bidx')) : -1;
+  if (e.key === 'ArrowDown') {
+    e.preventDefault();
+    var nxt = Math.min(idx + 1, opts.length - 1);
+    if (active) active.classList.remove('keyboard-active');
+    opts[nxt].classList.add('keyboard-active');
+    opts[nxt].scrollIntoView({block:'nearest'});
+  } else if (e.key === 'ArrowUp') {
+    e.preventDefault();
+    var prv = Math.max(idx - 1, 0);
+    if (active) active.classList.remove('keyboard-active');
+    opts[prv].classList.add('keyboard-active');
+    opts[prv].scrollIntoView({block:'nearest'});
+  } else if (e.key === 'Enter' && active) {
+    e.preventDefault();
+    _prdBomSelectIdx(Number(active.getAttribute('data-bidx')));
+  }
 }
 
 function _prdApplyBomSelection(bom) {
@@ -25079,6 +25153,7 @@ function _prdClearBom() {
   var _prdUnitBadge = document.getElementById('prdQtyUnit');
   if (_prdUnitBadge) _prdUnitBadge.textContent = 'وحدة';
   _prdUpdateYieldHint();
+  _prdMountBomPicker();
 }
 
 function _prdUpdateYieldHint() {

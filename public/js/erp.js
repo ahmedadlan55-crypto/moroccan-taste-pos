@@ -24812,15 +24812,16 @@ function _prdRenderWizard(data) {
             '<div id="prdItemsList" class="prd-items-list"></div>' +
           '</div>' +
           '<div class="prd-add-divider">إضافة منتج</div>' +
-          '<div class="wo-label-stack"><label class="wo-field-label"><i class="fas fa-book-open" style="color:#0284c7"></i> وصفة الإنتاج (BOM)</label>' +
+          '<div class="wo-label-stack"><label class="wo-field-label"><i class="fas fa-book-open"></i> وصفة الإنتاج <span class="prd-label-aux">(BOM)</span></label>' +
+            '<span class="prd-field-hint">اختر تركيبة المواد المستخدمة لإنتاج المنتج.</span>' +
             '<div id="prdBomPickerHost"></div>' +
             '<div id="prdBomSelected" class="wo-chip success" style="display:none;margin-top:8px;"><i class="fas fa-check"></i> <span id="prdBomSelectedText"></span> <button type="button" onclick="_prdClearBom()" class="wo-icon-btn danger" style="width:22px;height:22px;margin-inline-start:6px;" aria-label="مسح"><i class="fas fa-xmark"></i></button></div>' +
             '<div id="prdBomPreview" style="display:none;margin-top:10px;padding:10px;background:var(--wo-surface-2);border-radius:var(--wo-radius-md);border:1px solid var(--wo-border);"></div>' +
           '</div>' +
           '<div class="prd-wz-grid3" style="margin-top:12px;">' +
             '<div class="wo-label-stack"><label class="wo-field-label"><i class="fas fa-boxes-stacked"></i> الكمية المراد إنتاجها *</label><div class="prd-input-unit-wrap"><input type="number" class="wo-input prd-input-sfx" id="prdQty" step="0.001" min="0" value="'+v(_prdState.qty||'')+'" placeholder="50" oninput="_prdState.qty=this.value;_prdSaveDraft();_prdUpdateYieldHint();"><span class="prd-input-unit-sfx" id="prdQtyUnit">وحدة</span></div><span id="prdYieldHint" class="wo-text-caption" style="color:var(--wo-on-surface-subtle);min-height:14px;"></span></div>' +
-            '<div class="wo-label-stack"><label class="wo-field-label"><i class="fas fa-percent" style="color:#dc2626"></i> نسبة الهالك المسموح %</label><div class="prd-input-unit-wrap"><input type="number" class="wo-input prd-input-sfx" id="prdScrapPct" step="0.1" min="0" value="'+v(_prdState.scrapPct||'')+'" placeholder="0"><span class="prd-input-unit-sfx">%</span></div></div>' +
-            '<div class="wo-label-stack"><label class="wo-field-label"><i class="fas fa-barcode" style="color:#7c3aed"></i> رقم الدفعة</label><input type="text" class="wo-input" id="prdBatchNo" value="'+v(_prdState.batchNo||'')+'" placeholder="Batch-..."></div>' +
+            '<div class="wo-label-stack"><label class="wo-field-label"><i class="fas fa-percent" style="color:#dc2626"></i> نسبة الهالك المسموح %</label><div class="prd-input-unit-wrap"><input type="number" class="wo-input prd-input-sfx" id="prdScrapPct" step="0.1" min="0" value="'+v(_prdState.scrapPct||'')+'" placeholder="0"><span class="prd-input-unit-sfx">%</span></div><span class="prd-field-hint">القيمة من 0 إلى 100%</span></div>' +
+            '<div class="wo-label-stack"><label class="wo-field-label"><i class="fas fa-barcode" style="color:#7c3aed"></i> رقم الدفعة</label><input type="text" class="wo-input" id="prdBatchNo" value="'+v(_prdState.batchNo||'')+'" placeholder="مثال: BATCH-2026-001 (اختياري)"><span class="prd-field-hint">اختياري — يُستخدم لتتبع دُفعات الإنتاج.</span></div>' +
           '</div>' +
           '<button type="button" class="wo-btn wo-btn-secondary" onclick="_prdAddItemToList()" style="margin-top:10px;width:100%;"><i class="fas fa-plus"></i><span>إضافة هذا المنتج للقائمة</span></button>' +
         '</div>' +
@@ -24916,14 +24917,14 @@ function _prdWzRenderNav(){
   var right = (n<5)
     ? '<button type="button" class="wo-btn wo-btn-primary" onclick="_prdWzNext()"><span>التالي</span><i class="fas fa-arrow-left"></i></button>'
     : '<button type="button" class="wo-btn wo-btn-success" onclick="prdSubmitNew()"><i class="fas fa-industry"></i><span>إنشاء أمر الإنتاج</span></button>';
-  nav.innerHTML = '<div class="prd-wz-nav-row">'+left+'<button type="button" class="wo-btn wo-btn-secondary" onclick="window._prdModalApi && window._prdModalApi.close()">إلغاء</button>'+right+'</div>';
+  nav.innerHTML = '<div class="prd-wz-nav-row">'+left+'<button type="button" class="wo-btn wo-btn-ghost prd-wz-cancel" onclick="window._prdModalApi && window._prdModalApi.close()">إلغاء</button>'+right+'</div>';
 }
 function _prdWzShow(n){
   _prdWizStep=n;
   var steps=document.querySelectorAll('.prd-wz-step');
   for(var i=0;i<steps.length;i++){ steps[i].style.display = (Number(steps[i].getAttribute('data-wz'))===n)?'block':'none'; }
   _prdWzRenderSteps(); _prdWzRenderNav();
-  if(n===2) _prdRenderItemsList();
+  if(n===2){ _prdRenderItemsList(); var _sub=document.querySelector('#prdNewModal .wom-subtitle'); if(_sub) _sub.textContent='اختر وصفة الإنتاج وحدد الكمية ونسبة الهالك ورقم الدفعة.'; }
   if(n===3) _prdWzCheckAvail();
   if(n===4) _prdWzCalc();
   if(n===5) _prdWzRenderReview();
@@ -25086,13 +25087,14 @@ function _prdBomRenderList(boms) {
     return '<div class="prd-bom-option" data-bidx="' + i + '" tabindex="0"' +
       ' onclick="_prdBomSelectIdx(' + i + ')"' +
       ' onkeydown="if(event.key===\'Enter\')_prdBomSelectIdx(' + i + ')">' +
-      '<div class="prd-bom-opt-icon"><i class="fas fa-book-open"></i></div>' +
+      '<span class="prd-bom-opt-dot"></span>' +
       '<div class="prd-bom-opt-main">' +
-        '<div class="prd-bom-opt-title">' + _woEscapeHtml(b.productName || b.productId || '') + '</div>' +
+        '<div class="prd-bom-opt-title" dir="auto">' + _woEscapeHtml(b.productName || b.productId || '') + '</div>' +
         '<div class="prd-bom-opt-meta">' +
-          '<span>v' + (b.version||1) + '</span>' +
-          (b.brandName ? '<span>· ' + _woEscapeHtml(b.brandName) + '</span>' : '') +
-          '<span>· يُنتج ' + (b.yieldQuantity||1) + ' ' + _woEscapeHtml(b.yieldUnit||'وحدة') + '</span>' +
+          (b.brandName ? '<span dir="ltr">' + _woEscapeHtml(b.brandName) + '</span><span class="prd-bom-meta-sep"> · </span>' : '') +
+          '<span>الإصدار v' + (b.version||1) + '</span>' +
+          '<span class="prd-bom-meta-sep"> · </span>' +
+          '<span>الناتج: ' + (b.yieldQuantity||1) + ' ' + _woEscapeHtml(b.yieldUnit||'وحدة') + '</span>' +
         '</div>' +
       '</div>' +
       '<i class="fas fa-arrow-left prd-bom-opt-arrow"></i>' +
@@ -25214,7 +25216,13 @@ function _prdApplyBomSelection(bom) {
     }).join('');
     var totalCost = _prdBomLines.reduce(function(s,l){return s+Number(l.lineCost||0);},0);
     preview.innerHTML =
-      '<div class="wo-text-label" style="margin-bottom:6px;font-weight:600;">' +
+      '<div class="prd-bom-summary">' +
+        '<div class="prd-bom-sum-row"><span class="prd-bom-sum-label">الوصفة</span><span class="prd-bom-sum-val" dir="auto">'+_woEscapeHtml(bom.productName||bom.productId||'—')+'</span></div>' +
+        (bom.brandName ? '<div class="prd-bom-sum-row"><span class="prd-bom-sum-label">البراند</span><span class="prd-bom-sum-val" dir="ltr">'+_woEscapeHtml(bom.brandName)+'</span></div>' : '') +
+        '<div class="prd-bom-sum-row"><span class="prd-bom-sum-label">الإصدار</span><span class="prd-bom-sum-val">v'+(bom.version||1)+'</span></div>' +
+        '<div class="prd-bom-sum-row"><span class="prd-bom-sum-label">الناتج / دفعة</span><span class="prd-bom-sum-val">'+(bom.yieldQuantity||1)+' '+_woEscapeHtml(bom.yieldUnit||'وحدة')+'</span></div>' +
+      '</div>' +
+      '<div class="wo-text-label" style="margin:8px 0 4px;font-weight:600;font-size:12px;color:#64748b;">' +
         '<i class="fas fa-list-check"></i> مكونات الوصفة ('+_prdBomLines.length+' مادة) — تكلفة وحدة الإنتاج: <b>'+totalCost.toFixed(2)+'</b>' +
       '</div>' +
       '<table class="wo-table" style="font-size:12px;margin:0;">' +

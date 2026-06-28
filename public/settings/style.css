@@ -80,7 +80,7 @@ body {
   display: flex;
   align-items: center;
   justify-content: center;
-  background: rgba(248, 250, 252, 0.7);
+  background: var(--mt-surface-2);
   overflow: hidden;
   flex-shrink: 0;
 }
@@ -104,15 +104,17 @@ body {
 .logo-controls .btn { padding: 9px 14px; font-size: 12px; }
 .logo-hint { color: var(--mt-text-muted); font-size: 11px; }
 
-/* Payment methods rows */
+/* Payment methods rows — DEAD CODE (the payment-methods UI was moved to a
+   dedicated admin section; #payMethodsSettings no longer exists in the DOM).
+   Kept token-driven for consistency; safe to delete in a later cleanup. */
 .pm-row {
   display: flex;
   gap: 10px;
   align-items: center;
-  background: rgba(248, 250, 252, 0.7);
+  background: var(--mt-surface-2);
   padding: 12px 14px;
   border-radius: var(--mt-radius-md);
-  border: 1px solid rgba(226, 232, 240, 0.7);
+  border: 1px solid var(--mt-border);
   margin-bottom: 10px;
   flex-wrap: wrap;
 }
@@ -126,7 +128,7 @@ body {
   color: var(--accent);
   cursor: pointer;
   border-radius: var(--mt-radius-sm);
-  background: rgba(99, 102, 241, 0.08);
+  background: rgba(var(--mt-accent-rgb), 0.08);
 }
 .pm-row input.form-control { padding: 8px 12px; font-size: 13px; }
 .pm-row .pm-name-ar { flex: 1; min-width: 140px; }
@@ -138,14 +140,14 @@ body {
   height: 36px;
   border-radius: 10px;
   border: 1px solid var(--border);
-  background: rgba(254, 226, 226, 0.7);
+  background: var(--mt-danger-soft);
   color: var(--danger);
   display: inline-flex;
   align-items: center;
   justify-content: center;
   cursor: pointer;
 }
-.pm-row .pm-del:hover { background: var(--danger); color: #fff; }
+.pm-row .pm-del:hover { background: var(--danger); color: var(--mt-surface); }
 
 /* Wave1 pilot — solid Zellige Teal primary, no heavy gradient/shadow. */
 .save-all-btn {
@@ -201,13 +203,14 @@ body {
    (replace the inline styles formerly in index.html; token-driven)
    ========================================= */
 
-/* Field hints / notes */
+/* Field hints / notes — WCAG AA: muted (#64748b ≈ 4.6:1), not the
+   subtle slate-400 which failed contrast on white. */
 .field-note {
   display: block;
   margin-top: 6px;
   font-size: 11px;
   line-height: 1.6;
-  color: var(--mt-text-light);
+  color: var(--mt-text-muted);
 }
 .field-note-muted { color: var(--mt-text-muted); }
 
@@ -296,9 +299,53 @@ body {
 .rdb-grid-loading {
   grid-column: 1 / -1;
   text-align: center;
-  color: var(--mt-text-light);
+  color: var(--mt-text-muted);
   padding: 12px;
 }
+.rdb-grid-error { color: var(--mt-danger); }
+
+/* Reset-DB section items (rendered by app.js — now class-driven, no inline) */
+.rdb-section-check {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  background: var(--mt-surface);
+  border: 1.5px solid var(--mt-border);
+  border-radius: var(--mt-radius-sm);
+  padding: 10px 12px;
+  cursor: pointer;
+  transition: border-color 0.15s, background 0.15s;
+}
+.rdb-section-check.is-checked {
+  border-color: var(--mt-danger);
+  background: var(--mt-danger-soft);
+}
+.rdb-sec-cb {
+  margin-top: 3px;
+  flex-shrink: 0;
+  width: 16px;
+  height: 16px;
+  cursor: pointer;
+}
+.rdb-section-check__body { flex: 1; min-width: 0; }
+.rdb-section-check__title {
+  font-weight: 700;
+  color: var(--mt-text);
+  font-size: 12.5px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.rdb-section-check__icon { color: var(--mt-danger); width: 14px; }
+.rdb-section-check__tables {
+  font-size: 10px;
+  color: var(--mt-text-muted);
+  font-family: var(--mt-font-mono);
+  margin-top: 3px;
+  direction: ltr;
+  text-align: left;
+}
+
 @media (max-width: 600px) {
   .rdb-grid { grid-template-columns: 1fr; }
   .redirect-actions .btn { min-width: 100%; }

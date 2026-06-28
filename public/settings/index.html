@@ -188,9 +188,9 @@
 
   <!-- V5.7.12 — Granular reset-DB modal: per-section checkboxes -->
   <div id="modalResetDb" class="glass-modal hidden">
-    <div class="glass-modal-content danger rdb-modal">
+    <div class="glass-modal-content danger rdb-modal" role="dialog" aria-modal="true" aria-labelledby="rdbModalTitle">
       <div class="glass-modal-title">
-        <span><i class="fas fa-exclamation-triangle"></i> مسح أقسام من قاعدة البيانات</span>
+        <span id="rdbModalTitle"><i class="fas fa-exclamation-triangle"></i> مسح أقسام من قاعدة البيانات</span>
         <button class="glass-modal-close" aria-label="إغلاق" onclick="closeGlassModal('#modalResetDb')">&times;</button>
       </div>
       <div class="glass-modal-body">

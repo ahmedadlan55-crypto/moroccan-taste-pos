@@ -309,7 +309,7 @@ window.openResetDb = function() {
   q('#rdbPass').value = '';
   q('#rdbConfirm').value = '';
   // Render placeholder while sections load
-  q('#rdbSectionChecks').innerHTML = '<div style="grid-column:1/-1;text-align:center;color:#94a3b8;padding:12px;">جاري تحميل قائمة الأقسام...</div>';
+  q('#rdbSectionChecks').innerHTML = '<div class="rdb-grid-loading">جاري تحميل قائمة الأقسام...</div>';
   openGlassModal('#modalResetDb');
 
   // Fetch the section list from the server (so it auto-syncs when new sections are added backend-side)
@@ -320,39 +320,33 @@ window.openResetDb = function() {
     .then(function(data) {
       var sections = (data && data.sections) || [];
       if (!sections.length) {
-        q('#rdbSectionChecks').innerHTML = '<div style="grid-column:1/-1;text-align:center;color:#dc2626;padding:12px;">تعذّر تحميل الأقسام</div>';
+        q('#rdbSectionChecks').innerHTML = '<div class="rdb-grid-loading rdb-grid-error">تعذّر تحميل الأقسام</div>';
         return;
       }
       q('#rdbSectionChecks').innerHTML = sections.map(function(sec) {
         var icon = RDB_SECTION_ICONS[sec.key] || 'fa-folder';
         var tableHint = (sec.tables || []).slice(0, 3).join(', ') + (sec.tables && sec.tables.length > 3 ? '…' : '');
-        return '<label class="rdb-section-check" style="display:flex;align-items:flex-start;gap:8px;background:#fff;border:1.5px solid #e2e8f0;border-radius:10px;padding:10px 12px;cursor:pointer;transition:all 0.15s;">' +
-                 '<input type="checkbox" class="rdb-sec-cb" data-key="' + sec.key + '" style="margin-top:3px;flex-shrink:0;width:16px;height:16px;cursor:pointer;">' +
-                 '<div style="flex:1;min-width:0;">' +
-                   '<div style="font-weight:700;color:#0f172a;font-size:12.5px;display:flex;align-items:center;gap:6px;">' +
-                     '<i class="fas ' + icon + '" style="color:#dc2626;width:14px;"></i>' +
+        return '<label class="rdb-section-check">' +
+                 '<input type="checkbox" class="rdb-sec-cb" data-key="' + sec.key + '">' +
+                 '<div class="rdb-section-check__body">' +
+                   '<div class="rdb-section-check__title">' +
+                     '<i class="fas ' + icon + ' rdb-section-check__icon"></i>' +
                      '<span>' + sec.label + '</span>' +
                    '</div>' +
-                   '<div style="font-size:10px;color:#94a3b8;font-family:monospace;margin-top:3px;direction:ltr;text-align:left;">' + tableHint + '</div>' +
+                   '<div class="rdb-section-check__tables">' + tableHint + '</div>' +
                  '</div>' +
                '</label>';
       }).join('');
-      // Hover/checked styles
+      // Checked styling via class toggle (token-driven, no inline styles)
       qs('.rdb-section-check').forEach(function(label) {
         var cb = label.querySelector('.rdb-sec-cb');
         cb.addEventListener('change', function() {
-          if (cb.checked) {
-            label.style.borderColor = '#dc2626';
-            label.style.background = '#fef2f2';
-          } else {
-            label.style.borderColor = '#e2e8f0';
-            label.style.background = '#fff';
-          }
+          label.classList.toggle('is-checked', cb.checked);
         });
       });
     })
     .catch(function() {
-      q('#rdbSectionChecks').innerHTML = '<div style="grid-column:1/-1;text-align:center;color:#dc2626;padding:12px;">فشل تحميل الأقسام — تحقق من الاتصال</div>';
+      q('#rdbSectionChecks').innerHTML = '<div class="rdb-grid-loading rdb-grid-error">فشل تحميل الأقسام — تحقق من الاتصال</div>';
     });
 };
 

@@ -21821,21 +21821,21 @@ function _weRenderReasonChips(s){
   var box = document.getElementById('weReasonChips');
   if (!box) return;
   var def = [
-    { id:'',                label:'الكل',          icon:'fa-list',          count: s.total,                            cls:'all' },
-    { id:'expired',         label:'منتهي الصلاحية', icon:'fa-skull',         count: (s.byReason && s.byReason.expired         && s.byReason.expired.count)        || 0, cls:'expired' },
-    { id:'damaged',         label:'تالف',           icon:'fa-fire',          count: (s.byReason && s.byReason.damaged         && s.byReason.damaged.count)        || 0, cls:'critical' },
-    { id:'spill',           label:'انسكاب',          icon:'fa-droplet',       count: (s.byReason && s.byReason.spill           && s.byReason.spill.count)          || 0, cls:'soon' },
-    { id:'prep_loss',       label:'خسارة تحضير',     icon:'fa-utensils',      count: (s.byReason && s.byReason.prep_loss       && s.byReason.prep_loss.count)      || 0, cls:'monitor' },
-    { id:'customer_return', label:'إرجاع عميل',      icon:'fa-rotate-left',   count: (s.byReason && s.byReason.customer_return && s.byReason.customer_return.count)|| 0, cls:'safe' },
-    { id:'other',           label:'أخرى',           icon:'fa-circle',        count: (s.byReason && s.byReason.other           && s.byReason.other.count)          || 0, cls:'all' }
+    { id:'',                cat:'all',     label:'الكل',           icon:'fa-layer-group',          count: s.total || 0 },
+    { id:'expired',         cat:'expired', label:'منتهي الصلاحية', icon:'fa-clock',                count: (s.byReason && s.byReason.expired         && s.byReason.expired.count)         || 0 },
+    { id:'damaged',         cat:'damaged', label:'تالف',            icon:'fa-triangle-exclamation', count: (s.byReason && s.byReason.damaged         && s.byReason.damaged.count)         || 0 },
+    { id:'spill',           cat:'spill',   label:'انسكاب',          icon:'fa-droplet',              count: (s.byReason && s.byReason.spill           && s.byReason.spill.count)           || 0 },
+    { id:'prep_loss',       cat:'prep',    label:'خسارة تحضير',    icon:'fa-blender',              count: (s.byReason && s.byReason.prep_loss       && s.byReason.prep_loss.count)       || 0 },
+    { id:'customer_return', cat:'return',  label:'إرجاع عميل',     icon:'fa-arrow-rotate-left',    count: (s.byReason && s.byReason.customer_return && s.byReason.customer_return.count) || 0 },
+    { id:'other',           cat:'other',   label:'أخرى',           icon:'fa-ellipsis',             count: (s.byReason && s.byReason.other           && s.byReason.other.count)           || 0 }
   ];
   var current = (document.getElementById('weReason')||{}).value || '';
   box.innerHTML = def.map(function(b){
     var active = (b.id === current) ? ' is-active' : '';
-    var bucketAttr = b.cls === 'all' ? 'all' : b.cls;
-    return '<button class="exp-bucket-pill' + active + '" data-bucket="' + bucketAttr + '" onclick="weFilterByReason(\'' + b.id + '\')">' +
-      '<i class="fas ' + b.icon + '"></i><span>' + b.label + '</span>' +
-      '<span class="exp-bucket-count">' + Number(b.count||0).toLocaleString('ar-SA') + '</span>' +
+    return '<button class="we-reason-tab' + active + '" data-cat="' + b.cat + '" onclick="weFilterByReason(\'' + b.id + '\')">' +
+      '<span class="we-reason-tab__icon"><i class="fas ' + b.icon + '"></i></span>' +
+      '<span class="we-reason-tab__label">' + b.label + '</span>' +
+      '<span class="we-reason-tab__count">' + Number(b.count).toLocaleString('ar-SA') + '</span>' +
     '</button>';
   }).join('');
 }
@@ -21857,7 +21857,7 @@ function _weRenderRows(items){
   var fmt = function(n){ return Number(n||0).toLocaleString('en',{minimumFractionDigits:2,maximumFractionDigits:2}); };
   var reasonMap = {expired:'منتهي',damaged:'تالف',spill:'انسكاب',prep_loss:'تحضير',customer_return:'إرجاع',other:'أخرى'};
   var reasonCls = {expired:'expired',damaged:'critical',spill:'soon',prep_loss:'monitor',customer_return:'safe',other:'all'};
-  var reasonIcon= {expired:'fa-skull',damaged:'fa-fire',spill:'fa-droplet',prep_loss:'fa-utensils',customer_return:'fa-rotate-left',other:'fa-circle'};
+  var reasonIcon= {expired:'fa-clock',damaged:'fa-triangle-exclamation',spill:'fa-droplet',prep_loss:'fa-blender',customer_return:'fa-arrow-rotate-left',other:'fa-ellipsis'};
   body.innerHTML = items.map(function(w){
     var idEsc = esc(w.id||'').replace(/'/g, "\\'");
     var dt = w.wasteDate ? new Date(w.wasteDate).toLocaleDateString('en-GB') : '—';

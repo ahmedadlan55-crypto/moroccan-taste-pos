@@ -56,29 +56,29 @@ window.loadUsers = function() {
 
     var tbody = q('#tbUsers');
     if (!arr.length) {
-      tbody.innerHTML = '<tr><td colspan="6" style="text-align:center;padding:30px;color:#94a3b8;">لا يوجد مستخدمين</td></tr>';
+      tbody.innerHTML = '<tr><td colspan="6" class="table-empty">لا يوجد مستخدمين</td></tr>';
       return;
     }
 
     tbody.innerHTML = arr.map(function(u) {
       var devBadge = u.isDeveloper ? ' <span class="dev-badge"><i class="fas fa-code"></i> مطور</span>' : '';
-      var displayName = u.displayName || '<span style="color:#94a3b8;">— لم يُحدد —</span>';
+      var displayName = u.displayName || '<span class="u-cell-muted">— لم يُحدد —</span>';
       return '<tr>' +
-        '<td style="font-weight:800; font-size:14px;">' + displayName + '</td>' +
-        '<td style="font-family:monospace; font-weight:700; color:var(--secondary);">' + (u.username || '') + '</td>' +
+        '<td class="u-cell-name">' + displayName + '</td>' +
+        '<td class="u-cell-login">' + (u.username || '') + '</td>' +
         '<td>' + roleLabel(u.role) + devBadge + '</td>' +
         '<td>' + (u.active
           ? '<span class="badge green">نشط</span>'
           : '<span class="badge red">موقوف</span>') + '</td>' +
-        '<td style="color:#64748b;font-size:12px;">' +
+        '<td class="u-cell-date">' +
           (u.createdAt ? new Date(u.createdAt).toLocaleDateString('en-GB') : '—') + '</td>' +
         '<td>' +
           '<div class="user-actions">' +
-            '<button class="btn-edit"   onclick="editUser(\'' + u.username + '\')" title="تعديل"><i class="fas fa-edit"></i></button>' +
+            '<button class="btn-edit"   onclick="editUser(\'' + u.username + '\')" aria-label="تعديل المستخدم" title="تعديل"><i class="fas fa-edit"></i></button>' +
             // v6.18.5 (Wave 6) — Permissions modal trigger
-            '<button class="btn-edit"   onclick="openUserPermsModal(\'' + u.username + '\')" title="الصلاحيات" style="background:#0d9488;"><i class="fas fa-shield-halved"></i></button>' +
-            '<button class="btn-toggle" onclick="toggleUser(\'' + u.username + '\')" title="تفعيل / إيقاف"><i class="fas fa-power-off"></i></button>' +
-            '<button class="btn-del"    onclick="deleteUser(\'' + u.username + '\')" title="حذف"><i class="fas fa-trash"></i></button>' +
+            '<button class="btn-perms"  onclick="openUserPermsModal(\'' + u.username + '\')" aria-label="صلاحيات المستخدم" title="الصلاحيات"><i class="fas fa-shield-halved"></i></button>' +
+            '<button class="btn-toggle" onclick="toggleUser(\'' + u.username + '\')" aria-label="تفعيل / إيقاف المستخدم" title="تفعيل / إيقاف"><i class="fas fa-power-off"></i></button>' +
+            '<button class="btn-del"    onclick="deleteUser(\'' + u.username + '\')" aria-label="حذف المستخدم" title="حذف"><i class="fas fa-trash"></i></button>' +
           '</div>' +
         '</td>' +
       '</tr>';

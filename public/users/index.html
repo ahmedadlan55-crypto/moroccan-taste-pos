@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <title>المستخدمون - Moroccan Taste</title>
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-  <meta name="theme-color" content="#0d47a1">
+  <meta name="theme-color" content="#0F766E">
 
   <!-- Synchronous auth gate — redirects to / if no token, otherwise releases the visibility gate when body parses -->
   <script>
@@ -42,7 +42,7 @@
 
   <div id="loader">
     <div class="spinner"></div>
-    <h3 style="margin-top:20px;color:#fff;font-weight:800;">جاري التحميل...</h3>
+    <h3 class="loader-text">جاري التحميل...</h3>
   </div>
 
   <header id="appHeader" class="app-header"></header>
@@ -69,7 +69,7 @@
             </tr>
           </thead>
           <tbody id="tbUsers">
-            <tr><td colspan="6" style="text-align:center;padding:30px;color:#94a3b8;">جاري التحميل...</td></tr>
+            <tr><td colspan="6" class="table-empty">جاري التحميل...</td></tr>
           </tbody>
         </table>
       </div>
@@ -78,73 +78,73 @@
 
   <!-- Add/Edit User glass modal -->
   <div id="modalUserForm" class="glass-modal hidden">
-    <div class="glass-modal-content" style="max-width:620px;">
+    <div class="glass-modal-content user-modal" role="dialog" aria-modal="true" aria-labelledby="userModalTitle">
       <div class="glass-modal-title">
         <span id="userModalTitle"><i class="fas fa-user-plus"></i> إضافة موظف جديد</span>
-        <button class="glass-modal-close" onclick="closeGlassModal('#modalUserForm')">&times;</button>
+        <button class="glass-modal-close" aria-label="إغلاق" onclick="closeGlassModal('#modalUserForm')">&times;</button>
       </div>
       <div class="glass-modal-body">
         <!-- Identity section -->
-        <div style="font-size:12px;font-weight:800;color:#1e40af;margin-bottom:8px;padding-bottom:6px;border-bottom:1px dashed #e2e8f0;"><i class="fas fa-id-card"></i> بيانات الهوية</div>
-        <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;">
+        <div class="form-section-title"><i class="fas fa-id-card"></i> بيانات الهوية</div>
+        <div class="form-grid-2">
           <div class="form-group">
-            <label class="form-label">اسم الموظف الكامل</label>
+            <label class="form-label" for="muDisplayName">اسم الموظف الكامل</label>
             <input type="text" id="muDisplayName" class="form-control glass-input" placeholder="مثال: أحمد محمد العبدالله">
           </div>
           <div class="form-group">
-            <label class="form-label">الرقم الوظيفي / اسم الدخول <span style="color:#ef4444;">*</span></label>
-            <input type="text" id="muName" class="form-control glass-input" placeholder="مثال: EMP001 أو ahmad.s">
-            <div id="muNameHint" style="font-size:10px;color:#94a3b8;margin-top:3px;display:none;"><i class="fas fa-info-circle"></i> تعديل اسم الدخول سيُطبّق على كل المراجع في النظام.</div>
+            <label class="form-label" for="muName">الرقم الوظيفي / اسم الدخول <span class="required-mark" aria-hidden="true">*</span></label>
+            <input type="text" id="muName" class="form-control glass-input" placeholder="مثال: EMP001 أو ahmad.s" required aria-required="true">
+            <div id="muNameHint" class="field-note" style="display:none;"><i class="fas fa-info-circle"></i> تعديل اسم الدخول سيُطبّق على كل المراجع في النظام.</div>
           </div>
         </div>
-        <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;">
+        <div class="form-grid-2">
           <div class="form-group">
-            <label class="form-label">البريد الإلكتروني</label>
+            <label class="form-label" for="muEmail">البريد الإلكتروني</label>
             <input type="email" id="muEmail" class="form-control glass-input" placeholder="name@example.com">
           </div>
           <div class="form-group">
-            <label class="form-label">الجوال</label>
-            <input type="text" id="muPhone" class="form-control glass-input" placeholder="05xxxxxxxx">
+            <label class="form-label" for="muPhone">الجوال</label>
+            <input type="text" id="muPhone" class="form-control glass-input" placeholder="05xxxxxxxx" dir="ltr">
           </div>
         </div>
 
         <!-- v6.18.1 — HR people-record fields (Wave 2: soft-validated,
              format-checked when provided; Wave 3 will make them required). -->
-        <div style="font-size:12px;font-weight:800;color:#0d9488;margin:12px 0 8px;padding-bottom:6px;border-bottom:1px dashed #e2e8f0;"><i class="fas fa-briefcase"></i> بيانات الموظف الرسمية (HR)</div>
-        <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;">
+        <div class="form-section-title"><i class="fas fa-briefcase"></i> بيانات الموظف الرسمية (HR)</div>
+        <div class="form-grid-2">
           <div class="form-group">
-            <label class="form-label">رقم الإقامة / الهوية الوطنية</label>
-            <input type="text" id="muIqama" class="form-control glass-input" placeholder="10 أرقام (مثال: 2123456789)" maxlength="10" inputmode="numeric" pattern="[0-9]{10}">
-            <div id="muIqamaHint" style="font-size:10px;color:#94a3b8;margin-top:3px;"><i class="fas fa-info-circle"></i> 10 أرقام بالضبط</div>
+            <label class="form-label" for="muIqama">رقم الإقامة / الهوية الوطنية</label>
+            <input type="text" id="muIqama" class="form-control glass-input" placeholder="10 أرقام (مثال: 2123456789)" maxlength="10" inputmode="numeric" pattern="[0-9]{10}" dir="ltr">
+            <div id="muIqamaHint" class="field-note"><i class="fas fa-info-circle"></i> 10 أرقام بالضبط</div>
           </div>
           <div class="form-group">
-            <label class="form-label">المسمى الوظيفي الرسمي</label>
+            <label class="form-label" for="muJobTitle">المسمى الوظيفي الرسمي</label>
             <select id="muJobTitle" class="form-control glass-input"><option value="">— اختر —</option></select>
-            <div style="font-size:10px;color:#94a3b8;margin-top:3px;"><i class="fas fa-info-circle"></i> القائمة الرسمية للسلم الوظيفي</div>
+            <div class="field-note"><i class="fas fa-info-circle"></i> القائمة الرسمية للسلم الوظيفي</div>
           </div>
         </div>
         <div class="form-group">
-          <label class="form-label">رقم الـIBAN البنكي</label>
-          <input type="text" id="muIban" class="form-control glass-input" placeholder="SA0380000000608010167519" maxlength="24" style="font-family:ui-monospace,monospace;letter-spacing:1px;">
-          <div id="muIbanHint" style="font-size:10px;color:#94a3b8;margin-top:3px;"><i class="fas fa-info-circle"></i> يبدأ بـ SA ثم 22 رقماً (إجمالي 24 خانة)</div>
+          <label class="form-label" for="muIban">رقم الـIBAN البنكي</label>
+          <input type="text" id="muIban" class="form-control glass-input iban-input" placeholder="SA0380000000608010167519" maxlength="24" dir="ltr">
+          <div id="muIbanHint" class="field-note"><i class="fas fa-info-circle"></i> يبدأ بـ SA ثم 22 رقماً (إجمالي 24 خانة)</div>
         </div>
 
         <!-- Credentials -->
-        <div style="font-size:12px;font-weight:800;color:#1e40af;margin:12px 0 8px;padding-bottom:6px;border-bottom:1px dashed #e2e8f0;"><i class="fas fa-key"></i> بيانات الدخول</div>
+        <div class="form-section-title"><i class="fas fa-key"></i> بيانات الدخول</div>
         <div class="form-group">
-          <label class="form-label">كلمة المرور</label>
-          <div style="display:flex;gap:6px;">
-            <input type="password" id="muPass" class="form-control glass-input" placeholder="******" style="flex:1;">
-            <button type="button" onclick="muTogglePass()" class="btn btn-light" style="flex-shrink:0;padding:8px 12px;" title="إظهار/إخفاء"><i id="muPassEye" class="fas fa-eye"></i></button>
+          <label class="form-label" for="muPass">كلمة المرور</label>
+          <div class="pass-row">
+            <input type="password" id="muPass" class="form-control glass-input" placeholder="******">
+            <button type="button" onclick="muTogglePass()" class="btn btn-light pass-toggle" aria-label="إظهار/إخفاء كلمة المرور" title="إظهار/إخفاء"><i id="muPassEye" class="fas fa-eye"></i></button>
           </div>
-          <div style="font-size:10px;color:#94a3b8;margin-top:4px;">الشروط: 6 أحرف على الأقل، تحتوي حروف + أرقام + رمز خاص (!@#$...). اتركها فارغة لعدم التغيير.</div>
+          <div class="field-note">الشروط: 6 أحرف على الأقل، تحتوي حروف + أرقام + رمز خاص (!@#$...). اتركها فارغة لعدم التغيير.</div>
         </div>
 
         <!-- Assignment -->
-        <div style="font-size:12px;font-weight:800;color:#1e40af;margin:12px 0 8px;padding-bottom:6px;border-bottom:1px dashed #e2e8f0;"><i class="fas fa-sitemap"></i> المنصب والتعيين</div>
-        <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;">
+        <div class="form-section-title"><i class="fas fa-sitemap"></i> المنصب والتعيين</div>
+        <div class="form-grid-2">
           <div class="form-group">
-            <label class="form-label">نوع الصلاحية</label>
+            <label class="form-label" for="muRole">نوع الصلاحية</label>
             <select id="muRole" class="form-control glass-input">
               <option value="employee">موظف</option>
               <option value="cashier">كاشير — بائع فرع</option>
@@ -154,17 +154,17 @@
             </select>
           </div>
           <div class="form-group">
-            <label class="form-label">المسمى الوظيفي الإداري</label>
+            <label class="form-label" for="muPosition">المسمى الوظيفي الإداري</label>
             <select id="muPosition" class="form-control glass-input"><option value="">— بدون —</option></select>
           </div>
         </div>
-        <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;">
+        <div class="form-grid-2">
           <div class="form-group">
-            <label class="form-label">البراند</label>
+            <label class="form-label" for="muBrand">البراند</label>
             <select id="muBrand" class="form-control glass-input"><option value="">— الكل —</option></select>
           </div>
           <div class="form-group">
-            <label class="form-label">الفرع</label>
+            <label class="form-label" for="muBranch">الفرع</label>
             <select id="muBranch" class="form-control glass-input"><option value="">— بدون —</option></select>
           </div>
         </div>

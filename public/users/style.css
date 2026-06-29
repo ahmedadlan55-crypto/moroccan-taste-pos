@@ -2,13 +2,15 @@
    Users page styles
    ========================================= */
 
+/* Wave1 — calm "Mist" surface (single subtle teal wash), less glass. */
 body {
   min-height: 100dvh;
   background:
-    radial-gradient(circle at 0% 0%, rgba(167, 139, 250, 0.12), transparent 50%),
-    radial-gradient(circle at 100% 100%, rgba(59, 130, 246, 0.10), transparent 50%),
-    linear-gradient(135deg, var(--mt-surface-2) 0%, #eef2ff 100%);
+    radial-gradient(circle at 100% 0%, rgba(var(--mt-accent-rgb), 0.05), transparent 45%),
+    var(--mt-bg);
 }
+
+.loader-text { margin-top: 20px; color: var(--mt-surface); font-weight: 800; }
 
 .page-main {
   max-width: 1280px;
@@ -34,22 +36,22 @@ body {
 }
 .page-title i { color: var(--accent); }
 
+/* Wave1 — solid white surface, clear border, subtle shadow (less glass). */
 .page-card {
-  background: rgba(255, 255, 255, 0.85);
-  backdrop-filter: blur(18px) saturate(180%);
-  -webkit-backdrop-filter: blur(18px) saturate(180%);
-  border: 1px solid rgba(255, 255, 255, 0.6);
-  border-radius: 20px;
+  background: var(--mt-surface);
+  border: 1px solid var(--mt-border);
+  border-radius: var(--mt-radius-lg);
   padding: 18px;
-  box-shadow: 0 14px 40px rgba(99, 102, 241, 0.08);
+  box-shadow: var(--mt-shadow-sm);
 }
 
 .table-wrapper { overflow-x: auto; }
 .table { width: 100%; border-collapse: collapse; }
-.table th, .table td { padding: 12px 14px; text-align: start; border-bottom: 1px solid rgba(226, 232, 240, 0.6); font-size: 14px; vertical-align: middle; }
-.table thead th { background: rgba(241, 245, 249, 0.6); font-weight: 800; color: #475569; font-size: 13px; }
-.table tbody tr:hover { background: rgba(241, 245, 249, 0.4); }
+.table th, .table td { padding: 12px 14px; text-align: start; border-bottom: 1px solid var(--mt-border); font-size: 14px; vertical-align: middle; }
+.table thead th { background: var(--mt-surface-2); font-weight: 800; color: var(--mt-text-muted); font-size: 13px; }
+.table tbody tr:hover { background: var(--mt-surface-2); }
 .table tbody tr:last-child td { border-bottom: none; }
+.table-empty { text-align: center; padding: 30px; color: var(--mt-text-muted); }
 
 .user-actions {
   display: inline-flex;
@@ -73,9 +75,12 @@ body {
 .user-actions .btn-edit  { color: var(--secondary); }
 .user-actions .btn-toggle { color: var(--warning); }
 .user-actions .btn-del   { color: var(--danger); }
-.user-actions .btn-edit:hover  { background: var(--secondary); color: #fff; }
-.user-actions .btn-toggle:hover { background: var(--warning); color: #fff; }
-.user-actions .btn-del:hover   { background: var(--danger); color: #fff; }
+.user-actions .btn-edit:hover  { background: var(--secondary); color: var(--mt-surface); }
+.user-actions .btn-toggle:hover { background: var(--warning); color: var(--mt-surface); }
+.user-actions .btn-del:hover   { background: var(--danger); color: var(--mt-surface); }
+/* Permissions action button — teal (replaces the JS inline background) */
+.user-actions .btn-perms { color: var(--mt-accent); }
+.user-actions .btn-perms:hover { background: var(--mt-accent); color: var(--mt-surface); }
 
 .dev-flag {
   display: flex;
@@ -83,20 +88,20 @@ body {
   gap: 10px;
   cursor: pointer;
   padding: 12px 14px;
-  background: #fef3c7;
-  border: 1px solid #fde68a;
+  background: var(--mt-warm-soft);
+  border: 1px solid var(--mt-warning);
   border-radius: var(--mt-radius-md);
 }
 .dev-flag input[type="checkbox"] { width: 18px; height: 18px; accent-color: var(--mt-warning); }
-.dev-flag span { font-weight: 700; color: #92400e; font-size: 13px; }
+.dev-flag span { font-weight: 700; color: var(--mt-warm); font-size: 13px; }
 
 .dev-badge {
   display: inline-flex;
   align-items: center;
   gap: 4px;
-  background: #fef3c7;
-  color: #92400e;
-  border: 1px solid #fde68a;
+  background: var(--mt-warm-soft);
+  color: var(--mt-warm);
+  border: 1px solid var(--mt-warning);
   padding: 3px 9px;
   border-radius: var(--mt-radius-sm);
   font-size: 11px;
@@ -111,4 +116,58 @@ body {
   .page-card { padding: 12px; border-radius: var(--mt-radius-lg); }
   .table th, .table td { padding: 10px 8px; font-size: 12px; }
   .user-actions button { width: 32px; height: 32px; font-size: 12px; }
+  .form-grid-2 { grid-template-columns: 1fr; }
 }
+
+/* =========================================
+   Wave1 pilot — user-modal form: token-driven classes
+   (replace the inline styles formerly in index.html)
+   ========================================= */
+
+.user-modal { max-width: 620px; }
+
+/* Section heading inside the form */
+.form-section-title {
+  font-size: 12px;
+  font-weight: 800;
+  color: var(--mt-text);
+  margin: 12px 0 8px;
+  padding-bottom: 6px;
+  border-bottom: 1px dashed var(--mt-border);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.form-section-title:first-child { margin-top: 0; }
+.form-section-title i { color: var(--mt-accent); }
+
+/* Two-column field grid */
+.form-grid-2 {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+}
+
+/* Required marker + helper notes */
+.required-mark { color: var(--mt-danger); }
+.field-note {
+  display: block;
+  font-size: 10px;
+  color: var(--mt-text-muted);
+  margin-top: 3px;
+  line-height: 1.5;
+}
+
+/* Password row (input + show/hide toggle) */
+.pass-row { display: flex; gap: 6px; }
+.pass-row .form-control { flex: 1; }
+.pass-toggle { flex-shrink: 0; padding: 8px 12px; }
+
+/* IBAN — monospace, spaced for readability */
+.iban-input { font-family: var(--mt-font-mono); letter-spacing: 1px; }
+
+/* User table cells (rendered by app.js — class-driven, token colours) */
+.u-cell-name { font-weight: 800; font-size: 14px; }
+.u-cell-login { font-family: var(--mt-font-mono); font-weight: 700; color: var(--secondary); }
+.u-cell-date { color: var(--mt-text-muted); font-size: 12px; }
+.u-cell-muted { color: var(--mt-text-muted); }

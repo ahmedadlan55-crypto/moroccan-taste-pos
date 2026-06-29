@@ -1959,20 +1959,111 @@
 }
 
 /* ──────────────────────────────────────────────────────────────
- * 21. BOM INLINE PICKER — production wizard step 2
- *     Inline block layout — no absolute dropdown, no overflow-clip issues
+ * 21. BOM COMBOBOX — production wizard step 2 (collapsible, inline-expand)
+ *     A trigger on the page; the search + list expand below it ONLY when
+ *     opened, in normal flow (no absolute) → never clipped inside the modal.
  * ────────────────────────────────────────────────────────────── */
+.prd-combo { position: relative; }
+.prd-combo-field { position: relative; }
+
+/* Trigger — looks like a field, comfortable fixed height.
+   padding-inline-end leaves room for the clear button + caret. */
+.prd-combo-trigger {
+  width: 100%;
+  box-sizing: border-box;
+  min-height: 48px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding-block: 0;
+  padding-inline-start: 14px;
+  padding-inline-end: 56px;
+  border: 1.5px solid var(--wo-border);
+  border-radius: var(--wo-radius);
+  background: var(--wo-surface);
+  color: var(--wo-on-surface);
+  font-family: inherit;
+  font-size: var(--wo-text-body);
+  text-align: start;
+  cursor: pointer;
+  transition: border-color var(--wo-dur-1), box-shadow var(--wo-dur-2);
+}
+.prd-combo-trigger:hover { border-color: var(--wo-info-ring); }
+.prd-combo-trigger:focus-visible,
+.prd-combo-trigger[aria-expanded="true"] {
+  outline: none;
+  border-color: var(--wo-info-ring);
+  box-shadow: var(--wo-elev-focus);
+}
+.prd-combo-trigger-icon { color: var(--wo-info); font-size: 14px; flex-shrink: 0; }
+.prd-combo-trigger-text {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/* Placeholder colour until a recipe is chosen */
+.prd-combo-trigger:not(.has-value) .prd-combo-trigger-text { color: var(--wo-on-surface-subtle); }
+.prd-combo-caret {
+  position: absolute;
+  top: 50%;
+  inset-inline-end: 14px;
+  transform: translateY(-50%);
+  color: var(--wo-on-surface-subtle);
+  font-size: 12px;
+  transition: transform 0.15s;
+  pointer-events: none;
+}
+.prd-combo-trigger[aria-expanded="true"] .prd-combo-caret { transform: translateY(-50%) rotate(180deg); }
+/* Clear button — sibling of the trigger (valid HTML), overlaid at the inline-end */
+.prd-combo-clear {
+  position: absolute;
+  top: 50%;
+  inset-inline-end: 34px;
+  transform: translateY(-50%);
+  width: 26px;
+  height: 26px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--wo-on-surface-subtle);
+  cursor: pointer;
+}
+.prd-combo-clear:hover { background: var(--wo-danger-bg); color: var(--wo-danger); }
+.prd-combo-clear[hidden] { display: none; }
+
+/* Panel — inline-expand, below the trigger, in normal flow */
+.prd-combo-panel {
+  margin-top: 6px;
+  padding: 8px;
+  border: 1.5px solid var(--wo-border);
+  border-radius: var(--wo-radius-md);
+  background: var(--wo-surface);
+  box-shadow: var(--wo-elev-2);
+}
+.prd-combo-panel[hidden] { display: none; }
+
 .prd-bom-search-wrap { position: relative; }
 .prd-bom-input {
   width: 100%;
   box-sizing: border-box;
-  padding: 10px var(--wo-space-3) 10px 38px;
+  min-height: 44px;
+  /* Logical padding matches the inline-end icon so text never slides under it (RTL/LTR). */
+  padding-block: 10px;
+  padding-inline-start: 14px;
+  padding-inline-end: 40px;
   border: 1.5px solid var(--wo-border);
   border-radius: var(--wo-radius);
   font-size: var(--wo-text-body);
   background: var(--wo-surface);
   color: var(--wo-on-surface);
   font-family: inherit;
+  direction: rtl;
+  text-align: right;
   transition: border-color var(--wo-dur-1), box-shadow var(--wo-dur-2);
 }
 .prd-bom-input::placeholder { color: var(--wo-on-surface-subtle); }
@@ -1981,24 +2072,22 @@
   border-color: var(--wo-info-ring);
   box-shadow: var(--wo-elev-focus);
 }
-.prd-bom-input:disabled { background: var(--wo-surface-2); opacity: 0.7; }
 .prd-bom-search-icon {
   position: absolute;
   top: 50%;
-  inset-inline-end: 12px;
+  inset-inline-end: 14px;
   transform: translateY(-50%);
   color: var(--wo-on-surface-subtle);
   pointer-events: none;
   font-size: 14px;
 }
 .prd-bom-list {
-  margin-top: 6px;
+  margin-top: 8px;
   max-height: 240px;
   overflow-y: auto;
-  border: 1.5px solid var(--wo-border);
-  border-radius: var(--wo-radius-md);
+  border: 1px solid var(--wo-border);
+  border-radius: var(--wo-radius-sm);
   background: var(--wo-surface);
-  box-shadow: var(--wo-elev-2);
 }
 .prd-bom-option {
   display: flex;
@@ -5943,13 +6032,18 @@
 .prd-item-row-main { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
 .prd-item-row-name { font-size: var(--wo-text-body); font-weight: 700; color: var(--wo-on-surface); }
 .prd-item-row-meta { font-size: var(--wo-text-caption); color: var(--wo-on-surface-subtle); }
+/* Centered section title (the separator line sits ABOVE it, never through it). */
 .prd-add-divider {
-  display: flex; align-items: center; gap: 10px; margin: 12px 0 8px;
-  font-size: var(--wo-text-caption); font-weight: 600; color: var(--wo-on-surface-muted);
+  display: block;
+  text-align: center;
+  margin: 20px 0 14px;
+  padding-top: 16px;
+  border-top: 1px solid var(--wo-border);
+  font-size: var(--wo-text-body);
+  font-weight: 700;
+  color: var(--wo-on-surface);
 }
-.prd-add-divider::before, .prd-add-divider::after {
-  content: ''; flex: 1; height: 1px; background: var(--wo-border);
-}
+.prd-add-divider::before, .prd-add-divider::after { content: none; }
 .prd-avail-section-header {
   padding: 8px var(--wo-space-3); margin-top: 8px;
   background: var(--wo-surface-2); border-radius: var(--wo-radius-sm);
@@ -5962,10 +6056,10 @@
 /* Label auxiliary text */
 .prd-label-aux { font-size: 11px; font-weight: 500; color: var(--wo-on-surface-subtle); }
 
-/* Helper / hint text below fields */
+/* Helper / hint text below fields — clear gap from label above and field below */
 .prd-field-hint {
   display: block; font-size: 11.5px; color: var(--wo-on-surface-subtle);
-  margin-top: 4px; line-height: 1.4;
+  margin: 4px 0 8px; line-height: 1.4;
 }
 
 /* BOM picker option — dot indicator (replaces heavy icon box) */

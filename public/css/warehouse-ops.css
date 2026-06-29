@@ -2052,10 +2052,9 @@
   width: 100%;
   box-sizing: border-box;
   min-height: 44px;
-  /* Logical padding matches the inline-end icon so text never slides under it (RTL/LTR). */
   padding-block: 10px;
   padding-inline-start: 14px;
-  padding-inline-end: 40px;
+  padding-inline-end: 14px; /* no icon — symmetric padding */
   border: 1.5px solid var(--wo-border);
   border-radius: var(--wo-radius);
   font-size: var(--wo-text-body);
@@ -2072,15 +2071,7 @@
   border-color: var(--wo-info-ring);
   box-shadow: var(--wo-elev-focus);
 }
-.prd-bom-search-icon {
-  position: absolute;
-  top: 50%;
-  inset-inline-end: 14px;
-  transform: translateY(-50%);
-  color: var(--wo-on-surface-subtle);
-  pointer-events: none;
-  font-size: 14px;
-}
+.prd-bom-search-icon { display: none; } /* removed from HTML; hide any stale instance */
 .prd-bom-list {
   margin-top: 8px;
   max-height: 240px;
@@ -2125,7 +2116,9 @@
   color: var(--wo-on-surface-subtle);
   display: flex; gap: 6px; flex-wrap: wrap;
 }
-.prd-bom-opt-arrow { color: var(--wo-on-surface-subtle); font-size: 12px; flex-shrink: 0; }
+.prd-bom-opt-arrow { display: none; } /* replaced by checkbox-dot in multi-select mode */
+/* Multi-select: selected state */
+.prd-bom-option.is-selected { background: var(--wo-info-bg); }
 .prd-bom-empty {
   padding: var(--wo-space-4) var(--wo-space-3);
   text-align: center;
@@ -6062,14 +6055,34 @@
   margin: 4px 0 8px; line-height: 1.4;
 }
 
-/* BOM picker option — dot indicator (replaces heavy icon box) */
+/* BOM picker option — checkbox indicator (multi-select) */
 .prd-bom-opt-dot {
-  width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0;
-  background: var(--wo-info); opacity: 0.45; margin-top: 5px; align-self: flex-start;
-  transition: opacity 0.15s;
+  width: 18px; height: 18px;
+  flex-shrink: 0;
+  border: 2px solid var(--wo-border);
+  border-radius: 4px;
+  display: flex; align-items: center; justify-content: center;
+  transition: background var(--wo-dur-1), border-color var(--wo-dur-1);
+  opacity: 1;
 }
 .prd-bom-option:hover .prd-bom-opt-dot,
-.prd-bom-option.keyboard-active .prd-bom-opt-dot { opacity: 1; }
+.prd-bom-option.keyboard-active .prd-bom-opt-dot {
+  border-color: var(--wo-info);
+}
+.prd-bom-option.is-selected .prd-bom-opt-dot {
+  background: var(--wo-info);
+  border-color: var(--wo-info);
+}
+.prd-bom-option.is-selected .prd-bom-opt-dot::after {
+  content: '';
+  display: block;
+  width: 4px;
+  height: 8px;
+  border: 2px solid white;
+  border-top: none;
+  border-inline-start: none;
+  transform: rotate(45deg) translateY(-1px);
+}
 
 /* Hide old icon box — dot replaces it */
 .prd-bom-opt-icon { display: none !important; }

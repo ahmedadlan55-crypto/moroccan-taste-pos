@@ -24732,6 +24732,7 @@ var _prdAllBrands = [];
 var _prdAllBranches = [];
 var _prdBomLines = [];          // loaded when a BOM is selected (for availability check)
 var _prdBomFiltered = [];       // cached filtered results for inline BOM picker keyboard nav
+var _prdSelBoms    = [];       // multi-select: BOM objects currently checked in the picker
 
 function _prdSaveDraft() { try { localStorage.setItem(_prdDraftKey, JSON.stringify(_prdState)); } catch(e) {} }
 function _prdLoadDraft() {
@@ -25066,9 +25067,8 @@ function _prdMountBomPicker() {
         '<button type="button" class="prd-combo-clear" id="prdBomClear" aria-label="مسح الاختيار"' +
           ' hidden onclick="_prdClearBom()"><i class="fas fa-xmark"></i></button>' +
       '</div>' +
-      '<div class="prd-combo-panel" id="prdBomPanel" role="listbox" hidden>' +
+      '<div class="prd-combo-panel" id="prdBomPanel" role="listbox" aria-multiselectable="true" hidden>' +
         '<div class="prd-bom-search-wrap">' +
-          '<i class="fas fa-search prd-bom-search-icon"></i>' +
           '<input type="text" class="prd-bom-input" id="prdBomInput" autocomplete="off" dir="rtl"' +
             ' placeholder="' + searchPlaceholder.replace(/"/g, '&quot;') + '"' +
             ' oninput="_prdBomInputFilter(this.value)"' +
@@ -25077,11 +25077,13 @@ function _prdMountBomPicker() {
         '<div class="prd-bom-list" id="prdBomList"></div>' +
       '</div>' +
     '</div>';
-  _prdBomRenderList(_prdBomFiltered);
-  if (_prdState.bomId) {
+  // Pre-load selection from draft (backward-compat: single bomId → one entry in _prdSelBoms)
+  if (_prdState.bomId && !_prdSelBoms.length) {
     var preSelected = allBoms.find(function(b){ return b.id === _prdState.bomId; });
-    if (preSelected) _prdBomCollapseList(preSelected);
+    if (preSelected) _prdSelBoms = [preSelected];
   }
+  _prdBomRenderList(_prdBomFiltered);
+  _prdBomUpdateTrigger();
 }
 // ── Collapsible combobox open/close (presentation only) ──
 function _prdBomToggle() {
@@ -25133,8 +25135,11 @@ function _prdBomRenderList(boms) {
     list.innerHTML = '<div class="prd-bom-empty"><i class="fas fa-circle-info"></i> لا توجد نتائج مطابقة</div>';
     return;
   }
+  var selIds = _prdSelBoms.map(function(b){ return b.id; });
   list.innerHTML = boms.map(function(b, i){
-    return '<div class="prd-bom-option" data-bidx="' + i + '" tabindex="0"' +
+    var isSel = selIds.indexOf(b.id) >= 0;
+    return '<div class="prd-bom-option' + (isSel ? ' is-selected' : '') + '" data-bidx="' + i + '" tabindex="0"' +
+      ' role="option" aria-selected="' + isSel + '"' +
       ' onclick="_prdBomSelectIdx(' + i + ')"' +
       ' onkeydown="if(event.key===\'Enter\')_prdBomSelectIdx(' + i + ')">' +
       '<span class="prd-bom-opt-dot"></span>' +
@@ -25147,27 +25152,61 @@ function _prdBomRenderList(boms) {
           '<span>الناتج: ' + (b.yieldQuantity||1) + ' ' + _woEscapeHtml(b.yieldUnit||'وحدة') + '</span>' +
         '</div>' +
       '</div>' +
-      '<i class="fas fa-arrow-left prd-bom-opt-arrow"></i>' +
     '</div>';
   }).join('');
 }
 function _prdBomSelectIdx(i) {
   var bom = _prdBomFiltered[i];
   if (!bom) return;
-  _prdApplyBomSelection(bom);
-  _prdBomCollapseList(bom);
+  var idx = _prdSelBoms.findIndex(function(b){ return b.id === bom.id; });
+  if (idx >= 0) {
+    _prdSelBoms.splice(idx, 1);  // إلغاء التحديد
+  } else {
+    _prdSelBoms.push(bom);       // إضافة للتحديد
+  }
+  // تحديث العنصر بصرياً بلا re-render كامل
+  var opt = document.querySelector('#prdBomList [data-bidx="' + i + '"]');
+  if (opt) {
+    var nowSel = idx < 0;
+    opt.setAttribute('aria-selected', nowSel ? 'true' : 'false');
+    opt.classList.toggle('is-selected', nowSel);
+  }
+  _prdBomUpdateTrigger();
+  // Preview: يظهر فقط عند اختيار وصفة واحدة بالضبط
+  if (_prdSelBoms.length === 1) {
+    _prdApplyBomSelection(_prdSelBoms[0]);
+  } else {
+    var prev = document.getElementById('prdBomPreview');
+    if (prev) prev.style.display = 'none';
+    _prdState.bomId = '';
+  }
+  // الـ panel يبقى مفتوحاً — المستخدم يغلقه بالضغط خارجاً أو Escape
 }
 function _prdBomCollapseList(bom) {
-  // Reflect the selection in the trigger and close the panel.
-  var txt = document.getElementById('prdBomTriggerText');
-  var trig = document.getElementById('prdBomTrigger');
-  var clr = document.getElementById('prdBomClear');
-  if (bom) {
-    if (txt) txt.textContent = bom.productName || bom.productId || '';
-    if (trig) trig.classList.add('has-value');
-    if (clr) clr.removeAttribute('hidden');
+  // Used only for draft pre-load (single BOM). Updates trigger and closes panel.
+  if (bom && !_prdSelBoms.find(function(b){ return b.id === bom.id; })) {
+    _prdSelBoms.push(bom);
   }
+  _prdBomUpdateTrigger();
   _prdBomClose();
+}
+function _prdBomUpdateTrigger() {
+  var txt  = document.getElementById('prdBomTriggerText');
+  var trig = document.getElementById('prdBomTrigger');
+  var clr  = document.getElementById('prdBomClear');
+  if (!txt) return;
+  var n = _prdSelBoms.length;
+  if (n === 0) {
+    txt.textContent = 'اختر وصفة الإنتاج…';
+    if (trig) trig.classList.remove('has-value');
+  } else if (n === 1) {
+    txt.textContent = _prdSelBoms[0].productName || _prdSelBoms[0].productId || 'وصفة مختارة';
+    if (trig) trig.classList.add('has-value');
+  } else {
+    txt.textContent = n + ' وصفات مختارة';
+    if (trig) trig.classList.add('has-value');
+  }
+  if (clr) clr.hidden = n === 0;
 }
 function _prdBomKeyNav(e) {
   if (e.key === 'Escape') {
@@ -25233,16 +25272,17 @@ function _prdRemoveItem(i) {
 
 function _prdAddItemToList() {
   _prdWzSync();
-  if (!_prdState.bomId) return showToast('اختر وصفة أولاً', true);
+  if (!_prdSelBoms.length) return showToast('اختر وصفة أولاً', true);
   var qty = Number(_prdState.qty);
   if (!qty || qty <= 0) return showToast('أدخل كمية صحيحة', true);
-  var bom = _prdAllBoms.find(function(b){ return b.id === _prdState.bomId; }) || {};
-  (_prdState.items = _prdState.items || []).push({
-    bomId: _prdState.bomId,
-    productName: bom.productName || bom.productId || _prdState.bomId,
-    yieldUnit: bom.yieldUnit || 'وحدة', version: bom.version || 1,
-    qty: qty, scrapPct: Number(_prdState.scrapPct)||0,
-    batchNo: _prdState.batchNo || '', matCost: 0
+  _prdSelBoms.forEach(function(bom) {
+    (_prdState.items = _prdState.items || []).push({
+      bomId: bom.id,
+      productName: bom.productName || bom.productId || bom.id,
+      yieldUnit: bom.yieldUnit || 'وحدة', version: bom.version || 1,
+      qty: qty, scrapPct: Number(_prdState.scrapPct) || 0,
+      batchNo: _prdState.batchNo || '', matCost: 0
+    });
   });
   _prdSaveDraft(); _prdRenderItemsList();
   _prdClearBom();
@@ -25297,6 +25337,7 @@ function _prdApplyBomSelection(bom) {
 }
 
 function _prdClearBom() {
+  _prdSelBoms = [];
   _prdState.bomId = ''; _prdSaveDraft();
   var sel = document.getElementById('prdBomSelected');
   var preview = document.getElementById('prdBomPreview');

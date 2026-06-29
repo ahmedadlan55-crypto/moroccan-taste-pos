@@ -24815,7 +24815,9 @@ function _prdRenderWizard(data) {
           '<div class="wo-label-stack"><label class="wo-field-label"><i class="fas fa-book-open"></i> وصفة الإنتاج <span class="prd-label-aux">(BOM)</span></label>' +
             '<span class="prd-field-hint">اختر تركيبة المواد المستخدمة لإنتاج المنتج.</span>' +
             '<div id="prdBomPickerHost"></div>' +
-            '<div id="prdBomSelected" class="wo-chip success" style="display:none;margin-top:8px;"><i class="fas fa-check"></i> <span id="prdBomSelectedText"></span> <button type="button" onclick="_prdClearBom()" class="wo-icon-btn danger" style="width:22px;height:22px;margin-inline-start:6px;" aria-label="مسح"><i class="fas fa-xmark"></i></button></div>' +
+            // #prdBomSelected chip removed — the combobox trigger now shows the
+            // selected recipe and carries its own clear (×) button. The preview
+            // table below still renders the BOM components/cost.
             '<div id="prdBomPreview" style="display:none;margin-top:10px;padding:10px;background:var(--wo-surface-2);border-radius:var(--wo-radius-md);border:1px solid var(--wo-border);"></div>' +
           '</div>' +
           '<div class="prd-wz-grid3" style="margin-top:12px;">' +
@@ -25045,23 +25047,71 @@ function _prdMountBomPicker() {
   if (!host) return;
   var allBoms = _prdFilteredBoms();
   _prdBomFiltered = allBoms.slice(0, 50);
-  var placeholder = allBoms.length
+  var searchPlaceholder = allBoms.length
     ? 'ابحث عن وصفة بالاسم أو الكود... (' + allBoms.length + ' وصفة متاحة)'
     : (_prdState.brandId ? 'لا توجد وصفات لهذا البراند — اضف من قسم الوصفات' : 'لا توجد وصفات مُعرّفة');
+  // Collapsible combobox (inline-expand): a single trigger on the page; the
+  // search + list live in a panel that expands below it ONLY when opened — in
+  // normal flow (no absolute), so it can never be clipped inside the modal.
   host.innerHTML =
-    '<div class="prd-bom-search-wrap">' +
-      '<i class="fas fa-search prd-bom-search-icon"></i>' +
-      '<input type="text" class="prd-bom-input" id="prdBomInput" autocomplete="off"' +
-        ' placeholder="' + placeholder.replace(/"/g, '&quot;') + '"' +
-        ' oninput="_prdBomInputFilter(this.value)"' +
-        ' onkeydown="_prdBomKeyNav(event)">' +
-    '</div>' +
-    '<div class="prd-bom-list" id="prdBomList"></div>';
+    '<div class="prd-combo" id="prdBomCombo">' +
+      '<div class="prd-combo-field">' +
+        '<button type="button" class="prd-combo-trigger" id="prdBomTrigger"' +
+          ' aria-haspopup="listbox" aria-expanded="false" aria-controls="prdBomPanel"' +
+          ' onclick="_prdBomToggle()">' +
+          '<i class="fas fa-book-open prd-combo-trigger-icon"></i>' +
+          '<span class="prd-combo-trigger-text" id="prdBomTriggerText">اختر وصفة الإنتاج…</span>' +
+          '<i class="fas fa-chevron-down prd-combo-caret"></i>' +
+        '</button>' +
+        '<button type="button" class="prd-combo-clear" id="prdBomClear" aria-label="مسح الاختيار"' +
+          ' hidden onclick="_prdClearBom()"><i class="fas fa-xmark"></i></button>' +
+      '</div>' +
+      '<div class="prd-combo-panel" id="prdBomPanel" role="listbox" hidden>' +
+        '<div class="prd-bom-search-wrap">' +
+          '<i class="fas fa-search prd-bom-search-icon"></i>' +
+          '<input type="text" class="prd-bom-input" id="prdBomInput" autocomplete="off" dir="rtl"' +
+            ' placeholder="' + searchPlaceholder.replace(/"/g, '&quot;') + '"' +
+            ' oninput="_prdBomInputFilter(this.value)"' +
+            ' onkeydown="_prdBomKeyNav(event)">' +
+        '</div>' +
+        '<div class="prd-bom-list" id="prdBomList"></div>' +
+      '</div>' +
+    '</div>';
   _prdBomRenderList(_prdBomFiltered);
   if (_prdState.bomId) {
     var preSelected = allBoms.find(function(b){ return b.id === _prdState.bomId; });
     if (preSelected) _prdBomCollapseList(preSelected);
   }
+}
+// ── Collapsible combobox open/close (presentation only) ──
+function _prdBomToggle() {
+  var p = document.getElementById('prdBomPanel');
+  if (!p) return;
+  if (p.hasAttribute('hidden')) _prdBomOpen(); else _prdBomClose();
+}
+function _prdBomOpen() {
+  var p = document.getElementById('prdBomPanel');
+  var t = document.getElementById('prdBomTrigger');
+  if (!p || !t) return;
+  p.removeAttribute('hidden');
+  t.setAttribute('aria-expanded', 'true');
+  // Reset the search so the full list shows on open.
+  var inp = document.getElementById('prdBomInput');
+  if (inp) inp.value = '';
+  _prdBomInputFilter('');
+  if (inp) setTimeout(function(){ try { inp.focus(); } catch(e){} }, 0);
+  document.addEventListener('mousedown', _prdBomOutside, true);
+}
+function _prdBomClose() {
+  var p = document.getElementById('prdBomPanel');
+  var t = document.getElementById('prdBomTrigger');
+  if (p) p.setAttribute('hidden', '');
+  if (t) t.setAttribute('aria-expanded', 'false');
+  document.removeEventListener('mousedown', _prdBomOutside, true);
+}
+function _prdBomOutside(e) {
+  var combo = document.getElementById('prdBomCombo');
+  if (combo && !combo.contains(e.target)) _prdBomClose();
 }
 function _prdBomInputFilter(q) {
   var all = _prdFilteredBoms();
@@ -25108,14 +25158,27 @@ function _prdBomSelectIdx(i) {
   _prdBomCollapseList(bom);
 }
 function _prdBomCollapseList(bom) {
-  var list = document.getElementById('prdBomList');
-  if (list) list.style.display = 'none';
-  var inp = document.getElementById('prdBomInput');
-  if (inp) { inp.disabled = true; inp.value = bom ? (bom.productName || bom.productId || '') : ''; }
+  // Reflect the selection in the trigger and close the panel.
+  var txt = document.getElementById('prdBomTriggerText');
+  var trig = document.getElementById('prdBomTrigger');
+  var clr = document.getElementById('prdBomClear');
+  if (bom) {
+    if (txt) txt.textContent = bom.productName || bom.productId || '';
+    if (trig) trig.classList.add('has-value');
+    if (clr) clr.removeAttribute('hidden');
+  }
+  _prdBomClose();
 }
 function _prdBomKeyNav(e) {
+  if (e.key === 'Escape') {
+    e.preventDefault();
+    _prdBomClose();
+    var trig = document.getElementById('prdBomTrigger');
+    if (trig) trig.focus();
+    return;
+  }
   var list = document.getElementById('prdBomList');
-  if (!list || list.style.display === 'none') return;
+  if (!list) return;
   var opts = list.querySelectorAll('.prd-bom-option');
   if (!opts.length) return;
   var active = list.querySelector('.prd-bom-option.keyboard-active');

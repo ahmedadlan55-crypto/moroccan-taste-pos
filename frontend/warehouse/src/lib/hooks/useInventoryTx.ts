@@ -47,6 +47,19 @@ export function useInvTxDetail(docType: InvTxDocType, id: string | null) {
   });
 }
 
+export interface GlAccountOption { code: string; name: string; type: string }
+// Postable counter accounts for the receipt/issue wizards (active, leaf, allowed
+// type). The backend re-validates on submit — this only populates the dropdown.
+export function useGlAccounts(usage: "receipt" | "issue" | null) {
+  return useQuery({
+    enabled: !!usage,
+    queryKey: ["invtx", "gl-accounts", usage],
+    staleTime: 5 * 60_000,
+    queryFn: ({ signal }) => apiClient.get<{ data?: GlAccountOption[] }>("/inventory/v2/gl-accounts", { signal, params: { usage: usage as string } })
+      .then((r) => (Array.isArray(r?.data) ? r.data : [])),
+  });
+}
+
 export function useInvTxMutations(docType: InvTxDocType) {
   const qc = useQueryClient();
   const B = base(docType);

@@ -74,6 +74,18 @@ test('adjustment negative (تالف): Dr WASTE_EXPENSE / Cr inventory', () => {
   eq(s.entries[1].credit, 56.67);
   balanced(s);
 });
+test('glAdjustmentNet keeps positive & negative GROSS (no netting hides the effect)', () => {
+  const s = E.glAdjustmentNet({ posValue: 100, negValue: 40, warehouse: { type: 'main' }, reason: 'جرد', referenceId: 'ADV-NET' });
+  eq(s.entries.length, 4, 'four lines: a gross positive pair + a gross negative pair');
+  const invDeb = s.entries.filter((e) => e.accountCode === A.INVENTORY.code && Number(e.debit) > 0);
+  const invCrd = s.entries.filter((e) => e.accountCode === A.INVENTORY.code && Number(e.credit) > 0);
+  ok(invDeb.length === 1 && Number(invDeb[0].debit) === 100, 'inventory debit 100 (gross increase, not netted to 60)');
+  ok(invCrd.length === 1 && Number(invCrd[0].credit) === 40, 'inventory credit 40 (gross decrease, not netted away)');
+  const gain = s.entries.find((e) => e.accountCode === A.STOCK_GAIN.code);
+  ok(gain && Number(gain.credit) === 100, 'stock-gain credit = gross positive 100');
+  const totals = balanced(s);
+  close(totals.d, 140, 'gross debit = 140 (100 + 40)');
+});
 test('reverseSpec swaps debit/credit and tags *_reverse', () => {
   const fwd = E.glReceipt({ amount: 350, warehouse: { type: 'main' }, referenceId: 'RCV-1' });
   const rev = E.reverseSpec(fwd, { postedBy: 'admin' });

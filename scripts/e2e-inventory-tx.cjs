@@ -73,14 +73,14 @@ async function postDoc(kind, payload) {
     if (!(await waitUp())) throw new Error("server did not start");
 
     // Build the numeric chain via API (fast + deterministic), then screenshot the UI.
-    const rcv = await postDoc("receipts", { warehouseId: WA, sourceRef: "رصيد افتتاحي", items: [{ itemId: IT, qty: 50, unitCost: 7 }] });
+    const rcv = await postDoc("receipts", { warehouseId: WA, reason: "رصيد افتتاحي", counterAccountCode: "4910", sourceRef: "رصيد افتتاحي", items: [{ itemId: IT, qty: 50, unitCost: 7 }] });
     console.log("  receipt", rcv.number, "value", rcv.post.body && rcv.post.body.affectedValue);
-    const isu = await postDoc("issues", { warehouseId: WA, reason: "صرف للمطبخ المركزي", items: [{ itemId: IT, qty: 30 }] });
+    const isu = await postDoc("issues", { warehouseId: WA, reason: "صرف للمطبخ المركزي", expenseAccountCode: "5300", items: [{ itemId: IT, qty: 30 }] });
     console.log("  issue", isu.number);
     const adv = await postDoc("adjustments", { warehouseId: WA, reason: "جرد دوري", items: [{ itemId: IT, countedQty: 110 }] });
     console.log("  adjustment", adv.number);
     // a fresh DRAFT receipt for the 409-conflict capture
-    const draft = await api("POST", "/api/inventory/v2/receipts", { warehouseId: WA, items: [{ itemId: IT, qty: 3, unitCost: 7 }] });
+    const draft = await api("POST", "/api/inventory/v2/receipts", { warehouseId: WA, reason: "مسودة", counterAccountCode: "4910", items: [{ itemId: IT, qty: 3, unitCost: 7 }] });
     const draftId = draft.body && draft.body.id;
 
     const browser = await chromium.launch();

@@ -4061,6 +4061,10 @@ async function runMigrations() {
   // Existing-DB top-up (the create handler writes total_cost/total_value uniformly).
   await addColumnIfMissing('inv_adjustments', 'total_cost', 'DECIMAL(14,4) DEFAULT 0');
   await addColumnIfMissing('inv_adjustments', 'total_value', 'DECIMAL(14,2) DEFAULT 0');
+  // Phase 3C closure — receipts now carry a mandatory reason + validated counter
+  // (credit) account so STOCK_GAIN is never a silent default.
+  await addColumnIfMissing('inv_receipts', 'reason', 'VARCHAR(200)');
+  await addColumnIfMissing('inv_receipts', 'counter_account_code', 'VARCHAR(20)');
   // Unified append-only audit timeline for all three doc types (one row per
   // transition, written inside the SAME txn as the state change).
   await createTableIfMissing('inv_tx_events', `

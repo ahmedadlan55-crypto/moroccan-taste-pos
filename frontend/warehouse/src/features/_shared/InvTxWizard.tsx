@@ -10,7 +10,7 @@ import { useWarehouses } from "@/lib/hooks/useWarehouses";
 import { useWarehouseInventory } from "@/lib/hooks/useInventory";
 import { useWarehouseScope } from "@/app/warehouse-scope-provider";
 import { formatCurrency, formatQty } from "@/lib/formatters";
-import { useInvTxDetail, useInvTxMutations } from "@/lib/hooks/useInventoryTx";
+import { useInvTxDetail, useInvTxMutations, useGlAccounts } from "@/lib/hooks/useInventoryTx";
 import {
   createReceiptInput, createIssueInput, createAdjustmentInput,
   updateReceiptInput, updateIssueInput, updateAdjustmentInput,
@@ -35,6 +35,7 @@ export function InvTxWizard({ config }: { config: InvTxConfig }) {
   const [date, setDate] = useState("");
   const [reason, setReason] = useState("");
   const [sourceRef, setSourceRef] = useState("");
+  const [counterAccount, setCounterAccount] = useState("");
   const [recipient, setRecipient] = useState("");
   const [evidence, setEvidence] = useState("");
   const [notes, setNotes] = useState("");
@@ -49,6 +50,7 @@ export function InvTxWizard({ config }: { config: InvTxConfig }) {
     setDate(d.date ?? "");
     setReason(d.reason ?? "");
     setSourceRef(d.sourceRef ?? "");
+    setCounterAccount(d.counterAccountCode ?? d.expenseAccountCode ?? "");
     setRecipient(d.recipient ?? "");
     setEvidence(d.referenceEvidence ?? "");
     setNotes(d.notes ?? "");
@@ -74,6 +76,11 @@ export function InvTxWizard({ config }: { config: InvTxConfig }) {
 
   const isAdj = config.lineMode === "adjustment";
   const isReceipt = config.lineMode === "receipt";
+  const isIssue = config.lineMode === "issue";
+  // Receipts/issues require a validated GL counter account (no silent default).
+  const accountUsage = isReceipt ? "receipt" : isIssue ? "issue" : null;
+  const accounts = useGlAccounts(accountUsage);
+  const needsAccount = isReceipt || isIssue;
   const total = useMemo(() => lines.reduce((s, l) => s + (isAdj ? (l.countedQty - l.systemQty) * l.unitCost : l.qty * l.unitCost), 0), [lines, isAdj]);
 
   function buildPayload(): Record<string, unknown> {
@@ -83,8 +90,8 @@ export function InvTxWizard({ config }: { config: InvTxConfig }) {
           : { itemId: l.itemId, qty: Number(l.qty) },
     );
     const base: Record<string, unknown> = { warehouseId, notes: notes || undefined, items };
-    if (isReceipt) { base.receiptDate = date || undefined; if (sourceRef) base.sourceRef = sourceRef; }
-    if (config.lineMode === "issue") { base.issueDate = date || undefined; base.reason = reason; if (recipient) base.recipient = recipient; }
+    if (isReceipt) { base.receiptDate = date || undefined; base.reason = reason; base.counterAccountCode = counterAccount; if (sourceRef) base.sourceRef = sourceRef; }
+    if (isIssue) { base.issueDate = date || undefined; base.reason = reason; base.expenseAccountCode = counterAccount; if (recipient) base.recipient = recipient; }
     if (isAdj) { base.adjustmentDate = date || undefined; base.reason = reason; if (evidence) base.referenceEvidence = evidence; }
     return base;
   }
@@ -117,7 +124,7 @@ export function InvTxWizard({ config }: { config: InvTxConfig }) {
   const saving = m.create.isPending || m.update.isPending;
   if (editId && edit.isLoading) return <div className="p-4"><LoadingState rows={2} /></div>;
 
-  const canNext1 = !!warehouseId && (isReceipt || reason.trim().length >= 2);
+  const canNext1 = !!warehouseId && reason.trim().length >= 2 && (!needsAccount || !!counterAccount);
   const canNext2 = lines.length > 0 && lines.every((l) => (isAdj ? l.countedQty >= 0 : l.qty > 0) && (!isReceipt || l.unitCost > 0));
 
   return (
@@ -144,14 +151,20 @@ export function InvTxWizard({ config }: { config: InvTxConfig }) {
             <label className="block text-xs font-bold text-slate-500">التاريخ
               <input type="date" className="field mt-1 w-full" value={date} onChange={(e) => setDate(e.target.value)} aria-label="التاريخ" />
             </label>
+            <label className="block text-xs font-bold text-slate-500 sm:col-span-2">السبب (إلزامي)
+              <input className="field mt-1 w-full" value={reason} onChange={(e) => setReason(e.target.value)} placeholder={isReceipt ? "سبب الاستلام" : isAdj ? "سبب التعديل/الجرد" : "سبب الصرف"} aria-label="السبب" />
+            </label>
+            {needsAccount && (
+              <label className="block text-xs font-bold text-slate-500 sm:col-span-2">{isReceipt ? "الحساب المقابل (دائن)" : "حساب المصروف (مدين)"} (إلزامي)
+                <select className="field mt-1 w-full" value={counterAccount} onChange={(e) => setCounterAccount(e.target.value)} aria-label="الحساب المحاسبي" disabled={accounts.isLoading}>
+                  <option value="">{accounts.isLoading ? "تحميل الحسابات…" : "اختر الحساب"}</option>
+                  {(accounts.data ?? []).map((a) => <option key={a.code} value={a.code}>{a.code} — {a.name}</option>)}
+                </select>
+              </label>
+            )}
             {isReceipt && (
               <label className="block text-xs font-bold text-slate-500 sm:col-span-2">المرجع (اختياري)
                 <input className="field mt-1 w-full" value={sourceRef} onChange={(e) => setSourceRef(e.target.value)} placeholder="مثال: رصيد افتتاحي" aria-label="المرجع" />
-              </label>
-            )}
-            {!isReceipt && (
-              <label className="block text-xs font-bold text-slate-500 sm:col-span-2">السبب (إلزامي)
-                <input className="field mt-1 w-full" value={reason} onChange={(e) => setReason(e.target.value)} placeholder={isAdj ? "سبب التعديل/الجرد" : "سبب الصرف"} aria-label="السبب" />
               </label>
             )}
             {config.lineMode === "issue" && (

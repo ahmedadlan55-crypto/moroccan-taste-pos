@@ -29,6 +29,8 @@ export const adjustmentLineInput = z.object({
 export const createReceiptInput = z.object({
   warehouseId: z.string().min(1, "اختر المستودع"),
   receiptDate: z.string().optional(),
+  reason: z.string().trim().min(2, "سبب الاستلام إلزامي"),
+  counterAccountCode: z.string().trim().min(1, "اختر الحساب المقابل"),
   sourceRef: z.string().max(200).optional(),
   notes: z.string().max(2000).optional(),
   items: z.array(receiptLineInput).min(1, "أضف صنفًا واحدًا على الأقل"),
@@ -37,6 +39,7 @@ export const createIssueInput = z.object({
   warehouseId: z.string().min(1, "اختر المستودع"),
   issueDate: z.string().optional(),
   reason: z.string().trim().min(2, "سبب الصرف إلزامي"),
+  expenseAccountCode: z.string().trim().min(1, "اختر حساب المصروف"),
   recipient: z.string().max(200).optional(),
   notes: z.string().max(2000).optional(),
   items: z.array(issueLineInput).min(1, "أضف صنفًا واحدًا على الأقل"),

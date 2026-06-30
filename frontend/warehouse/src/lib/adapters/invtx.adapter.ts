@@ -97,6 +97,8 @@ export interface InvTxDetail {
   sourceRef: string | null;
   recipient: string | null;
   referenceEvidence: string | null;
+  counterAccountCode: string | null;
+  expenseAccountCode: string | null;
   notes: string | null;
   totalValue: number;
   totalCost: number;
@@ -128,6 +130,8 @@ export function toInvTxDetail(raw: unknown): InvTxDetail {
     sourceRef: d.source_ref ? s(d.source_ref) : null,
     recipient: d.recipient ? s(d.recipient) : null,
     referenceEvidence: d.reference_evidence ? s(d.reference_evidence) : null,
+    counterAccountCode: d.counter_account_code ? s(d.counter_account_code) : null,
+    expenseAccountCode: d.expense_account_code ? s(d.expense_account_code) : null,
     notes: d.notes ? s(d.notes) : null,
     totalValue: num(pick(d, VALUE_COLS)),
     totalCost: num(d.total_cost),

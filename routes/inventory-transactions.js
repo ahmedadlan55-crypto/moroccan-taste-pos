@@ -40,6 +40,12 @@ const MAKER_CHECKER = !/^(0|false|off|no)$/i.test(String(process.env.INV_MAKER_C
 // A large adjustment requires reference_evidence. Threshold in currency value.
 const EVIDENCE_THRESHOLD = (() => { const n = Number(process.env.INV_ADJ_EVIDENCE_THRESHOLD); return Number.isFinite(n) && n > 0 ? n : 1000; })();
 
+// Allowed gl_accounts.type for the user-chosen counter account per doc type.
+// A receipt (stock IN, not a purchase) credits a gain / owner contribution /
+// payable; an issue (stock OUT) debits an expense. The account is also checked
+// to be active + a postable leaf by E.validateAccount — no silent default.
+const ACCOUNT_USAGE = { receipt: ['revenue', 'equity', 'liability'], issue: ['expense'] };
+
 // ── Doc-type configuration ──────────────────────────────────────────────────
 const DOCS = {
   receipt: { table: 'inv_receipts', items: 'inv_receipt_items', fk: 'receipt_id', numberCol: 'receipt_number', dateCol: 'receipt_date', docType: 'receipt', prefix: 'RCV', refType: 'inv_receipt' },
@@ -142,6 +148,11 @@ async function _itemMeta(itemId) {
 // ── Build draft lines per doc type (also used by PATCH) ─────────────────────
 // Returns { lines:[{itemId,itemName,unit,...}], totalCost, totalValue, header:{} }
 async function _buildReceipt(body, warehouse) {
+  if (!String(body.reason || '').trim()) throw _err('REASON_REQUIRED', 'سبب الاستلام إلزامي');
+  // The counter (credit) account is REQUIRED and validated — no silent STOCK_GAIN.
+  const counterCode = String(body.counterAccountCode || body.counter_account_code || '').trim();
+  await gl.ensureCoreAccounts(db);
+  await E.validateAccount(db, counterCode, ACCOUNT_USAGE.receipt);
   _validateItems(body.items, 'qty', false);
   const lines = [];
   let total = 0;
@@ -156,11 +167,22 @@ async function _buildReceipt(body, warehouse) {
     lines.push({ itemId, itemName: meta.name, unit: meta.unit, qty, unitCost: E.round4(unitCost), lineTotal });
   }
   total = E.round2(total);
-  return { lines, totalCost: total, totalValue: total, header: { source_ref: (body.sourceRef || body.source_ref || '').toString().slice(0, 200) || null } };
+  return {
+    lines, totalCost: total, totalValue: total,
+    header: {
+      source_ref: (body.sourceRef || body.source_ref || '').toString().slice(0, 200) || null,
+      reason: String(body.reason).trim().slice(0, 200),
+      counter_account_code: counterCode.slice(0, 20),
+    },
+  };
 }
 
 async function _buildIssue(body, warehouse) {
   if (!String(body.reason || '').trim()) throw _err('REASON_REQUIRED', 'سبب الصرف إلزامي');
+  // The expense (debit) account is REQUIRED and validated — no silent STOCK_VARIANCE.
+  const expCode = String(body.expenseAccountCode || body.expense_account_code || '').trim();
+  await gl.ensureCoreAccounts(db);
+  await E.validateAccount(db, expCode, ACCOUNT_USAGE.issue);
   _validateItems(body.items, 'qty', false);
   const lines = [];
   let total = 0;
@@ -180,7 +202,7 @@ async function _buildIssue(body, warehouse) {
     header: {
       reason: String(body.reason).trim().slice(0, 200),
       recipient: (body.recipient || '').toString().slice(0, 200) || null,
-      expense_account_code: (body.expenseAccountCode || body.expense_account_code || '').toString().slice(0, 20) || null,
+      expense_account_code: expCode.slice(0, 20),
     },
   };
 }
@@ -419,6 +441,8 @@ function _makeApprove(cfg) {
 // ════════════════════════════════════════════════════════════════════════════
 async function _postReceipt(conn, cfg, doc, lines, actor) {
   const warehouse = await _loadWarehouse(doc.warehouse_id);
+  // Re-validate the counter account at post (it may have been deactivated since draft).
+  await E.validateAccount(conn, doc.counter_account_code, ACCOUNT_USAGE.receipt);
   const affectedStock = [];
   const movementIds = [];
   let amount = 0;
@@ -434,12 +458,14 @@ async function _postReceipt(conn, cfg, doc, lines, actor) {
     try { await recomputeInvItemStock(conn, ln.item_id); } catch (_) {}
   }
   amount = E.round2(amount);
-  const spec = E.glReceipt({ amount, warehouse, warehouseId: doc.warehouse_id, brandId: doc.brand_id, branchId: doc.branch_id, costCenterId: doc.cost_center_id, journalDate: _dateStr(doc[cfg.dateCol]), postedBy: actor, referenceId: doc.id, description: 'استلام مستقل ' + doc[cfg.numberCol] });
+  const spec = E.glReceipt({ amount, counterCode: doc.counter_account_code, warehouse, warehouseId: doc.warehouse_id, brandId: doc.brand_id, branchId: doc.branch_id, costCenterId: doc.cost_center_id, journalDate: _dateStr(doc[cfg.dateCol]), postedBy: actor, referenceId: doc.id, description: 'استلام مستقل ' + doc[cfg.numberCol] });
   return { affectedStock, movementIds, amount, spec };
 }
 
 async function _postIssue(conn, cfg, doc, lines, actor) {
   const warehouse = await _loadWarehouse(doc.warehouse_id);
+  // Re-validate the expense account at post (it may have been deactivated since draft).
+  await E.validateAccount(conn, doc.expense_account_code, ACCOUNT_USAGE.issue);
   const affectedStock = [];
   const movementIds = [];
   let amount = 0;
@@ -555,6 +581,23 @@ async function _reverseDoc(conn, cfg, doc, lines, actor) {
   const affectedStock = [];
   const movementIds = [];
   let amount = 0, posValue = 0, negValue = 0, netValue = 0;
+  // Guard: a reverse that runs AFTER later movements must not produce an illogical
+  // result. Lock each affected row and block if the compensating move would drive
+  // the qty (or carrying value) negative — e.g. reversing a receipt whose stock was
+  // already issued out, or reversing a positive adjustment after consumption.
+  for (const ln of lines) {
+    let comp = 0;
+    if (cfg.docType === 'receipt') comp = -Number(ln.qty);
+    else if (cfg.docType === 'issue') comp = Number(ln.qty);
+    else { const d = Number(ln.delta); if (Math.abs(d) < 1e-9) continue; comp = -d; }
+    if (comp < 0) {
+      const cur = await E.readStock(conn, doc.warehouse_id, ln.item_id, true); // FOR UPDATE
+      const resultQty = E.round4(cur.qty + comp);
+      if (resultQty < -1e-9) throw _err('INSUFFICIENT_STOCK', 'لا يمكن عكس المستند: سيصبح رصيد الصنف ' + ln.item_id + ' سالبًا (' + resultQty + ') بعد حركات لاحقة');
+      const resultVal = E.round2(resultQty * (cur.avgCost || 0));
+      if (resultVal < -1e-9) throw _err('INSUFFICIENT_STOCK', 'لا يمكن عكس المستند: قيمة مخزون غير منطقية للصنف ' + ln.item_id);
+    }
+  }
   for (const ln of lines) {
     const frozen = Number(ln.posted_unit_cost);
     if (cfg.docType === 'receipt') {
@@ -583,7 +626,7 @@ async function _reverseDoc(conn, cfg, doc, lines, actor) {
   }
   // Build the ORIGINAL forward spec from frozen costs, then swap it for the reverse.
   let forward = null;
-  if (cfg.docType === 'receipt') forward = E.glReceipt({ amount: E.round2(amount), warehouse, warehouseId: doc.warehouse_id, brandId: doc.brand_id, branchId: doc.branch_id, costCenterId: doc.cost_center_id, journalDate: _today(), postedBy: actor, referenceId: doc.id, description: doc[cfg.numberCol] });
+  if (cfg.docType === 'receipt') forward = E.glReceipt({ amount: E.round2(amount), counterCode: doc.counter_account_code, warehouse, warehouseId: doc.warehouse_id, brandId: doc.brand_id, branchId: doc.branch_id, costCenterId: doc.cost_center_id, journalDate: _today(), postedBy: actor, referenceId: doc.id, description: doc[cfg.numberCol] });
   else if (cfg.docType === 'issue') forward = E.glIssue({ amount: E.round2(amount), warehouse, warehouseId: doc.warehouse_id, brandId: doc.brand_id, branchId: doc.branch_id, costCenterId: doc.cost_center_id, expenseCode: doc.expense_account_code || null, journalDate: _today(), postedBy: actor, referenceId: doc.id, description: doc[cfg.numberCol] });
   else if (E.round2(posValue) > 0 || E.round2(negValue) > 0) forward = E.glAdjustmentNet({ posValue: E.round2(posValue), negValue: E.round2(negValue), warehouse, warehouseId: doc.warehouse_id, brandId: doc.brand_id, branchId: doc.branch_id, costCenterId: doc.cost_center_id, expenseCode: E.adjustmentExpenseCode(doc.reason), journalDate: _today(), postedBy: actor, referenceId: doc.id, description: doc[cfg.numberCol] });
   const spec = forward ? E.reverseSpec(forward, { postedBy: actor, journalDate: _today(), description: 'عكس ' + doc[cfg.numberCol] }) : null;
@@ -689,6 +732,26 @@ function _makeDelete(cfg) {
     } catch (e) { _catch(res, e); }
   };
 }
+
+// ── Postable counter accounts for the receipt/issue wizards ─────────────────
+// GET /api/inventory/v2/gl-accounts?usage=receipt|issue → active, postable-leaf
+// accounts of the allowed types (the only accounts the route will accept).
+router.get('/gl-accounts', async (req, res) => {
+  try {
+    const usage = String(req.query.usage || '').toLowerCase();
+    const types = ACCOUNT_USAGE[usage];
+    if (!types) return _fail(res, 'VALIDATION_ERROR', 'usage يجب أن يكون receipt أو issue');
+    await gl.ensureCoreAccounts(db);
+    const ph = types.map(() => '?').join(',');
+    const [rows] = await db.query(
+      'SELECT a.code, a.name_ar, a.name_en, a.type FROM gl_accounts a ' +
+      'WHERE a.is_active=1 AND a.type IN (' + ph + ') ' +
+      'AND NOT EXISTS (SELECT 1 FROM gl_accounts c WHERE c.parent_id=a.id) ORDER BY a.code',
+      types
+    );
+    res.json({ data: rows.map((r) => ({ code: r.code, name: r.name_ar || r.name_en || r.code, type: r.type })), usage });
+  } catch (e) { _catch(res, e); }
+});
 
 // ── Wire the three doc types ────────────────────────────────────────────────
 for (const name of Object.keys(DOCS)) {

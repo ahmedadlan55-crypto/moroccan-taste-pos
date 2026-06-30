@@ -28,6 +28,10 @@ const PORT = Number(process.env.INVTX_TEST_PORT || 3207);
 const BASE = { host: '127.0.0.1', port: PORT };
 const WA = 'WH-3B-A', WC = 'WH-3B-C';
 const ITEM = 'INVTX-ITEM';
+// Validated counter accounts (Phase 3C closure): receipts credit a revenue leaf,
+// issues debit an expense leaf. STOCK_GAIN 4910 / STOCK_VARIANCE 5300 are seeded
+// by gl.ensureCoreAccounts on the first build.
+const ACC_REV = '4910', ACC_EXP = '5300';
 const U_A = 'invtx_a', U_B = 'invtx_b', U_EMP = 'invtx_emp', U_OUT = 'invtx_out';
 
 let _p = 0, _f = 0;
@@ -59,6 +63,17 @@ async function movesFor(refId) { const [r] = await db.query('SELECT type, qty, r
 async function ensureGl() {
   await db.query("CREATE TABLE IF NOT EXISTS gl_journals (id VARCHAR(50) PRIMARY KEY, journal_number VARCHAR(20), journal_date DATE, reference_type VARCHAR(50), reference_id VARCHAR(100), description TEXT, total_debit DECIMAL(14,2) DEFAULT 0, total_credit DECIMAL(14,2) DEFAULT 0, period_id VARCHAR(50), status ENUM('posted','draft') DEFAULT 'posted', created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP, created_by VARCHAR(100), posted_by VARCHAR(100) DEFAULT '', posted_at DATETIME, brand_id VARCHAR(50) NULL, branch_id VARCHAR(50) NULL, project_id VARCHAR(50) NULL, cost_center_id VARCHAR(50) NULL, UNIQUE KEY uq_journal_number (journal_number)) ENGINE=InnoDB");
 }
+// Seed accounts used by the counter-account validation tests: an INACTIVE leaf
+// and a HEADER (non-postable) account with a child. The valid leaves (4910/5300)
+// are seeded by gl.ensureCoreAccounts on the first receipt/issue build.
+async function ensureTestAccounts() {
+  try {
+    await db.query("CREATE TABLE IF NOT EXISTS gl_accounts (id VARCHAR(50) PRIMARY KEY, code VARCHAR(20) NOT NULL UNIQUE, name_ar VARCHAR(200) NOT NULL, name_en VARCHAR(200), type ENUM('asset','liability','equity','revenue','expense') NOT NULL, parent_id VARCHAR(50), level INT DEFAULT 1, is_active BOOLEAN DEFAULT TRUE, balance DECIMAL(14,2) DEFAULT 0, created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP) ENGINE=InnoDB");
+    await db.query("INSERT IGNORE INTO gl_accounts (id,code,name_ar,type,parent_id,level,is_active) VALUES ('GL-ZTEST-INACT','ZINACT','حساب غير نشط','revenue',NULL,2,0)");
+    await db.query("INSERT IGNORE INTO gl_accounts (id,code,name_ar,type,parent_id,level,is_active) VALUES ('GL-ZTEST-HDR','ZHDR','حساب رئيسي','revenue',NULL,1,1)");
+    await db.query("INSERT IGNORE INTO gl_accounts (id,code,name_ar,type,parent_id,level,is_active) VALUES ('GL-ZTEST-CHILD','ZCHILD','حساب فرعي','revenue','GL-ZTEST-HDR',2,1)");
+  } catch (_) {}
+}
 
 async function cleanup() {
   const sqls = [
@@ -78,6 +93,7 @@ async function cleanup() {
     ['DELETE FROM idempotency_keys WHERE username IN (?,?,?,?)', [U_A, U_B, U_EMP, U_OUT]],
     ['DELETE FROM idempotency_keys WHERE username=?', ['invtx_admin']],
     ['DELETE uwa FROM user_warehouse_access uwa JOIN users u ON u.id=uwa.user_id WHERE u.username IN (?,?,?,?)', [U_A, U_B, U_EMP, U_OUT]],
+    ["DELETE FROM gl_accounts WHERE code IN ('ZINACT','ZHDR','ZCHILD')", []],
     ['DELETE FROM inv_items WHERE id=?', [ITEM]],
     ['DELETE FROM warehouses WHERE id IN (?,?)', [WA, WC]],
     ['DELETE FROM users WHERE username IN (?,?,?,?)', [U_A, U_B, U_EMP, U_OUT]],
@@ -88,6 +104,7 @@ async function cleanup() {
 async function seed() {
   await cleanup();
   await ensureGl();
+  await ensureTestAccounts();
   await db.query('INSERT INTO warehouses (id,code,name,type,is_active,is_main) VALUES (?,?,?,?,1,1)', [WA, '3BA', 'مستودع رئيسي', 'main']);
   await db.query('INSERT INTO warehouses (id,code,name,type,is_active) VALUES (?,?,?,?,1)', [WC, '3BC', 'مستودع بعيد', 'branch']);
   await db.query('INSERT INTO inv_items (id,name,category,unit,cost,min_stock,active) VALUES (?,?,?,?,?,?,1)', [ITEM, 'صنف اختبار', 'خام', 'كجم', 5, 2]);
@@ -121,19 +138,27 @@ async function seed() {
     // ─────────────────────────────────────────────────────────────────────
     // RECEIPT — create → approve → post (50 @ 7)
     // ─────────────────────────────────────────────────────────────────────
-    const rc = await req('POST', R, admin, { warehouseId: WA, sourceRef: 'فتح رصيد', items: [{ itemId: ITEM, qty: 50, unitCost: 7 }] }, { 'Idempotency-Key': 'rcv-create' });
+    const rc = await req('POST', R, admin, { warehouseId: WA, sourceRef: 'فتح رصيد', reason: 'رصيد افتتاحي', counterAccountCode: ACC_REV, items: [{ itemId: ITEM, qty: 50, unitCost: 7 }] }, { 'Idempotency-Key': 'rcv-create' });
     check('receipt create → draft v1 + RCV number', rc.status === 201 && rc.body.status === 'draft' && rc.body.version === 1 && /^RCV-/.test(rc.body.documentNumber || ''), rc.body);
     const rid = rc.body && rc.body.id;
     const rnum = rc.body && rc.body.documentNumber;
 
+    // counter account REQUIRED + validated (no silent STOCK_GAIN)
+    const rcNoAcc = await req('POST', R, admin, { warehouseId: WA, reason: 'بلا حساب', items: [{ itemId: ITEM, qty: 5, unitCost: 7 }] });
+    check('receipt without counter account → 422 VALIDATION_ERROR', rcNoAcc.status === 422 && rcNoAcc.body.code === 'VALIDATION_ERROR', rcNoAcc.body && rcNoAcc.body.code);
+    const rcInact = await req('POST', R, admin, { warehouseId: WA, reason: 'حساب معطّل', counterAccountCode: 'ZINACT', items: [{ itemId: ITEM, qty: 5, unitCost: 7 }] });
+    check('receipt with INACTIVE account → 422', rcInact.status === 422 && rcInact.body.code === 'VALIDATION_ERROR', rcInact.body && rcInact.body.code);
+    const rcHdr = await req('POST', R, admin, { warehouseId: WA, reason: 'حساب رئيسي', counterAccountCode: 'ZHDR', items: [{ itemId: ITEM, qty: 5, unitCost: 7 }] });
+    check('receipt with NON-LEAF (header) account → 422', rcHdr.status === 422 && rcHdr.body.code === 'VALIDATION_ERROR', rcHdr.body && rcHdr.body.code);
+
     // cost required
-    const rcNoCost = await req('POST', R, admin, { warehouseId: WA, items: [{ itemId: ITEM, qty: 5 }] });
+    const rcNoCost = await req('POST', R, admin, { warehouseId: WA, reason: 'بلا تكلفة', counterAccountCode: ACC_REV, items: [{ itemId: ITEM, qty: 5 }] });
     check('receipt without cost → 422 COST_REQUIRED', rcNoCost.status === 422 && rcNoCost.body.code === 'COST_REQUIRED', rcNoCost.body && rcNoCost.body.code);
 
     // draft edit keeps number + needs expectedVersion
-    const rPatchNoV = await req('PATCH', `${R}/${rid}`, admin, { warehouseId: WA, items: [{ itemId: ITEM, qty: 50, unitCost: 7 }] });
+    const rPatchNoV = await req('PATCH', `${R}/${rid}`, admin, { warehouseId: WA, reason: 'رصيد افتتاحي', counterAccountCode: ACC_REV, items: [{ itemId: ITEM, qty: 50, unitCost: 7 }] });
     check('receipt PATCH without expectedVersion → 422', rPatchNoV.status === 422, rPatchNoV.status);
-    const rPatch = await req('PATCH', `${R}/${rid}`, admin, { warehouseId: WA, items: [{ itemId: ITEM, qty: 50, unitCost: 7 }], notes: 'محدّث', expectedVersion: 1 });
+    const rPatch = await req('PATCH', `${R}/${rid}`, admin, { warehouseId: WA, reason: 'رصيد افتتاحي', counterAccountCode: ACC_REV, items: [{ itemId: ITEM, qty: 50, unitCost: 7 }], notes: 'محدّث', expectedVersion: 1 });
     check('receipt PATCH keeps number, version→2', rPatch.status === 200 && rPatch.body.documentNumber === rnum && rPatch.body.version === 2, rPatch.body);
 
     const rApprove = await req('POST', `${R}/${rid}/approve`, admin, { expectedVersion: 2 });
@@ -168,7 +193,7 @@ async function seed() {
     // ─────────────────────────────────────────────────────────────────────
     const icNoReason = await req('POST', I, admin, { warehouseId: WA, items: [{ itemId: ITEM, qty: 5 }] });
     check('issue without reason → 422', icNoReason.status === 422, icNoReason.body && icNoReason.body.code);
-    const ic = await req('POST', I, admin, { warehouseId: WA, reason: 'صرف للمطبخ', items: [{ itemId: ITEM, qty: 30 }] });
+    const ic = await req('POST', I, admin, { warehouseId: WA, reason: 'صرف للمطبخ', expenseAccountCode: ACC_EXP, items: [{ itemId: ITEM, qty: 30 }] });
     check('issue create → draft', ic.status === 201 && ic.body.status === 'draft' && /^ISU-/.test(ic.body.documentNumber || ''), ic.body);
     const iid = ic.body && ic.body.id;
     await req('POST', `${I}/${iid}/approve`, admin, {});
@@ -184,7 +209,7 @@ async function seed() {
 
     // insufficient stock blocks + rollback (try to issue 100000)
     const qBefore = await qty(WA);
-    const iBig = await req('POST', I, admin, { warehouseId: WA, reason: 'صرف ضخم', items: [{ itemId: ITEM, qty: 100000 }] });
+    const iBig = await req('POST', I, admin, { warehouseId: WA, reason: 'صرف ضخم', expenseAccountCode: ACC_EXP, items: [{ itemId: ITEM, qty: 100000 }] });
     const iBigPost = iBig.body && iBig.body.id ? (await req('POST', `${I}/${iBig.body.id}/approve`, admin, {}), await req('POST', `${I}/${iBig.body.id}/post`, admin, {})) : { status: 0 };
     check('over-issue → 422 INSUFFICIENT_STOCK, stock unchanged (rollback)', iBigPost.status === 422 && iBigPost.body.code === 'INSUFFICIENT_STOCK' && (await qty(WA)) === qBefore, { st: iBigPost.status, code: iBigPost.body && iBigPost.body.code, qty: await qty(WA) });
 
@@ -217,7 +242,7 @@ async function seed() {
     const ac2 = await req('POST', A, ua, { warehouseId: WA, reason: 'جرد ثانٍ', items: [{ itemId: ITEM, countedQty: 100 }] }); // snapshot 110
     await req('POST', `${A}/${ac2.body.id}/approve`, ub, {});
     // move stock underneath via a quick posted receipt (+5)
-    const bump = await req('POST', R, admin, { warehouseId: WA, items: [{ itemId: ITEM, qty: 5, unitCost: 7 }] });
+    const bump = await req('POST', R, admin, { warehouseId: WA, reason: 'تعزيز رصيد', counterAccountCode: ACC_REV, items: [{ itemId: ITEM, qty: 5, unitCost: 7 }] });
     await req('POST', `${R}/${bump.body.id}/approve`, admin, {});
     await req('POST', `${R}/${bump.body.id}/post`, admin, {});
     const ac2Post = await req('POST', `${A}/${ac2.body.id}/post`, ua, {});
@@ -240,7 +265,7 @@ async function seed() {
     // ─────────────────────────────────────────────────────────────────────
     // CONCURRENCY — two posts of one approved receipt → one 200 / one 409
     // ─────────────────────────────────────────────────────────────────────
-    const rcC = await req('POST', R, admin, { warehouseId: WA, items: [{ itemId: ITEM, qty: 8, unitCost: 6 }] });
+    const rcC = await req('POST', R, admin, { warehouseId: WA, reason: 'تزامن', counterAccountCode: ACC_REV, items: [{ itemId: ITEM, qty: 8, unitCost: 6 }] });
     await req('POST', `${R}/${rcC.body.id}/approve`, admin, { expectedVersion: 1 });
     const qBeforeC = await qty(WA);
     const [p1, p2] = await Promise.all([
@@ -255,10 +280,10 @@ async function seed() {
     // ─────────────────────────────────────────────────────────────────────
     // RBAC + scope + actor
     // ─────────────────────────────────────────────────────────────────────
-    const rcEmp = await req('POST', R, admin, { warehouseId: WA, items: [{ itemId: ITEM, qty: 1, unitCost: 7 }] });
+    const rcEmp = await req('POST', R, admin, { warehouseId: WA, reason: 'RBAC', counterAccountCode: ACC_REV, items: [{ itemId: ITEM, qty: 1, unitCost: 7 }] });
     const empApprove = await req('POST', `${R}/${rcEmp.body.id}/approve`, uemp, {});
     check('employee approve → 403 (RBAC)', empApprove.status === 403, empApprove.status);
-    const outCreate = await req('POST', R, uout, { warehouseId: WA, items: [{ itemId: ITEM, qty: 1, unitCost: 7 }] });
+    const outCreate = await req('POST', R, uout, { warehouseId: WA, reason: 'خارج النطاق', counterAccountCode: ACC_REV, items: [{ itemId: ITEM, qty: 1, unitCost: 7 }] });
     check('out-of-scope create in WA → 403 WAREHOUSE_ACCESS_DENIED', outCreate.status === 403, outCreate.status);
     const outDetail = await req('GET', `${R}/${rid}`, uout);
     check('out-of-scope GET detail → 403 (no leak)', outDetail.status === 403, outDetail.status);

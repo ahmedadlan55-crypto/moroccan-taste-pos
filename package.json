@@ -18,6 +18,7 @@
     "test:bootstrap": "node tests/integration/bootstrap.empty-db.test.js",
     "test:idempotency-retention": "node tests/integration/idempotencyRetention.test.js",
     "test:inv-tx-api": "node tests/integration/inventoryTx.api.test.js",
+    "test:inv-tx-reverse-api": "node tests/integration/inventoryTxReverse.api.test.js",
     "scope:backfill": "node scripts/backfill-warehouse-access.js"
   },
   "dependencies": {

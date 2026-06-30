@@ -3,7 +3,7 @@ import { renderHook, act, waitFor } from "@testing-library/react";
 import { QueryClientProvider } from "@tanstack/react-query";
 import type { ReactNode } from "react";
 import { makeTestClient, stubFetch } from "@/test/test-utils";
-import { useApproveTransfer, useIssueTransfer, useReceiveTransfer } from "../useTransferMutations";
+import { useApproveTransfer, useIssueTransfer, useReceiveTransfer, useUpdateDraft } from "../useTransferMutations";
 import { ApiError } from "@/lib/api-error";
 
 afterEach(() => vi.unstubAllGlobals());
@@ -34,6 +34,19 @@ describe("useTransferMutations", () => {
     await waitFor(() => expect(result.current.isSuccess).toBe(true));
     const headers = (mock.mock.calls[0][1]?.headers ?? {}) as Record<string, string>;
     expect(headers["Idempotency-Key"]).toBeTruthy();
+  });
+
+  it("updateDraft PATCHes the same document with expectedVersion (no recreate)", async () => {
+    const mock = stubFetch(() => ({ status: 200, body: { ...okEnvelope, status: "draft", version: 3, documentNumber: "ISS-1", data: { id: "SI-1" } } }));
+    const { result } = renderHook(() => useUpdateDraft(), { wrapper: wrapper() });
+    act(() =>
+      result.current.mutate({ id: "SI-1", input: { fromWarehouseId: "A", toWarehouseId: "B", expectedVersion: 2, items: [{ itemId: "I1", qtyRequested: 3 }] } }),
+    );
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+    const [url, init] = mock.mock.calls[0];
+    expect(String(url)).toMatch(/\/erp\/stock-issues\/SI-1$/); // SAME document id, not a new one
+    expect(init?.method).toBe("PATCH");
+    expect(String(init?.body)).toContain("expectedVersion");
   });
 
   it("a 409 surfaces as an ApiError of kind 'conflict' (no auto-retry)", async () => {

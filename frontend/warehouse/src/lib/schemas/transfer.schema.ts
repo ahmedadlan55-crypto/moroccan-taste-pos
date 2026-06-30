@@ -74,6 +74,23 @@ export const createTransferDraftInput = z
     path: ["toWarehouseId"],
   });
 
+// Phase 3A.1 — real in-place draft EDIT (PATCH). Same shape as create + a
+// mandatory expectedVersion for optimistic concurrency. The backend keeps the
+// same document number; the UI never delete+recreates.
+export const updateTransferDraftInput = z
+  .object({
+    fromWarehouseId: z.string().min(1, "اختر المستودع المصدر"),
+    toWarehouseId: z.string().min(1, "اختر المستودع الوجهة"),
+    issueDate: z.string().optional(),
+    notes: z.string().max(500).optional(),
+    expectedVersion: z.number().int(),
+    items: z.array(createTransferLineInput).min(1, "أضف صنفًا واحدًا على الأقل"),
+  })
+  .refine((v) => v.fromWarehouseId !== v.toWarehouseId, {
+    message: "المصدر والوجهة يجب أن يكونا مختلفين",
+    path: ["toWarehouseId"],
+  });
+
 export const receiveLineInput = z.object({
   id: z.string().min(1),
   qtyReceived: z.number().min(0),
@@ -94,6 +111,7 @@ export const cancelTransferInput = z.object({
 });
 
 export type CreateTransferDraftInput = z.infer<typeof createTransferDraftInput>;
+export type UpdateTransferDraftInput = z.infer<typeof updateTransferDraftInput>;
 export type ReceiveTransferInput = z.infer<typeof receiveTransferInput>;
 export type ReverseTransferInput = z.infer<typeof reverseTransferInput>;
 export type CancelTransferInput = z.infer<typeof cancelTransferInput>;

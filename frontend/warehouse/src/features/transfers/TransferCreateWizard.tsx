@@ -10,9 +10,9 @@ import { useWarehouses } from "@/lib/hooks/useWarehouses";
 import { useWarehouseInventory } from "@/lib/hooks/useInventory";
 import { useWarehouseScope } from "@/app/warehouse-scope-provider";
 import { useCan } from "@/app/permission-provider";
-import { useCreateDraft, useDeleteDraft } from "@/lib/hooks/useTransferMutations";
+import { useCreateDraft, useUpdateDraft } from "@/lib/hooks/useTransferMutations";
 import { useTransferDetail } from "@/lib/hooks/useTransferDetail";
-import { createTransferDraftInput } from "@/lib/schemas/transfer.schema";
+import { createTransferDraftInput, updateTransferDraftInput } from "@/lib/schemas/transfer.schema";
 import { formatQty } from "@/lib/formatters";
 import { useDebouncedValue } from "@/lib/hooks/useDebouncedValue";
 
@@ -43,7 +43,7 @@ export function TransferCreateWizard() {
   const [submitError, setSubmitError] = useState<string | null>(null);
 
   const createDraft = useCreateDraft();
-  const deleteDraft = useDeleteDraft();
+  const updateDraft = useUpdateDraft();
 
   // Edit mode — prefill from the existing draft once.
   const edit = useTransferDetail(editId);
@@ -80,21 +80,36 @@ export function TransferCreateWizard() {
 
   function submit() {
     setSubmitError(null);
-    const payload = {
+    const base = {
       fromWarehouseId: fromWh,
       toWarehouseId: toWh,
       issueDate,
       notes: notes || undefined,
       items: lines.map((l) => ({ itemId: l.itemId, qtyRequested: l.qtyRequested })),
     };
-    const parsed = createTransferDraftInput.safeParse(payload);
+    if (editId) {
+      // Real in-place edit — PATCH the SAME document (preserves number + URL).
+      const parsed = updateTransferDraftInput.safeParse({ ...base, expectedVersion: edit.data?.version ?? 0 });
+      if (!parsed.success) {
+        setSubmitError(parsed.error.issues[0]?.message ?? "تحقق من البيانات المدخلة.");
+        return;
+      }
+      updateDraft.mutate(
+        { id: editId, input: parsed.data },
+        {
+          onSuccess: () => navigate(`/transfers?view=${editId}`),
+          onError: (e) => setSubmitError(e instanceof Error ? e.message : "تعذّر حفظ التعديل."),
+        },
+      );
+      return;
+    }
+    const parsed = createTransferDraftInput.safeParse(base);
     if (!parsed.success) {
       setSubmitError(parsed.error.issues[0]?.message ?? "تحقق من البيانات المدخلة.");
       return;
     }
     createDraft.mutate(parsed.data, {
-      onSuccess: async (res) => {
-        if (editId) await deleteDraft.mutateAsync({ id: editId }).catch(() => undefined);
+      onSuccess: (res) => {
         const newId = (res.data?.id as string) ?? null;
         navigate(newId ? `/transfers?view=${newId}` : "/transfers");
       },
@@ -247,8 +262,8 @@ export function TransferCreateWizard() {
           {submitError && <div className="rounded-xl border border-rose-200 bg-rose-50 px-3 py-2 text-xs font-bold text-rose-700">{submitError}</div>}
           <div className="flex justify-between">
             <Button variant="secondary" onClick={() => setStep(2)}><ChevronRight className="h-4 w-4" /> السابق</Button>
-            <Button variant="primary" disabled={createDraft.isPending || !step1Valid || !step2Valid} onClick={submit}>
-              {createDraft.isPending ? <><Spinner className="h-4 w-4" /> جارٍ الحفظ…</> : "حفظ كمسودة"}
+            <Button variant="primary" disabled={createDraft.isPending || updateDraft.isPending || !step1Valid || !step2Valid} onClick={submit}>
+              {createDraft.isPending || updateDraft.isPending ? <><Spinner className="h-4 w-4" /> جارٍ الحفظ…</> : editId ? "حفظ التعديل" : "حفظ كمسودة"}
             </Button>
           </div>
         </div>

@@ -19,6 +19,7 @@ import type {
   ReceiveTransferInput,
   ReverseTransferInput,
   CancelTransferInput,
+  UpdateTransferDraftInput,
 } from "@/lib/schemas/transfer.schema";
 
 const BASE = "/erp/stock-issues";
@@ -54,6 +55,16 @@ export function useDeleteDraft() {
   return useMutation<MutationResult, Error, { id: string }>({
     mutationFn: ({ id }) => apiClient.delete<unknown>(`${BASE}/${id}`).then(toMutationResult),
     onSuccess: () => invalidate(),
+  });
+}
+
+// Phase 3A.1 — real in-place draft edit. PATCHes the SAME document (keeps its
+// number + URL); never delete+recreate. expectedVersion drives 409 conflicts.
+export function useUpdateDraft() {
+  const invalidate = useInvalidate();
+  return useMutation<MutationResult, Error, { id: string; input: UpdateTransferDraftInput }>({
+    mutationFn: ({ id, input }) => apiClient.patch<unknown>(`${BASE}/${id}`, input).then(toMutationResult),
+    onSuccess: (_r, v) => invalidate(v.id),
   });
 }
 

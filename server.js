@@ -390,7 +390,15 @@ async function autoInitDB() {
       if (!rows.length) {
         console.log('First run — creating database tables...');
         const schema = fs.readFileSync(require('path').join(__dirname, 'db/schema.sql'), 'utf8');
-        const stmts = schema.split(';').map(s => s.trim()).filter(s => s.length > 5 && !s.startsWith('CREATE DATABASE') && !s.startsWith('USE '));
+        // Phase 3A.1 — comment/quote-aware split. The old schema.split(';')
+        // broke on a ';' INSIDE a comment (e.g. "(SOCPA/IFRS); the only valid
+        // correction") or a string literal, shredding gl_journals / gl_entries /
+        // inventory_movements / sales on a fresh DB. splitSqlStatements ignores
+        // ';' inside '…' "…" `…`, -- line and /* */ block comments.
+        const stmts = splitSqlStatements(schema).filter(s => {
+          const bare = s.replace(/\/\*[\s\S]*?\*\//g, '').replace(/--[^\n]*/g, '').trim();
+          return bare.length > 5 && !/^create\s+database/i.test(bare) && !/^use\s/i.test(bare);
+        });
         for (const stmt of stmts) {
           try { await db.query(stmt); } catch (e) {
             console.log('Schema warning:', e.message.substring(0, 120));
@@ -459,6 +467,36 @@ async function modifyColumnDefinition(table, column, definition) {
   } catch (e) {
     console.log(`[DB] MODIFY warning (${table}.${column}):`, e.message.substring(0, 120));
   }
+}
+
+// Phase 3A.1 — comment/quote-aware SQL statement splitter. Scans char-by-char
+// and only treats ';' as a statement boundary when NOT inside a single/double/
+// backtick-quoted string, a `--` line comment, or a `/* */` block comment. This
+// replaces the naive schema.split(';') in autoInitDB, which mis-split DDL whose
+// comments contain ';' (e.g. "(SOCPA/IFRS); …") — shredding gl_journals,
+// gl_entries, inventory_movements, sales on a brand-new database.
+function splitSqlStatements(sql) {
+  const out = [];
+  let cur = '', i = 0;
+  const n = sql.length;
+  let sq = false, dq = false, bq = false, line = false, block = false;
+  while (i < n) {
+    const ch = sql[i], nx = sql[i + 1];
+    if (line) { cur += ch; if (ch === '\n') line = false; i++; continue; }
+    if (block) { cur += ch; if (ch === '*' && nx === '/') { cur += nx; i += 2; block = false; continue; } i++; continue; }
+    if (sq) { cur += ch; if (ch === '\\' && nx !== undefined) { cur += nx; i += 2; continue; } if (ch === "'") sq = false; i++; continue; }
+    if (dq) { cur += ch; if (ch === '\\' && nx !== undefined) { cur += nx; i += 2; continue; } if (ch === '"') dq = false; i++; continue; }
+    if (bq) { cur += ch; if (ch === '`') bq = false; i++; continue; }
+    if (ch === '-' && nx === '-') { line = true; cur += ch; i++; continue; }
+    if (ch === '/' && nx === '*') { block = true; cur += ch + nx; i += 2; continue; }
+    if (ch === "'") { sq = true; cur += ch; i++; continue; }
+    if (ch === '"') { dq = true; cur += ch; i++; continue; }
+    if (ch === '`') { bq = true; cur += ch; i++; continue; }
+    if (ch === ';') { out.push(cur.trim()); cur = ''; i++; continue; }
+    cur += ch; i++;
+  }
+  if (cur.trim()) out.push(cur.trim());
+  return out;
 }
 
 async function createTableIfMissing(tableName, createSQL) {
@@ -1584,6 +1622,81 @@ async function runMigrations() {
       INDEX idx_audit_entity (entity_type, entity_id),
       INDEX idx_audit_user (username),
       INDEX idx_audit_date (created_at)
+    ) ENGINE=InnoDB
+  `);
+
+  // Phase 3A.1 — self-healing GL core. db/schema.sql creates gl_accounts/
+  // gl_journals/gl_entries on a TRULY empty DB, but a PARTIAL DB (users table
+  // present so schema.sql is skipped on boot, yet gl_* somehow absent) would
+  // leave the column-ALTERs below no-op'ing against a missing table. Creating
+  // them idempotently HERE — before any gl ALTER — makes boot self-heal with
+  // zero manual ALTER. IF NOT EXISTS keeps two concurrent boots non-corrupting.
+  await createTableIfMissing('gl_accounts', `
+    CREATE TABLE IF NOT EXISTS gl_accounts (
+      id VARCHAR(50) PRIMARY KEY,
+      code VARCHAR(20) NOT NULL UNIQUE,
+      name_ar VARCHAR(200) NOT NULL,
+      name_en VARCHAR(200),
+      type ENUM('asset','liability','equity','revenue','expense') NOT NULL,
+      parent_id VARCHAR(50),
+      level INT DEFAULT 1,
+      is_active BOOLEAN DEFAULT TRUE,
+      balance DECIMAL(14,2) DEFAULT 0,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    ) ENGINE=InnoDB
+  `);
+  await createTableIfMissing('gl_journals', `
+    CREATE TABLE IF NOT EXISTS gl_journals (
+      id VARCHAR(50) PRIMARY KEY,
+      journal_number VARCHAR(20),
+      journal_date DATE,
+      reference_type VARCHAR(50),
+      reference_id VARCHAR(100),
+      description TEXT,
+      total_debit DECIMAL(14,2) DEFAULT 0,
+      total_credit DECIMAL(14,2) DEFAULT 0,
+      period_id VARCHAR(50),
+      status ENUM('posted','draft') DEFAULT 'posted',
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      created_by VARCHAR(100),
+      posted_by VARCHAR(100) DEFAULT '',
+      posted_at DATETIME,
+      reversed_by_journal_id VARCHAR(50) NULL,
+      reverses_journal_id VARCHAR(50) NULL,
+      reversed_at DATETIME NULL,
+      reversed_by VARCHAR(100) NULL,
+      brand_id VARCHAR(50) NULL,
+      branch_id VARCHAR(50) NULL,
+      project_id VARCHAR(50) NULL,
+      cost_center_id VARCHAR(50) NULL,
+      UNIQUE KEY uq_journal_number (journal_number)
+    ) ENGINE=InnoDB
+  `);
+  await createTableIfMissing('gl_entries', `
+    CREATE TABLE IF NOT EXISTS gl_entries (
+      id VARCHAR(50) PRIMARY KEY,
+      journal_id VARCHAR(50) NOT NULL,
+      account_id VARCHAR(50),
+      account_code VARCHAR(20),
+      account_name VARCHAR(200),
+      debit DECIMAL(14,2) DEFAULT 0,
+      credit DECIMAL(14,2) DEFAULT 0,
+      description TEXT,
+      brand_id VARCHAR(50),
+      branch_id VARCHAR(50),
+      project_id VARCHAR(50),
+      cost_center_id VARCHAR(50),
+      warehouse_id VARCHAR(50),
+      INDEX idx_gle_journal (journal_id)
+    ) ENGINE=InnoDB
+  `);
+  // Phase 3A.1 — DB-atomic per-day journal sequence (replaces timestamp-ordered
+  // numbering in lib/glPosting). One row per YYYYMMDD; lib/glPosting allocates
+  // the next serial via an atomic increment + the UNIQUE uq_journal_number guard.
+  await createTableIfMissing('gl_journal_seq', `
+    CREATE TABLE IF NOT EXISTS gl_journal_seq (
+      period_key VARCHAR(20) PRIMARY KEY,
+      last_serial INT NOT NULL DEFAULT 0
     ) ENGINE=InnoDB
   `);
 
@@ -4813,7 +4926,12 @@ async function runMigrations() {
       INDEX idx_user_age (username, created_at)
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
   `);
-  // House-keeping: drop idempotency rows older than 24h (cheap, runs on boot)
+  // Phase 3A.1 — request fingerprint so the SAME key with a DIFFERENT payload is
+  // rejected as IDEMPOTENCY_CONFLICT instead of replaying a mismatched result.
+  await addColumnIfMissing('idempotency_keys', 'request_hash', "VARCHAR(64)");
+  // House-keeping / retention policy: drop idempotency rows older than 24h
+  // (cheap, runs on every boot). Reservations from a crashed in-flight request
+  // are also reclaimed by this 24h sweep.
   try {
     await db.query(`DELETE FROM idempotency_keys WHERE created_at < DATE_SUB(NOW(), INTERVAL 24 HOUR)`);
   } catch(e) {}

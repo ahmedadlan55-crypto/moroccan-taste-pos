@@ -14,6 +14,8 @@
     "test:scope-api": "node tests/integration/warehouseScope.api.test.js",
     "test:reports-api": "node tests/integration/reports.api.test.js",
     "test:transfers-api": "node tests/integration/transfers.api.test.js",
+    "test:gl-concurrency": "node tests/integration/glConcurrency.api.test.js",
+    "test:bootstrap": "node tests/integration/bootstrap.empty-db.test.js",
     "scope:backfill": "node scripts/backfill-warehouse-access.js"
   },
   "dependencies": {

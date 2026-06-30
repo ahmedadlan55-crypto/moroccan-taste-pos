@@ -291,6 +291,7 @@ app.use('/api/inventory/v2/stocktakes', require('./routes/inventory-stocktakes')
 // Phase 4A — item master + replenishment (paths /items, /replenishment,
 // /categories, /units don't collide with the doc router's /receipts|/issues|…).
 app.use('/api/inventory/v2', require('./routes/inventory-items'));
+app.use('/api/inventory/v2', require('./routes/inventory-lots'));
 app.use('/api/inventory/v2', require('./routes/inventory-transactions'));
 app.use('/api/inventory', require('./routes/inventory'));
 // Phase 2B — read-only Analytics + Reports (inherits the warehouse-scope

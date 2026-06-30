@@ -27,6 +27,7 @@
     "test:lot-concurrency": "node tests/integration/lotConcurrency.test.js",
     "test:lot-writers": "node tests/integration/lotWriters.test.js",
     "test:stocktake-lots": "node tests/integration/stocktakeLots.test.js",
+    "test:lot-integrity": "node tests/integration/lotIntegrity.api.test.js",
     "scope:backfill": "node scripts/backfill-warehouse-access.js"
   },
   "dependencies": {

@@ -79,6 +79,28 @@ export const TRANSFER_STATUS_OPTIONS: { value: string; label: string }[] = [
   { value: "reversed", label: "معكوس" },
 ];
 
+// Phase 3B — independent inventory-transaction lifecycle status → Arabic.
+// Unified for receipts / issues / adjustments (draft → approved → posted →
+// reversed, + cancelled). Drives the StatusBadge label.
+export const invTxStatusLabel: Record<string, string> = {
+  draft: "مسودة",
+  approved: "معتمد",
+  posted: "مُرحّل",
+  cancelled: "ملغى",
+  reversed: "معكوس",
+};
+export function invTxStatusToLabel(status: string | null | undefined): string {
+  return invTxStatusLabel[String(status ?? "")] ?? "—";
+}
+export const INVTX_STATUS_OPTIONS: { value: string; label: string }[] = [
+  { value: "", label: "كل الحالات" },
+  { value: "draft", label: "مسودة" },
+  { value: "approved", label: "معتمد" },
+  { value: "posted", label: "مُرحّل" },
+  { value: "cancelled", label: "ملغى" },
+  { value: "reversed", label: "معكوس" },
+];
+
 // Movement `type` ('in'/'out') → Arabic, for the rare case a movement row has
 // no Arabic reason text to show.
 export function movementTypeLabel(type: string | null | undefined): string {

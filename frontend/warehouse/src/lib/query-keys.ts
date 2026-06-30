@@ -36,6 +36,15 @@ export const queryKeys = {
     detail: (id: string) => ["transfers", "detail", id] as const,
   },
 
+  // Phase 3B — independent inventory transactions (receipts / issues / adjustments).
+  // Keyed by docType so the three doc lists/details share one cache namespace; a
+  // mutation invalidates all(docType) (every list) + detail(docType,id).
+  invtx: {
+    all: (docType: string) => ["invtx", docType] as const,
+    list: (docType: string, params: Record<string, unknown>) => ["invtx", docType, "list", params] as const,
+    detail: (docType: string, id: string) => ["invtx", docType, "detail", id] as const,
+  },
+
   warehouses: {
     all: ["warehouses"] as const,
     summary: (scope: string) => ["warehouses", "summary", scope] as const,

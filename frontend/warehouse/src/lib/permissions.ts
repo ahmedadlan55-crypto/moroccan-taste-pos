@@ -24,6 +24,16 @@ export type WarehouseAction =
   | "stocktake.approve"
   | "adjustment.create"
   | "adjustment.approve"
+  | "adjustment.post"
+  | "adjustment.reverse"
+  | "receipt.create"
+  | "receipt.approve"
+  | "receipt.post"
+  | "receipt.reverse"
+  | "issue.create"
+  | "issue.approve"
+  | "issue.post"
+  | "issue.reverse"
   | "waste.create"
   | "document.reverse"
   | "settings.edit";
@@ -43,6 +53,18 @@ const MATRIX: Record<WarehouseAction, Role[]> = {
   "stocktake.approve": ["admin", "manager"],
   "adjustment.create": ["admin", "manager", "employee", "custody"],
   "adjustment.approve": ["admin", "manager"],
+  "adjustment.post": ["admin", "manager", "employee", "custody"],
+  "adjustment.reverse": ["admin", "manager"],
+  // Phase 3B — independent receipts / issues. create+post = back-office; approve
+  // + reverse = managerial. Mirrors routes/inventory-transactions.js (BACKOFFICE/MGR).
+  "receipt.create": ["admin", "manager", "employee", "custody"],
+  "receipt.approve": ["admin", "manager"],
+  "receipt.post": ["admin", "manager", "employee", "custody"],
+  "receipt.reverse": ["admin", "manager"],
+  "issue.create": ["admin", "manager", "employee", "custody"],
+  "issue.approve": ["admin", "manager"],
+  "issue.post": ["admin", "manager", "employee", "custody"],
+  "issue.reverse": ["admin", "manager"],
   "waste.create": ["admin", "manager", "employee", "custody"],
   "document.reverse": ["admin", "manager"],
   "settings.edit": ["admin", "manager"],

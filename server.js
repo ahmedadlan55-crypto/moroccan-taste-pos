@@ -4337,6 +4337,22 @@ async function runMigrations() {
       INDEX idx_wolc_lot (lot_id)
     ) ENGINE=InnoDB
   `);
+  // Lot-level stocktake counts: for a tracked item the counter enters a qty per
+  // lot (or an "unknown" lot via an audited row); Σ(counted per lot)=line countedQty.
+  await createTableIfMissing('inv_stocktake_lot_items', `
+    CREATE TABLE IF NOT EXISTS inv_stocktake_lot_items (
+      id VARCHAR(60) PRIMARY KEY,
+      stocktake_id VARCHAR(60) NOT NULL,
+      item_id VARCHAR(50) NOT NULL,
+      lot_id VARCHAR(60) NULL,
+      lot_number VARCHAR(120) NULL,
+      expiry_date DATE NULL,
+      counted_qty DECIMAL(14,3) NOT NULL DEFAULT 0,
+      counted_seq BIGINT DEFAULT 0,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      INDEX idx_stli_stk_item (stocktake_id, item_id)
+    ) ENGINE=InnoDB
+  `);
   // Production output genealogy: links a produced finished-goods lot back to the
   // component lots that went into it (backward traceability for recall).
   await createTableIfMissing('production_output_lots', `

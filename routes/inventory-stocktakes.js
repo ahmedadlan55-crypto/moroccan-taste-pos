@@ -34,6 +34,7 @@ const C = require('../lib/inventoryTxContract');
 const REC = require('../lib/stocktakeReconcile');
 const IDEM = require('../lib/idempotencyStore');
 const POST = require('../lib/inventoryTxPosters');
+const L = require('../lib/lotLedger');
 const requireRole = require('../middleware/auth').requireRole;
 
 const MGR = requireRole('admin', 'manager');
@@ -423,6 +424,19 @@ router.put('/:id/counts', BACKOFFICE, async (req, res) => {
           [REC.round3(counted), countedSeq, REC.round3(net), r.theoreticalQty, r.variance, r.varianceValue, r.variancePct, r.isFlagged ? 1 : 0,
             c.notes != null ? String(c.notes).slice(0, 400) : line.notes, c.reasonCode != null ? String(c.reasonCode).slice(0, 40) : line.reason_code, actor, line.id]
         );
+        // Phase 4B — tracked item: capture the per-lot counts (Σ must equal the
+        // line count). An entry with no lotId/lotNumber is an "unknown lot" found.
+        const lmode = await L.getTrackingMode(conn, line.item_id);
+        if (L.isTracked(lmode) && Array.isArray(c.lots)) {
+          let sum = 0;
+          for (const lt of c.lots) { const q = Number(lt.qty); if (!Number.isFinite(q) || q < 0) throw _err('VALIDATION_ERROR', 'كمية دفعة غير صالحة في عدّ الصنف ' + (line.item_name || itemId)); sum += q; }
+          if (REC.round3(sum) !== REC.round3(counted)) throw _err('VALIDATION_ERROR', 'مجموع كميات الدفعات (' + REC.round3(sum) + ') لا يساوي الكمية المجرودة (' + REC.round3(counted) + ') للصنف ' + (line.item_name || itemId));
+          await conn.query('DELETE FROM inv_stocktake_lot_items WHERE stocktake_id=? AND item_id=?', [id, line.item_id]);
+          for (const lt of c.lots) {
+            await conn.query('INSERT INTO inv_stocktake_lot_items (id, stocktake_id, item_id, lot_id, lot_number, expiry_date, counted_qty, counted_seq) VALUES (?,?,?,?,?,?,?,?)',
+              ['STLI-' + Date.now() + '-' + Math.random().toString(36).slice(2, 7), id, line.item_id, lt.lotId || null, lt.lotNumber || null, lt.expiryDate || null, REC.round3(Number(lt.qty)), countedSeq]);
+          }
+        }
         applied++;
       }
       const aggregates = await _recountAggregates(conn, id);
@@ -550,6 +564,19 @@ router.post('/:id/post', BACKOFFICE, async (req, res) => {
           warehouse, reason: 'تسوية جرد ' + doc.stocktake_number, referenceEvidence: doc.reference_evidence,
           notes: 'محضر جرد ' + doc.stocktake_number, costCenterId: doc.cost_center_id, dateStr: _dateStr(doc.stocktake_date), lines: adjLines,
         }, actor);
+      }
+
+      // Phase 4B — reconcile lot balances for every COUNTED tracked item (runs even
+      // when the item-level variance was zero, since the lot composition may differ).
+      // warehouse_stock is now the counted total; set each lot to its counted value.
+      for (const ln of lines) {
+        if (ln.counted_qty === null || ln.counted_qty === undefined) continue;
+        const lmode = await L.getTrackingMode(conn, ln.item_id);
+        if (!L.isTracked(lmode)) continue;
+        const [lotRows] = await conn.query("SELECT lot_id, lot_number, DATE_FORMAT(expiry_date,'%Y-%m-%d') AS expiry_date, counted_qty FROM inv_stocktake_lot_items WHERE stocktake_id=? AND item_id=?", [id, ln.item_id]);
+        if (!lotRows.length) throw _err('LOT_REQUIRED', 'الصنف المُتتبع "' + ln.item_name + '" يجب عدّه حسب الدفعة قبل ترحيل الجرد');
+        const countedLots = lotRows.map((r) => ({ lotId: r.lot_id || null, lotNumber: r.lot_number || null, expiryDate: r.expiry_date || null, qty: Number(r.counted_qty) }));
+        await L.reconcileStocktakeLots(conn, { warehouseId: doc.warehouse_id, itemId: ln.item_id, countedLots, referenceId: id, actor, occurredAt: new Date() });
       }
 
       const [u] = await conn.query(

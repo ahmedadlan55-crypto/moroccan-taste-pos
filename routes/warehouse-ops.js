@@ -20,6 +20,8 @@ const BACKOFFICE = requireRole('admin', 'manager', 'employee', 'custody');
 // with tests/warehouseTransfer.test.js so the route and the contract test
 // can never drift apart).
 const TR = require('../lib/warehouseTransfer');
+// Phase 3A — unified API contract (canonical error codes + mutation envelope).
+const TC = require('../lib/transferContract');
 
 // ─── Helpers ──────────────────────────────────────────────────────────
 
@@ -122,6 +124,89 @@ async function _applyStockMovement(warehouseId, itemId, qtyDelta, unitCost, trig
   const newQty = oldQty + Number(qtyDelta);
   await _recordCostHistory(itemId, warehouseId, oldCost, newCost, oldQty, newQty, triggerType, refId, changedBy, conn);
   return { oldQty, oldCost, newQty, newCost };
+}
+
+// ─── Phase 3A — transfer contract: idempotency, audit, version, envelope ──
+// All ADDITIVE: the legacy HTML UI keeps working because errors still carry a
+// human `error` and successes still carry the legacy keys (id/issueNumber/…).
+
+// Idempotency-Key replay (create/issue/receive). Keyed per action-scope so the
+// same key on two different actions can never collide. Returns the stored
+// {statusCode, body} on a hit, else null. Stored after success via _idemStore.
+function _idemKey(req) {
+  const k = (req.get && (req.get('Idempotency-Key') || req.get('X-Idempotency-Key'))) || '';
+  return k ? String(k).slice(0, 120) : '';
+}
+async function _idemReplay(scope, key) {
+  if (!key) return null;
+  try {
+    const [rows] = await db.query('SELECT response_json, status_code FROM idempotency_keys WHERE id=? LIMIT 1', [scope + ':' + key]);
+    if (rows.length) {
+      let body = null; try { body = JSON.parse(rows[0].response_json); } catch (_) {}
+      return { statusCode: Number(rows[0].status_code) || 200, body };
+    }
+  } catch (_) { /* table optional */ }
+  return null;
+}
+async function _idemStore(scope, key, req, statusCode, body) {
+  if (!key) return;
+  try {
+    await db.query(
+      'INSERT IGNORE INTO idempotency_keys (id, username, endpoint, response_json, status_code) VALUES (?,?,?,?,?)',
+      [scope + ':' + key, _actor(req), scope, JSON.stringify(body), statusCode]);
+  } catch (_) { /* best effort */ }
+}
+
+// Optimistic-concurrency token from the client (body.expectedVersion or
+// If-Match header). null → no check (legacy path keeps the status-only guard).
+function _expectedVersion(req) {
+  const raw = (req.body && req.body.expectedVersion != null)
+    ? req.body.expectedVersion
+    : (req.get && req.get('If-Match'));
+  const n = parseInt(raw, 10);
+  return Number.isFinite(n) ? n : null;
+}
+
+// Append-only audit row — pass the tx `conn` so it commits atomically with the
+// state change; falls back to the pool for the non-transactional transitions.
+async function _audit(conn, issueId, action, fromStatus, toStatus, actor, note, payload) {
+  const q = conn || db;
+  try {
+    await q.query(
+      'INSERT INTO stock_issue_events (id, issue_id, action, from_status, to_status, actor, note, payload_json) VALUES (?,?,?,?,?,?,?,?)',
+      ['EV-' + Date.now() + '-' + Math.random().toString(36).slice(2, 7), issueId, action,
+       fromStatus || null, toStatus || null, actor || '', String(note || '').slice(0, 500),
+       payload ? JSON.stringify(payload).slice(0, 8000) : null]);
+  } catch (_) { /* audit is best-effort, never blocks the transaction's intent */ }
+  return { issueId, action, fromStatus: fromStatus || null, toStatus: toStatus || null, actor: actor || '', at: new Date().toISOString() };
+}
+
+// Unified success body (mutation envelope §5 + legacy keys) — WITHOUT sending.
+// Idempotent handlers store this BEFORE responding so a fast retry replays it.
+function _envelope(parts, legacy) {
+  return Object.assign({}, TC.mutationEnvelope(parts), legacy || {});
+}
+// Build + send in one step (non-idempotent handlers).
+function _ok(res, parts, legacy, statusCode) {
+  const body = _envelope(parts, legacy);
+  res.status(statusCode || 200).json(body);
+  return body;
+}
+// Unified error: canonical code + matching HTTP status; keeps human `error`.
+function _fail(res, codeOrErr, message) {
+  const code = TC.isCanonical(codeOrErr) ? codeOrErr : TC.mapError(codeOrErr);
+  const msg = message || (codeOrErr && codeOrErr.message) || code;
+  return res.status(TC.httpFor(code)).json(TC.errorBody(code, msg));
+}
+// Catch-block router: a scope-guard that already answered → swallow; a 404 stays
+// 404; a thrown DOMAIN error (has `.code` or a non-500 `.status`) → canonical
+// code; anything else is a genuine server fault → 500 (never mislabelled 422).
+function _catch(res, e) {
+  if (e && e._guarded) return;
+  if (e && e.status === 404) return res.status(404).json({ success: false, code: 'NOT_FOUND', error: e.message || 'not found' });
+  const hasDomain = e && (e.code || (e.status && e.status !== 500));
+  if (!hasDomain) return res.status(500).json({ success: false, code: 'SERVER_ERROR', error: (e && e.message) || 'error' });
+  return _fail(res, e, e && e.message);
 }
 
 // ═══════════════════════════════════════════════════════════════════════
@@ -303,19 +388,20 @@ router.post('/stock-issues', async (req, res) => {
     const { fromWarehouseId, toWarehouseId, brandId, branchId, issueDate, notes, items } = req.body;
     // Phase 0 §5 — creator identity comes from the JWT, not the body.
     const createdBy = _actor(req);
-    if (!fromWarehouseId || !toWarehouseId) return res.status(400).json({ error: 'from/to warehouse required' });
+    // Phase 3A — idempotent create: a retried POST with the same Idempotency-Key
+    // replays the first response instead of creating a duplicate draft.
+    const idemKey = _idemKey(req);
+    const replay = await _idemReplay('transfer:create', idemKey);
+    if (replay) return res.status(replay.statusCode).json(replay.body);
+    if (!fromWarehouseId || !toWarehouseId) return _fail(res, 'VALIDATION_ERROR', 'from/to warehouse required');
     if (!req.guardTransfer(res, fromWarehouseId, toWarehouseId)) return;
     // v5.10.40 — Reject same-warehouse "transfers". Every ERP (SAP, Oracle,
     // Odoo) treats this as invalid because it has no business meaning and
     // would create offsetting movements at the same warehouse.
     if (String(fromWarehouseId) === String(toWarehouseId)) {
-      return res.status(400).json({
-        error: 'لا يمكن أن يكون المستودع المصدر هو نفسه المستودع الوجهة. اختر مستودعَين مختلفَين.',
-        code: 'SAME_WAREHOUSE'
-      });
+      return _fail(res, 'VALIDATION_ERROR', 'لا يمكن أن يكون المستودع المصدر هو نفسه المستودع الوجهة. اختر مستودعَين مختلفَين.');
     }
-    if (fromWarehouseId === toWarehouseId) return res.status(400).json({ error: 'from and to must differ' });
-    if (!items || !items.length) return res.status(400).json({ error: 'items required' });
+    if (!items || !items.length) return _fail(res, 'VALIDATION_ERROR', 'items required');
 
     // v7.5 — both warehouses must actually exist: a typo/phantom id used to
     // ride into stock_issues and surface later as a misleading
@@ -324,7 +410,7 @@ router.post('/stock-issues', async (req, res) => {
       'SELECT id FROM warehouses WHERE id IN (?, ?)', [fromWarehouseId, toWarehouseId]);
     const whFound = whRows.map(w => String(w.id));
     if (whFound.indexOf(String(fromWarehouseId)) < 0 || whFound.indexOf(String(toWarehouseId)) < 0) {
-      return res.status(400).json({ error: 'مستودع غير موجود — تحقق من المصدر والوجهة', code: 'warehouse-not-found' });
+      return _fail(res, 'VALIDATION_ERROR', 'مستودع غير موجود — تحقق من المصدر والوجهة');
     }
 
     const ymd = _ymd();
@@ -360,8 +446,16 @@ router.post('/stock-issues', async (req, res) => {
          it.unitCost, it.lineTotal, it.notes || '']);
     }
 
-    res.json({ success: true, id, issueNumber, totalCost: total });
-  } catch(e) { res.status(500).json({ error: e.message }); }
+    // Phase 3A — audit + unified envelope (legacy keys kept). Draft starts at v1.
+    const auditEvent = await _audit(null, id, 'create', null, 'draft', createdBy, notes || '',
+      { from: fromWarehouseId, to: toWarehouseId, lines: enriched.length });
+    const body = _envelope({
+      data: { id, issueNumber, status: 'draft', totalCost: total },
+      documentNumber: issueNumber, status: 'draft', version: 1, affectedStock: [], auditEvent,
+    }, { id, issueNumber, totalCost: total });
+    await _idemStore('transfer:create', idemKey, req, 200, body); // store BEFORE send
+    res.json(body);
+  } catch(e) { _catch(res, e); }
 });
 
 // Approve stock issue
@@ -370,21 +464,25 @@ router.post('/stock-issues/:id/approve', MGR, async (req, res) => {
     const id = req.params.id;
     // Phase 0 §5 — approver identity from the JWT, never the body.
     const approvedBy = _actor(req);
-    const [rows] = await db.query('SELECT status, from_warehouse_id, to_warehouse_id FROM stock_issues WHERE id=?', [id]);
-    if (!rows.length) return res.status(404).json({ error: 'not found' });
+    const expectedVersion = _expectedVersion(req);
+    const [rows] = await db.query('SELECT status, version, issue_number, from_warehouse_id, to_warehouse_id FROM stock_issues WHERE id=?', [id]);
+    if (!rows.length) return res.status(404).json({ success: false, code: 'NOT_FOUND', error: 'not found' });
     if (!req.guardTransfer(res, rows[0].from_warehouse_id, rows[0].to_warehouse_id)) return;
-    if (rows[0].status !== 'draft') return res.status(400).json({ error: 'only draft can be approved' });
-    // v7.5 — state-guarded UPDATE + affectedRows: a concurrent double-tap
-    // (second request racing past the read above) now gets 409 instead of a
-    // silent fake success.
+    if (rows[0].status !== 'draft') return _fail(res, 'INVALID_STATE_TRANSITION', 'لا يمكن اعتماد إلا المسودة (draft). الحالة الحالية: ' + rows[0].status);
+    // v7.5 — state-guarded UPDATE + affectedRows: a concurrent double-tap loses
+    // here with 409. Phase 3A — also bump `version` and honour an optional
+    // `expectedVersion` (legacy clients omit it → only the status guard applies).
     const [updRes] = await db.query(
-      `UPDATE stock_issues SET status='approved', approved_by=?, approved_at=NOW() WHERE id=? AND status='draft'`,
-      [approvedBy, id]);
+      `UPDATE stock_issues SET status='approved', approved_by=?, approved_at=NOW(), version = version + 1
+       WHERE id=? AND status='draft' AND (? IS NULL OR version = ?)`,
+      [approvedBy, id, expectedVersion, expectedVersion]);
     if (!updRes || updRes.affectedRows !== 1) {
-      return res.status(409).json({ error: 'تغيّرت حالة أمر الصرف — أعد التحميل وحاول مجدداً', code: 'state_changed' });
+      return _fail(res, 'VERSION_CONFLICT', 'تغيّرت حالة أمر الصرف — أعد التحميل وحاول مجدداً');
     }
-    res.json({ success: true });
-  } catch(e) { res.status(500).json({ error: e.message }); }
+    const newVersion = (Number(rows[0].version) || 1) + 1;
+    const auditEvent = await _audit(null, id, 'approve', 'draft', 'approved', approvedBy, '', null);
+    _ok(res, { data: { id, status: 'approved' }, documentNumber: rows[0].issue_number, status: 'approved', version: newVersion, affectedStock: [], auditEvent }, { success: true });
+  } catch(e) { _catch(res, e); }
 });
 
 // Issue (decrement source warehouse + post GL)
@@ -394,22 +492,25 @@ router.post('/stock-issues/:id/issue', BACKOFFICE, async (req, res) => {
     // Phase 0 §5 — issuer identity from the JWT, never the body.
     const issuedBy = _actor(req);
     const [hdrRows] = await db.query('SELECT * FROM stock_issues WHERE id=?', [id]);
-    if (!hdrRows.length) return res.status(404).json({ error: 'not found' });
+    if (!hdrRows.length) return res.status(404).json({ success: false, code: 'NOT_FOUND', error: 'not found' });
     const hdr = hdrRows[0];
     if (!req.guardTransfer(res, hdr.from_warehouse_id, hdr.to_warehouse_id)) return;
+    // Phase 3A — idempotent issue: a retried POST with the same key replays the
+    // first result (never moves stock / posts GL twice). Checked AFTER the scope
+    // guard and BEFORE the state check (a replay sees status already 'issued').
+    const idemKey = _idemKey(req);
+    const replay = await _idemReplay('transfer:issue', idemKey);
+    if (replay) return res.status(replay.statusCode).json(replay.body);
+    const expectedVersion = _expectedVersion(req);
     // Phase 0 §3 — a draft can NEVER be issued. The approval step is the
     // control that makes the value/stock move auditable, so issuing is only
-    // allowed from `approved`. (Was `['draft','approved']` — that let an
-    // approver-less draft move stock + post GL.)
+    // allowed from `approved`.
     if (!TR.canIssue(hdr.status)) {
-      return res.status(400).json({
-        error: 'لا يمكن صرف الإذن إلا بعد اعتماده (الحالة يجب أن تكون "approved"). الحالة الحالية: ' + hdr.status,
-        code: 'ISSUE_REQUIRES_APPROVED'
-      });
+      return _fail(res, 'INVALID_STATE_TRANSITION', 'لا يمكن صرف الإذن إلا بعد اعتماده (الحالة يجب أن تكون "approved"). الحالة الحالية: ' + hdr.status);
     }
 
     const [items] = await db.query('SELECT * FROM stock_issue_items WHERE issue_id=?', [id]);
-    if (!items.length) return res.status(400).json({ error: 'no items' });
+    if (!items.length) return _fail(res, 'VALIDATION_ERROR', 'no items');
 
     const issueNow = new Date();
 
@@ -430,10 +531,12 @@ router.post('/stock-issues/:id/issue', BACKOFFICE, async (req, res) => {
       }
 
       let totalCost = 0;
+      const affectedStock = [];
       for (const it of items) {
         const qty = Number(it.qty_requested);
-        await _applyStockMovement(hdr.from_warehouse_id, it.item_id, -qty, Number(it.unit_cost),
+        const mv = await _applyStockMovement(hdr.from_warehouse_id, it.item_id, -qty, Number(it.unit_cost),
                                   'stock_issue_out', id, issuedBy, conn);
+        affectedStock.push({ warehouseId: hdr.from_warehouse_id, itemId: it.item_id, delta: -qty, newQty: mv.newQty });
         const lineTotal = qty * Number(it.unit_cost);
         totalCost += lineTotal;
         await conn.query(
@@ -484,19 +587,25 @@ router.post('/stock-issues/:id/issue', BACKOFFICE, async (req, res) => {
       // stock deduction + GL back, instead of issuing the same goods twice.
       const [flipRes] = await conn.query(
         `UPDATE stock_issues
-         SET status='issued', issued_by=?, issued_at=NOW(), total_cost=?, gl_journal_id=?
-         WHERE id=? AND status='approved'`,
-        [issuedBy, totalCost, glId, id]);
+         SET status='issued', issued_by=?, issued_at=NOW(), total_cost=?, gl_journal_id=?, version = version + 1
+         WHERE id=? AND status='approved' AND (? IS NULL OR version = ?)`,
+        [issuedBy, totalCost, glId, id, expectedVersion, expectedVersion]);
       if (!flipRes || flipRes.affectedRows !== 1) {
         const e = new Error('تغيّرت حالة أمر الصرف (صرف مكرر؟) — أعد التحميل وحاول مجدداً');
-        e.status = 409; throw e;
+        e.status = 409; e.code = 'state_changed'; throw e;
       }
-
-      return { totalCost, glId };
+      const auditEvent = await _audit(conn, id, 'issue', 'approved', 'issued', issuedBy, '', { totalCost, glId });
+      return { totalCost, glId, affectedStock, newVersion: (Number(hdr.version) || 1) + 1, auditEvent };
     });
 
-    res.json({ success: true, totalCost: out.totalCost, glJournalId: out.glId });
-  } catch(e) { res.status(e.status || 500).json({ error: e.message }); }
+    const body = _envelope({
+      data: { id, status: 'issued', totalCost: out.totalCost, glJournalId: out.glId },
+      documentNumber: hdr.issue_number, status: 'issued', version: out.newVersion,
+      affectedStock: out.affectedStock, auditEvent: out.auditEvent,
+    }, { success: true, totalCost: out.totalCost, glJournalId: out.glId });
+    await _idemStore('transfer:issue', idemKey, req, 200, body); // store BEFORE send
+    res.json(body);
+  } catch(e) { _catch(res, e); }
 });
 
 // Receive (increment destination warehouse)
@@ -517,11 +626,14 @@ router.post('/stock-issues/:id/receive', BACKOFFICE, async (req, res) => {
     // fall back to a FULL receipt. Reject it: omit the field for "receive all
     // remaining", or send per-line qtys.
     if (Array.isArray(items) && items.length === 0) {
-      return res.status(400).json({
-        error: 'قائمة الأصناف فارغة — احذف الحقل لاستلام كل المتبقي أو أرسل كمية لكل سطر',
-        code: 'ITEMS_ARRAY_EMPTY'
-      });
+      return _fail(res, 'VALIDATION_ERROR', 'قائمة الأصناف فارغة — احذف الحقل لاستلام كل المتبقي أو أرسل كمية لكل سطر');
     }
+    // Phase 3A — idempotent receipt: a retried receive with the same key never
+    // double-counts the cumulative quantity.
+    const idemKey = _idemKey(req);
+    const replay = await _idemReplay('transfer:receive', idemKey);
+    if (replay) return res.status(replay.statusCode).json(replay.body);
+    const expectedVersion = _expectedVersion(req);
     // delta-to-receive-now, keyed by line id (only when items provided).
     const deltaMap = {};
     const hasItemsArg = Array.isArray(items);
@@ -578,11 +690,13 @@ router.post('/stock-issues/:id/receive', BACKOFFICE, async (req, res) => {
         e.status = 400; e.code = 'NOTHING_TO_RECEIVE'; throw e;
       }
 
+      const affectedStock = [];
       for (const p of plan) {
         if (p.delta <= TR.EPS) continue;
         const it = p.line;
-        await _applyStockMovement(hdr.to_warehouse_id, it.item_id, p.delta, Number(it.unit_cost),
+        const mv = await _applyStockMovement(hdr.to_warehouse_id, it.item_id, p.delta, Number(it.unit_cost),
                                   'stock_issue_in', id, receivedBy, conn);
+        affectedStock.push({ warehouseId: hdr.to_warehouse_id, itemId: it.item_id, delta: p.delta, newQty: mv.newQty });
         // Cumulative — set the new running total, not an overwrite of the delta.
         await conn.query('UPDATE stock_issue_items SET qty_received=? WHERE id=?', [p.newQtyReceived, it.id]);
         // Ledger entry — destination side, same reference_id as the 'out' row.
@@ -613,40 +727,52 @@ router.post('/stock-issues/:id/receive', BACKOFFICE, async (req, res) => {
       const [flipRes] = await conn.query(
         `UPDATE stock_issues
          SET status=?, received_by=?,
-             received_at = CASE WHEN ? = 'received' THEN NOW() ELSE received_at END
-         WHERE id=? AND status IN ('issued','partially_received')`,
-        [nextStatus, receivedBy, nextStatus, id]);
+             received_at = CASE WHEN ? = 'received' THEN NOW() ELSE received_at END,
+             version = version + 1
+         WHERE id=? AND status IN ('issued','partially_received') AND (? IS NULL OR version = ?)`,
+        [nextStatus, receivedBy, nextStatus, id, expectedVersion, expectedVersion]);
       if (!flipRes || flipRes.affectedRows !== 1) {
         const e = new Error('تغيّرت حالة أمر الصرف (استلام متزامن؟) — أعد التحميل وحاول مجدداً');
-        e.status = 409; throw e;
+        e.status = 409; e.code = 'state_changed'; throw e;
       }
-      return { status: nextStatus };
+      const auditEvent = await _audit(conn, id, 'receive', hdr.status, nextStatus, receivedBy, '', { delta: totalDelta });
+      return { status: nextStatus, affectedStock, newVersion: (Number(hdr.version) || 1) + 1, auditEvent, issueNumber: hdr.issue_number };
     });
 
-    res.json({ success: true, status: out.status, fullyReceived: out.status === 'received' });
-  } catch(e) {
-    if (e && e._guarded) return; // guard already wrote the 403 response
-    res.status(e.status || 500).json({ error: e.message });
-  }
+    const body = _envelope({
+      data: { id, status: out.status, fullyReceived: out.status === 'received' },
+      documentNumber: out.issueNumber, status: out.status, version: out.newVersion,
+      affectedStock: out.affectedStock, auditEvent: out.auditEvent,
+    }, { success: true, status: out.status, fullyReceived: out.status === 'received' });
+    await _idemStore('transfer:receive', idemKey, req, 200, body); // store BEFORE send
+    res.json(body);
+  } catch(e) { _catch(res, e); }
 });
 
 // Cancel stock issue
 router.post('/stock-issues/:id/cancel', MGR, async (req, res) => {
   try {
     const id = req.params.id;
-    const [hdrRows] = await db.query('SELECT status, from_warehouse_id, to_warehouse_id FROM stock_issues WHERE id=?', [id]);
-    if (!hdrRows.length) return res.status(404).json({ error: 'not found' });
+    const actor = _actor(req);
+    const reason = String((req.body && req.body.reason) || '').trim();
+    const expectedVersion = _expectedVersion(req);
+    const [hdrRows] = await db.query('SELECT status, version, issue_number, from_warehouse_id, to_warehouse_id FROM stock_issues WHERE id=?', [id]);
+    if (!hdrRows.length) return res.status(404).json({ success: false, code: 'NOT_FOUND', error: 'not found' });
     if (!req.guardTransfer(res, hdrRows[0].from_warehouse_id, hdrRows[0].to_warehouse_id)) return;
-    if (['issued','received'].includes(hdrRows[0].status))
-      return res.status(400).json({ error: 'cannot cancel after issue — use reverse instead' });
-    // v7.5 — state-guarded cancel (only draft/approved) + affectedRows check
+    if (!TR.canCancel(hdrRows[0].status))
+      return _fail(res, 'INVALID_STATE_TRANSITION', 'لا يمكن الإلغاء إلا للمسودة أو المعتمد — استخدم الإرجاع بعد الصرف. الحالة الحالية: ' + hdrRows[0].status);
+    // v7.5 — state-guarded cancel (only draft/approved) + affectedRows check.
+    // Phase 3A — version bump + optional expectedVersion guard.
     const [cRes] = await db.query(
-      `UPDATE stock_issues SET status='cancelled' WHERE id=? AND status IN ('draft','approved')`, [id]);
+      `UPDATE stock_issues SET status='cancelled', version = version + 1
+       WHERE id=? AND status IN ('draft','approved') AND (? IS NULL OR version = ?)`,
+      [id, expectedVersion, expectedVersion]);
     if (!cRes || cRes.affectedRows !== 1) {
-      return res.status(409).json({ error: 'تغيّرت حالة أمر الصرف — أعد التحميل', code: 'state_changed' });
+      return _fail(res, 'VERSION_CONFLICT', 'تغيّرت حالة أمر الصرف — أعد التحميل');
     }
-    res.json({ success: true });
-  } catch(e) { res.status(500).json({ error: e.message }); }
+    const auditEvent = await _audit(null, id, 'cancel', hdrRows[0].status, 'cancelled', actor, reason, null);
+    _ok(res, { data: { id, status: 'cancelled' }, documentNumber: hdrRows[0].issue_number, status: 'cancelled', version: (Number(hdrRows[0].version) || 1) + 1, affectedStock: [], auditEvent }, { success: true });
+  } catch(e) { _catch(res, e); }
 });
 
 // V5.9.7 — Reverse an already-issued/received stock issue. This is the
@@ -665,22 +791,20 @@ router.post('/stock-issues/:id/reverse', MGR, async (req, res) => {
     // compliance: every accounting reversal must carry justification).
     // Trim to avoid whitespace-only inputs.
     const reasonText = String(reason || '').trim();
+    const expectedVersion = _expectedVersion(req);
     if (!reasonText) {
-      return res.status(400).json({
-        error: 'سبب الإرجاع مطلوب — اشرح لماذا تُرجِع هذا الإذن لإكمال سجل التدقيق.',
-        code: 'REASON_REQUIRED'
-      });
+      return _fail(res, 'VALIDATION_ERROR', 'سبب الإرجاع مطلوب — اشرح لماذا تُرجِع هذا الإذن لإكمال سجل التدقيق.');
     }
     const [hdrRows] = await db.query('SELECT * FROM stock_issues WHERE id=?', [id]);
-    if (!hdrRows.length) return res.status(404).json({ error: 'not found' });
+    if (!hdrRows.length) return res.status(404).json({ success: false, code: 'NOT_FOUND', error: 'not found' });
     const hdr = hdrRows[0];
     if (!req.guardTransfer(res, hdr.from_warehouse_id, hdr.to_warehouse_id)) return;
     // Phase 0 — partially_received transfers are reversible too.
     if (!TR.canReverse(hdr.status))
-      return res.status(400).json({ error: 'يمكن إرجاع الإذن فقط بعد الصرف أو الاستلام (issued / partially_received / received)' });
+      return _fail(res, 'INVALID_STATE_TRANSITION', 'يمكن إرجاع الإذن فقط بعد الصرف أو الاستلام (issued / partially_received / received). الحالة الحالية: ' + hdr.status);
 
     const [items] = await db.query('SELECT * FROM stock_issue_items WHERE issue_id=?', [id]);
-    if (!items.length) return res.status(400).json({ error: 'no items' });
+    if (!items.length) return _fail(res, 'VALIDATION_ERROR', 'no items');
 
     // Reverse the stock movements:
     //   1. PUT BACK what we took from the source (positive delta on the from-warehouse).
@@ -700,13 +824,15 @@ router.post('/stock-issues/:id/reverse', MGR, async (req, res) => {
     // exemption is a deploy whose GL tables don't exist yet.
     const out = await db.withTransaction(async (conn) => {
       let totalCost = 0;
+      const affectedStock = [];
       for (const it of items) {
         const qtyIssued   = Number(it.qty_issued)   || 0;
         const qtyReceived = Number(it.qty_received) || 0;
         const unitCost    = Number(it.unit_cost)    || 0;
         if (qtyIssued > 0) {
-          await _applyStockMovement(hdr.from_warehouse_id, it.item_id, qtyIssued, unitCost,
+          const mvIn = await _applyStockMovement(hdr.from_warehouse_id, it.item_id, qtyIssued, unitCost,
                                     'stock_issue_reverse', id, reversedBy, conn);
+          affectedStock.push({ warehouseId: hdr.from_warehouse_id, itemId: it.item_id, delta: qtyIssued, newQty: mvIn.newQty });
           totalCost += qtyIssued * unitCost;
           // Ledger entry — 'in' to source (returning the goods)
           try {
@@ -721,8 +847,9 @@ router.post('/stock-issues/:id/reverse', MGR, async (req, res) => {
           } catch(_) {}
         }
         if (qtyReceived > 0) {
-          await _applyStockMovement(hdr.to_warehouse_id, it.item_id, -qtyReceived, unitCost,
+          const mvOut = await _applyStockMovement(hdr.to_warehouse_id, it.item_id, -qtyReceived, unitCost,
                                     'stock_issue_reverse', id, reversedBy, conn);
+          affectedStock.push({ warehouseId: hdr.to_warehouse_id, itemId: it.item_id, delta: -qtyReceived, newQty: mvOut.newQty });
           // Ledger entry — 'out' from destination (taking the goods back)
           try {
             const movId = 'MOV-SI-REV-OUT-' + Date.now() + '-' + Math.random().toString(36).substr(2, 4);
@@ -774,24 +901,29 @@ router.post('/stock-issues/:id/reverse', MGR, async (req, res) => {
       }
 
       // State-guarded flip — a concurrent double-reverse rolls everything back.
+      const fromStatus = hdr.status;
       const [flipRes] = await conn.query(
         `UPDATE stock_issues
          SET status='reversed', reversed_by=?, reversed_at=NOW(),
-             reverse_reason=?, reverse_gl_journal_id=?
-         WHERE id=? AND status IN ('issued','partially_received','received')`,
-        [reversedBy, reasonText.slice(0, 500), reverseGlId, id]);
+             reverse_reason=?, reverse_gl_journal_id=?, version = version + 1
+         WHERE id=? AND status IN ('issued','partially_received','received') AND (? IS NULL OR version = ?)`,
+        [reversedBy, reasonText.slice(0, 500), reverseGlId, id, expectedVersion, expectedVersion]);
       if (!flipRes || flipRes.affectedRows !== 1) {
         const e = new Error('تغيّرت حالة الإذن (إرجاع مكرر؟) — أعد التحميل');
-        e.status = 409; throw e;
+        e.status = 409; e.code = 'state_changed'; throw e;
       }
-
-      return { reverseGlId, totalCost };
+      const auditEvent = await _audit(conn, id, 'reverse', fromStatus, 'reversed', reversedBy, reasonText, { reverseGlId, totalCost });
+      return { reverseGlId, totalCost, affectedStock, newVersion: (Number(hdr.version) || 1) + 1, auditEvent };
     });
 
-    res.json({ success: true, reverseGlJournalId: out.reverseGlId, totalCost: out.totalCost });
+    _ok(res, {
+      data: { id, status: 'reversed', reverseGlJournalId: out.reverseGlId, totalCost: out.totalCost },
+      documentNumber: hdr.issue_number, status: 'reversed', version: out.newVersion,
+      affectedStock: out.affectedStock, auditEvent: out.auditEvent,
+    }, { success: true, reverseGlJournalId: out.reverseGlId, totalCost: out.totalCost });
   } catch(e) {
     console.error('[stock-issue reverse] error:', e);
-    res.status(e.status || 500).json({ error: e.message });
+    _catch(res, e);
   }
 });
 
@@ -801,18 +933,21 @@ router.post('/stock-issues/:id/reverse', MGR, async (req, res) => {
 router.delete('/stock-issues/:id', MGR, async (req, res) => {
   try {
     const id = req.params.id;
-    const [hdrRows] = await db.query('SELECT status, from_warehouse_id, to_warehouse_id FROM stock_issues WHERE id=?', [id]);
-    if (!hdrRows.length) return res.status(404).json({ error: 'not found' });
+    const actor = _actor(req);
+    const [hdrRows] = await db.query('SELECT status, issue_number, from_warehouse_id, to_warehouse_id FROM stock_issues WHERE id=?', [id]);
+    if (!hdrRows.length) return res.status(404).json({ success: false, code: 'NOT_FOUND', error: 'not found' });
     if (!req.guardTransfer(res, hdrRows[0].from_warehouse_id, hdrRows[0].to_warehouse_id)) return;
     if (hdrRows[0].status !== 'draft') {
-      return res.status(400).json({ error: 'يمكن حذف الإذن فقط عندما يكون مسودة — استخدم الإلغاء أو الإرجاع' });
+      return _fail(res, 'INVALID_STATE_TRANSITION', 'يمكن حذف الإذن فقط عندما يكون مسودة — استخدم الإلغاء أو الإرجاع. الحالة الحالية: ' + hdrRows[0].status);
     }
+    // Audit the deletion BEFORE removing the row (the event row outlives it).
+    const auditEvent = await _audit(null, id, 'delete', 'draft', null, actor, '', { issueNumber: hdrRows[0].issue_number });
     await db.query('DELETE FROM stock_issue_items WHERE issue_id=?', [id]);
     await db.query('DELETE FROM stock_issues WHERE id=?', [id]);
-    res.json({ success: true });
+    _ok(res, { data: { id, status: 'deleted' }, documentNumber: hdrRows[0].issue_number, status: 'deleted', version: null, affectedStock: [], auditEvent }, { success: true });
   } catch(e) {
     console.error('[stock-issue delete] error:', e);
-    res.status(500).json({ error: e.message });
+    _catch(res, e);
   }
 });
 

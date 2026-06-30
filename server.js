@@ -4190,6 +4190,42 @@ async function runMigrations() {
   await addColumnIfMissing('inv_stocktakes', 'snapshot_seq', 'BIGINT DEFAULT 0');
   await addColumnIfMissing('inv_stocktake_items', 'counted_seq', 'BIGINT DEFAULT 0');
 
+  // ─── Phase 4A — Item Master (ADDITIVE on inv_items; never drop/rename, sales/
+  // purchases/production read it) + per-warehouse replenishment rules ───────────
+  // sku_norm = UPPER(TRIM(sku)) maintained by the route; UNIQUE allows multiple
+  // NULLs (legacy rows have no SKU). version + audit (inv_tx_events doc_type='item').
+  await addColumnIfMissing('inv_items', 'sku', "VARCHAR(100)");
+  await addColumnIfMissing('inv_items', 'sku_norm', "VARCHAR(120)");
+  await addColumnIfMissing('inv_items', 'version', "INT NOT NULL DEFAULT 1");
+  await addColumnIfMissing('inv_items', 'default_warehouse_id', "VARCHAR(50)");
+  await addColumnIfMissing('inv_items', 'description', "TEXT");
+  await addColumnIfMissing('inv_items', 'notes', "VARCHAR(500)");
+  try { await db.query('CREATE UNIQUE INDEX uq_inv_items_sku_norm ON inv_items (sku_norm)'); } catch (e) { /* exists or dup data */ }
+  // Per-(warehouse, item) replenishment rules. min/reorder/max/safety/lead-time
+  // are per-warehouse here (inv_items.min_stock stays the GLOBAL fallback for
+  // legacy reads). The replenishment engine reads these; nothing posts stock.
+  await createTableIfMissing('warehouse_item_rules', `
+    CREATE TABLE IF NOT EXISTS warehouse_item_rules (
+      id VARCHAR(60) PRIMARY KEY,
+      warehouse_id VARCHAR(50) NOT NULL,
+      item_id VARCHAR(50) NOT NULL,
+      min_qty DECIMAL(12,3) DEFAULT 0,
+      reorder_point DECIMAL(12,3) DEFAULT 0,
+      reorder_qty DECIMAL(12,3) DEFAULT 0,
+      max_stock DECIMAL(12,3) DEFAULT 0,
+      safety_stock DECIMAL(12,3) DEFAULT 0,
+      lead_time_days INT DEFAULT 0,
+      is_enabled BOOLEAN DEFAULT TRUE,
+      last_reviewed_at DATETIME,
+      version INT NOT NULL DEFAULT 1,
+      created_by VARCHAR(100),
+      updated_by VARCHAR(100),
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      UNIQUE KEY uq_wir_wh_item (warehouse_id, item_id),
+      INDEX idx_wir_item (item_id)
+    ) ENGINE=InnoDB
+  `);
+
   // ═══════════════════════════════════════════════════════════
   // PHASE 2 — Production Orders
   // ═══════════════════════════════════════════════════════════

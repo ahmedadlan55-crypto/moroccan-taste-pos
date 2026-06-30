@@ -46,6 +46,19 @@ test('high when cover < leadTime', () => eq(R.stockoutRisk(3, 7), 'high'));
 test('medium when cover < 2×leadTime', () => eq(R.stockoutRisk(10, 7), 'medium'));
 test('low when cover >= 2×leadTime', () => eq(R.stockoutRisk(20, 7), 'low'));
 
+console.log('\n─── inactive item (Phase 4B — close 4A) ───');
+test('inactive → recommendedQty always 0 even below reorder', () => eq(R.recommendedQty(5, { reorderPoint: 10, reorderQty: 20, maxStock: 50 }, false), 0));
+test('active (explicit) still recommends', () => eq(R.recommendedQty(5, { reorderPoint: 10, reorderQty: 20, maxStock: 50 }, true), 45));
+test('inactive WITH remaining stock → inactive_balance', () => eq(R.reorderStatus(40, { safetyStock: 5, reorderPoint: 10 }, false), 'inactive_balance'));
+test('inactive WITH zero stock → ok (nothing to liquidate)', () => eq(R.reorderStatus(0, { safetyStock: 5, reorderPoint: 10 }, false), 'ok'));
+test('inactive with negative stock still flags negative (data integrity)', () => eq(R.reorderStatus(-2, { safetyStock: 5, reorderPoint: 10 }, false), 'negative'));
+test('computeReplenishment inactive → recommendedQty 0 + inactive_balance + isActive false', () => {
+  const r = R.computeReplenishment({ onHand: 40, avgDailyOut: 2, hasRule: true, isActive: false, rule: { reorderPoint: 10, reorderQty: 20, maxStock: 50, safetyStock: 5, leadTimeDays: 7 } });
+  eq(r.recommendedQty, 0);
+  eq(r.reorderStatus, 'inactive_balance');
+  eq(r.isActive, false);
+});
+
 console.log('\n─── computeReplenishment (integration) ───');
 test('full row: onHand 5, reorder 10/20, max 50, ado 2, lead 7', () => {
   const r = R.computeReplenishment({ onHand: 5, avgDailyOut: 2, hasRule: true, rule: { reorderPoint: 10, reorderQty: 20, maxStock: 50, safetyStock: 5, leadTimeDays: 7 } });
@@ -54,6 +67,7 @@ test('full row: onHand 5, reorder 10/20, max 50, ado 2, lead 7', () => {
   eq(r.reorderStatus, 'critical');
   eq(r.stockoutRisk, 'high');
   eq(r.available, 5);
+  eq(r.isActive, true);
 });
 
 console.log('\n  ' + _p + ' passed, ' + _f + ' failed\n');

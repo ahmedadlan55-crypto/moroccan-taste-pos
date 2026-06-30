@@ -116,9 +116,10 @@ function _replRow(r) {
     reorderQty: Number(r.reorder_qty) || 0, maxStock: Number(r.max_stock) || 0, safetyStock: Number(r.safety_stock) || 0,
     leadTimeDays: Number(r.lead_time_days) || 0, isEnabled: r.is_enabled == null ? true : !!r.is_enabled,
   };
-  const eng = REP.computeReplenishment({ onHand: Number(r.qty) || 0, avgDailyOut: REP.avgDailyOut(Number(r.out_qty) || 0, LOOKBACK_DAYS), hasRule: r.rule_id != null, rule });
+  const isActive = Number(r.active) !== 0; // inactive → recommendedQty 0 + 'inactive_balance' status
+  const eng = REP.computeReplenishment({ onHand: Number(r.qty) || 0, avgDailyOut: REP.avgDailyOut(Number(r.out_qty) || 0, LOOKBACK_DAYS), hasRule: r.rule_id != null, rule, isActive });
   return {
-    itemId: r.item_id, sku: r.sku || r.item_id, name: r.name, unit: r.unit, category: r.category,
+    itemId: r.item_id, sku: r.sku || r.item_id, name: r.name, unit: r.unit, category: r.category, isActive,
     warehouseId: r.warehouse_id, warehouseName: r.warehouse_name, cost: Number(r.cost) || Number(r.avg_cost) || 0,
     reorderPoint: rule.reorderPoint, reorderQty: rule.reorderQty, maxStock: rule.maxStock, safetyStock: rule.safetyStock, leadTimeDays: rule.leadTimeDays,
     onHand: eng.onHand, available: eng.available, avgDailyOutbound: eng.avgDailyOutbound, daysOfCover: eng.daysOfCover,
@@ -128,7 +129,7 @@ function _replRow(r) {
   };
 }
 const REPL_SELECT =
-  'SELECT ws.warehouse_id, ws.qty, ws.avg_cost, w.name AS warehouse_name, ii.id AS item_id, ii.name, ii.sku, ii.unit, ii.category, ii.cost, ii.min_stock, ' +
+  'SELECT ws.warehouse_id, ws.qty, ws.avg_cost, w.name AS warehouse_name, ii.id AS item_id, ii.name, ii.sku, ii.unit, ii.category, ii.cost, ii.min_stock, ii.active, ' +
   ' wir.id AS rule_id, wir.min_qty, wir.reorder_point, wir.reorder_qty, wir.max_stock, wir.safety_stock, wir.lead_time_days, wir.is_enabled, ' +
   ' (SELECT COALESCE(SUM(m.qty),0) FROM inventory_movements m WHERE m.item_id=ii.id AND m.type=\'out\' AND m.warehouse_id=ws.warehouse_id AND m.movement_date >= DATE_SUB(CURDATE(), INTERVAL ' + LOOKBACK_DAYS + ' DAY)) AS out_qty, ' +
   ' (SELECT MAX(m2.movement_date) FROM inventory_movements m2 WHERE m2.item_id=ii.id AND m2.warehouse_id=ws.warehouse_id) AS last_movement_at ' +
@@ -141,7 +142,7 @@ router.get('/replenishment', async (req, res) => {
     p.warehouseId = req.query.warehouseId ? String(req.query.warehouseId) : '';
     p.category = req.query.category ? String(req.query.category) : '';
     const riskFilter = ['high', 'medium', 'low', 'unknown'].indexOf(String(req.query.risk || '')) !== -1 ? String(req.query.risk) : '';
-    const statusFilter = ['negative', 'critical', 'reorder', 'watch', 'ok'].indexOf(String(req.query.status || '')) !== -1 ? String(req.query.status) : '';
+    const statusFilter = ['negative', 'critical', 'reorder', 'watch', 'ok', 'inactive_balance'].indexOf(String(req.query.status || '')) !== -1 ? String(req.query.status) : '';
     const w = _replenWhere(req, p);
     const [rows] = await db.query(REPL_SELECT + w.sql + ' ORDER BY ii.name', w.params);
     let computed = rows.map(_replRow);
@@ -159,7 +160,7 @@ router.get('/replenishment/summary', async (req, res) => {
     const w = _replenWhere(req, p);
     const [rows] = await db.query(REPL_SELECT + w.sql, w.params);
     const computed = rows.map(_replRow);
-    const byStatus = { negative: 0, critical: 0, reorder: 0, watch: 0, ok: 0 };
+    const byStatus = { negative: 0, critical: 0, reorder: 0, watch: 0, ok: 0, inactive_balance: 0 };
     const byRisk = { high: 0, medium: 0, low: 0, unknown: 0 };
     let recommendedValue = 0, reorderItems = 0;
     for (const r of computed) {

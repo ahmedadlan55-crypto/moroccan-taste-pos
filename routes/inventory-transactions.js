@@ -28,6 +28,7 @@ const gl = require('../lib/glPosting');
 const E = require('../lib/inventoryTxEngine');
 const C = require('../lib/inventoryTxContract');
 const IDEM = require('../lib/idempotencyStore');
+const POLICY = require('../lib/inventoryItemPolicy');
 const { recomputeInvItemStock } = require('../lib/stockRecompute');
 const requireRole = require('../middleware/auth').requireRole;
 
@@ -140,10 +141,11 @@ function _validateItems(items, qtyField, allowZero) {
   }
 }
 
+// Loads item metadata + active/deleted_at flags. The inactive-item policy is now
+// applied PER DIRECTION by the builders (Phase 4B — close 4A): inflow blocked,
+// outflow allowed to liquidate WITH a reason. See lib/inventoryItemPolicy.js.
 async function _itemMeta(itemId) {
   const [r] = await db.query('SELECT id, name, unit, active, deleted_at FROM inv_items WHERE id=? LIMIT 1', [itemId]);
-  // Phase 4A — an inactive / deleted item cannot enter a NEW v2 document.
-  if (r.length && (Number(r[0].active) === 0 || r[0].deleted_at)) throw _err('VALIDATION_ERROR', 'الصنف "' + (r[0].name || itemId) + '" غير نشط — لا يمكن استخدامه في مستند جديد');
   return r[0] || { id: itemId, name: '', unit: '' };
 }
 
@@ -164,6 +166,7 @@ async function _buildReceipt(body, warehouse) {
     const unitCost = Number(it.unitCost != null ? it.unitCost : it.unit_cost);
     if (!Number.isFinite(unitCost) || unitCost <= 0) throw _err('COST_REQUIRED', 'تكلفة الوحدة مطلوبة وموجبة للصنف ' + itemId);
     const meta = await _itemMeta(itemId);
+    POLICY.assertInflowAllowed(meta); // receipt is inbound — never restock an inactive item
     const lineTotal = E.round2(qty * unitCost);
     total += lineTotal;
     lines.push({ itemId, itemName: meta.name, unit: meta.unit, qty, unitCost: E.round4(unitCost), lineTotal });
@@ -192,6 +195,7 @@ async function _buildIssue(body, warehouse) {
     const itemId = it.itemId || it.item_id;
     const qty = Number(it.qty);
     const meta = await _itemMeta(itemId);
+    POLICY.assertOutflowAllowed(meta, { reason: body.reason }); // issue is outbound — inactive may liquidate WITH a reason
     // Estimate the line at the current WAC; the authoritative cost is frozen at post.
     const est = await E.getEffectiveCost(db, itemId, warehouse.id);
     const lineTotal = E.round2(qty * est);
@@ -223,6 +227,10 @@ async function _buildAdjustment(body, warehouse) {
     const snap = await E.readStock(db, warehouse.id, itemId);
     const systemQty = snap.qty;
     const delta = E.round2(counted - systemQty);
+    // Directional inactive-item policy: a positive delta is inflow (blocked), a
+    // negative delta is liquidation outflow (allowed WITH the doc reason).
+    if (delta > 0) POLICY.assertInflowAllowed(meta);
+    else if (delta < 0) POLICY.assertOutflowAllowed(meta, { reason: body.reason });
     const cost = await E.getEffectiveCost(db, itemId, warehouse.id);
     const deltaValue = E.round2(delta * cost);
     totalDeltaValue += deltaValue;

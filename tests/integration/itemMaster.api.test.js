@@ -138,8 +138,12 @@ async function seed() {
     check('deactivate → inactive', deact.status === 200 && deact.body.status === 'inactive', deact.body);
     const [stillThere] = await db.query('SELECT active FROM inv_items WHERE id=?', [id1]);
     check('deactivate kept the row (history preserved, no hard-delete)', stillThere.length === 1 && Number(stillThere[0].active) === 0, stillThere[0]);
-    const useInactive = await req('POST', A, mgr, { warehouseId: WH, reason: 'جرد', items: [{ itemId: id1, countedQty: 3 }] });
-    check('inactive item rejected in a NEW v2 document → 422', useInactive.status === 422 && useInactive.body.code === 'VALIDATION_ERROR', useInactive.body && useInactive.body.code);
+    // Phase 4B inactive-item policy: INFLOW blocked, liquidation OUTFLOW allowed with a reason.
+    // id1 has warehouse_stock qty=10 in WH; a count of 20 = +10 inflow, a count of 3 = -7 outflow.
+    const inflowInactive = await req('POST', A, mgr, { warehouseId: WH, reason: 'جرد', items: [{ itemId: id1, countedQty: 20 }] });
+    check('inactive item INFLOW blocked in a NEW v2 document → 422', inflowInactive.status === 422 && inflowInactive.body.code === 'VALIDATION_ERROR', inflowInactive.body && inflowInactive.body.code);
+    const liqInactive = await req('POST', A, mgr, { warehouseId: WH, reason: 'تصفية رصيد صنف معطّل', items: [{ itemId: id1, countedQty: 3 }] });
+    check('inactive item liquidation OUTFLOW allowed with a reason → 201', (liqInactive.status === 200 || liqInactive.status === 201) && liqInactive.body && liqInactive.body.code !== 'VALIDATION_ERROR', { st: liqInactive.status, code: liqInactive.body && liqInactive.body.code });
     const [v2] = await db.query('SELECT version FROM inv_items WHERE id=?', [id1]);
     const react = await req('POST', `${IT}/${id1}/activate`, mgr, { expectedVersion: Number(v2[0].version) });
     check('reactivate (MGR) → active', react.status === 200 && react.body.status === 'active', react.body);

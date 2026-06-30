@@ -21,7 +21,7 @@ const db = require('../../db/connection');
 const PORT = Number(process.env.REP_TEST_PORT || 3253);
 const BASE = { host: '127.0.0.1', port: PORT };
 const WH = 'WH-REP', WC = 'WH-REP-C';
-const I1 = 'REP-I1', I2 = 'REP-I2', I3 = 'REP-I3';
+const I1 = 'REP-I1', I2 = 'REP-I2', I3 = 'REP-I3', I4 = 'REP-I4';
 const U = 'rep_mgr', U_OUT = 'rep_out';
 const R = '/api/inventory/v2/replenishment';
 
@@ -42,10 +42,10 @@ function row(body, item) { return (body.data || []).find((r) => r.itemId === ite
 
 async function cleanup() {
   for (const [s, p] of [
-    ['DELETE FROM warehouse_item_rules WHERE item_id IN (?,?,?)', [I1, I2, I3]],
+    ['DELETE FROM warehouse_item_rules WHERE item_id IN (?,?,?,?)', [I1, I2, I3, I4]],
     ['DELETE FROM inventory_movements WHERE warehouse_id IN (?,?)', [WH, WC]],
     ['DELETE FROM warehouse_stock WHERE warehouse_id IN (?,?)', [WH, WC]],
-    ['DELETE FROM inv_items WHERE id IN (?,?,?)', [I1, I2, I3]],
+    ['DELETE FROM inv_items WHERE id IN (?,?,?,?)', [I1, I2, I3, I4]],
     ['DELETE uwa FROM user_warehouse_access uwa JOIN users u ON u.id=uwa.user_id WHERE u.username IN (?,?)', [U, U_OUT]],
     ['DELETE FROM warehouses WHERE id IN (?,?)', [WH, WC]],
     ['DELETE FROM users WHERE username IN (?,?)', [U, U_OUT]],
@@ -62,6 +62,11 @@ async function seed() {
   }
   await db.query('INSERT INTO warehouse_item_rules (id,warehouse_id,item_id,min_qty,reorder_point,reorder_qty,max_stock,safety_stock,lead_time_days,is_enabled,version) VALUES (?,?,?,?,?,?,?,?,?,1,1)', ['WIR-1', WH, I1, 5, 10, 20, 50, 5, 7]);
   await db.query('INSERT INTO warehouse_item_rules (id,warehouse_id,item_id,min_qty,reorder_point,reorder_qty,max_stock,safety_stock,lead_time_days,is_enabled,version) VALUES (?,?,?,?,?,?,?,?,?,1,1)', ['WIR-2', WH, I2, 0, 10, 20, 0, 0, 7]);
+  // I4: INACTIVE, onHand 5 below reorderPoint 10 — an ACTIVE item would recommend 45,
+  // but inactive must yield recommendedQty 0 + reorderStatus 'inactive_balance' (close 4A).
+  await db.query('INSERT INTO inv_items (id,name,sku,sku_norm,category,unit,cost,min_stock,active) VALUES (?,?,?,?,?,?,?,?,0)', [I4, 'صنف معطّل ' + I4, I4, I4.toUpperCase(), 'خام', 'كجم', 5, 0]);
+  await db.query('INSERT INTO warehouse_stock (id,warehouse_id,item_id,qty,avg_cost) VALUES (?,?,?,?,?)', ['WS-' + I4, WH, I4, 5, 5]);
+  await db.query('INSERT INTO warehouse_item_rules (id,warehouse_id,item_id,min_qty,reorder_point,reorder_qty,max_stock,safety_stock,lead_time_days,is_enabled,version) VALUES (?,?,?,?,?,?,?,?,?,1,1)', ['WIR-4', WH, I4, 5, 10, 20, 50, 5, 7]);
   // I1 outbound: 60 units 10 days ago → avgDaily = 60/30 = 2 → daysOfCover = 5/2 = 2.5
   await db.query("INSERT INTO inventory_movements (id, movement_date, item_id, item_name, type, qty, warehouse_id, reference_type) VALUES (?, DATE_SUB(NOW(), INTERVAL 10 DAY), ?, '', 'out', 60, ?, 'manual')", ['MVR1', I1, WH]);
   const ids = {};
@@ -86,8 +91,9 @@ async function seed() {
     if (!(await waitForServer())) { console.error('server did not start'); process.exit(2); }
 
     const list = await req('GET', `${R}?warehouseId=${WH}`, mgr);
-    check('replenishment list → 3 rows', list.status === 200 && (list.body.data || []).length === 3, { st: list.status, n: (list.body.data || []).length });
-    const r1 = row(list.body, I1), r2 = row(list.body, I2), r3 = row(list.body, I3);
+    check('replenishment list → 4 rows', list.status === 200 && (list.body.data || []).length === 4, { st: list.status, n: (list.body.data || []).length });
+    const r1 = row(list.body, I1), r2 = row(list.body, I2), r3 = row(list.body, I3), r4 = row(list.body, I4);
+    check('I4 INACTIVE → recommendedQty 0 + reorderStatus inactive_balance + isActive false', r4 && r4.recommendedQty === 0 && r4.reorderStatus === 'inactive_balance' && r4.isActive === false, r4 && { rq: r4.recommendedQty, s: r4.reorderStatus, a: r4.isActive });
     check('I1 recommendedQty 45 (max(20, 50−5))', r1 && near(r1.recommendedQty, 45), r1);
     check('I1 daysOfCover 2.5 (5 / (60/30))', r1 && near(r1.daysOfCover, 2.5), r1 && r1.daysOfCover);
     check('I1 reorderStatus critical (onHand 5 ≤ safety 5), risk high (cover 2.5 < lead 7)', r1 && r1.reorderStatus === 'critical' && r1.stockoutRisk === 'high', r1 && { s: r1.reorderStatus, risk: r1.stockoutRisk });

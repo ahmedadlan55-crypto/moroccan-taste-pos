@@ -15,8 +15,13 @@ const TONE: Record<string, string> = {
   "مطابقة مطلوبة": "border-amber-200 bg-amber-50 text-amber-700",
   // in-flight
   "في الطريق": "border-sky-200 bg-sky-50 text-sky-700",
+  "قيد النقل": "border-sky-200 bg-sky-50 text-sky-700",
   "قيد العد": "border-sky-200 bg-sky-50 text-sky-700",
   "استلام جزئي": "border-violet-200 bg-violet-50 text-violet-700",
+  // transfer terminal states
+  "ملغى": "border-slate-200 bg-slate-100 text-slate-500",
+  "معكوس": "border-rose-200 bg-rose-50 text-rose-700",
+  "مُرسل": "border-amber-200 bg-amber-50 text-amber-700",
   // danger
   "نافد": "border-rose-200 bg-rose-50 text-rose-700",
   "سالب": "border-rose-200 bg-rose-50 text-rose-700",

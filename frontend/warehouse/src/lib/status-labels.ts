@@ -49,6 +49,36 @@ export function warehouseTypeLabel(type: string | null | undefined): string {
   return WAREHOUSE_TYPE[t] ?? type ?? "—";
 }
 
+// Phase 3A — transfer (stock-issue) lifecycle status → Arabic label. The UI
+// renames the backend `issued` to «قيد النقل» (the adapter maps it to
+// `in_transit`). Drives the StatusBadge tone via the label text.
+export const transferStatusLabel: Record<string, string> = {
+  draft: "مسودة",
+  submitted: "مُرسل",
+  approved: "معتمد",
+  in_transit: "قيد النقل",
+  partially_received: "استلام جزئي",
+  received: "مستلم",
+  cancelled: "ملغى",
+  reversed: "معكوس",
+};
+export function transferStatusToLabel(status: string | null | undefined): string {
+  return transferStatusLabel[String(status ?? "")] ?? "—";
+}
+
+// Filter chips for the transfers list (status values match the adapter's UI
+// status enum; the backend filter uses the raw `issued` for `in_transit`).
+export const TRANSFER_STATUS_OPTIONS: { value: string; label: string }[] = [
+  { value: "", label: "كل الحالات" },
+  { value: "draft", label: "مسودة" },
+  { value: "approved", label: "معتمد" },
+  { value: "issued", label: "قيد النقل" },
+  { value: "partially_received", label: "استلام جزئي" },
+  { value: "received", label: "مستلم" },
+  { value: "cancelled", label: "ملغى" },
+  { value: "reversed", label: "معكوس" },
+];
+
 // Movement `type` ('in'/'out') → Arabic, for the rare case a movement row has
 // no Arabic reason text to show.
 export function movementTypeLabel(type: string | null | undefined): string {

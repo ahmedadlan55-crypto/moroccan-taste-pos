@@ -93,4 +93,19 @@
   .surface {
     box-shadow: none;
   }
+  /* Phase 3A — when a transfer document is open, print ONLY that document
+     (RTL, clean) instead of the whole app behind the drawer. */
+  body:has(.print-document) * {
+    visibility: hidden;
+  }
+  body:has(.print-document) .print-document,
+  body:has(.print-document) .print-document * {
+    visibility: visible;
+  }
+  .print-document {
+    position: absolute;
+    inset: 0;
+    margin: 0;
+    padding: 1.5rem;
+  }
 }

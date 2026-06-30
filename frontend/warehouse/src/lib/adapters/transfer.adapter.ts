@@ -4,6 +4,7 @@
 // qtyRemaining = qtyIssued − qtyReceived the Phase 0 backend now tracks.
 
 import type { Transfer, TransferLine, TransferStatus } from "../schemas/transfer.schema";
+export type { TransferLine, TransferStatus } from "../schemas/transfer.schema";
 
 const STATUS_MAP: Record<string, TransferStatus> = {
   draft: "draft",

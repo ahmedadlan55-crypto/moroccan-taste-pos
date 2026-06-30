@@ -19,6 +19,12 @@ export const queryKeys = {
   // scope + permission providers.
   accessScope: () => ["access-scope"] as const,
 
+  // Phase 2B — analytics + reports. Scope + filters in the key so a change
+  // aborts the in-flight request for the old scope/filters.
+  analytics: (scope: string, params: Record<string, unknown>) => ["analytics", scope, params] as const,
+  report: (type: string, scope: string, params: Record<string, unknown>) => ["report", type, scope, params] as const,
+  reportCatalog: () => ["report-catalog"] as const,
+
   dashboard: (scope: string) => ["dashboard", scope] as const,
 
   warehouses: {

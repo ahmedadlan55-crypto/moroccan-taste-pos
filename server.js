@@ -286,6 +286,10 @@ app.use('/api/inventory', require('./routes/inventory'));
 // middleware mounted on /api/inventory above; /analytics/* + /reports/* paths
 // don't collide with the inventory router).
 app.use('/api/inventory', require('./routes/warehouse-reports'));
+// Phase 3A — scoped READ endpoints for the React /transfers grid + detail
+// (list/KPIs/timeline). Mutations stay on /api/erp/stock-issues; the legacy
+// GET endpoints there are untouched.
+app.use('/api/inventory', require('./routes/warehouse-transfers'));
 app.use('/api/purchases', require('./routes/purchases'));
 app.use('/api/expenses', require('./routes/expenses'));
 app.use('/api/settings', require('./routes/settings'));

@@ -11,6 +11,8 @@ import {
   BarChart3,
   FileBarChart,
   GitBranch,
+  Tags,
+  ShoppingCart,
   type LucideIcon,
 } from "lucide-react";
 
@@ -38,6 +40,8 @@ export const navigation: NavGroup[] = [
     items: [
       { id: "warehouses", label: "المستودعات والهيكل", path: "/warehouses", icon: Warehouse },
       { id: "inventory", label: "المواد والأرصدة", path: "/inventory", icon: Boxes },
+      { id: "items", label: "كتالوج الأصناف", path: "/items", icon: Tags },
+      { id: "replenishment", label: "خطة إعادة الطلب", path: "/replenishment", icon: ShoppingCart },
     ],
   },
   {

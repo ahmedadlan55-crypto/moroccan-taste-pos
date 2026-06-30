@@ -27,6 +27,15 @@ export const queryKeys = {
 
   dashboard: (scope: string) => ["dashboard", scope] as const,
 
+  // Phase 3A — transfers (stock issues). Scope + filters in the list key so a
+  // scope change aborts the in-flight request; detail keyed by id so a mutation
+  // can refresh exactly one document.
+  transfers: {
+    all: ["transfers"] as const,
+    list: (scope: string, params: Record<string, unknown>) => ["transfers", "list", scope, params] as const,
+    detail: (id: string) => ["transfers", "detail", id] as const,
+  },
+
   warehouses: {
     all: ["warehouses"] as const,
     summary: (scope: string) => ["warehouses", "summary", scope] as const,

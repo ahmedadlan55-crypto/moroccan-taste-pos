@@ -53,3 +53,47 @@ export const transfer = z.object({
 
 export type Transfer = z.infer<typeof transfer>;
 export type TransferLine = z.infer<typeof transferLine>;
+
+// ── Phase 3A — mutation INPUT schemas (validated client-side before POST) ────
+
+export const createTransferLineInput = z.object({
+  itemId: z.string().min(1, "اختر صنفًا"),
+  qtyRequested: z.number().positive("الكمية يجب أن تكون أكبر من صفر"),
+});
+
+export const createTransferDraftInput = z
+  .object({
+    fromWarehouseId: z.string().min(1, "اختر المستودع المصدر"),
+    toWarehouseId: z.string().min(1, "اختر المستودع الوجهة"),
+    issueDate: z.string().optional(),
+    notes: z.string().max(500).optional(),
+    items: z.array(createTransferLineInput).min(1, "أضف صنفًا واحدًا على الأقل"),
+  })
+  .refine((v) => v.fromWarehouseId !== v.toWarehouseId, {
+    message: "المصدر والوجهة يجب أن يكونا مختلفين",
+    path: ["toWarehouseId"],
+  });
+
+export const receiveLineInput = z.object({
+  id: z.string().min(1),
+  qtyReceived: z.number().min(0),
+});
+export const receiveTransferInput = z.object({
+  items: z.array(receiveLineInput).optional(), // omit → receive all remaining
+  expectedVersion: z.number().int().optional(),
+});
+
+export const reverseTransferInput = z.object({
+  reason: z.string().trim().min(3, "اكتب سبب الإرجاع (٣ أحرف على الأقل)"),
+  expectedVersion: z.number().int().optional(),
+});
+
+export const cancelTransferInput = z.object({
+  reason: z.string().trim().min(3, "اكتب سبب الإلغاء (٣ أحرف على الأقل)"),
+  expectedVersion: z.number().int().optional(),
+});
+
+export type CreateTransferDraftInput = z.infer<typeof createTransferDraftInput>;
+export type ReceiveTransferInput = z.infer<typeof receiveTransferInput>;
+export type ReverseTransferInput = z.infer<typeof reverseTransferInput>;
+export type CancelTransferInput = z.infer<typeof cancelTransferInput>;

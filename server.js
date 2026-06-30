@@ -282,6 +282,10 @@ app.use('/api/menu', require('./routes/menu'));
 app.use('/api/sales', require('./routes/sales'));
 app.use('/api/shifts', require('./routes/shifts'));
 app.use('/api/inventory', require('./routes/inventory'));
+// Phase 2B — read-only Analytics + Reports (inherits the warehouse-scope
+// middleware mounted on /api/inventory above; /analytics/* + /reports/* paths
+// don't collide with the inventory router).
+app.use('/api/inventory', require('./routes/warehouse-reports'));
 app.use('/api/purchases', require('./routes/purchases'));
 app.use('/api/expenses', require('./routes/expenses'));
 app.use('/api/settings', require('./routes/settings'));

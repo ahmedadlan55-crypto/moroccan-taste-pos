@@ -63,7 +63,9 @@ app.use(cors({
     if (!origin) return callback(null, true);
     if (ALLOWED_ORIGINS.length === 0) return callback(null, true); // If not configured, allow all (dev mode)
     if (ALLOWED_ORIGINS.indexOf(origin) !== -1) return callback(null, true);
-    callback(null, true); // In production, set ALLOWED_ORIGINS env var to restrict
+    // Configured allow-list + origin not on it → deny (omit CORS headers so the
+    // browser blocks the cross-origin response). Empty allow-list = dev allow-all.
+    callback(null, false);
   },
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
@@ -215,6 +217,28 @@ app.use(express.static(path.join(__dirname, 'public'), {
 // immutable; index.html is no-cache so a redeploy is picked up immediately.
 // If the bundle hasn't been built yet, the path simply 404s (legacy app
 // unaffected) — build with: npm --prefix frontend/warehouse run build
+// ── warehouse-v2 — strict Content-Security-Policy (SPA scope only) ──────
+// The global helmet CSP stays disabled because the LEGACY app (served from
+// /public) relies on inline scripts. The React SPA loads ONLY hashed bundles
+// (no inline <script>), so a strict CSP can be applied scoped to /warehouse-v2
+// without affecting the legacy UI. style-src keeps 'unsafe-inline' for
+// Tailwind/React element styles (style attributes, not script).
+app.use('/warehouse-v2', function (req, res, next) {
+  res.setHeader('Content-Security-Policy', [
+    "default-src 'self'",
+    "base-uri 'self'",
+    "object-src 'none'",
+    "frame-ancestors 'none'",
+    "img-src 'self' data: blob:",
+    "font-src 'self' data:",
+    "style-src 'self' 'unsafe-inline'",
+    "script-src 'self'",
+    "connect-src 'self'",
+    "form-action 'self'"
+  ].join('; '));
+  next();
+});
+
 var _whDist = path.join(__dirname, 'frontend', 'warehouse', 'dist');
 if (_pwaFs.existsSync(path.join(_whDist, 'index.html'))) {
   app.use('/warehouse-v2', express.static(_whDist, {
@@ -238,6 +262,15 @@ if (_pwaFs.existsSync(path.join(_whDist, 'index.html'))) {
   console.log('[warehouse-v2] SPA mounted at /warehouse-v2');
 } else {
   console.warn('[warehouse-v2] bundle not found — run: npm --prefix frontend/warehouse run build');
+}
+
+// RC hardening — surface a loud warning if warehouse-v2 is exposed WITHOUT
+// per-user warehouse scope enforcement (an out-of-scope user could otherwise
+// read/write any warehouse). Deliberately a warning, not a hard stop: staging
+// must set WAREHOUSE_SCOPE_ENFORCE=1 (documented in the migration runbook).
+if (String(process.env.WAREHOUSE_V2_ENABLED || '1') !== '0' &&
+    String(process.env.WAREHOUSE_SCOPE_ENFORCE || '') !== '1') {
+  console.warn('[warehouse-v2][SECURITY] V2 is ENABLED but WAREHOUSE_SCOPE_ENFORCE is not "1" — users are NOT restricted to their assigned warehouses. Set WAREHOUSE_SCOPE_ENFORCE=1 in staging/production.');
 }
 
 // v6.20.0 — Deploy/version marker. Lets us confirm EXACTLY which commit is
@@ -287,6 +320,10 @@ app.use('/api/shifts', require('./routes/shifts'));
 // the /v2/* paths are claimed here. Inherits loadWarehouseScope (mounted above).
 // Phase 3C — professional stocktake mounted at the more-specific /v2/stocktakes
 // BEFORE the /v2 doc router (paths don't collide; this just claims the prefix).
+// RC hardening — per-user mutation rate limiter for the whole /v2 surface
+// (state-changing methods only; reads/exports pass through). Generous default
+// (300/min/user) so legitimate use + tests never trip it; env-tunable.
+app.use('/api/inventory/v2', require('./lib/v2RateLimit'));
 app.use('/api/inventory/v2/stocktakes', require('./routes/inventory-stocktakes'));
 // Phase 4A — item master + replenishment (paths /items, /replenishment,
 // /categories, /units don't collide with the doc router's /receipts|/issues|…).

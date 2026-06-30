@@ -101,6 +101,29 @@ export const INVTX_STATUS_OPTIONS: { value: string; label: string }[] = [
   { value: "reversed", label: "معكوس" },
 ];
 
+// Phase 3C — professional stocktake lifecycle status → Arabic. Drives the
+// StatusBadge label tone.
+export const stocktakeStatusLabel: Record<string, string> = {
+  draft: "مسودة",
+  counting: "قيد العد",
+  submitted: "بانتظار الاعتماد",
+  approved: "معتمد",
+  posted: "مُرحّل",
+  cancelled: "ملغى",
+};
+export function stocktakeStatusToLabel(status: string | null | undefined): string {
+  return stocktakeStatusLabel[String(status ?? "")] ?? "—";
+}
+export const STOCKTAKE_STATUS_OPTIONS: { value: string; label: string }[] = [
+  { value: "", label: "كل الحالات" },
+  { value: "draft", label: "مسودة" },
+  { value: "counting", label: "قيد العد" },
+  { value: "submitted", label: "بانتظار الاعتماد" },
+  { value: "approved", label: "معتمد" },
+  { value: "posted", label: "مُرحّل" },
+  { value: "cancelled", label: "ملغى" },
+];
+
 // Movement `type` ('in'/'out') → Arabic, for the rare case a movement row has
 // no Arabic reason text to show.
 export function movementTypeLabel(type: string | null | undefined): string {

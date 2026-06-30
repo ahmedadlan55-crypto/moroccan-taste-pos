@@ -45,6 +45,15 @@ export const queryKeys = {
     detail: (docType: string, id: string) => ["invtx", docType, "detail", id] as const,
   },
 
+  // Phase 3C — professional stocktake. List keyed by scope+filters (a scope
+  // change aborts the in-flight request); detail keyed by id; a mutation
+  // invalidates all + detail(id) + the dependent dashboard/inventory slices.
+  stocktakes: {
+    all: ["stocktakes"] as const,
+    list: (scope: string, params: Record<string, unknown>) => ["stocktakes", "list", scope, params] as const,
+    detail: (id: string) => ["stocktakes", "detail", id] as const,
+  },
+
   warehouses: {
     all: ["warehouses"] as const,
     summary: (scope: string) => ["warehouses", "summary", scope] as const,

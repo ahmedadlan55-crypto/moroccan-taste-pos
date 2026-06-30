@@ -22,6 +22,7 @@ export type WarehouseAction =
   | "transfer.reverse"
   | "stocktake.create"
   | "stocktake.approve"
+  | "stocktake.post"
   | "adjustment.create"
   | "adjustment.approve"
   | "adjustment.post"
@@ -51,6 +52,7 @@ const MATRIX: Record<WarehouseAction, Role[]> = {
   "transfer.reverse": ["admin", "manager"],
   "stocktake.create": ["admin", "manager", "employee", "custody"],
   "stocktake.approve": ["admin", "manager"],
+  "stocktake.post": ["admin", "manager", "employee", "custody"],
   "adjustment.create": ["admin", "manager", "employee", "custody"],
   "adjustment.approve": ["admin", "manager"],
   "adjustment.post": ["admin", "manager", "employee", "custody"],

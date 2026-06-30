@@ -1,0 +1,397 @@
+/**
+ * Item Master & Replenishment — Phase 4A.
+ *
+ * The professional item-catalog + per-warehouse replenishment layer under
+ *   /api/inventory/v2/{items,replenishment,categories,units}
+ * EXTENDS the existing inv_items (additively) — it never duplicates it. The
+ * legacy /api/inventory/items + sales/purchases that write inv_items.stock/cost
+ * directly keep working untouched.
+ *
+ * Business rules enforced here:
+ *   • SKU unique after trim + upper-case (sku_norm).
+ *   • No HARD-delete of an item with stock / movements / history — only soft
+ *     deactivate (active=0), which preserves the audit trail.
+ *   • Inactive items can't enter NEW v2 documents (guard added to the doc builders).
+ *   • SKU change after movements = HARD-BLOCK; unit change after movements = HARD-BLOCK.
+ *   • Editing the GLOBAL cost touches ONLY inv_items.cost — never warehouse WAC.
+ *   • Every mutation: expectedVersion + Idempotency-Key (create/rule) + JWT actor + RBAC + scope + audit.
+ *
+ * Replenishment is ADVISORY — it never creates a purchase order.
+ */
+'use strict';
+const router = require('express').Router();
+const crypto = require('crypto');
+const db = require('../db/connection');
+const C = require('../lib/inventoryTxContract');
+const IDEM = require('../lib/idempotencyStore');
+const REP = require('../lib/replenishmentEngine');
+const CSV = require('../lib/csvExport');
+const requireRole = require('../middleware/auth').requireRole;
+
+const MGR = requireRole('admin', 'manager');
+const BACKOFFICE = requireRole('admin', 'manager', 'employee', 'custody');
+const LOOKBACK_DAYS = (() => { const n = Number(process.env.REPLENISH_LOOKBACK_DAYS); return Number.isFinite(n) && n > 0 ? n : 30; })();
+
+// ── helpers (mirror routes/inventory-transactions.js) ───────────────────────
+function _actor(req) { return (req.user && (req.user.username || req.user.name)) || ''; }
+function _err(code, msg) { const e = new Error(msg || code); e.code = code; return e; }
+function _expectedVersion(req) {
+  const raw = (req.body && req.body.expectedVersion != null) ? req.body.expectedVersion : (req.get && req.get('If-Match'));
+  const n = parseInt(raw, 10);
+  return Number.isFinite(n) ? n : null;
+}
+function _fail(res, codeOrErr, message) {
+  const code = C.isCanonical(codeOrErr) ? codeOrErr : C.mapError(codeOrErr);
+  return res.status(C.httpFor(code)).json(C.errorBody(code, message || (codeOrErr && codeOrErr.message) || code));
+}
+function _catch(res, e) {
+  if (e && e.status === 404) return res.status(404).json({ success: false, code: 'NOT_FOUND', error: e.message || 'not found' });
+  if (e && (e.code === 'ER_DUP_ENTRY' || e.errno === 1062)) return _fail(res, 'VALIDATION_ERROR', 'الـ SKU مستخدم لصنف آخر');
+  const hasDomain = e && (e.code || (e.status && e.status !== 500));
+  if (!hasDomain) return res.status(500).json({ success: false, code: 'SERVER_ERROR', error: (e && e.message) || 'error' });
+  return _fail(res, e, e && e.message);
+}
+function _ok(res, parts, legacy, statusCode) {
+  const body = Object.assign({}, C.mutationEnvelope(parts), legacy || {});
+  res.status(statusCode || 200).json(body);
+  return body;
+}
+async function _audit(conn, docId, action, fromStatus, toStatus, actor, note, payload) {
+  const q = conn || db;
+  try {
+    await q.query('INSERT INTO inv_tx_events (id, doc_type, doc_id, action, from_status, to_status, actor, note, payload_json) VALUES (?,?,?,?,?,?,?,?,?)',
+      ['EV-' + Date.now() + '-' + Math.random().toString(36).slice(2, 7), 'item', docId, action, fromStatus || null, toStatus || null, actor || '', String(note || '').slice(0, 500), payload ? JSON.stringify(payload).slice(0, 8000) : null]);
+  } catch (_) { /* best-effort */ }
+  return { docType: 'item', docId, action, actor: actor || '', at: new Date().toISOString() };
+}
+function _skuNorm(sku) { return String(sku == null ? '' : sku).trim().toUpperCase(); }
+async function _hasMovements(itemId, conn) { const [r] = await (conn || db).query('SELECT 1 FROM inventory_movements WHERE item_id=? LIMIT 1', [itemId]); return r.length > 0; }
+async function _loadItem(id, conn) { const [r] = await (conn || db).query('SELECT * FROM inv_items WHERE id=? LIMIT 1' + (conn ? ' FOR UPDATE' : ''), [id]); return r[0] || null; }
+
+function _validateBasics(b, { requireSku }) {
+  const name = String(b.name == null ? '' : b.name).trim();
+  if (!name) throw _err('VALIDATION_ERROR', 'اسم الصنف مطلوب');
+  const unit = String(b.unit == null ? '' : b.unit).trim();
+  if (!unit) throw _err('VALIDATION_ERROR', 'الوحدة مطلوبة');
+  const sku = String(b.sku == null ? '' : b.sku).trim();
+  if (requireSku && !sku) throw _err('VALIDATION_ERROR', 'الـ SKU مطلوب');
+  if (b.cost != null && (!Number.isFinite(Number(b.cost)) || Number(b.cost) < 0)) throw _err('VALIDATION_ERROR', 'التكلفة لا يمكن أن تكون سالبة');
+  return { name, unit, sku };
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// CATEGORIES + UNITS (read)
+// ════════════════════════════════════════════════════════════════════════════
+router.get('/categories', async (req, res) => {
+  try {
+    const [rows] = await db.query("SELECT DISTINCT category AS c FROM inv_items WHERE active=1 AND deleted_at IS NULL AND category IS NOT NULL AND category<>'' ORDER BY category");
+    res.json({ data: rows.map((r) => r.c) });
+  } catch (e) { _catch(res, e); }
+});
+router.get('/units', async (req, res) => {
+  try {
+    let rows = [];
+    try { const [u] = await db.query('SELECT id, name_ar, name_en, type FROM units ORDER BY id'); rows = u; } catch (_) { rows = []; }
+    if (!rows.length) { const [u2] = await db.query("SELECT DISTINCT unit AS id FROM inv_items WHERE unit IS NOT NULL AND unit<>'' ORDER BY unit"); rows = u2.map((r) => ({ id: r.id, name_ar: r.id, name_en: r.id, type: '' })); }
+    res.json({ data: rows.map((r) => ({ code: r.id, nameAr: r.name_ar || r.id, nameEn: r.name_en || r.id, type: r.type || '' })) });
+  } catch (e) { _catch(res, e); }
+});
+
+// ════════════════════════════════════════════════════════════════════════════
+// REPLENISHMENT (advisory — never creates a PO)
+// ════════════════════════════════════════════════════════════════════════════
+function _replenWhere(req, p) {
+  const sc = req.whScopeClause ? req.whScopeClause('ws.warehouse_id') : { sql: '', params: [] };
+  const where = ['ii.deleted_at IS NULL'];
+  const params = [];
+  if (p.warehouseId) { where.push('ws.warehouse_id=?'); params.push(p.warehouseId); }
+  if (p.category) { where.push('ii.category=?'); params.push(p.category); }
+  if (p.q) { where.push('(ii.name LIKE ? OR ii.sku LIKE ?)'); params.push('%' + p.q + '%', '%' + p.q + '%'); }
+  return { sql: ' WHERE ' + where.join(' AND ') + (sc.sql || ''), params: params.concat(sc.params || []) };
+}
+// One outbound-rate + rule + stock row → an engine recommendation row.
+function _replRow(r) {
+  const rule = {
+    minQty: Number(r.min_qty) || 0, reorderPoint: r.reorder_point != null ? Number(r.reorder_point) : (Number(r.min_stock) || 0),
+    reorderQty: Number(r.reorder_qty) || 0, maxStock: Number(r.max_stock) || 0, safetyStock: Number(r.safety_stock) || 0,
+    leadTimeDays: Number(r.lead_time_days) || 0, isEnabled: r.is_enabled == null ? true : !!r.is_enabled,
+  };
+  const eng = REP.computeReplenishment({ onHand: Number(r.qty) || 0, avgDailyOut: REP.avgDailyOut(Number(r.out_qty) || 0, LOOKBACK_DAYS), hasRule: r.rule_id != null, rule });
+  return {
+    itemId: r.item_id, sku: r.sku || r.item_id, name: r.name, unit: r.unit, category: r.category,
+    warehouseId: r.warehouse_id, warehouseName: r.warehouse_name, cost: Number(r.cost) || Number(r.avg_cost) || 0,
+    reorderPoint: rule.reorderPoint, reorderQty: rule.reorderQty, maxStock: rule.maxStock, safetyStock: rule.safetyStock, leadTimeDays: rule.leadTimeDays,
+    onHand: eng.onHand, available: eng.available, avgDailyOutbound: eng.avgDailyOutbound, daysOfCover: eng.daysOfCover,
+    reorderStatus: eng.reorderStatus, recommendedQty: eng.recommendedQty, stockoutRisk: eng.stockoutRisk,
+    recommendedValue: REP.round3(eng.recommendedQty * (Number(r.cost) || Number(r.avg_cost) || 0)),
+    hasRule: eng.hasRule, lastMovementAt: r.last_movement_at || null,
+  };
+}
+const REPL_SELECT =
+  'SELECT ws.warehouse_id, ws.qty, ws.avg_cost, w.name AS warehouse_name, ii.id AS item_id, ii.name, ii.sku, ii.unit, ii.category, ii.cost, ii.min_stock, ' +
+  ' wir.id AS rule_id, wir.min_qty, wir.reorder_point, wir.reorder_qty, wir.max_stock, wir.safety_stock, wir.lead_time_days, wir.is_enabled, ' +
+  ' (SELECT COALESCE(SUM(m.qty),0) FROM inventory_movements m WHERE m.item_id=ii.id AND m.type=\'out\' AND m.warehouse_id=ws.warehouse_id AND m.movement_date >= DATE_SUB(CURDATE(), INTERVAL ' + LOOKBACK_DAYS + ' DAY)) AS out_qty, ' +
+  ' (SELECT MAX(m2.movement_date) FROM inventory_movements m2 WHERE m2.item_id=ii.id AND m2.warehouse_id=ws.warehouse_id) AS last_movement_at ' +
+  'FROM warehouse_stock ws JOIN inv_items ii ON ii.id=ws.item_id LEFT JOIN warehouses w ON w.id=ws.warehouse_id ' +
+  'LEFT JOIN warehouse_item_rules wir ON wir.item_id=ii.id AND wir.warehouse_id=ws.warehouse_id';
+
+router.get('/replenishment', async (req, res) => {
+  try {
+    const p = C.parseListQuery(req.query, ['name', 'qty', 'recommended'], []);
+    p.warehouseId = req.query.warehouseId ? String(req.query.warehouseId) : '';
+    p.category = req.query.category ? String(req.query.category) : '';
+    const riskFilter = ['high', 'medium', 'low', 'unknown'].indexOf(String(req.query.risk || '')) !== -1 ? String(req.query.risk) : '';
+    const statusFilter = ['negative', 'critical', 'reorder', 'watch', 'ok'].indexOf(String(req.query.status || '')) !== -1 ? String(req.query.status) : '';
+    const w = _replenWhere(req, p);
+    const [rows] = await db.query(REPL_SELECT + w.sql + ' ORDER BY ii.name', w.params);
+    let computed = rows.map(_replRow);
+    if (riskFilter) computed = computed.filter((r) => r.stockoutRisk === riskFilter);
+    if (statusFilter) computed = computed.filter((r) => r.reorderStatus === statusFilter);
+    const total = computed.length;
+    const pageRows = computed.slice(p.offset, p.offset + p.pageSize);
+    res.json({ data: pageRows, pagination: { page: p.page, pageSize: p.pageSize, total, totalPages: Math.max(1, Math.ceil(total / p.pageSize)) }, lookbackDays: LOOKBACK_DAYS, filters: { warehouseId: p.warehouseId, category: p.category, risk: riskFilter, status: statusFilter, q: p.q } });
+  } catch (e) { _catch(res, e); }
+});
+
+router.get('/replenishment/summary', async (req, res) => {
+  try {
+    const p = { warehouseId: req.query.warehouseId ? String(req.query.warehouseId) : '', category: req.query.category ? String(req.query.category) : '', q: '' };
+    const w = _replenWhere(req, p);
+    const [rows] = await db.query(REPL_SELECT + w.sql, w.params);
+    const computed = rows.map(_replRow);
+    const byStatus = { negative: 0, critical: 0, reorder: 0, watch: 0, ok: 0 };
+    const byRisk = { high: 0, medium: 0, low: 0, unknown: 0 };
+    let recommendedValue = 0, reorderItems = 0;
+    for (const r of computed) {
+      byStatus[r.reorderStatus] = (byStatus[r.reorderStatus] || 0) + 1;
+      byRisk[r.stockoutRisk] = (byRisk[r.stockoutRisk] || 0) + 1;
+      recommendedValue += r.recommendedValue;
+      if (r.recommendedQty > 0) reorderItems++;
+    }
+    res.json({ data: { total: computed.length, reorderItems, recommendedValue: REP.round3(recommendedValue), byStatus, byRisk, lookbackDays: LOOKBACK_DAYS } });
+  } catch (e) { _catch(res, e); }
+});
+
+router.get('/replenishment/export', async (req, res) => {
+  try {
+    const p = { warehouseId: req.query.warehouseId ? String(req.query.warehouseId) : '', category: req.query.category ? String(req.query.category) : '', q: req.query.q ? String(req.query.q).slice(0, 120) : '' };
+    const w = _replenWhere(req, p);
+    const [rows] = await db.query(REPL_SELECT + w.sql + ' ORDER BY ii.name', w.params);
+    let computed = rows.map(_replRow);
+    const riskFilter = ['high', 'medium', 'low', 'unknown'].indexOf(String(req.query.risk || '')) !== -1 ? String(req.query.risk) : '';
+    if (riskFilter) computed = computed.filter((r) => r.stockoutRisk === riskFilter);
+    const headers = ['الصنف', 'SKU', 'المستودع', 'الكمية الحالية', 'حد إعادة الطلب', 'الكمية المقترحة', 'أيام التغطية', 'مخاطر النفاد', 'آخر حركة'];
+    const body = computed.map((r) => [r.name, r.sku, r.warehouseName, r.onHand, r.reorderPoint, r.recommendedQty, r.daysOfCover == null ? '—' : r.daysOfCover, r.stockoutRisk, r.lastMovementAt || '']);
+    const csv = CSV.toCsv(headers, body);
+    res.header('Content-Type', 'text/csv; charset=utf-8');
+    res.header('Content-Disposition', 'attachment; filename="replenishment-' + new Date().toISOString().slice(0, 10) + '.csv"');
+    res.send(csv);
+  } catch (e) {
+    if (e && e.code === 'EXPORT_LIMIT') return res.status(413).json({ error: e.message });
+    _catch(res, e);
+  }
+});
+
+// ════════════════════════════════════════════════════════════════════════════
+// ITEMS — list + detail
+// ════════════════════════════════════════════════════════════════════════════
+router.get('/items', async (req, res) => {
+  try {
+    const p = C.parseListQuery(req.query, ['name', 'sku', 'category', 'created_at'], []);
+    const status = ['active', 'inactive'].indexOf(String(req.query.status || '')) !== -1 ? String(req.query.status) : '';
+    const category = req.query.category ? String(req.query.category) : '';
+    const warehouseId = req.query.warehouseId ? String(req.query.warehouseId) : '';
+    const where = ['ii.deleted_at IS NULL']; const params = [];
+    if (status === 'active') where.push('ii.active=1'); else if (status === 'inactive') where.push('ii.active=0');
+    if (category) { where.push('ii.category=?'); params.push(category); }
+    if (p.q) { where.push('(ii.name LIKE ? OR ii.sku LIKE ?)'); params.push('%' + p.q + '%', '%' + p.q + '%'); }
+    let join = '';
+    if (warehouseId) { join = ' JOIN warehouse_stock ws ON ws.item_id=ii.id AND ws.warehouse_id=?'; params.unshift(warehouseId); }
+    const sortCol = ({ name: 'ii.name', sku: 'ii.sku', category: 'ii.category', created_at: 'ii.created_at' })[p.sort] || 'ii.name';
+    const [rows] = await db.query(
+      'SELECT ii.id, ii.name, ii.name_en, ii.sku, ii.category, ii.unit, ii.cost, ii.stock, ii.min_stock, ii.active, ii.kind, ii.version, ii.default_warehouse_id, ii.created_at FROM inv_items ii' + join +
+      ' WHERE ' + where.join(' AND ') + ' ORDER BY ' + sortCol + ' ' + p.dir + ' LIMIT ? OFFSET ?', params.concat([p.pageSize, p.offset]));
+    const [cnt] = await db.query('SELECT COUNT(*) AS total FROM inv_items ii' + join + ' WHERE ' + where.join(' AND '), params);
+    const [kpi] = await db.query("SELECT COUNT(*) AS total, SUM(active=1) AS active, SUM(active=0) AS inactive, SUM(sku IS NULL OR sku='') AS no_sku FROM inv_items WHERE deleted_at IS NULL");
+    const total = Number(cnt[0].total) || 0; const k = kpi[0] || {};
+    res.json({
+      data: rows,
+      pagination: { page: p.page, pageSize: p.pageSize, total, totalPages: Math.max(1, Math.ceil(total / p.pageSize)) },
+      kpis: { total: Number(k.total) || 0, active: Number(k.active) || 0, inactive: Number(k.inactive) || 0, noSku: Number(k.no_sku) || 0 },
+      filters: { status, category, warehouseId, q: p.q, sort: p.sort, dir: p.dir },
+    });
+  } catch (e) { _catch(res, e); }
+});
+
+router.get('/items/:id/warehouses', async (req, res) => {
+  try {
+    const [rows] = await db.query(
+      'SELECT ws.warehouse_id, w.name AS warehouse_name, w.code AS warehouse_code, w.is_main, ws.qty, ws.avg_cost, (ws.qty*ws.avg_cost) AS value, ' +
+      ' wir.reorder_point, wir.reorder_qty, wir.max_stock, wir.safety_stock, wir.lead_time_days, wir.is_enabled, wir.version AS rule_version ' +
+      'FROM warehouse_stock ws LEFT JOIN warehouses w ON w.id=ws.warehouse_id LEFT JOIN warehouse_item_rules wir ON wir.item_id=ws.item_id AND wir.warehouse_id=ws.warehouse_id ' +
+      'WHERE ws.item_id=? ORDER BY w.is_main DESC, w.name', [req.params.id]);
+    res.json({ data: rows });
+  } catch (e) { _catch(res, e); }
+});
+
+router.get('/items/:id', async (req, res) => {
+  try {
+    const item = await _loadItem(req.params.id);
+    if (!item) { const e = new Error('الصنف غير موجود'); e.status = 404; throw e; }
+    const [dist] = await db.query('SELECT ws.warehouse_id, w.name AS warehouse_name, w.is_main, ws.qty, ws.avg_cost, (ws.qty*ws.avg_cost) AS value FROM warehouse_stock ws LEFT JOIN warehouses w ON w.id=ws.warehouse_id WHERE ws.item_id=? ORDER BY w.is_main DESC, w.name', [item.id]);
+    const [rules] = await db.query('SELECT * FROM warehouse_item_rules WHERE item_id=?', [item.id]);
+    const [movements] = await db.query('SELECT id, movement_date, type, qty, reason, warehouse_id, reference_type FROM inventory_movements WHERE item_id=? ORDER BY seq DESC LIMIT 20', [item.id]);
+    const [events] = await db.query("SELECT * FROM inv_tx_events WHERE doc_type='item' AND doc_id=? ORDER BY created_at ASC, id ASC", [item.id]);
+    res.json({ data: item, distribution: dist, rules, movements, timeline: events });
+  } catch (e) { _catch(res, e); }
+});
+
+// ════════════════════════════════════════════════════════════════════════════
+// CREATE / PATCH / activate / deactivate
+// ════════════════════════════════════════════════════════════════════════════
+router.post('/items', BACKOFFICE, async (req, res) => {
+  let idemId = null;
+  try {
+    const actor = _actor(req); const b = req.body || {};
+    const v = _validateBasics(b, { requireSku: true });
+    const skuNorm = _skuNorm(v.sku);
+
+    const key = IDEM.readKey(req);
+    const idem = await IDEM.begin(db, 'item:create', '', key, actor, b);
+    if (idem.mode === 'replay') return res.status(idem.statusCode || 200).json(idem.body);
+    if (idem.mode === 'conflict') return _fail(res, 'IDEMPOTENCY_CONFLICT', 'طلب إنشاء مكرر بمحتوى مختلف أو قيد التنفيذ');
+    if (idem.mode === 'proceed') idemId = idem.idemId;
+
+    const out = await db.withTransaction(async (conn) => {
+      const [dup] = await conn.query('SELECT id FROM inv_items WHERE sku_norm=? LIMIT 1', [skuNorm]);
+      if (dup.length) throw _err('VALIDATION_ERROR', 'الـ SKU "' + v.sku + '" مستخدم لصنف آخر');
+      const id = 'INV-' + crypto.randomBytes(7).toString('hex');
+      await conn.query(
+        'INSERT INTO inv_items (id, name, name_en, sku, sku_norm, category, unit, big_unit, conv_rate, cost, stock, min_stock, max_stock, active, kind, brand_id, default_warehouse_id, description, notes, version) ' +
+        'VALUES (?,?,?,?,?,?,?,?,?,?,0,?,?,1,?,?,?,?,?,1)',
+        [id, v.name, (b.nameEn || '').toString().slice(0, 200) || null, v.sku, skuNorm, (b.category || '').toString().slice(0, 100) || null, v.unit,
+          (b.bigUnit || '').toString().slice(0, 50) || null, Number.isFinite(Number(b.convRate)) && Number(b.convRate) > 0 ? Number(b.convRate) : 1,
+          Number.isFinite(Number(b.cost)) ? Number(b.cost) : 0, Number.isFinite(Number(b.minStock)) ? Number(b.minStock) : 0,
+          Number.isFinite(Number(b.maxStock)) ? Number(b.maxStock) : 0, (['raw', 'semi'].indexOf(String(b.kind)) !== -1 ? String(b.kind) : 'raw'),
+          (b.brandId || null), (b.defaultWarehouseId || null), (b.description || '').toString().slice(0, 5000) || null, (b.notes || '').toString().slice(0, 500) || null]);
+      const auditEvent = await _audit(conn, id, 'create', null, 'active', actor, 'إنشاء صنف', { sku: v.sku });
+      return { id, auditEvent };
+    });
+    const body = Object.assign({}, C.mutationEnvelope({ data: { id: out.id }, documentNumber: v.sku, status: 'active', version: 1, auditEvent: out.auditEvent }), { id: out.id });
+    if (idemId) await IDEM.complete(db, idemId, 201, body);
+    return res.status(201).json(body);
+  } catch (e) { if (idemId) await IDEM.abort(db, idemId).catch(() => {}); _catch(res, e); }
+});
+
+router.patch('/items/:id', BACKOFFICE, async (req, res) => {
+  try {
+    const actor = _actor(req); const id = req.params.id; const b = req.body || {};
+    const expected = _expectedVersion(req);
+    if (expected == null) return _fail(res, 'VALIDATION_ERROR', 'expectedVersion مطلوب للتعديل');
+    const item = await _loadItem(id);
+    if (!item) { const e = new Error('الصنف غير موجود'); e.status = 404; throw e; }
+    const out = await db.withTransaction(async (conn) => {
+      const cur = await _loadItem(id, conn); // FOR UPDATE
+      if (Number(cur.version) !== expected) throw _err('VERSION_CONFLICT', 'تغيّر الصنف منذ آخر تحميل — أعد التحميل');
+      const sets = ['version=version+1']; const vals = [];
+      const moved = await _hasMovements(id, conn);
+      // SKU change after movements = HARD-BLOCK.
+      if (b.sku !== undefined && _skuNorm(b.sku) !== _skuNorm(cur.sku)) {
+        if (moved) throw _err('VALIDATION_ERROR', 'لا يمكن تغيير SKU بعد وجود حركات للصنف');
+        const sku = String(b.sku).trim(); const skuNorm = _skuNorm(sku);
+        if (!sku) throw _err('VALIDATION_ERROR', 'الـ SKU لا يمكن أن يكون فارغًا');
+        const [dup] = await conn.query('SELECT id FROM inv_items WHERE sku_norm=? AND id<>? LIMIT 1', [skuNorm, id]);
+        if (dup.length) throw _err('VALIDATION_ERROR', 'الـ SKU "' + sku + '" مستخدم لصنف آخر');
+        sets.push('sku=?', 'sku_norm=?'); vals.push(sku, skuNorm);
+      }
+      // Unit change after movements = HARD-BLOCK.
+      if (b.unit !== undefined && String(b.unit).trim() !== String(cur.unit || '').trim()) {
+        if (moved) throw _err('VALIDATION_ERROR', 'لا يمكن تغيير الوحدة بعد وجود حركات للصنف');
+        if (!String(b.unit).trim()) throw _err('VALIDATION_ERROR', 'الوحدة مطلوبة');
+        sets.push('unit=?'); vals.push(String(b.unit).trim());
+      }
+      if (b.name !== undefined) { const nm = String(b.name).trim(); if (!nm) throw _err('VALIDATION_ERROR', 'اسم الصنف مطلوب'); sets.push('name=?'); vals.push(nm); }
+      if (b.nameEn !== undefined) { sets.push('name_en=?'); vals.push(String(b.nameEn).slice(0, 200) || null); }
+      if (b.category !== undefined) { sets.push('category=?'); vals.push(String(b.category).slice(0, 100) || null); }
+      // Editing the GLOBAL cost touches ONLY inv_items.cost — never warehouse WAC.
+      if (b.cost !== undefined) { if (!Number.isFinite(Number(b.cost)) || Number(b.cost) < 0) throw _err('VALIDATION_ERROR', 'التكلفة لا يمكن أن تكون سالبة'); sets.push('cost=?'); vals.push(Number(b.cost)); }
+      if (b.minStock !== undefined) { if (Number(b.minStock) < 0) throw _err('VALIDATION_ERROR', 'الحد الأدنى لا يمكن أن يكون سالبًا'); sets.push('min_stock=?'); vals.push(Number(b.minStock)); }
+      if (b.maxStock !== undefined) { if (Number(b.maxStock) < 0) throw _err('VALIDATION_ERROR', 'الحد الأقصى لا يمكن أن يكون سالبًا'); sets.push('max_stock=?'); vals.push(Number(b.maxStock)); }
+      if (b.defaultWarehouseId !== undefined) { sets.push('default_warehouse_id=?'); vals.push(b.defaultWarehouseId || null); }
+      if (b.description !== undefined) { sets.push('description=?'); vals.push(String(b.description).slice(0, 5000) || null); }
+      if (b.notes !== undefined) { sets.push('notes=?'); vals.push(String(b.notes).slice(0, 500) || null); }
+      const [r] = await conn.query('UPDATE inv_items SET ' + sets.join(', ') + ' WHERE id=? AND version=?', vals.concat([id, expected]));
+      if (!r || r.affectedRows !== 1) throw _err('VERSION_CONFLICT', 'تغيّر الصنف منذ آخر تحميل — أعد التحميل');
+      const auditEvent = await _audit(conn, id, 'edit', 'active', 'active', actor, 'تعديل صنف', null);
+      return { auditEvent };
+    });
+    return _ok(res, { data: { id }, documentNumber: item.sku, status: item.active ? 'active' : 'inactive', version: Number(item.version) + 1, auditEvent: out.auditEvent }, { id });
+  } catch (e) { _catch(res, e); }
+});
+
+function _setActive(active) {
+  return async (req, res) => {
+    try {
+      const actor = _actor(req); const id = req.params.id;
+      const expected = _expectedVersion(req);
+      const item = await _loadItem(id);
+      if (!item) { const e = new Error('الصنف غير موجود'); e.status = 404; throw e; }
+      if (!!Number(item.active) === active) return _fail(res, 'INVALID_STATE_TRANSITION', active ? 'الصنف نشط بالفعل' : 'الصنف غير نشط بالفعل');
+      const out = await db.withTransaction(async (conn) => {
+        const [r] = await conn.query('UPDATE inv_items SET active=?, version=version+1 WHERE id=? AND active=?' + (expected != null ? ' AND version=?' : ''),
+          expected != null ? [active ? 1 : 0, id, active ? 0 : 1, expected] : [active ? 1 : 0, id, active ? 0 : 1]);
+        if (!r || r.affectedRows !== 1) throw _err('VERSION_CONFLICT', 'تغيّر الصنف منذ آخر تحميل — أعد التحميل');
+        const auditEvent = await _audit(conn, id, active ? 'activate' : 'deactivate', active ? 'inactive' : 'active', active ? 'active' : 'inactive', actor, req.body && req.body.reason, null);
+        return { auditEvent };
+      });
+      return _ok(res, { data: { id }, documentNumber: item.sku, status: active ? 'active' : 'inactive', version: Number(item.version) + 1, auditEvent: out.auditEvent }, { id });
+    } catch (e) { _catch(res, e); }
+  };
+}
+router.post('/items/:id/activate', MGR, _setActive(true));
+router.post('/items/:id/deactivate', MGR, _setActive(false));
+
+// ════════════════════════════════════════════════════════════════════════════
+// WAREHOUSE-ITEM RULES (upsert; scope-guarded; version + validation)
+// ════════════════════════════════════════════════════════════════════════════
+router.put('/items/:id/warehouse-rules/:warehouseId', BACKOFFICE, async (req, res) => {
+  try {
+    const actor = _actor(req); const id = req.params.id; const warehouseId = req.params.warehouseId; const b = req.body || {};
+    if (req.guardWh && !req.guardWh(res, warehouseId)) return;
+    const item = await _loadItem(id);
+    if (!item) { const e = new Error('الصنف غير موجود'); e.status = 404; throw e; }
+    const [wh] = await db.query('SELECT id FROM warehouses WHERE id=? LIMIT 1', [warehouseId]);
+    if (!wh.length) return _fail(res, 'VALIDATION_ERROR', 'المستودع غير موجود');
+    let rule;
+    try { rule = REP.validateRule(b); } catch (e) { return _fail(res, 'VALIDATION_ERROR', e.message); }
+    const expected = _expectedVersion(req);
+
+    const key = IDEM.readKey(req);
+    const idem = await IDEM.begin(db, 'item:rule', id + ':' + warehouseId, key, actor, b);
+    let idemId = null;
+    if (idem.mode === 'replay') return res.status(idem.statusCode || 200).json(idem.body);
+    if (idem.mode === 'conflict') return _fail(res, 'IDEMPOTENCY_CONFLICT', 'طلب مكرر بمحتوى مختلف أو قيد التنفيذ');
+    if (idem.mode === 'proceed') idemId = idem.idemId;
+    try {
+      const out = await db.withTransaction(async (conn) => {
+        const [ex] = await conn.query('SELECT * FROM warehouse_item_rules WHERE warehouse_id=? AND item_id=? LIMIT 1 FOR UPDATE', [warehouseId, id]);
+        if (ex.length) {
+          if (expected != null && Number(ex[0].version) !== expected) throw _err('VERSION_CONFLICT', 'تغيّرت القاعدة منذ آخر تحميل — أعد التحميل');
+          await conn.query('UPDATE warehouse_item_rules SET min_qty=?, reorder_point=?, reorder_qty=?, max_stock=?, safety_stock=?, lead_time_days=?, is_enabled=?, last_reviewed_at=NOW(), updated_by=?, version=version+1 WHERE warehouse_id=? AND item_id=?',
+            [rule.minQty, rule.reorderPoint, rule.reorderQty, rule.maxStock, rule.safetyStock, rule.leadTimeDays, rule.isEnabled ? 1 : 0, actor, warehouseId, id]);
+        } else {
+          await conn.query('INSERT INTO warehouse_item_rules (id, warehouse_id, item_id, min_qty, reorder_point, reorder_qty, max_stock, safety_stock, lead_time_days, is_enabled, last_reviewed_at, created_by, updated_by, version) VALUES (?,?,?,?,?,?,?,?,?,?,NOW(),?,?,1)',
+            ['WIR-' + crypto.randomBytes(6).toString('hex'), warehouseId, id, rule.minQty, rule.reorderPoint, rule.reorderQty, rule.maxStock, rule.safetyStock, rule.leadTimeDays, rule.isEnabled ? 1 : 0, actor, actor]);
+        }
+        const [now] = await conn.query('SELECT version FROM warehouse_item_rules WHERE warehouse_id=? AND item_id=?', [warehouseId, id]);
+        const auditEvent = await _audit(conn, id, 'rule', null, null, actor, 'قاعدة إعادة طلب للمستودع ' + warehouseId, { warehouseId, rule });
+        return { version: Number(now[0] && now[0].version) || 1, auditEvent };
+      });
+      const body = Object.assign({}, C.mutationEnvelope({ data: { id, warehouseId }, status: 'saved', version: out.version, auditEvent: out.auditEvent }), { id, warehouseId });
+      if (idemId) await IDEM.complete(db, idemId, 200, body);
+      return res.status(200).json(body);
+    } catch (e) { if (idemId) await IDEM.abort(db, idemId).catch(() => {}); throw e; }
+  } catch (e) { _catch(res, e); }
+});
+
+module.exports = router;

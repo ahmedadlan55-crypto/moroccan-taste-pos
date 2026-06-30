@@ -141,7 +141,9 @@ function _validateItems(items, qtyField, allowZero) {
 }
 
 async function _itemMeta(itemId) {
-  const [r] = await db.query('SELECT id, name, unit FROM inv_items WHERE id=? LIMIT 1', [itemId]);
+  const [r] = await db.query('SELECT id, name, unit, active, deleted_at FROM inv_items WHERE id=? LIMIT 1', [itemId]);
+  // Phase 4A — an inactive / deleted item cannot enter a NEW v2 document.
+  if (r.length && (Number(r[0].active) === 0 || r[0].deleted_at)) throw _err('VALIDATION_ERROR', 'الصنف "' + (r[0].name || itemId) + '" غير نشط — لا يمكن استخدامه في مستند جديد');
   return r[0] || { id: itemId, name: '', unit: '' };
 }
 

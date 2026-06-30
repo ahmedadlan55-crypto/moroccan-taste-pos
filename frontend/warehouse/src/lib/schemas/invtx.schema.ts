@@ -11,10 +11,19 @@ export type InvTxStatus = z.infer<typeof invTxStatus>;
 export type InvTxDocType = "receipt" | "issue" | "adjustment";
 
 // ── line inputs ─────────────────────────────────────────────────────────────
+// Phase 4B — an optional per-line lot (used by the backend ONLY for tracked items;
+// a tracked item with no lot is rejected server-side with LOT_REQUIRED).
+export const lotLineInput = z.object({
+  lotNumber: z.string().min(1),
+  qty: z.number().positive(),
+  expiryDate: z.string().optional(),
+  manufactureDate: z.string().optional(),
+});
 export const receiptLineInput = z.object({
   itemId: z.string().min(1, "اختر صنفًا"),
   qty: z.number().positive("الكمية يجب أن تكون أكبر من صفر"),
   unitCost: z.number().positive("التكلفة مطلوبة وموجبة"),
+  lots: z.array(lotLineInput).optional(),
 });
 export const issueLineInput = z.object({
   itemId: z.string().min(1, "اختر صنفًا"),

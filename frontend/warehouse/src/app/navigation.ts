@@ -13,6 +13,8 @@ import {
   GitBranch,
   Tags,
   ShoppingCart,
+  Layers,
+  CalendarClock,
   type LucideIcon,
 } from "lucide-react";
 
@@ -42,6 +44,8 @@ export const navigation: NavGroup[] = [
       { id: "inventory", label: "المواد والأرصدة", path: "/inventory", icon: Boxes },
       { id: "items", label: "كتالوج الأصناف", path: "/items", icon: Tags },
       { id: "replenishment", label: "خطة إعادة الطلب", path: "/replenishment", icon: ShoppingCart },
+      { id: "lots", label: "الدفعات", path: "/lots", icon: Layers },
+      { id: "expiry", label: "تحذيرات الصلاحية", path: "/expiry", icon: CalendarClock },
     ],
   },
   {

@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { Fragment, useMemo, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { ArrowRight, Trash2, X } from "lucide-react";
 import { PageHeader } from "@/components/PageHeader";
@@ -17,7 +17,7 @@ import {
 } from "@/lib/schemas/invtx.schema";
 import type { InvTxConfig } from "./invtxConfig";
 
-interface Line { itemId: string; itemName: string; unit: string; qty: number; unitCost: number; countedQty: number; systemQty: number }
+interface Line { itemId: string; itemName: string; unit: string; qty: number; unitCost: number; countedQty: number; systemQty: number; lotNumber?: string; expiryDate?: string }
 
 const STEPS = ["الأساسيات", "الأصناف", "المراجعة"];
 
@@ -85,7 +85,7 @@ export function InvTxWizard({ config }: { config: InvTxConfig }) {
 
   function buildPayload(): Record<string, unknown> {
     const items = lines.map((l) =>
-      isReceipt ? { itemId: l.itemId, qty: Number(l.qty), unitCost: Number(l.unitCost) }
+      isReceipt ? { itemId: l.itemId, qty: Number(l.qty), unitCost: Number(l.unitCost), ...(l.lotNumber && l.lotNumber.trim() ? { lots: [{ lotNumber: l.lotNumber.trim(), qty: Number(l.qty), expiryDate: l.expiryDate || undefined }] } : {}) }
         : isAdj ? { itemId: l.itemId, countedQty: Number(l.countedQty) }
           : { itemId: l.itemId, qty: Number(l.qty) },
     );
@@ -214,7 +214,8 @@ export function InvTxWizard({ config }: { config: InvTxConfig }) {
                     {lines.map((l, i) => {
                       const delta = l.countedQty - l.systemQty;
                       return (
-                        <tr key={l.itemId}>
+                        <Fragment key={l.itemId}>
+                        <tr>
                           <td className="py-2 font-bold text-slate-700">{l.itemName}</td>
                           {isAdj ? (
                             <>
@@ -229,6 +230,18 @@ export function InvTxWizard({ config }: { config: InvTxConfig }) {
                           {!isAdj && <td className="text-center tabular-nums text-slate-600">{formatCurrency(l.qty * l.unitCost)}</td>}
                           <td className="text-left"><Button variant="ghost" size="icon" aria-label="حذف" onClick={() => removeLine(i)}><Trash2 className="h-4 w-4" /></Button></td>
                         </tr>
+                        {isReceipt && (
+                          <tr className="bg-slate-50/50">
+                            <td colSpan={6} className="px-2 pb-2">
+                              <div className="flex flex-wrap items-center gap-2 text-xs">
+                                <span className="font-bold text-slate-400">دفعة (إلزامية للأصناف المُتتبعة):</span>
+                                <input className="field h-9 w-40" placeholder="رقم الدفعة" value={l.lotNumber ?? ""} onChange={(e) => updateLine(i, { lotNumber: e.target.value })} aria-label="رقم الدفعة" />
+                                <input type="date" className="field h-9 w-40" value={l.expiryDate ?? ""} onChange={(e) => updateLine(i, { expiryDate: e.target.value })} aria-label="تاريخ الصلاحية" />
+                              </div>
+                            </td>
+                          </tr>
+                        )}
+                        </Fragment>
                       );
                     })}
                   </tbody>

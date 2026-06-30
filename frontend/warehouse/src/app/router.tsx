@@ -18,6 +18,8 @@ import { CountingWorkspace } from "@/features/stocktakes/CountingWorkspace";
 import { ItemsPage } from "@/features/items/ItemsPage";
 import { ItemWizard } from "@/features/items/ItemWizard";
 import { ReplenishmentPage } from "@/features/replenishment/ReplenishmentPage";
+import { LotsPage } from "@/features/lots/LotsPage";
+import { ExpiryPage } from "@/features/expiry/ExpiryPage";
 // Analytics + Reports pull in the heavy recharts bundle — lazy-load them so the
 // initial dashboard/inventory entry stays light; the rest stay eager.
 const AnalyticsPage = lazy(() => import("@/features/analytics/AnalyticsPage").then((m) => ({ default: m.AnalyticsPage })));
@@ -56,6 +58,9 @@ export function AppRouter() {
             <Route path="items" element={<ItemsPage />} />
             <Route path="items/new" element={<ItemWizard />} />
             <Route path="replenishment" element={<ReplenishmentPage />} />
+            <Route path="lots" element={<LotsPage />} />
+            <Route path="lots/:id" element={<LotsPage />} />
+            <Route path="expiry" element={<ExpiryPage />} />
             <Route path="receipts" element={<ReceiptsPage />} />
             <Route path="receipts/new" element={<ReceiptWizard />} />
             <Route path="issues" element={<IssuesPage />} />

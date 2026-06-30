@@ -16,6 +16,7 @@
     "test:transfers-api": "node tests/integration/transfers.api.test.js",
     "test:gl-concurrency": "node tests/integration/glConcurrency.api.test.js",
     "test:bootstrap": "node tests/integration/bootstrap.empty-db.test.js",
+    "test:idempotency-retention": "node tests/integration/idempotencyRetention.test.js",
     "scope:backfill": "node scripts/backfill-warehouse-access.js"
   },
   "dependencies": {

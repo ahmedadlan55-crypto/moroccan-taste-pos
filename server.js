@@ -4929,11 +4929,14 @@ async function runMigrations() {
   // Phase 3A.1 — request fingerprint so the SAME key with a DIFFERENT payload is
   // rejected as IDEMPOTENCY_CONFLICT instead of replaying a mismatched result.
   await addColumnIfMissing('idempotency_keys', 'request_hash', "VARCHAR(64)");
-  // House-keeping / retention policy: drop idempotency rows older than 24h
-  // (cheap, runs on every boot). Reservations from a crashed in-flight request
-  // are also reclaimed by this 24h sweep.
+  // House-keeping / retention policy (Phase 3B): purge COMPLETED idempotency
+  // results older than IDEMPOTENCY_RETENTION_DAYS (default 30). An IN-PROGRESS
+  // reservation (status_code IS NULL) is never deleted, so a live request is
+  // never torn out from under itself. Runs on every boot + daily (unref'd timer).
   try {
-    await db.query(`DELETE FROM idempotency_keys WHERE created_at < DATE_SUB(NOW(), INTERVAL 24 HOUR)`);
+    const _idemRetention = require('./lib/idempotencyRetention');
+    await _idemRetention.cleanupIdempotencyKeys(db);
+    _idemRetention.startIdempotencyCleanup(db);
   } catch(e) {}
 
   console.log('[v5-migrations] Real-Estate / Contracts / Work-Orders / AP-AR + V5.1 indexes ready.');

@@ -16,8 +16,20 @@ const { recomputeInvItemStock } = require('../lib/stockRecompute');
 const requireRole = require('../middleware/auth').requireRole;
 const MGR = requireRole('admin', 'manager');
 const BACKOFFICE = requireRole('admin', 'manager', 'employee', 'custody');
+// Phase 0 — canonical transfer lifecycle + cumulative-receipt math (shared
+// with tests/warehouseTransfer.test.js so the route and the contract test
+// can never drift apart).
+const TR = require('../lib/warehouseTransfer');
 
 // ─── Helpers ──────────────────────────────────────────────────────────
+
+// Phase 0 §5 — the actor of every state change is the AUTHENTICATED user from
+// the JWT (req.user), never a spoofable name sent in the request body. The
+// global /api gate in server.js sets req.user for every /api/erp route, so
+// this is always populated for an authenticated request.
+function _actor(req) {
+  return (req.user && (req.user.username || req.user.name)) || '';
+}
 
 function _ymd(d) {
   d = d || new Date();
@@ -275,7 +287,9 @@ router.get('/stock-issues/:id', async (req, res) => {
 // Create stock issue (draft)
 router.post('/stock-issues', async (req, res) => {
   try {
-    const { fromWarehouseId, toWarehouseId, brandId, branchId, issueDate, notes, items, createdBy } = req.body;
+    const { fromWarehouseId, toWarehouseId, brandId, branchId, issueDate, notes, items } = req.body;
+    // Phase 0 §5 — creator identity comes from the JWT, not the body.
+    const createdBy = _actor(req);
     if (!fromWarehouseId || !toWarehouseId) return res.status(400).json({ error: 'from/to warehouse required' });
     // v5.10.40 — Reject same-warehouse "transfers". Every ERP (SAP, Oracle,
     // Odoo) treats this as invalid because it has no business meaning and
@@ -340,7 +354,8 @@ router.post('/stock-issues', async (req, res) => {
 router.post('/stock-issues/:id/approve', MGR, async (req, res) => {
   try {
     const id = req.params.id;
-    const { approvedBy } = req.body;
+    // Phase 0 §5 — approver identity from the JWT, never the body.
+    const approvedBy = _actor(req);
     const [rows] = await db.query('SELECT status FROM stock_issues WHERE id=?', [id]);
     if (!rows.length) return res.status(404).json({ error: 'not found' });
     if (rows[0].status !== 'draft') return res.status(400).json({ error: 'only draft can be approved' });
@@ -349,7 +364,7 @@ router.post('/stock-issues/:id/approve', MGR, async (req, res) => {
     // silent fake success.
     const [updRes] = await db.query(
       `UPDATE stock_issues SET status='approved', approved_by=?, approved_at=NOW() WHERE id=? AND status='draft'`,
-      [approvedBy || '', id]);
+      [approvedBy, id]);
     if (!updRes || updRes.affectedRows !== 1) {
       return res.status(409).json({ error: 'تغيّرت حالة أمر الصرف — أعد التحميل وحاول مجدداً', code: 'state_changed' });
     }
@@ -361,11 +376,21 @@ router.post('/stock-issues/:id/approve', MGR, async (req, res) => {
 router.post('/stock-issues/:id/issue', BACKOFFICE, async (req, res) => {
   try {
     const id = req.params.id;
-    const { issuedBy } = req.body;
+    // Phase 0 §5 — issuer identity from the JWT, never the body.
+    const issuedBy = _actor(req);
     const [hdrRows] = await db.query('SELECT * FROM stock_issues WHERE id=?', [id]);
     if (!hdrRows.length) return res.status(404).json({ error: 'not found' });
     const hdr = hdrRows[0];
-    if (!['draft','approved'].includes(hdr.status)) return res.status(400).json({ error: 'invalid status' });
+    // Phase 0 §3 — a draft can NEVER be issued. The approval step is the
+    // control that makes the value/stock move auditable, so issuing is only
+    // allowed from `approved`. (Was `['draft','approved']` — that let an
+    // approver-less draft move stock + post GL.)
+    if (!TR.canIssue(hdr.status)) {
+      return res.status(400).json({
+        error: 'لا يمكن صرف الإذن إلا بعد اعتماده (الحالة يجب أن تكون "approved"). الحالة الحالية: ' + hdr.status,
+        code: 'ISSUE_REQUIRES_APPROVED'
+      });
+    }
 
     const [items] = await db.query('SELECT * FROM stock_issue_items WHERE issue_id=?', [id]);
     if (!items.length) return res.status(400).json({ error: 'no items' });
@@ -392,7 +417,7 @@ router.post('/stock-issues/:id/issue', BACKOFFICE, async (req, res) => {
       for (const it of items) {
         const qty = Number(it.qty_requested);
         await _applyStockMovement(hdr.from_warehouse_id, it.item_id, -qty, Number(it.unit_cost),
-                                  'stock_issue_out', id, issuedBy || '', conn);
+                                  'stock_issue_out', id, issuedBy, conn);
         const lineTotal = qty * Number(it.unit_cost);
         totalCost += lineTotal;
         await conn.query(
@@ -405,13 +430,13 @@ router.post('/stock-issues/:id/issue', BACKOFFICE, async (req, res) => {
             'INSERT INTO inventory_movements (id, movement_date, item_id, item_name, type, qty, reason, username, notes, warehouse_id, reference_type, reference_id) ' +
             'VALUES (?,?,?,?,?,?,?,?,?,?,?,?)',
             [movId, issueNow, it.item_id, it.item_name || '', 'out', qty,
-             'تحويل صادر', issuedBy || '', 'STOCK_ISSUE: ' + (hdr.issue_number || id),
+             'تحويل صادر', issuedBy, 'STOCK_ISSUE: ' + (hdr.issue_number || id),
              hdr.from_warehouse_id, 'transfer', id]);
         } catch(e) {
           await conn.query(
             'INSERT INTO inventory_movements (id, movement_date, item_id, item_name, type, qty, reason, username, notes, warehouse_id) VALUES (?,?,?,?,?,?,?,?,?,?)',
             [movId, issueNow, it.item_id, it.item_name || '', 'out', qty,
-             'تحويل صادر', issuedBy || '', 'STOCK_ISSUE: ' + (hdr.issue_number || id),
+             'تحويل صادر', issuedBy, 'STOCK_ISSUE: ' + (hdr.issue_number || id),
              hdr.from_warehouse_id]);
         }
       }
@@ -423,7 +448,7 @@ router.post('/stock-issues/:id/issue', BACKOFFICE, async (req, res) => {
           referenceType: 'stock_issue',
           referenceId: id,
           description: `إذن صرف ${hdr.issue_number}: من ${hdr.from_warehouse_id} إلى ${hdr.to_warehouse_id}`,
-          postedBy: issuedBy || '',
+          postedBy: issuedBy,
           entries: [
             { accountCode: gl.CORE_ACCOUNTS.BRANCH_INVENTORY.code, debit: totalCost, credit: 0,
               brandId: hdr.brand_id, branchId: hdr.branch_id, warehouseId: hdr.to_warehouse_id },
@@ -438,11 +463,18 @@ router.post('/stock-issues/:id/issue', BACKOFFICE, async (req, res) => {
         glId = glRes.journalId;
       }
 
-      await conn.query(
+      // Phase 0 — state-guarded flip: a concurrent double-issue (both racing
+      // past the read above) loses here with affectedRows=0 and rolls its own
+      // stock deduction + GL back, instead of issuing the same goods twice.
+      const [flipRes] = await conn.query(
         `UPDATE stock_issues
          SET status='issued', issued_by=?, issued_at=NOW(), total_cost=?, gl_journal_id=?
-         WHERE id=?`,
-        [issuedBy || '', totalCost, glId, id]);
+         WHERE id=? AND status='approved'`,
+        [issuedBy, totalCost, glId, id]);
+      if (!flipRes || flipRes.affectedRows !== 1) {
+        const e = new Error('تغيّرت حالة أمر الصرف (صرف مكرر؟) — أعد التحميل وحاول مجدداً');
+        e.status = 409; throw e;
+      }
 
       return { totalCost, glId };
     });
@@ -452,98 +484,126 @@ router.post('/stock-issues/:id/issue', BACKOFFICE, async (req, res) => {
 });
 
 // Receive (increment destination warehouse)
+// Phase 0 §4 — CUMULATIVE partial receipt. `items[].qtyReceived` is the
+// quantity arriving in THIS shipment (a delta), accumulated onto whatever was
+// received before. The header rests on `partially_received` until every line
+// is fully received, then flips to `received`. Per-line over-receipt is
+// validated against the REMAINING quantity (issued − already received), not
+// the issued total, so two partial receipts can never exceed what was issued.
 router.post('/stock-issues/:id/receive', BACKOFFICE, async (req, res) => {
   try {
     const id = req.params.id;
-    const { receivedBy, items } = req.body;  // items optional — partial receive
-    const [hdrRows] = await db.query('SELECT * FROM stock_issues WHERE id=?', [id]);
-    if (!hdrRows.length) return res.status(404).json({ error: 'not found' });
-    const hdr = hdrRows[0];
-    if (hdr.status !== 'issued') return res.status(400).json({ error: 'only issued can be received' });
+    // Phase 0 §5 — receiver identity from the JWT, never the body.
+    const receivedBy = _actor(req);
+    const { items } = req.body || {};  // items optional — omit = receive all remaining
 
-    // v7.5 — items=[] (truthy but EMPTY) used to skip the over-receipt
-    // validation below entirely and silently fall back to a FULL receipt.
-    // Reject it: omit the field for full receipt, or send per-line qtys.
+    // v7.5 — items=[] (truthy but EMPTY) used to skip validation and silently
+    // fall back to a FULL receipt. Reject it: omit the field for "receive all
+    // remaining", or send per-line qtys.
     if (Array.isArray(items) && items.length === 0) {
       return res.status(400).json({
-        error: 'قائمة الأصناف فارغة — احذف الحقل لاستلام الكل أو أرسل كمية لكل سطر',
+        error: 'قائمة الأصناف فارغة — احذف الحقل لاستلام كل المتبقي أو أرسل كمية لكل سطر',
         code: 'ITEMS_ARRAY_EMPTY'
       });
     }
+    // delta-to-receive-now, keyed by line id (only when items provided).
+    const deltaMap = {};
+    const hasItemsArg = Array.isArray(items);
+    if (hasItemsArg) items.forEach(it => { deltaMap[it.id] = Number(it.qtyReceived); });
 
-    const [dbItems] = await db.query('SELECT * FROM stock_issue_items WHERE issue_id=?', [id]);
-    const qtyMap = {};
-    if (Array.isArray(items)) items.forEach(it => { qtyMap[it.id] = Number(it.qtyReceived); });
-
-    // v5.10.40 — Validate received quantities BEFORE any side effects.
-    // A receiver must never accept more than what was issued — global ERP
-    // norm (SAP, Oracle, Odoo all reject over-receipt). Reject the whole
-    // request with a clear error rather than silently capping or failing
-    // mid-loop.
-    const issuedById = {};
-    dbItems.forEach(d => { issuedById[d.id] = Number(d.qty_issued) || 0; });
-    for (const k in qtyMap) {
-      const want = Number(qtyMap[k]) || 0;
-      const max  = issuedById[k] || 0;
-      if (want < 0) {
-        return res.status(400).json({ error: `الكمية المستلَمة لا يمكن أن تكون سالبة (سطر ${k})` });
-      }
-      if (want > max) {
-        return res.status(400).json({
-          error: `الكمية المستلَمة (${want}) أكبر من الكمية المُصدَرة (${max}) للسطر ${k}. غير مسموح.`,
-          code: 'OVER_RECEIPT',
-          lineId: k,
-          qtyIssued: max,
-          qtyReceived: want
-        });
-      }
-    }
-
-    // v5.10.39 — log a "تحويل وارد" inventory_movements row for each
-    // received line, dated NOW(), so the destination warehouse's ledger
-    // shows the transfer at the receive date (matches the issue-side
-    // 'out' row with the same reference_id).
     const receiveNow = new Date();
-    // v7.4 — atomic receive: every destination stock increment + its ledger row
-    // + the status flip commit together, so a mid-failure can't leave a transfer
-    // half-received. No GL here — the value already moved to Branch Inventory at
-    // issue time. Over-receipt was already validated above (rolls back nothing).
-    await db.withTransaction(async (conn) => {
+    // Everything authoritative happens INSIDE the transaction with the header
+    // row locked FOR UPDATE, so two concurrent receives on the same transfer
+    // serialize: the cumulative read-modify-write of qty_received is safe, and
+    // every stock increment + ledger row + status flip commit or roll back as
+    // one unit. No GL here — the value already moved to Branch Inventory at
+    // issue time.
+    const out = await db.withTransaction(async (conn) => {
+      const [hdrRows] = await conn.query('SELECT * FROM stock_issues WHERE id=? FOR UPDATE', [id]);
+      if (!hdrRows.length) { const e = new Error('not found'); e.status = 404; throw e; }
+      const hdr = hdrRows[0];
+      if (!TR.canReceive(hdr.status)) {
+        const e = new Error('لا يمكن الاستلام إلا بعد الصرف (issued أو partially_received). الحالة الحالية: ' + hdr.status);
+        e.status = 400; e.code = 'RECEIVE_INVALID_STATE'; throw e;
+      }
+
+      const [dbItems] = await conn.query('SELECT * FROM stock_issue_items WHERE issue_id=? FOR UPDATE', [id]);
+
+      // Validate every requested delta against the line's REMAINING quantity
+      // BEFORE any side effect (rolls back nothing on rejection).
+      const plan = []; // { line, delta, newQtyReceived }
+      let totalDelta = 0;
       for (const it of dbItems) {
-        const qtyReceived = qtyMap.hasOwnProperty(it.id) ? qtyMap[it.id] : Number(it.qty_issued);
-        if (qtyReceived <= 0) continue;
-        await _applyStockMovement(hdr.to_warehouse_id, it.item_id, qtyReceived, Number(it.unit_cost),
-                                  'stock_issue_in', id, receivedBy || '', conn);
-        await conn.query('UPDATE stock_issue_items SET qty_received=? WHERE id=?', [qtyReceived, it.id]);
+        const qtyIssued = Number(it.qty_issued) || 0;
+        const prev = Number(it.qty_received) || 0;
+        // When items omitted → receive all remaining for every line. When items
+        // provided → only the listed lines get a delta; the rest get 0.
+        const delta = hasItemsArg
+          ? (deltaMap.hasOwnProperty(it.id) ? Number(deltaMap[it.id]) || 0 : 0)
+          : (qtyIssued - prev);
+        let calc;
+        try {
+          calc = TR.computeLineReceipt({ qtyIssued, qtyReceivedSoFar: prev, qtyReceiveNow: delta });
+        } catch (ce) {
+          const e = new Error(ce.message + ' (سطر ' + it.id + ')');
+          e.status = 400; e.code = ce.code; e.lineId = it.id;
+          throw e;
+        }
+        totalDelta += calc.applied;
+        plan.push({ line: it, delta: calc.applied, newQtyReceived: calc.newQtyReceived });
+      }
+
+      if (totalDelta <= TR.EPS) {
+        const e = new Error('لا توجد كمية للاستلام — حدّد كمية واحدة على الأقل.');
+        e.status = 400; e.code = 'NOTHING_TO_RECEIVE'; throw e;
+      }
+
+      for (const p of plan) {
+        if (p.delta <= TR.EPS) continue;
+        const it = p.line;
+        await _applyStockMovement(hdr.to_warehouse_id, it.item_id, p.delta, Number(it.unit_cost),
+                                  'stock_issue_in', id, receivedBy, conn);
+        // Cumulative — set the new running total, not an overwrite of the delta.
+        await conn.query('UPDATE stock_issue_items SET qty_received=? WHERE id=?', [p.newQtyReceived, it.id]);
         // Ledger entry — destination side, same reference_id as the 'out' row.
         const movId = 'MOV-SI-IN-' + Date.now() + '-' + Math.random().toString(36).substr(2, 4);
         try {
           await conn.query(
             'INSERT INTO inventory_movements (id, movement_date, item_id, item_name, type, qty, reason, username, notes, warehouse_id, reference_type, reference_id) ' +
             'VALUES (?,?,?,?,?,?,?,?,?,?,?,?)',
-            [movId, receiveNow, it.item_id, it.item_name || '', 'in', qtyReceived,
-             'تحويل وارد', receivedBy || '', 'STOCK_ISSUE: ' + (hdr.issue_number || id),
+            [movId, receiveNow, it.item_id, it.item_name || '', 'in', p.delta,
+             'تحويل وارد', receivedBy, 'STOCK_ISSUE: ' + (hdr.issue_number || id),
              hdr.to_warehouse_id, 'transfer', id]);
         } catch(e) {
           await conn.query(
             'INSERT INTO inventory_movements (id, movement_date, item_id, item_name, type, qty, reason, username, notes, warehouse_id) VALUES (?,?,?,?,?,?,?,?,?,?)',
-            [movId, receiveNow, it.item_id, it.item_name || '', 'in', qtyReceived,
-             'تحويل وارد', receivedBy || '', 'STOCK_ISSUE: ' + (hdr.issue_number || id),
+            [movId, receiveNow, it.item_id, it.item_name || '', 'in', p.delta,
+             'تحويل وارد', receivedBy, 'STOCK_ISSUE: ' + (hdr.issue_number || id),
              hdr.to_warehouse_id]);
         }
       }
-      // v7.5 — state-guarded flip: a concurrent double-receive rolls the
-      // whole transaction (including the stock increments above) back.
+
+      // Header status from the NEW cumulative line totals: fully received →
+      // 'received', otherwise → 'partially_received'.
+      const nextStatus = TR.computeNextReceiveStatus(
+        plan.map(p => ({ qtyIssued: Number(p.line.qty_issued) || 0, qtyReceived: p.newQtyReceived }))
+      );
+      // received_at is only stamped on the FINAL receipt; partial receipts keep
+      // it null so the inbox 7-day cutoff doesn't hide an open transfer.
       const [flipRes] = await conn.query(
-        `UPDATE stock_issues SET status='received', received_by=?, received_at=NOW() WHERE id=? AND status='issued'`,
-        [receivedBy || '', id]);
+        `UPDATE stock_issues
+         SET status=?, received_by=?,
+             received_at = CASE WHEN ? = 'received' THEN NOW() ELSE received_at END
+         WHERE id=? AND status IN ('issued','partially_received')`,
+        [nextStatus, receivedBy, nextStatus, id]);
       if (!flipRes || flipRes.affectedRows !== 1) {
-        const e = new Error('تغيّرت حالة أمر الصرف (استلام مكرر؟) — أعد التحميل وحاول مجدداً');
+        const e = new Error('تغيّرت حالة أمر الصرف (استلام متزامن؟) — أعد التحميل وحاول مجدداً');
         e.status = 409; throw e;
       }
+      return { status: nextStatus };
     });
 
-    res.json({ success: true });
+    res.json({ success: true, status: out.status, fullyReceived: out.status === 'received' });
   } catch(e) { res.status(e.status || 500).json({ error: e.message }); }
 });
 
@@ -574,7 +634,9 @@ router.post('/stock-issues/:id/cancel', MGR, async (req, res) => {
 router.post('/stock-issues/:id/reverse', MGR, async (req, res) => {
   try {
     const id = req.params.id;
-    const { reversedBy, reason } = req.body || {};
+    const { reason } = req.body || {};
+    // Phase 0 §5 — reverser identity from the JWT, never the body.
+    const reversedBy = _actor(req);
     // v5.10.40 — Reason is now MANDATORY for reversal (audit-trail
     // compliance: every accounting reversal must carry justification).
     // Trim to avoid whitespace-only inputs.
@@ -588,15 +650,17 @@ router.post('/stock-issues/:id/reverse', MGR, async (req, res) => {
     const [hdrRows] = await db.query('SELECT * FROM stock_issues WHERE id=?', [id]);
     if (!hdrRows.length) return res.status(404).json({ error: 'not found' });
     const hdr = hdrRows[0];
-    if (!['issued','received'].includes(hdr.status))
-      return res.status(400).json({ error: 'يمكن إرجاع الإذن فقط بعد الصرف أو الاستلام' });
+    // Phase 0 — partially_received transfers are reversible too.
+    if (!TR.canReverse(hdr.status))
+      return res.status(400).json({ error: 'يمكن إرجاع الإذن فقط بعد الصرف أو الاستلام (issued / partially_received / received)' });
 
     const [items] = await db.query('SELECT * FROM stock_issue_items WHERE issue_id=?', [id]);
     if (!items.length) return res.status(400).json({ error: 'no items' });
 
     // Reverse the stock movements:
     //   1. PUT BACK what we took from the source (positive delta on the from-warehouse).
-    //   2. TAKE BACK what was received at the destination (only if status='received').
+    //   2. TAKE BACK whatever was physically received at the destination
+    //      (qty_received > 0 — covers both full and partial receipts).
     //
     // We use the original unit_cost stored on each line so the reversal lands
     // at the same valuation the issue posted at — keeps weighted-average sane.
@@ -617,7 +681,7 @@ router.post('/stock-issues/:id/reverse', MGR, async (req, res) => {
         const unitCost    = Number(it.unit_cost)    || 0;
         if (qtyIssued > 0) {
           await _applyStockMovement(hdr.from_warehouse_id, it.item_id, qtyIssued, unitCost,
-                                    'stock_issue_reverse', id, reversedBy || '', conn);
+                                    'stock_issue_reverse', id, reversedBy, conn);
           totalCost += qtyIssued * unitCost;
           // Ledger entry — 'in' to source (returning the goods)
           try {
@@ -626,14 +690,14 @@ router.post('/stock-issues/:id/reverse', MGR, async (req, res) => {
               'INSERT INTO inventory_movements (id, movement_date, item_id, item_name, type, qty, reason, username, notes, warehouse_id, reference_type, reference_id) ' +
               'VALUES (?,?,?,?,?,?,?,?,?,?,?,?)',
               [movId, reverseNow, it.item_id, it.item_name || '', 'in', qtyIssued,
-               'إرجاع تحويل', reversedBy || '',
+               'إرجاع تحويل', reversedBy,
                'REVERSE: ' + (hdr.issue_number || id) + ' · ' + reasonText.slice(0, 200),
                hdr.from_warehouse_id, 'transfer_reverse', id]);
           } catch(_) {}
         }
-        if (qtyReceived > 0 && hdr.status === 'received') {
+        if (qtyReceived > 0) {
           await _applyStockMovement(hdr.to_warehouse_id, it.item_id, -qtyReceived, unitCost,
-                                    'stock_issue_reverse', id, reversedBy || '', conn);
+                                    'stock_issue_reverse', id, reversedBy, conn);
           // Ledger entry — 'out' from destination (taking the goods back)
           try {
             const movId = 'MOV-SI-REV-OUT-' + Date.now() + '-' + Math.random().toString(36).substr(2, 4);
@@ -641,7 +705,7 @@ router.post('/stock-issues/:id/reverse', MGR, async (req, res) => {
               'INSERT INTO inventory_movements (id, movement_date, item_id, item_name, type, qty, reason, username, notes, warehouse_id, reference_type, reference_id) ' +
               'VALUES (?,?,?,?,?,?,?,?,?,?,?,?)',
               [movId, reverseNow, it.item_id, it.item_name || '', 'out', qtyReceived,
-               'إرجاع تحويل', reversedBy || '',
+               'إرجاع تحويل', reversedBy,
                'REVERSE: ' + (hdr.issue_number || id) + ' · ' + reasonText.slice(0, 200),
                hdr.to_warehouse_id, 'transfer_reverse', id]);
           } catch(_) {}
@@ -656,7 +720,7 @@ router.post('/stock-issues/:id/reverse', MGR, async (req, res) => {
           referenceType: 'stock_issue_reverse',
           referenceId: id,
           description: `إرجاع إذن صرف ${hdr.issue_number}: ` + reasonText,
-          postedBy: reversedBy || '',
+          postedBy: reversedBy,
           entries: [
             {
               accountCode: gl.CORE_ACCOUNTS.INVENTORY.code,
@@ -689,8 +753,8 @@ router.post('/stock-issues/:id/reverse', MGR, async (req, res) => {
         `UPDATE stock_issues
          SET status='reversed', reversed_by=?, reversed_at=NOW(),
              reverse_reason=?, reverse_gl_journal_id=?
-         WHERE id=? AND status IN ('issued','received')`,
-        [reversedBy || '', reasonText.slice(0, 500), reverseGlId, id]);
+         WHERE id=? AND status IN ('issued','partially_received','received')`,
+        [reversedBy, reasonText.slice(0, 500), reverseGlId, id]);
       if (!flipRes || flipRes.affectedRows !== 1) {
         const e = new Error('تغيّرت حالة الإذن (إرجاع مكرر؟) — أعد التحميل');
         e.status = 409; throw e;
@@ -768,7 +832,7 @@ router.get('/incoming-transfers', async (req, res) => {
       LEFT JOIN users uc ON uc.username = si.created_by
       LEFT JOIN users ua ON ua.username = si.approved_by
       LEFT JOIN users ui ON ui.username = si.issued_by
-      WHERE si.status IN ('issued','received')`;
+      WHERE si.status IN ('issued','partially_received','received')`;
     const params = [];
     if (filterWh) {
       sql += ' AND si.to_warehouse_id = ?';
@@ -781,7 +845,9 @@ router.get('/incoming-transfers', async (req, res) => {
     }
     if (status) { sql += ' AND si.status = ?'; params.push(status); }
     // Hide `received` rows older than 7 days so the inbox doesn't grow forever.
-    sql += " AND (si.status = 'issued' OR si.received_at >= DATE_SUB(NOW(), INTERVAL 7 DAY))";
+    // Keep open transfers (issued / partially_received) always visible; only
+    // age out fully-received rows after 7 days.
+    sql += " AND (si.status IN ('issued','partially_received') OR si.received_at >= DATE_SUB(NOW(), INTERVAL 7 DAY))";
     sql += ' ORDER BY si.issued_at DESC, si.created_at DESC LIMIT 100';
 
     const [rows] = await db.query(sql, params);

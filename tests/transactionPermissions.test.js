@@ -87,10 +87,14 @@ test('Assignee can reply if hasn\'t replied yet', () => {
   const ctx = { txn, replies: [], recipientUsernames: [] };
   assertTrue(can(reviewer, 'txn.reply', ctx));
 });
-test('Assignee CANNOT reply twice on same stage', () => {
+// V4.6.1 — replies are now COMMENTS (unlimited). The "one per stage" rule
+// applies only to workflow-advancing actions (approve/reject/return/forward),
+// which are enforced by txn.action.* — not by txn.reply. So an assignee who
+// already replied on this stage CAN still post another comment-reply.
+test('Assignee CAN reply again on same stage (V4.6.1 — replies are unlimited comments)', () => {
   const txn = { id: 'T1', current_assignee: 'reviewer1', current_step_id: 'S1', status: 'in_progress', created_by: 'creator1' };
   const ctx = { txn, replies: [{ author_username: 'reviewer1', stage_step_id: 'S1' }], recipientUsernames: [] };
-  assertFalse(can(reviewer, 'txn.reply', ctx));
+  assertTrue(can(reviewer, 'txn.reply', ctx));
 });
 test('Creator can reply on returned txn (clarification)', () => {
   const txn = { id: 'T1', created_by: 'creator1', current_assignee: 'creator1', status: 'returned' };
@@ -104,9 +108,15 @@ test('Admin can always reply (override)', () => {
 });
 
 console.log('\n─── Delete / Force Delete ───');
-test('Creator can delete draft', () => {
+// V5.4.3 — txn.delete is DEVELOPER-ONLY (hard cascade delete). A regular
+// creator can no longer delete their own draft; they cancel/return instead.
+test('Creator CANNOT delete draft (V5.4.3 — delete is developer-only)', () => {
   const txn = { id: 'T1', created_by: 'creator1', status: 'draft' };
-  assertTrue(can(creator, 'txn.delete', { txn }));
+  assertFalse(can(creator, 'txn.delete', { txn }));
+});
+test('Developer CAN delete a draft (V5.4.3)', () => {
+  const txn = { id: 'T1', created_by: 'someone_else', status: 'draft' };
+  assertTrue(can(admin, 'txn.delete', { txn }));   // admin fixture has isDeveloper:true
 });
 test('Creator CANNOT delete in_progress', () => {
   const txn = { id: 'T1', created_by: 'creator1', status: 'in_progress' };

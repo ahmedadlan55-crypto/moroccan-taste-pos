@@ -20,9 +20,19 @@ const gl = require('../lib/glPosting');
 // v7.1 — sync the inv_items.stock rollup after a stocktake sets warehouse_stock.
 const { recomputeInvItemStock } = require('../lib/stockRecompute');
 // v7.4 — stocktake approve/reject post stock + GL adjustments → managers only.
-const MGR = require('./authMiddleware').requireRole('admin', 'manager');
+const MGR = require('../middleware/auth').requireRole('admin', 'manager');
+// Phase 0 — shared workflow + variance helpers (tests/stocktakeWorkflow.test.js
+// validates the exact same functions the route uses, so they can never drift).
+const STK = require('../lib/stocktakeWorkflow');
 
 function _id(p){ return p+'-'+Date.now()+'-'+Math.random().toString(36).slice(2,7); }
+
+// Phase 0 §5 — actor identity from the authenticated JWT (req.user). The
+// state-changing actions (submit/approve/reject) take the actor STRICTLY from
+// the session; create/edit keep a body fallback for tooling.
+function _actor(req, fallback) {
+  return (req.user && (req.user.username || req.user.name)) || fallback || '';
+}
 
 const REASON_CODES = {
   'damage':       'تلف',
@@ -127,7 +137,7 @@ router.post('/', async (req, res) => {
          warehouse_id, branch_id, workflow_status, variance_threshold_pct, count_method)
       VALUES (?, ?, ?, ?, 'completed', 0, 0, ?, ?, 'draft', ?, ?)`,
       [id, b.stocktakeDate || new Date().toISOString().slice(0,10),
-       b.username || (req.user && req.user.username) || 'system',
+       _actor(req, b.username) || 'system',
        b.notes || null, b.warehouseId, b.branchId || null,
        b.varianceThresholdPct != null ? b.varianceThresholdPct : 10,
        b.countMethod || 'full']);
@@ -193,11 +203,16 @@ router.put('/:id/items/:lineId', async (req, res) => {
     const line = lRows[0];
     const threshold = Number(line.variance_threshold_pct) || 10;
     const newActual = b.actualQty != null ? Number(b.actualQty) : Number(line.actual_qty);
-    const variance = Math.round((newActual - Number(line.system_qty)) * 1000) / 1000;
-    const variancePct = Number(line.system_qty) > 0
-      ? Math.round((Math.abs(variance) / Number(line.system_qty)) * 10000) / 100 : (variance ? 100 : 0);
-    const varianceValue = Math.round(variance * (Number(line.unit_cost)||0) * 100) / 100;
-    const isFlagged = variancePct >= threshold ? 1 : 0;
+    // Phase 0 — variance math via the shared helper so the route and the
+    // contract test stay in lock-step.
+    const _v = STK.computeVariance({
+      systemQty: line.system_qty, actualQty: newActual,
+      unitCost: line.unit_cost, thresholdPct: threshold
+    });
+    const variance = _v.variance;
+    const variancePct = _v.variancePct;
+    const varianceValue = _v.varianceValue;
+    const isFlagged = _v.isFlagged ? 1 : 0;
     const sets = ['actual_qty=?','variance=?','variance_pct=?','variance_value=?','is_flagged=?'];
     const params = [newActual, variance, variancePct, varianceValue, isFlagged];
     if (b.reasonCode !== undefined) { sets.push('reason_code=?'); params.push(b.reasonCode || null); }
@@ -205,7 +220,7 @@ router.put('/:id/items/:lineId', async (req, res) => {
     if (b.photoData !== undefined)  { sets.push('photo_data=?'); params.push(b.photoData || null); }
     if (b.verified)                  {
       sets.push('verified_by=?,verified_at=NOW()');
-      params.push(b.verifiedBy || (req.user && req.user.username) || 'system');
+      params.push(_actor(req, b.verifiedBy) || 'system');
     }
     params.push(req.params.lineId);
     await db.query(`UPDATE stocktake_items SET ${sets.join(',')} WHERE id = ?`, params);
@@ -261,7 +276,7 @@ router.post('/:id/items/scan', async (req, res) => {
 
 router.post('/:id/submit', async (req, res) => {
   try {
-    const username = (req.body && req.body.username) || (req.user && req.user.username) || 'system';
+    const username = _actor(req) || 'system'; // Phase 0 §5 — actor from JWT only
     // Recompute totals
     const [agg] = await db.query(`
       SELECT
@@ -282,37 +297,41 @@ router.post('/:id/submit', async (req, res) => {
 
 router.post('/:id/approve', MGR, async (req, res) => {
   try {
-    const username = (req.body && req.body.username) || (req.user && req.user.username) || 'system';
-    const [hRows] = await db.query(`SELECT * FROM stocktakes WHERE id = ?`, [req.params.id]);
-    if (!hRows.length) return res.status(404).json({ error: 'Not found' });
-    const h = hRows[0];
-    if (h.workflow_status !== 'pending_approval') {
-      return res.status(409).json({ error: 'الجرد ليس بانتظار الاعتماد' });
-    }
+    const username = _actor(req) || 'system'; // Phase 0 §5 — actor from JWT only
 
-    // v7.4 (B3a) — a physical count can never be negative. Block approval so a
-    // data-entry slip can't lock a negative on-hand into stock + GL.
-    const [negRows] = await db.query(
-      `SELECT COUNT(*) AS n FROM stocktake_items WHERE stocktake_id = ? AND actual_qty < 0`,
-      [req.params.id]);
-    if (negRows[0] && Number(negRows[0].n) > 0) {
-      return res.status(400).json({ error: 'لا يمكن اعتماد جرد يحتوي على كمية فعلية سالبة. صحّح العدّ أولاً.' });
-    }
-
-    // Only changed lines drive adjustments. JOIN inv_items for the ledger name.
-    const [items] = await db.query(
-      `SELECT si.*, i.name AS item_name FROM stocktake_items si
-       LEFT JOIN inv_items i ON i.id = si.inv_item_id
-       WHERE si.stocktake_id = ? AND ABS(si.variance) > 0.001`,
-      [req.params.id]);
-
-    // v7.4 (B3b/c/d) — the whole approval is ATOMIC: warehouse_stock set +
-    // ledger rows (now with CORRECT columns & in/out type — the old insert used
-    // type='adjust' + ref_type/ref_id/created_at, which the 'in'/'out' ENUM and
-    // real column names rejected, so adjustments left NO trail) + a balanced GL
-    // variance journal (Dr inventory/gain, Cr loss/inventory) all commit or roll
-    // back together. GL failure aborts the whole approval (no silent drift).
+    // v7.4 (B3b/c/d) + Phase 0 — the whole approval is ATOMIC and CONCURRENCY-
+    // SAFE: the header is locked FOR UPDATE and the status gate + the final flip
+    // are state-guarded, so two concurrent approvals can no longer BOTH post the
+    // ledger rows + variance GL journal for one count. warehouse_stock set +
+    // ledger rows (CORRECT columns & in/out type) + a balanced GL variance
+    // journal (Dr inventory/gain, Cr loss/inventory) all commit or roll back
+    // together. GL failure aborts the whole approval (no silent drift).
     const result = await db.withTransaction(async (conn) => {
+      // Phase 0 — lock the header, gate the status INSIDE the txn.
+      const [hRows] = await conn.query(`SELECT * FROM stocktakes WHERE id = ? FOR UPDATE`, [req.params.id]);
+      if (!hRows.length) { const e = new Error('Not found'); e.status = 404; throw e; }
+      const h = hRows[0];
+      if (!STK.canApprove(h.workflow_status)) {
+        const e = new Error('الجرد ليس بانتظار الاعتماد'); e.status = 409; throw e;
+      }
+
+      // v7.4 (B3a) — a physical count can never be negative. Block approval so a
+      // data-entry slip can't lock a negative on-hand into stock + GL.
+      const [negRows] = await conn.query(
+        `SELECT COUNT(*) AS n FROM stocktake_items WHERE stocktake_id = ? AND actual_qty < 0`,
+        [req.params.id]);
+      if (negRows[0] && Number(negRows[0].n) > 0) {
+        const e = new Error('لا يمكن اعتماد جرد يحتوي على كمية فعلية سالبة. صحّح العدّ أولاً.');
+        e.status = 400; throw e;
+      }
+
+      // Only changed lines drive adjustments. JOIN inv_items for the ledger name.
+      const [items] = await conn.query(
+        `SELECT si.*, i.name AS item_name FROM stocktake_items si
+         LEFT JOIN inv_items i ON i.id = si.inv_item_id
+         WHERE si.stocktake_id = ? AND ABS(si.variance) > 0.001`,
+        [req.params.id]);
+
       let movements = 0;
       const glLines = [];
       for (const ln of items) {
@@ -374,10 +393,15 @@ router.post('/:id/approve', MGR, async (req, res) => {
         glId = glRes.journalId;
       }
 
-      await conn.query(`
+      // Phase 0 — state-guarded flip: a concurrent double-approve loses here
+      // (affectedRows=0) and rolls its own ledger rows + GL journal back.
+      const [flip] = await conn.query(`
         UPDATE stocktakes SET workflow_status = 'approved', status = 'completed',
           approved_by = ?, approved_at = NOW()
-        WHERE id = ?`, [username, req.params.id]);
+        WHERE id = ? AND workflow_status = 'pending_approval'`, [username, req.params.id]);
+      if (!flip || flip.affectedRows !== 1) {
+        const e = new Error('تغيّرت حالة الجرد (اعتماد متزامن؟) — أعد التحميل'); e.status = 409; throw e;
+      }
 
       return { movements, glId };
     });
@@ -388,13 +412,24 @@ router.post('/:id/approve', MGR, async (req, res) => {
 
 router.post('/:id/reject', MGR, async (req, res) => {
   try {
-    const username = (req.body && req.body.username) || (req.user && req.user.username) || 'system';
+    const username = _actor(req) || 'system'; // Phase 0 §5 — actor from JWT only
     const reason = (req.body && req.body.reason) || '';
     if (reason.length < 10) return res.status(400).json({ error: 'سبب الرفض مطلوب (10 أحرف على الأقل)' });
-    await db.query(`
+    // Phase 0 — only a pending_approval count can be rejected. Without this a
+    // reject could overwrite an already-approved (posted) count's status to
+    // 'rejected', which then made the posted count deletable (STK.canDelete).
+    const [h] = await db.query('SELECT workflow_status FROM stocktakes WHERE id = ?', [req.params.id]);
+    if (!h.length) return res.status(404).json({ error: 'Not found' });
+    if (!STK.canReject(h[0].workflow_status)) {
+      return res.status(409).json({ error: 'لا يمكن رفض جرد ليس بانتظار الاعتماد' });
+    }
+    const [rej] = await db.query(`
       UPDATE stocktakes SET workflow_status = 'rejected',
         rejected_by = ?, rejected_at = NOW(), rejection_reason = ?
-      WHERE id = ?`, [username, reason, req.params.id]);
+      WHERE id = ? AND workflow_status = 'pending_approval'`, [username, reason, req.params.id]);
+    if (!rej || rej.affectedRows !== 1) {
+      return res.status(409).json({ error: 'تغيّرت حالة الجرد — أعد التحميل' });
+    }
     res.json({ success: true });
   } catch(e) { res.status(500).json({ error: e.message }); }
 });
@@ -403,7 +438,7 @@ router.post('/:id/cancel', async (req, res) => {
   try {
     const [r] = await db.query(`SELECT workflow_status FROM stocktakes WHERE id = ?`, [req.params.id]);
     if (!r.length) return res.status(404).json({ error: 'Not found' });
-    if (!['draft','in_progress'].includes(r[0].workflow_status)) {
+    if (!STK.canCancel(r[0].workflow_status)) {
       return res.status(409).json({ error: 'لا يمكن الإلغاء بعد التقديم' });
     }
     await db.query(`UPDATE stocktakes SET workflow_status = 'cancelled' WHERE id = ?`, [req.params.id]);

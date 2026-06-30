@@ -131,15 +131,16 @@ async function _applyStockMovement(warehouseId, itemId, qtyDelta, unitCost, trig
 // List warehouses with hierarchy info
 router.get('/warehouses/hierarchy', async (req, res) => {
   try {
+    const sc = req.whScopeClause('w.id');
     const [rows] = await db.query(`
       SELECT w.*,
              p.name AS parent_name, p.code AS parent_code,
              (SELECT COUNT(*) FROM warehouses WHERE parent_warehouse_id = w.id) AS child_count
       FROM warehouses w
       LEFT JOIN warehouses p ON p.id = w.parent_warehouse_id
-      WHERE w.is_active = 1
+      WHERE w.is_active = 1` + sc.sql + `
       ORDER BY COALESCE(w.parent_warehouse_id, w.id), w.is_main DESC, w.name
-    `);
+    `, sc.params);
     res.json(rows);
   } catch(e) { res.status(500).json({ error: e.message }); }
 });
@@ -148,6 +149,7 @@ router.get('/warehouses/hierarchy', async (req, res) => {
 router.post('/warehouses/:id/set-main', async (req, res) => {
   try {
     const id = req.params.id;
+    if (!req.guardWh(res, id)) return;
     const [rows] = await db.query('SELECT brand_id FROM warehouses WHERE id=?', [id]);
     if (!rows.length) return res.status(404).json({ error: 'warehouse not found' });
     const brandId = rows[0].brand_id;
@@ -166,7 +168,9 @@ router.post('/warehouses/:id/set-main', async (req, res) => {
 router.post('/warehouses/:id/unset-main', async (req, res) => {
   try {
     const id = req.params.id;
+    if (!req.guardWh(res, id)) return;
     const { parentId } = req.body || {};
+    if (!req.guardWh(res, parentId)) return;
     const [rows] = await db.query('SELECT brand_id, is_main FROM warehouses WHERE id=?', [id]);
     if (!rows.length) return res.status(404).json({ error: 'warehouse not found' });
     if (parentId) {
@@ -184,7 +188,9 @@ router.post('/warehouses/:id/unset-main', async (req, res) => {
 router.post('/warehouses/:id/set-parent', async (req, res) => {
   try {
     const id = req.params.id;
+    if (!req.guardWh(res, id)) return;
     const { parentId } = req.body;
+    if (!req.guardWh(res, parentId)) return;
     if (!parentId) {
       await db.query('UPDATE warehouses SET parent_warehouse_id=NULL WHERE id=?', [id]);
     } else {
@@ -244,6 +250,12 @@ router.get('/stock-issues', async (req, res) => {
     if (brandId)  { sql += ' AND si.brand_id = ?'; params.push(brandId); }
     if (dateFrom) { sql += ' AND si.issue_date >= ?'; params.push(dateFrom); }
     if (dateTo)   { sql += ' AND si.issue_date <= ?'; params.push(dateTo); }
+    // Scope: restrict to issues touching an accessible warehouse on EITHER end.
+    const sf = req.whScopeClause('si.from_warehouse_id'), st = req.whScopeClause('si.to_warehouse_id');
+    if (sf.sql) {
+      sql += ' AND (' + sf.sql.replace(/^\s*AND\s+/i, '') + ' OR ' + st.sql.replace(/^\s*AND\s+/i, '') + ')';
+      params.push(...sf.params, ...st.params);
+    }
     sql += ' ORDER BY si.created_at DESC LIMIT 500';
     const [rows] = await db.query(sql, params);
     res.json(rows);
@@ -274,6 +286,7 @@ router.get('/stock-issues/:id', async (req, res) => {
       LEFT JOIN users uv ON uv.username = si.reversed_by
       WHERE si.id=?`, [req.params.id]);
     if (!rows.length) return res.status(404).json({ error: 'not found' });
+    if (!req.guardTransfer(res, rows[0].from_warehouse_id, rows[0].to_warehouse_id)) return;
     const [items] = await db.query(`
       SELECT sii.*, i.name AS item_name, i.unit AS item_unit
       FROM stock_issue_items sii
@@ -291,6 +304,7 @@ router.post('/stock-issues', async (req, res) => {
     // Phase 0 §5 — creator identity comes from the JWT, not the body.
     const createdBy = _actor(req);
     if (!fromWarehouseId || !toWarehouseId) return res.status(400).json({ error: 'from/to warehouse required' });
+    if (!req.guardTransfer(res, fromWarehouseId, toWarehouseId)) return;
     // v5.10.40 — Reject same-warehouse "transfers". Every ERP (SAP, Oracle,
     // Odoo) treats this as invalid because it has no business meaning and
     // would create offsetting movements at the same warehouse.
@@ -356,8 +370,9 @@ router.post('/stock-issues/:id/approve', MGR, async (req, res) => {
     const id = req.params.id;
     // Phase 0 §5 — approver identity from the JWT, never the body.
     const approvedBy = _actor(req);
-    const [rows] = await db.query('SELECT status FROM stock_issues WHERE id=?', [id]);
+    const [rows] = await db.query('SELECT status, from_warehouse_id, to_warehouse_id FROM stock_issues WHERE id=?', [id]);
     if (!rows.length) return res.status(404).json({ error: 'not found' });
+    if (!req.guardTransfer(res, rows[0].from_warehouse_id, rows[0].to_warehouse_id)) return;
     if (rows[0].status !== 'draft') return res.status(400).json({ error: 'only draft can be approved' });
     // v7.5 — state-guarded UPDATE + affectedRows: a concurrent double-tap
     // (second request racing past the read above) now gets 409 instead of a
@@ -381,6 +396,7 @@ router.post('/stock-issues/:id/issue', BACKOFFICE, async (req, res) => {
     const [hdrRows] = await db.query('SELECT * FROM stock_issues WHERE id=?', [id]);
     if (!hdrRows.length) return res.status(404).json({ error: 'not found' });
     const hdr = hdrRows[0];
+    if (!req.guardTransfer(res, hdr.from_warehouse_id, hdr.to_warehouse_id)) return;
     // Phase 0 §3 — a draft can NEVER be issued. The approval step is the
     // control that makes the value/stock move auditable, so issuing is only
     // allowed from `approved`. (Was `['draft','approved']` — that let an
@@ -522,6 +538,10 @@ router.post('/stock-issues/:id/receive', BACKOFFICE, async (req, res) => {
       const [hdrRows] = await conn.query('SELECT * FROM stock_issues WHERE id=? FOR UPDATE', [id]);
       if (!hdrRows.length) { const e = new Error('not found'); e.status = 404; throw e; }
       const hdr = hdrRows[0];
+      if (!req.guardTransfer(res, hdr.from_warehouse_id, hdr.to_warehouse_id)) {
+        // Guard already wrote the 403 — abort the txn and skip the duplicate send.
+        const e = new Error('forbidden'); e._guarded = true; throw e;
+      }
       if (!TR.canReceive(hdr.status)) {
         const e = new Error('لا يمكن الاستلام إلا بعد الصرف (issued أو partially_received). الحالة الحالية: ' + hdr.status);
         e.status = 400; e.code = 'RECEIVE_INVALID_STATE'; throw e;
@@ -604,15 +624,19 @@ router.post('/stock-issues/:id/receive', BACKOFFICE, async (req, res) => {
     });
 
     res.json({ success: true, status: out.status, fullyReceived: out.status === 'received' });
-  } catch(e) { res.status(e.status || 500).json({ error: e.message }); }
+  } catch(e) {
+    if (e && e._guarded) return; // guard already wrote the 403 response
+    res.status(e.status || 500).json({ error: e.message });
+  }
 });
 
 // Cancel stock issue
 router.post('/stock-issues/:id/cancel', MGR, async (req, res) => {
   try {
     const id = req.params.id;
-    const [hdrRows] = await db.query('SELECT status FROM stock_issues WHERE id=?', [id]);
+    const [hdrRows] = await db.query('SELECT status, from_warehouse_id, to_warehouse_id FROM stock_issues WHERE id=?', [id]);
     if (!hdrRows.length) return res.status(404).json({ error: 'not found' });
+    if (!req.guardTransfer(res, hdrRows[0].from_warehouse_id, hdrRows[0].to_warehouse_id)) return;
     if (['issued','received'].includes(hdrRows[0].status))
       return res.status(400).json({ error: 'cannot cancel after issue — use reverse instead' });
     // v7.5 — state-guarded cancel (only draft/approved) + affectedRows check
@@ -650,6 +674,7 @@ router.post('/stock-issues/:id/reverse', MGR, async (req, res) => {
     const [hdrRows] = await db.query('SELECT * FROM stock_issues WHERE id=?', [id]);
     if (!hdrRows.length) return res.status(404).json({ error: 'not found' });
     const hdr = hdrRows[0];
+    if (!req.guardTransfer(res, hdr.from_warehouse_id, hdr.to_warehouse_id)) return;
     // Phase 0 — partially_received transfers are reversible too.
     if (!TR.canReverse(hdr.status))
       return res.status(400).json({ error: 'يمكن إرجاع الإذن فقط بعد الصرف أو الاستلام (issued / partially_received / received)' });
@@ -776,8 +801,9 @@ router.post('/stock-issues/:id/reverse', MGR, async (req, res) => {
 router.delete('/stock-issues/:id', MGR, async (req, res) => {
   try {
     const id = req.params.id;
-    const [hdrRows] = await db.query('SELECT status FROM stock_issues WHERE id=?', [id]);
+    const [hdrRows] = await db.query('SELECT status, from_warehouse_id, to_warehouse_id FROM stock_issues WHERE id=?', [id]);
     if (!hdrRows.length) return res.status(404).json({ error: 'not found' });
+    if (!req.guardTransfer(res, hdrRows[0].from_warehouse_id, hdrRows[0].to_warehouse_id)) return;
     if (hdrRows[0].status !== 'draft') {
       return res.status(400).json({ error: 'يمكن حذف الإذن فقط عندما يكون مسودة — استخدم الإلغاء أو الإرجاع' });
     }
@@ -844,6 +870,9 @@ router.get('/incoming-transfers', async (req, res) => {
       params.push(filterBranch, filterBranch);
     }
     if (status) { sql += ' AND si.status = ?'; params.push(status); }
+    // Scope: restrict the inbox to destination warehouses the caller may access.
+    const sc = req.whScopeClause('si.to_warehouse_id');
+    if (sc.sql) { sql += sc.sql; params.push(...sc.params); }
     // Hide `received` rows older than 7 days so the inbox doesn't grow forever.
     // Keep open transfers (issued / partially_received) always visible; only
     // age out fully-received rows after 7 days.

@@ -56,6 +56,8 @@ router.get('/', async (req, res) => {
     if (dateFrom) { conds.push('s.stocktake_date >= ?'); params.push(dateFrom); }
     if (dateTo) { conds.push('s.stocktake_date <= ?'); params.push(dateTo); }
     if (brandId) { conds.push('w.brand_id = ?'); params.push(brandId); }
+    const _scope = req.whScopeClause('s.warehouse_id');
+    if (_scope.sql) { conds.push(_scope.sql.replace(/^ AND /, '')); params.push(..._scope.params); }
     const where = conds.length ? 'WHERE '+conds.join(' AND ') : '';
     const [rows] = await db.query(`
       SELECT s.*, w.name AS warehouse_name, br.name AS branch_name,
@@ -81,6 +83,7 @@ router.get('/:id', async (req, res) => {
       LEFT JOIN branches br ON br.id = s.branch_id
       WHERE s.id = ?`, [req.params.id]);
     if (!hRows.length) return res.status(404).json({ error: 'Not found' });
+    if (!req.guardWh(res, hRows[0].warehouse_id)) return;
     // V5-FIX: legacy schema uses inv_item_id (not item_id). Map to item_id in output for UI consistency.
     // V5.7.26 — also surface big_unit + conv_rate so the frontend can
     //   render the unified WoQtyInput widget (major + minor + auto-sync).
@@ -128,6 +131,7 @@ router.post('/', async (req, res) => {
   try {
     const b = req.body || {};
     if (!b.warehouseId) return res.status(400).json({ error: 'warehouseId required' });
+    if (!req.guardWh(res, b.warehouseId)) return;
     const id = b.id || _id('STK');
     // V5-FIX: existing stocktakes.status ENUM may not include 'draft' — use 'completed'
     // for the legacy column and rely on workflow_status for the new state.
@@ -149,6 +153,7 @@ router.post('/:id/load-snapshot', async (req, res) => {
   try {
     const [hRows] = await db.query('SELECT warehouse_id, workflow_status FROM stocktakes WHERE id = ?', [req.params.id]);
     if (!hRows.length) return res.status(404).json({ error: 'Not found' });
+    if (!req.guardWh(res, hRows[0].warehouse_id)) return;
     if (hRows[0].workflow_status !== 'draft' && hRows[0].workflow_status !== 'in_progress') {
       return res.status(409).json({ error: 'لا يمكن إعادة التحميل بعد المراجعة' });
     }
@@ -195,12 +200,13 @@ router.put('/:id/items/:lineId', async (req, res) => {
     const b = req.body || {};
     // Load the line + threshold
     const [lRows] = await db.query(`
-      SELECT si.*, s.variance_threshold_pct
+      SELECT si.*, s.variance_threshold_pct, s.warehouse_id
       FROM stocktake_items si
       JOIN stocktakes s ON s.id = si.stocktake_id
       WHERE si.id = ?`, [req.params.lineId]);
     if (!lRows.length) return res.status(404).json({ error: 'Line not found' });
     const line = lRows[0];
+    if (!req.guardWh(res, line.warehouse_id)) return;
     const threshold = Number(line.variance_threshold_pct) || 10;
     const newActual = b.actualQty != null ? Number(b.actualQty) : Number(line.actual_qty);
     // Phase 0 — variance math via the shared helper so the route and the
@@ -232,6 +238,9 @@ router.post('/:id/items/scan', async (req, res) => {
   try {
     const b = req.body || {};
     if (!b.itemCode && !b.itemId) return res.status(400).json({ error: 'itemCode or itemId required' });
+    const [stRows] = await db.query('SELECT warehouse_id FROM stocktakes WHERE id = ?', [req.params.id]);
+    if (!stRows.length) return res.status(404).json({ error: 'Not found' });
+    if (!req.guardWh(res, stRows[0].warehouse_id)) return;
     let lineId = null;
     let item = null;
     if (b.itemId) {
@@ -277,6 +286,9 @@ router.post('/:id/items/scan', async (req, res) => {
 router.post('/:id/submit', async (req, res) => {
   try {
     const username = _actor(req) || 'system'; // Phase 0 §5 — actor from JWT only
+    const [hRows] = await db.query('SELECT warehouse_id FROM stocktakes WHERE id = ?', [req.params.id]);
+    if (!hRows.length) return res.status(404).json({ error: 'Not found' });
+    if (!req.guardWh(res, hRows[0].warehouse_id)) return;
     // Recompute totals
     const [agg] = await db.query(`
       SELECT
@@ -311,6 +323,7 @@ router.post('/:id/approve', MGR, async (req, res) => {
       const [hRows] = await conn.query(`SELECT * FROM stocktakes WHERE id = ? FOR UPDATE`, [req.params.id]);
       if (!hRows.length) { const e = new Error('Not found'); e.status = 404; throw e; }
       const h = hRows[0];
+      if (!req.guardWh(res, h.warehouse_id)) { const e = new Error('__wh_denied'); e.handled = true; throw e; }
       if (!STK.canApprove(h.workflow_status)) {
         const e = new Error('الجرد ليس بانتظار الاعتماد'); e.status = 409; throw e;
       }
@@ -407,7 +420,7 @@ router.post('/:id/approve', MGR, async (req, res) => {
     });
 
     res.json({ success: true, movements: result.movements, glJournalId: result.glId });
-  } catch(e) { res.status(e.status || 500).json({ error: e.message }); }
+  } catch(e) { if (e.handled) return; res.status(e.status || 500).json({ error: e.message }); }
 });
 
 router.post('/:id/reject', MGR, async (req, res) => {
@@ -418,8 +431,9 @@ router.post('/:id/reject', MGR, async (req, res) => {
     // Phase 0 — only a pending_approval count can be rejected. Without this a
     // reject could overwrite an already-approved (posted) count's status to
     // 'rejected', which then made the posted count deletable (STK.canDelete).
-    const [h] = await db.query('SELECT workflow_status FROM stocktakes WHERE id = ?', [req.params.id]);
+    const [h] = await db.query('SELECT workflow_status, warehouse_id FROM stocktakes WHERE id = ?', [req.params.id]);
     if (!h.length) return res.status(404).json({ error: 'Not found' });
+    if (!req.guardWh(res, h[0].warehouse_id)) return;
     if (!STK.canReject(h[0].workflow_status)) {
       return res.status(409).json({ error: 'لا يمكن رفض جرد ليس بانتظار الاعتماد' });
     }
@@ -436,8 +450,9 @@ router.post('/:id/reject', MGR, async (req, res) => {
 
 router.post('/:id/cancel', async (req, res) => {
   try {
-    const [r] = await db.query(`SELECT workflow_status FROM stocktakes WHERE id = ?`, [req.params.id]);
+    const [r] = await db.query(`SELECT workflow_status, warehouse_id FROM stocktakes WHERE id = ?`, [req.params.id]);
     if (!r.length) return res.status(404).json({ error: 'Not found' });
+    if (!req.guardWh(res, r[0].warehouse_id)) return;
     if (!STK.canCancel(r[0].workflow_status)) {
       return res.status(409).json({ error: 'لا يمكن الإلغاء بعد التقديم' });
     }
@@ -448,6 +463,9 @@ router.post('/:id/cancel', async (req, res) => {
 
 router.get('/:id/export', async (req, res) => {
   try {
+    const [hRows] = await db.query('SELECT warehouse_id FROM stocktakes WHERE id = ?', [req.params.id]);
+    if (!hRows.length) return res.status(404).json({ error: 'Not found' });
+    if (!req.guardWh(res, hRows[0].warehouse_id)) return;
     const [items] = await db.query(`
       SELECT si.*, COALESCE(it.name, si.inv_item_name, si.inv_item_id) AS item_name,
              si.inv_item_id AS item_id

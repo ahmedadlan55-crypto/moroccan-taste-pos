@@ -382,6 +382,7 @@ router.get('/brands-summary', async (req, res) => {
     // Per-warehouse stats — same logic as /warehouses-by-brand. We then
     // group by brand_id on the JS side. SUMs match what the inner cards
     // show, so totals are consistent end-to-end.
+    const bsc = req.whScopeClause('w.id');
     const [whRows] = await db.query(`
       SELECT w.id AS warehouse_id, w.brand_id, w.is_active,
              (SELECT COUNT(DISTINCT i.id) FROM inv_items i
@@ -396,8 +397,8 @@ router.get('/brands-summary', async (req, res) => {
       FROM warehouses w
       LEFT JOIN warehouse_stock ws ON ws.warehouse_id = w.id
       LEFT JOIN inv_items i ON i.id = ws.item_id AND i.active = 1 AND i.deleted_at IS NULL
-      WHERE w.is_active = 1
-      GROUP BY w.id`);
+      WHERE w.is_active = 1` + bsc.sql + `
+      GROUP BY w.id`, bsc.params);
 
     // Roll up per-brand. itemCount sums per-warehouse counts (so brand
     // total = warehouse cards added together — what the user expects
@@ -480,6 +481,8 @@ router.get('/warehouses-by-brand', async (req, res) => {
       sql += ' AND w.brand_id = ?';
       params.push(brandId);
     }
+    const wsc = req.whScopeClause('w.id');
+    if (wsc.sql) { sql += wsc.sql; params.push(...wsc.params); }
     sql += ' GROUP BY w.id ORDER BY (w.is_main=1) DESC, w.code ASC';
     const [rows] = await db.query(sql, params);
 
@@ -540,6 +543,9 @@ router.get('/warehouse-card-stats', async (req, res) => {
     if (!warehouseId && !brandId) {
       return res.status(400).json({ success:false, error:'warehouseId-or-brandId-required' });
     }
+    // Guard BEFORE the existence lookup so a forbidden warehouse is
+    // indistinguishable from a non-existent one (rule 9).
+    if (warehouseId && !req.guardWh(res, warehouseId)) return;
 
     // Resolve scope label
     let scope;
@@ -743,10 +749,16 @@ router.get('/warehouse-card-stats', async (req, res) => {
 // ═══════════════════════════════════════════════════════════════════════
 
 // Shared per-warehouse aggregation (one GROUP BY + one last-movement query).
-async function _warehousesSummary(conn, warehouseId) {
+// `req` (optional) carries the warehouse scope: when enforced, only the
+// caller's warehouses are aggregated (rules 1 & 5 — totals exclude forbidden
+// warehouses), so this is safe to expose unscoped (?warehouseId omitted).
+async function _warehousesSummary(conn, warehouseId, req) {
   const params = [];
-  let whereWh = '';
-  if (warehouseId) { whereWh = ' WHERE w.id = ?'; params.push(warehouseId); }
+  const where = [];
+  if (warehouseId) { where.push('w.id = ?'); params.push(warehouseId); }
+  const sc = req && req.whScopeClause ? req.whScopeClause('w.id') : { sql: '', params: [] };
+  if (sc.sql) { where.push(sc.sql.replace(/^\s*AND\s+/i, '')); params.push(...sc.params); }
+  const whereWh = where.length ? (' WHERE ' + where.join(' AND ')) : '';
   const [rows] = await conn.query(
     // Every aggregate is gated on `i.id IS NOT NULL` (i.e. the item passed the
     // active/non-deleted filter on the JOIN) so the totals count ONLY active
@@ -773,8 +785,12 @@ async function _warehousesSummary(conn, warehouseId) {
   const lastMap = {};
   try {
     const lp = [];
+    const lwhere = [];
+    if (warehouseId) { lwhere.push('warehouse_id = ?'); lp.push(warehouseId); }
+    const lsc = req && req.whScopeClause ? req.whScopeClause('warehouse_id') : { sql: '', params: [] };
+    if (lsc.sql) { lwhere.push(lsc.sql.replace(/^\s*AND\s+/i, '')); lp.push(...lsc.params); }
     let lq = 'SELECT warehouse_id, MAX(movement_date) AS last_movement FROM inventory_movements';
-    if (warehouseId) { lq += ' WHERE warehouse_id = ?'; lp.push(warehouseId); }
+    if (lwhere.length) lq += ' WHERE ' + lwhere.join(' AND ');
     lq += ' GROUP BY warehouse_id';
     const [lrows] = await conn.query(lq, lp);
     lrows.forEach(r => { lastMap[String(r.warehouse_id)] = r.last_movement; });
@@ -792,8 +808,10 @@ async function _warehousesSummary(conn, warehouseId) {
 //   Every (or one) warehouse with value/qty/alerts + grand totals.
 router.get('/warehouses-summary', async (req, res) => {
   try {
-    const data = await _warehousesSummary(db, req.query.warehouseId || null);
-    res.json({ success: true, scope: { warehouseId: req.query.warehouseId || null }, ...data });
+    const warehouseId = req.query.warehouseId || null;
+    if (warehouseId && !req.guardWh(res, warehouseId)) return;
+    const data = await _warehousesSummary(db, warehouseId, req);
+    res.json({ success: true, scope: { warehouseId: warehouseId || null }, ...data });
   } catch (e) { res.status(500).json({ success: false, error: e.message }); }
 });
 
@@ -802,7 +820,8 @@ router.get('/warehouses-summary', async (req, res) => {
 router.get('/dashboard-summary', async (req, res) => {
   try {
     const warehouseId = req.query.warehouseId || null;
-    const wh = await _warehousesSummary(db, warehouseId);
+    if (warehouseId && !req.guardWh(res, warehouseId)) return;
+    const wh = await _warehousesSummary(db, warehouseId, req);
     const t = wh.totals;
     const kpis = {
       inventoryValue: t.totalValue,
@@ -817,8 +836,19 @@ router.get('/dashboard-summary', async (req, res) => {
     let transfers = { pending: 0, inTransit: 0, byStatus: {} };
     try {
       const tp = [];
+      const tconds = [];
+      if (warehouseId) {
+        tconds.push('(from_warehouse_id = ? OR to_warehouse_id = ?)'); tp.push(warehouseId, warehouseId);
+      } else {
+        const sf = req.whScopeClause('from_warehouse_id');
+        const st = req.whScopeClause('to_warehouse_id');
+        if (sf.sql) {
+          tconds.push('(' + sf.sql.replace(/^\s*AND\s+/i, '') + ' OR ' + st.sql.replace(/^\s*AND\s+/i, '') + ')');
+          tp.push(...sf.params, ...st.params);
+        }
+      }
       let tq = 'SELECT status, COUNT(*) AS n FROM stock_issues';
-      if (warehouseId) { tq += ' WHERE from_warehouse_id = ? OR to_warehouse_id = ?'; tp.push(warehouseId, warehouseId); }
+      if (tconds.length) tq += ' WHERE ' + tconds.join(' AND ');
       tq += ' GROUP BY status';
       const [trows] = await db.query(tq, tp);
       transfers = INV.transferCounts(trows);
@@ -828,10 +858,13 @@ router.get('/dashboard-summary', async (req, res) => {
     let recentMovements = [];
     try {
       const mp = [];
+      const mconds = [];
+      if (warehouseId) { mconds.push('m.warehouse_id = ?'); mp.push(warehouseId); }
+      else { const sm = req.whScopeClause('m.warehouse_id'); if (sm.sql) { mconds.push(sm.sql.replace(/^\s*AND\s+/i, '')); mp.push(...sm.params); } }
       let mq = 'SELECT m.id, m.movement_date, m.item_id, m.item_name, m.type, m.qty, m.reason, ' +
                '       m.warehouse_id, w.name AS warehouse_name ' +
                '  FROM inventory_movements m LEFT JOIN warehouses w ON w.id = m.warehouse_id';
-      if (warehouseId) { mq += ' WHERE m.warehouse_id = ?'; mp.push(warehouseId); }
+      if (mconds.length) mq += ' WHERE ' + mconds.join(' AND ');
       mq += ' ORDER BY m.movement_date DESC, m.id DESC LIMIT 8';
       const [mrows] = await db.query(mq, mp);
       recentMovements = mrows.map(m => ({
@@ -850,6 +883,7 @@ router.get('/dashboard-summary', async (req, res) => {
                 ' WHERE pl.expiry_date IS NOT NULL AND pl.qty_remaining > 0 ' +
                 '   AND pl.expiry_date <= DATE_ADD(CURDATE(), INTERVAL 30 DAY)';
       if (warehouseId) { eqx += ' AND pl.warehouse_id = ?'; ep.push(warehouseId); }
+      else { const se = req.whScopeClause('pl.warehouse_id'); if (se.sql) { eqx += se.sql; ep.push(...se.params); } }
       const [erows] = await db.query(eqx, ep);
       expiry = { available: true, count: Number(erows[0].cnt) || 0, atRiskValue: Number(erows[0].at_risk) || 0, days: 30 };
     } catch (_) { /* purchase_lots absent */ }
@@ -868,9 +902,14 @@ router.get('/dashboard-summary', async (req, res) => {
 router.get('/grid', async (req, res) => {
   try {
     const opt = INV.normalizeGridQuery(req.query);
+    if (opt.warehouseId && !req.guardWh(res, opt.warehouseId)) return;
     const where = ['i.active = 1', 'i.deleted_at IS NULL'];
     const params = [];
     if (opt.warehouseId) { where.push('ws.warehouse_id = ?'); params.push(opt.warehouseId); }
+    // Scope: restrict rows (and therefore the count/pagination total) to the
+    // caller's warehouses when no explicit warehouse is requested (rules 3 & 5).
+    const gsc = req.whScopeClause('ws.warehouse_id');
+    if (gsc.sql) { where.push(gsc.sql.replace(/^\s*AND\s+/i, '')); params.push(...gsc.params); }
     if (opt.category)    { where.push('i.category = ?'); params.push(opt.category); }
     if (opt.q)           { where.push('(i.name LIKE ? OR i.id LIKE ?)'); params.push('%' + opt.q + '%', '%' + opt.q + '%'); }
     const statusSql = INV.statusFilterSql(opt.status);
@@ -920,6 +959,7 @@ router.get('/categories', async (req, res) => {
     const { warehouseId } = req.query;
     let sql, params = [];
     if (warehouseId) {
+      if (!req.guardWh(res, warehouseId)) return;
       sql = `SELECT DISTINCT i.category AS category
                FROM inv_items i
                JOIN warehouse_stock ws ON ws.item_id = i.id AND ws.warehouse_id = ?
@@ -927,9 +967,21 @@ router.get('/categories', async (req, res) => {
               ORDER BY i.category`;
       params = [warehouseId];
     } else {
-      sql = `SELECT DISTINCT category FROM inv_items
-              WHERE active = 1 AND deleted_at IS NULL AND category IS NOT NULL AND category <> ''
-              ORDER BY category`;
+      // No explicit warehouse → when enforced, limit categories to items present
+      // in the caller's warehouses (rule 5); otherwise the legacy global list.
+      const csc = req.whScopeClause('ws.warehouse_id');
+      if (csc.sql) {
+        sql = `SELECT DISTINCT i.category AS category
+                 FROM inv_items i
+                 JOIN warehouse_stock ws ON ws.item_id = i.id
+                WHERE i.active = 1 AND i.deleted_at IS NULL AND i.category IS NOT NULL AND i.category <> ''`
+              + csc.sql + ` ORDER BY i.category`;
+        params = csc.params.slice();
+      } else {
+        sql = `SELECT DISTINCT category FROM inv_items
+                WHERE active = 1 AND deleted_at IS NULL AND category IS NOT NULL AND category <> ''
+                ORDER BY category`;
+      }
     }
     const [rows] = await db.query(sql, params);
     res.json({ success: true, categories: rows.map(r => String(r.category)) });
@@ -986,8 +1038,10 @@ router.get('/low-stock', async (req, res) => {
     const { warehouseId, brandId } = req.query;
     const where = ['i.active = 1', 'i.deleted_at IS NULL', 'i.min_stock > 0', 'ws.qty <= i.min_stock'];
     const params = [];
-    if (warehouseId) { where.push('ws.warehouse_id = ?'); params.push(warehouseId); }
+    if (warehouseId) { if (!req.guardWh(res, warehouseId)) return; where.push('ws.warehouse_id = ?'); params.push(warehouseId); }
     if (brandId)     { where.push('i.brand_id = ?');      params.push(brandId); }
+    const lsc = req.whScopeClause('ws.warehouse_id');
+    if (lsc.sql) { where.push(lsc.sql.replace(/^\s*AND\s+/i, '')); params.push(...lsc.params); }
     const [rows] = await db.query(
       `SELECT i.id AS item_id, i.name, i.category, i.unit,
               ws.warehouse_id, w.name AS warehouse_name,
@@ -1034,6 +1088,7 @@ router.get('/items', async (req, res) => {
     const { brandId, warehouseId, expandWarehouses } = req.query;
 
     if (warehouseId) {
+      if (!req.guardWh(res, warehouseId)) return;
       // v5.10.12 — Each warehouse is an independent entity. It shows
       // ONLY items that have touched it via either:
       //   (a) a warehouse_stock row (registered)
@@ -1169,6 +1224,9 @@ router.get('/items', async (req, res) => {
 //   item, with the qty in each.
 router.get('/items/:itemId/warehouses', async (req, res) => {
   try {
+    // Scope: a forbidden warehouse must never appear in an item's distribution
+    // (rule 9). When not enforced, dsc.sql is '' → legacy full distribution.
+    const dsc = req.whScopeClause('w.id');
     const [rows] = await db.query(`
       SELECT w.id, w.name, w.code, w.is_main,
              b.name AS brand_name,
@@ -1178,8 +1236,8 @@ router.get('/items/:itemId/warehouses', async (req, res) => {
       JOIN warehouses w ON w.id = ws.warehouse_id
       JOIN inv_items i ON i.id = ws.item_id
       LEFT JOIN brands b ON b.id = w.brand_id
-      WHERE ws.item_id = ? AND w.is_active = 1
-      ORDER BY (w.is_main=1) DESC, w.code ASC`, [req.params.itemId]);
+      WHERE ws.item_id = ? AND w.is_active = 1` + dsc.sql + `
+      ORDER BY (w.is_main=1) DESC, w.code ASC`, [req.params.itemId].concat(dsc.params));
     res.json(rows.map(r => ({
       warehouseId: r.id, warehouseName: r.name, warehouseCode: r.code,
       isMain: !!r.is_main,
@@ -1466,6 +1524,7 @@ router.patch('/items/:id/kind', async (req, res) => {
 router.post('/warehouses/:warehouseId/items', async (req, res) => {
   try {
     const warehouseId = req.params.warehouseId;
+    if (!req.guardWh(res, warehouseId)) return;
     const b = req.body || {};
     const username = (req.user && req.user.username) || b.username || 'system';
 
@@ -1600,6 +1659,7 @@ router.post('/warehouses/:warehouseId/items', async (req, res) => {
 // inv_item master record). Used by the warehouse view's "remove" action.
 router.delete('/warehouses/:warehouseId/items/:itemId', async (req, res) => {
   try {
+    if (!req.guardWh(res, req.params.warehouseId)) return;
     await db.query('DELETE FROM warehouse_stock WHERE warehouse_id = ? AND item_id = ?',
                    [req.params.warehouseId, req.params.itemId]);
     res.json({ success:true });
@@ -1615,6 +1675,7 @@ router.delete('/warehouses/:warehouseId/items/:itemId', async (req, res) => {
 router.get('/warehouses/:warehouseId/missing-items', async (req, res) => {
   try {
     const warehouseId = req.params.warehouseId;
+    if (!req.guardWh(res, warehouseId)) return;
     const [whs] = await db.query('SELECT id, name, brand_id FROM warehouses WHERE id = ?', [warehouseId]);
     if (!whs.length) return res.status(404).json({ success:false, error:'warehouse-not-found' });
     const brandId = req.query.brandId || whs[0].brand_id || null;
@@ -1660,6 +1721,7 @@ router.get('/warehouses/:warehouseId/missing-items', async (req, res) => {
 router.post('/warehouses/:warehouseId/register-bulk', async (req, res) => {
   try {
     const warehouseId = req.params.warehouseId;
+    if (!req.guardWh(res, warehouseId)) return;
     const b = req.body || {};
     const itemIds = Array.isArray(b.itemIds) ? b.itemIds.filter(Boolean) : [];
     if (!itemIds.length) return res.json({ success:false, error:'no-items' });
@@ -2116,6 +2178,9 @@ router.get('/movements', async (req, res) => {
     if (req.query.warehouseId) { where.push('m.warehouse_id = ?');          params.push(req.query.warehouseId); }
     if (req.query.q)           { where.push('(m.item_name LIKE ? OR m.reason LIKE ? OR m.notes LIKE ?)');
                                  params.push('%'+req.query.q+'%','%'+req.query.q+'%','%'+req.query.q+'%'); }
+    if (req.query.warehouseId && !req.guardWh(res, req.query.warehouseId)) return;
+    const msc = req.whScopeClause('m.warehouse_id');
+    if (msc.sql) { where.push(msc.sql.replace(/^\s*AND\s+/i, '')); params.push(...msc.params); }
 
     const whereSql = ' WHERE ' + where.join(' AND ');
     const limit = Math.max(1, Math.min(Number(req.query.limit) || 200, 2000));
@@ -2173,6 +2238,7 @@ router.post('/stock-update', async (req, res) => {
     if (!warehouseId) {
       return res.json({ success: false, error: 'لا يمكن إنشاء حركة مخزون بدون تحديد المستودع. حدّد مستودعاً افتراضياً للمستخدم أو أرسل warehouseId صراحةً.' });
     }
+    if (warehouseId && !req.guardWh(res, warehouseId)) return;
 
     const now = new Date();
     const movId = 'MOV-' + Date.now() + '-' + Math.random().toString(36).substr(2, 4);
@@ -2232,9 +2298,12 @@ router.get('/live', async (req, res) => {
     sql += ' ORDER BY i.category, i.name';
     const [items] = await db.query(sql, params);
 
+    if (req.query.warehouseId && !req.guardWh(res, req.query.warehouseId)) return;
+    const lsc = req.whScopeClause('warehouse_id');
     // Aggregate inventory movements per item: total purchased (in) and total consumed (out)
     const [movRows] = await db.query(
-      "SELECT item_id, type, SUM(qty) AS totalQty FROM inventory_movements GROUP BY item_id, type"
+      "SELECT item_id, type, SUM(qty) AS totalQty FROM inventory_movements WHERE 1=1" + lsc.sql + " GROUP BY item_id, type",
+      [...lsc.params]
     );
     const movMap = {};
     movRows.forEach(r => {
@@ -2304,6 +2373,7 @@ router.get('/warehouse-ledger', async (req, res) => {
   try {
     const { warehouseId, from, to, itemId } = req.query;
     if (!warehouseId) return res.json({ success:false, error:'warehouseId required' });
+    if (!req.guardWh(res, warehouseId)) return;
 
     const [wh] = await db.query('SELECT id, name, code FROM warehouses WHERE id = ?', [warehouseId]);
     if (!wh.length) return res.json({ success:false, error:'warehouse-not-found' });
@@ -2501,6 +2571,9 @@ router.get('/warehouse-ledger/all-movements', async (req, res) => {
       const pat = '%' + req.query.q + '%';
       params.push(pat, pat, pat);
     }
+    if (req.query.warehouseId && !req.guardWh(res, req.query.warehouseId)) return;
+    const msc = req.whScopeClause('m.warehouse_id');
+    if (msc.sql) { where.push(msc.sql.replace(/^\s*AND\s+/i, '')); params.push(...msc.params); }
 
     // refType is heuristic on reason/notes — apply post-fetch since the
     // classifier is JS. We push the SQL filter into the dataset.
@@ -2694,6 +2767,7 @@ router.get('/warehouse-ledger/movement/:id', async (req, res) => {
       ' WHERE m.id = ? LIMIT 1', [movId]);
     if (!rows.length) return res.status(404).json({ success:false, error:'movement-not-found' });
     const m = rows[0];
+    if (!req.guardWh(res, m.warehouse_id)) return;
 
     const ref = _classifyMovementRef(m.reason, m.notes);
     const detail = {
@@ -2830,6 +2904,7 @@ function _classifyMovementRef(reason, notes) {
 router.get('/live-report', async (req, res) => {
   try {
     const { brandId, warehouseId, category, startDate, endDate, q } = req.query;
+    if (req.query.warehouseId && !req.guardWh(res, req.query.warehouseId)) return;
     // Default period: last 30 days
     const endD   = endDate   ? new Date(endDate)   : new Date();
     const startD = startDate ? new Date(startDate) : new Date(Date.now() - 30 * 24 * 3600 * 1000);
@@ -2871,8 +2946,9 @@ router.get('/live-report', async (req, res) => {
 
     const itemIds = items.map(r => r.id);
     const placeholders = itemIds.map(() => '?').join(',');
-    const whClause = warehouseId ? ' AND warehouse_id = ?' : '';
-    const whParam  = warehouseId ? [warehouseId] : [];
+    const lrsc = req.whScopeClause('warehouse_id');
+    const whClause = (warehouseId ? ' AND warehouse_id = ?' : '') + lrsc.sql;
+    const whParam  = (warehouseId ? [warehouseId] : []).concat(lrsc.params);
 
     // 1) All movements for these items AFTER startD (regardless of endD).
     //    Purpose: opening = current_stock − sum(net) of all movements after startD.
@@ -3200,6 +3276,9 @@ router.get('/live-report/:itemId/movements', async (req, res) => {
       'LEFT JOIN warehouses w ON w.id = m.warehouse_id ' +
       'WHERE m.item_id = ? AND m.movement_date BETWEEN ? AND ?';
     if (warehouseId) { sql += ' AND m.warehouse_id = ?'; params.push(warehouseId); }
+    if (req.query.warehouseId && !req.guardWh(res, req.query.warehouseId)) return;
+    const msc = req.whScopeClause('m.warehouse_id');
+    if (msc.sql) { sql += msc.sql; params.push(...msc.params); }
     sql += ' ORDER BY m.movement_date DESC LIMIT 500';
     const [rows] = await db.query(sql, params);
 
@@ -3301,6 +3380,8 @@ router.get('/live-report/:itemId/sales-trace', async (req, res) => {
   try {
     const { itemId } = req.params;
     const { startDate, endDate, warehouseId } = req.query;
+    if (req.query.warehouseId && !req.guardWh(res, req.query.warehouseId)) return;
+    const stsc = req.whScopeClause('m.warehouse_id');
     const endD   = endDate   ? new Date(endDate)   : new Date();
     const startD = startDate ? new Date(startDate) : new Date(Date.now() - 30 * 24 * 3600 * 1000);
     endD.setHours(23, 59, 59, 999);
@@ -3399,8 +3480,8 @@ router.get('/live-report/:itemId/sales-trace', async (req, res) => {
           `SELECT m.id, m.movement_date, m.item_id, m.qty, m.reason, m.warehouse_id, m.notes
            FROM inventory_movements m
            WHERE m.movement_date BETWEEN ? AND ?
-             AND (${orClauses})`,
-          [startD, endD, ...orParams]);
+             AND (${orClauses})` + stsc.sql,
+          [startD, endD, ...orParams, ...stsc.params]);
         movementRows = rows;
       } catch (_) { movementRows = []; }
     }
@@ -3525,6 +3606,8 @@ router.post('/stocktakes', async (req, res) => {
         error: 'تعذّر تحديد المستودع: المستخدم ليس له default_warehouse_id ولا branch_id مرتبط بمستودع، والكاشير لم يُرسل warehouseId. حدّد المستودع من إعدادات المستخدم أو من واجهة الكاشير قبل الجرد.'
       });
     }
+    // Scope: the resolved target warehouse must be in the caller's scope.
+    if (!req.guardWh(res, warehouseId)) return;
 
     const now = countDate ? new Date(countDate) : new Date();
     const stId = 'ST-' + Date.now();
@@ -3694,6 +3777,9 @@ router.get('/stocktakes', async (req, res) => {
     if (to)                    { where.push('DATE(s.stocktake_date) <= ?'); params.push(to); }
     if (req.query.status)      { where.push('s.status = ?');                params.push(req.query.status); }
     if (req.query.username)    { where.push('s.username = ?');              params.push(req.query.username); }
+    if (req.query.warehouseId && !req.guardWh(res, req.query.warehouseId)) return;
+    const ssc = req.whScopeClause('s.warehouse_id');
+    if (ssc.sql) { where.push(ssc.sql.replace(/^\s*AND\s+/i, '')); params.push(...ssc.params); }
     const whereSql = where.length ? ' WHERE ' + where.join(' AND ') : '';
 
     const limit = Math.max(1, Math.min(Number(req.query.limit) || 200, 2000));
@@ -3764,6 +3850,7 @@ router.get('/stocktakes/:id', async (req, res) => {
     const [headers] = await db.query('SELECT * FROM stocktakes WHERE id = ?', [req.params.id]);
     if (!headers.length) return res.json({ error: 'Not found' });
     const st = headers[0];
+    if (!req.guardWh(res, st.warehouse_id)) return;
     const [items] = await db.query('SELECT si.*, COALESCE(inv.cost, 0) AS unit_cost FROM stocktake_items si LEFT JOIN inv_items inv ON si.inv_item_id = inv.id WHERE si.stocktake_id = ? ORDER BY si.id', [req.params.id]);
     var totalVarianceCost = 0;
     var mappedItems = items.map(i => {
@@ -3792,6 +3879,11 @@ router.get('/stocktakes/:id', async (req, res) => {
 // (The old route deleted any row with no auth and orphaned its items.)
 router.delete('/stocktakes/:id', MGR, async (req, res) => {
   try {
+    // Scope: guard on the stocktake's warehouse before any delete logic.
+    try {
+      const [wq] = await db.query('SELECT warehouse_id FROM stocktakes WHERE id = ?', [req.params.id]);
+      if (wq.length && !req.guardWh(res, wq[0].warehouse_id)) return;
+    } catch (_) {}
     let eff;
     try {
       const [st] = await db.query(
@@ -3848,6 +3940,9 @@ router.post('/adjustments', async (req, res) => {
         }
       } catch(_) {}
     }
+    // Scope: if a target warehouse is set (explicit or resolved), it must be in
+    // the caller's scope.
+    if (warehouseId && !req.guardWh(res, warehouseId)) return;
 
     const now = new Date();
     const adjId = 'ADJ-' + Date.now();
@@ -3910,6 +4005,8 @@ router.post('/adjustments/:id/approve', MGR, async (req, res) => {
 
     const [adj] = await db.query('SELECT * FROM stock_adjustments WHERE id = ?', [id]);
     if (!adj.length) return res.json({ success: false, error: 'Not found' });
+    // Scope: the adjustment's own warehouse must be in the approver's scope.
+    if (!req.guardWh(res, adj[0].warehouse_id)) return;
     // §6 — only a pending adjustment can be approved (never re-post an
     // already-approved one).
     if (!ADJ.canApprove(adj[0].status)) {
@@ -4025,6 +4122,9 @@ router.get('/adjustments', async (req, res) => {
     if (req.query.status)      { where.push('a.status = ?');                 params.push(req.query.status); }
     if (req.query.reason)      { where.push('a.reason = ?');                 params.push(req.query.reason); }
     if (req.query.username)    { where.push('a.username = ?');               params.push(req.query.username); }
+    if (req.query.warehouseId && !req.guardWh(res, req.query.warehouseId)) return;
+    const asc = req.whScopeClause('a.warehouse_id');
+    if (asc.sql) { where.push(asc.sql.replace(/^\s*AND\s+/i, '')); params.push(...asc.params); }
     const whereSql = where.length ? ' WHERE ' + where.join(' AND ') : '';
 
     const limit  = Math.max(1, Math.min(Number(req.query.limit) || 200, 2000));
@@ -4089,6 +4189,7 @@ router.get('/adjustments/:id', async (req, res) => {
     const [headers] = await db.query('SELECT * FROM stock_adjustments WHERE id = ?', [req.params.id]);
     if (!headers.length) return res.json({ error: 'Not found' });
     const a = headers[0];
+    if (!req.guardWh(res, a.warehouse_id)) return;
     const [items] = await db.query('SELECT * FROM stock_adjustment_items WHERE adjustment_id = ?', [req.params.id]);
     res.json({
       id: a.id, date: a.adjustment_date, reason: a.reason,
@@ -4111,8 +4212,9 @@ router.get('/adjustments/:id', async (req, res) => {
 // "developer-only, checked on frontend" comment was not a security boundary.
 router.delete('/adjustments/:id', MGR, async (req, res) => {
   try {
-    const [adj] = await db.query('SELECT status FROM stock_adjustments WHERE id = ?', [req.params.id]);
+    const [adj] = await db.query('SELECT status, warehouse_id FROM stock_adjustments WHERE id = ?', [req.params.id]);
     if (!adj.length) return res.json({ success: false, error: 'Not found' });
+    if (!req.guardWh(res, adj[0].warehouse_id)) return;
     if (!ADJ.canDelete(adj[0].status)) {
       return res.json({ success: false, code: 'ADJ_POSTED_NO_DELETE',
         error: 'لا يمكن حذف تعديل معتمد — استخدم عكسًا موثقًا بدل الحذف للحفاظ على سجل التدقيق.' });
@@ -4136,6 +4238,12 @@ router.post('/receive-request', async (req, res) => {
     const { purchaseId, items, username, notes } = req.body;
     if (!purchaseId || !items || !items.length) return res.json({ success: false, error: 'بيانات ناقصة' });
 
+    // Per-user warehouse access: derive the purchase's warehouse and guard.
+    try {
+      const [pwh] = await db.query('SELECT warehouse_id FROM purchases WHERE id = ?', [purchaseId]);
+      if (pwh.length && !req.guardWh(res, pwh[0].warehouse_id)) return;
+    } catch(_) { /* legacy schema without warehouse_id — skip guard */ }
+
     // Save received items to the purchase
     await db.query(
       'UPDATE purchases SET received_items_json = ?, receive_status = "pending", received_by = ? WHERE id = ?',
@@ -4148,12 +4256,14 @@ router.post('/receive-request', async (req, res) => {
 // Get pending receive requests
 router.get('/receive-requests', async (req, res) => {
   try {
+    const rrsc = req.whScopeClause('p.warehouse_id');
     const [rows] = await db.query(
       `SELECT p.id, p.supplier_name, p.total_price, p.items_json, p.received_items_json, p.received_by, p.po_id, p.receive_status,
               po.po_number, po.supplier_name AS po_supplier
        FROM purchases p LEFT JOIN purchase_orders po ON p.po_id = po.id
-       WHERE p.receive_status = 'pending'
-       ORDER BY p.purchase_date DESC`
+       WHERE p.receive_status = 'pending'` + rrsc.sql + `
+       ORDER BY p.purchase_date DESC`,
+      [...rrsc.params]
     );
     res.json(rows.map(r => ({
       id: r.id, supplierName: r.supplier_name || r.po_supplier || '', totalPrice: Number(r.total_price),
@@ -4181,6 +4291,13 @@ router.post('/receive-approve/:id', async (req, res) => {
     // prices as VAT-inclusive, so default true; callers may opt out with an
     // explicit includesVAT:false (same flag as purchases receive).
     const includesVAT = req.body.includesVAT !== false;
+
+    // Per-user warehouse access: guard on the purchase's warehouse before
+    // entering the (mutating) transaction so a denial is a clean 403.
+    try {
+      const [pwh] = await db.query('SELECT warehouse_id FROM purchases WHERE id = ?', [req.params.id]);
+      if (pwh.length && !req.guardWh(res, pwh[0].warehouse_id)) return;
+    } catch(_) { /* legacy schema without warehouse_id — skip guard */ }
 
     const out = await db.withTransaction(async (conn) => {
       const db = conn;
@@ -4347,6 +4464,7 @@ router.post('/shortage-requests', async (req, res) => {
   try {
     const { items, username, notes, warehouseId, branchId, brandId } = req.body;
     if (!items || !items.length) return res.json({ success: false, error: 'أضف مادة واحدة على الأقل' });
+    if (!req.guardWh(res, warehouseId)) return;
 
     // Auto-resolve brand from user's HR profile if not supplied
     let resolvedBrandId = brandId || null;
@@ -4406,6 +4524,9 @@ router.get('/shortage-requests', async (req, res) => {
     if (branchId)  { sql += ' AND r.branch_id = ?';           params.push(branchId); }
     if (startDate) { sql += ' AND DATE(r.request_date) >= ?'; params.push(startDate); }
     if (endDate)   { sql += ' AND DATE(r.request_date) <= ?'; params.push(endDate); }
+    if (req.query.warehouseId && !req.guardWh(res, req.query.warehouseId)) return;
+    const ssc = req.whScopeClause('r.warehouse_id');
+    if (ssc.sql) { sql += ssc.sql; params.push(...ssc.params); }
     sql += ' ORDER BY r.created_at DESC LIMIT 200';
     const [rows] = await db.query(sql, params);
     res.json(rows.map(r => ({
@@ -4425,6 +4546,7 @@ router.get('/shortage-requests/:id', async (req, res) => {
     const [reqs] = await db.query('SELECT * FROM shortage_requests WHERE id = ?', [req.params.id]);
     if (!reqs.length) return res.json({ error: 'Not found' });
     const r = reqs[0];
+    if (!req.guardWh(res, r.warehouse_id)) return;
     const [items] = await db.query('SELECT * FROM shortage_items WHERE request_id = ?', [req.params.id]);
     res.json({
       id: r.id, requestNumber: r.request_number, requestDate: r.request_date,
@@ -4444,6 +4566,9 @@ router.get('/shortage-requests/:id', async (req, res) => {
 router.post('/shortage-requests/:id/approve', async (req, res) => {
   try {
     const { username, supplyMode } = req.body;
+    const [sr] = await db.query('SELECT warehouse_id FROM shortage_requests WHERE id = ?', [req.params.id]);
+    if (!sr.length) return res.json({ success: false, error: 'الطلب غير موجود' });
+    if (!req.guardWh(res, sr[0].warehouse_id)) return;
     await db.query('UPDATE shortage_requests SET status = "approved", approved_by = ?, approved_at = ?, supply_mode = ? WHERE id = ?',
       [username || '', new Date(), supplyMode || 'parent_company', req.params.id]);
     res.json({ success: true });
@@ -4454,6 +4579,9 @@ router.post('/shortage-requests/:id/approve', async (req, res) => {
 router.post('/shortage-requests/:id/reject', async (req, res) => {
   try {
     const { username, reason } = req.body;
+    const [sr] = await db.query('SELECT warehouse_id FROM shortage_requests WHERE id = ?', [req.params.id]);
+    if (!sr.length) return res.json({ success: false, error: 'الطلب غير موجود' });
+    if (!req.guardWh(res, sr[0].warehouse_id)) return;
     const rejectNote = '\n[رفض: ' + (reason || 'بدون سبب') + ']';
     await db.query('UPDATE shortage_requests SET status = "rejected", approved_by = ?, approved_at = ?, notes = CONCAT(COALESCE(notes,""), ?) WHERE id = ?',
       [username || '', new Date(), rejectNote, req.params.id]);
@@ -4465,8 +4593,9 @@ router.post('/shortage-requests/:id/reject', async (req, res) => {
 router.put('/shortage-requests/:id', async (req, res) => {
   try {
     const { items, notes } = req.body;
-    const [reqs] = await db.query('SELECT status FROM shortage_requests WHERE id = ?', [req.params.id]);
+    const [reqs] = await db.query('SELECT status, warehouse_id FROM shortage_requests WHERE id = ?', [req.params.id]);
     if (!reqs.length) return res.json({ success: false, error: 'الطلب غير موجود' });
+    if (!req.guardWh(res, reqs[0].warehouse_id)) return;
     if (reqs[0].status !== 'pending') return res.json({ success: false, error: 'فقط الطلبات المعلقة يمكن تعديلها' });
     if (!items || !items.length) return res.json({ success: false, error: 'أضف مادة واحدة على الأقل' });
 
@@ -4487,6 +4616,9 @@ router.put('/shortage-requests/:id', async (req, res) => {
 // Delete shortage request (developer only)
 router.delete('/shortage-requests/:id', async (req, res) => {
   try {
+    const [sr] = await db.query('SELECT warehouse_id FROM shortage_requests WHERE id = ?', [req.params.id]);
+    if (!sr.length) return res.json({ success: false, error: 'الطلب غير موجود' });
+    if (!req.guardWh(res, sr[0].warehouse_id)) return;
     await db.query('DELETE FROM shortage_items WHERE request_id = ?', [req.params.id]);
     await db.query('DELETE FROM shortage_requests WHERE id = ?', [req.params.id]);
     res.json({ success: true });

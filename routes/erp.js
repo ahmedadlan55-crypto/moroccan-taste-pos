@@ -3847,6 +3847,7 @@ async function auditLog(action, entityType, entityId, username, details, ip) {
 
 router.get('/warehouses-list', async (req, res) => {
   try {
+    const scope = req.whScopeClause('w.id');
     const [rows] = await db.query(`
       SELECT w.*,
         b.name AS branch_name,
@@ -3856,7 +3857,8 @@ router.get('/warehouses-list', async (req, res) => {
       LEFT JOIN branches b ON w.branch_id = b.id
       LEFT JOIN brands bd ON w.brand_id = bd.id
       LEFT JOIN cost_centers cc ON w.cost_center_id = cc.id
-      ORDER BY w.code`);
+      WHERE 1=1${scope.sql}
+      ORDER BY w.code`, scope.params);
     res.json(rows.map(w => {
       let allowedBrands = [];
       try { if (w.allowed_brands) allowedBrands = JSON.parse(w.allowed_brands); } catch(e) {}
@@ -3879,6 +3881,7 @@ router.post('/warehouses-list', async (req, res) => {
     if (!code || !name) return res.json({ success: false, error: 'الرمز والاسم مطلوبان' });
     const allowedBrandsJson = Array.isArray(allowedBrands) ? JSON.stringify(allowedBrands) : null;
     if (id) {
+      if (!req.guardWh(res, id)) return;
       try {
         await db.query('UPDATE warehouses SET code=?, name=?, type=?, brand_id=?, branch_id=?, cost_center_id=?, location=?, manager=?, allowed_brands=? WHERE id=?',
           [code, name, type||'branch', brandId||null, branchId||null, costCenterId||null, location||'', manager||'', allowedBrandsJson, id]);
@@ -3910,6 +3913,7 @@ router.post('/warehouses-list', async (req, res) => {
 // fails on an old schema) we fail SAFE → deactivate, never delete.
 router.delete('/warehouses-list/:id', MGR, async (req, res) => {
   const id = req.params.id;
+  if (!req.guardWh(res, id)) return;
   async function _count(sql, params) {
     try { const [r] = await db.query(sql, params); return Number((r[0] || {}).n) || 0; }
     catch (_) { return Infinity; } // unknown → treat as "has history" (fail safe)
@@ -3946,6 +3950,7 @@ router.delete('/warehouses-list/:id', MGR, async (req, res) => {
 // Warehouse stock
 router.get('/warehouse-stock-detail/:whId', async (req, res) => {
   try {
+    if (!req.guardWh(res, req.params.whId)) return;
     const [rows] = await db.query(
       `SELECT ws.*, i.name, i.category, i.unit, i.cost FROM warehouse_stock ws
        JOIN inv_items i ON ws.item_id = i.id WHERE ws.warehouse_id = ? ORDER BY i.name`, [req.params.whId]);
@@ -3979,6 +3984,11 @@ router.get('/warehouse-transfers', async (req, res) => {
     if (status)    { conds.push('t.status = ?');                  params.push(status); }
     if (startDate) { conds.push('DATE(t.transfer_date) >= ?');    params.push(startDate); }
     if (endDate)   { conds.push('DATE(t.transfer_date) <= ?');    params.push(endDate); }
+    const sf = req.whScopeClause('t.from_warehouse_id'), st = req.whScopeClause('t.to_warehouse_id');
+    if (sf.sql) {
+      conds.push('(' + sf.sql.replace(/^\s*AND\s+/i, '') + ' OR ' + st.sql.replace(/^\s*AND\s+/i, '') + ')');
+      params.push(...sf.params, ...st.params);
+    }
     if (conds.length) sql += ' WHERE ' + conds.join(' AND ');
     sql += ' ORDER BY t.created_at DESC LIMIT 200';
     const [rows] = await db.query(sql, params);
@@ -3999,6 +4009,7 @@ router.post('/warehouse-transfers', MGR, async (req, res) => {
     if (!fromWarehouseId || !toWarehouseId || !items || !items.length) {
       return res.status(400).json({ success: false, error: 'بيانات ناقصة' });
     }
+    if (!req.guardTransfer(res, fromWarehouseId, toWarehouseId)) return;
     // v5.10.29 — block same-warehouse transfers; meaningless, would cancel out.
     if (String(fromWarehouseId) === String(toWarehouseId)) {
       return res.status(400).json({ success: false, error: 'لا يمكن التحويل إلى نفس المستودع' });
@@ -4048,6 +4059,7 @@ router.post('/warehouse-transfers/:id/approve', MGR, async (req, res) => {
     const [transfers] = await db.query('SELECT * FROM warehouse_transfers WHERE id = ?', [req.params.id]);
     if (!transfers.length) return res.status(404).json({ success: false, error: 'التحويل غير موجود' });
     const t = transfers[0];
+    if (!req.guardTransfer(res, t.from_warehouse_id, t.to_warehouse_id)) return;
     if (t.status !== 'draft') return res.status(409).json({ success: false, error: 'التحويل ليس في حالة مسودة' });
 
     const items = JSON.parse(t.items_json || '[]').filter(x => x && x.itemId && Number(x.qty) > 0);
@@ -4137,6 +4149,7 @@ router.post('/warehouse-transfers/:id/cancel', MGR, async (req, res) => {
   try {
     const [transfers] = await db.query('SELECT * FROM warehouse_transfers WHERE id = ?', [req.params.id]);
     if (!transfers.length) return res.json({ success: false, error: 'التحويل غير موجود' });
+    if (!req.guardTransfer(res, transfers[0].from_warehouse_id, transfers[0].to_warehouse_id)) return;
     if (transfers[0].status !== 'draft') return res.json({ success: false, error: 'لا يمكن إلغاء تحويل مكتمل' });
     await db.query('UPDATE warehouse_transfers SET status = "cancelled" WHERE id = ?', [req.params.id]);
     res.json({ success: true });
@@ -4147,6 +4160,7 @@ router.get('/warehouse-transfer-lines/:id', async (req, res) => {
   try {
     const [transfers] = await db.query('SELECT * FROM warehouse_transfers WHERE id = ?', [req.params.id]);
     if (!transfers.length) return res.json([]);
+    if (!req.guardTransfer(res, transfers[0].from_warehouse_id, transfers[0].to_warehouse_id)) return;
     const items = JSON.parse(transfers[0].items_json || '[]');
     res.json(items.map(item => ({
       itemId: item.itemId, itemName: item.itemName||'',

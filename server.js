@@ -4298,6 +4298,12 @@ async function runMigrations() {
       INDEX idx_ilm_wh_item (warehouse_id, item_id)
     ) ENGINE=InnoDB
   `);
+  // Per-line lot intent captured on the v2 document drafts (JSON): receipts carry
+  // the received lots; issues/adjustments may carry a manual allocation (else FEFO
+  // is computed at post). Parsed by routes/inventory-transactions.js at post time.
+  await addColumnIfMissing('inv_receipt_items', 'lot_data', 'TEXT NULL');
+  await addColumnIfMissing('inv_issue_items', 'lot_data', 'TEXT NULL');
+  await addColumnIfMissing('inv_adjustment_items', 'lot_data', 'TEXT NULL');
 
   // ═══════════════════════════════════════════════════════════
   // PHASE 2 — Production Orders

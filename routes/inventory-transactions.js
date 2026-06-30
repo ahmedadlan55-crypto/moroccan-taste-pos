@@ -29,6 +29,7 @@ const E = require('../lib/inventoryTxEngine');
 const C = require('../lib/inventoryTxContract');
 const IDEM = require('../lib/idempotencyStore');
 const POLICY = require('../lib/inventoryItemPolicy');
+const L = require('../lib/lotLedger');
 const { recomputeInvItemStock } = require('../lib/stockRecompute');
 const requireRole = require('../middleware/auth').requireRole;
 
@@ -145,8 +146,49 @@ function _validateItems(items, qtyField, allowZero) {
 // applied PER DIRECTION by the builders (Phase 4B — close 4A): inflow blocked,
 // outflow allowed to liquidate WITH a reason. See lib/inventoryItemPolicy.js.
 async function _itemMeta(itemId) {
-  const [r] = await db.query('SELECT id, name, unit, active, deleted_at FROM inv_items WHERE id=? LIMIT 1', [itemId]);
-  return r[0] || { id: itemId, name: '', unit: '' };
+  const [r] = await db.query('SELECT id, name, unit, active, deleted_at, tracking_mode FROM inv_items WHERE id=? LIMIT 1', [itemId]);
+  return r[0] || { id: itemId, name: '', unit: '', tracking_mode: 'none' };
+}
+
+// Read the auto-increment seq of a just-recorded inventory_movements row (links lot
+// movements to the parent ledger row). Phase 4B.
+async function _seqOf(conn, movementId) {
+  const [r] = await conn.query('SELECT seq FROM inventory_movements WHERE id=? LIMIT 1', [movementId]);
+  return r.length ? Number(r[0].seq) : null;
+}
+function _parseLot(s) { if (!s) return null; try { return typeof s === 'string' ? JSON.parse(s) : s; } catch (_) { return null; } }
+// Validate a per-line lot list for an INBOUND move (receipt / positive adjustment).
+function _validateInboundLots(meta, qty, rawLots) {
+  const lots = Array.isArray(rawLots) ? rawLots : [];
+  if (!lots.length) throw _err('LOT_REQUIRED', 'الصنف "' + (meta.name || meta.id) + '" يخضع لتتبع الدفعات — حدّد دفعة واحدة على الأقل');
+  let sum = 0;
+  const norm = [];
+  for (const lt of lots) {
+    const ln = String(lt.lotNumber || lt.lot_number || '').trim();
+    if (!ln) throw _err('LOT_REQUIRED', 'رقم الدفعة مطلوب');
+    const lq = Number(lt.qty);
+    if (!Number.isFinite(lq) || lq <= 0) throw _err('VALIDATION_ERROR', 'كمية الدفعة يجب أن تكون موجبة');
+    const exp = lt.expiryDate || lt.expiry_date || null;
+    if (meta.tracking_mode === 'expiry' && !exp) throw _err('VALIDATION_ERROR', 'تاريخ الصلاحية مطلوب لدفعة الصنف "' + (meta.name || meta.id) + '"');
+    sum += lq;
+    norm.push({ lotNumber: ln, qty: lq, expiryDate: exp, manufactureDate: lt.manufactureDate || lt.manufacture_date || null });
+  }
+  if (E.round2(sum) !== E.round2(qty)) throw _err('VALIDATION_ERROR', 'مجموع كميات الدفعات (' + E.round2(sum) + ') لا يساوي كمية السطر (' + E.round2(qty) + ')');
+  return { mode: meta.tracking_mode, lots: norm };
+}
+// Validate an OPTIONAL manual allocation for an OUTBOUND move (else FEFO at post).
+function _validateManualAlloc(meta, qty, rawAlloc, reason) {
+  const arr = Array.isArray(rawAlloc) ? rawAlloc : [];
+  if (!arr.length) return null; // no manual allocation → FEFO is used at post
+  let sum = 0; const norm = [];
+  for (const a of arr) {
+    const lotId = String(a.lotId || a.lot_id || '').trim();
+    const q = Number(a.qty);
+    if (!lotId || !Number.isFinite(q) || q <= 0) throw _err('VALIDATION_ERROR', 'تخصيص دفعة غير صالح');
+    sum += q; norm.push({ lotId, qty: q });
+  }
+  if (E.round2(sum) !== E.round2(qty)) throw _err('VALIDATION_ERROR', 'مجموع التخصيص اليدوي لا يساوي الكمية المطلوبة');
+  return { mode: meta.tracking_mode, manual: norm, reason: reason || null };
 }
 
 // ── Build draft lines per doc type (also used by PATCH) ─────────────────────
@@ -167,9 +209,10 @@ async function _buildReceipt(body, warehouse) {
     if (!Number.isFinite(unitCost) || unitCost <= 0) throw _err('COST_REQUIRED', 'تكلفة الوحدة مطلوبة وموجبة للصنف ' + itemId);
     const meta = await _itemMeta(itemId);
     POLICY.assertInflowAllowed(meta); // receipt is inbound — never restock an inactive item
+    const lotData = L.isTracked(meta.tracking_mode) ? _validateInboundLots(meta, qty, it.lots) : null;
     const lineTotal = E.round2(qty * unitCost);
     total += lineTotal;
-    lines.push({ itemId, itemName: meta.name, unit: meta.unit, qty, unitCost: E.round4(unitCost), lineTotal });
+    lines.push({ itemId, itemName: meta.name, unit: meta.unit, qty, unitCost: E.round4(unitCost), lineTotal, lotData });
   }
   total = E.round2(total);
   return {
@@ -196,11 +239,13 @@ async function _buildIssue(body, warehouse) {
     const qty = Number(it.qty);
     const meta = await _itemMeta(itemId);
     POLICY.assertOutflowAllowed(meta, { reason: body.reason }); // issue is outbound — inactive may liquidate WITH a reason
+    // Tracked issue: an OPTIONAL manual lot allocation (else FEFO is computed at post).
+    const lotData = L.isTracked(meta.tracking_mode) ? _validateManualAlloc(meta, qty, it.lotAllocations, it.allocationReason || body.reason) : null;
     // Estimate the line at the current WAC; the authoritative cost is frozen at post.
     const est = await E.getEffectiveCost(db, itemId, warehouse.id);
     const lineTotal = E.round2(qty * est);
     total += lineTotal;
-    lines.push({ itemId, itemName: meta.name, unit: meta.unit, qty, unitCost: E.round4(est), lineTotal });
+    lines.push({ itemId, itemName: meta.name, unit: meta.unit, qty, unitCost: E.round4(est), lineTotal, lotData });
   }
   total = E.round2(total);
   return {
@@ -231,11 +276,18 @@ async function _buildAdjustment(body, warehouse) {
     // negative delta is liquidation outflow (allowed WITH the doc reason).
     if (delta > 0) POLICY.assertInflowAllowed(meta);
     else if (delta < 0) POLICY.assertOutflowAllowed(meta, { reason: body.reason });
+    // Tracked adjustment lot intent: +delta needs the lots received; -delta may
+    // carry a manual allocation (else FEFO at post). delta 0 → no lot move.
+    let lotData = null;
+    if (L.isTracked(meta.tracking_mode)) {
+      if (delta > 0) lotData = _validateInboundLots(meta, delta, it.lots);
+      else if (delta < 0) lotData = _validateManualAlloc(meta, Math.abs(delta), it.lotAllocations, it.allocationReason || body.reason);
+    }
     const cost = await E.getEffectiveCost(db, itemId, warehouse.id);
     const deltaValue = E.round2(delta * cost);
     totalDeltaValue += deltaValue;
     absValue += Math.abs(deltaValue);
-    lines.push({ itemId, itemName: meta.name, unit: meta.unit, systemQtySnapshot: systemQty, countedQty: counted, delta, unitCost: E.round4(cost), deltaValue });
+    lines.push({ itemId, itemName: meta.name, unit: meta.unit, systemQtySnapshot: systemQty, countedQty: counted, delta, unitCost: E.round4(cost), deltaValue, lotData });
   }
   const evidence = (body.referenceEvidence || body.reference_evidence || '').toString().slice(0, 500) || null;
   if (E.round2(absValue) >= EVIDENCE_THRESHOLD && !evidence) {
@@ -250,15 +302,16 @@ const BUILDERS = { receipt: _buildReceipt, issue: _buildIssue, adjustment: _buil
 async function _insertLines(conn, cfg, docId, lines) {
   for (const ln of lines) {
     const id = 'LN-' + Date.now() + '-' + Math.random().toString(36).slice(2, 8);
+    const lotJson = ln.lotData ? JSON.stringify(ln.lotData).slice(0, 60000) : null;
     if (cfg.docType === 'adjustment') {
       await conn.query(
-        'INSERT INTO ' + cfg.items + ' (id, ' + cfg.fk + ', item_id, item_name, unit, system_qty_snapshot, counted_qty, delta, unit_cost, delta_value, posted_unit_cost, notes) VALUES (?,?,?,?,?,?,?,?,?,?,0,?)',
-        [id, docId, ln.itemId, ln.itemName || '', ln.unit || '', ln.systemQtySnapshot || 0, ln.countedQty || 0, ln.delta || 0, ln.unitCost || 0, ln.deltaValue || 0, (ln.notes || '').toString().slice(0, 400)]
+        'INSERT INTO ' + cfg.items + ' (id, ' + cfg.fk + ', item_id, item_name, unit, system_qty_snapshot, counted_qty, delta, unit_cost, delta_value, posted_unit_cost, notes, lot_data) VALUES (?,?,?,?,?,?,?,?,?,?,0,?,?)',
+        [id, docId, ln.itemId, ln.itemName || '', ln.unit || '', ln.systemQtySnapshot || 0, ln.countedQty || 0, ln.delta || 0, ln.unitCost || 0, ln.deltaValue || 0, (ln.notes || '').toString().slice(0, 400), lotJson]
       );
     } else {
       await conn.query(
-        'INSERT INTO ' + cfg.items + ' (id, ' + cfg.fk + ', item_id, item_name, unit, qty, unit_cost, line_total, posted_unit_cost, notes) VALUES (?,?,?,?,?,?,?,?,0,?)',
-        [id, docId, ln.itemId, ln.itemName || '', ln.unit || '', ln.qty || 0, ln.unitCost || 0, ln.lineTotal || 0, (ln.notes || '').toString().slice(0, 400)]
+        'INSERT INTO ' + cfg.items + ' (id, ' + cfg.fk + ', item_id, item_name, unit, qty, unit_cost, line_total, posted_unit_cost, notes, lot_data) VALUES (?,?,?,?,?,?,?,?,0,?,?)',
+        [id, docId, ln.itemId, ln.itemName || '', ln.unit || '', ln.qty || 0, ln.unitCost || 0, ln.lineTotal || 0, (ln.notes || '').toString().slice(0, 400), lotJson]
       );
     }
   }
@@ -459,10 +512,21 @@ async function _postReceipt(conn, cfg, doc, lines, actor) {
   for (const ln of lines) {
     const cost = Number(ln.unit_cost);
     const qty = Number(ln.qty);
+    const mode = await L.getTrackingMode(conn, ln.item_id);
     const mv = await E.applyStockMovement(conn, doc.warehouse_id, ln.item_id, qty, cost, 'inv_receipt', doc.id, actor);
     const mid = await E.recordMovement(conn, { warehouseId: doc.warehouse_id, itemId: ln.item_id, itemName: ln.item_name, type: 'in', qty, reason: 'استلام مستقل', username: actor, notes: doc[cfg.numberCol], referenceType: cfg.refType, referenceId: doc.id });
     movementIds.push(mid);
     affectedStock.push({ warehouseId: doc.warehouse_id, itemId: ln.item_id, delta: qty, newQty: mv.newQty });
+    if (L.isTracked(mode)) {
+      const seq = await _seqOf(conn, mid);
+      const ld = _parseLot(ln.lot_data);
+      const lots = (ld && Array.isArray(ld.lots) && ld.lots.length) ? ld.lots : null;
+      if (!lots) throw _err('LOT_REQUIRED', 'الصنف "' + ln.item_name + '" يخضع لتتبع الدفعات — لا توجد دفعات في المستند');
+      for (const lt of lots) {
+        await L.receiveInbound(conn, { warehouseId: doc.warehouse_id, itemId: ln.item_id, qty: lt.qty, lot: { lotNumber: lt.lotNumber, expiryDate: lt.expiryDate, manufactureDate: lt.manufactureDate, unitCost: cost, sourceType: 'receipt', sourceId: doc.id }, trackingMode: mode, movementSeq: seq, movementId: mid, referenceType: cfg.refType, referenceId: doc.id, reason: 'استلام', actor, occurredAt: new Date() });
+      }
+      await L.assertInvariant(conn, doc.warehouse_id, ln.item_id);
+    }
     await conn.query('UPDATE ' + cfg.items + ' SET posted_unit_cost=? WHERE id=?', [cost, ln.id]);
     amount += qty * cost;
     try { await recomputeInvItemStock(conn, ln.item_id); } catch (_) {}
@@ -487,11 +551,18 @@ async function _postIssue(conn, cfg, doc, lines, actor) {
   }
   for (const ln of lines) {
     const qty = Number(ln.qty);
+    const mode = await L.getTrackingMode(conn, ln.item_id);
     const cost = await E.getEffectiveCost(conn, ln.item_id, doc.warehouse_id);
     const mv = await E.applyStockMovement(conn, doc.warehouse_id, ln.item_id, -qty, cost, 'inv_issue', doc.id, actor);
     const mid = await E.recordMovement(conn, { warehouseId: doc.warehouse_id, itemId: ln.item_id, itemName: ln.item_name, type: 'out', qty, reason: 'صرف مستقل: ' + (doc.reason || ''), username: actor, notes: doc[cfg.numberCol], referenceType: cfg.refType, referenceId: doc.id });
     movementIds.push(mid);
     affectedStock.push({ warehouseId: doc.warehouse_id, itemId: ln.item_id, delta: -qty, newQty: mv.newQty });
+    if (L.isTracked(mode)) {
+      const seq = await _seqOf(conn, mid);
+      const ld = _parseLot(ln.lot_data);
+      await L.allocateOutbound(conn, { warehouseId: doc.warehouse_id, itemId: ln.item_id, qty, trackingMode: mode, movementSeq: seq, movementId: mid, referenceType: cfg.refType, referenceId: doc.id, reason: doc.reason, actor, occurredAt: new Date(), manualAllocations: (ld && Array.isArray(ld.manual) && ld.manual.length) ? ld.manual : null });
+      await L.assertInvariant(conn, doc.warehouse_id, ln.item_id);
+    }
     await conn.query('UPDATE ' + cfg.items + ' SET posted_unit_cost=?, unit_cost=?, line_total=? WHERE id=?', [cost, cost, E.round2(qty * cost), ln.id]);
     amount += qty * cost;
     try { await recomputeInvItemStock(conn, ln.item_id); } catch (_) {}
@@ -512,11 +583,24 @@ async function _postAdjustment(conn, cfg, doc, lines, actor) {
     if (Math.abs(cur.qty - snap) > 1e-9) throw _err('QUANTITY_CONFLICT', 'تغيّر رصيد الصنف ' + ln.item_id + ' منذ الجرد (الآن ' + cur.qty + ' بدل ' + snap + ') — أعد الجرد');
     const delta = Number(ln.delta);
     if (Math.abs(delta) < 1e-9) { await conn.query('UPDATE ' + cfg.items + ' SET posted_unit_cost=? WHERE id=?', [Number(ln.unit_cost), ln.id]); continue; }
+    const mode = await L.getTrackingMode(conn, ln.item_id);
     const cost = await E.getEffectiveCost(conn, ln.item_id, doc.warehouse_id);
     const mv = await E.applyStockMovement(conn, doc.warehouse_id, ln.item_id, delta, cost, 'inv_adjustment', doc.id, actor);
     const mid = await E.recordMovement(conn, { warehouseId: doc.warehouse_id, itemId: ln.item_id, itemName: ln.item_name, type: delta > 0 ? 'in' : 'out', qty: Math.abs(delta), reason: 'تعديل مخزني: ' + (doc.reason || ''), username: actor, notes: doc[cfg.numberCol], referenceType: cfg.refType, referenceId: doc.id });
     movementIds.push(mid);
     affectedStock.push({ warehouseId: doc.warehouse_id, itemId: ln.item_id, delta, newQty: mv.newQty });
+    if (L.isTracked(mode)) {
+      const seq = await _seqOf(conn, mid);
+      const ld = _parseLot(ln.lot_data);
+      if (delta > 0) {
+        const lots = (ld && Array.isArray(ld.lots) && ld.lots.length) ? ld.lots : null;
+        if (!lots) throw _err('LOT_REQUIRED', 'تعديل موجب لصنف مُتتبع "' + ln.item_name + '" يتطلب تحديد الدفعة');
+        for (const lt of lots) await L.receiveInbound(conn, { warehouseId: doc.warehouse_id, itemId: ln.item_id, qty: lt.qty, lot: { lotNumber: lt.lotNumber, expiryDate: lt.expiryDate, manufactureDate: lt.manufactureDate, unitCost: cost, sourceType: 'adjustment', sourceId: doc.id }, trackingMode: mode, movementSeq: seq, movementId: mid, referenceType: cfg.refType, referenceId: doc.id, reason: 'تعديل+', actor, occurredAt: new Date() });
+      } else {
+        await L.allocateOutbound(conn, { warehouseId: doc.warehouse_id, itemId: ln.item_id, qty: Math.abs(delta), trackingMode: mode, movementSeq: seq, movementId: mid, referenceType: cfg.refType, referenceId: doc.id, reason: doc.reason, actor, occurredAt: new Date(), manualAllocations: (ld && Array.isArray(ld.manual) && ld.manual.length) ? ld.manual : null });
+      }
+      await L.assertInvariant(conn, doc.warehouse_id, ln.item_id);
+    }
     const dval = E.round2(Math.abs(delta) * cost);
     if (delta > 0) posValue += dval; else negValue += dval;
     netValue += delta * cost;
@@ -608,8 +692,10 @@ async function _reverseDoc(conn, cfg, doc, lines, actor) {
       if (resultVal < -1e-9) throw _err('INSUFFICIENT_STOCK', 'لا يمكن عكس المستند: قيمة مخزون غير منطقية للصنف ' + ln.item_id);
     }
   }
+  const trackedItems = new Set();
   for (const ln of lines) {
     const frozen = Number(ln.posted_unit_cost);
+    if (L.isTracked(await L.getTrackingMode(conn, ln.item_id))) trackedItems.add(ln.item_id);
     if (cfg.docType === 'receipt') {
       const qty = Number(ln.qty);
       const mv = await E.applyStockMovement(conn, doc.warehouse_id, ln.item_id, -qty, frozen, 'inv_receipt_reverse', doc.id, actor);
@@ -633,6 +719,12 @@ async function _reverseDoc(conn, cfg, doc, lines, actor) {
       netValue += delta * frozen;
     }
     try { await recomputeInvItemStock(conn, ln.item_id); } catch (_) {}
+  }
+  // Lot reversal — restore the EXACT original lots the doc moved (never re-run FEFO),
+  // once for the whole doc, then re-check the invariant for every tracked item.
+  if (trackedItems.size) {
+    await L.reverseAllocation(conn, { referenceType: cfg.refType, referenceId: doc.id, movementSeq: null, movementId: null, actor, occurredAt: new Date() });
+    for (const itemId of trackedItems) await L.assertInvariant(conn, doc.warehouse_id, itemId);
   }
   // Build the ORIGINAL forward spec from frozen costs, then swap it for the reverse.
   let forward = null;

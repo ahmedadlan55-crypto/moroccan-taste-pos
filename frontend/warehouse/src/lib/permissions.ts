@@ -23,6 +23,11 @@ export type WarehouseAction =
   | "stocktake.create"
   | "stocktake.approve"
   | "stocktake.post"
+  | "item.view"
+  | "item.create"
+  | "item.edit"
+  | "item.activate"
+  | "replenishment.view"
   | "adjustment.create"
   | "adjustment.approve"
   | "adjustment.post"
@@ -53,6 +58,13 @@ const MATRIX: Record<WarehouseAction, Role[]> = {
   "stocktake.create": ["admin", "manager", "employee", "custody"],
   "stocktake.approve": ["admin", "manager"],
   "stocktake.post": ["admin", "manager", "employee", "custody"],
+  // Phase 4A — item master + replenishment. create/edit = back-office; activate/
+  // deactivate = managerial (mirrors routes/inventory-items.js BACKOFFICE/MGR).
+  "item.view": ["admin", "manager", "employee", "custody", "cashier", "auditor"],
+  "item.create": ["admin", "manager", "employee", "custody"],
+  "item.edit": ["admin", "manager", "employee", "custody"],
+  "item.activate": ["admin", "manager"],
+  "replenishment.view": ["admin", "manager", "employee", "custody", "auditor"],
   "adjustment.create": ["admin", "manager", "employee", "custody"],
   "adjustment.approve": ["admin", "manager"],
   "adjustment.post": ["admin", "manager", "employee", "custody"],

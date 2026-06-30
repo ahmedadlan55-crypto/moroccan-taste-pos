@@ -45,6 +45,20 @@ export const queryKeys = {
     detail: (docType: string, id: string) => ["invtx", docType, "detail", id] as const,
   },
 
+  // Phase 4A — item master + per-warehouse replenishment.
+  items: {
+    all: ["items"] as const,
+    list: (params: Record<string, unknown>) => ["items", "list", params] as const,
+    detail: (id: string) => ["items", "detail", id] as const,
+    categories: () => ["items", "categories"] as const,
+    units: () => ["items", "units"] as const,
+  },
+  replenishment: {
+    all: ["replenishment"] as const,
+    list: (scope: string, params: Record<string, unknown>) => ["replenishment", "list", scope, params] as const,
+    summary: (scope: string, params: Record<string, unknown>) => ["replenishment", "summary", scope, params] as const,
+  },
+
   // Phase 3C — professional stocktake. List keyed by scope+filters (a scope
   // change aborts the in-flight request); detail keyed by id; a mutation
   // invalidates all + detail(id) + the dependent dashboard/inventory slices.

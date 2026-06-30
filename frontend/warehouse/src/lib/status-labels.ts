@@ -101,6 +101,23 @@ export const INVTX_STATUS_OPTIONS: { value: string; label: string }[] = [
   { value: "reversed", label: "معكوس" },
 ];
 
+// Phase 4A — replenishment reorder-status + stockout-risk → Arabic (StatusBadge tone).
+export const reorderStatusLabel: Record<string, string> = {
+  negative: "سالب", critical: "حرج", reorder: "أعد الطلب", watch: "مراقبة", ok: "كافٍ",
+};
+export function reorderStatusToLabel(s: string | null | undefined): string { return reorderStatusLabel[String(s ?? "")] ?? "—"; }
+export const stockoutRiskLabel: Record<string, string> = { high: "مرتفع", medium: "متوسط", low: "منخفض", unknown: "غير معروف" };
+export function stockoutRiskToLabel(s: string | null | undefined): string { return stockoutRiskLabel[String(s ?? "")] ?? "—"; }
+export const REORDER_STATUS_OPTIONS: { value: string; label: string }[] = [
+  { value: "", label: "كل الحالات" }, { value: "critical", label: "حرج" }, { value: "reorder", label: "أعد الطلب" }, { value: "watch", label: "مراقبة" }, { value: "ok", label: "كافٍ" },
+];
+export const STOCKOUT_RISK_OPTIONS: { value: string; label: string }[] = [
+  { value: "", label: "كل المخاطر" }, { value: "high", label: "مرتفع" }, { value: "medium", label: "متوسط" }, { value: "low", label: "منخفض" },
+];
+export const ITEM_ACTIVE_OPTIONS: { value: string; label: string }[] = [
+  { value: "", label: "الكل" }, { value: "active", label: "نشط" }, { value: "inactive", label: "غير نشط" },
+];
+
 // Phase 3C — professional stocktake lifecycle status → Arabic. Drives the
 // StatusBadge label tone.
 export const stocktakeStatusLabel: Record<string, string> = {

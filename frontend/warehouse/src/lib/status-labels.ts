@@ -118,6 +118,22 @@ export const ITEM_ACTIVE_OPTIONS: { value: string; label: string }[] = [
   { value: "", label: "الكل" }, { value: "active", label: "نشط" }, { value: "inactive", label: "غير نشط" },
 ];
 
+// Phase 4B — lot lifecycle + expiry classification → Arabic (StatusBadge tone).
+export const lotStatusLabel: Record<string, string> = {
+  active: "نشط", quarantined: "محجور", recalled: "مُستدعى", closed: "مغلق",
+};
+export function lotStatusToLabel(s: string | null | undefined): string { return lotStatusLabel[String(s ?? "")] ?? "—"; }
+export const expiryClassLabel: Record<string, string> = {
+  expired: "منتهي", critical: "حرج", warning: "تحذير", safe: "آمن", none: "بلا صلاحية",
+};
+export function expiryClassToLabel(s: string | null | undefined): string { return expiryClassLabel[String(s ?? "")] ?? "—"; }
+export const LOT_STATUS_OPTIONS: { value: string; label: string }[] = [
+  { value: "", label: "كل الحالات" }, { value: "active", label: "نشط" }, { value: "quarantined", label: "محجور" }, { value: "recalled", label: "مُستدعى" }, { value: "closed", label: "مغلق" },
+];
+export const EXPIRY_CLASS_OPTIONS: { value: string; label: string }[] = [
+  { value: "", label: "كل المستويات" }, { value: "expired", label: "منتهي" }, { value: "critical", label: "حرج" }, { value: "warning", label: "تحذير" }, { value: "safe", label: "آمن" },
+];
+
 // Phase 3C — professional stocktake lifecycle status → Arabic. Drives the
 // StatusBadge label tone.
 export const stocktakeStatusLabel: Record<string, string> = {

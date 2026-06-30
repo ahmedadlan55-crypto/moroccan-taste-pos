@@ -28,6 +28,12 @@ export type WarehouseAction =
   | "item.edit"
   | "item.activate"
   | "replenishment.view"
+  | "lot.view"
+  | "lot.create"
+  | "lot.edit"
+  | "lot.quarantine"
+  | "lot.recall"
+  | "expiry.view"
   | "adjustment.create"
   | "adjustment.approve"
   | "adjustment.post"
@@ -65,6 +71,14 @@ const MATRIX: Record<WarehouseAction, Role[]> = {
   "item.edit": ["admin", "manager", "employee", "custody"],
   "item.activate": ["admin", "manager"],
   "replenishment.view": ["admin", "manager", "employee", "custody", "auditor"],
+  // Phase 4B — lots / expiry. view = everyone; create/edit = back-office;
+  // quarantine/recall = managerial (mirrors routes/inventory-lots.js BACKOFFICE/MGR).
+  "lot.view": ["admin", "manager", "employee", "custody", "cashier", "auditor"],
+  "lot.create": ["admin", "manager", "employee", "custody"],
+  "lot.edit": ["admin", "manager", "employee", "custody"],
+  "lot.quarantine": ["admin", "manager"],
+  "lot.recall": ["admin", "manager"],
+  "expiry.view": ["admin", "manager", "employee", "custody", "auditor"],
   "adjustment.create": ["admin", "manager", "employee", "custody"],
   "adjustment.approve": ["admin", "manager"],
   "adjustment.post": ["admin", "manager", "employee", "custody"],

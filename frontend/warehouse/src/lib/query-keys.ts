@@ -59,6 +59,22 @@ export const queryKeys = {
     summary: (scope: string, params: Record<string, unknown>) => ["replenishment", "summary", scope, params] as const,
   },
 
+  // Phase 4B — lots / expiry / integrity. Scope + filters in the list keys so a
+  // scope change aborts the in-flight request; detail/trace keyed by lot id.
+  lots: {
+    all: ["lots"] as const,
+    list: (scope: string, params: Record<string, unknown>) => ["lots", "list", scope, params] as const,
+    detail: (id: string) => ["lots", "detail", id] as const,
+    movements: (id: string) => ["lots", "movements", id] as const,
+    trace: (id: string) => ["lots", "trace", id] as const,
+  },
+  expiry: {
+    all: ["expiry"] as const,
+    list: (scope: string, params: Record<string, unknown>) => ["expiry", "list", scope, params] as const,
+    summary: (scope: string, params: Record<string, unknown>) => ["expiry", "summary", scope, params] as const,
+  },
+  lotIntegrity: (scope: string, params: Record<string, unknown>) => ["lot-integrity", scope, params] as const,
+
   // Phase 3C — professional stocktake. List keyed by scope+filters (a scope
   // change aborts the in-flight request); detail keyed by id; a mutation
   // invalidates all + detail(id) + the dependent dashboard/inventory slices.

@@ -28,6 +28,14 @@ const TONE: Record<string, string> = {
   "حرج": "border-rose-200 bg-rose-50 text-rose-700",
   "معطّل": "border-slate-200 bg-slate-100 text-slate-500",
   "نشط": "border-emerald-200 bg-emerald-50 text-emerald-700",
+  // Phase 4B — lot lifecycle + expiry classification
+  "محجور": "border-amber-200 bg-amber-50 text-amber-700",
+  "مُستدعى": "border-rose-200 bg-rose-50 text-rose-700",
+  "مغلق": "border-slate-200 bg-slate-100 text-slate-500",
+  "منتهي": "border-rose-200 bg-rose-50 text-rose-700",
+  "تحذير": "border-amber-200 bg-amber-50 text-amber-700",
+  "آمن": "border-emerald-200 bg-emerald-50 text-emerald-700",
+  "بلا صلاحية": "border-slate-200 bg-slate-50 text-slate-600",
   // neutral
   "مسودة": "border-slate-200 bg-slate-50 text-slate-600",
 };

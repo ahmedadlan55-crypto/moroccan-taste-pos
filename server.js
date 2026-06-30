@@ -267,6 +267,15 @@ app.use('/api/hr', auditMiddleware('hr'));
 app.use('/api/workflow', auditMiddleware('workflow'));
 app.use('/api/auth', auditMiddleware('auth'));
 
+// Phase 2A.2 — warehouse scope resolver. Runs AFTER the global /api auth gate
+// (req.user is set) and BEFORE the warehouse routers, so req.guardWh /
+// req.guardTransfer / req.whScopeClause are available to every inventory / erp
+// (incl. warehouse-ops) / stocktake-pro route. No-op until WAREHOUSE_SCOPE_ENFORCE.
+const { loadWarehouseScope } = require('./middleware/warehouseScope');
+app.use('/api/inventory', loadWarehouseScope);
+app.use('/api/erp', loadWarehouseScope);
+app.use('/api/stocktake-pro', loadWarehouseScope);
+
 // API Routes
 app.use('/api/auth', require('./routes/auth'));
 app.use('/api/menu', require('./routes/menu'));

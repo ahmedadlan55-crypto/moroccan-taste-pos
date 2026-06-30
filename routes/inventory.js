@@ -10,6 +10,39 @@ const STK = require('../lib/stocktakeWorkflow');
 // Phase 2A — pure helpers backing the read-only warehouse-v2 endpoints
 // (warehouses-summary, dashboard-summary, grid). Shared with tests.
 const INV = require('../lib/inventoryReporting');
+// Phase 2A.2 — warehouse access control (req.guardWh / req.whScopeClause are
+// attached by middleware/warehouseScope, mounted in server.js before this
+// router). Imported here only to report the enforcement flag in /access-scope.
+const WH_SCOPE = require('../middleware/warehouseScope');
+
+// Server-authoritative capability map (mirrors the frontend permissions.ts
+// matrix so the UI never shows a dead button). RBAC remains the real boundary.
+const _CAP_MATRIX = {
+  'warehouse.view':       ['admin', 'manager', 'employee', 'custody', 'cashier', 'auditor'],
+  'warehouse.create':     ['admin', 'manager'],
+  'warehouse.deactivate': ['admin', 'manager'],
+  'transfer.create':      ['admin', 'manager', 'employee', 'custody'],
+  'transfer.approve':     ['admin', 'manager'],
+  'transfer.issue':       ['admin', 'manager', 'employee', 'custody'],
+  'transfer.receive':     ['admin', 'manager', 'employee', 'custody'],
+  'transfer.reverse':     ['admin', 'manager'],
+  'stocktake.create':     ['admin', 'manager', 'employee', 'custody'],
+  'stocktake.approve':    ['admin', 'manager'],
+  'adjustment.create':    ['admin', 'manager', 'employee', 'custody'],
+  'adjustment.approve':   ['admin', 'manager'],
+  'waste.create':         ['admin', 'manager', 'employee', 'custody'],
+  'document.reverse':     ['admin', 'manager'],
+  'settings.edit':        ['admin', 'manager'],
+};
+function _capabilitiesFor(user) {
+  const role = String((user && user.role) || '').toLowerCase() || 'cashier';
+  const isDev = !!(user && (user.isDeveloper === true || user.isDeveloper === 1 || user.isDeveloper === '1'));
+  const caps = {};
+  Object.keys(_CAP_MATRIX).forEach((action) => {
+    caps[action] = isDev || _CAP_MATRIX[action].indexOf(role) !== -1;
+  });
+  return caps;
+}
 
 // Phase 0 §5 — actor identity comes from the authenticated JWT (req.user),
 // not a spoofable body field. The global /api gate sets req.user for every
@@ -900,6 +933,39 @@ router.get('/categories', async (req, res) => {
     }
     const [rows] = await db.query(sql, params);
     res.json({ success: true, categories: rows.map(r => String(r.category)) });
+  } catch (e) { res.status(500).json({ success: false, error: e.message }); }
+});
+
+// GET /api/inventory/access-scope
+//   Phase 2A.2 — the React app's bootstrap for warehouse access control. Returns
+//   ONLY the caller's accessible warehouses (never lists a forbidden one) plus
+//   the role capability map. req.warehouseScope is set by the scope middleware.
+router.get('/access-scope', async (req, res) => {
+  try {
+    const scope = req.warehouseScope || { all: true, warehouseIds: [] };
+    let warehouses = [];
+    if (scope.all) {
+      const [rows] = await db.query(
+        "SELECT id, name, code, type, branch_id, is_active FROM warehouses WHERE is_active = 1 ORDER BY is_main DESC, code");
+      warehouses = rows;
+    } else if (scope.warehouseIds.length) {
+      const ph = scope.warehouseIds.map(() => '?').join(',');
+      const [rows] = await db.query(
+        "SELECT id, name, code, type, branch_id, is_active FROM warehouses WHERE id IN (" + ph + ") ORDER BY is_main DESC, code",
+        scope.warehouseIds);
+      warehouses = rows;
+    }
+    res.json({
+      success: true,
+      enforced: WH_SCOPE.isEnforced(),
+      role: String((req.user && req.user.role) || '').toLowerCase() || 'cashier',
+      allWarehousesAccess: !!scope.all,
+      accessibleWarehouses: warehouses.map(w => ({
+        id: w.id, name: w.name, code: w.code, type: w.type,
+        branchId: w.branch_id || '', isActive: w.is_active === 1 || w.is_active === true,
+      })),
+      capabilities: _capabilitiesFor(req.user),
+    });
   } catch (e) { res.status(500).json({ success: false, error: e.message }); }
 });
 

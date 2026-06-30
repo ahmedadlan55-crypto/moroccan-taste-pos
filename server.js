@@ -3722,6 +3722,27 @@ async function runMigrations() {
   await addColumnIfMissing('stock_issues', 'reversed_at', "DATETIME");
   await addColumnIfMissing('stock_issues', 'reverse_reason', "VARCHAR(500)");
   await addColumnIfMissing('stock_issues', 'reverse_gl_journal_id', "VARCHAR(60)");
+  // Phase 3A — optimistic-concurrency version (bumped on every transition). The
+  // legacy UI never sends a version, so the existing state-guarded UPDATE keeps
+  // working; clients that DO send `expectedVersion` get a true VERSION_CONFLICT.
+  await addColumnIfMissing('stock_issues', 'version', "INT NOT NULL DEFAULT 1");
+  // Phase 3A — append-only audit trail; one row per lifecycle transition,
+  // written inside the SAME transaction as the state change (atomic).
+  await createTableIfMissing('stock_issue_events', `
+    CREATE TABLE stock_issue_events (
+      id VARCHAR(60) PRIMARY KEY,
+      issue_id VARCHAR(60) NOT NULL,
+      action VARCHAR(30) NOT NULL,
+      from_status VARCHAR(30),
+      to_status VARCHAR(30),
+      actor VARCHAR(100),
+      note VARCHAR(500),
+      payload_json TEXT,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      INDEX idx_issue (issue_id),
+      INDEX idx_created (created_at)
+    ) ENGINE=InnoDB
+  `);
   await createTableIfMissing('stock_issue_items', `
     CREATE TABLE stock_issue_items (
       id VARCHAR(60) PRIMARY KEY,

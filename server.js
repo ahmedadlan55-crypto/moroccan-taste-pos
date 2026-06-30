@@ -4304,6 +4304,54 @@ async function runMigrations() {
   await addColumnIfMissing('inv_receipt_items', 'lot_data', 'TEXT NULL');
   await addColumnIfMissing('inv_issue_items', 'lot_data', 'TEXT NULL');
   await addColumnIfMissing('inv_adjustment_items', 'lot_data', 'TEXT NULL');
+  // Transfer lot genealogy + in-transit tracking: which source lots a transfer
+  // issued, and how much of each has been received at the destination (partial-safe).
+  await createTableIfMissing('lot_transfer_allocations', `
+    CREATE TABLE IF NOT EXISTS lot_transfer_allocations (
+      id VARCHAR(60) PRIMARY KEY,
+      transfer_id VARCHAR(60) NOT NULL,
+      item_id VARCHAR(50) NOT NULL,
+      source_lot_id VARCHAR(60) NOT NULL,
+      lot_number VARCHAR(120) NULL,
+      expiry_date DATE NULL,
+      source_warehouse_id VARCHAR(50) NOT NULL,
+      dest_warehouse_id VARCHAR(50) NOT NULL,
+      qty DECIMAL(14,3) NOT NULL,
+      received_qty DECIMAL(14,3) NOT NULL DEFAULT 0,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      UNIQUE KEY uq_lta_transfer_lot (transfer_id, source_lot_id),
+      INDEX idx_lta_transfer (transfer_id, item_id)
+    ) ENGINE=InnoDB
+  `);
+  // Production consumption genealogy: which component lots a work order consumed.
+  await createTableIfMissing('work_order_lot_consumption', `
+    CREATE TABLE IF NOT EXISTS work_order_lot_consumption (
+      id VARCHAR(60) PRIMARY KEY,
+      work_order_id VARCHAR(60) NOT NULL,
+      component_item_id VARCHAR(50) NOT NULL,
+      lot_id VARCHAR(60) NOT NULL,
+      warehouse_id VARCHAR(50) NOT NULL,
+      qty DECIMAL(14,3) NOT NULL,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      INDEX idx_wolc_wo (work_order_id),
+      INDEX idx_wolc_lot (lot_id)
+    ) ENGINE=InnoDB
+  `);
+  // Production output genealogy: links a produced finished-goods lot back to the
+  // component lots that went into it (backward traceability for recall).
+  await createTableIfMissing('production_output_lots', `
+    CREATE TABLE IF NOT EXISTS production_output_lots (
+      id VARCHAR(60) PRIMARY KEY,
+      work_order_id VARCHAR(60) NOT NULL,
+      output_lot_id VARCHAR(60) NOT NULL,
+      component_lot_id VARCHAR(60) NULL,
+      qty DECIMAL(14,3) NULL,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      INDEX idx_pol_wo (work_order_id),
+      INDEX idx_pol_output (output_lot_id),
+      INDEX idx_pol_component (component_lot_id)
+    ) ENGINE=InnoDB
+  `);
 
   // ═══════════════════════════════════════════════════════════
   // PHASE 2 — Production Orders

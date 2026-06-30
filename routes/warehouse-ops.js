@@ -23,6 +23,10 @@ const BACKOFFICE = requireRole('admin', 'manager', 'employee', 'custody');
 const TR = require('../lib/warehouseTransfer');
 // Phase 3A — unified API contract (canonical error codes + mutation envelope).
 const TC = require('../lib/transferContract');
+// Phase 4B — lot ledger (FEFO allocation + invariant) for tracked items.
+const L = require('../lib/lotLedger');
+// Read the auto-increment seq of a just-recorded inventory_movements row.
+async function _seqOf(conn, movId) { const [r] = await conn.query('SELECT seq FROM inventory_movements WHERE id=? LIMIT 1', [movId]); return r.length ? Number(r[0].seq) : null; }
 
 // ─── Helpers ──────────────────────────────────────────────────────────
 
@@ -668,6 +672,14 @@ router.post('/stock-issues/:id/issue', BACKOFFICE, async (req, res) => {
              'تحويل صادر', issuedBy, 'STOCK_ISSUE: ' + (hdr.issue_number || id),
              hdr.from_warehouse_id]);
         }
+        // Phase 4B — tracked item: FEFO-allocate the issued qty from the source +
+        // record the in-transit lot allocation; re-check the source invariant.
+        const lmode = await L.getTrackingMode(conn, it.item_id);
+        if (L.isTracked(lmode)) {
+          const seq = await _seqOf(conn, movId);
+          await L.transferIssue(conn, { transferId: id, sourceWh: hdr.from_warehouse_id, destWh: hdr.to_warehouse_id, itemId: it.item_id, qty, trackingMode: lmode, movementSeq: seq, movementId: movId, actor: issuedBy, occurredAt: issueNow });
+          await L.assertInvariant(conn, hdr.from_warehouse_id, it.item_id);
+        }
       }
 
       // GL: Dr Branch Inventory / Cr Main Inventory — fatal when there's value.
@@ -828,6 +840,14 @@ router.post('/stock-issues/:id/receive', BACKOFFICE, async (req, res) => {
              'تحويل وارد', receivedBy, 'STOCK_ISSUE: ' + (hdr.issue_number || id),
              hdr.to_warehouse_id]);
         }
+        // Phase 4B — tracked item: add the SAME in-transit lots to the destination
+        // (partial-safe), preserving lot identity + expiry; re-check the invariant.
+        const lmode = await L.getTrackingMode(conn, it.item_id);
+        if (L.isTracked(lmode)) {
+          const seq = await _seqOf(conn, movId);
+          await L.transferReceive(conn, { transferId: id, destWh: hdr.to_warehouse_id, itemId: it.item_id, qty: p.delta, movementSeq: seq, movementId: movId, actor: receivedBy, occurredAt: receiveNow });
+          await L.assertInvariant(conn, hdr.to_warehouse_id, it.item_id);
+        }
       }
 
       // Header status from the NEW cumulative line totals: fully received →
@@ -974,6 +994,14 @@ router.post('/stock-issues/:id/reverse', MGR, async (req, res) => {
                'REVERSE: ' + (hdr.issue_number || id) + ' · ' + reasonText.slice(0, 200),
                hdr.to_warehouse_id, 'transfer_reverse', id]);
           } catch(_) {}
+        }
+        // Phase 4B — restore the EXACT transferred lots: issued back to source,
+        // received removed from the destination; re-check both invariants.
+        const lmode = await L.getTrackingMode(conn, it.item_id);
+        if (L.isTracked(lmode)) {
+          await L.transferReverse(conn, { transferId: id, sourceWh: hdr.from_warehouse_id, destWh: hdr.to_warehouse_id, itemId: it.item_id, movementSeq: null, movementId: null, actor: reversedBy, occurredAt: reverseNow });
+          if (qtyIssued > 0) await L.assertInvariant(conn, hdr.from_warehouse_id, it.item_id);
+          if (qtyReceived > 0) await L.assertInvariant(conn, hdr.to_warehouse_id, it.item_id);
         }
       }
 
@@ -1493,6 +1521,16 @@ router.post('/production-orders/:id/release', BACKOFFICE, async (req, res) => {
             [movId, releaseNow, c.item_id, _itnm, 'out', qty, 'إنتاج', releasedBy || '',
              'PRODUCTION: ' + (hdr.order_number || id), c.warehouse_id]);
         }
+        // Phase 4B — tracked component: FEFO-consume + record genealogy + invariant.
+        const lmode = await L.getTrackingMode(conn, c.item_id);
+        if (L.isTracked(lmode)) {
+          const seq = await _seqOf(conn, movId);
+          const alloc = await L.allocateOutbound(conn, { warehouseId: c.warehouse_id, itemId: c.item_id, qty, trackingMode: lmode, movementSeq: seq, movementId: movId, referenceType: 'production_consume', referenceId: id, reason: 'استهلاك إنتاج', actor: releasedBy || '', occurredAt: releaseNow });
+          for (const a of alloc.allocations) {
+            await conn.query('INSERT INTO work_order_lot_consumption (id, work_order_id, component_item_id, lot_id, warehouse_id, qty) VALUES (?,?,?,?,?,?)', ['WOLC-' + Date.now() + '-' + Math.random().toString(36).slice(2, 7), id, c.item_id, a.lotId, c.warehouse_id, a.qty]);
+          }
+          await L.assertInvariant(conn, c.warehouse_id, c.item_id);
+        }
         glLines.push({ accountCode: gl.CORE_ACCOUNTS.WIP.code, debit: lineTotal, credit: 0,
                        brandId: hdr.brand_id, branchId: hdr.branch_id, warehouseId: c.warehouse_id });
         glLines.push({ accountCode: gl.CORE_ACCOUNTS.INVENTORY.code, debit: 0, credit: lineTotal,
@@ -1613,6 +1651,20 @@ router.post('/production-orders/:id/complete', BACKOFFICE, async (req, res) => {
          id, hdr.product_id, outputWh, qtyOut, unitCost, wipTotal,
          batchNumber || null, expiryDate || null]);
 
+      // Phase 4B — tracked finished good: create the output lot from batch/expiry,
+      // link it to the consumed component lots (backward genealogy), check invariant.
+      const _fgMode = await L.getTrackingMode(conn, hdr.product_id);
+      if (L.isTracked(_fgMode)) {
+        if (!String(batchNumber || '').trim()) { const e = new Error('رقم الدفعة/التشغيلة مطلوب لمنتَج نهائي يخضع لتتبع الدفعات'); e.status = 400; e.code = 'LOT_REQUIRED'; throw e; }
+        const seq = await _seqOf(conn, movId);
+        const rcv = await L.receiveInbound(conn, { warehouseId: outputWh, itemId: hdr.product_id, qty: qtyOut, lot: { lotNumber: batchNumber, expiryDate: expiryDate || null, unitCost, sourceType: 'production', sourceId: id }, trackingMode: _fgMode, movementSeq: seq, movementId: movId, referenceType: 'production_output', referenceId: id, reason: 'إنتاج', actor: completedBy || '', occurredAt: completeNow });
+        const [comp] = await conn.query('SELECT lot_id, qty FROM work_order_lot_consumption WHERE work_order_id=?', [id]);
+        for (const cl of comp) {
+          await conn.query('INSERT INTO production_output_lots (id, work_order_id, output_lot_id, component_lot_id, qty) VALUES (?,?,?,?,?)', ['POL-' + Date.now() + '-' + Math.random().toString(36).slice(2, 7), id, rcv.lotId, cl.lot_id, cl.qty]);
+        }
+        await L.assertInvariant(conn, outputWh, hdr.product_id);
+      }
+
       // GL: Dr Finished Goods / Cr WIP — fatal only when there is value to move.
       let glId = null;
       if (wipTotal > 0.005) {
@@ -1725,6 +1777,15 @@ router.post('/production-orders/:id/reverse', MGR, async (req, res) => {
                        brandId: hdr.brand_id, warehouseId: c.warehouse_id });
         glLines.push({ accountCode: gl.CORE_ACCOUNTS.WIP.code, debit: 0, credit: lineTotal,
                        brandId: hdr.brand_id, branchId: hdr.branch_id, warehouseId: c.warehouse_id });
+      }
+      // Phase 4B — restore the EXACT consumed component lots (once for the order),
+      // then re-check the invariant for every tracked component+warehouse.
+      {
+        const [tc] = await conn.query('SELECT DISTINCT warehouse_id, component_item_id FROM work_order_lot_consumption WHERE work_order_id=?', [id]);
+        if (tc.length) {
+          await L.reverseAllocation(conn, { referenceType: 'production_consume', referenceId: id, movementSeq: null, movementId: null, actor: reversedBy || '', occurredAt: reverseNow });
+          for (const t of tc) await L.assertInvariant(conn, t.warehouse_id, t.component_item_id);
+        }
       }
       // Reverse the applied labor + overhead back out of WIP.
       const labor = Number(hdr.labor_cost) || 0;

@@ -42,6 +42,8 @@ const REQUIRED_TABLES = [
   'inventory_movements', 'inv_items', 'warehouse_item_rules',
   // Phase 4B — lots / expiry / FEFO / traceability core tables.
   'inventory_lots', 'warehouse_lot_balances', 'inventory_lot_movements',
+  // Phase 4B — transfer + production lot genealogy.
+  'lot_transfer_allocations', 'work_order_lot_consumption', 'production_output_lots',
 ];
 const REQUIRED_COLUMNS = [
   ['gl_journals', 'posted_by'], ['gl_journals', 'posted_at'],

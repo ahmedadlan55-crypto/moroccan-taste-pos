@@ -95,7 +95,7 @@ async function cleanup() {
     ["DELETE e FROM gl_entries e JOIN gl_journals j ON j.id=e.journal_id WHERE j.reference_type IN ('stock_issue','stock_issue_reverse') AND j.reference_id LIKE 'SI-%' AND j.reference_id NOT IN (SELECT id FROM stock_issues)", []],
     ["DELETE FROM gl_journals WHERE reference_type IN ('stock_issue','stock_issue_reverse') AND reference_id LIKE 'SI-%' AND reference_id NOT IN (SELECT id FROM stock_issues)", []],
     ['DELETE FROM inv_items WHERE id IN (?,?)', [ITEM, ITEM0]],
-    ["DELETE FROM idempotency_keys WHERE id LIKE 'transfer:%:it-%'", []],
+    ['DELETE FROM idempotency_keys WHERE username IN (?,?,?)', [U_BOTH, U_C, 'trf_admin']],
     ['DELETE uwa FROM user_warehouse_access uwa JOIN users u ON u.id=uwa.user_id WHERE u.username IN (?,?)', [U_BOTH, U_C]],
     ['DELETE FROM warehouses WHERE id IN (?,?,?)', [TA, TB, TC]],
     ['DELETE FROM users WHERE username IN (?,?)', [U_BOTH, U_C]],
@@ -232,6 +232,60 @@ async function seed() {
     const ins = await req('POST', `${E}/${big.body.id}/issue`, both, {});
     check('insufficient stock → 422 INSUFFICIENT_STOCK', ins.status === 422 && ins.body.code === 'INSUFFICIENT_STOCK', ins.body && ins.body.code);
     check('source unchanged after failed issue (rollback)', (await qty(TA)) === av, { av, now: await qty(TA) });
+
+    // 10) Real draft EDIT (PATCH) — in place, preserves identity, no stock/GL.
+    const d1 = await req('POST', E, both, { fromWarehouseId: TA, toWarehouseId: TB, notes: 'orig', items: [{ itemId: ITEM, qtyRequested: 5 }] });
+    const dId = d1.body.id, dNum = d1.body.issueNumber;
+    const [[meta0]] = await db.query('SELECT created_by, created_at FROM stock_issues WHERE id=?', [dId]);
+    const aPre = await qty(TA), bPre = await qty(TB);
+    const ed = await req('PATCH', `${E}/${dId}`, both, { fromWarehouseId: TA, toWarehouseId: TB, notes: 'edited', expectedVersion: 1, items: [{ itemId: ITEM, qtyRequested: 8 }, { itemId: ITEM0, qtyRequested: 3 }] });
+    check('PATCH draft → 200, status draft, version 2', ed.status === 200 && ed.body.status === 'draft' && ed.body.version === 2, ed.body);
+    check('PATCH preserves the document number', ed.body.documentNumber === dNum && ed.body.issueNumber === dNum, { was: dNum, now: ed.body.documentNumber });
+    const [[meta1]] = await db.query('SELECT issue_number, created_by, created_at FROM stock_issues WHERE id=?', [dId]);
+    check('PATCH preserves id, number, created_by, created_at', meta1.issue_number === dNum && meta1.created_by === meta0.created_by && String(meta1.created_at) === String(meta0.created_at), { m0: meta0, m1: meta1 });
+    const [edLines] = await db.query('SELECT item_id, qty_requested FROM stock_issue_items WHERE issue_id=? ORDER BY item_id', [dId]);
+    check('PATCH replaced lines (2 items, qty updated to 8)', edLines.length === 2 && Number((edLines.find((l) => l.item_id === ITEM) || {}).qty_requested) === 8, edLines.map((l) => [l.item_id, Number(l.qty_requested)]));
+    check('PATCH moved NO stock', (await qty(TA)) === aPre && (await qty(TB)) === bPre, { ta: await qty(TA), aPre });
+    check('PATCH missing expectedVersion → 422', (await req('PATCH', `${E}/${dId}`, both, { fromWarehouseId: TA, toWarehouseId: TB, items: [{ itemId: ITEM, qtyRequested: 1 }] })).status === 422);
+    check('PATCH duplicate itemId → 422', (await req('PATCH', `${E}/${dId}`, both, { expectedVersion: 2, fromWarehouseId: TA, toWarehouseId: TB, items: [{ itemId: ITEM, qtyRequested: 1 }, { itemId: ITEM, qtyRequested: 2 }] })).status === 422);
+    const [pe1, pe2] = await Promise.all([
+      req('PATCH', `${E}/${dId}`, both, { expectedVersion: 2, fromWarehouseId: TA, toWarehouseId: TB, notes: 'A', items: [{ itemId: ITEM, qtyRequested: 4 }] }),
+      req('PATCH', `${E}/${dId}`, both, { expectedVersion: 2, fromWarehouseId: TA, toWarehouseId: TB, notes: 'B', items: [{ itemId: ITEM, qtyRequested: 6 }] }),
+    ]);
+    check('concurrent PATCH → one 200, one 409 VERSION_CONFLICT', [pe1, pe2].filter((r) => r.status === 200).length === 1 && [pe1, pe2].filter((r) => r.status === 409 && r.body.code === 'VERSION_CONFLICT').length === 1, { s1: pe1.status, s2: pe2.status, c1: pe1.body && pe1.body.code, c2: pe2.body && pe2.body.code });
+    await req('POST', `${E}/${dId}/approve`, admin, {});
+    const peApproved = await req('PATCH', `${E}/${dId}`, both, { expectedVersion: 9, fromWarehouseId: TA, toWarehouseId: TB, items: [{ itemId: ITEM, qtyRequested: 1 }] });
+    check('PATCH a non-draft → 422 INVALID_STATE_TRANSITION', peApproved.status === 422 && peApproved.body.code === 'INVALID_STATE_TRANSITION', peApproved.body && peApproved.body.code);
+
+    // 11) Idempotency: same key+payload replays; same key+DIFFERENT payload → conflict.
+    const ik = 'idem-probe-conflict';
+    const ic1 = await req('POST', E, both, { fromWarehouseId: TA, toWarehouseId: TB, items: [{ itemId: ITEM, qtyRequested: 2 }] }, { 'Idempotency-Key': ik });
+    const ic2 = await req('POST', E, both, { fromWarehouseId: TA, toWarehouseId: TB, items: [{ itemId: ITEM, qtyRequested: 2 }] }, { 'Idempotency-Key': ik });
+    const ic3 = await req('POST', E, both, { fromWarehouseId: TA, toWarehouseId: TB, items: [{ itemId: ITEM, qtyRequested: 99 }] }, { 'Idempotency-Key': ik });
+    check('idempotency same key+payload → replay same id', ic1.status === 200 && ic2.body.id === ic1.body.id, { a: ic1.body.id, b: ic2.body.id });
+    check('idempotency same key+DIFFERENT payload → 409 IDEMPOTENCY_CONFLICT', ic3.status === 409 && ic3.body.code === 'IDEMPOTENCY_CONFLICT', { s: ic3.status, c: ic3.body && ic3.body.code });
+
+    // 12) Reverse scenarios — partial-reverse quantity correctness.
+    const rv1 = await req('POST', E, both, { fromWarehouseId: TA, toWarehouseId: TB, items: [{ itemId: ITEM, qtyRequested: 12 }] });
+    await req('POST', `${E}/${rv1.body.id}/approve`, admin, {});
+    await req('POST', `${E}/${rv1.body.id}/issue`, both, {});
+    const s1 = await qty(TA), b1 = await qty(TB);
+    const rr1 = await req('POST', `${E}/${rv1.body.id}/reverse`, admin, { reason: 'إرجاع بعد الصرف بلا استلام' });
+    check('reverse-after-issued(no receipt) → reversed; source +12, dest unchanged', rr1.status === 200 && rr1.body.status === 'reversed' && (await qty(TA)) - s1 === 12 && (await qty(TB)) === b1, { src: (await qty(TA)) - s1, dst: (await qty(TB)) - b1 });
+    check('duplicate reverse blocked', (await req('POST', `${E}/${rv1.body.id}/reverse`, admin, { reason: 'مكرر' })).status === 422);
+
+    const rv2 = await req('POST', E, both, { fromWarehouseId: TA, toWarehouseId: TB, items: [{ itemId: ITEM, qtyRequested: 20 }] });
+    await req('POST', `${E}/${rv2.body.id}/approve`, admin, {});
+    await req('POST', `${E}/${rv2.body.id}/issue`, both, {});
+    const rv2line = (await db.query('SELECT id FROM stock_issue_items WHERE issue_id=?', [rv2.body.id]))[0][0].id;
+    await req('POST', `${E}/${rv2.body.id}/receive`, both, { items: [{ id: rv2line, qtyReceived: 7 }] });
+    const s2 = await qty(TA), b2 = await qty(TB);
+    const rr2 = await req('POST', `${E}/${rv2.body.id}/reverse`, admin, { reason: 'إرجاع بعد استلام جزئي' });
+    check('reverse-after-partial → source +20 (full issued), dest -7 (received only)', rr2.status === 200 && (await qty(TA)) - s2 === 20 && b2 - (await qty(TB)) === 7, { src: (await qty(TA)) - s2, dst: b2 - (await qty(TB)) });
+    const [rMoves] = await db.query("SELECT type, qty FROM inventory_movements WHERE reference_id=? AND reference_type='transfer_reverse'", [rv2.body.id]);
+    const inMv = rMoves.filter((m) => m.type === 'in').reduce((s, m) => s + Number(m.qty), 0);
+    const outMv = rMoves.filter((m) => m.type === 'out').reduce((s, m) => s + Number(m.qty), 0);
+    check('reverse movements match actual qty (in=20 source, out=7 dest)', inMv === 20 && outMv === 7, { inMv, outMv });
 
     console.log('\n═══════════════════════════════════════════════════════════');
     console.log('Total: ' + (_p + _f) + ' | Passed: ' + _p + ' | Failed: ' + _f);

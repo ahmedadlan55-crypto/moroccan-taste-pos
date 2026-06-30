@@ -5,6 +5,7 @@
  * All mutations post to GL automatically with period-lock checks.
  */
 const router = require('express').Router();
+const crypto = require('crypto');
 const db = require('../db/connection');
 const gl = require('../lib/glPosting');
 // v7.1 — keep the denormalized inv_items.stock rollup in sync after any
@@ -130,31 +131,67 @@ async function _applyStockMovement(warehouseId, itemId, qtyDelta, unitCost, trig
 // All ADDITIVE: the legacy HTML UI keeps working because errors still carry a
 // human `error` and successes still carry the legacy keys (id/issueNumber/…).
 
-// Idempotency-Key replay (create/issue/receive). Keyed per action-scope so the
-// same key on two different actions can never collide. Returns the stored
-// {statusCode, body} on a hit, else null. Stored after success via _idemStore.
+// Idempotency-Key (create/issue/receive). Phase 3A.1 — RESERVATION pattern:
+//   1. _idemBegin INSERTs a reservation row keyed by a hash of
+//      (operation | document | user | client-key). The UNIQUE PK is the race
+//      guard — only ONE concurrent request with the same composite key wins.
+//   2. On a duplicate key: same client-key but a DIFFERENT request payload →
+//      IDEMPOTENCY_CONFLICT; a COMPLETED reservation → replay the stored result;
+//      an in-progress one → conflict (the original is still running).
+//   3. The owner runs the work, then _idemComplete stores the response; a
+//      FAILURE calls _idemAbort to DELETE the reservation so a transient failure
+//      is never cached as a permanent success and a retry can proceed.
+// Retention/cleanup: the 24h sweep in server.js reclaims stale rows.
 function _idemKey(req) {
   const k = (req.get && (req.get('Idempotency-Key') || req.get('X-Idempotency-Key'))) || '';
   return k ? String(k).slice(0, 120) : '';
 }
-async function _idemReplay(scope, key) {
-  if (!key) return null;
-  try {
-    const [rows] = await db.query('SELECT response_json, status_code FROM idempotency_keys WHERE id=? LIMIT 1', [scope + ':' + key]);
-    if (rows.length) {
-      let body = null; try { body = JSON.parse(rows[0].response_json); } catch (_) {}
-      return { statusCode: Number(rows[0].status_code) || 200, body };
-    }
-  } catch (_) { /* table optional */ }
-  return null;
+function _isDupErr(e) { return !!e && (e.code === 'ER_DUP_ENTRY' || e.errno === 1062 || /duplicate entry/i.test(e.message || '')); }
+function _stableStringify(o) {
+  if (o === null || typeof o !== 'object') return JSON.stringify(o);
+  if (Array.isArray(o)) return '[' + o.map(_stableStringify).join(',') + ']';
+  return '{' + Object.keys(o).sort().map((k) => JSON.stringify(k) + ':' + _stableStringify(o[k])).join(',') + '}';
 }
-async function _idemStore(scope, key, req, statusCode, body) {
-  if (!key) return;
+function _bodyHash(body) { try { return crypto.createHash('sha256').update(_stableStringify(body || {})).digest('hex'); } catch (_) { return ''; } }
+function _idemId(scope, docId, username, key) {
+  return 'tx:' + crypto.createHash('sha1').update([scope, docId || '', username || '', key].join('|')).digest('hex');
+}
+// Returns one of:
+//   { mode:'none' }                          — no key supplied; proceed normally
+//   { mode:'proceed', idemId }               — reservation taken; do the work
+//   { mode:'replay', statusCode, body }      — completed before; replay it
+//   { mode:'conflict' }                      — same key+different payload / in-progress
+async function _idemBegin(scope, docId, key, req) {
+  if (!key) return { mode: 'none' };
+  const username = _actor(req);
+  const idemId = _idemId(scope, docId, username, key);
+  const hash = _bodyHash(req.body);
   try {
     await db.query(
-      'INSERT IGNORE INTO idempotency_keys (id, username, endpoint, response_json, status_code) VALUES (?,?,?,?,?)',
-      [scope + ':' + key, _actor(req), scope, JSON.stringify(body), statusCode]);
-  } catch (_) { /* best effort */ }
+      'INSERT INTO idempotency_keys (id, username, endpoint, request_hash, status_code) VALUES (?,?,?,?,NULL)',
+      [idemId, username, scope, hash]);
+    return { mode: 'proceed', idemId };
+  } catch (e) {
+    if (!_isDupErr(e)) return { mode: 'proceed', idemId }; // table/other issue → never block the op
+    let row = null;
+    try { const [rows] = await db.query('SELECT request_hash, response_json, status_code FROM idempotency_keys WHERE id=? LIMIT 1', [idemId]); row = rows[0]; } catch (_) {}
+    if (!row) return { mode: 'proceed', idemId };
+    if (row.request_hash && hash && row.request_hash !== hash) return { mode: 'conflict' }; // same key, different payload
+    if (row.status_code != null && row.response_json != null) {
+      let body = null; try { body = JSON.parse(row.response_json); } catch (_) {}
+      return { mode: 'replay', statusCode: Number(row.status_code) || 200, body };
+    }
+    return { mode: 'conflict' }; // reserved but not yet completed → original in flight
+  }
+}
+async function _idemComplete(idemId, statusCode, body) {
+  if (!idemId) return;
+  try { await db.query('UPDATE idempotency_keys SET response_json=?, status_code=? WHERE id=?', [JSON.stringify(body), statusCode, idemId]); } catch (_) {}
+}
+async function _idemAbort(idemId) {
+  if (!idemId) return;
+  // Only delete a still-in-progress reservation (never a completed result).
+  try { await db.query('DELETE FROM idempotency_keys WHERE id=? AND status_code IS NULL', [idemId]); } catch (_) {}
 }
 
 // Optimistic-concurrency token from the client (body.expectedVersion or
@@ -384,15 +421,17 @@ router.get('/stock-issues/:id', async (req, res) => {
 
 // Create stock issue (draft)
 router.post('/stock-issues', async (req, res) => {
+  let _idemId = null;
   try {
     const { fromWarehouseId, toWarehouseId, brandId, branchId, issueDate, notes, items } = req.body;
     // Phase 0 §5 — creator identity comes from the JWT, not the body.
     const createdBy = _actor(req);
-    // Phase 3A — idempotent create: a retried POST with the same Idempotency-Key
-    // replays the first response instead of creating a duplicate draft.
+    // Phase 3A.1 — idempotency reservation (create has no document id yet).
     const idemKey = _idemKey(req);
-    const replay = await _idemReplay('transfer:create', idemKey);
-    if (replay) return res.status(replay.statusCode).json(replay.body);
+    const idem = await _idemBegin('transfer:create', null, idemKey, req);
+    if (idem.mode === 'replay') return res.status(idem.statusCode).json(idem.body);
+    if (idem.mode === 'conflict') return _fail(res, 'IDEMPOTENCY_CONFLICT', 'طلب مكرر بنفس المفتاح (محتوى مختلف أو قيد المعالجة)');
+    _idemId = idem.idemId;
     if (!fromWarehouseId || !toWarehouseId) return _fail(res, 'VALIDATION_ERROR', 'from/to warehouse required');
     if (!req.guardTransfer(res, fromWarehouseId, toWarehouseId)) return;
     // v5.10.40 — Reject same-warehouse "transfers". Every ERP (SAP, Oracle,
@@ -453,8 +492,77 @@ router.post('/stock-issues', async (req, res) => {
       data: { id, issueNumber, status: 'draft', totalCost: total },
       documentNumber: issueNumber, status: 'draft', version: 1, affectedStock: [], auditEvent,
     }, { id, issueNumber, totalCost: total });
-    await _idemStore('transfer:create', idemKey, req, 200, body); // store BEFORE send
+    await _idemComplete(_idemId, 200, body);
     res.json(body);
+  } catch(e) { if (_idemId) await _idemAbort(_idemId).catch(() => {}); _catch(res, e); }
+});
+
+// Edit a DRAFT in place (Phase 3A.1) — a REAL update, never delete+recreate.
+// Replaces the header fields + line items inside ONE transaction; preserves
+// id / issue_number / created_by / created_at; bumps version once; performs NO
+// stock movement and NO GL. expectedVersion is mandatory (optimistic lock).
+router.patch('/stock-issues/:id', async (req, res) => {
+  try {
+    const id = req.params.id;
+    const actor = _actor(req);
+    const { fromWarehouseId, toWarehouseId, issueDate, notes, items } = req.body || {};
+    const expectedVersion = _expectedVersion(req);
+    if (expectedVersion == null) return _fail(res, 'VALIDATION_ERROR', 'expectedVersion مطلوب لتعديل المسودة');
+    if (!fromWarehouseId || !toWarehouseId) return _fail(res, 'VALIDATION_ERROR', 'from/to warehouse required');
+    if (String(fromWarehouseId) === String(toWarehouseId)) return _fail(res, 'VALIDATION_ERROR', 'المصدر والوجهة يجب أن يكونا مختلفين');
+    if (!Array.isArray(items) || !items.length) return _fail(res, 'VALIDATION_ERROR', 'items required');
+    // Validate lines: positive qty, no duplicate itemId.
+    const seen = new Set();
+    for (const it of items) {
+      if (!it || !it.itemId) return _fail(res, 'VALIDATION_ERROR', 'صنف غير صالح');
+      if (seen.has(String(it.itemId))) return _fail(res, 'VALIDATION_ERROR', 'صنف مكرر في القائمة: ' + it.itemId);
+      seen.add(String(it.itemId));
+      if (!(Number(it.qtyRequested) > 0)) return _fail(res, 'VALIDATION_ERROR', 'الكمية يجب أن تكون أكبر من صفر');
+    }
+    const [rows] = await db.query('SELECT status, version, issue_number, from_warehouse_id, to_warehouse_id FROM stock_issues WHERE id=?', [id]);
+    if (!rows.length) return res.status(404).json({ success: false, code: 'NOT_FOUND', error: 'not found' });
+    const cur = rows[0];
+    if (cur.status !== 'draft') return _fail(res, 'INVALID_STATE_TRANSITION', 'لا يمكن تعديل إلا المسودة (draft). الحالة الحالية: ' + cur.status);
+    // Scope on the NEW source + destination (both ends).
+    if (!req.guardTransfer(res, fromWarehouseId, toWarehouseId)) return;
+    const [whRows] = await db.query('SELECT id FROM warehouses WHERE id IN (?,?)', [fromWarehouseId, toWarehouseId]);
+    const whFound = whRows.map((w) => String(w.id));
+    if (whFound.indexOf(String(fromWarehouseId)) < 0 || whFound.indexOf(String(toWarehouseId)) < 0) return _fail(res, 'VALIDATION_ERROR', 'مستودع غير موجود — تحقق من المصدر والوجهة');
+
+    // Re-price lines (draft only — no stock/GL movement).
+    let total = 0; const enriched = [];
+    for (const it of items) {
+      const cost = await _getEffectiveCost(it.itemId, fromWarehouseId);
+      const lineTotal = Number(it.qtyRequested || 0) * cost;
+      total += lineTotal;
+      enriched.push({ itemId: it.itemId, qtyRequested: Number(it.qtyRequested) || 0, notes: it.notes || '', unitCost: cost, lineTotal });
+    }
+
+    const out = await db.withTransaction(async (conn) => {
+      // Conditional, version-guarded header UPDATE — preserves id / issue_number
+      // / created_by / created_at (never written). A concurrent edit with the
+      // same expectedVersion loses here (affectedRows=0 → VERSION_CONFLICT).
+      const [upd] = await conn.query(
+        `UPDATE stock_issues SET from_warehouse_id=?, to_warehouse_id=?, issue_date=?, notes=?, total_cost=?, version=version+1
+         WHERE id=? AND status='draft' AND version=?`,
+        [fromWarehouseId, toWarehouseId, issueDate || new Date().toISOString().slice(0, 10), notes || '', total, id, expectedVersion]);
+      if (!upd || upd.affectedRows !== 1) { const e = new Error('تغيّرت المسودة منذ آخر تحميل — أعد التحميل وحاول مجددًا'); e.status = 409; e.code = 'state_changed'; throw e; }
+      // Replace the line items atomically.
+      await conn.query('DELETE FROM stock_issue_items WHERE issue_id=?', [id]);
+      for (const it of enriched) {
+        await conn.query(
+          `INSERT INTO stock_issue_items (id, issue_id, item_id, qty_requested, unit_cost, line_total, notes) VALUES (?,?,?,?,?,?,?)`,
+          ['SII-' + Date.now() + '-' + Math.random().toString(36).slice(2, 8), id, it.itemId, it.qtyRequested, it.unitCost, it.lineTotal, it.notes]);
+      }
+      const auditEvent = await _audit(conn, id, 'edit', 'draft', 'draft', actor, notes || '',
+        { from: fromWarehouseId, to: toWarehouseId, lines: enriched.length, totalCost: total });
+      return { newVersion: (Number(cur.version) || 1) + 1, auditEvent };
+    });
+
+    _ok(res, {
+      data: { id, issueNumber: cur.issue_number, status: 'draft', totalCost: total },
+      documentNumber: cur.issue_number, status: 'draft', version: out.newVersion, affectedStock: [], auditEvent: out.auditEvent,
+    }, { success: true, id, issueNumber: cur.issue_number, totalCost: total });
   } catch(e) { _catch(res, e); }
 });
 
@@ -487,6 +595,7 @@ router.post('/stock-issues/:id/approve', MGR, async (req, res) => {
 
 // Issue (decrement source warehouse + post GL)
 router.post('/stock-issues/:id/issue', BACKOFFICE, async (req, res) => {
+  let _idemId = null;
   try {
     const id = req.params.id;
     // Phase 0 §5 — issuer identity from the JWT, never the body.
@@ -495,12 +604,13 @@ router.post('/stock-issues/:id/issue', BACKOFFICE, async (req, res) => {
     if (!hdrRows.length) return res.status(404).json({ success: false, code: 'NOT_FOUND', error: 'not found' });
     const hdr = hdrRows[0];
     if (!req.guardTransfer(res, hdr.from_warehouse_id, hdr.to_warehouse_id)) return;
-    // Phase 3A — idempotent issue: a retried POST with the same key replays the
-    // first result (never moves stock / posts GL twice). Checked AFTER the scope
-    // guard and BEFORE the state check (a replay sees status already 'issued').
+    // Phase 3A.1 — idempotency reservation (bound to this document). Checked
+    // AFTER the scope guard and BEFORE the state check.
     const idemKey = _idemKey(req);
-    const replay = await _idemReplay('transfer:issue', idemKey);
-    if (replay) return res.status(replay.statusCode).json(replay.body);
+    const idem = await _idemBegin('transfer:issue', id, idemKey, req);
+    if (idem.mode === 'replay') return res.status(idem.statusCode).json(idem.body);
+    if (idem.mode === 'conflict') return _fail(res, 'IDEMPOTENCY_CONFLICT', 'طلب مكرر بنفس المفتاح (محتوى مختلف أو قيد المعالجة)');
+    _idemId = idem.idemId;
     const expectedVersion = _expectedVersion(req);
     // Phase 0 §3 — a draft can NEVER be issued. The approval step is the
     // control that makes the value/stock move auditable, so issuing is only
@@ -603,9 +713,9 @@ router.post('/stock-issues/:id/issue', BACKOFFICE, async (req, res) => {
       documentNumber: hdr.issue_number, status: 'issued', version: out.newVersion,
       affectedStock: out.affectedStock, auditEvent: out.auditEvent,
     }, { success: true, totalCost: out.totalCost, glJournalId: out.glId });
-    await _idemStore('transfer:issue', idemKey, req, 200, body); // store BEFORE send
+    await _idemComplete(_idemId, 200, body);
     res.json(body);
-  } catch(e) { _catch(res, e); }
+  } catch(e) { if (_idemId) await _idemAbort(_idemId).catch(() => {}); _catch(res, e); }
 });
 
 // Receive (increment destination warehouse)
@@ -616,6 +726,7 @@ router.post('/stock-issues/:id/issue', BACKOFFICE, async (req, res) => {
 // validated against the REMAINING quantity (issued − already received), not
 // the issued total, so two partial receipts can never exceed what was issued.
 router.post('/stock-issues/:id/receive', BACKOFFICE, async (req, res) => {
+  let _idemId = null;
   try {
     const id = req.params.id;
     // Phase 0 §5 — receiver identity from the JWT, never the body.
@@ -628,11 +739,13 @@ router.post('/stock-issues/:id/receive', BACKOFFICE, async (req, res) => {
     if (Array.isArray(items) && items.length === 0) {
       return _fail(res, 'VALIDATION_ERROR', 'قائمة الأصناف فارغة — احذف الحقل لاستلام كل المتبقي أو أرسل كمية لكل سطر');
     }
-    // Phase 3A — idempotent receipt: a retried receive with the same key never
-    // double-counts the cumulative quantity.
+    // Phase 3A.1 — idempotency reservation: a retried receive with the same key
+    // never double-counts the cumulative quantity.
     const idemKey = _idemKey(req);
-    const replay = await _idemReplay('transfer:receive', idemKey);
-    if (replay) return res.status(replay.statusCode).json(replay.body);
+    const idem = await _idemBegin('transfer:receive', id, idemKey, req);
+    if (idem.mode === 'replay') return res.status(idem.statusCode).json(idem.body);
+    if (idem.mode === 'conflict') return _fail(res, 'IDEMPOTENCY_CONFLICT', 'طلب مكرر بنفس المفتاح (محتوى مختلف أو قيد المعالجة)');
+    _idemId = idem.idemId;
     const expectedVersion = _expectedVersion(req);
     // delta-to-receive-now, keyed by line id (only when items provided).
     const deltaMap = {};
@@ -744,9 +857,9 @@ router.post('/stock-issues/:id/receive', BACKOFFICE, async (req, res) => {
       documentNumber: out.issueNumber, status: out.status, version: out.newVersion,
       affectedStock: out.affectedStock, auditEvent: out.auditEvent,
     }, { success: true, status: out.status, fullyReceived: out.status === 'received' });
-    await _idemStore('transfer:receive', idemKey, req, 200, body); // store BEFORE send
+    await _idemComplete(_idemId, 200, body);
     res.json(body);
-  } catch(e) { _catch(res, e); }
+  } catch(e) { if (_idemId) await _idemAbort(_idemId).catch(() => {}); _catch(res, e); }
 });
 
 // Cancel stock issue

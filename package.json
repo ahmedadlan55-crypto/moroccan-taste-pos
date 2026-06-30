@@ -30,6 +30,7 @@
     "test:lot-integrity": "node tests/integration/lotIntegrity.api.test.js",
     "test:lot-migration": "node tests/integration/lotMigration.test.js",
     "test:security-api": "node tests/integration/securityHardening.api.test.js",
+    "test:ops-api": "node tests/integration/ops.api.test.js",
     "migrate:purchase-lots": "node scripts/migrate-purchase-lots.js",
     "scope:backfill": "node scripts/backfill-warehouse-access.js"
   },

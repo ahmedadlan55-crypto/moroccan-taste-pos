@@ -35,6 +35,16 @@ const PORT = process.env.PORT || 3000;
 // 1. Compression
 app.use(compression());
 
+// 1b. Correlation ID — accept an inbound X-Request-Id or generate one; echo it on
+// the response and expose req.requestId for structured logs + audit + support.
+const { randomUUID } = require('crypto');
+app.use(function (req, res, next) {
+  const incoming = req.headers['x-request-id'];
+  req.requestId = (typeof incoming === 'string' && incoming.length > 0 && incoming.length <= 200) ? incoming : randomUUID();
+  res.setHeader('X-Request-Id', req.requestId);
+  next();
+});
+
 // 2. Security headers (Helmet)
 app.use(helmet({
   contentSecurityPolicy: false,  // Disabled — app uses inline scripts/styles extensively
@@ -112,6 +122,7 @@ app.use('/api/', function(req, res, next) {
 
   // FULLY PUBLIC — no token needed
   if (p === '/version') return next();                 // v6.20.0 — deploy/version marker
+  if (p === '/inventory/v2/ready') return next();      // RC — readiness probe (DB + schema)
   if (p.startsWith('/auth/')) return next();           // all auth endpoints
   if (p.startsWith('/settings')) return next();        // settings
   if (p.startsWith('/menu')) return next();            // menu
@@ -289,6 +300,35 @@ app.get('/api/version', (req, res) => {
   });
 });
 
+// RC ops — readiness probe. Verifies DB connectivity AND that the warehouse-v2
+// schema actually migrated (lot tables/columns) + reports the DB session
+// timezone. Returns 503 with the missing piece so an orchestrator never routes
+// traffic to a half-migrated instance. Public (no auth), like /api/version.
+const _readyDb = require('./db/connection');
+app.get('/api/inventory/v2/ready', async (req, res) => {
+  const checks = { db: false, schema: false, timezone: null };
+  const missing = [];
+  try { await _readyDb.query('SELECT 1'); checks.db = true; }
+  catch (e) { missing.push('db:' + (e.code || 'unreachable')); }
+  if (checks.db) {
+    const required = [
+      ['inv_items', 'tracking_mode'], ['inventory_lots', 'lifecycle_status'],
+      ['warehouse_lot_balances', 'qty'], ['inventory_lot_movements', 'inventory_movement_seq'],
+    ];
+    try {
+      let present = 0;
+      for (const [t, c] of required) {
+        const [r] = await _readyDb.query('SELECT COUNT(*) AS n FROM information_schema.columns WHERE table_schema=DATABASE() AND table_name=? AND column_name=?', [t, c]);
+        if (r[0] && Number(r[0].n) > 0) present++; else missing.push('schema:' + t + '.' + c);
+      }
+      checks.schema = present === required.length;
+      try { const [tz] = await _readyDb.query('SELECT @@session.time_zone AS tz'); checks.timezone = tz[0] && tz[0].tz; } catch (_) {}
+    } catch (e) { missing.push('schema:' + (e.code || 'error')); }
+  }
+  const ready = checks.db && checks.schema;
+  res.status(ready ? 200 : 503).json({ ready, checks, missing, processTz: process.env.TZ || null, at: new Date().toISOString() });
+});
+
 // 8. Audit logging middleware — auto-logs all POST/PUT/DELETE operations
 const { auditMiddleware } = require('./lib/auditLogger');
 app.use('/api/sales', auditMiddleware('sales'));
@@ -323,6 +363,7 @@ app.use('/api/shifts', require('./routes/shifts'));
 // RC hardening — per-user mutation rate limiter for the whole /v2 surface
 // (state-changing methods only; reads/exports pass through). Generous default
 // (300/min/user) so legitimate use + tests never trip it; env-tunable.
+app.use('/api/inventory/v2', require('./lib/v2Metrics').track);
 app.use('/api/inventory/v2', require('./lib/v2RateLimit'));
 app.use('/api/inventory/v2/stocktakes', require('./routes/inventory-stocktakes'));
 // Phase 4A — item master + replenishment (paths /items, /replenishment,

@@ -12,6 +12,7 @@
 const router = require('express').Router();
 const db = require('../db/connection');
 const os = require('os');
+const v2Metrics = require('../lib/v2Metrics');
 
 const _bootedAt = Date.now();
 
@@ -96,6 +97,7 @@ router.get('/json', async (req, res) => {
       cpu_count: os.cpus().length
     },
     requests: _requestCounters,
+    warehouse_v2: v2Metrics.snapshot(),
     database: dbMetrics
   });
 });
@@ -138,6 +140,13 @@ router.get('/', async (req, res) => {
     lines.push('# HELP db_pool_total DB pool connection count');
     lines.push(`db_pool_total ${m.db_pool_total}`);
     lines.push(`db_pool_free ${m.db_pool_free}`);
+  }
+  // warehouse-v2 operational counters (errors / 409 / reversals / integrity alerts)
+  const v2 = v2Metrics.snapshot();
+  lines.push('# HELP warehouse_v2_requests_total Total warehouse-v2 requests');
+  lines.push('# TYPE warehouse_v2_requests_total counter');
+  for (const [k, n] of Object.entries(v2)) {
+    lines.push(`warehouse_v2_${k} ${n}`);
   }
   res.setHeader('Content-Type', 'text/plain; version=0.0.4');
   res.send(lines.join('\n') + '\n');

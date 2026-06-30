@@ -32,6 +32,8 @@
     "test:security-api": "node tests/integration/securityHardening.api.test.js",
     "test:ops-api": "node tests/integration/ops.api.test.js",
     "test:flags-api": "node tests/integration/featureFlags.api.test.js",
+    "warehouse:v2:preflight": "node scripts/warehouse-v2-preflight.js",
+    "test:preflight": "node tests/integration/preflight.test.js",
     "migrate:purchase-lots": "node scripts/migrate-purchase-lots.js",
     "scope:backfill": "node scripts/backfill-warehouse-access.js"
   },

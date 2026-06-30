@@ -28,6 +28,11 @@ const jwt = require('jsonwebtoken');
 const app = express();
 const PORT = process.env.PORT || 3000;
 
+// RC cutover flag — when "0", the warehouse-v2 SPA serves a maintenance notice
+// and v2 WRITE endpoints return 503 (legacy UI/API remains the sole writer →
+// no dual-write, no data loss). Reads stay available. Default ENABLED.
+const WAREHOUSE_V2_ENABLED = String(process.env.WAREHOUSE_V2_ENABLED || '1') !== '0';
+
 // ═══════════════════════════════════════
 // SECURITY MIDDLEWARE CHAIN
 // ═══════════════════════════════════════
@@ -228,6 +233,14 @@ app.use(express.static(path.join(__dirname, 'public'), {
 // immutable; index.html is no-cache so a redeploy is picked up immediately.
 // If the bundle hasn't been built yet, the path simply 404s (legacy app
 // unaffected) — build with: npm --prefix frontend/warehouse run build
+// RC cutover — when v2 is DISABLED, intercept the SPA with a maintenance notice
+// (registered BEFORE the static mount so it always wins). Legacy UI unaffected.
+if (!WAREHOUSE_V2_ENABLED) {
+  app.all(/^\/warehouse-v2(?:\/.*)?$/, function (req, res) {
+    res.status(503).type('html').send('<!doctype html><html lang="ar" dir="rtl"><meta charset="utf-8"><title>صيانة</title><body style="font-family:Tahoma,Arial,sans-serif;padding:3rem;text-align:center;color:#172033"><h2>نظام المستودعات (v2) متوقف مؤقتًا</h2><p>يُرجى استخدام الواجهة القديمة. (WAREHOUSE_V2_ENABLED=0)</p></body></html>');
+  });
+}
+
 // ── warehouse-v2 — strict Content-Security-Policy (SPA scope only) ──────
 // The global helmet CSP stays disabled because the LEGACY app (served from
 // /public) relies on inline scripts. The React SPA loads ONLY hashed bundles
@@ -365,6 +378,12 @@ app.use('/api/shifts', require('./routes/shifts'));
 // (300/min/user) so legitimate use + tests never trip it; env-tunable.
 app.use('/api/inventory/v2', require('./lib/v2Metrics').track);
 app.use('/api/inventory/v2', require('./lib/v2RateLimit'));
+// RC cutover — v2 WRITE gate. When v2 is disabled, mutations return 503 so the
+// legacy system is the sole writer (no dual-write); reads stay available.
+app.use('/api/inventory/v2', function (req, res, next) {
+  if (WAREHOUSE_V2_ENABLED || !/^(POST|PUT|PATCH|DELETE)$/.test(req.method)) return next();
+  return res.status(503).json({ success: false, code: 'V2_DISABLED', error: 'نظام warehouse-v2 معطّل مؤقتًا — لا يمكن تنفيذ عمليات كتابية. استخدم النظام القديم.' });
+});
 app.use('/api/inventory/v2/stocktakes', require('./routes/inventory-stocktakes'));
 // Phase 4A — item master + replenishment (paths /items, /replenishment,
 // /categories, /units don't collide with the doc router's /receipts|/issues|…).

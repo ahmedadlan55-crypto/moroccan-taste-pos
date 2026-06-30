@@ -10,7 +10,7 @@
     "build:warehouse": "npm --prefix frontend/warehouse install && npm --prefix frontend/warehouse run build",
     "db:init": "node db/init.js",
     "db:migrate": "node db/migrate.js",
-    "test": "node tests/transactionPermissions.test.js && node tests/transactionSchema.test.js && node tests/transactionStateMachine.test.js && node tests/transactionService.test.js && node tests/warehouseTransfer.test.js && node tests/inventoryAdjustment.test.js && node tests/stocktakeWorkflow.test.js && node tests/inventoryReporting.test.js && node tests/warehouseScope.test.js",
+    "test": "node tests/transactionPermissions.test.js && node tests/transactionSchema.test.js && node tests/transactionStateMachine.test.js && node tests/transactionService.test.js && node tests/warehouseTransfer.test.js && node tests/inventoryAdjustment.test.js && node tests/stocktakeWorkflow.test.js && node tests/inventoryReporting.test.js && node tests/warehouseScope.test.js && node tests/csvExport.test.js && node tests/reportContract.test.js",
     "test:scope-api": "node tests/integration/warehouseScope.api.test.js",
     "scope:backfill": "node scripts/backfill-warehouse-access.js"
   },

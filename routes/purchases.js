@@ -1,6 +1,17 @@
 const router = require('express').Router();
 const db = require('../db/connection');
 const { recomputeInvItemStock } = require('../lib/stockRecompute');
+const POLICY = require('../lib/inventoryItemPolicy');
+async function _assertLegacyInboundItems(items, resolveFn) {
+  // Phase 4B — reject the whole receive UP FRONT if any line is a tracked or
+  // inactive item, so the autocommit loop never half-receives.
+  for (const it of (items || [])) {
+    const inv = await resolveFn(it, db);
+    if (!inv) continue;
+    const [m] = await db.query('SELECT name, tracking_mode, active, deleted_at FROM inv_items WHERE id=? LIMIT 1', [inv.id]);
+    if (m.length) { try { POLICY.assertLegacyInbound(m[0]); } catch (e) { e.status = 422; throw e; } }
+  }
+}
 // v7.5 — purchase receipts finally post GL (Dr Inventory + Input VAT /
 // Cr Cash|Bank|AP by payment method). Without it every receipt left the
 // balance sheet missing both the asset increase and the liability.
@@ -206,6 +217,8 @@ router.post('/receive/:id', BACKOFFICE, async (req, res) => {
 
       const rawItems = JSON.parse(purchase.items_json || '[]');
       const items = rawItems.map(normPurchaseItem);
+      // Phase 4B — block tracked/inactive items in the legacy PO receive (gate).
+      await _assertLegacyInboundItems(items, resolveInvItem);
 
       let count = 0;
       const skipped = [];
@@ -442,7 +455,9 @@ router.post('/receive/:id', BACKOFFICE, async (req, res) => {
       vatAmount: Number(out.totalVat.toFixed(2))
     });
   } catch (e) {
-    res.json({ success: false, error: e.message, debug: e.debugInfo || undefined });
+    // Phase 4B — surface a real HTTP status + canonical code when set (the lot
+    // gate); legacy errors keep the historical 200 {success:false} contract.
+    res.status(e.status || 200).json({ success: false, code: e.code || undefined, error: e.message, debug: e.debugInfo || undefined });
   }
 });
 

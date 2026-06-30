@@ -36,5 +36,15 @@ test('inactive outflow WITHOUT reason blocked', () => throwsV(() => P.assertOutf
 test('inactive outflow WITH reason allowed (liquidation)', () => noThrow(() => P.assertOutflowAllowed(inactive, { reason: 'تصفية رصيد' })));
 test('inactive outflow as REVERSAL always allowed (no reason)', () => noThrow(() => P.assertOutflowAllowed(inactive, { isReversal: true })));
 
+console.log('\n─── assertLegacyInbound (Phase 4B gate for legacy inbound) ───');
+const trackedActive = { id: 'I4', name: 'مُتتبع', active: 1, deleted_at: null, tracking_mode: 'expiry' };
+const lotActive = { id: 'I5', name: 'دفعة', active: 1, deleted_at: null, tracking_mode: 'lot' };
+const plainActive = { id: 'I6', name: 'عادي', active: 1, deleted_at: null, tracking_mode: 'none' };
+function throwsCode(fn, code) { let c = null; try { fn(); } catch (e) { c = e.code; } if (c !== code) throw new Error('expected ' + code + ', got ' + c); }
+test('legacy inbound of a tracked (expiry) item → WRITER_NOT_LOT_AWARE', () => throwsCode(() => P.assertLegacyInbound(trackedActive), 'WRITER_NOT_LOT_AWARE'));
+test('legacy inbound of a tracked (lot) item → WRITER_NOT_LOT_AWARE', () => throwsCode(() => P.assertLegacyInbound(lotActive), 'WRITER_NOT_LOT_AWARE'));
+test('legacy inbound of an inactive item → VALIDATION_ERROR', () => throwsCode(() => P.assertLegacyInbound(inactive), 'VALIDATION_ERROR'));
+test('legacy inbound of a plain active item → allowed', () => noThrow(() => P.assertLegacyInbound(plainActive)));
+
 console.log('\n  ' + _p + ' passed, ' + _f + ' failed\n');
 process.exit(_f > 0 ? 1 : 0);

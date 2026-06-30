@@ -25,6 +25,7 @@
     "test:replenishment-api": "node tests/integration/replenishment.api.test.js",
     "test:lots-api": "node tests/integration/lots.api.test.js",
     "test:lot-concurrency": "node tests/integration/lotConcurrency.test.js",
+    "test:lot-writers": "node tests/integration/lotWriters.test.js",
     "scope:backfill": "node scripts/backfill-warehouse-access.js"
   },
   "dependencies": {

@@ -721,6 +721,33 @@ async function runMigrations() {
     ) ENGINE=InnoDB
   `);
 
+  // Phase 2A.2 — per-user warehouse access (membership only; operation rights
+  // stay in RBAC). admin/developer get IMPLICIT all-access in code, so they
+  // need no rows here. A user with NO row sees no warehouse once enforcement
+  // is on (WAREHOUSE_SCOPE_ENFORCE). Idempotent; safe to re-run.
+  await createTableIfMissing('user_warehouse_access', `
+    CREATE TABLE user_warehouse_access (
+      id INT AUTO_INCREMENT PRIMARY KEY,
+      user_id INT NOT NULL,
+      warehouse_id VARCHAR(50) NOT NULL,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      created_by VARCHAR(100),
+      UNIQUE KEY uq_user_warehouse (user_id, warehouse_id),
+      KEY idx_uwa_user (user_id),
+      KEY idx_uwa_warehouse (warehouse_id)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+  `);
+  // FKs are best-effort: the project does not enforce a warehouses(branch_id)
+  // FK, and a legacy DB with a mismatched engine/charset must not break boot.
+  try {
+    const [fk] = await db.query(
+      "SELECT 1 FROM information_schema.TABLE_CONSTRAINTS WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='user_warehouse_access' AND CONSTRAINT_TYPE='FOREIGN KEY' LIMIT 1");
+    if (!fk.length) {
+      await db.query("ALTER TABLE user_warehouse_access ADD CONSTRAINT fk_uwa_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE");
+      await db.query("ALTER TABLE user_warehouse_access ADD CONSTRAINT fk_uwa_warehouse FOREIGN KEY (warehouse_id) REFERENCES warehouses(id) ON DELETE CASCADE");
+    }
+  } catch (e) { console.log('[DB] user_warehouse_access FK skipped:', String(e.message).substring(0, 120)); }
+
   // Branches: add new columns
   await addColumnIfMissing('branches', 'warehouse_id', "VARCHAR(50)");
   await addColumnIfMissing('branches', 'cost_center_id', "VARCHAR(50)");

@@ -1,11 +1,12 @@
 import { NavLink } from "react-router-dom";
-import { LayoutDashboard, Boxes, Truck, FileBarChart } from "lucide-react";
+import { LayoutDashboard, Boxes, Truck, BarChart3, FileBarChart } from "lucide-react";
 import { cn } from "@/lib/cn";
 
 const ITEMS = [
   { path: "/", label: "الرئيسية", icon: LayoutDashboard },
   { path: "/inventory", label: "المخزون", icon: Boxes },
   { path: "/transfers", label: "الحركة", icon: Truck },
+  { path: "/analytics", label: "التحليلات", icon: BarChart3 },
   { path: "/reports", label: "التقارير", icon: FileBarChart },
 ];
 
@@ -22,7 +23,7 @@ export function MobileNav() {
           end={item.path === "/"}
           className={({ isActive }) =>
             cn(
-              "flex min-h-12 min-w-16 flex-col items-center justify-center gap-1 rounded-xl text-[10px] font-extrabold transition",
+              "flex min-h-12 min-w-14 flex-col items-center justify-center gap-1 rounded-xl px-1 text-[10px] font-extrabold transition",
               isActive ? "bg-slate-950 text-white" : "text-slate-500 hover:bg-slate-100",
             )
           }

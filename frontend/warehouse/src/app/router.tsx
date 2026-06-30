@@ -5,14 +5,15 @@ import { AppShell } from "@/components/app-shell/AppShell";
 import { DashboardPage } from "@/features/dashboard/DashboardPage";
 import { WarehousesPage } from "@/features/warehouses/WarehousesPage";
 import { InventoryPage } from "@/features/inventory/InventoryPage";
+import { AnalyticsPage } from "@/features/analytics/AnalyticsPage";
+import { ReportsPage } from "@/features/reports/ReportsPage";
+import { ReportDetailPage } from "@/features/reports/ReportDetailPage";
 import {
   ReceiptsPage,
   TransfersPage,
   StocktakesPage,
   AdjustmentsPage,
   ProductionPage,
-  AnalyticsPage,
-  ReportsPage,
   SystemMapPage,
 } from "@/features/placeholders";
 
@@ -43,6 +44,7 @@ export function AppRouter() {
             <Route path="production" element={<ProductionPage />} />
             <Route path="analytics" element={<AnalyticsPage />} />
             <Route path="reports" element={<ReportsPage />} />
+            <Route path="reports/:reportType" element={<ReportDetailPage />} />
             <Route path="system-map" element={<SystemMapPage />} />
             <Route path="*" element={<NotFound />} />
           </Route>

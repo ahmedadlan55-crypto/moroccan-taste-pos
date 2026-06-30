@@ -1,0 +1,96 @@
+/* Tajawal is loaded by the host page when available; we fall back to the
+   system Arabic stack (Segoe UI / Tahoma) so the app stays self-contained and
+   has no blocking external font request. */
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  * {
+    box-sizing: border-box;
+  }
+
+  html {
+    background: #f5f7fb;
+  }
+
+  body {
+    margin: 0;
+    min-width: 320px;
+    color: #172033;
+    background:
+      radial-gradient(circle at 88% 2%, rgba(24, 163, 131, 0.08), transparent 25rem),
+      #f5f7fb;
+    font-family: "Tajawal", "Segoe UI", Tahoma, Arial, sans-serif;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  button,
+  input,
+  select,
+  textarea {
+    font: inherit;
+  }
+
+  /* Visible keyboard focus everywhere (WCAG 2.4.7). */
+  button:focus-visible,
+  input:focus-visible,
+  select:focus-visible,
+  textarea:focus-visible,
+  a:focus-visible,
+  [tabindex]:focus-visible {
+    outline: 3px solid rgba(24, 163, 131, 0.28);
+    outline-offset: 2px;
+  }
+}
+
+@layer components {
+  .surface {
+    @apply rounded-2xl border border-slate-200/80 bg-white shadow-soft;
+  }
+
+  .field {
+    @apply min-h-11 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm font-semibold text-slate-700 shadow-sm transition placeholder:font-normal placeholder:text-slate-400 hover:border-slate-300 focus:border-teal-500 focus:outline-none focus:ring-4 focus:ring-teal-100;
+  }
+
+  .chip {
+    @apply inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-[11px] font-extrabold;
+  }
+
+  .table-row {
+    @apply border-b border-slate-100 transition hover:bg-slate-50/80;
+  }
+
+  .nav-item {
+    @apply flex min-h-11 w-full items-center gap-3 rounded-xl px-3 text-right text-sm font-bold text-slate-300 transition hover:bg-white/10 hover:text-white;
+  }
+
+  .nav-item-active {
+    @apply bg-white text-slate-900 shadow-lg shadow-black/10 hover:bg-white hover:text-slate-900;
+  }
+}
+
+.scrollbar-thin {
+  scrollbar-width: thin;
+  scrollbar-color: #cbd5e1 transparent;
+}
+.scrollbar-thin::-webkit-scrollbar {
+  width: 7px;
+  height: 7px;
+}
+.scrollbar-thin::-webkit-scrollbar-thumb {
+  border-radius: 999px;
+  background: #cbd5e1;
+}
+
+@media print {
+  .no-print {
+    display: none !important;
+  }
+  body {
+    background: #fff;
+  }
+  .surface {
+    box-shadow: none;
+  }
+}

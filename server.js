@@ -285,6 +285,9 @@ app.use('/api/shifts', require('./routes/shifts'));
 // at a CLEAN namespace /api/inventory/v2/* so the legacy /api/inventory/adjustments
 // (delta model + legacy HTML UI) is never shadowed. Mounted BEFORE inventory.js so
 // the /v2/* paths are claimed here. Inherits loadWarehouseScope (mounted above).
+// Phase 3C — professional stocktake mounted at the more-specific /v2/stocktakes
+// BEFORE the /v2 doc router (paths don't collide; this just claims the prefix).
+app.use('/api/inventory/v2/stocktakes', require('./routes/inventory-stocktakes'));
 app.use('/api/inventory/v2', require('./routes/inventory-transactions'));
 app.use('/api/inventory', require('./routes/inventory'));
 // Phase 2B — read-only Analytics + Reports (inherits the warehouse-scope

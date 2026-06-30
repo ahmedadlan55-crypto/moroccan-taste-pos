@@ -19,6 +19,8 @@
     "test:idempotency-retention": "node tests/integration/idempotencyRetention.test.js",
     "test:inv-tx-api": "node tests/integration/inventoryTx.api.test.js",
     "test:inv-tx-reverse-api": "node tests/integration/inventoryTxReverse.api.test.js",
+    "test:stocktake-api": "node tests/integration/stocktake.api.test.js",
+    "test:stocktake-concurrency": "node tests/integration/stocktakeConcurrency.test.js",
     "scope:backfill": "node scripts/backfill-warehouse-access.js"
   },
   "dependencies": {

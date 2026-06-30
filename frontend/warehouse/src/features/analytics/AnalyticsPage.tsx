@@ -207,17 +207,25 @@ export function AnalyticsPage() {
       {/* Primary KPI row */}
       <section className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
         <MetricCard
-          label="قيمة المخزون (WAC)"
+          label="قيمة المخزون الموجب"
           value={formatCurrency(k.inventoryValueWac)}
-          note="بمتوسط التكلفة المرجّح"
+          note={
+            k.estimatedCostValue > 0
+              ? `بمتوسط التكلفة (WAC) · منها تقديري ${formatCurrency(k.estimatedCostValue)} (جزء من القيمة، لا يُضاف)`
+              : "بمتوسط التكلفة المرجّح (WAC) — رصيد موجب فقط"
+          }
           icon={CircleDollarSign}
         />
         <MetricCard
-          label="تكلفة تقديرية"
-          value={formatCurrency(k.estimatedCostValue)}
-          note="أصناف بلا WAC — قيمة تقديرية منفصلة"
+          label="أثر المخزون السالب بالقيمة"
+          value={formatCurrency(k.negativeStockValueImpact)}
+          note={
+            k.negativeStockValueImpact < 0
+              ? "قيمة العجز (سالبة) — غير محتسبة ضمن قيمة المخزون"
+              : "لا يوجد رصيد سالب"
+          }
           icon={Coins}
-          tone="violet"
+          tone="rose"
         />
         <MetricCard
           label="الأصناف"

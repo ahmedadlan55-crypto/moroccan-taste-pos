@@ -7,6 +7,8 @@ export interface ReportWarning { code: string; message: string; level: string; }
 export interface AnalyticsKpis {
   inventoryValueWac: number;
   estimatedCostValue: number;
+  estimatedCostIsSubset: boolean;
+  negativeStockValueImpact: number;
   itemCount: number;
   totalQty: number;
   availableCount: number;
@@ -59,6 +61,7 @@ export function toAnalytics(raw: unknown): Analytics {
   return {
     kpis: {
       inventoryValueWac: n(k.inventoryValueWac), estimatedCostValue: n(k.estimatedCostValue),
+      estimatedCostIsSubset: k.estimatedCostIsSubset !== false, negativeStockValueImpact: n(k.negativeStockValueImpact),
       itemCount: n(k.itemCount), totalQty: n(k.totalQty), availableCount: n(k.availableCount),
       lowCount: n(k.lowCount), outCount: n(k.outCount), negativeCount: n(k.negativeCount), activeWarehouses: n(k.activeWarehouses),
     },

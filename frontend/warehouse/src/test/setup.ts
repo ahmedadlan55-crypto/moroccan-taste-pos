@@ -8,6 +8,7 @@ class ResizeObserverStub {
   disconnect() {}
 }
 if (typeof globalThis.ResizeObserver === "undefined") {
-  // @ts-expect-error — assigning the stub onto the global
-  globalThis.ResizeObserver = ResizeObserverStub;
+  // Cast (not @ts-expect-error) so it's correct regardless of whether the
+  // installed DOM/@types already declare a compatible ResizeObserver type.
+  (globalThis as { ResizeObserver: unknown }).ResizeObserver = ResizeObserverStub;
 }

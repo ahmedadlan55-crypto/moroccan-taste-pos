@@ -55,7 +55,8 @@ async function _perWarehouse(req) {
             SUM(CASE WHEN i.id IS NOT NULL AND ws.qty > 0 AND (i.min_stock <= 0 OR ws.qty > i.min_stock) THEN 1 ELSE 0 END) AS available_count,
             SUM(CASE WHEN i.id IS NOT NULL AND ws.qty > 0 AND i.min_stock > 0 AND ws.qty <= i.min_stock THEN 1 ELSE 0 END) AS low_count,
             SUM(CASE WHEN i.id IS NOT NULL AND ws.qty = 0 AND ws.first_added_date IS NOT NULL THEN 1 ELSE 0 END) AS out_count,
-            SUM(CASE WHEN i.id IS NOT NULL AND ws.qty < 0 THEN 1 ELSE 0 END) AS negative_count
+            SUM(CASE WHEN i.id IS NOT NULL AND ws.qty < 0 THEN 1 ELSE 0 END) AS negative_count,
+            COALESCE(SUM(CASE WHEN i.id IS NOT NULL AND ws.qty < 0 THEN ws.qty * ${VALUE_EXPR} ELSE 0 END), 0) AS negative_value
        FROM warehouses w
        LEFT JOIN warehouse_stock ws ON ws.warehouse_id = w.id
        LEFT JOIN inv_items i ON i.id = ws.item_id AND i.active = 1 AND i.deleted_at IS NULL
@@ -80,10 +81,17 @@ router.get('/analytics/summary', async (req, res) => {
       const dto = INV.mapWarehouseRow(r);
       dto.availableCount = Number(r.available_count) || 0;
       dto.estimatedValue = Math.round((Number(r.estimated_value) || 0) * 100) / 100;
+      // Value impact of NEGATIVE stock (a negative number) — surfaced as a
+      // standalone KPI; it is NOT part of inventoryValueWac (which counts qty>0).
+      dto.negativeValue = Math.round((Number(r.negative_value) || 0) * 100) / 100;
       return dto;
     });
     const totals = INV.summarizeWarehouses(warehouses);
+    // estimatedCostValue is the SUBSET of inventoryValueWac priced from the
+    // global item cost fallback (no per-warehouse WAC) — a component WITHIN the
+    // value, never an amount added on top of it.
     const estimatedCostValue = Math.round(warehouses.reduce((s, w) => s + (w.estimatedValue || 0), 0) * 100) / 100;
+    const negativeStockValueImpact = Math.round(warehouses.reduce((s, w) => s + (w.negativeValue || 0), 0) * 100) / 100;
     const availableCount = warehouses.reduce((s, w) => s + (w.availableCount || 0), 0);
 
     // Helper to build a scoped value/category/item query body.
@@ -219,8 +227,13 @@ router.get('/analytics/summary', async (req, res) => {
     res.json(RC.envelope({
       data: {
         kpis: {
+          // Value of POSITIVE stock at WAC (qty>0 only).
           inventoryValueWac: totals.totalValue,
+          // A subset of inventoryValueWac, priced from the global cost fallback.
           estimatedCostValue,
+          estimatedCostIsSubset: true,
+          // Value impact of negative stock (≤ 0) — separate, not added to value.
+          negativeStockValueImpact,
           itemCount: totals.itemCount,
           totalQty: totals.totalQty,
           availableCount,
@@ -238,7 +251,7 @@ router.get('/analytics/summary', async (req, res) => {
         transfers,
         dataQualityIndicators,
       },
-      totals: { inventoryValueWac: totals.totalValue, estimatedCostValue, itemCount: totals.itemCount },
+      totals: { inventoryValueWac: totals.totalValue, estimatedCostValue, estimatedCostIsSubset: true, negativeStockValueImpact, itemCount: totals.itemCount },
       filters: { warehouseId: filters.warehouseId, from: filters.from, to: filters.to, category: filters.category, type: filters.type, window: filters.window },
       scope: _scopeInfo(req),
       generatedAt: _generatedAt(),

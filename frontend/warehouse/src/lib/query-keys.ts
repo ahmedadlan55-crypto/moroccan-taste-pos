@@ -15,6 +15,10 @@ export interface InventoryGridParams {
 }
 
 export const queryKeys = {
+  // Per-user warehouse access scope (Phase 2A.2) — loaded once, shared by the
+  // scope + permission providers.
+  accessScope: () => ["access-scope"] as const,
+
   dashboard: (scope: string) => ["dashboard", scope] as const,
 
   warehouses: {

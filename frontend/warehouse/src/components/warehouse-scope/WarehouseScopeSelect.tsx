@@ -1,16 +1,15 @@
 import { Warehouse } from "lucide-react";
 import { useWarehouseScope, ALL_WAREHOUSES } from "@/app/warehouse-scope-provider";
-import { useWarehouses } from "@/lib/hooks/useWarehouses";
 import { cn } from "@/lib/cn";
 
 // Persistent warehouse scope selector (Topbar). Reads/writes the shared scope
-// (URL ?wh= + sessionStorage). Options come from the live warehouses-summary
-// (cached + shared with the Warehouses page); while loading we still render the
-// current selection so the control never flickers empty.
+// (URL ?wh= + sessionStorage). Options come from the caller's ACCESSIBLE
+// warehouses (Phase 2A.2 access-scope) — a non-global user never sees a
+// warehouse they can't act on, and the "all" option only appears for users
+// with all-warehouses access.
 export function WarehouseScopeSelect({ fullWidth = false }: { fullWidth?: boolean }) {
-  const { scope, setScope } = useWarehouseScope();
-  const { data } = useWarehouses(ALL_WAREHOUSES);
-  const options = data?.warehouses ?? [];
+  const { scope, setScope, accessibleWarehouses, allWarehousesAccess } = useWarehouseScope();
+  const options = accessibleWarehouses;
 
   return (
     <label className={cn("flex items-center gap-2 text-xs font-extrabold text-slate-500", fullWidth && "w-full")}>
@@ -22,8 +21,8 @@ export function WarehouseScopeSelect({ fullWidth = false }: { fullWidth?: boolea
         onChange={(e) => setScope(e.target.value)}
         aria-label="نطاق المستودع"
       >
-        <option value={ALL_WAREHOUSES}>كل المستودعات</option>
-        {/* Ensure the current scope remains selectable even before options load. */}
+        {allWarehousesAccess && <option value={ALL_WAREHOUSES}>كل المستودعات</option>}
+        {/* Keep the current scope selectable even before options load. */}
         {scope !== ALL_WAREHOUSES && !options.some((w) => w.id === scope) && (
           <option value={scope}>{scope}</option>
         )}

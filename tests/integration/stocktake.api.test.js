@@ -26,6 +26,7 @@ const PORT = Number(process.env.STK_TEST_PORT || 3231);
 const BASE = { host: '127.0.0.1', port: PORT };
 const WH = 'WH-STK', WC = 'WH-STK-C';
 const I_MAIN = 'STK-MAIN', I_ZA = 'STK-ZA', I_ZB = 'STK-ZB', I_RB = 'STK-RB', I_RC = 'STK-RC';
+const I_SQ = 'STK-SQ', I_SQ2 = 'STK-SQ2'; // movement-sequence window tests
 const U_A = 'stk_a', U_B = 'stk_b', U_OUT = 'stk_out';
 const S = '/api/inventory/v2/stocktakes';
 
@@ -77,7 +78,7 @@ async function cleanup() {
     ['DELETE FROM idempotency_keys WHERE username IN (?,?,?)', [U_A, U_B, U_OUT]],
     ['DELETE FROM idempotency_keys WHERE username=?', ['stk_admin']],
     ['DELETE uwa FROM user_warehouse_access uwa JOIN users u ON u.id=uwa.user_id WHERE u.username IN (?,?,?)', [U_A, U_B, U_OUT]],
-    ['DELETE FROM inv_items WHERE id IN (?,?,?,?,?)', [I_MAIN, I_ZA, I_ZB, I_RB, I_RC]],
+    ['DELETE FROM inv_items WHERE id IN (?,?,?,?,?,?,?)', [I_MAIN, I_ZA, I_ZB, I_RB, I_RC, I_SQ, I_SQ2]],
     ['DELETE FROM warehouses WHERE id IN (?,?)', [WH, WC]],
     ['DELETE FROM users WHERE username IN (?,?,?)', [U_A, U_B, U_OUT]],
   ];
@@ -87,7 +88,7 @@ async function seed() {
   await cleanup();
   await db.query('INSERT INTO warehouses (id,code,name,type,is_active,is_main) VALUES (?,?,?,?,1,1)', [WH, 'STK', 'مستودع الجرد', 'main']);
   await db.query('INSERT INTO warehouses (id,code,name,type,is_active) VALUES (?,?,?,?,1)', [WC, 'STKC', 'مستودع آخر', 'branch']);
-  for (const [it, q] of [[I_MAIN, 100], [I_ZA, 8], [I_ZB, 12], [I_RB, 50], [I_RC, 30]]) {
+  for (const [it, q] of [[I_MAIN, 100], [I_ZA, 8], [I_ZB, 12], [I_RB, 50], [I_RC, 30], [I_SQ, 100], [I_SQ2, 100]]) {
     await db.query('INSERT INTO inv_items (id,name,category,unit,cost,min_stock,active) VALUES (?,?,?,?,?,?,1)', [it, 'صنف ' + it, 'خام', 'كجم', 5, 0]);
     await db.query('INSERT INTO warehouse_stock (id,warehouse_id,item_id,qty,avg_cost,first_added_date) VALUES (?,?,?,?,?,NOW())', ['WS-' + it, WH, it, q, 5]);
   }
@@ -228,6 +229,36 @@ async function seed() {
     // recover: post succeeds now
     const postOk = await req('POST', `${S}/${cb.body.id}/post`, ua, {});
     check('recovery: post succeeds, qty 40 (50 − 10)', postOk.status === 200 && (await qty(I_RB)) === 40, { st: postOk.status, q: await qty(I_RB) });
+
+    // ── 3C CLOSURE: movement-SEQUENCE window (not movement_date) ────────────
+    // (a) movements at the EXACT snapshot second + multiple in one second are all
+    // counted via seq (> snapshot_seq). The old `movement_date > snapshot_at`
+    // window dropped same-second-as-snapshot movements (1s resolution).
+    const sq = await req('POST', S, ua, { warehouseId: WH, scopeType: 'items', itemIds: [I_SQ], reason: 'تسلسل الحركات' });
+    await req('POST', `${S}/${sq.body.id}/start`, ua, {});
+    const [snapRow] = await db.query('SELECT snapshot_at FROM inv_stocktakes WHERE id=?', [sq.body.id]);
+    for (let i = 0; i < 3; i++) {
+      await db.query("INSERT INTO inventory_movements (id, movement_date, item_id, item_name, type, qty, reason, username, warehouse_id, reference_type, reference_id) VALUES (?, ?, ?, '', 'out', 5, 'seq', 'test', ?, 'manual', 'SEQ')",
+        ['MVSEQ-' + i + '-' + Math.random().toString(36).slice(2, 6), snapRow[0].snapshot_at, I_SQ, WH]);
+    }
+    await setQty(I_SQ, 85);
+    await req('PUT', `${S}/${sq.body.id}/counts`, ua, { counts: [{ itemId: I_SQ, countedQty: 85 }] });
+    const [sqLine] = await db.query('SELECT theoretical_qty, variance, net_movements FROM inv_stocktake_items WHERE stocktake_id=?', [sq.body.id]);
+    check('seq window: 3 same-second boundary movements all counted (net −15, theoretical 85, variance 0)', sqLine.length === 1 && near(sqLine[0].net_movements, -15) && near(sqLine[0].theoretical_qty, 85) && near(sqLine[0].variance, 0), sqLine[0]);
+
+    // (b) an OFFLINE count whose observedSeq predates later movements → conflict
+    // (returned for recount, NOT applied silently).
+    const sq2 = await req('POST', S, ua, { warehouseId: WH, scopeType: 'items', itemIds: [I_SQ2], reason: 'عد دون اتصال' });
+    await req('POST', `${S}/${sq2.body.id}/start`, ua, {});
+    const det = await req('GET', `${S}/${sq2.body.id}`, ua);
+    const observedSeq = det.body.currentSeq;
+    await injectMovement(I_SQ2, 'out', 7, 0); await setQty(I_SQ2, 93); // a movement lands after the device counted
+    const offline = await req('PUT', `${S}/${sq2.body.id}/counts`, ua, { counts: [{ itemId: I_SQ2, countedQty: 100, observedSeq }] });
+    check('offline count + later movement → conflict (not applied silently)', offline.status === 200 && Array.isArray(offline.body.conflicts) && offline.body.conflicts.length === 1 && offline.body.conflicts[0].code === 'STALE_COUNT', offline.body && offline.body.conflicts);
+    const [offLine] = await db.query('SELECT counted_qty FROM inv_stocktake_items WHERE stocktake_id=?', [sq2.body.id]);
+    check('offline-stale line left UNCOUNTED (needs recount)', offLine.length === 1 && offLine[0].counted_qty === null, offLine[0]);
+    const online = await req('PUT', `${S}/${sq2.body.id}/counts`, ua, { counts: [{ itemId: I_SQ2, countedQty: 93 }] });
+    check('online recount applied (theoretical 93, variance 0)', online.body && online.body.applied === 1 && (await (async () => { const [r] = await db.query('SELECT theoretical_qty, variance FROM inv_stocktake_items WHERE stocktake_id=?', [sq2.body.id]); return near(r[0].theoretical_qty, 93) && near(r[0].variance, 0); })()), online.body);
 
     // ── WAREHOUSE SCOPE ────────────────────────────────────────────────────
     const outCreate = await req('POST', S, uout, { warehouseId: WH, scopeType: 'full', reason: 'خارج النطاق' });

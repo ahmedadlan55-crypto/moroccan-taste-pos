@@ -12,6 +12,9 @@ import { useWarehouseScope } from "@/app/warehouse-scope-provider";
 import { toStocktakePage, toStocktakeDetail, toStocktakeMutation, type StocktakeMutationResult } from "@/lib/adapters/stocktake.adapter";
 
 const BASE = "/inventory/v2/stocktakes";
+
+export interface CountConflict { lineId: string; itemId: string; itemName: string; code: string; message: string }
+export interface SaveCountsResult { success: boolean; applied: number; conflicts: CountConflict[]; aggregates?: unknown }
 function uid(): string {
   try { if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") return crypto.randomUUID(); } catch { /* jsdom */ }
   return "idem-" + Math.random().toString(36).slice(2) + Date.now().toString(36);
@@ -66,8 +69,8 @@ export function useStocktakeMutations() {
     mutationFn: ({ id, expectedVersion }) => apiClient.post<unknown>(`${BASE}/${id}/start`, { expectedVersion }).then(toStocktakeMutation),
     onSuccess: (_r, v) => invalidate(v.id),
   });
-  const saveCounts = useMutation<unknown, Error, { id: string; counts: unknown[] }>({
-    mutationFn: ({ id, counts }) => apiClient.put<unknown>(`${BASE}/${id}/counts`, { counts }),
+  const saveCounts = useMutation<SaveCountsResult, Error, { id: string; counts: unknown[] }>({
+    mutationFn: ({ id, counts }) => apiClient.put<SaveCountsResult>(`${BASE}/${id}/counts`, { counts }),
     // counts autosave does NOT invalidate the whole detail (would clobber local edits);
     // the workspace refetches explicitly when it needs server truth.
   });

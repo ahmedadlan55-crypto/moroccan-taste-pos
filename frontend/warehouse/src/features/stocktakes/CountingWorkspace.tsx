@@ -11,7 +11,7 @@ import { formatQty, formatNumber } from "@/lib/formatters";
 import { useStocktakeDetail, useStocktakeMutations } from "@/lib/hooks/useStocktakes";
 import type { StocktakeLine } from "@/lib/adapters/stocktake.adapter";
 
-type Edit = { countedQty: number | null; notes: string };
+type Edit = { countedQty: number | null; notes: string; observedSeq?: number };
 const AUTOSAVE_MS = 700;
 
 export function CountingWorkspace() {
@@ -25,9 +25,14 @@ export function CountingWorkspace() {
   const [search, setSearch] = useState("");
   const [online, setOnline] = useState(typeof navigator === "undefined" ? true : navigator.onLine);
   const [saveState, setSaveState] = useState<"idle" | "saving" | "saved" | "offline" | "conflict">("idle");
+  const [staleItems, setStaleItems] = useState<string[]>([]); // items flagged by the server for recount
   const editsRef = useRef(edits); editsRef.current = edits;
+  // The movement high-water-mark the device last knew — stamped onto each edit so a
+  // count taken offline (then synced after later movements) is flagged for recount.
+  const seenSeqRef = useRef(0);
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const bufKey = `stk-counts-${id}`;
+  if (d && d.currentSeq > seenSeqRef.current) seenSeqRef.current = d.currentSeq;
 
   // Restore any buffered (e.g. offline) edits for this stocktake on mount.
   useEffect(() => {
@@ -47,17 +52,21 @@ export function CountingWorkspace() {
     if (keys.length === 0) return;
     if (!online) { setSaveState("offline"); return; }
     setSaveState("saving");
-    const counts = keys.map((itemId) => ({ itemId, countedQty: pend[itemId].countedQty, notes: pend[itemId].notes || undefined }));
+    const counts = keys.map((itemId) => ({ itemId, countedQty: pend[itemId].countedQty, notes: pend[itemId].notes || undefined, observedSeq: pend[itemId].observedSeq }));
     m.saveCounts.mutate({ id, counts }, {
-      onSuccess: () => {
-        // Clear only what we flushed (an edit during the request stays pending).
+      onSuccess: (res) => {
+        const conflicts = Array.isArray(res?.conflicts) ? res.conflicts : [];
+        const conflictIds = new Set(conflicts.map((c) => c.itemId));
+        // Clear what was APPLIED; keep server-rejected (stale) lines pending so the
+        // counter re-counts them. An edit made during the request also stays.
         setEdits((cur) => {
           const next: Record<string, Edit> = {};
-          for (const k of Object.keys(cur)) if (!keys.includes(k)) next[k] = cur[k];
+          for (const k of Object.keys(cur)) if (!keys.includes(k) || conflictIds.has(k)) next[k] = cur[k];
           try { Object.keys(next).length ? localStorage.setItem(bufKey, JSON.stringify(next)) : localStorage.removeItem(bufKey); } catch { /* ignore */ }
           return next;
         });
-        setSaveState("saved");
+        setStaleItems(conflicts.map((c) => c.itemId));
+        setSaveState(conflicts.length ? "conflict" : "saved");
         q.refetch();
       },
       onError: (e) => {
@@ -70,10 +79,13 @@ export function CountingWorkspace() {
   function setEdit(itemId: string, patch: Partial<Edit>, base: StocktakeLine) {
     setEdits((cur) => {
       const prev = cur[itemId] ?? { countedQty: base.countedQty, notes: base.notes ?? "" };
-      const next = { ...cur, [itemId]: { ...prev, ...patch } };
+      // Stamp the movement seq the device sees AT COUNT TIME. If this count is later
+      // synced after other movements landed, the server flags it for recount.
+      const next = { ...cur, [itemId]: { ...prev, ...patch, observedSeq: seenSeqRef.current } };
       try { localStorage.setItem(bufKey, JSON.stringify(next)); } catch { /* ignore */ }
       return next;
     });
+    setStaleItems((s) => s.filter((x) => x !== itemId));
     if (timer.current) clearTimeout(timer.current);
     timer.current = setTimeout(flush, AUTOSAVE_MS);
   }
@@ -114,7 +126,12 @@ export function CountingWorkspace() {
           <WifiOff className="h-4 w-4" /> أنت غير متصل — يُحفظ العد محليًا ويُرسل تلقائيًا عند عودة الاتصال. لا يمكن التقديم دون اتصال.
         </div>
       )}
-      {saveState === "conflict" && (
+      {staleItems.length > 0 && (
+        <div className="mb-4 rounded-xl border border-rose-200 bg-rose-50 px-4 py-2 text-sm font-bold text-rose-700">
+          حدثت حركات على {formatNumber(staleItems.length)} صنف منذ عدّه دون اتصال — لم يُحفَظ العد. أعد عدّ الأصناف المظلّلة ثم احفظ.
+        </div>
+      )}
+      {saveState === "conflict" && staleItems.length === 0 && (
         <div className="mb-4 rounded-xl border border-rose-200 bg-rose-50 px-4 py-2 text-sm font-bold text-rose-700">تغيّرت حالة المحضر (ربما طُلبت إعادة عد أو قُدّم) — أُعيد التحميل. تحقق ثم تابع.</div>
       )}
 

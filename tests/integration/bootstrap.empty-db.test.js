@@ -38,6 +38,8 @@ const REQUIRED_TABLES = [
   'inv_adjustments', 'inv_adjustment_items', 'inv_tx_events', 'inv_tx_counter',
   // Phase 3C — professional stocktake & reconciliation.
   'inv_stocktakes', 'inv_stocktake_items',
+  // Phase 4A.
+  'inventory_movements', 'inv_items',
 ];
 const REQUIRED_COLUMNS = [
   ['gl_journals', 'posted_by'], ['gl_journals', 'posted_at'],
@@ -51,6 +53,9 @@ const REQUIRED_COLUMNS = [
   ['inv_receipts', 'counter_account_code'],
   ['inv_stocktakes', 'snapshot_at'], ['inv_stocktakes', 'scope_type'],
   ['inv_stocktake_items', 'counted_qty'], ['inv_stocktake_items', 'theoretical_qty'],
+  // Phase 4A (3C closure) — monotonic movement seq window.
+  ['inventory_movements', 'seq'],
+  ['inv_stocktakes', 'snapshot_seq'], ['inv_stocktake_items', 'counted_seq'],
 ];
 
 let _p = 0, _f = 0;
@@ -117,6 +122,27 @@ function bootServer(port, logBuf) {
       "SELECT COUNT(*) AS n FROM INFORMATION_SCHEMA.STATISTICS WHERE TABLE_SCHEMA=? AND TABLE_NAME='gl_journals' AND NON_UNIQUE=0 AND COLUMN_NAME='journal_number'", [TEST_DB]);
     check('gl_journals unique(journal_number) NOT duplicated by the race', Number(uq.n) === 1, uq);
     await conn.end();
+
+    // ── Phase C: TWO servers boot CONCURRENTLY against a SECOND brand-new EMPTY
+    //    DB → they race the FIRST-RUN schema.sql + migrations. With the Phase-4A
+    //    boot-order fix (await autoInitDB BEFORE listen) + idempotent, race-tolerant
+    //    DDL, both must come up with a complete schema and no duplicate index. This
+    //    is the proof the migration-race GOTCHA is gone (no manual CREATE/ALTER).
+    await admin.query('DROP DATABASE IF EXISTS ' + TEST_DB);
+    await admin.query('CREATE DATABASE ' + TEST_DB + ' CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci');
+    const cP = PORT2 + 2, cQ = PORT2 + 3;
+    servers.push(bootServer(cP, null));
+    servers.push(bootServer(cQ, null)); // both start NOW — racing the first run
+    const cA = await waitUp(cP, 90);
+    const cB = await waitUp(cQ, 90);
+    check('two concurrent servers on a FRESH empty DB both start (race first-run migrations)', cA && cB, { cA, cB });
+    const conn2 = await mysql.createConnection(Object.assign({}, ADMIN, { database: TEST_DB }));
+    let have3 = new Set();
+    for (let i = 0; i < 120; i++) { const [t] = await conn2.query('SELECT TABLE_NAME FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_SCHEMA = ?', [TEST_DB]); have3 = new Set(t.map((r) => r.TABLE_NAME || r.table_name)); if (REQUIRED_TABLES.every((x) => have3.has(x))) break; await new Promise((z) => setTimeout(z, 1000)); }
+    check('schema complete after a CONCURRENT first-run (GOTCHA gone — zero manual ALTER)', REQUIRED_TABLES.every((t) => have3.has(t)), { missing: REQUIRED_TABLES.filter((t) => !have3.has(t)) });
+    const [[seqU]] = await conn2.query("SELECT COUNT(*) AS n FROM INFORMATION_SCHEMA.STATISTICS WHERE TABLE_SCHEMA=? AND TABLE_NAME='inventory_movements' AND COLUMN_NAME='seq' AND NON_UNIQUE=0", [TEST_DB]);
+    check('inventory_movements.seq single unique index after concurrent first-run', Number(seqU.n) === 1, seqU);
+    await conn2.end();
 
     console.log('\n  ── boot log (excerpt) ──');
     const joined = log.join('');

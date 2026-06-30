@@ -117,14 +117,21 @@ function canPost(s) { return s === 'approved'; }
 function canCancel(s) { return ['draft', 'counting', 'submitted', 'approved'].indexOf(s) !== -1; }
 function canDelete(s) { return s === 'draft'; }
 
-// Net stock movement for an item between the snapshot and NOW (the count time),
-// signed (in=+, out=−). Upper bound is DB NOW() to match counted_at exactly and
-// avoid any JS/DB timezone skew.
-async function _netMovements(conn, warehouseId, itemId, snapshotAt) {
+// Current movement high-water-mark (monotonic). NULL (no movements) → 0.
+async function _maxSeq(conn) {
+  const [r] = await (conn || db).query('SELECT COALESCE(MAX(seq),0) AS s FROM inventory_movements');
+  return Number(r[0] && r[0].s) || 0;
+}
+// Net stock movement for an item inside the MOVEMENT-SEQUENCE window
+// (seq > snapshotSeq AND seq <= countedSeq), signed (in=+, out=−). This replaces
+// the fragile 1-second movement_date window — seq is a monotonic AUTO_INCREMENT,
+// so movements colliding on the same second (or recorded concurrently) are still
+// ordered deterministically.
+async function _netMovements(conn, warehouseId, itemId, snapshotSeq, countedSeq) {
   const [r] = await (conn || db).query(
     "SELECT COALESCE(SUM(CASE WHEN type='in' THEN qty ELSE -qty END),0) AS net " +
-    'FROM inventory_movements WHERE warehouse_id=? AND item_id=? AND movement_date > ? AND movement_date <= NOW()',
-    [warehouseId, itemId, snapshotAt]
+    'FROM inventory_movements WHERE warehouse_id=? AND item_id=? AND seq > ? AND seq <= ?',
+    [warehouseId, itemId, Number(snapshotSeq) || 0, Number(countedSeq) || 0]
   );
   return Number(r[0] && r[0].net) || 0;
 }
@@ -211,7 +218,10 @@ router.get('/:id', async (req, res) => {
         journals = jr.map((j) => Object.assign({}, j, { entries: entries.filter((en) => en.journal_id === j.id) }));
       }
     }
-    res.json({ data: doc, lines, timeline: events, movements, journals });
+    // currentSeq lets the counting workspace stamp each count's observedSeq, so an
+    // offline count that synced after later movements is flagged for recount.
+    const currentSeq = await _maxSeq();
+    res.json({ data: doc, lines, timeline: events, movements, journals, currentSeq });
   } catch (e) { _catch(res, e); }
 });
 
@@ -314,9 +324,15 @@ router.post('/:id/start', BACKOFFICE, async (req, res) => {
     if (!canStart(pre.status)) throw _err('INVALID_STATE_TRANSITION', 'لا يمكن بدء العد لمحضر حالته "' + pre.status + '"');
 
     const out = await db.withTransaction(async (conn) => {
-      const doc = await _loadDoc(id, conn); // FOR UPDATE
+      const doc = await _loadDoc(id, conn); // FOR UPDATE (also fixes the REPEATABLE-READ snapshot)
       if (!doc || doc.status !== 'draft') throw _err('VERSION_CONFLICT', 'تغيّرت حالة المحضر — أعد التحميل');
       if (expected != null && Number(doc.version) !== expected) throw _err('VERSION_CONFLICT', 'تغيّر إصدار المحضر — أعد التحميل');
+
+      // The snapshot high-water-mark: every movement with seq <= snapshotSeq is
+      // already reflected in the snapshot_qty we freeze below (consistent under the
+      // txn's snapshot, fixed at the _loadDoc read above); movements with a higher
+      // seq are counted later via the (snapshotSeq, countedSeq] window.
+      const snapshotSeq = await _maxSeq(conn);
 
       // Resolve the frozen candidate list per scope.
       let itemIds = null;
@@ -335,6 +351,13 @@ router.post('/:id/start', BACKOFFICE, async (req, res) => {
         'FROM inv_items it LEFT JOIN warehouse_stock ws ON ws.item_id=it.id AND ws.warehouse_id=? ' +
         'WHERE ' + where.join(' AND ') + ' ORDER BY it.name', params
       );
+      // Pessimistically lock the scoped warehouse_stock rows so an in-flight
+      // movement on a counted item cannot commit between freezing snapshot_qty and
+      // capturing snapshot_seq — it blocks at its own applyStockMovement FOR UPDATE
+      // until start commits, then lands with seq > snapshotSeq.
+      if (cands.length) {
+        await conn.query('SELECT id FROM warehouse_stock WHERE warehouse_id=? AND item_id IN (?) FOR UPDATE', [doc.warehouse_id, cands.map((c) => c.id)]);
+      }
       // Freeze the list (snapshot qty + cost), counted_qty NULL = not counted yet.
       for (const c of cands) {
         const lid = 'STI-' + Date.now() + '-' + Math.random().toString(36).slice(2, 8);
@@ -343,7 +366,7 @@ router.post('/:id/start', BACKOFFICE, async (req, res) => {
           [lid, id, c.id, c.name || '', c.unit || '', c.category || null, REC.round3(c.qty), REC.round3(c.qty), E.round4(c.cost)]
         );
       }
-      const [u] = await conn.query("UPDATE inv_stocktakes SET status='counting', snapshot_at=NOW(), total_lines=?, version=version+1 WHERE id=? AND status='draft' AND version=?", [cands.length, id, doc.version]);
+      const [u] = await conn.query("UPDATE inv_stocktakes SET status='counting', snapshot_at=NOW(), snapshot_seq=?, total_lines=?, version=version+1 WHERE id=? AND status='draft' AND version=?", [snapshotSeq, cands.length, id, doc.version]);
       if (!u || u.affectedRows !== 1) throw _err('VERSION_CONFLICT', 'تغيّرت حالة المحضر أثناء بدء العد');
       const auditEvent = await _audit(conn, id, 'start', 'draft', 'counting', actor, 'بدء العد — تجميد ' + cands.length + ' صنفًا', { lines: cands.length });
       return { lines: cands.length, version: Number(doc.version) + 1, auditEvent };
@@ -365,7 +388,11 @@ router.put('/:id/counts', BACKOFFICE, async (req, res) => {
     if (req.guardWh && !req.guardWh(res, doc.warehouse_id)) return;
     if (!canCount(doc.status)) throw _err('VERSION_CONFLICT', 'لا يمكن حفظ العد — حالة المحضر "' + doc.status + '" (ربما قُدّم أو أُعيد) — أعد التحميل');
 
-    const agg = await db.withTransaction(async (conn) => {
+    const out = await db.withTransaction(async (conn) => {
+      // The window upper bound for THIS batch — the current movement high-water-mark.
+      const countedSeq = await _maxSeq(conn);
+      const conflicts = [];
+      let applied = 0;
       for (const c of counts) {
         const lineId = c.lineId || c.id;
         const itemId = c.itemId || c.item_id;
@@ -374,22 +401,34 @@ router.put('/:id/counts', BACKOFFICE, async (req, res) => {
         const line = lr[0];
         const counted = (c.countedQty === null || c.countedQty === undefined || c.countedQty === '') ? null : Number(c.countedQty);
         if (counted === null) {
-          await conn.query('UPDATE inv_stocktake_items SET counted_qty=NULL, counted_at=NULL, variance=0, variance_value=0, variance_pct=0, is_flagged=0, notes=?, reason_code=?, counted_by=? WHERE id=?',
+          await conn.query('UPDATE inv_stocktake_items SET counted_qty=NULL, counted_at=NULL, counted_seq=0, variance=0, variance_value=0, variance_pct=0, is_flagged=0, notes=?, reason_code=?, counted_by=? WHERE id=?',
             [c.notes != null ? String(c.notes).slice(0, 400) : line.notes, c.reasonCode != null ? String(c.reasonCode).slice(0, 40) : line.reason_code, actor, line.id]);
+          applied++;
           continue;
         }
         if (counted < 0) throw _err('VALIDATION_ERROR', 'الكمية المجرودة لا يمكن أن تكون سالبة (' + (line.item_name || itemId) + ')');
-        const net = await _netMovements(conn, doc.warehouse_id, line.item_id, doc.snapshot_at);
+        // Offline-stale guard: when a count was buffered OFFLINE the device sends the
+        // movement high-water-mark it saw at count time (observedSeq). If ANY movement
+        // landed for this item between then and now, the physical count predates those
+        // movements → it is NOT applied silently; it's returned for recount.
+        const observedSeq = (c.observedSeq != null && Number.isFinite(Number(c.observedSeq))) ? Number(c.observedSeq) : null;
+        if (observedSeq != null && observedSeq < countedSeq) {
+          const [mv] = await conn.query('SELECT 1 FROM inventory_movements WHERE warehouse_id=? AND item_id=? AND seq > ? AND seq <= ? LIMIT 1', [doc.warehouse_id, line.item_id, observedSeq, countedSeq]);
+          if (mv.length) { conflicts.push({ lineId: line.id, itemId: line.item_id, itemName: line.item_name, code: 'STALE_COUNT', message: 'حدثت حركات على الصنف منذ العد دون اتصال — يلزم إعادة عدّ هذا السطر' }); continue; }
+        }
+        const net = await _netMovements(conn, doc.warehouse_id, line.item_id, doc.snapshot_seq, countedSeq);
         const r = REC.reconcileLine({ snapshotQty: line.snapshot_qty, netMovements: net, countedQty: counted, unitCost: line.unit_cost, thresholdPct: 10 });
         await conn.query(
-          'UPDATE inv_stocktake_items SET counted_qty=?, counted_at=NOW(), net_movements=?, theoretical_qty=?, variance=?, variance_value=?, variance_pct=?, is_flagged=?, notes=?, reason_code=?, counted_by=? WHERE id=?',
-          [REC.round3(counted), REC.round3(net), r.theoreticalQty, r.variance, r.varianceValue, r.variancePct, r.isFlagged ? 1 : 0,
+          'UPDATE inv_stocktake_items SET counted_qty=?, counted_at=NOW(), counted_seq=?, net_movements=?, theoretical_qty=?, variance=?, variance_value=?, variance_pct=?, is_flagged=?, notes=?, reason_code=?, counted_by=? WHERE id=?',
+          [REC.round3(counted), countedSeq, REC.round3(net), r.theoreticalQty, r.variance, r.varianceValue, r.variancePct, r.isFlagged ? 1 : 0,
             c.notes != null ? String(c.notes).slice(0, 400) : line.notes, c.reasonCode != null ? String(c.reasonCode).slice(0, 40) : line.reason_code, actor, line.id]
         );
+        applied++;
       }
-      return _recountAggregates(conn, id);
+      const aggregates = await _recountAggregates(conn, id);
+      return { aggregates, conflicts, applied };
     });
-    return res.json({ success: true, data: { id }, status: 'counting', aggregates: agg });
+    return res.json({ success: true, data: { id }, status: 'counting', aggregates: out.aggregates, conflicts: out.conflicts, applied: out.applied });
   } catch (e) { _catch(res, e); }
 });
 

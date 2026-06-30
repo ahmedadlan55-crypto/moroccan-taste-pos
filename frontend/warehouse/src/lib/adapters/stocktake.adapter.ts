@@ -106,6 +106,7 @@ export interface StocktakeDetail {
   actors: { createdBy: string; submittedBy: string; approvedBy: string; postedBy: string; cancelledBy: string; recountBy: string };
   recountReason: string | null;
   cancelReason: string | null;
+  currentSeq: number;
   lines: StocktakeLine[];
   timeline: StocktakeTimelineEvent[];
   movements: StocktakeMovementRow[];
@@ -143,6 +144,7 @@ export function toStocktakeDetail(raw: unknown): StocktakeDetail {
     actors: { createdBy: s(d.created_by), submittedBy: s(d.submitted_by), approvedBy: s(d.approved_by), postedBy: s(d.posted_by), cancelledBy: s(d.cancelled_by), recountBy: s(d.recount_by) },
     recountReason: d.recount_reason ? s(d.recount_reason) : null,
     cancelReason: d.cancel_reason ? s(d.cancel_reason) : null,
+    currentSeq: num(r.currentSeq),
     lines: lines.map((l) => ({
       id: s(l.id),
       item: { id: s(l.item_id), name: s(l.item_name ?? l.item_id), unit: s(l.unit) },

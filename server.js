@@ -2825,6 +2825,11 @@ async function runMigrations() {
   // exist on all deploys (idempotent: a no-op where they already exist).
   await addColumnIfMissing('inventory_movements', 'reference_type', "VARCHAR(50)");
   await addColumnIfMissing('inventory_movements', 'reference_id', "VARCHAR(100)");
+  // Phase 4A (3C closure) — a MONOTONIC sequence so stocktake reconciliation can
+  // window movements deterministically (seq > snapshot_seq AND seq <= counted_seq)
+  // instead of the fragile 1-second movement_date. The string id (MV-<ms>-<rand>)
+  // is NOT sortable. ADD COLUMN AUTO_INCREMENT backfills existing rows in PK order.
+  await addColumnIfMissing('inventory_movements', 'seq', "BIGINT NOT NULL AUTO_INCREMENT UNIQUE");
   await addColumnIfMissing('stocktakes', 'warehouse_id', "VARCHAR(50)");
   await addColumnIfMissing('stocktakes', 'branch_id', "VARCHAR(50)");
   await addColumnIfMissing('shortage_requests', 'branch_id', "VARCHAR(50)");
@@ -4122,6 +4127,7 @@ async function runMigrations() {
       variance_value_threshold DECIMAL(14,2) DEFAULT 0,
       evidence_threshold DECIMAL(14,2) DEFAULT 0,
       snapshot_at DATETIME,
+      snapshot_seq BIGINT DEFAULT 0,
       reason VARCHAR(200),
       reference_evidence VARCHAR(500),
       notes TEXT,
@@ -4164,6 +4170,7 @@ async function runMigrations() {
       snapshot_qty DECIMAL(12,3) DEFAULT 0,
       counted_qty DECIMAL(12,3) NULL,
       counted_at DATETIME,
+      counted_seq BIGINT DEFAULT 0,
       net_movements DECIMAL(12,3) DEFAULT 0,
       theoretical_qty DECIMAL(12,3) DEFAULT 0,
       variance DECIMAL(12,3) DEFAULT 0,
@@ -4178,6 +4185,10 @@ async function runMigrations() {
       INDEX idx_sti_item (item_id)
     ) ENGINE=InnoDB
   `);
+  // Phase 4A (3C closure) — movement-sequence window for deterministic
+  // reconciliation (existing-DB top-up; fresh DBs get them from the CREATE above).
+  await addColumnIfMissing('inv_stocktakes', 'snapshot_seq', 'BIGINT DEFAULT 0');
+  await addColumnIfMissing('inv_stocktake_items', 'counted_seq', 'BIGINT DEFAULT 0');
 
   // ═══════════════════════════════════════════════════════════
   // PHASE 2 — Production Orders
@@ -5858,15 +5869,28 @@ async function runMigrations() {
   }
 }
 
-app.listen(PORT, async () => {
-  console.log(`Moroccan Taste POS running on port ${PORT}`);
-  await autoInitDB();
-  // v6.1.0 Wave E.6 — start the ZATCA submission worker after migrations
-  // complete so it can see the new zatca_submission_queue table. The
-  // worker no-ops gracefully until the operator finishes onboarding.
+// Phase 4A — run ALL migrations to completion BEFORE binding the port. The old
+// `app.listen(PORT, async () => { await autoInitDB() })` bound the socket first,
+// so /api/version answered while the schema was still incomplete — the migration
+// race that forced manual CREATE/ALTER in integration tests. Now the port only
+// opens once autoInitDB() (schema + runMigrations + collations) has finished, so
+// a successful /api/version GUARANTEES a complete schema. autoInitDB has its own
+// retry loop and returns (does not throw) on final failure, so the server still
+// comes up for diagnostics even if the DB is unreachable.
+(async () => {
   try {
-    require('./lib/zatca-worker').start();
+    await autoInitDB();
   } catch (e) {
-    console.warn('[zatca-worker] failed to start:', e.message);
+    console.error('[boot] autoInitDB error (starting anyway):', e && e.message);
   }
-});
+  app.listen(PORT, () => {
+    console.log(`Moroccan Taste POS running on port ${PORT}`);
+    // v6.1.0 Wave E.6 — start the ZATCA submission worker after migrations
+    // complete so it can see the new zatca_submission_queue table.
+    try {
+      require('./lib/zatca-worker').start();
+    } catch (e) {
+      console.warn('[zatca-worker] failed to start:', e.message);
+    }
+  });
+})();

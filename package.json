@@ -28,6 +28,8 @@
     "test:lot-writers": "node tests/integration/lotWriters.test.js",
     "test:stocktake-lots": "node tests/integration/stocktakeLots.test.js",
     "test:lot-integrity": "node tests/integration/lotIntegrity.api.test.js",
+    "test:lot-migration": "node tests/integration/lotMigration.test.js",
+    "migrate:purchase-lots": "node scripts/migrate-purchase-lots.js",
     "scope:backfill": "node scripts/backfill-warehouse-access.js"
   },
   "dependencies": {

@@ -33,11 +33,18 @@ const ADMIN = {
 const REQUIRED_TABLES = [
   'users', 'gl_accounts', 'gl_journals', 'gl_entries', 'gl_journal_seq',
   'accounting_periods', 'stock_issues', 'stock_issue_items', 'stock_issue_events', 'idempotency_keys',
+  // Phase 3B — independent inventory transactions (receipts / issues / adjustments).
+  'inv_receipts', 'inv_receipt_items', 'inv_issues', 'inv_issue_items',
+  'inv_adjustments', 'inv_adjustment_items', 'inv_tx_events', 'inv_tx_counter',
 ];
 const REQUIRED_COLUMNS = [
   ['gl_journals', 'posted_by'], ['gl_journals', 'posted_at'],
   ['stock_issues', 'version'], ['idempotency_keys', 'request_hash'],
   ['gl_journals', 'journal_number'],
+  // Phase 3B — the columns the new lifecycle depends on.
+  ['inv_receipts', 'version'], ['inv_receipt_items', 'posted_unit_cost'],
+  ['inv_issues', 'reason'], ['inv_adjustment_items', 'counted_qty'],
+  ['inv_adjustment_items', 'system_qty_snapshot'],
 ];
 
 let _p = 0, _f = 0;

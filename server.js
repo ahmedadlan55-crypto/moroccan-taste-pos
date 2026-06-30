@@ -281,6 +281,11 @@ app.use('/api/auth', require('./routes/auth'));
 app.use('/api/menu', require('./routes/menu'));
 app.use('/api/sales', require('./routes/sales'));
 app.use('/api/shifts', require('./routes/shifts'));
+// Phase 3B — independent inventory transactions (receipts / issues / adjustments)
+// at a CLEAN namespace /api/inventory/v2/* so the legacy /api/inventory/adjustments
+// (delta model + legacy HTML UI) is never shadowed. Mounted BEFORE inventory.js so
+// the /v2/* paths are claimed here. Inherits loadWarehouseScope (mounted above).
+app.use('/api/inventory/v2', require('./routes/inventory-transactions'));
 app.use('/api/inventory', require('./routes/inventory'));
 // Phase 2B — read-only Analytics + Reports (inherits the warehouse-scope
 // middleware mounted on /api/inventory above; /analytics/* + /reports/* paths
@@ -3880,6 +3885,207 @@ async function runMigrations() {
       ymd CHAR(8) NOT NULL,
       last_serial INT NOT NULL DEFAULT 0,
       PRIMARY KEY (ymd)
+    ) ENGINE=InnoDB
+  `);
+
+  // ═══════════════════════════════════════════════════════════
+  // PHASE 3B — Independent inventory transactions (receipts / issues /
+  // adjustments). FULLY SEPARATE from transfers (stock_issues) and from the
+  // legacy delta-model adjustments (stock_adjustments) — distinct tables, a
+  // distinct router (/api/inventory/v2), and distinct movement reference_types
+  // (inv_receipt / inv_issue / inv_adjustment). Unified lifecycle:
+  // draft → approved → posted → reversed (+ cancel before posting, delete draft).
+  // All idempotent (CREATE … IF NOT EXISTS) and safe under concurrent boot.
+  // posted_unit_cost freezes the line cost at posting so a reverse restores the
+  // EXACT original valuation (not the drifting current WAC).
+  // ═══════════════════════════════════════════════════════════
+  await createTableIfMissing('inv_receipts', `
+    CREATE TABLE IF NOT EXISTS inv_receipts (
+      id VARCHAR(60) PRIMARY KEY,
+      receipt_number VARCHAR(40) NOT NULL,
+      warehouse_id VARCHAR(50) NOT NULL,
+      brand_id VARCHAR(50),
+      branch_id VARCHAR(50),
+      cost_center_id VARCHAR(50),
+      receipt_date DATE,
+      status ENUM('draft','approved','posted','cancelled','reversed') DEFAULT 'draft',
+      source_ref VARCHAR(200),
+      total_cost DECIMAL(14,4) DEFAULT 0,
+      total_value DECIMAL(14,2) DEFAULT 0,
+      notes TEXT,
+      gl_journal_id VARCHAR(60),
+      reverse_gl_journal_id VARCHAR(60),
+      version INT NOT NULL DEFAULT 1,
+      created_by VARCHAR(100),
+      approved_by VARCHAR(100),
+      posted_by VARCHAR(100),
+      cancelled_by VARCHAR(100),
+      reversed_by VARCHAR(100),
+      cancel_reason VARCHAR(500),
+      reverse_reason VARCHAR(500),
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      approved_at DATETIME,
+      posted_at DATETIME,
+      cancelled_at DATETIME,
+      reversed_at DATETIME,
+      UNIQUE KEY uq_receipt_number (receipt_number),
+      INDEX idx_rcv_wh (warehouse_id),
+      INDEX idx_rcv_status (status),
+      INDEX idx_rcv_created (created_at)
+    ) ENGINE=InnoDB
+  `);
+  await createTableIfMissing('inv_receipt_items', `
+    CREATE TABLE IF NOT EXISTS inv_receipt_items (
+      id VARCHAR(60) PRIMARY KEY,
+      receipt_id VARCHAR(60) NOT NULL,
+      item_id VARCHAR(50) NOT NULL,
+      item_name VARCHAR(200),
+      unit VARCHAR(50),
+      qty DECIMAL(12,2) DEFAULT 0,
+      unit_cost DECIMAL(14,4) DEFAULT 0,
+      line_total DECIMAL(14,2) DEFAULT 0,
+      posted_unit_cost DECIMAL(14,4) DEFAULT 0,
+      notes VARCHAR(400),
+      INDEX idx_ri_receipt (receipt_id),
+      INDEX idx_ri_item (item_id)
+    ) ENGINE=InnoDB
+  `);
+  await createTableIfMissing('inv_issues', `
+    CREATE TABLE IF NOT EXISTS inv_issues (
+      id VARCHAR(60) PRIMARY KEY,
+      issue_number VARCHAR(40) NOT NULL,
+      warehouse_id VARCHAR(50) NOT NULL,
+      brand_id VARCHAR(50),
+      branch_id VARCHAR(50),
+      cost_center_id VARCHAR(50),
+      issue_date DATE,
+      status ENUM('draft','approved','posted','cancelled','reversed') DEFAULT 'draft',
+      reason VARCHAR(200),
+      recipient VARCHAR(200),
+      expense_account_code VARCHAR(20),
+      total_cost DECIMAL(14,4) DEFAULT 0,
+      total_value DECIMAL(14,2) DEFAULT 0,
+      notes TEXT,
+      gl_journal_id VARCHAR(60),
+      reverse_gl_journal_id VARCHAR(60),
+      version INT NOT NULL DEFAULT 1,
+      created_by VARCHAR(100),
+      approved_by VARCHAR(100),
+      posted_by VARCHAR(100),
+      cancelled_by VARCHAR(100),
+      reversed_by VARCHAR(100),
+      cancel_reason VARCHAR(500),
+      reverse_reason VARCHAR(500),
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      approved_at DATETIME,
+      posted_at DATETIME,
+      cancelled_at DATETIME,
+      reversed_at DATETIME,
+      UNIQUE KEY uq_inv_issue_number (issue_number),
+      INDEX idx_isu_wh (warehouse_id),
+      INDEX idx_isu_status (status),
+      INDEX idx_isu_created (created_at)
+    ) ENGINE=InnoDB
+  `);
+  await createTableIfMissing('inv_issue_items', `
+    CREATE TABLE IF NOT EXISTS inv_issue_items (
+      id VARCHAR(60) PRIMARY KEY,
+      issue_id VARCHAR(60) NOT NULL,
+      item_id VARCHAR(50) NOT NULL,
+      item_name VARCHAR(200),
+      unit VARCHAR(50),
+      qty DECIMAL(12,2) DEFAULT 0,
+      unit_cost DECIMAL(14,4) DEFAULT 0,
+      line_total DECIMAL(14,2) DEFAULT 0,
+      posted_unit_cost DECIMAL(14,4) DEFAULT 0,
+      notes VARCHAR(400),
+      INDEX idx_ii_issue (issue_id),
+      INDEX idx_ii_item (item_id)
+    ) ENGINE=InnoDB
+  `);
+  await createTableIfMissing('inv_adjustments', `
+    CREATE TABLE IF NOT EXISTS inv_adjustments (
+      id VARCHAR(60) PRIMARY KEY,
+      adjustment_number VARCHAR(40) NOT NULL,
+      warehouse_id VARCHAR(50) NOT NULL,
+      brand_id VARCHAR(50),
+      branch_id VARCHAR(50),
+      cost_center_id VARCHAR(50),
+      adjustment_date DATE,
+      status ENUM('draft','approved','posted','cancelled','reversed') DEFAULT 'draft',
+      reason VARCHAR(200),
+      reference_evidence VARCHAR(500),
+      total_delta_value DECIMAL(14,2) DEFAULT 0,
+      total_cost DECIMAL(14,4) DEFAULT 0,
+      total_value DECIMAL(14,2) DEFAULT 0,
+      notes TEXT,
+      gl_journal_id VARCHAR(60),
+      reverse_gl_journal_id VARCHAR(60),
+      version INT NOT NULL DEFAULT 1,
+      created_by VARCHAR(100),
+      approved_by VARCHAR(100),
+      posted_by VARCHAR(100),
+      cancelled_by VARCHAR(100),
+      reversed_by VARCHAR(100),
+      cancel_reason VARCHAR(500),
+      reverse_reason VARCHAR(500),
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      approved_at DATETIME,
+      posted_at DATETIME,
+      cancelled_at DATETIME,
+      reversed_at DATETIME,
+      UNIQUE KEY uq_adjustment_number (adjustment_number),
+      INDEX idx_adv_wh (warehouse_id),
+      INDEX idx_adv_status (status),
+      INDEX idx_adv_created (created_at)
+    ) ENGINE=InnoDB
+  `);
+  await createTableIfMissing('inv_adjustment_items', `
+    CREATE TABLE IF NOT EXISTS inv_adjustment_items (
+      id VARCHAR(60) PRIMARY KEY,
+      adjustment_id VARCHAR(60) NOT NULL,
+      item_id VARCHAR(50) NOT NULL,
+      item_name VARCHAR(200),
+      unit VARCHAR(50),
+      system_qty_snapshot DECIMAL(12,2) DEFAULT 0,
+      counted_qty DECIMAL(12,2) DEFAULT 0,
+      delta DECIMAL(12,2) DEFAULT 0,
+      unit_cost DECIMAL(14,4) DEFAULT 0,
+      delta_value DECIMAL(14,2) DEFAULT 0,
+      posted_unit_cost DECIMAL(14,4) DEFAULT 0,
+      notes VARCHAR(400),
+      INDEX idx_ai_adj (adjustment_id),
+      INDEX idx_ai_item (item_id)
+    ) ENGINE=InnoDB
+  `);
+  // Existing-DB top-up (the create handler writes total_cost/total_value uniformly).
+  await addColumnIfMissing('inv_adjustments', 'total_cost', 'DECIMAL(14,4) DEFAULT 0');
+  await addColumnIfMissing('inv_adjustments', 'total_value', 'DECIMAL(14,2) DEFAULT 0');
+  // Unified append-only audit timeline for all three doc types (one row per
+  // transition, written inside the SAME txn as the state change).
+  await createTableIfMissing('inv_tx_events', `
+    CREATE TABLE IF NOT EXISTS inv_tx_events (
+      id VARCHAR(60) PRIMARY KEY,
+      doc_type VARCHAR(20) NOT NULL,
+      doc_id VARCHAR(60) NOT NULL,
+      action VARCHAR(30) NOT NULL,
+      from_status VARCHAR(30),
+      to_status VARCHAR(30),
+      actor VARCHAR(100),
+      note VARCHAR(500),
+      payload_json TEXT,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      INDEX idx_evt_doc (doc_type, doc_id),
+      INDEX idx_evt_created (created_at)
+    ) ENGINE=InnoDB
+  `);
+  // Atomic per-(doc_type, day) numbering counter (RCV-/ISU-/ADV- YYYYMMDD-NNNN).
+  await createTableIfMissing('inv_tx_counter', `
+    CREATE TABLE IF NOT EXISTS inv_tx_counter (
+      doc_type VARCHAR(20) NOT NULL,
+      ymd CHAR(8) NOT NULL,
+      last_serial INT NOT NULL DEFAULT 0,
+      PRIMARY KEY (doc_type, ymd)
     ) ENGINE=InnoDB
   `);
 

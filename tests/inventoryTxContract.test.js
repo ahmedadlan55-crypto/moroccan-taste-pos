@@ -14,7 +14,18 @@ function ok(v, msg) { if (!v) throw new Error(msg || 'expected truthy'); }
 console.log('\n═══ Inventory-tx contract ═══');
 
 console.log('\n─── canonical codes ───');
-test('exactly 10 canonical codes', () => eq(Object.keys(C.HTTP_FOR).length, 10));
+test('18 canonical codes (10 base + 8 Phase 4B lot codes)', () => eq(Object.keys(C.HTTP_FOR).length, 18));
+test('Phase 4B lot codes mapped', () => {
+  eq(C.httpFor('INSUFFICIENT_LOT_QUANTITY'), 422);
+  eq(C.httpFor('EXPIRED_LOT'), 422);
+  eq(C.httpFor('QUARANTINED_LOT'), 422);
+  eq(C.httpFor('RECALLED_LOT'), 422);
+  eq(C.httpFor('LOT_REQUIRED'), 422);
+  eq(C.httpFor('TRACKING_MODE_LOCKED'), 422);
+  eq(C.httpFor('LOT_INVARIANT_VIOLATION'), 500);
+  eq(C.httpFor('WRITER_NOT_LOT_AWARE'), 422);
+  eq(C.isCanonical('EXPIRED_LOT'), true);
+});
 test('conflicts map to 409', () => {
   eq(C.httpFor('VERSION_CONFLICT'), 409);
   eq(C.httpFor('IDEMPOTENCY_CONFLICT'), 409);

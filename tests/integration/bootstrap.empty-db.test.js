@@ -40,6 +40,8 @@ const REQUIRED_TABLES = [
   'inv_stocktakes', 'inv_stocktake_items',
   // Phase 4A.
   'inventory_movements', 'inv_items', 'warehouse_item_rules',
+  // Phase 4B — lots / expiry / FEFO / traceability core tables.
+  'inventory_lots', 'warehouse_lot_balances', 'inventory_lot_movements',
 ];
 const REQUIRED_COLUMNS = [
   ['gl_journals', 'posted_by'], ['gl_journals', 'posted_at'],
@@ -59,6 +61,11 @@ const REQUIRED_COLUMNS = [
   // Phase 4A — item master + per-warehouse replenishment rules.
   ['inv_items', 'sku'], ['inv_items', 'version'],
   ['warehouse_item_rules', 'reorder_point'], ['warehouse_item_rules', 'version'],
+  // Phase 4B — lots / expiry / FEFO / traceability.
+  ['inv_items', 'tracking_mode'],
+  ['inventory_lots', 'lot_norm'], ['inventory_lots', 'expiry_date'], ['inventory_lots', 'lifecycle_status'], ['inventory_lots', 'version'],
+  ['warehouse_lot_balances', 'qty'], ['warehouse_lot_balances', 'item_id'],
+  ['inventory_lot_movements', 'inventory_movement_seq'], ['inventory_lot_movements', 'signed_qty'],
 ];
 
 let _p = 0, _f = 0;

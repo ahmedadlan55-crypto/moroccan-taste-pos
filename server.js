@@ -4229,6 +4229,76 @@ async function runMigrations() {
     ) ENGINE=InnoDB
   `);
 
+  // ─── Phase 4B — Lots, Expiry, FEFO & Traceability (ADDITIVE) ──────────────────
+  // tracking_mode = none | lot | expiry. An item is "tracked" when mode != 'none'.
+  // For tracked items the lot ledger below is the system of record and the hard
+  // invariant Σ(warehouse_lot_balances.qty) = warehouse_stock.qty is enforced after
+  // every transaction. `expired` is DERIVED from expiry_date, never stored.
+  await addColumnIfMissing('inv_items', 'tracking_mode', "ENUM('none','lot','expiry') NOT NULL DEFAULT 'none'");
+  // Master lot record — one row per (item, lot_number). lot_norm = UPPER(TRIM(lot_number)),
+  // UNIQUE per item. lifecycle is a manual state machine; expiry is a date, not a status.
+  await createTableIfMissing('inventory_lots', `
+    CREATE TABLE IF NOT EXISTS inventory_lots (
+      id VARCHAR(60) PRIMARY KEY,
+      item_id VARCHAR(50) NOT NULL,
+      lot_number VARCHAR(120) NOT NULL,
+      lot_norm VARCHAR(140) NOT NULL,
+      manufacture_date DATE NULL,
+      expiry_date DATE NULL,
+      lifecycle_status ENUM('active','quarantined','recalled','closed') NOT NULL DEFAULT 'active',
+      source_type VARCHAR(30) NULL,
+      source_id VARCHAR(100) NULL,
+      unit_cost DECIMAL(14,4) DEFAULT 0,
+      notes VARCHAR(500) NULL,
+      is_imported TINYINT(1) NOT NULL DEFAULT 0,
+      version INT NOT NULL DEFAULT 1,
+      created_by VARCHAR(100),
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      UNIQUE KEY uq_lot_item_norm (item_id, lot_norm),
+      INDEX idx_lot_item (item_id),
+      INDEX idx_lot_expiry (expiry_date),
+      INDEX idx_lot_status (lifecycle_status)
+    ) ENGINE=InnoDB
+  `);
+  // Per-(warehouse, lot) on-hand. item_id is denormalised so the per-item invariant
+  // (Σ qty WHERE warehouse_id=? AND item_id=?) is a single-table read with no join.
+  await createTableIfMissing('warehouse_lot_balances', `
+    CREATE TABLE IF NOT EXISTS warehouse_lot_balances (
+      id VARCHAR(60) PRIMARY KEY,
+      warehouse_id VARCHAR(50) NOT NULL,
+      lot_id VARCHAR(60) NOT NULL,
+      item_id VARCHAR(50) NOT NULL,
+      qty DECIMAL(14,3) NOT NULL DEFAULT 0,
+      updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+      UNIQUE KEY uq_wlb_wh_lot (warehouse_id, lot_id),
+      INDEX idx_wlb_wh_item (warehouse_id, item_id),
+      INDEX idx_wlb_lot (lot_id)
+    ) ENGINE=InnoDB
+  `);
+  // Lot-level ledger. Each row signs a qty (+in / -out) and links to the parent
+  // inventory_movements row by seq. UNIQUE(seq, lot) prevents double-posting a lot.
+  await createTableIfMissing('inventory_lot_movements', `
+    CREATE TABLE IF NOT EXISTS inventory_lot_movements (
+      id VARCHAR(60) PRIMARY KEY,
+      inventory_movement_seq BIGINT NULL,
+      movement_id VARCHAR(60) NULL,
+      lot_id VARCHAR(60) NOT NULL,
+      warehouse_id VARCHAR(50) NOT NULL,
+      item_id VARCHAR(50) NOT NULL,
+      signed_qty DECIMAL(14,3) NOT NULL,
+      reference_type VARCHAR(40) NULL,
+      reference_id VARCHAR(100) NULL,
+      reason VARCHAR(200) NULL,
+      actor VARCHAR(100) NULL,
+      occurred_at DATETIME NOT NULL,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      UNIQUE KEY uq_ilm_seq_lot (inventory_movement_seq, lot_id),
+      INDEX idx_ilm_lot (lot_id),
+      INDEX idx_ilm_ref (reference_type, reference_id),
+      INDEX idx_ilm_wh_item (warehouse_id, item_id)
+    ) ENGINE=InnoDB
+  `);
+
   // ═══════════════════════════════════════════════════════════
   // PHASE 2 — Production Orders
   // ═══════════════════════════════════════════════════════════

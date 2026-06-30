@@ -4083,13 +4083,96 @@ async function runMigrations() {
       INDEX idx_evt_created (created_at)
     ) ENGINE=InnoDB
   `);
-  // Atomic per-(doc_type, day) numbering counter (RCV-/ISU-/ADV- YYYYMMDD-NNNN).
+  // Atomic per-(doc_type, day) numbering counter (RCV-/ISU-/ADV-/STK- YYYYMMDD-NNNN).
   await createTableIfMissing('inv_tx_counter', `
     CREATE TABLE IF NOT EXISTS inv_tx_counter (
       doc_type VARCHAR(20) NOT NULL,
       ymd CHAR(8) NOT NULL,
       last_serial INT NOT NULL DEFAULT 0,
       PRIMARY KEY (doc_type, ymd)
+    ) ENGINE=InnoDB
+  `);
+
+  // ─── Phase 3C — professional stocktake & reconciliation (isolated v2 tables) ───
+  // The new stocktake is the single professional source going forward; it writes
+  // NO stock/GL itself — at post it creates a 3B Adjustment and lets the Adjustment
+  // Engine apply the variance. Legacy `stocktakes`/`stocktake_items` stay frozen.
+  // counted_qty is NULLABLE: NULL = not counted yet (excluded at post, never zeroed),
+  // 0 = counted and found empty. snapshot_qty/snapshot_at freeze the item list at
+  // the start of counting; theoretical_qty = snapshot + net movements until counted_at.
+  await createTableIfMissing('inv_stocktakes', `
+    CREATE TABLE IF NOT EXISTS inv_stocktakes (
+      id VARCHAR(60) PRIMARY KEY,
+      stocktake_number VARCHAR(40) NOT NULL,
+      warehouse_id VARCHAR(50) NOT NULL,
+      brand_id VARCHAR(50),
+      branch_id VARCHAR(50),
+      cost_center_id VARCHAR(50),
+      stocktake_date DATE,
+      status ENUM('draft','counting','submitted','approved','posted','cancelled') DEFAULT 'draft',
+      scope_type ENUM('full','category','items') DEFAULT 'full',
+      category_id VARCHAR(50),
+      include_zero BOOLEAN DEFAULT FALSE,
+      blind_count BOOLEAN DEFAULT FALSE,
+      count_method ENUM('full','cycle','spot') DEFAULT 'full',
+      variance_qty_threshold DECIMAL(12,3) DEFAULT 0,
+      variance_value_threshold DECIMAL(14,2) DEFAULT 0,
+      evidence_threshold DECIMAL(14,2) DEFAULT 0,
+      snapshot_at DATETIME,
+      reason VARCHAR(200),
+      reference_evidence VARCHAR(500),
+      notes TEXT,
+      total_lines INT DEFAULT 0,
+      counted_lines INT DEFAULT 0,
+      variance_lines INT DEFAULT 0,
+      total_variance_value DECIMAL(14,2) DEFAULT 0,
+      adjustment_id VARCHAR(60),
+      adjustment_number VARCHAR(40),
+      gl_journal_id VARCHAR(60),
+      version INT NOT NULL DEFAULT 1,
+      created_by VARCHAR(100),
+      submitted_by VARCHAR(100),
+      submitted_at DATETIME,
+      approved_by VARCHAR(100),
+      approved_at DATETIME,
+      recount_by VARCHAR(100),
+      recount_at DATETIME,
+      recount_reason VARCHAR(500),
+      posted_by VARCHAR(100),
+      posted_at DATETIME,
+      cancelled_by VARCHAR(100),
+      cancelled_at DATETIME,
+      cancel_reason VARCHAR(500),
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      UNIQUE KEY uq_stocktake_number (stocktake_number),
+      INDEX idx_stk_wh (warehouse_id),
+      INDEX idx_stk_status (status),
+      INDEX idx_stk_created (created_at)
+    ) ENGINE=InnoDB
+  `);
+  await createTableIfMissing('inv_stocktake_items', `
+    CREATE TABLE IF NOT EXISTS inv_stocktake_items (
+      id VARCHAR(60) PRIMARY KEY,
+      stocktake_id VARCHAR(60) NOT NULL,
+      item_id VARCHAR(50) NOT NULL,
+      item_name VARCHAR(200),
+      unit VARCHAR(50),
+      category_id VARCHAR(50),
+      snapshot_qty DECIMAL(12,3) DEFAULT 0,
+      counted_qty DECIMAL(12,3) NULL,
+      counted_at DATETIME,
+      net_movements DECIMAL(12,3) DEFAULT 0,
+      theoretical_qty DECIMAL(12,3) DEFAULT 0,
+      variance DECIMAL(12,3) DEFAULT 0,
+      unit_cost DECIMAL(14,4) DEFAULT 0,
+      variance_value DECIMAL(14,2) DEFAULT 0,
+      variance_pct DECIMAL(8,2) DEFAULT 0,
+      is_flagged BOOLEAN DEFAULT FALSE,
+      reason_code VARCHAR(40),
+      notes VARCHAR(400),
+      counted_by VARCHAR(100),
+      INDEX idx_sti_stk (stocktake_id),
+      INDEX idx_sti_item (item_id)
     ) ENGINE=InnoDB
   `);
 

@@ -36,6 +36,8 @@ const REQUIRED_TABLES = [
   // Phase 3B — independent inventory transactions (receipts / issues / adjustments).
   'inv_receipts', 'inv_receipt_items', 'inv_issues', 'inv_issue_items',
   'inv_adjustments', 'inv_adjustment_items', 'inv_tx_events', 'inv_tx_counter',
+  // Phase 3C — professional stocktake & reconciliation.
+  'inv_stocktakes', 'inv_stocktake_items',
 ];
 const REQUIRED_COLUMNS = [
   ['gl_journals', 'posted_by'], ['gl_journals', 'posted_at'],
@@ -45,6 +47,10 @@ const REQUIRED_COLUMNS = [
   ['inv_receipts', 'version'], ['inv_receipt_items', 'posted_unit_cost'],
   ['inv_issues', 'reason'], ['inv_adjustment_items', 'counted_qty'],
   ['inv_adjustment_items', 'system_qty_snapshot'],
+  // Phase 3C closure — receipt counter account + stocktake snapshot/theoretical.
+  ['inv_receipts', 'counter_account_code'],
+  ['inv_stocktakes', 'snapshot_at'], ['inv_stocktakes', 'scope_type'],
+  ['inv_stocktake_items', 'counted_qty'], ['inv_stocktake_items', 'theoretical_qty'],
 ];
 
 let _p = 0, _f = 0;

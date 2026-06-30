@@ -6,9 +6,11 @@
   "scripts": {
     "start": "node server.js",
     "dev": "nodemon server.js",
+    "build": "npm run build:warehouse",
+    "build:warehouse": "npm --prefix frontend/warehouse install && npm --prefix frontend/warehouse run build",
     "db:init": "node db/init.js",
     "db:migrate": "node db/migrate.js",
-    "test": "node tests/transactionPermissions.test.js && node tests/transactionSchema.test.js && node tests/transactionStateMachine.test.js && node tests/transactionService.test.js"
+    "test": "node tests/transactionPermissions.test.js && node tests/transactionSchema.test.js && node tests/transactionStateMachine.test.js && node tests/transactionService.test.js && node tests/warehouseTransfer.test.js && node tests/inventoryAdjustment.test.js && node tests/stocktakeWorkflow.test.js && node tests/inventoryReporting.test.js"
   },
   "dependencies": {
     "bcryptjs": "^2.4.3",

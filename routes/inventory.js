@@ -2,6 +2,21 @@ const router = require('express').Router();
 const db = require('../db/connection');
 const { recomputeInvItemStock, recomputeMenuStock, reconcileAllStock, deductWarehouseStock } = require('../lib/stockRecompute');
 const { nextDocNumber } = require('../lib/docNumber'); // v7.1 — ADJ-… numbering
+// Phase 0 (Contracts & Safety) — managerial RBAC for posting/deleting stock
+// documents, plus the shared adjustment/stocktake lifecycle guards.
+const MGR = require('../middleware/auth').requireRole('admin', 'manager');
+const ADJ = require('../lib/inventoryAdjustment');
+const STK = require('../lib/stocktakeWorkflow');
+// Phase 2A — pure helpers backing the read-only warehouse-v2 endpoints
+// (warehouses-summary, dashboard-summary, grid). Shared with tests.
+const INV = require('../lib/inventoryReporting');
+
+// Phase 0 §5 — actor identity comes from the authenticated JWT (req.user),
+// not a spoofable body field. The global /api gate sets req.user for every
+// /api/inventory route. Keeps a body fallback only for legacy import paths.
+function _actor(req, fallback) {
+  return (req.user && (req.user.username || req.user.name)) || fallback || '';
+}
 
 // v5.10.25 — Idempotent migration: add deleted_at column to inv_items so
 // the new "إدارة مواد المخزون" catalog page can soft-delete + restore.
@@ -677,6 +692,215 @@ router.get('/warehouse-card-stats', async (req, res) => {
   } catch (e) {
     res.status(500).json({ success:false, error: e.message });
   }
+});
+
+// ═══════════════════════════════════════════════════════════════════════
+// Phase 2A — READ-ONLY endpoints for the React warehouse-v2 app.
+//   These ADD nothing destructive: pure SELECTs, no writes, no change to any
+//   existing endpoint. They fill three gaps the legacy endpoints could not
+//   serve without N+1 calls or with a misleading global cost:
+//     • warehouses-summary — every warehouse's value/qty/alerts in ONE query
+//       (warehouse-card-stats is single-warehouse only → N+1).
+//     • dashboard-summary  — the whole command-center payload in one call.
+//     • grid               — a paginated, sortable, filterable inventory grid
+//       valued at the WAREHOUSE WAC (warehouse_stock.avg_cost), not the global
+//       inv_items.cost the legacy reports use.
+//   All value math uses COALESCE(NULLIF(ws.avg_cost,0), i.cost, 0) so the
+//   warehouse WAC wins and only falls back to the global cost when unknown.
+// ═══════════════════════════════════════════════════════════════════════
+
+// Shared per-warehouse aggregation (one GROUP BY + one last-movement query).
+async function _warehousesSummary(conn, warehouseId) {
+  const params = [];
+  let whereWh = '';
+  if (warehouseId) { whereWh = ' WHERE w.id = ?'; params.push(warehouseId); }
+  const [rows] = await conn.query(
+    // Every aggregate is gated on `i.id IS NOT NULL` (i.e. the item passed the
+    // active/non-deleted filter on the JOIN) so the totals count ONLY active
+    // items — matching item_count and the /grid endpoint exactly. Without this
+    // gate, an inactive/deleted item's leftover warehouse_stock would inflate
+    // total_qty/value while never appearing in item_count or the grid.
+    `SELECT w.id, w.name, w.code, w.type, w.location, w.manager, w.is_active,
+            COUNT(DISTINCT i.id) AS item_count,
+            COALESCE(SUM(CASE WHEN i.id IS NOT NULL AND ws.qty > 0 THEN ws.qty ELSE 0 END), 0) AS total_qty,
+            COALESCE(SUM(CASE WHEN i.id IS NOT NULL AND ws.qty > 0
+                              THEN ws.qty * COALESCE(NULLIF(ws.avg_cost,0), i.cost, 0)
+                              ELSE 0 END), 0) AS total_value,
+            SUM(CASE WHEN i.id IS NOT NULL AND ws.qty > 0 AND i.min_stock > 0 AND ws.qty <= i.min_stock THEN 1 ELSE 0 END) AS low_count,
+            SUM(CASE WHEN i.id IS NOT NULL AND ws.qty = 0 AND ws.first_added_date IS NOT NULL THEN 1 ELSE 0 END) AS out_count,
+            SUM(CASE WHEN i.id IS NOT NULL AND ws.qty < 0 THEN 1 ELSE 0 END) AS negative_count
+       FROM warehouses w
+       LEFT JOIN warehouse_stock ws ON ws.warehouse_id = w.id
+       LEFT JOIN inv_items i ON i.id = ws.item_id AND i.active = 1 AND i.deleted_at IS NULL
+       ${whereWh}
+      GROUP BY w.id, w.name, w.code, w.type, w.location, w.manager, w.is_active
+      ORDER BY w.is_main DESC, w.code`, params);
+
+  // Last movement per warehouse — one extra query, NOT per-warehouse N+1.
+  const lastMap = {};
+  try {
+    const lp = [];
+    let lq = 'SELECT warehouse_id, MAX(movement_date) AS last_movement FROM inventory_movements';
+    if (warehouseId) { lq += ' WHERE warehouse_id = ?'; lp.push(warehouseId); }
+    lq += ' GROUP BY warehouse_id';
+    const [lrows] = await conn.query(lq, lp);
+    lrows.forEach(r => { lastMap[String(r.warehouse_id)] = r.last_movement; });
+  } catch (_) { /* movements table variant — last movement stays null */ }
+
+  const warehouses = rows.map(r => {
+    const dto = INV.mapWarehouseRow(r);
+    dto.lastMovementAt = lastMap[dto.id] || null;
+    return dto;
+  });
+  return { warehouses, totals: INV.summarizeWarehouses(warehouses) };
+}
+
+// GET /api/inventory/warehouses-summary?warehouseId=
+//   Every (or one) warehouse with value/qty/alerts + grand totals.
+router.get('/warehouses-summary', async (req, res) => {
+  try {
+    const data = await _warehousesSummary(db, req.query.warehouseId || null);
+    res.json({ success: true, scope: { warehouseId: req.query.warehouseId || null }, ...data });
+  } catch (e) { res.status(500).json({ success: false, error: e.message }); }
+});
+
+// GET /api/inventory/dashboard-summary?warehouseId=
+//   The whole command-center payload in ONE call (no N+1).
+router.get('/dashboard-summary', async (req, res) => {
+  try {
+    const warehouseId = req.query.warehouseId || null;
+    const wh = await _warehousesSummary(db, warehouseId);
+    const t = wh.totals;
+    const kpis = {
+      inventoryValue: t.totalValue,
+      itemCount: t.itemCount,
+      lowCount: t.lowCount,
+      outCount: t.outCount,
+      negativeCount: t.negativeCount,
+      activeWarehouses: t.activeCount,
+    };
+
+    // Transfers — pending vs in-transit from stock_issues (scoped by from/to).
+    let transfers = { pending: 0, inTransit: 0, byStatus: {} };
+    try {
+      const tp = [];
+      let tq = 'SELECT status, COUNT(*) AS n FROM stock_issues';
+      if (warehouseId) { tq += ' WHERE from_warehouse_id = ? OR to_warehouse_id = ?'; tp.push(warehouseId, warehouseId); }
+      tq += ' GROUP BY status';
+      const [trows] = await db.query(tq, tp);
+      transfers = INV.transferCounts(trows);
+    } catch (_) { /* stock_issues absent on stale deploys */ }
+
+    // Recent movements (top 8), scoped.
+    let recentMovements = [];
+    try {
+      const mp = [];
+      let mq = 'SELECT m.id, m.movement_date, m.item_id, m.item_name, m.type, m.qty, m.reason, ' +
+               '       m.warehouse_id, w.name AS warehouse_name ' +
+               '  FROM inventory_movements m LEFT JOIN warehouses w ON w.id = m.warehouse_id';
+      if (warehouseId) { mq += ' WHERE m.warehouse_id = ?'; mp.push(warehouseId); }
+      mq += ' ORDER BY m.movement_date DESC, m.id DESC LIMIT 8';
+      const [mrows] = await db.query(mq, mp);
+      recentMovements = mrows.map(m => ({
+        id: m.id, date: m.movement_date, itemId: m.item_id, itemName: m.item_name,
+        type: m.type, qty: Number(m.qty) || 0, reason: m.reason,
+        warehouseId: m.warehouse_id || '', warehouseName: m.warehouse_name || ''
+      }));
+    } catch (_) {}
+
+    // Expiry within 30 days — best effort (purchase_lots may be absent).
+    let expiry = { available: false, count: 0, atRiskValue: 0, days: 30 };
+    try {
+      const ep = [];
+      let eqx = 'SELECT COUNT(*) AS cnt, COALESCE(SUM(pl.qty_remaining * pl.unit_cost),0) AS at_risk ' +
+                '  FROM purchase_lots pl ' +
+                ' WHERE pl.expiry_date IS NOT NULL AND pl.qty_remaining > 0 ' +
+                '   AND pl.expiry_date <= DATE_ADD(CURDATE(), INTERVAL 30 DAY)';
+      if (warehouseId) { eqx += ' AND pl.warehouse_id = ?'; ep.push(warehouseId); }
+      const [erows] = await db.query(eqx, ep);
+      expiry = { available: true, count: Number(erows[0].cnt) || 0, atRiskValue: Number(erows[0].at_risk) || 0, days: 30 };
+    } catch (_) { /* purchase_lots absent */ }
+
+    res.json({
+      success: true,
+      scope: { warehouseId: warehouseId || null },
+      kpis, transfers, warehouses: wh.warehouses, recentMovements, expiry,
+    });
+  } catch (e) { res.status(500).json({ success: false, error: e.message }); }
+});
+
+// GET /api/inventory/grid?warehouseId=&q=&category=&status=&page=&pageSize=&sort=&dir=
+//   Paginated inventory grid valued at warehouse WAC. Sort columns are
+//   WHITELISTED in lib/inventoryReporting.normalizeGridQuery (no SQL injection).
+router.get('/grid', async (req, res) => {
+  try {
+    const opt = INV.normalizeGridQuery(req.query);
+    const where = ['i.active = 1', 'i.deleted_at IS NULL'];
+    const params = [];
+    if (opt.warehouseId) { where.push('ws.warehouse_id = ?'); params.push(opt.warehouseId); }
+    if (opt.category)    { where.push('i.category = ?'); params.push(opt.category); }
+    if (opt.q)           { where.push('(i.name LIKE ? OR i.id LIKE ?)'); params.push('%' + opt.q + '%', '%' + opt.q + '%'); }
+    const statusSql = INV.statusFilterSql(opt.status);
+    if (statusSql) where.push(statusSql);
+
+    const whereSql = ' WHERE ' + where.join(' AND ');
+    const fromSql =
+      ' FROM warehouse_stock ws ' +
+      ' JOIN inv_items i ON i.id = ws.item_id ' +
+      ' JOIN warehouses w ON w.id = ws.warehouse_id';
+
+    const [cntRows] = await db.query('SELECT COUNT(*) AS total' + fromSql + whereSql, params);
+    const total = Number((cntRows[0] || {}).total) || 0;
+
+    const selectSql =
+      'SELECT i.id AS item_id, i.name, i.category, i.unit, i.min_stock, i.cost AS global_cost, ' +
+      '       ws.qty, ws.avg_cost, ' +
+      '       w.id AS warehouse_id, w.name AS warehouse_name, w.code AS warehouse_code, ' +
+      '       COALESCE(NULLIF(ws.avg_cost,0), i.cost, 0) AS eff_cost, ' +
+      '       (CASE WHEN ws.qty > 0 THEN ws.qty * COALESCE(NULLIF(ws.avg_cost,0), i.cost, 0) ELSE 0 END) AS line_value, ' +
+      '       (SELECT MAX(im.movement_date) FROM inventory_movements im ' +
+      '          WHERE im.item_id = i.id AND im.warehouse_id = ws.warehouse_id) AS last_movement';
+    // opt.sortColumn + opt.dir are whitelisted constants — safe to interpolate.
+    const orderSql = ' ORDER BY ' + opt.sortColumn + ' ' + opt.dir + ', i.name ASC';
+    const [rows] = await db.query(
+      selectSql + fromSql + whereSql + orderSql + ' LIMIT ? OFFSET ?',
+      params.concat([opt.limit, opt.offset]));
+
+    res.json({
+      success: true,
+      rows: rows.map(INV.mapGridRow),
+      total,
+      page: opt.page,
+      pageSize: opt.pageSize,
+      totalPages: Math.max(1, Math.ceil(total / opt.pageSize)),
+      sort: opt.sort,
+      dir: opt.dir,
+    });
+  } catch (e) { res.status(500).json({ success: false, error: e.message }); }
+});
+
+// GET /api/inventory/categories?warehouseId=
+//   Distinct categories (optionally limited to items present in one warehouse)
+//   — powers the inventory grid's category filter.
+router.get('/categories', async (req, res) => {
+  try {
+    const { warehouseId } = req.query;
+    let sql, params = [];
+    if (warehouseId) {
+      sql = `SELECT DISTINCT i.category AS category
+               FROM inv_items i
+               JOIN warehouse_stock ws ON ws.item_id = i.id AND ws.warehouse_id = ?
+              WHERE i.active = 1 AND i.deleted_at IS NULL AND i.category IS NOT NULL AND i.category <> ''
+              ORDER BY i.category`;
+      params = [warehouseId];
+    } else {
+      sql = `SELECT DISTINCT category FROM inv_items
+              WHERE active = 1 AND deleted_at IS NULL AND category IS NOT NULL AND category <> ''
+              ORDER BY category`;
+    }
+    const [rows] = await db.query(sql, params);
+    res.json({ success: true, categories: rows.map(r => String(r.category)) });
+  } catch (e) { res.status(500).json({ success: false, error: e.message }); }
 });
 
 // V5.9.1 — Items, optionally expanded per-warehouse.
@@ -3201,8 +3425,11 @@ router.post('/stocktakes', async (req, res) => {
     // v5.10.6 — accept user-supplied countDate so opening-balance
     // counts can be backdated to the actual physical-count date.
     // Falls back to "now" for live counts.
-    const { items, username, notes, brandId, countDate } = req.body;
+    const { items, notes, brandId, countDate } = req.body;
     let { warehouseId, branchId } = req.body;
+    // Phase 0 §5 — count author from the JWT (falls back to body only for
+    // legacy import scripts that post without an authenticated session).
+    const username = _actor(req, req.body.username);
     if (!items || !items.length) return res.json({ success: false, error: 'No items' });
 
     // v5.10.35 — Resolve warehouse_id + branch_id from the user's profile
@@ -3493,10 +3720,32 @@ router.get('/stocktakes/:id', async (req, res) => {
   } catch (e) { res.json({ error: e.message }); }
 });
 
-// Delete stocktake (developer only — checked on frontend)
-router.delete('/stocktakes/:id', async (req, res) => {
+// Delete stocktake — Phase 0 §6/§7/§8: managers only; a POSTED count (legacy
+// 'completed' or stocktake-pro 'approved') can NEVER be deleted — it already
+// moved stock + GL. Correct it with a new count/adjustment, not a delete.
+// (The old route deleted any row with no auth and orphaned its items.)
+router.delete('/stocktakes/:id', MGR, async (req, res) => {
   try {
-    await db.query('DELETE FROM stocktakes WHERE id = ?', [req.params.id]);
+    let eff;
+    try {
+      const [st] = await db.query(
+        'SELECT COALESCE(workflow_status, status) AS eff FROM stocktakes WHERE id = ?', [req.params.id]);
+      if (!st.length) return res.json({ success: false, error: 'Not found' });
+      eff = st[0].eff;
+    } catch (_) {
+      // Ultra-legacy schema without workflow_status — fall back to status.
+      const [st] = await db.query('SELECT status AS eff FROM stocktakes WHERE id = ?', [req.params.id]);
+      if (!st.length) return res.json({ success: false, error: 'Not found' });
+      eff = st[0].eff;
+    }
+    if (!STK.canDelete(eff)) {
+      return res.json({ success: false, code: 'STK_POSTED_NO_DELETE',
+        error: 'لا يمكن حذف محضر جرد مُرحّل — صحّح الفرق بجرد/تسوية جديدة بدل الحذف.' });
+    }
+    await db.withTransaction(async (conn) => {
+      await conn.query('DELETE FROM stocktake_items WHERE stocktake_id = ?', [req.params.id]);
+      await conn.query('DELETE FROM stocktakes WHERE id = ?', [req.params.id]);
+    });
     res.json({ success: true });
   } catch (e) { res.json({ success: false, error: e.message }); }
 });
@@ -3508,8 +3757,10 @@ const REASON_LABELS = { damaged: 'تالف', admin: 'إداري', settlement: '�
 // Create adjustment (draft — needs approval)
 router.post('/adjustments', async (req, res) => {
   try {
-    const { items, reason, reasonNotes, username } = req.body;
+    const { items, reason, reasonNotes } = req.body;
     let { warehouseId, branchId } = req.body;
+    // Phase 0 §5 — adjustment author from the JWT (body fallback for imports).
+    const username = _actor(req, req.body.username);
     if (!items || !items.length) return res.json({ success: false, error: 'No items' });
 
     // v5.10.39 — Resolve warehouseId + branchId from the user's profile
@@ -3579,63 +3830,108 @@ router.post('/adjustments', async (req, res) => {
   } catch (e) { res.json({ success: false, error: e.message }); }
 });
 
-// Approve adjustment — actually deducts stock
-router.post('/adjustments/:id/approve', async (req, res) => {
+// Approve adjustment — actually deducts stock.
+// Phase 0 — managers only (§6); actor from the JWT (§5); only a `pending`
+// draft can be approved, no double-post (§6); and the stock deduction +
+// ledger rows + a balanced GL journal + the status flip all commit inside
+// ONE transaction (§9). GL failure is FATAL (rolls the whole approval back)
+// except on a deploy whose GL tables don't exist yet.
+router.post('/adjustments/:id/approve', MGR, async (req, res) => {
   try {
     const { id } = req.params;
-    const { username } = req.body;
+    const username = _actor(req);
     const now = new Date();
 
     const [adj] = await db.query('SELECT * FROM stock_adjustments WHERE id = ?', [id]);
     if (!adj.length) return res.json({ success: false, error: 'Not found' });
-    if (adj[0].status === 'approved') return res.json({ success: false, error: 'Already approved' });
+    // §6 — only a pending adjustment can be approved (never re-post an
+    // already-approved one).
+    if (!ADJ.canApprove(adj[0].status)) {
+      return res.json({ success: false, code: 'ADJ_NOT_PENDING',
+        error: 'لا يمكن اعتماد تعديل ليس في حالة "بانتظار" (pending). الحالة الحالية: ' + adj[0].status });
+    }
 
     const [items] = await db.query('SELECT * FROM stock_adjustment_items WHERE adjustment_id = ?', [id]);
     const adjWarehouseId = adj[0].warehouse_id || null;
+    const gl = require('../lib/glPosting');
+    // Damaged goods hit the waste expense; admin/settlement corrections hit
+    // the inventory-variance expense.
+    const expenseCode = (adj[0].reason === 'damaged')
+      ? gl.CORE_ACCOUNTS.WASTE_EXPENSE.code
+      : gl.CORE_ACCOUNTS.STOCK_VARIANCE.code;
 
-    for (const item of items) {
-      // v5.10.39 — Deduct from the warehouse_stock for the adjustment's
-      // warehouse, then recompute the inv_items.stock rollup. Falls back
-      // to the legacy global deduction only when warehouse_id is NULL
-      // (very old adjustments) so the behavior stays correct in both
-      // cases.
-      if (adjWarehouseId) {
-        // v7.1 — atomic upsert-deduct: allow negative AND create the row if the
-        // item has none in this warehouse, so the over-deduction can never be a
-        // silent 0-rows loss — the true shortage is recorded.
-        await deductWarehouseStock(db, adjWarehouseId, item.inv_item_id, item.qty);
-        try {
-          await recomputeInvItemStock(db, item.inv_item_id);
-        } catch(_) { /* helper may be unavailable in very old deploys */ }
-      } else {
-        await db.query('UPDATE inv_items SET stock = stock - ? WHERE id = ?', [item.qty, item.inv_item_id]);
+    await db.withTransaction(async (conn) => {
+      let glValue = 0;
+      for (const item of items) {
+        // §9 — every write runs on the transaction connection.
+        if (adjWarehouseId) {
+          // v7.1 — atomic upsert-deduct: allows negative AND creates the row if
+          // the item has none in this warehouse, so an over-deduction is never a
+          // silent 0-rows loss — the true shortage is recorded.
+          await deductWarehouseStock(conn, adjWarehouseId, item.inv_item_id, item.qty);
+          try { await recomputeInvItemStock(conn, item.inv_item_id); } catch(_) {}
+        } else {
+          await conn.query('UPDATE inv_items SET stock = stock - ? WHERE id = ?', [item.qty, item.inv_item_id]);
+        }
+
+        glValue += Number(item.total_cost) || (Number(item.qty) * Number(item.unit_cost)) || 0;
+
+        // v5.10.39 — movement WITH warehouse_id + reference_type/id so the
+        // warehouse ledger can trace each row back to its ADJ- source.
+        const movId = 'MOV-' + Date.now() + '-' + Math.random().toString(36).substr(2, 4);
+        await conn.query(
+          'INSERT INTO inventory_movements (id, movement_date, item_id, item_name, type, qty, reason, username, notes, warehouse_id, reference_type, reference_id) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)',
+          [movId, now, item.inv_item_id, item.inv_item_name, 'out', item.qty,
+           REASON_LABELS[adj[0].reason] || 'تعديل كمية', username, 'ADJ: ' + id,
+           adjWarehouseId, 'adjustment', id]
+        );
       }
 
-      // v5.10.39 — Record movement WITH warehouse_id so per-warehouse
-      // reports show the row (was NULL previously, which orphaned every
-      // adjustment entry in the admin view).
-      const movId = 'MOV-' + Date.now() + '-' + Math.random().toString(36).substr(2, 4);
-      // v7.1 — link the movement to its adjustment document (reference_type/id) so
-      // the warehouse ledger can trace each row back to its ADJ- source. Columns
-      // are guaranteed by the inventory_movements migration in server.js.
-      await db.query(
-        'INSERT INTO inventory_movements (id, movement_date, item_id, item_name, type, qty, reason, username, notes, warehouse_id, reference_type, reference_id) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)',
-        [movId, now, item.inv_item_id, item.inv_item_name, 'out', item.qty,
-         REASON_LABELS[adj[0].reason] || 'تعديل كمية', username || '', 'ADJ: ' + id,
-         adjWarehouseId, 'adjustment', id]
+      // §9 — balanced GL journal: Dr expense (waste/variance) / Cr Inventory.
+      glValue = Math.round(glValue * 100) / 100;
+      if (glValue > 0.005) {
+        const glRes = await gl.postJournal(conn, {
+          // Post into the adjustment's OWN business date (not the approval
+          // wall-clock), so a back-dated adjustment lands in its real period.
+          journalDate: (adj[0].adjustment_date ? new Date(adj[0].adjustment_date) : now).toISOString().slice(0, 10),
+          referenceType: 'adjustment',
+          referenceId: id,
+          description: 'تعديل مخزون (' + (REASON_LABELS[adj[0].reason] || adj[0].reason) + ') — ' + id,
+          postedBy: username,
+          entries: [
+            { accountCode: expenseCode, debit: glValue, credit: 0,
+              branchId: adj[0].branch_id || null, warehouseId: adjWarehouseId },
+            { accountCode: gl.CORE_ACCOUNTS.INVENTORY.code, debit: 0, credit: glValue,
+              branchId: adj[0].branch_id || null, warehouseId: adjWarehouseId }
+          ]
+        });
+        if (!glRes || !glRes.success) {
+          const perr = (glRes && glRes.error) || 'unknown';
+          if (/doesn't exist|ER_NO_SUCH_TABLE/i.test(perr)) {
+            console.warn('[adjustment approve ' + id + '] GL skipped — gl tables absent:', perr);
+          } else {
+            throw new Error('فشل ترحيل قيد التعديل: ' + perr);
+          }
+        }
+      }
+
+      // §6 — state-guarded flip: a concurrent double-approve loses here and
+      // rolls its own stock deduction + GL back.
+      const [flip] = await conn.query(
+        'UPDATE stock_adjustments SET status = "approved", approved_by = ?, approved_at = ? WHERE id = ? AND status = "pending"',
+        [username, now, id]
       );
-    }
+      if (!flip || flip.affectedRows !== 1) {
+        const e = new Error('تغيّرت حالة التعديل (اعتماد متزامن؟) — أعد التحميل');
+        e.code = 'STATE_CHANGED'; throw e;
+      }
+    });
 
-    await db.query(
-      'UPDATE stock_adjustments SET status = "approved", approved_by = ?, approved_at = ? WHERE id = ?',
-      [username || '', now, id]
-    );
-
-    // Recompute menu costs
+    // Recompute menu costs (best effort, after commit).
     try { const { recomputeAllMenuCosts } = require('./pricing-utils'); await recomputeAllMenuCosts(); } catch(e) {}
 
     res.json({ success: true });
-  } catch (e) { res.json({ success: false, error: e.message }); }
+  } catch (e) { res.json({ success: false, error: e.message, code: e.code }); }
 });
 
 // List adjustments
@@ -3743,12 +4039,23 @@ router.get('/adjustments/:id', async (req, res) => {
   } catch (e) { res.json({ error: e.message }); }
 });
 
-// Delete (only pending)
-router.delete('/adjustments/:id', async (req, res) => {
+// Delete adjustment — Phase 0 §6/§7: managers only; a POSTED (approved)
+// adjustment can NEVER be hard-deleted — it already moved stock + GL, so the
+// only correction is a documented reversal. Backend enforces this; the old
+// "developer-only, checked on frontend" comment was not a security boundary.
+router.delete('/adjustments/:id', MGR, async (req, res) => {
   try {
     const [adj] = await db.query('SELECT status FROM stock_adjustments WHERE id = ?', [req.params.id]);
-    // Approved adjustments can be deleted by developer (frontend checks isDeveloper)
-    await db.query('DELETE FROM stock_adjustments WHERE id = ?', [req.params.id]);
+    if (!adj.length) return res.json({ success: false, error: 'Not found' });
+    if (!ADJ.canDelete(adj[0].status)) {
+      return res.json({ success: false, code: 'ADJ_POSTED_NO_DELETE',
+        error: 'لا يمكن حذف تعديل معتمد — استخدم عكسًا موثقًا بدل الحذف للحفاظ على سجل التدقيق.' });
+    }
+    // Cascade the line items (no FK CASCADE configured) inside one transaction.
+    await db.withTransaction(async (conn) => {
+      await conn.query('DELETE FROM stock_adjustment_items WHERE adjustment_id = ?', [req.params.id]);
+      await conn.query('DELETE FROM stock_adjustments WHERE id = ?', [req.params.id]);
+    });
     res.json({ success: true });
   } catch (e) { res.json({ success: false, error: e.message }); }
 });

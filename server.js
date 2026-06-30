@@ -208,6 +208,38 @@ app.use(express.static(path.join(__dirname, 'public'), {
   }
 }));
 
+// ── warehouse-v2 React app (Strangler rewrite) ──────────────────────────
+// Serves the built SPA at /warehouse-v2 with an SPA history fallback. The
+// mount is PATH-PREFIXED, so it never touches the legacy UI (served from
+// /public above) or the /api routes below. The hashed JS/CSS assets are
+// immutable; index.html is no-cache so a redeploy is picked up immediately.
+// If the bundle hasn't been built yet, the path simply 404s (legacy app
+// unaffected) — build with: npm --prefix frontend/warehouse run build
+var _whDist = path.join(__dirname, 'frontend', 'warehouse', 'dist');
+if (_pwaFs.existsSync(path.join(_whDist, 'index.html'))) {
+  app.use('/warehouse-v2', express.static(_whDist, {
+    setHeaders: function(res, filePath) {
+      if (/\.html$/i.test(filePath)) {
+        res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
+      } else if (/[/\\]assets[/\\]/.test(filePath)) {
+        res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
+      }
+    }
+  }));
+  // History fallback: any extensionless path under /warehouse-v2 (a client
+  // route like /warehouse-v2/inventory, incl. hard refresh) returns index.html.
+  // Paths that look like a file (have an extension) fall through to a normal
+  // 404 instead of being masked by HTML.
+  app.get(/^\/warehouse-v2(?:\/.*)?$/, function(req, res, next) {
+    if (/\.[a-zA-Z0-9]+$/.test(req.path)) return next();
+    res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
+    res.sendFile(path.join(_whDist, 'index.html'));
+  });
+  console.log('[warehouse-v2] SPA mounted at /warehouse-v2');
+} else {
+  console.warn('[warehouse-v2] bundle not found — run: npm --prefix frontend/warehouse run build');
+}
+
 // v6.20.0 — Deploy/version marker. Lets us confirm EXACTLY which commit is
 // live on production (ends the "is it actually deployed?" ambiguity). Railway
 // injects the RAILWAY_GIT_* vars at build time.
@@ -3640,9 +3672,12 @@ async function runMigrations() {
   `);
   // V5.9.7 — reversal support: extend the status enum + record who/when/why
   // and the reversing GL journal so the audit trail is complete.
+  // Phase 0 (Contracts & Safety) — also add 'partially_received' so a transfer
+  // can be received cumulatively across several shipments. Idempotent: MODIFY
+  // to the same/superset enum is a no-op on a DB that already has it.
   try {
-    await db.query(`ALTER TABLE stock_issues MODIFY COLUMN status ENUM('draft','approved','issued','received','cancelled','reversed') DEFAULT 'draft'`);
-  } catch(e) { /* enum may already include reversed */ }
+    await db.query(`ALTER TABLE stock_issues MODIFY COLUMN status ENUM('draft','approved','issued','partially_received','received','cancelled','reversed') DEFAULT 'draft'`);
+  } catch(e) { /* enum may already include partially_received / reversed */ }
   await addColumnIfMissing('stock_issues', 'reversed_by', "VARCHAR(100)");
   await addColumnIfMissing('stock_issues', 'reversed_at', "DATETIME");
   await addColumnIfMissing('stock_issues', 'reverse_reason', "VARCHAR(500)");

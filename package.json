@@ -33,6 +33,7 @@
     "test:ops-api": "node tests/integration/ops.api.test.js",
     "test:flags-api": "node tests/integration/featureFlags.api.test.js",
     "warehouse:v2:preflight": "node scripts/warehouse-v2-preflight.js",
+    "perf:warehouse-v2": "node scripts/perf/run-warehouse-v2.js",
     "test:preflight": "node tests/integration/preflight.test.js",
     "migrate:purchase-lots": "node scripts/migrate-purchase-lots.js",
     "scope:backfill": "node scripts/backfill-warehouse-access.js"

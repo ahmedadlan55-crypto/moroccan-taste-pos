@@ -15,6 +15,24 @@ const INV = require('../lib/inventoryReporting');
 // router). Imported here only to report the enforcement flag in /access-scope.
 const WH_SCOPE = require('../middleware/warehouseScope');
 
+// Phase 5A (RC) — legacy stock writers cannot capture lot identity/expiry, so a
+// TRACKED item's quantity must never change through them (the invariant
+// Σ(lot balances)=warehouse_stock would silently break). Mirrors the
+// purchases.js PO-receive gate (WRITER_NOT_LOT_AWARE). Returns true when the
+// request was rejected (caller must `return`). Untracked items unaffected.
+async function _blockTrackedLegacy(q, itemIds, res) {
+  const ids = (Array.isArray(itemIds) ? itemIds : [itemIds]).filter(Boolean);
+  if (!ids.length) return false;
+  const [rows] = await (q || db).query(
+    "SELECT id, name FROM inv_items WHERE tracking_mode <> 'none' AND id IN (" + ids.map(() => '?').join(',') + ')', ids);
+  if (!rows.length) return false;
+  res.status(422).json({
+    success: false, code: 'WRITER_NOT_LOT_AWARE',
+    error: 'الصنف "' + rows[0].name + '" يخضع لتتبع الدفعات — استخدم مستندات warehouse-v2 (استلام/صرف/تعديل/جرد) بدلاً من المسار القديم حتى لا يختل رصيد الدفعات.',
+  });
+  return true;
+}
+
 // Server-authoritative capability map (mirrors the frontend permissions.ts
 // matrix so the UI never shows a dead button). RBAC remains the real boundary.
 const _CAP_MATRIX = {
@@ -1564,6 +1582,10 @@ router.post('/warehouses/:warehouseId/items', async (req, res) => {
     const addedAtIso = addedAt.toISOString().slice(0,19).replace('T',' ');
     const firstAddedDate = b.addedAt ? b.addedAt : addedAt.toISOString().slice(0,10);
 
+    // RC — a tracked item's qty must not change via the legacy register path
+    // (new items are created untracked, so only existing items can be tracked).
+    if (!isNewItem && qtySmall !== 0 && (await _blockTrackedLegacy(db, itemId, res))) return;
+
     // v5.10.28 — Wrap the four-step write in a transaction so a partial
     // failure (e.g. movements insert) cannot leave warehouse_stock and
     // inv_items inconsistent. Falls back to best-effort sequential if
@@ -2239,6 +2261,9 @@ router.post('/stock-update', async (req, res) => {
       return res.json({ success: false, error: 'لا يمكن إنشاء حركة مخزون بدون تحديد المستودع. حدّد مستودعاً افتراضياً للمستخدم أو أرسل warehouseId صراحةً.' });
     }
     if (warehouseId && !req.guardWh(res, warehouseId)) return;
+
+    // RC — tracked items must move through warehouse-v2 documents (lot ledger).
+    if (await _blockTrackedLegacy(db, itemId, res)) return;
 
     const now = new Date();
     const movId = 'MOV-' + Date.now() + '-' + Math.random().toString(36).substr(2, 4);
@@ -3579,6 +3604,10 @@ router.post('/stocktakes', async (req, res) => {
     const username = _actor(req, req.body.username);
     if (!items || !items.length) return res.json({ success: false, error: 'No items' });
 
+    // RC — tracked items are counted via warehouse-v2 stocktakes (per-lot counting);
+    // the legacy count-set write would bypass the lot ledger entirely.
+    if (await _blockTrackedLegacy(db, items.map((x) => x && (x.id || x.itemId)), res)) return;
+
     // v5.10.35 — Resolve warehouse_id + branch_id from the user's profile
     // when the client didn't supply them (cashier POS sessions whose
     // state.warehouseId is empty would otherwise insert NULL — invisible
@@ -4298,6 +4327,15 @@ router.post('/receive-approve/:id', async (req, res) => {
       const [pwh] = await db.query('SELECT warehouse_id FROM purchases WHERE id = ?', [req.params.id]);
       if (pwh.length && !req.guardWh(res, pwh[0].warehouse_id)) return;
     } catch(_) { /* legacy schema without warehouse_id — skip guard */ }
+
+    // RC — tracked items cannot be received via the legacy approve path (it has
+    // no lot capture); use the warehouse-v2 receipt instead. Checked BEFORE the
+    // transaction so a rejection creates no partial stock or movement.
+    try {
+      const [pr] = await db.query('SELECT received_items_json FROM purchases WHERE id = ?', [req.params.id]);
+      const ri = pr.length ? JSON.parse(pr[0].received_items_json || '[]') : [];
+      if (await _blockTrackedLegacy(db, ri.map((x) => x && (x.invItemId || x.id)), res)) return;
+    } catch(_) { /* unparsable legacy payload — the transaction below validates it */ }
 
     const out = await db.withTransaction(async (conn) => {
       const db = conn;

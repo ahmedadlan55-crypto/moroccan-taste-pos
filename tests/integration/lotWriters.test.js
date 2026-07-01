@@ -111,6 +111,18 @@ async function seedTrackedLots() {
     const recU = await req('POST', '/api/purchases/receive/PUR-LOTW-U', admin, { warehouseId: W });
     check('untracked PO receive → success, stock 15→25', (recU.status === 200 || recU.status === 201) && (await stockQty(UN)) === 25, { st: recU.status, stock: await stockQty(UN) });
 
+    // 6) Phase 5A (RC) — legacy /stock-update BLOCKS tracked items (no lot capture).
+    const su = await req('POST', '/api/inventory/stock-update', admin, { itemId: T, itemName: 'مُتتبع', type: 'in', qty: 7, reason: 'اختبار', warehouseId: W });
+    check('legacy stock-update on a tracked item → 422 WRITER_NOT_LOT_AWARE', su.status === 422 && su.body && su.body.code === 'WRITER_NOT_LOT_AWARE', { st: su.status, code: su.body && su.body.code });
+    check('blocked stock-update did NOT change stock or movements', (await stockQty(T)) === 40 && (await invOk(T)), { stock: await stockQty(T) });
+    const suU = await req('POST', '/api/inventory/stock-update', admin, { itemId: UN, itemName: 'بلا تتبع', type: 'in', qty: 5, reason: 'اختبار', warehouseId: W });
+    check('legacy stock-update on an untracked item still works (25→30)', suU.status === 200 && (await stockQty(UN)) === 30, { st: suU.status, stock: await stockQty(UN) });
+
+    // 7) Phase 5A (RC) — legacy /stocktakes BLOCKS tracked items (per-lot counting is v2-only).
+    const stkT = await req('POST', '/api/inventory/stocktakes', admin, { warehouseId: W, items: [{ id: T, name: 'مُتتبع', countedQty: 99 }] });
+    check('legacy stocktake incl. a tracked item → 422 WRITER_NOT_LOT_AWARE', stkT.status === 422 && stkT.body && stkT.body.code === 'WRITER_NOT_LOT_AWARE', { st: stkT.status, code: stkT.body && stkT.body.code });
+    check('blocked legacy stocktake did NOT set tracked stock', (await stockQty(T)) === 40 && (await invOk(T)), { stock: await stockQty(T) });
+
   } catch (e) { _f++; exitCode = 1; console.error('  ❌ FATAL', e && e.stack || e); }
   finally { try { server.kill(); } catch (_) {} try { await cleanup(); } catch (_) {} }
   console.log('\n  ' + _p + ' passed, ' + _f + ' failed\n');

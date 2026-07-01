@@ -11,11 +11,20 @@ export function AppShell() {
   const location = useLocation();
   return (
     <div className="min-h-screen">
+      {/* RC a11y — keyboard users jump straight to the routed content (WCAG 2.4.1). */}
+      <a href="#main" className="skip-link no-print">
+        تخطٍّ إلى المحتوى
+      </a>
       <Sidebar />
       <Topbar />
       {/* pb clears the fixed MobileNav + the iOS home-indicator safe area on
           phones; desktop has no bottom nav so it reverts to a normal pad. */}
-      <main className="px-4 py-6 pb-[calc(6.5rem+env(safe-area-inset-bottom))] sm:px-6 lg:mr-72 lg:pb-6 xl:px-8" id="main">
+      <main
+        className="px-4 py-6 pb-[calc(6.5rem+env(safe-area-inset-bottom))] sm:px-6 lg:mr-72 lg:pb-6 xl:px-8"
+        id="main"
+        aria-label="المحتوى الرئيسي"
+        tabIndex={-1}
+      >
         <div className="mx-auto max-w-[1680px]">
           <AnimatePresence mode="wait">
             <motion.div

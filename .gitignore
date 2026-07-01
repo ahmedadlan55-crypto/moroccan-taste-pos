@@ -12,3 +12,7 @@ node_modules/
 Screenshot*.png
 Enterprise_System_Audit_Report.pdf
 generate_report.py
+
+# Phase 5A (RC) — generated evidence (screenshots, perf/preflight JSON) stays local
+artifacts/
+frontend/warehouse/dist/

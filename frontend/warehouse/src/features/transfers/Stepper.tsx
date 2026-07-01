@@ -5,7 +5,13 @@ import { cn } from "@/lib/cn";
 // — the wizard owns the current step. Accessible: the active step is announced.
 export function Stepper({ steps, current }: { steps: string[]; current: number }) {
   return (
-    <ol className="flex flex-wrap items-center gap-x-2 gap-y-3">
+    <>
+      {/* RC a11y — announce step changes to screen readers (the visual list
+          alone is not announced when `current` changes). */}
+      <span aria-live="polite" className="sr-only">
+        الخطوة {current} من {steps.length}: {steps[current - 1] ?? ""}
+      </span>
+      <ol className="flex flex-wrap items-center gap-x-2 gap-y-3">
       {steps.map((label, i) => {
         const n = i + 1;
         const state = n < current ? "done" : n === current ? "current" : "todo";
@@ -29,6 +35,7 @@ export function Stepper({ steps, current }: { steps: string[]; current: number }
           </li>
         );
       })}
-    </ol>
+      </ol>
+    </>
   );
 }

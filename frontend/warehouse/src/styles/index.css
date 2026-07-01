@@ -83,7 +83,42 @@
   background: #cbd5e1;
 }
 
+/* WCAG 2.3.3 — respect reduced-motion: collapse all transitions/animations. */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
+/* Skip-link (WCAG 2.4.1) — visually hidden until keyboard-focused. */
+.skip-link {
+  position: absolute;
+  top: -100px;
+  right: 1rem;
+  z-index: 100;
+  border-radius: 0 0 0.75rem 0.75rem;
+  background: #0f766e;
+  color: #fff;
+  padding: 0.6rem 1.2rem;
+  font-weight: 800;
+  font-size: 0.85rem;
+  transition: top 0.15s ease;
+}
+.skip-link:focus-visible {
+  top: 0;
+}
+
 @media print {
+  /* RC — A4 layout with sane margins; keep rows/cards unsplit across pages. */
+  @page {
+    size: A4;
+    margin: 12mm;
+  }
   .no-print {
     display: none !important;
   }
@@ -92,6 +127,16 @@
   }
   .surface {
     box-shadow: none;
+    break-inside: avoid;
+  }
+  tr,
+  .chip {
+    break-inside: avoid;
+  }
+  h1,
+  h2,
+  h3 {
+    break-after: avoid;
   }
   /* Phase 3A — when a transfer document is open, print ONLY that document
      (RTL, clean) instead of the whole app behind the drawer. */

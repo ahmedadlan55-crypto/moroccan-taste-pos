@@ -76,3 +76,20 @@ EXPIRY_CRITICAL_DAYS=7 · EXPIRY_WARNING_DAYS=30 · EXPIRY_RECEIPT_MIN_DAYS=30 �
 ## 6) الوثائق
 
 `docs/WAREHOUSE_V2_RELEASE_AUDIT_AR.md` · `docs/WAREHOUSE_V2_UAT_AR.md` · `docs/WAREHOUSE_V2_MIGRATION_RUNBOOK_AR.md` · `docs/WAREHOUSE_V2_ROLLBACK_RUNBOOK_AR.md` · `docs/WAREHOUSE_V2_RISK_REGISTER_AR.md` · `docs/status/WAREHOUSE_V2_PERF_REPORT_AR.md` · هذا الـmanifest. الأدلة المولّدة (لقطات + JSON) في `artifacts/` محليًا.
+
+---
+
+## 8) المرحلة 5C — بوابة ما قبل الإنتاج (Pre-Production Gate)
+
+**القرار: ✅ READY FOR PRODUCTION DEPLOYMENT** (التنفيذ بأمر صريح فقط — PR #4 باقٍ Draft، لا دمج ولا نشر).
+
+| البند | النتيجة |
+|---|---|
+| **Canary Allow-list** (`lib/v2Canary.js`) | `WAREHOUSE_V2_CANARY_USERS/ROLES` — غير مضبوطة=مفتوح، `*`=فتح كامل، نشطة=سماح بالاسم أو الدور وإلا `403 V2_CANARY_DENIED`؛ تغطي v2 كاملًا + `/analytics` + `/reports` + `/transfers`؛ بلا استثناء ضمني للأدمن؛ `/ready` عام غير متأثر. وحدة **7/7** + تكامل **16/16** + **درل حي على Staging** (منع manager/سماح admin/إرجاع) |
+| **متغيرات الإنتاج** | 10 متغيرات خاملة عبر `--skip-deploys` (V2=0 · SCOPE=0 · TZ/expiry/rate/idempotency) — **بلا إعادة تشغيل** (startedAt ثابت) |
+| **Backup إنتاجي مُختبَر الاستعادة** | `prod-backup-2026-07-02T03-09-10.sql` · 5.2MB · 145 جدولًا · 6,337 صفًا · sha256 `feacbd98…c7d47a` · dump 95ث · استعادة **145/145 بلا أخطاء** في 123ث (أُصلح الـdumper لاستثناء أعمدة GENERATED) |
+| **بروفة الهجرة على نسخة الإنتاج** | إقلاع كامل (legacy + versioned migrations) على النسخة المستعادة → `/ready` أخضر (schema + tz +03:00) في ≤4 د عبر بروكسي خارجي؛ FK لجدول scope تخطّاه المهاجر بأمان (توافق أعمدة legacy — سلامة تطبيقية + preflight يكشف اليتامى) |
+| **preflight على بيانات الإنتاج** | مباشر: عائقان legacy (55 حركة بلا مستودع — كلها مبيعات لأصناف بمستودع واحد `WH-1777701059737`؛ 3 أرصدة −1.00) → بعد إصلاحين موثّقين مُجرَّبين على النسخة: **BLOCKER=0** (22 فحصًا، 0 متخطى) |
+| **DENIED / تعارضات** | DENIED=1: المستخدم `2000` (custody) بلا فرع/مستودع — قرار مطلوب قبل ENFORCE؛ `purchase_lots` فارغ → لا ترحيل دفعات؛ تحذير غير مانع: 193 صنفًا بلا SKU |
+| **خطة الإطلاق بالدقائق** | `docs/status/WAREHOUSE_V2_PRODUCTION_CUTOVER_PLAN_AR.md` — ~35 د حتى الموجة 1، ثلاث موجات Canary، ثلاث درجات تراجع مقاسة، 3 بوابات GO/NO-GO |
+| ملاحظة | خادم الإنتاج فعليًا **MySQL 9.6.0** (لا فجوة محرك مع بروفة 9.4) |

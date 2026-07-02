@@ -304,6 +304,17 @@ if (String(process.env.WAREHOUSE_V2_ENABLED || '1') !== '0' &&
   console.warn('[warehouse-v2][SECURITY] V2 is ENABLED but WAREHOUSE_SCOPE_ENFORCE is not "1" — users are NOT restricted to their assigned warehouses. Set WAREHOUSE_SCOPE_ENFORCE=1 in staging/production.');
 }
 
+// Phase 5C — canary allow-list state, surfaced at boot like the scope warning
+// above so the rollout wave in effect is always visible in the deploy logs.
+const _v2Canary = require('./lib/v2Canary');
+if (_v2Canary.config.ACTIVE) {
+  console.log('[warehouse-v2] canary allow-list ACTIVE — users=%d role(s)=%d%s',
+    _v2Canary.config.USERS.length, _v2Canary.config.ROLES.length,
+    _v2Canary.config.ALLOW_ALL ? ' (contains "*" → full open)' : '');
+} else {
+  console.log('[warehouse-v2] canary allow-list OFF — v2 open to all authenticated users');
+}
+
 // v6.20.0 — Deploy/version marker. Lets us confirm EXACTLY which commit is
 // live on production (ends the "is it actually deployed?" ambiguity). Railway
 // injects the RAILWAY_GIT_* vars at build time.
@@ -401,6 +412,14 @@ app.use('/api/shifts', require('./routes/shifts'));
 // (300/min/user) so legitimate use + tests never trip it; env-tunable.
 app.use('/api/inventory/v2', require('./lib/v2Metrics').track);
 app.use('/api/inventory/v2', require('./lib/v2RateLimit'));
+// Phase 5C — canary allow-list. Gates the ENTIRE v2 surface (reads + writes)
+// plus the v2-only read namespaces mounted further down (/analytics, /reports,
+// /transfers — the legacy UI uses none of them). The public /ready probe is
+// registered ABOVE and is never affected. Pass-through when no list is set.
+app.use('/api/inventory/v2', _v2Canary);
+app.use('/api/inventory/analytics', _v2Canary);
+app.use('/api/inventory/reports', _v2Canary);
+app.use('/api/inventory/transfers', _v2Canary);
 // RC cutover — v2 WRITE gate. When v2 is disabled, mutations return 503 so the
 // legacy system is the sole writer (no dual-write); reads stay available.
 app.use('/api/inventory/v2', function (req, res, next) {

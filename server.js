@@ -50,6 +50,13 @@ app.use(function (req, res, next) {
   next();
 });
 
+// 1c. Phase 5B.1 — requests_total metrics middleware mounted BEFORE every /api
+// route/gate so ALL outcomes are counted (incl. 401 from the auth gate and 429
+// from the rate limiter). Labels: method / normalized_route / status_class —
+// bounded cardinality, never the raw URL. (Previously mounted after the
+// routers, which undercounted everything they handled.)
+app.use('/api/', require('./routes/metrics')._trackRequest);
+
 // 2. Security headers (Helmet)
 app.use(helmet({
   contentSecurityPolicy: false,  // Disabled — app uses inline scripts/styles extensively
@@ -318,8 +325,14 @@ app.get('/api/version', (req, res) => {
 // timezone. Returns 503 with the missing piece so an orchestrator never routes
 // traffic to a half-migrated instance. Public (no auth), like /api/version.
 const _readyDb = require('./db/connection');
+// Expected Riyadh offset in minutes, derived from the pool's DB_TIME_ZONE
+// ('+03:00' → 180). Named zones fall back to 180 (KSA has no DST).
+const _expectedTzMin = (() => {
+  const m = /^([+-])(\d{2}):(\d{2})$/.exec(String(_readyDb.DB_TIME_ZONE || '+03:00'));
+  return m ? (m[1] === '-' ? -1 : 1) * (Number(m[2]) * 60 + Number(m[3])) : 180;
+})();
 app.get('/api/inventory/v2/ready', async (req, res) => {
-  const checks = { db: false, schema: false, timezone: null };
+  const checks = { db: false, schema: false, timezone: null, timezoneOffsetMin: null, timezoneOk: false };
   const missing = [];
   try { await _readyDb.query('SELECT 1'); checks.db = true; }
   catch (e) { missing.push('db:' + (e.code || 'unreachable')); }
@@ -335,10 +348,20 @@ app.get('/api/inventory/v2/ready', async (req, res) => {
         if (r[0] && Number(r[0].n) > 0) present++; else missing.push('schema:' + t + '.' + c);
       }
       checks.schema = present === required.length;
-      try { const [tz] = await _readyDb.query('SELECT @@session.time_zone AS tz'); checks.timezone = tz[0] && tz[0].tz; } catch (_) {}
+      // Phase 5B.1 — assert the EFFECTIVE session timezone (not the global):
+      // the offset NOW()-UTC_TIMESTAMP() is what every date-boundary query
+      // actually uses. The pool re-applies SET time_zone per connection, so
+      // this stays green across DB restarts with no manual step.
+      try {
+        const [tz] = await _readyDb.query('SELECT @@session.time_zone AS tz, TIMESTAMPDIFF(MINUTE, UTC_TIMESTAMP(), NOW()) AS off');
+        checks.timezone = tz[0] && tz[0].tz;
+        checks.timezoneOffsetMin = tz[0] && Number(tz[0].off);
+        checks.timezoneOk = checks.timezoneOffsetMin === _expectedTzMin;
+        if (!checks.timezoneOk) missing.push('timezone:offset=' + checks.timezoneOffsetMin + ' expected=' + _expectedTzMin);
+      } catch (_) { missing.push('timezone:unreadable'); }
     } catch (e) { missing.push('schema:' + (e.code || 'error')); }
   }
-  const ready = checks.db && checks.schema;
+  const ready = checks.db && checks.schema && checks.timezoneOk;
   res.status(ready ? 200 : 503).json({ ready, checks, missing, processTz: process.env.TZ || null, at: new Date().toISOString() });
 });
 
@@ -441,8 +464,9 @@ const _slaRouter = require('./routes/sla');
 app.use('/api/sla', _slaRouter);
 app.use('/api/sse', require('./routes/sse'));
 const _metricsRouter = require('./routes/metrics');
-// Mount request tracker BEFORE other api routes so it counts everything
-app.use('/api/', _metricsRouter._trackRequest);
+// Phase 5B.1 — the request tracker is now mounted at the TOP of the /api chain
+// (see §1c near the correlation-id middleware). Mounting it here again would
+// double-count every request that reaches this point.
 app.use('/api/metrics', _metricsRouter);
 app.use('/api/workflow-routes', require('./routes/workflowRoutes'));
 // Start SLA background sweep on boot (every 30 minutes)

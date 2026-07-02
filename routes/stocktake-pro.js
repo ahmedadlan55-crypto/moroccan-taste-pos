@@ -20,9 +20,19 @@ const gl = require('../lib/glPosting');
 // v7.1 — sync the inv_items.stock rollup after a stocktake sets warehouse_stock.
 const { recomputeInvItemStock } = require('../lib/stockRecompute');
 // v7.4 — stocktake approve/reject post stock + GL adjustments → managers only.
-const MGR = require('./authMiddleware').requireRole('admin', 'manager');
+const MGR = require('../middleware/auth').requireRole('admin', 'manager');
+// Phase 0 — shared workflow + variance helpers (tests/stocktakeWorkflow.test.js
+// validates the exact same functions the route uses, so they can never drift).
+const STK = require('../lib/stocktakeWorkflow');
 
 function _id(p){ return p+'-'+Date.now()+'-'+Math.random().toString(36).slice(2,7); }
+
+// Phase 0 §5 — actor identity from the authenticated JWT (req.user). The
+// state-changing actions (submit/approve/reject) take the actor STRICTLY from
+// the session; create/edit keep a body fallback for tooling.
+function _actor(req, fallback) {
+  return (req.user && (req.user.username || req.user.name)) || fallback || '';
+}
 
 const REASON_CODES = {
   'damage':       'تلف',
@@ -46,6 +56,8 @@ router.get('/', async (req, res) => {
     if (dateFrom) { conds.push('s.stocktake_date >= ?'); params.push(dateFrom); }
     if (dateTo) { conds.push('s.stocktake_date <= ?'); params.push(dateTo); }
     if (brandId) { conds.push('w.brand_id = ?'); params.push(brandId); }
+    const _scope = req.whScopeClause('s.warehouse_id');
+    if (_scope.sql) { conds.push(_scope.sql.replace(/^ AND /, '')); params.push(..._scope.params); }
     const where = conds.length ? 'WHERE '+conds.join(' AND ') : '';
     const [rows] = await db.query(`
       SELECT s.*, w.name AS warehouse_name, br.name AS branch_name,
@@ -71,6 +83,7 @@ router.get('/:id', async (req, res) => {
       LEFT JOIN branches br ON br.id = s.branch_id
       WHERE s.id = ?`, [req.params.id]);
     if (!hRows.length) return res.status(404).json({ error: 'Not found' });
+    if (!req.guardWh(res, hRows[0].warehouse_id)) return;
     // V5-FIX: legacy schema uses inv_item_id (not item_id). Map to item_id in output for UI consistency.
     // V5.7.26 — also surface big_unit + conv_rate so the frontend can
     //   render the unified WoQtyInput widget (major + minor + auto-sync).
@@ -118,6 +131,7 @@ router.post('/', async (req, res) => {
   try {
     const b = req.body || {};
     if (!b.warehouseId) return res.status(400).json({ error: 'warehouseId required' });
+    if (!req.guardWh(res, b.warehouseId)) return;
     const id = b.id || _id('STK');
     // V5-FIX: existing stocktakes.status ENUM may not include 'draft' — use 'completed'
     // for the legacy column and rely on workflow_status for the new state.
@@ -127,7 +141,7 @@ router.post('/', async (req, res) => {
          warehouse_id, branch_id, workflow_status, variance_threshold_pct, count_method)
       VALUES (?, ?, ?, ?, 'completed', 0, 0, ?, ?, 'draft', ?, ?)`,
       [id, b.stocktakeDate || new Date().toISOString().slice(0,10),
-       b.username || (req.user && req.user.username) || 'system',
+       _actor(req, b.username) || 'system',
        b.notes || null, b.warehouseId, b.branchId || null,
        b.varianceThresholdPct != null ? b.varianceThresholdPct : 10,
        b.countMethod || 'full']);
@@ -139,6 +153,7 @@ router.post('/:id/load-snapshot', async (req, res) => {
   try {
     const [hRows] = await db.query('SELECT warehouse_id, workflow_status FROM stocktakes WHERE id = ?', [req.params.id]);
     if (!hRows.length) return res.status(404).json({ error: 'Not found' });
+    if (!req.guardWh(res, hRows[0].warehouse_id)) return;
     if (hRows[0].workflow_status !== 'draft' && hRows[0].workflow_status !== 'in_progress') {
       return res.status(409).json({ error: 'لا يمكن إعادة التحميل بعد المراجعة' });
     }
@@ -185,19 +200,25 @@ router.put('/:id/items/:lineId', async (req, res) => {
     const b = req.body || {};
     // Load the line + threshold
     const [lRows] = await db.query(`
-      SELECT si.*, s.variance_threshold_pct
+      SELECT si.*, s.variance_threshold_pct, s.warehouse_id
       FROM stocktake_items si
       JOIN stocktakes s ON s.id = si.stocktake_id
       WHERE si.id = ?`, [req.params.lineId]);
     if (!lRows.length) return res.status(404).json({ error: 'Line not found' });
     const line = lRows[0];
+    if (!req.guardWh(res, line.warehouse_id)) return;
     const threshold = Number(line.variance_threshold_pct) || 10;
     const newActual = b.actualQty != null ? Number(b.actualQty) : Number(line.actual_qty);
-    const variance = Math.round((newActual - Number(line.system_qty)) * 1000) / 1000;
-    const variancePct = Number(line.system_qty) > 0
-      ? Math.round((Math.abs(variance) / Number(line.system_qty)) * 10000) / 100 : (variance ? 100 : 0);
-    const varianceValue = Math.round(variance * (Number(line.unit_cost)||0) * 100) / 100;
-    const isFlagged = variancePct >= threshold ? 1 : 0;
+    // Phase 0 — variance math via the shared helper so the route and the
+    // contract test stay in lock-step.
+    const _v = STK.computeVariance({
+      systemQty: line.system_qty, actualQty: newActual,
+      unitCost: line.unit_cost, thresholdPct: threshold
+    });
+    const variance = _v.variance;
+    const variancePct = _v.variancePct;
+    const varianceValue = _v.varianceValue;
+    const isFlagged = _v.isFlagged ? 1 : 0;
     const sets = ['actual_qty=?','variance=?','variance_pct=?','variance_value=?','is_flagged=?'];
     const params = [newActual, variance, variancePct, varianceValue, isFlagged];
     if (b.reasonCode !== undefined) { sets.push('reason_code=?'); params.push(b.reasonCode || null); }
@@ -205,7 +226,7 @@ router.put('/:id/items/:lineId', async (req, res) => {
     if (b.photoData !== undefined)  { sets.push('photo_data=?'); params.push(b.photoData || null); }
     if (b.verified)                  {
       sets.push('verified_by=?,verified_at=NOW()');
-      params.push(b.verifiedBy || (req.user && req.user.username) || 'system');
+      params.push(_actor(req, b.verifiedBy) || 'system');
     }
     params.push(req.params.lineId);
     await db.query(`UPDATE stocktake_items SET ${sets.join(',')} WHERE id = ?`, params);
@@ -217,6 +238,9 @@ router.post('/:id/items/scan', async (req, res) => {
   try {
     const b = req.body || {};
     if (!b.itemCode && !b.itemId) return res.status(400).json({ error: 'itemCode or itemId required' });
+    const [stRows] = await db.query('SELECT warehouse_id FROM stocktakes WHERE id = ?', [req.params.id]);
+    if (!stRows.length) return res.status(404).json({ error: 'Not found' });
+    if (!req.guardWh(res, stRows[0].warehouse_id)) return;
     let lineId = null;
     let item = null;
     if (b.itemId) {
@@ -261,7 +285,10 @@ router.post('/:id/items/scan', async (req, res) => {
 
 router.post('/:id/submit', async (req, res) => {
   try {
-    const username = (req.body && req.body.username) || (req.user && req.user.username) || 'system';
+    const username = _actor(req) || 'system'; // Phase 0 §5 — actor from JWT only
+    const [hRows] = await db.query('SELECT warehouse_id FROM stocktakes WHERE id = ?', [req.params.id]);
+    if (!hRows.length) return res.status(404).json({ error: 'Not found' });
+    if (!req.guardWh(res, hRows[0].warehouse_id)) return;
     // Recompute totals
     const [agg] = await db.query(`
       SELECT
@@ -282,37 +309,42 @@ router.post('/:id/submit', async (req, res) => {
 
 router.post('/:id/approve', MGR, async (req, res) => {
   try {
-    const username = (req.body && req.body.username) || (req.user && req.user.username) || 'system';
-    const [hRows] = await db.query(`SELECT * FROM stocktakes WHERE id = ?`, [req.params.id]);
-    if (!hRows.length) return res.status(404).json({ error: 'Not found' });
-    const h = hRows[0];
-    if (h.workflow_status !== 'pending_approval') {
-      return res.status(409).json({ error: 'الجرد ليس بانتظار الاعتماد' });
-    }
+    const username = _actor(req) || 'system'; // Phase 0 §5 — actor from JWT only
 
-    // v7.4 (B3a) — a physical count can never be negative. Block approval so a
-    // data-entry slip can't lock a negative on-hand into stock + GL.
-    const [negRows] = await db.query(
-      `SELECT COUNT(*) AS n FROM stocktake_items WHERE stocktake_id = ? AND actual_qty < 0`,
-      [req.params.id]);
-    if (negRows[0] && Number(negRows[0].n) > 0) {
-      return res.status(400).json({ error: 'لا يمكن اعتماد جرد يحتوي على كمية فعلية سالبة. صحّح العدّ أولاً.' });
-    }
-
-    // Only changed lines drive adjustments. JOIN inv_items for the ledger name.
-    const [items] = await db.query(
-      `SELECT si.*, i.name AS item_name FROM stocktake_items si
-       LEFT JOIN inv_items i ON i.id = si.inv_item_id
-       WHERE si.stocktake_id = ? AND ABS(si.variance) > 0.001`,
-      [req.params.id]);
-
-    // v7.4 (B3b/c/d) — the whole approval is ATOMIC: warehouse_stock set +
-    // ledger rows (now with CORRECT columns & in/out type — the old insert used
-    // type='adjust' + ref_type/ref_id/created_at, which the 'in'/'out' ENUM and
-    // real column names rejected, so adjustments left NO trail) + a balanced GL
-    // variance journal (Dr inventory/gain, Cr loss/inventory) all commit or roll
-    // back together. GL failure aborts the whole approval (no silent drift).
+    // v7.4 (B3b/c/d) + Phase 0 — the whole approval is ATOMIC and CONCURRENCY-
+    // SAFE: the header is locked FOR UPDATE and the status gate + the final flip
+    // are state-guarded, so two concurrent approvals can no longer BOTH post the
+    // ledger rows + variance GL journal for one count. warehouse_stock set +
+    // ledger rows (CORRECT columns & in/out type) + a balanced GL variance
+    // journal (Dr inventory/gain, Cr loss/inventory) all commit or roll back
+    // together. GL failure aborts the whole approval (no silent drift).
     const result = await db.withTransaction(async (conn) => {
+      // Phase 0 — lock the header, gate the status INSIDE the txn.
+      const [hRows] = await conn.query(`SELECT * FROM stocktakes WHERE id = ? FOR UPDATE`, [req.params.id]);
+      if (!hRows.length) { const e = new Error('Not found'); e.status = 404; throw e; }
+      const h = hRows[0];
+      if (!req.guardWh(res, h.warehouse_id)) { const e = new Error('__wh_denied'); e.handled = true; throw e; }
+      if (!STK.canApprove(h.workflow_status)) {
+        const e = new Error('الجرد ليس بانتظار الاعتماد'); e.status = 409; throw e;
+      }
+
+      // v7.4 (B3a) — a physical count can never be negative. Block approval so a
+      // data-entry slip can't lock a negative on-hand into stock + GL.
+      const [negRows] = await conn.query(
+        `SELECT COUNT(*) AS n FROM stocktake_items WHERE stocktake_id = ? AND actual_qty < 0`,
+        [req.params.id]);
+      if (negRows[0] && Number(negRows[0].n) > 0) {
+        const e = new Error('لا يمكن اعتماد جرد يحتوي على كمية فعلية سالبة. صحّح العدّ أولاً.');
+        e.status = 400; throw e;
+      }
+
+      // Only changed lines drive adjustments. JOIN inv_items for the ledger name.
+      const [items] = await conn.query(
+        `SELECT si.*, i.name AS item_name FROM stocktake_items si
+         LEFT JOIN inv_items i ON i.id = si.inv_item_id
+         WHERE si.stocktake_id = ? AND ABS(si.variance) > 0.001`,
+        [req.params.id]);
+
       let movements = 0;
       const glLines = [];
       for (const ln of items) {
@@ -374,36 +406,54 @@ router.post('/:id/approve', MGR, async (req, res) => {
         glId = glRes.journalId;
       }
 
-      await conn.query(`
+      // Phase 0 — state-guarded flip: a concurrent double-approve loses here
+      // (affectedRows=0) and rolls its own ledger rows + GL journal back.
+      const [flip] = await conn.query(`
         UPDATE stocktakes SET workflow_status = 'approved', status = 'completed',
           approved_by = ?, approved_at = NOW()
-        WHERE id = ?`, [username, req.params.id]);
+        WHERE id = ? AND workflow_status = 'pending_approval'`, [username, req.params.id]);
+      if (!flip || flip.affectedRows !== 1) {
+        const e = new Error('تغيّرت حالة الجرد (اعتماد متزامن؟) — أعد التحميل'); e.status = 409; throw e;
+      }
 
       return { movements, glId };
     });
 
     res.json({ success: true, movements: result.movements, glJournalId: result.glId });
-  } catch(e) { res.status(e.status || 500).json({ error: e.message }); }
+  } catch(e) { if (e.handled) return; res.status(e.status || 500).json({ error: e.message }); }
 });
 
 router.post('/:id/reject', MGR, async (req, res) => {
   try {
-    const username = (req.body && req.body.username) || (req.user && req.user.username) || 'system';
+    const username = _actor(req) || 'system'; // Phase 0 §5 — actor from JWT only
     const reason = (req.body && req.body.reason) || '';
     if (reason.length < 10) return res.status(400).json({ error: 'سبب الرفض مطلوب (10 أحرف على الأقل)' });
-    await db.query(`
+    // Phase 0 — only a pending_approval count can be rejected. Without this a
+    // reject could overwrite an already-approved (posted) count's status to
+    // 'rejected', which then made the posted count deletable (STK.canDelete).
+    const [h] = await db.query('SELECT workflow_status, warehouse_id FROM stocktakes WHERE id = ?', [req.params.id]);
+    if (!h.length) return res.status(404).json({ error: 'Not found' });
+    if (!req.guardWh(res, h[0].warehouse_id)) return;
+    if (!STK.canReject(h[0].workflow_status)) {
+      return res.status(409).json({ error: 'لا يمكن رفض جرد ليس بانتظار الاعتماد' });
+    }
+    const [rej] = await db.query(`
       UPDATE stocktakes SET workflow_status = 'rejected',
         rejected_by = ?, rejected_at = NOW(), rejection_reason = ?
-      WHERE id = ?`, [username, reason, req.params.id]);
+      WHERE id = ? AND workflow_status = 'pending_approval'`, [username, reason, req.params.id]);
+    if (!rej || rej.affectedRows !== 1) {
+      return res.status(409).json({ error: 'تغيّرت حالة الجرد — أعد التحميل' });
+    }
     res.json({ success: true });
   } catch(e) { res.status(500).json({ error: e.message }); }
 });
 
 router.post('/:id/cancel', async (req, res) => {
   try {
-    const [r] = await db.query(`SELECT workflow_status FROM stocktakes WHERE id = ?`, [req.params.id]);
+    const [r] = await db.query(`SELECT workflow_status, warehouse_id FROM stocktakes WHERE id = ?`, [req.params.id]);
     if (!r.length) return res.status(404).json({ error: 'Not found' });
-    if (!['draft','in_progress'].includes(r[0].workflow_status)) {
+    if (!req.guardWh(res, r[0].warehouse_id)) return;
+    if (!STK.canCancel(r[0].workflow_status)) {
       return res.status(409).json({ error: 'لا يمكن الإلغاء بعد التقديم' });
     }
     await db.query(`UPDATE stocktakes SET workflow_status = 'cancelled' WHERE id = ?`, [req.params.id]);
@@ -413,6 +463,9 @@ router.post('/:id/cancel', async (req, res) => {
 
 router.get('/:id/export', async (req, res) => {
   try {
+    const [hRows] = await db.query('SELECT warehouse_id FROM stocktakes WHERE id = ?', [req.params.id]);
+    if (!hRows.length) return res.status(404).json({ error: 'Not found' });
+    if (!req.guardWh(res, hRows[0].warehouse_id)) return;
     const [items] = await db.query(`
       SELECT si.*, COALESCE(it.name, si.inv_item_name, si.inv_item_id) AS item_name,
              si.inv_item_id AS item_id

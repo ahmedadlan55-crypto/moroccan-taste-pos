@@ -7,6 +7,14 @@ const { ensureCoreAccounts } = require('../lib/glPosting');
 const COA_TEMPLATE = require('../db/coa-template.json');
 // v5.11.3 — developer-only guard for destructive journal endpoints.
 const { guardDeveloper } = require('../lib/transactionGuards');
+// Phase 0 (Contracts & Safety) — managerial RBAC for warehouse master-data
+// mutations (a warehouse with movement may never be hard-deleted) and for the
+// legacy warehouse_transfers stock-moving endpoints.
+const MGR = require('../middleware/auth').requireRole('admin', 'manager');
+// Phase 0 §5 — actor identity from the authenticated JWT, never a body field.
+function _actor(req) {
+  return (req.user && (req.user.username || req.user.name)) || '';
+}
 
 // ═══════════════════════════════════════════════════════════════════
 // v5.17.1 — routes/erp/ split (Phase 1 of 5). Each sub-router below
@@ -3839,6 +3847,7 @@ async function auditLog(action, entityType, entityId, username, details, ip) {
 
 router.get('/warehouses-list', async (req, res) => {
   try {
+    const scope = req.whScopeClause('w.id');
     const [rows] = await db.query(`
       SELECT w.*,
         b.name AS branch_name,
@@ -3848,7 +3857,8 @@ router.get('/warehouses-list', async (req, res) => {
       LEFT JOIN branches b ON w.branch_id = b.id
       LEFT JOIN brands bd ON w.brand_id = bd.id
       LEFT JOIN cost_centers cc ON w.cost_center_id = cc.id
-      ORDER BY w.code`);
+      WHERE 1=1${scope.sql}
+      ORDER BY w.code`, scope.params);
     res.json(rows.map(w => {
       let allowedBrands = [];
       try { if (w.allowed_brands) allowedBrands = JSON.parse(w.allowed_brands); } catch(e) {}
@@ -3871,6 +3881,7 @@ router.post('/warehouses-list', async (req, res) => {
     if (!code || !name) return res.json({ success: false, error: 'الرمز والاسم مطلوبان' });
     const allowedBrandsJson = Array.isArray(allowedBrands) ? JSON.stringify(allowedBrands) : null;
     if (id) {
+      if (!req.guardWh(res, id)) return;
       try {
         await db.query('UPDATE warehouses SET code=?, name=?, type=?, brand_id=?, branch_id=?, cost_center_id=?, location=?, manager=?, allowed_brands=? WHERE id=?',
           [code, name, type||'branch', brandId||null, branchId||null, costCenterId||null, location||'', manager||'', allowedBrandsJson, id]);
@@ -3893,17 +3904,53 @@ router.post('/warehouses-list', async (req, res) => {
   } catch(e) { res.json({ success: false, error: e.message }); }
 });
 
-router.delete('/warehouses-list/:id', async (req, res) => {
+// Phase 0 §7 — a warehouse that has EVER had movement (inventory_movements,
+// stock_issues, or non-zero on-hand) is never hard-deleted: deleting it would
+// strand its ledger history and break every report that joins on it. Such a
+// warehouse is DEACTIVATED instead (is_active = 0) so it drops out of the
+// pickers but its history stays intact. Only a pristine, never-used warehouse
+// may be physically removed. Managers only. When in doubt (a probe query
+// fails on an old schema) we fail SAFE → deactivate, never delete.
+router.delete('/warehouses-list/:id', MGR, async (req, res) => {
+  const id = req.params.id;
+  if (!req.guardWh(res, id)) return;
+  async function _count(sql, params) {
+    try { const [r] = await db.query(sql, params); return Number((r[0] || {}).n) || 0; }
+    catch (_) { return Infinity; } // unknown → treat as "has history" (fail safe)
+  }
   try {
-    await db.query('DELETE FROM warehouse_stock WHERE warehouse_id = ?', [req.params.id]);
-    await db.query('DELETE FROM warehouses WHERE id = ?', [req.params.id]);
-    res.json({ success: true });
+    const [whRows] = await db.query('SELECT id FROM warehouses WHERE id = ?', [id]);
+    if (!whRows.length) return res.json({ success: false, error: 'المستودع غير موجود' });
+
+    const used =
+      (await _count('SELECT COUNT(*) AS n FROM inventory_movements WHERE warehouse_id = ?', [id])) +
+      (await _count('SELECT COUNT(*) AS n FROM stock_issues WHERE from_warehouse_id = ? OR to_warehouse_id = ?', [id, id])) +
+      (await _count('SELECT COUNT(*) AS n FROM warehouse_transfers WHERE from_warehouse_id = ? OR to_warehouse_id = ?', [id, id])) +
+      (await _count('SELECT COUNT(*) AS n FROM warehouse_stock WHERE warehouse_id = ? AND qty <> 0', [id])) +
+      (await _count('SELECT COUNT(*) AS n FROM warehouses WHERE parent_warehouse_id = ?', [id]));
+
+    if (used > 0) {
+      await db.query('UPDATE warehouses SET is_active = 0 WHERE id = ?', [id]);
+      return res.json({
+        success: true, deactivated: true,
+        message: 'تم تعطيل المستودع بدل حذفه لوجود حركة/رصيد أو مستودعات فرعية مرتبطة. السجل محفوظ.'
+      });
+    }
+
+    // Pristine warehouse — safe to physically remove (clears its empty
+    // zero-qty stock rows first; there is no FK CASCADE configured).
+    await db.withTransaction(async (conn) => {
+      await conn.query('DELETE FROM warehouse_stock WHERE warehouse_id = ?', [id]);
+      await conn.query('DELETE FROM warehouses WHERE id = ?', [id]);
+    });
+    res.json({ success: true, deleted: true });
   } catch(e) { res.json({ success: false, error: e.message }); }
 });
 
 // Warehouse stock
 router.get('/warehouse-stock-detail/:whId', async (req, res) => {
   try {
+    if (!req.guardWh(res, req.params.whId)) return;
     const [rows] = await db.query(
       `SELECT ws.*, i.name, i.category, i.unit, i.cost FROM warehouse_stock ws
        JOIN inv_items i ON ws.item_id = i.id WHERE ws.warehouse_id = ? ORDER BY i.name`, [req.params.whId]);
@@ -3937,6 +3984,11 @@ router.get('/warehouse-transfers', async (req, res) => {
     if (status)    { conds.push('t.status = ?');                  params.push(status); }
     if (startDate) { conds.push('DATE(t.transfer_date) >= ?');    params.push(startDate); }
     if (endDate)   { conds.push('DATE(t.transfer_date) <= ?');    params.push(endDate); }
+    const sf = req.whScopeClause('t.from_warehouse_id'), st = req.whScopeClause('t.to_warehouse_id');
+    if (sf.sql) {
+      conds.push('(' + sf.sql.replace(/^\s*AND\s+/i, '') + ' OR ' + st.sql.replace(/^\s*AND\s+/i, '') + ')');
+      params.push(...sf.params, ...st.params);
+    }
     if (conds.length) sql += ' WHERE ' + conds.join(' AND ');
     sql += ' ORDER BY t.created_at DESC LIMIT 200';
     const [rows] = await db.query(sql, params);
@@ -3949,12 +4001,15 @@ router.get('/warehouse-transfers', async (req, res) => {
   } catch(e) { res.json([]); }
 });
 
-router.post('/warehouse-transfers', async (req, res) => {
+router.post('/warehouse-transfers', MGR, async (req, res) => {
   try {
-    const { fromWarehouseId, toWarehouseId, items, notes, username } = req.body;
+    const { fromWarehouseId, toWarehouseId, items, notes } = req.body;
+    // Phase 0 §5 — creator from the JWT, never the body.
+    const username = _actor(req);
     if (!fromWarehouseId || !toWarehouseId || !items || !items.length) {
       return res.status(400).json({ success: false, error: 'بيانات ناقصة' });
     }
+    if (!req.guardTransfer(res, fromWarehouseId, toWarehouseId)) return;
     // v5.10.29 — block same-warehouse transfers; meaningless, would cancel out.
     if (String(fromWarehouseId) === String(toWarehouseId)) {
       return res.status(400).json({ success: false, error: 'لا يمكن التحويل إلى نفس المستودع' });
@@ -3997,12 +4052,14 @@ router.post('/warehouse-transfers', async (req, res) => {
 //   5. Mark transfer "completed"
 // On any failure all writes roll back, so a partial transfer can never leave
 // stock missing or duplicated.
-router.post('/warehouse-transfers/:id/approve', async (req, res) => {
+router.post('/warehouse-transfers/:id/approve', MGR, async (req, res) => {
   try {
-    const { username } = req.body || {};
+    // Phase 0 §5/§6 — managers only; approver from the JWT, never the body.
+    const username = _actor(req);
     const [transfers] = await db.query('SELECT * FROM warehouse_transfers WHERE id = ?', [req.params.id]);
     if (!transfers.length) return res.status(404).json({ success: false, error: 'التحويل غير موجود' });
     const t = transfers[0];
+    if (!req.guardTransfer(res, t.from_warehouse_id, t.to_warehouse_id)) return;
     if (t.status !== 'draft') return res.status(409).json({ success: false, error: 'التحويل ليس في حالة مسودة' });
 
     const items = JSON.parse(t.items_json || '[]').filter(x => x && x.itemId && Number(x.qty) > 0);
@@ -4088,10 +4145,11 @@ router.post('/warehouse-transfers/:id/approve', async (req, res) => {
 
 // ─── Warehouse Transfers: cancel + view lines (consolidated from legacy) ───
 
-router.post('/warehouse-transfers/:id/cancel', async (req, res) => {
+router.post('/warehouse-transfers/:id/cancel', MGR, async (req, res) => {
   try {
     const [transfers] = await db.query('SELECT * FROM warehouse_transfers WHERE id = ?', [req.params.id]);
     if (!transfers.length) return res.json({ success: false, error: 'التحويل غير موجود' });
+    if (!req.guardTransfer(res, transfers[0].from_warehouse_id, transfers[0].to_warehouse_id)) return;
     if (transfers[0].status !== 'draft') return res.json({ success: false, error: 'لا يمكن إلغاء تحويل مكتمل' });
     await db.query('UPDATE warehouse_transfers SET status = "cancelled" WHERE id = ?', [req.params.id]);
     res.json({ success: true });
@@ -4102,6 +4160,7 @@ router.get('/warehouse-transfer-lines/:id', async (req, res) => {
   try {
     const [transfers] = await db.query('SELECT * FROM warehouse_transfers WHERE id = ?', [req.params.id]);
     if (!transfers.length) return res.json([]);
+    if (!req.guardTransfer(res, transfers[0].from_warehouse_id, transfers[0].to_warehouse_id)) return;
     const items = JSON.parse(transfers[0].items_json || '[]');
     res.json(items.map(item => ({
       itemId: item.itemId, itemName: item.itemName||'',

@@ -12,25 +12,61 @@
 const router = require('express').Router();
 const db = require('../db/connection');
 const os = require('os');
+const v2Metrics = require('../lib/v2Metrics');
 
 const _bootedAt = Date.now();
 
 // Counters (in-memory; reset on restart — for serious use, persist or use Prom client)
 const _requestCounters = {
   total: 0,
-  byStatus: { '2xx': 0, '4xx': 0, '5xx': 0 },
-  byMethod: { GET: 0, POST: 0, PUT: 0, DELETE: 0 }
+  byStatus: { '1xx': 0, '2xx': 0, '3xx': 0, '4xx': 0, '5xx': 0 },
+  byMethod: { GET: 0, POST: 0, PUT: 0, PATCH: 0, DELETE: 0, OPTIONS: 0 }
 };
 
-// Hook to track all requests (mounted by server.js as middleware on /api/)
+// Phase 5B.1 — labelled requests_total with BOUNDED cardinality:
+//   labels = method / normalized_route / status_class (never the raw URL).
+// Route normalization folds every id-like path segment into ':id' (pure digits,
+// UUIDs, and doc numbers like RCV-20260701-0001 / EV-...-x7k). A hard cap on
+// distinct routes buckets any overflow into 'other' so a scanner hitting random
+// URLs can never blow up the label set.
+const _byRoute = new Map(); // "METHOD route" -> {'1xx'..'5xx'}
+const MAX_ROUTES = 300;
+const _ID_SEG = /^(\d+|[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}|[A-Za-z]{1,6}[-_].*\d.*|.*\d{4,}.*)$/i;
+
+function normalizeRoute(path) {
+  const parts = String(path || '/').split('?')[0].split('/').filter(Boolean).slice(0, 7);
+  const out = parts.map((seg) => (_ID_SEG.test(seg) ? ':id' : seg.slice(0, 32)));
+  return '/' + out.join('/');
+}
+
+// Hook to track ALL /api requests — mounted by server.js BEFORE every router
+// (early in the chain, right after the correlation-id middleware) so 401s from
+// the auth gate and 429s from the limiter are counted too.
 function trackRequest(req, res, next) {
   _requestCounters.total++;
   if (_requestCounters.byMethod[req.method] !== undefined) _requestCounters.byMethod[req.method]++;
+  // originalUrl includes the mount prefix (/api/...) — req.path here is
+  // relative to the mount point, so normalize from originalUrl.
+  const route = normalizeRoute(req.originalUrl || req.url);
   res.on('finish', function() {
-    const tier = res.statusCode < 300 ? '2xx' : res.statusCode < 500 ? '4xx' : '5xx';
-    if (_requestCounters.byStatus[tier] !== undefined) _requestCounters.byStatus[tier]++;
+    const cls = res.statusCode < 200 ? '1xx' : res.statusCode < 300 ? '2xx' : res.statusCode < 400 ? '3xx' : res.statusCode < 500 ? '4xx' : '5xx';
+    if (_requestCounters.byStatus[cls] !== undefined) _requestCounters.byStatus[cls]++;
+    let key = req.method + ' ' + route;
+    if (!_byRoute.has(key) && _byRoute.size >= MAX_ROUTES) key = req.method + ' other';
+    let rec = _byRoute.get(key);
+    if (!rec) { rec = { '1xx': 0, '2xx': 0, '3xx': 0, '4xx': 0, '5xx': 0 }; _byRoute.set(key, rec); }
+    rec[cls]++;
   });
   next();
+}
+
+function routeSnapshot() {
+  const out = [];
+  for (const [k, v] of _byRoute) {
+    const sp = k.indexOf(' ');
+    out.push(Object.assign({ method: k.slice(0, sp), route: k.slice(sp + 1) }, v));
+  }
+  return out;
 }
 
 async function _collectDbMetrics() {
@@ -96,6 +132,8 @@ router.get('/json', async (req, res) => {
       cpu_count: os.cpus().length
     },
     requests: _requestCounters,
+    requests_by_route: routeSnapshot(),
+    warehouse_v2: v2Metrics.snapshot(),
     database: dbMetrics
   });
 });
@@ -120,6 +158,15 @@ router.get('/', async (req, res) => {
   for (const [meth, n] of Object.entries(_requestCounters.byMethod)) {
     lines.push(`http_requests_by_method_total{method="${meth}"} ${n}`);
   }
+  // Phase 5B.1 — labelled series (method / normalized_route / status_class);
+  // cardinality bounded by normalizeRoute() + the MAX_ROUTES 'other' bucket.
+  lines.push('# HELP http_requests_route_total HTTP requests by method/route/status_class');
+  lines.push('# TYPE http_requests_route_total counter');
+  for (const r of routeSnapshot()) {
+    for (const cls of ['2xx', '3xx', '4xx', '5xx']) {
+      if (r[cls] > 0) lines.push(`http_requests_route_total{method="${r.method}",route="${r.route}",status_class="${cls}"} ${r[cls]}`);
+    }
+  }
   // DB metrics
   lines.push('# HELP transactions_total Total transactions in DB');
   lines.push('# TYPE transactions_total gauge');
@@ -139,10 +186,20 @@ router.get('/', async (req, res) => {
     lines.push(`db_pool_total ${m.db_pool_total}`);
     lines.push(`db_pool_free ${m.db_pool_free}`);
   }
+  // warehouse-v2 operational counters (errors / 409 / reversals / integrity alerts)
+  const v2 = v2Metrics.snapshot();
+  lines.push('# HELP warehouse_v2_requests_total Total warehouse-v2 requests');
+  lines.push('# TYPE warehouse_v2_requests_total counter');
+  for (const [k, n] of Object.entries(v2)) {
+    lines.push(`warehouse_v2_${k} ${n}`);
+  }
   res.setHeader('Content-Type', 'text/plain; version=0.0.4');
   res.send(lines.join('\n') + '\n');
 });
 
 router._trackRequest = trackRequest;
+router._normalizeRoute = normalizeRoute;
+router._routeSnapshot = routeSnapshot;
+router._counters = _requestCounters;
 
 module.exports = router;

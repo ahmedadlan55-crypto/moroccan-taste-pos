@@ -28,12 +28,34 @@ const jwt = require('jsonwebtoken');
 const app = express();
 const PORT = process.env.PORT || 3000;
 
+// RC cutover flag — when "0", the warehouse-v2 SPA serves a maintenance notice
+// and v2 WRITE endpoints return 503 (legacy UI/API remains the sole writer →
+// no dual-write, no data loss). Reads stay available. Default ENABLED.
+const WAREHOUSE_V2_ENABLED = String(process.env.WAREHOUSE_V2_ENABLED || '1') !== '0';
+
 // ═══════════════════════════════════════
 // SECURITY MIDDLEWARE CHAIN
 // ═══════════════════════════════════════
 
 // 1. Compression
 app.use(compression());
+
+// 1b. Correlation ID — accept an inbound X-Request-Id or generate one; echo it on
+// the response and expose req.requestId for structured logs + audit + support.
+const { randomUUID } = require('crypto');
+app.use(function (req, res, next) {
+  const incoming = req.headers['x-request-id'];
+  req.requestId = (typeof incoming === 'string' && incoming.length > 0 && incoming.length <= 200) ? incoming : randomUUID();
+  res.setHeader('X-Request-Id', req.requestId);
+  next();
+});
+
+// 1c. Phase 5B.1 — requests_total metrics middleware mounted BEFORE every /api
+// route/gate so ALL outcomes are counted (incl. 401 from the auth gate and 429
+// from the rate limiter). Labels: method / normalized_route / status_class —
+// bounded cardinality, never the raw URL. (Previously mounted after the
+// routers, which undercounted everything they handled.)
+app.use('/api/', require('./routes/metrics')._trackRequest);
 
 // 2. Security headers (Helmet)
 app.use(helmet({
@@ -63,7 +85,9 @@ app.use(cors({
     if (!origin) return callback(null, true);
     if (ALLOWED_ORIGINS.length === 0) return callback(null, true); // If not configured, allow all (dev mode)
     if (ALLOWED_ORIGINS.indexOf(origin) !== -1) return callback(null, true);
-    callback(null, true); // In production, set ALLOWED_ORIGINS env var to restrict
+    // Configured allow-list + origin not on it → deny (omit CORS headers so the
+    // browser blocks the cross-origin response). Empty allow-list = dev allow-all.
+    callback(null, false);
   },
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
@@ -110,6 +134,7 @@ app.use('/api/', function(req, res, next) {
 
   // FULLY PUBLIC — no token needed
   if (p === '/version') return next();                 // v6.20.0 — deploy/version marker
+  if (p === '/inventory/v2/ready') return next();      // RC — readiness probe (DB + schema)
   if (p.startsWith('/auth/')) return next();           // all auth endpoints
   if (p.startsWith('/settings')) return next();        // settings
   if (p.startsWith('/menu')) return next();            // menu
@@ -208,6 +233,88 @@ app.use(express.static(path.join(__dirname, 'public'), {
   }
 }));
 
+// ── warehouse-v2 React app (Strangler rewrite) ──────────────────────────
+// Serves the built SPA at /warehouse-v2 with an SPA history fallback. The
+// mount is PATH-PREFIXED, so it never touches the legacy UI (served from
+// /public above) or the /api routes below. The hashed JS/CSS assets are
+// immutable; index.html is no-cache so a redeploy is picked up immediately.
+// If the bundle hasn't been built yet, the path simply 404s (legacy app
+// unaffected) — build with: npm --prefix frontend/warehouse run build
+// RC cutover — when v2 is DISABLED, intercept the SPA with a maintenance notice
+// (registered BEFORE the static mount so it always wins). Legacy UI unaffected.
+if (!WAREHOUSE_V2_ENABLED) {
+  app.all(/^\/warehouse-v2(?:\/.*)?$/, function (req, res) {
+    res.status(503).type('html').send('<!doctype html><html lang="ar" dir="rtl"><meta charset="utf-8"><title>صيانة</title><body style="font-family:Tahoma,Arial,sans-serif;padding:3rem;text-align:center;color:#172033"><h2>نظام المستودعات (v2) متوقف مؤقتًا</h2><p>يُرجى استخدام الواجهة القديمة. (WAREHOUSE_V2_ENABLED=0)</p></body></html>');
+  });
+}
+
+// ── warehouse-v2 — strict Content-Security-Policy (SPA scope only) ──────
+// The global helmet CSP stays disabled because the LEGACY app (served from
+// /public) relies on inline scripts. The React SPA loads ONLY hashed bundles
+// (no inline <script>), so a strict CSP can be applied scoped to /warehouse-v2
+// without affecting the legacy UI. style-src keeps 'unsafe-inline' for
+// Tailwind/React element styles (style attributes, not script).
+app.use('/warehouse-v2', function (req, res, next) {
+  res.setHeader('Content-Security-Policy', [
+    "default-src 'self'",
+    "base-uri 'self'",
+    "object-src 'none'",
+    "frame-ancestors 'none'",
+    "img-src 'self' data: blob:",
+    "font-src 'self' data:",
+    "style-src 'self' 'unsafe-inline'",
+    "script-src 'self'",
+    "connect-src 'self'",
+    "form-action 'self'"
+  ].join('; '));
+  next();
+});
+
+var _whDist = path.join(__dirname, 'frontend', 'warehouse', 'dist');
+if (_pwaFs.existsSync(path.join(_whDist, 'index.html'))) {
+  app.use('/warehouse-v2', express.static(_whDist, {
+    setHeaders: function(res, filePath) {
+      if (/\.html$/i.test(filePath)) {
+        res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
+      } else if (/[/\\]assets[/\\]/.test(filePath)) {
+        res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
+      }
+    }
+  }));
+  // History fallback: any extensionless path under /warehouse-v2 (a client
+  // route like /warehouse-v2/inventory, incl. hard refresh) returns index.html.
+  // Paths that look like a file (have an extension) fall through to a normal
+  // 404 instead of being masked by HTML.
+  app.get(/^\/warehouse-v2(?:\/.*)?$/, function(req, res, next) {
+    if (/\.[a-zA-Z0-9]+$/.test(req.path)) return next();
+    res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
+    res.sendFile(path.join(_whDist, 'index.html'));
+  });
+  console.log('[warehouse-v2] SPA mounted at /warehouse-v2');
+} else {
+  console.warn('[warehouse-v2] bundle not found — run: npm --prefix frontend/warehouse run build');
+}
+
+// RC hardening — surface a loud warning if warehouse-v2 is exposed WITHOUT
+// per-user warehouse scope enforcement (an out-of-scope user could otherwise
+// read/write any warehouse). Deliberately a warning, not a hard stop: staging
+// must set WAREHOUSE_SCOPE_ENFORCE=1 (documented in the migration runbook).
+if (String(process.env.WAREHOUSE_V2_ENABLED || '1') !== '0' &&
+    String(process.env.WAREHOUSE_SCOPE_ENFORCE || '') !== '1') {
+  console.warn('[warehouse-v2][SECURITY] V2 is ENABLED but WAREHOUSE_SCOPE_ENFORCE is not "1" — users are NOT restricted to their assigned warehouses. Set WAREHOUSE_SCOPE_ENFORCE=1 in staging/production.');
+}
+
+// Phase 5C — canary allow-list state, surfaced at boot like the scope warning
+// above so the rollout wave in effect is always visible in the deploy logs.
+const _v2Canary = require('./lib/v2Canary');
+if (_v2Canary.config.ACTIVE) {
+  console.log('[warehouse-v2] canary allow-list ACTIVE — users=%d role(s)=%d%s',
+    _v2Canary.config.USERS.length, _v2Canary.config.ROLES.length,
+    _v2Canary.config.ALLOW_ALL ? ' (contains "*" → full open)' : '');
+} else {
+  console.log('[warehouse-v2] canary allow-list OFF — v2 open to all authenticated users');
+}
+
 // v6.20.0 — Deploy/version marker. Lets us confirm EXACTLY which commit is
 // live on production (ends the "is it actually deployed?" ambiguity). Railway
 // injects the RAILWAY_GIT_* vars at build time.
@@ -224,6 +331,51 @@ app.get('/api/version', (req, res) => {
   });
 });
 
+// RC ops — readiness probe. Verifies DB connectivity AND that the warehouse-v2
+// schema actually migrated (lot tables/columns) + reports the DB session
+// timezone. Returns 503 with the missing piece so an orchestrator never routes
+// traffic to a half-migrated instance. Public (no auth), like /api/version.
+const _readyDb = require('./db/connection');
+// Expected Riyadh offset in minutes, derived from the pool's DB_TIME_ZONE
+// ('+03:00' → 180). Named zones fall back to 180 (KSA has no DST).
+const _expectedTzMin = (() => {
+  const m = /^([+-])(\d{2}):(\d{2})$/.exec(String(_readyDb.DB_TIME_ZONE || '+03:00'));
+  return m ? (m[1] === '-' ? -1 : 1) * (Number(m[2]) * 60 + Number(m[3])) : 180;
+})();
+app.get('/api/inventory/v2/ready', async (req, res) => {
+  const checks = { db: false, schema: false, timezone: null, timezoneOffsetMin: null, timezoneOk: false };
+  const missing = [];
+  try { await _readyDb.query('SELECT 1'); checks.db = true; }
+  catch (e) { missing.push('db:' + (e.code || 'unreachable')); }
+  if (checks.db) {
+    const required = [
+      ['inv_items', 'tracking_mode'], ['inventory_lots', 'lifecycle_status'],
+      ['warehouse_lot_balances', 'qty'], ['inventory_lot_movements', 'inventory_movement_seq'],
+    ];
+    try {
+      let present = 0;
+      for (const [t, c] of required) {
+        const [r] = await _readyDb.query('SELECT COUNT(*) AS n FROM information_schema.columns WHERE table_schema=DATABASE() AND table_name=? AND column_name=?', [t, c]);
+        if (r[0] && Number(r[0].n) > 0) present++; else missing.push('schema:' + t + '.' + c);
+      }
+      checks.schema = present === required.length;
+      // Phase 5B.1 — assert the EFFECTIVE session timezone (not the global):
+      // the offset NOW()-UTC_TIMESTAMP() is what every date-boundary query
+      // actually uses. The pool re-applies SET time_zone per connection, so
+      // this stays green across DB restarts with no manual step.
+      try {
+        const [tz] = await _readyDb.query('SELECT @@session.time_zone AS tz, TIMESTAMPDIFF(MINUTE, UTC_TIMESTAMP(), NOW()) AS off');
+        checks.timezone = tz[0] && tz[0].tz;
+        checks.timezoneOffsetMin = tz[0] && Number(tz[0].off);
+        checks.timezoneOk = checks.timezoneOffsetMin === _expectedTzMin;
+        if (!checks.timezoneOk) missing.push('timezone:offset=' + checks.timezoneOffsetMin + ' expected=' + _expectedTzMin);
+      } catch (_) { missing.push('timezone:unreadable'); }
+    } catch (e) { missing.push('schema:' + (e.code || 'error')); }
+  }
+  const ready = checks.db && checks.schema && checks.timezoneOk;
+  res.status(ready ? 200 : 503).json({ ready, checks, missing, processTz: process.env.TZ || null, at: new Date().toISOString() });
+});
+
 // 8. Audit logging middleware — auto-logs all POST/PUT/DELETE operations
 const { auditMiddleware } = require('./lib/auditLogger');
 app.use('/api/sales', auditMiddleware('sales'));
@@ -235,12 +387,60 @@ app.use('/api/hr', auditMiddleware('hr'));
 app.use('/api/workflow', auditMiddleware('workflow'));
 app.use('/api/auth', auditMiddleware('auth'));
 
+// Phase 2A.2 — warehouse scope resolver. Runs AFTER the global /api auth gate
+// (req.user is set) and BEFORE the warehouse routers, so req.guardWh /
+// req.guardTransfer / req.whScopeClause are available to every inventory / erp
+// (incl. warehouse-ops) / stocktake-pro route. No-op until WAREHOUSE_SCOPE_ENFORCE.
+const { loadWarehouseScope } = require('./middleware/warehouseScope');
+app.use('/api/inventory', loadWarehouseScope);
+app.use('/api/erp', loadWarehouseScope);
+app.use('/api/stocktake-pro', loadWarehouseScope);
+
 // API Routes
 app.use('/api/auth', require('./routes/auth'));
 app.use('/api/menu', require('./routes/menu'));
 app.use('/api/sales', require('./routes/sales'));
 app.use('/api/shifts', require('./routes/shifts'));
+// Phase 3B — independent inventory transactions (receipts / issues / adjustments)
+// at a CLEAN namespace /api/inventory/v2/* so the legacy /api/inventory/adjustments
+// (delta model + legacy HTML UI) is never shadowed. Mounted BEFORE inventory.js so
+// the /v2/* paths are claimed here. Inherits loadWarehouseScope (mounted above).
+// Phase 3C — professional stocktake mounted at the more-specific /v2/stocktakes
+// BEFORE the /v2 doc router (paths don't collide; this just claims the prefix).
+// RC hardening — per-user mutation rate limiter for the whole /v2 surface
+// (state-changing methods only; reads/exports pass through). Generous default
+// (300/min/user) so legitimate use + tests never trip it; env-tunable.
+app.use('/api/inventory/v2', require('./lib/v2Metrics').track);
+app.use('/api/inventory/v2', require('./lib/v2RateLimit'));
+// Phase 5C — canary allow-list. Gates the ENTIRE v2 surface (reads + writes)
+// plus the v2-only read namespaces mounted further down (/analytics, /reports,
+// /transfers — the legacy UI uses none of them). The public /ready probe is
+// registered ABOVE and is never affected. Pass-through when no list is set.
+app.use('/api/inventory/v2', _v2Canary);
+app.use('/api/inventory/analytics', _v2Canary);
+app.use('/api/inventory/reports', _v2Canary);
+app.use('/api/inventory/transfers', _v2Canary);
+// RC cutover — v2 WRITE gate. When v2 is disabled, mutations return 503 so the
+// legacy system is the sole writer (no dual-write); reads stay available.
+app.use('/api/inventory/v2', function (req, res, next) {
+  if (WAREHOUSE_V2_ENABLED || !/^(POST|PUT|PATCH|DELETE)$/.test(req.method)) return next();
+  return res.status(503).json({ success: false, code: 'V2_DISABLED', error: 'نظام warehouse-v2 معطّل مؤقتًا — لا يمكن تنفيذ عمليات كتابية. استخدم النظام القديم.' });
+});
+app.use('/api/inventory/v2/stocktakes', require('./routes/inventory-stocktakes'));
+// Phase 4A — item master + replenishment (paths /items, /replenishment,
+// /categories, /units don't collide with the doc router's /receipts|/issues|…).
+app.use('/api/inventory/v2', require('./routes/inventory-items'));
+app.use('/api/inventory/v2', require('./routes/inventory-lots'));
+app.use('/api/inventory/v2', require('./routes/inventory-transactions'));
 app.use('/api/inventory', require('./routes/inventory'));
+// Phase 2B — read-only Analytics + Reports (inherits the warehouse-scope
+// middleware mounted on /api/inventory above; /analytics/* + /reports/* paths
+// don't collide with the inventory router).
+app.use('/api/inventory', require('./routes/warehouse-reports'));
+// Phase 3A — scoped READ endpoints for the React /transfers grid + detail
+// (list/KPIs/timeline). Mutations stay on /api/erp/stock-issues; the legacy
+// GET endpoints there are untouched.
+app.use('/api/inventory', require('./routes/warehouse-transfers'));
 app.use('/api/purchases', require('./routes/purchases'));
 app.use('/api/expenses', require('./routes/expenses'));
 app.use('/api/settings', require('./routes/settings'));
@@ -283,8 +483,9 @@ const _slaRouter = require('./routes/sla');
 app.use('/api/sla', _slaRouter);
 app.use('/api/sse', require('./routes/sse'));
 const _metricsRouter = require('./routes/metrics');
-// Mount request tracker BEFORE other api routes so it counts everything
-app.use('/api/', _metricsRouter._trackRequest);
+// Phase 5B.1 — the request tracker is now mounted at the TOP of the /api chain
+// (see §1c near the correlation-id middleware). Mounting it here again would
+// double-count every request that reaches this point.
 app.use('/api/metrics', _metricsRouter);
 app.use('/api/workflow-routes', require('./routes/workflowRoutes'));
 // Start SLA background sweep on boot (every 30 minutes)
@@ -341,7 +542,15 @@ async function autoInitDB() {
       if (!rows.length) {
         console.log('First run — creating database tables...');
         const schema = fs.readFileSync(require('path').join(__dirname, 'db/schema.sql'), 'utf8');
-        const stmts = schema.split(';').map(s => s.trim()).filter(s => s.length > 5 && !s.startsWith('CREATE DATABASE') && !s.startsWith('USE '));
+        // Phase 3A.1 — comment/quote-aware split. The old schema.split(';')
+        // broke on a ';' INSIDE a comment (e.g. "(SOCPA/IFRS); the only valid
+        // correction") or a string literal, shredding gl_journals / gl_entries /
+        // inventory_movements / sales on a fresh DB. splitSqlStatements ignores
+        // ';' inside '…' "…" `…`, -- line and /* */ block comments.
+        const stmts = splitSqlStatements(schema).filter(s => {
+          const bare = s.replace(/\/\*[\s\S]*?\*\//g, '').replace(/--[^\n]*/g, '').trim();
+          return bare.length > 5 && !/^create\s+database/i.test(bare) && !/^use\s/i.test(bare);
+        });
         for (const stmt of stmts) {
           try { await db.query(stmt); } catch (e) {
             console.log('Schema warning:', e.message.substring(0, 120));
@@ -410,6 +619,36 @@ async function modifyColumnDefinition(table, column, definition) {
   } catch (e) {
     console.log(`[DB] MODIFY warning (${table}.${column}):`, e.message.substring(0, 120));
   }
+}
+
+// Phase 3A.1 — comment/quote-aware SQL statement splitter. Scans char-by-char
+// and only treats ';' as a statement boundary when NOT inside a single/double/
+// backtick-quoted string, a `--` line comment, or a `/* */` block comment. This
+// replaces the naive schema.split(';') in autoInitDB, which mis-split DDL whose
+// comments contain ';' (e.g. "(SOCPA/IFRS); …") — shredding gl_journals,
+// gl_entries, inventory_movements, sales on a brand-new database.
+function splitSqlStatements(sql) {
+  const out = [];
+  let cur = '', i = 0;
+  const n = sql.length;
+  let sq = false, dq = false, bq = false, line = false, block = false;
+  while (i < n) {
+    const ch = sql[i], nx = sql[i + 1];
+    if (line) { cur += ch; if (ch === '\n') line = false; i++; continue; }
+    if (block) { cur += ch; if (ch === '*' && nx === '/') { cur += nx; i += 2; block = false; continue; } i++; continue; }
+    if (sq) { cur += ch; if (ch === '\\' && nx !== undefined) { cur += nx; i += 2; continue; } if (ch === "'") sq = false; i++; continue; }
+    if (dq) { cur += ch; if (ch === '\\' && nx !== undefined) { cur += nx; i += 2; continue; } if (ch === '"') dq = false; i++; continue; }
+    if (bq) { cur += ch; if (ch === '`') bq = false; i++; continue; }
+    if (ch === '-' && nx === '-') { line = true; cur += ch; i++; continue; }
+    if (ch === '/' && nx === '*') { block = true; cur += ch + nx; i += 2; continue; }
+    if (ch === "'") { sq = true; cur += ch; i++; continue; }
+    if (ch === '"') { dq = true; cur += ch; i++; continue; }
+    if (ch === '`') { bq = true; cur += ch; i++; continue; }
+    if (ch === ';') { out.push(cur.trim()); cur = ''; i++; continue; }
+    cur += ch; i++;
+  }
+  if (cur.trim()) out.push(cur.trim());
+  return out;
 }
 
 async function createTableIfMissing(tableName, createSQL) {
@@ -688,6 +927,33 @@ async function runMigrations() {
       created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     ) ENGINE=InnoDB
   `);
+
+  // Phase 2A.2 — per-user warehouse access (membership only; operation rights
+  // stay in RBAC). admin/developer get IMPLICIT all-access in code, so they
+  // need no rows here. A user with NO row sees no warehouse once enforcement
+  // is on (WAREHOUSE_SCOPE_ENFORCE). Idempotent; safe to re-run.
+  await createTableIfMissing('user_warehouse_access', `
+    CREATE TABLE user_warehouse_access (
+      id INT AUTO_INCREMENT PRIMARY KEY,
+      user_id INT NOT NULL,
+      warehouse_id VARCHAR(50) NOT NULL,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      created_by VARCHAR(100),
+      UNIQUE KEY uq_user_warehouse (user_id, warehouse_id),
+      KEY idx_uwa_user (user_id),
+      KEY idx_uwa_warehouse (warehouse_id)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+  `);
+  // FKs are best-effort: the project does not enforce a warehouses(branch_id)
+  // FK, and a legacy DB with a mismatched engine/charset must not break boot.
+  try {
+    const [fk] = await db.query(
+      "SELECT 1 FROM information_schema.TABLE_CONSTRAINTS WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='user_warehouse_access' AND CONSTRAINT_TYPE='FOREIGN KEY' LIMIT 1");
+    if (!fk.length) {
+      await db.query("ALTER TABLE user_warehouse_access ADD CONSTRAINT fk_uwa_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE");
+      await db.query("ALTER TABLE user_warehouse_access ADD CONSTRAINT fk_uwa_warehouse FOREIGN KEY (warehouse_id) REFERENCES warehouses(id) ON DELETE CASCADE");
+    }
+  } catch (e) { console.log('[DB] user_warehouse_access FK skipped:', String(e.message).substring(0, 120)); }
 
   // Branches: add new columns
   await addColumnIfMissing('branches', 'warehouse_id', "VARCHAR(50)");
@@ -1508,6 +1774,81 @@ async function runMigrations() {
       INDEX idx_audit_entity (entity_type, entity_id),
       INDEX idx_audit_user (username),
       INDEX idx_audit_date (created_at)
+    ) ENGINE=InnoDB
+  `);
+
+  // Phase 3A.1 — self-healing GL core. db/schema.sql creates gl_accounts/
+  // gl_journals/gl_entries on a TRULY empty DB, but a PARTIAL DB (users table
+  // present so schema.sql is skipped on boot, yet gl_* somehow absent) would
+  // leave the column-ALTERs below no-op'ing against a missing table. Creating
+  // them idempotently HERE — before any gl ALTER — makes boot self-heal with
+  // zero manual ALTER. IF NOT EXISTS keeps two concurrent boots non-corrupting.
+  await createTableIfMissing('gl_accounts', `
+    CREATE TABLE IF NOT EXISTS gl_accounts (
+      id VARCHAR(50) PRIMARY KEY,
+      code VARCHAR(20) NOT NULL UNIQUE,
+      name_ar VARCHAR(200) NOT NULL,
+      name_en VARCHAR(200),
+      type ENUM('asset','liability','equity','revenue','expense') NOT NULL,
+      parent_id VARCHAR(50),
+      level INT DEFAULT 1,
+      is_active BOOLEAN DEFAULT TRUE,
+      balance DECIMAL(14,2) DEFAULT 0,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    ) ENGINE=InnoDB
+  `);
+  await createTableIfMissing('gl_journals', `
+    CREATE TABLE IF NOT EXISTS gl_journals (
+      id VARCHAR(50) PRIMARY KEY,
+      journal_number VARCHAR(20),
+      journal_date DATE,
+      reference_type VARCHAR(50),
+      reference_id VARCHAR(100),
+      description TEXT,
+      total_debit DECIMAL(14,2) DEFAULT 0,
+      total_credit DECIMAL(14,2) DEFAULT 0,
+      period_id VARCHAR(50),
+      status ENUM('posted','draft') DEFAULT 'posted',
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      created_by VARCHAR(100),
+      posted_by VARCHAR(100) DEFAULT '',
+      posted_at DATETIME,
+      reversed_by_journal_id VARCHAR(50) NULL,
+      reverses_journal_id VARCHAR(50) NULL,
+      reversed_at DATETIME NULL,
+      reversed_by VARCHAR(100) NULL,
+      brand_id VARCHAR(50) NULL,
+      branch_id VARCHAR(50) NULL,
+      project_id VARCHAR(50) NULL,
+      cost_center_id VARCHAR(50) NULL,
+      UNIQUE KEY uq_journal_number (journal_number)
+    ) ENGINE=InnoDB
+  `);
+  await createTableIfMissing('gl_entries', `
+    CREATE TABLE IF NOT EXISTS gl_entries (
+      id VARCHAR(50) PRIMARY KEY,
+      journal_id VARCHAR(50) NOT NULL,
+      account_id VARCHAR(50),
+      account_code VARCHAR(20),
+      account_name VARCHAR(200),
+      debit DECIMAL(14,2) DEFAULT 0,
+      credit DECIMAL(14,2) DEFAULT 0,
+      description TEXT,
+      brand_id VARCHAR(50),
+      branch_id VARCHAR(50),
+      project_id VARCHAR(50),
+      cost_center_id VARCHAR(50),
+      warehouse_id VARCHAR(50),
+      INDEX idx_gle_journal (journal_id)
+    ) ENGINE=InnoDB
+  `);
+  // Phase 3A.1 — DB-atomic per-day journal sequence (replaces timestamp-ordered
+  // numbering in lib/glPosting). One row per YYYYMMDD; lib/glPosting allocates
+  // the next serial via an atomic increment + the UNIQUE uq_journal_number guard.
+  await createTableIfMissing('gl_journal_seq', `
+    CREATE TABLE IF NOT EXISTS gl_journal_seq (
+      period_key VARCHAR(20) PRIMARY KEY,
+      last_serial INT NOT NULL DEFAULT 0
     ) ENGINE=InnoDB
   `);
 
@@ -2628,6 +2969,11 @@ async function runMigrations() {
   // exist on all deploys (idempotent: a no-op where they already exist).
   await addColumnIfMissing('inventory_movements', 'reference_type', "VARCHAR(50)");
   await addColumnIfMissing('inventory_movements', 'reference_id', "VARCHAR(100)");
+  // Phase 4A (3C closure) — a MONOTONIC sequence so stocktake reconciliation can
+  // window movements deterministically (seq > snapshot_seq AND seq <= counted_seq)
+  // instead of the fragile 1-second movement_date. The string id (MV-<ms>-<rand>)
+  // is NOT sortable. ADD COLUMN AUTO_INCREMENT backfills existing rows in PK order.
+  await addColumnIfMissing('inventory_movements', 'seq', "BIGINT NOT NULL AUTO_INCREMENT UNIQUE");
   await addColumnIfMissing('stocktakes', 'warehouse_id', "VARCHAR(50)");
   await addColumnIfMissing('stocktakes', 'branch_id', "VARCHAR(50)");
   await addColumnIfMissing('shortage_requests', 'branch_id', "VARCHAR(50)");
@@ -3640,13 +3986,37 @@ async function runMigrations() {
   `);
   // V5.9.7 — reversal support: extend the status enum + record who/when/why
   // and the reversing GL journal so the audit trail is complete.
+  // Phase 0 (Contracts & Safety) — also add 'partially_received' so a transfer
+  // can be received cumulatively across several shipments. Idempotent: MODIFY
+  // to the same/superset enum is a no-op on a DB that already has it.
   try {
-    await db.query(`ALTER TABLE stock_issues MODIFY COLUMN status ENUM('draft','approved','issued','received','cancelled','reversed') DEFAULT 'draft'`);
-  } catch(e) { /* enum may already include reversed */ }
+    await db.query(`ALTER TABLE stock_issues MODIFY COLUMN status ENUM('draft','approved','issued','partially_received','received','cancelled','reversed') DEFAULT 'draft'`);
+  } catch(e) { /* enum may already include partially_received / reversed */ }
   await addColumnIfMissing('stock_issues', 'reversed_by', "VARCHAR(100)");
   await addColumnIfMissing('stock_issues', 'reversed_at', "DATETIME");
   await addColumnIfMissing('stock_issues', 'reverse_reason', "VARCHAR(500)");
   await addColumnIfMissing('stock_issues', 'reverse_gl_journal_id', "VARCHAR(60)");
+  // Phase 3A — optimistic-concurrency version (bumped on every transition). The
+  // legacy UI never sends a version, so the existing state-guarded UPDATE keeps
+  // working; clients that DO send `expectedVersion` get a true VERSION_CONFLICT.
+  await addColumnIfMissing('stock_issues', 'version', "INT NOT NULL DEFAULT 1");
+  // Phase 3A — append-only audit trail; one row per lifecycle transition,
+  // written inside the SAME transaction as the state change (atomic).
+  await createTableIfMissing('stock_issue_events', `
+    CREATE TABLE stock_issue_events (
+      id VARCHAR(60) PRIMARY KEY,
+      issue_id VARCHAR(60) NOT NULL,
+      action VARCHAR(30) NOT NULL,
+      from_status VARCHAR(30),
+      to_status VARCHAR(30),
+      actor VARCHAR(100),
+      note VARCHAR(500),
+      payload_json TEXT,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      INDEX idx_issue (issue_id),
+      INDEX idx_created (created_at)
+    ) ENGINE=InnoDB
+  `);
   await createTableIfMissing('stock_issue_items', `
     CREATE TABLE stock_issue_items (
       id VARCHAR(60) PRIMARY KEY,
@@ -3669,6 +4039,483 @@ async function runMigrations() {
       PRIMARY KEY (ymd)
     ) ENGINE=InnoDB
   `);
+
+  // ═══════════════════════════════════════════════════════════
+  // PHASE 3B — Independent inventory transactions (receipts / issues /
+  // adjustments). FULLY SEPARATE from transfers (stock_issues) and from the
+  // legacy delta-model adjustments (stock_adjustments) — distinct tables, a
+  // distinct router (/api/inventory/v2), and distinct movement reference_types
+  // (inv_receipt / inv_issue / inv_adjustment). Unified lifecycle:
+  // draft → approved → posted → reversed (+ cancel before posting, delete draft).
+  // All idempotent (CREATE … IF NOT EXISTS) and safe under concurrent boot.
+  // posted_unit_cost freezes the line cost at posting so a reverse restores the
+  // EXACT original valuation (not the drifting current WAC).
+  // ═══════════════════════════════════════════════════════════
+  await createTableIfMissing('inv_receipts', `
+    CREATE TABLE IF NOT EXISTS inv_receipts (
+      id VARCHAR(60) PRIMARY KEY,
+      receipt_number VARCHAR(40) NOT NULL,
+      warehouse_id VARCHAR(50) NOT NULL,
+      brand_id VARCHAR(50),
+      branch_id VARCHAR(50),
+      cost_center_id VARCHAR(50),
+      receipt_date DATE,
+      status ENUM('draft','approved','posted','cancelled','reversed') DEFAULT 'draft',
+      source_ref VARCHAR(200),
+      total_cost DECIMAL(14,4) DEFAULT 0,
+      total_value DECIMAL(14,2) DEFAULT 0,
+      notes TEXT,
+      gl_journal_id VARCHAR(60),
+      reverse_gl_journal_id VARCHAR(60),
+      version INT NOT NULL DEFAULT 1,
+      created_by VARCHAR(100),
+      approved_by VARCHAR(100),
+      posted_by VARCHAR(100),
+      cancelled_by VARCHAR(100),
+      reversed_by VARCHAR(100),
+      cancel_reason VARCHAR(500),
+      reverse_reason VARCHAR(500),
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      approved_at DATETIME,
+      posted_at DATETIME,
+      cancelled_at DATETIME,
+      reversed_at DATETIME,
+      UNIQUE KEY uq_receipt_number (receipt_number),
+      INDEX idx_rcv_wh (warehouse_id),
+      INDEX idx_rcv_status (status),
+      INDEX idx_rcv_created (created_at)
+    ) ENGINE=InnoDB
+  `);
+  await createTableIfMissing('inv_receipt_items', `
+    CREATE TABLE IF NOT EXISTS inv_receipt_items (
+      id VARCHAR(60) PRIMARY KEY,
+      receipt_id VARCHAR(60) NOT NULL,
+      item_id VARCHAR(50) NOT NULL,
+      item_name VARCHAR(200),
+      unit VARCHAR(50),
+      qty DECIMAL(12,2) DEFAULT 0,
+      unit_cost DECIMAL(14,4) DEFAULT 0,
+      line_total DECIMAL(14,2) DEFAULT 0,
+      posted_unit_cost DECIMAL(14,4) DEFAULT 0,
+      notes VARCHAR(400),
+      INDEX idx_ri_receipt (receipt_id),
+      INDEX idx_ri_item (item_id)
+    ) ENGINE=InnoDB
+  `);
+  await createTableIfMissing('inv_issues', `
+    CREATE TABLE IF NOT EXISTS inv_issues (
+      id VARCHAR(60) PRIMARY KEY,
+      issue_number VARCHAR(40) NOT NULL,
+      warehouse_id VARCHAR(50) NOT NULL,
+      brand_id VARCHAR(50),
+      branch_id VARCHAR(50),
+      cost_center_id VARCHAR(50),
+      issue_date DATE,
+      status ENUM('draft','approved','posted','cancelled','reversed') DEFAULT 'draft',
+      reason VARCHAR(200),
+      recipient VARCHAR(200),
+      expense_account_code VARCHAR(20),
+      total_cost DECIMAL(14,4) DEFAULT 0,
+      total_value DECIMAL(14,2) DEFAULT 0,
+      notes TEXT,
+      gl_journal_id VARCHAR(60),
+      reverse_gl_journal_id VARCHAR(60),
+      version INT NOT NULL DEFAULT 1,
+      created_by VARCHAR(100),
+      approved_by VARCHAR(100),
+      posted_by VARCHAR(100),
+      cancelled_by VARCHAR(100),
+      reversed_by VARCHAR(100),
+      cancel_reason VARCHAR(500),
+      reverse_reason VARCHAR(500),
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      approved_at DATETIME,
+      posted_at DATETIME,
+      cancelled_at DATETIME,
+      reversed_at DATETIME,
+      UNIQUE KEY uq_inv_issue_number (issue_number),
+      INDEX idx_isu_wh (warehouse_id),
+      INDEX idx_isu_status (status),
+      INDEX idx_isu_created (created_at)
+    ) ENGINE=InnoDB
+  `);
+  await createTableIfMissing('inv_issue_items', `
+    CREATE TABLE IF NOT EXISTS inv_issue_items (
+      id VARCHAR(60) PRIMARY KEY,
+      issue_id VARCHAR(60) NOT NULL,
+      item_id VARCHAR(50) NOT NULL,
+      item_name VARCHAR(200),
+      unit VARCHAR(50),
+      qty DECIMAL(12,2) DEFAULT 0,
+      unit_cost DECIMAL(14,4) DEFAULT 0,
+      line_total DECIMAL(14,2) DEFAULT 0,
+      posted_unit_cost DECIMAL(14,4) DEFAULT 0,
+      notes VARCHAR(400),
+      INDEX idx_ii_issue (issue_id),
+      INDEX idx_ii_item (item_id)
+    ) ENGINE=InnoDB
+  `);
+  await createTableIfMissing('inv_adjustments', `
+    CREATE TABLE IF NOT EXISTS inv_adjustments (
+      id VARCHAR(60) PRIMARY KEY,
+      adjustment_number VARCHAR(40) NOT NULL,
+      warehouse_id VARCHAR(50) NOT NULL,
+      brand_id VARCHAR(50),
+      branch_id VARCHAR(50),
+      cost_center_id VARCHAR(50),
+      adjustment_date DATE,
+      status ENUM('draft','approved','posted','cancelled','reversed') DEFAULT 'draft',
+      reason VARCHAR(200),
+      reference_evidence VARCHAR(500),
+      total_delta_value DECIMAL(14,2) DEFAULT 0,
+      total_cost DECIMAL(14,4) DEFAULT 0,
+      total_value DECIMAL(14,2) DEFAULT 0,
+      notes TEXT,
+      gl_journal_id VARCHAR(60),
+      reverse_gl_journal_id VARCHAR(60),
+      version INT NOT NULL DEFAULT 1,
+      created_by VARCHAR(100),
+      approved_by VARCHAR(100),
+      posted_by VARCHAR(100),
+      cancelled_by VARCHAR(100),
+      reversed_by VARCHAR(100),
+      cancel_reason VARCHAR(500),
+      reverse_reason VARCHAR(500),
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      approved_at DATETIME,
+      posted_at DATETIME,
+      cancelled_at DATETIME,
+      reversed_at DATETIME,
+      UNIQUE KEY uq_adjustment_number (adjustment_number),
+      INDEX idx_adv_wh (warehouse_id),
+      INDEX idx_adv_status (status),
+      INDEX idx_adv_created (created_at)
+    ) ENGINE=InnoDB
+  `);
+  await createTableIfMissing('inv_adjustment_items', `
+    CREATE TABLE IF NOT EXISTS inv_adjustment_items (
+      id VARCHAR(60) PRIMARY KEY,
+      adjustment_id VARCHAR(60) NOT NULL,
+      item_id VARCHAR(50) NOT NULL,
+      item_name VARCHAR(200),
+      unit VARCHAR(50),
+      system_qty_snapshot DECIMAL(12,2) DEFAULT 0,
+      counted_qty DECIMAL(12,2) DEFAULT 0,
+      delta DECIMAL(12,2) DEFAULT 0,
+      unit_cost DECIMAL(14,4) DEFAULT 0,
+      delta_value DECIMAL(14,2) DEFAULT 0,
+      posted_unit_cost DECIMAL(14,4) DEFAULT 0,
+      notes VARCHAR(400),
+      INDEX idx_ai_adj (adjustment_id),
+      INDEX idx_ai_item (item_id)
+    ) ENGINE=InnoDB
+  `);
+  // Existing-DB top-up (the create handler writes total_cost/total_value uniformly).
+  await addColumnIfMissing('inv_adjustments', 'total_cost', 'DECIMAL(14,4) DEFAULT 0');
+  await addColumnIfMissing('inv_adjustments', 'total_value', 'DECIMAL(14,2) DEFAULT 0');
+  // Phase 3C closure — receipts now carry a mandatory reason + validated counter
+  // (credit) account so STOCK_GAIN is never a silent default.
+  await addColumnIfMissing('inv_receipts', 'reason', 'VARCHAR(200)');
+  await addColumnIfMissing('inv_receipts', 'counter_account_code', 'VARCHAR(20)');
+  // Unified append-only audit timeline for all three doc types (one row per
+  // transition, written inside the SAME txn as the state change).
+  await createTableIfMissing('inv_tx_events', `
+    CREATE TABLE IF NOT EXISTS inv_tx_events (
+      id VARCHAR(60) PRIMARY KEY,
+      doc_type VARCHAR(20) NOT NULL,
+      doc_id VARCHAR(60) NOT NULL,
+      action VARCHAR(30) NOT NULL,
+      from_status VARCHAR(30),
+      to_status VARCHAR(30),
+      actor VARCHAR(100),
+      note VARCHAR(500),
+      payload_json TEXT,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      INDEX idx_evt_doc (doc_type, doc_id),
+      INDEX idx_evt_created (created_at)
+    ) ENGINE=InnoDB
+  `);
+  // Atomic per-(doc_type, day) numbering counter (RCV-/ISU-/ADV-/STK- YYYYMMDD-NNNN).
+  await createTableIfMissing('inv_tx_counter', `
+    CREATE TABLE IF NOT EXISTS inv_tx_counter (
+      doc_type VARCHAR(20) NOT NULL,
+      ymd CHAR(8) NOT NULL,
+      last_serial INT NOT NULL DEFAULT 0,
+      PRIMARY KEY (doc_type, ymd)
+    ) ENGINE=InnoDB
+  `);
+
+  // ─── Phase 3C — professional stocktake & reconciliation (isolated v2 tables) ───
+  // The new stocktake is the single professional source going forward; it writes
+  // NO stock/GL itself — at post it creates a 3B Adjustment and lets the Adjustment
+  // Engine apply the variance. Legacy `stocktakes`/`stocktake_items` stay frozen.
+  // counted_qty is NULLABLE: NULL = not counted yet (excluded at post, never zeroed),
+  // 0 = counted and found empty. snapshot_qty/snapshot_at freeze the item list at
+  // the start of counting; theoretical_qty = snapshot + net movements until counted_at.
+  await createTableIfMissing('inv_stocktakes', `
+    CREATE TABLE IF NOT EXISTS inv_stocktakes (
+      id VARCHAR(60) PRIMARY KEY,
+      stocktake_number VARCHAR(40) NOT NULL,
+      warehouse_id VARCHAR(50) NOT NULL,
+      brand_id VARCHAR(50),
+      branch_id VARCHAR(50),
+      cost_center_id VARCHAR(50),
+      stocktake_date DATE,
+      status ENUM('draft','counting','submitted','approved','posted','cancelled') DEFAULT 'draft',
+      scope_type ENUM('full','category','items') DEFAULT 'full',
+      category_id VARCHAR(50),
+      include_zero BOOLEAN DEFAULT FALSE,
+      blind_count BOOLEAN DEFAULT FALSE,
+      count_method ENUM('full','cycle','spot') DEFAULT 'full',
+      variance_qty_threshold DECIMAL(12,3) DEFAULT 0,
+      variance_value_threshold DECIMAL(14,2) DEFAULT 0,
+      evidence_threshold DECIMAL(14,2) DEFAULT 0,
+      snapshot_at DATETIME,
+      snapshot_seq BIGINT DEFAULT 0,
+      reason VARCHAR(200),
+      reference_evidence VARCHAR(500),
+      notes TEXT,
+      total_lines INT DEFAULT 0,
+      counted_lines INT DEFAULT 0,
+      variance_lines INT DEFAULT 0,
+      total_variance_value DECIMAL(14,2) DEFAULT 0,
+      adjustment_id VARCHAR(60),
+      adjustment_number VARCHAR(40),
+      gl_journal_id VARCHAR(60),
+      version INT NOT NULL DEFAULT 1,
+      created_by VARCHAR(100),
+      submitted_by VARCHAR(100),
+      submitted_at DATETIME,
+      approved_by VARCHAR(100),
+      approved_at DATETIME,
+      recount_by VARCHAR(100),
+      recount_at DATETIME,
+      recount_reason VARCHAR(500),
+      posted_by VARCHAR(100),
+      posted_at DATETIME,
+      cancelled_by VARCHAR(100),
+      cancelled_at DATETIME,
+      cancel_reason VARCHAR(500),
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      UNIQUE KEY uq_stocktake_number (stocktake_number),
+      INDEX idx_stk_wh (warehouse_id),
+      INDEX idx_stk_status (status),
+      INDEX idx_stk_created (created_at)
+    ) ENGINE=InnoDB
+  `);
+  await createTableIfMissing('inv_stocktake_items', `
+    CREATE TABLE IF NOT EXISTS inv_stocktake_items (
+      id VARCHAR(60) PRIMARY KEY,
+      stocktake_id VARCHAR(60) NOT NULL,
+      item_id VARCHAR(50) NOT NULL,
+      item_name VARCHAR(200),
+      unit VARCHAR(50),
+      category_id VARCHAR(50),
+      snapshot_qty DECIMAL(12,3) DEFAULT 0,
+      counted_qty DECIMAL(12,3) NULL,
+      counted_at DATETIME,
+      counted_seq BIGINT DEFAULT 0,
+      net_movements DECIMAL(12,3) DEFAULT 0,
+      theoretical_qty DECIMAL(12,3) DEFAULT 0,
+      variance DECIMAL(12,3) DEFAULT 0,
+      unit_cost DECIMAL(14,4) DEFAULT 0,
+      variance_value DECIMAL(14,2) DEFAULT 0,
+      variance_pct DECIMAL(8,2) DEFAULT 0,
+      is_flagged BOOLEAN DEFAULT FALSE,
+      reason_code VARCHAR(40),
+      notes VARCHAR(400),
+      counted_by VARCHAR(100),
+      INDEX idx_sti_stk (stocktake_id),
+      INDEX idx_sti_item (item_id)
+    ) ENGINE=InnoDB
+  `);
+  // Phase 4A (3C closure) — movement-sequence window for deterministic
+  // reconciliation (existing-DB top-up; fresh DBs get them from the CREATE above).
+  await addColumnIfMissing('inv_stocktakes', 'snapshot_seq', 'BIGINT DEFAULT 0');
+  await addColumnIfMissing('inv_stocktake_items', 'counted_seq', 'BIGINT DEFAULT 0');
+
+  // ─── Phase 4A — Item Master (ADDITIVE on inv_items; never drop/rename, sales/
+  // purchases/production read it) + per-warehouse replenishment rules ───────────
+  // sku_norm = UPPER(TRIM(sku)) maintained by the route; UNIQUE allows multiple
+  // NULLs (legacy rows have no SKU). version + audit (inv_tx_events doc_type='item').
+  await addColumnIfMissing('inv_items', 'sku', "VARCHAR(100)");
+  await addColumnIfMissing('inv_items', 'sku_norm', "VARCHAR(120)");
+  await addColumnIfMissing('inv_items', 'version', "INT NOT NULL DEFAULT 1");
+  await addColumnIfMissing('inv_items', 'default_warehouse_id', "VARCHAR(50)");
+  await addColumnIfMissing('inv_items', 'description', "TEXT");
+  await addColumnIfMissing('inv_items', 'notes', "VARCHAR(500)");
+  try { await db.query('CREATE UNIQUE INDEX uq_inv_items_sku_norm ON inv_items (sku_norm)'); } catch (e) { /* exists or dup data */ }
+  // Per-(warehouse, item) replenishment rules. min/reorder/max/safety/lead-time
+  // are per-warehouse here (inv_items.min_stock stays the GLOBAL fallback for
+  // legacy reads). The replenishment engine reads these; nothing posts stock.
+  await createTableIfMissing('warehouse_item_rules', `
+    CREATE TABLE IF NOT EXISTS warehouse_item_rules (
+      id VARCHAR(60) PRIMARY KEY,
+      warehouse_id VARCHAR(50) NOT NULL,
+      item_id VARCHAR(50) NOT NULL,
+      min_qty DECIMAL(12,3) DEFAULT 0,
+      reorder_point DECIMAL(12,3) DEFAULT 0,
+      reorder_qty DECIMAL(12,3) DEFAULT 0,
+      max_stock DECIMAL(12,3) DEFAULT 0,
+      safety_stock DECIMAL(12,3) DEFAULT 0,
+      lead_time_days INT DEFAULT 0,
+      is_enabled BOOLEAN DEFAULT TRUE,
+      last_reviewed_at DATETIME,
+      version INT NOT NULL DEFAULT 1,
+      created_by VARCHAR(100),
+      updated_by VARCHAR(100),
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      UNIQUE KEY uq_wir_wh_item (warehouse_id, item_id),
+      INDEX idx_wir_item (item_id)
+    ) ENGINE=InnoDB
+  `);
+
+  // ─── Phase 4B — Lots, Expiry, FEFO & Traceability (ADDITIVE) ──────────────────
+  // tracking_mode = none | lot | expiry. An item is "tracked" when mode != 'none'.
+  // For tracked items the lot ledger below is the system of record and the hard
+  // invariant Σ(warehouse_lot_balances.qty) = warehouse_stock.qty is enforced after
+  // every transaction. `expired` is DERIVED from expiry_date, never stored.
+  await addColumnIfMissing('inv_items', 'tracking_mode', "ENUM('none','lot','expiry') NOT NULL DEFAULT 'none'");
+  // Master lot record — one row per (item, lot_number). lot_norm = UPPER(TRIM(lot_number)),
+  // UNIQUE per item. lifecycle is a manual state machine; expiry is a date, not a status.
+  await createTableIfMissing('inventory_lots', `
+    CREATE TABLE IF NOT EXISTS inventory_lots (
+      id VARCHAR(60) PRIMARY KEY,
+      item_id VARCHAR(50) NOT NULL,
+      lot_number VARCHAR(120) NOT NULL,
+      lot_norm VARCHAR(140) NOT NULL,
+      manufacture_date DATE NULL,
+      expiry_date DATE NULL,
+      lifecycle_status ENUM('active','quarantined','recalled','closed') NOT NULL DEFAULT 'active',
+      source_type VARCHAR(30) NULL,
+      source_id VARCHAR(100) NULL,
+      unit_cost DECIMAL(14,4) DEFAULT 0,
+      notes VARCHAR(500) NULL,
+      is_imported TINYINT(1) NOT NULL DEFAULT 0,
+      version INT NOT NULL DEFAULT 1,
+      created_by VARCHAR(100),
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      UNIQUE KEY uq_lot_item_norm (item_id, lot_norm),
+      INDEX idx_lot_item (item_id),
+      INDEX idx_lot_expiry (expiry_date),
+      INDEX idx_lot_status (lifecycle_status)
+    ) ENGINE=InnoDB
+  `);
+  // Per-(warehouse, lot) on-hand. item_id is denormalised so the per-item invariant
+  // (Σ qty WHERE warehouse_id=? AND item_id=?) is a single-table read with no join.
+  await createTableIfMissing('warehouse_lot_balances', `
+    CREATE TABLE IF NOT EXISTS warehouse_lot_balances (
+      id VARCHAR(60) PRIMARY KEY,
+      warehouse_id VARCHAR(50) NOT NULL,
+      lot_id VARCHAR(60) NOT NULL,
+      item_id VARCHAR(50) NOT NULL,
+      qty DECIMAL(14,3) NOT NULL DEFAULT 0,
+      updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+      UNIQUE KEY uq_wlb_wh_lot (warehouse_id, lot_id),
+      INDEX idx_wlb_wh_item (warehouse_id, item_id),
+      INDEX idx_wlb_lot (lot_id)
+    ) ENGINE=InnoDB
+  `);
+  // Lot-level ledger. Each row signs a qty (+in / -out) and links to the parent
+  // inventory_movements row by seq. UNIQUE(seq, lot) prevents double-posting a lot.
+  await createTableIfMissing('inventory_lot_movements', `
+    CREATE TABLE IF NOT EXISTS inventory_lot_movements (
+      id VARCHAR(60) PRIMARY KEY,
+      inventory_movement_seq BIGINT NULL,
+      movement_id VARCHAR(60) NULL,
+      lot_id VARCHAR(60) NOT NULL,
+      warehouse_id VARCHAR(50) NOT NULL,
+      item_id VARCHAR(50) NOT NULL,
+      signed_qty DECIMAL(14,3) NOT NULL,
+      reference_type VARCHAR(40) NULL,
+      reference_id VARCHAR(100) NULL,
+      reason VARCHAR(200) NULL,
+      actor VARCHAR(100) NULL,
+      occurred_at DATETIME NOT NULL,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      UNIQUE KEY uq_ilm_seq_lot (inventory_movement_seq, lot_id),
+      INDEX idx_ilm_lot (lot_id),
+      INDEX idx_ilm_ref (reference_type, reference_id),
+      INDEX idx_ilm_wh_item (warehouse_id, item_id)
+    ) ENGINE=InnoDB
+  `);
+  // Per-line lot intent captured on the v2 document drafts (JSON): receipts carry
+  // the received lots; issues/adjustments may carry a manual allocation (else FEFO
+  // is computed at post). Parsed by routes/inventory-transactions.js at post time.
+  await addColumnIfMissing('inv_receipt_items', 'lot_data', 'TEXT NULL');
+  await addColumnIfMissing('inv_issue_items', 'lot_data', 'TEXT NULL');
+  await addColumnIfMissing('inv_adjustment_items', 'lot_data', 'TEXT NULL');
+  // Transfer lot genealogy + in-transit tracking: which source lots a transfer
+  // issued, and how much of each has been received at the destination (partial-safe).
+  await createTableIfMissing('lot_transfer_allocations', `
+    CREATE TABLE IF NOT EXISTS lot_transfer_allocations (
+      id VARCHAR(60) PRIMARY KEY,
+      transfer_id VARCHAR(60) NOT NULL,
+      item_id VARCHAR(50) NOT NULL,
+      source_lot_id VARCHAR(60) NOT NULL,
+      lot_number VARCHAR(120) NULL,
+      expiry_date DATE NULL,
+      source_warehouse_id VARCHAR(50) NOT NULL,
+      dest_warehouse_id VARCHAR(50) NOT NULL,
+      qty DECIMAL(14,3) NOT NULL,
+      received_qty DECIMAL(14,3) NOT NULL DEFAULT 0,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      UNIQUE KEY uq_lta_transfer_lot (transfer_id, source_lot_id),
+      INDEX idx_lta_transfer (transfer_id, item_id)
+    ) ENGINE=InnoDB
+  `);
+  // Production consumption genealogy: which component lots a work order consumed.
+  await createTableIfMissing('work_order_lot_consumption', `
+    CREATE TABLE IF NOT EXISTS work_order_lot_consumption (
+      id VARCHAR(60) PRIMARY KEY,
+      work_order_id VARCHAR(60) NOT NULL,
+      component_item_id VARCHAR(50) NOT NULL,
+      lot_id VARCHAR(60) NOT NULL,
+      warehouse_id VARCHAR(50) NOT NULL,
+      qty DECIMAL(14,3) NOT NULL,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      INDEX idx_wolc_wo (work_order_id),
+      INDEX idx_wolc_lot (lot_id)
+    ) ENGINE=InnoDB
+  `);
+  // Lot-level stocktake counts: for a tracked item the counter enters a qty per
+  // lot (or an "unknown" lot via an audited row); Σ(counted per lot)=line countedQty.
+  await createTableIfMissing('inv_stocktake_lot_items', `
+    CREATE TABLE IF NOT EXISTS inv_stocktake_lot_items (
+      id VARCHAR(60) PRIMARY KEY,
+      stocktake_id VARCHAR(60) NOT NULL,
+      item_id VARCHAR(50) NOT NULL,
+      lot_id VARCHAR(60) NULL,
+      lot_number VARCHAR(120) NULL,
+      expiry_date DATE NULL,
+      counted_qty DECIMAL(14,3) NOT NULL DEFAULT 0,
+      counted_seq BIGINT DEFAULT 0,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      INDEX idx_stli_stk_item (stocktake_id, item_id)
+    ) ENGINE=InnoDB
+  `);
+  // Production output genealogy: links a produced finished-goods lot back to the
+  // component lots that went into it (backward traceability for recall).
+  await createTableIfMissing('production_output_lots', `
+    CREATE TABLE IF NOT EXISTS production_output_lots (
+      id VARCHAR(60) PRIMARY KEY,
+      work_order_id VARCHAR(60) NOT NULL,
+      output_lot_id VARCHAR(60) NOT NULL,
+      component_lot_id VARCHAR(60) NULL,
+      qty DECIMAL(14,3) NULL,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      INDEX idx_pol_wo (work_order_id),
+      INDEX idx_pol_output (output_lot_id),
+      INDEX idx_pol_component (component_lot_id)
+    ) ENGINE=InnoDB
+  `);
+
+  // Phase 5A (RC) — EXPLAIN-evidenced composite index. The inventory grid's
+  // last_movement subquery and the replenishment engine's out_qty/last-movement
+  // subqueries all probe inventory_movements by (item_id, warehouse_id [,date]).
+  // Measured on the 100k-movement perf dataset: grid sort=qty 1.93s → 0.60s,
+  // replenishment 3.1s → 1.03s (0.16s per-warehouse). Build time ~0.8s (online).
+  try { await db.query('CREATE INDEX idx_invmov_item_wh_date ON inventory_movements (item_id, warehouse_id, movement_date)'); } catch (e) {}
 
   // ═══════════════════════════════════════════════════════════
   // PHASE 2 — Production Orders
@@ -4713,9 +5560,17 @@ async function runMigrations() {
       INDEX idx_user_age (username, created_at)
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
   `);
-  // House-keeping: drop idempotency rows older than 24h (cheap, runs on boot)
+  // Phase 3A.1 — request fingerprint so the SAME key with a DIFFERENT payload is
+  // rejected as IDEMPOTENCY_CONFLICT instead of replaying a mismatched result.
+  await addColumnIfMissing('idempotency_keys', 'request_hash', "VARCHAR(64)");
+  // House-keeping / retention policy (Phase 3B): purge COMPLETED idempotency
+  // results older than IDEMPOTENCY_RETENTION_DAYS (default 30). An IN-PROGRESS
+  // reservation (status_code IS NULL) is never deleted, so a live request is
+  // never torn out from under itself. Runs on every boot + daily (unref'd timer).
   try {
-    await db.query(`DELETE FROM idempotency_keys WHERE created_at < DATE_SUB(NOW(), INTERVAL 24 HOUR)`);
+    const _idemRetention = require('./lib/idempotencyRetention');
+    await _idemRetention.cleanupIdempotencyKeys(db);
+    _idemRetention.startIdempotencyCleanup(db);
   } catch(e) {}
 
   console.log('[v5-migrations] Real-Estate / Contracts / Work-Orders / AP-AR + V5.1 indexes ready.');
@@ -5341,15 +6196,28 @@ async function runMigrations() {
   }
 }
 
-app.listen(PORT, async () => {
-  console.log(`Moroccan Taste POS running on port ${PORT}`);
-  await autoInitDB();
-  // v6.1.0 Wave E.6 — start the ZATCA submission worker after migrations
-  // complete so it can see the new zatca_submission_queue table. The
-  // worker no-ops gracefully until the operator finishes onboarding.
+// Phase 4A — run ALL migrations to completion BEFORE binding the port. The old
+// `app.listen(PORT, async () => { await autoInitDB() })` bound the socket first,
+// so /api/version answered while the schema was still incomplete — the migration
+// race that forced manual CREATE/ALTER in integration tests. Now the port only
+// opens once autoInitDB() (schema + runMigrations + collations) has finished, so
+// a successful /api/version GUARANTEES a complete schema. autoInitDB has its own
+// retry loop and returns (does not throw) on final failure, so the server still
+// comes up for diagnostics even if the DB is unreachable.
+(async () => {
   try {
-    require('./lib/zatca-worker').start();
+    await autoInitDB();
   } catch (e) {
-    console.warn('[zatca-worker] failed to start:', e.message);
+    console.error('[boot] autoInitDB error (starting anyway):', e && e.message);
   }
-});
+  app.listen(PORT, () => {
+    console.log(`Moroccan Taste POS running on port ${PORT}`);
+    // v6.1.0 Wave E.6 — start the ZATCA submission worker after migrations
+    // complete so it can see the new zatca_submission_queue table.
+    try {
+      require('./lib/zatca-worker').start();
+    } catch (e) {
+      console.warn('[zatca-worker] failed to start:', e.message);
+    }
+  });
+})();

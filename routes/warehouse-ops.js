@@ -5,6 +5,7 @@
  * All mutations post to GL automatically with period-lock checks.
  */
 const router = require('express').Router();
+const crypto = require('crypto');
 const db = require('../db/connection');
 const gl = require('../lib/glPosting');
 // v7.1 — keep the denormalized inv_items.stock rollup in sync after any
@@ -16,8 +17,26 @@ const { recomputeInvItemStock } = require('../lib/stockRecompute');
 const requireRole = require('../middleware/auth').requireRole;
 const MGR = requireRole('admin', 'manager');
 const BACKOFFICE = requireRole('admin', 'manager', 'employee', 'custody');
+// Phase 0 — canonical transfer lifecycle + cumulative-receipt math (shared
+// with tests/warehouseTransfer.test.js so the route and the contract test
+// can never drift apart).
+const TR = require('../lib/warehouseTransfer');
+// Phase 3A — unified API contract (canonical error codes + mutation envelope).
+const TC = require('../lib/transferContract');
+// Phase 4B — lot ledger (FEFO allocation + invariant) for tracked items.
+const L = require('../lib/lotLedger');
+// Read the auto-increment seq of a just-recorded inventory_movements row.
+async function _seqOf(conn, movId) { const [r] = await conn.query('SELECT seq FROM inventory_movements WHERE id=? LIMIT 1', [movId]); return r.length ? Number(r[0].seq) : null; }
 
 // ─── Helpers ──────────────────────────────────────────────────────────
+
+// Phase 0 §5 — the actor of every state change is the AUTHENTICATED user from
+// the JWT (req.user), never a spoofable name sent in the request body. The
+// global /api gate in server.js sets req.user for every /api/erp route, so
+// this is always populated for an authenticated request.
+function _actor(req) {
+  return (req.user && (req.user.username || req.user.name)) || '';
+}
 
 function _ymd(d) {
   d = d || new Date();
@@ -112,6 +131,125 @@ async function _applyStockMovement(warehouseId, itemId, qtyDelta, unitCost, trig
   return { oldQty, oldCost, newQty, newCost };
 }
 
+// ─── Phase 3A — transfer contract: idempotency, audit, version, envelope ──
+// All ADDITIVE: the legacy HTML UI keeps working because errors still carry a
+// human `error` and successes still carry the legacy keys (id/issueNumber/…).
+
+// Idempotency-Key (create/issue/receive). Phase 3A.1 — RESERVATION pattern:
+//   1. _idemBegin INSERTs a reservation row keyed by a hash of
+//      (operation | document | user | client-key). The UNIQUE PK is the race
+//      guard — only ONE concurrent request with the same composite key wins.
+//   2. On a duplicate key: same client-key but a DIFFERENT request payload →
+//      IDEMPOTENCY_CONFLICT; a COMPLETED reservation → replay the stored result;
+//      an in-progress one → conflict (the original is still running).
+//   3. The owner runs the work, then _idemComplete stores the response; a
+//      FAILURE calls _idemAbort to DELETE the reservation so a transient failure
+//      is never cached as a permanent success and a retry can proceed.
+// Retention/cleanup: the 24h sweep in server.js reclaims stale rows.
+function _idemKey(req) {
+  const k = (req.get && (req.get('Idempotency-Key') || req.get('X-Idempotency-Key'))) || '';
+  return k ? String(k).slice(0, 120) : '';
+}
+function _isDupErr(e) { return !!e && (e.code === 'ER_DUP_ENTRY' || e.errno === 1062 || /duplicate entry/i.test(e.message || '')); }
+function _stableStringify(o) {
+  if (o === null || typeof o !== 'object') return JSON.stringify(o);
+  if (Array.isArray(o)) return '[' + o.map(_stableStringify).join(',') + ']';
+  return '{' + Object.keys(o).sort().map((k) => JSON.stringify(k) + ':' + _stableStringify(o[k])).join(',') + '}';
+}
+function _bodyHash(body) { try { return crypto.createHash('sha256').update(_stableStringify(body || {})).digest('hex'); } catch (_) { return ''; } }
+function _idemId(scope, docId, username, key) {
+  return 'tx:' + crypto.createHash('sha1').update([scope, docId || '', username || '', key].join('|')).digest('hex');
+}
+// Returns one of:
+//   { mode:'none' }                          — no key supplied; proceed normally
+//   { mode:'proceed', idemId }               — reservation taken; do the work
+//   { mode:'replay', statusCode, body }      — completed before; replay it
+//   { mode:'conflict' }                      — same key+different payload / in-progress
+async function _idemBegin(scope, docId, key, req) {
+  if (!key) return { mode: 'none' };
+  const username = _actor(req);
+  const idemId = _idemId(scope, docId, username, key);
+  const hash = _bodyHash(req.body);
+  try {
+    await db.query(
+      'INSERT INTO idempotency_keys (id, username, endpoint, request_hash, status_code) VALUES (?,?,?,?,NULL)',
+      [idemId, username, scope, hash]);
+    return { mode: 'proceed', idemId };
+  } catch (e) {
+    if (!_isDupErr(e)) return { mode: 'proceed', idemId }; // table/other issue → never block the op
+    let row = null;
+    try { const [rows] = await db.query('SELECT request_hash, response_json, status_code FROM idempotency_keys WHERE id=? LIMIT 1', [idemId]); row = rows[0]; } catch (_) {}
+    if (!row) return { mode: 'proceed', idemId };
+    if (row.request_hash && hash && row.request_hash !== hash) return { mode: 'conflict' }; // same key, different payload
+    if (row.status_code != null && row.response_json != null) {
+      let body = null; try { body = JSON.parse(row.response_json); } catch (_) {}
+      return { mode: 'replay', statusCode: Number(row.status_code) || 200, body };
+    }
+    return { mode: 'conflict' }; // reserved but not yet completed → original in flight
+  }
+}
+async function _idemComplete(idemId, statusCode, body) {
+  if (!idemId) return;
+  try { await db.query('UPDATE idempotency_keys SET response_json=?, status_code=? WHERE id=?', [JSON.stringify(body), statusCode, idemId]); } catch (_) {}
+}
+async function _idemAbort(idemId) {
+  if (!idemId) return;
+  // Only delete a still-in-progress reservation (never a completed result).
+  try { await db.query('DELETE FROM idempotency_keys WHERE id=? AND status_code IS NULL', [idemId]); } catch (_) {}
+}
+
+// Optimistic-concurrency token from the client (body.expectedVersion or
+// If-Match header). null → no check (legacy path keeps the status-only guard).
+function _expectedVersion(req) {
+  const raw = (req.body && req.body.expectedVersion != null)
+    ? req.body.expectedVersion
+    : (req.get && req.get('If-Match'));
+  const n = parseInt(raw, 10);
+  return Number.isFinite(n) ? n : null;
+}
+
+// Append-only audit row — pass the tx `conn` so it commits atomically with the
+// state change; falls back to the pool for the non-transactional transitions.
+async function _audit(conn, issueId, action, fromStatus, toStatus, actor, note, payload) {
+  const q = conn || db;
+  try {
+    await q.query(
+      'INSERT INTO stock_issue_events (id, issue_id, action, from_status, to_status, actor, note, payload_json) VALUES (?,?,?,?,?,?,?,?)',
+      ['EV-' + Date.now() + '-' + Math.random().toString(36).slice(2, 7), issueId, action,
+       fromStatus || null, toStatus || null, actor || '', String(note || '').slice(0, 500),
+       payload ? JSON.stringify(payload).slice(0, 8000) : null]);
+  } catch (_) { /* audit is best-effort, never blocks the transaction's intent */ }
+  return { issueId, action, fromStatus: fromStatus || null, toStatus: toStatus || null, actor: actor || '', at: new Date().toISOString() };
+}
+
+// Unified success body (mutation envelope §5 + legacy keys) — WITHOUT sending.
+// Idempotent handlers store this BEFORE responding so a fast retry replays it.
+function _envelope(parts, legacy) {
+  return Object.assign({}, TC.mutationEnvelope(parts), legacy || {});
+}
+// Build + send in one step (non-idempotent handlers).
+function _ok(res, parts, legacy, statusCode) {
+  const body = _envelope(parts, legacy);
+  res.status(statusCode || 200).json(body);
+  return body;
+}
+// Unified error: canonical code + matching HTTP status; keeps human `error`.
+function _fail(res, codeOrErr, message) {
+  const code = TC.isCanonical(codeOrErr) ? codeOrErr : TC.mapError(codeOrErr);
+  const msg = message || (codeOrErr && codeOrErr.message) || code;
+  return res.status(TC.httpFor(code)).json(TC.errorBody(code, msg));
+}
+// Catch-block router: a scope-guard that already answered → swallow; a 404 stays
+// 404; a thrown DOMAIN error (has `.code` or a non-500 `.status`) → canonical
+// code; anything else is a genuine server fault → 500 (never mislabelled 422).
+function _catch(res, e) {
+  if (e && e._guarded) return;
+  if (e && e.status === 404) return res.status(404).json({ success: false, code: 'NOT_FOUND', error: e.message || 'not found' });
+  const hasDomain = e && (e.code || (e.status && e.status !== 500));
+  if (!hasDomain) return res.status(500).json({ success: false, code: 'SERVER_ERROR', error: (e && e.message) || 'error' });
+  return _fail(res, e, e && e.message);
+}
+
 // ═══════════════════════════════════════════════════════════════════════
 // PHASE 1 — WAREHOUSES HIERARCHY
 // ═══════════════════════════════════════════════════════════════════════
@@ -119,15 +257,16 @@ async function _applyStockMovement(warehouseId, itemId, qtyDelta, unitCost, trig
 // List warehouses with hierarchy info
 router.get('/warehouses/hierarchy', async (req, res) => {
   try {
+    const sc = req.whScopeClause('w.id');
     const [rows] = await db.query(`
       SELECT w.*,
              p.name AS parent_name, p.code AS parent_code,
              (SELECT COUNT(*) FROM warehouses WHERE parent_warehouse_id = w.id) AS child_count
       FROM warehouses w
       LEFT JOIN warehouses p ON p.id = w.parent_warehouse_id
-      WHERE w.is_active = 1
+      WHERE w.is_active = 1` + sc.sql + `
       ORDER BY COALESCE(w.parent_warehouse_id, w.id), w.is_main DESC, w.name
-    `);
+    `, sc.params);
     res.json(rows);
   } catch(e) { res.status(500).json({ error: e.message }); }
 });
@@ -136,6 +275,7 @@ router.get('/warehouses/hierarchy', async (req, res) => {
 router.post('/warehouses/:id/set-main', async (req, res) => {
   try {
     const id = req.params.id;
+    if (!req.guardWh(res, id)) return;
     const [rows] = await db.query('SELECT brand_id FROM warehouses WHERE id=?', [id]);
     if (!rows.length) return res.status(404).json({ error: 'warehouse not found' });
     const brandId = rows[0].brand_id;
@@ -154,7 +294,9 @@ router.post('/warehouses/:id/set-main', async (req, res) => {
 router.post('/warehouses/:id/unset-main', async (req, res) => {
   try {
     const id = req.params.id;
+    if (!req.guardWh(res, id)) return;
     const { parentId } = req.body || {};
+    if (!req.guardWh(res, parentId)) return;
     const [rows] = await db.query('SELECT brand_id, is_main FROM warehouses WHERE id=?', [id]);
     if (!rows.length) return res.status(404).json({ error: 'warehouse not found' });
     if (parentId) {
@@ -172,7 +314,9 @@ router.post('/warehouses/:id/unset-main', async (req, res) => {
 router.post('/warehouses/:id/set-parent', async (req, res) => {
   try {
     const id = req.params.id;
+    if (!req.guardWh(res, id)) return;
     const { parentId } = req.body;
+    if (!req.guardWh(res, parentId)) return;
     if (!parentId) {
       await db.query('UPDATE warehouses SET parent_warehouse_id=NULL WHERE id=?', [id]);
     } else {
@@ -232,6 +376,12 @@ router.get('/stock-issues', async (req, res) => {
     if (brandId)  { sql += ' AND si.brand_id = ?'; params.push(brandId); }
     if (dateFrom) { sql += ' AND si.issue_date >= ?'; params.push(dateFrom); }
     if (dateTo)   { sql += ' AND si.issue_date <= ?'; params.push(dateTo); }
+    // Scope: restrict to issues touching an accessible warehouse on EITHER end.
+    const sf = req.whScopeClause('si.from_warehouse_id'), st = req.whScopeClause('si.to_warehouse_id');
+    if (sf.sql) {
+      sql += ' AND (' + sf.sql.replace(/^\s*AND\s+/i, '') + ' OR ' + st.sql.replace(/^\s*AND\s+/i, '') + ')';
+      params.push(...sf.params, ...st.params);
+    }
     sql += ' ORDER BY si.created_at DESC LIMIT 500';
     const [rows] = await db.query(sql, params);
     res.json(rows);
@@ -262,6 +412,7 @@ router.get('/stock-issues/:id', async (req, res) => {
       LEFT JOIN users uv ON uv.username = si.reversed_by
       WHERE si.id=?`, [req.params.id]);
     if (!rows.length) return res.status(404).json({ error: 'not found' });
+    if (!req.guardTransfer(res, rows[0].from_warehouse_id, rows[0].to_warehouse_id)) return;
     const [items] = await db.query(`
       SELECT sii.*, i.name AS item_name, i.unit AS item_unit
       FROM stock_issue_items sii
@@ -274,20 +425,26 @@ router.get('/stock-issues/:id', async (req, res) => {
 
 // Create stock issue (draft)
 router.post('/stock-issues', async (req, res) => {
+  let _idemId = null;
   try {
-    const { fromWarehouseId, toWarehouseId, brandId, branchId, issueDate, notes, items, createdBy } = req.body;
-    if (!fromWarehouseId || !toWarehouseId) return res.status(400).json({ error: 'from/to warehouse required' });
+    const { fromWarehouseId, toWarehouseId, brandId, branchId, issueDate, notes, items } = req.body;
+    // Phase 0 §5 — creator identity comes from the JWT, not the body.
+    const createdBy = _actor(req);
+    // Phase 3A.1 — idempotency reservation (create has no document id yet).
+    const idemKey = _idemKey(req);
+    const idem = await _idemBegin('transfer:create', null, idemKey, req);
+    if (idem.mode === 'replay') return res.status(idem.statusCode).json(idem.body);
+    if (idem.mode === 'conflict') return _fail(res, 'IDEMPOTENCY_CONFLICT', 'طلب مكرر بنفس المفتاح (محتوى مختلف أو قيد المعالجة)');
+    _idemId = idem.idemId;
+    if (!fromWarehouseId || !toWarehouseId) return _fail(res, 'VALIDATION_ERROR', 'from/to warehouse required');
+    if (!req.guardTransfer(res, fromWarehouseId, toWarehouseId)) return;
     // v5.10.40 — Reject same-warehouse "transfers". Every ERP (SAP, Oracle,
     // Odoo) treats this as invalid because it has no business meaning and
     // would create offsetting movements at the same warehouse.
     if (String(fromWarehouseId) === String(toWarehouseId)) {
-      return res.status(400).json({
-        error: 'لا يمكن أن يكون المستودع المصدر هو نفسه المستودع الوجهة. اختر مستودعَين مختلفَين.',
-        code: 'SAME_WAREHOUSE'
-      });
+      return _fail(res, 'VALIDATION_ERROR', 'لا يمكن أن يكون المستودع المصدر هو نفسه المستودع الوجهة. اختر مستودعَين مختلفَين.');
     }
-    if (fromWarehouseId === toWarehouseId) return res.status(400).json({ error: 'from and to must differ' });
-    if (!items || !items.length) return res.status(400).json({ error: 'items required' });
+    if (!items || !items.length) return _fail(res, 'VALIDATION_ERROR', 'items required');
 
     // v7.5 — both warehouses must actually exist: a typo/phantom id used to
     // ride into stock_issues and surface later as a misleading
@@ -296,7 +453,7 @@ router.post('/stock-issues', async (req, res) => {
       'SELECT id FROM warehouses WHERE id IN (?, ?)', [fromWarehouseId, toWarehouseId]);
     const whFound = whRows.map(w => String(w.id));
     if (whFound.indexOf(String(fromWarehouseId)) < 0 || whFound.indexOf(String(toWarehouseId)) < 0) {
-      return res.status(400).json({ error: 'مستودع غير موجود — تحقق من المصدر والوجهة', code: 'warehouse-not-found' });
+      return _fail(res, 'VALIDATION_ERROR', 'مستودع غير موجود — تحقق من المصدر والوجهة');
     }
 
     const ymd = _ymd();
@@ -332,43 +489,142 @@ router.post('/stock-issues', async (req, res) => {
          it.unitCost, it.lineTotal, it.notes || '']);
     }
 
-    res.json({ success: true, id, issueNumber, totalCost: total });
-  } catch(e) { res.status(500).json({ error: e.message }); }
+    // Phase 3A — audit + unified envelope (legacy keys kept). Draft starts at v1.
+    const auditEvent = await _audit(null, id, 'create', null, 'draft', createdBy, notes || '',
+      { from: fromWarehouseId, to: toWarehouseId, lines: enriched.length });
+    const body = _envelope({
+      data: { id, issueNumber, status: 'draft', totalCost: total },
+      documentNumber: issueNumber, status: 'draft', version: 1, affectedStock: [], auditEvent,
+    }, { id, issueNumber, totalCost: total });
+    await _idemComplete(_idemId, 200, body);
+    res.json(body);
+  } catch(e) { if (_idemId) await _idemAbort(_idemId).catch(() => {}); _catch(res, e); }
+});
+
+// Edit a DRAFT in place (Phase 3A.1) — a REAL update, never delete+recreate.
+// Replaces the header fields + line items inside ONE transaction; preserves
+// id / issue_number / created_by / created_at; bumps version once; performs NO
+// stock movement and NO GL. expectedVersion is mandatory (optimistic lock).
+router.patch('/stock-issues/:id', async (req, res) => {
+  try {
+    const id = req.params.id;
+    const actor = _actor(req);
+    const { fromWarehouseId, toWarehouseId, issueDate, notes, items } = req.body || {};
+    const expectedVersion = _expectedVersion(req);
+    if (expectedVersion == null) return _fail(res, 'VALIDATION_ERROR', 'expectedVersion مطلوب لتعديل المسودة');
+    if (!fromWarehouseId || !toWarehouseId) return _fail(res, 'VALIDATION_ERROR', 'from/to warehouse required');
+    if (String(fromWarehouseId) === String(toWarehouseId)) return _fail(res, 'VALIDATION_ERROR', 'المصدر والوجهة يجب أن يكونا مختلفين');
+    if (!Array.isArray(items) || !items.length) return _fail(res, 'VALIDATION_ERROR', 'items required');
+    // Validate lines: positive qty, no duplicate itemId.
+    const seen = new Set();
+    for (const it of items) {
+      if (!it || !it.itemId) return _fail(res, 'VALIDATION_ERROR', 'صنف غير صالح');
+      if (seen.has(String(it.itemId))) return _fail(res, 'VALIDATION_ERROR', 'صنف مكرر في القائمة: ' + it.itemId);
+      seen.add(String(it.itemId));
+      if (!(Number(it.qtyRequested) > 0)) return _fail(res, 'VALIDATION_ERROR', 'الكمية يجب أن تكون أكبر من صفر');
+    }
+    const [rows] = await db.query('SELECT status, version, issue_number, from_warehouse_id, to_warehouse_id FROM stock_issues WHERE id=?', [id]);
+    if (!rows.length) return res.status(404).json({ success: false, code: 'NOT_FOUND', error: 'not found' });
+    const cur = rows[0];
+    if (cur.status !== 'draft') return _fail(res, 'INVALID_STATE_TRANSITION', 'لا يمكن تعديل إلا المسودة (draft). الحالة الحالية: ' + cur.status);
+    // Scope on the NEW source + destination (both ends).
+    if (!req.guardTransfer(res, fromWarehouseId, toWarehouseId)) return;
+    const [whRows] = await db.query('SELECT id FROM warehouses WHERE id IN (?,?)', [fromWarehouseId, toWarehouseId]);
+    const whFound = whRows.map((w) => String(w.id));
+    if (whFound.indexOf(String(fromWarehouseId)) < 0 || whFound.indexOf(String(toWarehouseId)) < 0) return _fail(res, 'VALIDATION_ERROR', 'مستودع غير موجود — تحقق من المصدر والوجهة');
+
+    // Re-price lines (draft only — no stock/GL movement).
+    let total = 0; const enriched = [];
+    for (const it of items) {
+      const cost = await _getEffectiveCost(it.itemId, fromWarehouseId);
+      const lineTotal = Number(it.qtyRequested || 0) * cost;
+      total += lineTotal;
+      enriched.push({ itemId: it.itemId, qtyRequested: Number(it.qtyRequested) || 0, notes: it.notes || '', unitCost: cost, lineTotal });
+    }
+
+    const out = await db.withTransaction(async (conn) => {
+      // Conditional, version-guarded header UPDATE — preserves id / issue_number
+      // / created_by / created_at (never written). A concurrent edit with the
+      // same expectedVersion loses here (affectedRows=0 → VERSION_CONFLICT).
+      const [upd] = await conn.query(
+        `UPDATE stock_issues SET from_warehouse_id=?, to_warehouse_id=?, issue_date=?, notes=?, total_cost=?, version=version+1
+         WHERE id=? AND status='draft' AND version=?`,
+        [fromWarehouseId, toWarehouseId, issueDate || new Date().toISOString().slice(0, 10), notes || '', total, id, expectedVersion]);
+      if (!upd || upd.affectedRows !== 1) { const e = new Error('تغيّرت المسودة منذ آخر تحميل — أعد التحميل وحاول مجددًا'); e.status = 409; e.code = 'state_changed'; throw e; }
+      // Replace the line items atomically.
+      await conn.query('DELETE FROM stock_issue_items WHERE issue_id=?', [id]);
+      for (const it of enriched) {
+        await conn.query(
+          `INSERT INTO stock_issue_items (id, issue_id, item_id, qty_requested, unit_cost, line_total, notes) VALUES (?,?,?,?,?,?,?)`,
+          ['SII-' + Date.now() + '-' + Math.random().toString(36).slice(2, 8), id, it.itemId, it.qtyRequested, it.unitCost, it.lineTotal, it.notes]);
+      }
+      const auditEvent = await _audit(conn, id, 'edit', 'draft', 'draft', actor, notes || '',
+        { from: fromWarehouseId, to: toWarehouseId, lines: enriched.length, totalCost: total });
+      return { newVersion: (Number(cur.version) || 1) + 1, auditEvent };
+    });
+
+    _ok(res, {
+      data: { id, issueNumber: cur.issue_number, status: 'draft', totalCost: total },
+      documentNumber: cur.issue_number, status: 'draft', version: out.newVersion, affectedStock: [], auditEvent: out.auditEvent,
+    }, { success: true, id, issueNumber: cur.issue_number, totalCost: total });
+  } catch(e) { _catch(res, e); }
 });
 
 // Approve stock issue
 router.post('/stock-issues/:id/approve', MGR, async (req, res) => {
   try {
     const id = req.params.id;
-    const { approvedBy } = req.body;
-    const [rows] = await db.query('SELECT status FROM stock_issues WHERE id=?', [id]);
-    if (!rows.length) return res.status(404).json({ error: 'not found' });
-    if (rows[0].status !== 'draft') return res.status(400).json({ error: 'only draft can be approved' });
-    // v7.5 — state-guarded UPDATE + affectedRows: a concurrent double-tap
-    // (second request racing past the read above) now gets 409 instead of a
-    // silent fake success.
+    // Phase 0 §5 — approver identity from the JWT, never the body.
+    const approvedBy = _actor(req);
+    const expectedVersion = _expectedVersion(req);
+    const [rows] = await db.query('SELECT status, version, issue_number, from_warehouse_id, to_warehouse_id FROM stock_issues WHERE id=?', [id]);
+    if (!rows.length) return res.status(404).json({ success: false, code: 'NOT_FOUND', error: 'not found' });
+    if (!req.guardTransfer(res, rows[0].from_warehouse_id, rows[0].to_warehouse_id)) return;
+    if (rows[0].status !== 'draft') return _fail(res, 'INVALID_STATE_TRANSITION', 'لا يمكن اعتماد إلا المسودة (draft). الحالة الحالية: ' + rows[0].status);
+    // v7.5 — state-guarded UPDATE + affectedRows: a concurrent double-tap loses
+    // here with 409. Phase 3A — also bump `version` and honour an optional
+    // `expectedVersion` (legacy clients omit it → only the status guard applies).
     const [updRes] = await db.query(
-      `UPDATE stock_issues SET status='approved', approved_by=?, approved_at=NOW() WHERE id=? AND status='draft'`,
-      [approvedBy || '', id]);
+      `UPDATE stock_issues SET status='approved', approved_by=?, approved_at=NOW(), version = version + 1
+       WHERE id=? AND status='draft' AND (? IS NULL OR version = ?)`,
+      [approvedBy, id, expectedVersion, expectedVersion]);
     if (!updRes || updRes.affectedRows !== 1) {
-      return res.status(409).json({ error: 'تغيّرت حالة أمر الصرف — أعد التحميل وحاول مجدداً', code: 'state_changed' });
+      return _fail(res, 'VERSION_CONFLICT', 'تغيّرت حالة أمر الصرف — أعد التحميل وحاول مجدداً');
     }
-    res.json({ success: true });
-  } catch(e) { res.status(500).json({ error: e.message }); }
+    const newVersion = (Number(rows[0].version) || 1) + 1;
+    const auditEvent = await _audit(null, id, 'approve', 'draft', 'approved', approvedBy, '', null);
+    _ok(res, { data: { id, status: 'approved' }, documentNumber: rows[0].issue_number, status: 'approved', version: newVersion, affectedStock: [], auditEvent }, { success: true });
+  } catch(e) { _catch(res, e); }
 });
 
 // Issue (decrement source warehouse + post GL)
 router.post('/stock-issues/:id/issue', BACKOFFICE, async (req, res) => {
+  let _idemId = null;
   try {
     const id = req.params.id;
-    const { issuedBy } = req.body;
+    // Phase 0 §5 — issuer identity from the JWT, never the body.
+    const issuedBy = _actor(req);
     const [hdrRows] = await db.query('SELECT * FROM stock_issues WHERE id=?', [id]);
-    if (!hdrRows.length) return res.status(404).json({ error: 'not found' });
+    if (!hdrRows.length) return res.status(404).json({ success: false, code: 'NOT_FOUND', error: 'not found' });
     const hdr = hdrRows[0];
-    if (!['draft','approved'].includes(hdr.status)) return res.status(400).json({ error: 'invalid status' });
+    if (!req.guardTransfer(res, hdr.from_warehouse_id, hdr.to_warehouse_id)) return;
+    // Phase 3A.1 — idempotency reservation (bound to this document). Checked
+    // AFTER the scope guard and BEFORE the state check.
+    const idemKey = _idemKey(req);
+    const idem = await _idemBegin('transfer:issue', id, idemKey, req);
+    if (idem.mode === 'replay') return res.status(idem.statusCode).json(idem.body);
+    if (idem.mode === 'conflict') return _fail(res, 'IDEMPOTENCY_CONFLICT', 'طلب مكرر بنفس المفتاح (محتوى مختلف أو قيد المعالجة)');
+    _idemId = idem.idemId;
+    const expectedVersion = _expectedVersion(req);
+    // Phase 0 §3 — a draft can NEVER be issued. The approval step is the
+    // control that makes the value/stock move auditable, so issuing is only
+    // allowed from `approved`.
+    if (!TR.canIssue(hdr.status)) {
+      return _fail(res, 'INVALID_STATE_TRANSITION', 'لا يمكن صرف الإذن إلا بعد اعتماده (الحالة يجب أن تكون "approved"). الحالة الحالية: ' + hdr.status);
+    }
 
     const [items] = await db.query('SELECT * FROM stock_issue_items WHERE issue_id=?', [id]);
-    if (!items.length) return res.status(400).json({ error: 'no items' });
+    if (!items.length) return _fail(res, 'VALIDATION_ERROR', 'no items');
 
     const issueNow = new Date();
 
@@ -389,10 +645,12 @@ router.post('/stock-issues/:id/issue', BACKOFFICE, async (req, res) => {
       }
 
       let totalCost = 0;
+      const affectedStock = [];
       for (const it of items) {
         const qty = Number(it.qty_requested);
-        await _applyStockMovement(hdr.from_warehouse_id, it.item_id, -qty, Number(it.unit_cost),
-                                  'stock_issue_out', id, issuedBy || '', conn);
+        const mv = await _applyStockMovement(hdr.from_warehouse_id, it.item_id, -qty, Number(it.unit_cost),
+                                  'stock_issue_out', id, issuedBy, conn);
+        affectedStock.push({ warehouseId: hdr.from_warehouse_id, itemId: it.item_id, delta: -qty, newQty: mv.newQty });
         const lineTotal = qty * Number(it.unit_cost);
         totalCost += lineTotal;
         await conn.query(
@@ -405,14 +663,22 @@ router.post('/stock-issues/:id/issue', BACKOFFICE, async (req, res) => {
             'INSERT INTO inventory_movements (id, movement_date, item_id, item_name, type, qty, reason, username, notes, warehouse_id, reference_type, reference_id) ' +
             'VALUES (?,?,?,?,?,?,?,?,?,?,?,?)',
             [movId, issueNow, it.item_id, it.item_name || '', 'out', qty,
-             'تحويل صادر', issuedBy || '', 'STOCK_ISSUE: ' + (hdr.issue_number || id),
+             'تحويل صادر', issuedBy, 'STOCK_ISSUE: ' + (hdr.issue_number || id),
              hdr.from_warehouse_id, 'transfer', id]);
         } catch(e) {
           await conn.query(
             'INSERT INTO inventory_movements (id, movement_date, item_id, item_name, type, qty, reason, username, notes, warehouse_id) VALUES (?,?,?,?,?,?,?,?,?,?)',
             [movId, issueNow, it.item_id, it.item_name || '', 'out', qty,
-             'تحويل صادر', issuedBy || '', 'STOCK_ISSUE: ' + (hdr.issue_number || id),
+             'تحويل صادر', issuedBy, 'STOCK_ISSUE: ' + (hdr.issue_number || id),
              hdr.from_warehouse_id]);
+        }
+        // Phase 4B — tracked item: FEFO-allocate the issued qty from the source +
+        // record the in-transit lot allocation; re-check the source invariant.
+        const lmode = await L.getTrackingMode(conn, it.item_id);
+        if (L.isTracked(lmode)) {
+          const seq = await _seqOf(conn, movId);
+          await L.transferIssue(conn, { transferId: id, sourceWh: hdr.from_warehouse_id, destWh: hdr.to_warehouse_id, itemId: it.item_id, qty, trackingMode: lmode, movementSeq: seq, movementId: movId, actor: issuedBy, occurredAt: issueNow });
+          await L.assertInvariant(conn, hdr.from_warehouse_id, it.item_id);
         }
       }
 
@@ -423,7 +689,7 @@ router.post('/stock-issues/:id/issue', BACKOFFICE, async (req, res) => {
           referenceType: 'stock_issue',
           referenceId: id,
           description: `إذن صرف ${hdr.issue_number}: من ${hdr.from_warehouse_id} إلى ${hdr.to_warehouse_id}`,
-          postedBy: issuedBy || '',
+          postedBy: issuedBy,
           entries: [
             { accountCode: gl.CORE_ACCOUNTS.BRANCH_INVENTORY.code, debit: totalCost, credit: 0,
               brandId: hdr.brand_id, branchId: hdr.branch_id, warehouseId: hdr.to_warehouse_id },
@@ -438,131 +704,208 @@ router.post('/stock-issues/:id/issue', BACKOFFICE, async (req, res) => {
         glId = glRes.journalId;
       }
 
-      await conn.query(
+      // Phase 0 — state-guarded flip: a concurrent double-issue (both racing
+      // past the read above) loses here with affectedRows=0 and rolls its own
+      // stock deduction + GL back, instead of issuing the same goods twice.
+      const [flipRes] = await conn.query(
         `UPDATE stock_issues
-         SET status='issued', issued_by=?, issued_at=NOW(), total_cost=?, gl_journal_id=?
-         WHERE id=?`,
-        [issuedBy || '', totalCost, glId, id]);
-
-      return { totalCost, glId };
+         SET status='issued', issued_by=?, issued_at=NOW(), total_cost=?, gl_journal_id=?, version = version + 1
+         WHERE id=? AND status='approved' AND (? IS NULL OR version = ?)`,
+        [issuedBy, totalCost, glId, id, expectedVersion, expectedVersion]);
+      if (!flipRes || flipRes.affectedRows !== 1) {
+        const e = new Error('تغيّرت حالة أمر الصرف (صرف مكرر؟) — أعد التحميل وحاول مجدداً');
+        e.status = 409; e.code = 'state_changed'; throw e;
+      }
+      const auditEvent = await _audit(conn, id, 'issue', 'approved', 'issued', issuedBy, '', { totalCost, glId });
+      return { totalCost, glId, affectedStock, newVersion: (Number(hdr.version) || 1) + 1, auditEvent };
     });
 
-    res.json({ success: true, totalCost: out.totalCost, glJournalId: out.glId });
-  } catch(e) { res.status(e.status || 500).json({ error: e.message }); }
+    const body = _envelope({
+      data: { id, status: 'issued', totalCost: out.totalCost, glJournalId: out.glId },
+      documentNumber: hdr.issue_number, status: 'issued', version: out.newVersion,
+      affectedStock: out.affectedStock, auditEvent: out.auditEvent,
+    }, { success: true, totalCost: out.totalCost, glJournalId: out.glId });
+    await _idemComplete(_idemId, 200, body);
+    res.json(body);
+  } catch(e) { if (_idemId) await _idemAbort(_idemId).catch(() => {}); _catch(res, e); }
 });
 
 // Receive (increment destination warehouse)
+// Phase 0 §4 — CUMULATIVE partial receipt. `items[].qtyReceived` is the
+// quantity arriving in THIS shipment (a delta), accumulated onto whatever was
+// received before. The header rests on `partially_received` until every line
+// is fully received, then flips to `received`. Per-line over-receipt is
+// validated against the REMAINING quantity (issued − already received), not
+// the issued total, so two partial receipts can never exceed what was issued.
 router.post('/stock-issues/:id/receive', BACKOFFICE, async (req, res) => {
+  let _idemId = null;
   try {
     const id = req.params.id;
-    const { receivedBy, items } = req.body;  // items optional — partial receive
-    const [hdrRows] = await db.query('SELECT * FROM stock_issues WHERE id=?', [id]);
-    if (!hdrRows.length) return res.status(404).json({ error: 'not found' });
-    const hdr = hdrRows[0];
-    if (hdr.status !== 'issued') return res.status(400).json({ error: 'only issued can be received' });
+    // Phase 0 §5 — receiver identity from the JWT, never the body.
+    const receivedBy = _actor(req);
+    const { items } = req.body || {};  // items optional — omit = receive all remaining
 
-    // v7.5 — items=[] (truthy but EMPTY) used to skip the over-receipt
-    // validation below entirely and silently fall back to a FULL receipt.
-    // Reject it: omit the field for full receipt, or send per-line qtys.
+    // v7.5 — items=[] (truthy but EMPTY) used to skip validation and silently
+    // fall back to a FULL receipt. Reject it: omit the field for "receive all
+    // remaining", or send per-line qtys.
     if (Array.isArray(items) && items.length === 0) {
-      return res.status(400).json({
-        error: 'قائمة الأصناف فارغة — احذف الحقل لاستلام الكل أو أرسل كمية لكل سطر',
-        code: 'ITEMS_ARRAY_EMPTY'
-      });
+      return _fail(res, 'VALIDATION_ERROR', 'قائمة الأصناف فارغة — احذف الحقل لاستلام كل المتبقي أو أرسل كمية لكل سطر');
     }
+    // Phase 3A.1 — idempotency reservation: a retried receive with the same key
+    // never double-counts the cumulative quantity.
+    const idemKey = _idemKey(req);
+    const idem = await _idemBegin('transfer:receive', id, idemKey, req);
+    if (idem.mode === 'replay') return res.status(idem.statusCode).json(idem.body);
+    if (idem.mode === 'conflict') return _fail(res, 'IDEMPOTENCY_CONFLICT', 'طلب مكرر بنفس المفتاح (محتوى مختلف أو قيد المعالجة)');
+    _idemId = idem.idemId;
+    const expectedVersion = _expectedVersion(req);
+    // delta-to-receive-now, keyed by line id (only when items provided).
+    const deltaMap = {};
+    const hasItemsArg = Array.isArray(items);
+    if (hasItemsArg) items.forEach(it => { deltaMap[it.id] = Number(it.qtyReceived); });
 
-    const [dbItems] = await db.query('SELECT * FROM stock_issue_items WHERE issue_id=?', [id]);
-    const qtyMap = {};
-    if (Array.isArray(items)) items.forEach(it => { qtyMap[it.id] = Number(it.qtyReceived); });
-
-    // v5.10.40 — Validate received quantities BEFORE any side effects.
-    // A receiver must never accept more than what was issued — global ERP
-    // norm (SAP, Oracle, Odoo all reject over-receipt). Reject the whole
-    // request with a clear error rather than silently capping or failing
-    // mid-loop.
-    const issuedById = {};
-    dbItems.forEach(d => { issuedById[d.id] = Number(d.qty_issued) || 0; });
-    for (const k in qtyMap) {
-      const want = Number(qtyMap[k]) || 0;
-      const max  = issuedById[k] || 0;
-      if (want < 0) {
-        return res.status(400).json({ error: `الكمية المستلَمة لا يمكن أن تكون سالبة (سطر ${k})` });
-      }
-      if (want > max) {
-        return res.status(400).json({
-          error: `الكمية المستلَمة (${want}) أكبر من الكمية المُصدَرة (${max}) للسطر ${k}. غير مسموح.`,
-          code: 'OVER_RECEIPT',
-          lineId: k,
-          qtyIssued: max,
-          qtyReceived: want
-        });
-      }
-    }
-
-    // v5.10.39 — log a "تحويل وارد" inventory_movements row for each
-    // received line, dated NOW(), so the destination warehouse's ledger
-    // shows the transfer at the receive date (matches the issue-side
-    // 'out' row with the same reference_id).
     const receiveNow = new Date();
-    // v7.4 — atomic receive: every destination stock increment + its ledger row
-    // + the status flip commit together, so a mid-failure can't leave a transfer
-    // half-received. No GL here — the value already moved to Branch Inventory at
-    // issue time. Over-receipt was already validated above (rolls back nothing).
-    await db.withTransaction(async (conn) => {
+    // Everything authoritative happens INSIDE the transaction with the header
+    // row locked FOR UPDATE, so two concurrent receives on the same transfer
+    // serialize: the cumulative read-modify-write of qty_received is safe, and
+    // every stock increment + ledger row + status flip commit or roll back as
+    // one unit. No GL here — the value already moved to Branch Inventory at
+    // issue time.
+    const out = await db.withTransaction(async (conn) => {
+      const [hdrRows] = await conn.query('SELECT * FROM stock_issues WHERE id=? FOR UPDATE', [id]);
+      if (!hdrRows.length) { const e = new Error('not found'); e.status = 404; throw e; }
+      const hdr = hdrRows[0];
+      if (!req.guardTransfer(res, hdr.from_warehouse_id, hdr.to_warehouse_id)) {
+        // Guard already wrote the 403 — abort the txn and skip the duplicate send.
+        const e = new Error('forbidden'); e._guarded = true; throw e;
+      }
+      if (!TR.canReceive(hdr.status)) {
+        const e = new Error('لا يمكن الاستلام إلا بعد الصرف (issued أو partially_received). الحالة الحالية: ' + hdr.status);
+        e.status = 400; e.code = 'RECEIVE_INVALID_STATE'; throw e;
+      }
+
+      const [dbItems] = await conn.query('SELECT * FROM stock_issue_items WHERE issue_id=? FOR UPDATE', [id]);
+
+      // Validate every requested delta against the line's REMAINING quantity
+      // BEFORE any side effect (rolls back nothing on rejection).
+      const plan = []; // { line, delta, newQtyReceived }
+      let totalDelta = 0;
       for (const it of dbItems) {
-        const qtyReceived = qtyMap.hasOwnProperty(it.id) ? qtyMap[it.id] : Number(it.qty_issued);
-        if (qtyReceived <= 0) continue;
-        await _applyStockMovement(hdr.to_warehouse_id, it.item_id, qtyReceived, Number(it.unit_cost),
-                                  'stock_issue_in', id, receivedBy || '', conn);
-        await conn.query('UPDATE stock_issue_items SET qty_received=? WHERE id=?', [qtyReceived, it.id]);
+        const qtyIssued = Number(it.qty_issued) || 0;
+        const prev = Number(it.qty_received) || 0;
+        // When items omitted → receive all remaining for every line. When items
+        // provided → only the listed lines get a delta; the rest get 0.
+        const delta = hasItemsArg
+          ? (deltaMap.hasOwnProperty(it.id) ? Number(deltaMap[it.id]) || 0 : 0)
+          : (qtyIssued - prev);
+        let calc;
+        try {
+          calc = TR.computeLineReceipt({ qtyIssued, qtyReceivedSoFar: prev, qtyReceiveNow: delta });
+        } catch (ce) {
+          const e = new Error(ce.message + ' (سطر ' + it.id + ')');
+          e.status = 400; e.code = ce.code; e.lineId = it.id;
+          throw e;
+        }
+        totalDelta += calc.applied;
+        plan.push({ line: it, delta: calc.applied, newQtyReceived: calc.newQtyReceived });
+      }
+
+      if (totalDelta <= TR.EPS) {
+        const e = new Error('لا توجد كمية للاستلام — حدّد كمية واحدة على الأقل.');
+        e.status = 400; e.code = 'NOTHING_TO_RECEIVE'; throw e;
+      }
+
+      const affectedStock = [];
+      for (const p of plan) {
+        if (p.delta <= TR.EPS) continue;
+        const it = p.line;
+        const mv = await _applyStockMovement(hdr.to_warehouse_id, it.item_id, p.delta, Number(it.unit_cost),
+                                  'stock_issue_in', id, receivedBy, conn);
+        affectedStock.push({ warehouseId: hdr.to_warehouse_id, itemId: it.item_id, delta: p.delta, newQty: mv.newQty });
+        // Cumulative — set the new running total, not an overwrite of the delta.
+        await conn.query('UPDATE stock_issue_items SET qty_received=? WHERE id=?', [p.newQtyReceived, it.id]);
         // Ledger entry — destination side, same reference_id as the 'out' row.
         const movId = 'MOV-SI-IN-' + Date.now() + '-' + Math.random().toString(36).substr(2, 4);
         try {
           await conn.query(
             'INSERT INTO inventory_movements (id, movement_date, item_id, item_name, type, qty, reason, username, notes, warehouse_id, reference_type, reference_id) ' +
             'VALUES (?,?,?,?,?,?,?,?,?,?,?,?)',
-            [movId, receiveNow, it.item_id, it.item_name || '', 'in', qtyReceived,
-             'تحويل وارد', receivedBy || '', 'STOCK_ISSUE: ' + (hdr.issue_number || id),
+            [movId, receiveNow, it.item_id, it.item_name || '', 'in', p.delta,
+             'تحويل وارد', receivedBy, 'STOCK_ISSUE: ' + (hdr.issue_number || id),
              hdr.to_warehouse_id, 'transfer', id]);
         } catch(e) {
           await conn.query(
             'INSERT INTO inventory_movements (id, movement_date, item_id, item_name, type, qty, reason, username, notes, warehouse_id) VALUES (?,?,?,?,?,?,?,?,?,?)',
-            [movId, receiveNow, it.item_id, it.item_name || '', 'in', qtyReceived,
-             'تحويل وارد', receivedBy || '', 'STOCK_ISSUE: ' + (hdr.issue_number || id),
+            [movId, receiveNow, it.item_id, it.item_name || '', 'in', p.delta,
+             'تحويل وارد', receivedBy, 'STOCK_ISSUE: ' + (hdr.issue_number || id),
              hdr.to_warehouse_id]);
         }
+        // Phase 4B — tracked item: add the SAME in-transit lots to the destination
+        // (partial-safe), preserving lot identity + expiry; re-check the invariant.
+        const lmode = await L.getTrackingMode(conn, it.item_id);
+        if (L.isTracked(lmode)) {
+          const seq = await _seqOf(conn, movId);
+          await L.transferReceive(conn, { transferId: id, destWh: hdr.to_warehouse_id, itemId: it.item_id, qty: p.delta, movementSeq: seq, movementId: movId, actor: receivedBy, occurredAt: receiveNow });
+          await L.assertInvariant(conn, hdr.to_warehouse_id, it.item_id);
+        }
       }
-      // v7.5 — state-guarded flip: a concurrent double-receive rolls the
-      // whole transaction (including the stock increments above) back.
+
+      // Header status from the NEW cumulative line totals: fully received →
+      // 'received', otherwise → 'partially_received'.
+      const nextStatus = TR.computeNextReceiveStatus(
+        plan.map(p => ({ qtyIssued: Number(p.line.qty_issued) || 0, qtyReceived: p.newQtyReceived }))
+      );
+      // received_at is only stamped on the FINAL receipt; partial receipts keep
+      // it null so the inbox 7-day cutoff doesn't hide an open transfer.
       const [flipRes] = await conn.query(
-        `UPDATE stock_issues SET status='received', received_by=?, received_at=NOW() WHERE id=? AND status='issued'`,
-        [receivedBy || '', id]);
+        `UPDATE stock_issues
+         SET status=?, received_by=?,
+             received_at = CASE WHEN ? = 'received' THEN NOW() ELSE received_at END,
+             version = version + 1
+         WHERE id=? AND status IN ('issued','partially_received') AND (? IS NULL OR version = ?)`,
+        [nextStatus, receivedBy, nextStatus, id, expectedVersion, expectedVersion]);
       if (!flipRes || flipRes.affectedRows !== 1) {
-        const e = new Error('تغيّرت حالة أمر الصرف (استلام مكرر؟) — أعد التحميل وحاول مجدداً');
-        e.status = 409; throw e;
+        const e = new Error('تغيّرت حالة أمر الصرف (استلام متزامن؟) — أعد التحميل وحاول مجدداً');
+        e.status = 409; e.code = 'state_changed'; throw e;
       }
+      const auditEvent = await _audit(conn, id, 'receive', hdr.status, nextStatus, receivedBy, '', { delta: totalDelta });
+      return { status: nextStatus, affectedStock, newVersion: (Number(hdr.version) || 1) + 1, auditEvent, issueNumber: hdr.issue_number };
     });
 
-    res.json({ success: true });
-  } catch(e) { res.status(e.status || 500).json({ error: e.message }); }
+    const body = _envelope({
+      data: { id, status: out.status, fullyReceived: out.status === 'received' },
+      documentNumber: out.issueNumber, status: out.status, version: out.newVersion,
+      affectedStock: out.affectedStock, auditEvent: out.auditEvent,
+    }, { success: true, status: out.status, fullyReceived: out.status === 'received' });
+    await _idemComplete(_idemId, 200, body);
+    res.json(body);
+  } catch(e) { if (_idemId) await _idemAbort(_idemId).catch(() => {}); _catch(res, e); }
 });
 
 // Cancel stock issue
 router.post('/stock-issues/:id/cancel', MGR, async (req, res) => {
   try {
     const id = req.params.id;
-    const [hdrRows] = await db.query('SELECT status FROM stock_issues WHERE id=?', [id]);
-    if (!hdrRows.length) return res.status(404).json({ error: 'not found' });
-    if (['issued','received'].includes(hdrRows[0].status))
-      return res.status(400).json({ error: 'cannot cancel after issue — use reverse instead' });
-    // v7.5 — state-guarded cancel (only draft/approved) + affectedRows check
+    const actor = _actor(req);
+    const reason = String((req.body && req.body.reason) || '').trim();
+    const expectedVersion = _expectedVersion(req);
+    const [hdrRows] = await db.query('SELECT status, version, issue_number, from_warehouse_id, to_warehouse_id FROM stock_issues WHERE id=?', [id]);
+    if (!hdrRows.length) return res.status(404).json({ success: false, code: 'NOT_FOUND', error: 'not found' });
+    if (!req.guardTransfer(res, hdrRows[0].from_warehouse_id, hdrRows[0].to_warehouse_id)) return;
+    if (!TR.canCancel(hdrRows[0].status))
+      return _fail(res, 'INVALID_STATE_TRANSITION', 'لا يمكن الإلغاء إلا للمسودة أو المعتمد — استخدم الإرجاع بعد الصرف. الحالة الحالية: ' + hdrRows[0].status);
+    // v7.5 — state-guarded cancel (only draft/approved) + affectedRows check.
+    // Phase 3A — version bump + optional expectedVersion guard.
     const [cRes] = await db.query(
-      `UPDATE stock_issues SET status='cancelled' WHERE id=? AND status IN ('draft','approved')`, [id]);
+      `UPDATE stock_issues SET status='cancelled', version = version + 1
+       WHERE id=? AND status IN ('draft','approved') AND (? IS NULL OR version = ?)`,
+      [id, expectedVersion, expectedVersion]);
     if (!cRes || cRes.affectedRows !== 1) {
-      return res.status(409).json({ error: 'تغيّرت حالة أمر الصرف — أعد التحميل', code: 'state_changed' });
+      return _fail(res, 'VERSION_CONFLICT', 'تغيّرت حالة أمر الصرف — أعد التحميل');
     }
-    res.json({ success: true });
-  } catch(e) { res.status(500).json({ error: e.message }); }
+    const auditEvent = await _audit(null, id, 'cancel', hdrRows[0].status, 'cancelled', actor, reason, null);
+    _ok(res, { data: { id, status: 'cancelled' }, documentNumber: hdrRows[0].issue_number, status: 'cancelled', version: (Number(hdrRows[0].version) || 1) + 1, affectedStock: [], auditEvent }, { success: true });
+  } catch(e) { _catch(res, e); }
 });
 
 // V5.9.7 — Reverse an already-issued/received stock issue. This is the
@@ -574,29 +917,32 @@ router.post('/stock-issues/:id/cancel', MGR, async (req, res) => {
 router.post('/stock-issues/:id/reverse', MGR, async (req, res) => {
   try {
     const id = req.params.id;
-    const { reversedBy, reason } = req.body || {};
+    const { reason } = req.body || {};
+    // Phase 0 §5 — reverser identity from the JWT, never the body.
+    const reversedBy = _actor(req);
     // v5.10.40 — Reason is now MANDATORY for reversal (audit-trail
     // compliance: every accounting reversal must carry justification).
     // Trim to avoid whitespace-only inputs.
     const reasonText = String(reason || '').trim();
+    const expectedVersion = _expectedVersion(req);
     if (!reasonText) {
-      return res.status(400).json({
-        error: 'سبب الإرجاع مطلوب — اشرح لماذا تُرجِع هذا الإذن لإكمال سجل التدقيق.',
-        code: 'REASON_REQUIRED'
-      });
+      return _fail(res, 'VALIDATION_ERROR', 'سبب الإرجاع مطلوب — اشرح لماذا تُرجِع هذا الإذن لإكمال سجل التدقيق.');
     }
     const [hdrRows] = await db.query('SELECT * FROM stock_issues WHERE id=?', [id]);
-    if (!hdrRows.length) return res.status(404).json({ error: 'not found' });
+    if (!hdrRows.length) return res.status(404).json({ success: false, code: 'NOT_FOUND', error: 'not found' });
     const hdr = hdrRows[0];
-    if (!['issued','received'].includes(hdr.status))
-      return res.status(400).json({ error: 'يمكن إرجاع الإذن فقط بعد الصرف أو الاستلام' });
+    if (!req.guardTransfer(res, hdr.from_warehouse_id, hdr.to_warehouse_id)) return;
+    // Phase 0 — partially_received transfers are reversible too.
+    if (!TR.canReverse(hdr.status))
+      return _fail(res, 'INVALID_STATE_TRANSITION', 'يمكن إرجاع الإذن فقط بعد الصرف أو الاستلام (issued / partially_received / received). الحالة الحالية: ' + hdr.status);
 
     const [items] = await db.query('SELECT * FROM stock_issue_items WHERE issue_id=?', [id]);
-    if (!items.length) return res.status(400).json({ error: 'no items' });
+    if (!items.length) return _fail(res, 'VALIDATION_ERROR', 'no items');
 
     // Reverse the stock movements:
     //   1. PUT BACK what we took from the source (positive delta on the from-warehouse).
-    //   2. TAKE BACK what was received at the destination (only if status='received').
+    //   2. TAKE BACK whatever was physically received at the destination
+    //      (qty_received > 0 — covers both full and partial receipts).
     //
     // We use the original unit_cost stored on each line so the reversal lands
     // at the same valuation the issue posted at — keeps weighted-average sane.
@@ -611,13 +957,15 @@ router.post('/stock-issues/:id/reverse', MGR, async (req, res) => {
     // exemption is a deploy whose GL tables don't exist yet.
     const out = await db.withTransaction(async (conn) => {
       let totalCost = 0;
+      const affectedStock = [];
       for (const it of items) {
         const qtyIssued   = Number(it.qty_issued)   || 0;
         const qtyReceived = Number(it.qty_received) || 0;
         const unitCost    = Number(it.unit_cost)    || 0;
         if (qtyIssued > 0) {
-          await _applyStockMovement(hdr.from_warehouse_id, it.item_id, qtyIssued, unitCost,
-                                    'stock_issue_reverse', id, reversedBy || '', conn);
+          const mvIn = await _applyStockMovement(hdr.from_warehouse_id, it.item_id, qtyIssued, unitCost,
+                                    'stock_issue_reverse', id, reversedBy, conn);
+          affectedStock.push({ warehouseId: hdr.from_warehouse_id, itemId: it.item_id, delta: qtyIssued, newQty: mvIn.newQty });
           totalCost += qtyIssued * unitCost;
           // Ledger entry — 'in' to source (returning the goods)
           try {
@@ -626,14 +974,15 @@ router.post('/stock-issues/:id/reverse', MGR, async (req, res) => {
               'INSERT INTO inventory_movements (id, movement_date, item_id, item_name, type, qty, reason, username, notes, warehouse_id, reference_type, reference_id) ' +
               'VALUES (?,?,?,?,?,?,?,?,?,?,?,?)',
               [movId, reverseNow, it.item_id, it.item_name || '', 'in', qtyIssued,
-               'إرجاع تحويل', reversedBy || '',
+               'إرجاع تحويل', reversedBy,
                'REVERSE: ' + (hdr.issue_number || id) + ' · ' + reasonText.slice(0, 200),
                hdr.from_warehouse_id, 'transfer_reverse', id]);
           } catch(_) {}
         }
-        if (qtyReceived > 0 && hdr.status === 'received') {
-          await _applyStockMovement(hdr.to_warehouse_id, it.item_id, -qtyReceived, unitCost,
-                                    'stock_issue_reverse', id, reversedBy || '', conn);
+        if (qtyReceived > 0) {
+          const mvOut = await _applyStockMovement(hdr.to_warehouse_id, it.item_id, -qtyReceived, unitCost,
+                                    'stock_issue_reverse', id, reversedBy, conn);
+          affectedStock.push({ warehouseId: hdr.to_warehouse_id, itemId: it.item_id, delta: -qtyReceived, newQty: mvOut.newQty });
           // Ledger entry — 'out' from destination (taking the goods back)
           try {
             const movId = 'MOV-SI-REV-OUT-' + Date.now() + '-' + Math.random().toString(36).substr(2, 4);
@@ -641,10 +990,18 @@ router.post('/stock-issues/:id/reverse', MGR, async (req, res) => {
               'INSERT INTO inventory_movements (id, movement_date, item_id, item_name, type, qty, reason, username, notes, warehouse_id, reference_type, reference_id) ' +
               'VALUES (?,?,?,?,?,?,?,?,?,?,?,?)',
               [movId, reverseNow, it.item_id, it.item_name || '', 'out', qtyReceived,
-               'إرجاع تحويل', reversedBy || '',
+               'إرجاع تحويل', reversedBy,
                'REVERSE: ' + (hdr.issue_number || id) + ' · ' + reasonText.slice(0, 200),
                hdr.to_warehouse_id, 'transfer_reverse', id]);
           } catch(_) {}
+        }
+        // Phase 4B — restore the EXACT transferred lots: issued back to source,
+        // received removed from the destination; re-check both invariants.
+        const lmode = await L.getTrackingMode(conn, it.item_id);
+        if (L.isTracked(lmode)) {
+          await L.transferReverse(conn, { transferId: id, sourceWh: hdr.from_warehouse_id, destWh: hdr.to_warehouse_id, itemId: it.item_id, movementSeq: null, movementId: null, actor: reversedBy, occurredAt: reverseNow });
+          if (qtyIssued > 0) await L.assertInvariant(conn, hdr.from_warehouse_id, it.item_id);
+          if (qtyReceived > 0) await L.assertInvariant(conn, hdr.to_warehouse_id, it.item_id);
         }
       }
 
@@ -656,7 +1013,7 @@ router.post('/stock-issues/:id/reverse', MGR, async (req, res) => {
           referenceType: 'stock_issue_reverse',
           referenceId: id,
           description: `إرجاع إذن صرف ${hdr.issue_number}: ` + reasonText,
-          postedBy: reversedBy || '',
+          postedBy: reversedBy,
           entries: [
             {
               accountCode: gl.CORE_ACCOUNTS.INVENTORY.code,
@@ -685,24 +1042,29 @@ router.post('/stock-issues/:id/reverse', MGR, async (req, res) => {
       }
 
       // State-guarded flip — a concurrent double-reverse rolls everything back.
+      const fromStatus = hdr.status;
       const [flipRes] = await conn.query(
         `UPDATE stock_issues
          SET status='reversed', reversed_by=?, reversed_at=NOW(),
-             reverse_reason=?, reverse_gl_journal_id=?
-         WHERE id=? AND status IN ('issued','received')`,
-        [reversedBy || '', reasonText.slice(0, 500), reverseGlId, id]);
+             reverse_reason=?, reverse_gl_journal_id=?, version = version + 1
+         WHERE id=? AND status IN ('issued','partially_received','received') AND (? IS NULL OR version = ?)`,
+        [reversedBy, reasonText.slice(0, 500), reverseGlId, id, expectedVersion, expectedVersion]);
       if (!flipRes || flipRes.affectedRows !== 1) {
         const e = new Error('تغيّرت حالة الإذن (إرجاع مكرر؟) — أعد التحميل');
-        e.status = 409; throw e;
+        e.status = 409; e.code = 'state_changed'; throw e;
       }
-
-      return { reverseGlId, totalCost };
+      const auditEvent = await _audit(conn, id, 'reverse', fromStatus, 'reversed', reversedBy, reasonText, { reverseGlId, totalCost });
+      return { reverseGlId, totalCost, affectedStock, newVersion: (Number(hdr.version) || 1) + 1, auditEvent };
     });
 
-    res.json({ success: true, reverseGlJournalId: out.reverseGlId, totalCost: out.totalCost });
+    _ok(res, {
+      data: { id, status: 'reversed', reverseGlJournalId: out.reverseGlId, totalCost: out.totalCost },
+      documentNumber: hdr.issue_number, status: 'reversed', version: out.newVersion,
+      affectedStock: out.affectedStock, auditEvent: out.auditEvent,
+    }, { success: true, reverseGlJournalId: out.reverseGlId, totalCost: out.totalCost });
   } catch(e) {
     console.error('[stock-issue reverse] error:', e);
-    res.status(e.status || 500).json({ error: e.message });
+    _catch(res, e);
   }
 });
 
@@ -712,17 +1074,21 @@ router.post('/stock-issues/:id/reverse', MGR, async (req, res) => {
 router.delete('/stock-issues/:id', MGR, async (req, res) => {
   try {
     const id = req.params.id;
-    const [hdrRows] = await db.query('SELECT status FROM stock_issues WHERE id=?', [id]);
-    if (!hdrRows.length) return res.status(404).json({ error: 'not found' });
+    const actor = _actor(req);
+    const [hdrRows] = await db.query('SELECT status, issue_number, from_warehouse_id, to_warehouse_id FROM stock_issues WHERE id=?', [id]);
+    if (!hdrRows.length) return res.status(404).json({ success: false, code: 'NOT_FOUND', error: 'not found' });
+    if (!req.guardTransfer(res, hdrRows[0].from_warehouse_id, hdrRows[0].to_warehouse_id)) return;
     if (hdrRows[0].status !== 'draft') {
-      return res.status(400).json({ error: 'يمكن حذف الإذن فقط عندما يكون مسودة — استخدم الإلغاء أو الإرجاع' });
+      return _fail(res, 'INVALID_STATE_TRANSITION', 'يمكن حذف الإذن فقط عندما يكون مسودة — استخدم الإلغاء أو الإرجاع. الحالة الحالية: ' + hdrRows[0].status);
     }
+    // Audit the deletion BEFORE removing the row (the event row outlives it).
+    const auditEvent = await _audit(null, id, 'delete', 'draft', null, actor, '', { issueNumber: hdrRows[0].issue_number });
     await db.query('DELETE FROM stock_issue_items WHERE issue_id=?', [id]);
     await db.query('DELETE FROM stock_issues WHERE id=?', [id]);
-    res.json({ success: true });
+    _ok(res, { data: { id, status: 'deleted' }, documentNumber: hdrRows[0].issue_number, status: 'deleted', version: null, affectedStock: [], auditEvent }, { success: true });
   } catch(e) {
     console.error('[stock-issue delete] error:', e);
-    res.status(500).json({ error: e.message });
+    _catch(res, e);
   }
 });
 
@@ -768,7 +1134,7 @@ router.get('/incoming-transfers', async (req, res) => {
       LEFT JOIN users uc ON uc.username = si.created_by
       LEFT JOIN users ua ON ua.username = si.approved_by
       LEFT JOIN users ui ON ui.username = si.issued_by
-      WHERE si.status IN ('issued','received')`;
+      WHERE si.status IN ('issued','partially_received','received')`;
     const params = [];
     if (filterWh) {
       sql += ' AND si.to_warehouse_id = ?';
@@ -780,8 +1146,13 @@ router.get('/incoming-transfers', async (req, res) => {
       params.push(filterBranch, filterBranch);
     }
     if (status) { sql += ' AND si.status = ?'; params.push(status); }
+    // Scope: restrict the inbox to destination warehouses the caller may access.
+    const sc = req.whScopeClause('si.to_warehouse_id');
+    if (sc.sql) { sql += sc.sql; params.push(...sc.params); }
     // Hide `received` rows older than 7 days so the inbox doesn't grow forever.
-    sql += " AND (si.status = 'issued' OR si.received_at >= DATE_SUB(NOW(), INTERVAL 7 DAY))";
+    // Keep open transfers (issued / partially_received) always visible; only
+    // age out fully-received rows after 7 days.
+    sql += " AND (si.status IN ('issued','partially_received') OR si.received_at >= DATE_SUB(NOW(), INTERVAL 7 DAY))";
     sql += ' ORDER BY si.issued_at DESC, si.created_at DESC LIMIT 100';
 
     const [rows] = await db.query(sql, params);
@@ -1150,6 +1521,16 @@ router.post('/production-orders/:id/release', BACKOFFICE, async (req, res) => {
             [movId, releaseNow, c.item_id, _itnm, 'out', qty, 'إنتاج', releasedBy || '',
              'PRODUCTION: ' + (hdr.order_number || id), c.warehouse_id]);
         }
+        // Phase 4B — tracked component: FEFO-consume + record genealogy + invariant.
+        const lmode = await L.getTrackingMode(conn, c.item_id);
+        if (L.isTracked(lmode)) {
+          const seq = await _seqOf(conn, movId);
+          const alloc = await L.allocateOutbound(conn, { warehouseId: c.warehouse_id, itemId: c.item_id, qty, trackingMode: lmode, movementSeq: seq, movementId: movId, referenceType: 'production_consume', referenceId: id, reason: 'استهلاك إنتاج', actor: releasedBy || '', occurredAt: releaseNow });
+          for (const a of alloc.allocations) {
+            await conn.query('INSERT INTO work_order_lot_consumption (id, work_order_id, component_item_id, lot_id, warehouse_id, qty) VALUES (?,?,?,?,?,?)', ['WOLC-' + Date.now() + '-' + Math.random().toString(36).slice(2, 7), id, c.item_id, a.lotId, c.warehouse_id, a.qty]);
+          }
+          await L.assertInvariant(conn, c.warehouse_id, c.item_id);
+        }
         glLines.push({ accountCode: gl.CORE_ACCOUNTS.WIP.code, debit: lineTotal, credit: 0,
                        brandId: hdr.brand_id, branchId: hdr.branch_id, warehouseId: c.warehouse_id });
         glLines.push({ accountCode: gl.CORE_ACCOUNTS.INVENTORY.code, debit: 0, credit: lineTotal,
@@ -1270,6 +1651,20 @@ router.post('/production-orders/:id/complete', BACKOFFICE, async (req, res) => {
          id, hdr.product_id, outputWh, qtyOut, unitCost, wipTotal,
          batchNumber || null, expiryDate || null]);
 
+      // Phase 4B — tracked finished good: create the output lot from batch/expiry,
+      // link it to the consumed component lots (backward genealogy), check invariant.
+      const _fgMode = await L.getTrackingMode(conn, hdr.product_id);
+      if (L.isTracked(_fgMode)) {
+        if (!String(batchNumber || '').trim()) { const e = new Error('رقم الدفعة/التشغيلة مطلوب لمنتَج نهائي يخضع لتتبع الدفعات'); e.status = 400; e.code = 'LOT_REQUIRED'; throw e; }
+        const seq = await _seqOf(conn, movId);
+        const rcv = await L.receiveInbound(conn, { warehouseId: outputWh, itemId: hdr.product_id, qty: qtyOut, lot: { lotNumber: batchNumber, expiryDate: expiryDate || null, unitCost, sourceType: 'production', sourceId: id }, trackingMode: _fgMode, movementSeq: seq, movementId: movId, referenceType: 'production_output', referenceId: id, reason: 'إنتاج', actor: completedBy || '', occurredAt: completeNow });
+        const [comp] = await conn.query('SELECT lot_id, qty FROM work_order_lot_consumption WHERE work_order_id=?', [id]);
+        for (const cl of comp) {
+          await conn.query('INSERT INTO production_output_lots (id, work_order_id, output_lot_id, component_lot_id, qty) VALUES (?,?,?,?,?)', ['POL-' + Date.now() + '-' + Math.random().toString(36).slice(2, 7), id, rcv.lotId, cl.lot_id, cl.qty]);
+        }
+        await L.assertInvariant(conn, outputWh, hdr.product_id);
+      }
+
       // GL: Dr Finished Goods / Cr WIP — fatal only when there is value to move.
       let glId = null;
       if (wipTotal > 0.005) {
@@ -1382,6 +1777,15 @@ router.post('/production-orders/:id/reverse', MGR, async (req, res) => {
                        brandId: hdr.brand_id, warehouseId: c.warehouse_id });
         glLines.push({ accountCode: gl.CORE_ACCOUNTS.WIP.code, debit: 0, credit: lineTotal,
                        brandId: hdr.brand_id, branchId: hdr.branch_id, warehouseId: c.warehouse_id });
+      }
+      // Phase 4B — restore the EXACT consumed component lots (once for the order),
+      // then re-check the invariant for every tracked component+warehouse.
+      {
+        const [tc] = await conn.query('SELECT DISTINCT warehouse_id, component_item_id FROM work_order_lot_consumption WHERE work_order_id=?', [id]);
+        if (tc.length) {
+          await L.reverseAllocation(conn, { referenceType: 'production_consume', referenceId: id, movementSeq: null, movementId: null, actor: reversedBy || '', occurredAt: reverseNow });
+          for (const t of tc) await L.assertInvariant(conn, t.warehouse_id, t.component_item_id);
+        }
       }
       // Reverse the applied labor + overhead back out of WIP.
       const labor = Number(hdr.labor_cost) || 0;

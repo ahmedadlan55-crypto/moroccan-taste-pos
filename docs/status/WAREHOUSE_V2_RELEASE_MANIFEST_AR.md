@@ -1,7 +1,24 @@
-# Release Manifest — Warehouse V2 · المرحلة 5A (Release Candidate)
+# Release Manifest — Warehouse V2 · المراحل 5A/5B/5B.1
 
-> **القرار: ✅ READY FOR STAGING** — بشرطَي إعداد عند الإطلاق (§5).
-> **بلا push / deploy / merge** — الفرع محلي بالكامل والشجرة الرئيسية لم تُمَس.
+> **قرار 5A:** READY FOR STAGING → **قرار 5B:** STAGING ACCEPTED → **5B.1:** تقوية نهائية (توقيت القاعدة + metrics) — انظر §7.
+> الفرع مدفوع إلى `origin/codex/warehouse-v2-release-candidate` فقط · **Draft PR #4 غير مدمج** · لا نشر إنتاج.
+
+## 0) حالة Staging (المرحلة 5B — 2026-07-02)
+
+| البند | القيمة |
+|---|---|
+| الرابط | https://warehouse-staging-production-aa06.up.railway.app |
+| مشروع Railway المنفصل | `moroccan-pos-staging` · `6cc5b7a3-313f-43dc-b3b9-672fbfa9bcdc` (MySQL 9.4 مستقل + أسرار مستقلة) |
+| Backup ID | `staging-backup-2026-07-02T01-10-46.sql` · SHA256 `715822c2…f015` |
+| UAT على الرابط الحي | **56/56** (15 خطوة × 7 دخولات حقيقية) + 8 لقطات + صفر كونسول + 5xx=0 |
+| p95 عبر HTTPS | ≤273ms لكل الواجهات العشر (الشبكة هي الغالب) · RSS 85MB |
+| Rollback Drill | ✅ V2=0 → نشر النسخة السابقة `c42847b` (عملت على القاعدة المُهاجَرة) → استعادة RC → preflight 0 → V2=1 |
+| Preflight على Staging | **BLOCKER=0** (قبل وبعد apply وبعد الدرل) |
+
+## 7) المرحلة 5B.1 — التقوية النهائية
+
+1. **توقيت القاعدة جذريًا (بلا SET GLOBAL):** `db/connection.js` يفرض `SET time_zone='+03:00'` على **كل اتصال جديد** في الـpool (يبقى بعد أي إعادة تشغيل لقاعدة البيانات تلقائيًا) + خيار `timezone` صريح في mysql2 لتحويلات DATETIME (مستقل عن TZ العملية) + متغير `DB_TIME_ZONE` للضبط. الفصل موثق: timestamps تُخزَّن وتُقرأ بجلسة الرياض، expiry أعمدة DATE تقويمية لا تتأثر بالتحويل. `/ready` صار **يفحص إزاحة الجلسة الفعلية** (`NOW()-UTC = +180min`) ويُخفق (503) عند أي انحراف. اختبار `test:db-timezone` (10 تأكيدات: 3 اتصالات، round-trips، حدود اليوم CURDATE، تطابق DATEDIFF مع expiryPolicy، بوابة /ready).
+2. **Metrics:** مُركِّب `requests_total` انتقل إلى **قمة سلسلة `/api`** (قبل كل الراوترات والبوابات → يحسب 401/429 أيضًا) بوسوم محدودة **method / normalized_route / status_class** (كل معرّف يُطوى إلى `:id`، سقف 300 مسار ثم `other` — لا URL خام ولا cardinality انفجاري) معروضة في `/api/metrics/json` (`requests_by_route`) وProm (`http_requests_route_total{…}`). عدّادات v2 لم تتكرر (تأكيد +1 بالضبط). اختبارات: `metricsContract` وحدة (5) + ops-api صار 13.
 
 ## 1) الكود
 

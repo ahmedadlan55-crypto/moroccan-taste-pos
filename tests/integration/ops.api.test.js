@@ -76,15 +76,26 @@ async function waitForServer() {
     const m0 = await req('GET', '/api/metrics/json', token);
     check('/api/metrics/json exposes warehouse_v2 counters', m0.body && m0.body.warehouse_v2 && typeof m0.body.warehouse_v2.v2_requests_total === 'number', m0.body && m0.body.warehouse_v2);
     const before = (m0.body && m0.body.warehouse_v2 && m0.body.warehouse_v2.v2_responses_4xx) || 0;
+    const beforeReqs = (m0.body && m0.body.warehouse_v2 && m0.body.warehouse_v2.v2_requests_total) || 0;
+    const beforeTotal = (m0.body && m0.body.requests && m0.body.requests.total) || 0;
     await req('POST', '/api/inventory/v2/lots', token, {}); // invalid body → 4xx, counted by v2Metrics.track
     const m1 = await req('GET', '/api/metrics/json', token);
     const after = (m1.body && m1.body.warehouse_v2 && m1.body.warehouse_v2.v2_responses_4xx) || 0;
     check('v2 4xx response increments warehouse_v2.v2_responses_4xx', after > before, { before, after });
+    // Phase 5B.1 — the v2 counter must move by EXACTLY 1 for one request (the
+    // global tracker moved to the top of the chain must not double-wrap it).
+    const afterReqs = m1.body.warehouse_v2.v2_requests_total;
+    check('one v2 request → v2_requests_total +1 exactly (no double count)', afterReqs - beforeReqs === 1, { beforeReqs, afterReqs });
+    // Phase 5B.1 — the GLOBAL requests_total is mounted before all routers now:
+    // the two requests since m0 (the v2 POST + this metrics GET ≥ 2).
+    check('global requests.total counts routed requests (mounted before routers)', (m1.body.requests.total - beforeTotal) >= 2, { beforeTotal, afterTotal: m1.body.requests.total });
+    check('requests_by_route present with normalized labels (no raw ids)', Array.isArray(m1.body.requests_by_route) && m1.body.requests_by_route.length > 0 && !m1.body.requests_by_route.some((r) => /\d{4,}/.test(r.route)), (m1.body.requests_by_route || []).slice(0, 3));
     check('warehouse_v2 exposes integrity-alert counters', m1.body && m1.body.warehouse_v2 && 'lot_invariant_violation_total' in m1.body.warehouse_v2 && 'gl_imbalance_total' in m1.body.warehouse_v2, m1.body && m1.body.warehouse_v2);
 
     // 4) Prometheus text
     const prom = await req('GET', '/api/metrics', token);
     check('/api/metrics (Prometheus) emits warehouse_v2_* lines', typeof prom.raw === 'string' && prom.raw.indexOf('warehouse_v2_requests_total') !== -1, prom.raw && prom.raw.slice(0, 80));
+    check('/api/metrics emits labelled http_requests_route_total{...}', prom.raw.indexOf('http_requests_route_total{method=') !== -1, (prom.raw.match(/http_requests_route_total\{[^}]+\}/) || [])[0]);
   } finally {
     try { server.kill(); } catch (_) {}
   }

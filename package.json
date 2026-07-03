@@ -35,6 +35,7 @@
     "test:db-timezone": "node tests/integration/dbTimezone.test.js",
     "test:flags-api": "node tests/integration/featureFlags.api.test.js",
     "test:negative-stock": "node tests/integration/negativeStock.api.test.js",
+    "test:purchase-receipt": "node tests/integration/purchaseReceipt.api.test.js",
     "test:canary-api": "node tests/integration/canary.api.test.js",
     "warehouse:v2:preflight": "node scripts/warehouse-v2-preflight.js",
     "perf:warehouse-v2": "node scripts/perf/run-warehouse-v2.js",

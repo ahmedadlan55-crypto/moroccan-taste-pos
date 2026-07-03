@@ -194,6 +194,34 @@ function _validateManualAlloc(meta, qty, rawAlloc, reason) {
 
 // ── Build draft lines per doc type (also used by PATCH) ─────────────────────
 // Returns { lines:[{itemId,itemName,unit,...}], totalCost, totalValue, header:{} }
+// Phase W3 — compute per-item outstanding for a legacy purchase across already
+// posted/approved V2 receipts linked to it. Read-only. Returns null if the
+// purchase doesn't exist.
+async function _purchaseOutstanding(q, purchaseId) {
+  const [pr] = await q.query('SELECT * FROM purchases WHERE id=? LIMIT 1', [purchaseId]);
+  if (!pr.length) return null;
+  const purchase = pr[0];
+  let ordered = [];
+  try { ordered = JSON.parse(purchase.items_json || '[]'); } catch (_) { ordered = []; }
+  const byItem = new Map();
+  for (const it of ordered) {
+    const id = it.itemId || it.item_id || it.id;
+    if (!id) continue;
+    const qty = Number(it.qty || it.quantity || 0);
+    const prev = byItem.get(id) || { itemId: id, name: it.name || it.item_name || id, ordered: 0, unitPrice: Number(it.unitPrice || it.unit_price || 0), receivedV2: 0 };
+    prev.ordered += qty;
+    byItem.set(id, prev);
+  }
+  // Sum already-received across NON-reversed V2 receipts linked to this purchase.
+  const [rv] = await q.query(
+    "SELECT i.item_id, COALESCE(SUM(i.qty),0) AS q FROM inv_receipt_items i " +
+    "JOIN inv_receipts r ON r.id=i.receipt_id " +
+    "WHERE r.purchase_id=? AND r.status IN ('approved','posted') GROUP BY i.item_id", [purchaseId]);
+  for (const row of rv) { const e = byItem.get(row.item_id); if (e) e.receivedV2 = Number(row.q); }
+  for (const e of byItem.values()) e.outstanding = E.round4(e.ordered - e.receivedV2);
+  return { purchase, supplierId: purchase.supplier_id || null, byItem, legacyReceived: purchase.status === 'received' };
+}
+
 async function _buildReceipt(body, warehouse) {
   if (!String(body.reason || '').trim()) throw _err('REASON_REQUIRED', 'سبب الاستلام إلزامي');
   // The counter (credit) account is REQUIRED and validated — no silent STOCK_GAIN.
@@ -201,6 +229,24 @@ async function _buildReceipt(body, warehouse) {
   await gl.ensureCoreAccounts(db);
   await E.validateAccount(db, counterCode, ACCOUNT_USAGE.receipt);
   _validateItems(body.items, 'qty', false);
+
+  // Phase W3 — optional linkage to a legacy purchase (partial receiving).
+  const purchaseId = (body.purchaseId || body.purchase_id || '').toString().trim() || null;
+  let plan = null;
+  if (purchaseId) {
+    plan = await _purchaseOutstanding(db, purchaseId);
+    if (!plan) throw _err('VALIDATION_ERROR', 'أمر الشراء غير موجود: ' + purchaseId);
+    if (plan.legacyReceived) throw _err('ALREADY_RECEIVED_IN_V2', 'أمر الشراء مُستلَم بالكامل عبر النظام القديم');
+    const over = [];
+    for (const it of body.items) {
+      const id = it.itemId || it.item_id;
+      const e = plan.byItem.get(id);
+      if (!e) { over.push({ itemId: id, reason: 'ليس في أمر الشراء' }); continue; }
+      if (Number(it.qty) > e.outstanding + 1e-6) over.push({ itemId: id, requested: Number(it.qty), outstanding: e.outstanding });
+    }
+    if (over.length) { const e = _err('OVER_RECEIPT', 'كمية الاستلام تتجاوز المتبقّي في أمر الشراء'); e.detail = over; throw e; }
+  }
+
   const lines = [];
   let total = 0;
   for (const it of body.items) {
@@ -219,9 +265,11 @@ async function _buildReceipt(body, warehouse) {
   return {
     lines, totalCost: total, totalValue: total,
     header: {
-      source_ref: (body.sourceRef || body.source_ref || '').toString().slice(0, 200) || null,
+      source_ref: (body.sourceRef || body.source_ref || '').toString().slice(0, 200) || (purchaseId ? ('PO:' + purchaseId) : null),
       reason: String(body.reason).trim().slice(0, 200),
       counter_account_code: counterCode.slice(0, 20),
+      purchase_id: purchaseId,
+      supplier_id: plan ? plan.supplierId : null,
     },
   };
 }
@@ -533,6 +581,25 @@ async function _postReceipt(conn, cfg, doc, lines, actor) {
     try { await recomputeInvItemStock(conn, ln.item_id); } catch (_) {}
   }
   amount = E.round2(amount);
+  // Phase W3 — if this receipt is linked to a legacy purchase, recompute the
+  // purchase's receive_status (partial / received) from ALL posted V2 receipts.
+  if (doc.purchase_id) {
+    try {
+      const plan = await _purchaseOutstanding(conn, doc.purchase_id);
+      if (plan) {
+        let anyOutstanding = false, anyReceived = false;
+        for (const e of plan.byItem.values()) { if (e.outstanding > 1e-6) anyOutstanding = true; if (e.receivedV2 > 1e-6) anyReceived = true; }
+        const status = !anyOutstanding && anyReceived ? 'received' : (anyReceived ? 'partial' : 'none');
+        await conn.query('UPDATE purchases SET v2_receive_status=? WHERE id=?', [status, doc.purchase_id]);
+        // Back-propagate received_qty onto PO lines when the purchase came from a PO.
+        if (plan.purchase.po_id) {
+          for (const e of plan.byItem.values()) {
+            await conn.query('UPDATE po_lines SET received_qty=? WHERE po_id=? AND item_id=?', [e.receivedV2, plan.purchase.po_id, e.itemId]).catch(() => {});
+          }
+        }
+      }
+    } catch (_) { /* linkage bookkeeping is best-effort; never blocks the receipt */ }
+  }
   const spec = E.glReceipt({ amount, counterCode: doc.counter_account_code, warehouse, warehouseId: doc.warehouse_id, brandId: doc.brand_id, branchId: doc.branch_id, costCenterId: doc.cost_center_id, journalDate: _dateStr(doc[cfg.dateCol]), postedBy: actor, referenceId: doc.id, description: 'استلام مستقل ' + doc[cfg.numberCol] });
   return { affectedStock, movementIds, amount, spec };
 }
@@ -875,6 +942,18 @@ router.get('/gl-accounts', async (req, res) => {
       types
     );
     res.json({ data: rows.map((r) => ({ code: r.code, name: r.name_ar || r.name_en || r.code, type: r.type })), usage });
+  } catch (e) { _catch(res, e); }
+});
+
+// ── Phase W3 — receive-plan for a legacy purchase (partial receiving) ───────
+// GET /api/inventory/v2/purchases/:id/receive-plan → per-line outstanding qty.
+router.get('/purchases/:id/receive-plan', async (req, res) => {
+  try {
+    const plan = await _purchaseOutstanding(db, req.params.id);
+    if (!plan) return res.status(404).json({ success: false, code: 'NOT_FOUND', error: 'أمر الشراء غير موجود' });
+    if (plan.legacyReceived) return _fail(res, 'ALREADY_RECEIVED_IN_V2', 'أمر الشراء مُستلَم بالكامل عبر النظام القديم');
+    const lines = Array.from(plan.byItem.values()).map((e) => ({ itemId: e.itemId, name: e.name, ordered: e.ordered, receivedV2: e.receivedV2, outstanding: e.outstanding, unitPrice: e.unitPrice }));
+    res.json({ success: true, data: { purchaseId: plan.purchase.id, supplierId: plan.supplierId, supplierName: plan.purchase.supplier_name || null, warehouseId: plan.purchase.warehouse_id || null, v2ReceiveStatus: plan.purchase.v2_receive_status || 'none', lines }, fullyOutstanding: lines.every((l) => Math.abs(l.receivedV2) < 1e-6) });
   } catch (e) { _catch(res, e); }
 });
 

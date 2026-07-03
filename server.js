@@ -4220,6 +4220,14 @@ async function runMigrations() {
   // (credit) account so STOCK_GAIN is never a silent default.
   await addColumnIfMissing('inv_receipts', 'reason', 'VARCHAR(200)');
   await addColumnIfMissing('inv_receipts', 'counter_account_code', 'VARCHAR(20)');
+  // Phase W3 — link a V2 receipt back to a legacy purchase / supplier (partial
+  // receiving). All nullable → standalone receipts are unaffected.
+  await addColumnIfMissing('inv_receipts', 'purchase_id', 'VARCHAR(50) NULL');
+  await addColumnIfMissing('inv_receipts', 'supplier_id', 'VARCHAR(50) NULL');
+  try { await db.query('CREATE INDEX idx_inv_receipts_purchase ON inv_receipts (purchase_id)'); } catch (_) {}
+  // Dedicated V2 partial-receive status on the legacy purchases table (does NOT
+  // touch the legacy `receive_status` enum which has its own PO-approval meaning).
+  try { await addColumnIfMissing('purchases', 'v2_receive_status', "ENUM('none','partial','received') NOT NULL DEFAULT 'none'"); } catch (_) {}
   // Unified append-only audit timeline for all three doc types (one row per
   // transition, written inside the SAME txn as the state change).
   await createTableIfMissing('inv_tx_events', `

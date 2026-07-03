@@ -205,7 +205,13 @@ router.get('/items', async (req, res) => {
     const where = ['ii.deleted_at IS NULL']; const params = [];
     if (status === 'active') where.push('ii.active=1'); else if (status === 'inactive') where.push('ii.active=0');
     if (category) { where.push('ii.category=?'); params.push(category); }
-    if (p.q) { where.push('(ii.name LIKE ? OR ii.sku LIKE ?)'); params.push('%' + p.q + '%', '%' + p.q + '%'); }
+    if (p.q) {
+      // Phase W4 — also match the (normalized) barcode so a scanner typing into
+      // the search box finds the item directly (primary + secondary codes).
+      const bq = require('../lib/barcode').normalize(p.q);
+      where.push('(ii.name LIKE ? OR ii.sku LIKE ? OR ii.barcode_norm=? OR EXISTS (SELECT 1 FROM item_barcodes ib WHERE ib.item_id=ii.id AND ib.code_norm=?))');
+      params.push('%' + p.q + '%', '%' + p.q + '%', bq, bq);
+    }
     let join = '';
     if (warehouseId) { join = ' JOIN warehouse_stock ws ON ws.item_id=ii.id AND ws.warehouse_id=?'; params.unshift(warehouseId); }
     const sortCol = ({ name: 'ii.name', sku: 'ii.sku', category: 'ii.category', created_at: 'ii.created_at' })[p.sort] || 'ii.name';
@@ -235,6 +241,26 @@ router.get('/items/:id/warehouses', async (req, res) => {
   } catch (e) { _catch(res, e); }
 });
 
+// Phase W4 — GET /items/by-barcode?code=X (registered BEFORE /items/:id so the
+// literal path is not shadowed by the :id param). item_barcodes → inv_items.
+router.get('/items/by-barcode', async (req, res) => {
+  try {
+    const BCq = require('../lib/barcode');
+    const norm = BCq.normalize(req.query.code || '');
+    if (!norm) return _fail(res, 'VALIDATION_ERROR', 'الرجاء تمرير code');
+    let matchedBarcode = null, sizeVariant = null, itemId = null;
+    const [b] = await db.query('SELECT item_id, code, size_variant FROM item_barcodes WHERE code_norm=? LIMIT 1', [norm]);
+    if (b.length) { itemId = b[0].item_id; matchedBarcode = b[0].code; sizeVariant = b[0].size_variant; }
+    else {
+      const [p] = await db.query('SELECT id, barcode FROM inv_items WHERE barcode_norm=? LIMIT 1', [norm]);
+      if (p.length) { itemId = p[0].id; matchedBarcode = p[0].barcode; }
+    }
+    if (!itemId) return res.status(404).json({ success: false, code: 'NOT_FOUND', error: 'لا يوجد صنف بهذا الباركود', data: null });
+    const item = await _loadItem(itemId);
+    res.json({ success: true, data: { item, matchedBarcode, sizeVariant } });
+  } catch (e) { _catch(res, e); }
+});
+
 router.get('/items/:id', async (req, res) => {
   try {
     const item = await _loadItem(req.params.id);
@@ -243,7 +269,8 @@ router.get('/items/:id', async (req, res) => {
     const [rules] = await db.query('SELECT * FROM warehouse_item_rules WHERE item_id=?', [item.id]);
     const [movements] = await db.query('SELECT id, movement_date, type, qty, reason, warehouse_id, reference_type FROM inventory_movements WHERE item_id=? ORDER BY seq DESC LIMIT 20', [item.id]);
     const [events] = await db.query("SELECT * FROM inv_tx_events WHERE doc_type='item' AND doc_id=? ORDER BY created_at ASC, id ASC", [item.id]);
-    res.json({ data: item, distribution: dist, rules, movements, timeline: events });
+    const [barcodes] = await db.query('SELECT id, code, size_variant, is_primary FROM item_barcodes WHERE item_id=? ORDER BY is_primary DESC, id', [item.id]).catch(() => [[]]);
+    res.json({ data: item, distribution: dist, rules, movements, timeline: events, barcodes });
   } catch (e) { _catch(res, e); }
 });
 
@@ -392,6 +419,60 @@ router.put('/items/:id/warehouse-rules/:warehouseId', BACKOFFICE, async (req, re
       if (idemId) await IDEM.complete(db, idemId, 200, body);
       return res.status(200).json(body);
     } catch (e) { if (idemId) await IDEM.abort(db, idemId).catch(() => {}); throw e; }
+  } catch (e) { _catch(res, e); }
+});
+
+// ════════════════════════════════════════════════════════════════════════════
+// Phase W4 — Barcode: fast scan lookup + multi-code editor
+// ════════════════════════════════════════════════════════════════════════════
+const BC = require('../lib/barcode');
+
+// PUT /items/:id/barcodes — replace the multi-code list (RBAC + expectedVersion + Audit).
+// body: { primaryBarcode?, barcodes:[{code, sizeVariant?}], expectedVersion }
+router.put('/items/:id/barcodes', MGR, async (req, res) => {
+  try {
+    const actor = _actor(req); const id = req.params.id; const b = req.body || {};
+    const expected = _expectedVersion(req);
+    const item = await _loadItem(id);
+    if (!item) { const e = new Error('الصنف غير موجود'); e.status = 404; throw e; }
+    // Normalize + validate all provided codes; detect in-payload duplicates.
+    const primary = b.primaryBarcode != null && String(b.primaryBarcode).trim() !== '' ? BC.requireValid(b.primaryBarcode) : null;
+    const list = Array.isArray(b.barcodes) ? b.barcodes : [];
+    const normed = [];
+    const seen = new Set();
+    if (primary) { seen.add(primary); }
+    for (const it of list) {
+      const code = BC.requireValid(it.code);
+      if (seen.has(code)) throw _err('VALIDATION_ERROR', 'باركود مكرر في الطلب: ' + code);
+      seen.add(code);
+      normed.push({ code: String(it.code).trim().slice(0, 80), code_norm: code, size_variant: (it.sizeVariant || it.size_variant || '').toString().slice(0, 60) || null });
+    }
+    const out = await db.withTransaction(async (conn) => {
+      const [cur] = await conn.query('SELECT id, version FROM inv_items WHERE id=? LIMIT 1 FOR UPDATE', [id]);
+      if (!cur.length) throw _err('VALIDATION_ERROR', 'الصنف غير موجود');
+      if (expected != null && Number(cur[0].version) !== expected) throw _err('VERSION_CONFLICT', 'تغيّر الصنف منذ آخر تحميل — أعد التحميل');
+      // Uniqueness across BOTH tables, excluding this item's own rows.
+      for (const code of seen) {
+        const [c1] = await conn.query('SELECT id FROM inv_items WHERE barcode_norm=? AND id<>? LIMIT 1', [code, id]);
+        if (c1.length) throw _err('BARCODE_TAKEN', 'الباركود مستخدم لصنف آخر: ' + c1[0].id);
+        const [c2] = await conn.query('SELECT item_id FROM item_barcodes WHERE code_norm=? AND item_id<>? LIMIT 1', [code, id]);
+        if (c2.length) throw _err('BARCODE_TAKEN', 'الباركود مستخدم لصنف آخر: ' + c2[0].item_id);
+      }
+      // Primary → inv_items.barcode(+norm); secondaries → item_barcodes (replace all).
+      await conn.query('UPDATE inv_items SET barcode=?, barcode_norm=?, version=version+1 WHERE id=?', [primary ? String(b.primaryBarcode).trim().slice(0, 80) : null, primary, id]);
+      await conn.query('DELETE FROM item_barcodes WHERE item_id=?', [id]);
+      for (const n of normed) {
+        await conn.query('INSERT INTO item_barcodes (id, item_id, code, code_norm, size_variant, is_primary, created_by) VALUES (?,?,?,?,?,0,?)',
+          ['IBC-' + crypto.randomBytes(6).toString('hex'), id, n.code, n.code_norm, n.size_variant, actor]);
+      }
+      const [now] = await conn.query('SELECT version FROM inv_items WHERE id=?', [id]);
+      try {
+        await conn.query('INSERT INTO inv_tx_events (id, doc_type, doc_id, action, actor, note, payload_json) VALUES (?,?,?,?,?,?,?)',
+          ['EV-' + Date.now() + '-' + crypto.randomBytes(3).toString('hex'), 'item', id, 'barcodes_changed', actor, 'تعديل باركودات الصنف', JSON.stringify({ primary, secondary: normed.map((x) => x.code_norm) }).slice(0, 8000)]);
+      } catch (_) {}
+      return { version: Number(now[0] && now[0].version) || 1 };
+    });
+    return res.status(200).json({ success: true, data: { id }, status: 'saved', version: out.version });
   } catch (e) { _catch(res, e); }
 });
 

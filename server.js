@@ -4400,6 +4400,28 @@ async function runMigrations() {
   await addColumnIfMissing('inv_items', 'description', "TEXT");
   await addColumnIfMissing('inv_items', 'notes', "VARCHAR(500)");
   try { await db.query('CREATE UNIQUE INDEX uq_inv_items_sku_norm ON inv_items (sku_norm)'); } catch (e) { /* exists or dup data */ }
+  // Phase W4 — unified barcode. Primary barcode on inv_items (multiple NULLs
+  // allowed by UNIQUE) + a 1:N item_barcodes table for size variants. SKU is
+  // untouched. Both normalized columns are uniquely indexed for O(1) scan lookup.
+  await addColumnIfMissing('inv_items', 'barcode', "VARCHAR(80)");
+  await addColumnIfMissing('inv_items', 'barcode_norm', "VARCHAR(80)");
+  try { await db.query('CREATE UNIQUE INDEX uq_inv_items_barcode_norm ON inv_items (barcode_norm)'); } catch (e) { /* exists or dup data */ }
+  await createTableIfMissing('item_barcodes', `
+    CREATE TABLE IF NOT EXISTS item_barcodes (
+      id VARCHAR(40) PRIMARY KEY,
+      item_id VARCHAR(50) NOT NULL,
+      code VARCHAR(80) NOT NULL,
+      code_norm VARCHAR(80) NOT NULL,
+      size_variant VARCHAR(60) NULL,
+      is_primary TINYINT(1) NOT NULL DEFAULT 0,
+      version INT NOT NULL DEFAULT 1,
+      created_by VARCHAR(64) NULL,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+      UNIQUE KEY uq_code_norm (code_norm),
+      KEY idx_item (item_id)
+    ) ENGINE=InnoDB
+  `);
   // Per-(warehouse, item) replenishment rules. min/reorder/max/safety/lead-time
   // are per-warehouse here (inv_items.min_stock stays the GLOBAL fallback for
   // legacy reads). The replenishment engine reads these; nothing posts stock.

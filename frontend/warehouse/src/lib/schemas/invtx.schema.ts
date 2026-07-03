@@ -69,7 +69,7 @@ export const updateIssueInput = createIssueInput.extend(withVersion);
 export const updateAdjustmentInput = createAdjustmentInput.extend(withVersion);
 
 export const reasonInput = z.object({
-  reason: z.string().trim().min(3, "اكتب السبب (٣ أحرف على الأقل)"),
+  reason: z.string().trim().min(3, "اكتب السبب (3 أحرف على الأقل)"),
   expectedVersion: z.number().int().optional(),
 });
 

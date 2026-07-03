@@ -95,7 +95,7 @@ export function AppRouter() {
 function NotFound() {
   return (
     <div className="surface grid place-items-center gap-3 p-12 text-center">
-      <div className="text-2xl font-extrabold text-slate-900">٤٠٤</div>
+      <div className="text-2xl font-extrabold text-slate-900">404</div>
       <p className="text-sm font-medium text-slate-500">الصفحة غير موجودة.</p>
       <Link className="text-sm font-bold text-teal-700 hover:underline" to="/">
         العودة إلى مركز المستودعات

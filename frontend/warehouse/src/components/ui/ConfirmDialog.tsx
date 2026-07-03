@@ -116,7 +116,7 @@ export function ConfirmDialog({
                     onChange={(e) => setReason(e.target.value)}
                   />
                   {!reasonOk && reason.length > 0 && (
-                    <span className="mt-1 block text-xs font-bold text-rose-600">السبب يجب أن يكون ٣ أحرف على الأقل.</span>
+                    <span className="mt-1 block text-xs font-bold text-rose-600">السبب يجب أن يكون 3 أحرف على الأقل.</span>
                   )}
                 </label>
               )}

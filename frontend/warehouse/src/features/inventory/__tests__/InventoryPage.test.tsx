@@ -33,7 +33,7 @@ describe("InventoryPage (real grid)", () => {
     stubFetch(route);
     renderWithProviders(<InventoryPage />);
     await waitFor(() => expect(screen.getByText("صنف 1")).toBeInTheDocument());
-    expect(screen.getByText(/من ٦٠/)).toBeInTheDocument(); // "عرض ١–٢٥ من ٦٠"
+    expect(screen.getByText(/من 60/)).toBeInTheDocument(); // "عرض 1–25 من 60" (أرقام إنجليزية)
   });
 
   it("paginates server-side: Next requests page 2", async () => {

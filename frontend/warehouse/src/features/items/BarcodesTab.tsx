@@ -72,7 +72,7 @@ export function BarcodesTab({ detail, onSaved }: { detail: ItemDetail; onSaved: 
       {
         onSuccess: () => { setSaved(true); setDirty(false); onSaved(); },
         onError: (e) => {
-          if (e instanceof ApiError && e.code === "BARCODE_TAKEN") setErr(`تعارض ٤٠٩: ${e.message} — الباركود مستخدم لصنف آخر.`);
+          if (e instanceof ApiError && e.code === "BARCODE_TAKEN") setErr(`تعارض 409: ${e.message} — الباركود مستخدم لصنف آخر.`);
           else if (e instanceof ApiError && e.isConflict) { setErr("تغيّر الصنف منذ آخر تحميل — أُعيد التحميل، حاول مجددًا."); onSaved(); }
           else setErr(e instanceof ApiError ? e.message : "تعذّر حفظ الباركودات.");
         },

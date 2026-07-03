@@ -5,7 +5,7 @@ import { stocktakeStatusToLabel } from "@/lib/status-labels";
 // sheet (for the floor); mode="variance" → the reconciled variance report. All
 // styles inline so it prints from a popup with no external CSS.
 function esc(v: unknown): string { return String(v ?? "").replace(/[&<>]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" }[c] as string)); }
-function n(v: number, dp = 2): string { return (Number(v) || 0).toLocaleString("ar-EG", { minimumFractionDigits: dp, maximumFractionDigits: dp }); }
+function n(v: number, dp = 2): string { return (Number(v) || 0).toLocaleString("en-US", { minimumFractionDigits: dp, maximumFractionDigits: dp }); }
 
 export function printStocktake(d: StocktakeDetail, mode: "count" | "variance"): void {
   const blind = d.blindCount && mode === "count";

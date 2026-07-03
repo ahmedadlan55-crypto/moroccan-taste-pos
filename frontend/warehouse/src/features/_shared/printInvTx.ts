@@ -8,8 +8,8 @@ import { invTxStatusToLabel } from "@/lib/status-labels";
 function esc(s: unknown): string {
   return String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c] as string));
 }
-function money(n: number): string { return (Number(n) || 0).toLocaleString("ar-EG", { minimumFractionDigits: 2, maximumFractionDigits: 2 }); }
-function qty(n: number): string { return (Number(n) || 0).toLocaleString("ar-EG", { maximumFractionDigits: 2 }); }
+function money(n: number): string { return (Number(n) || 0).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 }); }
+function qty(n: number): string { return (Number(n) || 0).toLocaleString("en-US", { maximumFractionDigits: 2 }); }
 
 export function printInvTx(config: InvTxConfig, d: InvTxDetail): void {
   const isAdj = config.lineMode === "adjustment";

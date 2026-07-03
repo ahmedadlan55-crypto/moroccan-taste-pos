@@ -246,6 +246,29 @@ function injectAppTemplate(html) {
     document.body.insertBefore(container.firstChild, insertBefore);
   }
   if (marker && marker.parentNode) marker.parentNode.removeChild(marker);
+  _applyWhV2Nav();
+}
+
+// Warehouse V2 sidebar link — same flag contract as /shared/header.js:
+// localStorage 'wh_v2_flag' gives an instant (flash-free) decision, then
+// GET /api/version refreshes it so a flag flip on the server propagates on
+// the next load. Only toggles visibility — legacy items stay untouched.
+function _applyWhV2Nav() {
+  function setShown(on) {
+    document.querySelectorAll('[data-wh-v2-link]').forEach(function(el) {
+      el.style.display = on ? '' : 'none';
+    });
+  }
+  var cached = localStorage.getItem('wh_v2_flag');
+  if (cached === '1') setShown(true);
+  fetch('/api/version', { headers: { 'Cache-Control': 'no-cache' } })
+    .then(function(r) { return r.ok ? r.json() : null; })
+    .then(function(v) {
+      var on = !!(v && v.warehouseV2 !== false);
+      try { localStorage.setItem('wh_v2_flag', on ? '1' : '0'); } catch (e) {}
+      setShown(on);
+    })
+    .catch(function() { /* keep cached decision */ });
 }
 
 // Mount a section from cache into the DOM (lazy) — called by nav/erpNav
@@ -344,7 +367,7 @@ const dict = {
     "nav.menuProduction":"المنيو والإنتاج", "nav.menuHub":"إدارة المنيو والبرندات",
     "nav.semiFinished":"المنتجات غير التامة", "nav.bom":"الوصفات (BOM)",
     "nav.productionOrders":"أوامر الإنتاج", "nav.priceLists":"قوائم الأسعار", "nav.categories":"تصنيفات الأصناف",
-    "nav.inventory":"المخزون والمستودعات", "nav.stockManagement":"تقارير المستودعات",
+    "nav.inventory":"المخزون والمستودعات", "nav.warehouseV2":"المستودعات", "nav.stockManagement":"تقارير المستودعات",
     "nav.multiWarehouses":"المستودعات المتعددة", "nav.whHierarchy":"هيكل المستودعات",
     "nav.inventoryMethod":"نوع الجرد وقيمة المخزون", "nav.stockIssues":"إذونات الصرف",
     "nav.wasteEntries":"قيود الهدر", "nav.expiryAlerts":"تنبيهات انتهاء الصلاحية",
@@ -457,7 +480,7 @@ const dict = {
     "nav.menuProduction":"Menu & Production", "nav.menuHub":"Menu & Brands",
     "nav.semiFinished":"Semi-Finished Products", "nav.bom":"Recipes (BOM)",
     "nav.productionOrders":"Production Orders", "nav.priceLists":"Price Lists", "nav.categories":"Item Categories",
-    "nav.inventory":"Inventory & Warehouses", "nav.stockManagement":"Stock & Stocktake",
+    "nav.inventory":"Inventory & Warehouses", "nav.warehouseV2":"Warehouses", "nav.stockManagement":"Stock & Stocktake",
     "nav.multiWarehouses":"Multi-Warehouses", "nav.whHierarchy":"Warehouse Hierarchy",
     "nav.inventoryMethod":"Valuation Method", "nav.stockIssues":"Stock Issues",
     "nav.wasteEntries":"Waste Entries", "nav.expiryAlerts":"Expiry Alerts",

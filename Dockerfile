@@ -18,5 +18,10 @@ COPY . .
 RUN npm run build:warehouse \
  && rm -rf frontend/warehouse/node_modules
 
+# 4) Build the Cashier V2 React SPA the same way (served at /pos-v2 behind
+#    POS_V2_ENABLED; the legacy /pos PWA remains the rollback path).
+RUN npm run build:pos \
+ && rm -rf frontend/pos/node_modules
+
 EXPOSE 3000
 CMD ["node", "server.js"]

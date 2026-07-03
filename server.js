@@ -304,6 +304,54 @@ if (_pwaFs.existsSync(path.join(_whDist, 'index.html'))) {
   console.warn('[warehouse] bundle not found — run: npm --prefix frontend/warehouse run build');
 }
 
+// ── Cashier V2 React app (Strangler beside the legacy /pos) ─────────────
+// Served at /pos-v2 behind POS_V2_ENABLED (default ON outside production so
+// dev/staging always sees it; production requires the explicit flag). The
+// legacy /pos PWA is untouched — it remains the rollback path.
+var POS_V2_ENABLED = process.env.NODE_ENV === 'production'
+  ? /^(1|true|on|yes)$/i.test(String(process.env.POS_V2_ENABLED || '').trim())
+  : !/^(0|false|off|no)$/i.test(String(process.env.POS_V2_ENABLED || '').trim());
+if (!POS_V2_ENABLED) {
+  app.all(/^\/pos-v2(?:\/.*)?$/, function (req, res) {
+    res.status(503).type('html').send('<!doctype html><html lang="ar" dir="rtl"><meta charset="utf-8"><title>صيانة</title><body style="font-family:Tahoma,Arial,sans-serif;padding:3rem;text-align:center;color:#172033"><h2>كاشير V2 غير مفعّل</h2><p>استخدم واجهة البيع الحالية /pos. (POS_V2_ENABLED=0)</p></body></html>');
+  });
+}
+app.use('/pos-v2', function (req, res, next) {
+  res.setHeader('Content-Security-Policy', [
+    "default-src 'self'",
+    "base-uri 'self'",
+    "object-src 'none'",
+    "frame-ancestors 'none'",
+    "img-src 'self' data: blob:",
+    "font-src 'self' data:",
+    "style-src 'self' 'unsafe-inline'",
+    "script-src 'self'",
+    "connect-src 'self'",
+    "form-action 'self'"
+  ].join('; '));
+  next();
+});
+var _posDist = path.join(__dirname, 'frontend', 'pos', 'dist');
+if (_pwaFs.existsSync(path.join(_posDist, 'index.html'))) {
+  app.use('/pos-v2', express.static(_posDist, {
+    setHeaders: function(res, filePath) {
+      if (/\.html$/i.test(filePath)) {
+        res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
+      } else if (/[/\\]assets[/\\]/.test(filePath)) {
+        res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
+      }
+    }
+  }));
+  app.get(/^\/pos-v2(?:\/.*)?$/, function(req, res, next) {
+    if (/\.[a-zA-Z0-9]+$/.test(req.path)) return next();
+    res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
+    res.sendFile(path.join(_posDist, 'index.html'));
+  });
+  console.log('[pos-v2] SPA mounted at /pos-v2');
+} else {
+  console.warn('[pos-v2] bundle not found — run: npm --prefix frontend/pos run build');
+}
+
 // RC hardening — surface a loud warning if warehouse-v2 is exposed WITHOUT
 // per-user warehouse scope enforcement (an out-of-scope user could otherwise
 // read/write any warehouse). Deliberately a warning, not a hard stop: staging
@@ -414,6 +462,8 @@ app.use('/api/auth', require('./routes/auth'));
 app.use('/api/menu', require('./routes/menu'));
 app.use('/api/sales', require('./routes/sales'));
 app.use('/api/shifts', require('./routes/shifts'));
+// Cashier V2 — cart lifecycle ONLY (checkout money path stays /api/sales).
+app.use('/api/pos/v2', require('./routes/pos-v2'));
 // Phase 3B — independent inventory transactions (receipts / issues / adjustments)
 // at a CLEAN namespace /api/inventory/v2/* so the legacy /api/inventory/adjustments
 // (delta model + legacy HTML UI) is never shadowed. Mounted BEFORE inventory.js so
@@ -4793,6 +4843,77 @@ async function runMigrations() {
   await addColumnIfMissing('production_output', 'waste_cost', 'DECIMAL(14,4) DEFAULT 0');
   await addColumnIfMissing('production_output', 'gl_journal_id', 'VARCHAR(60) NULL');
   await addColumnIfMissing('production_output', 'created_by', 'VARCHAR(100) NULL');
+
+  // ═══════════════════════════════════════════════════════════
+  // Cashier V2 (routes/pos-v2.js) — CART LIFECYCLE ONLY.
+  // The financial write (sale + ZATCA + GL + stock) stays the legacy
+  // POST /api/sales; pos_orders.id is the clientOrderId that makes the
+  // checkout replay-safe. Idempotent CREATEs — never touch legacy tables.
+  // ═══════════════════════════════════════════════════════════
+  await createTableIfMissing('pos_orders', `
+    CREATE TABLE pos_orders (
+      id VARCHAR(40) PRIMARY KEY,
+      status ENUM('open','held','submitted','completed','voided') NOT NULL DEFAULT 'open',
+      order_type ENUM('dine_in','takeaway','delivery') NOT NULL DEFAULT 'takeaway',
+      table_no VARCHAR(20) NULL,
+      shift_id VARCHAR(40) NULL,
+      username VARCHAR(100) NULL,
+      device_id VARCHAR(60) NULL,
+      warehouse_id VARCHAR(50) NULL,
+      channel_id VARCHAR(50) NULL,
+      channel_name VARCHAR(100) NULL,
+      customer_id VARCHAR(50) NULL,
+      discount_type ENUM('PERCENT','FIXED') NULL,
+      discount_value DECIMAL(10,2) NOT NULL DEFAULT 0,
+      discount_name VARCHAR(100) NULL,
+      subtotal DECIMAL(12,2) NOT NULL DEFAULT 0,
+      line_discount_total DECIMAL(12,2) NOT NULL DEFAULT 0,
+      discount_total DECIMAL(12,2) NOT NULL DEFAULT 0,
+      vat_total DECIMAL(12,2) NOT NULL DEFAULT 0,
+      total DECIMAL(12,2) NOT NULL DEFAULT 0,
+      note VARCHAR(300) NULL,
+      sale_id VARCHAR(50) NULL,
+      invoice_number VARCHAR(40) NULL,
+      origin ENUM('online','offline') NOT NULL DEFAULT 'online',
+      version INT NOT NULL DEFAULT 1,
+      held_at DATETIME NULL,
+      submitted_at DATETIME NULL,
+      completed_at DATETIME NULL,
+      voided_at DATETIME NULL,
+      void_reason VARCHAR(300) NULL,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+      INDEX idx_pos_shift_status (shift_id, status),
+      INDEX idx_pos_status (status),
+      INDEX idx_pos_sale (sale_id)
+    ) ENGINE=InnoDB
+  `);
+  await createTableIfMissing('pos_order_lines', `
+    CREATE TABLE pos_order_lines (
+      id VARCHAR(50) PRIMARY KEY,
+      order_id VARCHAR(40) NOT NULL,
+      menu_id VARCHAR(50) NOT NULL,
+      name_snapshot VARCHAR(200) NOT NULL,
+      qty DECIMAL(10,3) NOT NULL,
+      unit_price DECIMAL(10,2) NOT NULL,
+      line_discount DECIMAL(10,2) NOT NULL DEFAULT 0,
+      vat_category CHAR(1) NOT NULL DEFAULT 'S',
+      notes VARCHAR(300) NULL,
+      sort INT NOT NULL DEFAULT 0,
+      INDEX idx_pol_order (order_id)
+    ) ENGINE=InnoDB
+  `);
+  await createTableIfMissing('pos_payments', `
+    CREATE TABLE pos_payments (
+      id VARCHAR(50) PRIMARY KEY,
+      order_id VARCHAR(40) NOT NULL,
+      method VARCHAR(20) NOT NULL,
+      amount DECIMAL(12,2) NOT NULL,
+      ref VARCHAR(100) NULL,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      INDEX idx_pp_order (order_id)
+    ) ENGINE=InnoDB
+  `);
 
   // ═══════════════════════════════════════════════════════════
   // PHASE 3 — Real Cost Accounting: FIFO / WAC / Batch / Expiry

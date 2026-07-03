@@ -49,6 +49,10 @@ export type WarehouseAction =
   | "waste.create"
   | "document.reverse"
   | "settings.edit"
+  | "negativePolicy.view"
+  | "negativePolicy.edit"
+  | "warehouse.edit"
+  | "warehouse.scopeAssign"
   | "production.view"
   | "production.create"
   | "production.approve"
@@ -106,6 +110,13 @@ const MATRIX: Record<WarehouseAction, Role[]> = {
   "waste.create": ["admin", "manager", "employee", "custody"],
   "document.reverse": ["admin", "manager"],
   "settings.edit": ["admin", "manager"],
+  // Phase W2 — negative-stock policy settings (mirrors routes/negative-policy.js:
+  // read = managerial+auditor; edit = admin, allow-mode gated developer-side).
+  "negativePolicy.view": ["admin", "manager", "auditor"],
+  "negativePolicy.edit": ["admin"],
+  // Phase W6 — warehouse management writes (mirrors routes MGR gates).
+  "warehouse.edit": ["admin", "manager"],
+  "warehouse.scopeAssign": ["admin"],
   // Phase P1 — production orders. create/issue/output/complete = back-office;
   // approve/close/cancel/reverse/delete = managerial (mirrors
   // routes/inventory-production.js BACKOFFICE/MGR gates).

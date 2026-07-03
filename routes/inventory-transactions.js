@@ -946,14 +946,90 @@ router.get('/gl-accounts', async (req, res) => {
 });
 
 // ── Phase W3 — receive-plan for a legacy purchase (partial receiving) ───────
-// GET /api/inventory/v2/purchases/:id/receive-plan → per-line outstanding qty.
+// GET /api/inventory/v2/purchases/:id/receive-plan → per-line outstanding qty
+// + item tracking mode/unit so the receiving wizard can require lot/expiry.
 router.get('/purchases/:id/receive-plan', async (req, res) => {
   try {
     const plan = await _purchaseOutstanding(db, req.params.id);
     if (!plan) return res.status(404).json({ success: false, code: 'NOT_FOUND', error: 'أمر الشراء غير موجود' });
     if (plan.legacyReceived) return _fail(res, 'ALREADY_RECEIVED_IN_V2', 'أمر الشراء مُستلَم بالكامل عبر النظام القديم');
-    const lines = Array.from(plan.byItem.values()).map((e) => ({ itemId: e.itemId, name: e.name, ordered: e.ordered, receivedV2: e.receivedV2, outstanding: e.outstanding, unitPrice: e.unitPrice }));
-    res.json({ success: true, data: { purchaseId: plan.purchase.id, supplierId: plan.supplierId, supplierName: plan.purchase.supplier_name || null, warehouseId: plan.purchase.warehouse_id || null, v2ReceiveStatus: plan.purchase.v2_receive_status || 'none', lines }, fullyOutstanding: lines.every((l) => Math.abs(l.receivedV2) < 1e-6) });
+    const ids = Array.from(plan.byItem.keys());
+    const metaById = new Map();
+    if (ids.length) {
+      const [meta] = await db.query('SELECT id, name, unit, tracking_mode, active FROM inv_items WHERE id IN (?)', [ids]);
+      for (const m of meta) metaById.set(m.id, m);
+    }
+    const lines = Array.from(plan.byItem.values()).map((e) => {
+      const m = metaById.get(e.itemId) || {};
+      return {
+        itemId: e.itemId, name: m.name || e.name, unit: m.unit || '',
+        trackingMode: m.tracking_mode || 'none', active: m.active !== 0,
+        ordered: e.ordered, receivedV2: e.receivedV2, outstanding: e.outstanding, unitPrice: e.unitPrice,
+      };
+    });
+    res.json({ success: true, data: { purchaseId: plan.purchase.id, supplierId: plan.supplierId, supplierName: plan.purchase.supplier_name || null, warehouseId: plan.purchase.warehouse_id || null, purchaseDate: plan.purchase.purchase_date || null, notes: plan.purchase.notes || null, v2ReceiveStatus: plan.purchase.v2_receive_status || 'none', lines }, fullyOutstanding: lines.every((l) => Math.abs(l.receivedV2) < 1e-6) });
+  } catch (e) { _catch(res, e); }
+});
+
+// ── Phase W3b — OPEN legacy purchases list (the receiving work queue) ────────
+// GET /api/inventory/v2/purchases/open?q=&status=none|partial&page=&pageSize=
+// Lists legacy purchases that are still receivable through V2: legacy status
+// 'draft' (not received via the legacy path) and not fully received via V2.
+router.get('/purchases/open', async (req, res) => {
+  try {
+    const q = String(req.query.q || '').trim().slice(0, 120);
+    const vStatus = ['none', 'partial'].includes(String(req.query.status)) ? String(req.query.status) : '';
+    const page = Math.max(1, parseInt(req.query.page, 10) || 1);
+    const pageSize = Math.min(100, Math.max(1, parseInt(req.query.pageSize, 10) || 25));
+    const where = ["p.status='draft'", "COALESCE(p.v2_receive_status,'none') <> 'received'"];
+    const params = [];
+    if (vStatus) { where.push("COALESCE(p.v2_receive_status,'none')=?"); params.push(vStatus); }
+    if (q) { where.push('(p.id LIKE ? OR p.supplier_name LIKE ?)'); params.push('%' + q + '%', '%' + q + '%'); }
+    const whereSql = ' WHERE ' + where.join(' AND ');
+    const [rows] = await db.query(
+      `SELECT p.id, p.purchase_date, p.supplier_id, p.supplier_name, p.warehouse_id, w.name AS warehouse_name,
+              p.total_price, p.items_json, COALESCE(p.v2_receive_status,'none') AS v2_receive_status, p.po_id
+       FROM purchases p LEFT JOIN warehouses w ON w.id=p.warehouse_id
+       ${whereSql} ORDER BY p.purchase_date DESC, p.id DESC LIMIT ? OFFSET ?`,
+      params.concat([pageSize, (page - 1) * pageSize]));
+    const [cnt] = await db.query('SELECT COUNT(*) AS total FROM purchases p' + whereSql, params);
+    // Per-purchase V2 received sums in ONE grouped query for this page.
+    const ids = rows.map((r) => r.id);
+    const recvByPurchase = new Map();
+    if (ids.length) {
+      const [rv] = await db.query(
+        "SELECT r.purchase_id, i.item_id, COALESCE(SUM(i.qty),0) AS q FROM inv_receipt_items i JOIN inv_receipts r ON r.id=i.receipt_id WHERE r.purchase_id IN (?) AND r.status IN ('approved','posted') GROUP BY r.purchase_id, i.item_id",
+        [ids]);
+      for (const row of rv) {
+        if (!recvByPurchase.has(row.purchase_id)) recvByPurchase.set(row.purchase_id, new Map());
+        recvByPurchase.get(row.purchase_id).set(row.item_id, Number(row.q));
+      }
+    }
+    const data = rows.map((r) => {
+      let items = [];
+      try { items = JSON.parse(r.items_json || '[]'); } catch (_) { items = []; }
+      const recv = recvByPurchase.get(r.id) || new Map();
+      let orderedQty = 0, receivedQty = 0, lineCount = 0, outstandingLines = 0;
+      for (const it of items) {
+        const itemId = it.itemId || it.item_id || it.id;
+        const qty = Number(it.qty || it.quantity || 0);
+        if (!itemId || qty <= 0) continue;
+        lineCount++;
+        orderedQty += qty;
+        const got = recv.get(itemId) || 0;
+        receivedQty += Math.min(got, qty);
+        if (qty - got > 1e-6) outstandingLines++;
+      }
+      return {
+        id: r.id, purchaseDate: r.purchase_date, supplierId: r.supplier_id, supplierName: r.supplier_name,
+        warehouseId: r.warehouse_id, warehouseName: r.warehouse_name, poId: r.po_id || null,
+        totalPrice: Number(r.total_price) || 0, v2ReceiveStatus: r.v2_receive_status,
+        lineCount, orderedQty: Math.round(orderedQty * 10000) / 10000,
+        receivedQty: Math.round(receivedQty * 10000) / 10000, outstandingLines,
+      };
+    });
+    const total = Number(cnt[0].total) || 0;
+    res.json({ data, pagination: { page, pageSize, total, totalPages: Math.max(1, Math.ceil(total / pageSize)) } });
   } catch (e) { _catch(res, e); }
 });
 

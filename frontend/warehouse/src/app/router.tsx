@@ -10,6 +10,8 @@ import { InventoryPage } from "@/features/inventory/InventoryPage";
 import { TransfersPage } from "@/features/transfers/TransfersPage";
 import { TransferCreateWizard } from "@/features/transfers/TransferCreateWizard";
 import { ReceiptsPage, ReceiptWizard } from "@/features/receipts/ReceiptsPage";
+import { PurchaseReceivingPage } from "@/features/purchase-receiving/PurchaseReceivingPage";
+import { PurchaseReceiveWizard } from "@/features/purchase-receiving/PurchaseReceiveWizard";
 import { IssuesPage, IssueWizard } from "@/features/issues/IssuesPage";
 import { AdjustmentsPage, AdjustmentWizard } from "@/features/adjustments/AdjustmentsPage";
 import { StocktakesPage } from "@/features/stocktakes/StocktakesPage";
@@ -63,6 +65,8 @@ export function AppRouter() {
             <Route path="expiry" element={<ExpiryPage />} />
             <Route path="receipts" element={<ReceiptsPage />} />
             <Route path="receipts/new" element={<ReceiptWizard />} />
+            <Route path="purchase-receiving" element={<PurchaseReceivingPage />} />
+            <Route path="purchase-receiving/:purchaseId" element={<PurchaseReceiveWizard />} />
             <Route path="issues" element={<IssuesPage />} />
             <Route path="issues/new" element={<IssueWizard />} />
             <Route path="transfers" element={<TransfersPage />} />

@@ -101,6 +101,23 @@ export const queryKeys = {
     all: ["warehouses"] as const,
     summary: (scope: string) => ["warehouses", "summary", scope] as const,
     detail: (id: string) => ["warehouses", "detail", id] as const,
+    movements: (id: string, params: Record<string, unknown>) => ["warehouses", "movements", id, params] as const,
+    scopeAssignments: (id: string) => ["warehouses", "scope-assignments", id] as const,
+  },
+
+  // Phase W3b — purchase receiving work queue (open legacy purchases + plan).
+  purchaseReceiving: {
+    all: ["purchase-receiving"] as const,
+    open: (params: Record<string, unknown>) => ["purchase-receiving", "open", params] as const,
+    plan: (purchaseId: string) => ["purchase-receiving", "plan", purchaseId] as const,
+  },
+
+  // Phase W2 — negative-stock policy settings + deficit ledger.
+  negativePolicy: {
+    all: ["negative-policy"] as const,
+    rows: () => ["negative-policy", "rows"] as const,
+    effective: (warehouseId: string, itemId: string) => ["negative-policy", "effective", warehouseId, itemId] as const,
+    deficits: (params: Record<string, unknown>) => ["negative-policy", "deficits", params] as const,
   },
 
   inventory: {

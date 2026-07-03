@@ -4,6 +4,7 @@ import {
   Boxes,
   PackageCheck,
   PackageMinus,
+  PackageOpen,
   Truck,
   ClipboardCheck,
   SlidersHorizontal,
@@ -52,6 +53,7 @@ export const navigation: NavGroup[] = [
     title: "العمليات",
     items: [
       { id: "receipts", label: "الاستلامات", path: "/receipts", icon: PackageCheck },
+      { id: "purchase-receiving", label: "استلام المشتريات", path: "/purchase-receiving", icon: PackageOpen },
       { id: "issues", label: "أذونات الصرف", path: "/issues", icon: PackageMinus },
       { id: "transfers", label: "التحويلات", path: "/transfers", icon: Truck },
       { id: "stocktakes", label: "الجرد", path: "/stocktakes", icon: ClipboardCheck },

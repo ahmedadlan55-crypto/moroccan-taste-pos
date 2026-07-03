@@ -55,6 +55,7 @@ async function cleanup() {
     ['DELETE i FROM inv_receipt_items i JOIN inv_receipts d ON d.id=i.receipt_id WHERE d.warehouse_id=?', [WH]],
     ['DELETE FROM inv_receipts WHERE warehouse_id=?', [WH]],
     ["DELETE FROM inventory_movements WHERE warehouse_id=? AND reference_type LIKE 'inv\\_%'", [WH]],
+    ['DELETE FROM inventory_lot_movements WHERE warehouse_id=?', [WH]],
     ['DELETE FROM warehouse_lot_balances WHERE warehouse_id=?', [WH]],
     ['DELETE FROM inventory_lots WHERE item_id=?', [ITEM]],
     ['DELETE FROM warehouse_stock WHERE warehouse_id=?', [WH]],

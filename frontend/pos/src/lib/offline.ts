@@ -213,6 +213,18 @@ export class OfflineEngine {
   putOrder(doc: LocalOrder): Promise<void> {
     return this.deps.orders.put(doc.id, doc);
   }
+
+  /**
+   * serverVersion is ENGINE-OWNED: React state snapshots never carry it, so a
+   * raw put of a UI doc would clobber the acknowledged version and the next
+   * flush would send an upsert WITHOUT expectedVersion (server 422s updates of
+   * existing orders). Merge the stored value back before every UI-doc write.
+   */
+  private async mergeServerVersion(doc: LocalOrder): Promise<LocalOrder> {
+    if (doc.serverVersion != null) return doc;
+    const stored = await this.deps.orders.get(doc.id);
+    return stored?.serverVersion != null ? { ...doc, serverVersion: stored.serverVersion } : doc;
+  }
   async allOrders(): Promise<LocalOrder[]> {
     return this.deps.orders.getAll();
   }
@@ -232,6 +244,7 @@ export class OfflineEngine {
    * backend rejects empty carts) — they stay local until they gain a line.
    */
   async saveCart(doc: LocalOrder): Promise<void> {
+    doc = await this.mergeServerVersion(doc);
     await this.deps.orders.put(doc.id, doc);
     const old = this.debouncers.get(doc.id);
     if (old) clearTimeout(old);
@@ -343,7 +356,7 @@ export class OfflineEngine {
       await this.deps.orders.delete(doc.id);
       return;
     }
-    await this.deps.orders.put(doc.id, { ...doc, status: "voided", updatedAt: this.deps.now() });
+    await this.deps.orders.put(doc.id, { ...(await this.mergeServerVersion(doc)), status: "voided", updatedAt: this.deps.now() });
     await this.enqueue("void", doc.id, { reason });
     if (this.deps.isOnline()) void this.flush();
   }
@@ -359,7 +372,7 @@ export class OfflineEngine {
     payments: Payment[],
     opts: { cashTendered?: number; changeDue?: number; paymentNotes?: string },
   ): Promise<CheckoutOutcome> {
-    const submitted: LocalOrder = { ...doc, status: "submitted", updatedAt: this.deps.now() };
+    const submitted: LocalOrder = { ...(await this.mergeServerVersion(doc)), status: "submitted", updatedAt: this.deps.now() };
     await this.deps.orders.put(submitted.id, submitted);
     // The doc was open moments ago; enqueue its final lines before the submit.
     const t = this.debouncers.get(doc.id);

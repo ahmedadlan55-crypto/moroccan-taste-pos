@@ -559,11 +559,30 @@ async function autoInitDB() {
             console.log('Schema warning:', e.message.substring(0, 120));
           }
         }
-        // Create default admin user
+        // Create initial admin user.
+        // SECURITY: in production a default password is FORBIDDEN — the initial
+        // admin password must come from ADMIN_INITIAL_PASSWORD (min 12 chars,
+        // never logged). Without it, no admin is seeded and the operator must
+        // set the env var and restart (or create the admin manually and then
+        // run scripts/rotate-admin-password.js).
         const bcrypt = require('bcryptjs');
-        const hash = await bcrypt.hash('admin123', 10);
-        await db.query("INSERT IGNORE INTO users (username, password, role) VALUES ('admin', ?, 'admin')", [hash]);
-        console.log('Database ready! Default login: admin / admin123');
+        const isProd = process.env.NODE_ENV === 'production';
+        const initialPw = process.env.ADMIN_INITIAL_PASSWORD || '';
+        if (isProd) {
+          if (initialPw.length >= 12) {
+            const hash = await bcrypt.hash(initialPw, 12);
+            await db.query("INSERT IGNORE INTO users (username, password, role) VALUES ('admin', ?, 'admin')", [hash]);
+            console.log('Database ready! Admin seeded from ADMIN_INITIAL_PASSWORD (value not logged).');
+          } else {
+            console.error('[SECURITY] Empty database in production and no valid ADMIN_INITIAL_PASSWORD (>=12 chars).');
+            console.error('[SECURITY] Refusing to seed a default admin password. Set ADMIN_INITIAL_PASSWORD and restart.');
+          }
+        } else {
+          // Local development convenience ONLY — never reached when NODE_ENV=production.
+          const hash = await bcrypt.hash(initialPw.length >= 12 ? initialPw : 'admin123', 10);
+          await db.query("INSERT IGNORE INTO users (username, password, role) VALUES ('admin', ?, 'admin')", [hash]);
+          console.log('Database ready! Dev-only default admin created (rotate via scripts/rotate-admin-password.js before any real deployment).');
+        }
       } else {
         console.log('Database connection OK — tables already exist.');
       }

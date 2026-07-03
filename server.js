@@ -427,6 +427,9 @@ app.use('/api/inventory/v2', function (req, res, next) {
   return res.status(503).json({ success: false, code: 'V2_DISABLED', error: 'نظام warehouse-v2 معطّل مؤقتًا — لا يمكن تنفيذ عمليات كتابية. استخدم النظام القديم.' });
 });
 app.use('/api/inventory/v2/stocktakes', require('./routes/inventory-stocktakes'));
+// Phase W2b — negative-stock policy settings (mounted BEFORE the doc router so
+// /negative-policy is claimed here; sibling scoped router, canary-gated above).
+app.use('/api/inventory/v2/negative-policy', require('./routes/negative-policy'));
 // Phase 4A — item master + replenishment (paths /items, /replenishment,
 // /categories, /units don't collide with the doc router's /receipts|/issues|…).
 app.use('/api/inventory/v2', require('./routes/inventory-items'));
@@ -4242,6 +4245,50 @@ async function runMigrations() {
       ymd CHAR(8) NOT NULL,
       last_serial INT NOT NULL DEFAULT 0,
       PRIMARY KEY (doc_type, ymd)
+    ) ENGINE=InnoDB
+  `);
+
+  // ─── Phase W2 — negative-stock policy (settings + deficit ledger) ───────────
+  // Additive, isolated. Behavior is gated at issue time by
+  // NEGATIVE_STOCK_POLICY_ENABLED; with the seeded global/block row the guard is
+  // behaviorally identical to today. Mirrors db/migrations/0012.
+  await createTableIfMissing('negative_stock_policy', `
+    CREATE TABLE IF NOT EXISTS negative_stock_policy (
+      id VARCHAR(40) NOT NULL PRIMARY KEY,
+      scope ENUM('global','warehouse','item') NOT NULL,
+      warehouse_id VARCHAR(50) NULL,
+      item_id VARCHAR(50) NULL,
+      policy ENUM('block','controlled','allow') NOT NULL DEFAULT 'block',
+      max_negative_qty DECIMAL(18,3) NOT NULL DEFAULT 0,
+      require_reason TINYINT(1) NOT NULL DEFAULT 1,
+      is_enabled TINYINT(1) NOT NULL DEFAULT 1,
+      version INT NOT NULL DEFAULT 1,
+      created_by VARCHAR(64) NULL, updated_by VARCHAR(64) NULL,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+      UNIQUE KEY uq_scope (scope, warehouse_id, item_id),
+      KEY idx_warehouse (warehouse_id), KEY idx_item (item_id)
+    ) ENGINE=InnoDB
+  `);
+  try {
+    await db.query("INSERT INTO negative_stock_policy (id, scope, warehouse_id, item_id, policy, max_negative_qty, require_reason, is_enabled, created_by) " +
+      "SELECT 'NSP-GLOBAL','global',NULL,NULL,'block',0,1,1,'bootstrap' FROM DUAL " +
+      "WHERE NOT EXISTS (SELECT 1 FROM negative_stock_policy WHERE scope='global' AND warehouse_id IS NULL AND item_id IS NULL)");
+  } catch (_) {}
+  await createTableIfMissing('stock_deficits', `
+    CREATE TABLE IF NOT EXISTS stock_deficits (
+      id VARCHAR(40) NOT NULL PRIMARY KEY,
+      warehouse_id VARCHAR(50) NOT NULL, item_id VARCHAR(50) NOT NULL,
+      origin_doc_type VARCHAR(24) NOT NULL, origin_doc_id VARCHAR(50) NOT NULL,
+      deficit_qty DECIMAL(18,3) NOT NULL, remaining_qty DECIMAL(18,3) NOT NULL,
+      unit_cost_at_issue DECIMAL(18,4) NOT NULL DEFAULT 0,
+      reason VARCHAR(400) NOT NULL,
+      status ENUM('open','partial','covered','adjusted') NOT NULL DEFAULT 'open',
+      created_by VARCHAR(64) NULL, approved_by VARCHAR(64) NULL,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP, closed_at TIMESTAMP NULL,
+      version INT NOT NULL DEFAULT 1,
+      KEY idx_open (status, warehouse_id, item_id),
+      KEY idx_origin (origin_doc_type, origin_doc_id)
     ) ENGINE=InnoDB
   `);
 

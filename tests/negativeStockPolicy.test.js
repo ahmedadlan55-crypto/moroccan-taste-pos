@@ -22,18 +22,24 @@ test('tracked item ignores every level, always block', () => {
   eq(r.effectivePolicy, 'block');
   eq(r.reason, 'tracked-item');
 });
-test('most restrictive wins (block > controlled > allow)', () => {
-  eq(N.resolvePolicy({ item: { tracking_mode: 'none' }, globalCfg: { policy: 'controlled', is_enabled: 1, max_negative_qty: 5 }, whCfg: { policy: 'block', is_enabled: 1, max_negative_qty: 999 } }).effectivePolicy, 'block');
-  eq(N.resolvePolicy({ item: { tracking_mode: 'none' }, globalCfg: { policy: 'allow', is_enabled: 1, max_negative_qty: 100 }, itemCfg: { policy: 'controlled', is_enabled: 1, max_negative_qty: 5 } }).effectivePolicy, 'controlled');
+test('most-specific level wins: item controlled over global block', () => {
+  // global=block (seeded default) + item=controlled → item wins (per-item exception)
+  eq(N.resolvePolicy({ item: { tracking_mode: 'none' }, globalCfg: { policy: 'block', is_enabled: 1, max_negative_qty: 0 }, itemCfg: { policy: 'controlled', is_enabled: 1, max_negative_qty: 5 } }).effectivePolicy, 'controlled');
+  // warehouse=block overrides global=controlled (more specific + tighten)
+  eq(N.resolvePolicy({ item: { tracking_mode: 'none' }, globalCfg: { policy: 'controlled', is_enabled: 1, max_negative_qty: 5 }, whCfg: { policy: 'block', is_enabled: 1, max_negative_qty: 0 } }).effectivePolicy, 'block');
+  // item=block overrides warehouse=controlled
+  eq(N.resolvePolicy({ item: { tracking_mode: 'none' }, whCfg: { policy: 'controlled', is_enabled: 1, max_negative_qty: 9 }, itemCfg: { policy: 'block', is_enabled: 1, max_negative_qty: 0 } }).effectivePolicy, 'block');
 });
-test('disabled config row is ignored', () => {
-  const r = N.resolvePolicy({ item: { tracking_mode: 'none' }, globalCfg: { policy: 'controlled', is_enabled: 0, max_negative_qty: 10 } });
-  eq(r.effectivePolicy, 'block');
+test('disabled config row is skipped → falls to next-less-specific', () => {
+  // item disabled → warehouse controlled wins
+  eq(N.resolvePolicy({ item: { tracking_mode: 'none' }, whCfg: { policy: 'controlled', is_enabled: 1, max_negative_qty: 7 }, itemCfg: { policy: 'controlled', is_enabled: 0, max_negative_qty: 3 } }).effectivePolicy, 'controlled');
+  // only global, disabled → default block
+  eq(N.resolvePolicy({ item: { tracking_mode: 'none' }, globalCfg: { policy: 'controlled', is_enabled: 0, max_negative_qty: 10 } }).effectivePolicy, 'block');
 });
-test('effective maxNegative = smallest defined in winning tier', () => {
+test('effective maxNegative = the winning (most-specific) level', () => {
   const r = N.resolvePolicy({ item: { tracking_mode: 'none' }, globalCfg: { policy: 'controlled', is_enabled: 1, max_negative_qty: 20 }, whCfg: { policy: 'controlled', is_enabled: 1, max_negative_qty: 5 } });
   eq(r.effectivePolicy, 'controlled');
-  eq(r.effectiveMaxNegative, 5);
+  eq(r.effectiveMaxNegative, 5); // warehouse is more specific than global
 });
 test('allow without env flag degrades to controlled + sets allowGated', () => {
   delete process.env.NEGATIVE_STOCK_ALLOW_ENABLED;

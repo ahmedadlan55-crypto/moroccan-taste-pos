@@ -32,6 +32,7 @@ const POLICY = require('../lib/inventoryItemPolicy');
 const L = require('../lib/lotLedger');
 const { recomputeInvItemStock } = require('../lib/stockRecompute');
 const requireRole = require('../middleware/auth').requireRole;
+function v2metricInc(name) { try { require('../lib/v2Metrics').inc(name); } catch (_) {} }
 
 const MGR = requireRole('admin', 'manager');
 const BACKOFFICE = requireRole('admin', 'manager', 'employee', 'custody');
@@ -536,24 +537,39 @@ async function _postReceipt(conn, cfg, doc, lines, actor) {
   return { affectedStock, movementIds, amount, spec };
 }
 
-async function _postIssue(conn, cfg, doc, lines, actor) {
+async function _postIssue(conn, cfg, doc, lines, actor, ctx) {
   const warehouse = await _loadWarehouse(doc.warehouse_id);
   // Re-validate the expense account at post (it may have been deactivated since draft).
   await E.validateAccount(conn, doc.expense_account_code, ACCOUNT_USAGE.issue);
   const affectedStock = [];
   const movementIds = [];
   let amount = 0;
-  // Re-cost at current WAC + enforce the no-negative policy (lock rows first).
-  for (const ln of lines) {
-    const qty = Number(ln.qty);
-    const cur = await E.readStock(conn, doc.warehouse_id, ln.item_id, true); // FOR UPDATE
-    if (cur.qty < qty) throw _err('INSUFFICIENT_STOCK', 'الرصيد المتاح (' + cur.qty + ') لا يكفي لصرف ' + qty + ' من الصنف ' + ln.item_id);
+  const NSP = require('../lib/negativeStockPolicy');
+  const policyOn = NSP.POLICY_ENABLED();
+  // When the negative-stock policy is OFF, keep the exact legacy pre-check
+  // (block any line that would go negative). When ON, the per-line engine guard
+  // decides (block / controlled-deficit / deny) so we skip the blanket throw.
+  if (!policyOn) {
+    for (const ln of lines) {
+      const qty = Number(ln.qty);
+      const cur = await E.readStock(conn, doc.warehouse_id, ln.item_id, true); // FOR UPDATE
+      if (cur.qty < qty) throw _err('INSUFFICIENT_STOCK', 'الرصيد المتاح (' + cur.qty + ') لا يكفي لصرف ' + qty + ' من الصنف ' + ln.item_id);
+    }
   }
   for (const ln of lines) {
     const qty = Number(ln.qty);
     const mode = await L.getTrackingMode(conn, ln.item_id);
     const cost = await E.getEffectiveCost(conn, ln.item_id, doc.warehouse_id);
-    const mv = await E.applyStockMovement(conn, doc.warehouse_id, ln.item_id, -qty, cost, 'inv_issue', doc.id, actor);
+    const guardOpts = policyOn ? { negativeGuard: {
+      strict: true, user: (ctx && ctx.user) || {}, reason: doc.reason,
+      acknowledgeNegative: !!(ctx && ctx.acknowledgeNegative),
+      makerChecker: ctx && ctx.makerChecker, docType: 'inv_issue', docId: doc.id,
+    } } : undefined;
+    let mv;
+    try {
+      mv = await E.applyStockMovement(conn, doc.warehouse_id, ln.item_id, -qty, cost, 'inv_issue', doc.id, actor, guardOpts);
+    } catch (ge) { if (ge && ge.code) { const e = new Error(ge.message || ge.code); e.code = ge.code; throw e; } throw ge; }
+    if (mv.deficit) v2metricInc('negative_issues_total');
     const mid = await E.recordMovement(conn, { warehouseId: doc.warehouse_id, itemId: ln.item_id, itemName: ln.item_name, type: 'out', qty, reason: 'صرف مستقل: ' + (doc.reason || ''), username: actor, notes: doc[cfg.numberCol], referenceType: cfg.refType, referenceId: doc.id });
     movementIds.push(mid);
     affectedStock.push({ warehouseId: doc.warehouse_id, itemId: ln.item_id, delta: -qty, newQty: mv.newQty });
@@ -640,7 +656,14 @@ function _makePost(cfg) {
         if (doc.status !== 'approved') throw _err('VERSION_CONFLICT', 'تغيّرت حالة المستند — أعد التحميل');
         if (expected != null && Number(doc.version) !== expected) throw _err('VERSION_CONFLICT', 'تغيّر إصدار المستند — أعد التحميل');
         const lines = await _loadLines(cfg, id, conn);
-        const r = await POSTERS[cfg.docType](conn, cfg, doc, lines, actor);
+        // Phase W2b — context for the optional negative-stock guard. Reading the
+        // ACK at post time is authoritative (the negative actually occurs here).
+        const postCtx = {
+          user: { role: String((req.user && req.user.role) || '').toLowerCase(), username: actor, isDeveloper: !!(req.user && req.user.isDeveloper) },
+          acknowledgeNegative: !!(req.body && req.body.acknowledgeNegative === true),
+          makerChecker: MAKER_CHECKER ? { creator: doc.created_by, poster: actor } : null,
+        };
+        const r = await POSTERS[cfg.docType](conn, cfg, doc, lines, actor, postCtx);
         let journalId = null;
         if (r.spec) {
           const j = await gl.postJournal(conn, r.spec);

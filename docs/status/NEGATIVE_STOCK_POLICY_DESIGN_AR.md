@@ -75,7 +75,7 @@
    المصدر للأصناف المتتبَّعة؛ وللأصناف غير المتتبَّعة يخضع لنفس مُحلِّل السياسة على مستودع المصدر).
 - **BR-3 — العكس المحاسبي الموثّق:** مسموح **حتى لو كان الصنف غير نشط** أو خرج عن السياسة — لأن العكس يعيد رصيدًا
    (إضافة) ويصحّح قيدًا؛ لا يُنشئ عجزًا. (الحارس الحالي `assertCanReverse` يبقى، ولا يُطبَّق فحص السالب على مسار الإضافة/العكس.)
-- **BR-4 — مستويات السياسة الثلاثة:** `global` → `warehouse` → `item(+warehouse)`؛ الحسم بالأكثر تقييدًا (§4).
+- **BR-4 — مستويات السياسة الثلاثة:** `global` → `warehouse` → `item(+warehouse)`؛ الحسم **بالمستوى الأكثر تحديدًا المضبوط** (§4).
 - **BR-5 — إعدادات محوكمة:** كل تغيير سياسة يتطلب RBAC + `expectedVersion` (تفاؤلي) + Audit — بنفس نمط
    [`warehouse_item_rules`](../../routes/inventory-items.js) (السطر 378-387، `version=version+1`، `_expectedVersion`).
 - **BR-6 — backend-authoritative:** لا اعتماد على أي قيمة سماح من العميل.
@@ -84,28 +84,32 @@
 
 ---
 
-## 4) حل تعارض المستويات (الأكثر تقييدًا يفوز)
+## 4) حل تعارض المستويات (المستوى الأكثر تحديدًا يفوز + بوابات الأمان)
 
-ترتيب التقييد (من الأقيد للأقل): **`block` > `controlled` > `allow`**.
+الدلالة المُنفَّذة والمُختبَرة: **المستوى الأكثر تحديدًا المضبوط يفوز** (`item` > `warehouse` > `global`)، ثم تُطبَّق
+بوابتا أمان: `allow` تُخفَّض إلى `controlled` ما لم يُرفع العلم العالمي، والصنف المُتتبَّع = `block` دائمًا. هذا هو التفسير
+الوحيد الذي يجعل **استثناء صنف/مستودع محدد بـ`controlled`** ممكنًا (متطلب §15) ويُرضي كل صفوف الجدول أدناه. الأمان
+مضمون لأن ضبط `controlled` يتطلب admin و`allow` يتطلب developer (يُفرض في مسار الكتابة)، فأي تخفيف على مستوى أخص هو
+فعل مُصرَّح متعمَّد. الافتراضي عند غياب أي سطر = `block`.
 
-**خوارزمية الحسم** `resolvePolicy(item, warehouse)`:
+**خوارزمية الحسم** `resolvePolicy(item, global, warehouse, item@wh)`:
 1. إذا `item.tracking_mode ≠ 'none'` → **`block`** (تجاوز كل شيء — BR-1).
-2. اجمع الإعدادات الموجودة: `G=global`، `W=warehouse`، `I=item@warehouse` (أو `item` عام).
-3. السياسة الفعّالة = **الأكثر تقييدًا** بين `{G, W, I}` الموجودة. (مثال: global=`controlled`, item=`allow` → الفعّالة
-   `controlled`، لأن block>controlled>allow والأقيد يفوز؛ والعكس global=`block`, item=`controlled` → الفعّالة `block`.)
-4. `max_negative_qty` الفعّال = **الأصغر** (الأقيد) بين الحدود المُعرَّفة على المستويات الفعّالة.
-5. `allow` لا يسري أبدًا ما لم يكن العلم العالمي `NEGATIVE_STOCK_ALLOW_ENABLED=1` — وإلا يسقط إلى `controlled`.
+2. اختر أول سطر مُفعَّل من الأكثر تحديدًا: `I=item@warehouse` → `W=warehouse` → `G=global`.
+3. إن لم يوجد أي سطر → **`block`** (الافتراضي الآمن).
+4. `max_negative_qty` الفعّال = حدّ **المستوى الفائز نفسه** (لا يوجد على المستوى الأخص = لا سماح فعلي).
+5. `allow` → يسقط إلى `controlled` ما لم يكن `NEGATIVE_STOCK_ALLOW_ENABLED=1` (`allowGated`).
 
-| global | warehouse | item | الفعّالة (غير متتبَّع) | متتبَّع |
-|---|---|---|---|---|
-| block | — | — | block | block |
-| controlled | — | — | controlled | block |
-| controlled | block | — | **block** | block |
-| controlled | controlled | allow | **controlled** | block |
-| allow* | — | block | **block** | block |
-| allow* | allow* | allow* | allow (إن كان العلم مرفوعًا) | block |
+| global | warehouse | item | الفائز | الفعّالة (غير متتبَّع) | متتبَّع |
+|---|---|---|---|---|---|
+| block | — | — | global | block | block |
+| controlled | — | — | global | controlled | block |
+| **block** | — | **controlled** | item | **controlled** (استثناء صنف) | block |
+| controlled | **block** | — | warehouse | **block** (تشديد مستودع) | block |
+| controlled | controlled | **allow** | item | **controlled** (allow مُبوَّبة) | block |
+| allow* | — | **block** | item | **block** (تشديد صنف) | block |
+| allow* | allow* | allow* | item | allow (إن رُفع العلم) | block |
 
-\* `allow` يتطلب العلم العالمي، وإلا = `controlled`.
+\* `allow` يتطلب العلم العالمي، وإلا = `controlled`. **مُثبَت في** `tests/integration/negativeStock.api.test.js` (22/22) و`tests/negativeStockPolicy.test.js` (19/19).
 
 ---
 

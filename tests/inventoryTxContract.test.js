@@ -14,7 +14,18 @@ function ok(v, msg) { if (!v) throw new Error(msg || 'expected truthy'); }
 console.log('\n═══ Inventory-tx contract ═══');
 
 console.log('\n─── canonical codes ───');
-test('18 canonical codes (10 base + 8 Phase 4B lot codes)', () => eq(Object.keys(C.HTTP_FOR).length, 18));
+test('28 canonical codes (10 base + 8 lot + 10 W2/W3/W4)', () => eq(Object.keys(C.HTTP_FOR).length, 28));
+test('Phase W2/W3/W4 codes mapped to correct HTTP', () => {
+  eq(C.httpFor('NEGATIVE_CONFIRMATION_REQUIRED'), 409);
+  eq(C.httpFor('NEGATIVE_LIMIT_EXCEEDED'), 422);
+  eq(C.httpFor('ALLOW_REQUIRES_DEVELOPER'), 403);
+  eq(C.httpFor('MAKER_CHECKER_SELF_APPROVAL'), 403);
+  eq(C.httpFor('POLICY_NOT_ALLOWED_FOR_TRACKED'), 422);
+  eq(C.httpFor('OVER_RECEIPT'), 422);
+  eq(C.httpFor('ALREADY_RECEIVED_IN_V2'), 409);
+  eq(C.httpFor('V2_RECEIPTS_LINKED'), 409);
+  eq(C.httpFor('BARCODE_TAKEN'), 409);
+});
 test('Phase 4B lot codes mapped', () => {
   eq(C.httpFor('INSUFFICIENT_LOT_QUANTITY'), 422);
   eq(C.httpFor('EXPIRED_LOT'), 422);

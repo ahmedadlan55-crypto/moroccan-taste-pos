@@ -14,7 +14,13 @@ function ok(v, msg) { if (!v) throw new Error(msg || 'expected truthy'); }
 console.log('\n═══ Inventory-tx contract ═══');
 
 console.log('\n─── canonical codes ───');
-test('28 canonical codes (10 base + 8 lot + 10 W2/W3/W4)', () => eq(Object.keys(C.HTTP_FOR).length, 28));
+test('32 canonical codes (10 base + 8 lot + 10 W2/W3/W4 + 4 P1)', () => eq(Object.keys(C.HTTP_FOR).length, 32));
+test('Phase P1 production codes mapped to correct HTTP', () => {
+  eq(C.httpFor('OVER_ISSUE'), 422);
+  eq(C.httpFor('OVER_PRODUCTION'), 422);
+  eq(C.httpFor('NO_OUTPUT_RECORDED'), 422);
+  eq(C.httpFor('WASTE_ALLOWANCE_EXCEEDED'), 403);
+});
 test('Phase W2/W3/W4 codes mapped to correct HTTP', () => {
   eq(C.httpFor('NEGATIVE_CONFIRMATION_REQUIRED'), 409);
   eq(C.httpFor('NEGATIVE_LIMIT_EXCEEDED'), 422);

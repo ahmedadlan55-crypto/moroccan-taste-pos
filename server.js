@@ -427,6 +427,10 @@ app.use('/api/inventory/v2', function (req, res, next) {
   return res.status(503).json({ success: false, code: 'V2_DISABLED', error: 'نظام warehouse-v2 معطّل مؤقتًا — لا يمكن تنفيذ عمليات كتابية. استخدم النظام القديم.' });
 });
 app.use('/api/inventory/v2/stocktakes', require('./routes/inventory-stocktakes'));
+// Phase P1 — Production Orders V2 (full lifecycle: draft→approved→in_progress→
+// completed→closed, +cancel/reverse/delete). Path-scoped mount so it inherits
+// scope/canary/metrics; claimed BEFORE the sibling v2 routers.
+app.use('/api/inventory/v2/production-orders', require('./routes/inventory-production'));
 // Phase W2b — negative-stock policy settings (mounted BEFORE the doc router so
 // /negative-policy is claimed here; sibling scoped router, canary-gated above).
 app.use('/api/inventory/v2/negative-policy', require('./routes/negative-policy'));
@@ -4701,6 +4705,78 @@ async function runMigrations() {
       PRIMARY KEY (ymd)
     ) ENGINE=InnoDB
   `);
+
+  // ═══════════════════════════════════════════════════════════
+  // Phase P1 — Production Orders V2 (routes/inventory-production.js)
+  // ═══════════════════════════════════════════════════════════
+  // V2 lifecycle values are APPENDED to the ENUM (append-only → existing rows
+  // keep their string values; MODIFY is a no-op when already applied). Legacy
+  // writes only planned/released; V2 writes only the new set — zero overlap.
+  await modifyColumnDefinition('production_orders', 'status',
+    "ENUM('planned','released','in_progress','completed','closed','cancelled','draft','approved','reversed') DEFAULT 'planned'");
+  // source separates V2 documents from legacy ones (belt-and-braces on top of
+  // the disjoint status sets); every V2 conditional UPDATE adds AND source='v2'.
+  await addColumnIfMissing('production_orders', 'source', "VARCHAR(10) NOT NULL DEFAULT 'legacy'");
+  await addColumnIfMissing('production_orders', 'version', 'INT NOT NULL DEFAULT 1');
+  await addColumnIfMissing('production_orders', 'approved_by', 'VARCHAR(100) NULL');
+  await addColumnIfMissing('production_orders', 'approved_at', 'DATETIME NULL');
+  // qty_waste = Σ output-event waste (qty_scrap kept in sync for legacy reports).
+  await addColumnIfMissing('production_orders', 'qty_waste', 'DECIMAL(14,4) DEFAULT 0');
+  // wip_balance = running WIP residual (Σ issues − Σ output relief); close flushes it.
+  await addColumnIfMissing('production_orders', 'wip_balance', 'DECIMAL(14,4) DEFAULT 0');
+  await addColumnIfMissing('production_orders', 'closed_by', 'VARCHAR(100) NULL');
+  await addColumnIfMissing('production_orders', 'closed_at', 'DATETIME NULL');
+  await addColumnIfMissing('production_orders', 'close_variance', 'DECIMAL(14,4) DEFAULT 0');
+  await addColumnIfMissing('production_orders', 'gl_close_id', 'VARCHAR(60) NULL');
+  await addColumnIfMissing('production_orders', 'cancelled_by', 'VARCHAR(100) NULL');
+  await addColumnIfMissing('production_orders', 'cancelled_at', 'DATETIME NULL');
+  await addColumnIfMissing('production_orders', 'cancel_reason', 'VARCHAR(500) NULL');
+  await addColumnIfMissing('production_orders', 'reversed_by', 'VARCHAR(100) NULL');
+  await addColumnIfMissing('production_orders', 'reversed_at', 'DATETIME NULL');
+  await addColumnIfMissing('production_orders', 'reverse_reason', 'VARCHAR(500) NULL');
+  // One reversing journal per original journal → array of ids.
+  await addColumnIfMissing('production_orders', 'reverse_gl_ids', 'JSON DEFAULT NULL');
+
+  // One row per PARTIAL materials issue. production_consumption stays the
+  // per-component AGGREGATE (qty_planned/qty_actual); events carry their own
+  // frozen costs + GL journal and are the lot-ledger reference scope
+  // (inventory_lot_movements reference_type='prod_issue', reference_id=event id)
+  // so each event reverses exactly.
+  await createTableIfMissing('production_issue_events', `
+    CREATE TABLE production_issue_events (
+      id VARCHAR(60) PRIMARY KEY,
+      production_order_id VARCHAR(60) NOT NULL,
+      event_no INT NOT NULL,
+      materials_cost DECIMAL(14,4) DEFAULT 0,
+      labor_cost DECIMAL(14,4) DEFAULT 0,
+      overhead_cost DECIMAL(14,4) DEFAULT 0,
+      gl_journal_id VARCHAR(60) NULL,
+      issued_by VARCHAR(100) NULL,
+      issued_at DATETIME NULL,
+      notes VARCHAR(500) NULL,
+      INDEX idx_pie_po (production_order_id)
+    ) ENGINE=InnoDB
+  `);
+  await createTableIfMissing('production_issue_lines', `
+    CREATE TABLE production_issue_lines (
+      id VARCHAR(60) PRIMARY KEY,
+      issue_event_id VARCHAR(60) NOT NULL,
+      production_order_id VARCHAR(60) NOT NULL,
+      item_id VARCHAR(50) NOT NULL,
+      warehouse_id VARCHAR(50) NOT NULL,
+      qty DECIMAL(14,4) NOT NULL,
+      unit_cost DECIMAL(14,4) NOT NULL,
+      line_total DECIMAL(14,4) NOT NULL,
+      INDEX idx_pil_event (issue_event_id),
+      INDEX idx_pil_po (production_order_id, item_id)
+    ) ENGINE=InnoDB
+  `);
+  // production_output already supports multiple rows per order; V2 extends each
+  // row into a full OUTPUT EVENT (good + waste + its own journal).
+  await addColumnIfMissing('production_output', 'qty_waste', 'DECIMAL(14,4) DEFAULT 0');
+  await addColumnIfMissing('production_output', 'waste_cost', 'DECIMAL(14,4) DEFAULT 0');
+  await addColumnIfMissing('production_output', 'gl_journal_id', 'VARCHAR(60) NULL');
+  await addColumnIfMissing('production_output', 'created_by', 'VARCHAR(100) NULL');
 
   // ═══════════════════════════════════════════════════════════
   // PHASE 3 — Real Cost Accounting: FIFO / WAC / Batch / Expiry

@@ -9,9 +9,11 @@ import { useCan } from "@/app/permission-provider";
 import { formatCurrency, formatQty, formatDate } from "@/lib/formatters";
 import { useItemDetail, useItemMutations } from "@/lib/hooks/useItems";
 import type { ItemRule } from "@/lib/adapters/item.adapter";
+import { BarcodesTab } from "./BarcodesTab";
 
 const TABS = [
   { id: "basics", label: "البيانات الأساسية" },
+  { id: "barcodes", label: "الباركود" },
   { id: "warehouses", label: "توزيع المستودعات" },
   { id: "stock", label: "الرصيد وWAC" },
   { id: "rules", label: "قواعد إعادة الطلب" },
@@ -64,6 +66,8 @@ export function ItemDetailDrawer({ id, onClose, onEdit }: { id: string | null; o
               <p className="col-span-2 rounded-lg bg-blue-50 px-3 py-2 text-xs font-bold text-blue-700">التكلفة العامة هنا هي قيمة احتياطية فقط ولا تُعدّل متوسط تكلفة المستودع (WAC).</p>
             </div>
           )}
+
+          {tab === "barcodes" && <BarcodesTab detail={d} onSaved={() => q.refetch()} />}
 
           {tab === "warehouses" && (
             <div className="space-y-1">

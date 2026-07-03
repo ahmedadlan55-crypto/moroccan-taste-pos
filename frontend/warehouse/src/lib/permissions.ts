@@ -49,6 +49,7 @@ export type WarehouseAction =
   | "waste.create"
   | "document.reverse"
   | "settings.edit"
+  | "barcode.manage"
   | "negativePolicy.view"
   | "negativePolicy.edit"
   | "warehouse.edit"
@@ -110,6 +111,8 @@ const MATRIX: Record<WarehouseAction, Role[]> = {
   "waste.create": ["admin", "manager", "employee", "custody"],
   "document.reverse": ["admin", "manager"],
   "settings.edit": ["admin", "manager"],
+  // Phase W4 — barcode list replacement is a MGR endpoint (PUT /items/:id/barcodes).
+  "barcode.manage": ["admin", "manager"],
   // Phase W2 — negative-stock policy settings (mirrors routes/negative-policy.js:
   // read = managerial+auditor; edit = admin, allow-mode gated developer-side).
   "negativePolicy.view": ["admin", "manager", "auditor"],

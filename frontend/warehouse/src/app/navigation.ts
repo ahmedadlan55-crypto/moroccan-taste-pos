@@ -11,7 +11,8 @@ import {
   Factory,
   BarChart3,
   FileBarChart,
-  GitBranch,
+  ShieldAlert,
+  TrendingDown,
   Tags,
   ShoppingCart,
   Layers,
@@ -66,7 +67,13 @@ export const navigation: NavGroup[] = [
     items: [
       { id: "analytics", label: "التحليلات والتنبيهات", path: "/analytics", icon: BarChart3 },
       { id: "reports", label: "مركز التقارير", path: "/reports", icon: FileBarChart },
-      { id: "system-map", label: "خريطة النظام", path: "/system-map", icon: GitBranch },
+      { id: "deficits", label: "تقرير العجز", path: "/deficits", icon: TrendingDown },
+    ],
+  },
+  {
+    title: "السياسات والضبط",
+    items: [
+      { id: "negative-policy", label: "سياسة المخزون السالب", path: "/negative-policy", icon: ShieldAlert },
     ],
   },
 ];

@@ -22,6 +22,8 @@ import { ItemWizard } from "@/features/items/ItemWizard";
 import { ReplenishmentPage } from "@/features/replenishment/ReplenishmentPage";
 import { LotsPage } from "@/features/lots/LotsPage";
 import { ExpiryPage } from "@/features/expiry/ExpiryPage";
+import { NegativePolicyPage } from "@/features/negative-policy/NegativePolicyPage";
+import { DeficitsPage } from "@/features/negative-policy/DeficitsPage";
 import { ProductionPage } from "@/features/production/ProductionPage";
 import { ProductionCreateWizard } from "@/features/production/ProductionCreateWizard";
 import { ProductionDetailPage } from "@/features/production/ProductionDetailPage";
@@ -30,8 +32,6 @@ import { ProductionDetailPage } from "@/features/production/ProductionDetailPage
 const AnalyticsPage = lazy(() => import("@/features/analytics/AnalyticsPage").then((m) => ({ default: m.AnalyticsPage })));
 const ReportsPage = lazy(() => import("@/features/reports/ReportsPage").then((m) => ({ default: m.ReportsPage })));
 const ReportDetailPage = lazy(() => import("@/features/reports/ReportDetailPage").then((m) => ({ default: m.ReportDetailPage })));
-import { SystemMapPage } from "@/features/placeholders";
-
 // Suspense wrapper for the lazy (code-split) routes.
 function Lazy({ children }: { children: React.ReactNode }) {
   return <Suspense fallback={<LoadingState />}>{children}</Suspense>;
@@ -83,7 +83,8 @@ export function AppRouter() {
             <Route path="analytics" element={<Lazy><AnalyticsPage /></Lazy>} />
             <Route path="reports" element={<Lazy><ReportsPage /></Lazy>} />
             <Route path="reports/:reportType" element={<Lazy><ReportDetailPage /></Lazy>} />
-            <Route path="system-map" element={<SystemMapPage />} />
+            <Route path="negative-policy" element={<NegativePolicyPage />} />
+            <Route path="deficits" element={<DeficitsPage />} />
             <Route path="*" element={<NotFound />} />
           </Route>
         </Routes>

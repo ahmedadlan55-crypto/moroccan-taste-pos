@@ -434,6 +434,9 @@ app.use('/api/inventory/v2/production-orders', require('./routes/inventory-produ
 // Phase W2b — negative-stock policy settings (mounted BEFORE the doc router so
 // /negative-policy is claimed here; sibling scoped router, canary-gated above).
 app.use('/api/inventory/v2/negative-policy', require('./routes/negative-policy'));
+// Phase W6 — warehouse management CRUD (create/edit/activate/deactivate/hard-
+// delete guard/scope assignments). Path-scoped like the other v2 routers.
+app.use('/api/inventory/v2/warehouses', require('./routes/inventory-warehouses'));
 // Phase 4A — item master + replenishment (paths /items, /replenishment,
 // /categories, /units don't collide with the doc router's /receipts|/issues|…).
 app.use('/api/inventory/v2', require('./routes/inventory-items'));

@@ -84,6 +84,19 @@ export const queryKeys = {
     detail: (id: string) => ["stocktakes", "detail", id] as const,
   },
 
+  // Phase P1 — production orders V2. List keyed by scope+filters; detail /
+  // availability / variance keyed by order id; boms by search term. A mutation
+  // invalidates all + detail(id) + dashboard/inventory/lots/analytics slices.
+  production: {
+    all: ["production"] as const,
+    list: (scope: string, params: Record<string, unknown>) => ["production", "list", scope, params] as const,
+    detail: (id: string) => ["production", "detail", id] as const,
+    availability: (id: string) => ["production", "availability", id] as const,
+    variance: (id: string) => ["production", "variance", id] as const,
+    preview: (input: Record<string, unknown>) => ["production", "preview", input] as const,
+    boms: (q: string) => ["production", "boms", q] as const,
+  },
+
   warehouses: {
     all: ["warehouses"] as const,
     summary: (scope: string) => ["warehouses", "summary", scope] as const,

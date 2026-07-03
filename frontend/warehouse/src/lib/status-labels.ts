@@ -157,6 +157,36 @@ export const STOCKTAKE_STATUS_OPTIONS: { value: string; label: string }[] = [
   { value: "cancelled", label: "ملغى" },
 ];
 
+// Phase P1 — production order lifecycle → Arabic. V2 statuses (draft→approved→
+// in_progress→completed→closed, +cancelled/reversed) + the two legacy statuses
+// shown read-only with a badge. "منجز جزئيًا" is DERIVED in the page (never a
+// stored status).
+export const productionStatusLabel: Record<string, string> = {
+  draft: "مسودة",
+  approved: "معتمد",
+  in_progress: "قيد التنفيذ",
+  completed: "مكتمل",
+  closed: "مغلق",
+  cancelled: "ملغى",
+  reversed: "معكوس",
+  planned: "مخطط (قديم)",
+  released: "مُطلَق (قديم)",
+};
+export function productionStatusToLabel(status: string | null | undefined): string {
+  return productionStatusLabel[String(status ?? "")] ?? "—";
+}
+export const PRODUCTION_STATUS_OPTIONS: { value: string; label: string }[] = [
+  { value: "", label: "كل الحالات" },
+  { value: "draft", label: "مسودة" },
+  { value: "approved", label: "معتمد" },
+  { value: "in_progress", label: "قيد التنفيذ" },
+  { value: "completed", label: "مكتمل" },
+  { value: "closed", label: "مغلق" },
+  { value: "cancelled", label: "ملغى" },
+  { value: "reversed", label: "معكوس" },
+];
+export const PRODUCTION_PARTIAL_LABEL = "منجز جزئيًا";
+
 // Movement `type` ('in'/'out') → Arabic, for the rare case a movement row has
 // no Arabic reason text to show.
 export function movementTypeLabel(type: string | null | undefined): string {

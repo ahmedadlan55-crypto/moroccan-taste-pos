@@ -287,6 +287,7 @@ router.get('/:id', async (req, res) => {
     if (!doc) { const e = new Error('أمر الإنتاج غير موجود'); e.status = 404; throw e; }
     if (req.guardWh && !req.guardWh(res, doc.warehouse_id)) return;
     doc.product_name = await _productName(db, doc.product_id);
+    doc.product_tracking_mode = await L.getTrackingMode(db, doc.product_id);
     const [wh] = await db.query('SELECT id, name FROM warehouses WHERE id IN (?, ?)', [doc.warehouse_id, doc.output_warehouse_id || doc.warehouse_id]);
     doc.warehouse_name = (wh.find((w) => w.id === doc.warehouse_id) || {}).name || '';
     doc.output_warehouse_name = (wh.find((w) => w.id === (doc.output_warehouse_id || doc.warehouse_id)) || {}).name || '';

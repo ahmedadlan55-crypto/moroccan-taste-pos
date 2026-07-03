@@ -48,7 +48,17 @@ export type WarehouseAction =
   | "issue.reverse"
   | "waste.create"
   | "document.reverse"
-  | "settings.edit";
+  | "settings.edit"
+  | "production.view"
+  | "production.create"
+  | "production.approve"
+  | "production.issue"
+  | "production.output"
+  | "production.complete"
+  | "production.close"
+  | "production.cancel"
+  | "production.reverse"
+  | "production.delete";
 
 // Roles allowed per action. Mirrors the blueprint §5 matrix and the backend
 // requireRole gates established in Phase 0. `auditor` is read-only everywhere.
@@ -96,6 +106,19 @@ const MATRIX: Record<WarehouseAction, Role[]> = {
   "waste.create": ["admin", "manager", "employee", "custody"],
   "document.reverse": ["admin", "manager"],
   "settings.edit": ["admin", "manager"],
+  // Phase P1 — production orders. create/issue/output/complete = back-office;
+  // approve/close/cancel/reverse/delete = managerial (mirrors
+  // routes/inventory-production.js BACKOFFICE/MGR gates).
+  "production.view": ["admin", "manager", "employee", "custody", "auditor"],
+  "production.create": ["admin", "manager", "employee", "custody"],
+  "production.approve": ["admin", "manager"],
+  "production.issue": ["admin", "manager", "employee", "custody"],
+  "production.output": ["admin", "manager", "employee", "custody"],
+  "production.complete": ["admin", "manager", "employee", "custody"],
+  "production.close": ["admin", "manager"],
+  "production.cancel": ["admin", "manager"],
+  "production.reverse": ["admin", "manager"],
+  "production.delete": ["admin", "manager"],
 };
 
 export function can(user: SessionUser | null, action: WarehouseAction): boolean {

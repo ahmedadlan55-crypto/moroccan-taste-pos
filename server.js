@@ -243,10 +243,19 @@ app.use(express.static(path.join(__dirname, 'public'), {
 // RC cutover — when v2 is DISABLED, intercept the SPA with a maintenance notice
 // (registered BEFORE the static mount so it always wins). Legacy UI unaffected.
 if (!WAREHOUSE_V2_ENABLED) {
-  app.all(/^\/warehouse-v2(?:\/.*)?$/, function (req, res) {
+  app.all(/^\/warehouse(?:-v2)?(?:\/.*)?$/, function (req, res) {
     res.status(503).type('html').send('<!doctype html><html lang="ar" dir="rtl"><meta charset="utf-8"><title>صيانة</title><body style="font-family:Tahoma,Arial,sans-serif;padding:3rem;text-align:center;color:#172033"><h2>نظام المستودعات (v2) متوقف مؤقتًا</h2><p>يُرجى استخدام الواجهة القديمة. (WAREHOUSE_V2_ENABLED=0)</p></body></html>');
   });
 }
+
+// Back-compat alias: the section moved from /warehouse-v2 to /warehouse (it is
+// a first-class part of the main system now). Old bookmarks/deep links keep
+// working via a 301 that preserves the sub-path and query string.
+app.get(/^\/warehouse-v2(\/.*)?$/, function (req, res) {
+  const rest = req.params[0] || '';
+  const qs = req.originalUrl.indexOf('?') !== -1 ? req.originalUrl.slice(req.originalUrl.indexOf('?')) : '';
+  res.redirect(301, '/warehouse' + rest + qs);
+});
 
 // ── warehouse-v2 — strict Content-Security-Policy (SPA scope only) ──────
 // The global helmet CSP stays disabled because the LEGACY app (served from
@@ -254,7 +263,7 @@ if (!WAREHOUSE_V2_ENABLED) {
 // (no inline <script>), so a strict CSP can be applied scoped to /warehouse-v2
 // without affecting the legacy UI. style-src keeps 'unsafe-inline' for
 // Tailwind/React element styles (style attributes, not script).
-app.use('/warehouse-v2', function (req, res, next) {
+app.use('/warehouse', function (req, res, next) {
   res.setHeader('Content-Security-Policy', [
     "default-src 'self'",
     "base-uri 'self'",
@@ -272,7 +281,7 @@ app.use('/warehouse-v2', function (req, res, next) {
 
 var _whDist = path.join(__dirname, 'frontend', 'warehouse', 'dist');
 if (_pwaFs.existsSync(path.join(_whDist, 'index.html'))) {
-  app.use('/warehouse-v2', express.static(_whDist, {
+  app.use('/warehouse', express.static(_whDist, {
     setHeaders: function(res, filePath) {
       if (/\.html$/i.test(filePath)) {
         res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
@@ -281,18 +290,18 @@ if (_pwaFs.existsSync(path.join(_whDist, 'index.html'))) {
       }
     }
   }));
-  // History fallback: any extensionless path under /warehouse-v2 (a client
-  // route like /warehouse-v2/inventory, incl. hard refresh) returns index.html.
-  // Paths that look like a file (have an extension) fall through to a normal
-  // 404 instead of being masked by HTML.
-  app.get(/^\/warehouse-v2(?:\/.*)?$/, function(req, res, next) {
+  // History fallback: any extensionless path under /warehouse (a client route
+  // like /warehouse/inventory, incl. hard refresh) returns index.html. Paths
+  // that look like a file (have an extension) fall through to a normal 404
+  // instead of being masked by HTML.
+  app.get(/^\/warehouse(?:\/.*)?$/, function(req, res, next) {
     if (/\.[a-zA-Z0-9]+$/.test(req.path)) return next();
     res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
     res.sendFile(path.join(_whDist, 'index.html'));
   });
-  console.log('[warehouse-v2] SPA mounted at /warehouse-v2');
+  console.log('[warehouse] SPA mounted at /warehouse (alias: /warehouse-v2 → 301)');
 } else {
-  console.warn('[warehouse-v2] bundle not found — run: npm --prefix frontend/warehouse run build');
+  console.warn('[warehouse] bundle not found — run: npm --prefix frontend/warehouse run build');
 }
 
 // RC hardening — surface a loud warning if warehouse-v2 is exposed WITHOUT
@@ -327,7 +336,11 @@ app.get('/api/version', (req, res) => {
     deployId: process.env.RAILWAY_DEPLOYMENT_ID || '',
     env:     process.env.NODE_ENV || 'development',
     startedAt: SERVER_BOOT_ISO,
-    now: new Date().toISOString()
+    now: new Date().toISOString(),
+    // The shared header reads this to decide which warehouse link to render
+    // (V2 section at /warehouse vs the legacy /inventory/ rollback UI) — the
+    // user must never see two warehouse links at once.
+    warehouseV2: WAREHOUSE_V2_ENABLED
   });
 });
 

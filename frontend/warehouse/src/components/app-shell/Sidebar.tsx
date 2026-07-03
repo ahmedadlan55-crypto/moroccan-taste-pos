@@ -1,5 +1,5 @@
 import { NavLink } from "react-router-dom";
-import { Warehouse, MoreHorizontal } from "lucide-react";
+import { Warehouse, MoreHorizontal, Home } from "lucide-react";
 import { navigation } from "@/app/navigation";
 import { useAuth } from "@/app/auth-provider";
 import { cn } from "@/lib/cn";
@@ -56,6 +56,13 @@ export function Sidebar() {
           </div>
         ))}
       </nav>
+
+      {/* Same-tab jump back to the main system shell (same session/token —
+          the warehouse section is a first-class part of the one app). */}
+      <a href="/" className="nav-item mb-2 border border-white/10 bg-white/5 hover:bg-white/10">
+        <Home className="h-[18px] w-[18px] shrink-0" />
+        <span className="flex-1">العودة للنظام الرئيسي</span>
+      </a>
 
       <div className="rounded-2xl border border-white/10 bg-white/5 p-3">
         <div className="flex items-center gap-3">

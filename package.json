@@ -15,6 +15,7 @@
     "migrate:item-units": "node scripts/migrate-item-units.js",
     "test:change-password": "node tests/integration/changePassword.api.test.js",
     "test:search-api": "node tests/integration/search.api.test.js",
+    "test:uom-docs": "node tests/integration/uomDocs.api.test.js",
     "reconcile:legacy": "node scripts/reconcile-legacy-materials.js",
     "test:scope-api": "node tests/integration/warehouseScope.api.test.js",
     "test:reports-api": "node tests/integration/reports.api.test.js",

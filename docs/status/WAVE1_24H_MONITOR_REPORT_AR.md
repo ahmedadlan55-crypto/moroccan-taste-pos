@@ -56,3 +56,9 @@
 - ✅ النافذة النظيفة (توكن صالح) 100% خضراء.
 - ⚠️ الإخفاقات الظاهرة كلها عيب توكن مراقبة منتهٍ — يُعالَج بتقاعد المراقب الآن.
 - القرار النهائي: **WAVE 1 STABLE**.
+
+## 7. تقاعد المراقب وإلغاء توكناته (منفّذ في هذه البوابة)
+
+- **prod-monitor أُوقف:** `railway down -s prod-monitor -y` → الخدمة الآن `○ Offline`. (warehouse-staging + MySQL يبقيان Online — لا حذف Staging.)
+- **توكنا المراقبة أُلغيا:** `railway variable delete CANARY_TOKEN|NONCANARY_TOKEN -s prod-monitor` → `present: false`. إلغاء ثلاثي: (1) منتهيان أصلًا منذ 2026-07-03T15:10، (2) الخدمة Offline، (3) سيُبطلهما تدوير JWT_SECRET عالميًا.
+- الإنتاج لم يُمس طوال المراقبة (HTTP GET فقط، deploy `d81a43dc` ثابت).

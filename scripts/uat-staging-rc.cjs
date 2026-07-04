@@ -310,9 +310,15 @@ async function cleanupFixtures(whA, whB, itemIds) {
     await page.getByRole('button', { name: 'إضافة' }).click();
     await wait(400);
     await page.getByRole('button', { name: 'حفظ الباركودات' }).click();
-    await page.waitForSelector('text=حُفظت الباركودات', { timeout: 10000 });
-    const bcRows = await q('SELECT code FROM item_barcodes WHERE item_id=?', [ITEM_T]);
-    const bcOnItem = await q('SELECT barcode FROM inv_items WHERE id=?', [ITEM_T]);
+    // the success toast is transient; the authoritative proof is the DB row (poll it)
+    await page.waitForSelector('text=حُفظت الباركودات', { timeout: 8000 }).catch(() => {});
+    let bcRows = [], bcOnItem = [{}];
+    for (let i = 0; i < 8; i++) {
+      bcRows = await q('SELECT code FROM item_barcodes WHERE item_id=?', [ITEM_T]);
+      bcOnItem = await q('SELECT barcode FROM inv_items WHERE id=?', [ITEM_T]);
+      if (bcRows.some((r) => String(r.code) === BARCODE_T) || String((bcOnItem[0] || {}).barcode) === BARCODE_T) break;
+      await wait(700);
+    }
     check('P4: إضافة باركود من الواجهة وحفظه في القاعدة', (bcRows.some((r) => String(r.code) === BARCODE_T) || String((bcOnItem[0] || {}).barcode) === BARCODE_T), { bcRows, bcOnItem });
     await shot('04-item-barcode');
     // Topbar global scan: hit + miss

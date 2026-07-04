@@ -10,13 +10,30 @@ export type OrderStatus = "open" | "held" | "submitted" | "completed" | "voided"
 export type PayMethod = "cash" | "card" | "credit";
 export type DiscountType = "PERCENT" | "FIXED";
 
+/** A sellable unit for a catalog item (base or a major unit like carton). */
+export interface CatalogUnit {
+  unitId: string | null;
+  unitCode: string;
+  unitName: string;
+  isBase: boolean;
+  factor: number; // conversion_to_base: 1 <unit> = factor <base>
+  barcode: string | null; // optional per-unit barcode (scan a carton)
+}
+
 export interface CatalogItem {
   id: string;
   name: string;
-  price: number;
+  price: number; // base-unit price (tax-inclusive)
   category: string;
   active: boolean;
   taxCategory: TaxCategory;
+  // Phase U — multi-unit selling. `units` is [] for single-unit items (fully
+  // backward compatible). basePrice = price; warehouseQty = base availability.
+  basePrice?: number;
+  warehouseQty?: number | null;
+  barcode?: string | null; // primary (base) barcode
+  baseUnitName?: string | null;
+  units?: CatalogUnit[];
 }
 
 export interface Catalog {
@@ -30,11 +47,19 @@ export interface Catalog {
 export interface CartLine {
   menuId: string;
   name: string;
-  qty: number;
-  unitPrice: number;
+  qty: number; // = enteredQty (quantity in the chosen unit; base if none)
+  unitPrice: number; // base-unit price
   lineDiscount: number;
   vatCategory: TaxCategory;
   notes: string | null;
+  // Phase U — unit-of-measure. Money + stock use baseQty (= qty × factor). The
+  // factor is FROZEN at add time. Legacy piece lines: unit = base, factor 1,
+  // baseQty = qty. `qty` is the entered quantity shown to the cashier.
+  enteredUnitId?: string | null;
+  enteredUnitCode?: string | null;
+  enteredUnitName?: string | null;
+  conversionFactorSnapshot?: number; // frozen factor
+  baseQty?: number; // = qty × conversionFactorSnapshot
 }
 
 export interface OrderDiscount {

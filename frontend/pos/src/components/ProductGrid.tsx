@@ -1,11 +1,11 @@
 /**
  * Product grid + instant client-side search / barcode box.
  *
- * Barcode note: menu items have NO physical barcode column — a scanner that
- * types a code + Enter is matched against the CATALOG ID first (menu-level
- * "barcodes" ride on catalog ids), then name substring. The inventory-level
- * GET /api/inventory/v2/items/by-barcode endpoint targets warehouse items,
- * not sellable menu items, so it is intentionally not used here.
+ * Barcode note (Phase U): a scanned code resolves LOCALLY from the cached
+ * catalog. A PER-UNIT barcode wins first — scanning a carton barcode adds ONE
+ * carton (the unit's factor is frozen at add time); otherwise the item's primary
+ * (base) barcode or catalog id adds one BASE unit; finally a name substring.
+ * All offline, no round-trip.
  */
 import { forwardRef, memo, useMemo } from "react";
 import { PackageSearch, Search, X } from "lucide-react";
@@ -23,15 +23,33 @@ export function filterItems(items: CatalogItem[], category: string | null, query
   });
 }
 
-/** Scanner Enter-key resolution: exact-id match first, else first result. */
-export function resolveScan(items: CatalogItem[], query: string): CatalogItem | null {
-  const q = query.trim().toLowerCase();
+/** A resolved scan: the item + the unit to add it in (null = base unit). */
+export interface ScanHit {
+  item: CatalogItem;
+  unitCode: string | null;
+}
+
+/** Scanner Enter-key resolution: per-unit barcode → primary barcode → id → name. */
+export function resolveScan(items: CatalogItem[], query: string): ScanHit | null {
+  const q = query.trim();
   if (!q) return null;
+  const ql = q.toLowerCase();
   const active = items.filter((i) => i.active);
-  const exact = active.find((i) => i.id.toLowerCase() === q);
-  if (exact) return exact;
+  // 1) exact per-unit barcode (a carton barcode adds a carton)
+  for (const it of active) {
+    for (const u of it.units || []) {
+      if (u.barcode && u.barcode.toLowerCase() === ql) return { item: it, unitCode: u.unitCode };
+    }
+  }
+  // 2) exact primary (base) barcode
+  for (const it of active) {
+    if (it.barcode && it.barcode.toLowerCase() === ql) return { item: it, unitCode: null };
+  }
+  // 3) exact catalog id, then name/id substring — always the base unit
+  const byId = active.find((i) => i.id.toLowerCase() === ql);
+  if (byId) return { item: byId, unitCode: null };
   const results = filterItems(items, null, q);
-  return results[0] ?? null;
+  return results[0] ? { item: results[0], unitCode: null } : null;
 }
 
 const ProductCard = memo(function ProductCard({ item, onAdd }: { item: CatalogItem; onAdd: (item: CatalogItem) => void }) {

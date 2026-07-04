@@ -25,8 +25,10 @@ export interface LineTotals {
   discount: number;
 }
 
-export function lineTotals(line: Pick<CartLine, "qty" | "unitPrice" | "lineDiscount" | "vatCategory">): LineTotals {
-  const qty = Number(line.qty) || 0;
+export function lineTotals(line: Pick<CartLine, "qty" | "unitPrice" | "lineDiscount" | "vatCategory" | "baseQty">): LineTotals {
+  // Phase U — money uses the BASE quantity (= enteredQty × factor), matching the
+  // server (which stores qty as base). A single-unit line has baseQty == qty.
+  const qty = Number(line.baseQty ?? line.qty) || 0;
   const unitPrice = Number(line.unitPrice) || 0;
   const discount = Math.min(Math.max(Number(line.lineDiscount) || 0, 0), qty * unitPrice);
   const gross = round2(qty * unitPrice - discount);
@@ -36,7 +38,7 @@ export function lineTotals(line: Pick<CartLine, "qty" | "unitPrice" | "lineDisco
 }
 
 export function cartTotals(
-  lines: ReadonlyArray<Pick<CartLine, "qty" | "unitPrice" | "lineDiscount" | "vatCategory">>,
+  lines: ReadonlyArray<Pick<CartLine, "qty" | "unitPrice" | "lineDiscount" | "vatCategory" | "baseQty">>,
   orderDiscount?: Pick<OrderDiscount, "type" | "value"> | null,
 ): CartTotals {
   let subtotal = 0;

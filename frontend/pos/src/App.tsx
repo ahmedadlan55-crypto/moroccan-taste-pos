@@ -127,7 +127,8 @@ export default function App() {
     if (!catalog) return;
     const hit = resolveScan(catalog.items, query);
     if (hit) {
-      addItem(hit);
+      // a per-unit (carton) barcode adds that unit; otherwise the base unit
+      addItem(hit.item, hit.unitCode);
       setQuery("");
     } else if (query.trim()) {
       pushToast("error", `لا صنف يطابق «${query.trim()}»`);

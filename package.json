@@ -50,7 +50,8 @@
     "test:preflight": "node tests/integration/preflight.test.js",
     "migrate:purchase-lots": "node scripts/migrate-purchase-lots.js",
     "scope:backfill": "node scripts/backfill-warehouse-access.js",
-    "test:pos-v2-api": "node tests/integration/posV2.api.test.js"
+    "test:pos-v2-api": "node tests/integration/posV2.api.test.js",
+    "test:pos-v2-uom": "node tests/integration/posV2Uom.api.test.js"
   },
   "dependencies": {
     "bcryptjs": "^2.4.3",

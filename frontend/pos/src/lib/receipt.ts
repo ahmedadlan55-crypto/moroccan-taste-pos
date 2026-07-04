@@ -61,14 +61,22 @@ export function buildReceiptHtml(opts: ReceiptOptions): string {
   const orderTypeLabel = order.orderType === "dine_in" ? "محلي" : order.orderType === "delivery" ? "توصيل" : "سفري";
 
   const linesHtml = order.lines
-    .map(
-      (l) => `<tr>
+    .map((l) => {
+      // qty column shows the ENTERED unit (e.g. "1 كرتون"); the line total uses the
+      // BASE quantity × base price (money authority), matching cartTotals.
+      const baseQty = Number(l.baseQty ?? l.qty);
+      const factor = Number(l.conversionFactorSnapshot) || 1;
+      const qtyLabel = factor > 1 && l.enteredUnitName
+        ? `${fmt2(l.qty)} ${esc(l.enteredUnitName)}`
+        : fmt2(l.qty);
+      const lineGross = baseQty * l.unitPrice - (l.lineDiscount || 0);
+      return `<tr>
         <td>${esc(l.name)}${l.notes ? `<div style="font-size:10px;color:#333">${esc(l.notes)}</div>` : ""}</td>
-        <td class="l num">${fmt2(l.qty)}</td>
+        <td class="l num">${qtyLabel}</td>
         <td class="l num">${fmt2(l.unitPrice)}</td>
-        <td class="l num">${fmt2(l.qty * l.unitPrice - (l.lineDiscount || 0))}</td>
-      </tr>`,
-    )
+        <td class="l num">${fmt2(lineGross)}</td>
+      </tr>`;
+    })
     .join("");
 
   const payHtml = payments

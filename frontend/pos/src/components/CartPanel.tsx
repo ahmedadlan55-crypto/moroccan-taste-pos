@@ -25,6 +25,7 @@ import { fmt2, fmtInt } from "@/lib/format";
 import { lineTotals, orderDiscountPct } from "@/lib/cartMath";
 import type { CartLine, OrderType } from "@/lib/types";
 import { Button, cn, EmptyState, Money } from "./ui";
+import { UnitPicker } from "./UnitPicker";
 
 const ORDER_TYPES: Array<{ value: OrderType; label: string; icon: typeof Utensils }> = [
   { value: "dine_in", label: "محلي", icon: Utensils },
@@ -33,9 +34,15 @@ const ORDER_TYPES: Array<{ value: OrderType; label: string; icon: typeof Utensil
 ];
 
 function CartLineRow({ line, index }: { line: CartLine; index: number }) {
-  const { setQty, removeLine, setLineNotes, setLineDiscount } = usePos();
+  const { setQty, setLineUnit, removeLine, setLineNotes, setLineDiscount, catalog } = usePos();
   const [expanded, setExpanded] = useState(false);
   const t = lineTotals(line);
+  const item = catalog?.items.find((i) => i.id === line.menuId) || null;
+  const units = item?.units || [];
+  const baseUnitName = item?.baseUnitName || null;
+  const factor = Number(line.conversionFactorSnapshot) || 1;
+  const baseQty = Number(line.baseQty ?? line.qty);
+  const isMajor = factor > 1 && !!line.enteredUnitName;
 
   return (
     <li className="rounded-xl border border-slate-100 bg-white shadow-sm">
@@ -50,7 +57,12 @@ function CartLineRow({ line, index }: { line: CartLine; index: number }) {
           <span className="flex-1">
             <span className="block text-sm font-extrabold leading-tight text-ink">{line.name}</span>
             <span className="mt-0.5 block text-[11px] font-bold text-slate-400">
-              <Money value={fmt2(line.unitPrice)} /> ر.س
+              <Money value={fmt2(line.unitPrice)} /> ر.س{isMajor && baseUnitName ? `/${baseUnitName}` : ""}
+              {isMajor ? (
+                <span className="ms-1.5 text-teal-600">
+                  = <span className="num">{fmt2(baseQty)}</span> {baseUnitName || ""}
+                </span>
+              ) : null}
               {line.lineDiscount > 0 ? (
                 <span className="ms-1.5 text-saffron-600">
                   خصم <Money value={fmt2(line.lineDiscount)} />
@@ -87,6 +99,18 @@ function CartLineRow({ line, index }: { line: CartLine; index: number }) {
           </button>
         </div>
 
+        {line.enteredUnitName ? (
+          <span
+            className={cn(
+              "shrink-0 rounded-lg px-1.5 py-1 text-[11px] font-extrabold",
+              isMajor ? "bg-teal-50 text-teal-700" : "text-slate-400",
+            )}
+            aria-label={`الوحدة ${line.enteredUnitName}`}
+          >
+            {line.enteredUnitName}
+          </span>
+        ) : null}
+
         <div className="w-[4.5rem] text-end">
           <Money value={fmt2(t.gross)} className="text-sm font-extrabold text-ink" />
         </div>
@@ -103,6 +127,24 @@ function CartLineRow({ line, index }: { line: CartLine; index: number }) {
 
       {expanded ? (
         <div className="grid grid-cols-1 gap-2 border-t border-slate-100 bg-slate-50/60 p-2.5 sm:grid-cols-2">
+          {units.length > 1 ? (
+            <label className="block sm:col-span-2">
+              <span className="mb-1 block text-[11px] font-extrabold text-slate-500">
+                الوحدة{isMajor && baseUnitName ? ` — 1 ${line.enteredUnitName} = ` : ""}
+                {isMajor && baseUnitName ? (
+                  <>
+                    <span className="num">{fmt2(factor)}</span> {baseUnitName}
+                  </>
+                ) : null}
+              </span>
+              <UnitPicker
+                units={units}
+                value={line.enteredUnitCode ?? null}
+                baseUnitName={baseUnitName}
+                onSelect={(u) => setLineUnit(index, u)}
+              />
+            </label>
+          ) : null}
           <label className="block">
             <span className="mb-1 block text-[11px] font-extrabold text-slate-500">ملاحظات للمطبخ</span>
             <input

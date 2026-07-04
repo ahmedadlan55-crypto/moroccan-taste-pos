@@ -114,12 +114,21 @@ export function upsertPayloadFrom(doc: LocalOrder, expectedVersion?: number | nu
     discountValue: doc.discountType ? doc.discountValue : undefined,
     discountName: doc.discountName || undefined,
     note: composeNote(doc) || undefined,
+    // qty = entered qty in the chosen unit; unitFactor is FROZEN at add time so a
+    // re-sync (even weeks later) computes the SAME baseQty on the server. The
+    // server re-expands qty×factor→base and guards baseQty (UNIT_CONVERSION_CONFLICT).
     lines: doc.lines.map((l: CartLine) => ({
       menuId: l.menuId,
       qty: l.qty,
       unitPrice: l.unitPrice,
       lineDiscount: l.lineDiscount || 0,
       notes: l.notes || undefined,
+      ...(l.enteredUnitCode ? { enteredUnitCode: l.enteredUnitCode } : {}),
+      ...(l.enteredUnitId ? { enteredUnitId: l.enteredUnitId } : {}),
+      ...(l.conversionFactorSnapshot != null && l.conversionFactorSnapshot !== 1
+        ? { unitFactor: l.conversionFactorSnapshot }
+        : {}),
+      ...(l.baseQty != null ? { baseQty: l.baseQty } : {}),
     })),
     ...(expectedVersion != null ? { expectedVersion } : {}),
   };

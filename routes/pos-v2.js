@@ -66,7 +66,16 @@ async function _loadPayments(id, conn) {
   return rows;
 }
 function _linesForMath(rows) {
-  return rows.map((l) => ({ menuId: l.menu_id, nameSnapshot: l.name_snapshot, qty: Number(l.qty), unitPrice: Number(l.unit_price), lineDiscount: Number(l.line_discount), vatCategory: l.vat_category, notes: l.notes }));
+  // qty is the stored BASE qty; the entered-unit snapshot is carried through for
+  // the legacy sale payload (→ items_json → returns echo the same unit).
+  return rows.map((l) => ({
+    menuId: l.menu_id, nameSnapshot: l.name_snapshot, qty: Number(l.qty), unitPrice: Number(l.unit_price),
+    lineDiscount: Number(l.line_discount), vatCategory: l.vat_category, notes: l.notes,
+    enteredUnitId: l.entered_unit_id, enteredUnitCode: l.entered_unit_code,
+    enteredQty: l.entered_qty != null ? Number(l.entered_qty) : null,
+    conversionFactorSnapshot: l.conversion_factor_snapshot != null ? Number(l.conversion_factor_snapshot) : null,
+    baseQty: Number(l.qty),
+  }));
 }
 function _orderForMath(o) {
   return {
@@ -322,14 +331,53 @@ async function doComplete(user, id, body) {
 // ════════════════════════════════════════════════════════════════════════════
 router.get('/catalog', POS, async (req, res) => {
   try {
-    const [items] = await db.query("SELECT id, name, price, category, active, tax_category FROM menu WHERE COALESCE(is_deleted,0)=0 ORDER BY category, name");
+    const [items] = await db.query("SELECT id, name, price, category, active, tax_category, stock FROM menu WHERE COALESCE(is_deleted,0)=0 ORDER BY category, name");
     let vatRate = 15;
     try {
       const [vr] = await db.query("SELECT `value` FROM settings WHERE `key`='VATRate' LIMIT 1");
       if (vr.length) vatRate = Number(vr[0].value) || 15;
     } catch (_) { /* settings table variants */ }
+
+    // Phase U — attach the sellable units (base + majors like carton) per catalog
+    // item, keyed by the catalog id (= the stock item id for imported goods), plus
+    // the per-unit barcode (item_units.barcode_id → item_barcodes.code) and the
+    // primary barcode. Resolved offline so the cashier can scan a carton barcode
+    // with no round-trip. Fails soft: a missing units/barcode row → base-only item.
+    const ids = items.map((m) => String(m.id));
+    const unitsByItem = {}; const primaryBc = {};
+    if (ids.length) {
+      try {
+        const [us] = await db.query(
+          'SELECT iu.item_id, iu.id AS unit_id, iu.unit_code, iu.unit_name, iu.is_base, iu.conversion_to_base, ib.code AS barcode ' +
+          'FROM item_units iu LEFT JOIN item_barcodes ib ON ib.id=iu.barcode_id ' +
+          'WHERE iu.item_id IN (?) AND iu.is_active=1 AND iu.allow_sale=1 ORDER BY iu.is_base DESC, iu.conversion_to_base ASC', [ids]);
+        for (const u of us) {
+          (unitsByItem[u.item_id] = unitsByItem[u.item_id] || []).push({
+            unitId: u.unit_id, unitCode: u.unit_code, unitName: u.unit_name,
+            isBase: u.is_base === 1 || u.is_base === true, factor: Number(u.conversion_to_base), barcode: u.barcode || null,
+          });
+        }
+      } catch (_) { /* item_units not present → base-only */ }
+      try {
+        const [pb] = await db.query("SELECT item_id, code FROM item_barcodes WHERE item_id IN (?) AND is_primary=1", [ids]);
+        for (const b of pb) primaryBc[b.item_id] = b.code;
+      } catch (_) { /* item_barcodes not present */ }
+    }
+
     const data = {
-      items: items.map((m) => ({ id: String(m.id), name: m.name, price: Number(m.price), category: m.category || 'عام', active: !(m.active === 0 || m.active === false), taxCategory: ['S', 'Z', 'E', 'O'].includes(m.tax_category) ? m.tax_category : 'S' })),
+      items: items.map((m) => {
+        const units = unitsByItem[m.id] || [];
+        const base = units.find((u) => u.isBase);
+        return {
+          id: String(m.id), name: m.name, price: Number(m.price), category: m.category || 'عام',
+          active: !(m.active === 0 || m.active === false),
+          taxCategory: ['S', 'Z', 'E', 'O'].includes(m.tax_category) ? m.tax_category : 'S',
+          basePrice: Number(m.price), warehouseQty: m.stock == null ? null : Number(m.stock),
+          barcode: primaryBc[m.id] || null,
+          baseUnitName: base ? base.unitName : null,
+          units, // [] when no multi-unit config → cashier treats it as single-unit
+        };
+      }),
       categories: [...new Set(items.map((m) => m.category || 'عام'))],
       vatRate,
       maxCashierDiscountPct: MAX_CASHIER_DISC_PCT,

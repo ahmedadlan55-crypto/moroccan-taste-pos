@@ -25,11 +25,38 @@ import type {
   AuthUser,
   Catalog,
   CatalogItem,
+  CatalogUnit,
+  CartLine,
   CartTotals,
   DiscountType,
   LocalOrder,
   OrderType,
 } from "@/lib/types";
+
+// ── Phase U — unit-of-measure helpers ───────────────────────────────────────
+const round6 = (n: number) => Math.round((n + Number.EPSILON) * 1e6) / 1e6;
+function pickUnit(item: CatalogItem, unitCode?: string | null): CatalogUnit | null {
+  const units = item.units || [];
+  if (!units.length) return null; // single-unit item → no unit metadata
+  if (unitCode) return units.find((u) => u.unitCode === unitCode) || units.find((u) => u.isBase) || null;
+  return units.find((u) => u.isBase) || null;
+}
+function buildCartLine(item: CatalogItem, unit: CatalogUnit | null, enteredQty: number): CartLine {
+  const factor = unit ? Number(unit.factor) || 1 : 1;
+  return {
+    menuId: item.id, name: item.name, qty: enteredQty, unitPrice: item.basePrice ?? item.price,
+    lineDiscount: 0, vatCategory: item.taxCategory, notes: null,
+    enteredUnitId: unit ? unit.unitId : null, enteredUnitCode: unit ? unit.unitCode : null,
+    enteredUnitName: unit ? unit.unitName : item.baseUnitName || null,
+    conversionFactorSnapshot: factor, baseQty: round6(enteredQty * factor),
+  };
+}
+// recompute baseQty for a line whose entered qty (or factor) changed
+function withBase(l: CartLine, patch: Partial<CartLine>): CartLine {
+  const merged = { ...l, ...patch };
+  const factor = Number(merged.conversionFactorSnapshot) || 1;
+  return { ...merged, baseQty: round6((Number(merged.qty) || 0) * factor) };
+}
 
 // ── Device id (stable per browser/terminal) ──────────────────────────────────
 const DEVICE_KEY = "pos_v2_device_id";
@@ -96,10 +123,13 @@ export interface PosContextValue {
 
   cart: LocalOrder;
   totals: CartTotals;
-  addItem: (item: CatalogItem) => void;
+  /** Add an item, optionally in a specific unit (base if omitted). */
+  addItem: (item: CatalogItem, unitCode?: string | null) => void;
   /** Line ops address lines by INDEX — two lines may share a menuId
    *  (e.g. one with kitchen notes, one without). */
   setQty: (index: number, qty: number) => void;
+  /** Change a line's unit (re-freezes the factor, recomputes baseQty). */
+  setLineUnit: (index: number, unit: CatalogUnit) => void;
   removeLine: (index: number) => void;
   setLineNotes: (index: number, notes: string | null) => void;
   setLineDiscount: (index: number, amount: number) => void;
@@ -228,30 +258,19 @@ export function PosProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const addItem = useCallback(
-    (item: CatalogItem) =>
+    (item: CatalogItem, unitCode?: string | null) =>
       mutate((c) => {
-        const existing = c.lines.find((l) => l.menuId === item.id && !l.notes && !l.lineDiscount);
+        const unit = pickUnit(item, unitCode);
+        const code = unit ? unit.unitCode : null;
+        // Merge only into a line of the SAME item AND unit (a carton line and a
+        // piece line of the same product stay separate) with no notes/discount.
+        const existing = c.lines.find(
+          (l) => l.menuId === item.id && (l.enteredUnitCode ?? null) === code && !l.notes && !l.lineDiscount,
+        );
         if (existing) {
-          return {
-            ...c,
-            lines: c.lines.map((l) => (l === existing ? { ...l, qty: l.qty + 1 } : l)),
-          };
+          return { ...c, lines: c.lines.map((l) => (l === existing ? withBase(l, { qty: l.qty + 1 }) : l)) };
         }
-        return {
-          ...c,
-          lines: [
-            ...c.lines,
-            {
-              menuId: item.id,
-              name: item.name,
-              qty: 1,
-              unitPrice: item.price,
-              lineDiscount: 0,
-              vatCategory: item.taxCategory,
-              notes: null,
-            },
-          ],
-        };
+        return { ...c, lines: [...c.lines, buildCartLine(item, unit, 1)] };
       }),
     [mutate],
   );
@@ -263,7 +282,23 @@ export function PosProvider({ children }: { children: ReactNode }) {
         lines:
           qty <= 0
             ? c.lines.filter((_, i) => i !== index)
-            : c.lines.map((l, i) => (i === index ? { ...l, qty } : l)),
+            : c.lines.map((l, i) => (i === index ? withBase(l, { qty }) : l)),
+      })),
+    [mutate],
+  );
+
+  const setLineUnit = useCallback(
+    (index: number, unit: CatalogUnit) =>
+      mutate((c) => ({
+        ...c,
+        lines: c.lines.map((l, i) =>
+          i === index
+            ? withBase(l, {
+                enteredUnitId: unit.unitId, enteredUnitCode: unit.unitCode, enteredUnitName: unit.unitName,
+                conversionFactorSnapshot: Number(unit.factor) || 1,
+              })
+            : l,
+        ),
       })),
     [mutate],
   );
@@ -338,6 +373,7 @@ export function PosProvider({ children }: { children: ReactNode }) {
     totals,
     addItem,
     setQty,
+    setLineUnit,
     removeLine,
     setLineNotes,
     setLineDiscount,

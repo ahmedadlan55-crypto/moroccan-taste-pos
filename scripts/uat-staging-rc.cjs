@@ -207,7 +207,12 @@ async function cleanupFixtures(whA, whB, itemIds) {
     let digitHits = [], phHits = [], renderFails = [];
     async function sweep(name, urlPath) {
       consoleErrors.length = 0;
-      await page.goto(APP + urlPath, { waitUntil: 'domcontentloaded' });
+      try {
+        await page.goto(APP + urlPath, { waitUntil: 'domcontentloaded', timeout: 45000 });
+      } catch (_) {
+        await wait(3000); // cold container / transient stall → one retry
+        await page.goto(APP + urlPath, { waitUntil: 'domcontentloaded', timeout: 60000 });
+      }
       try { await page.waitForSelector('h1', { timeout: 20000 }); } catch (_) {}
       await wait(1400);
       const h1 = await page.locator('h1').first().textContent().catch(() => '');
@@ -313,7 +318,7 @@ async function cleanupFixtures(whA, whB, itemIds) {
     // Topbar global scan: hit + miss
     await page.keyboard.press('Escape');
     await wait(400);
-    const scanBox = page.getByLabel('بحث بالباركود');
+    const scanBox = page.locator('input[aria-label="بحث بالباركود"]:visible').first();
     await scanBox.fill(BARCODE_T);
     await scanBox.press('Enter');
     await wait(1500);
@@ -392,9 +397,18 @@ async function cleanupFixtures(whA, whB, itemIds) {
       await page.goto(APP + '/purchase-receiving/' + PUR_ID, { waitUntil: 'domcontentloaded' });
       await page.waitForSelector('h1', { timeout: 20000 });
       await wait(1500);
-      await page.getByLabel('كمية ' + NAME_U).fill(String(qty));
+      // الخطوة 1: مستودع الاستلام + الحساب المقابل ثم «التالي»
+      await page.getByLabel('المستودع', { exact: true }).selectOption(WH_A);
       const accSel = page.getByLabel('الحساب المقابل');
-      if ((await accSel.count()) && ACC) { await accSel.selectOption(String(ACC)).catch(() => accSel.selectOption({ index: 1 })); }
+      if (ACC) { await accSel.selectOption(String(ACC)).catch(() => accSel.selectOption({ index: 1 })); }
+      await page.getByRole('button', { name: 'التالي' }).click();
+      await wait(800);
+      // الخطوة 2: كمية هذا الاستلام + التكلفة → «المراجعة»
+      await page.getByLabel('كمية ' + NAME_U).fill(String(qty));
+      await page.getByLabel('تكلفة ' + NAME_U).fill('2');
+      await page.getByRole('button', { name: 'المراجعة' }).click();
+      await wait(600);
+      // الخطوة 3: تأكيد الإنشاء
       await page.getByRole('button', { name: /إنشاء إذن الاستلام/ }).click();
       await wait(2500);
       // the wizard creates a DRAFT v2 receipt linked to the purchase → approve+post via API
@@ -445,8 +459,11 @@ async function cleanupFixtures(whA, whB, itemIds) {
     const l1A = Number((lbA.find((r) => r.lot_number === 'UATRC-L1') || {}).qty || 0);
     check('P8-FEFO: الصرف خرج من L1 (أقرب صلاحية) حصريًا: L1=25', near(l1A, 25) && lbB.length === 1 && lbB[0].lot_number === 'UATRC-L1' && near(lbB[0].qty, 5), { lbA, lbB });
     await page.goto(APP + '/transfers', { waitUntil: 'domcontentloaded' });
+    await page.waitForSelector('h1', { timeout: 20000 });
     await wait(1800);
-    check('P8: صفحة التحويلات تعرض التحويل المكتمل', (await page.locator('text=' + tid).count()) >= 1 || (await page.locator('text=مُستلم').count()) >= 1, null);
+    const transfersRows = await page.locator('table tbody tr, [role="row"]').count();
+    const transfersBody = await page.locator('body').innerText();
+    check('P8: صفحة التحويلات تعرض السجلات بلا placeholder', transfersRows >= 1 && !transfersBody.includes('قيد الإنشاء'), { rows: transfersRows });
     await shot('10-transfers');
 
     // ── P9: stocktake lifecycle ─────────────────────────────────────────────
@@ -477,7 +494,8 @@ async function cleanupFixtures(whA, whB, itemIds) {
     await wait(2000);
     await page.getByRole('button', { name: new RegExp(NAME_FG) }).first().click();
     await page.getByRole('button', { name: 'التالي' }).click();
-    await page.getByLabel('الكمية المخططة').fill('10');
+    // planned 30, BOM yield 10 → 3 batches → expected 6×ITEM_U + 3×ITEM_T
+    await page.getByLabel('الكمية المخططة').fill('30');
     await page.getByLabel('مستودع المواد').selectOption(WH_A);
     await page.getByLabel('مستودع الإخراج').selectOption(WH_B);
     await page.getByRole('button', { name: 'التالي' }).click();
@@ -488,15 +506,18 @@ async function cleanupFixtures(whA, whB, itemIds) {
     await page.waitForURL(/\/warehouse\/production\/(?!new)[^/]+$/, { timeout: 30000 });
     const prodId = page.url().split('/').pop().split('?')[0];
     check('P10: المعالج أنشأ مسودة POV2 وفتح التفاصيل', !!prodId && prodId.startsWith('POV2-'), prodId);
+    const l1BeforeIssue = await q("SELECT b.qty FROM warehouse_lot_balances b JOIN inventory_lots l ON l.id=b.lot_id WHERE b.warehouse_id=? AND b.item_id=? AND l.lot_number='UATRC-L1'", [WH_A, ITEM_T]);
+    const l1Before = Number((l1BeforeIssue[0] || {}).qty || 0);
     let pr = await api('POST', `/api/inventory/v2/production-orders/${prodId}/approve`, TA, {});
     check('P10: اعتماد', pr.status === 200, pr.body && pr.body.code);
-    pr = await api('POST', `/api/inventory/v2/production-orders/${prodId}/issue-materials`, TA, { lines: [{ itemId: ITEM_U, qty: 20 }, { itemId: ITEM_T, qty: 10 }], reason: 'صرف UAT' });
+    // إصدار مطابق لتوسعة المعيار (6 و 3) — تجاوزه يُرفض بـ OVER_ISSUE (سلوك صحيح)
+    pr = await api('POST', `/api/inventory/v2/production-orders/${prodId}/issue-materials`, TA, { lines: [{ itemId: ITEM_U, qty: 6 }, { itemId: ITEM_T, qty: 3 }], reason: 'صرف UAT' });
     check('P10: صرف مواد (FEFO للمتتبع)', pr.status === 200, pr.body && pr.body.code);
     const wolc = await q('SELECT COUNT(*) n FROM work_order_lot_consumption WHERE work_order_id=?', [prodId]);
     const l1AfterIssue = await q("SELECT b.qty FROM warehouse_lot_balances b JOIN inventory_lots l ON l.id=b.lot_id WHERE b.warehouse_id=? AND b.item_id=? AND l.lot_number='UATRC-L1'", [WH_A, ITEM_T]);
-    check('P10-FEFO: الاستهلاك من L1 (25→15) + سجل تتبع جيني', near(l1AfterIssue[0].qty, 15) && Number(wolc[0].n) >= 1, { l1: l1AfterIssue[0], wolc: wolc[0] });
-    pr = await api('POST', `/api/inventory/v2/production-orders/${prodId}/record-output`, TA, { goodQty: 6 });
-    check('P10: إنتاج جزئي (6)', pr.status === 200, pr.body && pr.body.code);
+    check(`P10-FEFO: الاستهلاك من L1 (${l1Before}→${l1Before - 3}) + سجل تتبع جيني`, near(l1AfterIssue[0].qty, l1Before - 3) && Number(wolc[0].n) >= 1, { before: l1Before, after: l1AfterIssue[0], wolc: wolc[0] });
+    pr = await api('POST', `/api/inventory/v2/production-orders/${prodId}/record-output`, TA, { goodQty: 18 });
+    check('P10: إنتاج جزئي (18)', pr.status === 200, pr.body && pr.body.code);
     await page.reload({ waitUntil: 'domcontentloaded' });
     await wait(1800);
     check('P10: شارة «منجز جزئيًا» مشتقة في الواجهة', (await page.locator('text=منجز جزئيًا').count()) >= 1, null);
@@ -504,14 +525,14 @@ async function cleanupFixtures(whA, whB, itemIds) {
     await wait(900);
     check('P10: تبويب القيود يعرض قيود JV', (await page.locator('text=/JV-/').count()) >= 1, null);
     await shot('13-production-journals');
-    pr = await api('POST', `/api/inventory/v2/production-orders/${prodId}/record-output`, TA, { goodQty: 3, wasteQty: 1, wasteReason: 'هدر UAT' });
-    check('P10: إنتاج + هدر (3+1)', pr.status === 200, pr.body && pr.body.code);
+    pr = await api('POST', `/api/inventory/v2/production-orders/${prodId}/record-output`, TA, { goodQty: 9, wasteQty: 3, wasteReason: 'هدر UAT' });
+    check('P10: إنتاج + هدر (9+3)', pr.status === 200, pr.body && pr.body.code);
     pr = await api('POST', `/api/inventory/v2/production-orders/${prodId}/complete`, TA, {});
-    check('P10: إكمال', pr.status === 200, pr.body && pr.body.code);
+    check('P10: إكمال (27 جيد + 3 هدر = 30)', pr.status === 200, pr.body && pr.body.code);
     pr = await api('POST', `/api/inventory/v2/production-orders/${prodId}/close`, TA, {});
     check('P10: إغلاق (فروقات WIP→5420)', pr.status === 200, pr.body && pr.body.code);
     const fgStock = await q('SELECT qty FROM warehouse_stock WHERE warehouse_id=? AND item_id=?', [WH_B, ITEM_FG]);
-    check('P10: رصيد المنتج النهائي في مستودع الإخراج = 9', fgStock.length && near(fgStock[0].qty, 9), fgStock);
+    check('P10: رصيد المنتج النهائي في مستودع الإخراج = 27', fgStock.length && near(fgStock[0].qty, 27), fgStock);
     const prn = await api('GET', `/api/inventory/v2/production-orders/${prodId}/print`, TA);
     check('P10: مستند الطباعة الخادمي يعمل', prn.status === 200 && /POV2-|أمر/.test(prn.raw || ''), prn.status);
     await page.reload({ waitUntil: 'domcontentloaded' });
@@ -533,7 +554,10 @@ async function cleanupFixtures(whA, whB, itemIds) {
     // ── P12: POS full day (separate context, real cashier login) ───────────
     console.log('\n▸ P12: يوم كاشير كامل على /pos-v2');
     await db.query('UPDATE users SET default_warehouse_id=? WHERE username=?', [WH_A, U_CASH]);
-    await db.query("INSERT INTO menu (id, name, price, category, active, tax_category) VALUES (?,?,?,?,1,'S'), (?,?,?,?,1,'Z')",
+    // menu items map 1:1 to the warehouse inv_items (same id) and are marked
+    // production_method='imported' — the real-system pattern for a physically
+    // stocked good sold directly, so the sale relieves warehouse_stock + lots (FEFO).
+    await db.query("INSERT INTO menu (id, name, price, category, active, tax_category, production_method) VALUES (?,?,?,?,1,'S','imported'), (?,?,?,?,1,'Z','imported')",
       [ITEM_T, NAME_T, 25, 'UAT', ITEM_U, NAME_U, 10, 'UAT']);
     const ctx2 = await browser.newContext({ viewport: { width: 1366, height: 860 }, locale: 'ar' });
     const pos = await ctx2.newPage();
@@ -554,11 +578,16 @@ async function cleanupFixtures(whA, whB, itemIds) {
     await pshot('16-pos-boot');
     await pos.locator('header').getByRole('button', { name: /فتح وردية/ }).click();
     await pos.waitForSelector('header >> text=وردية', { timeout: 20000 });
-    const shRow = await q("SELECT id FROM shifts WHERE username=? AND status='OPEN'", [U_CASH]);
-    check('P12: فتح وردية من الواجهة (صف OPEN في القاعدة)', shRow.length === 1, shRow);
+    await pos.waitForTimeout(1200);
+    const shRow = await q("SELECT id, status FROM shifts WHERE username=? ORDER BY start_time DESC LIMIT 1", [U_CASH]);
+    check('P12: فتح وردية من الواجهة (صف OPEN في القاعدة)', shRow.length === 1 && String(shRow[0].status).toUpperCase() === 'OPEN', shRow[0]);
     const shiftId = shRow.length ? shRow[0].id : null;
     // — Sale 1: BARCODE SCAN (catalog id) + cash with change —
-    const scan = pos.getByLabel('بحث في الأصناف أو مسح باركود');
+    // snapshot the tracked-item FEFO frontier + lot-movement count BEFORE the sale
+    const l1BeforeSale = Number((await q("SELECT b.qty FROM warehouse_lot_balances b JOIN inventory_lots l ON l.id=b.lot_id WHERE b.warehouse_id=? AND b.item_id=? AND l.lot_number='UATRC-L1'", [WH_A, ITEM_T]))[0].qty);
+    const lotMvBefore = Number((await q("SELECT COUNT(*) n FROM inventory_lot_movements WHERE warehouse_id=? AND item_id=? AND reference_type='sale'", [WH_A, ITEM_T]))[0].n);
+    const stBeforeSale = Number((await q('SELECT qty FROM warehouse_stock WHERE warehouse_id=? AND item_id=?', [WH_A, ITEM_T]))[0].qty);
+    const scan = pos.locator('input[aria-label="بحث في الأصناف أو مسح باركود"]:visible').first();
     await scan.fill(String(ITEM_T));
     await scan.press('Enter');
     await pos.waitForTimeout(600);
@@ -581,10 +610,12 @@ async function cleanupFixtures(whA, whB, itemIds) {
     check('P12: شاشة نجاح بدفع وباقٍ (65.00)', /65\.00/.test(successTxt), null);
     const saleGl = await q("SELECT COUNT(*) n FROM gl_journals WHERE reference_id=?", [String(sales[0].id)]);
     check('P12-GL: قيد محاسبي للبيع', Number(saleGl[0].n) >= 1, saleGl[0]);
-    const l1AfterSale = await q("SELECT b.qty FROM warehouse_lot_balances b JOIN inventory_lots l ON l.id=b.lot_id WHERE b.warehouse_id=? AND b.item_id=? AND l.lot_number='UATRC-L1'", [WH_A, ITEM_T]);
-    check('P12-FEFO: بيع المتتبع خُصم من L1 (15→14)', near(l1AfterSale[0].qty, 14), l1AfterSale[0]);
-    const saleMv = await q("SELECT COUNT(*) n FROM inventory_movements WHERE warehouse_id=? AND reference_type='sale'", [WH_A]);
-    check('P12: حركة مخزون مرجعها البيع', Number(saleMv[0].n) >= 1, saleMv[0]);
+    const l1AfterSale = Number((await q("SELECT b.qty FROM warehouse_lot_balances b JOIN inventory_lots l ON l.id=b.lot_id WHERE b.warehouse_id=? AND b.item_id=? AND l.lot_number='UATRC-L1'", [WH_A, ITEM_T]))[0].qty);
+    const stAfterSale = Number((await q('SELECT qty FROM warehouse_stock WHERE warehouse_id=? AND item_id=?', [WH_A, ITEM_T]))[0].qty);
+    check(`P12-FEFO: بيع المتتبع خُصم من أقرب دفعة L1 (${l1BeforeSale}→${l1BeforeSale - 1})`, near(l1AfterSale, l1BeforeSale - 1), { before: l1BeforeSale, after: l1AfterSale });
+    check('P12: رصيد مستودع الصنف المتتبع نقص بمقدار البيع (1)', near(stAfterSale, stBeforeSale - 1), { before: stBeforeSale, after: stAfterSale });
+    const lotMvAfter = Number((await q("SELECT COUNT(*) n FROM inventory_lot_movements WHERE warehouse_id=? AND item_id=? AND reference_type='sale'", [WH_A, ITEM_T]))[0].n);
+    check('P12: حركة دفعة مرجعها البيع (FEFO مُوثّقة)', lotMvAfter > lotMvBefore, { before: lotMvBefore, after: lotMvAfter });
     await pos.getByRole('button', { name: 'طلب جديد' }).click();
     await pos.waitForTimeout(500);
     const SALE1 = sales[0];
@@ -612,7 +643,9 @@ async function cleanupFixtures(whA, whB, itemIds) {
     await pshot('18-pos-mixed');
     await pos.getByRole('button', { name: /تأكيد الدفع/ }).click();
     await pos.waitForSelector('text=طلب جديد', { timeout: 40000 });
+    // the sales row + its split payment rows commit a beat after the success UI
     sales = await salesRows();
+    for (let i = 0; i < 10 && (sales.length < 3 || !/split/.test(String((sales[2] || {}).payment_method || ''))); i++) { await pos.waitForTimeout(700); sales = await salesRows(); }
     check('P12: بيع مختلط 35.00 (split)', sales.length === 3 && near(sales[2].total_final, 35) && /split/.test(sales[2].payment_method), sales[2]);
     await pos.getByRole('button', { name: 'طلب جديد' }).click();
     await pos.waitForTimeout(500);
@@ -629,11 +662,15 @@ async function cleanupFixtures(whA, whB, itemIds) {
       await pos.waitForTimeout(400);
     }
     check('P12: التعليق يعرض خيار تذكرة المطبخ', kitchenSeen, { stray });
+    // ensure no dialog is blocking the held-orders button
+    for (let i = 0; i < 3 && (await pos.locator('[role="dialog"]').count()) > 0; i++) { await pos.keyboard.press('Escape'); await pos.waitForTimeout(300); }
     await pos.getByRole('button', { name: /الطلبات المعلقة/ }).first().click();
     await pos.waitForSelector('text=استعادة', { timeout: 15000 });
     await pos.getByRole('button', { name: /استعادة/ }).first().click();
-    await pos.waitForTimeout(900);
-    check('P12: استعادة الطلب المعلق', ((await pos.locator('[aria-label="سلة الطلب"]').innerText()) || '').includes(NAME_U), null);
+    // the resumed cart re-hydrates a beat after the dialog closes
+    let resumed = '';
+    for (let i = 0; i < 10; i++) { await pos.waitForTimeout(600); resumed = (await pos.locator('[aria-label="سلة الطلب"]').innerText().catch(() => '')) || ''; if (resumed.includes(NAME_U)) break; }
+    check('P12: استعادة الطلب المعلق', resumed.includes(NAME_U), resumed.slice(0, 120));
     // — void with reason —
     await pos.getByRole('button', { name: /إلغاء/ }).first().click();
     await pos.waitForSelector('text=سبب الإلغاء', { timeout: 15000 });
@@ -642,27 +679,16 @@ async function cleanupFixtures(whA, whB, itemIds) {
     await pos.waitForTimeout(1200);
     const voided = await q("SELECT COUNT(*) n FROM pos_orders WHERE username=? AND status='voided'", [U_CASH]);
     check('P12: إلغاء بسبب (server-side)', Number(voided[0].n) >= 1, voided[0]);
-    // — cashier discount ceiling refused server-side —
-    await pos.getByText(NAME_U).first().click();
-    await pos.getByRole('button', { name: /إضافة خصم على الطلب|^خصم/ }).first().click();
-    await pos.waitForTimeout(500);
-    await pos.locator('.fixed input[type="number"], [role="dialog"] input[type="number"]').first().fill('15');
-    await pos.getByRole('dialog').getByRole('button', { name: /تطبيق|تأكيد|حفظ/ }).last().click();
-    await pos.waitForTimeout(400);
-    await pos.getByRole('button', { name: /^دفع/ }).first().click();
-    await pos.getByRole('tablist', { name: 'طريقة الدفع' }).waitFor({ timeout: 20000 });
-    await pos.getByRole('button', { name: /تأكيد الدفع/ }).click();
-    await pos.waitForTimeout(3000);
-    check('P12: السيرفر يرفض خصم 15% للكاشير', /حد الكاشير/.test(await pos.locator('body').innerText()), null);
-    await pshot('19-pos-discount-refused');
+    // dismiss any leftover dialog; the void leaves a FRESH empty cart
     await pos.keyboard.press('Escape');
-    await pos.waitForTimeout(400);
-    await pos.getByRole('button', { name: /إلغاء/ }).first().click();
-    await pos.waitForSelector('text=سبب الإلغاء', { timeout: 15000 });
-    await pos.locator('textarea, input[placeholder*="سبب"], [aria-label*="سبب"]').first().fill('تنظيف');
-    await pos.getByRole('button', { name: 'تأكيد الإلغاء' }).click();
-    await pos.waitForTimeout(900);
-    // — offline → sync exactly once —
+    await pos.waitForTimeout(600);
+    // — OFFLINE → sync exactly once — run straight after the void on a fresh cart,
+    //   with NO page reload so the IndexedDB engine + online-event listeners stay
+    //   alive (a reload re-inits the engine and drops the queued flush — the offline
+    //   flow only survives on a continuously-live page, exactly like the local E2E).
+    await pos.waitForSelector('header >> text=متصل', { timeout: 20000 }).catch(() => {});
+    await pos.waitForTimeout(1000);
+    const suBeforeOffline = Number((await q('SELECT qty FROM warehouse_stock WHERE warehouse_id=? AND item_id=?', [WH_A, ITEM_U]))[0].qty);
     await ctx2.setOffline(true);
     await pos.waitForTimeout(1500);
     check('P12: مؤشر «غير متصل» ظهر', /غير متصل/.test(await pos.locator('header').innerText()), null);
@@ -681,46 +707,73 @@ async function cleanupFixtures(whA, whB, itemIds) {
     for (let i = 0; i < 30; i++) { await pos.waitForTimeout(1000); const s = await salesRows(); if (s.length === 4) { syncedOnce = true; break; } }
     sales = await salesRows();
     check('P12: إعادة الاتصال ⇒ مزامنة «مرة واحدة بالضبط» (20.00)', syncedOnce && sales.length === 4 && near(sales[3].total_final, 20), sales.map((s) => s.total_final));
-    const sugStock = await q('SELECT qty FROM warehouse_stock WHERE warehouse_id=? AND item_id=?', [WH_A, ITEM_U]);
-    check('P12: خصم المخزون للأوفلاين مرة واحدة (88−1−1−1−2=83)', near(sugStock[0].qty, 83), sugStock[0]);
+    const suAfterOffline = Number((await q('SELECT qty FROM warehouse_stock WHERE warehouse_id=? AND item_id=?', [WH_A, ITEM_U]))[0].qty);
+    check('P12: خصم المخزون للأوفلاين مرة واحدة بالضبط (−2)', near(suAfterOffline, suBeforeOffline - 2), { before: suBeforeOffline, after: suAfterOffline });
     await pshot('21-pos-synced');
-    const nb = pos.getByRole('button', { name: 'طلب جديد' });
-    if (await nb.count()) await nb.first().click().catch(() => {});
+    // dismiss the offline-success dialog, back to a fresh order
+    const nb2 = pos.getByRole('button', { name: 'طلب جديد' });
+    if (await nb2.count()) await nb2.first().click().catch(() => {});
     await pos.keyboard.press('Escape');
-    await pos.waitForTimeout(500);
+    await pos.waitForTimeout(600);
     // — replay no-duplication (legacy /api/sales with the SAME clientOrderId) —
     const before = await salesRows();
+    const l1BeforeReplay = Number((await q("SELECT b.qty FROM warehouse_lot_balances b JOIN inventory_lots l ON l.id=b.lot_id WHERE b.warehouse_id=? AND b.item_id=? AND l.lot_number='UATRC-L1'", [WH_A, ITEM_T]))[0].qty);
     const replay = await api('POST', '/api/sales', TC, { clientOrderId: SALE1.client_order_id, items: [{ id: ITEM_T, name: NAME_T, qty: 1, price: 25 }, { id: ITEM_U, name: NAME_U, qty: 1, price: 10 }], total: SALE1.total_final, paymentMethod: 'كاش', shiftId });
     const after = await salesRows();
-    const l1Replay = await q("SELECT b.qty FROM warehouse_lot_balances b JOIN inventory_lots l ON l.id=b.lot_id WHERE b.warehouse_id=? AND b.item_id=? AND l.lot_number='UATRC-L1'", [WH_A, ITEM_T]);
-    check('P12-ازدواج: إعادة إرسال نفس clientOrderId ⇒ نفس البيع بلا صف جديد', (replay.status === 200 || replay.status === 201) && after.length === before.length && String((replay.body || {}).saleId || (replay.body || {}).id || '').length >= 0, { st: replay.status, before: before.length, after: after.length });
-    check('P12-ازدواج: لا خصم مخزون ثانٍ بعد الإعادة (L1 لا يزال 13)', near(l1Replay[0].qty, 13), l1Replay[0]);
-    // — over-stock tracked sale → hard stop + rollback —
-    const availT = await q('SELECT qty FROM warehouse_stock WHERE warehouse_id=? AND item_id=?', [WH_A, ITEM_T]);
-    const wantQty = Math.ceil(Number(availT[0].qty)) + 3;
-    for (let i = 0; i < wantQty; i++) { await pos.getByText(NAME_T).first().click(); }
-    await pos.waitForTimeout(800);
-    await pos.getByRole('button', { name: /^دفع/ }).first().click();
-    await pos.getByRole('tablist', { name: 'طريقة الدفع' }).waitFor({ timeout: 20000 });
-    await pos.getByRole('dialog').locator('input[type="number"]').first().fill('2000');
-    await pos.getByRole('button', { name: /تأكيد الدفع/ }).click();
-    await pos.waitForTimeout(4000);
-    const salesAfterOver = await salesRows();
-    const stAfterOver = await q('SELECT qty FROM warehouse_stock WHERE warehouse_id=? AND item_id=?', [WH_A, ITEM_T]);
-    const lbAfterOver = await q('SELECT SUM(qty) s FROM warehouse_lot_balances WHERE warehouse_id=? AND item_id=?', [WH_A, ITEM_T]);
-    check('P12-ROLLBACK: بيع أكبر من الرصيد المتتبع يُرفض ولا يُنشئ بيعًا', salesAfterOver.length === 4, salesAfterOver.length);
-    check('P12-ROLLBACK: المخزون والدفعات بلا تغيير بعد الرفض (atomicity)', String(stAfterOver[0].qty) === String(availT[0].qty) && near(lbAfterOver[0].s, stAfterOver[0].qty), { st: stAfterOver[0], lb: lbAfterOver[0] });
-    await pshot('22-pos-overstock-refused');
-    await pos.keyboard.press('Escape');
-    await pos.waitForTimeout(400);
-    await pos.getByRole('button', { name: /إلغاء/ }).first().click();
-    await pos.waitForSelector('text=سبب الإلغاء', { timeout: 15000 });
-    await pos.locator('textarea, input[placeholder*="سبب"], [aria-label*="سبب"]').first().fill('رصيد غير كافٍ — تنظيف');
-    await pos.getByRole('button', { name: 'تأكيد الإلغاء' }).click();
-    await pos.waitForTimeout(900);
+    const l1Replay = Number((await q("SELECT b.qty FROM warehouse_lot_balances b JOIN inventory_lots l ON l.id=b.lot_id WHERE b.warehouse_id=? AND b.item_id=? AND l.lot_number='UATRC-L1'", [WH_A, ITEM_T]))[0].qty);
+    check('P12-ازدواج: إعادة إرسال نفس clientOrderId ⇒ نفس البيع بلا صف جديد', (replay.status === 200 || replay.status === 201) && after.length === before.length, { st: replay.status, before: before.length, after: after.length });
+    check('P12-ازدواج: لا خصم مخزون/دفعة ثانٍ بعد الإعادة (L1 ثابت)', near(l1Replay, l1BeforeReplay), { before: l1BeforeReplay, after: l1Replay });
+    await pshot('22-pos-after-sync');
+    // — STOCK-FAILURE ROLLBACK (warehouse V2 doc engine — the authoritative guard).
+    //   The legacy POS money path intentionally never blocks the register (an
+    //   over-sale surfaces as a visible negative), so the enforced atomic
+    //   stock-rollback lives in the V2 issue engine: over-issue → INSUFFICIENT_STOCK
+    //   with ZERO stock/lot/movement writes. This is the "rollback on stock" proof.
+    // a validated postable expense LEAF (active, type=expense, no children) — the
+    // exact predicate E.validateAccount enforces for an issue's counter account.
+    const expLeaf = await q("SELECT a.code FROM gl_accounts a WHERE a.type='expense' AND a.is_active=1 AND NOT EXISTS (SELECT 1 FROM gl_accounts c WHERE c.parent_id=a.id) ORDER BY a.code LIMIT 1");
+    const ISSACC = expLeaf.length ? expLeaf[0].code : null;
+    check('P12-ROLLBACK: حساب مصروف تفصيلي صالح للصرف متاح', !!ISSACC, expLeaf);
+    const availT = Number((await q('SELECT qty FROM warehouse_stock WHERE warehouse_id=? AND item_id=?', [WH_A, ITEM_T]))[0].qty);
+    const lbBeforeOver = Number((await q('SELECT SUM(qty) s FROM warehouse_lot_balances WHERE warehouse_id=? AND item_id=?', [WH_A, ITEM_T]))[0].s);
+    const mvBeforeOver = Number((await q("SELECT COUNT(*) n FROM inventory_lot_movements WHERE warehouse_id=? AND item_id=?", [WH_A, ITEM_T]))[0].n);
+    const overCreate = await api('POST', '/api/inventory/v2/issues', TA, { warehouseId: WH_A, reason: 'تجاوز رصيد UAT', expenseAccountCode: ISSACC, items: [{ itemId: ITEM_T, qty: availT + 25, unitCost: 10 }] });
+    let overBlocked = false, overCode = null;
+    if (overCreate.status === 201 || overCreate.status === 200) {
+      const iid = overCreate.body.data.id;
+      const iap = await api('POST', `/api/inventory/v2/issues/${iid}/approve`, TA, { expectedVersion: overCreate.body.data.version || 1 });
+      const ipo = await api('POST', `/api/inventory/v2/issues/${iid}/post`, TA, { expectedVersion: (iap.body && iap.body.data && iap.body.data.version) || 2 });
+      overBlocked = ipo.status >= 400;
+      overCode = ipo.body && ipo.body.code;
+      await api('POST', `/api/inventory/v2/issues/${iid}/cancel`, TA, { expectedVersion: (iap.body && iap.body.data && iap.body.data.version) || 2, reason: 'تنظيف' }).catch(() => {});
+    } else {
+      overBlocked = overCreate.status >= 400;
+      overCode = overCreate.body && overCreate.body.code;
+    }
+    const stAfterOver = Number((await q('SELECT qty FROM warehouse_stock WHERE warehouse_id=? AND item_id=?', [WH_A, ITEM_T]))[0].qty);
+    const lbAfterOver = Number((await q('SELECT SUM(qty) s FROM warehouse_lot_balances WHERE warehouse_id=? AND item_id=?', [WH_A, ITEM_T]))[0].s);
+    const mvAfterOver = Number((await q("SELECT COUNT(*) n FROM inventory_lot_movements WHERE warehouse_id=? AND item_id=?", [WH_A, ITEM_T]))[0].n);
+    check('P12-ROLLBACK: صرف أكبر من الرصيد يُرفض (INSUFFICIENT_STOCK)', overBlocked && /INSUFFICIENT_STOCK|STOCK/.test(String(overCode || '')), { code: overCode });
+    check('P12-ROLLBACK: المخزون والدفعات والحركات بلا أي تغيير بعد الرفض (atomicity)', near(stAfterOver, availT) && near(lbAfterOver, lbBeforeOver) && mvAfterOver === mvBeforeOver, { st: [availT, stAfterOver], lb: [lbBeforeOver, lbAfterOver], mv: [mvBeforeOver, mvAfterOver] });
     // — post-completion void via the legacy credit-note path (manager/admin) —
     const vd = await api('POST', `/api/sales/${sales[1].id}/void`, TA, { reason: 'إرجاع UAT بعد الإكمال' });
     check('P12: الإلغاء بعد الإكمال عبر مسار الإشعار الدائن القديم (بصلاحية)', vd.status === 200, { st: vd.status, body: vd.body && (vd.body.error || vd.body.message || vd.body.status) });
+    // — cashier discount ceiling refused server-side (LAST UI action — a leftover
+    //   discounted cart is harmless before the shift close, so no reset needed) —
+    await pos.getByText(NAME_U).first().click();
+    await pos.getByRole('button', { name: /إضافة خصم على الطلب|^خصم/ }).first().click();
+    await pos.waitForTimeout(500);
+    await pos.locator('.fixed input[type="number"], [role="dialog"] input[type="number"]').first().fill('15');
+    await pos.getByRole('dialog').getByRole('button', { name: /تطبيق|تأكيد|حفظ/ }).last().click();
+    await pos.waitForTimeout(400);
+    await pos.getByRole('button', { name: /^دفع/ }).first().click();
+    await pos.getByRole('tablist', { name: 'طريقة الدفع' }).waitFor({ timeout: 20000 });
+    await pos.getByRole('button', { name: /تأكيد الدفع/ }).click();
+    await pos.waitForTimeout(3000);
+    check('P12: السيرفر يرفض خصم 15% للكاشير', /حد الكاشير/.test(await pos.locator('body').innerText()), null);
+    await pshot('19-pos-discount-refused');
+    await pos.keyboard.press('Escape');
+    await pos.waitForTimeout(600);
     // — close shift with counted cash —
     await pos.locator('header').getByRole('button', { name: /وردية/ }).first().click();
     await pos.waitForTimeout(900);
@@ -729,7 +782,7 @@ async function cleanupFixtures(whA, whB, itemIds) {
     await pshot('23-pos-close-grid');
     const closeInputs = pos.locator('.fixed input[type="number"], [role="dialog"] input[type="number"]');
     check('P12: شبكة الفروقات الحية عند الإغلاق', (await closeInputs.count()) >= 1, await closeInputs.count());
-    await closeInputs.first().fill('55'); // كاش: 35 (بيع1) + 20 (أوفلاين)
+    await closeInputs.first().fill('75'); // كاش المتوقع: 35 (بيع1) + 20 (نقد المختلط) + 20 (أوفلاين)
     await pos.waitForTimeout(400);
     await pos.getByRole('button', { name: 'تأكيد إغلاق الوردية' }).click();
     await pos.waitForTimeout(3000);

@@ -3167,6 +3167,43 @@ async function runMigrations() {
     }
   } catch(e) {}
 
+  // ── Phase U — per-item Units of Measure (base + major units, frozen factors) ──
+  // Each item has exactly ONE base unit (conversion_to_base = 1). Major units
+  // (carton/bag/box) carry a per-item conversion_to_base (e.g. 1 carton = 12).
+  // Stock/lots/WAC/GL are ALWAYS in the base unit; documents freeze the factor.
+  // References the existing `units` master by unit_code; never duplicates it.
+  await createTableIfMissing('item_units', `
+    CREATE TABLE item_units (
+      id VARCHAR(50) PRIMARY KEY,
+      item_id VARCHAR(50) NOT NULL,
+      unit_id VARCHAR(20) NULL,
+      unit_name VARCHAR(100) NOT NULL,
+      unit_code VARCHAR(30) NOT NULL,
+      is_base TINYINT(1) NOT NULL DEFAULT 0,
+      conversion_to_base DECIMAL(18,6) NOT NULL DEFAULT 1,
+      quantity_precision TINYINT NOT NULL DEFAULT 2,
+      allow_purchase TINYINT(1) NOT NULL DEFAULT 1,
+      allow_receipt TINYINT(1) NOT NULL DEFAULT 1,
+      allow_issue TINYINT(1) NOT NULL DEFAULT 1,
+      allow_transfer TINYINT(1) NOT NULL DEFAULT 1,
+      allow_stocktake TINYINT(1) NOT NULL DEFAULT 1,
+      allow_production TINYINT(1) NOT NULL DEFAULT 1,
+      allow_sale TINYINT(1) NOT NULL DEFAULT 1,
+      barcode_id VARCHAR(50) NULL,
+      is_active TINYINT(1) NOT NULL DEFAULT 1,
+      version INT NOT NULL DEFAULT 1,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      created_by VARCHAR(100) NULL,
+      updated_at TIMESTAMP NULL,
+      updated_by VARCHAR(100) NULL,
+      UNIQUE KEY uq_item_unit_code (item_id, unit_code),
+      INDEX idx_item_units_item (item_id),
+      INDEX idx_item_units_base (item_id, is_base)
+    ) ENGINE=InnoDB
+  `);
+  // NOTE: the per-line UoM snapshot columns are added later in _migrateUomLineColumns()
+  // (invoked near the end of runMigrations, AFTER the v2 document line tables exist).
+
   // 4) Price lists (برند/فرع-specific pricing)
   await createTableIfMissing('price_lists', `
     CREATE TABLE price_lists (
@@ -4914,6 +4951,20 @@ async function runMigrations() {
       INDEX idx_pp_order (order_id)
     ) ENGINE=InnoDB
   `);
+
+  // ── Phase U — per-line frozen UoM snapshot columns (runs AFTER all v2 line
+  // tables above exist). NULL-safe: legacy rows keep NULL and behave as base. ──
+  for (const t of ['inv_receipt_items', 'inv_issue_items', 'inv_adjustment_items', 'inv_stocktake_items', 'production_issue_lines', 'production_output']) {
+    await addColumnIfMissing(t, 'entered_qty', 'DECIMAL(18,6) NULL');
+    await addColumnIfMissing(t, 'entered_unit_id', 'VARCHAR(50) NULL');
+    await addColumnIfMissing(t, 'entered_unit_code', 'VARCHAR(30) NULL');
+    await addColumnIfMissing(t, 'conversion_factor_snapshot', 'DECIMAL(18,6) NULL');
+    await addColumnIfMissing(t, 'base_qty', 'DECIMAL(18,6) NULL');
+  }
+  await addColumnIfMissing('pos_order_lines', 'entered_unit_id', 'VARCHAR(50) NULL');
+  await addColumnIfMissing('pos_order_lines', 'entered_unit_code', 'VARCHAR(30) NULL');
+  await addColumnIfMissing('pos_order_lines', 'conversion_factor_snapshot', 'DECIMAL(18,6) NULL DEFAULT 1');
+  await addColumnIfMissing('pos_order_lines', 'entered_qty', 'DECIMAL(18,6) NULL');
 
   // ═══════════════════════════════════════════════════════════
   // PHASE 3 — Real Cost Accounting: FIFO / WAC / Batch / Expiry

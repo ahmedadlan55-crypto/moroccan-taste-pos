@@ -37,6 +37,29 @@ router.get('/suppliers', async (req, res) => {
   }
 });
 
+// Phase B — searchable supplier picker (server-side, paged). Matches name /
+// name_en / phone / vat_number. Mirrors /api/erp/customers/search.
+router.get('/suppliers/search', async (req, res) => {
+  try {
+    const q = String(req.query.q || '').trim();
+    const activeOnly = req.query.activeOnly !== 'false' && req.query.activeOnly !== '0';
+    const page = Math.max(1, Number(req.query.page) || 1);
+    const pageSize = Math.min(50, Math.max(1, Number(req.query.pageSize) || 20));
+    const offset = (page - 1) * pageSize;
+    const where = []; const params = [];
+    if (activeOnly) where.push('s.is_active=1');
+    if (req.query.brandId) { where.push('s.brand_id=?'); params.push(String(req.query.brandId)); }
+    if (q) { where.push('(s.name LIKE ? OR s.name_en LIKE ? OR s.phone LIKE ? OR s.vat_number LIKE ?)'); params.push('%' + q + '%', '%' + q + '%', '%' + q + '%', q + '%'); }
+    const wsql = where.length ? ' WHERE ' + where.join(' AND ') : '';
+    const [rows] = await db.query('SELECT s.id, s.name, s.name_en, s.vat_number, s.phone, s.is_active FROM suppliers s' + wsql + ' ORDER BY s.name LIMIT ? OFFSET ?', params.concat([pageSize, offset]));
+    const [cnt] = await db.query('SELECT COUNT(*) AS total FROM suppliers s' + wsql, params);
+    res.json({
+      data: rows.map((s) => ({ id: s.id, name: s.name, nameEn: s.name_en, vatNumber: s.vat_number, phone: s.phone, active: s.is_active === 1 || s.is_active === true })),
+      pagination: { page, pageSize, total: Number(cnt[0].total) || 0, totalPages: Math.max(1, Math.ceil((Number(cnt[0].total) || 0) / pageSize)) },
+    });
+  } catch (e) { res.json({ data: [], pagination: { page: 1, pageSize: 20, total: 0, totalPages: 1 } }); }
+});
+
 router.post('/suppliers', async (req, res) => {
   try {
     const { id, name, nameEn, vatNumber, phone, email, address, city, paymentTerms, username, brandId } = req.body;

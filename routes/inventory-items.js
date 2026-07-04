@@ -230,6 +230,88 @@ router.get('/items', async (req, res) => {
   } catch (e) { _catch(res, e); }
 });
 
+// ─── Phase B — unified searchable item picker for every "add material" dialog ──
+// GET /item-search?q=&warehouseId=&context=&category=&activeOnly=&page=&pageSize=
+// Server-side search over name/name_en/sku/barcode/code/category. Returns the
+// data the SearchableEntityCombobox needs: name, sku, primary barcode, base +
+// major unit, the balance in the chosen warehouse, status, trackingMode and a
+// low/out/negative warning. Warehouse-scope enforced; inactive items are hidden
+// in input contexts (activeOnly default true) but visible for reports/correction.
+router.get('/item-search', async (req, res) => {
+  try {
+    const q = String(req.query.q || '').trim();
+    const warehouseId = req.query.warehouseId ? String(req.query.warehouseId) : '';
+    const context = String(req.query.context || '').trim();
+    const category = req.query.category ? String(req.query.category) : '';
+    // input contexts hide inactive by default; reports/correction can pass activeOnly=0
+    const reportCtx = ['report', 'reports', 'correction', 'audit'].indexOf(context) !== -1;
+    const activeOnly = req.query.activeOnly != null ? String(req.query.activeOnly) !== '0' : !reportCtx;
+    const page = Math.max(1, Number(req.query.page) || 1);
+    const pageSize = Math.min(50, Math.max(1, Number(req.query.pageSize) || 20));
+    const offset = (page - 1) * pageSize;
+
+    if (warehouseId && req.guardWh && !req.guardWh(res, warehouseId)) return; // scope: no leak
+
+    const where = ['ii.deleted_at IS NULL']; const params = [];
+    if (activeOnly) where.push('ii.active=1');
+    if (category) { where.push('ii.category=?'); params.push(category); }
+    let exactBarcodeId = null;
+    if (q) {
+      const bq = require('../lib/barcode').normalize(q);
+      where.push('(ii.name LIKE ? OR ii.name_en LIKE ? OR ii.sku LIKE ? OR ii.category LIKE ? OR ii.barcode_norm=? OR EXISTS (SELECT 1 FROM item_barcodes ib WHERE ib.item_id=ii.id AND ib.code_norm=?))');
+      params.push('%' + q + '%', '%' + q + '%', '%' + q + '%', '%' + q + '%', bq, bq);
+      // exact unique barcode → caller can auto-select
+      const [bx] = await db.query('SELECT item_id FROM item_barcodes WHERE code_norm=? UNION SELECT id FROM inv_items WHERE barcode_norm=? LIMIT 2', [bq, bq]);
+      if (bx.length === 1) exactBarcodeId = bx[0].item_id;
+    }
+    // warehouse-scope clause (only rows in warehouses the user may see, when no explicit wh)
+    if (!warehouseId && req.whScopeClause) {
+      const sc = req.whScopeClause('ws2.warehouse_id');
+      if (sc && sc.sql) { where.push('(EXISTS (SELECT 1 FROM warehouse_stock ws2 WHERE ws2.item_id=ii.id AND ' + sc.sql + ') OR NOT EXISTS (SELECT 1 FROM warehouse_stock ws3 WHERE ws3.item_id=ii.id))'); params.push(...sc.params); }
+    }
+
+    const stockJoin = warehouseId ? ' LEFT JOIN warehouse_stock ws ON ws.item_id=ii.id AND ws.warehouse_id=?' : '';
+    const selBal = warehouseId ? 'ws.qty AS wh_qty, ws.avg_cost AS wh_cost' : 'NULL AS wh_qty, NULL AS wh_cost';
+    const qp = warehouseId ? [warehouseId, ...params] : params;
+    const [rows] = await db.query(
+      'SELECT ii.id, ii.name, ii.name_en, ii.sku, ii.category, ii.unit, ii.cost, ii.stock, ii.min_stock, ii.active, ii.kind, ii.tracking_mode, ii.barcode, ' + selBal +
+      ' FROM inv_items ii' + stockJoin + ' WHERE ' + where.join(' AND ') + ' ORDER BY ii.active DESC, ii.name LIMIT ? OFFSET ?',
+      qp.concat([pageSize, offset]));
+    const [cnt] = await db.query('SELECT COUNT(*) AS total FROM inv_items ii WHERE ' + where.join(' AND '), params);
+
+    // units for the page (base + major) in one query
+    const ids = rows.map((r) => r.id);
+    let unitsByItem = {};
+    if (ids.length) {
+      const [us] = await db.query('SELECT item_id, unit_name, unit_code, is_base, conversion_to_base, is_active FROM item_units WHERE item_id IN (?) AND is_active=1 ORDER BY is_base DESC, conversion_to_base ASC', [ids]);
+      for (const u of us) { (unitsByItem[u.item_id] = unitsByItem[u.item_id] || []).push(u); }
+    }
+    const [pb] = ids.length ? await db.query("SELECT item_id, code FROM item_barcodes WHERE item_id IN (?) AND is_primary=1", [ids]) : [[]];
+    const primaryBc = {}; for (const b of pb) primaryBc[b.item_id] = b.code;
+
+    const data = rows.map((r) => {
+      const units = unitsByItem[r.id] || [];
+      const base = units.find((u) => u.is_base) || { unit_name: r.unit, unit_code: r.unit, conversion_to_base: 1, is_base: 1 };
+      const majors = units.filter((u) => !u.is_base).map((u) => ({ unitCode: u.unit_code, unitName: u.unit_name, factor: Number(u.conversion_to_base) }));
+      const whQty = r.wh_qty == null ? null : Number(r.wh_qty);
+      let warning = null;
+      if (whQty != null) { if (whQty < 0) warning = 'negative'; else if (whQty <= 0) warning = 'out'; else if (Number(r.min_stock) > 0 && whQty <= Number(r.min_stock)) warning = 'low'; }
+      return {
+        id: r.id, name: r.name, nameEn: r.name_en, sku: r.sku, category: r.category,
+        primaryBarcode: primaryBc[r.id] || r.barcode || null,
+        baseUnit: { code: base.unit_code, name: base.unit_name }, majorUnits: majors,
+        trackingMode: r.tracking_mode || 'none', active: r.active === 1 || r.active === true,
+        warehouseQty: whQty, warning,
+      };
+    });
+    res.json({
+      data,
+      pagination: { page, pageSize, total: Number(cnt[0].total) || 0, totalPages: Math.max(1, Math.ceil((Number(cnt[0].total) || 0) / pageSize)) },
+      exactBarcodeId, filters: { q, warehouseId, context, category, activeOnly },
+    });
+  } catch (e) { _catch(res, e); }
+});
+
 router.get('/items/:id/warehouses', async (req, res) => {
   try {
     const [rows] = await db.query(

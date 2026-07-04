@@ -513,6 +513,7 @@ app.use('/api/inventory/v2/warehouses', require('./routes/inventory-warehouses')
 app.use('/api/inventory/v2', require('./routes/inventory-items'));
 app.use('/api/inventory/v2', require('./routes/inventory-lots'));
 app.use('/api/inventory/v2', require('./routes/inventory-transactions'));
+try { app.use('/api/accounting', require('./routes/accounting')); } catch (e) { console.warn('[mod:accounting]', e.message); }
 app.use('/api/inventory', require('./routes/inventory'));
 // Phase 2B — read-only Analytics + Reports (inherits the warehouse-scope
 // middleware mounted on /api/inventory above; /analytics/* + /reports/* paths

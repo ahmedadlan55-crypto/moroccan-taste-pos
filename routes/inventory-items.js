@@ -301,7 +301,7 @@ router.get('/item-search', async (req, res) => {
         primaryBarcode: primaryBc[r.id] || r.barcode || null,
         baseUnit: { code: base.unit_code, name: base.unit_name }, majorUnits: majors,
         trackingMode: r.tracking_mode || 'none', active: r.active === 1 || r.active === true,
-        warehouseQty: whQty, warning,
+        warehouseQty: whQty, warehouseCost: r.wh_cost == null ? null : Number(r.wh_cost), warning,
       };
     });
     res.json({

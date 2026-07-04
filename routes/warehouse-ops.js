@@ -11,6 +11,7 @@ const gl = require('../lib/glPosting');
 // v7.1 — keep the denormalized inv_items.stock rollup in sync after any
 // per-warehouse mutation (lot disposal etc.), same discipline as sales/purchases.
 const { recomputeInvItemStock } = require('../lib/stockRecompute');
+const IU = require('../lib/itemUnits');
 // v7.4 — RBAC. MGR = managerial (approve / cancel / reverse / dispose);
 // BACKOFFICE = any authenticated back-office role EXCEPT cashier (the
 // widely-distributed front-line credential and the documented fraud vector).
@@ -464,10 +465,18 @@ router.post('/stock-issues', async (req, res) => {
     let total = 0;
     const enriched = [];
     for (const it of items) {
+      // Phase U — a line may be entered in a major unit; resolve → base (frozen
+      // factor). qty_requested is stored in the item's base unit; the movement
+      // and cost are base. Lines with no unit info behave as base (factor 1).
+      const u = await IU.resolveLineBase(db, it.itemId, {
+        enteredUnitId: it.enteredUnitId, enteredUnitCode: it.enteredUnitCode,
+        enteredQty: it.enteredQty != null ? it.enteredQty : it.qtyRequested,
+        majorQty: it.majorQty, minorQty: it.minorQty,
+      }, 'transfer');
       const cost = await _getEffectiveCost(it.itemId, fromWarehouseId);
-      const lineTotal = Number(it.qtyRequested || 0) * cost;
+      const lineTotal = u.baseQty * cost;
       total += lineTotal;
-      enriched.push({ ...it, unitCost: cost, lineTotal });
+      enriched.push({ ...it, qtyRequested: u.baseQty, unitCost: cost, lineTotal, _u: u });
     }
 
     await db.query(
@@ -480,13 +489,20 @@ router.post('/stock-issues', async (req, res) => {
        notes || '', createdBy || '']);
 
     for (const it of enriched) {
+      const u = it._u || {};
       await db.query(
         `INSERT INTO stock_issue_items
-         (id, issue_id, item_id, qty_requested, unit_cost, line_total, notes)
-         VALUES (?,?,?,?,?,?,?)`,
+         (id, issue_id, item_id, qty_requested, unit_cost, line_total, notes,
+          entered_qty, entered_unit_id, entered_unit_code, conversion_factor_snapshot, base_qty)
+         VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`,
         ['SII-' + Date.now() + '-' + Math.random().toString(36).slice(2,8),
          id, it.itemId, Number(it.qtyRequested) || 0,
-         it.unitCost, it.lineTotal, it.notes || '']);
+         it.unitCost, it.lineTotal, it.notes || '',
+         u.enteredQty != null ? u.enteredQty : (Number(it.qtyRequested) || 0),
+         u.enteredUnitId != null ? u.enteredUnitId : null,
+         u.enteredUnitCode != null ? u.enteredUnitCode : null,
+         u.conversionFactorSnapshot != null ? u.conversionFactorSnapshot : 1,
+         u.baseQty != null ? u.baseQty : (Number(it.qtyRequested) || 0)]);
     }
 
     // Phase 3A — audit + unified envelope (legacy keys kept). Draft starts at v1.
@@ -533,13 +549,19 @@ router.patch('/stock-issues/:id', async (req, res) => {
     const whFound = whRows.map((w) => String(w.id));
     if (whFound.indexOf(String(fromWarehouseId)) < 0 || whFound.indexOf(String(toWarehouseId)) < 0) return _fail(res, 'VALIDATION_ERROR', 'مستودع غير موجود — تحقق من المصدر والوجهة');
 
-    // Re-price lines (draft only — no stock/GL movement).
+    // Re-price lines (draft only — no stock/GL movement). Phase U — resolve the
+    // entered unit → base and store base qty (frozen factor snapshot kept).
     let total = 0; const enriched = [];
     for (const it of items) {
+      const u = await IU.resolveLineBase(db, it.itemId, {
+        enteredUnitId: it.enteredUnitId, enteredUnitCode: it.enteredUnitCode,
+        enteredQty: it.enteredQty != null ? it.enteredQty : it.qtyRequested,
+        majorQty: it.majorQty, minorQty: it.minorQty,
+      }, 'transfer');
       const cost = await _getEffectiveCost(it.itemId, fromWarehouseId);
-      const lineTotal = Number(it.qtyRequested || 0) * cost;
+      const lineTotal = u.baseQty * cost;
       total += lineTotal;
-      enriched.push({ itemId: it.itemId, qtyRequested: Number(it.qtyRequested) || 0, notes: it.notes || '', unitCost: cost, lineTotal });
+      enriched.push({ itemId: it.itemId, qtyRequested: u.baseQty, notes: it.notes || '', unitCost: cost, lineTotal, _u: u });
     }
 
     const out = await db.withTransaction(async (conn) => {
@@ -554,9 +576,11 @@ router.patch('/stock-issues/:id', async (req, res) => {
       // Replace the line items atomically.
       await conn.query('DELETE FROM stock_issue_items WHERE issue_id=?', [id]);
       for (const it of enriched) {
+        const u = it._u || {};
         await conn.query(
-          `INSERT INTO stock_issue_items (id, issue_id, item_id, qty_requested, unit_cost, line_total, notes) VALUES (?,?,?,?,?,?,?)`,
-          ['SII-' + Date.now() + '-' + Math.random().toString(36).slice(2, 8), id, it.itemId, it.qtyRequested, it.unitCost, it.lineTotal, it.notes]);
+          `INSERT INTO stock_issue_items (id, issue_id, item_id, qty_requested, unit_cost, line_total, notes, entered_qty, entered_unit_id, entered_unit_code, conversion_factor_snapshot, base_qty) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`,
+          ['SII-' + Date.now() + '-' + Math.random().toString(36).slice(2, 8), id, it.itemId, it.qtyRequested, it.unitCost, it.lineTotal, it.notes,
+           u.enteredQty != null ? u.enteredQty : it.qtyRequested, u.enteredUnitId ?? null, u.enteredUnitCode ?? null, u.conversionFactorSnapshot ?? 1, u.baseQty != null ? u.baseQty : it.qtyRequested]);
       }
       const auditEvent = await _audit(conn, id, 'edit', 'draft', 'draft', actor, notes || '',
         { from: fromWarehouseId, to: toWarehouseId, lines: enriched.length, totalCost: total });

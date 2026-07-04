@@ -1,22 +1,27 @@
 import { useEffect, useMemo, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
-import { ArrowLeftRight, Plus, Search, Trash2, AlertTriangle, ChevronLeft, ChevronRight } from "lucide-react";
+import { ArrowLeftRight, Trash2, AlertTriangle, ChevronLeft, ChevronRight } from "lucide-react";
 import { PageHeader } from "@/components/PageHeader";
 import { Button } from "@/components/ui/button";
 import { Spinner } from "@/components/ui/spinner";
 import { PermissionDenied } from "@/components/states/States";
 import { Stepper } from "./Stepper";
 import { useWarehouses } from "@/lib/hooks/useWarehouses";
-import { useWarehouseInventory } from "@/lib/hooks/useInventory";
 import { useWarehouseScope } from "@/app/warehouse-scope-provider";
 import { useCan } from "@/app/permission-provider";
 import { useCreateDraft, useUpdateDraft } from "@/lib/hooks/useTransferMutations";
 import { useTransferDetail } from "@/lib/hooks/useTransferDetail";
 import { createTransferDraftInput, updateTransferDraftInput } from "@/lib/schemas/transfer.schema";
 import { formatQty } from "@/lib/formatters";
-import { useDebouncedValue } from "@/lib/hooks/useDebouncedValue";
+import { SearchableEntityCombobox } from "@/components/ui/SearchableEntityCombobox";
+import { UnitQtyInput, baseFromValue, type ItemUnitLite, type UnitQtyValue } from "@/components/ui/UnitQtyInput";
+import { makeItemFetcher, type ItemHit } from "@/lib/hooks/useEntitySearch";
 
-interface DraftLine { itemId: string; name: string; unit: string; available: number; qtyRequested: number; }
+interface DraftLine { itemId: string; name: string; unit: string; units: ItemUnitLite[]; available: number; uv: UnitQtyValue; }
+const unitsOf = (h: Pick<ItemHit, "baseUnit" | "majorUnits">): ItemUnitLite[] => [
+  { code: h.baseUnit.code, name: h.baseUnit.name, factor: 1, isBase: true },
+  ...(h.majorUnits ?? []).map((mu) => ({ code: mu.unitCode, name: mu.unitName, factor: mu.factor })),
+];
 
 const STEPS = ["بيانات التحويل", "الأصناف", "المراجعة"];
 
@@ -39,7 +44,6 @@ export function TransferCreateWizard() {
   const [issueDate, setIssueDate] = useState(() => new Date().toISOString().slice(0, 10));
   const [notes, setNotes] = useState("");
   const [lines, setLines] = useState<DraftLine[]>([]);
-  const [search, setSearch] = useState("");
   const [submitError, setSubmitError] = useState<string | null>(null);
 
   const createDraft = useCreateDraft();
@@ -51,28 +55,31 @@ export function TransferCreateWizard() {
     if (editId && edit.data && edit.data.status === "draft" && fromWh === "" && lines.length === 0) {
       setFromWh(edit.data.fromWarehouse.id);
       setToWh(edit.data.toWarehouse.id);
-      setLines(edit.data.lines.map((l) => ({ itemId: l.item.id, name: l.item.name, unit: l.item.unit, available: 0, qtyRequested: l.qtyRequested })));
+      setLines(edit.data.lines.map((l) => ({
+        itemId: l.item.id, name: l.item.name, unit: l.item.unit,
+        units: [{ code: l.item.unit, name: l.item.unit, factor: 1, isBase: true }],
+        available: 0, uv: { unitCode: l.item.unit, qty: l.qtyRequested },
+      })));
     }
   }, [editId, edit.data, fromWh, lines.length]);
 
-  // Step 2 item search — source-warehouse inventory (available qty).
-  const debounced = useDebouncedValue(search, 250);
-  const inv = useWarehouseInventory({ scope: fromWh || "all", q: debounced, pageSize: 25 });
+  // Server-side item search scoped to the SOURCE warehouse (balances = available).
+  const itemFetcher = useMemo(() => makeItemFetcher({ warehouseId: fromWh || undefined, context: "transfer", activeOnly: true }), [fromWh]);
   const pickedIds = useMemo(() => new Set(lines.map((l) => l.itemId)), [lines]);
+  const lineBase = (l: DraftLine) => baseFromValue(l.units, l.uv, "single");
 
   if (!canCreate) return <PermissionDenied />;
 
   const sameWarehouse = !!fromWh && fromWh === toWh;
   const step1Valid = !!fromWh && !!toWh && !sameWarehouse;
-  const allQtyValid = lines.length > 0 && lines.every((l) => l.qtyRequested > 0);
-  const step2Valid = allQtyValid;
+  const step2Valid = lines.length > 0 && lines.every((l) => lineBase(l) > 0);
 
-  function addItem(row: { itemId: string; name: string; unit: string; available: number }) {
-    if (pickedIds.has(row.itemId)) return;
-    setLines((ls) => [...ls, { itemId: row.itemId, name: row.name, unit: row.unit, available: row.available, qtyRequested: 1 }]);
+  function addItem(hit: ItemHit) {
+    if (pickedIds.has(hit.id)) return;
+    setLines((ls) => [...ls, { itemId: hit.id, name: hit.name, unit: hit.baseUnit.name, units: unitsOf(hit), available: hit.warehouseQty ?? 0, uv: { unitCode: hit.baseUnit.code, qty: 1 } }]);
   }
-  function setQty(itemId: string, v: string) {
-    setLines((ls) => ls.map((l) => (l.itemId === itemId ? { ...l, qtyRequested: Number(v) || 0 } : l)));
+  function setLineUv(itemId: string, uv: UnitQtyValue) {
+    setLines((ls) => ls.map((l) => (l.itemId === itemId ? { ...l, uv } : l)));
   }
   function removeLine(itemId: string) {
     setLines((ls) => ls.filter((l) => l.itemId !== itemId));
@@ -85,7 +92,7 @@ export function TransferCreateWizard() {
       toWarehouseId: toWh,
       issueDate,
       notes: notes || undefined,
-      items: lines.map((l) => ({ itemId: l.itemId, qtyRequested: l.qtyRequested })),
+      items: lines.map((l) => ({ itemId: l.itemId, qtyRequested: lineBase(l), enteredUnitCode: l.uv.unitCode, enteredQty: Number(l.uv.qty) })),
     };
     if (editId) {
       // Real in-place edit — PATCH the SAME document (preserves number + URL).
@@ -167,31 +174,23 @@ export function TransferCreateWizard() {
       {/* Step 2 — items */}
       {step === 2 && (
         <div className="grid gap-4 lg:grid-cols-2">
-          {/* Picker */}
+          {/* Picker — central searchable combobox (server search, scoped to source) */}
           <div className="surface p-4">
             <div className="mb-3 text-sm font-extrabold text-slate-800">أصناف المستودع المصدر</div>
-            <label className="relative block">
-              <Search className="pointer-events-none absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
-              <input className="field w-full pr-10" placeholder="بحث بالاسم أو الكود…" value={search} onChange={(e) => setSearch(e.target.value)} />
-            </label>
-            <div className="mt-3 max-h-80 space-y-1.5 overflow-y-auto">
-              {inv.isLoading ? (
-                <div className="py-6 text-center text-xs text-slate-400">جارٍ التحميل…</div>
-              ) : (inv.data?.rows ?? []).length === 0 ? (
-                <div className="py-6 text-center text-xs text-slate-400">لا توجد أصناف مطابقة.</div>
-              ) : (
-                (inv.data?.rows ?? []).map((r) => (
-                  <button key={r.itemId} type="button" disabled={pickedIds.has(r.itemId)} onClick={() => addItem({ itemId: r.itemId, name: r.name, unit: r.unit, available: r.available })}
-                    className="flex w-full items-center justify-between gap-2 rounded-xl border border-slate-100 px-3 py-2 text-right transition hover:bg-slate-50 disabled:opacity-40">
-                    <div className="min-w-0">
-                      <div className="truncate text-xs font-bold text-slate-800">{r.name}</div>
-                      <div className="text-[11px] text-slate-400">متاح: {formatQty(r.available, r.unit)}</div>
-                    </div>
-                    <Plus className="h-4 w-4 text-teal-600" />
-                  </button>
-                ))
-              )}
-            </div>
+            <SearchableEntityCombobox<ItemHit>
+              value={null}
+              onChange={(hit) => { if (hit && !pickedIds.has(hit.id)) addItem(hit); }}
+              fetcher={itemFetcher}
+              queryKey={["item-search", fromWh, "transfer"]}
+              getKey={(it) => it.id}
+              getLabel={(it) => it.name}
+              getSublabel={(it) => [it.sku, it.warehouseQty != null ? `متاح ${formatQty(it.warehouseQty)} ${it.baseUnit.name}` : null].filter(Boolean).join(" · ") || undefined}
+              placeholder="ابحث عن صنف بالاسم/SKU/الباركود…"
+              ariaLabel="إضافة صنف للتحويل"
+              autoSelectExact
+              emptyText="لا أصناف مطابقة في المستودع المصدر."
+            />
+            <p className="mt-2 text-[11px] text-slate-400">اكتب للبحث ثم اختر الصنف لإضافته إلى قائمة التحويل.</p>
           </div>
 
           {/* Selected lines */}
@@ -202,16 +201,16 @@ export function TransferCreateWizard() {
             ) : (
               <div className="space-y-2">
                 {lines.map((l) => {
-                  const over = l.available > 0 && l.qtyRequested > l.available;
+                  const base = lineBase(l);
+                  const over = l.available > 0 && base > l.available;
                   return (
                     <div key={l.itemId} className="flex items-center justify-between gap-3 rounded-xl border border-slate-100 bg-slate-50 px-3 py-2">
                       <div className="min-w-0">
                         <div className="truncate text-xs font-bold text-slate-800">{l.name}</div>
-                        <div className="text-[11px] text-slate-400">متاح: {formatQty(l.available, l.unit)}</div>
+                        <div className={`text-[11px] ${over ? "font-bold text-rose-500" : "text-slate-400"}`} dir="ltr">متاح: {formatQty(l.available)} {l.unit}</div>
                       </div>
                       <div className="flex items-center gap-2">
-                        <input type="number" min={0} step="any" className={`field h-9 w-24 text-center ${l.qtyRequested <= 0 || over ? "border-rose-400" : ""}`}
-                          value={l.qtyRequested} onChange={(e) => setQty(l.itemId, e.target.value)} aria-label={`كمية ${l.name}`} />
+                        <UnitQtyInput units={l.units} value={l.uv} onChange={(uv) => setLineUv(l.itemId, uv)} mode="single" />
                         <Button variant="ghost" size="icon" aria-label="حذف" onClick={() => removeLine(l.itemId)}><Trash2 className="h-4 w-4 text-rose-500" /></Button>
                       </div>
                     </div>
@@ -242,11 +241,12 @@ export function TransferCreateWizard() {
               <thead className="bg-slate-50 text-slate-400"><tr><th className="px-3 py-2 text-right">الصنف</th><th className="px-3 py-2 text-center">الكمية المطلوبة</th><th className="px-3 py-2 text-center">متاح بالمصدر</th></tr></thead>
               <tbody className="divide-y divide-slate-100">
                 {lines.map((l) => {
-                  const over = l.available > 0 && l.qtyRequested > l.available;
+                  const base = lineBase(l);
+                  const over = l.available > 0 && base > l.available;
                   return (
                     <tr key={l.itemId}>
                       <td className="px-3 py-2 font-bold text-slate-800">{l.name}</td>
-                      <td className="px-3 py-2 text-center tabular-nums">{formatQty(l.qtyRequested, l.unit)}</td>
+                      <td className="px-3 py-2 text-center tabular-nums" dir="ltr">{formatQty(base)} {l.unit}</td>
                       <td className={`px-3 py-2 text-center tabular-nums ${over ? "font-bold text-amber-600" : "text-slate-500"}`}>{formatQty(l.available)}</td>
                     </tr>
                   );
@@ -254,7 +254,7 @@ export function TransferCreateWizard() {
               </tbody>
             </table>
           </div>
-          {lines.some((l) => l.available > 0 && l.qtyRequested > l.available) && (
+          {lines.some((l) => l.available > 0 && lineBase(l) > l.available) && (
             <p className="flex items-center gap-2 text-xs font-bold text-amber-600">
               <AlertTriangle className="h-4 w-4" /> بعض الكميات تتجاوز المتاح حاليًا بالمصدر — يُسمح بحفظ المسودة، لكن الإصدار سيتحقق من الرصيد.
             </p>

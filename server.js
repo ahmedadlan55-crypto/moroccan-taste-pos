@@ -4992,7 +4992,7 @@ async function runMigrations() {
 
   // ── Phase U — per-line frozen UoM snapshot columns (runs AFTER all v2 line
   // tables above exist). NULL-safe: legacy rows keep NULL and behave as base. ──
-  for (const t of ['inv_receipt_items', 'inv_issue_items', 'inv_adjustment_items', 'inv_stocktake_items', 'production_issue_lines', 'production_output']) {
+  for (const t of ['inv_receipt_items', 'inv_issue_items', 'inv_adjustment_items', 'inv_stocktake_items', 'production_issue_lines', 'production_output', 'stock_issue_items']) {
     await addColumnIfMissing(t, 'entered_qty', 'DECIMAL(18,6) NULL');
     await addColumnIfMissing(t, 'entered_unit_id', 'VARCHAR(50) NULL');
     await addColumnIfMissing(t, 'entered_unit_code', 'VARCHAR(30) NULL');

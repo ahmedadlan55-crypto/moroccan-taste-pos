@@ -8,9 +8,11 @@ import { LoadingState, ErrorState } from "@/components/states/States";
 import { useWarehouseScope } from "@/app/warehouse-scope-provider";
 import { useWarehouses } from "@/lib/hooks/useWarehouses";
 import { useReceivePlan } from "@/lib/hooks/usePurchaseReceiving";
-import { useInvTxMutations, useGlAccounts } from "@/lib/hooks/useInventoryTx";
+import { useInvTxMutations } from "@/lib/hooks/useInventoryTx";
 import { formatCurrency, formatQty, formatDate } from "@/lib/formatters";
 import { ApiError } from "@/lib/api-error";
+import { SearchableEntityCombobox } from "@/components/ui/SearchableEntityCombobox";
+import { makeAccountFetcher, type AccountHit } from "@/lib/hooks/useEntitySearch";
 
 const STEPS = ["خطة الاستلام", "الكميات والدفعات", "المراجعة"];
 
@@ -25,13 +27,14 @@ export function PurchaseReceiveWizard() {
   const navigate = useNavigate();
   const plan = useReceivePlan(purchaseId);
   const m = useInvTxMutations("receipt");
-  const accounts = useGlAccounts("receipt");
   const { accessibleWarehouses, allWarehousesAccess } = useWarehouseScope();
   const allWh = useWarehouses();
+  const accountFetcher = useMemo(() => makeAccountFetcher({ context: "receipt", postingOnly: true }), []);
 
   const [step, setStep] = useState(1);
   const [warehouseId, setWarehouseId] = useState("");
   const [counterAccount, setCounterAccount] = useState("");
+  const [accountSel, setAccountSel] = useState<AccountHit | null>(null);
   const [notes, setNotes] = useState("");
   const [lines, setLines] = useState<Record<string, LineState>>({});
   const [prefilled, setPrefilled] = useState(false);
@@ -54,9 +57,11 @@ export function PurchaseReceiveWizard() {
     setPrefilled(true);
   }, [plan.data, prefilled]);
 
+  // Default the credit account to AP (2100) once, without loading the full list.
   useEffect(() => {
-    if (!counterAccount && (accounts.data ?? []).some((a) => a.code === "2100")) setCounterAccount("2100");
-  }, [accounts.data, counterAccount]);
+    if (!counterAccount) { setCounterAccount("2100"); setAccountSel({ id: "2100", code: "2100", name: "الذمم الدائنة (الموردون)", type: "liability", active: true }); }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const whOptions = useMemo(() => {
     if (!allWarehousesAccess) return accessibleWarehouses.map((w) => ({ id: w.id, name: w.name }));
@@ -174,12 +179,22 @@ export function PurchaseReceiveWizard() {
                   {whOptions.map((w) => <option key={w.id} value={w.id}>{w.name}</option>)}
                 </select>
               </label>
-              <label className="block text-xs font-bold text-slate-500">الحساب المقابل (دائن — الافتراضي الذمم الدائنة)
-                <select className="field mt-1 w-full" value={counterAccount} onChange={(e) => setCounterAccount(e.target.value)} aria-label="الحساب المقابل" disabled={accounts.isLoading}>
-                  <option value="">{accounts.isLoading ? "تحميل الحسابات…" : "اختر الحساب"}</option>
-                  {(accounts.data ?? []).map((a) => <option key={a.code} value={a.code}>{a.code} — {a.name}</option>)}
-                </select>
-              </label>
+              <div className="block text-xs font-bold text-slate-500">الحساب المقابل (دائن — الافتراضي الذمم الدائنة)
+                <div className="mt-1">
+                  <SearchableEntityCombobox<AccountHit>
+                    value={accountSel}
+                    onChange={(a) => { setAccountSel(a); setCounterAccount(a?.code ?? ""); }}
+                    fetcher={accountFetcher}
+                    queryKey={["account-search", "receipt"]}
+                    getKey={(a) => a.id}
+                    getLabel={(a) => a.name}
+                    getSublabel={(a) => a.code}
+                    placeholder="ابحث عن حساب بالكود أو الاسم…"
+                    ariaLabel="الحساب المقابل"
+                    emptyText="لا حسابات ترحيل مطابقة."
+                  />
+                </div>
+              </div>
               <label className="block text-xs font-bold text-slate-500 sm:col-span-2">ملاحظات
                 <textarea className="field mt-1 w-full" value={notes} onChange={(e) => setNotes(e.target.value)} aria-label="ملاحظات" />
               </label>

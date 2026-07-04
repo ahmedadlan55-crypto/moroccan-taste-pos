@@ -192,7 +192,8 @@ router.post('/login', async (req, res) => {
       isDeveloper: isDev,
       brandId: user.brand_id || '', branchId: user.branch_id || '',
       default_warehouse_id: user.default_warehouse_id || '',
-      employeeId: user.employee_id || ''
+      employeeId: user.employee_id || '',
+      tokenVersion: Number(user.token_version) || 1
     }, process.env.JWT_SECRET, { expiresIn: '24h' });
 
     res.json({
@@ -200,9 +201,77 @@ router.post('/login', async (req, res) => {
       isDeveloper: isDev,
       brandId: user.brand_id || '', branchId: user.branch_id || '',
       warehouseId: user.default_warehouse_id || '',
-      employeeId: user.employee_id || ''
+      employeeId: user.employee_id || '',
+      mustChangePassword: !!user.must_change_password
     });
   } catch (e) { res.json({ success: false, error: e.message }); }
+});
+
+// ─── Self-service password change (in-system) ───────────────────────────────
+// POST /api/auth/change-password  { currentPassword, newPassword }
+// Actor is taken from the JWT ONLY (never the body — prevents mass-assignment).
+// Verifies the current password, enforces the strong policy, bumps token_version
+// (revoking OTHER sessions), clears must_change_password, and returns a FRESH
+// token so the current session stays signed in. No password/secret is logged.
+router.post('/change-password', verifyToken, async (req, res) => {
+  const ip = req.ip || (req.connection && req.connection.remoteAddress) || 'unknown';
+  try {
+    const rl = checkRateLimit(ip);
+    if (!rl.allowed) return res.status(429).json({ success: false, code: 'RATE_LIMITED', error: 'محاولات كثيرة. حاول بعد ' + rl.remaining + ' دقيقة' });
+
+    const actorId = req.user && req.user.id;
+    const actorName = req.user && req.user.username;
+    if (actorId == null) return res.status(401).json({ success: false, error: 'غير مصرح' });
+
+    const currentPassword = req.body && req.body.currentPassword;
+    const newPassword = req.body && req.body.newPassword;
+    if (!currentPassword || !newPassword) return res.status(422).json({ success: false, code: 'VALIDATION_ERROR', error: 'كلمة المرور الحالية والجديدة مطلوبتان' });
+
+    const [rows] = await db.query('SELECT id, username, password, token_version FROM users WHERE id=? AND active=1 LIMIT 1', [actorId]);
+    if (!rows.length) return res.status(401).json({ success: false, error: 'الحساب غير موجود أو غير نشط' });
+    const user = rows[0];
+
+    const okCurrent = await bcrypt.compare(String(currentPassword), user.password);
+    if (!okCurrent) {
+      recordFailedAttempt(ip);
+      return res.status(422).json({ success: false, code: 'INVALID_CURRENT_PASSWORD', error: 'كلمة المرور الحالية غير صحيحة' });
+    }
+
+    const policy = require('../lib/passwordPolicy').validate(newPassword, { username: user.username });
+    if (!policy.ok) return res.status(422).json({ success: false, code: 'WEAK_PASSWORD', error: policy.errors[0], errors: policy.errors });
+    if (await bcrypt.compare(String(newPassword), user.password)) {
+      return res.status(422).json({ success: false, code: 'PASSWORD_REUSED', error: 'الكلمة الجديدة يجب أن تختلف عن الحالية' });
+    }
+
+    const hash = await bcrypt.hash(String(newPassword), 12);
+    const newVersion = (Number(user.token_version) || 1) + 1;
+    await db.query(
+      'UPDATE users SET password=?, must_change_password=0, password_changed_at=NOW(), token_version=?, failed_attempts=0, locked_until=NULL WHERE id=?',
+      [hash, newVersion, user.id]
+    );
+    try { require('../lib/sessionVersion').bump(user.id); } catch (_) {}
+    clearAttempts(ip);
+    // Audit WITHOUT any password material.
+    try {
+      await db.query(
+        'INSERT INTO audit_log (id, user_id, username, action, table_name, record_id, new_value, created_at) VALUES (?,?,?,?,?,?,?, NOW())',
+        ['AUD-' + Date.now() + '-' + Math.random().toString(36).slice(2, 6), user.id, actorName, 'password_changed', 'users', String(user.id), JSON.stringify({ by: 'change-password', hashAlgo: 'bcrypt', cost: 12, otherSessionsRevoked: true })]
+      );
+    } catch (_) {}
+
+    // Fresh token for THIS session carrying the new version (so it stays valid).
+    const isDev = !!user.is_developer || user.username === 'admin' || (req.user && req.user.role === 'developer');
+    const fresh = jwt.sign({
+      id: user.id, username: user.username, role: req.user.role,
+      isDeveloper: isDev, brandId: req.user.brandId || '', branchId: req.user.branchId || '',
+      default_warehouse_id: req.user.default_warehouse_id || '', employeeId: req.user.employeeId || '',
+      tokenVersion: newVersion
+    }, process.env.JWT_SECRET, { expiresIn: '24h' });
+
+    return res.json({ success: true, token: fresh, otherSessionsRevoked: true, message: 'تم تغيير كلمة المرور. جلسات الأجهزة الأخرى انتهت.' });
+  } catch (e) {
+    return res.status(500).json({ success: false, error: 'تعذّر تغيير كلمة المرور' });
+  }
 });
 
 // v5.11.6 — Logout endpoint. Pure session-end action: no geo-fence
@@ -243,16 +312,20 @@ router.post('/refresh-token', async (req, res) => {
     // correct branch warehouse after a token refresh (was missing before, causing
     // inventory deductions to fall back to global inv_items.stock only).
     const [users] = await db.query(
-      'SELECT id, username, role, active, brand_id, branch_id, default_warehouse_id FROM users WHERE username = ?',
+      'SELECT id, username, role, active, brand_id, branch_id, default_warehouse_id, token_version FROM users WHERE username = ?',
       [decoded.username]
     );
     if (!users.length || !users[0].active) return res.json({ success: false, error: 'الحساب غير نشط أو محذوف' });
     const user = users[0];
+    // A refresh with a token from a REVOKED session (old version) is rejected.
+    const decodedVer = Number(decoded.tokenVersion != null ? decoded.tokenVersion : 1) || 1;
+    if (decodedVer !== (Number(user.token_version) || 1)) return res.json({ success: false, error: 'انتهت الجلسة — يرجى تسجيل الدخول مجددًا' });
     // Issue new token with CURRENT values (not old cached ones — role/branch/warehouse may have changed)
     const token = jwt.sign({
       id: user.id, username: user.username, role: user.role,
       brandId: user.brand_id || '', branchId: user.branch_id || '',
-      default_warehouse_id: user.default_warehouse_id || ''
+      default_warehouse_id: user.default_warehouse_id || '',
+      tokenVersion: Number(user.token_version) || 1
     }, process.env.JWT_SECRET, { expiresIn: '24h' });
     res.json({ success: true, token, role: user.role });
   } catch (e) { res.json({ success: false }); }

@@ -889,6 +889,12 @@ function doLogin() {
 
     // Save token for secured API calls and templates
     localStorage.setItem("pos_token", res.token);
+    // Phase A — a user still on a default password is routed to the in-system
+    // change-password page (not blocked from changing it), then back here.
+    if (res.mustChangePassword) {
+      window.location.href = '/security/?must=1&redirect=' + encodeURIComponent('/');
+      return;
+    }
     // V5.4.1: persist role + username separately — TxnView reads these to gate buttons.
     // V5.4.3: also persist isDeveloper flag — required for hard-delete button visibility
     try {

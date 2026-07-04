@@ -126,7 +126,7 @@ app.use('/api/', function(req, res, next) {
 // 7. Global JWT authentication
 // Auth module is FULLY public (login, refresh, init, users CRUD)
 // Other modules require token except specific paths
-app.use('/api/', function(req, res, next) {
+app.use('/api/', async function(req, res, next) {
   if (req.method === 'OPTIONS') return next();
 
   // Build full path for checking
@@ -154,6 +154,14 @@ app.use('/api/', function(req, res, next) {
     try {
       var token = authHeader.split(' ')[1];
       var decoded = jwt.verify(token, process.env.JWT_SECRET);
+      // Phase A — session-version gate: a password change bumps users.token_version,
+      // invalidating every token issued before it (revokes other sessions).
+      try {
+        const _sv = require('./lib/sessionVersion');
+        if (!(await _sv.isTokenCurrent(decoded))) {
+          return res.status(401).json({ success: false, error: 'انتهت الجلسة — يرجى تسجيل الدخول مجددًا' });
+        }
+      } catch (_) { /* fail open on cache/DB error */ }
       req.user = decoded;
       return next();
     } catch (err) {
@@ -604,6 +612,27 @@ app.get('*', (req, res) => {
 const fs = require('fs');
 const db = require('./db/connection');
 
+// Phase A — mark users still on a default password with must_change_password=1
+// so login routes them to the in-system change-password page (without blocking
+// them from actually changing it). Cheap: only never-changed accounts, top defaults.
+async function flagDefaultPasswordUsers() {
+  const bcrypt = require('bcryptjs');
+  const DEFAULTS = ['admin123', 'admin', 'password', '123456', 'changeme'];
+  let rows;
+  try {
+    [rows] = await db.query(
+      "SELECT id, username, password FROM users WHERE active=1 AND COALESCE(must_change_password,0)=0 AND password_changed_at IS NULL LIMIT 500"
+    );
+  } catch (_) { return; }
+  let flagged = 0;
+  for (const u of rows) {
+    let hit = false;
+    for (const d of DEFAULTS) { try { if (await bcrypt.compare(d, u.password)) { hit = true; break; } } catch (_) {} }
+    if (hit) { try { await db.query('UPDATE users SET must_change_password=1 WHERE id=?', [u.id]); flagged++; } catch (_) {} }
+  }
+  if (flagged) console.log('[pw-flag] flagged ' + flagged + ' user(s) still on a default password → must_change_password=1');
+}
+
 async function autoInitDB() {
   // Retry loop — Railway MySQL may not be ready immediately on cold start
   const MAX_RETRIES = 5;
@@ -661,6 +690,10 @@ async function autoInitDB() {
       // v6.20.0 — unify collations AFTER all tables exist (fixes mixed
       // utf8mb4_unicode_ci / utf8mb4_0900_ai_ci JOIN failures on MySQL 8).
       await normalizeCollations();
+      // Phase A — flag any user still on a default password so they are routed
+      // to the in-system change-password page after login (best-effort, cheap:
+      // only never-changed accounts, only the top defaults).
+      try { await flagDefaultPasswordUsers(); } catch (e) { console.warn('[pw-flag]', e.message); }
       return; // success — exit retry loop
     } catch (e) {
       console.error(`[DB] Connection attempt ${attempt}/${MAX_RETRIES} failed: ${e.message}`);
@@ -1969,6 +2002,10 @@ async function runMigrations() {
   // Security: account lockout columns
   await addColumnIfMissing('users', 'failed_attempts', "INT DEFAULT 0");
   await addColumnIfMissing('users', 'locked_until', "DATETIME DEFAULT NULL");
+  // Phase A — in-system password change: session-version revocation + forced-change flag
+  await addColumnIfMissing('users', 'token_version', "INT NOT NULL DEFAULT 1");
+  await addColumnIfMissing('users', 'must_change_password', "TINYINT(1) NOT NULL DEFAULT 0");
+  await addColumnIfMissing('users', 'password_changed_at', "DATETIME NULL");
 
   // User roles ENUM — include 'employee' for employee portal
   try { await db.query("ALTER TABLE users MODIFY COLUMN role ENUM('admin','cashier','manager','custody','employee') DEFAULT 'cashier'"); } catch(e) {}

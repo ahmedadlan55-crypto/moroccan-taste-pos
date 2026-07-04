@@ -1,9 +1,23 @@
 # SYSTEM V2 — تحديث Usability + Units-of-Measure — تقرير التسليم
 
-- **الفرع:** `codex/system-v2-usability-uom` (Base `0ebeff6`)
-- **Staging:** https://warehouse-staging-production-aa06.up.railway.app — deploy `be60e64d` (بُني ونُشر بنجاح)
-- **الحالة:** ✅ **SYSTEM V2 READY FOR PRODUCTION** (الكود والاختبارات مكتملة وخضراء؛ النشر الإنتاجي بيد المالك)
+- **الفرع:** `codex/system-v2-usability-uom` @ `80d38ee` (Base `0ebeff6`)
+- **Final RC:** `codex/system-v2-final-rc` مُقدَّم بـ fast-forward إلى `80d38ee` → **PR #5** يحوي الآن Warehouse + Cashier + UoM. main ثابت `dcc21653`.
+- **Staging:** https://warehouse-staging-production-aa06.up.railway.app — deploy `c00a62a7` (RC الكامل مع واجهة الكاشير UoM).
+- **الحالة:** ✅ **SYSTEM V2 READY FOR PRODUCTION** (الكود والاختبارات مكتملة وخضراء بما فيها واجهة الكاشير؛ النشر الإنتاجي بيد المالك).
 - **القيود المحترمة:** ❌ لا دمج إلى main · ❌ لا نشر Production (`kind-quietude`) · ❌ لا تغيير Canary/Scope · النظام القديم يعمل.
+
+---
+
+## 0) إكمال واجهة الكاشير UoM (frontend/pos) — الفجوة التي رُفض عليها القرار سابقًا
+
+**Backend (surgical، بلا هجرة):** `GET /api/pos/v2/catalog` يعرض `units[]` لكل صنف (أساس+كبرى+عامل+باركود الوحدة) + باركود الأساس + `basePrice` + `warehouseQty`(أساس)؛ `_linesForMath` يمرّر لقطة الوحدة؛ `buildLegacySalePayload` يضيف `enteredUnitCode/enteredQty/baseQty` ⇒ `sales.items_json` ⇒ **المرتجع يعيد نفس الوحدة والكمية الأساسية**.
+
+**Frontend/pos:** `CatalogItem.units` + `CartLine.{enteredUnit*,conversionFactorSnapshot,baseQty}`؛ `resolveScan` يربط باركود الوحدة الكبرى (مسح كرتون = **1 كرتون**، ليس 12 حبة بصريًا)؛ `store.addItem(item,unit)`+`setLineUnit` (baseQty=enteredQty×factor، **عامل مجمّد**)؛ `cartMath` يحسب على `baseQty` (السعر=factor×أساس، الأسطر القديمة دون تغيير)؛ **`UnitPicker`** قائمة وحدة قابلة للبحث لتغيير الوحدة من السلة؛ `offline.upsertPayloadFrom` يحمل `unitFactor/enteredUnitCode/baseQty` (لا ازدواج عند إعادة المزامنة)؛ الإيصال يعرض الوحدة المدخلة.
+
+**الأدلة (كلها خضراء):**
+- **pos vitest 44** (11 UoM: cartMath baseQty، resolveScan باركود→وحدة، upsert payload يحمل العامل).
+- **posV2Uom.api 20/20**: catalog units، كرتون→أساس 12، سعر=factor×base، `items_json` يحمل الوحدة+الأساس، **GL متوازن**، **صنف tracked → FEFO من أقدم دفعة (12 أساس)**، **المرتجع يعيد الوحدة+القيمة الأساسية (60)**، `UNIT_CONVERSION_CONFLICT`، **replay بلا خصم مزدوج**.
+- **E2E متصفح `scripts/e2e-pos-v2-uom.cjs` 18/18** (لقطات `artifacts/screenshots/pos-uom/`): باركود حبة→خصم 1 · باركود كرتون→«1 كرتون» + «=12 حبة» + خصم 12 أساس · كرتونان→24 · تغيير الوحدة من السلة · **offline بيع كرتون ثم reconnect → مزامنة مرة واحدة (خصم 12 مرة واحدة)** · السعر/الإجمالي 60=12×5 · صفر console errors.
 
 ---
 
@@ -76,19 +90,18 @@
 
 ## 10) نشر Staging + التحقق
 
-- `railway up` على خدمة **warehouse-staging** فقط (لم يُمس `kind-quietude` الإنتاجي). deploy `be60e64d` أصبح Online خلال ~80 ث.
-- **smoke UAT:** `/api/version` 200 · `/api/inventory/v2/ready` 200 · كل النقاط الجديدة **مركّبة** (401 auth-required، ليست 404): item-search، accounts/search، items/:id/units، suppliers/search، change-password · واجهة `/warehouse/` 200 مع bundle جديد · صفحة `/security/` 200.
-- preflight محلي: **BLOCKER=0** (3 تحذيرات بيانات اختبار سابقة، غير حاجبة).
-- migrate-item-units: dry-run مُتحقَّق؛ الأعمدة تُضاف تلقائيًا عند الإقلاع (تأكّد وجود `stock_issue_items.entered_unit_code` بعد النشر).
+- `railway up` على خدمة **warehouse-staging** فقط (لم يُمس `kind-quietude` الإنتاجي). deploy `c00a62a7` أصبح Online خلال ~60 ث (يحمل واجهة الكاشير UoM — bundle pos جديد).
+- **smoke UAT:** `/api/version` 200 · `/api/inventory/v2/ready` 200 · `GET /api/pos/v2/catalog` **401** (كود الكتالوج الجديد مركّب) · `/pos-v2/` 200 (SPA الكاشير الجديد) · `/warehouse/` 200 · كل نقاط UoM/البحث/كلمة المرور مركّبة (401 لا 404).
+- preflight محلي: **BLOCKER=0**.
 
-## 11) Commits
+## 11) Commits (فرع التطوير فقط)
 
-`d6e94f2` محرك الوحدات · `6b58f19` كلمة المرور · `8d9129d` بحث · `1f7efa7` عقد · `230ce15` UoM مستندات · `c3f2d80` إنتاج/جرد/تحويل/كاشير + CRUD · `1a5efb7` مكوّنات+تطبيق UI · `151f18b` تبويب الوحدات · `68d37c4` vitest — كلها على فرع التطوير فقط (main/prod سليمان).
+`d6e94f2` محرك الوحدات · `6b58f19` كلمة المرور · `8d9129d` بحث · `1f7efa7` عقد · `230ce15` UoM مستندات · `c3f2d80` إنتاج/جرد/تحويل/كاشير+CRUD · `1a5efb7` مكوّنات+تطبيق UI · `151f18b` تبويب الوحدات · `68d37c4` vitest · `c0ca307` تقرير · **`80d38ee` واجهة الكاشير UoM (frontend/pos) + posV2Uom + E2E**. Final RC = fast-forward `codex/system-v2-final-rc`→`80d38ee` (بلا force؛ 0ebeff6 سلف) → PR #5.
 
 ## 12) المخاطر المتبقية / بيد المالك (غير حاجبة للكود)
 
 1. **النشر الإنتاجي**: يتطلب أمر المالك بالدمج/النشر + إتمام **تدوير كلمة admin** (أداة تفاعلية `scripts/rotate-admin-password.js` — عائق إنتاجي فقط، لا يوقف الاختبارات).
-2. **واجهة الكاشير (frontend/pos)**: الـ backend يدعم بيع الكرتون (unitFactor) ومُختبَر؛ ربط مُنتقي الوحدة/باركود الكرتون في تطبيق pos المنفصل متابعة صغيرة (العقد جاهز).
+2. **قفل المخزون السالب في الكاشير**: مسار `/api/sales` القديم لا يمنع البيع بالسالب (سلوك قائم قبل التحديث)؛ الخصم والمحاسبة تتمّان **بالوحدة الأساسية** بشكل صحيح (مُثبت)، وحارس السالب الصلب يعيش في محرك الصرف V2. لا يخص UoM.
 3. تحذيرات preflight الثلاثة = بيانات اختبار محلية (يتيم/بلا إسناد Scope) — لا علاقة لها بالإنتاج.
 
 ## القرار

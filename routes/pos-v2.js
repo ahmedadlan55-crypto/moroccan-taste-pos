@@ -24,6 +24,7 @@ const crypto = require('crypto');
 const db = require('../db/connection');
 const M = require('../lib/posOrderMachine');
 const C = require('../lib/inventoryTxContract');
+const UC = require('../lib/unitConversion');
 const IDEM = require('../lib/idempotencyStore');
 const requireRole = require('../middleware/auth').requireRole;
 
@@ -107,8 +108,22 @@ async function _normalizeLines(q, rawLines) {
     const m = byId.get(menuId);
     if (!m) throw _err('VALIDATION_ERROR', 'صنف غير موجود في القائمة: ' + menuId);
     if (m.active === 0 || m.active === false) throw _err('VALIDATION_ERROR', 'الصنف "' + m.name + '" غير نشط — لا يمكن بيعه');
-    const qty = Number(l.qty);
-    if (!Number.isFinite(qty) || qty <= 0) throw _err('VALIDATION_ERROR', 'كمية غير صالحة للصنف "' + m.name + '"');
+    const enteredQty = Number(l.qty);
+    if (!Number.isFinite(enteredQty) || enteredQty <= 0) throw _err('VALIDATION_ERROR', 'كمية غير صالحة للصنف "' + m.name + '"');
+    // Phase U — expand-to-base (owner decision): a line may be entered in a major
+    // unit (e.g. scan a carton barcode). qty flowing to stock/sales is ALWAYS base
+    // (enteredQty × factor); price is the base price so the line total equals
+    // enteredQty × (factor × basePrice) — i.e. price per major unit = factor × base.
+    // No unit-price table. Server recomputes base; a client mismatch is rejected.
+    let factor = 1, enteredUnitId = null, enteredUnitCode = null;
+    if (l.unitFactor != null || l.enteredUnitCode != null || l.enteredUnitId != null) {
+      factor = Number(l.unitFactor != null ? l.unitFactor : 1);
+      if (!UC.isValidFactor(factor)) throw _err('INVALID_CONVERSION_FACTOR', 'عامل تحويل غير صالح للصنف "' + m.name + '"');
+      enteredUnitId = l.enteredUnitId != null ? String(l.enteredUnitId).slice(0, 50) : null;
+      enteredUnitCode = l.enteredUnitCode != null ? String(l.enteredUnitCode).slice(0, 30).toUpperCase() : null;
+    }
+    const qty = UC.round(enteredQty * factor, 6);
+    if (l.baseQty != null && UC.round(Number(l.baseQty), 6) !== qty) throw _err('UNIT_CONVERSION_CONFLICT', 'الكمية الأساسية المُرسلة لا تطابق المحسوبة للصنف "' + m.name + '"');
     const unitPrice = Number(l.unitPrice != null ? l.unitPrice : m.price);
     if (!Number.isFinite(unitPrice) || unitPrice < 0) throw _err('VALIDATION_ERROR', 'سعر غير صالح للصنف "' + m.name + '"');
     const lineDiscount = Math.max(0, Number(l.lineDiscount) || 0);
@@ -116,6 +131,7 @@ async function _normalizeLines(q, rawLines) {
       menuId, nameSnapshot: m.name, qty, unitPrice, lineDiscount,
       vatCategory: ['S', 'Z', 'E', 'O'].includes(m.tax_category) ? m.tax_category : 'S',
       notes: (l.notes || '').toString().slice(0, 300) || null, sort: sort++,
+      enteredQty, enteredUnitId, enteredUnitCode, conversionFactorSnapshot: factor,
     });
   }
   return out;
@@ -125,8 +141,9 @@ async function _replaceLines(conn, orderId, lines) {
   await conn.query('DELETE FROM pos_order_lines WHERE order_id=?', [orderId]);
   for (const l of lines) {
     await conn.query(
-      'INSERT INTO pos_order_lines (id, order_id, menu_id, name_snapshot, qty, unit_price, line_discount, vat_category, notes, sort) VALUES (?,?,?,?,?,?,?,?,?,?)',
-      ['PL-' + Date.now() + '-' + Math.random().toString(36).slice(2, 8), orderId, l.menuId, l.nameSnapshot, l.qty, l.unitPrice, l.lineDiscount, l.vatCategory, l.notes, l.sort]);
+      'INSERT INTO pos_order_lines (id, order_id, menu_id, name_snapshot, qty, unit_price, line_discount, vat_category, notes, sort, entered_qty, entered_unit_id, entered_unit_code, conversion_factor_snapshot) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)',
+      ['PL-' + Date.now() + '-' + Math.random().toString(36).slice(2, 8), orderId, l.menuId, l.nameSnapshot, l.qty, l.unitPrice, l.lineDiscount, l.vatCategory, l.notes, l.sort,
+       l.enteredQty != null ? l.enteredQty : l.qty, l.enteredUnitId != null ? l.enteredUnitId : null, l.enteredUnitCode != null ? l.enteredUnitCode : null, l.conversionFactorSnapshot != null ? l.conversionFactorSnapshot : 1]);
   }
 }
 

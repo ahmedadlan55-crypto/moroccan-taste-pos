@@ -558,4 +558,157 @@ router.put('/items/:id/barcodes', MGR, async (req, res) => {
   } catch (e) { _catch(res, e); }
 });
 
+// ════════════════════════════════════════════════════════════════════════════
+// Phase U — Units & conversions per item (base + major units, frozen factors)
+// GET  /items/:id/units → { item, units[], hasMovements }
+// PUT  /items/:id/units → replace the unit set (RBAC + expectedVersion + audit +
+//   factor-lock after history: once an item has posted movements you may NOT
+//   change an existing unit's factor / base flag, nor delete an existing unit —
+//   only add new major units, toggle allow_* flags, activate/deactivate, rename,
+//   or (re)bind a per-unit barcode. Violations → UNIT_LOCKED_BY_HISTORY.
+// ════════════════════════════════════════════════════════════════════════════
+const UC = require('../lib/unitConversion');
+const IU = require('../lib/itemUnits');
+
+function _unitRowOut(r) {
+  return {
+    id: r.id, itemId: r.item_id, unitId: r.unit_id, unitName: r.unit_name, unitCode: r.unit_code,
+    isBase: r.is_base === 1 || r.is_base === true, conversionToBase: Number(r.conversion_to_base),
+    precision: Number(r.quantity_precision) || 2,
+    allowPurchase: !!r.allow_purchase, allowReceipt: !!r.allow_receipt, allowIssue: !!r.allow_issue,
+    allowTransfer: !!r.allow_transfer, allowStocktake: !!r.allow_stocktake,
+    allowProduction: !!r.allow_production, allowSale: !!r.allow_sale,
+    barcodeId: r.barcode_id, isActive: r.is_active === 1 || r.is_active === true, version: Number(r.version) || 1,
+    createdAt: r.created_at, updatedAt: r.updated_at, updatedBy: r.updated_by,
+  };
+}
+
+router.get('/items/:id/units', async (req, res) => {
+  try {
+    const id = req.params.id;
+    const item = await _loadItem(id);
+    if (!item) { const e = new Error('الصنف غير موجود'); e.status = 404; throw e; }
+    const [rows] = await db.query('SELECT * FROM item_units WHERE item_id=? ORDER BY is_base DESC, conversion_to_base ASC', [id]);
+    const hasMovements = await IU.itemHasMovements(db, id);
+    res.json({
+      success: true,
+      data: {
+        item: { id: item.id, name: item.name, unit: item.unit, version: Number(item.version) || 1 },
+        units: rows.map(_unitRowOut),
+        hasMovements,
+      },
+    });
+  } catch (e) { _catch(res, e); }
+});
+
+router.put('/items/:id/units', MGR, async (req, res) => {
+  try {
+    const actor = _actor(req); const id = req.params.id; const b = req.body || {};
+    const expected = _expectedVersion(req);
+    const item = await _loadItem(id);
+    if (!item) { const e = new Error('الصنف غير موجود'); e.status = 404; throw e; }
+    const list = Array.isArray(b.units) ? b.units : null;
+    if (!list || !list.length) return _fail(res, 'VALIDATION_ERROR', 'حدّد وحدة أساسية واحدة على الأقل');
+
+    // Normalize incoming rows → the shape validateItemUnitSet expects.
+    const norm = list.map((u) => {
+      const code = String(u.unitCode || u.unit_code || '').trim().toUpperCase();
+      const factor = Number(u.conversionToBase != null ? u.conversionToBase : u.conversion_to_base);
+      return {
+        unitCode: code,
+        unitName: String(u.unitName || u.unit_name || code).trim().slice(0, 100),
+        unitId: (u.unitId || u.unit_id) ? String(u.unitId || u.unit_id).slice(0, 20) : null,
+        isBase: u.isBase === true || u.is_base === 1 || u.is_base === true,
+        conversionToBase: factor,
+        precision: Math.max(0, Math.min(6, Number(u.precision != null ? u.precision : u.quantity_precision) || 2)),
+        allowPurchase: u.allowPurchase !== false && u.allow_purchase !== 0,
+        allowReceipt: u.allowReceipt !== false && u.allow_receipt !== 0,
+        allowIssue: u.allowIssue !== false && u.allow_issue !== 0,
+        allowTransfer: u.allowTransfer !== false && u.allow_transfer !== 0,
+        allowStocktake: u.allowStocktake !== false && u.allow_stocktake !== 0,
+        allowProduction: u.allowProduction !== false && u.allow_production !== 0,
+        allowSale: u.allowSale !== false && u.allow_sale !== 0,
+        barcodeId: (u.barcodeId || u.barcode_id) ? String(u.barcodeId || u.barcode_id).slice(0, 50) : null,
+        isActive: !(u.isActive === false || u.is_active === 0),
+      };
+    });
+    // Structural validation (one base, base factor 1, positive factors, unique codes).
+    const v = UC.validateItemUnitSet(norm);
+    if (!v.ok) {
+      const msg = { NO_BASE_UNIT: 'يجب تحديد وحدة أساسية واحدة', DUPLICATE_BASE_UNIT: 'لا يُسمح بأكثر من وحدة أساسية', BASE_FACTOR_NOT_ONE: 'عامل الوحدة الأساسية يجب أن يساوي 1', DUPLICATE_UNIT_CODE: 'رمز وحدة مكرر', INVALID_CONVERSION_FACTOR: 'عامل تحويل غير صالح (يجب أن يكون موجبًا)', UNIT_REQUIRED: 'رمز الوحدة مطلوب' }[v.code] || 'مجموعة وحدات غير صالحة';
+      return _fail(res, v.code === 'DUPLICATE_BASE_UNIT' ? 'DUPLICATE_BASE_UNIT' : (v.code === 'INVALID_CONVERSION_FACTOR' ? 'INVALID_CONVERSION_FACTOR' : 'VALIDATION_ERROR'), msg);
+    }
+
+    const out = await db.withTransaction(async (conn) => {
+      const [cur] = await conn.query('SELECT id, version FROM inv_items WHERE id=? LIMIT 1 FOR UPDATE', [id]);
+      if (!cur.length) throw _err('VALIDATION_ERROR', 'الصنف غير موجود');
+      if (expected != null && Number(cur[0].version) !== expected) throw _err('VERSION_CONFLICT', 'تغيّر الصنف منذ آخر تحميل — أعد التحميل');
+      const [exRows] = await conn.query('SELECT * FROM item_units WHERE item_id=? FOR UPDATE', [id]);
+      const byCode = new Map(exRows.map((r) => [String(r.unit_code).toUpperCase(), r]));
+      const hasMovements = await IU.itemHasMovements(conn, id);
+
+      // Factor-lock after history: block factor/base changes + deletions of existing units.
+      if (hasMovements) {
+        const incomingCodes = new Set(norm.map((u) => u.unitCode));
+        for (const ex of exRows) {
+          const code = String(ex.unit_code).toUpperCase();
+          if (!incomingCodes.has(code)) throw _err('UNIT_LOCKED_BY_HISTORY', 'لا يمكن حذف الوحدة "' + ex.unit_name + '" بعد وجود حركات — عطّلها بدل الحذف');
+        }
+        for (const u of norm) {
+          const ex = byCode.get(u.unitCode);
+          if (!ex) continue; // new units may be added freely
+          if (UC.round(Number(ex.conversion_to_base), UC.MAX_PRECISION) !== UC.round(u.conversionToBase, UC.MAX_PRECISION)) {
+            throw _err('UNIT_LOCKED_BY_HISTORY', 'لا يمكن تغيير عامل التحويل للوحدة "' + u.unitName + '" بعد وجود حركات — أضف وحدة جديدة بعامل مختلف');
+          }
+          if ((ex.is_base === 1) !== u.isBase) throw _err('UNIT_LOCKED_BY_HISTORY', 'لا يمكن تغيير الوحدة الأساسية بعد وجود حركات');
+        }
+      }
+
+      // Per-unit barcode binding must be unique and belong to this item.
+      const usedBc = new Set();
+      for (const u of norm) {
+        if (!u.barcodeId) continue;
+        if (usedBc.has(u.barcodeId)) throw _err('BARCODE_UNIT_CONFLICT', 'باركود مرتبط بأكثر من وحدة في نفس الصنف');
+        usedBc.add(u.barcodeId);
+        const [bc] = await conn.query('SELECT item_id FROM item_barcodes WHERE id=? LIMIT 1', [u.barcodeId]);
+        if (bc.length && String(bc[0].item_id) !== String(id)) throw _err('BARCODE_UNIT_CONFLICT', 'الباركود المرتبط بالوحدة يخص صنفًا آخر');
+      }
+
+      // Upsert: keep existing ids by code (preserves audit lineage); insert new; delete removed.
+      const keepCodes = new Set(norm.map((u) => u.unitCode));
+      for (const ex of exRows) {
+        if (!keepCodes.has(String(ex.unit_code).toUpperCase())) {
+          await conn.query('DELETE FROM item_units WHERE id=?', [ex.id]);
+        }
+      }
+      for (const u of norm) {
+        const ex = byCode.get(u.unitCode);
+        const cols = [u.unitId, u.unitName, u.unitCode, u.isBase ? 1 : 0, u.conversionToBase, u.precision,
+          u.allowPurchase ? 1 : 0, u.allowReceipt ? 1 : 0, u.allowIssue ? 1 : 0, u.allowTransfer ? 1 : 0,
+          u.allowStocktake ? 1 : 0, u.allowProduction ? 1 : 0, u.allowSale ? 1 : 0, u.barcodeId, u.isActive ? 1 : 0];
+        if (ex) {
+          await conn.query(
+            'UPDATE item_units SET unit_id=?, unit_name=?, unit_code=?, is_base=?, conversion_to_base=?, quantity_precision=?, allow_purchase=?, allow_receipt=?, allow_issue=?, allow_transfer=?, allow_stocktake=?, allow_production=?, allow_sale=?, barcode_id=?, is_active=?, version=version+1, updated_at=NOW(), updated_by=? WHERE id=?',
+            cols.concat([actor, ex.id]));
+        } else {
+          await conn.query(
+            'INSERT INTO item_units (id, item_id, unit_id, unit_name, unit_code, is_base, conversion_to_base, quantity_precision, allow_purchase, allow_receipt, allow_issue, allow_transfer, allow_stocktake, allow_production, allow_sale, barcode_id, is_active, version, created_at, created_by) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,1,NOW(),?)',
+            ['IU-' + Date.now() + '-' + crypto.randomBytes(3).toString('hex'), id, u.unitId, u.unitName, u.unitCode, u.isBase ? 1 : 0, u.conversionToBase, u.precision,
+             u.allowPurchase ? 1 : 0, u.allowReceipt ? 1 : 0, u.allowIssue ? 1 : 0, u.allowTransfer ? 1 : 0, u.allowStocktake ? 1 : 0, u.allowProduction ? 1 : 0, u.allowSale ? 1 : 0, u.barcodeId, u.isActive ? 1 : 0, actor]);
+        }
+      }
+      await conn.query('UPDATE inv_items SET version=version+1 WHERE id=?', [id]);
+      const [now] = await conn.query('SELECT version FROM inv_items WHERE id=?', [id]);
+      try {
+        await conn.query('INSERT INTO inv_tx_events (id, doc_type, doc_id, action, actor, note, payload_json) VALUES (?,?,?,?,?,?,?)',
+          ['EV-' + Date.now() + '-' + crypto.randomBytes(3).toString('hex'), 'item', id, 'units_changed', actor, 'تعديل وحدات الصنف والتحويلات',
+           JSON.stringify({ units: norm.map((u) => ({ code: u.unitCode, base: u.isBase, factor: u.conversionToBase })) }).slice(0, 8000)]);
+      } catch (_) {}
+      const [rows] = await conn.query('SELECT * FROM item_units WHERE item_id=? ORDER BY is_base DESC, conversion_to_base ASC', [id]);
+      return { version: Number(now[0] && now[0].version) || 1, units: rows.map(_unitRowOut) };
+    });
+    return res.status(200).json({ success: true, data: { id, units: out.units }, status: 'saved', version: out.version });
+  } catch (e) { _catch(res, e); }
+});
+
 module.exports = router;

@@ -4022,12 +4022,32 @@ router.post('/warehouse-transfers', MGR, async (req, res) => {
     }
     // v5.10.29 — reject zero/negative quantities up-front so drafts never carry
     // garbage into approval. itemId required.
+    // Phase U — a line may be entered in a major unit (or composite); resolve →
+    // base and store base qty so the approve path moves stock in the item's base
+    // unit. The frozen snapshot is kept alongside for the timeline/reports.
+    const IU = require('../lib/itemUnits');
+    const normItems = [];
     for (const it of items) {
       if (!it || !it.itemId) return res.status(400).json({ success: false, error: 'صنف بدون معرّف' });
-      const q = Number(it.qty);
+      let u;
+      try {
+        u = await IU.resolveLineBase(db, it.itemId, {
+          enteredUnitId: it.enteredUnitId, enteredUnitCode: it.enteredUnitCode,
+          enteredQty: it.enteredQty != null ? it.enteredQty : it.qty,
+          majorQty: it.majorQty, minorQty: it.minorQty, baseQty: it.baseQty,
+        }, 'transfer');
+      } catch (e) {
+        const http = (require('../lib/inventoryTxContract').httpFor(e.code)) || 400;
+        return res.status(http).json({ success: false, code: e.code || 'VALIDATION_ERROR', error: e.message });
+      }
+      const q = u.baseQty;
       if (!isFinite(q) || q <= 0) {
         return res.status(400).json({ success: false, error: 'الكمية يجب أن تكون أكبر من صفر' });
       }
+      normItems.push(Object.assign({}, it, {
+        qty: q, baseQty: q, enteredQty: u.enteredQty, enteredUnitId: u.enteredUnitId,
+        enteredUnitCode: u.enteredUnitCode, conversionFactorSnapshot: u.conversionFactorSnapshot,
+      }));
     }
 
     const id = 'WT-' + Date.now();
@@ -4038,7 +4058,7 @@ router.post('/warehouse-transfers', MGR, async (req, res) => {
 
     await db.query(
       'INSERT INTO warehouse_transfers (id, transfer_number, from_warehouse_id, to_warehouse_id, transfer_date, items_json, notes, created_by) VALUES (?,?,?,?,?,?,?,?)',
-      [id, transferNumber, fromWarehouseId, toWarehouseId, new Date(), JSON.stringify(items), notes||'', username||'']
+      [id, transferNumber, fromWarehouseId, toWarehouseId, new Date(), JSON.stringify(normItems), notes||'', username||'']
     );
     res.status(201).json({ success: true, id, transferNumber });
   } catch(e) { res.status(500).json({ success: false, error: e.message }); }

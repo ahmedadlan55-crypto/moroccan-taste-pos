@@ -31,6 +31,7 @@ const P = require('../lib/productionEngine');
 const C = require('../lib/inventoryTxContract');
 const IDEM = require('../lib/idempotencyStore');
 const L = require('../lib/lotLedger');
+const IU = require('../lib/itemUnits');
 const { recomputeInvItemStock } = require('../lib/stockRecompute');
 const requireRole = require('../middleware/auth').requireRole;
 
@@ -524,11 +525,17 @@ router.post('/:id/issue-materials', BACKOFFICE, async (req, res) => {
 
       const [planRows] = await conn.query('SELECT * FROM production_consumption WHERE production_order_id=? FOR UPDATE', [id]);
       const plan = new Map(planRows.map((r) => [r.item_id, r]));
+      // Phase U — resolve each line's entered unit → base qty (frozen factor).
+      // Consumption is always evaluated/stored in base units; the snapshot is kept
+      // on production_issue_lines. Lines with no unit info behave as base (factor 1).
+      for (const ln of b.lines) {
+        ln._u = await IU.resolveLineBase(conn, (ln.itemId || ln.item_id), ln, 'production');
+      }
       const seen = new Set();
       const tol = P.overIssueTolerance();
       for (const ln of b.lines) {
         const itemId = ln.itemId || ln.item_id;
-        const qty = Number(ln.qty);
+        const qty = ln._u.baseQty;
         if (!itemId || seen.has(itemId)) throw _err('VALIDATION_ERROR', 'صنف مكرر أو غير معرّف في السطور');
         seen.add(itemId);
         if (!(qty > 0)) throw _err('VALIDATION_ERROR', 'كمية الإصدار يجب أن تكون موجبة للصنف ' + itemId);
@@ -548,7 +555,7 @@ router.post('/:id/issue-materials', BACKOFFICE, async (req, res) => {
       // when ON the per-line engine guard decides (tracked always blocks).
       if (!policyOn) {
         for (const ln of b.lines) {
-          const qty = Number(ln.qty);
+          const qty = ln._u.baseQty;
           const cur = await E.readStock(conn, doc.warehouse_id, ln.itemId || ln.item_id, true);
           if (cur.qty < qty) throw _err('INSUFFICIENT_STOCK', 'الرصيد المتاح (' + cur.qty + ') لا يكفي لإصدار ' + qty + ' من الصنف ' + (ln.itemId || ln.item_id));
         }
@@ -562,7 +569,7 @@ router.post('/:id/issue-materials', BACKOFFICE, async (req, res) => {
       let materialsCost = 0;
       for (const ln of b.lines) {
         const itemId = ln.itemId || ln.item_id;
-        const qty = Number(ln.qty);
+        const qty = ln._u.baseQty;
         const mode = await L.getTrackingMode(conn, itemId);
         const cost = await E.getEffectiveCost(conn, itemId, doc.warehouse_id);
         const guardOpts = policyOn ? { negativeGuard: {
@@ -598,8 +605,9 @@ router.post('/:id/issue-materials', BACKOFFICE, async (req, res) => {
         const lineTotal = P.round2(qty * cost);
         materialsCost += lineTotal;
         await conn.query(
-          'INSERT INTO production_issue_lines (id, issue_event_id, production_order_id, item_id, warehouse_id, qty, unit_cost, line_total) VALUES (?,?,?,?,?,?,?,?)',
-          ['PIL-' + Date.now() + '-' + Math.random().toString(36).slice(2, 7), eventId, id, itemId, doc.warehouse_id, qty, P.round4(cost), lineTotal]);
+          'INSERT INTO production_issue_lines (id, issue_event_id, production_order_id, item_id, warehouse_id, qty, unit_cost, line_total, entered_qty, entered_unit_id, entered_unit_code, conversion_factor_snapshot, base_qty) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)',
+          ['PIL-' + Date.now() + '-' + Math.random().toString(36).slice(2, 7), eventId, id, itemId, doc.warehouse_id, qty, P.round4(cost), lineTotal,
+           ln._u.enteredQty, ln._u.enteredUnitId, ln._u.enteredUnitCode, ln._u.conversionFactorSnapshot, ln._u.baseQty]);
         const pl = plan.get(itemId);
         await conn.query(
           'UPDATE production_consumption SET qty_actual=qty_actual+?, total_cost=total_cost+?, unit_cost=?, consumed_at=NOW() WHERE id=?',
@@ -656,14 +664,27 @@ router.post('/:id/record-output', BACKOFFICE, async (req, res) => {
     const id = req.params.id;
     const expected = _expectedVersion(req);
     const b = req.body || {};
-    const goodQty = Number(b.goodQty != null ? b.goodQty : b.qtyProduced) || 0;
-    const wasteQty = Number(b.wasteQty != null ? b.wasteQty : b.qtyScrap) || 0;
-    if (goodQty < 0 || wasteQty < 0) return _fail(res, 'VALIDATION_ERROR', 'الكميات لا تكون سالبة');
-    if (goodQty + wasteQty <= 0) return _fail(res, 'VALIDATION_ERROR', 'حدّد كمية جيدة أو هدرًا (على الأقل واحدة موجبة)');
-    if (wasteQty > 0 && !String(b.wasteReason || '').trim()) return _fail(res, 'REASON_REQUIRED', 'سبب الهدر إلزامي عند تسجيل هدر');
     const pre = await _loadOrder(id);
     if (!pre) { const e = new Error('أمر الإنتاج غير موجود'); e.status = 404; throw e; }
     P.assertV2(pre);
+    // Phase U — output may be entered in a major unit. Resolve the finished-good
+    // output unit → base (frozen factor); good + waste share the same factor.
+    // Stock, WAC, lots and GL are always in the product's base unit.
+    const rawGood = Number(b.goodQty != null ? b.goodQty : b.qtyProduced) || 0;
+    const rawWaste = Number(b.wasteQty != null ? b.wasteQty : b.qtyScrap) || 0;
+    if (rawGood < 0 || rawWaste < 0) return _fail(res, 'VALIDATION_ERROR', 'الكميات لا تكون سالبة');
+    let uGood;
+    try {
+      uGood = await IU.resolveLineBase(db, pre.product_id, {
+        enteredUnitId: b.outputUnitId || b.enteredUnitId, enteredUnitCode: b.outputUnitCode || b.enteredUnitCode,
+        enteredQty: rawGood, majorQty: b.majorQty, minorQty: b.minorQty, baseQty: b.baseGoodQty,
+      }, 'production');
+    } catch (e) { return _catch(res, e); }
+    const outFactor = uGood.conversionFactorSnapshot;
+    const goodQty = uGood.baseQty;
+    const wasteQty = require('../lib/unitConversion').round(rawWaste * outFactor, 6);
+    if (goodQty + wasteQty <= 0) return _fail(res, 'VALIDATION_ERROR', 'حدّد كمية جيدة أو هدرًا (على الأقل واحدة موجبة)');
+    if (wasteQty > 0 && !String(b.wasteReason || '').trim()) return _fail(res, 'REASON_REQUIRED', 'سبب الهدر إلزامي عند تسجيل هدر');
     const outputWh = pre.output_warehouse_id || pre.warehouse_id;
     if (req.guardWh && !req.guardWh(res, outputWh)) return;
     P.assertCanOutput(pre.status);
@@ -736,9 +757,10 @@ router.post('/:id/record-output', BACKOFFICE, async (req, res) => {
         journalId = j.journalId;
       }
       await conn.query(
-        `INSERT INTO production_output (id, production_order_id, item_id, warehouse_id, qty, unit_cost, total_cost, qty_waste, waste_cost, batch_number, expiry_date, produced_at, gl_journal_id, created_by)
-         VALUES (?,?,?,?,?,?,?,?,?,?,?,NOW(),?,?)`,
-        [eventId, id, doc.product_id, outputWh, goodQty, priced.fgUnitCost, priced.fgValue, wasteQty, priced.wasteValue, batchNumber, expiryDate, journalId, actor]);
+        `INSERT INTO production_output (id, production_order_id, item_id, warehouse_id, qty, unit_cost, total_cost, qty_waste, waste_cost, batch_number, expiry_date, produced_at, gl_journal_id, created_by, entered_qty, entered_unit_id, entered_unit_code, conversion_factor_snapshot, base_qty)
+         VALUES (?,?,?,?,?,?,?,?,?,?,?,NOW(),?,?,?,?,?,?,?)`,
+        [eventId, id, doc.product_id, outputWh, goodQty, priced.fgUnitCost, priced.fgValue, wasteQty, priced.wasteValue, batchNumber, expiryDate, journalId, actor,
+         uGood.enteredQty, uGood.enteredUnitId, uGood.enteredUnitCode, outFactor, goodQty]);
       // Cumulative FG unit cost = Σ good value / Σ good qty (never restated retroactively).
       const [sums] = await conn.query('SELECT COALESCE(SUM(qty),0) AS q, COALESCE(SUM(total_cost),0) AS v FROM production_output WHERE production_order_id=?', [id]);
       const totQ = Number(sums[0].q) || 0;

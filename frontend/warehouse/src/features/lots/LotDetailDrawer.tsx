@@ -9,6 +9,7 @@ import { useCan } from "@/app/permission-provider";
 import { formatQty, formatDate } from "@/lib/formatters";
 import { lotStatusToLabel, expiryClassToLabel } from "@/lib/status-labels";
 import { useLotDetail, useLotMovements, useLotTrace, useLotMutations } from "@/lib/hooks/useLots";
+import { ReasonDialog } from "@/features/_shared/ReasonDialog";
 
 const TABS = [
   { id: "basics", label: "البيانات الأساسية" },
@@ -35,16 +36,21 @@ export function LotDetailDrawer({ id, onClose }: { id: string | null; onClose: (
   const d = q.data?.lot;
   const busy = m.quarantine.isPending || m.release.isPending || m.recall.isPending;
 
-  function act(kind: "quarantine" | "release" | "recall") {
+  const [pendingAct, setPendingAct] = useState<null | "quarantine" | "release" | "recall">(null);
+  const ACT_META = {
+    quarantine: { title: "حجر الدفعة", desc: "الدفعة المحجورة تُستثنى من FEFO ولا تُصرف حتى الإفراج.", label: "حجر" },
+    release: { title: "الإفراج عن الدفعة", desc: "تعود الدفعة متاحة للصرف ضمن ترتيب FEFO.", label: "إفراج" },
+    recall: { title: "استدعاء الدفعة", desc: "الاستدعاء نهائي — راجع تبويب التتبع لمعرفة المستندات المتأثرة.", label: "استدعاء" },
+  } as const;
+  function confirmAct(kind: "quarantine" | "release" | "recall", reason: string) {
     if (!d) return;
-    const reason = window.prompt(kind === "quarantine" ? "سبب الحجر؟" : kind === "release" ? "سبب الإفراج؟" : "سبب الاستدعاء؟");
-    if (!reason || !reason.trim()) return;
     setErr(null);
-    m[kind].mutate({ id: d.id, reason: reason.trim(), expectedVersion: d.version }, {
-      onSuccess: () => { q.refetch(); trace.refetch(); },
-      onError: (e) => setErr(e instanceof ApiError ? (e.isConflict ? "تغيّرت الدفعة منذ آخر تحميل — أعد المحاولة." : e.message) : "تعذّر تنفيذ الإجراء."),
+    m[kind].mutate({ id: d.id, reason, expectedVersion: d.version }, {
+      onSuccess: () => { setPendingAct(null); q.refetch(); trace.refetch(); },
+      onError: (e) => { setPendingAct(null); setErr(e instanceof ApiError ? (e.isConflict ? "تغيّرت الدفعة منذ آخر تحميل — أعد المحاولة." : e.message) : "تعذّر تنفيذ الإجراء."); },
     });
   }
+  function act(kind: "quarantine" | "release" | "recall") { setPendingAct(kind); }
 
   return (
     <Drawer open={!!id} onClose={onClose} title={d ? `الدفعة ${d.lotNumber}` : "تفاصيل الدفعة"} eyebrow="كتالوج الدفعات" icon={Boxes}>
@@ -130,6 +136,18 @@ export function LotDetailDrawer({ id, onClose }: { id: string | null; onClose: (
             {canR && (d.lifecycleStatus === "active" || d.lifecycleStatus === "quarantined") && <Button variant="danger" size="sm" disabled={busy} onClick={() => act("recall")}><AlertOctagon className="h-4 w-4" /> استدعاء</Button>}
             <Button variant="ghost" size="sm" onClick={() => window.print()}>طباعة بطاقة الدفعة</Button>
           </div>
+
+          <ReasonDialog
+            open={!!pendingAct}
+            title={pendingAct ? ACT_META[pendingAct].title : ""}
+            description={pendingAct ? ACT_META[pendingAct].desc : undefined}
+            confirmLabel={pendingAct ? ACT_META[pendingAct].label : "تأكيد"}
+            tone={pendingAct === "recall" ? "danger" : "primary"}
+            pending={busy}
+            error={null}
+            onConfirm={(reason) => pendingAct && confirmAct(pendingAct, reason)}
+            onClose={() => setPendingAct(null)}
+          />
         </div>
       )}
     </Drawer>

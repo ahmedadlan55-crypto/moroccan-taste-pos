@@ -35,6 +35,7 @@ const REC = require('../lib/stocktakeReconcile');
 const IDEM = require('../lib/idempotencyStore');
 const POST = require('../lib/inventoryTxPosters');
 const L = require('../lib/lotLedger');
+const IU = require('../lib/itemUnits');
 const requireRole = require('../middleware/auth').requireRole;
 
 const MGR = requireRole('admin', 'manager');
@@ -400,9 +401,21 @@ router.put('/:id/counts', BACKOFFICE, async (req, res) => {
         const [lr] = await conn.query('SELECT * FROM inv_stocktake_items WHERE stocktake_id=? AND ' + (lineId ? 'id=?' : 'item_id=?') + ' LIMIT 1 FOR UPDATE', [id, lineId || itemId]);
         if (!lr.length) continue;
         const line = lr[0];
-        const counted = (c.countedQty === null || c.countedQty === undefined || c.countedQty === '') ? null : Number(c.countedQty);
+        // Phase U — the count may be entered in a major unit or as a composite
+        // (major+minor). Resolve → base (frozen factor). NULL semantics preserved:
+        // no countedQty AND no major/minor pair ⇒ uncounted (NULL), NOT counted-zero.
+        const hasComposite = c.majorQty != null || c.minorQty != null;
+        const hasEntered = !(c.countedQty === null || c.countedQty === undefined || c.countedQty === '');
+        let counted = null, uom = null;
+        if (hasEntered || hasComposite) {
+          uom = await IU.resolveLineBase(conn, line.item_id, {
+            enteredUnitId: c.enteredUnitId, enteredUnitCode: c.enteredUnitCode,
+            enteredQty: c.countedQty, majorQty: c.majorQty, minorQty: c.minorQty, baseQty: c.baseQty,
+          }, 'stocktake');
+          counted = uom.baseQty;
+        }
         if (counted === null) {
-          await conn.query('UPDATE inv_stocktake_items SET counted_qty=NULL, counted_at=NULL, counted_seq=0, variance=0, variance_value=0, variance_pct=0, is_flagged=0, notes=?, reason_code=?, counted_by=? WHERE id=?',
+          await conn.query('UPDATE inv_stocktake_items SET counted_qty=NULL, counted_at=NULL, counted_seq=0, variance=0, variance_value=0, variance_pct=0, is_flagged=0, entered_qty=NULL, entered_unit_id=NULL, entered_unit_code=NULL, conversion_factor_snapshot=NULL, base_qty=NULL, notes=?, reason_code=?, counted_by=? WHERE id=?',
             [c.notes != null ? String(c.notes).slice(0, 400) : line.notes, c.reasonCode != null ? String(c.reasonCode).slice(0, 40) : line.reason_code, actor, line.id]);
           applied++;
           continue;
@@ -420,8 +433,9 @@ router.put('/:id/counts', BACKOFFICE, async (req, res) => {
         const net = await _netMovements(conn, doc.warehouse_id, line.item_id, doc.snapshot_seq, countedSeq);
         const r = REC.reconcileLine({ snapshotQty: line.snapshot_qty, netMovements: net, countedQty: counted, unitCost: line.unit_cost, thresholdPct: 10 });
         await conn.query(
-          'UPDATE inv_stocktake_items SET counted_qty=?, counted_at=NOW(), counted_seq=?, net_movements=?, theoretical_qty=?, variance=?, variance_value=?, variance_pct=?, is_flagged=?, notes=?, reason_code=?, counted_by=? WHERE id=?',
+          'UPDATE inv_stocktake_items SET counted_qty=?, counted_at=NOW(), counted_seq=?, net_movements=?, theoretical_qty=?, variance=?, variance_value=?, variance_pct=?, is_flagged=?, entered_qty=?, entered_unit_id=?, entered_unit_code=?, conversion_factor_snapshot=?, base_qty=?, notes=?, reason_code=?, counted_by=? WHERE id=?',
           [REC.round3(counted), countedSeq, REC.round3(net), r.theoreticalQty, r.variance, r.varianceValue, r.variancePct, r.isFlagged ? 1 : 0,
+            uom.enteredQty, uom.enteredUnitId, uom.enteredUnitCode, uom.conversionFactorSnapshot, uom.baseQty,
             c.notes != null ? String(c.notes).slice(0, 400) : line.notes, c.reasonCode != null ? String(c.reasonCode).slice(0, 40) : line.reason_code, actor, line.id]
         );
         // Phase 4B — tracked item: capture the per-lot counts (Σ must equal the

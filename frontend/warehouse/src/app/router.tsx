@@ -10,6 +10,8 @@ import { InventoryPage } from "@/features/inventory/InventoryPage";
 import { TransfersPage } from "@/features/transfers/TransfersPage";
 import { TransferCreateWizard } from "@/features/transfers/TransferCreateWizard";
 import { ReceiptsPage, ReceiptWizard } from "@/features/receipts/ReceiptsPage";
+import { PurchaseReceivingPage } from "@/features/purchase-receiving/PurchaseReceivingPage";
+import { PurchaseReceiveWizard } from "@/features/purchase-receiving/PurchaseReceiveWizard";
 import { IssuesPage, IssueWizard } from "@/features/issues/IssuesPage";
 import { AdjustmentsPage, AdjustmentWizard } from "@/features/adjustments/AdjustmentsPage";
 import { StocktakesPage } from "@/features/stocktakes/StocktakesPage";
@@ -20,16 +22,16 @@ import { ItemWizard } from "@/features/items/ItemWizard";
 import { ReplenishmentPage } from "@/features/replenishment/ReplenishmentPage";
 import { LotsPage } from "@/features/lots/LotsPage";
 import { ExpiryPage } from "@/features/expiry/ExpiryPage";
+import { NegativePolicyPage } from "@/features/negative-policy/NegativePolicyPage";
+import { DeficitsPage } from "@/features/negative-policy/DeficitsPage";
+import { ProductionPage } from "@/features/production/ProductionPage";
+import { ProductionCreateWizard } from "@/features/production/ProductionCreateWizard";
+import { ProductionDetailPage } from "@/features/production/ProductionDetailPage";
 // Analytics + Reports pull in the heavy recharts bundle — lazy-load them so the
 // initial dashboard/inventory entry stays light; the rest stay eager.
 const AnalyticsPage = lazy(() => import("@/features/analytics/AnalyticsPage").then((m) => ({ default: m.AnalyticsPage })));
 const ReportsPage = lazy(() => import("@/features/reports/ReportsPage").then((m) => ({ default: m.ReportsPage })));
 const ReportDetailPage = lazy(() => import("@/features/reports/ReportDetailPage").then((m) => ({ default: m.ReportDetailPage })));
-import {
-  ProductionPage,
-  SystemMapPage,
-} from "@/features/placeholders";
-
 // Suspense wrapper for the lazy (code-split) routes.
 function Lazy({ children }: { children: React.ReactNode }) {
   return <Suspense fallback={<LoadingState />}>{children}</Suspense>;
@@ -63,6 +65,8 @@ export function AppRouter() {
             <Route path="expiry" element={<ExpiryPage />} />
             <Route path="receipts" element={<ReceiptsPage />} />
             <Route path="receipts/new" element={<ReceiptWizard />} />
+            <Route path="purchase-receiving" element={<PurchaseReceivingPage />} />
+            <Route path="purchase-receiving/:purchaseId" element={<PurchaseReceiveWizard />} />
             <Route path="issues" element={<IssuesPage />} />
             <Route path="issues/new" element={<IssueWizard />} />
             <Route path="transfers" element={<TransfersPage />} />
@@ -73,10 +77,14 @@ export function AppRouter() {
             <Route path="adjustments" element={<AdjustmentsPage />} />
             <Route path="adjustments/new" element={<AdjustmentWizard />} />
             <Route path="production" element={<ProductionPage />} />
+            <Route path="production/new" element={<ProductionCreateWizard />} />
+            <Route path="production/:id" element={<ProductionDetailPage />} />
+            <Route path="production/:id/edit" element={<ProductionCreateWizard />} />
             <Route path="analytics" element={<Lazy><AnalyticsPage /></Lazy>} />
             <Route path="reports" element={<Lazy><ReportsPage /></Lazy>} />
             <Route path="reports/:reportType" element={<Lazy><ReportDetailPage /></Lazy>} />
-            <Route path="system-map" element={<SystemMapPage />} />
+            <Route path="negative-policy" element={<NegativePolicyPage />} />
+            <Route path="deficits" element={<DeficitsPage />} />
             <Route path="*" element={<NotFound />} />
           </Route>
         </Routes>
@@ -88,7 +96,7 @@ export function AppRouter() {
 function NotFound() {
   return (
     <div className="surface grid place-items-center gap-3 p-12 text-center">
-      <div className="text-2xl font-extrabold text-slate-900">٤٠٤</div>
+      <div className="text-2xl font-extrabold text-slate-900">404</div>
       <p className="text-sm font-medium text-slate-500">الصفحة غير موجودة.</p>
       <Link className="text-sm font-bold text-teal-700 hover:underline" to="/">
         العودة إلى مركز المستودعات

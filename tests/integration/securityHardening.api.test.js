@@ -68,12 +68,16 @@ async function waitForServer() {
   try {
     if (!(await waitForServer())) { console.error('server did not start'); process.exit(2); }
 
-    // 1) Scoped CSP on /warehouse-v2 (present regardless of whether the bundle is built)
-    const csp = await req('GET', '/warehouse-v2/inventory');
+    // 1) Scoped CSP on /warehouse — the section's primary mount (present
+    // regardless of whether the bundle is built). /warehouse-v2 is now a
+    // 301 compat alias onto it (integration phase).
+    const csp = await req('GET', '/warehouse/inventory');
     const cspHeader = csp.headers && csp.headers['content-security-policy'];
-    check('/warehouse-v2 carries a Content-Security-Policy header', !!cspHeader, cspHeader);
+    check('/warehouse carries a Content-Security-Policy header', !!cspHeader, cspHeader);
     check('CSP restricts default-src + script-src to self', !!cspHeader && cspHeader.indexOf("default-src 'self'") !== -1 && cspHeader.indexOf("script-src 'self'") !== -1, cspHeader);
     check('CSP sets object-src none + frame-ancestors none', !!cspHeader && cspHeader.indexOf("object-src 'none'") !== -1 && cspHeader.indexOf("frame-ancestors 'none'") !== -1, cspHeader);
+    const alias = await req('GET', '/warehouse-v2/inventory');
+    check('/warehouse-v2 alias → 301 to /warehouse (path preserved)', alias.status === 301 && String((alias.headers && alias.headers.location) || '').indexOf('/warehouse/inventory') === 0, { status: alias.status, location: alias.headers && alias.headers.location });
     // The legacy API surface must NOT inherit the SPA CSP.
     const apiCsp = await req('GET', '/api/version');
     check('/api responses do NOT carry the SPA CSP (legacy unaffected)', !(apiCsp.headers && apiCsp.headers['content-security-policy']), apiCsp.headers && apiCsp.headers['content-security-policy']);

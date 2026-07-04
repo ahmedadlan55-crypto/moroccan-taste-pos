@@ -248,8 +248,11 @@ router.post('/:id/items/scan', async (req, res) => {
       if (r.length) item = r[0];
     }
     if (!item && b.itemCode) {
-      const [r] = await db.query(`SELECT * FROM inv_items WHERE id = ? OR name LIKE ? LIMIT 1`,
-        [b.itemCode, '%'+b.itemCode+'%']);
+      // Phase W4 — match id, barcode (primary + secondary), then name.
+      const bn = require('../lib/barcode').normalize(b.itemCode);
+      const [r] = await db.query(
+        'SELECT * FROM inv_items WHERE id = ? OR barcode_norm = ? OR id IN (SELECT item_id FROM item_barcodes WHERE code_norm = ?) OR name LIKE ? LIMIT 1',
+        [b.itemCode, bn, bn, '%' + b.itemCode + '%']);
       if (r.length) item = r[0];
     }
     if (!item) return res.status(404).json({ error: 'الصنف غير موجود' });

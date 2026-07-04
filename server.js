@@ -126,7 +126,7 @@ app.use('/api/', function(req, res, next) {
 // 7. Global JWT authentication
 // Auth module is FULLY public (login, refresh, init, users CRUD)
 // Other modules require token except specific paths
-app.use('/api/', function(req, res, next) {
+app.use('/api/', async function(req, res, next) {
   if (req.method === 'OPTIONS') return next();
 
   // Build full path for checking
@@ -154,6 +154,14 @@ app.use('/api/', function(req, res, next) {
     try {
       var token = authHeader.split(' ')[1];
       var decoded = jwt.verify(token, process.env.JWT_SECRET);
+      // Phase A — session-version gate: a password change bumps users.token_version,
+      // invalidating every token issued before it (revokes other sessions).
+      try {
+        const _sv = require('./lib/sessionVersion');
+        if (!(await _sv.isTokenCurrent(decoded))) {
+          return res.status(401).json({ success: false, error: 'انتهت الجلسة — يرجى تسجيل الدخول مجددًا' });
+        }
+      } catch (_) { /* fail open on cache/DB error */ }
       req.user = decoded;
       return next();
     } catch (err) {
@@ -243,10 +251,19 @@ app.use(express.static(path.join(__dirname, 'public'), {
 // RC cutover — when v2 is DISABLED, intercept the SPA with a maintenance notice
 // (registered BEFORE the static mount so it always wins). Legacy UI unaffected.
 if (!WAREHOUSE_V2_ENABLED) {
-  app.all(/^\/warehouse-v2(?:\/.*)?$/, function (req, res) {
+  app.all(/^\/warehouse(?:-v2)?(?:\/.*)?$/, function (req, res) {
     res.status(503).type('html').send('<!doctype html><html lang="ar" dir="rtl"><meta charset="utf-8"><title>صيانة</title><body style="font-family:Tahoma,Arial,sans-serif;padding:3rem;text-align:center;color:#172033"><h2>نظام المستودعات (v2) متوقف مؤقتًا</h2><p>يُرجى استخدام الواجهة القديمة. (WAREHOUSE_V2_ENABLED=0)</p></body></html>');
   });
 }
+
+// Back-compat alias: the section moved from /warehouse-v2 to /warehouse (it is
+// a first-class part of the main system now). Old bookmarks/deep links keep
+// working via a 301 that preserves the sub-path and query string.
+app.get(/^\/warehouse-v2(\/.*)?$/, function (req, res) {
+  const rest = req.params[0] || '';
+  const qs = req.originalUrl.indexOf('?') !== -1 ? req.originalUrl.slice(req.originalUrl.indexOf('?')) : '';
+  res.redirect(301, '/warehouse' + rest + qs);
+});
 
 // ── warehouse-v2 — strict Content-Security-Policy (SPA scope only) ──────
 // The global helmet CSP stays disabled because the LEGACY app (served from
@@ -254,7 +271,7 @@ if (!WAREHOUSE_V2_ENABLED) {
 // (no inline <script>), so a strict CSP can be applied scoped to /warehouse-v2
 // without affecting the legacy UI. style-src keeps 'unsafe-inline' for
 // Tailwind/React element styles (style attributes, not script).
-app.use('/warehouse-v2', function (req, res, next) {
+app.use('/warehouse', function (req, res, next) {
   res.setHeader('Content-Security-Policy', [
     "default-src 'self'",
     "base-uri 'self'",
@@ -272,7 +289,7 @@ app.use('/warehouse-v2', function (req, res, next) {
 
 var _whDist = path.join(__dirname, 'frontend', 'warehouse', 'dist');
 if (_pwaFs.existsSync(path.join(_whDist, 'index.html'))) {
-  app.use('/warehouse-v2', express.static(_whDist, {
+  app.use('/warehouse', express.static(_whDist, {
     setHeaders: function(res, filePath) {
       if (/\.html$/i.test(filePath)) {
         res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
@@ -281,18 +298,66 @@ if (_pwaFs.existsSync(path.join(_whDist, 'index.html'))) {
       }
     }
   }));
-  // History fallback: any extensionless path under /warehouse-v2 (a client
-  // route like /warehouse-v2/inventory, incl. hard refresh) returns index.html.
-  // Paths that look like a file (have an extension) fall through to a normal
-  // 404 instead of being masked by HTML.
-  app.get(/^\/warehouse-v2(?:\/.*)?$/, function(req, res, next) {
+  // History fallback: any extensionless path under /warehouse (a client route
+  // like /warehouse/inventory, incl. hard refresh) returns index.html. Paths
+  // that look like a file (have an extension) fall through to a normal 404
+  // instead of being masked by HTML.
+  app.get(/^\/warehouse(?:\/.*)?$/, function(req, res, next) {
     if (/\.[a-zA-Z0-9]+$/.test(req.path)) return next();
     res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
     res.sendFile(path.join(_whDist, 'index.html'));
   });
-  console.log('[warehouse-v2] SPA mounted at /warehouse-v2');
+  console.log('[warehouse] SPA mounted at /warehouse (alias: /warehouse-v2 → 301)');
 } else {
-  console.warn('[warehouse-v2] bundle not found — run: npm --prefix frontend/warehouse run build');
+  console.warn('[warehouse] bundle not found — run: npm --prefix frontend/warehouse run build');
+}
+
+// ── Cashier V2 React app (Strangler beside the legacy /pos) ─────────────
+// Served at /pos-v2 behind POS_V2_ENABLED (default ON outside production so
+// dev/staging always sees it; production requires the explicit flag). The
+// legacy /pos PWA is untouched — it remains the rollback path.
+var POS_V2_ENABLED = process.env.NODE_ENV === 'production'
+  ? /^(1|true|on|yes)$/i.test(String(process.env.POS_V2_ENABLED || '').trim())
+  : !/^(0|false|off|no)$/i.test(String(process.env.POS_V2_ENABLED || '').trim());
+if (!POS_V2_ENABLED) {
+  app.all(/^\/pos-v2(?:\/.*)?$/, function (req, res) {
+    res.status(503).type('html').send('<!doctype html><html lang="ar" dir="rtl"><meta charset="utf-8"><title>صيانة</title><body style="font-family:Tahoma,Arial,sans-serif;padding:3rem;text-align:center;color:#172033"><h2>كاشير V2 غير مفعّل</h2><p>استخدم واجهة البيع الحالية /pos. (POS_V2_ENABLED=0)</p></body></html>');
+  });
+}
+app.use('/pos-v2', function (req, res, next) {
+  res.setHeader('Content-Security-Policy', [
+    "default-src 'self'",
+    "base-uri 'self'",
+    "object-src 'none'",
+    "frame-ancestors 'none'",
+    "img-src 'self' data: blob:",
+    "font-src 'self' data:",
+    "style-src 'self' 'unsafe-inline'",
+    "script-src 'self'",
+    "connect-src 'self'",
+    "form-action 'self'"
+  ].join('; '));
+  next();
+});
+var _posDist = path.join(__dirname, 'frontend', 'pos', 'dist');
+if (_pwaFs.existsSync(path.join(_posDist, 'index.html'))) {
+  app.use('/pos-v2', express.static(_posDist, {
+    setHeaders: function(res, filePath) {
+      if (/\.html$/i.test(filePath)) {
+        res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
+      } else if (/[/\\]assets[/\\]/.test(filePath)) {
+        res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
+      }
+    }
+  }));
+  app.get(/^\/pos-v2(?:\/.*)?$/, function(req, res, next) {
+    if (/\.[a-zA-Z0-9]+$/.test(req.path)) return next();
+    res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
+    res.sendFile(path.join(_posDist, 'index.html'));
+  });
+  console.log('[pos-v2] SPA mounted at /pos-v2');
+} else {
+  console.warn('[pos-v2] bundle not found — run: npm --prefix frontend/pos run build');
 }
 
 // RC hardening — surface a loud warning if warehouse-v2 is exposed WITHOUT
@@ -327,7 +392,11 @@ app.get('/api/version', (req, res) => {
     deployId: process.env.RAILWAY_DEPLOYMENT_ID || '',
     env:     process.env.NODE_ENV || 'development',
     startedAt: SERVER_BOOT_ISO,
-    now: new Date().toISOString()
+    now: new Date().toISOString(),
+    // The shared header reads this to decide which warehouse link to render
+    // (V2 section at /warehouse vs the legacy /inventory/ rollback UI) — the
+    // user must never see two warehouse links at once.
+    warehouseV2: WAREHOUSE_V2_ENABLED
   });
 });
 
@@ -401,6 +470,8 @@ app.use('/api/auth', require('./routes/auth'));
 app.use('/api/menu', require('./routes/menu'));
 app.use('/api/sales', require('./routes/sales'));
 app.use('/api/shifts', require('./routes/shifts'));
+// Cashier V2 — cart lifecycle ONLY (checkout money path stays /api/sales).
+app.use('/api/pos/v2', require('./routes/pos-v2'));
 // Phase 3B — independent inventory transactions (receipts / issues / adjustments)
 // at a CLEAN namespace /api/inventory/v2/* so the legacy /api/inventory/adjustments
 // (delta model + legacy HTML UI) is never shadowed. Mounted BEFORE inventory.js so
@@ -427,11 +498,22 @@ app.use('/api/inventory/v2', function (req, res, next) {
   return res.status(503).json({ success: false, code: 'V2_DISABLED', error: 'نظام warehouse-v2 معطّل مؤقتًا — لا يمكن تنفيذ عمليات كتابية. استخدم النظام القديم.' });
 });
 app.use('/api/inventory/v2/stocktakes', require('./routes/inventory-stocktakes'));
+// Phase P1 — Production Orders V2 (full lifecycle: draft→approved→in_progress→
+// completed→closed, +cancel/reverse/delete). Path-scoped mount so it inherits
+// scope/canary/metrics; claimed BEFORE the sibling v2 routers.
+app.use('/api/inventory/v2/production-orders', require('./routes/inventory-production'));
+// Phase W2b — negative-stock policy settings (mounted BEFORE the doc router so
+// /negative-policy is claimed here; sibling scoped router, canary-gated above).
+app.use('/api/inventory/v2/negative-policy', require('./routes/negative-policy'));
+// Phase W6 — warehouse management CRUD (create/edit/activate/deactivate/hard-
+// delete guard/scope assignments). Path-scoped like the other v2 routers.
+app.use('/api/inventory/v2/warehouses', require('./routes/inventory-warehouses'));
 // Phase 4A — item master + replenishment (paths /items, /replenishment,
 // /categories, /units don't collide with the doc router's /receipts|/issues|…).
 app.use('/api/inventory/v2', require('./routes/inventory-items'));
 app.use('/api/inventory/v2', require('./routes/inventory-lots'));
 app.use('/api/inventory/v2', require('./routes/inventory-transactions'));
+try { app.use('/api/accounting', require('./routes/accounting')); } catch (e) { console.warn('[mod:accounting]', e.message); }
 app.use('/api/inventory', require('./routes/inventory'));
 // Phase 2B — read-only Analytics + Reports (inherits the warehouse-scope
 // middleware mounted on /api/inventory above; /analytics/* + /reports/* paths
@@ -531,6 +613,27 @@ app.get('*', (req, res) => {
 const fs = require('fs');
 const db = require('./db/connection');
 
+// Phase A — mark users still on a default password with must_change_password=1
+// so login routes them to the in-system change-password page (without blocking
+// them from actually changing it). Cheap: only never-changed accounts, top defaults.
+async function flagDefaultPasswordUsers() {
+  const bcrypt = require('bcryptjs');
+  const DEFAULTS = ['admin123', 'admin', 'password', '123456', 'changeme'];
+  let rows;
+  try {
+    [rows] = await db.query(
+      "SELECT id, username, password FROM users WHERE active=1 AND COALESCE(must_change_password,0)=0 AND password_changed_at IS NULL LIMIT 500"
+    );
+  } catch (_) { return; }
+  let flagged = 0;
+  for (const u of rows) {
+    let hit = false;
+    for (const d of DEFAULTS) { try { if (await bcrypt.compare(d, u.password)) { hit = true; break; } } catch (_) {} }
+    if (hit) { try { await db.query('UPDATE users SET must_change_password=1 WHERE id=?', [u.id]); flagged++; } catch (_) {} }
+  }
+  if (flagged) console.log('[pw-flag] flagged ' + flagged + ' user(s) still on a default password → must_change_password=1');
+}
+
 async function autoInitDB() {
   // Retry loop — Railway MySQL may not be ready immediately on cold start
   const MAX_RETRIES = 5;
@@ -556,11 +659,30 @@ async function autoInitDB() {
             console.log('Schema warning:', e.message.substring(0, 120));
           }
         }
-        // Create default admin user
+        // Create initial admin user.
+        // SECURITY: in production a default password is FORBIDDEN — the initial
+        // admin password must come from ADMIN_INITIAL_PASSWORD (min 12 chars,
+        // never logged). Without it, no admin is seeded and the operator must
+        // set the env var and restart (or create the admin manually and then
+        // run scripts/rotate-admin-password.js).
         const bcrypt = require('bcryptjs');
-        const hash = await bcrypt.hash('admin123', 10);
-        await db.query("INSERT IGNORE INTO users (username, password, role) VALUES ('admin', ?, 'admin')", [hash]);
-        console.log('Database ready! Default login: admin / admin123');
+        const isProd = process.env.NODE_ENV === 'production';
+        const initialPw = process.env.ADMIN_INITIAL_PASSWORD || '';
+        if (isProd) {
+          if (initialPw.length >= 12) {
+            const hash = await bcrypt.hash(initialPw, 12);
+            await db.query("INSERT IGNORE INTO users (username, password, role) VALUES ('admin', ?, 'admin')", [hash]);
+            console.log('Database ready! Admin seeded from ADMIN_INITIAL_PASSWORD (value not logged).');
+          } else {
+            console.error('[SECURITY] Empty database in production and no valid ADMIN_INITIAL_PASSWORD (>=12 chars).');
+            console.error('[SECURITY] Refusing to seed a default admin password. Set ADMIN_INITIAL_PASSWORD and restart.');
+          }
+        } else {
+          // Local development convenience ONLY — never reached when NODE_ENV=production.
+          const hash = await bcrypt.hash(initialPw.length >= 12 ? initialPw : 'admin123', 10);
+          await db.query("INSERT IGNORE INTO users (username, password, role) VALUES ('admin', ?, 'admin')", [hash]);
+          console.log('Database ready! Dev-only default admin created (rotate via scripts/rotate-admin-password.js before any real deployment).');
+        }
       } else {
         console.log('Database connection OK — tables already exist.');
       }
@@ -569,6 +691,10 @@ async function autoInitDB() {
       // v6.20.0 — unify collations AFTER all tables exist (fixes mixed
       // utf8mb4_unicode_ci / utf8mb4_0900_ai_ci JOIN failures on MySQL 8).
       await normalizeCollations();
+      // Phase A — flag any user still on a default password so they are routed
+      // to the in-system change-password page after login (best-effort, cheap:
+      // only never-changed accounts, only the top defaults).
+      try { await flagDefaultPasswordUsers(); } catch (e) { console.warn('[pw-flag]', e.message); }
       return; // success — exit retry loop
     } catch (e) {
       console.error(`[DB] Connection attempt ${attempt}/${MAX_RETRIES} failed: ${e.message}`);
@@ -1877,6 +2003,10 @@ async function runMigrations() {
   // Security: account lockout columns
   await addColumnIfMissing('users', 'failed_attempts', "INT DEFAULT 0");
   await addColumnIfMissing('users', 'locked_until', "DATETIME DEFAULT NULL");
+  // Phase A — in-system password change: session-version revocation + forced-change flag
+  await addColumnIfMissing('users', 'token_version', "INT NOT NULL DEFAULT 1");
+  await addColumnIfMissing('users', 'must_change_password', "TINYINT(1) NOT NULL DEFAULT 0");
+  await addColumnIfMissing('users', 'password_changed_at', "DATETIME NULL");
 
   // User roles ENUM — include 'employee' for employee portal
   try { await db.query("ALTER TABLE users MODIFY COLUMN role ENUM('admin','cashier','manager','custody','employee') DEFAULT 'cashier'"); } catch(e) {}
@@ -3075,6 +3205,43 @@ async function runMigrations() {
     }
   } catch(e) {}
 
+  // ── Phase U — per-item Units of Measure (base + major units, frozen factors) ──
+  // Each item has exactly ONE base unit (conversion_to_base = 1). Major units
+  // (carton/bag/box) carry a per-item conversion_to_base (e.g. 1 carton = 12).
+  // Stock/lots/WAC/GL are ALWAYS in the base unit; documents freeze the factor.
+  // References the existing `units` master by unit_code; never duplicates it.
+  await createTableIfMissing('item_units', `
+    CREATE TABLE item_units (
+      id VARCHAR(50) PRIMARY KEY,
+      item_id VARCHAR(50) NOT NULL,
+      unit_id VARCHAR(20) NULL,
+      unit_name VARCHAR(100) NOT NULL,
+      unit_code VARCHAR(30) NOT NULL,
+      is_base TINYINT(1) NOT NULL DEFAULT 0,
+      conversion_to_base DECIMAL(18,6) NOT NULL DEFAULT 1,
+      quantity_precision TINYINT NOT NULL DEFAULT 2,
+      allow_purchase TINYINT(1) NOT NULL DEFAULT 1,
+      allow_receipt TINYINT(1) NOT NULL DEFAULT 1,
+      allow_issue TINYINT(1) NOT NULL DEFAULT 1,
+      allow_transfer TINYINT(1) NOT NULL DEFAULT 1,
+      allow_stocktake TINYINT(1) NOT NULL DEFAULT 1,
+      allow_production TINYINT(1) NOT NULL DEFAULT 1,
+      allow_sale TINYINT(1) NOT NULL DEFAULT 1,
+      barcode_id VARCHAR(50) NULL,
+      is_active TINYINT(1) NOT NULL DEFAULT 1,
+      version INT NOT NULL DEFAULT 1,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      created_by VARCHAR(100) NULL,
+      updated_at TIMESTAMP NULL,
+      updated_by VARCHAR(100) NULL,
+      UNIQUE KEY uq_item_unit_code (item_id, unit_code),
+      INDEX idx_item_units_item (item_id),
+      INDEX idx_item_units_base (item_id, is_base)
+    ) ENGINE=InnoDB
+  `);
+  // NOTE: the per-line UoM snapshot columns are added later in _migrateUomLineColumns()
+  // (invoked near the end of runMigrations, AFTER the v2 document line tables exist).
+
   // 4) Price lists (برند/فرع-specific pricing)
   await createTableIfMissing('price_lists', `
     CREATE TABLE price_lists (
@@ -4217,6 +4384,14 @@ async function runMigrations() {
   // (credit) account so STOCK_GAIN is never a silent default.
   await addColumnIfMissing('inv_receipts', 'reason', 'VARCHAR(200)');
   await addColumnIfMissing('inv_receipts', 'counter_account_code', 'VARCHAR(20)');
+  // Phase W3 — link a V2 receipt back to a legacy purchase / supplier (partial
+  // receiving). All nullable → standalone receipts are unaffected.
+  await addColumnIfMissing('inv_receipts', 'purchase_id', 'VARCHAR(50) NULL');
+  await addColumnIfMissing('inv_receipts', 'supplier_id', 'VARCHAR(50) NULL');
+  try { await db.query('CREATE INDEX idx_inv_receipts_purchase ON inv_receipts (purchase_id)'); } catch (_) {}
+  // Dedicated V2 partial-receive status on the legacy purchases table (does NOT
+  // touch the legacy `receive_status` enum which has its own PO-approval meaning).
+  try { await addColumnIfMissing('purchases', 'v2_receive_status', "ENUM('none','partial','received') NOT NULL DEFAULT 'none'"); } catch (_) {}
   // Unified append-only audit timeline for all three doc types (one row per
   // transition, written inside the SAME txn as the state change).
   await createTableIfMissing('inv_tx_events', `
@@ -4242,6 +4417,50 @@ async function runMigrations() {
       ymd CHAR(8) NOT NULL,
       last_serial INT NOT NULL DEFAULT 0,
       PRIMARY KEY (doc_type, ymd)
+    ) ENGINE=InnoDB
+  `);
+
+  // ─── Phase W2 — negative-stock policy (settings + deficit ledger) ───────────
+  // Additive, isolated. Behavior is gated at issue time by
+  // NEGATIVE_STOCK_POLICY_ENABLED; with the seeded global/block row the guard is
+  // behaviorally identical to today. Mirrors db/migrations/0012.
+  await createTableIfMissing('negative_stock_policy', `
+    CREATE TABLE IF NOT EXISTS negative_stock_policy (
+      id VARCHAR(40) NOT NULL PRIMARY KEY,
+      scope ENUM('global','warehouse','item') NOT NULL,
+      warehouse_id VARCHAR(50) NULL,
+      item_id VARCHAR(50) NULL,
+      policy ENUM('block','controlled','allow') NOT NULL DEFAULT 'block',
+      max_negative_qty DECIMAL(18,3) NOT NULL DEFAULT 0,
+      require_reason TINYINT(1) NOT NULL DEFAULT 1,
+      is_enabled TINYINT(1) NOT NULL DEFAULT 1,
+      version INT NOT NULL DEFAULT 1,
+      created_by VARCHAR(64) NULL, updated_by VARCHAR(64) NULL,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+      UNIQUE KEY uq_scope (scope, warehouse_id, item_id),
+      KEY idx_warehouse (warehouse_id), KEY idx_item (item_id)
+    ) ENGINE=InnoDB
+  `);
+  try {
+    await db.query("INSERT INTO negative_stock_policy (id, scope, warehouse_id, item_id, policy, max_negative_qty, require_reason, is_enabled, created_by) " +
+      "SELECT 'NSP-GLOBAL','global',NULL,NULL,'block',0,1,1,'bootstrap' FROM DUAL " +
+      "WHERE NOT EXISTS (SELECT 1 FROM negative_stock_policy WHERE scope='global' AND warehouse_id IS NULL AND item_id IS NULL)");
+  } catch (_) {}
+  await createTableIfMissing('stock_deficits', `
+    CREATE TABLE IF NOT EXISTS stock_deficits (
+      id VARCHAR(40) NOT NULL PRIMARY KEY,
+      warehouse_id VARCHAR(50) NOT NULL, item_id VARCHAR(50) NOT NULL,
+      origin_doc_type VARCHAR(24) NOT NULL, origin_doc_id VARCHAR(50) NOT NULL,
+      deficit_qty DECIMAL(18,3) NOT NULL, remaining_qty DECIMAL(18,3) NOT NULL,
+      unit_cost_at_issue DECIMAL(18,4) NOT NULL DEFAULT 0,
+      reason VARCHAR(400) NOT NULL,
+      status ENUM('open','partial','covered','adjusted') NOT NULL DEFAULT 'open',
+      created_by VARCHAR(64) NULL, approved_by VARCHAR(64) NULL,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP, closed_at TIMESTAMP NULL,
+      version INT NOT NULL DEFAULT 1,
+      KEY idx_open (status, warehouse_id, item_id),
+      KEY idx_origin (origin_doc_type, origin_doc_id)
     ) ENGINE=InnoDB
   `);
 
@@ -4345,6 +4564,28 @@ async function runMigrations() {
   await addColumnIfMissing('inv_items', 'description', "TEXT");
   await addColumnIfMissing('inv_items', 'notes', "VARCHAR(500)");
   try { await db.query('CREATE UNIQUE INDEX uq_inv_items_sku_norm ON inv_items (sku_norm)'); } catch (e) { /* exists or dup data */ }
+  // Phase W4 — unified barcode. Primary barcode on inv_items (multiple NULLs
+  // allowed by UNIQUE) + a 1:N item_barcodes table for size variants. SKU is
+  // untouched. Both normalized columns are uniquely indexed for O(1) scan lookup.
+  await addColumnIfMissing('inv_items', 'barcode', "VARCHAR(80)");
+  await addColumnIfMissing('inv_items', 'barcode_norm', "VARCHAR(80)");
+  try { await db.query('CREATE UNIQUE INDEX uq_inv_items_barcode_norm ON inv_items (barcode_norm)'); } catch (e) { /* exists or dup data */ }
+  await createTableIfMissing('item_barcodes', `
+    CREATE TABLE IF NOT EXISTS item_barcodes (
+      id VARCHAR(40) PRIMARY KEY,
+      item_id VARCHAR(50) NOT NULL,
+      code VARCHAR(80) NOT NULL,
+      code_norm VARCHAR(80) NOT NULL,
+      size_variant VARCHAR(60) NULL,
+      is_primary TINYINT(1) NOT NULL DEFAULT 0,
+      version INT NOT NULL DEFAULT 1,
+      created_by VARCHAR(64) NULL,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+      UNIQUE KEY uq_code_norm (code_norm),
+      KEY idx_item (item_id)
+    ) ENGINE=InnoDB
+  `);
   // Per-(warehouse, item) replenishment rules. min/reorder/max/safety/lead-time
   // are per-warehouse here (inv_items.min_stock stays the GLOBAL fallback for
   // legacy reads). The replenishment engine reads these; nothing posts stock.
@@ -4605,6 +4846,163 @@ async function runMigrations() {
       PRIMARY KEY (ymd)
     ) ENGINE=InnoDB
   `);
+
+  // ═══════════════════════════════════════════════════════════
+  // Phase P1 — Production Orders V2 (routes/inventory-production.js)
+  // ═══════════════════════════════════════════════════════════
+  // V2 lifecycle values are APPENDED to the ENUM (append-only → existing rows
+  // keep their string values; MODIFY is a no-op when already applied). Legacy
+  // writes only planned/released; V2 writes only the new set — zero overlap.
+  await modifyColumnDefinition('production_orders', 'status',
+    "ENUM('planned','released','in_progress','completed','closed','cancelled','draft','approved','reversed') DEFAULT 'planned'");
+  // source separates V2 documents from legacy ones (belt-and-braces on top of
+  // the disjoint status sets); every V2 conditional UPDATE adds AND source='v2'.
+  await addColumnIfMissing('production_orders', 'source', "VARCHAR(10) NOT NULL DEFAULT 'legacy'");
+  await addColumnIfMissing('production_orders', 'version', 'INT NOT NULL DEFAULT 1');
+  await addColumnIfMissing('production_orders', 'approved_by', 'VARCHAR(100) NULL');
+  await addColumnIfMissing('production_orders', 'approved_at', 'DATETIME NULL');
+  // qty_waste = Σ output-event waste (qty_scrap kept in sync for legacy reports).
+  await addColumnIfMissing('production_orders', 'qty_waste', 'DECIMAL(14,4) DEFAULT 0');
+  // wip_balance = running WIP residual (Σ issues − Σ output relief); close flushes it.
+  await addColumnIfMissing('production_orders', 'wip_balance', 'DECIMAL(14,4) DEFAULT 0');
+  await addColumnIfMissing('production_orders', 'closed_by', 'VARCHAR(100) NULL');
+  await addColumnIfMissing('production_orders', 'closed_at', 'DATETIME NULL');
+  await addColumnIfMissing('production_orders', 'close_variance', 'DECIMAL(14,4) DEFAULT 0');
+  await addColumnIfMissing('production_orders', 'gl_close_id', 'VARCHAR(60) NULL');
+  await addColumnIfMissing('production_orders', 'cancelled_by', 'VARCHAR(100) NULL');
+  await addColumnIfMissing('production_orders', 'cancelled_at', 'DATETIME NULL');
+  await addColumnIfMissing('production_orders', 'cancel_reason', 'VARCHAR(500) NULL');
+  await addColumnIfMissing('production_orders', 'reversed_by', 'VARCHAR(100) NULL');
+  await addColumnIfMissing('production_orders', 'reversed_at', 'DATETIME NULL');
+  await addColumnIfMissing('production_orders', 'reverse_reason', 'VARCHAR(500) NULL');
+  // One reversing journal per original journal → array of ids.
+  await addColumnIfMissing('production_orders', 'reverse_gl_ids', 'JSON DEFAULT NULL');
+
+  // One row per PARTIAL materials issue. production_consumption stays the
+  // per-component AGGREGATE (qty_planned/qty_actual); events carry their own
+  // frozen costs + GL journal and are the lot-ledger reference scope
+  // (inventory_lot_movements reference_type='prod_issue', reference_id=event id)
+  // so each event reverses exactly.
+  await createTableIfMissing('production_issue_events', `
+    CREATE TABLE production_issue_events (
+      id VARCHAR(60) PRIMARY KEY,
+      production_order_id VARCHAR(60) NOT NULL,
+      event_no INT NOT NULL,
+      materials_cost DECIMAL(14,4) DEFAULT 0,
+      labor_cost DECIMAL(14,4) DEFAULT 0,
+      overhead_cost DECIMAL(14,4) DEFAULT 0,
+      gl_journal_id VARCHAR(60) NULL,
+      issued_by VARCHAR(100) NULL,
+      issued_at DATETIME NULL,
+      notes VARCHAR(500) NULL,
+      INDEX idx_pie_po (production_order_id)
+    ) ENGINE=InnoDB
+  `);
+  await createTableIfMissing('production_issue_lines', `
+    CREATE TABLE production_issue_lines (
+      id VARCHAR(60) PRIMARY KEY,
+      issue_event_id VARCHAR(60) NOT NULL,
+      production_order_id VARCHAR(60) NOT NULL,
+      item_id VARCHAR(50) NOT NULL,
+      warehouse_id VARCHAR(50) NOT NULL,
+      qty DECIMAL(14,4) NOT NULL,
+      unit_cost DECIMAL(14,4) NOT NULL,
+      line_total DECIMAL(14,4) NOT NULL,
+      INDEX idx_pil_event (issue_event_id),
+      INDEX idx_pil_po (production_order_id, item_id)
+    ) ENGINE=InnoDB
+  `);
+  // production_output already supports multiple rows per order; V2 extends each
+  // row into a full OUTPUT EVENT (good + waste + its own journal).
+  await addColumnIfMissing('production_output', 'qty_waste', 'DECIMAL(14,4) DEFAULT 0');
+  await addColumnIfMissing('production_output', 'waste_cost', 'DECIMAL(14,4) DEFAULT 0');
+  await addColumnIfMissing('production_output', 'gl_journal_id', 'VARCHAR(60) NULL');
+  await addColumnIfMissing('production_output', 'created_by', 'VARCHAR(100) NULL');
+
+  // ═══════════════════════════════════════════════════════════
+  // Cashier V2 (routes/pos-v2.js) — CART LIFECYCLE ONLY.
+  // The financial write (sale + ZATCA + GL + stock) stays the legacy
+  // POST /api/sales; pos_orders.id is the clientOrderId that makes the
+  // checkout replay-safe. Idempotent CREATEs — never touch legacy tables.
+  // ═══════════════════════════════════════════════════════════
+  await createTableIfMissing('pos_orders', `
+    CREATE TABLE pos_orders (
+      id VARCHAR(40) PRIMARY KEY,
+      status ENUM('open','held','submitted','completed','voided') NOT NULL DEFAULT 'open',
+      order_type ENUM('dine_in','takeaway','delivery') NOT NULL DEFAULT 'takeaway',
+      table_no VARCHAR(20) NULL,
+      shift_id VARCHAR(40) NULL,
+      username VARCHAR(100) NULL,
+      device_id VARCHAR(60) NULL,
+      warehouse_id VARCHAR(50) NULL,
+      channel_id VARCHAR(50) NULL,
+      channel_name VARCHAR(100) NULL,
+      customer_id VARCHAR(50) NULL,
+      discount_type ENUM('PERCENT','FIXED') NULL,
+      discount_value DECIMAL(10,2) NOT NULL DEFAULT 0,
+      discount_name VARCHAR(100) NULL,
+      subtotal DECIMAL(12,2) NOT NULL DEFAULT 0,
+      line_discount_total DECIMAL(12,2) NOT NULL DEFAULT 0,
+      discount_total DECIMAL(12,2) NOT NULL DEFAULT 0,
+      vat_total DECIMAL(12,2) NOT NULL DEFAULT 0,
+      total DECIMAL(12,2) NOT NULL DEFAULT 0,
+      note VARCHAR(300) NULL,
+      sale_id VARCHAR(50) NULL,
+      invoice_number VARCHAR(40) NULL,
+      origin ENUM('online','offline') NOT NULL DEFAULT 'online',
+      version INT NOT NULL DEFAULT 1,
+      held_at DATETIME NULL,
+      submitted_at DATETIME NULL,
+      completed_at DATETIME NULL,
+      voided_at DATETIME NULL,
+      void_reason VARCHAR(300) NULL,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+      INDEX idx_pos_shift_status (shift_id, status),
+      INDEX idx_pos_status (status),
+      INDEX idx_pos_sale (sale_id)
+    ) ENGINE=InnoDB
+  `);
+  await createTableIfMissing('pos_order_lines', `
+    CREATE TABLE pos_order_lines (
+      id VARCHAR(50) PRIMARY KEY,
+      order_id VARCHAR(40) NOT NULL,
+      menu_id VARCHAR(50) NOT NULL,
+      name_snapshot VARCHAR(200) NOT NULL,
+      qty DECIMAL(10,3) NOT NULL,
+      unit_price DECIMAL(10,2) NOT NULL,
+      line_discount DECIMAL(10,2) NOT NULL DEFAULT 0,
+      vat_category CHAR(1) NOT NULL DEFAULT 'S',
+      notes VARCHAR(300) NULL,
+      sort INT NOT NULL DEFAULT 0,
+      INDEX idx_pol_order (order_id)
+    ) ENGINE=InnoDB
+  `);
+  await createTableIfMissing('pos_payments', `
+    CREATE TABLE pos_payments (
+      id VARCHAR(50) PRIMARY KEY,
+      order_id VARCHAR(40) NOT NULL,
+      method VARCHAR(20) NOT NULL,
+      amount DECIMAL(12,2) NOT NULL,
+      ref VARCHAR(100) NULL,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      INDEX idx_pp_order (order_id)
+    ) ENGINE=InnoDB
+  `);
+
+  // ── Phase U — per-line frozen UoM snapshot columns (runs AFTER all v2 line
+  // tables above exist). NULL-safe: legacy rows keep NULL and behave as base. ──
+  for (const t of ['inv_receipt_items', 'inv_issue_items', 'inv_adjustment_items', 'inv_stocktake_items', 'production_issue_lines', 'production_output', 'stock_issue_items']) {
+    await addColumnIfMissing(t, 'entered_qty', 'DECIMAL(18,6) NULL');
+    await addColumnIfMissing(t, 'entered_unit_id', 'VARCHAR(50) NULL');
+    await addColumnIfMissing(t, 'entered_unit_code', 'VARCHAR(30) NULL');
+    await addColumnIfMissing(t, 'conversion_factor_snapshot', 'DECIMAL(18,6) NULL');
+    await addColumnIfMissing(t, 'base_qty', 'DECIMAL(18,6) NULL');
+  }
+  await addColumnIfMissing('pos_order_lines', 'entered_unit_id', 'VARCHAR(50) NULL');
+  await addColumnIfMissing('pos_order_lines', 'entered_unit_code', 'VARCHAR(30) NULL');
+  await addColumnIfMissing('pos_order_lines', 'conversion_factor_snapshot', 'DECIMAL(18,6) NULL DEFAULT 1');
+  await addColumnIfMissing('pos_order_lines', 'entered_qty', 'DECIMAL(18,6) NULL');
 
   // ═══════════════════════════════════════════════════════════
   // PHASE 3 — Real Cost Accounting: FIFO / WAC / Batch / Expiry

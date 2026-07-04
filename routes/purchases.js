@@ -214,6 +214,12 @@ router.post('/receive/:id', BACKOFFICE, async (req, res) => {
 
       const purchase = purchases[0];
       if (purchase.status === 'received') throw new Error('Already received');
+      // Phase W3 — refuse the legacy receive when this purchase has been (partly)
+      // received through the V2 inv_receipts flow, to prevent double-stocking.
+      try {
+        const [v2] = await db.query("SELECT COUNT(*) AS n FROM inv_receipts WHERE purchase_id=? AND status IN ('approved','posted')", [id]);
+        if (v2.length && Number(v2[0].n) > 0) { const e = new Error('تم استلام هذا الأمر (كليًا أو جزئيًا) عبر نظام المستودعات V2 — لا يمكن الاستلام القديم'); e.code = 'ALREADY_RECEIVED_IN_V2'; e.status = 409; throw e; }
+      } catch (e) { if (e && e.code === 'ALREADY_RECEIVED_IN_V2') throw e; }
 
       const rawItems = JSON.parse(purchase.items_json || '[]');
       const items = rawItems.map(normPurchaseItem);
@@ -481,6 +487,9 @@ router.post('/receive/:id/revert', MGR, async (req, res) => {
       if (purchase.status !== 'received') {
         throw new Error('هذه الفاتورة ليست مستلمة — لا يوجد ما يُلغى');
       }
+      // Phase W3 — block legacy revert while non-reversed V2 receipts are linked.
+      const [v2] = await db.query("SELECT COUNT(*) AS n FROM inv_receipts WHERE purchase_id=? AND status IN ('approved','posted')", [id]);
+      if (v2.length && Number(v2[0].n) > 0) { const e = new Error('لا يمكن إلغاء الاستلام القديم: توجد إيصالات V2 مرتبطة غير معكوسة — اعكسها أولًا'); e.code = 'V2_RECEIPTS_LINKED'; e.status = 409; throw e; }
 
       const rawItems = JSON.parse(purchase.items_json || '[]');
       const items = rawItems.map(normPurchaseItem);

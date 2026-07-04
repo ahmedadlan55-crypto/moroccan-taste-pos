@@ -7,14 +7,20 @@ function verifyToken(req, res, next) {
     }
 
     const token = authHeader.split(' ')[1];
-    
+
+    let decoded;
     try {
-        const decoded = jwt.verify(token, process.env.JWT_SECRET);
-        req.user = decoded; // { id, username, role, iat, exp }
-        next();
+        decoded = jwt.verify(token, process.env.JWT_SECRET);
     } catch (err) {
         return res.status(401).json({ error: 'Unauthorized: Invalid or expired token' });
     }
+    // Phase A — session-version gate (a password change bumps token_version and
+    // revokes every older token). Async, but fail-open on infra errors.
+    require('../lib/sessionVersion').isTokenCurrent(decoded).then(function (ok) {
+        if (!ok) return res.status(401).json({ error: 'انتهت الجلسة — يرجى تسجيل الدخول مجددًا' });
+        req.user = decoded; // { id, username, role, iat, exp }
+        next();
+    }).catch(function () { req.user = decoded; next(); });
 }
 
 // v7.4 — Role-based authorization guard. Use as route middleware AFTER the

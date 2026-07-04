@@ -49,7 +49,7 @@ export const countInput = z.object({
 export const countsInput = z.object({ counts: z.array(countInput).min(1) });
 
 export const recountInput = z.object({
-  reason: z.string().trim().min(3, "اكتب سبب إعادة العد (٣ أحرف على الأقل)"),
+  reason: z.string().trim().min(3, "اكتب سبب إعادة العد (3 أحرف على الأقل)"),
   expectedVersion: z.number().int().optional(),
 });
 

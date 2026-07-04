@@ -5,11 +5,12 @@ import { PageHeader } from "@/components/PageHeader";
 import { Button } from "@/components/ui/button";
 import { ApiError } from "@/lib/api-error";
 import { useWarehouses } from "@/lib/hooks/useWarehouses";
-import { useWarehouseInventory } from "@/lib/hooks/useInventory";
 import { useWarehouseScope } from "@/app/warehouse-scope-provider";
 import { formatQty } from "@/lib/formatters";
 import { useStocktakeMutations } from "@/lib/hooks/useStocktakes";
 import { createStocktakeInput } from "@/lib/schemas/stocktake.schema";
+import { SearchableEntityCombobox } from "@/components/ui/SearchableEntityCombobox";
+import { makeItemFetcher, type ItemHit } from "@/lib/hooks/useEntitySearch";
 
 type Scope = "full" | "category" | "items";
 
@@ -22,7 +23,8 @@ export function StocktakeWizard() {
   const [warehouseId, setWarehouseId] = useState("");
   const [scopeType, setScopeType] = useState<Scope>("full");
   const [categoryId, setCategoryId] = useState("");
-  const [itemIds, setItemIds] = useState<string[]>([]);
+  const [chosenItems, setChosenItems] = useState<{ id: string; name: string }[]>([]);
+  const itemIds = useMemo(() => chosenItems.map((c) => c.id), [chosenItems]);
   const [includeZero, setIncludeZero] = useState(false);
   const [blindCount, setBlindCount] = useState(false);
   const [reason, setReason] = useState("");
@@ -37,10 +39,7 @@ export function StocktakeWizard() {
     return (allWh.data?.warehouses ?? []).map((w) => ({ id: w.id, name: w.name }));
   }, [allWarehousesAccess, accessibleWarehouses, allWh.data]);
 
-  const inv = useWarehouseInventory({ scope: warehouseId || "all", pageSize: 500 });
-  const itemRows = inv.data?.rows ?? [];
-  const pickable = useMemo(() => itemRows.filter((r) => !itemIds.includes(r.itemId)), [itemRows, itemIds]);
-  const chosen = useMemo(() => itemIds.map((id) => itemRows.find((r) => r.itemId === id)).filter(Boolean), [itemIds, itemRows]);
+  const itemFetcher = useMemo(() => makeItemFetcher({ warehouseId: warehouseId || undefined, context: "stocktake", activeOnly: true }), [warehouseId]);
 
   function buildPayload(): Record<string, unknown> {
     const base: Record<string, unknown> = { warehouseId, scopeType, reason, includeZero, blindCount, notes: notes || undefined, stocktakeDate: date || undefined };
@@ -74,7 +73,7 @@ export function StocktakeWizard() {
 
         <div className="grid gap-4 sm:grid-cols-2">
           <label className="block text-xs font-bold text-slate-500">المستودع
-            <select className="field mt-1 w-full" value={warehouseId} onChange={(e) => { setWarehouseId(e.target.value); setItemIds([]); }} aria-label="المستودع">
+            <select className="field mt-1 w-full" value={warehouseId} onChange={(e) => { setWarehouseId(e.target.value); setChosenItems([]); }} aria-label="المستودع">
               <option value="">اختر المستودع</option>
               {whOptions.map((w) => <option key={w.id} value={w.id}>{w.name}</option>)}
             </select>
@@ -117,18 +116,29 @@ export function StocktakeWizard() {
 
         {scopeType === "items" && (
           <div className="rounded-xl border border-slate-100 p-3">
-            <div className="mb-2 flex items-center gap-2">
-              <span className="text-xs font-bold text-slate-500">الأصناف المحددة</span>
-              <select className="field max-w-xs" value="" onChange={(e) => { if (e.target.value) setItemIds((s) => [...s, e.target.value]); }} aria-label="إضافة صنف" disabled={!warehouseId || inv.isLoading}>
-                <option value="">{inv.isLoading ? "تحميل…" : "+ أضف صنفًا"}</option>
-                {pickable.map((r) => <option key={r.itemId} value={r.itemId}>{r.name} ({formatQty(r.qty)} {r.unit})</option>)}
-              </select>
+            <div className="mb-2 flex flex-col gap-1">
+              <span className="text-xs font-bold text-slate-500">الأصناف المحددة (بحث بالاسم/SKU/الباركود)</span>
+              <div className="max-w-md">
+                <SearchableEntityCombobox<ItemHit>
+                  value={null}
+                  onChange={(hit) => { if (hit && !itemIds.includes(hit.id)) setChosenItems((s) => [...s, { id: hit.id, name: hit.name }]); }}
+                  fetcher={itemFetcher}
+                  queryKey={["item-search", warehouseId, "stocktake"]}
+                  getKey={(it) => it.id}
+                  getLabel={(it) => it.name}
+                  getSublabel={(it) => [it.sku, it.warehouseQty != null ? `${formatQty(it.warehouseQty)} ${it.baseUnit.name}` : null].filter(Boolean).join(" · ") || undefined}
+                  placeholder="ابحث عن صنف لإضافته للنطاق…"
+                  ariaLabel="إضافة صنف للجرد"
+                  autoSelectExact
+                  emptyText="لا أصناف مطابقة."
+                />
+              </div>
             </div>
-            {itemIds.length === 0 ? <p className="text-xs text-slate-400">لم تُحدَّد أصناف بعد.</p> : (
+            {chosenItems.length === 0 ? <p className="text-xs text-slate-400">لم تُحدَّد أصناف بعد.</p> : (
               <div className="flex flex-wrap gap-2">
-                {chosen.map((r) => r && (
-                  <span key={r.itemId} className="flex items-center gap-1 rounded-lg bg-slate-100 px-2 py-1 text-xs font-bold text-slate-700">{r.name}
-                    <button type="button" aria-label="حذف" onClick={() => setItemIds((s) => s.filter((x) => x !== r.itemId))}><Trash2 className="h-3.5 w-3.5 text-slate-400 hover:text-rose-600" /></button>
+                {chosenItems.map((r) => (
+                  <span key={r.id} className="flex items-center gap-1 rounded-lg bg-slate-100 px-2 py-1 text-xs font-bold text-slate-700">{r.name}
+                    <button type="button" aria-label="حذف" onClick={() => setChosenItems((s) => s.filter((x) => x.id !== r.id))}><Trash2 className="h-3.5 w-3.5 text-slate-400 hover:text-rose-600" /></button>
                   </span>
                 ))}
               </div>

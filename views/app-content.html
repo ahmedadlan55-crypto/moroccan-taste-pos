@@ -16,6 +16,9 @@
         <!-- 1. الرئيسية -->
         <div class="nav-item active" onclick="nav('home')"><i class="fas fa-chart-line"></i><span data-i18n="nav.home">الرئيسية</span></div>
 
+        <!-- 1b. الأمان — تغيير كلمة المرور (متاح لكل الأدوار) -->
+        <a class="nav-item" href="/security/" style="text-decoration:none;color:inherit;"><i class="fas fa-shield-halved"></i><span data-i18n="nav.security">الأمان</span></a>
+
         <!-- 2. العمليات اليومية -->
         <div class="nav-item has-submenu" onclick="toggleSubmenu(this)">
           <i class="fas fa-bolt"></i><span data-i18n="nav.daily">العمليات اليومية</span><i class="fas fa-chevron-down submenu-indicator"></i>
@@ -37,6 +40,13 @@
           <div class="nav-item" data-erp-nav="erpPriceLists" onclick="erpNav('erpPriceLists')"><i class="fas fa-tags"></i><span data-i18n="nav.priceLists">قوائم الأسعار</span></div>
           <div class="nav-item" data-erp-nav="erpItemCategories" onclick="erpNav('erpItemCategories')"><i class="fas fa-folder-tree"></i><span data-i18n="nav.categories">تصنيفات الأصناف</span></div>
         </div>
+
+        <!-- 4-pre. المستودعات (نظام V2 الموحد) — رابط واحد يفتح /warehouse في نفس
+             التبويب وبنفس الجلسة. يظهر فقط عندما يكون WAREHOUSE_V2_ENABLED مفعّلًا
+             (نفس علم header.js المشترك — يُقلَب من _applyWhV2Nav في app.js). -->
+        <a class="nav-item" href="/warehouse" data-wh-v2-link style="display:none;text-decoration:none;color:inherit;background:linear-gradient(90deg,rgba(14,165,233,.16),transparent);font-weight:800;">
+          <i class="fas fa-warehouse" style="color:#0ea5e9;"></i><span data-i18n="nav.warehouseV2">المستودعات</span>
+        </a>
 
         <!-- 4. المخزون والمستودعات — موحّد: إعداد + عمليات + تحليلات + تقارير -->
         <div class="nav-item has-submenu" onclick="toggleSubmenu(this)">

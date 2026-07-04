@@ -68,5 +68,32 @@ export function useItemMutations() {
     mutationFn: ({ id, warehouseId, input }) => apiClient.put<unknown>(`${BASE}/${id}/warehouse-rules/${warehouseId}`, input, { headers: { "Idempotency-Key": uid() } }).then(toItemMutation),
     onSuccess: (_r, v) => invalidate(v.id),
   });
-  return { create, update, activate, deactivate, saveRule };
+  // Phase W4 — replace the item's barcode list (primary + secondaries). 409
+  // BARCODE_TAKEN surfaces as ApiError(isConflict=false, status 409) — the tab
+  // shows it inline with the conflicting code.
+  const saveBarcodes = useMutation<R, Error, { id: string; primaryBarcode: string | null; barcodes: { code: string; sizeVariant?: string | null }[]; expectedVersion: number }>({
+    mutationFn: ({ id, ...input }) => apiClient.put<unknown>(`${BASE}/${id}/barcodes`, input).then(toItemMutation),
+    onSuccess: (_r, v) => invalidate(v.id),
+  });
+  return { create, update, activate, deactivate, saveRule, saveBarcodes };
+}
+
+// Phase W4 — imperative barcode lookup (Topbar scan + the in-tab scan tester).
+export interface BarcodeLookupResult { itemId: string; name: string; sku: string; unit: string; active: boolean; matchedBarcode: string | null; sizeVariant: string | null }
+export async function lookupBarcode(code: string, signal?: AbortSignal): Promise<BarcodeLookupResult | null> {
+  try {
+    const r = await apiClient.get<{ data?: { item?: Record<string, unknown>; matchedBarcode?: string; sizeVariant?: string } }>(
+      "/inventory/v2/items/by-barcode", { signal, params: { code } });
+    const it = r?.data?.item as Record<string, unknown> | undefined;
+    if (!it || !it.id) return null;
+    return {
+      itemId: String(it.id), name: String(it.name ?? it.id), sku: String(it.sku ?? ""), unit: String(it.unit ?? ""),
+      active: it.active === 1 || it.active === true,
+      matchedBarcode: r?.data?.matchedBarcode ? String(r.data.matchedBarcode) : null,
+      sizeVariant: r?.data?.sizeVariant ? String(r.data.sizeVariant) : null,
+    };
+  } catch (e) {
+    if (e instanceof Error && "status" in e && (e as { status?: number }).status === 404) return null;
+    throw e;
+  }
 }

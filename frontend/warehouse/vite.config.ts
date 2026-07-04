@@ -12,7 +12,9 @@ const BACKEND = process.env.VITE_BACKEND_ORIGIN || "http://localhost:3000";
 // app behind Express. The router reads import.meta.env.BASE_URL to stay correct
 // in both modes.
 export default defineConfig(({ command }) => ({
-  base: command === "serve" ? "/" : "/warehouse-v2/",
+  // Production base is /warehouse/ — the warehouse section is a first-class
+  // part of the main system (the old /warehouse-v2 URL 301-redirects to it).
+  base: command === "serve" ? "/" : "/warehouse/",
   plugins: [react()],
   resolve: {
     alias: {

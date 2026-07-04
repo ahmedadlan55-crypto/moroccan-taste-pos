@@ -4,13 +4,15 @@ import {
   Boxes,
   PackageCheck,
   PackageMinus,
+  PackageOpen,
   Truck,
   ClipboardCheck,
   SlidersHorizontal,
   Factory,
   BarChart3,
   FileBarChart,
-  GitBranch,
+  ShieldAlert,
+  TrendingDown,
   Tags,
   ShoppingCart,
   Layers,
@@ -52,6 +54,7 @@ export const navigation: NavGroup[] = [
     title: "العمليات",
     items: [
       { id: "receipts", label: "الاستلامات", path: "/receipts", icon: PackageCheck },
+      { id: "purchase-receiving", label: "استلام المشتريات", path: "/purchase-receiving", icon: PackageOpen },
       { id: "issues", label: "أذونات الصرف", path: "/issues", icon: PackageMinus },
       { id: "transfers", label: "التحويلات", path: "/transfers", icon: Truck },
       { id: "stocktakes", label: "الجرد", path: "/stocktakes", icon: ClipboardCheck },
@@ -64,7 +67,13 @@ export const navigation: NavGroup[] = [
     items: [
       { id: "analytics", label: "التحليلات والتنبيهات", path: "/analytics", icon: BarChart3 },
       { id: "reports", label: "مركز التقارير", path: "/reports", icon: FileBarChart },
-      { id: "system-map", label: "خريطة النظام", path: "/system-map", icon: GitBranch },
+      { id: "deficits", label: "تقرير العجز", path: "/deficits", icon: TrendingDown },
+    ],
+  },
+  {
+    title: "السياسات والضبط",
+    items: [
+      { id: "negative-policy", label: "سياسة المخزون السالب", path: "/negative-policy", icon: ShieldAlert },
     ],
   },
 ];

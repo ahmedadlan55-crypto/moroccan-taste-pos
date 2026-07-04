@@ -80,7 +80,7 @@ router.get('/:channelId', async (req, res) => {
              m.is_semi_finished, m.production_warehouse_id, m.sales_warehouse_id AS item_default_sales_wh,
              w.name AS sales_wh_name,
              br.name AS branch_name,
-             b.name AS bom_name
+             COALESCE((SELECT name FROM menu WHERE id = b.product_id), (SELECT name FROM inv_items WHERE id = b.product_id)) AS bom_name
       FROM channel_menu_items cmi
       LEFT JOIN menu m ON m.id = cmi.menu_item_id
       LEFT JOIN warehouses w ON w.id = cmi.sales_warehouse_id

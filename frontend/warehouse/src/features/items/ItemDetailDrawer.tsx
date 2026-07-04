@@ -9,20 +9,39 @@ import { useCan } from "@/app/permission-provider";
 import { formatCurrency, formatQty, formatDate } from "@/lib/formatters";
 import { useItemDetail, useItemMutations } from "@/lib/hooks/useItems";
 import type { ItemRule } from "@/lib/adapters/item.adapter";
+import { BarcodesTab } from "./BarcodesTab";
+import { UnitsTab } from "./UnitsTab";
+import { useItemUnits } from "@/lib/hooks/useItemUnits";
 
 const TABS = [
   { id: "basics", label: "البيانات الأساسية" },
+  { id: "units", label: "الوحدات والتحويلات" },
+  { id: "barcodes", label: "الباركود" },
   { id: "warehouses", label: "توزيع المستودعات" },
   { id: "stock", label: "الرصيد وWAC" },
   { id: "rules", label: "قواعد إعادة الطلب" },
   { id: "movements", label: "الحركات" },
   { id: "audit", label: "سجل التدقيق" },
 ] as const;
+
+// "125 حبة = 10 كرتون + 5 حبة" — split a base qty by the largest major factor.
+function describeBalance(baseQty: number, baseName: string, majorFactor: number, majorName: string): string {
+  const q = Math.round((baseQty + Number.EPSILON) * 1e6) / 1e6;
+  if (!(majorFactor > 1) || !majorName) return `${formatQty(q)} ${baseName}`;
+  const major = Math.floor(q / majorFactor + 1e-9);
+  const minor = Math.round((q - major * majorFactor + Number.EPSILON) * 1e6) / 1e6;
+  const parts: string[] = [];
+  if (major > 0) parts.push(`${formatQty(major)} ${majorName}`);
+  if (minor > 0 || major === 0) parts.push(`${formatQty(minor)} ${baseName}`);
+  return `${formatQty(q)} ${baseName} = ${parts.join(" + ")}`;
+}
 type TabId = (typeof TABS)[number]["id"];
 const ACTION_LABEL: Record<string, string> = { create: "إنشاء", edit: "تعديل", activate: "تفعيل", deactivate: "تعطيل", rule: "قاعدة إعادة طلب" };
 
 export function ItemDetailDrawer({ id, onClose, onEdit }: { id: string | null; onClose: () => void; onEdit: (id: string) => void }) {
   const q = useItemDetail(id);
+  const unitsQ = useItemUnits(id);
+  const majorForBalance = (unitsQ.data?.units ?? []).filter((u) => !u.isBase && u.isActive).sort((a, b) => b.conversionToBase - a.conversionToBase)[0] ?? null;
   const m = useItemMutations();
   const canEdit = useCan("item.edit");
   const canActivate = useCan("item.activate");
@@ -65,12 +84,18 @@ export function ItemDetailDrawer({ id, onClose, onEdit }: { id: string | null; o
             </div>
           )}
 
+          {tab === "units" && <UnitsTab itemId={d.id} baseUnitName={d.unit} />}
+
+          {tab === "barcodes" && <BarcodesTab detail={d} onSaved={() => q.refetch()} />}
+
           {tab === "warehouses" && (
             <div className="space-y-1">
               {d.distribution.length === 0 ? <p className="text-sm text-slate-400">غير مُسند لأي مستودع.</p> : d.distribution.map((w) => (
                 <div key={w.warehouseId} className="flex items-center justify-between rounded-lg bg-slate-50 px-3 py-2 text-sm">
                   <span className="font-bold text-slate-700">{w.warehouseName}{w.isMain ? " · رئيسي" : ""}</span>
-                  <span className="tabular-nums text-slate-600">{formatQty(w.qty)} {d.unit} · {formatCurrency(w.value)}</span>
+                  <span className="tabular-nums text-slate-600" dir="ltr">
+                    {majorForBalance ? describeBalance(w.qty, d.unit, majorForBalance.conversionToBase, majorForBalance.unitName) : `${formatQty(w.qty)} ${d.unit}`} · {formatCurrency(w.value)}
+                  </span>
                 </div>
               ))}
             </div>

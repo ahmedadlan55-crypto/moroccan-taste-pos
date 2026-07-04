@@ -14,7 +14,33 @@ function ok(v, msg) { if (!v) throw new Error(msg || 'expected truthy'); }
 console.log('\n═══ Inventory-tx contract ═══');
 
 console.log('\n─── canonical codes ───');
-test('18 canonical codes (10 base + 8 Phase 4B lot codes)', () => eq(Object.keys(C.HTTP_FOR).length, 18));
+test('39 canonical codes (10 base + 8 lot + 10 W2/W3/W4 + 4 P1 + 7 UoM)', () => eq(Object.keys(C.HTTP_FOR).length, 39));
+test('Phase P1 production codes mapped to correct HTTP', () => {
+  eq(C.httpFor('OVER_ISSUE'), 422);
+  eq(C.httpFor('OVER_PRODUCTION'), 422);
+  eq(C.httpFor('NO_OUTPUT_RECORDED'), 422);
+  eq(C.httpFor('WASTE_ALLOWANCE_EXCEEDED'), 403);
+});
+test('Phase U units-of-measure codes mapped to correct HTTP', () => {
+  eq(C.httpFor('UNIT_REQUIRED'), 422);
+  eq(C.httpFor('UNIT_NOT_ALLOWED'), 422);
+  eq(C.httpFor('INVALID_CONVERSION_FACTOR'), 422);
+  eq(C.httpFor('UNIT_CONVERSION_CONFLICT'), 409);
+  eq(C.httpFor('UNIT_LOCKED_BY_HISTORY'), 409);
+  eq(C.httpFor('DUPLICATE_BASE_UNIT'), 422);
+  eq(C.httpFor('BARCODE_UNIT_CONFLICT'), 409);
+});
+test('Phase W2/W3/W4 codes mapped to correct HTTP', () => {
+  eq(C.httpFor('NEGATIVE_CONFIRMATION_REQUIRED'), 409);
+  eq(C.httpFor('NEGATIVE_LIMIT_EXCEEDED'), 422);
+  eq(C.httpFor('ALLOW_REQUIRES_DEVELOPER'), 403);
+  eq(C.httpFor('MAKER_CHECKER_SELF_APPROVAL'), 403);
+  eq(C.httpFor('POLICY_NOT_ALLOWED_FOR_TRACKED'), 422);
+  eq(C.httpFor('OVER_RECEIPT'), 422);
+  eq(C.httpFor('ALREADY_RECEIVED_IN_V2'), 409);
+  eq(C.httpFor('V2_RECEIPTS_LINKED'), 409);
+  eq(C.httpFor('BARCODE_TAKEN'), 409);
+});
 test('Phase 4B lot codes mapped', () => {
   eq(C.httpFor('INSUFFICIENT_LOT_QUANTITY'), 422);
   eq(C.httpFor('EXPIRED_LOT'), 422);

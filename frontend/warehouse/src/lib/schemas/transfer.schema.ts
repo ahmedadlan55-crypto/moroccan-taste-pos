@@ -101,12 +101,12 @@ export const receiveTransferInput = z.object({
 });
 
 export const reverseTransferInput = z.object({
-  reason: z.string().trim().min(3, "اكتب سبب الإرجاع (٣ أحرف على الأقل)"),
+  reason: z.string().trim().min(3, "اكتب سبب الإرجاع (3 أحرف على الأقل)"),
   expectedVersion: z.number().int().optional(),
 });
 
 export const cancelTransferInput = z.object({
-  reason: z.string().trim().min(3, "اكتب سبب الإلغاء (٣ أحرف على الأقل)"),
+  reason: z.string().trim().min(3, "اكتب سبب الإلغاء (3 أحرف على الأقل)"),
   expectedVersion: z.number().int().optional(),
 });
 

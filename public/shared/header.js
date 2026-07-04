@@ -4,16 +4,38 @@
  */
 
 (function() {
+  // Warehouse V2 flag — decides which SINGLE warehouse link the header shows:
+  // the V2 section at /warehouse (same tab, same session — no second login) or
+  // the legacy /inventory/ UI (kept ONLY as the rollback path when the flag is
+  // off). Cached in localStorage so the first paint is correct; refreshed from
+  // /api/version (public endpoint) and the header re-renders if it changed.
+  function whV2Enabled() { return localStorage.getItem('wh_v2_flag') !== '0'; }
+  try {
+    fetch('/api/version').then(function(r) { return r.json(); }).then(function(v) {
+      var next = v && v.warehouseV2 === false ? '0' : '1';
+      if (localStorage.getItem('wh_v2_flag') !== next) {
+        localStorage.setItem('wh_v2_flag', next);
+        var active = document.body.getAttribute('data-page') || '';
+        if (typeof window.renderHeader === 'function') window.renderHeader(active, { showShift: !!document.body.getAttribute('data-show-shift') });
+      }
+    }).catch(function() {});
+  } catch (e) {}
+
   // Pages registry — controls navigation links visibility per role
-  var PAGES = [
-    { key: 'pos',       href: '/pos/',       icon: 'fa-cash-register',  label: { ar: 'نقطة البيع', en: 'POS' },        roles: ['admin', 'manager', 'cashier'] },
-    { key: 'dashboard', href: '/dashboard/', icon: 'fa-chart-line',     label: { ar: 'الرئيسية',   en: 'Dashboard' }, roles: ['admin', 'manager'] },
-    { key: 'inventory', href: '/inventory/', icon: 'fa-boxes',          label: { ar: 'المخزون',    en: 'Inventory' }, roles: ['admin', 'manager'] },
-    { key: 'reports',   href: '/reports/',   icon: 'fa-file-alt',       label: { ar: 'التقارير',   en: 'Reports' },   roles: ['admin', 'manager'] },
-    { key: 'erp',       href: '/erp/',       icon: 'fa-building',       label: { ar: 'ERP',        en: 'ERP' },       roles: ['admin'] },
-    { key: 'settings',  href: '/settings/',  icon: 'fa-sliders-h',      label: { ar: 'الإعدادات',  en: 'Settings' },  roles: ['admin'] },
-    { key: 'users',     href: '/users/',     icon: 'fa-users-cog',      label: { ar: 'المستخدمين', en: 'Users' },     roles: ['admin'] }
-  ];
+  function getPages() {
+    var warehouseEntry = whV2Enabled()
+      ? { key: 'warehouse', href: '/warehouse',  icon: 'fa-warehouse', label: { ar: 'المستودعات', en: 'Warehouse' }, roles: ['admin', 'manager', 'employee', 'custody'] }
+      : { key: 'inventory', href: '/inventory/', icon: 'fa-boxes',     label: { ar: 'المخزون',    en: 'Inventory' }, roles: ['admin', 'manager'] };
+    return [
+      { key: 'pos',       href: '/pos/',       icon: 'fa-cash-register',  label: { ar: 'نقطة البيع', en: 'POS' },        roles: ['admin', 'manager', 'cashier'] },
+      { key: 'dashboard', href: '/dashboard/', icon: 'fa-chart-line',     label: { ar: 'الرئيسية',   en: 'Dashboard' }, roles: ['admin', 'manager'] },
+      warehouseEntry,
+      { key: 'reports',   href: '/reports/',   icon: 'fa-file-alt',       label: { ar: 'التقارير',   en: 'Reports' },   roles: ['admin', 'manager'] },
+      { key: 'erp',       href: '/erp/',       icon: 'fa-building',       label: { ar: 'ERP',        en: 'ERP' },       roles: ['admin'] },
+      { key: 'settings',  href: '/settings/',  icon: 'fa-sliders-h',      label: { ar: 'الإعدادات',  en: 'Settings' },  roles: ['admin'] },
+      { key: 'users',     href: '/users/',     icon: 'fa-users-cog',      label: { ar: 'المستخدمين', en: 'Users' },     roles: ['admin'] }
+    ];
+  }
 
   /**
    * Render the shared header.
@@ -28,7 +50,7 @@
     var session = (typeof getCurrentUser === 'function') ? getCurrentUser() : null;
     var role = (session && session.role || '').toLowerCase() || 'cashier';
     var lang = (state && state.lang) || 'ar';
-    var visiblePages = PAGES.filter(function(p) { return p.roles.indexOf(role) !== -1; });
+    var visiblePages = getPages().filter(function(p) { return p.roles.indexOf(role) !== -1; });
 
     var navHtml = visiblePages.map(function(p) {
       var label = p.label[lang] || p.label.en;

@@ -7,17 +7,27 @@ import { Stepper } from "@/features/transfers/Stepper";
 import { LoadingState } from "@/components/states/States";
 import { ApiError } from "@/lib/api-error";
 import { useWarehouses } from "@/lib/hooks/useWarehouses";
-import { useWarehouseInventory } from "@/lib/hooks/useInventory";
 import { useWarehouseScope } from "@/app/warehouse-scope-provider";
 import { formatCurrency, formatQty } from "@/lib/formatters";
-import { useInvTxDetail, useInvTxMutations, useGlAccounts } from "@/lib/hooks/useInventoryTx";
+import { useInvTxDetail, useInvTxMutations } from "@/lib/hooks/useInventoryTx";
+import { SearchableEntityCombobox } from "@/components/ui/SearchableEntityCombobox";
+import { UnitQtyInput, baseFromValue, type ItemUnitLite, type UnitQtyValue } from "@/components/ui/UnitQtyInput";
+import { makeItemFetcher, makeAccountFetcher, type ItemHit, type AccountHit } from "@/lib/hooks/useEntitySearch";
 import {
   createReceiptInput, createIssueInput, createAdjustmentInput,
   updateReceiptInput, updateIssueInput, updateAdjustmentInput,
 } from "@/lib/schemas/invtx.schema";
 import type { InvTxConfig } from "./invtxConfig";
 
-interface Line { itemId: string; itemName: string; unit: string; qty: number; unitCost: number; countedQty: number; systemQty: number; lotNumber?: string; expiryDate?: string }
+interface Line { itemId: string; itemName: string; unit: string; units: ItemUnitLite[]; uv: UnitQtyValue; unitCost: number; systemQty: number; lotNumber?: string; expiryDate?: string }
+
+// build the base+major unit list a picker returns into the UnitQtyInput shape
+function unitsOf(hit: Pick<ItemHit, "baseUnit" | "majorUnits">): ItemUnitLite[] {
+  return [
+    { code: hit.baseUnit.code, name: hit.baseUnit.name, factor: 1, isBase: true },
+    ...(hit.majorUnits ?? []).map((mu) => ({ code: mu.unitCode, name: mu.unitName, factor: mu.factor })),
+  ];
+}
 
 const STEPS = ["الأساسيات", "الأصناف", "المراجعة"];
 
@@ -30,12 +40,18 @@ export function InvTxWizard({ config }: { config: InvTxConfig }) {
   const m = useInvTxMutations(config.docType);
   const edit = useInvTxDetail(config.docType, editId);
 
+  const isAdj = config.lineMode === "adjustment";
+  const isReceipt = config.lineMode === "receipt";
+  const isIssue = config.lineMode === "issue";
+  const needsAccount = isReceipt || isIssue;
+
   const [step, setStep] = useState(1);
   const [warehouseId, setWarehouseId] = useState("");
   const [date, setDate] = useState("");
   const [reason, setReason] = useState("");
   const [sourceRef, setSourceRef] = useState("");
   const [counterAccount, setCounterAccount] = useState("");
+  const [accountSel, setAccountSel] = useState<AccountHit | null>(null);
   const [recipient, setRecipient] = useState("");
   const [evidence, setEvidence] = useState("");
   const [notes, setNotes] = useState("");
@@ -50,11 +66,17 @@ export function InvTxWizard({ config }: { config: InvTxConfig }) {
     setDate(d.date ?? "");
     setReason(d.reason ?? "");
     setSourceRef(d.sourceRef ?? "");
-    setCounterAccount(d.counterAccountCode ?? d.expenseAccountCode ?? "");
+    const acode = d.counterAccountCode ?? d.expenseAccountCode ?? "";
+    setCounterAccount(acode);
+    if (acode) setAccountSel({ id: acode, code: acode, name: acode, type: "", active: true });
     setRecipient(d.recipient ?? "");
     setEvidence(d.referenceEvidence ?? "");
     setNotes(d.notes ?? "");
-    setLines(d.lines.map((l) => ({ itemId: l.item.id, itemName: l.item.name, unit: l.item.unit, qty: l.qty || 0, unitCost: l.unitCost || 0, countedQty: l.countedQty || 0, systemQty: l.systemQtySnapshot || 0 })));
+    setLines(d.lines.map((l) => {
+      const units: ItemUnitLite[] = [{ code: l.item.unit, name: l.item.unit, factor: 1, isBase: true }];
+      const enteredQty = isAdj ? (l.countedQty || 0) : (l.qty || 0);
+      return { itemId: l.item.id, itemName: l.item.name, unit: l.item.unit, units, uv: { unitCode: l.item.unit, qty: enteredQty }, unitCost: l.unitCost || 0, systemQty: l.systemQtySnapshot || 0 };
+    }));
     setPrefilled(true);
   }
 
@@ -63,32 +85,46 @@ export function InvTxWizard({ config }: { config: InvTxConfig }) {
     return (allWh.data?.warehouses ?? []).map((w) => ({ id: w.id, name: w.name }));
   }, [allWarehousesAccess, accessibleWarehouses, allWh.data]);
 
-  const inv = useWarehouseInventory({ scope: warehouseId || "all", pageSize: 500 });
-  const itemOptions = useMemo(() => (inv.data?.rows ?? []).filter((r) => !lines.some((l) => l.itemId === r.itemId)), [inv.data, lines]);
+  // Server-side item search scoped to the chosen warehouse + document context, so
+  // balances/warnings reflect the target warehouse and inactive items are hidden.
+  const itemFetcher = useMemo(
+    () => makeItemFetcher({ warehouseId: warehouseId || undefined, context: isReceipt ? "receipt" : isAdj ? "stocktake" : "issue", activeOnly: true }),
+    [warehouseId, isReceipt, isAdj],
+  );
+  const accountFetcher = useMemo(
+    () => makeAccountFetcher({ context: isReceipt ? "receipt" : "issue", postingOnly: true }),
+    [isReceipt],
+  );
 
-  function addItem(itemId: string) {
-    const row = (inv.data?.rows ?? []).find((r) => r.itemId === itemId);
-    if (!row) return;
-    setLines((ls) => [...ls, { itemId: row.itemId, itemName: row.name, unit: row.unit, qty: 1, unitCost: config.lineMode === "receipt" ? row.avgCost || 0 : 0, countedQty: row.qty, systemQty: row.qty }]);
+  function addItem(hit: ItemHit) {
+    if (lines.some((l) => l.itemId === hit.id)) return;
+    const units = unitsOf(hit);
+    setLines((ls) => [...ls, {
+      itemId: hit.id, itemName: hit.name, unit: hit.baseUnit.name, units,
+      uv: { unitCode: hit.baseUnit.code, qty: 1 },
+      unitCost: isReceipt ? (hit.warehouseCost ?? 0) : 0,
+      systemQty: hit.warehouseQty ?? 0,
+    }]);
   }
   function updateLine(i: number, patch: Partial<Line>) { setLines((ls) => ls.map((l, idx) => (idx === i ? { ...l, ...patch } : l))); }
   function removeLine(i: number) { setLines((ls) => ls.filter((_, idx) => idx !== i)); }
 
-  const isAdj = config.lineMode === "adjustment";
-  const isReceipt = config.lineMode === "receipt";
-  const isIssue = config.lineMode === "issue";
-  // Receipts/issues require a validated GL counter account (no silent default).
-  const accountUsage = isReceipt ? "receipt" : isIssue ? "issue" : null;
-  const accounts = useGlAccounts(accountUsage);
-  const needsAccount = isReceipt || isIssue;
-  const total = useMemo(() => lines.reduce((s, l) => s + (isAdj ? (l.countedQty - l.systemQty) * l.unitCost : l.qty * l.unitCost), 0), [lines, isAdj]);
+  const lineBase = (l: Line) => baseFromValue(l.units, l.uv, "single");
+  const total = useMemo(() => lines.reduce((s, l) => s + (isAdj ? (lineBase(l) - l.systemQty) * l.unitCost : lineBase(l) * l.unitCost), 0), [lines, isAdj]);
 
   function buildPayload(): Record<string, unknown> {
-    const items = lines.map((l) =>
-      isReceipt ? { itemId: l.itemId, qty: Number(l.qty), unitCost: Number(l.unitCost), ...(l.lotNumber && l.lotNumber.trim() ? { lots: [{ lotNumber: l.lotNumber.trim(), qty: Number(l.qty), expiryDate: l.expiryDate || undefined }] } : {}) }
-        : isAdj ? { itemId: l.itemId, countedQty: Number(l.countedQty) }
-          : { itemId: l.itemId, qty: Number(l.qty) },
-    );
+    // Send the ENTERED unit + qty; the backend recomputes baseQty (frozen factor).
+    // Lots for receipts are always in base qty (the ledger is base-only).
+    const items = lines.map((l) => {
+      const base = lineBase(l);
+      // `qty` (base) satisfies the client zod mirror; `enteredUnitCode`/`enteredQty`
+      // drive the server's authoritative base recompute (frozen factor).
+      const u = { qty: base, enteredUnitCode: l.uv.unitCode, enteredQty: Number(l.uv.qty) };
+      return isReceipt
+        ? { itemId: l.itemId, ...u, unitCost: Number(l.unitCost), ...(l.lotNumber && l.lotNumber.trim() ? { lots: [{ lotNumber: l.lotNumber.trim(), qty: base, expiryDate: l.expiryDate || undefined }] } : {}) }
+        : isAdj ? { itemId: l.itemId, enteredUnitCode: l.uv.unitCode, countedQty: Number(l.uv.qty), baseCountedQty: base }
+          : { itemId: l.itemId, ...u };
+    });
     const base: Record<string, unknown> = { warehouseId, notes: notes || undefined, items };
     if (isReceipt) { base.receiptDate = date || undefined; base.reason = reason; base.counterAccountCode = counterAccount; if (sourceRef) base.sourceRef = sourceRef; }
     if (isIssue) { base.issueDate = date || undefined; base.reason = reason; base.expenseAccountCode = counterAccount; if (recipient) base.recipient = recipient; }
@@ -125,7 +161,7 @@ export function InvTxWizard({ config }: { config: InvTxConfig }) {
   if (editId && edit.isLoading) return <div className="p-4"><LoadingState rows={2} /></div>;
 
   const canNext1 = !!warehouseId && reason.trim().length >= 2 && (!needsAccount || !!counterAccount);
-  const canNext2 = lines.length > 0 && lines.every((l) => (isAdj ? l.countedQty >= 0 : l.qty > 0) && (!isReceipt || l.unitCost > 0));
+  const canNext2 = lines.length > 0 && lines.every((l) => (isAdj ? lineBase(l) >= 0 : lineBase(l) > 0) && (!isReceipt || l.unitCost > 0));
 
   return (
     <div>
@@ -155,12 +191,23 @@ export function InvTxWizard({ config }: { config: InvTxConfig }) {
               <input className="field mt-1 w-full" value={reason} onChange={(e) => setReason(e.target.value)} placeholder={isReceipt ? "سبب الاستلام" : isAdj ? "سبب التعديل/الجرد" : "سبب الصرف"} aria-label="السبب" />
             </label>
             {needsAccount && (
-              <label className="block text-xs font-bold text-slate-500 sm:col-span-2">{isReceipt ? "الحساب المقابل (دائن)" : "حساب المصروف (مدين)"} (إلزامي)
-                <select className="field mt-1 w-full" value={counterAccount} onChange={(e) => setCounterAccount(e.target.value)} aria-label="الحساب المحاسبي" disabled={accounts.isLoading}>
-                  <option value="">{accounts.isLoading ? "تحميل الحسابات…" : "اختر الحساب"}</option>
-                  {(accounts.data ?? []).map((a) => <option key={a.code} value={a.code}>{a.code} — {a.name}</option>)}
-                </select>
-              </label>
+              <div className="block text-xs font-bold text-slate-500 sm:col-span-2">
+                <span>{isReceipt ? "الحساب المقابل (دائن)" : "حساب المصروف (مدين)"} (إلزامي)</span>
+                <div className="mt-1">
+                  <SearchableEntityCombobox<AccountHit>
+                    value={accountSel}
+                    onChange={(a) => { setAccountSel(a); setCounterAccount(a?.code ?? ""); }}
+                    fetcher={accountFetcher}
+                    queryKey={["account-search", isReceipt ? "receipt" : "issue"]}
+                    getKey={(a) => a.id}
+                    getLabel={(a) => a.name}
+                    getSublabel={(a) => `${a.code}`}
+                    placeholder="ابحث عن حساب بالكود أو الاسم…"
+                    ariaLabel="الحساب المحاسبي"
+                    emptyText="لا حسابات ترحيل مطابقة."
+                  />
+                </div>
+              </div>
             )}
             {isReceipt && (
               <label className="block text-xs font-bold text-slate-500 sm:col-span-2">المرجع (اختياري)
@@ -189,12 +236,23 @@ export function InvTxWizard({ config }: { config: InvTxConfig }) {
         {/* Step 2 — items */}
         {step === 2 && (
           <div className="mt-5 space-y-4">
-            <div className="flex flex-wrap items-center gap-2">
-              <span className="text-xs font-bold text-slate-500">أصناف المستودع</span>
-              <select className="field max-w-xs" value="" onChange={(e) => { if (e.target.value) addItem(e.target.value); }} aria-label="إضافة صنف" disabled={!warehouseId || inv.isLoading}>
-                <option value="">{inv.isLoading ? "تحميل…" : "+ أضف صنفًا"}</option>
-                {itemOptions.map((r) => <option key={r.itemId} value={r.itemId}>{r.name} ({formatQty(r.qty)} {r.unit})</option>)}
-              </select>
+            <div className="flex flex-col gap-1">
+              <span className="text-xs font-bold text-slate-500">أضف صنفًا (بحث بالاسم/SKU/الباركود)</span>
+              <div className="max-w-md">
+                <SearchableEntityCombobox<ItemHit>
+                  value={null}
+                  onChange={(hit) => { if (hit) addItem(hit); }}
+                  fetcher={itemFetcher}
+                  queryKey={["item-search", warehouseId, isReceipt ? "receipt" : isAdj ? "stocktake" : "issue"]}
+                  getKey={(it) => it.id}
+                  getLabel={(it) => it.name}
+                  getSublabel={(it) => [it.sku, it.warehouseQty != null ? `${formatQty(it.warehouseQty)} ${it.baseUnit.name}` : null].filter(Boolean).join(" · ") || undefined}
+                  placeholder="ابحث عن صنف…"
+                  ariaLabel="إضافة صنف"
+                  autoSelectExact
+                  emptyText="لا أصناف مطابقة."
+                />
+              </div>
             </div>
             {lines.length === 0 ? (
               <p className="rounded-lg border border-dashed border-slate-200 p-6 text-center text-sm text-slate-400">أضف صنفًا واحدًا على الأقل.</p>
@@ -212,22 +270,23 @@ export function InvTxWizard({ config }: { config: InvTxConfig }) {
                   </thead>
                   <tbody className="divide-y divide-slate-100">
                     {lines.map((l, i) => {
-                      const delta = l.countedQty - l.systemQty;
+                      const base = lineBase(l);
+                      const delta = base - l.systemQty;
                       return (
                         <Fragment key={l.itemId}>
                         <tr>
                           <td className="py-2 font-bold text-slate-700">{l.itemName}</td>
                           {isAdj ? (
                             <>
-                              <td className="text-center tabular-nums text-slate-500">{formatQty(l.systemQty)}</td>
-                              <td className="text-center"><input type="number" min={0} step="any" className="field w-24 text-center" value={l.countedQty} onChange={(e) => updateLine(i, { countedQty: Number(e.target.value) })} aria-label="الكمية المجرودة" /></td>
-                              <td className={`text-center font-bold tabular-nums ${delta < 0 ? "text-rose-600" : delta > 0 ? "text-emerald-600" : "text-slate-400"}`}>{delta > 0 ? "+" : ""}{formatQty(delta)}</td>
+                              <td className="text-center tabular-nums text-slate-500" dir="ltr">{formatQty(l.systemQty)} {l.unit}</td>
+                              <td className="text-center"><div className="inline-block"><UnitQtyInput units={l.units} value={l.uv} onChange={(uv) => updateLine(i, { uv })} mode="single" qtyLabel="الكمية المجرودة" minQty={0} /></div></td>
+                              <td className={`text-center font-bold tabular-nums ${delta < 0 ? "text-rose-600" : delta > 0 ? "text-emerald-600" : "text-slate-400"}`} dir="ltr">{delta > 0 ? "+" : ""}{formatQty(delta)}</td>
                             </>
                           ) : (
-                            <td className="text-center"><input type="number" min={0} step="any" className="field w-24 text-center" value={l.qty} onChange={(e) => updateLine(i, { qty: Number(e.target.value) })} aria-label="الكمية" /></td>
+                            <td className="text-center"><div className="inline-block"><UnitQtyInput units={l.units} value={l.uv} onChange={(uv) => updateLine(i, { uv })} mode="single" /></div></td>
                           )}
-                          {isReceipt && <td className="text-center"><input type="number" min={0} step="any" className="field w-24 text-center" value={l.unitCost} onChange={(e) => updateLine(i, { unitCost: Number(e.target.value) })} aria-label="تكلفة الوحدة" /></td>}
-                          {!isAdj && <td className="text-center tabular-nums text-slate-600">{formatCurrency(l.qty * l.unitCost)}</td>}
+                          {isReceipt && <td className="text-center"><input type="number" min={0} step="any" className="field w-24 text-center" value={l.unitCost} onChange={(e) => updateLine(i, { unitCost: Number(e.target.value) })} aria-label="تكلفة الوحدة" dir="ltr" /></td>}
+                          {!isAdj && <td className="text-center tabular-nums text-slate-600">{formatCurrency(base * l.unitCost)}</td>}
                           <td className="text-left"><Button variant="ghost" size="icon" aria-label="حذف" onClick={() => removeLine(i)}><Trash2 className="h-4 w-4" /></Button></td>
                         </tr>
                         {isReceipt && (

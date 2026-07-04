@@ -30,8 +30,10 @@ const C = require('../lib/inventoryTxContract');
 const IDEM = require('../lib/idempotencyStore');
 const POLICY = require('../lib/inventoryItemPolicy');
 const L = require('../lib/lotLedger');
+const IU = require('../lib/itemUnits'); // Phase U — enteredUnit → baseQty resolution
 const { recomputeInvItemStock } = require('../lib/stockRecompute');
 const requireRole = require('../middleware/auth').requireRole;
+function v2metricInc(name) { try { require('../lib/v2Metrics').inc(name); } catch (_) {} }
 
 const MGR = requireRole('admin', 'manager');
 const BACKOFFICE = requireRole('admin', 'manager', 'employee', 'custody');
@@ -136,7 +138,15 @@ function _validateItems(items, qtyField, allowZero) {
     if (!id) throw _err('VALIDATION_ERROR', 'صنف غير معرّف في أحد السطور');
     if (seen.has(id)) throw _err('VALIDATION_ERROR', 'تكرار الصنف ' + id + ' في السطور');
     seen.add(id);
-    const qty = Number(it[qtyField]);
+    // Phase U — the quantity may arrive as the raw field (qty/countedQty), OR as
+    // an entered-unit quantity (enteredQty), OR as a major+minor composite. Any
+    // of these is a valid shape; the exact base value is computed after unit
+    // resolution. Here we only sanity-check that SOME quantity was provided.
+    const hasComposite = it.majorQty != null || it.minorQty != null;
+    const eff = it[qtyField] != null ? it[qtyField]
+      : (it.enteredQty != null ? it.enteredQty
+        : (hasComposite ? (Number(it.majorQty) || 0) + (Number(it.minorQty) || 0) : undefined));
+    const qty = Number(eff);
     if (!Number.isFinite(qty)) throw _err('VALIDATION_ERROR', 'كمية غير صحيحة للصنف ' + id);
     if (allowZero ? qty < 0 : qty <= 0) throw _err('VALIDATION_ERROR', 'الكمية يجب أن تكون موجبة للصنف ' + id);
   }
@@ -193,6 +203,34 @@ function _validateManualAlloc(meta, qty, rawAlloc, reason) {
 
 // ── Build draft lines per doc type (also used by PATCH) ─────────────────────
 // Returns { lines:[{itemId,itemName,unit,...}], totalCost, totalValue, header:{} }
+// Phase W3 — compute per-item outstanding for a legacy purchase across already
+// posted/approved V2 receipts linked to it. Read-only. Returns null if the
+// purchase doesn't exist.
+async function _purchaseOutstanding(q, purchaseId) {
+  const [pr] = await q.query('SELECT * FROM purchases WHERE id=? LIMIT 1', [purchaseId]);
+  if (!pr.length) return null;
+  const purchase = pr[0];
+  let ordered = [];
+  try { ordered = JSON.parse(purchase.items_json || '[]'); } catch (_) { ordered = []; }
+  const byItem = new Map();
+  for (const it of ordered) {
+    const id = it.itemId || it.item_id || it.id;
+    if (!id) continue;
+    const qty = Number(it.qty || it.quantity || 0);
+    const prev = byItem.get(id) || { itemId: id, name: it.name || it.item_name || id, ordered: 0, unitPrice: Number(it.unitPrice || it.unit_price || 0), receivedV2: 0 };
+    prev.ordered += qty;
+    byItem.set(id, prev);
+  }
+  // Sum already-received across NON-reversed V2 receipts linked to this purchase.
+  const [rv] = await q.query(
+    "SELECT i.item_id, COALESCE(SUM(i.qty),0) AS q FROM inv_receipt_items i " +
+    "JOIN inv_receipts r ON r.id=i.receipt_id " +
+    "WHERE r.purchase_id=? AND r.status IN ('approved','posted') GROUP BY i.item_id", [purchaseId]);
+  for (const row of rv) { const e = byItem.get(row.item_id); if (e) e.receivedV2 = Number(row.q); }
+  for (const e of byItem.values()) e.outstanding = E.round4(e.ordered - e.receivedV2);
+  return { purchase, supplierId: purchase.supplier_id || null, byItem, legacyReceived: purchase.status === 'received' };
+}
+
 async function _buildReceipt(body, warehouse) {
   if (!String(body.reason || '').trim()) throw _err('REASON_REQUIRED', 'سبب الاستلام إلزامي');
   // The counter (credit) account is REQUIRED and validated — no silent STOCK_GAIN.
@@ -200,11 +238,32 @@ async function _buildReceipt(body, warehouse) {
   await gl.ensureCoreAccounts(db);
   await E.validateAccount(db, counterCode, ACCOUNT_USAGE.receipt);
   _validateItems(body.items, 'qty', false);
+  // Phase U — resolve each line's entered unit → base qty ONCE (used by the
+  // over-receipt check AND the line build; stock/lots/GL stay in base units).
+  for (const it of body.items) { it._u = await IU.resolveLineBase(db, (it.itemId || it.item_id), it, 'receipt'); }
+
+  // Phase W3 — optional linkage to a legacy purchase (partial receiving).
+  const purchaseId = (body.purchaseId || body.purchase_id || '').toString().trim() || null;
+  let plan = null;
+  if (purchaseId) {
+    plan = await _purchaseOutstanding(db, purchaseId);
+    if (!plan) throw _err('VALIDATION_ERROR', 'أمر الشراء غير موجود: ' + purchaseId);
+    if (plan.legacyReceived) throw _err('ALREADY_RECEIVED_IN_V2', 'أمر الشراء مُستلَم بالكامل عبر النظام القديم');
+    const over = [];
+    for (const it of body.items) {
+      const id = it.itemId || it.item_id;
+      const e = plan.byItem.get(id);
+      if (!e) { over.push({ itemId: id, reason: 'ليس في أمر الشراء' }); continue; }
+      if (it._u.baseQty > e.outstanding + 1e-6) over.push({ itemId: id, requested: it._u.baseQty, outstanding: e.outstanding });
+    }
+    if (over.length) { const e = _err('OVER_RECEIPT', 'كمية الاستلام تتجاوز المتبقّي في أمر الشراء'); e.detail = over; throw e; }
+  }
+
   const lines = [];
   let total = 0;
   for (const it of body.items) {
     const itemId = it.itemId || it.item_id;
-    const qty = Number(it.qty);
+    const qty = it._u.baseQty; // base units — the unit-cost below is per BASE unit
     const unitCost = Number(it.unitCost != null ? it.unitCost : it.unit_cost);
     if (!Number.isFinite(unitCost) || unitCost <= 0) throw _err('COST_REQUIRED', 'تكلفة الوحدة مطلوبة وموجبة للصنف ' + itemId);
     const meta = await _itemMeta(itemId);
@@ -212,15 +271,17 @@ async function _buildReceipt(body, warehouse) {
     const lotData = L.isTracked(meta.tracking_mode) ? _validateInboundLots(meta, qty, it.lots) : null;
     const lineTotal = E.round2(qty * unitCost);
     total += lineTotal;
-    lines.push({ itemId, itemName: meta.name, unit: meta.unit, qty, unitCost: E.round4(unitCost), lineTotal, lotData });
+    lines.push({ itemId, itemName: meta.name, unit: meta.unit, qty, unitCost: E.round4(unitCost), lineTotal, lotData, uom: it._u });
   }
   total = E.round2(total);
   return {
     lines, totalCost: total, totalValue: total,
     header: {
-      source_ref: (body.sourceRef || body.source_ref || '').toString().slice(0, 200) || null,
+      source_ref: (body.sourceRef || body.source_ref || '').toString().slice(0, 200) || (purchaseId ? ('PO:' + purchaseId) : null),
       reason: String(body.reason).trim().slice(0, 200),
       counter_account_code: counterCode.slice(0, 20),
+      purchase_id: purchaseId,
+      supplier_id: plan ? plan.supplierId : null,
     },
   };
 }
@@ -232,11 +293,14 @@ async function _buildIssue(body, warehouse) {
   await gl.ensureCoreAccounts(db);
   await E.validateAccount(db, expCode, ACCOUNT_USAGE.issue);
   _validateItems(body.items, 'qty', false);
+  // Phase U — waste/damage is an issue with a reason; both use context 'issue'.
+  const uCtx = (String(body.docContext || body.context || '') === 'waste') ? 'waste' : 'issue';
   const lines = [];
   let total = 0;
   for (const it of body.items) {
     const itemId = it.itemId || it.item_id;
-    const qty = Number(it.qty);
+    const u = await IU.resolveLineBase(db, itemId, it, uCtx);
+    const qty = u.baseQty; // base units for stock/lots
     const meta = await _itemMeta(itemId);
     POLICY.assertOutflowAllowed(meta, { reason: body.reason }); // issue is outbound — inactive may liquidate WITH a reason
     // Tracked issue: an OPTIONAL manual lot allocation (else FEFO is computed at post).
@@ -245,7 +309,7 @@ async function _buildIssue(body, warehouse) {
     const est = await E.getEffectiveCost(db, itemId, warehouse.id);
     const lineTotal = E.round2(qty * est);
     total += lineTotal;
-    lines.push({ itemId, itemName: meta.name, unit: meta.unit, qty, unitCost: E.round4(est), lineTotal, lotData });
+    lines.push({ itemId, itemName: meta.name, unit: meta.unit, qty, unitCost: E.round4(est), lineTotal, lotData, uom: u });
   }
   total = E.round2(total);
   return {
@@ -266,7 +330,10 @@ async function _buildAdjustment(body, warehouse) {
   let absValue = 0;
   for (const it of body.items) {
     const itemId = it.itemId || it.item_id;
-    const counted = Number(it.countedQty != null ? it.countedQty : it.counted_qty);
+    // Phase U — the counted quantity may be entered in a major unit or as a
+    // major+minor composite; resolve to base before computing the delta.
+    const u = await IU.resolveLineBase(db, itemId, { enteredUnitId: it.enteredUnitId, enteredUnitCode: it.enteredUnitCode, enteredQty: (it.countedQty != null ? it.countedQty : it.counted_qty), majorQty: it.majorQty, minorQty: it.minorQty, baseQty: it.baseCountedQty }, 'stocktake');
+    const counted = u.baseQty;
     const meta = await _itemMeta(itemId);
     // Snapshot the system qty NOW; delta is computed in the backend (client delta ignored).
     const snap = await E.readStock(db, warehouse.id, itemId);
@@ -287,7 +354,7 @@ async function _buildAdjustment(body, warehouse) {
     const deltaValue = E.round2(delta * cost);
     totalDeltaValue += deltaValue;
     absValue += Math.abs(deltaValue);
-    lines.push({ itemId, itemName: meta.name, unit: meta.unit, systemQtySnapshot: systemQty, countedQty: counted, delta, unitCost: E.round4(cost), deltaValue, lotData });
+    lines.push({ itemId, itemName: meta.name, unit: meta.unit, systemQtySnapshot: systemQty, countedQty: counted, delta, unitCost: E.round4(cost), deltaValue, lotData, uom: u });
   }
   const evidence = (body.referenceEvidence || body.reference_evidence || '').toString().slice(0, 500) || null;
   if (E.round2(absValue) >= EVIDENCE_THRESHOLD && !evidence) {
@@ -303,15 +370,19 @@ async function _insertLines(conn, cfg, docId, lines) {
   for (const ln of lines) {
     const id = 'LN-' + Date.now() + '-' + Math.random().toString(36).slice(2, 8);
     const lotJson = ln.lotData ? JSON.stringify(ln.lotData).slice(0, 60000) : null;
+    // Phase U — frozen UoM snapshot (NULL when the line had no unit info).
+    const u = ln.uom || null;
+    const eQty = u ? u.enteredQty : null, eUid = u ? u.enteredUnitId : null, eUcode = u ? u.enteredUnitCode : null;
+    const fac = u ? u.conversionFactorSnapshot : null, bQty = u ? u.baseQty : (ln.qty != null ? ln.qty : (ln.countedQty != null ? ln.countedQty : null));
     if (cfg.docType === 'adjustment') {
       await conn.query(
-        'INSERT INTO ' + cfg.items + ' (id, ' + cfg.fk + ', item_id, item_name, unit, system_qty_snapshot, counted_qty, delta, unit_cost, delta_value, posted_unit_cost, notes, lot_data) VALUES (?,?,?,?,?,?,?,?,?,?,0,?,?)',
-        [id, docId, ln.itemId, ln.itemName || '', ln.unit || '', ln.systemQtySnapshot || 0, ln.countedQty || 0, ln.delta || 0, ln.unitCost || 0, ln.deltaValue || 0, (ln.notes || '').toString().slice(0, 400), lotJson]
+        'INSERT INTO ' + cfg.items + ' (id, ' + cfg.fk + ', item_id, item_name, unit, system_qty_snapshot, counted_qty, delta, unit_cost, delta_value, posted_unit_cost, notes, lot_data, entered_qty, entered_unit_id, entered_unit_code, conversion_factor_snapshot, base_qty) VALUES (?,?,?,?,?,?,?,?,?,?,0,?,?,?,?,?,?,?)',
+        [id, docId, ln.itemId, ln.itemName || '', ln.unit || '', ln.systemQtySnapshot || 0, ln.countedQty || 0, ln.delta || 0, ln.unitCost || 0, ln.deltaValue || 0, (ln.notes || '').toString().slice(0, 400), lotJson, eQty, eUid, eUcode, fac, bQty]
       );
     } else {
       await conn.query(
-        'INSERT INTO ' + cfg.items + ' (id, ' + cfg.fk + ', item_id, item_name, unit, qty, unit_cost, line_total, posted_unit_cost, notes, lot_data) VALUES (?,?,?,?,?,?,?,?,0,?,?)',
-        [id, docId, ln.itemId, ln.itemName || '', ln.unit || '', ln.qty || 0, ln.unitCost || 0, ln.lineTotal || 0, (ln.notes || '').toString().slice(0, 400), lotJson]
+        'INSERT INTO ' + cfg.items + ' (id, ' + cfg.fk + ', item_id, item_name, unit, qty, unit_cost, line_total, posted_unit_cost, notes, lot_data, entered_qty, entered_unit_id, entered_unit_code, conversion_factor_snapshot, base_qty) VALUES (?,?,?,?,?,?,?,?,0,?,?,?,?,?,?,?)',
+        [id, docId, ln.itemId, ln.itemName || '', ln.unit || '', ln.qty || 0, ln.unitCost || 0, ln.lineTotal || 0, (ln.notes || '').toString().slice(0, 400), lotJson, eQty, eUid, eUcode, fac, bQty]
       );
     }
   }
@@ -532,28 +603,62 @@ async function _postReceipt(conn, cfg, doc, lines, actor) {
     try { await recomputeInvItemStock(conn, ln.item_id); } catch (_) {}
   }
   amount = E.round2(amount);
+  // Phase W3 — if this receipt is linked to a legacy purchase, recompute the
+  // purchase's receive_status (partial / received) from ALL posted V2 receipts.
+  if (doc.purchase_id) {
+    try {
+      const plan = await _purchaseOutstanding(conn, doc.purchase_id);
+      if (plan) {
+        let anyOutstanding = false, anyReceived = false;
+        for (const e of plan.byItem.values()) { if (e.outstanding > 1e-6) anyOutstanding = true; if (e.receivedV2 > 1e-6) anyReceived = true; }
+        const status = !anyOutstanding && anyReceived ? 'received' : (anyReceived ? 'partial' : 'none');
+        await conn.query('UPDATE purchases SET v2_receive_status=? WHERE id=?', [status, doc.purchase_id]);
+        // Back-propagate received_qty onto PO lines when the purchase came from a PO.
+        if (plan.purchase.po_id) {
+          for (const e of plan.byItem.values()) {
+            await conn.query('UPDATE po_lines SET received_qty=? WHERE po_id=? AND item_id=?', [e.receivedV2, plan.purchase.po_id, e.itemId]).catch(() => {});
+          }
+        }
+      }
+    } catch (_) { /* linkage bookkeeping is best-effort; never blocks the receipt */ }
+  }
   const spec = E.glReceipt({ amount, counterCode: doc.counter_account_code, warehouse, warehouseId: doc.warehouse_id, brandId: doc.brand_id, branchId: doc.branch_id, costCenterId: doc.cost_center_id, journalDate: _dateStr(doc[cfg.dateCol]), postedBy: actor, referenceId: doc.id, description: 'استلام مستقل ' + doc[cfg.numberCol] });
   return { affectedStock, movementIds, amount, spec };
 }
 
-async function _postIssue(conn, cfg, doc, lines, actor) {
+async function _postIssue(conn, cfg, doc, lines, actor, ctx) {
   const warehouse = await _loadWarehouse(doc.warehouse_id);
   // Re-validate the expense account at post (it may have been deactivated since draft).
   await E.validateAccount(conn, doc.expense_account_code, ACCOUNT_USAGE.issue);
   const affectedStock = [];
   const movementIds = [];
   let amount = 0;
-  // Re-cost at current WAC + enforce the no-negative policy (lock rows first).
-  for (const ln of lines) {
-    const qty = Number(ln.qty);
-    const cur = await E.readStock(conn, doc.warehouse_id, ln.item_id, true); // FOR UPDATE
-    if (cur.qty < qty) throw _err('INSUFFICIENT_STOCK', 'الرصيد المتاح (' + cur.qty + ') لا يكفي لصرف ' + qty + ' من الصنف ' + ln.item_id);
+  const NSP = require('../lib/negativeStockPolicy');
+  const policyOn = NSP.POLICY_ENABLED();
+  // When the negative-stock policy is OFF, keep the exact legacy pre-check
+  // (block any line that would go negative). When ON, the per-line engine guard
+  // decides (block / controlled-deficit / deny) so we skip the blanket throw.
+  if (!policyOn) {
+    for (const ln of lines) {
+      const qty = Number(ln.qty);
+      const cur = await E.readStock(conn, doc.warehouse_id, ln.item_id, true); // FOR UPDATE
+      if (cur.qty < qty) throw _err('INSUFFICIENT_STOCK', 'الرصيد المتاح (' + cur.qty + ') لا يكفي لصرف ' + qty + ' من الصنف ' + ln.item_id);
+    }
   }
   for (const ln of lines) {
     const qty = Number(ln.qty);
     const mode = await L.getTrackingMode(conn, ln.item_id);
     const cost = await E.getEffectiveCost(conn, ln.item_id, doc.warehouse_id);
-    const mv = await E.applyStockMovement(conn, doc.warehouse_id, ln.item_id, -qty, cost, 'inv_issue', doc.id, actor);
+    const guardOpts = policyOn ? { negativeGuard: {
+      strict: true, user: (ctx && ctx.user) || {}, reason: doc.reason,
+      acknowledgeNegative: !!(ctx && ctx.acknowledgeNegative),
+      makerChecker: ctx && ctx.makerChecker, docType: 'inv_issue', docId: doc.id,
+    } } : undefined;
+    let mv;
+    try {
+      mv = await E.applyStockMovement(conn, doc.warehouse_id, ln.item_id, -qty, cost, 'inv_issue', doc.id, actor, guardOpts);
+    } catch (ge) { if (ge && ge.code) { const e = new Error(ge.message || ge.code); e.code = ge.code; throw e; } throw ge; }
+    if (mv.deficit) v2metricInc('negative_issues_total');
     const mid = await E.recordMovement(conn, { warehouseId: doc.warehouse_id, itemId: ln.item_id, itemName: ln.item_name, type: 'out', qty, reason: 'صرف مستقل: ' + (doc.reason || ''), username: actor, notes: doc[cfg.numberCol], referenceType: cfg.refType, referenceId: doc.id });
     movementIds.push(mid);
     affectedStock.push({ warehouseId: doc.warehouse_id, itemId: ln.item_id, delta: -qty, newQty: mv.newQty });
@@ -640,7 +745,14 @@ function _makePost(cfg) {
         if (doc.status !== 'approved') throw _err('VERSION_CONFLICT', 'تغيّرت حالة المستند — أعد التحميل');
         if (expected != null && Number(doc.version) !== expected) throw _err('VERSION_CONFLICT', 'تغيّر إصدار المستند — أعد التحميل');
         const lines = await _loadLines(cfg, id, conn);
-        const r = await POSTERS[cfg.docType](conn, cfg, doc, lines, actor);
+        // Phase W2b — context for the optional negative-stock guard. Reading the
+        // ACK at post time is authoritative (the negative actually occurs here).
+        const postCtx = {
+          user: { role: String((req.user && req.user.role) || '').toLowerCase(), username: actor, isDeveloper: !!(req.user && req.user.isDeveloper) },
+          acknowledgeNegative: !!(req.body && req.body.acknowledgeNegative === true),
+          makerChecker: MAKER_CHECKER ? { creator: doc.created_by, poster: actor } : null,
+        };
+        const r = await POSTERS[cfg.docType](conn, cfg, doc, lines, actor, postCtx);
         let journalId = null;
         if (r.spec) {
           const j = await gl.postJournal(conn, r.spec);
@@ -852,6 +964,94 @@ router.get('/gl-accounts', async (req, res) => {
       types
     );
     res.json({ data: rows.map((r) => ({ code: r.code, name: r.name_ar || r.name_en || r.code, type: r.type })), usage });
+  } catch (e) { _catch(res, e); }
+});
+
+// ── Phase W3 — receive-plan for a legacy purchase (partial receiving) ───────
+// GET /api/inventory/v2/purchases/:id/receive-plan → per-line outstanding qty
+// + item tracking mode/unit so the receiving wizard can require lot/expiry.
+router.get('/purchases/:id/receive-plan', async (req, res) => {
+  try {
+    const plan = await _purchaseOutstanding(db, req.params.id);
+    if (!plan) return res.status(404).json({ success: false, code: 'NOT_FOUND', error: 'أمر الشراء غير موجود' });
+    if (plan.legacyReceived) return _fail(res, 'ALREADY_RECEIVED_IN_V2', 'أمر الشراء مُستلَم بالكامل عبر النظام القديم');
+    const ids = Array.from(plan.byItem.keys());
+    const metaById = new Map();
+    if (ids.length) {
+      const [meta] = await db.query('SELECT id, name, unit, tracking_mode, active FROM inv_items WHERE id IN (?)', [ids]);
+      for (const m of meta) metaById.set(m.id, m);
+    }
+    const lines = Array.from(plan.byItem.values()).map((e) => {
+      const m = metaById.get(e.itemId) || {};
+      return {
+        itemId: e.itemId, name: m.name || e.name, unit: m.unit || '',
+        trackingMode: m.tracking_mode || 'none', active: m.active !== 0,
+        ordered: e.ordered, receivedV2: e.receivedV2, outstanding: e.outstanding, unitPrice: e.unitPrice,
+      };
+    });
+    res.json({ success: true, data: { purchaseId: plan.purchase.id, supplierId: plan.supplierId, supplierName: plan.purchase.supplier_name || null, warehouseId: plan.purchase.warehouse_id || null, purchaseDate: plan.purchase.purchase_date || null, notes: plan.purchase.notes || null, v2ReceiveStatus: plan.purchase.v2_receive_status || 'none', lines }, fullyOutstanding: lines.every((l) => Math.abs(l.receivedV2) < 1e-6) });
+  } catch (e) { _catch(res, e); }
+});
+
+// ── Phase W3b — OPEN legacy purchases list (the receiving work queue) ────────
+// GET /api/inventory/v2/purchases/open?q=&status=none|partial&page=&pageSize=
+// Lists legacy purchases that are still receivable through V2: legacy status
+// 'draft' (not received via the legacy path) and not fully received via V2.
+router.get('/purchases/open', async (req, res) => {
+  try {
+    const q = String(req.query.q || '').trim().slice(0, 120);
+    const vStatus = ['none', 'partial'].includes(String(req.query.status)) ? String(req.query.status) : '';
+    const page = Math.max(1, parseInt(req.query.page, 10) || 1);
+    const pageSize = Math.min(100, Math.max(1, parseInt(req.query.pageSize, 10) || 25));
+    const where = ["p.status='draft'", "COALESCE(p.v2_receive_status,'none') <> 'received'"];
+    const params = [];
+    if (vStatus) { where.push("COALESCE(p.v2_receive_status,'none')=?"); params.push(vStatus); }
+    if (q) { where.push('(p.id LIKE ? OR p.supplier_name LIKE ?)'); params.push('%' + q + '%', '%' + q + '%'); }
+    const whereSql = ' WHERE ' + where.join(' AND ');
+    const [rows] = await db.query(
+      `SELECT p.id, p.purchase_date, p.supplier_id, p.supplier_name, p.warehouse_id, w.name AS warehouse_name,
+              p.total_price, p.items_json, COALESCE(p.v2_receive_status,'none') AS v2_receive_status, p.po_id
+       FROM purchases p LEFT JOIN warehouses w ON w.id=p.warehouse_id
+       ${whereSql} ORDER BY p.purchase_date DESC, p.id DESC LIMIT ? OFFSET ?`,
+      params.concat([pageSize, (page - 1) * pageSize]));
+    const [cnt] = await db.query('SELECT COUNT(*) AS total FROM purchases p' + whereSql, params);
+    // Per-purchase V2 received sums in ONE grouped query for this page.
+    const ids = rows.map((r) => r.id);
+    const recvByPurchase = new Map();
+    if (ids.length) {
+      const [rv] = await db.query(
+        "SELECT r.purchase_id, i.item_id, COALESCE(SUM(i.qty),0) AS q FROM inv_receipt_items i JOIN inv_receipts r ON r.id=i.receipt_id WHERE r.purchase_id IN (?) AND r.status IN ('approved','posted') GROUP BY r.purchase_id, i.item_id",
+        [ids]);
+      for (const row of rv) {
+        if (!recvByPurchase.has(row.purchase_id)) recvByPurchase.set(row.purchase_id, new Map());
+        recvByPurchase.get(row.purchase_id).set(row.item_id, Number(row.q));
+      }
+    }
+    const data = rows.map((r) => {
+      let items = [];
+      try { items = JSON.parse(r.items_json || '[]'); } catch (_) { items = []; }
+      const recv = recvByPurchase.get(r.id) || new Map();
+      let orderedQty = 0, receivedQty = 0, lineCount = 0, outstandingLines = 0;
+      for (const it of items) {
+        const itemId = it.itemId || it.item_id || it.id;
+        const qty = Number(it.qty || it.quantity || 0);
+        if (!itemId || qty <= 0) continue;
+        lineCount++;
+        orderedQty += qty;
+        const got = recv.get(itemId) || 0;
+        receivedQty += Math.min(got, qty);
+        if (qty - got > 1e-6) outstandingLines++;
+      }
+      return {
+        id: r.id, purchaseDate: r.purchase_date, supplierId: r.supplier_id, supplierName: r.supplier_name,
+        warehouseId: r.warehouse_id, warehouseName: r.warehouse_name, poId: r.po_id || null,
+        totalPrice: Number(r.total_price) || 0, v2ReceiveStatus: r.v2_receive_status,
+        lineCount, orderedQty: Math.round(orderedQty * 10000) / 10000,
+        receivedQty: Math.round(receivedQty * 10000) / 10000, outstandingLines,
+      };
+    });
+    const total = Number(cnt[0].total) || 0;
+    res.json({ data, pagination: { page, pageSize, total, totalPages: Math.max(1, Math.ceil(total / pageSize)) } });
   } catch (e) { _catch(res, e); }
 });
 

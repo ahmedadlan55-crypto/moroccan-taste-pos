@@ -16,3 +16,5 @@ generate_report.py
 # Phase 5A (RC) — generated evidence (screenshots, perf/preflight JSON) stays local
 artifacts/
 frontend/warehouse/dist/
+frontend/pos/dist/
+frontend/pos/node_modules/

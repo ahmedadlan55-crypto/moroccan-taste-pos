@@ -48,7 +48,22 @@ export type WarehouseAction =
   | "issue.reverse"
   | "waste.create"
   | "document.reverse"
-  | "settings.edit";
+  | "settings.edit"
+  | "barcode.manage"
+  | "negativePolicy.view"
+  | "negativePolicy.edit"
+  | "warehouse.edit"
+  | "warehouse.scopeAssign"
+  | "production.view"
+  | "production.create"
+  | "production.approve"
+  | "production.issue"
+  | "production.output"
+  | "production.complete"
+  | "production.close"
+  | "production.cancel"
+  | "production.reverse"
+  | "production.delete";
 
 // Roles allowed per action. Mirrors the blueprint §5 matrix and the backend
 // requireRole gates established in Phase 0. `auditor` is read-only everywhere.
@@ -96,6 +111,28 @@ const MATRIX: Record<WarehouseAction, Role[]> = {
   "waste.create": ["admin", "manager", "employee", "custody"],
   "document.reverse": ["admin", "manager"],
   "settings.edit": ["admin", "manager"],
+  // Phase W4 — barcode list replacement is a MGR endpoint (PUT /items/:id/barcodes).
+  "barcode.manage": ["admin", "manager"],
+  // Phase W2 — negative-stock policy settings (mirrors routes/negative-policy.js:
+  // read = managerial+auditor; edit = admin, allow-mode gated developer-side).
+  "negativePolicy.view": ["admin", "manager", "auditor"],
+  "negativePolicy.edit": ["admin"],
+  // Phase W6 — warehouse management writes (mirrors routes MGR gates).
+  "warehouse.edit": ["admin", "manager"],
+  "warehouse.scopeAssign": ["admin"],
+  // Phase P1 — production orders. create/issue/output/complete = back-office;
+  // approve/close/cancel/reverse/delete = managerial (mirrors
+  // routes/inventory-production.js BACKOFFICE/MGR gates).
+  "production.view": ["admin", "manager", "employee", "custody", "auditor"],
+  "production.create": ["admin", "manager", "employee", "custody"],
+  "production.approve": ["admin", "manager"],
+  "production.issue": ["admin", "manager", "employee", "custody"],
+  "production.output": ["admin", "manager", "employee", "custody"],
+  "production.complete": ["admin", "manager", "employee", "custody"],
+  "production.close": ["admin", "manager"],
+  "production.cancel": ["admin", "manager"],
+  "production.reverse": ["admin", "manager"],
+  "production.delete": ["admin", "manager"],
 };
 
 export function can(user: SessionUser | null, action: WarehouseAction): boolean {

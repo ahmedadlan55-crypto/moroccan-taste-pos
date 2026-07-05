@@ -9,12 +9,22 @@
   // the legacy /inventory/ UI (kept ONLY as the rollback path when the flag is
   // off). Cached in localStorage so the first paint is correct; refreshed from
   // /api/version (public endpoint) and the header re-renders if it changed.
-  function whV2Enabled() { return localStorage.getItem('wh_v2_flag') !== '0'; }
+  // Show the /warehouse entry ONLY for canary-eligible users (per-user), else the
+  // legacy /inventory/ entry — matches the main shell's _applyWhV2Nav. Both flags
+  // are cached for a correct first paint and refreshed from the AUTHENTICATED
+  // /api/warehouse-nav, so a non-canary user never gets a header link to a v2 API
+  // that would 403 for them. Defaults to the legacy entry until confirmed.
+  function whV2Show() { return localStorage.getItem('wh_v2_flag') === '1' && localStorage.getItem('wh_v2_allowed') === '1'; }
   try {
-    fetch('/api/version').then(function(r) { return r.json(); }).then(function(v) {
-      var next = v && v.warehouseV2 === false ? '0' : '1';
-      if (localStorage.getItem('wh_v2_flag') !== next) {
-        localStorage.setItem('wh_v2_flag', next);
+    var _t = localStorage.getItem('pos_token');
+    var _hh = { 'Cache-Control': 'no-cache' };
+    if (_t) _hh['Authorization'] = 'Bearer ' + _t;
+    fetch('/api/warehouse-nav', { headers: _hh }).then(function(r) { return r.ok ? r.json() : null; }).then(function(v) {
+      var f = v && v.v2Enabled ? '1' : '0';
+      var a = v && v.v2Allowed ? '1' : '0';
+      var changed = localStorage.getItem('wh_v2_flag') !== f || localStorage.getItem('wh_v2_allowed') !== a;
+      try { localStorage.setItem('wh_v2_flag', f); localStorage.setItem('wh_v2_allowed', a); } catch (e) {}
+      if (changed) {
         var active = document.body.getAttribute('data-page') || '';
         if (typeof window.renderHeader === 'function') window.renderHeader(active, { showShift: !!document.body.getAttribute('data-show-shift') });
       }
@@ -23,7 +33,7 @@
 
   // Pages registry — controls navigation links visibility per role
   function getPages() {
-    var warehouseEntry = whV2Enabled()
+    var warehouseEntry = whV2Show()
       ? { key: 'warehouse', href: '/warehouse',  icon: 'fa-warehouse', label: { ar: 'المستودعات', en: 'Warehouse' }, roles: ['admin', 'manager', 'employee', 'custody'] }
       : { key: 'inventory', href: '/inventory/', icon: 'fa-boxes',     label: { ar: 'المخزون',    en: 'Inventory' }, roles: ['admin', 'manager'] };
     return [

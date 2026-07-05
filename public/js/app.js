@@ -249,26 +249,46 @@ function injectAppTemplate(html) {
   _applyWhV2Nav();
 }
 
-// Warehouse V2 sidebar link — same flag contract as /shared/header.js:
-// localStorage 'wh_v2_flag' gives an instant (flash-free) decision, then
-// GET /api/version refreshes it so a flag flip on the server propagates on
-// the next load. Only toggles visibility — legacy items stay untouched.
+// Warehouse navigation — the shell shows EXACTLY ONE warehouse section:
+//   • canary-eligible users (per-user, from GET /api/warehouse-nav) → the unified
+//     «إدارة المستودعات» → /warehouse link; the legacy inventory/warehouse submenu
+//     ([data-wh-legacy-nav]) is HIDDEN.
+//   • everyone else → the /warehouse link is hidden and the legacy submenu stays
+//     (it is their only working UI; a non-canary v2 API call returns 403).
+// RBAC-gated: the warehouse entry only appears for users with inventory/warehouse
+// permission. localStorage (wh_v2_flag + wh_v2_allowed) gives an instant,
+// flash-free decision, then the authenticated endpoint reconciles per user.
 function _applyWhV2Nav() {
-  function setShown(on) {
+  function permOK() {
+    return (typeof hasPermission !== 'function') || hasPermission('inventory.view') || hasPermission('warehouse.view');
+  }
+  function apply(showV2) {
+    window._whV2Active = !!showV2;
     document.querySelectorAll('[data-wh-v2-link]').forEach(function(el) {
-      el.style.display = on ? '' : 'none';
+      el.style.display = showV2 ? '' : 'none';
+    });
+    // Legacy warehouse nav is hidden when the v2 link shows OR the user lacks the
+    // warehouse permission — never two warehouse sections at once.
+    var hideLegacy = showV2 || !permOK();
+    document.querySelectorAll('[data-wh-legacy-nav]').forEach(function(el) {
+      el.style.display = hideLegacy ? 'none' : '';
     });
   }
-  var cached = localStorage.getItem('wh_v2_flag');
-  if (cached === '1') setShown(true);
-  fetch('/api/version', { headers: { 'Cache-Control': 'no-cache' } })
+  // instant, flash-free decision from cache (both flags must be affirmative)
+  if (localStorage.getItem('wh_v2_flag') === '1' && localStorage.getItem('wh_v2_allowed') === '1' && permOK()) apply(true);
+  // reconcile with the server — per-user canary (authenticated, so req.user is set)
+  var _tok = localStorage.getItem('pos_token');
+  var _h = { 'Cache-Control': 'no-cache' };
+  if (_tok) _h['Authorization'] = 'Bearer ' + _tok;
+  fetch('/api/warehouse-nav', { headers: _h })
     .then(function(r) { return r.ok ? r.json() : null; })
     .then(function(v) {
-      var on = !!(v && v.warehouseV2 !== false);
-      try { localStorage.setItem('wh_v2_flag', on ? '1' : '0'); } catch (e) {}
-      setShown(on);
+      var v2Enabled = !!(v && v.v2Enabled);
+      var v2Allowed = !!(v && v.v2Allowed);
+      try { localStorage.setItem('wh_v2_flag', v2Enabled ? '1' : '0'); localStorage.setItem('wh_v2_allowed', v2Allowed ? '1' : '0'); } catch (e) {}
+      apply(v2Enabled && v2Allowed && permOK());
     })
-    .catch(function() { /* keep cached decision */ });
+    .catch(function() { /* keep cached/default (legacy visible) */ });
 }
 
 // Mount a section from cache into the DOM (lazy) — called by nav/erpNav
@@ -367,7 +387,7 @@ const dict = {
     "nav.menuProduction":"المنيو والإنتاج", "nav.menuHub":"إدارة المنيو والبرندات",
     "nav.semiFinished":"المنتجات غير التامة", "nav.bom":"الوصفات (BOM)",
     "nav.productionOrders":"أوامر الإنتاج", "nav.priceLists":"قوائم الأسعار", "nav.categories":"تصنيفات الأصناف",
-    "nav.inventory":"المخزون والمستودعات", "nav.warehouseV2":"المستودعات", "nav.stockManagement":"تقارير المستودعات",
+    "nav.inventory":"المخزون والمستودعات", "nav.warehouseV2":"إدارة المستودعات", "nav.stockManagement":"تقارير المستودعات",
     "nav.multiWarehouses":"المستودعات المتعددة", "nav.whHierarchy":"هيكل المستودعات",
     "nav.inventoryMethod":"نوع الجرد وقيمة المخزون", "nav.stockIssues":"إذونات الصرف",
     "nav.wasteEntries":"قيود الهدر", "nav.expiryAlerts":"تنبيهات انتهاء الصلاحية",
@@ -480,7 +500,7 @@ const dict = {
     "nav.menuProduction":"Menu & Production", "nav.menuHub":"Menu & Brands",
     "nav.semiFinished":"Semi-Finished Products", "nav.bom":"Recipes (BOM)",
     "nav.productionOrders":"Production Orders", "nav.priceLists":"Price Lists", "nav.categories":"Item Categories",
-    "nav.inventory":"Inventory & Warehouses", "nav.warehouseV2":"Warehouses", "nav.stockManagement":"Stock & Stocktake",
+    "nav.inventory":"Inventory & Warehouses", "nav.warehouseV2":"Warehouse Management", "nav.stockManagement":"Stock & Stocktake",
     "nav.multiWarehouses":"Multi-Warehouses", "nav.whHierarchy":"Warehouse Hierarchy",
     "nav.inventoryMethod":"Valuation Method", "nav.stockIssues":"Stock Issues",
     "nav.wasteEntries":"Waste Entries", "nav.expiryAlerts":"Expiry Alerts",
@@ -2074,6 +2094,10 @@ document.addEventListener('keydown', function(e) {
 });
 
 function nav(sectionId) {
+  // Single warehouse section: canary-eligible users use the /warehouse SPA. Route
+  // the legacy warehouse section (its menu item, the dashboard low-stock tile, and
+  // any saved bookmark that calls nav('warehouse')) there — no second legacy UI.
+  if (sectionId === 'warehouse' && window._whV2Active) { window.location.href = '/warehouse'; return; }
   // Push the PREVIOUS section onto the back stack before switching.
   if (!window._navSilent) {
     var prev = localStorage.getItem('pos_last_section');

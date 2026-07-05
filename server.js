@@ -400,16 +400,27 @@ app.get('/api/version', (req, res) => {
   });
 });
 
-// Per-user warehouse navigation gate. The main shell + shared header show EXACTLY
-// ONE warehouse entry: the /warehouse SPA for canary-eligible users, else the
-// legacy inventory UI. Authenticated (NOT in the public list above → req.user is
-// set by the /api JWT gate), so canary is evaluated per user — non-canary roles
-// never get a link to a v2 API that would 403 for them. Single source of truth =
-// lib/v2Canary; no allow-list is leaked to the client.
-app.get('/api/warehouse-nav', (req, res) => {
-  const _wc = require('./lib/v2Canary');
-  const v2Allowed = _wc.isAllowed(req.user, { users: _wc.config.USERS, roles: _wc.config.ROLES });
-  res.json({ v2Enabled: WAREHOUSE_V2_ENABLED, v2Allowed: !!v2Allowed });
+// Per-user warehouse navigation gate (Final Rollout). The main shell + shared
+// header show EXACTLY ONE warehouse entry — «إدارة المستودعات» → /warehouse — and
+// ONLY to authorized users. Authorization = V2 enabled AND the user has Warehouse
+// Scope (admin/developer = global; everyone else = ≥1 explicitly-granted warehouse
+// in user_warehouse_access). A user with NO warehouse scope gets NO link. This is
+// the documented Scope/RBAC split: Scope decides WHICH warehouses (and whether the
+// entry shows); RBAC continues to govern WHAT actions the user may take inside the
+// v2 routes. NOT gated by canary — canary is `*` (open) at this stage; the legacy
+// UI is hidden for everyone and kept only as an internal rollback (flag → 0).
+// Authenticated (NOT in the public list above → req.user is set by the /api gate).
+app.get('/api/warehouse-nav', async (req, res) => {
+  if (!WAREHOUSE_V2_ENABLED) return res.json({ v2Enabled: false, v2Allowed: false });
+  try {
+    const _wsMw = require('./middleware/warehouseScope');
+    const scope = await _wsMw.loadScope(req.user);
+    const hasScope = !!(scope && (scope.all || (Array.isArray(scope.warehouseIds) && scope.warehouseIds.length > 0)));
+    res.json({ v2Enabled: true, v2Allowed: hasScope });
+  } catch (e) {
+    // fail-closed on the nav decision — never show a link we can't verify
+    res.json({ v2Enabled: true, v2Allowed: false });
+  }
 });
 
 // RC ops — readiness probe. Verifies DB connectivity AND that the warehouse-v2

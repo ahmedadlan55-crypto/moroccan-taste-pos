@@ -9,12 +9,13 @@
   // the legacy /inventory/ UI (kept ONLY as the rollback path when the flag is
   // off). Cached in localStorage so the first paint is correct; refreshed from
   // /api/version (public endpoint) and the header re-renders if it changed.
-  // Show the /warehouse entry ONLY for canary-eligible users (per-user), else the
-  // legacy /inventory/ entry — matches the main shell's _applyWhV2Nav. Both flags
-  // are cached for a correct first paint and refreshed from the AUTHENTICATED
-  // /api/warehouse-nav, so a non-canary user never gets a header link to a v2 API
-  // that would 403 for them. Defaults to the legacy entry until confirmed.
-  function whV2Show() { return localStorage.getItem('wh_v2_flag') === '1' && localStorage.getItem('wh_v2_allowed') === '1'; }
+  // Final Rollout: show «إدارة المستودعات» → /warehouse ONLY for authorized users
+  // (V2 enabled AND Warehouse Scope, per-user via the AUTHENTICATED /api/warehouse-nav).
+  // While V2 is ON, the legacy /inventory/ entry is hidden for EVERYONE (rollback-
+  // internal only); it returns only if V2 is turned OFF. Flags cached for a correct
+  // first paint. whV2On = V2 enabled; whV2Show = enabled AND authorized.
+  function whV2On() { return localStorage.getItem('wh_v2_flag') === '1'; }
+  function whV2Show() { return whV2On() && localStorage.getItem('wh_v2_allowed') === '1'; }
   try {
     var _t = localStorage.getItem('pos_token');
     var _hh = { 'Cache-Control': 'no-cache' };
@@ -33,9 +34,12 @@
 
   // Pages registry — controls navigation links visibility per role
   function getPages() {
+    // authorized → «إدارة المستودعات»→/warehouse ; V2-on-but-unauthorized → no entry ;
+    // V2-off → legacy /inventory/ (rollback). Null entries are filtered out below.
     var warehouseEntry = whV2Show()
-      ? { key: 'warehouse', href: '/warehouse',  icon: 'fa-warehouse', label: { ar: 'المستودعات', en: 'Warehouse' }, roles: ['admin', 'manager', 'employee', 'custody'] }
-      : { key: 'inventory', href: '/inventory/', icon: 'fa-boxes',     label: { ar: 'المخزون',    en: 'Inventory' }, roles: ['admin', 'manager'] };
+      ? { key: 'warehouse', href: '/warehouse',  icon: 'fa-warehouse', label: { ar: 'إدارة المستودعات', en: 'Warehouse Management' }, roles: ['admin', 'manager', 'employee', 'custody'] }
+      : (whV2On() ? null
+                  : { key: 'inventory', href: '/inventory/', icon: 'fa-boxes', label: { ar: 'المخزون', en: 'Inventory' }, roles: ['admin', 'manager'] });
     return [
       { key: 'pos',       href: '/pos/',       icon: 'fa-cash-register',  label: { ar: 'نقطة البيع', en: 'POS' },        roles: ['admin', 'manager', 'cashier'] },
       { key: 'dashboard', href: '/dashboard/', icon: 'fa-chart-line',     label: { ar: 'الرئيسية',   en: 'Dashboard' }, roles: ['admin', 'manager'] },
@@ -44,7 +48,7 @@
       { key: 'erp',       href: '/erp/',       icon: 'fa-building',       label: { ar: 'ERP',        en: 'ERP' },       roles: ['admin'] },
       { key: 'settings',  href: '/settings/',  icon: 'fa-sliders-h',      label: { ar: 'الإعدادات',  en: 'Settings' },  roles: ['admin'] },
       { key: 'users',     href: '/users/',     icon: 'fa-users-cog',      label: { ar: 'المستخدمين', en: 'Users' },     roles: ['admin'] }
-    ];
+    ].filter(Boolean);
   }
 
   /**

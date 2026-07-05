@@ -30,9 +30,16 @@ export interface WarehouseHit { id: string; name: string; code?: string | null; 
 
 interface Paged<T> { data: T[]; pagination?: { page: number; totalPages: number; total: number }; exactBarcodeId?: string | null }
 function toPage<T>(r: Paged<T>): EntityPage<T> {
+  // Contract guard: a paginated search MUST return `{ data: [...] }`. If the
+  // shape is wrong (null body, an HTML error page coerced to text, a non-array
+  // `data`), throw so the combobox shows its error+retry state instead of
+  // silently rendering an empty list. A legitimate empty result is `data: []`.
+  if (r == null || typeof r !== "object" || !Array.isArray((r as Paged<T>).data)) {
+    throw new Error("SEARCH_CONTRACT_INVALID");
+  }
   const pg = r.pagination;
   const nextPage = pg && pg.page < pg.totalPages ? pg.page + 1 : null;
-  return { items: Array.isArray(r.data) ? r.data : [], nextPage, total: pg?.total ?? (r.data?.length ?? 0), exactMatchId: r.exactBarcodeId ?? null };
+  return { items: r.data, nextPage, total: pg?.total ?? r.data.length, exactMatchId: r.exactBarcodeId ?? null };
 }
 
 // ── items / materials / products ─────────────────────────────────────────────

@@ -24,6 +24,8 @@ var I18N = {
     'header.refresh': 'تحديث',
     'header.logout': 'خروج',
     'header.langToggle': 'English',
+    'header.warehouse': 'إدارة المستودعات',
+    'header.warehouseShort': 'المستودعات',
     // Bottom nav
     'nav.home': 'الرئيسية',
     'nav.att': 'البصمة',
@@ -410,6 +412,8 @@ var I18N = {
     'header.refresh': 'Refresh',
     'header.logout': 'Logout',
     'header.langToggle': 'العربية',
+    'header.warehouse': 'Warehouse Management',
+    'header.warehouseShort': 'Warehouse',
     'nav.home': 'Home',
     'nav.att': 'Attendance',
     'nav.txn': 'Transactions',
@@ -842,6 +846,12 @@ function applyLangToStaticDOM() {
     var key = el.getAttribute('data-i18n-placeholder');
     el.setAttribute('placeholder', t(key));
   });
+  document.querySelectorAll('[data-i18n-title]').forEach(function(el) {
+    el.setAttribute('title', t(el.getAttribute('data-i18n-title')));
+  });
+  document.querySelectorAll('[data-i18n-aria]').forEach(function(el) {
+    el.setAttribute('aria-label', t(el.getAttribute('data-i18n-aria')));
+  });
   // Toggle button label — updates BOTH the login-screen button and the
   // in-app header button. The two buttons used to share id="langToggleBtn"
   // which is invalid HTML (duplicate IDs) — the header button never
@@ -1021,8 +1031,54 @@ function startApp() {
     }
   });
 
+  // Warehouse entry — reveal only for users with Warehouse Scope. Runs before
+  // home data so a slow/failed dashboard load never blocks the entry point.
+  applyWhNav();
+
   // Load home data
   loadHomeData();
+}
+
+// ─── Warehouse entry (Final Rollout — employee-portal gap closure) ───
+// The link appears ONLY when the server confirms this user has Warehouse Scope
+// (V2 enabled AND a warehouse assignment) via /api/warehouse-nav — the same
+// source of truth the main shell uses. It is NEVER shown to cashiers or to users
+// with no scope. No new permission is granted here: RBAC in the backend remains
+// the authority for every action inside /warehouse.
+function _empSessionRole() {
+  try { var s = JSON.parse(localStorage.getItem('emp_session') || 'null'); return String((s && s.role) || localStorage.getItem('emp_role') || '').toLowerCase(); }
+  catch (_) { return String(localStorage.getItem('emp_role') || '').toLowerCase(); }
+}
+function applyWhNav() {
+  var btn = document.getElementById('whNavBtn');
+  if (!btn) return;
+  // Cashiers use /pos/, not this portal — defense-in-depth: never surface here.
+  if (_empSessionRole() === 'cashier') { btn.style.display = 'none'; return; }
+  // Instant paint from the last confirmed answer (no flash), then reconcile.
+  try { if (localStorage.getItem('emp_wh_v2_allowed') === '1') btn.style.display = ''; } catch (_) {}
+  var token = localStorage.getItem('emp_token');
+  if (!token) { btn.style.display = 'none'; return; }
+  fetch('/api/warehouse-nav', { headers: { Authorization: 'Bearer ' + token } })
+    .then(function (r) { return r.ok ? r.json() : null; })
+    .then(function (j) {
+      var show = !!(j && j.v2Enabled && j.v2Allowed) && _empSessionRole() !== 'cashier';
+      btn.style.display = show ? '' : 'none';
+      try { localStorage.setItem('emp_wh_v2_allowed', show ? '1' : '0'); } catch (_) {}
+    })
+    .catch(function () { /* offline — keep the cached state */ });
+}
+// Open /warehouse in the SAME session: the warehouse SPA reads the JWT from
+// localStorage.pos_token, so mirror the employee's existing token/session (the
+// identical JWT — no re-login, no elevated claims) before navigating.
+function openWarehouse() {
+  try {
+    var tok = localStorage.getItem('emp_token');
+    if (!tok) { location.href = '/warehouse'; return; }
+    localStorage.setItem('pos_token', tok);
+    var sess = localStorage.getItem('emp_session');
+    if (sess) localStorage.setItem('pos_session', sess);
+  } catch (_) {}
+  window.location.href = '/warehouse';
 }
 
 function hideLoader() { var l = document.getElementById('loader'); if (l) l.style.display = 'none'; }
@@ -1137,7 +1193,14 @@ function doLogin() {
   });
 }
 
-function doLogout() { localStorage.removeItem('emp_token'); localStorage.removeItem('emp_session'); location.reload(); }
+function doLogout() {
+  localStorage.removeItem('emp_token'); localStorage.removeItem('emp_session');
+  // Also clear the JWT we mirrored for the warehouse app + its cached gate, so
+  // logging out here fully ends the session (no lingering /warehouse access).
+  localStorage.removeItem('pos_token'); localStorage.removeItem('pos_session');
+  localStorage.removeItem('emp_wh_v2_allowed');
+  location.reload();
+}
 function doRefresh() { loadHomeData(); toast(t('common.refreshed')); }
 
 // ─── Navigation ───

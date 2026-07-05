@@ -186,7 +186,7 @@ async function apply(db, log = () => {}) {
       INDEX idx_sim_invoice (invoice_id),
       INDEX idx_sim_po_line (po_line_id),
       INDEX idx_sim_receipt_line (receipt_line_id)
-    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`, log);
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`, log);
 
   // ─────────────────────────────────────────────────────────────────────────
   // 9. NEW: payment_allocations
@@ -204,7 +204,7 @@ async function apply(db, log = () => {}) {
       UNIQUE KEY uq_alloc (payment_id, supplier_invoice_id),
       INDEX idx_alloc_invoice (supplier_invoice_id),
       INDEX idx_alloc_payment (payment_id)
-    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`, log);
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`, log);
 
   // ─────────────────────────────────────────────────────────────────────────
   // 10. NEW: purchase_returns + purchase_return_lines
@@ -242,7 +242,7 @@ async function apply(db, log = () => {}) {
       INDEX idx_ret_supplier (supplier_id),
       INDEX idx_ret_receipt (receipt_id),
       INDEX idx_ret_invoice (invoice_id)
-    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`, log);
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`, log);
 
   await H.createTable(db, 'purchase_return_lines', `
     CREATE TABLE purchase_return_lines (
@@ -260,7 +260,7 @@ async function apply(db, log = () => {}) {
       line_total ${MONEY} NOT NULL,
       INDEX idx_retl_return (return_id),
       INDEX idx_retl_lot (purchase_lot_id)
-    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`, log);
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`, log);
 
   // ─────────────────────────────────────────────────────────────────────────
   // 11. NEW: procurement_events (domain audit + idempotency replay guard)
@@ -281,7 +281,19 @@ async function apply(db, log = () => {}) {
       INDEX idx_pe_doc (document_type, document_id, created_at),
       INDEX idx_pe_action (action, created_at),
       UNIQUE KEY uq_pe_idem (document_type, idempotency_key)
-    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`, log);
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`, log);
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // 11b. Normalize new-table collation to match the base tables
+  //      (utf8mb4_unicode_ci) — MariaDB creates utf8mb4 tables as
+  //      utf8mb4_general_ci by default, which breaks id JOINs against the base
+  //      schema with "Illegal mix of collations". Idempotent CONVERT.
+  // ─────────────────────────────────────────────────────────────────────────
+  for (const t of ['supplier_invoice_matches', 'payment_allocations', 'purchase_returns', 'purchase_return_lines', 'procurement_events']) {
+    if (await H.tableExists(db, t)) {
+      await H.run(db, `ALTER TABLE \`${t}\` CONVERT TO CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci`, log, `collation ${t}`);
+    }
+  }
 
   // ─────────────────────────────────────────────────────────────────────────
   // 12. Derived supplier AP balance (single source of truth for balances)

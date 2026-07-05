@@ -249,34 +249,32 @@ function injectAppTemplate(html) {
   _applyWhV2Nav();
 }
 
-// Warehouse navigation — the shell shows EXACTLY ONE warehouse section:
-//   • canary-eligible users (per-user, from GET /api/warehouse-nav) → the unified
-//     «إدارة المستودعات» → /warehouse link; the legacy inventory/warehouse submenu
-//     ([data-wh-legacy-nav]) is HIDDEN.
-//   • everyone else → the /warehouse link is hidden and the legacy submenu stays
-//     (it is their only working UI; a non-canary v2 API call returns 403).
-// RBAC-gated: the warehouse entry only appears for users with inventory/warehouse
-// permission. localStorage (wh_v2_flag + wh_v2_allowed) gives an instant,
-// flash-free decision, then the authenticated endpoint reconciles per user.
+// Warehouse navigation (Final Rollout) — the shell shows EXACTLY ONE warehouse
+// section, and the LEGACY inventory/warehouse UI is hidden for EVERYONE while V2
+// is enabled (kept only as an internal rollback: flag → 0 restores it):
+//   • authorized users (V2 enabled AND Warehouse Scope, per GET /api/warehouse-nav)
+//     → «إدارة المستودعات» → /warehouse; legacy ([data-wh-legacy-nav]) HIDDEN.
+//   • users with no warehouse scope → NO warehouse entry at all (0), legacy hidden.
+// Scope decides visibility (WHICH warehouses); RBAC governs WHAT actions inside the
+// v2 routes. localStorage (wh_v2_flag = enabled, wh_v2_allowed = authorized) gives a
+// flash-free first paint; the authenticated endpoint reconciles per user.
 function _applyWhV2Nav() {
-  function permOK() {
-    return (typeof hasPermission !== 'function') || hasPermission('inventory.view') || hasPermission('warehouse.view');
-  }
-  function apply(showV2) {
-    window._whV2Active = !!showV2;
+  function apply(v2Enabled, v2Allowed) {
+    window._whV2Enabled = !!v2Enabled;          // legacy is routed to /warehouse when on
+    window._whV2Active = !!(v2Enabled && v2Allowed);
     document.querySelectorAll('[data-wh-v2-link]').forEach(function(el) {
-      el.style.display = showV2 ? '' : 'none';
+      el.style.display = (v2Enabled && v2Allowed) ? '' : 'none';
     });
-    // Legacy warehouse nav is hidden when the v2 link shows OR the user lacks the
-    // warehouse permission — never two warehouse sections at once.
-    var hideLegacy = showV2 || !permOK();
+    // Legacy hidden for EVERYONE while V2 is enabled; shown again only if V2 is off.
     document.querySelectorAll('[data-wh-legacy-nav]').forEach(function(el) {
-      el.style.display = hideLegacy ? 'none' : '';
+      el.style.display = v2Enabled ? 'none' : '';
     });
   }
-  // instant, flash-free decision from cache (both flags must be affirmative)
-  if (localStorage.getItem('wh_v2_flag') === '1' && localStorage.getItem('wh_v2_allowed') === '1' && permOK()) apply(true);
-  // reconcile with the server — per-user canary (authenticated, so req.user is set)
+  // instant, flash-free decision from cache
+  if (localStorage.getItem('wh_v2_flag') !== null) {
+    apply(localStorage.getItem('wh_v2_flag') === '1', localStorage.getItem('wh_v2_allowed') === '1');
+  }
+  // reconcile with the server (V2 + Warehouse Scope, authenticated)
   var _tok = localStorage.getItem('pos_token');
   var _h = { 'Cache-Control': 'no-cache' };
   if (_tok) _h['Authorization'] = 'Bearer ' + _tok;
@@ -286,9 +284,9 @@ function _applyWhV2Nav() {
       var v2Enabled = !!(v && v.v2Enabled);
       var v2Allowed = !!(v && v.v2Allowed);
       try { localStorage.setItem('wh_v2_flag', v2Enabled ? '1' : '0'); localStorage.setItem('wh_v2_allowed', v2Allowed ? '1' : '0'); } catch (e) {}
-      apply(v2Enabled && v2Allowed && permOK());
+      apply(v2Enabled, v2Allowed);
     })
-    .catch(function() { /* keep cached/default (legacy visible) */ });
+    .catch(function() { /* keep cached/default */ });
 }
 
 // Mount a section from cache into the DOM (lazy) — called by nav/erpNav
@@ -2094,10 +2092,10 @@ document.addEventListener('keydown', function(e) {
 });
 
 function nav(sectionId) {
-  // Single warehouse section: canary-eligible users use the /warehouse SPA. Route
-  // the legacy warehouse section (its menu item, the dashboard low-stock tile, and
-  // any saved bookmark that calls nav('warehouse')) there — no second legacy UI.
-  if (sectionId === 'warehouse' && window._whV2Active) { window.location.href = '/warehouse'; return; }
+  // Single warehouse section: while V2 is enabled, the legacy warehouse view is
+  // hidden from EVERYONE — route any attempt to open it (menu item, dashboard
+  // low-stock tile, or a saved bookmark that calls nav('warehouse')) to /warehouse.
+  if (sectionId === 'warehouse' && window._whV2Enabled) { window.location.href = '/warehouse'; return; }
   // Push the PREVIOUS section onto the back stack before switching.
   if (!window._navSilent) {
     var prev = localStorage.getItem('pos_last_section');

@@ -400,6 +400,18 @@ app.get('/api/version', (req, res) => {
   });
 });
 
+// Per-user warehouse navigation gate. The main shell + shared header show EXACTLY
+// ONE warehouse entry: the /warehouse SPA for canary-eligible users, else the
+// legacy inventory UI. Authenticated (NOT in the public list above → req.user is
+// set by the /api JWT gate), so canary is evaluated per user — non-canary roles
+// never get a link to a v2 API that would 403 for them. Single source of truth =
+// lib/v2Canary; no allow-list is leaked to the client.
+app.get('/api/warehouse-nav', (req, res) => {
+  const _wc = require('./lib/v2Canary');
+  const v2Allowed = _wc.isAllowed(req.user, { users: _wc.config.USERS, roles: _wc.config.ROLES });
+  res.json({ v2Enabled: WAREHOUSE_V2_ENABLED, v2Allowed: !!v2Allowed });
+});
+
 // RC ops — readiness probe. Verifies DB connectivity AND that the warehouse-v2
 // schema actually migrated (lot tables/columns) + reports the DB session
 // timezone. Returns 503 with the missing piece so an orchestrator never routes

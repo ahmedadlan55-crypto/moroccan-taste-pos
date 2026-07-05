@@ -45,14 +45,15 @@
              التبويب وبنفس الجلسة. يظهر فقط عندما يكون WAREHOUSE_V2_ENABLED مفعّلًا
              (نفس علم header.js المشترك — يُقلَب من _applyWhV2Nav في app.js). -->
         <a class="nav-item" href="/warehouse" data-wh-v2-link style="display:none;text-decoration:none;color:inherit;background:linear-gradient(90deg,rgba(14,165,233,.16),transparent);font-weight:800;">
-          <i class="fas fa-warehouse" style="color:#0ea5e9;"></i><span data-i18n="nav.warehouseV2">المستودعات</span>
+          <i class="fas fa-warehouse" style="color:#0ea5e9;"></i><span data-i18n="nav.warehouseV2">إدارة المستودعات</span>
         </a>
 
-        <!-- 4. المخزون والمستودعات — موحّد: إعداد + عمليات + تحليلات + تقارير -->
-        <div class="nav-item has-submenu" onclick="toggleSubmenu(this)">
+        <!-- 4. المخزون والمستودعات — الواجهة القديمة (rollback). تُخفى تلقائيًا لمستخدمي
+             Canary الذين يستخدمون /warehouse عبر _applyWhV2Nav — لا قسمان معًا. -->
+        <div class="nav-item has-submenu" data-wh-legacy-nav onclick="toggleSubmenu(this)">
           <i class="fas fa-warehouse"></i><span data-i18n="nav.inventory">المخزون والمستودعات</span><i class="fas fa-chevron-down submenu-indicator"></i>
         </div>
-        <div class="submenu">
+        <div class="submenu" data-wh-legacy-nav>
           <div style="padding:10px 18px 4px;font-size:9.5px;font-weight:800;color:#94a3b8;text-transform:uppercase;letter-spacing:0.06em;" data-i18n="nav.section.invSetup">الإعداد</div>
           <div class="nav-item" onclick="nav('invCatalog')" style="background:linear-gradient(90deg,rgba(124,58,237,.15),transparent);font-weight:800;"><i class="fas fa-book" style="color:#7c3aed;"></i><span data-i18n="nav.invCatalog">إدارة مواد المخزون</span></div>
           <div class="nav-item" data-erp-nav="erpMultiWarehouses" onclick="erpNav('erpMultiWarehouses')"><i class="fas fa-building"></i><span data-i18n="nav.multiWarehouses">المستودعات المتعددة</span></div>

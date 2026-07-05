@@ -488,6 +488,37 @@ app.use('/api/inventory', loadWarehouseScope);
 app.use('/api/erp', loadWarehouseScope);
 app.use('/api/stocktake-pro', loadWarehouseScope);
 
+// ── Procurement / P2P unified module (flag-gated: PROCUREMENT_P2P_ENABLE) ─────
+// One namespace for suppliers + purchase orders + goods receipts + supplier
+// invoices + payments + returns + reports + dashboard. Dormant by default so the
+// legacy purchasing paths stay the sole stock/AP writers until the flag is
+// flipped after migration + backfill. Inherits the global JWT gate (req.user).
+const PROCUREMENT_P2P_ENABLE = /^(1|true|on|yes)$/i.test(String(process.env.PROCUREMENT_P2P_ENABLE || '').trim());
+if (PROCUREMENT_P2P_ENABLE) {
+  app.use('/api/procurement', auditMiddleware('procurement'));
+  app.use('/api/procurement', loadWarehouseScope);
+  app.use('/api/procurement', require('./routes/procurement'));
+
+  // Dual-write elimination — when the unified module owns procurement, the legacy
+  // stock/AP write endpoints must NOT write directly. Registered BEFORE the legacy
+  // routers (mounted further down) so they short-circuit with a redirect to the new
+  // module. Reads on the legacy routers stay available. Reverting the flag restores
+  // the legacy writers untouched (zero migration risk).
+  const _legacyGate = (target) => (req, res) => res.status(409).json({
+    success: false, code: 'V2_RECEIPTS_LINKED',
+    error: 'انتقلت هذه العملية إلى وحدة «المشتريات والموردون» الموحدة.',
+    redirect: target,
+  });
+  app.post('/api/purchases/receive/:id', _legacyGate('/api/procurement/receipts'));
+  app.post('/api/inventory/receive-request', _legacyGate('/api/procurement/receipts'));
+  app.post('/api/inventory/receive-approve/:id', _legacyGate('/api/procurement/receipts'));
+  app.post('/api/ap-invoices/:id/pay', _legacyGate('/api/procurement/payments'));
+
+  console.log('[procurement] P2P module MOUNTED at /api/procurement (legacy receive/pay writers gated)');
+} else {
+  console.log('[procurement] P2P module dormant — set PROCUREMENT_P2P_ENABLE=1 to enable');
+}
+
 // API Routes
 app.use('/api/auth', require('./routes/auth'));
 app.use('/api/menu', require('./routes/menu'));
@@ -714,6 +745,13 @@ async function autoInitDB() {
       // v6.20.0 — unify collations AFTER all tables exist (fixes mixed
       // utf8mb4_unicode_ci / utf8mb4_0900_ai_ci JOIN failures on MySQL 8).
       await normalizeCollations();
+      // Procurement / P2P — auto-provision schema + GRNI account + capabilities
+      // when the flag is on, so enabling PROCUREMENT_P2P_ENABLE is one switch.
+      // Idempotent + additive; a failure logs but never blocks startup.
+      if (PROCUREMENT_P2P_ENABLE) {
+        try { await require('./scripts/procurement/migrate').run({ dryRun: false }); console.log('[procurement] schema provisioned'); }
+        catch (e) { console.warn('[procurement] provisioning skipped:', e.message); }
+      }
       // Phase A — flag any user still on a default password so they are routed
       // to the in-system change-password page after login (best-effort, cheap:
       // only never-changed accounts, only the top defaults).

@@ -3,21 +3,27 @@
 // recipes, production orders, lots, users, customers). Replaces every large
 // native <select> and every "load everything then filter" list.
 //
-// Guarantees (per the pre-production directive §ثانيًا):
+// Guarantees (per the pre-production directive §ثانيًا / §ثالثًا):
+//   • opens with the FIRST PAGE — on click/focus the query fires with q='' so
+//     the allowed options are visible BEFORE the user types (searchOnEmpty=true)
 //   • server-side search — the fetcher hits a paginated `?q=…&page=…` endpoint,
 //     never loading thousands of rows at once
-//   • debounce (250ms) before firing a query
+//   • debounce (250ms) before firing a query, previous request auto-aborted
 //   • infinite scroll / pagination via useInfiniteQuery + a scroll sentinel
-//   • virtualization — only the rows in the visible window are in the DOM, so a
-//     list scrolled across many pages stays cheap
+//   • virtualization — only the rows in the visible window are in the DOM
 //   • full keyboard support: ↑ ↓ Home End to move, Enter to pick, Esc to close
 //   • ARIA combobox / listbox / option with aria-activedescendant
 //   • loading / empty / error+retry states (never a silent empty list)
+//   • the popup renders in a PORTAL, fixed-positioned above dialogs/drawers
+//     (z-[90], never clipped by an overflow:hidden ancestor) and flips UP when
+//     there is no room below; clicking inside it never closes a parent dialog
+//     and never steals focus from the search box
 //   • shows the current selection as a clearable chip
 //   • exact-match auto-select (unique barcode → pick directly)
 //   • RTL, English digits (numbers rendered by the caller's getSublabel)
 
-import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { useInfiniteQuery } from "@tanstack/react-query";
 import { Search, X, AlertTriangle, Loader2 } from "lucide-react";
 import { cn } from "@/lib/cn";
@@ -39,6 +45,7 @@ export type EntityFetcher<T> = (args: {
 const ROW_H = 52; // fixed row height (px) — drives virtualization math
 const MAX_H = 288; // dropdown viewport height (px)
 const OVERSCAN = 4;
+const GAP = 4; // px gap between the input and the popup
 
 export interface SearchableEntityComboboxProps<T> {
   value: T | null;
@@ -57,15 +64,18 @@ export interface SearchableEntityComboboxProps<T> {
   autoSelectExact?: boolean;
   id?: string;
   ariaLabel?: string;
-  /** render even before the user types (default false → prompt to type) */
+  /** load the first page as soon as the list opens, before any typing
+   *  (default true → options show on click/focus; pass false to require input) */
   searchOnEmpty?: boolean;
 }
+
+interface PopupPos { left: number; width: number; maxH: number; top?: number; bottom?: number }
 
 export function SearchableEntityCombobox<T>(props: SearchableEntityComboboxProps<T>) {
   const {
     value, onChange, fetcher, queryKey, getKey, getLabel, getSublabel, renderOption,
     placeholder = "ابحث بالاسم أو الرمز…", disabled = false, emptyText = "لا نتائج مطابقة.",
-    autoSelectExact = false, id, ariaLabel, searchOnEmpty = false,
+    autoSelectExact = false, id, ariaLabel, searchOnEmpty = true,
   } = props;
 
   const [q, setQ] = useState("");
@@ -73,6 +83,7 @@ export function SearchableEntityCombobox<T>(props: SearchableEntityComboboxProps
   const [active, setActive] = useState(0);
   const [scrollTop, setScrollTop] = useState(0);
   const [debounced, setDebounced] = useState("");
+  const [pos, setPos] = useState<PopupPos | null>(null);
   const boxRef = useRef<HTMLDivElement>(null);
   const listRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
@@ -111,10 +122,40 @@ export function SearchableEntityCombobox<T>(props: SearchableEntityComboboxProps
     if (hit) { onChange(hit); setOpen(false); setQ(""); }
   }, [autoSelectExact, open, exactId, rows, getKey, onChange]);
 
-  // close on outside click
+  // ── portal positioning: anchor to the input rect, flip up when needed ────────
+  const computePos = useCallback(() => {
+    const el = boxRef.current;
+    if (!el) return;
+    const r = el.getBoundingClientRect();
+    const spaceBelow = window.innerHeight - r.bottom - GAP;
+    const spaceAbove = r.top - GAP;
+    const flipUp = spaceBelow < Math.min(MAX_H, 200) && spaceAbove > spaceBelow;
+    const maxH = Math.max(140, Math.min(MAX_H, flipUp ? spaceAbove : spaceBelow));
+    if (flipUp) setPos({ left: r.left, width: r.width, maxH, bottom: window.innerHeight - r.top + GAP });
+    else setPos({ left: r.left, width: r.width, maxH, top: r.bottom + GAP });
+  }, []);
+
+  useLayoutEffect(() => {
+    if (!open) { setPos(null); return; }
+    computePos();
+    const onWin = () => computePos();
+    // capture=true so scrolling ANY ancestor (dialog body, drawer) repositions us
+    window.addEventListener("scroll", onWin, true);
+    window.addEventListener("resize", onWin);
+    return () => {
+      window.removeEventListener("scroll", onWin, true);
+      window.removeEventListener("resize", onWin);
+    };
+  }, [open, computePos]);
+
+  // close on outside click — but NOT when the click lands inside the portal list
+  // (so selecting an option never closes a parent dialog before onClick fires)
   useEffect(() => {
     function onDoc(e: MouseEvent) {
-      if (boxRef.current && !boxRef.current.contains(e.target as Node)) setOpen(false);
+      const t = e.target as Node;
+      if (boxRef.current && boxRef.current.contains(t)) return;
+      if (listRef.current && listRef.current.contains(t)) return;
+      setOpen(false);
     }
     document.addEventListener("mousedown", onDoc);
     return () => document.removeEventListener("mousedown", onDoc);
@@ -187,10 +228,10 @@ export function SearchableEntityCombobox<T>(props: SearchableEntityComboboxProps
   const end = Math.min(total, start + visibleCount);
   const padTop = start * ROW_H;
   const padBottom = Math.max(0, (total - end) * ROW_H);
-  const window = rows.slice(start, end);
+  const windowRows = rows.slice(start, end);
 
   const isError = query.isError;
-  const isLoading = enabled && query.isLoading;
+  const isLoading = enabled && (query.isLoading || (query.isFetching && rows.length === 0));
 
   return (
     <div ref={boxRef} className="relative">
@@ -204,6 +245,7 @@ export function SearchableEntityCombobox<T>(props: SearchableEntityComboboxProps
           value={q}
           disabled={disabled}
           onFocus={() => setOpen(true)}
+          onMouseDown={() => setOpen(true)}
           onChange={(e) => { setQ(e.target.value); setOpen(true); }}
           onKeyDown={onKeyDown}
           aria-label={ariaLabel || "بحث"}
@@ -215,14 +257,17 @@ export function SearchableEntityCombobox<T>(props: SearchableEntityComboboxProps
           autoComplete="off"
         />
       </label>
-      {open && !disabled && (
+      {open && !disabled && pos && createPortal(
         <div
           id={listId}
           role="listbox"
           ref={listRef}
+          dir="rtl"
           onScroll={onScroll}
-          className="absolute z-40 mt-1 w-full overflow-y-auto rounded-xl border border-slate-200 bg-white p-1 shadow-lg"
-          style={{ maxHeight: MAX_H }}
+          // keep the search box focused when the user clicks/scrolls the list
+          onMouseDown={(e) => { if (e.target !== listRef.current) e.preventDefault(); }}
+          className="fixed z-[90] overflow-y-auto rounded-xl border border-slate-200 bg-white p-1 shadow-xl ring-1 ring-black/5"
+          style={{ left: pos.left, width: pos.width, top: pos.top, bottom: pos.bottom, maxHeight: pos.maxH }}
         >
           {isError ? (
             <div className="flex flex-col items-center gap-2 px-3 py-5 text-center">
@@ -242,7 +287,7 @@ export function SearchableEntityCombobox<T>(props: SearchableEntityComboboxProps
             <div className="px-3 py-3 text-xs font-medium text-slate-400">{emptyText}</div>
           ) : (
             <div style={{ paddingTop: padTop, paddingBottom: padBottom }}>
-              {window.map((row, i) => {
+              {windowRows.map((row, i) => {
                 const idx = start + i;
                 const key = getKey(row);
                 const isActive = idx === active;
@@ -280,7 +325,8 @@ export function SearchableEntityCombobox<T>(props: SearchableEntityComboboxProps
               )}
             </div>
           )}
-        </div>
+        </div>,
+        document.body,
       )}
     </div>
   );

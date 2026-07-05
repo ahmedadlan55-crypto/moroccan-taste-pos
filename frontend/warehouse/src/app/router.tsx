@@ -32,6 +32,21 @@ import { ProductionDetailPage } from "@/features/production/ProductionDetailPage
 const AnalyticsPage = lazy(() => import("@/features/analytics/AnalyticsPage").then((m) => ({ default: m.AnalyticsPage })));
 const ReportsPage = lazy(() => import("@/features/reports/ReportsPage").then((m) => ({ default: m.ReportsPage })));
 const ReportDetailPage = lazy(() => import("@/features/reports/ReportDetailPage").then((m) => ({ default: m.ReportDetailPage })));
+// Procurement / P2P module — lazy-loaded (its own chunk, kept out of the initial
+// bundle). The page components share one chunk (ProcurementPages).
+const ProcurementLayout = lazy(() => import("@/features/procurement/ProcurementLayout").then((m) => ({ default: m.ProcurementLayout })));
+const P = () => import("@/features/procurement/ProcurementPages");
+const ProcurementDashboard = lazy(() => P().then((m) => ({ default: m.ProcurementDashboard })));
+const SuppliersPage = lazy(() => P().then((m) => ({ default: m.SuppliersPage })));
+const SupplierDetailPage = lazy(() => P().then((m) => ({ default: m.SupplierDetailPage })));
+const OrdersPage = lazy(() => P().then((m) => ({ default: m.OrdersPage })));
+const OrderDetailPage = lazy(() => P().then((m) => ({ default: m.OrderDetailPage })));
+const ReceiptsListPage = lazy(() => P().then((m) => ({ default: m.ReceiptsListPage })));
+const InvoicesListPage = lazy(() => P().then((m) => ({ default: m.InvoicesListPage })));
+const PaymentsListPage = lazy(() => P().then((m) => ({ default: m.PaymentsListPage })));
+const ReturnsListPage = lazy(() => P().then((m) => ({ default: m.ReturnsPage })));
+const ProcurementReportsPage = lazy(() => P().then((m) => ({ default: m.ProcurementReportsPage })));
+const OrderCreatePage = lazy(() => import("@/features/procurement/OrderCreatePage").then((m) => ({ default: m.OrderCreatePage })));
 // Suspense wrapper for the lazy (code-split) routes.
 function Lazy({ children }: { children: React.ReactNode }) {
   return <Suspense fallback={<LoadingState />}>{children}</Suspense>;
@@ -85,6 +100,20 @@ export function AppRouter() {
             <Route path="reports/:reportType" element={<Lazy><ReportDetailPage /></Lazy>} />
             <Route path="negative-policy" element={<NegativePolicyPage />} />
             <Route path="deficits" element={<DeficitsPage />} />
+            {/* Procurement / P2P — one section, internal tabs. */}
+            <Route path="purchasing" element={<Lazy><ProcurementLayout /></Lazy>}>
+              <Route index element={<Lazy><ProcurementDashboard /></Lazy>} />
+              <Route path="suppliers" element={<Lazy><SuppliersPage /></Lazy>} />
+              <Route path="suppliers/:id" element={<Lazy><SupplierDetailPage /></Lazy>} />
+              <Route path="orders" element={<Lazy><OrdersPage /></Lazy>} />
+              <Route path="orders/new" element={<Lazy><OrderCreatePage /></Lazy>} />
+              <Route path="orders/:id" element={<Lazy><OrderDetailPage /></Lazy>} />
+              <Route path="receipts" element={<Lazy><ReceiptsListPage /></Lazy>} />
+              <Route path="invoices" element={<Lazy><InvoicesListPage /></Lazy>} />
+              <Route path="payments" element={<Lazy><PaymentsListPage /></Lazy>} />
+              <Route path="returns" element={<Lazy><ReturnsListPage /></Lazy>} />
+              <Route path="reports" element={<Lazy><ProcurementReportsPage /></Lazy>} />
+            </Route>
             <Route path="*" element={<NotFound />} />
           </Route>
         </Routes>

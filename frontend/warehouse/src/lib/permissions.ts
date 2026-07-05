@@ -63,7 +63,13 @@ export type WarehouseAction =
   | "production.close"
   | "production.cancel"
   | "production.reverse"
-  | "production.delete";
+  | "production.delete"
+  // Procurement / P2P — UI hints only; backend requireCapability(procurement.*)
+  // is the real gate. view = everyone; manage = back-office document authoring;
+  // approve = managerial (PO/receipt/invoice/payment/return sensitive actions).
+  | "procurement.view"
+  | "procurement.manage"
+  | "procurement.approve";
 
 // Roles allowed per action. Mirrors the blueprint §5 matrix and the backend
 // requireRole gates established in Phase 0. `auditor` is read-only everywhere.
@@ -133,6 +139,9 @@ const MATRIX: Record<WarehouseAction, Role[]> = {
   "production.cancel": ["admin", "manager"],
   "production.reverse": ["admin", "manager"],
   "production.delete": ["admin", "manager"],
+  "procurement.view": ["admin", "manager", "employee", "custody", "auditor"],
+  "procurement.manage": ["admin", "manager", "employee", "custody"],
+  "procurement.approve": ["admin", "manager"],
 };
 
 export function can(user: SessionUser | null, action: WarehouseAction): boolean {

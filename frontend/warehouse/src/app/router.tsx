@@ -36,16 +36,21 @@ const ReportDetailPage = lazy(() => import("@/features/reports/ReportDetailPage"
 // bundle). The page components share one chunk (ProcurementPages).
 const ProcurementLayout = lazy(() => import("@/features/procurement/ProcurementLayout").then((m) => ({ default: m.ProcurementLayout })));
 const P = () => import("@/features/procurement/ProcurementPages");
+const D = () => import("@/features/procurement/DetailPages");
 const ProcurementDashboard = lazy(() => P().then((m) => ({ default: m.ProcurementDashboard })));
 const SuppliersPage = lazy(() => P().then((m) => ({ default: m.SuppliersPage })));
-const SupplierDetailPage = lazy(() => P().then((m) => ({ default: m.SupplierDetailPage })));
 const OrdersPage = lazy(() => P().then((m) => ({ default: m.OrdersPage })));
-const OrderDetailPage = lazy(() => P().then((m) => ({ default: m.OrderDetailPage })));
 const ReceiptsListPage = lazy(() => P().then((m) => ({ default: m.ReceiptsListPage })));
 const InvoicesListPage = lazy(() => P().then((m) => ({ default: m.InvoicesListPage })));
 const PaymentsListPage = lazy(() => P().then((m) => ({ default: m.PaymentsListPage })));
 const ReturnsListPage = lazy(() => P().then((m) => ({ default: m.ReturnsPage })));
 const ProcurementReportsPage = lazy(() => P().then((m) => ({ default: m.ProcurementReportsPage })));
+const SupplierDetailPage = lazy(() => D().then((m) => ({ default: m.SupplierDetailPage })));
+const OrderDetailPage = lazy(() => D().then((m) => ({ default: m.OrderDetailPage })));
+const ReceiptDetailPage = lazy(() => D().then((m) => ({ default: m.ReceiptDetailPage })));
+const InvoiceDetailPage = lazy(() => D().then((m) => ({ default: m.InvoiceDetailPage })));
+const PaymentDetailPage = lazy(() => D().then((m) => ({ default: m.PaymentDetailPage })));
+const ReturnDetailPage = lazy(() => D().then((m) => ({ default: m.ReturnDetailPage })));
 const OrderCreatePage = lazy(() => import("@/features/procurement/OrderCreatePage").then((m) => ({ default: m.OrderCreatePage })));
 // Suspense wrapper for the lazy (code-split) routes.
 function Lazy({ children }: { children: React.ReactNode }) {
@@ -109,9 +114,13 @@ export function AppRouter() {
               <Route path="orders/new" element={<Lazy><OrderCreatePage /></Lazy>} />
               <Route path="orders/:id" element={<Lazy><OrderDetailPage /></Lazy>} />
               <Route path="receipts" element={<Lazy><ReceiptsListPage /></Lazy>} />
+              <Route path="receipts/:id" element={<Lazy><ReceiptDetailPage /></Lazy>} />
               <Route path="invoices" element={<Lazy><InvoicesListPage /></Lazy>} />
+              <Route path="invoices/:id" element={<Lazy><InvoiceDetailPage /></Lazy>} />
               <Route path="payments" element={<Lazy><PaymentsListPage /></Lazy>} />
+              <Route path="payments/:id" element={<Lazy><PaymentDetailPage /></Lazy>} />
               <Route path="returns" element={<Lazy><ReturnsListPage /></Lazy>} />
+              <Route path="returns/:id" element={<Lazy><ReturnDetailPage /></Lazy>} />
               <Route path="reports" element={<Lazy><ProcurementReportsPage /></Lazy>} />
             </Route>
             <Route path="*" element={<NotFound />} />

@@ -174,4 +174,10 @@ router.post('/:id/reverse', requireCapability('purchase_returns.post'), async (r
   } catch (e) { return H.sendErr(res, e); }
 });
 
+
+router.get('/:id/timeline', requireCapability('procurement.view'), async (req, res) => {
+  try { return H.sendData(res, await events.timeline(db, 'return', req.params.id)); }
+  catch (e) { return H.sendErr(res, e); }
+});
+
 module.exports = router;

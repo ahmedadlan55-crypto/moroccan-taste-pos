@@ -116,6 +116,27 @@ export const useInvoice = (id: string | null) => useDetail(queryKeys.procurement
 export const usePayments = (p: ListParams) => useList<Payment>(queryKeys.procurement.payments.list, "payments", toPayment, p);
 export const usePayment = (id: string | null) => useDetail(queryKeys.procurement.payments.detail, "payments", id);
 export const useReturns = (p: ListParams) => useList<PurchaseReturn>(queryKeys.procurement.returns.list, "returns", toReturn, p);
+export const useReturn = (id: string | null) => useDetail(queryKeys.procurement.returns.detail, "returns", id);
+
+export interface TimelineEvent { id: string; action: string; from_status: string | null; to_status: string | null; actor: string | null; gl_journal_id: string | null; created_at: string }
+export function useTimeline(entity: string, id: string | null) {
+  return useQuery({
+    enabled: !!id,
+    queryKey: ["procurement", entity, "timeline", id ?? ""] as const,
+    queryFn: ({ signal }) => apiClient.get<{ data: TimelineEvent[] }>(`${P}/${entity}/${id}/timeline`, { signal }).then((r) => r.data ?? []),
+    staleTime: 10_000,
+  });
+}
+
+export interface GLEntry { account_code: string; account_name: string; debit: number; credit: number; description: string }
+export interface GLJournal { journal_number: string; journal_date: string; total_debit: number; total_credit: number; entries: GLEntry[] }
+export function useGLJournal(journalId: string | null) {
+  return useQuery({
+    enabled: !!journalId,
+    queryKey: ["procurement", "gl", journalId ?? ""] as const,
+    queryFn: ({ signal }) => apiClient.get<{ data: GLJournal }>(`${P}/gl/${journalId}`, { signal }).then((r) => r.data),
+  });
+}
 
 export function useProcurementReport(type: string, params: ListParams, enabled = true) {
   return useQuery({

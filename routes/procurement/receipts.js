@@ -215,4 +215,10 @@ router.post('/:id/cancel', requireCapability('receipts.approve'), async (req, re
   } catch (e) { return H.sendErr(res, e); }
 });
 
+
+router.get('/:id/timeline', requireCapability('procurement.view'), async (req, res) => {
+  try { return H.sendData(res, await events.timeline(db, 'grn', req.params.id)); }
+  catch (e) { return H.sendErr(res, e); }
+});
+
 module.exports = router;

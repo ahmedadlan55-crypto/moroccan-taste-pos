@@ -21,7 +21,7 @@ export function ProcurementLayout() {
   return (
     <div>
       <PageHeader eyebrow="Procure-to-Pay" title="المشتريات والموردون" subtitle="دورة كاملة: مورد ← أمر شراء ← استلام ← فاتورة ← سداد ← إرجاع" />
-      <nav className="mb-6 flex flex-wrap gap-1.5 border-b border-slate-200 pb-2" aria-label="أقسام المشتريات">
+      <nav className="mb-6 flex flex-wrap gap-1.5 border-b border-slate-200 pb-2 print:hidden" aria-label="أقسام المشتريات">
         {TABS.map((t) => (
           <NavLink
             key={t.to}

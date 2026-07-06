@@ -3,11 +3,11 @@
 // and the useProcurement hooks. All money/qty rendered via formatters (English
 // digits). Backend enforces permissions; useCan hides obviously-forbidden buttons.
 import { useState, type ReactNode } from "react";
-import { Link, useParams } from "react-router-dom";
+import { Link } from "react-router-dom";
 import {
   ShoppingBag, ClipboardList, AlarmClock, PackageCheck, FileWarning, Wallet, TriangleAlert, ArrowLeftRight,
 } from "lucide-react";
-import { PageHeader, PanelTitle } from "@/components/PageHeader";
+import { PanelTitle } from "@/components/PageHeader";
 import { MetricCard } from "@/components/metric-card/MetricCard";
 import { StatusBadge } from "@/components/status-badge/StatusBadge";
 import { Button } from "@/components/ui/button";
@@ -15,9 +15,8 @@ import { LoadingState, ErrorState, EmptyState } from "@/components/states/States
 import { formatCurrency, formatDate } from "@/lib/formatters";
 import { useCan } from "@/app/permission-provider";
 import {
-  useProcurementDashboard, useSuppliers, useSupplier, useSupplierStatement, useSupplierAging,
-  useOrders, useOrder, useReceipts, useInvoices, usePayments, useReturns, useProcurementReport,
-  useDocAction, useCreateSupplier, type ListParams,
+  useProcurementDashboard, useSuppliers, useOrders, useReceipts, useInvoices, usePayments,
+  useReturns, useProcurementReport, useCreateSupplier, type ListParams,
 } from "@/lib/hooks/useProcurement";
 import type { ApiError } from "@/lib/api-error";
 
@@ -160,51 +159,6 @@ export function SuppliersPage() {
   );
 }
 
-export function SupplierDetailPage() {
-  const { id = "" } = useParams();
-  const { data, isLoading, isError, error, refetch } = useSupplier(id);
-  const statement = useSupplierStatement(id, {});
-  const aging = useSupplierAging(id);
-  if (isLoading) return <LoadingState />;
-  if (isError || !data) return <ErrorState error={error} onRetry={() => refetch()} />;
-  const s = data as Record<string, unknown>;
-  const rows = (statement.data?.data ?? []) as Array<{ date: string; type: string; ref: string; debit: number; credit: number; balance: number }>;
-  return (
-    <div className="grid gap-6">
-      <Link to="/purchasing/suppliers" className="text-sm font-bold text-teal-700 hover:underline">← الموردون</Link>
-      <PageHeader eyebrow="مورد" title={String(s.name)} subtitle={String(s.vat_number || "")} />
-      <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
-        <MetricCard label="الرصيد المستحق" value={formatCurrency(Number(s.apBalance) || 0)} icon={Wallet} tone="violet" />
-        <MetricCard label="إجمالي الفواتير" value={formatCurrency(Number(s.invoicedTotal) || 0)} icon={ShoppingBag} tone="teal" />
-        <MetricCard label="المسدد" value={formatCurrency(Number(s.paidTotal) || 0)} icon={PackageCheck} tone="blue" />
-        <MetricCard label="الأعمار (الإجمالي)" value={formatCurrency(aging.data?.total ?? 0)} icon={AlarmClock} tone="amber" />
-      </div>
-      <section className="surface overflow-hidden">
-        <PanelTitle title="كشف الحساب" subtitle={`الرصيد الختامي: ${formatCurrency(statement.data?.closingBalance ?? 0)}`} />
-        {statement.isLoading ? <div className="p-6"><LoadingState rows={2} /></div> : rows.length === 0 ? (
-          <div className="p-6"><EmptyState title="لا حركات" /></div>
-        ) : (
-          <div className="overflow-x-auto">
-            <table className="w-full border-collapse">
-              <thead className="bg-slate-50"><tr><Th>التاريخ</Th><Th>النوع</Th><Th>المرجع</Th><Th className="text-left">مدين</Th><Th className="text-left">دائن</Th><Th className="text-left">الرصيد</Th></tr></thead>
-              <tbody className="divide-y divide-slate-100">
-                {rows.map((r, i) => (
-                  <tr key={i}>
-                    <Td className="tabular-nums">{formatDate(r.date)}</Td><Td>{r.type === "invoice" ? "فاتورة" : "سداد"}</Td><Td>{r.ref}</Td>
-                    <Td className="text-left tabular-nums">{r.debit ? formatCurrency(r.debit) : "—"}</Td>
-                    <Td className="text-left tabular-nums">{r.credit ? formatCurrency(r.credit) : "—"}</Td>
-                    <Td className="text-left font-bold tabular-nums">{formatCurrency(r.balance)}</Td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        )}
-      </section>
-    </div>
-  );
-}
-
 // ── Orders ────────────────────────────────────────────────────────────────
 export function OrdersPage() {
   const [params, patch] = useListState();
@@ -242,58 +196,6 @@ export function OrdersPage() {
   );
 }
 
-export function OrderDetailPage() {
-  const { id = "" } = useParams();
-  const { data, isLoading, isError, error, refetch } = useOrder(id);
-  const action = useDocAction("orders");
-  const canApprove = useCan("procurement.approve");
-  const canManage = useCan("procurement.manage");
-  if (isLoading) return <LoadingState />;
-  if (isError || !data) return <ErrorState error={error} onRetry={() => refetch()} />;
-  const o = data as Record<string, unknown>;
-  const lines = (o.lines ?? []) as Record<string, unknown>[];
-  const status = String(o.status);
-  const version = Number(o.version) || 1;
-  const run = (act: string) => action.mutate({ id, action: act, expectedVersion: version }, { onSuccess: () => refetch() });
-  return (
-    <div className="grid gap-6">
-      <Link to="/purchasing/orders" className="text-sm font-bold text-teal-700 hover:underline">← أوامر الشراء</Link>
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <PageHeader eyebrow="أمر شراء" title={String(o.po_number)} subtitle={String(o.supplier_name)} />
-        <StatusBadge>{st(status)}</StatusBadge>
-      </div>
-      {action.isError && <p className="text-sm font-semibold text-rose-600">{(action.error as ApiError)?.message}</p>}
-      <div className="flex flex-wrap gap-2">
-        {canManage && status === "draft" && <Button onClick={() => run("submit")}>تقديم</Button>}
-        {canApprove && status === "submitted" && <Button onClick={() => run("approve")}>اعتماد</Button>}
-        {canApprove && status === "approved" && <Button variant="secondary" onClick={() => run("send")}>إرسال للمورد</Button>}
-        {canApprove && ["approved", "sent", "fully_received"].includes(status) && <Button variant="secondary" onClick={() => run("close")}>إغلاق</Button>}
-        {canApprove && ["draft", "submitted", "approved"].includes(status) && <Button variant="danger" onClick={() => run("cancel")}>إلغاء</Button>}
-      </div>
-      <section className="surface overflow-hidden">
-        <PanelTitle title="السطور" />
-        <div className="overflow-x-auto">
-          <table className="w-full border-collapse">
-            <thead className="bg-slate-50"><tr><Th>المادة</Th><Th className="text-left">الكمية المدخلة</Th><Th className="text-left">الكمية الأساسية</Th><Th className="text-left">المستلم</Th><Th className="text-left">السعر</Th><Th className="text-left">الإجمالي</Th></tr></thead>
-            <tbody className="divide-y divide-slate-100">
-              {lines.map((l, i) => (
-                <tr key={i}>
-                  <Td>{String(l.item_name)}</Td>
-                  <Td className="text-left tabular-nums">{Number(l.entered_qty)} {String(l.entered_unit_code || "")}</Td>
-                  <Td className="text-left tabular-nums">{Number(l.base_qty)}</Td>
-                  <Td className="text-left tabular-nums">{Number(l.base_received_qty)}</Td>
-                  <Td className="text-left tabular-nums">{formatCurrency(Number(l.unit_price))}</Td>
-                  <Td className="text-left font-bold tabular-nums">{formatCurrency(Number(l.total))}</Td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      </section>
-    </div>
-  );
-}
-
 // ── generic list pages (receipts / invoices / payments / returns) ────────────
 export function ReceiptsListPage() {
   const [params, patch] = useListState();
@@ -302,7 +204,7 @@ export function ReceiptsListPage() {
     <SimpleList title="الاستلامات" isLoading={isLoading} isError={isError} error={error} onRetry={refetch}
       empty="لا استلامات" rows={data?.rows ?? []} page={data?.page ?? 1} totalPages={data?.totalPages ?? 1} onPage={(p) => patch({ page: p })}
       columns={[
-        { h: "الرقم", c: (r) => r.receiptNumber }, { h: "المورد", c: (r) => r.supplierName },
+        { h: "الرقم", c: (r) => <Link className="font-bold text-teal-700 hover:underline" to={`/purchasing/receipts/${r.id}`}>{r.receiptNumber}</Link> }, { h: "المورد", c: (r) => r.supplierName },
         { h: "التاريخ", c: (r) => formatDate(r.receiptDate) }, { h: "الحالة", c: (r) => <StatusBadge>{st(r.status)}</StatusBadge> },
         { h: "الإجمالي", c: (r) => formatCurrency(r.total), left: true },
       ]} />
@@ -315,7 +217,7 @@ export function InvoicesListPage() {
     <SimpleList title="فواتير الموردين" isLoading={isLoading} isError={isError} error={error} onRetry={refetch}
       empty="لا فواتير" rows={data?.rows ?? []} page={data?.page ?? 1} totalPages={data?.totalPages ?? 1} onPage={(p) => patch({ page: p })}
       columns={[
-        { h: "الرقم", c: (r) => r.invoiceNo || r.code }, { h: "المورد", c: (r) => r.supplierName },
+        { h: "الرقم", c: (r) => <Link className="font-bold text-teal-700 hover:underline" to={`/purchasing/invoices/${r.id}`}>{r.invoiceNo || r.code}</Link> }, { h: "المورد", c: (r) => r.supplierName },
         { h: "المطابقة", c: (r) => st(r.matchingStatus) }, { h: "الحالة", c: (r) => <StatusBadge>{st(r.status)}</StatusBadge> },
         { h: "المتبقي", c: (r) => formatCurrency(r.balance), left: true },
       ]} />
@@ -328,7 +230,7 @@ export function PaymentsListPage() {
     <SimpleList title="المدفوعات" isLoading={isLoading} isError={isError} error={error} onRetry={refetch}
       empty="لا مدفوعات" rows={data?.rows ?? []} page={data?.page ?? 1} totalPages={data?.totalPages ?? 1} onPage={(p) => patch({ page: p })}
       columns={[
-        { h: "الرقم", c: (r) => r.paymentNumber }, { h: "الطريقة", c: (r) => r.method },
+        { h: "الرقم", c: (r) => <Link className="font-bold text-teal-700 hover:underline" to={`/purchasing/payments/${r.id}`}>{r.paymentNumber}</Link> }, { h: "الطريقة", c: (r) => r.method },
         { h: "الحالة", c: (r) => <StatusBadge>{st(r.status)}</StatusBadge> }, { h: "المبلغ", c: (r) => formatCurrency(r.amount), left: true },
       ]} />
   );
@@ -340,7 +242,7 @@ export function ReturnsPage() {
     <SimpleList title="مرتجعات الشراء" isLoading={isLoading} isError={isError} error={error} onRetry={refetch}
       empty="لا مرتجعات" rows={data?.rows ?? []} page={data?.page ?? 1} totalPages={data?.totalPages ?? 1} onPage={(p) => patch({ page: p })}
       columns={[
-        { h: "الرقم", c: (r) => r.returnNumber }, { h: "المرحلة", c: (r) => (r.phase === "after_invoice" ? "بعد الفاتورة" : "قبل الفاتورة") },
+        { h: "الرقم", c: (r) => <Link className="font-bold text-teal-700 hover:underline" to={`/purchasing/returns/${r.id}`}>{r.returnNumber}</Link> }, { h: "المرحلة", c: (r) => (r.phase === "after_invoice" ? "بعد الفاتورة" : "قبل الفاتورة") },
         { h: "الحالة", c: (r) => <StatusBadge>{st(r.status)}</StatusBadge> }, { h: "الإجمالي", c: (r) => formatCurrency(r.total), left: true },
       ]} />
   );

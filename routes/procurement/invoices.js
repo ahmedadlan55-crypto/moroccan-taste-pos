@@ -268,4 +268,10 @@ router.post('/:id/credit-note', requireCapability('supplier_invoices.credit'), a
   } catch (e) { return H.sendErr(res, e); }
 });
 
+
+router.get('/:id/timeline', requireCapability('procurement.view'), async (req, res) => {
+  try { return H.sendData(res, await events.timeline(db, 'supplier_invoice', req.params.id)); }
+  catch (e) { return H.sendErr(res, e); }
+});
+
 module.exports = router;

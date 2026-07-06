@@ -22,6 +22,7 @@ router.use('/invoices', require('./invoices'));
 router.use('/payments', require('./payments'));
 router.use('/returns', require('./returns'));
 router.use('/reports', require('./reports'));
+router.use('/', require('./gl'));
 router.use('/', require('./dashboard'));
 
 module.exports = router;

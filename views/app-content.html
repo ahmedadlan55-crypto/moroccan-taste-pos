@@ -82,10 +82,10 @@
         </div>
 
         <!-- 5. المشتريات والموردين -->
-        <!-- Unified P2P entry — shown ONLY when PROCUREMENT_P2P_ENABLE (single section). -->
-        <div class="nav-item" id="p2p-unified-nav" style="display:none" onclick="location.href='/warehouse/purchasing'" title="وحدة المشتريات والموردون الموحدة">
-          <i class="fas fa-truck-loading"></i><span>المشتريات والموردون</span>
-        </div>
+        <!-- Procurement/Suppliers is a SINGLE unified entry INSIDE /warehouse only
+             (warehouse sidebar). When PROCUREMENT_P2P_ENABLE is on the main shell
+             shows NO purchasing section — reach it via «إدارة المستودعات» → /warehouse.
+             The legacy group below stays only for flag-OFF rollback (hidden when on). -->
         <div class="nav-item has-submenu" data-legacy-purchasing="1" onclick="toggleSubmenu(this)">
           <i class="fas fa-truck-loading"></i><span data-i18n="nav.purchasingSuppliers">المشتريات والموردين</span><i class="fas fa-chevron-down submenu-indicator"></i>
         </div>

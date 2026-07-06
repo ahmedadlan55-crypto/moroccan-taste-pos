@@ -61,6 +61,7 @@
     "test:procurement-concurrency": "node tests/procurementConcurrency.integration.test.js",
     "test:procurement-rbac": "node tests/procurementRBAC.integration.test.js",
     "test:procurement-migration": "node tests/procurementMigration.integration.test.js",
+    "test:procurement-reports-groupby": "node tests/procurementReportsGroupBy.integration.test.js",
     "e2e:procurement": "playwright test",
     "e2e:procurement-dormant": "playwright test --config=playwright.dormant.config.ts"
   },

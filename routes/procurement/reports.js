@@ -99,13 +99,35 @@ router.get('/supplier-statement', RPT, async (req, res) => {
   } catch (e) { return H.sendErr(res, e); }
 });
 
-// GET /purchase-analysis — spend by supplier
+// GET /purchase-analysis — spend by supplier.
+// ONLY_FULL_GROUP_BY compliant: aggregate invoice details per supplier_id in a
+// derived table (only supplier_id + aggregates in the grouped SELECT), then join
+// the suppliers header for the AUTHORITATIVE name, falling back to the invoice
+// snapshot name (MAX) only when the supplier row is missing/orphaned. Explicit
+// COLLATE on the id join + name coalesce avoids "Illegal mix of collations".
+// Exported below so the ONLY_FULL_GROUP_BY integration test runs the EXACT query.
+const PA_COLLATE = 'COLLATE utf8mb4_unicode_ci';
+const PURCHASE_ANALYSIS_SQL =
+  `SELECT agg.supplier_id,
+          COALESCE(s.name ${PA_COLLATE}, agg.snapshot_name ${PA_COLLATE}) AS supplier_name,
+          agg.invoices,
+          agg.spend
+     FROM (
+       SELECT supplier_id,
+              COUNT(*)                      AS invoices,
+              COALESCE(SUM(total_amount),0) AS spend,
+              MAX(supplier_name)            AS snapshot_name
+         FROM supplier_invoices
+        WHERE status NOT IN ('cancelled','draft')
+        GROUP BY supplier_id
+     ) agg
+     LEFT JOIN suppliers s ON s.id ${PA_COLLATE} = agg.supplier_id ${PA_COLLATE}
+    ORDER BY agg.spend DESC
+    LIMIT 500`;
+
 router.get('/purchase-analysis', RPT, async (req, res) => {
   try {
-    const [rows] = await db.query(
-      `SELECT supplier_id, supplier_name, COUNT(*) AS invoices, COALESCE(SUM(total_amount),0) AS spend
-         FROM supplier_invoices WHERE status NOT IN ('cancelled','draft')
-         GROUP BY supplier_id ORDER BY spend DESC LIMIT 500`);
+    const [rows] = await db.query(PURCHASE_ANALYSIS_SQL);
     return H.sendData(res, rows.map((r) => ({ ...r, spend: calc.money(r.spend) })), { totals: { spend: calc.money(rows.reduce((s, r) => s + Number(r.spend), 0)) } });
   } catch (e) { return H.sendErr(res, e); }
 });
@@ -149,3 +171,4 @@ router.get('/data-quality', requireCapability('procurement.data_quality'), async
 });
 
 module.exports = router;
+module.exports.PURCHASE_ANALYSIS_SQL = PURCHASE_ANALYSIS_SQL;

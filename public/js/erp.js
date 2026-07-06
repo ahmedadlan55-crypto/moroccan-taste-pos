@@ -67,6 +67,14 @@ const erpSections = [
 // section have been removed. ERPv5 / ERPv54 modules are no longer loaded.
 
 function erpNav(sectionId) {
+  // Unified procurement guard — when PROCUREMENT_P2P_ENABLE is on, every legacy
+  // purchasing/supplier ERP screen is replaced by the unified module; redirect
+  // instead of opening the old section (covers the menu, quick actions, the
+  // report hub, and last-section restore on refresh). Runs BEFORE persisting the
+  // section so the old screen is never recorded as "last".
+  if (window.__PROCUREMENT_P2P_ENABLE && /^(erpSuppliers|erpPurchaseOrders|erpPurchaseReports|erpAPAging|erpSupplierStatement)$/.test(sectionId)) {
+    window.location.href = '/warehouse/purchasing'; return;
+  }
   // Save last section for persistence across refreshes
   try { localStorage.setItem('pos_last_section', 'erp:' + sectionId); } catch(e) {}
   // Lazy-mount the section on first access

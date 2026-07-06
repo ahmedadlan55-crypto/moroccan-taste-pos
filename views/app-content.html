@@ -140,7 +140,7 @@
           <div class="nav-item" data-erp-nav="erpCustomers" onclick="erpNav('erpCustomers')"><i class="fas fa-user-tie"></i><span data-i18n="nav.customers">العملاء</span></div>
           <div class="nav-item" data-erp-nav="erpCustomerStatement" onclick="erpNav('erpCustomerStatement')"><i class="fas fa-file-invoice-dollar"></i><span data-i18n="nav.customerStatement">كشف حساب عميل</span></div>
           <div class="nav-item" data-erp-nav="erpARAging" onclick="erpNav('erpARAging')"><i class="fas fa-user-clock"></i><span data-i18n="nav.arAging">أعمار ذمم العملاء</span></div>
-          <div class="nav-item" data-erp-nav="erpAPAging" onclick="erpNav('erpAPAging')"><i class="fas fa-truck-loading"></i><span data-i18n="nav.apAging">أعمار ذمم الموردين</span></div>
+          <div class="nav-item" data-legacy-purchasing="1" data-erp-nav="erpAPAging" onclick="erpNav('erpAPAging')"><i class="fas fa-truck-loading"></i><span data-i18n="nav.apAging">أعمار ذمم الموردين</span></div>
         </div>
 
         <!-- 10. المحاسبة -->
@@ -187,7 +187,7 @@
 
           <div style="padding:10px 18px 4px;font-size:9.5px;font-weight:800;color:#94a3b8;text-transform:uppercase;letter-spacing:0.06em;" data-i18n="nav.section.taxPurchase">الضرائب والمشتريات</div>
           <div class="nav-item" data-erp-nav="erpVATReports" onclick="erpNav('erpVATReports')"><i class="fas fa-percent"></i><span data-i18n="nav.vatReports">تقارير الضريبة</span></div>
-          <div class="nav-item" data-erp-nav="erpPurchaseReports" onclick="erpNav('erpPurchaseReports')"><i class="fas fa-truck"></i><span data-i18n="nav.purchaseReports">تقارير المشتريات</span></div>
+          <div class="nav-item" data-legacy-purchasing="1" data-erp-nav="erpPurchaseReports" onclick="erpNav('erpPurchaseReports')"><i class="fas fa-truck"></i><span data-i18n="nav.purchaseReports">تقارير المشتريات</span></div>
         </div>
 
         <!-- 12. الضرائب والفوترة الإلكترونية (ZATCA + الإشعارات فقط — التقارير الضريبية في مركز التقارير) -->
@@ -3066,7 +3066,7 @@
         </div>
         <i class="fas fa-arrow-left rh-arrow"></i>
       </div>
-      <div class="rh-card" onclick="erpNav('erpAPAging')">
+      <div class="rh-card" data-legacy-purchasing="1" onclick="erpNav('erpAPAging')">
         <div class="rh-icon" style="background:linear-gradient(135deg,#fee2e2,#fca5a5);color:#b91c1c;"><i class="fas fa-truck-loading"></i></div>
         <div class="rh-body">
           <div class="rh-name">أعمار ذمم الموردين</div>
@@ -3140,7 +3140,7 @@
         </div>
         <i class="fas fa-arrow-left rh-arrow"></i>
       </div>
-      <div class="rh-card" onclick="erpNav('erpPurchaseReports')">
+      <div class="rh-card" data-legacy-purchasing="1" onclick="erpNav('erpPurchaseReports')">
         <div class="rh-icon" style="background:linear-gradient(135deg,#dbeafe,#bfdbfe);color:#1d4ed8;"><i class="fas fa-truck"></i></div>
         <div class="rh-body">
           <div class="rh-name">تقارير المشتريات</div>

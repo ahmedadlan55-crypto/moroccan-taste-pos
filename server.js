@@ -396,7 +396,10 @@ app.get('/api/version', (req, res) => {
     // The shared header reads this to decide which warehouse link to render
     // (V2 section at /warehouse vs the legacy /inventory/ rollback UI) — the
     // user must never see two warehouse links at once.
-    warehouseV2: WAREHOUSE_V2_ENABLED
+    warehouseV2: WAREHOUSE_V2_ENABLED,
+    // Procurement P2P — the legacy shell hides its old purchasing menu group and
+    // shows a single «المشتريات والموردون» entry when this is on.
+    procurementP2P: /^(1|true|on|yes)$/i.test(String(process.env.PROCUREMENT_P2P_ENABLE || '').trim())
   });
 });
 
@@ -510,6 +513,13 @@ if (PROCUREMENT_P2P_ENABLE) {
   app.post('/api/inventory/receive-request', legacyWriteGate('/api/procurement/receipts'));
   app.post('/api/inventory/receive-approve/:id', legacyWriteGate('/api/procurement/receipts'));
   app.use('/api/erp/payments', supplierPaymentGate('/api/procurement/payments')); // supplier-directed payments only (other treasury passes)
+
+  // Convenience 301s — old/short procurement URLs land on the unified module.
+  const _p2pTarget = '/warehouse/purchasing';
+  for (const p of ['/purchasing', '/procurement', '/suppliers']) {
+    app.get(p, (req, res) => res.redirect(301, _p2pTarget));
+    app.get(p + '/*', (req, res) => res.redirect(301, _p2pTarget));
+  }
 
   console.log('[procurement] P2P module MOUNTED at /api/procurement (all legacy stock/AP writers gated)');
 } else {

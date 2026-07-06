@@ -2096,6 +2096,10 @@ function nav(sectionId) {
   // hidden from EVERYONE — route any attempt to open it (menu item, dashboard
   // low-stock tile, or a saved bookmark that calls nav('warehouse')) to /warehouse.
   if (sectionId === 'warehouse' && window._whV2Enabled) { window.location.href = '/warehouse'; return; }
+  // Unified procurement: when PROCUREMENT_P2P_ENABLE is on, the legacy purchases
+  // screen is replaced by the unified module — route any attempt (menu item,
+  // quick action, saved bookmark, last-section restore) to /warehouse/purchasing.
+  if (sectionId === 'purchases' && window.__PROCUREMENT_P2P_ENABLE) { window.location.href = '/warehouse/purchasing'; return; }
   // Push the PREVIOUS section onto the back stack before switching.
   if (!window._navSilent) {
     var prev = localStorage.getItem('pos_last_section');
@@ -17167,16 +17171,38 @@ initTheme(); // Also immediately call it to prevent FOUC as much as possible
 // hide the legacy purchasing menu group and show a SINGLE «المشتريات والموردون»
 // entry that opens the unified React module. Reversible: flag OFF → legacy menu
 // stays and the unified entry stays hidden. Never shows both at once.
-function applyProcurementP2PNav() {
-  try {
-    fetch('/api/version').then(function (r) { return r.json(); }).then(function (v) {
-      if (!v || !v.procurementP2P) return;
-      var legacy = document.querySelectorAll('[data-legacy-purchasing="1"]');
-      for (var i = 0; i < legacy.length; i++) legacy[i].style.display = 'none';
-      var unified = document.getElementById('p2p-unified-nav');
-      if (unified) unified.style.display = '';
-    }).catch(function () {});
-  } catch (e) {}
+// Mirrors the warehouse-v2 nav pattern: localStorage (procurement_p2p_flag) gives
+// a flash-free first paint AND a SYNCHRONOUS flag for the nav guards (so even the
+// last-section-restore on load is routed correctly); /api/version reconciles per
+// load. A persistent CSS rule (not per-node display) also covers app-content.html
+// markup injected AFTER this runs — nothing is missed and there is no flash.
+function applyProcurementP2PNav(enabledOverride) {
+  function apply(enabled) {
+    window.__PROCUREMENT_P2P_ENABLE = !!enabled;
+    var st = document.getElementById('p2p-legacy-hide-style');
+    if (enabled) {
+      if (!st) {
+        st = document.createElement('style');
+        st.id = 'p2p-legacy-hide-style';
+        st.textContent = '[data-legacy-purchasing]{display:none !important;} #p2p-unified-nav{display:flex !important;}';
+        (document.head || document.documentElement).appendChild(st);
+      }
+    } else if (st && st.parentNode) {
+      st.parentNode.removeChild(st); // flag OFF → legacy menu restored (reversible)
+    }
+  }
+  if (typeof enabledOverride === 'boolean') { apply(enabledOverride); return; }
+  // instant, flash-free + synchronous flag from cache
+  try { if (localStorage.getItem('procurement_p2p_flag') !== null) apply(localStorage.getItem('procurement_p2p_flag') === '1'); } catch (e) {}
+  // reconcile with the server (single source of truth)
+  fetch('/api/version', { headers: { 'Cache-Control': 'no-cache' } })
+    .then(function (r) { return r.ok ? r.json() : null; })
+    .then(function (v) {
+      var enabled = !!(v && v.procurementP2P);
+      try { localStorage.setItem('procurement_p2p_flag', enabled ? '1' : '0'); } catch (e) {}
+      apply(enabled);
+    })
+    .catch(function () { /* keep cached/default */ });
 }
-document.addEventListener('DOMContentLoaded', applyProcurementP2PNav);
+document.addEventListener('DOMContentLoaded', function () { applyProcurementP2PNav(); });
 applyProcurementP2PNav();

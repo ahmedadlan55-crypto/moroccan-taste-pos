@@ -125,6 +125,11 @@
   body {
     background: #fff;
   }
+  /* the shell reserves a right margin for the (hidden) sidebar — reclaim it */
+  main {
+    margin: 0 !important;
+    padding: 0 !important;
+  }
   .surface {
     box-shadow: none;
     break-inside: avoid;

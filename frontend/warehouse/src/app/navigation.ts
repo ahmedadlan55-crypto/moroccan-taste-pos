@@ -15,6 +15,7 @@ import {
   TrendingDown,
   Tags,
   ShoppingCart,
+  ShoppingBag,
   Layers,
   CalendarClock,
   type LucideIcon,
@@ -48,6 +49,14 @@ export const navigation: NavGroup[] = [
       { id: "replenishment", label: "خطة إعادة الطلب", path: "/replenishment", icon: ShoppingCart },
       { id: "lots", label: "الدفعات", path: "/lots", icon: Layers },
       { id: "expiry", label: "تحذيرات الصلاحية", path: "/expiry", icon: CalendarClock },
+    ],
+  },
+  {
+    // One unified section (spec §12) — internal tabs cover suppliers / orders /
+    // receipts / invoices / payments / returns / reports.
+    title: "المشتريات والموردون",
+    items: [
+      { id: "purchasing", label: "المشتريات والموردون", path: "/purchasing", icon: ShoppingBag },
     ],
   },
   {

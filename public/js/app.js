@@ -17162,3 +17162,21 @@ function initTheme() {
 // Initialize theme as soon as this script is loaded / parsed
 document.addEventListener('DOMContentLoaded', initTheme);
 initTheme(); // Also immediately call it to prevent FOUC as much as possible
+
+// Procurement P2P — when the unified module is enabled (PROCUREMENT_P2P_ENABLE),
+// hide the legacy purchasing menu group and show a SINGLE «المشتريات والموردون»
+// entry that opens the unified React module. Reversible: flag OFF → legacy menu
+// stays and the unified entry stays hidden. Never shows both at once.
+function applyProcurementP2PNav() {
+  try {
+    fetch('/api/version').then(function (r) { return r.json(); }).then(function (v) {
+      if (!v || !v.procurementP2P) return;
+      var legacy = document.querySelectorAll('[data-legacy-purchasing="1"]');
+      for (var i = 0; i < legacy.length; i++) legacy[i].style.display = 'none';
+      var unified = document.getElementById('p2p-unified-nav');
+      if (unified) unified.style.display = '';
+    }).catch(function () {});
+  } catch (e) {}
+}
+document.addEventListener('DOMContentLoaded', applyProcurementP2PNav);
+applyProcurementP2PNav();

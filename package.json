@@ -11,7 +11,7 @@
     "build:pos": "npm --prefix frontend/pos install && npm --prefix frontend/pos run build",
     "db:init": "node db/init.js",
     "db:migrate": "node db/migrate.js",
-    "test": "node tests/transactionPermissions.test.js && node tests/transactionSchema.test.js && node tests/transactionStateMachine.test.js && node tests/transactionService.test.js && node tests/warehouseTransfer.test.js && node tests/inventoryAdjustment.test.js && node tests/stocktakeWorkflow.test.js && node tests/inventoryReporting.test.js && node tests/warehouseScope.test.js && node tests/csvExport.test.js && node tests/reportContract.test.js && node tests/transferContract.test.js && node tests/inventoryTxContract.test.js && node tests/inventoryTxEngine.test.js && node tests/stocktakeReconcile.test.js && node tests/replenishmentEngine.test.js && node tests/inventoryItemPolicy.test.js && node tests/expiryPolicy.test.js && node tests/lotLedger.test.js && node tests/securityHardening.test.js && node tests/metricsContract.test.js && node tests/v2Canary.test.js && node tests/reconcileLegacyMaterials.test.js && node tests/negativeStockPolicy.test.js && node tests/barcode.test.js && node tests/productionEngine.test.js && node tests/posOrderMachine.test.js && node tests/unitConversion.test.js && node tests/passwordPolicy.test.js",
+    "test": "node tests/transactionPermissions.test.js && node tests/transactionSchema.test.js && node tests/transactionStateMachine.test.js && node tests/transactionService.test.js && node tests/warehouseTransfer.test.js && node tests/inventoryAdjustment.test.js && node tests/stocktakeWorkflow.test.js && node tests/inventoryReporting.test.js && node tests/warehouseScope.test.js && node tests/csvExport.test.js && node tests/reportContract.test.js && node tests/transferContract.test.js && node tests/inventoryTxContract.test.js && node tests/inventoryTxEngine.test.js && node tests/stocktakeReconcile.test.js && node tests/replenishmentEngine.test.js && node tests/inventoryItemPolicy.test.js && node tests/expiryPolicy.test.js && node tests/lotLedger.test.js && node tests/securityHardening.test.js && node tests/metricsContract.test.js && node tests/v2Canary.test.js && node tests/reconcileLegacyMaterials.test.js && node tests/negativeStockPolicy.test.js && node tests/barcode.test.js && node tests/productionEngine.test.js && node tests/posOrderMachine.test.js && node tests/unitConversion.test.js && node tests/passwordPolicy.test.js && node tests/procurementCalculations.test.js && node tests/procurementStateMachine.test.js",
     "migrate:item-units": "node scripts/migrate-item-units.js",
     "test:change-password": "node tests/integration/changePassword.api.test.js",
     "test:search-api": "node tests/integration/search.api.test.js",
@@ -51,7 +51,18 @@
     "migrate:purchase-lots": "node scripts/migrate-purchase-lots.js",
     "scope:backfill": "node scripts/backfill-warehouse-access.js",
     "test:pos-v2-api": "node tests/integration/posV2.api.test.js",
-    "test:pos-v2-uom": "node tests/integration/posV2Uom.api.test.js"
+    "test:pos-v2-uom": "node tests/integration/posV2Uom.api.test.js",
+    "procurement:migrate": "node scripts/procurement/migrate.js",
+    "procurement:reconcile": "node scripts/procurement/reconcile.js",
+    "procurement:backfill": "node scripts/procurement/backfill.js",
+    "procurement:rollback": "node scripts/procurement/rollback.js",
+    "test:procurement-api": "node tests/procurementP2P.integration.test.js",
+    "test:procurement-gate": "node tests/procurementLegacyGate.integration.test.js",
+    "test:procurement-concurrency": "node tests/procurementConcurrency.integration.test.js",
+    "test:procurement-rbac": "node tests/procurementRBAC.integration.test.js",
+    "test:procurement-migration": "node tests/procurementMigration.integration.test.js",
+    "e2e:procurement": "playwright test",
+    "e2e:procurement-dormant": "playwright test --config=playwright.dormant.config.ts"
   },
   "dependencies": {
     "bcryptjs": "^2.4.3",
@@ -65,6 +76,7 @@
     "mysql2": "^3.6.5"
   },
   "devDependencies": {
+    "@playwright/test": "^1.61.1",
     "nodemon": "^3.0.2",
     "xlsx": "^0.18.5"
   }

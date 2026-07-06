@@ -2,13 +2,17 @@ import { NavLink } from "react-router-dom";
 import { Warehouse, MoreHorizontal, Home } from "lucide-react";
 import { navigation } from "@/app/navigation";
 import { useAuth } from "@/app/auth-provider";
+import { useServerFlags } from "@/app/server-flags";
 import { cn } from "@/lib/cn";
 
 // Dark fixed sidebar (RTL: pinned to the right). Uses NavLink so the active
 // route is derived from the URL, not local state.
 export function Sidebar() {
   const { user } = useAuth();
+  const { procurementEnabled } = useServerFlags();
   const initials = (user?.name || user?.username || "؟").slice(0, 2);
+  // Keep the Procurement section DORMANT in the nav until the backend flag is on.
+  const groups = navigation.filter((g) => procurementEnabled || !g.items.some((i) => i.id === "purchasing"));
 
   return (
     <aside className="no-print fixed inset-y-0 right-0 z-30 hidden w-72 flex-col bg-slate-950 px-4 pb-5 pt-4 text-white lg:flex">
@@ -23,7 +27,7 @@ export function Sidebar() {
       </div>
 
       <nav className="mt-5 flex-1 overflow-y-auto pr-1 scrollbar-thin" aria-label="التنقل الرئيسي">
-        {navigation.map((group) => (
+        {groups.map((group) => (
           <div key={group.title} className="mb-5">
             <div className="mb-2 px-3 text-[10px] font-extrabold tracking-wider text-slate-500">{group.title}</div>
             <div className="space-y-1">

@@ -396,7 +396,10 @@ app.get('/api/version', (req, res) => {
     // The shared header reads this to decide which warehouse link to render
     // (V2 section at /warehouse vs the legacy /inventory/ rollback UI) — the
     // user must never see two warehouse links at once.
-    warehouseV2: WAREHOUSE_V2_ENABLED
+    warehouseV2: WAREHOUSE_V2_ENABLED,
+    // Procurement P2P — the legacy shell hides its old purchasing menu group and
+    // shows a single «المشتريات والموردون» entry when this is on.
+    procurementP2P: /^(1|true|on|yes)$/i.test(String(process.env.PROCUREMENT_P2P_ENABLE || '').trim())
   });
 });
 
@@ -487,6 +490,41 @@ const { loadWarehouseScope } = require('./middleware/warehouseScope');
 app.use('/api/inventory', loadWarehouseScope);
 app.use('/api/erp', loadWarehouseScope);
 app.use('/api/stocktake-pro', loadWarehouseScope);
+
+// ── Procurement / P2P unified module (flag-gated: PROCUREMENT_P2P_ENABLE) ─────
+// One namespace for suppliers + purchase orders + goods receipts + supplier
+// invoices + payments + returns + reports + dashboard. Dormant by default so the
+// legacy purchasing paths stay the sole stock/AP writers until the flag is
+// flipped after migration + backfill. Inherits the global JWT gate (req.user).
+const PROCUREMENT_P2P_ENABLE = /^(1|true|on|yes)$/i.test(String(process.env.PROCUREMENT_P2P_ENABLE || '').trim());
+if (PROCUREMENT_P2P_ENABLE) {
+  app.use('/api/procurement', auditMiddleware('procurement'));
+  app.use('/api/procurement', loadWarehouseScope);
+  app.use('/api/procurement', require('./routes/procurement'));
+
+  // Dual-write elimination — the unified module is the SOLE writer of procurement
+  // stock (goods receipts) and AP (supplier invoices + supplier payments). Every
+  // LEGACY write path is blocked (GET/reads pass for historical screens).
+  // Registered BEFORE the legacy routers (mounted further down) so they
+  // short-circuit; reverting the flag removes every guard untouched.
+  const { legacyWriteGate, supplierPaymentGate } = require('./middleware/procurementLegacyGate');
+  app.use('/api/purchases', legacyWriteGate('/api/procurement/orders'));         // create / receive / revert / PO-approve / delete
+  app.use('/api/ap-invoices', legacyWriteGate('/api/procurement/invoices'));     // supplier invoice create / approve / pay / lines / cancel
+  app.post('/api/inventory/receive-request', legacyWriteGate('/api/procurement/receipts'));
+  app.post('/api/inventory/receive-approve/:id', legacyWriteGate('/api/procurement/receipts'));
+  app.use('/api/erp/payments', supplierPaymentGate('/api/procurement/payments')); // supplier-directed payments only (other treasury passes)
+
+  // Convenience 301s — old/short procurement URLs land on the unified module.
+  const _p2pTarget = '/warehouse/purchasing';
+  for (const p of ['/purchasing', '/procurement', '/suppliers']) {
+    app.get(p, (req, res) => res.redirect(301, _p2pTarget));
+    app.get(p + '/*', (req, res) => res.redirect(301, _p2pTarget));
+  }
+
+  console.log('[procurement] P2P module MOUNTED at /api/procurement (all legacy stock/AP writers gated)');
+} else {
+  console.log('[procurement] P2P module dormant — set PROCUREMENT_P2P_ENABLE=1 to enable');
+}
 
 // API Routes
 app.use('/api/auth', require('./routes/auth'));
@@ -714,6 +752,13 @@ async function autoInitDB() {
       // v6.20.0 — unify collations AFTER all tables exist (fixes mixed
       // utf8mb4_unicode_ci / utf8mb4_0900_ai_ci JOIN failures on MySQL 8).
       await normalizeCollations();
+      // Procurement / P2P — auto-provision schema + GRNI account + capabilities
+      // when the flag is on, so enabling PROCUREMENT_P2P_ENABLE is one switch.
+      // Idempotent + additive; a failure logs but never blocks startup.
+      if (PROCUREMENT_P2P_ENABLE) {
+        try { await require('./scripts/procurement/migrate').run({ dryRun: false }); console.log('[procurement] schema provisioned'); }
+        catch (e) { console.warn('[procurement] provisioning skipped:', e.message); }
+      }
       // Phase A — flag any user still on a default password so they are routed
       // to the in-system change-password page after login (best-effort, cheap:
       // only never-changed accounts, only the top defaults).

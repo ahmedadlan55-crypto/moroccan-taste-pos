@@ -82,10 +82,14 @@
         </div>
 
         <!-- 5. المشتريات والموردين -->
-        <div class="nav-item has-submenu" onclick="toggleSubmenu(this)">
+        <!-- Unified P2P entry — shown ONLY when PROCUREMENT_P2P_ENABLE (single section). -->
+        <div class="nav-item" id="p2p-unified-nav" style="display:none" onclick="location.href='/warehouse/purchasing'" title="وحدة المشتريات والموردون الموحدة">
+          <i class="fas fa-truck-loading"></i><span>المشتريات والموردون</span>
+        </div>
+        <div class="nav-item has-submenu" data-legacy-purchasing="1" onclick="toggleSubmenu(this)">
           <i class="fas fa-truck-loading"></i><span data-i18n="nav.purchasingSuppliers">المشتريات والموردين</span><i class="fas fa-chevron-down submenu-indicator"></i>
         </div>
-        <div class="submenu">
+        <div class="submenu" data-legacy-purchasing="1">
           <div class="nav-item" onclick="nav('purchases')"><i class="fas fa-shopping-basket"></i><span data-i18n="nav.purchases">المشتريات</span></div>
           <div class="nav-item" data-erp-nav="erpPurchaseOrders" onclick="erpNav('erpPurchaseOrders')"><i class="fas fa-shopping-cart"></i><span data-i18n="nav.purchaseOrders">أوامر الشراء</span></div>
           <div class="nav-item" data-erp-nav="erpSuppliers" onclick="erpNav('erpSuppliers')"><i class="fas fa-truck"></i><span data-i18n="nav.suppliers">الموردين</span></div>

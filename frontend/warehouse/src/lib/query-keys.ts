@@ -120,6 +120,48 @@ export const queryKeys = {
     deficits: (params: Record<string, unknown>) => ["negative-policy", "deficits", params] as const,
   },
 
+  // Procurement / P2P — suppliers, purchase orders, receipts, invoices,
+  // payments, returns, reports, dashboard. List keys carry filters so a change
+  // aborts the in-flight request; detail keyed by id for targeted invalidation.
+  procurement: {
+    all: ["procurement"] as const,
+    dashboard: () => ["procurement", "dashboard"] as const,
+    suppliers: {
+      all: ["procurement", "suppliers"] as const,
+      list: (params: Record<string, unknown>) => ["procurement", "suppliers", "list", params] as const,
+      detail: (id: string) => ["procurement", "suppliers", "detail", id] as const,
+      statement: (id: string, params: Record<string, unknown>) => ["procurement", "suppliers", "statement", id, params] as const,
+      aging: (id: string) => ["procurement", "suppliers", "aging", id] as const,
+    },
+    orders: {
+      all: ["procurement", "orders"] as const,
+      list: (params: Record<string, unknown>) => ["procurement", "orders", "list", params] as const,
+      detail: (id: string) => ["procurement", "orders", "detail", id] as const,
+      timeline: (id: string) => ["procurement", "orders", "timeline", id] as const,
+    },
+    receipts: {
+      all: ["procurement", "receipts"] as const,
+      list: (params: Record<string, unknown>) => ["procurement", "receipts", "list", params] as const,
+      detail: (id: string) => ["procurement", "receipts", "detail", id] as const,
+    },
+    invoices: {
+      all: ["procurement", "invoices"] as const,
+      list: (params: Record<string, unknown>) => ["procurement", "invoices", "list", params] as const,
+      detail: (id: string) => ["procurement", "invoices", "detail", id] as const,
+    },
+    payments: {
+      all: ["procurement", "payments"] as const,
+      list: (params: Record<string, unknown>) => ["procurement", "payments", "list", params] as const,
+      detail: (id: string) => ["procurement", "payments", "detail", id] as const,
+    },
+    returns: {
+      all: ["procurement", "returns"] as const,
+      list: (params: Record<string, unknown>) => ["procurement", "returns", "list", params] as const,
+      detail: (id: string) => ["procurement", "returns", "detail", id] as const,
+    },
+    report: (type: string, params: Record<string, unknown>) => ["procurement", "report", type, params] as const,
+  },
+
   inventory: {
     all: ["inventory"] as const,
     // warehouseId kept as its OWN key segment (index 2) so placeholderData can

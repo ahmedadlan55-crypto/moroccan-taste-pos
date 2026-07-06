@@ -18,3 +18,8 @@ artifacts/
 frontend/warehouse/dist/
 frontend/pos/dist/
 frontend/pos/node_modules/
+
+# Playwright
+test-results/
+playwright-report/
+e2e/.token

@@ -58,7 +58,9 @@
     "procurement:rollback": "node scripts/procurement/rollback.js",
     "test:procurement-api": "node tests/procurementP2P.integration.test.js",
     "test:procurement-gate": "node tests/procurementLegacyGate.integration.test.js",
-    "test:procurement-concurrency": "node tests/procurementConcurrency.integration.test.js"
+    "test:procurement-concurrency": "node tests/procurementConcurrency.integration.test.js",
+    "test:procurement-rbac": "node tests/procurementRBAC.integration.test.js",
+    "test:procurement-migration": "node tests/procurementMigration.integration.test.js"
   },
   "dependencies": {
     "bcryptjs": "^2.4.3",

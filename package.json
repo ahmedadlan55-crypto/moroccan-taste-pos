@@ -56,7 +56,9 @@
     "procurement:reconcile": "node scripts/procurement/reconcile.js",
     "procurement:backfill": "node scripts/procurement/backfill.js",
     "procurement:rollback": "node scripts/procurement/rollback.js",
-    "test:procurement-api": "node tests/procurementP2P.integration.test.js"
+    "test:procurement-api": "node tests/procurementP2P.integration.test.js",
+    "test:procurement-gate": "node tests/procurementLegacyGate.integration.test.js",
+    "test:procurement-concurrency": "node tests/procurementConcurrency.integration.test.js"
   },
   "dependencies": {
     "bcryptjs": "^2.4.3",
@@ -70,6 +72,7 @@
     "mysql2": "^3.6.5"
   },
   "devDependencies": {
+    "@playwright/test": "^1.61.1",
     "nodemon": "^3.0.2",
     "xlsx": "^0.18.5"
   }

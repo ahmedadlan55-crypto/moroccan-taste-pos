@@ -25,12 +25,23 @@ const LIST_STATUSES = ['requested', 'authorized', 'paid', 'closed', 'cancelled',
 function genId() { return 'PAY-' + Date.now() + '-' + Math.random().toString(36).slice(2, 6); }
 function allocId() { return 'ALC-' + Date.now() + '-' + Math.random().toString(36).slice(2, 8); }
 
+// Locking, current-read sum of an invoice's live allocations. A plain
+// SUM(...) is a snapshot read under REPEATABLE READ and would MISS a
+// concurrently-committed allocation (letting two payments over-allocate). A
+// FOR UPDATE read of the rows forces a current read + locks them, so a second
+// payment (serialized behind the invoice row lock) sees the first's allocation.
+async function _lockedAllocatedSum(conn, invoiceId) {
+  const [rows] = await conn.query(
+    'SELECT allocated_amount FROM payment_allocations WHERE supplier_invoice_id = ? AND reversed = 0 FOR UPDATE',
+    [invoiceId]);
+  return calc.money(rows.reduce((s, r) => s + Number(r.allocated_amount), 0));
+}
+
 async function _recomputeInvoice(conn, invoiceId) {
   const [inv] = await conn.query('SELECT total_amount FROM supplier_invoices WHERE id = ? FOR UPDATE', [invoiceId]);
   if (!inv.length) throw err('VALIDATION_ERROR', 'الفاتورة غير موجودة');
-  const [al] = await conn.query('SELECT COALESCE(SUM(allocated_amount),0) AS a FROM payment_allocations WHERE supplier_invoice_id = ? AND reversed = 0', [invoiceId]);
+  const paid = await _lockedAllocatedSum(conn, invoiceId);
   const total = calc.money(inv[0].total_amount);
-  const paid = calc.money(al[0].a);
   const balance = calc.money(total - paid);
   const status = balance <= 0.01 ? 'paid' : (paid > 0.01 ? 'partially_paid' : 'approved');
   await conn.query('UPDATE supplier_invoices SET paid_amount = ?, balance_amount = ?, status = CASE WHEN status IN ("cancelled","closed") THEN status ELSE ? END, version = version + 1 WHERE id = ?',
@@ -46,8 +57,8 @@ async function _applyAllocations(conn, payment, allocations, actor) {
     if (!(amount > 0)) throw err('VALIDATION_ERROR', 'مبلغ التخصيص يجب أن يكون موجبًا');
     const [inv] = await conn.query('SELECT id, total_amount FROM supplier_invoices WHERE id = ? FOR UPDATE', [invoiceId]);
     if (!inv.length) throw err('VALIDATION_ERROR', 'الفاتورة غير موجودة: ' + invoiceId);
-    const [al] = await conn.query('SELECT COALESCE(SUM(allocated_amount),0) AS a FROM payment_allocations WHERE supplier_invoice_id = ? AND reversed = 0', [invoiceId]);
-    const outstanding = calc.money(Number(inv[0].total_amount) - Number(al[0].a));
+    const alreadyAllocated = await _lockedAllocatedSum(conn, invoiceId);
+    const outstanding = calc.money(Number(inv[0].total_amount) - alreadyAllocated);
     if (amount - outstanding > 0.01) throw err('PAYMENT_OVER_ALLOCATION', `التخصيص (${amount}) يتجاوز المتبقي على الفاتورة (${outstanding})`);
     await conn.query(
       `INSERT INTO payment_allocations (id, payment_id, supplier_invoice_id, allocated_amount, allocation_date, actor)

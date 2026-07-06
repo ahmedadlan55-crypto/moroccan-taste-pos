@@ -39,7 +39,37 @@ async function runTransition(o) {
     statusColumn = 'status', versionColumn = 'version',
   } = o;
 
-  return db.withTransaction(async (conn) => {
+  async function replay(conn) {
+    const prior = await events.findByIdempotency(conn, docType, idempotencyKey);
+    if (!prior) return null;
+    const [cur] = await conn.query(`SELECT * FROM \`${table}\` WHERE id = ? LIMIT 1`, [id]);
+    const row = cur[0] || {};
+    return {
+      replayed: true, row, toStatus: prior.to_status,
+      newVersion: row[versionColumn] != null ? Number(row[versionColumn]) : null,
+      result: { journalIds: prior.gl_journal_id ? [prior.gl_journal_id] : [] },
+      event: prior,
+    };
+  }
+
+  try {
+    return await _run();
+  } catch (e) {
+    // Concurrent same-key race: the two requests both passed the idempotency
+    // pre-check before either committed, so the loser either fails the state
+    // machine (doc already advanced) or hits UNIQUE(document_type,
+    // idempotency_key) on the event INSERT. Either way its whole transaction
+    // rolled back (no double effect). If a prior event for this key now exists,
+    // the operation already succeeded → return it as a clean replay (200).
+    if (idempotencyKey) {
+      const r = await replay(db);
+      if (r) return r;
+    }
+    throw e;
+  }
+
+  function _run() {
+   return db.withTransaction(async (conn) => {
     // 1. idempotency replay
     if (idempotencyKey) {
       const prior = await events.findByIdempotency(conn, docType, idempotencyKey);
@@ -101,7 +131,8 @@ async function runTransition(o) {
       result,
       event,
     };
-  });
+   });
+  }
 }
 
 module.exports = { runTransition };

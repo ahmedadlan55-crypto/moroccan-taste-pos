@@ -499,22 +499,19 @@ if (PROCUREMENT_P2P_ENABLE) {
   app.use('/api/procurement', loadWarehouseScope);
   app.use('/api/procurement', require('./routes/procurement'));
 
-  // Dual-write elimination — when the unified module owns procurement, the legacy
-  // stock/AP write endpoints must NOT write directly. Registered BEFORE the legacy
-  // routers (mounted further down) so they short-circuit with a redirect to the new
-  // module. Reads on the legacy routers stay available. Reverting the flag restores
-  // the legacy writers untouched (zero migration risk).
-  const _legacyGate = (target) => (req, res) => res.status(409).json({
-    success: false, code: 'V2_RECEIPTS_LINKED',
-    error: 'انتقلت هذه العملية إلى وحدة «المشتريات والموردون» الموحدة.',
-    redirect: target,
-  });
-  app.post('/api/purchases/receive/:id', _legacyGate('/api/procurement/receipts'));
-  app.post('/api/inventory/receive-request', _legacyGate('/api/procurement/receipts'));
-  app.post('/api/inventory/receive-approve/:id', _legacyGate('/api/procurement/receipts'));
-  app.post('/api/ap-invoices/:id/pay', _legacyGate('/api/procurement/payments'));
+  // Dual-write elimination — the unified module is the SOLE writer of procurement
+  // stock (goods receipts) and AP (supplier invoices + supplier payments). Every
+  // LEGACY write path is blocked (GET/reads pass for historical screens).
+  // Registered BEFORE the legacy routers (mounted further down) so they
+  // short-circuit; reverting the flag removes every guard untouched.
+  const { legacyWriteGate, supplierPaymentGate } = require('./middleware/procurementLegacyGate');
+  app.use('/api/purchases', legacyWriteGate('/api/procurement/orders'));         // create / receive / revert / PO-approve / delete
+  app.use('/api/ap-invoices', legacyWriteGate('/api/procurement/invoices'));     // supplier invoice create / approve / pay / lines / cancel
+  app.post('/api/inventory/receive-request', legacyWriteGate('/api/procurement/receipts'));
+  app.post('/api/inventory/receive-approve/:id', legacyWriteGate('/api/procurement/receipts'));
+  app.use('/api/erp/payments', supplierPaymentGate('/api/procurement/payments')); // supplier-directed payments only (other treasury passes)
 
-  console.log('[procurement] P2P module MOUNTED at /api/procurement (legacy receive/pay writers gated)');
+  console.log('[procurement] P2P module MOUNTED at /api/procurement (all legacy stock/AP writers gated)');
 } else {
   console.log('[procurement] P2P module dormant — set PROCUREMENT_P2P_ENABLE=1 to enable');
 }

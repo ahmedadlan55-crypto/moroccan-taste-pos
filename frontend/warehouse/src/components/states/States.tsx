@@ -74,7 +74,20 @@ export function OfflineState({ onRetry }: { onRetry?: () => void }) {
   );
 }
 
-export function ErrorState({ error, onRetry }: { error: unknown; onRetry?: () => void }) {
+// Never render raw technical / DB / stack error text to the user. Intentional
+// short domain messages pass through; anything resembling SQL, driver internals,
+// or a stack trace is replaced by a safe generic Arabic message.
+export function safeUserMessage(error: unknown): string {
+  const GENERIC = "حدث خطأ غير متوقع. أعد المحاولة، وإن استمرت المشكلة تواصل مع المسؤول.";
+  const raw = error instanceof Error ? String(error.message || "") : "";
+  if (!raw) return GENERIC;
+  if (/\b(select|insert|update|delete|from|where|group\s+by|sql_mode|only_full_group_by|nonaggregated|syntax|errno|econnrefused|sqlmessage)\b/i.test(raw)) return GENERIC;
+  if (/\.(js|ts|tsx):\d+|\bat\s+\w+\s+\(/.test(raw)) return GENERIC; // stack frames
+  if (raw.length > 160) return GENERIC; // overly long → likely a dump, not a UI message
+  return raw;
+}
+
+export function ErrorState({ error, onRetry, title, body }: { error: unknown; onRetry?: () => void; title?: string; body?: string }) {
   if (error instanceof ApiError) {
     if (error.kind === "network") return <OfflineState onRetry={onRetry} />;
     if (error.kind === "unauthorized") return <SessionExpired />;
@@ -84,18 +97,17 @@ export function ErrorState({ error, onRetry }: { error: unknown; onRetry?: () =>
         <Shell
           icon={<RefreshCw className="h-6 w-6" />}
           title="تغيّرت البيانات منذ آخر تحميل"
-          body={error.message}
+          body={safeUserMessage(error)}
           action={onRetry && <Button onClick={onRetry}><RefreshCw className="h-4 w-4" /> تحديث</Button>}
         />
       );
     }
   }
-  const message = error instanceof Error ? error.message : "حدث خطأ غير متوقع";
   return (
     <Shell
       icon={<AlertTriangle className="h-6 w-6 text-rose-600" />}
-      title="تعذّر تحميل البيانات"
-      body={message}
+      title={title ?? "تعذّر تحميل البيانات"}
+      body={body ?? safeUserMessage(error)}
       action={onRetry && <Button variant="secondary" onClick={onRetry}><RefreshCw className="h-4 w-4" /> إعادة المحاولة</Button>}
     />
   );

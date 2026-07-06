@@ -300,7 +300,9 @@ export function ProcurementReportsPage() {
           <button key={r.key} onClick={() => setType(r.key)} className={`rounded-xl px-3 py-1.5 text-sm font-bold transition ${type === r.key ? "bg-teal-600 text-white" : "bg-slate-100 text-slate-600 hover:bg-slate-200"}`}>{r.label}</button>
         ))}
       </div>
-      {isLoading ? <LoadingState /> : isError ? <ErrorState error={error} onRetry={() => refetch()} /> : rows.length === 0 ? (
+      {isLoading ? <LoadingState /> : isError ? (
+        <ErrorState error={error} onRetry={() => refetch()} title="تعذّر تحميل تقرير المشتريات" body="أعد المحاولة، وإن استمرت المشكلة تواصل مع المسؤول." />
+      ) : rows.length === 0 ? (
         <EmptyState title="لا بيانات" body="لا توجد صفوف لهذا التقرير." />
       ) : (
         <div className="surface overflow-hidden"><div className="overflow-x-auto">

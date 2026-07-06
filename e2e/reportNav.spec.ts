@@ -44,7 +44,7 @@ test.describe("Legacy purchasing nav removed from the main shell", () => {
       }
       if (typeof w.applyProcurementP2PNav === "function") w.applyProcurementP2PNav();
     });
-    await page.locator("#p2p-unified-nav").waitFor({ state: "attached", timeout: 20_000 });
+    await page.locator("#adminView").waitFor({ state: "attached", timeout: 20_000 });
     await page.waitForFunction(() => (window as unknown as { __PROCUREMENT_P2P_ENABLE?: boolean }).__PROCUREMENT_P2P_ENABLE === true, null, { timeout: 15_000 });
 
     // every legacy purchasing/supplier nav entry exists in markup (reversible) but is HIDDEN
@@ -52,6 +52,16 @@ test.describe("Legacy purchasing nav removed from the main shell", () => {
     const count = await legacy.count();
     expect(count).toBeGreaterThan(0);
     for (let i = 0; i < count; i++) await expect(legacy.nth(i)).toBeHidden();
+
+    // the main shell shows ZERO purchasing section: no unified launcher, and no
+    // visible «المشتريات والموردون»/supplier entry anywhere in the sidebar
+    expect(await page.locator("#p2p-unified-nav").count()).toBe(0);
+    const visiblePurchasing = await page.evaluate(() => {
+      const labels = ["المشتريات والموردون", "المشتريات والموردين", "الموردين", "أوامر الشراء", "تقارير المشتريات", "أعمار ذمم الموردين", "كشف حساب مورد"];
+      return Array.from(document.querySelectorAll("#sidebar .nav-item, .sidebar .nav-item, nav .nav-item"))
+        .filter((el) => (el as HTMLElement).offsetParent !== null && labels.some((l) => (el.textContent || "").includes(l))).length;
+    });
+    expect(visiblePurchasing).toBe(0);
 
     // a legacy navigation call is guarded → redirected into the unified module
     await page.evaluate(() => (window as unknown as { erpNav?: (s: string) => void }).erpNav?.("erpSuppliers"));

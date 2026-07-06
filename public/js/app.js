@@ -17168,9 +17168,10 @@ document.addEventListener('DOMContentLoaded', initTheme);
 initTheme(); // Also immediately call it to prevent FOUC as much as possible
 
 // Procurement P2P — when the unified module is enabled (PROCUREMENT_P2P_ENABLE),
-// hide the legacy purchasing menu group and show a SINGLE «المشتريات والموردون»
-// entry that opens the unified React module. Reversible: flag OFF → legacy menu
-// stays and the unified entry stays hidden. Never shows both at once.
+// the MAIN shell shows NO purchasing/supplier section at all: the legacy menu
+// group AND any unified launcher are hidden. The single «المشتريات والموردون»
+// entry lives ONLY inside /warehouse (its sidebar), reached via «إدارة المستودعات».
+// Reversible: flag OFF → the legacy menu returns (rollback).
 // Mirrors the warehouse-v2 nav pattern: localStorage (procurement_p2p_flag) gives
 // a flash-free first paint AND a SYNCHRONOUS flag for the nav guards (so even the
 // last-section-restore on load is routed correctly); /api/version reconciles per
@@ -17184,7 +17185,7 @@ function applyProcurementP2PNav(enabledOverride) {
       if (!st) {
         st = document.createElement('style');
         st.id = 'p2p-legacy-hide-style';
-        st.textContent = '[data-legacy-purchasing]{display:none !important;} #p2p-unified-nav{display:flex !important;}';
+        st.textContent = '[data-legacy-purchasing], #p2p-unified-nav {display:none !important;}';
         (document.head || document.documentElement).appendChild(st);
       }
     } else if (st && st.parentNode) {

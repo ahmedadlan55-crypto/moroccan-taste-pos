@@ -60,7 +60,9 @@
     "test:procurement-gate": "node tests/procurementLegacyGate.integration.test.js",
     "test:procurement-concurrency": "node tests/procurementConcurrency.integration.test.js",
     "test:procurement-rbac": "node tests/procurementRBAC.integration.test.js",
-    "test:procurement-migration": "node tests/procurementMigration.integration.test.js"
+    "test:procurement-migration": "node tests/procurementMigration.integration.test.js",
+    "e2e:procurement": "playwright test",
+    "e2e:procurement-dormant": "playwright test --config=playwright.dormant.config.ts"
   },
   "dependencies": {
     "bcryptjs": "^2.4.3",

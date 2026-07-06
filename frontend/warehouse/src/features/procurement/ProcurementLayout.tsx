@@ -1,10 +1,12 @@
 // Unified "المشتريات والموردون" module shell — one section, internal tab
 // sub-navigation (spec §12). Renders under the AppShell's Outlet; its own
 // <Outlet/> hosts the sub-pages.
-import { NavLink, Outlet } from "react-router-dom";
-import { LayoutDashboard, Users, FileText, PackageCheck, Receipt, Wallet, Undo2, FileBarChart } from "lucide-react";
+import { NavLink, Outlet, Link } from "react-router-dom";
+import { LayoutDashboard, Users, FileText, PackageCheck, Receipt, Wallet, Undo2, FileBarChart, Lock } from "lucide-react";
 import { cn } from "@/lib/cn";
 import { PageHeader } from "@/components/PageHeader";
+import { useServerFlags } from "@/app/server-flags";
+import { LoadingState } from "@/components/states/States";
 
 const TABS = [
   { to: "/purchasing", label: "اللوحة", icon: LayoutDashboard, end: true },
@@ -18,6 +20,21 @@ const TABS = [
 ];
 
 export function ProcurementLayout() {
+  const { procurementEnabled, loading } = useServerFlags();
+  if (loading) return <LoadingState />;
+  if (!procurementEnabled) {
+    return (
+      <div className="surface grid place-items-center gap-3 p-12 text-center">
+        <span className="grid h-14 w-14 place-items-center rounded-2xl bg-slate-100 text-slate-400"><Lock className="h-6 w-6" /></span>
+        <div className="text-lg font-extrabold text-slate-800">وحدة المشتريات والموردون غير مفعّلة</div>
+        <p className="max-w-md text-sm font-medium text-slate-500">
+          هذه الوحدة مُهيّأة لكنها خاملة على هذه البيئة (العلم <code className="rounded bg-slate-100 px-1">PROCUREMENT_P2P_ENABLE</code> غير مُفعّل).
+          تُفعّل من إعدادات الخادم عند الجاهزية.
+        </p>
+        <Link className="text-sm font-bold text-teal-700 hover:underline" to="/">العودة إلى مركز المستودعات</Link>
+      </div>
+    );
+  }
   return (
     <div>
       <PageHeader eyebrow="Procure-to-Pay" title="المشتريات والموردون" subtitle="دورة كاملة: مورد ← أمر شراء ← استلام ← فاتورة ← سداد ← إرجاع" />

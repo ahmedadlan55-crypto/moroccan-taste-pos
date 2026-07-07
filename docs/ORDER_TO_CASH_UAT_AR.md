@@ -29,5 +29,19 @@
 - كل mutation يحمل Idempotency-Key؛ التقادم يعطي 409 مع رسالة «أعد التحميل».
 - القديم مخفي عند ON ويعمل عند OFF (عكسي بتغيير علم واحد).
 
-## ما يُختبر آليًا (مُنفَّذ)
-Vitest 42/42 (permissions/formatters/flag-gating/CustomersPage/combobox)، `tsc` نظيف، `vite build` أخضر، تركيب `/sales` مُتحقَّق بالخادم. **Playwright E2E**: بند لاحق (يتطلب خادمًا حيًّا + جلسة).
+## سيناريوهات POS V2 ↔ O2C (مُختبَرة)
+| # | السيناريو | المتوقع |
+|---|---|---|
+| 16 | فتح /pos-v2 وإضافة صنف | الكاتالوج يُعرض، صفر console errors |
+| 17 | فتح منتقي العميل في السلة | يعرض الصفحة الأولى فورًا + بحث + المتاح الائتماني بأرقام إنجليزية |
+| 18 | اختيار عميل | يُحفظ `customerId` حقيقي (لا اسم/هاتف فقط) ويظهر في السلة والإيصال |
+| 19 | بيع آجل بلا عميل | يُمنع: «البيع الآجل يتطلب اختيار عميل» (واجهة + خادم 422) |
+| 20 | بيع آجل مع عميل | يُرسل `customerId` + `payments` منظمة |
+| 21 | split cash+credit | `payments:[{cash},{credit}]` والمجموع = الإجمالي بدقة |
+| 22 | offline | كاش فقط؛ البيع الآجل ممنوع؛ replay بنفس `clientOrderId` لا يخصم مرتين |
+| 23 | UoM كرتون | `baseQty` صحيح، الإيصال يعرض الوحدة المدخلة |
+
+## ما يُختبر آليًا (مُنفَّذ فعليًا)
+- **Frontend Vitest**: sales 42/42 · pos 53/53 (permissions/formatters/flag-gating/CustomersPage/combobox/CustomerPicker/o2cPos). `tsc` نظيف، `vite build` (sales+pos) أخضر.
+- **Backend**: `o2cFoundation` 37/37 · `o2cServices` 36/36 · `o2cLegacyGate` 20/20 · `posO2CPayload` 9/9 · `npm test` أخضر · posV2.api 41/41 · posV2Uom 20/20.
+- **Playwright E2E** (`npm run e2e:o2c`، desktop+mobile): **9 passed · 0 failed · 3 skipped** — لقطات في `artifacts/e2e/o2c-final/`.

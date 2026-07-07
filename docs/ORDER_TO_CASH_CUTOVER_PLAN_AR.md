@@ -24,11 +24,13 @@
 - **الأساسي:** `ORDER_TO_CASH_ENABLE=0` → القسم يختفي، البوابات تُفكّ، القديم يعود، الجداول الإضافية خاملة (بلا فقد بيانات). عكسي فورًا بتغيير علم واحد.
 - استعادة DB **فقط** عند ثبوت تلف (النسخة الاحتياطية أعلاه).
 
-## عمل لاحق مطلوب قبل الاعتماد الكامل
-1. **تكامل واجهة POS** (`frontend/pos`): منتقي عميل يحفظ `customer_id` فعليًا + بنية مدفوعات منظمة `payments:[{method,amount}]` + منع الآجل offline. (البوابة الخادمية تفرض «الآجل يتطلب عميلًا» بالفعل، لكن UX الكاشير يحتاج التحسين.)
-- «فتح الكاشير» في القائمة الرئيسية → `/pos-v2` عند `POS_V2_ENABLED=1` (داخل `/sales` مُنفَّذ بالفعل).
-2. **Playwright E2E** كامل (§سيناريوهات UAT) على خادم حيّ + جلسة.
-3. **بذر أداء** production-like + قياس p95 للقوائم/اللوحة/التقارير.
+## المُنجَز (كان عملًا لاحقًا — أُغلِق)
+1. ✅ **تكامل واجهة POS** (`frontend/pos`): منتقي عميل searchable يحفظ `customer_id` فعليًا + بنية مدفوعات منظمة `payments:[{method,amount}]` + split cash+card+credit + منع الآجل بلا عميل (واجهة + خادم) + الآجل offline ممنوع. UoM/barcode/offline exactly-once بلا مساس.
+2. ✅ **Playwright E2E** كامل (`npm run e2e:o2c`، desktop+mobile): 9 passed · 0 failed · 3 skipped — لقطات في `artifacts/e2e/o2c-final/`.
+
+## عمل لاحق (تحسينات غير حاجبة، خارج نطاق الإغلاق)
+- «فتح الكاشير» في القائمة الرئيسية القديمة → `/pos-v2` عند `POS_V2_ENABLED=1` (داخل `/sales` مُنفَّذ بالفعل عبر الشريط الجانبي).
+- **بذر أداء** production-like + قياس p95 للقوائم/اللوحة/التقارير.
 
 ## تأكيدات
 لا تغيير `WAREHOUSE_V2_ENABLED`/`POS_V2_ENABLED`/`PROCUREMENT_P2P_ENABLE`/`WAREHOUSE_SCOPE_ENFORCE`/`JWT_SECRET`. خدمة/قاعدة واحدة. Draft PR فقط. لا merge/deploy.

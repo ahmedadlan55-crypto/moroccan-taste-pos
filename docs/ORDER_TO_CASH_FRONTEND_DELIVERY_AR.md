@@ -42,6 +42,18 @@ SPA ثالثة نظيرة لِـ`frontend/warehouse`(/warehouse) و`frontend/pos
 - **التركيب**: الخادم يقلع بالعلم ON → `/sales/` يخدم التطبيق (عنوان + JS/CSS 200)، `/sales/customers` SPA fallback 200؛ العلم OFF → 503.
 - **الانحدار Backend**: `o2cFoundation` 37/37، `o2cServices` 36/36، `o2cLegacyGate` 19/19 (بلا تأثّر بتعديلات `server.js`).
 
-## 8) النواقص الحقيقية
-- **تكامل واجهة POS** (`frontend/pos`): بوابة الائتمان الخادمية تفرض «الآجل يتطلب عميلًا» فعليًا (`creditSaleGate`)، لكن تعديل شاشة الكاشير لإرسال `customer_id` + بنية مدفوعات منظمة لم يُنفَّذ في هذه الدفعة (تجنّبًا لمخاطرة مسار البيع القوي) — يبقى عملًا لاحقًا موصوفًا في [Cutover Plan](ORDER_TO_CASH_CUTOVER_PLAN_AR.md).
-- **Playwright E2E**: لم يُشغَّل في هذه الدفعة (يتطلب خادمًا حيًّا + جلسة). التحقق تم عبر Vitest + build + تركيب الخادم.
+## 8) POS V2 O2C Integration (مُنجَز)
+شاشة الكاشير `/pos-v2` تربط الآن **عميلًا حقيقيًا** وترسل **مدفوعات منظمة** خلف `ORDER_TO_CASH_ENABLE` (العلم OFF ⇒ POS كما كان تمامًا):
+- **`CustomerPicker` جديد** في السلة (searchable، يفتح الصفحة الأولى فور الضغط، بحث `/api/order-to-cash/customers/search`، keyboard/ARIA، Error+Retry، يعرض المتاح الائتماني بأرقام إنجليزية، بلا native select). يُحفظ `customerId` الحقيقي في حالة السلة و`pos_orders.customer_id` (لا اسم/هاتف في notes فقط)؛ محفوظ عبر hold/resume.
+- **بنية المدفوعات المنظمة:** `payments:[{method:'cash'|'card'|'credit',amount}]` تُضاف في `buildLegacySalePayload` **بجانب** الحقول القديمة (لا انحدار على `routes/sales.js`/GL)؛ split يدعم cash+card+credit (partial credit). credit طريقة حقيقية، تُعرض «آجل» في الإيصال (لا «كيتا»).
+- **بوابة البيع الآجل:** أي جزء credit يتطلب عميلًا مرتبطًا — الواجهة تمنع التأكيد برسالة «البيع الآجل يتطلب اختيار عميل»، وحارس `/submit` (مُعلَّم بالعلم) + `creditSaleGate` على `/api/sales` يفرضان ذلك خادميًّا (422). offline يبقى cash فقط (البيع الآجل ممنوع). لم تُمَسّ UoM/barcode/FEFO/offline exactly-once (`clientOrderId`).
+- **الاختبارات:** `posO2CPayload` 9/9 · `o2cLegacyGate` 20/20 (يشمل structured-credit-بلا-عميل→422) · POS Vitest 53/53 (+`CustomerPicker` 4، +`o2cPos` 5) · posV2.api 41/41 · posV2Uom 20/20 (بلا انحدار).
+
+## 9) Playwright E2E Evidence (مُشغَّل فعليًا)
+`npm run e2e:o2c` (خادم حقيقي بالعلم ON، desktop + mobile) — **9 passed · 0 failed · 3 skipped** (الـskips = تدفقات إنشاء لسطح المكتب فقط، تُتخطّى في مشروع الجوال):
+- `/sales`: قسم واحد + تنقّل يُعرض (صفر console errors، لا تمرير أفقي) · إنشاء عميل + Customer 360 · فاتورة draft→issue→«صادرة» + GL + ZATCA (الصادرة immutable) · تقرير ar-aging بأرقام إنجليزية + طباعة.
+- `/pos-v2`: الكاتالوج يُعرض (صفر console errors، لا تمرير أفقي) · CustomerPicker يفتح الصفحة الأولى + بحث خادمي + المتاح الائتماني «5,000.00» بأرقام إنجليزية + يحلّ customerId حقيقيًا.
+- لقطات: `artifacts/e2e/o2c-final/{desktop,mobile}/*.png` (غير متتبعة في Git).
+
+## 10) Remaining Gaps
+**لا شيء مؤثر.** كلا البندين المُعلنين سابقًا (تكامل POS + Playwright) مُغلقان ومُتحقَّقان فعليًا أعلاه.

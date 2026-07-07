@@ -25,7 +25,9 @@
         </div>
         <div class="submenu">
           <div class="nav-item" onclick="window.open('/pos/','_blank')" style="background:linear-gradient(90deg,rgba(34,197,94,.15),transparent);"><i class="fas fa-cash-register" style="color:#22c55e;"></i><span data-i18n="nav.openPOS">فتح شاشة الكاشير POS</span></div>
-          <div class="nav-item" onclick="nav('sales')"><i class="fas fa-receipt"></i><span data-i18n="nav.sales">المبيعات</span></div>
+          <!-- Order-to-Cash unified section — shown only when ORDER_TO_CASH_ENABLE=1 (see applyOrderToCashNav). Opens the /sales SPA in the same tab. -->
+          <div class="nav-item" id="o2c-unified-nav" style="display:none;background:linear-gradient(90deg,rgba(13,148,136,.15),transparent);" onclick="location.href='/sales'"><i class="fas fa-file-invoice-dollar" style="color:#0d9488;"></i><span>المبيعات والعملاء</span></div>
+          <div class="nav-item" data-legacy-o2c="1" onclick="nav('sales')"><i class="fas fa-receipt"></i><span data-i18n="nav.sales">المبيعات</span></div>
           <div class="nav-item" onclick="nav('shifts')"><i class="fas fa-folder-open"></i><span data-i18n="nav.shiftsLog">سجل المناوبات</span></div>
         </div>
 
@@ -137,9 +139,9 @@
           <i class="fas fa-user-friends"></i><span data-i18n="nav.customersAR">العملاء والذمم</span><i class="fas fa-chevron-down submenu-indicator"></i>
         </div>
         <div class="submenu">
-          <div class="nav-item" data-erp-nav="erpCustomers" onclick="erpNav('erpCustomers')"><i class="fas fa-user-tie"></i><span data-i18n="nav.customers">العملاء</span></div>
-          <div class="nav-item" data-erp-nav="erpCustomerStatement" onclick="erpNav('erpCustomerStatement')"><i class="fas fa-file-invoice-dollar"></i><span data-i18n="nav.customerStatement">كشف حساب عميل</span></div>
-          <div class="nav-item" data-erp-nav="erpARAging" onclick="erpNav('erpARAging')"><i class="fas fa-user-clock"></i><span data-i18n="nav.arAging">أعمار ذمم العملاء</span></div>
+          <div class="nav-item" data-legacy-o2c="1" data-erp-nav="erpCustomers" onclick="erpNav('erpCustomers')"><i class="fas fa-user-tie"></i><span data-i18n="nav.customers">العملاء</span></div>
+          <div class="nav-item" data-legacy-o2c="1" data-erp-nav="erpCustomerStatement" onclick="erpNav('erpCustomerStatement')"><i class="fas fa-file-invoice-dollar"></i><span data-i18n="nav.customerStatement">كشف حساب عميل</span></div>
+          <div class="nav-item" data-legacy-o2c="1" data-erp-nav="erpARAging" onclick="erpNav('erpARAging')"><i class="fas fa-user-clock"></i><span data-i18n="nav.arAging">أعمار ذمم العملاء</span></div>
           <div class="nav-item" data-legacy-purchasing="1" data-erp-nav="erpAPAging" onclick="erpNav('erpAPAging')"><i class="fas fa-truck-loading"></i><span data-i18n="nav.apAging">أعمار ذمم الموردين</span></div>
         </div>
 

@@ -17,7 +17,7 @@ import {
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { currentUser, isSupervisor } from "@/lib/auth";
 import { loadCatalog } from "@/lib/catalogCache";
-import { openShift as apiOpenShift, findOpenShift } from "@/lib/api";
+import { openShift as apiOpenShift, findOpenShift, getServerFlags } from "@/lib/api";
 import { getEngine, type EngineStatus, type OfflineEngine } from "@/lib/offline";
 import { cartTotals } from "@/lib/cartMath";
 import { ulid } from "@/lib/ulid";
@@ -86,6 +86,7 @@ function newLocalOrder(shiftId: string | null, deviceId: string): LocalOrder {
     discountValue: 0,
     discountName: null,
     note: null,
+    customerId: null,
     customerName: null,
     customerPhone: null,
     lines: [],
@@ -137,6 +138,10 @@ export interface PosContextValue {
   setTableNo: (t: string | null) => void;
   setDiscount: (type: DiscountType | null, value: number, name: string | null) => void;
   setCustomer: (name: string | null, phone: string | null) => void;
+  setCustomerRef: (cust: { id: string; name: string | null; phone: string | null } | null) => void;
+  /** Order-to-Cash enabled on the server (read from /api/version). When true the
+   *  POS shows the searchable customer picker + enforces credit-needs-customer. */
+  o2cEnabled: boolean;
   setNote: (note: string | null) => void;
   startNewOrder: () => void;
   loadOrderDoc: (doc: LocalOrder) => void;
@@ -333,8 +338,15 @@ export function PosProvider({ children }: { children: ReactNode }) {
       mutate((c) => ({ ...c, discountType: type, discountValue: type ? Math.max(0, value) : 0, discountName: type ? name : null })),
     [mutate],
   );
+  // Free-text customer (legacy path / O2C off): manual edits clear any linked id.
   const setCustomer = useCallback(
-    (name: string | null, phone: string | null) => mutate((c) => ({ ...c, customerName: name, customerPhone: phone })),
+    (name: string | null, phone: string | null) => mutate((c) => ({ ...c, customerName: name, customerPhone: phone, customerId: null })),
+    [mutate],
+  );
+  // Linked customer (O2C): a real customerId + display name/phone from the picker.
+  const setCustomerRef = useCallback(
+    (cust: { id: string; name: string | null; phone: string | null } | null) =>
+      mutate((c) => ({ ...c, customerId: cust ? cust.id : null, customerName: cust ? cust.name : null, customerPhone: cust ? cust.phone : null })),
     [mutate],
   );
   const setNote = useCallback((note: string | null) => mutate((c) => ({ ...c, note })), [mutate]);
@@ -353,6 +365,15 @@ export function PosProvider({ children }: { children: ReactNode }) {
     () => cartTotals(cart.lines, cart.discountType ? { type: cart.discountType, value: cart.discountValue } : null),
     [cart.lines, cart.discountType, cart.discountValue],
   );
+
+  // Order-to-Cash server flag (read once, cached). Drives the customer picker.
+  const flagsQuery = useQuery({
+    queryKey: ["pos-server-flags"],
+    queryFn: () => getServerFlags(),
+    staleTime: 5 * 60_000,
+    retry: 1,
+  });
+  const o2cEnabled = flagsQuery.data?.orderToCash === true;
 
   const value: PosContextValue = {
     user,
@@ -381,6 +402,8 @@ export function PosProvider({ children }: { children: ReactNode }) {
     setTableNo,
     setDiscount,
     setCustomer,
+    setCustomerRef,
+    o2cEnabled,
     setNote,
     startNewOrder,
     loadOrderDoc,

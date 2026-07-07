@@ -360,6 +360,45 @@ if (_pwaFs.existsSync(path.join(_posDist, 'index.html'))) {
   console.warn('[pos-v2] bundle not found — run: npm --prefix frontend/pos run build');
 }
 
+// Order-to-Cash SPA — served at /sales behind ORDER_TO_CASH_ENABLE (peer to the
+// warehouse + pos SPAs, same JWT/session/tab). When the flag is OFF the section
+// is invisible: /sales returns a 503 maintenance notice instead of a broken UI.
+var O2C_UI_ENABLED = /^(1|true|on|yes)$/i.test(String(process.env.ORDER_TO_CASH_ENABLE || '').trim());
+if (!O2C_UI_ENABLED) {
+  app.all(/^\/sales(?:\/.*)?$/, function (req, res) {
+    res.status(503).type('html').send('<!doctype html><html lang="ar" dir="rtl"><meta charset="utf-8"><title>صيانة</title><body style="font-family:Tahoma,Arial,sans-serif;padding:3rem;text-align:center;color:#172033"><h2>قسم «المبيعات والعملاء» غير مُفعّل</h2><p>استخدم الشاشات الحالية من النظام الأساسي. (ORDER_TO_CASH_ENABLE=0)</p></body></html>');
+  });
+} else {
+  app.use('/sales', function (req, res, next) {
+    res.setHeader('Content-Security-Policy', [
+      "default-src 'self'", "base-uri 'self'", "object-src 'none'", "frame-ancestors 'none'",
+      "img-src 'self' data: blob:", "font-src 'self' data:", "style-src 'self' 'unsafe-inline'",
+      "script-src 'self'", "connect-src 'self'", "form-action 'self'"
+    ].join('; '));
+    next();
+  });
+  var _salesDist = path.join(__dirname, 'frontend', 'sales', 'dist');
+  if (_pwaFs.existsSync(path.join(_salesDist, 'index.html'))) {
+    app.use('/sales', express.static(_salesDist, {
+      setHeaders: function(res, filePath) {
+        if (/\.html$/i.test(filePath)) {
+          res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
+        } else if (/[/\\]assets[/\\]/.test(filePath)) {
+          res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
+        }
+      }
+    }));
+    app.get(/^\/sales(?:\/.*)?$/, function(req, res, next) {
+      if (/\.[a-zA-Z0-9]+$/.test(req.path)) return next();
+      res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
+      res.sendFile(path.join(_salesDist, 'index.html'));
+    });
+    console.log('[order-to-cash] SPA mounted at /sales');
+  } else {
+    console.warn('[order-to-cash] bundle not found — run: npm --prefix frontend/sales run build');
+  }
+}
+
 // RC hardening — surface a loud warning if warehouse-v2 is exposed WITHOUT
 // per-user warehouse scope enforcement (an out-of-scope user could otherwise
 // read/write any warehouse). Deliberately a warning, not a hard stop: staging
@@ -399,7 +438,10 @@ app.get('/api/version', (req, res) => {
     warehouseV2: WAREHOUSE_V2_ENABLED,
     // Procurement P2P — the legacy shell hides its old purchasing menu group and
     // shows a single «المشتريات والموردون» entry when this is on.
-    procurementP2P: /^(1|true|on|yes)$/i.test(String(process.env.PROCUREMENT_P2P_ENABLE || '').trim())
+    procurementP2P: /^(1|true|on|yes)$/i.test(String(process.env.PROCUREMENT_P2P_ENABLE || '').trim()),
+    // Order-to-Cash — the unified sales/customers/receivables module. When on, the
+    // legacy shell hides its old sales/customers/AR entries and routes to /sales.
+    orderToCash: /^(1|true|on|yes)$/i.test(String(process.env.ORDER_TO_CASH_ENABLE || '').trim())
   });
 });
 
@@ -524,6 +566,32 @@ if (PROCUREMENT_P2P_ENABLE) {
   console.log('[procurement] P2P module MOUNTED at /api/procurement (all legacy stock/AP writers gated)');
 } else {
   console.log('[procurement] P2P module dormant — set PROCUREMENT_P2P_ENABLE=1 to enable');
+}
+
+// ── Order-to-Cash unified module (flag-gated: ORDER_TO_CASH_ENABLE) ───────────
+// One namespace for customers + sales orders + customer invoices + collections +
+// returns + reports + dashboard, with a single AR source of truth (ar_documents).
+// Dormant by default so the legacy sales/AR/cash paths stay the sole AR writers
+// until migration + backfill are done and the flag is flipped. Inherits the
+// global JWT gate (req.user). POS sale CREATION is intentionally NOT gated (POS is
+// the financial writer); only the DUPLICATE AR/collection paths + destructive
+// legacy sale-reverse are blocked.
+const ORDER_TO_CASH_ENABLE = /^(1|true|on|yes)$/i.test(String(process.env.ORDER_TO_CASH_ENABLE || '').trim());
+if (ORDER_TO_CASH_ENABLE) {
+  app.use('/api/order-to-cash', auditMiddleware('order-to-cash'));
+  app.use('/api/order-to-cash', loadWarehouseScope);
+  app.use('/api/order-to-cash', require('./routes/order-to-cash'));
+
+  // Single-writer AR — block the legacy duplicate AR/collection write paths (reads pass).
+  const { legacyArGate, customerReceiptGate, saleReverseGate, creditSaleGate } = require('./middleware/o2cLegacyGate');
+  app.use('/api/ar-invoices', legacyArGate('/sales/invoices'));         // second invoice source → gated
+  app.use('/api/cash', customerReceiptGate('/sales/payments'));         // customer-directed receipts → gated
+  app.use('/api/sales', creditSaleGate());                             // credit sales must pass the server credit gate
+  app.use('/api/sales', saleReverseGate('/sales'));                     // legacy sale reverse/delete (GL-destroying) → gated; POS create passes
+
+  console.log('[order-to-cash] module MOUNTED at /api/order-to-cash (legacy AR/collection writers gated; POS create passes)');
+} else {
+  console.log('[order-to-cash] module dormant — set ORDER_TO_CASH_ENABLE=1 to enable');
 }
 
 // API Routes

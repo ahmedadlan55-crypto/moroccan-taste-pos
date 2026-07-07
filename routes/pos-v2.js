@@ -283,6 +283,15 @@ async function doSubmit(user, id, body) {
     M.validatePayments(payments, totals.total);
     // Credit sales are supervisor-gated (AR exposure).
     if (payments.some((p) => p.method === 'credit') && !_userIsSuper(user)) throw _err('PERMISSION_DENIED', 'البيع الآجل يتطلب مشرفًا/مديرًا');
+    // Order-to-Cash: a credit sale MUST be attached to a real customer (the AR
+    // subledger has nowhere to book it otherwise). Flag-gated so the legacy POS
+    // (flag OFF) keeps its prior behavior (customer name/phone in the note). The
+    // /api/sales creditSaleGate is the security backstop; this just fails earlier
+    // with a clear message before the financial write.
+    if (/^(1|true|on|yes)$/i.test(String(process.env.ORDER_TO_CASH_ENABLE || '').trim())
+        && payments.some((p) => p.method === 'credit') && !o.customer_id) {
+      throw _err('VALIDATION_ERROR', 'البيع الآجل يتطلب اختيار عميل');
+    }
 
     await conn.query('DELETE FROM pos_payments WHERE order_id=?', [id]);
     for (const p of payments) {

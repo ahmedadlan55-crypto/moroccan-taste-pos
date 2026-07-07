@@ -17207,3 +17207,60 @@ function applyProcurementP2PNav(enabledOverride) {
 }
 document.addEventListener('DOMContentLoaded', function () { applyProcurementP2PNav(); });
 applyProcurementP2PNav();
+
+// ── Order-to-Cash strangler nav (mirrors applyProcurementP2PNav) ─────────────
+// When ORDER_TO_CASH_ENABLE=1: hide every legacy sales/customers/AR menu entry
+// ([data-legacy-o2c]) and reveal the single «المبيعات والعملاء» entry
+// (#o2c-unified-nav → /sales). A persistent CSS rule also covers markup injected
+// after this runs (no flash, nothing missed). Legacy handlers (nav('sales'),
+// erpNav('erpCustomers'|'erpCustomerStatement'|'erpARAging')) redirect to /sales
+// when enabled — so a deep link / last-section-restore lands on the new module.
+var _O2C_LEGACY_NAV = { sales: 1 };
+var _O2C_LEGACY_ERP = { erpCustomers: 1, erpCustomerStatement: 1, erpARAging: 1 };
+function _o2cGuardNav() {
+  if (typeof window.nav === 'function' && !window.nav.__o2cWrapped) {
+    var _nav = window.nav;
+    window.nav = function (section) {
+      if (window.__ORDER_TO_CASH_ENABLE && _O2C_LEGACY_NAV[section]) { location.href = '/sales'; return; }
+      return _nav.apply(this, arguments);
+    };
+    window.nav.__o2cWrapped = true;
+  }
+  if (typeof window.erpNav === 'function' && !window.erpNav.__o2cWrapped) {
+    var _erpNav = window.erpNav;
+    window.erpNav = function (key) {
+      if (window.__ORDER_TO_CASH_ENABLE && _O2C_LEGACY_ERP[key]) { location.href = '/sales'; return; }
+      return _erpNav.apply(this, arguments);
+    };
+    window.erpNav.__o2cWrapped = true;
+  }
+}
+function applyOrderToCashNav(enabledOverride) {
+  function apply(enabled) {
+    window.__ORDER_TO_CASH_ENABLE = !!enabled;
+    var st = document.getElementById('o2c-legacy-hide-style');
+    if (enabled) {
+      if (!st) {
+        st = document.createElement('style');
+        st.id = 'o2c-legacy-hide-style';
+        st.textContent = '[data-legacy-o2c]{display:none !important;} #o2c-unified-nav{display:flex !important;}';
+        (document.head || document.documentElement).appendChild(st);
+      }
+      _o2cGuardNav();
+    } else if (st && st.parentNode) {
+      st.parentNode.removeChild(st); // flag OFF → legacy menu restored (reversible)
+    }
+  }
+  if (typeof enabledOverride === 'boolean') { apply(enabledOverride); return; }
+  try { if (localStorage.getItem('order_to_cash_flag') !== null) apply(localStorage.getItem('order_to_cash_flag') === '1'); } catch (e) {}
+  fetch('/api/version', { headers: { 'Cache-Control': 'no-cache' } })
+    .then(function (r) { return r.ok ? r.json() : null; })
+    .then(function (v) {
+      var enabled = !!(v && v.orderToCash);
+      try { localStorage.setItem('order_to_cash_flag', enabled ? '1' : '0'); } catch (e) {}
+      apply(enabled);
+    })
+    .catch(function () { /* keep cached/default */ });
+}
+document.addEventListener('DOMContentLoaded', function () { applyOrderToCashNav(); });
+applyOrderToCashNav();

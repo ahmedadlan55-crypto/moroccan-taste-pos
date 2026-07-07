@@ -193,3 +193,34 @@ export function closeShiftV3(body: {
 export function shiftSummary(shiftId: string): Promise<{ success: boolean; data: ShiftSummary }> {
   return request(`/api/pos/v2/shift-summary/${encodeURIComponent(shiftId)}`);
 }
+
+// ── Order-to-Cash: customer search (for the POS customer picker) + flags ──────
+export interface PosCustomerHit {
+  id: string;
+  name: string;
+  phone?: string | null;
+  vatNumber?: string | null;
+  creditLimit?: number;
+  balance?: number;
+  derived?: { arBalance: number };
+  isActive?: boolean;
+  paymentTerms?: string;
+  creditDays?: number;
+}
+export interface CustomerSearchResult {
+  success: boolean;
+  data: PosCustomerHit[];
+  pagination?: { page: number; pageSize: number; total: number; totalPages: number };
+}
+
+/** GET /api/order-to-cash/customers/search — first page shows instantly (q=''). */
+export function searchCustomers(q: string, page = 1): Promise<CustomerSearchResult> {
+  const p = new URLSearchParams({ q: q || "", page: String(page), pageSize: "20", active: "true" });
+  return request<CustomerSearchResult>(`/api/order-to-cash/customers/search?${p.toString()}`);
+}
+
+/** Public /api/version — read the Order-to-Cash flag so the POS shows the real
+ *  customer picker (flag ON) vs the legacy name/phone fields (flag OFF). */
+export function getServerFlags(): Promise<{ orderToCash?: boolean; posV2?: boolean }> {
+  return request<{ orderToCash?: boolean; posV2?: boolean }>("/api/version");
+}

@@ -65,6 +65,7 @@
     "test:procurement-reports-groupby": "node tests/procurementReportsGroupBy.integration.test.js",
     "e2e:procurement": "playwright test",
     "e2e:procurement-dormant": "playwright test --config=playwright.dormant.config.ts",
+    "e2e:o2c": "npm run build:sales && npm run build:pos && playwright test --config=playwright.o2c.config.ts",
     "o2c:migrate": "node scripts/order-to-cash/migrate.js",
     "o2c:backfill": "node scripts/order-to-cash/backfill.js",
     "o2c:reconcile": "node scripts/order-to-cash/reconcile.js",

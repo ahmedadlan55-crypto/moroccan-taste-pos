@@ -70,7 +70,7 @@ export function CustomerForm({ open, onClose, customer }: { open: boolean; onClo
           </div>
         )}
         <div className="sm:col-span-2">
-          <Field label="الاسم" required><input className="field w-full" {...register("name")} /></Field>
+          <Field label="الاسم" required><input className="field w-full" aria-label="اسم العميل" {...register("name")} /></Field>
           <FieldError>{errors.name?.message}</FieldError>
         </div>
         <Field label="الاسم بالإنجليزية"><input dir="ltr" className="field w-full" {...register("nameEn")} /></Field>

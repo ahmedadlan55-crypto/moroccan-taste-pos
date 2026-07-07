@@ -70,15 +70,15 @@ export function InvoiceForm({ open, onClose }: { open: boolean; onClose: () => v
               <div key={f.id} className="grid grid-cols-12 items-end gap-2">
                 <div className="col-span-12 sm:col-span-4">
                   <label className="mb-1 block text-[11px] font-bold text-slate-500">الوصف</label>
-                  <input className="field w-full" {...register(`lines.${i}.description` as const, { required: true })} />
+                  <input className="field w-full" aria-label={`وصف السطر ${i + 1}`} {...register(`lines.${i}.description` as const, { required: true })} />
                 </div>
                 <div className="col-span-3 sm:col-span-2">
                   <label className="mb-1 block text-[11px] font-bold text-slate-500">الكمية</label>
-                  <input dir="ltr" type="number" step="0.01" className="field w-full tabular-nums" {...register(`lines.${i}.enteredQty` as const, { valueAsNumber: true })} />
+                  <input dir="ltr" type="number" step="0.01" className="field w-full tabular-nums" aria-label={`كمية السطر ${i + 1}`} {...register(`lines.${i}.enteredQty` as const, { valueAsNumber: true })} />
                 </div>
                 <div className="col-span-3 sm:col-span-2">
                   <label className="mb-1 block text-[11px] font-bold text-slate-500">السعر</label>
-                  <input dir="ltr" type="number" step="0.01" className="field w-full tabular-nums" {...register(`lines.${i}.unitPrice` as const, { valueAsNumber: true })} />
+                  <input dir="ltr" type="number" step="0.01" className="field w-full tabular-nums" aria-label={`سعر السطر ${i + 1}`} {...register(`lines.${i}.unitPrice` as const, { valueAsNumber: true })} />
                 </div>
                 <div className="col-span-3 sm:col-span-2">
                   <label className="mb-1 block text-[11px] font-bold text-slate-500">الخصم</label>

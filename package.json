@@ -63,7 +63,14 @@
     "test:procurement-migration": "node tests/procurementMigration.integration.test.js",
     "test:procurement-reports-groupby": "node tests/procurementReportsGroupBy.integration.test.js",
     "e2e:procurement": "playwright test",
-    "e2e:procurement-dormant": "playwright test --config=playwright.dormant.config.ts"
+    "e2e:procurement-dormant": "playwright test --config=playwright.dormant.config.ts",
+    "o2c:migrate": "node scripts/order-to-cash/migrate.js",
+    "o2c:backfill": "node scripts/order-to-cash/backfill.js",
+    "o2c:reconcile": "node scripts/order-to-cash/reconcile.js",
+    "o2c:rollback": "node scripts/order-to-cash/rollback.js",
+    "test:o2c-foundation": "node tests/o2cFoundation.test.js",
+    "test:o2c-services": "node tests/o2cServices.integration.test.js",
+    "test:o2c-gate": "node tests/o2cLegacyGate.integration.test.js"
   },
   "dependencies": {
     "bcryptjs": "^2.4.3",

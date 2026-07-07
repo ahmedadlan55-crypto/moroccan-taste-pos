@@ -117,6 +117,10 @@ async function main() {
   ok(retPosted.result.journalIds.length === 1, 'return posted a credit-note GL journal');
   const [cnDoc] = await db.query("SELECT id, document_type, original_document_id FROM ar_documents WHERE id = ?", [retPosted.result.payload.creditNoteId]);
   ok(cnDoc.length && cnDoc[0].document_type === 'credit_note' && cnDoc[0].original_document_id === draft.id, 'credit note linked to original invoice');
+  // ar_reduction CN reduced the ORIGINAL invoice's subledger balance (ties to GL AR):
+  // before return balance 180; CN total 115 → paid 215, balance 65
+  const invAfterRet = await db.withTransaction((c) => InvoiceService.getWithLines(c, draft.id));
+  ok(Number(invAfterRet.paid_amount) === 215 && Number(invAfterRet.balance_amount) === 65, 'ar_reduction CN reduced original invoice balance 180→65 (subledger ties to GL)');
 
   // over-return blocked (only 1 left on that line)
   await throwsCode(() => db.withTransaction((c) => ReturnService.create(c, {

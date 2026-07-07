@@ -179,13 +179,24 @@ async function post(id, ctx) {
       });
       await conn.query('UPDATE ar_documents SET gl_journal_id = ? WHERE id = ?', [journalId, cnDocId]);
 
-      // 4) if refund is an AR reduction, allocate the CN against the original invoice's balance
+      // 4) AR-reduction refund: the CN credits GL AR (postCreditNote → Cr AR), so the
+      //    original invoice's subledger balance MUST drop by the same amount to stay
+      //    tied to the GL. Cash/bank/deposit refunds don't touch AR → no change here.
       if (String(row.refund_method) === 'ar_reduction' && row.original_ar_document_id) {
-        const [orig] = await conn.query('SELECT status FROM ar_documents WHERE id = ? FOR UPDATE', [row.original_ar_document_id]);
+        const [orig] = await conn.query(
+          'SELECT id, total_amount, paid_amount, balance_amount, status FROM ar_documents WHERE id = ? FOR UPDATE', [row.original_ar_document_id]);
         if (orig.length && !['cancelled', 'draft'].includes(String(orig[0].status))) {
-          // reduce the original balance by recording a synthetic negative allocation via recompute is not applicable;
-          // instead mark the original credited when fully offset. Partial CN leaves the invoice open for the remainder.
-          await conn.query('UPDATE ar_documents SET version = version + 1 WHERE id = ?', [row.original_ar_document_id]);
+          const cnTotal = money(row.total_amount);
+          const curBalance = money(orig[0].balance_amount);
+          const applied = money(Math.min(cnTotal, Math.max(0, curBalance)));
+          const newPaid = money(Number(orig[0].paid_amount) + applied);   // settled = cash + credit memo
+          const newBalance = money(Number(orig[0].total_amount) - newPaid);
+          const status = newBalance <= 0.01
+            ? (applied >= curBalance && curBalance > 0 ? 'credited' : 'paid')
+            : 'partially_paid';
+          await conn.query(
+            'UPDATE ar_documents SET paid_amount = ?, balance_amount = ?, status = ?, version = version + 1 WHERE id = ?',
+            [newPaid, Math.max(0, newBalance), status, row.original_ar_document_id]);
         }
       }
       return {

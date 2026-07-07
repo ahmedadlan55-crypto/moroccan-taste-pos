@@ -15,7 +15,7 @@ const schema = require('../../db/migrations/order-to-cash/schema');
 const capabilities = require('../../db/migrations/order-to-cash/capabilities');
 const H = require('../../db/migrations/order-to-cash/ddlHelpers');
 
-const NEW_TABLES = ['ar_documents', 'ar_document_lines', 'customer_payments', 'ar_payment_allocations', 'sales_returns', 'sales_return_lines', 'ar_events'];
+const NEW_TABLES = ['ar_documents', 'ar_document_lines', 'sales_orders', 'sales_order_lines', 'customer_payments', 'ar_payment_allocations', 'sales_returns', 'sales_return_lines', 'ar_events'];
 
 async function ensureMarker() {
   await db.query(`CREATE TABLE IF NOT EXISTS _o2c_migrations (

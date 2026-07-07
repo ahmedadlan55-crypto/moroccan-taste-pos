@@ -236,6 +236,68 @@ async function apply(db, log = () => {}) {
       KEY ix_are_created (created_at)
     ) ${TBL}`, log);
 
+  // ── 7b. sales_orders — the (optional) order stage before invoicing
+  await H.createTable(db, 'sales_orders', `
+    CREATE TABLE sales_orders (
+      id ${ID} PRIMARY KEY,
+      order_number VARCHAR(48) NOT NULL,
+      customer_id ${ID} NULL,
+      customer_name VARCHAR(200) NULL,
+      brand_id ${ID} NULL,
+      branch_id ${ID} NULL,
+      warehouse_id ${ID} NULL,
+      channel_id ${ID} NULL,
+      order_date DATE NOT NULL,
+      expected_date DATE NULL,
+      currency VARCHAR(8) NOT NULL DEFAULT 'SAR',
+      subtotal ${MONEY} NOT NULL DEFAULT 0,
+      discount_amount ${MONEY} NOT NULL DEFAULT 0,
+      vat_amount ${MONEY} NOT NULL DEFAULT 0,
+      total_amount ${MONEY} NOT NULL DEFAULT 0,
+      is_credit_sale TINYINT(1) NOT NULL DEFAULT 0,
+      invoice_id ${ID} NULL,
+      status ENUM('draft','confirmed','fulfilled','invoiced','closed','cancelled') NOT NULL DEFAULT 'draft',
+      version INT NOT NULL DEFAULT 1,
+      idempotency_key VARCHAR(120) NULL,
+      notes VARCHAR(500) NULL,
+      created_by VARCHAR(80) NULL, created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      confirmed_by VARCHAR(80) NULL, confirmed_at DATETIME NULL,
+      fulfilled_by VARCHAR(80) NULL, fulfilled_at DATETIME NULL,
+      cancelled_by VARCHAR(80) NULL, cancelled_at DATETIME NULL,
+      UNIQUE KEY uq_so_idem (idempotency_key),
+      KEY ix_so_customer (customer_id),
+      KEY ix_so_status (status),
+      KEY ix_so_date (order_date)
+    ) ${TBL}`, log);
+
+  // ── 7c. sales_order_lines
+  await H.createTable(db, 'sales_order_lines', `
+    CREATE TABLE sales_order_lines (
+      id ${ID} PRIMARY KEY,
+      order_id ${ID} NOT NULL,
+      item_id ${ID} NULL,
+      menu_id ${ID} NULL,
+      description VARCHAR(300) NULL,
+      entered_unit_id ${ID} NULL,
+      entered_unit_code VARCHAR(40) NULL,
+      entered_qty ${QTY} NOT NULL DEFAULT 0,
+      conversion_factor_snapshot ${RATE} NOT NULL DEFAULT 1,
+      base_qty ${QTY} NOT NULL DEFAULT 0,
+      unit_price ${RATE} NOT NULL DEFAULT 0,
+      discount_amount ${MONEY} NOT NULL DEFAULT 0,
+      vat_category ENUM('S','Z','E','O') NOT NULL DEFAULT 'S',
+      vat_rate DECIMAL(6,3) NULL,
+      net_amount ${MONEY} NOT NULL DEFAULT 0,
+      vat_amount ${MONEY} NOT NULL DEFAULT 0,
+      gross_amount ${MONEY} NOT NULL DEFAULT 0,
+      revenue_account_code VARCHAR(40) NULL,
+      warehouse_id ${ID} NULL,
+      cost_snapshot ${MONEY} NOT NULL DEFAULT 0,
+      created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      KEY ix_sol_order (order_id),
+      KEY ix_sol_item (item_id)
+    ) ${TBL}`, log);
+
   // ── 8. customers evolve (additive only; balance stays but is abandoned for the derived view)
   if (await H.tableExists(db, 'customers')) {
     await H.addColumn(db, 'customers', 'name_en', 'VARCHAR(200) NULL', log);

@@ -18,6 +18,8 @@ artifacts/
 frontend/warehouse/dist/
 frontend/pos/dist/
 frontend/pos/node_modules/
+frontend/sales/dist/
+frontend/sales/node_modules/
 
 # Playwright
 test-results/

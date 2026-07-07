@@ -360,6 +360,45 @@ if (_pwaFs.existsSync(path.join(_posDist, 'index.html'))) {
   console.warn('[pos-v2] bundle not found — run: npm --prefix frontend/pos run build');
 }
 
+// Order-to-Cash SPA — served at /sales behind ORDER_TO_CASH_ENABLE (peer to the
+// warehouse + pos SPAs, same JWT/session/tab). When the flag is OFF the section
+// is invisible: /sales returns a 503 maintenance notice instead of a broken UI.
+var O2C_UI_ENABLED = /^(1|true|on|yes)$/i.test(String(process.env.ORDER_TO_CASH_ENABLE || '').trim());
+if (!O2C_UI_ENABLED) {
+  app.all(/^\/sales(?:\/.*)?$/, function (req, res) {
+    res.status(503).type('html').send('<!doctype html><html lang="ar" dir="rtl"><meta charset="utf-8"><title>صيانة</title><body style="font-family:Tahoma,Arial,sans-serif;padding:3rem;text-align:center;color:#172033"><h2>قسم «المبيعات والعملاء» غير مُفعّل</h2><p>استخدم الشاشات الحالية من النظام الأساسي. (ORDER_TO_CASH_ENABLE=0)</p></body></html>');
+  });
+} else {
+  app.use('/sales', function (req, res, next) {
+    res.setHeader('Content-Security-Policy', [
+      "default-src 'self'", "base-uri 'self'", "object-src 'none'", "frame-ancestors 'none'",
+      "img-src 'self' data: blob:", "font-src 'self' data:", "style-src 'self' 'unsafe-inline'",
+      "script-src 'self'", "connect-src 'self'", "form-action 'self'"
+    ].join('; '));
+    next();
+  });
+  var _salesDist = path.join(__dirname, 'frontend', 'sales', 'dist');
+  if (_pwaFs.existsSync(path.join(_salesDist, 'index.html'))) {
+    app.use('/sales', express.static(_salesDist, {
+      setHeaders: function(res, filePath) {
+        if (/\.html$/i.test(filePath)) {
+          res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
+        } else if (/[/\\]assets[/\\]/.test(filePath)) {
+          res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
+        }
+      }
+    }));
+    app.get(/^\/sales(?:\/.*)?$/, function(req, res, next) {
+      if (/\.[a-zA-Z0-9]+$/.test(req.path)) return next();
+      res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
+      res.sendFile(path.join(_salesDist, 'index.html'));
+    });
+    console.log('[order-to-cash] SPA mounted at /sales');
+  } else {
+    console.warn('[order-to-cash] bundle not found — run: npm --prefix frontend/sales run build');
+  }
+}
+
 // RC hardening — surface a loud warning if warehouse-v2 is exposed WITHOUT
 // per-user warehouse scope enforcement (an out-of-scope user could otherwise
 // read/write any warehouse). Deliberately a warning, not a hard stop: staging

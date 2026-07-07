@@ -399,7 +399,10 @@ app.get('/api/version', (req, res) => {
     warehouseV2: WAREHOUSE_V2_ENABLED,
     // Procurement P2P — the legacy shell hides its old purchasing menu group and
     // shows a single «المشتريات والموردون» entry when this is on.
-    procurementP2P: /^(1|true|on|yes)$/i.test(String(process.env.PROCUREMENT_P2P_ENABLE || '').trim())
+    procurementP2P: /^(1|true|on|yes)$/i.test(String(process.env.PROCUREMENT_P2P_ENABLE || '').trim()),
+    // Order-to-Cash — the unified sales/customers/receivables module. When on, the
+    // legacy shell hides its old sales/customers/AR entries and routes to /sales.
+    orderToCash: /^(1|true|on|yes)$/i.test(String(process.env.ORDER_TO_CASH_ENABLE || '').trim())
   });
 });
 
@@ -524,6 +527,32 @@ if (PROCUREMENT_P2P_ENABLE) {
   console.log('[procurement] P2P module MOUNTED at /api/procurement (all legacy stock/AP writers gated)');
 } else {
   console.log('[procurement] P2P module dormant — set PROCUREMENT_P2P_ENABLE=1 to enable');
+}
+
+// ── Order-to-Cash unified module (flag-gated: ORDER_TO_CASH_ENABLE) ───────────
+// One namespace for customers + sales orders + customer invoices + collections +
+// returns + reports + dashboard, with a single AR source of truth (ar_documents).
+// Dormant by default so the legacy sales/AR/cash paths stay the sole AR writers
+// until migration + backfill are done and the flag is flipped. Inherits the
+// global JWT gate (req.user). POS sale CREATION is intentionally NOT gated (POS is
+// the financial writer); only the DUPLICATE AR/collection paths + destructive
+// legacy sale-reverse are blocked.
+const ORDER_TO_CASH_ENABLE = /^(1|true|on|yes)$/i.test(String(process.env.ORDER_TO_CASH_ENABLE || '').trim());
+if (ORDER_TO_CASH_ENABLE) {
+  app.use('/api/order-to-cash', auditMiddleware('order-to-cash'));
+  app.use('/api/order-to-cash', loadWarehouseScope);
+  app.use('/api/order-to-cash', require('./routes/order-to-cash'));
+
+  // Single-writer AR — block the legacy duplicate AR/collection write paths (reads pass).
+  const { legacyArGate, customerReceiptGate, saleReverseGate, creditSaleGate } = require('./middleware/o2cLegacyGate');
+  app.use('/api/ar-invoices', legacyArGate('/sales/invoices'));         // second invoice source → gated
+  app.use('/api/cash', customerReceiptGate('/sales/payments'));         // customer-directed receipts → gated
+  app.use('/api/sales', creditSaleGate());                             // credit sales must pass the server credit gate
+  app.use('/api/sales', saleReverseGate('/sales'));                     // legacy sale reverse/delete (GL-destroying) → gated; POS create passes
+
+  console.log('[order-to-cash] module MOUNTED at /api/order-to-cash (legacy AR/collection writers gated; POS create passes)');
+} else {
+  console.log('[order-to-cash] module dormant — set ORDER_TO_CASH_ENABLE=1 to enable');
 }
 
 // API Routes

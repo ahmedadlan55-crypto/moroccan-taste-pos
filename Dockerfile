@@ -23,5 +23,12 @@ RUN npm run build:warehouse \
 RUN npm run build:pos \
  && rm -rf frontend/pos/node_modules
 
+# 5) Build the Order-to-Cash React SPA (served at /sales behind
+#    ORDER_TO_CASH_ENABLE). The bundle ships in the image but stays DORMANT until
+#    the flag is enabled — when off, /sales returns a 503 notice and the SPA is
+#    never mounted, so building it now has no runtime effect.
+RUN npm run build:sales \
+ && rm -rf frontend/sales/node_modules
+
 EXPOSE 3000
 CMD ["node", "server.js"]

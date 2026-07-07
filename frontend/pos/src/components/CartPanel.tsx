@@ -4,6 +4,7 @@
  * discount, totals, actions (hold / held board / void / pay).
  */
 import { useState } from "react";
+import { CustomerPicker } from "./CustomerPicker";
 import {
   BadgePercent,
   Banknote,
@@ -183,9 +184,9 @@ function CartLineRow({ line, index }: { line: CartLine; index: number }) {
 }
 
 function CustomerAttach() {
-  const { cart, setCustomer } = usePos();
+  const { cart, setCustomer, setCustomerRef, o2cEnabled } = usePos();
   const [open, setOpen] = useState(false);
-  const hasCustomer = !!(cart.customerName || cart.customerPhone);
+  const hasCustomer = !!(cart.customerName || cart.customerPhone || cart.customerId);
 
   return (
     <div className="relative">
@@ -204,33 +205,43 @@ function CustomerAttach() {
         {hasCustomer ? (cart.customerName || cart.customerPhone) : "عميل"}
       </button>
       {open ? (
-        <div className="dialog-in absolute bottom-full z-20 mb-2 w-64 rounded-2xl border border-slate-200 bg-white p-3 shadow-lift">
-          {/* customerId is NOT set here — name/phone ride in the order note
-              (see composeNote in lib/offline.ts for the server-contract why). */}
-          <label className="mb-2 block">
-            <span className="mb-1 block text-[11px] font-extrabold text-slate-500">اسم العميل</span>
-            <input
-              type="text"
-              value={cart.customerName ?? ""}
-              onChange={(e) => setCustomer(e.target.value || null, cart.customerPhone)}
-              placeholder="محمد أحمد"
-              className="field"
+        <div className="dialog-in absolute bottom-full z-20 mb-2 w-72 rounded-2xl border border-slate-200 bg-white p-3 shadow-lift">
+          {o2cEnabled ? (
+            /* Order-to-Cash: a REAL linked customer (customerId) — required for a
+               credit sale. Searchable picker shows the first page on open. */
+            <CustomerPicker
+              value={cart.customerId ? { id: cart.customerId, name: cart.customerName, phone: cart.customerPhone } : null}
+              onChange={(c) => setCustomerRef(c)}
             />
-          </label>
-          <label className="block">
-            <span className="mb-1 flex items-center gap-1 text-[11px] font-extrabold text-slate-500">
-              <Phone className="h-3 w-3" aria-hidden /> الجوال
-            </span>
-            <input
-              type="tel"
-              inputMode="tel"
-              value={cart.customerPhone ?? ""}
-              onChange={(e) => setCustomer(cart.customerName, e.target.value || null)}
-              placeholder="05xxxxxxxx"
-              className="field num"
-              dir="ltr"
-            />
-          </label>
+          ) : (
+            /* Legacy path (O2C off) — name/phone only, ride in the order note. */
+            <>
+              <label className="mb-2 block">
+                <span className="mb-1 block text-[11px] font-extrabold text-slate-500">اسم العميل</span>
+                <input
+                  type="text"
+                  value={cart.customerName ?? ""}
+                  onChange={(e) => setCustomer(e.target.value || null, cart.customerPhone)}
+                  placeholder="محمد أحمد"
+                  className="field"
+                />
+              </label>
+              <label className="block">
+                <span className="mb-1 flex items-center gap-1 text-[11px] font-extrabold text-slate-500">
+                  <Phone className="h-3 w-3" aria-hidden /> الجوال
+                </span>
+                <input
+                  type="tel"
+                  inputMode="tel"
+                  value={cart.customerPhone ?? ""}
+                  onChange={(e) => setCustomer(cart.customerName, e.target.value || null)}
+                  placeholder="05xxxxxxxx"
+                  className="field num"
+                  dir="ltr"
+                />
+              </label>
+            </>
+          )}
           <div className="mt-2.5 flex gap-2">
             <Button size="sm" variant="primary" className="flex-1" onClick={() => setOpen(false)}>
               تم
@@ -240,7 +251,7 @@ function CustomerAttach() {
                 size="sm"
                 variant="ghost"
                 onClick={() => {
-                  setCustomer(null, null);
+                  setCustomerRef(null);
                   setOpen(false);
                 }}
               >

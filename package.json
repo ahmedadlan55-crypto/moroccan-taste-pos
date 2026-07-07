@@ -12,7 +12,7 @@
     "build:sales": "npm --prefix frontend/sales install && npm --prefix frontend/sales run build",
     "db:init": "node db/init.js",
     "db:migrate": "node db/migrate.js",
-    "test": "node tests/transactionPermissions.test.js && node tests/transactionSchema.test.js && node tests/transactionStateMachine.test.js && node tests/transactionService.test.js && node tests/warehouseTransfer.test.js && node tests/inventoryAdjustment.test.js && node tests/stocktakeWorkflow.test.js && node tests/inventoryReporting.test.js && node tests/warehouseScope.test.js && node tests/csvExport.test.js && node tests/reportContract.test.js && node tests/transferContract.test.js && node tests/inventoryTxContract.test.js && node tests/inventoryTxEngine.test.js && node tests/stocktakeReconcile.test.js && node tests/replenishmentEngine.test.js && node tests/inventoryItemPolicy.test.js && node tests/expiryPolicy.test.js && node tests/lotLedger.test.js && node tests/securityHardening.test.js && node tests/metricsContract.test.js && node tests/v2Canary.test.js && node tests/reconcileLegacyMaterials.test.js && node tests/negativeStockPolicy.test.js && node tests/barcode.test.js && node tests/productionEngine.test.js && node tests/posOrderMachine.test.js && node tests/unitConversion.test.js && node tests/passwordPolicy.test.js && node tests/procurementCalculations.test.js && node tests/procurementStateMachine.test.js",
+    "test": "node tests/transactionPermissions.test.js && node tests/transactionSchema.test.js && node tests/transactionStateMachine.test.js && node tests/transactionService.test.js && node tests/warehouseTransfer.test.js && node tests/inventoryAdjustment.test.js && node tests/stocktakeWorkflow.test.js && node tests/inventoryReporting.test.js && node tests/warehouseScope.test.js && node tests/csvExport.test.js && node tests/reportContract.test.js && node tests/transferContract.test.js && node tests/inventoryTxContract.test.js && node tests/inventoryTxEngine.test.js && node tests/stocktakeReconcile.test.js && node tests/replenishmentEngine.test.js && node tests/inventoryItemPolicy.test.js && node tests/expiryPolicy.test.js && node tests/lotLedger.test.js && node tests/securityHardening.test.js && node tests/metricsContract.test.js && node tests/v2Canary.test.js && node tests/reconcileLegacyMaterials.test.js && node tests/negativeStockPolicy.test.js && node tests/barcode.test.js && node tests/productionEngine.test.js && node tests/posOrderMachine.test.js && node tests/unitConversion.test.js && node tests/passwordPolicy.test.js && node tests/procurementCalculations.test.js && node tests/procurementStateMachine.test.js && node tests/posO2CPayload.test.js",
     "migrate:item-units": "node scripts/migrate-item-units.js",
     "test:change-password": "node tests/integration/changePassword.api.test.js",
     "test:search-api": "node tests/integration/search.api.test.js",
@@ -71,7 +71,8 @@
     "o2c:rollback": "node scripts/order-to-cash/rollback.js",
     "test:o2c-foundation": "node tests/o2cFoundation.test.js",
     "test:o2c-services": "node tests/o2cServices.integration.test.js",
-    "test:o2c-gate": "node tests/o2cLegacyGate.integration.test.js"
+    "test:o2c-gate": "node tests/o2cLegacyGate.integration.test.js",
+    "test:pos-o2c-payload": "node tests/posO2CPayload.test.js"
   },
   "dependencies": {
     "bcryptjs": "^2.4.3",

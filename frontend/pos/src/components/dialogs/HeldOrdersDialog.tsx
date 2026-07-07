@@ -30,6 +30,7 @@ function serverToLocal(so: ServerOrder): LocalOrder {
     discountValue: Number(so.discountValue) || 0,
     discountName: so.discountName,
     note: so.note,
+    customerId: so.customerId ?? null, // preserved across hold/resume (O2C)
     customerName: null, // rides inside note ("عميل: …") — not split back out
     customerPhone: null,
     lines: so.lines.map((l) => ({

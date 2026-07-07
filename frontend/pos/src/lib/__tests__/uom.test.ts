@@ -45,7 +45,7 @@ describe("cartMath — money uses baseQty (price = factor × base)", () => {
 describe("upsertPayloadFrom — carries the frozen unit for offline/sync", () => {
   const doc = (lines: CartLine[]): LocalOrder => ({
     id: "01ORDERULID0000000000000000", status: "open", orderType: "takeaway", tableNo: null, shiftId: "SH-1",
-    deviceId: "d1", discountType: null, discountValue: 0, discountName: null, note: null, customerName: null,
+    deviceId: "d1", discountType: null, discountValue: 0, discountName: null, note: null, customerId: null, customerName: null,
     customerPhone: null, lines, serverVersion: null, invoiceNumber: null, saleId: null, createdAt: 1, updatedAt: 1,
   });
   it("a carton line sends qty=enteredQty + unitFactor + enteredUnitCode + baseQty", () => {

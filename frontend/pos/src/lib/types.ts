@@ -94,6 +94,9 @@ export interface LocalOrder {
   discountValue: number;
   discountName: string | null;
   note: string | null;
+  /** Real linked customer id (Order-to-Cash). null = walk-in / free-text only.
+   *  Required for a credit sale when ORDER_TO_CASH_ENABLE is on. */
+  customerId: string | null;
   customerName: string | null;
   customerPhone: string | null;
   lines: CartLine[];
@@ -158,6 +161,7 @@ export interface ServerOrder {
   shiftId: string | null;
   username: string;
   deviceId: string | null;
+  customerId?: string | null;
   discountType: DiscountType | null;
   discountValue: number;
   discountName: string | null;

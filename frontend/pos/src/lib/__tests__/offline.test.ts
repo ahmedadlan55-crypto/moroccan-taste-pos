@@ -22,6 +22,7 @@ function makeDoc(id: string, overrides: Partial<LocalOrder> = {}): LocalOrder {
     discountValue: 0,
     discountName: null,
     note: null,
+    customerId: null,
     customerName: null,
     customerPhone: null,
     lines: [{ menuId: "M1", name: "شاي مغربي", qty: 2, unitPrice: 23, lineDiscount: 0, vatCategory: "S", notes: null }],

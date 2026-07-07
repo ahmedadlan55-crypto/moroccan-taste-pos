@@ -113,6 +113,10 @@ export function upsertPayloadFrom(doc: LocalOrder, expectedVersion?: number | nu
     discountType: doc.discountType || undefined,
     discountValue: doc.discountType ? doc.discountValue : undefined,
     discountName: doc.discountName || undefined,
+    // Real linked customer id → the server stores pos_orders.customer_id and
+    // buildLegacySalePayload attaches it to the /api/sales write (Order-to-Cash).
+    // Name/phone still ride in the note for the ticket/audit trail.
+    customerId: doc.customerId || undefined,
     note: composeNote(doc) || undefined,
     // qty = entered qty in the chosen unit; unitFactor is FROZEN at add time so a
     // re-sync (even weeks later) computes the SAME baseQty on the server. The

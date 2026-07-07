@@ -28,7 +28,7 @@ const STAGE_LABELS: Record<"submit" | "sale" | "complete", string> = {
 };
 
 export function PaymentDialog({ open, onClose }: { open: boolean; onClose: () => void }) {
-  const { cart, totals, engine, engineStatus, supervisor, user, catalog, startNewOrder, loadOrderDoc, pushToast, shiftId } = usePos();
+  const { cart, totals, engine, engineStatus, supervisor, user, catalog, startNewOrder, loadOrderDoc, pushToast, shiftId, o2cEnabled } = usePos();
   const online = engineStatus.online;
   const total = totals.total;
   // Offline the live shift query is disabled — fall back to the shift stored
@@ -39,6 +39,7 @@ export function PaymentDialog({ open, onClose }: { open: boolean; onClose: () =>
   const [tendered, setTendered] = useState<string>("");
   const [splitCash, setSplitCash] = useState<string>("");
   const [splitCard, setSplitCard] = useState<string>("");
+  const [splitCredit, setSplitCredit] = useState<string>("");
   const [phase, setPhase] = useState<Phase>({ name: "form" });
   const tenderedRef = useRef<HTMLInputElement>(null);
 
@@ -49,6 +50,7 @@ export function PaymentDialog({ open, onClose }: { open: boolean; onClose: () =>
       setTendered("");
       setSplitCash("");
       setSplitCard("");
+      setSplitCredit("");
       setPhase({ name: "form" });
     }
   }, [open]);
@@ -74,14 +76,16 @@ export function PaymentDialog({ open, onClose }: { open: boolean; onClose: () =>
 
   const splitCashNum = Number(splitCash) || 0;
   const splitCardNum = Number(splitCard) || 0;
-  const splitSum = round2(splitCashNum + splitCardNum);
+  const splitCreditNum = Number(splitCredit) || 0;
+  const splitSum = round2(splitCashNum + splitCardNum + splitCreditNum);
   const splitError =
     tab === "split"
       ? paymentsError(
-          [
+          ([
             { method: "cash", amount: splitCashNum },
             { method: "card", amount: splitCardNum },
-          ],
+            { method: "credit", amount: splitCreditNum },
+          ] as Payment[]).filter((p) => p.amount > 0),
           total,
         )
       : null;
@@ -90,16 +94,27 @@ export function PaymentDialog({ open, onClose }: { open: boolean; onClose: () =>
     if (tab === "cash") return [{ method: "cash", amount: total }];
     if (tab === "card") return [{ method: "card", amount: total }];
     if (tab === "credit") return [{ method: "credit", amount: total }];
-    return [
-      { method: "cash", amount: round2(splitCashNum) },
-      { method: "card", amount: round2(splitCardNum) },
-    ];
-  }, [tab, total, splitCashNum, splitCardNum]);
+    // split — only the non-zero legs (cash + card + credit).
+    return (
+      [
+        { method: "cash", amount: round2(splitCashNum) },
+        { method: "card", amount: round2(splitCardNum) },
+        { method: "credit", amount: round2(splitCreditNum) },
+      ] as Payment[]
+    ).filter((p) => p.amount > 0);
+  }, [tab, total, splitCashNum, splitCardNum, splitCreditNum]);
+
+  // Order-to-Cash credit gate: any credit portion needs a REAL linked customer
+  // (server enforces too — this blocks earlier with a clear message).
+  const creditAmount = round2(payments.filter((p) => p.method === "credit").reduce((s, p) => s + p.amount, 0));
+  const creditNeedsCustomer = o2cEnabled && creditAmount > 0;
+  const creditBlocked = creditNeedsCustomer && !cart.customerId;
 
   const confirmDisabled =
     total <= 0 ||
     (tab === "cash" && tendered !== "" && tenderedNum < total) ||
     (tab === "split" && !!splitError) ||
+    creditBlocked ||
     !effectiveShiftId;
 
   async function confirm() {
@@ -295,25 +310,16 @@ export function PaymentDialog({ open, onClose }: { open: boolean; onClose: () =>
           {/* Split */}
           {tab === "split" ? (
             <div>
-              <div className="grid grid-cols-2 gap-2">
+              <div className="grid grid-cols-3 gap-2">
                 <label className="block">
                   <span className="mb-1 flex items-center gap-1 text-[11px] font-extrabold text-slate-500">
                     <Banknote className="h-3.5 w-3.5" aria-hidden /> كاش
                   </span>
                   <input
-                    type="number"
-                    inputMode="decimal"
-                    min={0}
-                    step="0.01"
+                    type="number" inputMode="decimal" min={0} step="0.01"
                     value={splitCash}
-                    onChange={(e) => {
-                      setSplitCash(e.target.value);
-                      const rest = round2(total - (Number(e.target.value) || 0));
-                      if (rest >= 0) setSplitCard(rest > 0 ? String(rest) : "");
-                    }}
-                    placeholder="0.00"
-                    className="field num"
-                    dir="ltr"
+                    onChange={(e) => setSplitCash(e.target.value)}
+                    placeholder="0.00" className="field num" dir="ltr"
                   />
                 </label>
                 <label className="block">
@@ -321,15 +327,21 @@ export function PaymentDialog({ open, onClose }: { open: boolean; onClose: () =>
                     <CreditCard className="h-3.5 w-3.5" aria-hidden /> شبكة
                   </span>
                   <input
-                    type="number"
-                    inputMode="decimal"
-                    min={0}
-                    step="0.01"
+                    type="number" inputMode="decimal" min={0} step="0.01"
                     value={splitCard}
                     onChange={(e) => setSplitCard(e.target.value)}
-                    placeholder="0.00"
-                    className="field num"
-                    dir="ltr"
+                    placeholder="0.00" className="field num" dir="ltr"
+                  />
+                </label>
+                <label className="block">
+                  <span className="mb-1 flex items-center gap-1 text-[11px] font-extrabold text-slate-500">
+                    <HandCoins className="h-3.5 w-3.5" aria-hidden /> آجل
+                  </span>
+                  <input
+                    type="number" inputMode="decimal" min={0} step="0.01"
+                    value={splitCredit}
+                    onChange={(e) => setSplitCredit(e.target.value)}
+                    placeholder="0.00" className="field num" dir="ltr"
                   />
                 </label>
               </div>
@@ -355,6 +367,13 @@ export function PaymentDialog({ open, onClose }: { open: boolean; onClose: () =>
           {tab === "credit" ? (
             <p className="rounded-xl bg-slate-50 px-3 py-2.5 text-xs font-bold text-slate-500">
               بيع آجل بقيمة <Money value={fmt2(total)} /> ر.س — يُسجَّل على حساب العميل (يتطلب صلاحية مشرف)
+            </p>
+          ) : null}
+
+          {/* Order-to-Cash: a credit sale must be attached to a real customer. */}
+          {creditBlocked ? (
+            <p role="alert" className="mt-3 rounded-xl border border-amber-300 bg-amber-50 px-3 py-2.5 text-xs font-extrabold text-amber-800">
+              البيع الآجل يتطلب اختيار عميل — اختر عميلًا من السلة أولًا
             </p>
           ) : null}
 

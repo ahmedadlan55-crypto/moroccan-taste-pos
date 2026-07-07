@@ -40,7 +40,8 @@ const GATED = [
   ['POST', '/api/sales/X-none/void', {}, 409],
   ['POST', '/api/sales/X-none/return', {}, 409],
   ['DELETE', '/api/sales/X-none', null, 409],
-  ['POST', '/api/sales', { payment_method: 'credit', total_final: 100 }, 422], // credit gate: no customer
+  ['POST', '/api/sales', { payment_method: 'credit', total_final: 100 }, 422], // credit gate: no customer (legacy string)
+  ['POST', '/api/sales', { payments: [{ method: 'credit', amount: 100 }], total_final: 100 }, 422], // credit gate reads STRUCTURED payments (POS→O2C shape)
 ];
 const COUNT_TABLES = ['ar_documents', 'customer_payments', 'ar_payment_allocations', 'gl_entries'];
 

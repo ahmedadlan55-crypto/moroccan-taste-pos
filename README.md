@@ -24,3 +24,6 @@ Access: http://localhost:3000
 4. Clone project: `git clone ...`
 5. `docker-compose up -d`
 6. Setup domain + SSL with Nginx
+
+<!-- Deployment pipeline connected (GitHub → Railway auto-deploy) — verified 2026-07-09 -->
+

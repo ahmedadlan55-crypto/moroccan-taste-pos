@@ -50,7 +50,7 @@ router.post('/:id/ack', async (req,res)=>{
   try {
     await db.query(
       `UPDATE anomaly_alerts SET status='acknowledged', acknowledged_at=NOW(), acknowledged_by=? WHERE id=?`,
-      [req.headers['x-user']||'system', req.params.id]);
+      [(req.user && req.user.username) || 'system', req.params.id]);
     res.json({success:true});
   } catch(e){ res.status(500).json({error:e.message}); }
 });
@@ -59,7 +59,7 @@ router.post('/:id/dismiss', async (req,res)=>{
   try {
     await db.query(
       `UPDATE anomaly_alerts SET status='dismissed', acknowledged_at=NOW(), acknowledged_by=? WHERE id=?`,
-      [req.headers['x-user']||'system', req.params.id]);
+      [(req.user && req.user.username) || 'system', req.params.id]);
     res.json({success:true});
   } catch(e){ res.status(500).json({error:e.message}); }
 });

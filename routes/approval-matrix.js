@@ -68,7 +68,7 @@ router.post('/', async (req,res)=>{
        b.can_return!==false?1:0, b.can_delegate!==false?1:0,
        b.escalate_after_hours||null, b.escalate_to_role||null,
        b.is_active!==false?1:0, b.notes||null,
-       req.headers['x-user']||'system']);
+       (req.user && req.user.username) || 'system']);
     res.json({success:true, id});
   } catch(e){ res.status(500).json({error:e.message}); }
 });

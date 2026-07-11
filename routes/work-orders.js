@@ -18,7 +18,7 @@ const router = require('express').Router();
 const db = require('../db/connection');
 
 function _id(p){ return p+'-'+Date.now()+'-'+Math.random().toString(36).slice(2,7); }
-function _user(req,b){ return (b&&b.user)||req.headers['x-user']||'system'; }
+function _user(req,b){ return (req.user && req.user.username) || 'system'; }
 
 // ─── DASHBOARD ───────────────────────────────────────────────────────
 router.get('/dashboard', async (req,res)=>{

@@ -98,7 +98,7 @@ router.post('/', async (req,res)=>{
        b.subtotal||0, b.vat_amount||0, b.total_amount||0,
        b.total_amount||0, b.status||'draft',
        b.attachments?JSON.stringify(b.attachments):null, b.notes||null,
-       req.headers['x-user']||'system']);
+       (req.user && req.user.username) || 'system']);
     if (Array.isArray(b.lines)) {
       for (const ln of b.lines) {
         const lid = _id('CIL');

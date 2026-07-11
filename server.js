@@ -26,6 +26,10 @@ const path = require('path');
 const jwt = require('jsonwebtoken');
 
 const app = express();
+// v7.x SECURITY — trust the single Railway/reverse-proxy hop so req.ip is the
+// REAL client IP. Without this, express-rate-limit and the login lockout key on
+// the shared proxy IP → one attacker can lock out / DoS every user at once.
+app.set('trust proxy', 1);
 const PORT = process.env.PORT || 3000;
 
 // RC cutover flag — when "0", the warehouse-v2 SPA serves a maintenance notice

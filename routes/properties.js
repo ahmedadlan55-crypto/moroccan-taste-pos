@@ -101,7 +101,7 @@ router.post('/', async (req, res) => {
        b.address||null, b.total_area||null, b.area_unit||'m2',
        b.cost_center_id||null, b.brand_id||null, b.owner_party_id||null,
        b.status||'active', b.acquired_at||null, b.acquisition_cost||0,
-       b.notes||null, b.created_by||req.headers['x-user']||'system']);
+       b.notes||null, (req.user && req.user.username) || 'system']);
     res.json({ success:true, id });
   } catch(e) { res.status(500).json({ error: e.message }); }
 });

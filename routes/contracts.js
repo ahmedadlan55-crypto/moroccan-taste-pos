@@ -129,7 +129,7 @@ router.post('/', async (req, res) => {
        b.payment_amount||null, b.next_invoice_date||b.start_date,
        b.vat_included!==false?1:0, b.status||'draft',
        b.attachments?JSON.stringify(b.attachments):null, b.terms||null,
-       b.created_by||req.headers['x-user']||'system']);
+       (req.user && req.user.username) || 'system']);
     res.json({ success:true, id, code });
   } catch(e) { res.status(500).json({ error: e.message }); }
 });
@@ -159,7 +159,7 @@ router.post('/:id/activate', async (req, res) => {
     const c = rows[0];
     if (c.status === 'active') return res.json({ success:true, alreadyActive:true });
 
-    const user = req.body.activated_by || req.headers['x-user'] || 'system';
+    const user = (req.user && req.user.username) || 'system';
     await db.query(
       `UPDATE contracts SET status='active', activated_at=NOW(), activated_by=? WHERE id = ?`,
       [user, c.id]);
@@ -201,7 +201,7 @@ router.post('/:id/activate', async (req, res) => {
 router.post('/:id/terminate', async (req, res) => {
   try {
     const reason = (req.body && req.body.reason) || null;
-    const user = (req.body && req.body.terminated_by) || req.headers['x-user'] || 'system';
+    const user = (req.user && req.user.username) || 'system';
     await db.query(
       `UPDATE contracts SET status='terminated', terminated_at=NOW(),
        terminated_by=?, termination_reason=? WHERE id=?`,
@@ -255,7 +255,7 @@ router.post('/schedules/:sid/spawn-invoice', async (req, res) => {
       [invId, code, s.party_id, s.party_name, 'rental', s.contract_id, s.id,
        s.due_date, s.brand_id, s.cost_center_id, s.property_id, s.property_unit_id,
        s.currency, s.amount, s.vat_amount, s.total_amount, s.total_amount,
-       'issued', req.headers['x-user']||'system']);
+       'issued', (req.user && req.user.username) || 'system']);
     await db.query(
       `INSERT INTO customer_invoice_lines
        (id,invoice_id,description,quantity,uom,unit_price,vat_pct,line_total)

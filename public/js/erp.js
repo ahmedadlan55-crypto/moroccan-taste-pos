@@ -462,7 +462,7 @@ function erpOpenSupplierModal(data) {
       <input type="hidden" id="erpSupID" value="${d.id||''}">
       <div class="form-row"><label>الاسم (عربي) *</label><input class="form-control" id="erpSupName" value="${d.name||''}"></div>
       <div class="form-row"><label>الاسم (إنجليزي)</label><input class="form-control" id="erpSupNameEN" value="${d.nameEn||''}"></div>
-      <div class="form-row"><label><i class="fas fa-store" style="color:#8b5cf6;"></i> البراند</label><select class="form-control" id="erpSupBrand">${brandOpts}</select><small style="color:#64748b;">اختر البراند لتصفية هذا المورد ضمن قسم البراند — اتركه فارغاً للموردين العامين.</small></div>
+      <div class="form-row"><label><i class="fas fa-store" style="color:#0e7490;"></i> البراند</label><select class="form-control" id="erpSupBrand">${brandOpts}</select><small style="color:#64748b;">اختر البراند لتصفية هذا المورد ضمن قسم البراند — اتركه فارغاً للموردين العامين.</small></div>
       <div class="form-row"><label>الرقم الضريبي</label><input class="form-control" id="erpSupVAT" value="${d.vatNumber||''}"></div>
       <div class="form-row"><label>الهاتف</label><input class="form-control" id="erpSupPhone" value="${d.phone||''}"></div>
       <div class="form-row"><label>البريد الإلكتروني</label><input class="form-control" id="erpSupEmail" value="${d.email||''}"></div>
@@ -684,7 +684,7 @@ function _coaInjectToolbarCss() {
     /* Tree header: search input only — full width hero */
     '#erpGLAccounts .coa-tree-header{display:block !important;padding:14px 16px !important;background:#fff;border-bottom:1px solid #f1f5f9;}' +
     '#erpGLAccounts .coa-search{width:100% !important;height:40px;padding:0 14px;border:1.5px solid #e2e8f0;border-radius:10px;font-family:inherit;font-size:13.5px;color:#0f172a;background:#fff;outline:none;transition:border-color .15s ease,box-shadow .15s ease;box-sizing:border-box;}' +
-    '#erpGLAccounts .coa-search:focus{border-color:#7c3aed;box-shadow:0 0 0 3px rgba(124,58,237,0.12);}' +
+    '#erpGLAccounts .coa-search:focus{border-color:#0e7490;box-shadow:0 0 0 3px rgba(14, 116, 144,0.12);}' +
     '#erpGLAccounts .coa-search::placeholder{color:#94a3b8;}' +
     /* Legacy wrapper kept hidden so cached HTML doesn't double-render */
     '#erpGLAccounts .coa-tree-toolbar{display:none !important;}' +
@@ -693,7 +693,7 @@ function _coaInjectToolbarCss() {
     '#erpGLAccounts .coa-toolbar-sep{display:inline-block;width:1px;height:22px;background:#e2e8f0;flex-shrink:0;}' +
     /* Icon-only buttons */
     '#erpGLAccounts .coa-tool-icon-btn{width:34px;height:34px;border-radius:9px;border:1.5px solid #e2e8f0;background:#fff;color:#475569;cursor:pointer;display:inline-flex;align-items:center;justify-content:center;font-size:13px;transition:all .15s ease;flex-shrink:0;}' +
-    '#erpGLAccounts .coa-tool-icon-btn:hover{border-color:#7c3aed;color:#5b21b6;background:#faf5ff;}' +
+    '#erpGLAccounts .coa-tool-icon-btn:hover{border-color:#0e7490;color:#155e75;background:#e6f3f7;}' +
     '#erpGLAccounts .coa-tool-icon-btn:active{transform:scale(0.97);}' +
     /* Responsive: under 900px, actions wrap below chips */
     '@media (max-width:900px){#erpGLAccounts .coa-topbar-actions{width:100%;justify-content:flex-end;}}' +
@@ -702,9 +702,9 @@ function _coaInjectToolbarCss() {
     '#erpGLAccounts .coa-overflow-menu{display:none;position:absolute;top:calc(100% + 6px);inset-inline-end:0;background:#fff;border:1.5px solid #e2e8f0;border-radius:11px;box-shadow:0 14px 38px -10px rgba(15,23,42,0.22);min-width:230px;padding:6px;z-index:50;animation:coaOvIn .15s ease;}' +
     '@keyframes coaOvIn{from{opacity:0;transform:translateY(-4px);}to{opacity:1;transform:translateY(0);}}' +
     '#erpGLAccounts .coa-overflow.is-open .coa-overflow-menu{display:block;}' +
-    '#erpGLAccounts .coa-overflow.is-open .coa-overflow-btn{border-color:#7c3aed;color:#5b21b6;background:#faf5ff;}' +
+    '#erpGLAccounts .coa-overflow.is-open .coa-overflow-btn{border-color:#0e7490;color:#155e75;background:#e6f3f7;}' +
     '#erpGLAccounts .coa-overflow-item{display:flex;align-items:center;gap:10px;padding:9px 12px;border-radius:8px;cursor:pointer;font-size:13px;font-weight:600;color:#0f172a;border:none;background:transparent;width:100%;text-align:start;font-family:inherit;transition:background .12s ease,color .12s ease;}' +
-    '#erpGLAccounts .coa-overflow-item:hover{background:#faf5ff;color:#5b21b6;}' +
+    '#erpGLAccounts .coa-overflow-item:hover{background:#e6f3f7;color:#155e75;}' +
     '#erpGLAccounts .coa-overflow-item.is-danger{color:#991b1b;}' +
     '#erpGLAccounts .coa-overflow-item.is-danger:hover{background:#fef2f2;color:#7f1d1d;}' +
     '#erpGLAccounts .coa-overflow-item.is-danger i{color:#dc2626 !important;}' +
@@ -903,13 +903,13 @@ function _coaInjectRefinedCss() {
     '#erpGLAccounts .coa-node[data-level="3"] > .coa-node-row,' +
     '#erpGLAccounts .coa-node[data-level="4"] > .coa-node-row,' +
     '#erpGLAccounts .coa-node[data-level="5"] > .coa-node-row{font-size:13.5px;font-weight:600;color:#1e293b;}' +
-    '#erpGLAccounts .coa-node-row:hover{background:#faf5ff !important;}' +
-    '#erpGLAccounts .coa-node-row.active{background:#ede9fe !important;color:#5b21b6;font-weight:700;}' +
-    '#erpGLAccounts .coa-node-row.active .coa-node-name{color:#5b21b6;}' +
+    '#erpGLAccounts .coa-node-row:hover{background:#e6f3f7 !important;}' +
+    '#erpGLAccounts .coa-node-row.active{background:#e6f3f7 !important;color:#155e75;font-weight:700;}' +
+    '#erpGLAccounts .coa-node-row.active .coa-node-name{color:#155e75;}' +
     '#erpGLAccounts .coa-node-toggle{display:inline-flex;align-items:center;justify-content:center;width:18px;height:18px;color:#94a3b8;font-size:10px;flex-shrink:0;transition:transform .15s ease;}' +
-    '#erpGLAccounts .coa-node.is-open > .coa-node-row .coa-node-toggle{transform:rotate(-90deg);color:#7c3aed;}' +
+    '#erpGLAccounts .coa-node.is-open > .coa-node-row .coa-node-toggle{transform:rotate(-90deg);color:#0e7490;}' +
     '#erpGLAccounts .coa-node-row .coa-node-icon{font-size:14px !important;width:16px;text-align:center;flex-shrink:0;}' +
-    '#erpGLAccounts .coa-node-row .coa-node-icon.folder{color:#7c3aed !important;}' +
+    '#erpGLAccounts .coa-node-row .coa-node-icon.folder{color:#0e7490 !important;}' +
     '#erpGLAccounts .coa-node-row .coa-node-icon.file{color:#94a3b8 !important;}' +
     '#erpGLAccounts .coa-node-row .coa-node-name{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0;}' +
     /* Hide the noisy chrome from the previous design */
@@ -921,16 +921,16 @@ function _coaInjectRefinedCss() {
     '#erpGLAccounts .coa-node-actions{opacity:0;transition:opacity .15s ease;display:inline-flex;gap:4px;}' +
     '#erpGLAccounts .coa-node-row:hover .coa-node-actions{opacity:1;}' +
     '#erpGLAccounts .coa-node-actions button{width:26px;height:26px;border-radius:7px;border:1px solid #e2e8f0;background:#fff;color:#475569;cursor:pointer;font-size:11px;}' +
-    '#erpGLAccounts .coa-node-actions button:hover{border-color:#7c3aed;color:#5b21b6;background:#faf5ff;}' +
+    '#erpGLAccounts .coa-node-actions button:hover{border-color:#0e7490;color:#155e75;background:#e6f3f7;}' +
     /* Indent each depth by 20px */
     '#erpGLAccounts .coa-node-children{padding-inline-start:20px;border:none;}' +
     /* HERO — calm header for the selected node */
     '#erpGLAccounts .coa-hero{background:#fff;border:1.5px solid #e2e8f0;border-radius:16px;padding:22px 26px;margin-bottom:18px;display:flex;align-items:flex-start;gap:18px;flex-wrap:wrap;box-shadow:0 1px 3px rgba(15,23,42,0.04);}' +
     '#erpGLAccounts .coa-hero-main{display:flex;align-items:center;gap:16px;flex:1;min-width:240px;}' +
-    '#erpGLAccounts .coa-hero-avatar{width:52px;height:52px;border-radius:50%;background:#ede9fe;color:#7c3aed;display:flex;align-items:center;justify-content:center;font-size:22px;flex-shrink:0;}' +
+    '#erpGLAccounts .coa-hero-avatar{width:52px;height:52px;border-radius:50%;background:#e6f3f7;color:#0e7490;display:flex;align-items:center;justify-content:center;font-size:22px;flex-shrink:0;}' +
     '#erpGLAccounts .coa-hero-text{min-width:0;}' +
     '#erpGLAccounts .coa-hero-title{font-size:20px;font-weight:900;color:#0f172a;display:flex;align-items:center;gap:10px;flex-wrap:wrap;line-height:1.3;}' +
-    '#erpGLAccounts .coa-hero-title .coa-hero-code{font-family:ui-monospace,Menlo,monospace;font-size:13px;background:#f5f3ff;color:#5b21b6;padding:3px 10px;border-radius:7px;font-weight:800;}' +
+    '#erpGLAccounts .coa-hero-title .coa-hero-code{font-family:ui-monospace,Menlo,monospace;font-size:13px;background:#e6f3f7;color:#155e75;padding:3px 10px;border-radius:7px;font-weight:800;}' +
     '#erpGLAccounts .coa-hero-sub{font-size:12.5px;color:#64748b;margin-top:4px;font-weight:500;}' +
     '#erpGLAccounts .coa-hero-balance{display:flex;flex-direction:column;align-items:flex-end;text-align:end;gap:2px;flex-shrink:0;}' +
     '#erpGLAccounts .coa-hero-balance-amount{font-family:ui-monospace,Menlo,monospace;font-size:22px;font-weight:900;line-height:1.2;letter-spacing:-0.01em;}' +
@@ -940,13 +940,13 @@ function _coaInjectRefinedCss() {
     '#erpGLAccounts .coa-hero-balance-nature{font-size:11.5px;color:#94a3b8;font-weight:600;}' +
     '#erpGLAccounts .coa-hero-actions{display:flex;gap:6px;flex-shrink:0;}' +
     '#erpGLAccounts .coa-hero-btn{width:36px;height:36px;border-radius:10px;border:1.5px solid #e2e8f0;background:#fff;color:#475569;cursor:pointer;font-size:13px;display:inline-flex;align-items:center;justify-content:center;transition:all .15s ease;}' +
-    '#erpGLAccounts .coa-hero-btn:hover{border-color:#7c3aed;color:#5b21b6;background:#faf5ff;}' +
+    '#erpGLAccounts .coa-hero-btn:hover{border-color:#0e7490;color:#155e75;background:#e6f3f7;}' +
     '#erpGLAccounts .coa-hero-btn.is-danger:hover{border-color:#dc2626;color:#991b1b;background:#fef2f2;}' +
     /* CHILDREN CARDS — generous, minimal */
     '#erpGLAccounts .coa-cards--refined{display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:12px;margin-bottom:14px;}' +
     '#erpGLAccounts .coa-card--refined{display:grid;grid-template-columns:44px minmax(0,1fr) auto 28px;gap:12px;align-items:center;padding:14px 16px;background:#fff;border:1.5px solid #e2e8f0;border-radius:14px;cursor:pointer;transition:all .15s ease;text-align:start;}' +
-    '#erpGLAccounts .coa-card--refined:hover{border-color:#c4b5fd;box-shadow:0 6px 18px rgba(124,58,237,0.10);transform:translateY(-1px);}' +
-    '#erpGLAccounts .coa-card--refined .coa-card-avatar{width:44px;height:44px;border-radius:12px;background:#f5f3ff;color:#7c3aed;display:flex;align-items:center;justify-content:center;font-size:16px;}' +
+    '#erpGLAccounts .coa-card--refined:hover{border-color:#a5d8e6;box-shadow:0 6px 18px rgba(14, 116, 144,0.10);transform:translateY(-1px);}' +
+    '#erpGLAccounts .coa-card--refined .coa-card-avatar{width:44px;height:44px;border-radius:12px;background:#e6f3f7;color:#0e7490;display:flex;align-items:center;justify-content:center;font-size:16px;}' +
     '#erpGLAccounts .coa-card--refined.is-leaf .coa-card-avatar{background:#f1f5f9;color:#475569;}' +
     '#erpGLAccounts .coa-card--refined .coa-card-name{font-size:14.5px;font-weight:800;color:#0f172a;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}' +
     '#erpGLAccounts .coa-card--refined .coa-card-code{display:inline-block;margin-top:4px;font-family:ui-monospace,Menlo,monospace;font-size:10.5px;background:#f1f5f9;color:#64748b;padding:2px 8px;border-radius:5px;font-weight:700;}' +
@@ -959,12 +959,12 @@ function _coaInjectRefinedCss() {
     '#erpGLAccounts .coa-card--refined .coa-card-menu{width:28px;height:28px;border-radius:7px;border:none;background:transparent;color:#94a3b8;cursor:pointer;font-size:16px;line-height:1;display:inline-flex;align-items:center;justify-content:center;transition:all .15s ease;}' +
     '#erpGLAccounts .coa-card--refined .coa-card-menu:hover{background:#f1f5f9;color:#0f172a;}' +
     /* ADD-CHILD BUTTON */
-    '#erpGLAccounts .coa-add-row{display:flex;align-items:center;justify-content:center;gap:8px;width:100%;padding:14px 18px;background:#fff;border:1.5px dashed #cbd5e1;border-radius:12px;color:#7c3aed;font-family:inherit;font-size:13.5px;font-weight:700;cursor:pointer;transition:all .15s ease;}' +
-    '#erpGLAccounts .coa-add-row:hover{border-style:solid;border-color:#7c3aed;background:#faf5ff;}' +
+    '#erpGLAccounts .coa-add-row{display:flex;align-items:center;justify-content:center;gap:8px;width:100%;padding:14px 18px;background:#fff;border:1.5px dashed #cbd5e1;border-radius:12px;color:#0e7490;font-family:inherit;font-size:13.5px;font-weight:700;cursor:pointer;transition:all .15s ease;}' +
+    '#erpGLAccounts .coa-add-row:hover{border-style:solid;border-color:#0e7490;background:#e6f3f7;}' +
     '#erpGLAccounts .coa-add-row i{font-size:14px;}' +
     /* TRANSACTION SECTION HEADER (for leaves) */
     '#erpGLAccounts .coa-trans-title{font-size:15px;font-weight:800;color:#0f172a;margin:8px 0 14px;display:flex;align-items:center;gap:8px;}' +
-    '#erpGLAccounts .coa-trans-title i{color:#7c3aed;font-size:14px;}' +
+    '#erpGLAccounts .coa-trans-title i{color:#0e7490;font-size:14px;}' +
     /* EMPTY STATE */
     '#erpGLAccounts .coa-empty--refined{padding:40px 20px;text-align:center;color:#94a3b8;background:#fafafa;border:1.5px dashed #e2e8f0;border-radius:12px;margin-bottom:14px;}' +
     '#erpGLAccounts .coa-empty--refined i{font-size:28px;color:#cbd5e1;display:block;margin-bottom:10px;}' +
@@ -1287,7 +1287,7 @@ function _coaLoadTransactions(accountId) {
     }
 
     var refLabels = { manual: 'يدوي', opening: 'افتتاحي', sale: 'مبيعات', purchase: 'مشتريات', custody: 'عهدة', inventory: 'مخزون' };
-    var refColors = { manual: '#3b82f6', opening: '#7c3aed', sale: '#10b981', purchase: '#f59e0b', custody: '#ec4899', inventory: '#06b6d4' };
+    var refColors = { manual: '#3b82f6', opening: '#0e7490', sale: '#10b981', purchase: '#f59e0b', custody: '#ec4899', inventory: '#06b6d4' };
 
     var html = '<div style="overflow-x:auto;border-radius:12px;border:1px solid #e2e8f0;"><table style="width:100%;border-collapse:collapse;font-size:13px;">';
     html += '<thead><tr style="background:#0f172a;color:#fff;"><th style="padding:10px 12px;">التاريخ</th><th>القيد</th><th>النوع</th><th>البيان</th><th>مدين</th><th>دائن</th><th>الرصيد</th></tr></thead><tbody>';
@@ -1332,8 +1332,8 @@ function _coaInjectCardPopoverCss() {
     '.coa-card-popover{position:fixed;z-index:10010;background:#fff;border:1.5px solid #e2e8f0;border-radius:12px;box-shadow:0 14px 40px -10px rgba(15,23,42,0.25);padding:6px;min-width:240px;direction:rtl;font-family:inherit;animation:coaCardPopIn .15s ease;}' +
     '@keyframes coaCardPopIn{from{opacity:0;transform:translateY(-4px);}to{opacity:1;transform:translateY(0);}}' +
     '.coa-card-popover__item{display:flex;align-items:center;gap:10px;width:100%;padding:9px 12px;border:none;background:transparent;border-radius:8px;color:#0f172a;font-family:inherit;font-size:13px;font-weight:600;text-align:start;cursor:pointer;transition:background .12s ease,color .12s ease;}' +
-    '.coa-card-popover__item i{width:16px;text-align:center;font-size:13px;color:#7c3aed;flex-shrink:0;}' +
-    '.coa-card-popover__item:hover:not(:disabled){background:#faf5ff;color:#5b21b6;}' +
+    '.coa-card-popover__item i{width:16px;text-align:center;font-size:13px;color:#0e7490;flex-shrink:0;}' +
+    '.coa-card-popover__item:hover:not(:disabled){background:#e6f3f7;color:#155e75;}' +
     '.coa-card-popover__item:disabled{opacity:0.5;cursor:not-allowed;}' +
     '.coa-card-popover__item:disabled i{color:#94a3b8;}' +
     '.coa-card-popover__item--danger{color:#991b1b;}' +
@@ -1559,7 +1559,7 @@ function _coaRenderDiagnose(j) {
     typeMismatch:            { icon:'fa-arrows-rotate',    color:'#b45309', label:'نوع لا يطابق نوع الأب', group:'structural' },
     duplicateCodes:          { icon:'fa-copy',             color:'#b45309', label:'أكواد مكرَّرة', group:'structural' },
     levelMismatch:           { icon:'fa-layer-group',      color:'#0e7490', label:'مستوى مختلف عن العمق الفعلي', group:'structural' },
-    missingCoreAccounts:     { icon:'fa-circle-question',  color:'#7c3aed', label:'حسابات أساسية ناقصة', group:'structural' }
+    missingCoreAccounts:     { icon:'fa-circle-question',  color:'#0e7490', label:'حسابات أساسية ناقصة', group:'structural' }
   };
 
   // For each category in the active tab, render a card with up to 12 rows.
@@ -2205,7 +2205,7 @@ window.coaExportExcel = async function() {
     if (ws[addr]) {
       ws[addr].s = {
         font: { bold: true, color: { rgb: 'FFFFFF' } },
-        fill: { fgColor: { rgb: '7C3AED' } },
+        fill: { fgColor: { rgb: '0E7490' } },
         alignment: { horizontal: 'center', vertical: 'center' }
       };
     }
@@ -2282,7 +2282,7 @@ function _coaShowImportModeModal(rows) {
     '<div class="modal show" id="coaImportModeModal" style="display:flex;align-items:flex-start;justify-content:center;z-index:10001;" onclick="if(event.target===this)this.remove();">' +
       '<div class="modal-content" style="max-width:640px;width:96%;margin-top:60px;" onclick="event.stopPropagation();">' +
         '<div class="modal-title">' +
-          '<i class="fas fa-question-circle" style="color:#7c3aed;"></i>' +
+          '<i class="fas fa-question-circle" style="color:#0e7490;"></i>' +
           '<span>كيف تريد اعتماد الملف؟</span>' +
           '<button class="modal-close" onclick="document.getElementById(\'coaImportModeModal\').remove()">&times;</button>' +
         '</div>' +
@@ -2598,7 +2598,7 @@ window.coaApplyTemplate = function() {
           // Reuse the import preview modal; user just clicks "تأكيد".
           _coaConfirmImport(rows, 'replace');
         },
-        { icon: 'fa-wand-magic-sparkles', color: '#7c3aed', okText: 'تَطبيق' }
+        { icon: 'fa-wand-magic-sparkles', color: '#0e7490', okText: 'تَطبيق' }
       );
     })
     .catch(function(e){ showToast(String((e && e.message) || e), true); });
@@ -2707,7 +2707,7 @@ window.coaOpenDedupeModal = function() {
     }).join('');
     return '<div class="coa-dedupe-group" style="margin-bottom:18px;">' +
       '<div style="font-weight:800;color:#0f172a;font-size:13px;padding:6px 4px;display:flex;align-items:center;gap:8px;">' +
-        '<i class="fas fa-clone" style="color:#7c3aed;"></i>' +
+        '<i class="fas fa-clone" style="color:#0e7490;"></i>' +
         '<span>' + esc(group[0].nameAr) + '</span>' +
         '<span style="background:#fef3c7;color:#92400e;padding:2px 8px;border-radius:999px;font-size:11px;font-weight:700;">' + group.length + ' نسخ</span>' +
       '</div>' +
@@ -2733,7 +2733,7 @@ window.coaOpenDedupeModal = function() {
     '<div class="modal show" id="coaDedupeModal" style="display:flex;align-items:flex-start;justify-content:center;z-index:10001;" onclick="if(event.target===this)this.remove();">' +
       '<div class="modal-content" style="max-width:920px;width:96%;margin-top:32px;max-height:88vh;display:flex;flex-direction:column;" onclick="event.stopPropagation();">' +
         '<div class="modal-title">' +
-          '<i class="fas fa-clone" style="color:#7c3aed;"></i>' +
+          '<i class="fas fa-clone" style="color:#0e7490;"></i>' +
           '<span>حذف الحسابات المُكرَّرة</span>' +
           '<button class="modal-close" onclick="document.getElementById(\'coaDedupeModal\').remove()">&times;</button>' +
         '</div>' +
@@ -2851,37 +2851,37 @@ function _coaInjectMoveModalCss() {
     '#coaMoveModal{font-family:inherit;direction:rtl;}' +
     '#coaMoveModal .coa-mv__shell{max-width:640px;width:96%;margin:40px auto;background:#fff;border-radius:18px;box-shadow:0 30px 80px -20px rgba(15,23,42,0.45);overflow:hidden;animation:coaMvIn .25s ease;display:flex;flex-direction:column;max-height:calc(100vh - 60px);}' +
     '@keyframes coaMvIn{from{opacity:0;transform:translateY(20px);}to{opacity:1;transform:translateY(0);}}' +
-    '#coaMoveModal .coa-mv__hero{padding:18px 22px;background:linear-gradient(135deg,#faf5ff,#fff 60%);border-bottom:1px solid #f1f5f9;display:flex;align-items:center;gap:12px;flex-shrink:0;}' +
-    '#coaMoveModal .coa-mv__hero-icon{width:42px;height:42px;border-radius:12px;background:#ede9fe;color:#7c3aed;display:flex;align-items:center;justify-content:center;font-size:18px;flex-shrink:0;}' +
+    '#coaMoveModal .coa-mv__hero{padding:18px 22px;background:linear-gradient(135deg,#e6f3f7,#fff 60%);border-bottom:1px solid #f1f5f9;display:flex;align-items:center;gap:12px;flex-shrink:0;}' +
+    '#coaMoveModal .coa-mv__hero-icon{width:42px;height:42px;border-radius:12px;background:#e6f3f7;color:#0e7490;display:flex;align-items:center;justify-content:center;font-size:18px;flex-shrink:0;}' +
     '#coaMoveModal .coa-mv__hero-text{flex:1;min-width:0;}' +
-    '#coaMoveModal .coa-mv__eyebrow{font-size:11px;font-weight:800;color:#7c3aed;letter-spacing:0.4px;text-transform:uppercase;}' +
+    '#coaMoveModal .coa-mv__eyebrow{font-size:11px;font-weight:800;color:#0e7490;letter-spacing:0.4px;text-transform:uppercase;}' +
     '#coaMoveModal .coa-mv__title{font-size:16px;font-weight:900;color:#0f172a;margin-top:3px;display:flex;align-items:center;gap:10px;flex-wrap:wrap;}' +
-    '#coaMoveModal .coa-mv__title code{font-family:ui-monospace,Menlo,monospace;font-size:13.5px;background:#fff;padding:3px 10px;border-radius:7px;border:1.5px solid #ddd6fe;color:#5b21b6;font-weight:800;}' +
+    '#coaMoveModal .coa-mv__title code{font-family:ui-monospace,Menlo,monospace;font-size:13.5px;background:#fff;padding:3px 10px;border-radius:7px;border:1.5px solid #cfe9f1;color:#155e75;font-weight:800;}' +
     '#coaMoveModal .coa-mv__close{width:34px;height:34px;border-radius:10px;border:none;background:#fff;color:#64748b;font-size:18px;cursor:pointer;box-shadow:0 1px 3px rgba(15,23,42,0.08);flex-shrink:0;}' +
     '#coaMoveModal .coa-mv__close:hover{background:#fee2e2;color:#dc2626;}' +
     '#coaMoveModal .coa-mv__body{padding:18px 22px;overflow-y:auto;flex:1;}' +
     '#coaMoveModal .coa-mv__sec{margin-bottom:14px;}' +
     '#coaMoveModal .coa-mv__sec:last-child{margin-bottom:0;}' +
     '#coaMoveModal .coa-mv__sec-label{display:flex;align-items:center;gap:8px;font-size:12px;font-weight:800;color:#475569;margin-bottom:8px;letter-spacing:0.2px;}' +
-    '#coaMoveModal .coa-mv__sec-label i{color:#7c3aed;font-size:13px;}' +
+    '#coaMoveModal .coa-mv__sec-label i{color:#0e7490;font-size:13px;}' +
     '#coaMoveModal .coa-mv__searchbar{position:relative;display:flex;align-items:center;background:#fff;border:1.5px solid #e2e8f0;border-radius:10px;padding:0 14px;transition:border-color .15s ease,box-shadow .15s ease;}' +
-    '#coaMoveModal .coa-mv__searchbar:focus-within{border-color:#7c3aed;box-shadow:0 0 0 3px rgba(124,58,237,0.12);}' +
+    '#coaMoveModal .coa-mv__searchbar:focus-within{border-color:#0e7490;box-shadow:0 0 0 3px rgba(14, 116, 144,0.12);}' +
     '#coaMoveModal .coa-mv__searchbar i.fa-search{color:#94a3b8;font-size:13px;margin-inline-end:8px;}' +
     '#coaMoveModal .coa-mv__searchinput{flex:1;border:none;outline:none;font-family:inherit;font-size:13.5px;color:#0f172a;padding:11px 0;background:transparent;direction:rtl;}' +
     '#coaMoveModal .coa-mv__searchinput::placeholder{color:#94a3b8;}' +
-    '#coaMoveModal .coa-mv__count{font-size:11px;font-weight:800;color:#5b21b6;background:#ede9fe;padding:3px 10px;border-radius:999px;margin-inline-start:8px;min-width:32px;text-align:center;}' +
+    '#coaMoveModal .coa-mv__count{font-size:11px;font-weight:800;color:#155e75;background:#e6f3f7;padding:3px 10px;border-radius:999px;margin-inline-start:8px;min-width:32px;text-align:center;}' +
     '#coaMoveModal .coa-mv__list{margin-top:8px;max-height:280px;overflow-y:auto;background:#fff;border:1.5px solid #e2e8f0;border-radius:10px;}' +
     '#coaMoveModal .coa-mv__list::-webkit-scrollbar{width:8px;}' +
     '#coaMoveModal .coa-mv__list::-webkit-scrollbar-track{background:#f8fafc;}' +
     '#coaMoveModal .coa-mv__list::-webkit-scrollbar-thumb{background:#cbd5e1;border-radius:4px;}' +
     '#coaMoveModal .coa-mv__opt{display:flex;align-items:center;gap:10px;padding:10px 14px;cursor:pointer;border-bottom:1px solid #f1f5f9;font-size:13px;transition:background .12s ease;}' +
     '#coaMoveModal .coa-mv__opt:last-child{border-bottom:none;}' +
-    '#coaMoveModal .coa-mv__opt:hover{background:#faf5ff;}' +
-    '#coaMoveModal .coa-mv__opt.is-selected{background:#ede9fe;}' +
+    '#coaMoveModal .coa-mv__opt:hover{background:#e6f3f7;}' +
+    '#coaMoveModal .coa-mv__opt.is-selected{background:#e6f3f7;}' +
     '#coaMoveModal .coa-mv__opt-radio{width:18px;height:18px;border-radius:50%;border:2px solid #cbd5e1;flex-shrink:0;transition:all .12s ease;position:relative;background:#fff;}' +
-    '#coaMoveModal .coa-mv__opt.is-selected .coa-mv__opt-radio{border-color:#7c3aed;background:#7c3aed;}' +
+    '#coaMoveModal .coa-mv__opt.is-selected .coa-mv__opt-radio{border-color:#0e7490;background:#0e7490;}' +
     '#coaMoveModal .coa-mv__opt.is-selected .coa-mv__opt-radio::after{content:"";position:absolute;inset:3px;background:#fff;border-radius:50%;}' +
-    '#coaMoveModal .coa-mv__opt-code{font-family:ui-monospace,Menlo,monospace;font-size:11.5px;color:#5b21b6;background:#f5f3ff;padding:3px 9px;border-radius:5px;font-weight:700;flex-shrink:0;min-width:68px;text-align:center;}' +
+    '#coaMoveModal .coa-mv__opt-code{font-family:ui-monospace,Menlo,monospace;font-size:11.5px;color:#155e75;background:#e6f3f7;padding:3px 9px;border-radius:5px;font-weight:700;flex-shrink:0;min-width:68px;text-align:center;}' +
     '#coaMoveModal .coa-mv__opt.is-root .coa-mv__opt-code{background:transparent;color:#94a3b8;font-style:italic;min-width:0;padding:0;}' +
     '#coaMoveModal .coa-mv__opt-name{flex:1;color:#0f172a;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}' +
     '#coaMoveModal .coa-mv__opt-tag{font-size:10px;color:#64748b;background:#f1f5f9;padding:2px 7px;border-radius:4px;font-weight:700;flex-shrink:0;}' +
@@ -2890,7 +2890,7 @@ function _coaInjectMoveModalCss() {
     '#coaMoveModal .coa-mv__empty i{display:block;font-size:24px;color:#cbd5e1;margin-bottom:8px;}' +
     '#coaMoveModal .coa-mv__renum{display:flex;align-items:center;gap:12px;padding:12px 14px;background:#f8fafc;border:1.5px solid #e2e8f0;border-radius:10px;cursor:pointer;user-select:none;}' +
     '#coaMoveModal .coa-mv__renum:hover{border-color:#cbd5e1;}' +
-    '#coaMoveModal .coa-mv__renum input{width:18px;height:18px;cursor:pointer;accent-color:#7c3aed;flex-shrink:0;margin:0;}' +
+    '#coaMoveModal .coa-mv__renum input{width:18px;height:18px;cursor:pointer;accent-color:#0e7490;flex-shrink:0;margin:0;}' +
     '#coaMoveModal .coa-mv__renum-text{font-size:13px;font-weight:700;color:#0f172a;line-height:1.4;}' +
     '#coaMoveModal .coa-mv__renum-text small{display:block;font-size:11px;font-weight:500;color:#64748b;margin-top:3px;}' +
     '#coaMoveModal .coa-mv__preview{margin-top:14px;padding:14px 16px;background:linear-gradient(135deg,#f0fdf4,#fff 70%);border:1.5px solid #bbf7d0;border-radius:10px;font-size:13px;color:#0f172a;}' +
@@ -2907,8 +2907,8 @@ function _coaInjectMoveModalCss() {
     '#coaMoveModal .coa-mv__btn{height:40px;padding:0 22px;border-radius:10px;border:1.5px solid transparent;font-family:inherit;font-size:13.5px;font-weight:700;cursor:pointer;display:inline-flex;align-items:center;gap:8px;transition:all .15s ease;}' +
     '#coaMoveModal .coa-mv__btn-ghost{background:#fff;border-color:#e2e8f0;color:#475569;}' +
     '#coaMoveModal .coa-mv__btn-ghost:hover{border-color:#94a3b8;color:#0f172a;}' +
-    '#coaMoveModal .coa-mv__btn-primary{background:linear-gradient(135deg,#7c3aed,#6d28d9);color:#fff;box-shadow:0 4px 12px rgba(124,58,237,0.30);}' +
-    '#coaMoveModal .coa-mv__btn-primary:hover:not(:disabled){box-shadow:0 6px 18px rgba(124,58,237,0.45);transform:translateY(-1px);}' +
+    '#coaMoveModal .coa-mv__btn-primary{background:linear-gradient(135deg,#0e7490,#155e75);color:#fff;box-shadow:0 4px 12px rgba(14, 116, 144,0.30);}' +
+    '#coaMoveModal .coa-mv__btn-primary:hover:not(:disabled){box-shadow:0 6px 18px rgba(14, 116, 144,0.45);transform:translateY(-1px);}' +
     '#coaMoveModal .coa-mv__btn-primary:disabled{opacity:0.6;cursor:not-allowed;}' +
     '';
   document.head.appendChild(st);
@@ -3259,7 +3259,7 @@ function _coaShowRepairReport(j) {
     '<div class="modal show" id="coaRepairReportModal" style="display:flex;align-items:flex-start;justify-content:center;z-index:10000;" onclick="if(event.target===this)this.remove();">' +
       '<div class="modal-content modal-large" style="max-width:760px;width:96%;margin-top:24px;" onclick="event.stopPropagation();">' +
         '<div class="modal-title">' +
-          '<i class="fas fa-wand-magic-sparkles" style="color:#7c3aed;"></i>' +
+          '<i class="fas fa-wand-magic-sparkles" style="color:#0e7490;"></i>' +
           '<span>تقرير الإصلاح الشامل</span>' +
           '<button class="modal-close" onclick="document.getElementById(\'coaRepairReportModal\').remove()">&times;</button>' +
         '</div>' +
@@ -3370,11 +3370,11 @@ function _coaBuildSuggestionsHtml() {
   var existingByCode = {};
   _erpAccounts.forEach(function(a){ existingByCode[a.code] = a; });
 
-  var typeColor = { asset:'#0ea5e9', liability:'#dc2626', equity:'#7c3aed', revenue:'#16a34a', expense:'#f59e0b' };
+  var typeColor = { asset:'#0ea5e9', liability:'#dc2626', equity:'#0e7490', revenue:'#16a34a', expense:'#f59e0b' };
 
   var headHtml =
-    '<div style="background:linear-gradient(135deg,#ede9fe,#fae8ff);padding:14px 16px;border-radius:12px;border:1px solid #c4b5fd;margin-bottom:14px;">' +
-      '<div style="font-size:14px;font-weight:800;color:#5b21b6;margin-bottom:6px;"><i class="fas fa-lightbulb"></i> الهيكل المعياري للقطاع — مرجع IFRS / SOCPA / F&B</div>' +
+    '<div style="background:linear-gradient(135deg,#e6f3f7,#fae8ff);padding:14px 16px;border-radius:12px;border:1px solid #a5d8e6;margin-bottom:14px;">' +
+      '<div style="font-size:14px;font-weight:800;color:#155e75;margin-bottom:6px;"><i class="fas fa-lightbulb"></i> الهيكل المعياري للقطاع — مرجع IFRS / SOCPA / F&B</div>' +
       '<div style="font-size:12.5px;color:#475569;line-height:1.7;">' +
       'هذا الهيكل يحاكي معايير المحاسبة الدولية (IFRS) ومجلس المحاسبين السعوديين (SOCPA) مع تخصيصات قطاع المقاهي والمطاعم. ' +
       'علامة <span style="color:#16a34a;font-weight:700;">✓</span> = موجود · ' +
@@ -3446,16 +3446,16 @@ function _erpAccountModalInjectCss() {
   st.textContent =
     /* Shell + header + footer overrides scoped by data-modal-kind */
     '#erpModal[data-modal-kind="account"] .modal-box{max-width:720px;width:96%;border-radius:16px;overflow:hidden;}' +
-    '#erpModal[data-modal-kind="account"] .modal-header{padding:18px 22px;background:linear-gradient(135deg,#faf5ff,#fff 60%);border-bottom:1px solid #f1f5f9;display:flex;align-items:center;justify-content:space-between;gap:14px;}' +
+    '#erpModal[data-modal-kind="account"] .modal-header{padding:18px 22px;background:linear-gradient(135deg,#e6f3f7,#fff 60%);border-bottom:1px solid #f1f5f9;display:flex;align-items:center;justify-content:space-between;gap:14px;}' +
     '#erpModal[data-modal-kind="account"] .modal-header h3{margin:0;font-size:18px;font-weight:900;color:#0f172a;display:flex;align-items:center;gap:10px;}' +
-    '#erpModal[data-modal-kind="account"] .modal-header h3::before{content:"";display:inline-block;width:36px;height:36px;border-radius:10px;background:#ede9fe url("data:image/svg+xml;utf8,<svg xmlns=\'http://www.w3.org/2000/svg\' viewBox=\'0 0 512 512\'><path fill=\'%237c3aed\' d=\'M362.7 19.3L314.3 67.7 444.3 197.7l48.4-48.4c25-25 25-65.5 0-90.5L453.3 19.3c-25-25-65.5-25-90.5 0zm-71 71L58.6 323.5c-10.4 10.4-18 23.3-22.2 37.4L1 481.2C-1.5 489.7 .8 498.8 7 505s15.3 8.5 23.7 6.1l120.3-35.4c14.1-4.2 27-11.8 37.4-22.2L421.7 220.3 291.7 90.3z\'/></svg>") center/16px no-repeat;flex-shrink:0;}' +
+    '#erpModal[data-modal-kind="account"] .modal-header h3::before{content:"";display:inline-block;width:36px;height:36px;border-radius:10px;background:#e6f3f7 url("data:image/svg+xml;utf8,<svg xmlns=\'http://www.w3.org/2000/svg\' viewBox=\'0 0 512 512\'><path fill=\'%230e7490\' d=\'M362.7 19.3L314.3 67.7 444.3 197.7l48.4-48.4c25-25 25-65.5 0-90.5L453.3 19.3c-25-25-65.5-25-90.5 0zm-71 71L58.6 323.5c-10.4 10.4-18 23.3-22.2 37.4L1 481.2C-1.5 489.7 .8 498.8 7 505s15.3 8.5 23.7 6.1l120.3-35.4c14.1-4.2 27-11.8 37.4-22.2L421.7 220.3 291.7 90.3z\'/></svg>") center/16px no-repeat;flex-shrink:0;}' +
     '#erpModal[data-modal-kind="account"] .modal-close{width:36px;height:36px;border-radius:10px;border:1.5px solid #e2e8f0;background:#fff;color:#64748b;cursor:pointer;font-size:18px;line-height:1;display:inline-flex;align-items:center;justify-content:center;}' +
     '#erpModal[data-modal-kind="account"] .modal-close:hover{border-color:#dc2626;color:#dc2626;background:#fef2f2;}' +
     '#erpModal[data-modal-kind="account"] .modal-body{padding:20px 22px;max-height:70vh;overflow-y:auto;}' +
     '#erpModal[data-modal-kind="account"] .modal-footer{padding:14px 22px;background:#fafafa;border-top:1px solid #f1f5f9;display:flex;gap:10px;justify-content:flex-end;align-items:center;}' +
     '#erpModal[data-modal-kind="account"] .modal-footer .btn{height:40px;padding:0 22px;border-radius:10px;font-family:inherit;font-size:13.5px;font-weight:700;cursor:pointer;display:inline-flex;align-items:center;gap:8px;border:1.5px solid transparent;transition:all .15s ease;}' +
-    '#erpModal[data-modal-kind="account"] .modal-footer .btn-primary{background:linear-gradient(135deg,#7c3aed,#6d28d9) !important;color:#fff !important;border-color:transparent !important;box-shadow:0 4px 12px rgba(124,58,237,0.30);}' +
-    '#erpModal[data-modal-kind="account"] .modal-footer .btn-primary:hover{box-shadow:0 6px 18px rgba(124,58,237,0.45);transform:translateY(-1px);}' +
+    '#erpModal[data-modal-kind="account"] .modal-footer .btn-primary{background:linear-gradient(135deg,#0e7490,#155e75) !important;color:#fff !important;border-color:transparent !important;box-shadow:0 4px 12px rgba(14, 116, 144,0.30);}' +
+    '#erpModal[data-modal-kind="account"] .modal-footer .btn-primary:hover{box-shadow:0 6px 18px rgba(14, 116, 144,0.45);transform:translateY(-1px);}' +
     '#erpModal[data-modal-kind="account"] .modal-footer .btn-secondary{background:#fff !important;color:#475569 !important;border-color:#e2e8f0 !important;}' +
     '#erpModal[data-modal-kind="account"] .modal-footer .btn-secondary:hover{border-color:#94a3b8 !important;color:#0f172a !important;}' +
     /* Form layout */
@@ -3467,9 +3467,9 @@ function _erpAccountModalInjectCss() {
     '#erpModal .erp-acc-form .acc-kind-option input{position:absolute;opacity:0;pointer-events:none;}' +
     '#erpModal .erp-acc-form .acc-kind-card{display:flex;align-items:center;gap:12px;padding:12px 14px;border:1.5px solid #e2e8f0;border-radius:10px;background:#fff;transition:all .15s ease;}' +
     '#erpModal .erp-acc-form .acc-kind-card:hover{border-color:#cbd5e1;background:#fafafa;}' +
-    '#erpModal .erp-acc-form .acc-kind-option input:checked + .acc-kind-card{border-color:#7c3aed;background:#faf5ff;box-shadow:0 0 0 3px rgba(124,58,237,0.10);}' +
+    '#erpModal .erp-acc-form .acc-kind-option input:checked + .acc-kind-card{border-color:#0e7490;background:#e6f3f7;box-shadow:0 0 0 3px rgba(14, 116, 144,0.10);}' +
     '#erpModal .erp-acc-form .acc-kind-card-icon{width:34px;height:34px;border-radius:9px;display:flex;align-items:center;justify-content:center;font-size:14px;flex-shrink:0;background:#f1f5f9;color:#475569;}' +
-    '#erpModal .erp-acc-form .acc-kind-option input:checked + .acc-kind-card .acc-kind-card-icon{background:#ede9fe;color:#7c3aed;}' +
+    '#erpModal .erp-acc-form .acc-kind-option input:checked + .acc-kind-card .acc-kind-card-icon{background:#e6f3f7;color:#0e7490;}' +
     '#erpModal .erp-acc-form .acc-kind-card-text{min-width:0;}' +
     '#erpModal .erp-acc-form .acc-kind-title{font-size:13px;font-weight:800;color:#0f172a;}' +
     '#erpModal .erp-acc-form .acc-kind-sub{font-size:11px;color:#64748b;margin-top:2px;}' +
@@ -3480,13 +3480,13 @@ function _erpAccountModalInjectCss() {
     '#erpModal .erp-acc-form .acc-field-label{font-size:12.5px;font-weight:700;color:#475569;display:flex;align-items:center;gap:4px;}' +
     '#erpModal .erp-acc-form .acc-field-label .req{color:#dc2626;font-weight:800;font-size:13px;}' +
     '#erpModal .erp-acc-form .acc-input,#erpModal .erp-acc-form select.acc-input{height:40px !important;padding:0 12px !important;border:1.5px solid #e2e8f0 !important;border-radius:10px !important;font-family:inherit !important;font-size:13.5px !important;color:#0f172a !important;background:#fff !important;outline:none;transition:border-color .15s ease,box-shadow .15s ease;box-sizing:border-box;width:100%;}' +
-    '#erpModal .erp-acc-form .acc-input:focus,#erpModal .erp-acc-form select.acc-input:focus{border-color:#7c3aed !important;box-shadow:0 0 0 3px rgba(124,58,237,0.12) !important;}' +
+    '#erpModal .erp-acc-form .acc-input:focus,#erpModal .erp-acc-form select.acc-input:focus{border-color:#0e7490 !important;box-shadow:0 0 0 3px rgba(14, 116, 144,0.12) !important;}' +
     '#erpModal .erp-acc-form .acc-input[readonly]{background:#f8fafc !important;color:#64748b !important;}' +
     '#erpModal .erp-acc-form .acc-input::placeholder{color:#94a3b8;}' +
     /* Auto-code card */
     '#erpModal .erp-acc-form .acc-auto-card{display:flex;align-items:center;gap:12px;padding:12px 14px;background:#f8fafc;border:1.5px solid #e2e8f0;border-radius:10px;cursor:pointer;user-select:none;margin:0;}' +
     '#erpModal .erp-acc-form .acc-auto-card:hover{border-color:#cbd5e1;}' +
-    '#erpModal .erp-acc-form .acc-auto-card input{width:18px;height:18px;cursor:pointer;accent-color:#7c3aed;flex-shrink:0;margin:0;}' +
+    '#erpModal .erp-acc-form .acc-auto-card input{width:18px;height:18px;cursor:pointer;accent-color:#0e7490;flex-shrink:0;margin:0;}' +
     '#erpModal .erp-acc-form .acc-auto-text{min-width:0;}' +
     '#erpModal .erp-acc-form .acc-auto-title{font-size:13px;font-weight:800;color:#0f172a;}' +
     '#erpModal .erp-acc-form .acc-auto-sub{font-size:11.5px;color:#64748b;margin-top:2px;}' +
@@ -3494,14 +3494,14 @@ function _erpAccountModalInjectCss() {
     '#erpModal .erp-acc-form .coa-sel{position:relative;width:100%;}' +
     '#erpModal .erp-acc-form .coa-sel__trigger{width:100%;height:40px;padding:0 12px;border:1.5px solid #e2e8f0;border-radius:10px;background:#fff;font-family:inherit;font-size:13.5px;color:#0f172a;cursor:pointer;display:flex;align-items:center;justify-content:space-between;gap:8px;transition:border-color .15s ease,box-shadow .15s ease;box-sizing:border-box;}' +
     '#erpModal .erp-acc-form .coa-sel__trigger:hover{border-color:#94a3b8;}' +
-    '#erpModal .erp-acc-form .coa-sel[data-open="1"] .coa-sel__trigger{border-color:#7c3aed;box-shadow:0 0 0 3px rgba(124,58,237,0.12);}' +
+    '#erpModal .erp-acc-form .coa-sel[data-open="1"] .coa-sel__trigger{border-color:#0e7490;box-shadow:0 0 0 3px rgba(14, 116, 144,0.12);}' +
     '#erpModal .erp-acc-form .coa-sel__triggerText{display:flex;align-items:center;gap:8px;flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}' +
-    '#erpModal .erp-acc-form .coa-sel__trigger-code{font-family:ui-monospace,Menlo,monospace;font-size:11.5px;background:#ede9fe;color:#5b21b6;padding:2px 8px;border-radius:5px;font-weight:700;flex-shrink:0;}' +
+    '#erpModal .erp-acc-form .coa-sel__trigger-code{font-family:ui-monospace,Menlo,monospace;font-size:11.5px;background:#e6f3f7;color:#155e75;padding:2px 8px;border-radius:5px;font-weight:700;flex-shrink:0;}' +
     '#erpModal .erp-acc-form .coa-sel__trigger-name{font-weight:600;color:#0f172a;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}' +
     '#erpModal .erp-acc-form .coa-sel__current{flex:1;color:#0f172a;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}' +
     '#erpModal .erp-acc-form .coa-sel__current.is-placeholder{color:#94a3b8;font-weight:500;}' +
     '#erpModal .erp-acc-form .coa-sel__chev{color:#94a3b8;font-size:11px;transition:transform .15s ease;flex-shrink:0;}' +
-    '#erpModal .erp-acc-form .coa-sel[data-open="1"] .coa-sel__chev{transform:rotate(180deg);color:#7c3aed;}' +
+    '#erpModal .erp-acc-form .coa-sel[data-open="1"] .coa-sel__chev{transform:rotate(180deg);color:#0e7490;}' +
     '#erpModal .erp-acc-form .coa-sel__panel{display:none;position:absolute;top:calc(100% + 4px);left:0;right:0;background:#fff;border:1.5px solid #e2e8f0;border-radius:10px;box-shadow:0 10px 30px -10px rgba(15,23,42,0.20);z-index:60;flex-direction:column;overflow:hidden;}' +
     '#erpModal .erp-acc-form .coa-sel[data-open="1"] .coa-sel__panel{display:flex;}' +
     '#erpModal .erp-acc-form .coa-sel__searchbox{display:flex;align-items:center;gap:8px;padding:8px 12px;border-bottom:1.5px solid #f1f5f9;background:#fafafa;}' +
@@ -3510,11 +3510,11 @@ function _erpAccountModalInjectCss() {
     '#erpModal .erp-acc-form .coa-sel__list{max-height:240px;overflow-y:auto;}' +
     '#erpModal .erp-acc-form .coa-sel__opt{display:flex;align-items:center;gap:8px;padding:8px 14px;cursor:pointer;border-bottom:1px solid #f1f5f9;font-size:13px;transition:background .12s ease;}' +
     '#erpModal .erp-acc-form .coa-sel__opt:last-child{border-bottom:none;}' +
-    '#erpModal .erp-acc-form .coa-sel__opt:hover,#erpModal .erp-acc-form .coa-sel__opt.is-active{background:#faf5ff;}' +
-    '#erpModal .erp-acc-form .coa-sel__opt.is-selected{background:#ede9fe;}' +
-    '#erpModal .erp-acc-form .coa-sel__opt-code{font-family:ui-monospace,Menlo,monospace;font-size:11px;background:#f5f3ff;color:#5b21b6;padding:2px 7px;border-radius:4px;font-weight:700;flex-shrink:0;min-width:62px;text-align:center;}' +
+    '#erpModal .erp-acc-form .coa-sel__opt:hover,#erpModal .erp-acc-form .coa-sel__opt.is-active{background:#e6f3f7;}' +
+    '#erpModal .erp-acc-form .coa-sel__opt.is-selected{background:#e6f3f7;}' +
+    '#erpModal .erp-acc-form .coa-sel__opt-code{font-family:ui-monospace,Menlo,monospace;font-size:11px;background:#e6f3f7;color:#155e75;padding:2px 7px;border-radius:4px;font-weight:700;flex-shrink:0;min-width:62px;text-align:center;}' +
     '#erpModal .erp-acc-form .coa-sel__opt-name{flex:1;color:#0f172a;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}' +
-    '#erpModal .erp-acc-form .coa-sel__tick{color:#7c3aed;font-size:12px;flex-shrink:0;}' +
+    '#erpModal .erp-acc-form .coa-sel__tick{color:#0e7490;font-size:12px;flex-shrink:0;}' +
     '#erpModal .erp-acc-form .coa-sel__footer{padding:6px 12px;border-top:1.5px solid #f1f5f9;background:#fafafa;font-size:11px;color:#64748b;}' +
     '#erpModal .erp-acc-form .coa-sel__empty{padding:24px 12px;text-align:center;color:#94a3b8;font-size:12.5px;}' +
     '#erpModal .erp-acc-form .coa-sel__opt-indent{flex-shrink:0;}' +
@@ -4075,7 +4075,7 @@ window.erpBulkAction = function(action) {
   if (!ids.length) return;
   var labels = { approve: 'اعتماد', post: 'ترحيل', unpost: 'إلغاء ترحيل', delete: 'حذف' };
   var icons  = { approve: 'fa-check-circle', post: 'fa-share-square', unpost: 'fa-undo', delete: 'fa-trash' };
-  var colors = { approve: '#8b5cf6', post: '#16a34a', unpost: '#f59e0b', delete: '#dc2626' };
+  var colors = { approve: '#0e7490', post: '#16a34a', unpost: '#f59e0b', delete: '#dc2626' };
   erpConfirm(labels[action] + ' الكل', 'سيتم تَطبيق "' + labels[action] + '" على ' + ids.length + ' قيد. متابعة؟', function(){
     loader(true);
     var token = localStorage.getItem('pos_token') || '';
@@ -4225,7 +4225,7 @@ function _renderJournalDetail(j) {
   var entries = j.entries || [];
   var dt = j.journalDate ? new Date(j.journalDate).toLocaleDateString('en-GB') : '—';
   var statusLabels = {draft:'مسودة',approved:'معتمد',posted:'مرحّل'};
-  var statusColors = {draft:'#f59e0b',approved:'#8b5cf6',posted:'#16a34a'};
+  var statusColors = {draft:'#f59e0b',approved:'#0e7490',posted:'#16a34a'};
 
   var html = '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:8px;margin-bottom:14px;">' +
     '<div style="background:#f8fafc;padding:10px 12px;border-radius:12px;"><span style="font-size:10px;color:#64748b;display:block;">رقم القيد</span><strong style="font-size:15px;color:#1e40af;">' + (j.journalNumber||'—') + '</strong></div>' +
@@ -4256,7 +4256,7 @@ function _renderJournalDetail(j) {
     var accType = e.accountType || '';
     var typeColor = accType === 'asset' ? '#1e40af'
                   : accType === 'liability' ? '#b45309'
-                  : accType === 'equity' ? '#7c3aed'
+                  : accType === 'equity' ? '#0e7490'
                   : accType === 'revenue' ? '#16a34a'
                   : accType === 'expense' ? '#dc2626'
                   : '#475569';
@@ -4305,7 +4305,7 @@ function _renderJournalDetail(j) {
     html += '<button class="btn btn-sm" onclick="erpEditJournal(\'' + j.id + '\')" style="border-radius:10px;background:#3b82f6;color:#fff;"><i class="fas fa-edit"></i> تعديل</button>';
   }
   if (j.status === 'draft') {
-    html += '<button class="btn btn-sm" onclick="erpApproveJournal(\'' + j.id + '\');erpCloseDetailModal();" style="border-radius:10px;background:#8b5cf6;color:#fff;"><i class="fas fa-check-circle"></i> اعتماد</button>';
+    html += '<button class="btn btn-sm" onclick="erpApproveJournal(\'' + j.id + '\');erpCloseDetailModal();" style="border-radius:10px;background:#0e7490;color:#fff;"><i class="fas fa-check-circle"></i> اعتماد</button>';
   }
   if (j.status === 'approved') {
     html += '<button class="btn btn-sm" onclick="erpPostJournal(\'' + j.id + '\');erpCloseDetailModal();" style="border-radius:10px;background:#16a34a;color:#fff;"><i class="fas fa-share-square"></i> ترحيل</button>';
@@ -4798,7 +4798,7 @@ function _renderJournalForm() {
       // v5.11.0 — Header accounting dimensions. Each line inherits these
       // unless explicitly overridden in the line's own dim row.
       '<div style="padding:12px 20px;background:#fafbff;border-bottom:1px solid #e5e7eb;">' +
-        '<div style="font-size:11.5px;font-weight:800;color:#5b21b6;margin-bottom:8px;letter-spacing:.02em;">' +
+        '<div style="font-size:11.5px;font-weight:800;color:#155e75;margin-bottom:8px;letter-spacing:.02em;">' +
           '<i class="fas fa-layer-group" style="margin-left:6px;"></i> الأبعاد المحاسبية للقيد' +
           '<span style="font-weight:500;color:#94a3b8;font-size:10.5px;margin-inline-start:8px;">(تُورَث على كل سطر تلقائيًا)</span>' +
         '</div>' +
@@ -6167,7 +6167,7 @@ function _renderAssetsReport(container) {
   var fmt = function(v) { return Number(v||0).toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2}); };
   window._apiBridge.withSuccessHandler(function(data) {
     var rows = (data.rows || []).filter(function(r) { return r.type === 'asset'; });
-    var html = '<h3 style="color:#8b5cf6;margin-bottom:12px;"><i class="fas fa-building" style="margin-left:6px;"></i> تقرير الأصول</h3>';
+    var html = '<h3 style="color:#0e7490;margin-bottom:12px;"><i class="fas fa-building" style="margin-left:6px;"></i> تقرير الأصول</h3>';
     html += '<div style="overflow-x:auto;border-radius:14px;border:1px solid #e2e8f0;"><table style="width:100%;border-collapse:collapse;font-size:13px;">';
     html += '<thead><tr style="background:#0f172a;color:#fff;"><th style="padding:10px 14px;">الرمز</th><th>اسم الحساب</th><th>رصيد أول مدين</th><th>رصيد أول دائن</th><th>حركة مدين</th><th>حركة دائن</th><th>رصيد نهائي مدين</th><th>رصيد نهائي دائن</th></tr></thead><tbody>';
     var tot = {od:0,oc:0,pd:0,pc:0,cd:0,cc:0};
@@ -6192,8 +6192,8 @@ function _renderTrialBalance(container, filters) {
   var fmt = function(v) { return Number(v||0).toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2}); };
   var typeLabels = {asset:'أصول',liability:'التزامات',equity:'حقوق ملكية',revenue:'إيرادات',expense:'مصروفات'};
   var typeIcons = {asset:'fa-coins',liability:'fa-hand-holding-usd',equity:'fa-gem',revenue:'fa-chart-line',expense:'fa-receipt'};
-  var typeBg = {asset:'#dbeafe',liability:'#fee2e2',equity:'#f3e8ff',revenue:'#dcfce7',expense:'#fef3c7'};
-  var typeFg = {asset:'#1e40af',liability:'#991b1b',equity:'#7c3aed',revenue:'#166534',expense:'#92400e'};
+  var typeBg = {asset:'#dbeafe',liability:'#fee2e2',equity:'#e6f3f7',revenue:'#dcfce7',expense:'#fef3c7'};
+  var typeFg = {asset:'#1e40af',liability:'#991b1b',equity:'#0e7490',revenue:'#166534',expense:'#92400e'};
 
   window._apiBridge.withSuccessHandler(function(data) {
     var rows = data.rows || [];
@@ -6236,7 +6236,7 @@ function _renderTrialBalance(container, filters) {
       '<th rowspan="2" style="padding:10px 12px;border:1px solid #1e293b;width:80px;text-align:center;">الرمز</th>' +
       '<th rowspan="2" style="padding:10px 12px;border:1px solid #1e293b;">اسم الحساب</th>' +
       '<th colspan="2" style="padding:8px;border:1px solid #1e293b;text-align:center;background:#1e3a5f;">رصيد أول المدة</th>' +
-      '<th colspan="2" style="padding:8px;border:1px solid #1e293b;text-align:center;background:#4c1d95;">حركة الفترة</th>' +
+      '<th colspan="2" style="padding:8px;border:1px solid #1e293b;text-align:center;background:#155e75;">حركة الفترة</th>' +
       '<th colspan="2" style="padding:8px;border:1px solid #1e293b;text-align:center;background:#065f46;">الرصيد النهائي</th>' +
       '</tr><tr style="background:#1e293b;color:#cbd5e1;">' +
       '<th style="padding:6px 10px;border:1px solid #334155;width:95px;">مدين</th><th style="padding:6px 10px;border:1px solid #334155;width:95px;">دائن</th>' +
@@ -6283,7 +6283,7 @@ function _renderTrialBalance(container, filters) {
         '<td style="text-align:center;padding:5px 8px;border:1px solid #e2e8f0;"><code style="font-weight:700;font-size:11px;color:' + (isParentAcc?'#1e40af':'#475569') + ';">' + r.code + '</code></td>' +
         '<td style="padding:5px 10px;padding-right:' + (10+indent) + 'px;font-weight:' + weight + ';font-size:' + fontSize + ';border:1px solid #e2e8f0;color:' + nameColor + ';">' + (isParentAcc?'<i class="fas fa-folder" style="margin-left:4px;font-size:10px;color:#3b82f6;"></i> ':'') + r.nameAR + '</td>' +
         cell(r.openDebit, '#1e40af') + cell(r.openCredit, '#1e40af') +
-        cell(r.periodDebit, '#7c3aed') + cell(r.periodCredit, '#7c3aed') +
+        cell(r.periodDebit, '#0e7490') + cell(r.periodCredit, '#0e7490') +
         cell(r.closeDebit, '#065f46') + cell(r.closeCredit, '#065f46') +
         '</tr>';
     });
@@ -6402,7 +6402,7 @@ function _renderIncomeStatement(container) {
     html += line('إجمالي المصروفات التشغيلية', d.totalOpex, true, '#fee2e2', '#991b1b');
 
     // 5. Operating Income
-    html += '<tr style="background:#7c3aed;color:#fff;font-weight:900;font-size:15px;"><td style="padding:10px 14px;">الربح التشغيلي (Operating Income)</td><td style="text-align:start;padding:10px 14px;">' + fmt(d.operatingIncome) + '</td></tr>';
+    html += '<tr style="background:#0e7490;color:#fff;font-weight:900;font-size:15px;"><td style="padding:10px 14px;">الربح التشغيلي (Operating Income)</td><td style="text-align:start;padding:10px 14px;">' + fmt(d.operatingIncome) + '</td></tr>';
 
     // 6. Other Income
     if ((d.otherIncome||[]).length) {
@@ -6440,7 +6440,7 @@ function _renderBalanceSheet(container) {
       var h = '<tr style="background:' + color + '12;"><td colspan="3" style="padding:8px 14px;font-weight:900;color:' + color + ';font-size:14px;"><i class="fas ' + icon + '" style="margin-left:6px;"></i> ' + title + '</td></tr>';
       (items||[]).forEach(function(r) {
         var indent = (r.level||3) > 2 ? ((r.level-2)*16) : 0;
-        var style = r.isComputed ? 'font-style:italic;color:#7c3aed;' : '';
+        var style = r.isComputed ? 'font-style:italic;color:#0e7490;' : '';
         h += '<tr style="' + style + '"><td style="padding:6px 14px;"><code style="color:#94a3b8;font-size:11px;margin-left:6px;">' + (r.code||'') + '</code></td><td style="padding:6px 14px;padding-right:' + (14+indent) + 'px;font-weight:600;">' + r.name + '</td><td style="text-align:start;padding:6px 14px;font-weight:700;">' + fmt(r.balance) + '</td></tr>';
       });
       h += '<tr style="background:' + color + '18;font-weight:900;"><td colspan="2" style="padding:8px 14px;">' + totalLabel + '</td><td style="text-align:start;padding:8px 14px;color:' + color + ';font-size:15px;">' + fmt(total) + '</td></tr>';
@@ -6473,7 +6473,7 @@ function _renderBalanceSheet(container) {
       html += section('الالتزامات غير المتداولة', 'fa-landmark', '#b91c1c', d.nonCurrentLiab, d.totNCL, 'إجمالي الالتزامات غير المتداولة');
     }
     html += '<tr style="background:#ef4444;color:#fff;font-weight:900;"><td colspan="2" style="padding:8px 14px;">إجمالي الالتزامات</td><td style="text-align:start;padding:8px 14px;">' + fmt(d.totalLiabilities) + '</td></tr>';
-    html += section('حقوق الملكية', 'fa-gem', '#8b5cf6', d.equityItems, d.totEq, 'إجمالي حقوق الملكية');
+    html += section('حقوق الملكية', 'fa-gem', '#0e7490', d.equityItems, d.totEq, 'إجمالي حقوق الملكية');
     html += '<tr style="background:#1e293b;color:#fff;font-weight:900;font-size:15px;"><td colspan="2" style="padding:10px 14px;">إجمالي الالتزامات + حقوق الملكية</td><td style="text-align:start;padding:10px 14px;">' + fmt(d.totalLiabilities + d.totEq) + '</td></tr>';
     html += '</tbody></table></div>';
 
@@ -6513,13 +6513,13 @@ function _invMethodInjectStyles() {
   st.id = 'invMethodStyles';
   st.textContent =
     '#erpInventoryMethod .im-section-title{font-size:15px;font-weight:800;margin:24px 0 12px;color:#0f172a;display:flex;align-items:center;gap:8px;}' +
-    '#erpInventoryMethod .im-parent-card{background:#fff;border:1.5px solid #ddd6fe;border-radius:14px;padding:18px 20px;display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1.2fr);gap:18px;align-items:start;}' +
+    '#erpInventoryMethod .im-parent-card{background:#fff;border:1.5px solid #cfe9f1;border-radius:14px;padding:18px 20px;display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1.2fr);gap:18px;align-items:start;}' +
     '@media (max-width:900px){#erpInventoryMethod .im-parent-card{grid-template-columns:1fr;}}' +
-    '#erpInventoryMethod .im-parent-current{padding:14px 16px;background:linear-gradient(135deg,#faf5ff,#fff 70%);border:1.5px solid #ede9fe;border-radius:12px;min-width:0;}' +
-    '#erpInventoryMethod .im-parent-label{font-size:11.5px;font-weight:800;color:#5b21b6;text-transform:uppercase;letter-spacing:0.04em;display:flex;align-items:center;gap:6px;}' +
+    '#erpInventoryMethod .im-parent-current{padding:14px 16px;background:linear-gradient(135deg,#e6f3f7,#fff 70%);border:1.5px solid #e6f3f7;border-radius:12px;min-width:0;}' +
+    '#erpInventoryMethod .im-parent-label{font-size:11.5px;font-weight:800;color:#155e75;text-transform:uppercase;letter-spacing:0.04em;display:flex;align-items:center;gap:6px;}' +
     '#erpInventoryMethod .im-parent-label i{font-size:11px;}' +
     '#erpInventoryMethod .im-parent-value{margin-top:10px;font-size:16px;font-weight:800;color:#0f172a;display:flex;align-items:center;gap:10px;flex-wrap:wrap;line-height:1.5;}' +
-    '#erpInventoryMethod .im-parent-value code{font-family:ui-monospace,Menlo,monospace;font-size:13px;background:#fff;padding:3px 10px;border-radius:7px;border:1.5px solid #ddd6fe;color:#5b21b6;font-weight:800;}' +
+    '#erpInventoryMethod .im-parent-value code{font-family:ui-monospace,Menlo,monospace;font-size:13px;background:#fff;padding:3px 10px;border-radius:7px;border:1.5px solid #cfe9f1;color:#155e75;font-weight:800;}' +
     '#erpInventoryMethod .im-parent-value .im-lvl{font-size:10.5px;font-weight:800;color:#64748b;background:#f1f5f9;padding:2px 8px;border-radius:5px;}' +
     '#erpInventoryMethod .im-parent-source{margin-top:8px;font-size:11.5px;color:#64748b;display:inline-flex;align-items:center;gap:5px;padding:3px 9px;background:#f8fafc;border-radius:999px;}' +
     '#erpInventoryMethod .im-parent-source.is-setting{background:#dcfce7;color:#15803d;font-weight:700;}' +
@@ -6530,9 +6530,9 @@ function _invMethodInjectStyles() {
     '#erpInventoryMethod .im-parent-actions{display:flex;gap:8px;flex-wrap:wrap;}' +
     '#erpInventoryMethod .im-btn{height:38px;padding:0 18px;border-radius:10px;border:1.5px solid transparent;font-family:inherit;font-size:13px;font-weight:700;cursor:pointer;display:inline-flex;align-items:center;gap:7px;transition:all .15s ease;}' +
     '#erpInventoryMethod .im-btn-ghost{background:#fff;border-color:#cbd5e1;color:#475569;}' +
-    '#erpInventoryMethod .im-btn-ghost:hover{border-color:#7c3aed;color:#5b21b6;background:#faf5ff;}' +
-    '#erpInventoryMethod .im-btn-primary{background:linear-gradient(135deg,#7c3aed,#6d28d9);color:#fff;box-shadow:0 4px 12px rgba(124,58,237,0.30);}' +
-    '#erpInventoryMethod .im-btn-primary:hover:not(:disabled){box-shadow:0 6px 18px rgba(124,58,237,0.45);transform:translateY(-1px);}' +
+    '#erpInventoryMethod .im-btn-ghost:hover{border-color:#0e7490;color:#155e75;background:#e6f3f7;}' +
+    '#erpInventoryMethod .im-btn-primary{background:linear-gradient(135deg,#0e7490,#155e75);color:#fff;box-shadow:0 4px 12px rgba(14, 116, 144,0.30);}' +
+    '#erpInventoryMethod .im-btn-primary:hover:not(:disabled){box-shadow:0 6px 18px rgba(14, 116, 144,0.45);transform:translateY(-1px);}' +
     '#erpInventoryMethod .im-btn-primary:disabled{opacity:0.6;cursor:not-allowed;}' +
     '#erpInventoryMethod .im-parent-warn{grid-column:1/-1;margin-top:6px;padding:11px 14px;background:#fef2f2;border:1.5px solid #fca5a5;border-radius:10px;font-size:12.5px;color:#7f1d1d;display:flex;align-items:flex-start;gap:10px;line-height:1.6;}' +
     '#erpInventoryMethod .im-parent-warn i{color:#dc2626;font-size:14px;margin-top:1px;flex-shrink:0;}' +
@@ -6542,14 +6542,14 @@ function _invMethodInjectStyles() {
     '#erpInventoryMethod .coa-sel{position:relative;width:100%;}' +
     '#erpInventoryMethod .coa-sel__trigger{width:100%;height:42px;padding:0 14px;border:1.5px solid #e2e8f0;border-radius:10px;background:#fff;font-family:inherit;font-size:13.5px;color:#0f172a;cursor:pointer;display:flex;align-items:center;justify-content:space-between;gap:8px;transition:border-color .15s ease,box-shadow .15s ease;}' +
     '#erpInventoryMethod .coa-sel__trigger:hover{border-color:#94a3b8;}' +
-    '#erpInventoryMethod .coa-sel[data-open="1"] .coa-sel__trigger{border-color:#7c3aed;box-shadow:0 0 0 3px rgba(124,58,237,0.12);}' +
+    '#erpInventoryMethod .coa-sel[data-open="1"] .coa-sel__trigger{border-color:#0e7490;box-shadow:0 0 0 3px rgba(14, 116, 144,0.12);}' +
     '#erpInventoryMethod .coa-sel__triggerText{display:flex;align-items:center;gap:8px;flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}' +
-    '#erpInventoryMethod .coa-sel__trigger-code{font-family:ui-monospace,Menlo,monospace;font-size:11.5px;background:#ede9fe;color:#5b21b6;padding:2px 8px;border-radius:5px;font-weight:700;flex-shrink:0;}' +
+    '#erpInventoryMethod .coa-sel__trigger-code{font-family:ui-monospace,Menlo,monospace;font-size:11.5px;background:#e6f3f7;color:#155e75;padding:2px 8px;border-radius:5px;font-weight:700;flex-shrink:0;}' +
     '#erpInventoryMethod .coa-sel__trigger-name{font-weight:600;color:#0f172a;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}' +
     '#erpInventoryMethod .coa-sel__current{flex:1;color:#0f172a;}' +
     '#erpInventoryMethod .coa-sel__current.is-placeholder{color:#94a3b8;font-weight:500;}' +
     '#erpInventoryMethod .coa-sel__chev{color:#94a3b8;font-size:11px;transition:transform .15s ease;}' +
-    '#erpInventoryMethod .coa-sel[data-open="1"] .coa-sel__chev{transform:rotate(180deg);color:#7c3aed;}' +
+    '#erpInventoryMethod .coa-sel[data-open="1"] .coa-sel__chev{transform:rotate(180deg);color:#0e7490;}' +
     '#erpInventoryMethod .coa-sel__panel{display:none;position:absolute;top:calc(100% + 4px);left:0;right:0;background:#fff;border:1.5px solid #e2e8f0;border-radius:10px;box-shadow:0 10px 30px -10px rgba(15,23,42,0.20);z-index:30;flex-direction:column;overflow:hidden;}' +
     '#erpInventoryMethod .coa-sel[data-open="1"] .coa-sel__panel{display:flex;}' +
     '#erpInventoryMethod .coa-sel__searchbox{display:flex;align-items:center;gap:8px;padding:8px 12px;border-bottom:1.5px solid #f1f5f9;background:#fafafa;}' +
@@ -6558,11 +6558,11 @@ function _invMethodInjectStyles() {
     '#erpInventoryMethod .coa-sel__list{max-height:240px;overflow-y:auto;}' +
     '#erpInventoryMethod .coa-sel__opt{display:flex;align-items:center;gap:8px;padding:8px 14px;cursor:pointer;border-bottom:1px solid #f1f5f9;font-size:13px;transition:background .12s ease;}' +
     '#erpInventoryMethod .coa-sel__opt:last-child{border-bottom:none;}' +
-    '#erpInventoryMethod .coa-sel__opt:hover,#erpInventoryMethod .coa-sel__opt.is-active{background:#faf5ff;}' +
-    '#erpInventoryMethod .coa-sel__opt.is-selected{background:#ede9fe;}' +
-    '#erpInventoryMethod .coa-sel__opt-code{font-family:ui-monospace,Menlo,monospace;font-size:11px;background:#f5f3ff;color:#5b21b6;padding:2px 7px;border-radius:4px;font-weight:700;flex-shrink:0;min-width:62px;text-align:center;}' +
+    '#erpInventoryMethod .coa-sel__opt:hover,#erpInventoryMethod .coa-sel__opt.is-active{background:#e6f3f7;}' +
+    '#erpInventoryMethod .coa-sel__opt.is-selected{background:#e6f3f7;}' +
+    '#erpInventoryMethod .coa-sel__opt-code{font-family:ui-monospace,Menlo,monospace;font-size:11px;background:#e6f3f7;color:#155e75;padding:2px 7px;border-radius:4px;font-weight:700;flex-shrink:0;min-width:62px;text-align:center;}' +
     '#erpInventoryMethod .coa-sel__opt-name{flex:1;color:#0f172a;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}' +
-    '#erpInventoryMethod .coa-sel__tick{color:#7c3aed;font-size:12px;flex-shrink:0;}' +
+    '#erpInventoryMethod .coa-sel__tick{color:#0e7490;font-size:12px;flex-shrink:0;}' +
     '#erpInventoryMethod .coa-sel__footer{padding:6px 12px;border-top:1.5px solid #f1f5f9;background:#fafafa;font-size:11px;color:#64748b;}' +
     '#erpInventoryMethod .coa-sel__empty{padding:24px 12px;text-align:center;color:#94a3b8;font-size:12.5px;}' +
     '';
@@ -6892,7 +6892,7 @@ function erpLoadInventoryValuation(filters) {
 
       // Per-brand cards
       if (Object.keys(byBrand).length) {
-        html += '<h3 class="wo-section-heading" style="font-size:14px;font-weight:800;margin:24px 0 12px;color:#0f172a;"><i class="fas fa-tags" style="color:#8b5cf6;"></i> تقييم حسب البراند</h3>';
+        html += '<h3 class="wo-section-heading" style="font-size:14px;font-weight:800;margin:24px 0 12px;color:#0f172a;"><i class="fas fa-tags" style="color:#0e7490;"></i> تقييم حسب البراند</h3>';
         html += '<div class="wo-metric-strip">';
         Object.keys(byBrand).forEach(function(k) {
           var b = byBrand[k];
@@ -7278,7 +7278,7 @@ function _whRender(list) {
       _whStatCard('إجمالي المستودعات', list.length, 'مستودع',     'fa-warehouse',       '#3b82f6', '#dbeafe', 'eff6ff') +
       _whStatCard('المستودعات النشطة', active,      'نشط',         'fa-circle-check',    '#15803d', '#dcfce7', 'f0fdf4') +
       _whStatCard('أنواع المستودعات',  Object.keys(byType).length, 'نوع', 'fa-layer-group', '#854d0e', '#fef9c3', 'fefce8') +
-      _whStatCard('مرتبط ببراند',      brandedCount, 'مستودع',     'fa-shop',           '#7c3aed', '#f3e8ff', 'faf5ff');
+      _whStatCard('مرتبط ببراند',      brandedCount, 'مستودع',     'fa-shop',           '#0e7490', '#e6f3f7', 'faf5ff');
   }
   // Populate brand filter (once)
   var bf = document.getElementById('whpBrandFilter');
@@ -7426,7 +7426,7 @@ function _whInjectStyles() {
     '.whp-card-pill{display:inline-flex;align-items:center;gap:5px;font-size:10.5px;font-weight:700;padding:4px 9px;border-radius:8px;}' +
     '.whp-card-pill i{font-size:9px;}' +
     '.whp-pill-type{background:#fef9c3;color:#854d0e;}' +
-    '.whp-pill-brand{background:#ede9fe;color:#6d28d9;}' +
+    '.whp-pill-brand{background:#e6f3f7;color:#155e75;}' +
     '.whp-pill-branch{background:#dbeafe;color:#1e40af;}' +
     '.whp-pill-muted{background:#f1f5f9;color:#94a3b8;}' +
     '.whp-card-meta{display:flex;flex-direction:column;gap:6px;padding:10px 0;border-top:1px solid #f1f5f9;border-bottom:1px solid #f1f5f9;}' +
@@ -7506,7 +7506,7 @@ function erpOpenWarehouseModal(data) {
       { id:'branch',     label:'فرعي',      icon:'fa-store',              color:'#0d47a1' },
       { id:'production', label:'إنتاج',     icon:'fa-industry',           color:'#15803d' },
       { id:'raw',        label:'مواد خام',  icon:'fa-cubes',              color:'#854d0e' },
-      { id:'finished',   label:'تامة',      icon:'fa-box-open',           color:'#7c3aed' },
+      { id:'finished',   label:'تامة',      icon:'fa-box-open',           color:'#0e7490' },
       { id:'waste',      label:'هدر',       icon:'fa-recycle',            color:'#b91c1c' }
     ];
     var typeCardsHtml = typeBtns.map(function(t) {
@@ -8009,7 +8009,7 @@ function erpLoadBranchesFull() {
         // point under either intent.
         '<td>' +
           '<button class="btn-icon" title="تعديل / إعدادات الفرع" onclick="erpEditBranchFull(\'' + b.id + '\')"><i class="fas fa-edit"></i></button>' +
-          '<button class="btn-icon" title="إعدادات الفرع" onclick="erpEditBranchFull(\'' + b.id + '\')" style="margin-inline-start:6px;color:#7c3aed;"><i class="fas fa-cog"></i></button>' +
+          '<button class="btn-icon" title="إعدادات الفرع" onclick="erpEditBranchFull(\'' + b.id + '\')" style="margin-inline-start:6px;color:#0e7490;"><i class="fas fa-cog"></i></button>' +
         '</td></tr>';
     }).join('');
   }).getBranchesFull();
@@ -8612,18 +8612,18 @@ function _brfPoiIcon(tags) {
   if (t.amenity === 'fast_food')    return { ic: 'fa-burger',           c: '#ea580c', tx: 'وجبات سريعة' };
   if (t.amenity === 'fuel')         return { ic: 'fa-gas-pump',         c: '#0891b2', tx: 'محطة وقود' };
   if (t.amenity === 'pharmacy')     return { ic: 'fa-prescription-bottle-medical', c: '#16a34a', tx: 'صيدلية' };
-  if (t.amenity === 'bank' || t.amenity === 'atm') return { ic: 'fa-building-columns', c: '#7c3aed', tx: t.amenity === 'atm' ? 'صراف آلي' : 'بنك' };
+  if (t.amenity === 'bank' || t.amenity === 'atm') return { ic: 'fa-building-columns', c: '#0e7490', tx: t.amenity === 'atm' ? 'صراف آلي' : 'بنك' };
   if (t.amenity === 'hospital' || t.amenity === 'clinic') return { ic: 'fa-hospital',  c: '#dc2626', tx: t.amenity === 'hospital' ? 'مستشفى' : 'عيادة' };
   if (t.amenity === 'mosque')       return { ic: 'fa-mosque',           c: '#15803d', tx: 'مسجد' };
   if (t.amenity === 'school' || t.amenity === 'university') return { ic: 'fa-graduation-cap', c: '#1e40af', tx: t.amenity === 'school' ? 'مدرسة' : 'جامعة' };
-  if (t.amenity === 'marketplace')  return { ic: 'fa-cart-shopping',    c: '#9333ea', tx: 'سوق' };
+  if (t.amenity === 'marketplace')  return { ic: 'fa-cart-shopping',    c: '#0e7490', tx: 'سوق' };
   if (t.amenity === 'cinema')       return { ic: 'fa-film',             c: '#0d9488', tx: 'سينما' };
   if (t.shop === 'supermarket')     return { ic: 'fa-cart-shopping',    c: '#1e40af', tx: 'سوبر ماركت' };
   if (t.shop === 'convenience')     return { ic: 'fa-store',            c: '#0891b2', tx: 'بقالة' };
-  if (t.shop)                       return { ic: 'fa-store',            c: '#6b21a8', tx: 'متجر · ' + t.shop };
+  if (t.shop)                       return { ic: 'fa-store',            c: '#155e75', tx: 'متجر · ' + t.shop };
   if (t.tourism === 'hotel' || t.tourism === 'hostel') return { ic: 'fa-hotel', c: '#0d9488', tx: 'فندق' };
   if (t.office)                     return { ic: 'fa-briefcase',        c: '#475569', tx: 'مكتب · ' + t.office };
-  if (t.building === 'commercial')  return { ic: 'fa-city',             c: '#7c3aed', tx: 'مَبنى تجاري' };
+  if (t.building === 'commercial')  return { ic: 'fa-city',             c: '#0e7490', tx: 'مَبنى تجاري' };
   return { ic: 'fa-map-pin', c: '#64748b', tx: 'موقع' };
 }
 
@@ -8749,7 +8749,7 @@ function _brfRenderPois(filterQ) {
       var markerIcon = L.divIcon({ className: 'brf-poi-label', html: markerHtml, iconSize: null });
       L.marker([e.lat, e.lon], { icon: markerIcon, interactive: false, keyboard: false }).addTo(s.poiLayer);
     }
-    return '<div class="brf-poi" data-lat="' + e.lat + '" data-lng="' + e.lon + '" data-name="' + _brfAttr(nm) + '" style="display:flex;align-items:center;gap:10px;padding:9px 10px;border-bottom:1px solid #f1f5f9;cursor:pointer;transition:background .12s;" onmouseover="this.style.background=\'#faf5ff\';" onmouseout="this.style.background=\'\';">' +
+    return '<div class="brf-poi" data-lat="' + e.lat + '" data-lng="' + e.lon + '" data-name="' + _brfAttr(nm) + '" style="display:flex;align-items:center;gap:10px;padding:9px 10px;border-bottom:1px solid #f1f5f9;cursor:pointer;transition:background .12s;" onmouseover="this.style.background=\'#e6f3f7\';" onmouseout="this.style.background=\'\';">' +
       '<div style="width:32px;height:32px;border-radius:8px;background:' + info.c + '1a;color:' + info.c + ';display:flex;align-items:center;justify-content:center;flex-shrink:0;"><i class="fas ' + info.ic + '"></i></div>' +
       '<div style="flex:1;min-width:0;">' +
         '<div style="font-weight:800;color:#0f172a;font-size:12.5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">' + _brfAttr(nm) + '</div>' +
@@ -8770,7 +8770,7 @@ function _brfRenderPois(filterQ) {
       if (srch) srch.value = el.dataset.name || '';
       // Highlight the selected item
       Array.prototype.forEach.call(document.querySelectorAll('.brf-poi'), function(x) { x.style.background = ''; });
-      el.style.background = '#ede9fe';
+      el.style.background = '#e6f3f7';
     };
   });
 }
@@ -9710,7 +9710,7 @@ function wfLoadPositions() {
         '</div>' +
         '<div style="display:flex;align-items:center;gap:8px;margin-top:4px;">' +
           '<span style="font-size:12px;font-weight:700;color:#64748b;white-space:nowrap;">المستوى ' + (p.level || 0) + '</span>' +
-          '<div style="height:6px;border-radius:3px;background:#e2e8f0;flex:1;max-width:120px;overflow:hidden;"><div style="height:100%;border-radius:3px;background:linear-gradient(90deg,#3b82f6,#8b5cf6);width:' + pct + '%;"></div></div>' +
+          '<div style="height:6px;border-radius:3px;background:#e2e8f0;flex:1;max-width:120px;overflow:hidden;"><div style="height:100%;border-radius:3px;background:linear-gradient(90deg,#3b82f6,#0e7490);width:' + pct + '%;"></div></div>' +
         '</div>' +
         '<div style="display:flex;align-items:center;justify-content:space-between;margin-top:12px;padding-top:10px;border-top:1px solid #f1f5f9;">' +
           '<span style="font-size:12px;color:#94a3b8;">الصلاحية: ' + (p.level||0) + '</span>' +
@@ -9768,7 +9768,7 @@ function wfLoadTypes() {
     _wfTypes = list || [];
     if (!list.length) { grid.innerHTML = '<div style="text-align:center;padding:40px;color:#94a3b8;grid-column:1/-1;font-style:italic;">لا توجد أنواع — اضغط "نوع جديد"</div>'; return; }
     var icons = { EXPENSE: 'fa-money-bill-wave', PURCHASE: 'fa-shopping-cart', ASSET: 'fa-building', PAYMENT: 'fa-credit-card' };
-    var colors = { EXPENSE: '#dc2626', PURCHASE: '#2563eb', ASSET: '#7c3aed', PAYMENT: '#059669' };
+    var colors = { EXPENSE: '#dc2626', PURCHASE: '#2563eb', ASSET: '#0e7490', PAYMENT: '#059669' };
     grid.innerHTML = list.map(function(t) {
       var icon = icons[t.code] || 'fa-file-alt';
       var color = colors[t.code] || '#2563eb';
@@ -9924,7 +9924,7 @@ function _wfLoadDefsByRole() {
           '</div>' +
           '<div style="display:flex;gap:3px;justify-content:flex-start;margin-top:4px;flex-wrap:wrap;">' +
             (w.requireSameBranch!==false ? '<span style="padding:1px 5px;background:#dbeafe;color:#1e40af;border-radius:4px;font-size:9px;font-weight:700;">نفس الفرع</span>' : '') +
-            (w.requireSameDepartment ? '<span style="padding:1px 5px;background:#ede9fe;color:#6d28d9;border-radius:4px;font-size:9px;font-weight:700;">نفس القسم</span>' : '') +
+            (w.requireSameDepartment ? '<span style="padding:1px 5px;background:#e6f3f7;color:#155e75;border-radius:4px;font-size:9px;font-weight:700;">نفس القسم</span>' : '') +
             '<span style="padding:1px 5px;background:#dcfce7;color:#166534;border-radius:4px;font-size:9px;font-weight:700;">' + (w.assignmentStrategy === 'first' ? 'الأول' : 'الأقل انشغالاً') + '</span>' +
           '</div>' +
           '<div style="display:flex;gap:3px;justify-content:flex-start;margin-top:6px;">' +
@@ -9967,11 +9967,11 @@ function _wfLoadDefsByType() {
       var cBorder = w.isFinal ? '2.5px solid #86efac' : '2.5px solid #93c5fd';
       var cColor = w.isFinal ? '#166534' : '#1e40af';
       var roleChip = w.positionName
-        ? '<div style="display:inline-flex;align-items:center;gap:4px;padding:3px 10px;background:#ede9fe;color:#6d28d9;border-radius:8px;font-size:11px;font-weight:700;margin-top:4px;"><i class="fas fa-id-badge"></i>' + w.positionName + '</div>'
+        ? '<div style="display:inline-flex;align-items:center;gap:4px;padding:3px 10px;background:#e6f3f7;color:#155e75;border-radius:8px;font-size:11px;font-weight:700;margin-top:4px;"><i class="fas fa-id-badge"></i>' + w.positionName + '</div>'
         : '<div style="color:#94a3b8;font-size:11px;margin-top:4px;">أي منصب</div>';
       var scopeChips = '<div style="display:flex;gap:3px;justify-content:center;margin-top:5px;flex-wrap:wrap;">';
       if (w.requireSameBranch !== false) scopeChips += '<span style="padding:1px 6px;background:#dbeafe;color:#1e40af;border-radius:6px;font-size:9px;font-weight:700;">نفس الفرع</span>';
-      if (w.requireSameDepartment) scopeChips += '<span style="padding:1px 6px;background:#ede9fe;color:#6d28d9;border-radius:6px;font-size:9px;font-weight:700;">نفس القسم</span>';
+      if (w.requireSameDepartment) scopeChips += '<span style="padding:1px 6px;background:#e6f3f7;color:#155e75;border-radius:6px;font-size:9px;font-weight:700;">نفس القسم</span>';
       if (w.assignmentStrategy === 'first') scopeChips += '<span style="padding:1px 6px;background:#fef3c7;color:#92400e;border-radius:6px;font-size:9px;font-weight:700;">الأول</span>';
       else scopeChips += '<span style="padding:1px 6px;background:#dcfce7;color:#166534;border-radius:6px;font-size:9px;font-weight:700;">الأقل انشغالاً</span>';
       scopeChips += '</div>';
@@ -10049,7 +10049,7 @@ function wfOpenDefModal(data) {
         '</div>' +
       '</div>' +
 
-      '<div class="form-row"><label><i class="fas fa-id-badge" style="color:#8b5cf6;"></i> المسمى الوظيفي المسؤول (Role) *</label>' +
+      '<div class="form-row"><label><i class="fas fa-id-badge" style="color:#0e7490;"></i> المسمى الوظيفي المسؤول (Role) *</label>' +
         '<select class="form-control" id="wfDefPosition"><option value="">— أي منصب —</option>' + posOpts + '</select>' +
         '<div style="font-size:11px;color:#64748b;margin-top:4px;"><i class="fas fa-info-circle"></i> سيتم اختيار الموظف تلقائياً حسب هذا المسمى.</div>' +
       '</div>' +
@@ -10367,7 +10367,7 @@ window._wfInboxRenderRow = function(t){
     actions += '<button class="btn btn-sm btn-success" onclick="wfTxnAction(\'' + idEsc + '\',\'approve\')" title="موافقة" aria-label="اعتماد"><i class="fas fa-check"></i></button>';
     actions += '<button class="btn btn-sm btn-danger" onclick="wfTxnAction(\'' + idEsc + '\',\'reject\')" title="رفض" aria-label="رفض"><i class="fas fa-times"></i></button>';
     actions += '<button class="btn btn-sm" style="background:#fef3c7;color:#92400e;" onclick="wfTxnAction(\'' + idEsc + '\',\'return\')" title="إرجاع" aria-label="إعادة"><i class="fas fa-undo"></i></button>';
-    actions += '<button class="btn btn-sm" style="background:#f3e8ff;color:#7c3aed;" onclick="wfForwardTxn(\'' + idEsc + '\')" title="تحويل" aria-label="تحويل"><i class="fas fa-share"></i></button>';
+    actions += '<button class="btn btn-sm" style="background:#e6f3f7;color:#0e7490;" onclick="wfForwardTxn(\'' + idEsc + '\')" title="تحويل" aria-label="تحويل"><i class="fas fa-share"></i></button>';
   }
   actions += '</div>';
   // V5: status badge from shared TxnConst (with color contrast)
@@ -10393,7 +10393,7 @@ window._wfInboxRenderRow = function(t){
     // current_assignee text only when the employee record is missing.
     '<td style="font-size:12px;"><div style="font-weight:700;color:#1e40af;">' + (t.assigneeName||t.currentAssignee||'—') + '</div>' +
     (t.assigneeJobTitle ? '<div style="font-size:10px;color:#0d9488;font-weight:700;">'+t.assigneeJobTitle+'</div>' : '') +
-    (t.currentRoleName ? '<div style="font-size:10px;color:#8b5cf6;font-weight:700;"><i class="fas fa-id-badge" style="font-size:8px;"></i> ' + t.currentRoleName + '</div>' : '') +
+    (t.currentRoleName ? '<div style="font-size:10px;color:#0e7490;font-weight:700;"><i class="fas fa-id-badge" style="font-size:8px;"></i> ' + t.currentRoleName + '</div>' : '') +
     (t.sameOwner ? '<div style="font-size:9px;color:#94a3b8;font-weight:600;margin-top:2px;"><i class="fas fa-circle-check" style="color:#10b981;"></i> هو المُنشِئ نفسه</div>' : '') + '</td>' +
     '<td style="font-size:12px;color:#64748b;">' + dt + '</td>' +
     '<td>' + actions + '</td>' +
@@ -10720,22 +10720,22 @@ function wfOpenNewTxnModal() {
         '.wf-step { position: relative; z-index: 2; display: flex; flex-direction: column; align-items: center; gap: 8px; cursor: pointer; width: 120px; }' +
         '.wf-step-circle { width: 42px; height: 42px; border-radius: 50%; background: #fff; border: 3px solid #e2e8f0; display: flex; align-items: center; justify-content: center; font-size: 15px; font-weight: 800; color: #94a3b8; transition: all 0.3s ease; }' +
         '.wf-step-label { font-size: 13.5px; font-weight: 700; color: #64748b; transition: color 0.3s ease; text-align: center; }' +
-        '.wf-step.active .wf-step-circle { border-color: #7c3aed; background: #7c3aed; color: #fff; box-shadow: 0 0 0 6px rgba(124, 58, 237, 0.12); }' +
-        '.wf-step.active .wf-step-label { color: #7c3aed; font-weight: 800; }' +
+        '.wf-step.active .wf-step-circle { border-color: #0e7490; background: #0e7490; color: #fff; box-shadow: 0 0 0 6px rgba(14, 116, 144, 0.12); }' +
+        '.wf-step.active .wf-step-label { color: #0e7490; font-weight: 800; }' +
         '.wf-step.completed .wf-step-circle { border-color: #10b981; background: #10b981; color: #fff; }' +
         '.wf-step.completed .wf-step-label { color: #10b981; }' +
         '.wfnt-content { display: none; animation: wfFadeIn 0.4s ease; }' +
         '@keyframes wfFadeIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }' +
         '.wfnt-sec { background: #fff; border: 1px solid #e2e8f0; border-radius: 14px; padding: 24px; margin-bottom: 16px; box-shadow: 0 2px 4px rgba(15, 23, 42, 0.02); }' +
         '.wfnt-sec-h { font-size: 16px; font-weight: 800; color: #0f172a; margin-bottom: 20px; padding-bottom: 12px; border-bottom: 1px solid #f1f5f9; display: flex; align-items: center; gap: 10px; }' +
-        '.wfnt-sec-h i { color: #7c3aed; font-size: 18px; }' +
+        '.wfnt-sec-h i { color: #0e7490; font-size: 18px; }' +
         '.wfnt-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 18px; }' +
         '.wfnt-grid-full { grid-column: 1 / -1; }' +
         '.wfnt-field { display: flex; flex-direction: column; gap: 8px; }' +
         '.wfnt-field label { font-size: 13px; font-weight: 700; color: #475569; display: flex; align-items: center; gap: 4px; }' +
         '.wfnt-field label .req { color: #ef4444; font-size: 14px; }' +
         '.wfnt-input, .wfnt-sel { width: 100%; height: 46px; padding: 0 16px; border: 1.5px solid #cbd5e1; border-radius: 10px; font-size: 14px; font-weight: 500; background: #f8fafc; font-family: inherit; color: #0f172a; transition: all 0.2s ease; box-sizing: border-box; }' +
-        '.wfnt-input:focus, .wfnt-sel:focus { outline: none; border-color: #7c3aed; background: #fff; box-shadow: 0 0 0 4px rgba(124, 58, 237, 0.1); }' +
+        '.wfnt-input:focus, .wfnt-sel:focus { outline: none; border-color: #0e7490; background: #fff; box-shadow: 0 0 0 4px rgba(14, 116, 144, 0.1); }' +
         '.wfnt-input:hover:not(:focus), .wfnt-sel:hover:not(:focus) { border-color: #94a3b8; }' +
         '.wfnt-input[readonly] { background: #f1f5f9; color: #64748b; cursor: not-allowed; border-color: #e2e8f0; }' +
         '.wfnt-sel { appearance: none; background-image: url("data:image/svg+xml;utf8,<svg xmlns=\\\'http://www.w3.org/2000/svg\\\' width=\\\'12\\\' height=\\\'12\\\' viewBox=\\\'0 0 12 12\\\'><path d=\\\'M3 5l3 3 3-3\\\' stroke=\\\'%2364748b\\\' stroke-width=\\\'1.6\\\' stroke-linecap=\\\'round\\\' stroke-linejoin=\\\'round\\\' fill=\\\'none\\\'/></svg>"); background-repeat: no-repeat; background-position: left 16px center; cursor: pointer; padding-left: 36px; }' +
@@ -10750,16 +10750,16 @@ function wfOpenNewTxnModal() {
         '.wf-toggle input:checked + .wf-slider { background-color: #10b981; }' +
         '.wf-toggle input:checked + .wf-slider:before { transform: translateX(20px); }' +
         '.wfnt-rtb-wrap { border: 1.5px solid #cbd5e1; border-radius: 10px; overflow: hidden; transition: border-color 0.2s; }' +
-        '.wfnt-rtb-wrap:focus-within { border-color: #7c3aed; box-shadow: 0 0 0 4px rgba(124, 58, 237, 0.1); }' +
+        '.wfnt-rtb-wrap:focus-within { border-color: #0e7490; box-shadow: 0 0 0 4px rgba(14, 116, 144, 0.1); }' +
         '.wfnt-rtb-bar { display: flex; gap: 4px; padding: 8px; background: #f8fafc; border-bottom: 1px solid #e2e8f0; flex-wrap: wrap; }' +
         '.wfnt-rtb-btn { width: 32px; height: 32px; border: 0; background: transparent; border-radius: 6px; cursor: pointer; color: #475569; font-size: 13px; display: inline-flex; align-items: center; justify-content: center; transition: all 0.2s; }' +
         '.wfnt-rtb-btn:hover { background: #e2e8f0; color: #0f172a; }' +
         '.wfnt-rtb-ed { min-height: 240px; padding: 16px; font-size: 14px; line-height: 1.8; outline: none; direction: rtl; background: #fff; }' +
         '.wfnt-rtb-ed:empty:before { content: "اكتب محتوى المعاملة بوضوح..."; color: #94a3b8; }' +
         '.wf-file-upload { border: 2px dashed #cbd5e1; border-radius: 12px; padding: 30px; text-align: center; background: #f8fafc; cursor: pointer; transition: all 0.2s; margin-bottom: 10px; }' +
-        '.wf-file-upload:hover { border-color: #7c3aed; background: #faf5ff; }' +
+        '.wf-file-upload:hover { border-color: #0e7490; background: #e6f3f7; }' +
         '.wf-file-upload i { font-size: 32px; color: #94a3b8; margin-bottom: 12px; }' +
-        '.wf-file-upload.dragover { border-color: #7c3aed; background: #faf5ff; }' +
+        '.wf-file-upload.dragover { border-color: #0e7490; background: #e6f3f7; }' +
         '.wf-modal-footer-modern { display: flex; justify-content: space-between; align-items: center; padding-top: 16px; width: 100%; }' +
         '.wf-footer-actions { display: flex; gap: 12px; }' +
       '</style>' +
@@ -10797,7 +10797,7 @@ function wfOpenNewTxnModal() {
               '<label>تاريخ المعاملة</label>' +
               '<div style="display:flex;gap:8px;">' +
                 '<input class="wfnt-input" id="wfnDateG" value="' + gregStr + '" readonly style="flex:2;">' +
-                '<input class="wfnt-input" id="wfnDateH" value="' + hijriStr + '" readonly style="flex:1;text-align:center;color:#7c3aed;font-weight:700;">' +
+                '<input class="wfnt-input" id="wfnDateH" value="' + hijriStr + '" readonly style="flex:1;text-align:center;color:#0e7490;font-weight:700;">' +
               '</div>' +
             '</div>' +
             '<div class="wfnt-field">' +
@@ -11130,8 +11130,8 @@ function wfViewTxn(id) {
     var sClr = { pending:'#f59e0b', in_progress:'#0ea5e9', approved:'#10b981', returned:'#dc2626', rejected:'#991b1b', closed:'#6b7280', draft:'#94a3b8' };
     var sIcon = { pending:'fa-clock', in_progress:'fa-spinner', approved:'fa-circle-check', returned:'fa-rotate-left', rejected:'fa-circle-xmark', closed:'fa-lock', draft:'fa-file-pen' };
     var aMap = { create:'إنشاء', approve:'موافقة', reject:'رفض', return:'إرجاع', close:'إغلاق', forward:'تحويل' };
-    var aClr = { create:'#0ea5e9', approve:'#16a34a', reject:'#dc2626', return:'#f59e0b', close:'#6b7280', forward:'#8b5cf6' };
-    var aBg  = { create:'#e0f2fe', approve:'#dcfce7', reject:'#fee2e2', return:'#fef3c7', close:'#f3f4f6', forward:'#ede9fe' };
+    var aClr = { create:'#0ea5e9', approve:'#16a34a', reject:'#dc2626', return:'#f59e0b', close:'#6b7280', forward:'#0e7490' };
+    var aBg  = { create:'#e0f2fe', approve:'#dcfce7', reject:'#fee2e2', return:'#fef3c7', close:'#f3f4f6', forward:'#e6f3f7' };
     var aIcon = { create:'fa-plus-circle', approve:'fa-check-circle', reject:'fa-times-circle', return:'fa-undo', close:'fa-lock', forward:'fa-share' };
     var sc = sClr[txn.status]||'#6b7280';
     var impColors = window._wfImpColors || {}, impLabels = window._wfImpLabels || {};
@@ -11147,7 +11147,7 @@ function wfViewTxn(id) {
       '<span style="display:inline-flex;align-items:center;gap:6px;padding:6px 14px;border-radius:999px;background:'+sc+'15;border:1.5px solid '+sc+';color:'+sc+';font-size:13px;font-weight:900;"><i class="fas '+(sIcon[txn.status]||'fa-circle')+'"></i> '+(sMap[txn.status]||txn.status)+'</span>' +
       '<span style="display:inline-flex;align-items:center;gap:6px;padding:6px 14px;border-radius:999px;background:'+ic+'15;border:1.5px solid '+ic+';color:'+ic+';font-size:12px;font-weight:800;"><i class="fas fa-bolt" style="font-size:10px;"></i> '+(impLabels[txn.importance]||txn.importance)+'</span>' +
       '<span style="display:inline-flex;align-items:center;gap:6px;padding:6px 12px;border-radius:999px;background:'+cS.c+'15;color:'+cS.c+';font-size:11px;font-weight:700;"><i class="fas fa-shield-alt"></i> '+cS.l+'</span>' +
-      (txn.hijriDate ? '<span style="display:inline-flex;align-items:center;gap:6px;padding:6px 12px;border-radius:999px;background:#ede9fe;color:#6d28d9;font-size:11px;font-weight:700;"><i class="fas fa-moon"></i> '+txn.hijriDate+'</span>' : '') +
+      (txn.hijriDate ? '<span style="display:inline-flex;align-items:center;gap:6px;padding:6px 12px;border-radius:999px;background:#e6f3f7;color:#155e75;font-size:11px;font-weight:700;"><i class="fas fa-moon"></i> '+txn.hijriDate+'</span>' : '') +
     '</div>';
 
     // ─── RETURNED BANNER: prominent message when transaction was returned for edit ───
@@ -11261,7 +11261,7 @@ function wfViewTxn(id) {
             (txn.creatorJobTitle?'<div style="color:#0d9488;font-size:11px;font-weight:700;margin-top:2px;">'+esc(txn.creatorJobTitle)+'</div>':'') +
             '<div style="color:#94a3b8;font-size:10px;margin-top:2px;"><i class="fas fa-circle-check" style="color:#10b981;"></i> هو المُنشِئ والمسؤول الحالي معاً</div>')
         : (metaRow('المُنشِئ', '<b>'+esc(txn.creatorName||txn.senderName||txn.createdBy||'—')+'</b>' + (txn.creatorJobTitle?'<div style="color:#0d9488;font-size:11px;font-weight:700;margin-top:2px;">'+esc(txn.creatorJobTitle)+'</div>':'')) +
-           ((txn.assigneeName||txn.currentAssignee) ? metaRow('المسؤول الحالي', '<b style="color:#1e40af;">'+esc(txn.assigneeName||txn.currentAssignee)+'</b>'+(txn.assigneeJobTitle?' <span style="color:#0d9488;font-size:11px;">— '+esc(txn.assigneeJobTitle)+'</span>':(txn.currentRoleName?' <span style="color:#8b5cf6;font-size:11px;">— '+esc(txn.currentRoleName)+'</span>':''))) : (txn.currentRoleName ? metaRow('المسمى الوظيفي الحالي', esc(txn.currentRoleName), '#8b5cf6') : '')))
+           ((txn.assigneeName||txn.currentAssignee) ? metaRow('المسؤول الحالي', '<b style="color:#1e40af;">'+esc(txn.assigneeName||txn.currentAssignee)+'</b>'+(txn.assigneeJobTitle?' <span style="color:#0d9488;font-size:11px;">— '+esc(txn.assigneeJobTitle)+'</span>':(txn.currentRoleName?' <span style="color:#0e7490;font-size:11px;">— '+esc(txn.currentRoleName)+'</span>':''))) : (txn.currentRoleName ? metaRow('المسمى الوظيفي الحالي', esc(txn.currentRoleName), '#0e7490') : '')))
       ) +
       (Number(txn.amount) ? metaRow('المبلغ', Number(txn.amount).toLocaleString('en',{minimumFractionDigits:2}) + ' ر.س', '#16a34a') : '') +
       (txn.accountName ? metaRow('الحساب', esc((txn.accountCode||'')+' — '+txn.accountName)) : '') +
@@ -11273,7 +11273,7 @@ function wfViewTxn(id) {
     var workflowVertical = '';
     if (txn.workflowPath && txn.workflowPath.length) {
       workflowVertical = '<div style="background:#fff;border:1px solid #e5e7eb;border-radius:14px;padding:14px;">' +
-        '<div style="font-size:12px;font-weight:900;color:#0f172a;margin-bottom:10px;"><i class="fas fa-list-ol" style="color:#8b5cf6;"></i> خطوات الموافقة</div>' +
+        '<div style="font-size:12px;font-weight:900;color:#0f172a;margin-bottom:10px;"><i class="fas fa-list-ol" style="color:#0e7490;"></i> خطوات الموافقة</div>' +
         '<div style="display:flex;flex-direction:column;gap:6px;">';
       txn.workflowPath.forEach(function(s, i) {
         var stepClr = s.isCurrent ? '#0ea5e9' : (s.isPast ? '#16a34a' : '#94a3b8');
@@ -11338,18 +11338,18 @@ function wfViewTxn(id) {
     }
 
     // V3.1: Replies thread — professional design + file upload
-    html += '<div style="border:2px solid #c4b5fd;border-radius:14px;background:linear-gradient(180deg,#faf5ff 0%,#fff 60%);padding:14px;margin-bottom:12px;">' +
+    html += '<div style="border:2px solid #a5d8e6;border-radius:14px;background:linear-gradient(180deg,#e6f3f7 0%,#fff 60%);padding:14px;margin-bottom:12px;">' +
       '<div style="display:flex;align-items:center;gap:8px;margin-bottom:12px;">' +
-        '<div style="width:30px;height:30px;border-radius:50%;background:#8b5cf6;color:#fff;display:flex;align-items:center;justify-content:center;font-size:13px;"><i class="fas fa-comments"></i></div>' +
-        '<span style="font-size:14px;font-weight:900;color:#5b21b6;">الردود والمناقشة</span>' +
-        '<span id="adm_repliesCount" style="margin-inline-start:auto;font-size:11px;color:#7c3aed;font-weight:800;background:#ede9fe;padding:4px 10px;border-radius:999px;">جاري التحميل...</span>' +
+        '<div style="width:30px;height:30px;border-radius:50%;background:#0e7490;color:#fff;display:flex;align-items:center;justify-content:center;font-size:13px;"><i class="fas fa-comments"></i></div>' +
+        '<span style="font-size:14px;font-weight:900;color:#155e75;">الردود والمناقشة</span>' +
+        '<span id="adm_repliesCount" style="margin-inline-start:auto;font-size:11px;color:#0e7490;font-weight:800;background:#e6f3f7;padding:4px 10px;border-radius:999px;">جاري التحميل...</span>' +
       '</div>' +
       '<div id="adm_repliesList"><div style="text-align:center;color:#94a3b8;padding:20px;font-size:12px;"><i class="fas fa-spinner fa-spin"></i></div></div>' +
-      '<div style="margin-top:12px;padding-top:12px;border-top:1px dashed #c4b5fd;">' +
-        '<textarea id="adm_replyText" placeholder="اكتب رداً أو ملاحظة..." style="width:100%;min-height:64px;padding:12px;border:1.5px solid #c4b5fd;border-radius:10px;font-family:inherit;font-size:13px;resize:vertical;outline:none;background:#fff;line-height:1.7;"></textarea>' +
+      '<div style="margin-top:12px;padding-top:12px;border-top:1px dashed #a5d8e6;">' +
+        '<textarea id="adm_replyText" placeholder="اكتب رداً أو ملاحظة..." style="width:100%;min-height:64px;padding:12px;border:1.5px solid #a5d8e6;border-radius:10px;font-family:inherit;font-size:13px;resize:vertical;outline:none;background:#fff;line-height:1.7;"></textarea>' +
         '<div style="display:flex;gap:6px;margin-top:8px;align-items:center;flex-wrap:wrap;">' +
           '<input type="file" id="adm_replyFile" accept="image/*,.pdf,.doc,.docx,.xls,.xlsx" style="display:none;" onchange="(function(i){var l=document.getElementById(\'adm_replyFileLabel\');if(l)l.textContent=i.files[0]?(i.files[0].name.length>20?i.files[0].name.substring(0,20)+\'...\':i.files[0].name):\'إرفاق ملف\';})(this)">' +
-          '<button type="button" onclick="document.getElementById(\'adm_replyFile\').click()" class="wo-btn wo-btn-secondary" style="padding:9px 14px;font-size:12px;background:#fff;color:#8b5cf6;border:1.5px solid #c4b5fd;"><i class="fas fa-paperclip"></i><span id="adm_replyFileLabel">إرفاق ملف</span></button>' +
+          '<button type="button" onclick="document.getElementById(\'adm_replyFile\').click()" class="wo-btn wo-btn-secondary" style="padding:9px 14px;font-size:12px;background:#fff;color:#0e7490;border:1.5px solid #a5d8e6;"><i class="fas fa-paperclip"></i><span id="adm_replyFileLabel">إرفاق ملف</span></button>' +
           // V4.5: when user IS current assignee, show recipient picker + reply auto-advances
           (isAssignedToMe ?
             '<select id="adm_replyForwardTo" style="flex:1;min-width:160px;padding:8px 10px;border:1.5px solid #86efac;border-radius:8px;background:#f0fdf4;font-family:inherit;font-size:12px;font-weight:600;">' +
@@ -11357,7 +11357,7 @@ function wfViewTxn(id) {
               '<option value="" disabled>──────────</option>' +
             '</select>' +
             '<button onclick="admPostReply(\''+txn.id+'\',true)" class="wo-btn wo-btn-primary" style="flex:1;background:linear-gradient(135deg,#16a34a,#15803d);"><i class="fas fa-paper-plane"></i><span>رد + إرسال</span></button>'
-          : '<button onclick="admPostReply(\''+txn.id+'\',false)" class="wo-btn wo-btn-primary" style="flex:1;background:linear-gradient(135deg,#8b5cf6,#6d28d9);"><i class="fas fa-comment"></i><span>إرسال الرد</span></button>') +
+          : '<button onclick="admPostReply(\''+txn.id+'\',false)" class="wo-btn wo-btn-primary" style="flex:1;background:linear-gradient(135deg,#0e7490,#155e75);"><i class="fas fa-comment"></i><span>إرسال الرد</span></button>') +
         '</div>' +
       '</div>' +
     '</div>';
@@ -11396,7 +11396,7 @@ function wfViewTxn(id) {
     if (canReject)  leftBtns += '<button class="wo-btn wo-btn-danger" onclick="erpCloseModal();wfTxnAction(\''+txn.id+'\',\'reject\')"><i class="fas fa-xmark"></i><span>رفض</span></button>';
     if (canReturn)  leftBtns += '<button class="wo-btn wo-btn-warning" onclick="erpCloseModal();wfTxnAction(\''+txn.id+'\',\'return\')"><i class="fas fa-rotate-left"></i><span>إرجاع للتعديل</span></button>';
     // V4: Forward (admin/manager only — server permission decides)
-    if (canForward) leftBtns += '<button class="wo-btn wo-btn-secondary" style="background:#ede9fe;color:#5b21b6;border:1.5px solid #c4b5fd;" onclick="wfTxnForwardModal(\''+txn.id+'\')"><i class="fas fa-share"></i><span>تحويل</span></button>';
+    if (canForward) leftBtns += '<button class="wo-btn wo-btn-secondary" style="background:#e6f3f7;color:#155e75;border:1.5px solid #a5d8e6;" onclick="wfTxnForwardModal(\''+txn.id+'\')"><i class="fas fa-share"></i><span>تحويل</span></button>';
     // V4: Admin emergency close (force-close any non-terminal txn)
     if (canCloseAdmin && !['approved','rejected','closed'].includes(txn.status)) {
       leftBtns += '<button class="wo-btn wo-btn-secondary" style="background:#f3f4f6;color:#374151;border:1.5px solid #9ca3af;" onclick="erpCloseModal();wfTxnAction(\''+txn.id+'\',\'close\')"><i class="fas fa-lock"></i><span>إنهاء طارئ</span></button>';
@@ -11559,12 +11559,12 @@ function wfPrintTxn(id) {
       '.title-block h2{font-size:18px;color:#0f172a;margin-bottom:6px;}' +
       '.badges{display:flex;gap:8px;justify-content:center;flex-wrap:wrap;margin-top:8px;}' +
       '.badge{padding:3px 10px;border-radius:6px;font-size:11px;font-weight:700;}' +
-      '.b-status{background:#dbeafe;color:#1e40af;} .b-imp{background:#fee2e2;color:#991b1b;} .b-sec{background:#f3e8ff;color:#6d28d9;}' +
+      '.b-status{background:#dbeafe;color:#1e40af;} .b-imp{background:#fee2e2;color:#991b1b;} .b-sec{background:#e6f3f7;color:#155e75;}' +
       '.info-grid{display:grid;grid-template-columns:1fr 1fr;gap:6px 14px;margin:14px 0;font-size:12px;}' +
       '.info-grid div{padding:4px 0;border-bottom:1px dotted #e5e7eb;}' +
       '.info-grid b{color:#1e40af;}' +
       '.content-box{border:1px solid #cbd5e1;border-radius:8px;padding:14px;margin:14px 0;background:#fff;min-height:140px;font-size:13px;line-height:1.8;}' +
-      '.path{background:#ede9fe;border:1px solid #a78bfa;border-radius:8px;padding:10px 14px;margin:12px 0;font-size:12px;color:#5b21b6;font-weight:700;}' +
+      '.path{background:#e6f3f7;border:1px solid #1591b0;border-radius:8px;padding:10px 14px;margin:12px 0;font-size:12px;color:#155e75;font-weight:700;}' +
       'table{width:100%;border-collapse:collapse;margin:10px 0;font-size:11px;}' +
       'th,td{border:1px solid #cbd5e1;padding:6px 8px;text-align:right;}' +
       'th{background:#f1f5f9;font-weight:800;}' +
@@ -11746,10 +11746,10 @@ function wfReturnModal(id) {
     '</div>' +
 
     // Selected reason preview
-    '<div id="wfRetSelectedBox" style="display:none;padding:10px 14px;background:#f3e8ff;border:1px solid #c4b5fd;border-radius:10px;margin-top:10px;">' +
-      '<div style="font-size:11px;color:#7c3aed;font-weight:800;margin-bottom:4px;"><i class="fas fa-check-circle"></i> السبب المختار:</div>' +
-      '<div id="wfRetSelectedLabel" style="font-size:13px;font-weight:700;color:#5b21b6;"></div>' +
-      '<div id="wfRetSelectedDetail" style="font-size:11px;color:#6d28d9;margin-top:4px;"></div>' +
+    '<div id="wfRetSelectedBox" style="display:none;padding:10px 14px;background:#e6f3f7;border:1px solid #a5d8e6;border-radius:10px;margin-top:10px;">' +
+      '<div style="font-size:11px;color:#0e7490;font-weight:800;margin-bottom:4px;"><i class="fas fa-check-circle"></i> السبب المختار:</div>' +
+      '<div id="wfRetSelectedLabel" style="font-size:13px;font-weight:700;color:#155e75;"></div>' +
+      '<div id="wfRetSelectedDetail" style="font-size:11px;color:#155e75;margin-top:4px;"></div>' +
     '</div>' +
 
     // Note
@@ -11967,13 +11967,13 @@ function wfForwardTxn(id) {
       div.style.cssText = 'position:fixed;inset:0;z-index:9999;background:rgba(0,0,0,.5);display:flex;align-items:center;justify-content:center;';
       div.innerHTML =
         '<div style="background:#fff;border-radius:16px;padding:24px;width:440px;max-width:90%;box-shadow:0 20px 60px rgba(0,0,0,.15);">' +
-          '<div style="display:flex;align-items:center;gap:10px;margin-bottom:16px;"><div style="width:40px;height:40px;border-radius:50%;background:#f3e8ff;display:flex;align-items:center;justify-content:center;"><i class="fas fa-share" style="color:#7c3aed;"></i></div><h3 style="margin:0;">تحويل المعاملة</h3></div>' +
+          '<div style="display:flex;align-items:center;gap:10px;margin-bottom:16px;"><div style="width:40px;height:40px;border-radius:50%;background:#e6f3f7;display:flex;align-items:center;justify-content:center;"><i class="fas fa-share" style="color:#0e7490;"></i></div><h3 style="margin:0;">تحويل المعاملة</h3></div>' +
           '<div style="margin-bottom:12px;"><label style="font-size:12px;font-weight:700;color:#475569;">تحويل إلى *</label><select id="wfFwdUser" style="width:100%;padding:10px;border:1.5px solid #e5e7eb;border-radius:10px;font-size:14px;margin-top:4px;"><option value="">— اختر —</option>' +
           (users||[]).map(function(u) { return '<option value="' + u.username + '">' + (u.fullName||u.username) + ' — ' + (u.positionName||'') + '</option>'; }).join('') +
           '</select></div>' +
           '<div style="margin-bottom:16px;"><label style="font-size:12px;font-weight:700;color:#475569;">ملاحظة (اختياري)</label><textarea id="wfFwdNote" rows="2" style="width:100%;padding:10px;border:1.5px solid #e5e7eb;border-radius:10px;font-size:14px;resize:none;margin-top:4px;"></textarea></div>' +
           '<div style="display:flex;gap:8px;justify-content:flex-end;">' +
-            '<button id="wfFwdOk" style="padding:10px 24px;border-radius:10px;border:none;background:#7c3aed;color:#fff;font-weight:800;font-size:14px;cursor:pointer;">تحويل</button>' +
+            '<button id="wfFwdOk" style="padding:10px 24px;border-radius:10px;border:none;background:#0e7490;color:#fff;font-weight:800;font-size:14px;cursor:pointer;">تحويل</button>' +
             '<button onclick="document.getElementById(\'wfForwardDlg\').remove()" style="padding:10px 20px;border-radius:10px;border:2px solid #e5e7eb;background:#fff;color:#64748b;font-weight:700;cursor:pointer;">إلغاء</button>' +
           '</div></div>';
       document.body.appendChild(div);
@@ -12009,7 +12009,7 @@ function _hrStatCard(bg, iconBg, iconClr, icon, label, value) {
  * existing endpoints (/hr/dashboard + /hr/dashboard/alerts). */
 function _hrHubMetricCard(icon, label, value, accent, navId) {
   return '<div class="wo-metric accent-' + accent + ' hub-metric-click" onclick="erpNav(\'' + navId + '\')">' +
-         '<div class="wo-metric-icon" style="background:var(--hub-icon-bg,#ede9fe);color:var(--hub-accent,#8b5cf6);"><i class="fas ' + icon + '"></i></div>' +
+         '<div class="wo-metric-icon" style="background:var(--hub-icon-bg,#e6f3f7);color:var(--hub-accent,#0e7490);"><i class="fas ' + icon + '"></i></div>' +
          '<div class="wo-metric-body"><div class="wo-metric-value">' + value + '</div><div class="wo-metric-label">' + label + '</div></div></div>';
 }
 function hrLoadHub() {
@@ -12084,7 +12084,7 @@ function hrLoadDashboard() {
     extraStats.innerHTML =
       _hrStatCard('linear-gradient(135deg,#fef3c7,#fde68a)','#fde68a','#92400e','fa-clock','متأخرون اليوم', d.lateToday||0) +
       _hrStatCard('linear-gradient(135deg,#fef3c7,#fde68a)','#fde68a','#92400e','fa-business-time','ساعات إضافي الشهر', (d.monthOvertimeHours||0).toFixed(1)) +
-      _hrStatCard('linear-gradient(135deg,#faf5ff,#f3e8ff)','#f3e8ff','#7c3aed','fa-hourglass-half','إضافي معلّق', d.pendingOT||0) +
+      _hrStatCard('linear-gradient(135deg,#e6f3f7,#e6f3f7)','#e6f3f7','#0e7490','fa-hourglass-half','إضافي معلّق', d.pendingOT||0) +
       _hrStatCard('linear-gradient(135deg,#fef2f2,#fee2e2)','#fee2e2','#991b1b','fa-clock','ساعات تأخير الشهر', (d.monthLateHours||0).toFixed(1));
 
     // Attendance breakdown
@@ -12231,7 +12231,7 @@ function hrLoadJobTitles() {
       };
       var roleColors = {
         admin: '#dc2626', manager: '#1e40af', cashier: '#0891b2',
-        custody: '#7c3aed', employee: '#0d9488'
+        custody: '#0e7490', employee: '#0d9488'
       };
       tb.innerHTML = list.map(function(j) {
         return '<tr>' +
@@ -12261,7 +12261,7 @@ function hrFilterEmployees() {
 // v7.6 — login-account role badge for the employees list (so the admin can
 // instantly tell which employee row is the admin / a cashier / a manager).
 var HR_ROLE_LABELS = { admin:'مدير النظام', manager:'مشرف', cashier:'كاشير', custody:'عهدة', employee:'موظف' };
-var HR_ROLE_COLORS = { admin:'#dc2626', manager:'#1e40af', cashier:'#0891b2', custody:'#7c3aed', employee:'#0d9488' };
+var HR_ROLE_COLORS = { admin:'#dc2626', manager:'#1e40af', cashier:'#0891b2', custody:'#0e7490', employee:'#0d9488' };
 function hrLoginBadge(e) {
   if (!e.linkedUsername) {
     return '<span class="badge" style="background:#f1f5f9;color:#94a3b8;font-weight:700;" title="لا يملك حساب دخول للنظام">بلا حساب</span>';
@@ -13240,7 +13240,7 @@ function hrLoadExceptions() {
   window._apiBridge.withSuccessHandler(function(list) {
     if (!list.length) { tb.innerHTML = '<tr><td colspan="7" class="empty-msg">لا توجد استثناءات</td></tr>'; return; }
     var tMap = {ignore_late:'تجاهل تأخير',ignore_early_leave:'تجاهل انصراف مبكر',ignore_overtime:'تجاهل إضافي',adjust_attendance:'تعديل حضور',grant_day:'منح يوم',excuse_absence:'تبرير غياب'};
-    var tClr = {ignore_late:'#f59e0b',ignore_early_leave:'#f59e0b',ignore_overtime:'#8b5cf6',adjust_attendance:'#0ea5e9',grant_day:'#10b981',excuse_absence:'#16a34a'};
+    var tClr = {ignore_late:'#f59e0b',ignore_early_leave:'#f59e0b',ignore_overtime:'#0e7490',adjust_attendance:'#0ea5e9',grant_day:'#10b981',excuse_absence:'#16a34a'};
     tb.innerHTML = list.map(function(x) {
       var sd = x.startDate ? new Date(x.startDate).toLocaleDateString('en-GB') : '';
       var ed = x.endDate ? new Date(x.endDate).toLocaleDateString('en-GB') : '';
@@ -13323,7 +13323,7 @@ function hrDeleteException(id) {
  * sidebar badge uses, Redis-cached 30s server-side). */
 function _wfHubMetricCard(icon, label, value, accent, navId, preset) {
   return '<div class="wo-metric accent-' + accent + ' hub-metric-click" onclick="_wfHubMetricGo(\'' + navId + '\'' + (preset ? ',\'' + preset + '\'' : '') + ')">' +
-         '<div class="wo-metric-icon" style="background:var(--hub-icon-bg,#ede9fe);color:var(--hub-accent,#8b5cf6);"><i class="fas ' + icon + '"></i></div>' +
+         '<div class="wo-metric-icon" style="background:var(--hub-icon-bg,#e6f3f7);color:var(--hub-accent,#0e7490);"><i class="fas ' + icon + '"></i></div>' +
          '<div class="wo-metric-body"><div class="wo-metric-value">' + value + '</div><div class="wo-metric-label">' + label + '</div></div></div>';
 }
 function _wfHubMetricGo(navId, preset) {
@@ -13454,7 +13454,7 @@ function wfLoadDashboard() {
           '<div style="display:flex;justify-content:space-between;"><span style="color:#64748b;"><i class="fas fa-code-branch"></i> الفرع</span><b>'+(t.branchName||t.branchCode||'—')+'</b></div>' +
           '<div style="display:flex;justify-content:space-between;"><span style="color:#64748b;"><i class="fas fa-building"></i> القسم</span><b>'+(t.deptName||t.deptCode||'—')+'</b></div>' +
           '<div style="display:flex;justify-content:space-between;"><span style="color:#64748b;"><i class="fas fa-tag"></i> النوع</span><b>'+(t.typeName||'')+'</b></div>' +
-          '<div style="display:flex;justify-content:space-between;"><span style="color:#64748b;"><i class="fas fa-user"></i> مسؤول</span><b style="color:#1e40af;">'+(t.currentAssignee||'—')+(t.currentRoleName?' <small style="color:#8b5cf6;font-weight:700;">('+t.currentRoleName+')</small>':'')+'</b></div>' +
+          '<div style="display:flex;justify-content:space-between;"><span style="color:#64748b;"><i class="fas fa-user"></i> مسؤول</span><b style="color:#1e40af;">'+(t.currentAssignee||'—')+(t.currentRoleName?' <small style="color:#0e7490;font-weight:700;">('+t.currentRoleName+')</small>':'')+'</b></div>' +
           (Number(t.amount) ? '<div style="display:flex;justify-content:space-between;"><span style="color:#64748b;"><i class="fas fa-money-bill"></i> المبلغ</span><b style="color:#0ea5e9;">'+Number(t.amount).toLocaleString('en',{minimumFractionDigits:2})+'</b></div>' : '') +
         '</div>' +
         '<div style="text-align:left;font-size:10px;color:#94a3b8;">'+dt+'</div>' +
@@ -13540,7 +13540,7 @@ function wfLoadIncoming() {
         '<button class="btn btn-sm btn-success" onclick="wfTxnAction(\''+t.id+'\',\'approve\')" title="موافقة"><i class="fas fa-check"></i></button> ' +
         '<button class="btn btn-sm btn-danger" onclick="wfTxnAction(\''+t.id+'\',\'reject\')" title="رفض"><i class="fas fa-times"></i></button> ' +
         '<button class="btn btn-sm" style="background:#fef3c7;color:#92400e;" onclick="wfTxnAction(\''+t.id+'\',\'return\')" title="إرجاع"><i class="fas fa-undo"></i></button> ' +
-        '<button class="btn btn-sm" style="background:#f3e8ff;color:#7c3aed;" onclick="wfForwardTxn(\''+t.id+'\')" title="تحويل"><i class="fas fa-share"></i></button> ' +
+        '<button class="btn btn-sm" style="background:#e6f3f7;color:#0e7490;" onclick="wfForwardTxn(\''+t.id+'\')" title="تحويل"><i class="fas fa-share"></i></button> ' +
         '<button class="btn btn-sm wf-row-delete-btn" onclick="event.stopPropagation();wfForceDeleteTxn(\''+t.id+'\',\''+safeTxnNum+'\')" title="حَذف نِهائي (admin only)"><i class="fas fa-trash"></i></button>';
       return '<tr>' +
         '<td><input type="checkbox" data-inc-bulk-id="'+t.id+'" onchange="wfIncBulkToggle(\''+t.id+'\', this)" aria-label="تحديد المعاملة"></td>' +
@@ -14392,7 +14392,7 @@ var _wfOutStatusAr = {
 };
 var _wfOutStatusClr = {
   draft:'#94a3b8', created:'#0ea5e9', pending:'#f59e0b',
-  in_progress:'#f59e0b', replied:'#8b5cf6', returned:'#dc2626',
+  in_progress:'#f59e0b', replied:'#0e7490', returned:'#dc2626',
   approved:'#16a34a', rejected:'#991b1b', closed:'#6b7280'
 };
 var _wfOutStatusIcon = {
@@ -14483,7 +14483,7 @@ function wfLoadOutbox() {
     tb.innerHTML = list.map(function(t) {
       var dt = t.createdAt ? new Date(t.createdAt).toLocaleDateString('en-CA') : '';
       // v6.6.0 — Serial uses brand purple instead of generic blue/sky
-      var serialColor = t.isRead ? 'var(--mt-primary-2, #0f172a)' : 'var(--mt-accent, #7c3aed)';
+      var serialColor = t.isRead ? 'var(--mt-primary-2, #0f172a)' : 'var(--mt-accent, #0e7490)';
       var statusAr = _wfOutStatusAr[t.status] || t.status;
       var statusClr = _wfOutStatusClr[t.status] || '#64748b';
       var statusIcon = _wfOutStatusIcon[t.status] || 'fa-circle';
@@ -14506,7 +14506,7 @@ function wfLoadOutbox() {
         actionBtn = '<button class="btn btn-sm" style="background:linear-gradient(135deg,#dc2626,#b91c1c);color:#fff;border:none;font-weight:800;padding:6px 12px;border-radius:8px;box-shadow:0 2px 4px rgba(220,38,38,.3);" onclick="event.stopPropagation();wfEditOutboxTxn(\''+t.id+'\')"><i class="fas fa-pen-to-square"></i> تعديل وإعادة إرسال</button>';
       } else {
         // v6.6.0 — "سير المعاملة" button uses brand purple (was generic blue)
-        actionBtn = '<button class="btn btn-sm" style="background:var(--mt-accent-soft,#faf5ff);color:var(--mt-accent,#7c3aed);border:1px solid var(--mt-accent-soft-2,#f3e8ff);" onclick="wfViewTxn(\''+t.id+'\')"><i class="fas fa-route"></i> سير المعاملة</button>';
+        actionBtn = '<button class="btn btn-sm" style="background:var(--mt-accent-soft,#e6f3f7);color:var(--mt-accent,#0e7490);border:1px solid var(--mt-accent-soft-2,#e6f3f7);" onclick="wfViewTxn(\''+t.id+'\')"><i class="fas fa-route"></i> سير المعاملة</button>';
       }
       // v6.6.4 — Per-row admin-only "حَذف نِهائي" — hidden for non-admins by
       // _wfApplyAdminVisibility, gated authoritatively by guardAdmin on the
@@ -14519,7 +14519,7 @@ function wfLoadOutbox() {
         '<td><span class="wf-row-serial" style="color:'+serialColor+';">'+(t.txnNumber||'')+'</span>'+unread+'</td>' +
         '<td style="font-size:12px;">'+dt+overdue+'</td>' +
         '<td style="font-size:12px;">'+(t.issuingEntityName || t.deptName || t.branchName || '—')+'</td>' +
-        '<td style="font-weight:700;max-width:280px;overflow:hidden;text-overflow:ellipsis;">'+(t.subject||t.title||'')+(t.expenseCategoryName?'<div style="font-size:10px;color:var(--mt-accent,#7c3aed);font-weight:700;"><i class="fas fa-tag" style="font-size:8px;"></i> '+t.expenseCategoryName+'</div>':'')+(isReturned && t.returnReason?'<div style="font-size:10px;color:#dc2626;font-weight:700;margin-top:3px;background:#fef2f2;padding:3px 6px;border-radius:6px;border-right:2px solid #dc2626;"><i class="fas fa-quote-right" style="font-size:8px;"></i> '+_woEscapeHtml(t.returnReason.substring(0,80))+(t.returnReason.length>80?'…':'')+'</div>':'')+'</td>' +
+        '<td style="font-weight:700;max-width:280px;overflow:hidden;text-overflow:ellipsis;">'+(t.subject||t.title||'')+(t.expenseCategoryName?'<div style="font-size:10px;color:var(--mt-accent,#0e7490);font-weight:700;"><i class="fas fa-tag" style="font-size:8px;"></i> '+t.expenseCategoryName+'</div>':'')+(isReturned && t.returnReason?'<div style="font-size:10px;color:#dc2626;font-weight:700;margin-top:3px;background:#fef2f2;padding:3px 6px;border-radius:6px;border-right:2px solid #dc2626;"><i class="fas fa-quote-right" style="font-size:8px;"></i> '+_woEscapeHtml(t.returnReason.substring(0,80))+(t.returnReason.length>80?'…':'')+'</div>':'')+'</td>' +
         '<td>'+_wfImpBadge(t.importance||'medium')+'</td>' +
         '<td><span class="wf-pill '+scopeCls+'">'+scopeAr+'</span></td>' +
         '<td>'+statusCell+'</td>' +
@@ -14708,7 +14708,7 @@ function wfLoadOrgTree() {
       var chips = [
         ['create','إنشاء','#0ea5e9'], ['approve','موافقة','#10b981'],
         ['reject','رفض','#ef4444'], ['return','إرجاع','#f59e0b'],
-        ['forward','تحويل','#8b5cf6'], ['close','إغلاق','#6b7280']
+        ['forward','تحويل','#0e7490'], ['close','إغلاق','#6b7280']
       ].map(function(x) {
         var active = p[x[0]];
         return '<span style="padding:2px 8px;border-radius:6px;font-size:10px;font-weight:700;margin:2px;display:inline-block;'+
@@ -14807,7 +14807,7 @@ function erpFilterGLAccounts() {
   if (!filtered.length) {
     res.innerHTML = '<div class="sd-result-item" style="color:#94a3b8;">لا توجد نتائج</div>';
   } else {
-    var typeClrs = { asset:'#16a34a', liability:'#ef4444', equity:'#8b5cf6', revenue:'#0ea5e9', expense:'#f59e0b' };
+    var typeClrs = { asset:'#16a34a', liability:'#ef4444', equity:'#0e7490', revenue:'#0ea5e9', expense:'#f59e0b' };
     res.innerHTML = filtered.slice(0, 25).map(function(a) {
       var safe = String(a.nameAr||a.nameEn||'').replace(/'/g, "\\'").replace(/"/g,'&quot;');
       var clr = typeClrs[a.type] || '#64748b';
@@ -15238,7 +15238,7 @@ document.addEventListener('change', function(e){
 function _erpRenderGLLedger(res) {
   var fmt = function(v) { return Number(v||0).toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2}); };
   var typeLabels = { asset:'أصول', liability:'التزامات', equity:'حقوق ملكية', revenue:'إيرادات', expense:'مصروفات' };
-  var typeClrs = { asset:'#16a34a', liability:'#ef4444', equity:'#8b5cf6', revenue:'#0ea5e9', expense:'#f59e0b' };
+  var typeClrs = { asset:'#16a34a', liability:'#ef4444', equity:'#0e7490', revenue:'#0ea5e9', expense:'#f59e0b' };
   var acc = res.account || {};
   var tClr = typeClrs[acc.type] || '#64748b';
 
@@ -15285,7 +15285,7 @@ function _erpRenderGLLedger(res) {
   // Table rows — prepend opening-balance row, append closing-balance row
   var tbody = document.getElementById('erpGLLedgerBody');
   var refLabels = { manual:'يدوي', opening:'افتتاحي', sale:'مبيعات', purchase:'مشتريات', custody:'عهدة', inventory:'مخزون', cash:'نقد', payroll:'رواتب' };
-  var refColors = { manual:'#3b82f6', opening:'#7c3aed', sale:'#10b981', purchase:'#f59e0b', custody:'#ec4899', inventory:'#06b6d4', cash:'#0ea5e9', payroll:'#6366f1' };
+  var refColors = { manual:'#3b82f6', opening:'#0e7490', sale:'#10b981', purchase:'#f59e0b', custody:'#ec4899', inventory:'#06b6d4', cash:'#0ea5e9', payroll:'#0e7490' };
 
   var html = '';
   // Opening balance row
@@ -15548,7 +15548,7 @@ function wfOpenBulkBuilder() {
         '<select class="form-control" id="wfBulkType"><option value="">— اختر النوع —</option>' + tOpts + '</select>' +
       '</div>' +
 
-      '<div style="font-size:13px;font-weight:800;color:#0f172a;margin-bottom:8px;"><i class="fas fa-id-badge" style="color:#8b5cf6;"></i> تسلسل المناصب:</div>' +
+      '<div style="font-size:13px;font-weight:800;color:#0f172a;margin-bottom:8px;"><i class="fas fa-id-badge" style="color:#0e7490;"></i> تسلسل المناصب:</div>' +
       '<div id="wfBulkStepsWrap"></div>' +
       '<div style="display:flex;gap:8px;margin-top:12px;">' +
         '<button type="button" class="btn btn-primary btn-sm" onclick="wfBulkAddRow()"><i class="fas fa-plus"></i> إضافة منصب</button>' +
@@ -15689,7 +15689,7 @@ function _wfRenderBulkSteps() {
         '<label style="display:flex;align-items:center;gap:4px;padding:4px 6px;background:#f8fafc;border-radius:6px;cursor:pointer;"><input type="checkbox" id="wfbCRt_' + i + '"' + (s.canReturn?' checked':'') + '> إرجاع</label>' +
         '<label style="display:flex;align-items:center;gap:4px;padding:4px 6px;background:#f8fafc;border-radius:6px;cursor:pointer;"><input type="checkbox" id="wfbCEa_' + i + '"' + (s.canEditAmount?' checked':'') + '> تعديل مبلغ</label>' +
         '<label style="display:flex;align-items:center;gap:4px;padding:4px 6px;background:#dbeafe;border-radius:6px;cursor:pointer;"><input type="checkbox" id="wfbRqB_' + i + '"' + (s.requireSameBranch!==false?' checked':'') + '> نفس الفرع</label>' +
-        '<label style="display:flex;align-items:center;gap:4px;padding:4px 6px;background:#ede9fe;border-radius:6px;cursor:pointer;"><input type="checkbox" id="wfbRqD_' + i + '"' + (s.requireSameDepartment?' checked':'') + '> نفس القسم</label>' +
+        '<label style="display:flex;align-items:center;gap:4px;padding:4px 6px;background:#e6f3f7;border-radius:6px;cursor:pointer;"><input type="checkbox" id="wfbRqD_' + i + '"' + (s.requireSameDepartment?' checked':'') + '> نفس القسم</label>' +
         '<select class="form-control" id="wfbStr_' + i + '" style="padding:4px 6px;font-size:10px;">' +
           '<option value="least_busy"' + (s.assignmentStrategy==='least_busy'?' selected':'') + '>الأقل انشغالاً</option>' +
           '<option value="first"' + (s.assignmentStrategy==='first'?' selected':'') + '>الأول</option>' +
@@ -15763,8 +15763,8 @@ function wfLoadPositionSummary() {
     }
     grid.innerHTML = list.map(function(p) {
       var hasPath = p.stepCount > 0;
-      var levelColor = ['#94a3b8','#0ea5e9','#10b981','#f59e0b','#ef4444','#8b5cf6','#1e40af','#111827'][Math.min(Number(p.level)||0, 7)];
-      return '<div style="background:#fff;border:2px solid ' + (hasPath ? '#a78bfa' : '#e2e8f0') + ';border-radius:14px;padding:16px;display:flex;flex-direction:column;gap:10px;transition:transform .15s,box-shadow .15s;cursor:pointer;" onclick="wfOpenPositionPathBuilder(\'' + p.id + '\')" onmouseover="this.style.transform=\'translateY(-2px)\';this.style.boxShadow=\'0 6px 16px rgba(139,92,246,.15)\';" onmouseout="this.style.transform=\'\';this.style.boxShadow=\'\';">' +
+      var levelColor = ['#94a3b8','#0ea5e9','#10b981','#f59e0b','#ef4444','#0e7490','#1e40af','#111827'][Math.min(Number(p.level)||0, 7)];
+      return '<div style="background:#fff;border:2px solid ' + (hasPath ? '#1591b0' : '#e2e8f0') + ';border-radius:14px;padding:16px;display:flex;flex-direction:column;gap:10px;transition:transform .15s,box-shadow .15s;cursor:pointer;" onclick="wfOpenPositionPathBuilder(\'' + p.id + '\')" onmouseover="this.style.transform=\'translateY(-2px)\';this.style.boxShadow=\'0 6px 16px rgba(14, 116, 144,.15)\';" onmouseout="this.style.transform=\'\';this.style.boxShadow=\'\';">' +
         '<div style="display:flex;align-items:center;gap:10px;">' +
           '<div style="width:44px;height:44px;border-radius:12px;background:' + levelColor + ';color:#fff;display:flex;align-items:center;justify-content:center;font-size:18px;flex-shrink:0;"><i class="fas fa-id-badge"></i></div>' +
           '<div style="flex:1;">' +
@@ -15774,10 +15774,10 @@ function wfLoadPositionSummary() {
         '</div>' +
         '<div style="border-top:1px dashed #e5e7eb;padding-top:10px;display:flex;justify-content:space-between;align-items:center;">' +
           (hasPath
-            ? '<div><div style="font-size:11px;color:#64748b;">عدد الخطوات</div><div style="font-size:22px;font-weight:900;color:#8b5cf6;">' + p.stepCount + ' <small style="font-size:11px;color:#94a3b8;">خطوة</small></div></div>'
+            ? '<div><div style="font-size:11px;color:#64748b;">عدد الخطوات</div><div style="font-size:22px;font-weight:900;color:#0e7490;">' + p.stepCount + ' <small style="font-size:11px;color:#94a3b8;">خطوة</small></div></div>'
             : '<div><div style="font-size:12px;color:#94a3b8;font-style:italic;">لا يوجد مسار بعد</div></div>'
           ) +
-          '<button class="btn btn-sm" style="background:#ede9fe;color:#6d28d9;" onclick="event.stopPropagation();wfOpenPositionPathBuilder(\'' + p.id + '\')"><i class="fas fa-edit"></i> ' + (hasPath?'تعديل':'إنشاء') + '</button>' +
+          '<button class="btn btn-sm" style="background:#e6f3f7;color:#155e75;" onclick="event.stopPropagation();wfOpenPositionPathBuilder(\'' + p.id + '\')"><i class="fas fa-edit"></i> ' + (hasPath?'تعديل':'إنشاء') + '</button>' +
         '</div>' +
       '</div>';
     }).join('');
@@ -15819,12 +15819,12 @@ function wfOpenPositionPathBuilder(initiatorPosId) {
     var tabsHtml = paths.map(function(p) {
       var active = p.pathKey === initialKey;
       return '<button type="button" data-pathkey="' + p.pathKey + '" onclick="wfSwitchPath(\'' + p.pathKey + '\')" ' +
-        'style="padding:8px 14px;border-radius:9px 9px 0 0;border:1.5px solid ' + (active?'#8b5cf6':'#e2e8f0') + ';' +
-        'border-bottom:' + (active?'2px solid #fff':'1.5px solid #8b5cf6') + ';' +
-        'background:' + (active?'#fff':'#f8fafc') + ';color:' + (active?'#6d28d9':'#64748b') + ';' +
+        'style="padding:8px 14px;border-radius:9px 9px 0 0;border:1.5px solid ' + (active?'#0e7490':'#e2e8f0') + ';' +
+        'border-bottom:' + (active?'2px solid #fff':'1.5px solid #0e7490') + ';' +
+        'background:' + (active?'#fff':'#f8fafc') + ';color:' + (active?'#155e75':'#64748b') + ';' +
         'font-weight:800;font-size:12px;cursor:pointer;font-family:inherit;display:inline-flex;align-items:center;gap:6px;margin-inline-end:-1.5px;">' +
         '<i class="fas fa-route"></i>' + _woEscapeHtml(p.pathName) +
-        ' <span style="background:#ede9fe;color:#6d28d9;padding:1px 6px;border-radius:8px;font-size:9px;">' + p.stepCount + '</span>' +
+        ' <span style="background:#e6f3f7;color:#155e75;padding:1px 6px;border-radius:8px;font-size:9px;">' + p.stepCount + '</span>' +
         '</button>';
     }).join('');
     var newPathBtn = '<button type="button" onclick="wfNewPath()" style="padding:8px 12px;border-radius:9px 9px 0 0;border:1.5px dashed #94a3b8;background:transparent;color:#475569;font-weight:800;font-size:12px;cursor:pointer;font-family:inherit;display:inline-flex;align-items:center;gap:6px;"><i class="fas fa-plus"></i> مسار جديد</button>';
@@ -15832,9 +15832,9 @@ function wfOpenPositionPathBuilder(initiatorPosId) {
     document.getElementById('erpModalTitle').textContent = 'مسارات المنصب: ' + (initiator.name || '');
     document.getElementById('erpModalBody').innerHTML =
       // Header banner
-      '<div style="padding:12px 14px;border-radius:12px;background:linear-gradient(135deg,#ede9fe,#ddd6fe);border:1px solid #a78bfa;margin-bottom:14px;font-size:12.5px;color:#5b21b6;line-height:1.7;">' +
-        '<i class="fas fa-user-tie" style="font-size:16px;"></i> <b>المنصب البادئ:</b> <span style="font-weight:900;font-size:14px;color:#4c1d95;">' + (initiator.name||'') + ' (Level ' + (initiator.level||'?') + ')</span><br>' +
-        '<span style="font-size:12px;color:#6d28d9;">' +
+      '<div style="padding:12px 14px;border-radius:12px;background:linear-gradient(135deg,#e6f3f7,#cfe9f1);border:1px solid #1591b0;margin-bottom:14px;font-size:12.5px;color:#155e75;line-height:1.7;">' +
+        '<i class="fas fa-user-tie" style="font-size:16px;"></i> <b>المنصب البادئ:</b> <span style="font-weight:900;font-size:14px;color:#155e75;">' + (initiator.name||'') + ' (Level ' + (initiator.level||'?') + ')</span><br>' +
+        '<span style="font-size:12px;color:#155e75;">' +
           '💡 يمكنك تعريف <b>عدة مسارات بديلة</b> لهذا المنصب (مثلاً: مسار اعتماد الراتب، مسار اعتماد المصروفات). ' +
           'كل مسار له اسم وخطوات مستقلة. الموظف يختار المسار المناسب عند إنشاء معاملة.' +
         '</span>' +
@@ -15843,7 +15843,7 @@ function wfOpenPositionPathBuilder(initiatorPosId) {
       '<input type="hidden" id="wfPpPathKey" value="' + initialKey + '">' +
 
       // Path tabs row
-      '<div style="display:flex;gap:0;flex-wrap:wrap;align-items:flex-end;border-bottom:1.5px solid #8b5cf6;padding-bottom:0;margin-bottom:14px;">' +
+      '<div style="display:flex;gap:0;flex-wrap:wrap;align-items:flex-end;border-bottom:1.5px solid #0e7490;padding-bottom:0;margin-bottom:14px;">' +
         tabsHtml + newPathBtn +
       '</div>' +
 
@@ -15866,7 +15866,7 @@ function wfOpenPositionPathBuilder(initiatorPosId) {
 
       // Steps section
       '<div style="font-size:13px;font-weight:800;color:#0f172a;margin-bottom:8px;display:flex;align-items:center;gap:6px;">' +
-        '<i class="fas fa-list-ol" style="color:#8b5cf6;"></i> تسلسل خطوات الاعتماد لهذا المسار' +
+        '<i class="fas fa-list-ol" style="color:#0e7490;"></i> تسلسل خطوات الاعتماد لهذا المسار' +
       '</div>' +
       '<div style="font-size:11px;color:#64748b;margin-bottom:10px;line-height:1.6;">' +
         'كل خطوة = منصب واحد سيستلم المعاملة بعد المنصب السابق. الترتيب يحدد التتابع. آخر خطوة عادةً <b>هي النهائية</b> (الاعتماد النهائي).' +
@@ -16460,7 +16460,7 @@ function _renderTrialBalanceTable() {
   var displayList = _tbBuildDisplayList(rows);
 
   // Account type colors for visual cues
-  var typeMap = { asset:'#0ea5e9', liability:'#ef4444', equity:'#8b5cf6', revenue:'#16a34a', expense:'#f59e0b' };
+  var typeMap = { asset:'#0ea5e9', liability:'#ef4444', equity:'#0e7490', revenue:'#16a34a', expense:'#f59e0b' };
   var fmt = function(v){ return Number(v||0).toLocaleString('en',{minimumFractionDigits:2,maximumFractionDigits:2}); };
 
   // Compute totals from ROOT nodes only (since parents already include children's totals)
@@ -17069,7 +17069,7 @@ function erpLoadBalanceSheet() {
       kpis.innerHTML =
         _bsMetricWithDelta('إجمالي الأصول',         totalAssets, '#0ea5e9', 'fa-coins',         hasCompare ? r.change.totalAssets      : null, false) +
         _bsMetricWithDelta('إجمالي الالتزامات',     totalLiab,   '#ef4444', 'fa-file-invoice', hasCompare ? r.change.totalLiabilities : null, true)  +
-        _bsMetricWithDelta('حقوق الملكية',          totalEq,     '#8b5cf6', 'fa-user-tie',      hasCompare ? r.change.totEq            : null, false) +
+        _bsMetricWithDelta('حقوق الملكية',          totalEq,     '#0e7490', 'fa-user-tie',      hasCompare ? r.change.totEq            : null, false) +
         _bsMetricWithDelta('صافي ربح/خسارة الفترة', r.netIncome, Number(r.netIncome||0)>=0?'#16a34a':'#dc2626', 'fa-chart-line', hasCompare ? r.change.netIncome : null, false) +
         '<div class="wo-metric" style="border-color:'+(isBalanced?'#bbf7d0':'#fecaca')+';background:'+(isBalanced?'#f0fdf4':'#fef2f2')+';">' +
           '<div class="wo-metric-icon" style="background:'+(isBalanced?'#16a34a22':'#ef444422')+';color:'+(isBalanced?'#166534':'#991b1b')+';"><i class="fas '+(isBalanced?'fa-check-circle':'fa-triangle-exclamation')+'"></i></div>' +
@@ -17138,7 +17138,7 @@ function erpLoadBalanceSheet() {
     if (r.coaTree && (r.coaTree.assets || r.coaTree.liabilities || r.coaTree.equity)) {
       rightColHtml += _bsCoaColumn(r.coaTree.assets,      '#0ea5e9', 'fa-coins',          asOf);
       leftColHtml  += _bsCoaColumn(r.coaTree.liabilities, '#ef4444', 'fa-file-invoice',   asOf);
-      leftColHtml  += _bsCoaColumn(r.coaTree.equity,      '#8b5cf6', 'fa-user-tie',       asOf);
+      leftColHtml  += _bsCoaColumn(r.coaTree.equity,      '#0e7490', 'fa-user-tie',       asOf);
     } else {
       var groups = r.groups || {};
       rightColHtml +=
@@ -17152,8 +17152,8 @@ function erpLoadBalanceSheet() {
           { label: 'الالتزامات غير المتداولة', subs: groups.nonCurrentLiab, color: '#dc2626' }
         ], totalLiab, asOf);
       leftColHtml +=
-        _bsBigSection('حقوق الملكية', '#8b5cf6', 'fa-user-tie', [
-          { label: 'حقوق الملكية',             subs: groups.equity,         color: '#8b5cf6' }
+        _bsBigSection('حقوق الملكية', '#0e7490', 'fa-user-tie', [
+          { label: 'حقوق الملكية',             subs: groups.equity,         color: '#0e7490' }
         ], totalEq, asOf);
     }
 
@@ -17349,11 +17349,11 @@ function _bsInjectStyles() {
     '.bs-period-controls{padding:14px 16px;margin-bottom:14px;}' +
     '.bs-presets-row{display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin-bottom:12px;}' +
     '.bs-presets-label{font-size:12px;font-weight:700;color:#475569;white-space:nowrap;}' +
-    '.bs-presets-label i{color:#7c3aed;margin-inline-end:4px;}' +
+    '.bs-presets-label i{color:#0e7490;margin-inline-end:4px;}' +
     '.bs-presets{display:flex;gap:6px;flex-wrap:wrap;}' +
     '.bs-preset{padding:7px 14px;border:1.5px solid #e2e8f0;background:#fff;color:#475569;border-radius:999px;font-size:12px;font-weight:700;font-family:inherit;cursor:pointer;transition:all 140ms ease;}' +
-    '.bs-preset:hover{border-color:#7c3aed;color:#4c1d95;background:#faf5ff;transform:translateY(-1px);}' +
-    '.bs-preset.is-active{background:linear-gradient(135deg,#7c3aed,#6d28d9);color:#fff;border-color:transparent;box-shadow:0 4px 12px rgba(124,58,237,0.30);}' +
+    '.bs-preset:hover{border-color:#0e7490;color:#155e75;background:#e6f3f7;transform:translateY(-1px);}' +
+    '.bs-preset.is-active{background:linear-gradient(135deg,#0e7490,#155e75);color:#fff;border-color:transparent;box-shadow:0 4px 12px rgba(14, 116, 144,0.30);}' +
     '.bs-quarter-row{display:grid;grid-template-columns:repeat(2,minmax(180px,240px));gap:12px;align-items:end;}' +
     '@media(max-width:640px){.bs-quarter-row{grid-template-columns:1fr;}}' +
     /* v5.10.79 — sticky section headers */
@@ -17405,14 +17405,14 @@ function _bsInjectStyles() {
     '.bs-tree-row .bs-tree-bal.contra{color:#dc2626;font-style:italic;}' +
     '.bs-tree-row .bs-tree-contra-tag{font-size:10px;color:#dc2626;font-weight:700;background:#fef2f2;padding:1px 6px;border-radius:4px;margin-inline-start:6px;}' +
     /* v5.10.99 — Virtual IFRS section row (الأصول المتداولة / etc.) */
-    '.bs-tree-row.is-virtual{background:linear-gradient(90deg,rgba(124,58,237,0.08),transparent 70%);border-bottom:1.5px solid #ddd6fe;padding-top:11px;padding-bottom:11px;}' +
-    '.bs-tree-row.is-virtual .bs-tree-name{font-size:14px;font-weight:900;color:#5b21b6;letter-spacing:0.01em;}' +
-    '.bs-tree-row.is-virtual .bs-tree-bal{font-size:14px;font-weight:900;color:#5b21b6;}' +
-    '.bs-tree-row.is-virtual .bs-tree-chevron{color:#7c3aed;}' +
+    '.bs-tree-row.is-virtual{background:linear-gradient(90deg,rgba(14, 116, 144,0.08),transparent 70%);border-bottom:1.5px solid #cfe9f1;padding-top:11px;padding-bottom:11px;}' +
+    '.bs-tree-row.is-virtual .bs-tree-name{font-size:14px;font-weight:900;color:#155e75;letter-spacing:0.01em;}' +
+    '.bs-tree-row.is-virtual .bs-tree-bal{font-size:14px;font-weight:900;color:#155e75;}' +
+    '.bs-tree-row.is-virtual .bs-tree-chevron{color:#0e7490;}' +
     '.bs-tree-row .bs-tree-code-empty{width:0;display:inline-block;}' +
     /* Folder rows — bold, larger code chip, accent background tint */
-    '.bs-tree-row.is-folder{background:linear-gradient(90deg,rgba(124,58,237,0.04),transparent 70%);}' +
-    '.bs-tree-row.is-folder .bs-tree-code{background:#ede9fe;color:#5b21b6;font-weight:800;}' +
+    '.bs-tree-row.is-folder{background:linear-gradient(90deg,rgba(14, 116, 144,0.04),transparent 70%);}' +
+    '.bs-tree-row.is-folder .bs-tree-code{background:#e6f3f7;color:#155e75;font-weight:800;}' +
     '.bs-tree-row.is-folder .bs-tree-name{font-weight:800;color:#1e293b;}' +
     '.bs-tree-row.is-folder .bs-tree-bal{font-weight:800;color:#0f172a;}' +
     /* Level-specific styling — deeper levels lighten */
@@ -17632,15 +17632,15 @@ function _erpRenderBalanceSheetPrint(asOf, r, cfg) {
       '.tbl .num{text-align:end;font-variant-numeric:tabular-nums;font-family:ui-monospace,Menlo,monospace;font-weight:600;}' +
       '.tbl .head td{background:#0ea5e9;color:#fff;font-weight:800;font-size:11px;text-transform:uppercase;letter-spacing:0.4px;padding:8px 10px;}' +
       '.tbl.lia .head td{background:#ef4444;}' +
-      '.tbl.eq .head td{background:#8b5cf6;}' +
+      '.tbl.eq .head td{background:#0e7490;}' +
       '.tbl .sub-head td{background:#f1f5f9;font-weight:800;color:#0f172a;font-size:11px;}' +
       /* v5.10.82 — Hierarchical folder levels (CoA tree print) */
       '.tbl .sub-head.lvl1 td,.tbl .sub-head.lvl2 td{background:#0ea5e9;color:#fff;font-size:12px;}' +
       '.tbl.lia .sub-head.lvl1 td,.tbl.lia .sub-head.lvl2 td{background:#ef4444;}' +
-      '.tbl.eq  .sub-head.lvl1 td,.tbl.eq  .sub-head.lvl2 td{background:#8b5cf6;}' +
+      '.tbl.eq  .sub-head.lvl1 td,.tbl.eq  .sub-head.lvl2 td{background:#0e7490;}' +
       '.tbl .sub-head.lvl3 td{background:#e0f2fe;color:#0c4a6e;font-size:11.5px;}' +
       '.tbl.lia .sub-head.lvl3 td{background:#fee2e2;color:#991b1b;}' +
-      '.tbl.eq  .sub-head.lvl3 td{background:#ede9fe;color:#5b21b6;}' +
+      '.tbl.eq  .sub-head.lvl3 td{background:#e6f3f7;color:#155e75;}' +
       '.tbl .sub-head.lvl4 td{background:#f1f5f9;color:#334155;font-weight:700;font-size:11px;}' +
       '.tbl .num.neg{color:#dc2626;}' +
       '.tbl .sub-total td{background:#fef2f2;font-weight:800;color:#7f1d1d;border-top:1px solid #fecaca;}' +
@@ -17703,7 +17703,7 @@ function _erpRenderBalanceSheetPrint(asOf, r, cfg) {
             '<table class="tbl eq">' +
               '<tr class="head"><td>حقوق الملكية · Equity</td><td class="num">' + currency + '</td></tr>' +
               (useCoaTree ? treeRows(coa.equity) : subgroupRows(groups.equity)) +
-              '<tr class="grand" style="background:#5b21b6;"><td>إجمالي حقوق الملكية</td><td class="num">' + fmt(totalEq) + '</td></tr>' +
+              '<tr class="grand" style="background:#155e75;"><td>إجمالي حقوق الملكية</td><td class="num">' + fmt(totalEq) + '</td></tr>' +
             '</table>' +
           '</div>' +
         '</div>' +
@@ -17839,7 +17839,7 @@ function erpLoadCashFlow() {
 
     document.getElementById('cfDetails').innerHTML =
       renderSection('الأنشطة التشغيلية',  '#16a34a', 'fa-gears',          op) +
-      renderSection('الأنشطة الاستثمارية', '#8b5cf6', 'fa-chart-line',     iv) +
+      renderSection('الأنشطة الاستثمارية', '#0e7490', 'fa-chart-line',     iv) +
       renderSection('الأنشطة التمويلية',   '#0ea5e9', 'fa-building-columns', fi) +
       reconHtml +
       '<div style="text-align:center;margin-top:14px;"><button class="tb-btn tb-btn-success" onclick="erpCashFlowPrint()" style="font-size:13px;padding:8px 24px;"><i class="fas fa-print"></i> طباعة قائمة التدفقات النقدية</button></div>';
@@ -18107,7 +18107,7 @@ function _faRenderKpis() {
   var k = document.getElementById('faKpis');
   k.style.display = 'grid';
   k.innerHTML =
-    '<div class="fa-kpi"><div class="fa-kpi-label">إجمالي الأصول</div><div class="fa-kpi-value" style="color:#7c3aed;">' + rows.length + ' أصل</div></div>' +
+    '<div class="fa-kpi"><div class="fa-kpi-label">إجمالي الأصول</div><div class="fa-kpi-value" style="color:#0e7490;">' + rows.length + ' أصل</div></div>' +
     '<div class="fa-kpi"><div class="fa-kpi-label">الأصول النشطة</div><div class="fa-kpi-value" style="color:#16a34a;">' + activeCount + '</div></div>' +
     '<div class="fa-kpi"><div class="fa-kpi-label">إجمالي الكلفة</div><div class="fa-kpi-value">' + fmt(totalCost) + '</div></div>' +
     '<div class="fa-kpi"><div class="fa-kpi-label">القيمة الدفترية</div><div class="fa-kpi-value" style="color:#0ea5e9;">' + fmt(totalBook) + '</div></div>' +
@@ -19052,7 +19052,7 @@ function _wlRenderBreakdown(byRefType, byType) {
   var refDef = {
     sale:       { label: 'مبيعات',     icon: 'fa-cash-register',   bg: '#fee2e2', color: '#b91c1c' },
     transfer:   { label: 'تحويلات',    icon: 'fa-truck',           bg: '#cffafe', color: '#0e7490' },
-    stocktake:  { label: 'جرد',        icon: 'fa-clipboard-check', bg: '#ede9fe', color: '#6d28d9' },
+    stocktake:  { label: 'جرد',        icon: 'fa-clipboard-check', bg: '#e6f3f7', color: '#155e75' },
     adjustment: { label: 'تعديلات',    icon: 'fa-pen-to-square',   bg: '#fef3c7', color: '#b45309' },
     purchase:   { label: 'مشتريات',    icon: 'fa-box-archive',     bg: '#d1fae5', color: '#047857' },
     waste:      { label: 'تالف/هدر',   icon: 'fa-trash',           bg: '#fee2e2', color: '#991b1b' },
@@ -19112,7 +19112,7 @@ function _wlRender(j) {
   var kpis = document.getElementById('wlKpis');
   kpis.style.display = 'grid';
   kpis.innerHTML =
-    '<div class="fa-kpi"><div class="fa-kpi-label">عدد الأصناف</div><div class="fa-kpi-value" style="color:#7c3aed;">' + (s.itemsCount||0) + '</div></div>' +
+    '<div class="fa-kpi"><div class="fa-kpi-label">عدد الأصناف</div><div class="fa-kpi-value" style="color:#0e7490;">' + (s.itemsCount||0) + '</div></div>' +
     '<div class="fa-kpi"><div class="fa-kpi-label">القيمة الافتتاحية</div><div class="fa-kpi-value">' + fmt(s.openingValue) + ' ر.س</div></div>' +
     '<div class="fa-kpi"><div class="fa-kpi-label">إجمالي الوارد</div><div class="fa-kpi-value" style="color:#16a34a;">+' + fmt(s.totalIn) + '</div></div>' +
     '<div class="fa-kpi"><div class="fa-kpi-label">إجمالي الصادر</div><div class="fa-kpi-value" style="color:#ef4444;">−' + fmt(s.totalOut) + '</div></div>' +
@@ -19221,7 +19221,7 @@ function _wlRenderByDate(j) {
   var kpis = document.getElementById('wlKpis');
   kpis.style.display = 'grid';
   kpis.innerHTML =
-    '<div class="fa-kpi"><div class="fa-kpi-label">إجمالي الحركات</div><div class="fa-kpi-value" style="color:#7c3aed;">' + fmtInt(s.total) + '</div></div>' +
+    '<div class="fa-kpi"><div class="fa-kpi-label">إجمالي الحركات</div><div class="fa-kpi-value" style="color:#0e7490;">' + fmtInt(s.total) + '</div></div>' +
     '<div class="fa-kpi"><div class="fa-kpi-label">حركات الإدخال</div><div class="fa-kpi-value" style="color:#16a34a;">' + fmtInt((s.byType||{}).in) + '</div></div>' +
     '<div class="fa-kpi"><div class="fa-kpi-label">حركات الإخراج</div><div class="fa-kpi-value" style="color:#ef4444;">' + fmtInt((s.byType||{}).out) + '</div></div>' +
     '<div class="fa-kpi"><div class="fa-kpi-label">صافي الكمية</div><div class="fa-kpi-value" style="color:' + (s.netChange>=0?'#0ea5e9':'#dc2626') + ';">' + (s.netChange>=0?'+':'') + fmt(s.netChange) + '</div></div>' +
@@ -19550,7 +19550,7 @@ function erpLoadSalesAnalytics() {
       _saKpi('fa-receipt',       'linear-gradient(135deg,#3b82f6,#1d4ed8)', 'المبيعات بدون الضريبة', _erpFmt(rev.net)) +
       _saKpi('fa-percent',       'linear-gradient(135deg,#f59e0b,#d97706)', 'الضريبة (VAT)',           _erpFmt(rev.vat)) +
       _saKpi('fa-tag',           'linear-gradient(135deg,#ef4444,#dc2626)', 'الخصومات',               _erpFmt(rev.discounts)) +
-      _saKpi('fa-box',           'linear-gradient(135deg,#8b5cf6,#7c3aed)', 'التكلفة',                _erpFmt(rev.cost)) +
+      _saKpi('fa-box',           'linear-gradient(135deg,#0e7490,#0e7490)', 'التكلفة',                _erpFmt(rev.cost)) +
       _saKpi('fa-chart-line',    'linear-gradient(135deg,#06b6d4,#0891b2)', 'صافي الربح',             _erpFmt(rev.profit));
 
     // ── Products table ──
@@ -19713,7 +19713,7 @@ function erpLoadRoyaltyRecon() {
     if (!r.success) { showToast(r.error||'خطأ', true); return; }
     var t = r.totals || {};
     document.getElementById('rrSummary').innerHTML =
-      _erpKpi('إجمالي المستحق', _erpFmt(t.accrued), '#8b5cf6') +
+      _erpKpi('إجمالي المستحق', _erpFmt(t.accrued), '#0e7490') +
       _erpKpi('المدفوع', _erpFmt(t.paid), '#16a34a') +
       _erpKpi('المتبقي', _erpFmt(t.outstanding), (t.outstanding>0?'#ef4444':'#16a34a'));
     var rows = r.rows || [];
@@ -19799,7 +19799,7 @@ function erpLoadPriceLists() {
       var linkedChannels = channels.filter(function (c) { return String(c.priceListId) === String(p.id); });
       var channelBadges = linkedChannels.length
         ? linkedChannels.map(function (c) {
-            return '<span class="wo-chip" style="background:#faf5ff;color:#7c3aed;font-weight:700;font-size:10px;padding:2px 8px;border-radius:6px;display:inline-flex;align-items:center;gap:4px;margin:1px 2px 0 0;"><i class="fas fa-store"></i> ' + _v3EscapeHtml(c.name) + '</span>';
+            return '<span class="wo-chip" style="background:#e6f3f7;color:#0e7490;font-weight:700;font-size:10px;padding:2px 8px;border-radius:6px;display:inline-flex;align-items:center;gap:4px;margin:1px 2px 0 0;"><i class="fas fa-store"></i> ' + _v3EscapeHtml(c.name) + '</span>';
           }).join('')
         : '<span style="color:#94a3b8;font-size:10px;">— غير مرتبطة بقناة —</span>';
       // v5.16.1 — Active/inactive chip replaces the date columns.
@@ -19813,7 +19813,7 @@ function erpLoadPriceLists() {
         '</td>' +
         '<td>'+_v3EscapeHtml(p.brandName||'—')+'</td>' +
         '<td>'+_v3EscapeHtml(p.branchName||'—')+'</td>' +
-        '<td>'+(p.isDefault?'<i class="fas fa-star" style="color:#7c3aed;"></i>':'')+'</td>'+
+        '<td>'+(p.isDefault?'<i class="fas fa-star" style="color:#0e7490;"></i>':'')+'</td>'+
         '<td>'+activeChip+'</td>'+
         '<td><span class="badge badge-blue">'+(p.itemCount||0)+'</span></td>'+
         '<td>' +
@@ -19913,9 +19913,9 @@ function erpOpenPriceListModal(id) {
             '<input type="checkbox" id="plActive" ' + isActiveChecked + ' style="width:18px;height:18px;cursor:pointer;">' +
             '<span style="font-weight:800;color:#15803d;font-size:13px;"><i class="fas fa-toggle-on"></i> القائمة مُفَعَّلة</span>' +
           '</label>' +
-          '<label style="display:flex;align-items:center;gap:10px;padding:12px 14px;background:#faf5ff;border:1.5px solid #d8b4fe;border-radius:10px;cursor:pointer;">' +
+          '<label style="display:flex;align-items:center;gap:10px;padding:12px 14px;background:#e6f3f7;border:1.5px solid #cfe9f1;border-radius:10px;cursor:pointer;">' +
             '<input type="checkbox" id="plDefault" ' + isDefaultChecked + ' style="width:18px;height:18px;cursor:pointer;">' +
-            '<span style="font-weight:800;color:#7c3aed;font-size:13px;"><i class="fas fa-star"></i> هي الافتراضية</span>' +
+            '<span style="font-weight:800;color:#0e7490;font-size:13px;"><i class="fas fa-star"></i> هي الافتراضية</span>' +
           '</label>' +
         '</div>' +
 
@@ -19946,7 +19946,7 @@ function erpOpenPriceListModal(id) {
       btn.innerHTML = d.id
         ? '<i class="fas fa-save"></i> حفظ التَعديلات'
         : '<i class="fas fa-plus-circle"></i> إنشاء القائمة';
-      btn.style.cssText = 'font-size:15px;font-weight:800;padding:12px 24px;background:linear-gradient(135deg,#7c3aed,#6d28d9);color:#fff;border:0;border-radius:10px;box-shadow:0 4px 14px rgba(124,58,237,.35);cursor:pointer;';
+      btn.style.cssText = 'font-size:15px;font-weight:800;padding:12px 24px;background:linear-gradient(135deg,#0e7490,#155e75);color:#fff;border:0;border-radius:10px;box-shadow:0 4px 14px rgba(14, 116, 144,.35);cursor:pointer;';
       btn.onclick = function() {
         var name = (document.getElementById('plName').value || '').trim();
         if (!name) { showToast('الاسم مَطلوب', true); return; }
@@ -20277,8 +20277,8 @@ function _plRenderCategoryStrip() {
     return a.localeCompare(b, 'ar');
   });
   var chip = function(key, label, count, isActive, color) {
-    color = color || '#7c3aed';
-    var bg = isActive ? color : (color === '#94a3b8' ? '#f1f5f9' : (color === '#7c3aed' ? '#faf5ff' : '#fef3c7'));
+    color = color || '#0e7490';
+    var bg = isActive ? color : (color === '#94a3b8' ? '#f1f5f9' : (color === '#0e7490' ? '#e6f3f7' : '#fef3c7'));
     var fg = isActive ? '#fff' : color;
     var bd = isActive ? color : (color + '40');
     var safeKey = key.replace(/'/g, "\\'");
@@ -20289,10 +20289,10 @@ function _plRenderCategoryStrip() {
       '</button>';
   };
   var html =
-    '<div style="background:linear-gradient(135deg,#faf5ff,#f5f3ff);border:1.5px solid #e9d5ff;border-radius:14px;padding:12px 14px;display:flex;flex-direction:column;gap:10px;">' +
+    '<div style="background:linear-gradient(135deg,#e6f3f7,#e6f3f7);border:1.5px solid #cfe9f1;border-radius:14px;padding:12px 14px;display:flex;flex-direction:column;gap:10px;">' +
       '<div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;">' +
-        '<div style="font-size:12px;font-weight:900;color:#6d28d9;"><i class="fas fa-folder-tree"></i> التصنيفات في هذه القائمة</div>' +
-        '<button class="btn btn-sm" style="background:#7c3aed;color:#fff;font-weight:700;" onclick="_plOpenCategoryBulkPrompt()" title="تعديل أسعار التصنيف الحالي جماعياً">' +
+        '<div style="font-size:12px;font-weight:900;color:#155e75;"><i class="fas fa-folder-tree"></i> التصنيفات في هذه القائمة</div>' +
+        '<button class="btn btn-sm" style="background:#0e7490;color:#fff;font-weight:700;" onclick="_plOpenCategoryBulkPrompt()" title="تعديل أسعار التصنيف الحالي جماعياً">' +
           '<i class="fas fa-bolt"></i> تعديل جماعي للتصنيف' +
         '</button>' +
       '</div>' +
@@ -20300,7 +20300,7 @@ function _plRenderCategoryStrip() {
         chip('__all__', 'كل التصنيفات', items.length, active === '__all__', '#94a3b8') +
         keys.map(function(k) {
           var label = k === '__none__' ? 'بدون تصنيف' : k;
-          return chip(k, label, counts[k], active === k, '#7c3aed');
+          return chip(k, label, counts[k], active === k, '#0e7490');
         }).join('') +
       '</div>' +
     '</div>';
@@ -20373,7 +20373,7 @@ window.plStartCategoryEdit = function(displayEl) {
   input.type = 'text';
   input.value = cur;
   input.placeholder = 'اسم التصنيف';
-  input.style.cssText = 'padding:4px 8px;border:1.5px solid #7c3aed;border-radius:6px;font-size:12px;width:140px;font-family:inherit;';
+  input.style.cssText = 'padding:4px 8px;border:1.5px solid #0e7490;border-radius:6px;font-size:12px;width:140px;font-family:inherit;';
   var commit = function() {
     var v = (input.value || '').trim();
     if (v === cur) { wrap.innerHTML = ''; wrap.appendChild(displayEl); return; }
@@ -21132,7 +21132,7 @@ window.plBulkUpdateChannelPrices = function(plId, isPreview){
     '.bom-stat-card.danger .bom-stat-icon{color:#dc2626;}' +
     '.bom-stat-card.success .bom-stat-icon{color:#16a34a;}' +
     '.bom-stat-card.muted .bom-stat-icon{color:#94a3b8;}' +
-    '.bom-stat-card:not(.danger):not(.success):not(.muted) .bom-stat-icon{color:#7c3aed;}' +
+    '.bom-stat-card:not(.danger):not(.success):not(.muted) .bom-stat-icon{color:#0e7490;}' +
     '.bom-stat-label{font-size:11px;color:#94a3b8;font-weight:600;letter-spacing:.4px;}' +
     '.bom-stat-value{font-size:30px;font-weight:900;color:#0f172a;line-height:1;}' +
     '.bom-stat-card.danger .bom-stat-value{color:#dc2626;}' +
@@ -21146,20 +21146,20 @@ window.plBulkUpdateChannelPrices = function(plId, isPreview){
        padding aligned (38px left, 14px right) to prevent text overlap. */
     '.bom-search-icon{position:absolute;top:50%;transform:translateY(-50%);left:12px;color:#94a3b8;font-size:12px;pointer-events:none;}' +
     '.bom-search-input{width:100%;padding:10px 14px 10px 38px;border:1.5px solid #e2e8f0;border-radius:10px;font-size:13px;background:#fff;transition:border-color .15s;}' +
-    '.bom-search-input:focus{border-color:#7c3aed;outline:none;box-shadow:0 0 0 3px rgba(124,58,237,.08);}' +
+    '.bom-search-input:focus{border-color:#0e7490;outline:none;box-shadow:0 0 0 3px rgba(14, 116, 144,.08);}' +
     '.bom-select{padding:8px 12px;border:1.5px solid #e2e8f0;border-radius:8px;font-size:13px;background:#fff;cursor:pointer;min-width:130px;}' +
-    '.bom-select:focus{border-color:#7c3aed;outline:none;}' +
+    '.bom-select:focus{border-color:#0e7490;outline:none;}' +
     '.bom-chips-row{display:flex;flex-wrap:wrap;gap:6px;align-items:center;}' +
     '.bom-chip{display:inline-flex;align-items:center;gap:5px;padding:5px 13px;border-radius:20px;font-size:12px;font-weight:600;border:1.5px solid #e2e8f0;background:#fff;cursor:pointer;transition:all .15s;line-height:1.4;}' +
-    '.bom-chip:hover{border-color:#7c3aed;color:#7c3aed;}' +
-    '.bom-chip.active{background:#7c3aed;border-color:#7c3aed;color:#fff;}' +
+    '.bom-chip:hover{border-color:#0e7490;color:#0e7490;}' +
+    '.bom-chip.active{background:#0e7490;border-color:#0e7490;color:#fff;}' +
     '.bom-chip.zero{border-color:#fecaca;color:#dc2626;background:#fef2f2;}' +
     '.bom-chip.zero:hover{background:#fee2e2;border-color:#f87171;}' +
     '.bom-chip.zero.active{background:#dc2626;border-color:#dc2626;color:#fff;}' +
     /* ── Active filter tags ── */
     '.bom-active-filters{display:flex;flex-wrap:wrap;gap:5px;align-items:center;}' +
-    '.bom-active-tag{display:inline-flex;align-items:center;gap:4px;padding:3px 6px 3px 10px;background:#ede9fe;color:#6d28d9;border-radius:20px;font-size:11px;font-weight:600;border:1px solid #ddd6fe;}' +
-    '.bom-active-tag button{border:none;background:none;cursor:pointer;color:#7c3aed;font-size:13px;padding:0 2px;line-height:1;display:flex;align-items:center;}' +
+    '.bom-active-tag{display:inline-flex;align-items:center;gap:4px;padding:3px 6px 3px 10px;background:#e6f3f7;color:#155e75;border-radius:20px;font-size:11px;font-weight:600;border:1px solid #cfe9f1;}' +
+    '.bom-active-tag button{border:none;background:none;cursor:pointer;color:#0e7490;font-size:13px;padding:0 2px;line-height:1;display:flex;align-items:center;}' +
     '.bom-active-tag button:hover{color:#dc2626;}' +
     /* ── Ingredient chips ── */
     '.bom-ingr{display:inline-flex;align-items:center;gap:4px;padding:3px 8px;border-radius:10px;font-size:12px;font-weight:700;border:1px solid;}' +
@@ -21167,7 +21167,7 @@ window.plBulkUpdateChannelPrices = function(plId, isPreview){
     '.bom-ingr-low{background:#fffbeb;color:#d97706;border-color:#fde68a;}' +
     '.bom-ingr-ok{background:#f0fdf4;color:#16a34a;border-color:#bbf7d0;}' +
     /* ── BOM code cell ── */
-    '.bom-code-cell{font-family:"Courier New",monospace;font-size:10px;color:#7c3aed;background:#ede9fe;padding:2px 7px;border-radius:5px;display:inline-block;max-width:130px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;vertical-align:middle;}' +
+    '.bom-code-cell{font-family:"Courier New",monospace;font-size:10px;color:#0e7490;background:#e6f3f7;padding:2px 7px;border-radius:5px;display:inline-block;max-width:130px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;vertical-align:middle;}' +
     /* ── Table tweaks ── */
     '.bom-table td{vertical-align:middle;}' +
     '.bom-table .bom-name-ar{font-weight:700;color:#0f172a;font-size:13px;}' +
@@ -21176,8 +21176,8 @@ window.plBulkUpdateChannelPrices = function(plId, isPreview){
     '.bom-row-zero:hover{background:#fef2f2 !important;}' +
     /* ── Footer ── */
     '.bom-footer{padding:10px 2px;font-size:12px;color:#94a3b8;display:flex;justify-content:space-between;align-items:center;border-top:1px solid #e2e8f0;margin-top:6px;}' +
-    '.bom-clear-btn{border:none;background:none;cursor:pointer;color:#7c3aed;font-size:12px;font-weight:600;display:flex;align-items:center;gap:5px;padding:4px 8px;border-radius:6px;}' +
-    '.bom-clear-btn:hover{background:#ede9fe;}' +
+    '.bom-clear-btn{border:none;background:none;cursor:pointer;color:#0e7490;font-size:12px;font-weight:600;display:flex;align-items:center;gap:5px;padding:4px 8px;border-radius:6px;}' +
+    '.bom-clear-btn:hover{background:#e6f3f7;}' +
     /* ── Responsive ── */
     '@media(max-width:768px){.bom-stats{grid-template-columns:1fr 1fr;}.bom-filterbar-row{flex-direction:column;}.bom-search-wrap{min-width:100%;}}';
   document.head.appendChild(s);
@@ -21555,7 +21555,7 @@ function _erpPickMenuForRecipe() {
       st.id = 'reMenuPickStyles';
       st.textContent =
         '.re-menu-pick{background:#fff;border:1.5px solid #e2e8f0;border-radius:12px;padding:12px 14px;text-align:start;cursor:pointer;font-family:inherit;display:flex;flex-direction:column;gap:8px;transition:border-color 0.15s,transform 0.15s,box-shadow 0.15s;}' +
-        '.re-menu-pick:hover{border-color:#7c3aed;transform:translateY(-2px);box-shadow:0 8px 20px -8px rgba(124,58,237,0.25);}' +
+        '.re-menu-pick:hover{border-color:#0e7490;transform:translateY(-2px);box-shadow:0 8px 20px -8px rgba(14, 116, 144,0.25);}' +
         '.re-menu-pick-row{display:flex;justify-content:space-between;align-items:center;gap:8px;}' +
         '.re-menu-pick-name{font-size:13.5px;font-weight:800;color:#0f172a;line-height:1.3;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1;min-width:0;}' +
         '.re-menu-pick-meta{display:flex;justify-content:space-between;align-items:center;font-size:11.5px;color:#64748b;font-weight:600;gap:8px;}' +
@@ -21564,7 +21564,7 @@ function _erpPickMenuForRecipe() {
     }
 
     WoModal.open({
-      icon: 'fa-list-check', iconColor: '#7c3aed',
+      icon: 'fa-list-check', iconColor: '#0e7490',
       title: 'اختر المنتج لإضافة/تعديل وصفته',
       subtitle: 'اضغط على المنتج لفتح محرر الوصفة كامل الشاشة.',
       body: html, size: 'lg',
@@ -24619,7 +24619,7 @@ function _prdStatusMeta(s) {
   var m = {
     planned:     { t:'مخطط',       c:'warning', hex:'#f59e0b', icon:'fa-clipboard-list' },
     released:    { t:'مُطلق',       c:'info',    hex:'#0284c7', icon:'fa-play' },
-    in_progress: { t:'قيد التنفيذ', c:'purple',  hex:'#7c3aed', icon:'fa-gears' },
+    in_progress: { t:'قيد التنفيذ', c:'purple',  hex:'#0e7490', icon:'fa-gears' },
     completed:   { t:'مكتمل',       c:'success', hex:'#16a34a', icon:'fa-circle-check' },
     closed:      { t:'مغلق',        c:'neutral', hex:'#64748b', icon:'fa-lock' },
     cancelled:   { t:'ملغى',        c:'danger',  hex:'#dc2626', icon:'fa-ban' }
@@ -24801,13 +24801,13 @@ function _prdRenderWizard(data) {
         // ─ STEP 1: basic data ─
         '<div class="prd-wz-step" data-wz="1">' +
           '<div class="prd-wz-grid2">' +
-            '<div class="wo-label-stack"><label class="wo-field-label"><i class="fas fa-store" style="color:#7c3aed"></i> البراند</label><select class="wo-select" id="prdBrand">'+brandOpts+'</select></div>' +
+            '<div class="wo-label-stack"><label class="wo-field-label"><i class="fas fa-store" style="color:#0e7490"></i> البراند</label><select class="wo-select" id="prdBrand">'+brandOpts+'</select></div>' +
             '<div class="wo-label-stack"><label class="wo-field-label"><i class="fas fa-code-branch" style="color:#0891b2"></i> الفرع</label><select class="wo-select" id="prdBranch">'+_prdBranchOpts()+'</select></div>' +
             '<div class="wo-label-stack"><label class="wo-field-label"><i class="fas fa-warehouse" style="color:#f59e0b"></i> مستودع المواد الخام *</label><select class="wo-select" id="prdWhRaw"><option value="">— اختر المستودع —</option></select></div>' +
             '<div class="wo-label-stack"><label class="wo-field-label"><i class="fas fa-check-double" style="color:#16a34a"></i> مستودع المنتج التام</label><select class="wo-select" id="prdWhOut"><option value="">(نفس مستودع المواد)</option></select></div>' +
             '<div class="wo-label-stack"><label class="wo-field-label"><i class="fas fa-calendar-day"></i> تاريخ الإنتاج</label><input type="date" class="wo-input" id="prdDate" value="'+v(_prdState.date||new Date().toISOString().slice(0,10))+'"></div>' +
             '<div class="wo-label-stack"><label class="wo-field-label"><i class="fas fa-flag" style="color:#dc2626"></i> الأولوية</label><select class="wo-select" id="prdPriority"><option value="normal">عادية</option><option value="high">عاجل</option><option value="low">منخفض</option></select></div>' +
-            '<div class="wo-label-stack"><label class="wo-field-label"><i class="fas fa-users" style="color:#7c3aed"></i> طريقة احتساب العمالة</label><select class="wo-select" id="prdLaborMethod"><option value="manual">يدوي / حسب ساعات العمل</option><option value="none">بدون</option></select></div>' +
+            '<div class="wo-label-stack"><label class="wo-field-label"><i class="fas fa-users" style="color:#0e7490"></i> طريقة احتساب العمالة</label><select class="wo-select" id="prdLaborMethod"><option value="manual">يدوي / حسب ساعات العمل</option><option value="none">بدون</option></select></div>' +
             '<div class="wo-label-stack"><label class="wo-field-label"><i class="fas fa-bolt" style="color:#0284c7"></i> طريقة التكاليف غير المباشرة</label><select class="wo-select" id="prdOverheadMethod"><option value="manual">إدخال يدوي</option><option value="none">بدون</option></select></div>' +
           '</div>' +
           '<div class="wo-label-stack" style="margin-top:12px;"><label class="wo-field-label"><i class="fas fa-note-sticky"></i> ملاحظات داخلية</label><textarea class="wo-textarea" id="prdNotes" rows="2" placeholder="ملاحظات على أمر الإنتاج...">'+esc(_prdState.notes||'')+'</textarea></div>' +
@@ -24832,7 +24832,7 @@ function _prdRenderWizard(data) {
           '<div class="prd-wz-grid3" style="margin-top:12px;">' +
             '<div class="wo-label-stack"><label class="wo-field-label"><i class="fas fa-boxes-stacked"></i> الكمية المراد إنتاجها *</label><div class="prd-input-unit-wrap"><input type="number" class="wo-input prd-input-sfx" id="prdQty" step="0.001" min="0" value="'+v(_prdState.qty||'')+'" placeholder="50" oninput="_prdState.qty=this.value;_prdSaveDraft();_prdUpdateYieldHint();"><span class="prd-input-unit-sfx" id="prdQtyUnit">وحدة</span></div><span id="prdYieldHint" class="wo-text-caption" style="color:var(--wo-on-surface-subtle);min-height:14px;"></span></div>' +
             '<div class="wo-label-stack"><label class="wo-field-label"><i class="fas fa-percent" style="color:#dc2626"></i> نسبة الهالك المسموح %</label><div class="prd-input-unit-wrap"><input type="number" class="wo-input prd-input-sfx" id="prdScrapPct" step="0.1" min="0" value="'+v(_prdState.scrapPct||'')+'" placeholder="0"><span class="prd-input-unit-sfx">%</span></div><span class="prd-field-hint">القيمة من 0 إلى 100%</span></div>' +
-            '<div class="wo-label-stack"><label class="wo-field-label"><i class="fas fa-barcode" style="color:#7c3aed"></i> رقم الدفعة</label><input type="text" class="wo-input" id="prdBatchNo" value="'+v(_prdState.batchNo||'')+'" placeholder="مثال: BATCH-2026-001 (اختياري)"><span class="prd-field-hint">اختياري — يُستخدم لتتبع دُفعات الإنتاج.</span></div>' +
+            '<div class="wo-label-stack"><label class="wo-field-label"><i class="fas fa-barcode" style="color:#0e7490"></i> رقم الدفعة</label><input type="text" class="wo-input" id="prdBatchNo" value="'+v(_prdState.batchNo||'')+'" placeholder="مثال: BATCH-2026-001 (اختياري)"><span class="prd-field-hint">اختياري — يُستخدم لتتبع دُفعات الإنتاج.</span></div>' +
           '</div>' +
           '<button type="button" class="wo-btn wo-btn-secondary" onclick="_prdAddItemToList()" style="margin-top:10px;width:100%;"><i class="fas fa-plus"></i><span>إضافة هذا المنتج للقائمة</span></button>' +
         '</div>' +
@@ -24846,7 +24846,7 @@ function _prdRenderWizard(data) {
 
         // ─ STEP 4: costs ─
         '<div class="prd-wz-step" data-wz="4" style="display:none;">' +
-          '<div class="prd-rl-section"><div class="prd-rl-h"><i class="fas fa-users" style="color:#7c3aed"></i> العمالة المباشرة</div>' +
+          '<div class="prd-rl-section"><div class="prd-rl-h"><i class="fas fa-users" style="color:#0e7490"></i> العمالة المباشرة</div>' +
             '<div class="prd-rl-grid3">' +
               '<div class="wo-label-stack"><label class="wo-field-label">عدد العمال</label><input type="number" id="prdWzWorkers" class="wo-input" min="0" step="1" value="'+v(ld.workers)+'" oninput="_prdWzCalc()" placeholder="0"></div>' +
               '<div class="wo-label-stack"><label class="wo-field-label">عدد الساعات</label><input type="number" id="prdWzHours" class="wo-input" min="0" step="0.5" value="'+v(ld.hours)+'" oninput="_prdWzCalc()" placeholder="0"></div>' +
@@ -24861,7 +24861,7 @@ function _prdRenderWizard(data) {
             '</div><div class="prd-rl-auto">إجمالي غير المباشرة: <b id="prdWzOvhTotal">0.00 ر.س</b></div></div>' +
           '<div class="prd-card"><div class="prd-card-h"><i class="fas fa-calculator"></i> ملخص التكلفة التقديرية</div>' +
             '<div class="prd-cost-row"><span><i class="fas fa-boxes-stacked" style="color:#f59e0b"></i> مواد خام (مُقدّرة)</span><b id="prdWzSumMat">0.00</b></div>' +
-            '<div class="prd-cost-row"><span><i class="fas fa-users" style="color:#7c3aed"></i> عمالة</span><b id="prdWzSumLabor">0.00</b></div>' +
+            '<div class="prd-cost-row"><span><i class="fas fa-users" style="color:#0e7490"></i> عمالة</span><b id="prdWzSumLabor">0.00</b></div>' +
             '<div class="prd-cost-row"><span><i class="fas fa-bolt" style="color:#0284c7"></i> غير مباشرة</span><b id="prdWzSumOvh">0.00</b></div>' +
             '<div class="prd-cost-total"><span>إجمالي تقديري</span><b id="prdWzSumTotal">0.00 ر.س</b></div>' +
             '<div class="prd-cost-unit"><span>تكلفة الوحدة المتوقعة</span><b id="prdWzSumUnit">0.0000 ر.س</b></div>' +
@@ -25516,7 +25516,7 @@ function prdView(id) {
               '<span style="font-weight:700;">'+Number(d.materials_cost||0).toFixed(2)+' ر.س</span>' +
             '</div>' +
             '<div style="display:flex;justify-content:space-between;font-size:13px;">' +
-              '<span style="color:#64748b;"><i class="fas fa-users" style="color:#8b5cf6;"></i> عمالة + غير مباشرة</span>' +
+              '<span style="color:#64748b;"><i class="fas fa-users" style="color:#0e7490;"></i> عمالة + غير مباشرة</span>' +
               '<span style="font-weight:700;">'+ovhLabor.toFixed(2)+' ر.س</span>' +
             '</div>' +
             '<div style="border-top:1px solid #e2e8f0;padding-top:8px;display:flex;justify-content:space-between;font-size:14px;">' +
@@ -25722,7 +25722,7 @@ function _prdDetailSummary(d){
      '<div class="prd-card">'+
        '<div class="prd-card-h"><i class="fas fa-coins"></i> ملخص التكلفة</div>'+
        _prdCostRow('fa-boxes-stacked','#f59e0b','مواد خام', d.materials_cost)+
-       _prdCostRow('fa-users','#7c3aed','عمالة مباشرة', d.labor_cost)+
+       _prdCostRow('fa-users','#0e7490','عمالة مباشرة', d.labor_cost)+
        _prdCostRow('fa-bolt','#0284c7','تكاليف غير مباشرة', d.overhead_cost)+
        '<div class="prd-cost-total"><span>الإجمالي</span><b>'+_prdMoney(total)+' ر.س</b></div>'+
        (unit>0?'<div class="prd-cost-unit"><span>تكلفة الوحدة</span><b>'+unit.toFixed(4)+' ر.س</b></div>':'')+
@@ -25778,7 +25778,7 @@ function _prdDetailCosts(d){
   var total=Number(d.total_cost||0)||(materials+labor+overhead);
   var actBox = '<div class="prd-card"><div class="prd-card-h"><i class="fas fa-coins"></i> التكلفة الفعلية (المُرحّلة)</div>'+
     _prdCostRow('fa-boxes-stacked','#f59e0b','مواد خام', materials)+
-    _prdCostRow('fa-users','#7c3aed','عمالة مباشرة', labor)+
+    _prdCostRow('fa-users','#0e7490','عمالة مباشرة', labor)+
     _prdCostRow('fa-bolt','#0284c7','تكاليف غير مباشرة', overhead)+
     '<div class="prd-cost-total"><span>الإجمالي</span><b>'+_prdMoney(total)+' ر.س</b></div>'+
     (Number(d.unit_cost||0)>0?'<div class="prd-cost-unit"><span>تكلفة الوحدة الفعلية</span><b>'+Number(d.unit_cost).toFixed(4)+' ر.س</b></div>':'')+'</div>';
@@ -25789,7 +25789,7 @@ function _prdDetailCosts(d){
     var eMat = Number(cb.materials||0);
     var eTotal = eMat+eLabor+eOvh;
     estBox = '<div class="prd-card"><div class="prd-card-h"><i class="fas fa-calculator"></i> التقدير (وقت الإنشاء)</div>'+
-      (cb.labor?('<div class="prd-cost-row"><span><i class="fas fa-users" style="color:#7c3aed"></i> عمالة: '+(cb.labor.workers||0)+'×'+(cb.labor.hours||0)+'س×'+(cb.labor.rate||0)+'</span><b>'+_prdMoney(eLabor)+'</b></div>'):'')+
+      (cb.labor?('<div class="prd-cost-row"><span><i class="fas fa-users" style="color:#0e7490"></i> عمالة: '+(cb.labor.workers||0)+'×'+(cb.labor.hours||0)+'س×'+(cb.labor.rate||0)+'</span><b>'+_prdMoney(eLabor)+'</b></div>'):'')+
       _prdCostRow('fa-bolt','#0284c7','غير مباشرة (مقدّرة)', eOvh)+
       (eMat?_prdCostRow('fa-boxes-stacked','#f59e0b','مواد (مقدّرة)', eMat):'')+
       '<div class="prd-cost-total"><span>إجمالي تقديري</span><b>'+_prdMoney(eTotal)+' ر.س</b></div></div>';
@@ -25845,7 +25845,7 @@ function prdRelease(id) {
     var v = function(x){ return (x===0||x) ? x : ''; };
     var body =
       '<div class="prd-rl-matbox"><i class="fas fa-boxes-stacked"></i> تكلفة المواد الخام (محسوبة): <b>'+_prdMoney(d.materials_cost)+' ر.س</b> — ستُصرف من <b>'+_woEscapeHtml(d.warehouse_name||'')+'</b></div>' +
-      '<div class="prd-rl-section"><div class="prd-rl-h"><i class="fas fa-users" style="color:#7c3aed"></i> العمالة المباشرة</div>' +
+      '<div class="prd-rl-section"><div class="prd-rl-h"><i class="fas fa-users" style="color:#0e7490"></i> العمالة المباشرة</div>' +
         '<div class="prd-rl-grid3">' +
           '<div class="wo-label-stack"><label class="wo-field-label">عدد العمال</label><input type="number" id="prdRlWorkers" class="wo-input" min="0" step="1" value="'+v(L.workers)+'" oninput="_prdRlCalc()" placeholder="0"></div>' +
           '<div class="wo-label-stack"><label class="wo-field-label">عدد الساعات</label><input type="number" id="prdRlHours" class="wo-input" min="0" step="0.5" value="'+v(L.hours)+'" oninput="_prdRlCalc()" placeholder="0"></div>' +
@@ -25925,7 +25925,7 @@ function prdComplete(id) {
       '<div class="prd-cp-inputs">' +
         '<div class="wo-label-stack"><label class="wo-field-label"><i class="fas fa-boxes-stacked" style="color:#16a34a"></i> الكمية المُنتجة فعلياً <span style="color:#dc2626">*</span></label><input type="number" id="prdCpQty" class="wo-input" value="'+planned+'" min="0.001" step="0.001" oninput="_prdCpCalc()"></div>' +
         '<div class="wo-label-stack"><label class="wo-field-label"><i class="fas fa-dumpster" style="color:#dc2626"></i> كمية الهدر</label><input type="number" id="prdCpScrap" class="wo-input" value="0" min="0" step="0.001" oninput="_prdCpCalc()"></div>' +
-        '<div class="wo-label-stack"><label class="wo-field-label"><i class="fas fa-barcode" style="color:#7c3aed"></i> رقم الدفعة</label><input type="text" id="prdCpBatch" class="wo-input" value="'+_woEscapeHtml(d.batch_number||'')+'" placeholder="BATCH-..."></div>' +
+        '<div class="wo-label-stack"><label class="wo-field-label"><i class="fas fa-barcode" style="color:#0e7490"></i> رقم الدفعة</label><input type="text" id="prdCpBatch" class="wo-input" value="'+_woEscapeHtml(d.batch_number||'')+'" placeholder="BATCH-..."></div>' +
         '<div class="wo-label-stack"><label class="wo-field-label"><i class="fas fa-calendar-xmark" style="color:#dc2626"></i> انتهاء الصلاحية</label><input type="date" id="prdCpExpiry" class="wo-input"></div>' +
       '</div>' +
       '<div class="prd-cp-impact"><i class="fas fa-circle-info"></i> عند الإقفال: يُستلَم المنتج التام في <b>'+_woEscapeHtml(d.output_warehouse_name||d.warehouse_name||'')+'</b>، وتُسجَّل تكلفة الوحدة، ويُقفل الأمر (لا تعديل بعد الإقفال).</div>';
@@ -26996,7 +26996,7 @@ function _wzStepHtml(stepId) {
 function _wzBrandStep(d) {
   var b = d.brand;
   return '' +
-    '<h2 class="wz-step-heading"><i class="fas fa-store" style="color:#8b5cf6;"></i> معلومات البراند الأساسية</h2>' +
+    '<h2 class="wz-step-heading"><i class="fas fa-store" style="color:#0e7490;"></i> معلومات البراند الأساسية</h2>' +
     '<p class="wz-step-desc">ابدأ بتعريف البراند — هذا هو المظلة التي تنتظم تحتها الفروع والمستودعات والمنيو والمخزون.</p>' +
     '<div class="wo-form-row">' +
       '<div class="wo-label-stack">' +
@@ -28489,7 +28489,7 @@ function erpLoadAuditLog() {
       mk('تعديل', byAction.update||0, '#f59e0b', 'fa-edit') +
       mk('حذف', byAction.delete||0, '#ef4444', 'fa-trash') +
       mk('اعتماد', byAction.approve||0, '#10b981', 'fa-check') +
-      mk('دخول/خروج', (byAction.login||0)+(byAction.logout||0), '#8b5cf6', 'fa-sign-in-alt');
+      mk('دخول/خروج', (byAction.login||0)+(byAction.logout||0), '#0e7490', 'fa-sign-in-alt');
 
     // Render
     var tbody = document.getElementById('auditBody');
@@ -28497,7 +28497,7 @@ function erpLoadAuditLog() {
       tbody.innerHTML = '<tr><td colspan="7" class="empty-msg">لا توجد عمليات في هذه الفترة</td></tr>';
       return;
     }
-    var actionColors = { create:'#16a34a', update:'#f59e0b', delete:'#ef4444', login:'#8b5cf6', logout:'#94a3b8', approve:'#10b981', reject:'#ef4444', post:'#0ea5e9' };
+    var actionColors = { create:'#16a34a', update:'#f59e0b', delete:'#ef4444', login:'#0e7490', logout:'#94a3b8', approve:'#10b981', reject:'#ef4444', post:'#0ea5e9' };
     var actionLabels = { create:'إنشاء', update:'تعديل', delete:'حذف', login:'دخول', logout:'خروج', approve:'اعتماد', reject:'رفض', post:'ترحيل' };
     var entityLabels = { sales:'مبيعات', purchases:'مشتريات', inventory:'مخزون', erp:'محاسبة', custody:'عهد', hr:'موارد بشرية', workflow:'معاملات', auth:'صلاحيات' };
     var fmtDate = function(v){ try { var d = new Date(v); return d.toLocaleDateString('en-GB') + ' ' + d.toLocaleTimeString('en-GB',{hour:'2-digit',minute:'2-digit',second:'2-digit'}); } catch(_){ return ''; } };
@@ -28660,7 +28660,7 @@ var _pmGroupLabels = {
 };
 var _pmGroupColors = {
   cash: '#22c55e', electronic: '#3b82f6', voucher: '#f59e0b',
-  loyalty: '#8b5cf6', transfer: '#06b6d4', other: '#64748b'
+  loyalty: '#0e7490', transfer: '#06b6d4', other: '#64748b'
 };
 
 // Channel-type labels
@@ -29071,7 +29071,7 @@ function _v3RenderPmV3() {
       _v3MetricCard('fa-toggle-on', 'مفعّلة', counts.active, '#22c55e') +
       _v3MetricCard('fa-money-bill', 'كاش', counts.cash, '#22c55e') +
       _v3MetricCard('fa-credit-card', 'إلكتروني', counts.electronic, '#3b82f6') +
-      _v3MetricCard('fa-ticket', 'قسائم/ولاء', counts.voucher + counts.loyalty, '#8b5cf6') +
+      _v3MetricCard('fa-ticket', 'قسائم/ولاء', counts.voucher + counts.loyalty, '#0e7490') +
       _v3MetricCard('fa-money-bill-transfer', 'تحويلات', counts.transfer, '#06b6d4');
   }
 
@@ -29360,7 +29360,7 @@ function _v3RenderChannels() {
     metrics.innerHTML =
       _v3MetricCard('fa-store', 'إجمالي القنوات', rows.length, '#3b82f6') +
       _v3MetricCard('fa-toggle-on', 'مفعّلة', active, '#22c55e') +
-      _v3MetricCard('fa-tags', 'مربوطة بقائمة أسعار', withList, '#8b5cf6') +
+      _v3MetricCard('fa-tags', 'مربوطة بقائمة أسعار', withList, '#0e7490') +
       _v3MetricCard('fa-utensils', 'صالة', byType.dine_in||0, '#06b6d4') +
       _v3MetricCard('fa-motorcycle', 'تطبيقات وسيطة', byType.aggregator||0, '#fbbf24') +
       _v3MetricCard('fa-mobile-screen', 'تطبيق/هاتف', (byType.app||0)+(byType.phone||0), '#10b981');
@@ -29507,7 +29507,7 @@ function _v3OpenChannelModalInner(id) {
     '</form>';
 
   WoModal.open({
-    icon: 'fa-store', iconColor: '#8b5cf6',
+    icon: 'fa-store', iconColor: '#0e7490',
     title: id ? 'تعديل قناة بيع' : 'قناة بيع جديدة',
     subtitle: 'كل قناة مرتبطة بقائمة أسعار محددة لمنع خلط الأسعار في نفس الفاتورة.',
     body: html,
@@ -29714,7 +29714,7 @@ function _cmiLoadItems(cb) {
 function _cmiOpenModal() {
   var rows = window._cmiItems || [];
   WoModal.open({
-    icon: 'fa-utensils', iconColor: '#7c3aed',
+    icon: 'fa-utensils', iconColor: '#0e7490',
     title: 'إدارة أصناف القناة — ' + (window._cmiChannelName || ''),
     subtitle: 'الأصناف التي يراها الكاشير على هذه القناة. أضف، خصّص السعر، أو احذف.',
     body:
@@ -29895,7 +29895,7 @@ function _v3RenderDiscV3() {
       _v3MetricCard('fa-toggle-on', 'مفعّلة', active, '#22c55e') +
       _v3MetricCard('fa-receipt', 'على فاتورة', byScope.invoice, '#f59e0b') +
       _v3MetricCard('fa-cube', 'على صنف', byScope.line, '#06b6d4') +
-      _v3MetricCard('fa-bolt', 'جاهزة', byScope.preset, '#8b5cf6') +
+      _v3MetricCard('fa-bolt', 'جاهزة', byScope.preset, '#0e7490') +
       _v3MetricCard('fa-pen', 'يدوية', byScope.manual, '#64748b');
   }
 
@@ -29910,7 +29910,7 @@ function _v3RenderDiscV3() {
     var valueDisplay = d.type === 'percentage' ? (Number(d.value||0)+'%') : (_v3Fmt(d.value)+' ر.س');
     return '<tr>' +
       '<td>'+ (d.displayOrder||0) +'</td>' +
-      '<td><span class="v3-icon-badge" style="background:'+(d.color||'#8b5cf6')+'1a;color:'+(d.color||'#8b5cf6')+';"><i class="fas '+(d.icon||'fa-tag')+'"></i></span></td>' +
+      '<td><span class="v3-icon-badge" style="background:'+(d.color||'#0e7490')+'1a;color:'+(d.color||'#0e7490')+';"><i class="fas '+(d.icon||'fa-tag')+'"></i></span></td>' +
       '<td><div style="font-weight:800;">'+ _v3EscapeHtml(d.name) +'</div>'+ (d.code ? '<div style="font-size:11px;color:#64748b;"><code>'+_v3EscapeHtml(d.code)+'</code></div>':'') +'</td>' +
       '<td><span class="wo-chip">'+ (_discScopeLabels[d.discountScope]||d.discountScope||'invoice') +'</span></td>' +
       '<td><span class="wo-chip">'+ (_discTypeLabels[d.type]||d.type) +'</span></td>' +
@@ -29943,7 +29943,7 @@ function _v3OpenDiscV3ModalInner(id) {
     id:'', name:'', type:'percentage', value:0, maxAmount:0, minOrder:0,
     requireApproval:false, requireCode:false, code:'',
     enabled:true, displayOrder:0, validFrom:null, validTo:null,
-    applyOn:'invoice', color:'#8b5cf6',
+    applyOn:'invoice', color:'#0e7490',
     glAccountId:'', discountScope:'invoice', minRole:'cashier',
     maxPerInvoice:0, showInPos:true, icon:'fa-tag', description:''
   };
@@ -29999,11 +29999,11 @@ function _v3OpenDiscV3ModalInner(id) {
         '<div class="wo-field">' +
           '<label class="wo-field-label">الأيقونة</label>' +
           '<div style="display:flex;align-items:center;gap:10px;">' +
-            '<span class="v3-icon-badge v3-icon-badge-lg" id="discF_icon_box" style="background:'+(dc.color||'#8b5cf6')+'1a;color:'+(dc.color||'#8b5cf6')+';"><i id="discF_icon_preview" class="fas '+(dc.icon||'fa-tag')+'"></i></span>' +
+            '<span class="v3-icon-badge v3-icon-badge-lg" id="discF_icon_box" style="background:'+(dc.color||'#0e7490')+'1a;color:'+(dc.color||'#0e7490')+';"><i id="discF_icon_preview" class="fas '+(dc.icon||'fa-tag')+'"></i></span>' +
             '<input id="discF_icon" class="wo-input" value="'+ _v3EscapeHtml(dc.icon||'fa-tag') +'" style="flex:1;" oninput="document.getElementById(\'discF_icon_preview\').className=\'fas \'+this.value;">' +
           '</div>' +
         '</div>' +
-        '<div class="wo-field"><label class="wo-field-label">اللون</label><input id="discF_color" type="color" class="wo-input" value="'+ (dc.color||'#8b5cf6') +'" oninput="document.getElementById(\'discF_icon_box\').style.background=this.value+\'1a\';document.getElementById(\'discF_icon_box\').style.color=this.value;"></div>' +
+        '<div class="wo-field"><label class="wo-field-label">اللون</label><input id="discF_color" type="color" class="wo-input" value="'+ (dc.color||'#0e7490') +'" oninput="document.getElementById(\'discF_icon_box\').style.background=this.value+\'1a\';document.getElementById(\'discF_icon_box\').style.color=this.value;"></div>' +
         '<div class="wo-field"><label class="wo-field-label">ترتيب العرض</label><input id="discF_displayOrder" type="number" class="wo-input" value="'+ (dc.displayOrder||0) +'"></div>' +
       '</div>' +
       '<div class="v3-icon-picker-wrap" style="margin-top:10px;">' +
@@ -30027,7 +30027,7 @@ function _v3OpenDiscV3ModalInner(id) {
     '</form>';
 
   WoModal.open({
-    icon: 'fa-tags', iconColor: '#8b5cf6',
+    icon: 'fa-tags', iconColor: '#0e7490',
     title: id ? 'تعديل خصم' : 'خصم جديد',
     subtitle: 'حدد النطاق (صنف/فاتورة/جاهز/يدوي)، النوع، الحد الأقصى، أدنى صلاحية، وربط GL.',
     body: html,
@@ -30066,7 +30066,7 @@ function _v3SaveDiscV3() {
       validFrom: _v3FldVal('discF_validFrom') || null,
       validTo: _v3FldVal('discF_validTo') || null,
       applyOn: 'invoice',
-      color: _v3FldVal('discF_color') || '#8b5cf6',
+      color: _v3FldVal('discF_color') || '#0e7490',
       icon: _v3FldVal('discF_icon') || 'fa-tag',
       glAccountId: _v3FldVal('discF_glPicker_value') || null,
       discountScope: _v3FldVal('discF_scope') || 'invoice',
@@ -30233,7 +30233,7 @@ function _v3RenderShiftClose(arr) {
       _scaKpiCard('fa-door-open',    'مفتوحة',         open,       '#f59e0b') +
       _scaKpiCard('fa-door-closed',  'مغلقة',          closed,     '#22c55e') +
       _scaKpiCard('fa-calculator',   'المتوقَّع',       _v3Fmt(totalExpected) + ' ر.س', '#06b6d4') +
-      _scaKpiCard('fa-coins',        'الفعلي',         _v3Fmt(totalActual)   + ' ر.س', '#8b5cf6') +
+      _scaKpiCard('fa-coins',        'الفعلي',         _v3Fmt(totalActual)   + ' ر.س', '#0e7490') +
       _scaKpiCard(varIcon,           'الفرق',          _v3Fmt(totalVar)      + ' ر.س', varColor);
   }
 
@@ -30422,7 +30422,7 @@ function _mhRender() {
     metrics.innerHTML =
       _v3MetricCard('fa-tags', 'إجمالي البراندات', rows.length, '#3b82f6') +
       _v3MetricCard('fa-toggle-on', 'مفعّلة', active, '#22c55e') +
-      _v3MetricCard('fa-utensils', 'إجمالي المنتجات', totalProducts, '#8b5cf6') +
+      _v3MetricCard('fa-utensils', 'إجمالي المنتجات', totalProducts, '#0e7490') +
       _v3MetricCard('fa-code-branch', 'إجمالي الفروع', totalBranches, '#f59e0b');
   }
 
@@ -30546,7 +30546,7 @@ function _bmRender() {
       _v3MetricCard('fa-utensils', 'إجمالي المنتجات', rows.length, '#3b82f6') +
       _v3MetricCard('fa-burger', 'تامة (للبيع)', fin, '#22c55e') +
       _v3MetricCard('fa-blender', 'غير تامة', semi, '#f59e0b') +
-      _v3MetricCard('fa-toggle-on', 'مفعّلة', act, '#8b5cf6');
+      _v3MetricCard('fa-toggle-on', 'مفعّلة', act, '#0e7490');
   }
 
   var tbody = document.getElementById('bmBody');
@@ -30568,8 +30568,8 @@ function _bmRender() {
       return '<tr>' +
         '<td><span style="font-weight:800;">'+_v3EscapeHtml(m.name)+'</span>' +
           (m.nameEn ? '<div style="font-size:11px;color:#64748b;direction:ltr;font-weight:500;margin-top:2px;">'+_v3EscapeHtml(m.nameEn)+'</div>' : '') +
-          '<div style="margin-top:4px;"><span class="wo-chip" style="background:#ede9fe;color:#6d28d9;font-weight:700;"><i class="fas fa-gift"></i> عرض / كومبو</span></div></td>' +
-        '<td><span class="wo-chip" style="background:#ede9fe;color:#6d28d9;font-weight:700;"><i class="fas fa-gift"></i> عرض</span></td>' +
+          '<div style="margin-top:4px;"><span class="wo-chip" style="background:#e6f3f7;color:#155e75;font-weight:700;"><i class="fas fa-gift"></i> عرض / كومبو</span></div></td>' +
+        '<td><span class="wo-chip" style="background:#e6f3f7;color:#155e75;font-weight:700;"><i class="fas fa-gift"></i> عرض</span></td>' +
         '<td><span class="wo-chip">'+_v3EscapeHtml(m.category||'عروض')+'</span></td>' +
         '<td class="num"><span style="font-weight:900;color:#0f172a;">'+_v3Fmt(Number(m.price)||0)+'</span> ر.س</td>' +
         '<td><span style="color:#94a3b8;">—</span></td>' +
@@ -30608,7 +30608,7 @@ function _bmRender() {
     // Production method badge
     var methodLabels = {
       'made_at_branch':  { l: 'يُصنع بالفرع',   c: '#0ea5e9', i: 'fa-store' },
-      'made_at_kitchen': { l: 'مطبخ مركزي',     c: '#8b5cf6', i: 'fa-warehouse' },
+      'made_at_kitchen': { l: 'مطبخ مركزي',     c: '#0e7490', i: 'fa-warehouse' },
       'prepared':        { l: 'مُحضَّر مسبقاً', c: '#f59e0b', i: 'fa-blender' },
       'imported':        { l: 'مستورد/مخزون',  c: '#475569', i: 'fa-box' }
     };
@@ -30661,13 +30661,13 @@ function _bmRender() {
         //   from current ingredient stock (replaces the old wide column).
         (hasRecipe
           ? '<button class="wo-btn wo-btn-sm" style="background:#dcfce7;color:#15803d;font-weight:800;border:1.5px solid #86efac;" onclick="erpOpenRecipeEditor(\''+ m.id +'\')" title="تعديل الوصفة (شاشة كاملة)"><i class="fas fa-check-circle"></i> له وصفة</button>' + availChip + ' '
-          : '<button class="wo-btn wo-btn-sm" style="background:#fff;color:#7c3aed;font-weight:800;border:1.5px dashed #c4b5fd;" onclick="erpOpenRecipeEditor(\''+ m.id +'\')" title="إنشاء وصفة جديدة (شاشة كاملة)"><i class="fas fa-mortar-pestle"></i> + أضف وصفة</button> '
+          : '<button class="wo-btn wo-btn-sm" style="background:#fff;color:#0e7490;font-weight:800;border:1.5px dashed #a5d8e6;" onclick="erpOpenRecipeEditor(\''+ m.id +'\')" title="إنشاء وصفة جديدة (شاشة كاملة)"><i class="fas fa-mortar-pestle"></i> + أضف وصفة</button> '
         ) +
         (hasRecipe ? '<button class="wo-btn wo-btn-sm" style="background:#fee2e2;color:#991b1b;" onclick="erpDeleteMenuRecipe(\''+ m.id +'\',\''+_v3EscapeHtml(m.name).replace(/\'/g,"\\'")+'\')" title="حذف الوصفة"><i class="fas fa-trash-can"></i></button> ' : '') +
         // "اجعله عرض" — convert this product into a combo/offer in place. Hidden
         // for semi-finished items (not sellable). Combos take the early-return
         // branch above, so they never reach here.
-        (m.isSemiFinished ? '' : '<button class="wo-btn wo-btn-sm" style="background:#ede9fe;color:#6d28d9;border:1.5px solid #ddd6fe;font-weight:800;" onclick="erpConvertToCombo(\''+ m.id +'\')" title="حوّل هذا المنتج إلى عرض"><i class="fas fa-gift"></i> اجعله عرض</button> ') +
+        (m.isSemiFinished ? '' : '<button class="wo-btn wo-btn-sm" style="background:#e6f3f7;color:#155e75;border:1.5px solid #cfe9f1;font-weight:800;" onclick="erpConvertToCombo(\''+ m.id +'\')" title="حوّل هذا المنتج إلى عرض"><i class="fas fa-gift"></i> اجعله عرض</button> ') +
         '<button class="wo-btn wo-btn-sm wo-btn-secondary" onclick="erpEditBrandMenuItem(\''+ m.id +'\')" title="تعديل المنتج"><i class="fas fa-edit"></i></button> ' +
         '<button class="wo-btn wo-btn-sm wo-btn-danger" onclick="erpDeleteBrandMenuItem(\''+ m.id +'\')" title="حذف المنتج"><i class="fas fa-trash"></i></button>' +
       '</td>' +
@@ -30871,7 +30871,7 @@ window.erpOpenRecipeEditor = function(menuId) {
 
     function afterBomLoad() {
       WoModal.open({
-        icon: 'fa-mortar-pestle', iconColor: '#7c3aed',
+        icon: 'fa-mortar-pestle', iconColor: '#0e7490',
         title: 'محرر الوصفة',
         subtitle: 'وصفة احترافية بحساب فوري للتكلفة وهامش الربح',
         body: '<div id="reEditorBody"></div>',
@@ -30934,7 +30934,7 @@ window.erpOpenRecipeEditor = function(menuId) {
 
 // Color palette (locked to wo-* tokens + brand purple)
 var _RE_COLORS = {
-  primary:    '#7c3aed', primaryDark: '#5b21b6', primarySoft: '#ede9fe',
+  primary:    '#0e7490', primaryDark: '#155e75', primarySoft: '#e6f3f7',
   accent:     '#0ea5e9', accentSoft: '#e0f2fe',
   success:    '#10b981', successSoft: '#d1fae5',
   warning:    '#f59e0b', warningSoft: '#fef3c7',
@@ -30944,7 +30944,7 @@ var _RE_COLORS = {
 };
 
 // Category palette for cost composition chart (cycle through)
-var _RE_CHART_PALETTE = ['#7c3aed', '#0ea5e9', '#f59e0b', '#10b981', '#ef4444', '#8b5cf6', '#ec4899'];
+var _RE_CHART_PALETTE = ['#0e7490', '#0ea5e9', '#f59e0b', '#10b981', '#ef4444', '#0e7490', '#ec4899'];
 
 // V5.7.36 — Scoped stylesheet for the recipe editor. Single source of truth
 //   for visual rules. Every selector is prefixed with .re-* (or scoped via
@@ -30977,7 +30977,7 @@ function _reBuildStylesheet() {
 
     /* ─── 3. HERO CARD ─── */
     '.re-hero{position:relative;overflow:hidden;color:#fff;padding:18px 22px;border-radius:18px;margin-bottom:14px;',
-      'background:radial-gradient(120% 140% at 100% 0%,#8b5cf6 0%,#6d28d9 45%,#4c1d95 100%);',
+      'background:radial-gradient(120% 140% at 100% 0%,#0e7490 0%,#155e75 45%,#155e75 100%);',
       'box-shadow:0 12px 36px -12px rgba(76,29,149,0.45),0 2px 6px rgba(15,23,42,0.06);}',
     '.re-hero-orb{position:absolute;border-radius:50%;pointer-events:none;}',
     '.re-hero-orb-1{top:-60px;inset-inline-end:-50px;width:220px;height:220px;background:radial-gradient(circle,rgba(255,255,255,0.18) 0%,transparent 70%);}',
@@ -31090,9 +31090,9 @@ function _reBuildStylesheet() {
 
     /* ─── 10. EMPTY STATE ─── */
     '.re-empty{display:flex;flex-direction:column;align-items:center;justify-content:center;padding:48px 24px;text-align:center;min-height:320px;}',
-    '.re-empty-icon{width:88px;height:88px;background:linear-gradient(135deg,' + C.primarySoft + ',#f3e8ff);color:' + C.primary + ';',
+    '.re-empty-icon{width:88px;height:88px;background:linear-gradient(135deg,' + C.primarySoft + ',#e6f3f7);color:' + C.primary + ';',
       'border-radius:50%;display:grid;place-items:center;margin-bottom:18px;',
-      'box-shadow:inset 0 0 0 1px rgba(124,58,237,0.12),0 8px 24px -8px rgba(124,58,237,0.20);}',
+      'box-shadow:inset 0 0 0 1px rgba(14, 116, 144,0.12),0 8px 24px -8px rgba(14, 116, 144,0.20);}',
     '.re-empty-icon i{font-size:34px;}',
     '.re-empty-title{font-weight:900;font-size:17px;color:' + C.ink + ';margin:0 0 7px;letter-spacing:-0.01em;}',
     '.re-empty-text{font-size:13px;max-width:300px;line-height:1.65;margin:0 0 18px;color:' + C.sub + ';font-weight:500;}',
@@ -31108,8 +31108,8 @@ function _reBuildStylesheet() {
     '.re-add-btn{background:' + C.primary + ';color:#fff;border:1px solid ' + C.primary + ';',
       'padding:8px 14px;border-radius:10px;font-weight:800;font-size:12.5px;cursor:pointer;',
       'display:inline-flex;align-items:center;gap:6px;transition:all 0.15s;font-family:inherit;flex-shrink:0;',
-      'box-shadow:0 4px 12px -4px rgba(124,58,237,0.4);}',
-    '.re-add-btn:not(:disabled):hover{background:' + C.primaryDark + ';transform:translateY(-1px);box-shadow:0 8px 20px -6px rgba(124,58,237,0.5);}',
+      'box-shadow:0 4px 12px -4px rgba(14, 116, 144,0.4);}',
+    '.re-add-btn:not(:disabled):hover{background:' + C.primaryDark + ';transform:translateY(-1px);box-shadow:0 8px 20px -6px rgba(14, 116, 144,0.5);}',
     '.re-add-btn:disabled{background:#cbd5e1;border-color:#cbd5e1;cursor:not-allowed;box-shadow:none;opacity:0.7;}',
     '.re-add-btn i{font-size:11px;}',
     '.re-add-count{background:rgba(255,255,255,0.25);padding:1px 7px;border-radius:6px;font-variant-numeric:tabular-nums;min-width:22px;text-align:center;}',
@@ -31960,7 +31960,7 @@ function _cbRenderList() {
   if (m) {
     var active = list.filter(function(c){ return c.active; }).length;
     m.innerHTML =
-      _v3MetricCard('fa-gift', 'إجمالي العروض', list.length, '#8b5cf6') +
+      _v3MetricCard('fa-gift', 'إجمالي العروض', list.length, '#0e7490') +
       _v3MetricCard('fa-toggle-on', 'مفعّلة', active, '#22c55e');
   }
   if (!list.length) {
@@ -31974,7 +31974,7 @@ function _cbRenderList() {
       else { choiceCount++; optionCount += (g.options||[]).length; }
     });
     var makeup =
-      '<span class="wo-chip" style="background:#ede9fe;color:#6d28d9;font-weight:700;"><i class="fas fa-thumbtack"></i> ثابت: '+fixedCount+'</span> ' +
+      '<span class="wo-chip" style="background:#e6f3f7;color:#155e75;font-weight:700;"><i class="fas fa-thumbtack"></i> ثابت: '+fixedCount+'</span> ' +
       '<span class="wo-chip" style="background:#e0f2fe;color:#0369a1;font-weight:700;"><i class="fas fa-list-check"></i> '+choiceCount+' مجموعة · '+optionCount+' خيار</span>';
     var safeName = _v3EscapeHtml(c.name).replace(/'/g, "\\'");
     return '<tr>' +
@@ -32173,7 +32173,7 @@ window.erpConvertToCombo = function(menuId) {
 
 function _cbOpenModal() {
   WoModal.open({
-    icon: 'fa-gift', iconColor: '#8b5cf6',
+    icon: 'fa-gift', iconColor: '#0e7490',
     title: window._cb.convertMode ? 'تحويل منتج إلى عرض' : (window._cb.editingId ? 'تعديل العرض' : 'عرض جديد'),
     subtitle: 'مكوّن ثابت + مجموعات اختيار — يُخصم من المخزون حسب وصفة كل صنف مختار',
     body: '<div id="cbBuilderBody"></div>',
@@ -32213,7 +32213,7 @@ function _cbRender() {
 
   // Fixed components
   h += '<div class="cb-panel">';
-  h += '<div class="cb-panel-head"><span><i class="fas fa-thumbtack" style="color:#6d28d9;"></i> المكوّنات الثابتة <small style="color:#64748b;font-weight:500;">(تُضاف دائماً)</small></span>' +
+  h += '<div class="cb-panel-head"><span><i class="fas fa-thumbtack" style="color:#155e75;"></i> المكوّنات الثابتة <small style="color:#64748b;font-weight:500;">(تُضاف دائماً)</small></span>' +
        '<button class="wo-btn wo-btn-sm wo-btn-secondary" onclick="cbAddFixed()"><i class="fas fa-plus"></i> مكوّن ثابت</button></div>';
   h += '<div id="cbFixedList">';
   if (!c.fixed.length) h += '<div class="cb-hint">لا يوجد مكوّن ثابت (اختياري) — مثال: عصير.</div>';
@@ -32267,8 +32267,8 @@ function _cbRender() {
     '.cb-pick-menu{position:absolute;top:calc(100% + 4px);inset-inline-start:0;width:100%;max-height:240px;overflow-y:auto;background:#fff;border:1px solid #e2e8f0;border-radius:10px;box-shadow:0 12px 28px rgba(15,23,42,.14);z-index:50;}' +
     '.cb-pick-opt{display:flex;justify-content:space-between;align-items:center;gap:10px;padding:9px 12px;cursor:pointer;font-size:13.5px;border-bottom:1px solid #f1f5f9;}' +
     '.cb-pick-opt:last-child{border-bottom:0;}' +
-    '.cb-pick-opt:hover{background:#f5f3ff;}' +
-    '.cb-pick-opt.is-sel{background:#ede9fe;font-weight:700;}' +
+    '.cb-pick-opt:hover{background:#e6f3f7;}' +
+    '.cb-pick-opt.is-sel{background:#e6f3f7;font-weight:700;}' +
     '.cb-pick-opt-name{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}' +
     '.cb-pick-opt-price{color:#64748b;font-size:12px;white-space:nowrap;}' +
     '.cb-pick-empty{padding:12px;color:#94a3b8;font-size:13px;text-align:center;}' +
@@ -32591,7 +32591,7 @@ function _sfRender() {
     metrics.innerHTML =
       _v3MetricCard('fa-blender', 'إجمالي الأنواع', rows.length, '#f59e0b') +
       _v3MetricCard('fa-toggle-on', 'مفعّلة', act, '#22c55e') +
-      _v3MetricCard('fa-boxes-stacked', 'إجمالي المخزون', _v3Fmt(totalStock), '#8b5cf6') +
+      _v3MetricCard('fa-boxes-stacked', 'إجمالي المخزون', _v3Fmt(totalStock), '#0e7490') +
       _v3MetricCard('fa-triangle-exclamation', 'مخزون منخفض', lowStock, '#f59e0b') +
       _v3MetricCard('fa-circle-xmark', 'نفذ المخزون', outOfStock, '#ef4444') +
       _v3MetricCard('fa-list-check', 'له وصفة BOM', withBom, '#3b82f6');
@@ -32978,7 +32978,7 @@ function _poRender() {
       _v3MetricCard('fa-clipboard-list', 'مخططة', byStatus.planned, '#94a3b8') +
       _v3MetricCard('fa-play', 'مُطلقة', byStatus.released + byStatus.in_progress, '#f59e0b') +
       _v3MetricCard('fa-check-circle', 'مكتملة', byStatus.completed, '#22c55e') +
-      _v3MetricCard('fa-boxes-stacked', 'الكمية المنتجة', _v3Fmt(totalProduced), '#8b5cf6') +
+      _v3MetricCard('fa-boxes-stacked', 'الكمية المنتجة', _v3Fmt(totalProduced), '#0e7490') +
       _v3MetricCard('fa-gauge-high', 'كفاءة الإنتاج', efficiency + '%', '#06b6d4') +
       _v3MetricCard('fa-coins', 'إجمالي تكلفة', _v3Fmt(totalCost), '#be185d');
   }
@@ -33298,7 +33298,7 @@ function _renderProductionDetailModal(o, consumption, output) {
   // Cost breakdown grid (4 cards)
   html += '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:8px;margin-bottom:14px;">' +
     _v3CostCard('fa-cubes', 'تكلفة المواد', matCost, '#3b82f6') +
-    _v3CostCard('fa-hands', 'تكلفة العمالة', labCost, '#8b5cf6') +
+    _v3CostCard('fa-hands', 'تكلفة العمالة', labCost, '#0e7490') +
     _v3CostCard('fa-bolt', 'تكاليف غير مباشرة', ohCost, '#f59e0b') +
     _v3CostCard('fa-calculator', 'إجمالي التكلفة', totalCost, '#be185d') +
     (produced > 0 ? _v3CostCard('fa-tags', 'تكلفة الوحدة', unitCost, '#06b6d4') : '') +
@@ -33419,7 +33419,7 @@ function _renderSalesByChannel(r) {
   if (metrics) {
     metrics.innerHTML =
       _v3MetricCard('fa-store', 'عدد القنوات', rows.length, '#3b82f6') +
-      _v3MetricCard('fa-receipt', 'إجمالي الفواتير', totals.count || 0, '#8b5cf6') +
+      _v3MetricCard('fa-receipt', 'إجمالي الفواتير', totals.count || 0, '#0e7490') +
       _v3MetricCard('fa-coins', 'صافي المبيعات', _v3Fmt(totals.net) + ' ر.س', '#22c55e') +
       _v3MetricCard('fa-percent', 'إجمالي العمولات', _v3Fmt(totals.commission) + ' ر.س', '#f59e0b') +
       _v3MetricCard('fa-tag', 'إجمالي الخصومات', _v3Fmt(totals.discount) + ' ر.س', '#ef4444') +
@@ -33485,7 +33485,7 @@ function _renderDiscountsGiven(r) {
   var metrics = document.getElementById('dgMetrics');
   if (metrics) {
     metrics.innerHTML =
-      _v3MetricCard('fa-tag', 'أنواع الخصومات المستخدمة', rows.length, '#8b5cf6') +
+      _v3MetricCard('fa-tag', 'أنواع الخصومات المستخدمة', rows.length, '#0e7490') +
       _v3MetricCard('fa-receipt', 'إجمالي الاستخدامات', totals.uses || 0, '#3b82f6') +
       _v3MetricCard('fa-coins', 'إجمالي قيمة الخصومات', _v3Fmt(totals.amount) + ' ر.س', '#dc2626') +
       _v3MetricCard('fa-calculator', 'متوسط لكل استخدام', totals.uses ? _v3Fmt(totals.amount / totals.uses) + ' ر.س' : '0.00', '#06b6d4');
@@ -33536,7 +33536,7 @@ window.admLoadReplies = function(txnId) {
       if (cntEl) cntEl.textContent = rows.length + ' رد';
       if (!listEl) return;
       if (!rows.length) {
-        listEl.innerHTML = '<div style="text-align:center;color:#94a3b8;padding:24px;font-size:12px;background:#fff;border:1px dashed #c4b5fd;border-radius:10px;"><i class="fas fa-comment-dots" style="font-size:28px;display:block;margin-bottom:8px;color:#c4b5fd;"></i>لا توجد ردود بعد.</div>';
+        listEl.innerHTML = '<div style="text-align:center;color:#94a3b8;padding:24px;font-size:12px;background:#fff;border:1px dashed #a5d8e6;border-radius:10px;"><i class="fas fa-comment-dots" style="font-size:28px;display:block;margin-bottom:8px;color:#a5d8e6;"></i>لا توجد ردود بعد.</div>';
         return;
       }
       var esc = _v3EscapeHtml || _woEscapeHtml;
@@ -33546,7 +33546,7 @@ window.admLoadReplies = function(txnId) {
         cashier:  { grad: 'linear-gradient(135deg,#16a34a,#15803d)', label: 'كاشير', side: '#16a34a' },
         custody:  { grad: 'linear-gradient(135deg,#d97706,#b45309)', label: 'عهدة', side: '#d97706' },
         finance:  { grad: 'linear-gradient(135deg,#0369a1,#075985)', label: 'مالية', side: '#0369a1' },
-        hr:       { grad: 'linear-gradient(135deg,#a855f7,#7e22ce)', label: 'موارد بشرية', side: '#a855f7' },
+        hr:       { grad: 'linear-gradient(135deg,#1591b0,#155e75)', label: 'موارد بشرية', side: '#1591b0' },
         inventory:{ grad: 'linear-gradient(135deg,#0d9488,#0f766e)', label: 'مخزون', side: '#0d9488' },
         purchasing:{ grad: 'linear-gradient(135deg,#ea580c,#c2410c)', label: 'مشتريات', side: '#ea580c' },
         employee: { grad: 'linear-gradient(135deg,#475569,#334155)', label: 'موظف', side: '#475569' }
@@ -33762,7 +33762,7 @@ window._pmRoleLabels = {
   cashier: 'كاشير', custody: 'عهدة', employee: 'موظف'
 };
 window._pmRoleColors = {
-  admin: '#dc2626', manager: '#9333ea', finance: '#16a34a',
+  admin: '#dc2626', manager: '#0e7490', finance: '#16a34a',
   hr: '#0ea5e9', inventory: '#d97706', purchasing: '#06b6d4',
   cashier: '#3b82f6', custody: '#f59e0b', employee: '#64748b'
 };
@@ -33836,7 +33836,7 @@ function _renderPermsMatrix() {
   var catColors = {
     pos:'#22c55e', sales:'#3b82f6', inventory:'#d97706',
     purchasing:'#06b6d4', finance:'#16a34a', hr:'#0ea5e9',
-    workflow:'#8b5cf6', admin:'#dc2626', tax:'#be185d'
+    workflow:'#0e7490', admin:'#dc2626', tax:'#be185d'
   };
 
   var bodyHtml = '';
@@ -33938,7 +33938,7 @@ window.wfTxnForwardModal = function(txnId) {
 
   var footer =
     '<button class="wo-btn wo-btn-secondary" id="wfFwdCancel">إلغاء</button>' +
-    '<button class="wo-btn wo-btn-primary" id="wfFwdOk" style="background:linear-gradient(135deg,#8b5cf6,#6d28d9);"><i class="fas fa-share"></i><span>تحويل</span></button>';
+    '<button class="wo-btn wo-btn-primary" id="wfFwdOk" style="background:linear-gradient(135deg,#0e7490,#155e75);"><i class="fas fa-share"></i><span>تحويل</span></button>';
 
   var modal = WoModal.open({
     icon: 'fa-share', iconColor: 'info',
@@ -34112,7 +34112,7 @@ window.erpLoadDimensionsHub = function(){
   host.innerHTML =
     '<header class="wo-header">' +
       '<div class="wo-header-titles">' +
-        '<h1><span class="wo-icon-slot"><i class="fas fa-cubes" style="color:#7c3aed;"></i></span> دليل الأبعاد المحاسبية</h1>' +
+        '<h1><span class="wo-icon-slot"><i class="fas fa-cubes" style="color:#0e7490;"></i></span> دليل الأبعاد المحاسبية</h1>' +
         '<p class="wo-header-sub">كل البيوت التحليلية للنظام في مكان واحد — استخدمها لتقطيع التقارير والتحليل المالي والتشغيلي.</p>' +
       '</div>' +
     '</header>' +
@@ -34128,7 +34128,7 @@ window.erpLoadDimensionsHub = function(){
     // Top summary strip
     var t = d.totals || {};
     document.getElementById('dimSummaryStrip').innerHTML =
-      _v3MetricCard('fa-cubes',         'أنواع الأبعاد',      t.tableCount || 0, '#7c3aed') +
+      _v3MetricCard('fa-cubes',         'أنواع الأبعاد',      t.tableCount || 0, '#0e7490') +
       _v3MetricCard('fa-database',      'إجمالي العناصر',     (t.itemCount||0).toLocaleString('ar-SA-u-nu-latn'), '#3b82f6') +
       _v3MetricCard('fa-toggle-on',     'العناصر النشطة',     (t.activeItems||0).toLocaleString('ar-SA-u-nu-latn'), '#22c55e') +
       _v3MetricCard('fa-circle-check',  'جداول متاحة',         t.tablesAvailable || 0, '#16a34a') +
@@ -34536,7 +34536,7 @@ window.erpExportBomExcel = function() {
         if (ws[cell]) {
           ws[cell].s = {
             font: { bold: true, color: { rgb: 'FFFFFF' } },
-            fill: { fgColor: { rgb: '7C3AED' } },
+            fill: { fgColor: { rgb: '0E7490' } },
             alignment: { horizontal: 'center' }
           };
         }
@@ -34646,8 +34646,8 @@ window.erpImportBomExcel = function(input) {
         overlay.innerHTML =
           '<div style="background:#fff;border-radius:16px;padding:24px 26px;max-width:460px;width:100%;box-shadow:0 20px 60px rgba(0,0,0,.3);direction:rtl;">' +
             '<div style="display:flex;align-items:center;gap:10px;margin-bottom:8px;">' +
-              '<span style="width:38px;height:38px;border-radius:10px;background:#ede9fe;display:flex;align-items:center;justify-content:center;flex-shrink:0;">' +
-                '<i class="fas fa-warehouse" style="color:#7c3aed;"></i></span>' +
+              '<span style="width:38px;height:38px;border-radius:10px;background:#e6f3f7;display:flex;align-items:center;justify-content:center;flex-shrink:0;">' +
+                '<i class="fas fa-warehouse" style="color:#0e7490;"></i></span>' +
               '<h3 style="margin:0;font-size:16px;color:#0f172a;">إنشاء ' + count + ' مادة خام جديدة</h3>' +
             '</div>' +
             '<p style="margin:0 0 14px;font-size:13px;color:#64748b;">اختر المستودع الذي ستُضاف إليه المواد الجديدة:</p>' +
@@ -35046,9 +35046,9 @@ function _hrInjectStyles() {
       'box-shadow:0 8px 24px -8px rgba(245,158,11,0.18);' +
     '}' +
     '#erpHrAttendanceReport .sca-header {' +
-      'background:linear-gradient(135deg,#faf5ff 0%,#f5f3ff 35%,#fff 100%);' +
-      'border-color:#ddd6fe;' +
-      'box-shadow:0 8px 24px -8px rgba(124,58,237,0.18);' +
+      'background:linear-gradient(135deg,#e6f3f7 0%,#e6f3f7 35%,#fff 100%);' +
+      'border-color:#cfe9f1;' +
+      'box-shadow:0 8px 24px -8px rgba(14, 116, 144,0.18);' +
     '}' +
     dual('.sca-header-main') + '{display:flex;align-items:center;gap:16px;flex:1;min-width:0;}' +
     dual('.sca-header-icon') + '{' +
@@ -35072,8 +35072,8 @@ function _hrInjectStyles() {
     dual('.sca-btn-ghost:hover') + '{border-color:#cbd5e1;color:#0f172a;background:#f8fafc;transform:translateY(-1px);box-shadow:0 4px 10px rgba(15,23,42,0.06);}' +
     '#erpHrHolidays .sca-btn-primary{background:linear-gradient(135deg,#f59e0b,#d97706);color:#fff;box-shadow:0 6px 16px -4px rgba(245,158,11,0.5);}' +
     '#erpHrHolidays .sca-btn-primary:hover{box-shadow:0 8px 22px -4px rgba(245,158,11,0.65);transform:translateY(-1px);}' +
-    '#erpHrAttendanceReport .sca-btn-primary{background:linear-gradient(135deg,#7c3aed,#6d28d9);color:#fff;box-shadow:0 6px 16px -4px rgba(124,58,237,0.45);}' +
-    '#erpHrAttendanceReport .sca-btn-primary:hover{box-shadow:0 8px 22px -4px rgba(124,58,237,0.6);transform:translateY(-1px);}' +
+    '#erpHrAttendanceReport .sca-btn-primary{background:linear-gradient(135deg,#0e7490,#155e75);color:#fff;box-shadow:0 6px 16px -4px rgba(14, 116, 144,0.45);}' +
+    '#erpHrAttendanceReport .sca-btn-primary:hover{box-shadow:0 8px 22px -4px rgba(14, 116, 144,0.6);transform:translateY(-1px);}' +
 
     /* ═══ KPI grid — v5.11.8: now 6 cards (مُفعَّلة + إجمالي + قادمة + متوسط + مدفوعة + مُعطَّلة) ═══ */
     dual('.sca-kpis') + '{display:grid;grid-template-columns:repeat(6,minmax(0,1fr));gap:12px;margin-bottom:18px;}' +
@@ -35118,7 +35118,7 @@ function _hrInjectStyles() {
       'transition:border-color .15s, box-shadow .15s;' +
     '}' +
     '#erpHrHolidays .sca-input:focus{border-color:#f59e0b;box-shadow:0 0 0 3px rgba(245,158,11,0.18);}' +
-    '#erpHrAttendanceReport .sca-input:focus{border-color:#7c3aed;box-shadow:0 0 0 3px rgba(124,58,237,0.18);}' +
+    '#erpHrAttendanceReport .sca-input:focus{border-color:#0e7490;box-shadow:0 0 0 3px rgba(14, 116, 144,0.18);}' +
     dual('.sca-input:hover:not(:focus)') + '{border-color:#cbd5e1;}' +
     '#erpHrHolidays .sca-search-btn{' +
       'height:40px;padding:0 18px;border-radius:11px;border:1.5px solid transparent;' +
@@ -35129,13 +35129,13 @@ function _hrInjectStyles() {
     '}' +
     '#erpHrAttendanceReport .sca-search-btn{' +
       'height:40px;padding:0 18px;border-radius:11px;border:1.5px solid transparent;' +
-      'background:linear-gradient(135deg,#7c3aed,#6d28d9);color:#fff;' +
+      'background:linear-gradient(135deg,#0e7490,#155e75);color:#fff;' +
       'font-family:inherit;font-size:13px;font-weight:800;cursor:pointer;' +
       'display:inline-flex;align-items:center;gap:7px;white-space:nowrap;' +
-      'box-shadow:0 5px 14px -3px rgba(124,58,237,0.45);transition:all .15s;' +
+      'box-shadow:0 5px 14px -3px rgba(14, 116, 144,0.45);transition:all .15s;' +
     '}' +
     '#erpHrHolidays .sca-search-btn:hover{transform:translateY(-1px);box-shadow:0 8px 20px -3px rgba(245,158,11,0.55);}' +
-    '#erpHrAttendanceReport .sca-search-btn:hover{transform:translateY(-1px);box-shadow:0 8px 20px -3px rgba(124,58,237,0.55);}' +
+    '#erpHrAttendanceReport .sca-search-btn:hover{transform:translateY(-1px);box-shadow:0 8px 20px -3px rgba(14, 116, 144,0.55);}' +
 
     /* ═══ Table ═══ */
     dual('.sca-table-wrap') + '{' +
@@ -35156,7 +35156,7 @@ function _hrInjectStyles() {
     dual('.sca-table tbody tr') + '{transition:background-color .12s;}' +
     dual('.sca-table tbody tr:nth-child(even)') + '{background:#fafbfc;}' +
     '#erpHrHolidays .sca-table tbody tr:hover{background:#fffbeb;}' +
-    '#erpHrAttendanceReport .sca-table tbody tr:hover{background:#faf5ff;}' +
+    '#erpHrAttendanceReport .sca-table tbody tr:hover{background:#e6f3f7;}' +
     dual('.sca-table tbody tr:last-child td') + '{border-bottom:none;}' +
     dual('.sca-table strong') + '{font-weight:800;color:#0f172a;}' +
 
@@ -35193,13 +35193,13 @@ function _hrInjectStyles() {
     '#erpHrHolidays .mul-chip{' +
       'display:inline-flex;align-items:center;gap:4px;' +
       'font-family:ui-monospace,Menlo,monospace;font-size:12px;' +
-      'background:linear-gradient(135deg,#ede9fe,#ddd6fe);color:#5b21b6;' +
+      'background:linear-gradient(135deg,#e6f3f7,#cfe9f1);color:#155e75;' +
       'padding:4px 11px;border-radius:8px;font-weight:900;' +
     '}' +
     '#erpHrHolidays .rec-yes{' +
       'display:inline-flex;align-items:center;gap:5px;' +
-      'font-size:11.5px;font-weight:800;color:#5b21b6;' +
-      'padding:4px 10px;background:#f5f3ff;border-radius:99px;border:1px solid #ddd6fe;' +
+      'font-size:11.5px;font-weight:800;color:#155e75;' +
+      'padding:4px 10px;background:#e6f3f7;border-radius:99px;border:1px solid #cfe9f1;' +
     '}' +
     '#erpHrHolidays .rec-no{color:#cbd5e1;font-weight:700;font-size:13px;}' +
     '#erpHrHolidays .hol-name-en{font-size:11px;color:#64748b;margin-top:2px;}' +
@@ -35243,16 +35243,16 @@ function _hrInjectStyles() {
     '#holModal .foot .ghost{background:#fff;border-color:#e2e8f0;color:#475569;}' +
     '#holModal .foot .primary{background:linear-gradient(135deg,#f59e0b,#d97706);color:#fff;box-shadow:0 4px 12px rgba(245,158,11,0.30);}' +
     /* Monthly Attendance Report */
-    '#erpHrAttendanceReport #rptEmpCard{margin:16px 0;padding:16px 18px;background:linear-gradient(135deg,#faf5ff,#fff 60%);border:1.5px solid #ddd6fe;border-radius:14px;display:none;}' +
+    '#erpHrAttendanceReport #rptEmpCard{margin:16px 0;padding:16px 18px;background:linear-gradient(135deg,#e6f3f7,#fff 60%);border:1.5px solid #cfe9f1;border-radius:14px;display:none;}' +
     '#erpHrAttendanceReport #rptEmpCard.has-data{display:block;}' +
     '#erpHrAttendanceReport .empcard-top{display:flex;align-items:center;gap:14px;margin-bottom:10px;}' +
-    '#erpHrAttendanceReport .empcard-avatar{width:54px;height:54px;border-radius:14px;background:linear-gradient(135deg,#7c3aed,#6d28d9);color:#fff;display:flex;align-items:center;justify-content:center;font-size:22px;font-weight:900;flex-shrink:0;}' +
+    '#erpHrAttendanceReport .empcard-avatar{width:54px;height:54px;border-radius:14px;background:linear-gradient(135deg,#0e7490,#155e75);color:#fff;display:flex;align-items:center;justify-content:center;font-size:22px;font-weight:900;flex-shrink:0;}' +
     '#erpHrAttendanceReport .empcard-name{font-size:18px;font-weight:900;color:#0f172a;}' +
     '#erpHrAttendanceReport .empcard-meta{font-size:12px;color:#64748b;margin-top:3px;}' +
     '#erpHrAttendanceReport .empcard-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px;}' +
     '@media (max-width:800px){#erpHrAttendanceReport .empcard-grid{grid-template-columns:repeat(2,1fr);}}' +
-    '#erpHrAttendanceReport .empcard-grid .cell{background:#fff;border:1.5px solid #ede9fe;border-radius:10px;padding:8px 12px;}' +
-    '#erpHrAttendanceReport .empcard-grid .cell-l{font-size:10.5px;font-weight:800;color:#5b21b6;text-transform:uppercase;letter-spacing:0.04em;}' +
+    '#erpHrAttendanceReport .empcard-grid .cell{background:#fff;border:1.5px solid #e6f3f7;border-radius:10px;padding:8px 12px;}' +
+    '#erpHrAttendanceReport .empcard-grid .cell-l{font-size:10.5px;font-weight:800;color:#155e75;text-transform:uppercase;letter-spacing:0.04em;}' +
     '#erpHrAttendanceReport .empcard-grid .cell-v{font-size:13.5px;font-weight:800;color:#0f172a;margin-top:3px;}' +
     '#erpHrAttendanceReport #rptCalendar{margin:16px 0;}' +
     '#erpHrAttendanceReport .cal-shell{background:#fff;border:1.5px solid #e2e8f0;border-radius:14px;padding:14px 16px;}' +
@@ -35271,13 +35271,13 @@ function _hrInjectStyles() {
     '#erpHrAttendanceReport .cal-cell.t-late .label{color:#92400e;}' +
     '#erpHrAttendanceReport .cal-cell.t-absent{background:#fef2f2;border-color:#fecaca;}' +
     '#erpHrAttendanceReport .cal-cell.t-absent .label{color:#991b1b;}' +
-    '#erpHrAttendanceReport .cal-cell.t-leave{background:#f3e8ff;border-color:#e9d5ff;}' +
-    '#erpHrAttendanceReport .cal-cell.t-leave .label{color:#6b21a8;}' +
+    '#erpHrAttendanceReport .cal-cell.t-leave{background:#e6f3f7;border-color:#cfe9f1;}' +
+    '#erpHrAttendanceReport .cal-cell.t-leave .label{color:#155e75;}' +
     '#erpHrAttendanceReport .cal-cell.t-holiday{background:#fff7ed;border-color:#fdba74;}' +
     '#erpHrAttendanceReport .cal-cell.t-holiday .label{color:#9a3412;}' +
     '#erpHrAttendanceReport .cal-cell.t-rest{background:#f8fafc;border-color:#e2e8f0;}' +
     '#erpHrAttendanceReport .cal-cell.t-rest .label{color:#64748b;}' +
-    '#erpHrAttendanceReport .cal-cell.is-today{outline:2px solid #7c3aed;outline-offset:2px;}' +
+    '#erpHrAttendanceReport .cal-cell.is-today{outline:2px solid #0e7490;outline-offset:2px;}' +
     '#erpHrAttendanceReport .cal-legend{display:flex;flex-wrap:wrap;gap:8px;margin-top:14px;padding-top:12px;border-top:1px dashed #e2e8f0;}' +
     '#erpHrAttendanceReport .cal-legend .lg-item{display:inline-flex;align-items:center;gap:6px;font-size:11px;font-weight:700;color:#475569;}' +
     '#erpHrAttendanceReport .cal-legend .lg-dot{width:12px;height:12px;border-radius:3px;}' +
@@ -35359,7 +35359,7 @@ function _holidaysRenderKpis(rows) {
     card('fa-forward',      'قادمة',          upcoming,                   'من اليوم',
          '#22c55e', ['#dcfce7','#bbf7d0'], '#15803d') +
     card('fa-percent',      'مُتوسط المضاعف', avgMul.toFixed(2) + 'x',    'إضافي الإجازات',
-         '#8b5cf6', ['#ede9fe','#ddd6fe'], '#5b21b6') +
+         '#0e7490', ['#e6f3f7','#cfe9f1'], '#155e75') +
     card('fa-money-bill',   'مدفوعة / غير',  paid + ' / ' + unpaid,       'تَوزيع الأجر',
          '#06b6d4', ['#cffafe','#a5f3fc'], '#0e7490') +
     card('fa-circle-pause', 'مُعطَّلة',        disabled,                    'لا تُحتسَب',
@@ -35689,7 +35689,7 @@ function _rptRenderKpis(s) {
   box.innerHTML =
     card('fa-check-circle', 'الحضور', s.presentDays + ' / ' + s.workDays,        '#22c55e') +
     card('fa-times-circle', 'الغياب', s.absentDays,                              '#ef4444') +
-    card('fa-umbrella-beach', 'إجازات + رسمية', (s.leaveDays + s.holidayDays),   '#8b5cf6') +
+    card('fa-umbrella-beach', 'إجازات + رسمية', (s.leaveDays + s.holidayDays),   '#0e7490') +
     card('fa-clock', 'الساعات',     _hrFmt(s.totalHours) + ' / ' + _hrFmt(s.expectedHours), '#06b6d4') +
     card('fa-arrow-up-right-dots', 'الإضافي', _hrFmt(s.overtimeHours) + ' س · ' + _hrFmt(s.overtimeAmount) + ' ر.س', '#f59e0b') +
     card('fa-chart-pie', 'نِسبة الالتزام', s.attendanceRate + '%',               s.attendanceRate >= 95 ? '#15803d' : s.attendanceRate >= 80 ? '#f59e0b' : '#dc2626');
@@ -35736,7 +35736,7 @@ function _rptRenderCalendar(days, period) {
         '<div class="lg-item"><span class="lg-dot" style="background:#bbf7d0;"></span>حضور</div>' +
         '<div class="lg-item"><span class="lg-dot" style="background:#fde68a;"></span>تأخير</div>' +
         '<div class="lg-item"><span class="lg-dot" style="background:#fecaca;"></span>غياب</div>' +
-        '<div class="lg-item"><span class="lg-dot" style="background:#e9d5ff;"></span>إجازة</div>' +
+        '<div class="lg-item"><span class="lg-dot" style="background:#cfe9f1;"></span>إجازة</div>' +
         '<div class="lg-item"><span class="lg-dot" style="background:#fdba74;"></span>إجازة رسمية</div>' +
         '<div class="lg-item"><span class="lg-dot" style="background:#e2e8f0;"></span>راحة</div>' +
       '</div>' +
@@ -35867,11 +35867,11 @@ window.erpHrReportPrint = function() {
       'body{font-family:Tahoma,"Segoe UI",sans-serif;direction:rtl;color:#0f172a;background:#fff;font-size:12px;line-height:1.5;}' +
       '@page{size:A4;margin:14mm 12mm;}' +
       '.sheet{max-width:780px;margin:0 auto;padding:18px 22px;}' +
-      '.header{display:flex;justify-content:space-between;align-items:flex-start;border-bottom:3px solid #7c3aed;padding-bottom:14px;margin-bottom:18px;}' +
+      '.header{display:flex;justify-content:space-between;align-items:flex-start;border-bottom:3px solid #0e7490;padding-bottom:14px;margin-bottom:18px;}' +
       '.co{font-size:20px;font-weight:900;color:#0f172a;}' +
-      '.doc{font-size:11px;color:#7c3aed;font-weight:800;letter-spacing:0.5px;text-transform:uppercase;}' +
-      '.doc-name{font-size:18px;font-weight:900;color:#5b21b6;background:#ede9fe;border:1.5px solid #ddd6fe;padding:5px 14px;border-radius:8px;margin-top:4px;display:inline-block;}' +
-      '.empcard{background:#faf5ff;border:1.5px solid #ddd6fe;border-radius:10px;padding:12px 14px;margin-bottom:14px;}' +
+      '.doc{font-size:11px;color:#0e7490;font-weight:800;letter-spacing:0.5px;text-transform:uppercase;}' +
+      '.doc-name{font-size:18px;font-weight:900;color:#155e75;background:#e6f3f7;border:1.5px solid #cfe9f1;padding:5px 14px;border-radius:8px;margin-top:4px;display:inline-block;}' +
+      '.empcard{background:#e6f3f7;border:1.5px solid #cfe9f1;border-radius:10px;padding:12px 14px;margin-bottom:14px;}' +
       '.empcard .name{font-size:16px;font-weight:900;color:#0f172a;}' +
       '.empcard .meta{font-size:11px;color:#64748b;margin-top:4px;}' +
       '.kpis{display:grid;grid-template-columns:repeat(6,1fr);gap:8px;margin-bottom:14px;}' +
@@ -35887,7 +35887,7 @@ window.erpHrReportPrint = function() {
       '.sig{text-align:center;border-top:2px solid #0f172a;padding-top:6px;font-size:11px;font-weight:700;}' +
       '.toolbar{position:fixed;top:14px;inset-inline-end:14px;display:flex;gap:8px;background:#fff;padding:8px 12px;border-radius:10px;box-shadow:0 4px 14px rgba(0,0,0,0.1);z-index:1000;}' +
       '.toolbar button{height:36px;padding:0 16px;border-radius:8px;border:1.5px solid #e2e8f0;background:#fff;color:#475569;font-weight:700;cursor:pointer;font-family:inherit;font-size:12px;}' +
-      '.toolbar .primary{background:#7c3aed;color:#fff;border-color:#7c3aed;}' +
+      '.toolbar .primary{background:#0e7490;color:#fff;border-color:#0e7490;}' +
       '@media print{.toolbar{display:none;}}' +
     '</style></head><body>' +
       '<div class="toolbar"><button class="primary" onclick="window.print()">طباعة</button><button onclick="window.close()">إغلاق</button></div>' +
@@ -35943,7 +35943,7 @@ function _woInjectStyles() {
   if (document.getElementById('woStyles')) return;
   var st = document.createElement('style');
   st.id = 'woStyles';
-  // v6.10.0 — Brand-aligned palette (purple #7c3aed) + admin tooling
+  // v6.10.0 — Brand-aligned palette (purple #0e7490) + admin tooling
   // (toolbar / summary / bulk bar). The structure stays SCA-compatible
   // to match the rest of the HR module's chrome.
   st.textContent =
@@ -35964,11 +35964,11 @@ function _woInjectStyles() {
       'cursor:pointer;font-size:13px;font-weight:800;color:#475569;' +
       'transition:all .15s;user-select:none;display:inline-flex;align-items:center;gap:6px;' +
     '}' +
-    '#erpHrWeeklyOff .wo-day-pill:hover{border-color:#c4b5fd;background:#faf5ff;color:#6d28d9;transform:translateY(-1px);}' +
+    '#erpHrWeeklyOff .wo-day-pill:hover{border-color:#a5d8e6;background:#e6f3f7;color:#155e75;transform:translateY(-1px);}' +
     '#erpHrWeeklyOff .wo-day-pill.is-on{' +
-      'background:linear-gradient(135deg,#faf5ff,#ede9fe);' +
-      'border-color:#7c3aed;color:#6d28d9;' +
-      'box-shadow:0 4px 10px -4px rgba(124,58,237,0.30);' +
+      'background:linear-gradient(135deg,#e6f3f7,#e6f3f7);' +
+      'border-color:#0e7490;color:#155e75;' +
+      'box-shadow:0 4px 10px -4px rgba(14, 116, 144,0.30);' +
     '}' +
     '#erpHrWeeklyOff .wo-day-pill.is-on::before{content:"\\2713  ";font-weight:900;}' +
     '#erpHrWeeklyOff .wo-default-actions{text-align:end;}' +
@@ -35977,8 +35977,8 @@ function _woInjectStyles() {
     '#erpHrWeeklyOff .wo-emp-days{display:inline-flex;flex-wrap:wrap;gap:4px;}' +
     '#erpHrWeeklyOff .wo-emp-day{' +
       'padding:3px 9px;border-radius:99px;font-size:11px;font-weight:800;' +
-      'background:linear-gradient(135deg,#faf5ff,#ede9fe);color:#6d28d9;' +
-      'border:1px solid #ddd6fe;' +
+      'background:linear-gradient(135deg,#e6f3f7,#e6f3f7);color:#155e75;' +
+      'border:1px solid #cfe9f1;' +
     '}' +
 
     /* ─── Status pills ─── */
@@ -35993,14 +35993,14 @@ function _woInjectStyles() {
       'display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:12px;margin-bottom:16px;' +
     '}' +
     '#erpHrWeeklyOff .wo-summary-card{' +
-      'background:#fff;border:1.5px solid #e2e8f0;border-right:4px solid #7c3aed;' +
+      'background:#fff;border:1.5px solid #e2e8f0;border-right:4px solid #0e7490;' +
       'border-radius:14px;padding:14px 18px;' +
       'display:flex;justify-content:space-between;align-items:center;gap:10px;' +
       'box-shadow:0 1px 2px rgba(15,23,42,0.04);transition:transform .16s,box-shadow .16s;' +
     '}' +
     '#erpHrWeeklyOff .wo-summary-card:hover{transform:translateY(-2px);box-shadow:0 8px 22px -8px rgba(15,23,42,0.18);}' +
     '#erpHrWeeklyOff .wo-summary-card .lbl{font-size:12.5px;font-weight:700;color:#64748b;}' +
-    '#erpHrWeeklyOff .wo-summary-card .val{font-size:24px;font-weight:900;color:#7c3aed;font-variant-numeric:tabular-nums;}' +
+    '#erpHrWeeklyOff .wo-summary-card .val{font-size:24px;font-weight:900;color:#0e7490;font-variant-numeric:tabular-nums;}' +
     '#erpHrWeeklyOff .wo-summary-card.is-pattern .val{font-size:14px;line-height:1.3;color:#0f172a;text-align:end;}' +
     '#erpHrWeeklyOff .wo-summary-card.is-pattern .val small{display:block;font-size:11px;color:#94a3b8;font-weight:700;margin-top:2px;}' +
 
@@ -36013,7 +36013,7 @@ function _woInjectStyles() {
       'font-family:inherit;font-size:13.5px;color:#0f172a;background:#fff;outline:none;' +
       'transition:border-color .15s,box-shadow .15s;width:100%;box-sizing:border-box;' +
     '}' +
-    '#erpHrWeeklyOff .wo-toolbar .sca-input:focus{border-color:#7c3aed;box-shadow:0 0 0 4px rgba(124,58,237,0.14);}' +
+    '#erpHrWeeklyOff .wo-toolbar .sca-input:focus{border-color:#0e7490;box-shadow:0 0 0 4px rgba(14, 116, 144,0.14);}' +
     '#erpHrWeeklyOff .wo-toolbar .sca-btn{height:42px;padding:0 16px;border-radius:11px;font-size:13px;font-weight:800;cursor:pointer;display:inline-flex;align-items:center;gap:7px;border:1.5px solid #e2e8f0;background:#fff;color:#64748b;transition:all .15s;}' +
     '#erpHrWeeklyOff .wo-toolbar .sca-btn:hover{border-color:#cbd5e1;color:#0f172a;background:#f8fafc;}' +
     '@media(max-width:720px){#erpHrWeeklyOff .wo-toolbar{grid-template-columns:1fr 1fr;}#erpHrWeeklyOff .wo-toolbar .sca-input:first-child,#erpHrWeeklyOff .wo-toolbar .sca-btn{grid-column:1/-1;}}' +
@@ -36022,15 +36022,15 @@ function _woInjectStyles() {
     /* ─── v6.10.0 Bulk action bar ─── */
     '#erpHrWeeklyOff .wo-bulk-bar{' +
       'display:none;align-items:center;gap:12px;flex-wrap:wrap;' +
-      'background:linear-gradient(135deg,#7c3aed,#6d28d9);color:#fff;' +
+      'background:linear-gradient(135deg,#0e7490,#155e75);color:#fff;' +
       'padding:12px 18px;border-radius:14px;margin-bottom:14px;' +
-      'box-shadow:0 6px 18px -6px rgba(124,58,237,0.40);' +
+      'box-shadow:0 6px 18px -6px rgba(14, 116, 144,0.40);' +
       'animation:woBulkSlide .22s ease-out;' +
     '}' +
     '#erpHrWeeklyOff .wo-bulk-bar.is-visible{display:flex;}' +
     '#erpHrWeeklyOff .wo-bulk-bar strong{font-size:16px;font-weight:900;margin-inline-end:2px;}' +
     '#erpHrWeeklyOff .wo-bulk-bar .sca-btn{height:36px;padding:0 16px;border-radius:10px;font-size:13px;font-weight:800;cursor:pointer;display:inline-flex;align-items:center;gap:6px;border:1.5px solid transparent;transition:all .15s;}' +
-    '#erpHrWeeklyOff .wo-bulk-bar .sca-btn.sca-btn-primary{background:#fff;color:#7c3aed;}' +
+    '#erpHrWeeklyOff .wo-bulk-bar .sca-btn.sca-btn-primary{background:#fff;color:#0e7490;}' +
     '#erpHrWeeklyOff .wo-bulk-bar .sca-btn.sca-btn-primary:hover{transform:translateY(-1px);box-shadow:0 4px 10px -2px rgba(0,0,0,0.18);}' +
     '#erpHrWeeklyOff .wo-bulk-bar .sca-btn.sca-btn-ghost{background:rgba(255,255,255,0.16);color:#fff;border-color:rgba(255,255,255,0.24);}' +
     '#erpHrWeeklyOff .wo-bulk-bar .sca-btn.sca-btn-ghost:hover{background:rgba(255,255,255,0.26);}' +
@@ -36038,14 +36038,14 @@ function _woInjectStyles() {
 
     /* ─── v6.10.0 Checkbox column ─── */
     '#erpHrWeeklyOff .wo-checkbox-cell{width:36px;text-align:center;}' +
-    '#erpHrWeeklyOff .wo-checkbox-cell input{width:16px;height:16px;cursor:pointer;accent-color:#7c3aed;}' +
+    '#erpHrWeeklyOff .wo-checkbox-cell input{width:16px;height:16px;cursor:pointer;accent-color:#0e7490;}' +
 
     /* ─── Modal (brand purple) ─── */
     '#woEmpModal{position:fixed;inset:0;background:rgba(15,23,42,0.55);backdrop-filter:blur(6px);z-index:10001;display:flex;align-items:center;justify-content:center;padding:20px;}' +
     '#woEmpModal .shell{background:#fff;border-radius:18px;max-width:520px;width:96%;box-shadow:0 30px 80px -20px rgba(15,23,42,0.45);overflow:hidden;}' +
-    '#woEmpModal .hero{padding:18px 22px;background:linear-gradient(135deg,#faf5ff,#fff 60%);border-bottom:1px solid #f1f5f9;}' +
+    '#woEmpModal .hero{padding:18px 22px;background:linear-gradient(135deg,#e6f3f7,#fff 60%);border-bottom:1px solid #f1f5f9;}' +
     '#woEmpModal .hero h3{margin:0;font-size:17px;font-weight:900;color:#0f172a;display:inline-flex;align-items:center;gap:8px;}' +
-    '#woEmpModal .hero h3 i{color:#7c3aed;}' +
+    '#woEmpModal .hero h3 i{color:#0e7490;}' +
     '#woEmpModal .hero p{margin:4px 0 0;font-size:12px;color:#64748b;}' +
     '#woEmpModal .body{padding:20px 22px;}' +
     '#woEmpModal .foot{padding:14px 22px;background:#fafafa;border-top:1px solid #f1f5f9;display:flex;gap:10px;justify-content:flex-end;}' +
@@ -36054,8 +36054,8 @@ function _woInjectStyles() {
     '#woEmpModal .foot .ghost:hover{border-color:#cbd5e1;background:#f8fafc;}' +
     '#woEmpModal .foot .reset{background:#fff;border-color:#fdba74;color:#9a3412;}' +
     '#woEmpModal .foot .reset:hover{background:#fff7ed;}' +
-    '#woEmpModal .foot .primary{background:linear-gradient(135deg,#7c3aed,#6d28d9);color:#fff;box-shadow:0 4px 12px -3px rgba(124,58,237,0.40);}' +
-    '#woEmpModal .foot .primary:hover{transform:translateY(-1px);box-shadow:0 6px 16px -3px rgba(124,58,237,0.50);}';
+    '#woEmpModal .foot .primary{background:linear-gradient(135deg,#0e7490,#155e75);color:#fff;box-shadow:0 4px 12px -3px rgba(14, 116, 144,0.40);}' +
+    '#woEmpModal .foot .primary:hover{transform:translateY(-1px);box-shadow:0 6px 16px -3px rgba(14, 116, 144,0.50);}';
   document.head.appendChild(st);
 }
 

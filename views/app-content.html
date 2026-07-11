@@ -5,7 +5,8 @@
     <!-- Sidebar -->
     <div class="sidebar">
       <div class="sidebar-brand" id="sidebarBrand">
-        <i class="fas fa-mug-hot" style="color:var(--accent);"></i> <span id="sidebarBrandName">Moroccan Taste</span>
+        <span class="brand-logo"><i class="fas fa-mug-hot"></i></span>
+        <span class="brand-text"><span id="sidebarBrandName">Moroccan Taste</span><small class="brand-sub">Cafe Control Center</small></span>
       </div>
       <div class="sidebar-nav">
         <!-- ═══════════════════════════════════════════════════════════════════ -->
@@ -36,7 +37,7 @@
           <i class="fas fa-utensils"></i><span data-i18n="nav.menuProduction">المنيو والإنتاج</span><i class="fas fa-chevron-down submenu-indicator"></i>
         </div>
         <div class="submenu">
-          <div class="nav-item" data-erp-nav="erpMenuHub" onclick="erpNav('erpMenuHub')" style="background:linear-gradient(90deg,rgba(139,92,246,.15),transparent);font-weight:800;"><i class="fas fa-layer-group" style="color:#a78bfa;"></i><span data-i18n="nav.menuHub">إدارة المنيو والبرندات</span></div>
+          <div class="nav-item" data-erp-nav="erpMenuHub" onclick="erpNav('erpMenuHub')" style="background:linear-gradient(90deg,rgba(14, 116, 144,.15),transparent);font-weight:800;"><i class="fas fa-layer-group" style="color:#1591b0;"></i><span data-i18n="nav.menuHub">إدارة المنيو والبرندات</span></div>
           <div class="nav-item" data-erp-nav="erpSemiFinished" onclick="erpNav('erpSemiFinished')"><i class="fas fa-blender"></i><span data-i18n="nav.semiFinished">المنتجات غير التامة</span></div>
           <div class="nav-item" data-erp-nav="erpBOM" onclick="erpNav('erpBOM')"><i class="fas fa-list-check"></i><span data-i18n="nav.bom">الوصفات (BOM)</span></div>
           <div class="nav-item" data-erp-nav="erpPriceLists" onclick="erpNav('erpPriceLists')"><i class="fas fa-tags"></i><span data-i18n="nav.priceLists">قوائم الأسعار</span></div>
@@ -57,7 +58,7 @@
         </div>
         <div class="submenu" data-wh-legacy-nav>
           <div style="padding:10px 18px 4px;font-size:9.5px;font-weight:800;color:#94a3b8;text-transform:uppercase;letter-spacing:0.06em;" data-i18n="nav.section.invSetup">الإعداد</div>
-          <div class="nav-item" onclick="nav('invCatalog')" style="background:linear-gradient(90deg,rgba(124,58,237,.15),transparent);font-weight:800;"><i class="fas fa-book" style="color:#7c3aed;"></i><span data-i18n="nav.invCatalog">إدارة مواد المخزون</span></div>
+          <div class="nav-item" onclick="nav('invCatalog')" style="background:linear-gradient(90deg,rgba(14, 116, 144,.15),transparent);font-weight:800;"><i class="fas fa-book" style="color:#0e7490;"></i><span data-i18n="nav.invCatalog">إدارة مواد المخزون</span></div>
           <div class="nav-item" data-erp-nav="erpMultiWarehouses" onclick="erpNav('erpMultiWarehouses')"><i class="fas fa-building"></i><span data-i18n="nav.multiWarehouses">المستودعات المتعددة</span></div>
           <div class="nav-item" data-erp-nav="erpWhHierarchy" onclick="erpNav('erpWhHierarchy')"><i class="fas fa-sitemap"></i><span data-i18n="nav.whHierarchy">هيكل المستودعات</span></div>
           <div class="nav-item" data-erp-nav="erpInventoryMethod" onclick="erpNav('erpInventoryMethod')"><i class="fas fa-balance-scale"></i><span data-i18n="nav.inventoryMethod">نوع الجرد وقيمة المخزون</span></div>
@@ -155,7 +156,7 @@
           <div class="nav-item" data-erp-nav="erpGLJournals" onclick="erpNav('erpGLJournals')"><i class="fas fa-book"></i><span data-i18n="nav.journals">القيود المحاسبية</span></div>
           <div class="nav-item" data-erp-nav="erpPeriods" onclick="erpNav('erpPeriods')"><i class="fas fa-calendar-alt"></i><span data-i18n="nav.periods">الفترات المحاسبية</span></div>
           <div class="nav-item" data-erp-nav="erpCostCenters" onclick="erpNav('erpCostCenters')"><i class="fas fa-bullseye"></i><span data-i18n="nav.costCenters">مراكز التكلفة</span></div>
-          <div class="nav-item" data-erp-nav="erpDimensionsHub" onclick="erpNav('erpDimensionsHub')" style="background:linear-gradient(90deg,rgba(124,58,237,.18),transparent);font-weight:800;"><i class="fas fa-cubes" style="color:#7c3aed;"></i><span>دليل الأبعاد المحاسبية</span></div>
+          <div class="nav-item" data-erp-nav="erpDimensionsHub" onclick="erpNav('erpDimensionsHub')" style="background:linear-gradient(90deg,rgba(14, 116, 144,.18),transparent);font-weight:800;"><i class="fas fa-cubes" style="color:#0e7490;"></i><span>دليل الأبعاد المحاسبية</span></div>
           <!-- v5.10.5 — Fixed Assets Registry (الأصول الثابتة) -->
           <div class="nav-item" data-erp-nav="erpFixedAssets" onclick="erpNav('erpFixedAssets')"><i class="fas fa-cubes-stacked"></i><span data-i18n="nav.fixedAssets">الأصول الثابتة</span></div>
         </div>
@@ -209,7 +210,7 @@
         </div>
         <div class="submenu">
           <!-- ── 13.a — Org structure ───────────────────────────── -->
-          <div class="nav-item" onclick="wzOpen()" style="background:linear-gradient(90deg,rgba(139,92,246,.15),transparent);"><i class="fas fa-wand-magic-sparkles" style="color:#a78bfa;"></i><span data-i18n="nav.brandWizard">معالج براند جديد</span></div>
+          <div class="nav-item" onclick="wzOpen()" style="background:linear-gradient(90deg,rgba(14, 116, 144,.15),transparent);"><i class="fas fa-wand-magic-sparkles" style="color:#1591b0;"></i><span data-i18n="nav.brandWizard">معالج براند جديد</span></div>
           <div class="nav-item" data-erp-nav="erpCompanies" onclick="erpNav('erpCompanies')"><i class="fas fa-city"></i><span data-i18n="nav.companies">الشركات</span></div>
           <!-- v5.10.83 — Standalone Brands nav item restored. Removed in v5.11.2
                when it was deduplicated against "Menu Hub", but owners
@@ -237,7 +238,7 @@
                All old erpNav section ids remain valid (deep links + the
                pos_last_section restore keep working); the rest of the
                screens are reached from inside مركز المعاملات. -->
-          <div class="nav-item" data-erp-nav="erpWfHub" onclick="erpNav('erpWfHub')" style="background:linear-gradient(90deg,rgba(139,92,246,.15),transparent);font-weight:800;"><i class="fas fa-table-columns" style="color:#a78bfa;"></i><span data-i18n="nav.wfHub">مركز المعاملات</span></div>
+          <div class="nav-item" data-erp-nav="erpWfHub" onclick="erpNav('erpWfHub')" style="background:linear-gradient(90deg,rgba(14, 116, 144,.15),transparent);font-weight:800;"><i class="fas fa-table-columns" style="color:#1591b0;"></i><span data-i18n="nav.wfHub">مركز المعاملات</span></div>
           <div class="nav-item" data-erp-nav="erpWfIncoming" onclick="erpNav('erpWfIncoming')"><i class="fas fa-inbox"></i><span data-i18n="nav.wfIncoming">صندوق الوارد</span><span id="navWfInboxBadge" class="nav-count-badge" style="display:none;">0</span></div>
           <div class="nav-item" data-erp-nav="erpWfOutgoing" onclick="erpNav('erpWfOutgoing')"><i class="fas fa-paper-plane"></i><span data-i18n="nav.wfOutgoing">صندوق الصادر</span></div>
         </div>
@@ -251,7 +252,7 @@
                All old erpNav section ids remain valid (deep links + the
                pos_last_section restore keep working); the rest of the
                screens are reached from inside مركز الموارد البشرية. -->
-          <div class="nav-item" data-erp-nav="erpHrHub" onclick="erpNav('erpHrHub')" style="background:linear-gradient(90deg,rgba(139,92,246,.15),transparent);font-weight:800;"><i class="fas fa-table-columns" style="color:#a78bfa;"></i><span data-i18n="nav.hrHub">مركز الموارد البشرية</span></div>
+          <div class="nav-item" data-erp-nav="erpHrHub" onclick="erpNav('erpHrHub')" style="background:linear-gradient(90deg,rgba(14, 116, 144,.15),transparent);font-weight:800;"><i class="fas fa-table-columns" style="color:#1591b0;"></i><span data-i18n="nav.hrHub">مركز الموارد البشرية</span></div>
           <div class="nav-item" data-erp-nav="erpHrEmployees" onclick="erpNav('erpHrEmployees')"><i class="fas fa-users"></i><span data-i18n="nav.employees">الموظفون</span></div>
           <div class="nav-item" data-erp-nav="erpHrAttendance" onclick="erpNav('erpHrAttendance')"><i class="fas fa-fingerprint"></i><span data-i18n="nav.attendance">الحضور والانصراف</span></div>
           <div class="nav-item" data-erp-nav="erpHrPayroll" onclick="erpNav('erpHrPayroll')"><i class="fas fa-money-check-alt"></i><span data-i18n="nav.payroll">الرواتب</span></div>
@@ -508,7 +509,7 @@
               <div class="cc-rank-body" id="ccExpiring"><div class="wo-empty"><i class="fas fa-spinner fa-spin"></i><span>—</span></div></div>
             </div>
             <div class="cc-rank-col">
-              <div class="cc-rank-head" style="color:#8b5cf6;"><i class="fas fa-store"></i> طلبات نواقص من الفروع</div>
+              <div class="cc-rank-head" style="color:#0e7490;"><i class="fas fa-store"></i> طلبات نواقص من الفروع</div>
               <div class="cc-rank-body" id="dhPendingShortages"><div class="wo-empty"><i class="fas fa-spinner fa-spin"></i><span>—</span></div></div>
             </div>
           </div>
@@ -540,7 +541,7 @@
               <div class="sh-kpi"><div class="sh-kpi-icon" style="background:#dcfce7;color:#16a34a;"><i class="fas fa-money-bill-trend-up"></i></div><div><div class="sh-kpi-label">مبيعات اليوم</div><div class="sh-kpi-value" id="shKpiToday">— ر.س</div></div></div>
               <div class="sh-kpi"><div class="sh-kpi-icon" style="background:#dbeafe;color:#2563eb;"><i class="fas fa-receipt"></i></div><div><div class="sh-kpi-label">فواتير اليوم</div><div class="sh-kpi-value" id="shKpiTodayCount">—</div></div></div>
               <div class="sh-kpi"><div class="sh-kpi-icon" style="background:#fef3c7;color:#d97706;"><i class="fas fa-calendar-week"></i></div><div><div class="sh-kpi-label">مبيعات الأسبوع</div><div class="sh-kpi-value" id="shKpiWeek">— ر.س</div></div></div>
-              <div class="sh-kpi"><div class="sh-kpi-icon" style="background:#e0e7ff;color:#4f46e5;"><i class="fas fa-calendar-alt"></i></div><div><div class="sh-kpi-label">مبيعات الشهر</div><div class="sh-kpi-value" id="shKpiMonth">— ر.س</div></div></div>
+              <div class="sh-kpi"><div class="sh-kpi-icon" style="background:#e0e7ff;color:#155e75;"><i class="fas fa-calendar-alt"></i></div><div><div class="sh-kpi-label">مبيعات الشهر</div><div class="sh-kpi-value" id="shKpiMonth">— ر.س</div></div></div>
               <div class="sh-kpi"><div class="sh-kpi-icon" style="background:#fce7f3;color:#be185d;"><i class="fas fa-coins"></i></div><div><div class="sh-kpi-label">متوسط الفاتورة</div><div class="sh-kpi-value" id="shKpiAvg">— ر.س</div></div></div>
             </div>
 
@@ -592,7 +593,7 @@
             </div>
             <div id="salesLogFilter"></div>
             <div class="stat-grid" style="margin:14px 0;">
-              <div class="stat-card"><div class="stat-info"><h4>إجمالي المبيعات</h4><p id="slTotalSales">0.00</p></div><div class="stat-icon" style="background:#e0e7ff;color:#4f46e5;"><i class="fas fa-money-bill-trend-up"></i></div></div>
+              <div class="stat-card"><div class="stat-info"><h4>إجمالي المبيعات</h4><p id="slTotalSales">0.00</p></div><div class="stat-icon" style="background:#e0e7ff;color:#155e75;"><i class="fas fa-money-bill-trend-up"></i></div></div>
               <div class="stat-card"><div class="stat-info"><h4>عدد الفواتير</h4><p id="slTotalCount">0</p></div><div class="stat-icon" style="background:#dcfce7;color:#16a34a;"><i class="fas fa-file-invoice"></i></div></div>
               <div class="stat-card"><div class="stat-info"><h4>متوسط الفاتورة</h4><p id="slAvgInvoice">0.00</p></div><div class="stat-icon" style="background:#fef3c7;color:#d97706;"><i class="fas fa-calculator"></i></div></div>
               <div class="stat-card"><div class="stat-info"><h4>أعلى فاتورة</h4><p id="slMaxInvoice">0.00</p></div><div class="stat-icon" style="background:#fce7f3;color:#be185d;"><i class="fas fa-trophy"></i></div></div>
@@ -657,7 +658,7 @@
           <div id="salesReports" class="sh-page hidden">
             <div class="sh-page-header">
               <button class="sh-back" onclick="salesGo('hub')"><i class="fas fa-arrow-right"></i> رجوع للمركز</button>
-              <h2><i class="fas fa-chart-pie" style="color:#8b5cf6;"></i> تقارير المبيعات (Breakdown)</h2>
+              <h2><i class="fas fa-chart-pie" style="color:#0e7490;"></i> تقارير المبيعات (Breakdown)</h2>
             </div>
             <div id="salesReportsFilter"></div>
             <div class="breakdown-btns" style="margin-top:12px;">
@@ -719,7 +720,7 @@
             /* Fix for filter buttons UI */
             #salesAdvFilter .sf-actions { display: flex; justify-content: flex-start; align-items: center; gap: 12px; padding-top: 20px; border-top: 1px solid #e2e8f0; margin-top: 10px; flex-direction: row-reverse; }
             #salesAdvFilter .sf-btn { min-width: 130px; height: 44px; display: inline-flex; align-items: center; justify-content: center; gap: 8px; font-size: 14px; border-radius: 10px; border: none; font-weight: 700; transition: all 0.2s; box-shadow: 0 2px 4px rgba(0,0,0,0.05); }
-            #salesAdvFilter .sf-btn-apply { background: linear-gradient(135deg, #4f46e5, #3b82f6); color: white; width: auto; padding: 0 30px; }
+            #salesAdvFilter .sf-btn-apply { background: linear-gradient(135deg, #155e75, #3b82f6); color: white; width: auto; padding: 0 30px; }
             #salesAdvFilter .sf-btn-apply:hover { transform: translateY(-2px); box-shadow: 0 8px 16px rgba(59, 130, 246, 0.2); background: linear-gradient(135deg, #4338ca, #2563eb); }
             #salesAdvFilter .sf-btn-reset { background: white; color: #64748b; border: 1px solid #cbd5e1; }
             #salesAdvFilter .sf-btn-reset:hover { background: #f8fafc; color: #0f172a; }
@@ -969,7 +970,7 @@
              auto-layout) — header cells and data cells share the SAME
              grid-template-columns DECLARATION, so misalignment is
              mathematically impossible.
-             Identity: purple #7c3aed (matches admin-skin.css).
+             Identity: purple #0e7490 (matches admin-skin.css).
              All 30+ JS handlers and 27 backend endpoints kept verbatim. -->
         <div id="sec_invCatalog" class="admin-section invc-section">
 
@@ -1187,7 +1188,7 @@
                 <div class="form-group" style="flex:1; min-width:180px; margin:0;">
                   <input type="text" id="rawSearchQ" class="form-control" placeholder="بحث بالاسم أو الكود..." oninput="filterInvItems()">
                 </div>
-                <select id="rawBrandFilter" class="form-control" style="max-width:180px;background:linear-gradient(135deg,#faf5ff,#fff);border-color:#d8b4fe;" onchange="filterInvItems()">
+                <select id="rawBrandFilter" class="form-control" style="max-width:180px;background:linear-gradient(135deg,#e6f3f7,#fff);border-color:#cfe9f1;" onchange="filterInvItems()">
                   <option value="">🏪 كل البراندات</option>
                 </select>
                 <select id="rawCatFilter" class="form-control" style="max-width:160px;" onchange="filterInvItems()">
@@ -1228,7 +1229,7 @@
             <div class="filter-bar" style="justify-content:space-between; align-items:center;flex-wrap:wrap;gap:10px;">
               <h3 style="margin:0; color:var(--primary);"><i class="fas fa-cubes"></i> سجل المخزون الفعلي (Live Ledger)</h3>
               <div style="display:flex;gap:8px;align-items:center;">
-                <select id="liveBrandFilter" class="form-control" style="max-width:200px;background:linear-gradient(135deg,#faf5ff,#fff);border-color:#d8b4fe;" onchange="loadLiveInventory()">
+                <select id="liveBrandFilter" class="form-control" style="max-width:200px;background:linear-gradient(135deg,#e6f3f7,#fff);border-color:#cfe9f1;" onchange="loadLiveInventory()">
                   <option value="">🏪 كل البراندات</option>
                 </select>
                 <button class="btn btn-primary" onclick="loadLiveInventory()"><i class="fas fa-sync"></i> تحديث</button>
@@ -1285,7 +1286,7 @@
             <!-- ── رأس القسم (inline styled) ── -->
             <div style="display:flex;align-items:center;justify-content:space-between;padding:18px 20px;background:linear-gradient(135deg,#1e293b 0%,#312e81 100%);border-radius:14px;margin-bottom:14px;">
               <div style="display:flex;align-items:center;gap:14px;">
-                <div style="width:44px;height:44px;border-radius:12px;background:rgba(124,58,237,.3);display:flex;align-items:center;justify-content:center;font-size:20px;color:#c4b5fd;flex-shrink:0;">
+                <div style="width:44px;height:44px;border-radius:12px;background:rgba(14, 116, 144,.3);display:flex;align-items:center;justify-content:center;font-size:20px;color:#a5d8e6;flex-shrink:0;">
                   <i class="fas fa-sliders-h"></i>
                 </div>
                 <div>
@@ -1297,7 +1298,7 @@
                 <button onclick="loadDashAdjustments()" style="display:inline-flex;align-items:center;gap:6px;padding:8px 14px;background:rgba(255,255,255,.1);color:#e2e8f0;border:1px solid rgba(255,255,255,.2);border-radius:9px;cursor:pointer;font-size:13px;font-weight:600;">
                   <i class="fas fa-rotate"></i> تحديث
                 </button>
-                <button onclick="openAdjustmentModal()" style="display:inline-flex;align-items:center;gap:6px;padding:8px 16px;background:linear-gradient(135deg,#7c3aed,#5b21b6);color:#fff;border:none;border-radius:9px;cursor:pointer;font-size:13px;font-weight:700;box-shadow:0 3px 10px rgba(124,58,237,.4);">
+                <button onclick="openAdjustmentModal()" style="display:inline-flex;align-items:center;gap:6px;padding:8px 16px;background:linear-gradient(135deg,#0e7490,#155e75);color:#fff;border:none;border-radius:9px;cursor:pointer;font-size:13px;font-weight:700;box-shadow:0 3px 10px rgba(14, 116, 144,.4);">
                   <i class="fas fa-plus"></i> محضر تعديل جديد
                 </button>
               </div>
@@ -1363,7 +1364,7 @@
             .adj-r { display:inline-flex;align-items:center;gap:4px;font-size:11px;font-weight:700;padding:3px 9px;border-radius:999px;white-space:nowrap; }
             .adj-r-d { background:#fee2e2;color:#b91c1c; }
             .adj-r-w { background:#ffedd5;color:#c2410c; }
-            .adj-r-a { background:#ede9fe;color:#5b21b6; }
+            .adj-r-a { background:#e6f3f7;color:#155e75; }
             .adj-r-s { background:#dcfce7;color:#15803d; }
             .adj-s { display:inline-flex;align-items:center;gap:5px;font-size:11px;font-weight:700;padding:4px 10px;border-radius:999px; }
             .adj-s-ok  { background:#dcfce7;color:#15803d; }
@@ -1372,7 +1373,7 @@
             .adj-num { display:inline-block;font-family:ui-monospace,monospace;font-size:10px;font-weight:700;background:#1e293b;color:#cbd5e1;padding:2px 7px;border-radius:6px;letter-spacing:.4px; }
             .adj-ib { width:28px;height:28px;border-radius:50%;border:none;cursor:pointer;display:inline-flex;align-items:center;justify-content:center;font-size:12px;transition:all 150ms;margin:0 1px; }
             .adj-ib:hover { transform:scale(1.15); }
-            #adjTable tbody tr:hover { background:#faf5ff; }
+            #adjTable tbody tr:hover { background:#e6f3f7; }
             #adjTable tbody td { padding:11px 14px;vertical-align:middle; }
           </style>
 
@@ -1682,7 +1683,7 @@
               <input type="text" id="fpurSearch" class="wo-input" placeholder="رقم الفاتورة أو المورد أو الصنف..." oninput="purApplyFilters()">
             </div>
             <div class="wo-field">
-              <label class="wo-field-label" for="fpurBrand"><i class="fas fa-store" style="color:#8b5cf6;"></i>البراند</label>
+              <label class="wo-field-label" for="fpurBrand"><i class="fas fa-store" style="color:#0e7490;"></i>البراند</label>
               <select id="fpurBrand" class="wo-select" onchange="purApplyFilters()"><option value="">كل البراندات</option></select>
             </div>
             <div class="wo-field">
@@ -1988,7 +1989,7 @@
   </div>
 
   <!-- Financial summary -->
-  <h3 style="font-size:15px;font-weight:800;margin:24px 0 12px;color:#0f172a;display:flex;align-items:center;gap:8px;"><i class="fas fa-chart-pie" style="color:#8b5cf6;"></i> الملخص المالي</h3>
+  <h3 style="font-size:15px;font-weight:800;margin:24px 0 12px;color:#0f172a;display:flex;align-items:center;gap:8px;"><i class="fas fa-chart-pie" style="color:#0e7490;"></i> الملخص المالي</h3>
   <div class="wo-metric-strip">
     <div class="wo-metric accent-info">
       <div class="wo-metric-icon" style="background:var(--wo-info-bg);color:var(--wo-info);"><i class="fas fa-vault"></i></div>
@@ -2027,7 +2028,7 @@
       <div class="wo-metric-icon" style="background:var(--wo-warning-bg);color:var(--wo-warning);"><i class="fas fa-arrow-down-to-bracket"></i></div>
       <div class="wo-metric-body"><div class="wo-metric-label">ضريبة المدخلات</div><div class="wo-metric-value wo-money" id="erpVATInput">0.00</div></div>
     </div>
-    <div class="wo-metric" style="border-top:3px solid #8b5cf6;background:linear-gradient(135deg,#f3e8ff,#fff);">
+    <div class="wo-metric" style="border-top:3px solid #0e7490;background:linear-gradient(135deg,#e6f3f7,#fff);">
       <div class="wo-metric-icon" style="background:var(--wo-purple);color:#fff;"><i class="fas fa-building-columns"></i></div>
       <div class="wo-metric-body"><div class="wo-metric-label">صافي الضريبة المستحقة</div><div class="wo-metric-value wo-money" id="erpVATNet">0.00</div></div>
     </div>
@@ -2118,7 +2119,7 @@
       <span class="coa-toolbar-sep" aria-hidden="true"></span>
 
       <div class="coa-toolbar-group" role="group" aria-label="استيراد وتصدير">
-        <button class="coa-tool-icon-btn" onclick="document.getElementById('coaImportFile').click()" title="استيراد من Excel" aria-label="استيراد"><i class="fas fa-file-import" style="color:#7c3aed;"></i></button>
+        <button class="coa-tool-icon-btn" onclick="document.getElementById('coaImportFile').click()" title="استيراد من Excel" aria-label="استيراد"><i class="fas fa-file-import" style="color:#0e7490;"></i></button>
         <button class="coa-tool-icon-btn" onclick="coaExportExcel()" title="تصدير إلى Excel" aria-label="تصدير"><i class="fas fa-file-excel" style="color:#16a34a;"></i></button>
       </div>
 
@@ -2128,7 +2129,7 @@
         <button class="coa-tool-icon-btn coa-overflow-btn" onclick="event.stopPropagation();coaToggleOverflowMenu()" title="مزيد من الإجراءات" aria-label="مزيد من الإجراءات" aria-haspopup="true"><i class="fas fa-ellipsis-vertical"></i></button>
         <div class="coa-overflow-menu" role="menu" aria-label="إجراءات إدارية">
           <button class="coa-overflow-item" role="menuitem" onclick="coaToggleOverflowMenu(false);coaOpenDedupeModal()"><i class="fas fa-clone" style="color:#dc2626;width:16px;text-align:center;"></i><span>كشف المكرَّرات</span></button>
-          <button class="coa-overflow-item" role="menuitem" onclick="coaToggleOverflowMenu(false);coaApplyTemplate()"><i class="fas fa-wand-magic-sparkles" style="color:#7c3aed;width:16px;text-align:center;"></i><span>قالب رسمي (IFRS)</span></button>
+          <button class="coa-overflow-item" role="menuitem" onclick="coaToggleOverflowMenu(false);coaApplyTemplate()"><i class="fas fa-wand-magic-sparkles" style="color:#0e7490;width:16px;text-align:center;"></i><span>قالب رسمي (IFRS)</span></button>
           <button class="coa-overflow-item" role="menuitem" onclick="coaToggleOverflowMenu(false);coaOpenSuggestions()"><i class="fas fa-lightbulb" style="color:#f59e0b;width:16px;text-align:center;"></i><span>اقتراحات معيارية</span></button>
           <div class="coa-overflow-sep" aria-hidden="true"></div>
           <button class="coa-overflow-item is-danger" role="menuitem" onclick="coaToggleOverflowMenu(false);coaWipeAndSeed()"><i class="fas fa-bomb" style="width:16px;text-align:center;"></i><span>مسح + تأسيس</span></button>
@@ -2180,7 +2181,7 @@
   <div id="coaSuggModal" class="modal" style="display:none;align-items:flex-start;justify-content:center;z-index:9999;">
     <div class="modal-content modal-large" style="max-width:900px;width:96%;margin-top:24px;">
       <div class="modal-title">
-        <i class="fas fa-lightbulb" style="color:#7c3aed;"></i>
+        <i class="fas fa-lightbulb" style="color:#0e7490;"></i>
         <span>الهيكل المعياري المُقترَح (IFRS / SOCPA / F&B)</span>
         <button class="modal-close" onclick="coaCloseSuggestions()">&times;</button>
       </div>
@@ -2213,7 +2214,7 @@
   <div id="jrnStatsBar" style="display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin-bottom:14px;">
     <div class="jrn-stat-card"><div class="jsc-icon" style="color:#3b82f6;"><i class="fas fa-file-alt"></i></div><div class="jsc-body"><span class="jsc-label">إجمالي القيود</span><span class="jsc-val" id="jrnStatTotal">0</span></div></div>
     <div class="jrn-stat-card"><div class="jsc-icon" style="color:#f59e0b;"><i class="fas fa-pencil-alt"></i></div><div class="jsc-body"><span class="jsc-label">مسودة</span><span class="jsc-val" id="jrnStatDraft">0</span></div></div>
-    <div class="jrn-stat-card"><div class="jsc-icon" style="color:#8b5cf6;"><i class="fas fa-check-circle"></i></div><div class="jsc-body"><span class="jsc-label">معتمد</span><span class="jsc-val" id="jrnStatApproved">0</span></div></div>
+    <div class="jrn-stat-card"><div class="jsc-icon" style="color:#0e7490;"><i class="fas fa-check-circle"></i></div><div class="jsc-body"><span class="jsc-label">معتمد</span><span class="jsc-val" id="jrnStatApproved">0</span></div></div>
     <div class="jrn-stat-card"><div class="jsc-icon" style="color:#16a34a;"><i class="fas fa-check-double"></i></div><div class="jsc-body"><span class="jsc-label">مرحّل</span><span class="jsc-val" id="jrnStatPosted">0</span></div></div>
   </div>
 
@@ -2424,7 +2425,7 @@
         </div>
         <div class="form-row-2col">
           <div class="form-group">
-            <label class="form-label"><i class="fas fa-store" style="color:#8b5cf6;"></i> البراند</label>
+            <label class="form-label"><i class="fas fa-store" style="color:#0e7490;"></i> البراند</label>
             <select id="erpPOBrand" class="form-control"><option value="">— عام —</option></select>
           </div>
           <div class="form-group">
@@ -2602,7 +2603,7 @@
   </div>
 
   <!-- VAT Reports History -->
-  <h4 style="font-size:15px;font-weight:800;margin-bottom:10px;color:#1e293b;"><i class="fas fa-file-invoice-dollar" style="color:#8b5cf6;margin-left:8px;"></i> سجل التقارير الضريبية</h4>
+  <h4 style="font-size:15px;font-weight:800;margin-bottom:10px;color:#1e293b;"><i class="fas fa-file-invoice-dollar" style="color:#0e7490;margin-left:8px;"></i> سجل التقارير الضريبية</h4>
   <div style="overflow-x:auto;border-radius:14px;border:1px solid #e2e8f0;">
     <table class="erp-table" style="margin:0;font-size:13px;">
       <thead><tr style="background:#0f172a;color:#fff;"><th style="padding:10px 12px;">الرقم</th><th>من</th><th>إلى</th><th style="color:#fca5a5;">المخرجات</th><th style="color:#86efac;">المدخلات</th><th>الصافي</th><th>الحالة</th></tr></thead>
@@ -2833,7 +2834,7 @@
        Pattern: scoped .im-* classes + inline-injected CSS via
        `_invMethodInjectStyles()` so the layout never depends on
        which CSS bundle is active. -->
-  <h3 class="im-section-title"><i class="fas fa-folder-tree" style="color:#7c3aed;"></i> أب حسابات المخزون في شجرة الحسابات</h3>
+  <h3 class="im-section-title"><i class="fas fa-folder-tree" style="color:#0e7490;"></i> أب حسابات المخزون في شجرة الحسابات</h3>
   <div class="im-parent-card">
     <div class="im-parent-current">
       <div class="im-parent-label"><i class="fas fa-anchor"></i> الأب الحالي المُستخدَم في الترقيم</div>
@@ -2991,14 +2992,14 @@
   <div class="rh-group">
     <div class="rh-group-head">
       <div>
-        <h3><i class="fas fa-chart-bar" style="color:#8b5cf6;"></i> التحليل المالي والمؤشرات</h3>
+        <h3><i class="fas fa-chart-bar" style="color:#0e7490;"></i> التحليل المالي والمؤشرات</h3>
         <p>تحليلات أعمق تساعد الإدارة على اتخاذ القرارات — السيولة، الربحية، الكفاءة، والملاءة المالية.</p>
       </div>
       <span class="rh-badge analytics">Management Analytics</span>
     </div>
     <div class="rh-grid">
       <div class="rh-card" onclick="erpNav('erpRptFinRatios')">
-        <div class="rh-icon" style="background:linear-gradient(135deg,#f3e8ff,#e9d5ff);color:#7c3aed;"><i class="fas fa-calculator"></i></div>
+        <div class="rh-icon" style="background:linear-gradient(135deg,#e6f3f7,#cfe9f1);color:#0e7490;"><i class="fas fa-calculator"></i></div>
         <div class="rh-body">
           <div class="rh-name">المؤشرات والنسب المالية</div>
           <div class="rh-desc">نسب السيولة (Current Ratio, Quick Ratio) + الربحية (Gross/Net Margin, ROA, ROE) + الكفاءة + المديونية — مع تحليل وتفسير لكل مؤشر.</div>
@@ -3323,7 +3324,7 @@
 <!-- ══════════════════════════════════════════════════════════════════════ -->
 <div id="erpRptFinRatios" class="dash-section hidden">
   <div class="section-header"><h2 class="section-title"><i class="fas fa-calculator"></i> المؤشرات والنسب المالية</h2></div>
-  <div style="background:#f3e8ff;padding:10px 14px;border-radius:10px;margin-bottom:14px;font-size:12.5px;color:#5b21b6;line-height:1.7;">
+  <div style="background:#e6f3f7;padding:10px 14px;border-radius:10px;margin-bottom:14px;font-size:12.5px;color:#155e75;line-height:1.7;">
     <i class="fas fa-lightbulb"></i> <b>لماذا المؤشرات المالية؟</b> أرقام القوائم المالية وحدها لا تكفي — النِسَب تحوّل الأرقام إلى رؤى قابلة للتفسير: هل المنشأة قادرة على سداد التزاماتها (السيولة)؟ هل تربح بكفاءة (الربحية)؟ هل تستخدم أصولها بشكل جيد (الكفاءة)؟ هل ديونها تحت السيطرة (الملاءة)؟
   </div>
   <div class="erp-rpt-filter">
@@ -3370,14 +3371,14 @@
       <p class="wo-header-sub">كل براند له فروعه ومستودعاته ومنيوه ومواده الخام منفصلة — استخدم المعالج لإنشاء براند كامل دفعة واحدة.</p>
     </div>
     <div class="wo-header-actions">
-      <button class="wo-btn wo-btn-primary" onclick="wzOpen()" style="background:linear-gradient(135deg,#8b5cf6,#6d28d9);"><i class="fas fa-wand-magic-sparkles"></i><span>معالج إنشاء براند كامل</span></button>
+      <button class="wo-btn wo-btn-primary" onclick="wzOpen()" style="background:linear-gradient(135deg,#0e7490,#155e75);"><i class="fas fa-wand-magic-sparkles"></i><span>معالج إنشاء براند كامل</span></button>
       <button class="wo-btn wo-btn-secondary" onclick="erpOpenBrandModal()"><i class="fas fa-plus"></i><span>براند يدوي</span></button>
     </div>
   </header>
   <div class="wo-table-surface">
     <table class="wo-table">
       <thead><tr><th>الشعار</th><th>الاسم</th><th>الرمز</th><th class="num">الفروع</th><th class="num">المنتجات</th><th>الحالة</th><th>إجراءات</th></tr></thead>
-      <tbody id="erpBrandsBody"><tr><td colspan="7"><div class="wo-empty"><i class="fas fa-tags"></i><div class="wo-empty-title">لا توجد براندات</div><div class="wo-empty-sub">ابدأ بإنشاء أول براند عبر المعالج التفاعلي — خطوات مُيسَّرة تُنشئ كل شيء دفعة واحدة.</div><button class="wo-btn wo-btn-primary" onclick="wzOpen()" style="background:linear-gradient(135deg,#8b5cf6,#6d28d9);"><i class="fas fa-wand-magic-sparkles"></i><span>فتح المعالج</span></button></div></td></tr></tbody>
+      <tbody id="erpBrandsBody"><tr><td colspan="7"><div class="wo-empty"><i class="fas fa-tags"></i><div class="wo-empty-title">لا توجد براندات</div><div class="wo-empty-sub">ابدأ بإنشاء أول براند عبر المعالج التفاعلي — خطوات مُيسَّرة تُنشئ كل شيء دفعة واحدة.</div><button class="wo-btn wo-btn-primary" onclick="wzOpen()" style="background:linear-gradient(135deg,#0e7490,#155e75);"><i class="fas fa-wand-magic-sparkles"></i><span>فتح المعالج</span></button></div></td></tr></tbody>
     </table>
   </div>
 </div>
@@ -4238,14 +4239,14 @@
 <!-- ══════════════════════════════════════════════════════════════ -->
 <div id="erpWfDefs" class="dash-section hidden">
   <div class="section-header" style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;flex-wrap:wrap;gap:10px;">
-    <h2 class="section-title" style="font-size:18px;font-weight:800;display:flex;align-items:center;gap:8px;"><i class="fas fa-sitemap" style="color:#8b5cf6;"></i> مسارات المناصب الإدارية</h2>
+    <h2 class="section-title" style="font-size:18px;font-weight:800;display:flex;align-items:center;gap:8px;"><i class="fas fa-sitemap" style="color:#0e7490;"></i> مسارات المناصب الإدارية</h2>
     <div style="display:flex;gap:8px;">
       <button class="btn btn-light btn-sm" onclick="erpNav('erpWfHub')"><i class="fas fa-arrow-right"></i> رجوع للمركز</button>
       <button class="btn btn-light btn-sm" onclick="wfLoadPositionSummary()"><i class="fas fa-sync"></i> تحديث</button>
     </div>
   </div>
 
-  <div style="padding:12px 16px;border-radius:12px;background:linear-gradient(135deg,#ede9fe,#ddd6fe);border:1px solid #a78bfa;margin-bottom:16px;font-size:12.5px;color:#5b21b6;line-height:1.7;">
+  <div style="padding:12px 16px;border-radius:12px;background:linear-gradient(135deg,#e6f3f7,#cfe9f1);border:1px solid #1591b0;margin-bottom:16px;font-size:12.5px;color:#155e75;line-height:1.7;">
     <i class="fas fa-info-circle" style="font-size:16px;"></i>
     <b>كل منصب له مسار مستقل خاص به.</b>
     عندما يبدأ الموظف الذي يحمل هذا المنصب معاملة، يتم توجيهها عبر مسار هذا المنصب فقط.
@@ -4826,7 +4827,7 @@
 <!-- ══════════════════════════════════════════════════════════════ -->
 <div id="erpWfOrgTree" class="dash-section hidden">
   <div class="section-header" style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;">
-    <h2 class="section-title" style="font-size:18px;font-weight:800;display:flex;align-items:center;gap:8px;"><i class="fas fa-sitemap" style="color:#8b5cf6;"></i> الشجرة الإدارية</h2>
+    <h2 class="section-title" style="font-size:18px;font-weight:800;display:flex;align-items:center;gap:8px;"><i class="fas fa-sitemap" style="color:#0e7490;"></i> الشجرة الإدارية</h2>
     <div style="display:flex;gap:8px;">
       <button class="btn btn-light" onclick="erpNav('erpWfHub')"><i class="fas fa-arrow-right"></i> رجوع للمركز</button>
       <button class="btn btn-light" onclick="wfLoadOrgTree()"><i class="fas fa-sync"></i> تحديث</button>
@@ -4903,8 +4904,8 @@
 
 <div id="erpCashTransfers" class="dash-section hidden">
   <div class="section-header" style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;">
-    <h2 class="section-title" style="font-size:18px;font-weight:800;"><i class="fas fa-exchange-alt" style="color:#8b5cf6;"></i> التحويلات</h2>
-    <button class="btn btn-primary" onclick="cashOpenTransferModal()" style="border-radius:12px;background:#8b5cf6;"><i class="fas fa-plus"></i> تحويل جديد</button>
+    <h2 class="section-title" style="font-size:18px;font-weight:800;"><i class="fas fa-exchange-alt" style="color:#0e7490;"></i> التحويلات</h2>
+    <button class="btn btn-primary" onclick="cashOpenTransferModal()" style="border-radius:12px;background:#0e7490;"><i class="fas fa-plus"></i> تحويل جديد</button>
   </div>
   <div class="erp-table-container">
     <table class="erp-table">
@@ -5370,7 +5371,7 @@
        search/filters, bulk-select column + bar). -->
   <header class="sca-header">
     <div class="sca-header-main">
-      <div class="sca-header-icon" style="background:linear-gradient(135deg,#7c3aed,#6d28d9);"><i class="fas fa-calendar-week"></i></div>
+      <div class="sca-header-icon" style="background:linear-gradient(135deg,#0e7490,#155e75);"><i class="fas fa-calendar-week"></i></div>
       <div class="sca-header-text">
         <h1 class="sca-header-title">الإجازات الأسبوعية</h1>
         <p class="sca-header-sub">تَحديد أيام الراحة الأسبوعية على مُستوى الشَّركة + إمكانية تَخصيص استثناءات لكل موظف بشكل مُستقل.</p>
@@ -5388,7 +5389,7 @@
   <!-- Org default card -->
   <section class="wo-default-card">
     <div class="wo-card-head">
-      <h3><i class="fas fa-globe" style="color:#7c3aed;"></i> الإعداد الافتراضي للشَّركة</h3>
+      <h3><i class="fas fa-globe" style="color:#0e7490;"></i> الإعداد الافتراضي للشَّركة</h3>
       <p class="wo-card-sub">يُطبَّق على كل موظَّف ليس عنده استثناء فَردي.</p>
     </div>
     <div class="wo-day-pills" id="woDefaultPills"></div>
@@ -5400,7 +5401,7 @@
   <!-- Per-employee table -->
   <section class="wo-employees-card">
     <div class="wo-card-head">
-      <h3><i class="fas fa-users-cog" style="color:#7c3aed;"></i> استثناءات الموظفين</h3>
+      <h3><i class="fas fa-users-cog" style="color:#0e7490;"></i> استثناءات الموظفين</h3>
       <p class="wo-card-sub">اضغط على "تَخصيص" لِتَعيين أيام مُختلفة لمُوظَّف، أو "إعادة للافتراضي" لِمَسح الاستثناء.</p>
     </div>
 
@@ -5455,7 +5456,7 @@
 <div id="erpHrAttendanceReport" class="dash-section hidden">
   <header class="sca-header">
     <div class="sca-header-main">
-      <div class="sca-header-icon" style="background:linear-gradient(135deg,#7c3aed,#6d28d9);"><i class="fas fa-calendar-days"></i></div>
+      <div class="sca-header-icon" style="background:linear-gradient(135deg,#0e7490,#155e75);"><i class="fas fa-calendar-days"></i></div>
       <div class="sca-header-text">
         <h1 class="sca-header-title">تقرير الحضور والانصراف الشَّهري</h1>
         <p class="sca-header-sub">تقرير مُفصَّل لكل موظف: الحضور، الانصراف، التأخير، الغياب، الإجازات (عادية + رسمية)، والإضافي مع مضاعفاته.</p>
@@ -5695,7 +5696,7 @@
   <!-- Branded report banner -->
   <div id="erpGLBrandBanner" class="tb-brand-banner" style="display:none;">
     <div class="tb-brand-left">
-      <div class="tb-brand-logo" style="background:linear-gradient(135deg,#a855f7,#7e22ce);"><i class="fas fa-book"></i></div>
+      <div class="tb-brand-logo" style="background:linear-gradient(135deg,#1591b0,#155e75);"><i class="fas fa-book"></i></div>
     </div>
     <div class="tb-brand-center">
       <h3>حساب الأستاذ</h3>
@@ -5971,7 +5972,7 @@
     <div class="tb-brand-left"><div class="tb-brand-logo" style="background:linear-gradient(135deg,#10b981,#16a34a);"><i class="fas fa-chart-line"></i></div></div>
     <div class="tb-brand-center">
       <h3>قائمة الدخل الشامل</h3>
-      <div class="tb-brand-sub">من <span id="plBnFrom">—</span> إلى <span id="plBnTo">—</span><span id="plBnDim" style="margin-inline-start:8px;color:#8b5cf6;font-weight:700;"></span></div>
+      <div class="tb-brand-sub">من <span id="plBnFrom">—</span> إلى <span id="plBnTo">—</span><span id="plBnDim" style="margin-inline-start:8px;color:#0e7490;font-weight:700;"></span></div>
     </div>
   </div>
 
@@ -5980,7 +5981,7 @@
     <div class="wo-metric accent-success"><div class="wo-metric-icon" style="background:#dcfce7;color:#16a34a;"><i class="fas fa-arrow-up"></i></div><div class="wo-metric-body"><div class="wo-metric-label">إجمالي الإيرادات</div><div class="wo-metric-value" id="plKpiRevenue">—</div><div id="plKpiRevenueDelta" style="font-size:11px;font-weight:700;margin-top:2px;"></div></div></div>
     <div class="wo-metric accent-danger"><div class="wo-metric-icon" style="background:#fee2e2;color:#dc2626;"><i class="fas fa-arrow-down"></i></div><div class="wo-metric-body"><div class="wo-metric-label">إجمالي المصروفات</div><div class="wo-metric-value" id="plKpiExpense">—</div><div id="plKpiExpenseDelta" style="font-size:11px;font-weight:700;margin-top:2px;"></div></div></div>
     <div class="wo-metric accent-info"><div class="wo-metric-icon" style="background:#dbeafe;color:#1e40af;"><i class="fas fa-percent"></i></div><div class="wo-metric-body"><div class="wo-metric-label">هامش الربح</div><div class="wo-metric-value" id="plKpiMargin">—</div></div></div>
-    <div class="wo-metric accent-purple"><div class="wo-metric-icon" style="background:#f3e8ff;color:#7c3aed;"><i class="fas fa-coins"></i></div><div class="wo-metric-body"><div class="wo-metric-label">صافي الدخل</div><div class="wo-metric-value" id="plKpiNet">—</div><div id="plKpiNetDelta" style="font-size:11px;font-weight:700;margin-top:2px;"></div></div></div>
+    <div class="wo-metric accent-purple"><div class="wo-metric-icon" style="background:#e6f3f7;color:#0e7490;"><i class="fas fa-coins"></i></div><div class="wo-metric-body"><div class="wo-metric-label">صافي الدخل</div><div class="wo-metric-value" id="plKpiNet">—</div><div id="plKpiNetDelta" style="font-size:11px;font-weight:700;margin-top:2px;"></div></div></div>
   </div>
 
   <div id="plDetails"></div>
@@ -6092,7 +6093,7 @@
   <div id="bsKpis" class="wo-metric-strip" style="display:none;margin-bottom:14px;">
     <div class="wo-metric accent-info"><div class="wo-metric-icon" style="background:#dbeafe;color:#1e40af;"><i class="fas fa-coins"></i></div><div class="wo-metric-body"><div class="wo-metric-label">إجمالي الأصول</div><div class="wo-metric-value" id="bsKpiAssets">—</div></div></div>
     <div class="wo-metric accent-warning"><div class="wo-metric-icon" style="background:#fee2e2;color:#dc2626;"><i class="fas fa-file-invoice"></i></div><div class="wo-metric-body"><div class="wo-metric-label">إجمالي الخصوم</div><div class="wo-metric-value" id="bsKpiLiab">—</div></div></div>
-    <div class="wo-metric accent-purple"><div class="wo-metric-icon" style="background:#f3e8ff;color:#7c3aed;"><i class="fas fa-user-tie"></i></div><div class="wo-metric-body"><div class="wo-metric-label">حقوق الملكية</div><div class="wo-metric-value" id="bsKpiEquity">—</div></div></div>
+    <div class="wo-metric accent-purple"><div class="wo-metric-icon" style="background:#e6f3f7;color:#0e7490;"><i class="fas fa-user-tie"></i></div><div class="wo-metric-body"><div class="wo-metric-label">حقوق الملكية</div><div class="wo-metric-value" id="bsKpiEquity">—</div></div></div>
     <div class="wo-metric accent-success"><div class="wo-metric-icon" style="background:#dcfce7;color:#16a34a;"><i class="fas fa-check"></i></div><div class="wo-metric-body"><div class="wo-metric-label">المعادلة المحاسبية</div><div class="wo-metric-value" id="bsKpiBalance" style="font-size:14px;">—</div></div></div>
   </div>
 
@@ -6394,7 +6395,7 @@
   <div id="wlDetailModal" class="modal" style="display:none;align-items:center;justify-content:center;">
     <div class="modal-content modal-large">
       <div class="modal-title">
-        <i class="fas fa-receipt" style="color:#7c3aed;"></i>
+        <i class="fas fa-receipt" style="color:#0e7490;"></i>
         <span>تفاصيل الحركة</span>
         <button class="modal-close" onclick="erpCloseWlDetail()">&times;</button>
       </div>
@@ -6479,7 +6480,7 @@
       </div>
     </div>
     <div class="sa-sub-card">
-      <div class="sa-sub-card-head"><i class="fas fa-wallet" style="color:#8b5cf6;"></i> طريقة الدفع</div>
+      <div class="sa-sub-card-head"><i class="fas fa-wallet" style="color:#0e7490;"></i> طريقة الدفع</div>
       <div class="erp-table-container" style="max-height:320px;">
         <table class="erp-table"><thead><tr><th>الطريقة</th><th>الفواتير</th><th>الإجمالي</th></tr></thead>
         <tbody id="saPayBody"></tbody></table>
@@ -7010,7 +7011,7 @@
     </button>
     <div class="how-to-body">
       <div class="how-to-step"><span class="how-to-num" style="background:#22c55e;">💳</span><div><b>طريقة الدفع — Payment Method</b><br><small>الأداة التي يستخدمها العميل لتسليم النقود: <b>كاش / مدى / فيزا / أبل باي / تحويل بنكي</b>. تتحكم بـ: (1) كيف يدخل المال للحساب المحاسبي (Cash → 1110، Bank → 1120). (2) رسوم الخدمة (مثلاً مدى = 1.5%). (3) هل تظهر في إغلاق الشيفت أم لا.</small></div></div>
-      <div class="how-to-step"><span class="how-to-num" style="background:#8b5cf6;">🏪</span><div><b>قناة البيع — Sales Channel</b><br><small>المكان الذي وصلت منه الطلبية: <b>المنيو الرئيسي / هنقرستيشن / كيتا / تطبيق خاص / طلب هاتفي</b>. تتحكم بـ: (1) السعر (كل قناة لها قائمة أسعار). (2) العمولة الخارجية (هنقرستيشن تأخذ 25% مثلاً). (3) التقارير (المبيعات حسب القناة).</small></div></div>
+      <div class="how-to-step"><span class="how-to-num" style="background:#0e7490;">🏪</span><div><b>قناة البيع — Sales Channel</b><br><small>المكان الذي وصلت منه الطلبية: <b>المنيو الرئيسي / هنقرستيشن / كيتا / تطبيق خاص / طلب هاتفي</b>. تتحكم بـ: (1) السعر (كل قناة لها قائمة أسعار). (2) العمولة الخارجية (هنقرستيشن تأخذ 25% مثلاً). (3) التقارير (المبيعات حسب القناة).</small></div></div>
       <div class="how-to-step" style="background:#dbeafe;border-color:#bfdbfe;"><span class="how-to-num" style="background:#3b82f6;">🎯</span><div><b>مثال عملي</b><br><small>كوب قهوة سعره 10 ر.س في المنيو الرئيسي و12 ر.س في هنقرستيشن. عميل طلب من <b>هنقرستيشن (قناة)</b> ودفع عبر <b>هنقر باي (طريقة دفع)</b>. النظام يستخدم سعر 12 ر.س ويسجّل الإيراد في حساب البنك المحدد لـ هنقر باي.</small></div></div>
       <div class="how-to-step"><span class="how-to-num" style="background:#f59e0b;">⚙</span><div><b>كيف أضيف طريقة دفع جديدة؟</b><br><small>اضغط زر <b>"طريقة دفع جديدة"</b> أعلى يساراً. أدخل: الاسم بالعربية، المجموعة (كاش/إلكتروني)، الأيقونة، الرسوم، حساب GL المرتبط (مثلاً 1120 البنك)، ثم احفظ. ستظهر تلقائياً في شاشة الكاشير ضمن أزرار الدفع.</small></div></div>
       <div class="how-to-step" style="background:#fce7f3;border-color:#fbcfe8;"><span class="how-to-num" style="background:#be185d;">📋</span><div><b>كيف أضيف منيو لقناة معينة (هنقرستيشن مثلاً)؟</b><br><small>اذهب إلى: <code>المنيو والإنتاج ← قنوات البيع</code> — هناك دليل كامل. ملخص: أنشئ قائمة أسعار بأسعار خاصة، ثم اربطها بالقناة من زر التعديل.</small></div></div>
@@ -7295,7 +7296,7 @@
         <i class="fas fa-file-upload" style="color:#3b82f6;"></i><span>استيراد Excel</span>
         <input type="file" id="bmImportFile" accept=".xlsx,.xls,.csv" style="display:none;" onchange="erpImportBrandMenuExcel(this)">
       </label>
-      <button class="wo-btn wo-btn-secondary" onclick="erpOpenCombos()" title="العروض / الكومبو (أي سندوتش مع عصير)"><i class="fas fa-gift" style="color:#8b5cf6;"></i><span>العروض</span></button>
+      <button class="wo-btn wo-btn-secondary" onclick="erpOpenCombos()" title="العروض / الكومبو (أي سندوتش مع عصير)"><i class="fas fa-gift" style="color:#0e7490;"></i><span>العروض</span></button>
       <button class="wo-btn wo-btn-primary" onclick="erpOpenAddProductChooser()"><i class="fas fa-plus"></i><span>منتج جديد</span></button>
     </div>
   </header>
@@ -7350,7 +7351,7 @@
     <div class="wo-header-titles">
       <h1>
         <span class="wo-icon-slot purple"><i class="fas fa-gift"></i></span>
-        <span>عروض </span><span id="cbBrandName" style="color:#8b5cf6;">—</span>
+        <span>عروض </span><span id="cbBrandName" style="color:#0e7490;">—</span>
       </h1>
       <p class="wo-header-sub">عروض الكومبو: مكوّن ثابت + مجموعة اختيار متغيّرة (مثل: أي سندوتش مع عصير). تظهر تلقائياً في الكاشير ويُخصم المخزون حسب وصفة كل صنف مختار.</p>
     </div>
@@ -7396,7 +7397,7 @@
   <div class="wo-metric-strip" id="sfMetrics"></div>
   <!-- v5.15.2 — Production-flow hint. Explains that semi-finished
        stock only increases through production orders, not purchases. -->
-  <div style="margin:10px 0;padding:12px 16px;background:linear-gradient(135deg,#faf5ff,#f3e8ff);border:1.5px solid #d8b4fe;border-radius:12px;display:flex;align-items:center;gap:10px;font-size:13px;color:#6b21a8;">
+  <div style="margin:10px 0;padding:12px 16px;background:linear-gradient(135deg,#e6f3f7,#e6f3f7);border:1.5px solid #cfe9f1;border-radius:12px;display:flex;align-items:center;gap:10px;font-size:13px;color:#155e75;">
     <i class="fas fa-circle-info" style="font-size:18px;"></i>
     <div>
       <b>مَخزون هذه الأصناف يَتَحدَّث من أوامر الإنتاج، لا من الشِراء.</b>
@@ -7576,7 +7577,7 @@
 
       <div style="display:grid; grid-template-columns:1fr 1fr; gap:0 20px;">
         <div class="form-group">
-          <label class="form-label"><i class="fas fa-store" style="color:#8b5cf6;"></i> البراند</label>
+          <label class="form-label"><i class="fas fa-store" style="color:#0e7490;"></i> البراند</label>
           <select id="miBrand" class="form-control">
             <option value="">— بدون براند (عام) —</option>
           </select>
@@ -7593,7 +7594,7 @@
 
       <!-- v7.1 — tax controls: inclusive/net mode + ZATCA category -->
       <div class="form-group" style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:10px;padding:12px 14px;margin-bottom:14px;">
-        <label class="form-label" style="margin-bottom:8px;display:block;"><i class="fas fa-percent" style="color:#8b5cf6;"></i> ضريبة القيمة المضافة</label>
+        <label class="form-label" style="margin-bottom:8px;display:block;"><i class="fas fa-percent" style="color:#0e7490;"></i> ضريبة القيمة المضافة</label>
         <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">
           <div>
             <label class="form-label" for="miTaxMode" style="font-size:12px;">السعر المُدخل</label>
@@ -7734,8 +7735,8 @@
       </div>
 
       <!-- Brand selector (full-width row) -->
-      <div class="form-group" style="background:linear-gradient(135deg,#faf5ff,#f3e8ff);padding:12px 14px;border-radius:10px;border:1.5px solid #d8b4fe;margin-bottom:12px;">
-        <label class="form-label" style="color:#7c3aed;font-weight:800;"><i class="fas fa-store"></i> البراند</label>
+      <div class="form-group" style="background:linear-gradient(135deg,#e6f3f7,#e6f3f7);padding:12px 14px;border-radius:10px;border:1.5px solid #cfe9f1;margin-bottom:12px;">
+        <label class="form-label" style="color:#0e7490;font-weight:800;"><i class="fas fa-store"></i> البراند</label>
         <select id="mrBrand" class="form-control">
           <option value="">— بدون براند (مادة عامة تُستخدم في كل البراندات) —</option>
         </select>
@@ -7935,7 +7936,7 @@
       </div>
       <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">
         <div class="form-group">
-          <label class="form-label"><i class="fas fa-tags" style="color:#8b5cf6;"></i> البراند</label>
+          <label class="form-label"><i class="fas fa-tags" style="color:#0e7490;"></i> البراند</label>
           <select id="muBrand" class="form-control"><option value="">— بدون —</option></select>
         </div>
         <div class="form-group">
@@ -7973,11 +7974,11 @@
         </label>
       </div>
       <div class="form-group">
-        <label style="display:flex; align-items:flex-start; gap:10px; cursor:pointer; padding:10px 14px; background:#f5f3ff; border:1px solid #ddd6fe; border-radius:10px;">
-          <input type="checkbox" id="muCustodyPortal" style="width:18px; height:18px; accent-color:#7c3aed; margin-top:2px;">
+        <label style="display:flex; align-items:flex-start; gap:10px; cursor:pointer; padding:10px 14px; background:#e6f3f7; border:1px solid #cfe9f1; border-radius:10px;">
+          <input type="checkbox" id="muCustodyPortal" style="width:18px; height:18px; accent-color:#0e7490; margin-top:2px;">
           <div style="flex:1;">
-            <div style="font-weight:800; color:#5b21b6;"><i class="fas fa-wallet"></i> تفعيل حساب العهدة</div>
-            <div style="font-size:11px; color:#6d28d9; margin-top:2px;">يفتح <b>حساب عهدة</b> ببوابة دخول مستقلة عبر <code dir="ltr">/custody/</code> (مثل بوابة الموظف). الإيقاف لاحقاً يُعطّل الدخول دون حذف الرصيد/المصروفات.</div>
+            <div style="font-weight:800; color:#155e75;"><i class="fas fa-wallet"></i> تفعيل حساب العهدة</div>
+            <div style="font-size:11px; color:#155e75; margin-top:2px;">يفتح <b>حساب عهدة</b> ببوابة دخول مستقلة عبر <code dir="ltr">/custody/</code> (مثل بوابة الموظف). الإيقاف لاحقاً يُعطّل الدخول دون حذف الرصيد/المصروفات.</div>
           </div>
         </label>
       </div>
@@ -8139,7 +8140,7 @@
       </div>
       <div style="display:grid; grid-template-columns:1fr 1fr; gap:15px; margin-bottom:15px;">
         <div class="form-group" style="margin:0;">
-          <label class="form-label"><i class="fas fa-store" style="color:#8b5cf6;"></i> البراند</label>
+          <label class="form-label"><i class="fas fa-store" style="color:#0e7490;"></i> البراند</label>
           <select id="purBrand" class="form-control"><option value="">— عام (يُستنتج من المورد) —</option></select>
           <small style="color:#64748b;font-size:11px;">إذا تركته فارغاً وكان للمورد براند محدد، سيُنسب إليه تلقائياً.</small>
         </div>

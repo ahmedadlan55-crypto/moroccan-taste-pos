@@ -279,7 +279,7 @@
 .txn-letter-status-pill.s-created      { background: #e0f2fe; color: #0369a1; }
 .txn-letter-status-pill.s-pending      { background: #fef3c7; color: #92400e; }
 .txn-letter-status-pill.s-in_progress  { background: #dbeafe; color: #1d4ed8; }
-.txn-letter-status-pill.s-replied      { background: #ede9fe; color: var(--mt-accent-2); }
+.txn-letter-status-pill.s-replied      { background: #e6f3f7; color: var(--mt-accent-2); }
 .txn-letter-status-pill.s-returned     { background: #ffedd5; color: #9a3412; border: 1px solid #fdba74; }
 .txn-letter-status-pill.s-approved     { background: #dcfce7; color: var(--mt-success-2); }
 .txn-letter-status-pill.s-rejected     { background: #fee2e2; color: #991b1b; }

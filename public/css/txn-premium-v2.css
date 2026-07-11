@@ -9,7 +9,7 @@
 
    Design principles:
      • 8pt spacing grid (8, 16, 24, 32, 40)
-     • Brand purple #7c3aed as the primary interactive accent
+     • Brand purple #0e7490 as the primary interactive accent
      • Semantic colour palette: importance + status
      • Linear / Stripe visual language — minimal, high-contrast
      • RTL-first; EN direction flips via html[lang="en"]
@@ -59,7 +59,7 @@
 .txn-stat-badge.stat-draft       { color: #94a3b8; background: #f8fafc;  border-color: #e2e8f0; }
 .txn-stat-badge.stat-created     { color: #0284c7; background: #e0f2fe;  border-color: #bae6fd; }
 .txn-stat-badge.stat-pending     { color: #b45309; background: #fef9c3;  border-color: #fde68a; }
-.txn-stat-badge.stat-in_progress { color: #6d28d9; background: #f5f3ff;  border-color: #c4b5fd; }
+.txn-stat-badge.stat-in_progress { color: #155e75; background: #e6f3f7;  border-color: #a5d8e6; }
 .txn-stat-badge.stat-replied     { color: #0369a1; background: #e0f2fe;  border-color: #93c5fd; }
 .txn-stat-badge.stat-returned    { color: #dc2626; background: #fef2f2;  border-color: #dc2626; font-weight: 900; }
 .txn-stat-badge.stat-approved    { color: #15803d; background: #dcfce7;  border-color: #86efac; }
@@ -102,8 +102,8 @@
 .ep-tab:active { transform: scale(0.98); }
 .ep-tab.active {
   background: #fff;
-  color: var(--mt-accent, #7c3aed);
-  box-shadow: 0 2px 8px rgba(124, 58, 237, 0.12), 0 1px 3px rgba(0, 0, 0, 0.06);
+  color: var(--mt-accent, #0e7490);
+  box-shadow: 0 2px 8px rgba(14, 116, 144, 0.12), 0 1px 3px rgba(0, 0, 0, 0.06);
 }
 
 .ep-tab-count {
@@ -152,7 +152,7 @@
   transition: color 0.15s;
 }
 .ep-search-wrap:focus-within .ep-search-icon {
-  color: var(--mt-accent, #7c3aed);
+  color: var(--mt-accent, #0e7490);
 }
 .ep-search-input {
   width: 100%;
@@ -170,8 +170,8 @@
 /* RTL: icon is on the right (inline-start = right in RTL), padding accordingly */
 html[dir="ltr"] .ep-search-input { padding: 0 36px 0 12px; }
 .ep-search-input:focus {
-  border-color: var(--mt-accent, #7c3aed);
-  box-shadow: 0 0 0 3px rgba(124, 58, 237, 0.10);
+  border-color: var(--mt-accent, #0e7490);
+  box-shadow: 0 0 0 3px rgba(14, 116, 144, 0.10);
   background: #fff;
   outline: none;
 }
@@ -209,15 +209,15 @@ html[dir="ltr"] .ep-search-input { padding: 0 36px 0 12px; }
   line-height: 1;
 }
 .ep-chip:hover {
-  border-color: #ede9fe;
-  color: var(--mt-accent, #7c3aed);
-  background: #faf5ff;
+  border-color: #e6f3f7;
+  color: var(--mt-accent, #0e7490);
+  background: #e6f3f7;
 }
 .ep-chip.active {
-  background: var(--mt-accent, #7c3aed);
+  background: var(--mt-accent, #0e7490);
   color: #fff;
-  border-color: var(--mt-accent, #7c3aed);
-  box-shadow: 0 2px 6px rgba(124, 58, 237, 0.25);
+  border-color: var(--mt-accent, #0e7490);
+  box-shadow: 0 2px 6px rgba(14, 116, 144, 0.25);
 }
 .ep-chip.ep-chip-sort.active {
   background: #0f172a;
@@ -238,7 +238,7 @@ html[dir="ltr"] .ep-search-input { padding: 0 36px 0 12px; }
   gap: 8px;
 }
 .ep-list-header i {
-  color: var(--mt-accent, #7c3aed);
+  color: var(--mt-accent, #0e7490);
   font-size: 11px;
 }
 
@@ -248,7 +248,7 @@ html[dir="ltr"] .ep-search-input { padding: 0 36px 0 12px; }
   padding: 13px 16px;
   border-radius: 14px;
   border: none;
-  background: var(--mt-accent, #7c3aed);
+  background: var(--mt-accent, #0e7490);
   color: #fff;
   font-size: 14px;
   font-weight: 800;
@@ -259,12 +259,12 @@ html[dir="ltr"] .ep-search-input { padding: 0 36px 0 12px; }
   justify-content: center;
   gap: 8px;
   margin-bottom: 12px;
-  box-shadow: 0 4px 14px rgba(124, 58, 237, 0.30);
+  box-shadow: 0 4px 14px rgba(14, 116, 144, 0.30);
   transition: transform 0.15s, box-shadow 0.15s;
 }
 .ep-new-txn-btn:active {
   transform: scale(0.98);
-  box-shadow: 0 2px 6px rgba(124, 58, 237, 0.2);
+  box-shadow: 0 2px 6px rgba(14, 116, 144, 0.2);
 }
 
 /* ══════════════════════════════════════════════════════════════════
@@ -348,7 +348,7 @@ html[dir="ltr"] .ep-search-input { padding: 0 36px 0 12px; }
   flex: 1;
 }
 .ep-card-body:focus-visible {
-  outline: 2px solid var(--mt-accent, #7c3aed);
+  outline: 2px solid var(--mt-accent, #0e7490);
   border-radius: 6px;
 }
 
@@ -449,8 +449,8 @@ html[dir="ltr"] .ep-search-input { padding: 0 36px 0 12px; }
 .ep-act.reject:hover   { background: #dc2626; }
 .ep-act.return   { background: #f59e0b; color: #fff; }
 .ep-act.return:hover   { background: #d97706; }
-.ep-act.forward  { background: var(--mt-accent, #7c3aed); color: #fff; }
-.ep-act.forward:hover  { background: var(--mt-accent-2, #6d28d9); }
+.ep-act.forward  { background: var(--mt-accent, #0e7490); color: #fff; }
+.ep-act.forward:hover  { background: var(--mt-accent-2, #155e75); }
 .ep-act.edit     { background: #eff6ff; color: #1e40af; border: 1.5px solid #bfdbfe; }
 .ep-act.edit:hover { background: #dbeafe; }
 .ep-act.resubmit {
@@ -489,9 +489,9 @@ html[dir="ltr"] .ep-search-input { padding: 0 36px 0 12px; }
   transition: background 0.15s, border-color 0.15s, color 0.15s;
 }
 .ep-load-more:hover {
-  background: #ede9fe;
-  border-color: var(--mt-accent, #7c3aed);
-  color: var(--mt-accent, #7c3aed);
+  background: #e6f3f7;
+  border-color: var(--mt-accent, #0e7490);
+  color: var(--mt-accent, #0e7490);
 }
 
 /* ══════════════════════════════════════════════════════════════════
@@ -531,7 +531,7 @@ html[dir="ltr"] .ep-search-input { padding: 0 36px 0 12px; }
 .wf-stat-badge.stat-draft       { color: #94a3b8; background: #f8fafc;  border-color: #e2e8f0; }
 .wf-stat-badge.stat-created     { color: #0284c7; background: #e0f2fe;  border-color: #bae6fd; }
 .wf-stat-badge.stat-pending     { color: #b45309; background: #fef9c3;  border-color: #fde68a; }
-.wf-stat-badge.stat-in_progress { color: #6d28d9; background: #f5f3ff;  border-color: #c4b5fd; }
+.wf-stat-badge.stat-in_progress { color: #155e75; background: #e6f3f7;  border-color: #a5d8e6; }
 .wf-stat-badge.stat-replied     { color: #0369a1; background: #e0f2fe;  border-color: #93c5fd; }
 .wf-stat-badge.stat-returned    { color: #dc2626; background: #fef2f2;  border-color: #dc2626; font-weight: 900; }
 .wf-stat-badge.stat-approved    { color: #15803d; background: #dcfce7;  border-color: #86efac; }
@@ -551,7 +551,7 @@ html[dir="ltr"] .ep-search-input { padding: 0 36px 0 12px; }
   width: 7px;
   height: 7px;
   border-radius: 50%;
-  background: var(--mt-accent, #7c3aed);
+  background: var(--mt-accent, #0e7490);
   vertical-align: middle;
   margin-inline-start: 5px;
 }
@@ -595,7 +595,7 @@ html[dir="ltr"] .ep-search-input { padding: 0 36px 0 12px; }
 .wf-act-btn.approve { background: #dcfce7; color: #15803d;   border-color: #86efac; }
 .wf-act-btn.reject  { background: #fee2e2; color: #b91c1c;   border-color: #fca5a5; }
 .wf-act-btn.return  { background: #fef9c3; color: #92400e;   border-color: #fde68a; }
-.wf-act-btn.forward { background: #f5f3ff; color: #6d28d9;   border-color: #c4b5fd; }
+.wf-act-btn.forward { background: #e6f3f7; color: #155e75;   border-color: #a5d8e6; }
 .wf-act-btn.delete  { background: #fff;    color: #dc2626;   border-color: #fecaca; }
 
 /* ══════════════════════════════════════════════════════════════════
@@ -604,7 +604,7 @@ html[dir="ltr"] .ep-search-input { padding: 0 36px 0 12px; }
 
 /* Accent colour variants — override hub-ui.css CSS variables */
 .hub-card.accent-blue   { --hub-accent: #3b82f6; --hub-icon-bg: #eff6ff; }
-.hub-card.accent-purple { --hub-accent: #7c3aed; --hub-icon-bg: #ede9fe; }
+.hub-card.accent-purple { --hub-accent: #0e7490; --hub-icon-bg: #e6f3f7; }
 .hub-card.accent-green  { --hub-accent: #16a34a; --hub-icon-bg: #dcfce7; }
 .hub-card.accent-slate  { --hub-accent: #475569; --hub-icon-bg: #f1f5f9; }
 .hub-card.accent-teal   { --hub-accent: #0891b2; --hub-icon-bg: #ecfeff; }
@@ -640,7 +640,7 @@ html[dir="ltr"] .ep-search-input { padding: 0 36px 0 12px; }
 .wo-metric .val {
   font-size: 30px;
   font-weight: 900;
-  color: var(--mt-accent, #7c3aed);
+  color: var(--mt-accent, #0e7490);
   line-height: 1;
   font-variant-numeric: tabular-nums;
 }
@@ -662,7 +662,7 @@ html[dir="ltr"] .ep-search-input { padding: 0 36px 0 12px; }
   border-bottom: 1px solid #f0f0f0;
 }
 .hub-sub-title i {
-  color: var(--mt-accent, #7c3aed);
+  color: var(--mt-accent, #0e7490);
   font-size: 13px;
 }
 

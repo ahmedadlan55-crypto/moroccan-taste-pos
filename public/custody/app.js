@@ -237,7 +237,7 @@
       h += '</div>';
       // Show expense type (GL account) separately from description
       if (e.glAccountName) {
-        h += '<div style="font-size:11px;color:#8b5cf6;font-weight:700;margin:2px 0;"><i class="fas fa-tag" style="margin-left:3px;"></i> ' + esc(e.glAccountName) + '</div>';
+        h += '<div style="font-size:11px;color:#0e7490;font-weight:700;margin:2px 0;"><i class="fas fa-tag" style="margin-left:3px;"></i> ' + esc(e.glAccountName) + '</div>';
       }
       h += '<div class="ec-amount">' + fmt(total) + ' <small>SAR</small></div>';
       h += '<div class="ec-meta">';

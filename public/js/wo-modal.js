@@ -40,7 +40,7 @@
       .wom-icon.warning{background:#fef3c7;color:#92400e}
       .wom-icon.danger {background:#fee2e2;color:#991b1b}
       .wom-icon.info   {background:#dbeafe;color:#1e40af}
-      .wom-icon.purple {background:#ede9fe;color:#5b21b6}
+      .wom-icon.purple {background:#e6f3f7;color:#155e75}
       .wom-icon.neutral{background:#f1f5f9;color:#475569}
       .wom-titles{flex:1;min-width:0}
       .wom-title{font-size:17px;font-weight:700;color:#0f172a;margin:0;line-height:1.3}

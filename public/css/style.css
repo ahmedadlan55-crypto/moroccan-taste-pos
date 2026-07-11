@@ -5,12 +5,12 @@
 /* v5.14.3 — Legacy variable names are kept for backwards compatibility
  * with all existing rules in this file, but each one now resolves to a
  * token from the shared brand palette in /shared/design-tokens.css.
- * The whole admin shell switches from the old blue scheme to the new
- * Slate + Purple + Green identity with no per-rule edits. */
+ * The whole admin shell switches to the ADLAN identity
+ * (navy #0e1726 + petrol #0e7490 + IBM Plex) with no per-rule edits. */
 :root {
-  --primary:       var(--mt-primary-2);   /* slate 900 — sidebar / app chrome */
-  --secondary:     var(--mt-primary);     /* slate 800 — primary buttons */
-  --accent:        var(--mt-accent);      /* purple 600 — interactive accent */
+  --primary:       var(--mt-primary-2);   /* navy — sidebar / app chrome */
+  --secondary:     var(--mt-primary);     /* navy — primary buttons */
+  --accent:        var(--mt-accent);      /* petrol — interactive accent */
   --bg-color:      var(--mt-surface-2);   /* slate 50  — main background */
   --text-dark:     var(--mt-text);        /* slate 900 — primary text */
   --text-light:    var(--mt-text-muted);  /* slate 500 — secondary text */
@@ -75,7 +75,7 @@ input, select, textarea { outline: none; font-family: inherit; }
 .modal-close:hover { color: var(--danger); }
 
 /* =========================================
-   4. Login Screen — Cosmic Forest Theme
+   4. Login Screen — ADLAN (navy + petrol)
    ========================================= */
 #loginView {
   min-height: 100vh;
@@ -92,9 +92,9 @@ input, select, textarea { outline: none; font-family: inherit; }
   padding-right: max(24px, env(safe-area-inset-right));
   overflow: hidden;
   background:
-    radial-gradient(ellipse at 20% 0%, rgba(167, 139, 250, 0.55) 0%, transparent 50%),
-    radial-gradient(ellipse at 80% 10%, rgba(236, 72, 153, 0.35) 0%, transparent 55%),
-    linear-gradient(180deg, #1e1147 0%, #2d1b69 25%, #4c1d95 55%, #5b21b6 75%, #1e1147 100%);
+    radial-gradient(ellipse at 25% 12%, rgba(14, 116, 144, 0.45) 0%, transparent 55%),
+    radial-gradient(ellipse at 82% 85%, rgba(21, 94, 117, 0.38) 0%, transparent 55%),
+    linear-gradient(160deg, #0e1726 0%, #0f2434 48%, #0e1726 100%);
 }
 
 /* Stars layer (CSS only — no images) */
@@ -124,9 +124,10 @@ input, select, textarea { outline: none; font-family: inherit; }
 }
 @keyframes twinkle { 0% { opacity: 0.55; } 100% { opacity: 0.95; } }
 
-/* Mountains + forest silhouette layer */
+/* Mountains + forest silhouette layer — hidden (ADLAN: clean navy + petrol) */
 #loginView::after {
   content: "";
+  display: none;
   position: absolute;
   left: 0;
   right: 0;
@@ -236,20 +237,20 @@ body.en .login-field input.form-control { padding-left: 20px; padding-right: 50p
  * with a soft inner highlight that lifts the field without screaming. */
 .login-field input.form-control:focus {
   background: #ffffff;
-  border-color: #4f46e5;
+  border-color: #155e75;
   box-shadow: 0 0 0 3px rgba(79, 70, 229, 0.22),
               0 6px 20px rgba(79, 70, 229, 0.10);
   outline: none;
 }
 /* Field icon shifts to indigo on focus (was pale lavender on dark v5.10.51) */
 .login-field:focus-within .login-field-icon {
-  color: #4f46e5;
+  color: #155e75;
   transform: scale(1.06);
   transition: color .15s ease, transform .15s ease;
 }
 /* Caret + selection colours tuned for the new light glass field */
 .login-field input.form-control {
-  caret-color: #4f46e5;
+  caret-color: #155e75;
 }
 .login-field input.form-control::selection {
   background: rgba(79, 70, 229, 0.20);
@@ -292,7 +293,7 @@ body.en .login-field .login-field-icon { right: 0; left: auto; }
 .login-row input[type="checkbox"] {
   width: 16px;
   height: 16px;
-  accent-color: #a78bfa;
+  accent-color: #1591b0;
   cursor: pointer;
 }
 .login-row a {
@@ -311,7 +312,7 @@ body.en .login-field .login-field-icon { right: 0; left: auto; }
   border-radius: 14px;
   margin-top: 6px;
   background: rgba(255, 255, 255, 0.95);
-  color: #4c1d95;
+  color: #155e75;
   border: none;
   box-shadow: 0 10px 24px rgba(0, 0, 0, 0.25);
   -webkit-tap-highlight-color: transparent;
@@ -439,7 +440,7 @@ body.en #lPass { padding-left: 50px !important; padding-right: 50px !important; 
   content: '';
   width: 6px;
   height: 11px;
-  border: solid #4c1d95;
+  border: solid #155e75;
   border-width: 0 2.5px 2.5px 0;
   transform: rotate(45deg) translate(-1px, -1px);
 }
@@ -476,7 +477,7 @@ body.en .login-submit:hover .login-submit-arrow { transform: rotate(180deg) tran
 .login-field input:-webkit-autofill:active {
   -webkit-text-fill-color: var(--mt-primary-2) !important;
   -webkit-box-shadow: 0 0 0 1000px #ffffff inset !important;
-  caret-color: #4f46e5;
+  caret-color: #155e75;
   transition: background-color 5000s ease-in-out 0s;
 }
 .login-field input:-webkit-autofill:focus {
@@ -733,9 +734,9 @@ body.en .table th:last-child { border-top-right-radius: 18px; border-top-left-ra
 .wh-fb-search i { position: absolute; inset-inline-start: 14px; top: 50%; transform: translateY(-50%); color: var(--mt-text-light); font-size: 14px; pointer-events: none; z-index: 1; }
 .wh-fb-search input.form-control { padding-inline-start: 40px; padding-inline-end: 14px; background: #fff; border: 1.5px solid var(--mt-border); border-radius: 10px; height: 40px; font-size: 13px; box-sizing: border-box; width: 100%; }
 .wh-fb-search input.form-control::placeholder { color: var(--mt-text-light); }
-.wh-fb-search input.form-control:focus { border-color: var(--mt-accent); box-shadow: 0 0 0 3px #ede9fe; outline: none; }
+.wh-fb-search input.form-control:focus { border-color: var(--mt-accent); box-shadow: 0 0 0 3px #e6f3f7; outline: none; }
 .wh-fb-date { max-width: 150px; height: 40px; }
-.wh-fb-select { max-width: 180px; height: 40px; background: linear-gradient(135deg, #faf5ff, #fff); border-color: #d8b4fe; }
+.wh-fb-select { max-width: 180px; height: 40px; background: linear-gradient(135deg, #e6f3f7, #fff); border-color: #cfe9f1; }
 .wh-fb-clear { width: 40px; height: 40px; padding: 0; display: inline-flex; align-items: center; justify-content: center; flex-shrink: 0; }
 .wh-fb-clear:hover { background: #fee2e2; color: var(--mt-danger-2); border-color: #fca5a5; }
 @media (max-width: 768px) {
@@ -1108,12 +1109,12 @@ body.ar .search-dropdown-wrap .sd-icon { left: auto; right: 14px; }
 /* Active state per type — each type uses its own brand color */
 .coa-type-chip.active[data-type="asset"]     { background: #eff6ff; border-color: var(--mt-accent); color: #1d4ed8; }
 .coa-type-chip.active[data-type="liability"] { background: #fef2f2; border-color: var(--mt-danger); color: #991b1b; }
-.coa-type-chip.active[data-type="equity"]    { background: #faf5ff; border-color: #a855f7; color: #6b21a8; }
+.coa-type-chip.active[data-type="equity"]    { background: #e6f3f7; border-color: #1591b0; color: #155e75; }
 .coa-type-chip.active[data-type="revenue"]   { background: #f0fdf4; border-color: var(--mt-success); color: #166534; }
 .coa-type-chip.active[data-type="expense"]   { background: #fffbeb; border-color: var(--mt-warning); color: #92400e; }
 .coa-type-chip.active[data-type=""],
 .coa-type-chip.active:not([data-type]) {
-  background: #e0e7ff; border-color: #6366f1; color: #4338ca;
+  background: #e0e7ff; border-color: #0e7490; color: #4338ca;
 }
 
 .coa-actions {
@@ -1135,7 +1136,7 @@ body.ar .search-dropdown-wrap .sd-icon { left: auto; right: 14px; }
   user-select: none;
 }
 .coa-toggle-empty:hover { background: var(--mt-bg); }
-.coa-toggle-empty input[type="checkbox"] { accent-color: #4f46e5; width: 14px; height: 14px; cursor: pointer; }
+.coa-toggle-empty input[type="checkbox"] { accent-color: #155e75; width: 14px; height: 14px; cursor: pointer; }
 .coa-action-btn {
   display: inline-flex;
   align-items: center;
@@ -1153,8 +1154,8 @@ body.ar .search-dropdown-wrap .sd-icon { left: auto; right: 14px; }
 }
 .coa-action-btn:hover {
   background: var(--mt-surface-2);
-  border-color: #4f46e5;
-  color: #4f46e5;
+  border-color: #155e75;
+  color: #155e75;
 }
 
 /* ── Main layout (tree + content) ──────────────────────────────── */
@@ -1209,7 +1210,7 @@ body.ar .search-dropdown-wrap .sd-icon { left: auto; right: 14px; }
 }
 .coa-search:focus {
   outline: none;
-  border-color: #4f46e5;
+  border-color: #155e75;
   box-shadow: 0 0 0 3px rgba(79,70,229,0.15);
 }
 .coa-tree-toolbar {
@@ -1274,7 +1275,7 @@ body.ar .search-dropdown-wrap .sd-icon { left: auto; right: 14px; }
   background: #e0e7ff;
   color: #3730a3;
   font-weight: 800;
-  box-shadow: inset 2px 0 0 #4f46e5;
+  box-shadow: inset 2px 0 0 #155e75;
 }
 
 /* Chevron — smooth rotation on .is-open instead of glyph swap */
@@ -1289,8 +1290,8 @@ body.ar .search-dropdown-wrap .sd-icon { left: auto; right: 14px; }
   transition: transform .2s ease, color .15s;
 }
 .coa-node-toggle i { font-size: 11px; }
-.coa-node.is-open > .coa-node-row .coa-node-toggle { transform: rotate(-90deg); color: #4f46e5; }
-.coa-node-row:hover .coa-node-toggle { color: #4f46e5; }
+.coa-node.is-open > .coa-node-row .coa-node-toggle { transform: rotate(-90deg); color: #155e75; }
+.coa-node-row:hover .coa-node-toggle { color: #155e75; }
 
 .coa-node-icon { flex-shrink: 0; }
 .coa-node-name {
@@ -1313,7 +1314,7 @@ body.ar .search-dropdown-wrap .sd-icon { left: auto; right: 14px; }
 /* Type accent: 4px left edge per type */
 .coa-node[data-type="asset"]     > .coa-node-row { border-inline-start-color: var(--mt-accent); }
 .coa-node[data-type="liability"] > .coa-node-row { border-inline-start-color: var(--mt-danger); }
-.coa-node[data-type="equity"]    > .coa-node-row { border-inline-start-color: #a855f7; }
+.coa-node[data-type="equity"]    > .coa-node-row { border-inline-start-color: #1591b0; }
 .coa-node[data-type="revenue"]   > .coa-node-row { border-inline-start-color: var(--mt-success); }
 .coa-node[data-type="expense"]   > .coa-node-row { border-inline-start-color: var(--mt-warning); }
 
@@ -1428,7 +1429,7 @@ body.ar .search-dropdown-wrap .sd-icon { left: auto; right: 14px; }
   font-size: 12px;
   transition: background .15s, color .15s, transform .08s;
 }
-.coa-node-actions button:hover  { background: #e0e7ff; color: #4f46e5; }
+.coa-node-actions button:hover  { background: #e0e7ff; color: #155e75; }
 .coa-node-actions button:active { transform: scale(.93); }
 
 /* Code badge inside name */
@@ -1641,7 +1642,7 @@ body.ar .search-dropdown-wrap .sd-icon { left: auto; right: 14px; }
 .badge-green { background: #dcfce7; color: #166534; border: 1px solid #bbf7d0; }
 .badge-red { background: #fee2e2; color: #991b1b; border: 1px solid #fecaca; }
 .badge-orange { background: #ffedd5; color: #9a3412; border: 1px solid #fed7aa; }
-.badge-purple { background: #f3e8ff; color: #6b21a8; border: 1px solid #e9d5ff; }
+.badge-purple { background: #e6f3f7; color: #155e75; border: 1px solid #cfe9f1; }
 
 /* Filter Bar */
 .filter-bar select, .filter-bar input { border: 1px solid var(--mt-border); background: var(--mt-surface-2); border-radius: 10px; padding: 10px 14px; font-size: 14px; font-weight: 500; transition: all 0.2s; outline: none; }
@@ -1779,8 +1780,8 @@ body.en .report-kpi-card.kpi-revenue { border-right: none; border-left: 4px soli
 body.en .report-kpi-card.kpi-expense { border-right: none; border-left: 4px solid var(--mt-danger); }
 .report-kpi-card.kpi-purchase { border-right: 4px solid var(--mt-warning); }
 body.en .report-kpi-card.kpi-purchase { border-right: none; border-left: 4px solid var(--mt-warning); }
-.report-kpi-card.kpi-orders { border-right: 4px solid #6366f1; }
-body.en .report-kpi-card.kpi-orders { border-right: none; border-left: 4px solid #6366f1; }
+.report-kpi-card.kpi-orders { border-right: 4px solid #0e7490; }
+body.en .report-kpi-card.kpi-orders { border-right: none; border-left: 4px solid #0e7490; }
 .report-kpi-card.kpi-daily { border-right: 4px solid var(--mt-accent); }
 body.en .report-kpi-card.kpi-daily { border-right: none; border-left: 4px solid var(--mt-accent); }
 
@@ -2182,8 +2183,8 @@ body.en .report-kpi-card.kpi-daily { border-right: none; border-left: 4px solid 
 .wh-stat-card.wh-active .wh-stat-icon { background: #dcfce7; color: #166534; }
 .wh-stat-card.wh-value { background: linear-gradient(135deg, #fefce8, #fef9c3); border-color: #fde047; }
 .wh-stat-card.wh-value .wh-stat-icon { background: #fef9c3; color: #854d0e; }
-.wh-stat-card.wh-transfers { background: linear-gradient(135deg, #faf5ff, #f3e8ff); border-color: #d8b4fe; }
-.wh-stat-card.wh-transfers .wh-stat-icon { background: #f3e8ff; color: var(--mt-accent); }
+.wh-stat-card.wh-transfers { background: linear-gradient(135deg, #e6f3f7, #e6f3f7); border-color: #cfe9f1; }
+.wh-stat-card.wh-transfers .wh-stat-icon { background: #e6f3f7; color: var(--mt-accent); }
 
 .wh-tabs { display: flex; gap: 0; background: #fff; border-radius: 14px; padding: 4px; border: 1px solid var(--mt-border); margin-bottom: 20px; box-shadow: 0 2px 8px rgba(0,0,0,0.02); }
 .wh-tab { flex: 1; padding: 12px 16px; text-align: center; font-weight: 700; font-size: 14px; border-radius: 10px; cursor: pointer; color: var(--mt-text-muted); transition: 0.25s ease; display: flex; align-items: center; justify-content: center; gap: 8px; }

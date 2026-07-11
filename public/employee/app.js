@@ -1296,7 +1296,7 @@ function loadHomeData() {
         '<div class="st"><i class="fas fa-clock" style="color:#0ea5e9;background:#e0f2fe;"></i><b>' + hrsStr + '</b><span>'+t('stats.hours')+'</span></div>' +
         '<div class="st"><i class="fas fa-umbrella-beach" style="color:#10b981;background:#ecfdf5;"></i><b>' + leaveWhole + '<small style="font-size:11px;color:#64748b;">.' + leaveHrs + 'h</small></b><span>'+t('stats.leave')+'</span></div>' +
         '<div class="st"><i class="fas fa-exclamation" style="color:#f59e0b;background:#fffbeb;"></i><b>' + lateStr + '</b><span>'+t('stats.late')+'</span></div>' +
-        '<div class="st"><i class="fas fa-calendar-check" style="color:#8b5cf6;background:#f5f3ff;"></i><b>' + present + '</b><span>'+t('stats.present')+'</span></div>';
+        '<div class="st"><i class="fas fa-calendar-check" style="color:#0e7490;background:#e6f3f7;"></i><b>' + present + '</b><span>'+t('stats.present')+'</span></div>';
     });
 
     // Recent attendance
@@ -1888,12 +1888,12 @@ var _impBgs    = { critical:'#fee2e2', high:'#ffedd5', medium:'#fef9c3', low:'#d
 // V4: 8-state palette unified with admin
 var _statClr = {
   draft:'#94a3b8', created:'#0ea5e9', pending:'#f59e0b',
-  in_progress:'#f59e0b', replied:'#8b5cf6', returned:'#dc2626',
+  in_progress:'#f59e0b', replied:'#0e7490', returned:'#dc2626',
   approved:'#16a34a', rejected:'#991b1b', closed:'#6b7280'
 };
 var _statBg  = {
   draft:'#f1f5f9', created:'#e0f2fe', pending:'#fef3c7',
-  in_progress:'#fef3c7', replied:'#ede9fe', returned:'#fef2f2',
+  in_progress:'#fef3c7', replied:'#e6f3f7', returned:'#fef2f2',
   approved:'#dcfce7', rejected:'#fee2e2', closed:'#f3f4f6'
 };
 var _statIcon = {
@@ -2277,7 +2277,7 @@ function empFwd(id) {
     div.innerHTML =
       '<div role="document" style="background:#fff;border-radius:'+(isMobile?'18px 18px 0 0':'18px')+';padding:20px;width:100%;max-width:'+(isMobile?'100%':'480px')+';max-height:'+(isMobile?'85dvh':'90vh')+';overflow-y:auto;box-shadow:0 -8px 32px rgba(0,0,0,.25);direction:rtl;">' +
         '<div style="display:flex;align-items:center;gap:12px;margin-bottom:14px;">' +
-          '<div style="width:44px;height:44px;border-radius:12px;background:#ede9fe;display:grid;place-items:center;flex-shrink:0;"><i class="fas fa-share" style="color:#7c3aed;font-size:18px;"></i></div>' +
+          '<div style="width:44px;height:44px;border-radius:12px;background:#e6f3f7;display:grid;place-items:center;flex-shrink:0;"><i class="fas fa-share" style="color:#0e7490;font-size:18px;"></i></div>' +
           '<h3 id="empFwdTitle" style="margin:0;font-size:17px;font-weight:800;color:#0f172a;">'+t('txn.forward')+'</h3>' +
           '<button aria-label="إغلاق" id="empFwdCloseX" style="margin-inline-start:auto;width:36px;height:36px;border:0;background:transparent;font-size:22px;color:#64748b;cursor:pointer;border-radius:8px;">&times;</button>' +
         '</div>' +
@@ -2291,7 +2291,7 @@ function empFwd(id) {
         '</div>' +
         '<div style="display:flex;gap:10px;justify-content:flex-end;">' +
           '<button id="empFwdCancelBtn" style="padding:12px 22px;min-height:44px;min-width:88px;border:1.5px solid #e2e8f0;background:#fff;color:#475569;border-radius:12px;font-weight:700;font-size:14px;cursor:pointer;font-family:inherit;">'+t('common.cancelBtn')+'</button>' +
-          '<button id="empFwdOkBtn" style="padding:12px 26px;min-height:44px;min-width:120px;border:none;background:#8b5cf6;color:#fff;border-radius:12px;font-weight:800;font-size:14px;cursor:pointer;font-family:inherit;box-shadow:0 4px 12px rgba(139,92,246,.4);">'+t('txn.forward')+'</button>' +
+          '<button id="empFwdOkBtn" style="padding:12px 26px;min-height:44px;min-width:120px;border:none;background:#0e7490;color:#fff;border-radius:12px;font-weight:800;font-size:14px;cursor:pointer;font-family:inherit;box-shadow:0 4px 12px rgba(14, 116, 144,.4);">'+t('txn.forward')+'</button>' +
         '</div>' +
       '</div>';
     document.body.appendChild(div);
@@ -2958,18 +2958,18 @@ function viewMyTxn(id) {
     var btnLabel = isMyTurn ? '<i class="fas fa-paper-plane"></i> رد + موافقة وتحويل للتالي'
                             : '<i class="fas fa-comment"></i> ' + t('txn.sendReply');
     var btnBg = isMyTurn ? 'background:linear-gradient(135deg,#16a34a,#15803d);'
-                          : 'background:linear-gradient(135deg,#8b5cf6,#6d28d9);';
-    h += '<div style="border:2px solid ' + (isMyTurn ? '#16a34a' : '#c4b5fd') + ';border-radius:14px;background:linear-gradient(180deg,' + (isMyTurn ? '#f0fdf4' : '#faf5ff') + ' 0%,#fff 60%);padding:14px;margin-bottom:12px;" id="emp_replyBox">' +
+                          : 'background:linear-gradient(135deg,#0e7490,#155e75);';
+    h += '<div style="border:2px solid ' + (isMyTurn ? '#16a34a' : '#a5d8e6') + ';border-radius:14px;background:linear-gradient(180deg,' + (isMyTurn ? '#f0fdf4' : '#e6f3f7') + ' 0%,#fff 60%);padding:14px;margin-bottom:12px;" id="emp_replyBox">' +
       '<div style="display:flex;align-items:center;gap:8px;margin-bottom:12px;">' +
-        '<div style="width:30px;height:30px;border-radius:50%;background:' + (isMyTurn ? '#16a34a' : '#8b5cf6') + ';color:#fff;display:flex;align-items:center;justify-content:center;font-size:13px;"><i class="fas fa-comments"></i></div>' +
-        '<span style="font-size:14px;font-weight:900;color:' + (isMyTurn ? '#15803d' : '#5b21b6') + ';">' + (isMyTurn ? '⚠️ معاملة بانتظار ردّك' : t('txn.repliesTitle')) + '</span>' +
-        '<span id="emp_repliesCount" style="margin-inline-start:auto;font-size:11px;color:#7c3aed;font-weight:800;background:#ede9fe;padding:4px 10px;border-radius:999px;">…</span>' +
+        '<div style="width:30px;height:30px;border-radius:50%;background:' + (isMyTurn ? '#16a34a' : '#0e7490') + ';color:#fff;display:flex;align-items:center;justify-content:center;font-size:13px;"><i class="fas fa-comments"></i></div>' +
+        '<span style="font-size:14px;font-weight:900;color:' + (isMyTurn ? '#15803d' : '#155e75') + ';">' + (isMyTurn ? '⚠️ معاملة بانتظار ردّك' : t('txn.repliesTitle')) + '</span>' +
+        '<span id="emp_repliesCount" style="margin-inline-start:auto;font-size:11px;color:#0e7490;font-weight:800;background:#e6f3f7;padding:4px 10px;border-radius:999px;">…</span>' +
       '</div>' +
       '<div id="emp_repliesList"><div style="text-align:center;color:#94a3b8;padding:20px;font-size:12px;"><i class="fas fa-spinner fa-spin"></i></div></div>';
     if (canStillReply) {
-      h += '<div style="margin-top:12px;padding-top:12px;border-top:1px dashed ' + (isMyTurn ? '#86efac' : '#c4b5fd') + ';" id="emp_replyForm">' +
+      h += '<div style="margin-top:12px;padding-top:12px;border-top:1px dashed ' + (isMyTurn ? '#86efac' : '#a5d8e6') + ';" id="emp_replyForm">' +
         (isMyTurn ? '<div style="font-size:11.5px;color:#15803d;font-weight:700;margin-bottom:8px;background:#dcfce7;padding:8px 12px;border-radius:8px;border:1px solid #86efac;"><i class="fas fa-info-circle"></i> اكتب ردك واختر المستلم (افتراضياً: الشخص التالي في السلسلة).</div>' : '') +
-        '<textarea id="emp_replyText" placeholder="' + (isMyTurn ? 'اكتب ردك على المعاملة...' : t('txn.replyPlaceholder')).replace(/'/g,"\\'") + '" style="width:100%;min-height:80px;padding:12px;border:1.5px solid ' + (isMyTurn ? '#86efac' : '#c4b5fd') + ';border-radius:10px;font-family:inherit;font-size:13px;resize:vertical;outline:none;background:#fff;line-height:1.7;"></textarea>' +
+        '<textarea id="emp_replyText" placeholder="' + (isMyTurn ? 'اكتب ردك على المعاملة...' : t('txn.replyPlaceholder')).replace(/'/g,"\\'") + '" style="width:100%;min-height:80px;padding:12px;border:1.5px solid ' + (isMyTurn ? '#86efac' : '#a5d8e6') + ';border-radius:10px;font-family:inherit;font-size:13px;resize:vertical;outline:none;background:#fff;line-height:1.7;"></textarea>' +
         // V4.5/V5-UX: recipient picker (only when user is current assignee — otherwise reply is just a comment)
         // V5-UX: shows clear loading state, then populates with grouped optgroups.
         (isMyTurn ?
@@ -2983,7 +2983,7 @@ function viewMyTxn(id) {
           '</div>' : '') +
         '<div style="display:flex;gap:6px;margin-top:8px;align-items:center;flex-wrap:wrap;">' +
           '<input type="file" id="emp_replyFile" accept="image/*,.pdf,.doc,.docx,.xls,.xlsx" style="display:none;" onchange="(function(i){var l=document.getElementById(\'emp_replyFileLabel\');if(l)l.textContent=i.files[0]?(i.files[0].name.length>20?i.files[0].name.substring(0,20)+\'...\':i.files[0].name):(window.t?t(\'txn.attachFile\'):\'إرفاق ملف\');})(this)">' +
-          '<button type="button" onclick="document.getElementById(\'emp_replyFile\').click()" style="padding:9px 14px;border-radius:10px;background:#fff;color:' + (isMyTurn ? '#15803d' : '#8b5cf6') + ';border:1.5px solid ' + (isMyTurn ? '#86efac' : '#c4b5fd') + ';font-weight:800;font-size:12px;cursor:pointer;font-family:inherit;display:inline-flex;align-items:center;gap:6px;"><i class="fas fa-paperclip"></i><span id="emp_replyFileLabel">' + fileLabelDefault + '</span></button>' +
+          '<button type="button" onclick="document.getElementById(\'emp_replyFile\').click()" style="padding:9px 14px;border-radius:10px;background:#fff;color:' + (isMyTurn ? '#15803d' : '#0e7490') + ';border:1.5px solid ' + (isMyTurn ? '#86efac' : '#a5d8e6') + ';font-weight:800;font-size:12px;cursor:pointer;font-family:inherit;display:inline-flex;align-items:center;gap:6px;"><i class="fas fa-paperclip"></i><span id="emp_replyFileLabel">' + fileLabelDefault + '</span></button>' +
           '<button onclick="empPostReply(\''+id+'\',' + (isMyTurn?'true':'false') + ')" id="emp_replySendBtn" style="flex:1;padding:11px 16px;border-radius:10px;' + btnBg + 'color:#fff;border:none;font-weight:900;font-size:13px;cursor:pointer;font-family:inherit;display:inline-flex;align-items:center;justify-content:center;gap:6px;box-shadow:0 2px 6px rgba(0,0,0,.12);">' + btnLabel + '</button>' +
         '</div>' +
       '</div>';
@@ -3036,7 +3036,7 @@ function viewMyTxn(id) {
     // 6. TOGGLE BUTTON — translated label
     var hasWorkflow = (txn.workflowPath && txn.workflowPath.length) || (txn.logs && txn.logs.length) || (txn.recipients && txn.recipients.length);
     if (hasWorkflow) {
-      h += '<button onclick="toggleWorkflowView()" id="wfToggleBtn" style="width:100%;padding:13px;border-radius:12px;border:1.5px dashed #8b5cf6;background:#faf5ff;color:#6d28d9;font-weight:800;font-size:13px;cursor:pointer;font-family:inherit;display:flex;align-items:center;justify-content:center;gap:8px;margin-bottom:10px;">' +
+      h += '<button onclick="toggleWorkflowView()" id="wfToggleBtn" style="width:100%;padding:13px;border-radius:12px;border:1.5px dashed #0e7490;background:#e6f3f7;color:#155e75;font-weight:800;font-size:13px;cursor:pointer;font-family:inherit;display:flex;align-items:center;justify-content:center;gap:8px;margin-bottom:10px;">' +
         '<i class="fas fa-route"></i><span id="wfToggleLabel">' + t('txn.showWorkflow') + '</span><i class="fas fa-chevron-down" id="wfToggleChevron" style="font-size:11px;transition:transform .2s;"></i>' +
       '</button>';
     }
@@ -3065,11 +3065,11 @@ function viewMyTxn(id) {
     // 7c. Detailed timeline — who replied with what + attachments
     if (txn.logs && txn.logs.length) {
       var aMap = { create: t('txn.action.create'), approve: t('txn.action.approve'), reject: t('txn.action.reject'), return: t('txn.action.return'), close: t('txn.action.close'), forward: t('txn.action.forward') };
-      var aClr = { create:'#0ea5e9', approve:'#10b981', reject:'#ef4444', return:'#f97316', close:'#6b7280', forward:'#8b5cf6' };
+      var aClr = { create:'#0ea5e9', approve:'#10b981', reject:'#ef4444', return:'#f97316', close:'#6b7280', forward:'#0e7490' };
       var aIcon = { create:'fa-plus-circle', approve:'fa-check-circle', reject:'fa-times-circle', return:'fa-undo', close:'fa-lock', forward:'fa-share' };
       var dtLocale = currentLang === 'en' ? 'en-US' : 'ar-SA-u-nu-latn';
       h += '<div style="border:1px solid #e5e7eb;border-radius:10px;padding:12px;margin-bottom:10px;background:#fff;">';
-      h += '<div style="font-size:11px;font-weight:900;color:#0f172a;margin-bottom:10px;"><i class="fas fa-clock-rotate-left" style="color:#8b5cf6;margin-left:4px;"></i> ' + t('txn.workflowLog') + '</div>';
+      h += '<div style="font-size:11px;font-weight:900;color:#0f172a;margin-bottom:10px;"><i class="fas fa-clock-rotate-left" style="color:#0e7490;margin-left:4px;"></i> ' + t('txn.workflowLog') + '</div>';
       txn.logs.forEach(function(l, i) {
         var c = aClr[l.actionType]||'#6b7280';
         var icon = aIcon[l.actionType]||'fa-circle';
@@ -3090,7 +3090,7 @@ function viewMyTxn(id) {
         h += '<div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;"><span style="font-size:13px;font-weight:900;color:'+c+';">'+_esc(label)+'</span>' +
              (hasAttach ? '<span style="font-size:9.5px;color:#0369a1;background:#e0f2fe;padding:2px 7px;border-radius:999px;font-weight:800;border:1px solid #bae6fd;"><i class="fas fa-paperclip" style="font-size:8px;"></i> مرفق</span>' : '<span style="font-size:9.5px;color:#94a3b8;background:#f1f5f9;padding:2px 7px;border-radius:999px;font-weight:700;"><i class="fas fa-paperclip-vertical" style="font-size:8px;"></i> بدون مرفق</span>') +
              '</div>';
-        h += '<div style="font-size:11.5px;color:#1e293b;font-weight:700;margin-top:2px;">'+_esc(l.actionBy||'—')+(l.positionName?' <span style="color:#8b5cf6;font-weight:700;">— '+_esc(l.positionName)+'</span>':'')+'</div>';
+        h += '<div style="font-size:11.5px;color:#1e293b;font-weight:700;margin-top:2px;">'+_esc(l.actionBy||'—')+(l.positionName?' <span style="color:#0e7490;font-weight:700;">— '+_esc(l.positionName)+'</span>':'')+'</div>';
         if (l.note) {
           h += '<div style="font-size:12px;color:#334155;margin-top:6px;padding:8px 10px;border-radius:8px;background:#f8fafc;border:1px solid #f1f5f9;line-height:1.6;word-break:break-word;overflow-wrap:anywhere;">' +
             '<div style="font-size:9px;font-weight:800;color:#64748b;text-transform:uppercase;margin-bottom:3px;letter-spacing:.04em;"><i class="fas fa-quote-right"></i> ' + t('txn.replyDeptHeader') + '</div>' +
@@ -3183,7 +3183,7 @@ window.toggleWorkflowView = function() {
   wrap.style.display = isHidden ? '' : 'none';
   if (lbl) lbl.textContent = isHidden ? t('txn.hideWorkflow') : t('txn.showWorkflow');
   if (chev) chev.style.transform = isHidden ? 'rotate(180deg)' : 'rotate(0deg)';
-  if (btn) btn.style.background = isHidden ? '#ede9fe' : '#faf5ff';
+  if (btn) btn.style.background = isHidden ? '#e6f3f7' : '#e6f3f7';
 };
 function closeTxnDetail() { document.getElementById('txnDetailModal').classList.remove('show'); }
 
@@ -3206,7 +3206,7 @@ window.empLoadReplies = function(txnId, listElId, countElId) {
       if (cntEl) cntEl.textContent = t('txn.replyCount').replace('{n}', rows.length);
       if (!listEl) return;
       if (!rows.length) {
-        listEl.innerHTML = '<div style="text-align:center;color:#94a3b8;padding:24px;font-size:12px;background:#fff;border:1px dashed #c4b5fd;border-radius:10px;"><i class="fas fa-comment-dots" style="font-size:28px;display:block;margin-bottom:8px;color:#c4b5fd;"></i>' + t('txn.noReplies') + '</div>';
+        listEl.innerHTML = '<div style="text-align:center;color:#94a3b8;padding:24px;font-size:12px;background:#fff;border:1px dashed #a5d8e6;border-radius:10px;"><i class="fas fa-comment-dots" style="font-size:28px;display:block;margin-bottom:8px;color:#a5d8e6;"></i>' + t('txn.noReplies') + '</div>';
         return;
       }
       // Role-aware avatar gradient + label + side-color — labels via i18n
@@ -3216,7 +3216,7 @@ window.empLoadReplies = function(txnId, listElId, countElId) {
         cashier:  { grad: 'linear-gradient(135deg,#16a34a,#15803d)', label: t('role.cashier'), side: '#16a34a' },
         custody:  { grad: 'linear-gradient(135deg,#d97706,#b45309)', label: t('role.custody'), side: '#d97706' },
         finance:  { grad: 'linear-gradient(135deg,#0369a1,#075985)', label: t('role.finance'), side: '#0369a1' },
-        hr:       { grad: 'linear-gradient(135deg,#a855f7,#7e22ce)', label: t('role.hr'), side: '#a855f7' },
+        hr:       { grad: 'linear-gradient(135deg,#1591b0,#155e75)', label: t('role.hr'), side: '#1591b0' },
         inventory:{ grad: 'linear-gradient(135deg,#0d9488,#0f766e)', label: t('role.inventory'), side: '#0d9488' },
         purchasing:{ grad: 'linear-gradient(135deg,#ea580c,#c2410c)', label: t('role.purchasing'), side: '#ea580c' },
         employee: { grad: 'linear-gradient(135deg,#475569,#334155)', label: t('role.employee'), side: '#475569' }

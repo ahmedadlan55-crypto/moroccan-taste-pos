@@ -1,5 +1,5 @@
 *{margin:0;padding:0;box-sizing:border-box;}
-body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;direction:rtl;height:100dvh;display:flex;flex-direction:column;overflow:hidden;background:var(--mt-bg);color:var(--mt-primary);-webkit-tap-highlight-color:transparent;max-width:100vw;}
+body{font-family:var(--mt-font);direction:rtl;height:100dvh;display:flex;flex-direction:column;overflow:hidden;background:var(--mt-bg);color:var(--mt-primary);-webkit-tap-highlight-color:transparent;max-width:100vw;}
 
 /* No loader */
 

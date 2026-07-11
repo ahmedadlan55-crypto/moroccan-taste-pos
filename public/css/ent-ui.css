@@ -30,7 +30,7 @@
 /* ───────────────────────── Design tokens ───────────────────────── */
 :root {
   /* Brand */
-  --ent-primary:        #4f46e5;
+  --ent-primary:        #155e75;
   --ent-primary-soft:   #eef2ff;
   --ent-primary-bord:   #c7d2fe;
 
@@ -760,8 +760,8 @@
   flex: 0 1 220px;
   height: 40px;
   padding: 8px 30px 8px 12px;
-  background: linear-gradient(135deg, #faf5ff, #fff);
-  border: 1.5px solid #d8b4fe;
+  background: linear-gradient(135deg, #e6f3f7, #fff);
+  border: 1.5px solid #cfe9f1;
   border-radius: 10px;
   font-size: 13px;
   font-family: inherit;
@@ -772,8 +772,8 @@
   appearance: none;
   -webkit-appearance: none;
   background-image:
-    linear-gradient(135deg, #faf5ff, #fff),
-    url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='14' height='14' viewBox='0 0 24 24' fill='none' stroke='%237c3aed' stroke-width='2.4' stroke-linecap='round' stroke-linejoin='round'><polyline points='6 9 12 15 18 9'/></svg>");
+    linear-gradient(135deg, #e6f3f7, #fff),
+    url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='14' height='14' viewBox='0 0 24 24' fill='none' stroke='%230e7490' stroke-width='2.4' stroke-linecap='round' stroke-linejoin='round'><polyline points='6 9 12 15 18 9'/></svg>");
   background-repeat: no-repeat, no-repeat;
   background-position: 0 0, calc(100% - 10px) center;
   background-size: 100% 100%, 14px 14px;
@@ -962,7 +962,7 @@ html[dir="ltr"] .wo-section .wh-fb-search input.form-control,
 .wo-section[data-section-theme="warning"] .wo-header { background: linear-gradient(135deg, #b45309 0%, var(--mt-warning) 100%); }
 .wo-section[data-section-theme="danger"]  .wo-header { background: linear-gradient(135deg, var(--mt-danger-2) 0%, var(--mt-danger) 100%); }
 .wo-section[data-section-theme="info"]    .wo-header { background: linear-gradient(135deg, #1e3a8a 0%, var(--mt-accent) 100%); }
-.wo-section[data-section-theme="purple"]  .wo-header { background: linear-gradient(135deg, var(--mt-accent-2) 0%, #a855f7 100%); }
+.wo-section[data-section-theme="purple"]  .wo-header { background: linear-gradient(135deg, var(--mt-accent-2) 0%, #1591b0 100%); }
 
 /* ── KPI Strip (`.wo-metric-strip` / `.wo-metric`) upgrade ───────── */
 .wo-section .wo-metric-strip {
@@ -1004,7 +1004,7 @@ html[dir="ltr"] .wo-section .wh-fb-search input.form-control,
   --kpi-c: var(--mt-danger);    --kpi-g-from: #fee2e2;  --kpi-g-to: #fef2f2;
 }
 .wo-section .wo-metric.accent-purple {
-  --kpi-c: #a855f7;    --kpi-g-from: #f3e8ff;  --kpi-g-to: #faf5ff;
+  --kpi-c: #1591b0;    --kpi-g-from: #e6f3f7;  --kpi-g-to: #e6f3f7;
 }
 .wo-section .wo-metric.accent-pink {
   --kpi-c: #ec4899;    --kpi-g-from: #fce7f3;  --kpi-g-to: #fdf2f8;

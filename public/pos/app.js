@@ -354,7 +354,7 @@ window.renderMenuGrid = function() {
           'إعدادات القَنوات تَعمَل بِشَكل صَارِم — لا fallback تِلقائي.';
         action =
           (chId
-            ? '<button onclick="posQuickPopulateChannel(\'' + chId + '\')" style="padding:12px 24px;background:linear-gradient(135deg,#7c3aed,#6d28d9);color:#fff;border:0;border-radius:10px;font-weight:800;cursor:pointer;font-size:14px;box-shadow:0 4px 14px rgba(124,58,237,0.3);"><i class="fas fa-magic"></i> انسَخ أصناف المنيو الرَئيسي إلى هذه القَناة</button> '
+            ? '<button onclick="posQuickPopulateChannel(\'' + chId + '\')" style="padding:12px 24px;background:linear-gradient(135deg,#0e7490,#155e75);color:#fff;border:0;border-radius:10px;font-weight:800;cursor:pointer;font-size:14px;box-shadow:0 4px 14px rgba(14, 116, 144,0.3);"><i class="fas fa-magic"></i> انسَخ أصناف المنيو الرَئيسي إلى هذه القَناة</button> '
             : '') +
           '<button onclick="posJumpToMain()" style="padding:12px 24px;background:#fff;color:#1e293b;border:2px solid #1e293b;border-radius:10px;font-weight:800;cursor:pointer;font-size:14px;margin-inline-start:8px;"><i class="fas fa-home"></i> ارجِع للقَناة الرَئيسية (MAIN)</button>';
       } else if (!menuCount) {
@@ -369,7 +369,7 @@ window.renderMenuGrid = function() {
           ? 'لا أصناف في فِئة "<b>' + state.activeCat + '</b>" ضِمن نِطاق البَحث الحالي.'
           : 'لا أصناف تُطابِق البَحث.');
         action = state.activeCat
-          ? '<button onclick="posBackToCategories()" style="padding:10px 20px;background:#7c3aed;color:#fff;border:0;border-radius:8px;font-weight:700;cursor:pointer;"><i class="fas fa-arrow-right"></i> ارجِع للفِئات</button>'
+          ? '<button onclick="posBackToCategories()" style="padding:10px 20px;background:#0e7490;color:#fff;border:0;border-radius:8px;font-weight:700;cursor:pointer;"><i class="fas fa-arrow-right"></i> ارجِع للفِئات</button>'
           : '';
       }
 
@@ -386,7 +386,7 @@ window.renderMenuGrid = function() {
         : '';
 
       h = '<div style="grid-column:1/-1;text-align:center;padding:40px 20px;">' +
-        '<i class="fas fa-store-slash" style="font-size:64px;margin-bottom:16px;display:block;color:#7c3aed;opacity:0.5;"></i>' +
+        '<i class="fas fa-store-slash" style="font-size:64px;margin-bottom:16px;display:block;color:#0e7490;opacity:0.5;"></i>' +
         '<div style="font-weight:900;font-size:20px;color:#0f172a;margin-bottom:8px;">المنيو غير ظاهِر</div>' +
         '<div style="font-size:14px;color:#475569;max-width:480px;line-height:1.8;margin:0 auto 18px;">' + reason + '</div>' +
         '<div>' + action + '</div>' +
@@ -412,7 +412,7 @@ window.renderMenuGrid = function() {
         : '';
       // Combos (العروض) — tapping opens the variant chooser, not a direct add.
       var comboBadge = i.isCombo
-        ? '<div style="position:absolute;top:6px;inset-inline-end:6px;background:#8b5cf6;color:#fff;font-size:9px;font-weight:800;padding:2px 6px;border-radius:6px;z-index:1;"><i class="fas fa-gift"></i> عرض</div>'
+        ? '<div style="position:absolute;top:6px;inset-inline-end:6px;background:#0e7490;color:#fff;font-size:9px;font-weight:800;padding:2px 6px;border-radius:6px;z-index:1;"><i class="fas fa-gift"></i> عرض</div>'
         : '';
       // v7.2 — XSS hardening: the item JSON embeds DB-sourced strings
       // (name, etc.).  Escaping the whole serialized payload for the HTML
@@ -493,12 +493,12 @@ function _posRenderPriceListBadge() {
   if (!pl || !pl.name) { host.style.display = 'none'; host.innerHTML = ''; return; }
   host.style.display = '';
   host.innerHTML =
-    '<div style="display:inline-flex;align-items:center;gap:8px;background:linear-gradient(135deg,#faf5ff,#f3e8ff);' +
-                'border:1.5px solid #d8b4fe;border-radius:999px;padding:5px 14px;font-size:11.5px;font-weight:800;' +
-                'color:#6d28d9;box-shadow:0 1px 3px rgba(124,58,237,0.08);">' +
+    '<div style="display:inline-flex;align-items:center;gap:8px;background:linear-gradient(135deg,#e6f3f7,#e6f3f7);' +
+                'border:1.5px solid #cfe9f1;border-radius:999px;padding:5px 14px;font-size:11.5px;font-weight:800;' +
+                'color:#155e75;box-shadow:0 1px 3px rgba(14, 116, 144,0.08);">' +
       '<i class="fas fa-tag" style="font-size:10px;"></i>' +
       '<span>أسعار من قائمة:</span>' +
-      '<span style="background:#fff;padding:1px 8px;border-radius:6px;color:#7c3aed;">' +
+      '<span style="background:#fff;padding:1px 8px;border-radius:6px;color:#0e7490;">' +
         (typeof _v3EscapeHtml === 'function' ? _v3EscapeHtml(pl.name) : (pl.name || '')) +
       '</span>' +
     '</div>';
@@ -657,14 +657,14 @@ window.renderCategoryGrid = function () {
     var dReason, dAction;
     if (dMenuCount === 0) {
       dReason = 'المنيو الرَئيسي فارِغ — لا أصناف مُحَمَّلة لِلبراند.';
-      dAction = '<button onclick="posRefreshAll()" style="padding:12px 24px;background:linear-gradient(135deg,#7c3aed,#6d28d9);color:#fff;border:0;border-radius:10px;font-weight:800;cursor:pointer;font-size:14px;"><i class="fas fa-rotate"></i> تَحديث وإعادة المُحاوَلة</button>';
+      dAction = '<button onclick="posRefreshAll()" style="padding:12px 24px;background:linear-gradient(135deg,#0e7490,#155e75);color:#fff;border:0;border-radius:10px;font-weight:800;cursor:pointer;font-size:14px;"><i class="fas fa-rotate"></i> تَحديث وإعادة المُحاوَلة</button>';
     } else if (state.activeChannel && !dIsMain && dChItemsCount === 0) {
       // v5.10.33 — cleaner copy (was a half-finished sentence with "...").
       dReason = 'القَناة "<b>' + dchName + '</b>" لم تُعَدّ بِأصناف بَعد.';
       dAction = '<button onclick="posJumpToMain()" style="padding:12px 24px;background:#1e293b;color:#fff;border:0;border-radius:10px;font-weight:800;cursor:pointer;font-size:14px;"><i class="fas fa-home"></i> الرُجوع إلى MAIN</button>';
     } else {
       dReason = 'كل الفِئات فارِغة. حاوِل التَحديث.';
-      dAction = '<button onclick="posRefreshAll()" style="padding:12px 24px;background:linear-gradient(135deg,#7c3aed,#6d28d9);color:#fff;border:0;border-radius:10px;font-weight:800;cursor:pointer;font-size:14px;"><i class="fas fa-rotate"></i> تَحديث</button>';
+      dAction = '<button onclick="posRefreshAll()" style="padding:12px 24px;background:linear-gradient(135deg,#0e7490,#155e75);color:#fff;border:0;border-radius:10px;font-weight:800;cursor:pointer;font-size:14px;"><i class="fas fa-rotate"></i> تَحديث</button>';
     }
     var dDebugChip = _dIsDev
       ? ('<div style="margin-top:18px;padding:8px 14px;background:#f1f5f9;border-radius:6px;font-size:11px;color:#475569;font-family:ui-monospace,SFMono-Regular,monospace;text-align:left;direction:ltr;display:inline-block;">' +
@@ -676,7 +676,7 @@ window.renderCategoryGrid = function () {
       : '';
     grid.innerHTML =
       '<div class="pos-empty" style="padding:40px 20px;text-align:center;">' +
-        '<i class="fas fa-store-slash" style="font-size:64px;display:block;margin-bottom:16px;opacity:0.5;color:#7c3aed;"></i>' +
+        '<i class="fas fa-store-slash" style="font-size:64px;display:block;margin-bottom:16px;opacity:0.5;color:#0e7490;"></i>' +
         '<div style="font-weight:900;font-size:20px;color:#0f172a;margin-bottom:8px;">المنيو غير ظاهِر</div>' +
         '<div style="font-size:14px;color:#475569;max-width:480px;line-height:1.8;margin:0 auto 18px;">' + dReason + '</div>' +
         '<div>' + dAction + '</div>' +
@@ -1381,7 +1381,7 @@ window._posCustomerLoadSummary = function (id) {
 function _posKpiCard(label, value, unit, icon, kind) {
   return (
     '<div class="pos-cust-hist-kpi-card ' + (kind || '') + '">' +
-      '<i class="fas ' + (icon || 'fa-circle') + '" style="font-size:18px;color:#7c3aed;"></i>' +
+      '<i class="fas ' + (icon || 'fa-circle') + '" style="font-size:18px;color:#0e7490;"></i>' +
       '<div class="pos-cust-hist-kpi-value">' + _posEsc(value) + '</div>' +
       (unit ? '<div class="pos-cust-hist-kpi-unit">' + _posEsc(unit) + '</div>' : '') +
       '<div class="pos-cust-hist-kpi-label">' + _posEsc(label) + '</div>' +
@@ -1457,7 +1457,7 @@ window.posOpenCustomerHistoryModal = function () {
       var invNum = r.invoiceNumber || r.id;
       var extraSerial = '';
       if (r.voidSerial)   extraSerial = '<br><small style="color:#b91c1c;font-family:ui-monospace,monospace;">' + _posEsc(r.voidSerial) + '</small>';
-      if (r.returnSerial) extraSerial = '<br><small style="color:#6d28d9;font-family:ui-monospace,monospace;">' + _posEsc(r.returnSerial) + '</small>';
+      if (r.returnSerial) extraSerial = '<br><small style="color:#155e75;font-family:ui-monospace,monospace;">' + _posEsc(r.returnSerial) + '</small>';
       var totalDisplay = (r.zatcaType === 'credit_note' ? '−' : '') + _posFormatSAR(r.total) + ' ر.س';
       return (
         '<tr class="pos-cust-hist-row ' + rowCls + '">' +
@@ -2126,7 +2126,7 @@ function _comboOpenModal(item, def) {
     bodyHtml: '<div id="comboChooserBody">' + bodyHtml() + '</div>',
     footHtml:
       '<button type="button" data-pos-cust-close="1" style="padding:11px 18px;border-radius:12px;border:1.5px solid #e2e8f0;background:#fff;color:#475569;font-weight:800;font-family:inherit;cursor:pointer;">إلغاء</button>' +
-      '<button type="button" id="comboConfirmBtn" style="padding:11px 22px;border-radius:12px;border:0;background:linear-gradient(135deg,#8b5cf6,#7c3aed);color:#fff;font-weight:800;font-family:inherit;cursor:pointer;"><i class="fas fa-cart-plus"></i> أضف للسلة</button>'
+      '<button type="button" id="comboConfirmBtn" style="padding:11px 22px;border-radius:12px;border:0;background:linear-gradient(135deg,#0e7490,#0e7490);color:#fff;font-weight:800;font-family:inherit;cursor:pointer;"><i class="fas fa-cart-plus"></i> أضف للسلة</button>'
   });
 
   function refresh() {
@@ -3963,10 +3963,10 @@ function _printStocktakeReport(stId, items) {
       '*{margin:0;padding:0;box-sizing:border-box;}' +
       'body{font-family:\'Cairo\',\'Tahoma\',Arial,sans-serif;direction:rtl;background:#fff;color:#0f172a;padding:20px 16px;}' +
       // ── Header ──
-      '.header{text-align:center;border-bottom:3px solid #7c3aed;padding-bottom:14px;margin-bottom:16px;}' +
-      '.company{font-size:22px;font-weight:900;color:#7c3aed;letter-spacing:-0.5px;}' +
+      '.header{text-align:center;border-bottom:3px solid #0e7490;padding-bottom:14px;margin-bottom:16px;}' +
+      '.company{font-size:22px;font-weight:900;color:#0e7490;letter-spacing:-0.5px;}' +
       '.branch{font-size:12px;color:#64748b;margin-top:2px;}' +
-      '.doc-title{background:linear-gradient(135deg,#7c3aed,#6d28d9);color:#fff;display:inline-block;padding:5px 20px;border-radius:20px;font-size:14px;font-weight:700;margin-top:8px;letter-spacing:0.3px;}' +
+      '.doc-title{background:linear-gradient(135deg,#0e7490,#155e75);color:#fff;display:inline-block;padding:5px 20px;border-radius:20px;font-size:14px;font-weight:700;margin-top:8px;letter-spacing:0.3px;}' +
       // ── Meta grid ──
       '.meta{display:grid;grid-template-columns:1fr 1fr;gap:8px 16px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:10px;padding:12px 16px;margin-bottom:16px;}' +
       '.meta-item{display:flex;flex-direction:column;gap:2px;}' +
@@ -3974,13 +3974,13 @@ function _printStocktakeReport(stId, items) {
       '.meta-value{color:#0f172a;font-weight:700;font-size:12px;}' +
       // ── Table ──
       'table{width:100%;border-collapse:collapse;font-size:12px;margin-bottom:14px;}' +
-      'thead tr{background:linear-gradient(135deg,#7c3aed,#6d28d9);color:#fff;}' +
+      'thead tr{background:linear-gradient(135deg,#0e7490,#155e75);color:#fff;}' +
       'thead th{padding:9px 8px;font-weight:700;text-align:center;letter-spacing:0.2px;}' +
       'thead th:first-child{text-align:right;border-radius:0 8px 0 0;}' +
       'thead th:last-child{border-radius:8px 0 0 0;}' +
       'tbody tr.even{background:#fff;}' +
       'tbody tr.odd{background:#fafafe;}' +
-      'tbody tr:hover{background:#ede9fe;}' +
+      'tbody tr:hover{background:#e6f3f7;}' +
       'tbody td{padding:8px;border-bottom:1px solid #e2e8f0;text-align:center;}' +
       'tbody td.name{text-align:right;font-weight:600;color:#1e293b;}' +
       'tbody td.num{color:#94a3b8;font-size:11px;}' +
@@ -4062,7 +4062,7 @@ function _printStocktakeReport(stId, items) {
 
     // On-screen action buttons (hidden when printing)
     '<div class="no-print" style="margin-top:24px;text-align:center;display:flex;gap:10px;justify-content:center;">' +
-      '<button onclick="window.print()" style="background:#7c3aed;color:#fff;border:none;padding:10px 28px;border-radius:8px;font-size:14px;font-weight:700;cursor:pointer;font-family:\'Cairo\',sans-serif;">' +
+      '<button onclick="window.print()" style="background:#0e7490;color:#fff;border:none;padding:10px 28px;border-radius:8px;font-size:14px;font-weight:700;cursor:pointer;font-family:\'Cairo\',sans-serif;">' +
         '🖨 طباعة / PDF' +
       '</button>' +
       '<button onclick="window.close()" style="background:#e2e8f0;color:#374151;border:none;padding:10px 28px;border-radius:8px;font-size:14px;font-weight:700;cursor:pointer;font-family:\'Cairo\',sans-serif;">' +
@@ -4504,14 +4504,14 @@ window.shrSwitchTab = function(tab) {
     if (newAct) newAct.style.display = 'none';
     if (histAct) histAct.style.display = 'flex';
     if (tabNew) { tabNew.style.background = '#e2e8f0'; tabNew.style.color = '#475569'; }
-    if (tabHist) { tabHist.style.background = '#8b5cf6'; tabHist.style.color = '#fff'; }
+    if (tabHist) { tabHist.style.background = '#0e7490'; tabHist.style.color = '#fff'; }
     _shrLoadHistory();
   } else {
     if (newPanel) newPanel.style.display = 'flex';
     if (histPanel) histPanel.style.display = 'none';
     if (newAct) newAct.style.display = 'flex';
     if (histAct) histAct.style.display = 'none';
-    if (tabNew) { tabNew.style.background = '#8b5cf6'; tabNew.style.color = '#fff'; }
+    if (tabNew) { tabNew.style.background = '#0e7490'; tabNew.style.color = '#fff'; }
     if (tabHist) { tabHist.style.background = '#e2e8f0'; tabHist.style.color = '#475569'; }
   }
 };
@@ -4526,7 +4526,7 @@ function _shrLoadHistory() {
     var statusLabels = isEn
       ? {pending:'Pending',approved:'Approved',converted:'PO Created',rejected:'Rejected',partially_received:'Partial',fully_received:'Received',closed:'Closed'}
       : {pending:'بانتظار',approved:'معتمد',converted:'تم التحويل لـ PO',rejected:'مرفوض',partially_received:'استلام جزئي',fully_received:'تم الاستلام',closed:'مغلق'};
-    var statusColors = {pending:'#f59e0b',approved:'#3b82f6',converted:'#8b5cf6',rejected:'#ef4444',partially_received:'#d97706',fully_received:'#16a34a',closed:'#64748b'};
+    var statusColors = {pending:'#f59e0b',approved:'#3b82f6',converted:'#0e7490',rejected:'#ef4444',partially_received:'#d97706',fully_received:'#16a34a',closed:'#64748b'};
 
     if (!list || !list.length) {
       panel.innerHTML = '<div style="text-align:center;padding:40px;color:#94a3b8;"><i class="fas fa-inbox" style="font-size:28px;display:block;margin-bottom:8px;"></i>' + (isEn?'No requests yet':'لا توجد طلبات بعد') + '</div>';
@@ -4548,7 +4548,7 @@ function _shrLoadHistory() {
 
       return '<div style="border:1.5px solid #e2e8f0;border-radius:12px;padding:12px;margin-bottom:8px;background:#fff;">' +
         '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;">' +
-          '<code style="font-weight:800;color:#8b5cf6;">' + (r.requestNumber||'') + '</code>' +
+          '<code style="font-weight:800;color:#0e7490;">' + (r.requestNumber||'') + '</code>' +
           '<span style="font-size:11px;font-weight:800;padding:3px 10px;border-radius:8px;background:' + sColor + '18;color:' + sColor + ';">' + sLabel + '</span>' +
         '</div>' +
         '<div style="display:flex;gap:12px;font-size:12px;color:#64748b;">' +
@@ -5383,8 +5383,8 @@ window.posSelectLineForDiscount = function(idx) {
       var valStr = d.type === 'percentage' ? d.value + '%' : _posFmt(d.value) + ' ر.س';
       var canApply = !d.minOrder || lineTotal >= d.minOrder;
       return '<div class="pos-disc-card' + (canApply?'':' disabled') + '" onclick="' + (canApply?"posApplyLineDiscount('"+_posEsc(String(d.id))+"')":'') + '">' +
-        '<div><i class="fas ' + (d.icon||'fa-tag') + '" style="color:' + (d.color||'#8b5cf6') + ';"></i> <b>' + _posEsc(d.name || '') + '</b></div>' +
-        '<div style="color:' + (d.color||'#8b5cf6') + ';font-weight:800;">' + valStr + '</div>' +
+        '<div><i class="fas ' + (d.icon||'fa-tag') + '" style="color:' + (d.color||'#0e7490') + ';"></i> <b>' + _posEsc(d.name || '') + '</b></div>' +
+        '<div style="color:' + (d.color||'#0e7490') + ';font-weight:800;">' + valStr + '</div>' +
       '</div>';
     }).join('');
   }
@@ -5455,8 +5455,8 @@ window.posOpenInvoiceDiscountModal = function() {
       var valStr = d.type === 'percentage' ? d.value + '%' : _posFmt(d.value) + ' ر.س';
       var canApply = !d.minOrder || subtotal >= d.minOrder;
       return '<div class="pos-disc-card' + (canApply?'':' disabled') + '" onclick="' + (canApply?"posApplyInvoiceDiscount('"+_posEsc(String(d.id))+"')":'') + '">' +
-        '<div><i class="fas ' + (d.icon||'fa-receipt') + '" style="color:' + (d.color||'#8b5cf6') + ';"></i> <b>' + _posEsc(d.name || '') + '</b>' + (d.minOrder ? ' <small style="color:#94a3b8;">(حد أدنى: '+_posFmt(d.minOrder)+')</small>':'') + '</div>' +
-        '<div style="color:' + (d.color||'#8b5cf6') + ';font-weight:800;">' + valStr + '</div>' +
+        '<div><i class="fas ' + (d.icon||'fa-receipt') + '" style="color:' + (d.color||'#0e7490') + ';"></i> <b>' + _posEsc(d.name || '') + '</b>' + (d.minOrder ? ' <small style="color:#94a3b8;">(حد أدنى: '+_posFmt(d.minOrder)+')</small>':'') + '</div>' +
+        '<div style="color:' + (d.color||'#0e7490') + ';font-weight:800;">' + valStr + '</div>' +
       '</div>';
     }).join('');
   }

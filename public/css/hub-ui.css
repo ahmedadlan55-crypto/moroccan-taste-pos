@@ -36,19 +36,19 @@
   content: '';
   position: absolute;
   inset: 0;
-  background: linear-gradient(135deg, rgba(139, 92, 246, 0.04), rgba(59, 130, 246, 0.04));
+  background: linear-gradient(135deg, rgba(14, 116, 144, 0.04), rgba(59, 130, 246, 0.04));
   opacity: 0;
   transition: opacity 0.2s;
   pointer-events: none;
 }
 .hub-card:hover {
-  border-color: var(--hub-accent, #8b5cf6);
+  border-color: var(--hub-accent, #0e7490);
   transform: translateY(-3px);
-  box-shadow: 0 14px 32px rgba(139, 92, 246, 0.15);
+  box-shadow: 0 14px 32px rgba(14, 116, 144, 0.15);
 }
 .hub-card:hover::before { opacity: 1; }
 .hub-card:focus-visible {
-  outline: 2px solid var(--hub-accent, #8b5cf6);
+  outline: 2px solid var(--hub-accent, #0e7490);
   outline-offset: 2px;
 }
 
@@ -58,8 +58,8 @@
   display: flex; align-items: center; justify-content: center;
   font-size: 18px;
   margin-bottom: 10px;
-  background: var(--hub-icon-bg, #ede9fe);
-  color: var(--hub-accent, #8b5cf6);
+  background: var(--hub-icon-bg, #e6f3f7);
+  color: var(--hub-accent, #0e7490);
   flex-shrink: 0;
 }
 .hub-card-title {
@@ -82,7 +82,7 @@
 .hub-card-footer {
   font-size: 11.5px;
   font-weight: 700;
-  color: var(--hub-accent, #8b5cf6);
+  color: var(--hub-accent, #0e7490);
   display: flex;
   align-items: center;
   gap: 6px;
@@ -109,7 +109,7 @@
 /* accent variants (set --hub-accent per card) */
 .hub-card.accent-blue   { --hub-accent: #3b82f6; --hub-icon-bg: #dbeafe; }
 .hub-card.accent-green  { --hub-accent: #16a34a; --hub-icon-bg: #dcfce7; }
-.hub-card.accent-purple { --hub-accent: #8b5cf6; --hub-icon-bg: #ede9fe; }
+.hub-card.accent-purple { --hub-accent: #0e7490; --hub-icon-bg: #e6f3f7; }
 .hub-card.accent-orange { --hub-accent: #f59e0b; --hub-icon-bg: #fef3c7; }
 .hub-card.accent-red    { --hub-accent: #dc2626; --hub-icon-bg: #fee2e2; }
 .hub-card.accent-slate  { --hub-accent: #475569; --hub-icon-bg: #f1f5f9; }
@@ -126,7 +126,7 @@
   align-items: center;
   gap: 8px;
 }
-.hub-sub-title i { color: #8b5cf6; font-size: 13px; }
+.hub-sub-title i { color: #0e7490; font-size: 13px; }
 
 /* ─── Sidebar live count badge (e.g. صندوق الوارد) ────────────────── */
 .nav-count-badge {

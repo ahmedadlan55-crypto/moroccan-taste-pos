@@ -407,7 +407,7 @@ window.loadCustodyApprovals = function() {
           '<td><code style="font-size:11px;">' + (e.custodyNumber || '') + '</code></td>' +
           '<td style="font-weight:700;">' + (e.userName || '') + '</td>' +
           '<td style="font-size:12px;">' + (e.expenseDate ? new Date(e.expenseDate).toLocaleDateString('en-GB') : '') + '</td>' +
-          '<td style="color:#8b5cf6;font-weight:700;font-size:12px;">' + (e.glAccountName || '—') + '</td>' +
+          '<td style="color:#0e7490;font-weight:700;font-size:12px;">' + (e.glAccountName || '—') + '</td>' +
           '<td>' + (e.description || '') + '</td>' +
           '<td style="font-size:11px;color:#64748b;max-width:120px;overflow:hidden;text-overflow:ellipsis;">' + (e.notes || '—') + '</td>' +
           '<td style="font-weight:700;">' + formatVal(e.amount) + '</td>' +
@@ -784,7 +784,7 @@ function _crRenderExpenses(list) {
         '<td style="font-size:12px;">' + esc(e.userName||'') + '</td>' +
         '<td style="font-size:12px;color:#64748b;">' + dt + '</td>' +
         '<td style="font-weight:700;">' + esc(e.description||'') + '</td>' +
-        '<td style="font-size:11px;color:#8b5cf6;">' + esc(e.glAccountName||'—') + '</td>' +
+        '<td style="font-size:11px;color:#0e7490;">' + esc(e.glAccountName||'—') + '</td>' +
         '<td>' + formatVal(e.amount) + '</td>' +
         '<td style="color:#94a3b8;font-size:12px;">' + formatVal(e.vatAmount) + '</td>' +
         '<td style="font-weight:800;">' + formatVal(e.totalWithVat) + '</td>' +

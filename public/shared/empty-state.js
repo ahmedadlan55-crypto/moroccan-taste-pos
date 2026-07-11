@@ -68,8 +68,8 @@
 
     search: '<svg viewBox="0 0 96 96" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">' +
       '<defs><linearGradient id="es-g3" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#e0e7ff"/><stop offset="1" stop-color="#c7d2fe"/></linearGradient></defs>' +
-      '<circle cx="40" cy="40" r="24" fill="url(#es-g3)" stroke="#6366f1" stroke-width="2.5"/>' +
-      '<line x1="58" y1="58" x2="78" y2="78" stroke="#6366f1" stroke-width="5" stroke-linecap="round"/>' +
+      '<circle cx="40" cy="40" r="24" fill="url(#es-g3)" stroke="#0e7490" stroke-width="2.5"/>' +
+      '<line x1="58" y1="58" x2="78" y2="78" stroke="#0e7490" stroke-width="5" stroke-linecap="round"/>' +
       '<circle cx="40" cy="40" r="14" fill="none" stroke="#a5b4fc" stroke-width="1.5"/>' +
       '</svg>',
 

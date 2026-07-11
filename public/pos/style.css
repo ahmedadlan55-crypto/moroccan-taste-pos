@@ -36,9 +36,9 @@ body {
   flex-direction: column;
   overflow: hidden;
   background:
-    radial-gradient(circle at 0% 0%, rgba(167, 139, 250, 0.18), transparent 50%),
+    radial-gradient(circle at 0% 0%, rgba(14, 116, 144, 0.18), transparent 50%),
     radial-gradient(circle at 100% 100%, rgba(59, 130, 246, 0.16), transparent 50%),
-    linear-gradient(135deg, #eef2ff 0%, #e0e7ff 50%, #ede9fe 100%);
+    linear-gradient(135deg, #eef2ff 0%, #e0e7ff 50%, #e6f3f7 100%);
 
   /* Respect iOS notches / Android gesture bars in PWA standalone mode.
      `env(safe-area-inset-*)` maps to 0 on non-notched devices. */
@@ -57,9 +57,9 @@ body {
 @media (display-mode: standalone) {
   body {
     background:
-      radial-gradient(circle at 0% 0%, rgba(167, 139, 250, 0.22), transparent 50%),
+      radial-gradient(circle at 0% 0%, rgba(14, 116, 144, 0.22), transparent 50%),
       radial-gradient(circle at 100% 100%, rgba(59, 130, 246, 0.20), transparent 50%),
-      linear-gradient(135deg, #eef2ff 0%, #e0e7ff 50%, #ede9fe 100%);
+      linear-gradient(135deg, #eef2ff 0%, #e0e7ff 50%, #e6f3f7 100%);
   }
 }
 
@@ -280,7 +280,7 @@ body.ar .pwa-install-btn {
 }
 .pos-action-pricelist.is-linked,
 .pos-channel-pricelist.is-linked {
-  background: var(--mt-accent-soft, #faf5ff);
+  background: var(--mt-accent-soft, #e6f3f7);
   color: var(--mt-accent-2, var(--mt-accent-2));
 }
 .pos-action-pricelist.is-linked i,
@@ -354,7 +354,7 @@ body.ar .pwa-install-btn {
   padding: 2px 8px; border-radius: 999px;
 }
 .pos-cat-tile.pos-cat-all {
-  background: linear-gradient(140deg, #ddd6fe, var(--pos-accent-soft));
+  background: linear-gradient(140deg, #cfe9f1, var(--pos-accent-soft));
   border-color: var(--pos-accent);
 }
 .pos-cat-tile.pos-cat-all i { color: var(--pos-accent-2); }
@@ -433,7 +433,7 @@ body.foodics-mode .cart-footer { display: none !important; }
 .cart-footer-foodics:active { transform: scale(0.99); }
 .cart-footer-foodics:focus-visible {
   outline: 0;
-  box-shadow: inset 0 0 0 3px rgba(124, 58, 237, 0.20);
+  box-shadow: inset 0 0 0 3px rgba(14, 116, 144, 0.20);
 }
 .ctb-label {
   font-size: 13px;
@@ -490,8 +490,8 @@ body.foodics-mode .cart-footer { display: none !important; }
 }
 .pay-tile.is-active {
   border-color: var(--pos-accent);
-  background: linear-gradient(140deg, #ddd6fe, var(--pos-accent-soft));
-  box-shadow: 0 8px 20px rgba(124, 58, 237, 0.25);
+  background: linear-gradient(140deg, #cfe9f1, var(--pos-accent-soft));
+  box-shadow: 0 8px 20px rgba(14, 116, 144, 0.25);
 }
 .pay-tile.is-active i { color: var(--pos-accent-2); }
 .pay-tile.is-active span { color: var(--pos-accent-2); }
@@ -553,7 +553,7 @@ body.foodics-mode .cart-footer { display: none !important; }
 }
 .pay-split-input:focus {
   border-color: var(--mt-accent); outline: 0;
-  box-shadow: 0 0 0 3px rgba(124, 58, 237, 0.15);
+  box-shadow: 0 0 0 3px rgba(14, 116, 144, 0.15);
 }
 .pay-split-rest {
   width: 36px; height: 36px;
@@ -600,10 +600,10 @@ body.foodics-mode .cart-footer { display: none !important; }
 .pay-tender-due {
   display: flex; justify-content: space-between; align-items: center;
   margin: 14px 0 10px; padding: 12px 16px;
-  background: rgba(124, 58, 237, 0.06);
-  border: 1.5px solid rgba(124, 58, 237, 0.18);
+  background: rgba(14, 116, 144, 0.06);
+  border: 1.5px solid rgba(14, 116, 144, 0.18);
   border-radius: 14px;
-  font-weight: 800; font-size: 14px; color: #4c1d95;
+  font-weight: 800; font-size: 14px; color: #155e75;
 }
 .pay-tender-due strong {
   font-family: ui-monospace, SFMono-Regular, monospace;
@@ -619,7 +619,7 @@ body.foodics-mode .cart-footer { display: none !important; }
 .pay-tender-row { margin-bottom: 8px; }
 .pay-tender-row.is-focused {
   border-color: var(--mt-accent);
-  box-shadow: 0 0 0 3px rgba(124, 58, 237, 0.14);
+  box-shadow: 0 0 0 3px rgba(14, 116, 144, 0.14);
 }
 .pay-tender-amount {
   display: flex; flex-direction: column; align-items: flex-end; justify-content: center;
@@ -632,7 +632,7 @@ body.foodics-mode .cart-footer { display: none !important; }
 }
 .pay-tender-amount.is-focused {
   border-color: var(--mt-accent); color: var(--mt-primary);
-  box-shadow: 0 0 0 3px rgba(124, 58, 237, 0.15);
+  box-shadow: 0 0 0 3px rgba(14, 116, 144, 0.15);
 }
 .pay-tender-legchange {
   font-size: 10.5px; font-weight: 700; color: #16a34a; font-family: inherit;
@@ -669,11 +669,11 @@ body.foodics-mode .cart-footer { display: none !important; }
 }
 .pay-keypad-q {
   flex: 1 1 60px; min-width: 56px; min-height: 44px;
-  border: 1.5px solid rgba(124, 58, 237, 0.25); background: #faf5ff;
-  border-radius: 10px; font-weight: 800; font-size: 13px; color: #5b21b6;
+  border: 1.5px solid rgba(14, 116, 144, 0.25); background: #e6f3f7;
+  border-radius: 10px; font-weight: 800; font-size: 13px; color: #155e75;
   cursor: pointer;
 }
-.pay-keypad-q:hover { background: #f3e8ff; }
+.pay-keypad-q:hover { background: #e6f3f7; }
 
 /* ═══════════════════════════════════════════════════════════════════
    v5.11.4 — Payment notes block ("Other" method context)
@@ -726,8 +726,8 @@ body.foodics-mode .cart-footer { display: none !important; }
    public/pos/index.html for design rationale.
    ─────────────────────────────────────────────────────────────────── */
 .pos-customer-bar {
-  background: linear-gradient(180deg, #faf5ff 0%, #f5f3ff 100%);
-  border: 1.5px solid #ddd6fe;
+  background: linear-gradient(180deg, #e6f3f7 0%, #e6f3f7 100%);
+  border: 1.5px solid #cfe9f1;
   border-radius: 14px;
   margin: 8px 12px 10px;
   padding: 10px 12px;
@@ -809,22 +809,22 @@ body.foodics-mode .cart-footer { display: none !important; }
 
 .pos-cust-btn-search {
   background: #ffffff;
-  border-color: #ddd6fe;
-  color: #5b21b6;
-  box-shadow: 0 2px 6px rgba(124, 58, 237, 0.08);
+  border-color: #cfe9f1;
+  color: #155e75;
+  box-shadow: 0 2px 6px rgba(14, 116, 144, 0.08);
 }
 .pos-cust-btn-search:hover {
-  background: #f5f3ff;
-  box-shadow: 0 6px 14px rgba(124, 58, 237, 0.18);
+  background: #e6f3f7;
+  box-shadow: 0 6px 14px rgba(14, 116, 144, 0.18);
 }
 .pos-cust-btn-add {
-  background: linear-gradient(135deg, #7c3aed, #6d28d9);
+  background: linear-gradient(135deg, #0e7490, #155e75);
   color: #fff;
-  box-shadow: 0 4px 12px -3px rgba(124, 58, 237, 0.45);
+  box-shadow: 0 4px 12px -3px rgba(14, 116, 144, 0.45);
 }
 .pos-cust-btn-add:hover {
   filter: brightness(1.05);
-  box-shadow: 0 6px 16px -3px rgba(124, 58, 237, 0.55);
+  box-shadow: 0 6px 16px -3px rgba(14, 116, 144, 0.55);
 }
 
 /* ═══════════════════════════════════════════════════════════════════
@@ -862,7 +862,7 @@ body.foodics-mode .cart-footer { display: none !important; }
 .pos-cust-modal-card-lg { max-width: 680px; }
 .pos-cust-modal-head {
   padding: 14px 18px;
-  background: linear-gradient(135deg, #faf5ff, #fff 65%);
+  background: linear-gradient(135deg, #e6f3f7, #fff 65%);
   border-bottom: 1px solid #f1f5f9;
   display: flex;
   align-items: center;
@@ -876,7 +876,7 @@ body.foodics-mode .cart-footer { display: none !important; }
   flex: 1;
 }
 .pos-cust-modal-head h3 i {
-  color: #7c3aed;
+  color: #0e7490;
   margin-inline-end: 6px;
 }
 .pos-cust-modal-close {
@@ -900,15 +900,15 @@ body.foodics-mode .cart-footer { display: none !important; }
 
 /* ─── Combo chooser (العروض) ─────────────────────────────────────── */
 .combo-fixed {
-  background: #f5f3ff;
-  border: 1.5px solid #ddd6fe;
-  color: #5b21b6;
+  background: #e6f3f7;
+  border: 1.5px solid #cfe9f1;
+  color: #155e75;
   border-radius: 12px;
   padding: 11px 14px;
   font-size: 13.5px;
   margin-bottom: 16px;
 }
-.combo-fixed i { margin-inline-end: 6px; color: #7c3aed; }
+.combo-fixed i { margin-inline-end: 6px; color: #0e7490; }
 .combo-group { margin-bottom: 18px; }
 .combo-group-head {
   font-weight: 800;
@@ -938,14 +938,14 @@ body.foodics-mode .cart-footer { display: none !important; }
   text-align: start;
   transition: all .14s ease;
 }
-.combo-opt:hover { border-color: #c4b5fd; background: #faf8ff; }
+.combo-opt:hover { border-color: #a5d8e6; background: #faf8ff; }
 .combo-opt i { font-size: 17px; color: #cbd5e1; flex-shrink: 0; }
 .combo-opt.picked {
-  border-color: #7c3aed;
-  background: linear-gradient(135deg, #f5f3ff, #ede9fe);
-  box-shadow: 0 2px 10px rgba(124, 58, 237, .18);
+  border-color: #0e7490;
+  background: linear-gradient(135deg, #e6f3f7, #e6f3f7);
+  box-shadow: 0 2px 10px rgba(14, 116, 144, .18);
 }
-.combo-opt.picked i { color: #7c3aed; }
+.combo-opt.picked i { color: #0e7490; }
 .combo-opt-name { flex: 1; }
 .combo-empty { color: #94a3b8; font-size: 13px; padding: 8px 2px; }
 
@@ -953,7 +953,7 @@ body.foodics-mode .cart-footer { display: none !important; }
 .pos-cust-modal-input {
   width: 100%;
   padding: 11px 14px;
-  border: 1.5px solid #ddd6fe;
+  border: 1.5px solid #cfe9f1;
   border-radius: 11px;
   font-size: 14.5px;
   font-family: inherit;
@@ -962,8 +962,8 @@ body.foodics-mode .cart-footer { display: none !important; }
 }
 .pos-cust-modal-input:focus {
   outline: 0;
-  border-color: #7c3aed;
-  box-shadow: 0 0 0 3px rgba(124, 58, 237, 0.15);
+  border-color: #0e7490;
+  box-shadow: 0 0 0 3px rgba(14, 116, 144, 0.15);
 }
 /* v6.15.1 — Status banner above the results list.  Shows "Searching…",
    "X results", "No results", or any error from the backend. */
@@ -1015,12 +1015,12 @@ body.foodics-mode .cart-footer { display: none !important; }
   transition: background 120ms;
 }
 .pos-cust-result:last-child { border-bottom: 0; }
-.pos-cust-result:hover { background: #f5f3ff; }
+.pos-cust-result:hover { background: #e6f3f7; }
 .pos-cust-result-icon {
   width: 36px; height: 36px;
   border-radius: 10px;
-  background: #ede9fe;
-  color: #7c3aed;
+  background: #e6f3f7;
+  color: #0e7490;
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -1066,13 +1066,13 @@ body.foodics-mode .cart-footer { display: none !important; }
   gap: 5px;
   font-size: 11.5px;
   font-weight: 800;
-  color: #6d28d9;
+  color: #155e75;
 }
 .pos-cust-form-grid label.full { grid-column: 1 / -1; }
 .pos-cust-form-grid input,
 .pos-cust-form-grid select {
   padding: 9px 11px;
-  border: 1.5px solid #ddd6fe;
+  border: 1.5px solid #cfe9f1;
   border-radius: 10px;
   font-size: 13.5px;
   font-family: inherit;
@@ -1084,11 +1084,11 @@ body.foodics-mode .cart-footer { display: none !important; }
 .pos-cust-form-grid input:focus,
 .pos-cust-form-grid select:focus {
   outline: 0;
-  border-color: #7c3aed;
-  box-shadow: 0 0 0 3px rgba(124, 58, 237, 0.15);
+  border-color: #0e7490;
+  box-shadow: 0 0 0 3px rgba(14, 116, 144, 0.15);
 }
 .pos-cust-form-grid input[required] {
-  border-color: #c4b5fd;
+  border-color: #a5d8e6;
 }
 .pos-cust-form-grid input:invalid {
   border-color: #fda4af;
@@ -1156,28 +1156,28 @@ body.foodics-mode .cart-footer { display: none !important; }
 .pos-cust-modal-btn-cancel:hover { background: #f8fafc; border-color: #cbd5e1; }
 .pos-cust-modal-btn-add,
 .pos-cust-modal-btn-save {
-  background: linear-gradient(135deg, #7c3aed, #6d28d9);
+  background: linear-gradient(135deg, #0e7490, #155e75);
   color: #fff;
-  box-shadow: 0 4px 12px -3px rgba(124, 58, 237, 0.45);
+  box-shadow: 0 4px 12px -3px rgba(14, 116, 144, 0.45);
 }
 .pos-cust-modal-btn-add:hover,
 .pos-cust-modal-btn-save:hover {
   transform: translateY(-1px);
-  box-shadow: 0 6px 16px -3px rgba(124, 58, 237, 0.55);
+  box-shadow: 0 6px 16px -3px rgba(14, 116, 144, 0.55);
 }
 /* v6.15.1 — Refresh button (icon-only, in the search modal footer) */
 .pos-cust-modal-btn-refresh {
   width: 40px;
   padding: 0 !important;
   background: #fff;
-  border-color: #ddd6fe !important;
-  color: #5b21b6;
+  border-color: #cfe9f1 !important;
+  color: #155e75;
   font-size: 14px;
   justify-content: center;
 }
 .pos-cust-modal-btn-refresh:hover {
-  background: #f5f3ff;
-  border-color: #c4b5fd !important;
+  background: #e6f3f7;
+  border-color: #a5d8e6 !important;
 }
 .pos-cust-modal-btn-save:disabled {
   background: #cbd5e1;
@@ -1200,7 +1200,7 @@ body.foodics-mode .cart-footer { display: none !important; }
   align-items: center;
   gap: 10px;
   padding: 9px 12px;
-  background: linear-gradient(135deg, #ecfdf5 0%, #f5f3ff 100%);
+  background: linear-gradient(135deg, #ecfdf5 0%, #e6f3f7 100%);
   border: 1.5px solid #a7f3d0;
   border-radius: 11px;
   font-size: 12.5px;
@@ -1287,8 +1287,8 @@ body.foodics-mode .cart-footer { display: none !important; }
   align-items: center;
   gap: 4px;
 }
-.pos-cust-hist-kpi-card.is-primary { border-color: #c4b5fd; background: linear-gradient(135deg, #f5f3ff, #fff); }
-.pos-cust-hist-kpi-card.is-primary i { color: #7c3aed !important; }
+.pos-cust-hist-kpi-card.is-primary { border-color: #a5d8e6; background: linear-gradient(135deg, #e6f3f7, #fff); }
+.pos-cust-hist-kpi-card.is-primary i { color: #0e7490 !important; }
 .pos-cust-hist-kpi-card.is-info    { border-color: #93c5fd; background: linear-gradient(135deg, #eff6ff, #fff); }
 .pos-cust-hist-kpi-card.is-info i { color: #2563eb !important; }
 .pos-cust-hist-kpi-card.is-success { border-color: #86efac; background: linear-gradient(135deg, #f0fdf4, #fff); }
@@ -1330,7 +1330,7 @@ body.foodics-mode .cart-footer { display: none !important; }
   font-weight: 700;
 }
 .pos-cust-hist-meta i {
-  color: #7c3aed;
+  color: #0e7490;
   font-size: 12px;
   margin-inline-end: 3px;
 }
@@ -1360,9 +1360,9 @@ body.foodics-mode .cart-footer { display: none !important; }
   vertical-align: middle;
 }
 .pos-cust-hist-table tbody tr:last-child td { border-bottom: 0; }
-.pos-cust-hist-table tbody tr:hover { background: #f5f3ff; }
+.pos-cust-hist-table tbody tr:hover { background: #e6f3f7; }
 .pos-cust-hist-row.is-voided td.total-cell { text-decoration: line-through; color: #b91c1c; }
-.pos-cust-hist-row.is-refund td.total-cell { color: #6d28d9; }
+.pos-cust-hist-row.is-refund td.total-cell { color: #155e75; }
 .pos-cust-hist-row.is-voided { opacity: 0.78; }
 
 .pos-cust-hist-badge {
@@ -1373,7 +1373,7 @@ body.foodics-mode .cart-footer { display: none !important; }
   font-weight: 800;
 }
 .pos-cust-hist-badge.red    { background: #fee2e2; color: #b91c1c; }
-.pos-cust-hist-badge.purple { background: #ede9fe; color: #6d28d9; }
+.pos-cust-hist-badge.purple { background: #e6f3f7; color: #155e75; }
 .pos-cust-hist-badge.green  { background: #dcfce7; color: #16a34a; }
 
 .pos-cust-hist-note {
@@ -1465,7 +1465,7 @@ body.foodics-mode .cart-footer { display: none !important; }
   animation: posVoidFlash 2.0s ease-out 1;
 }
 @keyframes posVoidFlash {
-  0%   { background: rgba(124, 58, 237, 0.30); }
+  0%   { background: rgba(14, 116, 144, 0.30); }
   40%  { background: rgba(220, 38, 38, 0.25); }
   100% { background: #f9fafb; }
 }
@@ -1504,7 +1504,7 @@ body.foodics-mode .cart-footer { display: none !important; }
 }
 .pos-confirm-head {
   padding: 16px 20px;
-  background: linear-gradient(135deg, #faf5ff, #fff 65%);
+  background: linear-gradient(135deg, #e6f3f7, #fff 65%);
   border-bottom: 1px solid #f1f5f9;
   display: flex;
   align-items: center;
@@ -1512,7 +1512,7 @@ body.foodics-mode .cart-footer { display: none !important; }
 }
 .pos-confirm-head i {
   font-size: 22px;
-  color: #7c3aed;
+  color: #0e7490;
   flex-shrink: 0;
 }
 .pos-confirm-head h3 {
@@ -1562,17 +1562,17 @@ body.foodics-mode .cart-footer { display: none !important; }
   border-color: #cbd5e1;
 }
 .pos-confirm-ok {
-  background: linear-gradient(135deg, #7c3aed, #6d28d9);
+  background: linear-gradient(135deg, #0e7490, #155e75);
   color: #fff;
-  box-shadow: 0 4px 12px -3px rgba(124, 58, 237, 0.40);
+  box-shadow: 0 4px 12px -3px rgba(14, 116, 144, 0.40);
 }
 .pos-confirm-ok:hover {
   transform: translateY(-1px);
-  box-shadow: 0 6px 16px -3px rgba(124, 58, 237, 0.50);
+  box-shadow: 0 6px 16px -3px rgba(14, 116, 144, 0.50);
 }
 .pos-confirm-ok:focus-visible {
   outline: 0;
-  box-shadow: 0 0 0 4px rgba(124, 58, 237, 0.30);
+  box-shadow: 0 0 0 4px rgba(14, 116, 144, 0.30);
 }
 .my-inv-row.is-reversed .my-inv-id,
 .my-inv-row.is-reversed .my-inv-total { text-decoration: line-through; }
@@ -2239,7 +2239,7 @@ body.foodics-mode .cart-footer { display: none !important; }
   background: rgba(255, 255, 255, 0.95);
   backdrop-filter: blur(10px);
   -webkit-backdrop-filter: blur(10px);
-  border: 1px solid rgba(124, 58, 237, 0.18);
+  border: 1px solid rgba(14, 116, 144, 0.18);
   border-radius: 16px;
   box-shadow: 0 12px 32px -8px rgba(15, 23, 42, 0.22);
   justify-content: space-around;/* v6.17.5 — evenly distribute the 6 icons across the bar */
@@ -2281,7 +2281,7 @@ body.foodics-mode .cart-footer { display: none !important; }
 .float-btn-danger  { background: linear-gradient(135deg, var(--mt-danger), var(--mt-danger)); box-shadow: 0 6px 14px rgba(239,68,68,0.40); }
 .float-btn-info    { background: linear-gradient(135deg, #0d47a1, var(--mt-accent)); box-shadow: 0 6px 14px rgba(13,71,161,0.40); }
 .float-btn-warn    { background: linear-gradient(135deg, var(--mt-warning), var(--mt-warning)); box-shadow: 0 6px 14px rgba(217,119,6,0.40); }
-.float-btn-purple  { background: linear-gradient(135deg, #8b5cf6, var(--mt-accent-2)); box-shadow: 0 6px 14px rgba(139,92,246,0.40); }
+.float-btn-purple  { background: linear-gradient(135deg, #0e7490, var(--mt-accent-2)); box-shadow: 0 6px 14px rgba(14, 116, 144,0.40); }
 /* v6.17.0 — extracted inline styles for the last two buttons */
 .float-btn-sky     { background: linear-gradient(135deg, #0ea5e9, #0284c7); box-shadow: 0 6px 14px rgba(14,165,233,0.40); }
 .float-btn-green2  { background: linear-gradient(135deg, #22c55e, #15803d); box-shadow: 0 6px 14px rgba(34,197,94,0.40); }
@@ -2336,7 +2336,7 @@ body.foodics-mode .cart-footer { display: none !important; }
 .app-nav-pos-action-success { background: linear-gradient(135deg, #10b981, #059669); box-shadow: 0 6px 14px rgba(16,185,129,0.30); }
 .app-nav-pos-action-danger  { background: linear-gradient(135deg, var(--mt-danger), var(--mt-danger)); box-shadow: 0 6px 14px rgba(239,68,68,0.30); }
 .app-nav-pos-action-warn    { background: linear-gradient(135deg, var(--mt-warning), var(--mt-warning)); box-shadow: 0 6px 14px rgba(217,119,6,0.30); }
-.app-nav-pos-action-purple  { background: linear-gradient(135deg, #8b5cf6, var(--mt-accent-2)); box-shadow: 0 6px 14px rgba(139,92,246,0.30); }
+.app-nav-pos-action-purple  { background: linear-gradient(135deg, #0e7490, var(--mt-accent-2)); box-shadow: 0 6px 14px rgba(14, 116, 144,0.30); }
 .app-nav-pos-action-sky     { background: linear-gradient(135deg, #0ea5e9, #0284c7); box-shadow: 0 6px 14px rgba(14,165,233,0.30); }
 .app-nav-pos-action-green2  { background: linear-gradient(135deg, #22c55e, #15803d); box-shadow: 0 6px 14px rgba(34,197,94,0.30); }
 
@@ -2782,25 +2782,25 @@ body.foodics-mode .cart-footer { display: none !important; }
   align-items: center;
   gap: 8px;
   padding: 10px 14px;
-  background: linear-gradient(90deg, rgba(139,92,246,0.10), rgba(59,130,246,0.06));
-  border-bottom: 1px solid rgba(139,92,246,0.20);
+  background: linear-gradient(90deg, rgba(14, 116, 144,0.10), rgba(59,130,246,0.06));
+  border-bottom: 1px solid rgba(14, 116, 144,0.20);
   font-size: 13px;
 }
-.pos-channel-label { font-weight: 800; color: #4c1d95; white-space: nowrap; }
-.pos-channel-label i { color: #8b5cf6; margin-left: 4px; }
+.pos-channel-label { font-weight: 800; color: #155e75; white-space: nowrap; }
+.pos-channel-label i { color: #0e7490; margin-left: 4px; }
 .pos-channel-select {
   flex: 1;
   background: #fff;
-  border: 1.5px solid #c4b5fd;
+  border: 1.5px solid #a5d8e6;
   border-radius: 10px;
   padding: 7px 10px;
   font-size: 13px;
   font-weight: 700;
-  color: #4c1d95;
+  color: #155e75;
   outline: none;
   font-family: inherit;
 }
-.pos-channel-select:focus { box-shadow: 0 0 0 3px rgba(139,92,246,0.18); }
+.pos-channel-select:focus { box-shadow: 0 0 0 3px rgba(14, 116, 144,0.18); }
 /* v5.15.3 — old .pos-channel-pricelist rule removed; the new is-linked /
  * is-default variants above (near .pos-action-pricelist) handle both
  * selectors now. */
@@ -2844,7 +2844,7 @@ body.foodics-mode .cart-footer { display: none !important; }
   border-radius: 10px; cursor: pointer; transition: all 0.15s;
   margin-bottom: 8px;
 }
-.pos-disc-card:hover:not(.disabled) { background: var(--mt-surface-2); border-color: #8b5cf6; }
+.pos-disc-card:hover:not(.disabled) { background: var(--mt-surface-2); border-color: #0e7490; }
 .pos-disc-card.disabled { opacity: 0.5; cursor: not-allowed; }
 .pos-disc-manual {
   margin-top: 14px;

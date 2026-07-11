@@ -41,9 +41,9 @@
 
   --invc-purple:        var(--mt-accent);
   --invc-purple-deep:   var(--mt-accent-2);
-  --invc-purple-soft:   #faf5ff;
-  --invc-purple-soft-2: #f3e8ff;
-  --invc-purple-fg:     #4c1d95;
+  --invc-purple-soft:   #e6f3f7;
+  --invc-purple-soft-2: #e6f3f7;
+  --invc-purple-fg:     #155e75;
 
   --invc-slate-50:  var(--mt-surface-2);
   --invc-slate-100: var(--mt-bg);
@@ -69,8 +69,8 @@
   --invc-shadow-sm:     0 1px 3px rgba(15, 23, 42, 0.04), 0 1px 2px rgba(15, 23, 42, 0.03);
   --invc-shadow-md:     0 4px 12px rgba(15, 23, 42, 0.08);
   --invc-shadow-lg:     0 8px 24px rgba(15, 23, 42, 0.12);
-  --invc-shadow-purple: 0 8px 24px -8px rgba(124, 58, 237, 0.30);
-  --invc-ring:          0 0 0 3px rgba(124, 58, 237, 0.18);
+  --invc-shadow-purple: 0 8px 24px -8px rgba(14, 116, 144, 0.30);
+  --invc-ring:          0 0 0 3px rgba(14, 116, 144, 0.18);
 }
 
 /* ─────────────────────────────────────────────────────────────────────
@@ -164,11 +164,11 @@
 .invc-btn--primary {
   background: var(--invc-purple);
   color: #ffffff;
-  box-shadow: 0 2px 6px rgba(124, 58, 237, 0.3);
+  box-shadow: 0 2px 6px rgba(14, 116, 144, 0.3);
 }
 .invc-btn--primary:hover {
   background: var(--invc-purple-deep);
-  box-shadow: 0 6px 18px rgba(124, 58, 237, 0.4);
+  box-shadow: 0 6px 18px rgba(14, 116, 144, 0.4);
 }
 
 .invc-btn--ghost {
@@ -228,13 +228,13 @@
   background: linear-gradient(135deg, var(--invc-purple), var(--invc-purple-deep));
   color: #ffffff;
   border-color: transparent;
-  box-shadow: 0 2px 6px rgba(124, 58, 237, 0.3);
+  box-shadow: 0 2px 6px rgba(14, 116, 144, 0.3);
 }
 .invc-icon-btn--primary:hover {
   filter: brightness(1.06);
   border-color: transparent;
   color: #ffffff;
-  box-shadow: 0 4px 12px rgba(124, 58, 237, 0.4);
+  box-shadow: 0 4px 12px rgba(14, 116, 144, 0.4);
 }
 
 .invc-icon-btn--danger:hover {
@@ -631,7 +631,7 @@
   background: var(--invc-purple-soft);
 }
 .invc-row--data.is-selected {
-  background: rgba(124, 58, 237, 0.08);
+  background: rgba(14, 116, 144, 0.08);
 }
 .invc-row--data.is-selected::before {
   content: "";
@@ -1056,7 +1056,7 @@
   background: var(--invc-purple);
   color: #ffffff;
   cursor: default;
-  box-shadow: 0 2px 6px rgba(124, 58, 237, 0.3);
+  box-shadow: 0 2px 6px rgba(14, 116, 144, 0.3);
 }
 .invc-pagination__sep { color: var(--invc-slate-300); font-weight: 700; }
 .invc-pagination__size {

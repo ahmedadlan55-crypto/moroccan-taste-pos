@@ -31,7 +31,7 @@
   flex-shrink: 0;
 }
 .jrn-stat-card[data-status="draft"]    .jsc-icon { background: linear-gradient(135deg, var(--mt-warning), var(--mt-warning)); }
-.jrn-stat-card[data-status="approved"] .jsc-icon { background: linear-gradient(135deg, #6366f1, #4f46e5); }
+.jrn-stat-card[data-status="approved"] .jsc-icon { background: linear-gradient(135deg, #0e7490, #155e75); }
 .jrn-stat-card[data-status="posted"]   .jsc-icon { background: linear-gradient(135deg, #10b981, #059669); }
 .jrn-stat-card .jsc-body { display: flex; flex-direction: column; gap: 1px; min-width: 0; flex: 1; }
 .jrn-stat-card .jsc-val {
@@ -95,7 +95,7 @@
   white-space: nowrap;
 }
 .jrn-badge--draft    { background: #fef3c7; color: #92400e; border: 1px solid #fde68a; }
-.jrn-badge--approved { background: #ede9fe; color: #5b21b6; border: 1px solid #ddd6fe; }
+.jrn-badge--approved { background: #e6f3f7; color: #155e75; border: 1px solid #cfe9f1; }
 .jrn-badge--posted   { background: #d1fae5; color: #065f46; border: 1px solid #a7f3d0; }
 
 /* ── Dimension chips on each row ── */
@@ -113,7 +113,7 @@
   white-space: nowrap;
 }
 .jrn-dim-chip i { font-size: 9.5px; opacity: 0.85; }
-.jrn-dim-chip--brand   { --chip-bg: #faf5ff; --chip-fg: var(--mt-accent); --chip-border: #e9d5ff; }
+.jrn-dim-chip--brand   { --chip-bg: #e6f3f7; --chip-fg: var(--mt-accent); --chip-border: #cfe9f1; }
 .jrn-dim-chip--branch  { --chip-bg: #eff6ff; --chip-fg: #1d4ed8; --chip-border: #bfdbfe; }
 .jrn-dim-chip--project { --chip-bg: #f0fdf4; --chip-fg: var(--mt-success-2); --chip-border: #bbf7d0; }
 .jrn-dim-chip--cc      { --chip-bg: #fef2f2; --chip-fg: var(--mt-danger-2); --chip-border: #fecaca; }
@@ -198,10 +198,10 @@
    ──────────────────────────────────────────────────────────────────── */
 .cv-grid-3 { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 10px; }
 .cv-dim-bar {
-  background: linear-gradient(135deg, #faf5ff, #fff);
-  border: 1px solid #e9d5ff !important;
+  background: linear-gradient(135deg, #e6f3f7, #fff);
+  border: 1px solid #cfe9f1 !important;
 }
-.cv-dim-bar .cv-head { color: #5b21b6 !important; }
+.cv-dim-bar .cv-head { color: #155e75 !important; }
 
 /* ── Tile picker (Source / Destination) ── */
 .cv-tile-grid {
@@ -329,8 +329,8 @@
 /* ── لافتة كلاسيكية أعلى القسم ── */
 .jrn-banner {
   display: flex; align-items: center; gap: 14px;
-  background: linear-gradient(135deg, #faf5ff, #ffffff);
-  border: 1px solid #e9d5ff;
+  background: linear-gradient(135deg, #e6f3f7, #ffffff);
+  border: 1px solid #cfe9f1;
   border-radius: 16px;
   padding: 15px 18px;
   margin-bottom: 14px;
@@ -339,7 +339,7 @@
   width: 46px; height: 46px; flex-shrink: 0;
   display: grid; place-items: center;
   border-radius: 12px; font-size: 20px; color: #fff;
-  background: linear-gradient(135deg, #a855f7, #7e22ce);
+  background: linear-gradient(135deg, #1591b0, #155e75);
   box-shadow: 0 6px 16px -6px rgba(126, 34, 206, 0.5);
 }
 .jrn-banner__text h3 { margin: 0; font-size: 17px; font-weight: 900; color: var(--primary); letter-spacing: 0.01em; }

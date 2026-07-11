@@ -793,7 +793,8 @@ function applyBrandingToUI(name, logo) {
   if (sbName && name) sbName.textContent = name;
   var sbBrand = document.getElementById('sidebarBrand');
   if (sbBrand && logo) {
-    sbBrand.innerHTML = '<img src="' + logo + '" class="brand-logo-img" alt="logo"> <span id="sidebarBrandName">' + name + '</span>';
+    sbBrand.innerHTML = '<span class="brand-logo"><img src="' + logo + '" class="brand-logo-img" alt="logo"></span>' +
+      '<span class="brand-text"><span id="sidebarBrandName">' + name + '</span><small class="brand-sub">Cafe Control Center</small></span>';
   }
   // POS header
   var pbName = document.getElementById('posBrandName');
@@ -1892,7 +1893,7 @@ function openDiscountModal() {
         h += '<div class="card" style="margin-bottom:10px;cursor:pointer;padding:12px;border-radius:12px;" onclick="applyDiscountV2(\'' + d.id + '\',\'' + (d.name||'').replace(/'/g,'') + '\',\'' + d.type + '\',' + d.value + ',' + (d.maxAmount||0) + ',' + (d.requireCode?'true':'false') + ',' + (d.requireApproval?'true':'false') + ',\'' + (d.code||'') + '\')">' +
           '<div style="display:flex;justify-content:space-between;align-items:center;">' +
             '<div><strong style="font-size:14px;">' + d.name + '</strong><div style="font-size:11px;color:#64748b;">' + typeLabel + ' ' + badges + '</div></div>' +
-            '<strong style="color:#8b5cf6;font-size:18px;">' + valStr + '</strong>' +
+            '<strong style="color:#0e7490;font-size:18px;">' + valStr + '</strong>' +
           '</div></div>';
       });
       q('#discModalList').innerHTML = h;
@@ -2429,15 +2430,15 @@ window.ccExportPdf = function() {
     '<style>' +
       '*{margin:0;padding:0;box-sizing:border-box;}' +
       'body{font-family:"Segoe UI",Tahoma,Arial,sans-serif;direction:rtl;color:#0f172a;padding:20px;background:#fff;line-height:1.5;font-size:13px;}' +
-      'header.lh{display:flex;align-items:center;justify-content:space-between;padding:14px 18px;background:linear-gradient(135deg,#1e293b 0%,#4f46e5 100%);color:#fff;border-radius:14px;margin-bottom:18px;}' +
+      'header.lh{display:flex;align-items:center;justify-content:space-between;padding:14px 18px;background:linear-gradient(135deg,#1e293b 0%,#155e75 100%);color:#fff;border-radius:14px;margin-bottom:18px;}' +
       'header.lh h1{font-size:22px;font-weight:900;letter-spacing:-.01em;}' +
       'header.lh .sub{font-size:12px;opacity:.9;margin-top:2px;}' +
       'header.lh .right{text-align:left;font-size:11px;line-height:1.6;}' +
       '.filters{background:#f1f5f9;border:1px solid #e2e8f0;border-radius:10px;padding:10px 14px;margin-bottom:18px;font-size:12px;display:flex;flex-wrap:wrap;gap:6px;}' +
       '.filters .chip{background:#fff;border:1px solid #cbd5e1;border-radius:999px;padding:3px 10px;font-weight:700;color:#475569;}' +
-      'h2.sec{font-size:15px;font-weight:900;color:#0f172a;margin:18px 0 10px;padding-bottom:6px;border-bottom:2px solid #4f46e5;display:flex;align-items:center;gap:8px;}' +
+      'h2.sec{font-size:15px;font-weight:900;color:#0f172a;margin:18px 0 10px;padding-bottom:6px;border-bottom:2px solid #155e75;display:flex;align-items:center;gap:8px;}' +
       '.kpi-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin-bottom:18px;}' +
-      '.kpi{background:linear-gradient(160deg,#f8fafc 0%,#fff 60%);border:1px solid #e2e8f0;border-inline-start:4px solid #4f46e5;border-radius:12px;padding:12px 14px;}' +
+      '.kpi{background:linear-gradient(160deg,#f8fafc 0%,#fff 60%);border:1px solid #e2e8f0;border-inline-start:4px solid #155e75;border-radius:12px;padding:12px 14px;}' +
       '.kpi-label{font-size:10.5px;font-weight:800;color:#64748b;text-transform:uppercase;letter-spacing:.04em;}' +
       '.kpi-value{font-size:20px;font-weight:900;color:#0f172a;margin-top:4px;}' +
       '.kpi-unit{font-size:11px;color:#64748b;font-weight:700;}' +
@@ -2687,8 +2688,8 @@ function _ccRenderDailyChart(rows) {
     type: 'line',
     data: { labels: labels, datasets: [{
       label: 'المبيعات (SAR)', data: data,
-      borderColor: '#6366f1', backgroundColor: 'rgba(99,102,241,0.12)',
-      borderWidth: 3, pointBackgroundColor: '#fff', pointBorderColor: '#6366f1', pointBorderWidth: 2, pointRadius: 4, fill: true, tension: 0.4
+      borderColor: '#0e7490', backgroundColor: 'rgba(99,102,241,0.12)',
+      borderWidth: 3, pointBackgroundColor: '#fff', pointBorderColor: '#0e7490', pointBorderWidth: 2, pointRadius: 4, fill: true, tension: 0.4
     }] },
     options: { responsive: true, maintainAspectRatio: false,
       plugins: { legend: { display: false } },
@@ -2721,7 +2722,7 @@ function _ccRenderTopItemsChart(rows) {
     type: 'doughnut',
     data: { labels: top.map(function(r){return r.name;}),
       datasets: [{ data: top.map(function(r){return r.revenue;}),
-        backgroundColor: ['#f59e0b','#3b82f6','#ec4899','#8b5cf6','#14b8a6','#f43f5e','#84cc16','#06b6d4'],
+        backgroundColor: ['#f59e0b','#3b82f6','#ec4899','#0e7490','#14b8a6','#f43f5e','#84cc16','#06b6d4'],
         borderWidth: 2, hoverOffset: 6 }] },
     options: { responsive: true, maintainAspectRatio: false,
       plugins: { legend: { position: 'right', labels: { boxWidth: 12, font: { size: 11 } } } },
@@ -2740,7 +2741,7 @@ function _ccRenderTopBrandsChart(rows) {
     type: 'bar',
     data: { labels: top.map(function(r){return r.name;}),
       datasets: [{ label: 'مشتريات حسب البراند (SAR)', data: top.map(function(r){return r.total;}),
-        backgroundColor: '#8b5cf6', borderRadius: 4 }] },
+        backgroundColor: '#0e7490', borderRadius: 4 }] },
     options: { indexAxis: 'y', responsive: true, maintainAspectRatio: false,
       plugins: { legend: { display: false } }, scales: { x: { beginAtZero: true } } }
   });
@@ -2886,9 +2887,9 @@ function _loadDashHomeBody() {
         var dt = '';
         try { dt = new Date(r.requestDate).toLocaleDateString('en-GB') + ' ' + new Date(r.requestDate).toLocaleTimeString('en-GB',{hour:'2-digit',minute:'2-digit'}); } catch(e) {}
         return '<div style="display:flex;align-items:center;gap:12px;padding:12px 14px;border:1.5px solid #e2e8f0;border-radius:12px;background:#fff;">' +
-          '<div style="width:42px;height:42px;border-radius:50%;background:#f3e8ff;display:flex;align-items:center;justify-content:center;flex-shrink:0;"><i class="fas fa-store" style="color:#8b5cf6;font-size:18px;"></i></div>' +
+          '<div style="width:42px;height:42px;border-radius:50%;background:#e6f3f7;display:flex;align-items:center;justify-content:center;flex-shrink:0;"><i class="fas fa-store" style="color:#0e7490;font-size:18px;"></i></div>' +
           '<div style="flex:1;min-width:0;">' +
-            '<div style="font-weight:800;font-size:14px;color:#1e293b;">' + (r.requestNumber||'') + ' — <span style="color:#8b5cf6;">' + (r.username||'') + '</span></div>' +
+            '<div style="font-weight:800;font-size:14px;color:#1e293b;">' + (r.requestNumber||'') + ' — <span style="color:#0e7490;">' + (r.username||'') + '</span></div>' +
             '<div style="font-size:12px;color:#64748b;display:flex;gap:10px;"><span><i class="fas fa-clock" style="margin-left:3px;"></i>' + dt + '</span><span><i class="fas fa-boxes" style="margin-left:3px;"></i>' + (r.totalItems||0) + ' مادة</span></div>' +
           '</div>' +
           '<div style="display:flex;gap:6px;">' +
@@ -2925,8 +2926,8 @@ function _loadDashHomeBody() {
           labels: dayLabels,
           datasets: [{
             label: 'المبيعات (SAR)', data: dayData,
-            borderColor: '#6366f1', backgroundColor: 'rgba(99, 102, 241, 0.1)',
-            borderWidth: 3, pointBackgroundColor: '#ffffff', pointBorderColor: '#6366f1', pointBorderWidth: 2, pointRadius: 5, fill: true, tension: 0.4
+            borderColor: '#0e7490', backgroundColor: 'rgba(99, 102, 241, 0.1)',
+            borderWidth: 3, pointBackgroundColor: '#ffffff', pointBorderColor: '#0e7490', pointBorderWidth: 2, pointRadius: 5, fill: true, tension: 0.4
           }]
         },
         options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { display: false } }, scales: { y: { beginAtZero: true, grid: { color: '#f8fafc' } }, x: { grid: { display: false } } } }
@@ -2972,7 +2973,7 @@ function _loadDashHomeBody() {
           labels: topArr.map(function(x) { return x[0]; }),
           datasets: [{
             data: topArr.map(function(x) { return x[1]; }),
-            backgroundColor: ['#f59e0b', '#3b82f6', '#ec4899', '#8b5cf6', '#14b8a6', '#f43f5e', '#84cc16', '#06b6d4'],
+            backgroundColor: ['#f59e0b', '#3b82f6', '#ec4899', '#0e7490', '#14b8a6', '#f43f5e', '#84cc16', '#06b6d4'],
             borderWidth: 2, hoverOffset: 4
           }]
         },
@@ -2996,7 +2997,7 @@ function _loadDashHomeBody() {
           labels: userArr.map(function(x) { return userLabel(x[0]); }),
           datasets: [{
             label: 'إجمالي مبيعات الكاشير', data: userArr.map(function(x) { return x[1]; }),
-            backgroundColor: '#8b5cf6', borderRadius: 4
+            backgroundColor: '#0e7490', borderRadius: 4
           }]
         },
         options: { indexAxis: 'y', responsive: true, maintainAspectRatio: false, plugins: { legend: { display: false } }, scales: { x: { beginAtZero: true } } }
@@ -3104,14 +3105,14 @@ function loadDashSales() {
           try { var dt = new Date(s.date); dateStr = dt.toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'})+' '+dt.toLocaleTimeString('en-US',{hour:'2-digit',minute:'2-digit'}); } catch(e){ dateStr = s.date; }
           // V3: channel badge
           var chBadge = s.channelName
-            ? '<span style="background:#ede9fe;color:#6d28d9;padding:2px 8px;border-radius:6px;font-size:11px;font-weight:700;">'+s.channelName+'</span>'
+            ? '<span style="background:#e6f3f7;color:#155e75;padding:2px 8px;border-radius:6px;font-size:11px;font-weight:700;">'+s.channelName+'</span>'
             : '<span style="color:#94a3b8;font-size:11px;">—</span>';
           // v5.11.4 — Customer chip (click → openCustomerProfile drawer)
           var custName  = (s.customerName  || '').replace(/'/g, "&apos;").replace(/"/g, '&quot;');
           var custPhone = (s.customerPhone || '').replace(/'/g, "&apos;").replace(/"/g, '&quot;');
           var custChip = s.customerId
             ? '<span class="sl-cust-chip" onclick="openCustomerProfile(\''+s.customerId+'\')" title="فتح ملف العميل · Open profile">'+
-                '<i class="fas fa-user-circle" style="color:#7c3aed;"></i> '+
+                '<i class="fas fa-user-circle" style="color:#0e7490;"></i> '+
                 (custName || '—')+
                 (custPhone ? '<span class="sl-cust-phone">'+custPhone+'</span>' : '')+
               '</span>'
@@ -3568,7 +3569,7 @@ function _menuRenderSavedViews() {
     return;
   }
   menu.innerHTML = views.map(function(v, idx) {
-    return '<div class="wo-saved-view-item" onclick="menuLoadSavedView(' + idx + ')"><span><i class="fas fa-bookmark" style="color:#8b5cf6;margin-inline-end:6px;"></i>' + v.name + '</span><button class="delete-btn" onclick="event.stopPropagation();menuDeleteSavedView(' + idx + ')"><i class="fas fa-trash"></i></button></div>';
+    return '<div class="wo-saved-view-item" onclick="menuLoadSavedView(' + idx + ')"><span><i class="fas fa-bookmark" style="color:#0e7490;margin-inline-end:6px;"></i>' + v.name + '</span><button class="delete-btn" onclick="event.stopPropagation();menuDeleteSavedView(' + idx + ')"><i class="fas fa-trash"></i></button></div>';
   }).join('');
 }
 window.menuSaveCurrentView = function() {
@@ -4163,7 +4164,7 @@ window._invHubWhCache = window._invHubWhCache || {};   // brandId → { ts, list
 // Tabs metadata: title, icon, color, badge-resolver
 var _INV_HUB_TABS = [
   { id: 'items',       title: 'مواد المخزون',  icon: 'fa-boxes-stacked', color: '#3b82f6', sub: 'الأصناف، الأكواد، الأرصدة' },
-  { id: 'live',        title: 'المخزون الفعلي', icon: 'fa-chart-line',    color: '#7c3aed', sub: 'تقرير حركة الفترة + التصدير' },
+  { id: 'live',        title: 'المخزون الفعلي', icon: 'fa-chart-line',    color: '#0e7490', sub: 'تقرير حركة الفترة + التصدير' },
   { id: 'stocktake',   title: 'الجرد',          icon: 'fa-clipboard-check', color: '#0ea5e9', sub: 'مراجعة وتسوية الأرصدة' },
   { id: 'adjustments', title: 'تعديل كمية',     icon: 'fa-pen-to-square', color: '#f59e0b', sub: 'تالف/إداري/تسويات' },
   { id: 'transfers',   title: 'التحويلات',      icon: 'fa-arrow-right-arrow-left', color: '#10b981', sub: 'بين المستودعات' },
@@ -4857,20 +4858,20 @@ function _invHubInjectStyles() {
     '.iv-hub-btn-ghost{background:transparent;}' +
     '.iv-hub-back{background:#f1f5f9;color:#475569;border:0;width:38px;height:38px;border-radius:11px;cursor:pointer;display:grid;place-items:center;font-size:14px;transition:all 0.15s;flex-shrink:0;}' +
     '.iv-hub-back:hover{background:#e2e8f0;color:#0f172a;transform:translateX(2px);}' +
-    '.iv-hub-brand-logo{width:48px;height:48px;border-radius:12px;object-fit:cover;flex-shrink:0;background:#ede9fe;}' +
-    '.iv-hub-brand-logo-text{display:grid;place-items:center;font-weight:900;color:#6d28d9;font-size:22px;letter-spacing:-0.02em;}' +
+    '.iv-hub-brand-logo{width:48px;height:48px;border-radius:12px;object-fit:cover;flex-shrink:0;background:#e6f3f7;}' +
+    '.iv-hub-brand-logo-text{display:grid;place-items:center;font-weight:900;color:#155e75;font-size:22px;letter-spacing:-0.02em;}' +
     /* ─── Brands grid ─── */
     '.iv-hub-brands{display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:14px;}' +
     '.iv-hub-bcard{background:#fff;border:1.5px solid #e2e8f0;border-radius:18px;padding:18px 16px;cursor:pointer;font-family:inherit;text-align:center;display:flex;flex-direction:column;align-items:center;gap:10px;transition:all 0.18s;box-shadow:0 1px 3px rgba(15,23,42,0.04);}' +
-    '.iv-hub-bcard:hover{transform:translateY(-3px);border-color:#7c3aed;box-shadow:0 12px 28px -10px rgba(124,58,237,0.25);}' +
+    '.iv-hub-bcard:hover{transform:translateY(-3px);border-color:#0e7490;box-shadow:0 12px 28px -10px rgba(14, 116, 144,0.25);}' +
     '.iv-hub-bcard-all{background:linear-gradient(135deg,#1e293b,#0f172a);color:#fff;border-color:#1e293b;}' +
     '.iv-hub-bcard-all .iv-hub-bcard-name{color:#fff;}' +
     '.iv-hub-bcard-all .iv-hub-bcard-sub{color:#cbd5e1;}' +
     '.iv-hub-bcard-all .iv-hub-stat-num{color:#fff;}' +
     '.iv-hub-bcard-all .iv-hub-stat-lbl{color:#94a3b8;}' +
-    '.iv-hub-bcard-all:hover{border-color:#7c3aed;}' +
+    '.iv-hub-bcard-all:hover{border-color:#0e7490;}' +
     '.iv-hub-bcard-none{background:linear-gradient(135deg,#fff,#f8fafc);border-style:dashed;}' +
-    '.iv-hub-bcard-logo{width:72px;height:72px;border-radius:18px;background:#ede9fe;color:#6d28d9;display:grid;place-items:center;font-size:28px;font-weight:900;flex-shrink:0;overflow:hidden;}' +
+    '.iv-hub-bcard-logo{width:72px;height:72px;border-radius:18px;background:#e6f3f7;color:#155e75;display:grid;place-items:center;font-size:28px;font-weight:900;flex-shrink:0;overflow:hidden;}' +
     '.iv-hub-bcard-logo-img{width:100%;height:100%;object-fit:cover;}' +
     '.iv-hub-bcard-logo-text{font-size:32px;letter-spacing:-0.04em;}' +
     '.iv-hub-bcard-logo-all{background:rgba(255,255,255,0.15);color:#fff;backdrop-filter:blur(8px);}' +
@@ -4888,7 +4889,7 @@ function _invHubInjectStyles() {
     '@media (max-width:900px){.iv-hub-grid{grid-template-columns:repeat(2,1fr);}}' +
     '@media (max-width:520px){.iv-hub-grid{grid-template-columns:1fr;}}' +
     '.iv-hub-tile{background:#fff;border:1.5px solid #e2e8f0;border-radius:20px;padding:24px 20px;cursor:pointer;font-family:inherit;text-align:center;display:flex;flex-direction:column;align-items:center;gap:10px;transition:all 0.18s;box-shadow:0 2px 6px rgba(15,23,42,0.04);}' +
-    '.iv-hub-tile:hover{transform:translateY(-4px);border-color:#7c3aed;box-shadow:0 18px 36px -12px rgba(15,23,42,0.18);}' +
+    '.iv-hub-tile:hover{transform:translateY(-4px);border-color:#0e7490;box-shadow:0 18px 36px -12px rgba(15,23,42,0.18);}' +
     '.iv-hub-tile-icon{width:88px;height:88px;border-radius:22px;display:grid;place-items:center;font-size:38px;flex-shrink:0;box-shadow:inset 0 0 0 1px rgba(15,23,42,0.04);}' +
     '.iv-hub-tile-title{font-size:17px;font-weight:900;color:#0f172a;letter-spacing:-0.01em;}' +
     '.iv-hub-tile-sub{font-size:11.5px;color:#64748b;font-weight:500;line-height:1.4;}' +
@@ -4897,8 +4898,8 @@ function _invHubInjectStyles() {
     '.iv-hub-strip{display:flex;align-items:center;gap:8px;padding:4px 4px 14px;font-size:13px;color:#475569;flex-wrap:wrap;}' +
     '.iv-hub-back-sm{background:#fff;border:1px solid #e2e8f0;padding:8px 14px;border-radius:10px;font-size:12.5px;font-weight:700;color:#64748b;cursor:pointer;display:inline-flex;align-items:center;gap:6px;font-family:inherit;transition:all 0.15s;}' +
     '.iv-hub-back-sm:hover{background:#f1f5f9;color:#0f172a;border-color:#cbd5e1;transform:translateX(2px);}' +
-    '.iv-hub-back-sm-brand{background:linear-gradient(135deg,#ede9fe,#fff);color:#5b21b6;border-color:#c4b5fd;font-weight:800;}' +
-    '.iv-hub-back-sm-brand:hover{background:linear-gradient(135deg,#ddd6fe,#fff);color:#4c1d95;border-color:#a78bfa;}' +
+    '.iv-hub-back-sm-brand{background:linear-gradient(135deg,#e6f3f7,#fff);color:#155e75;border-color:#a5d8e6;font-weight:800;}' +
+    '.iv-hub-back-sm-brand:hover{background:linear-gradient(135deg,#cfe9f1,#fff);color:#155e75;border-color:#1591b0;}' +
     '.iv-hub-back-sm-current{padding:8px 14px;border-radius:10px;font-size:12.5px;font-weight:800;display:inline-flex;align-items:center;gap:6px;border:1px solid;cursor:default;}' +
     '.iv-hub-strip-logo{width:20px;height:20px;border-radius:5px;object-fit:cover;}' +
     '.iv-hub-strip-sep{color:#cbd5e1;font-weight:700;font-size:14px;}' +
@@ -5034,7 +5035,7 @@ function loadDashAdjustments() {
           var whHint = a.warehouseViaBranch
             ? '<small style="font-size:9px;color:#92400e;margin-inline-start:4px;">(من الفرع)</small>' : '';
           var whCell = a.warehouseName
-            ? '<span class="iv-live-pill" style="background:#ede9fe;color:#5b21b6;font-size:11px;"><i class="fas fa-warehouse" style="font-size:9px;margin-inline-end:3px;"></i>' + _invHubEsc(a.warehouseName) + '</span>' + whHint
+            ? '<span class="iv-live-pill" style="background:#e6f3f7;color:#155e75;font-size:11px;"><i class="fas fa-warehouse" style="font-size:9px;margin-inline-end:3px;"></i>' + _invHubEsc(a.warehouseName) + '</span>' + whHint
             : '<span style="color:#cbd5e1;font-size:11px;">—</span>';
 
           // Branch pill
@@ -5159,7 +5160,7 @@ function _openAdjustmentLegacyModal() {
 // ─── Reason metadata (cost-accounting) ───
 var _ADJ_REASONS = [
   { id: 'damaged',    label: 'تالف / كسر',     icon: 'fa-fire',                 color: '#dc2626', glAccount: '5310', glDesc: 'خسائر غير عادية' },
-  { id: 'waste',      label: 'هدر طبيعي',       icon: 'fa-droplet',              color: '#7c3aed', glAccount: '5310', glDesc: 'هدر تشغيلي ضمن المعيار' },
+  { id: 'waste',      label: 'هدر طبيعي',       icon: 'fa-droplet',              color: '#0e7490', glAccount: '5310', glDesc: 'هدر تشغيلي ضمن المعيار' },
   { id: 'admin',      label: 'إداري',          icon: 'fa-clipboard-user',       color: '#f59e0b', glAccount: '5310', glDesc: 'صرف إداري / استخدام داخلي' },
   { id: 'settlement', label: 'تسويات محاسبية', icon: 'fa-scale-balanced',       color: '#0ea5e9', glAccount: '5320', glDesc: 'تسوية فروقات محاسبية' }
 ];
@@ -6682,13 +6683,13 @@ window.invCatOpenRecipeModal = function(itemId, itemName) {
   }
   WoModal.open({
     icon: 'fa-mortar-pestle',
-    iconColor: '#7c3aed',
+    iconColor: '#0e7490',
     title: 'وصفة المادة',
     subtitle: itemName ? ('المادة: ' + itemName) : 'مادة بدون اسم',
     body:
       '<div id="invRecipeMdlBody">' +
         '<div style="padding:30px 16px;text-align:center;color:#94a3b8;">' +
-          '<i class="fas fa-spinner fa-spin" style="font-size:24px;color:#7c3aed;"></i>' +
+          '<i class="fas fa-spinner fa-spin" style="font-size:24px;color:#0e7490;"></i>' +
           '<div style="margin-top:10px;font-size:13px;font-weight:600;">جاري تحميل الوصفة…</div>' +
         '</div>' +
       '</div>',
@@ -6782,7 +6783,7 @@ function _invCatRecipeRender() {
   // info chip, then (only when editing) the unlink-recipe action.
   bodyEl.innerHTML =
     // ─── Metadata band ────────────────────────────────────────────────
-    '<div style="background:linear-gradient(135deg,#faf5ff,#f3e8ff);' +
+    '<div style="background:linear-gradient(135deg,#e6f3f7,#e6f3f7);' +
                 'border:1px solid #c7d2fe;border-radius:14px;padding:14px 16px;' +
                 'margin-bottom:14px;">' +
       '<div style="display:grid;grid-template-columns:140px 100px 1fr;gap:12px;">' +
@@ -6819,7 +6820,7 @@ function _invCatRecipeRender() {
       '</div>' +
       '<div id="invRecipeLines">' + rowsHtml + '</div>' +
       '<button class="wo-btn wo-btn-ghost" onclick="invCatRecipeAddLine()"' +
-              ' style="margin-top:10px;width:100%;border:1.5px dashed #c7d2fe;color:#4c1d95;background:#fafbff;">' +
+              ' style="margin-top:10px;width:100%;border:1.5px dashed #c7d2fe;color:#155e75;background:#fafbff;">' +
         '<i class="fas fa-plus"></i> إضافة مُكوِّن' +
       '</button>' +
     '</div>' +
@@ -8355,7 +8356,7 @@ function renderInvTable(list) {
         var statusBg   = (isDeficit || isOut) ? '#fee2e2' : (isLow ? '#fef3c7' : '#dcfce7');
         var statusFg   = (isDeficit || isOut) ? '#b91c1c' : (isLow ? '#92400e' : '#15803d');
         var brandHtml = i.brandName
-          ? '<span class="badge" style="background:#ede9fe;color:#6d28d9;font-weight:700;"><i class="fas fa-store"></i> ' + (i.brandName || '') + '</span>'
+          ? '<span class="badge" style="background:#e6f3f7;color:#155e75;font-weight:700;"><i class="fas fa-store"></i> ' + (i.brandName || '') + '</span>'
           : '<span class="badge" style="background:#f1f5f9;color:#94a3b8;"><i class="fas fa-minus"></i> بدون</span>';
         var whHtml = i.warehouseName
           ? '<span class="badge" style="background:#dbeafe;color:#1e40af;font-weight:700;"><i class="fas fa-warehouse"></i> ' + (i.warehouseName || '') + '</span>'
@@ -8387,7 +8388,7 @@ function renderInvTable(list) {
           '<td><span class="badge" style="background:#e2e8f0;color:#475569;">' + (i.category || '') + '</span></td>' +
           '<td style="font-weight:900;color:' + (isDeficit ? '#b91c1c' : (isOut ? '#94a3b8' : '#0d47a1')) + ';font-family:ui-monospace,monospace;">' + stock.toFixed(2) + ' <span style="font-size:11px;color:#94a3b8;">' + (i.unit || '') + '</span></td>' +
           '<td style="font-family:ui-monospace,monospace;color:#475569;">' + cost.toFixed(4) + '</td>' +
-          '<td style="font-weight:900;color:#7c3aed;font-family:ui-monospace,monospace;">' + lineValue.toFixed(2) + '</td>' +
+          '<td style="font-weight:900;color:#0e7490;font-family:ui-monospace,monospace;">' + lineValue.toFixed(2) + '</td>' +
           '<td><span class="badge ' + stClass + '">' + minS + '</span></td>' +
           '<td><span class="badge" style="background:' + statusBg + ';color:' + statusFg + ';font-weight:800;">' + statusLabel + '</span></td>' +
           '<td style="display:flex;gap:6px;justify-content:flex-end;">' +
@@ -8431,7 +8432,7 @@ window.invItemShowWarehouses = function(itemId, itemName) {
             return '<tr><td style="padding:8px;border-bottom:1px solid #f1f5f9;"><b>' + _invHubEsc(r.warehouseName) + '</b>' + (r.isMain ? ' <i class="fas fa-star" style="color:#f59e0b;font-size:10px;" title="رئيسي"></i>' : '') + '<div style="font-size:10.5px;color:#94a3b8;">' + _invHubEsc(r.warehouseCode||'') + '</div></td>' +
               '<td style="padding:8px;border-bottom:1px solid #f1f5f9;">' + _invHubEsc(r.brandName || '—') + '</td>' +
               '<td style="padding:8px;border-bottom:1px solid #f1f5f9;text-align:end;font-family:ui-monospace,monospace;font-weight:700;">' + Number(r.qty).toFixed(2) + '</td>' +
-              '<td style="padding:8px;border-bottom:1px solid #f1f5f9;text-align:end;font-family:ui-monospace,monospace;font-weight:800;color:#7c3aed;">' + Number(r.value).toFixed(2) + ' ر.س</td>' +
+              '<td style="padding:8px;border-bottom:1px solid #f1f5f9;text-align:end;font-family:ui-monospace,monospace;font-weight:800;color:#0e7490;">' + Number(r.value).toFixed(2) + ' ر.س</td>' +
             '</tr>';
           }).join('') +
           '</tbody></table>';
@@ -9228,10 +9229,10 @@ function loadDashShortageRequests() {
       var isDev = state.currentUser && (state.currentUser.isDeveloper || state.role === 'admin');
       if (isDev) actions += ' <button class="btn btn-danger btn-sm" onclick="deleteShortageReq(\'' + r.id + '\',\'' + (r.requestNumber||'') + '\')" title="حذف"><i class="fas fa-trash"></i></button>';
       var brandHtml = r.brandName
-        ? '<span class="badge" style="background:#ede9fe;color:#6d28d9;font-weight:700;"><i class="fas fa-store"></i> ' + r.brandName + '</span>'
+        ? '<span class="badge" style="background:#e6f3f7;color:#155e75;font-weight:700;"><i class="fas fa-store"></i> ' + r.brandName + '</span>'
         : '<span class="badge" style="background:#f1f5f9;color:#94a3b8;">—</span>';
       return '<tr>' +
-        '<td><code style="font-weight:800;color:#8b5cf6;">' + (r.requestNumber||'') + '</code></td>' +
+        '<td><code style="font-weight:800;color:#0e7490;">' + (r.requestNumber||'') + '</code></td>' +
         '<td>' + dt + '</td>' +
         '<td>' + brandHtml + '</td>' +
         '<td style="font-weight:700;">' + (r.username||'') + '</td>' +
@@ -9604,7 +9605,7 @@ function viewAndApproveShortage(id) {
     if (!data || data.error) return showToast(data && data.error || 'خطأ', true);
     var items = data.items || [];
     var html = '<div style="margin-bottom:14px;display:grid;grid-template-columns:repeat(3,1fr);gap:10px;">' +
-      '<div style="background:#f8fafc;padding:12px;border-radius:12px;text-align:center;"><div style="font-size:11px;color:#64748b;">رقم الطلب</div><div style="font-size:16px;font-weight:900;color:#8b5cf6;">' + (data.requestNumber||'') + '</div></div>' +
+      '<div style="background:#f8fafc;padding:12px;border-radius:12px;text-align:center;"><div style="font-size:11px;color:#64748b;">رقم الطلب</div><div style="font-size:16px;font-weight:900;color:#0e7490;">' + (data.requestNumber||'') + '</div></div>' +
       '<div style="background:#f8fafc;padding:12px;border-radius:12px;text-align:center;"><div style="font-size:11px;color:#64748b;">الكاشير</div><div style="font-weight:800;">' + (data.username||'') + '</div></div>' +
       '<div style="background:#f8fafc;padding:12px;border-radius:12px;text-align:center;"><div style="font-size:11px;color:#64748b;">عدد المواد</div><div style="font-weight:800;">' + items.length + '</div></div>' +
     '</div>';
@@ -9612,7 +9613,7 @@ function viewAndApproveShortage(id) {
     items.forEach(function(i) {
       html += '<tr><td style="font-weight:700;">' + (i.invItemName||'') + '</td><td>' + (i.unit||'') + '</td>' +
         '<td style="color:' + (i.currentQty <= i.minQty ? '#ef4444' : '#16a34a') + ';font-weight:700;">' + i.currentQty + '</td>' +
-        '<td>' + i.minQty + '</td><td style="font-weight:800;color:#8b5cf6;">' + i.requestedQty + '</td></tr>';
+        '<td>' + i.minQty + '</td><td style="font-weight:800;color:#0e7490;">' + i.requestedQty + '</td></tr>';
     });
     html += '</tbody></table>';
     html += '<div style="display:flex;gap:8px;margin-top:14px;">';
@@ -9649,7 +9650,7 @@ function viewShortageDetail(id) {
     if (!data || data.error) return showToast(data && data.error || 'خطأ', true);
     var items = data.items || [];
     var html = '<div style="margin-bottom:14px;display:grid;grid-template-columns:repeat(3,1fr);gap:10px;">' +
-      '<div style="background:#f8fafc;padding:12px;border-radius:12px;text-align:center;"><div style="font-size:11px;color:#64748b;">رقم الطلب</div><div style="font-size:16px;font-weight:900;color:#8b5cf6;">' + (data.requestNumber||'') + '</div></div>' +
+      '<div style="background:#f8fafc;padding:12px;border-radius:12px;text-align:center;"><div style="font-size:11px;color:#64748b;">رقم الطلب</div><div style="font-size:16px;font-weight:900;color:#0e7490;">' + (data.requestNumber||'') + '</div></div>' +
       '<div style="background:#f8fafc;padding:12px;border-radius:12px;text-align:center;"><div style="font-size:11px;color:#64748b;">الكاشير</div><div style="font-weight:800;">' + (data.username||'') + '</div></div>' +
       '<div style="background:#f8fafc;padding:12px;border-radius:12px;text-align:center;"><div style="font-size:11px;color:#64748b;">الحالة</div><div style="font-weight:800;">' + (data.status||'') + '</div></div>' +
     '</div>';
@@ -9657,7 +9658,7 @@ function viewShortageDetail(id) {
     items.forEach(function(i) {
       html += '<tr><td style="font-weight:700;">' + (i.invItemName||'') + '</td><td>' + (i.unit||'') + '</td>' +
         '<td style="color:' + (i.currentQty <= i.minQty ? '#ef4444' : '#16a34a') + ';font-weight:700;">' + i.currentQty + '</td>' +
-        '<td>' + i.minQty + '</td><td style="font-weight:800;color:#8b5cf6;">' + i.requestedQty + '</td></tr>';
+        '<td>' + i.minQty + '</td><td style="font-weight:800;color:#0e7490;">' + i.requestedQty + '</td></tr>';
     });
     html += '</tbody></table>';
     if (!document.getElementById('modalShortageDetail')) {
@@ -10181,7 +10182,7 @@ function _invLiveAlertsList(t) {
            row('توالف خلال الفترة',       t.damagedCount    || 0, '#b91c1c', 'fa-fire',          null,
                'بقيمة ' + _invHubFmtMoney(t.damagedValue || 0) + ' ر.س') +
            row('رصيد سالب (شذوذ)',         t.negativeCount   || 0, '#dc2626', 'fa-circle-exclamation', 'neg') +
-           row('تحتاج إعادة طلب',          t.reorderCount    || 0, '#7c3aed', 'fa-cart-plus', 'reorder') +
+           row('تحتاج إعادة طلب',          t.reorderCount    || 0, '#0e7490', 'fa-cart-plus', 'reorder') +
          '</div>';
 }
 
@@ -10202,7 +10203,7 @@ function _invLiveRenderKpis(t) {
     _kpiCard('مخزون أول الفترة', _invHubFmtMoney(t.openingValue), 'ر.س', 'fa-flag-checkered', '#3b82f6', t.itemCount + ' صنف') +
     _kpiCard('مشتريات', _invHubFmtMoney(t.purchasesValue), 'ر.س', 'fa-cart-arrow-down', '#10b981', '+ ' + _invHubFmtMoney(t.purchasesValue)) +
     _kpiCard('استهلاك إنتاج/مبيعات', _invHubFmtMoney(t.consumedValue), 'ر.س', 'fa-fire', '#ef4444', '− ' + _invHubFmtMoney(t.consumedValue)) +
-    _kpiCard('مخزون آخر الفترة', _invHubFmtMoney(t.closingValue), 'ر.س', 'fa-warehouse', '#7c3aed',
+    _kpiCard('مخزون آخر الفترة', _invHubFmtMoney(t.closingValue), 'ر.س', 'fa-warehouse', '#0e7490',
       (t.lowCount > 0 ? '⚠ ' + t.lowCount + ' منخفضة · ' : '') + (t.outCount > 0 ? t.outCount + ' نفدت' : 'سليم'));
 }
 function _kpiCard(label, num, unit, icon, color, sub) {
@@ -10292,7 +10293,7 @@ function _invLiveRenderTable(items, totals) {
         // v5.10.8 — per-cell click → typed drill (op="purchases" / "production" / etc.)
         var nameEsc = _invHubEsc(it.name).replace(/'/g, "\\'");
         var idEsc = _invHubEsc(it.id);
-        var closingCellAll = _drillCell(idEsc, nameEsc, 'all', it.closingStock, it.unit, '#7c3aed', true);
+        var closingCellAll = _drillCell(idEsc, nameEsc, 'all', it.closingStock, it.unit, '#0e7490', true);
         return '<tr class="' + rowClass + '">' +
                  '<td class="iv-live-code">' + idEsc + '</td>' +
                  '<td class="iv-live-name iv-cell-clickable" onclick="_invLiveDrillDown(\'' + idEsc + '\',\'' + nameEsc + '\',\'all\')" title="كل الحركات">' + _invHubEsc(it.name) + '</td>' +
@@ -10323,7 +10324,7 @@ function _invLiveRenderTable(items, totals) {
         '<td class="iv-live-num" style="color:#fde68a;">' + _invHubFmtMoney((totals||{}).adjustValue || 0) + '</td>' +
         '<td class="iv-live-num" style="color:#a5f3fc;">—</td>' + // transfers — net out at company level
         '<td class="iv-live-num iv-live-num-bold">' + _invHubFmtMoney((totals||{}).closingValue || 0) + '</td>' +
-        '<td class="iv-live-num iv-live-num-bold" style="color:#c4b5fd;">' + _invHubFmtMoney((totals||{}).closingValue || 0) + '</td>' +
+        '<td class="iv-live-num iv-live-num-bold" style="color:#a5d8e6;">' + _invHubFmtMoney((totals||{}).closingValue || 0) + '</td>' +
         '<td>—</td>' +
         '<td>—</td>' +
       '</tr>';
@@ -10372,7 +10373,7 @@ window.invLiveOpenReorder = function() {
                    '<td class="iv-live-name">' + _invHubEsc(it.name) + '</td>' +
                    '<td class="iv-live-num">' + (Number(it.closingStock) || 0).toFixed(2) + ' ' + (it.unit||'') + '</td>' +
                    '<td class="iv-live-num">' + perDay + '</td>' +
-                   '<td class="iv-live-num iv-live-num-bold" style="color:#7c3aed;">' + (it.suggestedReorder).toFixed(0) + ' ' + (it.unit||'') + '</td>' +
+                   '<td class="iv-live-num iv-live-num-bold" style="color:#0e7490;">' + (it.suggestedReorder).toFixed(0) + ' ' + (it.unit||'') + '</td>' +
                    '<td class="iv-live-num iv-live-num-bold">' + _invHubFmtMoney(it.suggestedReorder * it.cost) + ' ر.س</td>' +
                  '</tr>';
         }).join('') +
@@ -10380,7 +10381,7 @@ window.invLiveOpenReorder = function() {
     '</div>';
   // V5.8.3 — use self-contained modal (works whether or not erp.js loaded WoModal)
   ivShowModal({
-    icon: 'fa-cart-plus', iconColor: '#7c3aed',
+    icon: 'fa-cart-plus', iconColor: '#0e7490',
     title: 'اقتراح إعادة الطلب',
     subtitle: 'محسوب من معدل الاستهلاك خلال الفترة × تغطية ١٤ يوم',
     body: html, size: 'lg',
@@ -10565,7 +10566,7 @@ function _invLiveShowDrillModal(itemId, itemName, rows, op) {
           else if (r.op === 'adjustments') opPill = '<span class="iv-live-pill" style="background:#fef3c7;color:#a16207;">تسوية</span>';
           else if (r.op === 'transferIn')  opPill = '<span class="iv-live-pill" style="background:#cffafe;color:#0e7490;">تحويل وارد</span>';
           else if (r.op === 'transferOut') opPill = '<span class="iv-live-pill" style="background:#fce7f3;color:#a21caf;">تحويل صادر</span>';
-          else if (r.op === 'stocktake')   opPill = '<span class="iv-live-pill" style="background:#ede9fe;color:#5b21b6;">جرد</span>';
+          else if (r.op === 'stocktake')   opPill = '<span class="iv-live-pill" style="background:#e6f3f7;color:#155e75;">جرد</span>';
 
           // Warehouse cell + transfer pair
           var whCell = _invHubEsc(r.warehouseName || r.warehouseId || '—');
@@ -10603,7 +10604,7 @@ function _invLiveShowDrillModal(itemId, itemName, rows, op) {
 
   ivShowModal({
     icon: 'fa-rectangle-list',
-    iconColor: '#7c3aed',
+    iconColor: '#0e7490',
     title: _opLabel(op||'all') + ' · ' + itemName,
     subtitle: rows.length + ' حركة · ' + _ymd(window._invLive.startDate) + ' → ' + _ymd(window._invLive.endDate),
     body: html,
@@ -10668,7 +10669,7 @@ function _invLiveRenderTraceHtml(trace) {
   } else if (reason === 'skipped_semi') {
     icon = 'fa-arrow-right-from-bracket'; color = '#1d4ed8';
   } else if (reason === 'different_warehouse') {
-    icon = 'fa-warehouse'; color = '#7c3aed';
+    icon = 'fa-warehouse'; color = '#0e7490';
   } else if (reason === 'no_sales_in_period') {
     icon = 'fa-calendar-xmark'; color = '#64748b';
   }
@@ -10732,10 +10733,10 @@ function _invDrillInjectStyles() {
     '.iv-cell-clickable:hover{background:#fff7ed!important;color:#7c2d12!important;}' +
     '.iv-drill-summary{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:14px;padding-bottom:12px;border-bottom:1px solid #e2e8f0;}' +
     '.iv-drill-tab{padding:6px 14px;border-radius:999px;border:1.5px solid #e2e8f0;background:#fff;color:#475569;font-size:12px;font-weight:700;cursor:pointer;font-family:inherit;transition:all 0.15s;}' +
-    '.iv-drill-tab:hover{border-color:#7c3aed;color:#5b21b6;background:#faf5ff;}' +
-    '.iv-drill-tab.active{background:linear-gradient(135deg,#7c3aed,#5b21b6);border-color:#5b21b6;color:#fff;}' +
+    '.iv-drill-tab:hover{border-color:#0e7490;color:#155e75;background:#e6f3f7;}' +
+    '.iv-drill-tab.active{background:linear-gradient(135deg,#0e7490,#155e75);border-color:#155e75;color:#fff;}' +
     '.iv-drill-btn{padding:8px 14px;border-radius:8px;border:1.5px solid #e2e8f0;background:#fff;color:#0f172a;font-size:12.5px;font-weight:700;cursor:pointer;font-family:inherit;display:inline-flex;align-items:center;gap:6px;transition:all 0.15s;}' +
-    '.iv-drill-btn:hover{border-color:#7c3aed;color:#5b21b6;background:#faf5ff;}' +
+    '.iv-drill-btn:hover{border-color:#0e7490;color:#155e75;background:#e6f3f7;}' +
     '.iv-drill-btn i{font-size:11px;}';
   document.head.appendChild(st);
 }
@@ -10929,7 +10930,7 @@ window.ivShowModal = function(opts) {
   ov.className = 'iv-modal-overlay';
   ov.id = id;
   var iconHtml = opts.icon
-    ? '<div class="iv-modal-icon" style="background:' + (opts.iconColor || '#7c3aed') + '1a;color:' + (opts.iconColor || '#7c3aed') + ';"><i class="fas ' + _invHubEsc(opts.icon) + '"></i></div>'
+    ? '<div class="iv-modal-icon" style="background:' + (opts.iconColor || '#0e7490') + '1a;color:' + (opts.iconColor || '#0e7490') + ';"><i class="fas ' + _invHubEsc(opts.icon) + '"></i></div>'
     : '';
   var subHtml = opts.subtitle ? '<div class="iv-modal-sub">' + _invHubEsc(opts.subtitle) + '</div>' : '';
   var titleHtml = opts.title ? '<div class="iv-modal-title">' + _invHubEsc(opts.title) + '</div>' : '';
@@ -10997,8 +10998,8 @@ function _invModalEnsureStyles() {
     '.iv-modal-foot{padding:12px 18px;border-top:1px solid #e2e8f0;display:flex;justify-content:flex-end;gap:8px;background:#f8fafc;flex-shrink:0;}' +
     '.iv-modal-foot button{padding:9px 18px;border-radius:9px;border:1.5px solid #e2e8f0;background:#fff;color:#475569;font-weight:700;cursor:pointer;font-size:12.5px;font-family:inherit;transition:all 0.15s;}' +
     '.iv-modal-foot button:hover{background:#f1f5f9;border-color:#cbd5e1;}' +
-    '.iv-modal-foot button.primary{background:#7c3aed;color:#fff;border-color:#7c3aed;}' +
-    '.iv-modal-foot button.primary:hover{background:#6d28d9;border-color:#6d28d9;}' +
+    '.iv-modal-foot button.primary{background:#0e7490;color:#fff;border-color:#0e7490;}' +
+    '.iv-modal-foot button.primary:hover{background:#155e75;border-color:#155e75;}' +
     '.iv-modal-foot button.success{background:#15803d;color:#fff;border-color:#15803d;}' +
     '.iv-modal-foot button.success:hover{background:#166534;}';
   document.head.appendChild(st);
@@ -11102,21 +11103,21 @@ function _invLiveOpenPrintWindow(forPrint) {
       'body{font-family:"Tajawal","Cairo","Segoe UI",Tahoma,sans-serif;color:#0f172a;direction:rtl;font-size:11px;background:#fff;}' +
       '.page{padding:14mm 12mm;}' +
       // Header
-      '.head{display:flex;justify-content:space-between;align-items:flex-start;border-bottom:3px solid #7c3aed;padding-bottom:10px;margin-bottom:12px;}' +
+      '.head{display:flex;justify-content:space-between;align-items:flex-start;border-bottom:3px solid #0e7490;padding-bottom:10px;margin-bottom:12px;}' +
       '.head h1{font-size:20px;margin:0;color:#0f172a;letter-spacing:-0.02em;}' +
       '.head .h-sub{font-size:11px;color:#64748b;margin-top:3px;}' +
       '.h-meta{font-size:10.5px;color:#475569;line-height:1.6;text-align:end;}' +
       '.h-meta b{color:#0f172a;}' +
-      '.h-logo{font-size:14px;font-weight:900;color:#7c3aed;letter-spacing:-0.02em;}' +
+      '.h-logo{font-size:14px;font-weight:900;color:#0e7490;letter-spacing:-0.02em;}' +
       // KPIs
       '.kpis{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin-bottom:10px;}' +
-      '.kpi{border:1px solid #cbd5e1;border-radius:8px;padding:8px 10px;border-inline-start:3px solid var(--kc,#7c3aed);}' +
+      '.kpi{border:1px solid #cbd5e1;border-radius:8px;padding:8px 10px;border-inline-start:3px solid var(--kc,#0e7490);}' +
       '.kpi-label{font-size:9.5px;color:#64748b;font-weight:700;text-transform:uppercase;letter-spacing:0.04em;}' +
       '.kpi-num{font-size:15px;font-weight:900;margin-top:2px;font-family:ui-monospace,Menlo,monospace;}' +
       '.kpi.k-open{--kc:#3b82f6;}' +
       '.kpi.k-pur{--kc:#10b981;}' +
       '.kpi.k-con{--kc:#ef4444;}' +
-      '.kpi.k-cls{--kc:#7c3aed;}' +
+      '.kpi.k-cls{--kc:#0e7490;}' +
       // ABC ribbon
       '.abc-row{display:flex;align-items:center;gap:10px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;padding:8px 12px;margin-bottom:10px;font-size:10.5px;}' +
       '.abc-row .abc-bar{flex:1;display:flex;height:12px;border-radius:6px;overflow:hidden;background:#fff;border:1px solid #cbd5e1;}' +
@@ -11137,7 +11138,7 @@ function _invLiveOpenPrintWindow(forPrint) {
       '.code{font-family:ui-monospace,monospace;color:#64748b;font-size:9.5px;}' +
       '.pos{color:#15803d;font-weight:700;}' +
       '.neg{color:#b91c1c;font-weight:700;}' +
-      '.close{color:#5b21b6;font-weight:800;}' +
+      '.close{color:#155e75;font-weight:800;}' +
       '.abc{text-align:center;}' +
       '.abc-pill{display:inline-block;width:18px;height:16px;line-height:16px;text-align:center;border-radius:4px;color:#fff;font-size:9px;font-weight:900;}' +
       '.abc-pill.abc-a{background:#dc2626;}' +
@@ -11158,7 +11159,7 @@ function _invLiveOpenPrintWindow(forPrint) {
       '.sig-role{color:#94a3b8;font-size:9.5px;margin-top:2px;}' +
       // Toolbar (hidden on print)
       '.toolbar{position:sticky;top:0;background:#fff;padding:8px 12mm;border-bottom:1px solid #e2e8f0;display:flex;gap:8px;justify-content:end;z-index:10;}' +
-      '.toolbar button{background:#7c3aed;color:#fff;border:0;padding:8px 14px;border-radius:8px;font-weight:800;cursor:pointer;font-family:inherit;font-size:12px;}' +
+      '.toolbar button{background:#0e7490;color:#fff;border:0;padding:8px 14px;border-radius:8px;font-weight:800;cursor:pointer;font-family:inherit;font-size:12px;}' +
       '.toolbar button.ghost{background:#fff;color:#475569;border:1px solid #cbd5e1;}' +
       // Print rules
       '@media print{.toolbar{display:none !important;}.page{padding:8mm 6mm;}@page{size:A4 landscape;margin:8mm;}}' +
@@ -11271,14 +11272,14 @@ function _invLiveInjectStyles() {
     '.iv-live-field-grow{flex:1;min-width:200px;}' +
     '.iv-live-field label{font-size:11px;font-weight:700;color:#475569;letter-spacing:0.02em;}' +
     '.iv-live-field input,.iv-live-field select{padding:8px 12px;border:1.5px solid #e2e8f0;border-radius:9px;font-size:13px;font-family:inherit;background:#fff;}' +
-    '.iv-live-field input:focus,.iv-live-field select:focus{outline:none;border-color:#7c3aed;box-shadow:0 0 0 3px #ede9fe;}' +
+    '.iv-live-field input:focus,.iv-live-field select:focus{outline:none;border-color:#0e7490;box-shadow:0 0 0 3px #e6f3f7;}' +
     '.iv-live-presets{display:flex;flex-wrap:wrap;gap:5px;margin-inline-start:auto;}' +
     '.iv-live-preset{background:#f1f5f9;color:#475569;border:1px solid #e2e8f0;padding:7px 12px;border-radius:8px;font-size:11.5px;font-weight:700;cursor:pointer;font-family:inherit;transition:all 0.15s;}' +
     '.iv-live-preset:hover{background:#e2e8f0;color:#0f172a;}' +
-    '.iv-live-preset-active{background:#7c3aed;color:#fff;border-color:#7c3aed;}' +
+    '.iv-live-preset-active{background:#0e7490;color:#fff;border-color:#0e7490;}' +
     '.iv-live-btn{padding:8px 14px;border-radius:9px;font-size:12.5px;font-weight:800;cursor:pointer;display:inline-flex;align-items:center;gap:6px;font-family:inherit;border:1.5px solid;transition:all 0.15s;}' +
-    '.iv-live-btn-primary{background:#7c3aed;color:#fff;border-color:#7c3aed;}' +
-    '.iv-live-btn-primary:hover{background:#6d28d9;border-color:#6d28d9;}' +
+    '.iv-live-btn-primary{background:#0e7490;color:#fff;border-color:#0e7490;}' +
+    '.iv-live-btn-primary:hover{background:#155e75;border-color:#155e75;}' +
     '.iv-live-btn-success{background:#15803d;color:#fff;border-color:#15803d;}' +
     '.iv-live-btn-success:hover{background:#166534;border-color:#166534;}' +
     '.iv-live-btn-danger{background:#b91c1c;color:#fff;border-color:#b91c1c;}' +
@@ -11287,7 +11288,7 @@ function _invLiveInjectStyles() {
     '.iv-live-btn-ghost:hover{background:#f8fafc;border-color:#cbd5e1;}' +
     /* KPI cards */
     '.iv-live-kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:12px;margin-bottom:14px;}' +
-    '.iv-live-kpi{background:#fff;border:1px solid #e2e8f0;border-radius:14px;padding:14px 16px;display:flex;align-items:center;gap:12px;border-inline-start:4px solid var(--kc,#7c3aed);}' +
+    '.iv-live-kpi{background:#fff;border:1px solid #e2e8f0;border-radius:14px;padding:14px 16px;display:flex;align-items:center;gap:12px;border-inline-start:4px solid var(--kc,#0e7490);}' +
     '.iv-live-kpi-icon{width:46px;height:46px;border-radius:11px;display:grid;place-items:center;font-size:18px;flex-shrink:0;}' +
     '.iv-live-kpi-body{min-width:0;flex:1;}' +
     '.iv-live-kpi-label{font-size:11px;font-weight:700;color:#64748b;letter-spacing:0.02em;text-transform:uppercase;}' +
@@ -11313,7 +11314,7 @@ function _invLiveInjectStyles() {
     '.iv-live-num-unit{font-size:10px;color:#94a3b8;font-weight:600;}' +
     '.iv-th-name{min-width:180px;}' +
     '.iv-th-num{text-align:end;}' +
-    '.iv-th-closing{background:#5b21b6 !important;}' +
+    '.iv-th-closing{background:#155e75 !important;}' +
     '.iv-live-pill{display:inline-block;padding:3px 9px;border-radius:7px;font-size:10.5px;font-weight:800;white-space:nowrap;}' +
     '.iv-live-pill-ok{background:#dcfce7;color:#15803d;}' +
     '.iv-live-pill-low{background:#fef3c7;color:#92400e;}' +
@@ -11336,7 +11337,7 @@ function _invLiveInjectStyles() {
     '@media (max-width:1100px){.iv-live-insights{grid-template-columns:1fr;}}' +
     '.iv-live-insight{background:#fff;border:1px solid #e2e8f0;border-radius:14px;padding:14px 16px;display:flex;flex-direction:column;gap:10px;}' +
     '.iv-live-insight-head{display:flex;align-items:center;gap:8px;font-size:12.5px;font-weight:800;color:#0f172a;letter-spacing:0.01em;}' +
-    '.iv-live-insight-head i{color:#7c3aed;font-size:14px;}' +
+    '.iv-live-insight-head i{color:#0e7490;font-size:14px;}' +
     '.iv-live-insight-hint{margin-inline-start:auto;width:18px;height:18px;background:#f1f5f9;color:#64748b;border-radius:50%;display:grid;place-items:center;font-size:11px;cursor:help;font-weight:800;}' +
     '.iv-live-insight-empty{padding:24px;text-align:center;color:#94a3b8;font-size:12px;font-weight:600;}' +
     /* ABC bar */
@@ -11383,7 +11384,7 @@ function _invLiveInjectStyles() {
     '.iv-live-row-slow:hover{background:#fef3c7 !important;}' +
     /* Reorder modal */
     '.iv-live-reorder-summary{display:flex;align-items:center;gap:14px;padding:10px 14px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:10px;margin-bottom:12px;font-size:12.5px;color:#475569;flex-wrap:wrap;}' +
-    '.iv-live-reorder-total{margin-inline-start:auto;font-weight:800;color:#7c3aed;}' +
+    '.iv-live-reorder-total{margin-inline-start:auto;font-weight:800;color:#0e7490;}' +
     '.iv-live-reorder-table-wrap{overflow:auto;max-height:55vh;border:1px solid #e2e8f0;border-radius:10px;}' +
     /* Warning button */
     '.iv-live-btn-warning{background:#f59e0b;color:#fff;border-color:#f59e0b;}' +
@@ -11392,8 +11393,8 @@ function _invLiveInjectStyles() {
     '.iv-live-clear-chip{display:inline-flex;align-items:center;gap:8px;background:#fee2e2;color:#991b1b;border:1.5px solid #fca5a5;padding:6px 12px;border-radius:8px;margin-inline-start:10px;cursor:pointer;font-size:12px;font-weight:800;font-family:inherit;transition:all 0.15s;}' +
     '.iv-live-clear-chip:hover{background:#fecaca;border-color:#ef4444;transform:translateY(-1px);}' +
     '.iv-live-clear-x{background:#dc2626;color:#fff;padding:2px 9px;border-radius:6px;font-size:10.5px;font-weight:900;}' +
-    '.iv-live-empty a{color:#7c3aed;font-weight:800;text-decoration:underline;}' +
-    '.iv-live-empty a:hover{color:#6d28d9;}' +
+    '.iv-live-empty a{color:#0e7490;font-weight:800;text-decoration:underline;}' +
+    '.iv-live-empty a:hover{color:#155e75;}' +
     '@media print{' +
       '.iv-live-filterbar,.iv-live-toolbar,.iv-live-kpis,.iv-live-insights,.iv-hub-strip,#whTabs,.sidebar,.app-header{display:none !important;}' +
       '.iv-live-shell{padding:0;background:#fff;}' +
@@ -11470,7 +11471,7 @@ function loadDashStocktake() {
             ? '<small style="font-size:9px;color:#92400e;margin-inline-start:4px;opacity:0.85;">(من الفرع)</small>'
             : '';
           var whCell = st.warehouseName
-            ? '<span class="iv-live-pill" style="background:#ede9fe;color:#5b21b6;"><i class="fas fa-warehouse" style="font-size:9px;margin-inline-end:3px;"></i>' + _invHubEsc(st.warehouseName) + '</span>' + whHint
+            ? '<span class="iv-live-pill" style="background:#e6f3f7;color:#155e75;"><i class="fas fa-warehouse" style="font-size:9px;margin-inline-end:3px;"></i>' + _invHubEsc(st.warehouseName) + '</span>' + whHint
             : '<span style="color:#cbd5e1;font-size:11px;">—</span>';
           // v5.10.32 — Branch pill (teal). Shows "—" when the stocktake
           // has no branch attached (legacy records, admin-warehouse
@@ -11592,7 +11593,7 @@ function _whRenderStocktakeKpis(rows) {
                    icon: 'fa-scale-balanced',  color: '#f59e0b', gradFrom: '#fef3c7', gradTo: '#fffbeb',
                    footer: totalAbsVar > 0 ? '<i class="fas fa-bell"></i> فروقات تستحق المراجعة' : '<i class="fas fa-circle-check"></i> لا فروقات', pulse: totalAbsVar > 0 }) +
     _invItemsKpi({ label: 'محاضر اليوم',             num: todayCount.toLocaleString('ar-SA'), unit: 'محضر',
-                   icon: 'fa-calendar-day',    color: '#8b5cf6', gradFrom: '#ede9fe', gradTo: '#f5f3ff',
+                   icon: 'fa-calendar-day',    color: '#0e7490', gradFrom: '#e6f3f7', gradTo: '#e6f3f7',
                    footer: '<i class="fas fa-clock"></i> آخر تحديث: ' + new Date().toLocaleTimeString('ar-SA', {hour:'2-digit',minute:'2-digit'}) });
 }
 
@@ -11651,9 +11652,9 @@ function _whRenderAdjustmentsKpis(rows) {
         pendingCount > 0
           ? '<i class="fas fa-bell" style="color:#f59e0b;margin-inline-end:4px;"></i> <b>' + pendingCount + '</b> يحتاج مراجعة'
           : '<i class="fas fa-circle-check" style="color:#16a34a;margin-inline-end:4px;"></i> كل المحاضر معتمدة') +
-      _adjKpi('#8b5cf6','#ede9fe','fa-calendar-day','محاضر اليوم',
+      _adjKpi('#0e7490','#e6f3f7','fa-calendar-day','محاضر اليوم',
         todayCount.toLocaleString('ar-SA'), 'محضر',
-        '<i class="fas fa-clock" style="color:#8b5cf6;margin-inline-end:4px;"></i> آخر تحديث: <b>' + timeStr + '</b>') +
+        '<i class="fas fa-clock" style="color:#0e7490;margin-inline-end:4px;"></i> آخر تحديث: <b>' + timeStr + '</b>') +
     '</div>';
 }
 
@@ -11756,11 +11757,11 @@ function _whRenderStockIssuesKpis(rows) {
       draftCount > 0
         ? '<i class="fas fa-bell" style="color:#f59e0b;margin-inline-end:4px;"></i> <b>' + draftCount + '</b> تحتاج مراجعة'
         : '<i class="fas fa-circle-check" style="color:#16a34a;margin-inline-end:4px;"></i> لا مسودات') +
-    _adjKpi('#8b5cf6','#ede9fe','fa-paper-plane','قيد الاستلام',
+    _adjKpi('#0e7490','#e6f3f7','fa-paper-plane','قيد الاستلام',
       issuedCount.toLocaleString('ar-SA'), 'إذن',
       partialCount > 0
         ? '<i class="fas fa-exclamation-triangle" style="color:#d97706;margin-inline-end:4px;"></i> ' + partialCount + ' باستلام جزئي'
-        : '<i class="fas fa-truck" style="color:#8b5cf6;margin-inline-end:4px;"></i> أُرسلت ولم تُستلم بعد') +
+        : '<i class="fas fa-truck" style="color:#0e7490;margin-inline-end:4px;"></i> أُرسلت ولم تُستلم بعد') +
     _adjKpi('#10b981','#d1fae5','fa-sack-dollar','القيمة المنقولة',
       movedFmt, 'ر.س',
       reversedCount > 0
@@ -12191,7 +12192,7 @@ function _stRenderItemsPanel() {
                '</div>' +
              '</div>' +
              '<div style="display:flex;gap:8px;align-items:center;">' +
-               '<button class="st-clear-all" style="background:#ede9fe;border-color:#c4b5fd;color:#6d28d9;" onclick="stOpenBulkPaste()" title="لصق جماعي من Excel أو نص"><i class="fas fa-paste"></i> لصق جماعي</button>' +
+               '<button class="st-clear-all" style="background:#e6f3f7;border-color:#a5d8e6;color:#155e75;" onclick="stOpenBulkPaste()" title="لصق جماعي من Excel أو نص"><i class="fas fa-paste"></i> لصق جماعي</button>' +
                (items.length > 0
                  ? '<button class="st-clear-all" onclick="_stClearAll()" title="مسح الكل"><i class="fas fa-trash-can"></i> مسح الكل</button>'
                  : '') +
@@ -12460,7 +12461,7 @@ window.stOpenBulkPaste = function() {
     '<div id="stBulkPasteModal" class="modal" style="display:flex;align-items:center;justify-content:center;">' +
       '<div class="modal-content" style="max-width:640px;width:92%;">' +
         '<div class="modal-title">' +
-          '<i class="fas fa-paste" style="color:#7c3aed;"></i> لصق جماعي للجرد' +
+          '<i class="fas fa-paste" style="color:#0e7490;"></i> لصق جماعي للجرد' +
           '<button class="modal-close" onclick="document.getElementById(\'stBulkPasteModal\').remove()">&times;</button>' +
         '</div>' +
         '<div style="background:#eef2ff;border:1px solid #c7d2fe;border-radius:10px;padding:10px 14px;margin-bottom:12px;font-size:12.5px;color:#3730a3;line-height:1.7;">' +
@@ -12621,7 +12622,7 @@ function renderStItems() {
   }
   tb.innerHTML = items.map(function(i, idx){
     return '<tr data-st-idx="'+idx+'">' +
-      '<td style="color:#8b5cf6;font-weight:800;">'+(idx+1)+'</td>' +
+      '<td style="color:#0e7490;font-weight:800;">'+(idx+1)+'</td>' +
       '<td><b>'+_escHtml(i.name)+'</b>' +
         '<div style="font-size:11px;color:#64748b;"><code style="background:#f1f5f9;padding:1px 5px;border-radius:4px;">'+_escHtml(i.id)+'</code>'+(i.category?' · '+_escHtml(i.category):'')+'</div></td>' +
       '<td class="num"><b style="color:#1e40af;">'+i.sysStock.toFixed(2)+'</b> <span style="font-size:10px;color:#94a3b8;">'+_escHtml(i.unit||'')+'</span></td>' +
@@ -12874,7 +12875,7 @@ function _stOpenPrintWindow(forPrint) {
       '.kpi{border:1px solid #cbd5e1;border-radius:8px;padding:8px 10px;border-inline-start:3px solid var(--kc,#0ea5e9);}' +
       '.kpi-label{font-size:9.5px;color:#64748b;font-weight:700;text-transform:uppercase;}' +
       '.kpi-num{font-size:15px;font-weight:900;margin-top:2px;font-family:ui-monospace,monospace;}' +
-      '.kpi.k-tot{--kc:#0ea5e9;}.kpi.k-pos{--kc:#15803d;}.kpi.k-neg{--kc:#b91c1c;}.kpi.k-var{--kc:#7c3aed;}' +
+      '.kpi.k-tot{--kc:#0ea5e9;}.kpi.k-pos{--kc:#15803d;}.kpi.k-neg{--kc:#b91c1c;}.kpi.k-var{--kc:#0e7490;}' +
       // Notes box
       '.notes{background:#fffbeb;border:1px solid #fde68a;border-radius:8px;padding:8px 12px;margin-bottom:10px;font-size:10.5px;color:#78350f;}' +
       // Table
@@ -13137,7 +13138,7 @@ function loadDashUsers() {
     var roleLabel = function(r) {
       if (r === 'admin')    return '<span class="badge blue">مدير مؤسسة</span>';
       if (r === 'manager')  return '<span class="badge orange">مدير فرع</span>';
-      if (r === 'custody')  return '<span class="badge" style="background:#f3e8ff;color:#7c3aed;">مسؤول عهدة</span>';
+      if (r === 'custody')  return '<span class="badge" style="background:#e6f3f7;color:#0e7490;">مسؤول عهدة</span>';
       if (r === 'employee') return '<span class="badge" style="background:#ecfdf5;color:#059669;">موظف</span>';
       return '<span class="badge green">كاشير</span>';
     };
@@ -13148,7 +13149,7 @@ function loadDashUsers() {
       var passDisplay = '<span style="color:#94a3b8;font-size:11px;"><i class="fas fa-lock" style="margin-left:4px;"></i> مشفرة</span>';
       var emailDisplay = u.email ? '<div style="font-size:11px;color:#64748b;"><i class="fas fa-envelope" style="margin-left:3px;color:#94a3b8;"></i>' + u.email + '</div>' : '';
       var btnS = 'width:34px;height:34px;border-radius:10px;border:1px solid #e2e8f0;background:#f8fafc;display:inline-flex;align-items:center;justify-content:center;cursor:pointer;font-size:14px;';
-      var brandDisplay = u.brandName ? '<span class="badge" style="background:#f3e8ff;color:#7c3aed;font-size:10px;">' + u.brandName + '</span>' : '';
+      var brandDisplay = u.brandName ? '<span class="badge" style="background:#e6f3f7;color:#0e7490;font-size:10px;">' + u.brandName + '</span>' : '';
       var branchDisplay = u.branchName ? '<span class="badge badge-blue" style="font-size:10px;">' + u.branchName + '</span>' : '';
       var posDisplay = u.positionName ? '<div style="font-size:10px;margin-top:2px;"><span style="display:inline-flex;align-items:center;gap:3px;padding:2px 8px;border-radius:6px;background:#e0f2fe;color:#0369a1;font-weight:700;"><i class="fas fa-id-badge"></i>' + u.positionName + '</span></div>' : '';
       h += '<tr>' +
@@ -13160,7 +13161,7 @@ function loadDashUsers() {
           '<div style="display:flex;gap:4px;">' +
             '<button style="' + btnS + 'color:#3b82f6;" onclick="editUsr(\'' + u.username + '\')" title="تعديل"><i class="fas fa-edit"></i></button>' +
             '<button style="' + btnS + 'color:#f59e0b;" onclick="resetUserPassword(\'' + u.username + '\')" title="إعادة تعيين كلمة المرور"><i class="fas fa-key"></i></button>' +
-            '<button style="' + btnS + 'color:#8b5cf6;" onclick="setup2FA(\'' + u.username + '\')" title="تفعيل 2FA"><i class="fas fa-shield-alt"></i></button>' +
+            '<button style="' + btnS + 'color:#0e7490;" onclick="setup2FA(\'' + u.username + '\')" title="تفعيل 2FA"><i class="fas fa-shield-alt"></i></button>' +
             '<button style="' + btnS + 'color:#10b981;" onclick="toggUsr(\'' + u.username + '\')" title="تفعيل/إيقاف"><i class="fas fa-power-off"></i></button>' +
             '<button style="' + btnS + 'color:#ef4444;" onclick="delUsr(\'' + u.username + '\')" title="حذف"><i class="fas fa-trash"></i></button>' +
           '</div>' +
@@ -13418,7 +13419,7 @@ function setup2FA(username) {
     loader(false);
     if (r.success) {
       var html = '<div style="text-align:center;padding:20px;">' +
-        '<h3 style="margin-bottom:12px;"><i class="fas fa-shield-alt" style="color:#8b5cf6;"></i> التحقق الثنائي</h3>' +
+        '<h3 style="margin-bottom:12px;"><i class="fas fa-shield-alt" style="color:#0e7490;"></i> التحقق الثنائي</h3>' +
         '<p style="margin-bottom:16px;color:#64748b;">افتح تطبيق <b>Google Authenticator</b> وأضف حساب جديد باستخدام المفتاح التالي:</p>' +
         '<div style="background:#f1f5f9;padding:16px;border-radius:12px;margin-bottom:16px;">' +
           '<code style="font-size:18px;font-weight:900;letter-spacing:3px;color:#1e293b;word-break:break-all;">' + r.secret + '</code>' +
@@ -13557,12 +13558,12 @@ function _buildAdvReportBody() {
       </div>
       <div class="report-kpi-card kpi-orders">
         <div class="kpi-label"><i class="fas fa-receipt"></i> \u0639\u062f\u062f \u0627\u0644\u0637\u0644\u0628\u0627\u062a</div>
-        <div class="kpi-value" style="color:#6366f1;">${fmtInt(s.orderCount)}</div>
+        <div class="kpi-value" style="color:#0e7490;">${fmtInt(s.orderCount)}</div>
         <div class="kpi-sub">\u0623\u064a\u0627\u0645 \u0646\u0634\u0637\u0629: ${s.activeDays} \u064a\u0648\u0645</div>
       </div>
       <div class="report-kpi-card kpi-daily">
         <div class="kpi-label"><i class="fas fa-calendar-day"></i> \u0645\u062a\u0648\u0633\u0637 \u0627\u0644\u0625\u064a\u0631\u0627\u062f \u0627\u0644\u064a\u0648\u0645\u064a</div>
-        <div class="kpi-value" style="color:#8b5cf6;">${fmt(s.avgDailyRevenue)} <small style="font-size:13px;">SAR</small></div>
+        <div class="kpi-value" style="color:#0e7490;">${fmt(s.avgDailyRevenue)} <small style="font-size:13px;">SAR</small></div>
         <div class="kpi-sub">\u0645\u0646 ${s.activeDays} \u064a\u0648\u0645 \u0639\u0645\u0644</div>
       </div>
     </div>`;
@@ -13729,7 +13730,7 @@ function _buildAdvReportBody() {
       if (d.charts.salesByCashier.length) {
         advCharts.push(new Chart(document.getElementById('chartCashier').getContext('2d'), {
           type: 'bar',
-          data: { labels: d.charts.salesByCashier.map(x=>x.label), datasets: [{ label: '\u0627\u0644\u0645\u0628\u064a\u0639\u0627\u062a', data: d.charts.salesByCashier.map(x=>x.value), backgroundColor: ['#3b82f6','#8b5cf6','#ec4899','#f59e0b','#10b981','#06b6d4','#f43f5e'], borderRadius: 6 }] },
+          data: { labels: d.charts.salesByCashier.map(x=>x.label), datasets: [{ label: '\u0627\u0644\u0645\u0628\u064a\u0639\u0627\u062a', data: d.charts.salesByCashier.map(x=>x.value), backgroundColor: ['#3b82f6','#0e7490','#ec4899','#f59e0b','#10b981','#06b6d4','#f43f5e'], borderRadius: 6 }] },
           options: { ...chartOpts, indexAxis: 'y', plugins: { ...chartOpts.plugins, tooltip: fmtTooltip } }
         }));
       }
@@ -15133,7 +15134,7 @@ function _renderCustomerProfile(customerId, sales) {
 
   body.innerHTML =
     // Header
-    '<div style="background:linear-gradient(135deg,#7c3aed,#5b21b6);color:#fff;padding:22px 24px;border-radius:14px 14px 0 0;margin:-16px -16px 16px;">' +
+    '<div style="background:linear-gradient(135deg,#0e7490,#155e75);color:#fff;padding:22px 24px;border-radius:14px 14px 0 0;margin:-16px -16px 16px;">' +
       '<div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px;">' +
         '<div>' +
           '<div style="font-size:22px;font-weight:900;">' + info.name + '</div>' +
@@ -15163,7 +15164,7 @@ function _renderCustomerProfile(customerId, sales) {
           '<h4 style="margin:0 0 8px;font-size:14px;color:#1e293b;"><i class="fas fa-trophy" style="color:#f59e0b;"></i> أكثر المنتجات شراءً · Top 5 Products</h4>' +
           '<div style="display:flex;flex-wrap:wrap;gap:8px;">' +
           topProducts.map(function(p){
-            return '<span style="background:#ede9fe;color:#5b21b6;padding:6px 12px;border-radius:99px;font-weight:700;font-size:12.5px;">' +
+            return '<span style="background:#e6f3f7;color:#155e75;padding:6px 12px;border-radius:99px;font-weight:700;font-size:12.5px;">' +
                      p.name + ' · ' + p.qty + '× · ' + fmt(p.total) + ' ر.س' +
                    '</span>';
           }).join('') +
@@ -15172,7 +15173,7 @@ function _renderCustomerProfile(customerId, sales) {
       : '') +
 
     // Purchase history
-    '<h4 style="margin:0 0 8px;font-size:14px;color:#1e293b;"><i class="fas fa-history" style="color:#7c3aed;"></i> سجل المشتريات · Purchase History</h4>' +
+    '<h4 style="margin:0 0 8px;font-size:14px;color:#1e293b;"><i class="fas fa-history" style="color:#0e7490;"></i> سجل المشتريات · Purchase History</h4>' +
     (rows.length
       ? '<div class="table-wrapper"><table class="table" style="font-size:12.5px;">' +
           '<thead><tr>' +
@@ -15457,7 +15458,7 @@ function _renderChannelDistribution(rows) {
   if (!labels.length) labels = ['لا بيانات'], data = [0];
   window._advChannelChart = new Chart(ctx, {
     type: 'doughnut',
-    data: { labels: labels, datasets: [{ data: data, backgroundColor: ['#3b82f6','#22c55e','#f59e0b','#8b5cf6','#ef4444','#06b6d4','#94a3b8'] }] },
+    data: { labels: labels, datasets: [{ data: data, backgroundColor: ['#3b82f6','#22c55e','#f59e0b','#0e7490','#ef4444','#06b6d4','#94a3b8'] }] },
     options: { responsive: true, plugins: { legend: { position: 'bottom', rtl: true } } }
   });
 }
@@ -15485,7 +15486,7 @@ function _renderPayDistribution(rows) {
   if (!labels.length) labels = ['لا بيانات'], data = [0];
   window._advPayChart = new Chart(ctx, {
     type: 'pie',
-    data: { labels: labels, datasets: [{ data: data, backgroundColor: ['#22c55e','#3b82f6','#f59e0b','#8b5cf6','#ef4444','#06b6d4'] }] },
+    data: { labels: labels, datasets: [{ data: data, backgroundColor: ['#22c55e','#3b82f6','#f59e0b','#0e7490','#ef4444','#06b6d4'] }] },
     options: { responsive: true, plugins: { legend: { position: 'bottom', rtl: true } } }
   });
 }
@@ -15811,7 +15812,7 @@ function _loadSalesBreakdownBody(type) {
     if (ctx && data.length > 0) {
       const labels = data.slice(0, 15).map(d => d.name);
       const values = data.slice(0, 15).map(d => d.revenue);
-      const colors = ['#3b82f6','#10b981','#f59e0b','#ef4444','#8b5cf6','#ec4899','#06b6d4','#84cc16','#f97316','#6366f1','#14b8a6','#e11d48','#0ea5e9','#a855f7','#22c55e'];
+      const colors = ['#3b82f6','#10b981','#f59e0b','#ef4444','#0e7490','#ec4899','#06b6d4','#84cc16','#f97316','#0e7490','#14b8a6','#e11d48','#0ea5e9','#1591b0','#22c55e'];
       const chartType = (type === 'byMonth' || type === 'byDay') ? 'line' : 'bar';
 
       breakdownChartInst = new Chart(ctx.getContext('2d'), {
@@ -15995,8 +15996,8 @@ function printPurchase(id, supplier, itemName, qty, unitPrice, totalPrice, payMe
   const qtyNum = Number(qty);
 
   const payLabel = {'Cash':'كاش 💵','Card':'مدى/شبكة 💳','آجل':'آجل 🧾','Transfer':'تحويل 🏦'};
-  const payColor = {'Cash':'#dcfce7','Card':'#dbeafe','آجل':'#fef9c3','Transfer':'#f3e8ff'};
-  const payText  = {'Cash':'#166534','Card':'#1e40af','آجل':'#854d0e','Transfer':'#6b21a8'};
+  const payColor = {'Cash':'#dcfce7','Card':'#dbeafe','آجل':'#fef9c3','Transfer':'#e6f3f7'};
+  const payText  = {'Cash':'#166534','Card':'#1e40af','آجل':'#854d0e','Transfer':'#155e75'};
 
   const html = `<!DOCTYPE html>
 <html lang="ar" dir="rtl">
@@ -16816,7 +16817,7 @@ function printShiftPDF(data) {
   .stat-lbl { font-size: 8pt; color: #64748b; font-weight: 600; }
   .stat-val { font-size: 13pt; font-weight: 900; direction: ltr; line-height: 1.1; margin-top: 1mm; }
   .stat-blue   { background: #eff6ff; border-color: #bfdbfe; color: #1d4ed8; }
-  .stat-purple { background: #faf5ff; border-color: #e9d5ff; color: #7c3aed; }
+  .stat-purple { background: #e6f3f7; border-color: #cfe9f1; color: #0e7490; }
   .stat-amber  { background: #fffbeb; border-color: #fde68a; color: #b45309; }
   .stat-teal   { background: #f0fdfa; border-color: #99f6e4; color: #0f766e; }
 

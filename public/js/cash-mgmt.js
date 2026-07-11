@@ -548,10 +548,10 @@ function _cashOpenVoucherModal(kind) {
         // to gl_entries when this voucher is approved, so dimensional
         // reports include voucher activity.
         '<section class="cv-section cv-dim-bar">' +
-          '<header class="cv-head"><i class="fas fa-layer-group" style="color:#7c3aed;"></i><span>الأبعاد المحاسبية</span><small style="margin-inline-start:auto;color:#94a3b8;font-weight:500;font-size:11px;">تُورَث على القيد المحاسبي عند الاعتماد</small></header>' +
+          '<header class="cv-head"><i class="fas fa-layer-group" style="color:#0e7490;"></i><span>الأبعاد المحاسبية</span><small style="margin-inline-start:auto;color:#94a3b8;font-weight:500;font-size:11px;">تُورَث على القيد المحاسبي عند الاعتماد</small></header>' +
           '<div class="cv-grid cv-grid-3">' +
             '<div class="cv-row">' +
-              '<label><i class="fas fa-tag" style="color:#7c3aed;font-size:11px;"></i> البراند</label>' +
+              '<label><i class="fas fa-tag" style="color:#0e7490;font-size:11px;"></i> البراند</label>' +
               '<select class="cv-input" id="cvBrand"><option value="">— الكل —</option>' +
                 brands.map(function(b){return '<option value="'+_cashEsc(b.id)+'">'+_cashEsc(b.name||'')+'</option>';}).join('') +
               '</select>' +
@@ -1077,11 +1077,11 @@ function cashLoadTransfers() {
     if (!list.length) { tb.innerHTML = '<tr><td colspan="6" class="empty-msg">لا توجد تحويلات</td></tr>'; return; }
     tb.innerHTML = list.map(function(t) {
       var dt = t.transfer_date ? new Date(t.transfer_date).toLocaleDateString('en-GB') : '';
-      return '<tr><td><code style="font-weight:700;color:#8b5cf6;">'+t.transfer_number+'</code></td>' +
+      return '<tr><td><code style="font-weight:700;color:#0e7490;">'+t.transfer_number+'</code></td>' +
         '<td>'+dt+'</td>' +
         '<td>'+(t.from_type==='cash'?'صندوق':'بنك')+' <code>'+t.from_id+'</code></td>' +
         '<td>'+(t.to_type==='cash'?'صندوق':'بنك')+' <code>'+t.to_id+'</code></td>' +
-        '<td style="text-align:start;font-weight:800;color:#8b5cf6;">'+_fmt(t.amount)+'</td>' +
+        '<td style="text-align:start;font-weight:800;color:#0e7490;">'+_fmt(t.amount)+'</td>' +
         '<td style="font-size:12px;">'+(t.description||'')+'</td></tr>';
     }).join('');
   });

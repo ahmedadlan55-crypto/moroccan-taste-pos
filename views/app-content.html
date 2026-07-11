@@ -2064,6 +2064,14 @@
 <!-- GL ACCOUNTS (دليل الحسابات) -->
 <!-- ══════════════════════════════════════════════════════════════ -->
 <div id="erpGLAccounts" class="dash-section hidden">
+  <!-- ADLAN Stage C — unified page header (ap-page-head anatomy) -->
+  <div class="ap-page-head">
+    <span class="ap-ph-icon"><i class="fas fa-sitemap"></i></span>
+    <div class="ap-ph-titles">
+      <h2 class="ap-ph-title">دليل الحسابات</h2>
+      <span class="ap-ph-sub">الهيكل الشجري للحسابات — أصول · التزامات · حقوق ملكية · إيرادات · مصروفات</span>
+    </div>
+  </div>
   <!-- v5.10.35 — Top action bar: type filter chips + diagnose / repair / suggestions -->
   <!-- v5.10.91 — Removed the "إظهار الحسابات الهيكلية" checkbox.
        Structural accounts are now the permanent default (window._coaShowEmpty
@@ -2161,19 +2169,16 @@
 <!-- GL JOURNALS (القيود المحاسبية) -->
 <!-- ══════════════════════════════════════════════════════════════ -->
 <div id="erpGLJournals" class="dash-section hidden">
-  <div class="section-header" style="flex-wrap:wrap;gap:10px;">
-    <h2 class="section-title"><i class="fas fa-book-open"></i> القيود اليومية</h2>
-    <div style="display:flex;gap:8px;flex-wrap:wrap;">
-      <button class="btn btn-primary" onclick="erpOpenJournalModal()" style="border-radius:12px;"><i class="fas fa-plus"></i> قيد جديد</button>
+  <!-- ADLAN Stage C — unified page header (ap-page-head anatomy). Absorbs the
+       old .section-header + .jrn-banner (banner text became the sub-line). -->
+  <div class="ap-page-head">
+    <span class="ap-ph-icon"><i class="fas fa-book-open"></i></span>
+    <div class="ap-ph-titles">
+      <h2 class="ap-ph-title">القيود اليومية</h2>
+      <span class="ap-ph-sub">سِجلّ القيود المحاسبية — قيد مزدوج مُتوازن (مدين = دائن) وفق معايير SOCPA / IFRS</span>
     </div>
-  </div>
-
-  <!-- v6.29.0 — classic ledger banner -->
-  <div class="jrn-banner">
-    <div class="jrn-banner__mark"><i class="fas fa-feather-pointed"></i></div>
-    <div class="jrn-banner__text">
-      <h3>دفتر اليومية</h3>
-      <span>سِجلّ القيود المحاسبية — قيد مزدوج مُتوازن (مدين = دائن) وفق معايير SOCPA / IFRS</span>
+    <div class="ap-ph-actions">
+      <button class="btn btn-primary" onclick="erpOpenJournalModal()"><i class="fas fa-plus"></i> قيد جديد</button>
     </div>
   </div>
 
@@ -7511,7 +7516,7 @@
 
 <!-- Journal Entry Detail Modal -->
 <div id="erpJournalDetailModal" class="modal-overlay hidden" onclick="if(event.target===this) this.classList.add('hidden')">
-  <div class="modal-box erp-modal-box" style="max-width:700px;">
+  <div class="modal-box erp-modal-box">
     <div class="modal-header">
       <h3>تفاصيل القيد المحاسبي</h3>
       <button class="modal-close" onclick="document.getElementById('erpJournalDetailModal').classList.add('hidden')">&times;</button>

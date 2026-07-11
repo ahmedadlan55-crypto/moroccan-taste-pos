@@ -4033,7 +4033,9 @@ function erpLoadJournals() {
         '</td>' +
         '<td><span class="jrn-amt jrn-amt--debit">' + (j.totalDebit||0).toFixed(2) + '</span></td>' +
         '<td><span class="jrn-amt jrn-amt--credit">' + (j.totalCredit||0).toFixed(2) + '</span></td>' +
-        '<td>' + statusBadge(j.status) + '</td>' +
+        // ADLAN Stage C — reversed journals carry a second badge next to the
+        // status pill (reversedByJournalId is stamped by the reverse endpoint).
+        '<td>' + statusBadge(j.status) + (j.reversedByJournalId ? ' <span class="jrn-badge jrn-badge--reversed">معكوس</span>' : '') + '</td>' +
         '<td style="white-space:nowrap;">' + actions + '</td></tr>';
     }).join('');
 
@@ -4236,23 +4238,33 @@ function _renderJournalDetail(j) {
   var entries = j.entries || [];
   var dt = j.journalDate ? new Date(j.journalDate).toLocaleDateString('en-GB') : '—';
   var statusLabels = {draft:'مسودة',approved:'معتمد',posted:'مرحّل'};
-  var statusColors = {draft:'#f59e0b',approved:'#0e7490',posted:'#16a34a'};
+  // ADLAN Stage C — document anatomy (.ap-doc-*) from adlan-page.css replaces
+  // the old inline-styled cards. Same fields, same conditions — new skin only.
+  var statusCls = {draft:'jrn-badge--draft',approved:'jrn-badge--approved',posted:'jrn-badge--posted'};
+  var statusHtml = '<span class="jrn-badge ' + (statusCls[j.status]||'jrn-badge--draft') + '">' + (statusLabels[j.status]||j.status||'—') + '</span>' +
+    (j.reversedByJournalId ? ' <span class="jrn-badge jrn-badge--reversed">معكوس</span>' : '');
+  var docCell = function(k, v) {
+    return '<div class="ap-doc-cell"><div class="ap-doc-k">' + k + '</div><div class="ap-doc-v">' + v + '</div></div>';
+  };
 
-  var html = '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:8px;margin-bottom:14px;">' +
-    '<div style="background:#f8fafc;padding:10px 12px;border-radius:12px;"><span style="font-size:10px;color:#64748b;display:block;">رقم القيد</span><strong style="font-size:15px;color:#1e40af;">' + (j.journalNumber||'—') + '</strong></div>' +
-    '<div style="background:#f8fafc;padding:10px 12px;border-radius:12px;"><span style="font-size:10px;color:#64748b;display:block;">التاريخ</span><strong>' + dt + '</strong></div>' +
-    '<div style="background:#f8fafc;padding:10px 12px;border-radius:12px;"><span style="font-size:10px;color:#64748b;display:block;">الحالة</span><strong style="color:' + (statusColors[j.status]||'#64748b') + ';">' + (statusLabels[j.status]||j.status||'—') + '</strong></div>' +
-    '<div style="background:#f0fdf4;padding:10px 12px;border-radius:12px;"><span style="font-size:10px;color:#64748b;display:block;">أنشأه</span><strong style="color:#16a34a;">' + (j.createdBy||'—') + '</strong></div>' +
-    (j.approvedBy ? '<div style="background:#eff6ff;padding:10px 12px;border-radius:12px;"><span style="font-size:10px;color:#64748b;display:block;">اعتمده</span><strong style="color:#1e40af;">' + j.approvedBy + '</strong></div>' : '') +
-    (j.postedBy ? '<div style="background:#f0fdf4;padding:10px 12px;border-radius:12px;"><span style="font-size:10px;color:#64748b;display:block;">رحّله</span><strong style="color:#166534;">' + j.postedBy + '</strong></div>' : '') +
+  var html = '<div class="ap-doc-grid">' +
+    docCell('رقم القيد', (j.journalNumber||'—')) +
+    docCell('التاريخ', dt) +
+    docCell('الحالة', statusHtml) +
+    docCell('أنشأه', (j.createdBy||'—')) +
+    (j.approvedBy ? docCell('اعتمده', j.approvedBy) : '') +
+    (j.postedBy ? docCell('رحّله', j.postedBy) : '') +
     '</div>';
 
-  if (j.description) html += '<div style="margin-bottom:12px;padding:8px 14px;background:#eff6ff;border-radius:10px;font-weight:700;color:#1e40af;font-size:13px;"><i class="fas fa-file-alt" style="margin-left:6px;"></i>' + j.description + '</div>';
+  if (j.description) html += '<div class="ap-doc-desc"><i class="fas fa-file-alt" style="margin-left:6px;"></i>' + j.description + '</div>';
 
   // V5.7.18 — clearer two-line cell: bold account name on top, code below in monospace.
   //           Backend now ALWAYS returns accountName (via JOIN to gl_accounts),
   //           so old entries written with empty name still display correctly.
-  html += '<table class="erp-table" style="font-size:13px;"><thead><tr>' +
+  // ADLAN Stage C — the table keeps .erp-table (skinned inside
+  // #erpJournalDetailModal by adlan-page.css); amount cells use the shared
+  // .ap-num --debit/--credit vocabulary; totals row uses .jrn-foot-row.
+  html += '<table class="erp-table"><thead><tr>' +
             '<th style="text-align:start;">الحساب المحاسبي</th>' +
             '<th>البيان</th>' +
             '<th style="width:110px;">مدين</th>' +
@@ -4265,29 +4277,29 @@ function _renderJournalDetail(j) {
     var accName = e.accountName || e.accountCode || '—';
     var accCode = e.accountCode || '';
     var accType = e.accountType || '';
-    var typeColor = accType === 'asset' ? '#1e40af'
-                  : accType === 'liability' ? '#b45309'
-                  : accType === 'equity' ? '#0e7490'
-                  : accType === 'revenue' ? '#16a34a'
-                  : accType === 'expense' ? '#dc2626'
-                  : '#475569';
+    var typeColor = accType === 'asset' ? 'var(--mt-info)'
+                  : accType === 'liability' ? 'var(--mt-warm)'
+                  : accType === 'equity' ? 'var(--mt-accent)'
+                  : accType === 'revenue' ? 'var(--mt-success)'
+                  : accType === 'expense' ? 'var(--mt-danger)'
+                  : 'var(--mt-text-muted)';
     html += '<tr>' +
               '<td>' +
-                '<div style="font-weight:700;color:#0f172a;">' + accName + '</div>' +
-                '<div style="font-size:11px;color:#64748b;font-family:monospace;margin-top:2px;">' +
-                  '<code style="background:#f1f5f9;padding:1px 5px;border-radius:4px;">' + accCode + '</code>' +
+                '<div style="font-weight:700;color:var(--mt-text);">' + accName + '</div>' +
+                '<div style="font-size:11px;color:var(--mt-text-muted);font-family:var(--mt-font-mono);margin-top:2px;">' +
+                  '<code style="background:var(--mt-surface-3);padding:1px 5px;border-radius:4px;">' + accCode + '</code>' +
                   (accType ? ' <span style="color:' + typeColor + ';font-weight:600;font-family:inherit;">· ' + accType + '</span>' : '') +
                 '</div>' +
               '</td>' +
-              '<td style="color:#64748b;font-size:12px;">' + (e.description || '') + '</td>' +
-              '<td style="font-weight:800;color:#16a34a;text-align:end;font-family:monospace;">' + ((e.debit || 0) > 0 ? Number(e.debit).toFixed(2) : '') + '</td>' +
-              '<td style="font-weight:800;color:#ef4444;text-align:end;font-family:monospace;">' + ((e.credit || 0) > 0 ? Number(e.credit).toFixed(2) : '') + '</td>' +
+              '<td style="color:var(--mt-text-muted);font-size:12px;">' + (e.description || '') + '</td>' +
+              '<td class="ap-num ap-num--debit" style="font-weight:800;">' + ((e.debit || 0) > 0 ? Number(e.debit).toFixed(2) : '') + '</td>' +
+              '<td class="ap-num ap-num--credit" style="font-weight:800;">' + ((e.credit || 0) > 0 ? Number(e.credit).toFixed(2) : '') + '</td>' +
             '</tr>';
   });
-  html += '<tr style="background:#f1f5f9;">' +
+  html += '<tr class="jrn-foot-row">' +
             '<td colspan="2" style="font-weight:900;">الإجمالي</td>' +
-            '<td style="font-weight:900;color:#16a34a;text-align:end;font-family:monospace;">' + totalD.toFixed(2) + '</td>' +
-            '<td style="font-weight:900;color:#ef4444;text-align:end;font-family:monospace;">' + totalC.toFixed(2) + '</td>' +
+            '<td class="ap-num ap-num--debit" style="font-weight:900;">' + totalD.toFixed(2) + '</td>' +
+            '<td class="ap-num ap-num--credit" style="font-weight:900;">' + totalC.toFixed(2) + '</td>' +
           '</tr>';
   html += '</tbody></table>';
 
@@ -4303,27 +4315,29 @@ function _renderJournalDetail(j) {
   var isPosted = j.status === 'posted';
 
   if (isPosted) {
-    html += '<div style="margin-top:14px;padding:10px 14px;background:#f0fdf4;border:1.5px solid #bbf7d0;border-radius:10px;display:flex;align-items:center;gap:10px;font-size:12.5px;color:#15803d;">' +
-              '<i class="fas fa-lock" style="font-size:14px;"></i>' +
-              '<div>هذا القَيد <strong>مُرَحَّل ومَحفوظ</strong> — لا يَقبل التَّعديل أو الحذف حِفاظاً على سَلامة سجلات المحاسبة (SOCPA / IFRS). للتَّصحيح أنشِئ <strong>قَيداً عَكسياً</strong> يُلغي أثَره.</div>' +
+    html += '<div class="ap-doc-note">' +
+              '<i class="fas fa-lock" style="margin-left:6px;"></i>' +
+              'هذا القَيد <strong>مُرَحَّل ومَحفوظ</strong> — لا يَقبل التَّعديل أو الحذف حِفاظاً على سَلامة سجلات المحاسبة (SOCPA / IFRS). للتَّصحيح أنشِئ <strong>قَيداً عَكسياً</strong> يُلغي أثَره.' +
             '</div>';
   }
 
-  html += '<div style="display:flex;gap:8px;margin-top:14px;justify-content:flex-end;flex-wrap:wrap;">';
-  html += '<button class="btn btn-sm btn-secondary" onclick="erpPrintJournal(\'' + j.id + '\')" style="border-radius:10px;"><i class="fas fa-print"></i> طباعة</button>';
+  // ADLAN Stage C — action bar uses .ap-doc-actions + standard btn variants.
+  // Every onclick and every visibility condition is IDENTICAL to before.
+  html += '<div class="ap-doc-actions">';
+  html += '<button class="btn btn-sm btn-light" onclick="erpPrintJournal(\'' + j.id + '\')"><i class="fas fa-print"></i> طباعة</button>';
   // Edit / Approve / Post — ONLY pre-posted lifecycle
   if (isManual && !isPosted) {
-    html += '<button class="btn btn-sm" onclick="erpEditJournal(\'' + j.id + '\')" style="border-radius:10px;background:#3b82f6;color:#fff;"><i class="fas fa-edit"></i> تعديل</button>';
+    html += '<button class="btn btn-sm btn-primary" onclick="erpEditJournal(\'' + j.id + '\')"><i class="fas fa-edit"></i> تعديل</button>';
   }
   if (j.status === 'draft') {
-    html += '<button class="btn btn-sm" onclick="erpApproveJournal(\'' + j.id + '\');erpCloseDetailModal();" style="border-radius:10px;background:#0e7490;color:#fff;"><i class="fas fa-check-circle"></i> اعتماد</button>';
+    html += '<button class="btn btn-sm btn-primary" onclick="erpApproveJournal(\'' + j.id + '\');erpCloseDetailModal();"><i class="fas fa-check-circle"></i> اعتماد</button>';
   }
   if (j.status === 'approved') {
-    html += '<button class="btn btn-sm" onclick="erpPostJournal(\'' + j.id + '\');erpCloseDetailModal();" style="border-radius:10px;background:#16a34a;color:#fff;"><i class="fas fa-share-square"></i> ترحيل</button>';
+    html += '<button class="btn btn-sm btn-primary" onclick="erpPostJournal(\'' + j.id + '\');erpCloseDetailModal();"><i class="fas fa-share-square"></i> ترحيل</button>';
   }
   // Reversing Entry — only for posted journals (and only if no reversal exists yet).
   if (isPosted && !j.reversedByJournalId) {
-    html += '<button class="btn btn-sm" onclick="erpReverseJournal(\'' + j.id + '\',\'' + (j.journalNumber || '') + '\')" style="border-radius:10px;background:linear-gradient(135deg,#f59e0b,#d97706);color:#fff;"><i class="fas fa-right-left"></i> إنشاء قَيد عَكسي</button>';
+    html += '<button class="btn btn-sm btn-danger" onclick="erpReverseJournal(\'' + j.id + '\',\'' + (j.journalNumber || '') + '\')"><i class="fas fa-right-left"></i> إنشاء قَيد عَكسي</button>';
   }
   html += '</div>';
 
@@ -4681,11 +4695,14 @@ function erpPrintJournal(journalId) {
   var w = window.open('','_blank');
   w.document.write(
     '<html dir="rtl"><head><meta charset="UTF-8"><title>قيد ' + (j.journalNumber||'') + '</title>' +
-    '<style>*{margin:0;padding:0;box-sizing:border-box;}body{font-family:Arial,sans-serif;direction:rtl;padding:30px;color:#1e293b;font-size:13px;}' +
-    'h2{text-align:center;margin-bottom:4px;}h3{text-align:center;color:#64748b;margin-bottom:16px;}' +
-    '.info{display:grid;grid-template-columns:1fr 1fr 1fr 1fr;gap:10px;margin-bottom:16px;}.info div{background:#f8fafc;padding:10px;border-radius:8px;border:1px solid #e2e8f0;}.info .lbl{font-size:10px;color:#64748b;}.info .val{font-weight:700;}' +
-    'table{width:100%;border-collapse:collapse;margin:12px 0;}th,td{border:1px solid #ddd;padding:8px;text-align:right;}th{background:#f1f5f9;font-weight:700;}' +
-    '.sig{display:flex;justify-content:space-around;margin-top:40px;}.sig div{text-align:center;}.sig .line{width:120px;border-bottom:1px solid #94a3b8;padding-top:40px;margin:0 auto;}.sig .cap{font-size:11px;color:#64748b;margin-top:4px;}' +
+    /* ADLAN print identity — standalone popup has NO stylesheet links, so the
+       token values are written as literals (navy #0E1726 · petrol #0E7490 ·
+       border #E3E8EF · table head #F8FAFC · text #101828 · muted #64748B). */
+    '<style>*{margin:0;padding:0;box-sizing:border-box;}body{font-family:\'IBM Plex Sans Arabic\',Tajawal,Arial,sans-serif;direction:rtl;padding:30px;color:#101828;font-size:13px;}' +
+    'h2{text-align:center;margin-bottom:4px;color:#0E1726;}h3{text-align:center;color:#0E7490;margin-bottom:16px;}' +
+    '.info{display:grid;grid-template-columns:1fr 1fr 1fr 1fr;gap:10px;margin-bottom:16px;}.info div{background:#F8FAFC;padding:10px;border-radius:8px;border:1px solid #E3E8EF;}.info .lbl{font-size:10px;color:#64748B;}.info .val{font-weight:700;color:#101828;}' +
+    'table{width:100%;border-collapse:collapse;margin:12px 0;}th,td{border:1px solid #E3E8EF;padding:8px;text-align:right;}th{background:#F8FAFC;font-weight:700;color:#0E1726;}' +
+    '.sig{display:flex;justify-content:space-around;margin-top:40px;}.sig div{text-align:center;}.sig .line{width:120px;border-bottom:1px solid #64748B;padding-top:40px;margin:0 auto;}.sig .cap{font-size:11px;color:#64748B;margin-top:4px;}' +
     '@media print{body{padding:10px;}}</style></head><body>' +
     '<h2>' + company + '</h2><h3>قيد يومية — ' + (j.journalNumber||'') + '</h3>' +
     '<div class="info">' +
@@ -4789,15 +4806,15 @@ function _renderJournalForm() {
   section.innerHTML =
     '<div style="background:#fff;border:1px solid #e5e7eb;border-radius:12px;padding:0;margin:10px 0;">' +
       // Title bar
-      '<div style="display:flex;align-items:center;justify-content:space-between;padding:12px 20px;border-bottom:2px solid #0ea5e9;background:#f8fafc;border-radius:12px 12px 0 0;">' +
-        '<h3 style="margin:0;font-size:16px;color:#0f172a;"><i class="fas fa-file-invoice" style="color:#0ea5e9;margin-left:8px;"></i> القيود اليومية العامة</h3>' +
+      '<div style="display:flex;align-items:center;justify-content:space-between;padding:12px 20px;border-bottom:2px solid var(--mt-accent);background:#f8fafc;border-radius:12px 12px 0 0;">' +
+        '<h3 style="margin:0;font-size:16px;color:#0f172a;"><i class="fas fa-file-invoice" style="color:var(--mt-accent);margin-left:8px;"></i> القيود اليومية العامة</h3>' +
         '<button onclick="erpLoadJournals()" style="padding:6px 16px;border-radius:8px;border:1px solid #e5e7eb;background:#fff;cursor:pointer;font-size:13px;font-weight:700;color:#64748b;"><i class="fas fa-arrow-right" style="margin-left:4px;"></i> رجوع للقائمة</button>' +
       '</div>' +
       // Header fields
       '<div style="display:grid;grid-template-columns:1fr 1fr 1fr 1fr 1fr;gap:12px;padding:16px 20px;background:#f1f5f9;border-bottom:1px solid #e5e7eb;">' +
         '<div><label style="font-size:11px;font-weight:700;color:#64748b;display:block;margin-bottom:4px;">رقم الحركة *</label><input class="form-control" id="erpJrnNum" placeholder="تلقائي" readonly style="background:#e2e8f0;color:#94a3b8;"></div>' +
         '<div><label style="font-size:11px;font-weight:700;color:#64748b;display:block;margin-bottom:4px;">التاريخ *</label><input type="date" class="form-control" id="erpJrnDate" value="' + today + '"></div>' +
-        '<div><label style="font-size:11px;font-weight:700;color:#64748b;display:block;margin-bottom:4px;">اليومية *</label><div style="display:flex;gap:4px;"><input class="form-control" id="erpJrnTypeName" value="' + typeName + '" readonly style="background:#e0f2fe;color:#0369a1;font-weight:700;cursor:pointer;" onclick="erpOpenJrnTypePicker()"><button onclick="erpOpenJrnTypePicker()" style="padding:6px 10px;border-radius:8px;border:1px solid #e5e7eb;background:#fff;cursor:pointer;"><i class="fas fa-pen"></i></button></div></div>' +
+        '<div><label style="font-size:11px;font-weight:700;color:#64748b;display:block;margin-bottom:4px;">اليومية *</label><div style="display:flex;gap:4px;"><input class="form-control" id="erpJrnTypeName" value="' + typeName + '" readonly style="background:var(--mt-accent-soft);color:var(--mt-accent);font-weight:700;cursor:pointer;" onclick="erpOpenJrnTypePicker()"><button onclick="erpOpenJrnTypePicker()" style="padding:6px 10px;border-radius:8px;border:1px solid #e5e7eb;background:#fff;cursor:pointer;"><i class="fas fa-pen"></i></button></div></div>' +
         '<div><label style="font-size:11px;font-weight:700;color:#64748b;display:block;margin-bottom:4px;">النظام</label><input class="form-control" value="الحسابات العامة" readonly style="background:#f8fafc;color:#64748b;"></div>' +
         '<div><label style="font-size:11px;font-weight:700;color:#64748b;display:block;margin-bottom:4px;">نوع الحركة</label><select class="form-control" id="erpJrnMovType"><option value="general">عام</option><option value="opening">افتتاحي</option><option value="closing">إقفال</option><option value="adjustment">تسوية</option></select></div>' +
       '</div>' +
@@ -4815,19 +4832,19 @@ function _renderJournalForm() {
         '</div>' +
         '<div style="display:grid;grid-template-columns:1fr 1fr 1fr 1fr;gap:10px;">' +
           '<div><label style="font-size:10.5px;font-weight:700;color:#64748b;display:block;margin-bottom:3px;">🏷️ البراند</label>' +
-            '<select class="form-control" id="erpJrnBrand" style="font-size:13px;"><option value="">— الكل —</option>' +
+            '<select class="form-control" id="erpJrnBrand"><option value="">— الكل —</option>' +
               _jrnBrands.map(function(b){return '<option value="'+b.id+'">'+(b.name||'')+'</option>';}).join('') +
             '</select></div>' +
           '<div><label style="font-size:10.5px;font-weight:700;color:#64748b;display:block;margin-bottom:3px;">🏢 الفرع</label>' +
-            '<select class="form-control" id="erpJrnBranch" style="font-size:13px;"><option value="">— الكل —</option>' +
+            '<select class="form-control" id="erpJrnBranch"><option value="">— الكل —</option>' +
               _jrnBranches.map(function(b){return '<option value="'+b.id+'">'+(b.name||'')+'</option>';}).join('') +
             '</select></div>' +
           '<div><label style="font-size:10.5px;font-weight:700;color:#64748b;display:block;margin-bottom:3px;">📋 المشروع</label>' +
-            '<select class="form-control" id="erpJrnProject" style="font-size:13px;"><option value="">— لا يوجد —</option>' +
+            '<select class="form-control" id="erpJrnProject"><option value="">— لا يوجد —</option>' +
               _jrnProjects.map(function(p){return '<option value="'+p.id+'">'+(p.nameAr||p.name||p.code||'')+'</option>';}).join('') +
             '</select></div>' +
           '<div><label style="font-size:10.5px;font-weight:700;color:#64748b;display:block;margin-bottom:3px;">🎯 مركز التكلفة</label>' +
-            '<select class="form-control" id="erpJrnCC" style="font-size:13px;"><option value="">— لا يوجد —</option>' +
+            '<select class="form-control" id="erpJrnCC"><option value="">— لا يوجد —</option>' +
               _jrnCostCenters.map(function(c){return '<option value="'+c.id+'" data-name="'+(c.name||'')+'">'+(c.code||'')+' — '+(c.name||'')+'</option>';}).join('') +
             '</select></div>' +
         '</div>' +
@@ -4838,7 +4855,7 @@ function _renderJournalForm() {
           '<span style="font-size:14px;font-weight:800;color:#1e293b;">تفاصيل القيد اليومي</span>' +
         '</div>' +
         '<div style="display:flex;gap:6px;">' +
-          '<button onclick="erpAddJrnLine()" style="width:30px;height:30px;border-radius:50%;border:none;background:#0ea5e9;color:#fff;cursor:pointer;font-size:14px;" title="إضافة سطر"><i class="fas fa-plus"></i></button>' +
+          '<button onclick="erpAddJrnLine()" style="width:30px;height:30px;border-radius:50%;border:none;background:var(--mt-accent);color:#fff;cursor:pointer;font-size:14px;" title="إضافة سطر"><i class="fas fa-plus"></i></button>' +
           '<label for="erpExcelUpload" style="width:30px;height:30px;border-radius:50%;border:1px solid #e5e7eb;background:#fff;color:#16a34a;cursor:pointer;font-size:14px;display:flex;align-items:center;justify-content:center;" title="استيراد من Excel"><i class="fas fa-file-excel"></i></label>' +
           '<input type="file" id="erpExcelUpload" accept=".xlsx,.xls,.csv" onchange="erpImportExcel(this)" style="display:none;">' +
         '</div>' +
@@ -4858,10 +4875,10 @@ function _renderJournalForm() {
           '<tbody id="erpJrnLines"></tbody>' +
           '<tfoot><tr style="background:#f1f5f9;border-top:2px solid #cbd5e1;">' +
             '<td colspan="2" style="padding:10px 8px;font-weight:800;color:#1e293b;">مجموع</td>' +
-            '<td style="padding:10px 8px;"><input class="form-control" id="erpJrnTotalD" readonly style="background:#ecfdf5;color:#166534;font-weight:900;text-align:center;border:none;" value="0.00"></td>' +
-            '<td style="padding:10px 8px;"><input class="form-control" id="erpJrnTotalC" readonly style="background:#fef2f2;color:#991b1b;font-weight:900;text-align:center;border:none;" value="0.00"></td>' +
+            '<td style="padding:10px 8px;"><input class="form-control ap-num" id="erpJrnTotalD" dir="ltr" readonly style="background:#ecfdf5;color:#166534;font-weight:900;text-align:center;border:none;" value="0.00"></td>' +
+            '<td style="padding:10px 8px;"><input class="form-control ap-num" id="erpJrnTotalC" dir="ltr" readonly style="background:#fef2f2;color:#991b1b;font-weight:900;text-align:center;border:none;" value="0.00"></td>' +
             '<td style="padding:10px 8px;font-weight:700;color:#64748b;">الفرق</td>' +
-            '<td style="padding:10px 8px;"><input class="form-control" id="erpJrnDiff" readonly style="font-weight:900;text-align:center;border:none;" value="0.00"></td>' +
+            '<td style="padding:10px 8px;"><input class="form-control ap-num" id="erpJrnDiff" dir="ltr" readonly style="font-weight:900;text-align:center;border:none;" value="0.00"></td>' +
             '<td></td>' +
           '</tr></tfoot>' +
         '</table>' +
@@ -4872,9 +4889,9 @@ function _renderJournalForm() {
       '</div>' +
       // Action buttons
       '<div style="display:flex;align-items:center;gap:8px;padding:16px 20px;border-top:1px solid #e5e7eb;background:#f8fafc;border-radius:0 0 12px 12px;">' +
-        '<button onclick="erpSaveJournal(false)" style="padding:10px 28px;border-radius:8px;border:none;background:#1e40af;color:#fff;font-weight:800;font-size:14px;cursor:pointer;"><i class="fas fa-save" style="margin-left:6px;"></i> حفظ</button>' +
-        '<button onclick="erpSaveJournal(true)" style="padding:10px 20px;border-radius:8px;border:2px solid #1e40af;background:#fff;color:#1e40af;font-weight:800;font-size:14px;cursor:pointer;"><i class="fas fa-plus" style="margin-left:6px;"></i> حفظ و جديد</button>' +
-        '<button onclick="erpSaveAndPost()" style="padding:10px 20px;border-radius:8px;border:none;background:#ef4444;color:#fff;font-weight:800;font-size:14px;cursor:pointer;"><i class="fas fa-check-double" style="margin-left:6px;"></i> حفظ وترحيل</button>' +
+        '<button onclick="erpSaveJournal(false)" style="padding:10px 28px;border-radius:8px;border:none;background:var(--mt-accent);color:#fff;font-weight:800;font-size:14px;cursor:pointer;"><i class="fas fa-save" style="margin-left:6px;"></i> حفظ</button>' +
+        '<button onclick="erpSaveJournal(true)" style="padding:10px 20px;border-radius:8px;border:2px solid var(--mt-accent);background:#fff;color:var(--mt-accent);font-weight:800;font-size:14px;cursor:pointer;"><i class="fas fa-plus" style="margin-left:6px;"></i> حفظ و جديد</button>' +
+        '<button onclick="erpSaveAndPost()" style="padding:10px 20px;border-radius:8px;border:none;background:var(--mt-danger);color:#fff;font-weight:800;font-size:14px;cursor:pointer;"><i class="fas fa-check-double" style="margin-left:6px;"></i> حفظ وترحيل</button>' +
         '<button onclick="erpLoadJournals()" style="padding:10px 20px;border-radius:8px;border:2px solid #e5e7eb;background:#fff;color:#475569;font-weight:800;font-size:14px;cursor:pointer;">إلغاء</button>' +
       '</div>' +
     '</div>';
@@ -4895,18 +4912,21 @@ function erpAddJrnLine(prefill) {
   tr.id = lineId;
   tr.style.borderBottom = '1px solid #f1f5f9';
   var p = prefill || {};
+  // ADLAN Stage C — line inputs lean on .form-control (admin-skin: 40px /
+  // radius-8 / token border); conflicting inline font/padding styles dropped.
+  // Amount inputs carry dir="ltr" + .ap-num (mono, tabular digits).
   tr.innerHTML =
     '<td style="padding:6px 4px;position:relative;">' +
-      '<input type="text" class="form-control jec-code" placeholder="رقم أو اسم..." value="' + (p.code||'') + '" style="font-size:13px;padding:8px;" oninput="erpSearchAccount(this)" onfocus="erpSearchAccount(this)">' +
+      '<input type="text" class="form-control jec-code" placeholder="رقم أو اسم..." value="' + (p.code||'') + '" oninput="erpSearchAccount(this)" onfocus="erpSearchAccount(this)">' +
       '<input type="hidden" class="jec-acc-id" value="' + (p.id||'') + '">' +
       '<div class="jec-dropdown" style="display:none;position:absolute;top:100%;right:0;left:0;z-index:100;background:#fff;border:1px solid #e5e7eb;border-radius:8px;max-height:200px;overflow-y:auto;box-shadow:0 4px 12px rgba(0,0,0,.1);"></div>' +
     '</td>' +
-    '<td style="padding:6px 4px;position:relative;"><input type="text" class="form-control jec-acc-name" placeholder="ابحث بالاسم..." value="' + (p.name||'') + '" style="font-size:13px;padding:8px;" oninput="erpSearchAccountByName(this)" onfocus="erpSearchAccountByName(this)"><div class="jec-dropdown-name" style="display:none;position:absolute;top:100%;right:0;left:0;z-index:100;background:#fff;border:1px solid #e5e7eb;border-radius:8px;max-height:200px;overflow-y:auto;box-shadow:0 4px 12px rgba(0,0,0,.1);"></div></td>' +
-    '<td style="padding:6px 4px;"><input type="number" class="form-control jec-debit" step="0.01" min="0" placeholder="0" value="' + (p.debit||'') + '" style="font-size:13px;padding:8px;text-align:center;" oninput="erpCalcJrnBalance()"></td>' +
-    '<td style="padding:6px 4px;"><input type="number" class="form-control jec-credit" step="0.01" min="0" placeholder="0" value="' + (p.credit||'') + '" style="font-size:13px;padding:8px;text-align:center;" oninput="erpCalcJrnBalance()"></td>' +
-    '<td style="padding:6px 4px;"><input type="text" class="form-control jec-desc" placeholder="" value="' + (p.desc||'') + '" style="font-size:13px;padding:8px;"></td>' +
-    '<td style="padding:6px 4px;"><select class="form-control jec-cc" style="font-size:12px;padding:6px;"><option value="">—</option>' + _jrnCostCenters.map(function(c){return '<option value="'+c.id+'" data-name="'+(c.name||'')+'">'+c.code+' — '+(c.name||'')+'</option>';}).join('') + '</select></td>' +
-    '<td style="padding:6px 4px;text-align:center;"><button style="width:28px;height:28px;border-radius:6px;border:1px solid #fecaca;background:#fee2e2;color:#ef4444;cursor:pointer;font-size:11px;" onclick="erpRemoveJrnLine(\'' + lineId + '\')" title="حذف"><i class="fas fa-trash"></i></button></td>';
+    '<td style="padding:6px 4px;position:relative;"><input type="text" class="form-control jec-acc-name" placeholder="ابحث بالاسم..." value="' + (p.name||'') + '" oninput="erpSearchAccountByName(this)" onfocus="erpSearchAccountByName(this)"><div class="jec-dropdown-name" style="display:none;position:absolute;top:100%;right:0;left:0;z-index:100;background:#fff;border:1px solid #e5e7eb;border-radius:8px;max-height:200px;overflow-y:auto;box-shadow:0 4px 12px rgba(0,0,0,.1);"></div></td>' +
+    '<td style="padding:6px 4px;"><input type="number" class="form-control ap-num jec-debit" dir="ltr" step="0.01" min="0" placeholder="0" value="' + (p.debit||'') + '" oninput="erpCalcJrnBalance()"></td>' +
+    '<td style="padding:6px 4px;"><input type="number" class="form-control ap-num jec-credit" dir="ltr" step="0.01" min="0" placeholder="0" value="' + (p.credit||'') + '" oninput="erpCalcJrnBalance()"></td>' +
+    '<td style="padding:6px 4px;"><input type="text" class="form-control jec-desc" placeholder="" value="' + (p.desc||'') + '"></td>' +
+    '<td style="padding:6px 4px;"><select class="form-control jec-cc"><option value="">—</option>' + _jrnCostCenters.map(function(c){return '<option value="'+c.id+'" data-name="'+(c.name||'')+'">'+c.code+' — '+(c.name||'')+'</option>';}).join('') + '</select></td>' +
+    '<td style="padding:6px 4px;text-align:center;"><button style="width:28px;height:28px;border-radius:6px;border:1px solid var(--mt-danger-line);background:var(--mt-danger-soft);color:var(--mt-danger);cursor:pointer;font-size:11px;" onclick="erpRemoveJrnLine(\'' + lineId + '\')" title="حذف"><i class="fas fa-trash"></i></button></td>';
   document.getElementById('erpJrnLines').appendChild(tr);
 
   // Auto-match account if prefilled

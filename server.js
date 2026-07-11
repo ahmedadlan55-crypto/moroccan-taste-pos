@@ -671,23 +671,27 @@ try { app.use('/api/erp', require('./routes/erp/zatca')); } catch(e){ console.wa
 try { app.use('/api/erp', require('./routes/erp/reports/ar-aging')); } catch(e){ console.warn('[mod:ar-aging]', e.message); }
 try { app.use('/api/erp', require('./routes/erp/reports/ap-aging')); } catch(e){ console.warn('[mod:ap-aging]', e.message); }
 try { app.use('/api/erp', require('./routes/erp/periods'));            } catch(e){ console.warn('[mod:periods]', e.message); }
+// v7.x SECURITY (RBAC) — financial/admin modules are gated to an elevated role
+// at the mount point (default-deny for cashier/employee). requireRole fails
+// closed: an empty/unknown role normalizes to the least-privileged 'cashier'.
+const { requireRole } = require('./middleware/auth');
 // V5 Enterprise modules (Real-Estate / Contracts / WorkOrders / AP-AR / Approval Matrix)
-try { app.use('/api/properties', require('./routes/properties')); } catch(e){ console.warn('[mod:properties]', e.message); }
-try { app.use('/api/contracts', require('./routes/contracts')); } catch(e){ console.warn('[mod:contracts]', e.message); }
-try { app.use('/api/work-orders', require('./routes/work-orders')); } catch(e){ console.warn('[mod:work-orders]', e.message); }
-try { app.use('/api/ap-invoices', require('./routes/ap-invoices')); } catch(e){ console.warn('[mod:ap-inv]', e.message); }
-try { app.use('/api/ar-invoices', require('./routes/ar-invoices')); } catch(e){ console.warn('[mod:ar-inv]', e.message); }
-try { app.use('/api/approval-matrix', require('./routes/approval-matrix')); } catch(e){ console.warn('[mod:matrix]', e.message); }
-try { app.use('/api/budgets', require('./routes/budgets')); } catch(e){ console.warn('[mod:budgets]', e.message); }
-try { app.use('/api/anomalies', require('./routes/anomalies')); } catch(e){ console.warn('[mod:anomalies]', e.message); }
+try { app.use('/api/properties', requireRole('admin','manager'), require('./routes/properties')); } catch(e){ console.warn('[mod:properties]', e.message); }
+try { app.use('/api/contracts', requireRole('admin','manager'), require('./routes/contracts')); } catch(e){ console.warn('[mod:contracts]', e.message); }
+try { app.use('/api/work-orders', requireRole('admin','manager'), require('./routes/work-orders')); } catch(e){ console.warn('[mod:work-orders]', e.message); }
+try { app.use('/api/ap-invoices', requireRole('admin','manager'), require('./routes/ap-invoices')); } catch(e){ console.warn('[mod:ap-inv]', e.message); }
+try { app.use('/api/ar-invoices', requireRole('admin','manager'), require('./routes/ar-invoices')); } catch(e){ console.warn('[mod:ar-inv]', e.message); }
+try { app.use('/api/approval-matrix', requireRole('admin','manager'), require('./routes/approval-matrix')); } catch(e){ console.warn('[mod:matrix]', e.message); }
+try { app.use('/api/budgets', requireRole('admin','manager'), require('./routes/budgets')); } catch(e){ console.warn('[mod:budgets]', e.message); }
+try { app.use('/api/anomalies', requireRole('admin','manager'), require('./routes/anomalies')); } catch(e){ console.warn('[mod:anomalies]', e.message); }
 try { app.use('/api/activity-log', require('./routes/activity-log')); } catch(e){ console.warn('[mod:activity-log]', e.message); }
 try { app.use('/api/channel-menus', require('./routes/channel-menu')); } catch(e){ console.warn('[mod:channel-menu]', e.message); }
 try { app.use('/api/stocktake-pro', require('./routes/stocktake-pro')); } catch(e){ console.warn('[mod:stocktake-pro]', e.message); }
 app.use('/api/dashboard', require('./routes/dashboard'));
-app.use('/api/custody', require('./routes/custody'));
-app.use('/api/cash', require('./routes/cash'));
+app.use('/api/custody', requireRole('admin','manager','custody'), require('./routes/custody'));
+app.use('/api/cash', requireRole('admin','manager'), require('./routes/cash'));
 app.use('/api/workflow', require('./routes/workflow'));
-app.use('/api/hr', require('./routes/hr'));
+app.use('/api/hr', requireRole('admin','manager'), require('./routes/hr'));
 // V4 — counters, SLA, SSE inbox stream, metrics, workflow-routes JSON-DSL
 app.use('/api/counters', require('./routes/counters'));
 const _slaRouter = require('./routes/sla');

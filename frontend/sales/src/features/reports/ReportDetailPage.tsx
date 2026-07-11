@@ -89,7 +89,7 @@ export function ReportDetailPage() {
         )}
 
       {q.data?.totals && Object.keys(q.data.totals).length > 0 && (
-        <div className="mt-4 flex flex-wrap gap-3 no-print">
+        <div className="mt-4 flex flex-wrap gap-3">
           {Object.entries(q.data.totals).map(([k, v]) => (
             <span key={k} className="rounded-xl bg-slate-100 px-3 py-1.5 text-sm font-bold text-slate-600">
               {k}: <span dir="ltr" className="tabular-nums text-slate-900">{formatNumber(Number(v))}</span>

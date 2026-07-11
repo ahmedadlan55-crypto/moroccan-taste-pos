@@ -36,13 +36,15 @@ export function formatQty(value: number | null | undefined, unit?: string): stri
   return unit ? `${n} ${unit}` : n;
 }
 
-// Arabic month/day names, LATIN digits (numberingSystem 'latn').
-const _dateTime = new Intl.DateTimeFormat("ar-SA", {
+// Arabic month/day names, LATIN digits (numberingSystem 'latn'), GREGORIAN
+// calendar (financial documents use Gregorian dates, never Hijri).
+const _dateTime = new Intl.DateTimeFormat("ar", {
   dateStyle: "medium",
   timeStyle: "short",
   numberingSystem: "latn",
+  calendar: "gregory",
 });
-const _date = new Intl.DateTimeFormat("ar-SA", { dateStyle: "medium", numberingSystem: "latn" });
+const _date = new Intl.DateTimeFormat("ar", { dateStyle: "medium", numberingSystem: "latn", calendar: "gregory" });
 
 function _parse(value: string | null | undefined): Date | null {
   if (!value) return null;

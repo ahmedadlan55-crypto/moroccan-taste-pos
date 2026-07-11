@@ -19,6 +19,7 @@ export default defineConfig(({ command }) => ({
   },
   server: {
     port: 5175,
+    strictPort: true,
     hmr: process.env.VITE_NO_HMR ? false : undefined,
     proxy: {
       "/api": { target: BACKEND, changeOrigin: true },

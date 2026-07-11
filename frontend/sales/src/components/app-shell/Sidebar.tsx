@@ -11,9 +11,9 @@ export function Sidebar() {
   const items = navItems.filter((i) => can(i.cap));
 
   return (
-    <aside className="fixed inset-y-0 right-0 z-30 hidden w-72 flex-col bg-slate-900 text-slate-100 lg:flex no-print">
+    <aside className="fixed inset-y-0 right-0 z-30 hidden w-72 flex-col bg-[#0e1726] text-slate-100 lg:flex no-print">
       <div className="flex items-center gap-3 border-b border-white/10 px-5 py-5">
-        <span className="grid h-11 w-11 place-items-center rounded-2xl bg-teal-500 text-white">
+        <span className="grid h-11 w-11 place-items-center rounded-2xl bg-teal-600 text-white">
           <ShoppingBag className="h-5 w-5" />
         </span>
         <div className="min-w-0">
@@ -33,7 +33,7 @@ export function Sidebar() {
                   className={({ isActive }) =>
                     cn(
                       "flex min-h-11 items-center gap-3 rounded-xl px-3 py-2 text-sm font-bold transition",
-                      isActive ? "bg-teal-500 text-white shadow-sm" : "text-slate-300 hover:bg-white/5 hover:text-white",
+                      isActive ? "bg-teal-600 text-white shadow-sm" : "text-slate-300 hover:bg-white/5 hover:text-white",
                     )
                   }
                 >

@@ -65,7 +65,7 @@
   }
 
   .nav-item-active {
-    @apply bg-white text-slate-900 shadow-lg shadow-black/10 hover:bg-white hover:text-slate-900;
+    @apply bg-teal-600 text-white shadow-lg shadow-black/10 hover:bg-teal-600 hover:text-white;
   }
 }
 

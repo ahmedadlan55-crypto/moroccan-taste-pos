@@ -22,7 +22,7 @@
   --warning:       var(--mt-warning);
 }
 
-* { margin: 0; padding: 0; box-sizing: border-box; font-family: 'Segoe UI', system-ui, sans-serif; }
+* { margin: 0; padding: 0; box-sizing: border-box; font-family: var(--mt-font); }
 body { background: var(--bg-color); color: var(--text-dark); overflow-x: hidden; }
 body.ar { direction: rtl; }
 body.en { direction: ltr; }

@@ -1,40 +1,41 @@
 import type { Config } from "tailwindcss";
 
-// Design tokens shared with the warehouse-v2 app (frontend/warehouse) —
-// Teal primary, Saffron secondary, dark ink — so the whole V2 family reads
-// as one product. POS additions: bigger touch minima + amber "offline" hue.
+// ADLAN ERP design tokens — a single petrol accent (#0E7490), dark-navy chrome
+// (#0E1726), cool-neutral surfaces, and IBM Plex Sans Arabic. Mapped onto the
+// EXISTING token names (teal / saffron / ink / canvas) so every component adopts
+// the new identity with zero code changes — presentation only, no logic touched.
 export default {
   content: ["./index.html", "./src/**/*.{ts,tsx}"],
   theme: {
     extend: {
       fontFamily: {
-        sans: ["Tajawal", "Segoe UI", "Tahoma", "Arial", "sans-serif"],
+        sans: ["IBM Plex Sans Arabic", "Tajawal", "Segoe UI", "Tahoma", "Arial", "sans-serif"],
       },
       colors: {
-        ink: "#172033",
-        canvas: "#f5f7fb",
+        ink: "#101828",
+        canvas: "#f2f5f9",
         teal: {
-          50: "#effcf9",
-          100: "#d7f7ef",
-          200: "#aeeede",
-          500: "#18a383",
-          600: "#0c8b6f",
-          700: "#0b6f5b",
+          50: "#e6f3f7",
+          100: "#cfe9f1",
+          200: "#a5d8e6",
+          500: "#1591b0",
+          600: "#0e7490",
+          700: "#155e75",
         },
         saffron: {
-          50: "#fff9ed",
-          100: "#fff0ce",
-          500: "#e7a527",
-          600: "#c78113",
+          50: "#fffbeb",
+          100: "#fef3c7",
+          500: "#d97706",
+          600: "#b45309",
         },
       },
       borderRadius: {
-        xl: "0.75rem",
-        "2xl": "1rem",
+        xl: "0.625rem", // 10px — buttons/controls
+        "2xl": "0.875rem", // 14px — cards/surfaces
       },
       boxShadow: {
-        soft: "0 18px 45px -28px rgba(15, 23, 42, .35)",
-        lift: "0 20px 60px -30px rgba(15, 23, 42, .45)",
+        soft: "0 2px 8px rgba(15, 23, 42, 0.06)",
+        lift: "0 8px 20px rgba(15, 23, 42, 0.10)",
       },
       minHeight: {
         11: "2.75rem", // 44px touch target

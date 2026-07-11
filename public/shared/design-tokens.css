@@ -21,18 +21,20 @@
  * Do NOT inline hex colours in component CSS — read from var()
  * so brand updates take one edit.
  * ──────────────────────────────────────────────────────────────── */
-:root {
-  /* Brand — App chrome (Ink/Slate) */
-  --mt-primary:     #1e293b;
-  --mt-primary-rgb: 30, 41, 59;       /* v5.10.96 — for rgba() */
-  --mt-primary-2:   #0f172a;
-  --mt-primary-soft:#CCFBF1;           /* Wave1 — soft fill for primary action */
+@import url("https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+Arabic:wght@400;500;600;700&display=swap");
 
-  /* Brand — Interactive accent (Zellige Teal) */
-  --mt-accent:      #0F766E;           /* Wave1 — was #7c3aed (purple) */
-  --mt-accent-rgb:  15, 118, 110;      /* Wave1 — for rgba() */
-  --mt-accent-2:    #115E59;           /* Wave1 — hover/active */
-  --mt-accent-soft: #CCFBF1;           /* Wave1 — teal-50 tint */
+:root {
+  /* Brand — App chrome (ADLAN dark navy) */
+  --mt-primary:     #0e1726;
+  --mt-primary-rgb: 14, 23, 38;        /* ADLAN navy chrome */
+  --mt-primary-2:   #0e1726;
+  --mt-primary-soft:#E6F3F7;           /* ADLAN — petrol soft fill */
+
+  /* Brand — Interactive accent (ADLAN petrol) */
+  --mt-accent:      #0E7490;           /* ADLAN petrol accent */
+  --mt-accent-rgb:  14, 116, 144;      /* ADLAN petrol */
+  --mt-accent-2:    #155E75;           /* ADLAN petrol hover/active */
+  --mt-accent-soft: #E6F3F7;           /* ADLAN petrol tint */
 
   /* Brand — Warmth (Saffron) — Wave1 additive */
   --mt-warm:        #D97706;
@@ -46,19 +48,19 @@
   --mt-danger-rgb:  220, 38, 38;      /* v5.10.96 — for rgba() */
   --mt-danger-2:    #b91c1c;
   --mt-danger-soft: #FEE2E2;           /* Wave1 additive */
-  --mt-warning:     #f59e0b;
+  --mt-warning:     #D97706;
   --mt-info:        #0369A1;           /* Wave1 — Atlas Blue (was #0284c7) */
   --mt-info-soft:   #E0F2FE;           /* Wave1 additive */
 
   /* Neutrals */
-  --mt-bg:          #f1f5f9;
+  --mt-bg:          #f2f5f9;
   --mt-surface:     #ffffff;
   --mt-surface-2:   #f8fafc;
-  --mt-border:      #e2e8f0;
+  --mt-border:      #E3E8EF;
   --mt-divider:     rgba(0, 0, 0, 0.06);
 
   /* Text */
-  --mt-text:        #0f172a;
+  --mt-text:        #101828;
   --mt-text-muted:  #64748b;
   --mt-text-light:  #94a3b8;
 
@@ -86,8 +88,8 @@
   --mt-shadow-lg:   0 16px 40px rgba(15, 23, 42, 0.20);
 
   /* Typography */
-  --mt-font:        -apple-system, BlinkMacSystemFont, "SF Pro Display",
-                    "Segoe UI", "Tahoma", "Cairo", Arial, sans-serif;
+  --mt-font:        "IBM Plex Sans Arabic", "Tajawal", "Segoe UI",
+                    "Tahoma", "Cairo", Arial, sans-serif;
   --mt-font-mono:   ui-monospace, "SFMono-Regular", "Menlo", monospace;
 }
 

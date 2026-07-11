@@ -286,14 +286,45 @@ body {
 .badge.gray,   .badge.draft,   .badge.cancelled{ background: #F1F5F9 !important; color: #475569 !important; border-color: #E2E8F0 !important; }
 .badge.posted                                  { background: #E0E7FF !important; color: #3730A3 !important; border-color: #C7D2FE !important; }
 
-/* ───────────── 10. Modals — radius 16 · shadow lg ───────────── */
-.modal-content, .glass-modal-content {
-  border-radius: 16px !important;
-  box-shadow: var(--sh-lg) !important;
+/* ───────────── 10. Windows — modals / drawers / overlays (ADLAN) ─────────────
+   4-layer z-hierarchy: popover 55 · drawer 60 · modal 70 · palette 80.
+   Overlay .5 · centered box radius 18 + shadow lg · header/footer dividers. */
+.modal-overlay, .wo-modal-overlay, .modal-backdrop {
+  background: rgba(15,23,42,0.5) !important;
+}
+.modal-content, .modal-box, .wo-modal, .erp-modal-box, .glass-modal-content {
+  border-radius: 18px !important;
+  box-shadow: 0 16px 40px rgba(15,23,42,0.30) !important;
+  background: #fff !important;
+  border: 1px solid #E3E8EF !important;
 }
 .glass-modal-content { background: rgba(255,255,255,0.98) !important; }
-.glass-modal-title i { color: #0E7490 !important; }
-.glass-modal-close:hover { background: #FEE2E2 !important; color: #DC2626 !important; }
+.modal-header, .wo-modal-header {
+  padding: 16px 20px !important;
+  border-bottom: 1px solid #EDF1F5 !important;
+}
+.modal-title, .wo-modal-title, .glass-modal-title {
+  font-size: 16px !important; font-weight: 700 !important; color: #101828 !important; letter-spacing: -0.2px !important;
+}
+.glass-modal-title i, .modal-title i { color: #0E7490 !important; }
+.modal-body, .wo-modal-body { padding: 18px 20px !important; }
+.modal-footer, .wo-modal-footer {
+  padding: 14px 20px !important;
+  border-top: 1px solid #EDF1F5 !important;
+  background: #FBFCFE !important;
+}
+.modal-close, .wo-modal-close, .glass-modal-close {
+  width: 32px !important; height: 32px !important;
+  border-radius: 8px !important;
+  background: #F1F5F9 !important;
+  color: #64748B !important;
+  border: 0 !important;
+  display: inline-flex !important; align-items: center; justify-content: center;
+  transition: background 140ms, color 140ms;
+}
+.modal-close:hover, .wo-modal-close:hover, .glass-modal-close:hover {
+  background: #E2E8F0 !important; color: #334155 !important;
+}
 
 /* ───────────── 11. Toasts ───────────── */
 .toast {

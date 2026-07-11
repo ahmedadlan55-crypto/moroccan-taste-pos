@@ -27,8 +27,8 @@
         <div class="submenu">
           <div class="nav-item" onclick="window.open('/pos/','_blank')" style="background:linear-gradient(90deg,rgba(34,197,94,.15),transparent);"><i class="fas fa-cash-register" style="color:#22c55e;"></i><span data-i18n="nav.openPOS">فتح شاشة الكاشير POS</span></div>
           <!-- Order-to-Cash unified section — shown only when ORDER_TO_CASH_ENABLE=1 (see applyOrderToCashNav). Opens the /sales SPA in the same tab. -->
-          <div class="nav-item" id="o2c-unified-nav" style="display:none;background:linear-gradient(90deg,rgba(13,148,136,.15),transparent);" onclick="location.href='/sales'"><i class="fas fa-file-invoice-dollar" style="color:#0d9488;"></i><span>المبيعات والعملاء</span></div>
-          <div class="nav-item" data-legacy-o2c="1" onclick="nav('sales')"><i class="fas fa-receipt"></i><span data-i18n="nav.sales">المبيعات</span></div>
+          <div class="nav-item" id="o2c-unified-nav" onclick="location.href='/sales'"><i class="fas fa-file-invoice-dollar"></i><span>المبيعات والعملاء</span></div>
+          <!-- [تنقية ADLAN] «المبيعات» legacy (nav('sales')) أُزيل — مكرّر مع «المبيعات والعملاء» → /sales (React). لا حذف لأي API. -->
           <div class="nav-item" onclick="nav('shifts')"><i class="fas fa-folder-open"></i><span data-i18n="nav.shiftsLog">سجل المناوبات</span></div>
         </div>
 
@@ -44,60 +44,19 @@
           <div class="nav-item" data-erp-nav="erpItemCategories" onclick="erpNav('erpItemCategories')"><i class="fas fa-folder-tree"></i><span data-i18n="nav.categories">تصنيفات الأصناف</span></div>
         </div>
 
-        <!-- 4-pre. المستودعات (نظام V2 الموحد) — رابط واحد يفتح /warehouse في نفس
-             التبويب وبنفس الجلسة. يظهر فقط عندما يكون WAREHOUSE_V2_ENABLED مفعّلًا
-             (نفس علم header.js المشترك — يُقلَب من _applyWhV2Nav في app.js). -->
-        <a class="nav-item" href="/warehouse" data-wh-v2-link style="display:none;text-decoration:none;color:inherit;background:linear-gradient(90deg,rgba(14,165,233,.16),transparent);font-weight:800;">
-          <i class="fas fa-warehouse" style="color:#0ea5e9;"></i><span data-i18n="nav.warehouseV2">إدارة المستودعات</span>
+        <!-- 4. المخزون والمستودعات (React V2) — رابط واحد يفتح /warehouse بنفس الجلسة. -->
+        <a class="nav-item" href="/warehouse" style="text-decoration:none;color:inherit;">
+          <i class="fas fa-warehouse"></i><span data-i18n="nav.warehouseV2">المخزون والمستودعات</span>
         </a>
 
-        <!-- 4. المخزون والمستودعات — الواجهة القديمة (rollback). تُخفى تلقائيًا لمستخدمي
-             Canary الذين يستخدمون /warehouse عبر _applyWhV2Nav — لا قسمان معًا. -->
-        <div class="nav-item has-submenu" data-wh-legacy-nav onclick="toggleSubmenu(this)">
-          <i class="fas fa-warehouse"></i><span data-i18n="nav.inventory">المخزون والمستودعات</span><i class="fas fa-chevron-down submenu-indicator"></i>
-        </div>
-        <div class="submenu" data-wh-legacy-nav>
-          <div style="padding:10px 18px 4px;font-size:9.5px;font-weight:800;color:#94a3b8;text-transform:uppercase;letter-spacing:0.06em;" data-i18n="nav.section.invSetup">الإعداد</div>
-          <div class="nav-item" onclick="nav('invCatalog')" style="background:linear-gradient(90deg,rgba(14, 116, 144,.15),transparent);font-weight:800;"><i class="fas fa-book" style="color:#0e7490;"></i><span data-i18n="nav.invCatalog">إدارة مواد المخزون</span></div>
-          <div class="nav-item" data-erp-nav="erpMultiWarehouses" onclick="erpNav('erpMultiWarehouses')"><i class="fas fa-building"></i><span data-i18n="nav.multiWarehouses">المستودعات المتعددة</span></div>
-          <div class="nav-item" data-erp-nav="erpWhHierarchy" onclick="erpNav('erpWhHierarchy')"><i class="fas fa-sitemap"></i><span data-i18n="nav.whHierarchy">هيكل المستودعات</span></div>
-          <div class="nav-item" data-erp-nav="erpInventoryMethod" onclick="erpNav('erpInventoryMethod')"><i class="fas fa-balance-scale"></i><span data-i18n="nav.inventoryMethod">نوع الجرد وقيمة المخزون</span></div>
+        <!-- 5. المشتريات والموردون (React P2P) — رابط واحد يفتح /warehouse/purchasing. -->
+        <a class="nav-item" href="/warehouse/purchasing" style="text-decoration:none;color:inherit;">
+          <i class="fas fa-truck-loading"></i><span data-i18n="nav.purchasingSuppliers">المشتريات والموردون</span>
+        </a>
 
-          <div style="padding:10px 18px 4px;font-size:9.5px;font-weight:800;color:#94a3b8;text-transform:uppercase;letter-spacing:0.06em;" data-i18n="nav.section.invOps">العمليات</div>
-          <div class="nav-item" onclick="nav('warehouse')"><i class="fas fa-boxes-stacked"></i><span data-i18n="nav.stockManagement">تقارير المستودعات</span></div>
-          <div class="nav-item" data-erp-nav="erpStockIssues" onclick="erpNav('erpStockIssues')" title="صرف رسمي بترحيل محاسبي تلقائي"><i class="fas fa-truck-arrow-right"></i><span data-i18n="nav.stockIssues">إذونات الصرف الرسمية (GL)</span></div>
-          <div class="nav-item" data-erp-nav="erpWasteEntries" onclick="erpNav('erpWasteEntries')"><i class="fas fa-dumpster"></i><span data-i18n="nav.wasteEntries">قيود الهدر</span></div>
-          <div class="nav-item" data-erp-nav="erpProductionOrders" onclick="erpNav('erpProductionOrders')"><i class="fas fa-industry"></i><span data-i18n="nav.productionOrders">أوامر الإنتاج</span></div>
-
-          <div style="padding:10px 18px 4px;font-size:9.5px;font-weight:800;color:#94a3b8;text-transform:uppercase;letter-spacing:0.06em;" data-i18n="nav.section.invAnalytics">التحليلات</div>
-          <div class="nav-item" data-erp-nav="erpExpiryAlerts" onclick="erpNav('erpExpiryAlerts')"><i class="fas fa-hourglass-half"></i><span data-i18n="nav.expiryAlerts">تنبيهات انتهاء الصلاحية</span></div>
-          <div class="nav-item" data-erp-nav="erpSlowMoving" onclick="erpNav('erpSlowMoving')"><i class="fas fa-snowflake"></i><span data-i18n="nav.slowMoving">أصناف بطيئة الحركة</span></div>
-          <div class="nav-item" data-erp-nav="erpTurnover" onclick="erpNav('erpTurnover')"><i class="fas fa-rotate"></i><span data-i18n="nav.turnover">دوران المخزون</span></div>
-          <div class="nav-item" data-erp-nav="erpReorderAlerts" onclick="erpNav('erpReorderAlerts')"><i class="fas fa-cart-plus"></i><span data-i18n="nav.reorderAlerts">تنبيهات إعادة الطلب</span></div>
-          <div class="nav-item" data-erp-nav="erpDaysOfStock" onclick="erpNav('erpDaysOfStock')"><i class="fas fa-calendar-week"></i><span data-i18n="nav.daysOfStock">أيام التغطية</span></div>
-          <div class="nav-item" data-erp-nav="erpAbcAnalysis" onclick="erpNav('erpAbcAnalysis')"><i class="fas fa-chart-pie"></i><span data-i18n="nav.abcAnalysis">تحليل ABC</span></div>
-          <div class="nav-item" data-erp-nav="erpStocktakeHistory" onclick="erpNav('erpStocktakeHistory')"><i class="fas fa-clipboard-list"></i><span data-i18n="nav.stocktakeHistory">سجل محاضر الجرد</span></div>
-
-          <div style="padding:10px 18px 4px;font-size:9.5px;font-weight:800;color:#94a3b8;text-transform:uppercase;letter-spacing:0.06em;" data-i18n="nav.section.invReports">التقارير</div>
-          <div class="nav-item" data-erp-nav="erpRptInventoryVal" onclick="erpNav('erpRptInventoryVal')"><i class="fas fa-warehouse"></i><span data-i18n="nav.invValuation">تقييم المخزون</span></div>
-          <div class="nav-item" data-erp-nav="erpRptWarehouseLedger" onclick="erpNav('erpRptWarehouseLedger')"><i class="fas fa-book-bookmark"></i><span data-i18n="nav.warehouseLedger">دفتر أستاذ المستودع</span></div>
-          <div class="nav-item" data-erp-nav="erpRptWasteAnalytics" onclick="erpNav('erpRptWasteAnalytics')"><i class="fas fa-trash-alt"></i><span data-i18n="nav.wasteAnalytics">تحليل الهدر</span></div>
-        </div>
-
-        <!-- 5. المشتريات والموردين -->
-        <!-- Procurement/Suppliers is a SINGLE unified entry INSIDE /warehouse only
-             (warehouse sidebar). When PROCUREMENT_P2P_ENABLE is on the main shell
-             shows NO purchasing section — reach it via «إدارة المستودعات» → /warehouse.
-             The legacy group below stays only for flag-OFF rollback (hidden when on). -->
-        <div class="nav-item has-submenu" data-legacy-purchasing="1" onclick="toggleSubmenu(this)">
-          <i class="fas fa-truck-loading"></i><span data-i18n="nav.purchasingSuppliers">المشتريات والموردين</span><i class="fas fa-chevron-down submenu-indicator"></i>
-        </div>
-        <div class="submenu" data-legacy-purchasing="1">
-          <div class="nav-item" onclick="nav('purchases')"><i class="fas fa-shopping-basket"></i><span data-i18n="nav.purchases">المشتريات</span></div>
-          <div class="nav-item" data-erp-nav="erpPurchaseOrders" onclick="erpNav('erpPurchaseOrders')"><i class="fas fa-shopping-cart"></i><span data-i18n="nav.purchaseOrders">أوامر الشراء</span></div>
-          <div class="nav-item" data-erp-nav="erpSuppliers" onclick="erpNav('erpSuppliers')"><i class="fas fa-truck"></i><span data-i18n="nav.suppliers">الموردين</span></div>
-          <div class="nav-item" data-erp-nav="erpSupplierStatement" onclick="erpNav('erpSupplierStatement')"><i class="fas fa-file-invoice"></i><span data-i18n="nav.supplierStatement">كشف حساب مورد</span></div>
-        </div>
+        <!-- [تنقية ADLAN] مجموعتا «المخزون والمستودعات» و«المشتريات والموردين» legacy (≈24 عنصرًا كانت
+             مخفيّة بالأعلام) أُزيلتا من القائمة — مغطّاتان بالكامل في /warehouse و/warehouse/purchasing (React).
+             لا حذف لأي API/بيانات؛ حالات erp* في erp.js تبقى صالحة للـ deep-links. -->
 
         <!-- 6. إدارة الدفع والقنوات والخصومات -->
         <div class="nav-item has-submenu" onclick="toggleSubmenu(this)">
@@ -135,16 +94,9 @@
           <div class="nav-item" onclick="nav('custodyReports')"><i class="fas fa-file-invoice-dollar"></i><span data-i18n="nav.custodyReports">تقارير العهد</span></div>
         </div>
 
-        <!-- 9. العملاء والذمم -->
-        <div class="nav-item has-submenu" onclick="toggleSubmenu(this)">
-          <i class="fas fa-user-friends"></i><span data-i18n="nav.customersAR">العملاء والذمم</span><i class="fas fa-chevron-down submenu-indicator"></i>
-        </div>
-        <div class="submenu">
-          <div class="nav-item" data-legacy-o2c="1" data-erp-nav="erpCustomers" onclick="erpNav('erpCustomers')"><i class="fas fa-user-tie"></i><span data-i18n="nav.customers">العملاء</span></div>
-          <div class="nav-item" data-legacy-o2c="1" data-erp-nav="erpCustomerStatement" onclick="erpNav('erpCustomerStatement')"><i class="fas fa-file-invoice-dollar"></i><span data-i18n="nav.customerStatement">كشف حساب عميل</span></div>
-          <div class="nav-item" data-legacy-o2c="1" data-erp-nav="erpARAging" onclick="erpNav('erpARAging')"><i class="fas fa-user-clock"></i><span data-i18n="nav.arAging">أعمار ذمم العملاء</span></div>
-          <div class="nav-item" data-legacy-purchasing="1" data-erp-nav="erpAPAging" onclick="erpNav('erpAPAging')"><i class="fas fa-truck-loading"></i><span data-i18n="nav.apAging">أعمار ذمم الموردين</span></div>
-        </div>
+        <!-- [تنقية ADLAN] مجموعة «العملاء والذمم» أُزيلت من القائمة — مغطّاة بالكامل:
+             العملاء + كشف الحساب + أعمار ذمم العملاء → /sales (React)؛
+             أعمار ذمم الموردين → /warehouse/purchasing (React). لا حذف لأي API/بيانات. -->
 
         <!-- 10. المحاسبة -->
         <div class="nav-item has-submenu" onclick="toggleSubmenu(this)">
@@ -190,7 +142,7 @@
 
           <div style="padding:10px 18px 4px;font-size:9.5px;font-weight:800;color:#94a3b8;text-transform:uppercase;letter-spacing:0.06em;" data-i18n="nav.section.taxPurchase">الضرائب والمشتريات</div>
           <div class="nav-item" data-erp-nav="erpVATReports" onclick="erpNav('erpVATReports')"><i class="fas fa-percent"></i><span data-i18n="nav.vatReports">تقارير الضريبة</span></div>
-          <div class="nav-item" data-legacy-purchasing="1" data-erp-nav="erpPurchaseReports" onclick="erpNav('erpPurchaseReports')"><i class="fas fa-truck"></i><span data-i18n="nav.purchaseReports">تقارير المشتريات</span></div>
+          <!-- [تنقية ADLAN] «تقارير المشتريات» أُزيل — مغطّى في /warehouse/purchasing (React). -->
         </div>
 
         <!-- 12. الضرائب والفوترة الإلكترونية (ZATCA + الإشعارات فقط — التقارير الضريبية في مركز التقارير) -->
@@ -263,7 +215,7 @@
         <!-- 16. الإعدادات (آخر شيء) -->
         <div style="border-top:1px solid rgba(255,255,255,0.1);margin:14px 0 6px;"></div>
         <div class="nav-item" onclick="nav('settings')"><i class="fas fa-sliders-h"></i><span data-i18n="nav.settings">الإعدادات</span></div>
-        <div class="nav-item" onclick="nav('reports')"><i class="fas fa-file-excel"></i><span data-i18n="nav.legacyReports">تقارير قديمة</span></div>
+        <!-- [تنقية ADLAN] «تقارير قديمة» (nav('reports')) أُزيل — مكرّر مع «التقارير المالية» (مركز التقارير الموحّد). #sec_reports يبقى للـ deep-links. -->
       </div>
     </div>
     

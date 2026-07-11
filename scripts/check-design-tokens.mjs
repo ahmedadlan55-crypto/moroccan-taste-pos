@@ -69,6 +69,9 @@ function buildScanSet() {
   const adminSkin = path.join(ROOT, 'public', 'css', 'admin-skin.css');
   if (existsSync(adminSkin) && statSync(adminSkin).isFile()) files.push(adminSkin);
 
+  const adlanPage = path.join(ROOT, 'public', 'css', 'adlan-page.css');
+  if (existsSync(adlanPage) && statSync(adlanPage).isFile()) files.push(adlanPage);
+
   const unique = [...new Set(files)].filter((f) => !EXEMPT.has(toKey(f)));
   unique.sort((a, b) => {
     const ka = toKey(a);
@@ -82,6 +85,7 @@ function buildScanSet() {
 function isHardFailFile(key) {
   if (/^frontend\/(warehouse|sales|pos)\/tailwind\.config\.ts$/.test(key)) return true;
   if (/^frontend\/shared\/.+\.(ts|tsx|css)$/.test(key)) return true;
+  if (key === 'public/css/adlan-page.css') return true; // Stage C component layer — tokens only
   return false;
 }
 

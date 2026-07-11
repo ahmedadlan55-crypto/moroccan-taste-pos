@@ -67,6 +67,17 @@ const erpSections = [
 // section have been removed. ERPv5 / ERPv54 modules are no longer loaded.
 
 function erpNav(sectionId) {
+  // ADLAN Stage C — legacy-key aliases. Normalizes removed/renamed section keys
+  // from EVERY caller class (inline onclick attrs, stale localStorage
+  // pos_last_section restore, dynamic JS) BEFORE the guards and BEFORE
+  // persistence, so stale keys self-heal to the canonical section.
+  var ERP_NAV_ALIASES = {
+    erpFinReports: 'erpRptHub',        // dead legacy financial-reports hub key
+    erpMyInbox: 'erpWfIncoming',       // dashboard tile pointed at a never-built key
+    erpPayments: 'erpCashPayments',    // dashboard tile pointed at a never-built key
+    erpAuditLog: 'erpRptAuditLog'      // old audit screen (broken by loader shadowing) → full audit report
+  };
+  sectionId = ERP_NAV_ALIASES[sectionId] || sectionId;
   // Unified procurement guard — when PROCUREMENT_P2P_ENABLE is on, every legacy
   // purchasing/supplier ERP screen is replaced by the unified module; redirect
   // instead of opening the old section (covers the menu, quick actions, the

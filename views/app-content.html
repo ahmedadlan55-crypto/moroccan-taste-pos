@@ -5580,7 +5580,7 @@
 <div id="erpGLLedgerReport" class="dash-section hidden">
   <!-- Top toolbar (right-title, left-actions) -->
   <div class="tb-top">
-    <h2 class="tb-title"><i class="fas fa-book"></i> حساب الأستاذ</h2>
+    <h2 class="tb-title"><i class="fas fa-book"></i> حساب الأستاذ<span class="tb-sub">دفتر الأستاذ العام — حركة الحسابات وأرصدتها الجارية</span></h2>
     <div class="tb-actions">
       <button class="tb-btn" onclick="erpPrintGLLedger()"><i class="fas fa-print"></i> طباعة</button>
       <div class="tb-export-wrap">
@@ -5668,7 +5668,7 @@
   <!-- Branded report banner -->
   <div id="erpGLBrandBanner" class="tb-brand-banner" style="display:none;">
     <div class="tb-brand-left">
-      <div class="tb-brand-logo" style="background:linear-gradient(135deg,#1591b0,#155e75);"><i class="fas fa-book"></i></div>
+      <div class="tb-brand-logo" style="background:linear-gradient(135deg,var(--mt-accent-500),var(--mt-accent-2));"><i class="fas fa-book"></i></div>
     </div>
     <div class="tb-brand-center">
       <h3>حساب الأستاذ</h3>
@@ -5711,7 +5711,7 @@
 <div id="erpRptTrialBalance" class="dash-section hidden">
   <!-- ─── Report header: title + toolbar (print / export) ─── -->
   <div class="tb-top">
-    <h2 class="tb-title"><i class="fas fa-balance-scale"></i> تقرير ميزان مراجعة مجاميع وأرصدة</h2>
+    <h2 class="tb-title"><i class="fas fa-balance-scale"></i> تقرير ميزان مراجعة مجاميع وأرصدة<span class="tb-sub">أرصدة الحسابات مدين/دائن حتى تاريخ محدد</span></h2>
     <div class="tb-actions">
       <button class="tb-btn" onclick="erpTrialPrint()"><i class="fas fa-print"></i> طباعة</button>
       <div class="tb-export-wrap">
@@ -5875,10 +5875,10 @@
       <tfoot>
         <tr class="tb-totals" id="tbTotals" style="display:none;">
           <td>الإجمالي</td><td></td>
-          <td id="tbTotBeforeD">0.00</td><td id="tbTotBeforeC">0.00</td>
-          <td id="tbTotMoveD">0.00</td><td id="tbTotMoveC">0.00</td>
-          <td id="tbTotAfterD">0.00</td><td id="tbTotAfterC">0.00</td>
-          <td id="tbTotBalD">0.00</td><td id="tbTotBalC">0.00</td>
+          <td id="tbTotBeforeD" class="ap-num">0.00</td><td id="tbTotBeforeC" class="ap-num">0.00</td>
+          <td id="tbTotMoveD" class="ap-num">0.00</td><td id="tbTotMoveC" class="ap-num">0.00</td>
+          <td id="tbTotAfterD" class="ap-num">0.00</td><td id="tbTotAfterC" class="ap-num">0.00</td>
+          <td id="tbTotBalD" class="ap-num">0.00</td><td id="tbTotBalC" class="ap-num">0.00</td>
         </tr>
       </tfoot>
     </table>
@@ -5893,7 +5893,7 @@
 <!-- ══════════════════════════════════════════════════════════════════ -->
 <div id="erpRptPnL" class="dash-section hidden">
   <div class="tb-top">
-    <h2 class="tb-title"><i class="fas fa-chart-line"></i> قائمة الدخل الشامل (Profit & Loss)</h2>
+    <h2 class="tb-title"><i class="fas fa-chart-line"></i> قائمة الدخل الشامل (Profit & Loss)<span class="tb-sub">الإيرادات والمصروفات وصافي الربح للفترة</span></h2>
     <div class="tb-actions">
       <button class="tb-btn" onclick="window.print()"><i class="fas fa-print"></i> طباعة</button>
     </div>
@@ -5941,19 +5941,19 @@
   </div>
 
   <div id="plBranded" class="tb-brand-banner" style="display:none;">
-    <div class="tb-brand-left"><div class="tb-brand-logo" style="background:linear-gradient(135deg,#10b981,#16a34a);"><i class="fas fa-chart-line"></i></div></div>
+    <div class="tb-brand-left"><div class="tb-brand-logo" style="background:linear-gradient(135deg,var(--mt-accent-500),var(--mt-accent-2));"><i class="fas fa-chart-line"></i></div></div>
     <div class="tb-brand-center">
       <h3>قائمة الدخل الشامل</h3>
-      <div class="tb-brand-sub">من <span id="plBnFrom">—</span> إلى <span id="plBnTo">—</span><span id="plBnDim" style="margin-inline-start:8px;color:#0e7490;font-weight:700;"></span></div>
+      <div class="tb-brand-sub">من <span id="plBnFrom">—</span> إلى <span id="plBnTo">—</span><span id="plBnDim" style="margin-inline-start:8px;color:var(--mt-accent);font-weight:700;"></span></div>
     </div>
   </div>
 
   <!-- KPI strip -->
   <div id="plKpis" class="wo-metric-strip" style="display:none;margin-bottom:14px;">
-    <div class="wo-metric accent-success"><div class="wo-metric-icon" style="background:#dcfce7;color:#16a34a;"><i class="fas fa-arrow-up"></i></div><div class="wo-metric-body"><div class="wo-metric-label">إجمالي الإيرادات</div><div class="wo-metric-value" id="plKpiRevenue">—</div><div id="plKpiRevenueDelta" style="font-size:11px;font-weight:700;margin-top:2px;"></div></div></div>
-    <div class="wo-metric accent-danger"><div class="wo-metric-icon" style="background:#fee2e2;color:#dc2626;"><i class="fas fa-arrow-down"></i></div><div class="wo-metric-body"><div class="wo-metric-label">إجمالي المصروفات</div><div class="wo-metric-value" id="plKpiExpense">—</div><div id="plKpiExpenseDelta" style="font-size:11px;font-weight:700;margin-top:2px;"></div></div></div>
-    <div class="wo-metric accent-info"><div class="wo-metric-icon" style="background:#dbeafe;color:#1e40af;"><i class="fas fa-percent"></i></div><div class="wo-metric-body"><div class="wo-metric-label">هامش الربح</div><div class="wo-metric-value" id="plKpiMargin">—</div></div></div>
-    <div class="wo-metric accent-purple"><div class="wo-metric-icon" style="background:#e6f3f7;color:#0e7490;"><i class="fas fa-coins"></i></div><div class="wo-metric-body"><div class="wo-metric-label">صافي الدخل</div><div class="wo-metric-value" id="plKpiNet">—</div><div id="plKpiNetDelta" style="font-size:11px;font-weight:700;margin-top:2px;"></div></div></div>
+    <div class="wo-metric accent-success"><div class="wo-metric-icon" style="background:var(--mt-success-soft);color:var(--mt-success);"><i class="fas fa-arrow-up"></i></div><div class="wo-metric-body"><div class="wo-metric-label">إجمالي الإيرادات</div><div class="wo-metric-value" id="plKpiRevenue">—</div><div id="plKpiRevenueDelta" style="font-size:11px;font-weight:700;margin-top:2px;"></div></div></div>
+    <div class="wo-metric accent-danger"><div class="wo-metric-icon" style="background:var(--mt-danger-soft);color:var(--mt-danger);"><i class="fas fa-arrow-down"></i></div><div class="wo-metric-body"><div class="wo-metric-label">إجمالي المصروفات</div><div class="wo-metric-value" id="plKpiExpense">—</div><div id="plKpiExpenseDelta" style="font-size:11px;font-weight:700;margin-top:2px;"></div></div></div>
+    <div class="wo-metric accent-info"><div class="wo-metric-icon" style="background:var(--mt-info-soft);color:var(--mt-info);"><i class="fas fa-percent"></i></div><div class="wo-metric-body"><div class="wo-metric-label">هامش الربح</div><div class="wo-metric-value" id="plKpiMargin">—</div></div></div>
+    <div class="wo-metric accent-purple"><div class="wo-metric-icon" style="background:var(--mt-accent-soft);color:var(--mt-accent);"><i class="fas fa-coins"></i></div><div class="wo-metric-body"><div class="wo-metric-label">صافي الدخل</div><div class="wo-metric-value" id="plKpiNet">—</div><div id="plKpiNetDelta" style="font-size:11px;font-weight:700;margin-top:2px;"></div></div></div>
   </div>
 
   <div id="plDetails"></div>
@@ -5964,7 +5964,7 @@
 <!-- ══════════════════════════════════════════════════════════════════ -->
 <div id="erpRptBalanceSheet" class="dash-section hidden">
   <div class="tb-top">
-    <h2 class="tb-title"><i class="fas fa-landmark"></i> قائمة المركز المالي (Balance Sheet)</h2>
+    <h2 class="tb-title"><i class="fas fa-landmark"></i> قائمة المركز المالي (Balance Sheet)<span class="tb-sub">المركز المالي — أصول · التزامات · حقوق ملكية</span></h2>
     <div class="tb-actions">
       <button class="tb-btn" onclick="bsExportCsv()"><i class="fas fa-file-excel"></i> تنزيل Excel</button>
       <button class="tb-btn" onclick="window.print()"><i class="fas fa-print"></i> طباعة</button>
@@ -6055,7 +6055,7 @@
   </div>
 
   <div id="bsBranded" class="tb-brand-banner" style="display:none;">
-    <div class="tb-brand-left"><div class="tb-brand-logo" style="background:linear-gradient(135deg,#3b82f6,#1e40af);"><i class="fas fa-landmark"></i></div></div>
+    <div class="tb-brand-left"><div class="tb-brand-logo" style="background:linear-gradient(135deg,var(--mt-accent-500),var(--mt-accent-2));"><i class="fas fa-landmark"></i></div></div>
     <div class="tb-brand-center">
       <h3>قائمة المركز المالي</h3>
       <div class="tb-brand-sub">كما في <span id="bsBnDate">—</span></div>
@@ -6063,10 +6063,10 @@
   </div>
 
   <div id="bsKpis" class="wo-metric-strip" style="display:none;margin-bottom:14px;">
-    <div class="wo-metric accent-info"><div class="wo-metric-icon" style="background:#dbeafe;color:#1e40af;"><i class="fas fa-coins"></i></div><div class="wo-metric-body"><div class="wo-metric-label">إجمالي الأصول</div><div class="wo-metric-value" id="bsKpiAssets">—</div></div></div>
-    <div class="wo-metric accent-warning"><div class="wo-metric-icon" style="background:#fee2e2;color:#dc2626;"><i class="fas fa-file-invoice"></i></div><div class="wo-metric-body"><div class="wo-metric-label">إجمالي الخصوم</div><div class="wo-metric-value" id="bsKpiLiab">—</div></div></div>
-    <div class="wo-metric accent-purple"><div class="wo-metric-icon" style="background:#e6f3f7;color:#0e7490;"><i class="fas fa-user-tie"></i></div><div class="wo-metric-body"><div class="wo-metric-label">حقوق الملكية</div><div class="wo-metric-value" id="bsKpiEquity">—</div></div></div>
-    <div class="wo-metric accent-success"><div class="wo-metric-icon" style="background:#dcfce7;color:#16a34a;"><i class="fas fa-check"></i></div><div class="wo-metric-body"><div class="wo-metric-label">المعادلة المحاسبية</div><div class="wo-metric-value" id="bsKpiBalance" style="font-size:14px;">—</div></div></div>
+    <div class="wo-metric accent-info"><div class="wo-metric-icon" style="background:var(--mt-info-soft);color:var(--mt-info);"><i class="fas fa-coins"></i></div><div class="wo-metric-body"><div class="wo-metric-label">إجمالي الأصول</div><div class="wo-metric-value" id="bsKpiAssets">—</div></div></div>
+    <div class="wo-metric accent-warning"><div class="wo-metric-icon" style="background:var(--mt-danger-soft);color:var(--mt-danger);"><i class="fas fa-file-invoice"></i></div><div class="wo-metric-body"><div class="wo-metric-label">إجمالي الخصوم</div><div class="wo-metric-value" id="bsKpiLiab">—</div></div></div>
+    <div class="wo-metric accent-purple"><div class="wo-metric-icon" style="background:var(--mt-accent-soft);color:var(--mt-accent);"><i class="fas fa-user-tie"></i></div><div class="wo-metric-body"><div class="wo-metric-label">حقوق الملكية</div><div class="wo-metric-value" id="bsKpiEquity">—</div></div></div>
+    <div class="wo-metric accent-success"><div class="wo-metric-icon" style="background:var(--mt-success-soft);color:var(--mt-success);"><i class="fas fa-check"></i></div><div class="wo-metric-body"><div class="wo-metric-label">المعادلة المحاسبية</div><div class="wo-metric-value" id="bsKpiBalance" style="font-size:14px;">—</div></div></div>
   </div>
 
   <div id="bsDetails"></div>
@@ -6077,7 +6077,7 @@
 <!-- ══════════════════════════════════════════════════════════════════ -->
 <div id="erpRptCashFlow" class="dash-section hidden">
   <div class="tb-top">
-    <h2 class="tb-title"><i class="fas fa-water"></i> قائمة التدفقات النقدية (Cash Flow)</h2>
+    <h2 class="tb-title"><i class="fas fa-water"></i> قائمة التدفقات النقدية (Cash Flow)<span class="tb-sub">قائمة التدفقات النقدية وفق IAS 7</span></h2>
     <div class="tb-actions"><button class="tb-btn" onclick="window.print()"><i class="fas fa-print"></i> طباعة</button></div>
   </div>
   <div class="tb-filters-card">
@@ -6110,7 +6110,7 @@
   </div>
 
   <div id="cfBranded" class="tb-brand-banner" style="display:none;">
-    <div class="tb-brand-left"><div class="tb-brand-logo" style="background:linear-gradient(135deg,#06b6d4,#0891b2);"><i class="fas fa-water"></i></div></div>
+    <div class="tb-brand-left"><div class="tb-brand-logo" style="background:linear-gradient(135deg,var(--mt-accent-500),var(--mt-accent-2));"><i class="fas fa-water"></i></div></div>
     <div class="tb-brand-center">
       <h3>قائمة التدفقات النقدية</h3>
       <div class="tb-brand-sub">من <span id="cfBnFrom">—</span> إلى <span id="cfBnTo">—</span></div>

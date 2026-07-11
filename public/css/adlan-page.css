@@ -64,6 +64,14 @@
 }
 .tb-top .tb-title i, .tb-top h2 i { color: var(--mt-accent) !important; }
 .tb-top .tb-sub, .tb-top .tb-subtitle { color: var(--mt-text-muted) !important; }
+/* v2 — page subtitle line inside the title (financial reports batch C3):
+   .tb-title is a flex row (icon + text); the sub breaks to its own line. */
+.tb-top .tb-title { flex-wrap: wrap; row-gap: 2px; }
+.tb-top .tb-sub {
+  display: block; flex-basis: 100%;
+  font-size: 12.5px !important; font-weight: 500 !important;
+  letter-spacing: 0;
+}
 
 /* ───────────── 2. Standard table (الجدول المعياري) ───────────── */
 /* Card shell */
@@ -163,7 +171,7 @@
   border-color: var(--mt-accent) !important; color: var(--mt-accent) !important;
   background: var(--mt-accent-soft) !important;
 }
-.jfb-presets button.active, .bs-preset.active {
+.jfb-presets button.active, .bs-preset.active, .bs-preset.is-active {
   background: var(--mt-accent) !important; border-color: var(--mt-accent) !important;
   color: var(--mt-surface) !important;
 }
@@ -352,12 +360,15 @@
   .jrn-filter-bar, .jrn-bulk-bar, .tb-filters-card, .bs-period-controls,
   .tb-actions, .tb-level-tabs, .coa-topbar-actions,
   .section-header .btn, .jrn-action-btn, .tb-btn, .btn-icon,
-  .jfb-presets, .float-actions, .toast-container {
+  .jfb-presets, .float-actions, .toast-container,
+  .tb-export-menu, .tb-daterange-menu, .tb-msel-panel, .sd-results,
+  #bsDrillOverlay {
     display: none !important;
   }
   /* Clean paper tables */
   .erp-table-container, .tb-table-wrap, .gl-account-section,
-  .jrn-filter-bar, .jrn-stat-card {
+  .jrn-filter-bar, .jrn-stat-card,
+  .tb-top, .tb-brand-banner, .wo-metric {
     box-shadow: none !important;
     border-color: var(--mt-border) !important;
   }

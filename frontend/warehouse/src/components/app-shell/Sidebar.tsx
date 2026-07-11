@@ -15,7 +15,7 @@ export function Sidebar() {
   const groups = navigation.filter((g) => procurementEnabled || !g.items.some((i) => i.id === "purchasing"));
 
   return (
-    <aside className="no-print fixed inset-y-0 right-0 z-30 hidden w-72 flex-col bg-[#0e1726] px-4 pb-5 pt-4 text-white lg:flex">
+    <aside className="no-print fixed inset-y-0 right-0 z-30 hidden w-72 flex-col bg-navy px-4 pb-5 pt-4 text-white lg:flex">
       <div className="flex items-center gap-3 px-2 py-3">
         <span className="grid h-11 w-11 place-items-center rounded-2xl bg-teal-600 text-white shadow-lg shadow-black/20">
           <Warehouse className="h-5 w-5" />

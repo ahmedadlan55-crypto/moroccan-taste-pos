@@ -1,46 +1,11 @@
+// ADLAN — all theme tokens come from public/shared/design-tokens.css, bridged
+// into Tailwind by frontend/shared/design-tokens.ts (adlanPreset). Edit tokens
+// there, never here — hardcoded color literals are forbidden in this file.
 import type { Config } from "tailwindcss";
+import { adlanPreset } from "../shared/design-tokens";
 
-// ADLAN ERP design tokens — a single petrol accent (#0E7490), dark-navy chrome
-// (#0E1726), cool-neutral surfaces, and IBM Plex Sans Arabic. Mapped onto the
-// EXISTING token names (teal / saffron / ink / canvas) so every component adopts
-// the new identity with zero code changes — presentation only, no logic touched.
 export default {
   content: ["./index.html", "./src/**/*.{ts,tsx}"],
-  theme: {
-    extend: {
-      fontFamily: {
-        sans: ["IBM Plex Sans Arabic", "Tajawal", "Segoe UI", "Tahoma", "Arial", "sans-serif"],
-      },
-      colors: {
-        ink: "#101828",
-        canvas: "#f2f5f9",
-        teal: {
-          50: "#e6f3f7",
-          100: "#cfe9f1",
-          200: "#a5d8e6",
-          500: "#1591b0",
-          600: "#0e7490",
-          700: "#155e75",
-        },
-        saffron: {
-          50: "#fffbeb",
-          100: "#fef3c7",
-          500: "#d97706",
-          600: "#b45309",
-        },
-      },
-      borderRadius: {
-        xl: "0.625rem", // 10px — buttons/controls
-        "2xl": "0.875rem", // 14px — cards/surfaces
-      },
-      boxShadow: {
-        soft: "0 2px 8px rgba(15, 23, 42, 0.06)",
-        lift: "0 8px 20px rgba(15, 23, 42, 0.10)",
-      },
-      minHeight: {
-        11: "2.75rem", // 44px touch target
-      },
-    },
-  },
-  plugins: [],
+  presets: [adlanPreset],
+  theme: { extend: {} },
 } satisfies Config;

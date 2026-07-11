@@ -91,6 +91,76 @@
   --mt-font:        "IBM Plex Sans Arabic", "Tajawal", "Segoe UI",
                     "Tahoma", "Cairo", Arial, sans-serif;
   --mt-font-mono:   ui-monospace, "SFMono-Regular", "Menlo", monospace;
+
+  /* ══════════════════════════════════════════════════════════════
+   * ADLAN Stage B (2026-07) — single-source expansion.
+   * Everything below used to live in admin-skin.css :root or be
+   * hardcoded per-app in the three frontend tailwind.config.ts files.
+   * The React apps now derive their Tailwind theme from THIS file via
+   * frontend/shared/design-tokens.ts — edit here, never there.
+   * ══════════════════════════════════════════════════════════════ */
+
+  /* Accent (petrol) scale — Tailwind `teal-*` reads these */
+  --mt-accent-50:   var(--mt-accent-soft);   /* #E6F3F7 */
+  --mt-accent-100:  #CFE9F1;
+  --mt-accent-200:  #A5D8E6;
+  --mt-accent-500:  #1591B0;
+  --mt-accent-600:  var(--mt-accent);        /* #0E7490 */
+  --mt-accent-700:  var(--mt-accent-2);      /* #155E75 */
+
+  /* Warm (saffron/amber) scale — Tailwind `saffron-*` reads these */
+  --mt-warm-50:     #FFFBEB;
+  --mt-warm-2:      #B45309;                 /* hover / darker step */
+
+  /* Semantic soft surfaces + accent foreground (from admin-skin.css) */
+  --mt-accent-soft-2: #D3EAF1;
+  --mt-accent-fg:     var(--mt-accent);
+  --mt-warning-soft:  var(--mt-warm-soft);   /* #FEF3C7 */
+  --mt-surface-3:     #F1F5F9;
+  --mt-surface-4:     var(--mt-border);
+
+  /* Semantic hairlines — badge borders / row dividers */
+  --mt-success-line:  #BBF7D0;
+  --mt-danger-line:   #FECACA;
+  --mt-warning-line:  #FDE68A;
+  --mt-info-line:     #BAE6FD;
+  --mt-hairline:      #EDF1F5;               /* table head / modal dividers */
+  --mt-row-line:      #F4F7FA;               /* table row divider */
+
+  /* Component radii (ADLAN: field 8 · button 10 · card 14) */
+  --mt-r-field:  8px;
+  --mt-r-btn:    var(--mt-radius-sm);        /* 10px */
+  --mt-r-card:   var(--mt-radius-md);        /* 14px */
+  --mt-r-md:     var(--mt-radius-sm);        /* legacy alias → button radius */
+  --mt-r-lg:     var(--mt-radius-md);        /* legacy alias → card radius   */
+
+  /* Shadow aliases (from admin-skin.css) + focus ring */
+  --sh-sm: var(--mt-shadow-sm);
+  --sh-md: var(--mt-shadow-md);
+  --sh-lg: var(--mt-shadow-lg);
+  --mt-shadow-focus: 0 0 0 3px rgba(var(--mt-accent-rgb), 0.15);
+
+  /* Motion — matches component reality: rows 120 · controls 140 · lift 160 */
+  --mt-dur-fast: 120ms;
+  --mt-dur-base: 140ms;
+  --mt-dur-slow: 160ms;
+  --mt-ease:     ease;
+
+  /* Z layers — ADLAN windows (popover · drawer · modal · palette) */
+  --mt-z-popover: 55;
+  --mt-z-drawer:  60;
+  --mt-z-modal:   70;
+  --mt-z-palette: 80;
+
+  /* Table density (enterprise dense) */
+  --mt-table-head-bg:   var(--mt-surface-2);
+  --mt-table-row-hover: var(--mt-surface-2);
+  --mt-table-pad-x:     18px;
+
+  /* Controls & touch */
+  --mt-control-h:    40px;
+  --mt-touch-target: 44px;
+  --mt-field-border: #CBD5E1;
 }
 
 /* v5.10.96 — Unified focus ring scoped to interactive elements only.

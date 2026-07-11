@@ -1,0 +1,11 @@
+{
+  "frontend/pos/src/lib/receipt.ts": 8,
+  "frontend/sales/src/styles/index.css": 2,
+  "frontend/warehouse/src/features/_shared/printInvTx.ts": 10,
+  "frontend/warehouse/src/features/analytics/AnalyticsPage.tsx": 7,
+  "frontend/warehouse/src/features/items/barcodeLabel.ts": 6,
+  "frontend/warehouse/src/features/production/printProduction.ts": 10,
+  "frontend/warehouse/src/features/stocktakes/printStocktake.ts": 9,
+  "frontend/warehouse/src/styles/index.css": 2,
+  "public/css/admin-skin.css": 45
+}

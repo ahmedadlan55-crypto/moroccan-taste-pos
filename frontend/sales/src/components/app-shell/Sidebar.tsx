@@ -11,7 +11,7 @@ export function Sidebar() {
   const items = navItems.filter((i) => can(i.cap));
 
   return (
-    <aside className="fixed inset-y-0 right-0 z-30 hidden w-72 flex-col bg-[#0e1726] text-slate-100 lg:flex no-print">
+    <aside className="fixed inset-y-0 right-0 z-30 hidden w-72 flex-col bg-navy text-slate-100 lg:flex no-print">
       <div className="flex items-center gap-3 border-b border-white/10 px-5 py-5">
         <span className="grid h-11 w-11 place-items-center rounded-2xl bg-teal-600 text-white">
           <ShoppingBag className="h-5 w-5" />

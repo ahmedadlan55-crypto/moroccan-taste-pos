@@ -58,7 +58,7 @@ export function Topbar() {
         <div className="flex items-center gap-3">
           {/* Mobile/tablet: menu + route picker */}
           <div className="flex min-w-0 items-center gap-2 lg:hidden">
-            <span className="grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-[#0e1726] text-white">
+            <span className="grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-navy text-white">
               <Menu className="h-5 w-5" />
             </span>
             <select

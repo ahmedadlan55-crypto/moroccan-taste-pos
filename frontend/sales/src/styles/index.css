@@ -10,17 +10,17 @@
   }
 
   html {
-    background: #f2f5f9;
+    background: theme(colors.canvas);
   }
 
   body {
     margin: 0;
     min-width: 320px;
-    color: #101828;
+    color: theme(colors.ink);
     background:
-      radial-gradient(circle at 88% 2%, rgba(14, 116, 144, 0.07), transparent 25rem),
-      #f2f5f9;
-    font-family: "IBM Plex Sans Arabic", "Tajawal", "Segoe UI", Tahoma, Arial, sans-serif;
+      radial-gradient(circle at 88% 2%, theme(colors.teal.600 / 7%), transparent 25rem),
+      theme(colors.canvas);
+    font-family: theme(fontFamily.sans);
     -webkit-font-smoothing: antialiased;
   }
 
@@ -38,7 +38,7 @@
   textarea:focus-visible,
   a:focus-visible,
   [tabindex]:focus-visible {
-    outline: 3px solid rgba(14, 116, 144, 0.28);
+    outline: 3px solid theme(colors.teal.600 / 28%);
     outline-offset: 2px;
   }
 }
@@ -71,7 +71,7 @@
 
 .scrollbar-thin {
   scrollbar-width: thin;
-  scrollbar-color: #cbd5e1 transparent;
+  scrollbar-color: theme(colors.slate.300) transparent;
 }
 .scrollbar-thin::-webkit-scrollbar {
   width: 7px;
@@ -79,7 +79,7 @@
 }
 .scrollbar-thin::-webkit-scrollbar-thumb {
   border-radius: 999px;
-  background: #cbd5e1;
+  background: theme(colors.slate.300);
 }
 
 /* WCAG 2.3.3 — respect reduced-motion: collapse all transitions/animations. */
@@ -101,7 +101,7 @@
   right: 1rem;
   z-index: 100;
   border-radius: 0 0 0.75rem 0.75rem;
-  background: #0e7490;
+  background: theme(colors.teal.600);
   color: #fff;
   padding: 0.6rem 1.2rem;
   font-weight: 800;

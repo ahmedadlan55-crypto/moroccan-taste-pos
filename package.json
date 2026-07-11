@@ -73,7 +73,8 @@
     "test:o2c-foundation": "node tests/o2cFoundation.test.js",
     "test:o2c-services": "node tests/o2cServices.integration.test.js",
     "test:o2c-gate": "node tests/o2cLegacyGate.integration.test.js",
-    "test:pos-o2c-payload": "node tests/posO2CPayload.test.js"
+    "test:pos-o2c-payload": "node tests/posO2CPayload.test.js",
+    "tokens:check": "node scripts/check-design-tokens.mjs"
   },
   "dependencies": {
     "bcryptjs": "^2.4.3",

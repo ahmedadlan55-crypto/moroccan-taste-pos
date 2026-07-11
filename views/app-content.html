@@ -3359,14 +3359,21 @@
 <div id="erpDimensionsHub" class="dash-section hidden wo-section"></div>
 
 <div id="erpCostCenters" class="dash-section hidden">
-  <div class="section-header">
-    <h2 class="section-title"><i class="fas fa-bullseye"></i> مراكز التكلفة</h2>
-    <button class="btn btn-primary" onclick="erpOpenCostCenterModal()" style="border-radius:12px;"><i class="fas fa-plus"></i> إضافة مركز تكلفة</button>
+  <!-- ADLAN Stage C (C4) — unified page header (ap-page-head anatomy) -->
+  <div class="ap-page-head">
+    <span class="ap-ph-icon"><i class="fas fa-bullseye"></i></span>
+    <div class="ap-ph-titles">
+      <h2 class="ap-ph-title">مراكز التكلفة</h2>
+      <span class="ap-ph-sub">الأبعاد التحليلية للتكاليف — ربط القيود والمصروفات بمراكز المسؤولية</span>
+    </div>
+    <div class="ap-ph-actions">
+      <button class="btn btn-primary" onclick="erpOpenCostCenterModal()"><i class="fas fa-plus"></i> إضافة مركز تكلفة</button>
+    </div>
   </div>
-  <div class="erp-table-container" style="border-radius:14px;">
+  <div class="erp-table-container">
     <table class="erp-table">
       <thead><tr><th>الرمز</th><th>الاسم</th><th>النوع</th><th>الحالة</th><th>إجراءات</th></tr></thead>
-      <tbody id="erpCCBody"><tr><td colspan="5" class="empty-msg">لا توجد مراكز تكلفة</td></tr></tbody>
+      <tbody id="erpCCBody"><tr><td colspan="5"><div class="ap-empty"><div class="ap-empty-icon"><i class="fas fa-bullseye"></i></div>لا توجد مراكز تكلفة</div></td></tr></tbody>
     </table>
   </div>
 </div>
@@ -5483,14 +5490,22 @@
 <!-- AR AGING (أعمار الذمم المدينة) §19.6.7 -->
 <!-- ══════════════════════════════════════════════════════════════ -->
 <div id="erpARAging" class="dash-section hidden">
-  <div class="section-header">
-    <h2 class="section-title"><i class="fas fa-user-clock"></i> أعمار الذمم المدينة (العملاء)</h2>
-    <button class="btn btn-secondary" onclick="erpExportReport('ar_aging')"><i class="fas fa-file-csv"></i> تصدير CSV</button>
+  <!-- ADLAN Stage C (C4) — unified page header (ap-page-head anatomy) -->
+  <div class="ap-page-head">
+    <span class="ap-ph-icon"><i class="fas fa-user-clock"></i></span>
+    <div class="ap-ph-titles">
+      <h2 class="ap-ph-title">أعمار الذمم المدينة (العملاء)</h2>
+      <span class="ap-ph-sub">الذمم المدينة حسب فترة الاستحقاق — 30/60/90/120+ يوم</span>
+    </div>
+    <div class="ap-ph-actions">
+      <button class="btn btn-secondary" onclick="erpExportReport('ar_aging')"><i class="fas fa-file-csv"></i> تصدير CSV</button>
+    </div>
   </div>
   <div class="erp-table-container">
     <table class="erp-table">
-      <thead><tr><th>العميل</th><th>الرقم الضريبي</th><th>حالي</th><th>1-30 يوم</th><th>31-60 يوم</th><th>61-90 يوم</th><th>+90 يوم</th><th>الإجمالي</th></tr></thead>
-      <tbody id="erpARAgingBody"><tr><td colspan="8" class="empty-msg">جاري التحميل...</td></tr></tbody>
+      <!-- C4: bucket labels aligned with the live v6.2.0 renderer (0-30/31-60/61-90/91-120/120+) -->
+      <thead><tr><th>العميل</th><th>الرقم الضريبي</th><th>0-30 يوم</th><th>31-60 يوم</th><th>61-90 يوم</th><th>91-120 يوم</th><th>+120 يوم</th><th>الإجمالي</th></tr></thead>
+      <tbody id="erpARAgingBody"><tr><td colspan="8"><div class="ap-empty"><div class="ap-empty-icon"><i class="fas fa-spinner fa-spin"></i></div>جاري التحميل...</div></td></tr></tbody>
       <tfoot id="erpARAgingFoot"></tfoot>
     </table>
   </div>
@@ -5500,14 +5515,22 @@
 <!-- AP AGING (أعمار الذمم الدائنة) §19.6.8 -->
 <!-- ══════════════════════════════════════════════════════════════ -->
 <div id="erpAPAging" class="dash-section hidden">
-  <div class="section-header">
-    <h2 class="section-title"><i class="fas fa-truck-loading"></i> أعمار الذمم الدائنة (الموردين)</h2>
-    <button class="btn btn-secondary" onclick="erpExportReport('ap_aging')"><i class="fas fa-file-csv"></i> تصدير CSV</button>
+  <!-- ADLAN Stage C (C4) — unified page header (ap-page-head anatomy) -->
+  <div class="ap-page-head">
+    <span class="ap-ph-icon"><i class="fas fa-truck-clock"></i></span>
+    <div class="ap-ph-titles">
+      <h2 class="ap-ph-title">أعمار الذمم الدائنة (الموردين)</h2>
+      <span class="ap-ph-sub">الذمم الدائنة حسب فترة الاستحقاق — 30/60/90/120+ يوم</span>
+    </div>
+    <div class="ap-ph-actions">
+      <button class="btn btn-secondary" onclick="erpExportReport('ap_aging')"><i class="fas fa-file-csv"></i> تصدير CSV</button>
+    </div>
   </div>
   <div class="erp-table-container">
     <table class="erp-table">
-      <thead><tr><th>المورد</th><th>الرقم الضريبي</th><th>حالي</th><th>1-30 يوم</th><th>31-60 يوم</th><th>61-90 يوم</th><th>+90 يوم</th><th>الإجمالي</th></tr></thead>
-      <tbody id="erpAPAgingBody"><tr><td colspan="8" class="empty-msg">جاري التحميل...</td></tr></tbody>
+      <!-- C4: bucket labels aligned with the live v6.2.0 renderer (0-30/31-60/61-90/91-120/120+) -->
+      <thead><tr><th>المورد</th><th>الرقم الضريبي</th><th>0-30 يوم</th><th>31-60 يوم</th><th>61-90 يوم</th><th>91-120 يوم</th><th>+120 يوم</th><th>الإجمالي</th></tr></thead>
+      <tbody id="erpAPAgingBody"><tr><td colspan="8"><div class="ap-empty"><div class="ap-empty-icon"><i class="fas fa-spinner fa-spin"></i></div>جاري التحميل...</div></td></tr></tbody>
       <tfoot id="erpAPAgingFoot"></tfoot>
     </table>
   </div>

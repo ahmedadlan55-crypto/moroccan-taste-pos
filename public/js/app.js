@@ -1195,6 +1195,14 @@ function initViews() {
   localStorage.setItem("pos_last_view", 'admin');
   show("#adminView");
   if (q("#adminUserLabel")) q("#adminUserLabel").innerText = state.user;
+  // [ADLAN] hydrate the sidebar user card (name + role + avatar initials)
+  try {
+    var _roleAr = { admin:'مدير النظام', manager:'مشرف', employee:'موظف', custody:'أمين عهدة', cashier:'كاشير', auditor:'مدقق' };
+    var _u = state.user || 'مستخدم';
+    if (q("#sidebarUserName2")) q("#sidebarUserName2").innerText = _u;
+    if (q("#sidebarUserRole")) q("#sidebarUserRole").innerText = _roleAr[state.role] || state.role || '—';
+    if (q("#sidebarUserAvatar")) q("#sidebarUserAvatar").innerText = _u.slice(0,2);
+  } catch(e) {}
 
   {
     // Admin/manager → restore last section or default to home

@@ -20,6 +20,8 @@
         <!-- 1b. الأمان — تغيير كلمة المرور (متاح لكل الأدوار) -->
         <a class="nav-item" href="/security/" style="text-decoration:none;color:inherit;"><i class="fas fa-shield-halved"></i><span data-i18n="nav.security">الأمان</span></a>
 
+        <div class="nav-section-label">التشغيل</div>
+
         <!-- 2. العمليات اليومية -->
         <div class="nav-item has-submenu" onclick="toggleSubmenu(this)">
           <i class="fas fa-bolt"></i><span data-i18n="nav.daily">العمليات اليومية</span><i class="fas fa-chevron-down submenu-indicator"></i>
@@ -57,6 +59,8 @@
         <!-- [تنقية ADLAN] مجموعتا «المخزون والمستودعات» و«المشتريات والموردين» legacy (≈24 عنصرًا كانت
              مخفيّة بالأعلام) أُزيلتا من القائمة — مغطّاتان بالكامل في /warehouse و/warehouse/purchasing (React).
              لا حذف لأي API/بيانات؛ حالات erp* في erp.js تبقى صالحة للـ deep-links. -->
+
+        <div class="nav-section-label">المالية والمحاسبة</div>
 
         <!-- 6. إدارة الدفع والقنوات والخصومات -->
         <div class="nav-item has-submenu" onclick="toggleSubmenu(this)">
@@ -156,6 +160,8 @@
           <div class="nav-item" data-erp-nav="erpCreditNotes" onclick="erpNav('erpCreditNotes')"><i class="fas fa-file-alt"></i><span data-i18n="nav.creditNotes">الإشعارات الدائنة/المدينة</span></div>
         </div>
 
+        <div class="nav-section-label">المؤسسة والإدارة</div>
+
         <!-- 13. الإدارة العامة — v5.11.2: «إدارة المؤسسة المتقدّمة» section removed entirely. -->
         <div class="nav-item has-submenu" onclick="toggleSubmenu(this)">
           <i class="fas fa-building"></i><span data-i18n="nav.organization">الإدارة العامة</span><i class="fas fa-chevron-down submenu-indicator"></i>
@@ -215,7 +221,16 @@
         <!-- 16. الإعدادات (آخر شيء) -->
         <div style="border-top:1px solid rgba(255,255,255,0.1);margin:14px 0 6px;"></div>
         <div class="nav-item" onclick="nav('settings')"><i class="fas fa-sliders-h"></i><span data-i18n="nav.settings">الإعدادات</span></div>
-        <!-- [تنقية ADLAN] «تقارير قديمة» (nav('reports')) أُزيل — مكرّر مع «التقارير المالية» (مركز التقارير الموحّد). #sec_reports يبقى للـ deep-links. -->
+        <!-- [تنقية ADLAN] «تقارير قديمة» (nav('reports')) أُزيل — مكرّر مع «التقارير المالية». #sec_reports يبقى للـ deep-links. -->
+      </div>
+      <!-- [ADLAN] بطاقة المستخدم أسفل القائمة (مطابقة قشرة React) -->
+      <div class="sidebar-user">
+        <div class="sidebar-user-avatar" id="sidebarUserAvatar">A</div>
+        <div class="sidebar-user-info">
+          <div class="sidebar-user-name" id="sidebarUserName2">Admin</div>
+          <div class="sidebar-user-role" id="sidebarUserRole">—</div>
+        </div>
+        <button class="sidebar-user-logout" onclick="logout()" title="تسجيل خروج" aria-label="تسجيل خروج"><i class="fas fa-power-off"></i></button>
       </div>
     </div>
     

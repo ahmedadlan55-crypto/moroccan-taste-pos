@@ -20,11 +20,6 @@ function trackErrors(page: Page): string[] {
     if (m.type() !== "error") return;
     const t = m.text();
     if (/favicon|Failed to load resource|ResizeObserver|Download the React DevTools/i.test(t)) return;
-    // PRE-EXISTING (predates the ADLAN range; fonts link shipped in 3e02f3f on
-    // origin/main while the SPA CSP is style-src 'self'): Google-Fonts stylesheet
-    // is CSP-blocked on every /warehouse load. Tracked as a follow-up task —
-    // ONLY this exact violation is ignored here.
-    if (/violates the following Content Security Policy directive.*style-src/i.test(t) && t.includes("fonts.googleapis.com")) return;
     errors.push("console: " + t);
   });
   return errors;
@@ -36,6 +31,14 @@ test.describe("Procurement module", () => {
     const errors = trackErrors(page);
     await page.goto("/warehouse/purchasing");
     await expect(page.getByRole("heading", { name: "المشتريات والموردون" })).toBeVisible();
+    // The ADLAN font must genuinely render — it is self-hosted (the strict SPA
+    // CSP blocks Google Fonts), so a broken font pipeline would otherwise fall
+    // back to Tajawal silently, with no console error to catch.
+    const plexLoaded = await page.evaluate(async () => {
+      await document.fonts.ready;
+      return document.fonts.check('16px "IBM Plex Sans Arabic"', "المشتريات والموردون 123");
+    });
+    expect(plexLoaded, "IBM Plex Sans Arabic loaded from self-hosted woff2").toBe(true);
     // KPI cards
     await expect(page.getByText("قيمة المشتريات")).toBeVisible();
     await page.screenshot({ path: SHOT("01-dashboard", testInfo.project.name), fullPage: true });

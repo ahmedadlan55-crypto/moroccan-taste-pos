@@ -1,5 +1,6 @@
-/* IBM Plex Sans Arabic (ADLAN design system) is loaded via index.html, with a
+/* IBM Plex Sans Arabic (ADLAN design system) is self-hosted (fonts.css), with a
    graceful fallback to Tajawal / the system Arabic stack (Segoe UI / Tahoma). */
+@import "./fonts.css";
 @tailwind base;
 @tailwind components;
 @tailwind utilities;

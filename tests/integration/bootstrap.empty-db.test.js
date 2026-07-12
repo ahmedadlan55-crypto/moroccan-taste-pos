@@ -101,7 +101,11 @@ function bootServer(port, logBuf) {
     //    one-process first-run step, so we don't race it.
     const log = [];
     servers.push(bootServer(PORT, log));
-    const up = await waitUp(PORT, 90);
+    // Release Gate 2026-07: budget calibrated to slow machines (measured 102s
+    // for a full fresh-DB first boot on Windows/MySQL 8.4 AFTER eliminating the
+    // 20-table collation-conversion pass; 90s flaked there while every
+    // functional assertion passed). Timing budget only — not a whitelist.
+    const up = await waitUp(PORT, 240);
     check('server started on a brand-new empty DB (answers /api/version)', up, { port: PORT });
 
     // The listen callback runs autoInitDB ASYNCHRONOUSLY (the port binds before
@@ -150,8 +154,10 @@ function bootServer(port, logBuf) {
     const cP = PORT2 + 2, cQ = PORT2 + 3;
     servers.push(bootServer(cP, null));
     servers.push(bootServer(cQ, null)); // both start NOW — racing the first run
-    const cA = await waitUp(cP, 90);
-    const cB = await waitUp(cQ, 90);
+    // Same calibration as phase A; two concurrent fresh first-runs share the
+    // DB server, so give each an even wider budget.
+    const cA = await waitUp(cP, 300);
+    const cB = await waitUp(cQ, 300);
     check('two concurrent servers on a FRESH empty DB both start (race first-run migrations)', cA && cB, { cA, cB });
     const conn2 = await mysql.createConnection(Object.assign({}, ADMIN, { database: TEST_DB }));
     let have3 = new Set();

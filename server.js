@@ -1011,9 +1011,30 @@ async function runMigrations() {
   // (id/code/name/type, v. line ~1150) and the rich one in routes/inventory.js
   // (name_ar/name_en/branch_id/notes/created_by) that routes/erp/cost-centers.js
   // SELECTs. DBs whose table was born with the old shape never upgraded and the
-  // endpoint 500s with "Unknown column 'p.name_ar'". Add the rich columns
-  // (nullable — safest ALTER on populated tables; the route tolerates NULLs)
-  // and backfill name_ar from the legacy name column when that column exists.
+  // endpoint 500s with "Unknown column 'p.name_ar'". On a FRESH DB the table
+  // does not exist yet at this point (it was born later, old-shaped), so create
+  // it here in the UNION of both shapes (rich + legacy name/type kept for the
+  // accounting-dimensions directory which still selects `name`). Then the
+  // column-adds below upgrade old-shaped DBs, with name_ar backfilled from the
+  // legacy name column when it exists.
+  try {
+    await db.query(`CREATE TABLE IF NOT EXISTS cost_centers (
+      id          VARCHAR(50) PRIMARY KEY,
+      code        VARCHAR(50) UNIQUE,
+      name        VARCHAR(200) NULL,
+      type        VARCHAR(50) NULL,
+      name_ar     VARCHAR(200) NULL,
+      name_en     VARCHAR(200) NULL,
+      branch_id   VARCHAR(50) NULL,
+      parent_id   VARCHAR(50) NULL,
+      is_active   BOOLEAN DEFAULT TRUE,
+      notes       TEXT,
+      created_at  TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      created_by  VARCHAR(80)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`);
+  } catch (e) {
+    console.log('[DB] Migration warning (cost_centers create):', e.message.substring(0, 120));
+  }
   await addColumnIfMissing('cost_centers', 'name_ar', "VARCHAR(200) NULL");
   await addColumnIfMissing('cost_centers', 'name_en', "VARCHAR(200) NULL");
   await addColumnIfMissing('cost_centers', 'branch_id', "VARCHAR(50) NULL");
@@ -1269,7 +1290,7 @@ async function runMigrations() {
       UNIQUE KEY uq_user_warehouse (user_id, warehouse_id),
       KEY idx_uwa_user (user_id),
       KEY idx_uwa_warehouse (warehouse_id)
-    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
   `);
   // FKs are best-effort: the project does not enforce a warehouses(branch_id)
   // FK, and a legacy DB with a mismatched engine/charset must not break boot.
@@ -5691,7 +5712,7 @@ async function runMigrations() {
       INDEX idx_brand (brand_id),
       INDEX idx_status (status),
       INDEX idx_city (city)
-    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
   `);
 
   // 2) Property Units (شقق/محلات/مكاتب داخل العقار)
@@ -5716,7 +5737,7 @@ async function runMigrations() {
       INDEX idx_property (property_id),
       INDEX idx_status (status),
       INDEX idx_contract (current_contract_id)
-    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
   `);
 
   // 3) Contracts (عقود إيجار / خدمة / توريد / عمل)
@@ -5762,7 +5783,7 @@ async function runMigrations() {
       INDEX idx_next_inv (next_invoice_date),
       INDEX idx_brand (brand_id),
       INDEX idx_dates (start_date, end_date)
-    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
   `);
 
   // 4) Contract Invoice Schedules (جدولة الفواتير الدورية)
@@ -5785,7 +5806,7 @@ async function runMigrations() {
       INDEX idx_contract (contract_id),
       INDEX idx_due (due_date, status),
       INDEX idx_status (status)
-    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
   `);
 
   // 5) Assets (الأصول الثابتة — معدات/مركبات/أجهزة للصيانة)
@@ -5819,7 +5840,7 @@ async function runMigrations() {
       INDEX idx_branch (branch_id),
       INDEX idx_status (status),
       INDEX idx_next_mnt (next_maintenance_date)
-    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
   `);
 
   // 6) Work Orders (أوامر العمل والصيانة)
@@ -5863,7 +5884,7 @@ async function runMigrations() {
       INDEX idx_assigned (assigned_to),
       INDEX idx_status_pri (status, priority),
       INDEX idx_due (due_date)
-    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
   `);
 
   // 7) Work Order Lines (بنود الأمر — مواد مستهلكة + ساعات عمل)
@@ -5886,7 +5907,7 @@ async function runMigrations() {
       created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
       INDEX idx_wo (work_order_id),
       INDEX idx_type (line_type)
-    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
   `);
 
   // 8) Supplier Invoices (فواتير الموردين)
@@ -5926,7 +5947,7 @@ async function runMigrations() {
       INDEX idx_due (due_date, status),
       INDEX idx_status (status),
       INDEX idx_po (purchase_order_id)
-    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
   `);
 
   // 9) Supplier Invoice Lines
@@ -5945,7 +5966,7 @@ async function runMigrations() {
       account_id VARCHAR(40),
       cost_center_id VARCHAR(40),
       INDEX idx_invoice (invoice_id)
-    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
   `);
 
   // 10) Customer Invoices (فواتير العملاء — للإيجار / خدمات / مبيعات)
@@ -5985,7 +6006,7 @@ async function runMigrations() {
       INDEX idx_brand (brand_id),
       INDEX idx_due (due_date, status),
       INDEX idx_status (status)
-    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
   `);
 
   await createTableIfMissing('customer_invoice_lines', `
@@ -6000,7 +6021,7 @@ async function runMigrations() {
       line_total DECIMAL(14,4),
       account_id VARCHAR(40),
       INDEX idx_invoice (invoice_id)
-    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
   `);
 
   // 11) Approval Policies (مصفوفة سياسات الموافقة المتقدمة)
@@ -6031,7 +6052,7 @@ async function runMigrations() {
       INDEX idx_type_amount (transaction_type_code, amount_from, amount_to),
       INDEX idx_scope (brand_id, branch_id),
       INDEX idx_active (is_active)
-    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
   `);
 
   // 12) Document Reference Chain (السلسلة المرجعية بين المستندات)
@@ -6049,7 +6070,7 @@ async function runMigrations() {
       INDEX idx_from (from_doc_type, from_doc_id),
       INDEX idx_to (to_doc_type, to_doc_id),
       INDEX idx_chain (chain_code)
-    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
   `);
 
   // 13) Budget Lines (الميزانيات الشهرية / السنوية لمراكز التكلفة)
@@ -6075,7 +6096,7 @@ async function runMigrations() {
       INDEX idx_period (fiscal_year, period_month),
       INDEX idx_cc (cost_center_id),
       INDEX idx_brand (brand_id)
-    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
   `);
 
   // 14) Anomaly Alerts (تنبيهات شذوذ — أساس الـ AI Layer)
@@ -6097,7 +6118,7 @@ async function runMigrations() {
       INDEX idx_severity (severity, status),
       INDEX idx_doc (related_doc_type, related_doc_id),
       INDEX idx_status (status)
-    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
   `);
 
   // 15) Saved Views (لتخصيص الفلاتر والشاشات لكل مستخدم)
@@ -6114,7 +6135,7 @@ async function runMigrations() {
       sort_json VARCHAR(200),
       created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
       INDEX idx_user_mod (username, module)
-    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
   `);
 
   // Enrich position_workflow_steps with policy linkage if not present
@@ -6157,7 +6178,7 @@ async function runMigrations() {
       status_code SMALLINT,
       created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
       INDEX idx_user_age (username, created_at)
-    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
   `);
   // Phase 3A.1 — request fingerprint so the SAME key with a DIFFERENT payload is
   // rejected as IDEMPOTENCY_CONFLICT instead of replaying a mismatched result.
@@ -6199,7 +6220,7 @@ async function runMigrations() {
       INDEX idx_branch (branch_id),
       INDEX idx_item (menu_item_id),
       INDEX idx_avail (is_available)
-    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
   `);
 
   // 17) Stocktake — extend with status workflow + variance threshold + photo evidence
@@ -6640,7 +6661,7 @@ async function runMigrations() {
       created_at  TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
       INDEX idx_proj_status (status),
       INDEX idx_proj_dims (brand_id, branch_id)
-    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
   `);
 
   console.log('[v5.10.39] Multi-dimensional GL columns + projects table ready.');

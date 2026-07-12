@@ -3945,10 +3945,14 @@ function erpLoadJournals() {
       // Replace the inner — we expect the existing markup to be a single
       // value span, so we rebuild with full premium structure.
       var host = card || el;
+      // Re-emit the container id on the rebuilt value node — otherwise every
+      // later erpLoadJournals gets getElementById()===null and the four KPI
+      // cards silently freeze at their first-load values (review fix).
+      var valId = card ? ' id="' + containerId + '"' : '';
       host.innerHTML =
         '<div class="jsc-icon"><i class="fas ' + meta.icon + '"></i></div>' +
         '<div class="jsc-body">' +
-          '<div class="jsc-val">' + n + '</div>' +
+          '<div class="jsc-val"' + valId + '>' + n + '</div>' +
           '<div class="jsc-label">' + meta.label + '</div>' +
           '<div class="jsc-amt">' + fmt(amt) + '</div>' +
         '</div>';
@@ -4083,9 +4087,9 @@ function _erpUpdateBulkBar() {
 window.erpBulkAction = function(action) {
   var ids = Array.from(window._jrnSelectedIds);
   if (!ids.length) return;
-  var labels = { approve: 'اعتماد', post: 'ترحيل', unpost: 'إلغاء ترحيل', delete: 'حذف' };
-  var icons  = { approve: 'fa-check-circle', post: 'fa-share-square', unpost: 'fa-undo', delete: 'fa-trash' };
-  var colors = { approve: '#0e7490', post: '#16a34a', unpost: '#f59e0b', delete: '#dc2626' };
+  var labels = { approve: 'اعتماد', post: 'ترحيل', unpost: 'إلغاء ترحيل', delete: 'حذف', approve_post: 'اعتماد + ترحيل' };
+  var icons  = { approve: 'fa-check-circle', post: 'fa-share-square', unpost: 'fa-undo', delete: 'fa-trash', approve_post: 'fa-check-double' };
+  var colors = { approve: '#0e7490', post: '#16a34a', unpost: '#f59e0b', delete: '#dc2626', approve_post: '#0e7490' };
   erpConfirm(labels[action] + ' الكل', 'سيتم تَطبيق "' + labels[action] + '" على ' + ids.length + ' قيد. متابعة؟', function(){
     loader(true);
     var token = localStorage.getItem('pos_token') || '';
@@ -4253,7 +4257,7 @@ function _renderJournalDetail(j) {
     (j.postedBy ? docCell('رحّله', j.postedBy) : '') +
     '</div>';
 
-  if (j.description) html += '<div class="ap-doc-desc"><i class="fas fa-file-alt" style="margin-left:6px;"></i>' + j.description + '</div>';
+  if (j.description) html += '<div class="ap-doc-desc"><i class="fas fa-file-alt" style="margin-inline-end:6px;"></i>' + j.description + '</div>';
 
   // V5.7.18 — clearer two-line cell: bold account name on top, code below in monospace.
   //           Backend now ALWAYS returns accountName (via JOIN to gl_accounts),
@@ -4313,7 +4317,7 @@ function _renderJournalDetail(j) {
 
   if (isPosted) {
     html += '<div class="ap-doc-note">' +
-              '<i class="fas fa-lock" style="margin-left:6px;"></i>' +
+              '<i class="fas fa-lock" style="margin-inline-end:6px;"></i>' +
               'هذا القَيد <strong>مُرَحَّل ومَحفوظ</strong> — لا يَقبل التَّعديل أو الحذف حِفاظاً على سَلامة سجلات المحاسبة (SOCPA / IFRS). للتَّصحيح أنشِئ <strong>قَيداً عَكسياً</strong> يُلغي أثَره.' +
             '</div>';
   }
@@ -4804,7 +4808,7 @@ function _renderJournalForm() {
     '<div style="background:#fff;border:1px solid #e5e7eb;border-radius:12px;padding:0;margin:10px 0;">' +
       // Title bar
       '<div style="display:flex;align-items:center;justify-content:space-between;padding:12px 20px;border-bottom:2px solid var(--mt-accent);background:#f8fafc;border-radius:12px 12px 0 0;">' +
-        '<h3 style="margin:0;font-size:16px;color:#0f172a;"><i class="fas fa-file-invoice" style="color:var(--mt-accent);margin-left:8px;"></i> القيود اليومية العامة</h3>' +
+        '<h3 style="margin:0;font-size:16px;color:#0f172a;"><i class="fas fa-file-invoice" style="color:var(--mt-accent);margin-inline-end:8px;"></i> القيود اليومية العامة</h3>' +
         '<button onclick="erpLoadJournals()" style="padding:6px 16px;border-radius:8px;border:1px solid #e5e7eb;background:#fff;cursor:pointer;font-size:13px;font-weight:700;color:#64748b;"><i class="fas fa-arrow-right" style="margin-left:4px;"></i> رجوع للقائمة</button>' +
       '</div>' +
       // Header fields
@@ -4886,9 +4890,9 @@ function _renderJournalForm() {
       '</div>' +
       // Action buttons
       '<div style="display:flex;align-items:center;gap:8px;padding:16px 20px;border-top:1px solid #e5e7eb;background:#f8fafc;border-radius:0 0 12px 12px;">' +
-        '<button onclick="erpSaveJournal(false)" style="padding:10px 28px;border-radius:8px;border:none;background:var(--mt-accent);color:#fff;font-weight:800;font-size:14px;cursor:pointer;"><i class="fas fa-save" style="margin-left:6px;"></i> حفظ</button>' +
-        '<button onclick="erpSaveJournal(true)" style="padding:10px 20px;border-radius:8px;border:2px solid var(--mt-accent);background:#fff;color:var(--mt-accent);font-weight:800;font-size:14px;cursor:pointer;"><i class="fas fa-plus" style="margin-left:6px;"></i> حفظ و جديد</button>' +
-        '<button onclick="erpSaveAndPost()" style="padding:10px 20px;border-radius:8px;border:none;background:var(--mt-danger);color:#fff;font-weight:800;font-size:14px;cursor:pointer;"><i class="fas fa-check-double" style="margin-left:6px;"></i> حفظ وترحيل</button>' +
+        '<button onclick="erpSaveJournal(false)" style="padding:10px 28px;border-radius:8px;border:none;background:var(--mt-accent);color:#fff;font-weight:800;font-size:14px;cursor:pointer;"><i class="fas fa-save" style="margin-inline-end:6px;"></i> حفظ</button>' +
+        '<button onclick="erpSaveJournal(true)" style="padding:10px 20px;border-radius:8px;border:2px solid var(--mt-accent);background:#fff;color:var(--mt-accent);font-weight:800;font-size:14px;cursor:pointer;"><i class="fas fa-plus" style="margin-inline-end:6px;"></i> حفظ و جديد</button>' +
+        '<button onclick="erpSaveAndPost()" style="padding:10px 20px;border-radius:8px;border:none;background:var(--mt-danger);color:#fff;font-weight:800;font-size:14px;cursor:pointer;"><i class="fas fa-check-double" style="margin-inline-end:6px;"></i> حفظ وترحيل</button>' +
         '<button onclick="erpLoadJournals()" style="padding:10px 20px;border-radius:8px;border:2px solid #e5e7eb;background:#fff;color:#475569;font-weight:800;font-size:14px;cursor:pointer;">إلغاء</button>' +
       '</div>' +
     '</div>';

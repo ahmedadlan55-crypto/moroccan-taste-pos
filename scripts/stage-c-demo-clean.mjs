@@ -41,6 +41,15 @@ function readEnv() {
 }
 const ENV = readEnv();
 
+// ─── SAFETY GUARD (review fix): direct-SQL deletions — local dev only. ───
+const _dbHost = (ENV.DB_HOST || 'localhost').trim().toLowerCase();
+const _localHosts = ['localhost', '127.0.0.1', '::1'];
+if (!_localHosts.includes(_dbHost) ||
+    (process.env.NODE_ENV || ENV.NODE_ENV || '').trim() === 'production') {
+  console.error('[stage-c-demo-clean] REFUSED: non-local DB_HOST or NODE_ENV=production.');
+  process.exit(2);
+}
+
 const CC_NAMES = [
   'الإدارة العامة', 'المطبخ المركزي', 'فرع العليا',
   'فرع النخيل', 'التسويق والتوصيل', 'مشروع التوسعة 2026',

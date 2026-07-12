@@ -39,6 +39,19 @@ function readEnv() {
 }
 const ENV = readEnv();
 
+// ─── SAFETY GUARD (review fix): this script mutates DB rows and, on first
+// run, adds a missing accounting_periods.period_name column. It must NEVER
+// run against anything but a local dev environment. ───
+const _dbHost = (ENV.DB_HOST || 'localhost').trim().toLowerCase();
+const _baseHost = new URL(BASE).hostname.toLowerCase();
+const _localHosts = ['localhost', '127.0.0.1', '::1'];
+if (!_localHosts.includes(_dbHost) || !_localHosts.includes(_baseHost) ||
+    (process.env.NODE_ENV || ENV.NODE_ENV || '').trim() === 'production') {
+  console.error('[stage-c-demo-seed] REFUSED: non-local DB_HOST/BASE or NODE_ENV=production.');
+  console.error(`  DB_HOST=${_dbHost}  BASE=${_baseHost}  NODE_ENV=${process.env.NODE_ENV || ENV.NODE_ENV || ''}`);
+  process.exit(2);
+}
+
 const token = jwt.sign(
   { id: 1, username: 'admin', role: 'admin', tokenVersion: 1 },
   ENV.JWT_SECRET,

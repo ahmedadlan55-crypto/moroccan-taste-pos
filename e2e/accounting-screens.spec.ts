@@ -23,7 +23,26 @@ import fs from "fs";
 import path from "path";
 
 const TOKEN = fs.readFileSync(path.join(process.cwd(), "e2e", ".token"), "utf8").trim();
-const OUT_ROOT = path.join(process.cwd(), "artifacts", "e2e", "accounting", "before");
+// SHOT_PHASE selects the output folder. Default is "after" so an accidental
+// run can never overwrite the pre-redesign baseline; pass SHOT_PHASE=before
+// deliberately to (re)capture a baseline.
+const PHASE = process.env.SHOT_PHASE || "after";
+const OUT_ROOT = path.join(process.cwd(), "artifacts", "e2e", "accounting", PHASE);
+
+// Known-acceptable failures (documented; PRE-EXISTING — verified untouched by
+// every Stage C commit via git diff e13cfcc..HEAD):
+// - /api/erp/cost-centers        → 500: local DB still has the pre-name_ar schema
+// - /api/erp/projects            → 404: journals dims filter caller (erp.js) hits
+//                                   a route not mounted on this server config
+// - /api/sse/inbox               → 401: notifications SSE rejects the synthetic
+//                                   e2e JWT (no server-side session row)
+// - /api/auth/users-list         → 404: boot-path caller predates Stage C
+const NETWORK_WHITELIST = [
+  /\/api\/erp\/cost-centers/,
+  /\/api\/erp\/projects(\?|$)/,
+  /\/api\/sse\/inbox/,
+  /\/api\/auth\/users-list/,
+];
 
 test.describe.configure({ mode: "serial" });
 
@@ -45,6 +64,23 @@ async function erpNavTo(page: Page, key: string) {
 test("accounting screens baseline", async ({ page }, testInfo) => {
   const project = testInfo.project.name;
   const results: string[] = [];
+
+  // ── console / network evidence collectors ──
+  const consoleErrors: string[] = [];
+  const failedRequests: string[] = [];
+  page.on("console", (msg) => {
+    // Resource-load failures are judged by the network collector below (which
+    // carries the documented whitelist); here we keep only REAL JS errors.
+    if (msg.type() === "error" && !/^Failed to load resource/.test(msg.text())) {
+      consoleErrors.push(msg.text().slice(0, 200));
+    }
+  });
+  page.on("pageerror", (err) => consoleErrors.push("pageerror: " + String(err).slice(0, 200)));
+  page.on("response", (res) => {
+    if (res.status() >= 400 && !NETWORK_WHITELIST.some((re) => re.test(res.url()))) {
+      failedRequests.push(`${res.status()} ${res.request().method()} ${res.url()}`.slice(0, 220));
+    }
+  });
 
   await page.addInitScript(
     ([token, session]) => {
@@ -257,4 +293,11 @@ test("accounting screens baseline", async ({ page }, testInfo) => {
   });
 
   console.log(`\n[${project}] captured:\n  ` + results.join("\n  "));
+  console.log(`[${project}] console errors: ${consoleErrors.length}`);
+  consoleErrors.forEach((e) => console.log(`  [console] ${e}`));
+  console.log(`[${project}] failed requests (non-whitelisted): ${failedRequests.length}`);
+  failedRequests.forEach((r) => console.log(`  [network] ${r}`));
+  // Hard evidence for the verification report — fail the run on real errors.
+  expect(consoleErrors, "zero console errors expected").toEqual([]);
+  expect(failedRequests, "zero non-whitelisted failed requests expected").toEqual([]);
 });

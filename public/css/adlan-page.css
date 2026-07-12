@@ -125,6 +125,11 @@
 .tb-report-table tbody tr:hover, .gl-account-table tbody tr:hover {
   background: var(--mt-table-row-hover);
 }
+/* GL ledger 2-row grouped header — restore the العملية/الرصيد column-group
+   disambiguation (was flattened by the generic thead rule; review fix) */
+.gl-account-table thead th.gl-grp-op  { background: var(--mt-warning-soft) !important; color: var(--mt-warm-2) !important; }
+.gl-account-table thead th.gl-grp-bal { background: var(--mt-info-soft) !important; color: var(--mt-info) !important; }
+
 /* Totals / footer rows */
 .jrn-foot-row td, .tb-totals td, .gl-total-row td,
 #erpARAging tfoot td, #erpAPAging tfoot td {
@@ -176,7 +181,7 @@
   border-color: var(--mt-accent) !important; color: var(--mt-accent) !important;
   background: var(--mt-accent-soft) !important;
 }
-.jfb-presets button.active, .bs-preset.active, .bs-preset.is-active {
+.jfb-presets button.active, .jfb-presets button.is-active, .bs-preset.active, .bs-preset.is-active {
   background: var(--mt-accent) !important; border-color: var(--mt-accent) !important;
   color: var(--mt-surface) !important;
 }
@@ -284,6 +289,11 @@
   background: var(--mt-accent-soft) !important;
   color: var(--mt-accent) !important;
 }
+/* Per-status icon tints — keep the at-a-glance journal-status color coding
+   (total=info · draft=amber · approved=petrol base · posted=green; review fix) */
+.jrn-stat-card[data-status="total"] .jsc-icon  { background: var(--mt-info-soft) !important;    color: var(--mt-info) !important; }
+.jrn-stat-card[data-status="draft"] .jsc-icon  { background: var(--mt-warning-soft) !important; color: var(--mt-warm-2) !important; }
+.jrn-stat-card[data-status="posted"] .jsc-icon { background: var(--mt-success-soft) !important; color: var(--mt-success-2) !important; }
 .jrn-stat-card .jsc-val,
 #erpRptPnL .wo-metric-value, #erpRptBalanceSheet .wo-metric-value, #erpRptCashFlow .wo-metric-value {
   font-variant-numeric: tabular-nums;

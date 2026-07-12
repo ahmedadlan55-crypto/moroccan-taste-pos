@@ -5,18 +5,20 @@ import { useServerFlags } from "./server-flags";
 import { useCan } from "./permission-provider";
 import { AppShell } from "@/components/app-shell/AppShell";
 import { LoadingState, ErrorState } from "@/components/states/States";
-import { DashboardPage } from "@/features/dashboard/DashboardPage";
-import { CustomersPage } from "@/features/customers/CustomersPage";
-import { CustomerDetailPage } from "@/features/customers/CustomerDetailPage";
-import { OrdersPage } from "@/features/orders/OrdersPage";
-import { OrderDetailPage } from "@/features/orders/OrderDetailPage";
-import { InvoicesPage } from "@/features/invoices/InvoicesPage";
-import { InvoiceDetailPage } from "@/features/invoices/InvoiceDetailPage";
-import { PaymentsPage } from "@/features/payments/PaymentsPage";
-import { PaymentDetailPage } from "@/features/payments/PaymentDetailPage";
-import { ReturnsPage } from "@/features/returns/ReturnsPage";
-import { ReturnDetailPage } from "@/features/returns/ReturnDetailPage";
-
+// Route-level code splitting: every feature page is lazy so each section
+// downloads on first visit and no chunk exceeds Vite's 500KB budget. The App
+// Shell (sidebar/topbar/providers) above stays eager and stable.
+const DashboardPage = lazy(() => import("@/features/dashboard/DashboardPage").then((m) => ({ default: m.DashboardPage })));
+const CustomersPage = lazy(() => import("@/features/customers/CustomersPage").then((m) => ({ default: m.CustomersPage })));
+const CustomerDetailPage = lazy(() => import("@/features/customers/CustomerDetailPage").then((m) => ({ default: m.CustomerDetailPage })));
+const OrdersPage = lazy(() => import("@/features/orders/OrdersPage").then((m) => ({ default: m.OrdersPage })));
+const OrderDetailPage = lazy(() => import("@/features/orders/OrderDetailPage").then((m) => ({ default: m.OrderDetailPage })));
+const InvoicesPage = lazy(() => import("@/features/invoices/InvoicesPage").then((m) => ({ default: m.InvoicesPage })));
+const InvoiceDetailPage = lazy(() => import("@/features/invoices/InvoiceDetailPage").then((m) => ({ default: m.InvoiceDetailPage })));
+const PaymentsPage = lazy(() => import("@/features/payments/PaymentsPage").then((m) => ({ default: m.PaymentsPage })));
+const PaymentDetailPage = lazy(() => import("@/features/payments/PaymentDetailPage").then((m) => ({ default: m.PaymentDetailPage })));
+const ReturnsPage = lazy(() => import("@/features/returns/ReturnsPage").then((m) => ({ default: m.ReturnsPage })));
+const ReturnDetailPage = lazy(() => import("@/features/returns/ReturnDetailPage").then((m) => ({ default: m.ReturnDetailPage })));
 const ReportsPage = lazy(() => import("@/features/reports/ReportsPage").then((m) => ({ default: m.ReportsPage })));
 const ReportDetailPage = lazy(() => import("@/features/reports/ReportDetailPage").then((m) => ({ default: m.ReportDetailPage })));
 
@@ -73,17 +75,17 @@ export function AppRouter() {
           }
         >
           <Route index element={<Navigate to="/dashboard" replace />} />
-          <Route path="dashboard" element={<DashboardPage />} />
-          <Route path="customers" element={<CustomersPage />} />
-          <Route path="customers/:id" element={<CustomerDetailPage />} />
-          <Route path="orders" element={<OrdersPage />} />
-          <Route path="orders/:id" element={<OrderDetailPage />} />
-          <Route path="invoices" element={<InvoicesPage />} />
-          <Route path="invoices/:id" element={<InvoiceDetailPage />} />
-          <Route path="payments" element={<PaymentsPage />} />
-          <Route path="payments/:id" element={<PaymentDetailPage />} />
-          <Route path="returns" element={<ReturnsPage />} />
-          <Route path="returns/:id" element={<ReturnDetailPage />} />
+          <Route path="dashboard" element={<Lazy><DashboardPage /></Lazy>} />
+          <Route path="customers" element={<Lazy><CustomersPage /></Lazy>} />
+          <Route path="customers/:id" element={<Lazy><CustomerDetailPage /></Lazy>} />
+          <Route path="orders" element={<Lazy><OrdersPage /></Lazy>} />
+          <Route path="orders/:id" element={<Lazy><OrderDetailPage /></Lazy>} />
+          <Route path="invoices" element={<Lazy><InvoicesPage /></Lazy>} />
+          <Route path="invoices/:id" element={<Lazy><InvoiceDetailPage /></Lazy>} />
+          <Route path="payments" element={<Lazy><PaymentsPage /></Lazy>} />
+          <Route path="payments/:id" element={<Lazy><PaymentDetailPage /></Lazy>} />
+          <Route path="returns" element={<Lazy><ReturnsPage /></Lazy>} />
+          <Route path="returns/:id" element={<Lazy><ReturnDetailPage /></Lazy>} />
           <Route path="reports" element={<Lazy><ReportsPage /></Lazy>} />
           <Route path="reports/:type" element={<Lazy><ReportDetailPage /></Lazy>} />
           <Route path="*" element={<NotFound />} />

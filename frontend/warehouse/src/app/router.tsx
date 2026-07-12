@@ -4,31 +4,42 @@ import { WarehouseScopeProvider } from "./warehouse-scope-provider";
 import { RequireAuth } from "./require-auth";
 import { AppShell } from "@/components/app-shell/AppShell";
 import { LoadingState } from "@/components/states/States";
-import { DashboardPage } from "@/features/dashboard/DashboardPage";
-import { WarehousesPage } from "@/features/warehouses/WarehousesPage";
-import { InventoryPage } from "@/features/inventory/InventoryPage";
-import { TransfersPage } from "@/features/transfers/TransfersPage";
-import { TransferCreateWizard } from "@/features/transfers/TransferCreateWizard";
-import { ReceiptsPage, ReceiptWizard } from "@/features/receipts/ReceiptsPage";
-import { PurchaseReceivingPage } from "@/features/purchase-receiving/PurchaseReceivingPage";
-import { PurchaseReceiveWizard } from "@/features/purchase-receiving/PurchaseReceiveWizard";
-import { IssuesPage, IssueWizard } from "@/features/issues/IssuesPage";
-import { AdjustmentsPage, AdjustmentWizard } from "@/features/adjustments/AdjustmentsPage";
-import { StocktakesPage } from "@/features/stocktakes/StocktakesPage";
-import { StocktakeWizard } from "@/features/stocktakes/StocktakeWizard";
-import { CountingWorkspace } from "@/features/stocktakes/CountingWorkspace";
-import { ItemsPage } from "@/features/items/ItemsPage";
-import { ItemWizard } from "@/features/items/ItemWizard";
-import { ReplenishmentPage } from "@/features/replenishment/ReplenishmentPage";
-import { LotsPage } from "@/features/lots/LotsPage";
-import { ExpiryPage } from "@/features/expiry/ExpiryPage";
-import { NegativePolicyPage } from "@/features/negative-policy/NegativePolicyPage";
-import { DeficitsPage } from "@/features/negative-policy/DeficitsPage";
-import { ProductionPage } from "@/features/production/ProductionPage";
-import { ProductionCreateWizard } from "@/features/production/ProductionCreateWizard";
-import { ProductionDetailPage } from "@/features/production/ProductionDetailPage";
-// Analytics + Reports pull in the heavy recharts bundle — lazy-load them so the
-// initial dashboard/inventory entry stays light; the rest stay eager.
+// Route-level code splitting: every feature page is lazy so each section
+// downloads on first visit and no chunk exceeds Vite's 500KB budget. The App
+// Shell (sidebar/topbar/providers) above stays eager and stable.
+const DashboardPage = lazy(() => import("@/features/dashboard/DashboardPage").then((m) => ({ default: m.DashboardPage })));
+const WarehousesPage = lazy(() => import("@/features/warehouses/WarehousesPage").then((m) => ({ default: m.WarehousesPage })));
+const InventoryPage = lazy(() => import("@/features/inventory/InventoryPage").then((m) => ({ default: m.InventoryPage })));
+const TransfersPage = lazy(() => import("@/features/transfers/TransfersPage").then((m) => ({ default: m.TransfersPage })));
+const TransferCreateWizard = lazy(() => import("@/features/transfers/TransferCreateWizard").then((m) => ({ default: m.TransferCreateWizard })));
+// Receipts / Issues / Adjustments each export the page + its wizard from one
+// file — share the dynamic import so each pair lands in a single chunk.
+const R = () => import("@/features/receipts/ReceiptsPage");
+const ReceiptsPage = lazy(() => R().then((m) => ({ default: m.ReceiptsPage })));
+const ReceiptWizard = lazy(() => R().then((m) => ({ default: m.ReceiptWizard })));
+const PurchaseReceivingPage = lazy(() => import("@/features/purchase-receiving/PurchaseReceivingPage").then((m) => ({ default: m.PurchaseReceivingPage })));
+const PurchaseReceiveWizard = lazy(() => import("@/features/purchase-receiving/PurchaseReceiveWizard").then((m) => ({ default: m.PurchaseReceiveWizard })));
+const I = () => import("@/features/issues/IssuesPage");
+const IssuesPage = lazy(() => I().then((m) => ({ default: m.IssuesPage })));
+const IssueWizard = lazy(() => I().then((m) => ({ default: m.IssueWizard })));
+const A = () => import("@/features/adjustments/AdjustmentsPage");
+const AdjustmentsPage = lazy(() => A().then((m) => ({ default: m.AdjustmentsPage })));
+const AdjustmentWizard = lazy(() => A().then((m) => ({ default: m.AdjustmentWizard })));
+const StocktakesPage = lazy(() => import("@/features/stocktakes/StocktakesPage").then((m) => ({ default: m.StocktakesPage })));
+const StocktakeWizard = lazy(() => import("@/features/stocktakes/StocktakeWizard").then((m) => ({ default: m.StocktakeWizard })));
+const CountingWorkspace = lazy(() => import("@/features/stocktakes/CountingWorkspace").then((m) => ({ default: m.CountingWorkspace })));
+const ItemsPage = lazy(() => import("@/features/items/ItemsPage").then((m) => ({ default: m.ItemsPage })));
+const ItemWizard = lazy(() => import("@/features/items/ItemWizard").then((m) => ({ default: m.ItemWizard })));
+const ReplenishmentPage = lazy(() => import("@/features/replenishment/ReplenishmentPage").then((m) => ({ default: m.ReplenishmentPage })));
+const LotsPage = lazy(() => import("@/features/lots/LotsPage").then((m) => ({ default: m.LotsPage })));
+const ExpiryPage = lazy(() => import("@/features/expiry/ExpiryPage").then((m) => ({ default: m.ExpiryPage })));
+const NegativePolicyPage = lazy(() => import("@/features/negative-policy/NegativePolicyPage").then((m) => ({ default: m.NegativePolicyPage })));
+const DeficitsPage = lazy(() => import("@/features/negative-policy/DeficitsPage").then((m) => ({ default: m.DeficitsPage })));
+const ProductionPage = lazy(() => import("@/features/production/ProductionPage").then((m) => ({ default: m.ProductionPage })));
+const ProductionCreateWizard = lazy(() => import("@/features/production/ProductionCreateWizard").then((m) => ({ default: m.ProductionCreateWizard })));
+const ProductionDetailPage = lazy(() => import("@/features/production/ProductionDetailPage").then((m) => ({ default: m.ProductionDetailPage })));
+// Analytics + Reports pull in the heavy recharts bundle — lazy-loaded like the
+// rest so the initial entry stays light.
 const AnalyticsPage = lazy(() => import("@/features/analytics/AnalyticsPage").then((m) => ({ default: m.AnalyticsPage })));
 const ReportsPage = lazy(() => import("@/features/reports/ReportsPage").then((m) => ({ default: m.ReportsPage })));
 const ReportDetailPage = lazy(() => import("@/features/reports/ReportDetailPage").then((m) => ({ default: m.ReportDetailPage })));
@@ -74,37 +85,37 @@ export function AppRouter() {
               </RequireAuth>
             }
           >
-            <Route index element={<DashboardPage />} />
-            <Route path="warehouses" element={<WarehousesPage />} />
-            <Route path="inventory" element={<InventoryPage />} />
-            <Route path="items" element={<ItemsPage />} />
-            <Route path="items/new" element={<ItemWizard />} />
-            <Route path="replenishment" element={<ReplenishmentPage />} />
-            <Route path="lots" element={<LotsPage />} />
-            <Route path="lots/:id" element={<LotsPage />} />
-            <Route path="expiry" element={<ExpiryPage />} />
-            <Route path="receipts" element={<ReceiptsPage />} />
-            <Route path="receipts/new" element={<ReceiptWizard />} />
-            <Route path="purchase-receiving" element={<PurchaseReceivingPage />} />
-            <Route path="purchase-receiving/:purchaseId" element={<PurchaseReceiveWizard />} />
-            <Route path="issues" element={<IssuesPage />} />
-            <Route path="issues/new" element={<IssueWizard />} />
-            <Route path="transfers" element={<TransfersPage />} />
-            <Route path="transfers/new" element={<TransferCreateWizard />} />
-            <Route path="stocktakes" element={<StocktakesPage />} />
-            <Route path="stocktakes/new" element={<StocktakeWizard />} />
-            <Route path="stocktakes/:id/count" element={<CountingWorkspace />} />
-            <Route path="adjustments" element={<AdjustmentsPage />} />
-            <Route path="adjustments/new" element={<AdjustmentWizard />} />
-            <Route path="production" element={<ProductionPage />} />
-            <Route path="production/new" element={<ProductionCreateWizard />} />
-            <Route path="production/:id" element={<ProductionDetailPage />} />
-            <Route path="production/:id/edit" element={<ProductionCreateWizard />} />
+            <Route index element={<Lazy><DashboardPage /></Lazy>} />
+            <Route path="warehouses" element={<Lazy><WarehousesPage /></Lazy>} />
+            <Route path="inventory" element={<Lazy><InventoryPage /></Lazy>} />
+            <Route path="items" element={<Lazy><ItemsPage /></Lazy>} />
+            <Route path="items/new" element={<Lazy><ItemWizard /></Lazy>} />
+            <Route path="replenishment" element={<Lazy><ReplenishmentPage /></Lazy>} />
+            <Route path="lots" element={<Lazy><LotsPage /></Lazy>} />
+            <Route path="lots/:id" element={<Lazy><LotsPage /></Lazy>} />
+            <Route path="expiry" element={<Lazy><ExpiryPage /></Lazy>} />
+            <Route path="receipts" element={<Lazy><ReceiptsPage /></Lazy>} />
+            <Route path="receipts/new" element={<Lazy><ReceiptWizard /></Lazy>} />
+            <Route path="purchase-receiving" element={<Lazy><PurchaseReceivingPage /></Lazy>} />
+            <Route path="purchase-receiving/:purchaseId" element={<Lazy><PurchaseReceiveWizard /></Lazy>} />
+            <Route path="issues" element={<Lazy><IssuesPage /></Lazy>} />
+            <Route path="issues/new" element={<Lazy><IssueWizard /></Lazy>} />
+            <Route path="transfers" element={<Lazy><TransfersPage /></Lazy>} />
+            <Route path="transfers/new" element={<Lazy><TransferCreateWizard /></Lazy>} />
+            <Route path="stocktakes" element={<Lazy><StocktakesPage /></Lazy>} />
+            <Route path="stocktakes/new" element={<Lazy><StocktakeWizard /></Lazy>} />
+            <Route path="stocktakes/:id/count" element={<Lazy><CountingWorkspace /></Lazy>} />
+            <Route path="adjustments" element={<Lazy><AdjustmentsPage /></Lazy>} />
+            <Route path="adjustments/new" element={<Lazy><AdjustmentWizard /></Lazy>} />
+            <Route path="production" element={<Lazy><ProductionPage /></Lazy>} />
+            <Route path="production/new" element={<Lazy><ProductionCreateWizard /></Lazy>} />
+            <Route path="production/:id" element={<Lazy><ProductionDetailPage /></Lazy>} />
+            <Route path="production/:id/edit" element={<Lazy><ProductionCreateWizard /></Lazy>} />
             <Route path="analytics" element={<Lazy><AnalyticsPage /></Lazy>} />
             <Route path="reports" element={<Lazy><ReportsPage /></Lazy>} />
             <Route path="reports/:reportType" element={<Lazy><ReportDetailPage /></Lazy>} />
-            <Route path="negative-policy" element={<NegativePolicyPage />} />
-            <Route path="deficits" element={<DeficitsPage />} />
+            <Route path="negative-policy" element={<Lazy><NegativePolicyPage /></Lazy>} />
+            <Route path="deficits" element={<Lazy><DeficitsPage /></Lazy>} />
             {/* Procurement / P2P — one section, internal tabs. */}
             <Route path="purchasing" element={<Lazy><ProcurementLayout /></Lazy>}>
               <Route index element={<Lazy><ProcurementDashboard /></Lazy>} />

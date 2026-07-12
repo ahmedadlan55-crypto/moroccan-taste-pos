@@ -25,6 +25,25 @@ export default defineConfig(({ command }) => ({
       "/api": { target: BACKEND, changeOrigin: true },
     },
   },
+  build: {
+    rollupOptions: {
+      output: {
+        // Vendor splitting for cache-stable chunks. The WHOLE react family
+        // (react, react-dom, scheduler, router) must stay in ONE chunk —
+        // splitting react-dom from react/scheduler breaks hook dispatch at
+        // runtime. Everything unmatched falls through to Rollup's default
+        // chunking, which respects the route-level dynamic-import boundaries.
+        manualChunks(id: string) {
+          if (!id.includes("node_modules")) return;
+          if (/[\\/]node_modules[\\/](react|react-dom|react-is|scheduler|react-router|react-router-dom|@remix-run)[\\/]/.test(id)) return "vendor-react";
+          if (/[\\/]node_modules[\\/](framer-motion|motion-dom|motion-utils)[\\/]/.test(id)) return "vendor-motion";
+          if (/[\\/]node_modules[\\/]@tanstack[\\/]/.test(id)) return "vendor-query";
+          if (/[\\/]node_modules[\\/]lucide-react[\\/]/.test(id)) return "vendor-icons";
+          if (/[\\/]node_modules[\\/](react-hook-form|@hookform|zod)[\\/]/.test(id)) return "vendor-forms";
+        },
+      },
+    },
+  },
   test: {
     globals: true,
     environment: "jsdom",

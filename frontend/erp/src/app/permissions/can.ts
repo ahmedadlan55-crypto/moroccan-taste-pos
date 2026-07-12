@@ -141,6 +141,11 @@ export const ROLE_GRANTS: Record<Capability, readonly Role[]> = {
   "accounting.view": FIN,
   "accounting.journals.view": FIN,
   "accounting.reports.view": FIN_READ,
+  // ── Accounting write caps (E1) — reverse is tighter (excludes plain accountant) ──
+  "accounting.accounts.manage": FIN,
+  "accounting.journals.create": FIN,
+  "accounting.journals.post": FIN,
+  "accounting.journals.reverse": [...ADM, "manager", "finance"],
   // ── Cash & banking ──
   "banking.view": [...ADM, "manager", "accountant", "finance", "cashier"],
   // ── People / HR ──

@@ -756,7 +756,7 @@ router.post('/gl/accounts/:id/move', async (req, res) => {
 
 router.post('/gl/accounts', async (req, res) => {
   try {
-    const { id, code, nameAr, nameEn, type, parentId, level, isFolder } = req.body;
+    const { id, code, nameAr, nameEn, type, parentId, level, isFolder, isActive } = req.body;
     // v5.10.46 — accept explicit isFolder flag from the frontend modal so
     // L1/L2 main accounts get is_folder=1 even before any child is added.
     const hasFolderFlag = (typeof isFolder === 'boolean');
@@ -775,6 +775,11 @@ router.post('/gl/accounts', async (req, res) => {
             'UPDATE gl_accounts SET code=?, name_ar=?, name_en=?, type=?, parent_id=?, level=? WHERE id=?',
             [code, nameAr, nameEn || '', type, parentId || null, level || 1, id]
           );
+        }
+        // E1: the React COA editor toggles active status; legacy never sends
+        // isActive, so this UPDATE only runs on the new path — no legacy change.
+        if (typeof isActive === 'boolean') {
+          await db.query('UPDATE gl_accounts SET is_active=? WHERE id=?', [isActive ? 1 : 0, id]);
         }
         return res.json({ success: true, id });
       }
@@ -808,6 +813,11 @@ router.post('/gl/accounts', async (req, res) => {
       } catch (e) {
         console.error('[gl/accounts] auto-promote parent failed:', e.message);
       }
+    }
+
+    // E1: honor an explicit inactive flag on create (defaults active otherwise).
+    if (typeof isActive === 'boolean' && isActive === false) {
+      await db.query('UPDATE gl_accounts SET is_active = 0 WHERE id = ?', [newId]);
     }
 
     res.json({ success: true, id: newId });
@@ -2819,7 +2829,7 @@ router.put('/gl/journals/:id', async (req, res) => {
     // v5.11.0 — accept all four header dimensions on edit too.
     const {
       journalDate, description, notes, entries, username, force,
-      brandId, branchId, projectId, costCenterId, costCenterName
+      brandId, branchId, projectId, costCenterId, costCenterName, attachment
     } = req.body;
 
     const [jrnRows] = await db.query('SELECT * FROM gl_journals WHERE id = ?', [journalId]);
@@ -2857,6 +2867,8 @@ router.put('/gl/journals/:id', async (req, res) => {
     const effProject = projectId  !== undefined ? (projectId  || null) : jrn.project_id;
     const effCC      = costCenterId    !== undefined ? (costCenterId    || null) : jrn.cost_center_id;
     const effCCName  = costCenterName  !== undefined ? (costCenterName  || '')   : jrn.cost_center_name;
+    // E1: persist attachment on edit too (legacy PUT omits it → existing value preserved).
+    const effAttachment = attachment !== undefined ? (attachment || null) : jrn.attachment;
 
     await db.withTransaction(async (conn) => {
       // 1. If posted, reverse the OLD entries' impact on stored balances.
@@ -2877,11 +2889,11 @@ router.put('/gl/journals/:id', async (req, res) => {
             SET journal_date=?, description=?, notes=?,
                 total_debit=?, total_credit=?,
                 brand_id=?, branch_id=?, project_id=?,
-                cost_center_id=?, cost_center_name=?
+                cost_center_id=?, cost_center_name=?, attachment=?
           WHERE id=?`,
         [journalDate || jrn.journal_date, description || jrn.description, notes || '',
          totalDebit, totalCredit,
-         effBrand, effBranch, effProject, effCC, effCCName,
+         effBrand, effBranch, effProject, effCC, effCCName, effAttachment,
          journalId]
       );
       for (const entry of (entries || [])) {

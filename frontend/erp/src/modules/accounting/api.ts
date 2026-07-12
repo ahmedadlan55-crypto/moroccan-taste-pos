@@ -367,3 +367,391 @@ export function useProjects(search: string) {
       }),
   });
 }
+
+// ════════════════════════════════════════════════════════════════════════════
+// E1 — Chart of Accounts (دليل الحسابات)  ·  /api/erp/gl/accounts
+// The legacy screen loads a FLAT array and builds the tree client-side from
+// parentId. We preserve that contract exactly: same endpoints, same payloads.
+// ════════════════════════════════════════════════════════════════════════════
+
+export type GlAccountType = "asset" | "liability" | "equity" | "revenue" | "expense";
+
+export const GL_ACCOUNT_TYPES: GlAccountType[] = [
+  "asset",
+  "liability",
+  "equity",
+  "revenue",
+  "expense",
+];
+export const GL_TYPE_LABEL: Record<GlAccountType, string> = {
+  asset: "الأصول",
+  liability: "الالتزامات",
+  equity: "حقوق الملكية",
+  revenue: "الإيرادات",
+  expense: "المصروفات",
+};
+// Normal balance side, derived from type (mirrors legacy typeNature).
+export const GL_TYPE_NATURE: Record<GlAccountType, "debit" | "credit"> = {
+  asset: "debit",
+  expense: "debit",
+  liability: "credit",
+  equity: "credit",
+  revenue: "credit",
+};
+// Accounts whose lines require a cost center (P&L). Enforced in the editor.
+export const PNL_TYPES: GlAccountType[] = ["revenue", "expense"];
+
+export interface GlAccount {
+  id: string;
+  code: string;
+  nameAr: string;
+  nameEn: string;
+  type: GlAccountType;
+  parentId: string | null;
+  level: number;
+  isActive: boolean;
+  isFolder: boolean;
+  displayOrder: number | null;
+  balance: number;
+  storedBalance: number;
+  movementCount: number;
+  accountClass: string;
+  reportSection: string | null;
+  taxNature: string;
+}
+
+export interface GlAccountInput {
+  id?: string;
+  code: string;
+  nameAr: string;
+  nameEn: string;
+  type: GlAccountType;
+  parentId: string | null;
+  level: number;
+  isFolder: boolean;
+  isActive?: boolean;
+}
+
+// GET /api/erp/gl/accounts → flat GlAccount[] (server owns balances).
+export function useGlAccounts() {
+  return useQuery({
+    queryKey: ["acc", "gl-accounts"],
+    queryFn: async () => apiClient.get<GlAccount[]>("/erp/gl/accounts"),
+  });
+}
+
+// POST /api/erp/gl/accounts (upsert). isActive is honored by the E1 backend
+// gap-fix; omitting it leaves the flag untouched (legacy behavior).
+export function useSaveGlAccount() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (input: GlAccountInput) =>
+      apiClient.post<{ success: boolean; id: string; error?: string }>("/erp/gl/accounts", input),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["acc", "gl-accounts"] }),
+  });
+}
+
+// Activate / deactivate — re-sends the full account with a flipped isActive so
+// the upsert preserves every other column. Distinct hook = testable intent.
+export function useSetAccountActive() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ account, isActive }: { account: GlAccount; isActive: boolean }) =>
+      apiClient.post<{ success: boolean; id: string; error?: string }>("/erp/gl/accounts", {
+        id: account.id,
+        code: account.code,
+        nameAr: account.nameAr,
+        nameEn: account.nameEn,
+        type: account.type,
+        parentId: account.parentId,
+        level: account.level,
+        isFolder: account.isFolder,
+        isActive,
+      } satisfies GlAccountInput),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["acc", "gl-accounts"] }),
+  });
+}
+
+// DELETE /api/erp/gl/accounts/:id — server refuses if it has children or entries.
+export function useDeleteGlAccount() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (id: string) =>
+      apiClient.delete<{ success: boolean; error?: string }>(`/erp/gl/accounts/${id}`),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["acc", "gl-accounts"] }),
+  });
+}
+
+// POST /api/erp/gl/accounts/:id/folder — flip the is_folder flag.
+export function useToggleAccountFolder() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, isFolder }: { id: string; isFolder: boolean }) =>
+      apiClient.post<{ success: boolean; id: string; isFolder: boolean; error?: string }>(
+        `/erp/gl/accounts/${id}/folder`,
+        { isFolder },
+      ),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["acc", "gl-accounts"] }),
+  });
+}
+
+// GET /api/erp/gl/account-ledger/:id → { ledger: [...] } recent movements.
+export interface AccountLedgerLine {
+  journalId: string;
+  journalNumber: string;
+  journalDate: string;
+  referenceType: string;
+  journalDesc?: string;
+  entryDesc?: string;
+  debit: number;
+  credit: number;
+  balance: number;
+}
+export function useAccountLedger(accountId: string | null) {
+  return useQuery({
+    queryKey: ["acc", "account-ledger", accountId],
+    enabled: !!accountId,
+    queryFn: async () => {
+      const res = await apiClient.get<{
+        success?: boolean;
+        error?: string;
+        ledger?: AccountLedgerLine[];
+      }>(`/erp/gl/account-ledger/${accountId}`);
+      return unwrap(res).ledger ?? [];
+    },
+  });
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// E1 — Journal Entries (القيود اليومية)  ·  /api/erp/gl/journals
+// ════════════════════════════════════════════════════════════════════════════
+
+export type JournalStatus = "draft" | "approved" | "posted";
+
+export interface JournalLine {
+  id?: string;
+  accountId: string | null;
+  accountCode: string;
+  accountName: string;
+  accountType?: string;
+  debit: number;
+  credit: number;
+  description: string;
+  costCenterId: string | null;
+  costCenterName?: string;
+}
+
+export interface Journal {
+  id: string;
+  journalNumber: string;
+  journalDate: string;
+  referenceType: string;
+  referenceId: string;
+  description: string;
+  notes: string;
+  totalDebit: number;
+  totalCredit: number;
+  status: JournalStatus;
+  createdBy: string;
+  approvedBy: string;
+  postedBy: string;
+  attachment: string | null;
+  brandId: string | null;
+  brandName?: string;
+  branchId: string | null;
+  branchName?: string;
+  projectId: string | null;
+  projectName?: string;
+  costCenterId: string | null;
+  costCenterName?: string;
+  reversedByJournalId: string | null;
+  reversesJournalId: string | null;
+  entries: JournalLine[];
+}
+
+export interface JournalFilters {
+  startDate?: string;
+  endDate?: string;
+  status?: string;
+  q?: string;
+  referenceType?: string;
+  brandId?: string;
+  branchId?: string;
+  projectId?: string;
+  costCenterId?: string;
+}
+
+// GET /api/erp/gl/journals (LIMIT 500, server-side filters) → Journal[].
+export function useJournals(filters: JournalFilters) {
+  return useQuery({
+    queryKey: ["acc", "journals", filters],
+    queryFn: async () => {
+      const res = await apiClient.get<Journal[] | { success?: boolean; error?: string }>(
+        "/erp/gl/journals",
+        { params: { ...filters } },
+      );
+      if (Array.isArray(res)) return res;
+      throw new Error((res as { error?: string })?.error || "تعذّر تحميل القيود");
+    },
+  });
+}
+
+// The write payload — identical for create (POST) and edit (PUT).
+export interface JournalInput {
+  journalDate: string;
+  referenceType?: string; // 'manual' | 'opening'
+  referenceId?: string;
+  description: string;
+  notes?: string;
+  attachment?: string | null;
+  isOpening?: boolean;
+  brandId?: string | null;
+  branchId?: string | null;
+  projectId?: string | null;
+  costCenterId?: string | null;
+  costCenterName?: string;
+  entries: Array<{
+    accountId: string | null;
+    accountCode: string;
+    accountName: string;
+    debit: number;
+    credit: number;
+    description?: string;
+    costCenterId?: string | null;
+    costCenterName?: string;
+  }>;
+}
+
+export function useCreateJournal() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (input: JournalInput) =>
+      apiClient.post<{ success: boolean; id: string; journalNumber: string; error?: string }>(
+        "/erp/gl/journals",
+        input,
+      ),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["acc", "journals"] }),
+  });
+}
+
+export function useUpdateJournal() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, input }: { id: string; input: JournalInput }) =>
+      apiClient.put<{ success: boolean; journalNumber: string; reposted?: boolean; error?: string }>(
+        `/erp/gl/journals/${id}`,
+        input,
+      ),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["acc", "journals"] }),
+  });
+}
+
+// POST /:id/approve then /:id/post — a draft must be approved before posting,
+// so "post a draft" chains both (matches legacy erpApproveJournal).
+export function usePostJournal() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (journal: { id: string; status: JournalStatus }) => {
+      if (journal.status === "draft") {
+        const a = await apiClient.post<{ success: boolean; error?: string }>(
+          `/erp/gl/journals/${journal.id}/approve`,
+          {},
+        );
+        if (a && a.success === false) throw new Error(a.error || "تعذّر اعتماد القيد");
+      }
+      const p = await apiClient.post<{ success: boolean; error?: string }>(
+        `/erp/gl/journals/${journal.id}/post`,
+        {},
+      );
+      if (p && p.success === false) throw new Error(p.error || "تعذّر ترحيل القيد");
+      return p;
+    },
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["acc", "journals"] }),
+  });
+}
+
+// POST /:id/reverse — only a posted, not-yet-reversed journal; reason optional.
+export function useReverseJournal() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, reason }: { id: string; reason?: string }) =>
+      apiClient.post<{
+        success: boolean;
+        newJournalId?: string;
+        newJournalNumber?: string;
+        error?: string;
+      }>(`/erp/gl/journals/${id}/reverse`, { reason }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["acc", "journals"] }),
+  });
+}
+
+// ── Journal-line account picker — server-side searchable postable accounts ───
+// GET /api/accounting/accounts/search?postingOnly=1 → active + LEAF accounts.
+// Shape is structurally the SearchableEntityCombobox EntityFetcher/EntityPage,
+// so a line row can pass `searchPostableAccounts` straight in as its fetcher.
+export interface PostableAccount {
+  id: string;
+  code: string;
+  name: string;
+  nameEn?: string;
+  type: GlAccountType | string;
+  parentId?: string | null;
+  active?: boolean;
+}
+export interface PostableAccountPage {
+  items: PostableAccount[];
+  nextPage: number | null;
+  total: number;
+}
+export async function searchPostableAccounts(args: {
+  q: string;
+  page: number;
+  signal?: AbortSignal;
+  accountType?: GlAccountType;
+}): Promise<PostableAccountPage> {
+  const pageSize = 20;
+  const res = await apiClient.get<{
+    data: PostableAccount[];
+    pagination?: { page: number; pageSize: number; total: number; totalPages?: number };
+  }>("/accounting/accounts/search", {
+    params: {
+      q: args.q || undefined,
+      postingOnly: "1",
+      accountType: args.accountType || undefined,
+      page: String(args.page),
+      pageSize: String(pageSize),
+    },
+    signal: args.signal,
+  });
+  const items = res.data ?? [];
+  const pg = res.pagination;
+  const total = pg?.total ?? items.length;
+  const hasMore = pg ? pg.page * pg.pageSize < total : false;
+  return { items, nextPage: hasMore ? args.page + 1 : null, total };
+}
+
+// ── Header dimension lookups (optional; inherited by lines server-side) ──────
+export interface DimOption {
+  id: string;
+  name: string;
+}
+function toDimOptions(rows: Array<Record<string, unknown>>): DimOption[] {
+  return (rows ?? []).map((r) => ({
+    id: String(r.id ?? ""),
+    name: String(r.nameAr ?? r.name ?? r.name_ar ?? r.code ?? r.id ?? ""),
+  }));
+}
+export function useBrands() {
+  return useQuery({
+    queryKey: ["acc", "brands"],
+    queryFn: async () =>
+      toDimOptions(await apiClient.get<Array<Record<string, unknown>>>("/erp/brands-stats")),
+  });
+}
+export function useBranches() {
+  return useQuery({
+    queryKey: ["acc", "branches"],
+    queryFn: async () =>
+      toDimOptions(await apiClient.get<Array<Record<string, unknown>>>("/erp/branches-full")),
+  });
+}

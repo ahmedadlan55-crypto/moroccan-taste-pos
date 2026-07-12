@@ -58,7 +58,7 @@ const EXEMPT = new Set(['public/shared/design-tokens.css']); // the token source
 function buildScanSet() {
   const files = [];
 
-  for (const app of ['warehouse', 'sales', 'pos']) {
+  for (const app of ['warehouse', 'sales', 'pos', 'erp']) {
     collectFiles(path.join(ROOT, 'frontend', app, 'src'), ['.ts', '.tsx', '.css'], files);
     const tw = path.join(ROOT, 'frontend', app, 'tailwind.config.ts');
     if (existsSync(tw) && statSync(tw).isFile()) files.push(tw);
@@ -83,7 +83,7 @@ function buildScanSet() {
 
 /** Files where ANY hex is a hard failure, baseline or not. */
 function isHardFailFile(key) {
-  if (/^frontend\/(warehouse|sales|pos)\/tailwind\.config\.ts$/.test(key)) return true;
+  if (/^frontend\/(warehouse|sales|pos|erp)\/tailwind\.config\.ts$/.test(key)) return true;
   if (/^frontend\/shared\/.+\.(ts|tsx|css)$/.test(key)) return true;
   if (key === 'public/css/adlan-page.css') return true; // Stage C component layer — tokens only
   return false;

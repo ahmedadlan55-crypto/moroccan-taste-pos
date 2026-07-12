@@ -2,6 +2,7 @@
 node_modules/
 frontend/warehouse/node_modules/
 frontend/pos/node_modules/
+frontend/erp/node_modules/
 artifacts/
 *.log
 .git/

@@ -1,0 +1,106 @@
+import { readdirSync, readFileSync, statSync } from "node:fs";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
+import { describe, it, expect } from "vitest";
+import { NAV, NAV_ITEMS } from "@/app/navigation/manifest";
+import { ALL_CAPS, ROLE_GRANTS } from "@/app/permissions";
+import { ROUTE_PATHS, REDIRECT_PATHS } from "@/app/router";
+
+// ── Anti-duplication / integrity harness ────────────────────────────────────
+// The unified app has ONE nav manifest, ONE permission catalog and ONE router.
+// These tests fail loudly the moment those drift apart, so no duplicate route /
+// nav id / permission key can slip in, and no screen can depend on the legacy
+// erp.js globals.
+
+describe("navigation manifest integrity", () => {
+  it("every nav item id is unique", () => {
+    const ids = NAV_ITEMS.map((i) => i.id);
+    const dupes = ids.filter((id, i) => ids.indexOf(id) !== i);
+    expect(dupes).toEqual([]);
+  });
+
+  it("every nav item path is unique", () => {
+    const paths = NAV_ITEMS.map((i) => i.path);
+    const dupes = paths.filter((p, i) => paths.indexOf(p) !== i);
+    expect(dupes).toEqual([]);
+  });
+
+  it("every nav group id is unique", () => {
+    const ids = NAV.map((g) => g.id);
+    const dupes = ids.filter((id, i) => ids.indexOf(id) !== i);
+    expect(dupes).toEqual([]);
+  });
+
+  it("every nav item has a capability from the ONE catalog", () => {
+    const caps = new Set<string>(ALL_CAPS);
+    const offenders = NAV_ITEMS.filter((i) => !i.cap || !caps.has(i.cap));
+    expect(offenders.map((i) => `${i.id} (${i.cap ?? "no cap"})`)).toEqual([]);
+  });
+});
+
+describe("permission catalog integrity", () => {
+  it("every catalog capability has a role grant", () => {
+    const missing = ALL_CAPS.filter(
+      (cap) => !Object.prototype.hasOwnProperty.call(ROLE_GRANTS, cap),
+    );
+    expect(missing).toEqual([]);
+  });
+
+  it("catalog capabilities are unique", () => {
+    const dupes = ALL_CAPS.filter((c, i) => ALL_CAPS.indexOf(c) !== i);
+    expect(dupes).toEqual([]);
+  });
+});
+
+describe("router ↔ manifest coverage", () => {
+  it("every nav path has a registered route", () => {
+    const missing = NAV_ITEMS.map((i) => i.path).filter((p) => !ROUTE_PATHS.has(p));
+    expect(missing).toEqual([]);
+  });
+
+  it("no route exists without a nav item or an allowlisted redirect", () => {
+    const navPaths = new Set(NAV_ITEMS.map((i) => i.path));
+    const orphans = [...ROUTE_PATHS].filter((p) => !navPaths.has(p) && !REDIRECT_PATHS.has(p));
+    expect(orphans).toEqual([]);
+  });
+});
+
+// ── Source scan — bans on legacy coupling / unsafe HTML ──────────────────────
+const SRC_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
+const SKIP_DIRS = new Set(["__tests__", "node_modules", "dist", "assets"]);
+
+function collectSources(dir: string, out: string[]): void {
+  for (const entry of readdirSync(dir)) {
+    const abs = path.join(dir, entry);
+    if (statSync(abs).isDirectory()) {
+      if (SKIP_DIRS.has(entry)) continue;
+      collectSources(abs, out);
+    } else if (/\.(ts|tsx)$/.test(entry)) {
+      out.push(abs);
+    }
+  }
+}
+
+describe("no legacy coupling in erp source", () => {
+  const files: string[] = [];
+  collectSources(SRC_DIR, files);
+
+  it("finds source files to scan", () => {
+    expect(files.length).toBeGreaterThan(0);
+  });
+
+  it("no file references window.erp*", () => {
+    const offenders = files.filter((f) => /window\.erp/.test(readFileSync(f, "utf8")));
+    expect(offenders.map((f) => path.relative(SRC_DIR, f))).toEqual([]);
+  });
+
+  it("no file imports the legacy erp.js", () => {
+    const offenders = files.filter((f) => /['"][^'"]*erp\.js['"]/.test(readFileSync(f, "utf8")));
+    expect(offenders.map((f) => path.relative(SRC_DIR, f))).toEqual([]);
+  });
+
+  it("no file uses dangerouslySetInnerHTML", () => {
+    const offenders = files.filter((f) => /dangerouslySetInnerHTML/.test(readFileSync(f, "utf8")));
+    expect(offenders.map((f) => path.relative(SRC_DIR, f))).toEqual([]);
+  });
+});

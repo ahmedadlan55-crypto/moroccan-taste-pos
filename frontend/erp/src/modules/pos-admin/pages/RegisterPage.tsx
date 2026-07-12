@@ -1,0 +1,278 @@
+import { useMemo, useState } from "react";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { Monitor, Pencil, Plus, Trash2 } from "lucide-react";
+import {
+  Badge,
+  ConfirmDialog,
+  IconButton,
+  Select,
+  StatusBadge,
+  safeUserMessage,
+} from "@/shared/ui";
+import { Can } from "@/shared/permissions";
+import { DataTable, type ColumnDef } from "@/shared/tables";
+import { formatCurrency } from "@/shared/lib";
+import { posAdminApi } from "../lib/api";
+import { posAdminKeys } from "../lib/shifts";
+import { PM_GROUP_LABELS, PM_GROUP_OPTIONS, PM_GROUP_TONE } from "../lib/labels";
+import type { PaymentMethod, PaymentMethodInput } from "../lib/types";
+import { PaymentMethodDialog } from "../components/PaymentMethodDialog";
+import { PosLauncherCard } from "../components/PosLauncherCard";
+
+function feeText(pm: PaymentMethod): string {
+  if (pm.serviceFeeType === "percent") return `${Number(pm.serviceFeeValue) || 0}%`;
+  if (pm.serviceFeeType === "fixed") return formatCurrency(pm.serviceFeeValue);
+  return "—";
+}
+
+export function RegisterPage() {
+  const qc = useQueryClient();
+  const query = useQuery({
+    queryKey: posAdminKeys.paymentMethods,
+    queryFn: ({ signal }) => posAdminApi.paymentMethods(signal),
+    staleTime: 30_000,
+  });
+  const all: PaymentMethod[] = Array.isArray(query.data) ? query.data : [];
+
+  const [group, setGroup] = useState("");
+  const [status, setStatus] = useState("");
+  const [dialogOpen, setDialogOpen] = useState(false);
+  const [editing, setEditing] = useState<PaymentMethod | null>(null);
+  const [saveError, setSaveError] = useState<string | null>(null);
+  const [deleteTarget, setDeleteTarget] = useState<PaymentMethod | null>(null);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
+
+  const rows = useMemo(
+    () =>
+      all.filter((p) => {
+        if (group && (p.groupType || "cash") !== group) return false;
+        if (status !== "" && (p.isActive ? "1" : "0") !== status) return false;
+        return true;
+      }),
+    [all, group, status],
+  );
+
+  const saveMut = useMutation({
+    mutationFn: async (input: PaymentMethodInput) => {
+      const r = await posAdminApi.savePaymentMethod(input);
+      if (r && r.success === false) throw new Error(r.error || "فشل الحفظ");
+      return r;
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: posAdminKeys.paymentMethods });
+      setDialogOpen(false);
+      setEditing(null);
+    },
+    onError: (e) => setSaveError(safeUserMessage(e)),
+  });
+
+  const deleteMut = useMutation({
+    mutationFn: async (id: string | number) => {
+      const r = await posAdminApi.deletePaymentMethod(id);
+      if (r && r.success === false) throw new Error(r.error || "فشل الحذف");
+      return r;
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: posAdminKeys.paymentMethods });
+      setDeleteTarget(null);
+    },
+    onError: (e) => setDeleteError(safeUserMessage(e)),
+  });
+
+  function openCreate() {
+    setEditing(null);
+    setSaveError(null);
+    setDialogOpen(true);
+  }
+  function openEdit(pm: PaymentMethod) {
+    setEditing(pm);
+    setSaveError(null);
+    setDialogOpen(true);
+  }
+
+  const columns: ColumnDef<PaymentMethod>[] = [
+    {
+      id: "sortOrder",
+      header: "الترتيب",
+      accessor: (r) => Number(r.sortOrder) || 0,
+      numeric: true,
+      sortable: true,
+      width: "5rem",
+    },
+    {
+      id: "name",
+      header: "الاسم",
+      accessor: (r) => r.nameAr || r.name,
+      sortable: true,
+      cell: (r) => (
+        <div>
+          <div className="font-extrabold text-slate-800">{r.nameAr || r.name}</div>
+          {r.name && r.name !== r.nameAr && (
+            <div dir="ltr" className="text-[11px] font-medium text-slate-400">
+              {r.name}
+            </div>
+          )}
+        </div>
+      ),
+    },
+    {
+      id: "groupType",
+      header: "المجموعة",
+      accessor: (r) => PM_GROUP_LABELS[r.groupType || "cash"] ?? r.groupType,
+      cell: (r) => {
+        const g = r.groupType || "cash";
+        return <Badge tone={PM_GROUP_TONE[g] ?? "neutral"}>{PM_GROUP_LABELS[g] ?? g}</Badge>;
+      },
+    },
+    {
+      id: "fee",
+      header: "رسوم الخدمة",
+      accessor: (r) => feeText(r),
+    },
+    {
+      id: "shiftClose",
+      header: "إغلاق الشيفت",
+      accessor: (r) => (r.showInShiftClose ? "نعم" : "لا"),
+    },
+    {
+      id: "status",
+      header: "الحالة",
+      accessor: (r) => (r.isActive ? "مفعّل" : "معطّل"),
+      cell: (r) => (
+        <StatusBadge tone={r.isActive ? "success" : "neutral"}>
+          {r.isActive ? "مفعّل" : "معطّل"}
+        </StatusBadge>
+      ),
+    },
+  ];
+
+  return (
+    <div className="space-y-5">
+      <PosLauncherCard
+        icon={Monitor}
+        title="فتح الكاشير"
+        description="طرق الدفع المُعرّفة هنا تظهر مباشرةً في شاشة الكاشير. لبدء البيع افتح تطبيق نقطة البيع."
+        ctaLabel="فتح شاشة الكاشير"
+      />
+
+      <div>
+        <div className="mb-3 flex items-center justify-between gap-3">
+          <div>
+            <h2 className="text-base font-extrabold text-slate-900">طرق الدفع</h2>
+            <p className="mt-0.5 text-xs font-medium text-slate-500">
+              إدارة طرق الدفع التي تُشغّل الكاشير وإغلاق الشيفت.
+            </p>
+          </div>
+        </div>
+
+        <DataTable
+          columns={columns}
+          rows={rows}
+          getRowId={(r) => String(r.id)}
+          loading={query.isLoading}
+          error={query.isError ? query.error : undefined}
+          onRetry={() => query.refetch()}
+          searchable
+          searchPlaceholder="ابحث بالاسم…"
+          exportFilename="payment-methods"
+          emptyTitle="لا توجد طرق دفع"
+          emptyBody="أضف أول طريقة دفع لتظهر في شاشة الكاشير."
+          initialSort={{ columnId: "sortOrder", dir: "asc" }}
+          tableId="pos-admin-payment-methods"
+          filterBar={
+            <>
+              <Select
+                className="h-10 w-40 py-1.5"
+                value={group}
+                onChange={(e) => setGroup(e.target.value)}
+                aria-label="المجموعة"
+              >
+                <option value="">كل المجموعات</option>
+                {PM_GROUP_OPTIONS.map((o) => (
+                  <option key={o.value} value={o.value}>
+                    {o.label}
+                  </option>
+                ))}
+              </Select>
+              <Select
+                className="h-10 w-36 py-1.5"
+                value={status}
+                onChange={(e) => setStatus(e.target.value)}
+                aria-label="الحالة"
+              >
+                <option value="">الكل</option>
+                <option value="1">مفعّل</option>
+                <option value="0">معطّل</option>
+              </Select>
+            </>
+          }
+          toolbarActions={
+            <Can cap="pos.register.view">
+              <button
+                type="button"
+                onClick={openCreate}
+                className="inline-flex min-h-11 items-center gap-2 rounded-xl bg-teal-600 px-3 text-sm font-bold text-white transition hover:bg-teal-700 focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-teal-100"
+              >
+                <Plus className="h-4 w-4" /> طريقة دفع جديدة
+              </button>
+            </Can>
+          }
+          rowActions={(r) => (
+            <Can cap="pos.register.view">
+              <div className="flex items-center gap-1">
+                <IconButton aria-label="تعديل" size="sm" onClick={() => openEdit(r)}>
+                  <Pencil className="h-4 w-4" />
+                </IconButton>
+                <IconButton
+                  aria-label="حذف"
+                  size="sm"
+                  variant="danger"
+                  onClick={() => {
+                    setDeleteError(null);
+                    setDeleteTarget(r);
+                  }}
+                >
+                  <Trash2 className="h-4 w-4" />
+                </IconButton>
+              </div>
+            </Can>
+          )}
+        />
+      </div>
+
+      <PaymentMethodDialog
+        open={dialogOpen}
+        method={editing}
+        saving={saveMut.isPending}
+        error={saveError}
+        onClose={() => {
+          if (!saveMut.isPending) setDialogOpen(false);
+        }}
+        onSave={(input) => {
+          setSaveError(null);
+          saveMut.mutate(input);
+        }}
+      />
+
+      <ConfirmDialog
+        open={deleteTarget != null}
+        title="حذف طريقة الدفع"
+        description={
+          deleteTarget
+            ? `سيتم حذف «${deleteTarget.nameAr || deleteTarget.name}». لن تتأثر المبيعات السابقة.`
+            : ""
+        }
+        confirmLabel="حذف"
+        tone="danger"
+        processing={deleteMut.isPending}
+        error={deleteError}
+        onConfirm={() => {
+          if (deleteTarget) deleteMut.mutate(deleteTarget.id);
+        }}
+        onClose={() => {
+          if (!deleteMut.isPending) setDeleteTarget(null);
+        }}
+      />
+    </div>
+  );
+}

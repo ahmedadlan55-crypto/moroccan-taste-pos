@@ -136,6 +136,22 @@ app.use('/api/', async function(req, res, next) {
   // Build full path for checking
   var p = req.path || '';
 
+  // Best-effort identity for PUBLIC paths: if a valid Bearer token is present,
+  // populate req.user before the public early-returns below. Some paths are
+  // public here (no token REQUIRED) yet sit behind a role guard at their own
+  // mount — e.g. GET /api/hr/departments and /api/hr/leave-types run under
+  // requireRole('admin','manager'). Without this, req.user is unset on those
+  // public paths, requireRole defaults the role to 'cashier', and an authenticated
+  // admin/manager is wrongly 403'd. This NEVER blocks: absent/invalid tokens leave
+  // req.user unset and public paths still proceed anonymously. Non-public paths are
+  // still hard-verified (with the session-version gate) by the strict block below.
+  try {
+    var _pubAuth = req.headers['authorization'];
+    if (_pubAuth && _pubAuth.startsWith('Bearer ')) {
+      req.user = jwt.verify(_pubAuth.split(' ')[1], process.env.JWT_SECRET);
+    }
+  } catch (_) { /* anonymous — ignore invalid/expired token on public paths */ }
+
   // FULLY PUBLIC — no token needed
   if (p === '/version') return next();                 // v6.20.0 — deploy/version marker
   if (p === '/inventory/v2/ready') return next();      // RC — readiness probe (DB + schema)
@@ -406,6 +422,65 @@ if (!O2C_UI_ENABLED) {
     console.log('[order-to-cash] SPA mounted at /sales');
   } else {
     console.warn('[order-to-cash] bundle not found — run: npm --prefix frontend/sales run build');
+  }
+}
+
+// ── ADLAN Back-Office (unified React SPA) — served at /app ───────────────────
+// The unified Back-Office (frontend/erp) is served at /app behind
+// ERP_UNIFIED_ENABLED (default ON outside production so dev/staging always sees
+// it; production requires the explicit flag). It is a peer to the warehouse /
+// pos / sales SPAs — path-prefixed, same JWT/session/tab. The legacy UI at /
+// stays intact as the rollback path. When the flag is OFF the section is
+// invisible: /app returns a 503 maintenance notice instead of a broken UI.
+var ERP_UNIFIED_ENABLED = process.env.NODE_ENV === 'production'
+  ? /^(1|true|on|yes)$/i.test(String(process.env.ERP_UNIFIED_ENABLED || '').trim())
+  : !/^(0|false|off|no)$/i.test(String(process.env.ERP_UNIFIED_ENABLED || '').trim());
+if (!ERP_UNIFIED_ENABLED) {
+  app.all(/^\/app(?:\/.*)?$/, function (req, res) {
+    res.status(503).type('html').send('<!doctype html><html lang="ar" dir="rtl"><meta charset="utf-8"><title>صيانة</title><body style="font-family:Tahoma,Arial,sans-serif;padding:3rem;text-align:center;color:#172033"><h2>الإدارة الموحّدة غير مُفعّلة</h2><p>استخدم النظام الحالي مؤقتًا. (ERP_UNIFIED_ENABLED=0)</p></body></html>');
+  });
+} else {
+  // Strict CSP scoped to /app (copy of the /warehouse directives). The React SPA
+  // loads ONLY hashed bundles (no inline <script>), so a strict CSP applies here
+  // without touching the legacy UI. style-src keeps 'unsafe-inline' for
+  // Tailwind/React element styles (style attributes, not script).
+  app.use('/app', function (req, res, next) {
+    res.setHeader('Content-Security-Policy', [
+      "default-src 'self'",
+      "base-uri 'self'",
+      "object-src 'none'",
+      "frame-ancestors 'none'",
+      "img-src 'self' data: blob:",
+      "font-src 'self' data:",
+      "style-src 'self' 'unsafe-inline'",
+      "script-src 'self'",
+      "connect-src 'self'",
+      "form-action 'self'"
+    ].join('; '));
+    next();
+  });
+  var _erpDist = path.join(__dirname, 'frontend', 'erp', 'dist');
+  if (_pwaFs.existsSync(path.join(_erpDist, 'index.html'))) {
+    app.use('/app', express.static(_erpDist, {
+      setHeaders: function(res, filePath) {
+        if (/\.html$/i.test(filePath)) {
+          res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
+        } else if (/[/\\]assets[/\\]/.test(filePath)) {
+          res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
+        }
+      }
+    }));
+    // History fallback: any extensionless path under /app (a client route like
+    // /app/inventory, incl. hard refresh) returns index.html. Paths that look
+    // like a file (have an extension) fall through to a normal 404.
+    app.get(/^\/app(?:\/.*)?$/, function(req, res, next) {
+      if (/\.[a-zA-Z0-9]+$/.test(req.path)) return next();
+      res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
+      res.sendFile(path.join(_erpDist, 'index.html'));
+    });
+    console.log('[erp] unified Back-Office SPA mounted at /app');
+  } else {
+    console.warn('[erp] bundle not found — run: npm --prefix frontend/erp run build');
   }
 }
 

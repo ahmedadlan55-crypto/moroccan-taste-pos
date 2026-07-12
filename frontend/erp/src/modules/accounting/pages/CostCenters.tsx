@@ -1,0 +1,255 @@
+import { useState } from "react";
+import { Plus, Pencil, Trash2 } from "lucide-react";
+import {
+  Button,
+  IconButton,
+  Dialog,
+  Input,
+  Select,
+  Toggle,
+  Badge,
+  ConfirmDialog,
+} from "@/shared/ui";
+import { Field } from "@/shared/forms";
+import { DataTable, type ColumnDef } from "@/shared/tables";
+import { PageHeader } from "@/shared/ui";
+import {
+  useCostCenters,
+  useSaveCostCenter,
+  useDeleteCostCenter,
+  type CostCenter,
+  type CostCenterInput,
+} from "../api";
+
+const EMPTY: CostCenterInput = {
+  code: "",
+  nameAr: "",
+  nameEn: "",
+  parentId: null,
+  isActive: true,
+  notes: "",
+};
+
+// Server error codes (409/400) → friendly Arabic messages.
+function mapError(error: unknown): string {
+  const raw = error instanceof Error ? error.message : "";
+  if (/duplicate-code/.test(raw)) return "الرمز مستخدم مسبقًا لمركز آخر.";
+  if (/name-required/.test(raw)) return "الاسم بالعربية مطلوب.";
+  if (/has-children/.test(raw)) return "لا يمكن حذف مركز له مراكز فرعية.";
+  if (/not-found/.test(raw)) return "المركز غير موجود.";
+  return raw || "تعذّرت العملية. أعد المحاولة.";
+}
+
+export function CostCentersPage() {
+  const listQuery = useCostCenters("");
+  const save = useSaveCostCenter();
+  const del = useDeleteCostCenter();
+
+  const [editing, setEditing] = useState<CostCenterInput | null>(null);
+  const [formError, setFormError] = useState<string | null>(null);
+  const [nameError, setNameError] = useState<string | null>(null);
+  const [toDelete, setToDelete] = useState<CostCenter | null>(null);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
+
+  const rows = listQuery.data ?? [];
+  const parentOptions = rows.filter((r) => r.id !== editing?.id);
+
+  function openNew() {
+    setFormError(null);
+    setNameError(null);
+    setEditing({ ...EMPTY });
+  }
+  function openEdit(cc: CostCenter) {
+    setFormError(null);
+    setNameError(null);
+    setEditing({
+      id: cc.id,
+      code: cc.code ?? "",
+      nameAr: cc.nameAr ?? "",
+      nameEn: cc.nameEn ?? "",
+      parentId: cc.parentId || null,
+      isActive: cc.isActive,
+      notes: cc.notes ?? "",
+    });
+  }
+
+  function submit() {
+    if (!editing) return;
+    if (!editing.nameAr.trim()) {
+      setNameError("الاسم بالعربية مطلوب.");
+      return;
+    }
+    setFormError(null);
+    save.mutate(editing, {
+      onSuccess: (res) => {
+        if (res && res.success === false) {
+          setFormError(mapError(new Error(res.error)));
+          return;
+        }
+        setEditing(null);
+      },
+      onError: (e) => setFormError(mapError(e)),
+    });
+  }
+
+  function confirmDelete(reason: string) {
+    void reason;
+    if (!toDelete) return;
+    setDeleteError(null);
+    del.mutate(toDelete.id, {
+      onSuccess: (res) => {
+        if (res && res.success === false) {
+          setDeleteError(mapError(new Error(res.error)));
+          return;
+        }
+        setToDelete(null);
+      },
+      onError: (e) => setDeleteError(mapError(e)),
+    });
+  }
+
+  const columns: ColumnDef<CostCenter>[] = [
+    { id: "code", header: "الرمز", accessor: (r) => r.code, sortable: true },
+    { id: "nameAr", header: "الاسم", accessor: (r) => r.nameAr, sortable: true },
+    { id: "nameEn", header: "الاسم (EN)", accessor: (r) => r.nameEn, defaultHidden: true },
+    { id: "parentName", header: "المركز الأب", accessor: (r) => r.parentName || "—" },
+    { id: "branchName", header: "الفرع", accessor: (r) => r.branchName || "—" },
+    {
+      id: "isActive",
+      header: "الحالة",
+      accessor: (r) => (r.isActive ? "نشط" : "متوقّف"),
+      cell: (r) => (
+        <Badge tone={r.isActive ? "success" : "neutral"}>{r.isActive ? "نشط" : "متوقّف"}</Badge>
+      ),
+    },
+  ];
+
+  return (
+    <div>
+      <PageHeader
+        eyebrow="المحاسبة"
+        title="مراكز التكلفة"
+        subtitle="إدارة مراكز التكلفة المستخدمة في توزيع القيود على الأنشطة والأقسام."
+        action={
+          <Button variant="primary" onClick={openNew}>
+            <Plus className="h-4 w-4" /> مركز جديد
+          </Button>
+        }
+      />
+
+      <DataTable
+        columns={columns}
+        rows={rows}
+        getRowId={(r) => r.id}
+        loading={listQuery.isLoading}
+        error={listQuery.error}
+        onRetry={() => listQuery.refetch()}
+        searchable
+        searchPlaceholder="بحث بالاسم أو الرمز…"
+        emptyTitle="لا توجد مراكز تكلفة"
+        emptyBody="أضف أول مركز تكلفة للبدء."
+        rowActions={(r) => (
+          <div className="flex items-center gap-1">
+            <IconButton aria-label="تعديل" size="sm" onClick={() => openEdit(r)}>
+              <Pencil className="h-4 w-4" />
+            </IconButton>
+            <IconButton aria-label="حذف" size="sm" onClick={() => { setDeleteError(null); setToDelete(r); }}>
+              <Trash2 className="h-4 w-4 text-rose-600" />
+            </IconButton>
+          </div>
+        )}
+      />
+
+      <Dialog
+        open={!!editing}
+        onClose={() => setEditing(null)}
+        title={editing?.id ? "تعديل مركز التكلفة" : "مركز تكلفة جديد"}
+        size="lg"
+        footer={
+          <>
+            <Button variant="secondary" onClick={() => setEditing(null)} disabled={save.isPending}>
+              إلغاء
+            </Button>
+            <Button variant="primary" onClick={submit} loading={save.isPending}>
+              حفظ
+            </Button>
+          </>
+        }
+      >
+        {editing && (
+          <div className="space-y-4">
+            <div className="grid gap-4 sm:grid-cols-2">
+              <Field label="الرمز">
+                <Input
+                  value={editing.code}
+                  onChange={(e) => setEditing({ ...editing, code: e.target.value })}
+                  placeholder="مثال: CC-01"
+                />
+              </Field>
+              <Field label="الاسم بالعربية" required error={nameError ?? undefined}>
+                <Input
+                  value={editing.nameAr}
+                  invalid={!!nameError}
+                  onChange={(e) => {
+                    setNameError(null);
+                    setEditing({ ...editing, nameAr: e.target.value });
+                  }}
+                />
+              </Field>
+              <Field label="الاسم بالإنجليزية">
+                <Input
+                  value={editing.nameEn}
+                  onChange={(e) => setEditing({ ...editing, nameEn: e.target.value })}
+                />
+              </Field>
+              <Field label="المركز الأب">
+                <Select
+                  value={editing.parentId ?? ""}
+                  onChange={(e) => setEditing({ ...editing, parentId: e.target.value || null })}
+                >
+                  <option value="">— بدون —</option>
+                  {parentOptions.map((p) => (
+                    <option key={p.id} value={p.id}>
+                      {p.code ? `${p.code} — ${p.nameAr}` : p.nameAr}
+                    </option>
+                  ))}
+                </Select>
+              </Field>
+            </div>
+            <Field label="ملاحظات">
+              <textarea
+                className="field min-h-20 w-full resize-y py-2"
+                value={editing.notes}
+                onChange={(e) => setEditing({ ...editing, notes: e.target.value })}
+              />
+            </Field>
+            <label className="flex items-center gap-3">
+              <Toggle
+                checked={editing.isActive}
+                onChange={(v) => setEditing({ ...editing, isActive: v })}
+              />
+              <span className="text-sm font-bold text-slate-700">نشط</span>
+            </label>
+            {formError && (
+              <div className="rounded-xl border border-rose-200 bg-rose-50 px-3 py-2 text-xs font-bold text-rose-700">
+                {formError}
+              </div>
+            )}
+          </div>
+        )}
+      </Dialog>
+
+      <ConfirmDialog
+        open={!!toDelete}
+        title="حذف مركز التكلفة"
+        description={toDelete ? `سيتم حذف «${toDelete.nameAr}». إن كان مستخدمًا في قيود سيُعطَّل بدلاً من حذفه.` : ""}
+        tone="danger"
+        confirmLabel="حذف"
+        processing={del.isPending}
+        error={deleteError}
+        onConfirm={confirmDelete}
+        onClose={() => setToDelete(null)}
+      />
+    </div>
+  );
+}

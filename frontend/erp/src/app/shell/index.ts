@@ -1,0 +1,16 @@
+export { AppShell } from "./AppShell";
+export { Sidebar } from "./Sidebar";
+export { Topbar } from "./Topbar";
+export { MobileNav } from "./MobileNav";
+export { Breadcrumbs } from "./Breadcrumbs";
+export { CommandPalette } from "./CommandPalette";
+export { CompanyBranchSelect } from "./CompanyBranchSelect";
+export { NotificationCenter } from "./NotificationCenter";
+export { ApprovalsInbox } from "./ApprovalsInbox";
+export { UserMenu } from "./UserMenu";
+export { GlobalSearch } from "./GlobalSearch";
+export { CapGuard } from "./CapGuard";
+export { ModulePlaceholder } from "./ModulePlaceholder";
+export { RouteFallback } from "./RouteFallback";
+export { ShellProvider, useShell } from "./shell-context";
+export { getIcon } from "./icons";

@@ -1,0 +1,94 @@
+import { lazy, type ComponentType, type LazyExoticComponent } from "react";
+import { BrowserRouter, Routes, Route, Navigate, Link } from "react-router-dom";
+import { RequireAuth } from "./providers";
+import { AppShell } from "./shell/AppShell";
+import { CapGuard } from "./shell/CapGuard";
+import { NAV_ITEMS } from "./navigation/manifest";
+
+// ── Lazy module loaders ─────────────────────────────────────────────────────
+// One code-split chunk per module folder; every nav item that routes into a
+// module shares that module's lazy component. Domain agents overwrite
+// src/modules/<module>/index.tsx with the real page(s) — the loader + the
+// manifest entries stay the same, so nothing here changes when a module lands.
+const MODULE_LOADERS: Record<string, () => Promise<{ default: ComponentType }>> = {
+  overview: () => import("@/modules/overview"),
+  sales: () => import("@/modules/sales"),
+  customers: () => import("@/modules/customers"),
+  "pos-admin": () => import("@/modules/pos-admin"),
+  inventory: () => import("@/modules/inventory"),
+  purchasing: () => import("@/modules/purchasing"),
+  accounting: () => import("@/modules/accounting"),
+  banking: () => import("@/modules/banking"),
+  people: () => import("@/modules/people"),
+  workflow: () => import("@/modules/workflow"),
+  reports: () => import("@/modules/reports"),
+  administration: () => import("@/modules/administration"),
+  production: () => import("@/modules/production"),
+};
+
+const MODULE_COMPONENTS: Record<string, LazyExoticComponent<ComponentType>> = Object.fromEntries(
+  Object.entries(MODULE_LOADERS).map(([key, loader]) => [key, lazy(loader)]),
+);
+
+// The app mounts under /app in production and at root in dev. The basename is
+// derived from Vite's injected BASE_URL so every route + deep link stays correct
+// in both modes.
+const BASENAME = import.meta.env.BASE_URL.replace(/\/$/, "") || "/";
+
+// ── Route contract (consumed by the architecture tests) ─────────────────────
+/** Every leaf route path the router registers (one per nav item). */
+export const ROUTE_PATHS: ReadonlySet<string> = new Set(NAV_ITEMS.map((i) => i.path));
+/** Non-nav paths that are allowed to exist as routes (redirects + not-found). */
+export const REDIRECT_PATHS: ReadonlySet<string> = new Set<string>(["/"]);
+/** The index route redirects to this path. */
+export const INDEX_REDIRECT = "/overview";
+
+export function AppRouter() {
+  return (
+    <BrowserRouter basename={BASENAME}>
+      <Routes>
+        <Route
+          element={
+            <RequireAuth>
+              <AppShell />
+            </RequireAuth>
+          }
+        >
+          {/* Index → the overview screen. */}
+          <Route index element={<Navigate to={INDEX_REDIRECT.replace(/^\//, "")} replace />} />
+
+          {/* One lazy, capability-gated route per manifest item. */}
+          {NAV_ITEMS.map((item) => {
+            const Page = MODULE_COMPONENTS[item.module];
+            if (!Page) return null;
+            return (
+              <Route
+                key={item.id}
+                path={item.path.replace(/^\//, "")}
+                element={
+                  <CapGuard cap={item.cap}>
+                    <Page />
+                  </CapGuard>
+                }
+              />
+            );
+          })}
+
+          <Route path="*" element={<NotFound />} />
+        </Route>
+      </Routes>
+    </BrowserRouter>
+  );
+}
+
+function NotFound() {
+  return (
+    <div className="surface grid place-items-center gap-3 p-12 text-center">
+      <div className="text-2xl font-extrabold text-slate-900">404</div>
+      <p className="text-sm font-medium text-slate-500">الصفحة غير موجودة.</p>
+      <Link className="text-sm font-bold text-teal-700 hover:underline" to={INDEX_REDIRECT}>
+        العودة إلى نظرة عامة
+      </Link>
+    </div>
+  );
+}

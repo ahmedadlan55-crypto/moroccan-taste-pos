@@ -1,0 +1,122 @@
+import type { ReactNode } from "react";
+import { useNavigate } from "react-router-dom";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { ArrowRight, Printer, CheckCircle2, XCircle, Undo2, HandCoins } from "lucide-react";
+import {
+  Button, Card, CardHeader, CardTitle, CardBody, PageHeader, LoadingState, ErrorState, safeUserMessage,
+} from "@/shared/ui";
+import { useCan } from "@/app/providers";
+import { o2cApi, qk, VAT_CATEGORY_LABEL, SalesStatus, Money, Num, DateCell, Info, type InvoiceLine } from "@/modules/sales/lib";
+
+export function InvoiceDetail({ id, onBack }: { id: string; onBack: () => void }) {
+  const nav = useNavigate();
+  const qc = useQueryClient();
+  const canIssue = useCan("invoices.issue");
+  const canCreatePayment = useCan("payments.create");
+  const canReturn = useCan("returns.create");
+
+  const q = useQuery({ queryKey: qk.invoice(id), queryFn: ({ signal }) => o2cApi.invoice(id, signal).then((r) => r.data), enabled: !!id });
+
+  const issue = useMutation({ mutationFn: () => o2cApi.issueInvoice(id, q.data?.version), onSuccess: () => qc.invalidateQueries({ queryKey: qk.all }) });
+  const cancel = useMutation({ mutationFn: () => o2cApi.cancelInvoice(id, q.data?.version), onSuccess: () => qc.invalidateQueries({ queryKey: qk.all }) });
+
+  if (q.isLoading) return <LoadingState rows={6} />;
+  if (q.isError) return <ErrorState error={q.error} onRetry={() => q.refetch()} />;
+  const inv = q.data!;
+  const isDraft = inv.status === "draft";
+  const lines: InvoiceLine[] = inv.lines ?? [];
+  const busy = issue.isPending || cancel.isPending;
+
+  return (
+    <div>
+      <button type="button" onClick={onBack} className="mb-3 inline-flex items-center gap-1 text-sm font-bold text-slate-500 hover:text-teal-700 no-print"><ArrowRight className="h-4 w-4" /> رجوع للفواتير</button>
+      <PageHeader
+        eyebrow={`فاتورة · ${inv.source_type}`}
+        title={inv.document_number}
+        subtitle={inv.customer_name || undefined}
+        action={
+          <div className="flex flex-wrap items-center gap-2 no-print">
+            <Button variant="secondary" onClick={() => window.print()}><Printer className="h-4 w-4" /> طباعة</Button>
+            {isDraft && canIssue && <Button onClick={() => issue.mutate()} disabled={busy}><CheckCircle2 className="h-4 w-4" /> إصدار</Button>}
+            {isDraft && <Button variant="danger" onClick={() => cancel.mutate()} disabled={busy}><XCircle className="h-4 w-4" /> إلغاء</Button>}
+            {!isDraft && Number(inv.balance_amount) > 0 && canCreatePayment && <Button variant="secondary" onClick={() => nav(`/sales/payments?customerId=${inv.customer_id ?? ""}&new=1`)}><HandCoins className="h-4 w-4" /> تحصيل</Button>}
+            {!isDraft && canReturn && <Button variant="secondary" onClick={() => nav(`/sales/returns?invoiceId=${inv.id}&new=1`)}><Undo2 className="h-4 w-4" /> مرتجع</Button>}
+          </div>
+        }
+      />
+
+      {(issue.isError || cancel.isError) && (
+        <div className="mb-4 rounded-xl border border-rose-200 bg-rose-50 px-3 py-2 text-sm font-bold text-rose-700 no-print">{safeUserMessage(issue.error || cancel.error)}</div>
+      )}
+
+      <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+        <Info label="الحالة" value={<SalesStatus status={inv.status} />} />
+        <Info label="زاتكا" value={<SalesStatus status={inv.zatca_status} />} />
+        <Info label="تاريخ الإصدار" value={<DateCell value={inv.issue_date} />} />
+        <Info label="الاستحقاق" value={<DateCell value={inv.due_date} />} />
+      </div>
+
+      <Card className="mt-6">
+        <CardHeader><CardTitle>الأسطر</CardTitle></CardHeader>
+        <CardBody>
+          <div className="overflow-x-auto rounded-2xl border border-slate-200">
+            <table className="w-full min-w-[720px] border-collapse text-right text-sm">
+              <thead className="bg-slate-50 text-xs font-bold text-slate-500">
+                <tr>
+                  <th className="px-4 py-3 font-bold">الوصف</th>
+                  <th className="px-4 py-3 font-bold">الكمية</th>
+                  <th className="px-4 py-3 font-bold">السعر</th>
+                  <th className="px-4 py-3 font-bold">الخصم</th>
+                  <th className="px-4 py-3 font-bold">الضريبة</th>
+                  <th className="px-4 py-3 font-bold">الصافي</th>
+                  <th className="px-4 py-3 font-bold">الإجمالي</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-100">
+                {lines.map((l) => (
+                  <tr key={l.id}>
+                    <td className="px-4 py-3 font-bold text-slate-700">{l.description || "—"}</td>
+                    <td className="px-4 py-3 text-slate-700"><Num value={l.entered_qty} /></td>
+                    <td className="px-4 py-3 text-slate-700"><Num value={l.unit_price} /></td>
+                    <td className="px-4 py-3 text-slate-700"><Money value={l.discount_amount} /></td>
+                    <td className="px-4 py-3 text-slate-700">{VAT_CATEGORY_LABEL[l.vat_category] || l.vat_category}</td>
+                    <td className="px-4 py-3 text-slate-700"><Money value={l.net_amount} /></td>
+                    <td className="px-4 py-3 text-slate-700"><Money value={l.gross_amount} className="font-bold" /></td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+
+          <div className="mt-4 flex justify-end">
+            <dl className="w-full max-w-xs space-y-1.5 text-sm">
+              <Row label="الإجمالي الفرعي" value={<Money value={inv.subtotal} />} />
+              <Row label="الضريبة" value={<Money value={inv.vat_amount} />} />
+              <Row label="الإجمالي" value={<Money value={inv.total_amount} className="font-extrabold" />} strong />
+              <Row label="المدفوع" value={<Money value={inv.paid_amount} />} />
+              <Row label="المتبقّي" value={<Money value={inv.balance_amount} className="font-extrabold text-teal-700" />} strong />
+            </dl>
+          </div>
+        </CardBody>
+      </Card>
+
+      <Card className="mt-6 no-print">
+        <CardHeader><CardTitle>المرجع المحاسبي</CardTitle></CardHeader>
+        <CardBody className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+          <Info label="قيد GL" value={<span dir="ltr" className="text-xs tabular-nums">{inv.gl_journal_id || "—"}</span>} />
+          <Info label="UUID زاتكا" value={<span dir="ltr" className="truncate text-xs tabular-nums">{inv.zatca_uuid || "—"}</span>} />
+          <Info label="النسخة" value={<Num value={inv.version} />} />
+        </CardBody>
+      </Card>
+    </div>
+  );
+}
+
+function Row({ label, value, strong }: { label: string; value: ReactNode; strong?: boolean }) {
+  return (
+    <div className={`flex items-center justify-between ${strong ? "border-t border-slate-100 pt-1.5" : ""}`}>
+      <dt className="font-bold text-slate-500">{label}</dt>
+      <dd className="text-slate-800">{value}</dd>
+    </div>
+  );
+}

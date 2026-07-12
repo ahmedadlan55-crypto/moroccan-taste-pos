@@ -1,0 +1,94 @@
+// Workflow / Transactions (نظام المعاملات) DTOs — the shapes returned by the
+// legacy /api/workflow endpoints (routes/workflow.js `_mapTxn` + `full-bundle`).
+// Kept minimal + permissive (optional fields) since the Express envelope is the
+// source of truth and this session only READS it. No shapes are invented here.
+
+/** A row in the list endpoints (/incoming, /outbox, /my-transactions, /transactions). */
+export interface TxnListItem {
+  id: string;
+  txnNumber?: string;
+  typeId?: string;
+  typeName?: string;
+  typeCode?: string;
+  createdBy?: string;
+  creatorName?: string;
+  creatorJobTitle?: string;
+  branchName?: string;
+  deptName?: string;
+  title?: string;
+  subject?: string;
+  amount?: number;
+  importance?: string; // 'critical' | 'high' | 'medium' | 'low'
+  status: string;
+  currentStepName?: string;
+  currentAssignee?: string;
+  assigneeName?: string;
+  assigneeJobTitle?: string;
+  // enriched by /incoming, /outbox, /transactions (absent on /my-transactions)
+  isRead?: boolean;
+  readAt?: string | null;
+  dueDate?: string | null;
+  isOverdue?: boolean;
+  isReturnedForEdit?: boolean;
+  returnReason?: string | null;
+  createdAt?: string;
+  updatedAt?: string;
+}
+
+/** One node of the transaction-type approval path (full-bundle `workflowPath`). */
+export interface WorkflowPathStep {
+  id: string;
+  stepOrder?: number;
+  stepName?: string;
+  positionName?: string;
+  isFinal?: boolean;
+  isCurrent?: boolean;
+  isPast?: boolean;
+  state?: "current" | "done" | "pending";
+}
+
+/** One entry of the action log (full-bundle `logs`, table transaction_steps_log). */
+export interface TxnLog {
+  id: string | number;
+  stepName?: string;
+  positionName?: string;
+  actionBy?: string;
+  actorFullName?: string;
+  actorRole?: string;
+  actionType?: string; // ENUM(create, approve, reject, return, forward, close)
+  note?: string | null;
+  createdAt: string;
+}
+
+/** A recipient of the transaction (full-bundle `recipients`). */
+export interface TxnRecipient {
+  id: string | number;
+  type?: string;
+  username?: string;
+  name?: string;
+  position?: string;
+  needsResponse?: boolean;
+  responseReceived?: boolean;
+}
+
+/**
+ * The one-shot read bundle for the detail drawer
+ * (GET /api/workflow/transactions/:id/full-bundle).
+ */
+export interface TxnBundle extends TxnListItem {
+  description?: string;
+  contentSecrecy?: string;
+  attachmentsSecrecy?: string;
+  hijriDate?: string;
+  createdByName?: string;
+  createdByPosition?: string;
+  createdByBranch?: string;
+  currentAssigneeName?: string;
+  currentAssigneePosition?: string;
+  currentAssigneeBranch?: string;
+  recipients?: TxnRecipient[];
+  workflowPath?: WorkflowPathStep[];
+  logs?: TxnLog[];
+  /** Present on the error envelope some legacy handlers return with HTTP 200. */
+  error?: string;
+}

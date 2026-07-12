@@ -30,5 +30,12 @@ RUN npm run build:pos \
 RUN npm run build:sales \
  && rm -rf frontend/sales/node_modules
 
+# 6) Build the unified ADLAN Back-Office React SPA (served at /app behind
+#    ERP_UNIFIED_ENABLED). The bundle ships in the image; when the flag is off
+#    /app returns a 503 notice and the SPA is never mounted, so building it now
+#    has no runtime effect until the flag is enabled.
+RUN npm run build:erp \
+ && rm -rf frontend/erp/node_modules
+
 EXPOSE 3000
 CMD ["node", "server.js"]

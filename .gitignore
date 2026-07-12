@@ -20,6 +20,8 @@ frontend/pos/dist/
 frontend/pos/node_modules/
 frontend/sales/dist/
 frontend/sales/node_modules/
+frontend/erp/dist/
+frontend/erp/node_modules/
 
 # Playwright
 test-results/

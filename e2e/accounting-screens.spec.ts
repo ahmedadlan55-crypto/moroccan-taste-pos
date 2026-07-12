@@ -92,6 +92,13 @@ test("accounting screens baseline", async ({ page }, testInfo) => {
   // let core data + sidebar hydration finish
   await page.waitForTimeout(1500);
 
+  // Release Gate G4 — flags-ON/OFF nav contract under THIS config's env
+  // (WAREHOUSE_V2_ENABLED=1, P2P/O2C off): the warehouse link is visible,
+  // the O2C and purchasing unified links are hidden (their flags are off).
+  await expect(page.locator('a[href="/warehouse"]')).toBeVisible();
+  await expect(page.locator("#o2c-unified-nav")).toBeHidden();
+  await expect(page.locator("#p2p-main-nav")).toBeHidden();
+
   // ── helper wrapping each capture so failures never abort the run ──
   async function capture(
     nn: string,

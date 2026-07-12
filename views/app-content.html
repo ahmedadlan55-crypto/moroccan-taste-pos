@@ -28,8 +28,10 @@
         </div>
         <div class="submenu">
           <div class="nav-item" onclick="window.open('/pos/','_blank')" style="background:linear-gradient(90deg,rgba(34,197,94,.15),transparent);"><i class="fas fa-cash-register" style="color:#22c55e;"></i><span data-i18n="nav.openPOS">فتح شاشة الكاشير POS</span></div>
-          <!-- Order-to-Cash unified section — shown only when ORDER_TO_CASH_ENABLE=1 (see applyOrderToCashNav). Opens the /sales SPA in the same tab. -->
-          <div class="nav-item" id="o2c-unified-nav" onclick="location.href='/sales'"><i class="fas fa-file-invoice-dollar"></i><span>المبيعات والعملاء</span></div>
+          <!-- Order-to-Cash unified section — DEFAULT HIDDEN; applyOrderToCashNav reveals it
+               (display:flex !important) only when ORDER_TO_CASH_ENABLE=1, so a flag rollback
+               never leaves a visible link to the /sales 503 page (Release Gate G4). -->
+          <div class="nav-item" id="o2c-unified-nav" style="display:none" onclick="location.href='/sales'"><i class="fas fa-file-invoice-dollar"></i><span>المبيعات والعملاء</span></div>
           <!-- [تنقية ADLAN] «المبيعات» legacy (nav('sales')) أُزيل — مكرّر مع «المبيعات والعملاء» → /sales (React). لا حذف لأي API. -->
           <div class="nav-item" onclick="nav('shifts')"><i class="fas fa-folder-open"></i><span data-i18n="nav.shiftsLog">سجل المناوبات</span></div>
         </div>
@@ -46,13 +48,16 @@
           <div class="nav-item" data-erp-nav="erpItemCategories" onclick="erpNav('erpItemCategories')"><i class="fas fa-folder-tree"></i><span data-i18n="nav.categories">تصنيفات الأصناف</span></div>
         </div>
 
-        <!-- 4. المخزون والمستودعات (React V2) — رابط واحد يفتح /warehouse بنفس الجلسة. -->
-        <a class="nav-item" href="/warehouse" style="text-decoration:none;color:inherit;">
+        <!-- 4. المخزون والمستودعات (React V2) — DEFAULT HIDDEN; _applyWhV2Nav (app.js)
+             reveals [data-wh-v2-link] only when v2Enabled && v2Allowed, so a
+             WAREHOUSE_V2_ENABLED=0 rollback never shows a link to the 503 page (G4). -->
+        <a class="nav-item" href="/warehouse" data-wh-v2-link style="text-decoration:none;color:inherit;display:none;">
           <i class="fas fa-warehouse"></i><span data-i18n="nav.warehouseV2">المخزون والمستودعات</span>
         </a>
 
-        <!-- 5. المشتريات والموردون (React P2P) — رابط واحد يفتح /warehouse/purchasing. -->
-        <a class="nav-item" href="/warehouse/purchasing" style="text-decoration:none;color:inherit;">
+        <!-- 5. المشتريات والموردون (React P2P) — DEFAULT HIDDEN; applyProcurementP2PNav
+             reveals #p2p-main-nav only when procurementP2P && warehouseV2 (G4). -->
+        <a class="nav-item" id="p2p-main-nav" href="/warehouse/purchasing" style="text-decoration:none;color:inherit;display:none;">
           <i class="fas fa-truck-loading"></i><span data-i18n="nav.purchasingSuppliers">المشتريات والموردون</span>
         </a>
 

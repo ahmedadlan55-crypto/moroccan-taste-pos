@@ -17187,18 +17187,30 @@ initTheme(); // Also immediately call it to prevent FOUC as much as possible
 // load. A persistent CSS rule (not per-node display) also covers app-content.html
 // markup injected AFTER this runs — nothing is missed and there is no flash.
 function applyProcurementP2PNav(enabledOverride) {
-  function apply(enabled) {
+  function _whOn() {
+    // WAREHOUSE_V2_ENABLED defaults ON server-side ('1' unless explicitly '0');
+    // mirror that when the cache is cold.
+    try { var f = localStorage.getItem('wh_v2_flag'); return f === null ? true : f === '1'; } catch (e) { return true; }
+  }
+  function apply(enabled, whOn) {
+    if (typeof whOn !== 'boolean') whOn = _whOn();
     window.__PROCUREMENT_P2P_ENABLE = !!enabled;
     var st = document.getElementById('p2p-legacy-hide-style');
     if (enabled) {
       if (!st) {
         st = document.createElement('style');
         st.id = 'p2p-legacy-hide-style';
-        st.textContent = '[data-legacy-purchasing], #p2p-unified-nav {display:none !important;}';
         (document.head || document.documentElement).appendChild(st);
       }
+      // Hide the legacy purchasing entries; reveal the unified main-shell link
+      // (#p2p-main-nav, default-hidden in markup — Release Gate G4) ONLY while
+      // /warehouse itself is served, otherwise the link would dead-end on the
+      // WAREHOUSE_V2 503 page. (The old #p2p-unified-nav selector matched no
+      // element anywhere — dropped.)
+      st.textContent = '[data-legacy-purchasing] {display:none !important;}' +
+        (whOn ? ' #p2p-main-nav {display:flex !important;}' : '');
     } else if (st && st.parentNode) {
-      st.parentNode.removeChild(st); // flag OFF → legacy menu restored (reversible)
+      st.parentNode.removeChild(st); // flag OFF → legacy entries restored; unified link stays default-hidden
     }
   }
   if (typeof enabledOverride === 'boolean') { apply(enabledOverride); return; }
@@ -17209,8 +17221,9 @@ function applyProcurementP2PNav(enabledOverride) {
     .then(function (r) { return r.ok ? r.json() : null; })
     .then(function (v) {
       var enabled = !!(v && v.procurementP2P);
+      var whOn = !!(v && v.warehouseV2);
       try { localStorage.setItem('procurement_p2p_flag', enabled ? '1' : '0'); } catch (e) {}
-      apply(enabled);
+      apply(enabled, whOn);
     })
     .catch(function () { /* keep cached/default */ });
 }

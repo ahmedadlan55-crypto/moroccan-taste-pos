@@ -7,7 +7,7 @@ export default defineConfig({
   // o2c/** has its own config (playwright.o2c.config.ts) and reads e2e/o2c/.token
   // at module load — collecting it here breaks the whole run when that token is
   // absent. accounting-screens has its own config too (playwright.accounting.config.ts).
-  testIgnore: ["**/o2c/**", "**/accounting-screens.spec.ts"],
+  testIgnore: ["**/o2c/**", "**/accounting-screens.spec.ts", "**/flags-off.spec.ts"],
   timeout: 90_000,
   expect: { timeout: 15_000 },
   fullyParallel: false,

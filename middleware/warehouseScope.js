@@ -62,7 +62,7 @@ async function loadWarehouseScope(req, res, next) {
       if (warehouseId == null || String(warehouseId) === '') return true;
       if (WS.hasWarehouseAccess(scope, warehouseId)) return true;
       if (!ENFORCE) {
-        console.warn('[wh-scope shadow] user=%s would be denied warehouse=%s on %s', who, warehouseId, req.originalUrl);
+        console.warn('[wh-scope shadow] user=%s would be denied warehouse=%s on %s', who, warehouseId, require('../lib/urlScrub').scrubUrl(req.originalUrl));
         return true;
       }
       _deny(response);
@@ -73,7 +73,7 @@ async function loadWarehouseScope(req, res, next) {
     req.guardTransfer = function (response, sourceId, destId) {
       if (WS.hasTransferAccess(scope, sourceId, destId)) return true;
       if (!ENFORCE) {
-        console.warn('[wh-scope shadow] user=%s would be denied transfer %s→%s on %s', who, sourceId, destId, req.originalUrl);
+        console.warn('[wh-scope shadow] user=%s would be denied transfer %s→%s on %s', who, sourceId, destId, require('../lib/urlScrub').scrubUrl(req.originalUrl));
         return true;
       }
       _deny(response);

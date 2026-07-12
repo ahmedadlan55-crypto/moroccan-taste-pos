@@ -14,16 +14,29 @@ const db = require('../db/connection');
 const _connections = new Map();
 
 router.get('/inbox', async (req, res) => {
-  const username = req.query.username || (req.user && req.user.username);
-  if (!username) return res.status(401).end('username required');
+  // Release Gate hardening — the stream is bound to the AUTHENTICATED user
+  // (req.user, set by the global Bearer gate in server.js). The legacy
+  // ?username= parameter is no longer an identity source: if present and
+  // different from the token's user it is an explicit 403, so no
+  // authenticated user can subscribe to another user's notifications.
+  const authUser = req.user && req.user.username;
+  if (!authUser) return res.status(401).end('unauthorized');
+  if (req.query.username && String(req.query.username) !== String(authUser)) {
+    return res.status(403).end('forbidden: the stream is bound to the authenticated user');
+  }
+  const username = authUser;
 
-  // SSE headers
+  // SSE headers. `no-transform` is load-bearing: the compression middleware's
+  // default filter skips responses that declare it — otherwise the stream is
+  // gzip-buffered and events sit in the compressor instead of reaching the
+  // client in real time (discovered by tests/integration/sse.security.test.js).
   res.writeHead(200, {
     'Content-Type': 'text/event-stream',
-    'Cache-Control': 'no-cache',
+    'Cache-Control': 'no-cache, no-transform',
     'Connection': 'keep-alive',
     'X-Accel-Buffering': 'no'   // disable proxy buffering
   });
+  if (typeof res.flushHeaders === 'function') res.flushHeaders();
 
   // Initial hello
   res.write(`event: hello\ndata: ${JSON.stringify({ username, ts: Date.now() })}\n\n`);
@@ -126,7 +139,9 @@ router.post('/broadcast', async (req, res) => {
   }
 });
 
-// Health check — how many active connections
+// Health check — how many active connections. The per-user breakdown is
+// admin/developer-only (usernames of connected users are not for everyone);
+// other authenticated users get the total plus their own count.
 router.get('/health', (req, res) => {
   const counts = {};
   let total = 0;
@@ -134,7 +149,13 @@ router.get('/health', (req, res) => {
     counts[u] = list.length;
     total += list.length;
   }
-  res.json({ activeConnections: total, byUser: counts });
+  const role = (req.user && req.user.role) || '';
+  const isDev = !!(req.user && req.user.isDeveloper);
+  if (role === 'admin' || isDev) {
+    return res.json({ activeConnections: total, byUser: counts });
+  }
+  const me = (req.user && req.user.username) || '';
+  res.json({ activeConnections: total, mine: counts[me] || 0 });
 });
 
 module.exports = router;

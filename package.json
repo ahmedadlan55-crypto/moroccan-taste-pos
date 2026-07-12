@@ -24,6 +24,8 @@
     "test:transfers-api": "node tests/integration/transfers.api.test.js",
     "test:gl-concurrency": "node tests/integration/glConcurrency.api.test.js",
     "test:bootstrap": "node tests/integration/bootstrap.empty-db.test.js",
+    "test:sse-security": "node tests/integration/sse.security.test.js",
+    "test:warehouse-scope": "node tests/integration/warehouseScope.api.test.js",
     "test:idempotency-retention": "node tests/integration/idempotencyRetention.test.js",
     "test:inv-tx-api": "node tests/integration/inventoryTx.api.test.js",
     "test:production-api": "node tests/integration/production.api.test.js",

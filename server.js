@@ -152,20 +152,15 @@ app.use('/api/', async function(req, res, next) {
   // V5.7.19 — printable shift report (opened in a new tab without JS auth headers)
   if (/^\/shifts\/[^\/]+\/full-report-print$/.test(p)) return next();
 
-  // Try to extract and verify JWT token
+  // Try to extract and verify JWT token — HEADER ONLY. Credentials are never
+  // accepted from the URL/query string (they leak into access logs, browser
+  // history and proxies). The SSE client consumes /api/sse/inbox via
+  // fetch()+ReadableStream with a normal Authorization header instead of
+  // EventSource (which cannot send headers) — see wfStartLiveInbox in
+  // public/js/erp.js.
   var authHeader = req.headers['authorization'];
   var token = null;
   if (authHeader && authHeader.startsWith('Bearer ')) token = authHeader.split(' ')[1];
-  // Release Gate 2026-07 — the browser EventSource API cannot send an
-  // Authorization header, which made /api/sse/inbox reject EVERY real client
-  // (infinite 401/reconnect loop; live notifications dead in production).
-  // For the /sse/ prefix ONLY, the same JWT may arrive as ?token= — the
-  // verification below is byte-identical (jwt.verify + session-version gate),
-  // no relaxation. Documented trade-off: the token can appear in access logs
-  // for this one same-origin streaming path.
-  if (!token && p.startsWith('/sse/') && req.query && typeof req.query.token === 'string' && req.query.token) {
-    token = req.query.token;
-  }
   if (token) {
     try {
       var decoded = jwt.verify(token, process.env.JWT_SECRET);

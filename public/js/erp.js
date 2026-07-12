@@ -33608,46 +33608,83 @@ window.wfRefreshCounters = function() {
 /* ═══════════════════════════════════════════════════════════════════
  * V4 — SSE Live Inbox (real-time notification toast on new events)
  * ═══════════════════════════════════════════════════════════════════ */
+// Release Gate hardening — the live inbox is consumed via fetch() +
+// ReadableStream with a normal `Authorization: Bearer` header. EventSource
+// cannot send headers, and putting the JWT in the URL (query string) is not
+// acceptable in production (access logs / history / proxies). No credential
+// ever appears in a URL; the token is the EXISTING pos_token (no new storage).
+// _wfSSE holds the AbortController of the live stream (null = not connected).
 window._wfSSE = null;
+window._wfSSEShowNotif = function(data) {
+  try {
+    // Show a non-intrusive toast (top-right) with click-to-open
+    var sevColor = { info:'#0ea5e9', success:'#16a34a', warning:'#f59e0b', danger:'#dc2626' };
+    var color = sevColor[data.severity] || '#0ea5e9';
+    var t = document.createElement('div');
+    t.style.cssText = 'position:fixed;top:80px;inset-inline-end:20px;z-index:99999;background:#fff;border-inline-start:4px solid '+color+';box-shadow:0 8px 24px rgba(0,0,0,.15);border-radius:10px;padding:12px 16px;max-width:340px;font-family:inherit;cursor:pointer;animation:slideInRight 0.3s ease;';
+    t.innerHTML = '<div style="font-weight:900;font-size:13px;color:#0f172a;margin-bottom:4px;">' + (data.title || '') + '</div>' +
+                  '<div style="font-size:11.5px;color:#64748b;line-height:1.5;">' + (data.body || '') + '</div>';
+    if (data.linkType === 'transaction' && data.linkId) {
+      t.onclick = function() { t.remove(); if (typeof wfViewTxn === 'function') wfViewTxn(data.linkId); };
+    }
+    document.body.appendChild(t);
+    setTimeout(function(){ t.style.transition = 'opacity 0.4s'; t.style.opacity = '0'; setTimeout(function(){ t.remove(); }, 400); }, 6000);
+    // Refresh counters
+    if (typeof wfRefreshCounters === 'function') wfRefreshCounters();
+  } catch(e) { console.warn('SSE notif render:', e); }
+};
 window.wfStartLiveInbox = function() {
   if (window._wfSSE || !currentUser) return;
-  if (typeof EventSource === 'undefined') return;   // SSE unsupported
-  try {
-    // Release Gate 2026-07 — EventSource cannot send an Authorization header,
-    // so the API gate accepts the SAME JWT as ?token= for /api/sse/ only.
-    // Without it every connection 401'd and live notifications never worked.
-    var _sseTok = '';
-    try { _sseTok = localStorage.getItem('pos_token') || ''; } catch (e) {}
-    var sse = new EventSource('/api/sse/inbox?username=' + encodeURIComponent(currentUser) +
-                              (_sseTok ? '&token=' + encodeURIComponent(_sseTok) : ''));
-    sse.addEventListener('notification', function(ev) {
-      try {
-        var data = JSON.parse(ev.data);
-        // Show a non-intrusive toast (top-right) with click-to-open
-        var sevColor = { info:'#0ea5e9', success:'#16a34a', warning:'#f59e0b', danger:'#dc2626' };
-        var color = sevColor[data.severity] || '#0ea5e9';
-        var t = document.createElement('div');
-        t.style.cssText = 'position:fixed;top:80px;inset-inline-end:20px;z-index:99999;background:#fff;border-inline-start:4px solid '+color+';box-shadow:0 8px 24px rgba(0,0,0,.15);border-radius:10px;padding:12px 16px;max-width:340px;font-family:inherit;cursor:pointer;animation:slideInRight 0.3s ease;';
-        t.innerHTML = '<div style="font-weight:900;font-size:13px;color:#0f172a;margin-bottom:4px;">' + (data.title || '') + '</div>' +
-                      '<div style="font-size:11.5px;color:#64748b;line-height:1.5;">' + (data.body || '') + '</div>';
-        if (data.linkType === 'transaction' && data.linkId) {
-          t.onclick = function() { t.remove(); if (typeof wfViewTxn === 'function') wfViewTxn(data.linkId); };
+  if (typeof window.fetch !== 'function' || typeof AbortController === 'undefined' ||
+      typeof TextDecoder === 'undefined') return;   // streaming unsupported
+  var tok = '';
+  try { tok = localStorage.getItem('pos_token') || ''; } catch (e) {}
+  if (!tok) return;
+  var ctrl = new AbortController();
+  window._wfSSE = ctrl;
+  function reconnect() {
+    // Only the CURRENT stream schedules a reconnect (a deliberate stop sets
+    // _wfSSE to something else first, so an aborted stream stays stopped).
+    if (window._wfSSE !== ctrl) return;
+    window._wfSSE = null;
+    setTimeout(function(){ try { wfStartLiveInbox(); } catch(_){} }, 10000);
+  }
+  fetch('/api/sse/inbox', {
+    headers: { 'Authorization': 'Bearer ' + tok, 'Accept': 'text/event-stream' },
+    cache: 'no-store',
+    signal: ctrl.signal
+  }).then(function (resp) {
+    if (!resp.ok || !resp.body) { reconnect(); return; }
+    console.log('[SSE] connected');
+    var reader = resp.body.getReader();
+    var dec = new TextDecoder();
+    var buf = '';
+    function handleFrame(frame) {
+      var ev = 'message', data = '';
+      var lines = frame.split('\n');
+      for (var i = 0; i < lines.length; i++) {
+        var line = lines[i];
+        if (line.indexOf('event:') === 0) ev = line.slice(6).trim();
+        else if (line.indexOf('data:') === 0) data += (data ? '\n' : '') + line.slice(5).trim();
+      }
+      if (ev !== 'notification' || !data) return;
+      try { window._wfSSEShowNotif(JSON.parse(data)); }
+      catch(e) { console.warn('SSE notif parse:', e); }
+    }
+    (function pump() {
+      reader.read().then(function (r) {
+        if (r.done) { reconnect(); return; }
+        buf += dec.decode(r.value, { stream: true });
+        var idx;
+        while ((idx = buf.indexOf('\n\n')) !== -1) {
+          var frame = buf.slice(0, idx);
+          buf = buf.slice(idx + 2);
+          if (frame) handleFrame(frame);
         }
-        document.body.appendChild(t);
-        setTimeout(function(){ t.style.transition = 'opacity 0.4s'; t.style.opacity = '0'; setTimeout(function(){ t.remove(); }, 400); }, 6000);
-        // Refresh counters
-        wfRefreshCounters();
-      } catch(e) { console.warn('SSE notif parse:', e); }
-    });
-    sse.addEventListener('hello', function() { console.log('[SSE] connected'); });
-    sse.onerror = function() {
-      sse.close();
-      window._wfSSE = null;
-      // Reconnect after 10s
-      setTimeout(function(){ wfStartLiveInbox(); }, 10000);
-    };
-    window._wfSSE = sse;
-  } catch(e) { console.warn('SSE init failed:', e); }
+        pump();
+      }).catch(function () { reconnect(); });
+    })();
+  }).catch(function () { reconnect(); });
 };
 // Start SSE once on script load
 setTimeout(function(){ try { wfStartLiveInbox(); } catch(_){} }, 2000);

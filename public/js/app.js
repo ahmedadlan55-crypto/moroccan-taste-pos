@@ -1129,7 +1129,7 @@ window._sidebarGroupPerms = {
 // Per-item permission map (specific items inside submenus)
 window._sidebarItemPerms = {
   'erpPermsMatrix': ['admin.users.manage'],   // also requires primary admin (extra check)
-  'erpAuditLog':    ['admin.audit.view'],
+  'erpRptAuditLog': ['admin.audit.view'],
   'erpRptSalesByChannel': ['sales.reports.advanced'],
   'erpRptDiscountsGiven': ['sales.reports.advanced']
 };

@@ -115,8 +115,6 @@
     getVATReports:       { method: 'GET',  url: '/erp/vat/reports' },
     createVATReport:     { method: 'POST', url: '/erp/vat/reports' },
     getTrialBalance:     { method: 'GET',  url: '/erp/reports/trial-balance', query: (f) => f },
-    getIncomeStatement:  { method: 'GET',  url: '/erp/reports/income', query: (f) => f },
-    getBalanceSheet:     { method: 'GET',  url: '/erp/reports/balance-sheet', query: (f) => f },
     // v5.10.1 — Cash Flow Statement (IAS 7, indirect method).
     // v5.11.13 — points to the IAS 7 endpoint; the legacy /reports/cash-flow
     // (hardcoded to '1110'/'1120') was removed when those codes left the chart.
@@ -148,7 +146,6 @@
     getAccountingPeriods:{ method: 'GET',  url: '/erp/periods' },
     getBranches:         { method: 'GET',  url: '/erp/branches' },
     saveBranch:          { method: 'POST', url: '/erp/branches' },
-    getAuditLogs:        { method: 'GET',  url: '/erp/audit', query: (f) => f },
     getLiveInventory:    { method: 'GET',  url: '/inventory/live' },
     submitStocktake:     { method: 'POST', url: '/inventory/stocktakes', body: (items,u,n,whId,brId,countDate) => ({items:items,username:u,notes:n,warehouseId:whId||'',branchId:brId||'',countDate:countDate||null}) },
     getAllStocktakes:     { method: 'GET',  url: '/inventory/stocktakes' },
@@ -230,8 +227,6 @@
     getStockTransferLines:{ method: 'GET', url: (id) => '/erp/stock-transfer-lines/' + id },
     getSupplierStatement:{ method: 'GET',  url: '/erp/supplier-statement', query: (f) => f },
     getCustomerStatement:{ method: 'GET',  url: '/erp/customer-statement', query: (f) => f },
-    getARAging:          { method: 'GET',  url: '/erp/ar-aging' },
-    getAPAging:          { method: 'GET',  url: '/erp/ap-aging' },
     getCreditNotes:      { method: 'GET',  url: '/erp/credit-notes' },
     getDebitNotes:       { method: 'GET',  url: '/erp/debit-notes' },
     getPaymentsList:     { method: 'GET',  url: '/erp/payments' },

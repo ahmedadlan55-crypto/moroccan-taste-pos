@@ -31,6 +31,7 @@ router.use(require('./erp/suppliers'));
 router.use(require('./erp/brands'));
 router.use(require('./erp/dashboard'));
 router.use(require('./erp/cost-centers'));
+router.use(require('./erp/projects'));
 router.use(require('./erp/audit-logs'));
 router.use(require('./erp/purchase-reports'));
 router.use(require('./erp/branches-full'));

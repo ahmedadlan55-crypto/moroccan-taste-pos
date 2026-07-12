@@ -547,6 +547,26 @@ async function _auditUserOp(req, action, target, details) {
   } catch (_) { /* table/columns may differ — never block the op */ }
 }
 
+// Release Gate 2026-07 — GET /api/auth/users-list: lightweight display-name
+// directory for report/audit filter dropdowns (three legacy-shell consumers
+// fetched this exact URL and 404'd forever; the full /users route below is
+// requireAdmin and would 403 the non-admin roles those screens serve).
+// Returns ONLY {username, fullName} — no roles, flags, or contact data.
+router.get('/users-list', verifyToken, async (req, res) => {
+  try {
+    let hasFullName = true;
+    try { const [c] = await db.query("SHOW COLUMNS FROM users LIKE 'full_name'"); hasFullName = !!c.length; } catch (e) { hasFullName = false; }
+    const [rows] = await db.query(
+      `SELECT username${hasFullName ? ', full_name' : ''} FROM users
+        WHERE COALESCE(active, 1) = 1
+        ORDER BY username`);
+    res.json(rows.map(r => ({ username: r.username, fullName: (hasFullName && r.full_name) ? r.full_name : r.username })));
+  } catch (e) {
+    console.error('[auth/users-list] failed:', e.message);
+    res.status(500).json({ success: false, error: 'تعذر تحميل قائمة المستخدمين' });
+  }
+});
+
 // ─── Users CRUD ───
 // GET /api/auth/users — list users with display name + developer flag
 router.get('/users', requireAdmin, async (req, res) => {

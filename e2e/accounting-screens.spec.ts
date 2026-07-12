@@ -29,20 +29,11 @@ const TOKEN = fs.readFileSync(path.join(process.cwd(), "e2e", ".token"), "utf8")
 const PHASE = process.env.SHOT_PHASE || "after";
 const OUT_ROOT = path.join(process.cwd(), "artifacts", "e2e", "accounting", PHASE);
 
-// Known-acceptable failures (documented; PRE-EXISTING — verified untouched by
-// every Stage C commit via git diff e13cfcc..HEAD):
-// - /api/erp/cost-centers        → 500: local DB still has the pre-name_ar schema
-// - /api/erp/projects            → 404: journals dims filter caller (erp.js) hits
-//                                   a route not mounted on this server config
-// - /api/sse/inbox               → 401: notifications SSE rejects the synthetic
-//                                   e2e JWT (no server-side session row)
-// - /api/auth/users-list         → 404: boot-path caller predates Stage C
-const NETWORK_WHITELIST = [
-  /\/api\/erp\/cost-centers/,
-  /\/api\/erp\/projects(\?|$)/,
-  /\/api\/sse\/inbox/,
-  /\/api\/auth\/users-list/,
-];
+// Release Gate 2026-07: the four historic failures were fixed at the ROOT
+// (cost_centers/customers boot migrations, new /api/erp/projects and
+// /api/auth/users-list routes, SSE ?token= auth) — the whitelist is now EMPTY
+// and every 4xx/5xx response is a hard failure.
+const NETWORK_WHITELIST: RegExp[] = [];
 
 test.describe.configure({ mode: "serial" });
 

@@ -154,9 +154,20 @@ app.use('/api/', async function(req, res, next) {
 
   // Try to extract and verify JWT token
   var authHeader = req.headers['authorization'];
-  if (authHeader && authHeader.startsWith('Bearer ')) {
+  var token = null;
+  if (authHeader && authHeader.startsWith('Bearer ')) token = authHeader.split(' ')[1];
+  // Release Gate 2026-07 — the browser EventSource API cannot send an
+  // Authorization header, which made /api/sse/inbox reject EVERY real client
+  // (infinite 401/reconnect loop; live notifications dead in production).
+  // For the /sse/ prefix ONLY, the same JWT may arrive as ?token= — the
+  // verification below is byte-identical (jwt.verify + session-version gate),
+  // no relaxation. Documented trade-off: the token can appear in access logs
+  // for this one same-origin streaming path.
+  if (!token && p.startsWith('/sse/') && req.query && typeof req.query.token === 'string' && req.query.token) {
+    token = req.query.token;
+  }
+  if (token) {
     try {
-      var token = authHeader.split(' ')[1];
       var decoded = jwt.verify(token, process.env.JWT_SECRET);
       // Phase A — session-version gate: a password change bumps users.token_version,
       // invalidating every token issued before it (revokes other sessions).
@@ -985,6 +996,52 @@ async function normalizeCollations() {
 }
 
 async function runMigrations() {
+  // ─── Release Gate 2026-07 — schema-drift repairs (idempotent) ───
+  // (1) customers: the O2C service layer (services/order-to-cash/CustomerService.js)
+  // writes payment_terms/credit_days/brand_id (+ merge uses merged_into_id), but
+  // those column-adds lived ONLY in db/migrations/order-to-cash/schema.js, which
+  // is invoked solely by the manual scripts/order-to-cash/migrate.js — never by
+  // boot. Long-lived DBs therefore miss them ("Unknown column 'payment_terms'").
+  // Same definitions as the O2C module, now on the canonical boot path.
+  await addColumnIfMissing('customers', 'payment_terms', "VARCHAR(40) NOT NULL DEFAULT 'Cash'");
+  await addColumnIfMissing('customers', 'credit_days', "INT NOT NULL DEFAULT 0");
+  await addColumnIfMissing('customers', 'brand_id', "VARCHAR(50) NULL");
+  await addColumnIfMissing('customers', 'merged_into_id', "VARCHAR(50) NULL");
+  // (2) cost_centers: two create-if-missing shapes exist — the old one here
+  // (id/code/name/type, v. line ~1150) and the rich one in routes/inventory.js
+  // (name_ar/name_en/branch_id/notes/created_by) that routes/erp/cost-centers.js
+  // SELECTs. DBs whose table was born with the old shape never upgraded and the
+  // endpoint 500s with "Unknown column 'p.name_ar'". Add the rich columns
+  // (nullable — safest ALTER on populated tables; the route tolerates NULLs)
+  // and backfill name_ar from the legacy name column when that column exists.
+  await addColumnIfMissing('cost_centers', 'name_ar', "VARCHAR(200) NULL");
+  await addColumnIfMissing('cost_centers', 'name_en', "VARCHAR(200) NULL");
+  await addColumnIfMissing('cost_centers', 'branch_id', "VARCHAR(50) NULL");
+  await addColumnIfMissing('cost_centers', 'notes', "TEXT NULL");
+  await addColumnIfMissing('cost_centers', 'created_by', "VARCHAR(80) NULL");
+  try {
+    const [legacyName] = await db.query(
+      `SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS
+       WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'cost_centers' AND COLUMN_NAME = 'name'`);
+    if (legacyName.length) {
+      await db.query("UPDATE cost_centers SET name_ar = name WHERE name_ar IS NULL AND name IS NOT NULL");
+    }
+  } catch (e) {
+    console.log('[DB] Migration warning (cost_centers backfill):', e.message.substring(0, 120));
+  }
+  // (3) Full O2C additive schema (7 AR/SO tables + customers evolve + the
+  // v_customer_ar_balance view) + o2c.* capabilities — previously applied only
+  // by the manual scripts/order-to-cash/migrate.js, never by boot. The service
+  // layer reads the view even outside the O2C flag (CustomerService.get →
+  // derivedBalance), so the schema must ride the canonical boot path. Both
+  // modules are idempotent (guarded creates / CREATE OR REPLACE / INSERT IGNORE).
+  try {
+    await require('./db/migrations/order-to-cash/schema').apply(db, (m) => console.log('[o2c-schema]', m));
+    await require('./db/migrations/order-to-cash/capabilities').seedO2CCapabilities(db, (m) => console.log('[o2c-caps]', m));
+  } catch (e) {
+    console.log('[DB] Migration warning (o2c schema):', e.message.substring(0, 160));
+  }
+
   // PO lines — unit conversion columns
   await addColumnIfMissing('po_lines', 'unit', "VARCHAR(50) DEFAULT ''");
   await addColumnIfMissing('po_lines', 'conv_rate', "DECIMAL(10,2) DEFAULT 1");

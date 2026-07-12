@@ -33613,7 +33613,13 @@ window.wfStartLiveInbox = function() {
   if (window._wfSSE || !currentUser) return;
   if (typeof EventSource === 'undefined') return;   // SSE unsupported
   try {
-    var sse = new EventSource('/api/sse/inbox?username=' + encodeURIComponent(currentUser));
+    // Release Gate 2026-07 — EventSource cannot send an Authorization header,
+    // so the API gate accepts the SAME JWT as ?token= for /api/sse/ only.
+    // Without it every connection 401'd and live notifications never worked.
+    var _sseTok = '';
+    try { _sseTok = localStorage.getItem('pos_token') || ''; } catch (e) {}
+    var sse = new EventSource('/api/sse/inbox?username=' + encodeURIComponent(currentUser) +
+                              (_sseTok ? '&token=' + encodeURIComponent(_sseTok) : ''));
     sse.addEventListener('notification', function(ev) {
       try {
         var data = JSON.parse(ev.data);

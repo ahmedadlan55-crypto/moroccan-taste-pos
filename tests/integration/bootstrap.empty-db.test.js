@@ -68,6 +68,11 @@ const REQUIRED_COLUMNS = [
   ['inventory_lots', 'lot_norm'], ['inventory_lots', 'expiry_date'], ['inventory_lots', 'lifecycle_status'], ['inventory_lots', 'version'],
   ['warehouse_lot_balances', 'qty'], ['warehouse_lot_balances', 'item_id'],
   ['inventory_lot_movements', 'inventory_movement_seq'], ['inventory_lot_movements', 'signed_qty'],
+  // Release Gate 2026-07 — schema-drift repairs now guaranteed by boot:
+  // O2C customer columns (were only in the manual o2c migration script) and
+  // the rich cost_centers shape (was create-if-missing only, never upgraded).
+  ['customers', 'payment_terms'], ['customers', 'credit_days'], ['customers', 'brand_id'],
+  ['cost_centers', 'name_ar'], ['cost_centers', 'branch_id'], ['cost_centers', 'created_by'],
 ];
 
 let _p = 0, _f = 0;

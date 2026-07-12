@@ -32,11 +32,9 @@ function _dbCfg() {
   };
 }
 const tpool = mysql.createPool(Object.assign(_dbCfg(), { waitForConnections: true, connectionLimit: 40, queueLimit: 0, charset: 'utf8mb4' }));
-tpool.withTransaction = async function (fn) {
-  const conn = await tpool.getConnection();
-  try { await conn.beginTransaction(); const r = await fn(conn); await conn.commit(); return r; }
-  catch (e) { await conn.rollback(); throw e; } finally { conn.release(); }
-};
+// EXACT production transaction semantics (incl. bounded deadlock retry) — the
+// factory is shared from db/connection so the mirror can never drift.
+tpool.withTransaction = db.makeWithTransaction(tpool);
 
 let _p = 0, _f = 0;
 function check(name, cond, extra) { if (cond) { _p++; console.log('  ✅', name); } else { _f++; console.log('  ❌', name, extra != null ? '→ ' + JSON.stringify(extra) : ''); } }

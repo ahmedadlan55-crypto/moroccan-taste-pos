@@ -107,20 +107,51 @@ pool.on('connection', function(conn) {
 
 pool.DB_TIME_ZONE = DB_TIME_ZONE;
 
-// Helper: execute a function inside a database transaction
-pool.withTransaction = async function(fn) {
-  const conn = await pool.getConnection();
-  try {
-    await conn.beginTransaction();
-    const result = await fn(conn);
-    await conn.commit();
-    return result;
-  } catch (e) {
-    await conn.rollback();
-    throw e;
-  } finally {
-    conn.release();
-  }
-};
+// Helper: execute a function inside a database transaction.
+//
+// Phase 3A.2 — deadlock-aware. InnoDB resolves a deadlock (errno 1213) by
+// rolling back the ENTIRE victim transaction; a lock-wait timeout (1205)
+// aborts the current statement. In both cases the only correct recovery is to
+// re-run the whole unit of work on a fresh transaction — so fn is retried a
+// bounded number of times with jittered backoff. Nothing from a failed attempt
+// persists (full rollback), therefore fn MUST be written so a clean re-run is
+// safe: no mutation of outer closure state, no non-DB side effects before the
+// commit. Any other error still throws immediately, exactly as before.
+function _isTxnRetryable(e) {
+  return !!e && (e.errno === 1213 || e.errno === 1205 ||
+                 e.code === 'ER_LOCK_DEADLOCK' || e.code === 'ER_LOCK_WAIT_TIMEOUT');
+}
+const TXN_ATTEMPTS = 4;
+function makeWithTransaction(p) {
+  return async function withTransaction(fn) {
+    let lastErr = null;
+    for (let attempt = 0; attempt < TXN_ATTEMPTS; attempt++) {
+      const conn = await p.getConnection();
+      try {
+        await conn.beginTransaction();
+        const result = await fn(conn);
+        await conn.commit();
+        return result;
+      } catch (e) {
+        lastErr = e;
+        // The txn may already be gone (deadlock = implicit full rollback);
+        // an explicit rollback is then a harmless no-op.
+        try { await conn.rollback(); } catch (_) {}
+      } finally {
+        conn.release();
+      }
+      if (!_isTxnRetryable(lastErr) || attempt === TXN_ATTEMPTS - 1) throw lastErr;
+      console.warn('[db] transaction retry ' + (attempt + 1) + '/' + (TXN_ATTEMPTS - 1) +
+                   ' after ' + (lastErr.code || lastErr.errno) + ': ' + lastErr.message);
+      await new Promise((r) => setTimeout(r, 20 * (attempt + 1) + Math.floor(Math.random() * 60)));
+    }
+    throw lastErr;
+  };
+}
+
+pool.withTransaction = makeWithTransaction(pool);
+// Expose the factory so auxiliary pools (tests, tools) get the EXACT same
+// transaction semantics instead of hand-rolling a divergent copy.
+pool.makeWithTransaction = makeWithTransaction;
 
 module.exports = pool;

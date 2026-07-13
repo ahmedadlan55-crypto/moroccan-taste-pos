@@ -40,8 +40,10 @@ vi.mock("@/shared/api", async (importOriginal) => {
 });
 
 // Mock the session so the list query is enabled with a known username.
+// FC-P3: the detail drawer now gates its actions on useCan — provide it here.
 vi.mock("@/app/providers", () => ({
   useAuth: () => ({ user: { username: "tester", role: "admin", isDeveloper: false }, isAuthenticated: true }),
+  useCan: () => true,
 }));
 
 import { apiClient } from "@/shared/api";

@@ -504,3 +504,196 @@ export function makeCoaFetcher(accounts: CoaAccount[]): EntityFetcher<CoaAccount
     return Promise.resolve({ items, nextPage: null, total: items.length } as EntityPage<CoaAccount>);
   };
 }
+
+// ════════════════════════════════════════════════════════════════════════════
+// FC-P3 — Bank reconciliation + cash-drawer closing (/api/bank-recon)
+// ════════════════════════════════════════════════════════════════════════════
+
+export interface BankStatement {
+  id: string;
+  bankAccountId: string;
+  bankName: string;
+  periodFrom: string | null;
+  periodTo: string | null;
+  openingBalance: number;
+  closingBalance: number;
+  status: "draft" | "closed" | string;
+  lineCount: number;
+  unmatchedCount: number;
+  createdBy: string;
+}
+export interface StatementLine {
+  id: string;
+  lineDate: string | null;
+  description: string;
+  reference: string;
+  amount: number;
+  matchStatus: "unmatched" | "matched" | "adjusted" | string;
+  matchedGlEntryId: string | null;
+}
+export interface BookEntry {
+  id: string;
+  date: string;
+  journalNumber: string;
+  description: string;
+  amount: number;
+  matched: boolean;
+}
+export interface StatementDetail {
+  statement: {
+    id: string;
+    bankAccountId: string;
+    glAccountId: string | null;
+    periodFrom: string | null;
+    periodTo: string | null;
+    openingBalance: number;
+    closingBalance: number;
+    status: string;
+  };
+  lines: StatementLine[];
+  book: BookEntry[];
+}
+export interface StatementInput {
+  bankAccountId: string;
+  periodFrom?: string;
+  periodTo?: string;
+  openingBalance?: number;
+  closingBalance?: number;
+  lines: Array<{ lineDate?: string; description?: string; reference?: string; amount: number }>;
+}
+
+const RKEY = ["bank-recon"] as const;
+
+export function useBankStatements(bankAccountId?: string) {
+  return useQuery({
+    queryKey: [...RKEY, "statements", bankAccountId ?? "all"],
+    queryFn: () =>
+      apiClient.get<BankStatement[]>("/bank-recon/statements", {
+        params: { bankAccountId: bankAccountId || undefined },
+      }),
+  });
+}
+export function useStatementDetail(id: string | null) {
+  return useQuery({
+    queryKey: [...RKEY, "statement", id],
+    enabled: !!id,
+    queryFn: () => apiClient.get<StatementDetail>(`/bank-recon/statements/${id}`),
+  });
+}
+export function useCreateStatement() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (input: StatementInput) =>
+      apiClient.post<{ success: boolean; id?: string; error?: string }>("/bank-recon/statements", input),
+    onSuccess: () => qc.invalidateQueries({ queryKey: [...RKEY, "statements"] }),
+  });
+}
+export function useAutoMatch() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (statementId: string) =>
+      apiClient.post<{ success: boolean; matched: number; remaining: number; error?: string }>(
+        `/bank-recon/statements/${statementId}/auto-match`,
+        {},
+      ),
+    onSuccess: () => qc.invalidateQueries({ queryKey: [...RKEY] }),
+  });
+}
+export function useMatchLine() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (v: { lineId: string; glEntryId: string }) =>
+      apiClient.post<{ success: boolean; error?: string }>(`/bank-recon/lines/${v.lineId}/match`, {
+        glEntryId: v.glEntryId,
+      }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: [...RKEY] }),
+  });
+}
+export function useUnmatchLine() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (lineId: string) =>
+      apiClient.post<{ success: boolean; error?: string }>(`/bank-recon/lines/${lineId}/unmatch`, {}),
+    onSuccess: () => qc.invalidateQueries({ queryKey: [...RKEY] }),
+  });
+}
+export function useAdjustLine() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (v: {
+      statementId: string;
+      lineId: string;
+      contraAccountId: string;
+      kind: "fee" | "interest";
+      amount: number;
+      description?: string;
+    }) =>
+      apiClient.post<{ success: boolean; journalId?: string; journalNumber?: string; error?: string }>(
+        `/bank-recon/statements/${v.statementId}/adjust`,
+        v,
+      ),
+    onSuccess: () => qc.invalidateQueries({ queryKey: [...RKEY] }),
+  });
+}
+export function useCloseStatement() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (statementId: string) =>
+      apiClient.post<{ success: boolean; error?: string }>(`/bank-recon/statements/${statementId}/close`, {}),
+    onSuccess: () => qc.invalidateQueries({ queryKey: [...RKEY] }),
+  });
+}
+
+// ── Cash-drawer closing ──────────────────────────────────────────────────────
+export interface CashClosing {
+  id: string;
+  cashboxId: string;
+  cashboxName: string;
+  closingDate: string | null;
+  expectedBalance: number;
+  countedAmount: number;
+  difference: number;
+  status: "draft" | "approved" | string;
+  notes: string;
+  journalId: string | null;
+  createdBy: string;
+  approvedBy: string;
+}
+export function useCashClosings(cashboxId?: string) {
+  return useQuery({
+    queryKey: [...RKEY, "cash-closings", cashboxId ?? "all"],
+    queryFn: () =>
+      apiClient.get<CashClosing[]>("/bank-recon/cash-closings", {
+        params: { cashboxId: cashboxId || undefined },
+      }),
+  });
+}
+export function useCreateCashClosing() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (v: { cashboxId: string; closingDate?: string; countedAmount: number; notes?: string }) =>
+      apiClient.post<{ success: boolean; id?: string; expectedBalance?: number; difference?: number; error?: string }>(
+        "/bank-recon/cash-closings",
+        v,
+      ),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: [...RKEY, "cash-closings"] });
+      qc.invalidateQueries({ queryKey: [...KEY, "cash-boxes"] });
+    },
+  });
+}
+export function useApproveCashClosing() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (v: { id: string; differenceAccountId?: string }) =>
+      apiClient.post<{ success: boolean; journalId?: string; journalNumber?: string; error?: string }>(
+        `/bank-recon/cash-closings/${v.id}/approve`,
+        { differenceAccountId: v.differenceAccountId },
+      ),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: [...RKEY, "cash-closings"] });
+      qc.invalidateQueries({ queryKey: [...KEY, "cash-boxes"] });
+      qc.invalidateQueries({ queryKey: [...KEY, "summary"] });
+    },
+  });
+}

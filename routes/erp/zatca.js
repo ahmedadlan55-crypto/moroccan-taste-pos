@@ -13,6 +13,10 @@
 
 const router = require('express').Router();
 const db = require('../../db/connection');
+// FC-P1b — ZATCA credential endpoints (onboard/production/test/revoke) manage
+// encrypted CSIDs and private keys → capability-gated, not JWT-only.
+const requireCapability = require('../../middleware/requireCapability');
+const zcap = requireCapability('zatca.manage');
 const zatcaSigner = require('../../lib/zatca-signer');
 const zatcaClient = require('../../lib/zatca-client');
 const zatcaUbl    = require('../../lib/zatca-ubl');
@@ -53,7 +57,7 @@ router.get('/zatca/status', async (req, res) => {
   }
 });
 
-router.post('/zatca/onboard/compliance', async (req, res) => {
+router.post('/zatca/onboard/compliance', zcap, async (req, res) => {
   try {
     const { otp, commonName, organizationName, organizationalUnitName,
             invoiceType, sellerLocation, industryCode, vatNumber, crNumber } = req.body || {};
@@ -111,7 +115,7 @@ router.post('/zatca/onboard/compliance', async (req, res) => {
   }
 });
 
-router.post('/zatca/onboard/production', async (req, res) => {
+router.post('/zatca/onboard/production', zcap, async (req, res) => {
   try {
     const [c] = await db.query(`
       SELECT zatca_csid_request_id, zatca_binary_token_encrypted, zatca_secret_encrypted,
@@ -148,7 +152,7 @@ router.post('/zatca/onboard/production', async (req, res) => {
   }
 });
 
-router.post('/zatca/test', async (req, res) => {
+router.post('/zatca/test', zcap, async (req, res) => {
   try {
     const [c] = await db.query(`
       SELECT name, tax_number, zatca_binary_token_encrypted, zatca_secret_encrypted,
@@ -205,7 +209,7 @@ router.post('/zatca/test', async (req, res) => {
   }
 });
 
-router.post('/zatca/revoke', async (req, res) => {
+router.post('/zatca/revoke', zcap, async (req, res) => {
   try {
     await db.query(`
       UPDATE companies SET

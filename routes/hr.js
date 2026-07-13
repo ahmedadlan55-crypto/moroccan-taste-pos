@@ -2,6 +2,9 @@ const router = require('express').Router();
 const db = require('../db/connection');
 const hrRules = require('../lib/hrRules');
 const hrGLPosting = require('../lib/hrGLPosting');
+// FC-P1b — capability guard + JWT actor for payroll approve/pay (double-post safe).
+const requireCapability = require('../middleware/requireCapability');
+function _actor(req) { return (req.user && (req.user.username || req.user.name)) || ''; }
 // v6.3.0 — live payroll projection + weekly off classifier
 const payrollEngine = require('../lib/payroll-engine');
 const weeklyOff = require('../lib/weeklyOff');
@@ -1831,22 +1834,29 @@ router.post('/payroll-runs/:id/calculate', async (req, res) => {
   }
 });
 
-router.post('/payroll-runs/:id/approve', async (req, res) => {
+router.post('/payroll-runs/:id/approve', requireCapability('hr.payroll.approve'), async (req, res) => {
   try {
-    const { username } = req.body;
-    await db.query(
-      `UPDATE hr_payroll_runs SET status='approved', approved_by=?, approved_at=? WHERE id=?`,
-      [username, new Date(), req.params.id]
-    );
-    // Auto-post to GL (accrual + deductions journals)
-    let glResult = null;
-    try {
-      glResult = await hrGLPosting.postPayrollJournals(req.params.id, username);
-    } catch (glErr) {
-      // Don't fail the approval — log the GL error and continue
-      console.error('[Payroll GL] Failed to post journals:', glErr.message);
-      return res.json({ success: true, id: req.params.id, glWarning: 'تم الاعتماد لكن فشل ترحيل القيود: ' + glErr.message });
-    }
+    const username = _actor(req); // FC-P1b — actor from JWT
+    // FC-P1b — claim the run under a row lock and refuse re-approval so the
+    // accrual/deductions journals can never be posted twice (double-post).
+    const out = await db.withTransaction(async (conn) => {
+      const [rows] = await conn.query('SELECT status FROM hr_payroll_runs WHERE id=? FOR UPDATE', [req.params.id]);
+      if (!rows.length) return { error: 'المسير غير موجود' };
+      if (rows[0].status === 'approved' || rows[0].status === 'paid') return { error: 'المسير معتمد بالفعل' };
+      await conn.query(`UPDATE hr_payroll_runs SET status='approved', approved_by=?, approved_at=? WHERE id=?`,
+        [username, new Date(), req.params.id]);
+      // Auto-post to GL (accrual + deductions journals). A GL failure does NOT
+      // roll back the approval — it is surfaced as a warning (legacy behaviour).
+      try {
+        return { glResult: await hrGLPosting.postPayrollJournals(req.params.id, username) };
+      } catch (glErr) {
+        console.error('[Payroll GL] Failed to post journals:', glErr.message);
+        return { glWarning: 'تم الاعتماد لكن فشل ترحيل القيود: ' + glErr.message };
+      }
+    });
+    if (out.error) return res.json({ success: false, error: out.error });
+    if (out.glWarning) return res.json({ success: true, id: req.params.id, glWarning: out.glWarning });
+    const glResult = out.glResult;
     res.json({
       success: true, id: req.params.id,
       glPosted: !!glResult,
@@ -1859,12 +1869,24 @@ router.post('/payroll-runs/:id/approve', async (req, res) => {
 });
 
 // Pay payroll run — creates payment journal (bank → payable)
-router.post('/payroll-runs/:id/pay', async (req, res) => {
+router.post('/payroll-runs/:id/pay', requireCapability('hr.payroll.pay'), async (req, res) => {
   try {
-    const { username, bankAccountId } = req.body;
+    const username = _actor(req); // FC-P1b — actor from JWT
+    const { bankAccountId } = req.body;
     if (!bankAccountId) return res.json({ success: false, error: 'اختر حساب البنك/الصندوق' });
-    const result = await hrGLPosting.postPayrollPaymentJournal(req.params.id, bankAccountId, username);
-    res.json(result);
+    // FC-P1b — claim the run under a row lock; refuse unless approved + not paid,
+    // then stamp 'paid' inside the lock so a concurrent pay can't double-pay.
+    const out = await db.withTransaction(async (conn) => {
+      const [rows] = await conn.query('SELECT status FROM hr_payroll_runs WHERE id=? FOR UPDATE', [req.params.id]);
+      if (!rows.length) return { error: 'المسير غير موجود' };
+      if (rows[0].status === 'paid') return { error: 'المسير مدفوع بالفعل' };
+      if (rows[0].status !== 'approved') return { error: 'يجب اعتماد المسير قبل الصرف' };
+      const result = await hrGLPosting.postPayrollPaymentJournal(req.params.id, bankAccountId, username);
+      await conn.query(`UPDATE hr_payroll_runs SET status='paid' WHERE id=?`, [req.params.id]);
+      return { result };
+    });
+    if (out.error) return res.json({ success: false, error: out.error });
+    res.json(out.result);
   } catch (e) {
     res.json({ success: false, error: e.message });
   }

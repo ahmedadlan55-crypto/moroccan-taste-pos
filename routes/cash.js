@@ -1,5 +1,8 @@
 const router = require('express').Router();
 const db = require('../db/connection');
+// FC-P1b — capability guard + JWT actor for voucher approval (double-approve safe).
+const requireCapability = require('../middleware/requireCapability');
+function _actor(req) { return (req.user && (req.user.username || req.user.name)) || ''; }
 
 // ═══════════════════════════════════════════════════════════════
 // HELPER: Auto-create GL accounts for cash/bank + post journals
@@ -517,14 +520,17 @@ router.post('/receipts', async (req, res) => {
 // V5.10.3 — When manual_gl_lines is set on the row, posts that exact journal
 // instead of the auto-routed Dr destination / Cr source contra. The lines
 // are already validated at create time.
-router.post('/receipts/:id/approve', async (req, res) => {
+router.post('/receipts/:id/approve', requireCapability('finance.cash.approve'), async (req, res) => {
   try {
     const id = req.params.id;
-    const username = (req.body && req.body.username) || (req.user && req.user.username) || '';
-    const [rows] = await db.query('SELECT * FROM cash_receipts WHERE id=?', [id]);
-    if (!rows.length) return res.json({ success:false, error: 'السند غير موجود' });
+    const username = _actor(req); // FC-P1b — actor from JWT, not body
+    // FC-P1b — claim the voucher under a row lock so two concurrent approves
+    // can never both post a journal / double the cashbox balance.
+    const out = await db.withTransaction(async (conn) => {
+    const [rows] = await conn.query('SELECT * FROM cash_receipts WHERE id=? FOR UPDATE', [id]);
+    if (!rows.length) return { error: 'السند غير موجود' };
     const r = rows[0];
-    if (r.status !== 'draft') return res.json({ success:false, error: 'السند غير قابل للاعتماد (الحالة: ' + r.status + ')' });
+    if (r.status !== 'draft') return { error: 'السند غير قابل للاعتماد (الحالة: ' + r.status + ')' };
 
     let lines;
     if (r.manual_gl_lines) {
@@ -541,7 +547,7 @@ router.post('/receipts/:id/approve', async (req, res) => {
           description: l.description || ''
         });
       }
-      if (!lines.length) return res.json({ success:false, error: 'القيد اليدوي فارغ — راجع الأسطر' });
+      if (!lines.length) return { error: 'القيد اليدوي فارغ — راجع الأسطر' };
     } else {
       const destAcc = await getSourceAccount(r.destination_type, r.destination_id);
       const src = await _receiptSourceGl(r.source_type);
@@ -561,11 +567,14 @@ router.post('/receipts/:id/approve', async (req, res) => {
         costCenterId: r.cost_center_id || null,
         projectId: r.project_id || null
       });
-    await db.query('UPDATE cash_receipts SET status=?, journal_id=?, approved_by=?, approved_at=NOW() WHERE id=?',
+    await conn.query('UPDATE cash_receipts SET status=?, journal_id=?, approved_by=?, approved_at=NOW() WHERE id=?',
       ['posted', journal.id, username, id]);
-    if (r.destination_type === 'cash') await db.query('UPDATE cash_boxes SET balance = balance + ? WHERE id = ?', [r.amount, r.destination_id]);
-    else                               await db.query('UPDATE bank_accounts SET balance = balance + ? WHERE id = ?', [r.amount, r.destination_id]);
-    res.json({ success:true, journalId: journal.id, journalNumber: journal.journalNumber });
+    if (r.destination_type === 'cash') await conn.query('UPDATE cash_boxes SET balance = balance + ? WHERE id = ?', [r.amount, r.destination_id]);
+    else                               await conn.query('UPDATE bank_accounts SET balance = balance + ? WHERE id = ?', [r.amount, r.destination_id]);
+    return { journal };
+    });
+    if (out.error) return res.json({ success:false, error: out.error });
+    res.json({ success:true, journalId: out.journal.id, journalNumber: out.journal.journalNumber });
   } catch(e) { res.json({ success:false, error: e.message }); }
 });
 
@@ -732,14 +741,16 @@ router.post('/payments', async (req, res) => {
 // V5.9.14 — Approve a draft payment: posts the GL journal and decrements
 // the source balance.
 // V5.10.3 — Honors manual_gl_lines override (same as receipt approval).
-router.post('/payments/:id/approve', async (req, res) => {
+router.post('/payments/:id/approve', requireCapability('finance.cash.approve'), async (req, res) => {
   try {
     const id = req.params.id;
-    const username = (req.body && req.body.username) || (req.user && req.user.username) || '';
-    const [rows] = await db.query('SELECT * FROM cash_payments WHERE id=?', [id]);
-    if (!rows.length) return res.json({ success:false, error:'السند غير موجود' });
+    const username = _actor(req); // FC-P1b — actor from JWT, not body
+    // FC-P1b — claim the voucher under a row lock (double-approve safe).
+    const out = await db.withTransaction(async (conn) => {
+    const [rows] = await conn.query('SELECT * FROM cash_payments WHERE id=? FOR UPDATE', [id]);
+    if (!rows.length) return { error: 'السند غير موجود' };
     const p = rows[0];
-    if (p.status !== 'draft') return res.json({ success:false, error: 'السند غير قابل للاعتماد (الحالة: ' + p.status + ')' });
+    if (p.status !== 'draft') return { error: 'السند غير قابل للاعتماد (الحالة: ' + p.status + ')' };
 
     let lines;
     if (p.manual_gl_lines) {
@@ -755,7 +766,7 @@ router.post('/payments/:id/approve', async (req, res) => {
           description: l.description || ''
         });
       }
-      if (!lines.length) return res.json({ success:false, error: 'القيد اليدوي فارغ — راجع الأسطر' });
+      if (!lines.length) return { error: 'القيد اليدوي فارغ — راجع الأسطر' };
     } else {
       const srcAcc = await getSourceAccount(p.source_type, p.source_id);
       const recip = await _paymentRecipientGl(p.recipient_type, p.expense_account_id);
@@ -774,11 +785,14 @@ router.post('/payments/:id/approve', async (req, res) => {
         costCenterId: p.cost_center_id || null,
         projectId: p.project_id || null
       });
-    await db.query('UPDATE cash_payments SET status=?, journal_id=?, approved_by=?, approved_at=NOW() WHERE id=?',
+    await conn.query('UPDATE cash_payments SET status=?, journal_id=?, approved_by=?, approved_at=NOW() WHERE id=?',
       ['posted', journal.id, username, id]);
-    if (p.source_type === 'cash') await db.query('UPDATE cash_boxes SET balance = balance - ? WHERE id = ?', [p.amount, p.source_id]);
-    else                          await db.query('UPDATE bank_accounts SET balance = balance - ? WHERE id = ?', [p.amount, p.source_id]);
-    res.json({ success:true, journalId: journal.id, journalNumber: journal.journalNumber });
+    if (p.source_type === 'cash') await conn.query('UPDATE cash_boxes SET balance = balance - ? WHERE id = ?', [p.amount, p.source_id]);
+    else                          await conn.query('UPDATE bank_accounts SET balance = balance - ? WHERE id = ?', [p.amount, p.source_id]);
+    return { journal };
+    });
+    if (out.error) return res.json({ success:false, error: out.error });
+    res.json({ success:true, journalId: out.journal.id, journalNumber: out.journal.journalNumber });
   } catch(e) { res.json({ success:false, error: e.message }); }
 });
 

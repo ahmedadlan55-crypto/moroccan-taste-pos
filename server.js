@@ -824,6 +824,20 @@ app.get('/pos/*',       sendProtectedApp('pos/index.html'));
 app.get('/custody',     sendProtectedApp('custody/index.html'));
 app.get('/custody/*',   sendProtectedApp('custody/index.html'));
 
+// FC-P4 — optional local cutover. When ERP_DEFAULT_ENABLED is ON, the unified
+// Back-Office at /app becomes the default entry point and the legacy admin shell
+// stays reachable at /legacy (a hidden rollback/admin path). OFF by default →
+// ZERO behaviour change (root keeps serving the legacy app via the catch-all).
+// Flip the flag to 0 to roll back instantly. Requires ERP_UNIFIED_ENABLED=1 so
+// /app actually serves; otherwise the redirect lands on the 503 maintenance page.
+var ERP_DEFAULT_ENABLED = /^(1|true|on|yes)$/i.test(String(process.env.ERP_DEFAULT_ENABLED || '').trim());
+if (ERP_DEFAULT_ENABLED) {
+  app.get('/legacy',    sendProtectedApp('index.html'));
+  app.get('/legacy/*',  sendProtectedApp('index.html'));
+  app.get('/', (req, res) => res.redirect(302, '/app/'));
+  console.log('[cutover] ERP_DEFAULT_ENABLED=1 — "/" → /app/, legacy at /legacy');
+}
+
 // SPA fallback — main admin app
 app.get('*', (req, res) => {
   res.sendFile(path.join(__dirname, 'public', 'index.html'));

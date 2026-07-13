@@ -3,6 +3,7 @@ import { BrowserRouter, Routes, Route, Navigate, Link } from "react-router-dom";
 import { RequireAuth } from "./providers";
 import { AppShell } from "./shell/AppShell";
 import { CapGuard } from "./shell/CapGuard";
+import { LoginPage } from "./pages/Login";
 import { NAV_ITEMS } from "./navigation/manifest";
 
 // ── Lazy module loaders ─────────────────────────────────────────────────────
@@ -38,8 +39,8 @@ const BASENAME = import.meta.env.BASE_URL.replace(/\/$/, "") || "/";
 // ── Route contract (consumed by the architecture tests) ─────────────────────
 /** Every leaf route path the router registers (one per nav item). */
 export const ROUTE_PATHS: ReadonlySet<string> = new Set(NAV_ITEMS.map((i) => i.path));
-/** Non-nav paths that are allowed to exist as routes (redirects + not-found). */
-export const REDIRECT_PATHS: ReadonlySet<string> = new Set<string>(["/"]);
+/** Non-nav paths that are allowed to exist as routes (redirects + login + not-found). */
+export const REDIRECT_PATHS: ReadonlySet<string> = new Set<string>(["/", "/login"]);
 /** The index route redirects to this path. */
 export const INDEX_REDIRECT = "/overview";
 
@@ -47,6 +48,9 @@ export function AppRouter() {
   return (
     <BrowserRouter basename={BASENAME}>
       <Routes>
+        {/* Public login (outside the auth gate) — the entry point when /app is
+            the default and the user has no session yet. */}
+        <Route path="login" element={<LoginPage />} />
         <Route
           element={
             <RequireAuth>

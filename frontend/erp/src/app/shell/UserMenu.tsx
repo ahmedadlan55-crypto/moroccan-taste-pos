@@ -3,8 +3,8 @@ import { useAuth } from "@/app/providers";
 import { HeaderMenu } from "./HeaderMenu";
 
 // User menu — identity + logout. Logout clears the shared session tokens and
-// returns to the main system root (same-tab), where the legacy shell handles
-// re-authentication.
+// returns to the in-app /login (FC-P4). When `/app` is not the default, that
+// login still works; the legacy shell also remains reachable at /legacy.
 export function UserMenu() {
   const { user } = useAuth();
   const initials = (user?.name || user?.username || "؟").slice(0, 2);
@@ -18,7 +18,8 @@ export function UserMenu() {
     } catch {
       /* ignore storage errors */
     }
-    window.location.href = "/";
+    const base = (import.meta.env.BASE_URL || "/").replace(/\/$/, "");
+    window.location.assign(base + "/login");
   }
 
   return (

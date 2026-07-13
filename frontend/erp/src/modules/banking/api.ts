@@ -5,6 +5,7 @@
 
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { apiClient } from "@/shared/api";
+import type { EntityFetcher, EntityPage } from "@/shared/ui";
 
 const KEY = ["cash"] as const;
 
@@ -194,6 +195,48 @@ export function useReceipts() {
     queryFn: () => apiClient.get<Receipt[]>("/cash/receipts"),
   });
 }
+// ── Voucher draft creation ──────────────────────────────────────────────────
+// Optional bookkeeper-controlled journal (overrides the auto-routed contra).
+// Server validates it balances AND equals `amount`; we validate the same
+// client-side before submit.
+export interface ManualGlLine {
+  accountId: string;
+  debit: number;
+  credit: number;
+  description?: string;
+}
+
+// POST /cash/receipts body — mirrors the route exactly. Persists a DRAFT.
+export interface ReceiptInput {
+  receiptDate: string;
+  amount: number;
+  destinationType: "cash" | "bank";
+  destinationId: string;
+  sourceType: string; // customer | employee | rent | sales | other
+  sourceId?: string | null;
+  sourceName?: string;
+  reference?: string;
+  description?: string;
+  brandId?: string | null;
+  branchId?: string | null;
+  costCenterId?: string | null;
+  projectId?: string | null;
+  manualGlLines?: ManualGlLine[];
+}
+export function useCreateReceipt() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (input: ReceiptInput) =>
+      apiClient.post<{ success: boolean; id?: string; number?: string; error?: string }>(
+        "/cash/receipts",
+        input,
+      ),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: [...KEY, "receipts"] });
+      qc.invalidateQueries({ queryKey: [...KEY, "summary"] });
+    },
+  });
+}
 export function useApproveReceipt() {
   const qc = useQueryClient();
   return useMutation({
@@ -235,6 +278,38 @@ export function usePayments() {
   return useQuery({
     queryKey: [...KEY, "payments"],
     queryFn: () => apiClient.get<Payment[]>("/cash/payments"),
+  });
+}
+// POST /cash/payments body — mirrors the route exactly. Persists a DRAFT.
+export interface PaymentInput {
+  paymentDate: string;
+  amount: number;
+  sourceType: "cash" | "bank";
+  sourceId: string;
+  recipientType: string; // supplier | employee | expense | other
+  recipientId?: string | null;
+  recipientName?: string;
+  expenseAccountId?: string | null;
+  reference?: string;
+  description?: string;
+  brandId?: string | null;
+  branchId?: string | null;
+  costCenterId?: string | null;
+  projectId?: string | null;
+  manualGlLines?: ManualGlLine[];
+}
+export function useCreatePayment() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (input: PaymentInput) =>
+      apiClient.post<{ success: boolean; id?: string; number?: string; error?: string }>(
+        "/cash/payments",
+        input,
+      ),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: [...KEY, "payments"] });
+      qc.invalidateQueries({ queryKey: [...KEY, "summary"] });
+    },
   });
 }
 export function useApprovePayment() {
@@ -303,4 +378,129 @@ export function useCreateTransfer() {
 
 export function todayISO(): string {
   return new Date().toISOString().slice(0, 10);
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// Voucher form lookups — dimensions, parties, and the COA (manual GL / expense)
+// ════════════════════════════════════════════════════════════════════════════
+
+// ── Header dimensions (optional) — reuse the same erp endpoints the accounting
+//    screens read; the voucher header carries brand/branch/cost-center. ────────
+export interface DimOption {
+  id: string;
+  label: string;
+}
+function mapDimOptions(
+  rows: Array<Record<string, unknown>>,
+  opts: { withCode?: boolean; activeOnly?: boolean } = {},
+): DimOption[] {
+  return (rows ?? [])
+    .filter((r) => (opts.activeOnly ? r.isActive !== false : true))
+    .map((r) => {
+      const name = String(r.nameAr ?? r.name ?? r.name_ar ?? r.id ?? "");
+      const code = String(r.code ?? "");
+      return { id: String(r.id ?? ""), label: opts.withCode && code ? `${code} — ${name}` : name };
+    })
+    .filter((o) => o.id);
+}
+export function useBrandDims() {
+  return useQuery({
+    queryKey: [...KEY, "dim-brands"],
+    staleTime: 300_000,
+    queryFn: async () =>
+      mapDimOptions(await apiClient.get<Array<Record<string, unknown>>>("/erp/brands-stats")),
+  });
+}
+export function useBranchDims() {
+  return useQuery({
+    queryKey: [...KEY, "dim-branches"],
+    staleTime: 300_000,
+    queryFn: async () =>
+      mapDimOptions(await apiClient.get<Array<Record<string, unknown>>>("/erp/branches-full")),
+  });
+}
+export function useCostCenterDims() {
+  return useQuery({
+    queryKey: [...KEY, "dim-cost-centers"],
+    staleTime: 300_000,
+    queryFn: async () =>
+      mapDimOptions(await apiClient.get<Array<Record<string, unknown>>>("/erp/cost-centers"), {
+        withCode: true,
+        activeOnly: true,
+      }),
+  });
+}
+
+// ── Party pickers — server-side searchable customer / supplier lists, shaped
+//    for SearchableEntityCombobox. ─────────────────────────────────────────────
+export interface PartyHit {
+  id: string;
+  name: string;
+  phone?: string | null;
+}
+export const customerFetcher: EntityFetcher<PartyHit> = ({ q, signal }) =>
+  apiClient
+    .get<PartyHit[]>("/erp/customers/search", { signal, params: { q } })
+    .then((rows) => ({
+      items: Array.isArray(rows) ? rows : [],
+      nextPage: null,
+      total: Array.isArray(rows) ? rows.length : 0,
+    }));
+export const supplierFetcher: EntityFetcher<PartyHit> = ({ q, page, signal }) =>
+  apiClient
+    .get<{ data?: PartyHit[]; pagination?: { page: number; totalPages: number; total: number } }>(
+      "/erp/suppliers/search",
+      { signal, params: { q, page, pageSize: 20 } },
+    )
+    .then((r) => {
+      const data = Array.isArray(r?.data) ? r.data : [];
+      const pg = r?.pagination;
+      const nextPage = pg && pg.page < pg.totalPages ? pg.page + 1 : null;
+      return { items: data, nextPage, total: pg?.total ?? data.length };
+    });
+
+// ── COA accounts for the OPTIONAL manual-GL editor / expense-account picker.
+//    /cash/gl-accounts-tree returns a subtree per root; merge the standard roots
+//    into one flat, de-duped chart and flag postable leaves (accounts that are
+//    not a parent of any other account). ───────────────────────────────────────
+export interface CoaAccount {
+  id: string;
+  code: string;
+  nameAr: string;
+  isLeaf: boolean;
+}
+const COA_ROOTS = ["1", "2", "3", "4", "5"] as const;
+export function useCoaAccounts(enabled: boolean) {
+  return useQuery({
+    queryKey: [...KEY, "coa-accounts"],
+    enabled,
+    staleTime: 300_000,
+    queryFn: async () => {
+      const chunks = await Promise.all(
+        COA_ROOTS.map((root) =>
+          apiClient
+            .get<GlNode[]>("/cash/gl-accounts-tree", { params: { root } })
+            .catch(() => [] as GlNode[]),
+        ),
+      );
+      const byId = new Map<string, GlNode>();
+      for (const rows of chunks) for (const n of rows ?? []) if (!byId.has(n.id)) byId.set(n.id, n);
+      const all = [...byId.values()];
+      const parentIds = new Set(all.map((n) => n.parentId).filter(Boolean) as string[]);
+      return all
+        .map((n) => ({ id: n.id, code: n.code, nameAr: n.nameAr, isLeaf: !parentIds.has(n.id) }))
+        .sort((a, b) => a.code.localeCompare(b.code));
+    },
+  });
+}
+// In-memory fetcher over the loaded chart → drives a SearchableEntityCombobox
+// (instant client-side filter, no per-keystroke network calls).
+export function makeCoaFetcher(accounts: CoaAccount[]): EntityFetcher<CoaAccount> {
+  return ({ q }) => {
+    const needle = q.trim().toLowerCase();
+    const items = needle
+      ? accounts.filter((a) => `${a.code} ${a.nameAr}`.toLowerCase().includes(needle))
+      : accounts;
+    return Promise.resolve({ items, nextPage: null, total: items.length } as EntityPage<CoaAccount>);
+  };
 }

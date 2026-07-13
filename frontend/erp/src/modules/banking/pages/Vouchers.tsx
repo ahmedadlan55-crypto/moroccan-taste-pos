@@ -1,8 +1,9 @@
 import { useState } from "react";
-import { ExternalLink } from "lucide-react";
+import { Plus } from "lucide-react";
 import { Button, PageHeader, ConfirmDialog } from "@/shared/ui";
 import { DataTable, type ColumnDef } from "@/shared/tables";
 import { formatDate } from "@/shared/lib";
+import { useCan } from "@/app/providers";
 import {
   useReceipts,
   useApproveReceipt,
@@ -12,6 +13,7 @@ import {
   useCancelPayment,
 } from "../api";
 import { Money, StatusPill, mapError } from "../components";
+import { VoucherForm, VOUCHER_CREATE_CAP, type VoucherKind } from "../vouchers/VoucherForm";
 
 // A normalized voucher row so one register renders both receipts and payments.
 interface VoucherRow {
@@ -30,6 +32,7 @@ interface VoucherRow {
 type PendingAction = { kind: "approve" | "cancel"; row: VoucherRow } | null;
 
 function VoucherRegister({
+  kind,
   eyebrow,
   title,
   subtitle,
@@ -42,6 +45,7 @@ function VoucherRegister({
   approve,
   cancel,
 }: {
+  kind: VoucherKind;
   eyebrow: string;
   title: string;
   subtitle: string;
@@ -54,6 +58,8 @@ function VoucherRegister({
   approve: (id: string, cb: { onDone: () => void; onError: (m: string) => void }) => void;
   cancel: (id: string, cb: { onDone: () => void; onError: (m: string) => void }) => void;
 }) {
+  const canCreate = useCan(VOUCHER_CREATE_CAP);
+  const [formOpen, setFormOpen] = useState(false);
   const [pending, setPending] = useState<PendingAction>(null);
   const [busy, setBusy] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
@@ -118,14 +124,17 @@ function VoucherRegister({
         title={title}
         subtitle={subtitle}
         action={
-          <a
-            href="/"
-            className="inline-flex min-h-11 items-center gap-2 rounded-xl border border-slate-200 bg-white px-4 text-sm font-bold text-slate-600 transition hover:bg-slate-50"
-          >
-            <ExternalLink className="h-4 w-4" /> سند جديد (في النظام الحالي)
-          </a>
+          canCreate ? (
+            <Button variant="primary" onClick={() => setFormOpen(true)}>
+              <Plus className="h-4 w-4" /> سند جديد
+            </Button>
+          ) : undefined
         }
       />
+
+      {canCreate && (
+        <VoucherForm kind={kind} open={formOpen} onClose={() => setFormOpen(false)} />
+      )}
 
       <DataTable
         columns={columns}
@@ -193,6 +202,7 @@ export function ReceiptsPage() {
 
   return (
     <VoucherRegister
+      kind="receipt"
       eyebrow="النقد والبنوك"
       title="سندات القبض"
       subtitle="متابعة سندات القبض واعتماد المسودات لترحيل قيودها المحاسبية."
@@ -237,6 +247,7 @@ export function PaymentsPage() {
 
   return (
     <VoucherRegister
+      kind="payment"
       eyebrow="النقد والبنوك"
       title="سندات الصرف"
       subtitle="متابعة سندات الصرف واعتماد المسودات لترحيل قيودها المحاسبية."

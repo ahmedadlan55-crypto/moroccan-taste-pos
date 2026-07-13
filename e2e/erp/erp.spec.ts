@@ -72,11 +72,25 @@ const SHOTS: { path: string; file: string }[] = [
 
 // 5 deep-linked routes that must survive a hard refresh (history fallback).
 const DEEP_LINKS = [
+  "/accounting/chart-of-accounts", // E1 — converted heavy editor
+  "/accounting/journals", // E1 — converted heavy editor
   "/accounting/trial-balance",
   "/sales/orders",
   "/inventory/items",
   "/administration/audit-log",
   "/people/employees",
+];
+
+// E1 — the two converted heavy editors, captured at all four review viewports.
+const E1_VIEWPORTS = [
+  { w: 390, h: 844 },
+  { w: 768, h: 1024 },
+  { w: 1024, h: 768 },
+  { w: 1440, h: 900 },
+];
+const E1_SCREENS = [
+  { path: "/accounting/chart-of-accounts", name: "coa" },
+  { path: "/accounting/journals", name: "journals" },
 ];
 
 test.describe.configure({ mode: "serial" });
@@ -191,6 +205,39 @@ test("unified back-office — smoke, refresh-safety & screenshots", async ({ pag
       await page.screenshot({ path: path.join(dir2, file), fullPage: true });
       shot.push(file);
     });
+  }
+
+  // ── 6. E1 heavy editors — explicit 4-viewport capture (once, desktop project) ─
+  if (project === "desktop") {
+    const e1dir = path.join(dir2, "e1");
+    fs.mkdirSync(e1dir, { recursive: true });
+    for (const s of E1_SCREENS) {
+      for (const v of E1_VIEWPORTS) {
+        await test.step(`e1 shot ${s.name} ${v.w}x${v.h}`, async () => {
+          await page.setViewportSize({ width: v.w, height: v.h });
+          await page.goto(`/app${s.path}`);
+          await waitRendered(page, `${s.name} ${v.w}x${v.h}`);
+          await page.waitForTimeout(400);
+          await page.screenshot({ path: path.join(e1dir, `${s.name}-${v.w}x${v.h}.png`), fullPage: true });
+        });
+      }
+    }
+    // The journal EDITOR (open "قيد جديد") at desktop + mobile, for visual review
+    // of the live-balance grid, dimension header and mandatory-cost-center rule.
+    for (const v of [{ w: 1440, h: 900 }, { w: 390, h: 844 }]) {
+      await test.step(`e1 shot journal-editor ${v.w}x${v.h}`, async () => {
+        await page.setViewportSize({ width: v.w, height: v.h });
+        await page.goto(`/app/accounting/journals`);
+        await waitRendered(page, `journals ${v.w}x${v.h}`);
+        const newBtn = page.getByRole("button", { name: /قيد جديد/ }).first();
+        if (await newBtn.isVisible().catch(() => false)) {
+          await newBtn.click();
+          await page.waitForTimeout(700);
+          await page.screenshot({ path: path.join(e1dir, `journal-editor-${v.w}x${v.h}.png`), fullPage: true });
+        }
+      });
+    }
+    await page.setViewportSize({ width: 1440, height: 900 }); // restore
   }
 
   // ── Evidence for the report ───────────────────────────────────────────────

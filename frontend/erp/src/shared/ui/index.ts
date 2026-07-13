@@ -42,6 +42,7 @@ export * from "./checkbox";
 export * from "./toggle";
 export * from "./tabs";
 export * from "./segmented-control";
+export * from "./stepper";
 
 // ── rich display ──
 export * from "./timeline";

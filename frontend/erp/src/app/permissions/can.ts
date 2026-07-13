@@ -148,6 +148,11 @@ export const ROLE_GRANTS: Record<Capability, readonly Role[]> = {
   "accounting.journals.reverse": [...ADM, "manager", "finance"],
   // ── Cash & banking ──
   "banking.view": [...ADM, "manager", "accountant", "finance", "cashier"],
+  "banking.vouchers.create": [...ADM, "manager", "accountant", "finance", "cashier"],
+  "banking.vouchers.approve": FIN,
+  "banking.reconciliation.manage": FIN,
+  "banking.reconciliation.close": [...ADM, "manager", "finance"],
+  "banking.cashclose.manage": [...ADM, "manager", "finance", "cashier"],
   // ── People / HR ──
   "people.employees.view": MGR,
   "people.attendance.view": [...ADM, "manager", "employee"],
@@ -155,6 +160,9 @@ export const ROLE_GRANTS: Record<Capability, readonly Role[]> = {
   "people.leaves.view": [...ADM, "manager", "employee"],
   "people.contracts.view": MGR,
   "people.payroll.view": FIN,
+  "people.payroll.manage": [...ADM, "manager", "finance"],
+  "people.payroll.approve": [...ADM, "manager", "finance"],
+  "people.payroll.pay": [...ADM, "manager", "finance"],
   "people.custody.view": [...ADM, "manager", "custody"],
   "people.selfservice.view": EVERYONE,
   // ── Workflow / approvals ──
@@ -163,6 +171,8 @@ export const ROLE_GRANTS: Record<Capability, readonly Role[]> = {
   "workflow.myrequests.view": EVERYONE,
   "workflow.approvals.view": FIN,
   "workflow.audit.view": [...ADM, "manager", "auditor"],
+  "workflow.actions.act": EVERYONE,
+  "workflow.builder.manage": ADM,
   // ── Reports center ──
   "reports.view": FIN_READ,
   // ── Administration ──
@@ -176,6 +186,11 @@ export const ROLE_GRANTS: Record<Capability, readonly Role[]> = {
   "administration.payment-methods": MGR,
   "administration.security": ADM,
   "administration.audit": [...ADM, "manager", "auditor"],
+  "administration.zatca.manage": [...ADM, "manager", "finance"],
+  "administration.brands.wizard": MGR,
+  // ── Sales section write caps ──
+  "sales.channels.manage": [...ADM, "manager", "sales"],
+  "sales.pricing.manage": [...ADM, "manager", "sales", "accountant"],
 };
 
 /** admin/developer see everything; otherwise the role must be granted the cap. */

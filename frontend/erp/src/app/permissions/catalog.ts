@@ -148,6 +148,12 @@ export const ALL_CAPS = [
   "accounting.journals.reverse",
   // ── Cash & banking (new) ──
   "banking.view",
+  // ── Banking write caps (FC-P3) ──
+  "banking.vouchers.create",
+  "banking.vouchers.approve",
+  "banking.reconciliation.manage",
+  "banking.reconciliation.close",
+  "banking.cashclose.manage",
   // ── People / HR (new) ──
   "people.employees.view",
   "people.attendance.view",
@@ -157,12 +163,19 @@ export const ALL_CAPS = [
   "people.payroll.view",
   "people.custody.view",
   "people.selfservice.view",
+  // ── Payroll write caps (FC-P3) ──
+  "people.payroll.manage",
+  "people.payroll.approve",
+  "people.payroll.pay",
   // ── Workflow / approvals (new) ──
   "workflow.inbox.view",
   "workflow.outbox.view",
   "workflow.myrequests.view",
   "workflow.approvals.view",
   "workflow.audit.view",
+  // ── Workflow write caps (FC-P3) ──
+  "workflow.actions.act",
+  "workflow.builder.manage",
   // ── Reports center (new) ──
   "reports.view",
   // ── Administration (new) ──
@@ -176,6 +189,12 @@ export const ALL_CAPS = [
   "administration.payment-methods",
   "administration.security",
   "administration.audit",
+  // ── Administration write caps (FC-P3) ──
+  "administration.zatca.manage",
+  "administration.brands.wizard",
+  // ── Sales section write caps (FC-P3) ──
+  "sales.channels.manage",
+  "sales.pricing.manage",
 ] as const;
 
 /** The one capability union — every gate in the app keys off this. */

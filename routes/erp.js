@@ -7,6 +7,8 @@ const { ensureCoreAccounts } = require('../lib/glPosting');
 const COA_TEMPLATE = require('../db/coa-template.json');
 // v5.11.3 — developer-only guard for destructive journal endpoints.
 const { guardDeveloper } = require('../lib/transactionGuards');
+// FC-P1 — fine-grained GL capability guard (permissions_v3). Fails closed.
+const requireCapability = require('../middleware/requireCapability');
 // Phase 0 (Contracts & Safety) — managerial RBAC for warehouse master-data
 // mutations (a warehouse with movement may never be hard-deleted) and for the
 // legacy warehouse_transfers stock-moving endpoints.
@@ -14,6 +16,45 @@ const MGR = require('../middleware/auth').requireRole('admin', 'manager');
 // Phase 0 §5 — actor identity from the authenticated JWT, never a body field.
 function _actor(req) {
   return (req.user && (req.user.username || req.user.name)) || '';
+}
+
+// FC-P1 — server-side journal-line validation shared by create + edit. Every
+// posting line must reference an EXISTING, ACTIVE, LEAF (postable) account, so
+// a client can never post to a header/group or a deactivated account. Returns
+// an Arabic error string, or null when all lines are valid.
+async function _validateJournalLines(conn, entries) {
+  const q = conn || db;
+  for (const e of (entries || [])) {
+    const accId = e.accountId || e.account_id || null;
+    if (!accId) continue; // balance/min-lines checks cover empty lines elsewhere
+    const [rows] = await q.query(
+      `SELECT a.is_active,
+              (NOT EXISTS (SELECT 1 FROM gl_accounts c WHERE c.parent_id = a.id)) AS is_leaf
+         FROM gl_accounts a WHERE a.id = ? LIMIT 1`,
+      [accId]
+    );
+    if (!rows.length) return 'حساب غير موجود في أحد السطور';
+    if (!(rows[0].is_active === 1 || rows[0].is_active === true)) return 'لا يمكن الترحيل إلى حساب معطَّل';
+    if (!Number(rows[0].is_leaf)) return 'لا يمكن الترحيل إلى حساب رئيسي (اختر حسابًا فرعيًا)';
+  }
+  return null;
+}
+
+// FC-P1 — attachment guard: inline data URLs only, image/* or application/pdf,
+// decoded size ≤ 5MB. Returns an Arabic error string, or null when acceptable
+// (or absent — the attachment is optional).
+function _validateAttachment(attachment) {
+  if (attachment == null || attachment === '') return null;
+  if (typeof attachment !== 'string') return 'صيغة المرفق غير صالحة';
+  const m = /^data:([^;,]+)(;base64)?,/i.exec(attachment);
+  if (!m) return 'صيغة المرفق غير صالحة (يجب أن يكون data URL)';
+  const mime = m[1].toLowerCase();
+  if (!(mime.startsWith('image/') || mime === 'application/pdf')) return 'نوع المرفق غير مسموح (صورة أو PDF فقط)';
+  const comma = attachment.indexOf(',');
+  const payload = comma >= 0 ? attachment.slice(comma + 1) : '';
+  const bytes = m[2] ? Math.floor(payload.length * 3 / 4) : payload.length;
+  if (bytes > 5 * 1024 * 1024) return 'حجم المرفق أكبر من 5 ميجابايت';
+  return null;
 }
 
 // ═══════════════════════════════════════════════════════════════════
@@ -56,7 +97,7 @@ router.use(require('./erp/reports/gl-ledger'));
 
 // ─── GL Accounts (Chart of Accounts) ───
 
-router.get('/gl/accounts', async (req, res) => {
+router.get('/gl/accounts', requireCapability('finance.gl.view'), async (req, res) => {
   try {
     // v5.10.38 — derive `balance` from posted gl_entries (single source of
     // truth) so the COA tree never shows a "zombie" balance that lacks an
@@ -100,7 +141,7 @@ router.get('/gl/accounts', async (req, res) => {
 
 // v5.10.40 — toggle is_folder on an account. Refuses to demote a folder
 // that still has children (data integrity).
-router.post('/gl/accounts/:id/folder', async (req, res) => {
+router.post('/gl/accounts/:id/folder', requireCapability('finance.accounts.manage'), async (req, res) => {
   try {
     const { isFolder } = req.body;
     const want = !!isFolder;
@@ -134,7 +175,7 @@ router.post('/gl/accounts/:id/folder', async (req, res) => {
 //     code so reports and ledger views don't go stale.
 //   - codeMap is updated as we go, so children reparented to a renamed
 //     parent resolve to the right id within the same batch.
-router.post('/gl/accounts/import', async (req, res) => {
+router.post('/gl/accounts/import', requireCapability('finance.accounts.manage'), async (req, res) => {
   const { rows } = req.body || {};
   // v5.10.55 — mode controls destructive semantics:
   //   'update'  (default): upsert only. Accounts in DB but not in the
@@ -620,7 +661,7 @@ router.post('/gl/accounts/import', async (req, res) => {
 // any children of the deletees to the keeper, refuse to delete any account
 // that has gl_entries rows (would orphan the journal), then DELETE the
 // rest. Reports counts so the UI can tell the user exactly what happened.
-router.post('/gl/accounts/dedupe', async (req, res) => {
+router.post('/gl/accounts/dedupe', requireCapability('finance.accounts.manage'), async (req, res) => {
   const { groups } = req.body || {};
   if (!Array.isArray(groups) || !groups.length) {
     return res.status(400).json({ success: false, error: 'لا توجد مجموعات للحذف' });
@@ -669,7 +710,7 @@ router.post('/gl/accounts/dedupe', async (req, res) => {
 // every descendant's code is rewritten with the new prefix in the same
 // transaction, and gl_entries.account_code (denormalized) is kept in sync.
 // Refuses to make an account its own ancestor (cycle protection).
-router.post('/gl/accounts/:id/move', async (req, res) => {
+router.post('/gl/accounts/:id/move', requireCapability('finance.accounts.manage'), async (req, res) => {
   const { id } = req.params;
   const { parentId, autoRenumber } = req.body || {};
   const willRenumber = !!autoRenumber;
@@ -754,47 +795,49 @@ router.post('/gl/accounts/:id/move', async (req, res) => {
   }
 });
 
-router.post('/gl/accounts', async (req, res) => {
+router.post('/gl/accounts', requireCapability('finance.accounts.manage'), async (req, res) => {
   try {
     const { id, code, nameAr, nameEn, type, parentId, level, isFolder, isActive } = req.body;
     // v5.10.46 — accept explicit isFolder flag from the frontend modal so
     // L1/L2 main accounts get is_folder=1 even before any child is added.
     const hasFolderFlag = (typeof isFolder === 'boolean');
     const folderInt = hasFolderFlag ? (isFolder ? 1 : 0) : null;
+    // FC-P1 — is_active is written ATOMICALLY inside the INSERT/UPDATE below
+    // (E1 previously used a separate statement, which could leave a new account
+    // active on partial failure). Legacy callers omit isActive → COALESCE keeps
+    // the stored value on UPDATE and defaults to active (1) on INSERT.
+    const hasActiveFlag = (typeof isActive === 'boolean');
+    const activeInt = hasActiveFlag ? (isActive ? 1 : 0) : null;
 
     if (id) {
       const [existing] = await db.query('SELECT id FROM gl_accounts WHERE id = ?', [id]);
       if (existing.length) {
         if (hasFolderFlag) {
           await db.query(
-            'UPDATE gl_accounts SET code=?, name_ar=?, name_en=?, type=?, parent_id=?, level=?, is_folder=? WHERE id=?',
-            [code, nameAr, nameEn || '', type, parentId || null, level || 1, folderInt, id]
+            'UPDATE gl_accounts SET code=?, name_ar=?, name_en=?, type=?, parent_id=?, level=?, is_folder=?, is_active=COALESCE(?, is_active) WHERE id=?',
+            [code, nameAr, nameEn || '', type, parentId || null, level || 1, folderInt, activeInt, id]
           );
         } else {
           await db.query(
-            'UPDATE gl_accounts SET code=?, name_ar=?, name_en=?, type=?, parent_id=?, level=? WHERE id=?',
-            [code, nameAr, nameEn || '', type, parentId || null, level || 1, id]
+            'UPDATE gl_accounts SET code=?, name_ar=?, name_en=?, type=?, parent_id=?, level=?, is_active=COALESCE(?, is_active) WHERE id=?',
+            [code, nameAr, nameEn || '', type, parentId || null, level || 1, activeInt, id]
           );
-        }
-        // E1: the React COA editor toggles active status; legacy never sends
-        // isActive, so this UPDATE only runs on the new path — no legacy change.
-        if (typeof isActive === 'boolean') {
-          await db.query('UPDATE gl_accounts SET is_active=? WHERE id=?', [isActive ? 1 : 0, id]);
         }
         return res.json({ success: true, id });
       }
     }
 
     const newId = id || 'GL-' + Date.now();
+    const newActive = hasActiveFlag ? activeInt : 1; // new accounts default active
     if (hasFolderFlag) {
       await db.query(
-        'INSERT INTO gl_accounts (id, code, name_ar, name_en, type, parent_id, level, is_folder) VALUES (?,?,?,?,?,?,?,?)',
-        [newId, code, nameAr, nameEn || '', type, parentId || null, level || 1, folderInt]
+        'INSERT INTO gl_accounts (id, code, name_ar, name_en, type, parent_id, level, is_folder, is_active) VALUES (?,?,?,?,?,?,?,?,?)',
+        [newId, code, nameAr, nameEn || '', type, parentId || null, level || 1, folderInt, newActive]
       );
     } else {
       await db.query(
-        'INSERT INTO gl_accounts (id, code, name_ar, name_en, type, parent_id, level) VALUES (?,?,?,?,?,?,?)',
-        [newId, code, nameAr, nameEn || '', type, parentId || null, level || 1]
+        'INSERT INTO gl_accounts (id, code, name_ar, name_en, type, parent_id, level, is_active) VALUES (?,?,?,?,?,?,?,?)',
+        [newId, code, nameAr, nameEn || '', type, parentId || null, level || 1, newActive]
       );
     }
 
@@ -815,11 +858,6 @@ router.post('/gl/accounts', async (req, res) => {
       }
     }
 
-    // E1: honor an explicit inactive flag on create (defaults active otherwise).
-    if (typeof isActive === 'boolean' && isActive === false) {
-      await db.query('UPDATE gl_accounts SET is_active = 0 WHERE id = ?', [newId]);
-    }
-
     res.json({ success: true, id: newId });
   } catch (e) {
     res.json({ success: false, error: e.message });
@@ -827,7 +865,7 @@ router.post('/gl/accounts', async (req, res) => {
 });
 
 // Delete GL account
-router.delete('/gl/accounts/:id', async (req, res) => {
+router.delete('/gl/accounts/:id', requireCapability('finance.accounts.manage'), async (req, res) => {
   try {
     // Check if account has children
     const [children] = await db.query('SELECT id FROM gl_accounts WHERE parent_id = ?', [req.params.id]);
@@ -2141,7 +2179,7 @@ router.post('/gl/deep-repair', async (req, res) => {
 
 // ─── GL Journals ───
 
-router.get('/gl/journals', async (req, res) => {
+router.get('/gl/journals', requireCapability('finance.gl.view'), async (req, res) => {
   try {
     // v5.11.0 — JOIN brands/branches/projects/cost_centers so the list
     // can render dimension chips with human-readable names without an
@@ -2255,7 +2293,7 @@ router.get('/gl/journals', async (req, res) => {
 });
 
 // Create journal entry (status: draft — no balance update until posted)
-router.post('/gl/journals', async (req, res) => {
+router.post('/gl/journals', requireCapability('finance.gl.create'), async (req, res) => {
   try {
     // v5.11.0 — accept all four accounting dimensions on the header.
     // Each entry inherits the header dim unless it explicitly overrides.
@@ -2264,16 +2302,11 @@ router.post('/gl/journals', async (req, res) => {
       attachment, notes, isOpening,
       brandId, branchId, projectId, costCenterId, costCenterName
     } = req.body;
+    // FC-P1 — actor from JWT, never a body field.
+    const actor = _actor(req);
+    void username;
     const actualRefType = isOpening ? 'opening' : (referenceType || 'manual');
     const journalId = 'JRN-' + Date.now();
-
-    const [lastJ] = await db.query('SELECT journal_number FROM gl_journals ORDER BY created_at DESC LIMIT 1');
-    let nextNum = 1;
-    if (lastJ.length && lastJ[0].journal_number) {
-      const match = lastJ[0].journal_number.match(/(\d+)/);
-      if (match) nextNum = parseInt(match[1]) + 1;
-    }
-    const journalNumber = 'JV-' + String(nextNum).padStart(6, '0');
 
     let totalDebit = 0, totalCredit = 0;
     if (entries && entries.length) {
@@ -2289,6 +2322,12 @@ router.post('/gl/journals', async (req, res) => {
     if (!entries || entries.length < 2) {
       return res.json({ success: false, error: 'القيد يَجب أن يَحوي سطرين على الأقل' });
     }
+    // FC-P1 — every posting line must hit an existing, active, LEAF account.
+    const lineErr = await _validateJournalLines(db, entries);
+    if (lineErr) return res.status(400).json({ success: false, error: lineErr });
+    // FC-P1 — attachment must be an inline image/PDF ≤ 5MB.
+    const attErr = _validateAttachment(attachment);
+    if (attErr) return res.status(400).json({ success: false, error: attErr });
     // v5.11.0 — BR-4: project must belong to the same brand if both set
     if (brandId && projectId) {
       const [proj] = await db.query('SELECT brand_id FROM projects WHERE id = ?', [projectId]).catch(() => [[]]);
@@ -2297,31 +2336,37 @@ router.post('/gl/journals', async (req, res) => {
       }
     }
 
-    await db.query(
-      `INSERT INTO gl_journals
-         (id, journal_number, journal_date, reference_type, reference_id,
-          description, total_debit, total_credit, status, created_by,
-          attachment, notes,
-          cost_center_id, cost_center_name,
-          brand_id, branch_id, project_id)
-       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
-      [journalId, journalNumber, journalDate || new Date(), actualRefType, referenceId || '',
-       description || '', totalDebit, totalCredit, 'draft', username || '',
-       attachment || null, notes || '',
-       costCenterId || null, costCenterName || '',
-       brandId || null, branchId || null, projectId || null]
-    );
-    // Audit log — payload now includes the dimensions for full traceability
-    await auditLog('create_journal', 'gl_journal', journalId, username,
-      { journalNumber, totalDebit, totalCredit, description,
-        brandId: brandId || null, branchId: branchId || null,
-        projectId: projectId || null, costCenterId: costCenterId || null },
-      req.ip);
+    // FC-P1 — header + entries written atomically (no partial-write window); the
+    // journal number is derived inside the txn and guarded by uq_journal_number.
+    let journalNumber = '';
+    await db.withTransaction(async (conn) => {
+      const [lastJ] = await conn.query('SELECT journal_number FROM gl_journals ORDER BY created_at DESC LIMIT 1 FOR UPDATE');
+      let nextNum = 1;
+      if (lastJ.length && lastJ[0].journal_number) {
+        const match = lastJ[0].journal_number.match(/(\d+)/);
+        if (match) nextNum = parseInt(match[1]) + 1;
+      }
+      journalNumber = 'JV-' + String(nextNum).padStart(6, '0');
 
-    if (entries && entries.length) {
-      for (const entry of entries) {
-        const entryId = 'GLE-' + Date.now() + '-' + Math.random().toString(36).substr(2, 4);
-        await db.query(
+      await conn.query(
+        `INSERT INTO gl_journals
+           (id, journal_number, journal_date, reference_type, reference_id,
+            description, total_debit, total_credit, status, created_by,
+            attachment, notes,
+            cost_center_id, cost_center_name,
+            brand_id, branch_id, project_id)
+         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+        [journalId, journalNumber, journalDate || new Date(), actualRefType, referenceId || '',
+         description || '', totalDebit, totalCredit, 'draft', actor,
+         attachment || null, notes || '',
+         costCenterId || null, costCenterName || '',
+         brandId || null, branchId || null, projectId || null]
+      );
+
+      let seq = 0;
+      for (const entry of (entries || [])) {
+        const entryId = 'GLE-' + Date.now() + '-' + (seq++) + '-' + Math.random().toString(36).substr(2, 4);
+        await conn.query(
           `INSERT INTO gl_entries
              (id, journal_id, account_id, account_code, account_name,
               debit, credit, description,
@@ -2337,22 +2382,34 @@ router.post('/gl/journals', async (req, res) => {
            entry.warehouseId || null]
         );
       }
-    }
+    });
+
+    // Audit log — payload now includes the dimensions for full traceability
+    await auditLog('create_journal', 'gl_journal', journalId, actor,
+      { journalNumber, totalDebit, totalCredit, description,
+        brandId: brandId || null, branchId: branchId || null,
+        projectId: projectId || null, costCenterId: costCenterId || null },
+      req.ip);
+
     // Note: balances NOT updated yet — only on "post"
     res.json({ success: true, id: journalId, journalNumber });
   } catch (e) { res.json({ success: false, error: e.message }); }
 });
 
 // Approve journal (draft → approved)
-router.post('/gl/journals/:id/approve', async (req, res) => {
+router.post('/gl/journals/:id/approve', requireCapability('finance.gl.approve'), async (req, res) => {
   try {
-    const { username } = req.body;
-    const [jrn] = await db.query('SELECT status FROM gl_journals WHERE id = ?', [req.params.id]);
-    if (!jrn.length) return res.json({ success: false, error: 'القيد غير موجود' });
-    if (jrn[0].status !== 'draft') return res.json({ success: false, error: 'فقط القيود المسودة يمكن اعتمادها' });
-    await db.query('UPDATE gl_journals SET status = "approved", approved_by = ?, approved_at = ? WHERE id = ?',
-      [username || '', new Date(), req.params.id]);
-    await auditLog('approve_journal', 'gl_journal', req.params.id, username, {}, req.ip);
+    const actor = _actor(req); // FC-P1 — actor from JWT
+    const out = await db.withTransaction(async (conn) => {
+      const [jrn] = await conn.query('SELECT status FROM gl_journals WHERE id = ? FOR UPDATE', [req.params.id]);
+      if (!jrn.length) return { error: 'القيد غير موجود' };
+      if (jrn[0].status !== 'draft') return { error: 'فقط القيود المسودة يمكن اعتمادها' };
+      await conn.query('UPDATE gl_journals SET status = "approved", approved_by = ?, approved_at = ? WHERE id = ?',
+        [actor, new Date(), req.params.id]);
+      return { ok: true };
+    });
+    if (out.error) return res.json({ success: false, error: out.error });
+    await auditLog('approve_journal', 'gl_journal', req.params.id, actor, {}, req.ip);
     res.json({ success: true });
   } catch (e) { res.json({ success: false, error: e.message }); }
 });
@@ -2646,50 +2703,52 @@ async function _checkPeriodOpen(journalDate, allowForce) {
 }
 
 // Post journal (approved → posted) — updates account balances
-router.post('/gl/journals/:id/post', async (req, res) => {
+router.post('/gl/journals/:id/post', requireCapability('finance.gl.post'), async (req, res) => {
   try {
-    const { username, force } = req.body || {};
-    const [jrn] = await db.query('SELECT status, journal_date FROM gl_journals WHERE id = ?', [req.params.id]);
-    if (!jrn.length) return res.json({ success: false, error: 'القيد غير موجود' });
-    if (jrn[0].status !== 'approved') return res.json({ success: false, error: 'يجب اعتماد القيد أولاً قبل الترحيل' });
+    const { force } = req.body || {};
+    const actor = _actor(req); // FC-P1 — actor from JWT
+    // FC-P1 — the whole post runs inside ONE transaction with the journal row
+    // LOCKED (SELECT … FOR UPDATE) and the status re-checked under the lock, so
+    // two concurrent posts can never both apply the balances (double-post race).
+    const out = await db.withTransaction(async (conn) => {
+      const [jrn] = await conn.query('SELECT status, journal_date FROM gl_journals WHERE id = ? FOR UPDATE', [req.params.id]);
+      if (!jrn.length) return { error: 'القيد غير موجود' };
+      if (jrn[0].status !== 'approved') return { error: 'يجب اعتماد القيد أولاً قبل الترحيل' };
 
-    // V5.10.0 — period lock guard
-    const guard = await _checkPeriodOpen(jrn[0].journal_date, !!force);
-    if (!guard.ok) return res.json({ success: false, error: guard.error });
+      // V5.10.0 — period lock guard
+      const guard = await _checkPeriodOpen(jrn[0].journal_date, !!force);
+      if (!guard.ok) return { error: guard.error };
 
-    // Update account balances
-    const [entries] = await db.query('SELECT * FROM gl_entries WHERE journal_id = ?', [req.params.id]);
-    for (const e of entries) {
-      if (e.account_id) {
+      // Apply balances — sorted by account id so concurrent posters take the
+      // per-account row locks in a consistent order (matches lib/glPosting).
+      const [entries] = await conn.query(
+        'SELECT account_id, debit, credit FROM gl_entries WHERE journal_id = ? AND account_id IS NOT NULL ORDER BY account_id',
+        [req.params.id]
+      );
+      for (const e of entries) {
         const netAmount = (Number(e.debit) || 0) - (Number(e.credit) || 0);
-        await db.query('UPDATE gl_accounts SET balance = balance + ? WHERE id = ?', [netAmount, e.account_id]);
+        await conn.query('UPDATE gl_accounts SET balance = balance + ? WHERE id = ?', [netAmount, e.account_id]);
       }
-    }
-    await db.query('UPDATE gl_journals SET status = "posted", posted_by = ?, posted_at = ? WHERE id = ?',
-      [username || '', new Date(), req.params.id]);
+      await conn.query('UPDATE gl_journals SET status = "posted", posted_by = ?, posted_at = ? WHERE id = ?',
+        [actor, new Date(), req.params.id]);
+      return { ok: true };
+    });
+    if (out.error) return res.json({ success: false, error: out.error });
+    await auditLog('post_journal', 'gl_journal', req.params.id, actor, {}, req.ip);
     res.json({ success: true });
   } catch (e) { res.json({ success: false, error: e.message }); }
 });
 
-// Unpost journal (posted → draft) — reverses account balances
-router.post('/gl/journals/:id/unpost', async (req, res) => {
-  try {
-    const [jrn] = await db.query('SELECT status FROM gl_journals WHERE id = ?', [req.params.id]);
-    if (!jrn.length) return res.json({ success: false, error: 'القيد غير موجود' });
-    if (jrn[0].status !== 'posted') return res.json({ success: false, error: 'القيد ليس مرحّلاً' });
-
-    // Reverse account balances
-    const [entries] = await db.query('SELECT * FROM gl_entries WHERE journal_id = ?', [req.params.id]);
-    for (const e of entries) {
-      if (e.account_id) {
-        const netAmount = (Number(e.debit) || 0) - (Number(e.credit) || 0);
-        await db.query('UPDATE gl_accounts SET balance = balance - ? WHERE id = ?', [netAmount, e.account_id]);
-      }
-    }
-    await db.query('UPDATE gl_journals SET status = "draft", posted_by = NULL, posted_at = NULL, approved_by = NULL, approved_at = NULL WHERE id = ?',
-      [req.params.id]);
-    res.json({ success: true });
-  } catch (e) { res.json({ success: false, error: e.message }); }
+// Unpost journal — DISABLED (FC-P1). SOCPA/IFRS require posted journals to stay
+// immutable; the only accepted correction is a reversing entry. Kept as a 409
+// stub so any legacy caller gets a clear, auditable refusal instead of mutating
+// the ledger.
+router.post('/gl/journals/:id/unpost', requireCapability('finance.gl.post'), async (req, res) => {
+  return res.status(409).json({
+    success: false,
+    code: 'posted-immutable',
+    error: 'القيد المُرحَّل لا يُلغى ترحيله — أنشئ قيدًا عكسيًا للتصحيح.'
+  });
 });
 
 // ─── v6.4.2 — Reversing Entry endpoint ──────────────────────────────
@@ -2707,7 +2766,7 @@ router.post('/gl/journals/:id/unpost', async (req, res) => {
 //      journal (referenceType='reversal', referenceId=<original.id>).
 //   5. Stamp the linking columns on both rows so the UI can hide the
 //      Reverse button on already-reversed journals.
-router.post('/gl/journals/:id/reverse', async (req, res) => {
+router.post('/gl/journals/:id/reverse', requireCapability('finance.gl.reverse'), async (req, res) => {
   try {
     const result = await db.withTransaction(async (conn) => {
       // 1. Lock the original
@@ -2737,8 +2796,7 @@ router.post('/gl/journals/:id/reverse', async (req, res) => {
       }
 
       // 3. Build mirrored set — DEBIT ↔ CREDIT swap, dimensions preserved
-      const username = (req.user && req.user.username) ||
-                       (req.body && req.body.username) || 'system';
+      const username = _actor(req) || 'system'; // FC-P1 — actor from JWT only
       const reason = String((req.body && req.body.reason) || 'correction').slice(0, 200);
       const reversedEntries = entries.map(function (e) {
         return {
@@ -2799,7 +2857,7 @@ router.post('/gl/journals/:id/reverse', async (req, res) => {
 });
 
 // Get entries for a specific journal
-router.get('/gl/journals/:id/entries', async (req, res) => {
+router.get('/gl/journals/:id/entries', requireCapability('finance.gl.view'), async (req, res) => {
   try {
     const [entries] = await db.query('SELECT * FROM gl_entries WHERE journal_id = ? ORDER BY id', [req.params.id]);
     res.json(entries.map(e => ({
@@ -2823,26 +2881,26 @@ router.get('/gl/journals/:id/entries', async (req, res) => {
 // warns before proceeding. Both cases are audit-logged. The fully
 // IAS/SOCPA-compliant alternative remains the reversing entry
 // (POST /gl/journals/:id/reverse), still offered in the UI.
-router.put('/gl/journals/:id', async (req, res) => {
+router.put('/gl/journals/:id', requireCapability('finance.gl.create'), async (req, res) => {
   try {
     const journalId = req.params.id;
+    const actor = _actor(req); // FC-P1 — actor from JWT
     // v5.11.0 — accept all four header dimensions on edit too.
     const {
-      journalDate, description, notes, entries, username, force,
+      journalDate, description, notes, entries,
       brandId, branchId, projectId, costCenterId, costCenterName, attachment
     } = req.body;
-
-    const [jrnRows] = await db.query('SELECT * FROM gl_journals WHERE id = ?', [journalId]);
-    if (!jrnRows.length) return res.json({ success: false, error: 'القيد غير موجود' });
-    const jrn = jrnRows[0];
-    const wasPosted = jrn.status === 'posted';
-    const isAuto = jrn.reference_type && jrn.reference_type !== 'manual' && jrn.reference_type !== 'opening';
 
     // Validate balance
     let totalDebit = 0, totalCredit = 0;
     (entries || []).forEach(e => { totalDebit += Number(e.debit) || 0; totalCredit += Number(e.credit) || 0; });
     if (Math.abs(totalDebit - totalCredit) > 0.01) return res.json({ success: false, error: 'القيد غير متوازن' });
     if (!entries || entries.length < 2) return res.json({ success: false, error: 'القيد يَجب أن يَحوي سطرين على الأقل' });
+    // FC-P1 — line + attachment validation (same rules as create).
+    const lineErr = await _validateJournalLines(db, entries);
+    if (lineErr) return res.status(400).json({ success: false, error: lineErr });
+    const attErr = _validateAttachment(attachment);
+    if (attErr) return res.status(400).json({ success: false, error: attErr });
 
     // BR-4: project must belong to the same brand
     if (brandId && projectId) {
@@ -2852,37 +2910,26 @@ router.put('/gl/journals/:id', async (req, res) => {
       }
     }
 
-    // Editing a posted journal moves the ledger — refuse if the old or the
-    // new period is locked (unless explicitly forced).
-    if (wasPosted) {
-      const g1 = await _checkPeriodOpen(jrn.journal_date, !!force);
-      if (!g1.ok) return res.json({ success: false, error: g1.error });
-      const g2 = await _checkPeriodOpen(journalDate || jrn.journal_date, !!force);
-      if (!g2.ok) return res.json({ success: false, error: g2.error });
-    }
-
-    // Effective header dims: incoming value if defined, else preserve existing
-    const effBrand   = brandId    !== undefined ? (brandId    || null) : jrn.brand_id;
-    const effBranch  = branchId   !== undefined ? (branchId   || null) : jrn.branch_id;
-    const effProject = projectId  !== undefined ? (projectId  || null) : jrn.project_id;
-    const effCC      = costCenterId    !== undefined ? (costCenterId    || null) : jrn.cost_center_id;
-    const effCCName  = costCenterName  !== undefined ? (costCenterName  || '')   : jrn.cost_center_name;
-    // E1: persist attachment on edit too (legacy PUT omits it → existing value preserved).
-    const effAttachment = attachment !== undefined ? (attachment || null) : jrn.attachment;
-
-    await db.withTransaction(async (conn) => {
-      // 1. If posted, reverse the OLD entries' impact on stored balances.
-      if (wasPosted) {
-        const [oldE] = await conn.query('SELECT account_id, debit, credit FROM gl_entries WHERE journal_id = ?', [journalId]);
-        for (const e of oldE) {
-          if (e.account_id) {
-            const net = (Number(e.debit) || 0) - (Number(e.credit) || 0);
-            await conn.query('UPDATE gl_accounts SET balance = balance - ? WHERE id = ?', [net, e.account_id]);
-          }
-        }
+    // FC-P1 — the whole edit runs under the journal-row lock. Posted journals
+    // are IMMUTABLE (SOCPA/IFRS): editing one is refused with 409; the only
+    // correction is a reversing entry. This replaces the old in-place
+    // reverse-and-reapply behaviour.
+    const out = await db.withTransaction(async (conn) => {
+      const [jrnRows] = await conn.query('SELECT * FROM gl_journals WHERE id = ? FOR UPDATE', [journalId]);
+      if (!jrnRows.length) return { status: 404, error: 'القيد غير موجود' };
+      const jrn = jrnRows[0];
+      if (jrn.status === 'posted') {
+        return { status: 409, code: 'posted-immutable', error: 'القيد المُرحَّل لا يُعدَّل — أنشئ قيدًا عكسيًا للتصحيح.' };
       }
 
-      // 2. Replace entries + header. Status is untouched (stays posted/draft).
+      // Effective header dims: incoming value if defined, else preserve existing
+      const effBrand   = brandId    !== undefined ? (brandId    || null) : jrn.brand_id;
+      const effBranch  = branchId   !== undefined ? (branchId   || null) : jrn.branch_id;
+      const effProject = projectId  !== undefined ? (projectId  || null) : jrn.project_id;
+      const effCC      = costCenterId    !== undefined ? (costCenterId    || null) : jrn.cost_center_id;
+      const effCCName  = costCenterName  !== undefined ? (costCenterName  || '')   : jrn.cost_center_name;
+      const effAttachment = attachment !== undefined ? (attachment || null) : jrn.attachment;
+
       await conn.query('DELETE FROM gl_entries WHERE journal_id = ?', [journalId]);
       await conn.query(
         `UPDATE gl_journals
@@ -2896,8 +2943,9 @@ router.put('/gl/journals/:id', async (req, res) => {
          effBrand, effBranch, effProject, effCC, effCCName, effAttachment,
          journalId]
       );
+      let seq = 0;
       for (const entry of (entries || [])) {
-        const entryId = 'GLE-' + Date.now() + '-' + Math.random().toString(36).substr(2, 4);
+        const entryId = 'GLE-' + Date.now() + '-' + (seq++) + '-' + Math.random().toString(36).substr(2, 4);
         await conn.query(
           `INSERT INTO gl_entries
              (id, journal_id, account_id, account_code, account_name,
@@ -2913,23 +2961,16 @@ router.put('/gl/journals/:id', async (req, res) => {
            entry.warehouseId || null]
         );
       }
-
-      // 3. If posted, re-apply the NEW entries' impact (status stays posted).
-      if (wasPosted) {
-        for (const entry of (entries || [])) {
-          if (entry.accountId) {
-            const net = (Number(entry.debit) || 0) - (Number(entry.credit) || 0);
-            await conn.query('UPDATE gl_accounts SET balance = balance + ? WHERE id = ?', [net, entry.accountId]);
-          }
-        }
-      }
+      return { ok: true, journalNumber: jrn.journal_number, effBrand, effBranch, effProject, effCC };
     });
 
-    await auditLog(wasPosted ? 'edit_posted_journal' : 'update_journal', 'gl_journal', journalId, username || '',
-      { isAuto, wasPosted, brandId: effBrand, branchId: effBranch, projectId: effProject, costCenterId: effCC,
+    if (out.error) return res.status(out.status || 400).json({ success: false, code: out.code, error: out.error });
+
+    await auditLog('update_journal', 'gl_journal', journalId, actor,
+      { brandId: out.effBrand, branchId: out.effBranch, projectId: out.effProject, costCenterId: out.effCC,
         totalDebit, totalCredit, lineCount: (entries || []).length }, req.ip);
 
-    res.json({ success: true, journalNumber: jrn.journal_number, reposted: wasPosted });
+    res.json({ success: true, journalNumber: out.journalNumber, reposted: false });
   } catch (e) { res.json({ success: false, error: e.message }); }
 });
 
@@ -2937,23 +2978,27 @@ router.put('/gl/journals/:id', async (req, res) => {
 // Per-id outcome is reported so the UI can show partial-failure states.
 // Each action goes through the same gating as its single-id counterpart;
 // posted journals are protected by the same rules.
-router.post('/gl/journals/bulk', async (req, res) => {
-  const { ids, action, username } = req.body || {};
+router.post('/gl/journals/bulk', requireCapability('finance.gl.view'), async (req, res) => {
+  const { ids, action } = req.body || {};
+  const actor = _actor(req); // FC-P1 — actor from JWT
   if (!Array.isArray(ids) || !ids.length) return res.json({ success: false, error: 'لا توجد قيود محدَّدة' });
-  // v5.11.1 — added 'approve_post': single round-trip that approves and
-  // posts each journal so bulk-approve in the UI matches the new
-  // single-row behaviour (approve = post on the chart of accounts).
-  const allowed = ['approve','post','unpost','delete','approve_post'];
+  // FC-P1 — 'unpost' is gone (posted journals are immutable; use reverse).
+  const allowed = ['approve','post','delete','approve_post'];
   if (allowed.indexOf(action) < 0) return res.json({ success: false, error: 'إجراء غير مدعوم' });
-  // v5.11.3 — bulk delete is developer-only. We can't pin guardDeveloper
-  // to the whole route (the other actions are open), so we run the same
-  // check inline when action === 'delete'.
+
+  // FC-P1 — enforce the SAME capability the single-id route requires, per action.
+  const capFor = { approve: 'finance.gl.approve', post: 'finance.gl.post', approve_post: 'finance.gl.post' };
+  if (capFor[action]) {
+    const okCap = await requireCapability.hasCapability(req.user, capFor[action]);
+    if (!okCap) return res.status(403).json({ success: false, code: 'PERMISSION_DENIED', error: 'صلاحية غير كافية لهذه العملية' });
+  }
+  // Bulk delete stays developer-only (matches the single DELETE guard).
   if (action === 'delete') {
     let isDev = false;
     if (req.user && req.user.isDeveloper) isDev = true;
-    else if ((username || (req.user && req.user.username)) === 'admin') isDev = true;
+    else if ((req.user && req.user.username) === 'admin') isDev = true;
     else {
-      const u = (username || (req.user && req.user.username) || '').trim();
+      const u = (req.user && req.user.username || '').trim();
       if (u) {
         try {
           const [rows] = await db.query('SELECT is_developer, role FROM users WHERE username = ? LIMIT 1', [u]);
@@ -2968,58 +3013,40 @@ router.post('/gl/journals/bulk', async (req, res) => {
   let ok = 0, failed = 0;
   for (const id of ids) {
     try {
-      const [rows] = await db.query('SELECT * FROM gl_journals WHERE id = ?', [id]);
-      if (!rows.length) { results.push({ id, ok: false, reason: 'not-found' }); failed++; continue; }
-      const jrn = rows[0];
-      if (action === 'approve') {
-        if (jrn.status !== 'draft') { results.push({ id, ok: false, reason: 'not-draft' }); failed++; continue; }
-        await db.query('UPDATE gl_journals SET status = "approved", approved_by = ?, approved_at = ? WHERE id = ?', [username || '', new Date(), id]);
-        await auditLog('approve_journal', 'gl_journal', id, username, { bulk: true }, req.ip);
-        results.push({ id, ok: true }); ok++;
-      } else if (action === 'approve_post') {
-        // v5.11.1 — combined: only drafts can enter this path; we approve,
-        // then immediately post (apply balance updates).
-        if (jrn.status !== 'draft') { results.push({ id, ok: false, reason: 'not-draft' }); failed++; continue; }
-        await db.query('UPDATE gl_journals SET status = "approved", approved_by = ?, approved_at = ? WHERE id = ?', [username || '', new Date(), id]);
-        const [entries] = await db.query('SELECT account_id, debit, credit FROM gl_entries WHERE journal_id = ?', [id]);
-        for (const e of entries) {
-          if (!e.account_id) continue;
-          const net = (Number(e.debit) || 0) - (Number(e.credit) || 0);
-          await db.query('UPDATE gl_accounts SET balance = balance + ? WHERE id = ?', [net, e.account_id]);
+      // FC-P1 — each id is processed under its own row lock inside a txn, with
+      // the status re-checked in the lock (no bulk double-post race).
+      const r = await db.withTransaction(async (conn) => {
+        const [rows] = await conn.query('SELECT * FROM gl_journals WHERE id = ? FOR UPDATE', [id]);
+        if (!rows.length) return { ok: false, reason: 'not-found' };
+        const jrn = rows[0];
+        if (action === 'approve') {
+          if (jrn.status !== 'draft') return { ok: false, reason: 'not-draft' };
+          await conn.query('UPDATE gl_journals SET status = "approved", approved_by = ?, approved_at = ? WHERE id = ?', [actor, new Date(), id]);
+          return { ok: true, audit: 'approve_journal' };
+        } else if (action === 'approve_post' || action === 'post') {
+          if (action === 'approve_post' && jrn.status !== 'draft') return { ok: false, reason: 'not-draft' };
+          if (action === 'post' && jrn.status === 'posted') return { ok: false, reason: 'already-posted' };
+          if (action === 'post' && jrn.status !== 'approved') return { ok: false, reason: 'not-approved' };
+          if (action === 'approve_post') {
+            await conn.query('UPDATE gl_journals SET status = "approved", approved_by = ?, approved_at = ? WHERE id = ?', [actor, new Date(), id]);
+          }
+          const [entries] = await conn.query('SELECT account_id, debit, credit FROM gl_entries WHERE journal_id = ? AND account_id IS NOT NULL ORDER BY account_id', [id]);
+          for (const e of entries) {
+            const net = (Number(e.debit) || 0) - (Number(e.credit) || 0);
+            await conn.query('UPDATE gl_accounts SET balance = balance + ? WHERE id = ?', [net, e.account_id]);
+          }
+          await conn.query('UPDATE gl_journals SET status = "posted", posted_by = ?, posted_at = ? WHERE id = ?', [actor, new Date(), id]);
+          return { ok: true, audit: action === 'approve_post' ? 'approve_post_journal' : 'post_journal' };
+        } else if (action === 'delete') {
+          if (jrn.status === 'posted') return { ok: false, reason: 'is-posted-needs-reverse' };
+          await conn.query('DELETE FROM gl_entries WHERE journal_id = ?', [id]);
+          await conn.query('DELETE FROM gl_journals WHERE id = ?', [id]);
+          return { ok: true, audit: 'delete_journal' };
         }
-        await db.query('UPDATE gl_journals SET status = "posted", posted_by = ?, posted_at = ? WHERE id = ?', [username || '', new Date(), id]);
-        await auditLog('approve_post_journal', 'gl_journal', id, username, { bulk: true }, req.ip);
-        results.push({ id, ok: true }); ok++;
-      } else if (action === 'post') {
-        if (jrn.status === 'posted') { results.push({ id, ok: false, reason: 'already-posted' }); failed++; continue; }
-        // Apply balance updates to gl_accounts
-        const [entries] = await db.query('SELECT account_id, debit, credit FROM gl_entries WHERE journal_id = ?', [id]);
-        for (const e of entries) {
-          if (!e.account_id) continue;
-          const net = (Number(e.debit) || 0) - (Number(e.credit) || 0);
-          await db.query('UPDATE gl_accounts SET balance = balance + ? WHERE id = ?', [net, e.account_id]);
-        }
-        await db.query('UPDATE gl_journals SET status = "posted", posted_by = ?, posted_at = ? WHERE id = ?', [username || '', new Date(), id]);
-        await auditLog('post_journal', 'gl_journal', id, username, { bulk: true }, req.ip);
-        results.push({ id, ok: true }); ok++;
-      } else if (action === 'unpost') {
-        if (jrn.status !== 'posted') { results.push({ id, ok: false, reason: 'not-posted' }); failed++; continue; }
-        const [entries] = await db.query('SELECT account_id, debit, credit FROM gl_entries WHERE journal_id = ?', [id]);
-        for (const e of entries) {
-          if (!e.account_id) continue;
-          const reverse = (Number(e.credit) || 0) - (Number(e.debit) || 0);
-          await db.query('UPDATE gl_accounts SET balance = balance + ? WHERE id = ?', [reverse, e.account_id]);
-        }
-        await db.query('UPDATE gl_journals SET status = "draft", posted_by = NULL, posted_at = NULL WHERE id = ?', [id]);
-        await auditLog('unpost_journal', 'gl_journal', id, username, { bulk: true }, req.ip);
-        results.push({ id, ok: true }); ok++;
-      } else if (action === 'delete') {
-        if (jrn.status === 'posted') { results.push({ id, ok: false, reason: 'is-posted-needs-unpost' }); failed++; continue; }
-        await db.query('DELETE FROM gl_entries WHERE journal_id = ?', [id]);
-        await db.query('DELETE FROM gl_journals WHERE id = ?', [id]);
-        await auditLog('delete_journal', 'gl_journal', id, username, { bulk: true }, req.ip);
-        results.push({ id, ok: true }); ok++;
-      }
+        return { ok: false, reason: 'unsupported' };
+      });
+      if (r.ok) { await auditLog(r.audit, 'gl_journal', id, actor, { bulk: true }, req.ip); results.push({ id, ok: true }); ok++; }
+      else { results.push({ id, ok: false, reason: r.reason }); failed++; }
     } catch (e) {
       results.push({ id, ok: false, reason: e.message });
       failed++;
@@ -3035,16 +3062,19 @@ router.post('/gl/journals/bulk', async (req, res) => {
 // everyone else; this is the server-side safety net for direct calls.
 router.delete('/gl/journals/:id', guardDeveloper, async (req, res) => {
   try {
-    const [entries] = await db.query('SELECT * FROM gl_entries WHERE journal_id = ?', [req.params.id]);
-    // Reverse account balances
-    for (const e of entries) {
-      if (e.account_id) {
+    // FC-P1 — atomic: reverse balances + delete under the journal-row lock.
+    await db.withTransaction(async (conn) => {
+      const [jrn] = await conn.query('SELECT id FROM gl_journals WHERE id = ? FOR UPDATE', [req.params.id]);
+      if (!jrn.length) return;
+      const [entries] = await conn.query('SELECT account_id, debit, credit FROM gl_entries WHERE journal_id = ? AND account_id IS NOT NULL ORDER BY account_id', [req.params.id]);
+      for (const e of entries) {
         const reverseAmount = (Number(e.credit) || 0) - (Number(e.debit) || 0);
-        await db.query('UPDATE gl_accounts SET balance = balance + ? WHERE id = ?', [reverseAmount, e.account_id]);
+        await conn.query('UPDATE gl_accounts SET balance = balance + ? WHERE id = ?', [reverseAmount, e.account_id]);
       }
-    }
-    await db.query('DELETE FROM gl_entries WHERE journal_id = ?', [req.params.id]);
-    await db.query('DELETE FROM gl_journals WHERE id = ?', [req.params.id]);
+      await conn.query('DELETE FROM gl_entries WHERE journal_id = ?', [req.params.id]);
+      await conn.query('DELETE FROM gl_journals WHERE id = ?', [req.params.id]);
+    });
+    await auditLog('delete_journal', 'gl_journal', req.params.id, _actor(req), {}, req.ip);
     res.json({ success: true });
   } catch (e) { res.json({ success: false, error: e.message }); }
 });

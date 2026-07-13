@@ -1951,6 +1951,18 @@ async function runMigrations() {
     }
   } catch(e) { console.error('seed role_permissions failed:', e.message); }
 
+  // FC-P1 — additive finance/GL/payroll/bankrec/ZATCA capabilities. Runs AFTER
+  // permissions_v3 + role_permissions exist and are base-seeded. Idempotent
+  // (INSERT IGNORE) with an explicit admin top-up + role grants, so the new
+  // caps reach admin/manager/finance even on already-populated databases (the
+  // base role seed only fills role_permissions when it is empty). These caps
+  // are ENFORCED by requireCapability on the GL / cash / payroll / ZATCA routes.
+  try {
+    await require('./db/migrations/finance/capabilities').seedFinanceCapabilities(db, (m) => console.log('[fin-caps]', m));
+  } catch (e) {
+    console.error('seed finance capabilities failed:', e.message);
+  }
+
   // Seed default positions
   try {
     const [posCount] = await db.query('SELECT COUNT(*) AS cnt FROM positions');

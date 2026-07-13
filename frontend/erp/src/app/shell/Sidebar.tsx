@@ -1,5 +1,5 @@
 import { NavLink } from "react-router-dom";
-import { LayoutGrid, Home, MoreHorizontal, ChevronsRight, ChevronsLeft } from "lucide-react";
+import { LayoutGrid, MoreHorizontal, ChevronsRight, ChevronsLeft } from "lucide-react";
 import { NAV } from "@/app/navigation/manifest";
 import { useAuth } from "@/app/providers";
 import { usePermissions } from "@/app/providers";
@@ -83,16 +83,6 @@ export function Sidebar() {
           </div>
         ))}
       </nav>
-
-      {/* Same-tab jump back to the legacy main system shell (same session/token). */}
-      <a
-        href="/"
-        title={collapsed ? "العودة للنظام الرئيسي" : undefined}
-        className={cn("nav-item mb-2 border border-white/10 bg-white/5 hover:bg-white/10", collapsed && "justify-center px-0")}
-      >
-        <Home className="h-[18px] w-[18px] shrink-0" />
-        {!collapsed && <span className="flex-1">العودة للنظام الرئيسي</span>}
-      </a>
 
       <div className={cn("rounded-2xl border border-white/10 bg-white/5 p-3", collapsed && "px-2")}>
         <div className={cn("flex items-center gap-3", collapsed && "justify-center")}>

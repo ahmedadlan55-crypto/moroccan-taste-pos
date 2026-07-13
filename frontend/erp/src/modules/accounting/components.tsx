@@ -223,17 +223,16 @@ export function DeferredScreen({ pathname }: { pathname: string }) {
         <div className="grid h-14 w-14 place-items-center rounded-2xl bg-slate-100 text-slate-500">
           <Construction className="h-6 w-6" aria-hidden="true" />
         </div>
-        <div className="text-base font-extrabold text-slate-800">شاشة متقدّمة — تُدار حاليًا في النظام الحالي</div>
+        <div className="text-base font-extrabold text-slate-800">الصفحة غير متاحة على هذا المسار</div>
         <p className="max-w-md text-sm font-medium text-slate-500">
           {item ? `«${item.label}» ` : "هذه الشاشة "}
-          محرّر متقدّم لم يُنقل بعد إلى الواجهة الموحّدة. يمكنك استخدامه الآن من النظام الحالي، وسيُنقل لاحقًا ضمن نظام
-          ADLAN.
+          غير متاحة على هذا المسار. عُد إلى نظرة عامة وتابع من القائمة الجانبية.
         </p>
         <a
-          href="/"
+          href="/app/overview"
           className="mt-1 inline-flex min-h-11 items-center gap-2 rounded-xl bg-teal-600 px-4 text-sm font-bold text-white transition hover:bg-teal-700"
         >
-          <ExternalLink className="h-4 w-4" /> فتح في النظام الحالي
+          <ExternalLink className="h-4 w-4" /> العودة إلى نظرة عامة
         </a>
       </div>
     </div>

@@ -77,7 +77,9 @@ export function SessionExpired() {
         <Button
           variant="primary"
           onClick={() => {
-            window.location.href = "/";
+            // Base-aware jump to the app login (never the legacy root).
+            const base = import.meta.env.BASE_URL.replace(/\/$/, "");
+            window.location.assign(`${base}/login`);
           }}
         >
           <LogIn className="h-4 w-4" /> تسجيل الدخول

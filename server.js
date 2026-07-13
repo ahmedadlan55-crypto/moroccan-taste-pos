@@ -775,6 +775,8 @@ try { app.use('/api/stocktake-pro', require('./routes/stocktake-pro')); } catch(
 app.use('/api/dashboard', require('./routes/dashboard'));
 app.use('/api/custody', requireRole('admin','manager','custody'), require('./routes/custody'));
 app.use('/api/cash', requireRole('admin','manager'), require('./routes/cash'));
+// FC-P3 — bank reconciliation + cash-drawer closing (capability-gated inside).
+app.use('/api/bank-recon', requireRole('admin','manager'), require('./routes/bank-reconciliation'));
 app.use('/api/workflow', require('./routes/workflow'));
 app.use('/api/hr', requireRole('admin','manager'), require('./routes/hr'));
 // V4 — counters, SLA, SSE inbox stream, metrics, workflow-routes JSON-DSL
@@ -1962,6 +1964,46 @@ async function runMigrations() {
   } catch (e) {
     console.error('seed finance capabilities failed:', e.message);
   }
+
+  // FC-P3 — bank reconciliation + cash-drawer closing tables (greenfield).
+  await createTableIfMissing('bank_statements', `
+    CREATE TABLE bank_statements (
+      id VARCHAR(40) PRIMARY KEY,
+      bank_account_id VARCHAR(40) NOT NULL,
+      period_from DATE NULL, period_to DATE NULL,
+      opening_balance DECIMAL(15,2) DEFAULT 0,
+      closing_balance DECIMAL(15,2) DEFAULT 0,
+      status ENUM('draft','closed') DEFAULT 'draft',
+      created_by VARCHAR(100), created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      closed_by VARCHAR(100), closed_at DATETIME NULL,
+      INDEX idx_bs_acct (bank_account_id)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`);
+  await createTableIfMissing('bank_statement_lines', `
+    CREATE TABLE bank_statement_lines (
+      id VARCHAR(40) PRIMARY KEY,
+      statement_id VARCHAR(40) NOT NULL,
+      line_date DATE NULL, description VARCHAR(300), reference VARCHAR(100),
+      amount DECIMAL(15,2) DEFAULT 0,
+      match_status ENUM('unmatched','matched','adjusted') DEFAULT 'unmatched',
+      matched_gl_entry_id VARCHAR(40) NULL,
+      matched_by VARCHAR(100), matched_at DATETIME NULL,
+      INDEX idx_bsl_stmt (statement_id)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`);
+  await createTableIfMissing('cashbox_closings', `
+    CREATE TABLE cashbox_closings (
+      id VARCHAR(40) PRIMARY KEY,
+      cashbox_id VARCHAR(40) NOT NULL,
+      closing_date DATE NULL,
+      expected_balance DECIMAL(15,2) DEFAULT 0,
+      counted_amount DECIMAL(15,2) DEFAULT 0,
+      difference DECIMAL(15,2) DEFAULT 0,
+      notes VARCHAR(300),
+      status ENUM('draft','approved') DEFAULT 'draft',
+      journal_id VARCHAR(40) NULL,
+      created_by VARCHAR(100), created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      approved_by VARCHAR(100), approved_at DATETIME NULL,
+      INDEX idx_cc_box (cashbox_id)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`);
 
   // Seed default positions
   try {

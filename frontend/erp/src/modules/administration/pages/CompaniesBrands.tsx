@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { useForm } from "react-hook-form";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Building2, Pencil, Plus, Tags, Trash2 } from "lucide-react";
+import { Building2, Pencil, Plus, Tags, Trash2, Wand2 } from "lucide-react";
 import { apiClient } from "@/shared/api";
 import {
   Badge,
@@ -21,7 +21,8 @@ import { DataTable, type ColumnDef } from "@/shared/tables";
 import { Field, FormActions, zodResolver } from "@/shared/forms";
 import { z, arabicText } from "@/shared/schemas";
 import { useCan } from "@/app/providers";
-import { asArray, ensureAck, DeferredNote, type MutationAck } from "../_common";
+import { asArray, ensureAck, type MutationAck } from "../_common";
+import { BrandWizard } from "../brand-wizard";
 
 // ── Types (mapped from the raw /api/erp JSON) ────────────────────────────────
 interface Company {
@@ -328,7 +329,7 @@ function CompaniesTab() {
 }
 
 // ── Brands tab ───────────────────────────────────────────────────────────────
-function BrandsTab() {
+function BrandsTab({ onOpenWizard }: { onOpenWizard?: () => void }) {
   const canManage = useCan("administration.companies");
   const qc = useQueryClient();
   const { toast } = useToast();
@@ -383,15 +384,22 @@ function BrandsTab() {
         mobileTitle={(r) => r.name}
         toolbarActions={
           canManage && (
-            <Button
-              size="sm"
-              onClick={() => {
-                setEditing(null);
-                setDialogOpen(true);
-              }}
-            >
-              <Plus className="h-4 w-4" /> علامة جديدة
-            </Button>
+            <div className="flex items-center gap-2">
+              {onOpenWizard && (
+                <Button size="sm" variant="secondary" onClick={onOpenWizard}>
+                  <Wand2 className="h-4 w-4" /> معالج علامة جديدة
+                </Button>
+              )}
+              <Button
+                size="sm"
+                onClick={() => {
+                  setEditing(null);
+                  setDialogOpen(true);
+                }}
+              >
+                <Plus className="h-4 w-4" /> علامة جديدة
+              </Button>
+            </div>
           )
         }
         rowActions={
@@ -443,6 +451,13 @@ function BrandsTab() {
 
 export default function CompaniesBrandsPage() {
   const [tab, setTab] = useState("companies");
+  const canWizard = useCan("administration.brands.wizard");
+
+  // Full-page wizard mode — replaces the tabbed shell while active.
+  if (tab === "wizard" && canWizard) {
+    return <BrandWizard onDone={() => setTab("brands")} onCancel={() => setTab("brands")} />;
+  }
+
   return (
     <div>
       <PageHeader
@@ -453,7 +468,7 @@ export default function CompaniesBrandsPage() {
       />
       <Tabs
         aria-label="أقسام الشركات والعلامات"
-        value={tab}
+        value={tab === "wizard" ? "brands" : tab}
         onChange={setTab}
         className="mb-4"
         items={[
@@ -473,16 +488,11 @@ export default function CompaniesBrandsPage() {
               </span>
             ),
           },
-          { value: "wizard", label: "معالج العلامة" },
         ]}
       />
       {tab === "companies" && <CompaniesTab />}
-      {tab === "brands" && <BrandsTab />}
-      {tab === "wizard" && (
-        <DeferredNote
-          title="معالج إنشاء العلامة (متعدد الخطوات)"
-          body="معالج العلامة متعدد الخطوات (القوائم، الفروع، الربط المحاسبي) ما يزال يُدار من النظام الأصلي، وسيُنقل لاحقًا."
-        />
+      {tab === "brands" && (
+        <BrandsTab onOpenWizard={canWizard ? () => setTab("wizard") : undefined} />
       )}
     </div>
   );

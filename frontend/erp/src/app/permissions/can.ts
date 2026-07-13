@@ -191,6 +191,16 @@ export const ROLE_GRANTS: Record<Capability, readonly Role[]> = {
   // ── Sales section write caps ──
   "sales.channels.manage": [...ADM, "manager", "sales"],
   "sales.pricing.manage": [...ADM, "manager", "sales", "accountant"],
+  // ── Menu / recipes domain (Closure Sprint v2) ──
+  "menu.view": [...ADM, "manager", "accountant", "sales"],
+  "menu.catalog.manage": MGR,
+  "menu.pricing.manage": [...ADM, "manager", "accountant"],
+  "menu.recipes.manage": [...ADM, "manager"],
+  // ── Purchasing requisitions (Closure Sprint v2) ──
+  "purchasing.requisitions.manage": BACKOFFICE,
+  "purchasing.requisitions.approve": MGR,
+  // ── Administration: advanced security policies (Closure Sprint v2) ──
+  "administration.security.manage": ADM,
 };
 
 /** admin/developer see everything; otherwise the role must be granted the cap. */

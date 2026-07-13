@@ -68,6 +68,9 @@ import {
   ShieldCheck,
   Percent,
   History,
+  LayoutGrid,
+  ChefHat,
+  Soup,
   Circle,
   type LucideIcon,
 } from "lucide-react";
@@ -139,6 +142,9 @@ const ICONS: Record<string, LucideIcon> = {
   ShieldCheck,
   Percent,
   History,
+  LayoutGrid,
+  ChefHat,
+  Soup,
 };
 
 export function getIcon(name: string): LucideIcon {

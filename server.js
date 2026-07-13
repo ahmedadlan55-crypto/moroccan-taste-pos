@@ -740,6 +740,9 @@ app.use('/api/inventory', require('./routes/warehouse-transfers'));
 app.use('/api/purchases', require('./routes/purchases'));
 app.use('/api/expenses', require('./routes/expenses'));
 app.use('/api/settings', require('./routes/settings'));
+// Closure Sprint v2 — advanced security policies (password policy / session timeout
+// / IP allowlist), settings-backed. requireCapability lives inside the route file.
+try { app.use('/api/security-policies', require('./routes/security-policies')); } catch(e){ console.warn('[mod:security-policies]', e.message); }
 app.use('/api/sales-channels', require('./routes/sales-channels'));
 // V5.7.13 — translation proxy (server-side Google Translate fetch, no CORS)
 try { app.use('/api/i18n', require('./routes/i18n')); } catch(e){ console.warn('[mod:i18n]', e.message); }

@@ -195,6 +195,16 @@ export const ALL_CAPS = [
   // ── Sales section write caps (FC-P3) ──
   "sales.channels.manage",
   "sales.pricing.manage",
+  // ── Menu / recipes domain (Closure Sprint v2 — new group) ──
+  "menu.view",
+  "menu.catalog.manage",
+  "menu.pricing.manage",
+  "menu.recipes.manage",
+  // ── Purchasing requisitions (Closure Sprint v2 — new subsystem) ──
+  "purchasing.requisitions.manage",
+  "purchasing.requisitions.approve",
+  // ── Administration: advanced security policies (Closure Sprint v2) ──
+  "administration.security.manage",
 ] as const;
 
 /** The one capability union — every gate in the app keys off this. */

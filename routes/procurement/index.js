@@ -15,6 +15,7 @@ router.use((req, res, next) => {
   next();
 });
 
+router.use('/requisitions', require('./requisitions'));
 router.use('/suppliers', require('./suppliers'));
 router.use('/orders', require('./orders'));
 router.use('/receipts', require('./receipts'));

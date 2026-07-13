@@ -16,6 +16,7 @@ const MODULE_LOADERS: Record<string, () => Promise<{ default: ComponentType }>> 
   sales: () => import("@/modules/sales"),
   customers: () => import("@/modules/customers"),
   "pos-admin": () => import("@/modules/pos-admin"),
+  menu: () => import("@/modules/menu"),
   inventory: () => import("@/modules/inventory"),
   purchasing: () => import("@/modules/purchasing"),
   accounting: () => import("@/modules/accounting"),
@@ -40,7 +41,14 @@ const BASENAME = import.meta.env.BASE_URL.replace(/\/$/, "") || "/";
 /** Every leaf route path the router registers (one per nav item). */
 export const ROUTE_PATHS: ReadonlySet<string> = new Set(NAV_ITEMS.map((i) => i.path));
 /** Non-nav paths that are allowed to exist as routes (redirects + login + not-found). */
-export const REDIRECT_PATHS: ReadonlySet<string> = new Set<string>(["/", "/login"]);
+export const REDIRECT_PATHS: ReadonlySet<string> = new Set<string>([
+  "/",
+  "/login",
+  // Units & barcodes are managed inside the item card (Units/Barcodes tabs), so
+  // the standalone destination is a redirect, not a screen. Kept as an allowlisted
+  // route so old deep links resolve instead of 404-ing.
+  "/inventory/units-barcodes",
+]);
 /** The index route redirects to this path. */
 export const INDEX_REDIRECT = "/overview";
 
@@ -60,6 +68,9 @@ export function AppRouter() {
         >
           {/* Index → the overview screen. */}
           <Route index element={<Navigate to={INDEX_REDIRECT.replace(/^\//, "")} replace />} />
+
+          {/* Units & barcodes moved into the item card — redirect the old path. */}
+          <Route path="inventory/units-barcodes" element={<Navigate to="/inventory/items" replace />} />
 
           {/* One lazy, capability-gated route per manifest item. */}
           {NAV_ITEMS.map((item) => {

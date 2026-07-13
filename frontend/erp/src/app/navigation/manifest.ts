@@ -57,6 +57,18 @@ export const NAV: NavGroup[] = [
     ],
   },
   {
+    id: "menu",
+    label: "القوائم والوصفات",
+    items: [
+      { id: "mn-hub", path: "/menu/hub", label: "لوحة القوائم", icon: "LayoutGrid", cap: "menu.view", module: "menu" },
+      { id: "mn-brand", path: "/menu/brand", label: "قائمة العلامة التجارية", icon: "BookOpen", cap: "menu.view", module: "menu" },
+      { id: "mn-recipes", path: "/menu/recipes-bom", label: "الوصفات ومكوّنات التصنيع", icon: "ChefHat", cap: "menu.view", module: "menu" },
+      { id: "mn-price-lists", path: "/menu/price-lists", label: "قوائم الأسعار", icon: "Tags", cap: "menu.view", module: "menu" },
+      { id: "mn-combos", path: "/menu/combos", label: "الوجبات المركّبة", icon: "Layers", cap: "menu.view", module: "menu" },
+      { id: "mn-semi", path: "/menu/semi-finished", label: "المنتجات نصف المصنّعة", icon: "Soup", cap: "menu.view", module: "menu" },
+    ],
+  },
+  {
     id: "pos-admin",
     label: "نقاط البيع",
     items: [
@@ -73,7 +85,6 @@ export const NAV: NavGroup[] = [
     items: [
       { id: "inv-overview", path: "/inventory", label: "نظرة عامة", icon: "LayoutDashboard", cap: "inventory.view", module: "inventory" },
       { id: "inv-items", path: "/inventory/items", label: "الأصناف", icon: "Package", cap: "item.view", module: "inventory" },
-      { id: "inv-units", path: "/inventory/units-barcodes", label: "الوحدات والباركود", icon: "Barcode", cap: "inventory.units.view", module: "inventory" },
       { id: "inv-warehouses", path: "/inventory/warehouses", label: "المستودعات", icon: "Warehouse", cap: "warehouse.view", module: "inventory" },
       { id: "inv-balances", path: "/inventory/balances", label: "الأرصدة", icon: "Boxes", cap: "inventory.balances.view", module: "inventory" },
       { id: "inv-transfers", path: "/inventory/transfers", label: "التحويلات", icon: "Truck", cap: "inventory.transfers.view", module: "inventory" },

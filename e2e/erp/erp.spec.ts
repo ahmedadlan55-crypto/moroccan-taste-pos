@@ -68,9 +68,14 @@ const SHOTS: { path: string; file: string }[] = [
   { path: "/people/employees", file: "08-people-employees.png" },
   { path: "/administration/audit-log", file: "09-administration-audit-log.png" },
   { path: "/workflow/inbox", file: "10-workflow-inbox.png" },
+  // FC-P3 converted screens
+  { path: "/people/payroll", file: "11-payroll.png" },
+  { path: "/banking/reconciliation", file: "12-bank-reconciliation.png" },
+  { path: "/banking/cash-closing", file: "13-cash-closing.png" },
+  { path: "/workflow/approval-flows", file: "14-approval-flows.png" },
 ];
 
-// 5 deep-linked routes that must survive a hard refresh (history fallback).
+// Deep-linked routes that must survive a hard refresh (history fallback).
 const DEEP_LINKS = [
   "/accounting/chart-of-accounts", // E1 — converted heavy editor
   "/accounting/journals", // E1 — converted heavy editor
@@ -79,6 +84,13 @@ const DEEP_LINKS = [
   "/inventory/items",
   "/administration/audit-log",
   "/people/employees",
+  // FC-P3 — converted placeholders (payroll, bank-rec, cash-closing, workflow
+  // builder, vouchers) must render cleanly (0 console errors / 0 failed reqs).
+  "/people/payroll",
+  "/banking/reconciliation",
+  "/banking/cash-closing",
+  "/workflow/approval-flows",
+  "/banking/receipts",
 ];
 
 // E1 — the two converted heavy editors, captured at all four review viewports.

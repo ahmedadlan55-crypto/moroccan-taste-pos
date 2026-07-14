@@ -185,6 +185,7 @@ export const ALL_CAPS = [
   "administration.users",
   "administration.roles",
   "administration.settings",
+  "administration.invoice-settings",
   "administration.tax",
   "administration.payment-methods",
   "administration.security",

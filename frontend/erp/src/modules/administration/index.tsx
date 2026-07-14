@@ -12,6 +12,7 @@ import WarehousesRedirectPage from "./pages/WarehousesRedirect";
 import UsersPage from "./pages/Users";
 import RolesPermissionsPage from "./pages/RolesPermissions";
 import SettingsPage from "./pages/Settings";
+import InvoiceSettingsPage from "./pages/InvoiceSettings";
 import TaxVatPage from "./pages/TaxVat";
 import PaymentMethodsPage from "./pages/PaymentMethods";
 import SecurityPage from "./pages/Security";
@@ -24,6 +25,7 @@ const PAGES: Record<string, () => JSX.Element> = {
   "/administration/users": UsersPage,
   "/administration/roles": RolesPermissionsPage,
   "/administration/settings": SettingsPage,
+  "/administration/invoice-settings": InvoiceSettingsPage,
   "/administration/tax": TaxVatPage,
   "/administration/payment-methods": PaymentMethodsPage,
   "/administration/security": SecurityPage,

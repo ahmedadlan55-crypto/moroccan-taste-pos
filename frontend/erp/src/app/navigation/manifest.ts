@@ -188,6 +188,7 @@ export const NAV: NavGroup[] = [
       { id: "ad-users", path: "/administration/users", label: "المستخدمون", icon: "Users", cap: "administration.users", module: "administration" },
       { id: "ad-roles", path: "/administration/roles", label: "الأدوار والصلاحيات", icon: "ShieldCheck", cap: "administration.roles", module: "administration" },
       { id: "ad-settings", path: "/administration/settings", label: "الإعدادات", icon: "SlidersHorizontal", cap: "administration.settings", module: "administration" },
+      { id: "ad-invoice-settings", path: "/administration/invoice-settings", label: "بيانات وتصميم الفاتورة", icon: "ReceiptText", cap: "administration.invoice-settings", module: "administration" },
       { id: "ad-tax", path: "/administration/tax", label: "الضرائب", icon: "Percent", cap: "administration.tax", module: "administration" },
       { id: "ad-payment-methods", path: "/administration/payment-methods", label: "طرق الدفع", icon: "CreditCard", cap: "administration.payment-methods", module: "administration" },
       { id: "ad-security", path: "/administration/security", label: "الأمان", icon: "Lock", cap: "administration.security", module: "administration" },

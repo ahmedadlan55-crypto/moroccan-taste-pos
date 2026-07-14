@@ -13,6 +13,29 @@ const MGR = verifyToken.requireRole('admin', 'manager');
 // The canonical-key resolver. Writes fan out to every spelling a reader uses, so
 // a value saved here always reaches the receipt/ZATCA path (see lib/settingsKeys).
 const { normalizeSettingsWrite } = require('../lib/settingsKeys');
+const invoiceIdentity = require('../lib/invoiceIdentity');
+
+// GET /api/settings/invoice-identity?branchId=&brandId=
+// The resolved seller block for a scope, WITH the source of every field, so the
+// invoice-settings screen can show where each value comes from and whether it is
+// editable here or derived from companies/brands/branches.
+//
+// Explicitly token-gated: server.js exempts the whole /settings prefix from the
+// global API guard (so the login page can read branding before auth), which means
+// anything added here is public unless it says otherwise. This returns the
+// company's tax identity — it is not public.
+// Declared BEFORE '/' so it can never be shadowed by a broader matcher.
+router.get('/invoice-identity', verifyToken, MGR, async (req, res) => {
+  try {
+    const scope = { branchId: req.query.branchId || null, brandId: req.query.brandId || null };
+    const { identity, sources } = await invoiceIdentity.resolveIdentity(db, scope);
+    const [branches] = await db.query('SELECT id, name FROM branches ORDER BY name').catch(() => [[]]);
+    const [brands] = await db.query('SELECT id, name FROM brands ORDER BY name').catch(() => [[]]);
+    res.json({ success: true, scope, identity, sources, branches, brands });
+  } catch (e) {
+    res.status(500).json({ success: false, error: e.message });
+  }
+});
 
 // Get all settings
 router.get('/', async (req, res) => {

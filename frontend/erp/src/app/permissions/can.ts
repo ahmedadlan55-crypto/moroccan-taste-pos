@@ -182,6 +182,7 @@ export const ROLE_GRANTS: Record<Capability, readonly Role[]> = {
   "administration.users": ADM,
   "administration.roles": ADM,
   "administration.settings": MGR,
+  "administration.invoice-settings": MGR,
   "administration.tax": FIN,
   "administration.payment-methods": MGR,
   "administration.security": ADM,

@@ -110,8 +110,12 @@ app.use(express.urlencoded({ limit: '25mb', extended: true }));
 
 // 6. Global rate limiter for ALL API requests
 const _rateLimitStore = {}; // { ip: { count, windowStart } }
-const RATE_LIMIT_WINDOW = 15 * 60 * 1000; // 15 minutes
-const RATE_LIMIT_MAX = 500; // 500 requests per 15 min per IP
+// Defaults are the production values (500 / 15 min / IP) and are UNCHANGED. They
+// are env-overridable only so an automated sweep (the E2E gate walks all 89 routes
+// in seconds from one IP — not human behaviour) doesn't throttle ITSELF and mask
+// real screen failures behind 429s. A genuine 429 still fails the gate.
+const RATE_LIMIT_WINDOW = Number(process.env.RATE_LIMIT_WINDOW_MS) || 15 * 60 * 1000; // 15 minutes
+const RATE_LIMIT_MAX = Number(process.env.RATE_LIMIT_MAX) || 500; // requests per window per IP
 app.use('/api/', function(req, res, next) {
   const ip = req.ip || req.headers['x-forwarded-for'] || 'unknown';
   const now = Date.now();

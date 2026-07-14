@@ -38,6 +38,11 @@ export default defineConfig({
       PROCUREMENT_P2P_ENABLE: "1",
       ORDER_TO_CASH_ENABLE: "1",
       POS_V2_ENABLED: "1",
+      // The gate walks all 89 routes from ONE ip in seconds. The production limiter
+      // (500/15min/IP) would throttle the sweep itself and turn healthy screens into
+      // 429 ErrorStates — which is exactly how the previous run produced a FALSE
+      // pass. Raise it for the sweep only; a real 429 still fails the gate.
+      RATE_LIMIT_MAX: "1000000",
     },
   },
   projects: [

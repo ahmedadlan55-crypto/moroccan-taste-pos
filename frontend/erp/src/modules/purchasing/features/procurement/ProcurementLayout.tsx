@@ -28,14 +28,14 @@ export function ProcurementLayout({ children }: { children?: ReactNode }) {
   const { procurementP2P } = useServerFlags();
   if (!procurementP2P) {
     return (
-      <div className="surface grid place-items-center gap-3 p-12 text-center">
+      <div data-state="feature-disabled" className="surface grid place-items-center gap-3 p-12 text-center">
         <span className="grid h-14 w-14 place-items-center rounded-2xl bg-slate-100 text-slate-400"><Lock className="h-6 w-6" /></span>
         <div className="text-lg font-extrabold text-slate-800">وحدة المشتريات والموردون غير مفعّلة</div>
         <p className="max-w-md text-sm font-medium text-slate-500">
           هذه الوحدة مُهيّأة لكنها خاملة على هذه البيئة (العلم <code className="rounded bg-slate-100 px-1">PROCUREMENT_P2P_ENABLE</code> غير مُفعّل).
           تُفعّل من إعدادات الخادم عند الجاهزية.
         </p>
-        <Link className="text-sm font-bold text-teal-700 hover:underline" to="/">العودة إلى مركز المستودعات</Link>
+        <Link className="text-sm font-bold text-teal-700 hover:underline" to="/overview">العودة إلى نظرة عامة</Link>
       </div>
     );
   }

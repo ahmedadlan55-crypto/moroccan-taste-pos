@@ -6,20 +6,35 @@ import { Skeleton } from "./skeleton";
 
 // The canonical page states: loading skeleton, empty (first-use and filtered),
 // server error, permission denied, offline, and a 409 conflict with a Refresh CTA.
+//
+// Every state carries a stable `data-state` so automation can tell a healthy
+// screen (data / "empty") from a broken one (error / offline / session-expired /
+// permission-denied / conflict) WITHOUT matching translated copy. The closure
+// E2E gate fails on any non-healthy state, so these values are a contract.
+export type PageState =
+  | "loading"
+  | "empty"
+  | "error"
+  | "offline"
+  | "session-expired"
+  | "permission-denied"
+  | "conflict";
 
 function Shell({
   icon,
   title,
   body,
   action,
+  state,
 }: {
   icon: ReactNode;
   title: string;
   body?: string;
   action?: ReactNode;
+  state: PageState;
 }) {
   return (
-    <div className="surface grid place-items-center gap-3 p-12 text-center">
+    <div data-state={state} className="surface grid place-items-center gap-3 p-12 text-center">
       <div className="grid h-14 w-14 place-items-center rounded-2xl bg-slate-100 text-slate-500">{icon}</div>
       <div className="text-base font-extrabold text-slate-800">{title}</div>
       {body && <p className="max-w-md text-sm font-medium text-slate-500">{body}</p>}
@@ -30,7 +45,7 @@ function Shell({
 
 export function LoadingState({ rows = 4 }: { rows?: number }) {
   return (
-    <div className="space-y-4" role="status" aria-live="polite" aria-busy="true">
+    <div data-state="loading" className="space-y-4" role="status" aria-live="polite" aria-busy="true">
       <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
         {Array.from({ length: 4 }).map((_, i) => (
           <Skeleton key={i} className="h-28" />
@@ -54,7 +69,7 @@ export function EmptyState({
   action?: ReactNode;
   icon?: ReactNode;
 }) {
-  return <Shell icon={icon ?? <Inbox className="h-6 w-6" />} title={title} body={body} action={action} />;
+  return <Shell state="empty" icon={icon ?? <Inbox className="h-6 w-6" />} title={title} body={body} action={action} />;
 }
 
 export function PermissionDenied({
@@ -64,12 +79,13 @@ export function PermissionDenied({
   title?: string;
   body?: string;
 }) {
-  return <Shell icon={<Lock className="h-6 w-6" />} title={title} body={body} />;
+  return <Shell state="permission-denied" icon={<Lock className="h-6 w-6" />} title={title} body={body} />;
 }
 
 export function SessionExpired() {
   return (
     <Shell
+      state="session-expired"
       icon={<LogIn className="h-6 w-6" />}
       title="انتهت الجلسة"
       body="انتهت صلاحية تسجيل الدخول. سجّل الدخول من جديد ثم عُد إلى هذه الصفحة."
@@ -92,6 +108,7 @@ export function SessionExpired() {
 export function OfflineState({ onRetry }: { onRetry?: () => void }) {
   return (
     <Shell
+      state="offline"
       icon={<WifiOff className="h-6 w-6" />}
       title="أنت غير متصل بالإنترنت"
       body="تعذّر الوصول إلى الخادم. سنعيد المحاولة تلقائيًا عند عودة الاتصال."
@@ -142,6 +159,7 @@ export function ErrorState({
     if (error.isConflict) {
       return (
         <Shell
+          state="conflict"
           icon={<RefreshCw className="h-6 w-6" />}
           title="تغيّرت البيانات منذ آخر تحميل"
           body={safeUserMessage(error)}
@@ -158,6 +176,7 @@ export function ErrorState({
   }
   return (
     <Shell
+      state="error"
       icon={<AlertTriangle className="h-6 w-6 text-rose-600" />}
       title={title ?? "تعذّر تحميل البيانات"}
       body={body ?? safeUserMessage(error)}

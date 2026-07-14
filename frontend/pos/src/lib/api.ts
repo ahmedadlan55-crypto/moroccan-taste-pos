@@ -7,11 +7,13 @@
  */
 import { getToken } from "./auth";
 import type {
+  ApproverCredentials,
   Catalog,
   ClosingDataV3,
   CloseV3Result,
   LegacySalePayload,
   SaleResult,
+  SaleRow,
   ServerOrder,
   ShiftSummary,
   SubmitResult,
@@ -223,4 +225,58 @@ export function searchCustomers(q: string, page = 1): Promise<CustomerSearchResu
  *  customer picker (flag ON) vs the legacy name/phone fields (flag OFF). */
 export function getServerFlags(): Promise<{ orderToCash?: boolean; posV2?: boolean }> {
   return request<{ orderToCash?: boolean; posV2?: boolean }>("/api/version");
+}
+
+// ── فواتيري / My Invoices — void + return ───────────────────────────────────
+// Parity with the legacy cashier's "فواتيري" modal (public/pos/app.js:3288).
+// All three endpoints are the legacy financial path — there is no /pos/v2
+// equivalent, and there must not be: void/return move money and must go
+// through the same ZATCA + GL + stock reversal the old POS used.
+
+/**
+ * GET /api/sales — returns up to 500 rows, newest first.
+ * The endpoint has NO shift filter, so callers narrow by shiftId themselves
+ * (exactly what the legacy POS does at app.js:3300).
+ */
+export function listSales(params: {
+  startDate?: string;
+  endDate?: string;
+  username?: string;
+  paymentMethod?: string;
+  customerId?: string;
+} = {}): Promise<SaleRow[]> {
+  const p = new URLSearchParams();
+  for (const [k, v] of Object.entries(params)) if (v) p.set(k, String(v));
+  const qs = p.toString();
+  return request<SaleRow[]>(`/api/sales${qs ? `?${qs}` : ""}`);
+}
+
+/**
+ * POST /api/sales/:orderId/void — full cancellation (zatca_type='cancellation').
+ * Refused by the server when the invoice was already submitted to ZATCA
+ * (BR-KSA-08 immutability) — a credit note is the only lawful offset then.
+ * `approver` is required for non-privileged roles unless the owner disabled it
+ * via settings.RequireManagerApprovalForVoid.
+ */
+export function voidSale(orderId: string, approver?: ApproverCredentials): Promise<{ success: true }> {
+  return request(`/api/sales/${encodeURIComponent(orderId)}/void`, {
+    method: "POST",
+    body: { ...(approver ?? {}) },
+  });
+}
+
+/**
+ * POST /api/sales/:orderId/return — issues a real ZATCA credit note.
+ * Approval is ALWAYS required for non-privileged roles here (money out), with
+ * no opt-out — unlike void.
+ */
+export function returnSale(
+  orderId: string,
+  reason: string,
+  approver?: ApproverCredentials,
+): Promise<{ success: true }> {
+  return request(`/api/sales/${encodeURIComponent(orderId)}/return`, {
+    method: "POST",
+    body: { reason, ...(approver ?? {}) },
+  });
 }

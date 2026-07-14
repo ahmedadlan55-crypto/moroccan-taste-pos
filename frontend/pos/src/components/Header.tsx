@@ -2,7 +2,7 @@
  * Header — brand, cashier identity, shift chip, connection indicator,
  * links back to the main system and the legacy cashier.
  */
-import { AlertTriangle, ChefHat, CloudOff, ExternalLink, History, Loader2, UserRound, Wifi } from "lucide-react";
+import { AlertTriangle, ChefHat, CloudOff, ExternalLink, FileText, History, Loader2, UserRound, Wifi } from "lucide-react";
 import { usePos } from "@/state/store";
 import { fmtInt } from "@/lib/format";
 import { cn, Button } from "./ui";
@@ -102,9 +102,11 @@ export function StaleCatalogChip() {
 export function Header({
   onOpenShiftDialog,
   onOpenSyncReport,
+  onOpenMyInvoices,
 }: {
   onOpenShiftDialog: () => void;
   onOpenSyncReport: () => void;
+  onOpenMyInvoices: () => void;
 }) {
   const { user, shiftId, shiftLoading, engineStatus, openShiftNow, openingShift } = usePos();
 
@@ -161,6 +163,13 @@ export function Header({
             </Button>
           </span>
         )}
+
+        {/* فواتيري — legacy reaches this from the cashier action menu
+            (public/pos/app.js:4357). Same function, same shift scope. */}
+        <Button size="sm" variant="secondary" onClick={onOpenMyInvoices} title="فواتير الوردية الحالية">
+          <FileText className="h-3.5 w-3.5" aria-hidden />
+          فواتيري
+        </Button>
 
         <StaleCatalogChip />
 

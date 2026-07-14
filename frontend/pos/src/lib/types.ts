@@ -248,3 +248,49 @@ export interface AuthUser {
   username: string;
   role: string;
 }
+
+// ── فواتيري / My Invoices ────────────────────────────────────────────────────
+// A row from GET /api/sales (routes/sales.js:1715) — already camelCased by the
+// backend. That endpoint has no shift filter, so the legacy POS pulls the day
+// and narrows to the active shift client-side; we match that behaviour.
+
+/** ZATCA document type. `cancellation` = voided, `credit_note` = returned. */
+export type ZatcaType = "standard" | "simplified" | "credit_note" | "debit_note" | "cancellation";
+
+export interface SaleLineLite {
+  name?: string;
+  qty?: number;
+  price?: number;
+  total?: number;
+  notes?: string;
+}
+
+export interface SaleRow {
+  orderId: string;
+  date: string;
+  total: number;
+  payment: string | null;
+  username: string;
+  items: SaleLineLite[];
+  discount: number;
+  shiftId: string | null;
+  customerId: string | null;
+  customerName: string | null;
+  customerPhone: string | null;
+  paymentNotes: string | null;
+  zatcaType: ZatcaType | null;
+  hasCreditNote: boolean;
+  invoiceNumber: string | null;
+  voidSerial: string | null;
+  returnSerial: string | null;
+}
+
+/**
+ * Credentials for the manager-approval gate on void/return.
+ * The server re-authorizes with bcrypt + role — this is a UX shortcut, never
+ * the security boundary (routes/sales.js:_requireManagerApproval).
+ */
+export interface ApproverCredentials {
+  approverUsername: string;
+  approverPassword: string;
+}

@@ -409,6 +409,15 @@ async function apply(db, log = () => {}) {
     // create() computed a warehouseId and then dropped it on the floor — the
     // INSERT never listed the column. Same write-dead family as source_line_id.
     await H.addColumn(db, 'sales_return_lines', 'warehouse_id', `${ID} NULL`, log);
+    // Who authorised putting these goods back on the shelf, why, and when.
+    // `restock` alone records the OUTCOME but not the DECISION: it moves stock
+    // and reverses COGS, so an auditor asking "who decided this returned meal
+    // was resellable, and on what grounds" currently has nowhere to look —
+    // created_by is the cashier who raised the return, not the manager who
+    // ruled on it. Nullable because a no_restock line has no decision to record.
+    await H.addColumn(db, 'sales_return_lines', 'restock_reason', 'VARCHAR(300) NULL', log);
+    await H.addColumn(db, 'sales_return_lines', 'restock_by', 'VARCHAR(80) NULL', log);
+    await H.addColumn(db, 'sales_return_lines', 'restock_at', 'DATETIME NULL', log);
   }
 
   // The return's own component snapshot, mirroring ar_document_line_components.

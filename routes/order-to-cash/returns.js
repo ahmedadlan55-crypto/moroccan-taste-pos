@@ -33,7 +33,14 @@ router.get('/:id', requireCapability('returns.view'), async (req, res) => {
 
 router.post('/', requireCapability('returns.create'), async (req, res) => {
   try {
-    const out = await db.withTransaction((c) => ReturnService.create(c, req.body || {}, H.actorOf(req)));
+    // returns.create lets a cashier RAISE a return — they are the one holding the
+    // item. It does not let them rule that the item goes back on the shelf: that
+    // moves stock and reverses COGS, so it needs returns.restock (manager and up).
+    // Resolved here because RBAC is the route layer's job and req.user lives here;
+    // the service then refuses any restock line without it.
+    const canRestock = await requireCapability.hasCapability(req.user, 'returns.restock');
+    const body = Object.assign({}, req.body || {}, { canRestock });
+    const out = await db.withTransaction((c) => ReturnService.create(c, body, H.actorOf(req)));
     return H.sendOk(res, { data: out, documentNumber: out.return_number, status: out.status, version: out.version }, 201);
   } catch (e) { return H.sendErr(res, e); }
 });

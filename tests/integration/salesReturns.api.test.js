@@ -36,6 +36,13 @@ const db = require('../../db/connection');
 const PORT = 3988;
 const CASHIER = 'itest_ret_cashier';
 const MANAGER = 'itest_ret_manager';
+// Separation of duties needs a second pair of hands: whoever raises a return may
+// not approve it, so the manager who authorises a restock cannot also sign it
+// off. A second MANAGER, not an accountant — users.role is
+// enum('admin','cashier','manager','custody','employee') and cannot hold
+// 'accountant' at all, and 'admin' would prove nothing here because it bypasses
+// every capability check.
+const APPROVER = 'itest_ret_approver';
 const PW = 'Return#Test!2026';
 const WH = 'ITEST-WH-RET';
 const WH2 = 'ITEST-WH-RET2';
@@ -81,7 +88,7 @@ const retCount = async () => { const [r] = await db.query('SELECT COUNT(*) c FRO
 
 async function cleanup() {
   const del = async (sql, a) => { try { await db.query(sql, a || []); } catch (_) {} };
-  for (const u of [CASHIER, MANAGER]) await del('DELETE FROM users WHERE username=?', [u]);
+  for (const u of [CASHIER, MANAGER, APPROVER]) await del('DELETE FROM users WHERE username=?', [u]);
   // returns + their credit notes + every journal either produced
   const [rets] = await db.query('SELECT id, credit_note_id FROM sales_returns WHERE original_ar_document_id=?', [INV]).catch(() => [[]]);
   for (const r of rets) {
@@ -117,6 +124,7 @@ async function fixtures() {
   const hash = await bcrypt.hash(PW, 12);
   await db.query('INSERT INTO users (username,password,role,active) VALUES (?,?,?,1)', [CASHIER, hash, 'cashier']);
   await db.query('INSERT INTO users (username,password,role,active) VALUES (?,?,?,1)', [MANAGER, hash, 'manager']);
+  await db.query('INSERT INTO users (username,password,role,active) VALUES (?,?,?,1)', [APPROVER, hash, 'manager']);
   // warehouses.code is NOT NULL with no default.
   await db.query("INSERT INTO warehouses (id, name, code) VALUES (?, 'ITEST Ret WH', 'ITSTR')", [WH]);
   await db.query("INSERT INTO warehouses (id, name, code) VALUES (?, 'ITEST Ret WH2', 'ITSTR2')", [WH2]);
@@ -173,7 +181,8 @@ async function fixtures() {
     if (!(await waitUp())) { console.error('server did not start'); process.exit(2); }
     const cashier = await login(CASHIER);
     const manager = await login(MANAGER);
-    check('cashier + manager both got a JWT', !!cashier && !!manager);
+    const approver = await login(APPROVER);
+    check('cashier + manager + approver all got a JWT', !!cashier && !!manager && !!approver);
 
     // ── schema: the columns whose absence made restock dead code ──────────────
     console.log('\n▶ schema');
@@ -191,18 +200,83 @@ async function fixtures() {
     console.log('\n▶ create (cashier)');
     const mkBody = (lines) => ({ originalArDocumentId: INV, returnDate: RET_DATE, refundMethod: 'ar_reduction', reason: 'itest', lines });
 
-    const over = await call('POST', '/api/order-to-cash/returns', cashier, mkBody([{ originalLineId: LINE_A, returnQty: 3, restock: true }]));
-    check('over-return (3 of a sold 2) is REJECTED', over.status >= 400, over.body);
+    // restock:false here on purpose — with restock:true a cashier is refused by
+    // returns.restock (403) and this would pass on the WRONG error, never
+    // reaching the over-return guard it claims to test.
+    const over = await call('POST', '/api/order-to-cash/returns', cashier, mkBody([{ originalLineId: LINE_A, returnQty: 3, restock: false }]));
+    check('over-return (3 of a sold 2) is REJECTED', over.status === 422 && over.body?.code === 'OVER_RETURN', over.body);
     check('  …and no return row was created by the rejected attempt', (await retCount()) === 0);
 
-    const created = await call('POST', '/api/order-to-cash/returns', cashier,
+    // ── who may decide a restock ──────────────────────────────────────────────
+    // Putting goods back on the shelf moves stock and reverses COGS. A cashier
+    // raises the return (they hold the item) but may not rule that a prepared
+    // meal is resellable.
+    const cashRestock = await call('POST', '/api/order-to-cash/returns', cashier,
+      mkBody([{ originalLineId: LINE_A, returnQty: 1, restock: true, restockReason: 'sealed' }]));
+    check('cashier CANNOT authorise a restock (returns.restock)',
+      cashRestock.status === 403 && cashRestock.body?.code === 'PERMISSION_DENIED', cashRestock.body);
+    check('  …and the refused attempt created no return row', (await retCount()) === 0);
+
+    const cashPlain = await call('POST', '/api/order-to-cash/returns', cashier,
+      mkBody([{ originalLineId: LINE_B, returnQty: 1, restock: false }]));
+    check('cashier CAN still create a no_restock return (returns.create)', cashPlain.status === 201, cashPlain.body);
+    // Drop it again: the rest of the flow asserts against a known return count.
+    const plainId = cashPlain.body?.data?.id;
+    if (plainId) {
+      await db.query('DELETE FROM sales_return_line_components WHERE return_id=?', [plainId]);
+      await db.query('DELETE FROM sales_return_lines WHERE return_id=?', [plainId]);
+      await db.query('DELETE FROM sales_returns WHERE id=?', [plainId]);
+    }
+
+    // A lot/expiry-tracked component leaves stock via lotLedger.allocateOutbound,
+    // which picks specific lots — but the component snapshot records item,
+    // warehouse and qty, never WHICH lot. Restoring it would add quantity that no
+    // lot balance accounts for, breaking Σ(lot balances) = warehouse_stock.
+    await db.query("UPDATE inv_items SET tracking_mode='lot' WHERE id=?", [BUN]);
+    const lotRestock = await call('POST', '/api/order-to-cash/returns', manager,
+      mkBody([{ originalLineId: LINE_A, returnQty: 1, restock: true, restockReason: 'sealed' }]));
+    check('restocking a LOT-TRACKED component is refused — the snapshot has no lot number',
+      lotRestock.status === 422 && lotRestock.body?.code === 'VALIDATION_ERROR', lotRestock.body);
+    check('  …and it created no return row', (await retCount()) === 0);
+    const lotNoRestock = await call('POST', '/api/order-to-cash/returns', manager,
+      mkBody([{ originalLineId: LINE_A, returnQty: 1, restock: false }]));
+    check('  …but no_restock on the SAME line is still allowed (refuse the restock, not the return)',
+      lotNoRestock.status === 201, lotNoRestock.body);
+    const lotRetId = lotNoRestock.body?.data?.id;
+    if (lotRetId) {
+      await db.query('DELETE FROM sales_return_line_components WHERE return_id=?', [lotRetId]);
+      await db.query('DELETE FROM sales_return_lines WHERE return_id=?', [lotRetId]);
+      await db.query('DELETE FROM sales_returns WHERE id=?', [lotRetId]);
+    }
+    await db.query("UPDATE inv_items SET tracking_mode='none' WHERE id=?", [BUN]);
+
+    const noReason = await call('POST', '/api/order-to-cash/returns', manager,
+      mkBody([{ originalLineId: LINE_A, returnQty: 1, restock: true }]));
+    check('a restock without a REASON is refused — the flag records the outcome, not the grounds',
+      noReason.status === 422 && noReason.body?.code === 'VALIDATION_ERROR', noReason.body);
+    check('  …and it created no return row', (await retCount()) === 0);
+
+    // The manager holds returns.restock, so they raise this one. That makes them
+    // the creator — and therefore NOT its approver (see SoD below).
+    const created = await call('POST', '/api/order-to-cash/returns', manager,
       mkBody([
-        { originalLineId: LINE_A, returnQty: 1, restock: true },    // half of 2 → fraction 0.5
+        { originalLineId: LINE_A, returnQty: 1, restock: true, restockReason: 'عبوة مغلقة سليمة' }, // half of 2 → fraction 0.5
         { originalLineId: LINE_B, returnQty: 2, restock: false },   // all of 2 → fraction 1.0
       ]));
-    check('cashier CAN create a return (returns.create)', created.status === 201, created.body);
+    check('a manager CAN authorise a restock (returns.restock)', created.status === 201, created.body);
     const RET = created.body?.data?.id;
     check('  …and it came back with an id', !!RET);
+
+    const [aud] = await db.query(
+      'SELECT restock, restock_reason, restock_by, restock_at FROM sales_return_lines WHERE return_id=? ORDER BY id', [RET]);
+    const yes = aud.find((l) => Number(l.restock) === 1);
+    const no = aud.find((l) => Number(l.restock) === 0);
+    check('the restock decision records WHO decided it', yes && yes.restock_by === MANAGER, yes && yes.restock_by);
+    check('  …and WHY', yes && yes.restock_reason === 'عبوة مغلقة سليمة', yes && yes.restock_reason);
+    check('  …and WHEN', !!(yes && yes.restock_at), yes && yes.restock_at);
+    check('a no_restock line records no decision — there was none to make',
+      no && !no.restock_by && !no.restock_reason && !no.restock_at,
+      no && { by: no.restock_by, why: no.restock_reason, at: no.restock_at });
 
     const [rl] = await db.query('SELECT id, restock, warehouse_id, net_amount, vat_amount, cost_snapshot FROM sales_return_lines WHERE return_id=? ORDER BY id', [RET]);
     check('warehouse_id is PERSISTED (create() used to compute it and drop it)', rl.every((l) => !!l.warehouse_id), rl.map((l) => l.warehouse_id));
@@ -243,14 +317,23 @@ async function fixtures() {
     check('  …the server does not grant cashier returns.cancel (UI mirrors this)', Number(capRow[0].c) === 0);
 
     // ── approve → post ───────────────────────────────────────────────────────
-    console.log('\n▶ approve → post (manager)');
+    console.log('\n▶ approve → post');
     const bunBefore = await stockOf(WH, BUN);
     const pattyBefore = await stockOf(WH2, PATTY);
     const potatoBefore = await stockOf(WH, POTATO);
     const cogsBefore = await journalsRef('SalesReturnCOGS');
 
-    const appr = await call('POST', `/api/order-to-cash/returns/${RET}/approve`, manager, {});
-    check('manager CAN approve (returns.approve)', appr.status === 200, appr.body);
+    // Separation of duties. The manager raised this return and holds
+    // returns.approve — the capability gate cannot tell that it is their OWN.
+    // Without this check one person credits a customer and signs it off alone,
+    // which is the entire point of the draft→approved step.
+    const selfAppr = await call('POST', `/api/order-to-cash/returns/${RET}/approve`, manager, {});
+    check('the CREATOR cannot approve their own return, capability notwithstanding',
+      selfAppr.status === 403 && selfAppr.body?.code === 'SOD_VIOLATION', selfAppr.body);
+    check('  …and it is still draft — the refusal changed nothing', (await retStatus(RET)) === 'draft');
+
+    const appr = await call('POST', `/api/order-to-cash/returns/${RET}/approve`, approver, {});
+    check('a DIFFERENT authorised approver CAN approve it', appr.status === 200, appr.body);
     check('  …status is approved', (await retStatus(RET)) === 'approved');
     check('approve alone moves NO stock', (await stockOf(WH, BUN)) === bunBefore);
 
@@ -322,9 +405,12 @@ async function fixtures() {
 
     // ── double-return (the remaining qty is bounded by what already went back) ─
     console.log('\n▶ double-return');
-    const dbl = await call('POST', '/api/order-to-cash/returns', cashier, mkBody([{ originalLineId: LINE_A, returnQty: 2, restock: true }]));
-    check('returning 2 more of a line where 1 of 2 is already returned is REJECTED', dbl.status >= 400, dbl.body);
-    const ok2 = await call('POST', '/api/order-to-cash/returns', cashier, mkBody([{ originalLineId: LINE_A, returnQty: 1, restock: true }]));
+    // restock:false — this pair tests the remaining-qty guard, so it must not be
+    // able to fail (or pass) on the restock authority check instead.
+    const dbl = await call('POST', '/api/order-to-cash/returns', cashier, mkBody([{ originalLineId: LINE_A, returnQty: 2, restock: false }]));
+    check('returning 2 more of a line where 1 of 2 is already returned is REJECTED',
+      dbl.status === 422 && dbl.body?.code === 'OVER_RETURN', dbl.body);
+    const ok2 = await call('POST', '/api/order-to-cash/returns', cashier, mkBody([{ originalLineId: LINE_A, returnQty: 1, restock: false }]));
     check('  …but the remaining 1 IS allowed (a real success, not just a refusal)', ok2.status === 201, ok2.body);
 
     // The form can only offer the right max if the invoice publishes it. It didn't:

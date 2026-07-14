@@ -83,11 +83,42 @@ async function create(conn, data, actor) {
     // Whether the goods physically come back. Not derivable from the item: only
     // the person holding it knows. Absent ⇒ false, matching the column default.
     const restock = rl.restock === true || rl.restock === 1 || rl.restock === '1';
+    // Restocking moves stock and reverses COGS, so it is an authorised decision,
+    // not a checkbox: the route gates it on returns.restock (a cashier may raise
+    // the return but not rule that a prepared meal is resellable), and the
+    // reason is mandatory because `restock` alone records the outcome without
+    // the grounds. created_by is the raiser, so the decider is stamped here.
+    const restockReason = String(rl.restockReason || '').trim();
+    if (restock && !data.canRestock) {
+      throw err('PERMISSION_DENIED', 'إعادة المرتجع للمخزون تحتاج صلاحية مدير');
+    }
+    if (restock && !restockReason) {
+      throw err('VALIDATION_ERROR', `سبب إعادة السطر للمخزون مطلوب (${ol.description || ol.id})`);
+    }
     // The components this line deducted at checkout, scaled to the returned
     // fraction. Read from the ORIGINAL line's snapshot, never from the live
     // recipe — a reformulated recipe would restock quantities never deducted.
     const [origComps] = await conn.query(
       'SELECT * FROM ar_document_line_components WHERE document_line_id = ? ORDER BY component_seq', [ol.id]);
+    // A lot/expiry-tracked item leaves stock through lotLedger.allocateOutbound,
+    // which picks specific lots — but the component snapshot records only item,
+    // warehouse and quantity, never WHICH lot. Restoring it would add quantity
+    // to warehouse_stock that no lot balance accounts for, silently breaking the
+    // Σ(lot balances) = warehouse_stock invariant that assertInvariant enforces.
+    // Refuse rather than corrupt the ledger; no_restock is always available.
+    if (restock && origComps.length) {
+      const ids = [...new Set(origComps.map((c) => c.inv_item_id).filter(Boolean))];
+      if (ids.length) {
+        const [tracked] = await conn.query(
+          `SELECT id, name, tracking_mode FROM inv_items
+            WHERE id IN (${ids.map(() => '?').join(',')}) AND tracking_mode IS NOT NULL AND tracking_mode <> 'none'`, ids);
+        if (tracked.length) {
+          throw err('VALIDATION_ERROR',
+            `لا يمكن إعادة مكوّن متتبَّع بالتشغيلة للمخزون (${tracked.map((t) => t.name || t.id).join('، ')}) — ` +
+            'اللقطة لا تحفظ رقم التشغيلة الأصلية. اختر «بدون إعادة للمخزون».');
+        }
+      }
+    }
     const components = origComps.map((c) => ({
       seq: c.component_seq, source: c.source, invItemId: c.inv_item_id, invItemName: c.inv_item_name,
       // Component-level warehouse: the header's is NULL on every live return and
@@ -104,7 +135,7 @@ async function create(conn, data, actor) {
       conversionFactor: ol.conversion_factor_snapshot, baseQty,
       soldQty, previouslyReturned: already, returnQty,
       unitPrice: ol.unit_price, vatCategory: ol.vat_category, vatRate: ol.vat_rate,
-      net, vat, gross: money(net + vat), cost, restock, components,
+      net, vat, gross: money(net + vat), cost, restock, restockReason, components,
       warehouseId: rl.warehouseId || ol.warehouse_id || original.warehouse_id,
       lotSnapshot: ol.lot_allocations_json || null,
     });
@@ -132,12 +163,16 @@ async function create(conn, data, actor) {
         (id, return_id, original_line_id, item_id, menu_id, description, sold_qty, previously_returned_qty,
          return_qty, entered_unit_id, entered_unit_code, conversion_factor_snapshot, base_qty, unit_price_snapshot,
          discount_snapshot, vat_category, vat_rate, net_amount, vat_amount, gross_amount, cost_snapshot,
-         lot_allocations_json, warehouse_id, restock)
-       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+         lot_allocations_json, warehouse_id, restock, restock_reason, restock_by, restock_at)
+       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
       [rlId, id, l.originalLineId, l.itemId, l.menuId, l.description, l.soldQty, l.previouslyReturned,
        l.returnQty, l.enteredUnitId, l.enteredUnitCode, l.conversionFactor, l.baseQty, l.unitPrice,
        0, l.vatCategory, l.vatRate, l.net, l.vat, l.gross, l.cost, l.lotSnapshot,
-       l.warehouseId || null, l.restock ? 1 : 0]);
+       l.warehouseId || null, l.restock ? 1 : 0,
+       // A no_restock line has no decision, so it carries no decider or reason.
+       l.restock ? l.restockReason : null,
+       l.restock ? (actor || '') : null,
+       l.restock ? new Date() : null]);
     for (const c of l.components) {
       await conn.query(
         `INSERT INTO sales_return_line_components
@@ -226,7 +261,20 @@ async function approve(id, ctx) {
   return runTransition({
     docType: 'sales_return', table: 'sales_returns', id, action: 'approve',
     actor: ctx.actor, actorId: ctx.actorId, expectedVersion: ctx.expectedVersion, idempotencyKey: ctx.idempotencyKey,
-    actorColumns: { by: 'approved_by', at: 'approved_at' }, perform: async () => ({}),
+    actorColumns: { by: 'approved_by', at: 'approved_at' },
+    perform: async (conn, row) => {
+      // Separation of duties. The capability gate proves the actor MAY approve
+      // returns; it cannot know they are approving their OWN. A manager holds
+      // both returns.create and returns.approve, so without this one person can
+      // raise a return crediting a customer and approve it unreviewed — the
+      // control the draft→approved step exists to provide. Checked here rather
+      // than at the route because `row` is already locked FOR UPDATE, so the
+      // creator cannot change under the check.
+      if (row.created_by && ctx.actor && String(row.created_by) === String(ctx.actor)) {
+        throw err('SOD_VIOLATION', 'لا يمكنك اعتماد مرتجع أنشأته بنفسك — يلزم اعتماد شخص آخر');
+      }
+      return {};
+    },
   });
 }
 

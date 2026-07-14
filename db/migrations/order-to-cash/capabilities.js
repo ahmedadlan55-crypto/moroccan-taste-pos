@@ -44,6 +44,12 @@ const CAPS = [
   // manager had already APPROVED — an approval-level act behind a create-level
   // gate, against this file's own cashier rule.
   ['returns.cancel',        1, 65, 'إلغاء مرتجع بيع',            'Cancel sales return'],
+  // Deciding that goods physically go BACK ON THE SHELF is not a clerical act:
+  // it moves stock and reverses COGS. A cashier may create a return (they are
+  // the one holding the item) but may not rule that a prepared meal is
+  // resellable — that is the manager's call, and it needs a reason on record.
+  // Absent from cashier/sales below; `manager: CAPS.map(...)` grants it there.
+  ['returns.restock',       1, 66, 'إقرار إعادة مرتجع للمخزون',   'Authorise return restock'],
 ];
 
 // role → capability ids (admin handled by top-up)
@@ -72,13 +78,14 @@ const ROLE_GRANTS = {
     'credit.override',
     'payments.view', 'payments.create', 'payments.approve', 'payments.post', 'payments.reverse',
     'returns.view', 'returns.approve', 'returns.post', 'returns.reverse', 'returns.cancel',
+    'returns.restock',
   ],
   finance: [
     'o2c.view', 'o2c.dashboard.view', 'ar_reports.view', 'o2c.export', 'o2c.data_quality',
     'customers.view',
     'invoices.view', 'invoices.issue', 'credit.override',
     'payments.view', 'payments.approve', 'payments.post', 'payments.reverse',
-    'returns.approve', 'returns.post', 'returns.reverse', 'returns.cancel',
+    'returns.approve', 'returns.post', 'returns.reverse', 'returns.cancel', 'returns.restock',
   ],
 };
 

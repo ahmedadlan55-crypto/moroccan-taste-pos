@@ -4185,6 +4185,21 @@ async function runMigrations() {
     );
   } catch (e) { console.log('[DB] doc_counters create warning:', e.message.substring(0, 120)); }
   await addColumnIfMissing('waste_entries', 'waste_number', "VARCHAR(40)");
+  // v4 — waste deducts stock AND posts to the GL, but its id was random, so a
+  // retried or double-clicked POST created two entries and deducted stock twice.
+  // The UNIQUE index is what makes it safe under concurrency: the loser of a race
+  // gets ER_DUP_ENTRY and returns the winner's entry instead of double-writing.
+  await addColumnIfMissing('waste_entries', 'idempotency_key', 'VARCHAR(80) NULL');
+  try {
+    const [idx] = await db.query(
+      "SELECT COUNT(*) AS c FROM INFORMATION_SCHEMA.STATISTICS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'waste_entries' AND INDEX_NAME = 'uq_waste_idem'");
+    if (!Number(idx[0].c)) {
+      await db.query('ALTER TABLE waste_entries ADD UNIQUE KEY uq_waste_idem (idempotency_key)');
+      console.log('[DB] Migration: waste_entries.uq_waste_idem unique index added');
+    }
+  } catch (e) {
+    console.log('[DB] Migration warning (uq_waste_idem):', e.message.substring(0, 120));
+  }
   await addColumnIfMissing('stock_adjustments', 'adjustment_number', "VARCHAR(40)");
 
   // ─── v7.1 — One-time: treat ALL existing menu prices as NET (exclusive) ───

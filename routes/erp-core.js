@@ -1502,7 +1502,11 @@ router.get('/waste-entries', requireCapability('inventory.view'), async (req, re
       params.concat([limit, offset]));
 
     const items = rows.map(w => ({
-      id: w.id, wasteDate: w.waste_date, reason: w.reason,
+      id: w.id,
+      // v4 — the sequential document number (WST-YYYYMMDD-NNNN) was generated and
+      // stored but never returned, so the UI showed the raw internal id instead.
+      wasteNumber: w.waste_number || '',
+      wasteDate: w.waste_date, reason: w.reason,
       brandId: w.brand_id || '', brandName: w.brand_name || '',
       branchId: w.branch_id || '', branchName: w.branch_name || '',
       warehouseId: w.warehouse_id, warehouseName: w.warehouse_name || '', warehouseCode: w.warehouse_code || '',
@@ -1623,9 +1627,27 @@ router.delete('/waste-entries/:id', requireCapability('waste.create'), async (re
   } catch (e) { res.status(500).json({ success:false, error: e.message }); }
 });
 
+/**
+ * Create a waste entry: deducts warehouse stock, writes an inventory movement,
+ * and posts Dr <waste sub-account by reason> / Cr Inventory.
+ *
+ * v4 HARDENING. This route moves stock AND money and had none of the protections
+ * its own DELETE sibling already had:
+ *   · NO transaction — a mid-loop failure left a half-written entry with partial
+ *     stock deducted and no GL. (The DELETE at :1591 wraps in withTransaction.)
+ *   · NO idempotency — genId('WE') is random, so a double-POST created two
+ *     entries and deducted stock TWICE.
+ *   · NO server-side qty validation — `Number(it.quantity) || 0` on a signed
+ *     DECIMAL, so a negative qty INCREMENTED stock and posted a reversed GL
+ *     entry. Only the browser enforced min="0".
+ *   · created_by came from req.body — a spoofable actor on an audit column.
+ *   · NO period-lock check — waste could post into a closed period.
+ */
 router.post('/waste-entries', requireCapability('waste.create'), async (req, res) => {
   try {
-    const { brandId, branchId, warehouseId, costCenterId, wasteDate, reason, notes, createdBy, items } = req.body;
+    const { brandId, branchId, warehouseId, costCenterId, wasteDate, reason, notes, items } = req.body || {};
+    // v4 SECURITY — actor from the verified token, never from the body.
+    const actor = (req.user && req.user.username) || '';
     if (!warehouseId) return res.json({ success: false, error: 'المستودع مطلوب' });
     if (!Array.isArray(items) || !items.length) return res.json({ success: false, error: 'أصناف الهدر مطلوبة' });
     // v7.5 — whitelist the reason: keeps the ENUM honest on non-strict MySQL
@@ -1633,6 +1655,40 @@ router.post('/waste-entries', requireCapability('waste.create'), async (req, res
     const VALID_WASTE_REASONS = ['expired', 'damaged', 'spill', 'prep_loss', 'customer_return', 'other'];
     if (reason && VALID_WASTE_REASONS.indexOf(String(reason)) < 0) {
       return res.json({ success: false, error: 'سبب هدر غير صالح — القيم المسموحة: ' + VALID_WASTE_REASONS.join(', ') });
+    }
+
+    // v4 — validate every line BEFORE touching stock. A non-positive or
+    // non-numeric qty is a client bug, not a zero.
+    for (const it of items) {
+      if (!it || !it.itemId) return res.json({ success: false, error: 'كل سطر يحتاج صنفًا' });
+      const q = Number(it.quantity);
+      if (!Number.isFinite(q) || q <= 0) {
+        return res.json({ success: false, error: 'الكمية يجب أن تكون رقمًا أكبر من صفر' });
+      }
+      const c = Number(it.unitCost);
+      if (it.unitCost !== undefined && it.unitCost !== null && it.unitCost !== '' && (!Number.isFinite(c) || c < 0)) {
+        return res.json({ success: false, error: 'التكلفة يجب أن تكون رقمًا غير سالب' });
+      }
+    }
+
+    const effectiveDate = wasteDate || new Date().toISOString().slice(0, 10);
+
+    // v4 — waste posts to the GL, so it must respect the period lock like every
+    // other posting path. isPeriodClosed fails CLOSED on a DB fault (da47ca5).
+    if (await isPeriodClosed(effectiveDate)) {
+      return res.json({ success: false, error: 'الفترة المحاسبية مُقفلة لهذا التاريخ — لا يمكن تسجيل هدر فيها' });
+    }
+
+    // v4 — idempotency. Without this a retried/double-clicked POST deducted stock
+    // twice and posted the GL twice. Callers send X-Idempotency-Key (the same
+    // header the POS sync already uses); we return the ORIGINAL result on replay.
+    const idemKey = req.get('X-Idempotency-Key') || (req.body && req.body.idempotencyKey) || '';
+    if (idemKey) {
+      const [prior] = await db.query(
+        'SELECT id, total_cost FROM waste_entries WHERE idempotency_key = ? LIMIT 1', [idemKey]);
+      if (prior.length) {
+        return res.json({ success: true, id: prior[0].id, totalCost: Number(prior[0].total_cost) || 0, replayed: true });
+      }
     }
 
     // Compute total + insert header
@@ -1645,41 +1701,69 @@ router.post('/waste-entries', requireCapability('waste.create'), async (req, res
     let wasteNumber = '';
     try { wasteNumber = await nextDocNumber(db, 'WST'); } catch(_) { wasteNumber = ''; }
     const _wasteNow = new Date();
-    await db.query(
-      `INSERT INTO waste_entries (id, waste_number, brand_id, branch_id, warehouse_id, cost_center_id, waste_date, reason, total_cost, notes, created_by)
-       VALUES (?,?,?,?,?,?,?,?,?,?,?)`,
-      [id, wasteNumber || null, brandId||null, branchId||null, warehouseId, costCenterId||null,
-       wasteDate || new Date().toISOString().slice(0,10), reason || 'other', total, notes || '', createdBy || '']);
 
-    for (const it of items) {
-      const lineCost = (Number(it.quantity)||0) * (Number(it.unitCost)||0);
-      const _qty = Number(it.quantity) || 0;
-      await db.query(
-        `INSERT INTO waste_entry_items (id, waste_id, item_id, quantity, unit, unit_cost, line_cost)
-         VALUES (?,?,?,?,?,?,?)`,
-        [genId('WEI'), id, it.itemId, _qty, it.unit||'PCS',
-         Number(it.unitCost)||0, Math.round(lineCost * 100) / 100]);
+    // v4 — resolve item names ONCE from inv_items. The movement rows used
+    // `it.itemName`, which the client never sends, so every waste movement was
+    // written with item_name='' and the warehouse ledger showed nameless rows.
+    const nameById = new Map();
+    try {
+      const ids = [...new Set(items.map((it) => it.itemId))];
+      const [rows] = await db.query(
+        `SELECT id, name FROM inv_items WHERE id IN (${ids.map(() => '?').join(',')})`, ids);
+      rows.forEach((r) => nameById.set(r.id, r.name || ''));
+    } catch (_) { /* names are cosmetic on the ledger — never block the write */ }
 
-      // v7.1 — ACTUALLY deduct from the warehouse stock (was missing → waste
-      // never reduced physical stock). Allow negative so shortages stay visible.
-      try {
-        // v7.1 — atomic upsert-deduct: creates a negative row if the item has
-        // none in this warehouse, so wasting from an empty warehouse records the
-        // true deficit instead of a silent 0-rows loss.
-        await deductWarehouseStock(db, warehouseId, it.itemId, _qty);
-        await recomputeInvItemStock(db, it.itemId);
-      } catch(e) { /* warehouse_stock missing on very old deploy — non-fatal */ }
+    // v4 — ONE transaction around header + lines + stock + movements. A failure
+    // anywhere now rolls the whole entry back instead of leaving partial stock
+    // deducted with no header. Mirrors the DELETE sibling at :1591.
+    const writeAll = async (conn) => {
+      const q = conn ? conn.query.bind(conn) : db.query.bind(db);
+      await q(
+        `INSERT INTO waste_entries (id, waste_number, brand_id, branch_id, warehouse_id, cost_center_id, waste_date, reason, total_cost, notes, created_by, idempotency_key)
+         VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`,
+        [id, wasteNumber || null, brandId||null, branchId||null, warehouseId, costCenterId||null,
+         effectiveDate, reason || 'other', total, notes || '', actor, idemKey || null]);
 
-      // v7.1 — movement in the STANDARD shape the warehouse ledger reads
-      // (type/qty/reason/warehouse_id/reference_*), replacing the old
-      // non-standard txn_type insert that silently failed.
-      try {
-        await db.query(
+      for (const it of items) {
+        const _qty = Number(it.quantity);
+        const lineCost = _qty * (Number(it.unitCost) || 0);
+        await q(
+          `INSERT INTO waste_entry_items (id, waste_id, item_id, quantity, unit, unit_cost, line_cost)
+           VALUES (?,?,?,?,?,?,?)`,
+          [genId('WEI'), id, it.itemId, _qty, it.unit||'PCS',
+           Number(it.unitCost)||0, Math.round(lineCost * 100) / 100]);
+
+        // v7.1 — ACTUALLY deduct from the warehouse stock (was missing → waste
+        // never reduced physical stock). Allow negative so shortages stay visible:
+        // an atomic upsert-deduct records the true deficit rather than a silent
+        // 0-rows loss when the item has no row in this warehouse.
+        // v4 — no longer swallowed: a failed deduction used to leave the entry
+        // standing while the stock never moved, which is the whole point of it.
+        await deductWarehouseStock(conn || db, warehouseId, it.itemId, _qty);
+        await recomputeInvItemStock(conn || db, it.itemId);
+
+        // Movement in the STANDARD shape the warehouse ledger reads
+        // (type/qty/reason/warehouse_id/reference_*).
+        await q(
           `INSERT INTO inventory_movements (id, movement_date, item_id, item_name, type, qty, reason, username, notes, warehouse_id, reference_type, reference_id)
            VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`,
-          [genId('IM'), _wasteNow, it.itemId, it.itemName || '', 'out', _qty, 'هدر',
-           createdBy || '', wasteNumber || id, warehouseId, 'waste', id]);
-      } catch(e) { /* older schema — inventory_movements may lack columns */ }
+          [genId('IM'), _wasteNow, it.itemId, nameById.get(it.itemId) || '', 'out', _qty, 'هدر',
+           actor, wasteNumber || id, warehouseId, 'waste', id]);
+      }
+    };
+
+    try {
+      if (typeof db.withTransaction === 'function') await db.withTransaction(writeAll);
+      else await writeAll(null);
+    } catch (txErr) {
+      // ER_DUP_ENTRY on idempotency_key = a concurrent double-POST lost the race.
+      // The winner's entry stands; return it rather than a scary error.
+      if (txErr && txErr.code === 'ER_DUP_ENTRY' && idemKey) {
+        const [won] = await db.query('SELECT id, total_cost FROM waste_entries WHERE idempotency_key = ? LIMIT 1', [idemKey]);
+        if (won.length) return res.json({ success: true, id: won[0].id, totalCost: Number(won[0].total_cost) || 0, replayed: true });
+      }
+      console.error('[erp/waste-entries] create rolled back:', txErr && (txErr.code || txErr.message));
+      return res.status(500).json({ success: false, error: 'تعذّر تسجيل الهدر — لم يُحفظ شيء' });
     }
 
     // ═══ AUTO GL POSTING (v5.10.39 — granular by reason) ═══
@@ -1719,18 +1803,21 @@ router.post('/waste-entries', requireCapability('waste.create'), async (req, res
             warehouseId: warehouseId
           }
         ],
-        postedBy: createdBy || ''
+        postedBy: actor
       });
       return res.json({
-        success: true, id, totalCost: total,
+        success: true, id, totalCost: total, wasteNumber: wasteNumber || null,
         journalId: post.journalId || null,
         journalNumber: post.journalNumber || null,
         wasteAccountCode: wasteAccountCode,
         postingWarning: post.success ? null : post.error
       });
     }
-    res.json({ success: true, id, totalCost: total });
-  } catch(e) { res.json({ success: false, error: e.message }); }
+    res.json({ success: true, id, totalCost: total, wasteNumber: wasteNumber || null });
+  } catch (e) {
+    console.error('[erp/waste-entries] create failed:', e && (e.code || e.message));
+    res.json({ success: false, error: 'تعذّر تسجيل الهدر' });
+  }
 });
 
 router.get('/waste-entries/:id/items', requireCapability('inventory.view'), async (req, res) => {
@@ -1739,12 +1826,18 @@ router.get('/waste-entries/:id/items', requireCapability('inventory.view'), asyn
       `SELECT wi.*, i.name AS item_name, i.id AS sku
        FROM waste_entry_items wi LEFT JOIN inv_items i ON wi.item_id = i.id
        WHERE wi.waste_id = ?`, [req.params.id]);
+    // (catch below no longer answers [] — see the end of this handler.)
     res.json(rows.map(l => ({
       id: l.id, itemId: l.item_id, itemName: l.item_name || '', sku: l.sku || '',
       quantity: Number(l.quantity), unit: l.unit, unitCost: Number(l.unit_cost),
       lineCost: Number(l.line_cost)
     })));
-  } catch(e) { res.json([]); }
+  } catch (e) {
+    // v4 — was `res.json([])`: a DB fault rendered as "this waste entry has no
+    // lines", which is indistinguishable from a real (impossible) empty entry.
+    console.error('[erp/waste-entries/:id/items] failed:', e && (e.code || e.message));
+    res.status(500).json({ success: false, error: 'تعذّر تحميل أصناف الهدر' });
+  }
 });
 
 // ═══════════════════════════════════════

@@ -5,6 +5,7 @@
 // react-query surfaces through <ErrorState>.
 
 import { apiClient } from "@/shared/api";
+import type { OrgEmployee } from "./orgTree";
 import type {
   Advance,
   AttendanceRow,
@@ -25,6 +26,7 @@ import type {
   MyLeaveBalance,
   MyLeaveRequestRow,
   MyProfile,
+  OrgEmployeeUpdate,
   OvertimeEntry,
   OvertimeRule,
   Shift,
@@ -210,4 +212,23 @@ export const peopleApi = {
 
   myLeaveRequests: (signal?: AbortSignal) =>
     apiClient.get<unknown>("/hr/my-leave-requests", { signal }).then(ensureArray<MyLeaveRequestRow>),
+};
+
+// ── Org chart (v4) ───────────────────────────────────────────────────────────
+// GET/PUT /workflow/org-tree. These live under /workflow because the manager
+// chain and the can_*_txn flags are the workflow engine's routing inputs — but
+// the screen is a People screen, so the hooks live here.
+//
+// Guarded since v4 (workflow.view / workflow.manage). Before that the endpoint
+// was unauthenticated: a tokenless GET returned the whole staff directory.
+export const orgTreeApi = {
+  /** NOTE: answers a BARE ARRAY — no {success} envelope, unlike the PUT beside it. */
+  list: (signal?: AbortSignal) =>
+    apiClient.get<unknown>("/workflow/org-tree", { signal }).then(ensureArray<OrgEmployee>),
+
+  /** PARTIAL update — send only what changed; the server sets only the keys present. */
+  update: (employeeId: string, body: OrgEmployeeUpdate) =>
+    apiClient
+      .put<{ success: boolean; error?: string }>(`/workflow/org-tree/${employeeId}`, body)
+      .then(ensureOk),
 };

@@ -142,6 +142,8 @@ export const ALL_CAPS = [
   // ── Accounting (new) ──
   "accounting.view",
   "accounting.journals.view",
+  "workflow.view",
+  "workflow.manage",
   "accounting.periods.view",
   "accounting.periods.manage",
   "accounting.reports.view",

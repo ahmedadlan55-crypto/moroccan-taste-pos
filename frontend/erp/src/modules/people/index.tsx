@@ -14,6 +14,7 @@ import { ShiftsPage } from "./pages/ShiftsPage";
 import { LeavesPage } from "./pages/LeavesPage";
 import { ContractsPage } from "./pages/ContractsPage";
 import { PayrollPage } from "./pages/PayrollPage";
+import { OrgTreePage } from "./pages/OrgTreePage";
 import { CustodyPage } from "./pages/CustodyPage";
 import { SelfServicePage } from "./pages/SelfServicePage";
 
@@ -26,6 +27,7 @@ const PAGES: Record<string, ComponentType> = {
   "/people/leaves": LeavesPage,
   "/people/contracts": ContractsPage,
   "/people/payroll": PayrollPage,
+  "/people/org-tree": OrgTreePage,
   "/people/custody": CustodyPage,
   "/people/self-service": SelfServicePage,
 };

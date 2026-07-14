@@ -23,6 +23,7 @@ export const qk = {
   leaveRequests: (params?: unknown) => [...qk.all, "leave-requests", params ?? {}] as const,
   leaveTypes: () => [...qk.all, "leave-types"] as const,
 
+  orgTree: () => [...qk.all, "org-tree"] as const,
   custodies: () => [...qk.all, "custody", "list"] as const,
   custody: (id: string) => [...qk.all, "custody", "detail", id] as const,
   custodyExpenses: (params?: unknown) => [...qk.all, "custody", "expenses", params ?? {}] as const,

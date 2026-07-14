@@ -336,3 +336,14 @@ export interface MyLeaveRequestRow {
   status: string;
   reason?: string;
 }
+
+/** PARTIAL payload for PUT /workflow/org-tree/:id — only the keys present are
+ *  written. `managerId: null` clears the manager; omitting it leaves it alone. */
+export interface OrgEmployeeUpdate {
+  managerId?: string | null;
+  workflowLevel?: number;
+  permissions?: Partial<{
+    create: boolean; approve: boolean; reject: boolean;
+    return: boolean; forward: boolean; close: boolean;
+  }>;
+}

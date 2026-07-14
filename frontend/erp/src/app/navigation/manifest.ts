@@ -153,6 +153,7 @@ export const NAV: NavGroup[] = [
       { id: "pe-leaves", path: "/people/leaves", label: "الإجازات", icon: "Plane", cap: "people.leaves.view", module: "people" },
       { id: "pe-contracts", path: "/people/contracts", label: "العقود", icon: "FileSignature", cap: "people.contracts.view", module: "people" },
       { id: "pe-payroll", path: "/people/payroll", label: "الرواتب", icon: "Banknote", cap: "people.payroll.view", module: "people" },
+      { id: "pe-org-tree", path: "/people/org-tree", label: "الهيكل الإداري", icon: "Network", cap: "workflow.view", module: "people" },
       { id: "pe-custody", path: "/people/custody", label: "العهد والمستندات", icon: "Briefcase", cap: "people.custody.view", module: "people" },
       { id: "pe-self-service", path: "/people/self-service", label: "الخدمة الذاتية", icon: "UserCircle", cap: "people.selfservice.view", module: "people" },
     ],

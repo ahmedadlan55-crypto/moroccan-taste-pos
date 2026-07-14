@@ -144,6 +144,17 @@ export const ROLE_GRANTS: Record<Capability, readonly Role[]> = {
   "inventory.stocktakes.view": READ_OPS,
   // ── Accounting ──
   "accounting.view": FIN,
+  // Reading the org chart is normal operational context (the workflow inbox and
+  // the forward-to picker need it); EDITING it grants approval rights, so it is
+  // narrower. Mirrors the server-side grants seeded in server.js.
+  // Mirrors the server grants seeded in server.js for every role this union
+  // models — a cashier is denied 403 by requireCapability('workflow.view'), so
+  // showing them the nav item would just link to a permission error.
+  // NB: the server also grants both to the 'hr' role, which this Role union does
+  // not model (pre-existing — no live user holds it). Add it here if 'hr' is ever
+  // added to @/app/permissions/catalog.
+  "workflow.view": [...MGR, "accountant", "finance", "employee"],
+  "workflow.manage": [...ADM, "manager"],
   "accounting.journals.view": FIN,
   // Auditors may read the period register; closing/reopening posts and reverses
   // closing entries, so managing it is narrower than reading it.

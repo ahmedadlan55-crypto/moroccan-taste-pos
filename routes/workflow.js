@@ -1014,7 +1014,12 @@ router.get('/org-tree', requireCapability('workflow.view'), async (req, res) => 
         return: !!e.can_return_txn, forward: !!e.can_forward_txn, close: !!e.can_close_txn
       }
     })));
-  } catch(e) { console.error('[wf]', req.method, req.path, '-> query failed:', e && e.message); res.json([]); }
+  } catch (e) {
+    // v4 — was `res.json([])`: a DB fault rendered as "this company has no
+    // employees" on a table holding 27 rows. Errors fail loudly now.
+    console.error('[wf] GET /org-tree failed:', e && (e.code || e.message));
+    res.status(500).json({ success: false, error: 'تعذّر تحميل الهيكل الإداري' });
+  }
 });
 
 /**

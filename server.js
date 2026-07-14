@@ -261,6 +261,13 @@ app.get('/pos/manifest.json', sendStaticAsset('pos/manifest.json', 'application/
 app.get('/pos/sw.js',         sendStaticAsset('pos/sw.js',         'application/javascript', { 'Service-Worker-Allowed': '/pos/' }));
 app.get('/pos/icons/:file',   sendIconFile('pos'));
 
+// Cutover (Closure Sprint v2): when ERP_DEFAULT_ENABLED is ON, "/" redirects to
+// the unified React app. Registered BEFORE express.static so the legacy index.html
+// doesn't shadow it. The legacy shell stays reachable at /legacy (see below).
+if (/^(1|true|on|yes)$/i.test(String(process.env.ERP_DEFAULT_ENABLED || '').trim())) {
+  app.get('/', function (req, res) { res.redirect(302, '/app/'); });
+}
+
 // Send no-cache for HTML + JS + CSS so users always get latest code
 // (CDN libs are not affected — they use their own versioned URLs)
 app.use(express.static(path.join(__dirname, 'public'), {
@@ -741,7 +748,8 @@ var ERP_DEFAULT_ENABLED = /^(1|true|on|yes)$/i.test(String(process.env.ERP_DEFAU
 if (ERP_DEFAULT_ENABLED) {
   app.get('/legacy',    sendProtectedApp('index.html'));
   app.get('/legacy/*',  sendProtectedApp('index.html'));
-  app.get('/', (req, res) => res.redirect(302, '/app/'));
+  // NB: the "/" → /app/ redirect is registered EARLIER (before express.static),
+  // because the legacy static mount would otherwise serve index.html for "/" first.
   console.log('[cutover] ERP_DEFAULT_ENABLED=1 — "/" → /app/, legacy at /legacy');
 }
 

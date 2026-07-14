@@ -27,15 +27,12 @@ const { nextDocNumber } = require('../lib/docNumber');
 // HELPERS
 // ═══════════════════════════════════════
 
-async function isPeriodClosed(date) {
-  if (!date) return false;
-  try {
-    const [r] = await db.query(
-      `SELECT status FROM accounting_periods
-       WHERE ? BETWEEN start_date AND end_date LIMIT 1`, [date]);
-    return r.length && r[0].status === 'closed';
-  } catch(e) { return false; }
-}
+// v4 — was a byte-identical copy of lib/glPosting.js's helper, and it had drifted
+// with the SAME two bugs: it compared status to the single literal 'closed' (the
+// enum has five values — 'locked'/'soft_close'/'soft_closed' all posted), and it
+// answered `false` on any DB error, so the swallow turned the period lock OFF
+// exactly when the DB was unhealthy. One implementation now, and it fails closed.
+const isPeriodClosed = (date) => gl.isPeriodClosed(db, date);
 
 function genId(prefix) {
   return prefix + '-' + Date.now() + '-' + Math.random().toString(36).substr(2, 4);
@@ -1284,13 +1281,20 @@ router.post('/accounting-periods/:id/reopen', async (req, res) => {
   } catch(e) { res.json({ success: false, error: e.message }); }
 });
 
-// Helper endpoint — check if a date falls in a closed period
+// Helper endpoint — check if a date falls in a closed period.
+// The catch used to answer `{closed:false}` — telling the caller the period is
+// OPEN when we had in fact failed to determine anything. isPeriodClosed already
+// fails closed internally; this now surfaces a real fault instead of a
+// reassuring lie.
 router.get('/period-status', async (req, res) => {
   try {
     const d = req.query.date;
     const closed = await isPeriodClosed(d);
     res.json({ date: d, closed });
-  } catch(e) { res.json({ closed: false }); }
+  } catch (e) {
+    console.error('[erp/period-status] failed:', e && (e.code || e.message));
+    res.status(500).json({ success: false, error: 'تعذّر التحقق من حالة الفترة' });
+  }
 });
 
 // ═══════════════════════════════════════

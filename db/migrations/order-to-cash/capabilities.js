@@ -40,6 +40,10 @@ const CAPS = [
   ['returns.approve',       1, 62, 'اعتماد مرتجع بيع',           'Approve sales return'],
   ['returns.post',          1, 63, 'ترحيل مرتجع بيع',            'Post sales return'],
   ['returns.reverse',       1, 64, 'عكس مرتجع بيع',              'Reverse sales return'],
+  // Cancel was guarded by returns.create, so a cashier could cancel a return a
+  // manager had already APPROVED — an approval-level act behind a create-level
+  // gate, against this file's own cashier rule.
+  ['returns.cancel',        1, 65, 'إلغاء مرتجع بيع',            'Cancel sales return'],
 ];
 
 // role → capability ids (admin handled by top-up)
@@ -67,14 +71,14 @@ const ROLE_GRANTS = {
     'invoices.view', 'invoices.create', 'invoices.issue',
     'credit.override',
     'payments.view', 'payments.create', 'payments.approve', 'payments.post', 'payments.reverse',
-    'returns.view', 'returns.approve', 'returns.post', 'returns.reverse',
+    'returns.view', 'returns.approve', 'returns.post', 'returns.reverse', 'returns.cancel',
   ],
   finance: [
     'o2c.view', 'o2c.dashboard.view', 'ar_reports.view', 'o2c.export', 'o2c.data_quality',
     'customers.view',
     'invoices.view', 'invoices.issue', 'credit.override',
     'payments.view', 'payments.approve', 'payments.post', 'payments.reverse',
-    'returns.approve', 'returns.post', 'returns.reverse',
+    'returns.approve', 'returns.post', 'returns.reverse', 'returns.cancel',
   ],
 };
 

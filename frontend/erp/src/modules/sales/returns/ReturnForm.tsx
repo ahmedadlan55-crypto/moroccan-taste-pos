@@ -14,6 +14,10 @@ export function ReturnForm({ open, onClose, onCreated, presetInvoiceId }: { open
   const [refund, setRefund] = useState("ar_reduction");
   const [reason, setReason] = useState("");
   const [qtys, setQtys] = useState<Record<string, number>>({});
+  // Off by default, per line. Only the person holding the item knows whether it
+  // can be sold again — a sealed drink can, the burger beside it cannot — and the
+  // safe default for a food business is that it cannot.
+  const [restock, setRestock] = useState<Record<string, boolean>>({});
 
   const invoiceId = presetInvoiceId || picked?.id;
   const detail = useQuery({
@@ -24,12 +28,17 @@ export function ReturnForm({ open, onClose, onCreated, presetInvoiceId }: { open
 
   const lines = detail.data?.lines ?? [];
   const selected = lines.filter((l) => (qtys[l.id] ?? 0) > 0);
+  // What is actually still returnable. The server enforces this (OVER_RETURN);
+  // the form used to cap at the full sold qty, so it invited a request it knew
+  // the server would refuse.
+  const remainingOf = (l: { entered_qty: number; returned_qty?: number | null }) =>
+    Math.max(0, Number(l.entered_qty) - Number(l.returned_qty ?? 0));
 
   const mutation = useMutation({
     mutationFn: () => o2cApi.createReturn({
       originalArDocumentId: invoiceId,
       returnDate: date, refundMethod: refund, reason: reason || undefined,
-      lines: selected.map((l) => ({ originalLineId: l.id, returnQty: qtys[l.id] })),
+      lines: selected.map((l) => ({ originalLineId: l.id, returnQty: qtys[l.id], restock: !!restock[l.id] })),
     }),
     onSuccess: (res) => {
       qc.invalidateQueries({ queryKey: qk.all });
@@ -78,24 +87,48 @@ export function ReturnForm({ open, onClose, onCreated, presetInvoiceId }: { open
               <p className="text-xs font-semibold text-slate-400">لا توجد أسطر.</p>
             ) : (
               <div className="flex flex-col gap-2">
-                {lines.map((l) => (
-                  <div key={l.id} className="grid grid-cols-12 items-center gap-2 rounded-xl bg-slate-50 px-3 py-2">
-                    <span className="col-span-6 truncate text-sm font-bold text-slate-700">{l.description || "—"}</span>
-                    <span className="col-span-2 text-xs text-slate-500">مباع: <Num value={l.entered_qty} /></span>
-                    <span className="col-span-2 text-xs text-slate-500"><Money value={l.unit_price} /></span>
-                    <input
-                      dir="ltr" type="number" step="0.01" min={0} max={Number(l.entered_qty)}
-                      className="field col-span-2 w-full tabular-nums"
-                      placeholder="كمية"
-                      aria-label={`كمية إرجاع ${l.description || l.id}`}
-                      value={qtys[l.id] || ""}
-                      onChange={(e) => {
-                        const v = Math.max(0, Math.min(Number(e.target.value) || 0, Number(l.entered_qty)));
-                        setQtys((s) => ({ ...s, [l.id]: v }));
-                      }}
-                    />
-                  </div>
-                ))}
+                {lines.map((l) => {
+                  const remaining = remainingOf(l);
+                  const chosen = qtys[l.id] ?? 0;
+                  return (
+                    <div key={l.id} className="rounded-xl bg-slate-50 px-3 py-2">
+                      <div className="grid grid-cols-12 items-center gap-2">
+                        <span className="col-span-6 truncate text-sm font-bold text-slate-700">{l.description || "—"}</span>
+                        <span className="col-span-2 text-xs text-slate-500">متاح: <Num value={remaining} /></span>
+                        <span className="col-span-2 text-xs text-slate-500"><Money value={l.unit_price} /></span>
+                        <input
+                          dir="ltr" type="number" step="0.01" min={0} max={remaining}
+                          disabled={remaining <= 0}
+                          className="field col-span-2 w-full tabular-nums"
+                          placeholder="كمية"
+                          aria-label={`كمية إرجاع ${l.description || l.id}`}
+                          value={qtys[l.id] || ""}
+                          onChange={(e) => {
+                            const v = Math.max(0, Math.min(Number(e.target.value) || 0, remaining));
+                            setQtys((s) => ({ ...s, [l.id]: v }));
+                          }}
+                        />
+                      </div>
+                      {chosen > 0 && (
+                        <label className="mt-2 flex cursor-pointer items-center gap-2">
+                          <input
+                            type="checkbox"
+                            checked={!!restock[l.id]}
+                            onChange={(e) => setRestock((s) => ({ ...s, [l.id]: e.target.checked }))}
+                            aria-label={`إعادة ${l.description || l.id} للمخزون`}
+                          />
+                          <span className="text-xs font-bold text-slate-600">إعادة للمخزون</span>
+                          <span className="text-[11px] font-semibold text-slate-400">
+                            {restock[l.id]
+                              ? "ستُعاد مكوّنات هذا الصنف للمخزون وتُعكس تكلفتها."
+                              : "لن يتغيّر المخزون ولا التكلفة — الإشعار الدائن فقط."}
+                          </span>
+                        </label>
+                      )}
+                      {remaining <= 0 && <p className="mt-1 text-[11px] font-semibold text-slate-400">أُرجع هذا السطر بالكامل.</p>}
+                    </div>
+                  );
+                })}
               </div>
             )}
           </div>

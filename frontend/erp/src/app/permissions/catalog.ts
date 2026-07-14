@@ -114,6 +114,7 @@ export const ALL_CAPS = [
   "returns.approve",
   "returns.post",
   "returns.reverse",
+  "returns.cancel",
   // ── Overview / home (new) ──
   "overview.view",
   "overview.tasks.view",

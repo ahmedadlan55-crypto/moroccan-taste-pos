@@ -114,6 +114,11 @@ export const ROLE_GRANTS: Record<Capability, readonly Role[]> = {
   "returns.approve": FIN,
   "returns.post": FIN,
   "returns.reverse": FIN,
+  // Cancelling voids a return a manager may already have approved, so it sits with
+  // approve — not with create. Mirrors the server grant seeded in
+  // db/migrations/order-to-cash/capabilities.js: a cashier is denied 403, so
+  // showing them the button would only produce a permission error.
+  "returns.cancel": FIN,
   // ── Overview / home ──
   "overview.view": EVERYONE,
   "overview.tasks.view": EVERYONE,

@@ -234,6 +234,13 @@ async function fixtures() {
     const postDraft = await call('POST', `/api/order-to-cash/returns/${RET}/post`, manager, {});
     check('even a manager cannot post a DRAFT — approve comes first', postDraft.status >= 400, postDraft.body);
     check('  …and it is still draft', (await retStatus(RET)) === 'draft');
+    // cancel used to be guarded by returns.create, so a cashier could cancel a
+    // return a manager had already approved.
+    const cashCancel = await call('POST', `/api/order-to-cash/returns/${RET}/cancel`, cashier, {});
+    check('cashier is DENIED cancel (403) — it was allowed via returns.create', cashCancel.status === 403, cashCancel.body);
+    check('  …and the return genuinely still exists as draft', (await retStatus(RET)) === 'draft');
+    const [capRow] = await db.query("SELECT COUNT(*) c FROM role_permissions WHERE role='cashier' AND permission_id='returns.cancel'");
+    check('  …the server does not grant cashier returns.cancel (UI mirrors this)', Number(capRow[0].c) === 0);
 
     // ── approve → post ───────────────────────────────────────────────────────
     console.log('\n▶ approve → post (manager)');
@@ -319,6 +326,16 @@ async function fixtures() {
     check('returning 2 more of a line where 1 of 2 is already returned is REJECTED', dbl.status >= 400, dbl.body);
     const ok2 = await call('POST', '/api/order-to-cash/returns', cashier, mkBody([{ originalLineId: LINE_A, returnQty: 1, restock: true }]));
     check('  …but the remaining 1 IS allowed (a real success, not just a refusal)', ok2.status === 201, ok2.body);
+
+    // The form can only offer the right max if the invoice publishes it. It didn't:
+    // the server bounded returns by (sold − returned) and never exposed `returned`,
+    // so the form capped at the full sold qty and invited a doomed request.
+    const invDetail = await call('GET', `/api/order-to-cash/invoices/${INV}`, manager);
+    const aLine = (invDetail.body?.data?.lines || []).find((l) => l.id === LINE_A);
+    check('the invoice now publishes returned_qty per line', aLine && aLine.returned_qty != null, aLine && Object.keys(aLine || {}).length);
+    check('  …and it equals what really went back (1 + 1 = 2 of 2)', aLine && Number(aLine.returned_qty) === 2, aLine && aLine.returned_qty);
+    const bLine = (invDetail.body?.data?.lines || []).find((l) => l.id === LINE_B);
+    check('  …the no_restock line still counts as returned (money moved, stock did not)', bLine && Number(bLine.returned_qty) === 2, bLine && bLine.returned_qty);
 
     // ── reverse ──────────────────────────────────────────────────────────────
     console.log('\n▶ reverse');

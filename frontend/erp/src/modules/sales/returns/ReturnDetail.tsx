@@ -1,11 +1,12 @@
 import { useNavigate } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { ArrowRight, CheckCircle2, Send, Undo2, XCircle } from "lucide-react";
-import { Button, PageHeader, LoadingState, ErrorState, safeUserMessage } from "@/shared/ui";
+import { ArrowRight, CheckCircle2, PackageCheck, PackageX, Send, Undo2, XCircle } from "lucide-react";
+import { Button, PageHeader, PanelTitle, LoadingState, ErrorState, StatusBadge, safeUserMessage } from "@/shared/ui";
 import { useCan } from "@/app/providers";
 import { o2cApi, qk, SalesStatus, Money, Num, DateCell, Info } from "@/modules/sales/lib";
 
 const REFUND_LABEL: Record<string, string> = { ar_reduction: "تخفيض ذمم", cash: "نقدي", bank: "بنكي", customer_deposit: "رصيد دائن للعميل" };
+const ZATCA_LABEL: Record<string, string> = { pending: "بانتظار الإرسال", submitted: "مُرسَل", accepted: "مقبول", rejected: "مرفوض", not_required: "غير مطلوب" };
 
 export function ReturnDetail({ id, onBack }: { id: string; onBack: () => void }) {
   const nav = useNavigate();
@@ -13,6 +14,7 @@ export function ReturnDetail({ id, onBack }: { id: string; onBack: () => void })
   const canApprove = useCan("returns.approve");
   const canPost = useCan("returns.post");
   const canReverse = useCan("returns.reverse");
+  const canCancel = useCan("returns.cancel");
 
   const q = useQuery({ queryKey: qk.return(id), queryFn: ({ signal }) => o2cApi.salesReturn(id, signal).then((r) => r.data), enabled: !!id });
   const version = q.data?.version;
@@ -40,7 +42,7 @@ export function ReturnDetail({ id, onBack }: { id: string; onBack: () => void })
             {r.status === "draft" && canApprove && <Button onClick={() => approve.mutate()} disabled={busy}><CheckCircle2 className="h-4 w-4" /> اعتماد</Button>}
             {r.status === "approved" && canPost && <Button onClick={() => post.mutate()} disabled={busy}><Send className="h-4 w-4" /> ترحيل</Button>}
             {r.status === "posted" && canReverse && <Button variant="danger" onClick={() => reverse.mutate()} disabled={busy}><Undo2 className="h-4 w-4" /> عكس</Button>}
-            {(r.status === "draft" || r.status === "approved") && <Button variant="ghost" onClick={() => cancel.mutate()} disabled={busy}><XCircle className="h-4 w-4" /> إلغاء</Button>}
+            {(r.status === "draft" || r.status === "approved") && canCancel && <Button variant="ghost" onClick={() => cancel.mutate()} disabled={busy}><XCircle className="h-4 w-4" /> إلغاء</Button>}
           </div>
         }
       />
@@ -54,8 +56,84 @@ export function ReturnDetail({ id, onBack }: { id: string; onBack: () => void })
         <Info label="الإجمالي" value={<Money value={r.total_amount} />} />
         <Info label="طريقة الرد" value={REFUND_LABEL[r.refund_method] || r.refund_method} />
         <Info label="الفاتورة الأصلية" value={r.original_ar_document_id ? <button type="button" onClick={() => nav(`/sales/invoices?doc=${r.original_ar_document_id}`)} className="text-xs text-teal-700 hover:underline">عرض</button> : "—"} />
-        <Info label="إشعار دائن" value={r.credit_note_id ? <span dir="ltr" className="text-xs tabular-nums">{r.credit_note_id}</span> : "—"} />
+        <Info label="إشعار دائن" value={r.creditNote?.document_number ? <span dir="ltr" className="text-xs tabular-nums">{r.creditNote.document_number}</span> : "—"} />
       </div>
+
+      {/* The credit note is the whole point of posting; the screen used to show
+          only its raw id, so nothing told the user whether it was ZATCA-stamped. */}
+      {r.creditNote && (
+        <section className="section surface mt-4">
+          <PanelTitle title="الإشعار الدائن" subtitle="مستند ضريبي من نوع 381" />
+          <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+            <Info label="الرقم" value={<span dir="ltr" className="tabular-nums">{r.creditNote.document_number}</span>} />
+            <Info label="الإجمالي" value={<Money value={r.creditNote.total_amount} />} />
+            <Info label="حالة ZATCA" value={<StatusBadge dot>{ZATCA_LABEL[r.creditNote.zatca_status] || r.creditNote.zatca_status}</StatusBadge>} />
+            <Info label="مُعرّف ZATCA" value={r.creditNote.zatca_uuid ? <span dir="ltr" className="text-[10px] tabular-nums">{r.creditNote.zatca_uuid}</span> : "—"} />
+          </div>
+          {r.creditNote.zatca_qr_base64 ? (
+            <p className="mt-3 text-xs font-semibold text-slate-500">رمز الاستجابة السريعة مختوم ومحفوظ مع المستند.</p>
+          ) : (
+            <p className="mt-3 text-xs font-semibold text-amber-700">لا يوجد رمز مختوم لهذا المستند.</p>
+          )}
+        </section>
+      )}
+
+      {/* Lines were never rendered at all. Without them the user cannot see WHAT
+          was returned, and — the point of this screen — what went back on the shelf. */}
+      <section className="section surface mt-4">
+        <PanelTitle title="أسطر المرتجع" subtitle="ما أُرجع، وما عاد للمخزون فعلًا" />
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="border-b border-slate-200 text-right text-xs font-extrabold text-slate-500">
+                <th className="py-2">الصنف</th>
+                <th className="py-2">مباع</th>
+                <th className="py-2">مُرجَع</th>
+                <th className="py-2">الصافي</th>
+                <th className="py-2">الضريبة</th>
+                <th className="py-2">المخزون</th>
+              </tr>
+            </thead>
+            <tbody>
+              {(r.lines ?? []).map((l) => {
+                const restock = Number(l.restock) === 1;
+                return (
+                  <tr key={l.id} className="border-b border-slate-100 align-top">
+                    <td className="py-2 font-bold text-slate-700">
+                      {l.description || "—"}
+                      {/* A menu line names a burger; the shelf saw bun + patty. */}
+                      {restock && (l.components?.length ?? 0) > 0 && (
+                        <ul className="mt-1 space-y-0.5">
+                          {l.components!.map((c) => (
+                            <li key={c.id} className="text-[11px] font-semibold text-slate-400">
+                              ↳ {c.inv_item_name || c.inv_item_id} — <Num value={c.restored_base_qty} /> {c.unit_code || ""}
+                            </li>
+                          ))}
+                        </ul>
+                      )}
+                    </td>
+                    <td className="py-2 tabular-nums text-slate-500"><Num value={l.sold_qty} /></td>
+                    <td className="py-2 tabular-nums font-bold text-slate-700"><Num value={l.return_qty} /></td>
+                    <td className="py-2 tabular-nums text-slate-600"><Money value={l.net_amount} /></td>
+                    <td className="py-2 tabular-nums text-slate-600"><Money value={l.vat_amount} /></td>
+                    <td className="py-2">
+                      {restock ? (
+                        <span className="inline-flex items-center gap-1 text-xs font-bold text-teal-700"><PackageCheck className="h-3.5 w-3.5" /> يعود للمخزون</span>
+                      ) : (
+                        <span className="inline-flex items-center gap-1 text-xs font-bold text-slate-400"><PackageX className="h-3.5 w-3.5" /> لا يعود</span>
+                      )}
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+        <p className="mt-3 text-xs font-semibold text-slate-400">
+          تكلفة المستند <Money value={r.cost_total} /> — يُعكس منها في المحاسبة فقط ما عاد للمخزون فعلًا.
+        </p>
+      </section>
+
       <p className="mt-3 text-left text-xs font-semibold text-slate-400">النسخة: <Num value={r.version} /></p>
     </div>
   );

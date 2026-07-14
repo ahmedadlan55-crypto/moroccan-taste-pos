@@ -88,6 +88,10 @@ export interface InvoiceLine {
   id: string;
   description?: string | null;
   entered_qty: number;
+  /** Already returned across non-cancelled/non-reversed returns. The server bounds
+   *  new returns by entered_qty − this (OVER_RETURN); a return form must use the
+   *  same number or it will offer a quantity the server refuses. */
+  returned_qty?: number;
   base_qty: number;
   unit_price: number;
   discount_amount: number;
@@ -139,6 +143,56 @@ export interface SalesOrder {
   timeline?: TimelineEvent[];
 }
 
+/** One inv_item the return puts back on the shelf. A POS line sells a menu item;
+ *  these are the recipe components that actually left stock, snapshotted at
+ *  checkout and scaled to the returned fraction. */
+export interface SalesReturnLineComponent {
+  id: string;
+  return_line_id: string;
+  component_seq: number;
+  source: "recipe" | "semi" | "imported" | "combo";
+  inv_item_id?: string | null;
+  inv_item_name?: string | null;
+  warehouse_id?: string | null;
+  restored_base_qty: number;
+  unit_code?: string | null;
+  total_cost: number;
+}
+
+export interface SalesReturnLine {
+  id: string;
+  original_line_id?: string | null;
+  item_id?: string | null;
+  menu_id?: string | null;
+  description?: string | null;
+  sold_qty: number;
+  previously_returned_qty: number;
+  return_qty: number;
+  vat_category: string;
+  vat_rate?: number | null;
+  net_amount: number;
+  vat_amount: number;
+  gross_amount: number;
+  cost_snapshot: number;
+  warehouse_id?: string | null;
+  /** 1 = the goods physically come back. Per-line: a sealed drink is restockable,
+   *  the identical-priced burger beside it is not. */
+  restock: number;
+  components?: SalesReturnLineComponent[];
+}
+
+/** The Type-381 document a posted return produces. */
+export interface SalesReturnCreditNote {
+  id: string;
+  document_number: string;
+  issue_date: string;
+  total_amount: number;
+  status: string;
+  zatca_status: string;
+  zatca_uuid?: string | null;
+  zatca_qr_base64?: string | null;
+}
+
 export interface SalesReturn {
   id: string;
   return_number: string;
@@ -149,11 +203,15 @@ export interface SalesReturn {
   subtotal: number;
   vat_amount: number;
   total_amount: number;
+  /** The document's proportional cost. NOT what reverses in the GL — only the
+   *  restocked components do that. */
+  cost_total: number;
   refund_method: string;
   status: string;
   credit_note_id?: string | null;
   version: number;
-  lines?: unknown[];
+  lines?: SalesReturnLine[];
+  creditNote?: SalesReturnCreditNote | null;
 }
 
 export interface TimelineEvent {

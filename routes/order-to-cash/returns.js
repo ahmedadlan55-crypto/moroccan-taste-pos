@@ -63,7 +63,7 @@ router.post('/:id/reverse', requireCapability('returns.reverse'), async (req, re
   } catch (e) { return H.sendErr(res, e); }
 });
 
-router.post('/:id/cancel', requireCapability('returns.create'), async (req, res) => {
+router.post('/:id/cancel', requireCapability('returns.cancel'), async (req, res) => {
   try {
     const r = await ReturnService.cancel(req.params.id, _ctx(req));
     return H.sendOk(res, { data: { id: req.params.id }, documentNumber: r.row.return_number, status: r.toStatus, version: r.newVersion });

@@ -269,7 +269,21 @@ async function getWithLines(conn, id) {
   const [rows] = await conn.query('SELECT * FROM ar_documents WHERE id = ? LIMIT 1', [id]);
   if (!rows.length) throw err('NOT_FOUND', 'الفاتورة غير موجودة');
   const [lines] = await conn.query('SELECT * FROM ar_document_lines WHERE document_id = ? ORDER BY id', [id]);
-  return Object.assign({}, rows[0], { lines });
+  // How much of each line has already gone back. SalesReturnService.create bounds
+  // return_qty by exactly this (OVER_RETURN) but never published it, so a return
+  // form could only cap at the full sold qty and invite a request the server was
+  // always going to refuse. Same query, same statuses — client and server agree
+  // by construction rather than by coincidence.
+  const [prev] = await conn.query(
+    `SELECT srl.original_line_id, COALESCE(SUM(srl.return_qty), 0) AS returned
+       FROM sales_return_lines srl JOIN sales_returns sr ON sr.id = srl.return_id
+      WHERE sr.original_ar_document_id = ? AND sr.status NOT IN ('cancelled','reversed')
+      GROUP BY srl.original_line_id`, [id]);
+  const returnedBy = {};
+  prev.forEach((r) => { returnedBy[r.original_line_id] = Number(r.returned); });
+  return Object.assign({}, rows[0], {
+    lines: lines.map((l) => Object.assign({}, l, { returned_qty: returnedBy[l.id] || 0 })),
+  });
 }
 
 const SORTABLE = { issueDate: 'issue_date', total: 'total_amount', dueDate: 'due_date', status: 'status', number: 'document_number' };

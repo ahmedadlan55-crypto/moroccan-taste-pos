@@ -12,7 +12,9 @@ import {
 } from "@/shared/ui";
 import { DataTable, type ColumnDef } from "@/shared/tables";
 import { formatCurrency, formatDate } from "@/shared/lib";
-import { asArray, DeferredNote } from "../_common";
+import { asArray } from "../_common";
+import { ZatcaOnboardingWizard } from "../zatca/OnboardingWizard";
+import { useZatcaStatus } from "../zatca/api";
 
 interface VatReport {
   id: string;
@@ -24,17 +26,6 @@ interface VatReport {
   status: string;
   createdBy: string;
 }
-interface ZatcaStatus {
-  success?: boolean;
-  csidStatus: string;
-  csidObtainedAt: string | null;
-  requestId: string | null;
-  sellerName: string;
-  sellerVat: string;
-  lastSubmittedAt: string | null;
-  queueStats: { pending?: number; running?: number; done?: number; failed?: number };
-}
-
 const VAT_STATUS_AR: Record<string, string> = {
   submitted: "مُرسل",
   closed: "مغلق",
@@ -45,6 +36,7 @@ const CSID_AR: Record<string, string> = {
   none: "غير مُفعّل",
   compliance: "امتثال (تجريبي)",
   production: "إنتاج (مُفعّل)",
+  revoked: "مُبطلة",
 };
 
 function VatReportsTab() {
@@ -110,17 +102,15 @@ function VatReportsTab() {
 }
 
 function ZatcaTab() {
-  const query = useQuery({
-    queryKey: ["erp", "zatca-status"],
-    queryFn: ({ signal }) => apiClient.get<ZatcaStatus>("/erp/zatca/status", { signal }),
-  });
+  const query = useZatcaStatus();
 
   if (query.isLoading) return <LoadingState />;
   if (query.error) return <ErrorState error={query.error} onRetry={() => query.refetch()} />;
 
   const s = query.data;
-  const q = s?.queueStats ?? {};
-  const csid = s?.csidStatus ?? "none";
+  if (!s) return null;
+  const q = s.queueStats ?? {};
+  const csid = s.csidStatus ?? "none";
   const active = csid === "production";
 
   const stat = (label: string, value: string | number, tone?: "success" | "warning" | "danger") => (
@@ -159,11 +149,7 @@ function ZatcaTab() {
         {stat("فشل", q.failed ?? 0, (q.failed ?? 0) > 0 ? "danger" : undefined)}
       </div>
 
-      <DeferredNote
-        eyebrow="ZATCA"
-        title="تهيئة الربط (المرحلة الثانية)"
-        body="خطوات التسجيل والحصول على شهادة الامتثال والإنتاج (Onboarding Phase 2) ما تزال تُدار من النظام الأصلي."
-      />
+      <ZatcaOnboardingWizard status={s} />
     </div>
   );
 }

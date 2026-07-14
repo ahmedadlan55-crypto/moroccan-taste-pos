@@ -338,6 +338,53 @@ async function apply(db, log = () => {}) {
       ) al ON al.customer_id ${C} = c.id ${C}
   `, log, 'view v_customer_ar_balance');
 
+  // ── 10. eager POS→O2C line projection (additive; ar_document_lines EXISTS)
+  // These MUST be addColumn/addIndex, not edits to the CREATE TABLE above:
+  // H.createTable returns early when the table exists and never diffs columns,
+  // so a CREATE-block edit is a silent no-op on every non-empty database.
+  if (await H.tableExists(db, 'ar_document_lines')) {
+    // Which version of the allocation algorithm produced this row's snapshot.
+    // Line-grained because the algorithm is per-line: a future repair needs to
+    // tell a v1 row from a v2 one without re-deriving it.
+    await H.addColumn(db, 'ar_document_lines', 'projection_version', 'SMALLINT NOT NULL DEFAULT 1', log);
+    // The replay guard for the projection. NOTE: this protects nothing while
+    // source_line_id is NULL — MySQL treats NULLs as distinct — so the
+    // projection must always populate it. Every pre-existing row is NULL
+    // (manual invoices, which the POS path never touches), and NULLs cannot
+    // collide, so building this on an existing table is safe.
+    await H.addIndex(db, 'ar_document_lines', 'uq_arl_doc_srcline', 'document_id, source_line_id', { unique: true }, log);
+  }
+
+  // Per-line inventory component snapshot. A POS menu line explodes into N
+  // recipe deductions, so reversing it needs the ORIGINAL components — the
+  // recipe itself may have been reformulated by the time a return is filed,
+  // and re-reading it then would restock quantities that were never deducted.
+  // Kept as queryable rows rather than following the ar_document_lines
+  // .lot_allocations_json TEXT-blob convention, because the return path has to
+  // aggregate cost and quantity per component.
+  await H.createTable(db, 'ar_document_line_components', `
+    CREATE TABLE ar_document_line_components (
+      id ${ID} PRIMARY KEY,
+      document_id ${ID} NOT NULL,
+      document_line_id ${ID} NOT NULL,
+      component_seq INT NOT NULL,
+      source ENUM('recipe','semi','imported','combo') NOT NULL DEFAULT 'recipe',
+      inv_item_id ${ID} NULL,
+      inv_item_name VARCHAR(200) NULL,
+      warehouse_id ${ID} NULL,
+      deducted_base_qty ${QTY} NOT NULL DEFAULT 0,
+      unit_code VARCHAR(32) NULL,
+      conversion_factor ${RATE} NULL,
+      unit_cost_snapshot ${RATE} NOT NULL DEFAULT 0,
+      total_cost ${MONEY} NOT NULL DEFAULT 0,
+      projection_version SMALLINT NOT NULL DEFAULT 1,
+      created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      UNIQUE KEY uq_arlc_line_seq (document_line_id, component_seq),
+      KEY ix_arlc_doc (document_id),
+      KEY ix_arlc_line (document_line_id),
+      KEY ix_arlc_item (inv_item_id)
+    ) ${TBL}`, log);
+
   return true;
 }
 

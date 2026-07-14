@@ -9,6 +9,11 @@ const { recomputeInvItemStock, recomputeMenuStock, deductWarehouseStock } = requ
 // v6.20.0 — Central tax math.  Honors per-item is_tax_inclusive + reads
 // the live VAT rate from settings (not ENV anymore).
 const pricing = require('../lib/pricing');
+// v7.4 — integer-halala allocation for the eager POS→O2C line projection.
+// Pure; fits per-line snapshots to the header figures this route records.
+const alloc = require('../lib/order-to-cash/lineAllocation');
+const InvoiceService = require('../services/order-to-cash/InvoiceService');
+const o2cConfig = require('../lib/order-to-cash/config');
 // v6.11.0 — Human-readable invoice / void / return numbering. Helpers
 // tolerate missing schema columns and return null silently so this
 // require stays safe on deploys that haven't run migration 0002 yet.
@@ -489,7 +494,12 @@ router.post('/', async (req, res) => {
     //         amount (owner's v6.20.0 requirement).
     const taxSubtotals = {};
     let grandNet = 0, grandVat = 0;
-    items.forEach(it => {
+    // v7.4 — retain each line's PRE-discount split for the O2C projection.
+    // These were computed and thrown away into the accumulators below; the
+    // projection needs them as the allocation weights, and they are the only
+    // per-line tax figures the sale ever produces.
+    const _lineTax = [];
+    items.forEach((it, lineIdx) => {
       const meta = _taxMeta[it.id] || { cat: 'S', inclusive: true };
       const cat = meta.cat;
       const isIncl = meta.inclusive;
@@ -500,6 +510,12 @@ router.post('/', async (req, res) => {
       const split = pricing.splitLinePrice(unitPrice, isIncl, rate);
       const lineNet = Math.round(split.net * qty * 100) / 100;
       const lineVat = Math.round(split.vat * qty * 100) / 100;
+      _lineTax.push({
+        sourceLineId: 'L' + lineIdx, lineIdx,
+        menuId: it.id || null, name: it.name || null,
+        qty, unitPrice, cat, rate, inclusive: isIncl,
+        net: lineNet, vat: lineVat,
+      });
       grandNet += lineNet;
       grandVat += lineVat;
       if (!taxSubtotals[cat]) taxSubtotals[cat] = { net: 0, vat: 0, rate };
@@ -534,6 +550,13 @@ router.post('/', async (req, res) => {
     const grossAfterLine     = Math.round((grossSubtotal - lineDiscCapped) * 100) / 100;
     const invDiscCapped      = Math.min(invoiceDiscountGross, grossAfterLine);
     const grossAfterDiscount = Math.round((grossAfterLine - invDiscCapped) * 100) / 100;
+    // v7.4 — the discount ACTUALLY applied to this sale. `discountAmount` from
+    // the body is neither: it is the invoice discount only (line discounts were
+    // never recorded at all) and it is uncapped, so whenever the cap bit, the
+    // stored value could not be reconciled against total_final. This is the
+    // figure the sale row and the AR header both persist, and the one the line
+    // allocations must sum to.
+    const appliedDiscountTotal = Math.round((lineDiscCapped + invDiscCapped) * 100) / 100;
     // ONE ratio scales NET and VAT together (gross-proportional). A
     // zero-rated bucket (vat already 0) stays 0, and the VAT-factor skew the
     // old net-space discount caused is gone.
@@ -744,10 +767,10 @@ router.post('/', async (req, res) => {
     try {
       if (clientOrderId) {
         await db.query('INSERT INTO sales (id, order_date, items_json, total_final, payment_method, username, shift_id, discount_name, discount_amount, kita_service_fee, client_order_id, brand_id, branch_id, receipt_identity_id) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)',
-          [orderId, now, JSON.stringify(items), invTotal, payStr, username, shiftId, discountName || '', discountAmount || 0, kitaServiceFee || 0, clientOrderId, saleBrandId, saleBranchId, receiptIdentityId]);
+          [orderId, now, JSON.stringify(items), invTotal, payStr, username, shiftId, discountName || '', appliedDiscountTotal, kitaServiceFee || 0, clientOrderId, saleBrandId, saleBranchId, receiptIdentityId]);
       } else {
         await db.query('INSERT INTO sales (id, order_date, items_json, total_final, payment_method, username, shift_id, discount_name, discount_amount, kita_service_fee, brand_id, branch_id, receipt_identity_id) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)',
-          [orderId, now, JSON.stringify(items), invTotal, payStr, username, shiftId, discountName || '', discountAmount || 0, kitaServiceFee || 0, saleBrandId, saleBranchId, receiptIdentityId]);
+          [orderId, now, JSON.stringify(items), invTotal, payStr, username, shiftId, discountName || '', appliedDiscountTotal, kitaServiceFee || 0, saleBrandId, saleBranchId, receiptIdentityId]);
       }
     } catch (insErr) {
       if (insErr && insErr.code === 'ER_DUP_ENTRY' && clientOrderId) {
@@ -978,9 +1001,17 @@ router.post('/', async (req, res) => {
     } catch(_) {}
 
     // 2. Legacy recipe table — only used for menu items that DON'T have a BOM yet
+    // v7.4 BUG FIX — the guard below used to read `recipeMap[r.menu_id]`, which
+    // is also where THIS loop accumulates. So the first ingredient of a legacy
+    // recipe created the key, and every ingredient after it matched the guard
+    // and was silently dropped: a multi-ingredient legacy recipe deducted only
+    // its FIRST ingredient, understating COGS and never relieving the rest of
+    // the inventory — with no error anywhere. Snapshot the BOM-covered set
+    // BEFORE the loop so the guard means what its comment says.
+    const _bomCovered = new Set(Object.keys(recipeMap));
     const [recipes] = await db.query('SELECT * FROM recipe');
     recipes.forEach(r => {
-      if (recipeMap[r.menu_id]) return;  // BOM already covers this — skip legacy
+      if (_bomCovered.has(String(r.menu_id))) return;  // BOM already covers this — skip legacy
       if (!recipeMap[r.menu_id]) recipeMap[r.menu_id] = [];
       recipeMap[r.menu_id].push({
         invId: r.inv_item_id,
@@ -1138,7 +1169,14 @@ router.post('/', async (req, res) => {
       }
     } catch (e) { console.warn('[sales] combo load failed:', e.message); }
 
-    for (const item of items) {
+    // v7.4 — indexed loop. `recipesApplied` et al. were keyed ONLY by menuId,
+    // which cannot identify a LINE: two cart lines of the same item are
+    // indistinguishable, and the `continue`s below mean the arrays have gaps,
+    // so positional correlation is invalid too. The projection needs to know
+    // which line each deduction belongs to, so every push now carries lineIdx
+    // — the line's ordinal in `items`, which is also its source_line_id.
+    for (let lineIdx = 0; lineIdx < items.length; lineIdx++) {
+      const item = items[lineIdx];
       // sales_items log row
       await db.query('INSERT INTO sales_items (order_id, order_date, item_name, qty, price, total, payment_method, username, shift_id) VALUES (?,?,?,?,?,?,?,?,?)',
         [orderId, now, item.name, item.qty, item.price, item.qty * item.price, payStr, username, shiftId]);
@@ -1185,7 +1223,10 @@ router.post('/', async (req, res) => {
               } else {
                 await db.query('UPDATE menu SET stock = stock - ? WHERE id = ?', [physQty, comp.menuId]);
               }
-              importedDeductions.push({ menuId: comp.menuId, menuName: compName, qty: physQty });
+              // lineIdx, not menuId: this records the COMPONENT's menuId, which
+              // matches no cart line at all, so lineIdx is the only thing that
+              // ties this deduction back to the combo line that caused it.
+              importedDeductions.push({ lineIdx, menuId: comp.menuId, menuName: compName, qty: physQty });
             } catch (_) {}
             continue;
           }
@@ -1211,7 +1252,7 @@ router.post('/', async (req, res) => {
             deductions.push({ invId: ing.invId, invName: ing.invName, deducted: deduct, affected: 1 });
           }
         }
-        recipesApplied.push({ menuId: item.id, menuName: item.name, deductions: deductions, isCombo: true });
+        recipesApplied.push({ lineIdx, menuId: item.id, menuName: item.name, deductions: deductions, isCombo: true });
         continue;
       }
 
@@ -1281,7 +1322,7 @@ router.post('/', async (req, res) => {
             } else { throw refErr; }
           }
           semiDeductions.push({
-            menuId: item.id, menuName: item.name,
+            lineIdx, menuId: item.id, menuName: item.name,
             semiId: sc.semiId, semiName: semiNameMap[sc.semiId] || sc.semiId,
             qty: consumed
           });
@@ -1319,7 +1360,7 @@ router.post('/', async (req, res) => {
           // v7.2 (#7) — record the imported relief so its cost flows into
           // the COGS/Inventory GL legs below (otherwise revenue posts with
           // zero COGS and inventory is never relieved in the ledger).
-          importedDeductions.push({ menuId: item.id, menuName: item.name, qty: Number(item.qty) || 0 });
+          importedDeductions.push({ lineIdx, menuId: item.id, menuName: item.name, qty: Number(item.qty) || 0 });
         } catch(_) {}
       }
 
@@ -1372,6 +1413,7 @@ router.post('/', async (req, res) => {
       }
 
       recipesApplied.push({
+        lineIdx,
         menuId: item.id,
         menuName: item.name,
         deductions: deductions
@@ -1397,6 +1439,10 @@ router.post('/', async (req, res) => {
     // All lines carry brand_id + branch_id; COGS/Inventory also carry warehouse_id.
     // ═══════════════════════════════════════════════════════════════
     let cogsWarning = null;
+    // v7.4 — per-line COGS + component snapshots for the O2C projection, built
+    // from the SAME deductions and cost maps that produce totalCogs below.
+    // Assigned inside the COGS block where those maps are in scope.
+    let _projCost = null;
     {
       // v7.5 — this block now runs for EVERY sale. A zero-total (100% comp /
       // staff-meal) sale still relieves physical stock above, so the
@@ -1430,9 +1476,11 @@ router.post('/', async (req, res) => {
         // v7.2 (#7) — value imported finished-goods relief at menu.cost and
         // fold it into totalCogs so the COGS/Inventory legs are posted for
         // physically-stocked items (which never appear in recipesApplied).
+        // v7.4 — hoisted out of the `if` below so the projection can value
+        // imported components from the SAME map the GL used.
+        const impCost = {};
         if (importedDeductions.length) {
           const impIds = [...new Set(importedDeductions.map(d => d.menuId))];
-          const impCost = {};
           try {
             const ph = impIds.map(() => '?').join(',');
             const [crows] = await db.query(
@@ -1452,6 +1500,72 @@ router.post('/', async (req, res) => {
           });
         }
         totalCogs = Math.round(totalCogs * 100) / 100;
+
+        // ─── v7.4 — per-line COGS + component snapshots (O2C projection) ───
+        // Same deductions, same cost maps, same numbers the GL just posted.
+        // A return must reverse the cost that was actually booked, and the
+        // recipe may be reformulated before the return is ever filed — so the
+        // components are frozen here rather than re-read later.
+        //
+        // totalCogs rounds ONCE at the end (above), so per-line rounding would
+        // not sum back to it. We allocate the recorded totalCogs across lines
+        // instead, using the same largest-remainder primitive the money path
+        // uses — exact by construction, and totalCogs itself never shifts (the
+        // GL legs below are already computed from it and posting is fatal).
+        {
+          const comps = [];   // flat: one row per deducted component
+          recipesApplied.forEach((r) => {
+            r.deductions.forEach((d) => {
+              const unitCost = costMap[d.invId] || 0;
+              comps.push({
+                lineIdx: r.lineIdx,
+                source: r.isCombo ? 'combo' : 'recipe',
+                invItemId: d.invId, invItemName: d.invName,
+                deductedBaseQty: Number(d.deducted) || 0,
+                unitCostSnapshot: unitCost,
+                rawCost: (Number(d.deducted) || 0) * unitCost,
+              });
+            });
+          });
+          importedDeductions.forEach((d) => {
+            const unitCost = impCost[d.menuId] || 0;
+            comps.push({
+              lineIdx: d.lineIdx,
+              source: 'imported',
+              invItemId: d.menuId, invItemName: d.menuName,
+              deductedBaseQty: Number(d.qty) || 0,
+              unitCostSnapshot: unitCost,
+              rawCost: (Number(d.qty) || 0) * unitCost,
+            });
+          });
+
+          // Weights are integers at 4dp of a SAR — ample proportional
+          // resolution without risking the 2^53 ceiling on a large cart.
+          const W = (raw) => Math.round((Number(raw) || 0) * 1e4);
+          const lineIdxs = [...new Set(comps.map((c) => c.lineIdx))].sort((a, b) => a - b);
+          const lineRaw = lineIdxs.map((li) =>
+            comps.filter((c) => c.lineIdx === li).reduce((s, c) => s + c.rawCost, 0));
+
+          const costByLine = {};
+          if (lineIdxs.length) {
+            // Σ(line cost_snapshot) === totalCogs, exactly.
+            const parts = alloc.largestRemainder(
+              alloc.toMinor(totalCogs), lineRaw.map(W), lineIdxs.map((li) => 'L' + li));
+            lineIdxs.forEach((li, i) => { costByLine[li] = parts[i]; });
+          }
+
+          // Σ(component total_cost) === that line's cost_snapshot, exactly.
+          lineIdxs.forEach((li) => {
+            const mine = comps.filter((c) => c.lineIdx === li);
+            const parts = alloc.largestRemainder(
+              costByLine[li], mine.map((c) => W(c.rawCost)),
+              mine.map((c, i) => String(c.invItemId || '') + '#' + i));
+            mine.forEach((c, i) => { c.totalCostMinor = parts[i]; });
+          });
+
+          _projCost = { costByLine, components: comps, totalCogs };
+        }
+
         if (zeroCostComponents.length) {
           const names = [...new Set(zeroCostComponents)].slice(0, 5);
           console.warn('[sale ' + orderId + '] zero-cost components:', names.join(', '));
@@ -1628,6 +1742,92 @@ router.post('/', async (req, res) => {
           }
         } catch (commErr) { console.warn('[sale ' + orderId + '] channel commission GL skipped:', commErr.message); }
       }
+    }
+
+    // ═══ v7.4 — eager POS→O2C line projection ═══════════════════════════
+    // Placement is load-bearing:
+    //  • INSIDE the transaction (before the commit below), so a projection
+    //    failure rolls back the sale, inventory and GL together. Anything
+    //    after the commit runs under autocommit and could not be rolled back.
+    //  • AFTER the GL post, because linkPosSale resolves the sale's 'Sale'
+    //    journal by reference and it must already exist on this connection.
+    //  • linkPosSale(conn, …) only — never InvoiceService.issue(), which opens
+    //    its OWN connection via db.withTransaction and would then SELECT … FOR
+    //    UPDATE rows this transaction has not committed: a guaranteed self-
+    //    deadlock, amplified by the pool's lock-wait retry loop.
+    //
+    // Fatal by design, matching the GL contract above: a sale whose snapshot
+    // is missing or disagrees with the ledger is not returnable and not
+    // auditable, so it is better never recorded than recorded wrong.
+    //
+    // Gated on the O2C flag, which is this module's documented rollback lever
+    // (ORDER_TO_CASH_ENABLE=0 restores the legacy path untouched).
+    if (o2cConfig.o2cEnabled()) {
+      const _alloc = alloc.allocateSaleLines({
+        lines: _lineTax,
+        taxSubtotals,
+        appliedDiscount: appliedDiscountTotal,
+        totalFinal: invTotal,
+      });
+      const _allocById = {};
+      _alloc.lines.forEach((l) => { _allocById[l.sourceLineId] = l; });
+
+      const _projLines = _lineTax.map((t) => {
+        const a = _allocById[t.sourceLineId];
+        return {
+          sourceLineId: t.sourceLineId,
+          // POS lines are MENU items: menu_id is the identity, item_id stays
+          // null (inventory items appear only as component snapshots below).
+          itemId: null,
+          menuId: t.menuId,
+          description: t.name,
+          enteredUnitId: null, enteredUnitCode: null,
+          enteredQty: t.qty, conversionFactor: 1, baseQty: t.qty,
+          unitPrice: t.unitPrice,
+          discountAmount: a.discount,
+          vatCategory: t.cat, vatRate: t.rate,
+          netAmount: a.net, vatAmount: a.vat, grossAmount: a.gross,
+          // The GL journal is referenced on the header; the revenue account is
+          // not re-derived per line (that would recompute, not snapshot).
+          revenueAccountId: null, revenueAccountCode: null,
+          warehouseId: warehouseId || null,
+          costSnapshot: alloc.fromMinor((_projCost && _projCost.costByLine[t.lineIdx]) || 0),
+          projectionVersion: _alloc.projectionVersion,
+        };
+      });
+
+      const _projComponents = (_projCost ? _projCost.components : []).map((c) => ({
+        sourceLineId: 'L' + c.lineIdx,
+        source: c.source,
+        invItemId: c.invItemId, invItemName: c.invItemName,
+        warehouseId: warehouseId || null,
+        deductedBaseQty: c.deductedBaseQty,
+        unitCode: null, conversionFactor: null,
+        unitCostSnapshot: c.unitCostSnapshot,
+        totalCost: alloc.fromMinor(c.totalCostMinor || 0),
+        projectionVersion: _alloc.projectionVersion,
+      }));
+
+      await InvoiceService.linkPosSale(db, {
+        id: orderId,
+        invoice_number: invoiceNumber || orderId,
+        order_date: now,
+        total_final: invTotal,
+        vat_amount: vat,
+        // The APPLIED discount, not the raw body value — see the sales INSERT.
+        discount_amount: appliedDiscountTotal,
+        brand_id: saleBrandId || null,
+        branch_id: saleBranchId || null,
+        customer_id: resolvedCustomerId || null,
+        zatca_status: zatcaStamp.uuid ? 'pending' : 'pending',
+        invoice_uuid: zatcaStamp.uuid || null,
+        invoice_hash: zatcaStamp.invoiceHash || null,
+      }, {
+        actor: username || '',
+        status: 'paid',
+        lines: _projLines,
+        components: _projComponents,
+      });
     }
 
     // v6.0.1 Wave A — commit the transaction

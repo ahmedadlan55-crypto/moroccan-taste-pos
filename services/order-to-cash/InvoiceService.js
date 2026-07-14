@@ -41,6 +41,11 @@ async function _computeDoc(conn, data) {
       inclusiveTax: l.inclusiveTax,
     }, std);
     return Object.assign({}, c, {
+      // sourceLineId was absent here, so the INSERT below — its ONLY writer —
+      // wrote NULL for every row ever created. The column existed but never
+      // held a value, which also left the (document_id, source_line_id) replay
+      // guard inert, since NULLs never collide.
+      sourceLineId: l.sourceLineId || null,
       itemId: l.itemId || null, menuId: l.menuId || null,
       description: l.description || null,
       enteredUnitId: l.enteredUnitId || null, enteredUnitCode: l.enteredUnitCode || null,
@@ -156,9 +161,77 @@ async function cancel(id, ctx) {
  * existing 'Sale' GL journal — NO GL re-post (avoids double Revenue/VAT/COGS).
  * Idempotent via UNIQUE(source_type, source_id). Used by POS integration + backfill.
  */
+/**
+ * Write the POS line snapshots + their inventory-component snapshots.
+ *
+ * These are inserted VERBATIM — deliberately not routed through _computeDoc /
+ * calc.computeLine, which would recompute VAT from unit price and diverge from
+ * the per-category figures the sale actually recorded and the GL actually
+ * posted. The caller has already fitted these numbers to the header; this
+ * function's only job is to persist them faithfully.
+ *
+ * Idempotent on UNIQUE(document_id, source_line_id) and
+ * UNIQUE(document_line_id, component_seq). ON DUPLICATE KEY UPDATE rather than
+ * INSERT IGNORE, which would also swallow genuine errors (bad FK, truncation).
+ */
+async function _ensurePosLines(conn, documentId, lines, components) {
+  if (!Array.isArray(lines) || !lines.length) return 0;
+  const idBySourceLine = {};
+  for (const l of lines) {
+    const existing = await conn.query(
+      'SELECT id FROM ar_document_lines WHERE document_id = ? AND source_line_id = ? LIMIT 1',
+      [documentId, l.sourceLineId]);
+    if (existing[0].length) { idBySourceLine[l.sourceLineId] = existing[0][0].id; continue; }
+    const id = lineId();
+    await conn.query(
+      `INSERT INTO ar_document_lines
+        (id, document_id, source_line_id, item_id, menu_id, description, entered_unit_id, entered_unit_code,
+         entered_qty, conversion_factor_snapshot, base_qty, unit_price, discount_amount, vat_category, vat_rate,
+         net_amount, vat_amount, gross_amount, revenue_account_id, revenue_account_code, warehouse_id,
+         cost_snapshot, projection_version)
+       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+       ON DUPLICATE KEY UPDATE id = id`,
+      [id, documentId, l.sourceLineId, l.itemId || null, l.menuId || null, l.description || null,
+       l.enteredUnitId || null, l.enteredUnitCode || null, l.enteredQty, l.conversionFactor || 1, l.baseQty,
+       l.unitPrice, l.discountAmount, l.vatCategory, l.vatRate, l.netAmount, l.vatAmount, l.grossAmount,
+       l.revenueAccountId || null, l.revenueAccountCode || null, l.warehouseId || null,
+       l.costSnapshot, l.projectionVersion]);
+    idBySourceLine[l.sourceLineId] = id;
+  }
+
+  if (Array.isArray(components) && components.length) {
+    // component_seq is per-line and assigned in the caller's deterministic
+    // order, so a replay reproduces the same key rather than duplicating rows.
+    const seqByLine = {};
+    for (const c of components) {
+      const parentId = idBySourceLine[c.sourceLineId];
+      if (!parentId) continue;
+      seqByLine[c.sourceLineId] = (seqByLine[c.sourceLineId] || 0) + 1;
+      await conn.query(
+        `INSERT INTO ar_document_line_components
+          (id, document_id, document_line_id, component_seq, source, inv_item_id, inv_item_name,
+           warehouse_id, deducted_base_qty, unit_code, conversion_factor, unit_cost_snapshot,
+           total_cost, projection_version)
+         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+         ON DUPLICATE KEY UPDATE id = id`,
+        ['ARLC-' + Date.now() + '-' + Math.random().toString(36).slice(2, 8), documentId, parentId,
+         seqByLine[c.sourceLineId], c.source || 'recipe', c.invItemId || null, c.invItemName || null,
+         c.warehouseId || null, c.deductedBaseQty, c.unitCode || null, c.conversionFactor || null,
+         c.unitCostSnapshot, c.totalCost, c.projectionVersion]);
+    }
+  }
+  return lines.length;
+}
+
 async function linkPosSale(conn, sale, opts = {}) {
   const [exist] = await conn.query("SELECT id FROM ar_documents WHERE source_type='pos' AND source_id = ? LIMIT 1", [sale.id]);
-  if (exist.length) return { id: exist[0].id, linked: true, replayed: true };
+  if (exist.length) {
+    // Ensure lines even on replay: a header may predate the projection (the
+    // backfill script wrote headers only), in which case it is still lineless
+    // and therefore still un-returnable.
+    if (opts.lines) await _ensurePosLines(conn, exist[0].id, opts.lines, opts.components);
+    return { id: exist[0].id, linked: true, replayed: true };
+  }
   const [jrows] = await conn.query("SELECT id FROM gl_journals WHERE reference_type = 'Sale' AND reference_id = ? LIMIT 1", [sale.id]);
   const journalId = jrows.length ? jrows[0].id : null;
   const id = genId();
@@ -184,11 +257,12 @@ async function linkPosSale(conn, sale, opts = {}) {
      (opts.paid != null ? money(opts.paid) : total), (opts.balance != null ? money(opts.balance) : 0),
      (opts.status || 'paid'), sale.zatca_status || 'pending', sale.invoice_uuid || null, sale.invoice_hash || null,
      journalId, opts.actor || 'backfill', opts.actor || 'backfill']);
+  const lineCount = await _ensurePosLines(conn, id, opts.lines, opts.components);
   await events.recordEvent(conn, {
     documentType: 'ar_document', documentId: id, action: 'link_pos_sale', toStatus: (opts.status || 'paid'),
-    actor: opts.actor || 'backfill', glJournalId: journalId, payload: { saleId: sale.id },
+    actor: opts.actor || 'backfill', glJournalId: journalId, payload: { saleId: sale.id, lines: lineCount },
   });
-  return { id, linked: true, journalId };
+  return { id, linked: true, journalId, lines: lineCount };
 }
 
 async function getWithLines(conn, id) {

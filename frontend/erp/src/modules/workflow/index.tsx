@@ -8,9 +8,10 @@
 // to the manifest paths. This IS the per-manifest-path routing, done the way the
 // parent router allows.
 //
-// BUILT this session (read-only, real React): صندوق الوارد / صندوق الصادر / طلباتي.
-// DEFERRED (heavy engine, stays legacy): مسارات الاعتماد (chain builder) — clean
-// placeholder. سجل الإجراءات links to the unified audit log (no duplicate).
+// All five boxes are real React: صندوق الوارد (with the live action bar) / صندوق
+// الصادر / طلباتي / مسارات الاعتماد (the full builder: positions, transaction
+// types, steps, position paths, routes DSL + dry-run, SLA). سجل الإجراءات links
+// to the unified audit log (no duplicate).
 
 import type { ComponentType } from "react";
 import { useLocation } from "react-router-dom";

@@ -10,7 +10,7 @@ export { ApprovalsInbox } from "./ApprovalsInbox";
 export { UserMenu } from "./UserMenu";
 export { GlobalSearch } from "./GlobalSearch";
 export { CapGuard } from "./CapGuard";
-export { ModulePlaceholder } from "./ModulePlaceholder";
+export { NotFound } from "./NotFound";
 export { RouteFallback } from "./RouteFallback";
 export { ShellProvider, useShell } from "./shell-context";
 export { getIcon } from "./icons";

@@ -19,14 +19,14 @@ interface Props {
   emptyTitle: string;
   emptyBody?: string;
   searchPlaceholder?: string;
-  /** Inbox only: expose the "act in the legacy system" note in the detail drawer. */
-  showLegacyAction?: boolean;
+  /** Inbox only: enable the real action bar (اعتماد/رفض/إرجاع/إحالة) in the drawer. */
+  canAct?: boolean;
 }
 
 /**
- * The shared read-only list surface for a workflow box (وارد / صادر / طلباتي):
- * a DataTable of transactions whose rows open a read-only detail Drawer. No
- * approve/reject actions — those are the heavy engine, deferred to the legacy app.
+ * The shared list surface for a workflow box (وارد / صادر / طلباتي): a DataTable
+ * of transactions whose rows open a detail Drawer. Only the inbox passes
+ * `canAct` — outbox / طلباتي stay read-only.
  */
 export function TxnListScreen({
   icon,
@@ -38,7 +38,7 @@ export function TxnListScreen({
   emptyTitle,
   emptyBody,
   searchPlaceholder,
-  showLegacyAction = false,
+  canAct = false,
 }: Props) {
   const { user } = useAuth();
   const username = user?.username ?? "";
@@ -92,7 +92,7 @@ export function TxnListScreen({
         open={open}
         onClose={() => setOpen(false)}
         username={username}
-        showLegacyAction={showLegacyAction}
+        canAct={canAct}
       />
     </div>
   );

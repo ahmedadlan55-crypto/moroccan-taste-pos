@@ -1,8 +1,9 @@
 import { lazy, type ComponentType, type LazyExoticComponent } from "react";
-import { BrowserRouter, Routes, Route, Navigate, Link } from "react-router-dom";
+import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
 import { RequireAuth } from "./providers";
 import { AppShell } from "./shell/AppShell";
 import { CapGuard } from "./shell/CapGuard";
+import { NotFound } from "./shell/NotFound";
 import { LoginPage } from "./pages/Login";
 import { NAV_ITEMS } from "./navigation/manifest";
 
@@ -96,14 +97,3 @@ export function AppRouter() {
   );
 }
 
-function NotFound() {
-  return (
-    <div className="surface grid place-items-center gap-3 p-12 text-center">
-      <div className="text-2xl font-extrabold text-slate-900">404</div>
-      <p className="text-sm font-medium text-slate-500">الصفحة غير موجودة.</p>
-      <Link className="text-sm font-bold text-teal-700 hover:underline" to={INDEX_REDIRECT}>
-        العودة إلى نظرة عامة
-      </Link>
-    </div>
-  );
-}

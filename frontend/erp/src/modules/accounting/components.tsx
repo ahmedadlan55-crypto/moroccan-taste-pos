@@ -1,14 +1,11 @@
 // ── Shared building blocks for the accounting screens ───────────────────────
-// Report scaffolding (filter card, print/export actions, print banner), the
-// money formatter, and a small deferred-screen placeholder for the HEAVY
-// editors that stay in the legacy system for now.
+// Report scaffolding (filter card, print/export actions, print banner) and the
+// money formatter.
 
 import { useState, type ReactNode } from "react";
-import { Printer, Construction, ExternalLink } from "lucide-react";
+import { Printer } from "lucide-react";
 import { Button } from "@/shared/ui";
 import { LoadingState, ErrorState, EmptyState } from "@/shared/ui";
-import { getIcon } from "@/app/shell/icons";
-import { navByPath, navGroupOf } from "@/app/navigation/manifest";
 
 // English-digit, 2-decimal grouping — matches the legacy report formatting and
 // the app-wide numbering policy (English numerals inside RTL layout).
@@ -203,38 +200,3 @@ export function exportRowsCsv(filename: string, header: string[], rows: (string 
   URL.revokeObjectURL(href);
 }
 
-// ── Deferred screen (HEAVY editors that stay in the legacy app for now) ──────
-export function DeferredScreen({ pathname }: { pathname: string }) {
-  const item = navByPath(pathname);
-  const group = item ? navGroupOf(item) : undefined;
-  const Icon = item ? getIcon(item.icon) : Construction;
-  return (
-    <div className="space-y-5">
-      <header className="flex items-center gap-3">
-        <span className="grid h-11 w-11 shrink-0 place-items-center rounded-2xl bg-teal-50 text-teal-700">
-          <Icon className="h-5 w-5" />
-        </span>
-        <div>
-          <h1 className="text-xl font-extrabold text-slate-900">{item?.label ?? group?.label}</h1>
-          <p className="mt-0.5 text-[12px] font-bold text-slate-400">الواجهة الموحّدة — نظام ADLAN</p>
-        </div>
-      </header>
-      <div className="surface grid place-items-center gap-3 p-12 text-center">
-        <div className="grid h-14 w-14 place-items-center rounded-2xl bg-slate-100 text-slate-500">
-          <Construction className="h-6 w-6" aria-hidden="true" />
-        </div>
-        <div className="text-base font-extrabold text-slate-800">الصفحة غير متاحة على هذا المسار</div>
-        <p className="max-w-md text-sm font-medium text-slate-500">
-          {item ? `«${item.label}» ` : "هذه الشاشة "}
-          غير متاحة على هذا المسار. عُد إلى نظرة عامة وتابع من القائمة الجانبية.
-        </p>
-        <a
-          href="/app/overview"
-          className="mt-1 inline-flex min-h-11 items-center gap-2 rounded-xl bg-teal-600 px-4 text-sm font-bold text-white transition hover:bg-teal-700"
-        >
-          <ExternalLink className="h-4 w-4" /> العودة إلى نظرة عامة
-        </a>
-      </div>
-    </div>
-  );
-}

@@ -3,9 +3,10 @@ import { TxnListScreen } from "../components/TxnListScreen";
 import { fetchIncoming } from "../lib/api";
 import { qk } from "../lib/query-keys";
 
-// صندوق الوارد — read-only list of transactions awaiting my attention.
-// Row → detail Drawer (transaction + approval path + action log). Acting on an
-// item routes back to the legacy engine via the drawer's LegacyActionNote.
+// صندوق الوارد — the transactions awaiting my attention. Row → detail Drawer
+// (transaction + approval path + action log) with the REAL action bar
+// (اعتماد/رفض/إرجاع/إحالة) posting to /workflow/:id/action — gated by the
+// workflow.actions.act capability AND the server's per-transaction permissions.
 export function InboxPage() {
   return (
     <TxnListScreen
@@ -17,7 +18,7 @@ export function InboxPage() {
       fetcher={fetchIncoming}
       emptyTitle="لا توجد معاملات واردة"
       emptyBody="لا توجد معاملات بانتظار إجراء منك حاليًا."
-      showLegacyAction
+      canAct
     />
   );
 }

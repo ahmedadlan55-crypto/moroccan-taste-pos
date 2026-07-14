@@ -3,15 +3,17 @@
 // localStorage-backed saved-views list. Dispatches by pathname because each
 // /reports/* manifest path is its own route pointing at this module.
 import { useLocation } from "react-router-dom";
-import { ModulePlaceholder } from "@/app/shell/ModulePlaceholder";
+import { normalizeRoutePath } from "@/shared/lib";
+import { NotFound } from "@/app/shell/NotFound";
 import ReportsHub from "./pages/ReportsHub";
 import SavedReportsPage from "./pages/SavedReports";
 import { REPORT_SECTIONS } from "./reportLinks";
 
 export default function ReportsModule() {
   const { pathname } = useLocation();
-  if (pathname === "/reports/saved") return <SavedReportsPage />;
-  const section = REPORT_SECTIONS[pathname];
+  const key = normalizeRoutePath(pathname);
+  if (key === "/reports/saved") return <SavedReportsPage />;
+  const section = REPORT_SECTIONS[key];
   if (section) return <ReportsHub section={section} />;
-  return <ModulePlaceholder />;
+  return <NotFound />;
 }

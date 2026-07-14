@@ -78,12 +78,11 @@ interface Props {
    * footer — passed only for صندوق الوارد. The buttons themselves are gated by
    * BOTH the `workflow.actions.act` capability AND the server permission flags,
    * so this is just the "this box can act" switch (outbox / طلباتي stay read-only).
-   * Kept as `showLegacyAction` so the pages/TxnListScreen contract is untouched.
    */
-  showLegacyAction?: boolean;
+  canAct?: boolean;
 }
 
-export function TxnDetailDrawer({ txnId, open, onClose, username, showLegacyAction = false }: Props) {
+export function TxnDetailDrawer({ txnId, open, onClose, username, canAct = false }: Props) {
   const query = useQuery({
     queryKey: qk.bundle(txnId ?? "", username),
     queryFn: ({ signal }) => fetchBundle(txnId as string, username, { signal }),
@@ -95,7 +94,7 @@ export function TxnDetailDrawer({ txnId, open, onClose, username, showLegacyActi
 
   // Server decides — per txn, per user — which actions are allowed. We only fetch
   // it when this box may act AND the drawer is open on a successfully-loaded txn.
-  const permQuery = useTxnPermissions(txnId, username, showLegacyAction && open && loaded);
+  const permQuery = useTxnPermissions(txnId, username, canAct && open && loaded);
   const actAllowed = useCan("workflow.actions.act");
 
   const perms = permQuery.data?.permissions;
@@ -110,7 +109,7 @@ export function TxnDetailDrawer({ txnId, open, onClose, username, showLegacyActi
   const title = bundle?.subject || bundle?.title || bundle?.txnNumber || "تفاصيل المعاملة";
 
   const footer =
-    showLegacyAction && loaded && anyAction ? (
+    canAct && loaded && anyAction ? (
       <TxnActionBar
         txnId={txnId as string}
         username={username}

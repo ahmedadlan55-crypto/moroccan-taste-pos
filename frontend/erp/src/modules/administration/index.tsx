@@ -4,7 +4,8 @@
 // the full path, so nested <Routes> can't sub-match). Toasts flow through the
 // single shell-level <ToastProvider> in app/providers — no local provider here.
 import { useLocation } from "react-router-dom";
-import { ModulePlaceholder } from "@/app/shell/ModulePlaceholder";
+import { normalizeRoutePath } from "@/shared/lib";
+import { NotFound } from "@/app/shell/NotFound";
 import CompaniesBrandsPage from "./pages/CompaniesBrands";
 import BranchesPage from "./pages/Branches";
 import WarehousesRedirectPage from "./pages/WarehousesRedirect";
@@ -31,8 +32,8 @@ const PAGES: Record<string, () => JSX.Element> = {
 
 function AdministrationRoutes() {
   const { pathname } = useLocation();
-  const Page = PAGES[pathname];
-  return Page ? <Page /> : <ModulePlaceholder />;
+  const Page = PAGES[normalizeRoutePath(pathname)];
+  return Page ? <Page /> : <NotFound />;
 }
 
 export default function AdministrationModule() {

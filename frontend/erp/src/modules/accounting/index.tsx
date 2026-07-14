@@ -2,11 +2,13 @@
 // The router registers the SAME lazy module component for every accounting nav
 // path, so this entry switches on the current pathname and renders the matching
 // page. Read-heavy reports were converted 1:1 against the legacy report loaders
-// (server owns all the math). E1 converted the two HEAVY editors (Chart of
-// Accounts + Journal editor) to real React; the DeferredScreen fallback is kept
-// only as a safety net for any unmapped path.
+// (server owns all the math). Every accounting screen — including the two HEAVY
+// editors (Chart of Accounts + Journal editor) — is real React; the fallback is
+// an unreachable safety net (the router only registers the exact manifest paths).
 
 import { useLocation } from "react-router-dom";
+import { normalizeRoutePath } from "@/shared/lib";
+import { NotFound } from "@/app/shell/NotFound";
 import { TrialBalancePage } from "./pages/TrialBalance";
 import { IncomeStatementPage } from "./pages/IncomeStatement";
 import { BalanceSheetPage } from "./pages/BalanceSheet";
@@ -17,7 +19,6 @@ import { CostCentersPage } from "./pages/CostCenters";
 import { DimensionsPage } from "./pages/Dimensions";
 import { ChartOfAccountsPage } from "./pages/ChartOfAccounts";
 import { JournalsPage } from "./pages/Journals";
-import { DeferredScreen } from "./components";
 
 const ROUTES: Record<string, () => JSX.Element> = {
   "/accounting/chart-of-accounts": ChartOfAccountsPage,
@@ -35,7 +36,6 @@ const ROUTES: Record<string, () => JSX.Element> = {
 
 export default function AccountingModule() {
   const { pathname } = useLocation();
-  const Page = ROUTES[pathname];
-  if (Page) return <Page />;
-  return <DeferredScreen pathname={pathname} />;
+  const Page = ROUTES[normalizeRoutePath(pathname)];
+  return Page ? <Page /> : <NotFound />;
 }

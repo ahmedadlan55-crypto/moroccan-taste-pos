@@ -51,8 +51,12 @@ const GROUP_FIRST = ["/overview", "/sales/orders", "/menu/hub", "/pos-admin/regi
   "/purchasing/suppliers", "/accounting/chart-of-accounts", "/banking/cashboxes", "/people/employees",
   "/workflow/inbox", "/reports/sales", "/administration/companies"];
 
-// Non-healthy page states. `empty` and `loading` are intentionally NOT here.
-const BAD_STATES = ["error", "offline", "session-expired", "permission-denied", "conflict", "feature-disabled"];
+// Non-healthy page states. `empty` and `loading` are intentionally NOT here:
+// "no rows yet" is a legitimate business state. `not-found` IS here — no manifest
+// leaf may ever render the NotFound screen.
+const BAD_STATES = [
+  "error", "offline", "session-expired", "permission-denied", "conflict", "feature-disabled", "not-found",
+];
 
 // Distinctive placeholder / legacy-handoff sentences (kept specific so they can't
 // collide with real business status text such as a transfer that is "قيد النقل").

@@ -18,7 +18,23 @@ export type PageState =
   | "offline"
   | "session-expired"
   | "permission-denied"
-  | "conflict";
+  | "conflict"
+  | "not-found";
+
+/**
+ * The one state frame. Exported as `StateShell` so app-level states that need
+ * router context (see app/shell/NotFound) reuse it instead of hand-copying the
+ * markup — `shared/*` deliberately stays free of a react-router dependency.
+ */
+export function StateShell(props: {
+  icon: ReactNode;
+  title: string;
+  body?: string;
+  action?: ReactNode;
+  state: PageState;
+}) {
+  return <Shell {...props} />;
+}
 
 function Shell({
   icon,

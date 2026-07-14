@@ -11,8 +11,23 @@
 // ═══════════════════════════════════════════════════════════════════
 const router = require('express').Router();
 const db = require('../../db/connection');
+const requireRole = require('../../middleware/auth').requireRole;
 
-router.get('/customers', async (req, res) => {
+// v7.4 — Authorization. These routes previously carried NO role guard at all:
+// `/api/erp` only chains audit + warehouse-scope middleware, so ANY authenticated
+// principal — including `employee` and `custody`, who have no business touching
+// the customer master — could list, create and soft-delete customers. Verified
+// exploitable: a plain cashier's token returned HTTP 200 on
+// DELETE /api/erp/customers/:id and set is_active = 0.
+//
+// Reads + create stay open to the till (the cashier genuinely creates a customer
+// mid-checkout — that is legacy parity, see public/pos/app.js customer flow).
+// Deletion is a master-data operation and is restricted to admin/manager.
+const CUSTOMER_READ  = requireRole('admin', 'manager', 'cashier');
+const CUSTOMER_WRITE = requireRole('admin', 'manager', 'cashier');
+const CUSTOMER_ADMIN = requireRole('admin', 'manager');
+
+router.get('/customers', CUSTOMER_READ, async (req, res) => {
   try {
     const activeOnly = req.query.activeOnly !== 'false';
     let query = 'SELECT * FROM customers';
@@ -50,7 +65,7 @@ router.get('/customers', async (req, res) => {
 //      created customers — used by the search-modal empty state so the
 //      cashier always sees at least the just-added customer.
 //   4. Increased LIMIT 8 → 20 since the modal can scroll.
-router.get('/customers/search', async (req, res) => {
+router.get('/customers/search', CUSTOMER_READ, async (req, res) => {
   try {
     const qRaw = String(req.query.q || '').trim();
 
@@ -144,7 +159,7 @@ router.get('/customers/search', async (req, res) => {
   }
 });
 
-router.post('/customers', async (req, res) => {
+router.post('/customers', CUSTOMER_WRITE, async (req, res) => {
   try {
     const { id, name, nameEn, vatNumber, phone, email, address, city, customerType, creditLimit, gender, username } = req.body;
     const safeGender = (gender === 'male' || gender === 'female') ? gender : 'unknown';
@@ -175,8 +190,8 @@ router.post('/customers', async (req, res) => {
   }
 });
 
-// Deactivate customer (soft delete)
-router.delete('/customers/:id', async (req, res) => {
+// Deactivate customer (soft delete) — master-data change, manager+ only.
+router.delete('/customers/:id', CUSTOMER_ADMIN, async (req, res) => {
   try {
     await db.query('UPDATE customers SET is_active = 0 WHERE id = ?', [req.params.id]);
     res.json({ success: true });
@@ -215,7 +230,7 @@ router.delete('/customers/:id', async (req, res) => {
 // (db/schema.sql:173).  On a customer with 10k orders the aggregate
 // runs in <10ms; the recent-50 query in <20ms.
 // ════════════════════════════════════════════════════════════════════
-router.get('/customers/:id/summary', async (req, res) => {
+router.get('/customers/:id/summary', CUSTOMER_READ, async (req, res) => {
   try {
     const customerId = String(req.params.id || '').trim();
     if (!customerId) return res.json({ success: false, error: 'missing-id' });

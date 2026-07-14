@@ -2,7 +2,7 @@
  * Header — brand, cashier identity, shift chip, connection indicator,
  * links back to the main system and the legacy cashier.
  */
-import { ChefHat, CloudOff, ExternalLink, History, Loader2, UserRound, Wifi } from "lucide-react";
+import { AlertTriangle, ChefHat, CloudOff, ExternalLink, History, Loader2, UserRound, Wifi } from "lucide-react";
 import { usePos } from "@/state/store";
 import { fmtInt } from "@/lib/format";
 import { cn, Button } from "./ui";
@@ -59,6 +59,42 @@ export function ConnectionIndicator({ onOpenReport }: { onOpenReport: () => void
       className={cn("chip btn-press min-h-11 cursor-pointer px-3 text-xs", cls)}
     >
       {label}
+    </button>
+  );
+}
+
+/** Humanises a cache age for the cashier — "٣ ساعات", "يومان", never raw ms. */
+function humanAge(ms: number): string {
+  const h = Math.floor(ms / 3_600_000);
+  if (h < 1) return "أقل من ساعة";
+  if (h < 24) return `${h} ساعة`;
+  const d = Math.floor(h / 24);
+  return d === 1 ? "يوم" : d === 2 ? "يومان" : `${d} أيام`;
+}
+
+/**
+ * Stale-catalog warning. The cashier keeps selling — that is deliberate, an
+ * outage must never stop the till — but they are told the price list could not
+ * be confirmed, and how old it is. Previously this was completely silent.
+ */
+export function StaleCatalogChip() {
+  const { catalogStale, catalogAgeMs, refetchCatalog, engineStatus } = usePos();
+  if (!catalogStale) return null;
+  const age = catalogAgeMs == null ? "غير معروف" : humanAge(catalogAgeMs);
+  return (
+    <button
+      type="button"
+      onClick={refetchCatalog}
+      disabled={!engineStatus.online}
+      title={
+        engineStatus.online
+          ? "قائمة الأصناف غير مؤكَّدة — اضغط لإعادة التحميل"
+          : "قائمة الأصناف محفوظة محليًا ولم يتم تأكيدها — ستُحدَّث عند عودة الاتصال"
+      }
+      className="chip btn-press min-h-11 border-amber-300 bg-amber-50 px-3 text-xs font-bold text-amber-800"
+    >
+      <AlertTriangle className="h-3.5 w-3.5" aria-hidden />
+      قائمة قديمة ({age})
     </button>
   );
 }
@@ -125,6 +161,8 @@ export function Header({
             </Button>
           </span>
         )}
+
+        <StaleCatalogChip />
 
         <ConnectionIndicator onOpenReport={onOpenSyncReport} />
 

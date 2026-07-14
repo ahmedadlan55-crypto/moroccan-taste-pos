@@ -114,6 +114,10 @@ export interface PosContextValue {
   catalog: Catalog | null;
   catalogLoading: boolean;
   catalogError: string | null;
+  /** Serving a cached catalog we could not confirm is current — prices may be out of date. */
+  catalogStale: boolean;
+  /** Age of the served catalog copy in ms (null = fresh or unknown). */
+  catalogAgeMs: number | null;
   refetchCatalog: () => void;
 
   shiftId: string | null;
@@ -384,6 +388,8 @@ export function PosProvider({ children }: { children: ReactNode }) {
     catalog: catalogQuery.data?.catalog ?? null,
     catalogLoading: catalogQuery.isLoading,
     catalogError: catalogQuery.isError ? (catalogQuery.error as Error).message : null,
+    catalogStale: catalogQuery.data?.stale ?? false,
+    catalogAgeMs: catalogQuery.data?.ageMs ?? null,
     refetchCatalog: () => void catalogQuery.refetch(),
     shiftId,
     shiftLoading: shiftQuery.isLoading,

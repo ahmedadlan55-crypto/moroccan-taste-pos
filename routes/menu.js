@@ -1,5 +1,6 @@
 const router = require('express').Router();
 const db = require('../db/connection');
+const { isTruthy } = require('../lib/settingsKeys');
 // v7.1 SECURITY — the global /api guard (server.js) blanket-exempts /menu so the
 // POS can READ the menu without a token. That left every menu WRITE (create/edit/
 // delete/price/import/recipes) fully public. Re-verify the JWT on writes only;
@@ -202,7 +203,10 @@ router.post('/', verifyToken, MGR, async (req, res) => {
         const [rows] = await db.query(
           "SELECT setting_value FROM settings WHERE setting_key = 'NewProductsTaxInclusive' LIMIT 1"
         );
-        taxInclusive = rows.length ? String(rows[0].setting_value) === '1' : false;
+        // Tolerant read: a === '1' comparison silently ignored the "true" the
+        // React admin wrote, so this failed OPEN — new products were priced
+        // tax-exclusive while the owner had asked for inclusive.
+        taxInclusive = rows.length ? isTruthy(rows[0].setting_value) : false;
       } catch (_) { taxInclusive = false; }
     }
     // v7.1 — ZATCA tax category (S=standard 15%, Z=zero, E=exempt, O=out-of-scope)
@@ -1077,7 +1081,7 @@ router.post('/combos', verifyToken, MGR, async (req, res) => {
     if (typeof taxInclusive === 'undefined') {
       try {
         const [rows] = await db.query("SELECT setting_value FROM settings WHERE setting_key = 'NewProductsTaxInclusive' LIMIT 1");
-        taxInclusive = rows.length ? String(rows[0].setting_value) === '1' : false;
+        taxInclusive = rows.length ? isTruthy(rows[0].setting_value) : false;
       } catch (_) { taxInclusive = false; }
     }
     const cost = await _computeComboCost(b.groups);

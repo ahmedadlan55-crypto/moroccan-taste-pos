@@ -343,9 +343,16 @@ router.get('/catalog', POS, async (req, res) => {
     const [items] = await db.query("SELECT id, name, price, category, active, tax_category, stock FROM menu WHERE COALESCE(is_deleted,0)=0 ORDER BY category, name");
     let vatRate = 15;
     try {
-      const [vr] = await db.query("SELECT `value` FROM settings WHERE `key`='VATRate' LIMIT 1");
-      if (vr.length) vatRate = Number(vr[0].value) || 15;
-    } catch (_) { /* settings table variants */ }
+      // Was: SELECT `value` ... WHERE `key`=... — columns that do not exist. The
+      // query threw on every call and a bare catch swallowed it, pinning the
+      // React POS to 15% no matter what the owner configured (it then flowed to
+      // the receipt while /api/sales booked the real rate).
+      const [vr] = await db.query(
+        "SELECT setting_value FROM settings WHERE setting_key = 'VATRate' LIMIT 1");
+      if (vr.length) vatRate = Number(vr[0].setting_value) || 15;
+    } catch (e) {
+      console.error('[pos-v2] VATRate lookup failed; falling back to 15%:', e.message);
+    }
 
     // Phase U — attach the sellable units (base + majors like carton) per catalog
     // item, keyed by the catalog id (= the stock item id for imported goods), plus

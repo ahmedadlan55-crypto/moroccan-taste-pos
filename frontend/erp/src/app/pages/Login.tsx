@@ -41,6 +41,14 @@ export function LoginPage() {
       localStorage.setItem("pos_token", data.token);
       // Full navigation so the AuthProvider re-reads the token at mount.
       const base = (import.meta.env.BASE_URL || "/").replace(/\/$/, "");
+      // flagDefaultPasswordUsers() (server.js) marks accounts still on a default
+      // password. The legacy shell bounced them to /security/?must=1; this screen
+      // ignored the flag entirely, so on /app they signed straight in and had no
+      // way to clear it. Honour it before handing over the app.
+      if (data.mustChangePassword) {
+        window.location.assign(base + "/change-password?must=1");
+        return;
+      }
       window.location.assign(base + "/overview");
     } catch {
       setError("تعذّر الاتصال بالخادم. حاول مجددًا.");

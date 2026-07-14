@@ -5,6 +5,7 @@ import { AppShell } from "./shell/AppShell";
 import { CapGuard } from "./shell/CapGuard";
 import { NotFound } from "./shell/NotFound";
 import { LoginPage } from "./pages/Login";
+import { ChangePasswordPage } from "./pages/ChangePassword";
 import { NAV_ITEMS } from "./navigation/manifest";
 
 // ── Lazy module loaders ─────────────────────────────────────────────────────
@@ -60,6 +61,9 @@ export function AppRouter() {
         {/* Public login (outside the auth gate) — the entry point when /app is
             the default and the user has no session yet. */}
         <Route path="login" element={<LoginPage />} />
+        {/* Outside the shell on purpose: a user forced here by must_change_password
+            must not be able to reach the app until the password is changed. */}
+        <Route path="change-password" element={<ChangePasswordPage />} />
         <Route
           element={
             <RequireAuth>

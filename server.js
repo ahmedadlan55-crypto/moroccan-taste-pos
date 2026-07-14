@@ -4042,7 +4042,31 @@ async function runMigrations() {
   // Partial-unique semantics: many NULL rows are allowed (legacy sales +
   // any sale where the POS omitted the key) per ANSI NULL handling, but
   // two non-NULL identical keys collide. Tolerate re-runs (key exists).
-  try { await db.query('ALTER TABLE sales ADD UNIQUE KEY uq_sales_client_order_id (client_order_id)'); } catch(e) {}
+  //
+  // This used to be `catch(e){}` — swallowing EVERY failure. That is unsafe:
+  // the index IS the race net behind checkout idempotency. If it silently
+  // fails to build (e.g. pre-existing duplicate keys), the pre-check in
+  // routes/sales.js still returns "idempotent" for sequential replays while
+  // two CONCURRENT posts of the same clientOrderId both insert — duplicating
+  // the invoice, its GL journal and the stock relief, with nothing logged.
+  // Tolerate only "already exists"; verify, and shout about anything else.
+  try {
+    await db.query('ALTER TABLE sales ADD UNIQUE KEY uq_sales_client_order_id (client_order_id)');
+  } catch (e) {
+    if (!e || e.code !== 'ER_DUP_KEYNAME') {
+      console.error('[schema] FAILED to create uq_sales_client_order_id —', (e && (e.code || e.message)));
+    }
+  }
+  try {
+    const [idx] = await db.query("SHOW INDEX FROM sales WHERE Key_name = 'uq_sales_client_order_id'");
+    if (!idx.length) {
+      console.error(
+        '[schema] *** CHECKOUT IDEMPOTENCY IS NOT ENFORCED *** unique index ' +
+        'uq_sales_client_order_id is absent from `sales`. Concurrent retries of the same ' +
+        'offline sale CAN double-post. Resolve duplicate client_order_id rows, then restart.'
+      );
+    }
+  } catch (_) { /* SHOW INDEX unsupported — non-fatal */ }
 
   // ─── v7.3 — Cash tendered → change due (world-class cashier UX) ───
   // The POS now records how much cash the customer handed over and the

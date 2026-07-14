@@ -99,6 +99,9 @@
     var currency          = inv.currency          || settings.currency || 'SAR';
     var companyPhone      = inv.companyPhone      || settings.companyPhone || '';
     var companyEmail      = inv.companyEmail      || settings.companyEmail || '';
+    // Owner-authored footer line (settings.receiptFooter). Absent → the block
+    // below simply doesn't render; nothing else on the receipt shifts.
+    var receiptFooter     = inv.receiptFooter     || settings.receiptFooter || '';
     var branchName        = inv.branchName        || settings.branchName || '';
     var branchAddr        = inv.branchAddress     || settings.branchAddress || '';
     var branchCompanyName = inv.branchCompanyName || '';
@@ -139,6 +142,7 @@
       companyName: companyName, companyNameAr: companyNameAr,
       taxNumber: taxNumber, currency: currency,
       companyPhone: companyPhone, companyEmail: companyEmail,
+      receiptFooter: receiptFooter,
       branchName: branchName, branchAddr: branchAddr, branchCompanyName: branchCompanyName,
       cashierName: cashierName, cashierEmpNo: cashierEmpNo,
       logoUrl: logoUrl,
@@ -429,6 +433,11 @@
         '<div style="font-size:14px;font-weight:800;color:#000;letter-spacing:0.5px;">THANK YOU FOR YOUR VISIT</div>' +
         '<div style="font-size:13px;font-weight:800;color:#000;direction:rtl;margin-top:2px;">شُكرًا لِزيارَتِكم</div>' +
       '</div>' +
+
+      // Owner-authored footer from settings.receiptFooter.
+      (r.receiptFooter
+        ? '<div style="text-align:center;font-size:11px;color:#000;direction:rtl;margin-top:6px;white-space:pre-line;">' + esc(r.receiptFooter) + '</div>'
+        : '') +
 
       // v6.20.0 — VAT rate label is dynamic (driven by settings.VATRate).
       '<div style="text-align:center;font-size:10px;color:#000;margin-top:6px;">All Prices Include VAT (' + esc(r.vatRate) + '%)</div>' +

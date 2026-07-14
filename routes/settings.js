@@ -10,6 +10,9 @@ const verifyToken = require('./authMiddleware');
 // strings rendered raw in POS/print surfaces. Cashier tokens must not be able
 // to touch them: writes are admin/manager only.
 const MGR = verifyToken.requireRole('admin', 'manager');
+// The canonical-key resolver. Writes fan out to every spelling a reader uses, so
+// a value saved here always reaches the receipt/ZATCA path (see lib/settingsKeys).
+const { normalizeSettingsWrite } = require('../lib/settingsKeys');
 
 // Get all settings
 router.get('/', async (req, res) => {
@@ -26,9 +29,11 @@ router.get('/', async (req, res) => {
 // Update settings
 router.put('/', verifyToken, MGR, async (req, res) => {
   try {
-    const settings = req.body;
-
-    for (const [key, value] of Object.entries(settings)) {
+    // Was: write each key verbatim. camelCase payloads from the React admin
+    // landed in rows no reader looks at, so company/tax edits never reached a
+    // printed invoice. normalizeSettingsWrite resolves each key to its canonical
+    // spelling, coerces booleans to '1'/'0', and keeps aliases in sync.
+    for (const [key, value] of normalizeSettingsWrite(req.body)) {
       await db.query(
         'INSERT INTO settings (setting_key, setting_value) VALUES (?, ?) ON DUPLICATE KEY UPDATE setting_value = ?',
         [key, value, value]

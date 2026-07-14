@@ -1,6 +1,7 @@
 const router = require('express').Router();
 const db = require('../db/connection');
 const bcrypt = require('bcryptjs');
+const { isTruthy } = require('../lib/settingsKeys');
 const gl = require('../lib/glPosting');
 const zatca = require('../lib/zatca');
 const { recomputeInvItemStock, recomputeMenuStock, deductWarehouseStock } = require('../lib/stockRecompute');
@@ -703,13 +704,35 @@ router.post('/', async (req, res) => {
     // concurrent double-POST the UNIQUE index throws ER_DUP_ENTRY → we
     // rollback this (uncommitted) attempt and return the original sale's
     // success response so the second request is a safe no-op.
+    // v7.3 — stamp the seller's brand + branch ONTO the sale.
+    // `sales.brand_id`/`branch_id` have existed since server.js:1983-1984 but
+    // nothing ever wrote them, so every row was NULL and the receipt had to
+    // guess the branch at print time — which meant a historical receipt silently
+    // followed the cashier when they were reassigned. Freezing it here is both
+    // the correctness fix and the foundation for the invoice snapshot.
+    let saleBrandId = null, saleBranchId = null;
+    try {
+      saleBrandId  = (req.user && (req.user.brandId  || req.user.brand_id))  || null;
+      saleBranchId = (req.user && (req.user.branchId || req.user.branch_id)) || null;
+      if ((!saleBrandId || !saleBranchId) && username) {
+        const [u] = await db.query(
+          'SELECT brand_id, branch_id, default_branch_id FROM users WHERE username = ? LIMIT 1', [username]);
+        if (u.length) {
+          saleBrandId  = saleBrandId  || u[0].brand_id || null;
+          saleBranchId = saleBranchId || u[0].branch_id || u[0].default_branch_id || null;
+        }
+      }
+    } catch (e) {
+      console.warn('[sales] could not resolve seller brand/branch for', username, '—', e.code || e.message);
+    }
+
     try {
       if (clientOrderId) {
-        await db.query('INSERT INTO sales (id, order_date, items_json, total_final, payment_method, username, shift_id, discount_name, discount_amount, kita_service_fee, client_order_id) VALUES (?,?,?,?,?,?,?,?,?,?,?)',
-          [orderId, now, JSON.stringify(items), invTotal, payStr, username, shiftId, discountName || '', discountAmount || 0, kitaServiceFee || 0, clientOrderId]);
+        await db.query('INSERT INTO sales (id, order_date, items_json, total_final, payment_method, username, shift_id, discount_name, discount_amount, kita_service_fee, client_order_id, brand_id, branch_id) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)',
+          [orderId, now, JSON.stringify(items), invTotal, payStr, username, shiftId, discountName || '', discountAmount || 0, kitaServiceFee || 0, clientOrderId, saleBrandId, saleBranchId]);
       } else {
-        await db.query('INSERT INTO sales (id, order_date, items_json, total_final, payment_method, username, shift_id, discount_name, discount_amount, kita_service_fee) VALUES (?,?,?,?,?,?,?,?,?,?)',
-          [orderId, now, JSON.stringify(items), invTotal, payStr, username, shiftId, discountName || '', discountAmount || 0, kitaServiceFee || 0]);
+        await db.query('INSERT INTO sales (id, order_date, items_json, total_final, payment_method, username, shift_id, discount_name, discount_amount, kita_service_fee, brand_id, branch_id) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)',
+          [orderId, now, JSON.stringify(items), invTotal, payStr, username, shiftId, discountName || '', discountAmount || 0, kitaServiceFee || 0, saleBrandId, saleBranchId]);
       }
     } catch (insErr) {
       if (insErr && insErr.code === 'ER_DUP_ENTRY' && clientOrderId) {
@@ -742,9 +765,24 @@ router.post('/', async (req, res) => {
         });
       }
       if (insErr && insErr.code === 'ER_BAD_FIELD_ERROR' && clientOrderId) {
-        // client_order_id column not present on this deploy — insert without it.
-        await db.query('INSERT INTO sales (id, order_date, items_json, total_final, payment_method, username, shift_id, discount_name, discount_amount, kita_service_fee) VALUES (?,?,?,?,?,?,?,?,?,?)',
-          [orderId, now, JSON.stringify(items), invTotal, payStr, username, shiftId, discountName || '', discountAmount || 0, kitaServiceFee || 0]);
+        // A clientOrderId means the POS is (re)playing a checkout and is relying
+        // on us to make the replay single-shot. If the column is missing we CANNOT
+        // honour that contract.
+        //
+        // This branch used to silently re-insert without client_order_id: the sale
+        // succeeded, the POS saw 200, and every offline replay posted the invoice,
+        // the GL journal and the stock relief AGAIN — duplicating money with no
+        // error anywhere. Never silently downgrade an idempotency guarantee; fail
+        // loudly so the schema gets fixed instead of the books.
+        console.error(
+          '[sales] REFUSING checkout: clientOrderId supplied but `sales` is missing a ' +
+          'column required for idempotency (' + (insErr.sqlMessage || insErr.message) + '). ' +
+          'Run the boot migrations (addColumnIfMissing on sales) and retry.'
+        );
+        const e = new Error('Checkout idempotency unavailable on this deploy — refusing to risk a duplicate sale.');
+        e.code = 'IDEMPOTENCY_UNAVAILABLE';
+        e.status = 503;
+        throw e;
       } else {
         throw insErr;
       }
@@ -1757,18 +1795,24 @@ router.get('/invoice/:orderId', async (req, res) => {
       }
     } catch (_) { /* fall back to username for the name; empNo stays empty */ }
 
-    // ── Lookup the branch: prefer the shift's branch, else the user's primary branch ──
+    // ── Lookup the branch: prefer the branch frozen on the sale, else the user's ──
+    //
+    // This used to read `shifts.branch_id` and then `user_branches`. NEITHER
+    // EXISTS: `shifts` has no branch_id column and the `user_branches` table is
+    // never created anywhere in the codebase. Both queries threw on every single
+    // call and the bare `catch` swallowed it, so branchName/branchAddress were
+    // silently ALWAYS empty and the receipt's whole branch block could never
+    // render. The real mapping lives on `users` (branch_id / default_branch_id).
     let branchName = '', branchAddress = '', branchLat = null, branchLng = null;
     let branchCompanyName = '';  // V5.7.14 — operating company per branch
     try {
-      let branchId = null;
-      if (sale.shift_id) {
-        const [shiftRows] = await db.query('SELECT branch_id FROM shifts WHERE id = ?', [sale.shift_id]);
-        if (shiftRows.length && shiftRows[0].branch_id) branchId = shiftRows[0].branch_id;
-      }
+      // Prefer the branch stamped on the sale at checkout — a historical receipt
+      // must not follow the cashier if they are later moved to another branch.
+      let branchId = sale.branch_id || null;
       if (!branchId && sale.username) {
-        const [ub] = await db.query('SELECT branch_id FROM user_branches WHERE username = ? LIMIT 1', [sale.username]);
-        if (ub.length) branchId = ub[0].branch_id;
+        const [ub] = await db.query(
+          'SELECT branch_id, default_branch_id FROM users WHERE username = ? LIMIT 1', [sale.username]);
+        if (ub.length) branchId = ub[0].branch_id || ub[0].default_branch_id || null;
       }
       if (branchId) {
         const [br] = await db.query('SELECT name, location, company_name, geo_lat, geo_lng FROM branches WHERE id = ?', [branchId]);
@@ -1781,14 +1825,18 @@ router.get('/invoice/:orderId', async (req, res) => {
           branchCompanyName = br[0].company_name || '';
         }
       }
-    } catch (_) { /* shifts.branch_id or user_branches may not exist on legacy schemas — ignore */ }
+    } catch (e) {
+      // Do NOT swallow silently — that is exactly how this stayed broken. A
+      // missing branch must be visible in the logs, not printed as a blank line.
+      console.warn('[sales/invoice] branch lookup failed for sale', sale.id, '—', e.code || e.message);
+    }
 
     // ── Pull company contact + branding from settings ──
     let companyName = 'Moroccan Taste', taxNumber = '', currency = 'SAR';
-    let companyPhone = '', companyEmail = '', companyLogo = '';
+    let companyPhone = '', companyEmail = '', companyLogo = '', receiptFooter = '';
     try {
       const [setRows] = await db.query(
-        "SELECT setting_key, setting_value FROM settings WHERE setting_key IN ('CompanyName','TaxNumber','Currency','CompanyPhone','CompanyEmail','logo')"
+        "SELECT setting_key, setting_value FROM settings WHERE setting_key IN ('CompanyName','TaxNumber','Currency','CompanyPhone','CompanyEmail','logo','receiptFooter')"
       );
       const map = {};
       setRows.forEach(r => { map[r.setting_key] = r.setting_value; });
@@ -1798,18 +1846,24 @@ router.get('/invoice/:orderId', async (req, res) => {
       companyPhone = map.CompanyPhone || '';
       companyEmail = map.CompanyEmail || '';
       companyLogo  = map.logo         || '';
+      // receiptFooter was write-only: the React admin saved it under a label
+      // promising it prints on the invoice, and nothing anywhere read it.
+      receiptFooter = map.receiptFooter || '';
     } catch (_) { /* settings table missing — ignore, defaults already set */ }
 
     // V5.7.26 — per-brand logo: if the sale has a brand_id, prefer THAT
     //   brand's logo over the company-wide one. So Burger Wagef sales
     //   print with the Burger Wagef logo, Hangerstation with theirs, etc.
+    // The fallback here read `user_brands`, a table that is never created —
+    // it threw on every call and was swallowed, so brandLogo was always ''.
+    // `users.brand_id` is the real mapping.
     let brandLogo = '';
     let brandName = '';
     try {
       let brandId = sale.brand_id;
       if (!brandId && sale.username) {
         // Fallback: derive from the user's primary brand
-        const [ub] = await db.query('SELECT brand_id FROM user_brands WHERE username = ? LIMIT 1', [sale.username]);
+        const [ub] = await db.query('SELECT brand_id FROM users WHERE username = ? LIMIT 1', [sale.username]);
         if (ub.length) brandId = ub[0].brand_id;
       }
       if (brandId) {
@@ -1819,7 +1873,9 @@ router.get('/invoice/:orderId', async (req, res) => {
           brandLogo = br[0].logo || '';
         }
       }
-    } catch (_) { /* brands table or brand_id column may not exist on legacy schemas */ }
+    } catch (e) {
+      console.warn('[sales/invoice] brand lookup failed for sale', sale.id, '—', e.code || e.message);
+    }
 
     // ─── v5.11.4 — customer enrichment for receipts ───
     let customerName = '', customerPhone = '', customerGender = '';
@@ -1862,6 +1918,7 @@ router.get('/invoice/:orderId', async (req, res) => {
       currency: currency,
       companyPhone: companyPhone,
       companyEmail: companyEmail,
+      receiptFooter: receiptFooter,
       // V5.7.26 — receiptLogo prefers brand logo > company logo
       companyLogo: companyLogo,
       brandName: brandName,
@@ -2002,7 +2059,10 @@ async function _requireManagerApproval(req, action) {
     try {
       const [s] = await db.query(
         "SELECT setting_value FROM settings WHERE setting_key = 'RequireManagerApprovalForVoid' LIMIT 1");
-      if (s.length && String(s[0].setting_value) === '0') return null; // approval disabled
+      // Tolerant read: a === '0' comparison ignored the "false" the React admin
+      // wrote, so this failed CLOSED — approval stayed enforced after the owner
+      // switched it off. Absent/unparseable still enforces (safe default).
+      if (s.length && !isTruthy(s[0].setting_value)) return null; // approval disabled
     } catch (_) { /* settings missing → fall through to enforce */ }
   }
   const PRIVILEGED = ['admin', 'manager'];

@@ -7,7 +7,8 @@
  * (base) barcode or catalog id adds one BASE unit; finally a name substring.
  * All offline, no round-trip.
  */
-import { forwardRef, memo, useMemo } from "react";
+import { forwardRef, memo, useEffect, useMemo, useState } from "react";
+import { useVirtualizer } from "@tanstack/react-virtual";
 import { PackageSearch, Search, X } from "lucide-react";
 import type { Catalog, CatalogItem } from "@/lib/types";
 import { fmt2 } from "@/lib/format";
@@ -75,6 +76,16 @@ export interface ProductGridProps {
   onQueryChange: (q: string) => void;
   onScanSubmit: () => void;
   onAdd: (item: CatalogItem) => void;
+  /** The element that actually scrolls the grid — the host owns it, so it has to
+   *  hand it down for windowing to have an axis to measure.
+   *
+   *  It must be STATE in the host, not a ref: React attaches a child's refs and
+   *  runs its effects BEFORE the parent's ref callback, so a ref passed down here
+   *  is still null when the virtualizer first reads it, and nothing would ever
+   *  re-trigger the read — the grid would stay permanently empty.
+   *
+   *  Omit the prop entirely and the grid renders every item (correct, unwindowed). */
+  scrollElement?: HTMLElement | null;
 }
 
 export const SearchBox = forwardRef<HTMLInputElement, Pick<ProductGridProps, "query" | "onQueryChange" | "onScanSubmit">>(
@@ -113,11 +124,49 @@ export const SearchBox = forwardRef<HTMLInputElement, Pick<ProductGridProps, "qu
   },
 );
 
-export function ProductGrid({ catalog, loading, category, query, onAdd }: Omit<ProductGridProps, "onQueryChange" | "onScanSubmit">) {
+/** Mirrors the Tailwind classes below (`grid-cols-2 sm:grid-cols-3 xl:grid-cols-4`).
+ *  These are VIEWPORT media queries, so the column count follows window width —
+ *  not the container's. If those classes change, change this with them. */
+const colsFor = (w: number) => (w >= 1280 ? 4 : w >= 640 ? 3 : 2);
+/** Card min-height (5.5rem = 88px) + the 2.5 gap (10px). The virtualizer measures
+ *  each real row anyway; this only has to be close enough to size the scrollbar
+ *  before anything is measured. */
+const ROW_ESTIMATE = 98;
+const GRID_CLASS = "grid grid-cols-2 gap-2.5 sm:grid-cols-3 xl:grid-cols-4";
+
+function useColumns(): number {
+  const [cols, setCols] = useState(() => (typeof window === "undefined" ? 2 : colsFor(window.innerWidth)));
+  useEffect(() => {
+    const onResize = () => setCols(colsFor(window.innerWidth));
+    onResize();
+    window.addEventListener("resize", onResize);
+    return () => window.removeEventListener("resize", onResize);
+  }, []);
+  return cols;
+}
+
+export function ProductGrid({ catalog, loading, category, query, onAdd, scrollElement }: Omit<ProductGridProps, "onQueryChange" | "onScanSubmit">) {
   const visible = useMemo(
     () => (catalog ? filterItems(catalog.items, category, query) : []),
     [catalog, category, query],
   );
+  const cols = useColumns();
+  const rowCount = Math.ceil(visible.length / cols);
+  // Windowed by ROW, not by card: the grid is 2-4 columns, so the scroll axis is
+  // rows. The catalog is ~2,000 items × 5 nodes = ~10k DOM nodes if we map the
+  // whole array, which is what this used to do. ProductCard is memoised and onAdd
+  // is a stable useCallback, so re-render churn was never the cost — mounting and
+  // laying out 10k nodes was.
+  const rowVirtualizer = useVirtualizer({
+    count: rowCount,
+    getScrollElement: () => scrollElement ?? null,
+    estimateSize: () => ROW_ESTIMATE,
+    // Rows are measured (a long name can wrap and push a card past its min-height),
+    // but a height of 0 is never a real row — it means layout has not run yet.
+    // Trusting it would collapse every row to nothing and blank the grid.
+    measureElement: (el) => (el as HTMLElement).getBoundingClientRect().height || ROW_ESTIMATE,
+    overscan: 4,
+  });
 
   if (loading) {
     return (
@@ -139,11 +188,40 @@ export function ProductGrid({ catalog, loading, category, query, onAdd }: Omit<P
     );
   }
 
+  // The host opted out of windowing entirely (prop absent — distinct from null,
+  // which means "attaching"). Render everything rather than window against
+  // nothing and show a blank grid.
+  if (scrollElement === undefined) {
+    return (
+      <div className={cn(GRID_CLASS)}>
+        {visible.map((item) => (
+          <ProductCard key={item.id} item={item} onAdd={onAdd} />
+        ))}
+      </div>
+    );
+  }
+
   return (
-    <div className={cn("grid grid-cols-2 gap-2.5 sm:grid-cols-3 xl:grid-cols-4")}>
-      {visible.map((item) => (
-        <ProductCard key={item.id} item={item} onAdd={onAdd} />
-      ))}
+    <div style={{ height: rowVirtualizer.getTotalSize(), position: "relative", width: "100%" }}>
+      {rowVirtualizer.getVirtualItems().map((vRow) => {
+        const start = vRow.index * cols;
+        return (
+          <div
+            key={vRow.key}
+            data-index={vRow.index}
+            data-testid="product-row"
+            ref={rowVirtualizer.measureElement}
+            // left+right rather than an inline-start offset: the row spans the full
+            // width, so this is direction-agnostic and stays correct in RTL.
+            style={{ position: "absolute", top: 0, left: 0, right: 0, transform: `translateY(${vRow.start}px)` }}
+            className={cn(GRID_CLASS, "pb-2.5")}
+          >
+            {visible.slice(start, start + cols).map((item) => (
+              <ProductCard key={item.id} item={item} onAdd={onAdd} />
+            ))}
+          </div>
+        );
+      })}
     </div>
   );
 }

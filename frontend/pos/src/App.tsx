@@ -66,6 +66,11 @@ export default function App() {
 
   const [category, setCategory] = useState<string | null>(null);
   const [query, setQuery] = useState("");
+  // The grid windows against this element; it is the one that scrolls, and the
+  // grid cannot reach it on its own. STATE, not a ref: React runs the child's
+  // effects before this parent's ref callback, so a ref would still be null when
+  // the virtualizer first reads it and nothing would re-trigger the read.
+  const [gridScrollEl, setGridScrollEl] = useState<HTMLDivElement | null>(null);
   const searchRef = useRef<HTMLInputElement>(null);
 
   const [payOpen, setPayOpen] = useState(false);
@@ -231,8 +236,8 @@ export default function App() {
           {catalogError && !catalog ? (
             <ErrorBanner message={catalogError} onRetry={refetchCatalog} />
           ) : (
-            <div className="scrollbar-thin min-h-0 flex-1 overflow-y-auto pb-24 md:pb-0">
-              <ProductGrid catalog={catalog} loading={catalogLoading} category={category} query={query} onAdd={addItem} />
+            <div ref={setGridScrollEl} className="scrollbar-thin min-h-0 flex-1 overflow-y-auto pb-24 md:pb-0">
+              <ProductGrid catalog={catalog} loading={catalogLoading} category={category} query={query} onAdd={addItem} scrollElement={gridScrollEl} />
             </div>
           )}
         </section>

@@ -30,6 +30,12 @@ const app = express();
 // REAL client IP. Without this, express-rate-limit and the login lockout key on
 // the shared proxy IP → one attacker can lock out / DoS every user at once.
 app.set('trust proxy', 1);
+// Closure Sprint v2 — advanced security: optional IP allowlist (settings-backed,
+// fails OPEN, and a no-op unless enabled AND non-empty) applied to every /api
+// request. Configured from Administration › Security. trust proxy above makes
+// req.ip the real client IP for the check.
+try { app.use('/api', require('./routes/security-policies').ipAllowlistMiddleware()); }
+catch (e) { console.warn('[security-ip-allowlist]', e.message); }
 const PORT = process.env.PORT || 3000;
 
 // RC cutover flag — when "0", the warehouse-v2 SPA serves a maintenance notice
@@ -267,76 +273,9 @@ app.use(express.static(path.join(__dirname, 'public'), {
   }
 }));
 
-// ── warehouse-v2 React app (Strangler rewrite) ──────────────────────────
-// Serves the built SPA at /warehouse-v2 with an SPA history fallback. The
-// mount is PATH-PREFIXED, so it never touches the legacy UI (served from
-// /public above) or the /api routes below. The hashed JS/CSS assets are
-// immutable; index.html is no-cache so a redeploy is picked up immediately.
-// If the bundle hasn't been built yet, the path simply 404s (legacy app
-// unaffected) — build with: npm --prefix frontend/warehouse run build
-// RC cutover — when v2 is DISABLED, intercept the SPA with a maintenance notice
-// (registered BEFORE the static mount so it always wins). Legacy UI unaffected.
-if (!WAREHOUSE_V2_ENABLED) {
-  app.all(/^\/warehouse(?:-v2)?(?:\/.*)?$/, function (req, res) {
-    res.status(503).type('html').send('<!doctype html><html lang="ar" dir="rtl"><meta charset="utf-8"><title>صيانة</title><body style="font-family:Tahoma,Arial,sans-serif;padding:3rem;text-align:center;color:#172033"><h2>نظام المستودعات (v2) متوقف مؤقتًا</h2><p>يُرجى استخدام الواجهة القديمة. (WAREHOUSE_V2_ENABLED=0)</p></body></html>');
-  });
-}
-
-// Back-compat alias: the section moved from /warehouse-v2 to /warehouse (it is
-// a first-class part of the main system now). Old bookmarks/deep links keep
-// working via a 301 that preserves the sub-path and query string.
-app.get(/^\/warehouse-v2(\/.*)?$/, function (req, res) {
-  const rest = req.params[0] || '';
-  const qs = req.originalUrl.indexOf('?') !== -1 ? req.originalUrl.slice(req.originalUrl.indexOf('?')) : '';
-  res.redirect(301, '/warehouse' + rest + qs);
-});
-
-// ── warehouse-v2 — strict Content-Security-Policy (SPA scope only) ──────
-// The global helmet CSP stays disabled because the LEGACY app (served from
-// /public) relies on inline scripts. The React SPA loads ONLY hashed bundles
-// (no inline <script>), so a strict CSP can be applied scoped to /warehouse-v2
-// without affecting the legacy UI. style-src keeps 'unsafe-inline' for
-// Tailwind/React element styles (style attributes, not script).
-app.use('/warehouse', function (req, res, next) {
-  res.setHeader('Content-Security-Policy', [
-    "default-src 'self'",
-    "base-uri 'self'",
-    "object-src 'none'",
-    "frame-ancestors 'none'",
-    "img-src 'self' data: blob:",
-    "font-src 'self' data:",
-    "style-src 'self' 'unsafe-inline'",
-    "script-src 'self'",
-    "connect-src 'self'",
-    "form-action 'self'"
-  ].join('; '));
-  next();
-});
-
-var _whDist = path.join(__dirname, 'frontend', 'warehouse', 'dist');
-if (_pwaFs.existsSync(path.join(_whDist, 'index.html'))) {
-  app.use('/warehouse', express.static(_whDist, {
-    setHeaders: function(res, filePath) {
-      if (/\.html$/i.test(filePath)) {
-        res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
-      } else if (/[/\\]assets[/\\]/.test(filePath)) {
-        res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
-      }
-    }
-  }));
-  // History fallback: any extensionless path under /warehouse (a client route
-  // like /warehouse/inventory, incl. hard refresh) returns index.html. Paths
-  // that look like a file (have an extension) fall through to a normal 404
-  // instead of being masked by HTML.
-  app.get(/^\/warehouse(?:\/.*)?$/, function(req, res, next) {
-    if (/\.[a-zA-Z0-9]+$/.test(req.path)) return next();
-    res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
-    res.sendFile(path.join(_whDist, 'index.html'));
-  });
-  console.log('[warehouse] SPA mounted at /warehouse (alias: /warehouse-v2 → 301)');
-} else {
-  console.warn('[warehouse] bundle not found — run: npm --prefix frontend/warehouse run build');
-}
+// Standalone Warehouse (v2) SPA retired (Closure Sprint v2) — its features live in
+// the unified ERP at /app (inventory + purchasing). Redirect old links there.
+app.all(/^\/warehouse(?:-v2)?(?:\/.*)?$/, function (req, res) { res.redirect(302, '/app/inventory'); });
 
 // ── Cashier V2 React app (Strangler beside the legacy /pos) ─────────────
 // Served at /pos-v2 behind POS_V2_ENABLED (default ON outside production so
@@ -386,44 +325,9 @@ if (_pwaFs.existsSync(path.join(_posDist, 'index.html'))) {
   console.warn('[pos-v2] bundle not found — run: npm --prefix frontend/pos run build');
 }
 
-// Order-to-Cash SPA — served at /sales behind ORDER_TO_CASH_ENABLE (peer to the
-// warehouse + pos SPAs, same JWT/session/tab). When the flag is OFF the section
-// is invisible: /sales returns a 503 maintenance notice instead of a broken UI.
-var O2C_UI_ENABLED = /^(1|true|on|yes)$/i.test(String(process.env.ORDER_TO_CASH_ENABLE || '').trim());
-if (!O2C_UI_ENABLED) {
-  app.all(/^\/sales(?:\/.*)?$/, function (req, res) {
-    res.status(503).type('html').send('<!doctype html><html lang="ar" dir="rtl"><meta charset="utf-8"><title>صيانة</title><body style="font-family:Tahoma,Arial,sans-serif;padding:3rem;text-align:center;color:#172033"><h2>قسم «المبيعات والعملاء» غير مُفعّل</h2><p>استخدم الشاشات الحالية من النظام الأساسي. (ORDER_TO_CASH_ENABLE=0)</p></body></html>');
-  });
-} else {
-  app.use('/sales', function (req, res, next) {
-    res.setHeader('Content-Security-Policy', [
-      "default-src 'self'", "base-uri 'self'", "object-src 'none'", "frame-ancestors 'none'",
-      "img-src 'self' data: blob:", "font-src 'self' data:", "style-src 'self' 'unsafe-inline'",
-      "script-src 'self'", "connect-src 'self'", "form-action 'self'"
-    ].join('; '));
-    next();
-  });
-  var _salesDist = path.join(__dirname, 'frontend', 'sales', 'dist');
-  if (_pwaFs.existsSync(path.join(_salesDist, 'index.html'))) {
-    app.use('/sales', express.static(_salesDist, {
-      setHeaders: function(res, filePath) {
-        if (/\.html$/i.test(filePath)) {
-          res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
-        } else if (/[/\\]assets[/\\]/.test(filePath)) {
-          res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
-        }
-      }
-    }));
-    app.get(/^\/sales(?:\/.*)?$/, function(req, res, next) {
-      if (/\.[a-zA-Z0-9]+$/.test(req.path)) return next();
-      res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
-      res.sendFile(path.join(_salesDist, 'index.html'));
-    });
-    console.log('[order-to-cash] SPA mounted at /sales');
-  } else {
-    console.warn('[order-to-cash] bundle not found — run: npm --prefix frontend/sales run build');
-  }
-}
+// Standalone Order-to-Cash (sales) SPA retired (Closure Sprint v2) — its features
+// live in the unified ERP at /app (sales + customers). Redirect old links there.
+app.all(/^\/sales(?:\/.*)?$/, function (req, res) { res.redirect(302, '/app/sales/orders'); });
 
 // ── ADLAN Back-Office (unified React SPA) — served at /app ───────────────────
 // The unified Back-Office (frontend/erp) is served at /app behind

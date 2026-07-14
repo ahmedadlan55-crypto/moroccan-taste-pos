@@ -7,7 +7,6 @@
 // the current path, and rides the same search-param protocol for sub-views:
 //   ?doc=<id>  → detail page      ?new=1 → order create page
 import { useLocation, useSearchParams } from "react-router-dom";
-import { EmptyState } from "@/shared/ui";
 import { WarehouseModuleProviders } from "@/modules/inventory/lib/providers";
 import { ProcurementLayout } from "./features/procurement/ProcurementLayout";
 import {
@@ -17,15 +16,7 @@ import {
   SupplierDetailPage, OrderDetailPage, ReceiptDetailPage, InvoiceDetailPage, PaymentDetailPage, ReturnDetailPage,
 } from "./features/procurement/DetailPages";
 import { OrderCreatePage } from "./features/procurement/OrderCreatePage";
-
-function Requisitions() {
-  return (
-    <EmptyState
-      title="طلبات الشراء"
-      body="سيُنقل مسار طلبات الشراء (الطلبات الداخلية قبل أمر الشراء) ضمن مرحلة لاحقة من توحيد المشتريات."
-    />
-  );
-}
+import { RequisitionsPage } from "./requisitions/RequisitionsPage";
 
 function Section() {
   const { pathname } = useLocation();
@@ -37,7 +28,7 @@ function Section() {
     case "/purchasing/suppliers":
       return doc ? <SupplierDetailPage /> : <SuppliersPage />;
     case "/purchasing/requisitions":
-      return <Requisitions />;
+      return <RequisitionsPage />;
     case "/purchasing/orders":
       return isNew ? <OrderCreatePage /> : doc ? <OrderDetailPage /> : <OrdersPage />;
     case "/purchasing/receiving":

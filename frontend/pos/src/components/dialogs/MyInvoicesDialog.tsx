@@ -141,6 +141,20 @@ export function MyInvoicesDialog({ open, onClose }: { open: boolean; onClose: ()
     },
     onError: (e: unknown, v) => {
       const err = e as ApiError;
+      // ORDER_TO_CASH_ENABLE=1 makes middleware/o2cLegacyGate reject the legacy
+      // reverse path with 409 (server.js:590) because reversals moved to the
+      // append-only O2C credit note. The LEGACY POS hits the same wall — its
+      // إلغاء button is equally dead in this configuration. Say so plainly
+      // rather than showing the raw gate message, which redirects to /sales — a
+      // SPA that no longer exists.
+      if (err?.code === "O2C_MODULE_ACTIVE") {
+        pushToast(
+          "error",
+          "الإلغاء والمرتجع منقولان إلى وحدة «المبيعات والعملاء» — غير متاحين من الكاشير حاليًا.",
+        );
+        setPending(null);
+        return;
+      }
       // approval_required means the server rejected the credentials (or none
       // were sent) — keep the dialog open so the manager can retry.
       if (err?.code === "approval_required" || err?.status === 403) {

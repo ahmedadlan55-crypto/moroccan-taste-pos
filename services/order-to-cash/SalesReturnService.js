@@ -22,6 +22,7 @@ const posting = require('../../lib/order-to-cash/posting');
 const events = require('../../lib/order-to-cash/events');
 const { runTransition } = require('./TransitionExecutor');
 const Alloc = require('./PaymentAllocationService');
+const Zatca = require('./ZatcaDocumentService');
 
 let recomputeInvItemStock;
 try { recomputeInvItemStock = require('../../lib/stockRecompute').recomputeInvItemStock; }
@@ -79,13 +80,31 @@ async function create(conn, data, actor) {
     const vat = money(Number(ol.vat_amount) * fraction);
     const cost = money(Number(ol.cost_snapshot) * fraction);
     const baseQty = qty(Number(ol.base_qty) * fraction);
+    // Whether the goods physically come back. Not derivable from the item: only
+    // the person holding it knows. Absent ⇒ false, matching the column default.
+    const restock = rl.restock === true || rl.restock === 1 || rl.restock === '1';
+    // The components this line deducted at checkout, scaled to the returned
+    // fraction. Read from the ORIGINAL line's snapshot, never from the live
+    // recipe — a reformulated recipe would restock quantities never deducted.
+    const [origComps] = await conn.query(
+      'SELECT * FROM ar_document_line_components WHERE document_line_id = ? ORDER BY component_seq', [ol.id]);
+    const components = origComps.map((c) => ({
+      seq: c.component_seq, source: c.source, invItemId: c.inv_item_id, invItemName: c.inv_item_name,
+      // Component-level warehouse: the header's is NULL on every live return and
+      // one line's components can span warehouses.
+      warehouseId: c.warehouse_id || rl.warehouseId || ol.warehouse_id || original.warehouse_id || null,
+      restoredBaseQty: qty(Number(c.deducted_base_qty) * fraction),
+      unitCode: c.unit_code, conversionFactor: c.conversion_factor,
+      unitCostSnapshot: c.unit_cost_snapshot, totalCost: money(Number(c.total_cost) * fraction),
+      projectionVersion: c.projection_version,
+    }));
     computed.push({
       originalLineId: ol.id, itemId: ol.item_id, menuId: ol.menu_id, description: ol.description,
       enteredUnitId: ol.entered_unit_id, enteredUnitCode: ol.entered_unit_code,
       conversionFactor: ol.conversion_factor_snapshot, baseQty,
       soldQty, previouslyReturned: already, returnQty,
       unitPrice: ol.unit_price, vatCategory: ol.vat_category, vatRate: ol.vat_rate,
-      net, vat, gross: money(net + vat), cost,
+      net, vat, gross: money(net + vat), cost, restock, components,
       warehouseId: rl.warehouseId || ol.warehouse_id || original.warehouse_id,
       lotSnapshot: ol.lot_allocations_json || null,
     });
@@ -107,17 +126,100 @@ async function create(conn, data, actor) {
      data.reason || null, data.reasonCode || null, data.refundMethod || 'ar_reduction', data.refundDestinationId || null,
      subtotal, vatTotal, total, costTotal, data.idempotencyKey || null, actor || '']);
   for (const l of computed) {
+    const rlId = lineId();
     await conn.query(
       `INSERT INTO sales_return_lines
         (id, return_id, original_line_id, item_id, menu_id, description, sold_qty, previously_returned_qty,
          return_qty, entered_unit_id, entered_unit_code, conversion_factor_snapshot, base_qty, unit_price_snapshot,
-         discount_snapshot, vat_category, vat_rate, net_amount, vat_amount, gross_amount, cost_snapshot, lot_allocations_json)
-       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
-      [lineId(), id, l.originalLineId, l.itemId, l.menuId, l.description, l.soldQty, l.previouslyReturned,
+         discount_snapshot, vat_category, vat_rate, net_amount, vat_amount, gross_amount, cost_snapshot,
+         lot_allocations_json, warehouse_id, restock)
+       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+      [rlId, id, l.originalLineId, l.itemId, l.menuId, l.description, l.soldQty, l.previouslyReturned,
        l.returnQty, l.enteredUnitId, l.enteredUnitCode, l.conversionFactor, l.baseQty, l.unitPrice,
-       0, l.vatCategory, l.vatRate, l.net, l.vat, l.gross, l.cost, l.lotSnapshot]);
+       0, l.vatCategory, l.vatRate, l.net, l.vat, l.gross, l.cost, l.lotSnapshot,
+       l.warehouseId || null, l.restock ? 1 : 0]);
+    for (const c of l.components) {
+      await conn.query(
+        `INSERT INTO sales_return_line_components
+          (id, return_id, return_line_id, component_seq, source, inv_item_id, inv_item_name, warehouse_id,
+           restored_base_qty, unit_code, conversion_factor, unit_cost_snapshot, total_cost, projection_version)
+         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+        ['SRLC-' + Date.now() + '-' + Math.random().toString(36).slice(2, 8), id, rlId, c.seq, c.source,
+         c.invItemId, c.invItemName, c.warehouseId, c.restoredBaseQty, c.unitCode, c.conversionFactor,
+         c.unitCostSnapshot, c.totalCost, c.projectionVersion]);
+    }
   }
   return getWithLines(conn, id);
+}
+
+/**
+ * What a restock line puts back on the shelf. Components first: a POS line sells a
+ * menu item but deducts inv_items, so the components ARE the stock movement. Lines
+ * with no components (manual invoices sell an inv_item directly) fall back to the
+ * line's own item. `direction` is +1 on post and −1 on reverse, so a reversal can
+ * never re-deduct stock a no_restock line never restored.
+ */
+async function _restore(conn, row, lines, actor, direction = 1) {
+  const wanted = lines.filter((l) => Number(l.restock) === 1);
+  const out = { restoredCost: 0, affectedStock: [], cogsByWarehouse: {} };
+  if (!wanted.length) return out;                                  // no_restock ⇒ zero stock, zero COGS
+
+  const [comps] = await conn.query(
+    `SELECT * FROM sales_return_line_components WHERE return_line_id IN (${wanted.map(() => '?').join(',')})
+      ORDER BY return_line_id, component_seq`, wanted.map((l) => l.id));
+  const byLine = {};
+  comps.forEach((c) => { (byLine[c.return_line_id] = byLine[c.return_line_id] || []).push(c); });
+
+  const moves = [];
+  for (const l of wanted) {
+    const cs = byLine[l.id] || [];
+    if (cs.length) {
+      for (const c of cs) {
+        if (!c.inv_item_id || !c.warehouse_id) {
+          // Do NOT skip. The operator asked for a restock and we cannot honour it;
+          // silently continuing is exactly the bug that made this branch dead.
+          throw err('VALIDATION_ERROR',
+            `مكوّن بلا صنف أو مستودع في السطر ${l.id} — لا يمكن إعادة المخزون (component_seq ${c.component_seq})`);
+        }
+        if (!(Number(c.restored_base_qty) > 0)) continue;           // a zero-qty component moves nothing
+        moves.push({ itemId: c.inv_item_id, itemName: c.inv_item_name || l.description || '',
+          warehouseId: c.warehouse_id, baseQty: qty(c.restored_base_qty), cost: money(c.total_cost || 0) });
+      }
+    } else if (l.item_id && l.warehouse_id && Number(l.base_qty) > 0) {
+      moves.push({ itemId: l.item_id, itemName: l.description || '', warehouseId: l.warehouse_id,
+        baseQty: qty(l.base_qty), cost: money(l.cost_snapshot || 0) });
+    } else {
+      throw err('VALIDATION_ERROR',
+        `السطر ${l.id} مطلوب إعادته للمخزون لكن لا توجد له لقطة مكوّنات ولا صنف/مستودع مباشر`);
+    }
+  }
+
+  for (const m of moves) {
+    const delta = direction > 0 ? m.baseQty : -m.baseQty;
+    const [ws] = await conn.query(
+      'SELECT id, qty FROM warehouse_stock WHERE warehouse_id = ? AND item_id = ? LIMIT 1 FOR UPDATE',
+      [m.warehouseId, m.itemId]);
+    if (ws.length) {
+      await conn.query('UPDATE warehouse_stock SET qty = qty + ?, last_updated = NOW() WHERE id = ?', [delta, ws[0].id]);
+    } else {
+      await conn.query('INSERT INTO warehouse_stock (id, warehouse_id, item_id, qty, added_by) VALUES (?,?,?,?,?)',
+        ['WS-' + mvId(), m.warehouseId, m.itemId, delta, actor]);
+    }
+    await conn.query(
+      `INSERT INTO inventory_movements (id, movement_date, item_id, item_name, type, qty, reason, username, notes, warehouse_id, reference_type, reference_id)
+       VALUES (?, NOW(), ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [mvId(), m.itemId, m.itemName, direction > 0 ? 'in' : 'out', m.baseQty,
+       direction > 0 ? 'مرتجع بيع' : 'عكس مرتجع بيع', actor, row.return_number, m.warehouseId,
+       direction > 0 ? 'SalesReturn' : 'SalesReturnReversal', row.id]);
+    // The qty cache is derived data; a failure here means it disagrees with the
+    // movements, which is a real defect — do not swallow it into a silent drift.
+    await recomputeInvItemStock(conn, m.itemId);
+    out.restoredCost += m.cost;
+    out.cogsByWarehouse[m.warehouseId] = money((out.cogsByWarehouse[m.warehouseId] || 0) + m.cost);
+    out.affectedStock.push({ itemId: m.itemId, warehouseId: m.warehouseId, qty: m.baseQty });
+  }
+  out.restoredCost = money(out.restoredCost);
+  return out;
 }
 
 async function approve(id, ctx) {
@@ -135,7 +237,20 @@ async function post(id, ctx) {
     actor: ctx.actor, actorId: ctx.actorId, expectedVersion: ctx.expectedVersion, idempotencyKey: ctx.idempotencyKey,
     actorColumns: { by: 'posted_by', at: 'posted_at' },
     perform: async (conn, row) => {
-      const [lines] = await conn.query('SELECT * FROM sales_return_lines WHERE return_id = ?', [id]);
+      const [lines] = await conn.query('SELECT * FROM sales_return_lines WHERE return_id = ? ORDER BY id', [id]);
+      if (!lines.length) throw err('VALIDATION_ERROR', 'لا يمكن ترحيل مرتجع بلا أسطر');
+
+      // The revenue account each original line credited. The credit note must
+      // debit THAT account, not a global default: an invoice whose revenue was
+      // split across accounts would otherwise never net back to zero.
+      const revByOrig = {};
+      const origIds = lines.map((l) => l.original_line_id).filter(Boolean);
+      if (origIds.length) {
+        const [o] = await conn.query(
+          `SELECT id, revenue_account_id, revenue_account_code FROM ar_document_lines WHERE id IN (${origIds.map(() => '?').join(',')})`, origIds);
+        o.forEach((x) => { revByOrig[x.id] = x; });
+      }
+
       // 1) create the credit_note ar_document linked to the original invoice
       const cnDocId = cnId();
       const cnNumber = await nextNumber(conn, 'credit_note', row.return_date);
@@ -150,32 +265,56 @@ async function post(id, ctx) {
          row.return_date, money(row.subtotal), money(row.vat_amount), money(row.total_amount),
          row.original_ar_document_id, ctx.actor || '', ctx.actor || '']);
 
-      // 2) physical stock restoration (only lines with item_id + warehouse) → accumulate restorable cost
-      let restoredCost = 0;
-      const affectedStock = [];
+      // 2) the credit note's LINES. These were never written: every credit note
+      //    ever posted is a header with a total and nothing under it — unprintable,
+      //    un-auditable, and unstampable (ZATCA needs lines). source_line_id is the
+      //    return line's id: stable, replay-safe, and honours uq_arl_doc_srcline.
       for (const l of lines) {
-        if (!l.item_id || !l.warehouse_id || !(Number(l.base_qty) > 0)) continue;
-        const [ws] = await conn.query('SELECT id, qty FROM warehouse_stock WHERE warehouse_id = ? AND item_id = ? LIMIT 1 FOR UPDATE', [l.warehouse_id, l.item_id]);
-        if (ws.length) {
-          await conn.query('UPDATE warehouse_stock SET qty = qty + ?, last_updated = NOW() WHERE id = ?', [qty(l.base_qty), ws[0].id]);
-        } else {
-          await conn.query('INSERT INTO warehouse_stock (id, warehouse_id, item_id, qty, added_by) VALUES (?,?,?,?,?)',
-            ['WS-' + mvId(), l.warehouse_id, l.item_id, qty(l.base_qty), ctx.actor || '']);
-        }
+        const rev = revByOrig[l.original_line_id] || {};
         await conn.query(
-          `INSERT INTO inventory_movements (id, movement_date, item_id, item_name, type, qty, reason, username, notes, warehouse_id, reference_type, reference_id)
-           VALUES (?, NOW(), ?, ?, 'in', ?, ?, ?, ?, ?, 'SalesReturn', ?)`,
-          [mvId(), l.item_id, l.description || '', qty(l.base_qty), 'مرتجع بيع', ctx.actor || '', row.return_number, l.warehouse_id, row.id]);
-        try { await recomputeInvItemStock(conn, l.item_id); } catch (_) { /* qty cache best-effort */ }
-        restoredCost += Number(l.cost_snapshot || 0);
-        affectedStock.push({ itemId: l.item_id, warehouseId: l.warehouse_id, qty: qty(l.base_qty) });
+          `INSERT INTO ar_document_lines
+            (id, document_id, source_line_id, item_id, menu_id, description, entered_unit_id, entered_unit_code,
+             entered_qty, conversion_factor_snapshot, base_qty, unit_price, discount_amount, vat_category, vat_rate,
+             net_amount, vat_amount, gross_amount, revenue_account_id, revenue_account_code, warehouse_id,
+             cost_snapshot, projection_version)
+           VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,1)
+           ON DUPLICATE KEY UPDATE id = id`,
+          ['ARL-' + mvId(), cnDocId, l.id, l.item_id, l.menu_id, l.description, l.entered_unit_id,
+           l.entered_unit_code, qty(l.return_qty), l.conversion_factor_snapshot, qty(l.base_qty),
+           l.unit_price_snapshot, 0, l.vat_category, l.vat_rate, money(l.net_amount), money(l.vat_amount),
+           money(l.gross_amount), rev.revenue_account_id || null, rev.revenue_account_code || null,
+           l.warehouse_id || null, money(l.cost_snapshot)]);
       }
-      restoredCost = money(restoredCost);
 
-      // 3) GL — revenue + VAT reversal + refund leg; cost reversal only for physically restored qty
+      // 3) REAL ZATCA stamp — mirrors InvoiceService.issue. A credit note is a
+      //    Type-381 document; leaving it 'pending' with no uuid/hash was not a
+      //    conservative default, it was an unstamped document.
+      const [cnRows] = await conn.query('SELECT * FROM ar_documents WHERE id = ? LIMIT 1', [cnDocId]);
+      const [cnLines] = await conn.query('SELECT * FROM ar_document_lines WHERE document_id = ?', [cnDocId]);
+      const z = await Zatca.stamp(conn, { doc: cnRows[0], lines: cnLines });
+      await conn.query(
+        'UPDATE ar_documents SET zatca_uuid = ?, zatca_hash = ?, zatca_status = ?, zatca_qr_base64 = ? WHERE id = ?',
+        [z.uuid, z.hash, z.status, z.qr, cnDocId]);
+
+      // 4) physical stock restoration — ONLY for lines the operator marked restock,
+      //    and ONLY from the checkout component snapshot. A POS line is a menu item
+      //    (a burger); what left the shelf were its components (bun, patty). The old
+      //    code tested l.warehouse_id, a column that did not exist, so it skipped
+      //    every line on every return — restock and the COGS reversal have never run.
+      const { restoredCost, affectedStock, cogsByWarehouse } = await _restore(conn, row, lines, ctx.actor || '');
+
+      // 5) GL — revenue + VAT reversal + refund leg; cost reversal only for what
+      //    physically came back, split per warehouse so the inventory legs land on
+      //    the same dimension the sale credited.
+      const revenueByAccount = {};
+      for (const l of lines) {
+        const code = (revByOrig[l.original_line_id] || {}).revenue_account_code || '';
+        revenueByAccount[code] = money((revenueByAccount[code] || 0) + Number(l.net_amount || 0));
+      }
       const journalId = await posting.postCreditNote(conn, {
         ret: Object.assign({}, row, { posted_by: ctx.actor }),
-        net: money(row.subtotal), vat: money(row.vat_amount), cost: restoredCost, warehouseId: row.warehouse_id,
+        net: money(row.subtotal), vat: money(row.vat_amount), cost: restoredCost,
+        warehouseId: row.warehouse_id, revenueByAccount, cogsByWarehouse,
       });
       await conn.query('UPDATE ar_documents SET gl_journal_id = ? WHERE id = ?', [journalId, cnDocId]);
 
@@ -221,20 +360,32 @@ async function reverse(id, ctx) {
           originalJournalId: row.journal_id, referenceType: 'SalesReturn', referenceId: row.id, actor: ctx.actor, dateYMD: calc.ymd(ctx.date),
         }));
       }
-      // re-deduct the restored stock
-      const [lines] = await conn.query('SELECT * FROM sales_return_lines WHERE return_id = ?', [id]);
-      for (const l of lines) {
-        if (!l.item_id || !l.warehouse_id || !(Number(l.base_qty) > 0)) continue;
-        await conn.query('UPDATE warehouse_stock SET qty = qty - ?, last_updated = NOW() WHERE warehouse_id = ? AND item_id = ?', [qty(l.base_qty), l.warehouse_id, l.item_id]);
-        await conn.query(
-          `INSERT INTO inventory_movements (id, movement_date, item_id, item_name, type, qty, reason, username, notes, warehouse_id, reference_type, reference_id)
-           VALUES (?, NOW(), ?, ?, 'out', ?, ?, ?, ?, ?, 'SalesReturnReversal', ?)`,
-          [mvId(), l.item_id, l.description || '', qty(l.base_qty), 'عكس مرتجع بيع', ctx.actor || '', row.return_number, l.warehouse_id, row.id]);
-        try { await recomputeInvItemStock(conn, l.item_id); } catch (_) {}
+      // The cost reversal is a SECOND journal (postCreditNote posts revenue and
+      // COGS separately) and sales_returns only remembers the first. Reversing the
+      // revenue journal alone would put the stock back out the door while leaving
+      // Dr Inventory / Cr COGS standing — value and quantity would part company.
+      // This was latent, not visible: restoredCost was always 0, so the COGS
+      // journal never existed to be missed.
+      const [cogsJ] = await conn.query(
+        "SELECT id FROM gl_journals WHERE reference_type = 'SalesReturnCOGS' AND reference_id = ? AND reversed_by_journal_id IS NULL",
+        [row.id]);
+      for (const j of cogsJ) {
+        journalIds.push(await posting.postReversal(conn, {
+          originalJournalId: j.id, referenceType: 'SalesReturnCOGS', referenceId: row.id, actor: ctx.actor, dateYMD: calc.ymd(ctx.date),
+        }));
       }
+      // Re-deduct EXACTLY what the post restored — no more. Reading the same
+      // restock flag and the same component snapshot is what makes that true; the
+      // old loop keyed off a non-existent column, so it would have re-deducted
+      // stock on lines that never restored any had the column ever appeared.
+      const [lines] = await conn.query('SELECT * FROM sales_return_lines WHERE return_id = ? ORDER BY id', [id]);
+      const undone = await _restore(conn, row, lines, ctx.actor || '', -1);
       // mark the credit note as cancelled (it no longer represents a live document)
       if (row.credit_note_id) await conn.query("UPDATE ar_documents SET status='cancelled', version=version+1 WHERE id = ?", [row.credit_note_id]);
-      return { extraSets: { reversal_journal_id: journalIds[0] || null }, journalIds };
+      return {
+        extraSets: { reversal_journal_id: journalIds[0] || null },
+        journalIds, affectedStock: undone.affectedStock,
+      };
     },
   });
 }
@@ -251,7 +402,25 @@ async function getWithLines(conn, id) {
   const [rows] = await conn.query('SELECT * FROM sales_returns WHERE id = ? LIMIT 1', [id]);
   if (!rows.length) throw err('NOT_FOUND', 'المرتجع غير موجود');
   const [lines] = await conn.query('SELECT * FROM sales_return_lines WHERE return_id = ? ORDER BY id', [id]);
-  return Object.assign({}, rows[0], { lines });
+  // Components ride along so the screen can show WHAT a restock actually puts
+  // back — a menu line names a burger, but the shelf sees bun + patty.
+  const [comps] = await conn.query(
+    'SELECT * FROM sales_return_line_components WHERE return_id = ? ORDER BY return_line_id, component_seq', [id]);
+  const byLine = {};
+  comps.forEach((c) => { (byLine[c.return_line_id] = byLine[c.return_line_id] || []).push(c); });
+  // The credit note is the whole point of posting; the screen should not have to
+  // guess whether it was stamped.
+  let creditNote = null;
+  if (rows[0].credit_note_id) {
+    const [cn] = await conn.query(
+      'SELECT id, document_number, issue_date, total_amount, status, zatca_status, zatca_uuid, zatca_qr_base64 FROM ar_documents WHERE id = ? LIMIT 1',
+      [rows[0].credit_note_id]);
+    if (cn.length) creditNote = cn[0];
+  }
+  return Object.assign({}, rows[0], {
+    lines: lines.map((l) => Object.assign({}, l, { components: byLine[l.id] || [] })),
+    creditNote,
+  });
 }
 
 const SORTABLE = { returnDate: 'return_date', total: 'total_amount', status: 'status', number: 'return_number' };

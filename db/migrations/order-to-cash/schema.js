@@ -385,6 +385,60 @@ async function apply(db, log = () => {}) {
       KEY ix_arlc_item (inv_item_id)
     ) ${TBL}`, log);
 
+  // ── 11. per-line restock decision (additive; sales_return_lines EXISTS)
+  // Same rule as §10: the CREATE TABLE at §6 is a no-op on every live database,
+  // so these must be addColumn.
+  if (await H.tableExists(db, 'ar_documents')) {
+    // The stamped Phase-1 QR. ZatcaDocumentService returns one and no caller
+    // could persist it — there was no column — so every printed O2C document
+    // would have to re-derive it and hope the inputs still agree. The legacy
+    // credit_notes table has carried this since day one; ar_documents is the
+    // replacement and must not lose the field.
+    await H.addColumn(db, 'ar_documents', 'zatca_qr_base64', 'TEXT NULL', log);
+  }
+
+  if (await H.tableExists(db, 'sales_return_lines')) {
+    // Whether this line's goods physically come back. NOT derivable: a sealed
+    // drink is restockable, the identical-priced burger beside it is not, and
+    // only the person holding the item knows which. DEFAULT 0 because 0 is the
+    // only value that preserves what the already-posted returns actually did —
+    // SalesReturnService skipped every line (it tested a column that has never
+    // existed), so no return has ever moved stock. Defaulting to 1 would
+    // silently redefine those rows and restock spoiled food.
+    await H.addColumn(db, 'sales_return_lines', 'restock', 'TINYINT(1) NOT NULL DEFAULT 0', log);
+    // create() computed a warehouseId and then dropped it on the floor — the
+    // INSERT never listed the column. Same write-dead family as source_line_id.
+    await H.addColumn(db, 'sales_return_lines', 'warehouse_id', `${ID} NULL`, log);
+  }
+
+  // The return's own component snapshot, mirroring ar_document_line_components.
+  // Copied at create() rather than read from the invoice at post(): the return
+  // is a historical document that must print and re-post identically, and the
+  // qty here is the RETURNED fraction, not the sold one. Also bounds the blast
+  // radius — a second partial return re-reads the invoice, not this.
+  await H.createTable(db, 'sales_return_line_components', `
+    CREATE TABLE sales_return_line_components (
+      id ${ID} PRIMARY KEY,
+      return_id ${ID} NOT NULL,
+      return_line_id ${ID} NOT NULL,
+      component_seq INT NOT NULL,
+      source ENUM('recipe','semi','imported','combo') NOT NULL DEFAULT 'recipe',
+      inv_item_id ${ID} NULL,
+      inv_item_name VARCHAR(200) NULL,
+      warehouse_id ${ID} NULL,
+      restored_base_qty ${QTY} NOT NULL DEFAULT 0,
+      unit_code VARCHAR(32) NULL,
+      conversion_factor ${RATE} NULL,
+      unit_cost_snapshot ${RATE} NOT NULL DEFAULT 0,
+      total_cost ${MONEY} NOT NULL DEFAULT 0,
+      projection_version SMALLINT NOT NULL DEFAULT 1,
+      created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      UNIQUE KEY uq_srlc_line_seq (return_line_id, component_seq),
+      KEY ix_srlc_ret (return_id),
+      KEY ix_srlc_line (return_line_id),
+      KEY ix_srlc_item (inv_item_id)
+    ) ${TBL}`, log);
+
   return true;
 }
 

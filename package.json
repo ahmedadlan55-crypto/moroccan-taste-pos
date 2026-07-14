@@ -19,6 +19,7 @@
     "test:periods-security": "node tests/integration/periodsSecurity.api.test.js",
     "test:workflow-auth": "node tests/integration/workflowAuth.api.test.js",
     "test:period-lock": "node tests/integration/periodLock.api.test.js",
+    "test:erp-core-authz": "node tests/integration/erpCoreAuthz.api.test.js",
     "test:inventory-method": "node tests/integration/inventoryMethod.api.test.js",
     "test:search-api": "node tests/integration/search.api.test.js",
     "test:uom-docs": "node tests/integration/uomDocs.api.test.js",

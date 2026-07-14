@@ -1856,6 +1856,12 @@ async function runMigrations() {
       // chart + position registry were world-readable and world-writable.
       ['workflow.view', 'workflow', 'عرض الهيكل الإداري والمناصب', 'View org chart and positions', 0, 810],
       ['workflow.manage', 'workflow', 'تعديل الهيكل الإداري والمناصب وصلاحيات المعاملات', 'Manage org chart, positions and transaction rights', 1, 815],
+      // Royalty accrual posts Dr 6100 / Cr 2310 to the GL. routes/erp-core.js had
+      // no guard at all, so any authenticated user could approve an accrual.
+      // (waste.create already existed in the catalog above — it was simply never
+      // enforced on the route.)
+      ['royalty.view', 'finance', 'عرض احتسابات الإتاوات', 'View royalty runs', 0, 546],
+      ['royalty.manage', 'finance', 'احتساب واعتماد الإتاوات', 'Compute and approve royalty runs', 1, 547],
     ];
     for (const p of latePerms) {
       await db.query(
@@ -1884,6 +1890,16 @@ async function runMigrations() {
     for (const role of ['manager', 'hr']) {
       await db.query('INSERT IGNORE INTO role_permissions (role, permission_id) VALUES (?, ?)',
         [role, 'workflow.manage']);
+    }
+    // Royalty is a franchise-accounting function: same audience as the other
+    // finance rights it sits beside.
+    for (const role of ['manager', 'finance', 'accountant']) {
+      await db.query('INSERT IGNORE INTO role_permissions (role, permission_id) VALUES (?, ?)',
+        [role, 'royalty.view']);
+    }
+    for (const role of ['manager', 'finance']) {
+      await db.query('INSERT IGNORE INTO role_permissions (role, permission_id) VALUES (?, ?)',
+        [role, 'royalty.manage']);
     }
   } catch(e) { console.error('seed late permissions failed:', e.message); }
 

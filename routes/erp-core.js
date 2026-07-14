@@ -22,6 +22,13 @@ const gl = require('../lib/glPosting');
 // v7.1 — waste must actually deduct warehouse stock + carry a document number.
 const { recomputeInvItemStock, deductWarehouseStock } = require('../lib/stockRecompute');
 const { nextDocNumber } = require('../lib/docNumber');
+// v4 SECURITY — this router is mounted at /api/erp (server.js) and had ZERO
+// capability or role guards, while it contains THREE gl.postJournal call sites
+// (royalty approve, waste create, purchase receipt). Any authenticated user —
+// a cashier's token included — could post journal entries to the general ledger
+// and deduct warehouse stock. Sibling modules right next to the mount are gated
+// with requireRole('admin','manager').
+const requireCapability = require('../middleware/requireCapability');
 
 // ═══════════════════════════════════════
 // HELPERS
@@ -1300,7 +1307,7 @@ router.get('/period-status', async (req, res) => {
 // ═══════════════════════════════════════
 // ROYALTY RUNS (franchise accrual)
 // ═══════════════════════════════════════
-router.get('/royalty-runs', async (req, res) => {
+router.get('/royalty-runs', requireCapability('royalty.view'), async (req, res) => {
   try {
     const [rows] = await db.query(
       `SELECT rr.*, b.name AS brand_name
@@ -1321,7 +1328,7 @@ router.get('/royalty-runs', async (req, res) => {
 });
 
 // Compute royalty for a brand + period (creates draft entry)
-router.post('/royalty-runs/compute', async (req, res) => {
+router.post('/royalty-runs/compute', requireCapability('royalty.manage'), async (req, res) => {
   try {
     const { brandId, periodStart, periodEnd } = req.body;
     if (!brandId || !periodStart || !periodEnd) return res.json({ success: false, error: 'الحقول مطلوبة' });
@@ -1368,7 +1375,7 @@ router.post('/royalty-runs/compute', async (req, res) => {
   } catch(e) { res.json({ success: false, error: e.message }); }
 });
 
-router.post('/royalty-runs/:id/approve', async (req, res) => {
+router.post('/royalty-runs/:id/approve', requireCapability('royalty.manage'), async (req, res) => {
   try {
     const { username } = req.body;
     const [rr] = await db.query('SELECT * FROM royalty_runs WHERE id = ?', [req.params.id]);
@@ -1420,7 +1427,7 @@ router.post('/royalty-runs/:id/approve', async (req, res) => {
   } catch(e) { res.json({ success: false, error: e.message }); }
 });
 
-router.post('/royalty-runs/:id/mark-paid', async (req, res) => {
+router.post('/royalty-runs/:id/mark-paid', requireCapability('royalty.manage'), async (req, res) => {
   try {
     await db.query(
       `UPDATE royalty_runs SET status='paid', paid_at=NOW() WHERE id=? AND status IN ('approved','invoiced')`,
@@ -1429,7 +1436,7 @@ router.post('/royalty-runs/:id/mark-paid', async (req, res) => {
   } catch(e) { res.json({ success: false, error: e.message }); }
 });
 
-router.delete('/royalty-runs/:id', async (req, res) => {
+router.delete('/royalty-runs/:id', requireCapability('royalty.manage'), async (req, res) => {
   try {
     await db.query(`DELETE FROM royalty_runs WHERE id=? AND status='draft'`, [req.params.id]);
     res.json({ success: true });
@@ -1441,7 +1448,7 @@ router.delete('/royalty-runs/:id', async (req, res) => {
 // ═══════════════════════════════════════
 // v5.10.34 — Enhanced: pagination + search + reason/warehouse filters + summary.
 // Back-compat: still returns array shape when ?paginated is not set.
-router.get('/waste-entries', async (req, res) => {
+router.get('/waste-entries', requireCapability('inventory.view'), async (req, res) => {
   try {
     const { brand_id, branch_id, warehouse_id, reason, q } = req.query;
     const fromDate = req.query.fromDate || req.query.from;
@@ -1539,7 +1546,7 @@ router.get('/waste-entries', async (req, res) => {
 // v5.10.34 — Delete a waste entry (and reverse its inventory + GL effect).
 // Wrapped in db.withTransaction so a partial failure can never leave a
 // half-deleted entry.
-router.delete('/waste-entries/:id', async (req, res) => {
+router.delete('/waste-entries/:id', requireCapability('waste.create'), async (req, res) => {
   try {
     const id = req.params.id;
     const [hdr] = await db.query('SELECT * FROM waste_entries WHERE id = ?', [id]);
@@ -1602,7 +1609,7 @@ router.delete('/waste-entries/:id', async (req, res) => {
   } catch (e) { res.status(500).json({ success:false, error: e.message }); }
 });
 
-router.post('/waste-entries', async (req, res) => {
+router.post('/waste-entries', requireCapability('waste.create'), async (req, res) => {
   try {
     const { brandId, branchId, warehouseId, costCenterId, wasteDate, reason, notes, createdBy, items } = req.body;
     if (!warehouseId) return res.json({ success: false, error: 'المستودع مطلوب' });
@@ -1712,7 +1719,7 @@ router.post('/waste-entries', async (req, res) => {
   } catch(e) { res.json({ success: false, error: e.message }); }
 });
 
-router.get('/waste-entries/:id/items', async (req, res) => {
+router.get('/waste-entries/:id/items', requireCapability('inventory.view'), async (req, res) => {
   try {
     const [rows] = await db.query(
       `SELECT wi.*, i.name AS item_name, i.id AS sku
@@ -1748,7 +1755,7 @@ router.get('/purchase-receipts', async (req, res) => {
   } catch(e) { res.json([]); }
 });
 
-router.post('/purchase-receipts', async (req, res) => {
+router.post('/purchase-receipts', requireCapability('purchases.create'), async (req, res) => {
   try {
     const { poId, supplierId, warehouseId, receiptDate, createdBy, lines, brandId, branchId } = req.body;
     if (!warehouseId || !Array.isArray(lines) || !lines.length)

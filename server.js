@@ -4266,6 +4266,27 @@ async function runMigrations() {
     ) ENGINE=InnoDB`);
   await addColumnIfMissing('sales', 'has_credit_note', 'BOOLEAN NOT NULL DEFAULT 0');
 
+  // ─── v4 — Immutable receipt identity (seller block snapshot) ───
+  // A tax document must not change after issue. Every company/VAT/CR/logo value
+  // on a receipt used to be resolved LIVE at reprint, so editing the tax number
+  // silently reprinted EVERY historical invoice with the new one and rebuilt its
+  // ZATCA QR from it. Sales now pin the identity they were issued under.
+  //
+  // Content-addressed on purpose: the logo is a base64 data-URL (tens of KB), so
+  // copying the block onto every sale row would cost ~50KB × every invoice. The
+  // id is the hash of the identity's canonical JSON, so identical identity =>
+  // one shared row, and changing the logo mints a new row while existing sales
+  // keep pointing at the old one. Storage is O(distinct identities), not O(sales).
+  await createTableIfMissing('receipt_identities', `
+    CREATE TABLE receipt_identities (
+      id CHAR(40) PRIMARY KEY,
+      payload_json LONGTEXT NOT NULL,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    ) ENGINE=InnoDB`);
+  // NULL for every invoice issued before this migration — the reprint path falls
+  // back to a live resolve for those, so old receipts keep printing unchanged.
+  await addColumnIfMissing('sales', 'receipt_identity_id', 'CHAR(40) NULL');
+
   // ─── v5.11.6 — Per-attendance-event device tracking ───
   // Each clock-in / clock-out remembers the brand + model + OS + UA of
   // the phone or tablet that recorded it. Owner needs this to verify

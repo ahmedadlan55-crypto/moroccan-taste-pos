@@ -2,6 +2,7 @@ const router = require('express').Router();
 const db = require('../db/connection');
 const bcrypt = require('bcryptjs');
 const { isTruthy } = require('../lib/settingsKeys');
+const invoiceIdentity = require('../lib/invoiceIdentity');
 const gl = require('../lib/glPosting');
 const zatca = require('../lib/zatca');
 const { recomputeInvItemStock, recomputeMenuStock, deductWarehouseStock } = require('../lib/stockRecompute');
@@ -726,13 +727,27 @@ router.post('/', async (req, res) => {
       console.warn('[sales] could not resolve seller brand/branch for', username, '—', e.code || e.message);
     }
 
+    // v4 — freeze the seller identity this invoice is issued under. Resolved
+    // through the scope chain (branch → brand → company → global settings) and
+    // content-addressed, so a later logo/tax-number edit cannot rewrite what this
+    // receipt already printed or the ZATCA QR built from it. Best-effort: a
+    // failure here must never block taking money — the reprint then falls back to
+    // a live resolve exactly as it did before.
+    let receiptIdentityId = null;
+    try {
+      const { identity } = await invoiceIdentity.resolveIdentity(db, { brandId: saleBrandId, branchId: saleBranchId });
+      receiptIdentityId = await invoiceIdentity.snapshotIdentity(db, identity);
+    } catch (e) {
+      console.warn('[sales] receipt identity snapshot skipped for', orderId, '—', e.code || e.message);
+    }
+
     try {
       if (clientOrderId) {
-        await db.query('INSERT INTO sales (id, order_date, items_json, total_final, payment_method, username, shift_id, discount_name, discount_amount, kita_service_fee, client_order_id, brand_id, branch_id) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)',
-          [orderId, now, JSON.stringify(items), invTotal, payStr, username, shiftId, discountName || '', discountAmount || 0, kitaServiceFee || 0, clientOrderId, saleBrandId, saleBranchId]);
+        await db.query('INSERT INTO sales (id, order_date, items_json, total_final, payment_method, username, shift_id, discount_name, discount_amount, kita_service_fee, client_order_id, brand_id, branch_id, receipt_identity_id) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)',
+          [orderId, now, JSON.stringify(items), invTotal, payStr, username, shiftId, discountName || '', discountAmount || 0, kitaServiceFee || 0, clientOrderId, saleBrandId, saleBranchId, receiptIdentityId]);
       } else {
-        await db.query('INSERT INTO sales (id, order_date, items_json, total_final, payment_method, username, shift_id, discount_name, discount_amount, kita_service_fee, brand_id, branch_id) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)',
-          [orderId, now, JSON.stringify(items), invTotal, payStr, username, shiftId, discountName || '', discountAmount || 0, kitaServiceFee || 0, saleBrandId, saleBranchId]);
+        await db.query('INSERT INTO sales (id, order_date, items_json, total_final, payment_method, username, shift_id, discount_name, discount_amount, kita_service_fee, brand_id, branch_id, receipt_identity_id) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)',
+          [orderId, now, JSON.stringify(items), invTotal, payStr, username, shiftId, discountName || '', discountAmount || 0, kitaServiceFee || 0, saleBrandId, saleBranchId, receiptIdentityId]);
       }
     } catch (insErr) {
       if (insErr && insErr.code === 'ER_DUP_ENTRY' && clientOrderId) {
@@ -1893,6 +1908,35 @@ router.get('/invoice/:orderId', async (req, res) => {
       }
     } catch (_) { /* customer_id column or row missing — skip */ }
 
+    // ─── v4 — the seller block this invoice was ISSUED under wins ───
+    // Everything resolved above is the LIVE identity. For any sale carrying a
+    // snapshot we replace it wholesale: a receipt reprinted next year must show
+    // the company name, tax number, CR and logo that were on it the day it was
+    // issued — not today's — because the ZATCA QR is built from these values.
+    // Invoices predating the migration have no snapshot and keep the live
+    // resolution, so old receipts print exactly as they did before.
+    let crNumber = '', nationalAddress = '', receiptHeader = '', receiptThankYou = '', receiptReturnPolicy = '';
+    let identitySource = 'live';
+    const snap = await invoiceIdentity.loadIdentity(db, sale.receipt_identity_id);
+    if (snap) {
+      identitySource = 'snapshot';
+      companyName   = snap.sellerName   || companyName;
+      taxNumber     = snap.taxNumber    || taxNumber;
+      currency      = snap.currency     || currency;
+      companyPhone  = snap.phone        || companyPhone;
+      companyEmail  = snap.email        || companyEmail;
+      companyLogo   = snap.logo         || companyLogo;
+      receiptFooter = snap.footer       || receiptFooter;
+      brandName     = snap.brandName    || brandName;
+      branchName    = snap.branchName   || branchName;
+      branchAddress = snap.address      || branchAddress;
+      crNumber            = snap.crNumber       || '';
+      nationalAddress     = snap.nationalAddress || '';
+      receiptHeader       = snap.header         || '';
+      receiptThankYou     = snap.thankYou       || '';
+      receiptReturnPolicy = snap.returnPolicy   || '';
+    }
+
     res.json({
       orderId: sale.id, date: sale.order_date, payment: sale.payment_method,
       totalFinal: Number(sale.total_final), username: sale.username,
@@ -1919,6 +1963,15 @@ router.get('/invoice/:orderId', async (req, res) => {
       companyPhone: companyPhone,
       companyEmail: companyEmail,
       receiptFooter: receiptFooter,
+      // v4 — fields the receipt never had a source for. crNumber lived on
+      // companies.cr_number and was never printed; the rest did not exist.
+      crNumber: crNumber,
+      nationalAddress: nationalAddress,
+      receiptHeader: receiptHeader,
+      receiptThankYou: receiptThankYou,
+      receiptReturnPolicy: receiptReturnPolicy,
+      // 'snapshot' = frozen at issue; 'live' = pre-migration sale resolved now.
+      identitySource: identitySource,
       // V5.7.26 — receiptLogo prefers brand logo > company logo
       companyLogo: companyLogo,
       brandName: brandName,

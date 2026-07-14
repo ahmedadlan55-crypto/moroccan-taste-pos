@@ -43,7 +43,18 @@ async function waitUp() { for (let i = 0; i < 120; i++) { const ok = await new P
 
 async function cleanup() {
   for (const u of [CASHIER, ADMIN]) { try { await db.query('DELETE FROM users WHERE username=?', [u]); } catch (_) {} }
-  try { await db.query('DELETE FROM accounting_periods WHERE id=?', [PERIOD_ID]); } catch (_) {} }
+  try { await db.query('DELETE FROM accounting_periods WHERE id=?', [PERIOD_ID]); } catch (_) {}
+  // This test hard-closes the period (which GENERATES a CLOSE-<id> journal) and
+  // then force-reopens it (which posts a REOPEN-CLOSE-<id> reversal). Deleting
+  // only the period left both journals behind, polluting gl_journals for every
+  // later reader — the equity report reads exactly these rows. Ids are
+  // deterministic: routes/erp.js builds them as 'CLOSE-'+period.id and
+  // 'REOPEN-CLOSE-'+period.id.
+  for (const jid of [`CLOSE-${PERIOD_ID}`, `REOPEN-CLOSE-${PERIOD_ID}`]) {
+    try { await db.query('DELETE FROM gl_entries WHERE journal_id=?', [jid]); } catch (_) {}
+    try { await db.query('DELETE FROM gl_journals WHERE id=?', [jid]); } catch (_) {}
+  }
+}
 
 (async () => {
   await cleanup();

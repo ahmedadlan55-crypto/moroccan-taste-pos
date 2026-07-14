@@ -15,6 +15,7 @@ import { BalanceSheetPage } from "./pages/BalanceSheet";
 import { CashFlowPage } from "./pages/CashFlow";
 import { GeneralLedgerPage } from "./pages/GeneralLedger";
 import { ArAgingPage, ApAgingPage } from "./pages/Aging";
+import { PeriodsPage } from "./pages/Periods";
 import { CostCentersPage } from "./pages/CostCenters";
 import { DimensionsPage } from "./pages/Dimensions";
 import { ChartOfAccountsPage } from "./pages/ChartOfAccounts";
@@ -30,6 +31,7 @@ const ROUTES: Record<string, () => JSX.Element> = {
   "/accounting/general-ledger": GeneralLedgerPage,
   "/accounting/ar-aging": ArAgingPage,
   "/accounting/ap-aging": ApAgingPage,
+  "/accounting/periods": PeriodsPage,
   "/accounting/cost-centers": CostCentersPage,
   "/accounting/dimensions": DimensionsPage,
 };

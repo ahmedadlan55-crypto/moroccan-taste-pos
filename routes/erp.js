@@ -2416,36 +2416,74 @@ router.post('/gl/journals/:id/approve', requireCapability('finance.gl.approve'),
 
 // V5.10.0 — Accounting periods: list / create / open / close / soft-close.
 // The schema already exists (server.js:2382). These endpoints expose it.
-router.get('/periods', async (req, res) => {
+// v4 SECURITY — the /periods routes carried NO capability guard while their
+// /gl/* neighbours did, so closing (or force-reopening) a financial period —
+// which generates and reverses closing journal entries — was reachable with any
+// valid token, including a cashier's.
+// v4 BUGFIX — this SELECT named `company_id` and `notes`, and accounting_periods
+// has NEITHER (its columns are period_label/closing_notes, with brand_id and
+// branch_id for scope). Every call threw ER_BAD_FIELD_ERROR straight into the
+// bare `catch` below, which answered `[]` — so the periods screen reported "لا
+// توجد فترات" on a table holding 12 real rows, and the failure was invisible.
+// The catch no longer lies: a real DB fault is now a 500, not a silent empty list.
+router.get('/periods', requireCapability('finance.gl.view'), async (req, res) => {
   try {
     const [rows] = await db.query(
-      `SELECT id, company_id, period_name, start_date, end_date, status, closed_by, closed_at, notes
+      `SELECT id, period_name, period_label, start_date, end_date, status,
+              brand_id, branch_id, closed_by, closed_at, closing_notes
        FROM accounting_periods
        ORDER BY start_date DESC LIMIT 200`);
     res.json(rows.map(r => ({
-      id: r.id, periodName: r.period_name, startDate: r.start_date, endDate: r.end_date,
-      status: r.status, closedBy: r.closed_by || '', closedAt: r.closed_at, notes: r.notes || ''
+      id: r.id,
+      // period_name was added later and is nullable; period_label is the older
+      // NOT NULL column. Prefer the friendly name, fall back to the label.
+      periodName: r.period_name || r.period_label || '',
+      startDate: r.start_date, endDate: r.end_date,
+      // The enum carries BOTH 'soft_close' and 'soft_closed' from an old
+      // migration. Normalise so the client has one spelling to handle.
+      status: r.status === 'soft_close' ? 'soft_closed' : r.status,
+      brandId: r.brand_id || null, branchId: r.branch_id || null,
+      closedBy: r.closed_by || '', closedAt: r.closed_at,
+      notes: r.closing_notes || ''
     })));
-  } catch(e) { res.json([]); }
+  } catch (e) {
+    console.error('[erp/periods] list failed:', e.code || e.message);
+    res.status(500).json({ success: false, error: 'تعذّر تحميل الفترات المحاسبية' });
+  }
 });
 
-router.post('/periods', async (req, res) => {
+// v4 BUGFIX — same schema mismatch as the GET: this wrote `company_id` and
+// `notes`, which do not exist on accounting_periods, so creating a period was
+// IMPOSSIBLE — every attempt threw and surfaced as a raw SQL string in a toast.
+// period_label is the older NOT NULL column and must be populated; both it and
+// period_name are VARCHAR(20), so the name is validated rather than truncated
+// silently into something the owner didn't type.
+router.post('/periods', requireCapability('finance.periods.manage'), async (req, res) => {
   try {
     const { id, periodName, startDate, endDate, notes } = req.body || {};
     if (!periodName || !startDate || !endDate) return res.json({ success:false, error: 'الاسم والتواريخ مطلوبة' });
+    const name = String(periodName).trim();
+    if (name.length > 20) return res.json({ success:false, error: 'اسم الفترة يجب ألا يتجاوز 20 حرفًا' });
+    if (String(endDate) < String(startDate)) {
+      return res.json({ success:false, error: 'تاريخ النهاية يجب أن يكون بعد تاريخ البداية' });
+    }
     if (id) {
       await db.query(
-        `UPDATE accounting_periods SET period_name=?, start_date=?, end_date=?, notes=? WHERE id=?`,
-        [periodName, startDate, endDate, notes||null, id]);
+        `UPDATE accounting_periods SET period_name=?, period_label=?, start_date=?, end_date=?, closing_notes=? WHERE id=?`,
+        [name, name, startDate, endDate, notes || null, id]);
       return res.json({ success:true, id });
     }
     const newId = 'PER-' + Date.now();
     await db.query(
-      `INSERT INTO accounting_periods (id, company_id, period_name, start_date, end_date, status, notes)
-       VALUES (?, 'CO-MAIN', ?, ?, ?, 'open', ?)`,
-      [newId, periodName, startDate, endDate, notes||null]);
+      `INSERT INTO accounting_periods (id, period_name, period_label, start_date, end_date, status, closing_notes)
+       VALUES (?, ?, ?, ?, ?, 'open', ?)`,
+      [newId, name, name, startDate, endDate, notes || null]);
     res.json({ success:true, id:newId });
-  } catch(e) { res.json({ success:false, error:e.message }); }
+  } catch (e) {
+    console.error('[erp/periods] save failed:', e.code || e.message);
+    // Never echo a raw SQL error to the browser.
+    res.json({ success:false, error:'تعذّر حفظ الفترة المحاسبية' });
+  }
 });
 
 // Lock / unlock a period. status ∈ {open, soft_closed, closed}.
@@ -2461,9 +2499,14 @@ router.post('/periods', async (req, res) => {
 // period), Retained Earnings (321) gains net income. This matches IFRS
 // closing-entry mechanics. Idempotent — won't double-close. Reopening
 // generates a REVERSE journal that undoes the closing without deleting it.
-router.post('/periods/:id/lock', async (req, res) => {
+router.post('/periods/:id/lock', requireCapability('finance.periods.manage'), async (req, res) => {
   try {
-    const { status, username } = req.body || {};
+    const { status } = req.body || {};
+    // v4 SECURITY — the actor stamped on closed_by and on the generated/reversed
+    // closing entries comes from the VERIFIED token, never from the request body.
+    // It used to be read from req.body.username, so any caller could attribute a
+    // period close to someone else on an audit field.
+    const username = (req.user && req.user.username) || '';
     if (!['open','soft_closed','closed'].includes(status)) {
       return res.json({ success:false, error:'الحالة غير صالحة' });
     }

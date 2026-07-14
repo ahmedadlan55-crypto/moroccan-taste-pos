@@ -140,6 +140,10 @@ export const ROLE_GRANTS: Record<Capability, readonly Role[]> = {
   // ── Accounting ──
   "accounting.view": FIN,
   "accounting.journals.view": FIN,
+  // Auditors may read the period register; closing/reopening posts and reverses
+  // closing entries, so managing it is narrower than reading it.
+  "accounting.periods.view": FIN_READ,
+  "accounting.periods.manage": FIN,
   "accounting.reports.view": FIN_READ,
   // ── Accounting write caps (E1) — reverse is tighter (excludes plain accountant) ──
   "accounting.accounts.manage": FIN,

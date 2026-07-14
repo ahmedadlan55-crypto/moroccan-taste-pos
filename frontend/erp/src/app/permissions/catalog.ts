@@ -140,6 +140,8 @@ export const ALL_CAPS = [
   // ── Accounting (new) ──
   "accounting.view",
   "accounting.journals.view",
+  "accounting.periods.view",
+  "accounting.periods.manage",
   "accounting.reports.view",
   // ── Accounting write caps (E1 — UI-only gating; backend stays authoritative) ──
   "accounting.accounts.manage",

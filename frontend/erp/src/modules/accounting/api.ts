@@ -755,3 +755,77 @@ export function useBranches() {
       toDimOptions(await apiClient.get<Array<Record<string, unknown>>>("/erp/branches-full")),
   });
 }
+
+// ── Accounting periods (v4) ─────────────────────────────────────────────────
+// Converted from the legacy-only `erpLoadPeriods` screen (public/js/erp.js).
+// Three states, and the transitions are asymmetric on purpose:
+//   open        → soft_closed (reversible) | closed
+//   soft_closed → open | closed
+//   closed      → open ONLY with force:true — the server reverses the closing
+//                 journal entries rather than deleting them, so a hard reopen
+//                 mutates the ledger and must be a deliberate act.
+export type PeriodStatus = "open" | "soft_closed" | "closed";
+
+export interface AccountingPeriod {
+  id: string;
+  periodName: string;
+  startDate: string;
+  endDate: string;
+  status: PeriodStatus;
+  closedBy: string;
+  closedAt: string | null;
+  notes: string;
+}
+
+export const PERIOD_STATUS_LABEL: Record<PeriodStatus, string> = {
+  open: "مفتوحة",
+  soft_closed: "إقفال مبدئي",
+  closed: "مُقفلة نهائيًا",
+};
+
+/** Which transitions a period in `status` allows. Mirrors the server's rules in
+ *  routes/erp.js POST /periods/:id/lock — kept as data so it is unit-testable. */
+export function allowedPeriodTransitions(status: PeriodStatus): Array<{ to: PeriodStatus; force: boolean }> {
+  if (status === "open") return [{ to: "soft_closed", force: false }, { to: "closed", force: false }];
+  if (status === "soft_closed") return [{ to: "open", force: false }, { to: "closed", force: false }];
+  return [{ to: "open", force: true }];
+}
+
+export function usePeriods() {
+  return useQuery({
+    queryKey: ["acc", "periods"],
+    queryFn: ({ signal }) => apiClient.get<AccountingPeriod[]>("/erp/periods", { signal }),
+  });
+}
+
+export function useSavePeriod() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (input: { id?: string; periodName: string; startDate: string; endDate: string; notes?: string }) => {
+      const r = await apiClient.post<{ success: boolean; id?: string; error?: string }>("/erp/periods", input);
+      // This endpoint answers 200 {success:false,error} instead of an HTTP error.
+      if (r && r.success === false) throw new Error(r.error || "تعذّر حفظ الفترة");
+      return r;
+    },
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["acc", "periods"] }),
+  });
+}
+
+export function useLockPeriod() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (input: { id: string; status: PeriodStatus; force?: boolean }) => {
+      const r = await apiClient.post<{ success: boolean; error?: string; closingResult?: unknown }>(
+        `/erp/periods/${input.id}/lock`,
+        { status: input.status, force: !!input.force },
+      );
+      if (r && r.success === false) throw new Error(r.error || "تعذّر تغيير حالة الفترة");
+      return r;
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["acc", "periods"] });
+      // Closing/reopening posts or reverses closing entries → the ledger moved.
+      qc.invalidateQueries({ queryKey: ["acc", "journals"] });
+    },
+  });
+}

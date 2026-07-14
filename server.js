@@ -1827,6 +1827,35 @@ async function runMigrations() {
     }
   } catch(e) { console.error('seed permissions_v3 failed:', e.message); }
 
+  // ─── Late-added capabilities (v4+) ───
+  // The block above is labelled "idempotent" but is really ONE-SHOT: it only
+  // runs when the catalog is empty, so a capability appended to that array
+  // would never reach an install that has already booted once. Anything added
+  // after the first seed has to go here, where INSERT IGNORE runs every boot
+  // and is genuinely idempotent.
+  try {
+    const latePerms = [
+      // Closing or (force-)reopening an accounting period generates and reverses
+      // closing journal entries. It was reachable with any valid token — the
+      // /periods routes carried no capability guard at all while their /gl/*
+      // neighbours did.
+      ['finance.periods.manage', 'finance', 'إقفال وإعادة فتح الفترات المحاسبية', 'Close/reopen accounting periods', 1, 545],
+    ];
+    for (const p of latePerms) {
+      await db.query(
+        'INSERT IGNORE INTO permissions_v3 (id, category, label_ar, label_en, is_sensitive, sort_order) VALUES (?,?,?,?,?,?)',
+        [p[0], p[1], p[2], p[3], p[4], p[5]]
+      );
+    }
+    // Grant to the roles that already hold the neighbouring finance rights, so
+    // this guard hardens the endpoint without taking the function away from the
+    // people who were legitimately using it.
+    for (const role of ['finance', 'manager']) {
+      await db.query('INSERT IGNORE INTO role_permissions (role, permission_id) VALUES (?, ?)',
+        [role, 'finance.periods.manage']);
+    }
+  } catch(e) { console.error('seed late permissions failed:', e.message); }
+
   // Seed default role → permissions mapping (idempotent — only if empty)
   try {
     const [rcnt] = await db.query("SELECT COUNT(*) AS c FROM role_permissions");

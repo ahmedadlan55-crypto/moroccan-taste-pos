@@ -36,7 +36,12 @@ export function Tabs({ items, value, onChange, className, "aria-label": ariaLabe
     <div
       role="tablist"
       aria-label={ariaLabel}
-      className={cn("flex items-center gap-1 border-b border-slate-200", className)}
+      className={cn(
+        // Scroll the strip horizontally when there are more tabs than fit (e.g. the
+        // 6-tab approval-flow builder on a 390px phone) instead of overflowing the page.
+        "flex items-center gap-1 overflow-x-auto border-b border-slate-200 scrollbar-thin",
+        className,
+      )}
       onKeyDown={(e) => {
         // RTL-aware: ArrowLeft advances, ArrowRight goes back.
         if (e.key === "ArrowLeft") {
@@ -64,7 +69,7 @@ export function Tabs({ items, value, onChange, className, "aria-label": ariaLabe
             disabled={t.disabled}
             onClick={() => onChange(t.value)}
             className={cn(
-              "-mb-px min-h-11 border-b-2 px-4 text-sm font-bold transition focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-teal-100 disabled:cursor-not-allowed disabled:opacity-50",
+              "-mb-px min-h-11 shrink-0 whitespace-nowrap border-b-2 px-4 text-sm font-bold transition focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-teal-100 disabled:cursor-not-allowed disabled:opacity-50",
               selected
                 ? "border-teal-600 text-teal-700"
                 : "border-transparent text-slate-500 hover:text-slate-800",

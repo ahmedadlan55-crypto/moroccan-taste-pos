@@ -19,7 +19,9 @@ export function FormActions({ children, sticky = false, start, className }: Form
     <div
       className={cn(
         "flex flex-wrap items-center justify-end gap-2 border-t border-slate-100 bg-white px-1 py-3",
-        sticky && "sticky bottom-0 z-10 -mx-5 mt-2 px-5 shadow-soft",
+        // Full-bleed to the page gutters (main uses px-4 / sm:px-6), so the sticky
+        // bar never overshoots the viewport on a phone.
+        sticky && "sticky bottom-0 z-10 -mx-4 mt-2 px-4 shadow-soft sm:-mx-6 sm:px-6",
         className,
       )}
     >

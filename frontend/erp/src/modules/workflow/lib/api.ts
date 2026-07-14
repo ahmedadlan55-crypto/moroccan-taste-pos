@@ -526,3 +526,125 @@ export function useEscalateNow() {
     onSuccess: () => qc.invalidateQueries({ queryKey: ["workflow", "sla"] }),
   });
 }
+
+// ════════════════════════════════════════════════════════════════════════════
+// (B-cont.) BUILDER — the 4 heavier tabs (steps · position-paths · routes · SLA).
+// APPEND-ONLY extension of the write layer above; nothing here removes/rewrites
+// an existing export. Field names verified against routes/workflow.js,
+// routes/workflowRoutes.js and routes/sla.js.
+// ════════════════════════════════════════════════════════════════════════════
+
+// ── Approval steps — bulk replace-set for a type ─────────────────────────────
+// POST /workflow/workflow-definitions/bulk wipes then re-inserts the whole chain
+// for one transaction type (or ALL types when applyToAllTypes). Individual-step
+// CRUD stays on useSaveWorkflowDefinition / useDeleteWorkflowDefinition above.
+export interface WorkflowDefinitionBulkStep {
+  positionId: string | null;
+  stepOrder?: number;
+  stepName?: string;
+  canApprove: boolean;
+  canReject: boolean;
+  canReturn: boolean;
+  canEdit: boolean;
+  canEditAmount: boolean;
+  requireSameBranch: boolean;
+  requireSameDepartment: boolean;
+  assignmentStrategy: AssignmentStrategy;
+  isFinal: boolean;
+}
+export interface WorkflowDefinitionBulkInput {
+  transactionTypeId?: string;
+  applyToAllTypes?: boolean;
+  steps: WorkflowDefinitionBulkStep[];
+}
+export function useSaveWorkflowDefinitionsBulk() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (input: WorkflowDefinitionBulkInput) =>
+      apiClient.post<MutationEnvelope & { count?: number; typesAffected?: number }>(
+        "/workflow/workflow-definitions/bulk",
+        input,
+      ),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["workflow", "builder", "definitions"] }),
+  });
+}
+
+// ── Position paths — list the paths of one initiator, and delete one path ─────
+export interface PositionWorkflowPath {
+  pathKey: string;
+  pathName: string;
+  description: string;
+  stepCount: number;
+}
+/** GET /workflow/position-workflow/:initiatorPositionId/paths — one row per path. */
+export function usePositionWorkflowPaths(initiatorPositionId: string | null) {
+  return useQuery({
+    queryKey: ["workflow", "builder", "pw-paths", initiatorPositionId ?? ""] as const,
+    enabled: !!initiatorPositionId,
+    queryFn: () =>
+      apiClient.get<PositionWorkflowPath[]>(
+        `/workflow/position-workflow/${initiatorPositionId}/paths`,
+      ),
+  });
+}
+/** DELETE /workflow/position-workflow/:initiatorPositionId/path/:pathKey. */
+export function useDeletePositionWorkflow() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({
+      initiatorPositionId,
+      pathKey,
+    }: {
+      initiatorPositionId: string;
+      pathKey: string;
+    }) =>
+      apiClient.delete<MutationEnvelope>(
+        `/workflow/position-workflow/${initiatorPositionId}/path/${encodeURIComponent(pathKey)}`,
+      ),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["workflow", "builder"] }),
+  });
+}
+
+// ── Routing rules (JSON-DSL) — full CRUD at /api/workflow-routes (admin only) ─
+// The list/test hooks live above (useWorkflowRoutes / useTestWorkflowRoute). The
+// backend guards writes with `admin only` (403) — the shared apiClient turns that
+// into a thrown ApiError the caller surfaces; 200-envelope { success:false } too.
+export interface WorkflowRouteInput {
+  transactionTypeId?: string | null;
+  initiatorPositionId?: string | null;
+  routeName: string;
+  isDefault?: boolean;
+  conditions: unknown;
+  steps: unknown;
+}
+export function useSaveWorkflowRoute() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (input: WorkflowRouteInput) =>
+      apiClient.post<MutationEnvelope>("/workflow-routes", input),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["workflow", "builder", "routes"] }),
+  });
+}
+export interface WorkflowRouteUpdate {
+  id: string;
+  routeName?: string;
+  isDefault?: boolean;
+  isActive?: boolean;
+  conditions?: unknown;
+  steps?: unknown;
+}
+export function useUpdateWorkflowRoute() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, ...body }: WorkflowRouteUpdate) =>
+      apiClient.put<MutationEnvelope>(`/workflow-routes/${id}`, body),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["workflow", "builder", "routes"] }),
+  });
+}
+export function useDeleteWorkflowRoute() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (id: string) => apiClient.delete<MutationEnvelope>(`/workflow-routes/${id}`),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["workflow", "builder", "routes"] }),
+  });
+}

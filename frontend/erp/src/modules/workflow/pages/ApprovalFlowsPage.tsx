@@ -3,15 +3,24 @@ import { PageHeader, Tabs } from "@/shared/ui";
 import { Can } from "@/shared/permissions";
 import { PositionsTab } from "../builder/PositionsTab";
 import { TransactionTypesTab } from "../builder/TransactionTypesTab";
+import { StepsTab } from "../builder/StepsTab";
+import { PositionPathsTab } from "../builder/PositionPathsTab";
+import { RoutesDslTab } from "../builder/RoutesDslTab";
+import { SlaTab } from "../builder/SlaTab";
 
-// مسارات الاعتماد — approval-flow builder. FC-P3 wires the real Positions and
-// Transaction-Types CRUD tabs (on /api/workflow/*). The heavier step-definition /
-// position-path / routes-DSL / SLA tabs are NOT built yet (the builder agent
-// stalled mid-run) — this is an honest partial builder, gated on
-// workflow.builder.manage, not a faked-complete screen.
+// مسارات الاعتماد — the full approval-flow builder. All six tabs are real,
+// backend-wired screens (nothing stubbed): Positions + Transaction-Types manage
+// the primitives; Steps / Position-Paths define the chains (single-step and
+// per-initiator bulk); Routes is the JSON-DSL layer with a dry-run tester; SLA is
+// the read-only queue-health view with an admin escalate-now sweep. The whole
+// page is gated on workflow.builder.manage via <Can>.
 const TABS = [
   { value: "positions", label: "المناصب" },
   { value: "types", label: "أنواع المعاملات" },
+  { value: "steps", label: "خطوات الاعتماد" },
+  { value: "position-paths", label: "مسارات المناصب" },
+  { value: "routes", label: "قواعد التوجيه" },
+  { value: "sla", label: "اتفاقيات الخدمة" },
 ];
 
 export function ApprovalFlowsPage() {
@@ -22,12 +31,17 @@ export function ApprovalFlowsPage() {
         <PageHeader
           eyebrow="المعاملات والموافقات"
           title="مسارات الاعتماد"
-          subtitle="إدارة المناصب وأنواع المعاملات لبناء سلاسل الاعتماد."
+          subtitle="إدارة المناصب وأنواع المعاملات وخطوات ومسارات وقواعد الاعتماد ومستوى الخدمة."
         />
         <div className="mb-4">
           <Tabs items={TABS} value={tab} onChange={setTab} />
         </div>
-        {tab === "positions" ? <PositionsTab /> : <TransactionTypesTab />}
+        {tab === "positions" && <PositionsTab />}
+        {tab === "types" && <TransactionTypesTab />}
+        {tab === "steps" && <StepsTab />}
+        {tab === "position-paths" && <PositionPathsTab />}
+        {tab === "routes" && <RoutesDslTab />}
+        {tab === "sla" && <SlaTab />}
       </div>
     </Can>
   );

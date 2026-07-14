@@ -1246,12 +1246,26 @@ router.get('/accounting-periods', async (req, res) => {
   try {
     const [rows] = await db.query('SELECT * FROM accounting_periods ORDER BY start_date DESC');
     res.json(rows.map(p => ({
-      id: p.id, periodName: p.period_name,
+      id: p.id,
+      // period_name is nullable and was added later; period_label is the older
+      // NOT NULL column. Prefer the friendly name, fall back to the label.
+      periodName: p.period_name || p.period_label || '',
       startDate: p.start_date, endDate: p.end_date,
-      status: p.status, closedBy: p.closed_by || '', closedAt: p.closed_at,
-      notes: p.notes || ''
+      // Normalise the duplicate soft_close/soft_closed enum spellings, as
+      // /erp/periods does — one spelling for the client.
+      status: p.status === 'soft_close' ? 'soft_closed' : p.status,
+      closedBy: p.closed_by || '', closedAt: p.closed_at,
+      // v4 — was `p.notes`, a PHANTOM column: accounting_periods has
+      // closing_notes, not notes. Because the query is `SELECT *`, MySQL never
+      // threw — the property was simply undefined, so this endpoint reported
+      // every period as having no notes. Silent-undefined, not silent-empty.
+      notes: p.closing_notes || ''
     })));
-  } catch(e) { res.json([]); }
+  } catch (e) {
+    // Was `res.json([])` — a DB fault rendered as "no periods".
+    console.error('[erp/accounting-periods] list failed:', e && (e.code || e.message));
+    res.status(500).json({ success: false, error: 'تعذّر تحميل الفترات المحاسبية' });
+  }
 });
 
 router.post('/accounting-periods', async (req, res) => {

@@ -45,7 +45,14 @@ router.get('/overdue', async (req, res) => {
       hoursOverdue: Number(r.hours_overdue) || 0,
       escalationCount: Number(r.escalation_count) || 0
     })));
-  } catch(e) { res.json([]); }
+  } catch (e) {
+    // v4 — was a bare `res.json([])` with no logging at all: a DB fault rendered
+    // as "no SLA breaches", i.e. the healthiest possible answer, and left no
+    // trace anywhere. An overdue-transaction monitor that reports silence when
+    // it is broken is worse than one that is down.
+    console.error('[sla] breaches query failed:', e && (e.code || e.message));
+    res.status(500).json({ success: false, error: 'تعذّر تحميل تجاوزات SLA' });
+  }
 });
 
 // GET /sla/stats — system-wide SLA health

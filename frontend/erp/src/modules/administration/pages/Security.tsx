@@ -11,7 +11,11 @@ import {
   useToast,
 } from "@/shared/ui";
 import { useCan } from "@/app/providers";
-import { DeferredNote, ensureAck, type MutationAck } from "../_common";
+import { ensureAck, type MutationAck } from "../_common";
+import { useSecurityPolicies } from "../security/api";
+import { PasswordPolicyCard } from "../security/PasswordPolicyCard";
+import { SessionCard } from "../security/SessionCard";
+import { IpAllowlistCard } from "../security/IpAllowlistCard";
 
 interface TwoFaStatus {
   enabled: boolean;
@@ -22,8 +26,11 @@ const boolFrom = (v: string | undefined): boolean => v === "true" || v === "1" |
 
 export default function SecurityPage() {
   const canManage = useCan("administration.security");
+  const canManageSecurity = useCan("administration.security.manage");
   const qc = useQueryClient();
   const { toast } = useToast();
+
+  const policies = useSecurityPolicies();
 
   const twoFa = useQuery({
     queryKey: ["auth", "2fa-status"],
@@ -122,11 +129,17 @@ export default function SecurityPage() {
           </div>
         </section>
 
-        <DeferredNote
-          eyebrow="الأمان"
-          title="سياسات الأمان المتقدمة"
-          body="سياسة كلمات المرور، مهلة الجلسة، وقوائم عناوين IP المسموح بها ما تزال تُدار من النظام الأصلي."
-        />
+        {policies.isLoading ? (
+          <LoadingState rows={2} />
+        ) : policies.error ? (
+          <ErrorState error={policies.error} onRetry={() => policies.refetch()} />
+        ) : policies.data ? (
+          <>
+            <PasswordPolicyCard initial={policies.data.passwordPolicy} canManage={canManageSecurity} />
+            <SessionCard initial={policies.data.session} canManage={canManageSecurity} />
+            <IpAllowlistCard initial={policies.data.ipAllowlist} canManage={canManageSecurity} />
+          </>
+        ) : null}
       </div>
     </div>
   );

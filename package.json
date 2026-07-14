@@ -29,6 +29,7 @@
     "test:gl-security": "node tests/integration/glSecurity.api.test.js",
     "test:gl-double-post": "node tests/integration/glDoublePost.api.test.js",
     "test:cash-voucher-security": "node tests/integration/cashVoucherSecurity.api.test.js",
+    "test:security-policies": "node tests/integration/securityPolicies.api.test.js",
     "test:bank-recon": "node tests/integration/bankRecon.api.test.js",
     "test:warehouse-scope": "node tests/integration/warehouseScope.api.test.js",
     "test:idempotency-retention": "node tests/integration/idempotencyRetention.test.js",

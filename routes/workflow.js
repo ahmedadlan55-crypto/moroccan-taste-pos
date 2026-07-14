@@ -18,6 +18,11 @@ const SM = require('../lib/transactionStateMachine');
 const PERMS = require('../lib/transactionPermissions');
 const SCHEMA = require('../lib/transactionSchema');
 const { guardTxnAccess, guardDeveloper, guardAdmin } = require('../lib/transactionGuards');
+// v4 SECURITY — this router had ZERO capability guards while /workflow/* was
+// exempt from the global JWT gate, so the org chart and the position registry
+// were world-readable AND world-writable. Config surfaces are guarded here; the
+// per-transaction routes keep their ownership/role guards above.
+const requireCapability = require('../middleware/requireCapability');
 // v6.8.0 Phase 1 — Service layer (Strangler Fig). Currently used by the
 // migrated `POST /transactions` and `DELETE /transactions/:id/force`
 // handlers. The remaining 52 endpoints in this file continue to use the
@@ -390,14 +395,19 @@ module.exports._invalidatePermsCache = function(username){
 // POSITIONS (المناصب الإدارية)
 // ═══════════════════════════════════════
 
-router.get('/positions', async (req, res) => {
+router.get('/positions', requireCapability('workflow.view'), async (req, res) => {
   try {
     const [rows] = await db.query('SELECT * FROM positions ORDER BY level');
     res.json(rows.map(p => ({ id: p.id, name: p.name, level: p.level, isActive: !!p.is_active })));
-  } catch(e) { console.error('[wf]', req.method, req.path, '-> query failed:', e && e.message); res.json([]); }
+  } catch (e) {
+    // Was `res.json([])` — a DB fault rendered as "no positions" instead of an
+    // error, which is how schema drift stays invisible in this codebase.
+    console.error('[wf] GET /positions failed:', e && (e.code || e.message));
+    res.status(500).json({ success: false, error: 'تعذّر تحميل المناصب' });
+  }
 });
 
-router.post('/positions', async (req, res) => {
+router.post('/positions', requireCapability('workflow.manage'), async (req, res) => {
   try {
     const { id, name, level } = req.body;
     if (!name) return res.json({ success: false, error: 'الاسم مطلوب' });
@@ -411,11 +421,45 @@ router.post('/positions', async (req, res) => {
   } catch(e) { res.json({ success: false, error: e.message }); }
 });
 
-router.delete('/positions/:id', async (req, res) => {
+// v4 — was an unguarded, unchecked hard DELETE reachable from the shipped
+// PositionsTab. `positions` has no FKs, so removing a row silently orphaned
+// hr_employees.position_id, position_workflow_steps.initiator_position_id AND
+// .required_position_id, workflow_routes.initiator_position_id and
+// transactions.initiator_position_id — i.e. it could break approval routing for
+// in-flight transactions. The UI warned in prose; nothing enforced it.
+// hr.js:410 already blocks department deletion the same way.
+router.delete('/positions/:id', requireCapability('workflow.manage'), async (req, res) => {
+  const id = req.params.id;
   try {
-    await db.query('DELETE FROM positions WHERE id = ?', [req.params.id]);
-    res.json({ success: true });
-  } catch(e) { res.json({ success: false, error: e.message }); }
+    const refs = [];
+    const count = async (sql, label) => {
+      try {
+        const [r] = await db.query(sql, [id]);
+        if (Number(r[0].c) > 0) refs.push({ label, count: Number(r[0].c) });
+      } catch (_) { /* table absent on this install — nothing to orphan */ }
+    };
+    await count('SELECT COUNT(*) c FROM hr_employees WHERE position_id = ?', 'موظفون');
+    await count('SELECT COUNT(*) c FROM position_workflow_steps WHERE initiator_position_id = ?', 'مسارات اعتماد (كمُنشئ)');
+    await count('SELECT COUNT(*) c FROM position_workflow_steps WHERE required_position_id = ?', 'خطوات اعتماد (كمعتمِد)');
+    await count('SELECT COUNT(*) c FROM workflow_routes WHERE initiator_position_id = ?', 'قواعد توجيه');
+    await count('SELECT COUNT(*) c FROM transactions WHERE initiator_position_id = ?', 'معاملات');
+
+    if (refs.length) {
+      return res.status(409).json({
+        success: false,
+        blocked: true,
+        references: refs,
+        error: 'لا يمكن حذف المنصب لارتباطه بـ: ' + refs.map((r) => `${r.label} (${r.count})`).join('، '),
+      });
+    }
+
+    const [del] = await db.query('DELETE FROM positions WHERE id = ?', [id]);
+    if (!del.affectedRows) return res.status(404).json({ success: false, error: 'المنصب غير موجود' });
+    res.json({ success: true, id });
+  } catch (e) {
+    console.error('[wf] DELETE /positions failed:', e && (e.code || e.message));
+    res.status(500).json({ success: false, error: 'تعذّر حذف المنصب' });
+  }
 });
 
 // ═══════════════════════════════════════
@@ -937,7 +981,10 @@ router.get('/my-profile', async (req, res) => {
 });
 
 // Full org tree — employees + their managers
-router.get('/org-tree', async (req, res) => {
+// v4 SECURITY — this returned the entire staff directory (full names, usernames,
+// job titles, manager chain, branches) to ANY unauthenticated caller: proven with
+// a tokenless GET answering 200 + 27 employees.
+router.get('/org-tree', requireCapability('workflow.view'), async (req, res) => {
   try {
     const [emps] = await db.query(
       `SELECT e.id, e.employee_number, e.first_name, e.last_name, e.linked_username, e.job_title,
@@ -970,13 +1017,68 @@ router.get('/org-tree', async (req, res) => {
   } catch(e) { console.error('[wf]', req.method, req.path, '-> query failed:', e && e.message); res.json([]); }
 });
 
-// Update an employee's workflow settings (permissions / manager / level)
-router.put('/org-tree/:employeeId', async (req, res) => {
+/**
+ * Update an employee's workflow settings (permissions / manager / level).
+ *
+ * v4 SECURITY + INTEGRITY. This was unauthenticated AND validated nothing: no
+ * employee-exists check, no manager-exists check, and no cycle check — so
+ * `A.manager_id = A`, or A→B→A, were both storable through the API. Nothing
+ * walks the chain recursively TODAY (AssigneeResolverService:103 takes one hop),
+ * which is the only reason a cycle doesn't hang the server — but the org chart
+ * renders real nesting, so the data must not contain cycles.
+ *
+ * These flags are authorization (can_approve_txn et al), which is why the write
+ * needs workflow.manage rather than merely being logged in.
+ */
+router.put('/org-tree/:employeeId', requireCapability('workflow.manage'), async (req, res) => {
+  const employeeId = req.params.employeeId;
   try {
-    const { managerId, workflowLevel, permissions } = req.body;
+    const { managerId, workflowLevel, permissions } = req.body || {};
+
+    const [emp] = await db.query('SELECT id FROM hr_employees WHERE id = ? LIMIT 1', [employeeId]);
+    if (!emp.length) return res.status(404).json({ success: false, error: 'الموظف غير موجود' });
+
     const sets = []; const params = [];
-    if (managerId !== undefined) { sets.push('manager_id=?'); params.push(managerId || null); }
-    if (workflowLevel !== undefined) { sets.push('workflow_level=?'); params.push(Number(workflowLevel)||1); }
+
+    if (managerId !== undefined) {
+      const mgr = managerId || null;
+      if (mgr) {
+        if (mgr === employeeId) {
+          return res.status(400).json({ success: false, error: 'لا يمكن أن يكون الموظف مديرًا لنفسه' });
+        }
+        const [m] = await db.query('SELECT id FROM hr_employees WHERE id = ? LIMIT 1', [mgr]);
+        if (!m.length) return res.status(400).json({ success: false, error: 'المدير المحدد غير موجود' });
+
+        // Walk UP from the proposed manager: if we reach this employee, the edit
+        // would close a loop (A→B→A). Bounded by the row count so malformed data
+        // already containing a cycle cannot spin here.
+        const [all] = await db.query('SELECT id, manager_id FROM hr_employees');
+        const parentOf = new Map(all.map((r) => [r.id, r.manager_id || null]));
+        let cursor = mgr; let hops = 0;
+        const chain = [mgr];
+        while (cursor && hops <= all.length) {
+          if (cursor === employeeId) {
+            return res.status(400).json({
+              success: false,
+              error: 'هذا التعديل يُنشئ حلقة في التسلسل الإداري: ' + chain.join(' → ') + ' → ' + employeeId,
+            });
+          }
+          cursor = parentOf.get(cursor) || null;
+          if (cursor) chain.push(cursor);
+          hops++;
+        }
+      }
+      sets.push('manager_id=?'); params.push(mgr);
+    }
+
+    if (workflowLevel !== undefined) {
+      const lvl = Number(workflowLevel);
+      if (!Number.isFinite(lvl) || lvl < 1 || lvl > 7) {
+        return res.status(400).json({ success: false, error: 'المستوى يجب أن يكون بين 1 و7' });
+      }
+      sets.push('workflow_level=?'); params.push(lvl);
+    }
+
     if (permissions && typeof permissions === 'object') {
       const map = { create: 'can_create_txn', approve: 'can_approve_txn', reject: 'can_reject_txn',
                     return: 'can_return_txn', forward: 'can_forward_txn', close: 'can_close_txn' };
@@ -984,11 +1086,16 @@ router.put('/org-tree/:employeeId', async (req, res) => {
         if (permissions[k] !== undefined) { sets.push(map[k]+'=?'); params.push(permissions[k] ? 1 : 0); }
       });
     }
-    if (!sets.length) return res.json({ success: false, error: 'لا توجد تغييرات' });
-    params.push(req.params.employeeId);
+
+    if (!sets.length) return res.status(400).json({ success: false, error: 'لا توجد تغييرات' });
+    params.push(employeeId);
     await db.query(`UPDATE hr_employees SET ${sets.join(', ')} WHERE id = ?`, params);
-    res.json({ success: true });
-  } catch(e) { res.json({ success: false, error: e.message }); }
+    console.log(`[wf] org-tree ${employeeId} updated by ${(req.user && req.user.username) || '?'}`);
+    res.json({ success: true, id: employeeId });
+  } catch (e) {
+    console.error('[wf] PUT /org-tree failed:', e && (e.code || e.message));
+    res.status(500).json({ success: false, error: 'تعذّر حفظ إعدادات الموظف' });
+  }
 });
 
 // ═══════════════════════════════════════

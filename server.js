@@ -171,7 +171,16 @@ app.use('/api/', async function(req, res, next) {
   // v7.5 (H1 SECURITY) — /hr/my-* is NO LONGER public. It now passes through the
   // JWT gate below so the employee is identified from their token, never from a
   // spoofable ?username=. The employee portal already sends "Authorization: Bearer".
-  if (p.startsWith('/workflow/')) return next();        // workflow (all public — auth checked inside)
+  // v4 SECURITY — /workflow/* is NO LONGER public. The old exemption claimed
+  // "auth checked inside"; routes/workflow.js contained ZERO guards, so
+  // `GET /api/workflow/org-tree` returned the entire staff directory (names,
+  // usernames, manager chain, branches) to any unauthenticated caller, and
+  // `PUT /org-tree/:id` let anyone rewrite the manager chain and grant themselves
+  // can_approve_txn. Worse: because the exemption meant req.user was never set,
+  // guardAdmin/guardDeveloper "compensated" by trusting ?username= — so
+  // `?username=admin` authenticated as admin with NO token, on routes including
+  // DELETE /transactions/__wipe-all. Every caller (employee PWA, legacy admin,
+  // api-bridge, React) already sends "Authorization: Bearer".
   if (p.startsWith('/hr/leave-types')) return next();  // leave types list
   if (p.startsWith('/hr/departments')) return next();  // departments list
   if (p.startsWith('/i18n/')) return next();           // V5.7.13 — translation proxy (login pages too)
@@ -1843,6 +1852,10 @@ async function runMigrations() {
       // The inventory valuation method decides how COGS is computed and posted
       // to the GL. POST /erp/inventory-method was reachable with any valid token.
       ['inventory.method.manage', 'inventory', 'تغيير طريقة تقييم المخزون', 'Change inventory valuation method', 1, 745],
+      // /api/workflow was exempt from the JWT gate AND had no guards, so the org
+      // chart + position registry were world-readable and world-writable.
+      ['workflow.view', 'workflow', 'عرض الهيكل الإداري والمناصب', 'View org chart and positions', 0, 810],
+      ['workflow.manage', 'workflow', 'تعديل الهيكل الإداري والمناصب وصلاحيات المعاملات', 'Manage org chart, positions and transaction rights', 1, 815],
     ];
     for (const p of latePerms) {
       await db.query(
@@ -1861,6 +1874,17 @@ async function runMigrations() {
     // to manager only (admin bypasses the guard entirely).
     await db.query('INSERT IGNORE INTO role_permissions (role, permission_id) VALUES (?, ?)',
       ['manager', 'inventory.method.manage']);
+    // Reading the org chart is normal operational context (the workflow inbox and
+    // the forward-to picker need it), so it goes to every role that already works
+    // transactions. EDITING it grants approval rights, so it stays with manager.
+    for (const role of ['manager', 'finance', 'hr', 'employee', 'accountant']) {
+      await db.query('INSERT IGNORE INTO role_permissions (role, permission_id) VALUES (?, ?)',
+        [role, 'workflow.view']);
+    }
+    for (const role of ['manager', 'hr']) {
+      await db.query('INSERT IGNORE INTO role_permissions (role, permission_id) VALUES (?, ?)',
+        [role, 'workflow.manage']);
+    }
   } catch(e) { console.error('seed late permissions failed:', e.message); }
 
   // Seed default role → permissions mapping (idempotent — only if empty)

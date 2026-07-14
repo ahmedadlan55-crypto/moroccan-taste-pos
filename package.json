@@ -17,6 +17,7 @@
     "test:settings-receipt": "node tests/integration/settingsReceipt.api.test.js",
     "test:invoice-snapshot": "node tests/integration/invoiceSnapshot.api.test.js",
     "test:periods-security": "node tests/integration/periodsSecurity.api.test.js",
+    "test:workflow-auth": "node tests/integration/workflowAuth.api.test.js",
     "test:inventory-method": "node tests/integration/inventoryMethod.api.test.js",
     "test:search-api": "node tests/integration/search.api.test.js",
     "test:uom-docs": "node tests/integration/uomDocs.api.test.js",

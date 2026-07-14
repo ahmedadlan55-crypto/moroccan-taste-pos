@@ -132,6 +132,8 @@ export const ALL_CAPS = [
   "inventory.view",
   "inventory.units.view",
   "inventory.balances.view",
+  "inventory.method.view",
+  "inventory.method.manage",
   "inventory.transfers.view",
   "inventory.receiving.view",
   "inventory.issues.view",

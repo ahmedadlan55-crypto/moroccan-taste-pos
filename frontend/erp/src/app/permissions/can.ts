@@ -132,6 +132,11 @@ export const ROLE_GRANTS: Record<Capability, readonly Role[]> = {
   "inventory.view": EVERYONE,
   "inventory.units.view": READ_OPS,
   "inventory.balances.view": READ_OPS,
+  // The valuation method is an accounting control (it decides how COGS is posted),
+  // so reading it is finance-wide but changing it is manager-only — matching the
+  // server-side inventory.method.manage grant.
+  "inventory.method.view": FIN_READ,
+  "inventory.method.manage": MGR,
   "inventory.transfers.view": READ_OPS,
   "inventory.receiving.view": READ_OPS,
   "inventory.issues.view": READ_OPS,

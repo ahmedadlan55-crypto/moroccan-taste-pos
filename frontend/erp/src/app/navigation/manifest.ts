@@ -95,6 +95,7 @@ export const NAV: NavGroup[] = [
       { id: "inv-lots-expiry", path: "/inventory/lots-expiry", label: "التشغيلات والصلاحية", icon: "CalendarClock", cap: "expiry.view", module: "inventory" },
       { id: "inv-replenishment", path: "/inventory/replenishment", label: "إعادة الطلب", icon: "RefreshCcw", cap: "replenishment.view", module: "inventory" },
       { id: "inv-production", path: "/inventory/production", label: "الإنتاج", icon: "Factory", cap: "production.view", module: "production" },
+      { id: "inv-method", path: "/inventory/method", label: "طريقة تقييم المخزون", icon: "Scale", cap: "inventory.method.view", module: "inventory" },
     ],
   },
   {

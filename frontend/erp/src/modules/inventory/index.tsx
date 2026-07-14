@@ -13,6 +13,8 @@
 import { useLocation, useSearchParams } from "react-router-dom";
 import { Barcode } from "lucide-react";
 import { PageHeader, EmptyState } from "@/shared/ui";
+import { normalizeRoutePath } from "@/shared/lib";
+import { NotFound } from "@/app/shell/NotFound";
 import { WarehouseModuleProviders } from "./lib/providers";
 import { WarehouseScopeSelect } from "./lib/WarehouseScopeSelect";
 
@@ -32,6 +34,7 @@ import { CountingWorkspace } from "./features/stocktakes/CountingWorkspace";
 import { ReplenishmentPage } from "./features/replenishment/ReplenishmentPage";
 import { LotsPage } from "./features/lots/LotsPage";
 import { ExpiryPage } from "./features/expiry/ExpiryPage";
+import { InventoryMethodPage } from "./features/method/InventoryMethodPage";
 
 // Sections that filter their data by the shared scope but have no in-page
 // warehouse picker — surface the persistent scope selector for them.
@@ -95,9 +98,14 @@ function Section() {
   const isNew = sp.get("new") === "1";
   const countId = sp.get("count");
 
-  switch (pathname) {
+  // Normalised: react-router matches a route ignoring a trailing slash and case,
+  // but useLocation().pathname returns it RAW — so "/inventory/items/" used to
+  // fall through this switch to the default and render the wrong screen.
+  switch (normalizeRoutePath(pathname)) {
     case "/inventory":
       return <DashboardPage />;
+    case "/inventory/method":
+      return <InventoryMethodPage />;
     case "/inventory/items":
       return isNew ? <ItemWizard /> : <ItemsPage />;
     case "/inventory/units-barcodes":
@@ -121,7 +129,10 @@ function Section() {
     case "/inventory/replenishment":
       return <ReplenishmentPage />;
     default:
-      return <InventoryPage />;
+      // Never fall back to InventoryPage: an unmapped path silently rendered the
+      // WRONG screen instead of saying so. NotFound carries data-state="not-found",
+      // which the closure gate fails on — so a missing route surfaces as a defect.
+      return <NotFound />;
   }
 }
 

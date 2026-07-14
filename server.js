@@ -1840,6 +1840,9 @@ async function runMigrations() {
       // /periods routes carried no capability guard at all while their /gl/*
       // neighbours did.
       ['finance.periods.manage', 'finance', 'إقفال وإعادة فتح الفترات المحاسبية', 'Close/reopen accounting periods', 1, 545],
+      // The inventory valuation method decides how COGS is computed and posted
+      // to the GL. POST /erp/inventory-method was reachable with any valid token.
+      ['inventory.method.manage', 'inventory', 'تغيير طريقة تقييم المخزون', 'Change inventory valuation method', 1, 745],
     ];
     for (const p of latePerms) {
       await db.query(
@@ -1854,6 +1857,10 @@ async function runMigrations() {
       await db.query('INSERT IGNORE INTO role_permissions (role, permission_id) VALUES (?, ?)',
         [role, 'finance.periods.manage']);
     }
+    // Inventory method is an accounting control, not a warehouse chore — grant it
+    // to manager only (admin bypasses the guard entirely).
+    await db.query('INSERT IGNORE INTO role_permissions (role, permission_id) VALUES (?, ?)',
+      ['manager', 'inventory.method.manage']);
   } catch(e) { console.error('seed late permissions failed:', e.message); }
 
   // Seed default role → permissions mapping (idempotent — only if empty)

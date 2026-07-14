@@ -3596,19 +3596,82 @@ router.post('/gl/auto-fix', async (req, res) => {
 // ─── Inventory Method & Valuation ───
 
 // Get/Set inventory method
-router.get('/inventory-method', async (req, res) => {
+// How many inventory movements have been posted since the last hard-closed
+// period — i.e. movements whose COGS was computed under the CURRENT method and
+// is still in an open period. Switching the method with these present would leave
+// one period's COGS computed two different ways (IAS 2 consistency).
+async function _movementsSinceLastClose() {
+  let since = null;
+  try {
+    const [p] = await db.query(
+      "SELECT end_date FROM accounting_periods WHERE status='closed' ORDER BY end_date DESC LIMIT 1");
+    if (p.length) since = p[0].end_date;
+  } catch (_) { /* no periods table → treat as "everything is open" */ }
+  try {
+    // inventory_movements dates its rows with `movement_date` — there is no
+    // created_at on this table.
+    const [r] = since
+      ? await db.query('SELECT COUNT(*) c FROM inventory_movements WHERE movement_date > ?', [since])
+      : await db.query('SELECT COUNT(*) c FROM inventory_movements');
+    return { count: Number(r[0].c) || 0, since: since || null };
+  } catch (_) {
+    // Table missing → we cannot prove it is safe, so report unknown and let the
+    // caller fail closed rather than silently allowing the switch.
+    return { count: -1, since: since || null };
+  }
+}
+
+router.get('/inventory-method', requireCapability('inventory.view'), async (req, res) => {
   try {
     const [rows] = await db.query("SELECT setting_value FROM settings WHERE setting_key = 'inventory_method'");
-    res.json({ method: rows.length ? rows[0].setting_value : 'perpetual' });
-  } catch(e) { res.json({ method: 'perpetual' }); }
+    const mv = await _movementsSinceLastClose();
+    res.json({
+      method: rows.length ? rows[0].setting_value : 'perpetual',
+      // Surfaced so the screen can explain WHY the switch is blocked instead of
+      // just disabling a control.
+      movementsSinceLastClose: mv.count,
+      lastCloseDate: mv.since,
+      canChange: mv.count === 0,
+    });
+  } catch (e) {
+    console.error('[erp/inventory-method] read failed:', e.code || e.message);
+    res.status(500).json({ success: false, error: 'تعذّر قراءة طريقة تقييم المخزون' });
+  }
 });
-router.post('/inventory-method', async (req, res) => {
+
+// v4 — was unguarded and unprotected. The inventory valuation method decides how
+// COGS is computed and posted to the GL; it was changeable by anyone holding any
+// valid token, at any time, with no check on whether movements had already been
+// costed under the outgoing method.
+router.post('/inventory-method', requireCapability('inventory.method.manage'), async (req, res) => {
   try {
-    const { method } = req.body;
-    if (!['perpetual','periodic'].includes(method)) return res.json({ success: false, error: 'Invalid method' });
+    const { method, force } = req.body || {};
+    if (!['perpetual','periodic'].includes(method)) return res.json({ success: false, error: 'طريقة غير صالحة' });
+
+    const [cur] = await db.query("SELECT setting_value FROM settings WHERE setting_key = 'inventory_method'");
+    const current = cur.length ? cur[0].setting_value : 'perpetual';
+    if (current === method) return res.json({ success: true, unchanged: true });
+
+    const mv = await _movementsSinceLastClose();
+    if (mv.count !== 0 && force !== true) {
+      return res.json({
+        success: false,
+        blocked: true,
+        movementsSinceLastClose: mv.count,
+        lastCloseDate: mv.since,
+        error: mv.count < 0
+          ? 'تعذّر التحقق من حركات المخزون — لا يمكن تغيير الطريقة قبل التأكد'
+          : `توجد ${mv.count} حركة مخزون في فترة غير مُقفلة حُسبت تكلفتها بالطريقة الحالية. أقفل الفترة أولًا، أو أكِّد التغيير صراحةً.`,
+      });
+    }
+
     await db.query("INSERT INTO settings (setting_key, setting_value) VALUES ('inventory_method',?) ON DUPLICATE KEY UPDATE setting_value=?", [method, method]);
-    res.json({ success: true });
-  } catch(e) { res.json({ success: false, error: e.message }); }
+    console.log(`[erp/inventory-method] ${current} → ${method} by ${(req.user && req.user.username) || '?'}${force === true ? ' (FORCED over ' + mv.count + ' movements)' : ''}`);
+    res.json({ success: true, from: current, to: method, forced: force === true });
+  } catch (e) {
+    console.error('[erp/inventory-method] save failed:', e.code || e.message);
+    res.json({ success: false, error: 'تعذّر حفظ طريقة تقييم المخزون' });
+  }
 });
 
 // Inventory valuation — real-time stock value (per-warehouse or aggregated)

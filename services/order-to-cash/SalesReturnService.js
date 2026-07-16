@@ -348,24 +348,40 @@ async function post(id, ctx) {
            l.warehouse_id || null, money(l.cost_snapshot)]);
       }
 
-      // 3) REAL ZATCA stamp — mirrors InvoiceService.issue. A credit note is a
+      // 3) Lock the ORIGINAL invoice before the stamp takes the chain-head
+      //    lock. issue() and allocation paths lock the invoice first and may
+      //    then want the chain — taking these two in the opposite order here
+      //    is a deadlock cycle the retry loop would mask as latency. The row
+      //    is used by the AR-reduction step after the GL below.
+      let origRow = null;
+      if (String(row.refund_method) === 'ar_reduction' && row.original_ar_document_id) {
+        const [orig] = await conn.query(
+          'SELECT id, total_amount, paid_amount, balance_amount, status FROM ar_documents WHERE id = ? FOR UPDATE', [row.original_ar_document_id]);
+        origRow = orig.length ? orig[0] : null;
+      }
+
+      // 4) REAL ZATCA stamp — mirrors InvoiceService.issue. A credit note is a
       //    Type-381 document; leaving it 'pending' with no uuid/hash was not a
-      //    conservative default, it was an unstamped document.
+      //    conservative default, it was an unstamped document. The credit note
+      //    enters the SAME chain as invoices: previousHash is the locked head,
+      //    and the head becomes this CN's hash in the same transaction.
       const [cnRows] = await conn.query('SELECT * FROM ar_documents WHERE id = ? LIMIT 1', [cnDocId]);
       const [cnLines] = await conn.query('SELECT * FROM ar_document_lines WHERE document_id = ?', [cnDocId]);
       const z = await Zatca.stamp(conn, { doc: cnRows[0], lines: cnLines });
       await conn.query(
-        'UPDATE ar_documents SET zatca_uuid = ?, zatca_hash = ?, zatca_status = ?, zatca_qr_base64 = ? WHERE id = ?',
-        [z.uuid, z.hash, z.status, z.qr, cnDocId]);
+        `UPDATE ar_documents SET zatca_uuid = ?, zatca_hash = ?, zatca_status = ?, zatca_qr_base64 = ?,
+                previous_invoice_hash = ?, zatca_icv = ? WHERE id = ?`,
+        [z.uuid, z.hash, z.status, z.qr, z.previousHash, z.icv, cnDocId]);
+      await Zatca.advanceChain(conn, { hash: z.hash, icv: z.icv });
 
-      // 4) physical stock restoration — ONLY for lines the operator marked restock,
+      // 5) physical stock restoration — ONLY for lines the operator marked restock,
       //    and ONLY from the checkout component snapshot. A POS line is a menu item
       //    (a burger); what left the shelf were its components (bun, patty). The old
       //    code tested l.warehouse_id, a column that did not exist, so it skipped
       //    every line on every return — restock and the COGS reversal have never run.
       const { restoredCost, affectedStock, cogsByWarehouse } = await _restore(conn, row, lines, ctx.actor || '');
 
-      // 5) GL — revenue + VAT reversal + refund leg; cost reversal only for what
+      // 6) GL — revenue + VAT reversal + refund leg; cost reversal only for what
       //    physically came back, split per warehouse so the inventory legs land on
       //    the same dimension the sale credited.
       const revenueByAccount = {};
@@ -380,25 +396,23 @@ async function post(id, ctx) {
       });
       await conn.query('UPDATE ar_documents SET gl_journal_id = ? WHERE id = ?', [journalId, cnDocId]);
 
-      // 4) AR-reduction refund: the CN credits GL AR (postCreditNote → Cr AR), so the
+      // 7) AR-reduction refund: the CN credits GL AR (postCreditNote → Cr AR), so the
       //    original invoice's subledger balance MUST drop by the same amount to stay
       //    tied to the GL. Cash/bank/deposit refunds don't touch AR → no change here.
-      if (String(row.refund_method) === 'ar_reduction' && row.original_ar_document_id) {
-        const [orig] = await conn.query(
-          'SELECT id, total_amount, paid_amount, balance_amount, status FROM ar_documents WHERE id = ? FOR UPDATE', [row.original_ar_document_id]);
-        if (orig.length && !['cancelled', 'draft'].includes(String(orig[0].status))) {
-          const cnTotal = money(row.total_amount);
-          const curBalance = money(orig[0].balance_amount);
-          const applied = money(Math.min(cnTotal, Math.max(0, curBalance)));
-          const newPaid = money(Number(orig[0].paid_amount) + applied);   // settled = cash + credit memo
-          const newBalance = money(Number(orig[0].total_amount) - newPaid);
-          const status = newBalance <= 0.01
-            ? (applied >= curBalance && curBalance > 0 ? 'credited' : 'paid')
-            : 'partially_paid';
-          await conn.query(
-            'UPDATE ar_documents SET paid_amount = ?, balance_amount = ?, status = ?, version = version + 1 WHERE id = ?',
-            [newPaid, Math.max(0, newBalance), status, row.original_ar_document_id]);
-        }
+      //    The row was locked FOR UPDATE back in step 3 (before the chain lock),
+      //    so its balances cannot have moved under us.
+      if (origRow && !['cancelled', 'draft'].includes(String(origRow.status))) {
+        const cnTotal = money(row.total_amount);
+        const curBalance = money(origRow.balance_amount);
+        const applied = money(Math.min(cnTotal, Math.max(0, curBalance)));
+        const newPaid = money(Number(origRow.paid_amount) + applied);   // settled = cash + credit memo
+        const newBalance = money(Number(origRow.total_amount) - newPaid);
+        const status = newBalance <= 0.01
+          ? (applied >= curBalance && curBalance > 0 ? 'credited' : 'paid')
+          : 'partially_paid';
+        await conn.query(
+          'UPDATE ar_documents SET paid_amount = ?, balance_amount = ?, status = ?, version = version + 1 WHERE id = ?',
+          [newPaid, Math.max(0, newBalance), status, row.original_ar_document_id]);
       }
       return {
         extraSets: { credit_note_id: cnDocId, journal_id: journalId, cogs_journal_id: cogsJournalId },

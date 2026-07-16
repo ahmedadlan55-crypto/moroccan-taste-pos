@@ -124,10 +124,14 @@ async function issue(id, ctx) {
           override: ctx.override, hasOverrideCapability: ctx.hasOverrideCapability,
         });
       }
-      // real ZATCA stamp
-      const z = await Zatca.stamp(conn, { doc: row, lines });
+      // Number FIRST, then stamp: every stamping path takes locks in the order
+      // counter → chain head. Returns-post takes the CN counter before its
+      // stamp; taking them here in the opposite order is a deadlock the retry
+      // loop would mask as latency.
       const number = row.document_number && !/^DRAFT-/.test(row.document_number)
         ? row.document_number : await nextNumber(conn, row.document_type === 'credit_note' ? 'credit_note' : 'invoice', row.issue_date);
+      // real ZATCA stamp (locks the chain head until commit)
+      const z = await Zatca.stamp(conn, { doc: row, lines });
       // GL — POS sales link the existing journal; manual/contract post now
       let journalId = row.gl_journal_id || null;
       if (row.source_type !== 'pos') {
@@ -144,10 +148,17 @@ async function issue(id, ctx) {
           net, vat, cogs: money(cogs || 0), warehouseId: row.warehouse_id, revenueByAccount,
         });
       }
+      // Advance the head in THIS transaction: a failure after this point rolls
+      // back the head together with the document, and an idempotent replay
+      // (which never reaches perform) cannot advance it again.
+      await Zatca.advanceChain(conn, { hash: z.hash, icv: z.icv });
       return {
         extraSets: {
           document_number: number, gl_journal_id: journalId,
+          // previousHash and the QR used to be RETURNED by the stamper and
+          // dropped here — the chain link existed only as a recomputation.
           zatca_uuid: z.uuid, zatca_hash: z.hash, zatca_status: z.status,
+          previous_invoice_hash: z.previousHash, zatca_icv: z.icv, zatca_qr_base64: z.qr,
           balance_amount: money(row.total_amount), paid_amount: 0,
         },
         journalIds: journalId ? [journalId] : [],

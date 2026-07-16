@@ -506,6 +506,56 @@ async function apply(db, log = () => {}) {
     await H.addColumn(db, 'sales_returns', 'cogs_journal_id', `${ID} NULL`, log);
   }
 
+  // ── 14. ZATCA hash chain — a real, lockable head for O2C documents
+  // ZatcaDocumentService computed previousHash from MAX(created_at) over
+  // ar_documents (1-second resolution — not a total order; FOR UPDATE over an
+  // empty table locks nothing at genesis; an unlocked catch-fallback could
+  // fork the chain; and linkPosSale's copied legacy-sale hashes were eligible
+  // heads). The stamper then RETURNED previousHash and the QR — and issue()
+  // dropped both on the floor: no column existed, so the chain link was
+  // recomputed-and-hoped rather than stored, unverifiable after the fact.
+  if (await H.tableExists(db, 'ar_documents')) {
+    await H.addColumn(db, 'ar_documents', 'previous_invoice_hash', 'VARCHAR(128) NULL', log);
+    // Persisted now, consumed at Phase-2 submission — the UBL worker still
+    // reads legacy tables only and hardcodes ICV '1'; wiring it up is that
+    // worker's migration, not this one.
+    await H.addColumn(db, 'ar_documents', 'zatca_icv', 'INT NULL', log);
+  }
+  await H.createTable(db, 'zatca_chain_state', `
+    CREATE TABLE zatca_chain_state (
+      chain_id VARCHAR(64) PRIMARY KEY,
+      last_hash VARCHAR(128) NOT NULL,
+      last_icv INT NOT NULL DEFAULT 0,
+      updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+    ) ${TBL}`, log);
+  // Seed = CUTOVER, not genesis: stamped documents already exist, and seeding
+  // zeros would declare a genesis PIH with chained predecessors standing.
+  // Derive the head with the same source_type<>'pos' filter the runtime gets
+  // structurally (POS-copied hashes are not chain links), fall back to an
+  // onboarding seed setting, then to the conventional genesis. INSERT IGNORE:
+  // reboots must never reset a live head.
+  {
+    const [head] = await db.query(
+      `SELECT zatca_hash FROM ar_documents
+        WHERE source_type <> 'pos' AND zatca_hash IS NOT NULL AND zatca_hash <> ''
+        ORDER BY created_at DESC, id DESC LIMIT 1`);
+    let seedHash = head.length ? head[0].zatca_hash : null;
+    let seedIcv = 0;
+    if (seedHash) {
+      const [cnt] = await db.query(
+        `SELECT COUNT(*) c FROM ar_documents
+          WHERE source_type <> 'pos' AND zatca_hash IS NOT NULL AND zatca_hash <> ''`);
+      seedIcv = Number(cnt[0].c) || 0;
+    } else {
+      const [s] = await db.query("SELECT setting_value FROM settings WHERE setting_key = 'zatca_pih_seed' LIMIT 1");
+      seedHash = (s.length && s[0].setting_value) || '0'.repeat(64);
+    }
+    const [ins] = await db.query(
+      'INSERT IGNORE INTO zatca_chain_state (chain_id, last_hash, last_icv) VALUES (?,?,?)',
+      ['o2c:default', seedHash, seedIcv]);
+    if (ins.affectedRows) log(`  + zatca_chain_state o2c:default (icv ${seedIcv})`);
+  }
+
   return true;
 }
 

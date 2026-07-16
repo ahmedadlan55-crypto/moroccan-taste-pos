@@ -17,6 +17,13 @@
 
 const zatca = require('../../lib/zatca');
 const calc = require('../../lib/order-to-cash/calculations');
+const { err } = require('../../lib/order-to-cash/errors');
+
+// One chain per EGS unit. A constant, not a company-id lookup: deriving the id
+// at seed time AND at every read means any disagreement (renamed company row,
+// fresh test DB) silently forks the chain — one variant per derived id.
+const CHAIN_ID = 'o2c:default';
+const GENESIS_HASH = '0'.repeat(64); // the repo's own genesis (lib/zatca.js chainHash)
 
 async function _sellerFromSettings(conn) {
   const [rows] = await conn.query(
@@ -29,17 +36,44 @@ async function _sellerFromSettings(conn) {
   };
 }
 
-/** Last stamped O2C document hash (chain link). Locks in a tx to avoid a forked chain. */
-async function _lastHash(conn) {
-  try {
-    const [r] = await conn.query(
-      "SELECT zatca_hash FROM ar_documents WHERE zatca_hash IS NOT NULL AND zatca_hash <> '' ORDER BY created_at DESC, id DESC LIMIT 1 FOR UPDATE");
-    return r.length ? r[0].zatca_hash : null;
-  } catch (_) {
-    const [r] = await conn.query(
-      "SELECT zatca_hash FROM ar_documents WHERE zatca_hash IS NOT NULL AND zatca_hash <> '' ORDER BY created_at DESC, id DESC LIMIT 1");
-    return r.length ? r[0].zatca_hash : null;
-  }
+/**
+ * The chain head, LOCKED. Replaces a MAX(created_at) scan over ar_documents
+ * that failed three separate ways: created_at has 1-second resolution so two
+ * same-second documents had no defined order (two such rows exist live);
+ * FOR UPDATE over an EMPTY result set locks nothing, so the first two
+ * documents ever could both compute the genesis previousHash even unraced;
+ * and a bare catch(_) re-ran the query WITHOUT the lock — the exact
+ * concurrency case the lock exists for — silently forking the chain. It also
+ * made linkPosSale's copied legacy-sale hashes eligible chain heads.
+ *
+ * A dedicated, always-present row fixes all four by construction: INSERT
+ * IGNORE self-heals a pre-seed DB, the SELECT ... FOR UPDATE is a real lock
+ * even at genesis, there is no fallback (a lock error aborts the stamp and
+ * withTransaction retries 1213/1205), and POS-copied hashes never touch it.
+ *
+ * REQUIRES a transaction connection: on an autocommit conn the row lock
+ * releases at statement end and serializes nothing.
+ */
+async function _chainHead(conn) {
+  await conn.query(
+    'INSERT IGNORE INTO zatca_chain_state (chain_id, last_hash, last_icv) VALUES (?,?,0)',
+    [CHAIN_ID, GENESIS_HASH]);
+  const [r] = await conn.query(
+    'SELECT last_hash, last_icv FROM zatca_chain_state WHERE chain_id = ? FOR UPDATE', [CHAIN_ID]);
+  if (!r.length) throw err('ZATCA_POSTING_FAILED', 'سلسلة ZATCA غير مهيأة');
+  return { lastHash: r[0].last_hash, lastIcv: Number(r[0].last_icv) || 0 };
+}
+
+/**
+ * Advance the head — call in the SAME transaction that persists the stamped
+ * document, after stamp(). Rollback then reverts both together, so a failed
+ * issue/post can never advance the chain, and an idempotent replay (which
+ * skips perform entirely) can never advance it twice.
+ */
+async function advanceChain(conn, { hash, icv }) {
+  await conn.query(
+    'UPDATE zatca_chain_state SET last_hash = ?, last_icv = ?, updated_at = NOW() WHERE chain_id = ?',
+    [hash, icv, CHAIN_ID]);
 }
 
 /** True when EVERY line is out-of-scope (category 'O') → the doc needs no ZATCA reporting. */
@@ -55,7 +89,12 @@ function _isOutOfScope(lines) {
  */
 async function stamp(conn, { doc, lines }) {
   const seller = await _sellerFromSettings(conn);
-  const previousHash = await _lastHash(conn);
+  const head = await _chainHead(conn);
+  // Genesis is representable: the seed row's hash, not a NULL from an empty
+  // scan. ICV is NOT mixed into canonicalInvoice — the hash function must not
+  // silently change under existing stamped documents.
+  const previousHash = head.lastHash;
+  const icv = head.lastIcv + 1;
   const issueYmd = calc.ymd(doc.issue_date);
   const ksa = zatca.nowInRiyadh(new Date(issueYmd + 'T00:00:00Z'));
   const stamped = zatca.stampInvoice({
@@ -79,7 +118,7 @@ async function stamp(conn, { doc, lines }) {
   });
   const status = _isOutOfScope(lines) ? 'not_required' : 'pending';
   const docTypeCode = doc.document_type === 'credit_note' ? '381' : (doc.document_type === 'debit_note' ? '383' : '388');
-  return { uuid: stamped.uuid, hash: stamped.invoiceHash, previousHash: stamped.previousInvoiceHash, qr: stamped.qrBase64, status, docTypeCode };
+  return { uuid: stamped.uuid, hash: stamped.invoiceHash, previousHash: stamped.previousInvoiceHash, qr: stamped.qrBase64, status, docTypeCode, icv };
 }
 
-module.exports = { stamp, _isOutOfScope };
+module.exports = { stamp, advanceChain, _isOutOfScope, CHAIN_ID };

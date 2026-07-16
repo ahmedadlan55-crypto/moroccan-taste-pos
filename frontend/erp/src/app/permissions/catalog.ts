@@ -145,6 +145,8 @@ export const ALL_CAPS = [
   "accounting.journals.view",
   "workflow.view",
   "workflow.manage",
+  "royalty.view",
+  "royalty.manage",
   "accounting.periods.view",
   "accounting.periods.manage",
   "accounting.reports.view",

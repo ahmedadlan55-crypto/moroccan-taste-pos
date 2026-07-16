@@ -160,6 +160,11 @@ export const ROLE_GRANTS: Record<Capability, readonly Role[]> = {
   // added to @/app/permissions/catalog.
   "workflow.view": [...MGR, "accountant", "finance", "employee"],
   "workflow.manage": [...ADM, "manager"],
+  // Mirrors the live role_permissions grants (late-seeded in server.js):
+  // view → manager/accountant/finance; manage → manager/finance. A role shown a
+  // button the server answers with 403 is not a permission model.
+  "royalty.view": [...ADM, "manager", "accountant", "finance"],
+  "royalty.manage": [...ADM, "manager", "finance"],
   "accounting.journals.view": FIN,
   // Auditors may read the period register; closing/reopening posts and reverses
   // closing entries, so managing it is narrower than reading it.

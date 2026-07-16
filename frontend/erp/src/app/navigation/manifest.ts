@@ -126,6 +126,7 @@ export const NAV: NavGroup[] = [
       { id: "ac-ar-aging", path: "/accounting/ar-aging", label: "أعمار الذمم المدينة", icon: "HandCoins", cap: "accounting.reports.view", module: "accounting" },
       { id: "ac-ap-aging", path: "/accounting/ap-aging", label: "أعمار الذمم الدائنة", icon: "PiggyBank", cap: "accounting.reports.view", module: "accounting" },
       { id: "ac-ratios", path: "/accounting/financial-ratios", label: "النسب المالية", icon: "Gauge", cap: "accounting.reports.view", module: "accounting" },
+      { id: "ac-royalties", path: "/accounting/royalties", label: "امتياز العلامات", icon: "Crown", cap: "royalty.view", module: "accounting" },
       { id: "ac-periods", path: "/accounting/periods", label: "الفترات المحاسبية", icon: "CalendarRange", cap: "accounting.periods.view", module: "accounting" },
       { id: "ac-cost-centers", path: "/accounting/cost-centers", label: "مراكز التكلفة", icon: "Target", cap: "accounting.view", module: "accounting" },
       { id: "ac-dimensions", path: "/accounting/dimensions", label: "المشروعات والأبعاد", icon: "GitBranch", cap: "accounting.view", module: "accounting" },

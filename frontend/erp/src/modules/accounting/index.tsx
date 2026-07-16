@@ -17,6 +17,7 @@ import { GeneralLedgerPage } from "./pages/GeneralLedger";
 import { ArAgingPage, ApAgingPage } from "./pages/Aging";
 import { PeriodsPage } from "./pages/Periods";
 import { FinancialRatiosPage } from "./pages/FinancialRatios";
+import { RoyaltiesPage } from "./pages/Royalties";
 import { CostCentersPage } from "./pages/CostCenters";
 import { DimensionsPage } from "./pages/Dimensions";
 import { ChartOfAccountsPage } from "./pages/ChartOfAccounts";
@@ -34,6 +35,7 @@ const ROUTES: Record<string, () => JSX.Element> = {
   "/accounting/ap-aging": ApAgingPage,
   "/accounting/periods": PeriodsPage,
   "/accounting/financial-ratios": FinancialRatiosPage,
+  "/accounting/royalties": RoyaltiesPage,
   "/accounting/cost-centers": CostCentersPage,
   "/accounting/dimensions": DimensionsPage,
 };

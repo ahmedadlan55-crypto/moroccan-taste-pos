@@ -1,6 +1,6 @@
 import { useNavigate } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { ArrowRight, CheckCircle2, PackageCheck, PackageX, Send, Undo2, XCircle } from "lucide-react";
+import { ArrowRight, CheckCircle2, PackageCheck, PackageX, Printer, Send, Undo2, XCircle } from "lucide-react";
 import { Button, PageHeader, PanelTitle, LoadingState, ErrorState, StatusBadge, safeUserMessage } from "@/shared/ui";
 import { useCan } from "@/app/providers";
 import { o2cApi, qk, SalesStatus, Money, Num, DateCell, Info } from "@/modules/sales/lib";
@@ -59,22 +59,47 @@ export function ReturnDetail({ id, onBack }: { id: string; onBack: () => void })
         <Info label="إشعار دائن" value={r.creditNote?.document_number ? <span dir="ltr" className="text-xs tabular-nums">{r.creditNote.document_number}</span> : "—"} />
       </div>
 
-      {/* The credit note is the whole point of posting; the screen used to show
-          only its raw id, so nothing told the user whether it was ZATCA-stamped. */}
+      {/* The credit note section IS the printable tax document: `.print-document`
+          + the existing @media print CSS means window.print() emits exactly this
+          section — seller block, buyer, lines, totals, QR — and nothing else.
+          The seller comes DECODED FROM THE PERSISTED TLV (frozen at stamp time);
+          re-reading live settings at print time would drift after a rename,
+          which is the exact defect the sales side eliminated at issue. */}
       {r.creditNote && (
-        <section className="section surface mt-4">
-          <PanelTitle title="الإشعار الدائن" subtitle="مستند ضريبي من نوع 381" />
+        <section className="section surface print-document mt-4">
+          <div className="no-print float-left">
+            <Button variant="secondary" onClick={() => window.print()} disabled={!r.creditNote.zatca_qr_data_url && !r.creditNote.zatca_uuid}>
+              <Printer className="h-4 w-4" /> طباعة الإشعار
+            </Button>
+          </div>
+          <PanelTitle title="إشعار دائن ضريبي" subtitle="مستند من نوع 381 — مرتبط بالفاتورة الأصلية" />
+
           <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
             <Info label="الرقم" value={<span dir="ltr" className="tabular-nums">{r.creditNote.document_number}</span>} />
-            <Info label="الإجمالي" value={<Money value={r.creditNote.total_amount} />} />
+            <Info label="التاريخ" value={<DateCell value={r.creditNote.issue_date} />} />
+            <Info label="الفاتورة الأصلية" value={r.creditNote.original_document_number ? <span dir="ltr" className="tabular-nums">{r.creditNote.original_document_number}</span> : "—"} />
             <Info label="حالة ZATCA" value={<StatusBadge dot>{ZATCA_LABEL[r.creditNote.zatca_status] || r.creditNote.zatca_status}</StatusBadge>} />
+            <Info label="البائع" value={r.creditNote.seller?.sellerName || "—"} />
+            <Info label="الرقم الضريبي" value={r.creditNote.seller?.vatNumber ? <span dir="ltr" className="tabular-nums">{r.creditNote.seller.vatNumber}</span> : "—"} />
+            <Info label="العميل" value={r.creditNote.customer_name || "عميل نقدي"} />
             <Info label="مُعرّف ZATCA" value={r.creditNote.zatca_uuid ? <span dir="ltr" className="text-[10px] tabular-nums">{r.creditNote.zatca_uuid}</span> : "—"} />
           </div>
-          {r.creditNote.zatca_qr_base64 ? (
-            <p className="mt-3 text-xs font-semibold text-slate-500">رمز الاستجابة السريعة مختوم ومحفوظ مع المستند.</p>
-          ) : (
-            <p className="mt-3 text-xs font-semibold text-amber-700">لا يوجد رمز مختوم لهذا المستند.</p>
-          )}
+
+          <div className="mt-4 flex flex-wrap items-start justify-between gap-4">
+            <div className="grid grid-cols-3 gap-3">
+              <Info label="الصافي" value={<Money value={r.creditNote.subtotal ?? r.subtotal} />} />
+              <Info label="الضريبة" value={<Money value={r.creditNote.vat_amount ?? r.vat_amount} />} />
+              <Info label="الإجمالي" value={<Money value={r.creditNote.total_amount} />} />
+            </div>
+            {r.creditNote.zatca_qr_data_url ? (
+              <figure className="text-center">
+                <img src={r.creditNote.zatca_qr_data_url} alt="ZATCA QR" width={120} height={120} className="rounded bg-white p-1 ring-1 ring-slate-200" />
+                <figcaption className="mt-1 text-[10px] font-semibold text-slate-400">مختوم عند الترحيل — ICV {r.creditNote.zatca_icv ?? "—"}</figcaption>
+              </figure>
+            ) : (
+              <p className="text-xs font-semibold text-amber-700">لا يوجد رمز مختوم لهذا المستند.</p>
+            )}
+          </div>
         </section>
       )}
 

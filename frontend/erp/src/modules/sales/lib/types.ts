@@ -79,6 +79,13 @@ export interface Invoice {
   status: string;
   zatca_status: string;
   zatca_uuid?: string | null;
+  zatca_qr_base64?: string | null;
+  /** PNG data URL rendered server-side from the persisted TLV. */
+  zatca_qr_data_url?: string | null;
+  zatca_icv?: number | null;
+  previous_invoice_hash?: string | null;
+  /** Seller identity decoded from the TLV — frozen at stamp time. */
+  seller?: ZatcaSellerSnapshot | null;
   gl_journal_id?: string | null;
   version: number;
   lines?: InvoiceLine[];
@@ -183,16 +190,36 @@ export interface SalesReturnLine {
   components?: SalesReturnLineComponent[];
 }
 
+/** The seller block decoded from the persisted TLV — the identity frozen at
+ *  stamp time. ar_documents has no seller columns; re-reading live settings at
+ *  print time would drift after a company rename. */
+export interface ZatcaSellerSnapshot {
+  sellerName?: string;
+  vatNumber?: string;
+  timestamp?: string;
+  total?: string;
+  vat?: string;
+}
+
 /** The Type-381 document a posted return produces. */
 export interface SalesReturnCreditNote {
   id: string;
   document_number: string;
   issue_date: string;
+  subtotal?: number;
+  vat_amount?: number;
   total_amount: number;
   status: string;
   zatca_status: string;
   zatca_uuid?: string | null;
   zatca_qr_base64?: string | null;
+  /** PNG data URL rendered server-side — clients never encode QRs. */
+  zatca_qr_data_url?: string | null;
+  previous_invoice_hash?: string | null;
+  zatca_icv?: number | null;
+  customer_name?: string | null;
+  original_document_number?: string | null;
+  seller?: ZatcaSellerSnapshot | null;
 }
 
 export interface SalesReturn {

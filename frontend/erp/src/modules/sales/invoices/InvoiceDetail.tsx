@@ -88,7 +88,19 @@ export function InvoiceDetail({ id, onBack }: { id: string; onBack: () => void }
             </table>
           </div>
 
-          <div className="mt-4 flex justify-end">
+          <div className="mt-4 flex flex-wrap items-start justify-between gap-4">
+            {/* The ZATCA stamp block: QR image rendered server-side from the
+                persisted TLV (clients never encode QRs), seller decoded from
+                the same TLV — the identity frozen at issue, immune to a later
+                company rename. Printed pages carried NO QR before this. */}
+            {inv.zatca_qr_data_url ? (
+              <figure className="text-center">
+                <img src={inv.zatca_qr_data_url} alt="ZATCA QR" width={120} height={120} className="rounded bg-white p-1 ring-1 ring-slate-200" />
+                <figcaption className="mt-1 text-[10px] font-semibold text-slate-400">
+                  {inv.seller?.sellerName || ""}{inv.seller?.vatNumber ? ` — ض.ر ${inv.seller.vatNumber}` : ""}
+                </figcaption>
+              </figure>
+            ) : <span />}
             <dl className="w-full max-w-xs space-y-1.5 text-sm">
               <Row label="الإجمالي الفرعي" value={<Money value={inv.subtotal} />} />
               <Row label="الضريبة" value={<Money value={inv.vat_amount} />} />

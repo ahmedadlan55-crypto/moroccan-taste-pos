@@ -20,6 +20,7 @@ const calc = require('../../lib/order-to-cash/calculations');
 const { nextNumber } = require('../../lib/order-to-cash/numbering');
 const posting = require('../../lib/order-to-cash/posting');
 const events = require('../../lib/order-to-cash/events');
+const Zqr = require('../../lib/zatca-qr-image');
 const { runTransition } = require('./TransitionExecutor');
 const Alloc = require('./PaymentAllocationService');
 const Zatca = require('./ZatcaDocumentService');
@@ -490,9 +491,25 @@ async function getWithLines(conn, id) {
   let creditNote = null;
   if (rows[0].credit_note_id) {
     const [cn] = await conn.query(
-      'SELECT id, document_number, issue_date, total_amount, status, zatca_status, zatca_uuid, zatca_qr_base64 FROM ar_documents WHERE id = ? LIMIT 1',
+      `SELECT d.id, d.document_number, d.issue_date, d.subtotal, d.vat_amount, d.total_amount,
+              d.status, d.zatca_status, d.zatca_uuid, d.zatca_qr_base64, d.previous_invoice_hash, d.zatca_icv,
+              d.customer_id, COALESCE(d.customer_name, c.name) AS customer_name,
+              orig.document_number AS original_document_number
+         FROM ar_documents d
+         LEFT JOIN customers c ON c.id = d.customer_id
+         LEFT JOIN ar_documents orig ON orig.id = d.original_document_id
+        WHERE d.id = ? LIMIT 1`,
       [rows[0].credit_note_id]);
-    if (cn.length) creditNote = cn[0];
+    if (cn.length) {
+      creditNote = cn[0];
+      // The print needs a QR IMAGE and the seller block. Clients never encode
+      // QRs (no QR lib ships to a browser), and ar_documents carries no seller
+      // columns — the persisted TLV is the frozen truth for both, stamped at
+      // post time. Decoding it beats re-reading live settings, which would
+      // reproduce the rename-drift defect the sales side already eliminated.
+      creditNote.zatca_qr_data_url = await Zqr.zatcaQrDataUrl(creditNote.zatca_qr_base64);
+      creditNote.seller = Zqr.decodeZatcaTlv(creditNote.zatca_qr_base64);
+    }
   }
   return Object.assign({}, rows[0], {
     lines: lines.map((l) => Object.assign({}, l, { components: byLine[l.id] || [] })),

@@ -11,6 +11,7 @@ const db = require('../../db/connection');
 const requireCapability = require('../../middleware/requireCapability');
 const H = require('../../lib/order-to-cash/http');
 const events = require('../../lib/order-to-cash/events');
+const Zqr = require('../../lib/zatca-qr-image');
 const InvoiceService = require('../../services/order-to-cash/InvoiceService');
 
 router.get('/', requireCapability('invoices.view'), async (req, res) => {
@@ -21,8 +22,17 @@ router.get('/', requireCapability('invoices.view'), async (req, res) => {
 });
 
 router.get('/:id', requireCapability('invoices.view'), async (req, res) => {
-  try { return H.sendData(res, await db.withTransaction((c) => InvoiceService.getWithLines(c, req.params.id))); }
-  catch (e) { return H.sendErr(res, e); }
+  try {
+    const out = await db.withTransaction((c) => InvoiceService.getWithLines(c, req.params.id));
+    // Print support: the QR image and the frozen seller block both come from
+    // the persisted TLV (clients never encode QRs; ar_documents has no seller
+    // columns — the stamp is the issue-time truth).
+    if (out && out.zatca_qr_base64) {
+      out.zatca_qr_data_url = await Zqr.zatcaQrDataUrl(out.zatca_qr_base64);
+      out.seller = Zqr.decodeZatcaTlv(out.zatca_qr_base64);
+    }
+    return H.sendData(res, out);
+  } catch (e) { return H.sendErr(res, e); }
 });
 
 router.post('/', requireCapability('invoices.create'), async (req, res) => {

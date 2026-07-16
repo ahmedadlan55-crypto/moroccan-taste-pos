@@ -1197,7 +1197,7 @@ function initViews() {
   if (q("#adminUserLabel")) q("#adminUserLabel").innerText = state.user;
   // [ADLAN] hydrate the sidebar user card (name + role + avatar initials)
   try {
-    var _roleAr = { admin:'مدير النظام', manager:'مشرف', employee:'موظف', custody:'أمين عهدة', cashier:'كاشير', auditor:'مدقق' };
+    var _roleAr = { admin:'مدير النظام', manager:'مشرف', employee:'موظف', custody:'أمين عهدة', cashier:'كاشير', auditor:'مدقق', accountant:'محاسب', finance:'مالية', sales:'مبيعات' };
     var _u = state.user || 'مستخدم';
     if (q("#sidebarUserName2")) q("#sidebarUserName2").innerText = _u;
     if (q("#sidebarUserRole")) q("#sidebarUserRole").innerText = _roleAr[state.role] || state.role || '—';

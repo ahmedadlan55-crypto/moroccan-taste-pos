@@ -11,6 +11,11 @@ const ROLE_LABELS: Record<string, string> = {
   admin: "مدير النظام",
   manager: "مدير",
   cashier: "كاشير",
+  custody: "أمين عهدة",
+  employee: "موظف",
+  accountant: "محاسب",
+  finance: "مالية",
+  sales: "مبيعات",
 };
 
 export function ConnectionIndicator({ onOpenReport }: { onOpenReport: () => void }) {

@@ -11834,8 +11834,8 @@ function hrFilterEmployees() {
 
 // v7.6 — login-account role badge for the employees list (so the admin can
 // instantly tell which employee row is the admin / a cashier / a manager).
-var HR_ROLE_LABELS = { admin:'مدير النظام', manager:'مشرف', cashier:'كاشير', custody:'عهدة', employee:'موظف' };
-var HR_ROLE_COLORS = { admin:'#dc2626', manager:'#1e40af', cashier:'#0891b2', custody:'#0e7490', employee:'#0d9488' };
+var HR_ROLE_LABELS = { admin:'مدير النظام', manager:'مشرف', cashier:'كاشير', custody:'عهدة', employee:'موظف', accountant:'محاسب', finance:'مالية', sales:'مبيعات' };
+var HR_ROLE_COLORS = { admin:'#dc2626', manager:'#1e40af', cashier:'#0891b2', custody:'#0e7490', employee:'#0d9488', accountant:'#7c3aed', finance:'#b45309', sales:'#15803d' };
 function hrLoginBadge(e) {
   if (!e.linkedUsername) {
     return '<span class="badge" style="background:#f1f5f9;color:#94a3b8;font-weight:700;" title="لا يملك حساب دخول للنظام">بلا حساب</span>';

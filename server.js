@@ -1754,10 +1754,18 @@ async function runMigrations() {
     ) ENGINE=InnoDB
   `);
 
-  // Extend users.role ENUM to support new specialized roles
+  // Extend users.role ENUM to the canonical assignable set (lib/roles.js).
+  // HISTORY, because this line used to be a silent fight: this ALTER once
+  // listed finance/hr/inventory/purchasing, and a second, OLDER ALTER further
+  // down (the employee-portal migration) re-narrowed the enum to five values
+  // on every boot — both wrapped in empty catches, so the widen shipped here
+  // NEVER actually survived a startup. That narrowing ALTER is now gone.
+  // hr/inventory/purchasing stay grant-only (role_permissions groupings, not
+  // storable roles) — making them assignable is a product decision nobody has
+  // made; accountant/finance/sales are assignable per the roles directive.
   try {
-    await db.query("ALTER TABLE users MODIFY COLUMN role ENUM('admin','cashier','manager','custody','employee','finance','hr','inventory','purchasing') DEFAULT 'cashier'");
-  } catch(e) {}
+    await db.query("ALTER TABLE users MODIFY COLUMN role ENUM('admin','cashier','manager','custody','employee','accountant','finance','sales') DEFAULT 'cashier'");
+  } catch(e) { console.error('[migrations] users.role widen failed:', e && (e.code || e.message)); }
 
   // Seed permissions catalog (idempotent)
   try {
@@ -2363,8 +2371,12 @@ async function runMigrations() {
   await addColumnIfMissing('users', 'must_change_password', "TINYINT(1) NOT NULL DEFAULT 0");
   await addColumnIfMissing('users', 'password_changed_at', "DATETIME NULL");
 
-  // User roles ENUM — include 'employee' for employee portal
-  try { await db.query("ALTER TABLE users MODIFY COLUMN role ENUM('admin','cashier','manager','custody','employee') DEFAULT 'cashier'"); } catch(e) {}
+  // User roles ENUM — this used to re-assert the five-value employee-portal
+  // enum here, silently REVERTING the specialized-roles widen that runs
+  // earlier in this same file (both ALTERs sat in empty catches, so the fight
+  // was invisible). The canonical widen — including 'employee' — lives in one
+  // place now: the specialized-roles ALTER above + db/migrations/order-to-cash
+  // /schema.js §12. Nothing narrows the enum anymore.
 
   // Custody management tables (العهد)
   await createTableIfMissing('custody_users', `

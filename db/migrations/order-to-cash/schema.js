@@ -410,6 +410,8 @@ async function apply(db, log = () => {}) {
     // INSERT never listed the column. Same write-dead family as source_line_id.
     await H.addColumn(db, 'sales_return_lines', 'warehouse_id', `${ID} NULL`, log);
     // Who authorised putting these goods back on the shelf, why, and when.
+    // (see §12 below for the users.role widening that makes the approver
+    // roles storable at all)
     // `restock` alone records the OUTCOME but not the DECISION: it moves stock
     // and reverses COGS, so an auditor asking "who decided this returned meal
     // was resellable, and on what grounds" currently has nowhere to look —
@@ -447,6 +449,30 @@ async function apply(db, log = () => {}) {
       KEY ix_srlc_line (return_line_id),
       KEY ix_srlc_item (inv_item_id)
     ) ${TBL}`, log);
+
+  // ── 12. assignable roles — widen users.role so the seeded grants are reachable
+  // role_permissions has carried accountant(31)/finance(65)/sales(15) grants
+  // since the O2C capability seed, but users.role was
+  // enum('admin','cashier','manager','custody','employee') — no user could ever
+  // HOLD those roles, so every one of those grants was dead. There is no
+  // central roles table to migrate to (only role_permissions, free text), so
+  // the ENUM is widened in place, append-only: existing rows keep their values
+  // untouched. lib/roles.js is the single code-side catalog.
+  //
+  // Domain bleed, acknowledged: users is legacy schema, but THIS apply() is
+  // the only migration runner that executes at boot (server.js calls it;
+  // db/migrate.js NNNN-*.sql has no boot caller) — a widen parked there would
+  // strand fresh deploys with grants that 403 until someone runs db:migrate.
+  // Guarded on COLUMN_TYPE so reboots don't re-ALTER.
+  if (await H.tableExists(db, 'users')) {
+    const [rc] = await db.query(
+      `SELECT COLUMN_TYPE AS t FROM INFORMATION_SCHEMA.COLUMNS
+        WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'users' AND COLUMN_NAME = 'role'`);
+    if (rc.length && !/accountant/.test(String(rc[0].t))) {
+      await H.modifyColumn(db, 'users', 'role',
+        `ENUM('admin','cashier','manager','custody','employee','accountant','finance','sales') DEFAULT 'cashier'`, log);
+    }
+  }
 
   return true;
 }

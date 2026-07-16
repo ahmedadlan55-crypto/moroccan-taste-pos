@@ -4,6 +4,8 @@ const jwt = require('jsonwebtoken');
 const db = require('../db/connection');
 const path = require('path');
 const verifyToken = require('./authMiddleware');
+const ROLES = require('../lib/roles');
+const sessionVersion = require('../lib/sessionVersion');
 // v5.11.6 — geo-fence + attendance helpers are no longer used here.
 // They live exclusively in routes/hr.js POST /my-clock so attendance
 // becomes a separate, intentional action from authentication.
@@ -525,11 +527,20 @@ async function setUserMeta(meta) {
 // endpoints fully PUBLIC (anyone could create an admin, list PII, delete
 // users, reset passwords). This middleware re-verifies the JWT locally and
 // requires an admin/developer for the sensitive management routes only.
-function requireAdmin(req, res, next) {
+async function requireAdmin(req, res, next) {
   try {
     const h = req.headers['authorization'] || '';
     if (!h.startsWith('Bearer ')) return res.status(401).json({ success: false, error: 'غير مصرح — يجب تسجيل الدخول' });
     const decoded = jwt.verify(h.split(' ')[1], process.env.JWT_SECRET);
+    // /api/auth/* is exempt from the global session gate (server.js mounts it
+    // before the gate), so this local verify was the ONLY check here — meaning
+    // a token issued before a role change or password change kept its admin
+    // powers on exactly the user-management routes for the token's full
+    // lifetime. Check token_version here too. Inherits sessionVersion's
+    // documented fail-open on DB error; a genuine version mismatch still 401s.
+    if (!(await sessionVersion.isTokenCurrent(decoded))) {
+      return res.status(401).json({ success: false, error: 'انتهت الجلسة — يرجى تسجيل الدخول مجددًا' });
+    }
     req.user = decoded;
     const isAdmin = decoded.role === 'admin' || decoded.isDeveloper === true || decoded.username === 'admin';
     if (!isAdmin) return res.status(403).json({ success: false, error: 'هذه العملية تتطلب صلاحية مدير' });
@@ -705,10 +716,13 @@ router.post('/users', requireAdmin, async (req, res) => {
     // downgrading to cashier.
     const [dupUser] = await db.query('SELECT 1 FROM users WHERE username = ? LIMIT 1', [username]);
     if (dupUser.length) return res.status(409).json({ success: false, error: 'اسم المستخدم مستخدم بالفعل' });
-    const VALID_ROLES = ['admin', 'cashier', 'manager', 'custody', 'employee'];
-    if (role && VALID_ROLES.indexOf(role) < 0) return res.json({ success: false, error: 'الدور غير صالح: ' + String(role) });
+    // lib/roles.js is the catalog (accountant/finance/sales are storable since
+    // the §12 ENUM widen made their long-seeded grants reachable).
+    if (role && !ROLES.isAssignable(role)) {
+      return res.status(400).json({ success: false, error: 'الدور غير صالح: ' + String(role) });
+    }
     const hash = await bcrypt.hash(password, 12);
-    const dbRole = VALID_ROLES.indexOf(role) >= 0 ? role : 'cashier';
+    const dbRole = ROLES.isAssignable(role) ? role : 'cashier';
 
     // V3: explicit defaultWarehouseId from request OR auto-derive from branch's warehouse
     let defaultWarehouseId = req.body.defaultWarehouseId || null;
@@ -924,8 +938,26 @@ router.put('/users/:username', requireAdmin, async (req, res) => {
       const hash = await bcrypt.hash(password, 12);
       await db.query('UPDATE users SET password = ? WHERE username = ?', [hash, username]);
     }
-    if (role && ['admin', 'cashier', 'manager', 'custody', 'employee'].indexOf(role) >= 0) {
-      await db.query('UPDATE users SET role = ? WHERE username = ?', [role, username]);
+    if (role) {
+      // Was: `if (role && [whitelist].indexOf(role) >= 0)` — an UNKNOWN role was
+      // silently ignored, so the ERP edit form reported success while the write
+      // was skipped. Reject loudly instead.
+      if (!ROLES.isAssignable(role)) {
+        return res.status(400).json({ success: false, error: 'الدور غير صالح: ' + String(role) });
+      }
+      const [curRole] = await db.query(
+        'SELECT id, role, token_version FROM users WHERE username = ? LIMIT 1', [username]);
+      if (curRole.length && String(curRole[0].role || '') !== String(role)) {
+        // A role change re-scopes every capability the JWT vouches for, so it
+        // must kill outstanding sessions the same way a password change does
+        // (precedent above): bump token_version so the global gate 401s old
+        // tokens within the sessionVersion cache TTL. Same-role writes don't
+        // bump — saving the user form unchanged must not log the user out.
+        const nextVersion = (Number(curRole[0].token_version) || 1) + 1;
+        await db.query('UPDATE users SET role = ?, token_version = ? WHERE username = ?',
+          [role, nextVersion, username]);
+        sessionVersion.bump(curRole[0].id);
+      }
       // Auto-create custody_users record if switching to custody role
       if (role === 'custody') {
         try {
@@ -1481,6 +1513,12 @@ router.put('/permissions/role/:role', requireAdmin, async (req, res) => {
     const { permissionIds } = req.body;
     if (!Array.isArray(permissionIds)) {
       return res.json({ success: false, error: 'permissionIds array required' });
+    }
+    // Was unvalidated: any string in :role became a role_permissions grouping.
+    // Accept assignable roles plus the seeded grant-only groupings
+    // (auditor/hr/inventory/purchasing) — reject arbitrary strings.
+    if (!ROLES.isKnownGrantRole(req.params.role)) {
+      return res.status(400).json({ success: false, error: 'الدور غير معروف: ' + String(req.params.role) });
     }
     // Replace atomically
     await db.query("DELETE FROM role_permissions WHERE role = ?", [req.params.role]);

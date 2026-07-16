@@ -797,6 +797,24 @@ router.get('/employees/:id', async (req, res) => {
 router.post('/employees', async (req, res) => {
   try {
     const b = req.body;
+
+    // Role-assignment gate — validated BEFORE the employee INSERT so a
+    // rejection cannot leave a half-created employee. This was the third,
+    // unvalidated user-creation path: the INSERT below took b.userRole
+    // verbatim (only the users.role ENUM stood between it and garbage), and
+    // the /api/hr mount admits managers — but assigning any role above
+    // 'employee' is admin's call alone (same rule as routes/auth.js).
+    if (b.createUser && b.userRole && b.userRole !== 'employee') {
+      const ROLES = require('../lib/roles');
+      if (!ROLES.isAssignable(b.userRole)) {
+        return res.status(400).json({ success: false, error: 'الدور غير صالح: ' + String(b.userRole) });
+      }
+      const isAdminActor = !!(req.user && (req.user.role === 'admin' || req.user.isDeveloper === true));
+      if (!isAdminActor) {
+        return res.status(403).json({ success: false, error: 'إسناد دور غير «موظف» يتطلب صلاحية admin' });
+      }
+    }
+
     const empId = 'EMP-' + Date.now();
 
     // Generate sequential employee number

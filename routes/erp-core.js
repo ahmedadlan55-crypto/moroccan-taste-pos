@@ -1338,45 +1338,135 @@ router.get('/royalty-runs', requireCapability('royalty.view'), async (req, res) 
       status: r.status, approvedBy: r.approved_by || '', approvedAt: r.approved_at,
       paidAt: r.paid_at, notes: r.notes || ''
     })));
-  } catch(e) { res.json([]); }
+  } catch(e) {
+    // was `res.json([])` — a DB fault rendered as "no royalty runs".
+    console.error('[erp/royalty-runs] list failed:', e && (e.code || e.message));
+    res.status(500).json({ success: false, error: 'تعذّر تحميل احتسابات الامتياز' });
+  }
 });
 
-// Compute royalty for a brand + period (creates draft entry)
+/**
+ * The royalty base, computed from what the sales table ACTUALLY records.
+ *
+ * The previous version selected sales.total_amount and sales.vat_amount —
+ * columns this table has never had (they belong to sales_returns). Every
+ * compute since the feature shipped threw ER_BAD_FIELD_ERROR and the catch
+ * reported it as a friendly failure: royalty_runs is empty because the feature
+ * was BROKEN, not unused. It also filtered on deleted_at, which is written by
+ * nothing (0 rows live), and dated by created_at instead of the business date.
+ *
+ *  · gross  = SUM(total_final)              — post-discount, VAT-inclusive
+ *  · net    = Σ tax_subtotals_json[*].net   — the RECORDED ex-VAT amounts per
+ *    category (S/Z/E/O). Never gross/1.15: that taxes zero-rated and exempt
+ *    lines at 15% and hardcodes a rate that lives in settings.
+ *  · voided sales are excluded by zatca_type — the only cancellation marker
+ *    that is actually written.
+ *  · returns reduce the month the CREDIT NOTE was issued in (per the business
+ *    decision: an approved period is never recomputed). Credit notes live in
+ *    ar_documents (document_type='credit_note') — the legacy credit_notes
+ *    table has 0 rows and is not the O2C source of truth.
+ *
+ * Rows whose tax_subtotals_json is missing or unparseable make the NET
+ * indeterminable. They are counted and surfaced; a net_sales-based royalty
+ * REFUSES to compute over them rather than guessing.
+ */
+async function _royaltyBase(brandId, periodStart, periodEnd) {
+  const [rows] = await db.query(
+    `SELECT total_final, tax_subtotals_json FROM sales
+      WHERE brand_id = ? AND DATE(order_date) BETWEEN ? AND ?
+        AND (zatca_type IS NULL OR zatca_type NOT IN ('cancellation','credit_note'))`,
+    [brandId, periodStart, periodEnd]);
+  let gross = 0, net = 0, netUnknownCount = 0;
+  for (const r of rows) {
+    gross += Number(r.total_final) || 0;
+    let parsed = null;
+    try { parsed = r.tax_subtotals_json ? JSON.parse(r.tax_subtotals_json) : null; } catch (_) { parsed = null; }
+    if (parsed && typeof parsed === 'object') {
+      for (const b of Object.values(parsed)) net += Number(b && b.net) || 0;
+    } else {
+      netUnknownCount++;
+    }
+  }
+  // Credit notes issued INSIDE the period reduce it, whatever month the
+  // original sale was in. Drafts and cancelled CNs are not money.
+  const [cn] = await db.query(
+    `SELECT COALESCE(SUM(total_amount),0) AS g, COALESCE(SUM(subtotal),0) AS n, COUNT(*) AS c
+       FROM ar_documents
+      WHERE document_type = 'credit_note' AND brand_id = ?
+        AND DATE(issue_date) BETWEEN ? AND ?
+        AND status NOT IN ('cancelled','draft')`,
+    [brandId, periodStart, periodEnd]);
+  const round2 = (v) => Math.round(v * 100) / 100;
+  return {
+    saleCount: rows.length,
+    gross: round2(gross - Number(cn[0].g)),
+    net: round2(net - Number(cn[0].n)),
+    creditNotes: { count: Number(cn[0].c), gross: round2(Number(cn[0].g)), net: round2(Number(cn[0].n)) },
+    netUnknownCount,
+  };
+}
+
+function _royaltyAmount(brand, base) {
+  const rtype = brand.royalty_type || 'none';
+  const rvalue = Number(brand.royalty_value) || 0;
+  const rbase = brand.royalty_base || 'gross_sales';
+  const fixedComponent = Number(brand.royalty_fixed_component) || 0;
+  const baseAmount = rbase === 'net_sales' ? base.net : base.gross;
+  let amount = 0;
+  if (rtype === 'percentage') amount = baseAmount * rvalue / 100;
+  else if (rtype === 'fixed') amount = rvalue;
+  else if (rtype === 'mixed') amount = fixedComponent + (baseAmount * rvalue / 100);
+  return { rtype, rvalue, rbase, fixedComponent, amount: Math.round(amount * 100) / 100 };
+}
+
+// Compute royalty for a brand + period. `preview:true` answers the numbers
+// WITHOUT writing anything — the screen shows the operator what a run would
+// contain before a draft exists to clean up.
 router.post('/royalty-runs/compute', requireCapability('royalty.manage'), async (req, res) => {
   try {
-    const { brandId, periodStart, periodEnd } = req.body;
+    const { brandId, periodStart, periodEnd, preview } = req.body || {};
     if (!brandId || !periodStart || !periodEnd) return res.json({ success: false, error: 'الحقول مطلوبة' });
+    if (String(periodEnd) < String(periodStart)) return res.json({ success: false, error: 'نهاية الفترة قبل بدايتها' });
 
-    // Load brand royalty settings
     const [br] = await db.query('SELECT * FROM brands WHERE id = ?', [brandId]);
     if (!br.length) return res.json({ success: false, error: 'البراند غير موجود' });
     const b = br[0];
 
-    // Aggregate sales for the brand/period
-    const [agg] = await db.query(
-      `SELECT COALESCE(SUM(total_amount),0) AS gross,
-              COALESCE(SUM(total_amount - COALESCE(vat_amount,0)),0) AS net
-       FROM sales
-       WHERE brand_id = ? AND DATE(created_at) BETWEEN ? AND ?
-         AND (deleted_at IS NULL)`,
+    const base = await _royaltyBase(brandId, periodStart, periodEnd);
+    const calc = _royaltyAmount(b, base);
+
+    // A net-based royalty over sales whose recorded VAT breakdown is missing
+    // would be a guess wearing a decimal point. Refuse, name the count.
+    if (calc.rbase === 'net_sales' && base.netUnknownCount > 0) {
+      return res.json({
+        success: false,
+        error: `تعذّر الاحتساب على صافي المبيعات: ${base.netUnknownCount} فاتورة بلا تفصيل ضريبي مسجّل — الصافي غير قابل للتحديد`,
+        netUnknownCount: base.netUnknownCount,
+      });
+    }
+
+    const body = {
+      brandId, periodStart, periodEnd,
+      grossSales: base.gross, netSales: base.net,
+      saleCount: base.saleCount, creditNotes: base.creditNotes,
+      netUnknownCount: base.netUnknownCount,
+      royaltyType: calc.rtype, royaltyValue: calc.rvalue, royaltyBase: calc.rbase,
+      fixedComponent: calc.fixedComponent, royaltyAmount: calc.amount,
+    };
+    if (preview) return res.json({ success: true, preview: true, ...body });
+
+    // One run per brand+period. Overlap (not just equality) is refused: two
+    // runs sharing even a day would bill the same sales twice.
+    const [dup] = await db.query(
+      `SELECT id, period_start, period_end, status FROM royalty_runs
+        WHERE brand_id = ? AND NOT (period_end < ? OR period_start > ?) LIMIT 1`,
       [brandId, periodStart, periodEnd]);
-    const gross = Number(agg[0].gross) || 0;
-    const net = Number(agg[0].net) || 0;
-
-    // Compute royalty based on brand settings
-    const rtype = b.royalty_type || 'none';
-    const rvalue = Number(b.royalty_value) || 0;
-    const rbase = b.royalty_base || 'gross_sales';
-    const fixedComponent = Number(b.royalty_fixed_component) || 0;
-    const baseAmount = rbase === 'net_sales' ? net : gross;
-
-    let amount = 0;
-    if (rtype === 'percentage') amount = baseAmount * rvalue / 100;
-    else if (rtype === 'fixed') amount = rvalue;
-    else if (rtype === 'mixed') amount = fixedComponent + (baseAmount * rvalue / 100);
-
-    // Round to 2 decimals
-    amount = Math.round(amount * 100) / 100;
+    if (dup.length) {
+      return res.json({
+        success: false,
+        error: `الفترة تتداخل مع احتساب قائم (${dup[0].id} — ${String(dup[0].period_start).slice(0, 10)} إلى ${String(dup[0].period_end).slice(0, 10)}، حالة ${dup[0].status})`,
+      });
+    }
 
     const id = genId('RR');
     await db.query(
@@ -1384,77 +1474,96 @@ router.post('/royalty-runs/compute', requireCapability('royalty.manage'), async 
          id, brand_id, run_date, period_start, period_end,
          gross_sales, net_sales, royalty_type, royalty_value, fixed_component, royalty_amount, status
        ) VALUES (?,?,CURDATE(),?,?, ?,?,?,?,?,?,'draft')`,
-      [id, brandId, periodStart, periodEnd, gross, net, rtype, rvalue, fixedComponent, amount]);
-    res.json({ success: true, id, grossSales: gross, netSales: net, royaltyAmount: amount });
-  } catch(e) { res.json({ success: false, error: e.message }); }
+      [id, brandId, periodStart, periodEnd, base.gross, base.net, calc.rtype, calc.rvalue, calc.fixedComponent, calc.amount]);
+    res.json({ success: true, id, ...body });
+  } catch(e) {
+    console.error('[erp/royalty-runs/compute] failed:', e && (e.code || e.message));
+    res.status(500).json({ success: false, error: 'تعذّر احتساب الامتياز' });
+  }
 });
 
 router.post('/royalty-runs/:id/approve', requireCapability('royalty.manage'), async (req, res) => {
   try {
-    const { username } = req.body;
-    const [rr] = await db.query('SELECT * FROM royalty_runs WHERE id = ?', [req.params.id]);
-    if (!rr.length) return res.json({ success: false, error: 'الاحتساب غير موجود' });
-    if (rr[0].status !== 'draft') return res.json({ success: false, error: 'لا يمكن الاعتماد — الحالة ليست مسودة' });
+    // v4 SECURITY — the approver is whoever the TOKEN says, never the body.
+    const actor = (req.user && req.user.username) || '';
 
-    const run = rr[0];
-    const amt = Number(run.royalty_amount) || 0;
+    // One transaction: the status flip and the accrual journal commit together
+    // or not at all. The old flow flipped to 'approved' FIRST and posted after —
+    // a posting failure left an approved run with no journal, reported as
+    // success with a "postingWarning" nobody reads. An approval that did not
+    // reach the ledger is not an approval.
+    const out = await db.withTransaction(async (conn) => {
+      const [rr] = await conn.query('SELECT * FROM royalty_runs WHERE id = ? FOR UPDATE', [req.params.id]);
+      if (!rr.length) return { status: 404, body: { success: false, error: 'الاحتساب غير موجود' } };
+      if (rr[0].status !== 'draft') return { status: 409, body: { success: false, error: 'لا يمكن الاعتماد — الحالة ليست مسودة' } };
+      const run = rr[0];
+      const amt = Number(run.royalty_amount) || 0;
 
-    await db.query(
-      `UPDATE royalty_runs SET status='approved', approved_by=?, approved_at=NOW() WHERE id=?`,
-      [username || '', req.params.id]);
+      await conn.query(
+        `UPDATE royalty_runs SET status='approved', approved_by=?, approved_at=NOW() WHERE id=?`,
+        [actor, req.params.id]);
 
-    // ═══ AUTO GL POSTING ═══
-    // Dr Franchise Fee Expense (brand dimension) / Cr Franchise Royalty Payable
-    let postResult = { success: true };
-    if (amt > 0) {
-      postResult = await gl.postJournal(db, {
-        journalDate: run.run_date || new Date().toISOString().slice(0, 10),
-        description: 'Royalty accrual — ' + (run.period_start || '') + ' to ' + (run.period_end || ''),
-        referenceType: 'RoyaltyRun',
-        referenceId: req.params.id,
-        entries: [
-          {
-            accountCode: '6100',                 // Franchise Fee Expense
-            debit: amt, credit: 0,
-            description: 'Franchise royalty expense',
-            brandId: run.brand_id
-          },
-          {
-            accountCode: '2310',                 // Royalty Payable
-            debit: 0, credit: amt,
-            description: 'Royalty liability to brand owner',
-            brandId: run.brand_id
-          }
-        ],
-        postedBy: username || ''
-      });
-      if (postResult.journalId) {
-        await db.query('UPDATE royalty_runs SET gl_journal_id = ? WHERE id = ?', [postResult.journalId, req.params.id]);
+      // Dr Franchise Fee Expense (brand dimension) / Cr Royalty Payable.
+      // A zero-amount run (brand configured royalty_type='none') approves with
+      // no journal — there is genuinely nothing to accrue.
+      let journalId = null, journalNumber = null;
+      if (amt > 0) {
+        // mysql2 returns DATE columns as Date objects at LOCAL midnight;
+        // postJournal wants 'YYYY-MM-DD'. Format locally — toISOString() would
+        // shift the day back across the +03:00 offset and post yesterday.
+        const ymd = (d) => (d instanceof Date
+          ? `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+          : String(d || '').slice(0, 10));
+        const post = await gl.postJournal(conn, {
+          journalDate: ymd(run.run_date) || new Date().toISOString().slice(0, 10),
+          description: 'Royalty accrual — ' + (run.period_start || '') + ' to ' + (run.period_end || ''),
+          referenceType: 'RoyaltyRun',
+          referenceId: req.params.id,
+          entries: [
+            { accountCode: '6100', debit: amt, credit: 0, description: 'Franchise royalty expense', brandId: run.brand_id },
+            { accountCode: '2310', debit: 0, credit: amt, description: 'Royalty liability to brand owner', brandId: run.brand_id },
+          ],
+          postedBy: actor,
+        });
+        // In connection mode a validation failure returns {success:false} —
+        // throwing rolls the status flip back with it (closed period included).
+        if (!post || !post.success) throw new Error(post && post.error ? post.error : 'فشل ترحيل قيد الامتياز');
+        journalId = post.journalId; journalNumber = post.journalNumber || null;
+        await conn.query('UPDATE royalty_runs SET gl_journal_id = ? WHERE id = ?', [journalId, req.params.id]);
       }
-    }
-    res.json({
-      success: true,
-      journalId: postResult.journalId || null,
-      journalNumber: postResult.journalNumber || null,
-      postingWarning: postResult.success ? null : postResult.error
+      return { status: 200, body: { success: true, journalId, journalNumber } };
     });
-  } catch(e) { res.json({ success: false, error: e.message }); }
+    res.status(out.status).json(out.body);
+  } catch(e) {
+    console.error('[erp/royalty-runs/approve] rolled back:', e && (e.code || e.message));
+    res.status(422).json({ success: false, error: e.message || 'تعذّر اعتماد الاحتساب' });
+  }
 });
 
 router.post('/royalty-runs/:id/mark-paid', requireCapability('royalty.manage'), async (req, res) => {
   try {
-    await db.query(
+    const [r] = await db.query(
       `UPDATE royalty_runs SET status='paid', paid_at=NOW() WHERE id=? AND status IN ('approved','invoiced')`,
       [req.params.id]);
+    // was unconditional success:true — marking a draft (or nothing) "paid"
+    // answered exactly like marking an approved run paid.
+    if (!r.affectedRows) return res.status(409).json({ success: false, error: 'لا يمكن التأشير بالسداد — الاحتساب غير معتمد أو غير موجود' });
     res.json({ success: true });
-  } catch(e) { res.json({ success: false, error: e.message }); }
+  } catch(e) {
+    console.error('[erp/royalty-runs/mark-paid] failed:', e && (e.code || e.message));
+    res.status(500).json({ success: false, error: 'تعذّر التأشير بالسداد' });
+  }
 });
 
 router.delete('/royalty-runs/:id', requireCapability('royalty.manage'), async (req, res) => {
   try {
-    await db.query(`DELETE FROM royalty_runs WHERE id=? AND status='draft'`, [req.params.id]);
+    const [r] = await db.query(`DELETE FROM royalty_runs WHERE id=? AND status='draft'`, [req.params.id]);
+    if (!r.affectedRows) return res.status(409).json({ success: false, error: 'لا يُحذف إلا احتساب بحالة مسودة' });
     res.json({ success: true });
-  } catch(e) { res.json({ success: false, error: e.message }); }
+  } catch(e) {
+    console.error('[erp/royalty-runs/delete] failed:', e && (e.code || e.message));
+    res.status(500).json({ success: false, error: 'تعذّر الحذف' });
+  }
 });
 
 // ═══════════════════════════════════════

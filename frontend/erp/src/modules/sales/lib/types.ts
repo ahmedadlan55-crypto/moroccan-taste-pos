@@ -150,7 +150,9 @@ export interface SalesReturnLineComponent {
   id: string;
   return_line_id: string;
   component_seq: number;
-  source: "recipe" | "semi" | "imported" | "combo";
+  // 'semi' was a dead enum member: nothing ever wrote it — the modern path for
+  // a semi-finished item is an ordinary recipe component (source 'recipe').
+  source: "recipe" | "imported" | "combo";
   inv_item_id?: string | null;
   inv_item_name?: string | null;
   warehouse_id?: string | null;

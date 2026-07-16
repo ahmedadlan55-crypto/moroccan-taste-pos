@@ -368,7 +368,7 @@ async function apply(db, log = () => {}) {
       document_id ${ID} NOT NULL,
       document_line_id ${ID} NOT NULL,
       component_seq INT NOT NULL,
-      source ENUM('recipe','semi','imported','combo') NOT NULL DEFAULT 'recipe',
+      source ENUM('recipe','imported','combo') NOT NULL DEFAULT 'recipe',
       inv_item_id ${ID} NULL,
       inv_item_name VARCHAR(200) NULL,
       warehouse_id ${ID} NULL,
@@ -433,7 +433,7 @@ async function apply(db, log = () => {}) {
       return_id ${ID} NOT NULL,
       return_line_id ${ID} NOT NULL,
       component_seq INT NOT NULL,
-      source ENUM('recipe','semi','imported','combo') NOT NULL DEFAULT 'recipe',
+      source ENUM('recipe','imported','combo') NOT NULL DEFAULT 'recipe',
       inv_item_id ${ID} NULL,
       inv_item_name VARCHAR(200) NULL,
       warehouse_id ${ID} NULL,
@@ -554,6 +554,29 @@ async function apply(db, log = () => {}) {
       'INSERT IGNORE INTO zatca_chain_state (chain_id, last_hash, last_icv) VALUES (?,?,?)',
       ['o2c:default', seedHash, seedIcv]);
     if (ins.affectedRows) log(`  + zatca_chain_state o2c:default (icv ${seedIcv})`);
+  }
+
+  // ── 15. drop the dead 'semi' member from component source ENUMs
+  // 'semi' shipped in both CREATE TABLEs above but NOTHING has ever written it:
+  // the checkout projects components as recipe/combo (routes/sales.js) or
+  // imported, and the legacy semi branch `continue`s before any component
+  // write. It was obsolete before it shipped — the v7.1 boot migration turns
+  // consumes_semi_id pointers into ordinary recipe rows, so the MODERN path
+  // for a semi-finished item is already source='recipe'. A dead enum member is
+  // a promise the code doesn't keep; readers (and the return-copy INSERT)
+  // treat source as provenance, so shrinking the set is behavior-free.
+  // Guarded on COLUMN_TYPE; if a DB somewhere ever held a 'semi' row the
+  // MODIFY fails LOUDLY at boot — that is the intended fail-closed outcome,
+  // because such a row would mean an undocumented writer exists.
+  for (const t of ['ar_document_line_components', 'sales_return_line_components']) {
+    if (!(await H.tableExists(db, t))) continue;
+    const [sc] = await db.query(
+      `SELECT COLUMN_TYPE AS ct FROM INFORMATION_SCHEMA.COLUMNS
+        WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ? AND COLUMN_NAME = 'source'`, [t]);
+    if (sc.length && /semi/.test(String(sc[0].ct))) {
+      await H.modifyColumn(db, t, 'source',
+        `ENUM('recipe','imported','combo') NOT NULL DEFAULT 'recipe'`, log);
+    }
   }
 
   return true;

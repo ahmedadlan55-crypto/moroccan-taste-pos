@@ -26,6 +26,7 @@
     "test:roles": "node tests/integration/roles.api.test.js",
     "test:o2c-idempotency": "node tests/integration/o2cIdempotency.api.test.js",
     "test:zatca-chain": "node tests/integration/zatcaChain.api.test.js",
+    "test:component-source": "node tests/integration/componentSource.test.js",
     "test:o2c-idempotency": "node tests/integration/o2cIdempotency.api.test.js",
     "test:royalty-runs": "node tests/integration/royaltyRuns.api.test.js",
     "test:inventory-method": "node tests/integration/inventoryMethod.api.test.js",

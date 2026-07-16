@@ -92,6 +92,7 @@ export const NAV: NavGroup[] = [
       { id: "inv-issues", path: "/inventory/issues", label: "الصرف", icon: "PackageMinus", cap: "inventory.issues.view", module: "inventory" },
       { id: "inv-adjustments", path: "/inventory/adjustments", label: "التسويات", icon: "SlidersHorizontal", cap: "inventory.adjustments.view", module: "inventory" },
       { id: "inv-stocktakes", path: "/inventory/stocktakes", label: "الجرد", icon: "ClipboardCheck", cap: "inventory.stocktakes.view", module: "inventory" },
+      { id: "inv-waste", path: "/inventory/waste", label: "الهدر", icon: "PackageMinus", cap: "inventory.view", module: "inventory" },
       { id: "inv-lots-expiry", path: "/inventory/lots-expiry", label: "التشغيلات والصلاحية", icon: "CalendarClock", cap: "expiry.view", module: "inventory" },
       { id: "inv-replenishment", path: "/inventory/replenishment", label: "إعادة الطلب", icon: "RefreshCcw", cap: "replenishment.view", module: "inventory" },
       { id: "inv-production", path: "/inventory/production", label: "الإنتاج", icon: "Factory", cap: "production.view", module: "production" },

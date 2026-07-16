@@ -35,6 +35,7 @@ import { ReplenishmentPage } from "./features/replenishment/ReplenishmentPage";
 import { LotsPage } from "./features/lots/LotsPage";
 import { ExpiryPage } from "./features/expiry/ExpiryPage";
 import { InventoryMethodPage } from "./features/method/InventoryMethodPage";
+import { WastePage } from "./features/waste/WastePage";
 
 // Sections that filter their data by the shared scope but have no in-page
 // warehouse picker — surface the persistent scope selector for them.
@@ -106,6 +107,8 @@ function Section() {
       return <DashboardPage />;
     case "/inventory/method":
       return <InventoryMethodPage />;
+    case "/inventory/waste":
+      return <WastePage />;
     case "/inventory/items":
       return isNew ? <ItemWizard /> : <ItemsPage />;
     case "/inventory/units-barcodes":

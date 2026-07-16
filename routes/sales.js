@@ -5,6 +5,21 @@ const { isTruthy } = require('../lib/settingsKeys');
 const invoiceIdentity = require('../lib/invoiceIdentity');
 const gl = require('../lib/glPosting');
 const zatca = require('../lib/zatca');
+// Renders the ZATCA TLV payload into a PNG data-URL SERVER-side. The clients
+// must not encode QRs themselves: the legacy receipt template lazy-loaded a QR
+// library from a CDN — an online dependency inside the receipt of an
+// offline-first POS — and the React POS simply printed no QR at all.
+const qrImage = require('qrcode');
+async function zatcaQrDataUrl(tlvBase64) {
+  if (!tlvBase64) return null;
+  try {
+    // The TLV is BINARY; feed it as bytes or the QR encodes mojibake text.
+    return await qrImage.toDataURL([{ data: Buffer.from(tlvBase64, 'base64'), mode: 'byte' }], { margin: 0, width: 160 });
+  } catch (e) {
+    console.error('[zatca] QR image render failed:', e.message);
+    return null;
+  }
+}
 const { recomputeInvItemStock, recomputeMenuStock, deductWarehouseStock } = require('../lib/stockRecompute');
 // v6.20.0 — Central tax math.  Honors per-item is_tax_inclusive + reads
 // the live VAT rate from settings (not ENV anymore).
@@ -962,13 +977,19 @@ router.post('/', async (req, res) => {
       } catch (e) { /* cash_tendered/change_due missing on older deploy */ }
     }
 
-    // Stamp ZATCA fields back (tolerate schemas without these columns)
+    // Stamp ZATCA fields back — including the TLV payload, so the QR the
+    // customer received is the QR every future reprint shows, byte for byte,
+    // rather than a client-side re-derivation that drifts with the inputs.
     if (zatcaStamp.uuid) {
       try {
         await db.query(
-          `UPDATE sales SET invoice_uuid=?, invoice_hash=?, previous_invoice_hash=?, zatca_type=? WHERE id=?`,
-          [zatcaStamp.uuid, zatcaStamp.invoiceHash, zatcaStamp.previousInvoiceHash || null, 'simplified', orderId]);
-      } catch(e) { /* older schema — ignore */ }
+          `UPDATE sales SET invoice_uuid=?, invoice_hash=?, previous_invoice_hash=?, zatca_type=?, zatca_qr_base64=? WHERE id=?`,
+          [zatcaStamp.uuid, zatcaStamp.invoiceHash, zatcaStamp.previousInvoiceHash || null, 'simplified', zatcaStamp.qrBase64 || null, orderId]);
+      } catch(e) {
+        // Not silent (was `/* older schema — ignore */`): losing the stamp means
+        // the printed invoice and the stored one disagree, and nobody knew.
+        console.error('[zatca] failed to persist stamp on sale', orderId, e.code || e.message);
+      }
     }
 
     // Build recipe map: menu_id → [{ invId, invName, qtyUsed, wastePct }]
@@ -1877,7 +1898,9 @@ router.post('/', async (req, res) => {
         uuid: zatcaStamp.uuid || null,
         invoiceHash: zatcaStamp.invoiceHash || null,
         previousInvoiceHash: zatcaStamp.previousInvoiceHash || null,
-        qrBase64: zatcaStamp.qrBase64 || null
+        qrBase64: zatcaStamp.qrBase64 || null,
+        // Print-ready PNG so the receipt needs no client-side QR encoder.
+        qrDataUrl: await zatcaQrDataUrl(zatcaStamp.qrBase64)
       },
       totals: { total: invTotal, net, vat }
     });
@@ -2184,6 +2207,34 @@ router.get('/invoice/:orderId', async (req, res) => {
       customerGender: customerGender,
       paymentNotes: sale.payment_notes || null,
       zatcaType: sale.zatca_type || null,
+      // v6.15 — the QR for reprints. Preferred source is the STORED TLV: byte for
+      // byte what the customer's first receipt carried. Sales stamped before the
+      // column existed get a deterministic server-side rebuild from the sale's
+      // RECORDED values — VAT from tax_subtotals_json (the recorded per-category
+      // amounts), never total/1.15, and never a client-side derivation: the legacy
+      // template re-derived the TLV in the browser and pulled its QR library from
+      // a CDN, which fails exactly where this POS must work — offline.
+      zatcaQr: await (async () => {
+        let tlv = sale.zatca_qr_base64 || null;
+        if (!tlv && taxNumber) {
+          let vat = null;
+          try {
+            const ts = sale.tax_subtotals_json ? JSON.parse(sale.tax_subtotals_json) : null;
+            if (ts && typeof ts === 'object') vat = Object.values(ts).reduce((s, b) => s + (Number(b && b.vat) || 0), 0);
+          } catch (_) { vat = null; }
+          // A corrupt/absent subtotal blob means the VAT is indeterminable — a
+          // rebuilt QR must carry the sale's numbers, so in that case there is
+          // honestly no QR rather than one asserting a guessed VAT.
+          if (vat != null) {
+            tlv = zatca.buildZatcaQR({
+              sellerName: companyName, sellerVat: taxNumber,
+              timestamp: new Date(sale.order_date).toISOString(),
+              total: Number(sale.total_final) || 0, vatAmount: vat,
+            });
+          }
+        }
+        return tlv ? { qrBase64: tlv, qrDataUrl: await zatcaQrDataUrl(tlv), stored: !!sale.zatca_qr_base64 } : null;
+      })(),
       // v6.11.0 — Human-readable identifiers for printable receipts
       invoiceNumber: sale.invoice_number || null,
       voidSerial: sale.void_serial || null,

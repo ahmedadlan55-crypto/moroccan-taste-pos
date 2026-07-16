@@ -26,6 +26,7 @@ const M = require('../lib/posOrderMachine');
 const C = require('../lib/inventoryTxContract');
 const UC = require('../lib/unitConversion');
 const IDEM = require('../lib/idempotencyStore');
+const invoiceIdentity = require('../lib/invoiceIdentity');
 const requireRole = require('../middleware/auth').requireRole;
 
 const POS = requireRole('admin', 'manager', 'cashier');
@@ -380,6 +381,31 @@ router.get('/catalog', POS, async (req, res) => {
       } catch (_) { /* item_barcodes not present */ }
     }
 
+    // Receipt identity, resolved for THIS cashier's branch and shipped inside the
+    // catalog because the catalog is the one payload the client already caches
+    // for offline use. Until now the React receipt derived the seller name from
+    // document.title and printed none of the owner-configured fields — the API
+    // returned them (routes/sales.js /invoice/:orderId) but only AFTER a sale,
+    // over the network, which is exactly what an offline receipt cannot do.
+    let identity = null;
+    let receiptShowFields = invoiceIdentity.showFields(null);
+    try {
+      let scope = null;
+      const uname = _userName(req.user);
+      if (uname) {
+        const [u] = await db.query('SELECT branch_id, default_branch_id FROM users WHERE username = ? LIMIT 1', [uname]);
+        if (u.length) scope = { branchId: u[0].branch_id || u[0].default_branch_id || null };
+      }
+      const resolved = await invoiceIdentity.resolveIdentity(db, scope);
+      identity = resolved.identity;
+      const [sf] = await db.query("SELECT setting_value FROM settings WHERE setting_key = 'ReceiptShowFields' LIMIT 1");
+      receiptShowFields = invoiceIdentity.showFields(sf.length ? sf[0].setting_value : null);
+    } catch (e) {
+      // Loud, and identity stays null: the receipt renderer treats a missing
+      // identity as "print what you have", never as fabricated seller data.
+      console.error('[pos-v2] receipt identity resolution failed:', e.message);
+    }
+
     const data = {
       items: items.map((m) => {
         const units = unitsByItem[m.id] || [];
@@ -397,9 +423,13 @@ router.get('/catalog', POS, async (req, res) => {
       categories: [...new Set(items.map((m) => m.category || 'عام'))],
       vatRate,
       maxCashierDiscountPct: MAX_CASHIER_DISC_PCT,
+      identity,
+      receiptShowFields,
       serverTime: new Date().toISOString(),
     };
-    const etag = '"' + crypto.createHash('sha1').update(JSON.stringify({ i: data.items, v: data.vatRate })).digest('hex') + '"';
+    // identity is part of the ETag: an owner editing the receipt header must
+    // reach cached offline clients on their next sync, not never.
+    const etag = '"' + crypto.createHash('sha1').update(JSON.stringify({ i: data.items, v: data.vatRate, id: identity, sf: receiptShowFields })).digest('hex') + '"';
     if (req.get('If-None-Match') === etag) return res.status(304).end();
     res.setHeader('ETag', etag);
     res.json({ success: true, data });

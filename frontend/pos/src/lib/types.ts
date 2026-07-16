@@ -36,11 +36,53 @@ export interface CatalogItem {
   units?: CatalogUnit[];
 }
 
+/** Owner-configured seller identity, resolved server-side for this cashier's
+ *  branch (lib/invoiceIdentity.js). Rides in the catalog because the catalog is
+ *  the one payload the client already caches — so an OFFLINE receipt still
+ *  prints the real seller, not the browser tab title. */
+export interface ReceiptIdentity {
+  sellerName: string;
+  legalName: string;
+  taxNumber: string;
+  crNumber: string;
+  address: string;
+  nationalAddress: string;
+  phone: string;
+  email: string;
+  logo: string;
+  currency: string;
+  vatRate: number;
+  header: string;
+  footer: string;
+  thankYou: string;
+  returnPolicy: string;
+  branchName: string;
+  branchCompanyName: string;
+  brandName: string;
+}
+
+/** Which optional blocks the owner wants printed. Server defaults are all-on. */
+export interface ReceiptShowFields {
+  logo: boolean;
+  taxNumber: boolean;
+  crNumber: boolean;
+  nationalAddress: boolean;
+  phone: boolean;
+  email: boolean;
+  cashier: boolean;
+  customer: boolean;
+  qr: boolean;
+}
+
 export interface Catalog {
   items: CatalogItem[];
   categories: string[];
   vatRate: number;
   maxCashierDiscountPct: number;
+  /** null when the server could not resolve it — the receipt then prints what it
+   *  has rather than fabricated seller data. */
+  identity?: ReceiptIdentity | null;
+  receiptShowFields?: ReceiptShowFields;
   serverTime: string;
 }
 
@@ -104,6 +146,10 @@ export interface LocalOrder {
   serverVersion: number | null;
   invoiceNumber: string | null;
   saleId: string | null;
+  /** Server-rendered ZATCA QR (PNG data-URL), captured at checkout. null for a
+   *  queued offline sale — the stamp does not exist until the server sees it,
+   *  and the receipt says so instead of printing a fake. */
+  zatcaQrDataUrl?: string | null;
   createdAt: number;
   updatedAt: number;
 }
@@ -197,6 +243,16 @@ export interface SaleResult {
   invoiceNumber?: string | null;
   idempotent?: boolean;
   error?: string;
+  /** The server has ALWAYS returned this block; the type simply never declared
+   *  it, so the stamp the customer is entitled to see was dropped on the floor.
+   *  qrDataUrl is a server-rendered PNG — the client never encodes QRs. */
+  zatca?: {
+    uuid: string | null;
+    invoiceHash: string | null;
+    previousInvoiceHash: string | null;
+    qrBase64: string | null;
+    qrDataUrl: string | null;
+  } | null;
 }
 
 export interface ClosingMethod {

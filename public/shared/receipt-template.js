@@ -102,6 +102,14 @@
     // Owner-authored footer line (settings.receiptFooter). Absent → the block
     // below simply doesn't render; nothing else on the receipt shifts.
     var receiptFooter     = inv.receiptFooter     || settings.receiptFooter || '';
+    // v6.15 — the API has returned these since v4 and this normalizer silently
+    // dropped every one of them: configured in settings, present on the wire,
+    // never on paper.
+    var crNumber            = inv.crNumber            || '';
+    var nationalAddress     = inv.nationalAddress     || '';
+    var receiptHeader       = inv.receiptHeader       || '';
+    var receiptThankYou     = inv.receiptThankYou     || '';
+    var receiptReturnPolicy = inv.receiptReturnPolicy || '';
     var branchName        = inv.branchName        || settings.branchName || '';
     var branchAddr        = inv.branchAddress     || settings.branchAddress || '';
     var branchCompanyName = inv.branchCompanyName || '';
@@ -146,6 +154,9 @@
       branchName: branchName, branchAddr: branchAddr, branchCompanyName: branchCompanyName,
       cashierName: cashierName, cashierEmpNo: cashierEmpNo,
       logoUrl: logoUrl,
+      crNumber: crNumber, nationalAddress: nationalAddress,
+      receiptHeader: receiptHeader, receiptThankYou: receiptThankYou,
+      receiptReturnPolicy: receiptReturnPolicy,
       dateStr: _formatDate(inv.date),
       totalItems: totalItems, netAmount: netAmount, vatAmount: vatAmount,
       subtotal: totalFinal + _lineDiscTotal + _invoiceDiscount,
@@ -249,6 +260,16 @@
           '</div>'
         : ''
       ) +
+
+      // v6.15 — CR + national address + owner header: configured, on the wire,
+      // and until now never rendered by anything.
+      (r.crNumber
+        ? '<div style="text-align:center;font-size:10px;color:#000;margin-bottom:2px;">CR NO. <span style="direction:rtl;">| س.ت</span> ' +
+            '<span style="font-family:ui-monospace,SFMono-Regular,monospace;font-weight:800;direction:ltr;">' + esc(r.crNumber) + '</span></div>'
+        : ''
+      ) +
+      (r.nationalAddress ? '<div style="text-align:center;font-size:10px;color:#000;direction:rtl;margin-bottom:2px;line-height:1.5;">' + esc(r.nationalAddress) + '</div>' : '') +
+      (r.receiptHeader ? '<div style="text-align:center;font-size:11px;color:#000;direction:rtl;margin-bottom:4px;font-weight:700;">' + esc(r.receiptHeader) + '</div>' : '') +
 
       (r.branchName ? '<div style="text-align:center;font-size:13px;font-weight:800;direction:ltr;margin-top:6px;letter-spacing:0.5px;">' + esc(String(r.branchName).toUpperCase()) + '</div>' : '') +
       (r.branchAddr ? '<div style="text-align:center;font-size:11px;color:#000;direction:rtl;margin-bottom:8px;line-height:1.6;">' + esc(r.branchAddr) + '</div>' : '') +
@@ -431,8 +452,15 @@
       // ───── THANK YOU ─────
       '<div style="text-align:center;margin-top:10px;padding-top:8px;border-top:2px solid #000;">' +
         '<div style="font-size:14px;font-weight:800;color:#000;letter-spacing:0.5px;">THANK YOU FOR YOUR VISIT</div>' +
-        '<div style="font-size:13px;font-weight:800;color:#000;direction:rtl;margin-top:2px;">شُكرًا لِزيارَتِكم</div>' +
+        // The owner-authored thank-you REPLACES the stock line when configured.
+        '<div style="font-size:13px;font-weight:800;color:#000;direction:rtl;margin-top:2px;">' + esc(r.receiptThankYou || 'شُكرًا لِزيارَتِكم') + '</div>' +
       '</div>' +
+
+      // v6.15 — return policy: configured, on the wire, never printed.
+      (r.receiptReturnPolicy
+        ? '<div style="text-align:center;font-size:10px;color:#000;direction:rtl;margin-top:4px;white-space:pre-line;">' + esc(r.receiptReturnPolicy) + '</div>'
+        : ''
+      ) +
 
       // Owner-authored footer from settings.receiptFooter.
       (r.receiptFooter
@@ -569,10 +597,6 @@
       return;
     }
 
-    _ensureQRCodeLib().catch(function(e) {
-      _toast(e.message || 'فشل تحميل QRCode', true);
-    });
-
     apiObj
       .withFailureHandler(function(err) {
         _toast((err && err.message) || 'فشل جلب الفاتورة', true);
@@ -580,10 +604,23 @@
       .withSuccessHandler(function(inv) {
         if (!inv) { _toast('الفاتورة غير موجودة', true); return; }
 
+        // v6.15 — the server now returns the STAMPED QR as a ready PNG
+        // (inv.zatcaQr.qrDataUrl). Only when a pre-v6.15 server omits it do we
+        // fall back to deriving the TLV client-side — which needs the QR
+        // library, historically fetched from a CDN: an online dependency
+        // inside the receipt of an offline-first POS.
+        var serverQr = (inv.zatcaQr && inv.zatcaQr.qrDataUrl) || '';
+        if (!serverQr) {
+          _ensureQRCodeLib().catch(function(e) {
+            _toast(e.message || 'فشل تحميل QRCode', true);
+          });
+        }
+
         console.log('[MTReceipt] orderId=' + orderId + ' customer:',
           inv.customerId ? (inv.customerId + ' / ' + (inv.customerName || '(no name)') + ' / ' + (inv.customerPhone || '(no phone)')) : 'null (walk-in)');
 
         var receipt = _prepReceipt(inv, settings, user);
+        receipt.qrDataUrl = serverQr;   // '' when the server did not provide one
         _lastReceipt = receipt;
         // Mirror to legacy global so old code that reads state._lastReceipt still works
         try { if (window.state) window.state._lastReceipt = receipt; } catch (e) {}
@@ -598,9 +635,14 @@
           try { openModalFn(modalSelector); } catch (e) { console.warn('[MTReceipt] modal open failed:', e); }
         }
 
-        // Generate ZATCA QR code in the rendered preview
+        // Populate the ZATCA QR in the rendered preview: the stamped image when
+        // the server sent one, else the legacy client-side derivation.
         setTimeout(function() {
           var qrEl = (box && box.querySelector('#receiptQR')) || document.getElementById('receiptQR');
+          if (qrEl && serverQr) {
+            qrEl.innerHTML = '<img src="' + serverQr + '" width="140" height="140" style="display:block;margin:0 auto;">';
+            return;
+          }
           if (qrEl && typeof window.QRCode !== 'undefined') {
             qrEl.innerHTML = '';
             var tlv = generateZATCA_TLV(
@@ -634,11 +676,10 @@
       _toast('لا توجد فاتورة محفوظة للطباعة', true);
       return;
     }
-    // Grab the QR canvas data-URL from the on-screen preview so the
-    // printed copy includes the visible ZATCA QR (rather than an
-    // empty placeholder div).
+    // Prefer the server-stamped QR captured at fetch time; fall back to the
+    // preview canvas only for pre-v6.15 servers that never sent one.
     var qrCanvas = document.querySelector('#receiptQR canvas');
-    var qrImg = qrCanvas ? qrCanvas.toDataURL() : '';
+    var qrImg = (_lastReceipt && _lastReceipt.qrDataUrl) || (qrCanvas ? qrCanvas.toDataURL() : '');
     var fullHtml = buildReceiptHTML(_lastReceipt, { qrImg: qrImg, includeWrapper: true });
     silentPrint(fullHtml);
   }

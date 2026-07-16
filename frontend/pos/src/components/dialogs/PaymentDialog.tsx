@@ -18,7 +18,7 @@ type Tab = "cash" | "card" | "split" | "credit";
 type Phase =
   | { name: "form" }
   | { name: "working"; stage: "submit" | "sale" | "complete" }
-  | { name: "success"; invoiceNumber: string | null; saleId: string | null; queued: boolean; doc: LocalOrder; payments: Payment[]; cashTendered: number; changeDue: number }
+  | { name: "success"; invoiceNumber: string | null; saleId: string | null; queued: boolean; doc: LocalOrder; payments: Payment[]; cashTendered: number; changeDue: number; zatcaQrDataUrl: string | null }
   | { name: "failed"; error: string };
 
 const STAGE_LABELS: Record<"submit" | "sale" | "complete", string> = {
@@ -146,6 +146,7 @@ export function PaymentDialog({ open, onClose }: { open: boolean; onClose: () =>
         payments,
         cashTendered,
         changeDue: change,
+        zatcaQrDataUrl: outcome.zatcaQrDataUrl ?? null,
       });
     } catch (e) {
       const fresh = await engine.getOrder(snapshot.id);
@@ -170,6 +171,11 @@ export function PaymentDialog({ open, onClose }: { open: boolean; onClose: () =>
         cashierName: user?.username ?? "",
         vatRate: catalog?.vatRate ?? 15,
         offlineRef: p.queued,
+        // Owner-configured seller block from the cached catalog (works offline)
+        // and the server-stamped QR from checkout (absent while queued).
+        identity: catalog?.identity ?? null,
+        showFields: catalog?.receiptShowFields ?? null,
+        zatcaQrDataUrl: p.zatcaQrDataUrl,
       }),
     );
     if (!ok) pushToast("error", "المتصفح منع نافذة الطباعة — اسمح بالنوافذ المنبثقة");

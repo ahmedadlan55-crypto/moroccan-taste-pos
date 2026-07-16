@@ -4377,6 +4377,11 @@ async function runMigrations() {
   // NULL for every invoice issued before this migration — the reprint path falls
   // back to a live resolve for those, so old receipts keep printing unchanged.
   await addColumnIfMissing('sales', 'receipt_identity_id', 'CHAR(40) NULL');
+  // v6.15 — persist the stamped Phase-1 TLV payload. The checkout response was
+  // the ONLY place the QR ever existed: nothing stored it, so a reprint had to
+  // re-derive it client-side — which is why the legacy receipt template pulls a
+  // QR library from a CDN and fails offline, in a POS built around offline.
+  await addColumnIfMissing('sales', 'zatca_qr_base64', 'TEXT NULL');
 
   // ─── v5.11.6 — Per-attendance-event device tracking ───
   // Each clock-in / clock-out remembers the brand + model + OS + UA of

@@ -83,6 +83,9 @@ export interface CheckoutOutcome {
   state: "completed" | "queued" | "failed";
   invoiceNumber: string | null;
   saleId: string | null;
+  /** Present only on "completed" — a queued sale has no stamp yet, and the
+   *  receipt states that instead of inventing one. */
+  zatcaQrDataUrl?: string | null;
   error?: string;
 }
 
@@ -411,7 +414,7 @@ export class OfflineEngine {
     await this.flush();
     const after = await this.deps.orders.get(doc.id);
     if (after?.status === "completed") {
-      return { state: "completed", invoiceNumber: after.invoiceNumber, saleId: after.saleId };
+      return { state: "completed", invoiceNumber: after.invoiceNumber, saleId: after.saleId, zatcaQrDataUrl: after.zatcaQrDataUrl ?? null };
     }
     const failed = this.lastReport?.results.find((r) => r.orderId === doc.id && !r.ok);
     if (failed) return { state: "failed", invoiceNumber: null, saleId: null, error: failed.error || failed.code };
@@ -638,10 +641,14 @@ export class OfflineEngine {
     this.emitEvent({ type: "checkout-progress", orderId, stage: "sale" });
     let saleId: string;
     let invoiceNumber: string | null;
+    let zatcaQrDataUrl: string | null;
     try {
       const sale = await this.deps.api.postLegacySale(sub.data.legacyPayload);
       saleId = sale.orderId;
       invoiceNumber = sale.invoiceNumber ?? null;
+      // The stamp the customer's receipt must carry. It was always in the
+      // response; nothing kept it.
+      zatcaQrDataUrl = sale.zatca?.qrDataUrl ?? null;
     } catch (e) {
       if (isNetworkError(e)) return true; // clientOrderId dedupe makes replay safe
       // Domain failure → reopen the order server-side and surface the error.
@@ -674,6 +681,9 @@ export class OfflineEngine {
       doc.status = "completed";
       doc.saleId = saleId;
       doc.invoiceNumber = invoiceNumber;
+      // Persisted with the doc so a reprint after the dialog closed — or after a
+      // reload — still carries the stamp instead of silently dropping it.
+      doc.zatcaQrDataUrl = zatcaQrDataUrl;
       doc.updatedAt = this.deps.now();
       await this.deps.orders.put(doc.id, doc);
     }

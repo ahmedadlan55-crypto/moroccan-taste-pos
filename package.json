@@ -22,6 +22,7 @@
     "test:erp-core-authz": "node tests/integration/erpCoreAuthz.api.test.js",
     "test:waste-entries": "node tests/integration/wasteEntries.api.test.js",
     "test:sales-returns": "node tests/integration/salesReturns.api.test.js",
+    "test:receipt-qr": "node tests/integration/receiptQr.api.test.js",
     "test:inventory-method": "node tests/integration/inventoryMethod.api.test.js",
     "test:search-api": "node tests/integration/search.api.test.js",
     "test:uom-docs": "node tests/integration/uomDocs.api.test.js",
@@ -100,7 +101,8 @@
     "express-session": "^1.17.3",
     "helmet": "^7.1.0",
     "jsonwebtoken": "^9.0.2",
-    "mysql2": "^3.6.5"
+    "mysql2": "^3.6.5",
+    "qrcode": "^1.5.4"
   },
   "devDependencies": {
     "@playwright/test": "^1.61.1",

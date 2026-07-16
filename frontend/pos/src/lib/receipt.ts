@@ -2,20 +2,28 @@
  * Receipt printing — self-contained RTL HTML in a print window. No external
  * assets (works offline). English digits throughout (fmt2 / fmtDateTime).
  *
- * Store header: the settings-lite source here is the app identity itself —
- * brand from the window title ("المذاق المغربي | كاشير V2" → first segment),
- * datetime from the client clock (catalog.serverTime is used by the caller to
- * detect gross clock skew, not printed).
+ * Seller identity comes from the owner-configured ReceiptIdentity that rides in
+ * the cached catalog (lib/invoiceIdentity.js server-side) — resolvable OFFLINE.
+ * It used to be derived from the browser tab title, and none of the configured
+ * fields (tax number, CR, national address, header, thank-you, return policy)
+ * ever reached paper even though the API returned every one of them.
+ *
+ * The ZATCA QR is a server-rendered PNG data-URL captured at checkout. The
+ * client never encodes QRs (the legacy template pulled an encoder from a CDN —
+ * an online dependency inside an offline-first POS). A queued offline sale has
+ * no stamp yet, and the receipt SAYS so rather than printing a substitute.
  */
 import { cartTotals } from "./cartMath";
 import { fmt2, fmtDateTime, shortRef } from "./format";
-import type { LocalOrder, Payment } from "./types";
+import type { LocalOrder, Payment, ReceiptIdentity, ReceiptShowFields } from "./types";
 
 function esc(s: string): string {
   return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
 }
 
-function brandName(): string {
+/** Tab-title fallback ONLY for when no identity is cached (first run, resolver
+ *  failure). A configured identity always wins. */
+function brandNameFallback(): string {
   const title = typeof document !== "undefined" ? document.title : "";
   return title.split("|")[0]?.trim() || "المذاق المغربي";
 }
@@ -37,6 +45,8 @@ const BASE_CSS = `
   .tot td { padding: 1px 0; }
   .grand { font-size: 15px; font-weight: 800; border-top: 1px solid #000; }
   .foot { text-align: center; margin-top: 8px; font-size: 12px; font-weight: 700; }
+  .qr { text-align: center; margin-top: 8px; }
+  .qr img { image-rendering: pixelated; }
   .kitchen { font-size: 18px; }
   .kitchen td { font-size: 18px; font-weight: 700; padding: 4px 0; }
   .kitchen .note { font-size: 14px; font-weight: 400; color: #111; }
@@ -53,6 +63,14 @@ export interface ReceiptOptions {
   vatRate: number;
   /** true → offline queued sale: prints the local reference instead. */
   offlineRef?: boolean;
+  /** Owner-configured seller block from the cached catalog. Absent → the receipt
+   *  prints what it has (tab-title name), never fabricated fields. */
+  identity?: ReceiptIdentity | null;
+  /** Owner's print toggles; absent → print everything present. */
+  showFields?: ReceiptShowFields | null;
+  /** Server-rendered ZATCA QR PNG. Absent on a queued offline sale — the receipt
+   *  states the stamp arrives after sync instead of inventing one. */
+  zatcaQrDataUrl?: string | null;
 }
 
 export function buildReceiptHtml(opts: ReceiptOptions): string {
@@ -89,13 +107,29 @@ export function buildReceiptHtml(opts: ReceiptOptions): string {
     ? `<div class="sub">مرجع محلي: <span class="num">${esc(shortRef(order.id))}</span> — سيُرحَّل عند عودة الاتصال</div>`
     : `<div class="sub">فاتورة: <span class="num">${esc(invoiceNumber || order.saleId || shortRef(order.id))}</span></div>`;
 
+  // ── seller block: only what the owner configured, gated by their toggles ──
+  const idn = opts.identity ?? null;
+  const show = opts.showFields ?? null;
+  const on = (k: keyof ReceiptShowFields) => !show || show[k] !== false;
+  const sellerName = idn?.sellerName || idn?.brandName || brandNameFallback();
+  const sellerLines: string[] = [];
+  if (idn) {
+    if (idn.branchName) sellerLines.push(`<div class="sub">${esc(idn.branchName)}</div>`);
+    if (on("taxNumber") && idn.taxNumber) sellerLines.push(`<div class="sub">الرقم الضريبي: <span class="num">${esc(idn.taxNumber)}</span></div>`);
+    if (on("crNumber") && idn.crNumber) sellerLines.push(`<div class="sub">س.ت: <span class="num">${esc(idn.crNumber)}</span></div>`);
+    if (on("nationalAddress") && idn.nationalAddress) sellerLines.push(`<div class="sub">${esc(idn.nationalAddress)}</div>`);
+    if (on("phone") && idn.phone) sellerLines.push(`<div class="sub num">${esc(idn.phone)}</div>`);
+    if (idn.header) sellerLines.push(`<div class="sub">${esc(idn.header)}</div>`);
+  }
+
   return `<!doctype html><html lang="ar" dir="rtl"><head><meta charset="utf-8">
   <title>إيصال</title><style>${BASE_CSS}</style></head><body>
-  <h1>${esc(brandName())}</h1>
+  <h1>${esc(sellerName)}</h1>
+  ${sellerLines.join("\n  ")}
   ${refLine}
   <div class="sub num">${fmtDateTime(new Date())}</div>
-  <div class="sub">الكاشير: ${esc(opts.cashierName)} · ${orderTypeLabel}${order.tableNo ? ` · طاولة <span class="num">${esc(order.tableNo)}</span>` : ""}</div>
-  ${order.customerName || order.customerPhone ? `<div class="sub">العميل: ${esc([order.customerName, order.customerPhone].filter(Boolean).join(" "))}</div>` : ""}
+  ${on("cashier") ? `<div class="sub">الكاشير: ${esc(opts.cashierName)} · ${orderTypeLabel}${order.tableNo ? ` · طاولة <span class="num">${esc(order.tableNo)}</span>` : ""}</div>` : ""}
+  ${on("customer") && (order.customerName || order.customerPhone) ? `<div class="sub">العميل: ${esc([order.customerName, order.customerPhone].filter(Boolean).join(" "))}</div>` : ""}
   <hr>
   <table>
     <thead><tr><th>الصنف</th><th class="l">كمية</th><th class="l">سعر</th><th class="l">إجمالي</th></tr></thead>
@@ -114,7 +148,17 @@ export function buildReceiptHtml(opts: ReceiptOptions): string {
     ${opts.cashTendered ? `<tr><td>المستلَم</td><td class="l num">${fmt2(opts.cashTendered)}</td></tr>` : ""}
     ${opts.changeDue ? `<tr><td>الباقي</td><td class="l num">${fmt2(opts.changeDue)}</td></tr>` : ""}
   </table>
-  <div class="foot">شكرًا لزيارتكم</div>
+  ${(() => {
+    // ZATCA QR: the stamped one or an honest absence — never a client-side
+    // re-derivation. A queued offline sale is not stamped until it syncs.
+    if (!on("qr")) return "";
+    if (opts.zatcaQrDataUrl) return `<div class="qr"><img src="${opts.zatcaQrDataUrl}" alt="ZATCA QR" width="120" height="120"></div>`;
+    if (opts.offlineRef) return `<div class="sub">رمز الفاتورة الضريبي يصدر بعد المزامنة</div>`;
+    return "";
+  })()}
+  <div class="foot">${esc(idn?.thankYou || "شكرًا لزيارتكم")}</div>
+  ${idn?.returnPolicy ? `<div class="sub">${esc(idn.returnPolicy)}</div>` : ""}
+  ${idn?.footer ? `<div class="sub">${esc(idn.footer)}</div>` : ""}
   </body></html>`;
 }
 

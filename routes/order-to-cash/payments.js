@@ -17,6 +17,7 @@ function _ctx(req, extra) {
   return Object.assign({
     actor: H.actorOf(req), actorId: H.actorIdOf(req),
     expectedVersion: H.expectedVersionOf(req), idempotencyKey: H.idemOf(req),
+    requestHash: H.requestHashOf(req),
   }, extra || {});
 }
 
@@ -39,7 +40,19 @@ router.get('/:id/timeline', requireCapability('payments.view'), async (req, res)
 
 router.post('/', requireCapability('payments.create'), async (req, res) => {
   try {
-    const out = await db.withTransaction((c) => PaymentService.create(c, req.body || {}, H.actorOf(req)));
+    const idemKey = H.idemOf(req);
+    const reqHash = H.requestHashOf(req);
+    const body = Object.assign({}, req.body || {}, { idempotencyKey: idemKey, requestHash: reqHash });
+    let out;
+    try {
+      out = await db.withTransaction((c) => PaymentService.create(c, body, H.actorOf(req)));
+    } catch (e) {
+      // Parallel same-key race — recover on the POOL (see returns.js).
+      const prior = idemKey && e && e.code === 'ER_DUP_ENTRY'
+        ? await events.findPrior(db, 'customer_payment', 'create', '', idemKey, reqHash) : null;
+      if (!prior) throw e;
+      out = await db.withTransaction((c) => PaymentService.get(c, prior.entity_id));
+    }
     return H.sendOk(res, { data: out, documentNumber: out.payment_number, status: out.status, version: out.version }, 201);
   } catch (e) { return H.sendErr(res, e); }
 });
@@ -64,7 +77,12 @@ router.post('/:id/post', requireCapability('payments.post'), async (req, res) =>
 // apply a posted advance's unapplied balance to invoices
 router.post('/:id/allocate', requireCapability('payments.post'), async (req, res) => {
   try {
-    const out = await PaymentService.allocateAdvance(req.params.id, { actor: H.actorOf(req), allocations: req.body && req.body.allocations });
+    const out = await PaymentService.allocateAdvance(req.params.id, {
+      actor: H.actorOf(req), allocations: req.body && req.body.allocations,
+      // This posts GL and moves invoice balances — it gets the same
+      // key+fingerprint contract as every other money-moving endpoint.
+      idempotencyKey: H.idemOf(req), requestHash: H.requestHashOf(req),
+    });
     return H.sendOk(res, { data: out, journalIds: out.journalId ? [out.journalId] : [] });
   } catch (e) { return H.sendErr(res, e); }
 });

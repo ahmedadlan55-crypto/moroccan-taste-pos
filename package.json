@@ -24,6 +24,7 @@
     "test:sales-returns": "node tests/integration/salesReturns.api.test.js",
     "test:receipt-qr": "node tests/integration/receiptQr.api.test.js",
     "test:roles": "node tests/integration/roles.api.test.js",
+    "test:o2c-idempotency": "node tests/integration/o2cIdempotency.api.test.js",
     "test:royalty-runs": "node tests/integration/royaltyRuns.api.test.js",
     "test:inventory-method": "node tests/integration/inventoryMethod.api.test.js",
     "test:search-api": "node tests/integration/search.api.test.js",

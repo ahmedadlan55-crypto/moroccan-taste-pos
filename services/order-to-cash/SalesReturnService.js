@@ -50,6 +50,12 @@ async function _resolveOriginal(conn, data) {
 
 /** Create a draft return with proportional, snapshot-based lines. */
 async function create(conn, data, actor) {
+  // Sequential same-key retry replays the existing draft instead of creating a
+  // twin; same key + different payload is a 409 (thrown by findPrior). The
+  // PARALLEL race is handled at the route via ER_DUP_ENTRY + a pool re-check.
+  const prior = await events.findPrior(conn, 'sales_return', 'create', '', data.idempotencyKey, data.requestHash);
+  if (prior) return getWithLines(conn, prior.entity_id);
+
   const original = await _resolveOriginal(conn, data);
   const [origLines] = await conn.query('SELECT * FROM ar_document_lines WHERE document_id = ?', [original.id]);
   const byId = {}; origLines.forEach((l) => { byId[l.id] = l; });
@@ -184,6 +190,14 @@ async function create(conn, data, actor) {
          c.unitCostSnapshot, c.totalCost, c.projectionVersion]);
     }
   }
+  // The create event is the idempotency record (scope sales_return:create: +
+  // request_hash); its UNIQUE is also the backstop the parallel-race recovery
+  // reads after ER_DUP_ENTRY.
+  await events.recordEvent(conn, {
+    documentType: 'sales_return', documentId: id, action: 'create', toStatus: 'draft',
+    actor, idempotencyKey: data.idempotencyKey || null, requestHash: data.requestHash || null,
+    payload: { returnNumber: 'DRAFT-' + id.slice(-8) },
+  });
   return getWithLines(conn, id);
 }
 
@@ -260,7 +274,7 @@ async function _restore(conn, row, lines, actor, direction = 1) {
 async function approve(id, ctx) {
   return runTransition({
     docType: 'sales_return', table: 'sales_returns', id, action: 'approve',
-    actor: ctx.actor, actorId: ctx.actorId, expectedVersion: ctx.expectedVersion, idempotencyKey: ctx.idempotencyKey,
+    actor: ctx.actor, actorId: ctx.actorId, expectedVersion: ctx.expectedVersion, idempotencyKey: ctx.idempotencyKey, requestHash: ctx.requestHash,
     actorColumns: { by: 'approved_by', at: 'approved_at' },
     perform: async (conn, row) => {
       // Separation of duties. The capability gate proves the actor MAY approve
@@ -282,7 +296,7 @@ async function approve(id, ctx) {
 async function post(id, ctx) {
   return runTransition({
     docType: 'sales_return', table: 'sales_returns', id, action: 'post',
-    actor: ctx.actor, actorId: ctx.actorId, expectedVersion: ctx.expectedVersion, idempotencyKey: ctx.idempotencyKey,
+    actor: ctx.actor, actorId: ctx.actorId, expectedVersion: ctx.expectedVersion, idempotencyKey: ctx.idempotencyKey, requestHash: ctx.requestHash,
     actorColumns: { by: 'posted_by', at: 'posted_at' },
     perform: async (conn, row) => {
       const [lines] = await conn.query('SELECT * FROM sales_return_lines WHERE return_id = ? ORDER BY id', [id]);
@@ -359,7 +373,7 @@ async function post(id, ctx) {
         const code = (revByOrig[l.original_line_id] || {}).revenue_account_code || '';
         revenueByAccount[code] = money((revenueByAccount[code] || 0) + Number(l.net_amount || 0));
       }
-      const journalId = await posting.postCreditNote(conn, {
+      const { journalId, cogsJournalId } = await posting.postCreditNote(conn, {
         ret: Object.assign({}, row, { posted_by: ctx.actor }),
         net: money(row.subtotal), vat: money(row.vat_amount), cost: restoredCost,
         warehouseId: row.warehouse_id, revenueByAccount, cogsByWarehouse,
@@ -387,8 +401,9 @@ async function post(id, ctx) {
         }
       }
       return {
-        extraSets: { credit_note_id: cnDocId, journal_id: journalId },
-        journalIds: [journalId], affectedStock, affectedValue: money(row.total_amount),
+        extraSets: { credit_note_id: cnDocId, journal_id: journalId, cogs_journal_id: cogsJournalId },
+        journalIds: cogsJournalId ? [journalId, cogsJournalId] : [journalId],
+        affectedStock, affectedValue: money(row.total_amount),
         payload: { creditNoteId: cnDocId, creditNoteNumber: cnNumber, restoredCost },
       };
     },
@@ -399,7 +414,7 @@ async function post(id, ctx) {
 async function reverse(id, ctx) {
   return runTransition({
     docType: 'sales_return', table: 'sales_returns', id, action: 'reverse',
-    actor: ctx.actor, actorId: ctx.actorId, expectedVersion: ctx.expectedVersion, idempotencyKey: ctx.idempotencyKey,
+    actor: ctx.actor, actorId: ctx.actorId, expectedVersion: ctx.expectedVersion, idempotencyKey: ctx.idempotencyKey, requestHash: ctx.requestHash,
     actorColumns: { by: 'reversed_by', at: 'reversed_at' },
     perform: async (conn, row) => {
       const journalIds = [];
@@ -441,7 +456,7 @@ async function reverse(id, ctx) {
 async function cancel(id, ctx) {
   return runTransition({
     docType: 'sales_return', table: 'sales_returns', id, action: 'cancel',
-    actor: ctx.actor, actorId: ctx.actorId, expectedVersion: ctx.expectedVersion, idempotencyKey: ctx.idempotencyKey,
+    actor: ctx.actor, actorId: ctx.actorId, expectedVersion: ctx.expectedVersion, idempotencyKey: ctx.idempotencyKey, requestHash: ctx.requestHash,
     perform: async () => ({}),
   });
 }

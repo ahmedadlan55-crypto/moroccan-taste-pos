@@ -20,19 +20,32 @@ const { err } = require('../../lib/order-to-cash/errors');
 async function runTransition(o) {
   const {
     docType, table, id, action, actor, actorId,
-    expectedVersion, idempotencyKey, actorColumns, perform,
+    expectedVersion, idempotencyKey, requestHash, actorColumns, perform,
     statusColumn = 'status', versionColumn = 'version',
   } = o;
 
   async function replay(conn) {
-    const prior = await events.findByIdempotency(conn, docType, idempotencyKey);
+    // Scoped to (docType, action, id): the same key on a DIFFERENT action or
+    // document no longer replays this event — that was the silent-no-op bug
+    // where a key reused across approve→post returned 200 having done nothing.
+    const prior = await events.findByIdempotency(conn, docType, idempotencyKey, action, id);
     if (!prior) return null;
+    // Same key, different payload = the client is making the key mean two
+    // different things. Neither replaying the first result nor running the
+    // second request is safe. Legacy events with NULL request_hash replay
+    // regardless (5 such rows exist; all are simple issue events).
+    if (prior.request_hash && requestHash && prior.request_hash !== requestHash) {
+      throw err('IDEMPOTENCY_KEY_REUSED', 'مفتاح Idempotency مُعاد استخدامه بمحتوى مختلف');
+    }
     const [cur] = await conn.query(`SELECT * FROM \`${table}\` WHERE id = ? LIMIT 1`, [id]);
     const row = cur[0] || {};
     return {
       replayed: true, row, toStatus: prior.to_status,
       newVersion: row[versionColumn] != null ? Number(row[versionColumn]) : null,
-      result: { journalIds: prior.gl_journal_id ? [prior.gl_journal_id] : [] },
+      // Faithful envelope: parsed payload + full journalIds, not just the
+      // single gl_journal_id column — routes read result.payload directly
+      // (a replayed post used to return creditNoteId: undefined with a 200).
+      result: events.replayEnvelope(prior),
       event: prior,
     };
   }
@@ -41,8 +54,13 @@ async function runTransition(o) {
     return await _run();
   } catch (e) {
     // Concurrent same-key race: the loser rolled back (state-machine reject or
-    // UNIQUE(entity_type, idempotency_key) on the event INSERT). If a prior event
-    // for this key now exists, the operation already succeeded → clean replay.
+    // UNIQUE(event_scope, idempotency_key) on the event INSERT). If a prior
+    // event for this key now exists AND the payload matches, the operation
+    // already succeeded → clean replay. A hash mismatch throws the 409 from
+    // replay() itself — NOT the incidental error (the loser of a same-key
+    // different-payload race would otherwise surface a misleading 422).
+    // Runs on the POOL: the failed txn's REPEATABLE READ snapshot predates
+    // the winner's commit and would miss it.
     if (idempotencyKey) {
       const r = await replay(db);
       if (r) return r;
@@ -54,17 +72,8 @@ async function runTransition(o) {
     return db.withTransaction(async (conn) => {
       // 1. idempotency replay
       if (idempotencyKey) {
-        const prior = await events.findByIdempotency(conn, docType, idempotencyKey);
-        if (prior) {
-          const [cur] = await conn.query(`SELECT * FROM \`${table}\` WHERE id = ? LIMIT 1`, [id]);
-          const row = cur[0] || {};
-          return {
-            replayed: true, row, toStatus: prior.to_status,
-            newVersion: row[versionColumn] != null ? Number(row[versionColumn]) : null,
-            result: { journalIds: prior.gl_journal_id ? [prior.gl_journal_id] : [] },
-            event: prior,
-          };
-        }
+        const r = await replay(conn);
+        if (r) return r;
       }
 
       // 2. lock the document row
@@ -95,11 +104,16 @@ async function runTransition(o) {
         `UPDATE \`${table}\` SET ${sets.join(', ')} WHERE id = ? AND \`${versionColumn}\` = ?`, params);
       if (upd.affectedRows === 0) throw err('VERSION_CONFLICT', 'تغيّر المستند أثناء المعالجة');
 
-      // 7. audit event (also the idempotency record)
+      // 7. audit event (also the idempotency record). journalIds go INTO the
+      // payload: gl_journal_id is a single column and a post can produce two
+      // journals (collection+advance, revenue+COGS) — replaying from the
+      // column alone under-reported them.
       const journalIds = Array.isArray(result.journalIds) ? result.journalIds : [];
       const event = await events.recordEvent(conn, {
         documentType: docType, documentId: id, action, fromStatus, toStatus,
-        actor, actorId, idempotencyKey, payload: result.payload || null, glJournalId: journalIds[0] || null,
+        actor, actorId, idempotencyKey, requestHash,
+        payload: Object.assign({}, result.payload || {}, { journalIds }),
+        glJournalId: journalIds[0] || null,
       });
 
       return { replayed: false, row, fromStatus, toStatus, newVersion: Number(row[versionColumn]) + 1, result, event };

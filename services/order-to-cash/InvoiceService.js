@@ -60,6 +60,11 @@ async function _computeDoc(conn, data) {
 
 /** Create a draft invoice (manual / contract). POS invoices use linkPosSale instead. */
 async function createDraft(conn, data, actor) {
+  // Same-key retry replays the existing draft; same key + different payload
+  // throws 409 inside findPrior. Parallel races recover at the route.
+  const prior = await events.findPrior(conn, 'ar_document', 'create', '', data.idempotencyKey, data.requestHash);
+  if (prior) return getWithLines(conn, prior.entity_id);
+
   const { computed, totals } = await _computeDoc(conn, data);
   const id = genId();
   const issueDate = calc.ymd(data.issueDate);
@@ -92,6 +97,12 @@ async function createDraft(conn, data, actor) {
        l.enteredQty, l.factor, l.baseQty, l.unitPriceEntered, l.discountAmount, l.vatCategory, l.vatRate,
        l.netAmount, l.vatAmount, l.grossAmount, l.revenueAccountId, l.revenueAccountCode, l.warehouseId, l.costSnapshot]);
   }
+  // The create event is the idempotency record (scope ar_document:create:).
+  await events.recordEvent(conn, {
+    documentType: 'ar_document', documentId: id, action: 'create', toStatus: 'draft',
+    actor, idempotencyKey: data.idempotencyKey || null, requestHash: data.requestHash || null,
+    payload: { documentType: data.documentType || 'invoice' },
+  });
   return getWithLines(conn, id);
 }
 
@@ -99,7 +110,7 @@ async function createDraft(conn, data, actor) {
 async function issue(id, ctx) {
   return runTransition({
     docType: 'ar_document', table: 'ar_documents', id, action: 'issue',
-    actor: ctx.actor, actorId: ctx.actorId, expectedVersion: ctx.expectedVersion, idempotencyKey: ctx.idempotencyKey,
+    actor: ctx.actor, actorId: ctx.actorId, expectedVersion: ctx.expectedVersion, idempotencyKey: ctx.idempotencyKey, requestHash: ctx.requestHash,
     actorColumns: { by: 'issued_by', at: 'issued_at' },
     perform: async (conn, row) => {
       if (row.source_type === 'pos' && row.gl_journal_id) {
@@ -151,7 +162,7 @@ async function issue(id, ctx) {
 async function cancel(id, ctx) {
   return runTransition({
     docType: 'ar_document', table: 'ar_documents', id, action: 'cancel',
-    actor: ctx.actor, actorId: ctx.actorId, expectedVersion: ctx.expectedVersion, idempotencyKey: ctx.idempotencyKey,
+    actor: ctx.actor, actorId: ctx.actorId, expectedVersion: ctx.expectedVersion, idempotencyKey: ctx.idempotencyKey, requestHash: ctx.requestHash,
     actorColumns: { by: 'cancelled_by', at: 'cancelled_at' }, perform: async () => ({}),
   });
 }

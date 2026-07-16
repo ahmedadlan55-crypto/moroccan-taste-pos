@@ -41,6 +41,11 @@ async function _compute(conn, data) {
 }
 
 async function create(conn, data, actor) {
+  // Same-key retry replays the existing order; same key + different payload
+  // throws 409 inside findPrior. Parallel races recover at the route.
+  const prior = await events.findPrior(conn, 'sales_order', 'create', '', data.idempotencyKey, data.requestHash);
+  if (prior) return getWithLines(conn, prior.entity_id);
+
   const { computed, totals } = await _compute(conn, data);
   const id = genId();
   const number = await nextNumber(conn, 'sales_order', data.orderDate);
@@ -65,13 +70,19 @@ async function create(conn, data, actor) {
        l.factor, l.baseQty, l.unitPriceEntered, l.discountAmount, l.vatCategory, l.vatRate,
        l.netAmount, l.vatAmount, l.grossAmount, l.revenueAccountCode, l.warehouseId, l.costSnapshot]);
   }
+  // The create event is the idempotency record (scope sales_order:create:).
+  await events.recordEvent(conn, {
+    documentType: 'sales_order', documentId: id, action: 'create', toStatus: 'draft',
+    actor, idempotencyKey: data.idempotencyKey || null, requestHash: data.requestHash || null,
+    payload: { orderNumber: number },
+  });
   return getWithLines(conn, id);
 }
 
 async function confirm(id, ctx) {
   return runTransition({
     docType: 'sales_order', table: 'sales_orders', id, action: 'confirm',
-    actor: ctx.actor, actorId: ctx.actorId, expectedVersion: ctx.expectedVersion, idempotencyKey: ctx.idempotencyKey,
+    actor: ctx.actor, actorId: ctx.actorId, expectedVersion: ctx.expectedVersion, idempotencyKey: ctx.idempotencyKey, requestHash: ctx.requestHash,
     actorColumns: { by: 'confirmed_by', at: 'confirmed_at' },
     perform: async (conn, row) => {
       if (Number(row.is_credit_sale) && row.customer_id) {
@@ -88,7 +99,7 @@ async function confirm(id, ctx) {
 async function fulfill(id, ctx) {
   return runTransition({
     docType: 'sales_order', table: 'sales_orders', id, action: 'fulfill',
-    actor: ctx.actor, actorId: ctx.actorId, expectedVersion: ctx.expectedVersion, idempotencyKey: ctx.idempotencyKey,
+    actor: ctx.actor, actorId: ctx.actorId, expectedVersion: ctx.expectedVersion, idempotencyKey: ctx.idempotencyKey, requestHash: ctx.requestHash,
     actorColumns: { by: 'fulfilled_by', at: 'fulfilled_at' }, perform: async () => ({}),
   });
 }
@@ -96,7 +107,7 @@ async function fulfill(id, ctx) {
 async function cancel(id, ctx) {
   return runTransition({
     docType: 'sales_order', table: 'sales_orders', id, action: 'cancel',
-    actor: ctx.actor, actorId: ctx.actorId, expectedVersion: ctx.expectedVersion, idempotencyKey: ctx.idempotencyKey,
+    actor: ctx.actor, actorId: ctx.actorId, expectedVersion: ctx.expectedVersion, idempotencyKey: ctx.idempotencyKey, requestHash: ctx.requestHash,
     actorColumns: { by: 'cancelled_by', at: 'cancelled_at' }, perform: async () => ({}),
   });
 }
@@ -105,7 +116,7 @@ async function cancel(id, ctx) {
 async function invoiceOrder(id, ctx) {
   return runTransition({
     docType: 'sales_order', table: 'sales_orders', id, action: 'invoice',
-    actor: ctx.actor, actorId: ctx.actorId, expectedVersion: ctx.expectedVersion, idempotencyKey: ctx.idempotencyKey,
+    actor: ctx.actor, actorId: ctx.actorId, expectedVersion: ctx.expectedVersion, idempotencyKey: ctx.idempotencyKey, requestHash: ctx.requestHash,
     perform: async (conn, row) => {
       const [lines] = await conn.query('SELECT * FROM sales_order_lines WHERE order_id = ?', [id]);
       const draft = await InvoiceService.createDraft(conn, {

@@ -26,6 +26,11 @@ function genId() { return 'CR-' + Date.now() + '-' + Math.random().toString(36).
 
 /** Create a draft collection; intended allocations are captured for post-time. */
 async function create(conn, data, actor) {
+  // Same-key retry replays the existing payment; same key + different payload
+  // throws 409 inside findPrior. Parallel races recover at the route.
+  const prior = await events.findPrior(conn, 'customer_payment', 'create', '', data.idempotencyKey, data.requestHash);
+  if (prior) return get(conn, prior.entity_id);
+
   const amount = money(data.amount);
   if (!(amount > 0)) throw err('VALIDATION_ERROR', 'مبلغ التحصيل يجب أن يكون موجبًا');
   if (!data.customerId) throw err('VALIDATION_ERROR', 'العميل مطلوب لسند القبض');
@@ -45,7 +50,8 @@ async function create(conn, data, actor) {
      data.reference || null, data.notes || null, data.idempotencyKey || null, actor || '']);
   await events.recordEvent(conn, {
     documentType: 'customer_payment', documentId: id, action: 'create', toStatus: 'draft',
-    actor, payload: { allocations },
+    actor, idempotencyKey: data.idempotencyKey || null, requestHash: data.requestHash || null,
+    payload: { allocations },
   });
   return get(conn, id);
 }
@@ -53,7 +59,7 @@ async function create(conn, data, actor) {
 async function approve(id, ctx) {
   return runTransition({
     docType: 'customer_payment', table: 'customer_payments', id, action: 'approve',
-    actor: ctx.actor, actorId: ctx.actorId, expectedVersion: ctx.expectedVersion, idempotencyKey: ctx.idempotencyKey,
+    actor: ctx.actor, actorId: ctx.actorId, expectedVersion: ctx.expectedVersion, idempotencyKey: ctx.idempotencyKey, requestHash: ctx.requestHash,
     actorColumns: { by: 'approved_by', at: 'approved_at' },
     perform: async (conn, row) => {
       // Maker–Checker: the approver must differ from the creator for large amounts.
@@ -70,7 +76,7 @@ async function approve(id, ctx) {
 async function post(id, ctx) {
   return runTransition({
     docType: 'customer_payment', table: 'customer_payments', id, action: 'post',
-    actor: ctx.actor, actorId: ctx.actorId, expectedVersion: ctx.expectedVersion, idempotencyKey: ctx.idempotencyKey,
+    actor: ctx.actor, actorId: ctx.actorId, expectedVersion: ctx.expectedVersion, idempotencyKey: ctx.idempotencyKey, requestHash: ctx.requestHash,
     actorColumns: { by: 'posted_by', at: 'posted_at' },
     perform: async (conn, row) => {
       let allocations = Array.isArray(ctx.allocations) ? ctx.allocations : null;
@@ -105,7 +111,15 @@ async function post(id, ctx) {
 /** Apply a posted advance's unapplied balance to invoices: Dr Deposits / Cr AR. */
 async function allocateAdvance(id, ctx) {
   const actor = ctx.actor;
-  return db.withTransaction(async (conn) => {
+  const run = () => db.withTransaction(async (conn) => {
+    // This posts a REAL journal and moves invoice balances, yet it ran with no
+    // idempotency at all — and applyAllocations uses ON DUPLICATE KEY UPDATE
+    // ... + VALUES, so a double-submit ADDED a second application instead of
+    // replaying the first. Same (scope,key,hash) contract as the executor:
+    // scope is customer_payment:allocate_advance:<id>.
+    const priorIn = await events.findPrior(conn, 'customer_payment', 'allocate_advance', id, ctx.idempotencyKey, ctx.requestHash);
+    if (priorIn) return Object.assign({ replayed: true }, events.replayEnvelope(priorIn).payload || {});
+
     const [rows] = await conn.query('SELECT * FROM customer_payments WHERE id = ? FOR UPDATE', [id]);
     if (!rows.length) throw err('NOT_FOUND', 'سند القبض غير موجود');
     const row = rows[0];
@@ -120,16 +134,34 @@ async function allocateAdvance(id, ctx) {
     const newUnapplied = money(available - applied.allocatedTotal);
     await conn.query('UPDATE customer_payments SET allocated_amount = allocated_amount + ?, unapplied_amount = ?, is_advance = ? WHERE id = ?',
       [applied.allocatedTotal, newUnapplied, newUnapplied > 0.001 ? 1 : 0, id]);
-    await events.recordEvent(conn, { documentType: 'customer_payment', documentId: id, action: 'allocate_advance', actor, glJournalId: journalId, payload: { allocations } });
-    return { id, allocated: applied.allocatedTotal, unapplied: newUnapplied, journalId, perInvoice: applied.perInvoice };
+    const out = { id, allocated: applied.allocatedTotal, unapplied: newUnapplied, journalId, perInvoice: applied.perInvoice };
+    // The FULL return value is the payload, so a replay answers byte-equally.
+    await events.recordEvent(conn, {
+      documentType: 'customer_payment', documentId: id, action: 'allocate_advance', actor,
+      idempotencyKey: ctx.idempotencyKey || null, requestHash: ctx.requestHash || null,
+      glJournalId: journalId, payload: Object.assign({}, out, { journalIds: [journalId] }),
+    });
+    return out;
   });
+  try {
+    return await run();
+  } catch (e) {
+    // Parallel same-key race: the loser's UNIQUE(event_scope, key) violation
+    // rolled it back. Re-check on the POOL (the dead txn's snapshot predates
+    // the winner's commit); hash mismatch throws the 409 from findPrior.
+    if (ctx.idempotencyKey) {
+      const prior = await events.findPrior(db, 'customer_payment', 'allocate_advance', id, ctx.idempotencyKey, ctx.requestHash);
+      if (prior) return Object.assign({ replayed: true }, events.replayEnvelope(prior).payload || {});
+    }
+    throw e;
+  }
 }
 
 /** Reverse a posted collection: undo allocations + append-only reversal journal. */
 async function reverse(id, ctx) {
   return runTransition({
     docType: 'customer_payment', table: 'customer_payments', id, action: 'reverse',
-    actor: ctx.actor, actorId: ctx.actorId, expectedVersion: ctx.expectedVersion, idempotencyKey: ctx.idempotencyKey,
+    actor: ctx.actor, actorId: ctx.actorId, expectedVersion: ctx.expectedVersion, idempotencyKey: ctx.idempotencyKey, requestHash: ctx.requestHash,
     actorColumns: { by: 'reversed_by', at: 'reversed_at' },
     perform: async (conn, row) => {
       await Alloc.reverseAllocations(conn, row.id);
@@ -156,7 +188,7 @@ async function reverse(id, ctx) {
 async function cancel(id, ctx) {
   return runTransition({
     docType: 'customer_payment', table: 'customer_payments', id, action: 'cancel',
-    actor: ctx.actor, actorId: ctx.actorId, expectedVersion: ctx.expectedVersion, idempotencyKey: ctx.idempotencyKey,
+    actor: ctx.actor, actorId: ctx.actorId, expectedVersion: ctx.expectedVersion, idempotencyKey: ctx.idempotencyKey, requestHash: ctx.requestHash,
     perform: async () => ({}),
   });
 }

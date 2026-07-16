@@ -10,12 +10,14 @@ const router = express.Router();
 const db = require('../../db/connection');
 const requireCapability = require('../../middleware/requireCapability');
 const H = require('../../lib/order-to-cash/http');
+const events = require('../../lib/order-to-cash/events');
 const ReturnService = require('../../services/order-to-cash/SalesReturnService');
 
 function _ctx(req, extra) {
   return Object.assign({
     actor: H.actorOf(req), actorId: H.actorIdOf(req),
     expectedVersion: H.expectedVersionOf(req), idempotencyKey: H.idemOf(req),
+    requestHash: H.requestHashOf(req),
   }, extra || {});
 }
 
@@ -39,8 +41,22 @@ router.post('/', requireCapability('returns.create'), async (req, res) => {
     // Resolved here because RBAC is the route layer's job and req.user lives here;
     // the service then refuses any restock line without it.
     const canRestock = await requireCapability.hasCapability(req.user, 'returns.restock');
-    const body = Object.assign({}, req.body || {}, { canRestock });
-    const out = await db.withTransaction((c) => ReturnService.create(c, body, H.actorOf(req)));
+    const idemKey = H.idemOf(req);
+    const reqHash = H.requestHashOf(req);
+    const body = Object.assign({}, req.body || {}, { canRestock, idempotencyKey: idemKey, requestHash: reqHash });
+    let out;
+    try {
+      out = await db.withTransaction((c) => ReturnService.create(c, body, H.actorOf(req)));
+    } catch (e) {
+      // Parallel same-key race: the loser hits uq_ret_idem or the event UNIQUE.
+      // Recovery MUST run on the POOL — the dead transaction's REPEATABLE READ
+      // snapshot predates the winner's commit and would miss it. A payload
+      // mismatch throws the 409 from findPrior instead of a bare 500.
+      const prior = idemKey && e && e.code === 'ER_DUP_ENTRY'
+        ? await events.findPrior(db, 'sales_return', 'create', '', idemKey, reqHash) : null;
+      if (!prior) throw e;
+      out = await db.withTransaction((c) => ReturnService.getWithLines(c, prior.entity_id));
+    }
     return H.sendOk(res, { data: out, documentNumber: out.return_number, status: out.status, version: out.version }, 201);
   } catch (e) { return H.sendErr(res, e); }
 });

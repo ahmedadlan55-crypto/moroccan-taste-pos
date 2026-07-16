@@ -474,6 +474,38 @@ async function apply(db, log = () => {}) {
     }
   }
 
+  // ── 13. idempotency contract — scope + fingerprint on ar_events
+  // The old UNIQUE was (entity_type, idempotency_key): one key per DOCUMENT
+  // TYPE globally, so a key reused across approve→post silently replayed the
+  // approve as the post (200, no side effects), and a key reused across two
+  // documents replayed the first onto the second. event_scope pins a key to
+  // (type, action, document) for transitions and (type, 'create') for creates;
+  // request_hash lets replay tell "same request again" (replay it) from "same
+  // key, different payload" (409 IDEMPOTENCY_KEY_REUSED) — without it the two
+  // are indistinguishable after the fact.
+  if (await H.tableExists(db, 'ar_events')) {
+    await H.addColumn(db, 'ar_events', 'event_scope', "VARCHAR(180) NOT NULL DEFAULT ''", log);
+    await H.addColumn(db, 'ar_events', 'request_hash', 'CHAR(64) NULL', log);
+    // Backfill scope for keyed rows that predate scoping, so the new UNIQUE
+    // can be created and old events keep replaying under the new lookup.
+    await db.query(
+      `UPDATE ar_events
+          SET event_scope = CONCAT(entity_type, ':', event_type, ':',
+                                   CASE WHEN event_type = 'create' THEN '' ELSE entity_id END)
+        WHERE idempotency_key IS NOT NULL AND event_scope = ''`);
+    await H.addIndex(db, 'ar_events', 'uq_are_scope', 'event_scope, idempotency_key', { unique: true }, log);
+    if (await H.indexExists(db, 'ar_events', 'uq_are_idem')) {
+      await db.query('ALTER TABLE ar_events DROP INDEX uq_are_idem');
+      log('  - index ar_events.uq_are_idem (superseded by uq_are_scope)');
+    }
+  }
+  if (await H.tableExists(db, 'sales_returns')) {
+    // postCreditNote posts a SECOND journal (SalesReturnCOGS) whose id was
+    // returned to nobody — sales_returns had no column for it, so the COGS
+    // journal was unreferenced by the document that caused it.
+    await H.addColumn(db, 'sales_returns', 'cogs_journal_id', `${ID} NULL`, log);
+  }
+
   return true;
 }
 

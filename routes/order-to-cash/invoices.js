@@ -10,6 +10,7 @@ const router = express.Router();
 const db = require('../../db/connection');
 const requireCapability = require('../../middleware/requireCapability');
 const H = require('../../lib/order-to-cash/http');
+const events = require('../../lib/order-to-cash/events');
 const InvoiceService = require('../../services/order-to-cash/InvoiceService');
 
 router.get('/', requireCapability('invoices.view'), async (req, res) => {
@@ -26,7 +27,19 @@ router.get('/:id', requireCapability('invoices.view'), async (req, res) => {
 
 router.post('/', requireCapability('invoices.create'), async (req, res) => {
   try {
-    const out = await db.withTransaction((c) => InvoiceService.createDraft(c, req.body || {}, H.actorOf(req)));
+    const idemKey = H.idemOf(req);
+    const reqHash = H.requestHashOf(req);
+    const body = Object.assign({}, req.body || {}, { idempotencyKey: idemKey, requestHash: reqHash });
+    let out;
+    try {
+      out = await db.withTransaction((c) => InvoiceService.createDraft(c, body, H.actorOf(req)));
+    } catch (e) {
+      // Parallel same-key race — recover on the POOL (see returns.js).
+      const prior = idemKey && e && e.code === 'ER_DUP_ENTRY'
+        ? await events.findPrior(db, 'ar_document', 'create', '', idemKey, reqHash) : null;
+      if (!prior) throw e;
+      out = await db.withTransaction((c) => InvoiceService.getWithLines(c, prior.entity_id));
+    }
     return H.sendOk(res, { data: out, documentNumber: out.document_number, status: out.status, version: out.version }, 201);
   } catch (e) { return H.sendErr(res, e); }
 });
@@ -37,6 +50,7 @@ router.post('/:id/issue', requireCapability('invoices.issue'), async (req, res) 
     const r = await InvoiceService.issue(req.params.id, {
       actor: H.actorOf(req), actorId: H.actorIdOf(req),
       expectedVersion: H.expectedVersionOf(req), idempotencyKey: H.idemOf(req),
+      requestHash: H.requestHashOf(req),
       enforceCredit: !!(req.body && req.body.creditSale), override: !!(req.body && req.body.override), hasOverrideCapability: has,
     });
     return H.sendOk(res, {

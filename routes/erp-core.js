@@ -2472,7 +2472,12 @@ router.get('/reports/profitability', async (req, res) => {
         };
       })
     });
-  } catch(e) { res.json({ success: false, error: e.message, rows: [] }); }
+  } catch(e) {
+    // was `res.json({success:false, rows:[]})` with 200 — a DB fault
+    // rendered as an empty profitability report. Honest now.
+    console.error('[erp/reports/profitability] failed:', e && (e.code || e.message));
+    res.status(500).json({ success: false, error: 'تعذّر توليد تقرير الربحية' });
+  }
 });
 
 // ═══════════════════════════════════════════════════════════════════════
@@ -2632,9 +2637,13 @@ router.get('/reports/ap-aging', async (req, res) => {
 router.get('/reports/inventory-valuation', async (req, res) => {
   try {
     const { warehouse, brand } = req.query;
-    // Prefer warehouse_stock when available; fall back to inv_items.stock
-    let hasWS = true;
-    try { const [t] = await db.query("SHOW TABLES LIKE 'warehouse_stock'"); hasWS = !!t.length; } catch(e) { hasWS = false; }
+    // Schema probe (documented): warehouse_stock only exists on installs
+    // that ran the per-warehouse migration — older deploys value
+    // inv_items.stock directly. SHOW TABLES throws only when the DB itself
+    // is broken; that now surfaces as a 500 from the outer catch instead
+    // of silently degrading to the legacy path.
+    const [t] = await db.query("SHOW TABLES LIKE 'warehouse_stock'");
+    const hasWS = !!t.length;
 
     // v5.15.2 — Two-track inventory: raw materials live in inv_items +
     // warehouse_stock (per-warehouse), while semi-finished products live
@@ -2733,6 +2742,12 @@ router.get('/reports/inventory-valuation', async (req, res) => {
     res.json({
       success: true,
       filters: { warehouse: warehouse || null, brand: brand || null },
+      // The valuation basis is the item-master cost (inv_items.cost /
+      // menu.cost) — a static card figure, NOT a moving/weighted average
+      // recomputed from receipts. Named explicitly so nobody reads the
+      // `avgCost` field as WAC.
+      costBasis: 'item_cost',
+      note: 'القيمة محسوبة على تكلفة الصنف في بطاقة الصنف (وليست متوسطاً متحركاً مرجّحاً بحركات الاستلام)',
       items,
       byWarehouse: Object.values(byWarehouse).map(w => ({
         ...w,
@@ -2745,7 +2760,12 @@ router.get('/reports/inventory-valuation', async (req, res) => {
         totalValue: Math.round(grandValue * 100) / 100
       }
     });
-  } catch(e) { res.json({ success: false, error: e.message, items: [] }); }
+  } catch(e) {
+    // was `res.json({success:false, items:[]})` with 200 — a DB fault
+    // rendered as an empty warehouse. Honest now.
+    console.error('[erp/reports/inventory-valuation] failed:', e && (e.code || e.message));
+    res.status(500).json({ success: false, error: 'تعذّر توليد تقرير تقييم المخزون' });
+  }
 });
 
 /**

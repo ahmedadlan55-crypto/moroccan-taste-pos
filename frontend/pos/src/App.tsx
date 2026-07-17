@@ -8,6 +8,8 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ChefHat, LogIn, PauseCircle, ShoppingBasket } from "lucide-react";
 import { usePos } from "@/state/store";
 import { listOrders } from "@/lib/api";
+import { initPwa } from "@/lib/pwa";
+import { runLegacyDrainOnce, getDrainStatus } from "@/lib/legacyDrain";
 import { fmt2, fmtInt } from "@/lib/format";
 import { buildKitchenTicketHtml, printHtml } from "@/lib/receipt";
 import { resolveScan } from "@/components/ProductGrid";
@@ -78,6 +80,22 @@ export default function App() {
   const [voidBusy, setVoidBusy] = useState(false);
   const [lastHeld, setLastHeld] = useState<LocalOrder | null>(null);
   const [cartSheetOpen, setCartSheetOpen] = useState(false);
+  const [drainOpen, setDrainOpen] = useState(false);
+
+  // ── PWA (SW registration + install prompt) + legacy-queue drain ──────────
+  useEffect(() => {
+    initPwa();
+  }, []);
+  useEffect(() => {
+    if (!user) return;
+    void runLegacyDrainOnce().then((outcome) => {
+      if (!outcome || outcome.attempted === 0) return;
+      if (outcome.succeeded.length > 0) {
+        pushToast("success", `تمت مزامنة ${outcome.succeeded.length} عملية من النسخة القديمة`);
+      }
+      setDrainOpen(true); // small report: what synced, what stayed
+    });
+  }, [user, pushToast]);
 
   // ── Held count (badge) ───────────────────────────────────────────────────
   const refreshHeldCount = useCallback(async () => {
@@ -201,7 +219,11 @@ export default function App() {
   return (
     <div className="flex h-screen flex-col overflow-hidden">
       <Toasts />
-      <Header onOpenShiftDialog={() => setShiftOpen(true)} onOpenSyncReport={() => setSyncOpen(true)} />
+      <Header
+        onOpenShiftDialog={() => setShiftOpen(true)}
+        onOpenSyncReport={() => setSyncOpen(true)}
+        onOpenDrainReport={() => setDrainOpen(true)}
+      />
 
       <main className="flex min-h-0 flex-1 gap-3 p-3">
         {/* Category rail — first column in RTL, ≥1024px only */}
@@ -273,6 +295,53 @@ export default function App() {
       <VoidDialog open={voidOpen} onClose={() => setVoidOpen(false)} onConfirm={(r) => void voidCurrent(r)} busy={voidBusy} />
       <DiscountDialog open={discountOpen} onClose={() => setDiscountOpen(false)} />
       <SyncReportDialog open={syncOpen} onClose={() => setSyncOpen(false)} />
+
+      {/* Legacy-queue drain report (offline sales queued by the OLD cashier) */}
+      <Dialog open={drainOpen} onClose={() => setDrainOpen(false)} title="مزامنة النسخة القديمة" widthClass="max-w-md">
+        {(() => {
+          const st = getDrainStatus();
+          if (!st.outcome) {
+            return (
+              <p className="py-4 text-center text-sm font-bold text-slate-500">
+                {st.pending > 0
+                  ? `${fmtInt(st.pending)} عملية من الكاشير القديم بانتظار المزامنة — تتم المحاولة عند توفر الاتصال`
+                  : "لا عمليات معلّقة من الكاشير القديم"}
+              </p>
+            );
+          }
+          const { succeeded, failed } = st.outcome;
+          return (
+            <div className="space-y-3">
+              <p className="text-sm font-extrabold text-slate-600">
+                تمت مزامنة <span className="num">{fmtInt(succeeded.length)}</span> عملية من النسخة القديمة
+                {failed.length > 0 ? (
+                  <span className="text-amber-700"> — {fmtInt(failed.length)} لم تُزامَن وبقيت محفوظة</span>
+                ) : null}
+              </p>
+              {succeeded.length > 0 ? (
+                <ul className="space-y-1">
+                  {succeeded.map((s) => (
+                    <li key={s.clientOrderId} className="flex items-center justify-between rounded-xl border border-teal-100 bg-teal-50/50 px-3 py-2 text-xs font-bold text-slate-600">
+                      <span className="num" dir="ltr">{s.clientOrderId}</span>
+                      <span className="text-teal-600">نجحت{s.orderId ? ` — فاتورة ${s.orderId}` : ""}</span>
+                    </li>
+                  ))}
+                </ul>
+              ) : null}
+              {failed.length > 0 ? (
+                <ul className="space-y-1">
+                  {failed.map((f, i) => (
+                    <li key={`${f.clientOrderId ?? "invalid"}-${i}`} className="flex items-center justify-between gap-2 rounded-xl border border-red-100 bg-red-50/50 px-3 py-2 text-xs font-bold text-slate-600">
+                      <span className="num" dir="ltr">{f.clientOrderId ?? "؟"}</span>
+                      <span className="text-red-600">{f.error}</span>
+                    </li>
+                  ))}
+                </ul>
+              ) : null}
+            </div>
+          );
+        })()}
+      </Dialog>
 
       {/* Post-hold kitchen ticket offer */}
       <Dialog open={!!lastHeld} onClose={() => setLastHeld(null)} title="تم تعليق الطلب" widthClass="max-w-sm">

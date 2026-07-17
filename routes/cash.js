@@ -906,21 +906,29 @@ router.get('/summary', async (req, res) => {
     const today = new Date().toISOString().slice(0,10);
     const [monthStart] = [today.slice(0,7) + '-01'];
     let rcpt = 0, pay = 0;
+    // Per-metric probes: cash_receipts / cash_payments may be absent on older
+    // schemas, so a failure here degrades ONE metric — but it must be visible,
+    // not silently zeroed (v8 G3).
     try {
       const [r] = await db.query('SELECT COALESCE(SUM(amount),0) AS t FROM cash_receipts WHERE receipt_date >= ?', [monthStart]);
       rcpt = Number(r[0].t)||0;
-    } catch(e) {}
+    } catch(e) { console.error('[cash] GET /summary — cash_receipts probe failed:', e.message); }
     try {
       const [r] = await db.query('SELECT COALESCE(SUM(amount),0) AS t FROM cash_payments WHERE payment_date >= ?', [monthStart]);
       pay = Number(r[0].t)||0;
-    } catch(e) {}
+    } catch(e) { console.error('[cash] GET /summary — cash_payments probe failed:', e.message); }
     res.json({
       cashBoxCount: cash[0].cnt, cashTotal: Number(cash[0].total)||0,
       bankCount: bank[0].cnt, bankTotal: Number(bank[0].total)||0,
       monthReceipts: rcpt, monthPayments: pay,
       grandTotal: (Number(cash[0].total)||0) + (Number(bank[0].total)||0)
     });
-  } catch(e) { res.json({ cashBoxCount:0, cashTotal:0, bankCount:0, bankTotal:0, monthReceipts:0, monthPayments:0, grandTotal:0 }); }
+  } catch(e) {
+    // v8 (G3) — was a fabricated all-zeros payload: a DB error rendered the
+    // dashboard as "no money anywhere" with nothing logged. Fail honestly.
+    console.error('[cash] GET /summary failed:', e.message);
+    res.status(500).json({ success: false, error: e.message });
+  }
 });
 
 module.exports = router;

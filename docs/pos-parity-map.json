@@ -1,0 +1,497 @@
+{
+  "$doc": "POS parity classification map — evidence-backed status per docs/pos-parity-matrix.md row. Stream P2 domains: customers (27), shift (28), cash (5), invoices (21), returns (15) = 96 matrix rows / 94 unique slugs (invoice-void + invoice-return appear in both invoices and returns). Statuses: covered = verified React implementation + named test; not-required = matrix-documented dead/orphan/negative finding or structurally-obsolete legacy mechanics with quoted reason; unclassified = genuinely missing and genuinely required — left open on purpose. Tests marked '(wave-1: B2)' are placeholders for components announced by the parallel build-streams; the coordinator replaces them with real test refs at merge.",
+  "stream": "close/p2-classify",
+  "domains": ["customers", "shift", "cash", "invoices", "returns"],
+  "counts": { "matrixRows": 96, "uniqueSlugs": 94, "covered": 69, "notRequired": 19, "unclassified": 6 },
+  "rows": {
+    "cust-status-bar": {
+      "domain": "customers",
+      "status": "covered",
+      "react": "frontend/pos/src/components/CartPanel.tsx (CustomerAttach — always-visible customer control above the cart: «عميل» when empty, name/phone chip when linked)",
+      "test": "frontend/pos/src/components/__tests__/parity-customers.test.tsx — «cust-status-bar»"
+    },
+    "cust-unlink": {
+      "domain": "customers",
+      "status": "covered",
+      "react": "frontend/pos/src/components/CartPanel.tsx (إزالة → setCustomerRef(null)) + CustomerPicker.tsx (chip X «مسح العميل»)",
+      "test": "frontend/pos/src/components/__tests__/parity-customers.test.tsx — «cust-unlink»"
+    },
+    "cust-search-open": {
+      "domain": "customers",
+      "status": "covered",
+      "react": "frontend/pos/src/components/CartPanel.tsx → CustomerPicker.tsx (O2C /api/order-to-cash/customers/search)",
+      "test": "frontend/pos/src/components/__tests__/parity-customers.test.tsx — «cust-search-open»"
+    },
+    "cust-search-recent": {
+      "domain": "customers",
+      "status": "covered",
+      "react": "frontend/pos/src/components/CustomerPicker.tsx (first page fetched with q='' on open — no typing needed)",
+      "test": "frontend/pos/src/components/__tests__/CustomerPicker.test.tsx — «shows the FIRST PAGE of customers on open — before any typing»"
+    },
+    "cust-search-debounce": {
+      "domain": "customers",
+      "status": "covered",
+      "react": "frontend/pos/src/components/CustomerPicker.tsx (250ms setTimeout debounce, same delay as legacy app.js:1648)",
+      "test": "frontend/pos/src/components/__tests__/parity-customers.test.tsx — «cust-search-debounce»"
+    },
+    "cust-search-enter-autoselect": {
+      "domain": "customers",
+      "status": "covered",
+      "react": "frontend/pos/src/components/CustomerPicker.tsx (Enter picks the highlighted row; with a single result that is the legacy autoselect, plus full ArrowUp/Down keyboard nav legacy never had)",
+      "test": "frontend/pos/src/components/__tests__/parity-customers.test.tsx — «cust-search-enter-autoselect»"
+    },
+    "cust-search-click-select": {
+      "domain": "customers",
+      "status": "covered",
+      "react": "frontend/pos/src/components/CustomerPicker.tsx (row click → onChange with the REAL customerId)",
+      "test": "frontend/pos/src/components/__tests__/CustomerPicker.test.tsx — «resolves a real customerId when a row is picked»"
+    },
+    "cust-search-refresh": {
+      "domain": "customers",
+      "status": "not-required",
+      "reason": "Structurally obsolete. Matrix: «Small 🔄 (fa-rotate) button in the search-modal footer, title='تحديث القائمة'» — a manual cache-bust for the legacy static list. React-query refetches automatically (staleTime 15s, refetch on reopen) and the failure path has an explicit «إعادة المحاولة» retry (tested in CustomerPicker.test.tsx)."
+    },
+    "cust-search-add-prefill": {
+      "domain": "customers",
+      "status": "covered",
+      "react": "CustomerAddDialog",
+      "test": "(wave-1: B2)"
+    },
+    "cust-search-empty-result": {
+      "domain": "customers",
+      "status": "covered",
+      "react": "frontend/pos/src/components/CustomerPicker.tsx («لا عملاء مطابقون.»)",
+      "test": "frontend/pos/src/components/__tests__/parity-customers.test.tsx — «cust-search-empty-result»"
+    },
+    "cust-search-null-guard": {
+      "domain": "customers",
+      "status": "covered",
+      "react": "frontend/pos/src/lib/api.ts (typed fetch throws ApiError — the legacy api-bridge could return null, which is what the paranoid guard existed for) + CustomerPicker error state with retry",
+      "test": "frontend/pos/src/components/__tests__/CustomerPicker.test.tsx — «surfaces an error + retry when the search fails»"
+    },
+    "cust-add-modal": { "domain": "customers", "status": "covered", "react": "CustomerAddDialog", "test": "(wave-1: B2)" },
+    "cust-add-validation": { "domain": "customers", "status": "covered", "react": "CustomerAddDialog", "test": "(wave-1: B2)" },
+    "cust-add-save-link": { "domain": "customers", "status": "covered", "react": "CustomerAddDialog", "test": "(wave-1: B2)" },
+    "cust-add-readback": { "domain": "customers", "status": "covered", "react": "CustomerAddDialog", "test": "(wave-1: B2)" },
+    "cust-add-dup-phone": { "domain": "customers", "status": "covered", "react": "CustomerAddDialog", "test": "(wave-1: B2)" },
+    "cust-add-enter-submit": { "domain": "customers", "status": "covered", "react": "CustomerAddDialog", "test": "(wave-1: B2)" },
+    "cust-totals-strip": {
+      "domain": "customers",
+      "status": "unclassified",
+      "gap": "Legacy shows an always-visible إجمالي مشتريات strip (GET /api/erp/customers/:id/summary) inside the customer bar. React's picker sublabel shows credit availability (المتاح), not lifetime purchases. May land with CustomerHistoryDialog (wave-1: B2) but that ownership was not announced explicitly — left open rather than stretched."
+    },
+    "cust-history-modal": { "domain": "customers", "status": "covered", "react": "CustomerHistoryDialog", "test": "(wave-1: B2)" },
+    "cust-history-meta": { "domain": "customers", "status": "covered", "react": "CustomerHistoryDialog", "test": "(wave-1: B2)" },
+    "cust-history-table": { "domain": "customers", "status": "covered", "react": "CustomerHistoryDialog", "test": "(wave-1: B2)" },
+    "cust-history-no-detail": {
+      "domain": "customers",
+      "status": "not-required",
+      "reason": "Matrix-documented NEGATIVE finding (a gap in legacy, not a feature): «NONE — rows are not clickable … rows are rendered as plain <tr>, no onclick/data-action». Nothing existed to port."
+    },
+    "cust-modal-scaffold": {
+      "domain": "customers",
+      "status": "covered",
+      "react": "frontend/pos/src/components/Dialog.tsx (Esc-to-close, backdrop click, header × «إغلاق», focus move-in — one scaffold for every POS dialog)",
+      "test": "frontend/pos/src/components/__tests__/parity-customers.test.tsx — «cust-modal-scaffold» (3 tests)"
+    },
+    "cust-checkout-link": {
+      "domain": "customers",
+      "status": "covered",
+      "react": "frontend/pos/src/lib/offline.ts (upsertPayloadFrom carries customerId; server stores pos_orders.customer_id and buildLegacySalePayload attaches it to /api/sales) + store.tsx setCustomerRef",
+      "test": "frontend/pos/src/lib/__tests__/o2cPos.test.ts — «sends a real customerId when the cart is linked to a customer» + «omits customerId for a walk-in»"
+    },
+    "cust-checkout-outcome-toast": {
+      "domain": "customers",
+      "status": "not-required",
+      "reason": "Structurally obsolete. Legacy created/linked the ERP customer as a SIDE EFFECT of checkout and had to report customerSaveOutcome afterwards (app.js:2680-2702: 'linked-existing / created-new / skipped-no-phone / failed-insert…'). React links a REAL customerId at cart time via CustomerPicker (O2C), so there is no save-outcome to report post-sale — failures surface at pick/create time instead, before money moves."
+    },
+    "cust-clear-after-sale": {
+      "domain": "customers",
+      "status": "covered",
+      "react": "frontend/pos/src/components/dialogs/PaymentDialog.tsx (finishAndNew → startNewOrder) + state/store.tsx (newLocalOrder resets customerId/customerName/customerPhone to null)",
+      "test": "frontend/pos/src/components/__tests__/parity-customers.test.tsx — «cust-clear-after-sale»"
+    },
+    "cust-crud-delete-unexposed": {
+      "domain": "customers",
+      "status": "not-required",
+      "reason": "Matrix-documented NEGATIVE finding: «NONE in the POS» — DELETE /api/erp/customers/:id exists server-side with no POS caller. Nothing existed in the cashier to port; the server-authz concern is tracked by tests/integration/customersAuthz.api.test.js, outside POS parity."
+    },
+
+    "shift-badge-indicator": {
+      "domain": "shift",
+      "status": "covered",
+      "react": "frontend/pos/src/components/Header.tsx (shift chip «وردية <id>» / «لا وردية» + فتح وردية)",
+      "test": "frontend/pos/src/components/__tests__/parity-shift.test.tsx — «shift-badge-indicator» (2 tests)"
+    },
+    "shift-open": {
+      "domain": "shift",
+      "status": "covered",
+      "react": "frontend/pos/src/components/Header.tsx + lib/api.ts openShift() → POST /api/shifts/open; ShiftDialog offers the same when opened with no shift (offline-blocked by design)",
+      "test": "frontend/pos/src/components/__tests__/parity-shift.test.tsx — «shift-open / shift-open-commit»",
+      "notes": "The legacy third-party nominatim reverse-geocode ride-along was deliberately dropped; the server still records device info."
+    },
+    "shift-open-commit": {
+      "domain": "shift",
+      "status": "covered",
+      "react": "frontend/pos/src/state/store.tsx (openShiftMutation — react-query single-flight; Button loading disables re-entry — the openOnce() latch equivalent)",
+      "test": "frontend/pos/src/components/__tests__/parity-shift.test.tsx — «while the open is in flight the button is disabled»"
+    },
+    "shift-close-start": {
+      "domain": "shift",
+      "status": "covered",
+      "react": "frontend/pos/src/components/dialogs/ShiftDialog.tsx (startClosing → GET /api/shifts/closing-data-v3/:shiftId)",
+      "test": "frontend/pos/src/components/__tests__/parity-shift.test.tsx — «runs the whole V3 close flow»"
+    },
+    "shift-close-items-sold": {
+      "domain": "shift",
+      "status": "unclassified",
+      "gap": "Legacy close modal step 1 shows a read-only items-sold table (GET /api/shifts/closing-data/:shiftId returns items). React uses closing-data-v3, whose response has NO items array (lib/types.ts ClosingDataV3), and ShiftDialog renders no items table — genuinely missing, needs either the v1 endpoint or items added to v3."
+    },
+    "shift-close-reveal-gate": {
+      "domain": "shift",
+      "status": "unclassified",
+      "gap": "Legacy blind-count control: expected totals stay hidden until the cashier checks «أنهيت العدّ» (app.js:5815-5827). React ShiftDialog shows expectedAmount per method WHILE counting — the anti-fraud gate is genuinely missing, not obsolete."
+    },
+    "shift-close-comparison-panel": {
+      "domain": "shift",
+      "status": "covered",
+      "react": "frontend/pos/src/components/dialogs/ShiftDialog.tsx (per-method المتوقع/المعدود/الفرق table + totals row, live)",
+      "test": "frontend/pos/src/components/__tests__/parity-shift.test.tsx — «runs the whole V3 close flow»"
+    },
+    "shift-close-variance-note-gate": {
+      "domain": "shift",
+      "status": "unclassified",
+      "gap": "Legacy refuses to close on a variance until a ≥10-char explanation is typed (app.js:5767-5776, 5829-5837). React's ملاحظات الإغلاق is optional and never gates the close — genuinely missing control."
+    },
+    "shift-close-button-lock-unlock": {
+      "domain": "shift",
+      "status": "unclassified",
+      "gap": "Legacy locks the confirm button until counting is finished / variance explained (_scLockClose/_scUnlockClose). React's تأكيد إغلاق الوردية is always enabled — missing together with the reveal/variance gates (rows 6 & 8); the three form one blind-count control."
+    },
+    "shift-close-general-notes": {
+      "domain": "shift",
+      "status": "covered",
+      "react": "frontend/pos/src/components/dialogs/ShiftDialog.tsx (ملاحظات الإغلاق textarea → close-v3 body.notes)",
+      "test": "frontend/pos/src/components/__tests__/parity-shift.test.tsx — «runs the whole V3 close flow» (asserts notes in the POST body)"
+    },
+    "shift-close-confirm": {
+      "domain": "shift",
+      "status": "covered",
+      "react": "frontend/pos/src/components/dialogs/ShiftDialog.tsx (confirmClose → POST /api/shifts/close-v3 {shiftId, openingFloat, denominations, paymentTotals, notes})",
+      "test": "frontend/pos/src/components/__tests__/parity-shift.test.tsx — «runs the whole V3 close flow» (asserts the exact body contract)"
+    },
+    "shift-close-cancel": {
+      "domain": "shift",
+      "status": "covered",
+      "react": "frontend/pos/src/components/dialogs/ShiftDialog.tsx («رجوع» aborts to info mode; Dialog × / Esc close)",
+      "test": "frontend/pos/src/components/__tests__/parity-shift.test.tsx — «shift-close-cancel»"
+    },
+    "shift-thermal-report-print": { "domain": "shift", "status": "covered", "react": "ShiftDialog", "test": "(wave-1: B2)" },
+    "shift-report-modal-fallback": {
+      "domain": "shift",
+      "status": "covered",
+      "react": "frontend/pos/src/components/dialogs/ShiftDialog.tsx (closed-mode report screen with per-method breakdown — rendered ALWAYS, not only when thermal printing throws like legacy)",
+      "test": "frontend/pos/src/components/__tests__/parity-shift.test.tsx — «runs the whole V3 close flow» (asserts the inline report)"
+    },
+    "shift-report-whatsapp": {
+      "domain": "shift",
+      "status": "unclassified",
+      "gap": "Legacy shares the shift report via wa.me (app.js:2872-2922). No React equivalent and not announced by any build-stream — genuinely missing convenience feature; product may also choose to drop it, but that is a product call, not a classification."
+    },
+    "shift-variance-modal-orphan": {
+      "domain": "shift",
+      "status": "not-required",
+      "reason": "Matrix-documented DEAD CODE: «NONE — grep across public/pos/app.js finds zero references to '#modalShiftVariance' or '#varianceBody'. Never [invoked]» — orphan markup, nothing to port."
+    },
+    "shift-quick-actions-menu-desktop": {
+      "domain": "shift",
+      "status": "not-required",
+      "reason": "Structurally obsolete. The collapsible #floatActions popover (toggled by clicking the 'POS' nav link) existed to bolt cashier actions onto the legacy shared header. React's purpose-built header (Header.tsx) exposes the same actions — shift chip/close, فواتيري, sync report — as first-class always-visible controls; there is no hidden menu to port."
+    },
+    "shift-quick-actions-mobile-drawer": {
+      "domain": "shift",
+      "status": "not-required",
+      "reason": "Structurally obsolete. Legacy injected an 'إجراءات الكاشير' box into the hamburger drawer on <768px (app.js:4340-4456) because the shared header could not show POS actions on mobile. React's header is responsive (flex-wrap) and the same actions stay directly reachable on mobile."
+    },
+    "shift-menu-auto-dismiss": {
+      "domain": "shift",
+      "status": "not-required",
+      "reason": "Dismissal mechanics (Escape/inside-click/outside-click) of the #floatActions menu — a menu that does not exist in React because its actions are inline in the header. Mechanics of a nonexistent surface."
+    },
+    "shift-menu-swipe-and-autocollapse": {
+      "domain": "shift",
+      "status": "not-required",
+      "reason": "Swipe-to-show/hide + 5-second auto-collapse of the same nonexistent #floatActions menu (app.js:4461-4485). Nothing to port."
+    },
+    "shift-nav-mobile-relocation": {
+      "domain": "shift",
+      "status": "not-required",
+      "reason": "Matrix: «No UI — invisible layout repair» — a MutationObserver hack (_moveAppNavToBody) that relocated the legacy shared header's nav out of the header on mobile. React renders its own layout; the defect the hack repaired does not exist."
+    },
+    "shift-my-invoices": {
+      "domain": "shift",
+      "status": "covered",
+      "react": "frontend/pos/src/components/dialogs/MyInvoicesDialog.tsx (today's sales narrowed to the active shift client-side — same technique as legacy app.js:3300) + Header فواتيري button",
+      "test": "frontend/pos/src/components/__tests__/parity-invoices.test.tsx — «myinv-open/load»"
+    },
+    "shift-invoice-void": {
+      "domain": "shift",
+      "status": "covered",
+      "react": "frontend/pos/src/components/dialogs/MyInvoicesDialog.tsx (voidSale POST /api/sales/:id/void + ManagerApprovalDialog); with ORDER_TO_CASH_ENABLE=1 the reversal outcome is reachable through the O2C returns flow (/app/sales/returns) and the dialog maps the 409 O2C_MODULE_ACTIVE gate to a clear message",
+      "test": "tests/integration/salesReturns.api.test.js (the operative reversal path end-to-end) + parity-invoices.test.tsx — «maps O2C_MODULE_ACTIVE …»"
+    },
+    "shift-invoice-return": {
+      "domain": "shift",
+      "status": "covered",
+      "react": "frontend/pos/src/components/dialogs/MyInvoicesDialog.tsx (returnSale with reason + approval) / O2C returns flow issues the real credit note",
+      "test": "tests/integration/salesReturns.api.test.js — «a credit note was created», «the credit note HAS LINES», approval/post chain checks"
+    },
+    "shift-my-invoices-confirm-modal": {
+      "domain": "shift",
+      "status": "not-required",
+      "reason": "Legacy-only UI mechanics of the in-POS reversal flow: matrix calls it a «DOM-built overlay #posConfirmModal … (بديل glassConfirm المفقود)» — a workaround for a missing glassConfirm. Under ORDER_TO_CASH_ENABLE=1 the POS void/return path is 409-gated (middleware/o2cLegacyGate) and reversals carry O2C's far stronger confirmation chain (draft→approve→post with separation of duties, salesReturns.api.test.js); non-privileged POS actions still confirm through ManagerApprovalDialog.",
+      "notes": "Residual UX nit if the O2C flag were OFF: a privileged (admin/manager) إلغاء fires with no confirm step. Recorded in the stream report."
+    },
+    "cart-footer-keyboard-access": {
+      "domain": "shift",
+      "status": "not-required",
+      "reason": "Structurally obsolete. The legacy «document keydown listener» (app.js:1944-1951) compensated for a non-semantic div role=button cart footer. The React pay control is a native <button> (CartPanel.tsx pay action, plus the F4 shortcut in App.tsx) — keyboard operability comes from the platform, no listener to port."
+    },
+    "xz-reports-absent": {
+      "domain": "shift",
+      "status": "not-required",
+      "reason": "Matrix-documented NEGATIVE FINDING: «NONE. No 'X Report' / 'Z Report' / 'تقرير الكاشير' button exists.» Nothing existed in legacy to port."
+    },
+    "shift-report-print": { "domain": "shift", "status": "covered", "react": "ShiftDialog", "test": "(wave-1: B2)" },
+
+    "shift-close-denomination-grid": { "domain": "cash", "status": "covered", "react": "ShiftDialog", "test": "(wave-1: B2)" },
+    "shift-close-electronic-methods": {
+      "domain": "cash",
+      "status": "covered",
+      "react": "frontend/pos/src/components/dialogs/ShiftDialog.tsx (one counted input per payment method from closing-data-v3 — cash and electronic uniformly; paymentTotals keyed by method id)",
+      "test": "frontend/pos/src/components/__tests__/parity-shift.test.tsx — «runs the whole V3 close flow»"
+    },
+    "shift-close-recalc": {
+      "domain": "cash",
+      "status": "covered",
+      "react": "frontend/pos/src/components/dialogs/ShiftDialog.tsx (varianceRows useMemo — every keystroke recomputes per-method and total variance)",
+      "test": "frontend/pos/src/components/__tests__/parity-shift.test.tsx — «runs the whole V3 close flow» (types 90/50, asserts live −10.00)"
+    },
+    "shift-close-per-method-diff": {
+      "domain": "cash",
+      "status": "covered",
+      "react": "frontend/pos/src/components/dialogs/ShiftDialog.tsx (الفرق column per method, green/red toned, + totals row)",
+      "test": "frontend/pos/src/components/__tests__/parity-shift.test.tsx — «runs the whole V3 close flow»"
+    },
+    "cash-movements-absent": {
+      "domain": "cash",
+      "status": "not-required",
+      "reason": "Matrix-documented NEGATIVE FINDING: «NONE. There is no paid-in / paid-out / drop / pickup / petty-cash button anywhere in public/pos/index.html.» Paid-in/out never existed in legacy either — nothing to port."
+    },
+
+    "myinv-open": {
+      "domain": "invoices",
+      "status": "covered",
+      "react": "frontend/pos/src/components/Header.tsx (فواتيري button) + dialogs/MyInvoicesDialog.tsx",
+      "test": "frontend/pos/src/components/__tests__/parity-invoices.test.tsx — «myinv-open/load»"
+    },
+    "myinv-load": {
+      "domain": "invoices",
+      "status": "covered",
+      "react": "frontend/pos/src/components/dialogs/MyInvoicesDialog.tsx (listSales today + username, then client-side shiftId filter — GET /api/sales has no shift param, exactly like legacy)",
+      "test": "frontend/pos/src/components/__tests__/parity-invoices.test.tsx — «myinv-open/load» (asserts the SH-2 row is excluded and the query params)"
+    },
+    "myinv-refresh": {
+      "domain": "invoices",
+      "status": "covered",
+      "react": "frontend/pos/src/components/dialogs/MyInvoicesDialog.tsx (تحديث → invalidateQueries → refetch)",
+      "test": "frontend/pos/src/components/__tests__/parity-invoices.test.tsx — «myinv-refresh»"
+    },
+    "myinv-stats": {
+      "domain": "invoices",
+      "status": "covered",
+      "react": "frontend/pos/src/components/dialogs/MyInvoicesDialog.tsx (الإجمالي/سارية/ملغاة/مرتجع/ر.س strip; amount EXCLUDES reversed docs like legacy app.js:3355)",
+      "test": "frontend/pos/src/components/__tests__/parity-invoices.test.tsx — «myinv-stats» (115.00 shown, 165.00 never)"
+    },
+    "myinv-table": {
+      "domain": "invoices",
+      "status": "covered",
+      "react": "frontend/pos/src/components/dialogs/MyInvoicesDialog.tsx (7 columns: الحالة/الوقت/رقم الفاتورة/المنتجات/الإجمالي/الدفع/إجراءات)",
+      "test": "frontend/pos/src/components/__tests__/parity-invoices.test.tsx — «myinv-table/time-fmt»"
+    },
+    "myinv-badges": {
+      "domain": "invoices",
+      "status": "covered",
+      "react": "frontend/pos/src/components/dialogs/MyInvoicesDialog.tsx (StatusBadge: سارية/ملغاة+voidSerial/مرتجع+returnSerial by zatcaType)",
+      "test": "frontend/pos/src/components/__tests__/parity-invoices.test.tsx — «myinv-badges + void-return-serials»"
+    },
+    "myinv-time-fmt": {
+      "domain": "invoices",
+      "status": "covered",
+      "react": "frontend/pos/src/components/dialogs/MyInvoicesDialog.tsx (الوقت column, toLocaleTimeString)",
+      "test": "frontend/pos/src/components/__tests__/parity-invoices.test.tsx — «myinv-table/time-fmt»",
+      "notes": "Format differs from legacy's DD/MM · HH:mm:ss (React shows localized HH:mm without seconds) — function present, cosmetic difference only."
+    },
+    "myinv-prod-chips": {
+      "domain": "invoices",
+      "status": "covered",
+      "react": "frontend/pos/src/components/dialogs/MyInvoicesDialog.tsx (first 3 items as qty× chips + «+N» remainder)",
+      "test": "frontend/pos/src/components/__tests__/parity-invoices.test.tsx — «myinv-prod-chips» (5 items → «+2»)"
+    },
+    "myinv-invnum-sysref": {
+      "domain": "invoices",
+      "status": "covered",
+      "react": "frontend/pos/src/components/dialogs/MyInvoicesDialog.tsx (invoiceNumber on top, technical orderId beneath in muted type)",
+      "test": "frontend/pos/src/components/__tests__/parity-invoices.test.tsx — «myinv-invnum-sysref + invoice-numbering»"
+    },
+    "myinv-empty": {
+      "domain": "invoices",
+      "status": "covered",
+      "react": "frontend/pos/src/components/dialogs/MyInvoicesDialog.tsx (EmptyState «لا توجد فواتير في هذه الوردية بعد»)",
+      "test": "frontend/pos/src/components/__tests__/parity-invoices.test.tsx — «myinv-empty»"
+    },
+    "myinv-no-search-filter": {
+      "domain": "invoices",
+      "status": "not-required",
+      "reason": "Matrix-documented NEGATIVE finding (legacy gap): «NONE … toolbar contains only Refresh + stats». Nothing existed to port — and React went beyond parity anyway: MyInvoicesDialog ships search + الكل/سارية/ملغاة/مرتجع filters."
+    },
+    "my-invoices-modal": {
+      "domain": "invoices",
+      "status": "covered",
+      "react": "frontend/pos/src/components/dialogs/MyInvoicesDialog.tsx (duplicate matrix row of myinv-open)",
+      "test": "frontend/pos/src/components/__tests__/parity-invoices.test.tsx — «myinv-open/load»"
+    },
+    "my-invoices-refresh": {
+      "domain": "invoices",
+      "status": "covered",
+      "react": "frontend/pos/src/components/dialogs/MyInvoicesDialog.tsx (duplicate matrix row of myinv-refresh)",
+      "test": "frontend/pos/src/components/__tests__/parity-invoices.test.tsx — «myinv-refresh»"
+    },
+    "my-invoices-status-badge": {
+      "domain": "invoices",
+      "status": "covered",
+      "react": "frontend/pos/src/components/dialogs/MyInvoicesDialog.tsx (badge per zatca_type + reversed rows dimmed/inert «تم — لا إجراءات» — the is-reversed equivalent)",
+      "test": "frontend/pos/src/components/__tests__/parity-invoices.test.tsx — «myinv-badges + void-return-serials»"
+    },
+    "invoice-void": {
+      "domain": "invoices+returns",
+      "status": "covered",
+      "react": "frontend/pos/src/components/dialogs/MyInvoicesDialog.tsx (إلغاء → voidSale, approval-gated); user-visible reversal reachable via the O2C returns flow (/app/sales/returns) under ORDER_TO_CASH_ENABLE=1, with the 409 gate mapped to a clear message",
+      "test": "tests/integration/salesReturns.api.test.js + parity-invoices.test.tsx — «maps O2C_MODULE_ACTIVE …»",
+      "notes": "Slug appears twice in the matrix (invoices #15 and returns #14) — one classification."
+    },
+    "invoice-return": {
+      "domain": "invoices+returns",
+      "status": "covered",
+      "react": "frontend/pos/src/components/dialogs/MyInvoicesDialog.tsx (مرتجع → returnSale with reason + approval); the O2C flow issues the real credit note",
+      "test": "tests/integration/salesReturns.api.test.js — «a credit note was created», «CN line net sums to the header net»",
+      "notes": "Slug appears twice in the matrix (invoices #16 and returns #15) — one classification."
+    },
+    "invoice-confirm-modal": {
+      "domain": "invoices",
+      "status": "not-required",
+      "reason": "Same artifact as shift-my-invoices-confirm-modal: matrix «نافذة تأكيد مبنيّة بالـDOM (بديل glassConfirm المفقود)» — a legacy workaround modal. The confirmation duty is carried by ManagerApprovalDialog (non-privileged) and by O2C's draft→approve→post chain for the reversal itself."
+    },
+    "invoice-void-highlight": {
+      "domain": "invoices",
+      "status": "not-required",
+      "reason": "UI sugar of the in-POS void success path (2s CSS flash + scrollIntoView, app.js:3601-3617). Under ORDER_TO_CASH_ENABLE=1 that success path is 409-gated — reversals complete in the O2C returns module; the POS list re-renders the row as ملغاة/مرتجع with reversed styling (tested), which is the durable signal the flash approximated."
+    },
+    "invoice-numbering": {
+      "domain": "invoices",
+      "status": "covered",
+      "react": "Server-generated (lib/salesNumbering.js, unchanged — React posts the SAME /api/sales the legacy POS used); displayed in MyInvoicesDialog and on the PaymentDialog success screen/receipt",
+      "test": "frontend/pos/src/components/__tests__/parity-invoices.test.tsx — «myinv-invnum-sysref + invoice-numbering» (display); generation exercised by every /api/sales integration test (e.g. receiptQr.api.test.js checkout)"
+    },
+    "void-return-serials": {
+      "domain": "invoices",
+      "status": "covered",
+      "react": "frontend/pos/src/lib/types.ts SaleRow.voidSerial/returnSerial + MyInvoicesDialog StatusBadge renders «#VOI-…/#RET-…»; reprint stamps land with the wave-1 reprint work (MyInvoicesDialog)",
+      "test": "frontend/pos/src/components/__tests__/parity-invoices.test.tsx — «myinv-badges + void-return-serials»"
+    },
+    "zatca-backend-stamp": {
+      "domain": "invoices",
+      "status": "covered",
+      "react": "Server-side (routes/sales.js zatca.stampSale inside the sale transaction — invisible to the cashier, unchanged by the React migration); React consumes the stamped QR (PaymentDialog → receipt zatcaQrDataUrl)",
+      "test": "tests/integration/zatcaChain.api.test.js (PIH/ICV chain, locked head, rollback) + tests/integration/receiptQr.api.test.js (TLV + QR PNG stored and returned)"
+    },
+
+    "inv-void": {
+      "domain": "returns",
+      "status": "covered",
+      "react": "frontend/pos/src/components/dialogs/MyInvoicesDialog.tsx (same void path as shift-invoice-void; O2C is the operative reversal route)",
+      "test": "tests/integration/salesReturns.api.test.js + parity-invoices.test.tsx — «maps O2C_MODULE_ACTIVE …»"
+    },
+    "inv-void-confirm": {
+      "domain": "returns",
+      "status": "not-required",
+      "reason": "Legacy-only UI mechanics of the gated in-POS void flow: the «Self-built overlay (z-index 10010)» _myInvConfirm existed as a glassConfirm substitute. Under ORDER_TO_CASH_ENABLE=1 the flow it confirmed is 409-dead; ManagerApprovalDialog + the O2C draft→approve→post chain carry the confirmation duty."
+    },
+    "inv-void-highlight": {
+      "domain": "returns",
+      "status": "not-required",
+      "reason": "Same artifact as invoice-void-highlight — post-void flash of the gated in-POS flow; the reversed-row styling + badge (tested) deliver the durable equivalent."
+    },
+    "inv-void-errors": {
+      "domain": "returns",
+      "status": "covered",
+      "react": "frontend/pos/src/components/dialogs/MyInvoicesDialog.tsx (structured onError: O2C_MODULE_ACTIVE → clear Arabic toast instead of the raw gate text that redirects to a retired SPA; approval_required/403 → inline error keeping the gate open for retry; else message toast)",
+      "test": "frontend/pos/src/components/__tests__/parity-invoices.test.tsx — «maps O2C_MODULE_ACTIVE (409 legacy-gate) to a clear cashier-facing toast»"
+    },
+    "inv-return": {
+      "domain": "returns",
+      "status": "covered",
+      "react": "frontend/pos/src/components/dialogs/MyInvoicesDialog.tsx + O2C returns flow (credit note with lines, approve/post, GL + proportional money)",
+      "test": "tests/integration/salesReturns.api.test.js — full flow: create → approve → post → credit note with lines"
+    },
+    "inv-return-reason": {
+      "domain": "returns",
+      "status": "covered",
+      "react": "frontend/pos/src/components/dialogs/ManagerApprovalDialog.tsx (reasonLabel «سبب الإرجاع», required, default «مرتجع عميل» — legacy default app.js:3547); O2C additionally refuses a restock without a recorded reason",
+      "test": "frontend/pos/src/components/__tests__/parity-invoices.test.tsx — «a cashier's مرتجع opens the gate WITH the reason field» + tests/integration/salesReturns.api.test.js — «a restock without a REASON is refused»"
+    },
+    "mgr-approval-gate": {
+      "domain": "returns",
+      "status": "covered",
+      "react": "frontend/pos/src/components/dialogs/MyInvoicesDialog.tsx (isPrivileged admin/manager bypass — legacy parity app.js:3527 — else ManagerApprovalDialog opens before anything is sent)",
+      "test": "frontend/pos/src/components/__tests__/parity-invoices.test.tsx — «a cashier's إلغاء opens the approval gate instead of firing the void»"
+    },
+    "mgr-auth-modal": {
+      "domain": "returns",
+      "status": "covered",
+      "react": "frontend/pos/src/components/dialogs/ManagerApprovalDialog.tsx (username/password/[reason] fields, submit disabled until complete, credentials wiped on close)",
+      "test": "frontend/pos/src/components/__tests__/parity-invoices.test.tsx — «mgr-auth-submit» + gate tests"
+    },
+    "mgr-auth-submit": {
+      "domain": "returns",
+      "status": "covered",
+      "react": "frontend/pos/src/components/dialogs/ManagerApprovalDialog.tsx (onSubmit({approverUsername, approverPassword}, reason) → rides in the void/return body exactly like api-bridge.js:40-41)",
+      "test": "frontend/pos/src/components/__tests__/parity-invoices.test.tsx — «mgr-auth-submit: submits approver credentials + reason»"
+    },
+    "server-approval-gate": {
+      "domain": "returns",
+      "status": "covered",
+      "react": "Server-side boundary (routes/sales.js _requireManagerApproval for the legacy path; O2C capabilities returns.create/restock/approve/post/cancel for the operative path) — the client dialog is explicitly a UX shortcut, never the boundary",
+      "test": "tests/integration/salesReturns.api.test.js — cashier DENIED approve/post/cancel/restock (403s), creator cannot self-approve, a different authorised approver can"
+    },
+    "void-zatca-immutable": {
+      "domain": "returns",
+      "status": "covered",
+      "react": "Server-side: legacy refusal at routes/sales.js:2090-2093 remains; under O2C the invariant is stronger — every POS void 409s and the ONLY reversal is an append-only credit note that never mutates the reported invoice",
+      "test": "tests/integration/salesReturns.api.test.js (reversal happens as a NEW credit-note document) + tests/integration/zatcaChain.api.test.js (append-only chain, head integrity, rollback on failure)",
+      "notes": "No test drives the literal routes/sales.js:2090 refusal string; the enforced production configuration makes that branch unreachable from the POS."
+    },
+    "void-race-safe": {
+      "domain": "returns",
+      "status": "covered",
+      "react": "Server-side: legacy SELECT FOR UPDATE runner remains (routes/sales.js:2082-2129); the operative O2C path enforces the same outcome — no double/over reversal — via over-return rejection and scoped idempotency",
+      "test": "tests/integration/salesReturns.api.test.js — «over-return (3 of a sold 2) is REJECTED … no return row was created» + tests/integration/o2cIdempotency.api.test.js"
+    },
+    "return-credit-note": {
+      "domain": "returns",
+      "status": "covered",
+      "react": "O2C returns flow issues the real ZATCA credit note (with lines, proportional money, GL); printable with server-rendered QR + frozen seller",
+      "test": "tests/integration/salesReturns.api.test.js — «a credit note was created», «the credit note HAS LINES» + tests/integration/cnPrint.api.test.js — issue→return→approve→post with QR PNG + decoded TLV"
+    }
+  }
+}

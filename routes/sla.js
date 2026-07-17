@@ -11,10 +11,20 @@
 const router = require('express').Router();
 const db = require('../db/connection');
 
-// GET /sla/overdue?username=X — list overdue items in user's inbox
+// GET /sla/overdue — list overdue items in user's inbox
 router.get('/overdue', async (req, res) => {
   try {
-    const username = req.query.username;
+    // g-wf SECURITY: ?username= was the SOLE identity source — anyone could read
+    // any user's overdue list (subjects, amounts), and omitting it dumped EVERY
+    // overdue transaction system-wide. Now: /api/sla is behind the global JWT
+    // gate, non-admin callers are ALWAYS scoped to their own inbox, and only
+    // admin/developer may pass ?username= — there it is a DATA FILTER over
+    // another inbox (or omit it for the system-wide dashboard view), not an
+    // identity claim.
+    const caller = req.user && req.user.username;
+    if (!caller) return res.status(401).json({ error: 'غير مصرح — يرجى تسجيل الدخول' });
+    const isAdmin = (req.user.role === 'admin') || !!req.user.isDeveloper;
+    const username = isAdmin ? (req.query.username || '') : caller;
     let sql = `
       SELECT t.id, t.transaction_number, t.subject, t.title, t.status, t.amount,
              t.importance, t.created_by, t.current_assignee, t.due_date,
@@ -45,7 +55,11 @@ router.get('/overdue', async (req, res) => {
       hoursOverdue: Number(r.hours_overdue) || 0,
       escalationCount: Number(r.escalation_count) || 0
     })));
-  } catch(e) { res.json([]); }
+  } catch(e) {
+    // g-wf: was `res.json([])` — a DB fault looked like "nothing overdue".
+    console.error('[sla] GET /overdue failed:', e && e.message);
+    res.status(500).json({ error: 'خطأ في الخادم أثناء تحميل المعاملات المتأخرة' });
+  }
 });
 
 // GET /sla/stats — system-wide SLA health
@@ -75,17 +89,29 @@ router.get('/stats', async (req, res) => {
       avgCloseHours: Number((counts[0]||{}).avg_close_hours) || 0,
       overdueByPriority: byPriority.reduce((acc, r) => { acc[r.importance] = Number(r.c); return acc; }, {})
     });
-  } catch(e) { res.json({ error: e.message }); }
+  } catch(e) {
+    // g-wf: was a 200 with an error body — clients treated it as data.
+    console.error('[sla] GET /stats failed:', e && e.message);
+    res.status(500).json({ error: 'خطأ في الخادم أثناء حساب مؤشرات SLA' });
+  }
 });
 
 // POST /sla/escalate-now — admin-triggered manual escalation sweep
 router.post('/escalate-now', async (req, res) => {
   try {
-    const username = req.body.username || (req.user && req.user.username);
-    if (username !== 'admin') return res.status(403).json({ error: 'admin only' });
+    // g-wf SECURITY: role from the verified JWT only. The old check compared a
+    // body-supplied username to the literal 'admin' — sending username=admin
+    // in the body triggered the sweep with any (or no meaningful) identity,
+    // and a real admin not literally named 'admin' was refused.
+    const role = (req.user && req.user.role) || '';
+    const isDev = !!(req.user && req.user.isDeveloper);
+    if (role !== 'admin' && !isDev) return res.status(403).json({ error: 'admin only' });
     const result = await runEscalationSweep();
     res.json(result);
-  } catch(e) { res.json({ success: false, error: e.message }); }
+  } catch(e) {
+    console.error('[sla] POST /escalate-now failed:', e && e.message);
+    res.status(500).json({ success: false, error: 'خطأ في الخادم أثناء تنفيذ جولة التصعيد' });
+  }
 });
 
 // ─── Background sweep (called by server.js on interval) ──────────────────

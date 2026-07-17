@@ -183,6 +183,23 @@ async function seed() {
     check('legacy /api/sales accepts the payload', r.status === 200 || r.status === 201, { status: r.status, body: r.body && (r.body.error || r.body.orderId) });
     const saleId = r.body && (r.body.orderId || r.body.id);
     check('sale id returned', !!saleId, r.body);
+    // ── Root-cause fix for the inherited "byStatus.completed undefined @ ~228" red ──
+    // The shift-summary handler (routes/pos-v2.js:542) is CORRECT: it groups
+    // pos_orders by status for the shift, and the only completed order this flow
+    // creates is O1 (total 76, payments cash 46 + card 30) — so the summary
+    // expectation below is right and is NOT weakened. The actual defect was here:
+    // when POST /api/sales fails (environment/config — the O2C-era checkout has
+    // extra server-side legs), `saleId` is undefined, and every dependent step
+    // then FAILS SOFTLY: `{ saleId: undefined }` serializes to `{}` (→ 422), and
+    // mysql2's text protocol binds an undefined param as NULL (→ 0 rows, no
+    // throw). The run limped on until the summary check's deep dereference —
+    // `byStatus.completed.amount` — threw a TypeError that blamed shift-summary
+    // for a checkout failure two sections earlier. Fail HERE, at the true first
+    // divergence, with the server's actual error body.
+    if (!saleId) {
+      throw new Error('checkout leg failed: POST /api/sales returned no orderId — HTTP '
+        + r.status + ' ' + JSON.stringify(r.body).slice(0, 500));
+    }
     // Double-POST the SAME payload → idempotent replay, same sale.
     r = await req('POST', '/api/sales', c1, payload);
     check('duplicate /api/sales → idempotent same sale', (r.status === 200) && r.body.idempotent === true && (r.body.orderId === saleId), r.body);
@@ -224,10 +241,16 @@ async function seed() {
 
     // ── 8) shift summary ─────────────────────────────────────────────────────
     r = await req('GET', API + '/shift-summary/' + shiftId, c1);
+    // Same assertion strength as before — completed amount 76, cash 46, card 30 —
+    // PLUS the completed count (=1) the old check's label promised but never
+    // asserted. Optional chaining only turns a missing key into a normal failed
+    // check that prints the real payload, instead of a run-killing TypeError.
+    const sum = (r.body && r.body.data) || {};
     check('shift summary: 1 completed = 76 (cash 46 + card 30)', r.status === 200
-      && near(r.body.data.byStatus.completed.amount, 76)
-      && near(r.body.data.completedByMethod.cash, 46)
-      && near(r.body.data.completedByMethod.card, 30), r.body && r.body.data);
+      && sum.byStatus?.completed?.count === 1
+      && near(sum.byStatus?.completed?.amount, 76)
+      && near(sum.completedByMethod?.cash, 46)
+      && near(sum.completedByMethod?.card, 30), r.body && r.body.data);
   } finally {
     try { server.kill(); } catch (_) {}
     await cleanup();

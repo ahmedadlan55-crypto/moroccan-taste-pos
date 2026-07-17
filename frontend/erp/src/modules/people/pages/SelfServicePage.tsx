@@ -1,13 +1,18 @@
+import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { Card, DetailStat, ErrorState, LoadingState, PageHeader, StatusBadge } from "@/shared/ui";
+import { Plus } from "lucide-react";
+import { Button, Card, DetailStat, ErrorState, LoadingState, PageHeader, StatusBadge } from "@/shared/ui";
 import { DataTable, type ColumnDef } from "@/shared/tables";
 import { formatCurrency, formatDate, formatNumber } from "@/shared/lib";
 import { peopleApi } from "../lib/api";
 import { qk } from "../lib/query-keys";
 import { statusMeta } from "../lib/labels";
+import { ClockCard } from "../components/ClockCard";
+import { MyLeaveRequestDialog } from "../components/MyLeaveRequestDialog";
 import type { MyAttendanceRow, MyLeaveBalance, MyLeaveRequestRow } from "../lib/types";
 
 export function SelfServicePage() {
+  const [leaveDialog, setLeaveDialog] = useState(false);
   const profile = useQuery({ queryKey: qk.myProfile(), queryFn: ({ signal }) => peopleApi.myProfile(signal) });
   const balances = useQuery({
     queryKey: qk.myLeaveBalances(),
@@ -59,8 +64,11 @@ export function SelfServicePage() {
       <PageHeader
         eyebrow="الموارد البشرية"
         title="الخدمة الذاتية"
-        subtitle="ملفك الوظيفي وأرصدة إجازاتك وسجل حضورك (عرض فقط)."
+        subtitle="ملفك الوظيفي، تسجيل حضورك وانصرافك، وطلبات إجازتك."
       />
+
+      {/* حضور/انصراف — the legacy PWA clock, now a first-class card here. */}
+      <ClockCard rows={attendance.data ?? []} />
 
       {profile.isLoading && <LoadingState rows={2} />}
       {profile.error && <ErrorState error={profile.error} onRetry={() => profile.refetch()} />}
@@ -111,7 +119,12 @@ export function SelfServicePage() {
       </section>
 
       <section>
-        <h2 className="mb-3 text-base font-extrabold text-slate-900">طلبات إجازتي</h2>
+        <div className="mb-3 flex items-center justify-between gap-3">
+          <h2 className="text-base font-extrabold text-slate-900">طلبات إجازتي</h2>
+          <Button variant="primary" size="sm" onClick={() => setLeaveDialog(true)}>
+            <Plus className="h-4 w-4" aria-hidden="true" /> طلب إجازة
+          </Button>
+        </div>
         <DataTable
           columns={requestColumns}
           rows={requests.data ?? []}
@@ -124,6 +137,8 @@ export function SelfServicePage() {
           emptyTitle="لا توجد طلبات إجازة"
         />
       </section>
+
+      <MyLeaveRequestDialog open={leaveDialog} onClose={() => setLeaveDialog(false)} />
     </div>
   );
 }

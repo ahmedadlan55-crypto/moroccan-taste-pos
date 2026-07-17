@@ -27,6 +27,12 @@ export const qk = {
   custodies: () => [...qk.all, "custody", "list"] as const,
   custody: (id: string) => [...qk.all, "custody", "detail", id] as const,
   custodyExpenses: (params?: unknown) => [...qk.all, "custody", "expenses", params ?? {}] as const,
+  custodyUsers: () => [...qk.all, "custody", "users"] as const,
+  custodyPending: () => [...qk.all, "custody", "pending"] as const,
+  myCustody: () => [...qk.all, "custody", "mine"] as const,
+  myCustodyHistory: () => [...qk.all, "custody", "mine", "history"] as const,
+  glAccounts: () => [...qk.all, "gl-accounts"] as const,
+  costCenters: () => [...qk.all, "cost-centers"] as const,
 
   myProfile: () => [...qk.all, "self", "profile"] as const,
   myAttendance: (params?: unknown) => [...qk.all, "self", "attendance", params ?? {}] as const,

@@ -6,16 +6,22 @@
 
 import { apiClient } from "@/shared/api";
 import type { OrgEmployee } from "./orgTree";
+import type { ClockResponse, MyClockPayload } from "./selfService";
 import type {
   Advance,
   AttendanceRow,
+  CostCenterLite,
   Custody,
   CustodyExpense,
+  CustodyExpenseInput,
+  CustodyTopupInput,
+  CustodyUser,
   Department,
   DepartmentInput,
   Employee,
   EmployeeDetail,
   EmployeeInput,
+  GlAccountLite,
   Holiday,
   HrException,
   JobTitle,
@@ -23,7 +29,10 @@ import type {
   LeaveRequestInput,
   LeaveType,
   MyAttendanceRow,
+  MyCustodyHistoryRow,
+  MyCustodyResponse,
   MyLeaveBalance,
+  MyLeaveRequestInput,
   MyLeaveRequestRow,
   MyProfile,
   OrgEmployeeUpdate,
@@ -187,7 +196,7 @@ export const peopleApi = {
   rejectAdvance: (id: string, username: string, reason: string) =>
     apiClient.post<{ success: boolean; error?: string }>(`/hr/advances/${id}/reject`, { username, reason }).then(ensureOk),
 
-  // ── Custody (read-only this session) ──
+  // ── Custody — reads ──
   listCustodies: (signal?: AbortSignal) =>
     apiClient.get<unknown>("/custody/list", { signal }).then(ensureArray<Custody>),
 
@@ -196,6 +205,86 @@ export const peopleApi = {
 
   custodyExpensesFor: (id: string, signal?: AbortSignal) =>
     apiClient.get<unknown>(`/custody/${id}/expenses`, { signal }).then(ensureArray<CustodyExpense>),
+
+  /** Admin/manager: the custodian directory (picker for إنشاء عهدة). */
+  listCustodyUsers: (signal?: AbortSignal) =>
+    apiClient.get<unknown>("/custody/users", { signal }).then(ensureArray<CustodyUser>),
+
+  /** Admin/manager: expenses awaiting a decision (pending/approved/override_pending/returned). */
+  listCustodyPending: (signal?: AbortSignal) =>
+    apiClient.get<unknown>("/custody/approval/pending", { signal }).then(ensureArray<CustodyExpense>),
+
+  /** Custody holder: my active custody bundle (stats + expenses + expense-type accounts). */
+  myCustody: (signal?: AbortSignal) =>
+    apiClient.get<MyCustodyResponse>("/custody/my-custody", { signal }),
+
+  /** Custody holder: my previous custodies (legacy loadHistory, custody/app.js:627). */
+  myCustodyHistory: (signal?: AbortSignal) =>
+    apiClient.get<unknown>("/custody/my-history", { signal }).then(ensureArray<MyCustodyHistoryRow>),
+
+  // ── Custody — writes (routes/custody.js; actor ALWAYS from the JWT) ──
+  /** Legacy createCustodyFn (public/js/custody.js:160) → POST /custody/create. */
+  createCustody: (body: { userId: string; userName: string }) =>
+    apiClient
+      .post<{ success: boolean; id?: string; custodyNumber?: string; error?: string }>("/custody/create", body)
+      .then(ensureOk),
+
+  /** Legacy submitTopup (public/js/custody.js:249) → POST /custody/:id/topup. */
+  topupCustody: (custodyId: string, body: CustodyTopupInput) =>
+    apiClient
+      .post<{ success: boolean; id?: string; error?: string }>(`/custody/${custodyId}/topup`, body)
+      .then(ensureOk),
+
+  /** Legacy submitExpense (custody/app.js:456) → POST /custody/:id/expenses.
+   *  NOT ensureOk-wrapped: the { needsOverride } refusal is a real flow the
+   *  caller must branch on (override confirm → resend with overrideBalance). */
+  addCustodyExpense: (custodyId: string, body: CustodyExpenseInput) =>
+    apiClient.post<{ success: boolean; id?: string; status?: string; needsOverride?: boolean; error?: string }>(
+      `/custody/${custodyId}/expenses`,
+      body,
+    ),
+
+  /** Legacy approveCustodyExpFn (public/js/custody.js:446). */
+  approveCustodyExpense: (expId: string) =>
+    apiClient.post<{ success: boolean; error?: string }>(`/custody/expenses/${expId}/approve`, {}).then(ensureOk),
+
+  /** Legacy rejectCustodyExpFn (public/js/custody.js:451). */
+  rejectCustodyExpense: (expId: string, reason: string) =>
+    apiClient.post<{ success: boolean; error?: string }>(`/custody/expenses/${expId}/reject`, { reason }).then(ensureOk),
+
+  /** Legacy approveOverrideFn (public/js/custody.js:468) — moves override_pending → pending. */
+  approveOverrideExpense: (expId: string) =>
+    apiClient
+      .post<{ success: boolean; error?: string }>(`/custody/expenses/${expId}/approve-override`, {})
+      .then(ensureOk),
+
+  /** Legacy confirmClose (custody/app.js:516) → POST /custody/:id/close-request. */
+  requestCloseCustody: (custodyId: string, notes: string) =>
+    apiClient
+      .post<{ success: boolean; balance?: number; error?: string }>(`/custody/${custodyId}/close-request`, { notes })
+      .then(ensureOk),
+
+  /** Legacy approveCloseCustodyFn (public/js/custody.js:473). */
+  approveCloseCustody: (custodyId: string) =>
+    apiClient
+      .post<{ success: boolean; balance?: number; error?: string }>(`/custody/${custodyId}/close-approve`, {})
+      .then(ensureOk),
+
+  /** Legacy rejectCloseCustodyFn (public/js/custody.js:478). */
+  rejectCloseCustody: (custodyId: string, reason: string) =>
+    apiClient
+      .post<{ success: boolean; error?: string }>(`/custody/${custodyId}/close-reject`, { reason })
+      .then(ensureOk),
+
+  // ── Pickers backing the custody dialogs ──
+  /** GL accounts for the topup cash/bank picker — same endpoint the legacy admin
+   *  used (api-bridge getGLAccounts → GET /erp/gl/accounts, finance.gl.view). */
+  listGlAccounts: (signal?: AbortSignal) =>
+    apiClient.get<unknown>("/erp/gl/accounts", { signal }).then(ensureArray<GlAccountLite>),
+
+  /** Cost centers for the expense dialog (legacy getCostCenters → /erp/cost-centers). */
+  listCostCenters: (signal?: AbortSignal) =>
+    apiClient.get<unknown>("/erp/cost-centers", { signal }).then(ensureArray<CostCenterLite>),
 
   // ── Self-service ──
   myProfile: (signal?: AbortSignal) =>
@@ -212,6 +301,22 @@ export const peopleApi = {
 
   myLeaveRequests: (signal?: AbortSignal) =>
     apiClient.get<unknown>("/hr/my-leave-requests", { signal }).then(ensureArray<MyLeaveRequestRow>),
+
+  // ── Self-service — writes ──
+  /** Legacy sendClock (employee/app.js:1418) → POST /hr/my-clock. The response
+   *  is NOT ensureOk-wrapped: geofence refusals come back as
+   *  { success:false, code:'outside_fence', distance, radius } and the caller
+   *  renders the exact legacy distance message. */
+  myClock: (body: MyClockPayload) => apiClient.post<ClockResponse>("/hr/my-clock", body),
+
+  /** Legacy submitLeave (employee/app.js:1700) → POST /hr/my-leave-request. */
+  submitMyLeaveRequest: (body: MyLeaveRequestInput) =>
+    apiClient
+      .post<{ success: boolean; id?: string; requestNumber?: string; message?: string; error?: string }>(
+        "/hr/my-leave-request",
+        body,
+      )
+      .then(ensureOk),
 };
 
 // ── Org chart (v4) ───────────────────────────────────────────────────────────

@@ -267,6 +267,18 @@ export interface Advance {
 }
 
 // ── Custody ──────────────────────────────────────────────────────────────────
+/** Row from GET /custody/users (admin) — the custodian directory. */
+export interface CustodyUser {
+  id: string;
+  name: string;
+  idNumber?: string;
+  phone?: string;
+  jobTitle?: string;
+  notes?: string;
+  isActive?: number | boolean;
+  linkedUsername?: string;
+}
+
 export interface Custody {
   id: string;
   custodyNumber: string;
@@ -292,6 +304,93 @@ export interface CustodyExpense {
   status: string;
   glAccountName?: string;
   rejectionReason?: string;
+  /** base64 data-URL (image/* or application/pdf) — column custody_expenses.invoice_image. */
+  invoiceImage?: string | null;
+  notes?: string;
+  createdBy?: string;
+  approvedBy?: string;
+  hasVat?: number | boolean;
+  vatRate?: number;
+}
+
+/** POST /custody/:id/expenses body — the exact field set routes/custody.js reads
+ *  (expenseDate, description, amount, hasVat, vatRate, invoiceImage, notes,
+ *  overrideBalance, glAccountId, glAccountName, costCenterId, costCenterName,
+ *  preApproval). The creator comes from the JWT — no username field. */
+export interface CustodyExpenseInput {
+  expenseDate: string;
+  description: string;
+  amount: number;
+  hasVat: boolean;
+  vatRate: number;
+  invoiceImage?: string;
+  notes?: string;
+  overrideBalance?: boolean;
+  glAccountId?: string;
+  glAccountName?: string;
+  costCenterId?: string;
+  costCenterName?: string;
+}
+
+/** POST /custody/:id/topup body (routes/custody.js:406). Actor from JWT. */
+export interface CustodyTopupInput {
+  amount: number;
+  paymentMethod: "cash" | "transfer" | "other";
+  glAccountId?: string;
+  receiptImage?: string;
+  notes?: string;
+}
+
+/** GET /custody/my-custody — the custody-holder portal bundle. */
+export interface MyCustodyResponse {
+  success?: boolean;
+  error?: string;
+  noCustody?: boolean;
+  user?: { id: string; name: string; idNumber?: string; phone?: string; jobTitle?: string };
+  custody?: {
+    id: string;
+    custodyNumber: string;
+    userName: string;
+    createdDate?: string;
+    balance: number;
+    totalTopups: number;
+    totalExpenses: number;
+    status: string;
+  };
+  expenses?: CustodyExpense[];
+  topups?: { id: string; amount: number; paymentMethod?: string; notes?: string; createdAt?: string }[];
+  /** GL expense accounts for the expense-type dropdown (id/code/name). */
+  expenseAccounts?: { id: string; code: string; name: string }[];
+  branchName?: string;
+  companyName?: string;
+}
+
+/** GET /custody/my-history rows — previous custodies of the holder. */
+export interface MyCustodyHistoryRow {
+  id: string;
+  custodyNumber: string;
+  status: string;
+  createdDate?: string;
+  closeApprovedAt?: string | null;
+  balance: number;
+  totalTopups: number;
+  totalExpenses: number;
+}
+
+/** GET /erp/gl/accounts row (subset needed by the topup picker). */
+export interface GlAccountLite {
+  id: string;
+  code: string;
+  nameAr: string;
+  type?: string;
+  isActive?: number | boolean;
+}
+
+/** GET /erp/cost-centers row (subset for the expense dialog). */
+export interface CostCenterLite {
+  id: string;
+  code?: string;
+  name: string;
 }
 
 // ── Self-service ─────────────────────────────────────────────────────────────
@@ -334,6 +433,16 @@ export interface MyLeaveRequestRow {
   end_date: string;
   days_count?: number;
   status: string;
+  reason?: string;
+}
+
+/** POST /hr/my-leave-request body — exact legacy shape (employee/app.js:1701).
+ *  The employee is resolved from the JWT; `username` is legacy fidelity only. */
+export interface MyLeaveRequestInput {
+  username: string;
+  leaveTypeId: string;
+  startDate: string;
+  endDate: string;
   reason?: string;
 }
 

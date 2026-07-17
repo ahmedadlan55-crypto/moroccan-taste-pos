@@ -30,28 +30,58 @@ function brandNameFallback(): string {
 
 const PAY_LABELS: Record<string, string> = { cash: "كاش", card: "شبكة", credit: "آجل" };
 
-const BASE_CSS = `
+// ── Paper width (owner setting: ReceiptPaperWidth '58'|'80'|'A4') ────────────
+// 58mm thermal paper prints ~48mm wide; 80mm paper prints ~72mm (the historical
+// hardcode); A4 gets a full-width layout. The setting rides in the catalog as
+// `receiptSettings.{paperWidth,autoPrint}` (server stream); both resolvers are
+// DEFENSIVE — any missing/foreign shape falls back to 80mm / autoprint-on.
+export type PaperWidth = "58" | "80" | "A4";
+
+const PAPER: Record<PaperWidth, { width: string; font: string; h1: string; grand: string; kitchen: string }> = {
+  "58": { width: "48mm", font: "10px", h1: "13px", grand: "13px", kitchen: "15px" },
+  "80": { width: "72mm", font: "12px", h1: "16px", grand: "15px", kitchen: "18px" },
+  A4: { width: "190mm", font: "13px", h1: "19px", grand: "17px", kitchen: "20px" },
+};
+
+export function resolvePaperWidth(catalog: unknown): PaperWidth {
+  const rs = (catalog as { receiptSettings?: { paperWidth?: unknown } } | null | undefined)?.receiptSettings;
+  const raw = String(rs?.paperWidth ?? "80").trim().toUpperCase();
+  return raw === "58" ? "58" : raw === "A4" ? "A4" : "80";
+}
+
+/** ReceiptAutoPrint ('1' default). '0' → the payment screen must NOT auto-invoke
+ *  print; the manual receipt button always works either way. */
+export function resolveAutoPrint(catalog: unknown): boolean {
+  const rs = (catalog as { receiptSettings?: { autoPrint?: unknown } } | null | undefined)?.receiptSettings;
+  return String(rs?.autoPrint ?? "1").trim() !== "0";
+}
+
+function baseCss(paper: PaperWidth): string {
+  const p = PAPER[paper];
+  return `
   * { margin: 0; padding: 0; box-sizing: border-box; }
   body { font-family: "Tajawal", "Segoe UI", Tahoma, Arial, sans-serif; direction: rtl;
-         width: 72mm; margin: 0 auto; padding: 4mm 2mm; color: #000; background: #fff; font-size: 12px; }
+         width: ${p.width}; margin: 0 auto; padding: 4mm 2mm; color: #000; background: #fff; font-size: ${p.font}; }
   .num { direction: ltr; unicode-bidi: embed; font-variant-numeric: tabular-nums; }
-  h1 { font-size: 16px; text-align: center; margin-bottom: 2px; }
-  .sub { text-align: center; font-size: 11px; color: #333; }
+  h1 { font-size: ${p.h1}; text-align: center; margin-bottom: 2px; }
+  .sub { text-align: center; font-size: 0.92em; color: #333; }
   hr { border: none; border-top: 1px dashed #000; margin: 6px 0; }
   table { width: 100%; border-collapse: collapse; }
-  th { text-align: right; font-size: 11px; border-bottom: 1px solid #000; padding: 2px 0; }
-  td { padding: 2px 0; vertical-align: top; font-size: 12px; }
+  th { text-align: right; font-size: 0.92em; border-bottom: 1px solid #000; padding: 2px 0; }
+  td { padding: 2px 0; vertical-align: top; }
   .l { text-align: left; }
   .tot td { padding: 1px 0; }
-  .grand { font-size: 15px; font-weight: 800; border-top: 1px solid #000; }
-  .foot { text-align: center; margin-top: 8px; font-size: 12px; font-weight: 700; }
+  .grand { font-size: ${p.grand}; font-weight: 800; border-top: 1px solid #000; }
+  .foot { text-align: center; margin-top: 8px; font-weight: 700; }
   .qr { text-align: center; margin-top: 8px; }
   .qr img { image-rendering: pixelated; }
-  .kitchen { font-size: 18px; }
-  .kitchen td { font-size: 18px; font-weight: 700; padding: 4px 0; }
-  .kitchen .note { font-size: 14px; font-weight: 400; color: #111; }
-  @media print { body { width: auto; } }
+  .stamp { border: 2px solid #000; text-align: center; font-weight: 900; padding: 3px 6px; margin: 6px auto; width: fit-content; }
+  .kitchen { font-size: ${p.kitchen}; }
+  .kitchen td { font-weight: 700; padding: 4px 0; }
+  .kitchen .note { font-size: 0.8em; font-weight: 400; color: #111; }
+  ${paper === "A4" ? "" : "@media print { body { width: auto; } }"}
 `;
+}
 
 export interface ReceiptOptions {
   order: LocalOrder;
@@ -71,11 +101,32 @@ export interface ReceiptOptions {
   /** Server-rendered ZATCA QR PNG. Absent on a queued offline sale — the receipt
    *  states the stamp arrives after sync instead of inventing one. */
   zatcaQrDataUrl?: string | null;
+  /** Paper width per the owner setting (ReceiptPaperWidth). Default 80mm. */
+  paperWidth?: PaperWidth;
+  /** The moment shown on paper. A REPRINT passes the ORIGINAL sale datetime —
+   *  the receipt is a copy of that document, not a new one. Default: now. */
+  printedAt?: Date;
+  /** Bordered stamp under the header for reprints of reversed documents
+   *  (e.g. "ملغاة · VOIDED" / "مرتجع · RETURNED"). */
+  stamp?: string | null;
+  /** RECORDED figures for reprints. A reprint must show the sale's stored
+   *  numbers, not a recomputation from lines whose vat categories the
+   *  invoice endpoint does not echo. When present these replace cartTotals. */
+  totalsOverride?: {
+    subtotal: number;
+    lineDiscountTotal: number;
+    discountAmount: number;
+    vatTotal: number;
+    total: number;
+  };
 }
 
 export function buildReceiptHtml(opts: ReceiptOptions): string {
   const { order, payments, invoiceNumber } = opts;
-  const totals = cartTotals(order.lines, order.discountType ? { type: order.discountType, value: order.discountValue } : null);
+  const paper = opts.paperWidth ?? "80";
+  const totals =
+    opts.totalsOverride ??
+    cartTotals(order.lines, order.discountType ? { type: order.discountType, value: order.discountValue } : null);
   const orderTypeLabel = order.orderType === "dine_in" ? "محلي" : order.orderType === "delivery" ? "توصيل" : "سفري";
 
   const linesHtml = order.lines
@@ -123,11 +174,12 @@ export function buildReceiptHtml(opts: ReceiptOptions): string {
   }
 
   return `<!doctype html><html lang="ar" dir="rtl"><head><meta charset="utf-8">
-  <title>إيصال</title><style>${BASE_CSS}</style></head><body>
+  <title>إيصال</title><style>${baseCss(paper)}</style></head><body data-paper="${paper}">
   <h1>${esc(sellerName)}</h1>
   ${sellerLines.join("\n  ")}
+  ${opts.stamp ? `<div class="stamp">${esc(opts.stamp)}</div>` : ""}
   ${refLine}
-  <div class="sub num">${fmtDateTime(new Date())}</div>
+  <div class="sub num">${fmtDateTime(opts.printedAt ?? new Date())}</div>
   ${on("cashier") ? `<div class="sub">الكاشير: ${esc(opts.cashierName)} · ${orderTypeLabel}${order.tableNo ? ` · طاولة <span class="num">${esc(order.tableNo)}</span>` : ""}</div>` : ""}
   ${on("customer") && (order.customerName || order.customerPhone) ? `<div class="sub">العميل: ${esc([order.customerName, order.customerPhone].filter(Boolean).join(" "))}</div>` : ""}
   <hr>
@@ -163,7 +215,7 @@ export function buildReceiptHtml(opts: ReceiptOptions): string {
 }
 
 /** Kitchen ticket — items + qty + notes + table only, big font. */
-export function buildKitchenTicketHtml(order: LocalOrder): string {
+export function buildKitchenTicketHtml(order: LocalOrder, paperWidth: PaperWidth = "80"): string {
   const orderTypeLabel = order.orderType === "dine_in" ? "محلي" : order.orderType === "delivery" ? "توصيل" : "سفري";
   const linesHtml = order.lines
     .map(
@@ -174,7 +226,7 @@ export function buildKitchenTicketHtml(order: LocalOrder): string {
     )
     .join("");
   return `<!doctype html><html lang="ar" dir="rtl"><head><meta charset="utf-8">
-  <title>تذكرة مطبخ</title><style>${BASE_CSS}</style></head><body class="kitchen">
+  <title>تذكرة مطبخ</title><style>${baseCss(paperWidth)}</style></head><body class="kitchen" data-paper="${paperWidth}">
   <h1>المطبخ — ${orderTypeLabel}${order.tableNo ? ` · طاولة <span class="num">${esc(order.tableNo)}</span>` : ""}</h1>
   <div class="sub num">${fmtDateTime(new Date())} · ${esc(shortRef(order.id))}</div>
   <hr>

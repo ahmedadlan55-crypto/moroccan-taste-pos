@@ -10,7 +10,13 @@
  * Each assertion is a field reaching PAPER, not a field existing in a payload.
  */
 import { describe, expect, it } from "vitest";
-import { buildReceiptHtml, type ReceiptOptions } from "../receipt";
+import {
+  buildKitchenTicketHtml,
+  buildReceiptHtml,
+  resolveAutoPrint,
+  resolvePaperWidth,
+  type ReceiptOptions,
+} from "../receipt";
 import type { LocalOrder, ReceiptIdentity } from "../types";
 
 const IDENTITY: ReceiptIdentity = {
@@ -123,5 +129,96 @@ describe("buildReceiptHtml — identity reaches paper", () => {
     );
     expect(html).not.toContain("310122393500003");
     expect(html).toContain("1010999999");
+  });
+});
+
+// ═════════════════════════════════════════════════════════════════════════════
+// Paper width (ReceiptPaperWidth '58'|'80'|'A4') + autoprint toggle + reprint
+// fidelity — close/b2-pos-daily.
+// ═════════════════════════════════════════════════════════════════════════════
+
+describe("paper width — the body actually changes size", () => {
+  it("defaults to 80mm → the historical 72mm printable body", () => {
+    const html = buildReceiptHtml(opts());
+    expect(html).toContain('data-paper="80"');
+    expect(html).toContain("width: 72mm");
+  });
+
+  it("58 switches to a 48mm body with smaller type", () => {
+    const html = buildReceiptHtml(opts({ paperWidth: "58" }));
+    expect(html).toContain('data-paper="58"');
+    expect(html).toContain("width: 48mm");
+    expect(html).toContain("font-size: 10px");
+    expect(html).not.toContain("width: 72mm");
+  });
+
+  it("A4 switches to the full-width layout and keeps it when printing", () => {
+    const html = buildReceiptHtml(opts({ paperWidth: "A4" }));
+    expect(html).toContain('data-paper="A4"');
+    expect(html).toContain("width: 190mm");
+    expect(html).not.toContain("@media print { body { width: auto; } }");
+  });
+
+  it("kitchen ticket follows the same switch", () => {
+    expect(buildKitchenTicketHtml(order(), "58")).toContain("width: 48mm");
+    expect(buildKitchenTicketHtml(order())).toContain("width: 72mm");
+  });
+});
+
+describe("resolvePaperWidth / resolveAutoPrint — defensive catalog read", () => {
+  it("reads catalog.receiptSettings.paperWidth (case-tolerant)", () => {
+    expect(resolvePaperWidth({ receiptSettings: { paperWidth: "58" } })).toBe("58");
+    expect(resolvePaperWidth({ receiptSettings: { paperWidth: "a4" } })).toBe("A4");
+    expect(resolvePaperWidth({ receiptSettings: { paperWidth: "80" } })).toBe("80");
+  });
+
+  it("falls back to 80 on every missing/foreign shape", () => {
+    expect(resolvePaperWidth(null)).toBe("80");
+    expect(resolvePaperWidth(undefined)).toBe("80");
+    expect(resolvePaperWidth({})).toBe("80");
+    expect(resolvePaperWidth({ receiptSettings: null })).toBe("80");
+    expect(resolvePaperWidth({ receiptSettings: { paperWidth: "letter" } })).toBe("80");
+    expect(resolvePaperWidth({ receiptSettings: { paperWidth: 42 } })).toBe("80");
+  });
+
+  it("autoPrint defaults ON; only an explicit '0' turns it off", () => {
+    expect(resolveAutoPrint(null)).toBe(true);
+    expect(resolveAutoPrint({})).toBe(true);
+    expect(resolveAutoPrint({ receiptSettings: { autoPrint: "1" } })).toBe(true);
+    expect(resolveAutoPrint({ receiptSettings: { autoPrint: "0" } })).toBe(false);
+    expect(resolveAutoPrint({ receiptSettings: { autoPrint: 0 } })).toBe(false);
+  });
+});
+
+describe("reprint fidelity", () => {
+  it("prints the ORIGINAL sale datetime when printedAt is passed", () => {
+    const html = buildReceiptHtml(opts({ printedAt: new Date("2026-01-05T09:30:00") }));
+    expect(html).toContain("2026-01-05");
+    expect(html).toContain("09:30");
+  });
+
+  it("RECORDED totals override the line recomputation", () => {
+    const html = buildReceiptHtml(
+      opts({ totalsOverride: { subtotal: 76, lineDiscountTotal: 0, discountAmount: 5, vatTotal: 9.26, total: 71 } }),
+    );
+    expect(html).toContain("71.00");
+    expect(html).toContain("9.26");
+    expect(html).toContain("-5.00");
+  });
+
+  it("stamps a reversed-document reprint", () => {
+    const html = buildReceiptHtml(opts({ stamp: "ملغاة · VOIDED" }));
+    expect(html).toContain('class="stamp"');
+    expect(html).toContain("ملغاة · VOIDED");
+  });
+
+  it("split payments + tendered/change rows survive on a reprint", () => {
+    const html = buildReceiptHtml(
+      opts({ payments: [{ method: "cash", amount: 46 }, { method: "card", amount: 30 }], cashTendered: 50, changeDue: 4 }),
+    );
+    expect(html).toContain("كاش");
+    expect(html).toContain("شبكة");
+    expect(html).toContain("المستلَم");
+    expect(html).toContain("الباقي");
   });
 });

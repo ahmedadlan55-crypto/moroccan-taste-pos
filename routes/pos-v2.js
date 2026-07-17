@@ -389,6 +389,11 @@ router.get('/catalog', POS, async (req, res) => {
     // over the network, which is exactly what an offline receipt cannot do.
     let identity = null;
     let receiptShowFields = invoiceIdentity.showFields(null);
+    // Print preferences (paper width / auto-print). Global-only settings, and
+    // NEVER part of `identity` — the identity is snapshotted onto every issued
+    // invoice while the paper size belongs to whatever printer prints TODAY.
+    // Contract with the receipt renderer: { paperWidth: '58'|'80'|'A4', autoPrint: '1'|'0' }.
+    let receiptSettings = invoiceIdentity.normalizeReceiptSettings(null, null);
     try {
       let scope = null;
       const uname = _userName(req.user);
@@ -398,6 +403,7 @@ router.get('/catalog', POS, async (req, res) => {
       }
       const resolved = await invoiceIdentity.resolveIdentity(db, scope);
       identity = resolved.identity;
+      receiptSettings = resolved.receiptSettings;
       const [sf] = await db.query("SELECT setting_value FROM settings WHERE setting_key = 'ReceiptShowFields' LIMIT 1");
       receiptShowFields = invoiceIdentity.showFields(sf.length ? sf[0].setting_value : null);
     } catch (e) {
@@ -425,11 +431,13 @@ router.get('/catalog', POS, async (req, res) => {
       maxCashierDiscountPct: MAX_CASHIER_DISC_PCT,
       identity,
       receiptShowFields,
+      receiptSettings,
       serverTime: new Date().toISOString(),
     };
     // identity is part of the ETag: an owner editing the receipt header must
-    // reach cached offline clients on their next sync, not never.
-    const etag = '"' + crypto.createHash('sha1').update(JSON.stringify({ i: data.items, v: data.vatRate, id: identity, sf: receiptShowFields })).digest('hex') + '"';
+    // reach cached offline clients on their next sync, not never. Same for the
+    // print preferences — a paper-width change must reach cached clients too.
+    const etag = '"' + crypto.createHash('sha1').update(JSON.stringify({ i: data.items, v: data.vatRate, id: identity, sf: receiptShowFields, rs: receiptSettings })).digest('hex') + '"';
     if (req.get('If-None-Match') === etag) return res.status(304).end();
     res.setHeader('ETag', etag);
     res.json({ success: true, data });

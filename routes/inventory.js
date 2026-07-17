@@ -1240,7 +1240,9 @@ router.get('/items', async (req, res) => {
       brandId: i.brand_id || '', brand_id: i.brand_id || '', brandName: i.brand_name || ''
     })));
   } catch (e) {
-    res.json([]);
+    // G-INV M3 — a DB failure is a 500, not a silent empty list.
+    console.error('[inventory /items]', e);
+    res.status(500).json({ success: false, error: e.message });
   }
 });
 
@@ -1270,7 +1272,11 @@ router.get('/items/:itemId/warehouses', async (req, res) => {
       qty: Number(r.qty) || 0,
       value: (Number(r.qty) || 0) * (Number(r.cost) || 0)
     })));
-  } catch (e) { res.json([]); }
+  } catch (e) {
+    // G-INV M3 — a DB failure is a 500, not a silent empty distribution.
+    console.error('[inventory /items/:itemId/warehouses]', e);
+    res.status(500).json({ success: false, error: e.message });
+  }
 });
 
 // Save inventory item (insert or update)
@@ -2242,7 +2248,9 @@ router.get('/movements', async (req, res) => {
     }
     res.json(items);
   } catch (e) {
-    res.json([]);
+    // G-INV M3 — a DB failure is a 500, not a silent empty movements list.
+    console.error('[inventory /movements]', e);
+    res.status(500).json({ success: false, error: e.message });
   }
 });
 
@@ -3390,7 +3398,11 @@ router.get('/live-report/:itemId/movements', async (req, res) => {
       mapped = mapped.filter(r => r.op === opFilter);
     }
     res.json(mapped);
-  } catch (e) { console.error('[live-report movements]', e); res.json([]); }
+  } catch (e) {
+    // G-INV M3 — was console.error + empty list; a DB failure is now a 500.
+    console.error('[live-report movements]', e);
+    res.status(500).json({ success: false, error: e.message });
+  }
 });
 
 // v5.10.18 — Diagnostic: explain why an inventory item shows zero sales-movements
@@ -3880,7 +3892,11 @@ router.get('/stocktakes', async (req, res) => {
       return res.json({ items, total: Number((countRows[0]||{}).total) || 0, limit, offset });
     }
     res.json(items);
-  } catch (e) { res.json([]); }
+  } catch (e) {
+    // G-INV M3 — a DB failure is a 500, not a silent empty stocktake list.
+    console.error('[inventory /stocktakes list]', e);
+    res.status(500).json({ success: false, error: e.message });
+  }
 });
 
 // Get stocktake detail
@@ -4223,7 +4239,11 @@ router.get('/adjustments', async (req, res) => {
     }));
     if (wantsPaginated) return res.json({ items, total: total || items.length, limit, offset });
     res.json(items);
-  } catch (e) { res.json([]); }
+  } catch (e) {
+    // G-INV M3 — a DB failure is a 500, not a silent empty adjustments list.
+    console.error('[inventory /adjustments list]', e);
+    res.status(500).json({ success: false, error: e.message });
+  }
 });
 
 // Detail
@@ -4317,7 +4337,11 @@ router.get('/receive-requests', async (req, res) => {
       items: JSON.parse(r.items_json || '[]'), receivedItems: JSON.parse(r.received_items_json || '[]'),
       receivedBy: r.received_by, poId: r.po_id, poNumber: r.po_number || '', receiveStatus: r.receive_status
     })));
-  } catch(e) { res.json([]); }
+  } catch(e) {
+    // G-INV M3 — a DB failure is a 500, not a silent empty receive queue.
+    console.error('[inventory /receive-requests]', e);
+    res.status(500).json({ success: false, error: e.message });
+  }
 });
 
 // Approve receive — updates stock + creates GL journal
@@ -4596,7 +4620,11 @@ router.get('/shortage-requests', async (req, res) => {
       brandId: r.brand_id || '', brand_id: r.brand_id || '', brandName: r.brand_name || '',
       branchId: r.branch_id || '', branchName: r.branch_name || ''
     })));
-  } catch (e) { res.json([]); }
+  } catch (e) {
+    // G-INV M3 — a DB failure is a 500, not a silent empty shortage list.
+    console.error('[inventory /shortage-requests list]', e);
+    res.status(500).json({ success: false, error: e.message });
+  }
 });
 
 // Get single shortage request with items

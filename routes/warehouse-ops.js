@@ -272,8 +272,13 @@ router.get('/warehouses/hierarchy', async (req, res) => {
   } catch(e) { res.status(500).json({ error: e.message }); }
 });
 
+// v7.5 — the three hierarchy mutations below were the ONLY unguarded writes on
+// the warehouse master data (approve/cancel/reverse/dispose already carry MGR).
+// Re-rooting the hierarchy silently changes which warehouse every issue and
+// production order defaults to — managerial, like its DELETE/approve siblings.
+
 // Set a warehouse as "main" for a brand
-router.post('/warehouses/:id/set-main', async (req, res) => {
+router.post('/warehouses/:id/set-main', MGR, async (req, res) => {
   try {
     const id = req.params.id;
     if (!req.guardWh(res, id)) return;
@@ -292,7 +297,7 @@ router.post('/warehouses/:id/set-main', async (req, res) => {
 // V5.9.3 — Demote a warehouse from main → sub.  Optional ?parentId to
 //   link it to a different main.  If no other main exists for the brand,
 //   the warehouse becomes a free-standing sub (no parent).
-router.post('/warehouses/:id/unset-main', async (req, res) => {
+router.post('/warehouses/:id/unset-main', MGR, async (req, res) => {
   try {
     const id = req.params.id;
     if (!req.guardWh(res, id)) return;
@@ -312,7 +317,7 @@ router.post('/warehouses/:id/unset-main', async (req, res) => {
 });
 
 // Link a sub-warehouse to a parent (main)
-router.post('/warehouses/:id/set-parent', async (req, res) => {
+router.post('/warehouses/:id/set-parent', MGR, async (req, res) => {
   try {
     const id = req.params.id;
     if (!req.guardWh(res, id)) return;
@@ -425,7 +430,11 @@ router.get('/stock-issues/:id', async (req, res) => {
 });
 
 // Create stock issue (draft)
-router.post('/stock-issues', async (req, res) => {
+// v7.5 — BACKOFFICE, matching its own lifecycle: issue/receive were already
+// BACKOFFICE and approve/cancel/reverse/delete MGR, yet the DRAFT could be
+// created (and edited, below) by the one credential the file's own header
+// names as the fraud vector — the cashier.
+router.post('/stock-issues', BACKOFFICE, async (req, res) => {
   let _idemId = null;
   try {
     const { fromWarehouseId, toWarehouseId, brandId, branchId, issueDate, notes, items } = req.body;
@@ -521,7 +530,7 @@ router.post('/stock-issues', async (req, res) => {
 // Replaces the header fields + line items inside ONE transaction; preserves
 // id / issue_number / created_by / created_at; bumps version once; performs NO
 // stock movement and NO GL. expectedVersion is mandatory (optimistic lock).
-router.patch('/stock-issues/:id', async (req, res) => {
+router.patch('/stock-issues/:id', BACKOFFICE, async (req, res) => {
   try {
     const id = req.params.id;
     const actor = _actor(req);
@@ -1302,6 +1311,8 @@ router.get('/production-orders/:id/availability', async (req, res) => {
 // v7.7 — Materials availability PREVIEW before an order exists (read-only).
 // Reuses the create-time expansion math (batches × line × (1+waste%)) then
 // LEFT JOINs live stock, so the create wizard's "materials" step works up front.
+// v7.5 — POST-shaped but a pure READ (SELECT-only availability math): left at
+// the same access level as the GET /production-orders reads beside it.
 router.post('/production-orders/preview-availability', async (req, res) => {
   try {
     const { bomId, qtyPlanned, warehouseId } = req.body;
@@ -1345,7 +1356,9 @@ router.post('/production-orders/preview-availability', async (req, res) => {
 });
 
 // Create production order from BOM
-router.post('/production-orders', async (req, res) => {
+// v7.5 — BACKOFFICE, matching release/complete (already BACKOFFICE) and
+// cancel/reverse (MGR). Creation reserves component demand — not a till action.
+router.post('/production-orders', BACKOFFICE, async (req, res) => {
   try {
     // ── Multi-item batch (new format: items array) ──────────────────────────
     if (req.body.items && Array.isArray(req.body.items) && req.body.items.length > 0) {

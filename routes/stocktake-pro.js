@@ -21,6 +21,10 @@ const gl = require('../lib/glPosting');
 const { recomputeInvItemStock } = require('../lib/stockRecompute');
 // v7.4 — stocktake approve/reject post stock + GL adjustments → managers only.
 const MGR = require('../middleware/auth').requireRole('admin', 'manager');
+// G-INV — capability guards: count entry needs inventory.stocktake.create
+// (seeded incl. cashier/custody/employee — db/migrations/capability-seeds/
+// g-inv.json); posting/rejecting stays manager-level (MGR + inventory.edit).
+const requireCapability = require('../middleware/requireCapability');
 // Phase 0 — shared workflow + variance helpers (tests/stocktakeWorkflow.test.js
 // validates the exact same functions the route uses, so they can never drift).
 const STK = require('../lib/stocktakeWorkflow');
@@ -127,7 +131,7 @@ router.get('/:id', async (req, res) => {
   } catch(e) { res.status(500).json({ error: e.message }); }
 });
 
-router.post('/', async (req, res) => {
+router.post('/', requireCapability('inventory.stocktake.create'), async (req, res) => {
   try {
     const b = req.body || {};
     if (!b.warehouseId) return res.status(400).json({ error: 'warehouseId required' });
@@ -149,7 +153,7 @@ router.post('/', async (req, res) => {
   } catch(e) { res.status(500).json({ error: e.message }); }
 });
 
-router.post('/:id/load-snapshot', async (req, res) => {
+router.post('/:id/load-snapshot', requireCapability('inventory.stocktake.create'), async (req, res) => {
   try {
     const [hRows] = await db.query('SELECT warehouse_id, workflow_status FROM stocktakes WHERE id = ?', [req.params.id]);
     if (!hRows.length) return res.status(404).json({ error: 'Not found' });
@@ -195,7 +199,7 @@ router.post('/:id/load-snapshot', async (req, res) => {
   } catch(e) { res.status(500).json({ error: e.message }); }
 });
 
-router.put('/:id/items/:lineId', async (req, res) => {
+router.put('/:id/items/:lineId', requireCapability('inventory.stocktake.create'), async (req, res) => {
   try {
     const b = req.body || {};
     // Load the line + threshold
@@ -234,7 +238,7 @@ router.put('/:id/items/:lineId', async (req, res) => {
   } catch(e) { res.status(500).json({ error: e.message }); }
 });
 
-router.post('/:id/items/scan', async (req, res) => {
+router.post('/:id/items/scan', requireCapability('inventory.stocktake.create'), async (req, res) => {
   try {
     const b = req.body || {};
     if (!b.itemCode && !b.itemId) return res.status(400).json({ error: 'itemCode or itemId required' });
@@ -286,7 +290,7 @@ router.post('/:id/items/scan', async (req, res) => {
   } catch(e) { res.status(500).json({ error: e.message }); }
 });
 
-router.post('/:id/submit', async (req, res) => {
+router.post('/:id/submit', requireCapability('inventory.stocktake.create'), async (req, res) => {
   try {
     const username = _actor(req) || 'system'; // Phase 0 §5 — actor from JWT only
     const [hRows] = await db.query('SELECT warehouse_id FROM stocktakes WHERE id = ?', [req.params.id]);
@@ -310,7 +314,7 @@ router.post('/:id/submit', async (req, res) => {
   } catch(e) { res.status(500).json({ error: e.message }); }
 });
 
-router.post('/:id/approve', MGR, async (req, res) => {
+router.post('/:id/approve', MGR, requireCapability('inventory.edit'), async (req, res) => {
   try {
     const username = _actor(req) || 'system'; // Phase 0 §5 — actor from JWT only
 
@@ -426,7 +430,7 @@ router.post('/:id/approve', MGR, async (req, res) => {
   } catch(e) { if (e.handled) return; res.status(e.status || 500).json({ error: e.message }); }
 });
 
-router.post('/:id/reject', MGR, async (req, res) => {
+router.post('/:id/reject', MGR, requireCapability('inventory.edit'), async (req, res) => {
   try {
     const username = _actor(req) || 'system'; // Phase 0 §5 — actor from JWT only
     const reason = (req.body && req.body.reason) || '';
@@ -451,7 +455,7 @@ router.post('/:id/reject', MGR, async (req, res) => {
   } catch(e) { res.status(500).json({ error: e.message }); }
 });
 
-router.post('/:id/cancel', async (req, res) => {
+router.post('/:id/cancel', requireCapability('inventory.stocktake.create'), async (req, res) => {
   try {
     const [r] = await db.query(`SELECT workflow_status, warehouse_id FROM stocktakes WHERE id = ?`, [req.params.id]);
     if (!r.length) return res.status(404).json({ error: 'Not found' });

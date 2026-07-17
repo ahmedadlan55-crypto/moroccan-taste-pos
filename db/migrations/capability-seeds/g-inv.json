@@ -1,0 +1,23 @@
+[
+  {
+    "id": "inventory.stocktake.create",
+    "label_ar": "إنشاء وتسجيل الجرد المخزني",
+    "label_en": "Create & record stocktakes (legacy POS /stocktakes + stocktake-pro count entry/submit/cancel)",
+    "is_sensitive": 0,
+    "roles": ["admin", "manager", "employee", "custody", "inventory", "cashier"]
+  },
+  {
+    "id": "inventory.adjustment.create",
+    "label_ar": "إنشاء مسودة تسوية مخزنية",
+    "label_en": "Create stock adjustment DRAFTS (posting/approval stays manager-level via inventory.edit)",
+    "is_sensitive": 0,
+    "roles": ["admin", "manager", "employee", "custody", "inventory"]
+  },
+  {
+    "id": "inventory.requisition.create",
+    "label_ar": "إنشاء طلبات النواقص وطلبات استلام الفرع",
+    "label_en": "Create/edit shortage requests + submit branch receive requests (cashier POS flow; approve/convert stays purchasing.requisitions.approve)",
+    "is_sensitive": 0,
+    "roles": ["admin", "manager", "employee", "custody", "purchasing", "inventory", "cashier"]
+  }
+]

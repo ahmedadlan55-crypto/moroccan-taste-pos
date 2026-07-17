@@ -5,6 +5,11 @@ const { nextDocNumber } = require('../lib/docNumber'); // v7.1 — ADJ-… numbe
 // Phase 0 (Contracts & Safety) — managerial RBAC for posting/deleting stock
 // documents, plus the shared adjustment/stocktake lifecycle guards.
 const MGR = require('../middleware/auth').requireRole('admin', 'manager');
+// G-INV — fine-grained capability guards (permissions_v3 ∪ overrides, admin
+// bypass, fails closed). Every write route below now names the capability it
+// needs; cashier-facing POS flows use the g-inv seeded capabilities
+// (db/migrations/capability-seeds/g-inv.json) so the POS keeps working.
+const requireCapability = require('../middleware/requireCapability');
 const ADJ = require('../lib/inventoryAdjustment');
 const STK = require('../lib/stocktakeWorkflow');
 // Phase 2A — pure helpers backing the read-only warehouse-v2 endpoints
@@ -62,11 +67,12 @@ function _capabilitiesFor(user) {
   return caps;
 }
 
-// Phase 0 §5 — actor identity comes from the authenticated JWT (req.user),
-// not a spoofable body field. The global /api gate sets req.user for every
-// /api/inventory route. Keeps a body fallback only for legacy import paths.
-function _actor(req, fallback) {
-  return (req.user && (req.user.username || req.user.name)) || fallback || '';
+// Phase 0 §5 / G-INV M2 — actor identity comes STRICTLY from the authenticated
+// JWT (req.user); the global /api gate sets req.user for every /api/inventory
+// route. The old body-username fallback let any caller spoof the recorded
+// actor on stocktakes/adjustments/audit rows and is deleted.
+function _actor(req) {
+  return (req.user && (req.user.username || req.user.name)) || '';
 }
 
 // v5.10.25 — Idempotent migration: add deleted_at column to inv_items so
@@ -229,7 +235,8 @@ async function _checkDuplicateName(conn, name, brandId, excludeId) {
 async function _audit(connOrDb, req, action, recordId, oldVal, newVal) {
   try {
     const c = connOrDb || db;
-    const username = (req && (req.user && req.user.username)) || (req && req.body && req.body.username) || 'system';
+    // G-INV M2 — audit actor from the JWT only (body fallback was spoofable).
+    const username = (req && req.user && req.user.username) || 'system';
     const userId   = (req && req.user && req.user.id) || null;
     const ip       = (req && (req.ip || (req.headers && req.headers['x-forwarded-for']) || '')) || '';
     const ua       = (req && req.headers && req.headers['user-agent']) || '';
@@ -301,7 +308,7 @@ async function _ensureWarehouseStockBackfilled() {
 }
 
 // Manual backfill trigger (admin only — one-time)
-router.post('/warehouse-stock/backfill', async (req, res) => {
+router.post('/warehouse-stock/backfill', requireCapability('inventory.edit'), async (req, res) => {
   res.json(await _ensureWarehouseStockBackfilled());
 });
 
@@ -347,7 +354,7 @@ router.get('/warehouse-stock/cleanup-ghosts', async (req, res) => {
   });
 });
 
-router.post('/warehouse-stock/cleanup-ghosts', async (req, res) => {
+router.post('/warehouse-stock/cleanup-ghosts', requireCapability('inventory.edit'), async (req, res) => {
   try {
     const ghosts = await _findEmptyGhostRows();
     if (ghosts && ghosts._error) return res.json({ success: false, error: ghosts._error });
@@ -380,7 +387,7 @@ router.get('/reconcile-stock', async (req, res) => {
   }
 });
 
-router.post('/reconcile-stock', async (req, res) => {
+router.post('/reconcile-stock', requireCapability('inventory.edit'), async (req, res) => {
   try {
     const result = await reconcileAllStock(db, { reportDrift: true });
     res.json({ success: true, dryRun: false, ...result });
@@ -1233,7 +1240,9 @@ router.get('/items', async (req, res) => {
       brandId: i.brand_id || '', brand_id: i.brand_id || '', brandName: i.brand_name || ''
     })));
   } catch (e) {
-    res.json([]);
+    // G-INV M3 — a DB failure is a 500, not a silent empty list.
+    console.error('[inventory /items]', e);
+    res.status(500).json({ success: false, error: e.message });
   }
 });
 
@@ -1263,7 +1272,11 @@ router.get('/items/:itemId/warehouses', async (req, res) => {
       qty: Number(r.qty) || 0,
       value: (Number(r.qty) || 0) * (Number(r.cost) || 0)
     })));
-  } catch (e) { res.json([]); }
+  } catch (e) {
+    // G-INV M3 — a DB failure is a 500, not a silent empty distribution.
+    console.error('[inventory /items/:itemId/warehouses]', e);
+    res.status(500).json({ success: false, error: e.message });
+  }
 });
 
 // Save inventory item (insert or update)
@@ -1281,7 +1294,7 @@ router.get('/items/:itemId/warehouses', async (req, res) => {
 // multiple times — existing inv_items rows with the generated id are
 // skipped. Lets the admin pull legacy semis into the unified inventory
 // model without re-creating them by hand.
-router.post('/items/import-semi-from-menu', async (req, res) => {
+router.post('/items/import-semi-from-menu', requireCapability('inventory.edit'), async (req, res) => {
   try {
     const [semis] = await db.query(`
       SELECT id, name, category, cost, stock, brand_id,
@@ -1336,7 +1349,7 @@ router.post('/items/import-semi-from-menu', async (req, res) => {
   }
 });
 
-router.post('/items', async (req, res) => {
+router.post('/items', requireCapability('inventory.edit'), async (req, res) => {
   try {
     const b = req.body || {};
     const { id, name, category, cost, stock, minStock, unit, bigUnit, convRate, active, brandId, warehouseId, kind } = b;
@@ -1412,7 +1425,7 @@ router.post('/items', async (req, res) => {
         await conn.query(
           `INSERT INTO warehouse_stock (id, warehouse_id, item_id, qty, added_at, first_added_date, added_by, last_updated)
            VALUES (?,?,?,?,?,?,?,?)`,
-          [wsId, warehouseId, newId, 0, nowIso, today, (req.user && req.user.username) || b.username || 'system', nowIso]
+          [wsId, warehouseId, newId, 0, nowIso, today, _actor(req) || 'system', nowIso]
         );
         await _audit(conn, req, 'inv_item.create', newId, null, { id: newId, name, brandId: effectiveBrand, warehouseId, kind: safeKind });
       });
@@ -1455,7 +1468,7 @@ router.post('/items', async (req, res) => {
 //
 // Audit: each successful flip writes a row to audit_log with the
 // before/after kind for traceability.
-router.patch('/items/:id/kind', async (req, res) => {
+router.patch('/items/:id/kind', requireCapability('inventory.edit'), async (req, res) => {
   try {
     const id   = req.params.id;
     const body = req.body || {};
@@ -1539,12 +1552,12 @@ router.patch('/items/:id/kind', async (req, res) => {
 //      the new "warehouse ledger by date" report respects the timeline.
 //   5. Recompute global inv_items.stock as Σ warehouse_stock.qty across
 //      all warehouses (keeps the legacy global counter consistent).
-router.post('/warehouses/:warehouseId/items', async (req, res) => {
+router.post('/warehouses/:warehouseId/items', requireCapability('inventory.edit'), async (req, res) => {
   try {
     const warehouseId = req.params.warehouseId;
     if (!req.guardWh(res, warehouseId)) return;
     const b = req.body || {};
-    const username = (req.user && req.user.username) || b.username || 'system';
+    const username = _actor(req) || 'system';
 
     // Validate warehouse exists
     const [whs] = await db.query('SELECT id, name, brand_id FROM warehouses WHERE id = ?', [warehouseId]);
@@ -1679,7 +1692,7 @@ router.post('/warehouses/:warehouseId/items', async (req, res) => {
 
 // v5.10.6 — Remove an item from a single warehouse (without deleting the
 // inv_item master record). Used by the warehouse view's "remove" action.
-router.delete('/warehouses/:warehouseId/items/:itemId', async (req, res) => {
+router.delete('/warehouses/:warehouseId/items/:itemId', requireCapability('inventory.edit'), async (req, res) => {
   try {
     if (!req.guardWh(res, req.params.warehouseId)) return;
     await db.query('DELETE FROM warehouse_stock WHERE warehouse_id = ? AND item_id = ?',
@@ -1740,7 +1753,7 @@ router.get('/warehouses/:warehouseId/missing-items', async (req, res) => {
 //   Creates a warehouse_stock(qty=0, first_added_date=...) row for each
 //   itemId that doesn't already have one. Idempotent — silently skips
 //   items already registered.
-router.post('/warehouses/:warehouseId/register-bulk', async (req, res) => {
+router.post('/warehouses/:warehouseId/register-bulk', requireCapability('inventory.edit'), async (req, res) => {
   try {
     const warehouseId = req.params.warehouseId;
     if (!req.guardWh(res, warehouseId)) return;
@@ -1754,7 +1767,7 @@ router.post('/warehouses/:warehouseId/register-bulk', async (req, res) => {
     const firstAddedDate = b.firstAddedDate
       ? new Date(b.firstAddedDate).toISOString().slice(0,10)
       : new Date().toISOString().slice(0,10);
-    const username = b.username || 'system';
+    const username = _actor(req) || 'system';
 
     let registered = 0, skipped = 0;
     for (const itemId of itemIds) {
@@ -1811,7 +1824,7 @@ async function _cleanupGhostWarehouseStock(dbConn) {
 // Expose helper for server.js boot migration
 router._cleanupGhostWarehouseStock = _cleanupGhostWarehouseStock;
 
-router.post('/admin/cleanup-ghost-warehouse-stock', async (req, res) => {
+router.post('/admin/cleanup-ghost-warehouse-stock', requireCapability('inventory.edit'), async (req, res) => {
   try {
     const r = await _cleanupGhostWarehouseStock(db);
     res.json({ success:!!r.ok, scanned:r.scanned||0, removed:r.removed||0, reason:r.reason||null });
@@ -1821,7 +1834,7 @@ router.post('/admin/cleanup-ghost-warehouse-stock', async (req, res) => {
 // Delete inventory item
 // v5.10.25 — Soft-delete: marks deleted_at instead of physically removing.
 // v5.10.28 — Adds audit trail + proper 404 / 409 status codes.
-router.delete('/items/:id', async (req, res) => {
+router.delete('/items/:id', requireCapability('inventory.edit'), async (req, res) => {
   try {
     const id = req.params.id;
     const before = await _fetchItemSnapshot(null, id);
@@ -1848,7 +1861,7 @@ router.delete('/items/:id', async (req, res) => {
 
 // v5.10.25 — Restore a soft-deleted item back into the active catalog.
 // v5.10.28 — Adds audit trail + 404 / 409 codes.
-router.post('/items/:id/restore', async (req, res) => {
+router.post('/items/:id/restore', requireCapability('inventory.edit'), async (req, res) => {
   try {
     const id = req.params.id;
     const before = await _fetchItemSnapshot(null, id);
@@ -1869,7 +1882,7 @@ router.post('/items/:id/restore', async (req, res) => {
 // v5.10.28 — Bulk soft-delete: ids in body. Wrapped in a transaction so
 // partial failure leaves no half-applied state. Returns per-id outcomes
 // so the UI can show a meaningful summary.
-router.post('/items/bulk-delete', async (req, res) => {
+router.post('/items/bulk-delete', requireCapability('inventory.edit'), async (req, res) => {
   try {
     const ids = Array.isArray(req.body && req.body.ids) ? req.body.ids.filter(Boolean) : [];
     if (!ids.length) return res.status(400).json({ success: false, error: 'ids-required' });
@@ -1915,7 +1928,7 @@ router.post('/items/bulk-delete', async (req, res) => {
 });
 
 // v5.10.28 — Bulk restore: mirror of bulk-delete.
-router.post('/items/bulk-restore', async (req, res) => {
+router.post('/items/bulk-restore', requireCapability('inventory.edit'), async (req, res) => {
   try {
     const ids = Array.isArray(req.body && req.body.ids) ? req.body.ids.filter(Boolean) : [];
     if (!ids.length) return res.status(400).json({ success: false, error: 'ids-required' });
@@ -2143,7 +2156,7 @@ router.get('/catalog/summary', async (req, res) => {
 });
 
 // Bulk import inventory items
-router.post('/items/import', async (req, res) => {
+router.post('/items/import', requireCapability('inventory.edit'), async (req, res) => {
   try {
     const { items } = req.body;
     if (!items || !items.length) return res.json({ success: false, error: 'No items provided' });
@@ -2235,15 +2248,18 @@ router.get('/movements', async (req, res) => {
     }
     res.json(items);
   } catch (e) {
-    res.json([]);
+    // G-INV M3 — a DB failure is a 500, not a silent empty movements list.
+    console.error('[inventory /movements]', e);
+    res.status(500).json({ success: false, error: e.message });
   }
 });
 
 // Stock update (in/out movement)
-router.post('/stock-update', async (req, res) => {
+router.post('/stock-update', requireCapability('inventory.edit'), async (req, res) => {
   try {
-    const { itemId, itemName, type, qty, reason, username, notes } = req.body;
+    const { itemId, itemName, type, qty, reason, notes } = req.body;
     let { warehouseId, branchId } = req.body;
+    const username = _actor(req); // G-INV M2 — movement actor from the JWT only
 
     // V3 spec rule: stock movements MUST have warehouse_id + branch_id
     // (يمنع: إنشاء حركات مخزون بدون مستودع وفرع محددين)
@@ -3382,7 +3398,11 @@ router.get('/live-report/:itemId/movements', async (req, res) => {
       mapped = mapped.filter(r => r.op === opFilter);
     }
     res.json(mapped);
-  } catch (e) { console.error('[live-report movements]', e); res.json([]); }
+  } catch (e) {
+    // G-INV M3 — was console.error + empty list; a DB failure is now a 500.
+    console.error('[live-report movements]', e);
+    res.status(500).json({ success: false, error: e.message });
+  }
 });
 
 // v5.10.18 — Diagnostic: explain why an inventory item shows zero sales-movements
@@ -3592,16 +3612,18 @@ router.get('/live-report/:itemId/sales-trace', async (req, res) => {
 // ─── Stocktakes ───
 
 // Submit a new stocktake: adjusts stock + records movements + persists the report
-router.post('/stocktakes', async (req, res) => {
+// G-INV — inventory.stocktake.create is seeded for cashier too (the POS
+// stocktake screen posts here); see db/migrations/capability-seeds/g-inv.json.
+router.post('/stocktakes', requireCapability('inventory.stocktake.create'), async (req, res) => {
   try {
     // v5.10.6 — accept user-supplied countDate so opening-balance
     // counts can be backdated to the actual physical-count date.
     // Falls back to "now" for live counts.
     const { items, notes, brandId, countDate } = req.body;
     let { warehouseId, branchId } = req.body;
-    // Phase 0 §5 — count author from the JWT (falls back to body only for
-    // legacy import scripts that post without an authenticated session).
-    const username = _actor(req, req.body.username);
+    // Phase 0 §5 / G-INV M2 — count author STRICTLY from the JWT (the body
+    // fallback was spoofable and is deleted; every caller is authenticated).
+    const username = _actor(req);
     if (!items || !items.length) return res.json({ success: false, error: 'No items' });
 
     // RC — tracked items are counted via warehouse-v2 stocktakes (per-lot counting);
@@ -3870,7 +3892,11 @@ router.get('/stocktakes', async (req, res) => {
       return res.json({ items, total: Number((countRows[0]||{}).total) || 0, limit, offset });
     }
     res.json(items);
-  } catch (e) { res.json([]); }
+  } catch (e) {
+    // G-INV M3 — a DB failure is a 500, not a silent empty stocktake list.
+    console.error('[inventory /stocktakes list]', e);
+    res.status(500).json({ success: false, error: e.message });
+  }
 });
 
 // Get stocktake detail
@@ -3906,7 +3932,7 @@ router.get('/stocktakes/:id', async (req, res) => {
 // 'completed' or stocktake-pro 'approved') can NEVER be deleted — it already
 // moved stock + GL. Correct it with a new count/adjustment, not a delete.
 // (The old route deleted any row with no auth and orphaned its items.)
-router.delete('/stocktakes/:id', MGR, async (req, res) => {
+router.delete('/stocktakes/:id', MGR, requireCapability('inventory.edit'), async (req, res) => {
   try {
     // Scope: guard on the stocktake's warehouse before any delete logic.
     try {
@@ -3942,12 +3968,16 @@ router.delete('/stocktakes/:id', MGR, async (req, res) => {
 const REASON_LABELS = { damaged: 'تالف', admin: 'إداري', settlement: 'تسويات' };
 
 // Create adjustment (draft — needs approval)
-router.post('/adjustments', async (req, res) => {
+// G-INV — draft creation only (no stock/GL until the MGR approve below);
+// inventory.adjustment.create mirrors the legacy matrix (employee/custody yes,
+// cashier no) — see db/migrations/capability-seeds/g-inv.json.
+router.post('/adjustments', requireCapability('inventory.adjustment.create'), async (req, res) => {
   try {
     const { items, reason, reasonNotes } = req.body;
     let { warehouseId, branchId } = req.body;
-    // Phase 0 §5 — adjustment author from the JWT (body fallback for imports).
-    const username = _actor(req, req.body.username);
+    // Phase 0 §5 / G-INV M2 — adjustment author STRICTLY from the JWT (the
+    // spoofable body fallback is deleted).
+    const username = _actor(req);
     if (!items || !items.length) return res.json({ success: false, error: 'No items' });
 
     // v5.10.39 — Resolve warehouseId + branchId from the user's profile
@@ -4026,7 +4056,7 @@ router.post('/adjustments', async (req, res) => {
 // ledger rows + a balanced GL journal + the status flip all commit inside
 // ONE transaction (§9). GL failure is FATAL (rolls the whole approval back)
 // except on a deploy whose GL tables don't exist yet.
-router.post('/adjustments/:id/approve', MGR, async (req, res) => {
+router.post('/adjustments/:id/approve', MGR, requireCapability('inventory.edit'), async (req, res) => {
   try {
     const { id } = req.params;
     const username = _actor(req);
@@ -4209,7 +4239,11 @@ router.get('/adjustments', async (req, res) => {
     }));
     if (wantsPaginated) return res.json({ items, total: total || items.length, limit, offset });
     res.json(items);
-  } catch (e) { res.json([]); }
+  } catch (e) {
+    // G-INV M3 — a DB failure is a 500, not a silent empty adjustments list.
+    console.error('[inventory /adjustments list]', e);
+    res.status(500).json({ success: false, error: e.message });
+  }
 });
 
 // Detail
@@ -4239,7 +4273,7 @@ router.get('/adjustments/:id', async (req, res) => {
 // adjustment can NEVER be hard-deleted — it already moved stock + GL, so the
 // only correction is a documented reversal. Backend enforces this; the old
 // "developer-only, checked on frontend" comment was not a security boundary.
-router.delete('/adjustments/:id', MGR, async (req, res) => {
+router.delete('/adjustments/:id', MGR, requireCapability('inventory.edit'), async (req, res) => {
   try {
     const [adj] = await db.query('SELECT status, warehouse_id FROM stock_adjustments WHERE id = ?', [req.params.id]);
     if (!adj.length) return res.json({ success: false, error: 'Not found' });
@@ -4262,9 +4296,13 @@ router.delete('/adjustments/:id', MGR, async (req, res) => {
 // ═══════════════════════════════════════
 
 // Submit receive request (cashier enters actual quantities)
-router.post('/receive-request', async (req, res) => {
+// G-INV — inventory.requisition.create is seeded for cashier (this is the
+// branch receive flow the cashier UI drives); the mutating approve below
+// stays manager-level.
+router.post('/receive-request', requireCapability('inventory.requisition.create'), async (req, res) => {
   try {
-    const { purchaseId, items, username, notes } = req.body;
+    const { purchaseId, items } = req.body;
+    const username = _actor(req); // G-INV M2 — receiver identity from the JWT only
     if (!purchaseId || !items || !items.length) return res.json({ success: false, error: 'بيانات ناقصة' });
 
     // Per-user warehouse access: derive the purchase's warehouse and guard.
@@ -4299,7 +4337,11 @@ router.get('/receive-requests', async (req, res) => {
       items: JSON.parse(r.items_json || '[]'), receivedItems: JSON.parse(r.received_items_json || '[]'),
       receivedBy: r.received_by, poId: r.po_id, poNumber: r.po_number || '', receiveStatus: r.receive_status
     })));
-  } catch(e) { res.json([]); }
+  } catch(e) {
+    // G-INV M3 — a DB failure is a 500, not a silent empty receive queue.
+    console.error('[inventory /receive-requests]', e);
+    res.status(500).json({ success: false, error: e.message });
+  }
 });
 
 // Approve receive — updates stock + creates GL journal
@@ -4313,10 +4355,10 @@ router.get('/receive-requests', async (req, res) => {
 // approve is ONE transaction (stock, movements, status flips, journal commit
 // or roll back together); GL failure is FATAL except on deploys whose GL
 // tables don't exist yet. FOR UPDATE serializes a double-approve.
-router.post('/receive-approve/:id', async (req, res) => {
+router.post('/receive-approve/:id', requireCapability('inventory.edit'), async (req, res) => {
   try {
-    const { username } = req.body;
-    // The approve UI sends only {username} and this flow has always treated
+    const username = _actor(req); // G-INV M2 — approver identity from the JWT only
+    // The approve UI sends only {username} (now ignored) and this flow has always treated
     // prices as VAT-inclusive, so default true; callers may opt out with an
     // explicit includesVAT:false (same flag as purchases receive).
     const includesVAT = req.body.includesVAT !== false;
@@ -4498,9 +4540,12 @@ router.post('/receive-approve/:id', async (req, res) => {
 // ═══════════════════════════════════════
 
 // Create shortage request (from cashier)
-router.post('/shortage-requests', async (req, res) => {
+// G-INV — inventory.requisition.create is seeded for cashier (this is the POS
+// shortage-request screen); see db/migrations/capability-seeds/g-inv.json.
+router.post('/shortage-requests', requireCapability('inventory.requisition.create'), async (req, res) => {
   try {
-    const { items, username, notes, warehouseId, branchId, brandId } = req.body;
+    const { items, notes, warehouseId, branchId, brandId } = req.body;
+    const username = _actor(req); // G-INV M2 — requester identity from the JWT only
     if (!items || !items.length) return res.json({ success: false, error: 'أضف مادة واحدة على الأقل' });
     if (!req.guardWh(res, warehouseId)) return;
 
@@ -4575,7 +4620,11 @@ router.get('/shortage-requests', async (req, res) => {
       brandId: r.brand_id || '', brand_id: r.brand_id || '', brandName: r.brand_name || '',
       branchId: r.branch_id || '', branchName: r.branch_name || ''
     })));
-  } catch (e) { res.json([]); }
+  } catch (e) {
+    // G-INV M3 — a DB failure is a 500, not a silent empty shortage list.
+    console.error('[inventory /shortage-requests list]', e);
+    res.status(500).json({ success: false, error: e.message });
+  }
 });
 
 // Get single shortage request with items
@@ -4601,9 +4650,10 @@ router.get('/shortage-requests/:id', async (req, res) => {
 });
 
 // Approve shortage request
-router.post('/shortage-requests/:id/approve', async (req, res) => {
+router.post('/shortage-requests/:id/approve', requireCapability('purchasing.requisitions.approve'), async (req, res) => {
   try {
-    const { username, supplyMode } = req.body;
+    const { supplyMode } = req.body;
+    const username = _actor(req); // G-INV M2 — approver identity from the JWT only
     const [sr] = await db.query('SELECT warehouse_id FROM shortage_requests WHERE id = ?', [req.params.id]);
     if (!sr.length) return res.json({ success: false, error: 'الطلب غير موجود' });
     if (!req.guardWh(res, sr[0].warehouse_id)) return;
@@ -4614,9 +4664,10 @@ router.post('/shortage-requests/:id/approve', async (req, res) => {
 });
 
 // Reject shortage request
-router.post('/shortage-requests/:id/reject', async (req, res) => {
+router.post('/shortage-requests/:id/reject', requireCapability('purchasing.requisitions.approve'), async (req, res) => {
   try {
-    const { username, reason } = req.body;
+    const { reason } = req.body;
+    const username = _actor(req); // G-INV M2 — actor from the JWT only
     const [sr] = await db.query('SELECT warehouse_id FROM shortage_requests WHERE id = ?', [req.params.id]);
     if (!sr.length) return res.json({ success: false, error: 'الطلب غير موجود' });
     if (!req.guardWh(res, sr[0].warehouse_id)) return;
@@ -4628,7 +4679,7 @@ router.post('/shortage-requests/:id/reject', async (req, res) => {
 });
 
 // Update pending shortage request (branch manager can edit before approval)
-router.put('/shortage-requests/:id', async (req, res) => {
+router.put('/shortage-requests/:id', requireCapability('inventory.requisition.create'), async (req, res) => {
   try {
     const { items, notes } = req.body;
     const [reqs] = await db.query('SELECT status, warehouse_id FROM shortage_requests WHERE id = ?', [req.params.id]);
@@ -4651,8 +4702,9 @@ router.put('/shortage-requests/:id', async (req, res) => {
   } catch (e) { res.json({ success: false, error: e.message }); }
 });
 
-// Delete shortage request (developer only)
-router.delete('/shortage-requests/:id', async (req, res) => {
+// Delete shortage request — manager-level (was labelled developer-only but had
+// NO guard at all; requireCapability's admin/developer bypass covers devs).
+router.delete('/shortage-requests/:id', requireCapability('purchasing.requisitions.approve'), async (req, res) => {
   try {
     const [sr] = await db.query('SELECT warehouse_id FROM shortage_requests WHERE id = ?', [req.params.id]);
     if (!sr.length) return res.json({ success: false, error: 'الطلب غير موجود' });
@@ -4664,9 +4716,10 @@ router.delete('/shortage-requests/:id', async (req, res) => {
 });
 
 // Convert shortage to Purchase Order
-router.post('/shortage-requests/:id/convert-to-po', async (req, res) => {
+router.post('/shortage-requests/:id/convert-to-po', requireCapability('purchasing.requisitions.approve'), async (req, res) => {
   try {
-    const { username, supplierId, supplierName } = req.body;
+    const { supplierId, supplierName } = req.body;
+    const username = _actor(req); // G-INV M2 — actor from the JWT only
     const [reqs] = await db.query('SELECT * FROM shortage_requests WHERE id = ?', [req.params.id]);
     if (!reqs.length) return res.json({ success: false, error: 'الطلب غير موجود' });
     const r = reqs[0];

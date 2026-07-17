@@ -2,9 +2,12 @@
  * Header — brand, cashier identity, shift chip, connection indicator,
  * links back to the main system and the legacy cashier.
  */
-import { AlertTriangle, ChefHat, ClipboardCheck, CloudOff, ExternalLink, FileText, History, Loader2, PackageSearch, UserRound, Wifi } from "lucide-react";
+import { useSyncExternalStore } from "react";
+import { AlertTriangle, ChefHat, ClipboardCheck, CloudOff, DownloadCloud, ExternalLink, FileText, History, Inbox, Loader2, PackageSearch, RefreshCw, UserRound, Wifi } from "lucide-react";
 import { usePos } from "@/state/store";
 import { fmtInt } from "@/lib/format";
+import { getPwaStatus, subscribePwa, promptInstall, applyUpdate } from "@/lib/pwa";
+import { getDrainStatus, subscribeDrain } from "@/lib/legacyDrain";
 import { cn, Button } from "./ui";
 
 const ROLE_LABELS: Record<string, string> = {
@@ -104,18 +107,57 @@ export function StaleCatalogChip() {
   );
 }
 
+/** PWA install button + «نسخة جديدة» update action + legacy-queue drain chip. */
+export function PwaControls({ onOpenDrainReport }: { onOpenDrainReport?: () => void }) {
+  const pwa = useSyncExternalStore(subscribePwa, getPwaStatus);
+  const drain = useSyncExternalStore(subscribeDrain, getDrainStatus);
+  return (
+    <>
+      {drain.pending > 0 || (drain.outcome && drain.outcome.failed.length > 0) ? (
+        <button
+          type="button"
+          onClick={onOpenDrainReport}
+          title="عمليات من الكاشير القديم بانتظار المزامنة"
+          className="chip btn-press min-h-11 cursor-pointer border-amber-300 bg-amber-50 px-3 text-xs text-amber-800"
+        >
+          {drain.state === "running" ? (
+            <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden />
+          ) : (
+            <Inbox className="h-3.5 w-3.5" aria-hidden />
+          )}
+          قديم <span className="num">({fmtInt(drain.pending)})</span>
+        </button>
+      ) : null}
+      {pwa.updateReady ? (
+        <Button size="sm" variant="saffron" onClick={applyUpdate} title="توفرت نسخة جديدة من التطبيق">
+          <RefreshCw className="h-3.5 w-3.5" aria-hidden />
+          نسخة جديدة — تحديث
+        </Button>
+      ) : null}
+      {pwa.canInstall ? (
+        <Button size="sm" variant="secondary" onClick={() => void promptInstall()} title="تثبيت الكاشير كتطبيق على هذا الجهاز">
+          <DownloadCloud className="h-3.5 w-3.5" aria-hidden />
+          تثبيت التطبيق
+        </Button>
+      ) : null}
+    </>
+  );
+}
+
 export function Header({
   onOpenShiftDialog,
   onOpenSyncReport,
   onOpenMyInvoices,
   onOpenStocktake,
   onOpenRequisitions,
+  onOpenDrainReport,
 }: {
   onOpenShiftDialog: () => void;
   onOpenSyncReport: () => void;
   onOpenMyInvoices: () => void;
   onOpenStocktake: () => void;
   onOpenRequisitions: () => void;
+  onOpenDrainReport?: () => void;
 }) {
   const { user, shiftId, shiftLoading, engineStatus, openShiftNow, openingShift } = usePos();
 
@@ -181,6 +223,7 @@ export function Header({
         </Button>
 
         <StaleCatalogChip />
+        <PwaControls onOpenDrainReport={onOpenDrainReport} />
 
         <ConnectionIndicator onOpenReport={onOpenSyncReport} />
 

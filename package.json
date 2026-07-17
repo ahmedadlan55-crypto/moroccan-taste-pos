@@ -95,6 +95,7 @@
     "test:procurement-migration": "node tests/procurementMigration.integration.test.js",
     "test:procurement-reports-groupby": "node tests/procurementReportsGroupBy.integration.test.js",
     "e2e:erp": "npm run build:erp && playwright test --config=playwright.erp.config.ts",
+    "e2e:pos": "npm run build:pos && playwright test --config=playwright.pos.config.ts",
     "o2c:migrate": "node scripts/order-to-cash/migrate.js",
     "o2c:backfill": "node scripts/order-to-cash/backfill.js",
     "o2c:reconcile": "node scripts/order-to-cash/reconcile.js",

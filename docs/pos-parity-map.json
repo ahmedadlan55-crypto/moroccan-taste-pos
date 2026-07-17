@@ -1,10 +1,61 @@
 {
+  "_about": "Legacy /pos → React /pos-v2 parity map. Keyed by slug so parallel closure streams can append entries without stomping each other. status: done | partial | deferred.",
+  "entries": {
+    "pwa-manifest": {
+      "status": "done",
+      "legacy": "public/pos/manifest.json",
+      "v2": "frontend/pos/public/manifest.webmanifest",
+      "notes": "«كاشير المذاق», rtl/ar, standalone, start_url+scope './' (base-relative: identical file serves /pos-v2/ now and /pos/ after cutover), theme #0e1726 / background #f2f5f9, 192+512 maskable PNG icons (programmatically generated).",
+      "verify": "e2e/pos/offline.spec.ts — 'PWA installability signals'"
+    },
+    "pwa-service-worker": {
+      "status": "done",
+      "legacy": "public/pos/sw.js (CACHE_NAME mt-pos-v61-warehouse-rollout)",
+      "v2": "frontend/pos/public/sw.js (CACHE_NAME mt-posv2-<version> — cannot collide with legacy)",
+      "notes": "Hand-rolled, same battle-tested strategy: HTML/JS network-first with cache fallback, static stale-while-revalidate, /api/* NEVER cached, skipWaiting + clients.claim, old mt-posv2-* caches deleted on activate. Precache list comes from Vite's build manifest (asset-manifest.json at dist root — build.manifest in frontend/pos/vite.config.ts) fetched at SW install time.",
+      "verify": "node --check + e2e/pos/offline.spec.ts (shell served offline, controller on 2nd load)"
+    },
+    "pwa-install-prompt": {
+      "status": "done",
+      "legacy": "browser default (legacy relied on Chrome's own install UI)",
+      "v2": "frontend/pos/src/lib/pwa.ts + Header PwaControls («تثبيت التطبيق» button when beforeinstallprompt is captured)",
+      "notes": "Deferred-prompt capture + promptInstall(); appinstalled clears the button.",
+      "verify": "manual — Chromium shows the button once installability criteria pass"
+    },
+    "pwa-update-signal": {
+      "status": "done",
+      "legacy": "silent skipWaiting (legacy users picked up new code on next reload without notice)",
+      "v2": "sw.js POSV2_SW_UPDATED postMessage → Header «نسخة جديدة — تحديث» action (reload)",
+      "notes": "Only fires on a real update (old mt-posv2-* cache existed), never on first install.",
+      "verify": "bump SW_VERSION, redeploy, open a controlled page → button appears"
+    },
+    "offline-shell-cache": {
+      "status": "done",
+      "legacy": "public/pos/sw.js APP_SHELL precache (hardcoded file list)",
+      "v2": "frontend/pos/public/sw.js precache from asset-manifest.json (hashed bundle) + './' + manifest + icons",
+      "notes": "Offline navigation falls back to the cached shell ('./') for ANY in-scope URL (SPA fallback).",
+      "verify": "e2e/pos/offline.spec.ts steps 4–6 (close, reopen offline, shell renders)"
+    },
+    "offline-sale-queue": {
+      "status": "done",
+      "legacy": "public/pos/app.js v7.3 — localStorage pos_offline_queue + _posOQSync replay",
+      "v2": "frontend/pos/src/lib/offline.ts — IndexedDB FIFO op queue, submit→/api/sales→complete with clientOrderId dedupe (pre-existing)",
+      "notes": "This stream added the E2E proof: offline cash checkout queues, survives restart, replays to exactly ONE sales row.",
+      "verify": "e2e/pos/offline.spec.ts — 'eight-step offline sale lifecycle' (asserts the MySQL row count by client_order_id)"
+    },
+    "offline-legacy-queue-drain": {
+      "status": "done",
+      "legacy": "pos_offline_queue entries could strand if the terminal moved to /pos-v2 before syncing",
+      "v2": "frontend/pos/src/lib/legacyDrain.ts (boot-once, online-only) + App report dialog + Header chip",
+      "notes": "Replays each entry through POST /api/sales exactly as legacy would ({...order, username, shiftId}); clientOrderId dedupe makes replay safe. ONLY successes are cleared — rejections/transport failures/malformed records are retained verbatim and surfaced («تمت مزامنة X عملية من النسخة القديمة» + report dialog). Stricter than legacy, which dropped server-rejected entries.",
+      "verify": "frontend/pos/src/lib/__tests__/legacyDrain.test.ts (11 tests: parsing, exact replay body, idempotent replay, partial-failure retention, transport stop, offline no-op)"
+    }
+  },
   "_meta": {
     "purpose": "Machine-readable coverage map: legacy /pos slug (docs/pos-parity-matrix.md) → React /pos-v2 implementation. status=covered means implemented in React AND exercised by the referenced vitest file; status=not-required needs a quoted reason from the matrix itself.",
     "stream": "close/b1-pos-inventory — stocktake (جرد) + shortage requests (طلب النواقص) + receive materials (استلام مواد)",
     "capNote": "cap reflects the server contract as it stands: authenticated POS session (JWT) + warehouse scoping via req.guardWh/whScopeClause; a parallel security stream is adding capability guards to these routes with the cashier role explicitly kept working."
   },
-
   "stocktake-open": {
     "status": "covered",
     "react": "frontend/pos/src/components/dialogs/StocktakeDialog.tsx (Header launcher «جرد المخزون»)",
@@ -96,7 +147,6 @@
     "cap": "authenticated POS user",
     "test": "StocktakeDialog.test.tsx (same builder as stocktake-print-report)"
   },
-
   "shortage-open": {
     "status": "covered",
     "react": "frontend/pos/src/components/dialogs/RequisitionsDialog.tsx (Header launcher «طلب النواقص»); loads GET /api/inventory/items on open, restores draft cart",
@@ -209,7 +259,6 @@
     "cap": "authenticated POS user",
     "test": "RequisitionsDialog.test.tsx — create test asserts the key is cleared post-submit (write path exercised by every mutation)"
   },
-
   "receive-materials-open": {
     "status": "covered",
     "react": "RequisitionsDialog.tsx openReceive() — only offered on status='converted' cards; loads the request detail, refuses non-converted/poId-less («هذا الطلب لم يُحوّل لأمر شراء بعد»), finds the purchase by poId (port of openReceiveModal app.js:4101)",

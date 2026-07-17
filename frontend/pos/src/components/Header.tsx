@@ -2,8 +2,7 @@
  * Header — brand, cashier identity, shift chip, connection indicator,
  * links back to the main system and the legacy cashier.
  */
-import { AlertTriangle, ChefHat, CloudOff, ExternalLink, FileText, History, Loader2, UserRound, Wifi } from "lucide-react";
-import { ChefHat, ClipboardCheck, CloudOff, ExternalLink, History, Loader2, PackageSearch, UserRound, Wifi } from "lucide-react";
+import { AlertTriangle, ChefHat, ClipboardCheck, CloudOff, ExternalLink, FileText, History, Loader2, PackageSearch, UserRound, Wifi } from "lucide-react";
 import { usePos } from "@/state/store";
 import { fmtInt } from "@/lib/format";
 import { cn, Button } from "./ui";
@@ -109,15 +108,12 @@ export function Header({
   onOpenShiftDialog,
   onOpenSyncReport,
   onOpenMyInvoices,
-}: {
-  onOpenShiftDialog: () => void;
-  onOpenSyncReport: () => void;
-  onOpenMyInvoices: () => void;
   onOpenStocktake,
   onOpenRequisitions,
 }: {
   onOpenShiftDialog: () => void;
   onOpenSyncReport: () => void;
+  onOpenMyInvoices: () => void;
   onOpenStocktake: () => void;
   onOpenRequisitions: () => void;
 }) {

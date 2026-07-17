@@ -48,6 +48,7 @@
     "test:cash-voucher-security": "node tests/integration/cashVoucherSecurity.api.test.js",
     "test:security-policies": "node tests/integration/securityPolicies.api.test.js",
     "test:customers-authz": "node tests/integration/customersAuthz.api.test.js",
+    "test:erp-writes-authz": "node tests/integration/erpWritesAuthz.api.test.js",
     "test:bank-recon": "node tests/integration/bankRecon.api.test.js",
     "test:warehouse-scope": "node tests/integration/warehouseScope.api.test.js",
     "test:idempotency-retention": "node tests/integration/idempotencyRetention.test.js",

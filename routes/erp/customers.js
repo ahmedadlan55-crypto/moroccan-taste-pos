@@ -11,7 +11,6 @@
 // ═══════════════════════════════════════════════════════════════════
 const router = require('express').Router();
 const db = require('../../db/connection');
-const requireRole = require('../../middleware/auth').requireRole;
 
 // v7.4 — Authorization. These routes previously carried NO role guard at all:
 // `/api/erp` only chains audit + warehouse-scope middleware, so ANY authenticated
@@ -20,12 +19,21 @@ const requireRole = require('../../middleware/auth').requireRole;
 // exploitable: a plain cashier's token returned HTTP 200 on
 // DELETE /api/erp/customers/:id and set is_active = 0.
 //
-// Reads + create stay open to the till (the cashier genuinely creates a customer
-// mid-checkout — that is legacy parity, see public/pos/app.js customer flow).
-// Deletion is a master-data operation and is restricted to admin/manager.
-const CUSTOMER_READ  = requireRole('admin', 'manager', 'cashier');
-const CUSTOMER_WRITE = requireRole('admin', 'manager', 'cashier');
-const CUSTOMER_ADMIN = requireRole('admin', 'manager');
+// v7.5 — Upgraded from coarse requireRole to the fine-grained capability model
+// (permissions_v3 — the same customers.* capabilities the /api/o2c customer
+// routes already enforce, seeded every boot by seedO2CCapabilities):
+//   reads  → customers.view    (admin/manager/cashier/sales/accountant/finance)
+//   create → customers.create  (admin/manager/cashier/sales)
+//   update → customers.edit    (checked in-handler: this module has no PUT —
+//                               POST with an existing id IS the update path)
+//   delete → customers.deactivate (sensitive: admin/manager only)
+// The till keeps working: the cashier role holds customers.view/create/edit per
+// the O2C seeds (the cashier genuinely creates a customer mid-checkout — legacy
+// parity, see public/pos/app.js customer flow). requireCapability fails closed.
+const requireCapability = require('../../middleware/requireCapability');
+const CUSTOMER_READ   = requireCapability('customers.view');
+const CUSTOMER_CREATE = requireCapability('customers.create');
+const CUSTOMER_ADMIN  = requireCapability('customers.deactivate');
 
 router.get('/customers', CUSTOMER_READ, async (req, res) => {
   try {
@@ -159,7 +167,7 @@ router.get('/customers/search', CUSTOMER_READ, async (req, res) => {
   }
 });
 
-router.post('/customers', CUSTOMER_WRITE, async (req, res) => {
+router.post('/customers', CUSTOMER_CREATE, async (req, res) => {
   try {
     const { id, name, nameEn, vatNumber, phone, email, address, city, customerType, creditLimit, gender, username } = req.body;
     const safeGender = (gender === 'male' || gender === 'female') ? gender : 'unknown';
@@ -167,6 +175,12 @@ router.post('/customers', CUSTOMER_WRITE, async (req, res) => {
     if (id) {
       const [existing] = await db.query('SELECT id FROM customers WHERE id = ?', [id]);
       if (existing.length) {
+        // Updating an EXISTING customer is an edit, not a create — hold it to
+        // customers.edit (mirrors PUT /:id on the /api/o2c customers router).
+        const canEdit = await requireCapability.hasCapability(req.user, 'customers.edit');
+        if (!canEdit) {
+          return res.status(403).json({ success: false, code: 'PERMISSION_DENIED', error: 'صلاحية غير كافية لهذه العملية' });
+        }
         await db.query(
           `UPDATE customers SET name=?, name_en=?, vat_number=?, phone=?, email=?, address=?, city=?, customer_type=?, credit_limit=?, gender=?, updated_by=? WHERE id=?`,
           [name, nameEn || '', vatNumber || '', phone || '', email || '', address || '', city || '',

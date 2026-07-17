@@ -25,6 +25,8 @@ import { VoidDialog } from "@/components/dialogs/VoidDialog";
 import { DiscountDialog } from "@/components/dialogs/DiscountDialog";
 import { SyncReportDialog } from "@/components/dialogs/SyncReportDialog";
 import { MyInvoicesDialog } from "@/components/dialogs/MyInvoicesDialog";
+import { StocktakeDialog } from "@/components/dialogs/StocktakeDialog";
+import { RequisitionsDialog } from "@/components/dialogs/RequisitionsDialog";
 import { Button, ErrorBanner, Money } from "@/components/ui";
 
 function LoginRequired() {
@@ -80,6 +82,8 @@ export default function App() {
   const [discountOpen, setDiscountOpen] = useState(false);
   const [syncOpen, setSyncOpen] = useState(false);
   const [myInvoicesOpen, setMyInvoicesOpen] = useState(false);
+  const [stocktakeOpen, setStocktakeOpen] = useState(false);
+  const [requisitionsOpen, setRequisitionsOpen] = useState(false);
   const [heldCount, setHeldCount] = useState(0);
   const [holdBusy, setHoldBusy] = useState(false);
   const [voidBusy, setVoidBusy] = useState(false);
@@ -212,6 +216,8 @@ export default function App() {
         onOpenShiftDialog={() => setShiftOpen(true)}
         onOpenSyncReport={() => setSyncOpen(true)}
         onOpenMyInvoices={() => setMyInvoicesOpen(true)}
+        onOpenStocktake={() => setStocktakeOpen(true)}
+        onOpenRequisitions={() => setRequisitionsOpen(true)}
       />
 
       <main className="flex min-h-0 flex-1 gap-3 p-3">
@@ -285,6 +291,8 @@ export default function App() {
       <DiscountDialog open={discountOpen} onClose={() => setDiscountOpen(false)} />
       <SyncReportDialog open={syncOpen} onClose={() => setSyncOpen(false)} />
       <MyInvoicesDialog open={myInvoicesOpen} onClose={() => setMyInvoicesOpen(false)} />
+      <StocktakeDialog open={stocktakeOpen} onClose={() => setStocktakeOpen(false)} />
+      <RequisitionsDialog open={requisitionsOpen} onClose={() => setRequisitionsOpen(false)} />
 
       {/* Post-hold kitchen ticket offer */}
       <Dialog open={!!lastHeld} onClose={() => setLastHeld(null)} title="تم تعليق الطلب" widthClass="max-w-sm">

@@ -3,6 +3,7 @@
  * links back to the main system and the legacy cashier.
  */
 import { AlertTriangle, ChefHat, CloudOff, ExternalLink, FileText, History, Loader2, UserRound, Wifi } from "lucide-react";
+import { ChefHat, ClipboardCheck, CloudOff, ExternalLink, History, Loader2, PackageSearch, UserRound, Wifi } from "lucide-react";
 import { usePos } from "@/state/store";
 import { fmtInt } from "@/lib/format";
 import { cn, Button } from "./ui";
@@ -112,6 +113,13 @@ export function Header({
   onOpenShiftDialog: () => void;
   onOpenSyncReport: () => void;
   onOpenMyInvoices: () => void;
+  onOpenStocktake,
+  onOpenRequisitions,
+}: {
+  onOpenShiftDialog: () => void;
+  onOpenSyncReport: () => void;
+  onOpenStocktake: () => void;
+  onOpenRequisitions: () => void;
 }) {
   const { user, shiftId, shiftLoading, engineStatus, openShiftNow, openingShift } = usePos();
 
@@ -179,6 +187,26 @@ export function Header({
         <StaleCatalogChip />
 
         <ConnectionIndicator onOpenReport={onOpenSyncReport} />
+
+        {/* Inventory launchers — stocktake (جرد) + shortage requests (النواقص) */}
+        <button
+          type="button"
+          onClick={onOpenStocktake}
+          title="جرد المخزون"
+          className="btn-press flex min-h-11 items-center gap-1.5 rounded-xl px-3 text-xs font-bold text-slate-500 hover:bg-slate-100 hover:text-slate-700"
+        >
+          <ClipboardCheck className="h-4 w-4" aria-hidden />
+          <span className="hidden sm:inline">جرد المخزون</span>
+        </button>
+        <button
+          type="button"
+          onClick={onOpenRequisitions}
+          title="طلب النواقص والاستلام"
+          className="btn-press flex min-h-11 items-center gap-1.5 rounded-xl px-3 text-xs font-bold text-slate-500 hover:bg-slate-100 hover:text-slate-700"
+        >
+          <PackageSearch className="h-4 w-4" aria-hidden />
+          <span className="hidden sm:inline">طلب النواقص</span>
+        </button>
 
         <nav className="flex items-center gap-1">
           <a

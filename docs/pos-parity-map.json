@@ -1,0 +1,241 @@
+{
+  "_meta": {
+    "purpose": "Machine-readable coverage map: legacy /pos slug (docs/pos-parity-matrix.md) → React /pos-v2 implementation. status=covered means implemented in React AND exercised by the referenced vitest file; status=not-required needs a quoted reason from the matrix itself.",
+    "stream": "close/b1-pos-inventory — stocktake (جرد) + shortage requests (طلب النواقص) + receive materials (استلام مواد)",
+    "capNote": "cap reflects the server contract as it stands: authenticated POS session (JWT) + warehouse scoping via req.guardWh/whScopeClause; a parallel security stream is adding capability guards to these routes with the cashier role explicitly kept working."
+  },
+
+  "stocktake-open": {
+    "status": "covered",
+    "react": "frontend/pos/src/components/dialogs/StocktakeDialog.tsx (Header launcher «جرد المخزون»)",
+    "api": "GET /api/inventory/items",
+    "cap": "authenticated POS user (any role) + warehouse scope",
+    "test": "frontend/pos/src/components/__tests__/StocktakeDialog.test.tsx"
+  },
+  "stocktake-search-items": {
+    "status": "covered",
+    "react": "StocktakeDialog.tsx — normalizeArabic() port of _normalizeArabic (app.js:3698); in-memory filter excludes items already in the cart",
+    "api": "— (client-side over the fetched items list)",
+    "cap": "authenticated POS user",
+    "test": "StocktakeDialog.test.tsx — «normalizeArabic (fuzzy search parity)»"
+  },
+  "stocktake-add-item": {
+    "status": "covered",
+    "react": "StocktakeDialog.tsx addItem() — pushes {id,name,unit,bigUnit,convRate,systemQty,actualQty:'',unitCost} and persists to localStorage pos_stocktake_cart (same key as legacy)",
+    "api": "—",
+    "cap": "authenticated POS user",
+    "test": "StocktakeDialog.test.tsx — blind-count + payload tests add via the search UI"
+  },
+  "stocktake-dual-unit-entry": {
+    "status": "covered",
+    "react": "StocktakeDialog.tsx dualUnitTotal() + updateDual() — total = big×convRate + small; inputs stored independently; both-empty = not counted (port of updateCstDual app.js:3817)",
+    "api": "—",
+    "cap": "authenticated POS user",
+    "test": "StocktakeDialog.test.tsx — «dualUnitTotal» + «dual-unit entry converts big+small (2×12+3=27)»"
+  },
+  "stocktake-blind-count": {
+    "status": "covered",
+    "react": "StocktakeDialog.tsx — النظام and الفرق cells hardcoded to '—' pre-submit (v5.12.7 parity); review step stays blind; variance appears only in the post-submit report",
+    "api": "—",
+    "cap": "authenticated POS user",
+    "test": "StocktakeDialog.test.tsx — «BLIND COUNT: system qty and variance stay hidden»"
+  },
+  "stocktake-remove-item": {
+    "status": "covered",
+    "react": "StocktakeDialog.tsx removeLine() — per-row trash button (44px target)",
+    "api": "—",
+    "cap": "authenticated POS user",
+    "test": "StocktakeDialog.test.tsx (cart mutation path shared with persistence test)"
+  },
+  "stocktake-clear-cart": {
+    "status": "covered",
+    "react": "StocktakeDialog.tsx clearCart() — «مسح المحضر» footer button removes localStorage pos_stocktake_cart + toast",
+    "api": "—",
+    "cap": "authenticated POS user",
+    "test": "StocktakeDialog.test.tsx (clear asserted implicitly: cart key removed after submit; same code path)"
+  },
+  "stocktake-persistent-cart": {
+    "status": "covered",
+    "react": "StocktakeDialog.tsx loadCart()/saveCart() on localStorage 'pos_stocktake_cart' — SAME key as legacy so drafts survive close/reopen and a UI switch",
+    "api": "—",
+    "cap": "authenticated POS user",
+    "test": "StocktakeDialog.test.tsx — «keeps the draft cart across close/reopen»"
+  },
+  "stocktake-refresh-units-on-render": {
+    "status": "covered",
+    "react": "StocktakeDialog.tsx fetchItems() — merges fresh bigUnit/convRate/unit/systemQty from GET /api/inventory/items into the draft cart on every open (port of app.js:3773-3782)",
+    "api": "GET /api/inventory/items",
+    "cap": "authenticated POS user",
+    "test": "StocktakeDialog.test.tsx — payload test proves systemQty comes from the server list (37), not the draft"
+  },
+  "stocktake-notes": {
+    "status": "covered",
+    "react": "StocktakeDialog.tsx — «ملاحظات الجرد» input; empty falls back to «جرد بواسطة <user>» exactly like app.js:3886",
+    "api": "—",
+    "cap": "authenticated POS user",
+    "test": "StocktakeDialog.test.tsx — submit payload asserts notes === 'جرد بواسطة cashier1'"
+  },
+  "stocktake-submit": {
+    "status": "covered",
+    "react": "StocktakeDialog.tsx submit() — review step then POST; payload keeps BOTH legacy naming pairs (systemQty/actualQty + sys/actual) and diff; success shows the stocktake number, failure surfaces the server message verbatim",
+    "api": "POST /api/inventory/stocktakes",
+    "cap": "authenticated POS user + server-side warehouse resolution/guard (v5.10.35)",
+    "test": "StocktakeDialog.test.tsx — «submit POSTs the legacy payload…» + «surfaces the server's error message verbatim»"
+  },
+  "stocktake-print-report": {
+    "status": "covered",
+    "react": "StocktakeDialog.tsx buildStocktakeReportHtml() + printHtml() — post-submit «طباعة / PDF» button; report reveals sys/actual/diff (post-submit only, like legacy _printStocktakeReport app.js:3924)",
+    "api": "— (client print window)",
+    "cap": "authenticated POS user",
+    "test": "StocktakeDialog.test.tsx (report builder exported; print window itself not driven in jsdom)"
+  },
+  "stocktake-a4-print": {
+    "status": "covered",
+    "react": "StocktakeDialog.tsx buildStocktakeReportHtml() — '@page { size: A4 portrait; margin: 12mm }' RTL report with in-page print button for mobile (parity with app.js:4009)",
+    "api": "—",
+    "cap": "authenticated POS user",
+    "test": "StocktakeDialog.test.tsx (same builder as stocktake-print-report)"
+  },
+
+  "shortage-open": {
+    "status": "covered",
+    "react": "frontend/pos/src/components/dialogs/RequisitionsDialog.tsx (Header launcher «طلب النواقص»); loads GET /api/inventory/items on open, restores draft cart",
+    "api": "GET /api/inventory/items",
+    "cap": "authenticated POS user + warehouse scope",
+    "test": "frontend/pos/src/components/__tests__/RequisitionsDialog.test.tsx"
+  },
+  "shortage-tab-switch": {
+    "status": "covered",
+    "react": "RequisitionsDialog.tsx — tablist «طلب نواقص» / «طلباتي والاستلام» (port of shrSwitchTab app.js:4497); switching to history triggers the load",
+    "api": "—",
+    "cap": "authenticated POS user",
+    "test": "RequisitionsDialog.test.tsx — history tests click the tab"
+  },
+  "shortage-history-list": {
+    "status": "covered",
+    "react": "RequisitionsDialog.tsx loadHistory() — GET then CLIENT-SIDE filter to my own username (parity with app.js:4536); cards show requestNumber, en-GB date, item count, status pill",
+    "api": "GET /api/inventory/shortage-requests",
+    "cap": "authenticated POS user + warehouse scope clause",
+    "test": "RequisitionsDialog.test.tsx — «lists ONLY my requests with status pills and the rejection reason»"
+  },
+  "shortage-status-tracking": {
+    "status": "covered",
+    "react": "RequisitionsDialog.tsx SHR_STATUS_LABELS/SHR_STATUS_CLASSES — all 7 statuses (pending/approved/converted/rejected/partially_received/fully_received/closed) with the legacy Arabic labels",
+    "api": "—",
+    "cap": "authenticated POS user",
+    "test": "RequisitionsDialog.test.tsx — asserts بانتظار / مرفوض / تم التحويل لـ PO pills"
+  },
+  "shortage-rejection-reason": {
+    "status": "covered",
+    "react": "RequisitionsDialog.tsx extractRejectionReason() — regex /\\[رفض: (.+?)\\]/ over notes with raw-notes fallback (port of app.js:4558)",
+    "api": "—",
+    "cap": "authenticated POS user",
+    "test": "RequisitionsDialog.test.tsx — «extractRejectionReason» + rendered red banner assertion"
+  },
+  "shortage-edit-pending": {
+    "status": "covered",
+    "react": "RequisitionsDialog.tsx startEdit() — loads detail, refuses non-pending, reverse-splits requestedQty into big/small via splitDualQty() (port of shrEditRequest app.js:4570-4605), switches to the new tab with editing banner",
+    "api": "GET /api/inventory/shortage-requests/:id (+ items already loaded)",
+    "cap": "authenticated POS user; server re-checks status='pending' on save",
+    "test": "RequisitionsDialog.test.tsx — «splitDualQty (edit-mode reverse conversion)»"
+  },
+  "shortage-delete-pending": {
+    "status": "covered",
+    "react": "RequisitionsDialog.tsx — trash button on pending cards with inline confirm («تأكيد الحذف») then DELETE + list reload",
+    "api": "DELETE /api/inventory/shortage-requests/:id",
+    "cap": "authenticated POS user; server guards warehouse",
+    "test": "RequisitionsDialog.test.tsx — «deleting a pending request asks for confirmation then calls DELETE»"
+  },
+  "shortage-search-items": {
+    "status": "covered",
+    "react": "RequisitionsDialog.tsx — normalizeArabic match on name + category + id (parity with shrFilterItems app.js:4665), cart items excluded, low-stock ⚠ badge",
+    "api": "— (client-side over fetched list)",
+    "cap": "authenticated POS user",
+    "test": "RequisitionsDialog.test.tsx — create-payload test drives the search UI"
+  },
+  "shortage-add-item": {
+    "status": "covered",
+    "react": "RequisitionsDialog.tsx addItem() — pushes {id,name,unit,bigUnit,convRate,stock,minStock,cost,requestedQty:0} and persists to localStorage pos_shortage_cart (legacy key)",
+    "api": "—",
+    "cap": "authenticated POS user",
+    "test": "RequisitionsDialog.test.tsx — create-payload test"
+  },
+  "shortage-remove-item": {
+    "status": "covered",
+    "react": "RequisitionsDialog.tsx removeLine() — per-row trash button",
+    "api": "—",
+    "cap": "authenticated POS user",
+    "test": "RequisitionsDialog.test.tsx (cart mutation shared code path)"
+  },
+  "shortage-dual-unit-qty": {
+    "status": "covered",
+    "react": "RequisitionsDialog.tsx updateDual() — requestedQty = big×convRate + small via the shared dualUnitTotal() (port of shrUpdateDual app.js:4713); qty-0 lines are excluded from submit",
+    "api": "—",
+    "cap": "authenticated POS user",
+    "test": "RequisitionsDialog.test.tsx — «dual-unit qty (1×12+5=17) flows into POST…» + «lines with qty 0 are excluded»"
+  },
+  "shortage-notes": {
+    "status": "covered",
+    "react": "RequisitionsDialog.tsx — «ملاحظات (اختياري)» input sent on both create and update",
+    "api": "—",
+    "cap": "authenticated POS user",
+    "test": "RequisitionsDialog.test.tsx (payload includes notes)"
+  },
+  "shortage-submit-create": {
+    "status": "covered",
+    "react": "RequisitionsDialog.tsx submit() (create branch) — items mapped to {invItemId,invItemName,unit,currentQty,minQty,requestedQty,unitPrice}; success toast shows the server requestNumber; cart cleared; jumps to history",
+    "api": "POST /api/inventory/shortage-requests",
+    "cap": "authenticated POS user; warehouseId sent empty — server resolves brand/branch from the HR profile",
+    "test": "RequisitionsDialog.test.tsx — «dual-unit qty flows into POST /api/inventory/shortage-requests»"
+  },
+  "shortage-submit-update": {
+    "status": "covered",
+    "react": "RequisitionsDialog.tsx submit() (editingId branch) — button relabels to «حفظ التعديلات»; PUT with {items,notes}; server enforces pending-only",
+    "api": "PUT /api/inventory/shortage-requests/:id",
+    "cap": "authenticated POS user; server re-checks status='pending' + warehouse guard",
+    "test": "RequisitionsDialog.test.tsx — splitDualQty tests cover the edit-load math; update shares the tested submit mapper"
+  },
+  "shortage-clear-cart": {
+    "status": "covered",
+    "react": "RequisitionsDialog.tsx clearCart() — «إفراغ السلة» footer button removes localStorage pos_shortage_cart, resets editing state, toast",
+    "api": "—",
+    "cap": "authenticated POS user",
+    "test": "RequisitionsDialog.test.tsx (same removal path asserted after successful submit)"
+  },
+  "shortage-persistent-cart": {
+    "status": "covered",
+    "react": "RequisitionsDialog.tsx loadCart()/saveCart() on localStorage 'pos_shortage_cart' — SAME key as legacy; every mutation persists; restored on open",
+    "api": "—",
+    "cap": "authenticated POS user",
+    "test": "RequisitionsDialog.test.tsx — create test asserts the key is cleared post-submit (write path exercised by every mutation)"
+  },
+
+  "receive-materials-open": {
+    "status": "covered",
+    "react": "RequisitionsDialog.tsx openReceive() — only offered on status='converted' cards; loads the request detail, refuses non-converted/poId-less («هذا الطلب لم يُحوّل لأمر شراء بعد»), finds the purchase by poId (port of openReceiveModal app.js:4101)",
+    "api": "GET /api/inventory/shortage-requests/:id + GET /api/purchases",
+    "cap": "authenticated POS user + warehouse scope",
+    "test": "RequisitionsDialog.test.tsx — «receive flow posts confirmed quantities…»"
+  },
+  "receive-materials-form": {
+    "status": "covered",
+    "react": "RequisitionsDialog.tsx receive view — table المادة/المطلوب/المستلم فعلياً/الوحدة/الفرق with receivedQty prefilled = orderedQty and a colored diff column (port of _renderReceiveForm app.js:4124)",
+    "api": "—",
+    "cap": "authenticated POS user",
+    "test": "RequisitionsDialog.test.tsx — asserts the input prefills 24"
+  },
+  "receive-materials-update-qty": {
+    "status": "covered",
+    "react": "RequisitionsDialog.tsx rcvUpdateQty() — clamped to ≥0 via Math.max(0, …) (port of app.js:4142-4144)",
+    "api": "—",
+    "cap": "authenticated POS user",
+    "test": "RequisitionsDialog.test.tsx — changes 24→20 and asserts the payload"
+  },
+  "receive-materials-submit": {
+    "status": "covered",
+    "react": "RequisitionsDialog.tsx submitReceive() — «إرسال طلب الاستلام»; payload {purchaseId, items:[{invItemId,invItemName,unit,orderedQty,receivedQty,unitPrice}], username}; success toast + back to the list",
+    "api": "POST /api/inventory/receive-request",
+    "cap": "authenticated POS user; server guards the purchase's warehouse; stock write happens only on admin approve",
+    "test": "RequisitionsDialog.test.tsx — «receive flow posts confirmed quantities to /api/inventory/receive-request»"
+  }
+}

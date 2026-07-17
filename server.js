@@ -1490,10 +1490,13 @@ async function runMigrations() {
   await addColumnIfMissing('transactions', 'returned_by', "VARCHAR(100) DEFAULT NULL");
   await addColumnIfMissing('transactions', 'returned_reason', "VARCHAR(500) DEFAULT NULL");
   await addColumnIfMissing('transactions', 'return_count', "INT DEFAULT 0");
-  // Extend status ENUM to include 'returned' as a first-class state
-  try {
-    await db.query("ALTER TABLE transactions MODIFY COLUMN status ENUM('draft','pending','in_progress','returned','rejected','approved','closed') DEFAULT 'draft'");
-  } catch(e) { /* tolerate if already extended */ }
+  // v8 SAFETY (G3) — the V3.1 "extend to include 'returned'" ALTER that lived here
+  // was DELETED. Relative to the V4.1 statement just below it, it NARROWED the
+  // enum (its list lacked 'created' and 'replied'), and MySQL runs MODIFY COLUMN
+  // as a table rebuild: on every boot, any row sitting in 'created' or 'replied'
+  // during the narrow pass could be coerced ('' / first member) before the V4.1
+  // statement re-widened the enum microseconds later. The V4.1 ALTER below is a
+  // superset (it includes 'returned'), so nothing is lost by dropping this one.
 
   // ═══════════════════════════════════════════════════════════════════
   // V4 — Workflow Engine (Full Plan Execution)
@@ -2767,6 +2770,14 @@ async function runMigrations() {
   await addColumnIfMissing('hr_departments', 'name_en', "VARCHAR(200)");
   await addColumnIfMissing('hr_departments', 'code', "VARCHAR(50)");
   await addColumnIfMissing('hr_departments', 'branch_id', "VARCHAR(50)");
+  // v8 (G3) — the hr_departments table created HERE (createTableIfMissing above)
+  // never had manager_id / parent_id / description, yet routes/hr.js selected
+  // them (always '') and its POST parsed then silently DROPPED them while
+  // returning success:true. Additive + nullable, so existing rows are untouched;
+  // routes/hr.js now actually reads/writes them.
+  await addColumnIfMissing('hr_departments', 'manager_id', "VARCHAR(50) NULL");
+  await addColumnIfMissing('hr_departments', 'parent_id', "VARCHAR(50) NULL");
+  await addColumnIfMissing('hr_departments', 'description', "TEXT NULL");
 
   // Expand hr_exceptions ENUM to include excuse_absence (for existing tables)
   try {
@@ -4080,7 +4091,17 @@ async function runMigrations() {
   // ─── v6.0.1 Wave A.3 — UNIQUE constraint on gl_journals.journal_number ───
   // Closes the SELECT-then-INSERT race that could produce duplicate
   // JV-YYYYMMDD-NNNN numbers under concurrent checkouts.
-  try { await db.query('ALTER TABLE gl_journals ADD UNIQUE KEY uq_journal_number (journal_number)'); } catch(e) {}
+  // v8 SAFETY (G3) — was `catch(e) {}`: on a DB with pre-existing duplicate
+  // journal numbers the key silently never built, while the numbering code
+  // above kept believing the race net existed. Tolerate only "already exists";
+  // shout about anything else (do not crash boot — the sale path must stay up).
+  try {
+    await db.query('ALTER TABLE gl_journals ADD UNIQUE KEY uq_journal_number (journal_number)');
+  } catch (e) {
+    if (!e || e.code !== 'ER_DUP_KEYNAME') {
+      console.error('[schema] FAILED to create gl_journals.uq_journal_number —', (e && (e.code || e.message)));
+    }
+  }
 
   // ─── v6.4.3 — De-duplicate menu items + UNIQUE (brand_id, name) ───
   // Older deployments accumulated duplicate menu rows when the same item
@@ -4104,7 +4125,14 @@ async function runMigrations() {
   } catch (e) { /* table may not exist on a fresh boot — ignore */ }
   try {
     await db.query('ALTER TABLE menu ADD UNIQUE KEY uq_menu_brand_name (brand_id, name)');
-  } catch (e) { /* already there — ignore */ }
+  } catch (e) {
+    // v8 SAFETY (G3) — only "already there" is fine; anything else (e.g. the
+    // dedupe above failed and duplicates remain) means imports can double
+    // items again, so it must be visible in the boot log.
+    if (!e || e.code !== 'ER_DUP_KEYNAME') {
+      console.error('[schema] FAILED to create menu.uq_menu_brand_name —', (e && (e.code || e.message)));
+    }
+  }
 
   // ─── v6.4.4 — Silence orphan menu items that have a branded twin ───
   // The owner reported the cashier seeing 215 items when the admin
@@ -4239,7 +4267,9 @@ async function runMigrations() {
       console.log('[DB] Migration: waste_entries.uq_waste_idem unique index added');
     }
   } catch (e) {
-    console.log('[DB] Migration warning (uq_waste_idem):', e.message.substring(0, 120));
+    // v8 SAFETY (G3) — this index is what makes waste POST idempotent under
+    // concurrency; a quiet console.log buried the failure. Shout, don't crash.
+    console.error('[schema] FAILED to create waste_entries.uq_waste_idem —', (e && (e.code || e.message)));
   }
   await addColumnIfMissing('stock_adjustments', 'adjustment_number', "VARCHAR(40)");
 
@@ -4271,7 +4301,16 @@ async function runMigrations() {
         AND c1.created_at > c2.created_at
     `);
   } catch(e) {}
-  try { await db.query('ALTER TABLE customers ADD UNIQUE KEY uq_customers_phone (phone)'); } catch(e) {}
+  // v8 SAFETY (G3) — was `catch(e) {}`: if the dedupe above failed (or new
+  // duplicates appeared between boots) the key never built and the
+  // upsert-by-phone flow silently produced sibling customers again.
+  try {
+    await db.query('ALTER TABLE customers ADD UNIQUE KEY uq_customers_phone (phone)');
+  } catch (e) {
+    if (!e || e.code !== 'ER_DUP_KEYNAME') {
+      console.error('[schema] FAILED to create customers.uq_customers_phone —', (e && (e.code || e.message)));
+    }
+  }
 
   // ─── v6.0.3 Wave C.3 — Inventory cost history table ───
   // Every change to inv_items.cost (purchase receipt, stocktake variance,

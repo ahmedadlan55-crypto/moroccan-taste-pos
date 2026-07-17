@@ -376,6 +376,12 @@ router.post('/departments', async (req, res) => {
         const [col] = await db.query("SHOW COLUMNS FROM hr_departments LIKE 'branch_id'");
         if (col.length) { fields.push('branch_id=?'); params.push(branchId || null); }
       } catch(e) {}
+      // v8 (G3) — manager_id / parent_id / description were parsed from the body
+      // then silently DROPPED (the UPDATE never mentioned them) while the API
+      // returned success:true. The columns are guaranteed now (ensureTables here
+      // + addColumnIfMissing in server.js), so write them unconditionally.
+      fields.push('manager_id=?', 'parent_id=?', 'description=?');
+      params.push(managerId || null, parentId || null, description || null);
       params.push(id);
       await db.query(`UPDATE hr_departments SET ${fields.join(', ')} WHERE id=?`, params);
       return res.json({ success: true, id, code: finalCode });
@@ -397,6 +403,10 @@ router.post('/departments', async (req, res) => {
       const [c] = await db.query("SHOW COLUMNS FROM hr_departments LIKE 'branch_id'");
       if (c.length) { cols.push('branch_id'); vals.push(branchId || null); }
     } catch(e) {}
+    // v8 (G3) — same as the UPDATE path above: these three were parsed then
+    // silently dropped on INSERT. Columns are guaranteed by the migrations.
+    cols.push('manager_id', 'parent_id', 'description');
+    vals.push(managerId || null, parentId || null, description || null);
     const placeholders = cols.map(() => '?').join(',');
     await db.query(`INSERT INTO hr_departments (${cols.join(',')}) VALUES (${placeholders})`, vals);
     res.json({ success: true, id: newId, code: finalCode });

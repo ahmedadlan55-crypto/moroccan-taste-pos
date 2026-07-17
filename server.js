@@ -147,12 +147,10 @@ app.use('/api/', async function(req, res, next) {
   var p = req.path || '';
 
   // Best-effort identity for PUBLIC paths: if a valid Bearer token is present,
-  // populate req.user before the public early-returns below. Some paths are
-  // public here (no token REQUIRED) yet sit behind a role guard at their own
-  // mount — e.g. GET /api/hr/departments and /api/hr/leave-types run under
-  // requireRole('admin','manager'). Without this, req.user is unset on those
-  // public paths, requireRole defaults the role to 'cashier', and an authenticated
-  // admin/manager is wrongly 403'd. This NEVER blocks: absent/invalid tokens leave
+  // populate req.user before the public early-returns below. Some public paths'
+  // handlers (or role guards mounted on their routers) read req.user when it is
+  // available; without this, an authenticated caller on a public path would be
+  // treated as anonymous. This NEVER blocks: absent/invalid tokens leave
   // req.user unset and public paths still proceed anonymously. Non-public paths are
   // still hard-verified (with the session-version gate) by the strict block below.
   try {
@@ -166,7 +164,12 @@ app.use('/api/', async function(req, res, next) {
   if (p === '/version') return next();                 // v6.20.0 — deploy/version marker
   if (p === '/inventory/v2/ready') return next();      // RC — readiness probe (DB + schema)
   if (p.startsWith('/auth/')) return next();           // all auth endpoints
-  if (p.startsWith('/settings')) return next();        // settings
+  // v8 SECURITY (G3) — /settings is public for GET ONLY: the login pages read
+  // branding (company name / logo) before auth. Every non-GET /settings request
+  // now goes through the JWT gate below. This is defense-in-depth on top of
+  // routes/settings.js, whose writes ALL re-verify the token inline and require
+  // admin/manager (verified: no legitimate anonymous write exists there).
+  if (p.startsWith('/settings') && req.method === 'GET') return next();
   if (p.startsWith('/menu')) return next();            // menu
   // v7.5 (H1 SECURITY) — /hr/my-* is NO LONGER public. It now passes through the
   // JWT gate below so the employee is identified from their token, never from a
@@ -181,11 +184,19 @@ app.use('/api/', async function(req, res, next) {
   // `?username=admin` authenticated as admin with NO token, on routes including
   // DELETE /transactions/__wipe-all. Every caller (employee PWA, legacy admin,
   // api-bridge, React) already sends "Authorization: Bearer".
-  if (p.startsWith('/hr/leave-types')) return next();  // leave types list
-  if (p.startsWith('/hr/departments')) return next();  // departments list
+  // v8 SECURITY (G3) — /hr/departments and /hr/leave-types are NO LONGER public.
+  // The exemptions exposed the org directory (department names, structure,
+  // manager links) to any unauthenticated caller. Every known consumer — the
+  // legacy admin api-bridge, the React ERP people module, and the employee PWA —
+  // calls them AFTER login with "Authorization: Bearer"; no pre-login page reads
+  // them (verified across public/ and frontend/).
   if (p.startsWith('/i18n/')) return next();           // V5.7.13 — translation proxy (login pages too)
-  // V5.7.19 — printable shift report (opened in a new tab without JS auth headers)
-  if (/^\/shifts\/[^\/]+\/full-report-print$/.test(p)) return next();
+  // v8 SECURITY (G3) — the /shifts/:id/full-report-print exemption is REMOVED.
+  // It served the full financial shift report (sales, refunds, drawer counts) to
+  // anyone who guessed/shared the URL. The route itself is being made
+  // token-aware in a parallel change (the print tab carries a credential instead
+  // of relying on a public path); until that lands, the report requires the
+  // normal Authorization header like every other /api route.
 
   // Try to extract and verify JWT token — HEADER ONLY. Credentials are never
   // accepted from the URL/query string (they leak into access logs, browser

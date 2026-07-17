@@ -67,11 +67,12 @@ function _capabilitiesFor(user) {
   return caps;
 }
 
-// Phase 0 §5 — actor identity comes from the authenticated JWT (req.user),
-// not a spoofable body field. The global /api gate sets req.user for every
-// /api/inventory route. Keeps a body fallback only for legacy import paths.
-function _actor(req, fallback) {
-  return (req.user && (req.user.username || req.user.name)) || fallback || '';
+// Phase 0 §5 / G-INV M2 — actor identity comes STRICTLY from the authenticated
+// JWT (req.user); the global /api gate sets req.user for every /api/inventory
+// route. The old body-username fallback let any caller spoof the recorded
+// actor on stocktakes/adjustments/audit rows and is deleted.
+function _actor(req) {
+  return (req.user && (req.user.username || req.user.name)) || '';
 }
 
 // v5.10.25 — Idempotent migration: add deleted_at column to inv_items so
@@ -234,7 +235,8 @@ async function _checkDuplicateName(conn, name, brandId, excludeId) {
 async function _audit(connOrDb, req, action, recordId, oldVal, newVal) {
   try {
     const c = connOrDb || db;
-    const username = (req && (req.user && req.user.username)) || (req && req.body && req.body.username) || 'system';
+    // G-INV M2 — audit actor from the JWT only (body fallback was spoofable).
+    const username = (req && req.user && req.user.username) || 'system';
     const userId   = (req && req.user && req.user.id) || null;
     const ip       = (req && (req.ip || (req.headers && req.headers['x-forwarded-for']) || '')) || '';
     const ua       = (req && req.headers && req.headers['user-agent']) || '';
@@ -1417,7 +1419,7 @@ router.post('/items', requireCapability('inventory.edit'), async (req, res) => {
         await conn.query(
           `INSERT INTO warehouse_stock (id, warehouse_id, item_id, qty, added_at, first_added_date, added_by, last_updated)
            VALUES (?,?,?,?,?,?,?,?)`,
-          [wsId, warehouseId, newId, 0, nowIso, today, (req.user && req.user.username) || b.username || 'system', nowIso]
+          [wsId, warehouseId, newId, 0, nowIso, today, _actor(req) || 'system', nowIso]
         );
         await _audit(conn, req, 'inv_item.create', newId, null, { id: newId, name, brandId: effectiveBrand, warehouseId, kind: safeKind });
       });
@@ -1549,7 +1551,7 @@ router.post('/warehouses/:warehouseId/items', requireCapability('inventory.edit'
     const warehouseId = req.params.warehouseId;
     if (!req.guardWh(res, warehouseId)) return;
     const b = req.body || {};
-    const username = (req.user && req.user.username) || b.username || 'system';
+    const username = _actor(req) || 'system';
 
     // Validate warehouse exists
     const [whs] = await db.query('SELECT id, name, brand_id FROM warehouses WHERE id = ?', [warehouseId]);
@@ -1759,7 +1761,7 @@ router.post('/warehouses/:warehouseId/register-bulk', requireCapability('invento
     const firstAddedDate = b.firstAddedDate
       ? new Date(b.firstAddedDate).toISOString().slice(0,10)
       : new Date().toISOString().slice(0,10);
-    const username = b.username || 'system';
+    const username = _actor(req) || 'system';
 
     let registered = 0, skipped = 0;
     for (const itemId of itemIds) {
@@ -2247,8 +2249,9 @@ router.get('/movements', async (req, res) => {
 // Stock update (in/out movement)
 router.post('/stock-update', requireCapability('inventory.edit'), async (req, res) => {
   try {
-    const { itemId, itemName, type, qty, reason, username, notes } = req.body;
+    const { itemId, itemName, type, qty, reason, notes } = req.body;
     let { warehouseId, branchId } = req.body;
+    const username = _actor(req); // G-INV M2 — movement actor from the JWT only
 
     // V3 spec rule: stock movements MUST have warehouse_id + branch_id
     // (يمنع: إنشاء حركات مخزون بدون مستودع وفرع محددين)
@@ -3606,9 +3609,9 @@ router.post('/stocktakes', requireCapability('inventory.stocktake.create'), asyn
     // Falls back to "now" for live counts.
     const { items, notes, brandId, countDate } = req.body;
     let { warehouseId, branchId } = req.body;
-    // Phase 0 §5 — count author from the JWT (falls back to body only for
-    // legacy import scripts that post without an authenticated session).
-    const username = _actor(req, req.body.username);
+    // Phase 0 §5 / G-INV M2 — count author STRICTLY from the JWT (the body
+    // fallback was spoofable and is deleted; every caller is authenticated).
+    const username = _actor(req);
     if (!items || !items.length) return res.json({ success: false, error: 'No items' });
 
     // RC — tracked items are counted via warehouse-v2 stocktakes (per-lot counting);
@@ -3956,8 +3959,9 @@ router.post('/adjustments', requireCapability('inventory.adjustment.create'), as
   try {
     const { items, reason, reasonNotes } = req.body;
     let { warehouseId, branchId } = req.body;
-    // Phase 0 §5 — adjustment author from the JWT (body fallback for imports).
-    const username = _actor(req, req.body.username);
+    // Phase 0 §5 / G-INV M2 — adjustment author STRICTLY from the JWT (the
+    // spoofable body fallback is deleted).
+    const username = _actor(req);
     if (!items || !items.length) return res.json({ success: false, error: 'No items' });
 
     // v5.10.39 — Resolve warehouseId + branchId from the user's profile
@@ -4277,7 +4281,8 @@ router.delete('/adjustments/:id', MGR, requireCapability('inventory.edit'), asyn
 // stays manager-level.
 router.post('/receive-request', requireCapability('inventory.requisition.create'), async (req, res) => {
   try {
-    const { purchaseId, items, username, notes } = req.body;
+    const { purchaseId, items } = req.body;
+    const username = _actor(req); // G-INV M2 — receiver identity from the JWT only
     if (!purchaseId || !items || !items.length) return res.json({ success: false, error: 'بيانات ناقصة' });
 
     // Per-user warehouse access: derive the purchase's warehouse and guard.
@@ -4328,8 +4333,8 @@ router.get('/receive-requests', async (req, res) => {
 // tables don't exist yet. FOR UPDATE serializes a double-approve.
 router.post('/receive-approve/:id', requireCapability('inventory.edit'), async (req, res) => {
   try {
-    const { username } = req.body;
-    // The approve UI sends only {username} and this flow has always treated
+    const username = _actor(req); // G-INV M2 — approver identity from the JWT only
+    // The approve UI sends only {username} (now ignored) and this flow has always treated
     // prices as VAT-inclusive, so default true; callers may opt out with an
     // explicit includesVAT:false (same flag as purchases receive).
     const includesVAT = req.body.includesVAT !== false;
@@ -4515,7 +4520,8 @@ router.post('/receive-approve/:id', requireCapability('inventory.edit'), async (
 // shortage-request screen); see db/migrations/capability-seeds/g-inv.json.
 router.post('/shortage-requests', requireCapability('inventory.requisition.create'), async (req, res) => {
   try {
-    const { items, username, notes, warehouseId, branchId, brandId } = req.body;
+    const { items, notes, warehouseId, branchId, brandId } = req.body;
+    const username = _actor(req); // G-INV M2 — requester identity from the JWT only
     if (!items || !items.length) return res.json({ success: false, error: 'أضف مادة واحدة على الأقل' });
     if (!req.guardWh(res, warehouseId)) return;
 
@@ -4618,7 +4624,8 @@ router.get('/shortage-requests/:id', async (req, res) => {
 // Approve shortage request
 router.post('/shortage-requests/:id/approve', requireCapability('purchasing.requisitions.approve'), async (req, res) => {
   try {
-    const { username, supplyMode } = req.body;
+    const { supplyMode } = req.body;
+    const username = _actor(req); // G-INV M2 — approver identity from the JWT only
     const [sr] = await db.query('SELECT warehouse_id FROM shortage_requests WHERE id = ?', [req.params.id]);
     if (!sr.length) return res.json({ success: false, error: 'الطلب غير موجود' });
     if (!req.guardWh(res, sr[0].warehouse_id)) return;
@@ -4631,7 +4638,8 @@ router.post('/shortage-requests/:id/approve', requireCapability('purchasing.requ
 // Reject shortage request
 router.post('/shortage-requests/:id/reject', requireCapability('purchasing.requisitions.approve'), async (req, res) => {
   try {
-    const { username, reason } = req.body;
+    const { reason } = req.body;
+    const username = _actor(req); // G-INV M2 — actor from the JWT only
     const [sr] = await db.query('SELECT warehouse_id FROM shortage_requests WHERE id = ?', [req.params.id]);
     if (!sr.length) return res.json({ success: false, error: 'الطلب غير موجود' });
     if (!req.guardWh(res, sr[0].warehouse_id)) return;
@@ -4682,7 +4690,8 @@ router.delete('/shortage-requests/:id', requireCapability('purchasing.requisitio
 // Convert shortage to Purchase Order
 router.post('/shortage-requests/:id/convert-to-po', requireCapability('purchasing.requisitions.approve'), async (req, res) => {
   try {
-    const { username, supplierId, supplierName } = req.body;
+    const { supplierId, supplierName } = req.body;
+    const username = _actor(req); // G-INV M2 — actor from the JWT only
     const [reqs] = await db.query('SELECT * FROM shortage_requests WHERE id = ?', [req.params.id]);
     if (!reqs.length) return res.json({ success: false, error: 'الطلب غير موجود' });
     const r = reqs[0];

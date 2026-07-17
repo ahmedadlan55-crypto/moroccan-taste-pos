@@ -31,11 +31,11 @@ const STK = require('../lib/stocktakeWorkflow');
 
 function _id(p){ return p+'-'+Date.now()+'-'+Math.random().toString(36).slice(2,7); }
 
-// Phase 0 §5 — actor identity from the authenticated JWT (req.user). The
-// state-changing actions (submit/approve/reject) take the actor STRICTLY from
-// the session; create/edit keep a body fallback for tooling.
-function _actor(req, fallback) {
-  return (req.user && (req.user.username || req.user.name)) || fallback || '';
+// Phase 0 §5 / G-INV M2 — actor identity STRICTLY from the authenticated JWT
+// (req.user) for EVERY action; the create/edit body fallback was spoofable
+// and is deleted (all callers are authenticated by the global /api gate).
+function _actor(req) {
+  return (req.user && (req.user.username || req.user.name)) || '';
 }
 
 const REASON_CODES = {
@@ -145,7 +145,7 @@ router.post('/', requireCapability('inventory.stocktake.create'), async (req, re
          warehouse_id, branch_id, workflow_status, variance_threshold_pct, count_method)
       VALUES (?, ?, ?, ?, 'completed', 0, 0, ?, ?, 'draft', ?, ?)`,
       [id, b.stocktakeDate || new Date().toISOString().slice(0,10),
-       _actor(req, b.username) || 'system',
+       _actor(req) || 'system',
        b.notes || null, b.warehouseId, b.branchId || null,
        b.varianceThresholdPct != null ? b.varianceThresholdPct : 10,
        b.countMethod || 'full']);
@@ -230,7 +230,7 @@ router.put('/:id/items/:lineId', requireCapability('inventory.stocktake.create')
     if (b.photoData !== undefined)  { sets.push('photo_data=?'); params.push(b.photoData || null); }
     if (b.verified)                  {
       sets.push('verified_by=?,verified_at=NOW()');
-      params.push(_actor(req, b.verifiedBy) || 'system');
+      params.push(_actor(req) || 'system');
     }
     params.push(req.params.lineId);
     await db.query(`UPDATE stocktake_items SET ${sets.join(',')} WHERE id = ?`, params);

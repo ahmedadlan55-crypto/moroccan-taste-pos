@@ -24,6 +24,8 @@ import { ShiftDialog } from "@/components/dialogs/ShiftDialog";
 import { VoidDialog } from "@/components/dialogs/VoidDialog";
 import { DiscountDialog } from "@/components/dialogs/DiscountDialog";
 import { SyncReportDialog } from "@/components/dialogs/SyncReportDialog";
+import { StocktakeDialog } from "@/components/dialogs/StocktakeDialog";
+import { RequisitionsDialog } from "@/components/dialogs/RequisitionsDialog";
 import { Button, ErrorBanner, Money } from "@/components/ui";
 
 function LoginRequired() {
@@ -73,6 +75,8 @@ export default function App() {
   const [voidOpen, setVoidOpen] = useState(false);
   const [discountOpen, setDiscountOpen] = useState(false);
   const [syncOpen, setSyncOpen] = useState(false);
+  const [stocktakeOpen, setStocktakeOpen] = useState(false);
+  const [requisitionsOpen, setRequisitionsOpen] = useState(false);
   const [heldCount, setHeldCount] = useState(0);
   const [holdBusy, setHoldBusy] = useState(false);
   const [voidBusy, setVoidBusy] = useState(false);
@@ -201,7 +205,12 @@ export default function App() {
   return (
     <div className="flex h-screen flex-col overflow-hidden">
       <Toasts />
-      <Header onOpenShiftDialog={() => setShiftOpen(true)} onOpenSyncReport={() => setSyncOpen(true)} />
+      <Header
+        onOpenShiftDialog={() => setShiftOpen(true)}
+        onOpenSyncReport={() => setSyncOpen(true)}
+        onOpenStocktake={() => setStocktakeOpen(true)}
+        onOpenRequisitions={() => setRequisitionsOpen(true)}
+      />
 
       <main className="flex min-h-0 flex-1 gap-3 p-3">
         {/* Category rail — first column in RTL, ≥1024px only */}
@@ -273,6 +282,8 @@ export default function App() {
       <VoidDialog open={voidOpen} onClose={() => setVoidOpen(false)} onConfirm={(r) => void voidCurrent(r)} busy={voidBusy} />
       <DiscountDialog open={discountOpen} onClose={() => setDiscountOpen(false)} />
       <SyncReportDialog open={syncOpen} onClose={() => setSyncOpen(false)} />
+      <StocktakeDialog open={stocktakeOpen} onClose={() => setStocktakeOpen(false)} />
+      <RequisitionsDialog open={requisitionsOpen} onClose={() => setRequisitionsOpen(false)} />
 
       {/* Post-hold kitchen ticket offer */}
       <Dialog open={!!lastHeld} onClose={() => setLastHeld(null)} title="تم تعليق الطلب" widthClass="max-w-sm">

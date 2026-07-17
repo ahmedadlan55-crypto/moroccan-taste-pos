@@ -13,6 +13,9 @@
  */
 const router = require('express').Router();
 const db = require('../db/connection');
+// G-SALES hardening — channel-menu writes shape what the POS can sell and at
+// what price: gated by the live `channels.manage` capability.
+const requireCapability = require('../middleware/requireCapability');
 
 function _id(){ return 'CMI-' + Date.now() + '-' + Math.random().toString(36).slice(2,7); }
 
@@ -167,7 +170,7 @@ router.get('/:channelId/available-items', async (req, res) => {
   } catch(e) { res.status(500).json({ error: e.message }); }
 });
 
-router.post('/:channelId/items', async (req, res) => {
+router.post('/:channelId/items', requireCapability('channels.manage'), async (req, res) => {
   try {
     const { itemIds, branchId, defaults } = req.body || {};
     if (!Array.isArray(itemIds) || !itemIds.length) {
@@ -198,7 +201,7 @@ router.post('/:channelId/items', async (req, res) => {
   } catch(e) { res.status(500).json({ error: e.message }); }
 });
 
-router.put('/:channelId/items/:itemId', async (req, res) => {
+router.put('/:channelId/items/:itemId', requireCapability('channels.manage'), async (req, res) => {
   try {
     const fields = ['is_available','override_price','daily_limit','sort_order',
                     'sales_warehouse_id','bom_id','notes','branch_id'];
@@ -220,7 +223,7 @@ router.put('/:channelId/items/:itemId', async (req, res) => {
   } catch(e) { res.status(500).json({ error: e.message }); }
 });
 
-router.delete('/:channelId/items/:itemId', async (req, res) => {
+router.delete('/:channelId/items/:itemId', requireCapability('channels.manage'), async (req, res) => {
   try {
     const branchId = req.query.branchId || null;
     const params = [req.params.channelId, req.params.itemId];
@@ -232,7 +235,7 @@ router.delete('/:channelId/items/:itemId', async (req, res) => {
   } catch(e) { res.status(500).json({ error: e.message }); }
 });
 
-router.post('/:channelId/copy-from/:srcChannelId', async (req, res) => {
+router.post('/:channelId/copy-from/:srcChannelId', requireCapability('channels.manage'), async (req, res) => {
   try {
     const branchId = (req.body && req.body.branchId) || null;
     const [src] = await db.query(`SELECT * FROM channel_menu_items
@@ -250,7 +253,7 @@ router.post('/:channelId/copy-from/:srcChannelId', async (req, res) => {
             r.is_available, r.override_price, r.daily_limit, r.sort_order,
             r.sales_warehouse_id, r.bom_id, r.notes]);
         copied++;
-      } catch(_) {}
+      } catch(_) { /* duplicate target row — skip (INSERT IGNORE edge) */ }
     }
     res.json({ success: true, copied, total_source: src.length });
   } catch(e) { res.status(500).json({ error: e.message }); }

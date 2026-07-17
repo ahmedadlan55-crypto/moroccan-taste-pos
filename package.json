@@ -81,6 +81,7 @@
     "scope:backfill": "node scripts/backfill-warehouse-access.js",
     "test:pos-v2-api": "node tests/integration/posV2.api.test.js",
     "test:pos-v2-uom": "node tests/integration/posV2Uom.api.test.js",
+    "test:sales-shifts-authz": "node tests/integration/salesShiftsAuthz.api.test.js",
     "procurement:migrate": "node scripts/procurement/migrate.js",
     "procurement:reconcile": "node scripts/procurement/reconcile.js",
     "procurement:backfill": "node scripts/procurement/backfill.js",

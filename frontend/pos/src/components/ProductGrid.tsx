@@ -11,8 +11,71 @@ import { forwardRef, memo, useEffect, useMemo, useState } from "react";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { PackageSearch, Search, X } from "lucide-react";
 import type { Catalog, CatalogItem } from "@/lib/types";
+import { getToken } from "@/lib/auth";
 import { fmt2 } from "@/lib/format";
 import { cn, EmptyState, Skeleton } from "./ui";
+
+// ── Item images (close/d-images) ─────────────────────────────────────────────
+// The catalog carries only `imageVersion` (an 8-char content hash) — the bytes
+// live behind GET /api/pos/v2/item-image/:id. That endpoint sits behind the
+// global /api JWT gate and a plain <img src> cannot send an Authorization
+// header, so images are fetched with the POS token and rendered as object URLs
+// (the same fetch→objectURL pattern the ERP uses for authenticated downloads).
+// `?v=<imageVersion>` keys both the browser HTTP cache (the response is
+// `public, max-age=31536000, immutable`) and the in-memory cache below, so an
+// image edit invalidates on the next catalog sync with no manual busting.
+//
+// The API base is deliberately ABSOLUTE: /api/* is mounted at the server root
+// no matter where this SPA is served (/pos-v2/ today, /pos/ after the cutover),
+// so — unlike anything derived from import.meta.env.BASE_URL — it survives the
+// move unchanged.
+const ITEM_IMAGE_API = "/api/pos/v2/item-image/";
+
+/** Object-URL cache, insertion-ordered. Bounded so scrolling a 2,000-item
+ *  catalog can't pin hundreds of MB of blobs: evicted entries (long unmounted
+ *  by then — only ~50 cards are ever live) are revoked and simply refetch from
+ *  the HTTP cache if the cashier scrolls back. */
+const imageCache = new Map<string, Promise<string | null>>();
+const IMAGE_CACHE_MAX = 300;
+
+function loadItemImage(id: string, version: string): Promise<string | null> {
+  const key = `${id}?v=${version}`;
+  const hit = imageCache.get(key);
+  if (hit) return hit;
+  const p = (async (): Promise<string | null> => {
+    try {
+      const headers: Record<string, string> = {};
+      const token = getToken();
+      if (token) headers.Authorization = `Bearer ${token}`;
+      const res = await fetch(`${ITEM_IMAGE_API}${encodeURIComponent(id)}?v=${encodeURIComponent(version)}`, { headers });
+      if (!res.ok) return null; // 404 corrupt/cleared, 401 logged-out — no photo, never a broken grid
+      return URL.createObjectURL(await res.blob());
+    } catch {
+      return null; // offline / network error — the card just shows no photo
+    }
+  })();
+  if (imageCache.size >= IMAGE_CACHE_MAX) {
+    const oldest = imageCache.keys().next().value;
+    if (oldest !== undefined) {
+      const evicted = imageCache.get(oldest);
+      imageCache.delete(oldest);
+      void evicted?.then((url) => { if (url) URL.revokeObjectURL(url); });
+    }
+  }
+  imageCache.set(key, p);
+  return p;
+}
+
+function useItemImage(id: string, version: string | null | undefined): string | null {
+  const [src, setSrc] = useState<string | null>(null);
+  useEffect(() => {
+    if (!version) { setSrc(null); return; }
+    let alive = true;
+    void loadItemImage(id, version).then((url) => { if (alive) setSrc(url); });
+    return () => { alive = false; };
+  }, [id, version]);
+  return version ? src : null;
+}
 
 export function filterItems(items: CatalogItem[], category: string | null, query: string): CatalogItem[] {
   const q = query.trim().toLowerCase();
@@ -54,12 +117,35 @@ export function resolveScan(items: CatalogItem[], query: string): ScanHit | null
 }
 
 const ProductCard = memo(function ProductCard({ item, onAdd }: { item: CatalogItem; onAdd: (item: CatalogItem) => void }) {
+  const imgSrc = useItemImage(item.id, item.imageVersion);
   return (
     <button
       type="button"
       onClick={() => onAdd(item)}
       className="btn-press group flex min-h-[5.5rem] flex-col justify-between rounded-2xl border border-slate-200 bg-white p-3 text-start shadow-sm transition hover:border-teal-200 hover:shadow-soft"
     >
+      {item.imageVersion ? (
+        // FIXED height, reserved from first paint: the box exists before (and
+        // whether or not) the bytes arrive, so a finished download never changes
+        // the card's height — the virtualizer's measured rows stay put (no
+        // reflow, no scroll jump). Rendered ONLY when the item has an image.
+        <div data-testid="product-thumb" aria-hidden className="mb-2 h-16 w-full shrink-0 overflow-hidden rounded-xl bg-slate-100">
+          {imgSrc ? (
+            <img
+              key={imgSrc}
+              src={imgSrc}
+              alt=""
+              loading="lazy"
+              decoding="async"
+              draggable={false}
+              className="h-full w-full object-cover"
+              // Graceful: a corrupt blob hides ITSELF (the box keeps the row
+              // height stable); keyed by src so a later good image starts fresh.
+              onError={(e) => { e.currentTarget.style.display = "none"; }}
+            />
+          ) : null}
+        </div>
+      ) : null}
       <p className="line-clamp-2 text-sm font-extrabold leading-snug text-ink group-hover:text-teal-700">{item.name}</p>
       <p className="mt-2 text-sm font-extrabold text-teal-600">
         <span className="num">{fmt2(item.price)}</span> <span className="text-[11px] font-bold text-slate-400">ر.س</span>

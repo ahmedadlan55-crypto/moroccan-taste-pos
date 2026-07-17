@@ -28,10 +28,106 @@ const invoiceIdentity = require('../lib/invoiceIdentity');
 router.get('/invoice-identity', verifyToken, MGR, async (req, res) => {
   try {
     const scope = { branchId: req.query.branchId || null, brandId: req.query.brandId || null };
-    const { identity, sources } = await invoiceIdentity.resolveIdentity(db, scope);
+    const { identity, sources, receiptSettings } = await invoiceIdentity.resolveIdentity(db, scope);
     const [branches] = await db.query('SELECT id, name FROM branches ORDER BY name').catch(() => [[]]);
     const [brands] = await db.query('SELECT id, name FROM brands ORDER BY name').catch(() => [[]]);
-    res.json({ success: true, scope, identity, sources, branches, brands });
+    // The print toggles (settings.ReceiptShowFields): parsed for the editor's
+    // switches AND raw so the screen can tell "explicitly configured" apart
+    // from "all-true defaults".
+    let showFieldsRaw = null;
+    try {
+      const [sf] = await db.query("SELECT setting_value FROM settings WHERE setting_key = 'ReceiptShowFields' LIMIT 1");
+      if (sf.length) showFieldsRaw = sf[0].setting_value;
+    } catch (_) { /* settings table missing → defaults */ }
+    res.json({
+      success: true, scope, identity, sources, branches, brands,
+      showFields: invoiceIdentity.showFields(showFieldsRaw),
+      showFieldsRaw,
+      receiptSettings,
+    });
+  } catch (e) {
+    res.status(500).json({ success: false, error: e.message });
+  }
+});
+
+// PUT /api/settings/invoice-identity-scope — scoped identity overrides.
+//
+// The invoice-settings screen previews per-scope but every write used to be
+// GLOBAL (PUT /settings). This endpoint edits the ONLY columns resolveIdentity
+// actually reads from the scope tables — nothing is invented:
+//   branch scope (branches.id):  address            → branches.location
+//                                branchCompanyName  → branches.company_name
+//   brand scope  (brands.id):    brandName          → brands.name
+//                                logo               → brands.logo
+// Every other identity field has no scoped column and stays global-only —
+// honest, and the screen says so instead of silently disabling.
+//
+// Same gate as the other identity surfaces: token + admin/manager (the
+// /settings prefix is exempt from the global /api guard, so it must be
+// explicit here).
+const SCOPE_COLUMNS = Object.freeze({
+  branch: Object.freeze({ address: 'location', branchCompanyName: 'company_name' }),
+  brand: Object.freeze({ brandName: 'name', logo: 'logo' }),
+});
+// brands.logo is LONGTEXT and carries data-URLs; the screen compresses to
+// ≤100KB (≈137K base64 chars). Cap generously above that, not at infinity.
+const SCOPE_VALUE_MAX = Object.freeze({ address: 500, branchCompanyName: 200, brandName: 200, logo: 200000 });
+
+router.put('/invoice-identity-scope', verifyToken, MGR, async (req, res) => {
+  try {
+    const body = req.body || {};
+    const branchId = body.branchId ? String(body.branchId).trim() : null;
+    const brandId = body.brandId ? String(body.brandId).trim() : null;
+    const fields = body.fields && typeof body.fields === 'object' ? body.fields : null;
+    if (!fields || !Object.keys(fields).length) {
+      return res.status(400).json({ success: false, error: 'fields مطلوب: القيم المراد تخصيصها' });
+    }
+
+    // Split the payload into per-table column sets, rejecting anything that is
+    // not a genuinely scoped field (a whitelist, so no column name ever comes
+    // from the request).
+    const updates = { branch: {}, brand: {} };
+    for (const [field, raw] of Object.entries(fields)) {
+      const scope = SCOPE_COLUMNS.branch[field] ? 'branch' : (SCOPE_COLUMNS.brand[field] ? 'brand' : null);
+      if (!scope) {
+        return res.status(400).json({ success: false, error: `الحقل "${field}" لا يملك عمودًا على مستوى الفرع/العلامة — يُحفظ من الإعدادات العامة فقط.` });
+      }
+      const value = String(raw == null ? '' : raw);
+      if (value.length > SCOPE_VALUE_MAX[field]) {
+        return res.status(400).json({ success: false, error: `قيمة "${field}" أطول من الحد المسموح (${SCOPE_VALUE_MAX[field]}).` });
+      }
+      updates[scope][field] = value;
+    }
+    if (Object.keys(updates.branch).length && !branchId) {
+      return res.status(400).json({ success: false, error: 'تخصيص حقول الفرع يتطلب branchId.' });
+    }
+    if (Object.keys(updates.brand).length && !brandId) {
+      return res.status(400).json({ success: false, error: 'تخصيص حقول العلامة التجارية يتطلب brandId.' });
+    }
+    // brands.name is the brand's actual NOT NULL name (the brands screen lists
+    // it) — blanking it via this side door would break that screen.
+    if ('brandName' in updates.brand && !updates.brand.brandName.trim()) {
+      return res.status(400).json({ success: false, error: 'اسم العلامة التجارية لا يمكن أن يكون فارغًا.' });
+    }
+
+    const applied = [];
+    for (const [scope, table, id] of [['branch', 'branches', branchId], ['brand', 'brands', brandId]]) {
+      const cols = Object.entries(updates[scope]);
+      if (!cols.length) continue;
+      // Existence check up-front: UPDATE affectedRows can be 0 for a same-value
+      // write, so it cannot distinguish "row missing" from "already that value".
+      const [row] = await db.query(`SELECT id FROM ${table} WHERE id = ? LIMIT 1`, [id]);
+      if (!row.length) {
+        return res.status(404).json({ success: false, error: `${scope === 'branch' ? 'الفرع' : 'العلامة التجارية'} غير موجود: ${id}` });
+      }
+      await db.query(
+        `UPDATE ${table} SET ${cols.map(([f]) => `${SCOPE_COLUMNS[scope][f]} = ?`).join(', ')} WHERE id = ?`,
+        cols.map(([, v]) => v).concat([id])
+      );
+      applied.push({ scope, id, fields: cols.map(([f]) => f) });
+    }
+
+    res.json({ success: true, applied });
   } catch (e) {
     res.status(500).json({ success: false, error: e.message });
   }

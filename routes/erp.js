@@ -135,7 +135,10 @@ router.get('/gl/accounts', requireCapability('finance.gl.view'), async (req, res
       taxNature:     a.tax_nature || 'none'
     })));
   } catch (e) {
-    res.json([]);
+    // v7.5 — was res.json([]): a DB fault rendered as "the chart of accounts
+    // is empty", which the COA screen dutifully displayed.
+    console.error('[erp/gl/accounts] list failed:', e && (e.code || e.message));
+    res.status(500).json({ success: false, error: 'تعذّر تحميل دليل الحسابات' });
   }
 });
 
@@ -894,7 +897,10 @@ router.get('/gl/coa-template', async (req, res) => {
 // Differs from /gl/accounts/import?mode=replace which preserves accounts
 // with posted journal entries — that guard is exactly why the user's
 // bank stayed under inventory.
-router.post('/gl/coa/wipe-and-seed', async (req, res) => {
+// v7.5 SECURITY — every seed/repair endpoint below rewrites the chart of
+// accounts (and some create journals). They were reachable with ANY
+// authenticated token. Same capability as the other COA mutations above.
+router.post('/gl/coa/wipe-and-seed', requireCapability('finance.accounts.manage'), async (req, res) => {
   const phrase = (req.body && req.body.confirmPhrase) || '';
   if (phrase !== 'WIPE-COA-CONFIRMED') {
     return res.status(400).json({ success: false, error: 'تأكيد ناقص أو خاطئ' });
@@ -1083,7 +1089,7 @@ router.post('/gl/coa/wipe-and-seed', async (req, res) => {
 });
 
 // Seed cafe GL accounts (دليل حسابات المقهى)
-router.post('/gl/seed', async (req, res) => {
+router.post('/gl/seed', requireCapability('finance.accounts.manage'), async (req, res) => {
   try {
     const [existing] = await db.query('SELECT COUNT(*) AS cnt FROM gl_accounts');
     if (existing[0].cnt > 0) return res.json({ success: true, msg: 'already seeded' });
@@ -1258,7 +1264,7 @@ async function _repairInventoryClassification(db) {
 // Expose helper on the router so server.js can run it at boot
 router._repairInventoryClassification = _repairInventoryClassification;
 
-router.post('/gl/repair-inventory-classification', async (req, res) => {
+router.post('/gl/repair-inventory-classification', requireCapability('finance.accounts.manage'), async (req, res) => {
   try {
     const r = await _repairInventoryClassification(db);
     res.json({ success: r.ok, fixed: r.repaired.length, repaired: r.repaired, reason: r.reason || null });
@@ -1279,7 +1285,7 @@ router.post('/gl/repair-inventory-classification', async (req, res) => {
 //       newParentCode, reason }],
 //     skipped:  [{ id, code, nameAr, reason }]   // for human review
 //   }
-router.post('/gl/repair-classification', async (req, res) => {
+router.post('/gl/repair-classification', requireCapability('finance.accounts.manage'), async (req, res) => {
   try {
     // Keyword → preferred parent code map (ordered: most-specific first)
     // Each entry: [regex, parentCode, label]
@@ -1561,7 +1567,7 @@ async function _repairCoaByPrefix(db) {
 // Export so server.js / boot scripts can run it idempotently if needed.
 router._repairCoaByPrefix = _repairCoaByPrefix;
 
-router.post('/gl/repair-tree-by-prefix', async (req, res) => {
+router.post('/gl/repair-tree-by-prefix', requireCapability('finance.accounts.manage'), async (req, res) => {
   try {
     const r = await _repairCoaByPrefix(db);
     res.json({
@@ -2063,7 +2069,7 @@ async function _coaRecomputeBalances(db) {
 // v5.10.43 — every step now logs to server console so silent failures
 // become visible. If a step throws, the transaction rolls back and the
 // HTTP response includes the actual error message + the step that failed.
-router.post('/gl/deep-repair', async (req, res) => {
+router.post('/gl/deep-repair', requireCapability('finance.accounts.manage'), async (req, res) => {
   let lastStep = 'init';
   try {
     const result = await db.withTransaction(async (conn) => {
@@ -2288,7 +2294,9 @@ router.get('/gl/journals', requireCapability('finance.gl.view'), async (req, res
 
     res.json(result);
   } catch (e) {
-    res.json([]);
+    // v7.5 — was res.json([]): a DB fault rendered as "no journals".
+    console.error('[erp/gl/journals] list failed:', e && (e.code || e.message));
+    res.status(500).json({ success: false, error: 'تعذّر تحميل القيود' });
   }
 });
 
@@ -2908,7 +2916,11 @@ router.get('/gl/journals/:id/entries', requireCapability('finance.gl.view'), asy
       accountName: e.account_name, debit: Number(e.debit), credit: Number(e.credit),
       description: e.description
     })));
-  } catch (e) { res.json([]); }
+  } catch (e) {
+    // v7.5 — was res.json([]): a fault read as "this journal has no lines".
+    console.error('[erp/gl/journals/:id/entries] failed:', e && (e.code || e.message));
+    res.status(500).json({ success: false, error: 'تعذّر تحميل سطور القيد' });
+  }
 });
 
 // v5.17.2 — /reports/gl-ledger-multi moved to routes/erp/reports/gl-ledger.js
@@ -3123,7 +3135,7 @@ router.delete('/gl/journals/:id', guardDeveloper, async (req, res) => {
 });
 
 // Repair: fix gl_entries with NULL account_id by matching account_code
-router.post('/gl/repair', async (req, res) => {
+router.post('/gl/repair', requireCapability('finance.accounts.manage'), async (req, res) => {
   try {
     const [nullEntries] = await db.query('SELECT e.id, e.account_code, e.account_name, e.debit, e.credit FROM gl_entries e WHERE e.account_id IS NULL');
     let fixed = 0, created = 0;
@@ -3195,7 +3207,7 @@ router.post('/gl/repair', async (req, res) => {
 
 // Repair: create GL entries for old custody topups that have no journal
 // Fix: restructure to 5 main accounts (merge old 6 into 5)
-router.post('/gl/fix-tree', async (req, res) => {
+router.post('/gl/fix-tree', requireCapability('finance.accounts.manage'), async (req, res) => {
   try {
     let fixed = 0;
 
@@ -3243,7 +3255,9 @@ router.post('/gl/fix-tree', async (req, res) => {
   } catch(e) { res.json({ success: false, error: e.message }); }
 });
 
-router.post('/gl/repair-topups', async (req, res) => {
+// repair-topups CREATES posted journals for historic custody top-ups — that is
+// journal posting, not account maintenance, hence finance.gl.post.
+router.post('/gl/repair-topups', requireCapability('finance.gl.post'), async (req, res) => {
   try {
     // Find topups without GL journals
     const [topups] = await db.query(
@@ -3555,7 +3569,7 @@ router.get('/gl/diagnose', async (req, res) => {
 //   • level mismatches → recompute level from actual parent depth
 // Does NOT touch type mismatches (operator decision), duplicate codes
 // (need merge strategy), or unbalanced journals (need accounting review).
-router.post('/gl/auto-fix', async (req, res) => {
+router.post('/gl/auto-fix', requireCapability('finance.accounts.manage'), async (req, res) => {
   try {
     const result = { orphansPromoted: 0, levelsCorrected: 0 };
 
@@ -3860,7 +3874,7 @@ router.get('/inventory-coa-parent', async (req, res) => {
 //     Saudi/International standard CoA.
 //   • 3-digit legacy parent (e.g. 113) → 113xx 2-digit suffix
 //     (11301, 11302, …) preserved for backward-compat.
-router.post('/gl/sync-inventory', async (req, res) => {
+router.post('/gl/sync-inventory', requireCapability('finance.accounts.manage'), async (req, res) => {
   try {
     let parent = await _resolveInventoryParent();
     // Fall back: if nothing resolved, create '113' under '11' (legacy)
@@ -4021,10 +4035,17 @@ router.get('/warehouses-list', async (req, res) => {
         allowedBrands: allowedBrands
       };
     }));
-  } catch(e) { res.json([]); }
+  } catch(e) {
+    // v7.5 — was res.json([]): a DB fault rendered as "no warehouses exist".
+    console.error('[erp/warehouses-list] failed:', e && (e.code || e.message));
+    res.status(500).json({ success: false, error: 'تعذّر تحميل المستودعات' });
+  }
 });
 
-router.post('/warehouses-list', async (req, res) => {
+// v7.5 — warehouse master-data create/update. inventory.edit (admin/manager/
+// inventory) so the store-keeper keeps the function while the till loses it;
+// the harder DELETE below stays MGR.
+router.post('/warehouses-list', requireCapability('inventory.edit'), async (req, res) => {
   try {
     const { id, code, name, type, brandId, branchId, costCenterId, location, manager, allowedBrands } = req.body;
     if (!code || !name) return res.json({ success: false, error: 'الرمز والاسم مطلوبان' });
@@ -4104,7 +4125,11 @@ router.get('/warehouse-stock-detail/:whId', async (req, res) => {
       `SELECT ws.*, i.name, i.category, i.unit, i.cost FROM warehouse_stock ws
        JOIN inv_items i ON ws.item_id = i.id WHERE ws.warehouse_id = ? ORDER BY i.name`, [req.params.whId]);
     res.json(rows.map(r => ({ itemId: r.item_id, itemName: r.name, category: r.category, unit: r.unit, qty: Number(r.qty), cost: Number(r.cost) })));
-  } catch(e) { res.json([]); }
+  } catch(e) {
+    // v7.5 — was res.json([]): a fault read as "this warehouse is empty".
+    console.error('[erp/warehouse-stock-detail] failed:', e && (e.code || e.message));
+    res.status(500).json({ success: false, error: 'تعذّر تحميل مخزون المستودع' });
+  }
 });
 
 // Warehouse transfers
@@ -4147,7 +4172,11 @@ router.get('/warehouse-transfers', async (req, res) => {
       transferDate: t.transfer_date, status: t.status, items: JSON.parse(t.items_json||'[]'),
       notes: t.notes, createdBy: t.created_by, approvedBy: t.approved_by
     })));
-  } catch(e) { res.json([]); }
+  } catch(e) {
+    // v7.5 — was res.json([]): a fault (or bad items_json) read as "no transfers".
+    console.error('[erp/warehouse-transfers] list failed:', e && (e.code || e.message));
+    res.status(500).json({ success: false, error: 'تعذّر تحميل تحويلات المستودعات' });
+  }
 });
 
 router.post('/warehouse-transfers', MGR, async (req, res) => {
@@ -4335,7 +4364,12 @@ router.get('/warehouse-transfer-lines/:id', async (req, res) => {
       itemId: item.itemId, itemName: item.itemName||'',
       qty: Number(item.qty)||0, cost: Number(item.cost)||0
     })));
-  } catch(e) { res.json([]); }
+  } catch(e) {
+    // v7.5 — was res.json([]): a fault (or corrupt items_json — JSON.parse
+    // throws here) read as "this transfer has no lines".
+    console.error('[erp/warehouse-transfer-lines] failed:', e && (e.code || e.message));
+    res.status(500).json({ success: false, error: 'تعذّر تحميل سطور التحويل' });
+  }
 });
 
 // ─── Brands: count linked branches + products ───
@@ -4353,7 +4387,11 @@ router.get('/brands-stats', async (req, res) => {
       });
     }
     res.json(result);
-  } catch(e) { res.json([]); }
+  } catch(e) {
+    // v7.5 — was res.json([]): a DB fault rendered as "no brands".
+    console.error('[erp/brands-stats] failed:', e && (e.code || e.message));
+    res.status(500).json({ success: false, error: 'تعذّر تحميل إحصاءات البراندات' });
+  }
 });
 
 // ─── LEGACY WAREHOUSE CODE REMOVED — consolidated into /warehouses-list, /warehouse-transfers ───

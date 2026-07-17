@@ -1,5 +1,34 @@
 const router = require('express').Router();
 const db = require('../db/connection');
+// G-SALES hardening — capability guard (pattern: routes/order-to-cash/returns.js)
+// + hasCapability for the owner-or-manager report check. jsonwebtoken is needed
+// because /:shiftId/full-report-print historically bypassed the global JWT gate
+// (server.js exemption), so this route verifies the Bearer token itself.
+const requireCapability = require('../middleware/requireCapability');
+const { hasCapability } = require('../middleware/requireCapability');
+const jwt = require('jsonwebtoken');
+
+// Resolve the authenticated user for routes that may be exempt from the global
+// JWT gate: prefer req.user (set by server.js), else verify the standard
+// Authorization header locally. Returns null when no valid token is present.
+function _userFromRequest(req) {
+  if (req.user && req.user.username) return req.user;
+  const h = req.headers['authorization'] || '';
+  if (h.startsWith('Bearer ')) {
+    try { return jwt.verify(h.slice(7), process.env.JWT_SECRET); } catch (_) { /* invalid/expired token → unauthenticated */ }
+  }
+  return null;
+}
+
+// Shift reports are financial documents: only the shift OWNER (the cashier who
+// ran it) or a holder of the manager-level `sales.reports.view` capability
+// (admin/developer bypass inside hasCapability) may read them.
+async function _canViewShiftReport(user, shiftUsername) {
+  if (!user || !user.username) return false;
+  if (shiftUsername && user.username === shiftUsername) return true;
+  try { return await hasCapability(user, 'sales.reports.view'); }
+  catch (_) { return false; /* fail closed */ }
+}
 
 // ═══════════════════════════════════════════════════════════════════
 // V5.7.17 — Shared payment-aggregation helper used by ALL shift
@@ -37,12 +66,18 @@ async function aggregateShiftPayments(shiftId) {
     );
     methods = rows;
   } catch (_) {
+    // Deliberate schema back-compat: legacy DBs lack show_in_shift_close.
     try {
       const [rows] = await db.query(
         "SELECT id, name, name_ar FROM payment_methods WHERE is_active = 1 ORDER BY sort_order, name"
       );
       methods = rows;
-    } catch (__) { methods = []; }
+    } catch (e2) {
+      // No payment_methods table at all — synthetic methods below keep the
+      // aggregation honest, but say so in the log instead of hiding it.
+      console.error('[aggregateShiftPayments] payment_methods unavailable:', e2.message);
+      methods = [];
+    }
   }
 
   // 2. Build exact + alias lookup tables
@@ -141,7 +176,12 @@ async function aggregateShiftPayments(shiftId) {
       agg[n].total += Number(it.total) || 0;
     }
     soldItems = Object.values(agg).sort((a, b) => b.qty - a.qty);
-  } catch (_) {}
+  } catch (e) {
+    // G-SALES error honesty — this feeds the printed shift report's items
+    // table. Keep the [] fallback (a missing items list must not block a
+    // shift CLOSE), but never swallow the failure silently again.
+    console.error('[aggregateShiftPayments] sold-items query failed:', e.message);
+  }
 
   return {
     methods: methods
@@ -163,14 +203,14 @@ async function aggregateShiftPayments(shiftId) {
   };
 }
 
-// Open shift
-router.post('/open', async (req, res) => {
+// Open shift — a CASHIER action: `pos.use` (live for role=cashier).
+router.post('/open', requireCapability('pos.use'), async (req, res) => {
   try {
-    // v7.5 — identity from the VERIFIED token first (body kept as a legacy
-    // fallback only) so a request can't open a shift under another cashier.
-    const username = (req.user && req.user.username) || req.body.username;
+    // G-SALES — identity comes ONLY from the verified token. The legacy
+    // req.body.username fallback let a request open a shift under another
+    // cashier; requireCapability above guarantees req.user is set.
+    const username = req.user.username;
     const { geoLat, geoLng, geoAddress, deviceInfo, device } = req.body;
-    if (!username) return res.status(400).json({ success: false, error: 'username مطلوب' });
     const ip = req.ip || req.headers['x-forwarded-for'] || req.connection.remoteAddress || '';
 
     // v5.12.2 — accept structured device { brand, model, os, ua, mobile }
@@ -211,12 +251,14 @@ router.post('/open', async (req, res) => {
 
     res.json({ success: true, shiftId: out.shiftId });
   } catch (e) {
-    res.json({ success: false, error: e.message });
+    // G-SALES error honesty — was res.json({success:false}) with HTTP 200.
+    console.error('[POST /shifts/open]', e.message);
+    res.status(e.status || 500).json({ success: false, error: e.message });
   }
 });
 
-// Close shift
-router.post('/close', async (req, res) => {
+// Close shift — a CASHIER action: `pos.shift_close` (live for role=cashier).
+router.post('/close', requireCapability('pos.shift_close'), async (req, res) => {
   try {
     const { shiftId, actualCash, actualCard, actualKita } = req.body;
     const now = new Date();
@@ -304,7 +346,8 @@ router.post('/close', async (req, res) => {
 //   notes
 // }
 // ═══════════════════════════════════════════════════════════════════
-router.post('/close-v3', async (req, res) => {
+// G-SALES — same cashier capability as /close.
+router.post('/close-v3', requireCapability('pos.shift_close'), async (req, res) => {
   try {
     const { shiftId, openingFloat, denominations, paymentTotals, notes } = req.body;
     if (!shiftId) return res.json({ success: false, error: 'shiftId مطلوب' });
@@ -580,7 +623,10 @@ router.get('/closing-data-v3/:shiftId', async (req, res) => {
       expected, expectedTotal, orderCount, unmatchedTotal
     });
   } catch (e) {
-    res.json({ error: e.message });
+    // G-SALES error honesty — was res.json({error}) with HTTP 200; the
+    // reconciliation grid then rendered all-zeros over a real DB failure.
+    console.error('[GET /shifts/closing-data-v3]', e.message);
+    res.status(500).json({ error: e.message });
   }
 });
 
@@ -596,6 +642,11 @@ router.get('/:shiftId/full-report', async (req, res) => {
     if (!shifts.length) return res.status(404).json({ error: 'Shift not found' });
     const s = shifts[0];
 
+    // G-SALES — financial report: shift owner or `sales.reports.view` only.
+    if (!(await _canViewShiftReport(req.user, s.username))) {
+      return res.status(403).json({ success: false, code: 'PERMISSION_DENIED', error: 'صلاحية غير كافية لعرض تقرير هذه الوردية' });
+    }
+
     // 2. Cashier display name from user_meta
     let cashierName = s.username || '';
     let cashierEmpNo = '';
@@ -607,7 +658,7 @@ router.get('/:shiftId/full-report', async (req, res) => {
         if (me.name)  cashierName  = me.name;
         if (me.empNo) cashierEmpNo = me.empNo;
       }
-    } catch (_) {}
+    } catch (_) { /* cosmetic — display name only; username fallback already set */ }
 
     // 3. Branch info (per V5.7.9 receipt extension)
     let branchName = '', branchAddress = '', branchCompanyName = '';
@@ -625,7 +676,7 @@ router.get('/:shiftId/full-report', async (req, res) => {
           branchCompanyName = br[0].company_name || '';
         }
       }
-    } catch (_) {}
+    } catch (_) { /* cosmetic — report header labels only */ }
 
     // 4. Company info from settings
     let companyName = 'Moroccan Taste', taxNumber = '', currency = 'SAR';
@@ -642,7 +693,7 @@ router.get('/:shiftId/full-report', async (req, res) => {
       companyPhone = map.CompanyPhone || '';
       companyEmail = map.CompanyEmail || '';
       companyLogo  = map.logo         || '';
-    } catch (_) {}
+    } catch (_) { /* cosmetic — company header labels; defaults already set */ }
 
     // 5. Live aggregation (items + methods + expected)
     const agg = await aggregateShiftPayments(shiftId);
@@ -661,7 +712,11 @@ router.get('/:shiftId/full-report', async (req, res) => {
           savedBreakdown = parsed.breakdown || null;
         }
       }
-    } catch (_) {}
+    } catch (e) {
+      // G-SALES error honesty — corrupt saved reconciliation silently degraded
+      // to legacy columns; keep the fallback but log it (financial data).
+      console.error('[GET /shifts/:id/full-report] payment_totals_json parse failed:', e.message);
+    }
 
     // 7. Build a per-method actual-vs-expected table that PREFERS the saved
     //    breakdown (what the cashier confirmed at close) and falls back to
@@ -706,11 +761,13 @@ router.get('/:shiftId/full-report', async (req, res) => {
       denominations = dr.map(d => ({
         value: Number(d.denomination), kind: d.kind, count: Number(d.count)
       }));
-    } catch (_) {
-      // Fallback to denominations_json
+    } catch (e) {
+      // Fallback to denominations_json — real fallback chain, but the cash
+      // breakdown is financial data so the primary failure gets logged.
+      console.error('[GET /shifts/:id/full-report] denominations query failed:', e.message);
       try {
         if (s.denominations_json) denominations = JSON.parse(s.denominations_json);
-      } catch (_) {}
+      } catch (_) { /* both sources unavailable — report renders "no cash recorded" */ }
     }
 
     const totalActual   = methodsTable.reduce((sum, m) => sum + m.actual,   0);
@@ -758,18 +815,21 @@ router.get('/:shiftId/full-report', async (req, res) => {
 router.get('/:shiftId/full-report-print', async (req, res) => {
   try {
     const { shiftId } = req.params;
-    // Re-use the JSON endpoint logic by hitting it internally
-    const reqStub = { params: { shiftId } };
-    let payload = null;
-    const resStub = {
-      json: function(data) { payload = data; return this; },
-      status: function() { return this; }
-    };
-    // Call the handler we registered earlier — find it by hand-walking the stack
-    // (we can't do internal redirect, so re-execute the data-build inline)
+    // G-SALES (Mission 2) — this route was served ANONYMOUSLY via a server.js
+    // exemption (print-in-new-tab had no JS auth headers). The route is now
+    // JWT-safe on its own: it reads the standard Authorization header (the
+    // React caller sends it) even while the legacy exemption is still in
+    // place, and requires the shift owner or a manager-level capability.
+    const user = _userFromRequest(req);
+    if (!user || !user.username) {
+      return res.status(401).type('text/plain').send('401 Unauthorized — تسجيل الدخول مطلوب لعرض تقرير الوردية');
+    }
     const [shifts] = await db.query('SELECT * FROM shifts WHERE id = ?', [shiftId]);
     if (!shifts.length) return res.status(404).send('Shift not found');
     const s = shifts[0];
+    if (!(await _canViewShiftReport(user, s.username))) {
+      return res.status(403).type('text/plain').send('403 Forbidden — صلاحية غير كافية لعرض تقرير هذه الوردية');
+    }
     let cashierName = s.username || '', cashierEmpNo = '';
     try {
       const [meta] = await db.query("SELECT setting_value FROM settings WHERE setting_key = 'user_meta'");
@@ -779,7 +839,7 @@ router.get('/:shiftId/full-report-print', async (req, res) => {
         if (me.name)  cashierName  = me.name;
         if (me.empNo) cashierEmpNo = me.empNo;
       }
-    } catch (_) {}
+    } catch (_) { /* cosmetic — display name only; username fallback already set */ }
     let branchName = '', branchAddress = '', branchCompanyName = '';
     try {
       let branchId = s.branch_id;
@@ -795,7 +855,7 @@ router.get('/:shiftId/full-report-print', async (req, res) => {
           branchCompanyName = br[0].company_name || '';
         }
       }
-    } catch (_) {}
+    } catch (_) { /* cosmetic — report header labels only */ }
     let companyName = 'Moroccan Taste', taxNumber = '', currency = 'SAR';
     let companyPhone = '', companyEmail = '', companyLogo = '';
     try {
@@ -810,7 +870,7 @@ router.get('/:shiftId/full-report-print', async (req, res) => {
       companyPhone = map.CompanyPhone || '';
       companyEmail = map.CompanyEmail || '';
       companyLogo  = map.logo         || '';
-    } catch (_) {}
+    } catch (_) { /* cosmetic — company header labels; defaults already set */ }
 
     const agg = await aggregateShiftPayments(shiftId);
     let savedActuals = {}, savedBreakdown = null;
@@ -823,7 +883,11 @@ router.get('/:shiftId/full-report-print', async (req, res) => {
           savedBreakdown = parsed.breakdown || null;
         }
       }
-    } catch (_) {}
+    } catch (e) {
+      // G-SALES error honesty — corrupt saved reconciliation degrades to
+      // legacy columns; keep the fallback but log it (financial data).
+      console.error('[GET /shifts/:id/full-report-print] payment_totals_json parse failed:', e.message);
+    }
     const norm = _normPM;
     const methodsTable = agg.methods.map(m => {
       let actual = null;
@@ -854,8 +918,12 @@ router.get('/:shiftId/full-report-print', async (req, res) => {
         [shiftId]
       );
       denominations = dr.map(d => ({ value: Number(d.denomination), kind: d.kind, count: Number(d.count) }));
-    } catch (_) {
-      try { if (s.denominations_json) denominations = JSON.parse(s.denominations_json); } catch (_) {}
+    } catch (e) {
+      // Real fallback chain (denominations_json), but cash breakdown is
+      // financial data — log the primary failure instead of hiding it.
+      console.error('[GET /shifts/:id/full-report-print] denominations query failed:', e.message);
+      try { if (s.denominations_json) denominations = JSON.parse(s.denominations_json); }
+      catch (_) { /* both sources unavailable — report renders "no cash recorded" */ }
     }
     const totalActual   = methodsTable.reduce((sum, m) => sum + m.actual,   0);
     const totalExpected = methodsTable.reduce((sum, m) => sum + m.expected, 0);
@@ -1066,7 +1134,7 @@ router.get('/', async (req, res) => {
     try {
       const [meta] = await db.query("SELECT setting_value FROM settings WHERE setting_key = 'user_meta'");
       if (meta.length) userMap = JSON.parse(meta[0].setting_value || '{}');
-    } catch(e) {}
+    } catch(e) { /* cosmetic — display names only; username fallback below */ }
     res.json(rows.map(s => ({
       id: s.id, username: s.username,
       displayName: (userMap[s.username] && userMap[s.username].name) || s.username,
@@ -1096,7 +1164,10 @@ router.get('/', async (req, res) => {
       ipAddress: s.ip_address || ''
     })));
   } catch (e) {
-    res.json([]);
+    // G-SALES error honesty — an empty [] made a DB failure look like
+    // "no shifts exist" on the admin reconciliation screen. Surface it.
+    console.error('[GET /shifts]', e.message);
+    res.status(500).json({ success: false, error: 'تعذّر تحميل الورديات', code: 'shifts_list_failed' });
   }
 });
 
@@ -1120,7 +1191,12 @@ router.get('/closing-data/:shiftId', async (req, res) => {
           "SELECT id, name, name_ar FROM payment_methods WHERE is_active = 1 ORDER BY sort_order, name"
         );
         methods = rows;
-      } catch (__) { methods = []; }
+      } catch (e2) {
+        // No payment_methods table at all — synthetic fallbacks below keep
+        // totals correct, but log it (feeds the closing reconciliation).
+        console.error('[GET /shifts/closing-data] payment_methods unavailable:', e2.message);
+        methods = [];
+      }
     }
 
     // ── 2. Pull sales for this shift ──
@@ -1253,7 +1329,12 @@ router.get('/closing-data/:shiftId', async (req, res) => {
         agg[n].total += Number(it.total) || 0;
       }
       soldItems = Object.values(agg).sort((a, b) => b.qty - a.qty);
-    } catch (_) { soldItems = []; }
+    } catch (e) {
+      // G-SALES error honesty — feeds the closing report's items table; keep
+      // the [] fallback (must not block the close flow) but log the failure.
+      console.error('[GET /shifts/closing-data] sold-items query failed:', e.message);
+      soldItems = [];
+    }
 
     // ── 6. Back-compat shape (theoreticalCash/Card/Kita) ──
     //      Old POS clients still read these. Map by group_type.
@@ -1304,7 +1385,10 @@ router.get('/closing-data/:shiftId', async (req, res) => {
       orderCount: orderCount
     });
   } catch (e) {
-    res.json({ error: e.message });
+    // G-SALES error honesty — was res.json({error}) with HTTP 200 (the POS
+    // close screen showed zero expected totals over a real DB failure).
+    console.error('[GET /shifts/closing-data]', e.message);
+    res.status(500).json({ error: e.message });
   }
 });
 
@@ -1315,7 +1399,9 @@ router.get('/closing-data/:shiftId', async (req, res) => {
 //   instead of keeping them linked to a deleted shift
 // - Refuses to delete shifts with linked sales unless ?force=1 is passed
 // ═══════════════════════════════════════════════════════════════════
-router.delete('/:shiftId', async (req, res) => {
+// G-SALES — wipe action: `shifts.delete` (NEW capability, seeded to manager in
+// db/migrations/capability-seeds/g-sales.json; admin bypasses inside the guard).
+router.delete('/:shiftId', requireCapability('shifts.delete'), async (req, res) => {
   try {
     const { shiftId } = req.params;
     const force = req.query.force === '1' || req.query.force === 'true';
@@ -1347,12 +1433,14 @@ router.delete('/:shiftId', async (req, res) => {
     await db.query('DELETE FROM shifts WHERE id = ?', [shiftId]);
     res.json({ success: true, deleted: shiftId, unlinkedSales: linkedCount });
   } catch (e) {
-    res.json({ success: false, error: e.message });
+    // G-SALES error honesty — destructive endpoint must never mask failure as 200.
+    console.error('[DELETE /shifts/:shiftId]', e.message);
+    res.status(500).json({ success: false, error: e.message });
   }
 });
 
-// Bulk delete
-router.post('/bulk-delete', async (req, res) => {
+// Bulk delete — same wipe capability as DELETE /:shiftId.
+router.post('/bulk-delete', requireCapability('shifts.delete'), async (req, res) => {
   try {
     const { ids, unlinkSales } = req.body;
     if (!ids || !ids.length) return res.json({ success: false, error: 'لم يُحدَّد أي معرّف' });
@@ -1363,7 +1451,9 @@ router.post('/bulk-delete', async (req, res) => {
     const [r] = await db.query('DELETE FROM shifts WHERE id IN ('+placeholders+')', ids);
     res.json({ success: true, deleted: r.affectedRows || ids.length });
   } catch (e) {
-    res.json({ success: false, error: e.message });
+    // G-SALES error honesty — destructive endpoint must never mask failure as 200.
+    console.error('[POST /shifts/bulk-delete]', e.message);
+    res.status(500).json({ success: false, error: e.message });
   }
 });
 

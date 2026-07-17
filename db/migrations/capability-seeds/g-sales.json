@@ -1,0 +1,9 @@
+[
+  {
+    "id": "shifts.delete",
+    "label_ar": "حذف الورديات",
+    "label_en": "Delete shifts",
+    "is_sensitive": 1,
+    "roles": ["admin", "manager"]
+  }
+]

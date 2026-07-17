@@ -212,12 +212,30 @@ app.use('/api/', async function(req, res, next) {
       var decoded = jwt.verify(token, process.env.JWT_SECRET);
       // Phase A — session-version gate: a password change bumps users.token_version,
       // invalidating every token issued before it (revokes other sessions).
+      // v8 SECURITY (G3) — this used to fail OPEN (`catch (_) {}` + isTokenCurrent's
+      // internal null→true), so a DB hiccup ACCEPTED a REVOKED token. It now fails
+      // CLOSED: server.js reads currentVersion() directly (the 15s in-memory cache
+      // inside lib/sessionVersion stays the fast path — the DB is only hit on a
+      // cache miss) and rejects with SESSION_CHECK_FAILED when the check cannot be
+      // completed. Tokens without an id claim predate the feature and carry
+      // nothing to check — same as isTokenCurrent's contract.
       try {
         const _sv = require('./lib/sessionVersion');
-        if (!(await _sv.isTokenCurrent(decoded))) {
-          return res.status(401).json({ success: false, error: 'انتهت الجلسة — يرجى تسجيل الدخول مجددًا' });
+        if (decoded.id != null) {
+          const _tokenVer = Number(decoded.tokenVersion != null ? decoded.tokenVersion : 1) || 1;
+          const _cur = await _sv.currentVersion(decoded.id); // cached; null = the check itself failed
+          if (_cur == null) {
+            console.error('[auth] session-version check FAILED (DB/cache error in sessionVersion.currentVersion) for user id=' + decoded.id + ' — failing CLOSED');
+            return res.status(401).json({ success: false, code: 'SESSION_CHECK_FAILED', error: 'تعذّر التحقق من الجلسة — يرجى المحاولة مجددًا' });
+          }
+          if (_tokenVer !== _cur) {
+            return res.status(401).json({ success: false, error: 'انتهت الجلسة — يرجى تسجيل الدخول مجددًا' });
+          }
         }
-      } catch (_) { /* fail open on cache/DB error */ }
+      } catch (svErr) {
+        console.error('[auth] session-version check threw — failing CLOSED:', svErr && (svErr.code || svErr.message));
+        return res.status(401).json({ success: false, code: 'SESSION_CHECK_FAILED', error: 'تعذّر التحقق من الجلسة — يرجى المحاولة مجددًا' });
+      }
       req.user = decoded;
       return next();
     } catch (err) {

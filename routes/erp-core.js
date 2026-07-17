@@ -2752,20 +2752,36 @@ router.get('/reports/inventory-valuation', async (req, res) => {
  * GET /erp/reports/sales-analytics?from=&to=&branch=&brand=&groupBy=
  * Sales analytics with multiple breakdowns in a single response.
  * groupBy: 'daily' (default) | 'payment' | 'cashier' | 'hour' | 'top_items' | 'all'
+ *
+ * v7.x HONESTY REWRITE — the previous version fabricated its numbers:
+ *   · net was gross ÷ (1 + rate/100) with rate falling back to a hardcoded
+ *     15 behind a swallowed catch — taxing zero-rated/exempt lines at 15%.
+ *   · cost was matched by product NAME with `|| 0`, so a renamed menu item
+ *     silently became a 100%-margin product.
+ *   · voids were "excluded" via deleted_at, a column nothing writes.
+ * Now: net/vat come from each sale's RECORDED tax_subtotals_json (the same
+ * convention the royalty compute uses); sales whose blob is missing or
+ * unparseable are counted into netUnknownCount and EXCLUDED from net/vat —
+ * surfaced, never guessed. Voids are excluded by zatca_type, the only
+ * cancellation marker actually written. Cost misses are counted into
+ * costUnknownCount and excluded from cost/profit.
  */
 router.get('/reports/sales-analytics', async (req, res) => {
   try {
     const { from, to, branch, brand, groupBy, channel, paymentMethod } = req.query;
     const by = groupBy || 'all';
 
-    // Detect optional columns (backward-compat with very old deploys)
-    let hasBranch = true, hasBrand = true, hasChannel = false, hasDeleted = false;
-    try { const [c] = await db.query("SHOW COLUMNS FROM sales LIKE 'branch_id'");  hasBranch  = !!c.length; } catch(e) { hasBranch  = false; }
-    try { const [c] = await db.query("SHOW COLUMNS FROM sales LIKE 'brand_id'");   hasBrand   = !!c.length; } catch(e) { hasBrand   = false; }
-    try { const [c] = await db.query("SHOW COLUMNS FROM sales LIKE 'channel_name'"); hasChannel = !!c.length; } catch(e) { hasChannel = false; }
-    try { const [c] = await db.query("SHOW COLUMNS FROM sales LIKE 'deleted_at'"); hasDeleted = !!c.length; } catch(e) { hasDeleted = false; }
+    // Schema probes (documented) — these optional columns only exist on
+    // newer deploys. SHOW COLUMNS throws only when the DB itself is broken;
+    // that now falls through to the outer catch and answers 500 instead of
+    // being swallowed into "column missing" (which hid real DB faults).
+    const [cBranch]  = await db.query("SHOW COLUMNS FROM sales LIKE 'branch_id'");
+    const [cBrand]   = await db.query("SHOW COLUMNS FROM sales LIKE 'brand_id'");
+    const [cChannel] = await db.query("SHOW COLUMNS FROM sales LIKE 'channel_name'");
+    const hasBranch = !!cBranch.length, hasBrand = !!cBrand.length, hasChannel = !!cChannel.length;
 
-    const where = hasDeleted ? ["(s.deleted_at IS NULL)"] : ["1=1"];
+    // Voided sales are excluded by zatca_type — NOT deleted_at (never written).
+    const where = ["(s.zatca_type IS NULL OR s.zatca_type NOT IN ('cancellation','credit_note'))"];
     const params = [];
     if (from)  { where.push('DATE(s.order_date) >= ?'); params.push(from); }
     if (to)    { where.push('DATE(s.order_date) <= ?'); params.push(to); }
@@ -2777,68 +2793,89 @@ router.get('/reports/sales-analytics', async (req, res) => {
 
     const out = { filters: { from: from || null, to: to || null, branch: branch || null, brand: brand || null } };
 
-    // v7.0 — VAT rate from settings (single source of truth) + 2-dp helper.
-    let _rate = 15;
-    try { _rate = await require('../lib/pricing').getVatRateFromDb(db, 15); } catch(_) {}
-    const _div = 1 + (Number(_rate) || 15) / 100;
     const r2 = n => Math.round((Number(n) || 0) * 100) / 100;
 
-    // Headline totals — gross is the ACTUAL charged amount (total_final, whole
-    // SAR). net/vat are DERIVED from it, so a 4 SAR sale reads 4 (not 4.35).
-    const [hd] = await db.query(
-      `SELECT COUNT(*) AS cnt, COALESCE(SUM(total_final),0) AS total,
-              COALESCE(AVG(total_final),0) AS avg_ticket,
-              COALESCE(SUM(discount_amount),0) AS discounts
+    // ── Headline + net/vat from the RECORDED per-sale tax subtotals ──
+    // gross = SUM(total_final), the actual charged amount. net/vat = the sum
+    // of each sale's tax_subtotals_json buckets (S/Z/E/O × {net, vat}) — the
+    // same convention as the royalty compute (_royaltyBase above). A sale
+    // whose blob is missing/unparseable has an INDETERMINABLE net: it counts
+    // into netUnknownCount and is excluded from net/vat (its gross still
+    // counts — total_final is recorded).
+    const [saleRows] = await db.query(
+      `SELECT s.total_final, s.discount_amount, s.tax_subtotals_json
        FROM sales s WHERE ${whereClause}`, params);
-    const _gross = Number(hd[0].total) || 0;
-    const _net = _gross / _div;
+    let _gross = 0, _discounts = 0, _net = 0, _vat = 0, netUnknownCount = 0;
+    for (const s of saleRows) {
+      _gross += Number(s.total_final) || 0;
+      _discounts += Number(s.discount_amount) || 0;
+      let parsed = null;
+      // The JSON.parse catch is the documented "unparseable blob" path —
+      // it classifies the ROW, it does not swallow a DB error.
+      try { parsed = s.tax_subtotals_json ? JSON.parse(s.tax_subtotals_json) : null; } catch (_) { parsed = null; }
+      if (parsed && typeof parsed === 'object') {
+        for (const b of Object.values(parsed)) {
+          _net += Number(b && b.net) || 0;
+          _vat += Number(b && b.vat) || 0;
+        }
+      } else {
+        netUnknownCount++;
+      }
+    }
+    const invoiceCount = saleRows.length;
     out.headline = {
-      invoiceCount: Number(hd[0].cnt) || 0,
+      invoiceCount,
       total: r2(_gross),
-      avgTicket: r2(hd[0].avg_ticket)
+      avgTicket: invoiceCount > 0 ? r2(_gross / invoiceCount) : 0
     };
 
-    // Per-product breakdown (sales_items only — no menu JOIN, to avoid row
-    // multiplication on duplicate names). Cost comes from a name→cost map so
-    // headline cost === sum of per-product cost (consistent).
-    let _costMap = {};
-    try {
-      const [mc] = await db.query('SELECT name, COALESCE(cost,0) AS cost FROM menu');
-      mc.forEach(m => { _costMap[m.name] = Number(m.cost) || 0; });
-    } catch(_) {}
+    // ── Per-product breakdown (sales_items only — no menu JOIN, to avoid row
+    // multiplication on duplicate names). sales_items carries NO menu-id
+    // column (live schema: id, order_id, order_date, item_name, qty, price,
+    // total, payment_method, username, shift_id, channel_id), so the cost
+    // join stays on NAME — but a miss is now COUNTED and excluded, never
+    // silently priced at 0. Per-product net/vat/profit/margin are null:
+    // tax subtotals are recorded PER SALE, so a line-level split does not
+    // exist in the data and inventing one (÷1.15) is what this rewrite
+    // removed. Duplicate menu names: last row wins (documented, not hidden).
+    const [mc] = await db.query('SELECT name, cost FROM menu');
+    const _costMap = new Map(mc.map(m => [m.name, Number(m.cost) || 0]));
     const [prodRows] = await db.query(
       `SELECT si.item_name AS name, SUM(si.qty) AS qty, COALESCE(SUM(si.total),0) AS gross
        FROM sales_items si JOIN sales s ON si.order_id = s.id
        WHERE ${whereClause}
        GROUP BY si.item_name ORDER BY gross DESC`, params);
-    let _totalCost = 0;
+    let _totalCost = 0, costUnknownCount = 0;
     out.byProduct = prodRows.map(r => {
-      const g = Number(r.gross) || 0;
-      const n = g / _div;
       const q = Number(r.qty) || 0;
-      const c = r2(q * (_costMap[r.name] || 0));
-      _totalCost += c;
-      const p = n - c;
+      const g = r2(Number(r.gross) || 0);
+      const known = _costMap.has(r.name);
+      let c = null;
+      if (known) { c = r2(q * _costMap.get(r.name)); _totalCost += c; }
+      else costUnknownCount++;
       return {
         name: r.name || '', qty: q,
-        gross: r2(g), net: r2(n), vat: r2(g - n),
-        cost: c, profit: r2(p),
-        margin: n > 0 ? Math.round((p / n) * 10000) / 100 : 0
+        gross: g, net: null, vat: null,
+        cost: c, profit: null, margin: null
       };
     });
     _totalCost = r2(_totalCost);
+    out.byProductNote = 'net/vat/profit/margin على مستوى الصنف غير قابلة للاشتقاق: التفصيل الضريبي مسجّل على مستوى الفاتورة (tax_subtotals_json) وليس على مستوى السطر';
     // Back-compat alias (older consumers expect topItems: name/qty/total)
     out.topItems = out.byProduct.map(p => ({ name: p.name, qty: p.qty, total: p.gross }));
 
-    // The six headline metrics the owner asked for.
+    // The headline metrics — sums over what is RECORDED, with the unknowns
+    // counted next to them instead of folded into the totals.
     out.revenue = {
-      invoiceCount: Number(hd[0].cnt) || 0,
+      invoiceCount,
       grossInclVat: r2(_gross),
-      net: r2(_net),
-      vat: r2(_gross - _net),
-      discounts: r2(hd[0].discounts),
-      cost: _totalCost,
-      profit: r2(_net - _totalCost)
+      net: r2(_net),                    // Σ recorded tax_subtotals_json[*].net
+      vat: r2(_vat),                    // Σ recorded tax_subtotals_json[*].vat
+      netUnknownCount,                  // sales excluded from net/vat (missing/corrupt blob)
+      discounts: r2(_discounts),
+      cost: _totalCost,                 // Σ item-master cost over KNOWN products only
+      costUnknownCount,                 // products excluded from cost/profit (no menu row by that name)
+      profit: r2(_net - _totalCost)     // over the known components above
     };
 
     if (by === 'daily' || by === 'all') {
@@ -2875,20 +2912,23 @@ router.get('/reports/sales-analytics', async (req, res) => {
     }
     // (top_items handled above as out.byProduct + out.topItems alias)
 
-    // v7.1 — distinct channels + payment methods so the UI can populate dropdowns
+    // v7.1 — distinct channels + payment methods so the UI can populate
+    // dropdowns. A query failure here is a DB fault, not "no channels" —
+    // it now reaches the outer catch (500) instead of being dressed as [].
     if (hasChannel) {
-      try {
-        const [chRows] = await db.query("SELECT DISTINCT channel_name FROM sales WHERE channel_name IS NOT NULL AND channel_name <> '' ORDER BY channel_name");
-        out.channels = chRows.map(r => r.channel_name);
-      } catch(_) { out.channels = []; }
+      const [chRows] = await db.query("SELECT DISTINCT channel_name FROM sales WHERE channel_name IS NOT NULL AND channel_name <> '' ORDER BY channel_name");
+      out.channels = chRows.map(r => r.channel_name);
     } else { out.channels = []; }
-    try {
-      const [pmRows] = await db.query("SELECT DISTINCT payment_method FROM sales WHERE payment_method IS NOT NULL AND payment_method <> '' ORDER BY payment_method");
-      out.paymentMethods = pmRows.map(r => r.payment_method);
-    } catch(_) { out.paymentMethods = []; }
+    const [pmRows] = await db.query("SELECT DISTINCT payment_method FROM sales WHERE payment_method IS NOT NULL AND payment_method <> '' ORDER BY payment_method");
+    out.paymentMethods = pmRows.map(r => r.payment_method);
 
     res.json({ success: true, ...out });
-  } catch(e) { res.json({ success: false, error: e.message }); }
+  } catch(e) {
+    // was `res.json({success:false})` with 200 — a DB fault dressed as a
+    // polite empty answer. Honest now: 500 + server-side detail.
+    console.error('[erp/reports/sales-analytics] failed:', e && (e.code || e.message));
+    res.status(500).json({ success: false, error: 'تعذّر توليد تحليلات المبيعات' });
+  }
 });
 
 /**

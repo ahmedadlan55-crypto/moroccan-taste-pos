@@ -207,6 +207,18 @@ export const ROLE_GRANTS: Record<Capability, readonly Role[]> = {
   "workflow.audit.view": [...ADM, "manager", "auditor"],
   "workflow.actions.act": EVERYONE,
   "workflow.builder.manage": ADM,
+  // ── Workflow txn actions — EXACT mirror of the live role_permissions rows
+  //    (queried read-only on 2026-07-17):
+  //      txn.approve → admin, finance, hr, manager
+  //      txn.reject  → admin, finance, hr, manager
+  //      txn.return  → admin, manager
+  //    NB: the server also grants approve/reject to the 'hr' role, which this
+  //    Role union does not model (same pre-existing note as workflow.view).
+  //    'employee' deliberately absent: the live grants do not include it, and
+  //    the G-wf guards will 403 an employee on these actions. ──
+  "txn.approve": [...ADM, "manager", "finance"],
+  "txn.reject": [...ADM, "manager", "finance"],
+  "txn.return": [...ADM, "manager"],
   // ── Reports center ──
   "reports.view": FIN_READ,
   // ── Administration ──

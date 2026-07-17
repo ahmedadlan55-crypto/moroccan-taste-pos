@@ -18,6 +18,16 @@
 const router = require('express').Router();
 const db = require('../db/connection');
 const gl = require('../lib/glPosting');
+// v7.5 SECURITY — this router is mounted bare at /api/erp (server.js): any
+// authenticated token, a cashier's included, could request, authorize, execute
+// and CLOSE a payment (the close step posts a GL journal). The only gate was
+// middleware/procurementLegacyGate.supplierPaymentGate, which (a) is a no-op
+// unless PROCUREMENT_P2P_ENABLE is on and (b) only blocks direction=out with a
+// supplier referenceType — every other treasury payment sailed through.
+// Each lifecycle step now requires the matching payments.* capability from the
+// procurement catalog (db/migrations/procurement/capabilities.js — seeded every
+// boot; held by admin/manager/finance). Fails closed.
+const requireCapability = require('../middleware/requireCapability');
 
 function _ymd(d) {
   d = d || new Date();
@@ -88,7 +98,7 @@ router.get('/payments/:id', async (req, res) => {
 });
 
 // ─── CREATE ──────────────────────────────────────────
-router.post('/payments', async (req, res) => {
+router.post('/payments', requireCapability('payments.request'), async (req, res) => {
   try {
     const {
       transactionId, referenceType, referenceId, direction, amount,
@@ -130,7 +140,7 @@ router.post('/payments', async (req, res) => {
 });
 
 // ─── AUTHORIZE (finance manager approves payment) ──────────
-router.post('/payments/:id/authorize', async (req, res) => {
+router.post('/payments/:id/authorize', requireCapability('payments.authorize'), async (req, res) => {
   try {
     const { authorizedBy } = req.body;
     const [rows] = await db.query('SELECT status FROM payment_records WHERE id = ?', [req.params.id]);
@@ -144,7 +154,7 @@ router.post('/payments/:id/authorize', async (req, res) => {
 });
 
 // ─── PAY (bank team executes the payment) ──────────
-router.post('/payments/:id/pay', async (req, res) => {
+router.post('/payments/:id/pay', requireCapability('payments.execute'), async (req, res) => {
   try {
     const { paidBy, receiptAttachment, receiptNumber, receiptDate } = req.body;
     const [rows] = await db.query('SELECT status, receipt_attachment FROM payment_records WHERE id = ?', [req.params.id]);
@@ -164,7 +174,7 @@ router.post('/payments/:id/pay', async (req, res) => {
 });
 
 // ─── RECEIPT UPLOAD (standalone — can be done before pay) ──────────
-router.post('/payments/:id/receipt', async (req, res) => {
+router.post('/payments/:id/receipt', requireCapability('payments.execute'), async (req, res) => {
   try {
     const { receiptAttachment, receiptNumber, receiptDate } = req.body;
     if (!receiptAttachment) return res.status(400).json({ error: 'receiptAttachment required' });
@@ -178,7 +188,8 @@ router.post('/payments/:id/receipt', async (req, res) => {
 });
 
 // ─── CLOSE (posts GL journal) ──────────
-router.post('/payments/:id/close', async (req, res) => {
+// CLOSE is the step that posts the GL journal — finance-level by requirement.
+router.post('/payments/:id/close', requireCapability('payments.close'), async (req, res) => {
   try {
     const { closedBy } = req.body;
     const [rows] = await db.query(`
@@ -252,7 +263,8 @@ router.post('/payments/:id/close', async (req, res) => {
 });
 
 // ─── CANCEL ──────────
-router.post('/payments/:id/cancel', async (req, res) => {
+// Cancelling an in-flight payment is an authorization-level decision.
+router.post('/payments/:id/cancel', requireCapability('payments.authorize'), async (req, res) => {
   try {
     const [rows] = await db.query('SELECT status FROM payment_records WHERE id = ?', [req.params.id]);
     if (!rows.length) return res.status(404).json({ error: 'not found' });

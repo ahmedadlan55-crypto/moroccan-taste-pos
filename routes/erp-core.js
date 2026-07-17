@@ -2478,6 +2478,13 @@ router.get('/reports/profitability', async (req, res) => {
 // ═══════════════════════════════════════════════════════════════════════
 // EXTENDED REPORTS — Aging / Inventory / Sales / Waste / Royalty
 // ═══════════════════════════════════════════════════════════════════════
+
+// Statement of Changes in Equity (IAS 1) — first real backend for this
+// report (the legacy screen synthesized it client-side from stale code
+// prefixes). Sub-router; reconciles against /reports/balance-sheet-ifrs
+// (routes/erp/reports/balance-sheet.js) and requires finance.reports.view.
+router.use(require('./erp/reports/equity-changes'));
+
 //
 // v5.11.13 — The legacy GET /reports/cash-flow endpoint was removed.
 // It hardcoded cash/bank account codes ('1110','1120') that don't exist

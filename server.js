@@ -1106,6 +1106,16 @@ async function runMigrations() {
     console.log('[DB] Migration warning (o2c schema):', e.message.substring(0, 160));
   }
 
+  // Closure-stream capability declarations (db/migrations/capability-seeds/*.json).
+  // Loud on failure: a capability that silently fails to seed turns into a 403
+  // for a role that legitimately holds the work — the exact class of bug the
+  // one-shot seeder caused before the late-seed block existed.
+  try {
+    await require('./db/migrations/capability-seeds/apply').applyCapabilitySeeds(db, (m) => console.log('[cap-seeds]', m));
+  } catch (e) {
+    console.error('[DB] capability-seeds FAILED (roles may 403 on new routes):', e.message);
+  }
+
   // PO lines — unit conversion columns
   await addColumnIfMissing('po_lines', 'unit', "VARCHAR(50) DEFAULT ''");
   await addColumnIfMissing('po_lines', 'conv_rate', "DECIMAL(10,2) DEFAULT 1");

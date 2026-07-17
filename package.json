@@ -31,6 +31,7 @@
     "test:cn-print": "node tests/integration/cnPrint.api.test.js",
     "test:o2c-idempotency": "node tests/integration/o2cIdempotency.api.test.js",
     "test:royalty-runs": "node tests/integration/royaltyRuns.api.test.js",
+    "test:reports-equations": "node tests/integration/reportsEquations.api.test.js",
     "db:clean-test-residue": "node scripts/clean-test-residue.js",
     "test:inventory-method": "node tests/integration/inventoryMethod.api.test.js",
     "test:search-api": "node tests/integration/search.api.test.js",

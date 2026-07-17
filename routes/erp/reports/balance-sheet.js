@@ -157,6 +157,96 @@ function _codeCompare(a, b) {
   return String(a.code || '').localeCompare(String(b.code || ''), 'en', { numeric: true });
 }
 
+// ════════════════════════════════════════════════════════════════════
+// Shared helpers (exported) — the Statement of Changes in Equity
+// (routes/erp/reports/equity-changes.js) must reconcile EXACTLY with
+// this report's totEq, so the pieces that define "which accounts count
+// and under what bucket" live here, once. These are behavior-identical
+// extractions from the route handler below — no logic change.
+// ════════════════════════════════════════════════════════════════════
+
+// The LEAF account predicate: active, not a folder, and not the parent
+// of any other account. This is the exact filter the balance sheet uses
+// to decide which gl_accounts rows carry balances.
+const LEAF_ACCOUNT_WHERE =
+  "a.is_active = 1 " +
+  "AND COALESCE(a.is_folder, 0) = 0 " +
+  "AND a.id NOT IN (SELECT DISTINCT parent_id FROM gl_accounts WHERE parent_id IS NOT NULL)";
+
+// Bucket keys whose group is created with makeGroup(label, /*isContra*/ true)
+// inside the route handler. pushToGroup() SUBTRACTS the magnitude for these
+// (signed = -magnitude). KEEP IN SYNC with the makeGroup(...) calls below —
+// equity-changes mirrors this flip to reconcile with totEq.
+const CONTRA_GROUP_KEYS = new Set(['allowanceDoubtful', 'accDep', 'drawings']);
+
+// v5.10.78 — Single source of truth: report_section → [topGroup, subGroup].
+// The wipe-and-seed function (routes/erp.js) writes this column for every
+// CoA template account, and the server-start backfill (server.js v5.10.78)
+// populates it for legacy installs via the same heuristics. Classifiers
+// check this column FIRST; only fall through to prefix-matching
+// when the column is NULL (unmigrated row).
+const reportSectionMap = {
+  // Assets
+  cash:               ['currentAssets',    'cash'],
+  receivables:        ['currentAssets',    'receivables'],
+  allowance_doubtful: ['currentAssets',    'allowanceDoubtful'],
+  inventory:          ['currentAssets',    'inventory'],
+  vat_input:          ['currentAssets',    'vatInput'],
+  prepaid:            ['currentAssets',    'prepaid'],
+  other_current_asset:['currentAssets',    'otherCA'],
+  ppe:                ['nonCurrentAssets', 'ppe'],
+  rou:                ['nonCurrentAssets', 'rou'],            // v5.10.81 — IFRS 16
+  acc_dep:            ['nonCurrentAssets', 'accDep'],
+  intangibles:        ['nonCurrentAssets', 'intangibles'],
+  // Liabilities
+  payables:           ['currentLiab',      'payables'],
+  accrued:            ['currentLiab',      'accrued'],
+  vat_output:         ['currentLiab',      'vatOutput'],
+  net_vat:            ['currentLiab',      'netVat'],
+  gosi:               ['currentLiab',      'gosi'],
+  withholding:        ['currentLiab',      'withholding'],
+  customer_deposits:  ['currentLiab',      'customerDeposits'],
+  short_term_debt:    ['currentLiab',      'shortTermDebt'],
+  other_current_liability: ['currentLiab', 'otherCL'],
+  long_term_debt:     ['nonCurrentLiab',   'longTermDebt'],
+  lease_obligation:   ['nonCurrentLiab',   'leaseObligation'],  // v5.10.81 — IFRS 16
+  eosb:               ['nonCurrentLiab',   'eosb'],
+  // Equity
+  capital:            ['equity',           'capital'],
+  retained:           ['equity',           'retained'],
+  drawings:           ['equity',           'drawings'],
+  reserves:           ['equity',           'reserves'],
+  zakat:              ['equity',           'zakat']
+};
+function classifyByReportSection(reportSection) {
+  if (!reportSection) return null;
+  return reportSectionMap[reportSection] || null;
+}
+
+function classifyEquity(code) {
+  const c = String(code || '');
+  // ── v5.10.84 — Saudi/International standard 6-digit GGMMPP ──
+  // GG=30 → Equity. MM bucket map:
+  //   01 capital, 02 retained earnings, 03 period P&L (folds
+  //   into 'retained' per IAS 1 Statement of Changes in Equity).
+  if (/^\d{6}$/.test(c) && c.startsWith('30')) {
+    const mm = c.substr(2, 2);
+    if (mm === '01') return ['equity', 'capital'];
+    if (mm === '02') return ['equity', 'retained'];
+    if (mm === '03') return ['equity', 'retained'];
+    if (mm === '04') return ['equity', 'reserves'];   // v5.10.85
+    if (mm === '05') return ['equity', 'drawings'];   // v5.10.85 (contra)
+    return ['equity', 'capital'];
+  }
+  // ── Legacy fallback (pre-v5.10.84) ──
+  if (c.startsWith('31')) return ['equity', 'capital'];
+  if (c.startsWith('32')) return ['equity', 'retained'];
+  if (c.startsWith('33')) return ['equity', 'drawings'];
+  if (c.startsWith('343')) return ['equity', 'zakat'];
+  if (c.startsWith('34')) return ['equity', 'reserves'];
+  return ['equity', 'capital'];
+}
+
 // Build the CoA tree with rolled-up balances. Returns the root nodes
 // keyed by their account type (asset / liability / equity). Includes
 // folders + leaves; the frontend collapses zero-balance subtrees when
@@ -470,9 +560,7 @@ router.get('/reports/balance-sheet-ifrs', async (req, res) => {
       "       COALESCE(a.account_class, 'detail') AS account_class, " +
       "       a.report_section " +
       "FROM gl_accounts a " +
-      "WHERE a.is_active = 1 " +
-      "  AND COALESCE(a.is_folder, 0) = 0 " +
-      "  AND a.id NOT IN (SELECT DISTINCT parent_id FROM gl_accounts WHERE parent_id IS NOT NULL) " +
+      "WHERE " + LEAF_ACCOUNT_WHERE + " " +
       "ORDER BY a.code"
     );
     // Full CoA (folders + leaves) for the hierarchical tree view.
@@ -560,49 +648,9 @@ router.get('/reports/balance-sheet-ifrs', async (req, res) => {
       }
     };
 
-    // v5.10.78 — Single source of truth: report_section → [topGroup, subGroup].
-    // The wipe-and-seed function (routes/erp.js) writes this column for every
-    // CoA template account, and the server-start backfill (server.js v5.10.78)
-    // populates it for legacy installs via the same heuristics. Classifiers
-    // below check this column FIRST; only fall through to prefix-matching
-    // when the column is NULL (unmigrated row).
-    const reportSectionMap = {
-      // Assets
-      cash:               ['currentAssets',    'cash'],
-      receivables:        ['currentAssets',    'receivables'],
-      allowance_doubtful: ['currentAssets',    'allowanceDoubtful'],
-      inventory:          ['currentAssets',    'inventory'],
-      vat_input:          ['currentAssets',    'vatInput'],
-      prepaid:            ['currentAssets',    'prepaid'],
-      other_current_asset:['currentAssets',    'otherCA'],
-      ppe:                ['nonCurrentAssets', 'ppe'],
-      rou:                ['nonCurrentAssets', 'rou'],            // v5.10.81 — IFRS 16
-      acc_dep:            ['nonCurrentAssets', 'accDep'],
-      intangibles:        ['nonCurrentAssets', 'intangibles'],
-      // Liabilities
-      payables:           ['currentLiab',      'payables'],
-      accrued:            ['currentLiab',      'accrued'],
-      vat_output:         ['currentLiab',      'vatOutput'],
-      net_vat:            ['currentLiab',      'netVat'],
-      gosi:               ['currentLiab',      'gosi'],
-      withholding:        ['currentLiab',      'withholding'],
-      customer_deposits:  ['currentLiab',      'customerDeposits'],
-      short_term_debt:    ['currentLiab',      'shortTermDebt'],
-      other_current_liability: ['currentLiab', 'otherCL'],
-      long_term_debt:     ['nonCurrentLiab',   'longTermDebt'],
-      lease_obligation:   ['nonCurrentLiab',   'leaseObligation'],  // v5.10.81 — IFRS 16
-      eosb:               ['nonCurrentLiab',   'eosb'],
-      // Equity
-      capital:            ['equity',           'capital'],
-      retained:           ['equity',           'retained'],
-      drawings:           ['equity',           'drawings'],
-      reserves:           ['equity',           'reserves'],
-      zakat:              ['equity',           'zakat']
-    };
-    function classifyByReportSection(reportSection) {
-      if (!reportSection) return null;
-      return reportSectionMap[reportSection] || null;
-    }
+    // v5.10.78 — report_section → [topGroup, subGroup] lookup. The map +
+    // classifyByReportSection now live at module scope (exported for the
+    // equity-changes reconciliation) — same logic, same precedence.
 
     // v5.10.80 — Name-based override that runs BEFORE the explicit
     // report_section lookup. Rescues legacy mis-coded accounts whose
@@ -690,29 +738,8 @@ router.get('/reports/balance-sheet-ifrs', async (req, res) => {
       if (c.startsWith('21'))  return ['currentLiab', 'otherCL'];
       return null;
     }
-    function classifyEquity(code) {
-      const c = String(code || '');
-      // ── v5.10.84 — Saudi/International standard 6-digit GGMMPP ──
-      // GG=30 → Equity. MM bucket map:
-      //   01 capital, 02 retained earnings, 03 period P&L (folds
-      //   into 'retained' per IAS 1 Statement of Changes in Equity).
-      if (/^\d{6}$/.test(c) && c.startsWith('30')) {
-        const mm = c.substr(2, 2);
-        if (mm === '01') return ['equity', 'capital'];
-        if (mm === '02') return ['equity', 'retained'];
-        if (mm === '03') return ['equity', 'retained'];
-        if (mm === '04') return ['equity', 'reserves'];   // v5.10.85
-        if (mm === '05') return ['equity', 'drawings'];   // v5.10.85 (contra)
-        return ['equity', 'capital'];
-      }
-      // ── Legacy fallback (pre-v5.10.84) ──
-      if (c.startsWith('31')) return ['equity', 'capital'];
-      if (c.startsWith('32')) return ['equity', 'retained'];
-      if (c.startsWith('33')) return ['equity', 'drawings'];
-      if (c.startsWith('343')) return ['equity', 'zakat'];
-      if (c.startsWith('34')) return ['equity', 'reserves'];
-      return ['equity', 'capital'];
-    }
+    // classifyEquity now lives at module scope (exported for the
+    // equity-changes reconciliation) — same logic, same fallbacks.
 
     // Backward-compat flat arrays
     const currentAssets = [], nonCurrentAssets = [], currentLiab = [], nonCurrentLiab = [], equityItems = [];
@@ -898,3 +925,11 @@ router.get('/reports/balance-sheet-ifrs', async (req, res) => {
 });
 
 module.exports = router;
+// Shared with routes/erp/reports/equity-changes.js — the Statement of
+// Changes in Equity must reconcile exactly with this report's totEq,
+// so it reuses the SAME leaf predicate, classification and contra set
+// instead of re-implementing them (and drifting).
+module.exports.LEAF_ACCOUNT_WHERE = LEAF_ACCOUNT_WHERE;
+module.exports.CONTRA_GROUP_KEYS = CONTRA_GROUP_KEYS;
+module.exports.classifyByReportSection = classifyByReportSection;
+module.exports.classifyEquity = classifyEquity;

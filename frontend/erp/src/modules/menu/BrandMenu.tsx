@@ -33,6 +33,7 @@ import {
   type MenuItemInput,
 } from "./api";
 import { Money, marginPct, useBrandScope, BrandSelect } from "./lib";
+import { ItemImageEditor } from "./ItemImageEditor";
 
 const TAX_OPTIONS = [
   { value: "S", label: "خاضع 15٪ (S)" },
@@ -227,6 +228,10 @@ function ItemFormDialog({
   const { toast } = useToast();
   const create = useCreateMenuItem();
   const update = useUpdateMenuItem();
+  // close/d-images — pending image edit, OUTSIDE react-hook-form on purpose:
+  // undefined = untouched (field omitted → server leaves the stored image),
+  // '' = remove on save, string = the new ≤512px JPEG data URL.
+  const [imageData, setImageData] = useState<string | undefined>(undefined);
   const {
     register,
     handleSubmit,
@@ -241,6 +246,7 @@ function ItemFormDialog({
 
   useEffect(() => {
     if (!open) return;
+    setImageData(undefined);
     reset({
       name: initial?.name ?? "",
       nameEn: initial?.nameEn ?? "",
@@ -280,6 +286,9 @@ function ItemFormDialog({
         convRate: initial.convRate,
         yieldQuantity: initial.yieldQuantity,
         yieldUnit: initial.yieldUnit,
+        // Only send imageData when the user actually touched it — the PUT
+        // route leaves the stored image alone when the field is absent.
+        ...(imageData !== undefined ? { imageData } : {}),
       };
       update.mutate(
         { id: initial.id, input: body },
@@ -289,7 +298,7 @@ function ItemFormDialog({
         },
       );
     } else {
-      create.mutate({ ...base, taxCategory: v.taxCategory }, {
+      create.mutate({ ...base, taxCategory: v.taxCategory, ...(imageData ? { imageData } : {}) }, {
         onSuccess: () => { toast({ title: "تم إنشاء الصنف", tone: "success" }); onClose(); },
         onError: (e: Error) => toast({ title: "تعذّر الإنشاء", description: e.message, tone: "error" }),
       });
@@ -334,6 +343,12 @@ function ItemFormDialog({
             </Field>
           )}
         </div>
+        <ItemImageEditor
+          current={initial?.imageData ?? null}
+          pending={imageData}
+          onChange={setImageData}
+          disabled={isSubmitting}
+        />
         <Toggle checked={watch("active")} onChange={(v) => setValue("active", v)} label="صنف نشط" />
         <FormActions>
           <Button variant="secondary" onClick={onClose} disabled={isSubmitting}>إلغاء</Button>

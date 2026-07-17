@@ -17,6 +17,14 @@ export default defineConfig(({ command }) => ({
       "@": fileURLToPath(new URL("./src", import.meta.url)),
     },
   },
+  build: {
+    // Emit a stable manifest of hashed assets for the service worker's
+    // precache step (public/sw.js fetches it at install time). A STRING (not
+    // `true`) so it lands at dist ROOT: the default `.vite/manifest.json`
+    // sits in a dotfile directory, which express.static ignores by default
+    // (dotfiles: 'ignore') — the SW could never fetch it in production.
+    manifest: "asset-manifest.json",
+  },
   server: {
     port: 5175,
     strictPort: true,

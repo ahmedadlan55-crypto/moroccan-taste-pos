@@ -1,0 +1,34 @@
+# Build context hygiene — the image gets `COPY . .`, so everything not excluded
+# here ships to production. Keep this list conservative: excluding a file the
+# server actually reads at runtime breaks the deploy, not the build.
+
+.git
+.gitignore
+.dockerignore
+.env
+.env.*
+*.log
+logs/
+
+# Dependencies are installed inside the image; the frontends are built inside it.
+node_modules/
+frontend/pos/node_modules/
+frontend/erp/node_modules/
+frontend/pos/dist/
+frontend/erp/dist/
+
+# Local tooling, tests, artifacts — never needed at runtime.
+artifacts/
+test-results/
+playwright-report/
+e2e/
+tests/
+docs/
+*.md
+docker-compose.yml
+
+# Local editor/OS noise
+.vscode/
+.idea/
+Thumbs.db
+.DS_Store

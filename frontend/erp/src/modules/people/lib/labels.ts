@@ -30,6 +30,10 @@ const STATUS: Record<string, Meta> = {
   absent: { label: "غائب", tone: "danger" },
   late: { label: "متأخر", tone: "warning" },
   leave: { label: "إجازة", tone: "info" },
+  // custody lifecycle (legacy labels preserved)
+  close_pending: { label: "بانتظار الإقفال", tone: "warning" },
+  override_pending: { label: "طلب تجاوز رصيد", tone: "warning" },
+  returned: { label: "مُرجع للتعديل", tone: "info" },
 };
 
 export function statusMeta(status: string | null | undefined): Meta {

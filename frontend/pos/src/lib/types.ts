@@ -34,6 +34,11 @@ export interface CatalogItem {
   barcode?: string | null; // primary (base) barcode
   baseUnitName?: string | null;
   units?: CatalogUnit[];
+  /** close/d-images — 8-char SHA1 prefix of the stored product image; null/absent
+   *  = no image. The blob itself NEVER rides in the catalog: bytes come from
+   *  GET /api/pos/v2/item-image/:id (immutable-cached, ?v=imageVersion busts the
+   *  cache when the owner edits the image). */
+  imageVersion?: string | null;
 }
 
 /** Owner-configured seller identity, resolved server-side for this cashier's

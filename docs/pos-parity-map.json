@@ -1,5 +1,5 @@
 {
-  "_about": "Legacy /pos → React /pos-v2 parity map. Keyed by slug so parallel closure streams can append entries without stomping each other. status: done | partial | deferred.",
+  "$doc": "خريطة تكافؤ إغلاق الكاشير — تُلحِق مسارات close/* قيودها هنا عند تسليم وظيفة من الكاشير القديم /pos إلى React /pos-v2. المرجع الكامل للتدقيق (374 وظيفة): docs/pos-parity-matrix.md. الحالة: equivalent (منفَّذ + مُثبت باختبار) | needs-review | missing.",
   "entries": {
     "pwa-manifest": {
       "status": "done",
@@ -51,6 +51,7 @@
       "verify": "frontend/pos/src/lib/__tests__/legacyDrain.test.ts (11 tests: parsing, exact replay body, idempotent replay, partial-failure retention, transport stop, offline no-op)"
     }
   },
+  "_about": "Legacy /pos → React /pos-v2 parity map. Keyed by slug so parallel closure streams can append entries without stomping each other. status: done | partial | deferred.",
   "_meta": {
     "purpose": "Machine-readable coverage map: legacy /pos slug (docs/pos-parity-matrix.md) → React /pos-v2 implementation. status=covered means implemented in React AND exercised by the referenced vitest file; status=not-required needs a quoted reason from the matrix itself.",
     "stream": "close/b1-pos-inventory — stocktake (جرد) + shortage requests (طلب النواقص) + receive materials (استلام مواد)",

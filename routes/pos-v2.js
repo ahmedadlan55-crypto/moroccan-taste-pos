@@ -341,7 +341,18 @@ async function doComplete(user, id, body) {
 // ════════════════════════════════════════════════════════════════════════════
 router.get('/catalog', POS, async (req, res) => {
   try {
-    const [items] = await db.query("SELECT id, name, price, category, active, tax_category, stock FROM menu WHERE COALESCE(is_deleted,0)=0 ORDER BY category, name");
+    // close/d-images — the catalog carries an image VERSION, never the image.
+    // menu.image_data is a base64 data-URL in a LONGTEXT (66MB across the live
+    // catalog); shipping it here is exactly the legacy full-menu-in-localStorage
+    // problem this client exists to escape. Instead each item exposes an 8-char
+    // SHA1 prefix: the client fetches bytes from GET /item-image/:id?v=<version>
+    // (immutable-cached), and an image edit changes the version — which changes
+    // data.items and therefore this route's ETag, invalidating cached catalogs.
+    // Measured on the live 2,000-row / 68MB-of-blobs table: ~28ms → ~100ms.
+    const [items] = await db.query(
+      "SELECT id, name, price, category, active, tax_category, stock, " +
+      "CASE WHEN image_data IS NULL OR image_data='' THEN NULL ELSE SUBSTRING(SHA1(image_data),1,8) END AS image_ver " +
+      "FROM menu WHERE COALESCE(is_deleted,0)=0 ORDER BY category, name");
     let vatRate = 15;
     try {
       // Was: SELECT `value` ... WHERE `key`=... — columns that do not exist. The
@@ -418,6 +429,7 @@ router.get('/catalog', POS, async (req, res) => {
           barcode: primaryBc[m.id] || null,
           baseUnitName: base ? base.unitName : null,
           units, // [] when no multi-unit config → cashier treats it as single-unit
+          imageVersion: m.image_ver ?? null, // 8-char SHA1 prefix; bytes via /item-image/:id
         };
       }),
       categories: [...new Set(items.map((m) => m.category || 'عام'))],
@@ -433,6 +445,44 @@ router.get('/catalog', POS, async (req, res) => {
     if (req.get('If-None-Match') === etag) return res.status(304).end();
     res.setHeader('ETag', etag);
     res.json({ success: true, data });
+  } catch (e) { _catch(res, e); }
+});
+
+// ════════════════════════════════════════════════════════════════════════════
+// ITEM IMAGE — menu.image_data (a base64 data-URL in a LONGTEXT, kept for
+// legacy compatibility) served as REAL bytes, one item at a time. The rule the
+// catalog route lives by: the LONGTEXT never rides in the catalog payload —
+// clients get `imageVersion` there and fetch bytes here, immutable-cached
+// (?v=<imageVersion> busts the cache when the owner edits the image).
+// Corrupt/absent stored data → 404, never a 500: a broken image must cost the
+// grid one thumbnail, not the whole request.
+// ════════════════════════════════════════════════════════════════════════════
+const IMG_DATA_URL_RE = /^data:image\/(jpeg|jpg|png|webp|gif);base64,([A-Za-z0-9+/=\s]+)$/;
+router.get('/item-image/:id', POS, async (req, res) => {
+  try {
+    const id = String(req.params.id || '').slice(0, 50);
+    const [rows] = await db.query('SELECT image_data FROM menu WHERE id=? LIMIT 1', [id]);
+    const raw = rows.length ? rows[0].image_data : null;
+    if (!raw) return res.status(404).json({ success: false, code: 'NOT_FOUND', error: 'لا توجد صورة لهذا الصنف' });
+    const m = IMG_DATA_URL_RE.exec(String(raw));
+    let b64 = null; let bytes = null;
+    if (m) {
+      b64 = m[2].replace(/\s+/g, '');
+      const buf = Buffer.from(b64, 'base64'); // charset already constrained by the regex
+      if (buf.length > 0) bytes = buf;
+    }
+    if (!bytes) {
+      console.error('[pos-v2] item-image: stored image_data is not a valid base64 data-URL for menu id', id);
+      return res.status(404).json({ success: false, code: 'NOT_FOUND', error: 'الصورة المخزّنة تالفة' });
+    }
+    // ETag = sha1 of the base64 payload (content-addressed, independent of the
+    // catalog's imageVersion which hashes the full data-URL). Set on the 304 too.
+    const etag = '"' + crypto.createHash('sha1').update(b64).digest('hex') + '"';
+    res.setHeader('ETag', etag);
+    res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
+    if (req.get('If-None-Match') === etag) return res.status(304).end();
+    res.setHeader('Content-Type', 'image/' + (m[1] === 'jpg' ? 'jpeg' : m[1]));
+    res.send(bytes);
   } catch (e) { _catch(res, e); }
 });
 

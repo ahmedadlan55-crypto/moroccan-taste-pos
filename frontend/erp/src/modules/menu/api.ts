@@ -77,6 +77,11 @@ export interface MenuItem {
   yieldQuantity: number;
   yieldUnit: string | null;
   isTaxInclusive: boolean;
+  /** close/d-images — stored product image as a base64 data URL (null = none).
+   *  _mapMenu (routes/menu.js) has always shipped it on /menu/all; typed
+   *  optional so older payload mocks stay valid. The POS catalog never carries
+   *  it — cards fetch bytes from /api/pos/v2/item-image/:id instead. */
+  imageData?: string | null;
 }
 
 /** POST /menu + PUT /menu/:id body (create/update a catalog item). On PUT the
@@ -101,6 +106,10 @@ export interface MenuItemInput {
   yieldUnit?: string | null;
   taxInclusive?: boolean;
   taxCategory?: string;
+  /** close/d-images — ≤512px JPEG data URL from ItemImageEditor. Absent =
+   *  leave the stored image untouched (PUT); '' = clear it. The server 400s
+   *  anything that is not data:image/(jpeg|png|webp);base64 ≤ 300KB decoded. */
+  imageData?: string;
 }
 
 export interface PriceHistoryRow {

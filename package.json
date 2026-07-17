@@ -22,6 +22,7 @@
     "test:erp-core-authz": "node tests/integration/erpCoreAuthz.api.test.js",
     "test:waste-entries": "node tests/integration/wasteEntries.api.test.js",
     "test:auth-gate": "node tests/integration/authGate.api.test.js",
+    "test:item-image": "node tests/integration/itemImage.api.test.js",
     "test:sales-returns": "node tests/integration/salesReturns.api.test.js",
     "test:receipt-qr": "node tests/integration/receiptQr.api.test.js",
     "test:roles": "node tests/integration/roles.api.test.js",

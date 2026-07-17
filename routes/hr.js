@@ -376,6 +376,12 @@ router.post('/departments', async (req, res) => {
         const [col] = await db.query("SHOW COLUMNS FROM hr_departments LIKE 'branch_id'");
         if (col.length) { fields.push('branch_id=?'); params.push(branchId || null); }
       } catch(e) {}
+      // v8 (G3) — manager_id / parent_id / description were parsed from the body
+      // then silently DROPPED (the UPDATE never mentioned them) while the API
+      // returned success:true. The columns are guaranteed now (ensureTables here
+      // + addColumnIfMissing in server.js), so write them unconditionally.
+      fields.push('manager_id=?', 'parent_id=?', 'description=?');
+      params.push(managerId || null, parentId || null, description || null);
       params.push(id);
       await db.query(`UPDATE hr_departments SET ${fields.join(', ')} WHERE id=?`, params);
       return res.json({ success: true, id, code: finalCode });
@@ -397,6 +403,10 @@ router.post('/departments', async (req, res) => {
       const [c] = await db.query("SHOW COLUMNS FROM hr_departments LIKE 'branch_id'");
       if (c.length) { cols.push('branch_id'); vals.push(branchId || null); }
     } catch(e) {}
+    // v8 (G3) — same as the UPDATE path above: these three were parsed then
+    // silently dropped on INSERT. Columns are guaranteed by the migrations.
+    cols.push('manager_id', 'parent_id', 'description');
+    vals.push(managerId || null, parentId || null, description || null);
     const placeholders = cols.map(() => '?').join(',');
     await db.query(`INSERT INTO hr_departments (${cols.join(',')}) VALUES (${placeholders})`, vals);
     res.json({ success: true, id: newId, code: finalCode });
@@ -2344,7 +2354,12 @@ router.get('/my-attendance', async (req, res) => {
       [emp[0].id, month, year]
     );
     res.json(rows);
-  } catch (e) { res.json([]); }
+  } catch (e) {
+    // v8 (G3) — was `res.json([])`: a DB error was indistinguishable from
+    // "no rows", fabricating an empty result on a primary data read.
+    console.error('[hr] ' + req.method + ' ' + (req.originalUrl || req.url) + ' failed:', e.message);
+    res.status(500).json({ success: false, error: e.message });
+  }
 });
 
 // POST clock in/out for myself
@@ -2479,7 +2494,12 @@ router.get('/my-leave-balances', async (req, res) => {
       [emp[0].id, year]
     );
     res.json(rows);
-  } catch (e) { res.json([]); }
+  } catch (e) {
+    // v8 (G3) — was `res.json([])`: a DB error was indistinguishable from
+    // "no rows", fabricating an empty result on a primary data read.
+    console.error('[hr] ' + req.method + ' ' + (req.originalUrl || req.url) + ' failed:', e.message);
+    res.status(500).json({ success: false, error: e.message });
+  }
 });
 
 // POST my leave request
@@ -2545,7 +2565,12 @@ router.get('/my-leave-requests', async (req, res) => {
       [emp[0].id]
     );
     res.json(rows);
-  } catch (e) { res.json([]); }
+  } catch (e) {
+    // v8 (G3) — was `res.json([])`: a DB error was indistinguishable from
+    // "no rows", fabricating an empty result on a primary data read.
+    console.error('[hr] ' + req.method + ' ' + (req.originalUrl || req.url) + ' failed:', e.message);
+    res.status(500).json({ success: false, error: e.message });
+  }
 });
 
 // GET my payslips
@@ -2560,7 +2585,12 @@ router.get('/my-payslips', async (req, res) => {
       [emp[0].id]
     );
     res.json(rows);
-  } catch (e) { res.json([]); }
+  } catch (e) {
+    // v8 (G3) — was `res.json([])`: a DB error was indistinguishable from
+    // "no rows", fabricating an empty result on a primary data read.
+    console.error('[hr] ' + req.method + ' ' + (req.originalUrl || req.url) + ' failed:', e.message);
+    res.status(500).json({ success: false, error: e.message });
+  }
 });
 
 // ═══════════════════════════════════════════════════════════════
@@ -2687,7 +2717,12 @@ router.get('/shifts', async (req, res) => {
       allowOvertimeBefore: !!s.allow_overtime_before, allowOvertimeAfter: !!s.allow_overtime_after,
       workDays: s.work_days || '0,1,2,3,4', isDefault: !!s.is_default
     })));
-  } catch(e) { res.json([]); }
+  } catch(e) {
+    // v8 (G3) — was `res.json([])`: a DB error was indistinguishable from
+    // "no rows", fabricating an empty result on a primary data read.
+    console.error('[hr] ' + req.method + ' ' + (req.originalUrl || req.url) + ' failed:', e.message);
+    res.status(500).json({ success: false, error: e.message });
+  }
 });
 
 router.post('/shifts', async (req, res) => {
@@ -2744,7 +2779,12 @@ router.get('/overtime-rules', async (req, res) => {
       multiplier: Number(r.multiplier), minMinutes: r.min_minutes,
       requireApproval: !!r.require_approval
     })));
-  } catch(e) { res.json([]); }
+  } catch(e) {
+    // v8 (G3) — was `res.json([])`: a DB error was indistinguishable from
+    // "no rows", fabricating an empty result on a primary data read.
+    console.error('[hr] ' + req.method + ' ' + (req.originalUrl || req.url) + ' failed:', e.message);
+    res.status(500).json({ success: false, error: e.message });
+  }
 });
 
 router.post('/overtime-rules', async (req, res) => {
@@ -2787,7 +2827,12 @@ router.get('/overtime-entries', async (req, res) => {
       amount: Number(r.amount), status: r.status, ruleName: r.rule_name,
       approvedBy: r.approved_by, approvedAt: r.approved_at, note: r.note
     })));
-  } catch(e) { res.json([]); }
+  } catch(e) {
+    // v8 (G3) — was `res.json([])`: a DB error was indistinguishable from
+    // "no rows", fabricating an empty result on a primary data read.
+    console.error('[hr] ' + req.method + ' ' + (req.originalUrl || req.url) + ' failed:', e.message);
+    res.status(500).json({ success: false, error: e.message });
+  }
 });
 
 router.post('/overtime-entries/:id/approve', async (req, res) => {
@@ -2831,7 +2876,12 @@ router.get('/exceptions', async (req, res) => {
       newClockIn: r.new_clock_in, newClockOut: r.new_clock_out,
       reason: r.reason, approvedBy: r.approved_by, createdBy: r.created_by, createdAt: r.created_at
     })));
-  } catch(e) { res.json([]); }
+  } catch(e) {
+    // v8 (G3) — was `res.json([])`: a DB error was indistinguishable from
+    // "no rows", fabricating an empty result on a primary data read.
+    console.error('[hr] ' + req.method + ' ' + (req.originalUrl || req.url) + ' failed:', e.message);
+    res.status(500).json({ success: false, error: e.message });
+  }
 });
 
 router.post('/exceptions', async (req, res) => {
@@ -2851,7 +2901,9 @@ router.post('/exceptions', async (req, res) => {
 router.delete('/exceptions/:id', async (req, res) => {
   try {
     await db.query('DELETE FROM hr_exceptions WHERE id = ?', [req.params.id]);
-    await hrRules.auditLog(req.query.username, 'delete_exception', 'hr_exceptions', req.params.id, {}, req.ip);
+    // v8 SECURITY (G3) — the audit actor came from ?username= (spoofable, and it
+    // leaked identity into access logs). Token only.
+    await hrRules.auditLog(_actor(req), 'delete_exception', 'hr_exceptions', req.params.id, {}, req.ip);
     res.json({ success: true });
   } catch(e) { res.json({ success: false, error: e.message }); }
 });
@@ -2899,7 +2951,12 @@ router.get('/dashboard/alerts', async (req, res) => {
       title: e.name + ' — عقد ينتهي ' + new Date(e.contract_end_date).toLocaleDateString('en-GB'), link:'employee:'+e.id }));
 
     res.json(alerts);
-  } catch(e) { res.json([]); }
+  } catch(e) {
+    // v8 (G3) — was `res.json([])`: a DB error was indistinguishable from
+    // "no rows", fabricating an empty result on a primary data read.
+    console.error('[hr] ' + req.method + ' ' + (req.originalUrl || req.url) + ' failed:', e.message);
+    res.status(500).json({ success: false, error: e.message });
+  }
 });
 
 // ═══════════════════════════════════════════════════════════════
@@ -2917,7 +2974,12 @@ router.get('/audit', async (req, res) => {
     sql += ' ORDER BY created_at DESC LIMIT 200';
     const [rows] = await db.query(sql, params);
     res.json(rows);
-  } catch(e) { res.json([]); }
+  } catch(e) {
+    // v8 (G3) — was `res.json([])`: a DB error was indistinguishable from
+    // "no rows", fabricating an empty result on a primary data read.
+    console.error('[hr] ' + req.method + ' ' + (req.originalUrl || req.url) + ' failed:', e.message);
+    res.status(500).json({ success: false, error: e.message });
+  }
 });
 
 // ═══════════════════════════════════════════════════════════════

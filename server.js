@@ -147,12 +147,10 @@ app.use('/api/', async function(req, res, next) {
   var p = req.path || '';
 
   // Best-effort identity for PUBLIC paths: if a valid Bearer token is present,
-  // populate req.user before the public early-returns below. Some paths are
-  // public here (no token REQUIRED) yet sit behind a role guard at their own
-  // mount — e.g. GET /api/hr/departments and /api/hr/leave-types run under
-  // requireRole('admin','manager'). Without this, req.user is unset on those
-  // public paths, requireRole defaults the role to 'cashier', and an authenticated
-  // admin/manager is wrongly 403'd. This NEVER blocks: absent/invalid tokens leave
+  // populate req.user before the public early-returns below. Some public paths'
+  // handlers (or role guards mounted on their routers) read req.user when it is
+  // available; without this, an authenticated caller on a public path would be
+  // treated as anonymous. This NEVER blocks: absent/invalid tokens leave
   // req.user unset and public paths still proceed anonymously. Non-public paths are
   // still hard-verified (with the session-version gate) by the strict block below.
   try {
@@ -166,7 +164,12 @@ app.use('/api/', async function(req, res, next) {
   if (p === '/version') return next();                 // v6.20.0 — deploy/version marker
   if (p === '/inventory/v2/ready') return next();      // RC — readiness probe (DB + schema)
   if (p.startsWith('/auth/')) return next();           // all auth endpoints
-  if (p.startsWith('/settings')) return next();        // settings
+  // v8 SECURITY (G3) — /settings is public for GET ONLY: the login pages read
+  // branding (company name / logo) before auth. Every non-GET /settings request
+  // now goes through the JWT gate below. This is defense-in-depth on top of
+  // routes/settings.js, whose writes ALL re-verify the token inline and require
+  // admin/manager (verified: no legitimate anonymous write exists there).
+  if (p.startsWith('/settings') && req.method === 'GET') return next();
   if (p.startsWith('/menu')) return next();            // menu
   // v7.5 (H1 SECURITY) — /hr/my-* is NO LONGER public. It now passes through the
   // JWT gate below so the employee is identified from their token, never from a
@@ -181,11 +184,19 @@ app.use('/api/', async function(req, res, next) {
   // `?username=admin` authenticated as admin with NO token, on routes including
   // DELETE /transactions/__wipe-all. Every caller (employee PWA, legacy admin,
   // api-bridge, React) already sends "Authorization: Bearer".
-  if (p.startsWith('/hr/leave-types')) return next();  // leave types list
-  if (p.startsWith('/hr/departments')) return next();  // departments list
+  // v8 SECURITY (G3) — /hr/departments and /hr/leave-types are NO LONGER public.
+  // The exemptions exposed the org directory (department names, structure,
+  // manager links) to any unauthenticated caller. Every known consumer — the
+  // legacy admin api-bridge, the React ERP people module, and the employee PWA —
+  // calls them AFTER login with "Authorization: Bearer"; no pre-login page reads
+  // them (verified across public/ and frontend/).
   if (p.startsWith('/i18n/')) return next();           // V5.7.13 — translation proxy (login pages too)
-  // V5.7.19 — printable shift report (opened in a new tab without JS auth headers)
-  if (/^\/shifts\/[^\/]+\/full-report-print$/.test(p)) return next();
+  // v8 SECURITY (G3) — the /shifts/:id/full-report-print exemption is REMOVED.
+  // It served the full financial shift report (sales, refunds, drawer counts) to
+  // anyone who guessed/shared the URL. The route itself is being made
+  // token-aware in a parallel change (the print tab carries a credential instead
+  // of relying on a public path); until that lands, the report requires the
+  // normal Authorization header like every other /api route.
 
   // Try to extract and verify JWT token — HEADER ONLY. Credentials are never
   // accepted from the URL/query string (they leak into access logs, browser
@@ -201,12 +212,30 @@ app.use('/api/', async function(req, res, next) {
       var decoded = jwt.verify(token, process.env.JWT_SECRET);
       // Phase A — session-version gate: a password change bumps users.token_version,
       // invalidating every token issued before it (revokes other sessions).
+      // v8 SECURITY (G3) — this used to fail OPEN (`catch (_) {}` + isTokenCurrent's
+      // internal null→true), so a DB hiccup ACCEPTED a REVOKED token. It now fails
+      // CLOSED: server.js reads currentVersion() directly (the 15s in-memory cache
+      // inside lib/sessionVersion stays the fast path — the DB is only hit on a
+      // cache miss) and rejects with SESSION_CHECK_FAILED when the check cannot be
+      // completed. Tokens without an id claim predate the feature and carry
+      // nothing to check — same as isTokenCurrent's contract.
       try {
         const _sv = require('./lib/sessionVersion');
-        if (!(await _sv.isTokenCurrent(decoded))) {
-          return res.status(401).json({ success: false, error: 'انتهت الجلسة — يرجى تسجيل الدخول مجددًا' });
+        if (decoded.id != null) {
+          const _tokenVer = Number(decoded.tokenVersion != null ? decoded.tokenVersion : 1) || 1;
+          const _cur = await _sv.currentVersion(decoded.id); // cached; null = the check itself failed
+          if (_cur == null) {
+            console.error('[auth] session-version check FAILED (DB/cache error in sessionVersion.currentVersion) for user id=' + decoded.id + ' — failing CLOSED');
+            return res.status(401).json({ success: false, code: 'SESSION_CHECK_FAILED', error: 'تعذّر التحقق من الجلسة — يرجى المحاولة مجددًا' });
+          }
+          if (_tokenVer !== _cur) {
+            return res.status(401).json({ success: false, error: 'انتهت الجلسة — يرجى تسجيل الدخول مجددًا' });
+          }
         }
-      } catch (_) { /* fail open on cache/DB error */ }
+      } catch (svErr) {
+        console.error('[auth] session-version check threw — failing CLOSED:', svErr && (svErr.code || svErr.message));
+        return res.status(401).json({ success: false, code: 'SESSION_CHECK_FAILED', error: 'تعذّر التحقق من الجلسة — يرجى المحاولة مجددًا' });
+      }
       req.user = decoded;
       return next();
     } catch (err) {
@@ -1461,10 +1490,13 @@ async function runMigrations() {
   await addColumnIfMissing('transactions', 'returned_by', "VARCHAR(100) DEFAULT NULL");
   await addColumnIfMissing('transactions', 'returned_reason', "VARCHAR(500) DEFAULT NULL");
   await addColumnIfMissing('transactions', 'return_count', "INT DEFAULT 0");
-  // Extend status ENUM to include 'returned' as a first-class state
-  try {
-    await db.query("ALTER TABLE transactions MODIFY COLUMN status ENUM('draft','pending','in_progress','returned','rejected','approved','closed') DEFAULT 'draft'");
-  } catch(e) { /* tolerate if already extended */ }
+  // v8 SAFETY (G3) — the V3.1 "extend to include 'returned'" ALTER that lived here
+  // was DELETED. Relative to the V4.1 statement just below it, it NARROWED the
+  // enum (its list lacked 'created' and 'replied'), and MySQL runs MODIFY COLUMN
+  // as a table rebuild: on every boot, any row sitting in 'created' or 'replied'
+  // during the narrow pass could be coerced ('' / first member) before the V4.1
+  // statement re-widened the enum microseconds later. The V4.1 ALTER below is a
+  // superset (it includes 'returned'), so nothing is lost by dropping this one.
 
   // ═══════════════════════════════════════════════════════════════════
   // V4 — Workflow Engine (Full Plan Execution)
@@ -2738,6 +2770,14 @@ async function runMigrations() {
   await addColumnIfMissing('hr_departments', 'name_en', "VARCHAR(200)");
   await addColumnIfMissing('hr_departments', 'code', "VARCHAR(50)");
   await addColumnIfMissing('hr_departments', 'branch_id', "VARCHAR(50)");
+  // v8 (G3) — the hr_departments table created HERE (createTableIfMissing above)
+  // never had manager_id / parent_id / description, yet routes/hr.js selected
+  // them (always '') and its POST parsed then silently DROPPED them while
+  // returning success:true. Additive + nullable, so existing rows are untouched;
+  // routes/hr.js now actually reads/writes them.
+  await addColumnIfMissing('hr_departments', 'manager_id', "VARCHAR(50) NULL");
+  await addColumnIfMissing('hr_departments', 'parent_id', "VARCHAR(50) NULL");
+  await addColumnIfMissing('hr_departments', 'description', "TEXT NULL");
 
   // Expand hr_exceptions ENUM to include excuse_absence (for existing tables)
   try {
@@ -4051,7 +4091,17 @@ async function runMigrations() {
   // ─── v6.0.1 Wave A.3 — UNIQUE constraint on gl_journals.journal_number ───
   // Closes the SELECT-then-INSERT race that could produce duplicate
   // JV-YYYYMMDD-NNNN numbers under concurrent checkouts.
-  try { await db.query('ALTER TABLE gl_journals ADD UNIQUE KEY uq_journal_number (journal_number)'); } catch(e) {}
+  // v8 SAFETY (G3) — was `catch(e) {}`: on a DB with pre-existing duplicate
+  // journal numbers the key silently never built, while the numbering code
+  // above kept believing the race net existed. Tolerate only "already exists";
+  // shout about anything else (do not crash boot — the sale path must stay up).
+  try {
+    await db.query('ALTER TABLE gl_journals ADD UNIQUE KEY uq_journal_number (journal_number)');
+  } catch (e) {
+    if (!e || e.code !== 'ER_DUP_KEYNAME') {
+      console.error('[schema] FAILED to create gl_journals.uq_journal_number —', (e && (e.code || e.message)));
+    }
+  }
 
   // ─── v6.4.3 — De-duplicate menu items + UNIQUE (brand_id, name) ───
   // Older deployments accumulated duplicate menu rows when the same item
@@ -4075,7 +4125,14 @@ async function runMigrations() {
   } catch (e) { /* table may not exist on a fresh boot — ignore */ }
   try {
     await db.query('ALTER TABLE menu ADD UNIQUE KEY uq_menu_brand_name (brand_id, name)');
-  } catch (e) { /* already there — ignore */ }
+  } catch (e) {
+    // v8 SAFETY (G3) — only "already there" is fine; anything else (e.g. the
+    // dedupe above failed and duplicates remain) means imports can double
+    // items again, so it must be visible in the boot log.
+    if (!e || e.code !== 'ER_DUP_KEYNAME') {
+      console.error('[schema] FAILED to create menu.uq_menu_brand_name —', (e && (e.code || e.message)));
+    }
+  }
 
   // ─── v6.4.4 — Silence orphan menu items that have a branded twin ───
   // The owner reported the cashier seeing 215 items when the admin
@@ -4210,7 +4267,9 @@ async function runMigrations() {
       console.log('[DB] Migration: waste_entries.uq_waste_idem unique index added');
     }
   } catch (e) {
-    console.log('[DB] Migration warning (uq_waste_idem):', e.message.substring(0, 120));
+    // v8 SAFETY (G3) — this index is what makes waste POST idempotent under
+    // concurrency; a quiet console.log buried the failure. Shout, don't crash.
+    console.error('[schema] FAILED to create waste_entries.uq_waste_idem —', (e && (e.code || e.message)));
   }
   await addColumnIfMissing('stock_adjustments', 'adjustment_number', "VARCHAR(40)");
 
@@ -4242,7 +4301,16 @@ async function runMigrations() {
         AND c1.created_at > c2.created_at
     `);
   } catch(e) {}
-  try { await db.query('ALTER TABLE customers ADD UNIQUE KEY uq_customers_phone (phone)'); } catch(e) {}
+  // v8 SAFETY (G3) — was `catch(e) {}`: if the dedupe above failed (or new
+  // duplicates appeared between boots) the key never built and the
+  // upsert-by-phone flow silently produced sibling customers again.
+  try {
+    await db.query('ALTER TABLE customers ADD UNIQUE KEY uq_customers_phone (phone)');
+  } catch (e) {
+    if (!e || e.code !== 'ER_DUP_KEYNAME') {
+      console.error('[schema] FAILED to create customers.uq_customers_phone —', (e && (e.code || e.message)));
+    }
+  }
 
   // ─── v6.0.3 Wave C.3 — Inventory cost history table ───
   // Every change to inv_items.cost (purchase receipt, stocktake variance,

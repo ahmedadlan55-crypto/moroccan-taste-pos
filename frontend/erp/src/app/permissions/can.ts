@@ -127,6 +127,10 @@ export const ROLE_GRANTS: Record<Capability, readonly Role[]> = {
   // ── Sales section extras ──
   "sales.channels.view": [...ADM, "manager", "sales"],
   "sales.pricing.view": [...ADM, "manager", "sales", "accountant"],
+  // Mirrors the live role_permissions seed (server.js): finance holds it
+  // explicitly and manager via the nearly-everything seed. Accountant is NOT
+  // granted live, so showing them the nav item would just 403.
+  "sales.reports.advanced": [...ADM, "manager", "finance"],
   // ── POS administration ──
   "pos.register.view": [...ADM, "manager", "cashier"],
   "pos.shifts.view": [...ADM, "manager", "cashier"],

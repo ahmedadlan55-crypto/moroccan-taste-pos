@@ -123,6 +123,10 @@ export const ALL_CAPS = [
   // ── Sales section extras (new) ──
   "sales.channels.view",
   "sales.pricing.view",
+  // Advanced sales analytics — mirrors the LIVE legacy permission id seeded in
+  // permissions_v3 (server.js): granted to finance explicitly + manager's
+  // nearly-everything seed. Kept verbatim so the backend RBAC gate matches.
+  "sales.reports.advanced",
   // ── POS administration (new) ──
   "pos.register.view",
   "pos.shifts.view",

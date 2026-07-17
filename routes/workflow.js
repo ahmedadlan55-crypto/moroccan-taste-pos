@@ -37,6 +37,39 @@ const TxnService = require('../services/TransactionService');
 const SOD = require('../lib/sodValidator');
 const S3 = require('../lib/s3Storage');     // optional — falls back to inline if not configured
 const CACHE = require('../lib/redisCache'); // optional — no-op if REDIS_URL not set
+// (requireCapability is imported once at the top of the file.)
+
+// ═══════════════════════════════════════════════════════════════════
+// g-wf SECURITY — ROUTER-LEVEL JWT GATE
+// server.js exempts /api/workflow/* from the global JWT gate with the comment
+// "auth checked inside" — but nothing inside this router ever verified a token;
+// handlers took the acting identity from ?username= / body.username / X-User,
+// all attacker-chosen. From here on EVERY /api/workflow request must carry a
+// valid Bearer token, and req.user is the ONLY identity source in this file.
+// Mirrors the global gate in server.js (including the token_version check that
+// revokes tokens issued before a password change).
+// ═══════════════════════════════════════════════════════════════════
+const jwt = require('jsonwebtoken');
+router.use(async function workflowAuthGate(req, res, next) {
+  if (req.user && req.user.username) return next(); // already authenticated upstream
+  const authHeader = req.headers && req.headers.authorization;
+  if (authHeader && authHeader.startsWith('Bearer ')) {
+    try {
+      const decoded = jwt.verify(authHeader.split(' ')[1], process.env.JWT_SECRET);
+      // Session-version gate — a password change bumps users.token_version,
+      // invalidating every token issued before it (same as the global gate).
+      try {
+        const _sv = require('../lib/sessionVersion');
+        if (!(await _sv.isTokenCurrent(decoded))) {
+          return res.status(401).json({ success: false, error: 'انتهت الجلسة — يرجى تسجيل الدخول مجددًا' });
+        }
+      } catch (_e) { /* fail open on cache/DB error — same policy as the global gate */ }
+      req.user = decoded;
+      return next();
+    } catch (_e) { /* invalid/expired token — fall through to 401 */ }
+  }
+  return res.status(401).json({ success: false, error: 'غير مصرح — يرجى تسجيل الدخول' });
+});
 
 // Mojibake fixer: repairs UTF-8 Arabic text that was decoded through a
 // single-byte codepage (Latin-1 or Windows-1252). Produces forms like
@@ -329,7 +362,11 @@ async function getPermissions(username) {
   try {
     const [r] = await db.query('SELECT role FROM users WHERE username = ? LIMIT 1', [username]);
     if (r.length) userRole = (r[0].role || '').toLowerCase();
-  } catch(_) {}
+  } catch(e) {
+    // g-wf: role lookup failure silently degraded the user to role='' (least
+    // privilege — fail-closed) but hid real DB faults. Log it.
+    console.error('[wf getPermissions] role lookup failed for', username, ':', e && e.message);
+  }
 
   if (emp) {
     const out = {
@@ -407,6 +444,9 @@ router.get('/positions', requireCapability('workflow.view'), async (req, res) =>
   }
 });
 
+// g-wf SECURITY — workflow-configuration writes are gated with workflow.manage
+// (held by admin/hr/manager; admin bypasses). Editing positions, chains and
+// types grants approval routing power, so it must not be world-writable.
 router.post('/positions', requireCapability('workflow.manage'), async (req, res) => {
   try {
     const { id, name, level } = req.body;
@@ -486,7 +526,12 @@ router.get('/transaction-types', async (req, res) => {
       description: t.description || '',
       sortOrder: t.sort_order || 100
     })));
-  } catch(e) { console.error('[wf]', req.method, req.path, '-> query failed:', e && e.message); res.json([]); }
+  } catch(e) {
+    // g-wf: was `res.json([])` — a DB fault rendered as "empty list" and stayed
+    // invisible. Surface it as a real 500 the client can distinguish.
+    console.error('[wf]', req.method, req.path, '-> query failed:', e && e.message);
+    res.status(500).json({ success: false, error: 'خطأ في الخادم أثناء تحميل البيانات — راجع سجل الخادم' });
+  }
 });
 
 // Grouped by category — convenient for the "new transaction" wizard
@@ -521,7 +566,11 @@ router.get('/transaction-types/grouped', async (req, res) => {
       })),
       total: rows.length
     });
-  } catch(e) { res.json({ groups: [], total: 0, error: e.message }); }
+  } catch(e) {
+    // g-wf: was a 200 with empty groups — the wizard rendered "no types" on DB faults.
+    console.error('[wf] GET /transaction-types/grouped failed:', e && e.message);
+    res.status(500).json({ groups: [], total: 0, error: 'خطأ في الخادم أثناء تحميل أنواع المعاملات' });
+  }
 });
 
 // GL templates (for UI preview of "what journal will post")
@@ -529,7 +578,12 @@ router.get('/gl-templates', async (req, res) => {
   try {
     const [rows] = await db.query('SELECT * FROM transaction_gl_templates ORDER BY code');
     res.json(rows);
-  } catch(e) { console.error('[wf]', req.method, req.path, '-> query failed:', e && e.message); res.json([]); }
+  } catch(e) {
+    // g-wf: was `res.json([])` — a DB fault rendered as "empty list" and stayed
+    // invisible. Surface it as a real 500 the client can distinguish.
+    console.error('[wf]', req.method, req.path, '-> query failed:', e && e.message);
+    res.status(500).json({ success: false, error: 'خطأ في الخادم أثناء تحميل البيانات — راجع سجل الخادم' });
+  }
 });
 
 // Default approval chain for a given transaction type
@@ -541,10 +595,15 @@ router.get('/transaction-types/:code/default-chain', async (req, res) => {
        ORDER BY step_order ASC, amount_from ASC`,
       [req.params.code]);
     res.json(rows);
-  } catch(e) { console.error('[wf]', req.method, req.path, '-> query failed:', e && e.message); res.json([]); }
+  } catch(e) {
+    // g-wf: was `res.json([])` — a DB fault rendered as "empty list" and stayed
+    // invisible. Surface it as a real 500 the client can distinguish.
+    console.error('[wf]', req.method, req.path, '-> query failed:', e && e.message);
+    res.status(500).json({ success: false, error: 'خطأ في الخادم أثناء تحميل البيانات — راجع سجل الخادم' });
+  }
 });
 
-router.post('/transaction-types', async (req, res) => {
+router.post('/transaction-types', requireCapability('workflow.manage'), async (req, res) => {
   try {
     const { id, name, code } = req.body;
     if (!name || !code) return res.json({ success: false, error: 'الاسم والرمز مطلوبان' });
@@ -559,7 +618,7 @@ router.post('/transaction-types', async (req, res) => {
   } catch(e) { res.json({ success: false, error: e.message }); }
 });
 
-router.delete('/transaction-types/:id', async (req, res) => {
+router.delete('/transaction-types/:id', requireCapability('workflow.manage'), async (req, res) => {
   try {
     await db.query('DELETE FROM transaction_types WHERE id = ?', [req.params.id]);
     res.json({ success: true });
@@ -594,7 +653,12 @@ router.get('/workflow-definitions-by-role/:positionId', async (req, res) => {
       requireSameDepartment: !!w.require_same_department,
       assignmentStrategy: w.assignment_strategy || 'least_busy'
     })));
-  } catch(e) { console.error('[wf]', req.method, req.path, '-> query failed:', e && e.message); res.json([]); }
+  } catch(e) {
+    // g-wf: was `res.json([])` — a DB fault rendered as "empty list" and stayed
+    // invisible. Surface it as a real 500 the client can distinguish.
+    console.error('[wf]', req.method, req.path, '-> query failed:', e && e.message);
+    res.status(500).json({ success: false, error: 'خطأ في الخادم أثناء تحميل البيانات — راجع سجل الخادم' });
+  }
 });
 
 router.get('/workflow-definitions/:typeId', async (req, res) => {
@@ -616,10 +680,15 @@ router.get('/workflow-definitions/:typeId', async (req, res) => {
       requireSameDepartment: !!w.require_same_department,
       assignmentStrategy: w.assignment_strategy || 'least_busy'
     })));
-  } catch(e) { console.error('[wf]', req.method, req.path, '-> query failed:', e && e.message); res.json([]); }
+  } catch(e) {
+    // g-wf: was `res.json([])` — a DB fault rendered as "empty list" and stayed
+    // invisible. Surface it as a real 500 the client can distinguish.
+    console.error('[wf]', req.method, req.path, '-> query failed:', e && e.message);
+    res.status(500).json({ success: false, error: 'خطأ في الخادم أثناء تحميل البيانات — راجع سجل الخادم' });
+  }
 });
 
-router.post('/workflow-definitions', async (req, res) => {
+router.post('/workflow-definitions', requireCapability('workflow.manage'), async (req, res) => {
   try {
     const {
       id, transactionTypeId, stepOrder, stepName, positionId,
@@ -671,7 +740,7 @@ router.post('/workflow-definitions', async (req, res) => {
   } catch(e) { res.json({ success: false, error: e.message }); }
 });
 
-router.delete('/workflow-definitions/:id', async (req, res) => {
+router.delete('/workflow-definitions/:id', requireCapability('workflow.manage'), async (req, res) => {
   try {
     await db.query('DELETE FROM workflow_definitions WHERE id = ?', [req.params.id]);
     res.json({ success: true });
@@ -687,7 +756,7 @@ router.delete('/workflow-definitions/:id', async (req, res) => {
 //         steps: [{ stepOrder?, stepName?, positionId, canApprove, canReject,
 //           canReturn, canEditAmount, canEdit, isFinal,
 //           requireSameBranch, requireSameDepartment, assignmentStrategy }, ...] }
-router.post('/workflow-definitions/bulk', async (req, res) => {
+router.post('/workflow-definitions/bulk', requireCapability('workflow.manage'), async (req, res) => {
   try {
     const { transactionTypeId, steps, applyToAllTypes } = req.body;
     if (!Array.isArray(steps) || !steps.length) return res.json({ success: false, error: 'يجب إضافة خطوة واحدة على الأقل' });
@@ -797,7 +866,12 @@ router.get('/position-workflow/:initiatorPositionId', async (req, res) => {
       requireSameDepartment: !!w.require_same_department,
       assignmentStrategy: w.assignment_strategy || 'least_busy'
     })));
-  } catch(e) { console.error('[wf]', req.method, req.path, '-> query failed:', e && e.message); res.json([]); }
+  } catch(e) {
+    // g-wf: was `res.json([])` — a DB fault rendered as "empty list" and stayed
+    // invisible. Surface it as a real 500 the client can distinguish.
+    console.error('[wf]', req.method, req.path, '-> query failed:', e && e.message);
+    res.status(500).json({ success: false, error: 'خطأ في الخادم أثناء تحميل البيانات — راجع سجل الخادم' });
+  }
 });
 
 // List ALL paths for an initiator position (one row per path_key)
@@ -819,7 +893,12 @@ router.get('/position-workflow/:initiatorPositionId/paths', async (req, res) => 
       description: r.description,
       stepCount: Number(r.step_count) || 0
     })));
-  } catch(e) { console.error('[wf]', req.method, req.path, '-> query failed:', e && e.message); res.json([]); }
+  } catch(e) {
+    // g-wf: was `res.json([])` — a DB fault rendered as "empty list" and stayed
+    // invisible. Surface it as a real 500 the client can distinguish.
+    console.error('[wf]', req.method, req.path, '-> query failed:', e && e.message);
+    res.status(500).json({ success: false, error: 'خطأ في الخادم أثناء تحميل البيانات — راجع سجل الخادم' });
+  }
 });
 
 // List all initiator positions with step counts (summary)
@@ -835,13 +914,18 @@ router.get('/position-workflows-summary', async (req, res) => {
       id: r.id, name: r.name, level: Number(r.level) || 0,
       stepCount: Number(r.step_count) || 0
     })));
-  } catch(e) { console.error('[wf]', req.method, req.path, '-> query failed:', e && e.message); res.json([]); }
+  } catch(e) {
+    // g-wf: was `res.json([])` — a DB fault rendered as "empty list" and stayed
+    // invisible. Surface it as a real 500 the client can distinguish.
+    console.error('[wf]', req.method, req.path, '-> query failed:', e && e.message);
+    res.status(500).json({ success: false, error: 'خطأ في الخادم أثناء تحميل البيانات — راجع سجل الخادم' });
+  }
 });
 
 // Replace the chain for a given initiator position + pathKey (atomic).
 // If pathKey is omitted, defaults to 'default' (backward compat).
 // Other paths under the same initiator are NOT touched.
-router.post('/position-workflow/bulk', async (req, res) => {
+router.post('/position-workflow/bulk', requireCapability('workflow.manage'), async (req, res) => {
   try {
     const { initiatorPositionId, steps } = req.body;
     // V5-SEC: sanitize pathKey to safe chars only — was just sliced to 50.
@@ -922,7 +1006,7 @@ router.post('/position-workflow/bulk', async (req, res) => {
 });
 
 // Delete one specific path (or all paths if pathKey is omitted)
-router.delete('/position-workflow/:initiatorPositionId/path/:pathKey', async (req, res) => {
+router.delete('/position-workflow/:initiatorPositionId/path/:pathKey', requireCapability('workflow.manage'), async (req, res) => {
   try {
     await db.query(
       `DELETE FROM position_workflow_steps
@@ -933,7 +1017,7 @@ router.delete('/position-workflow/:initiatorPositionId/path/:pathKey', async (re
 });
 
 // Delete all steps for an initiator position
-router.delete('/position-workflow/:initiatorPositionId', async (req, res) => {
+router.delete('/position-workflow/:initiatorPositionId', requireCapability('workflow.manage'), async (req, res) => {
   try {
     await db.query('DELETE FROM position_workflow_steps WHERE initiator_position_id = ?', [req.params.initiatorPositionId]);
     res.json({ success: true });
@@ -964,7 +1048,12 @@ router.get('/default-workflow', async (req, res) => {
       requireSameDepartment: !!w.require_same_department,
       assignmentStrategy: w.assignment_strategy || 'least_busy'
     })));
-  } catch(e) { console.error('[wf]', req.method, req.path, '-> query failed:', e && e.message); res.json([]); }
+  } catch(e) {
+    // g-wf: was `res.json([])` — a DB fault rendered as "empty list" and stayed
+    // invisible. Surface it as a real 500 the client can distinguish.
+    console.error('[wf]', req.method, req.path, '-> query failed:', e && e.message);
+    res.status(500).json({ success: false, error: 'خطأ في الخادم أثناء تحميل البيانات — راجع سجل الخادم' });
+  }
 });
 
 // ═══════════════════════════════════════
@@ -974,7 +1063,8 @@ router.get('/default-workflow', async (req, res) => {
 // Current user's profile, permissions, and effective workflow context
 router.get('/my-profile', async (req, res) => {
   try {
-    const username = req.query.username || (req.user && req.user.username) || '';
+    // g-wf SECURITY: identity from the verified JWT only (was ?username= first).
+    const username = (req.user && req.user.username) || '';
     const perms = await getPermissions(username);
     res.json({ success: true, username, ...perms });
   } catch(e) { res.json({ success: false, error: e.message }); }
@@ -1115,10 +1205,15 @@ router.get('/expense-categories', async (req, res) => {
       glAccountId: r.gl_account_id || '', glAccountCode: r.gl_account_code || '',
       isActive: r.is_active !== false
     })));
-  } catch(e) { console.error('[wf]', req.method, req.path, '-> query failed:', e && e.message); res.json([]); }
+  } catch(e) {
+    // g-wf: was `res.json([])` — a DB fault rendered as "empty list" and stayed
+    // invisible. Surface it as a real 500 the client can distinguish.
+    console.error('[wf]', req.method, req.path, '-> query failed:', e && e.message);
+    res.status(500).json({ success: false, error: 'خطأ في الخادم أثناء تحميل البيانات — راجع سجل الخادم' });
+  }
 });
 
-router.post('/expense-categories', async (req, res) => {
+router.post('/expense-categories', requireCapability('workflow.manage'), async (req, res) => {
   try {
     const { id, code, name, glAccountId, glAccountCode, isActive } = req.body;
     if (!name) return res.json({ success: false, error: 'الاسم مطلوب' });
@@ -1136,7 +1231,7 @@ router.post('/expense-categories', async (req, res) => {
   } catch(e) { res.json({ success: false, error: e.message }); }
 });
 
-router.delete('/expense-categories/:id', async (req, res) => {
+router.delete('/expense-categories/:id', requireCapability('workflow.manage'), async (req, res) => {
   try {
     await db.query('UPDATE expense_categories SET is_active = 0 WHERE id = ?', [req.params.id]);
     res.json({ success: true });
@@ -1175,7 +1270,12 @@ router.get('/recipients-directory', async (req, res) => {
         displayName: fullName + (position ? (' — ' + position) : '') + (r.branch_name ? (' | ' + r.branch_name) : '')
       };
     }));
-  } catch(e) { console.error('[wf]', req.method, req.path, '-> query failed:', e && e.message); res.json([]); }
+  } catch(e) {
+    // g-wf: was `res.json([])` — a DB fault rendered as "empty list" and stayed
+    // invisible. Surface it as a real 500 the client can distinguish.
+    console.error('[wf]', req.method, req.path, '-> query failed:', e && e.message);
+    res.status(500).json({ success: false, error: 'خطأ في الخادم أثناء تحميل البيانات — راجع سجل الخادم' });
+  }
 });
 
 // Eligible recipients — users with positions (higher level than sender by default)
@@ -1205,7 +1305,10 @@ router.get('/eligible-users', async (req, res) => {
 
     // V5-SEC: caller must be the sender OR admin/developer.
     // Otherwise the endpoint leaks the org chart (who reports to whom).
-    const callerName = (req.user && req.user.username) || req.headers['x-user'] || '';
+    // g-wf SECURITY: caller identity from the verified JWT only (X-User header
+    // was attacker-chosen). ?sender= stays: it is a DATA parameter ("who is the
+    // sender I'm asking about"), validated against the token identity below.
+    const callerName = (req.user && req.user.username) || '';
     const isDev = !!(req.user && req.user.isDeveloper);
     const isAdmin = req.user && (req.user.role === 'admin');
     if (senderUsername && callerName && callerName !== senderUsername && !isDev && !isAdmin) {
@@ -1304,8 +1407,9 @@ router.get('/eligible-users', async (req, res) => {
       branchId: r.branch_id || ''
     })));
   } catch(e) {
+    // g-wf: was `res.json([])` — a DB fault looked like "no eligible users".
     console.error('eligible-users error:', e);
-    res.json([]);
+    res.status(500).json({ success: false, error: 'خطأ في الخادم أثناء تحميل المستلمين المتاحين' });
   }
 });
 
@@ -1320,10 +1424,14 @@ router.get('/eligible-users', async (req, res) => {
 // daily serial allocation, workflow step lookup, the 6-level assignee
 // fallback, the INSERT, recipient inserts, step log, audit, and the
 // post-create notification all live in the service now.
-router.post('/transactions', async (req, res) => {
+router.post('/transactions', requireCapability('txn.create'), async (req, res) => {
   try {
     const actor = {
-      username: (req.body && req.body.username) || (req.user && req.user.username) || '',
+      // g-wf SECURITY: the acting identity comes ONLY from the verified JWT.
+      // body.username is still accepted by the schema (legacy clients send it)
+      // but it is IGNORED here — a spoofed value can no longer create
+      // transactions in someone else's name.
+      username: (req.user && req.user.username) || '',
       role: req.user && req.user.role,
       ip: req.ip || req.headers['x-forwarded-for'] || ''
     };
@@ -1421,7 +1529,8 @@ function _mapTxn(t) {
 // OUTBOX — transactions I created (صندوق الصادر) with rich filters
 router.get('/outbox', async (req, res) => {
   try {
-    const username = req.query.username || (req.user && req.user.username) || '';
+    // g-wf SECURITY: identity from the verified JWT only — ?username= is ignored.
+    const username = (req.user && req.user.username) || '';
     const {
       status, typeId, importance,
       startDate, endDate,       // from/to transaction date
@@ -1477,7 +1586,8 @@ router.get('/outbox', async (req, res) => {
 // Summary stats for the outbox bottom panel
 router.get('/outbox-summary', async (req, res) => {
   try {
-    const username = req.query.username || (req.user && req.user.username) || '';
+    // g-wf SECURITY: identity from the verified JWT only — ?username= is ignored.
+    const username = (req.user && req.user.username) || '';
     const [rows] = await db.query(
       `SELECT
          SUM(CASE WHEN status IN ('pending','in_progress') THEN 1 ELSE 0 END) AS open_out,
@@ -1505,16 +1615,23 @@ router.get('/outbox-summary', async (req, res) => {
       },
       incoming: { open: Number(ri.open_in)||0, closed: Number(ri.closed_in)||0, total: Number(ri.total_in)||0 }
     });
-  } catch(e) { res.json({ outgoing: {}, incoming: {} }); }
+  } catch(e) {
+    // g-wf: was a silent 200 with empty objects — summary failures were invisible.
+    console.error('[wf] GET /outbox-summary failed:', e && e.message);
+    res.status(500).json({ success: false, error: 'خطأ في الخادم أثناء تحميل ملخص الصادر' });
+  }
 });
 
 // Mark a transaction as read (for حالة القراءة)
-router.post('/transactions/:id/mark-read', async (req, res) => {
+router.post('/transactions/:id/mark-read', requireCapability('txn.view'), async (req, res) => {
   try {
-    const { username } = req.body;
-    if (!username) return res.status(400).json({ success: false, error: 'username required' });
+    // g-wf SECURITY: identity from the verified JWT only. body.username used to
+    // be BOTH the recorded reader AND the permission subject — spoofing it
+    // marked transactions read in someone else's name.
+    const username = req.user && req.user.username;
+    if (!username) return res.status(401).json({ success: false, error: 'غير مصرح — يرجى تسجيل الدخول' });
     // V5-SEC: only allow marking read if caller can view the txn — prevents enumeration.
-    const callerName = (req.user && req.user.username) || username;
+    const callerName = username;
     const isDev = !!(req.user && req.user.isDeveloper);
     const isAdmin = req.user && req.user.role === 'admin';
     if (!isDev && !isAdmin) {
@@ -1550,7 +1667,8 @@ router.post('/transactions/:id/mark-read', async (req, res) => {
 // server-side filtering instead of relying on a single SELECT * scan.
 router.get('/incoming', async (req, res) => {
   try {
-    const username = req.query.username || (req.user && req.user.username) || '';
+    // g-wf SECURITY: identity from the verified JWT only — ?username= is ignored.
+    const username = (req.user && req.user.username) || '';
     if (!username) return res.json([]);
     const perms = await getPermissions(username);
 
@@ -1629,11 +1747,17 @@ router.get('/incoming', async (req, res) => {
 // Kept for backward compatibility
 router.get('/my-transactions', async (req, res) => {
   try {
-    const username = req.query.username || (req.user && req.user.username) || '';
+    // g-wf SECURITY: identity from the verified JWT only — ?username= is ignored.
+    const username = (req.user && req.user.username) || '';
     const sql = _txnSelectSQL() + ' WHERE t.created_by = ? ORDER BY t.created_at DESC LIMIT 100';
     const [rows] = await db.query(sql, [username]);
     res.json(rows.map(_mapTxn));
-  } catch(e) { console.error('[wf]', req.method, req.path, '-> query failed:', e && e.message); res.json([]); }
+  } catch(e) {
+    // g-wf: was `res.json([])` — a DB fault rendered as "empty list" and stayed
+    // invisible. Surface it as a real 500 the client can distinguish.
+    console.error('[wf]', req.method, req.path, '-> query failed:', e && e.message);
+    res.status(500).json({ success: false, error: 'خطأ في الخادم أثناء تحميل البيانات — راجع سجل الخادم' });
+  }
 });
 
 // DASHBOARD — importance-based card listing for management
@@ -1654,7 +1778,12 @@ router.get('/dashboard-cards', async (req, res) => {
     sql += " ORDER BY FIELD(t.importance,'critical','high','medium','low'), t.created_at DESC LIMIT 300";
     const [rows] = await db.query(sql, params);
     res.json(rows.map(_mapTxn));
-  } catch(e) { console.error('[wf]', req.method, req.path, '-> query failed:', e && e.message); res.json([]); }
+  } catch(e) {
+    // g-wf: was `res.json([])` — a DB fault rendered as "empty list" and stayed
+    // invisible. Surface it as a real 500 the client can distinguish.
+    console.error('[wf]', req.method, req.path, '-> query failed:', e && e.message);
+    res.status(500).json({ success: false, error: 'خطأ في الخادم أثناء تحميل البيانات — راجع سجل الخادم' });
+  }
 });
 
 // Dashboard filter metadata (branches, depts, types)
@@ -1674,7 +1803,11 @@ router.get('/dashboard-filters', async (req, res) => {
       types: types.map(t => ({ id: t.id, name: t.name, code: t.code || '' })),
       counts
     });
-  } catch(e) { res.json({ branches: [], departments: [], types: [], counts: {} }); }
+  } catch(e) {
+    // g-wf: was a silent 200 with empty lists — filter metadata failures were invisible.
+    console.error('[wf] GET /dashboard-filters failed:', e && e.message);
+    res.status(500).json({ success: false, error: 'خطأ في الخادم أثناء تحميل خيارات التصفية' });
+  }
 });
 
 // Generic list (admin-level — "جميع المعاملات" / Inbox screen)
@@ -1683,6 +1816,10 @@ router.get('/dashboard-filters', async (req, res) => {
 // deptId). Soft-deleted rows are excluded by default.
 router.get('/transactions', async (req, res) => {
   try {
+    // NOTE: createdBy / currentAssignee below are DATA FILTERS on the admin-level
+    // listing ("show me transactions created by X / pending at Y") — they are
+    // NOT the caller's identity. The route is authenticated by the router-level
+    // JWT gate; nothing here impersonates anyone.
     const {
       status, positionId, importance, typeId,
       txnNumber, subject,
@@ -1721,7 +1858,12 @@ router.get('/transactions', async (req, res) => {
       dueDate: r.due_date,
       isOverdue: r.due_date && new Date(r.due_date) < new Date() && (r.status === 'pending' || r.status === 'in_progress')
     })));
-  } catch(e) { console.error('[wf]', req.method, req.path, '-> query failed:', e && e.message); res.json([]); }
+  } catch(e) {
+    // g-wf: was `res.json([])` — a DB fault rendered as "empty list" and stayed
+    // invisible. Surface it as a real 500 the client can distinguish.
+    console.error('[wf]', req.method, req.path, '-> query failed:', e && e.message);
+    res.status(500).json({ success: false, error: 'خطأ في الخادم أثناء تحميل البيانات — راجع سجل الخادم' });
+  }
 });
 
 // ═══════════════════════════════════════════════════════════════════
@@ -1748,12 +1890,19 @@ router.get('/stuck-drafts', async (req, res) => {
       id: r.id, txnNumber: r.transaction_number, title: r.title,
       createdBy: r.created_by, createdAt: r.created_at, typeName: r.type_name || ''
     })));
-  } catch(e) { console.error('[wf]', req.method, req.path, '-> query failed:', e && e.message); res.json([]); }
+  } catch(e) {
+    // g-wf: was `res.json([])` — a DB fault rendered as "empty list" and stayed
+    // invisible. Surface it as a real 500 the client can distinguish.
+    console.error('[wf]', req.method, req.path, '-> query failed:', e && e.message);
+    res.status(500).json({ success: false, error: 'خطأ في الخادم أثناء تحميل البيانات — راجع سجل الخادم' });
+  }
 });
 
-router.post('/stuck-drafts/recover', async (req, res) => {
+router.post('/stuck-drafts/recover', requireCapability('workflow.manage'), async (req, res) => {
   try {
-    const callerName = (req.user && req.user.username) || req.body.username || '';
+    // g-wf SECURITY: identity from the verified JWT only (body.username deleted).
+    // The inner admin/developer check below stays — it is STRICTER than the guard.
+    const callerName = (req.user && req.user.username) || '';
     if (!callerName) return res.status(401).json({ success: false, error: 'مستخدم غير معروف' });
     const perms = await getPermissions(callerName);
     const isAdmin = (perms.role === 'admin') || callerName === 'admin' || !!(req.user && req.user.isDeveloper);
@@ -1785,7 +1934,9 @@ router.post('/stuck-drafts/recover', async (req, res) => {
             'INSERT INTO transaction_steps_log (id, transaction_id, action_by, action_type, action_note) VALUES (?,?,?,?,?)',
             ['LOG-' + Date.now() + '-' + Math.random().toString(36).substr(2, 4), c.id, callerName, 'forward',
              '[استرجاع مسودة عالقة] توجيه إلى ' + target]);
-        } catch (_) {}
+        } catch (e) {
+          console.error('[stuck-drafts] step log insert failed for', c.id, ':', e && e.message);
+        }
         try {
           const counters = require('./counters');
           if (counters && counters.invalidateCountersFor) await counters.invalidateCountersFor(c.created_by, target);
@@ -1858,7 +2009,11 @@ router.get('/transactions/:id', async (req, res) => {
       })),
       attachments: atts.map(a => ({ id: a.id, fileName: a.file_name, mime: a.mime_type, uploadedBy: a.uploaded_by, uploadedAt: a.uploaded_at, logId: a.log_id }))
     });
-  } catch(e) { res.json({ error: e.message }); }
+  } catch(e) {
+    // g-wf: was a 200 with an error body — clients treated it as data.
+    console.error('[wf] GET /transactions/:id failed:', e && e.message);
+    res.status(500).json({ error: 'خطأ في الخادم أثناء تحميل المعاملة' });
+  }
 });
 
 // V5.4 — One-shot full bundle endpoint for the unified TxnView modal.
@@ -1868,7 +2023,9 @@ router.get('/transactions/:id', async (req, res) => {
 router.get('/transactions/:id/full-bundle', async (req, res) => {
   try {
     const id = req.params.id;
-    const callerName = (req.user && req.user.username) || req.query.username || req.headers['x-user'] || '';
+    // g-wf SECURITY: identity from the verified JWT only — the ?username= and
+    // X-User fallbacks let anyone impersonate a recipient and read the bundle.
+    const callerName = (req.user && req.user.username) || '';
     const isDev = !!(req.user && req.user.isDeveloper);
     const isAdmin = req.user && req.user.role === 'admin';
 
@@ -2074,10 +2231,14 @@ router.get('/transactions/:id/full-bundle', async (req, res) => {
 // branch, dept, account, cost center, brand) — the whole point of returning is
 // to let creator FIX the issue, including wrong type/recipient mistakes.
 // For draft + pending(no others acted): only basic fields editable.
-router.put('/transactions/:id', async (req, res) => {
+router.put('/transactions/:id', requireCapability('txn.create'), async (req, res) => {
   try {
+    // g-wf SECURITY: identity from the verified JWT only. body.username used to
+    // BE the creator check — sending username=<creator> let anyone edit any
+    // editable transaction.
+    const username = req.user && req.user.username;
     const {
-      title, description, contentHtml, amount, importance, username, attachment,
+      title, description, contentHtml, amount, importance, attachment,
       // V4.4: full-edit fields (only applied when status='returned' or 'draft')
       transactionTypeId, recipientUsername, branchId, deptId, brandId,
       accountId, accountCode, accountName, costCenterId, costCenterName,
@@ -2139,7 +2300,11 @@ router.put('/transactions/:id', async (req, res) => {
           if (creatorPerms && creatorPerms.positionId) {
             sets.push('initiator_position_id=?'); params.push(creatorPerms.positionId);
           }
-        } catch(_e) { /* swallow */ }
+        } catch(e) {
+          // g-wf: was a silent swallow — a failed re-stamp leaves a STALE
+          // initiator_position_id and resubmit routes to the wrong chain.
+          console.error('[wf edit] initiator re-stamp failed:', e && e.message);
+        }
       }
       if (recipientUsername !== undefined) { sets.push('recipient_username=?'); params.push(recipientUsername || ''); }
       if (branchId !== undefined) { sets.push('branch_id=?'); params.push(branchId || null); }
@@ -2208,9 +2373,12 @@ router.put('/transactions/:id', async (req, res) => {
 // Status moves from 'returned' → 'pending' (or 'in_progress' if the workflow has more steps).
 // The transaction goes back to the step it was returned FROM (the assignee who returned it),
 // or to the first non-creator step if we can't reconstruct it.
-router.post('/transactions/:id/resubmit', SCHEMA.validateBody(SCHEMA.schemas.resubmit), async (req, res) => {
+router.post('/transactions/:id/resubmit', requireCapability('txn.create'), SCHEMA.validateBody(SCHEMA.schemas.resubmit), async (req, res) => {
   try {
-    const { username, note } = req.body;
+    // g-wf SECURITY: identity from the verified JWT only. The schema still
+    // requires body.username (legacy clients send it) but it is IGNORED here.
+    const username = req.user && req.user.username;
+    const { note } = req.body;
     const [txns] = await db.query('SELECT * FROM transactions WHERE id = ?', [req.params.id]);
     if (!txns.length) return res.json({ success: false, error: 'المعاملة غير موجودة' });
     const txn = txns[0];
@@ -2300,11 +2468,17 @@ router.post('/transactions/:id/resubmit', SCHEMA.validateBody(SCHEMA.schemas.res
 // developer audience for those is intentional.
 router.delete('/transactions/__wipe-all', guardAdmin, async (req, res) => {
   try {
-    const username = (req.user && req.user.username) || (req.body && req.body.username) || 'developer';
+    // g-wf SECURITY: the audited actor comes ONLY from the verified JWT
+    // (guardAdmin + the router gate guarantee req.user is set). The old
+    // body.username / 'developer' fallbacks let the audit row lie.
+    const username = req.user && req.user.username;
     const confirm = req.query.confirm || (req.body && req.body.confirm) || '';
     const dryRun = req.query.dryRun === '1' || (req.body && req.body.dryRun === true);
     const status = req.query.status || (req.body && req.body.status) || null;
     const beforeDate = req.query.before || (req.body && req.body.before) || null;
+    // NOTE: createdBy here is a DATA FILTER ("wipe only transactions created by
+    // X"), chosen by the admin running the wipe — it is NOT the actor identity.
+    // The route is admin-gated (guardAdmin) and authenticated by the router gate.
     const createdBy = req.query.createdBy || (req.body && req.body.createdBy) || null;
 
     if (!dryRun && confirm !== 'DELETE-ALL-FOREVER') {
@@ -2395,7 +2569,12 @@ router.delete('/transactions/__wipe-all', guardAdmin, async (req, res) => {
               `DELETE FROM ${tbl}
                WHERE transaction_id IN (SELECT id FROM (SELECT id FROM transactions WHERE ${whereSql}) AS t)`,
               whereParams);
-          } catch(_) {}
+          } catch(e) {
+            // g-wf: a failed cascade DELETE inside the wipe was silently
+            // swallowed (partial wipe, orphaned rows). Table-missing is the
+            // legitimate case — log every failure loudly instead.
+            console.error('[wipe-all] cascade delete failed for', tbl, ':', e && e.message);
+          }
         }
         // Notifications
         try {
@@ -2460,7 +2639,11 @@ router.delete('/transactions/__wipe-all', guardAdmin, async (req, res) => {
           counts: counts,
           executedAt: new Date().toISOString()
         })]);
-    } catch(_) {}
+    } catch(e) {
+      // g-wf: the audit row is the ONLY remaining trace of a full wipe —
+      // its failure must never be silent.
+      console.error('[wipe-all] audit log insert failed:', e && e.message);
+    }
 
     res.json({
       success: true,
@@ -2483,7 +2666,9 @@ router.delete('/transactions/__wipe-all', guardAdmin, async (req, res) => {
 // The /force endpoint below remains for backward compatibility (does the same).
 router.delete('/transactions/:id', guardDeveloper, async (req, res) => {
   try {
-    const username = req.query.username || (req.user && req.user.username) || (req.body && req.body.username) || 'developer';
+    // g-wf SECURITY: audited actor from the verified JWT only (was ?username=
+    // first — the audit trail recorded whatever the caller claimed).
+    const username = req.user && req.user.username;
     const reason = (req.body && req.body.reason) || (req.query.reason) || 'developer hard delete';
     const txnId = req.params.id;
 
@@ -2529,7 +2714,11 @@ router.delete('/transactions/:id', guardDeveloper, async (req, res) => {
             amount: Number(snap.amount) || 0,
             deletedAt: new Date().toISOString()
           })]);
-      } catch(_) {}
+      } catch(e) {
+        // g-wf: the audit snapshot is how compliance proves the hard delete
+        // happened — log the failure instead of swallowing it.
+        console.error('[delete txn] audit log insert failed:', e && e.message);
+      }
     });
 
     // Invalidate counter cache for everyone affected
@@ -2553,12 +2742,13 @@ router.delete('/transactions/:id', guardDeveloper, async (req, res) => {
 
 // V4 — Restore a soft-deleted transaction (admin only)
 // V5-SEC: check role, not username string
-router.post('/transactions/:id/restore', async (req, res) => {
+router.post('/transactions/:id/restore', requireCapability('workflow.manage'), async (req, res) => {
   try {
     const role = (req.user && req.user.role) || '';
     const isDev = !!(req.user && req.user.isDeveloper);
     if (role !== 'admin' && !isDev) return res.status(403).json({ error: 'admin only' });
-    const username = (req.user && req.user.username) || (req.body && req.body.username) || '';
+    // g-wf SECURITY: audited actor from the verified JWT only (body fallback deleted).
+    const username = (req.user && req.user.username) || '';
     const [snap] = await db.query('SELECT created_by, current_assignee FROM transactions WHERE id = ?', [req.params.id]);
     await db.query(
       'UPDATE transactions SET deleted_at = NULL, deleted_by = NULL, delete_reason = NULL, version = version + 1 WHERE id = ?',
@@ -2575,7 +2765,9 @@ router.post('/transactions/:id/restore', async (req, res) => {
         `INSERT INTO audit_logs (user_username, action, entity_type, entity_id, details)
          VALUES (?, 'restore', 'transaction', ?, '{}')`,
         [username, req.params.id]);
-    } catch(e) {}
+    } catch(e) {
+      console.error('[wf restore] audit log insert failed:', e && e.message);
+    }
     res.json({ success: true });
   } catch(e) { res.json({ success: false, error: e.message }); }
 });
@@ -2604,7 +2796,9 @@ router.post('/transactions/:id/restore', async (req, res) => {
 router.delete('/transactions/:id/force', guardAdmin, SCHEMA.validateBody(SCHEMA.schemas.forceDelete), async (req, res) => {
   try {
     const actor = {
-      username: req.query.username || (req.user && req.user.username) || (req.body && req.body.username) || '',
+      // g-wf SECURITY: audited actor from the verified JWT only (query/body
+      // fallbacks deleted — guardAdmin + the router gate guarantee req.user).
+      username: (req.user && req.user.username) || '',
       role: req.user && req.user.role,
       ip: req.ip || req.headers['x-forwarded-for'] || ''
     };
@@ -2634,7 +2828,11 @@ router.delete('/transactions/:id/force', guardAdmin, SCHEMA.validateBody(SCHEMA.
 // notifications, audit) via a mock req/res. Behavior unchanged.
 const _txnActionHandler = async (req, res) => {
   const txnId = req.params.id;
-  const { action, username, note, attachment, newAmount, forwardTo, expectedVersion, idempotencyKey } = req.body;
+  const { action, note, attachment, newAmount, forwardTo, expectedVersion, idempotencyKey } = req.body;
+  // g-wf SECURITY: the acting identity comes ONLY from the verified JWT.
+  // body.username is still required by the schema (legacy clients send it) but
+  // it is IGNORED — approving/rejecting in someone else's name is impossible.
+  const username = req.user && req.user.username;
   if (!action) return res.status(400).json({ success: false, error: 'الإجراء مطلوب' });
   if (!username) return res.status(401).json({ success: false, error: 'مستخدم غير معروف' });
 
@@ -2963,7 +3161,9 @@ const _txnActionHandler = async (req, res) => {
           'UPDATE transactions SET passed_ceo_at = NOW(), passed_ceo_by = ? WHERE id = ? AND passed_ceo_at IS NULL',
           [username, txnId]);
       }
-    } catch(e) {}
+    } catch(e) {
+      console.error('[wf action] CEO approval stamp failed:', e && e.message);
+    }
 
     // 15. Insert notification for the new assignee (or creator on return/reject/approve)
     try {
@@ -3003,7 +3203,11 @@ const _txnActionHandler = async (req, res) => {
            notifyUser, 'workflow_' + action, notifTitle, notifBody, 'transaction', txnId, severity]
         );
       }
-    } catch(e) { /* notifications table may not exist on old deploy */ }
+    } catch(e) {
+      // g-wf: a lost notification means the next assignee never learns the txn
+      // landed on them — log it (was a bare swallow "table may not exist").
+      console.error('[wf action] notification insert failed:', e && e.message);
+    }
 
     // 16. Audit log entry
     try {
@@ -3014,7 +3218,10 @@ const _txnActionHandler = async (req, res) => {
           oldStatus: txn.status, newStatus, fromStep: txn.current_step_id, toStep: newStepId,
           note: note || ''
         })]);
-    } catch(e) {}
+    } catch(e) {
+      // g-wf: workflow actions are the audit trail's core — never swallow silently.
+      console.error('[wf action] audit log insert failed:', e && e.message);
+    }
 
     await conn.commit();
     const _actResp = {
@@ -3031,7 +3238,10 @@ const _txnActionHandler = async (req, res) => {
            VALUES (?, ?, ?, ?, ?)`,
           ['ACT-' + idemKey, username, 'POST /workflow/transactions/:id/action',
            JSON.stringify(_actResp), 200]);
-      } catch(_e) {}
+      } catch(e) {
+        // g-wf: losing the idempotency record silently re-opens double-action replay.
+        console.warn('[wf action] idempotency persist failed:', e && e.message);
+      }
     }
     return res.json(_actResp);
   } catch (e) {
@@ -3042,7 +3252,13 @@ const _txnActionHandler = async (req, res) => {
     conn.release();
   }
 };
-router.post('/transactions/:id/action', SCHEMA.validateBody(SCHEMA.schemas.action), _txnActionHandler);
+// g-wf SECURITY: gated with txn.view (held by every operational role — employee,
+// cashier, custody, inventory, purchasing, finance, hr, manager) so the daily
+// inbox flow keeps working; the fine-grained per-action rights (assignee check,
+// step can_approve/can_reject flags, SoD) are enforced inside by the PERMS
+// engine. Gating with txn.approve here would lock employees out of acting on
+// their OWN inbox items (they hold only txn.view + txn.create).
+router.post('/transactions/:id/action', requireCapability('txn.view'), SCHEMA.validateBody(SCHEMA.schemas.action), _txnActionHandler);
 
 // ═══════════════════════════════════════════════════════════════════
 // v6.19.1 — BULK ACTION (موافقة/رفض جماعي)
@@ -3057,8 +3273,11 @@ router.post('/transactions/:id/action', SCHEMA.validateBody(SCHEMA.schemas.actio
 // Idempotency: derived key `batchKey:txnId` → retrying the same batch
 // replays stored responses instead of double-acting.
 // ═══════════════════════════════════════════════════════════════════
-router.post('/transactions/bulk-action', async (req, res) => {
-  const { ids, action, note, username } = req.body || {};
+router.post('/transactions/bulk-action', requireCapability('txn.view'), async (req, res) => {
+  const { ids, action, note } = req.body || {};
+  // g-wf SECURITY: the acting identity comes ONLY from the verified JWT —
+  // body.username is IGNORED. Same guard rationale as the single-action route.
+  const username = req.user && req.user.username;
   if (!Array.isArray(ids) || !ids.length) {
     return res.status(400).json({ success: false, error: 'حدد معاملة واحدة على الأقل' });
   }
@@ -3176,9 +3395,12 @@ const ATTACHMENT_MIME_WHITELIST = new Set([
 
 const ATTACHMENT_MAX_BYTES = 10 * 1024 * 1024; // 10 MB hard cap
 
-router.post('/transactions/:id/attachments', async (req, res) => {
+router.post('/transactions/:id/attachments', requireCapability('txn.view'), async (req, res) => {
   try {
-    const { username, fileName, mime, dataUrl, logId } = req.body;
+    const { fileName, mime, dataUrl, logId } = req.body;
+    // g-wf SECURITY: uploader identity from the verified JWT only — body.username
+    // let the caller forge who a file appears to be uploaded by.
+    const username = req.user && req.user.username;
     if (!dataUrl) return res.status(400).json({ success: false, error: 'المرفق مطلوب' });
 
     // V5-SEC: validate MIME type against whitelist
@@ -3236,7 +3458,9 @@ router.get('/attachments/:id', async (req, res) => {
     const [rows] = await db.query('SELECT * FROM txn_attachments WHERE id = ?', [req.params.id]);
     if (!rows.length) return res.status(404).json({ error: 'غير موجود' });
     const att = rows[0];
-    const username = (req.user && req.user.username) || req.query.username || req.headers['x-user'];
+    // g-wf SECURITY: identity from the verified JWT only — the ?username= and
+    // X-User fallbacks let anyone impersonate a recipient and download files.
+    const username = req.user && req.user.username;
     const isDev = !!(req.user && req.user.isDeveloper);
     const isAdmin = req.user && req.user.role === 'admin';
     if (!isDev && !isAdmin) {
@@ -3293,7 +3517,9 @@ router.get('/transactions/:id/replies', async (req, res) => {
       createdAt: r.created_at
     })));
   } catch(e) {
-    res.json({ error: e.message, replies: [] });
+    // g-wf: was a 200 with empty replies — a DB fault looked like "no replies".
+    console.error('[wf] GET /transactions/:id/replies failed:', e && e.message);
+    res.status(500).json({ error: 'خطأ في الخادم أثناء تحميل الردود', replies: [] });
   }
 });
 
@@ -3301,13 +3527,17 @@ router.get('/transactions/:id/replies', async (req, res) => {
 // V4 — Enforces "one reply per stage per actor" rule.
 // V4.2 — If `andAdvance:true` AND user is current assignee → AUTO-ADVANCES workflow
 //        (implements user spec: "بعد الرد يجب انتقال المعاملة للجهة التالية")
-router.post('/transactions/:id/replies', SCHEMA.validateBody(SCHEMA.schemas.reply), async (req, res) => {
+router.post('/transactions/:id/replies', requireCapability('txn.view'), SCHEMA.validateBody(SCHEMA.schemas.reply), async (req, res) => {
   try {
-    const { replyText, attachment, attachmentName, attachmentMime, isInternal, username, andAdvance, forwardTo, idempotencyKey } = req.body;
+    const { replyText, attachment, attachmentName, attachmentMime, isInternal, andAdvance, forwardTo, idempotencyKey } = req.body;
     if (!replyText || !replyText.trim()) {
       return res.json({ success: false, error: 'نص الرد مطلوب' });
     }
-    const author = username || (req.user && req.user.username) || 'admin';
+    // g-wf SECURITY: author identity from the verified JWT only. The old chain
+    // `body.username || req.user || 'admin'` let any caller post replies (and
+    // auto-advance workflows) as ANY user — including a default of 'admin'.
+    const author = req.user && req.user.username;
+    if (!author) return res.status(401).json({ success: false, error: 'غير مصرح — يرجى تسجيل الدخول' });
 
     // V5-IDEM: idempotency check — if same key seen in last 24h, return cached response.
     // Prevents duplicate replies on flaky networks where the client retries.
@@ -3407,7 +3637,11 @@ router.post('/transactions/:id/replies', SCHEMA.validateBody(SCHEMA.schemas.repl
            'transaction', req.params.id, 'info']
         );
       }
-    } catch(e) {}
+    } catch(e) {
+      // g-wf: version bump + creator notification failing silently hid real DB
+      // faults (optimistic locking stops working without the bump).
+      console.error('[wf reply] version bump / notification failed:', e && e.message);
+    }
 
     // V4.2/4.5: If user IS the current assignee AND andAdvance is true → auto-advance the workflow
     let advanceResult = null;
@@ -3451,7 +3685,10 @@ router.post('/transactions/:id/replies', SCHEMA.validateBody(SCHEMA.schemas.repl
             // V5-SEC: enforce permission engine — caller must have approve OR forward right.
             try {
               const PERMS = require('../lib/transactionPermissions');
-              const callerUser = (req.user && req.user.username) ? req.user : { username: author, role: req.body.role || 'employee' };
+              // g-wf SECURITY: the permission subject is the verified JWT user.
+              // The old fallback built a user object from body.role — the caller
+              // could claim any role and pass the can-forward check.
+              const callerUser = req.user;
               const ctx = { txn, currentStep: step, actionLog: [] };
               const canApprove = PERMS.can(callerUser, 'txn.action.approve', ctx);
               const canForward = PERMS.can(callerUser, 'txn.action.forward', ctx);
@@ -3545,7 +3782,9 @@ router.post('/transactions/:id/replies', SCHEMA.validateBody(SCHEMA.schemas.repl
                    (txn.subject || txn.title || ''), 'transaction', req.params.id, 'success']);
               }
             }
-          } catch(_) {}
+          } catch(e) {
+            console.error('[reply+advance] notification insert failed:', e && e.message);
+          }
           await conn.commit();
           advanceResult = { newStatus, newAssignee, newStepId };
         } catch(advErr) {
@@ -3575,7 +3814,10 @@ router.post('/transactions/:id/replies', SCHEMA.validateBody(SCHEMA.schemas.repl
            VALUES (?, ?, ?, ?, ?)`,
           ['REP-' + idemKey, author, 'POST /workflow/transactions/:id/replies',
            JSON.stringify(_replyResp), 200]);
-      } catch(_e) { /* table may not exist yet */ }
+      } catch(e) {
+        // g-wf: losing the idempotency record silently re-opens duplicate replies.
+        console.warn('[wf reply] idempotency persist failed:', e && e.message);
+      }
     }
 
     // V4.5.3: BACKGROUND S3 upload (fire-and-forget, after response sent)
@@ -3604,7 +3846,8 @@ router.post('/transactions/:id/replies', SCHEMA.validateBody(SCHEMA.schemas.repl
 // This replaces scattered if/else logic in the frontend with a single source of truth.
 router.get('/transactions/:id/permissions', async (req, res) => {
   try {
-    const username = req.query.username || (req.user && req.user.username) || '';
+    // g-wf SECURITY: identity from the verified JWT only — ?username= is ignored.
+    const username = (req.user && req.user.username) || '';
     if (!username) return res.json({ permissions: {}, error: 'لا يوجد مستخدم' });
     const [rows] = await db.query('SELECT * FROM transactions WHERE id = ?', [req.params.id]);
     if (!rows.length) return res.json({ permissions: {}, error: 'المعاملة غير موجودة' });
@@ -3659,7 +3902,9 @@ router.get('/transactions/:id/permissions', async (req, res) => {
         r.author_username === username && r.stage_step_id === txn.current_step_id)
     });
   } catch(e) {
-    res.json({ permissions: {}, error: e.message });
+    // g-wf: was a 200 with empty permissions — indistinguishable from "no rights".
+    console.error('[wf] GET /transactions/:id/permissions failed:', e && e.message);
+    res.status(500).json({ permissions: {}, error: 'خطأ في الخادم أثناء حساب الصلاحيات' });
   }
 });
 
@@ -3669,7 +3914,8 @@ router.get('/transactions/:id/permissions', async (req, res) => {
 // merges by username, so admin/finance/manager users without HR rows still appear.
 router.get('/routable-users', async (req, res) => {
   try {
-    const username = req.query.username || (req.user && req.user.username);
+    // g-wf SECURITY: identity from the verified JWT only — ?username= is ignored.
+    const username = req.user && req.user.username;
     if (!username) return res.json({ groups: [] });
 
     // 1. Get ALL active users (admin + employees) — single source of truth
@@ -3777,8 +4023,9 @@ router.get('/routable-users', async (req, res) => {
     const total = groups.reduce((s, g) => s + g.users.length, 0);
     res.json({ groups, totalUsers: total });
   } catch(e) {
-    console.warn('[routable-users]', e.message);
-    res.json({ groups: [], error: e.message });
+    // g-wf: was a 200 with empty groups — routing-picker failures were invisible.
+    console.error('[routable-users]', e.message);
+    res.status(500).json({ groups: [], error: 'خطأ في الخادم أثناء تحميل المستخدمين' });
   }
 });
 
@@ -3793,9 +4040,10 @@ function _roleLabel(role) {
 
 // V4 — POST /transactions/:id/open — explicit "first view" trigger
 // Transitions created → in_progress when assignee opens the txn for the first time.
-router.post('/transactions/:id/open', async (req, res) => {
+router.post('/transactions/:id/open', requireCapability('txn.view'), async (req, res) => {
   const txnId = req.params.id;
-  const username = req.body.username || (req.user && req.user.username);
+  // g-wf SECURITY: identity from the verified JWT only — body.username is ignored.
+  const username = req.user && req.user.username;
   if (!username) return res.status(401).json({ success: false, error: 'لا يوجد مستخدم' });
 
   const conn = await db.getConnection();
@@ -3837,10 +4085,12 @@ router.post('/transactions/:id/open', async (req, res) => {
  * ═══════════════════════════════════════════════════════════════════ */
 
 // POST /workflow/transactions/:id/memo-read — mark as read
-router.post('/transactions/:id/memo-read', async (req, res) => {
+router.post('/transactions/:id/memo-read', requireCapability('txn.view'), async (req, res) => {
   try {
-    const username = req.body.username || (req.user && req.user.username);
-    if (!username) return res.json({ success: false, error: 'username required' });
+    // g-wf SECURITY: identity from the verified JWT only — body.username let a
+    // caller forge someone else's read receipt.
+    const username = req.user && req.user.username;
+    if (!username) return res.status(401).json({ success: false, error: 'غير مصرح — يرجى تسجيل الدخول' });
     const id = 'MRR-' + req.params.id + '-' + username;
     await db.query(
       'INSERT INTO memo_read_receipts (id, transaction_id, username) VALUES (?,?,?) ON DUPLICATE KEY UPDATE read_at = CURRENT_TIMESTAMP',
@@ -3863,7 +4113,12 @@ router.get('/transactions/:id/memo-readers', async (req, res) => {
       username: r.username, fullName: r.full_name || r.username,
       role: r.role || '', readAt: r.read_at
     })));
-  } catch(e) { console.error('[wf]', req.method, req.path, '-> query failed:', e && e.message); res.json([]); }
+  } catch(e) {
+    // g-wf: was `res.json([])` — a DB fault rendered as "empty list" and stayed
+    // invisible. Surface it as a real 500 the client can distinguish.
+    console.error('[wf]', req.method, req.path, '-> query failed:', e && e.message);
+    res.status(500).json({ success: false, error: 'خطأ في الخادم أثناء تحميل البيانات — راجع سجل الخادم' });
+  }
 });
 
 // GET /workflow/memos-inbox — list all memos (for the dedicated inbox tab)
@@ -3871,7 +4126,8 @@ router.get('/transactions/:id/memo-readers', async (req, res) => {
 // or category = 'administrative' (for compatibility with existing seed data).
 router.get('/memos-inbox', async (req, res) => {
   try {
-    const username = req.query.username || (req.user && req.user.username);
+    // g-wf SECURITY: identity from the verified JWT only — ?username= is ignored.
+    const username = req.user && req.user.username;
     // Get all memo type ids — tolerate either old or new code
     const [tt] = await db.query(`
       SELECT id FROM transaction_types
@@ -3901,7 +4157,9 @@ router.get('/memos-inbox', async (req, res) => {
       isRead: !!t.my_read_at, readAt: t.my_read_at
     })));
   } catch(e) {
-    res.json({ error: e.message, memos: [] });
+    // g-wf: was a 200 with empty memos — a DB fault looked like "no memos".
+    console.error('[wf] GET /memos-inbox failed:', e && e.message);
+    res.status(500).json({ error: 'خطأ في الخادم أثناء تحميل التعاميم', memos: [] });
   }
 });
 

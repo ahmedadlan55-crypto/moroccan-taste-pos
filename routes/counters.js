@@ -13,8 +13,12 @@ const CACHE = require('../lib/redisCache');   // optional Redis layer
 // drift bugs). Materialized table is now optional cache, not source of truth.
 router.get('/me', async (req, res) => {
   try {
-    const username = req.query.username || (req.user && req.user.username);
-    if (!username) return res.json({ error: 'username required' });
+    // g-wf SECURITY: identity from the verified JWT only. /api/counters passes
+    // through the global JWT gate in server.js, so req.user is always set for
+    // authenticated callers — ?username= let anyone read someone else's badge
+    // counts (inbox/outbox/notification volumes).
+    const username = req.user && req.user.username;
+    if (!username) return res.status(401).json({ error: 'غير مصرح — يرجى تسجيل الدخول' });
 
     // Try Redis cache first (30s TTL — covers >95% of inbox loads)
     const cacheKey = 'counters:' + username;
@@ -74,7 +78,9 @@ router.get('/me', async (req, res) => {
     }
     res.json(result);
   } catch(e) {
-    res.json({ error: e.message });
+    // g-wf: was a 200 with an error body — clients treated it as data.
+    console.error('[counters] GET /me failed:', e && e.message);
+    res.status(500).json({ error: 'خطأ في الخادم أثناء حساب العدّادات' });
   }
 });
 
@@ -84,17 +90,15 @@ router.get('/me', async (req, res) => {
 // Previously, a user literally named 'admin' (without admin role) could trigger this.
 router.post('/recompute', async (req, res) => {
   try {
+    // g-wf SECURITY: role from the verified JWT only. The old "paths bypassing
+    // JWT" branch accepted body.username and looked its role up in the DB —
+    // i.e. sending username=admin (any admin's name) triggered a rebuild with
+    // no token at all. /api/counters is behind the global JWT gate; there is
+    // no legitimate unauthenticated path here.
     const role = (req.user && req.user.role) || '';
     const isDev = !!(req.user && req.user.isDeveloper);
     const isAdmin = (role === 'admin' || isDev);
     if (!isAdmin) return res.status(403).json({ error: 'admin only' });
-    // Also accept if database lookup says role=admin (for paths bypassing JWT)
-    if (!req.user) {
-      const username = req.body.username || '';
-      if (!username) return res.status(401).json({ error: 'unauthenticated' });
-      const [rows] = await db.query('SELECT role FROM users WHERE username = ?', [username]);
-      if (!rows.length || rows[0].role !== 'admin') return res.status(403).json({ error: 'admin only' });
-    }
 
     await db.query("DELETE FROM user_inbox_counters");
     await db.query(`
@@ -126,7 +130,9 @@ router.post('/recompute', async (req, res) => {
     `);
     res.json({ success: true, message: 'Counters rebuilt' });
   } catch(e) {
-    res.json({ success: false, error: e.message });
+    // g-wf: was a 200 with success:false — a failed rebuild looked like a quirk.
+    console.error('[counters] POST /recompute failed:', e && e.message);
+    res.status(500).json({ success: false, error: 'خطأ في الخادم أثناء إعادة بناء العدّادات' });
   }
 });
 
@@ -135,8 +141,10 @@ router.post('/recompute', async (req, res) => {
 // creator/assignee/recipient (e.g., escalation managers shouldn't see the subject).
 router.get('/notifications', async (req, res) => {
   try {
-    const username = req.query.username || (req.user && req.user.username);
-    if (!username) return res.json([]);
+    // g-wf SECURITY: identity from the verified JWT only — ?username= let anyone
+    // read another user's notification feed (titles + bodies).
+    const username = req.user && req.user.username;
+    if (!username) return res.status(401).json({ error: 'غير مصرح — يرجى تسجيل الدخول' });
     const limit = Math.min(Number(req.query.limit) || 20, 100);
     const unreadOnly = req.query.unreadOnly === '1';
     const sql = unreadOnly
@@ -147,6 +155,7 @@ router.get('/notifications', async (req, res) => {
     // V5-SEC: bulk-load secrecy info for any linked transactions and redact bodies.
     const txnIds = [...new Set(rows.filter(r => r.link_type === 'transaction').map(r => r.link_id).filter(Boolean))];
     let secrecyMap = {};
+    let secrecyLoadFailed = false;
     if (txnIds.length) {
       try {
         const placeholders = txnIds.map(() => '?').join(',');
@@ -162,12 +171,20 @@ router.get('/notifications', async (req, res) => {
           if (!secrecyMap[rec.transaction_id]._recipients) secrecyMap[rec.transaction_id]._recipients = [];
           secrecyMap[rec.transaction_id]._recipients.push(rec.username);
         });
-      } catch(_e){}
+      } catch(e) {
+        // g-wf: this empty catch was a redaction bypass — if the secrecy load
+        // failed, secret/top_secret bodies went out UNREDACTED. Log it and
+        // fail CLOSED below (redact every transaction-linked body).
+        console.error('[counters] secrecy load failed — redacting all txn-linked bodies:', e && e.message);
+        secrecyLoadFailed = true;
+      }
     }
 
     res.json(rows.map(r => {
       let body = r.body;
-      if (r.link_type === 'transaction' && secrecyMap[r.link_id]) {
+      if (secrecyLoadFailed && r.link_type === 'transaction') {
+        body = '[محتوى سري — انقر للاطلاع إن كانت لك صلاحية]';
+      } else if (r.link_type === 'transaction' && secrecyMap[r.link_id]) {
         const t = secrecyMap[r.link_id];
         const sec = (t.content_secrecy || '').toLowerCase();
         const recs = t._recipients || [];
@@ -194,33 +211,44 @@ router.get('/notifications', async (req, res) => {
       createdAt: r.created_at
     };}));
   } catch(e) {
-    res.json([]);
+    // g-wf: was `res.json([])` — a DB fault looked like "no notifications".
+    console.error('[counters] GET /notifications failed:', e && e.message);
+    res.status(500).json({ error: 'خطأ في الخادم أثناء تحميل الإشعارات' });
   }
 });
 
 // POST /counters/notifications/:id/read
 router.post('/notifications/:id/read', async (req, res) => {
   try {
-    const username = req.body.username || (req.user && req.user.username);
+    // g-wf SECURITY: identity from the verified JWT only (body.username deleted).
+    // The UPDATE is scoped to the token user's own row — no capability needed;
+    // employees/cashiers must keep acknowledging their own notifications.
+    const username = req.user && req.user.username;
+    if (!username) return res.status(401).json({ success: false, error: 'غير مصرح — يرجى تسجيل الدخول' });
     await db.query(
       'UPDATE notifications SET is_read = 1, read_at = NOW() WHERE id = ? AND username = ?',
       [req.params.id, username]);
     res.json({ success: true });
   } catch(e) {
-    res.json({ success: false, error: e.message });
+    console.error('[counters] POST /notifications/:id/read failed:', e && e.message);
+    res.status(500).json({ success: false, error: 'خطأ في الخادم أثناء تحديث الإشعار' });
   }
 });
 
 // POST /counters/notifications/mark-all-read
 router.post('/notifications/mark-all-read', async (req, res) => {
   try {
-    const username = req.body.username || (req.user && req.user.username);
+    // g-wf SECURITY: identity from the verified JWT only — body.username let a
+    // caller mark ANOTHER user's notifications read (hiding alerts from them).
+    const username = req.user && req.user.username;
+    if (!username) return res.status(401).json({ success: false, error: 'غير مصرح — يرجى تسجيل الدخول' });
     await db.query(
       'UPDATE notifications SET is_read = 1, read_at = NOW() WHERE username = ? AND is_read = 0',
       [username]);
     res.json({ success: true });
   } catch(e) {
-    res.json({ success: false, error: e.message });
+    console.error('[counters] POST /notifications/mark-all-read failed:', e && e.message);
+    res.status(500).json({ success: false, error: 'خطأ في الخادم أثناء تحديث الإشعارات' });
   }
 });
 

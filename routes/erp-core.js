@@ -1352,8 +1352,13 @@ router.post('/accounting-periods', requireCapability('finance.periods.manage'), 
     }
     const newId = genId('AP');
     await db.query(
-      `INSERT INTO accounting_periods (id, period_name, start_date, end_date, status) VALUES (?,?,?,?,'open')`,
-      [newId, periodName, startDate, endDate]);
+      // period_label is NOT NULL with no default on the live schema — omitting it
+      // made this endpoint unable to create a period AT ALL (every insert threw,
+      // and the old 200-with-{success:false} catch dressed that as a business
+      // reply). Same value as period_name: the repaired /erp/periods sibling
+      // treats label as the display name.
+      `INSERT INTO accounting_periods (id, period_name, period_label, start_date, end_date, status) VALUES (?,?,?,?,?,'open')`,
+      [newId, periodName, periodName, startDate, endDate]);
     res.json({ success: true, id: newId });
   } catch(e) {
     // v7.5 — was a 200 with {success:false}: a DB fault dressed as a business reply.

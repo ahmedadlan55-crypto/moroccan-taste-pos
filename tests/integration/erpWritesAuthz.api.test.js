@@ -37,8 +37,8 @@ const MANAGER = 'itest_gerp_manager';
 const PW = 'GErp#Test!2026';
 const CUST_KEEP = 'ITEST-GERP-CUST-KEEP';   // custody tries to delete this — it must survive
 const CUST_NAME = 'ITEST GERP عميل الكاشير'; // cashier creates this via the API
-const PERIOD_CASHIER = 'ITEST-GERP-PERIOD-DENIED';  // cashier attempt — must never exist
-const PERIOD_MANAGER = 'ITEST-GERP-PERIOD-ALLOWED'; // manager attempt — must exist, then cleaned
+const PERIOD_CASHIER = 'ITEST-GERP-DNY'; // ≤20 chars — period_name is varchar(20); cashier attempt, must never exist
+const PERIOD_MANAGER = 'ITEST-GERP-ALW'; // ≤20 chars — manager attempt, must exist then cleaned
 const PL_NAME = 'ITEST-GERP-PRICELIST-DENIED';
 const PAY_NOTE = 'ITEST-GERP-PAYMENT-DENIED';
 

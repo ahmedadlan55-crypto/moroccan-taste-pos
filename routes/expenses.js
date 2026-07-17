@@ -1,6 +1,10 @@
 const router = require('express').Router();
 const db = require('../db/connection');
 const gl = require('../lib/glPosting');
+// G-SALES hardening — expense writes post GL / open approval workflows: gated
+// by the live finance.expenses.* capability family (custody/finance/manager
+// hold `view`; only finance/manager hold `approve`; admin bypasses).
+const requireCapability = require('../middleware/requireCapability');
 
 const VAT_RATE = Number(process.env.VAT_RATE) || 15;
 
@@ -65,8 +69,10 @@ router.get('/', async (req, res) => {
       isManaged: !!e.txn_id  // managed = goes through workflow (vs legacy immediate post)
     })));
   } catch (e) {
+    // G-SALES error honesty — was res.json([]) with HTTP 200: a DB failure
+    // rendered as "no expenses" on the finance screen.
     console.error('[expenses GET]', e.message);
-    res.json([]);
+    res.status(500).json({ success: false, error: 'تعذّر تحميل المصروفات', code: 'expenses_list_failed' });
   }
 });
 
@@ -77,13 +83,17 @@ router.get('/', async (req, res) => {
 //       → DO NOT post GL yet (will post at payment close)
 //   - Else (legacy, no workflow defined)
 //       → keep old immediate-GL behavior for backward compatibility
-router.post('/', async (req, res) => {
+router.post('/', requireCapability('finance.expenses.view'), async (req, res) => {
   try {
     const {
-      category, description, amount, paymentMethod, username, notes, date,
+      category, description, amount, paymentMethod, notes, date,
       accountCode, hasVat, brandId, branchId, costCenterId,
       forceLegacy  // optional client flag to skip workflow (emergency bypass)
     } = req.body;
+    // G-SALES — the actor is the AUTHENTICATED user, never the body. The old
+    // req.body.username let a caller file an expense under any user's name
+    // (HR-profile resolution + workflow initiator + GL postedBy attribution).
+    const username = req.user.username;
 
     const expenseId = 'EXP-' + Date.now();
     const expenseDate = date ? new Date(date) : new Date();
@@ -218,17 +228,22 @@ router.post('/', async (req, res) => {
 
     res.json({ success: true, id: expenseId, managed: false, postingWarning });
   } catch (e) {
-    res.json({ success: false, error: e.message });
+    // G-SALES error honesty — was res.json({success:false}) with HTTP 200.
+    console.error('[expenses POST]', e.message);
+    res.status(500).json({ success: false, error: e.message });
   }
 });
 
-// Delete expense
-router.delete('/:id', async (req, res) => {
+// Delete expense — G-SALES: destructive + GL-affecting → `finance.expenses.approve`
+// (sensitive; live grant = finance/manager, admin bypasses).
+router.delete('/:id', requireCapability('finance.expenses.approve'), async (req, res) => {
   try {
     await db.query('DELETE FROM expenses WHERE id = ?', [req.params.id]);
     res.json({ success: true });
   } catch (e) {
-    res.json({ success: false, error: e.message });
+    // G-SALES error honesty — destructive endpoint must never mask failure as 200.
+    console.error('[expenses DELETE]', e.message);
+    res.status(500).json({ success: false, error: e.message });
   }
 });
 

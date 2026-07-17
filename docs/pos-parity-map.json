@@ -1,0 +1,44 @@
+{
+  "$doc": "خريطة تكافؤ إغلاق الكاشير — تُلحِق مسارات close/* قيودها هنا عند تسليم وظيفة من الكاشير القديم /pos إلى React /pos-v2. المرجع الكامل للتدقيق (374 وظيفة): docs/pos-parity-matrix.md. الحالة: equivalent (منفَّذ + مُثبت باختبار) | needs-review | missing.",
+  "entries": [
+    {
+      "slug": "catalog-card-image",
+      "domain": "catalog",
+      "title": "صورة الصنف على بطاقة الشبكة",
+      "legacy": "public/pos/app.js:405-408 — <img src=dataURL> مباشرة من كاش القائمة الكاملة في localStorage (حمولة الصور ~66MB لكل جهاز)",
+      "react": "frontend/pos/src/components/ProductGrid.tsx — ProductCard تعرض مصغّرة بارتفاع ثابت (h-16، محجوز قبل وصول البايتات فلا يحدث reflow في الصفوف المُقاسة) عبر GET /api/pos/v2/item-image/:id?v=<imageVersion>؛ الجلب بترويسة Authorization (النقطة خلف بوابة JWT العامة و<img> لا يرسل ترويسات) ثم object URL بكاش داخلي محدود (300 مدخلة، إخلاء + revoke)؛ تُعرض فقط عند وجود imageVersion و onerror يخفي الصورة نفسها دون كسر الشبكة؛ مسار الـ API مطلق فيصمد أمام انتقال التطبيق من /pos-v2/ إلى /pos/",
+      "api": "GET /api/pos/v2/item-image/:id",
+      "offline": "بدون اتصال لا صورة (الكرت يعمل كاملًا بلا صورة)؛ الصور المزارة سابقًا تُخدم من كاش HTTP الـ immutable",
+      "permission": "POS (admin/manager/cashier) + JWT عبر البوابة العامة",
+      "status": "equivalent",
+      "test": "frontend/pos/src/components/__tests__/ProductGrid.image.test.tsx + tests/integration/itemImage.api.test.js (npm run test:item-image)",
+      "branch": "close/d-images"
+    },
+    {
+      "slug": "catalog-image-transport",
+      "domain": "catalog",
+      "title": "نقل الصور خارج حمولة الكتالوج (استبدال مشكلة الـ 66MB)",
+      "legacy": "القديم يشحن menu.image_data (LONGTEXT base64، ~68MB على كتالوج 2000 صنف) داخل استجابة القائمة الكاملة ويخزّنها في localStorage",
+      "react": "routes/pos-v2.js /catalog — القاعدة: الـ LONGTEXT لا يركب حمولة الكتالوج أبدًا. كل صنف يحمل imageVersion = SUBSTRING(SHA1(image_data),1,8) أو null؛ تعديل الصورة يغيّر النسخة وبالتالي ETag الكتالوج فتتحدّث الأجهزة المتصلة عند أول مزامنة. قياس حي (2000 صف/68MB): ~28ms → ~100ms للاستعلام",
+      "api": "GET /api/pos/v2/catalog (items[].imageVersion)",
+      "offline": "imageVersion جزء من الكتالوج المخزَّن أصلًا في IndexedDB — لا تغيير في سلوك الأوفلاين",
+      "permission": "POS (admin/manager/cashier)",
+      "status": "equivalent",
+      "test": "tests/integration/itemImage.api.test.js — الحمولة بلا أي 'base64'، مطابقة SHA1، انقلاب ETag بعد التعديل، null بعد المسح",
+      "branch": "close/d-images"
+    },
+    {
+      "slug": "catalog-admin-image-manage",
+      "domain": "catalog-admin",
+      "title": "إدارة صورة الصنف (رفع / تصغير / إزالة)",
+      "legacy": "شاشة الإدارة القديمة تكتب imageData حرًّا في routes/menu.js بلا أي تحقق من النوع أو الحجم",
+      "react": "frontend/erp/src/modules/menu/ItemImageEditor.tsx داخل محرر الصنف (BrandMenu) — تصغير canvas إلى ≤512px (أطول ضلع) JPEG q0.8 يمسح الميتاداتا، معاينة حية، «إزالة الصورة» ('' يمسح)، خلف menu.catalog.manage عبر usePermissions/useCan؛ الخادم يفرض data:image/(jpeg|png|webp);base64 و≤300KB مفكوكة وإلا 400 برسالة عربية (routes/menu.js) — التحقق قبل أي كتابة",
+      "api": "POST /api/menu + PUT /api/menu/:id (حقل imageData عبر مسار التحديث القائم)",
+      "offline": "لا ينطبق (شاشة إدارة ERP متصلة)",
+      "permission": "menu.catalog.manage (واجهة) + verifyToken + requireRole('admin','manager') (خادم)",
+      "status": "equivalent",
+      "test": "frontend/erp/src/modules/menu/__tests__/itemImage.test.tsx + tests/integration/itemImage.api.test.js (رفض gif/svg/oversize/غير-dataURL، كاشير 403، '' يمسح)",
+      "branch": "close/d-images"
+    }
+  ]
+}

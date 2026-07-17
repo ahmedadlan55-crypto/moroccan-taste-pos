@@ -96,13 +96,19 @@ export function TxnDetailDrawer({ txnId, open, onClose, username, canAct = false
   // it when this box may act AND the drawer is open on a successfully-loaded txn.
   const permQuery = useTxnPermissions(txnId, username, canAct && open && loaded);
   const actAllowed = useCan("workflow.actions.act");
+  // Live txn.* capability family (role_permissions) — the same keys the G-wf
+  // stream's requireCapability guards enforce on POST /workflow/:id/action.
+  // Forward has NO txn.* capability server-side, so it stays on actAllowed only.
+  const capApprove = useCan("txn.approve");
+  const capReject = useCan("txn.reject");
+  const capReturn = useCan("txn.return");
 
   const perms = permQuery.data?.permissions;
   const version = permQuery.data?.currentVersion ?? 0;
   // A button shows ONLY when the capability AND the server flag both allow it.
-  const canApprove = actAllowed && !!perms?.canApprove;
-  const canReject = actAllowed && !!perms?.canReject;
-  const canReturn = actAllowed && !!perms?.canReturn;
+  const canApprove = actAllowed && capApprove && !!perms?.canApprove;
+  const canReject = actAllowed && capReject && !!perms?.canReject;
+  const canReturn = actAllowed && capReturn && !!perms?.canReturn;
   const canForward = actAllowed && !!perms?.canForward;
   const anyAction = canApprove || canReject || canReturn || canForward;
 

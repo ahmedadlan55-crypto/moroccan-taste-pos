@@ -1,0 +1,469 @@
+{
+  "onscreen-tender-keypad": {
+    "status": "covered",
+    "react": "frontend/pos/src/components/dialogs/PaymentDialog.tsx — quick-tender buttons (المبلغ بالضبط/50/100/200) + decimal tender input (inputMode=decimal) with live change/shortfall math; touch devices get the OS numeric keypad",
+    "test": "frontend/pos/src/components/__tests__/parity-shortcuts.test.tsx (F4 opens payment — with the on-screen quick-tender controls)"
+  },
+  "shift-report-print-window": {
+    "status": "covered",
+    "react": "frontend/pos/src/components/dialogs/ShiftDialog.tsx close-report + Z-report print (wave-1: B2)",
+    "test": "(wave-1: B2)"
+  },
+  "shift-report-print-legacy": {
+    "status": "covered",
+    "react": "frontend/pos/src/components/dialogs/ShiftDialog.tsx close-report + Z-report print (wave-1: B2) — both legacy print variants collapse into the one Z-report path",
+    "test": "(wave-1: B2)"
+  },
+  "shift-close-modal-print-orphan": {
+    "status": "not-required",
+    "reason": "دالة يتيمة في القديم نفسه: المصفوفة تنص 'NONE — no element in public/pos/index.html references scV3Print. Reachable only from the console' (docs/pos-parity-matrix.md:155). لا مدخل واجهة، لا وظيفة كاشير تُنقل."
+  },
+  "printer-settings-hidden": {
+    "status": "not-required",
+    "reason": "الزر الوحيد المؤدي إليها مخفي: public/pos/index.html:422 يحمل style=\"display:none\" (المصفوفة :156 'UNREACHABLE from the UI')، والإعداد نفسه لا يُستخدم في أي طباعة (printer-config-dead :183 — تحقق مستقل: getSavedPrinter يُقرأ فقط داخل نافذة الإعدادات ذاتها app.js:3029,3066)."
+  },
+  "receipt-autoprint-after-sale": {
+    "status": "covered",
+    "react": "frontend/pos/src/components/dialogs/PaymentDialog.tsx printReceipt (success phase) + auto-print after sale (wave-1: B2)",
+    "test": "(wave-1: B2)"
+  },
+  "receipt-preview-modal": {
+    "status": "covered",
+    "react": "frontend/pos/src/lib/receipt.ts printHtml — opens a dedicated window that RENDERS the receipt (the preview) then invokes the browser print dialog; popup-block is surfaced as a toast (PaymentDialog.tsx:181)",
+    "test": "frontend/pos/src/lib/__tests__/parity-print.test.ts (printHtml writes the receipt HTML + popup-block returns false)"
+  },
+  "receipt-paper-switch-receipt-modal": {
+    "status": "covered",
+    "react": "receipt paper width 80/58 switch (wave-1: B2) — frontend/pos/src/lib/receipt.ts",
+    "test": "(wave-1: B2)"
+  },
+  "receipt-paper-switch-printer-modal": {
+    "status": "not-required",
+    "reason": "المبدّل المكرر داخل نافذة إعدادات الطابعة، وهي غير قابلة للوصول من الواجهة أصلاً (printer-settings-hidden — index.html:422 display:none، المصفوفة :156). المبدّل الفعلي القابل للوصول هو صف receipt-paper-switch-receipt-modal وتغطيه الموجة B2."
+  },
+  "receipt-paper-persist": {
+    "status": "covered",
+    "react": "receipt paper width persistence (wave-1: B2) — frontend/pos/src/lib/receipt.ts",
+    "test": "(wave-1: B2)"
+  },
+  "receipt-reprint-last": {
+    "status": "covered",
+    "react": "frontend/pos/src/components/dialogs/PaymentDialog.tsx — success-phase «طباعة الإيصال» is repeatable while the dialog is open; reprint surface (wave-1: B2)",
+    "test": "(wave-1: B2)"
+  },
+  "receipt-reprint-arbitrary-MISSING": {
+    "status": "not-required",
+    "reason": "صف سلبي في المصفوفة ذاتها: 'لا يوجد مدخل واجهة في POS القديم' (app.js:3411-3416 — خلية الإجراءات تحوي إلغاء/مرتجع فقط). الوظيفة غير موجودة في القديم فلا تكافؤ مطلوب؛ إعادة طباعة B2 من فواتيري ستتجاوز القديم."
+  },
+  "receipt-silent-print": {
+    "status": "not-required",
+    "reason": "آلية داخلية (iframe مخفي في shared/receipt-template.js:332-348) وليست وظيفة كاشير: فعل الطباعة نفسه مغطى بصف receipt-print عبر receipt.ts printHtml (نافذة مخصصة + print()). استبدال وسيلة النقل لا يُفقد وظيفة."
+  },
+  "receipt-qr-render": {
+    "status": "covered",
+    "react": "frontend/pos/src/lib/receipt.ts — prints the SERVER-stamped ZATCA QR (PNG data-URL captured at checkout, offline.ts:646-651, persisted on the doc :686); works OFFLINE where legacy FAILED (CDN encoder, matrix row: 'FAILS — المكتبة من CDN')؛ a queued offline sale honestly states the stamp arrives after sync",
+    "test": "frontend/pos/src/lib/__tests__/receipt.test.ts (prints the server-stamped QR as an image — never re-derives it; offline queued sale says the stamp comes after sync)"
+  },
+  "receipt-zatca-tlv": {
+    "status": "not-required",
+    "reason": "إعادة اشتقاق TLV المرحلة الأولى على العميل استُبدلت عمداً بالـ QR المختوم من الخادم (receipt.ts:10-14، commit edb966e): طباعة QR مشتق محلياً يخالف ختم الفاتورة هي بالضبط العيب الذي يوثقه صف receipt-zatca-phase2-ignored. القرار موثق في رأس receipt.ts: 'The client never encodes QRs'."
+  },
+  "receipt-zatca-phase2-ignored": {
+    "status": "covered",
+    "react": "the legacy DEFECT is FIXED: frontend/pos/src/lib/offline.ts captures sale.zatca.qrDataUrl at checkout (:646-651) and persists it on the order doc (:686); frontend/pos/src/lib/receipt.ts prints that stamped QR — never a client re-derivation",
+    "test": "frontend/pos/src/lib/__tests__/receipt.test.ts + tests/integration/receiptQr.api.test.js"
+  },
+  "receipt-content-template": {
+    "status": "covered",
+    "react": "frontend/pos/src/lib/receipt.ts buildReceiptHtml — self-contained RTL receipt (identity block, lines, totals, payments, QR, thankYou/returnPolicy/footer), no external assets so it renders offline",
+    "test": "frontend/pos/src/lib/__tests__/receipt.test.ts (identity reaches paper; owner toggles honoured)"
+  },
+  "receipt-tax-snapshot": {
+    "status": "covered",
+    "react": "frontend/pos/src/lib/receipt.ts — VAT line «الضريبة (N% مشمولة)» from cartMath.cartTotals (tax-inclusive snapshot math identical to the money authority)",
+    "test": "frontend/pos/src/lib/__tests__/parity-print.test.ts (VAT line) + frontend/pos/src/lib/__tests__/cartMath.test.ts (VAT math)"
+  },
+  "receipt-payment-labels": {
+    "status": "covered",
+    "react": "frontend/pos/src/lib/receipt.ts PAY_LABELS (cash=كاش, card=شبكة, credit=آجل) with a safe fallback to the raw method name",
+    "test": "frontend/pos/src/lib/__tests__/o2cPos.test.ts (prints each payment method incl. credit as «آجل»)"
+  },
+  "receipt-split-rows": {
+    "status": "covered",
+    "react": "frontend/pos/src/lib/receipt.ts payHtml — one row per payment leg; PaymentDialog split tab produces the multi-leg payments array",
+    "test": "frontend/pos/src/lib/__tests__/o2cPos.test.ts (receipt shows the payment split)"
+  },
+  "receipt-tendered-change": {
+    "status": "covered",
+    "react": "frontend/pos/src/lib/receipt.ts — «المستلَم»/«الباقي» rows print only when a cash amount was tendered (values ride ReceiptOptions from the PaymentDialog)",
+    "test": "frontend/pos/src/lib/__tests__/parity-print.test.ts (prints المستلَم and الباقي; omits them on a card sale)"
+  },
+  "receipt-css-58-80": {
+    "status": "covered",
+    "react": "58/80mm print CSS (wave-1: B2) — frontend/pos/src/lib/receipt.ts BASE_CSS",
+    "test": "(wave-1: B2)"
+  },
+  "receipt-no-a4": {
+    "status": "not-required",
+    "reason": "صف سلبي: القديم لا يملك مقاس A4 أصلاً (_normalizePaperWidth يُرجع 58 أو 80 فقط — shared/receipt-template.js:44-46) وReact كذلك لا يقدمه. لا فجوة لأن الوظيفة غير موجودة في الطرفين."
+  },
+  "printer-settings-modal": {
+    "status": "not-required",
+    "reason": "النافذة كلها ميتة في القديم: زرها الوحيد مخفي (public/pos/index.html:422 display:none + no-print-on-kiosk، المصفوفة :156)، والإعداد المحفوظ لا يقرأه أي مسار طباعة (التعليق الصريح app.js:2997-2999 'Future print jobs can read this' — تحقق: getSavedPrinter يُستهلك فقط في :3029 و:3066 داخل النافذة ذاتها)."
+  },
+  "printer-support-probe": {
+    "status": "not-required",
+    "reason": "فحص دعم بلوتوث/USB يعيش داخل نافذة إعدادات الطابعة غير القابلة للوصول (:156) وفي خدمة إعداد لا تُستخدم في الطباعة إطلاقاً (printer-config-dead :183). لا وظيفة كاشير فعلية تُنقل."
+  },
+  "printer-tabs": {
+    "status": "not-required",
+    "reason": "تبويبات واجهة داخل النافذة الميتة نفسها (printer-settings-modal — زر مخفي index.html:422، إعداد غير مستخدم app.js:2997-2999). تسقط بسقوط مضيفها."
+  },
+  "printer-bluetooth-scan": {
+    "status": "not-required",
+    "reason": "الربط يعمل لكنه طريق مسدود في القديم: الطابعة المربوطة تُحفظ في localStorage 'pos_printer' ولا يقرأها أي مسار طباعة (تعليق app.js:2997-2999 'Future print jobs can read this and route the job accordingly' — أي أنه لم يحدث قط؛ تحقق مستقل: getSavedPrinter يُقرأ فقط في refreshPrinterCurrent/openPrinterSettings). كل الطباعة الفعلية تمر عبر window.print()، وهو ما يفعله React (receipt.ts printHtml)."
+  },
+  "printer-usb-scan": {
+    "status": "not-required",
+    "reason": "كما printer-bluetooth-scan: ربط WebUSB يخزن إعداداً لا يستخدمه أي مسار طباعة في القديم (app.js:2997-2999، getSavedPrinter لا يُقرأ خارج نافذة الإعدادات)، والنافذة نفسها مخفية (:156)."
+  },
+  "printer-network-save": {
+    "status": "not-required",
+    "reason": "حفظ IP/منفذ طابعة شبكة إلى إعداد لا يقرأه أي مسار طباعة في القديم (app.js:2997-2999) — ولا يمكن أصلاً للطباعة من متصفح الوصول لمنفذ 9100 خام دون وسيط. لا سلوك فعلي يُفقد."
+  },
+  "printer-current-clear": {
+    "status": "not-required",
+    "reason": "عرض/مسح الطابعة المرتبطة داخل النافذة الميتة (زر مخفي :156) لإعداد غير مستخدم في أي طباعة (:183 + تحقق getSavedPrinter). واجهة لإدارة شيء لا أثر له."
+  },
+  "printer-config-dead": {
+    "status": "not-required",
+    "reason": "هذا الصف هو نفسه توثيق العيب: 'إعدادات الطابعة لا تُستخدم في الطباعة إطلاقاً' (المصفوفة :183، التعليق الصريح app.js:2996-2999). لا وظيفة هنا — بل إثبات أن عائلة printer-* بأكملها كانت واجهة بلا خلفية."
+  },
+  "invoice-fetch": {
+    "status": "covered",
+    "react": "no server fetch needed: frontend/pos/src/lib/receipt.ts renders from the LOCAL order doc + checkout outcome (identity rides the cached catalog, QR captured at checkout) — the receipt prints OFFLINE where legacy failed with «تعذر طباعة الفاتورة» (matrix: Offline=never)",
+    "test": "frontend/pos/src/lib/__tests__/receipt.test.ts (identity + QR from local data, no fetch)"
+  },
+  "receipt-print": {
+    "status": "covered",
+    "react": "frontend/pos/src/components/dialogs/PaymentDialog.tsx printReceipt → frontend/pos/src/lib/receipt.ts buildReceiptHtml + printHtml (dedicated window + window.print(); popup-block toasted); kitchen ticket printable from the same success screen and after hold (App.tsx)",
+    "test": "frontend/pos/src/lib/__tests__/receipt.test.ts + frontend/pos/src/lib/__tests__/parity-print.test.ts (printHtml writes + prints)"
+  },
+
+  "offline-sale-queue": {
+    "status": "covered",
+    "react": "frontend/pos/src/lib/offline.ts — IndexedDB FIFO op queue; a checkout enqueues 'submit-and-sale' and replays submit→/api/sales→complete with a stable Idempotency-Key; frontend/pos/src/components/Header.tsx ConnectionIndicator shows the pending count",
+    "test": "frontend/pos/src/lib/__tests__/offline.test.ts (keeps the checkout op queued when the network dies mid-chain; FIFO order)"
+  },
+  "offline-queue-dedupe": {
+    "status": "covered",
+    "react": "frontend/pos/src/lib/offline.ts — the op keeps the SAME opId across retries (server-side idempotency) and the LocalOrder id doubles as clientOrderId for /api/sales dedupe (types.ts:129)",
+    "test": "frontend/pos/src/lib/__tests__/offline.test.ts (keeps the SAME opId across a network-failure retry; treats replayed results as success)"
+  },
+  "offline-badge-sync-now": {
+    "status": "covered",
+    "react": "frontend/pos/src/components/Header.tsx ConnectionIndicator (amber «غير متصل (N)» chip with the queue count) → frontend/pos/src/components/dialogs/SyncReportDialog.tsx with a real «مزامنة الآن» button calling engine.flush()",
+    "test": "frontend/pos/src/lib/__tests__/parity-offline.test.ts (flush drains the queue) + offline.test.ts"
+  },
+  "offline-auto-sync": {
+    "status": "covered",
+    "react": "frontend/pos/src/lib/offline.ts start() — window 'online' listener triggers flush, plus a 30s interval and flush-on-enqueue while online",
+    "test": "frontend/pos/src/lib/__tests__/parity-offline.test.ts (the 'online' event drains the queue)"
+  },
+  "offline-quota-guard": {
+    "status": "covered",
+    "react": "storage write failures REJECT and surface: engine ops await every IndexedDB put (frontend/pos/src/lib/offline.ts), and PaymentDialog's catch shows the failed phase with the error — never a false «saved» (frontend/pos/src/components/dialogs/PaymentDialog.tsx:151-155); IndexedDB quota is also orders of magnitude beyond legacy localStorage",
+    "test": "frontend/pos/src/lib/__tests__/parity-offline.test.ts (saveCart/checkout REJECT on QuotaExceededError)"
+  },
+  "offline-checkout-watchdog": {
+    "status": "not-required",
+    "reason": "مؤقت 120 ثانية في القديم كان تعويضاً عن جسر نداءات قد لا يعود أبداً (app.js:2753-2770). سلسلة الدفع في React وعود fetch تستقر دائماً: نجاح، أو ApiError، أو رفض شبكة يُبقي العملية في الطابور ويعيد الحوار إلى 'queued' — وحارس أوفلاين يعيد 'queued' فوراً دون انتظار شبكة (offline.ts checkout:409-411). زر الدفع لا يملك مساراً يبقى فيه مقفولاً بلا نهاية."
+  },
+  "offline-menu-cache": {
+    "status": "covered",
+    "react": "frontend/pos/src/lib/catalogCache.ts — ETag-aware catalog with IndexedDB persistence; offline serves the cached copy and a stale copy is called out (never refuses to sell)",
+    "test": "frontend/pos/src/lib/__tests__/catalogCache.test.ts (offline + recent cache → serves it; offline + old cache → STILL SELLS but reports stale)"
+  },
+  "sw-registration": {
+    "status": "covered",
+    "react": "frontend/pos/src/pwa.ts service-worker registration (wave-1: C)",
+    "test": "(wave-1: C)"
+  },
+  "sw-cache-strategy": {
+    "status": "covered",
+    "react": "frontend/pos/public/sw.js app-shell precache + versioned cache strategy (wave-1: C) — replaces legacy public/pos/sw.js mechanics",
+    "test": "(wave-1: C)"
+  },
+  "pwa-install-button": {
+    "status": "covered",
+    "react": "frontend/pos/src/pwa.ts beforeinstallprompt capture + install affordance (wave-1: C)",
+    "test": "(wave-1: C)"
+  },
+  "pwa-manifest": {
+    "status": "covered",
+    "react": "frontend/pos PWA manifest + icons (wave-1: C)",
+    "test": "(wave-1: C)"
+  },
+  "menu-auto-refresh": {
+    "status": "covered",
+    "react": "frontend/pos/src/state/store.tsx catalogQuery refetchInterval 5*60_000 → catalogCache.loadCatalog (ETag 304-aware; skips gracefully offline via the navigator.onLine guard in loadCatalog)",
+    "test": "frontend/pos/src/lib/__tests__/catalogCache.test.ts (304 refreshes savedAt; network failure falls back to cache)"
+  },
+  "boot-offline-sale-queue": {
+    "status": "covered",
+    "react": "frontend/pos/src/lib/offline.ts queue restored from IndexedDB at boot (initSeq) + frontend/pos/src/components/Header.tsx ConnectionIndicator pending count — same mechanism as offline-sale-queue",
+    "test": "frontend/pos/src/lib/__tests__/offline.test.ts"
+  },
+  "offline-queue-enqueue": {
+    "status": "covered",
+    "react": "frontend/pos/src/lib/offline.ts checkout() offline path — enqueues the final upsert + 'submit-and-sale' and returns state:'queued'; PaymentDialog shows «حُفظ الطلب — سيُرحَّل عند عودة الاتصال» with the local reference",
+    "test": "frontend/pos/src/lib/__tests__/offline.test.ts (checkout op queued; FIFO split around checkout ops)"
+  },
+  "offline-quota-honest": {
+    "status": "covered",
+    "react": "same surface as offline-quota-guard: the write failure propagates to the PaymentDialog failed phase — the cashier is TOLD the sale did not go through (PaymentDialog.tsx:151-155), matching the legacy honesty contract",
+    "test": "frontend/pos/src/lib/__tests__/parity-offline.test.ts (storage-full is surfaced, never a false success)"
+  },
+  "offline-badge-sync": {
+    "status": "covered",
+    "react": "frontend/pos/src/components/Header.tsx ConnectionIndicator queue-count chip → SyncReportDialog «مزامنة الآن» (engine.flush) — same surface as offline-badge-sync-now",
+    "test": "frontend/pos/src/lib/__tests__/parity-offline.test.ts + offline.test.ts"
+  },
+  "offline-autosync-reprint": {
+    "status": "covered",
+    "react": "auto-sync: frontend/pos/src/lib/offline.ts ('online' listener + 30s interval; checkout-done event carries invoiceNumber/saleId after replay); receipt print after sync (wave-1: B2)",
+    "test": "frontend/pos/src/lib/__tests__/parity-offline.test.ts (auto-sync) + (wave-1: B2)"
+  },
+  "pwa-offline-shell": {
+    "status": "covered",
+    "react": "frontend/pos PWA shell — sw.js precache + pwa.ts install (wave-1: C); the data layer already boots offline from IndexedDB (catalogCache.ts + offline.ts)",
+    "test": "(wave-1: C)"
+  },
+
+  "legacy-bridge-drift": {
+    "status": "not-required",
+    "reason": "صف يوثق انحرافاً بين نسختي جسر قديمتين (public/shared/api-bridge.js يرسل approver* بينما public/js لا) — عيب بنية قديمة لا وظيفة كاشير. React يملك عميل API واحداً (frontend/pos/src/lib/api.ts) يرسل approverUsername/approverPassword في voidSale/returnSale؛ لا جسر ثانٍ لينحرف."
+  },
+  "customers-no-authz": {
+    "status": "not-required",
+    "reason": "اكتشاف أمني في الخلفية القديمة (routes/erp/customers.js بلا requirePermission) وليس قدرة كاشير تُنقل إلى React — لا يجوز 'تكافؤ' مع غياب بوابة صلاحيات. كاشير React يستخدم /api/order-to-cash/customers/search (lib/api.ts:219-222) خلف مصادقة Bearer؛ سد الثغرة عمل خادم يُتتبع في مساره الخاص."
+  },
+  "logout": {
+    "status": "not-required",
+    "reason": "قرار تصميم موثق في الكود: كاشير V2 بلا إدارة جلسات داخلية إطلاقاً — 'There is no login screen here' (frontend/pos/src/lib/auth.ts:1-7)؛ الدخول والخروج كلاهما في النظام الرئيسي الذي يشاركه نفس pos_token، والهيدر يوفر «العودة للنظام الرئيسي» (Header.tsx:184-190). خروجٌ هناك يُبطل الكاشير لأن كل نداء API يفشل مغلقاً بلا توكن."
+  },
+  "hard-auth-gate": {
+    "status": "covered",
+    "react": "frontend/pos/src/App.tsx — !user renders ONLY the LoginRequired screen (no catalog, no cart, no API polling: store.tsx queries are enabled:!!user); user comes from auth.ts currentUser() over the shared pos_token",
+    "test": "frontend/pos/src/components/__tests__/parity-shortcuts.test.tsx (no session renders ONLY the login screen) + frontend/pos/src/lib/__tests__/parity-auth.test.ts (garbage/no token ⇒ null)"
+  },
+  "manager-approval-gate": {
+    "status": "covered",
+    "react": "frontend/pos/src/components/dialogs/ManagerApprovalDialog.tsx + MyInvoicesDialog.start() — non-privileged void/return demand approver credentials (+reason for returns); admin/manager skip the dialog exactly like legacy (app.js:3527) and the SERVER re-authorizes with bcrypt+role either way",
+    "test": "frontend/pos/src/components/__tests__/parity-auth.test.tsx (credentials demanded; reason required; creds forwarded)"
+  },
+  "hard-auth-gate-inline": {
+    "status": "covered",
+    "react": "same gate as hard-auth-gate — the React SPA renders nothing privileged pre-auth (App.tsx LoginRequired); the legacy inline-<head>-script mechanics existed to blank a server-rendered page and are obsolete in an SPA whose data layer is auth-gated (store.tsx enabled:!!user)",
+    "test": "frontend/pos/src/components/__tests__/parity-shortcuts.test.tsx (hard-auth-gate)"
+  },
+  "auth-require-auth": {
+    "status": "covered",
+    "react": "frontend/pos/src/state/store.tsx — every query (catalog/shift/flags) is enabled only with a user; frontend/pos/src/App.tsx aborts to LoginRequired without one (the React equivalent of `if (!requireAuth()) return;`)",
+    "test": "frontend/pos/src/components/__tests__/parity-shortcuts.test.tsx (login gate)"
+  },
+  "auth-get-current-user": {
+    "status": "covered",
+    "react": "frontend/pos/src/lib/auth.ts — getToken/decodeUser/currentUser (UTF-8-safe base64url payload decode; display/role-gating only, the server verifies every request)",
+    "test": "frontend/pos/src/lib/__tests__/parity-auth.test.ts (decodes username+role incl. Arabic; defaults role; null on garbage)"
+  },
+  "auth-bfcache-pageshow-guard": {
+    "status": "not-required",
+    "reason": "حارس pageshow في القديم حمى صفحات مُقدَّمة من الخادم تُستعاد من bfcache بعد الخروج. React SPA لا يحمل جلسة خادم في الصفحة: كل نداء API يعيد المصادقة بتوكن Bearer لحظياً ويفشل مغلقاً (lib/api.ts:62 → UNAUTHORIZED)، فاستعادة bfcache لا تمنح أي فعل مميز — أول نداء بعد الخروج يرفض."
+  },
+  "auth-popstate-guard": {
+    "status": "not-required",
+    "reason": "نفس منطق auth-bfcache-pageshow-guard: حارس زر الرجوع كان لآلية صفحات الخادم؛ في React كل طلب يفشل مغلقاً بلا توكن صالح (lib/api.ts request → Bearer إلزامي على الخادم)، ولا حالة صفحة قديمة تمنح صلاحية."
+  },
+  "auth-role-helpers": {
+    "status": "covered",
+    "react": "frontend/pos/src/lib/auth.ts isSupervisor — admin OR manager, case-insensitive (the exact predicate of legacy isAdmin(), public/shared/auth.js:52-59); consumed by the credit-tab gate and approval-skip",
+    "test": "frontend/pos/src/lib/__tests__/parity-auth.test.ts (isSupervisor cases)"
+  },
+  "auth-logout": {
+    "status": "not-required",
+    "reason": "نفس صف logout: لا إدارة جلسات داخل كاشير V2 بقرار موثق (lib/auth.ts:1-7)؛ الخروج يتم من النظام الرئيسي المشارك لنفس pos_token، والوصول إليه زر واحد في الهيدر (Header.tsx «العودة للنظام الرئيسي»)."
+  },
+  "auth-token-attach-fetch": {
+    "status": "covered",
+    "react": "frontend/pos/src/lib/api.ts request() — Authorization: Bearer <pos_token> on EVERY call (shifts closing-data-v3/close-v3 included) + fetchCatalog attaches it too; 401 maps to UNAUTHORIZED ApiError",
+    "test": "frontend/pos/src/lib/__tests__/parity-auth.test.ts (Bearer header attached; omitted when absent — fail closed)"
+  },
+  "auth-manager-approval-gate": {
+    "status": "covered",
+    "react": "same surface as manager-approval-gate: ManagerApprovalDialog collects approver creds, MyInvoicesDialog forwards them to POST /api/sales/:id/void|return (lib/api.ts voidSale/returnSale); privileged bypass + server re-auth preserved; a server 'approval_required'/403 keeps the dialog open for retry (MyInvoicesDialog.tsx:160-169)",
+    "test": "frontend/pos/src/components/__tests__/parity-auth.test.tsx"
+  },
+  "auth-role-based-nav": {
+    "status": "not-required",
+    "reason": "كاشير V2 شاشة واحدة بلا قائمة صفحات داخلية تُرشَّح بالدور — التنقل حسب الدور يعيش في شل ADLAN الموحد على / (الذي يصله الهيدر مباشرة)، وبوابات الدور داخل الكاشير موجودة حيث تهم فعلاً: تبويب الآجل يتطلب مشرفاً (PaymentDialog.tsx:239) وتجاوز الاعتماد للمدير فقط (MyInvoicesDialog.tsx:85). القديم رسم روابط هيدر لأنه كان جزءاً من عدة صفحات SPA متجاورة."
+  },
+  "auth-save-restore-state": {
+    "status": "covered",
+    "react": "frontend/pos/src/state/store.tsx restore effect (engine.latestOpenOrder on mount → cart survives refresh) + every cart change persists local-first to IndexedDB via engine.saveCart — strictly stronger than legacy's manual saveState/restoreState snapshots",
+    "test": "frontend/pos/src/lib/__tests__/parity-offline.test.ts (latestOpenOrder returns the most recent open doc)"
+  },
+  "manager-auth-modal": {
+    "status": "covered",
+    "react": "frontend/pos/src/components/dialogs/ManagerApprovalDialog.tsx — username/password (+«سبب الإرجاع» for returns), Enter submits (real <form onSubmit>), autofocus on the username, password state cleared on close",
+    "test": "frontend/pos/src/components/__tests__/parity-auth.test.tsx (Enter in the password field submits the FORM)"
+  },
+  "auth-hard-gate": {
+    "status": "covered",
+    "react": "same as hard-auth-gate — App.tsx LoginRequired with a direct link to the main system instead of a silent redirect (strictly more informative; nothing privileged renders)",
+    "test": "frontend/pos/src/components/__tests__/parity-shortcuts.test.tsx"
+  },
+  "manager-approval-modal": {
+    "status": "covered",
+    "react": "same as manager-approval-gate — auto-raised for non-privileged roles by void/return in MyInvoicesDialog; autofocuses the username after paint (ManagerApprovalDialog.tsx:48); server verifies bcrypt+role",
+    "test": "frontend/pos/src/components/__tests__/parity-auth.test.tsx"
+  },
+
+  "boot-pwa-sw-register": {
+    "status": "covered",
+    "react": "frontend/pos/src/pwa.ts SW registration on load (wave-1: C)",
+    "test": "(wave-1: C)"
+  },
+  "boot-pwa-install-prompt": {
+    "status": "covered",
+    "react": "frontend/pos/src/pwa.ts beforeinstallprompt capture + install button (wave-1: C)",
+    "test": "(wave-1: C)"
+  },
+  "boot-pwa-manifest-meta": {
+    "status": "covered",
+    "react": "frontend/pos PWA manifest + meta (theme-color already in frontend/pos/index.html:6) (wave-1: C)",
+    "test": "(wave-1: C)"
+  },
+  "boot-dom-ready-sequence": {
+    "status": "covered",
+    "react": "declarative boot replaces the fixed imperative order: frontend/pos/src/main.tsx (ErrorBoundary → QueryClient → PosProvider → App) + frontend/pos/src/state/store.tsx — auth first (queries enabled:!!user), cache-first catalog (loadCatalog), cart restore (latestOpenOrder), shift query; same ordering guarantees, no DOMContentLoaded choreography",
+    "test": "frontend/pos/src/lib/__tests__/catalogCache.test.ts (cache-first) + frontend/pos/src/components/__tests__/parity-shortcuts.test.tsx (auth gate) + parity-bootstrap.test.tsx (ErrorBoundary safety net)"
+  },
+  "boot-menu-cache-restore": {
+    "status": "covered",
+    "react": "frontend/pos/src/lib/catalogCache.ts — IndexedDB cached catalog serves the first paint (offline or before the network answers), with honest staleness instead of legacy's silent 1-hour TTL",
+    "test": "frontend/pos/src/lib/__tests__/catalogCache.test.ts (offline + cache → serves it; no cache and no network → throws rather than inventing an empty menu)"
+  },
+  "boot-initial-app-data": {
+    "status": "covered",
+    "react": "frontend/pos/src/state/store.tsx — catalogQuery (vatRate/identity/receiptShowFields/maxCashierDiscountPct ride the one cached payload) + flagsQuery (/api/version) + shiftQuery; loading is per-region skeletons (ProductGrid/ShiftDialog) instead of one full-screen loader",
+    "test": "frontend/pos/src/lib/__tests__/catalogCache.test.ts + frontend/pos/src/components/__tests__/parity-bootstrap.test.tsx (skeleton loading)"
+  },
+  "boot-menu-auto-refresh-5min": {
+    "status": "covered",
+    "react": "frontend/pos/src/state/store.tsx catalogQuery refetchInterval 5*60_000 (the same 5 minutes) → loadCatalog with the ETag If-None-Match + offline early-return guard",
+    "test": "frontend/pos/src/lib/__tests__/catalogCache.test.ts (304 path; offline path)"
+  },
+  "boot-manual-refresh-all": {
+    "status": "covered",
+    "react": "manual refresh surfaces where refresh is actually needed: StaleCatalogChip tap → refetchCatalog (Header.tsx:85-105), ErrorBanner retry on load failure (App.tsx:237), plus the always-on 5-min auto-refresh with ETag revalidation — legacy needed a permanent button because it had no staleness signal at all",
+    "test": "frontend/pos/src/components/__tests__/parity-bootstrap.test.tsx (stale chip refetches; disabled offline)"
+  },
+  "boot-loader-overlay": {
+    "status": "covered",
+    "react": "per-region loading instead of a full-screen overlay: ProductGrid skeletons while the catalog loads, ShiftDialog/MyInvoices skeletons, PaymentDialog working-phase progress (submit→sale→complete) — the cashier always sees WHICH part is loading",
+    "test": "frontend/pos/src/components/__tests__/parity-bootstrap.test.tsx (ProductGrid loading skeletons)"
+  },
+
+  "printer-bluetooth-pair": {
+    "status": "not-required",
+    "reason": "نفس عائلة printer-bluetooth-scan: ربط بلوتوث داخل نافذة مخفية (index.html:422 display:none) يحفظ إعداد 'pos_printer' الذي لا يقرأه أي مسار طباعة في القديم (app.js:2997-2999 + تحقق getSavedPrinter :3029/:3066 فقط). ميزة شكلية بلا أثر على الطباعة الفعلية."
+  },
+  "printer-usb-pair": {
+    "status": "not-required",
+    "reason": "كما printer-bluetooth-pair: ربط WebUSB يخزن إعداداً ميتاً (printer-config-dead :183) داخل نافذة غير قابلة للوصول (:156). الطباعة الفعلية في القديم والجديد كلاهما window.print()."
+  },
+  "printer-current-and-clear": {
+    "status": "not-required",
+    "reason": "عرض/إلغاء ربط الطابعة داخل النافذة الميتة نفسها لإعداد لا يُستخدم إطلاقاً في الطباعة (:183). واجهة إدارة لشيء بلا مستهلك."
+  },
+  "receipt-paper-width": {
+    "status": "covered",
+    "react": "receipt paper width 80/58 selection (wave-1: B2) — frontend/pos/src/lib/receipt.ts",
+    "test": "(wave-1: B2)"
+  },
+  "developer-diagnostics-flag": {
+    "status": "not-required",
+    "reason": "بلا أي مدخل واجهة حتى في القديم ('you must set localStorage.pos_is_developer=1 by hand') — أداة تشخيص لمطور محرك القنوات V3، لا وظيفة كاشير. بيئة React/Vite توفر بديلها الطبيعي (source maps + React DevTools + React Query Devtools) دون علم مخفي في الإنتاج."
+  },
+
+  "float-actions-menu": {
+    "status": "not-required",
+    "reason": "حاوية قائمة منبثقة لا وظيفة بذاتها: أزرارها (فواتيري/تقرير الوردية/الطابعة/بوابة الموظف…) لكل منها صفه الخاص في مجاله. React يعرض الإجراءات مباشرة في الهيدر الدائم (Header.tsx: فواتيري، شريحة الوردية، تقرير المزامنة) بلا قائمة تُفتح وتُغلق — سطح أفضل لا ينقص وظيفة مُتتبعة."
+  },
+  "float-actions-auto-dismiss": {
+    "status": "not-required",
+    "reason": "ميكانيكا إغلاق تلقائي لقائمة float-actions التي لا وجود لها في React (الإجراءات أزرار هيدر دائمة). سلوك الإغلاق المكافئ للطبقات المنبثقة موجود حيث توجد طبقات فعلاً: Dialog.tsx يغلق بـ Escape وبنقرة الخلفية."
+  },
+  "float-actions-swipe": {
+    "status": "not-required",
+    "reason": "إيماءة سحب لفتح/إغلاق قائمة float-actions الملغاة — تسقط بسقوط مضيفها؛ لا قائمة قابلة للسحب في React لأن الإجراءات ظاهرة دائماً في الهيدر."
+  },
+  "float-actions-auto-collapse": {
+    "status": "not-required",
+    "reason": "طي تلقائي بعد 5 ثوانٍ لقائمة float-actions الملغاة على الجوال — ميكانيكا داخلية لمضيف غير موجود؛ هيدر React يلتف (flex-wrap) ويبقي الإجراءات في المتناول على الشاشات الصغيرة."
+  },
+  "mobile-drawer-actions": {
+    "status": "not-required",
+    "reason": "حقن نسخة من إجراءات الكاشير داخل درج الهيدر القديم على الجوال (app.js:4340-4456) — حل لكون الإجراءات مدفونة في قائمة عائمة سطح-مكتبية. في React الإجراءات في الهيدر نفسه ويلتف على الجوال؛ لا درج ولا حاجة لاستنساخ."
+  },
+  "mobile-nav-relocation": {
+    "status": "not-required",
+    "reason": "إصلاح DOM غير مرئي (_moveAppNavToBody + MutationObserver) لعيب تخطيط في هيدر القديم المشترك على الجوال. تخطيط React متجاوب بالبناء (Tailwind flex-wrap)؛ لا DOM يُنقل ولا Observer يُحرس."
+  },
+  "generic-confirm-modal": {
+    "status": "covered",
+    "react": "frontend/pos/src/components/Dialog.tsx (shared modal: Esc-to-close, backdrop click, focus containment, locked mode) + explicit confirm dialogs built on it (VoidDialog danger confirm, PaymentDialog, ShiftDialog) — the typed React replacement of glassConfirm/glassAlert",
+    "test": "frontend/pos/src/components/__tests__/parity-shortcuts.test.tsx (Escape closes; locked refuses)"
+  },
+  "loader-and-toast": {
+    "status": "covered",
+    "react": "frontend/pos/src/components/Toasts.tsx + store.tsx pushToast/dismissToast (aria-live polite, capped queue, 5s auto-dismiss) — loading is per-region skeletons (ui.tsx Skeleton) instead of the legacy full-screen #loader",
+    "test": "frontend/pos/src/components/__tests__/parity-bootstrap.test.tsx (toasts render/dismiss; skeleton loading)"
+  },
+
+  "keyboard-cart-footer-activate": {
+    "status": "covered",
+    "react": "the pay control is a NATIVE <button> (CartPanel.tsx) so Enter/Space activate it by browser semantics — the legacy keydown shim existed because its 'button' was a div (role=button tabindex=0); plus the global F4 opens payment from anywhere (App.tsx:119-121)",
+    "test": "frontend/pos/src/components/__tests__/parity-shortcuts.test.tsx (F4 opens the payment dialog; empty cart refuses)"
+  },
+  "keyboard-escape-close-menu": {
+    "status": "covered",
+    "react": "Escape closes every layered surface in React: frontend/pos/src/components/Dialog.tsx document-level Escape handler (the float-actions popover it closed in legacy no longer exists — its actions are permanent header buttons)",
+    "test": "frontend/pos/src/components/__tests__/parity-shortcuts.test.tsx (Escape closes an open dialog)"
+  },
+  "keyboard-modal-esc-enter": {
+    "status": "covered",
+    "react": "frontend/pos/src/components/Dialog.tsx Escape (with locked guard) + real <form onSubmit> Enter submission in ManagerApprovalDialog + Enter-to-pick in CustomerPicker (:75-79) + Enter-to-scan in SearchBox (ProductGrid.tsx:102-107)",
+    "test": "frontend/pos/src/components/__tests__/parity-shortcuts.test.tsx + parity-auth.test.tsx"
+  },
+  "keyboard-customer-search-enter": {
+    "status": "covered",
+    "react": "frontend/pos/src/components/CustomerPicker.tsx — search is LIVE (250ms debounce, first page on open, no Enter needed at all); Enter picks the active result (exceeds the legacy Enter-to-search)",
+    "test": "frontend/pos/src/components/__tests__/parity-shortcuts.test.tsx (ArrowDown + Enter select a customer) + CustomerPicker.test.tsx"
+  },
+  "keyboard-customer-card-enter": {
+    "status": "covered",
+    "react": "frontend/pos/src/components/CustomerPicker.tsx — result rows are native <button role=option> (Enter activates natively when focused) and the combobox input supports ArrowUp/Down + Enter selection with aria-selected tracking",
+    "test": "frontend/pos/src/components/__tests__/parity-shortcuts.test.tsx (Enter picks the active result)"
+  },
+  "keyboard-manager-auth-enter": {
+    "status": "covered",
+    "react": "frontend/pos/src/components/dialogs/ManagerApprovalDialog.tsx — the credentials live in a real <form onSubmit>, so Enter in the password (or any) field submits; legacy needed an inline onkeydown because it had no form",
+    "test": "frontend/pos/src/components/__tests__/parity-auth.test.tsx (Enter in the password field submits the FORM)"
+  },
+  "no-global-hotkeys": {
+    "status": "not-required",
+    "reason": "صف سلبي: القديم لا يملك أي اختصار عام إطلاقاً — grep المصفوفة (:483 'returns ZERO') وتحقق مستقل في هذا التصنيف: صفر تطابقات لـ F1-F12/ctrlKey/altKey/metaKey في public/pos/app.js. React يتجاوز القديم بـ F2 بحث/F4 دفع/F9 تعليق (App.tsx:113-130) والاختبار parity-shortcuts.test.tsx يثبتها."
+  }
+}

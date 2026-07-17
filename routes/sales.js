@@ -1,6 +1,10 @@
 const router = require('express').Router();
 const db = require('../db/connection');
 const bcrypt = require('bcryptjs');
+// G-SALES hardening — fine-grained capability guard (same pattern as
+// routes/order-to-cash/returns.js). Runs after the global JWT gate, so
+// req.user is the verified token. admin/developer bypass inside.
+const requireCapability = require('../middleware/requireCapability');
 const gl = require('../lib/glPosting');
 const zatca = require('../lib/zatca');
 const { recomputeInvItemStock, recomputeMenuStock, deductWarehouseStock } = require('../lib/stockRecompute');
@@ -211,7 +215,9 @@ async function _ensureNotSubmitted(conn, orderId) {
 // `db` import is shadowed by `const db = _conn` so existing query calls
 // keep working without rewriting every line. GL posting failure now
 // throws (A.2), triggering rollback of sale + inventory + ZATCA stamp.
-router.post('/', async (req, res) => {
+// G-SALES — checkout stays reachable by the cashier: `pos.use` is the base POS
+// capability (live for role=cashier). Roles without it (employee/warehouse) 403.
+router.post('/', requireCapability('pos.use'), async (req, res) => {
   const _pool = db; // capture outer pool reference before shadowing
   let _conn;
   try {
@@ -223,13 +229,11 @@ router.post('/', async (req, res) => {
     const { items, total, totalFinal, paymentMethod, discountName, discountAmount, lineDiscountTotal, kitaServiceFee, splitDetails } = req.body;
     const { shiftId, warehouseId: reqWhId } = req.body;
     // v7.2 — HIGH: the actor is the AUTHENTICATED user, never the body.
-    // The route is behind the global JWT gate (server.js), so req.user is
-    // populated with the verified token claims. Trusting req.body.username
-    // let a caller post a sale under any cashier's name (audit forgery +
-    // wrong shift/commission attribution). We take the username from the
-    // token and keep the body value only as a last-resort fallback for the
-    // theoretical case where req.user is somehow absent.
-    const username = (req.user && req.user.username) || req.body.username || '';
+    // G-SALES — the legacy req.body.username fallback is DELETED: it let a
+    // caller post a sale under any cashier's name (audit forgery + wrong
+    // shift/commission attribution). requireCapability('pos.use') above
+    // guarantees req.user is set, so there is no legitimate absent case.
+    const username = req.user.username;
     // v7.2 — CRITICAL idempotency key. The POS sends a stable clientOrderId
     // per checkout attempt and re-sends it on every retry of the SAME sale.
     const clientOrderId = (req.body.clientOrderId != null && String(req.body.clientOrderId).trim() !== '')
@@ -1726,7 +1730,12 @@ router.get('/', async (req, res) => {
       channelId:      r.channel_id      || null,
       channelName:    r.channel_name    || null
     })));
-  } catch (e) { res.json([]); }
+  } catch (e) {
+    // G-SALES error honesty — an empty [] here made a DB failure look like
+    // "no sales today" on every financial screen. Surface it as a 500.
+    console.error('[GET /sales]', e.message);
+    res.status(500).json({ success: false, error: 'تعذّر تحميل المبيعات', code: 'sales_list_failed' });
+  }
 });
 
 // Get invoice
@@ -1879,7 +1888,12 @@ router.get('/invoice/:orderId', async (req, res) => {
       voidSerial: sale.void_serial || null,
       returnSerial: sale.return_serial || null
     });
-  } catch (e) { res.json(null); }
+  } catch (e) {
+    // G-SALES error honesty — `null` made a DB failure indistinguishable from
+    // "invoice not found" on the printed-receipt path. Surface it as a 500.
+    console.error('[GET /sales/invoice/:orderId]', e.message);
+    res.status(500).json({ success: false, error: 'تعذّر تحميل الفاتورة', code: 'invoice_load_failed' });
+  }
 });
 
 // v5.10.29 — Reverse a sale's stock + GL effects, then optionally hard-delete.
@@ -2040,10 +2054,15 @@ async function _requireManagerApproval(req, action) {
 // POST /sales/:orderId/void — reverse stock + GL but KEEP the sale row.
 // This is the recommended path when you need an audit trail (the sale
 // remains visible in reports as voided). Use ?delete=1 to also drop the row.
-router.post('/:orderId/void', async (req, res) => {
+// G-SALES — explicit capability on the flag-off path (o2c saleReverseGate covers
+// flag-on): void reverses money + stock, so it needs `pos.refund` (manager-level;
+// cashier does NOT hold it). The in-handler manager-approval gate still applies.
+router.post('/:orderId/void', requireCapability('pos.refund'), async (req, res) => {
   try {
     const orderId = req.params.orderId;
-    const username = (req.user && req.user.username) || (req.body && req.body.username) || 'system';
+    // G-SALES — spoofable req.body.username fallback deleted; the capability
+    // guard guarantees req.user.
+    const username = req.user.username;
     const wantDelete = req.query.delete === '1';
     // v7.3 — gate: cashiers (and any non-privileged role) need manager approval.
     // Honors settings.RequireManagerApprovalForVoid='0' to skip (void only).
@@ -2141,10 +2160,13 @@ router.post('/:orderId/void', async (req, res) => {
 // is NOT mutated (BR-KSA-08 immutability) — only `has_credit_note` flips
 // to 1 for UI hinting. Inventory + GL are reversed via the existing
 // _reverseSaleEffects helper. Cancellation tag on the original is removed.
-router.post('/:orderId/return', async (req, res) => {
+// G-SALES — returns are money-out: explicit `pos.refund` capability on the
+// flag-off path (manager approval below remains as the second factor).
+router.post('/:orderId/return', requireCapability('pos.refund'), async (req, res) => {
   try {
     const orderId = req.params.orderId;
-    const username = (req.user && req.user.username) || (req.body && req.body.username) || 'system';
+    // G-SALES — spoofable req.body.username fallback deleted.
+    const username = req.user.username;
     const reason   = (req.body && String(req.body.reason || '').trim()) || 'customer return';
     const reasonCode = (req.body && String(req.body.reasonCode || '').trim()) || 'goods_returned';
     // v7.3 — gate: cashiers (and any non-privileged role) need manager approval.
@@ -2295,10 +2317,11 @@ router.post('/:orderId/return', async (req, res) => {
 //   * deletes the sale row (sales_items cascades via FK)
 //   * accepts ?force=1 to skip reversal (legacy emergency mode — leaves
 //     phantom stock; do NOT use in normal operation)
-router.delete('/:orderId', async (req, res) => {
+// G-SALES — destructive: `sales.delete` (sensitive; live grant = admin only).
+router.delete('/:orderId', requireCapability('sales.delete'), async (req, res) => {
   try {
     const orderId = req.params.orderId;
-    const username = (req.user && req.user.username) || 'system';
+    const username = req.user.username;
     // v6.0.2 Wave B.7 — Submitted invoices are immutable (ZATCA BR-KSA-08).
     // The only way to undo a submitted sale is a Credit Note (Wave D).
     try {
@@ -2330,11 +2353,12 @@ router.delete('/:orderId', async (req, res) => {
 });
 
 // Bulk delete sales — same reversal semantics applied to each id.
-router.post('/bulk-delete', async (req, res) => {
+// G-SALES — destructive: `sales.delete` (sensitive; live grant = admin only).
+router.post('/bulk-delete', requireCapability('sales.delete'), async (req, res) => {
   try {
     const { ids, force } = req.body || {};
     if (!ids || !ids.length) return res.status(400).json({ success: false, error: 'No IDs' });
-    const username = (req.user && req.user.username) || 'system';
+    const username = req.user.username;
 
     if (force) {
       const placeholders = ids.map(() => '?').join(',');
@@ -2596,8 +2620,10 @@ router.get('/report/advanced', async (req, res) => {
     });
 
   } catch (e) {
-    // Production: removed debug log
-    res.json({ success: false, error: e.message });
+    // G-SALES error honesty — this returned {success:false} with HTTP 200, so
+    // the advanced-report UI treated a query failure as an empty report.
+    console.error('[GET /sales/report/advanced]', e.message);
+    res.status(500).json({ success: false, error: e.message });
   }
 });
 

@@ -224,3 +224,200 @@ export function searchCustomers(q: string, page = 1): Promise<CustomerSearchResu
 export function getServerFlags(): Promise<{ orderToCash?: boolean; posV2?: boolean }> {
   return request<{ orderToCash?: boolean; posV2?: boolean }>("/api/version");
 }
+
+// ═════════════════════════════════════════════════════════════════════════════
+// ═══ B1 POS-INVENTORY BLOCK — stocktake (جرد) + shortage requests (طلب      ═══
+// ═══ النواقص) + receive materials (استلام مواد).                            ═══
+// ═══ Appended as ONE self-contained block at the END of the file by the     ═══
+// ═══ close/b1-pos-inventory stream; another stream also appends functions   ═══
+// ═══ to this file — keep this block LAST and intact to ease merging.        ═══
+// ═══ Contracts mirror public/shared/api-bridge.js + routes/inventory.js.    ═══
+// ═════════════════════════════════════════════════════════════════════════════
+
+/** Raw inventory item — GET /api/inventory/items (legacy branch: one row per
+ *  item, GLOBAL stock; shape per routes/inventory.js ~1228). */
+export interface InvItem {
+  id: string;
+  name: string;
+  category: string;
+  kind?: string;
+  cost: number;
+  stock: number;
+  minStock: number;
+  unit: string;
+  bigUnit: string | null;
+  convRate: number;
+  active: number | boolean;
+}
+
+export function getInvItems(): Promise<InvItem[]> {
+  return request<InvItem[]>("/api/inventory/items");
+}
+
+/** One counted stocktake line. The legacy payload sends BOTH naming pairs
+ *  (systemQty/actualQty and sys/actual) plus diff — the server reads either
+ *  (routes/inventory.js ~3660: `item.sys || item.systemQty`). We keep both. */
+export interface StocktakeLine {
+  id: string;
+  name: string;
+  unit: string;
+  systemQty: number;
+  actualQty: number;
+  sys: number;
+  actual: number;
+  diff: number;
+}
+
+export interface StocktakeResult {
+  success: boolean;
+  stocktakeId: string;
+  adjustedCount: number;
+  totalGainCost: number;
+  totalLossCost: number;
+  postingWarning: string | null;
+}
+
+/** POST /api/inventory/stocktakes — body per public/shared/api-bridge.js:147.
+ *  warehouseId/branchId are sent EMPTY on purpose: the server resolves them
+ *  from the cashier's profile (v5.10.35) and refuses with an Arabic message
+ *  when it can't — we surface that message verbatim. */
+export function submitStocktake(items: StocktakeLine[], username: string, notes: string): Promise<StocktakeResult> {
+  return request<StocktakeResult>("/api/inventory/stocktakes", {
+    method: "POST",
+    body: { items, username, notes, warehouseId: "", branchId: "", countDate: null },
+  });
+}
+
+/** One requested shortage line (POST/PUT body shape, routes/inventory.js ~4539). */
+export interface ShortageLinePayload {
+  invItemId: string;
+  invItemName: string;
+  unit: string;
+  currentQty: number;
+  minQty: number;
+  requestedQty: number;
+  unitPrice: number;
+}
+
+export type ShortageStatus =
+  | "pending"
+  | "approved"
+  | "converted"
+  | "rejected"
+  | "partially_received"
+  | "fully_received"
+  | "closed";
+
+export interface ShortageRequestSummary {
+  id: string;
+  requestNumber: string;
+  requestDate: string;
+  username: string;
+  notes: string | null;
+  status: ShortageStatus | string;
+  totalItems: number;
+  poId: string | null;
+}
+
+export interface ShortageRequestDetail extends ShortageRequestSummary {
+  items: Array<{
+    id: string;
+    invItemId: string;
+    invItemName: string;
+    unit: string;
+    currentQty: number;
+    minQty: number;
+    requestedQty: number;
+    unitPrice: number;
+  }>;
+}
+
+/** POST /api/inventory/shortage-requests → { success, id, requestNumber }.
+ *  warehouseId/branchId empty = server resolves from the user's HR profile. */
+export function createShortageRequest(body: {
+  items: ShortageLinePayload[];
+  username: string;
+  notes: string;
+}): Promise<{ success: boolean; id: string; requestNumber: string }> {
+  return request("/api/inventory/shortage-requests", {
+    method: "POST",
+    body: { ...body, warehouseId: "", branchId: "" },
+  });
+}
+
+/** PUT /api/inventory/shortage-requests/:id — pending requests only (server-enforced). */
+export function updateShortageRequest(
+  id: string,
+  body: { items: ShortageLinePayload[]; notes: string },
+): Promise<{ success: boolean }> {
+  return request(`/api/inventory/shortage-requests/${encodeURIComponent(id)}`, { method: "PUT", body });
+}
+
+/** DELETE /api/inventory/shortage-requests/:id — pending requests only. */
+export function deleteShortageRequest(id: string): Promise<{ success: boolean }> {
+  return request(`/api/inventory/shortage-requests/${encodeURIComponent(id)}`, { method: "DELETE" });
+}
+
+/** GET /api/inventory/shortage-requests → raw array (no envelope). The caller
+ *  filters to the current cashier client-side, exactly like legacy app.js:4536. */
+export function getShortageRequests(): Promise<ShortageRequestSummary[]> {
+  return request<ShortageRequestSummary[]>("/api/inventory/shortage-requests");
+}
+
+/** GET /api/inventory/shortage-requests/:id — NOTE: the server answers a
+ *  not-found/denied with HTTP 200 + { error } (no success field), which the
+ *  generic thrower doesn't catch — normalize that here. */
+export async function getShortageRequest(id: string): Promise<ShortageRequestDetail> {
+  const data = await request<ShortageRequestDetail & { error?: string }>(
+    `/api/inventory/shortage-requests/${encodeURIComponent(id)}`,
+  );
+  if (data && typeof data.error === "string" && data.error) {
+    throw new ApiError(404, "NOT_FOUND", data.error);
+  }
+  return data;
+}
+
+/** Purchase row — GET /api/purchases (routes/purchases.js ~48). Only the
+ *  fields the receive flow reads; items_json lines historically used either
+ *  id/name/unitPrice or itemId/itemName/price, so both pairs are optional. */
+export interface PurchaseRow {
+  id: string;
+  poId: string | null;
+  supplierName: string;
+  items: Array<{
+    id?: string;
+    itemId?: string;
+    name?: string;
+    itemName?: string;
+    unit?: string;
+    qty: number;
+    unitPrice?: number;
+    price?: number;
+  }>;
+}
+
+export function getPurchases(): Promise<PurchaseRow[]> {
+  return request<PurchaseRow[]>("/api/purchases");
+}
+
+/** One received line (POST /api/inventory/receive-request body, app.js:4151). */
+export interface ReceiveLinePayload {
+  invItemId: string;
+  invItemName: string;
+  unit: string;
+  orderedQty: number;
+  receivedQty: number;
+  unitPrice: number;
+}
+
+/** POST /api/inventory/receive-request — stores the counted quantities on the
+ *  purchase (receive_status='pending'); an admin approves the stock write. */
+export function submitReceiveRequest(body: {
+  purchaseId: string;
+  items: ReceiveLinePayload[];
+  username: string;
+}): Promise<{ success: boolean }> {
+  return request("/api/inventory/receive-request", { method: "POST", body });
+}
+
+// ═══ END B1 POS-INVENTORY BLOCK ══════════════════════════════════════════════

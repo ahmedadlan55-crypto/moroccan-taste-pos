@@ -62,7 +62,16 @@ router.get('/companies', async (req, res) => {
   } catch(e) { res.json([]); }
 });
 
-router.post('/companies', async (req, res) => {
+// v7.5 SECURITY — every write in this file outside royalty/waste/purchase-
+// receipts (guarded in v4) was still bare: any authenticated token could
+// rewrite companies, item categories, price lists, recipes, POS terminals and
+// accounting periods. Each write now carries the narrowest EXISTING
+// permissions_v3 capability (all verified present with role grants):
+//   org.companies.edit / org.brands.edit / org.branches.edit  (admin+manager)
+//   inventory.edit          (admin/manager/inventory — categories, units, BOM)
+//   channels.manage         (admin+manager — price lists ARE channel pricing)
+//   finance.periods.manage  (finance+manager — period create/close/reopen)
+router.post('/companies', requireCapability('org.companies.edit'), async (req, res) => {
   try {
     const { id, name, legalName, crNumber, taxNumber, country, city, baseCurrency, fiscalYearStart, logoUrl } = req.body;
     if (!name) return res.json({ success: false, error: 'اسم الشركة مطلوب' });
@@ -78,7 +87,11 @@ router.post('/companies', async (req, res) => {
        VALUES (?,?,?,?,?,?,?,?,?,?)`,
       [newId, name, legalName||'', crNumber||'', taxNumber||'', country||'SA', city||'', baseCurrency||'SAR', fiscalYearStart||null, logoUrl||null]);
     res.json({ success: true, id: newId });
-  } catch(e) { res.json({ success: false, error: e.message }); }
+  } catch(e) {
+    // v7.5 — was a 200 with {success:false}: a DB fault dressed as a business reply.
+    console.error('[erp/companies] failed:', e && (e.code || e.message));
+    res.status(500).json({ success: false, error: e.message });
+  }
 });
 
 // ═══════════════════════════════════════
@@ -104,7 +117,7 @@ router.get('/item-categories', async (req, res) => {
   } catch(e) { res.json([]); }
 });
 
-router.post('/item-categories', async (req, res) => {
+router.post('/item-categories', requireCapability('inventory.edit'), async (req, res) => {
   try {
     const { id, name, code, brandId, parentId } = req.body;
     if (!name) return res.json({ success: false, error: 'الاسم مطلوب' });
@@ -118,16 +131,24 @@ router.post('/item-categories', async (req, res) => {
       `INSERT INTO item_categories (id, name, code, brand_id, parent_id) VALUES (?,?,?,?,?)`,
       [newId, name, code||'', brandId||null, parentId||null]);
     res.json({ success: true, id: newId });
-  } catch(e) { res.json({ success: false, error: e.message }); }
+  } catch(e) {
+    // v7.5 — was a 200 with {success:false}: a DB fault dressed as a business reply.
+    console.error('[erp/item-categories] failed:', e && (e.code || e.message));
+    res.status(500).json({ success: false, error: e.message });
+  }
 });
 
-router.delete('/item-categories/:id', async (req, res) => {
+router.delete('/item-categories/:id', requireCapability('inventory.edit'), async (req, res) => {
   try {
     const [c] = await db.query('SELECT COUNT(*) AS n FROM inv_items WHERE category_id = ?', [req.params.id]);
     if (c[0].n > 0) return res.json({ success: false, error: 'توجد أصناف تحت هذه الفئة' });
     await db.query('UPDATE item_categories SET is_active = 0 WHERE id = ?', [req.params.id]);
     res.json({ success: true });
-  } catch(e) { res.json({ success: false, error: e.message }); }
+  } catch(e) {
+    // v7.5 — was a 200 with {success:false}: a DB fault dressed as a business reply.
+    console.error('[erp/item-categories:delete] failed:', e && (e.code || e.message));
+    res.status(500).json({ success: false, error: e.message });
+  }
 });
 
 // ═══════════════════════════════════════
@@ -147,7 +168,7 @@ router.get('/unit-conversions', async (req, res) => {
   } catch(e) { res.json([]); }
 });
 
-router.post('/unit-conversions', async (req, res) => {
+router.post('/unit-conversions', requireCapability('inventory.edit'), async (req, res) => {
   try {
     const { fromUnit, toUnit, factor } = req.body;
     if (!fromUnit || !toUnit || !factor) return res.json({ success: false, error: 'الحقول مطلوبة' });
@@ -158,7 +179,11 @@ router.post('/unit-conversions', async (req, res) => {
        ON DUPLICATE KEY UPDATE factor = VALUES(factor)`,
       [id, fromUnit, toUnit, Number(factor)]);
     res.json({ success: true });
-  } catch(e) { res.json({ success: false, error: e.message }); }
+  } catch(e) {
+    // v7.5 — was a 200 with {success:false}: a DB fault dressed as a business reply.
+    console.error('[erp/unit-conversions] failed:', e && (e.code || e.message));
+    res.status(500).json({ success: false, error: e.message });
+  }
 });
 
 // ═══════════════════════════════════════
@@ -186,7 +211,7 @@ router.get('/price-lists', async (req, res) => {
   } catch(e) { res.json([]); }
 });
 
-router.post('/price-lists', async (req, res) => {
+router.post('/price-lists', requireCapability('channels.manage'), async (req, res) => {
   try {
     // v5.16.1 — isActive added; validFrom/validTo optional (UI removed them
     // but kept on the schema for backward compatibility).
@@ -209,14 +234,18 @@ router.post('/price-lists', async (req, res) => {
       [newId, name, brandId||null, branchId||null, isDefault?1:0,
        validFrom||null, validTo||null, activeFlag]);
     res.json({ success: true, id: newId });
-  } catch(e) { res.json({ success: false, error: e.message }); }
+  } catch(e) {
+    // v7.5 — was a 200 with {success:false}: a DB fault dressed as a business reply.
+    console.error('[erp/price-lists] failed:', e && (e.code || e.message));
+    res.status(500).json({ success: false, error: e.message });
+  }
 });
 
 // v5.16.1 — Bulk-add the brand's entire admin menu into a price list.
 // Skips items already in the list (dedup via INSERT IGNORE on the
 // composite unique key if present, falls back to a SELECT exists check
 // otherwise). Returns counts so the UI can show a toast.
-router.post('/price-lists/:plId/import-brand-menu', async (req, res) => {
+router.post('/price-lists/:plId/import-brand-menu', requireCapability('channels.manage'), async (req, res) => {
   try {
     const { plId } = req.params;
     const { brandId } = req.body || {};
@@ -294,7 +323,7 @@ router.get('/price-lists/:id/items', async (req, res) => {
   } catch(e) { res.json([]); }
 });
 
-router.post('/price-lists/:id/items', async (req, res) => {
+router.post('/price-lists/:id/items', requireCapability('channels.manage'), async (req, res) => {
   try {
     // v5.13.0 — accept either {itemId} (menu/inv reference) or
     // {itemName, category} for a fully standalone custom item.
@@ -316,14 +345,22 @@ router.post('/price-lists/:id/items', async (req, res) => {
         [id, req.params.id, itemId, Number(price), Number(minPrice)||0, validFrom||null, validTo||null]);
     }
     res.json({ success: true, id });
-  } catch(e) { res.json({ success: false, error: e.message }); }
+  } catch(e) {
+    // v7.5 — was a 200 with {success:false}: a DB fault dressed as a business reply.
+    console.error('[erp/price-lists/items] failed:', e && (e.code || e.message));
+    res.status(500).json({ success: false, error: e.message });
+  }
 });
 
-router.delete('/price-list-items/:id', async (req, res) => {
+router.delete('/price-list-items/:id', requireCapability('channels.manage'), async (req, res) => {
   try {
     await db.query('DELETE FROM price_list_items WHERE id = ?', [req.params.id]);
     res.json({ success: true });
-  } catch(e) { res.json({ success: false, error: e.message }); }
+  } catch(e) {
+    // v7.5 — was a 200 with {success:false}: a DB fault dressed as a business reply.
+    console.error('[erp/price-list-items:delete] failed:', e && (e.code || e.message));
+    res.status(500).json({ success: false, error: e.message });
+  }
 });
 
 // v5.10.27 — Category-aware price-list management. These endpoints power
@@ -364,7 +401,7 @@ router.get('/price-lists/:id/categories', async (req, res) => {
 //   add      → add `value` to every price (negative allowed for subtract)
 //   percent  → multiply each price by (1 + value/100)
 // Returns affected count. Min-price safety: prices never go below 0.
-router.post('/price-lists/:id/categories/bulk-price', async (req, res) => {
+router.post('/price-lists/:id/categories/bulk-price', requireCapability('channels.manage'), async (req, res) => {
   try {
     const { category, mode, value } = req.body || {};
     if (!mode || value == null) return res.json({ success: false, error: 'mode و value مطلوبان' });
@@ -400,12 +437,16 @@ router.post('/price-lists/:id/categories/bulk-price', async (req, res) => {
       affected++;
     }
     res.json({ success: true, affected, mode, value: v });
-  } catch(e) { res.json({ success: false, error: e.message }); }
+  } catch(e) {
+    // v7.5 — was a 200 with {success:false}: a DB fault dressed as a business reply.
+    console.error('[erp/price-lists/bulk-price] failed:', e && (e.code || e.message));
+    res.status(500).json({ success: false, error: e.message });
+  }
 });
 
 // Inline-edit save: bulk update specific line items by id.
 // Body: { items: [{ id, price, minPrice?, category? }] }
-router.post('/price-lists/:id/items/bulk-update', async (req, res) => {
+router.post('/price-lists/:id/items/bulk-update', requireCapability('channels.manage'), async (req, res) => {
   try {
     const { items } = req.body || {};
     if (!Array.isArray(items) || !items.length) return res.json({ success: false, error: 'items مطلوب' });
@@ -425,12 +466,16 @@ router.post('/price-lists/:id/items/bulk-update', async (req, res) => {
       affected += r.affectedRows || 0;
     }
     res.json({ success: true, affected });
-  } catch(e) { res.json({ success: false, error: e.message }); }
+  } catch(e) {
+    // v7.5 — was a 200 with {success:false}: a DB fault dressed as a business reply.
+    console.error('[erp/price-lists/bulk-update] failed:', e && (e.code || e.message));
+    res.status(500).json({ success: false, error: e.message });
+  }
 });
 
 // Move every item in one category to another. Useful for renaming
 // categories without touching menu.category.
-router.post('/price-lists/:id/categories/rename', async (req, res) => {
+router.post('/price-lists/:id/categories/rename', requireCapability('channels.manage'), async (req, res) => {
   try {
     const { from, to } = req.body || {};
     if (to == null) return res.json({ success: false, error: 'to مطلوب' });
@@ -444,7 +489,11 @@ router.post('/price-lists/:id/categories/rename', async (req, res) => {
       `UPDATE price_list_items SET item_category = ? WHERE ${fromFilter} AND price_list_id = ?`,
       params);
     res.json({ success: true, affected: r.affectedRows || 0 });
-  } catch(e) { res.json({ success: false, error: e.message }); }
+  } catch(e) {
+    // v7.5 — was a 200 with {success:false}: a DB fault dressed as a business reply.
+    console.error('[erp/price-lists/categories-rename] failed:', e && (e.code || e.message));
+    res.status(500).json({ success: false, error: e.message });
+  }
 });
 
 // V5.7 — DELETE the entire price list (with cascade across all dependent tables)
@@ -453,7 +502,7 @@ router.post('/price-lists/:id/categories/rename', async (req, res) => {
 //   3. channel_menu_items — UNSET override_price refs that came from this list (if any)
 //   4. price_lists        — the list itself (last)
 //   ?force=1 query param required if list is the default one (extra safety).
-router.delete('/price-lists/:id', async (req, res) => {
+router.delete('/price-lists/:id', requireCapability('channels.manage'), async (req, res) => {
   try {
     const id = req.params.id;
     const force = req.query.force === '1' || (req.body && req.body.force === true);
@@ -501,7 +550,7 @@ router.delete('/price-lists/:id', async (req, res) => {
 // V5.5 — Bulk-add multiple items at once (used by the multi-select picker)
 //   Body: { items: [{ itemId, price, minPrice? }, ...] }
 //   Returns: { success, added, updated, skipped, errors }
-router.post('/price-lists/:id/items/bulk', async (req, res) => {
+router.post('/price-lists/:id/items/bulk', requireCapability('channels.manage'), async (req, res) => {
   try {
     const items = (req.body && req.body.items) || [];
     if (!Array.isArray(items) || !items.length) {
@@ -635,7 +684,7 @@ function _normAr(s){
     .replace(/ة/g, 'ه')
     .replace(/\s+/g, ' ');
 }
-router.post('/price-lists/:id/import', async (req, res) => {
+router.post('/price-lists/:id/import', requireCapability('channels.manage'), async (req, res) => {
   try {
     const rows = (req.body && req.body.rows) || [];
     const dryRun = !!(req.body && req.body.dryRun);
@@ -927,7 +976,7 @@ router.get('/inventory/usage/:itemId', async (req, res) => {
   } catch(e) { res.status(500).json({ error: e.message }); }
 });
 
-router.post('/bom', async (req, res) => {
+router.post('/bom', requireCapability('inventory.edit'), async (req, res) => {
   try {
     const { id, productId, productSource, version, yieldQuantity, yieldUnit, effectiveFrom, effectiveTo, notes, lines, consumptionWarehouseId } = req.body;
     if (!productId) return res.json({ success: false, error: 'المنتج مطلوب' });
@@ -1051,7 +1100,11 @@ router.post('/bom', async (req, res) => {
       }
     }
     res.json({ success: true, id: bomId, productSource: src });
-  } catch(e) { res.json({ success: false, error: e.message }); }
+  } catch(e) {
+    // v7.5 — was a 200 with {success:false}: a DB fault dressed as a business reply.
+    console.error('[erp/bom] failed:', e && (e.code || e.message));
+    res.status(500).json({ success: false, error: e.message });
+  }
 });
 
 router.get('/bom/:id/lines', async (req, res) => {
@@ -1075,7 +1128,7 @@ router.get('/bom/:id/lines', async (req, res) => {
 // pointed to the now-inactive BOM, leaving the menu item in a broken state where
 // the recipe button wouldn't work. The new logic:
 // V5.9.1 — Delete ALL Recipes (BOMs) at once
-router.delete('/bom-all/clear', async (req, res) => {
+router.delete('/bom-all/clear', requireCapability('inventory.edit'), async (req, res) => {
   try {
     await db.withTransaction(async (conn) => {
       // Unlink from all menu items
@@ -1088,7 +1141,8 @@ router.delete('/bom-all/clear', async (req, res) => {
     res.json({ success: true, message: 'تم حذف جميع الوصفات بنجاح' });
   } catch (err) {
     console.error('Error clearing all BOMs:', err);
-    res.json({ success: false, error: 'حدث خطأ أثناء حذف الوصفات: ' + err.message });
+    // v7.5 — was a 200 with {success:false}: a DB fault dressed as a business reply.
+    res.status(500).json({ success: false, error: 'حدث خطأ أثناء حذف الوصفات: ' + err.message });
   }
 });
 
@@ -1097,7 +1151,7 @@ router.delete('/bom-all/clear', async (req, res) => {
 //   3. Delete the BOM row itself
 //   4. If product_source='menu', clear menu.bom_id so the menu item knows
 //      it no longer has a recipe
-router.delete('/bom/:id', async (req, res) => {
+router.delete('/bom/:id', requireCapability('inventory.edit'), async (req, res) => {
   try {
     const id = req.params.id;
     // Read BOM meta first
@@ -1132,7 +1186,7 @@ router.delete('/bom/:id', async (req, res) => {
 
 // Bulk-assign brand to rows that currently have no brand.
 // Body: { brandId, force? (default false — only updates null/empty), targets? (['menu','inv_items'] — default both) }
-router.post('/brands/assign-default', async (req, res) => {
+router.post('/brands/assign-default', requireCapability('org.brands.edit'), async (req, res) => {
   try {
     const { brandId, force, targets } = req.body;
     if (!brandId) return res.json({ success: false, error: 'brandId مطلوب' });
@@ -1151,12 +1205,16 @@ router.post('/brands/assign-default', async (req, res) => {
       result.itemsUpdated = r.affectedRows || 0;
     }
     res.json(result);
-  } catch(e) { res.json({ success: false, error: e.message }); }
+  } catch(e) {
+    // v7.5 — was a 200 with {success:false}: a DB fault dressed as a business reply.
+    console.error('[erp/brands/assign-default] failed:', e && (e.code || e.message));
+    res.status(500).json({ success: false, error: e.message });
+  }
 });
 
 // Clone a BOM to a new product (optionally a different brand)
 // Accepts: itemId OR componentItemId in line objects — tolerates either naming.
-router.post('/bom/:id/clone', async (req, res) => {
+router.post('/bom/:id/clone', requireCapability('inventory.edit'), async (req, res) => {
   try {
     const srcId = req.params.id;
     const { newProductId, newVersion, notes, copyLines } = req.body;
@@ -1189,7 +1247,11 @@ router.post('/bom/:id/clone', async (req, res) => {
     }
 
     res.json({ success: true, id: newId });
-  } catch(e) { res.json({ success: false, error: e.message }); }
+  } catch(e) {
+    // v7.5 — was a 200 with {success:false}: a DB fault dressed as a business reply.
+    console.error('[erp/bom/clone] failed:', e && (e.code || e.message));
+    res.status(500).json({ success: false, error: e.message });
+  }
 });
 
 // ═══════════════════════════════════════
@@ -1214,7 +1276,8 @@ router.get('/pos-terminals', async (req, res) => {
   } catch(e) { res.json([]); }
 });
 
-router.post('/pos-terminals', async (req, res) => {
+// POS terminals are branch equipment — org.branches.edit (admin+manager).
+router.post('/pos-terminals', requireCapability('org.branches.edit'), async (req, res) => {
   try {
     const { id, name, code, branchId, deviceId } = req.body;
     if (!name || !branchId) return res.json({ success: false, error: 'الاسم والفرع مطلوبان' });
@@ -1229,14 +1292,22 @@ router.post('/pos-terminals', async (req, res) => {
       `INSERT INTO pos_terminals (id, name, code, branch_id, device_id) VALUES (?,?,?,?,?)`,
       [newId, name, code||'', branchId, deviceId||'']);
     res.json({ success: true, id: newId });
-  } catch(e) { res.json({ success: false, error: e.message }); }
+  } catch(e) {
+    // v7.5 — was a 200 with {success:false}: a DB fault dressed as a business reply.
+    console.error('[erp/pos-terminals] failed:', e && (e.code || e.message));
+    res.status(500).json({ success: false, error: e.message });
+  }
 });
 
-router.delete('/pos-terminals/:id', async (req, res) => {
+router.delete('/pos-terminals/:id', requireCapability('org.branches.edit'), async (req, res) => {
   try {
     await db.query('UPDATE pos_terminals SET is_active = 0 WHERE id = ?', [req.params.id]);
     res.json({ success: true });
-  } catch(e) { res.json({ success: false, error: e.message }); }
+  } catch(e) {
+    // v7.5 — was a 200 with {success:false}: a DB fault dressed as a business reply.
+    console.error('[erp/pos-terminals:delete] failed:', e && (e.code || e.message));
+    res.status(500).json({ success: false, error: e.message });
+  }
 });
 
 // ═══════════════════════════════════════
@@ -1268,7 +1339,9 @@ router.get('/accounting-periods', async (req, res) => {
   }
 });
 
-router.post('/accounting-periods', async (req, res) => {
+// Period create/close/reopen decides what the period lock enforces on every
+// GL-writing endpoint — finance.periods.manage, same as /erp/periods.
+router.post('/accounting-periods', requireCapability('finance.periods.manage'), async (req, res) => {
   try {
     const { id, periodName, startDate, endDate } = req.body;
     if (!periodName || !startDate || !endDate) return res.json({ success: false, error: 'الحقول مطلوبة' });
@@ -1282,24 +1355,36 @@ router.post('/accounting-periods', async (req, res) => {
       `INSERT INTO accounting_periods (id, period_name, start_date, end_date, status) VALUES (?,?,?,?,'open')`,
       [newId, periodName, startDate, endDate]);
     res.json({ success: true, id: newId });
-  } catch(e) { res.json({ success: false, error: e.message }); }
+  } catch(e) {
+    // v7.5 — was a 200 with {success:false}: a DB fault dressed as a business reply.
+    console.error('[erp/accounting-periods] failed:', e && (e.code || e.message));
+    res.status(500).json({ success: false, error: e.message });
+  }
 });
 
-router.post('/accounting-periods/:id/close', async (req, res) => {
+router.post('/accounting-periods/:id/close', requireCapability('finance.periods.manage'), async (req, res) => {
   try {
-    const { username } = req.body;
+    // v7.5 — closed_by comes from the authenticated JWT, never the body (the
+    // body's `username` was a spoofable actor on an audit column).
+    const actor = (req.user && (req.user.username || req.user.name)) || '';
     await db.query(
       `UPDATE accounting_periods SET status='closed', closed_by=?, closed_at=NOW() WHERE id=?`,
-      [username||'', req.params.id]);
+      [actor, req.params.id]);
     res.json({ success: true });
-  } catch(e) { res.json({ success: false, error: e.message }); }
+  } catch(e) {
+    console.error('[erp/accounting-periods/close] failed:', e && (e.code || e.message));
+    res.status(500).json({ success: false, error: e.message });
+  }
 });
 
-router.post('/accounting-periods/:id/reopen', async (req, res) => {
+router.post('/accounting-periods/:id/reopen', requireCapability('finance.periods.manage'), async (req, res) => {
   try {
     await db.query(`UPDATE accounting_periods SET status='open', closed_by=NULL, closed_at=NULL WHERE id=?`, [req.params.id]);
     res.json({ success: true });
-  } catch(e) { res.json({ success: false, error: e.message }); }
+  } catch(e) {
+    console.error('[erp/accounting-periods/reopen] failed:', e && (e.code || e.message));
+    res.status(500).json({ success: false, error: e.message });
+  }
 });
 
 // Helper endpoint — check if a date falls in a closed period.

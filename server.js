@@ -734,7 +734,17 @@ app.use('/api/cash', requireRole('admin','manager'), require('./routes/cash'));
 // FC-P3 — bank reconciliation + cash-drawer closing (capability-gated inside).
 app.use('/api/bank-recon', requireRole('admin','manager'), require('./routes/bank-reconciliation'));
 app.use('/api/workflow', require('./routes/workflow'));
-app.use('/api/hr', requireRole('admin','manager'), require('./routes/hr'));
+// HR is manager-territory EXCEPT the employee self-service surface: /my-* routes
+// (clock in/out, leave requests, own attendance/profile/balances) derive their
+// subject from the verified JWT inside the handler, so any authenticated role may
+// call them — that is the whole point of self-service. Gating the mount with
+// requireRole(admin,manager) 403'd every employee clock-in (the employee PWA and
+// the React SelfService page both broke). /leave-types is the read the leave
+// form needs. Everything else stays admin/manager.
+app.use('/api/hr', (req, res, next) => {
+  if (/^\/(my-|leave-types)/.test(req.path)) return next(); // JWT already verified by the global gate
+  return requireRole('admin', 'manager')(req, res, next);
+}, require('./routes/hr'));
 // V4 — counters, SLA, SSE inbox stream, metrics, workflow-routes JSON-DSL
 app.use('/api/counters', require('./routes/counters'));
 const _slaRouter = require('./routes/sla');

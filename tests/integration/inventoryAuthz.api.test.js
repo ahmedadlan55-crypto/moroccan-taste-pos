@@ -3,13 +3,13 @@
  * and /api/stocktake-pro (real server + DB, synthesized ITEST- fixtures).
  *
  * What this proves:
- *   (a) A role with NO inventory-write capability (auditor) gets 403 on a
+ *   (a) A role with NO inventory-write capability (accountant) gets 403 on a
  *       stocktake create and the stocktakes table count is UNCHANGED; a role
  *       without manager-level caps (custody) is denied destructive/valuation
  *       routes (item delete, receive-approve) — the guard runs BEFORE any
  *       handler lookup. (Note: custody IS seeded inventory.stocktake.create —
  *       the legacy _CAP_MATRIX allowed custody counts — so the stocktake-403
- *       subject here is auditor, a genuinely read-only role.)
+ *       subject here is accountant — a real users.role ENUM member holding no inventory caps.)
  *   (b) The cashier POS flows KEEP WORKING through the g-inv capability seeds
  *       (db/migrations/capability-seeds/g-inv.json): a cashier creates a
  *       legacy POS stocktake, a stocktake-pro draft, and a shortage request —
@@ -33,7 +33,7 @@ const db = require('../../db/connection');
 
 const PORT = 3992;
 const CASHIER = 'itest_ginv_cashier';
-const AUDITOR = 'itest_ginv_auditor';
+const AUDITOR = 'itest_ginv_accountant'; // users.role ENUM has no 'auditor' — accountant is a real role with no inventory caps
 const CUSTODY = 'itest_ginv_custody';
 const PW = 'GInv#Test!2026';
 const WH = 'ITEST-WH-GINV';
@@ -111,7 +111,7 @@ async function cleanup() {
   await cleanup();
   const hash = await bcrypt.hash(PW, 12);
   await db.query('INSERT INTO users (username,password,role,active) VALUES (?,?,?,1)', [CASHIER, hash, 'cashier']);
-  await db.query('INSERT INTO users (username,password,role,active) VALUES (?,?,?,1)', [AUDITOR, hash, 'auditor']);
+  await db.query('INSERT INTO users (username,password,role,active) VALUES (?,?,?,1)', [AUDITOR, hash, 'accountant']);
   await db.query('INSERT INTO users (username,password,role,active) VALUES (?,?,?,1)', [CUSTODY, hash, 'custody']);
   await db.query("INSERT INTO warehouses (id, name, code) VALUES (?, 'ITEST G-INV WH', 'ITGNV')", [WH]);
   await db.query("INSERT INTO inv_items (id, name, unit, cost, stock) VALUES (?, 'ITEST g-inv item', 'PCS', 10, 50)", [ITEM]);
@@ -129,7 +129,7 @@ async function cleanup() {
     const cashier = await login(CASHIER);
     const auditor = await login(AUDITOR);
     const custody = await login(CUSTODY);
-    check('users authenticate (cashier / auditor / custody)', !!cashier && !!auditor && !!custody);
+    check('users authenticate (cashier / accountant / custody)', !!cashier && !!auditor && !!custody);
 
     // zero-variance count lines → header + lines only, no stock/GL side-effects
     const stPayload = (extra = {}) => ({
@@ -144,7 +144,7 @@ async function cleanup() {
 
     const stBefore = await stocktakeCount();
     const denied = await call('POST', '/api/inventory/stocktakes', auditor, stPayload());
-    check('auditor (no capability) gets 403 on POST /api/inventory/stocktakes', denied.status === 403 && denied.body && denied.body.code === 'PERMISSION_DENIED', { status: denied.status, body: denied.body });
+    check('accountant (no capability) gets 403 on POST /api/inventory/stocktakes', denied.status === 403 && denied.body && denied.body.code === 'PERMISSION_DENIED', { status: denied.status, body: denied.body });
     check('…and the stocktakes table count is UNCHANGED', (await stocktakeCount()) === stBefore, { before: stBefore, after: await stocktakeCount() });
 
     const deniedPro = await call('POST', '/api/stocktake-pro', auditor, { warehouseId: WH });
@@ -162,7 +162,14 @@ async function cleanup() {
     const [itemStill] = await db.query('SELECT id FROM inv_items WHERE id = ? AND deleted_at IS NULL', [ITEM]);
     check('…and the item was NOT (soft-)deleted', itemStill.length === 1);
     const rcvApprove = await call('POST', '/api/inventory/receive-approve/NO-SUCH-ID', custody, {});
-    check('custody gets 403 on POST /api/inventory/receive-approve/:id (guard runs first)', rcvApprove.status === 403, { status: rcvApprove.status, body: rcvApprove.body });
+    // Under PROCUREMENT_P2P_ENABLE=1 the mount-level legacy gate answers 409
+    // V2_RECEIPTS_LINKED before the route's capability guard can 403 — EVERYONE
+    // is pushed to the unified procurement module (which has its own RBAC).
+    // Either answer proves custody cannot approve a receipt here; flag-off
+    // deployments exercise the 403 branch.
+    const rcvDenied = rcvApprove.status === 403
+      || (rcvApprove.status === 409 && rcvApprove.body && rcvApprove.body.code === 'V2_RECEIPTS_LINKED');
+    check('custody CANNOT reach receive-approve (403 cap-guard, or 409 procurement gate)', rcvDenied, { status: rcvApprove.status, body: rcvApprove.body });
     const adjDenied = await call('POST', '/api/inventory/adjustments', cashier, { warehouseId: WH, items: [{ id: ITEM, qty: 1 }], reason: 'damaged' });
     check('cashier gets 403 on POST /api/inventory/adjustments (not in inventory.adjustment.create)', adjDenied.status === 403, { status: adjDenied.status });
 

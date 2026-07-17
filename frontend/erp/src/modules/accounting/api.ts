@@ -755,6 +755,247 @@ export function useBranches() {
       toDimOptions(await apiClient.get<Array<Record<string, unknown>>>("/erp/branches-full")),
   });
 }
+export function useWarehousesLookup() {
+  return useQuery({
+    queryKey: ["acc", "warehouses"],
+    queryFn: async () =>
+      toDimOptions(await apiClient.get<Array<Record<string, unknown>>>("/erp/warehouses-list")),
+  });
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// A2 — Legacy-only report conversions (equity changes / profitability /
+// inventory valuation / sales analytics). The four endpoints below are the
+// PINNED contracts agreed with the backend stream — the server owns every
+// number; these hooks only fetch, unwrap and type.
+// ════════════════════════════════════════════════════════════════════════════
+
+// ── Equity Changes — GET /api/erp/reports/equity-changes?from=&to= ──────────
+export interface EquityAccountRow {
+  id: string;
+  code: string;
+  name: string;
+  opening: number;
+  periodDebit: number;
+  periodCredit: number;
+  closing: number;
+}
+export interface EquityBucket {
+  key: string;
+  label: string;
+  accounts: EquityAccountRow[];
+  opening: number;
+  closing: number;
+}
+/** A single statement line the server computes (net income / closing entries). */
+export interface EquityStatementLine {
+  label?: string;
+  amount: number;
+}
+export interface EquityChangesResponse {
+  success?: boolean;
+  error?: string;
+  from: string;
+  to: string;
+  buckets: EquityBucket[];
+  netIncomeLine: EquityStatementLine | null;
+  closingEntriesLine: EquityStatementLine | null;
+  totals: { opening: number; closing: number };
+  /** Server-side cross-check against the balance sheet's total equity. */
+  reconciliation: { bsTotEq: number; matches: boolean };
+}
+export function useEquityChanges(range: DateRange | null) {
+  return useQuery({
+    queryKey: ["acc", "equity-changes", range?.from, range?.to],
+    enabled: !!range,
+    queryFn: async () =>
+      unwrap(
+        await apiClient.get<EquityChangesResponse>("/erp/reports/equity-changes", {
+          params: { from: range!.from, to: range!.to },
+        }),
+      ),
+  });
+}
+
+// ── Profitability by dimension — GET /api/erp/reports/profitability ─────────
+export type ProfitabilityDimension = "brand" | "branch" | "cost_center";
+export const PROFITABILITY_DIMENSIONS: ProfitabilityDimension[] = [
+  "brand",
+  "branch",
+  "cost_center",
+];
+export const PROFITABILITY_DIMENSION_LABEL: Record<ProfitabilityDimension, string> = {
+  brand: "علامة تجارية",
+  branch: "فرع",
+  cost_center: "مركز تكلفة",
+};
+export interface ProfitabilityRow {
+  id: string | null;
+  name: string;
+  revenue: number;
+  expenses: number;
+  profit: number;
+  margin: number;
+}
+export interface ProfitabilityResponse {
+  success?: boolean;
+  error?: string;
+  dimension: string;
+  rows: ProfitabilityRow[];
+}
+export interface ProfitabilityFilter extends DateRange {
+  dimension: ProfitabilityDimension;
+}
+export function useProfitability(filter: ProfitabilityFilter | null) {
+  return useQuery({
+    queryKey: ["acc", "profitability", filter?.dimension, filter?.from, filter?.to],
+    enabled: !!filter,
+    queryFn: async () =>
+      unwrap(
+        await apiClient.get<ProfitabilityResponse>("/erp/reports/profitability", {
+          params: { dimension: filter!.dimension, from: filter!.from, to: filter!.to },
+        }),
+      ),
+  });
+}
+
+// ── Inventory valuation — GET /api/erp/reports/inventory-valuation ──────────
+export interface ValuationItem {
+  warehouseId: string;
+  warehouseName: string;
+  itemId: string;
+  itemName: string;
+  sku: string;
+  unit: string;
+  itemType: string;
+  qty: number;
+  avgCost: number;
+  value: number;
+}
+export interface ValuationByWarehouse {
+  warehouseId: string;
+  warehouseName: string;
+  itemCount: number;
+  totalQty: number;
+  totalValue: number;
+}
+export interface InventoryValuationResponse {
+  success?: boolean;
+  error?: string;
+  items: ValuationItem[];
+  byWarehouse: ValuationByWarehouse[];
+  grand: { itemCount: number; totalQty: number; totalValue: number };
+  /** Pinned to 'item_cost' — the recorded item cost, NOT a moving average. */
+  costBasis: string;
+  note: string;
+}
+export interface InventoryValuationFilter {
+  /** Empty string = all warehouses. */
+  warehouseId: string;
+  /** Empty string = all brands. */
+  brandId: string;
+}
+export function useInventoryValuation(filter: InventoryValuationFilter | null) {
+  return useQuery({
+    queryKey: ["acc", "inventory-valuation", filter?.warehouseId, filter?.brandId],
+    enabled: !!filter,
+    queryFn: async () =>
+      unwrap(
+        await apiClient.get<InventoryValuationResponse>("/erp/reports/inventory-valuation", {
+          params: {
+            warehouseId: filter!.warehouseId || undefined,
+            brandId: filter!.brandId || undefined,
+          },
+        }),
+      ),
+  });
+}
+
+// ── Sales analytics — GET /api/erp/reports/sales-analytics ──────────────────
+export interface SalesHeadline {
+  invoiceCount: number;
+  total: number;
+  avgTicket: number;
+}
+export interface SalesRevenueSummary {
+  invoiceCount: number;
+  grossInclVat: number;
+  net: number;
+  vat: number;
+  discounts: number;
+  cost: number;
+  profit: number;
+  /** Invoices excluded from `net` because they carry no VAT breakdown. */
+  netUnknownCount: number;
+  /** Invoices excluded from `cost`/`profit` because their cost is unknown. */
+  costUnknownCount: number;
+}
+export interface SalesByProductRow {
+  name: string;
+  qty: number;
+  gross: number;
+  net: number;
+  vat: number;
+  cost: number;
+  profit: number;
+  margin: number;
+}
+export interface SalesDailyRow {
+  date: string;
+  count: number;
+  total: number;
+}
+export interface SalesByPaymentRow {
+  method: string;
+  count: number;
+  total: number;
+}
+export interface SalesByCashierRow {
+  cashier: string;
+  count: number;
+  total: number;
+  avgTicket: number;
+}
+export interface SalesByHourRow {
+  hour: number;
+  count: number;
+  total: number;
+}
+export interface SalesAnalyticsResponse {
+  success?: boolean;
+  error?: string;
+  headline: SalesHeadline;
+  revenue: SalesRevenueSummary;
+  byProduct: SalesByProductRow[];
+  daily: SalesDailyRow[];
+  byPayment: SalesByPaymentRow[];
+  byCashier: SalesByCashierRow[];
+  byHour: SalesByHourRow[];
+  channels: string[];
+}
+export interface SalesAnalyticsFilter extends DateRange {
+  /** Empty string = all brands. */
+  brandId: string;
+  /** Empty string = all branches. */
+  branchId: string;
+}
+export function useSalesAnalytics(filter: SalesAnalyticsFilter | null) {
+  return useQuery({
+    queryKey: ["acc", "sales-analytics", filter?.from, filter?.to, filter?.brandId, filter?.branchId],
+    enabled: !!filter,
+    queryFn: async () =>
+      unwrap(
+        await apiClient.get<SalesAnalyticsResponse>("/erp/reports/sales-analytics", {
+          params: {
+            from: filter!.from,
+            to: filter!.to,
+            brandId: filter!.brandId || undefined,
+            branchId: filter!.branchId || undefined,
+          },
+        }),
+      ),
+  });
+}
 
 // ── Accounting periods (v4) ─────────────────────────────────────────────────
 // Converted from the legacy-only `erpLoadPeriods` screen (public/js/erp.js).

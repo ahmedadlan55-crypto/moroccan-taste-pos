@@ -22,6 +22,10 @@ import { CostCentersPage } from "./pages/CostCenters";
 import { DimensionsPage } from "./pages/Dimensions";
 import { ChartOfAccountsPage } from "./pages/ChartOfAccounts";
 import { JournalsPage } from "./pages/Journals";
+import { EquityChangesPage } from "./pages/EquityChanges";
+import { ProfitabilityPage } from "./pages/Profitability";
+import { InventoryValuationPage } from "./pages/InventoryValuation";
+import { SalesAnalyticsPage } from "./pages/SalesAnalytics";
 
 const ROUTES: Record<string, () => JSX.Element> = {
   "/accounting/chart-of-accounts": ChartOfAccountsPage,
@@ -35,6 +39,10 @@ const ROUTES: Record<string, () => JSX.Element> = {
   "/accounting/ap-aging": ApAgingPage,
   "/accounting/periods": PeriodsPage,
   "/accounting/financial-ratios": FinancialRatiosPage,
+  "/accounting/equity-changes": EquityChangesPage,
+  "/accounting/profitability": ProfitabilityPage,
+  "/accounting/inventory-valuation": InventoryValuationPage,
+  "/accounting/sales-analytics": SalesAnalyticsPage,
   "/accounting/royalties": RoyaltiesPage,
   "/accounting/cost-centers": CostCentersPage,
   "/accounting/dimensions": DimensionsPage,

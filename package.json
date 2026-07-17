@@ -29,6 +29,7 @@
     "test:production-api": "node tests/integration/production.api.test.js",
     "test:inv-tx-reverse-api": "node tests/integration/inventoryTxReverse.api.test.js",
     "test:stocktake-api": "node tests/integration/stocktake.api.test.js",
+    "test:inventory-authz": "node tests/integration/inventoryAuthz.api.test.js",
     "test:stocktake-concurrency": "node tests/integration/stocktakeConcurrency.test.js",
     "test:item-master-api": "node tests/integration/itemMaster.api.test.js",
     "test:replenishment-api": "node tests/integration/replenishment.api.test.js",

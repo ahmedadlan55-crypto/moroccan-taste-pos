@@ -21,6 +21,7 @@
     "test:period-lock": "node tests/integration/periodLock.api.test.js",
     "test:erp-core-authz": "node tests/integration/erpCoreAuthz.api.test.js",
     "test:waste-entries": "node tests/integration/wasteEntries.api.test.js",
+    "test:people-writes": "node tests/integration/peopleWrites.api.test.js",
     "test:sales-returns": "node tests/integration/salesReturns.api.test.js",
     "test:receipt-qr": "node tests/integration/receiptQr.api.test.js",
     "test:roles": "node tests/integration/roles.api.test.js",

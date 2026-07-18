@@ -155,7 +155,10 @@ export interface CartTotals {
 }
 
 export interface Payment {
-  method: PayMethod;
+  /** A built-in method OR an owner-configured method NAME sent verbatim
+   *  (close/w25-sell-ui pinned contract: checkout payments accept owner-method
+   *  names; `string & {}` keeps the built-in literals in autocomplete). */
+  method: PayMethod | (string & {});
   amount: number;
 }
 

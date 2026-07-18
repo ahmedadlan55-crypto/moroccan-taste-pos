@@ -1892,5 +1892,41 @@
       "react": "frontend/pos/src/state/store.tsx loadCatalogForChannel — a fetched channel catalog is written through to the SAME IndexedDB slot catalogCache reads (etag null). HONEST NOTE: the cache is NOT keyed per channel — offline serves the LAST-FETCHED channel's catalog (legacy kept a per-channel localStorage map, app.js:4972). A failed/offline channel fetch falls back to loadCatalog()'s cached copy, which may be another channel's prices; the existing stale/age banner machinery surfaces cache age. Selling through an outage was ranked above per-channel cache fidelity.",
       "legacy": "public/pos/app.js:4970-4972 pos_channel_menu_cache (per-channel localStorage prefetch cache)",
       "test": "frontend/pos/src/state/__tests__/parity-channels.test.tsx (write-through to the catalog IDB slot; failed channel fetch degrades to the cached copy without blanking the grid)"
+  },
+  "pay-method-tiles": {
+      "status": "covered",
+      "react": "frontend/pos/src/components/dialogs/PaymentDialog.tsx — the method tablist is now tile-driven: built-ins كاش/شبكة/مختلط/آجل always render, owner methods from catalog.paymentMethods append after them (Arabic label nameAr||name, dedup against built-in names, disabled offline). An old server (no paymentMethods) renders exactly the four built-ins — today's behavior. Confirming an owner tile ships the method NAME verbatim as the single payment leg (pinned contract).",
+      "legacy": "public/pos/app.js:2390-2426 renderPayButtons + 4976-4994 (/settings/payment-methods-full → state.paymentMethods)",
+      "test": "frontend/pos/src/components/__tests__/parity-sell-pay-methods.test.tsx (tiles from a mocked catalog, dedupe, offline-disabled, owner name in the checkout payments)"
+  },
+  "payment-tender-tiles": {
+      "status": "covered",
+      "react": "same surface as pay-method-tiles — the v8.0 unified-tender tile row collapses into the PaymentDialog tablist (built-ins + owner tiles); the mixed/split flow keeps its cash/card/credit legs unchanged.",
+      "legacy": "public/pos/app.js renderPayButtons (v8.0 unified tender modal tiles)",
+      "test": "frontend/pos/src/components/__tests__/parity-sell-pay-methods.test.tsx + parity-sell-payment.test.tsx (split flow still green)"
+  },
+  "pay-notes-block": {
+      "status": "covered",
+      "react": "frontend/pos/src/components/dialogs/PaymentDialog.tsx — selecting an 'other'-group (or requiresNote) owner method reveals the ملاحظات الدفع textarea; hidden for every other method.",
+      "legacy": "public/pos/app.js:1184-1194 _payNotesUpdate (#payNotesBlock shown when an Other tender exists)",
+      "test": "frontend/pos/src/components/__tests__/parity-sell-pay-methods.test.tsx (block appears for «أخرى», absent for a bank-group method)"
+  },
+  "pay-notes-counter": {
+      "status": "covered",
+      "react": "frontend/pos/src/components/dialogs/PaymentDialog.tsx — live N/200 counter (maxLength 200) beside the notes label.",
+      "legacy": "public/pos/app.js:1191-1193 (#payNotesLen counter)",
+      "test": "frontend/pos/src/components/__tests__/parity-sell-pay-methods.test.tsx (0/200 → 2/200 as the cashier types)"
+  },
+  "pay-notes-required": {
+      "status": "covered",
+      "react": "frontend/pos/src/components/dialogs/PaymentDialog.tsx — confirm is DISABLED until the trimmed note is ≥3 chars (whitespace does not count), with an inline alert explaining the server would 422 «أخرى» without a note.",
+      "legacy": "public/pos/app.js:2555-2569 doCheckout ('Other' tender ⇒ note ≥3 chars or a blocking glassAlert)",
+      "test": "frontend/pos/src/components/__tests__/parity-sell-pay-methods.test.tsx (blocked at 0 and 2 chars and for whitespace, unblocked at ≥3)"
+  },
+  "payment-other-notes": {
+      "status": "covered",
+      "react": "frontend/pos/src/components/dialogs/PaymentDialog.tsx — the trimmed note rides into engine.checkout as opts.paymentNotes (the engine already threads paymentNotes through submit-and-sale to the sale payload).",
+      "legacy": "public/pos/app.js:2624 (order.paymentNotes)",
+      "test": "frontend/pos/src/components/__tests__/parity-sell-pay-methods.test.tsx (checkout receives paymentNotes: «تحويل عهدة» trimmed)"
   }
 }

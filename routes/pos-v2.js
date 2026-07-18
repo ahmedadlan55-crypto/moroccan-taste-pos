@@ -502,8 +502,28 @@ async function doSubmit(user, id, body) {
         throw _err('PERMISSION_DENIED', 'الخصم (' + M.round2(pct) + '%) يتجاوز حد الكاشير (' + MAX_CASHIER_DISC_PCT + '%) — يتطلب مديرًا');
       }
     }
+    // Owner-configured payment methods (ERP → الإعدادات → طرق الدفع): valid
+    // methods = built-ins ∪ ACTIVE payment_methods rows. 'Split' rows are
+    // excluded — V2 splits natively via multiple payment legs. A load failure
+    // is loud and degrades to built-ins only (never a silent open door).
+    let ownerMethods = [];
+    try {
+      const [pmRows] = await conn.query('SELECT id, name, name_ar, group_type FROM payment_methods WHERE is_active = 1');
+      ownerMethods = pmRows
+        .filter((p) => String(p.name || '').toLowerCase() !== 'split')
+        .map((p) => ({ id: String(p.id), name: p.name, nameAr: p.name_ar || p.name, groupType: p.group_type || 'cash', requiresNote: String(p.group_type || '') === 'other' }));
+    } catch (e) {
+      console.error('[pos-v2] payment_methods load failed (built-in methods only):', e.message);
+    }
     const payments = Array.isArray(b.payments) ? b.payments.map((p) => ({ method: String(p.method), amount: Number(p.amount) })) : [];
-    M.validatePayments(payments, totals.total);
+    M.validatePayments(payments, totals.total, ownerMethods);
+    // 'other'-group methods REQUIRE a payment note (≥3 chars) — it flows into
+    // the legacy payload's paymentNotes → sales.payment_notes (the audit trail
+    // for ad-hoc tenders).
+    const noteMethod = M.paymentNoteRequirement(payments, ownerMethods);
+    if (noteMethod && String(b.paymentNotes || '').trim().length < 3) {
+      throw _err('VALIDATION_ERROR', 'طريقة الدفع "' + (noteMethod.nameAr || noteMethod.name) + '" تتطلب ملاحظة دفع (3 أحرف على الأقل)');
+    }
     // Credit sales are supervisor-gated (AR exposure).
     if (payments.some((p) => p.method === 'credit') && !_userIsSuper(user)) throw _err('PERMISSION_DENIED', 'البيع الآجل يتطلب مشرفًا/مديرًا');
     // Order-to-Cash: a credit sale MUST be attached to a real customer (the AR
@@ -519,7 +539,7 @@ async function doSubmit(user, id, body) {
     await conn.query('DELETE FROM pos_payments WHERE order_id=?', [id]);
     for (const p of payments) {
       await conn.query('INSERT INTO pos_payments (id, order_id, method, amount, ref) VALUES (?,?,?,?,?)',
-        ['PP-' + Date.now() + '-' + Math.random().toString(36).slice(2, 8), id, p.method, M.round2(p.amount), (b.ref || '').toString().slice(0, 100) || null]);
+        ['PP-' + Date.now() + '-' + Math.random().toString(36).slice(2, 8), id, String(p.method).slice(0, 50), M.round2(p.amount), (b.ref || '').toString().slice(0, 100) || null]);
     }
     const [r] = await conn.query(
       "UPDATE pos_orders SET status='submitted', submitted_at=NOW(), subtotal=?, line_discount_total=?, discount_total=?, vat_total=?, total=?, version=version+1 WHERE id=? AND status='open' AND version=?",
@@ -529,6 +549,7 @@ async function doSubmit(user, id, body) {
     const legacyPayload = M.buildLegacySalePayload(_orderForMath(o), lines, payments, {
       cashTendered: Number(b.cashTendered) || 0, changeDue: Number(b.changeDue) || 0,
       paymentNotes: (b.paymentNotes || '').toString().slice(0, 300) || undefined,
+      ownerMethods,
     });
     return { success: true, data: { id, legacyPayload, total: totals.total }, status: 'submitted', version: Number(o.version) + 1 };
   });
@@ -703,6 +724,28 @@ router.get('/catalog', POS, async (req, res) => {
       console.error('[pos-v2] receipt identity resolution failed:', e.message);
     }
 
+    // Owner payment methods for the tender tiles (legacy: the POS loaded
+    // GET /api/settings/payment-methods-full at boot). ACTIVE only; literal
+    // 'Split' rows are excluded (V2 splits via multiple payment legs, exactly
+    // like the legacy tile filter). requiresNote mirrors the /submit rule:
+    // 'other'-group methods demand a payment note ≥3 chars.
+    let paymentMethods = [];
+    try {
+      const [pmRows] = await db.query(
+        'SELECT id, name, name_ar, icon, color, group_type FROM payment_methods WHERE is_active = 1 ORDER BY sort_order, name');
+      paymentMethods = pmRows
+        .filter((p) => String(p.name || '').toLowerCase() !== 'split')
+        .map((p) => ({
+          id: p.id, name: p.name, nameAr: p.name_ar || p.name,
+          icon: p.icon || 'fa-money-bill', color: p.color || '#3b82f6',
+          groupType: p.group_type || 'cash',
+          requiresNote: String(p.group_type || '') === 'other',
+        }));
+    } catch (e) {
+      // Loud fallback: the client renders its built-in tiles (cash/card/credit).
+      console.error('[pos-v2] payment_methods load failed (catalog ships without owner methods):', e.message);
+    }
+
     // Active channels for the switcher (legacy: GET /api/sales-channels/active).
     let channels = [];
     try {
@@ -737,6 +780,7 @@ router.get('/catalog', POS, async (req, res) => {
         };
       }),
       combos,
+      paymentMethods,
       channels,
       // Echo of the requested channel (badge + price-list chip in the client).
       channel: channel ? {
@@ -755,7 +799,7 @@ router.get('/catalog', POS, async (req, res) => {
     // identity is part of the ETag: an owner editing the receipt header must
     // reach cached offline clients on their next sync, not never. Same for the
     // print preferences — a paper-width change must reach cached clients too.
-    const etag = '"' + crypto.createHash('sha1').update(JSON.stringify({ i: data.items, c: data.combos, ch: data.channels, sel: reqChannelId || null, v: data.vatRate, id: identity, sf: receiptShowFields, rs: receiptSettings })).digest('hex') + '"';
+    const etag = '"' + crypto.createHash('sha1').update(JSON.stringify({ i: data.items, c: data.combos, pm: data.paymentMethods, ch: data.channels, sel: reqChannelId || null, v: data.vatRate, id: identity, sf: receiptShowFields, rs: receiptSettings })).digest('hex') + '"';
     if (req.get('If-None-Match') === etag) return res.status(304).end();
     res.setHeader('ETag', etag);
     res.json({ success: true, data });

@@ -1,9 +1,11 @@
 import { useNavigate } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ArrowRight, CheckCircle2, PackageCheck, PackageX, Printer, Send, Undo2, XCircle } from "lucide-react";
-import { Button, PageHeader, PanelTitle, LoadingState, ErrorState, StatusBadge, safeUserMessage } from "@/shared/ui";
+import { Button, PageHeader, PanelTitle, LoadingState, ErrorState, StatusBadge, safeUserMessage, useToast } from "@/shared/ui";
 import { useCan } from "@/app/providers";
 import { o2cApi, qk, SalesStatus, Money, Num, DateCell, Info } from "@/modules/sales/lib";
+import { buildCreditNoteHtml, printHtml } from "../../../../../shared/invoiceTemplate";
+import { toCreditNoteOptions } from "./creditNoteAdapter";
 
 const REFUND_LABEL: Record<string, string> = { ar_reduction: "تخفيض ذمم", cash: "نقدي", bank: "بنكي", customer_deposit: "رصيد دائن للعميل" };
 const ZATCA_LABEL: Record<string, string> = { pending: "بانتظار الإرسال", submitted: "مُرسَل", accepted: "مقبول", rejected: "مرفوض", not_required: "غير مطلوب" };
@@ -11,6 +13,7 @@ const ZATCA_LABEL: Record<string, string> = { pending: "بانتظار الإر�
 export function ReturnDetail({ id, onBack }: { id: string; onBack: () => void }) {
   const nav = useNavigate();
   const qc = useQueryClient();
+  const { toast } = useToast();
   const canApprove = useCan("returns.approve");
   const canPost = useCan("returns.post");
   const canReverse = useCan("returns.reverse");
@@ -59,16 +62,20 @@ export function ReturnDetail({ id, onBack }: { id: string; onBack: () => void })
         <Info label="إشعار دائن" value={r.creditNote?.document_number ? <span dir="ltr" className="text-xs tabular-nums">{r.creditNote.document_number}</span> : "—"} />
       </div>
 
-      {/* The credit note section IS the printable tax document: `.print-document`
-          + the existing @media print CSS means window.print() emits exactly this
-          section — seller block, buyer, lines, totals, QR — and nothing else.
-          The seller comes DECODED FROM THE PERSISTED TLV (frozen at stamp time);
-          re-reading live settings at print time would drift after a rename,
-          which is the exact defect the sales side eliminated at issue. */}
+      {/* Printing now goes through the SHARED credit-note renderer (buildCreditNote
+          Html → printHtml): a self-contained مرتجع / إشعار دائن document — seller
+          block, buyer, lines, totals, ZATCA QR — written into its own print window,
+          identical to what the POS emits. The seller stays DECODED FROM THE
+          PERSISTED TLV (frozen at stamp time); re-reading live settings at print
+          time would drift after a rename, the exact defect the sales side
+          eliminated at issue. The on-screen section below is display only. */}
       {r.creditNote && (
-        <section className="section surface print-document mt-4">
+        <section className="section surface mt-4">
           <div className="no-print float-left">
-            <Button variant="secondary" onClick={() => window.print()} disabled={!r.creditNote.zatca_qr_data_url && !r.creditNote.zatca_uuid}>
+            <Button variant="secondary" onClick={() => {
+              const ok = printHtml(buildCreditNoteHtml(toCreditNoteOptions(r)));
+              if (!ok) toast({ title: "تعذّرت الطباعة", description: "المتصفح منع نافذة الطباعة — اسمح بالنوافذ المنبثقة", tone: "error" });
+            }} disabled={!r.creditNote.zatca_qr_data_url && !r.creditNote.zatca_uuid}>
               <Printer className="h-4 w-4" /> طباعة الإشعار
             </Button>
           </div>

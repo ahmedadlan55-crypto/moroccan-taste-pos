@@ -1,25 +1,28 @@
 /**
- * Receipt printing — self-contained RTL HTML in a print window. No external
- * assets (works offline). English digits throughout (fmt2 / fmtDateTime).
+ * Receipt printing — a thin POS wrapper over the shared invoice template
+ * (frontend/shared/invoiceTemplate.ts). The sale-receipt HTML, paper-width CSS,
+ * identity block, ZATCA QR and stamp handling now live in that ONE shared module
+ * so the ERP `/app` invoice/credit-note screens render byte-identical documents.
  *
- * Seller identity comes from the owner-configured ReceiptIdentity that rides in
- * the cached catalog (lib/invoiceIdentity.js server-side) — resolvable OFFLINE.
- * It used to be derived from the browser tab title, and none of the configured
- * fields (tax number, CR, national address, header, thank-you, return policy)
- * ever reached paper even though the API returned every one of them.
+ * What STAYS here is POS-specific: the `LocalOrder → DocumentLine[]` adaptation,
+ * the cart-math / totalsOverride resolution, the tab-title brand fallback, the
+ * defensive catalog readers (paper width / auto-print), and the kitchen ticket +
+ * shift X/Z report (no ERP consumer — kitchen tickets carry no money/identity,
+ * shift reports are POS-shift-specific).
  *
- * The ZATCA QR is a server-rendered PNG data-URL captured at checkout. The
- * client never encodes QRs (the legacy template pulled an encoder from a CDN —
- * an online dependency inside an offline-first POS). A queued offline sale has
- * no stamp yet, and the receipt SAYS so rather than printing a substitute.
+ * English digits throughout. The print window is self-contained and CSP-safe in
+ * both apps (window.open + document.write + .print(), no inline <script>).
  */
 import { cartTotals } from "./cartMath";
 import { fmt2, fmtDateTime, shortRef } from "./format";
 import type { LocalOrder, Payment, ReceiptIdentity, ReceiptShowFields } from "./types";
+import { baseCss, esc, buildSaleReceiptHtml } from "../../../shared/invoiceTemplate";
+import type { PaperWidth } from "../../../shared/invoiceTemplate";
 
-function esc(s: string): string {
-  return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
-}
+// Re-exported so existing POS call sites keep their import paths unchanged:
+//   import { printHtml } from "./receipt"  /  from "@/lib/receipt"
+export { printHtml } from "../../../shared/invoiceTemplate";
+export type { PaperWidth } from "../../../shared/invoiceTemplate";
 
 /** Tab-title fallback ONLY for when no identity is cached (first run, resolver
  *  failure). A configured identity always wins. */
@@ -28,20 +31,10 @@ function brandNameFallback(): string {
   return title.split("|")[0]?.trim() || "المذاق المغربي";
 }
 
-const PAY_LABELS: Record<string, string> = { cash: "كاش", card: "شبكة", credit: "آجل" };
-
 // ── Paper width (owner setting: ReceiptPaperWidth '58'|'80'|'A4') ────────────
-// 58mm thermal paper prints ~48mm wide; 80mm paper prints ~72mm (the historical
-// hardcode); A4 gets a full-width layout. The setting rides in the catalog as
-// `receiptSettings.{paperWidth,autoPrint}` (server stream); both resolvers are
-// DEFENSIVE — any missing/foreign shape falls back to 80mm / autoprint-on.
-export type PaperWidth = "58" | "80" | "A4";
-
-const PAPER: Record<PaperWidth, { width: string; font: string; h1: string; grand: string; kitchen: string }> = {
-  "58": { width: "48mm", font: "10px", h1: "13px", grand: "13px", kitchen: "15px" },
-  "80": { width: "72mm", font: "12px", h1: "16px", grand: "15px", kitchen: "18px" },
-  A4: { width: "190mm", font: "13px", h1: "19px", grand: "17px", kitchen: "20px" },
-};
+// The setting rides in the catalog as `receiptSettings.{paperWidth,autoPrint}`
+// (server stream); both resolvers are DEFENSIVE — any missing/foreign shape
+// falls back to 80mm / autoprint-on.
 
 export function resolvePaperWidth(catalog: unknown): PaperWidth {
   const rs = (catalog as { receiptSettings?: { paperWidth?: unknown } } | null | undefined)?.receiptSettings;
@@ -54,33 +47,6 @@ export function resolvePaperWidth(catalog: unknown): PaperWidth {
 export function resolveAutoPrint(catalog: unknown): boolean {
   const rs = (catalog as { receiptSettings?: { autoPrint?: unknown } } | null | undefined)?.receiptSettings;
   return String(rs?.autoPrint ?? "1").trim() !== "0";
-}
-
-function baseCss(paper: PaperWidth): string {
-  const p = PAPER[paper];
-  return `
-  * { margin: 0; padding: 0; box-sizing: border-box; }
-  body { font-family: "Tajawal", "Segoe UI", Tahoma, Arial, sans-serif; direction: rtl;
-         width: ${p.width}; margin: 0 auto; padding: 4mm 2mm; color: #000; background: #fff; font-size: ${p.font}; }
-  .num { direction: ltr; unicode-bidi: embed; font-variant-numeric: tabular-nums; }
-  h1 { font-size: ${p.h1}; text-align: center; margin-bottom: 2px; }
-  .sub { text-align: center; font-size: 0.92em; color: #333; }
-  hr { border: none; border-top: 1px dashed #000; margin: 6px 0; }
-  table { width: 100%; border-collapse: collapse; }
-  th { text-align: right; font-size: 0.92em; border-bottom: 1px solid #000; padding: 2px 0; }
-  td { padding: 2px 0; vertical-align: top; }
-  .l { text-align: left; }
-  .tot td { padding: 1px 0; }
-  .grand { font-size: ${p.grand}; font-weight: 800; border-top: 1px solid #000; }
-  .foot { text-align: center; margin-top: 8px; font-weight: 700; }
-  .qr { text-align: center; margin-top: 8px; }
-  .qr img { image-rendering: pixelated; }
-  .stamp { border: 2px solid #000; text-align: center; font-weight: 900; padding: 3px 6px; margin: 6px auto; width: fit-content; }
-  .kitchen { font-size: ${p.kitchen}; }
-  .kitchen td { font-weight: 700; padding: 4px 0; }
-  .kitchen .note { font-size: 0.8em; font-weight: 400; color: #111; }
-  ${paper === "A4" ? "" : "@media print { body { width: auto; } }"}
-`;
 }
 
 export interface ReceiptOptions {
@@ -121,100 +87,58 @@ export interface ReceiptOptions {
   };
 }
 
+/** Adapt a POS `LocalOrder` + resolved totals into the shared sale-receipt
+ *  renderer. All the presentation lives in buildSaleReceiptHtml now. */
 export function buildReceiptHtml(opts: ReceiptOptions): string {
-  const { order, payments, invoiceNumber } = opts;
-  const paper = opts.paperWidth ?? "80";
+  const { order } = opts;
   const totals =
     opts.totalsOverride ??
     cartTotals(order.lines, order.discountType ? { type: order.discountType, value: order.discountValue } : null);
-  const orderTypeLabel = order.orderType === "dine_in" ? "محلي" : order.orderType === "delivery" ? "توصيل" : "سفري";
 
-  const linesHtml = order.lines
-    .map((l) => {
-      // qty column shows the ENTERED unit (e.g. "1 كرتون"); the line total uses the
-      // BASE quantity × base price (money authority), matching cartTotals.
-      const baseQty = Number(l.baseQty ?? l.qty);
-      const factor = Number(l.conversionFactorSnapshot) || 1;
-      const qtyLabel = factor > 1 && l.enteredUnitName
-        ? `${fmt2(l.qty)} ${esc(l.enteredUnitName)}`
-        : fmt2(l.qty);
-      const lineGross = baseQty * l.unitPrice - (l.lineDiscount || 0);
-      return `<tr>
-        <td>${esc(l.name)}${l.notes ? `<div style="font-size:10px;color:#333">${esc(l.notes)}</div>` : ""}</td>
-        <td class="l num">${qtyLabel}</td>
-        <td class="l num">${fmt2(l.unitPrice)}</td>
-        <td class="l num">${fmt2(lineGross)}</td>
-      </tr>`;
-    })
-    .join("");
-
-  const payHtml = payments
-    .map(
-      (p) => `<tr><td>${PAY_LABELS[p.method] ?? esc(p.method)}</td><td class="l num">${fmt2(p.amount)}</td></tr>`,
-    )
-    .join("");
-
-  const refLine = opts.offlineRef
-    ? `<div class="sub">مرجع محلي: <span class="num">${esc(shortRef(order.id))}</span> — سيُرحَّل عند عودة الاتصال</div>`
-    : `<div class="sub">فاتورة: <span class="num">${esc(invoiceNumber || order.saleId || shortRef(order.id))}</span></div>`;
-
-  // ── seller block: only what the owner configured, gated by their toggles ──
-  const idn = opts.identity ?? null;
-  const show = opts.showFields ?? null;
-  const on = (k: keyof ReceiptShowFields) => !show || show[k] !== false;
-  const sellerName = idn?.sellerName || idn?.brandName || brandNameFallback();
-  const sellerLines: string[] = [];
-  if (idn) {
-    if (idn.branchName) sellerLines.push(`<div class="sub">${esc(idn.branchName)}</div>`);
-    if (on("taxNumber") && idn.taxNumber) sellerLines.push(`<div class="sub">الرقم الضريبي: <span class="num">${esc(idn.taxNumber)}</span></div>`);
-    if (on("crNumber") && idn.crNumber) sellerLines.push(`<div class="sub">س.ت: <span class="num">${esc(idn.crNumber)}</span></div>`);
-    if (on("nationalAddress") && idn.nationalAddress) sellerLines.push(`<div class="sub">${esc(idn.nationalAddress)}</div>`);
-    if (on("phone") && idn.phone) sellerLines.push(`<div class="sub num">${esc(idn.phone)}</div>`);
-    if (idn.header) sellerLines.push(`<div class="sub">${esc(idn.header)}</div>`);
-  }
-
-  return `<!doctype html><html lang="ar" dir="rtl"><head><meta charset="utf-8">
-  <title>إيصال</title><style>${baseCss(paper)}</style></head><body data-paper="${paper}">
-  <h1>${esc(sellerName)}</h1>
-  ${sellerLines.join("\n  ")}
-  ${opts.stamp ? `<div class="stamp">${esc(opts.stamp)}</div>` : ""}
-  ${refLine}
-  <div class="sub num">${fmtDateTime(opts.printedAt ?? new Date())}</div>
-  ${on("cashier") ? `<div class="sub">الكاشير: ${esc(opts.cashierName)} · ${orderTypeLabel}${order.tableNo ? ` · طاولة <span class="num">${esc(order.tableNo)}</span>` : ""}</div>` : ""}
-  ${on("customer") && (order.customerName || order.customerPhone) ? `<div class="sub">العميل: ${esc([order.customerName, order.customerPhone].filter(Boolean).join(" "))}</div>` : ""}
-  <hr>
-  <table>
-    <thead><tr><th>الصنف</th><th class="l">كمية</th><th class="l">سعر</th><th class="l">إجمالي</th></tr></thead>
-    <tbody>${linesHtml}</tbody>
-  </table>
-  <hr>
-  <table class="tot">
-    <tr><td>المجموع</td><td class="l num">${fmt2(totals.subtotal)}</td></tr>
-    ${totals.lineDiscountTotal > 0 ? `<tr><td>خصومات الأسطر</td><td class="l num">-${fmt2(totals.lineDiscountTotal)}</td></tr>` : ""}
-    ${totals.discountAmount > 0 ? `<tr><td>الخصم${order.discountName ? ` (${esc(order.discountName)})` : ""}</td><td class="l num">-${fmt2(totals.discountAmount)}</td></tr>` : ""}
-    <tr><td>الضريبة (${fmt2(opts.vatRate)}% مشمولة)</td><td class="l num">${fmt2(totals.vatTotal)}</td></tr>
-    <tr class="grand"><td>الإجمالي</td><td class="l num">${fmt2(totals.total)} ر.س</td></tr>
-  </table>
-  <hr>
-  <table class="tot">${payHtml}
-    ${opts.cashTendered ? `<tr><td>المستلَم</td><td class="l num">${fmt2(opts.cashTendered)}</td></tr>` : ""}
-    ${opts.changeDue ? `<tr><td>الباقي</td><td class="l num">${fmt2(opts.changeDue)}</td></tr>` : ""}
-  </table>
-  ${(() => {
-    // ZATCA QR: the stamped one or an honest absence — never a client-side
-    // re-derivation. A queued offline sale is not stamped until it syncs.
-    if (!on("qr")) return "";
-    if (opts.zatcaQrDataUrl) return `<div class="qr"><img src="${opts.zatcaQrDataUrl}" alt="ZATCA QR" width="120" height="120"></div>`;
-    if (opts.offlineRef) return `<div class="sub">رمز الفاتورة الضريبي يصدر بعد المزامنة</div>`;
-    return "";
-  })()}
-  <div class="foot">${esc(idn?.thankYou || "شكرًا لزيارتكم")}</div>
-  ${idn?.returnPolicy ? `<div class="sub">${esc(idn.returnPolicy)}</div>` : ""}
-  ${idn?.footer ? `<div class="sub">${esc(idn.footer)}</div>` : ""}
-  </body></html>`;
+  return buildSaleReceiptHtml({
+    lines: order.lines.map((l) => ({
+      name: l.name,
+      qty: l.qty,
+      baseQty: l.baseQty,
+      unitPrice: l.unitPrice,
+      lineDiscount: l.lineDiscount,
+      notes: l.notes ?? undefined,
+      conversionFactorSnapshot: l.conversionFactorSnapshot,
+      enteredUnitName: l.enteredUnitName ?? undefined,
+    })),
+    payments: opts.payments.map((p) => ({ method: p.method, amount: p.amount })),
+    totals: {
+      subtotal: totals.subtotal,
+      lineDiscountTotal: totals.lineDiscountTotal,
+      discountAmount: totals.discountAmount,
+      vatTotal: totals.vatTotal,
+      total: totals.total,
+    },
+    invoiceNumber: opts.invoiceNumber,
+    fallbackSellerName: brandNameFallback(),
+    cashierName: opts.cashierName,
+    vatRate: opts.vatRate,
+    paperWidth: opts.paperWidth ?? "80",
+    identity: opts.identity ?? null,
+    showFields: opts.showFields ?? null,
+    zatcaQrDataUrl: opts.zatcaQrDataUrl ?? null,
+    printedAt: opts.printedAt,
+    stamp: opts.stamp ?? null,
+    offlineRef: opts.offlineRef,
+    cashTendered: opts.cashTendered,
+    changeDue: opts.changeDue,
+    orderType: order.orderType,
+    tableNo: order.tableNo,
+    discountName: order.discountName,
+    customerName: order.customerName,
+    customerPhone: order.customerPhone,
+    localRef: shortRef(order.id),
+    saleId: order.saleId,
+  });
 }
 
-/** Kitchen ticket — items + qty + notes + table only, big font. */
+/** Kitchen ticket — items + qty + notes + table only, big font. Stays in POS:
+ *  no ERP consumer, and it carries no money or seller identity. */
 export function buildKitchenTicketHtml(order: LocalOrder, paperWidth: PaperWidth = "80"): string {
   const orderTypeLabel = order.orderType === "dine_in" ? "محلي" : order.orderType === "delivery" ? "توصيل" : "سفري";
   const linesHtml = order.lines
@@ -240,7 +164,7 @@ export function buildKitchenTicketHtml(order: LocalOrder, paperWidth: PaperWidth
 // module keeps zero dependency on the API layer). Z = after close (counted vs
 // expected + variance + denominations); X = mid-shift snapshot (expected only —
 // nothing has been counted yet, and printing zero "counted" would read as a
-// perfect drawer).
+// perfect drawer). Stays in POS: shift reports are POS-shift-specific.
 export interface ShiftReportData {
   shiftId: string;
   status?: string;
@@ -322,19 +246,4 @@ export function buildShiftReportHtml(rep: ShiftReportData, opts: { mode: "X" | "
   ${rep.notes ? `<hr><div class="sub">${esc(rep.notes)}</div>` : ""}
   ${!isZ ? `<div class="foot">تقرير X — الوردية ما زالت مفتوحة</div>` : `<div class="foot">نهاية تقرير الوردية</div>`}
   </body></html>`;
-}
-
-/** Open a print window, write, print. Popup-blocked → returns false. */
-export function printHtml(html: string): boolean {
-  const w = window.open("", "_blank", "width=420,height=640");
-  if (!w) return false;
-  w.document.open();
-  w.document.write(html);
-  w.document.close();
-  // Give the layout a beat before printing (some webviews need it).
-  w.setTimeout(() => {
-    w.focus();
-    w.print();
-  }, 150);
-  return true;
 }

@@ -2133,6 +2133,30 @@ router.get('/', async (req, res) => {
 // V5.7.9 — also returns cashier full-name, branch name+address, and company
 //          contact info (phone/email) so the printed receipt can render the
 //          full bilingual layout the user expects (matches printed sample).
+// Parse a sale's RECORDED per-category tax breakdown (sales.tax_subtotals_json,
+// shape { <category>: { net, vat, rate? } }) into summed net/vat plus a
+// {net,vat} map per category. Returns null when the column is absent/empty
+// (pre-migration sales) or the blob is unparseable — a caller must treat null as
+// "indeterminable", NEVER as zero (a rebuilt ZATCA QR must carry the sale's real
+// VAT, not a guessed one). Rounded to 2dp so the exposed figures match paper.
+function parseTaxSubtotals(rawJson) {
+  if (rawJson == null || rawJson === '') return null;
+  let parsed;
+  try { parsed = typeof rawJson === 'string' ? JSON.parse(rawJson) : rawJson; }
+  catch (_) { return null; }
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return null;
+  const r2 = (n) => Math.round((Number(n) || 0) * 100) / 100;
+  const byCategory = {};
+  let net = 0, vat = 0;
+  for (const [cat, b] of Object.entries(parsed)) {
+    const bn = Number(b && b.net) || 0;
+    const bv = Number(b && b.vat) || 0;
+    byCategory[cat] = { net: r2(bn), vat: r2(bv) };
+    net += bn; vat += bv;
+  }
+  return { net: r2(net), vat: r2(vat), byCategory };
+}
+
 router.get('/invoice/:orderId', async (req, res) => {
   try {
     const [sales] = await db.query('SELECT * FROM sales WHERE id = ?', [req.params.orderId]);
@@ -2296,6 +2320,10 @@ router.get('/invoice/:orderId', async (req, res) => {
       receiptReturnPolicy = snap.returnPolicy   || '';
     }
 
+    // RECORDED per-category tax breakdown — parsed ONCE and reused for both the
+    // QR-rebuild fallback (below) and the new `taxSubtotals` response field.
+    const recordedTaxSubtotals = parseTaxSubtotals(sale.tax_subtotals_json);
+
     res.json({
       orderId: sale.id, date: sale.order_date, payment: sale.payment_method,
       totalFinal: Number(sale.total_final), username: sale.username,
@@ -2343,6 +2371,11 @@ router.get('/invoice/:orderId', async (req, res) => {
       customerGender: customerGender,
       paymentNotes: sale.payment_notes || null,
       zatcaType: sale.zatca_type || null,
+      // The RECORDED per-category tax breakdown ({net, vat, byCategory}) or null
+      // for a pre-migration / corrupt sale. Feeds any client that itemizes VAT
+      // by category on the printed invoice; null means the breakdown is honestly
+      // unavailable, never zero.
+      taxSubtotals: recordedTaxSubtotals,
       // v6.15 — the QR for reprints. Preferred source is the STORED TLV: byte for
       // byte what the customer's first receipt carried. Sales stamped before the
       // column existed get a deterministic server-side rebuild from the sale's
@@ -2353,14 +2386,10 @@ router.get('/invoice/:orderId', async (req, res) => {
       zatcaQr: await (async () => {
         let tlv = sale.zatca_qr_base64 || null;
         if (!tlv && taxNumber) {
-          let vat = null;
-          try {
-            const ts = sale.tax_subtotals_json ? JSON.parse(sale.tax_subtotals_json) : null;
-            if (ts && typeof ts === 'object') vat = Object.values(ts).reduce((s, b) => s + (Number(b && b.vat) || 0), 0);
-          } catch (_) { vat = null; }
           // A corrupt/absent subtotal blob means the VAT is indeterminable — a
           // rebuilt QR must carry the sale's numbers, so in that case there is
           // honestly no QR rather than one asserting a guessed VAT.
+          const vat = recordedTaxSubtotals ? recordedTaxSubtotals.vat : null;
           if (vat != null) {
             tlv = zatca.buildZatcaQR({
               sellerName: companyName, sellerVat: taxNumber,

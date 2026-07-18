@@ -28,9 +28,11 @@ describe("product-card-combo-badge", () => {
     const badges = getAllByTestId("combo-badge");
     expect(badges).toHaveLength(1);
     expect(badges[0].textContent).toBe("عرض");
-    // the badge sits inside the COMBO card, not any other
-    expect(badges[0].closest("button")?.textContent).toContain("وجبة شاورما");
-    expect(getByText("شاي").closest("button")?.querySelector('[data-testid="combo-badge"]')).toBeNull();
+    // the badge sits inside the COMBO card's wrapper, not any other card's.
+    // (close/w25-sell-ui restructured the card: overlays are SIBLINGS of the
+    // add button inside a relative wrapper div — a button cannot nest a button.)
+    expect(badges[0].closest("div")?.textContent).toContain("وجبة شاورما");
+    expect(getByText("شاي").closest("div")?.querySelector('[data-testid="combo-badge"]')).toBeNull();
   });
 
   it("a combo card still fires onAdd with the item (chooser interception lives in the store)", () => {

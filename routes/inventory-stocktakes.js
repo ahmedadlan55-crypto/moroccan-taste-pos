@@ -37,9 +37,17 @@ const POST = require('../lib/inventoryTxPosters');
 const L = require('../lib/lotLedger');
 const IU = require('../lib/itemUnits');
 const requireRole = require('../middleware/auth').requireRole;
+const requireCapability = require('../middleware/requireCapability');
 
 const MGR = requireRole('admin', 'manager');
 const BACKOFFICE = requireRole('admin', 'manager', 'employee', 'custody');
+// Cashier-reachable count entry (create/edit-draft/start/counts/submit). Gated by
+// the already-seeded capability `inventory.stocktake.create` (db/migrations/
+// capability-seeds/g-inv.json → roles include cashier + inventory) INSTEAD of the
+// BACKOFFICE role-list, so a branch cashier can run a per-warehouse count for THEIR
+// own warehouse. Separation of duties is preserved: request-recount / approve /
+// post / cancel / delete stay MGR / BACKOFFICE (manager-only) below.
+const STK_COUNT = requireCapability('inventory.stocktake.create');
 
 // Maker–Checker: the creator may not approve their own stocktake. On by default;
 // STOCKTAKE_MAKER_CHECKER=0/off disables. Admins always bypass.
@@ -230,7 +238,7 @@ router.get('/:id', async (req, res) => {
 // ════════════════════════════════════════════════════════════════════════════
 // CREATE draft (scope config only; the item list is frozen at /start)
 // ════════════════════════════════════════════════════════════════════════════
-router.post('/', BACKOFFICE, async (req, res) => {
+router.post('/', STK_COUNT, async (req, res) => {
   let idemId = null;
   try {
     const actor = _actor(req);
@@ -286,7 +294,7 @@ router.post('/', BACKOFFICE, async (req, res) => {
 // ════════════════════════════════════════════════════════════════════════════
 // PATCH draft (scope / settings; version-guarded; draft only)
 // ════════════════════════════════════════════════════════════════════════════
-router.patch('/:id', BACKOFFICE, async (req, res) => {
+router.patch('/:id', STK_COUNT, async (req, res) => {
   try {
     const actor = _actor(req); const id = req.params.id; const b = req.body || {};
     const expected = _expectedVersion(req);
@@ -316,7 +324,7 @@ router.patch('/:id', BACKOFFICE, async (req, res) => {
 // ════════════════════════════════════════════════════════════════════════════
 // START — snapshot + freeze the item list (draft → counting)
 // ════════════════════════════════════════════════════════════════════════════
-router.post('/:id/start', BACKOFFICE, async (req, res) => {
+router.post('/:id/start', STK_COUNT, async (req, res) => {
   try {
     const actor = _actor(req); const id = req.params.id;
     const expected = _expectedVersion(req);
@@ -380,7 +388,7 @@ router.post('/:id/start', BACKOFFICE, async (req, res) => {
 // ════════════════════════════════════════════════════════════════════════════
 // PUT counts — autosave target (counting only). Recomputes theoretical/variance.
 // ════════════════════════════════════════════════════════════════════════════
-router.put('/:id/counts', BACKOFFICE, async (req, res) => {
+router.put('/:id/counts', STK_COUNT, async (req, res) => {
   try {
     const actor = _actor(req); const id = req.params.id;
     const counts = Array.isArray(req.body && req.body.counts) ? req.body.counts : null;
@@ -463,7 +471,7 @@ router.put('/:id/counts', BACKOFFICE, async (req, res) => {
 // ════════════════════════════════════════════════════════════════════════════
 // SUBMIT (counting → submitted) — evidence gate for large variances
 // ════════════════════════════════════════════════════════════════════════════
-router.post('/:id/submit', BACKOFFICE, async (req, res) => {
+router.post('/:id/submit', STK_COUNT, async (req, res) => {
   try {
     const actor = _actor(req); const id = req.params.id;
     const expected = _expectedVersion(req);

@@ -654,3 +654,176 @@ export interface CustomerSummaryData {
 export function getCustomerSummary(id: string): Promise<CustomerSummaryData> {
   return request<CustomerSummaryData>(`/api/erp/customers/${encodeURIComponent(id)}/summary`);
 }
+
+// ═════════════════════════════════════════════════════════════════════════════
+// APPEND-ONLY BLOCK — close2/stocktake-pro-pos.
+// Professional PER-WAREHOUSE stocktake (جرد احترافي) against the v2 system
+//   /api/inventory/v2/stocktakes   (routes/inventory-stocktakes.js).
+// Replaces the legacy one-shot POST /api/inventory/stocktakes — which compared
+// the count against a company-wide stock ROLLUP while the write landed in one
+// warehouse — with the create → start → counts → submit lifecycle, so the count
+// is reconciled against, and its adjustment lands in, ONE specific warehouse.
+// The cashier's role ENDS at submit; a manager approves + posts in the ERP.
+// New exports only; nothing above this line was modified.
+// ═════════════════════════════════════════════════════════════════════════════
+
+/** RFC-4122 idempotency key (mirrors the ERP useStocktakes uid() helper). */
+export function stkIdempotencyKey(): string {
+  try {
+    if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") return crypto.randomUUID();
+  } catch {
+    /* jsdom / older runtime — fall through */
+  }
+  return "idem-" + Math.random().toString(36).slice(2) + Date.now().toString(36);
+}
+
+/** Decode the base64url JSON payload of the shared pos_token WITHOUT verifying
+ *  the signature (resolution/display only — the server verifies every request).
+ *  Mirrors lib/auth.decodeUser, but reads the warehouse claim it doesn't expose. */
+function decodeTokenPayload(): Record<string, unknown> | null {
+  const token = getToken();
+  if (!token) return null;
+  const parts = token.split(".");
+  if (parts.length < 2) return null;
+  try {
+    const b64 = parts[1].replace(/-/g, "+").replace(/_/g, "/");
+    const padded = b64 + "=".repeat((4 - (b64.length % 4)) % 4);
+    const bin = atob(padded);
+    const bytes = Uint8Array.from(bin, (c) => c.charCodeAt(0));
+    return JSON.parse(new TextDecoder("utf-8").decode(bytes)) as Record<string, unknown>;
+  } catch {
+    return null;
+  }
+}
+
+/** The cashier's OWN warehouse from the JWT (users.default_warehouse_id — the
+ *  exact field the legacy stocktake route resolved server-side). "" when absent. */
+export function cashierWarehouseIdFromToken(): string {
+  const p = decodeTokenPayload();
+  if (!p) return "";
+  const w = p.default_warehouse_id ?? p.warehouseId ?? p.warehouse_id;
+  return w == null ? "" : String(w);
+}
+
+export interface AccessScope {
+  success: boolean;
+  enforced: boolean;
+  role: string;
+  allWarehousesAccess: boolean;
+  accessibleWarehouses: Array<{ id: string; name: string; code: string; type: string; branchId: string; isActive: boolean }>;
+}
+
+/** GET /api/inventory/access-scope — the caller's accessible warehouses. */
+export function getInventoryAccessScope(): Promise<AccessScope> {
+  return request<AccessScope>("/api/inventory/access-scope");
+}
+
+/**
+ * Resolve the warehouse a cashier's stocktake must target. Primary source is the
+ * JWT default_warehouse_id (authoritative, offline-safe). When that is empty we
+ * fall back to the SINGLE warehouse this user is scoped to (access-scope). Returns
+ * null when the warehouse can't be determined unambiguously — the caller MUST
+ * surface a clear error rather than send an empty warehouseId: the v2 create 422s
+ * on a missing warehouse, it does NOT auto-resolve like the legacy route did.
+ */
+export async function resolveStocktakeWarehouseId(): Promise<string | null> {
+  const fromJwt = cashierWarehouseIdFromToken();
+  if (fromJwt) return fromJwt;
+  try {
+    const scope = await getInventoryAccessScope();
+    const list = scope.accessibleWarehouses || [];
+    if (list.length === 1) return list[0].id;
+  } catch {
+    /* unresolved → null below */
+  }
+  return null;
+}
+
+/** A single count line for PUT /:id/counts. countedQty is the total already in
+ *  the item's BASE unit; the server defaults an entry with no enteredUnitId to
+ *  base (lib/itemUnits.resolveLineBase), so a pre-summed dual-unit total lands
+ *  1:1 without a UNIT_CONVERSION_CONFLICT. */
+export interface StocktakeCountV2 {
+  itemId: string;
+  countedQty: number;
+}
+
+/** The v2 mutation envelope (lib/inventoryTxContract.mutationEnvelope). create
+ *  also spreads a legacy top-level {id, number}; transitions carry data.id. */
+export interface StocktakeMutationV2 {
+  success: boolean;
+  data: { id?: string; lines?: number } | null;
+  documentNumber: string | null;
+  status: string | null;
+  version: number | null;
+  id?: string;
+  number?: string;
+}
+
+export interface CreateStocktakeV2Input {
+  warehouseId: string;
+  itemIds: string[];
+  reason?: string;
+  scopeType?: "full" | "category" | "items";
+  includeZero?: boolean;
+  blindCount?: boolean;
+}
+
+/** POST /api/inventory/v2/stocktakes — create a draft (Idempotency-Key required
+ *  server-side). The POS flow scopes to the EXACT items the cashier counted
+ *  (scopeType 'items') with includeZero so a surplus item at 0 system stock
+ *  still gets a frozen line at /start. */
+export function createStocktakeV2(input: CreateStocktakeV2Input, idempotencyKey: string): Promise<StocktakeMutationV2> {
+  return request<StocktakeMutationV2>("/api/inventory/v2/stocktakes", {
+    method: "POST",
+    body: {
+      warehouseId: input.warehouseId,
+      scopeType: input.scopeType ?? "items",
+      itemIds: input.itemIds,
+      includeZero: input.includeZero ?? true,
+      blindCount: input.blindCount ?? true,
+      reason: input.reason ?? "",
+    },
+    headers: { "Idempotency-Key": idempotencyKey },
+  });
+}
+
+/** POST /:id/start — freeze the per-warehouse snapshot (draft → counting). */
+export function startStocktakeV2(id: string, expectedVersion: number): Promise<StocktakeMutationV2> {
+  return request<StocktakeMutationV2>(`/api/inventory/v2/stocktakes/${encodeURIComponent(id)}/start`, {
+    method: "POST",
+    body: { expectedVersion },
+  });
+}
+
+export interface SaveCountsV2Result {
+  success: boolean;
+  data: { id: string };
+  status: string;
+  applied: number;
+  conflicts: Array<{ lineId: string; itemId: string; itemName: string; code: string; message: string }>;
+  aggregates?: unknown;
+}
+
+/** PUT /:id/counts — record counted quantities (counting only). This route is
+ *  the autosave target and is deliberately NOT version-guarded server-side
+ *  (mirrors the ERP saveCounts hook): per-line FOR UPDATE locks + the
+ *  status='counting' guard prevent lost updates, and a count sent after the doc
+ *  left 'counting' comes back as VERSION_CONFLICT rather than a silent write. */
+export function saveStocktakeCountsV2(id: string, counts: StocktakeCountV2[]): Promise<SaveCountsV2Result> {
+  return request<SaveCountsV2Result>(`/api/inventory/v2/stocktakes/${encodeURIComponent(id)}/counts`, {
+    method: "PUT",
+    body: { counts },
+  });
+}
+
+/** POST /:id/submit — hand the count off for approval (counting → submitted).
+ *  This is where the CASHIER's job ENDS; a manager approves + posts in the ERP.
+ *  Version-guarded, so a double-submit resolves to VERSION_CONFLICT, never two
+ *  submits. */
+export function submitStocktakeV2(id: string, expectedVersion: number): Promise<StocktakeMutationV2> {
+  return request<StocktakeMutationV2>(`/api/inventory/v2/stocktakes/${encodeURIComponent(id)}/submit`, {
+    method: "POST",
+    body: { expectedVersion },
+  });
+}

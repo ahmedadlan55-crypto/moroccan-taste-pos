@@ -25,6 +25,7 @@
 // ═══════════════════════════════════════════════════════════════════
 const router = require('express').Router();
 const db = require('../../../db/connection');
+const { todayYmd } = require('../../../lib/expiryPolicy');
 
 // v5.10.79 — Canonical IFRS-conventional ordering inside each Balance
 // Sheet section. The most-liquid item appears first (cash before
@@ -913,7 +914,11 @@ router.get('/reports/balance-sheet-ifrs', async (req, res) => {
       equityItems, totEq,
       netIncome,
       isBalanced: Math.abs(totalAssets - (totalLiabilities + totEq)) < 0.01,
-      asOfDate: asOfDate || new Date().toISOString().split('T')[0],
+      // Same UTC-vs-Riyadh-session-timezone mistake as routes/hr.js's
+      // /my-clock (fixed alongside this) — toISOString() is UTC, not this
+      // codebase's canonical Riyadh session timezone, so the default as-of
+      // date could silently label itself "yesterday" for ~3h every day.
+      asOfDate: asOfDate || todayYmd(),
       groups: groups,
       orderedGroups: orderedGroups,   // v5.10.79 — IFRS-ordered arrays
       coaTree: coaTree,                // v5.10.82 — CoA-mirrored hierarchical tree

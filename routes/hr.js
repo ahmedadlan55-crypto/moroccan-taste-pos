@@ -8,6 +8,7 @@ function _actor(req) { return (req.user && (req.user.username || req.user.name))
 // v6.3.0 — live payroll projection + weekly off classifier
 const payrollEngine = require('../lib/payroll-engine');
 const weeklyOff = require('../lib/weeklyOff');
+const { todayYmd } = require('../lib/expiryPolicy');
 
 // ═══════════════════════════════════════════════════════════════
 // HELPER: Ensure HR tables exist (auto-migrate)
@@ -2375,7 +2376,13 @@ router.post('/my-clock', async (req, res) => {
     if (!emp.length) return res.json({ success: false, error: 'لا يوجد ملف موظف مرتبط بحسابك — تواصل مع الإدارة' });
     const empId = emp[0].id;
     const branchId = emp[0].branch_id;
-    const today = new Date().toISOString().split('T')[0];
+    // v5.11.6 used toISOString() here — UTC, not this codebase's canonical
+    // Riyadh session timezone (db/connection.js's DB_TIME_ZONE). For the ~3h
+    // window each day between UTC midnight and Riyadh midnight, a clock-in
+    // was stored under the WRONG calendar date: every query that finds
+    // "today's" attendance via CURDATE() (Riyadh, server-side) would miss it
+    // entirely — a real daily gap for any employee clocking in overnight.
+    const today = todayYmd();
 
     // v5.11.6 — Normalize device payload (brand/model/os/ua) — accept
     // either a structured object or the legacy deviceName string.

@@ -401,9 +401,11 @@ app.all(/^\/sales(?:\/.*)?$/, function (req, res) { res.redirect(302, '/app/sale
 // pos / sales SPAs — path-prefixed, same JWT/session/tab. The legacy UI at /
 // stays intact as the rollback path. When the flag is OFF the section is
 // invisible: /app returns a 503 maintenance notice instead of a broken UI.
-var ERP_UNIFIED_ENABLED = process.env.NODE_ENV === 'production'
-  ? /^(1|true|on|yes)$/i.test(String(process.env.ERP_UNIFIED_ENABLED || '').trim())
-  : !/^(0|false|off|no)$/i.test(String(process.env.ERP_UNIFIED_ENABLED || '').trim());
+// Final cutover: the unified app IS the product — the strangler-era
+// "explicit flag in production" default is retired with the legacy shells
+// (there is no other UI to fall back to). ERP_UNIFIED_ENABLED=0 remains an
+// explicit kill switch (503 maintenance notice) in every environment.
+var ERP_UNIFIED_ENABLED = !/^(0|false|off|no)$/i.test(String(process.env.ERP_UNIFIED_ENABLED || '').trim());
 if (!ERP_UNIFIED_ENABLED) {
   app.all(/^\/app(?:\/.*)?$/, function (req, res) {
     res.status(503).type('html').send('<!doctype html><html lang="ar" dir="rtl"><meta charset="utf-8"><title>صيانة</title><body style="font-family:Tahoma,Arial,sans-serif;padding:3rem;text-align:center;color:#172033"><h2>الإدارة الموحّدة غير مُفعّلة</h2><p>استخدم النظام الحالي مؤقتًا. (ERP_UNIFIED_ENABLED=0)</p></body></html>');

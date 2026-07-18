@@ -17,25 +17,66 @@ vi.mock("@/state/store", () => ({
 
 // ── Fixtures ──────────────────────────────────────────────────────────────────
 const ITEMS = [
-  // dual-unit item: 1 كيس = 12 كيلو, system stock 37 (must stay INVISIBLE pre-submit)
+  // dual-unit item: 1 كيس = 12 كيلو, system stock 37 (must stay INVISIBLE always)
   { id: "INV-1", name: "أرز بسمتي", category: "مواد جافة", kind: "raw", cost: 10, stock: 37, minStock: 5, unit: "كيلو", bigUnit: "كيس", convRate: 12, active: 1 },
   // single-unit item (no big unit)
   { id: "INV-2", name: "زيت زيتون", category: "زيوت", kind: "raw", cost: 20, stock: 4, minStock: 5, unit: "لتر", bigUnit: "", convRate: 1, active: 1 },
 ];
 
-type FetchCall = { url: string; init?: RequestInit };
+const ST_ID = "STK-abc123";
+const ST_NUMBER = "STK-0007";
 
-function installFetch(overrides: Record<string, (init?: RequestInit) => unknown> = {}): FetchCall[] {
+/** base64url of a UTF-8 string (matches api.ts decodeTokenPayload). */
+function b64url(s: string): string {
+  return btoa(unescape(encodeURIComponent(s))).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+}
+/** A fake pos_token whose payload carries the given claims (signature ignored). */
+function setToken(payload: Record<string, unknown>) {
+  localStorage.setItem("pos_token", `h.${b64url(JSON.stringify(payload))}.s`);
+}
+
+type FetchCall = { url: string; init?: RequestInit };
+type Handler = (init?: RequestInit) => unknown;
+
+/** A handler may return a plain body (→ 200) or { __status, __body } to control
+ *  the HTTP status (for the 422 / error paths). */
+function httpError(status: number, body: unknown) {
+  return { __status: status, __body: body };
+}
+
+function installFetch(overrides: Record<string, Handler> = {}): FetchCall[] {
   const calls: FetchCall[] = [];
-  const routes: Record<string, (init?: RequestInit) => unknown> = {
+  const routes: Record<string, Handler> = {
     "GET /api/inventory/items": () => ITEMS,
-    "POST /api/inventory/stocktakes": () => ({
+    "POST /api/inventory/v2/stocktakes": () => ({
       success: true,
-      stocktakeId: "ST-1752700000000",
-      adjustedCount: 1,
-      totalGainCost: 0,
-      totalLossCost: 0,
-      postingWarning: null,
+      id: ST_ID,
+      number: ST_NUMBER,
+      data: { id: ST_ID },
+      documentNumber: ST_NUMBER,
+      status: "draft",
+      version: 1,
+    }),
+    [`POST /api/inventory/v2/stocktakes/${ST_ID}/start`]: () => ({
+      success: true,
+      data: { id: ST_ID, lines: 1 },
+      documentNumber: ST_NUMBER,
+      status: "counting",
+      version: 2,
+    }),
+    [`PUT /api/inventory/v2/stocktakes/${ST_ID}/counts`]: () => ({
+      success: true,
+      data: { id: ST_ID },
+      status: "counting",
+      applied: 1,
+      conflicts: [],
+    }),
+    [`POST /api/inventory/v2/stocktakes/${ST_ID}/submit`]: () => ({
+      success: true,
+      data: { id: ST_ID },
+      documentNumber: ST_NUMBER,
+      status: "submitted",
+      version: 3,
     }),
     ...overrides,
   };
@@ -46,11 +87,14 @@ function installFetch(overrides: Record<string, (init?: RequestInit) => unknown>
       const key = `${(init?.method ?? "GET").toUpperCase()} ${String(url).split("?")[0]}`;
       const handler = routes[key];
       if (!handler) throw new Error(`unmocked route: ${key}`);
+      const out = handler(init) as { __status?: number; __body?: unknown };
+      const status = out && out.__status ? out.__status : 200;
+      const body = out && out.__status ? out.__body : out;
       return {
-        ok: true,
-        status: 200,
+        ok: status >= 200 && status < 300,
+        status,
         headers: new Headers({ "content-type": "application/json" }),
-        json: async () => handler(init),
+        json: async () => body,
       };
     }) as unknown as typeof fetch,
   );
@@ -63,6 +107,10 @@ async function addRiceToCart() {
   await waitFor(() => expect(search).not.toBeDisabled()); // items loaded
   fireEvent.change(search, { target: { value: "أرز" } });
   fireEvent.click(await screen.findByText("أرز بسمتي"));
+}
+
+function keyOf(c: FetchCall): string {
+  return `${(c.init?.method ?? "GET").toUpperCase()} ${String(c.url).split("?")[0]}`;
 }
 
 beforeEach(() => {
@@ -104,7 +152,7 @@ describe("StocktakeDialog", () => {
     // The النظام + الفرق cells render a dash — never the number.
     expect(screen.getByTestId("cst-sys-INV-1")).toHaveTextContent("—");
     expect(screen.getByTestId("cst-diff-INV-1")).toHaveTextContent("—");
-    // The system stock (37) appears NOWHERE in the dialog before submit.
+    // The system stock (37) appears NOWHERE in the dialog.
     expect(screen.queryByText(/37/)).toBeNull();
   });
 
@@ -121,50 +169,88 @@ describe("StocktakeDialog", () => {
     expect(screen.queryByText(/37/)).toBeNull();
   });
 
-  it("submit POSTs the legacy payload to /api/inventory/stocktakes and shows the stocktake number", async () => {
+  it("submit runs the v2 lifecycle (create→start→counts→submit) against the cashier's OWN warehouse", async () => {
+    setToken({ username: "cashier1", role: "cashier", default_warehouse_id: "WH-CASHIER" });
     const calls = installFetch();
     await addRiceToCart();
 
     fireEvent.change(screen.getByLabelText("الكمية الكبيرة — أرز بسمتي"), { target: { value: "2" } });
     fireEvent.change(screen.getByLabelText("الكمية الصغيرة — أرز بسمتي"), { target: { value: "3" } });
     fireEvent.click(screen.getByText(/مراجعة وإرسال/));
-    fireEvent.click(await screen.findByText("حفظ وإرسال التقرير"));
+    fireEvent.click(await screen.findByText("إرسال للاعتماد"));
 
-    // Success view shows the server's stocktake number.
-    expect(await screen.findByText("ST-1752700000000")).toBeInTheDocument();
+    // Success view shows the server's document number + the approval-handoff copy.
+    expect(await screen.findByText(ST_NUMBER)).toBeInTheDocument();
+    await waitFor(() => expect(mocks.pushToast).toHaveBeenCalledWith("success", "أُرسل محضر الجرد للاعتماد"));
 
-    const post = calls.find((c) => c.url === "/api/inventory/stocktakes");
-    expect(post).toBeTruthy();
-    expect((post!.init?.method ?? "").toUpperCase()).toBe("POST");
-    const body = JSON.parse(String(post!.init?.body));
-    expect(body.items).toHaveLength(1);
-    // Both legacy naming pairs + diff, computed against the fetched system qty.
-    expect(body.items[0]).toMatchObject({
-      id: "INV-1",
-      unit: "كيلو",
-      systemQty: 37,
-      actualQty: 27,
-      sys: 37,
-      actual: 27,
-      diff: -10,
-    });
-    expect(body.username).toBe("cashier1");
-    expect(body.notes).toBe("جرد بواسطة cashier1"); // legacy default when notes empty
-    expect(body.warehouseId).toBe(""); // server resolves from the user profile
-    expect(body.branchId).toBe("");
-    // Draft cart is cleared after a successful submit.
+    // The four v2 calls fired, in order.
+    const seq = calls.map(keyOf).filter((k) => k.includes("/v2/stocktakes"));
+    expect(seq).toEqual([
+      "POST /api/inventory/v2/stocktakes",
+      `POST /api/inventory/v2/stocktakes/${ST_ID}/start`,
+      `PUT /api/inventory/v2/stocktakes/${ST_ID}/counts`,
+      `POST /api/inventory/v2/stocktakes/${ST_ID}/submit`,
+    ]);
+
+    // create: warehouseId is the cashier's own (NEVER empty), scoped to the counted
+    // item, blind + includeZero, and it carries an Idempotency-Key.
+    const create = calls.find((c) => keyOf(c) === "POST /api/inventory/v2/stocktakes")!;
+    const createBody = JSON.parse(String(create.init?.body));
+    expect(createBody.warehouseId).toBe("WH-CASHIER");
+    expect(createBody.warehouseId).not.toBe("");
+    expect(createBody.scopeType).toBe("items");
+    expect(createBody.itemIds).toEqual(["INV-1"]);
+    expect(createBody.includeZero).toBe(true);
+    expect(createBody.blindCount).toBe(true);
+    expect((create.init?.headers as Record<string, string>)["Idempotency-Key"]).toBeTruthy();
+
+    // counts: the pre-summed dual-unit total (2×12+3 = 27) lands as the base qty.
+    const countsCall = calls.find((c) => keyOf(c) === `PUT /api/inventory/v2/stocktakes/${ST_ID}/counts`)!;
+    const countsBody = JSON.parse(String(countsCall.init?.body));
+    expect(countsBody.counts).toEqual([{ itemId: "INV-1", countedQty: 27 }]);
+
+    // start + submit thread the version returned by the previous step.
+    const startCall = calls.find((c) => keyOf(c) === `POST /api/inventory/v2/stocktakes/${ST_ID}/start`)!;
+    expect(JSON.parse(String(startCall.init?.body)).expectedVersion).toBe(1);
+    const submitCall = calls.find((c) => keyOf(c) === `POST /api/inventory/v2/stocktakes/${ST_ID}/submit`)!;
+    expect(JSON.parse(String(submitCall.init?.body)).expectedVersion).toBe(2);
+
+    // Draft cart cleared after a successful submit.
     expect(localStorage.getItem("pos_stocktake_cart")).toBeNull();
   });
 
-  it("surfaces the server's error message verbatim on a failed submit", async () => {
-    installFetch({
-      "POST /api/inventory/stocktakes": () => ({ success: false, error: "تعذّر تحديد المستودع" }),
+  it("NEVER sends an empty warehouseId: an unresolvable warehouse surfaces a clear error and creates nothing", async () => {
+    setToken({ username: "cashier1", role: "cashier" }); // no default_warehouse_id
+    const calls = installFetch({
+      // access-scope fallback returns NO single warehouse → unresolvable.
+      "GET /api/inventory/access-scope": () => ({ success: true, allWarehousesAccess: false, accessibleWarehouses: [] }),
     });
     await addRiceToCart();
     fireEvent.change(screen.getByLabelText("الكمية الصغيرة — أرز بسمتي"), { target: { value: "5" } });
     fireEvent.click(screen.getByText(/مراجعة وإرسال/));
-    fireEvent.click(await screen.findByText("حفظ وإرسال التقرير"));
-    await waitFor(() => expect(mocks.pushToast).toHaveBeenCalledWith("error", "تعذّر تحديد المستودع"));
+    fireEvent.click(await screen.findByText("إرسال للاعتماد"));
+
+    await waitFor(() =>
+      expect(mocks.pushToast).toHaveBeenCalledWith(
+        "error",
+        expect.stringContaining("تعذّر تحديد مستودع الكاشير"),
+      ),
+    );
+    // No stocktake was created — the guard fired before any write.
+    expect(calls.some((c) => keyOf(c) === "POST /api/inventory/v2/stocktakes")).toBe(false);
+  });
+
+  it("surfaces a 422 missing-warehouse server error verbatim (no silent failure)", async () => {
+    setToken({ username: "cashier1", role: "cashier", default_warehouse_id: "WH-CASHIER" });
+    installFetch({
+      "POST /api/inventory/v2/stocktakes": () =>
+        httpError(422, { success: false, code: "VALIDATION_ERROR", error: "المستودع مطلوب" }),
+    });
+    await addRiceToCart();
+    fireEvent.change(screen.getByLabelText("الكمية الصغيرة — أرز بسمتي"), { target: { value: "5" } });
+    fireEvent.click(screen.getByText(/مراجعة وإرسال/));
+    fireEvent.click(await screen.findByText("إرسال للاعتماد"));
+    await waitFor(() => expect(mocks.pushToast).toHaveBeenCalledWith("error", "المستودع مطلوب"));
   });
 
   it("offline: shows «الجرد يتطلب اتصالًا» and fetches nothing", () => {

@@ -4539,54 +4539,78 @@ router.post('/receive-approve/:id', requireCapability('inventory.edit'), async (
 // SHORTAGE REQUESTS (طلبات النواقص)
 // ═══════════════════════════════════════
 
+// close2/requisitions-fix — ownership gate for shortage requests. A non-approver
+// (plain cashier) may only see/act on the requests THEY created; a holder of
+// purchasing.requisitions.approve (the approve/reject/convert capability) keeps
+// full warehouse-scoped visibility. hasCapability fails closed; admin bypasses.
+async function _shrIsApprover(req) {
+  try { return await requireCapability.hasCapability(req.user, 'purchasing.requisitions.approve'); }
+  catch (_) { return false; }
+}
+
 // Create shortage request (from cashier)
 // G-INV — inventory.requisition.create is seeded for cashier (this is the POS
 // shortage-request screen); see db/migrations/capability-seeds/g-inv.json.
 router.post('/shortage-requests', requireCapability('inventory.requisition.create'), async (req, res) => {
   try {
-    const { items, notes, warehouseId, branchId, brandId } = req.body;
+    const { items, notes, branchId, brandId } = req.body;
+    let { warehouseId } = req.body;
     const username = _actor(req); // G-INV M2 — requester identity from the JWT only
     if (!items || !items.length) return res.json({ success: false, error: 'أضف مادة واحدة على الأقل' });
-    if (!req.guardWh(res, warehouseId)) return;
 
-    // Auto-resolve brand from user's HR profile if not supplied
+    // Auto-resolve brand/branch AND warehouse from the requester's HR profile when
+    // the client didn't supply them. close2 Fix 1 — warehouse_id must NEVER become a
+    // silent NULL (invisible to every per-warehouse admin filter); this mirrors the
+    // stocktake route's resolution (users.default_warehouse_id → branches.warehouse_id).
     let resolvedBrandId = brandId || null;
     let resolvedBranchId = branchId || null;
-    if (!resolvedBrandId && username) {
+    if ((!resolvedBrandId || !resolvedBranchId || !warehouseId) && username) {
       try {
         const [u] = await db.query(
-          'SELECT brand_id, branch_id FROM users WHERE username = ? LIMIT 1',
+          'SELECT u.brand_id, u.branch_id, u.default_warehouse_id, b.warehouse_id AS branch_warehouse_id ' +
+          'FROM users u LEFT JOIN branches b ON b.id = u.branch_id ' +
+          'WHERE u.username = ? LIMIT 1',
           [username]);
         if (u.length) {
-          resolvedBrandId = resolvedBrandId || u[0].brand_id;
-          resolvedBranchId = resolvedBranchId || u[0].branch_id;
+          resolvedBrandId  = resolvedBrandId  || u[0].brand_id  || null;
+          resolvedBranchId = resolvedBranchId || u[0].branch_id || null;
+          warehouseId = warehouseId || u[0].default_warehouse_id || u[0].branch_warehouse_id || null;
         }
-      } catch(e) {}
+      } catch (_) { /* legacy schema — keep whatever the client sent */ }
     }
 
-    const id = 'SHR-' + Date.now();
-    const [last] = await db.query('SELECT request_number FROM shortage_requests ORDER BY created_at DESC LIMIT 1');
-    let num = 1;
-    if (last.length && last[0].request_number) {
-      const m = last[0].request_number.match(/(\d+)/);
-      if (m) num = parseInt(m[1]) + 1;
+    // close2 Fix 1 — refuse rather than insert a NULL warehouse (matches the
+    // stocktake route's 422 style). Runs BEFORE guardWh so the message is precise.
+    if (!warehouseId) {
+      return res.status(422).json({ code: 'VALIDATION_ERROR', error: 'تعذّر تحديد المستودع — تحقق من إعدادات حسابك' });
     }
-    const requestNumber = 'SHR-' + String(num).padStart(5, '0');
+    // Scope: the resolved target warehouse must be in the caller's scope.
+    if (!req.guardWh(res, warehouseId)) return;
 
-    await db.query(
-      'INSERT INTO shortage_requests (id, request_number, request_date, username, notes, total_items, branch_id, warehouse_id, brand_id) VALUES (?,?,?,?,?,?,?,?,?)',
-      [id, requestNumber, new Date(), username || '', notes || '', items.length, resolvedBranchId, warehouseId || null, resolvedBrandId]
-    );
-
-    for (const item of items) {
-      const itemId = 'SHRI-' + Date.now() + '-' + Math.random().toString(36).substr(2, 4);
-      await db.query(
-        'INSERT INTO shortage_items (id, request_id, inv_item_id, inv_item_name, unit, current_qty, min_qty, requested_qty, unit_price) VALUES (?,?,?,?,?,?,?,?,?)',
-        [itemId, id, item.invItemId || '', item.invItemName || '', item.unit || '', item.currentQty || 0, item.minQty || 0, item.requestedQty || 0, item.unitPrice || 0]
+    // close2 Fix 3+4 — header + all lines in ONE transaction, with a race-free
+    // document number from the atomic doc_counters (nextDocNumber) instead of the
+    // old last-row/MAX+1 read. A mid-request failure rolls the header back too, so a
+    // header with zero lines can never persist. id is collision-resistant (random
+    // suffix) so N truly-parallel creates never clash on the primary key either.
+    const requestDate = new Date();
+    const out = await db.withTransaction(async (conn) => {
+      const requestNumber = await nextDocNumber(conn, 'SHR', requestDate);
+      const id = 'SHR-' + Date.now() + '-' + Math.random().toString(36).slice(2, 8);
+      await conn.query(
+        'INSERT INTO shortage_requests (id, request_number, request_date, username, notes, total_items, branch_id, warehouse_id, brand_id) VALUES (?,?,?,?,?,?,?,?,?)',
+        [id, requestNumber, requestDate, username || '', notes || '', items.length, resolvedBranchId, warehouseId, resolvedBrandId]
       );
-    }
+      for (const item of items) {
+        const itemId = 'SHRI-' + Date.now() + '-' + Math.random().toString(36).slice(2, 8);
+        await conn.query(
+          'INSERT INTO shortage_items (id, request_id, inv_item_id, inv_item_name, unit, current_qty, min_qty, requested_qty, unit_price) VALUES (?,?,?,?,?,?,?,?,?)',
+          [itemId, id, item.invItemId || '', item.invItemName || '', item.unit || '', item.currentQty || 0, item.minQty || 0, item.requestedQty || 0, item.unitPrice || 0]
+        );
+      }
+      return { id, requestNumber };
+    });
 
-    res.json({ success: true, id, requestNumber, brandId: resolvedBrandId });
+    res.json({ success: true, id: out.id, requestNumber: out.requestNumber, brandId: resolvedBrandId });
   } catch (e) { res.json({ success: false, error: e.message }); }
 });
 
@@ -4607,6 +4631,10 @@ router.get('/shortage-requests', async (req, res) => {
     if (branchId)  { sql += ' AND r.branch_id = ?';           params.push(branchId); }
     if (startDate) { sql += ' AND DATE(r.request_date) >= ?'; params.push(startDate); }
     if (endDate)   { sql += ' AND DATE(r.request_date) <= ?'; params.push(endDate); }
+    // close2 Fix 2 — a non-approver sees ONLY their own requests (server-enforced,
+    // not merely the client-side filter in RequisitionsDialog). Approvers keep the
+    // full warehouse-scoped list.
+    if (!(await _shrIsApprover(req))) { sql += ' AND r.username = ?'; params.push(_actor(req)); }
     if (req.query.warehouseId && !req.guardWh(res, req.query.warehouseId)) return;
     const ssc = req.whScopeClause('r.warehouse_id');
     if (ssc.sql) { sql += ssc.sql; params.push(...ssc.params); }
@@ -4634,6 +4662,10 @@ router.get('/shortage-requests/:id', async (req, res) => {
     if (!reqs.length) return res.json({ error: 'Not found' });
     const r = reqs[0];
     if (!req.guardWh(res, r.warehouse_id)) return;
+    // close2 Fix 2 — a non-approver may only view their OWN request.
+    if (r.username !== _actor(req) && !(await _shrIsApprover(req))) {
+      return res.status(403).json({ success: false, code: 'PERMISSION_DENIED' });
+    }
     const [items] = await db.query('SELECT * FROM shortage_items WHERE request_id = ?', [req.params.id]);
     res.json({
       id: r.id, requestNumber: r.request_number, requestDate: r.request_date,
@@ -4682,9 +4714,13 @@ router.post('/shortage-requests/:id/reject', requireCapability('purchasing.requi
 router.put('/shortage-requests/:id', requireCapability('inventory.requisition.create'), async (req, res) => {
   try {
     const { items, notes } = req.body;
-    const [reqs] = await db.query('SELECT status, warehouse_id FROM shortage_requests WHERE id = ?', [req.params.id]);
+    const [reqs] = await db.query('SELECT status, warehouse_id, username FROM shortage_requests WHERE id = ?', [req.params.id]);
     if (!reqs.length) return res.json({ success: false, error: 'الطلب غير موجود' });
     if (!req.guardWh(res, reqs[0].warehouse_id)) return;
+    // close2 Fix 2 — a non-approver may only edit their OWN request.
+    if (reqs[0].username !== _actor(req) && !(await _shrIsApprover(req))) {
+      return res.status(403).json({ success: false, code: 'PERMISSION_DENIED' });
+    }
     if (reqs[0].status !== 'pending') return res.json({ success: false, error: 'فقط الطلبات المعلقة يمكن تعديلها' });
     if (!items || !items.length) return res.json({ success: false, error: 'أضف مادة واحدة على الأقل' });
 
@@ -4702,13 +4738,24 @@ router.put('/shortage-requests/:id', requireCapability('inventory.requisition.cr
   } catch (e) { res.json({ success: false, error: e.message }); }
 });
 
-// Delete shortage request — manager-level (was labelled developer-only but had
-// NO guard at all; requireCapability's admin/developer bypass covers devs).
-router.delete('/shortage-requests/:id', requireCapability('purchasing.requisitions.approve'), async (req, res) => {
+// Delete shortage request. close2 Fix 2 — authorization is dual-path so a cashier
+// can cancel their OWN request (the POS "حذف" button) while an approver (holder of
+// purchasing.requisitions.approve) can delete ANY request in their warehouse scope.
+// No single requireCapability middleware can express "owner OR approver", so the
+// check is inline; unauthenticated callers are already blocked by the global /api
+// JWT gate (req.user is always set here).
+router.delete('/shortage-requests/:id', async (req, res) => {
   try {
-    const [sr] = await db.query('SELECT warehouse_id FROM shortage_requests WHERE id = ?', [req.params.id]);
+    const [sr] = await db.query('SELECT warehouse_id, username FROM shortage_requests WHERE id = ?', [req.params.id]);
     if (!sr.length) return res.json({ success: false, error: 'الطلب غير موجود' });
     if (!req.guardWh(res, sr[0].warehouse_id)) return;
+    if (!(await _shrIsApprover(req))) {
+      // Non-approver: must be the creator AND hold the requester capability.
+      const canCreate = await requireCapability.hasCapability(req.user, 'inventory.requisition.create');
+      if (!canCreate || sr[0].username !== _actor(req)) {
+        return res.status(403).json({ success: false, code: 'PERMISSION_DENIED' });
+      }
+    }
     await db.query('DELETE FROM shortage_items WHERE request_id = ?', [req.params.id]);
     await db.query('DELETE FROM shortage_requests WHERE id = ?', [req.params.id]);
     res.json({ success: true });

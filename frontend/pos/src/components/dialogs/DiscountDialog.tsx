@@ -4,9 +4,10 @@
  * enforces the ceiling at /submit regardless — hidden buttons are not RBAC).
  */
 import { useEffect, useMemo, useState } from "react";
-import { BadgePercent } from "lucide-react";
+import { BadgePercent, Tag } from "lucide-react";
 import { usePos } from "@/state/store";
 import { cartTotals, orderDiscountPct, round2 } from "@/lib/cartMath";
+import { presetsForScope, useDiscountPresets } from "@/lib/discountPresets";
 import { fmt2 } from "@/lib/format";
 import type { DiscountType } from "@/lib/types";
 import { Dialog } from "../Dialog";
@@ -34,8 +35,43 @@ export function DiscountDialog({ open, onClose }: { open: boolean; onClose: () =
   const ceiling = catalog?.maxCashierDiscountPct ?? 10;
   const overCeiling = !supervisor && preview.discountAmount > 0 && pct > ceiling + 1e-9;
 
+  // Preset cards (خصومات جاهزة) from the owner's discounts settings — a preset
+  // click only FILLS the form (type/value/name) exactly like manual typing; the
+  // apply button + ceiling logic stay the single path (close/w25-sell-ui).
+  const presets = presetsForScope(useDiscountPresets(open), "invoice");
+
   return (
     <Dialog open={open} onClose={onClose} title="خصم على الطلب" widthClass="max-w-md">
+      {presets.length > 0 ? (
+        <div className="mb-3">
+          <p className="mb-1.5 text-[11px] font-extrabold text-slate-500">خصومات جاهزة</p>
+          <div className="grid grid-cols-2 gap-1.5">
+            {presets.map((p) => {
+              const belowMin = p.minOrder != null && preview.subtotal < p.minOrder;
+              return (
+                <button
+                  key={p.id}
+                  type="button"
+                  disabled={belowMin}
+                  title={belowMin ? `الحد الأدنى للطلب ${fmt2(p.minOrder!)} ر.س` : undefined}
+                  onClick={() => {
+                    setType(p.type);
+                    setValue(String(p.value));
+                    setName(p.name);
+                  }}
+                  className="btn-press flex min-h-11 items-center justify-between gap-1.5 rounded-xl border border-slate-200 bg-white px-3 text-xs font-extrabold text-slate-600 transition hover:border-teal-200 hover:bg-teal-50 disabled:cursor-not-allowed disabled:opacity-40"
+                >
+                  <span className="flex items-center gap-1.5 truncate">
+                    <Tag className="h-3.5 w-3.5 shrink-0 text-teal-600" aria-hidden />
+                    <span className="truncate">{p.name}</span>
+                  </span>
+                  <Money value={p.type === "PERCENT" ? `${fmt2(p.value)}%` : fmt2(p.value)} className="shrink-0 text-teal-700" />
+                </button>
+              );
+            })}
+          </div>
+        </div>
+      ) : null}
       <div className="mb-3 grid grid-cols-2 gap-1.5" role="radiogroup" aria-label="نوع الخصم">
         {(
           [

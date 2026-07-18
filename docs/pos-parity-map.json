@@ -1928,5 +1928,23 @@
       "react": "frontend/pos/src/components/dialogs/PaymentDialog.tsx — the trimmed note rides into engine.checkout as opts.paymentNotes (the engine already threads paymentNotes through submit-and-sale to the sale payload).",
       "legacy": "public/pos/app.js:2624 (order.paymentNotes)",
       "test": "frontend/pos/src/components/__tests__/parity-sell-pay-methods.test.tsx (checkout receives paymentNotes: «تحويل عهدة» trimmed)"
+  },
+  "discount-legacy-apply": {
+      "status": "covered",
+      "react": "frontend/pos/src/lib/discountPresets.ts — GET /api/settings/discounts-v2-full via plain fetch with the POS Bearer token (session-cached; failure/old-server degrades to [] and manual entry keeps working). Same visibility filter as legacy (enabled && showInPos !== false), type mapped percentage→PERCENT / fixed→FIXED.",
+      "legacy": "public/pos/app.js:4996 (/settings/discounts-v2-full → state.discountsV3) + the older getDiscounts modal (app.js:2435-2459)",
+      "test": "frontend/pos/src/components/__tests__/parity-sell-discount-presets.test.tsx (endpoint + Bearer, filter, failure degrade)"
+  },
+  "discount-invoice-apply-preset": {
+      "status": "covered",
+      "react": "frontend/pos/src/components/dialogs/DiscountDialog.tsx — «خصومات جاهزة» cards (scope invoice|preset|manual) above the manual form; a click FILLS type/value/name exactly as manual typing and the normal apply button + cashier-ceiling warning stay the single path; minOrder gates the card against the live subtotal.",
+      "legacy": "public/pos/app.js:5438-5500 posOpenInvoiceDiscountModal/posApplyInvoiceDiscount (invoice preset cards, minOrder gate)",
+      "test": "frontend/pos/src/components/__tests__/parity-sell-discount-presets.test.tsx (fill-not-apply semantics, PERCENT + FIXED, minOrder disabled card)"
+  },
+  "discount-line-apply-preset": {
+      "status": "covered",
+      "react": "frontend/pos/src/components/CartPanel.tsx CartLineRow — preset chips (scope line|preset|manual) inside the expanded line editor; a chip computes percentage-of-line-gross (baseQty × unitPrice — the TRUE gross, so a carton line discounts its real total) capped by maxAmount then the line total, and lands through the SAME setLineDiscount path as manual entry.",
+      "legacy": "public/pos/app.js:5343-5420 posOpenLineDiscountModal/posApplyLineDiscount (line preset cards, % of gross, maxAmount cap)",
+      "test": "frontend/pos/src/components/__tests__/parity-sell-discount-presets.test.tsx (scope filter in the editor, 50% of 46 capped at 10, fixed preset lands as 5)"
   }
 }

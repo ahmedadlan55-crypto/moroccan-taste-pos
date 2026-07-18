@@ -235,6 +235,95 @@ export function buildKitchenTicketHtml(order: LocalOrder, paperWidth: PaperWidth
   </body></html>`;
 }
 
+// ── Shift X/Z report (thermal) ───────────────────────────────────────────────
+// Data = GET /api/shifts/:id/full-report (declared structurally here so this
+// module keeps zero dependency on the API layer). Z = after close (counted vs
+// expected + variance + denominations); X = mid-shift snapshot (expected only —
+// nothing has been counted yet, and printing zero "counted" would read as a
+// perfect drawer).
+export interface ShiftReportData {
+  shiftId: string;
+  status?: string;
+  cashier?: { username?: string; name?: string; empNo?: string };
+  branch?: { name?: string; companyName?: string };
+  company?: { name?: string; nameAr?: string; taxNumber?: string };
+  times?: { start?: string | null; end?: string | null };
+  financials?: { openingFloat?: number; expectedTotal?: number; actualTotal?: number; variance?: number; unmatched?: number };
+  methods?: Array<{ name?: string; nameAr?: string | null; expected?: number; actual?: number; variance?: number }>;
+  soldItems?: Array<{ name?: string; qty?: number; price?: number; total?: number }>;
+  denominations?: Array<{ value?: number; kind?: string; count?: number }>;
+  orderCount?: number;
+  itemsCount?: number;
+  notes?: string;
+}
+
+export function buildShiftReportHtml(rep: ShiftReportData, opts: { mode: "X" | "Z"; paperWidth?: PaperWidth }): string {
+  const paper = opts.paperWidth ?? "80";
+  const isZ = opts.mode === "Z";
+  const f = rep.financials ?? {};
+  const title = isZ ? "تقرير إغلاق وردية · Z" : "تقرير منتصف وردية · X";
+  const cashier = rep.cashier ?? {};
+  const methods = rep.methods ?? [];
+  const denoms = (rep.denominations ?? []).filter((d) => Number(d.count) > 0);
+  const items = rep.soldItems ?? [];
+
+  const methodRows = methods
+    .map((m) => {
+      const label = esc(m.nameAr || m.name || "—");
+      if (!isZ) return `<tr><td>${label}</td><td class="l num">${fmt2(m.expected ?? 0)}</td></tr>`;
+      const v = m.variance ?? 0;
+      return `<tr><td>${label}</td><td class="l num">${fmt2(m.expected ?? 0)}</td><td class="l num">${fmt2(m.actual ?? 0)}</td><td class="l num">${v > 0 ? "+" : ""}${fmt2(v)}</td></tr>`;
+    })
+    .join("");
+
+  const denomRows = denoms
+    .map((d) => {
+      const val = Number(d.value) || 0;
+      const face = val < 1 ? `${Math.round(val * 100)} هللة` : `${fmt2(val)} ر.س`;
+      return `<tr><td>${face}</td><td class="l num">× ${Number(d.count) || 0}</td><td class="l num">${fmt2(val * (Number(d.count) || 0))}</td></tr>`;
+    })
+    .join("");
+
+  const itemRows = items
+    .map((i) => `<tr><td>${esc(i.name || "—")}</td><td class="l num">${fmt2(i.qty ?? 0)}</td><td class="l num">${fmt2(i.total ?? 0)}</td></tr>`)
+    .join("");
+
+  const variance = f.variance ?? 0;
+
+  return `<!doctype html><html lang="ar" dir="rtl"><head><meta charset="utf-8">
+  <title>${title}</title><style>${baseCss(paper)}</style></head><body data-paper="${paper}">
+  <h1>${esc(rep.company?.name || rep.company?.nameAr || brandNameFallback())}</h1>
+  ${rep.branch?.name ? `<div class="sub">${esc(rep.branch.name)}</div>` : ""}
+  <div class="stamp">${title}</div>
+  <div class="sub">وردية: <span class="num">${esc(rep.shiftId)}</span></div>
+  <div class="sub">الكاشير: ${esc(cashier.name || cashier.username || "—")}${cashier.empNo ? ` · <span class="num">${esc(cashier.empNo)}</span>` : ""}</div>
+  ${rep.times?.start ? `<div class="sub">البداية: <span class="num">${fmtDateTime(new Date(rep.times.start))}</span></div>` : ""}
+  ${isZ && rep.times?.end ? `<div class="sub">الإغلاق: <span class="num">${fmtDateTime(new Date(rep.times.end))}</span></div>` : ""}
+  <div class="sub">طُبع: <span class="num">${fmtDateTime(new Date())}</span></div>
+  <hr>
+  <table class="tot">
+    <tr><td>عدد الفواتير</td><td class="l num">${Number(rep.orderCount ?? 0)}</td></tr>
+    <tr><td>عدد الأصناف المباعة</td><td class="l num">${Number(rep.itemsCount ?? 0)}</td></tr>
+    <tr><td>رصيد افتتاحي</td><td class="l num">${fmt2(f.openingFloat ?? 0)}</td></tr>
+  </table>
+  <hr>
+  <table>
+    <thead><tr><th>طريقة الدفع</th><th class="l">متوقع</th>${isZ ? '<th class="l">معدود</th><th class="l">فرق</th>' : ""}</tr></thead>
+    <tbody>${methodRows}</tbody>
+  </table>
+  <table class="tot">
+    <tr class="grand"><td>الإجمالي المتوقع</td><td class="l num">${fmt2(f.expectedTotal ?? 0)}</td></tr>
+    ${isZ ? `<tr class="grand"><td>الإجمالي المعدود</td><td class="l num">${fmt2(f.actualTotal ?? 0)}</td></tr>
+    <tr class="grand"><td>الفرق</td><td class="l num">${variance > 0 ? "+" : ""}${fmt2(variance)}</td></tr>` : ""}
+    ${(f.unmatched ?? 0) > 0 ? `<tr><td>غير مطابق لأي طريقة</td><td class="l num">${fmt2(f.unmatched ?? 0)}</td></tr>` : ""}
+  </table>
+  ${isZ && denomRows ? `<hr><table><thead><tr><th>الفئة</th><th class="l">العدد</th><th class="l">الإجمالي</th></tr></thead><tbody>${denomRows}</tbody></table>` : ""}
+  ${itemRows ? `<hr><table><thead><tr><th>الصنف</th><th class="l">كمية</th><th class="l">إجمالي</th></tr></thead><tbody>${itemRows}</tbody></table>` : ""}
+  ${rep.notes ? `<hr><div class="sub">${esc(rep.notes)}</div>` : ""}
+  ${!isZ ? `<div class="foot">تقرير X — الوردية ما زالت مفتوحة</div>` : `<div class="foot">نهاية تقرير الوردية</div>`}
+  </body></html>`;
+}
+
 /** Open a print window, write, print. Popup-blocked → returns false. */
 export function printHtml(html: string): boolean {
   const w = window.open("", "_blank", "width=420,height=640");

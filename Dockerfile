@@ -9,13 +9,12 @@ RUN npm install --production
 #    here — each bundle is built fresh in the next steps).
 COPY . .
 
-# Closure Sprint v2 — the standalone Warehouse (/warehouse) and Order-to-Cash
-# (/sales) SPAs are RETIRED: their features live in the unified ERP (/app), and
-# server.js 302-redirects the old paths there. The image therefore builds exactly
-# TWO React bundles: the unified Back-Office (/app) and the Cashier V2 POS (/pos-v2).
+# Final cutover (FC-W3) — every legacy shell is deleted from the repo. The image
+# builds exactly TWO React bundles: the unified Back-Office (/app) and the React
+# cashier, which now OWNS /pos (/pos-v2 is a 301 to it). Rollback is a release
+# rollback, not a flag.
 
-# 3) Build the Cashier V2 React SPA (served at /pos-v2 behind POS_V2_ENABLED; the
-#    legacy /pos PWA remains the rollback path).
+# 3) Build the cashier React SPA (served at /pos; base /pos/).
 RUN npm run build:pos \
  && rm -rf frontend/pos/node_modules
 

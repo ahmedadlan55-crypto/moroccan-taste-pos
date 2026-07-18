@@ -114,6 +114,14 @@ export function PaymentDialog({ open, onClose }: { open: boolean; onClose: () =>
     if (tab.startsWith("owner:") && !ownerMethod) setTab("cash");
   }, [tab, ownerMethod]);
 
+  // The split tab's آجل leg requires a supervisor, same as the dedicated
+  // credit tab — if supervisor status drops mid-session (or the dialog was
+  // left open), a stale nonzero value must not silently keep counting toward
+  // the split sum once the field is disabled.
+  useEffect(() => {
+    if (!supervisor) setSplitCredit("");
+  }, [supervisor]);
+
   // Progress events from the engine's checkout chain.
   useEffect(() => {
     if (!open) return;
@@ -178,10 +186,16 @@ export function PaymentDialog({ open, onClose }: { open: boolean; onClose: () =>
   const creditNeedsCustomer = o2cEnabled && creditAmount > 0;
   const creditBlocked = creditNeedsCustomer && !cart.customerId;
 
+  // Split's آجل leg needs a supervisor too — checked BEFORE any network call,
+  // even when the arithmetic sum already matches the total (a role gate, not
+  // a sum-mismatch check).
+  const splitCreditNeedsSupervisor = tab === "split" && !supervisor && splitCreditNum > 0;
+
   const confirmDisabled =
     total <= 0 ||
     (tab === "cash" && tendered !== "" && tenderedNum < total) ||
     (tab === "split" && !!splitError) ||
+    splitCreditNeedsSupervisor ||
     creditBlocked ||
     noteTooShort ||
     !effectiveShiftId;
@@ -433,10 +447,18 @@ export function PaymentDialog({ open, onClose }: { open: boolean; onClose: () =>
                   <input
                     type="number" inputMode="decimal" min={0} step="0.01"
                     value={splitCredit}
-                    onChange={(e) => setSplitCredit(e.target.value)}
+                    // Guard (not just the `disabled` attribute): a non-supervisor
+                    // must never get a nonzero splitCredit into state, from any
+                    // input path.
+                    onChange={(e) => { if (supervisor) setSplitCredit(e.target.value); }}
                     onFocus={() => setActiveSplitField("credit")}
                     placeholder="0.00" dir="ltr"
-                    className={cn("field num", activeSplitField === "credit" && "ring-2 ring-teal-500/60")}
+                    disabled={!supervisor}
+                    title={!supervisor ? "البيع الآجل يتطلب مشرفًا/مديرًا" : undefined}
+                    className={cn(
+                      "field num disabled:cursor-not-allowed disabled:opacity-40",
+                      activeSplitField === "credit" && "ring-2 ring-teal-500/60",
+                    )}
                   />
                 </label>
               </div>

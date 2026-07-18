@@ -1958,5 +1958,29 @@
       "react": "same surface as pay-watchdog (the React POS has a single checkout path through PaymentDialog). NOTE: the earlier offline-checkout-watchdog «not-required» reasoning claimed fetch promises always settle — a hung connection (accepted, never answered) settles neither, which is exactly the case legacy guarded; this watchdog closes that residual hole.",
       "legacy": "public/pos/app.js:2753-2770",
       "test": "frontend/pos/src/components/__tests__/parity-sell-watchdog.test.tsx"
+  },
+  "product-card-qty-badge": {
+      "status": "covered",
+      "react": "frontend/pos/src/components/ProductGrid.tsx ProductCard — a live qty badge (sum of the item's cart lines, fed by App's cartQtyByItem) + a teal selection ring on in-cart cards. Overlays are absolute so measured virtualizer rows never move.",
+      "legacy": "public/pos/app.js:398-403 (inCart/qty per card) + :449 (qty-display) + .selected card class",
+      "test": "frontend/pos/src/components/__tests__/parity-sell-card-affordances.test.tsx (badge only on the in-cart card with the live qty; ring class present/absent)"
+  },
+  "product-card-inline-dec": {
+      "status": "covered",
+      "react": "frontend/pos/src/components/ProductGrid.tsx ProductCard — a small − button rendered only while the item is in the cart; it is a SIBLING of the add surface (a button cannot nest a button) so card taps still add. Wired to store.decrementItem via App.",
+      "legacy": "public/pos/app.js:448 decFromCart − button on the card",
+      "test": "frontend/pos/src/components/__tests__/parity-sell-card-affordances.test.tsx (− fires onDecrement with the item and never onAdd; the card body still adds)"
+  },
+  "cart-dec-line": {
+      "status": "covered",
+      "react": "frontend/pos/src/state/store.tsx decrementItem — targets the line a repeated card tap would grow (clean no-notes/no-discount line first — mirroring addItem's merge target — else the LAST line of the item); qty 1 → the line is removed; baseQty recomputes through the frozen unit factor; unknown item is a no-op.",
+      "legacy": "public/pos/app.js decFromCart (decrement the card's matching cart line; zero removes it)",
+      "test": "frontend/pos/src/state/__tests__/parity-store-cart.test.tsx cart-dec-line describe (decrement→remove, clean-line preference, last-line fallback with baseQty 72→48, ghost no-op)"
+  },
+  "product-card-custom-badge": {
+      "status": "covered",
+      "react": "frontend/pos/src/components/ProductGrid.tsx ProductCard — «مُخصَّص» mini-chip (top-start, saffron) on cards whose priceSource is set. NOTE: legacy showed it on __custom standalone price-list items; the pinned contract generalizes it to any card whose price a channel price list drove — a superset that includes the legacy case (standalone items also carry priceSource).",
+      "legacy": "public/pos/app.js:410-412 customBadge «مُخصَّص»",
+      "test": "frontend/pos/src/components/__tests__/parity-sell-card-affordances.test.tsx (chip only on the priceSource card)"
   }
 }

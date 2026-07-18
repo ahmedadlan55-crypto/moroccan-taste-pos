@@ -143,6 +143,7 @@ export function makeCtx(opts: MakeCtxOpts = {}): PosContextValue {
     cart,
     totals,
     addItem: vi.fn(),
+    decrementItem: vi.fn(),
     setQty: vi.fn(),
     setLineUnit: vi.fn(),
     removeLine: vi.fn(),

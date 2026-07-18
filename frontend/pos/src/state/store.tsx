@@ -184,6 +184,10 @@ export interface PosContextValue {
   totals: CartTotals;
   /** Add an item, optionally in a specific unit (base if omitted). */
   addItem: (item: CatalogItem, unitCode?: string | null) => void;
+  /** Card − affordance: decrement one unit of this item — targets the line a
+   *  repeated card tap would grow (clean/no-notes first, else the last line of
+   *  the item). Removing the last unit removes the line (cart-dec-line). */
+  decrementItem: (itemId: string) => void;
   /** Line ops address lines by INDEX — two lines may share a menuId
    *  (e.g. one with kitchen notes, one without). */
   setQty: (index: number, qty: number) => void;
@@ -364,6 +368,30 @@ export function PosProvider({ children }: { children: ReactNode }) {
     [mutate],
   );
 
+  // Legacy decFromCart (app.js:448) decremented the card's matching cart line.
+  // Preference order mirrors addItem's merge target so + and − act on the SAME
+  // line: a clean line (no notes / no discount) of the item first, else the
+  // LAST line of the item. qty 1 → the line goes away entirely.
+  const decrementItem = useCallback(
+    (itemId: string) =>
+      mutate((c) => {
+        let idx = c.lines.findIndex((l) => l.menuId === itemId && !l.notes && !l.lineDiscount);
+        if (idx === -1) {
+          for (let i = c.lines.length - 1; i >= 0; i--) {
+            if (c.lines[i]!.menuId === itemId) {
+              idx = i;
+              break;
+            }
+          }
+        }
+        if (idx === -1) return c;
+        const target = c.lines[idx]!;
+        if (target.qty <= 1) return { ...c, lines: c.lines.filter((_, i) => i !== idx) };
+        return { ...c, lines: c.lines.map((l, i) => (i === idx ? withBase(l, { qty: l.qty - 1 }) : l)) };
+      }),
+    [mutate],
+  );
+
   const setQty = useCallback(
     (index: number, qty: number) =>
       mutate((c) => ({
@@ -482,6 +510,7 @@ export function PosProvider({ children }: { children: ReactNode }) {
     cart,
     totals,
     addItem,
+    decrementItem,
     setQty,
     setLineUnit,
     removeLine,

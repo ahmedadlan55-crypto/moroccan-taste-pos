@@ -111,6 +111,7 @@ function makeFixture(overrides: Partial<PosContextValue> = {}): PosContextValue 
     cart,
     totals: cartTotals(cart.lines, null),
     addItem: vi.fn(),
+    decrementItem: vi.fn(),
     setQty: vi.fn(),
     setLineUnit: vi.fn(),
     removeLine: vi.fn(),

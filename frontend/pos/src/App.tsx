@@ -62,6 +62,7 @@ export default function App() {
     cart,
     totals,
     addItem,
+    decrementItem,
     startNewOrder,
     engine,
     engineStatus,
@@ -227,6 +228,13 @@ export default function App() {
     return null;
   }, [catalog]);
 
+  // Live per-item cart quantity → the card qty badge + selection ring + − button.
+  const cartQtyByItem = useMemo(() => {
+    const m: Record<string, number> = {};
+    for (const l of cart.lines) m[l.menuId] = (m[l.menuId] ?? 0) + l.qty;
+    return m;
+  }, [cart.lines]);
+
   if (!user) return <LoginRequired />;
 
   const itemCount = cart.lines.reduce((s, l) => s + l.qty, 0);
@@ -308,7 +316,16 @@ export default function App() {
             <ErrorBanner message={catalogError} onRetry={refetchCatalog} />
           ) : (
             <div ref={setGridScrollEl} className="scrollbar-thin min-h-0 flex-1 overflow-y-auto pb-24 md:pb-0">
-              <ProductGrid catalog={catalog} loading={catalogLoading} category={category} query={query} onAdd={addItem} scrollElement={gridScrollEl} />
+              <ProductGrid
+                catalog={catalog}
+                loading={catalogLoading}
+                category={category}
+                query={query}
+                onAdd={addItem}
+                scrollElement={gridScrollEl}
+                cartQty={cartQtyByItem}
+                onDecrement={(item) => decrementItem(item.id)}
+              />
             </div>
           )}
         </section>

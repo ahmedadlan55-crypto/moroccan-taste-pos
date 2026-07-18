@@ -184,6 +184,44 @@ describe("order type — dine_in table number is cleared when leaving dine_in", 
   });
 });
 
+describe("cart-dec-line — decrementItem targets the line a card tap would grow", () => {
+  it("decrements the clean line; qty 1 → the line is removed entirely", () => {
+    renderStore();
+    act(() => ctx.addItem(TEA));
+    act(() => ctx.addItem(TEA)); // qty 2
+    act(() => ctx.decrementItem("M1"));
+    expect(ctx.cart.lines[0]).toMatchObject({ menuId: "M1", qty: 1 });
+    act(() => ctx.decrementItem("M1"));
+    expect(ctx.cart.lines).toHaveLength(0);
+  });
+
+  it("prefers the CLEAN line over a noted one (mirrors addItem's merge target)", () => {
+    renderStore();
+    act(() => ctx.addItem(TEA));
+    act(() => ctx.setLineNotes(0, "بدون سكر"));
+    act(() => ctx.addItem(TEA)); // clean line at index 1
+    act(() => ctx.decrementItem("M1"));
+    expect(ctx.cart.lines).toHaveLength(1);
+    expect(ctx.cart.lines[0]).toMatchObject({ notes: "بدون سكر", qty: 1 });
+  });
+
+  it("falls back to the LAST line of the item when no clean line exists, keeping baseQty in sync", () => {
+    renderStore();
+    act(() => ctx.addItem(BOXED, "CTN"));
+    act(() => ctx.setQty(0, 3)); // 3 cartons = baseQty 72
+    act(() => ctx.setLineDiscount(0, 2)); // no longer 'clean'
+    act(() => ctx.decrementItem("M9"));
+    expect(ctx.cart.lines[0]).toMatchObject({ qty: 2, baseQty: 48 });
+  });
+
+  it("an item not in the cart is a no-op", () => {
+    renderStore();
+    act(() => ctx.addItem(TEA));
+    act(() => ctx.decrementItem("GHOST"));
+    expect(ctx.cart.lines).toHaveLength(1);
+  });
+});
+
 describe("startNewOrder — a fresh doc, old lines gone", () => {
   it("resets the cart to an empty open order with a NEW id", () => {
     renderStore();

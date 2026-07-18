@@ -11,6 +11,7 @@ describe("Dialog", () => {
     );
     const dialog = screen.getByRole("dialog");
     expect(dialog).toHaveAttribute("aria-modal", "true");
+    expect(dialog).toHaveClass("max-h-[100dvh]", "overflow-hidden", "flex-col");
     expect(screen.getByText("تأكيد العملية")).toBeInTheDocument();
   });
 

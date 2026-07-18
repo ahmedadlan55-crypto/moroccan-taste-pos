@@ -10,13 +10,20 @@ export interface PageHeaderProps {
 /** The one page title block: eyebrow + H1 + subtitle + right-aligned actions. */
 export function PageHeader({ eyebrow, title, subtitle, action }: PageHeaderProps) {
   return (
-    <div className="mb-6 flex flex-col gap-4 xl:flex-row xl:items-end xl:justify-between">
+    <div className="mb-6 flex min-w-0 flex-col gap-4 xl:flex-row xl:items-end xl:justify-between">
       <div className="min-w-0">
         {eyebrow && <div className="mb-1 text-xs font-extrabold tracking-wide text-teal-700">{eyebrow}</div>}
         <h1 className="text-2xl font-extrabold tracking-tight text-slate-950 sm:text-3xl">{title}</h1>
         {subtitle && <p className="mt-2 max-w-3xl text-sm font-medium leading-6 text-slate-500">{subtitle}</p>}
       </div>
-      {action && <div className="flex flex-col gap-2 sm:flex-row sm:items-center">{action}</div>}
+      {action && (
+        <div
+          className="grid w-full min-w-0 grid-cols-1 gap-2 sm:flex sm:w-auto sm:flex-wrap sm:items-center sm:justify-end [&>*]:min-w-0 [&>button]:w-full sm:[&>button]:w-auto"
+          aria-label="إجراءات الصفحة"
+        >
+          {action}
+        </div>
+      )}
     </div>
   );
 }
@@ -45,7 +52,11 @@ export function PanelTitle({
           {subtitle && <p className="mt-0.5 text-xs font-medium text-slate-500">{subtitle}</p>}
         </div>
       </div>
-      {action}
+      {action && (
+        <div className="grid w-full grid-cols-1 gap-2 sm:flex sm:w-auto sm:flex-wrap sm:items-center [&>button]:w-full sm:[&>button]:w-auto">
+          {action}
+        </div>
+      )}
     </div>
   );
 }

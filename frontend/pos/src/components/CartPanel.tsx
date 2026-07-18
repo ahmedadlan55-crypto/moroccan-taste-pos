@@ -56,17 +56,17 @@ function CartLineRow({ line, index }: { line: CartLine; index: number }) {
 
   return (
     <li className="rounded-xl border border-slate-100 bg-white shadow-sm">
-      <div className="flex items-center gap-1.5 p-2">
+      <div className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-2 p-2">
         <button
           type="button"
           onClick={() => setExpanded((v) => !v)}
-          className="flex min-h-11 flex-1 items-center gap-1 text-start"
+          className="flex min-h-11 min-w-0 items-center gap-1 text-start"
           aria-expanded={expanded}
           aria-label={`تفاصيل ${line.name}`}
         >
-          <span className="flex-1">
-            <span className="block text-sm font-extrabold leading-tight text-ink">{line.name}</span>
-            <span className="mt-0.5 block text-[11px] font-bold text-slate-400">
+          <span className="min-w-0 flex-1">
+            <span className="line-clamp-2 block break-words text-sm font-extrabold leading-tight text-ink [overflow-wrap:anywhere]" title={line.name}>{line.name}</span>
+            <span className="mt-0.5 block break-words text-[11px] font-bold text-slate-400">
               <Money value={fmt2(line.unitPrice)} /> ر.س{isMajor && baseUnitName ? `/${baseUnitName}` : ""}
               {isMajor ? (
                 <span className="ms-1.5 text-teal-600">
@@ -88,8 +88,18 @@ function CartLineRow({ line, index }: { line: CartLine; index: number }) {
           )}
         </button>
 
-        {/* Qty stepper */}
-        <div className="flex items-center gap-0.5 rounded-xl border border-slate-200 bg-slate-50 p-0.5">
+        <button
+          type="button"
+          onClick={() => removeLine(index)}
+          aria-label={`حذف ${line.name}`}
+          className="btn-press flex h-11 w-11 shrink-0 items-center justify-center rounded-xl text-red-400 hover:bg-red-50 hover:text-red-600"
+        >
+          <Trash2 className="h-4 w-4" aria-hidden />
+        </button>
+
+        <div className="col-span-2 flex min-w-0 flex-wrap items-center justify-between gap-2 border-t border-slate-100 pt-2">
+          {/* Qty stepper */}
+          <div className="flex shrink-0 items-center gap-0.5 rounded-xl border border-slate-200 bg-slate-50 p-0.5">
           <button
             type="button"
             onClick={() => setQty(index, line.qty + 1)}
@@ -107,9 +117,9 @@ function CartLineRow({ line, index }: { line: CartLine; index: number }) {
           >
             <Minus className="h-4 w-4" aria-hidden />
           </button>
-        </div>
+          </div>
 
-        {line.enteredUnitName ? (
+          {line.enteredUnitName ? (
           <span
             className={cn(
               "shrink-0 rounded-lg px-1.5 py-1 text-[11px] font-extrabold",
@@ -119,20 +129,12 @@ function CartLineRow({ line, index }: { line: CartLine; index: number }) {
           >
             {line.enteredUnitName}
           </span>
-        ) : null}
+          ) : null}
 
-        <div className="w-[4.5rem] text-end">
-          <Money value={fmt2(t.gross)} className="text-sm font-extrabold text-ink" />
+          <div className="ms-auto shrink-0 text-end">
+            <Money value={fmt2(t.gross)} className="text-sm font-extrabold text-ink" />
+          </div>
         </div>
-
-        <button
-          type="button"
-          onClick={() => removeLine(index)}
-          aria-label={`حذف ${line.name}`}
-          className="btn-press flex h-11 w-11 items-center justify-center rounded-xl text-red-400 hover:bg-red-50 hover:text-red-600"
-        >
-          <Trash2 className="h-4 w-4" aria-hidden />
-        </button>
       </div>
 
       {expanded ? (

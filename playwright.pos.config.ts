@@ -50,5 +50,20 @@ export default defineConfig({
       name: "desktop",
       use: { ...devices["Desktop Chrome"], viewport: { width: 1440, height: 900 } },
     },
+    {
+      name: "mobile-390",
+      testMatch: "**/responsive.spec.ts",
+      use: { ...devices["Desktop Chrome"], viewport: { width: 390, height: 844 }, hasTouch: true },
+    },
+    {
+      name: "tablet-768",
+      testMatch: "**/responsive.spec.ts",
+      use: { ...devices["Desktop Chrome"], viewport: { width: 768, height: 1024 }, hasTouch: true },
+    },
+    {
+      name: "laptop-1024",
+      testMatch: "**/responsive.spec.ts",
+      use: { ...devices["Desktop Chrome"], viewport: { width: 1024, height: 768 } },
+    },
   ],
 });

@@ -279,24 +279,46 @@ export const SearchBox = forwardRef<HTMLInputElement, Pick<ProductGridProps, "qu
   },
 );
 
-/** Mirrors the Tailwind classes below (`grid-cols-2 sm:grid-cols-3 xl:grid-cols-4`).
- *  These are VIEWPORT media queries, so the column count follows window width —
- *  not the container's. If those classes change, change this with them. */
-const colsFor = (w: number) => (w >= 1280 ? 4 : w >= 640 ? 3 : 2);
+/** Column count follows the space actually available to the product surface,
+ *  not the browser viewport. On desktop the cart/category rails can consume
+ *  half the viewport; using viewport breakpoints there produced crushed cards. */
+export const productColumnsForWidth = (w: number) => (w >= 900 ? 4 : w >= 600 ? 3 : 2);
 /** Card min-height (5.5rem = 88px) + the 2.5 gap (10px). The virtualizer measures
  *  each real row anyway; this only has to be close enough to size the scrollbar
  *  before anything is measured. */
 const ROW_ESTIMATE = 98;
-const GRID_CLASS = "grid grid-cols-2 gap-2.5 sm:grid-cols-3 xl:grid-cols-4";
+const gridClassFor = (cols: number) =>
+  cn(
+    "grid gap-2.5",
+    cols === 4 ? "grid-cols-4" : cols === 3 ? "grid-cols-3" : "grid-cols-2",
+  );
 
-function useColumns(): number {
-  const [cols, setCols] = useState(() => (typeof window === "undefined" ? 2 : colsFor(window.innerWidth)));
+function useColumns(scrollElement: HTMLElement | null | undefined): number {
+  const [cols, setCols] = useState(2);
   useEffect(() => {
-    const onResize = () => setCols(colsFor(window.innerWidth));
+    const measure = (el?: HTMLElement | null) => {
+      const width = el
+        ? el.getBoundingClientRect().width || el.clientWidth || el.offsetWidth
+        : typeof window !== "undefined"
+          ? window.innerWidth
+          : 0;
+      if (width > 0) setCols(productColumnsForWidth(width));
+    };
+
+    if (scrollElement) {
+      measure(scrollElement);
+      const observer = new ResizeObserver(() => measure(scrollElement));
+      observer.observe(scrollElement);
+      return () => observer.disconnect();
+    }
+
+    // Unwindowed consumers do not provide a container. Preserve a safe viewport
+    // fallback for them, while App always supplies its real scroll surface.
+    const onResize = () => measure(null);
     onResize();
     window.addEventListener("resize", onResize);
     return () => window.removeEventListener("resize", onResize);
-  }, []);
+  }, [scrollElement]);
   return cols;
 }
 
@@ -305,7 +327,7 @@ export function ProductGrid({ catalog, loading, category, query, onAdd, scrollEl
     () => (catalog ? filterItems(catalog.items, category, query) : []),
     [catalog, category, query],
   );
-  const cols = useColumns();
+  const cols = useColumns(scrollElement);
   const rowCount = Math.ceil(visible.length / cols);
   // Windowed by ROW, not by card: the grid is 2-4 columns, so the scroll axis is
   // rows. The catalog is ~2,000 items × 5 nodes = ~10k DOM nodes if we map the
@@ -325,7 +347,7 @@ export function ProductGrid({ catalog, loading, category, query, onAdd, scrollEl
 
   if (loading) {
     return (
-      <div className="grid grid-cols-2 gap-2.5 sm:grid-cols-3 xl:grid-cols-4">
+      <div className={gridClassFor(cols)}>
         {Array.from({ length: 12 }, (_, i) => (
           <Skeleton key={i} className="min-h-[5.5rem]" />
         ))}
@@ -348,7 +370,7 @@ export function ProductGrid({ catalog, loading, category, query, onAdd, scrollEl
   // nothing and show a blank grid.
   if (scrollElement === undefined) {
     return (
-      <div className={cn(GRID_CLASS)}>
+      <div className={gridClassFor(cols)}>
         {visible.map((item) => (
           <ProductCard key={item.id} item={item} onAdd={onAdd} qty={cartQty?.[item.id] ?? 0} onDec={onDecrement} />
         ))}
@@ -369,7 +391,7 @@ export function ProductGrid({ catalog, loading, category, query, onAdd, scrollEl
             // left+right rather than an inline-start offset: the row spans the full
             // width, so this is direction-agnostic and stays correct in RTL.
             style={{ position: "absolute", top: 0, left: 0, right: 0, transform: `translateY(${vRow.start}px)` }}
-            className={cn(GRID_CLASS, "pb-2.5")}
+            className={cn(gridClassFor(cols), "pb-2.5")}
           >
             {visible.slice(start, start + cols).map((item) => (
               <ProductCard key={item.id} item={item} onAdd={onAdd} qty={cartQty?.[item.id] ?? 0} onDec={onDecrement} />

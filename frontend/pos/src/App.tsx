@@ -33,7 +33,7 @@ import { Button, ErrorBanner, Money } from "@/components/ui";
 
 function LoginRequired() {
   return (
-    <main className="flex min-h-screen flex-col items-center justify-center gap-4 p-6 text-center">
+    <main className="flex min-h-[100dvh] flex-col items-center justify-center gap-4 p-6 text-center">
       <div className="flex h-20 w-20 items-center justify-center rounded-3xl bg-ink text-saffron-500 shadow-lift">
         <ChefHat className="h-10 w-10" aria-hidden />
       </div>
@@ -96,6 +96,8 @@ export default function App() {
   const [lastHeld, setLastHeld] = useState<LocalOrder | null>(null);
   const [cartSheetOpen, setCartSheetOpen] = useState(false);
   const [drainOpen, setDrainOpen] = useState(false);
+  const overlayOpen = payOpen || heldOpen || shiftOpen || voidOpen || discountOpen
+    || syncOpen || myInvoicesOpen || stocktakeOpen || requisitionsOpen || cartSheetOpen || drainOpen;
 
   // ── PWA (SW registration + install prompt) + legacy-queue drain ──────────
   useEffect(() => {
@@ -138,13 +140,16 @@ export default function App() {
   // ── Keyboard shortcuts ───────────────────────────────────────────────────
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
+      const target = e.target instanceof HTMLElement ? e.target : null;
+      const isEditing = !!target?.closest("input, textarea, select, [contenteditable='true']");
+      if (overlayOpen || isEditing) return;
       if (e.key === "F2") {
         e.preventDefault();
         searchRef.current?.focus();
         searchRef.current?.select();
       } else if (e.key === "F4") {
         e.preventDefault();
-        if (cart.lines.length > 0) setPayOpen(true);
+        if (cart.lines.length > 0 && !payOpen) setPayOpen(true);
       } else if (e.key === "F9") {
         e.preventDefault();
         if (cart.lines.length > 0 && !holdBusy) void holdCurrent();
@@ -153,7 +158,7 @@ export default function App() {
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [cart.lines.length, holdBusy]);
+  }, [cart.lines.length, holdBusy, overlayOpen, payOpen]);
 
   // ── Actions ──────────────────────────────────────────────────────────────
   const onScanSubmit = useCallback(() => {
@@ -253,7 +258,7 @@ export default function App() {
   );
 
   return (
-    <div className="flex h-screen flex-col overflow-hidden">
+    <div className="flex h-[100dvh] min-h-[100svh] flex-col overflow-hidden">
       <Toasts />
       <Header
         onOpenShiftDialog={() => setShiftOpen(true)}
@@ -264,7 +269,7 @@ export default function App() {
         onOpenDrainReport={() => setDrainOpen(true)}
       />
 
-      <main className="flex min-h-0 flex-1 gap-3 p-3">
+      <main className="flex min-h-0 flex-1 gap-3 px-3 pb-[calc(5rem+env(safe-area-inset-bottom))] pt-3 md:pb-3">
         {/* Category rail — first column in RTL, ≥1024px only */}
         <aside className="hidden w-44 shrink-0 lg:block" aria-label="التصنيفات">
           <CategoryRail categories={catalog?.categories ?? []} counts={categoryCounts} active={category} onSelect={setCategory} />
@@ -272,19 +277,19 @@ export default function App() {
 
         {/* Products */}
         <section className="flex min-h-0 min-w-0 flex-1 flex-col gap-2.5" aria-label="الأصناف">
-          <div className="flex flex-wrap items-center gap-2">
-            <div className="min-w-[12rem] flex-1">
+          <div className="grid min-w-0 grid-cols-1 gap-2 sm:grid-cols-[minmax(12rem,1fr)_auto]">
+            <div className="min-w-0">
               <SearchBox ref={searchRef} query={query} onQueryChange={setQuery} onScanSubmit={onScanSubmit} />
             </div>
             {showChannelPicker ? (
-              <label className="flex shrink-0 items-center gap-1.5">
+              <label className="flex min-w-0 items-center gap-1.5 sm:shrink-0">
                 <Store className="h-4 w-4 text-slate-400" aria-hidden />
                 <span className="sr-only">قناة البيع</span>
                 <select
                   value={activeChannelId ?? ""}
                   onChange={(e) => setChannel(e.target.value || null)}
                   aria-label="قناة البيع"
-                  className="field min-h-11 w-auto max-w-[11rem] text-xs font-extrabold"
+                  className="field min-h-11 min-w-0 flex-1 text-xs font-extrabold sm:w-auto sm:max-w-[11rem]"
                 >
                   <option value="">الأساسي</option>
                   {channels.map((c) => (
@@ -296,9 +301,9 @@ export default function App() {
               </label>
             ) : null}
             {priceListName ? (
-              <span className="flex shrink-0 items-center gap-1.5 rounded-full border border-teal-200 bg-teal-50 px-3 py-1.5 text-[11px] font-extrabold text-teal-700">
+              <span className="flex min-w-0 items-center gap-1.5 rounded-xl border border-teal-200 bg-teal-50 px-3 py-2 text-[11px] font-extrabold text-teal-700 sm:col-span-2 sm:justify-self-end">
                 <Tag className="h-3.5 w-3.5" aria-hidden />
-                أسعار من قائمة: <span className="rounded-md bg-white px-1.5">{priceListName}</span>
+                <span className="truncate">أسعار من قائمة: <span className="rounded-md bg-white px-1.5">{priceListName}</span></span>
               </span>
             ) : null}
           </div>
@@ -315,7 +320,7 @@ export default function App() {
           {catalogError && !catalog ? (
             <ErrorBanner message={catalogError} onRetry={refetchCatalog} />
           ) : (
-            <div ref={setGridScrollEl} className="scrollbar-thin min-h-0 flex-1 overflow-y-auto pb-24 md:pb-0">
+            <div ref={setGridScrollEl} className="scrollbar-thin min-h-0 flex-1 overflow-y-auto">
               <ProductGrid
                 catalog={catalog}
                 loading={catalogLoading}
@@ -337,15 +342,15 @@ export default function App() {
       </main>
 
       {/* Mobile bottom cart bar + sheet (<768px) */}
-      <div className="fixed inset-x-0 bottom-0 z-40 border-t border-slate-200 bg-white/95 p-2.5 shadow-lift backdrop-blur md:hidden">
+      <div className="fixed inset-x-0 bottom-0 z-40 border-t border-slate-200 bg-white/95 px-2.5 pb-[calc(0.625rem+env(safe-area-inset-bottom))] pt-2.5 shadow-lift backdrop-blur md:hidden">
         <Button variant="primary" size="lg" className="w-full" onClick={() => setCartSheetOpen(true)}>
           <ShoppingBasket className="h-5 w-5" aria-hidden />
           السلة (<Money value={fmtInt(itemCount)} />) — <Money value={fmt2(totals.total)} /> ر.س
         </Button>
       </div>
       {cartSheetOpen ? (
-        <div className="fixed inset-0 z-50 flex flex-col bg-ink/45 md:hidden" role="presentation" onMouseDown={(e) => e.target === e.currentTarget && setCartSheetOpen(false)}>
-          <div className="sheet-in mt-14 flex min-h-0 flex-1 flex-col overflow-hidden rounded-t-2xl bg-canvas p-2.5">
+        <div className="fixed inset-0 z-50 flex h-[100dvh] flex-col bg-ink/45 pt-[env(safe-area-inset-top)] md:hidden" role="presentation" onMouseDown={(e) => e.target === e.currentTarget && setCartSheetOpen(false)}>
+          <div className="sheet-in mt-12 flex min-h-0 flex-1 flex-col overflow-hidden rounded-t-2xl bg-canvas px-2.5 pb-[calc(0.625rem+env(safe-area-inset-bottom))] pt-2.5">
             <div className="mb-1 flex justify-center">
               <button
                 type="button"

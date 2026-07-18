@@ -59,5 +59,18 @@ export default defineConfig({
         deviceScaleFactor: 2,
       },
     },
+    {
+      name: "tablet-768",
+      use: {
+        viewport: { width: 768, height: 1024 },
+        hasTouch: true,
+      },
+    },
+    {
+      name: "laptop-1024",
+      use: {
+        viewport: { width: 1024, height: 768 },
+      },
+    },
   ],
 });

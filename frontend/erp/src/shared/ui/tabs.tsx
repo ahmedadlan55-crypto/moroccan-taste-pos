@@ -1,4 +1,4 @@
-import { useId, useRef, type ReactNode } from "react";
+import { useEffect, useId, useRef, type ReactNode } from "react";
 import { cn } from "@/shared/lib";
 
 export interface TabItem {
@@ -23,6 +23,13 @@ export function Tabs({ items, value, onChange, className, "aria-label": ariaLabe
   const baseId = useId();
   const refs = useRef<Record<string, HTMLButtonElement | null>>({});
 
+  useEffect(() => {
+    const selected = refs.current[value];
+    if (selected && typeof selected.scrollIntoView === "function") {
+      selected.scrollIntoView({ behavior: "smooth", block: "nearest", inline: "center" });
+    }
+  }, [value]);
+
   const move = (dir: 1 | -1) => {
     const enabled = items.filter((t) => !t.disabled);
     const idx = enabled.findIndex((t) => t.value === value);
@@ -35,11 +42,12 @@ export function Tabs({ items, value, onChange, className, "aria-label": ariaLabe
   return (
     <div
       role="tablist"
+      aria-orientation="horizontal"
       aria-label={ariaLabel}
       className={cn(
         // Scroll the strip horizontally when there are more tabs than fit (e.g. the
         // 6-tab approval-flow builder on a 390px phone) instead of overflowing the page.
-        "flex items-center gap-1 overflow-x-auto border-b border-slate-200 scrollbar-thin",
+        "flex max-w-full items-center gap-1 overflow-x-auto scroll-smooth border-b border-slate-200 px-1 scrollbar-thin",
         className,
       )}
       onKeyDown={(e) => {

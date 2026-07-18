@@ -168,6 +168,7 @@ export const NAV: NavGroup[] = [
     id: "workflow",
     label: "المعاملات والموافقات",
     items: [
+      { id: "wf-new", path: "/workflow/new", label: "إنشاء معاملة", icon: "FileText", cap: "txn.create", module: "workflow" },
       { id: "wf-inbox", path: "/workflow/inbox", label: "صندوق الوارد", icon: "Inbox", cap: "workflow.inbox.view", module: "workflow" },
       { id: "wf-outbox", path: "/workflow/outbox", label: "صندوق الصادر", icon: "Send", cap: "workflow.outbox.view", module: "workflow" },
       { id: "wf-my-requests", path: "/workflow/my-requests", label: "طلباتي", icon: "FileClock", cap: "workflow.myrequests.view", module: "workflow" },

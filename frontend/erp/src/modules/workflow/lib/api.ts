@@ -6,24 +6,28 @@
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { apiClient } from "@/shared/api";
-import type { TxnBundle, TxnListItem } from "./types";
+import type { TxnBundle, TxnListFilters, TxnListItem } from "./types";
 
 interface Opts {
   signal?: AbortSignal;
 }
 
 /** صندوق الوارد — transactions awaiting my action (received from others). */
-export function fetchIncoming(username: string, opts?: Opts) {
+function listParams(username: string, filters?: TxnListFilters) {
+  return { username, ...(filters ?? {}) };
+}
+
+export function fetchIncoming(username: string, opts?: Opts & { filters?: TxnListFilters }) {
   return apiClient.get<TxnListItem[]>("/workflow/incoming", {
-    params: { username },
+    params: listParams(username, opts?.filters),
     signal: opts?.signal,
   });
 }
 
 /** صندوق الصادر — transactions I created/sent. */
-export function fetchOutbox(username: string, opts?: Opts) {
+export function fetchOutbox(username: string, opts?: Opts & { filters?: TxnListFilters }) {
   return apiClient.get<TxnListItem[]>("/workflow/outbox", {
-    params: { username },
+    params: listParams(username, opts?.filters),
     signal: opts?.signal,
   });
 }
@@ -68,6 +72,53 @@ const bk = {
   slaOverdue: (username: string) => ["workflow", "sla", "overdue", username] as const,
   slaStats: () => ["workflow", "sla", "stats"] as const,
 };
+
+export interface CreateTransactionInput {
+  transactionTypeId: string;
+  title: string;
+  subject: string;
+  username: string;
+  description?: string;
+  contentHtml?: string;
+  amount?: number;
+  importance: "low" | "medium" | "high" | "critical";
+  scope: "internal" | "external";
+  recipientUsername?: string;
+  dueDate?: string;
+  contentSecrecy?: "normal" | "confidential" | "secret" | "top_secret";
+  attachmentsSecrecy?: "normal" | "confidential" | "secret" | "top_secret";
+  attachment?: string;
+  saveAsDraft?: boolean;
+}
+
+export interface MarkReadResult {
+  success: boolean;
+  error?: string;
+}
+
+export function useMarkTxnRead() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (id: string) =>
+      apiClient.post<MarkReadResult>(`/workflow/transactions/${id}/mark-read`),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["workflow"] }),
+  });
+}
+
+export interface CreateTransactionResult extends MutationEnvelope {
+  txnNumber?: string;
+  currentAssignee?: string;
+}
+
+/** Creates a routed transaction or an explicit server-side draft. */
+export function useCreateTransaction() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (input: CreateTransactionInput) =>
+      apiClient.post<CreateTransactionResult>("/workflow/transactions", input),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["workflow"] }),
+  });
+}
 
 // ════════════════════════════════════════════════════════════════════════════
 // (A) INBOX ACTIONS

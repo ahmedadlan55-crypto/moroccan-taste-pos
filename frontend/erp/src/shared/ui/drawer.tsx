@@ -17,9 +17,18 @@ interface DrawerProps {
   icon?: LucideIcon;
   children: ReactNode;
   footer?: ReactNode;
+  /** Responsive panel width. Mobile always uses the full viewport. */
+  size?: "sm" | "md" | "lg" | "xl";
 }
 
-export function Drawer({ open, onClose, title, eyebrow = "عرض سريع", icon: Icon, children, footer }: DrawerProps) {
+const DRAWER_SIZE = {
+  sm: "sm:max-w-md",
+  md: "sm:max-w-xl",
+  lg: "sm:max-w-2xl",
+  xl: "sm:max-w-4xl",
+} as const;
+
+export function Drawer({ open, onClose, title, eyebrow = "عرض سريع", icon: Icon, children, footer, size = "md" }: DrawerProps) {
   const panelRef = useFocusTrap<HTMLDivElement>({ active: open, onClose });
 
   if (typeof document === "undefined") return null;
@@ -42,14 +51,14 @@ export function Drawer({ open, onClose, title, eyebrow = "عرض سريع", icon
             animate={{ x: 0 }}
             exit={{ x: "100%" }}
             transition={{ type: "spring", damping: 28, stiffness: 280 }}
-            className="absolute inset-y-0 right-0 flex w-full max-w-xl flex-col border-l border-slate-200 bg-white shadow-2xl focus:outline-none"
+            className={`absolute inset-y-0 right-0 flex h-[100dvh] w-full flex-col border-l border-slate-200 bg-white shadow-2xl focus:outline-none ${DRAWER_SIZE[size]}`}
             role="dialog"
             aria-modal="true"
             aria-label={title}
             tabIndex={-1}
             dir="rtl"
           >
-            <div className="flex items-start gap-3 border-b border-slate-100 p-5">
+            <div className="flex items-start gap-3 border-b border-slate-100 p-4 sm:p-5">
               {Icon && (
                 <span className="grid h-11 w-11 shrink-0 place-items-center rounded-xl bg-teal-50 text-teal-700">
                   <Icon className="h-5 w-5" />
@@ -63,8 +72,12 @@ export function Drawer({ open, onClose, title, eyebrow = "عرض سريع", icon
                 <X className="h-5 w-5" />
               </IconButton>
             </div>
-            <div className="scrollbar-thin flex-1 overflow-y-auto p-5">{children}</div>
-            {footer && <div className="flex flex-wrap gap-2 border-t border-slate-100 p-4">{footer}</div>}
+            <div className="scrollbar-thin min-h-0 flex-1 overflow-y-auto p-4 sm:p-5">{children}</div>
+            {footer && (
+              <div className="grid grid-cols-1 gap-2 border-t border-slate-100 bg-white p-4 pb-[max(1rem,env(safe-area-inset-bottom))] sm:flex sm:flex-wrap sm:items-center [&>button]:w-full sm:[&>button]:w-auto">
+                {footer}
+              </div>
+            )}
           </motion.div>
         </div>
       )}

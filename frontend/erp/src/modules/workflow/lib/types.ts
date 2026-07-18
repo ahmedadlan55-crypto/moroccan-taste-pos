@@ -29,10 +29,25 @@ export interface TxnListItem {
   readAt?: string | null;
   dueDate?: string | null;
   isOverdue?: boolean;
+  expenseCategoryId?: string;
+  expenseCategoryName?: string;
+  scope?: "internal" | "external" | string;
   isReturnedForEdit?: boolean;
   returnReason?: string | null;
   createdAt?: string;
   updatedAt?: string;
+}
+
+export interface TxnListFilters {
+  status?: string;
+  importance?: string;
+  typeId?: string;
+  readStatus?: "read" | "unread";
+  overdue?: "1";
+  subject?: string;
+  txnNumber?: string;
+  startDate?: string;
+  endDate?: string;
 }
 
 /** One node of the transaction-type approval path (full-bundle `workflowPath`). */
@@ -71,15 +86,44 @@ export interface TxnRecipient {
   responseReceived?: boolean;
 }
 
+export interface TxnAttachment {
+  id: string | number;
+  fileName?: string;
+  mime?: string;
+  dataUrl?: string;
+  uploadedBy?: string;
+  uploadedAt?: string;
+  logId?: string | number | null;
+}
+
+export interface TxnReply {
+  id: string | number;
+  replyText?: string;
+  attachment?: string;
+  attachmentName?: string;
+  attachmentMime?: string;
+  authorUsername?: string;
+  authorName?: string;
+  authorRole?: string;
+  authorPosition?: string;
+  authorBranch?: string;
+  receivedAt?: string;
+  createdAt: string;
+}
+
 /**
  * The one-shot read bundle for the detail drawer
  * (GET /api/workflow/transactions/:id/full-bundle).
  */
 export interface TxnBundle extends TxnListItem {
   description?: string;
+  contentHtml?: string;
   contentSecrecy?: string;
   attachmentsSecrecy?: string;
+  issuingEntityName?: string;
   hijriDate?: string;
+  passedCeoAt?: string | null;
+  passedCeoBy?: string | null;
   createdByName?: string;
   createdByPosition?: string;
   createdByBranch?: string;
@@ -89,6 +133,8 @@ export interface TxnBundle extends TxnListItem {
   recipients?: TxnRecipient[];
   workflowPath?: WorkflowPathStep[];
   logs?: TxnLog[];
+  attachments?: TxnAttachment[];
+  replies?: TxnReply[];
   /** Present on the error envelope some legacy handlers return with HTTP 200. */
   error?: string;
 }

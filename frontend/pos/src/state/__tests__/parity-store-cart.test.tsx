@@ -19,6 +19,11 @@ const engine = makeFakeEngine();
 vi.mock("@/lib/auth", () => ({
   currentUser: () => ({ username: "cashier1", role: "cashier" }),
   isSupervisor: () => false,
+  getToken: () => "tok-test",
+}));
+vi.mock("@/lib/idb", () => ({
+  idbGet: vi.fn(async () => undefined),
+  idbPut: vi.fn(async () => {}),
 }));
 vi.mock("@/lib/offline", async (importOriginal) => {
   const mod = await importOriginal<typeof import("@/lib/offline")>();

@@ -15,8 +15,9 @@ import {
   type ReactNode,
 } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { currentUser, isSupervisor } from "@/lib/auth";
-import { loadCatalog } from "@/lib/catalogCache";
+import { currentUser, getToken, isSupervisor } from "@/lib/auth";
+import { loadCatalog, type LoadedCatalog } from "@/lib/catalogCache";
+import { idbPut } from "@/lib/idb";
 import { openShift as apiOpenShift, findOpenShift, getServerFlags } from "@/lib/api";
 import { getEngine, type EngineStatus, type OfflineEngine } from "@/lib/offline";
 import { cartTotals } from "@/lib/cartMath";
@@ -31,6 +32,7 @@ import type {
   DiscountType,
   LocalOrder,
   OrderType,
+  SalesChannel,
 } from "@/lib/types";
 
 // ── Phase U — unit-of-measure helpers ───────────────────────────────────────
@@ -70,6 +72,50 @@ function getDeviceId(): string {
     return id;
   } catch {
     return "DEV-unknown";
+  }
+}
+
+// ── Sales channel (قناة البيع) — close/w25-sell-ui ──────────────────────────
+// The selected channel survives reloads (legacy kept pos_active_channel_id the
+// same way). null = the implicit base channel «الأساسي».
+const CHANNEL_KEY = "pos_v2_channel_id";
+function getStoredChannelId(): string | null {
+  try {
+    return localStorage.getItem(CHANNEL_KEY) || null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Channel-aware catalog load.
+ *   base (null)      → the ETag+IndexedDB path in catalogCache, unchanged.
+ *   selected channel → plain fetch of /api/pos/v2/catalog?channelId=… with the
+ *     POS token (api.ts/catalogCache belong to parallel streams). On success the
+ *     copy is written through to the SAME IndexedDB slot catalogCache reads, so
+ *     an offline boot serves the LAST-FETCHED channel — the cache is NOT keyed
+ *     per channel (documented at docs/pos-parity-map.json offline-channel-menu-cache).
+ *   any failure      → loadCatalog() fallback (the cached copy — possibly another
+ *     channel's prices, surfaced by the existing stale/age machinery — because
+ *     selling through an outage beats a blank grid). An old server simply
+ *     ignores ?channelId= and returns the base catalog: same behavior as today.
+ */
+async function loadCatalogForChannel(channelId: string | null): Promise<LoadedCatalog> {
+  if (!channelId) return loadCatalog();
+  try {
+    const headers: Record<string, string> = { Accept: "application/json" };
+    const token = getToken();
+    if (token) headers.Authorization = `Bearer ${token}`;
+    const res = await fetch(`/api/pos/v2/catalog?channelId=${encodeURIComponent(channelId)}`, { headers });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const data = (await res.json()) as Catalog;
+    const savedAt = Date.now();
+    // Write-through (etag null: the next base load does a full 200 refetch
+    // rather than trusting a channel-priced copy against the base ETag).
+    await idbPut("catalog", "catalog", { data, etag: null, savedAt }).catch(() => undefined);
+    return { catalog: data, fromCache: false, savedAt, ageMs: 0, stale: false };
+  } catch {
+    return loadCatalog();
   }
 }
 
@@ -119,6 +165,14 @@ export interface PosContextValue {
   /** Age of the served catalog copy in ms (null = fresh or unknown). */
   catalogAgeMs: number | null;
   refetchCatalog: () => void;
+
+  /** Owner sales channels from the catalog ([] on an old server → no selector). */
+  channels: SalesChannel[];
+  /** Selected channel id (persisted); null = the implicit base «الأساسي». */
+  channelId: string | null;
+  /** Switch channel: refetches the catalog with ?channelId= WITHOUT touching the
+   *  cart (legacy preserved the cart across switches — V5.7.11). */
+  setChannel: (id: string | null) => void;
 
   shiftId: string | null;
   shiftLoading: boolean;
@@ -179,12 +233,28 @@ export function PosProvider({ children }: { children: ReactNode }) {
   }, []);
   const dismissToast = useCallback((id: number) => setToasts((t) => t.filter((x) => x.id !== id)), []);
 
-  // ── Catalog ────────────────────────────────────────────────────────────────
+  // ── Catalog (channel-aware) ────────────────────────────────────────────────
+  const [channelId, setChannelId] = useState<string | null>(getStoredChannelId);
+  const setChannel = useCallback((id: string | null) => {
+    setChannelId(id);
+    try {
+      if (id) localStorage.setItem(CHANNEL_KEY, id);
+      else localStorage.removeItem(CHANNEL_KEY);
+    } catch {
+      /* private mode — the selection just won't survive a reload */
+    }
+    // Deliberately NOT touching the cart: switching channels preserves it
+    // (legacy V5.7.11 — «Switching channels NEVER clears the cart»).
+  }, []);
+
   const catalogQuery = useQuery({
-    queryKey: ["catalog"],
-    queryFn: loadCatalog,
+    queryKey: ["catalog", channelId ?? "base"],
+    queryFn: () => loadCatalogForChannel(channelId),
     enabled: !!user,
     refetchInterval: 5 * 60_000,
+    // Keep the previous channel's catalog on screen while the new one loads —
+    // a switch must never blank the grid mid-shift.
+    placeholderData: (prev) => prev,
   });
 
   // ── Shift ──────────────────────────────────────────────────────────────────
@@ -272,9 +342,19 @@ export function PosProvider({ children }: { children: ReactNode }) {
         const unit = pickUnit(item, unitCode);
         const code = unit ? unit.unitCode : null;
         // Merge only into a line of the SAME item AND unit (a carton line and a
-        // piece line of the same product stay separate) with no notes/discount.
+        // piece line of the same product stay separate) with no notes/discount —
+        // AND the same effective price: legacy's cart-line key was «id +
+        // effective price + modifiers» (app.js:400), so after a channel switch
+        // re-prices the catalog, a new add opens a NEW line at the new price
+        // instead of silently selling more units at the old frozen price.
+        const effectivePrice = item.basePrice ?? item.price;
         const existing = c.lines.find(
-          (l) => l.menuId === item.id && (l.enteredUnitCode ?? null) === code && !l.notes && !l.lineDiscount,
+          (l) =>
+            l.menuId === item.id &&
+            (l.enteredUnitCode ?? null) === code &&
+            l.unitPrice === effectivePrice &&
+            !l.notes &&
+            !l.lineDiscount,
         );
         if (existing) {
           return { ...c, lines: c.lines.map((l) => (l === existing ? withBase(l, { qty: l.qty + 1 }) : l)) };
@@ -391,6 +471,9 @@ export function PosProvider({ children }: { children: ReactNode }) {
     catalogStale: catalogQuery.data?.stale ?? false,
     catalogAgeMs: catalogQuery.data?.ageMs ?? null,
     refetchCatalog: () => void catalogQuery.refetch(),
+    channels: catalogQuery.data?.catalog.channels ?? [],
+    channelId,
+    setChannel,
     shiftId,
     shiftLoading: shiftQuery.isLoading,
     openShiftNow: () => openShiftMutation.mutate(),

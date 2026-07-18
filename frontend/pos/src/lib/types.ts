@@ -20,6 +20,26 @@ export interface CatalogUnit {
   barcode: string | null; // optional per-unit barcode (scan a carton)
 }
 
+/** close/w25-sell-ui — a sales channel (قناة بيع) the owner configured. The
+ *  implicit base channel «الأساسي» is NOT in the list — the client prepends it.
+ *  Absent on an old server → the POS behaves exactly as before (no selector). */
+export interface SalesChannel {
+  id: string;
+  name: string;
+}
+
+/** close/w25-sell-ui — an owner-configured payment method riding in the catalog
+ *  (pinned contract; absent on an old server → built-in tabs only).
+ *  groupType 'other' (or requiresNote) ⇒ checkout REQUIRES a note ≥3 chars
+ *  (the server 422s otherwise — the dialog blocks earlier with a counter). */
+export interface CatalogPaymentMethod {
+  id: number | string;
+  name: string;
+  nameAr: string | null;
+  groupType: string | null;
+  requiresNote?: boolean;
+}
+
 export interface CatalogItem {
   id: string;
   name: string;
@@ -27,6 +47,10 @@ export interface CatalogItem {
   category: string;
   active: boolean;
   taxCategory: TaxCategory;
+  /** close/w25-sell-ui — price-list name when a channel price overrode the base
+   *  price (server-resolved: override → channel price list → base). null/absent
+   *  = base price. Drives the «مُخصَّص» card chip + «أسعار من قائمة: X» strip chip. */
+  priceSource?: string | null;
   // Phase U — multi-unit selling. `units` is [] for single-unit items (fully
   // backward compatible). basePrice = price; warehouseQty = base availability.
   basePrice?: number;
@@ -84,6 +108,12 @@ export interface Catalog {
   categories: string[];
   vatRate: number;
   maxCashierDiscountPct: number;
+  /** close/w25-sell-ui — owner sales channels (absent/[] on an old server →
+   *  the channel selector never renders). */
+  channels?: SalesChannel[];
+  /** close/w25-sell-ui — owner payment methods (absent on an old server →
+   *  the payment dialog shows only the built-in tabs). */
+  paymentMethods?: CatalogPaymentMethod[];
   /** null when the server could not resolve it — the receipt then prints what it
    *  has rather than fabricated seller data. */
   identity?: ReceiptIdentity | null;

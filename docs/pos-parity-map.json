@@ -1862,5 +1862,35 @@
   "boot-lang-toggle": {
     "status": "not-required",
     "reason": "قرار منتج موثَّق: المنظومة الموحدة (ERP + POS الجديد) عربية فقط بالتصميم — dynamic-i18n القديمة كانت وحدة مشتركة تُحذف مع القشرة القديمة؛ يُسجَّل في التقرير النهائي كقرار قابل للمراجعة"
+  },
+  "channel-selector-top": {
+      "status": "covered",
+      "react": "frontend/pos/src/App.tsx — compact channel <select> in the top strip next to the search box (implicit «الأساسي» + catalog.channels); renders ONLY when the owner has channels, so an old server (no channels field) keeps today's UI. Selection persists in localStorage pos_v2_channel_id (store.tsx setChannel).",
+      "legacy": "public/pos/app.js:741 posOnChannelTopChange / #posChannelSelTop (v5.14.0 top action-bar selector)",
+      "test": "frontend/pos/src/components/__tests__/parity-sell-channel-ui.test.tsx (picker renders from channels, «الأساسي» first, change → setChannel) + frontend/pos/src/state/__tests__/parity-channels.test.tsx (persistence across boot)"
+  },
+  "channel-switch": {
+      "status": "covered",
+      "react": "frontend/pos/src/state/store.tsx setChannel + channel-keyed catalog query — switching refetches /api/pos/v2/catalog?channelId=… (Bearer token, plain fetch) WITHOUT touching the cart doc; placeholderData keeps the previous grid visible during the load. Existing lines keep their FROZEN unitPrice (server /submit re-validates); a NEW add after the switch opens a new line at the new price because addItem's merge identity now includes the effective price (legacy _itemMatchKey app.js:400 was id+price+modifiers).",
+      "legacy": "public/pos/app.js:5025-5035 posSetChannel (V5.7.11 «Switching channels NEVER clears the cart») + _doSetChannel app.js:5074-5100",
+      "test": "frontend/pos/src/state/__tests__/parity-channels.test.tsx (cart survives the switch: same doc id, same lines, frozen price; new add uses the channel price; fetch URL carries ?channelId=)"
+  },
+  "channel-price-list-chip": {
+      "status": "covered",
+      "react": "frontend/pos/src/App.tsx — «أسعار من قائمة: X» chip in the top strip whenever any served item carries priceSource (the server resolved a channel price list).",
+      "legacy": "public/pos/app.js:481-505 _posRenderPriceListBadge («أسعار من قائمة: X» above the grid)",
+      "test": "frontend/pos/src/components/__tests__/parity-sell-channel-ui.test.tsx (chip appears with the list name; absent when no priceSource)"
+  },
+  "channel-price-resolution": {
+      "status": "covered",
+      "react": "resolution moved SERVER-SIDE (pinned contract): the catalog returned for ?channelId= already carries the resolved price + per-item priceSource; the client renders what it is served. Legacy's client-side chain (override → price list → base, app.js:5279-5334 _posApplyChannelPrices) is intentionally not reimplemented client-side — one resolver, no drift. Existing cart lines are NOT re-stamped on switch (frozen-price model; legacy re-stamped) — new adds pick up the channel price; documented trade-off.",
+      "legacy": "public/pos/app.js:5279-5334 _posApplyChannelPrices + posGetChannelPrice",
+      "test": "frontend/pos/src/state/__tests__/parity-channels.test.tsx (channel catalog serves price 30 + priceSource; new add lands at 30)"
+  },
+  "offline-channel-menu-cache": {
+      "status": "covered",
+      "react": "frontend/pos/src/state/store.tsx loadCatalogForChannel — a fetched channel catalog is written through to the SAME IndexedDB slot catalogCache reads (etag null). HONEST NOTE: the cache is NOT keyed per channel — offline serves the LAST-FETCHED channel's catalog (legacy kept a per-channel localStorage map, app.js:4972). A failed/offline channel fetch falls back to loadCatalog()'s cached copy, which may be another channel's prices; the existing stale/age banner machinery surfaces cache age. Selling through an outage was ranked above per-channel cache fidelity.",
+      "legacy": "public/pos/app.js:4970-4972 pos_channel_menu_cache (per-channel localStorage prefetch cache)",
+      "test": "frontend/pos/src/state/__tests__/parity-channels.test.tsx (write-through to the catalog IDB slot; failed channel fetch degrades to the cached copy without blanking the grid)"
   }
 }

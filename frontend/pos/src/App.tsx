@@ -5,7 +5,7 @@
  * with a bottom cart sheet. Keyboard: F2 search, F4 pay, F9 hold, Esc close.
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { ChefHat, LogIn, PauseCircle, ShoppingBasket } from "lucide-react";
+import { ChefHat, LogIn, PauseCircle, ShoppingBasket, Store, Tag } from "lucide-react";
 import { usePos } from "@/state/store";
 import { listOrders } from "@/lib/api";
 import { initPwa } from "@/lib/pwa";
@@ -66,6 +66,9 @@ export default function App() {
     engine,
     engineStatus,
     pushToast,
+    channels,
+    channelId,
+    setChannel,
   } = usePos();
 
   const [category, setCategory] = useState<string | null>(null);
@@ -210,6 +213,20 @@ export default function App() {
     return counts;
   }, [catalog]);
 
+  // ── Sales channel strip (close/w25-sell-ui) ──────────────────────────────
+  // The selector renders only when the owner actually has channels (the
+  // implicit base «الأساسي» + ≥1 configured channel). An old server sends no
+  // channels → nothing renders and the POS behaves exactly as before.
+  const showChannelPicker = channels.length >= 1;
+  // A persisted id whose channel was deleted server-side degrades to base.
+  const activeChannelId = channels.some((c) => c.id === channelId) ? channelId : null;
+  // «أسعار من قائمة: X» — shown when any served item carries a priceSource
+  // (the server resolved a channel price list over the base price).
+  const priceListName = useMemo(() => {
+    for (const it of catalog?.items ?? []) if (it.priceSource) return it.priceSource;
+    return null;
+  }, [catalog]);
+
   if (!user) return <LoginRequired />;
 
   const itemCount = cart.lines.reduce((s, l) => s + l.qty, 0);
@@ -247,7 +264,36 @@ export default function App() {
 
         {/* Products */}
         <section className="flex min-h-0 min-w-0 flex-1 flex-col gap-2.5" aria-label="الأصناف">
-          <SearchBox ref={searchRef} query={query} onQueryChange={setQuery} onScanSubmit={onScanSubmit} />
+          <div className="flex flex-wrap items-center gap-2">
+            <div className="min-w-[12rem] flex-1">
+              <SearchBox ref={searchRef} query={query} onQueryChange={setQuery} onScanSubmit={onScanSubmit} />
+            </div>
+            {showChannelPicker ? (
+              <label className="flex shrink-0 items-center gap-1.5">
+                <Store className="h-4 w-4 text-slate-400" aria-hidden />
+                <span className="sr-only">قناة البيع</span>
+                <select
+                  value={activeChannelId ?? ""}
+                  onChange={(e) => setChannel(e.target.value || null)}
+                  aria-label="قناة البيع"
+                  className="field min-h-11 w-auto max-w-[11rem] text-xs font-extrabold"
+                >
+                  <option value="">الأساسي</option>
+                  {channels.map((c) => (
+                    <option key={c.id} value={c.id}>
+                      {c.name}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            ) : null}
+            {priceListName ? (
+              <span className="flex shrink-0 items-center gap-1.5 rounded-full border border-teal-200 bg-teal-50 px-3 py-1.5 text-[11px] font-extrabold text-teal-700">
+                <Tag className="h-3.5 w-3.5" aria-hidden />
+                أسعار من قائمة: <span className="rounded-md bg-white px-1.5">{priceListName}</span>
+              </span>
+            ) : null}
+          </div>
           {/* Horizontal categories under 1024px */}
           <div className="lg:hidden">
             <CategoryRail

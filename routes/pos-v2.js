@@ -223,11 +223,84 @@ async function _loadComboDefs(q, comboIds) {
   return defs;
 }
 
+// ── Channels — the ERP-managed price-resolution chain, server-side ───────────
+// Replicates the legacy cashier exactly (public/pos/app.js _doSetChannel +
+// _posApplyChannelPrices, backed by routes/channel-menu.js):
+//   use_full_menu=1 → every active menu item; price = channel price list (when
+//                     linked + active + date-valid) else base menu price.
+//                     Per-item channel_menu_items overrides are IGNORED — the
+//                     legacy full-menu branch clears channelOverrideMap.
+//   use_full_menu=0 → ONLY channel_menu_items rows with is_available=1 (the
+//                     owner's "channels are independent" rule: zero configured
+//                     items = an EMPTY grid, never a silent MAIN fallback);
+//                     price = override_price > price-list price > base.
+async function _loadActiveChannel(q, channelId) {
+  const [rows] = await q.query(
+    'SELECT id, code, name, channel_type, is_active, price_list_id, COALESCE(use_full_menu,0) AS use_full_menu ' +
+    'FROM sales_channels WHERE id=? LIMIT 1', [channelId]);
+  if (!rows.length) throw _err('VALIDATION_ERROR', 'قناة البيع غير موجودة: ' + channelId);
+  if (!rows[0].is_active) throw _err('VALIDATION_ERROR', 'قناة البيع "' + rows[0].name + '" غير نشطة');
+  return rows[0];
+}
+
+async function _cashierBranchId(q, user) {
+  const uname = _userName(user);
+  if (!uname) return null;
+  const [u] = await q.query('SELECT branch_id, default_branch_id FROM users WHERE username = ? LIMIT 1', [uname]);
+  return u.length ? (u[0].branch_id || u[0].default_branch_id || null) : null;
+}
+
+async function _channelPricing(q, channel, branchId) {
+  const out = { priceListId: null, priceListName: null, plMap: {}, overrideMap: null, availableSet: null };
+  if (!channel) return out;
+  if (channel.price_list_id) {
+    const [pl] = await q.query('SELECT id, name, is_active FROM price_lists WHERE id=? LIMIT 1', [channel.price_list_id]);
+    if (pl.length && pl[0].is_active !== 0) {
+      out.priceListId = pl[0].id;
+      out.priceListName = pl[0].name || '';
+      // Same date window routes/channel-menu.js applies to price_list_items.
+      const today = new Date().toISOString().slice(0, 10);
+      const [plItems] = await q.query(
+        'SELECT item_id, price FROM price_list_items WHERE price_list_id=? AND item_id IS NOT NULL' +
+        ' AND (valid_from IS NULL OR valid_from <= ?) AND (valid_to IS NULL OR valid_to >= ?)',
+        [pl[0].id, today, today]);
+      for (const li of plItems) out.plMap[String(li.item_id)] = Number(li.price) || 0;
+    }
+  }
+  if (!channel.use_full_menu) {
+    out.overrideMap = {};
+    out.availableSet = new Set();
+    const conds = ['channel_id = ?']; const params = [channel.id];
+    if (branchId) { conds.push('(branch_id = ? OR branch_id IS NULL)'); params.push(branchId); }
+    const [rows] = await q.query(
+      'SELECT menu_item_id, is_available, override_price FROM channel_menu_items WHERE ' + conds.join(' AND '), params);
+    for (const r of rows) {
+      if (!r.is_available) continue;
+      out.availableSet.add(String(r.menu_item_id));
+      if (r.override_price != null) out.overrideMap[String(r.menu_item_id)] = Number(r.override_price);
+    }
+  }
+  return out;
+}
+
+// Effective price + provenance for one item under a channel.
+// source: null (base menu price) | 'override' (channel_menu_items.override_price)
+//         | the price list NAME (price came from the channel's price list).
+function _channelPriceFor(pricing, menuId, basePrice) {
+  const key = String(menuId);
+  if (pricing.overrideMap && pricing.overrideMap[key] != null) return { price: pricing.overrideMap[key], source: 'override' };
+  if (pricing.plMap[key] != null) return { price: pricing.plMap[key], source: pricing.priceListName || 'قائمة أسعار' };
+  return { price: Number(basePrice) || 0, source: null };
+}
+
 // Validate + normalize the incoming lines against the LIVE menu: existence,
 // active flag (inactive items are unsellable), qty/price sanity. vat_category
 // comes from the menu — never trusted from the client. Combo lines carry
-// server-validated choices (see _validateComboChoices).
-async function _normalizeLines(q, rawLines) {
+// server-validated choices (see _validateComboChoices). When the order rides a
+// sales channel, `chPricing` makes the CHANNEL price the default for lines
+// that omit unitPrice (an explicit client unitPrice still wins — manual price
+// edits are part of the existing contract).
+async function _normalizeLines(q, rawLines, chPricing) {
   if (!Array.isArray(rawLines) || rawLines.length === 0) throw _err('VALIDATION_ERROR', 'السلة فارغة — أضف صنفًا واحدًا على الأقل');
   if (rawLines.length > 200) throw _err('VALIDATION_ERROR', 'السلة كبيرة جدًا');
   const ids = [...new Set(rawLines.map((l) => String(l.menuId || l.menu_id || '')).filter(Boolean))];
@@ -267,7 +340,8 @@ async function _normalizeLines(q, rawLines) {
     }
     const qty = UC.round(enteredQty * factor, 6);
     if (l.baseQty != null && UC.round(Number(l.baseQty), 6) !== qty) throw _err('UNIT_CONVERSION_CONFLICT', 'الكمية الأساسية المُرسلة لا تطابق المحسوبة للصنف "' + m.name + '"');
-    const unitPrice = Number(l.unitPrice != null ? l.unitPrice : m.price);
+    const defaultPrice = chPricing ? _channelPriceFor(chPricing, menuId, m.price).price : Number(m.price);
+    const unitPrice = Number(l.unitPrice != null ? l.unitPrice : defaultPrice);
     if (!Number.isFinite(unitPrice) || unitPrice < 0) throw _err('VALIDATION_ERROR', 'سعر غير صالح للصنف "' + m.name + '"');
     const lineDiscount = Math.max(0, Number(l.lineDiscount) || 0);
     out.push({
@@ -302,7 +376,20 @@ async function doUpsert(user, body) {
   const b = body || {};
   const id = String(b.id || '').trim();
   if (!ULID_RE.test(id)) throw _err('VALIDATION_ERROR', 'معرف الطلب (id) مطلوب — ULID من العميل');
-  const lines = await _normalizeLines(db, b.lines);
+  // Channels: an order's channel must be a REAL, ACTIVE sales channel. The
+  // channel NAME is resolved server-side from the DB (never trusted from the
+  // client when an id is given), and the channel's price chain provides the
+  // default unit price for lines that omit unitPrice.
+  const channelId = b.channelId != null && String(b.channelId).trim() !== '' ? String(b.channelId).trim().slice(0, 50) : null;
+  let channel = null; let chPricing = null;
+  if (channelId) {
+    channel = await _loadActiveChannel(db, channelId);
+    let branchId = null;
+    try { branchId = await _cashierBranchId(db, user); } catch (e) { console.error('[pos-v2] branch lookup failed (channel pricing uses global rows):', e.message); }
+    chPricing = await _channelPricing(db, channel, branchId);
+  }
+  const channelName = channel ? String(channel.name || '').slice(0, 100) : ((b.channelName || '').toString().slice(0, 100) || null);
+  const lines = await _normalizeLines(db, b.lines, chPricing);
   const discountType = ['PERCENT', 'FIXED'].includes(b.discountType) ? b.discountType : null;
   const discountValue = discountType ? Math.max(0, Number(b.discountValue) || 0) : 0;
   const totals = M.cartTotals(lines, discountType ? { type: discountType, value: discountValue } : null);
@@ -320,8 +407,8 @@ async function doUpsert(user, body) {
         [id, orderType, (b.tableNo || '').toString().slice(0, 20) || null, shiftId, actor,
          (b.deviceId || '').toString().slice(0, 60) || null,
          (b.warehouseId || '').toString().slice(0, 50) || null,
-         (b.channelId || '').toString().slice(0, 50) || null,
-         (b.channelName || '').toString().slice(0, 100) || null,
+         channelId,
+         channelName,
          (b.customerId || '').toString().slice(0, 50) || null,
          discountType, discountValue, (b.discountName || '').toString().slice(0, 100) || null,
          totals.subtotal, totals.lineDiscountTotal, totals.discountAmount, totals.vatTotal, totals.total,
@@ -339,8 +426,8 @@ async function doUpsert(user, body) {
        WHERE id=? AND status='open' AND version=?`,
       [orderType, (b.tableNo || '').toString().slice(0, 20) || null, shiftId,
        (b.warehouseId || '').toString().slice(0, 50) || null,
-       (b.channelId || '').toString().slice(0, 50) || null,
-       (b.channelName || '').toString().slice(0, 100) || null,
+       channelId,
+       channelName,
        (b.customerId || '').toString().slice(0, 50) || null,
        discountType, discountValue, (b.discountName || '').toString().slice(0, 100) || null,
        totals.subtotal, totals.lineDiscountTotal, totals.discountAmount, totals.vatTotal, totals.total,
@@ -476,6 +563,20 @@ async function doComplete(user, id, body) {
 // ════════════════════════════════════════════════════════════════════════════
 router.get('/catalog', POS, async (req, res) => {
   try {
+    // Channels — ?channelId= resolves every item price through the ERP channel
+    // chain (override > price list > base; see _channelPricing) and, for a
+    // non-full-menu channel, restricts the item grid to the channel's own
+    // configured items. Unknown/inactive channel → 422, never a silent
+    // full-menu fallback.
+    const reqChannelId = String(req.query.channelId || '').trim();
+    let channel = null; let chPricing = null;
+    if (reqChannelId) {
+      channel = await _loadActiveChannel(db, reqChannelId);
+      let branchId = null;
+      try { branchId = await _cashierBranchId(db, req.user); } catch (e) { console.error('[pos-v2] branch lookup failed (channel pricing uses global rows):', e.message); }
+      chPricing = await _channelPricing(db, channel, branchId);
+    }
+
     // close/d-images — the catalog carries an image VERSION, never the image.
     // menu.image_data is a base64 data-URL in a LONGTEXT (66MB across the live
     // catalog); shipping it here is exactly the legacy full-menu-in-localStorage
@@ -538,8 +639,10 @@ router.get('/catalog', POS, async (req, res) => {
     // REJECTED server-side at upsert.
     let combos = [];
     try {
-      const [comboRows] = await db.query(
+      let [comboRows] = await db.query(
         "SELECT id, name, price FROM menu WHERE COALESCE(is_combo,0)=1 AND COALESCE(is_deleted,0)=0 ORDER BY category, name");
+      // A non-full-menu channel restricts combos exactly like plain items.
+      if (chPricing && chPricing.availableSet) comboRows = comboRows.filter((c) => chPricing.availableSet.has(String(c.id)));
       if (comboRows.length) {
         const defs = await _loadComboDefs(db, comboRows.map((c) => String(c.id)));
         combos = comboRows.map((c) => {
@@ -557,7 +660,9 @@ router.get('/catalog', POS, async (req, res) => {
               });
             }
           }
-          return { id: String(c.id), menuId: String(c.id), name: c.name, price: Number(c.price), fixedComponents, groups };
+          // Combo price is FIXED but still channel-priced like any menu row.
+          const resolved = chPricing ? _channelPriceFor(chPricing, c.id, c.price) : { price: Number(c.price), source: null };
+          return { id: String(c.id), menuId: String(c.id), name: c.name, price: resolved.price, priceSource: resolved.source, fixedComponents, groups };
         });
       }
     } catch (e) {
@@ -598,15 +703,32 @@ router.get('/catalog', POS, async (req, res) => {
       console.error('[pos-v2] receipt identity resolution failed:', e.message);
     }
 
+    // Active channels for the switcher (legacy: GET /api/sales-channels/active).
+    let channels = [];
+    try {
+      const [chRows] = await db.query(
+        'SELECT id, name, code, COALESCE(use_full_menu,0) AS use_full_menu FROM sales_channels WHERE is_active = 1 ORDER BY display_order, name');
+      channels = chRows.map((c) => ({ id: c.id, name: c.name, code: c.code, useFullMenu: !!c.use_full_menu }));
+    } catch (e) {
+      // Loud fallback: the catalog still serves the grid; the switcher is empty.
+      console.error('[pos-v2] channels load failed (catalog ships without channels):', e.message);
+    }
+
+    const visibleItems = items.filter((m) => !chPricing || !chPricing.availableSet || chPricing.availableSet.has(String(m.id)));
     const data = {
-      items: items.map((m) => {
+      items: visibleItems.map((m) => {
         const units = unitsByItem[m.id] || [];
         const base = units.find((u) => u.isBase);
+        const resolved = chPricing ? _channelPriceFor(chPricing, m.id, m.price) : { price: Number(m.price), source: null };
         return {
-          id: String(m.id), name: m.name, price: Number(m.price), category: m.category || 'عام',
+          id: String(m.id), name: m.name, price: resolved.price, category: m.category || 'عام',
           active: !(m.active === 0 || m.active === false),
           taxCategory: ['S', 'Z', 'E', 'O'].includes(m.tax_category) ? m.tax_category : 'S',
           basePrice: Number(m.price), warehouseQty: m.stock == null ? null : Number(m.stock),
+          // Price provenance under a channel: null = base menu price;
+          // 'override' = per-channel manual override; otherwise the NAME of the
+          // channel's price list that supplied the price.
+          priceSource: resolved.source,
           barcode: primaryBc[m.id] || null,
           baseUnitName: base ? base.unitName : null,
           units, // [] when no multi-unit config → cashier treats it as single-unit
@@ -615,7 +737,14 @@ router.get('/catalog', POS, async (req, res) => {
         };
       }),
       combos,
-      categories: [...new Set(items.map((m) => m.category || 'عام'))],
+      channels,
+      // Echo of the requested channel (badge + price-list chip in the client).
+      channel: channel ? {
+        id: channel.id, name: channel.name, useFullMenu: !!channel.use_full_menu,
+        priceListId: chPricing ? chPricing.priceListId : null,
+        priceListName: chPricing ? chPricing.priceListName : null,
+      } : null,
+      categories: [...new Set(visibleItems.map((m) => m.category || 'عام'))],
       vatRate,
       maxCashierDiscountPct: MAX_CASHIER_DISC_PCT,
       identity,
@@ -626,7 +755,7 @@ router.get('/catalog', POS, async (req, res) => {
     // identity is part of the ETag: an owner editing the receipt header must
     // reach cached offline clients on their next sync, not never. Same for the
     // print preferences — a paper-width change must reach cached clients too.
-    const etag = '"' + crypto.createHash('sha1').update(JSON.stringify({ i: data.items, c: data.combos, v: data.vatRate, id: identity, sf: receiptShowFields, rs: receiptSettings })).digest('hex') + '"';
+    const etag = '"' + crypto.createHash('sha1').update(JSON.stringify({ i: data.items, c: data.combos, ch: data.channels, sel: reqChannelId || null, v: data.vatRate, id: identity, sf: receiptShowFields, rs: receiptSettings })).digest('hex') + '"';
     if (req.get('If-None-Match') === etag) return res.status(304).end();
     res.setHeader('ETag', etag);
     res.json({ success: true, data });

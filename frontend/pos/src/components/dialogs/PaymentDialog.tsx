@@ -5,21 +5,41 @@
  * replay ("سيُرحَّل عند عودة الاتصال") with a local reference.
  */
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Banknote, CheckCircle2, ChefHat, CreditCard, HandCoins, Loader2, Printer, SplitSquareHorizontal } from "lucide-react";
+import { Banknote, CheckCircle2, ChefHat, CreditCard, HandCoins, Loader2, Printer, SplitSquareHorizontal, Wallet } from "lucide-react";
 import { usePos } from "@/state/store";
 import { round2, paymentsError } from "@/lib/cartMath";
 import { fmt2, shortRef } from "@/lib/format";
 import { buildKitchenTicketHtml, buildReceiptHtml, printHtml } from "@/lib/receipt";
-import type { LocalOrder, Payment } from "@/lib/types";
+import type { CatalogPaymentMethod, LocalOrder, Payment } from "@/lib/types";
 import { Dialog } from "../Dialog";
 import { Button, cn, Money } from "../ui";
 
-type Tab = "cash" | "card" | "split" | "credit";
+/** Built-in tabs + `owner:<name>` for owner-configured methods (close/w25-sell-ui). */
+type Tab = "cash" | "card" | "split" | "credit" | `owner:${string}`;
+
+/** Names the built-in tiles already cover — an owner row with one of these
+ *  names would render a duplicate tile, so it is skipped. */
+const BUILTIN_METHOD_NAMES = new Set(["cash", "card", "credit", "split"]);
+
+/** 'other'-group methods REQUIRE a note ≥3 chars (server 422s otherwise —
+ *  legacy doCheckout enforced the same, app.js:2556-2569). */
+function methodNeedsNote(m: CatalogPaymentMethod | null): boolean {
+  if (!m) return false;
+  return m.requiresNote === true || String(m.groupType ?? "").toLowerCase() === "other";
+}
 type Phase =
   | { name: "form" }
   | { name: "working"; stage: "submit" | "sale" | "complete" }
+  /** The watchdog fired: the request may STILL land server-side (it is not
+   *  aborted — checkout is idempotent), but the cashier gets an exit. */
+  | { name: "timeout" }
   | { name: "success"; invoiceNumber: string | null; saleId: string | null; queued: boolean; doc: LocalOrder; payments: Payment[]; cashTendered: number; changeDue: number; zatcaQrDataUrl: string | null }
   | { name: "failed"; error: string };
+
+/** pay-watchdog — legacy released a hung checkout after 120s (app.js:2753-2770):
+ *  a fetch whose connection is accepted but never answered fires NEITHER
+ *  handler, and the dialog would stay locked forever. */
+export const CHECKOUT_WATCHDOG_MS = 120_000;
 
 const STAGE_LABELS: Record<"submit" | "sale" | "complete", string> = {
   submit: "تثبيت الطلب…",
@@ -40,8 +60,30 @@ export function PaymentDialog({ open, onClose }: { open: boolean; onClose: () =>
   const [splitCash, setSplitCash] = useState<string>("");
   const [splitCard, setSplitCard] = useState<string>("");
   const [splitCredit, setSplitCredit] = useState<string>("");
+  const [payNote, setPayNote] = useState<string>("");
   const [phase, setPhase] = useState<Phase>({ name: "form" });
   const tenderedRef = useRef<HTMLInputElement>(null);
+
+  // Owner-configured method tiles from the catalog (close/w25-sell-ui).
+  // Absent on an old server → [] → the four built-in tabs only, as before.
+  const ownerMethods = useMemo(() => {
+    const seen = new Set<string>();
+    const out: CatalogPaymentMethod[] = [];
+    for (const m of catalog?.paymentMethods ?? []) {
+      const name = String(m?.name ?? "").trim();
+      if (!name) continue;
+      const lower = name.toLowerCase();
+      if (BUILTIN_METHOD_NAMES.has(lower) || seen.has(lower)) continue;
+      seen.add(lower);
+      out.push({ ...m, name });
+    }
+    return out;
+  }, [catalog]);
+  const ownerMethod = tab.startsWith("owner:")
+    ? ownerMethods.find((m) => `owner:${m.name}` === tab) ?? null
+    : null;
+  const noteRequired = methodNeedsNote(ownerMethod);
+  const noteTooShort = noteRequired && payNote.trim().length < 3;
 
   // Reset per open.
   useEffect(() => {
@@ -51,6 +93,7 @@ export function PaymentDialog({ open, onClose }: { open: boolean; onClose: () =>
       setSplitCash("");
       setSplitCard("");
       setSplitCredit("");
+      setPayNote("");
       setPhase({ name: "form" });
     }
   }, [open]);
@@ -59,6 +102,12 @@ export function PaymentDialog({ open, onClose }: { open: boolean; onClose: () =>
   useEffect(() => {
     if (!online && tab !== "cash") setTab("cash");
   }, [online, tab]);
+
+  // An owner tab whose method vanished from the catalog (owner edit mid-shift)
+  // falls back to cash rather than confirming against a ghost method.
+  useEffect(() => {
+    if (tab.startsWith("owner:") && !ownerMethod) setTab("cash");
+  }, [tab, ownerMethod]);
 
   // Progress events from the engine's checkout chain.
   useEffect(() => {
@@ -69,6 +118,18 @@ export function PaymentDialog({ open, onClose }: { open: boolean; onClose: () =>
       }
     });
   }, [engine, open, cart.id]);
+
+  // Watchdog: entering 'working' arms a 120s timer (stage changes keep the SAME
+  // timer — phase.name is the dep). Leaving 'working' (success/failed) clears
+  // it, so it can never fire after an outcome; if it fires first, a late
+  // outcome from the still-running checkout simply overwrites the timeout view.
+  useEffect(() => {
+    if (phase.name !== "working") return;
+    const t = setTimeout(() => {
+      setPhase((p) => (p.name === "working" ? { name: "timeout" } : p));
+    }, CHECKOUT_WATCHDOG_MS);
+    return () => clearTimeout(t);
+  }, [phase.name]);
 
   const tenderedNum = Number(tendered) || 0;
   const changeDue = round2(Math.max(0, tenderedNum - total));
@@ -94,6 +155,8 @@ export function PaymentDialog({ open, onClose }: { open: boolean; onClose: () =>
     if (tab === "cash") return [{ method: "cash", amount: total }];
     if (tab === "card") return [{ method: "card", amount: total }];
     if (tab === "credit") return [{ method: "credit", amount: total }];
+    // Owner method — the method NAME rides verbatim (pinned contract).
+    if (ownerMethod) return [{ method: ownerMethod.name, amount: total }];
     // split — only the non-zero legs (cash + card + credit).
     return (
       [
@@ -102,7 +165,7 @@ export function PaymentDialog({ open, onClose }: { open: boolean; onClose: () =>
         { method: "credit", amount: round2(splitCreditNum) },
       ] as Payment[]
     ).filter((p) => p.amount > 0);
-  }, [tab, total, splitCashNum, splitCardNum, splitCreditNum]);
+  }, [tab, ownerMethod, total, splitCashNum, splitCardNum, splitCreditNum]);
 
   // Order-to-Cash credit gate: any credit portion needs a REAL linked customer
   // (server enforces too — this blocks earlier with a clear message).
@@ -115,10 +178,14 @@ export function PaymentDialog({ open, onClose }: { open: boolean; onClose: () =>
     (tab === "cash" && tendered !== "" && tenderedNum < total) ||
     (tab === "split" && !!splitError) ||
     creditBlocked ||
+    noteTooShort ||
     !effectiveShiftId;
 
   async function confirm() {
-    if (phase.name !== "form") return;
+    // 'timeout' allows a RETRY: safe — the sale dedupes on clientOrderId
+    // (= the doc id) server-side, so a landed first attempt is replayed, not
+    // duplicated (same guarantee legacy leaned on, app.js:2756-2766).
+    if (phase.name !== "form" && phase.name !== "timeout") return;
     const snapshot: LocalOrder = { ...cart, lines: cart.lines.map((l) => ({ ...l })) };
     const cashTendered = tab === "cash" ? (tendered === "" ? total : tenderedNum) : 0;
     const change = tab === "cash" ? round2(Math.max(0, cashTendered - total)) : 0;
@@ -127,7 +194,8 @@ export function PaymentDialog({ open, onClose }: { open: boolean; onClose: () =>
       const outcome = await engine.checkout(snapshot, payments, {
         cashTendered,
         changeDue: change,
-        paymentNotes: undefined,
+        // The 'other'-group note (already gated ≥3 chars by confirmDisabled).
+        paymentNotes: noteRequired && payNote.trim() ? payNote.trim() : undefined,
       });
       if (outcome.state === "failed") {
         // The engine reopened the doc server-side + locally; reload the fresh
@@ -213,7 +281,7 @@ export function PaymentDialog({ open, onClose }: { open: boolean; onClose: () =>
             </p>
           </div>
 
-          {/* Method tabs */}
+          {/* Method tiles — built-ins always; owner methods appended (pay-method-tiles) */}
           <div className="mb-4 grid grid-cols-4 gap-1.5" role="tablist" aria-label="طريقة الدفع">
             {(
               [
@@ -239,7 +307,14 @@ export function PaymentDialog({ open, onClose }: { open: boolean; onClose: () =>
                   disabled: !online || !supervisor,
                   tip: !online ? "البيع الآجل غير متاح بلا اتصال" : !supervisor ? "البيع الآجل يتطلب مشرفًا/مديرًا" : undefined,
                 },
-              ] as const
+                ...ownerMethods.map((m) => ({
+                  key: `owner:${m.name}` as Tab,
+                  label: m.nameAr || m.name,
+                  icon: Wallet,
+                  disabled: !online,
+                  tip: !online ? "طرق الدفع الإضافية غير متاحة بلا اتصال" : undefined,
+                })),
+              ] as ReadonlyArray<{ key: Tab; label: string; icon: typeof Banknote; disabled: boolean; tip: string | undefined }>
             ).map(({ key, label, icon: Icon, disabled, tip }) => (
               <button
                 key={key}
@@ -376,6 +451,41 @@ export function PaymentDialog({ open, onClose }: { open: boolean; onClose: () =>
             </p>
           ) : null}
 
+          {/* Owner method info + the notes block ('other' group ⇒ note ≥3 chars) */}
+          {ownerMethod ? (
+            <div>
+              <p className="rounded-xl bg-slate-50 px-3 py-2.5 text-xs font-bold text-slate-500">
+                حصّل <Money value={fmt2(total)} /> ر.س عبر «{ownerMethod.nameAr || ownerMethod.name}» ثم أكّد
+              </p>
+              {noteRequired ? (
+                <div className="mt-3">
+                  <label className="block">
+                    <span className="mb-1 flex items-center justify-between text-[11px] font-extrabold text-slate-500">
+                      <span>ملاحظات الدفع — سبب اختيار «{ownerMethod.nameAr || ownerMethod.name}» (إلزامية)</span>
+                      <span className="num text-slate-400" dir="ltr" data-testid="pay-notes-counter">
+                        {payNote.length}/200
+                      </span>
+                    </span>
+                    <textarea
+                      value={payNote}
+                      onChange={(e) => setPayNote(e.target.value)}
+                      maxLength={200}
+                      rows={2}
+                      placeholder="مثال: تحويل بنكي — إيصال رقم 123"
+                      aria-label="ملاحظات الدفع"
+                      className="field resize-none"
+                    />
+                  </label>
+                  {noteTooShort ? (
+                    <p role="alert" className="mt-1 rounded-xl bg-amber-50 px-3 py-2 text-[11px] font-bold text-amber-800">
+                      اكتب ٣ أحرف على الأقل لوصف الدفعة — الخادم يرفض «أخرى» بلا ملاحظة
+                    </p>
+                  ) : null}
+                </div>
+              ) : null}
+            </div>
+          ) : null}
+
           {/* Order-to-Cash: a credit sale must be attached to a real customer. */}
           {creditBlocked ? (
             <p role="alert" className="mt-3 rounded-xl border border-amber-300 bg-amber-50 px-3 py-2.5 text-xs font-extrabold text-amber-800">
@@ -409,6 +519,27 @@ export function PaymentDialog({ open, onClose }: { open: boolean; onClose: () =>
               </li>
             ))}
           </ol>
+        </div>
+      ) : null}
+
+      {/* Watchdog timeout — an exit instead of an eternal lock */}
+      {phase.name === "timeout" ? (
+        <div data-testid="pay-timeout-panel" className="flex flex-col items-center gap-3 py-6 text-center">
+          <p role="alert" className="rounded-2xl border border-amber-300 bg-amber-50 px-4 py-3 text-sm font-extrabold text-amber-800">
+            انتهت مهلة الطلب — تحقق من الاتصال ثم أعد المحاولة
+          </p>
+          <p className="max-w-sm text-xs font-bold text-slate-500">
+            لم يُلغَ الطلب — قد يكون البيع وصل للخادم رغم انقطاع الرد. إعادة المحاولة آمنة: إن كان البيع قد سُجّل فلن
+            يتكرر (محمي ضد الازدواج)، ويمكنك أيضًا التحقق من «فواتيري».
+          </p>
+          <div className="grid w-full grid-cols-2 gap-2">
+            <Button variant="secondary" onClick={onClose}>
+              إغلاق
+            </Button>
+            <Button variant="primary" onClick={() => void confirm()}>
+              إعادة المحاولة
+            </Button>
+          </div>
         </div>
       ) : null}
 

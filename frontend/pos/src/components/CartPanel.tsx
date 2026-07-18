@@ -16,6 +16,7 @@ import {
   Phone,
   Plus,
   ShoppingBasket,
+  Tag,
   Trash2,
   UserPlus,
   Utensils,
@@ -23,7 +24,8 @@ import {
 } from "lucide-react";
 import { usePos } from "@/state/store";
 import { fmt2, fmtInt } from "@/lib/format";
-import { lineTotals, orderDiscountPct } from "@/lib/cartMath";
+import { lineTotals, orderDiscountPct, round2 } from "@/lib/cartMath";
+import { presetLineAmount, presetsForScope, useDiscountPresets } from "@/lib/discountPresets";
 import type { CartLine, OrderType } from "@/lib/types";
 import { Button, cn, EmptyState, Money } from "./ui";
 import { UnitPicker } from "./UnitPicker";
@@ -44,6 +46,13 @@ function CartLineRow({ line, index }: { line: CartLine; index: number }) {
   const factor = Number(line.conversionFactorSnapshot) || 1;
   const baseQty = Number(line.baseQty ?? line.qty);
   const isMajor = factor > 1 && !!line.enteredUnitName;
+  // Preset discounts for the line editor (loaded once per session, only when a
+  // row is actually expanded). A preset fills the SAME amount field manual
+  // entry uses — the store/math clamp path is unchanged (close/w25-sell-ui).
+  const linePresets = presetsForScope(useDiscountPresets(expanded), "line");
+  // True line gross (baseQty × unit price) — matches the cartMath clamp, so a
+  // carton line discounts its real total, not the entered-qty figure.
+  const lineGross = round2(baseQty * line.unitPrice);
 
   return (
     <li className="rounded-xl border border-slate-100 bg-white shadow-sm">
@@ -177,6 +186,30 @@ function CartLineRow({ line, index }: { line: CartLine; index: number }) {
               dir="ltr"
             />
           </label>
+          {linePresets.length > 0 ? (
+            <div className="sm:col-span-2">
+              <p className="mb-1 text-[11px] font-extrabold text-slate-500">خصومات جاهزة</p>
+              <div className="flex flex-wrap gap-1.5">
+                {linePresets.map((p) => {
+                  const belowMin = p.minOrder != null && lineGross < p.minOrder;
+                  return (
+                    <button
+                      key={p.id}
+                      type="button"
+                      disabled={belowMin}
+                      title={belowMin ? `الحد الأدنى للسطر ${fmt2(p.minOrder!)} ر.س` : undefined}
+                      onClick={() => setLineDiscount(index, presetLineAmount(p, lineGross))}
+                      className="btn-press flex min-h-9 items-center gap-1 rounded-lg border border-slate-200 bg-white px-2.5 text-[11px] font-extrabold text-slate-600 transition hover:border-teal-200 hover:bg-teal-50 disabled:cursor-not-allowed disabled:opacity-40"
+                    >
+                      <Tag className="h-3 w-3 text-teal-600" aria-hidden />
+                      {p.name}
+                      <Money value={p.type === "PERCENT" ? `${fmt2(p.value)}%` : fmt2(p.value)} className="text-teal-700" />
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          ) : null}
         </div>
       ) : null}
     </li>

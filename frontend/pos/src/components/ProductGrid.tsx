@@ -9,10 +9,10 @@
  */
 import { forwardRef, memo, useEffect, useMemo, useState } from "react";
 import { useVirtualizer } from "@tanstack/react-virtual";
-import { PackageSearch, Search, X } from "lucide-react";
+import { Minus, PackageSearch, Search, X } from "lucide-react";
 import type { Catalog, CatalogItem } from "@/lib/types";
 import { getToken } from "@/lib/auth";
-import { fmt2 } from "@/lib/format";
+import { fmt2, fmtInt } from "@/lib/format";
 import { cn, EmptyState, Skeleton } from "./ui";
 
 // ── Item images (close/d-images) ─────────────────────────────────────────────
@@ -116,51 +116,105 @@ export function resolveScan(items: CatalogItem[], query: string): ScanHit | null
   return results[0] ? { item: results[0], unitCode: null } : null;
 }
 
-const ProductCard = memo(function ProductCard({ item, onAdd }: { item: CatalogItem; onAdd: (item: CatalogItem) => void }) {
+const ProductCard = memo(function ProductCard({
+  item,
+  onAdd,
+  qty = 0,
+  onDec,
+}: {
+  item: CatalogItem;
+  onAdd: (item: CatalogItem) => void;
+  /** Live quantity of this item in the cart (0 = not in the cart). */
+  qty?: number;
+  /** Decrement one unit of this item (only offered while qty > 0). */
+  onDec?: (item: CatalogItem) => void;
+}) {
   const imgSrc = useItemImage(item.id, item.imageVersion);
+  const inCart = qty > 0;
   return (
-    <button
-      type="button"
-      onClick={() => onAdd(item)}
-      className="btn-press group relative flex min-h-[5.5rem] flex-col justify-between rounded-2xl border border-slate-200 bg-white p-3 text-start shadow-sm transition hover:border-teal-200 hover:shadow-soft"
-    >
+    // Wrapper: the qty badge + − button are SIBLINGS of the add button (a
+    // button cannot nest a button). Absolute overlays never change the card's
+    // height, so the virtualizer's measured rows stay put.
+    <div className="relative">
+      <button
+        type="button"
+        onClick={() => onAdd(item)}
+        className={cn(
+          "btn-press group flex h-full min-h-[5.5rem] w-full flex-col justify-between rounded-2xl border bg-white p-3 text-start shadow-sm transition hover:border-teal-200 hover:shadow-soft",
+          // Selection ring while the item sits in the cart (legacy .selected).
+          inCart ? "border-teal-300 ring-2 ring-teal-500/50" : "border-slate-200",
+        )}
+      >
+        {item.imageVersion ? (
+          // FIXED height, reserved from first paint: the box exists before (and
+          // whether or not) the bytes arrive, so a finished download never changes
+          // the card's height — the virtualizer's measured rows stay put (no
+          // reflow, no scroll jump). Rendered ONLY when the item has an image.
+          <div data-testid="product-thumb" aria-hidden className="mb-2 h-16 w-full shrink-0 overflow-hidden rounded-xl bg-slate-100">
+            {imgSrc ? (
+              <img
+                key={imgSrc}
+                src={imgSrc}
+                alt=""
+                loading="lazy"
+                decoding="async"
+                draggable={false}
+                className="h-full w-full object-cover"
+                // Graceful: a corrupt blob hides ITSELF (the box keeps the row
+                // height stable); keyed by src so a later good image starts fresh.
+                onError={(e) => { e.currentTarget.style.display = "none"; }}
+              />
+            ) : null}
+          </div>
+        ) : null}
+        <p className="line-clamp-2 text-sm font-extrabold leading-snug text-ink group-hover:text-teal-700">{item.name}</p>
+        <p className="mt-2 text-sm font-extrabold text-teal-600">
+          <span className="num">{fmt2(item.price)}</span> <span className="text-[11px] font-bold text-slate-400">ر.س</span>
+        </p>
+      </button>
+      {/* العروض (close/w25-combos): tapping this card opens the combo chooser,
+          not a direct add — the badge says so (legacy amber «عرض» badge).
+          Sibling overlay at top-end; the qty badge sits at -top-1.5 (clear). */}
       {item.isCombo ? (
-        // العروض (close/w25-combos): tapping this card opens the combo chooser,
-        // not a direct add — the badge says so (legacy amber «عرض» badge).
         <span
           data-testid="combo-badge"
-          className="absolute end-1.5 top-1.5 z-[1] rounded-md bg-amber-500 px-1.5 py-0.5 text-[10px] font-extrabold text-white shadow-sm"
+          className="pointer-events-none absolute end-1.5 top-1.5 z-[1] rounded-md bg-amber-500 px-1.5 py-0.5 text-[10px] font-extrabold text-white shadow-sm"
         >
           عرض
         </span>
       ) : null}
-      {item.imageVersion ? (
-        // FIXED height, reserved from first paint: the box exists before (and
-        // whether or not) the bytes arrive, so a finished download never changes
-        // the card's height — the virtualizer's measured rows stay put (no
-        // reflow, no scroll jump). Rendered ONLY when the item has an image.
-        <div data-testid="product-thumb" aria-hidden className="mb-2 h-16 w-full shrink-0 overflow-hidden rounded-xl bg-slate-100">
-          {imgSrc ? (
-            <img
-              key={imgSrc}
-              src={imgSrc}
-              alt=""
-              loading="lazy"
-              decoding="async"
-              draggable={false}
-              className="h-full w-full object-cover"
-              // Graceful: a corrupt blob hides ITSELF (the box keeps the row
-              // height stable); keyed by src so a later good image starts fresh.
-              onError={(e) => { e.currentTarget.style.display = "none"; }}
-            />
-          ) : null}
-        </div>
+      {/* «مُخصَّص» — a channel price list drives this card's price (legacy badge
+          app.js:410-412; top-start like the original). */}
+      {item.priceSource ? (
+        <span
+          aria-hidden
+          className="pointer-events-none absolute start-1.5 top-1.5 rounded-md bg-saffron-500 px-1.5 py-0.5 text-[9px] font-extrabold text-white"
+        >
+          مُخصَّص
+        </span>
       ) : null}
-      <p className="line-clamp-2 text-sm font-extrabold leading-snug text-ink group-hover:text-teal-700">{item.name}</p>
-      <p className="mt-2 text-sm font-extrabold text-teal-600">
-        <span className="num">{fmt2(item.price)}</span> <span className="text-[11px] font-bold text-slate-400">ر.س</span>
-      </p>
-    </button>
+      {inCart ? (
+        <>
+          {/* Live qty badge (legacy qty-display, app.js:449) */}
+          <span
+            data-testid="card-qty-badge"
+            aria-label={`في السلة ${item.name}: ${fmtInt(qty)}`}
+            className="num absolute -top-1.5 end-1.5 min-w-6 rounded-full bg-teal-600 px-1.5 py-0.5 text-center text-[11px] font-extrabold text-white shadow-sm"
+          >
+            {fmtInt(qty)}
+          </span>
+          {/* Inline − (legacy decFromCart, app.js:448) — last unit removes the line */}
+          <button
+            type="button"
+            onClick={() => onDec?.(item)}
+            aria-label={`إنقاص ${item.name}`}
+            className="btn-press absolute bottom-1.5 end-1.5 flex h-8 w-8 items-center justify-center rounded-lg border border-slate-200 bg-white text-slate-500 shadow-sm hover:bg-slate-100 hover:text-red-600"
+          >
+            <Minus className="h-4 w-4" aria-hidden />
+          </button>
+        </>
+      ) : null}
+    </div>
   );
 });
 
@@ -172,6 +226,11 @@ export interface ProductGridProps {
   onQueryChange: (q: string) => void;
   onScanSubmit: () => void;
   onAdd: (item: CatalogItem) => void;
+  /** Live cart quantity per item id — drives the qty badge + selection ring
+   *  (close/w25-sell-ui). Omit for badge-less rendering. */
+  cartQty?: Record<string, number>;
+  /** Decrement one unit of an in-cart item (the card's − button). */
+  onDecrement?: (item: CatalogItem) => void;
   /** The element that actually scrolls the grid — the host owns it, so it has to
    *  hand it down for windowing to have an axis to measure.
    *
@@ -241,7 +300,7 @@ function useColumns(): number {
   return cols;
 }
 
-export function ProductGrid({ catalog, loading, category, query, onAdd, scrollElement }: Omit<ProductGridProps, "onQueryChange" | "onScanSubmit">) {
+export function ProductGrid({ catalog, loading, category, query, onAdd, scrollElement, cartQty, onDecrement }: Omit<ProductGridProps, "onQueryChange" | "onScanSubmit">) {
   const visible = useMemo(
     () => (catalog ? filterItems(catalog.items, category, query) : []),
     [catalog, category, query],
@@ -291,7 +350,7 @@ export function ProductGrid({ catalog, loading, category, query, onAdd, scrollEl
     return (
       <div className={cn(GRID_CLASS)}>
         {visible.map((item) => (
-          <ProductCard key={item.id} item={item} onAdd={onAdd} />
+          <ProductCard key={item.id} item={item} onAdd={onAdd} qty={cartQty?.[item.id] ?? 0} onDec={onDecrement} />
         ))}
       </div>
     );
@@ -313,7 +372,7 @@ export function ProductGrid({ catalog, loading, category, query, onAdd, scrollEl
             className={cn(GRID_CLASS, "pb-2.5")}
           >
             {visible.slice(start, start + cols).map((item) => (
-              <ProductCard key={item.id} item={item} onAdd={onAdd} />
+              <ProductCard key={item.id} item={item} onAdd={onAdd} qty={cartQty?.[item.id] ?? 0} onDec={onDecrement} />
             ))}
           </div>
         );

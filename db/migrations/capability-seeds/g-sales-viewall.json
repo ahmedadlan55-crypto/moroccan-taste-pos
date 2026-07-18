@@ -1,0 +1,9 @@
+[
+  {
+    "id": "sales.viewAll",
+    "label_ar": "عرض مبيعات جميع الكاشيرين",
+    "label_en": "View ALL cashiers' sales (sales log + invoice reprint); cashiers without it see only their own",
+    "is_sensitive": 1,
+    "roles": ["admin", "manager"]
+  }
+]

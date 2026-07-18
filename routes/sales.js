@@ -75,6 +75,77 @@ function _normPmName(s) {
     .replace(/[أإآا]/g, 'ا').replace(/ى/g, 'ي').replace(/ة/g, 'ه').trim();
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// close2/sales-security — supervisor gate + ownership helpers.
+// These enforce, at the money-writing /api/sales endpoints themselves, the same
+// rules pos-v2.js and middleware/o2cLegacyGate enforce elsewhere — but WITHOUT
+// depending on the ORDER_TO_CASH_ENABLE flag, so a direct POST can never bypass
+// them. They reuse this file's OWN helpers (_payToAccountCode / _normPmName) so
+// the guard and the GL posting agree on what "credit" means.
+// ─────────────────────────────────────────────────────────────────────────────
+
+// Does this payment-method label/key denote a credit / on-account sale?
+// Anchored on the file's own GL mapping (_payToAccountCode routes credit to the
+// AR account 1150) so the guard and the posted journal never disagree. Also
+// catches the Arabic labels the pos-v2 legacyPayload and middleware/o2cLegacyGate
+// treat as on-account (كيتا / آجل / ذمم), so a direct POST can't slip a credit
+// sale past the guard by sending the display label instead of the 'credit' key.
+function _isCreditMethod(method) {
+  if (_payToAccountCode(method) === '1150') return true;
+  const k = _normPmName(method); // lower-cased + Arabic normalized (آجل → اجل)
+  return /^(credit|customer_credit|kita|ar)$/.test(k) || /كيتا|اجل|ذمم/.test(k);
+}
+
+// Mirror pos-v2.js _userIsSuper EXACTLY: admin/manager role or the developer
+// flag bypass the credit-sale supervisor gate (and grant "view all sales").
+function _isSuperUser(user) {
+  const role = String((user && user.role) || '').toLowerCase();
+  return role === 'admin' || role === 'manager' || !!(user && user.isDeveloper);
+}
+
+// Does the POST /api/sales body carry a credit / on-account payment leg?
+// Serves BOTH the legacy UI contract and the pos-v2 legacyPayload, so it checks
+// every shape a credit leg can arrive in:
+//   • single method:  paymentMethod = 'credit' | 'كيتا' | owner AR method …
+//   • split (object):  splitDetails = { <label>: amount, … }        (legacy UI)
+//   • split (array):   splitDetails = [{ method, amount }, … ]      (legacyPayload)
+//   • structured:      payments     = [{ method, amount }, … ]      (O2C contract)
+// For the split/payments shapes a leg only counts when its amount is > 0.
+function _saleCarriesCredit(body) {
+  if (!body || typeof body !== 'object') return false;
+  // 1) single method — a lone credit method carries the whole invoice
+  if (body.paymentMethod != null
+      && String(body.paymentMethod).toLowerCase() !== 'split'
+      && _isCreditMethod(body.paymentMethod)) return true;
+  // 2) splitDetails — object {label:amount} OR array [{method,amount}]
+  const sd = body.splitDetails;
+  if (sd && typeof sd === 'object') {
+    if (Array.isArray(sd)) {
+      if (sd.some((leg) => leg && _isCreditMethod(leg.method) && (Number(leg.amount) || 0) > 0)) return true;
+    } else if (Object.keys(sd).some((label) => _isCreditMethod(label) && (Number(sd[label]) || 0) > 0)) {
+      return true;
+    }
+  }
+  // 3) structured payments [{method,amount}] — sits alongside the legacy fields
+  if (Array.isArray(body.payments)
+      && body.payments.some((p) => p && _isCreditMethod(p.method) && (Number(p.amount) || 0) > 0)) return true;
+  return false;
+}
+
+// Elevated read scope: admin/manager/developer, or an explicit sales.viewAll
+// grant (see db/migrations/capability-seeds/g-sales-viewall.json). Everyone else
+// sees only their OWN sales. Fails CLOSED (own-sales-only) on any capability
+// lookup error — a DB hiccup must never widen a cashier's visibility.
+async function _canViewAllSales(user) {
+  if (_isSuperUser(user)) return true;
+  try {
+    return await requireCapability.hasCapability(user, 'sales.viewAll');
+  } catch (e) {
+    console.error('[sales] sales.viewAll capability check failed — restricting to own sales:', e && (e.code || e.message));
+    return false;
+  }
+}
+
 // Build a payment-method → GL account code map by joining payment_methods.gl_account_id → gl_accounts.code
 // Returns: { 'cash': '1110', 'card': '1120', 'hangerstation': '4150', ... }
 // V5.7.18 — keys normalized; both name and name_ar registered so the
@@ -242,6 +313,33 @@ async function _ensureNotSubmitted(conn, orderId) {
 router.post('/', requireCapability('pos.use'), async (req, res) => {
   const _pool = db; // capture outer pool reference before shadowing
   let _conn;
+
+  // ─── close2/sales-security · Task 1 — credit-sale supervisor gate ───
+  // This money-writing endpoint must enforce the SAME rule pos-v2.js enforces on
+  // its cart-submit path (routes/pos-v2.js: credit legs require a supervisor).
+  // A direct POST here with a credit/on-account leg — single method OR any split
+  // / structured-payments leg — is rejected for non-supervisors. Run BEFORE any
+  // DB connection or transaction opens (no partial writes), and INDEPENDENTLY of
+  // ORDER_TO_CASH_ENABLE / middleware/o2cLegacyGate (that gate only fires when
+  // the flag is ON — this closes the gap when it's OFF). Authority = admin/manager
+  // role, the developer flag, or the credit.override capability (the exact id the
+  // O2C creditSaleGate already uses).
+  if (_saleCarriesCredit(req.body)) {
+    let _creditAllowed = _isSuperUser(req.user);
+    if (!_creditAllowed) {
+      try {
+        _creditAllowed = await requireCapability.hasCapability(req.user, 'credit.override');
+      } catch (capErr) {
+        // Fail CLOSED — never open a credit sale when authority can't be verified.
+        console.error('[POST /sales] credit.override capability check failed — denying credit sale:', capErr && (capErr.code || capErr.message));
+        _creditAllowed = false;
+      }
+    }
+    if (!_creditAllowed) {
+      return res.status(403).json({ success: false, code: 'PERMISSION_DENIED', error: 'البيع الآجل يتطلب مشرفًا/مديرًا' });
+    }
+  }
+
   try {
     _conn = await _pool.getConnection();
     await _conn.beginTransaction();
@@ -1956,13 +2054,29 @@ router.post('/', requireCapability('pos.use'), async (req, res) => {
 // the query falls back to the legacy form.
 router.get('/', async (req, res) => {
   try {
+    // ─── close2/sales-security · Task 3 — server-side ownership scoping ───
+    // The username filter used to be applied ONLY when the client sent it, so a
+    // plain cashier calling this with no param (or with someone ELSE's username)
+    // got EVERY cashier's sales. Decide the effective username filter on the
+    // SERVER from the verified identity: privileged callers (admin/manager/dev or
+    // sales.viewAll) may filter by any username (or omit for all); everyone else
+    // is pinned to their OWN username regardless of what they sent.
+    if (!req.user || !req.user.username) {
+      return res.status(401).json({ success: false, code: 'PERMISSION_DENIED', error: 'مطلوب تسجيل الدخول' });
+    }
+    const _viewAll = await _canViewAllSales(req.user);
+    const _userFilter = _viewAll ? (req.query.username || null) : req.user.username;
+
     let query =
       'SELECT s.*, c.name AS customer_name, c.phone AS customer_phone, c.gender AS customer_gender ' +
       'FROM sales s LEFT JOIN customers c ON c.id = s.customer_id WHERE 1=1';
     const params = [];
     if (req.query.startDate)     { query += ' AND DATE(s.order_date) >= ?'; params.push(req.query.startDate); }
     if (req.query.endDate)       { query += ' AND DATE(s.order_date) <= ?'; params.push(req.query.endDate); }
-    if (req.query.username)      { query += ' AND s.username = ?'; params.push(req.query.username); }
+    if (_userFilter)             { query += ' AND s.username = ?'; params.push(_userFilter); }
+    // New: server-side shift filter so the POS can scope to one shift instead of
+    // fetching everything and filtering in the browser.
+    if (req.query.shiftId)       { query += ' AND s.shift_id = ?'; params.push(req.query.shiftId); }
     if (req.query.paymentMethod) { query += ' AND LOWER(s.payment_method) = ?'; params.push(String(req.query.paymentMethod).toLowerCase()); }
     if (req.query.customerId)    { query += ' AND s.customer_id = ?'; params.push(req.query.customerId); }
     query += ' ORDER BY s.order_date DESC LIMIT 500';
@@ -1976,7 +2090,8 @@ router.get('/', async (req, res) => {
       const lp = [];
       if (req.query.startDate)     { legacy += ' AND DATE(order_date) >= ?'; lp.push(req.query.startDate); }
       if (req.query.endDate)       { legacy += ' AND DATE(order_date) <= ?'; lp.push(req.query.endDate); }
-      if (req.query.username)      { legacy += ' AND username = ?'; lp.push(req.query.username); }
+      if (_userFilter)             { legacy += ' AND username = ?'; lp.push(_userFilter); }
+      if (req.query.shiftId)       { legacy += ' AND shift_id = ?'; lp.push(req.query.shiftId); }
       if (req.query.paymentMethod) { legacy += ' AND LOWER(payment_method) = ?'; lp.push(String(req.query.paymentMethod).toLowerCase()); }
       legacy += ' ORDER BY order_date DESC LIMIT 500';
       [rows] = await db.query(legacy, lp);
@@ -2023,6 +2138,18 @@ router.get('/invoice/:orderId', async (req, res) => {
     const [sales] = await db.query('SELECT * FROM sales WHERE id = ?', [req.params.orderId]);
     if (!sales.length) return res.json(null);
     const sale = sales[0];
+
+    // ─── close2/sales-security · Task 2 — invoice ownership ───
+    // Previously ANY authenticated user could fetch ANY sale's full invoice by
+    // id (a plain cashier could read a colleague's — or a manager's — receipts).
+    // Restrict to the sale's own cashier unless the caller can view all sales
+    // (admin/manager/developer, or the sales.viewAll grant). Ownership is decided
+    // by the VERIFIED JWT identity (req.user.username), never a client-supplied
+    // claim.
+    if (!(await _canViewAllSales(req.user)) && sale.username !== (req.user && req.user.username)) {
+      return res.status(403).json({ success: false, code: 'PERMISSION_DENIED', error: 'لا تملك صلاحية عرض فاتورة كاشير آخر' });
+    }
+
     const [items] = await db.query('SELECT * FROM sales_items WHERE order_id = ?', [req.params.orderId]);
 
     // ── Lookup cashier display name from settings.user_meta ──

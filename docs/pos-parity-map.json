@@ -2075,5 +2075,11 @@
     "react": "frontend/pos/src/components/ProductGrid.tsx ProductCard — «مُخصَّص» mini-chip (top-start, saffron) on cards whose priceSource is set. NOTE: legacy showed it on __custom standalone price-list items; the pinned contract generalizes it to any card whose price a channel price list drove — a superset that includes the legacy case (standalone items also carry priceSource).",
     "legacy": "public/pos/app.js:410-412 customBadge «مُخصَّص»",
     "test": "frontend/pos/src/components/__tests__/parity-sell-card-affordances.test.tsx (chip only on the priceSource card)"
+  },
+  "pwa-manifest": {
+    "status": "covered",
+    "react": "frontend/pos/public/manifest.webmanifest (name/short_name/start_url/scope/display/theme_color/icons) linked from frontend/pos/index.html:15; served under the POS base",
+    "api": "static asset",
+    "test": "frontend/pos/src/lib/__tests__/pwa.test.ts (wave-1: C) + e2e offline spec exercises the installed shell"
   }
 }

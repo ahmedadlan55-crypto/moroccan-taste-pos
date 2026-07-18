@@ -71,6 +71,19 @@ export function PosLogin() {
       }
 
       setToken(data.token);
+      // A forced-change account (P0 mandate: strong password + forced first-
+      // login change) must never reach the POS shell on its temporary
+      // password. The ERP's own Login.tsx already honours this flag by
+      // sending the user to the one shared change-password screen — this POS
+      // login previously ignored it entirely, so a freshly-created cashier
+      // could sign straight in without ever being prompted. `/app` is a
+      // separate Vite app from `/pos`, so this is a real cross-app
+      // navigation; `redirect=/pos/` brings the cashier straight back here
+      // once the password is changed.
+      if (data.mustChangePassword) {
+        window.location.assign("/app/change-password?must=1&redirect=" + encodeURIComponent("/pos/"));
+        return;
+      }
       // Full reload so PosProvider re-reads the token at mount and renders the
       // POS shell (mirrors the ERP login's post-auth navigation).
       window.location.reload();

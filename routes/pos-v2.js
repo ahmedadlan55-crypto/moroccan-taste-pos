@@ -51,6 +51,41 @@ function _catch(res, e) {
 }
 const ULID_RE = /^[0-9A-Za-z_-]{10,40}$/;
 
+// ── Additive schema ensure (idempotent, INFORMATION_SCHEMA-guarded) ──────────
+// Pattern: routes/sales-channels.js `_ensureUseFullMenuColumn` — checked lazily
+// on the first request through this router (module load can precede DB
+// readiness) and kicked off once at module init as a best effort.
+//   • pos_order_lines.combo_choices_json — the cashier's validated combo picks
+//     (legacy [{groupId, menuItemId}] shape) persisted per line so /submit can
+//     rebuild the EXACT legacy /api/sales payload for recipe deductions.
+//   • pos_payments.method VARCHAR(20) → VARCHAR(50) — owner-configured payment
+//     method names (payment_methods.name) exceed the built-in 20-char budget.
+let _schemaEnsured = false;
+async function _ensureSchema() {
+  if (_schemaEnsured) return;
+  const [col] = await db.query(
+    "SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS " +
+    "WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'pos_order_lines' AND COLUMN_NAME = 'combo_choices_json'");
+  if (!col.length) {
+    await db.query('ALTER TABLE pos_order_lines ADD COLUMN combo_choices_json TEXT NULL');
+    console.log('[pos-v2] added pos_order_lines.combo_choices_json');
+  }
+  const [mcol] = await db.query(
+    "SELECT CHARACTER_MAXIMUM_LENGTH AS len FROM INFORMATION_SCHEMA.COLUMNS " +
+    "WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'pos_payments' AND COLUMN_NAME = 'method'");
+  if (mcol.length && Number(mcol[0].len) < 50) {
+    await db.query('ALTER TABLE pos_payments MODIFY method VARCHAR(50) NOT NULL');
+    console.log('[pos-v2] widened pos_payments.method to VARCHAR(50)');
+  }
+  _schemaEnsured = true;
+}
+_ensureSchema().catch((e) => console.error('[pos-v2] schema ensure at init failed (will retry on first request):', e.message));
+router.use(async (req, res, next) => {
+  if (_schemaEnsured) return next();
+  try { await _ensureSchema(); } catch (e) { console.error('[pos-v2] schema ensure failed:', e.message); }
+  next();
+});
+
 async function _loadOrder(id, conn) {
   const q = conn || db;
   const [rows] = await q.query('SELECT * FROM pos_orders WHERE id=? LIMIT 1' + (conn ? ' FOR UPDATE' : ''), [id]);
@@ -66,6 +101,20 @@ async function _loadPayments(id, conn) {
   const [rows] = await q.query('SELECT * FROM pos_payments WHERE order_id=? ORDER BY id', [id]);
   return rows;
 }
+// Parse a stored combo_choices_json (server-written legacy shape
+// [{groupId, menuItemId}]). Corrupt JSON is loud, never silent — it means a
+// write bug, and a combo submitted without its choices would deduct wrong.
+function _parseComboChoices(raw, lineId) {
+  if (raw == null || raw === '') return null;
+  try {
+    const arr = JSON.parse(raw);
+    return Array.isArray(arr) && arr.length ? arr : null;
+  } catch (e) {
+    console.error('[pos-v2] corrupt combo_choices_json on line', lineId, ':', e.message);
+    return null;
+  }
+}
+
 function _linesForMath(rows) {
   // qty is the stored BASE qty; the entered-unit snapshot is carried through for
   // the legacy sale payload (→ items_json → returns echo the same unit).
@@ -76,6 +125,7 @@ function _linesForMath(rows) {
     enteredQty: l.entered_qty != null ? Number(l.entered_qty) : null,
     conversionFactorSnapshot: l.conversion_factor_snapshot != null ? Number(l.conversion_factor_snapshot) : null,
     baseQty: Number(l.qty),
+    comboChoices: _parseComboChoices(l.combo_choices_json, l.id),
   }));
 }
 function _orderForMath(o) {
@@ -96,21 +146,95 @@ function _publicOrder(o, lines, payments) {
     version: Number(o.version), heldAt: o.held_at, submittedAt: o.submitted_at,
     completedAt: o.completed_at, voidedAt: o.voided_at, voidReason: o.void_reason,
     createdAt: o.created_at, updatedAt: o.updated_at,
-    lines: (lines || []).map((l) => ({ id: l.id, menuId: l.menu_id, name: l.name_snapshot, qty: Number(l.qty), unitPrice: Number(l.unit_price), lineDiscount: Number(l.line_discount), vatCategory: l.vat_category, notes: l.notes, sort: l.sort })),
+    lines: (lines || []).map((l) => ({ id: l.id, menuId: l.menu_id, name: l.name_snapshot, qty: Number(l.qty), unitPrice: Number(l.unit_price), lineDiscount: Number(l.line_discount), vatCategory: l.vat_category, notes: l.notes, sort: l.sort, comboChoices: _parseComboChoices(l.combo_choices_json, l.id) })),
     payments: (payments || []).map((p) => ({ id: p.id, method: p.method, amount: Number(p.amount), ref: p.ref })),
   };
 }
 
+// ── Combo choice validation (server-authoritative) ──────────────────────────
+// The V2 client sends `comboChoices` per line as {[groupId]: menuId[]}. The
+// choices are validated against the LIVE combo definition (combo_groups /
+// combo_group_items — the same tables routes/sales.js expands at deduction
+// time): min/max per choice group, configured options only, no duplicates,
+// active components only. Returns the LEGACY array shape
+// [{groupId, menuItemId}] — EXACTLY what the legacy POS sent to /api/sales.
+function _validateComboChoices(m, def, raw) {
+  if (raw != null && (typeof raw !== 'object' || Array.isArray(raw))) {
+    throw _err('VALIDATION_ERROR', 'خيارات العرض "' + m.name + '" يجب أن تكون كائنًا {groupId: [menuId]}');
+  }
+  const choiceGroups = (def && def.groups ? def.groups : []).filter((g) => g.type === 'choice');
+  const picks = raw || {};
+  for (const gid of Object.keys(picks)) {
+    if (!choiceGroups.some((g) => g.id === String(gid))) {
+      throw _err('VALIDATION_ERROR', 'مجموعة اختيار غير معروفة في العرض "' + m.name + '": ' + gid);
+    }
+  }
+  const out = [];
+  for (const g of choiceGroups) {
+    const arr = picks[g.id];
+    if (arr != null && !Array.isArray(arr)) throw _err('VALIDATION_ERROR', 'اختيارات مجموعة "' + g.name + '" في العرض "' + m.name + '" يجب أن تكون قائمة معرفات');
+    const sel = (arr || []).map((x) => String(x));
+    if (new Set(sel).size !== sel.length) throw _err('VALIDATION_ERROR', 'خيار مكرر في مجموعة "' + g.name + '" للعرض "' + m.name + '"');
+    if (sel.length < g.min) throw _err('VALIDATION_ERROR', 'أكمل اختيارات "' + g.name + '" في العرض "' + m.name + '" — المطلوب ' + g.min + ' على الأقل');
+    if (g.max > 0 && sel.length > g.max) throw _err('VALIDATION_ERROR', 'عدد اختيارات "' + g.name + '" يتجاوز الحد الأقصى (' + g.max + ') في العرض "' + m.name + '"');
+    for (const menuItemId of sel) {
+      const opt = g.options.get(menuItemId);
+      if (!opt) throw _err('VALIDATION_ERROR', 'خيار غير صالح في مجموعة "' + g.name + '" للعرض "' + m.name + '": ' + menuItemId);
+      if (!opt.active) throw _err('VALIDATION_ERROR', 'الخيار "' + opt.name + '" غير نشط — لا يمكن بيعه ضمن العرض "' + m.name + '"');
+      out.push({ groupId: g.id, menuItemId });
+    }
+  }
+  return out;
+}
+
+// Load combo definitions (groups + options) for the given combo menu ids.
+// Map: menuId → { groups: [{id, name, type, min, max, options: Map<menuId, {name, active}>}] }
+async function _loadComboDefs(q, comboIds) {
+  const defs = new Map();
+  if (!comboIds.length) return defs;
+  for (const id of comboIds) defs.set(String(id), { groups: [] });
+  const [gRows] = await q.query(
+    'SELECT id, menu_id, group_type, name, min_select, max_select FROM combo_groups WHERE menu_id IN (?) ORDER BY sort_order, id', [comboIds]);
+  const byGroup = new Map();
+  for (const g of gRows) {
+    const def = defs.get(String(g.menu_id));
+    if (!def) continue;
+    const grp = {
+      id: String(g.id), name: g.name || '', type: g.group_type === 'fixed' ? 'fixed' : 'choice',
+      min: Number(g.min_select) || 0, max: Number(g.max_select) || 0, options: new Map(),
+    };
+    def.groups.push(grp);
+    byGroup.set(grp.id, grp);
+  }
+  if (byGroup.size) {
+    const [iRows] = await q.query(
+      'SELECT cgi.group_id, cgi.menu_item_id, cgi.qty, mi.name AS item_name, COALESCE(mi.active,1) AS item_active ' +
+      'FROM combo_group_items cgi LEFT JOIN menu mi ON mi.id = cgi.menu_item_id ' +
+      'WHERE cgi.group_id IN (?) ORDER BY cgi.sort_order, cgi.id', [[...byGroup.keys()]]);
+    for (const it of iRows) {
+      const grp = byGroup.get(String(it.group_id));
+      if (grp) grp.options.set(String(it.menu_item_id), {
+        name: it.item_name || String(it.menu_item_id),
+        qty: Number(it.qty) || 1,
+        active: !(it.item_active === 0 || it.item_active === false),
+      });
+    }
+  }
+  return defs;
+}
+
 // Validate + normalize the incoming lines against the LIVE menu: existence,
 // active flag (inactive items are unsellable), qty/price sanity. vat_category
-// comes from the menu — never trusted from the client.
+// comes from the menu — never trusted from the client. Combo lines carry
+// server-validated choices (see _validateComboChoices).
 async function _normalizeLines(q, rawLines) {
   if (!Array.isArray(rawLines) || rawLines.length === 0) throw _err('VALIDATION_ERROR', 'السلة فارغة — أضف صنفًا واحدًا على الأقل');
   if (rawLines.length > 200) throw _err('VALIDATION_ERROR', 'السلة كبيرة جدًا');
   const ids = [...new Set(rawLines.map((l) => String(l.menuId || l.menu_id || '')).filter(Boolean))];
   if (!ids.length) throw _err('VALIDATION_ERROR', 'أسطر بلا معرف صنف');
-  const [menu] = await q.query('SELECT id, name, price, active, tax_category FROM menu WHERE id IN (?)', [ids]);
+  const [menu] = await q.query('SELECT id, name, price, active, tax_category, COALESCE(is_combo,0) AS is_combo FROM menu WHERE id IN (?)', [ids]);
   const byId = new Map(menu.map((m) => [String(m.id), m]));
+  const comboDefs = await _loadComboDefs(q, menu.filter((m) => Number(m.is_combo) === 1).map((m) => String(m.id)));
   const out = [];
   let sort = 0;
   for (const l of rawLines) {
@@ -118,6 +242,15 @@ async function _normalizeLines(q, rawLines) {
     const m = byId.get(menuId);
     if (!m) throw _err('VALIDATION_ERROR', 'صنف غير موجود في القائمة: ' + menuId);
     if (m.active === 0 || m.active === false) throw _err('VALIDATION_ERROR', 'الصنف "' + m.name + '" غير نشط — لا يمكن بيعه');
+    // Combos: validate the picks against the stored definition; non-combo lines
+    // must not smuggle choices (silent-drop would hide a client bug).
+    let comboChoicesJson = null;
+    if (Number(m.is_combo) === 1) {
+      const legacyChoices = _validateComboChoices(m, comboDefs.get(menuId), l.comboChoices);
+      comboChoicesJson = legacyChoices.length ? JSON.stringify(legacyChoices) : null;
+    } else if (l.comboChoices != null && (typeof l.comboChoices !== 'object' || Array.isArray(l.comboChoices) || Object.keys(l.comboChoices).length)) {
+      throw _err('VALIDATION_ERROR', 'الصنف "' + m.name + '" ليس عرضًا — لا تُقبل خيارات عرض عليه');
+    }
     const enteredQty = Number(l.qty);
     if (!Number.isFinite(enteredQty) || enteredQty <= 0) throw _err('VALIDATION_ERROR', 'كمية غير صالحة للصنف "' + m.name + '"');
     // Phase U — expand-to-base (owner decision): a line may be entered in a major
@@ -142,6 +275,7 @@ async function _normalizeLines(q, rawLines) {
       vatCategory: ['S', 'Z', 'E', 'O'].includes(m.tax_category) ? m.tax_category : 'S',
       notes: (l.notes || '').toString().slice(0, 300) || null, sort: sort++,
       enteredQty, enteredUnitId, enteredUnitCode, conversionFactorSnapshot: factor,
+      comboChoicesJson,
     });
   }
   return out;
@@ -151,9 +285,10 @@ async function _replaceLines(conn, orderId, lines) {
   await conn.query('DELETE FROM pos_order_lines WHERE order_id=?', [orderId]);
   for (const l of lines) {
     await conn.query(
-      'INSERT INTO pos_order_lines (id, order_id, menu_id, name_snapshot, qty, unit_price, line_discount, vat_category, notes, sort, entered_qty, entered_unit_id, entered_unit_code, conversion_factor_snapshot) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)',
+      'INSERT INTO pos_order_lines (id, order_id, menu_id, name_snapshot, qty, unit_price, line_discount, vat_category, notes, sort, entered_qty, entered_unit_id, entered_unit_code, conversion_factor_snapshot, combo_choices_json) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)',
       ['PL-' + Date.now() + '-' + Math.random().toString(36).slice(2, 8), orderId, l.menuId, l.nameSnapshot, l.qty, l.unitPrice, l.lineDiscount, l.vatCategory, l.notes, l.sort,
-       l.enteredQty != null ? l.enteredQty : l.qty, l.enteredUnitId != null ? l.enteredUnitId : null, l.enteredUnitCode != null ? l.enteredUnitCode : null, l.conversionFactorSnapshot != null ? l.conversionFactorSnapshot : 1]);
+       l.enteredQty != null ? l.enteredQty : l.qty, l.enteredUnitId != null ? l.enteredUnitId : null, l.enteredUnitCode != null ? l.enteredUnitCode : null, l.conversionFactorSnapshot != null ? l.conversionFactorSnapshot : 1,
+       l.comboChoicesJson != null ? l.comboChoicesJson : null]);
   }
 }
 
@@ -350,7 +485,7 @@ router.get('/catalog', POS, async (req, res) => {
     // data.items and therefore this route's ETag, invalidating cached catalogs.
     // Measured on the live 2,000-row / 68MB-of-blobs table: ~28ms → ~100ms.
     const [items] = await db.query(
-      "SELECT id, name, price, category, active, tax_category, stock, " +
+      "SELECT id, name, price, category, active, tax_category, stock, COALESCE(is_combo,0) AS is_combo, " +
       "CASE WHEN image_data IS NULL OR image_data='' THEN NULL ELSE SUBSTRING(SHA1(image_data),1,8) END AS image_ver " +
       "FROM menu WHERE COALESCE(is_deleted,0)=0 ORDER BY category, name");
     let vatRate = 15;
@@ -390,6 +525,46 @@ router.get('/catalog', POS, async (req, res) => {
         const [pb] = await db.query("SELECT item_id, code FROM item_barcodes WHERE item_id IN (?) AND is_primary=1", [ids]);
         for (const b of pb) primaryBc[b.item_id] = b.code;
       } catch (_) { /* item_barcodes not present */ }
+    }
+
+    // Combos (العروض) — full definitions so the React POS can open the chooser
+    // offline: fixed components (always consumed) + choice groups (min/max +
+    // options). Derived from the SAME tables routes/sales.js expands at
+    // deduction time (combo_groups / combo_group_items on is_combo=1 menu
+    // rows). Combo price is FIXED (the menu row's price) — options carry
+    // priceDelta: 0 today; the field exists so a future per-option surcharge
+    // is additive, not a shape break. Inactive options ship with active:false
+    // (the client hides them, exactly like the legacy chooser) and are
+    // REJECTED server-side at upsert.
+    let combos = [];
+    try {
+      const [comboRows] = await db.query(
+        "SELECT id, name, price FROM menu WHERE COALESCE(is_combo,0)=1 AND COALESCE(is_deleted,0)=0 ORDER BY category, name");
+      if (comboRows.length) {
+        const defs = await _loadComboDefs(db, comboRows.map((c) => String(c.id)));
+        combos = comboRows.map((c) => {
+          const def = defs.get(String(c.id)) || { groups: [] };
+          const fixedComponents = [];
+          const groups = [];
+          for (const g of def.groups) {
+            const opts = [...g.options.entries()];
+            if (g.type === 'fixed') {
+              for (const [mid, o] of opts) fixedComponents.push({ menuId: mid, name: o.name, qty: o.qty });
+            } else {
+              groups.push({
+                id: g.id, name: g.name, min: g.min, max: g.max,
+                options: opts.map(([mid, o]) => ({ menuId: mid, name: o.name, qty: o.qty, priceDelta: 0, active: o.active })),
+              });
+            }
+          }
+          return { id: String(c.id), menuId: String(c.id), name: c.name, price: Number(c.price), fixedComponents, groups };
+        });
+      }
+    } catch (e) {
+      // Loud, and the catalog ships without combos rather than 500ing the whole
+      // grid — a combo-tables schema gap must not cost the cashier the menu.
+      console.error('[pos-v2] combos load failed (catalog ships without combos):', e.message);
+      combos = [];
     }
 
     // Receipt identity, resolved for THIS cashier's branch and shipped inside the
@@ -436,8 +611,10 @@ router.get('/catalog', POS, async (req, res) => {
           baseUnitName: base ? base.unitName : null,
           units, // [] when no multi-unit config → cashier treats it as single-unit
           imageVersion: m.image_ver ?? null, // 8-char SHA1 prefix; bytes via /item-image/:id
+          isCombo: Number(m.is_combo) === 1, // tap opens the combo chooser (definition in data.combos)
         };
       }),
+      combos,
       categories: [...new Set(items.map((m) => m.category || 'عام'))],
       vatRate,
       maxCashierDiscountPct: MAX_CASHIER_DISC_PCT,
@@ -449,7 +626,7 @@ router.get('/catalog', POS, async (req, res) => {
     // identity is part of the ETag: an owner editing the receipt header must
     // reach cached offline clients on their next sync, not never. Same for the
     // print preferences — a paper-width change must reach cached clients too.
-    const etag = '"' + crypto.createHash('sha1').update(JSON.stringify({ i: data.items, v: data.vatRate, id: identity, sf: receiptShowFields, rs: receiptSettings })).digest('hex') + '"';
+    const etag = '"' + crypto.createHash('sha1').update(JSON.stringify({ i: data.items, c: data.combos, v: data.vatRate, id: identity, sf: receiptShowFields, rs: receiptSettings })).digest('hex') + '"';
     if (req.get('If-None-Match') === etag) return res.status(304).end();
     res.setHeader('ETag', etag);
     res.json({ success: true, data });

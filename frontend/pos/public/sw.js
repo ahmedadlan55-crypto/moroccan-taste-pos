@@ -25,7 +25,7 @@
 
 /* eslint-disable no-restricted-globals */
 
-const SW_VERSION = "1.0.0";
+const SW_VERSION = "1.0.1"; // 1.0.1: ignoreVary matches (cors Vary: Origin broke offline shell)
 const CACHE_NAME = "mt-posv2-" + SW_VERSION;
 
 // Scope root, base-relative: '/pos-v2/' today, '/pos/' after cutover.
@@ -132,11 +132,15 @@ self.addEventListener("fetch", (event) => {
           return response;
         })
         .catch(async () => {
-          const cached = await caches.match(request);
+          // ignoreVary: the server's cors middleware stamps `Vary: Origin` on
+          // every response, and module/CSS requests carry an Origin header the
+          // install-time precache fetch did not — without this flag the cached
+          // bundle NEVER matches and the offline shell boots blank.
+          const cached = await caches.match(request, { ignoreVary: true });
           if (cached) return cached;
           // SPA fallback: any offline navigation inside the scope boots the shell.
           if (isNavigation) {
-            const shell = await caches.match(new URL("./", self.location).href);
+            const shell = await caches.match(new URL("./", self.location).href, { ignoreVary: true });
             if (shell) return shell;
           }
           return Response.error();
@@ -146,8 +150,9 @@ self.addEventListener("fetch", (event) => {
   }
 
   // STALE-WHILE-REVALIDATE for css / images / fonts / manifest.
+  // (ignoreVary for the same `Vary: Origin` reason as the branch above.)
   event.respondWith(
-    caches.match(request).then((cached) => {
+    caches.match(request, { ignoreVary: true }).then((cached) => {
       const fetchPromise = fetch(request)
         .then((response) => {
           if (response && response.status === 200 && (response.type === "basic" || response.type === "cors")) {

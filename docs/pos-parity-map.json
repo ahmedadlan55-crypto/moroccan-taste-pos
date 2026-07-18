@@ -1946,5 +1946,17 @@
       "react": "frontend/pos/src/components/CartPanel.tsx CartLineRow — preset chips (scope line|preset|manual) inside the expanded line editor; a chip computes percentage-of-line-gross (baseQty × unitPrice — the TRUE gross, so a carton line discounts its real total) capped by maxAmount then the line total, and lands through the SAME setLineDiscount path as manual entry.",
       "legacy": "public/pos/app.js:5343-5420 posOpenLineDiscountModal/posApplyLineDiscount (line preset cards, % of gross, maxAmount cap)",
       "test": "frontend/pos/src/components/__tests__/parity-sell-discount-presets.test.tsx (scope filter in the editor, 50% of 46 capped at 10, fixed preset lands as 5)"
+  },
+  "pay-watchdog": {
+      "status": "covered",
+      "react": "frontend/pos/src/components/dialogs/PaymentDialog.tsx — the 'working' phase arms a 120s timer (CHECKOUT_WATCHDOG_MS); on fire it surfaces «انتهت مهلة الطلب — تحقق من الاتصال ثم أعد المحاولة» with retry + close instead of an eternal lock. The engine op is NOT aborted (checkout is idempotent and may still land) — the copy says so, retry re-runs the deduped chain (clientOrderId = doc id), and a LATE outcome from the first attempt still overwrites the timeout view.",
+      "legacy": "public/pos/app.js:2753-2770 (v7.5 — 120s watchdog releasing the pay lock; retry is duplicate-protected)",
+      "test": "frontend/pos/src/components/__tests__/parity-sell-watchdog.test.tsx (fires at exactly 120s with fake timers, not at 119.999s; never fires after success; retry re-invokes checkout; a late outcome supersedes the timeout view)"
+  },
+  "checkout-watchdog": {
+      "status": "covered",
+      "react": "same surface as pay-watchdog (the React POS has a single checkout path through PaymentDialog). NOTE: the earlier offline-checkout-watchdog «not-required» reasoning claimed fetch promises always settle — a hung connection (accepted, never answered) settles neither, which is exactly the case legacy guarded; this watchdog closes that residual hole.",
+      "legacy": "public/pos/app.js:2753-2770",
+      "test": "frontend/pos/src/components/__tests__/parity-sell-watchdog.test.tsx"
   }
 }

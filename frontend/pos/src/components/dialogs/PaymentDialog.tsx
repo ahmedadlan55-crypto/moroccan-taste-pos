@@ -30,8 +30,16 @@ function methodNeedsNote(m: CatalogPaymentMethod | null): boolean {
 type Phase =
   | { name: "form" }
   | { name: "working"; stage: "submit" | "sale" | "complete" }
+  /** The watchdog fired: the request may STILL land server-side (it is not
+   *  aborted — checkout is idempotent), but the cashier gets an exit. */
+  | { name: "timeout" }
   | { name: "success"; invoiceNumber: string | null; saleId: string | null; queued: boolean; doc: LocalOrder; payments: Payment[]; cashTendered: number; changeDue: number; zatcaQrDataUrl: string | null }
   | { name: "failed"; error: string };
+
+/** pay-watchdog — legacy released a hung checkout after 120s (app.js:2753-2770):
+ *  a fetch whose connection is accepted but never answered fires NEITHER
+ *  handler, and the dialog would stay locked forever. */
+export const CHECKOUT_WATCHDOG_MS = 120_000;
 
 const STAGE_LABELS: Record<"submit" | "sale" | "complete", string> = {
   submit: "تثبيت الطلب…",
@@ -111,6 +119,18 @@ export function PaymentDialog({ open, onClose }: { open: boolean; onClose: () =>
     });
   }, [engine, open, cart.id]);
 
+  // Watchdog: entering 'working' arms a 120s timer (stage changes keep the SAME
+  // timer — phase.name is the dep). Leaving 'working' (success/failed) clears
+  // it, so it can never fire after an outcome; if it fires first, a late
+  // outcome from the still-running checkout simply overwrites the timeout view.
+  useEffect(() => {
+    if (phase.name !== "working") return;
+    const t = setTimeout(() => {
+      setPhase((p) => (p.name === "working" ? { name: "timeout" } : p));
+    }, CHECKOUT_WATCHDOG_MS);
+    return () => clearTimeout(t);
+  }, [phase.name]);
+
   const tenderedNum = Number(tendered) || 0;
   const changeDue = round2(Math.max(0, tenderedNum - total));
   const cashShort = tab === "cash" && tendered !== "" && tenderedNum < total;
@@ -162,7 +182,10 @@ export function PaymentDialog({ open, onClose }: { open: boolean; onClose: () =>
     !effectiveShiftId;
 
   async function confirm() {
-    if (phase.name !== "form") return;
+    // 'timeout' allows a RETRY: safe — the sale dedupes on clientOrderId
+    // (= the doc id) server-side, so a landed first attempt is replayed, not
+    // duplicated (same guarantee legacy leaned on, app.js:2756-2766).
+    if (phase.name !== "form" && phase.name !== "timeout") return;
     const snapshot: LocalOrder = { ...cart, lines: cart.lines.map((l) => ({ ...l })) };
     const cashTendered = tab === "cash" ? (tendered === "" ? total : tenderedNum) : 0;
     const change = tab === "cash" ? round2(Math.max(0, cashTendered - total)) : 0;
@@ -496,6 +519,27 @@ export function PaymentDialog({ open, onClose }: { open: boolean; onClose: () =>
               </li>
             ))}
           </ol>
+        </div>
+      ) : null}
+
+      {/* Watchdog timeout — an exit instead of an eternal lock */}
+      {phase.name === "timeout" ? (
+        <div data-testid="pay-timeout-panel" className="flex flex-col items-center gap-3 py-6 text-center">
+          <p role="alert" className="rounded-2xl border border-amber-300 bg-amber-50 px-4 py-3 text-sm font-extrabold text-amber-800">
+            انتهت مهلة الطلب — تحقق من الاتصال ثم أعد المحاولة
+          </p>
+          <p className="max-w-sm text-xs font-bold text-slate-500">
+            لم يُلغَ الطلب — قد يكون البيع وصل للخادم رغم انقطاع الرد. إعادة المحاولة آمنة: إن كان البيع قد سُجّل فلن
+            يتكرر (محمي ضد الازدواج)، ويمكنك أيضًا التحقق من «فواتيري».
+          </p>
+          <div className="grid w-full grid-cols-2 gap-2">
+            <Button variant="secondary" onClick={onClose}>
+              إغلاق
+            </Button>
+            <Button variant="primary" onClick={() => void confirm()}>
+              إعادة المحاولة
+            </Button>
+          </div>
         </div>
       ) : null}
 

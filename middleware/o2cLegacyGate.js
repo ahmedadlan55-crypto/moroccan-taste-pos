@@ -92,9 +92,14 @@ function saleReverseGate(redirect) {
 function _creditPortion(body) {
   if (!body) return 0;
   // structured payments (preferred): [{ method:'customer_credit'|'credit', amount }]
+  // Latin tokens are matched EXACTLY — an unanchored /ar/ also matches "card",
+  // which classified every card leg as on-account and 422'd normal card sales.
   if (Array.isArray(body.payments)) {
     return body.payments
-      .filter((p) => /credit|customer_credit|kita|ar|آجل|ذمم/i.test(String(p.method || p.type || '')))
+      .filter((p) => {
+        const m = String(p.method || p.type || '').trim();
+        return /^(credit|customer_credit|kita|ar)$/i.test(m) || /آجل|ذمم|كيتا/.test(m);
+      })
       .reduce((s, p) => s + (Number(p.amount) || 0), 0);
   }
   // legacy single method string

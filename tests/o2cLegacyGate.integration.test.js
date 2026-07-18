@@ -54,7 +54,10 @@ async function counts() {
 async function main() {
   const e = env();
   const child = spawn(process.execPath, [path.join(__dirname, '..', 'server.js')], {
-    env: Object.assign({}, process.env, e, { ORDER_TO_CASH_ENABLE: '1', PORT: String(PORT), NODE_ENV: 'development' }),
+    // PROCUREMENT_P2P_ENABLE pinned to '0' (dotenv never overrides a set var):
+    // the "flag untouched" check measures that O2C does not flip P2P, not
+    // whatever this machine's .env happens to enable.
+    env: Object.assign({}, process.env, e, { ORDER_TO_CASH_ENABLE: '1', PROCUREMENT_P2P_ENABLE: '0', PORT: String(PORT), NODE_ENV: 'development' }),
     stdio: 'ignore',
   });
   try {

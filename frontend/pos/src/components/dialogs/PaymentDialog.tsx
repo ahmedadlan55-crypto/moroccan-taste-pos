@@ -12,6 +12,7 @@ import { fmt2, shortRef } from "@/lib/format";
 import { buildKitchenTicketHtml, buildReceiptHtml, printHtml } from "@/lib/receipt";
 import type { CatalogPaymentMethod, LocalOrder, Payment } from "@/lib/types";
 import { Dialog } from "../Dialog";
+import { Numpad } from "../Numpad";
 import { Button, cn, Money } from "../ui";
 
 /** Built-in tabs + `owner:<name>` for owner-configured methods (close/w25-sell-ui). */
@@ -63,6 +64,9 @@ export function PaymentDialog({ open, onClose }: { open: boolean; onClose: () =>
   const [payNote, setPayNote] = useState<string>("");
   const [phase, setPhase] = useState<Phase>({ name: "form" });
   const tenderedRef = useRef<HTMLInputElement>(null);
+  // Which split leg the on-screen numpad edits (touch POS): the last-focused
+  // amount field, highlighted with a ring. Cash tab always edits `tendered`.
+  const [activeSplitField, setActiveSplitField] = useState<"cash" | "card" | "credit">("cash");
 
   // Owner-configured method tiles from the catalog (close/w25-sell-ui).
   // Absent on an old server → [] → the four built-in tabs only, as before.
@@ -94,6 +98,7 @@ export function PaymentDialog({ open, onClose }: { open: boolean; onClose: () =>
       setSplitCard("");
       setSplitCredit("");
       setPayNote("");
+      setActiveSplitField("cash");
       setPhase({ name: "form" });
     }
   }, [open]);
@@ -385,6 +390,9 @@ export function PaymentDialog({ open, onClose }: { open: boolean; onClose: () =>
                 <span className="text-sm font-extrabold">{cashShort ? "المبلغ غير كافٍ" : "الباقي للعميل"}</span>
                 <Money value={fmt2(cashShort ? total - tenderedNum : changeDue)} className="text-lg font-extrabold" />
               </div>
+              {/* On-screen keypad (touch POS) — edits the same `tendered` state
+                  the input above is bound to; the system keyboard still works. */}
+              <Numpad value={tendered} onChange={setTendered} className="mt-2" />
             </div>
           ) : null}
 
@@ -400,7 +408,9 @@ export function PaymentDialog({ open, onClose }: { open: boolean; onClose: () =>
                     type="number" inputMode="decimal" min={0} step="0.01"
                     value={splitCash}
                     onChange={(e) => setSplitCash(e.target.value)}
-                    placeholder="0.00" className="field num" dir="ltr"
+                    onFocus={() => setActiveSplitField("cash")}
+                    placeholder="0.00" dir="ltr"
+                    className={cn("field num", activeSplitField === "cash" && "ring-2 ring-teal-500/60")}
                   />
                 </label>
                 <label className="block">
@@ -411,7 +421,9 @@ export function PaymentDialog({ open, onClose }: { open: boolean; onClose: () =>
                     type="number" inputMode="decimal" min={0} step="0.01"
                     value={splitCard}
                     onChange={(e) => setSplitCard(e.target.value)}
-                    placeholder="0.00" className="field num" dir="ltr"
+                    onFocus={() => setActiveSplitField("card")}
+                    placeholder="0.00" dir="ltr"
+                    className={cn("field num", activeSplitField === "card" && "ring-2 ring-teal-500/60")}
                   />
                 </label>
                 <label className="block">
@@ -422,7 +434,9 @@ export function PaymentDialog({ open, onClose }: { open: boolean; onClose: () =>
                     type="number" inputMode="decimal" min={0} step="0.01"
                     value={splitCredit}
                     onChange={(e) => setSplitCredit(e.target.value)}
-                    placeholder="0.00" className="field num" dir="ltr"
+                    onFocus={() => setActiveSplitField("credit")}
+                    placeholder="0.00" dir="ltr"
+                    className={cn("field num", activeSplitField === "credit" && "ring-2 ring-teal-500/60")}
                   />
                 </label>
               </div>
@@ -436,6 +450,12 @@ export function PaymentDialog({ open, onClose }: { open: boolean; onClose: () =>
                 <span>{splitError ? splitError : "المجموع مطابق"}</span>
                 <Money value={`${fmt2(splitSum)} / ${fmt2(total)}`} />
               </div>
+              {/* On-screen keypad — edits the ACTIVE (ringed) split leg. */}
+              <Numpad
+                value={activeSplitField === "cash" ? splitCash : activeSplitField === "card" ? splitCard : splitCredit}
+                onChange={activeSplitField === "cash" ? setSplitCash : activeSplitField === "card" ? setSplitCard : setSplitCredit}
+                className="mt-2"
+              />
             </div>
           ) : null}
 

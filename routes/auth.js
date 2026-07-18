@@ -735,6 +735,11 @@ router.post('/users', requireAdmin, async (req, res) => {
       'INSERT INTO users (username, password, role, active, email, brand_id, branch_id, default_branch_id, default_warehouse_id, position_id, can_change_branch) VALUES (?, ?, ?, 1, ?, ?, ?, ?, ?, ?, ?)',
       [username, hash, dbRole, email||'', brandId||null, branchId||null, branchId||null, defaultWarehouseId, positionId, canChangeBranch]
     );
+    // close2 — every admin-created account must rotate its admin-assigned password
+    // on first login. The create path historically never set this; the login
+    // handler already enforces the flag (mustChangePassword → forced change +
+    // fresh token). Schema-tolerant so an old deploy without the column still works.
+    try { await db.query('UPDATE users SET must_change_password = 1 WHERE username = ?', [username]); } catch(e) {}
     // Apply optional extras (phone + full_name) — tolerate old schemas without the columns
     if (phone) { try { await db.query('UPDATE users SET phone = ? WHERE username = ?', [phone, username]); } catch(e) {} }
     if (displayName) { try { await db.query('UPDATE users SET full_name = ? WHERE username = ?', [displayName, username]); } catch(e) {} }
@@ -1076,6 +1081,32 @@ router.delete('/users/:username', requireAdmin, async (req, res) => {
     _auditUserOp(req, 'delete_user', req.params.username, {});
     res.json({ success: true });
   } catch (e) { res.json({ success: false, error: e.message }); }
+});
+
+// close2 — GET /api/auth/users/:username/audit — read-only user-management audit
+// trail. _auditUserOp (line ~550) writes every user op to audit_log (SINGULAR)
+// with entity_type='user'; /api/erp/audit-logs reads the OTHER table (audit_logs,
+// PLURAL), so no existing endpoint surfaces a single user's management history.
+// requireAdmin for parity with every sibling /users endpoint above. Additive +
+// read-only; degrades to [] on any schema gap (same convention as /erp/audit-logs).
+router.get('/users/:username/audit', requireAdmin, async (req, res) => {
+  try {
+    const [rows] = await db.query(
+      "SELECT * FROM audit_log WHERE entity_type = 'user' AND entity_id = ? ORDER BY created_at DESC LIMIT 100",
+      [req.params.username]
+    );
+    res.json(rows.map(r => ({
+      id: r.id,
+      action: r.action,
+      entityType: r.entity_type,
+      entityId: r.entity_id,
+      username: r.username,
+      details: r.details,
+      ip: r.ip,
+      ipAddress: r.ip,
+      createdAt: r.created_at
+    })));
+  } catch (e) { res.json([]); }
 });
 
 // ═══════════════════════════════════════════════════════════════

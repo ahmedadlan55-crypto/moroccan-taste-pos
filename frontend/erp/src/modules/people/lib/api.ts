@@ -16,6 +16,7 @@ import type {
   CustodyExpenseInput,
   CustodyTopupInput,
   CustodyUser,
+  CustodyUserInput,
   Department,
   DepartmentInput,
   Employee,
@@ -26,6 +27,7 @@ import type {
   HrException,
   JobTitle,
   LeaveRequest,
+  LoginAccount,
   LeaveRequestInput,
   LeaveType,
   MyAttendanceRow,
@@ -275,6 +277,27 @@ export const peopleApi = {
     apiClient
       .post<{ success: boolean; error?: string }>(`/custody/${custodyId}/close-reject`, { reason })
       .then(ensureOk),
+
+  // ── Custody officers (مسؤولو العهدة) — admin/manager CRUD over custody_users ──
+  /** Create (no id) or update (id present) a custodian. A 409 { code:'DUPLICATE_LINK' }
+   *  comes back as an ApiError when linkedUsername is already taken by another
+   *  active custodian — the caller surfaces it as a field-level message. */
+  saveCustodyUser: (body: CustodyUserInput) =>
+    apiClient
+      .post<{ success: boolean; id?: string; error?: string; code?: string }>("/custody/users", body)
+      .then(ensureOk),
+
+  /** Flip a custodian active ⇄ inactive. */
+  toggleCustodyUser: (id: string) =>
+    apiClient.post<{ success: boolean; error?: string }>(`/custody/users/${id}/toggle`, {}).then(ensureOk),
+
+  /** Remove a custodian (server refuses when they still hold an active custody). */
+  deleteCustodyUser: (id: string) =>
+    apiClient.delete<{ success: boolean; error?: string }>(`/custody/users/${id}`).then(ensureOk),
+
+  /** Lightweight login-account directory for the "ربط بحساب دخول" picker. */
+  listLoginAccounts: (signal?: AbortSignal) =>
+    apiClient.get<unknown>("/auth/users-list", { signal }).then(ensureArray<LoginAccount>),
 
   // ── Pickers backing the custody dialogs ──
   /** GL accounts for the topup cash/bank picker — same endpoint the legacy admin

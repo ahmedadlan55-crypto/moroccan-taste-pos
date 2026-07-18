@@ -16,6 +16,7 @@ import { ContractsPage } from "./pages/ContractsPage";
 import { PayrollPage } from "./pages/PayrollPage";
 import { OrgTreePage } from "./pages/OrgTreePage";
 import { CustodyPage } from "./pages/CustodyPage";
+import { CustodyOfficersPage } from "./pages/CustodyOfficers";
 import { SelfServicePage } from "./pages/SelfServicePage";
 
 /** Absolute manifest path → screen. Keys mirror the `people` group in the nav
@@ -29,6 +30,7 @@ const PAGES: Record<string, ComponentType> = {
   "/people/payroll": PayrollPage,
   "/people/org-tree": OrgTreePage,
   "/people/custody": CustodyPage,
+  "/people/custody-officers": CustodyOfficersPage,
   "/people/self-service": SelfServicePage,
 };
 

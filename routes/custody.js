@@ -102,6 +102,21 @@ router.post('/users', async (req, res) => {
   try {
     const { id, name, idNumber, phone, jobTitle, notes, linkedUsername } = req.body;
     if (!name) return res.json({ success: false, error: 'Name required' });
+    // v7.8 — a login account may be linked to at most ONE ACTIVE custodian.
+    // Reject a create (or a relink on update) that would attach linkedUsername
+    // to a second active custody_users row. `id <> ?` excludes self on update
+    // (id is '' on create, so no row is excluded and the whole active set is
+    // checked). The is_active=1 clause lets a username be re-linked once the
+    // previous holder has been deactivated.
+    if (linkedUsername) {
+      const [dup] = await db.query(
+        'SELECT id FROM custody_users WHERE linked_username = ? AND is_active = 1 AND id <> ?',
+        [linkedUsername, id || '']
+      );
+      if (dup.length) {
+        return res.status(409).json({ success: false, code: 'DUPLICATE_LINK', error: 'هذا الحساب مرتبط بالفعل بمسؤول عهدة آخر' });
+      }
+    }
     if (id) {
       await db.query(
         'UPDATE custody_users SET name=?, id_number=?, phone=?, job_title=?, notes=?, linked_username=? WHERE id=?',

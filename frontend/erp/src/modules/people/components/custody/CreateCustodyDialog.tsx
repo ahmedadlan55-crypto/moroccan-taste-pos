@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { Link } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Button, Dialog, ErrorState, LoadingState, Select, safeUserMessage, useToast } from "@/shared/ui";
 import { peopleApi } from "../../lib/api";
@@ -83,7 +84,15 @@ export function CreateCustodyDialog({ open, onClose }: { open: boolean; onClose:
           </Select>
           {!active.length && (
             <p className="mt-2 text-xs font-medium text-slate-500">
-              لا يوجد مسؤولو عهدة نشطون — أضفهم أولًا من إدارة مسؤولي العهدة.
+              لا يوجد مسؤولو عهدة نشطون —{" "}
+              <Link
+                to="/people/custody-officers"
+                onClick={onClose}
+                className="font-bold text-teal-700 underline underline-offset-2 hover:text-teal-800"
+              >
+                أضفهم من شاشة «مسؤولو العهدة»
+              </Link>
+              .
             </p>
           )}
         </label>

@@ -279,6 +279,26 @@ export interface CustodyUser {
   linkedUsername?: string;
 }
 
+/** POST /custody/users body (create when no id, update when id present). The
+ *  actor is taken from the JWT; only these custody_users columns are writable. */
+export interface CustodyUserInput {
+  id?: string;
+  name: string;
+  idNumber?: string;
+  phone?: string;
+  jobTitle?: string;
+  notes?: string;
+  /** Free-text login username to link (GET /auth/users-list). '' clears it. */
+  linkedUsername?: string;
+}
+
+/** Row from GET /auth/users-list — the lightweight login-account directory that
+ *  feeds the "ربط بحساب دخول" picker (username + display name only). */
+export interface LoginAccount {
+  username: string;
+  fullName: string;
+}
+
 export interface Custody {
   id: string;
   custodyNumber: string;

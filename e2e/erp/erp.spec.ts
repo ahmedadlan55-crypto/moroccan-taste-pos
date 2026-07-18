@@ -276,3 +276,89 @@ test("closure gate — every leaf is real, healthy, contained, legacy-free", asy
   expect(consoleErrors, "zero console errors expected").toEqual([]);
   expect(failedRequests, "zero failed requests expected (both viewports, no whitelist)").toEqual([]);
 });
+
+test("company and branch scope stays readable from 390px through 1920px", async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name !== "desktop", "one serial responsive matrix is enough");
+
+  await page.addInitScript(
+    ([token, session]) => {
+      localStorage.setItem("pos_token", token);
+      localStorage.setItem("pos_session", session);
+    },
+    [TOKEN, JSON.stringify({ user: "admin", role: "admin" })],
+  );
+
+  const sizes = [
+    { width: 390, height: 844 },
+    { width: 768, height: 1024 },
+    { width: 1024, height: 768 },
+    { width: 1440, height: 900 },
+    { width: 1920, height: 1080 },
+  ];
+
+  for (const size of sizes) {
+    await test.step(`${size.width}px scope layout`, async () => {
+      await page.setViewportSize(size);
+      await page.goto("/app/overview");
+      await waitRendered(page, `/overview scope ${size.width}`);
+      await settle(page);
+
+      if (size.width < 1536) {
+        await page.getByRole("button", { name: /فتح البحث ونطاق العمل/ }).click();
+      }
+
+      const group = page.getByRole("group", { name: "نطاق عرض البيانات" });
+      await expect(group).toBeVisible();
+      await expect(group.getByRole("combobox", { name: "اختيار الشركة" })).toHaveValue("all");
+      await expect(group.getByRole("combobox", { name: "اختيار الفرع" })).toHaveValue("all");
+      await expect(group.getByText("كل الشركات", { exact: true }).last()).toBeVisible();
+      await expect(group.getByText("كل الفروع", { exact: true }).last()).toBeVisible();
+
+      const probe = await group.evaluate((scope) => {
+        const rects = Array.from(scope.querySelectorAll("label")).map((label) => {
+          const rect = label.getBoundingClientRect();
+          return { width: rect.width, height: rect.height };
+        });
+        const valuesFit = Array.from(scope.querySelectorAll<HTMLElement>("[data-scope-value]"))
+          .every((value) => value.scrollWidth <= value.clientWidth + 1);
+        const search = Array.from(
+          document.querySelectorAll<HTMLElement>('[aria-label="بحث والانتقال السريع (Ctrl+K)"]'),
+        ).find((candidate) => {
+          const rect = candidate.getBoundingClientRect();
+          const style = getComputedStyle(candidate);
+          return rect.width > 0
+            && rect.height > 0
+            && style.display !== "none"
+            && style.visibility !== "hidden";
+        });
+        const scopeRect = scope.getBoundingClientRect();
+        const searchRect = search?.getBoundingClientRect();
+        const overlapsSearch = !!searchRect
+          && scopeRect.left < searchRect.right
+          && scopeRect.right > searchRect.left
+          && scopeRect.top < searchRect.bottom
+          && scopeRect.bottom > searchRect.top;
+        return {
+          bodyOverflow: document.documentElement.scrollWidth - document.documentElement.clientWidth,
+          rects,
+          valuesFit,
+          overlapsSearch,
+        };
+      });
+
+      expect(probe.bodyOverflow, `${size.width}px must not overflow`).toBeLessThanOrEqual(1);
+      expect(probe.valuesFit, `${size.width}px scope values must not clip`).toBe(true);
+      expect(probe.overlapsSearch, `${size.width}px scope must not overlap search`).toBe(false);
+      expect(probe.rects).toHaveLength(2);
+      expect(probe.rects.every((rect) => rect.height >= 44 && rect.width >= 150)).toBe(true);
+
+      const dir = path.join(OUT_ROOT, "scope-responsive");
+      fs.mkdirSync(dir, { recursive: true });
+      await page.screenshot({
+        path: path.join(dir, `scope-${size.width}.png`),
+        fullPage: false,
+        animations: "disabled",
+      });
+    });
+  }
+});

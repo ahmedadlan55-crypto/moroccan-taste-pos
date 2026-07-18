@@ -27,7 +27,7 @@ function ShellFrame() {
   const { collapsed } = useShell();
 
   return (
-    <div className="min-h-screen">
+    <div className="min-h-screen min-h-[100dvh] overflow-x-hidden">
       {/* a11y — keyboard users jump straight to the routed content (WCAG 2.4.1). */}
       <a href="#main" className="skip-link no-print">
         تخطٍّ إلى المحتوى
@@ -38,7 +38,7 @@ function ShellFrame() {
           phones; desktop has no bottom nav so it reverts to a normal pad. */}
       <main
         className={cn(
-          "px-4 py-6 pb-[calc(6.5rem+env(safe-area-inset-bottom))] transition-[margin] sm:px-6 lg:pb-6 xl:px-8",
+          "px-4 py-6 pb-[calc(7.75rem+env(safe-area-inset-bottom))] transition-[margin] sm:px-6 lg:pb-6 xl:px-8",
           collapsed ? "lg:mr-20" : "lg:mr-72",
         )}
         id="main"

@@ -66,7 +66,7 @@ export function Dialog({
             aria-hidden="true"
             onClick={() => dismissable && onClose()}
           />
-          <div className="absolute inset-0 grid place-items-center p-4">
+          <div className="absolute inset-0 grid place-items-center p-0 sm:p-4">
             <motion.div
               ref={panelRef}
               initial={{ opacity: 0, scale: 0.96, y: 8 }}
@@ -80,12 +80,12 @@ export function Dialog({
               tabIndex={-1}
               dir="rtl"
               className={cn(
-                "w-full rounded-2xl border border-slate-200 bg-white shadow-2xl focus:outline-none",
+                "flex max-h-[100dvh] w-full flex-col overflow-hidden rounded-t-2xl border border-slate-200 bg-white shadow-2xl focus:outline-none sm:max-h-[calc(100dvh-2rem)] sm:rounded-2xl",
                 SIZES[size],
               )}
             >
               {(title || !hideClose) && (
-                <div className="flex items-start justify-between gap-3 border-b border-slate-100 px-5 py-4">
+                <div className="flex shrink-0 items-start justify-between gap-3 border-b border-slate-100 px-4 py-4 sm:px-5">
                   <div className="min-w-0">
                     {title && (
                       <h2 id={titleId} className="text-lg font-extrabold text-slate-900">
@@ -105,9 +105,9 @@ export function Dialog({
                   )}
                 </div>
               )}
-              {children && <div className="px-5 py-4">{children}</div>}
+              {children && <div className="scrollbar-thin min-h-0 flex-1 overflow-y-auto overscroll-contain px-4 py-4 sm:px-5">{children}</div>}
               {footer && (
-                <div className="flex flex-wrap justify-end gap-2 border-t border-slate-100 px-5 py-4">
+                <div className="grid shrink-0 grid-cols-1 gap-2 border-t border-slate-100 bg-white px-4 py-4 pb-[max(1rem,env(safe-area-inset-bottom))] sm:flex sm:flex-wrap sm:justify-end sm:px-5 [&>button]:w-full sm:[&>button]:w-auto">
                   {footer}
                 </div>
               )}

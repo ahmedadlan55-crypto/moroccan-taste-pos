@@ -207,6 +207,7 @@ export const ROLE_GRANTS: Record<Capability, readonly Role[]> = {
   "workflow.audit.view": [...ADM, "manager", "auditor"],
   "workflow.actions.act": EVERYONE,
   "workflow.builder.manage": ADM,
+  "txn.create": EVERYONE,
   // ── Workflow txn actions — EXACT mirror of the live role_permissions rows
   //    (queried read-only on 2026-07-17):
   //      txn.approve → admin, finance, hr, manager

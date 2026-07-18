@@ -20,8 +20,10 @@ import { OutboxPage } from "./pages/OutboxPage";
 import { MyRequestsPage } from "./pages/MyRequestsPage";
 import { ApprovalFlowsPage } from "./pages/ApprovalFlowsPage";
 import { ActionLogPage } from "./pages/ActionLogPage";
+import { CreateTransactionPage } from "./pages/CreateTransactionPage";
 
 const PAGES: Record<string, ComponentType> = {
+  "/workflow/new": CreateTransactionPage,
   "/workflow/inbox": InboxPage,
   "/workflow/outbox": OutboxPage,
   "/workflow/my-requests": MyRequestsPage,

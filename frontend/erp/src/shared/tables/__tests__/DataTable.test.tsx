@@ -121,4 +121,39 @@ describe("DataTable", () => {
     );
     expect(screen.getByText("لا توجد سجلات")).toBeInTheDocument();
   });
+
+  it("omits mobileHidden columns from the compact mobile cards", () => {
+    const compactColumns: ColumnDef<Row>[] = [
+      COLUMNS[0],
+      { ...COLUMNS[1], mobileHidden: true },
+    ];
+    const { container } = render(
+      <DataTable columns={compactColumns} rows={[ROWS[0]]} getRowId={(r) => r.id} paginate={false} />,
+    );
+    const mobileList = container.querySelector("ul");
+    expect(mobileList).not.toBeNull();
+    expect(within(mobileList as HTMLElement).getByText("Beta")).toBeInTheDocument();
+    expect(within(mobileList as HTMLElement).queryByText("المبلغ")).not.toBeInTheDocument();
+    expect(within(mobileList as HTMLElement).queryByText("30")).not.toBeInTheDocument();
+  });
+
+  it("uses a real keyboard-focusable button for clickable mobile cards", () => {
+    const onRowClick = vi.fn();
+    const { container } = render(
+      <DataTable
+        columns={COLUMNS}
+        rows={[ROWS[0]]}
+        getRowId={(r) => r.id}
+        mobileTitle={(row) => row.name}
+        onRowClick={onRowClick}
+        paginate={false}
+      />,
+    );
+    const mobileList = container.querySelector("ul");
+    const openButton = within(mobileList as HTMLElement).getByRole("button", { name: "Beta" });
+    openButton.focus();
+    fireEvent.keyDown(openButton, { key: "Enter" });
+    fireEvent.click(openButton);
+    expect(onRowClick).toHaveBeenCalledTimes(1);
+  });
 });

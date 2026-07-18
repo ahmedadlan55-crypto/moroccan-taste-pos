@@ -446,31 +446,42 @@ export function DataTable<T>(props: DataTableProps<T>) {
             <ul className="divide-y divide-slate-100 md:hidden">
               {paged.map((row) => {
                 const id = getRowId(row);
-                return (
-                  <li
-                    key={id}
-                    onClick={onRowClick ? () => onRowClick(row) : undefined}
-                    className={cn("p-4", onRowClick && "cursor-pointer active:bg-slate-50")}
-                  >
-                    <div className="flex items-start justify-between gap-3">
-                      <div className="min-w-0 flex-1 space-y-1.5">
-                        {mobileTitle && (
-                          <div className="text-sm font-extrabold text-slate-900">{mobileTitle(row)}</div>
-                        )}
-                        {visibleColumns.map((col) => (
-                          <div key={col.id} className="flex items-baseline justify-between gap-3 text-xs">
-                            <span className="font-bold text-slate-400">
-                              {typeof col.header === "string" ? col.header : (col.label ?? col.id)}
-                            </span>
-                            <span
-                              dir={col.numeric ? "ltr" : undefined}
-                              className={cn("font-semibold text-slate-700", col.numeric && "tabular-nums")}
-                            >
-                              {renderCell(col, row)}
-                            </span>
-                          </div>
-                        ))}
+                const mobileContent = (
+                  <div className="min-w-0 flex-1 space-y-1.5">
+                    {mobileTitle && (
+                      <div className="break-words text-sm font-extrabold text-slate-900">{mobileTitle(row)}</div>
+                    )}
+                    {visibleColumns.filter((col) => !col.mobileHidden).map((col) => (
+                      <div key={col.id} className="flex min-w-0 items-baseline justify-between gap-3 text-xs">
+                        <span className="shrink-0 font-bold text-slate-400">
+                          {typeof col.header === "string" ? col.header : (col.label ?? col.id)}
+                        </span>
+                        <span
+                          dir={col.numeric ? "ltr" : undefined}
+                          className={cn(
+                            "min-w-0 flex-1 break-words text-end font-semibold text-slate-700 [overflow-wrap:anywhere]",
+                            col.numeric && "tabular-nums",
+                          )}
+                        >
+                          {renderCell(col, row)}
+                        </span>
                       </div>
+                    ))}
+                  </div>
+                );
+                return (
+                  <li key={id} className="p-4">
+                    <div className="flex items-start justify-between gap-3">
+                      {onRowClick ? (
+                        <button
+                          type="button"
+                          onClick={() => onRowClick(row)}
+                          className="min-w-0 flex-1 rounded-xl text-right outline-none transition active:bg-slate-50 focus-visible:ring-4 focus-visible:ring-teal-100"
+                          aria-label={typeof mobileTitle?.(row) === "string" ? String(mobileTitle(row)) : "فتح تفاصيل الصف"}
+                        >
+                          {mobileContent}
+                        </button>
+                      ) : mobileContent}
                       <div className="flex shrink-0 items-center gap-2">
                         {selectable && (
                           <span onClick={(e) => e.stopPropagation()}>

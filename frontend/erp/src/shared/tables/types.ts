@@ -18,6 +18,8 @@ export interface ColumnDef<T> {
   hideable?: boolean;
   /** Hidden until the user enables it in the columns menu. */
   defaultHidden?: boolean;
+  /** Hide this column from the compact mobile-card representation. */
+  mobileHidden?: boolean;
   /** Fixed width (e.g. "8rem" or 120). */
   width?: string | number;
   /** Numeric cell → tabular-nums, LTR, end-aligned. */

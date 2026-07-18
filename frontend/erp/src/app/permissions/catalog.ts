@@ -189,6 +189,7 @@ export const ALL_CAPS = [
   // ── Workflow write caps (FC-P3) ──
   "workflow.actions.act",
   "workflow.builder.manage",
+  "txn.create",
   // ── Workflow txn actions (close/f-people-writes) — mirrors the LIVE
   //    role_permissions rows (permission_id txn.approve/txn.reject/txn.return).
   //    The G-wf stream is adding requireCapability guards on the action route

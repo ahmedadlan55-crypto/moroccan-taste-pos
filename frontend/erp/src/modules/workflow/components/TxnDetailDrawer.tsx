@@ -1,26 +1,35 @@
-import { useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import {
   CheckCircle2,
+  Building2,
+  CalendarClock,
   CornerUpLeft,
   FileText,
   GitBranch,
   History,
+  MessageCircle,
+  MoreHorizontal,
+  Paperclip,
+  ShieldCheck,
   Share2,
   XCircle,
 } from "lucide-react";
 import {
   AuditTimeline,
+  AttachmentViewer,
   Badge,
   Button,
   ConfirmDialog,
   Dialog,
+  DropdownMenu,
   Drawer,
   DetailStat,
   ErrorState,
   LoadingState,
   Select,
   StatusBadge,
+  Tabs,
   WorkflowTimeline,
   safeUserMessage,
   useToast,
@@ -33,6 +42,7 @@ import { useCan } from "@/app/providers";
 import { formatCurrency, formatDate } from "@/shared/lib";
 import {
   fetchBundle,
+  useMarkTxnRead,
   useRoutableUsers,
   useTxnAction,
   useTxnPermissions,
@@ -41,6 +51,33 @@ import {
 import { qk } from "../lib/query-keys";
 import { actionTypeLabel, importanceMeta, statusMeta } from "../lib/labels";
 import type { TxnBundle, TxnLog, WorkflowPathStep } from "../lib/types";
+
+type DetailTab = "summary" | "content" | "attachments" | "conversation" | "path" | "audit";
+
+function htmlToText(html?: string) {
+  if (!html) return "";
+  if (typeof DOMParser !== "undefined") {
+    return new DOMParser().parseFromString(html, "text/html").body.textContent?.trim() ?? "";
+  }
+  return html.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim();
+}
+
+function safeAttachmentUrl(url?: string) {
+  if (!url) return undefined;
+  if (/^data:(?:application\/pdf|image\/(?:png|jpe?g|webp|gif));base64,/i.test(url)) return url;
+  if (/^(?:https:\/\/|\/api\/)/i.test(url)) return url;
+  return undefined;
+}
+
+function secrecyLabel(value?: string) {
+  const labels: Record<string, string> = {
+    normal: "عادي",
+    confidential: "سري",
+    secret: "سري جدًا",
+    top_secret: "عالي السرية",
+  };
+  return labels[String(value || "normal")] || String(value || "عادي");
+}
 
 function stepStatus(step: WorkflowPathStep, txnStatus: string): WorkflowStepStatus {
   if (step.isCurrent && String(txnStatus).toLowerCase() === "rejected") return "rejected";
@@ -83,6 +120,7 @@ interface Props {
 }
 
 export function TxnDetailDrawer({ txnId, open, onClose, username, canAct = false }: Props) {
+  const [tab, setTab] = useState<DetailTab>("summary");
   const query = useQuery({
     queryKey: qk.bundle(txnId ?? "", username),
     queryFn: ({ signal }) => fetchBundle(txnId as string, username, { signal }),
@@ -91,6 +129,19 @@ export function TxnDetailDrawer({ txnId, open, onClose, username, canAct = false
 
   const bundle = query.data;
   const loaded = !!bundle && !bundle.error;
+  const markRead = useMarkTxnRead();
+
+  useEffect(() => {
+    setTab("summary");
+  }, [txnId]);
+
+  useEffect(() => {
+    if (!open || !txnId || !loaded || bundle?.isRead !== false || markRead.isPending) return;
+    markRead.mutate(txnId);
+    // `txnId` and the bundle's read flag make this idempotent; mutation state is
+    // deliberately not a dependency so invalidation cannot create a request loop.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, txnId, loaded, bundle?.isRead]);
 
   // Server decides — per txn, per user — which actions are allowed. We only fetch
   // it when this box may act AND the drawer is open on a successfully-loaded txn.
@@ -113,6 +164,15 @@ export function TxnDetailDrawer({ txnId, open, onClose, username, canAct = false
   const anyAction = canApprove || canReject || canReturn || canForward;
 
   const title = bundle?.subject || bundle?.title || bundle?.txnNumber || "تفاصيل المعاملة";
+  const contentText = useMemo(() => htmlToText(bundle?.contentHtml), [bundle?.contentHtml]);
+  const detailTabs = useMemo(() => [
+    { value: "summary", label: "الملخص" },
+    { value: "content", label: "المحتوى" },
+    { value: "attachments", label: `المرفقات (${bundle?.attachments?.length ?? 0})` },
+    { value: "conversation", label: `المحادثة (${bundle?.replies?.length ?? 0})` },
+    { value: "path", label: "المسار" },
+    { value: "audit", label: "السجل" },
+  ], [bundle?.attachments?.length, bundle?.replies?.length]);
 
   const footer =
     canAct && loaded && anyAction ? (
@@ -127,7 +187,7 @@ export function TxnDetailDrawer({ txnId, open, onClose, username, canAct = false
     ) : undefined;
 
   return (
-    <Drawer open={open} onClose={onClose} title={title} eyebrow="عرض المعاملة" icon={FileText} footer={footer}>
+    <Drawer open={open} onClose={onClose} title={title} eyebrow="عرض المعاملة" icon={FileText} footer={footer} size="xl">
       {query.isLoading ? (
         <LoadingState rows={6} />
       ) : query.isError ? (
@@ -138,71 +198,159 @@ export function TxnDetailDrawer({ txnId, open, onClose, username, canAct = false
           onRetry={() => query.refetch()}
         />
       ) : (
-        <div className="space-y-6">
-          {/* Summary */}
-          <div className="grid grid-cols-2 gap-3">
-            <DetailStat
-              label="رقم المعاملة"
-              value={<span dir="ltr" className="tabular-nums">{bundle.txnNumber || "—"}</span>}
-            />
-            <DetailStat label="النوع" value={bundle.typeName || "—"} />
-            <DetailStat label="الحالة" value={<StatusBadge tone={statusMeta(bundle.status).tone}>{statusMeta(bundle.status).label}</StatusBadge>} />
-            <DetailStat label="الأهمية" value={<Badge tone={importanceMeta(bundle.importance).tone}>{importanceMeta(bundle.importance).label}</Badge>} />
-            <DetailStat label="المُرسِل" value={bundle.createdByName || bundle.creatorName || bundle.createdBy || "—"} />
-            <DetailStat label="لدى" value={bundle.currentAssigneeName || bundle.assigneeName || bundle.currentAssignee || "—"} />
-            <DetailStat
-              label="التاريخ"
-              value={<span dir="ltr" className="tabular-nums">{formatDate(bundle.createdAt)}</span>}
-            />
-            {typeof bundle.amount === "number" && bundle.amount > 0 && (
-              <DetailStat
-                label="المبلغ"
-                value={<span dir="ltr" className="tabular-nums">{formatCurrency(bundle.amount)}</span>}
-              />
-            )}
+        <div className="space-y-5">
+          <div className="flex flex-wrap items-center gap-2 rounded-2xl border border-slate-200 bg-slate-50 p-3">
+            <StatusBadge tone={statusMeta(bundle.status).tone}>{statusMeta(bundle.status).label}</StatusBadge>
+            <Badge tone={importanceMeta(bundle.importance).tone}>{importanceMeta(bundle.importance).label}</Badge>
+            {bundle.isOverdue && <Badge tone="danger">متأخرة عن SLA</Badge>}
+            <span className="me-auto inline-flex items-center gap-1 text-xs font-bold text-slate-500">
+              <CalendarClock className="h-4 w-4" aria-hidden="true" />
+              {bundle.dueDate ? `الاستحقاق ${formatDate(bundle.dueDate)}` : "لا يوجد موعد استحقاق"}
+            </span>
           </div>
 
-          {/* Description */}
-          {bundle.description && (
-            <section className="space-y-2">
-              <h3 className="text-sm font-extrabold text-slate-800">التفاصيل</h3>
-              <p className="whitespace-pre-wrap rounded-xl border border-slate-100 bg-slate-50 p-3 text-sm font-medium leading-6 text-slate-600">
-                {bundle.description}
-              </p>
-            </section>
+          <Tabs
+            items={detailTabs}
+            value={tab}
+            onChange={(value) => setTab(value as DetailTab)}
+            aria-label="أقسام تفاصيل المعاملة"
+          />
+
+          {tab === "summary" && (
+            <div className="space-y-5" role="tabpanel">
+              <div className="grid grid-cols-2 gap-3">
+                <DetailStat label="رقم المعاملة" value={<span dir="ltr" className="tabular-nums">{bundle.txnNumber || "—"}</span>} />
+                <DetailStat label="النوع" value={bundle.typeName || "—"} />
+                <DetailStat label="المُرسِل" value={bundle.createdByName || bundle.creatorName || bundle.createdBy || "—"} />
+                <DetailStat label="لدى الآن" value={bundle.currentAssigneeName || bundle.assigneeName || bundle.currentAssignee || "—"} />
+                <DetailStat label="الخطوة الحالية" value={bundle.currentStepName || "—"} />
+                <DetailStat label="الفرع" value={bundle.createdByBranch || bundle.branchName || "—"} />
+                <DetailStat label="تاريخ الإنشاء" value={<span dir="ltr" className="tabular-nums">{formatDate(bundle.createdAt)}</span>} />
+                {typeof bundle.amount === "number" && bundle.amount > 0 && (
+                  <DetailStat label="المبلغ" value={<span dir="ltr" className="tabular-nums">{formatCurrency(bundle.amount)}</span>} />
+                )}
+              </div>
+
+              {(bundle.issuingEntityName || bundle.createdByPosition) && (
+                <section className="rounded-2xl border border-slate-200 p-4">
+                  <h3 className="flex items-center gap-2 text-sm font-extrabold text-slate-800">
+                    <Building2 className="h-4 w-4 text-teal-600" aria-hidden="true" /> بيانات الإصدار
+                  </h3>
+                  <dl className="mt-3 grid gap-3 text-sm sm:grid-cols-2">
+                    <div><dt className="text-xs font-bold text-slate-400">جهة الإصدار</dt><dd className="mt-1 font-semibold text-slate-700">{bundle.issuingEntityName || "—"}</dd></div>
+                    <div><dt className="text-xs font-bold text-slate-400">منصب المُرسِل</dt><dd className="mt-1 font-semibold text-slate-700">{bundle.createdByPosition || "—"}</dd></div>
+                  </dl>
+                </section>
+              )}
+
+              {bundle.recipients && bundle.recipients.length > 0 && (
+                <section className="space-y-2">
+                  <h3 className="text-sm font-extrabold text-slate-800">الجهات والمستلمون</h3>
+                  <div className="flex flex-wrap gap-2">
+                    {bundle.recipients.map((recipient) => (
+                      <Badge key={recipient.id} tone={recipient.responseReceived ? "success" : "neutral"}>
+                        {recipient.name || recipient.username || "—"}
+                        {recipient.needsResponse ? (recipient.responseReceived ? " · تم الرد" : " · ينتظر الرد") : ""}
+                      </Badge>
+                    ))}
+                  </div>
+                </section>
+              )}
+            </div>
           )}
 
-          {/* Recipients */}
-          {bundle.recipients && bundle.recipients.length > 0 && (
-            <section className="space-y-2">
-              <h3 className="text-sm font-extrabold text-slate-800">الجهات</h3>
-              <div className="flex flex-wrap gap-2">
-                {bundle.recipients.map((r) => (
-                  <Badge key={r.id} tone={r.responseReceived ? "success" : "neutral"}>
-                    {r.name || r.username || "—"}
-                  </Badge>
-                ))}
+          {tab === "content" && (
+            <section className="space-y-4" role="tabpanel">
+              <div className="flex flex-wrap items-center gap-2">
+                <ShieldCheck className="h-4 w-4 text-teal-600" aria-hidden="true" />
+                <span className="text-xs font-bold text-slate-500">سرية المحتوى</span>
+                <Badge tone={bundle.contentSecrecy === "normal" ? "neutral" : "warning"}>{secrecyLabel(bundle.contentSecrecy)}</Badge>
+              </div>
+              {bundle.description && (
+                <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
+                  <h3 className="text-sm font-extrabold text-slate-800">الملخص التنفيذي</h3>
+                  <p className="mt-2 whitespace-pre-wrap text-sm font-medium leading-7 text-slate-700">{bundle.description}</p>
+                </div>
+              )}
+              <div className="rounded-2xl border border-slate-200 bg-white p-4">
+                <h3 className="text-sm font-extrabold text-slate-800">نص المعاملة</h3>
+                <p className="mt-3 whitespace-pre-wrap text-sm font-medium leading-8 text-slate-700">
+                  {contentText || "لا يوجد محتوى نصي مسجل لهذه المعاملة."}
+                </p>
               </div>
             </section>
           )}
 
-          {/* Approval path */}
-          {bundle.workflowPath && bundle.workflowPath.length > 0 && (
-            <section className="space-y-3">
-              <h3 className="flex items-center gap-2 text-sm font-extrabold text-slate-800">
-                <GitBranch className="h-4 w-4 text-teal-600" aria-hidden="true" /> مسار الاعتماد
-              </h3>
-              <WorkflowTimeline steps={toWorkflowSteps(bundle)} />
+          {tab === "attachments" && (
+            <section className="space-y-4" role="tabpanel">
+              <div className="flex flex-wrap items-center gap-2">
+                <Paperclip className="h-4 w-4 text-teal-600" aria-hidden="true" />
+                <span className="text-xs font-bold text-slate-500">سرية المرفقات</span>
+                <Badge tone={bundle.attachmentsSecrecy === "normal" ? "neutral" : "warning"}>{secrecyLabel(bundle.attachmentsSecrecy)}</Badge>
+              </div>
+              <AttachmentViewer
+                attachments={(bundle.attachments ?? []).map((attachment) => ({
+                  id: attachment.id,
+                  name: attachment.fileName || "مرفق",
+                  url: safeAttachmentUrl(attachment.dataUrl),
+                  contentType: attachment.mime,
+                }))}
+                emptyText="لا توجد مرفقات لهذه المعاملة."
+              />
+              {(bundle.attachments ?? []).map((attachment) => (
+                <div key={`meta-${attachment.id}`} className="text-xs font-medium text-slate-400">
+                  {attachment.fileName || "مرفق"} · رفعه {attachment.uploadedBy || "—"} · {formatDate(attachment.uploadedAt)}
+                </div>
+              ))}
             </section>
           )}
 
-          {/* Action log */}
-          <section className="space-y-3">
-            <h3 className="flex items-center gap-2 text-sm font-extrabold text-slate-800">
-              <History className="h-4 w-4 text-teal-600" aria-hidden="true" /> سجل الإجراءات
-            </h3>
-            <AuditTimeline entries={toAuditEntries(bundle.logs ?? [])} />
-          </section>
+          {tab === "conversation" && (
+            <section className="space-y-3" role="tabpanel">
+              {(bundle.replies ?? []).length === 0 ? (
+                <p className="rounded-2xl border border-dashed border-slate-200 p-6 text-center text-sm font-medium text-slate-400">لا توجد ردود أو مناقشات بعد.</p>
+              ) : (bundle.replies ?? []).map((reply) => (
+                <article key={reply.id} className="rounded-2xl border border-slate-200 p-4">
+                  <div className="flex items-start gap-3">
+                    <span className="grid h-9 w-9 shrink-0 place-items-center rounded-full bg-teal-50 text-teal-700"><MessageCircle className="h-4 w-4" aria-hidden="true" /></span>
+                    <div className="min-w-0 flex-1">
+                      <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+                        <span className="text-sm font-extrabold text-slate-800">{reply.authorName || reply.authorUsername || "—"}</span>
+                        {reply.authorPosition && <span className="text-xs font-medium text-slate-400">{reply.authorPosition}</span>}
+                        <span dir="ltr" className="me-auto text-xs tabular-nums text-slate-400">{formatDate(reply.createdAt)}</span>
+                      </div>
+                      <p className="mt-2 whitespace-pre-wrap text-sm font-medium leading-7 text-slate-700">{reply.replyText || "—"}</p>
+                      {safeAttachmentUrl(reply.attachment) && (
+                        <a href={safeAttachmentUrl(reply.attachment)} target="_blank" rel="noreferrer" className="mt-3 inline-flex items-center gap-1 text-xs font-bold text-teal-700 hover:underline">
+                          <Paperclip className="h-3.5 w-3.5" aria-hidden="true" /> {reply.attachmentName || "فتح المرفق"}
+                        </a>
+                      )}
+                    </div>
+                  </div>
+                </article>
+              ))}
+            </section>
+          )}
+
+          {tab === "path" && (
+            <section className="space-y-3" role="tabpanel">
+              <h3 className="flex items-center gap-2 text-sm font-extrabold text-slate-800">
+                <GitBranch className="h-4 w-4 text-teal-600" aria-hidden="true" /> مسار الاعتماد
+              </h3>
+              {(bundle.workflowPath ?? []).length > 0
+                ? <WorkflowTimeline steps={toWorkflowSteps(bundle)} />
+                : <p className="text-sm font-medium text-slate-400">لا يوجد مسار اعتماد مسجل.</p>}
+            </section>
+          )}
+
+          {tab === "audit" && (
+            <section className="space-y-3" role="tabpanel">
+              <h3 className="flex items-center gap-2 text-sm font-extrabold text-slate-800">
+                <History className="h-4 w-4 text-teal-600" aria-hidden="true" /> سجل الإجراءات
+              </h3>
+              <AuditTimeline entries={toAuditEntries(bundle.logs ?? [])} />
+            </section>
+          )}
         </div>
       )}
     </Drawer>
@@ -302,26 +450,42 @@ function TxnActionBar({
   const groups = routable.data?.groups ?? [];
 
   return (
-    <div className="flex w-full flex-wrap items-center gap-2">
+    <div className="flex w-full items-center gap-2">
       {can.approve && (
-        <Button variant="primary" size="sm" onClick={() => openDialog("approve")}>
+        <Button className="flex-1 sm:flex-none" variant="primary" size="sm" onClick={() => openDialog("approve")}>
           <CheckCircle2 className="h-4 w-4" aria-hidden="true" /> اعتماد
         </Button>
       )}
       {can.reject && (
-        <Button variant="danger" size="sm" onClick={() => openDialog("reject")}>
+        <Button className="hidden sm:inline-flex" variant="danger" size="sm" onClick={() => openDialog("reject")}>
           <XCircle className="h-4 w-4" aria-hidden="true" /> رفض
         </Button>
       )}
       {can.return && (
-        <Button variant="secondary" size="sm" onClick={() => openDialog("return")}>
+        <Button className="hidden sm:inline-flex" variant="secondary" size="sm" onClick={() => openDialog("return")}>
           <CornerUpLeft className="h-4 w-4" aria-hidden="true" /> إرجاع للتعديل
         </Button>
       )}
       {can.forward && (
-        <Button variant="secondary" size="sm" onClick={() => openDialog("forward")}>
+        <Button className="hidden sm:inline-flex" variant="secondary" size="sm" onClick={() => openDialog("forward")}>
           <Share2 className="h-4 w-4" aria-hidden="true" /> إحالة
         </Button>
+      )}
+      {(can.reject || can.return || can.forward) && (
+        <DropdownMenu
+          className="sm:hidden"
+          aria-label="إجراءات أخرى"
+          trigger={
+            <span className="inline-flex min-h-11 items-center justify-center gap-2 rounded-xl border border-slate-200 bg-white px-4 text-sm font-bold text-slate-700">
+              <MoreHorizontal className="h-4 w-4" aria-hidden="true" /> المزيد
+            </span>
+          }
+          items={[
+            ...(can.return ? [{ key: "return", label: "إرجاع للتعديل", icon: <CornerUpLeft className="h-4 w-4" />, onSelect: () => openDialog("return" as const) }] : []),
+            ...(can.forward ? [{ key: "forward", label: "إحالة", icon: <Share2 className="h-4 w-4" />, onSelect: () => openDialog("forward" as const) }] : []),
+            ...(can.reject ? [{ key: "reject", label: "رفض", tone: "danger" as const, icon: <XCircle className="h-4 w-4" />, onSelect: () => openDialog("reject" as const) }] : []),
+          ]}
+        />
       )}
 
       {/* Approve — optional note */}

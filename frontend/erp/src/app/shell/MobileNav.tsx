@@ -15,7 +15,7 @@ export function MobileNav() {
 
   return (
     <nav
-      className="no-print fixed inset-x-3 bottom-[max(0.75rem,env(safe-area-inset-bottom))] z-40 flex items-center justify-around rounded-2xl border border-slate-200 bg-white/95 p-1.5 shadow-lift backdrop-blur lg:hidden"
+      className="no-print fixed inset-x-3 bottom-[max(0.75rem,env(safe-area-inset-bottom))] z-40 mx-auto flex max-w-lg items-center justify-around rounded-2xl border border-slate-200 bg-white/95 p-1.5 shadow-lift backdrop-blur lg:hidden"
       aria-label="تنقل سريع"
     >
       {items.map((item) => {

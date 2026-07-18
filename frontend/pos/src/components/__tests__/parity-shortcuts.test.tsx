@@ -193,6 +193,17 @@ describe("global keyboard shortcuts (F2 / F4 / F9) — exceed legacy's zero hotk
     fireEvent.keyDown(window, { key: "F9" });
     await waitFor(() => expect(f.engine.holdOrder).toHaveBeenCalledTimes(1));
   });
+
+  it("blocks destructive shortcuts while a payment overlay is open", async () => {
+    const f = renderApp();
+    fireEvent.keyDown(window, { key: "F4" });
+    expect(screen.getAllByRole("dialog", { name: "الدفع" })).toHaveLength(1);
+    fireEvent.keyDown(window, { key: "F9" });
+    fireEvent.keyDown(window, { key: "F4" });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(f.engine.holdOrder).not.toHaveBeenCalled();
+    expect(screen.getAllByRole("dialog", { name: "الدفع" })).toHaveLength(1);
+  });
 });
 
 describe("generic dialog keyboard behaviour (Escape)", () => {
@@ -218,6 +229,24 @@ describe("generic dialog keyboard behaviour (Escape)", () => {
     );
     fireEvent.keyDown(document, { key: "Escape" });
     expect(onClose).not.toHaveBeenCalled();
+  });
+
+  it("locks body scroll and wraps Tab focus inside the dialog", async () => {
+    fixture.value = makeFixture();
+    const { rerender } = render(
+      <Dialog open onClose={() => {}} title="تجربة">
+        <button type="button">الأول</button>
+        <button type="button">الأخير</button>
+      </Dialog>,
+    );
+    expect(document.body.style.overflow).toBe("hidden");
+    const first = screen.getByRole("button", { name: "إغلاق" });
+    const last = screen.getByRole("button", { name: "الأخير" });
+    last.focus();
+    fireEvent.keyDown(document, { key: "Tab" });
+    expect(document.activeElement).toBe(first);
+    rerender(<Dialog open={false} onClose={() => {}} title="تجربة"><span /></Dialog>);
+    expect(document.body.style.overflow).toBe("");
   });
 });
 

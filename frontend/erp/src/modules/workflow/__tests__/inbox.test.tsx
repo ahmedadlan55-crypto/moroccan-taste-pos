@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 
@@ -21,6 +21,10 @@ vi.mock("@/shared/api", async (importOriginal) => {
           createdBy: "ahmed",
           importance: "high",
           status: "pending",
+          isRead: false,
+          dueDate: "2025-01-01T09:00:00Z",
+          isOverdue: true,
+          currentStepName: "اعتماد المدير",
           createdAt: "2026-01-01T09:00:00Z",
         },
         {
@@ -32,6 +36,8 @@ vi.mock("@/shared/api", async (importOriginal) => {
           createdBy: "sara",
           importance: "medium",
           status: "in_progress",
+          isRead: true,
+          currentStepName: "مراجعة المالية",
           createdAt: "2026-01-02T09:00:00Z",
         },
       ]),
@@ -78,5 +84,22 @@ describe("workflow InboxPage", () => {
       "/workflow/incoming",
       expect.objectContaining({ params: { username: "tester" } }),
     );
+  });
+
+  it("shows operational KPIs and the current SLA/step context", async () => {
+    renderInbox();
+    await screen.findAllByText("شراء مستلزمات");
+    expect(screen.getAllByText("غير مقروءة").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("اعتماد المدير").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("متأخرة").length).toBeGreaterThan(0);
+    expect(screen.getByText("متأخرة عن SLA")).toBeInTheDocument();
+  });
+
+  it("filters the queue by unread transactions without losing the named subject", async () => {
+    renderInbox();
+    await screen.findAllByText("شراء مستلزمات");
+    fireEvent.click(screen.getByRole("button", { name: /غير مقروءة 1/ }));
+    expect(screen.getAllByText("شراء مستلزمات").length).toBeGreaterThan(0);
+    expect(screen.queryByText("تعميم إداري")).not.toBeInTheDocument();
   });
 });

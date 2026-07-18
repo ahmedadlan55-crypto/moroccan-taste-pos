@@ -1,3 +1,4 @@
+import { AlertTriangle, Clock3 } from "lucide-react";
 import { Badge, StatusBadge } from "@/shared/ui";
 import { formatDate } from "@/shared/lib";
 import type { ColumnDef } from "@/shared/tables";
@@ -41,7 +42,13 @@ export function buildTxnColumns(people: PeopleColumn): ColumnDef<TxnListItem>[] 
       header: "الموضوع",
       accessor: (r) => r.subject || r.title || "",
       cell: (r) => (
-        <span className="font-semibold text-slate-800">{r.subject || r.title || "—"}</span>
+        <span className="flex min-w-0 items-center gap-2 font-semibold text-slate-800">
+          <span
+            className={`h-2 w-2 shrink-0 rounded-full ${r.isRead === false ? "bg-teal-600" : "bg-transparent"}`}
+            aria-label={r.isRead === false ? "غير مقروءة" : undefined}
+          />
+          <span className="line-clamp-2">{r.subject || r.title || "—"}</span>
+        </span>
       ),
     },
     {
@@ -50,6 +57,29 @@ export function buildTxnColumns(people: PeopleColumn): ColumnDef<TxnListItem>[] 
       accessor: people.value,
       cell: (r) => people.value(r) || "—",
       sortable: true,
+    },
+    {
+      id: "currentStep",
+      header: "الخطوة الحالية",
+      accessor: (r) => r.currentStepName ?? "",
+      cell: (r) => <span className="font-semibold text-slate-600">{r.currentStepName || "—"}</span>,
+      sortable: true,
+    },
+    {
+      id: "sla",
+      header: "SLA",
+      accessor: (r) => r.dueDate ?? "",
+      cell: (r) => r.isOverdue ? (
+        <span className="inline-flex items-center gap-1 font-bold text-rose-700">
+          <AlertTriangle className="h-3.5 w-3.5" aria-hidden="true" /> متأخرة
+        </span>
+      ) : r.dueDate ? (
+        <span className="inline-flex items-center gap-1 font-semibold text-slate-500">
+          <Clock3 className="h-3.5 w-3.5" aria-hidden="true" /> {formatDate(r.dueDate)}
+        </span>
+      ) : "—",
+      sortable: true,
+      width: "9rem",
     },
     {
       id: "importance",

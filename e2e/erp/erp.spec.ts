@@ -196,7 +196,7 @@ async function auditLeaf(page: Page, leaf: Leaf, isMobile: boolean, issues: stri
 
 test("closure gate — every leaf is real, healthy, contained, legacy-free", async ({ page }, testInfo) => {
   const project = testInfo.project.name;
-  const isMobile = project === "mobile";
+  const usesMobileNav = project === "mobile" || project === "tablet-768";
   const consoleErrors: string[] = [];
   const failedRequests: string[] = [];
   const issues: string[] = [];
@@ -233,7 +233,7 @@ test("closure gate — every leaf is real, healthy, contained, legacy-free", asy
     await test.step(`leaf ${leaf.path}`, async () => {
       await spaNavigate(page, leaf.path);
       await settle(page);
-      const h = await auditLeaf(page, leaf, isMobile, issues);
+      const h = await auditLeaf(page, leaf, usesMobileNav, issues);
       headings.push(`${leaf.path} → ${h || "(no heading)"}`);
     });
   }
@@ -248,7 +248,7 @@ test("closure gate — every leaf is real, healthy, contained, legacy-free", asy
       await page.reload();
       await waitRendered(page, `reload ${p}`);
       await settle(page);
-      await auditLeaf(page, leaf, isMobile, issues);
+      await auditLeaf(page, leaf, usesMobileNav, issues);
     });
   }
 

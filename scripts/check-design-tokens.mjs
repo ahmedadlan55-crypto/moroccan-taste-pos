@@ -53,7 +53,7 @@ function collectFiles(absDir, extensions, out) {
   }
 }
 
-const EXEMPT = new Set(['public/shared/design-tokens.css']); // the token source itself
+const EXEMPT = new Set(['frontend/shared/design-tokens.css']); // the token source itself
 
 function buildScanSet() {
   const files = [];
@@ -220,8 +220,8 @@ function runCheck() {
   }
 
   if (failed) {
-    console.error('القاعدة: الألوان الجديدة تُعرَّف في public/shared/design-tokens.css وتُستهلك عبر var(--…).');
-    console.error('(New colors belong in public/shared/design-tokens.css — consume them via var(--…).)');
+    console.error('القاعدة: الألوان الجديدة تُعرَّف في frontend/shared/design-tokens.css وتُستهلك عبر var(--…).');
+    console.error('(New colors belong in frontend/shared/design-tokens.css — consume them via var(--…).)');
     return 1;
   }
 

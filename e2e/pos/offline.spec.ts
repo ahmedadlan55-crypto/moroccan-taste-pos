@@ -1,5 +1,5 @@
 // ═══════════════════════════════════════════════════════════════════════════
-// Cashier V2 PWA (/pos-v2) — OFFLINE LIFECYCLE + INSTALLABILITY E2E.
+// Cashier V2 PWA (/pos) — OFFLINE LIFECYCLE + INSTALLABILITY E2E.
 //
 // Run:  npm run e2e:pos          (builds frontend/pos first — the service
 //                                 worker only registers in production bundles)
@@ -159,7 +159,7 @@ test("eight-step offline sale lifecycle — queue offline, shell from SW, replay
   await context.addInitScript((tok) => {
     try { localStorage.setItem("pos_token", tok as string); } catch { /* ignore */ }
   }, token);
-  await page.goto("/pos-v2/");
+  await page.goto("/pos/");
   await waitForApp(page);
   // seeded catalog item is on the grid
   await expect(page.getByText(MENU_NAME).first()).toBeVisible({ timeout: 30_000 });
@@ -203,7 +203,7 @@ test("eight-step offline sale lifecycle — queue offline, shell from SW, replay
 
   // ── (5) reopen while STILL offline — shell + queued order state ────────────
   const page2 = await context.newPage();
-  await page2.goto("/pos-v2/");
+  await page2.goto("/pos/");
   await waitForApp(page2);
   expect(await page2.evaluate(() => navigator.onLine), "still offline on reopen").toBe(false);
   // SW controls the page and the precached shell exists in CacheStorage —
@@ -262,7 +262,7 @@ test("eight-step offline sale lifecycle — queue offline, shell from SW, replay
 
 test("PWA installability signals — manifest, icons, SW controller on second load", async ({ page, context }) => {
   // manifest reachable + sane
-  const mRes = await api.get("/pos-v2/manifest.webmanifest");
+  const mRes = await api.get("/pos/manifest.webmanifest");
   expect(mRes.status(), "manifest HTTP status").toBe(200);
   const manifest = (await mRes.json()) as {
     name: string; dir: string; lang: string; display: string; start_url: string; scope: string;
@@ -277,26 +277,26 @@ test("PWA installability signals — manifest, icons, SW controller on second lo
   const sizes = manifest.icons.map((i) => i.sizes).sort();
   expect(sizes).toEqual(["192x192", "512x512"]);
   for (const icon of manifest.icons) {
-    const iRes = await api.get(`/pos-v2/${icon.src}`);
+    const iRes = await api.get(`/pos/${icon.src}`);
     expect(iRes.status(), `icon ${icon.src}`).toBe(200);
     expect(iRes.headers()["content-type"]).toContain("image/png");
     expect(icon.purpose ?? "").toContain("maskable");
   }
   // the SW script itself is served
-  const swRes = await api.get("/pos-v2/sw.js");
+  const swRes = await api.get("/pos/sw.js");
   expect(swRes.status(), "sw.js served").toBe(200);
 
   // first load: registration completes (install + activate = precache done)
   await context.addInitScript((tok) => {
     try { localStorage.setItem("pos_token", tok as string); } catch { /* ignore */ }
   }, token);
-  await page.goto("/pos-v2/");
+  await page.goto("/pos/");
   await waitForApp(page);
   // the built page links the manifest
   await expect(page.locator('link[rel="manifest"]')).toHaveAttribute("href", /manifest\.webmanifest$/);
   await page.evaluate(() => navigator.serviceWorker.ready);
   const scope = await page.evaluate(async () => (await navigator.serviceWorker.ready).scope);
-  expect(scope.endsWith("/pos-v2/"), `SW scope is the app base (got ${scope})`).toBe(true);
+  expect(scope.endsWith("/pos/"), `SW scope is the app base (got ${scope})`).toBe(true);
 
   // second load: the SW CONTROLS the page (clients.claim may already control
   // the first load; the reload makes the signal unambiguous)

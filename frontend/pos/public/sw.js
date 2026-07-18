@@ -80,7 +80,10 @@ self.addEventListener("activate", (event) => {
   event.waitUntil(
     (async () => {
       const keys = await caches.keys();
-      const stale = keys.filter((k) => k.startsWith("mt-posv2-") && k !== CACHE_NAME);
+      // Sweep BOTH generations: older mt-posv2-* versions of this SW, and the
+      // retired legacy POS caches (mt-pos-v61-* …) orphaned when this SW took
+      // over the legacy registration URL (/pos/sw.js) at cutover.
+      const stale = keys.filter((k) => (k.startsWith("mt-posv2-") || k.startsWith("mt-pos-v")) && k !== CACHE_NAME);
       await Promise.all(stale.map((k) => caches.delete(k)));
       await self.clients.claim();
       // Old caches existed → this is an UPDATE, not a first install: tell every

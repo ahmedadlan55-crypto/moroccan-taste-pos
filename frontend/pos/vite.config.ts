@@ -2,15 +2,17 @@ import { defineConfig } from "vitest/config";
 import react from "@vitejs/plugin-react";
 import { fileURLToPath, URL } from "node:url";
 
-// The app is served under /pos-v2 alongside the legacy POS (Strangler).
-// In dev, /api is proxied to the existing Express backend so the React app
-// talks to the real contracts without CORS gymnastics.
+// The app IS the POS: served at /pos (final cutover — the legacy PWA that
+// lived there is retired; /pos-v2 now 301-redirects here). In dev, /api is
+// proxied to the existing Express backend so the React app talks to the real
+// contracts without CORS gymnastics.
 const BACKEND = process.env.VITE_BACKEND_ORIGIN || "http://localhost:3000";
 
 // Dev serves at root (http://localhost:5175/); the production build is based
-// at /pos-v2/ so it mounts beside the legacy app behind Express.
+// at /pos/ so Express mounts it on the historical POS path (installed icons
+// with start_url /pos/ open it directly; the SW takes over /pos/sw.js).
 export default defineConfig(({ command }) => ({
-  base: command === "serve" ? "/" : "/pos-v2/",
+  base: command === "serve" ? "/" : "/pos/",
   plugins: [react()],
   resolve: {
     alias: {

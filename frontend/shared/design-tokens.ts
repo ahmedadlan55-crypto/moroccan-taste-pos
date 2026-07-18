@@ -2,7 +2,7 @@
  * ADLAN — Tailwind bridge for the single design-token source.
  * ────────────────────────────────────────────────────────────────
  * This module is the ONLY bridge from the single source of truth
- * (public/shared/design-tokens.css) into the Tailwind themes of the
+ * (frontend/shared/design-tokens.css) into the Tailwind themes of the
  * three React apps (frontend/warehouse, frontend/sales, frontend/pos).
  *
  * It is loaded by Tailwind (via jiti) at build time AND type-checked
@@ -13,12 +13,12 @@
  * Hex literals are FORBIDDEN in this file and in the three
  * tailwind.config.ts files (enforced by scripts/check-design-tokens.mjs).
  * Every value must be read from the CSS token file through tok().
- * Edit the token values in public/shared/design-tokens.css — never here.
+ * Edit the token values in frontend/shared/design-tokens.css — never here.
  */
 import * as fs from "node:fs";
 import * as path from "node:path";
 
-const TOKENS_CSS_PATH = path.resolve(__dirname, "..", "..", "public", "shared", "design-tokens.css");
+const TOKENS_CSS_PATH = path.resolve(__dirname, "design-tokens.css");
 
 /* ── Parsing ─────────────────────────────────────────────────── */
 
@@ -149,7 +149,7 @@ export function tok(name: string): string {
   const key = name.startsWith("--") ? name : `--${name}`;
   if (!rawVars.has(key)) {
     throw new Error(
-      `[design-tokens] Missing token "${key}" in public/shared/design-tokens.css — add it there; the Tailwind build cannot continue.`,
+      `[design-tokens] Missing token "${key}" in frontend/shared/design-tokens.css — add it there; the Tailwind build cannot continue.`,
     );
   }
   return resolveName(key, []);

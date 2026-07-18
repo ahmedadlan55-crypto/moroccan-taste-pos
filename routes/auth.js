@@ -47,10 +47,8 @@ function recordFailedAttempt(ip) {
 }
 function clearAttempts(ip) { delete loginAttempts[ip]; }
 
-// Serve protected app template
-router.get('/template', verifyToken, (req, res) => {
-  res.sendFile(path.join(__dirname, '../views/app-content.html'));
-});
+// GET /template (the legacy shell's protected app-content loader) is RETIRED
+// with the shell itself (FC-W3 cutover) — views/app-content.html is deleted.
 
 // Login — with rate limiting + account lockout
 router.post('/login', async (req, res) => {

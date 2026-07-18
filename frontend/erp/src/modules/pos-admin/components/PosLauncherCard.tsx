@@ -3,10 +3,10 @@ import { ExternalLink } from "lucide-react";
 import { Card } from "@/shared/ui";
 
 // The unified back-office is served at /app/; the cashier (POS) SPA is a peer app
-// mounted at /pos-v2/ (see frontend/pos/vite.config.ts `base`). Launching the
-// register is a cross-app navigation, so it uses a real anchor rather than the
-// in-app router.
-export const POS_APP_URL = "/pos-v2/";
+// mounted at /pos/ (final cutover — see frontend/pos/vite.config.ts `base`).
+// Launching the register is a cross-app navigation, so it uses a real anchor
+// rather than the in-app router.
+export const POS_APP_URL = "/pos/";
 
 interface PosLauncherCardProps {
   icon: LucideIcon;

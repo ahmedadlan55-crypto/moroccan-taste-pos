@@ -1,6 +1,6 @@
 import { defineConfig, devices } from "@playwright/test";
 
-// ── E2E for the Cashier V2 PWA (/pos-v2): offline lifecycle + installability ──
+// ── E2E for the Cashier V2 PWA (/pos): offline lifecycle + installability ──
 // Modeled on playwright.erp.config.ts / playwright.o2c.config.ts: boots the
 // REAL Express server which serves the BUILT dist (the service worker only
 // registers in production bundles), so build first — the npm script does:

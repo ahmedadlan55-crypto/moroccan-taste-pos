@@ -1,4 +1,4 @@
-// ADLAN — all theme tokens come from public/shared/design-tokens.css, bridged
+// ADLAN — all theme tokens come from frontend/shared/design-tokens.css, bridged
 // into Tailwind by frontend/shared/design-tokens.ts (adlanPreset). Edit tokens
 // there, never here — hardcoded color literals are forbidden in this file.
 import type { Config } from "tailwindcss";

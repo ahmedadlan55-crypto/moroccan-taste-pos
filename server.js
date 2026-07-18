@@ -293,22 +293,36 @@ function sendIconFile(folder) {
   };
 }
 
-// /employee/ PWA assets
-app.get('/employee/manifest.json', sendStaticAsset('employee/manifest.json', 'application/manifest+json'));
-app.get('/employee/sw.js',         sendStaticAsset('employee/sw.js',         'application/javascript', { 'Service-Worker-Allowed': '/employee/' }));
-app.get('/employee/icons/:file',   sendIconFile('employee'));
+// ── Final cutover (FC-W3): the legacy /employee PWA is RETIRED — its writes
+// live in the unified app (/app/people/self-service). Installed clients still
+// hold its service worker, so /employee/sw.js now serves a TOMBSTONE: it
+// sweeps the employee caches (mt-emp-*), unregisters itself, and reloads its
+// windows — which then hit the /employee → /app redirect below. Cache filters
+// are PREFIX-scoped because the Cache API is origin-global: an unqualified
+// sweep here would nuke the POS offline caches too.
+app.get('/employee/sw.js', function (req, res) {
+  res.setHeader('Content-Type', 'application/javascript');
+  res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
+  res.setHeader('Service-Worker-Allowed', '/employee/');
+  res.send(
+    "self.addEventListener('install',function(){self.skipWaiting();});\n" +
+    "self.addEventListener('activate',function(e){e.waitUntil((async function(){\n" +
+    "  var keys=await caches.keys();\n" +
+    "  await Promise.all(keys.filter(function(k){return k.indexOf('mt-emp-')===0;}).map(function(k){return caches.delete(k);}));\n" +
+    "  await self.registration.unregister();\n" +
+    "  var cs=await self.clients.matchAll({type:'window'});\n" +
+    "  cs.forEach(function(c){ c.navigate(c.url); });\n" +
+    "})());});\n");
+});
 
-// /pos/ PWA assets
-app.get('/pos/manifest.json', sendStaticAsset('pos/manifest.json', 'application/manifest+json'));
-app.get('/pos/sw.js',         sendStaticAsset('pos/sw.js',         'application/javascript', { 'Service-Worker-Allowed': '/pos/' }));
-app.get('/pos/icons/:file',   sendIconFile('pos'));
+// NOTE: the legacy /pos PWA asset handlers are GONE — /pos now serves the React
+// cashier (see the SPA mount below). Its sw.js lives at the SAME URL the legacy
+// SW was registered under, so installed registers update in place; its activate
+// sweeps both mt-posv2-* and the orphaned legacy mt-pos-v* caches.
 
-// Cutover (Closure Sprint v2): when ERP_DEFAULT_ENABLED is ON, "/" redirects to
-// the unified React app. Registered BEFORE express.static so the legacy index.html
-// doesn't shadow it. The legacy shell stays reachable at /legacy (see below).
-if (/^(1|true|on|yes)$/i.test(String(process.env.ERP_DEFAULT_ENABLED || '').trim())) {
-  app.get('/', function (req, res) { res.redirect(302, '/app/'); });
-}
+// Final cutover: "/" ALWAYS lands on the unified app. Registered BEFORE
+// express.static; the legacy shell it used to serve is deleted.
+app.get('/', function (req, res) { res.redirect(302, '/app/'); });
 
 // Send no-cache for HTML + JS + CSS so users always get latest code
 // (CDN libs are not affected — they use their own versioned URLs)
@@ -326,19 +340,17 @@ app.use(express.static(path.join(__dirname, 'public'), {
 // the unified ERP at /app (inventory + purchasing). Redirect old links there.
 app.all(/^\/warehouse(?:-v2)?(?:\/.*)?$/, function (req, res) { res.redirect(302, '/app/inventory'); });
 
-// ── Cashier V2 React app (Strangler beside the legacy /pos) ─────────────
-// Served at /pos-v2 behind POS_V2_ENABLED (default ON outside production so
-// dev/staging always sees it; production requires the explicit flag). The
-// legacy /pos PWA is untouched — it remains the rollback path.
-var POS_V2_ENABLED = process.env.NODE_ENV === 'production'
-  ? /^(1|true|on|yes)$/i.test(String(process.env.POS_V2_ENABLED || '').trim())
-  : !/^(0|false|off|no)$/i.test(String(process.env.POS_V2_ENABLED || '').trim());
-if (!POS_V2_ENABLED) {
-  app.all(/^\/pos-v2(?:\/.*)?$/, function (req, res) {
-    res.status(503).type('html').send('<!doctype html><html lang="ar" dir="rtl"><meta charset="utf-8"><title>صيانة</title><body style="font-family:Tahoma,Arial,sans-serif;padding:3rem;text-align:center;color:#172033"><h2>كاشير V2 غير مفعّل</h2><p>استخدم واجهة البيع الحالية /pos. (POS_V2_ENABLED=0)</p></body></html>');
-  });
-}
-app.use('/pos-v2', function (req, res, next) {
+// ── Cashier React app — THE POS, served at /pos (final cutover) ──────────
+// The legacy /pos PWA is deleted; the React cashier owns the path. Installed
+// home-screen icons (start_url /pos/) open it directly, and its service worker
+// replaces the legacy one at the identical registration URL /pos/sw.js.
+// /pos-v2 (the strangler-era path) permanently redirects here so old links,
+// bookmarks and cached SPAs converge on the one path. Rollback is a git/Railway
+// release rollback — there is no legacy UI to flag back to.
+app.all(/^\/pos-v2(\/.*)?$/, function (req, res) {
+  res.redirect(301, '/pos' + (req.params[0] || ''));
+});
+app.use('/pos', function (req, res, next) {
   res.setHeader('Content-Security-Policy', [
     "default-src 'self'",
     "base-uri 'self'",
@@ -355,23 +367,27 @@ app.use('/pos-v2', function (req, res, next) {
 });
 var _posDist = path.join(__dirname, 'frontend', 'pos', 'dist');
 if (_pwaFs.existsSync(path.join(_posDist, 'index.html'))) {
-  app.use('/pos-v2', express.static(_posDist, {
+  app.use('/pos', express.static(_posDist, {
     setHeaders: function(res, filePath) {
-      if (/\.html$/i.test(filePath)) {
+      // sw.js + manifests must NEVER cache: the SW update check and the
+      // precache manifest are the app's only update channels.
+      if (/(sw\.js|asset-manifest\.json|manifest\.webmanifest)$/i.test(filePath)) {
+        res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
+      } else if (/\.html$/i.test(filePath)) {
         res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
       } else if (/[/\\]assets[/\\]/.test(filePath)) {
         res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
       }
     }
   }));
-  app.get(/^\/pos-v2(?:\/.*)?$/, function(req, res, next) {
+  app.get(/^\/pos(?:\/.*)?$/, function(req, res, next) {
     if (/\.[a-zA-Z0-9]+$/.test(req.path)) return next();
     res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
     res.sendFile(path.join(_posDist, 'index.html'));
   });
-  console.log('[pos-v2] SPA mounted at /pos-v2');
+  console.log('[pos] React cashier SPA mounted at /pos');
 } else {
-  console.warn('[pos-v2] bundle not found — run: npm --prefix frontend/pos run build');
+  console.warn('[pos] bundle not found — run: npm --prefix frontend/pos run build');
 }
 
 // Standalone Order-to-Cash (sales) SPA retired (Closure Sprint v2) — its features
@@ -766,48 +782,21 @@ app.all('/api/*', notFoundHandler);
 // Centralized error handler (MUST be last middleware)
 app.use(errorHandler);
 
-// Standalone apps — serve their own index.html
-// Protected app shells — explicitly opt out of bfcache so that a logged-out
-// user pressing browser-back cannot see the authenticated view.
-function sendProtectedApp(file) {
-  return function(req, res) {
-    res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, private');
-    res.setHeader('Pragma', 'no-cache');
-    res.setHeader('Expires', '0');
-    res.sendFile(path.join(__dirname, 'public', file));
-  };
-}
+// ── Final cutover (FC-W3): every legacy shell is DELETED ─────────────────────
+// /employee + /custody → their write flows live in the unified app (stream F:
+// SelfServicePage attendance/leave/approvals, CustodyPage full cycle). The
+// /employee tombstone SW (registered earlier, before express.static) unhooks
+// installed PWAs; these redirects then land everyone on the React screens.
+// /custody never had a service worker — a plain redirect suffices.
+app.get(['/employee', '/employee/*'], function (req, res) { res.redirect(302, '/app/people/self-service'); });
+app.get(['/custody', '/custody/*'],   function (req, res) { res.redirect(302, '/app/people/custody'); });
+// /legacy (the FC-P4 rollback shell) is gone with the shell it served.
+app.get(['/legacy', '/legacy/*'], function (req, res) { res.redirect(302, '/app/'); });
 
-// PWA handlers + protected shells were MOVED to before express.static
-// (line ~118) so they take precedence. The static handler was capturing
-// /employee/manifest.json etc and serving with default mime detection
-// (application/json instead of application/manifest+json + no SW-Allowed).
-
-app.get('/employee',    sendProtectedApp('employee/index.html'));
-app.get('/employee/*',  sendProtectedApp('employee/index.html'));
-app.get('/pos',         sendProtectedApp('pos/index.html'));
-app.get('/pos/*',       sendProtectedApp('pos/index.html'));
-app.get('/custody',     sendProtectedApp('custody/index.html'));
-app.get('/custody/*',   sendProtectedApp('custody/index.html'));
-
-// FC-P4 — optional local cutover. When ERP_DEFAULT_ENABLED is ON, the unified
-// Back-Office at /app becomes the default entry point and the legacy admin shell
-// stays reachable at /legacy (a hidden rollback/admin path). OFF by default →
-// ZERO behaviour change (root keeps serving the legacy app via the catch-all).
-// Flip the flag to 0 to roll back instantly. Requires ERP_UNIFIED_ENABLED=1 so
-// /app actually serves; otherwise the redirect lands on the 503 maintenance page.
-var ERP_DEFAULT_ENABLED = /^(1|true|on|yes)$/i.test(String(process.env.ERP_DEFAULT_ENABLED || '').trim());
-if (ERP_DEFAULT_ENABLED) {
-  app.get('/legacy',    sendProtectedApp('index.html'));
-  app.get('/legacy/*',  sendProtectedApp('index.html'));
-  // NB: the "/" → /app/ redirect is registered EARLIER (before express.static),
-  // because the legacy static mount would otherwise serve index.html for "/" first.
-  console.log('[cutover] ERP_DEFAULT_ENABLED=1 — "/" → /app/, legacy at /legacy');
-}
-
-// SPA fallback — main admin app
+// Catch-all: any unknown non-API path converges on the unified app instead of
+// resurrecting a deleted shell. (/api/* 404s are handled above, never here.)
 app.get('*', (req, res) => {
-  res.sendFile(path.join(__dirname, 'public', 'index.html'));
+  res.redirect(302, '/app/');
 });
 
 // Auto-initialize database tables on first run

@@ -8,9 +8,11 @@
  */
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { AlertTriangle, Loader2, Search, X } from "lucide-react";
-import { searchCustomers, type PosCustomerHit } from "@/lib/api";
+import { AlertTriangle, Coins, History, Loader2, Search, UserPlus, X } from "lucide-react";
+import { getCustomerSummary, searchCustomers, type PosCustomerHit } from "@/lib/api";
 import { fmt2 } from "@/lib/format";
+import { CustomerAddDialog } from "./dialogs/CustomerAddDialog";
+import { CustomerHistoryDialog } from "./dialogs/CustomerHistoryDialog";
 import { cn } from "./ui";
 
 export interface CustomerPickerProps {
@@ -30,6 +32,8 @@ export function CustomerPicker({ value, onChange }: CustomerPickerProps) {
   const [q, setQ] = useState("");
   const [debounced, setDebounced] = useState("");
   const [active, setActive] = useState(0);
+  const [addOpen, setAddOpen] = useState(false);
+  const [histOpen, setHistOpen] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
@@ -44,25 +48,54 @@ export function CustomerPicker({ value, onChange }: CustomerPickerProps) {
     staleTime: 15_000,
   });
 
+  // Always-visible totals strip for the LINKED customer (legacy
+  // _posCustomerLoadSummary :1347 — «<total> ر.س» next to the name).
+  const summaryQuery = useQuery({
+    queryKey: ["cust-summary", value?.id],
+    queryFn: () => getCustomerSummary(value!.id),
+    enabled: !!value?.id,
+    staleTime: 30_000,
+  });
+
   const rows = useMemo(() => query.data?.data ?? [], [query.data]);
   useEffect(() => { setActive(0); }, [debounced]);
 
   if (value) {
     return (
-      <div className="flex items-center justify-between gap-2 rounded-xl border border-teal-200 bg-teal-50 px-3 py-2">
-        <span className="flex min-w-0 flex-col">
-          <span className="truncate text-sm font-extrabold text-teal-800">{value.name || "عميل"}</span>
-          {value.phone ? <span dir="ltr" className="truncate text-[11px] font-bold text-teal-600 num">{value.phone}</span> : null}
-        </span>
-        <button
-          type="button"
-          onClick={() => onChange(null)}
-          className="grid h-7 w-7 shrink-0 place-items-center rounded-lg text-teal-500 transition hover:bg-white hover:text-rose-600"
-          aria-label="مسح العميل"
-        >
-          <X className="h-4 w-4" aria-hidden />
-        </button>
-      </div>
+      <>
+        <div className="flex items-center justify-between gap-2 rounded-xl border border-teal-200 bg-teal-50 px-3 py-2">
+          <span className="flex min-w-0 flex-col">
+            <span className="truncate text-sm font-extrabold text-teal-800">{value.name || "عميل"}</span>
+            {value.phone ? <span dir="ltr" className="truncate text-[11px] font-bold text-teal-600 num">{value.phone}</span> : null}
+            {summaryQuery.data ? (
+              <span className="flex items-center gap-1 text-[11px] font-extrabold text-teal-700">
+                <Coins className="h-3 w-3" aria-hidden />
+                <span className="num">{fmt2(summaryQuery.data.kpi.totalSpent)}</span> ر.س
+              </span>
+            ) : null}
+          </span>
+          <span className="flex shrink-0 items-center gap-1">
+            <button
+              type="button"
+              onClick={() => setHistOpen(true)}
+              className="grid h-7 w-7 place-items-center rounded-lg text-teal-500 transition hover:bg-white hover:text-teal-700"
+              aria-label="سجل العميل"
+              title="سجل العميل"
+            >
+              <History className="h-4 w-4" aria-hidden />
+            </button>
+            <button
+              type="button"
+              onClick={() => onChange(null)}
+              className="grid h-7 w-7 place-items-center rounded-lg text-teal-500 transition hover:bg-white hover:text-rose-600"
+              aria-label="مسح العميل"
+            >
+              <X className="h-4 w-4" aria-hidden />
+            </button>
+          </span>
+        </div>
+        {histOpen ? <CustomerHistoryDialog open onClose={() => setHistOpen(false)} customer={value} /> : null}
+      </>
     );
   }
 
@@ -135,6 +168,34 @@ export function CustomerPicker({ value, onChange }: CustomerPickerProps) {
           ))
         )}
       </div>
+      {/* «عميل جديد» (legacy posOpenCustomerAddModal :1736) — prefilled from the
+          query: digits → phone, otherwise name. On create the customer is
+          auto-attached through the same onChange the row-pick uses. */}
+      <button
+        type="button"
+        onClick={() => setAddOpen(true)}
+        className="btn-press mt-2 flex min-h-11 w-full items-center justify-center gap-1.5 rounded-xl border border-dashed border-teal-300 bg-teal-50/50 text-xs font-extrabold text-teal-700 transition hover:bg-teal-50"
+      >
+        <UserPlus className="h-4 w-4" aria-hidden />
+        عميل جديد
+      </button>
+      {addOpen ? (
+        <CustomerAddDialog
+          open
+          onClose={() => setAddOpen(false)}
+          prefill={/^[\d+\s-]{3,}$/.test(q.trim()) ? { phone: q.trim() } : q.trim() ? { name: q.trim() } : undefined}
+          onCreated={(c) => {
+            setAddOpen(false);
+            onChange({ id: c.id, name: c.name, phone: c.phone || null });
+          }}
+          onRecallExisting={(phone) => {
+            // Duplicate phone → back to the search, prefilled (legacy :1883).
+            setAddOpen(false);
+            setQ(phone);
+            inputRef.current?.focus();
+          }}
+        />
+      ) : null}
     </div>
   );
 }

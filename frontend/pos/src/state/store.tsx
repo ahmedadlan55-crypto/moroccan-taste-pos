@@ -21,12 +21,14 @@ import { openShift as apiOpenShift, findOpenShift, getServerFlags } from "@/lib/
 import { getEngine, type EngineStatus, type OfflineEngine } from "@/lib/offline";
 import { cartTotals } from "@/lib/cartMath";
 import { ulid } from "@/lib/ulid";
+import { ComboDialog, type ComboFinalizeResult } from "@/components/dialogs/ComboDialog";
 import type {
   AuthUser,
   Catalog,
   CatalogItem,
   CatalogUnit,
   CartLine,
+  ComboDef,
   CartTotals,
   DiscountType,
   LocalOrder,
@@ -266,8 +268,35 @@ export function PosProvider({ children }: { children: ReactNode }) {
     setCart((c) => ({ ...fn(c), updatedAt: Date.now() }));
   }, []);
 
+  // ── Combos (العروض) — close/w25-combos ─────────────────────────────────────
+  // Tapping a combo card must open the CHOOSER, not add directly (legacy
+  // openComboChooser). The pending item + its definition (from the cached
+  // catalog payload — works offline for free) drive the ComboDialog rendered
+  // below; confirm freezes the picks into the cart line.
+  const [comboItem, setComboItem] = useState<CatalogItem | null>(null);
+  const catalogCombos = catalogQuery.data?.catalog?.combos;
+  const findComboDef = useCallback(
+    (item: CatalogItem): ComboDef | null => {
+      const list = catalogCombos ?? [];
+      return list.find((c) => c.menuId === item.id) ?? list.find((c) => c.id === item.id) ?? null;
+    },
+    [catalogCombos],
+  );
+  const comboDef = comboItem ? findComboDef(comboItem) : null;
+
   const addItem = useCallback(
-    (item: CatalogItem, unitCode?: string | null) =>
+    (item: CatalogItem, unitCode?: string | null) => {
+      // Combo interception: open the chooser instead of adding. Missing
+      // definition (stale cache from a pre-combos server) → say so, add nothing
+      // — silently charging a combo without its picks is the one wrong answer.
+      if (item.isCombo) {
+        if (!findComboDef(item)) {
+          pushToast("error", "خيارات العرض غير متوفرة — حدّث القائمة عند الاتصال");
+          return;
+        }
+        setComboItem(item);
+        return;
+      }
       mutate((c) => {
         const unit = pickUnit(item, unitCode);
         const code = unit ? unit.unitCode : null;
@@ -280,8 +309,44 @@ export function PosProvider({ children }: { children: ReactNode }) {
           return { ...c, lines: c.lines.map((l) => (l === existing ? withBase(l, { qty: l.qty + 1 }) : l)) };
         }
         return { ...c, lines: [...c.lines, buildCartLine(item, unit, 1)] };
-      }),
-    [mutate],
+      });
+    },
+    [mutate, findComboDef, pushToast],
+  );
+
+  // Chooser confirm → ONE cart line with the frozen picks. comboChoices rides
+  // for the server; the human summary lands in `notes` so the cart panel and
+  // the kitchen ticket show the choices with no extra plumbing. Identical
+  // picks stack (legacy stacked by modifiers key); any difference — choices,
+  // notes, discount — keeps its own line.
+  const confirmCombo = useCallback(
+    (result: ComboFinalizeResult) => {
+      const item = comboItem;
+      setComboItem(null);
+      if (!item) return;
+      mutate((c) => {
+        const key = JSON.stringify(result.comboChoices);
+        const existing = c.lines.find(
+          (l) =>
+            l.menuId === item.id &&
+            l.comboChoices != null &&
+            JSON.stringify(l.comboChoices) === key &&
+            (l.notes ?? null) === result.notesSummary &&
+            !l.lineDiscount,
+        );
+        if (existing) {
+          return { ...c, lines: c.lines.map((l) => (l === existing ? withBase(l, { qty: l.qty + 1 }) : l)) };
+        }
+        const line: CartLine = {
+          ...buildCartLine(item, null, 1),
+          unitPrice: result.unitPrice, // combo price + picked priceDeltas, frozen
+          notes: result.notesSummary,
+          comboChoices: result.comboChoices,
+        };
+        return { ...c, lines: [...c.lines, line] };
+      });
+    },
+    [comboItem, mutate],
   );
 
   const setQty = useCallback(
@@ -418,7 +483,20 @@ export function PosProvider({ children }: { children: ReactNode }) {
     dismissToast,
   };
 
-  return <PosContext.Provider value={value}>{children}</PosContext.Provider>;
+  return (
+    <PosContext.Provider value={value}>
+      {children}
+      {/* Combo chooser — mounted by the provider (addItem owns the intercept),
+          so every host of the store gets the flow with zero wiring. */}
+      <ComboDialog
+        open={comboItem != null && comboDef != null}
+        combo={comboDef}
+        basePrice={comboItem ? (comboItem.basePrice ?? comboItem.price) : undefined}
+        onClose={() => setComboItem(null)}
+        onConfirm={confirmCombo}
+      />
+    </PosContext.Provider>
+  );
 }
 
 export function usePos(): PosContextValue {

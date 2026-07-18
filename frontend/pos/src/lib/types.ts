@@ -27,6 +27,10 @@ export interface CatalogItem {
   category: string;
   active: boolean;
   taxCategory: TaxCategory;
+  /** close/w25-combos — العروض. True on a combo menu item: tapping its card opens
+   *  the chooser (ComboDialog) instead of adding directly. The full definition
+   *  (fixed components + choice groups) lives in Catalog.combos, keyed by menuId. */
+  isCombo?: boolean;
   // Phase U — multi-unit selling. `units` is [] for single-unit items (fully
   // backward compatible). basePrice = price; warehouseQty = base availability.
   basePrice?: number;
@@ -79,9 +83,52 @@ export interface ReceiptShowFields {
   qr: boolean;
 }
 
+// ── العروض / Combos (close/w25-combos) ──────────────────────────────────────
+// Definitions ride IN the catalog payload (the one payload the client already
+// caches), so the chooser works offline for free. The server validates the
+// submitted comboChoices at sale time — this is display + UX, never authority.
+
+/** Always-included component, shown read-only in the chooser. */
+export interface ComboFixedComponent {
+  menuId: string;
+  name: string;
+  qty: number;
+}
+
+/** One pickable option inside a choice group. priceDelta (± SAR, tax-inclusive)
+ *  adjusts the combo price when picked; 0 for most options. */
+export interface ComboOption {
+  menuId: string;
+  name: string;
+  priceDelta: number;
+}
+
+/** A choice group ("اختر مشروبًا"): the cashier must pick ≥ min and ≤ max. */
+export interface ComboGroup {
+  id: string;
+  name: string;
+  min: number;
+  max: number;
+  options: ComboOption[];
+}
+
+/** Full combo definition. `menuId` links it to the CatalogItem carrying
+ *  isCombo: true; `price` is the combo's own (base) price. */
+export interface ComboDef {
+  id: string;
+  menuId: string;
+  name: string;
+  price: number;
+  fixedComponents: ComboFixedComponent[];
+  groups: ComboGroup[];
+}
+
 export interface Catalog {
   items: CatalogItem[];
   categories: string[];
+  /** Combo definitions (العروض) for the chooser. Absent/[] on servers without
+   *  the combos feature — every consumer must tolerate that. */
+  combos?: ComboDef[];
   vatRate: number;
   maxCashierDiscountPct: number;
   /** null when the server could not resolve it — the receipt then prints what it
@@ -107,6 +154,12 @@ export interface CartLine {
   enteredUnitName?: string | null;
   conversionFactorSnapshot?: number; // frozen factor
   baseQty?: number; // = qty × conversionFactorSnapshot
+  /** close/w25-combos — frozen at finalize time by the chooser:
+   *  { [groupId]: [chosen menuId, …] }. The server validates it at submit.
+   *  A human-readable summary of the same picks goes into `notes` so the cart
+   *  panel and kitchen ticket show the choices with no extra plumbing.
+   *  Absent on normal (non-combo) lines. */
+  comboChoices?: Record<string, string[]>;
 }
 
 export interface OrderDiscount {

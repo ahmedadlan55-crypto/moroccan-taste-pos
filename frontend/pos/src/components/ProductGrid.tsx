@@ -122,8 +122,18 @@ const ProductCard = memo(function ProductCard({ item, onAdd }: { item: CatalogIt
     <button
       type="button"
       onClick={() => onAdd(item)}
-      className="btn-press group flex min-h-[5.5rem] flex-col justify-between rounded-2xl border border-slate-200 bg-white p-3 text-start shadow-sm transition hover:border-teal-200 hover:shadow-soft"
+      className="btn-press group relative flex min-h-[5.5rem] flex-col justify-between rounded-2xl border border-slate-200 bg-white p-3 text-start shadow-sm transition hover:border-teal-200 hover:shadow-soft"
     >
+      {item.isCombo ? (
+        // العروض (close/w25-combos): tapping this card opens the combo chooser,
+        // not a direct add — the badge says so (legacy amber «عرض» badge).
+        <span
+          data-testid="combo-badge"
+          className="absolute end-1.5 top-1.5 z-[1] rounded-md bg-amber-500 px-1.5 py-0.5 text-[10px] font-extrabold text-white shadow-sm"
+        >
+          عرض
+        </span>
+      ) : null}
       {item.imageVersion ? (
         // FIXED height, reserved from first paint: the box exists before (and
         // whether or not) the bytes arrive, so a finished download never changes

@@ -261,3 +261,39 @@ describe("inv-void-errors — رسائل أخطاء الإلغاء المُهي�
     );
   });
 });
+
+describe("مرتجع routing — O2C dialog vs legacy path (close2/pos-returns)", () => {
+  it("o2c ON: «مرتجع» opens the O2C return-request dialog, NOT the legacy gate", async () => {
+    h.ctx = baseCtx({ user: { username: "c1", role: "cashier" }, o2cEnabled: true });
+    stubSalesFetch([ACTIVE]);
+    renderDialog();
+    const activeRow = (await screen.findByText("INV-20260717-0001")).closest("tr") as HTMLElement;
+    fireEvent.click(within(activeRow).getByRole("button", { name: "مرتجع" }));
+    // the new O2C dialog opens…
+    expect(await screen.findByText("طلب مرتجع · Sales Return")).toBeInTheDocument();
+    // …and the legacy manager-approval «اعتماد مرتجع» gate does NOT
+    expect(screen.queryByText("اعتماد مرتجع")).not.toBeInTheDocument();
+  });
+
+  it("o2c OFF: «مرتجع» keeps the legacy path (manager-approval gate, no O2C dialog)", async () => {
+    h.ctx = baseCtx({ user: { username: "c1", role: "cashier" }, o2cEnabled: false });
+    stubSalesFetch([ACTIVE]);
+    renderDialog();
+    const activeRow = (await screen.findByText("INV-20260717-0001")).closest("tr") as HTMLElement;
+    fireEvent.click(within(activeRow).getByRole("button", { name: "مرتجع" }));
+    // legacy gate opens…
+    expect(await screen.findByText("اعتماد مرتجع")).toBeInTheDocument();
+    // …and the new O2C dialog does NOT
+    expect(screen.queryByText("طلب مرتجع · Sales Return")).not.toBeInTheDocument();
+  });
+
+  it("myinv-shift-filter: shiftId is passed to the sales-list request (server-side filter)", async () => {
+    h.ctx = baseCtx({ shiftId: "SH-1" });
+    const fetchMock = stubSalesFetch([ACTIVE]);
+    renderDialog();
+    await screen.findByText("INV-20260717-0001");
+    const url = String(fetchMock.mock.calls[0][0]);
+    expect(url).toContain("/api/sales?");
+    expect(url).toContain("shiftId=SH-1");
+  });
+});

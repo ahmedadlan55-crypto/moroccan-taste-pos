@@ -111,6 +111,24 @@ describe("reprintHtmlFromInvoice", () => {
     const html = reprintHtmlFromInvoice(invoice(), { receiptSettings: { paperWidth: "58" } }, "x");
     expect(html).toContain('data-paper="58"');
   });
+
+  it("VAT uses the PERSISTED taxSubtotals snapshot when present — not a live recompute", () => {
+    // total 100 @ 15% would recompute to 13.04; the snapshot says 7.77, and the
+    // snapshot must win (an old sale's tax is frozen, not re-derived from today's rate).
+    const inv = { ...invoice({ totalFinal: 100 }), taxSubtotals: { vat: 7.77 } } as InvoiceDetail & {
+      taxSubtotals: { vat: number };
+    };
+    const html = reprintHtmlFromInvoice(inv, null, "x");
+    expect(html).toContain("7.77");
+    expect(html).not.toContain("13.04");
+  });
+
+  it("VAT falls back to the recomputed formula for a pre-migration sale with no snapshot", () => {
+    // no taxSubtotals → 100 − 100/1.15 = 13.04 (the legacy fallback), not 7.77.
+    const html = reprintHtmlFromInvoice(invoice({ totalFinal: 100 }), null, "x");
+    expect(html).toContain("13.04");
+    expect(html).not.toContain("7.77");
+  });
 });
 
 describe("needsApprovalGate — RequireManagerApprovalForVoid opt-out", () => {

@@ -20,16 +20,147 @@
  */
 import { useCallback, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Ban, FileText, RotateCcw, Search, Undo2 } from "lucide-react";
-import { listSales, returnSale, voidSale, ApiError } from "@/lib/api";
+import { Ban, FileText, Printer, RotateCcw, Search, Undo2 } from "lucide-react";
+import { getInvoice, listSales, returnSale, voidSale, ApiError, type InvoiceDetail } from "@/lib/api";
+import { round2 } from "@/lib/cartMath";
 import { fmt2, fmtInt } from "@/lib/format";
-import type { ApproverCredentials, SaleRow } from "@/lib/types";
+import { buildReceiptHtml, printHtml, resolvePaperWidth } from "@/lib/receipt";
+import type { ApproverCredentials, LocalOrder, Payment, ReceiptIdentity, SaleRow } from "@/lib/types";
 import { usePos } from "@/state/store";
 import { Dialog } from "../Dialog";
 import { Button, EmptyState, ErrorBanner, Money, Skeleton, cn } from "../ui";
 import { ManagerApprovalDialog } from "./ManagerApprovalDialog";
 
 type Filter = "all" | "active" | "cancelled" | "returned";
+
+/**
+ * Does this action need the manager-approval dialog?
+ * Legacy parity (public/pos/app.js:3519-3525): admin/manager never see it, and
+ * the owner can opt VOIDS out via settings.RequireManagerApprovalForVoid='0'
+ * (delivered to the client on the catalog as `requireVoidApproval`). RETURNS
+ * are never opted out — money leaves the till. The SERVER re-checks the same
+ * setting either way (routes/sales.js:_requireManagerApproval); this only
+ * decides whether to SHOW a dialog the server would wave through.
+ */
+export function needsApprovalGate(action: "void" | "return", privileged: boolean, requireVoidApproval: boolean): boolean {
+  if (privileged) return false;
+  if (action === "void" && !requireVoidApproval) return false;
+  return true;
+}
+
+/**
+ * Build the REPRINT receipt from GET /api/sales/invoice/:orderId — pure, so
+ * the vitest suite can assert the fetched (server-stamped) QR and the reversal
+ * stamp reach the HTML. Fidelity rules:
+ *  • identity = the invoice's frozen seller snapshot; catalog identity only
+ *    when the invoice carries none (pre-snapshot sales).
+ *  • QR = zatcaQr.qrDataUrl EXACTLY as fetched — NEVER derived client-side.
+ *  • totals = the RECORDED figures (totalFinal/discount); VAT derived from the
+ *    recorded total like the legacy template's fallback, since the invoice
+ *    endpoint does not echo per-line categories.
+ *  • a reversed document prints with its ملغاة/مرتجع stamp + serial.
+ */
+export function reprintHtmlFromInvoice(inv: InvoiceDetail, catalog: unknown, fallbackCashier: string): string {
+  const cat = catalog as { identity?: ReceiptIdentity | null; receiptShowFields?: null; vatRate?: number } | null;
+  const vatRate = Number(cat?.vatRate) || 15;
+  const now = Date.now();
+
+  const doc: LocalOrder = {
+    id: inv.orderId,
+    status: "completed",
+    orderType: "takeaway",
+    tableNo: null,
+    shiftId: null,
+    deviceId: null,
+    discountType: inv.discountAmount > 0 ? "FIXED" : null,
+    discountValue: inv.discountAmount > 0 ? inv.discountAmount : 0,
+    discountName: inv.discountName || null,
+    note: null,
+    customerId: inv.customerId,
+    customerName: inv.customerName || null,
+    customerPhone: inv.customerPhone || null,
+    lines: (inv.items ?? []).map((it) => ({
+      menuId: "",
+      name: it.name,
+      qty: Number(it.qty) || 0,
+      unitPrice: Number(it.price) || 0,
+      lineDiscount: 0,
+      vatCategory: "S",
+      notes: null,
+    })),
+    serverVersion: null,
+    invoiceNumber: inv.invoiceNumber,
+    saleId: inv.orderId,
+    createdAt: now,
+    updatedAt: now,
+  };
+
+  const payments = (
+    inv.splitDetails && inv.splitDetails.length
+      ? inv.splitDetails.map((d) => ({ method: d.method, amount: Number(d.amount) || 0 }))
+      : [{ method: inv.payment || "كاش", amount: Number(inv.totalFinal) || 0 }]
+  ) as Payment[];
+
+  // Identity: the invoice's frozen seller block wins (identitySource snapshot/
+  // live is resolved server-side); the cached catalog identity is only a
+  // fallback for sales that carry none.
+  const identity: ReceiptIdentity | null = inv.companyName
+    ? {
+        sellerName: inv.companyName,
+        legalName: "",
+        taxNumber: inv.taxNumber || "",
+        crNumber: inv.crNumber || "",
+        address: inv.branchAddress || "",
+        nationalAddress: inv.nationalAddress || "",
+        phone: inv.companyPhone || "",
+        email: inv.companyEmail || "",
+        logo: "",
+        currency: inv.currency || "SAR",
+        vatRate,
+        header: inv.receiptHeader || "",
+        footer: inv.receiptFooter || "",
+        thankYou: inv.receiptThankYou || "",
+        returnPolicy: inv.receiptReturnPolicy || "",
+        branchName: inv.branchName || "",
+        branchCompanyName: inv.branchCompanyName || "",
+        brandName: inv.brandName || "",
+      }
+    : (cat?.identity ?? null);
+
+  const stamp =
+    inv.zatcaType === "cancellation"
+      ? `ملغاة · VOIDED${inv.voidSerial ? ` #${inv.voidSerial}` : ""}`
+      : inv.zatcaType === "credit_note"
+        ? `مرتجع · RETURNED${inv.returnSerial ? ` #${inv.returnSerial}` : ""}`
+        : null;
+
+  const total = Number(inv.totalFinal) || 0;
+  const subtotal = round2((inv.items ?? []).reduce((s, it) => s + (Number(it.total) || 0), 0));
+  const parsedDate = new Date(inv.date);
+
+  return buildReceiptHtml({
+    order: doc,
+    payments,
+    invoiceNumber: inv.invoiceNumber,
+    cashTendered: Number(inv.cashTendered) || 0,
+    changeDue: Number(inv.changeDue) || 0,
+    cashierName: inv.cashierName || fallbackCashier,
+    vatRate,
+    identity,
+    showFields: cat?.receiptShowFields ?? null,
+    zatcaQrDataUrl: inv.zatcaQr?.qrDataUrl ?? null,
+    paperWidth: resolvePaperWidth(catalog),
+    printedAt: Number.isNaN(parsedDate.getTime()) ? new Date() : parsedDate,
+    stamp,
+    totalsOverride: {
+      subtotal,
+      lineDiscountTotal: 0,
+      discountAmount: Number(inv.discountAmount) || 0,
+      vatTotal: round2(total - total / (1 + vatRate / 100)),
+      total,
+    },
+  });
+}
 
 /** A row is reversed when it carries a cancellation or credit-note ZATCA type. */
 const isReversed = (r: SaleRow) => r.zatcaType === "cancellation" || r.zatcaType === "credit_note";
@@ -74,15 +205,19 @@ function Stat({ label, value, tone }: { label: string; value: string; tone: stri
 }
 
 export function MyInvoicesDialog({ open, onClose }: { open: boolean; onClose: () => void }) {
-  const { user, shiftId, pushToast, engineStatus } = usePos();
+  const { user, shiftId, pushToast, engineStatus, catalog } = usePos();
   const queryClient = useQueryClient();
   const [query, setQuery] = useState("");
   const [filter, setFilter] = useState<Filter>("all");
   const [pending, setPending] = useState<{ row: SaleRow; action: "void" | "return" } | null>(null);
   const [approvalError, setApprovalError] = useState<string | null>(null);
+  const [printingId, setPrintingId] = useState<string | null>(null);
 
   // Privileged roles skip the approval dialog — the server still authorizes.
   const isPrivileged = ["admin", "manager"].includes(String(user?.role ?? "").toLowerCase());
+  // Owner opt-out (void only) — rides in on the catalog; absent → gated.
+  const requireVoidApproval =
+    (catalog as unknown as { requireVoidApproval?: boolean } | null)?.requireVoidApproval !== false;
 
   const invoicesQuery = useQuery({
     queryKey: ["my-invoices", user?.username, shiftId],
@@ -174,13 +309,31 @@ export function MyInvoicesDialog({ open, onClose }: { open: boolean; onClose: ()
 
   function start(row: SaleRow, action: "void" | "return") {
     setApprovalError(null);
-    if (isPrivileged) {
-      // No dialog for admin/manager — legacy bypasses it too (app.js:3527).
+    if (!needsApprovalGate(action, isPrivileged, requireVoidApproval)) {
+      // No dialog: admin/manager (legacy bypass, app.js:3527) or the owner
+      // opted voids out (app.js:3519 — the server skips the same gate).
       // A return still needs a reason; legacy defaults it (app.js:3547).
       reverse.mutate({ row, action, reason: action === "return" ? "مرتجع عميل" : "" });
       return;
     }
     setPending({ row, action });
+  }
+
+  /** Reprint (فواتيري → طباعة): fetch the invoice (identity + STAMPED QR) and
+   *  print it through the same window path as first prints. Works for reversed
+   *  rows too — those print with their ملغاة/مرتجع stamp. */
+  async function reprint(row: SaleRow) {
+    setPrintingId(row.orderId);
+    try {
+      const inv = await getInvoice(row.orderId);
+      if (!inv) throw new Error("تعذّر تحميل بيانات الفاتورة للطباعة");
+      const ok = printHtml(reprintHtmlFromInvoice(inv, catalog, row.username || user?.username || ""));
+      if (!ok) pushToast("error", "المتصفح منع نافذة الطباعة — اسمح بالنوافذ المنبثقة");
+    } catch (e) {
+      pushToast("error", (e as Error).message || "تعذّرت طباعة الفاتورة");
+    } finally {
+      setPrintingId(null);
+    }
   }
 
   const busy = reverse.isPending;
@@ -310,26 +463,39 @@ export function MyInvoicesDialog({ open, onClose }: { open: boolean; onClose: ()
                           {r.paymentNotes ? <div className="text-[10px] text-slate-400">{r.paymentNotes}</div> : null}
                         </td>
                         <td className="p-2">
-                          {reversed ? (
-                            <span className="text-[10px] font-bold text-slate-400">تم — لا إجراءات</span>
-                          ) : (
-                            <div className="flex flex-wrap gap-1">
-                              <Button size="sm" variant="danger" disabled={busy} onClick={() => start(r, "void")}>
-                                <Ban className="h-3.5 w-3.5" aria-hidden />
-                                إلغاء
-                              </Button>
-                              <Button
-                                size="sm"
-                                variant="secondary"
-                                disabled={busy}
-                                onClick={() => start(r, "return")}
-                                className="border-orange-200 bg-orange-50 text-orange-700 hover:bg-orange-100"
-                              >
-                                <Undo2 className="h-3.5 w-3.5" aria-hidden />
-                                مرتجع
-                              </Button>
-                            </div>
-                          )}
+                          <div className="flex flex-wrap gap-1">
+                            <Button
+                              size="sm"
+                              variant="secondary"
+                              disabled={busy || printingId === r.orderId}
+                              loading={printingId === r.orderId}
+                              onClick={() => void reprint(r)}
+                              title="إعادة طباعة الفاتورة (برمز ZATCA المختوم)"
+                            >
+                              <Printer className="h-3.5 w-3.5" aria-hidden />
+                              طباعة
+                            </Button>
+                            {reversed ? (
+                              <span className="self-center text-[10px] font-bold text-slate-400">تم — لا إجراءات</span>
+                            ) : (
+                              <>
+                                <Button size="sm" variant="danger" disabled={busy} onClick={() => start(r, "void")}>
+                                  <Ban className="h-3.5 w-3.5" aria-hidden />
+                                  إلغاء
+                                </Button>
+                                <Button
+                                  size="sm"
+                                  variant="secondary"
+                                  disabled={busy}
+                                  onClick={() => start(r, "return")}
+                                  className="border-orange-200 bg-orange-50 text-orange-700 hover:bg-orange-100"
+                                >
+                                  <Undo2 className="h-3.5 w-3.5" aria-hidden />
+                                  مرتجع
+                                </Button>
+                              </>
+                            )}
+                          </div>
                         </td>
                       </tr>
                     );

@@ -11,6 +11,7 @@ const sessionVersion = require('../lib/sessionVersion');
 // becomes a separate, intentional action from authentication.
 // v6.2.0 Wave F.5 — 2FA required for admin / developer
 const { generateSecret: _genTotpSecret, verifyTOTP, generateOTPAuthURI: _genOtpUri } = require('../lib/twoFactor');
+const { appendAuditEntry, verifyAuditChain } = require('../lib/auditLogger');
 
 // ─── In-memory rate limiter (per IP) ───
 const loginAttempts = {}; // { ip: { count, firstAttempt, blockedUntil } }
@@ -547,13 +548,26 @@ async function requireAdmin(req, res, next) {
 }
 
 // Best-effort audit logger for user-management ops (non-fatal).
+// Was hand-rolling its own INSERT against column names that don't exist on
+// audit_log (entity_type/entity_id/username/details/ip — the real columns are
+// table_name/record_id/old_value/new_value/ip_address), silently swallowed by
+// its own catch. Every create/update/toggle/reset through this admin screen
+// has failed to write an audit row since this table's schema was set —
+// appendAuditEntry() (used correctly elsewhere by login/change-password)
+// already knows the real schema and the hash chain; use it instead of a
+// second, drifted write path.
 async function _auditUserOp(req, action, target, details) {
   try {
-    await db.query(
-      'INSERT INTO audit_log (action, entity_type, entity_id, username, details, ip, created_at) VALUES (?,?,?,?,?,?,NOW())',
-      [action, 'user', target || '', (req.user && req.user.username) || '', JSON.stringify(details || {}), req.ip || '']
-    );
-  } catch (_) { /* table/columns may differ — never block the op */ }
+    await appendAuditEntry(db, {
+      user_id: (req.user && req.user.id) || null,
+      username: (req.user && req.user.username) || '',
+      action,
+      table_name: 'users',
+      record_id: target || '',
+      ip_address: req.ip || '',
+      after: details || {},
+    });
+  } catch (_) { /* audit must never block the underlying operation */ }
 }
 
 // Release Gate 2026-07 — GET /api/auth/users-list: lightweight display-name
@@ -816,7 +830,7 @@ router.post('/users', requireAdmin, async (req, res) => {
         if (u.length) await db.query('UPDATE hr_employees SET linked_user_id = ?, linked_username = ? WHERE id = ?', [u[0].id, username, empId]);
       } catch (e) { /* tolerate hr_employees schema gaps on older deploys */ }
     }
-    _auditUserOp(req, 'create_user', username, { role: dbRole, brandId: brandId || null, branchId: branchId || null });
+    await _auditUserOp(req, 'create_user', username, { role: dbRole, brandId: brandId || null, branchId: branchId || null });
     res.json({ success: true });
   } catch (e) {
     res.json({ success: false, error: e.message });
@@ -1034,7 +1048,7 @@ router.put('/users/:username', requireAdmin, async (req, res) => {
       }
       await setUserMeta(meta);
     }
-    _auditUserOp(req, 'update_user', username, { role: role || null });
+    await _auditUserOp(req, 'update_user', username, { role: role || null });
     res.json({ success: true });
   } catch (e) {
     res.json({ success: false, error: e.message });
@@ -1046,7 +1060,7 @@ router.post('/users/:username/toggle', requireAdmin, async (req, res) => {
   try {
     if (req.params.username === 'admin') return res.json({ success: false, error: 'لا يمكن إيقاف المستخدم admin' });
     await db.query('UPDATE users SET active = 1 - active WHERE username = ?', [req.params.username]);
-    _auditUserOp(req, 'toggle_user_active', req.params.username, {});
+    await _auditUserOp(req, 'toggle_user_active', req.params.username, {});
     res.json({ success: true });
   } catch (e) { res.json({ success: false, error: e.message }); }
 });
@@ -1063,7 +1077,7 @@ router.post('/users/:username/reset-password', requireAdmin, async (req, res) =>
     if (!/[!@#$%^&*()_+\-=\[\]{};':"|,.<>\/?]/.test(password)) return res.json({ success: false, error: 'كلمة المرور يجب أن تحتوي على رمز خاص (!@#$...)' });
     const hashed = await bcrypt.hash(password, 12);
     await db.query('UPDATE users SET password = ?, failed_attempts = 0, locked_until = NULL WHERE username = ?', [hashed, req.params.username]);
-    _auditUserOp(req, 'reset_password', req.params.username, {});
+    await _auditUserOp(req, 'reset_password', req.params.username, {});
     res.json({ success: true });
   } catch (e) { res.json({ success: false, error: e.message }); }
 });
@@ -1078,32 +1092,37 @@ router.delete('/users/:username', requireAdmin, async (req, res) => {
       delete meta[req.params.username];
       await setUserMeta(meta);
     }
-    _auditUserOp(req, 'delete_user', req.params.username, {});
+    await _auditUserOp(req, 'delete_user', req.params.username, {});
     res.json({ success: true });
   } catch (e) { res.json({ success: false, error: e.message }); }
 });
 
 // close2 — GET /api/auth/users/:username/audit — read-only user-management audit
-// trail. _auditUserOp (line ~550) writes every user op to audit_log (SINGULAR)
-// with entity_type='user'; /api/erp/audit-logs reads the OTHER table (audit_logs,
-// PLURAL), so no existing endpoint surfaces a single user's management history.
+// trail. _auditUserOp (line ~550) writes every user op to audit_log (SINGULAR,
+// table_name='users', record_id=<target username>) via appendAuditEntry();
+// /api/erp/audit-logs reads the OTHER table (audit_logs, PLURAL), so no existing
+// endpoint surfaces a single user's management history.
 // requireAdmin for parity with every sibling /users endpoint above. Additive +
 // read-only; degrades to [] on any schema gap (same convention as /erp/audit-logs).
+// v2 — this originally filtered on entity_type/entity_id, columns audit_log
+// (singular) has never had (the real columns are table_name/record_id); every
+// query threw and the catch silently returned [], so this tab showed no
+// history regardless of whether _auditUserOp had written anything.
 router.get('/users/:username/audit', requireAdmin, async (req, res) => {
   try {
     const [rows] = await db.query(
-      "SELECT * FROM audit_log WHERE entity_type = 'user' AND entity_id = ? ORDER BY created_at DESC LIMIT 100",
+      "SELECT * FROM audit_log WHERE table_name = 'users' AND record_id = ? ORDER BY created_at DESC LIMIT 100",
       [req.params.username]
     );
     res.json(rows.map(r => ({
       id: r.id,
       action: r.action,
-      entityType: r.entity_type,
-      entityId: r.entity_id,
+      entityType: r.table_name,
+      entityId: r.record_id,
       username: r.username,
-      details: r.details,
-      ip: r.ip,
-      ipAddress: r.ip,
+      details: r.new_value,
+      ip: r.ip_address,
+      ipAddress: r.ip_address,
       createdAt: r.created_at
     })));
   } catch (e) { res.json([]); }
@@ -1647,7 +1666,6 @@ router.put('/permissions/user/:username', requireAdmin, async (req, res) => {
 // Walks the audit_log hash chain and reports any row whose stored
 // record_hash doesn't match the recomputed value. Tampering (manual
 // UPDATEs in the DB) is detected with brokenAt: <id>.
-const { verifyAuditChain } = require('../lib/auditLogger');
 router.get('/audit/verify', verifyToken, async (req, res) => {
   try {
     // Only admin / developer can run this

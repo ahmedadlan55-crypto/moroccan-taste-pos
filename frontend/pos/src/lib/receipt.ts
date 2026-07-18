@@ -30,28 +30,58 @@ function brandNameFallback(): string {
 
 const PAY_LABELS: Record<string, string> = { cash: "كاش", card: "شبكة", credit: "آجل" };
 
-const BASE_CSS = `
+// ── Paper width (owner setting: ReceiptPaperWidth '58'|'80'|'A4') ────────────
+// 58mm thermal paper prints ~48mm wide; 80mm paper prints ~72mm (the historical
+// hardcode); A4 gets a full-width layout. The setting rides in the catalog as
+// `receiptSettings.{paperWidth,autoPrint}` (server stream); both resolvers are
+// DEFENSIVE — any missing/foreign shape falls back to 80mm / autoprint-on.
+export type PaperWidth = "58" | "80" | "A4";
+
+const PAPER: Record<PaperWidth, { width: string; font: string; h1: string; grand: string; kitchen: string }> = {
+  "58": { width: "48mm", font: "10px", h1: "13px", grand: "13px", kitchen: "15px" },
+  "80": { width: "72mm", font: "12px", h1: "16px", grand: "15px", kitchen: "18px" },
+  A4: { width: "190mm", font: "13px", h1: "19px", grand: "17px", kitchen: "20px" },
+};
+
+export function resolvePaperWidth(catalog: unknown): PaperWidth {
+  const rs = (catalog as { receiptSettings?: { paperWidth?: unknown } } | null | undefined)?.receiptSettings;
+  const raw = String(rs?.paperWidth ?? "80").trim().toUpperCase();
+  return raw === "58" ? "58" : raw === "A4" ? "A4" : "80";
+}
+
+/** ReceiptAutoPrint ('1' default). '0' → the payment screen must NOT auto-invoke
+ *  print; the manual receipt button always works either way. */
+export function resolveAutoPrint(catalog: unknown): boolean {
+  const rs = (catalog as { receiptSettings?: { autoPrint?: unknown } } | null | undefined)?.receiptSettings;
+  return String(rs?.autoPrint ?? "1").trim() !== "0";
+}
+
+function baseCss(paper: PaperWidth): string {
+  const p = PAPER[paper];
+  return `
   * { margin: 0; padding: 0; box-sizing: border-box; }
   body { font-family: "Tajawal", "Segoe UI", Tahoma, Arial, sans-serif; direction: rtl;
-         width: 72mm; margin: 0 auto; padding: 4mm 2mm; color: #000; background: #fff; font-size: 12px; }
+         width: ${p.width}; margin: 0 auto; padding: 4mm 2mm; color: #000; background: #fff; font-size: ${p.font}; }
   .num { direction: ltr; unicode-bidi: embed; font-variant-numeric: tabular-nums; }
-  h1 { font-size: 16px; text-align: center; margin-bottom: 2px; }
-  .sub { text-align: center; font-size: 11px; color: #333; }
+  h1 { font-size: ${p.h1}; text-align: center; margin-bottom: 2px; }
+  .sub { text-align: center; font-size: 0.92em; color: #333; }
   hr { border: none; border-top: 1px dashed #000; margin: 6px 0; }
   table { width: 100%; border-collapse: collapse; }
-  th { text-align: right; font-size: 11px; border-bottom: 1px solid #000; padding: 2px 0; }
-  td { padding: 2px 0; vertical-align: top; font-size: 12px; }
+  th { text-align: right; font-size: 0.92em; border-bottom: 1px solid #000; padding: 2px 0; }
+  td { padding: 2px 0; vertical-align: top; }
   .l { text-align: left; }
   .tot td { padding: 1px 0; }
-  .grand { font-size: 15px; font-weight: 800; border-top: 1px solid #000; }
-  .foot { text-align: center; margin-top: 8px; font-size: 12px; font-weight: 700; }
+  .grand { font-size: ${p.grand}; font-weight: 800; border-top: 1px solid #000; }
+  .foot { text-align: center; margin-top: 8px; font-weight: 700; }
   .qr { text-align: center; margin-top: 8px; }
   .qr img { image-rendering: pixelated; }
-  .kitchen { font-size: 18px; }
-  .kitchen td { font-size: 18px; font-weight: 700; padding: 4px 0; }
-  .kitchen .note { font-size: 14px; font-weight: 400; color: #111; }
-  @media print { body { width: auto; } }
+  .stamp { border: 2px solid #000; text-align: center; font-weight: 900; padding: 3px 6px; margin: 6px auto; width: fit-content; }
+  .kitchen { font-size: ${p.kitchen}; }
+  .kitchen td { font-weight: 700; padding: 4px 0; }
+  .kitchen .note { font-size: 0.8em; font-weight: 400; color: #111; }
+  ${paper === "A4" ? "" : "@media print { body { width: auto; } }"}
 `;
+}
 
 export interface ReceiptOptions {
   order: LocalOrder;
@@ -71,11 +101,32 @@ export interface ReceiptOptions {
   /** Server-rendered ZATCA QR PNG. Absent on a queued offline sale — the receipt
    *  states the stamp arrives after sync instead of inventing one. */
   zatcaQrDataUrl?: string | null;
+  /** Paper width per the owner setting (ReceiptPaperWidth). Default 80mm. */
+  paperWidth?: PaperWidth;
+  /** The moment shown on paper. A REPRINT passes the ORIGINAL sale datetime —
+   *  the receipt is a copy of that document, not a new one. Default: now. */
+  printedAt?: Date;
+  /** Bordered stamp under the header for reprints of reversed documents
+   *  (e.g. "ملغاة · VOIDED" / "مرتجع · RETURNED"). */
+  stamp?: string | null;
+  /** RECORDED figures for reprints. A reprint must show the sale's stored
+   *  numbers, not a recomputation from lines whose vat categories the
+   *  invoice endpoint does not echo. When present these replace cartTotals. */
+  totalsOverride?: {
+    subtotal: number;
+    lineDiscountTotal: number;
+    discountAmount: number;
+    vatTotal: number;
+    total: number;
+  };
 }
 
 export function buildReceiptHtml(opts: ReceiptOptions): string {
   const { order, payments, invoiceNumber } = opts;
-  const totals = cartTotals(order.lines, order.discountType ? { type: order.discountType, value: order.discountValue } : null);
+  const paper = opts.paperWidth ?? "80";
+  const totals =
+    opts.totalsOverride ??
+    cartTotals(order.lines, order.discountType ? { type: order.discountType, value: order.discountValue } : null);
   const orderTypeLabel = order.orderType === "dine_in" ? "محلي" : order.orderType === "delivery" ? "توصيل" : "سفري";
 
   const linesHtml = order.lines
@@ -123,11 +174,12 @@ export function buildReceiptHtml(opts: ReceiptOptions): string {
   }
 
   return `<!doctype html><html lang="ar" dir="rtl"><head><meta charset="utf-8">
-  <title>إيصال</title><style>${BASE_CSS}</style></head><body>
+  <title>إيصال</title><style>${baseCss(paper)}</style></head><body data-paper="${paper}">
   <h1>${esc(sellerName)}</h1>
   ${sellerLines.join("\n  ")}
+  ${opts.stamp ? `<div class="stamp">${esc(opts.stamp)}</div>` : ""}
   ${refLine}
-  <div class="sub num">${fmtDateTime(new Date())}</div>
+  <div class="sub num">${fmtDateTime(opts.printedAt ?? new Date())}</div>
   ${on("cashier") ? `<div class="sub">الكاشير: ${esc(opts.cashierName)} · ${orderTypeLabel}${order.tableNo ? ` · طاولة <span class="num">${esc(order.tableNo)}</span>` : ""}</div>` : ""}
   ${on("customer") && (order.customerName || order.customerPhone) ? `<div class="sub">العميل: ${esc([order.customerName, order.customerPhone].filter(Boolean).join(" "))}</div>` : ""}
   <hr>
@@ -163,7 +215,7 @@ export function buildReceiptHtml(opts: ReceiptOptions): string {
 }
 
 /** Kitchen ticket — items + qty + notes + table only, big font. */
-export function buildKitchenTicketHtml(order: LocalOrder): string {
+export function buildKitchenTicketHtml(order: LocalOrder, paperWidth: PaperWidth = "80"): string {
   const orderTypeLabel = order.orderType === "dine_in" ? "محلي" : order.orderType === "delivery" ? "توصيل" : "سفري";
   const linesHtml = order.lines
     .map(
@@ -174,12 +226,101 @@ export function buildKitchenTicketHtml(order: LocalOrder): string {
     )
     .join("");
   return `<!doctype html><html lang="ar" dir="rtl"><head><meta charset="utf-8">
-  <title>تذكرة مطبخ</title><style>${BASE_CSS}</style></head><body class="kitchen">
+  <title>تذكرة مطبخ</title><style>${baseCss(paperWidth)}</style></head><body class="kitchen" data-paper="${paperWidth}">
   <h1>المطبخ — ${orderTypeLabel}${order.tableNo ? ` · طاولة <span class="num">${esc(order.tableNo)}</span>` : ""}</h1>
   <div class="sub num">${fmtDateTime(new Date())} · ${esc(shortRef(order.id))}</div>
   <hr>
   <table><tbody>${linesHtml}</tbody></table>
   ${order.note ? `<hr><div class="note">${esc(order.note)}</div>` : ""}
+  </body></html>`;
+}
+
+// ── Shift X/Z report (thermal) ───────────────────────────────────────────────
+// Data = GET /api/shifts/:id/full-report (declared structurally here so this
+// module keeps zero dependency on the API layer). Z = after close (counted vs
+// expected + variance + denominations); X = mid-shift snapshot (expected only —
+// nothing has been counted yet, and printing zero "counted" would read as a
+// perfect drawer).
+export interface ShiftReportData {
+  shiftId: string;
+  status?: string;
+  cashier?: { username?: string; name?: string; empNo?: string };
+  branch?: { name?: string; companyName?: string };
+  company?: { name?: string; nameAr?: string; taxNumber?: string };
+  times?: { start?: string | null; end?: string | null };
+  financials?: { openingFloat?: number; expectedTotal?: number; actualTotal?: number; variance?: number; unmatched?: number };
+  methods?: Array<{ name?: string; nameAr?: string | null; expected?: number; actual?: number; variance?: number }>;
+  soldItems?: Array<{ name?: string; qty?: number; price?: number; total?: number }>;
+  denominations?: Array<{ value?: number; kind?: string; count?: number }>;
+  orderCount?: number;
+  itemsCount?: number;
+  notes?: string;
+}
+
+export function buildShiftReportHtml(rep: ShiftReportData, opts: { mode: "X" | "Z"; paperWidth?: PaperWidth }): string {
+  const paper = opts.paperWidth ?? "80";
+  const isZ = opts.mode === "Z";
+  const f = rep.financials ?? {};
+  const title = isZ ? "تقرير إغلاق وردية · Z" : "تقرير منتصف وردية · X";
+  const cashier = rep.cashier ?? {};
+  const methods = rep.methods ?? [];
+  const denoms = (rep.denominations ?? []).filter((d) => Number(d.count) > 0);
+  const items = rep.soldItems ?? [];
+
+  const methodRows = methods
+    .map((m) => {
+      const label = esc(m.nameAr || m.name || "—");
+      if (!isZ) return `<tr><td>${label}</td><td class="l num">${fmt2(m.expected ?? 0)}</td></tr>`;
+      const v = m.variance ?? 0;
+      return `<tr><td>${label}</td><td class="l num">${fmt2(m.expected ?? 0)}</td><td class="l num">${fmt2(m.actual ?? 0)}</td><td class="l num">${v > 0 ? "+" : ""}${fmt2(v)}</td></tr>`;
+    })
+    .join("");
+
+  const denomRows = denoms
+    .map((d) => {
+      const val = Number(d.value) || 0;
+      const face = val < 1 ? `${Math.round(val * 100)} هللة` : `${fmt2(val)} ر.س`;
+      return `<tr><td>${face}</td><td class="l num">× ${Number(d.count) || 0}</td><td class="l num">${fmt2(val * (Number(d.count) || 0))}</td></tr>`;
+    })
+    .join("");
+
+  const itemRows = items
+    .map((i) => `<tr><td>${esc(i.name || "—")}</td><td class="l num">${fmt2(i.qty ?? 0)}</td><td class="l num">${fmt2(i.total ?? 0)}</td></tr>`)
+    .join("");
+
+  const variance = f.variance ?? 0;
+
+  return `<!doctype html><html lang="ar" dir="rtl"><head><meta charset="utf-8">
+  <title>${title}</title><style>${baseCss(paper)}</style></head><body data-paper="${paper}">
+  <h1>${esc(rep.company?.name || rep.company?.nameAr || brandNameFallback())}</h1>
+  ${rep.branch?.name ? `<div class="sub">${esc(rep.branch.name)}</div>` : ""}
+  <div class="stamp">${title}</div>
+  <div class="sub">وردية: <span class="num">${esc(rep.shiftId)}</span></div>
+  <div class="sub">الكاشير: ${esc(cashier.name || cashier.username || "—")}${cashier.empNo ? ` · <span class="num">${esc(cashier.empNo)}</span>` : ""}</div>
+  ${rep.times?.start ? `<div class="sub">البداية: <span class="num">${fmtDateTime(new Date(rep.times.start))}</span></div>` : ""}
+  ${isZ && rep.times?.end ? `<div class="sub">الإغلاق: <span class="num">${fmtDateTime(new Date(rep.times.end))}</span></div>` : ""}
+  <div class="sub">طُبع: <span class="num">${fmtDateTime(new Date())}</span></div>
+  <hr>
+  <table class="tot">
+    <tr><td>عدد الفواتير</td><td class="l num">${Number(rep.orderCount ?? 0)}</td></tr>
+    <tr><td>عدد الأصناف المباعة</td><td class="l num">${Number(rep.itemsCount ?? 0)}</td></tr>
+    <tr><td>رصيد افتتاحي</td><td class="l num">${fmt2(f.openingFloat ?? 0)}</td></tr>
+  </table>
+  <hr>
+  <table>
+    <thead><tr><th>طريقة الدفع</th><th class="l">متوقع</th>${isZ ? '<th class="l">معدود</th><th class="l">فرق</th>' : ""}</tr></thead>
+    <tbody>${methodRows}</tbody>
+  </table>
+  <table class="tot">
+    <tr class="grand"><td>الإجمالي المتوقع</td><td class="l num">${fmt2(f.expectedTotal ?? 0)}</td></tr>
+    ${isZ ? `<tr class="grand"><td>الإجمالي المعدود</td><td class="l num">${fmt2(f.actualTotal ?? 0)}</td></tr>
+    <tr class="grand"><td>الفرق</td><td class="l num">${variance > 0 ? "+" : ""}${fmt2(variance)}</td></tr>` : ""}
+    ${(f.unmatched ?? 0) > 0 ? `<tr><td>غير مطابق لأي طريقة</td><td class="l num">${fmt2(f.unmatched ?? 0)}</td></tr>` : ""}
+  </table>
+  ${isZ && denomRows ? `<hr><table><thead><tr><th>الفئة</th><th class="l">العدد</th><th class="l">الإجمالي</th></tr></thead><tbody>${denomRows}</tbody></table>` : ""}
+  ${itemRows ? `<hr><table><thead><tr><th>الصنف</th><th class="l">كمية</th><th class="l">إجمالي</th></tr></thead><tbody>${itemRows}</tbody></table>` : ""}
+  ${rep.notes ? `<hr><div class="sub">${esc(rep.notes)}</div>` : ""}
+  ${!isZ ? `<div class="foot">تقرير X — الوردية ما زالت مفتوحة</div>` : `<div class="foot">نهاية تقرير الوردية</div>`}
   </body></html>`;
 }
 

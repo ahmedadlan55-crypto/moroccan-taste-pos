@@ -476,3 +476,181 @@ export function submitReceiveRequest(body: {
 }
 
 // ═══ END B1 POS-INVENTORY BLOCK ══════════════════════════════════════════════
+
+// ═════════════════════════════════════════════════════════════════════════════
+// APPEND-ONLY BLOCK — close/b2-pos-daily (POS daily-ops parity).
+// New endpoints only; nothing above this line was modified.
+//   • GET  /api/shifts/:id/full-report      — X/Z thermal report data
+//   • GET  /api/sales/invoice/:orderId      — reprint (identity + STAMPED QR)
+//   • POST /api/erp/customers               — cashier creates a customer
+//   • GET  /api/erp/customers/:id/summary   — customer totals + history
+// Note on closeShiftV3 above: the close flow NOW sends the counted
+// denominations (value/count/kind) alongside paymentTotals. Server-side,
+// denominations>0 override the cash method's paymentTotals entry — the two are
+// derived from the SAME grid so they are always equal, and sending the rows is
+// what persists the breakdown (shift_close_denominations) that the Z-report
+// prints. The older "denominations stay []" note above describes the pre-grid
+// behavior and is superseded for callers that pass a real count.
+// ═════════════════════════════════════════════════════════════════════════════
+
+/** One method row of GET /api/shifts/:id/full-report (routes/shifts.js:591). */
+export interface ShiftReportMethod {
+  id: number | string;
+  name: string;
+  nameAr: string | null;
+  icon: string | null;
+  color: string | null;
+  groupType: string | null;
+  expected: number;
+  actual: number;
+  variance: number;
+  count?: number;
+}
+
+/** GET /api/shifts/:id/full-report — the X/Z report payload. Token-gated:
+ *  request() attaches the Authorization header like every other call here. */
+export interface ShiftFullReport {
+  shiftId: string;
+  status: string;
+  cashier: { username: string; name: string; empNo: string };
+  branch: { name: string; address: string; companyName: string };
+  company: { name: string; nameAr: string; taxNumber: string; currency: string; phone: string; email: string; logo: string };
+  times: { start: string | null; end: string | null; durationMs: number | null };
+  financials: { openingFloat: number; expectedTotal: number; actualTotal: number; variance: number; unmatched: number };
+  methods: ShiftReportMethod[];
+  soldItems: Array<{ name: string; qty: number; price: number; total: number }>;
+  denominations: Array<{ value: number; kind: string; count: number }>;
+  orderCount: number;
+  itemsCount: number;
+  notes: string;
+}
+
+export function shiftFullReport(shiftId: string): Promise<ShiftFullReport> {
+  return request<ShiftFullReport>(`/api/shifts/${encodeURIComponent(shiftId)}/full-report`);
+}
+
+/**
+ * GET /api/sales/invoice/:orderId — everything a REPRINT needs: the frozen
+ * seller identity (snapshot-preferred server-side) and the STAMPED ZATCA QR
+ * (`zatcaQr.qrDataUrl`, a server-rendered PNG). The client NEVER derives a QR.
+ * The route answers `null` on any error (legacy contract) — callers must
+ * handle a null resolution.
+ */
+export interface InvoiceDetail {
+  orderId: string;
+  date: string;
+  payment: string | null;
+  totalFinal: number;
+  username: string;
+  discountName: string | null;
+  discountAmount: number;
+  lineDiscounts: unknown;
+  splitDetails: Array<{ method: string; amount: number }> | null;
+  cashTendered: number;
+  changeDue: number;
+  items: Array<{ name: string; qty: number; price: number; total: number }>;
+  cashierName: string;
+  branchName: string;
+  branchAddress: string;
+  branchCompanyName: string;
+  companyName: string;
+  taxNumber: string;
+  currency: string;
+  companyPhone: string;
+  companyEmail: string;
+  receiptFooter: string;
+  crNumber: string;
+  nationalAddress: string;
+  receiptHeader: string;
+  receiptThankYou: string;
+  receiptReturnPolicy: string;
+  identitySource: "snapshot" | "live";
+  brandName: string;
+  customerId: string | null;
+  customerName: string;
+  customerPhone: string;
+  paymentNotes: string | null;
+  zatcaType: string | null;
+  zatcaQr: { qrBase64: string; qrDataUrl: string | null; stored: boolean } | null;
+  invoiceNumber: string | null;
+  voidSerial: string | null;
+  returnSerial: string | null;
+}
+
+export function getInvoice(orderId: string): Promise<InvoiceDetail | null> {
+  return request<InvoiceDetail | null>(`/api/sales/invoice/${encodeURIComponent(orderId)}`);
+}
+
+/**
+ * POST /api/erp/customers — the legacy add-customer contract EXACTLY
+ * (public/pos/app.js doSave :1808): id:'' means INSERT; the route answers
+ * {success:false,error} with HTTP 200 on failure, which request() converts to
+ * an ApiError (duplicate-phone messages surface through e.message).
+ */
+export interface NewCustomerInput {
+  name: string;
+  phone: string;
+  vatNumber?: string;
+  customerType?: "B2C" | "B2B" | "B2G";
+}
+
+export function createErpCustomer(input: NewCustomerInput, username: string): Promise<{ success: boolean; id: string }> {
+  return request<{ success: boolean; id: string }>("/api/erp/customers", {
+    method: "POST",
+    body: {
+      id: "", // empty = INSERT (legacy contract)
+      name: input.name,
+      nameEn: "",
+      vatNumber: input.vatNumber ?? "",
+      phone: input.phone,
+      email: "",
+      address: "",
+      city: "",
+      customerType: input.customerType ?? "B2C",
+      creditLimit: 0,
+      gender: "unknown",
+      username,
+    },
+  });
+}
+
+/** GET /api/erp/customers/:id/summary — totals strip + recent purchases
+ *  (routes/erp/customers.js:233; legacy consumer _posCustomerLoadSummary :1347). */
+export interface CustomerSummaryData {
+  success: boolean;
+  customer: {
+    id: string;
+    name: string;
+    nameEn: string | null;
+    phone: string;
+    email: string;
+    gender: string;
+    customerType: string;
+    balance: number;
+    creditLimit: number;
+    createdAt: string;
+    isActive: boolean;
+  };
+  kpi: {
+    orderCount: number;
+    totalSpent: number;
+    avgInvoice: number;
+    firstVisit: string | null;
+    lastVisit: string | null;
+  };
+  recentInvoices: Array<{
+    id: string;
+    invoiceNumber: string | null;
+    date: string;
+    total: number;
+    payment: string;
+    zatcaType: string;
+    voidSerial: string | null;
+    returnSerial: string | null;
+    hasCreditNote: boolean;
+  }>;
+}
+
+export function getCustomerSummary(id: string): Promise<CustomerSummaryData> {
+  return request<CustomerSummaryData>(`/api/erp/customers/${encodeURIComponent(id)}/summary`);
+}

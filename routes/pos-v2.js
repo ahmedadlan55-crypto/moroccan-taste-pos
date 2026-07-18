@@ -423,6 +423,19 @@ router.get('/catalog', POS, async (req, res) => {
       console.error('[pos-v2] receipt identity resolution failed:', e.message);
     }
 
+    // Owner opt-out for the void approval modal (RequireManagerApprovalForVoid
+    // = '0' → any cashier voids without manager credentials). The SERVER gate
+    // (routes/sales.js:_requireManagerApproval) reads the same setting and
+    // remains the enforcement point — this key only lets the client skip a
+    // dialog the server would wave through anyway. Defaults to TRUE (gated)
+    // on any read failure; VOID only — returns are never opted out.
+    let requireVoidApproval = true;
+    try {
+      const [va] = await db.query(
+        "SELECT setting_value FROM settings WHERE setting_key = 'RequireManagerApprovalForVoid' LIMIT 1");
+      if (va.length && String(va[0].setting_value).trim() === '0') requireVoidApproval = false;
+    } catch (_) { /* fail closed — keep the dialog */ }
+
     const data = {
       items: items.map((m) => {
         const units = unitsByItem[m.id] || [];
@@ -444,12 +457,14 @@ router.get('/catalog', POS, async (req, res) => {
       identity,
       receiptShowFields,
       receiptSettings,
+      requireVoidApproval,
       serverTime: new Date().toISOString(),
     };
     // identity is part of the ETag: an owner editing the receipt header must
     // reach cached offline clients on their next sync, not never. Same for the
-    // print preferences — a paper-width change must reach cached clients too.
-    const etag = '"' + crypto.createHash('sha1').update(JSON.stringify({ i: data.items, v: data.vatRate, id: identity, sf: receiptShowFields, rs: receiptSettings })).digest('hex') + '"';
+    // print preferences and the void-approval opt-out — a paper-width change or
+    // a flipped approval policy must reach cached offline clients too.
+    const etag = '"' + crypto.createHash('sha1').update(JSON.stringify({ i: data.items, v: data.vatRate, id: identity, sf: receiptShowFields, rs: receiptSettings, va: requireVoidApproval })).digest('hex') + '"';
     if (req.get('If-None-Match') === etag) return res.status(304).end();
     res.setHeader('ETag', etag);
     res.json({ success: true, data });

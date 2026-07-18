@@ -73,6 +73,9 @@ export interface Shift {
   displayName?: string;
   /** OPEN | CLOSED (case-insensitive in the legacy data). */
   status?: string;
+  /** Opening float (الرصيد الافتتاحي) — real cash the drawer started with,
+   *  recorded at open time. Returned by GET /api/shifts/ (openingFloat). */
+  openingFloat?: number;
   totalTheoretical?: number;
   theoreticalCash?: number;
   theoreticalCard?: number;

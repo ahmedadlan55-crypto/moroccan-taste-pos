@@ -49,6 +49,12 @@ export function LoginPage() {
         window.location.assign(base + "/change-password?must=1");
         return;
       }
+      // A cashier's home is the POS, not the Back-Office overview. Send them
+      // straight to /pos/ so they don't land on a screen their role can't use.
+      if (String(data.role || "").toLowerCase() === "cashier") {
+        window.location.assign("/pos/");
+        return;
+      }
       window.location.assign(base + "/overview");
     } catch {
       setError("تعذّر الاتصال بالخادم. حاول مجددًا.");

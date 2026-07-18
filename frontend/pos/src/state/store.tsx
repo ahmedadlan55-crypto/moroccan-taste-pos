@@ -178,7 +178,9 @@ export interface PosContextValue {
 
   shiftId: string | null;
   shiftLoading: boolean;
-  openShiftNow: () => void;
+  /** Open a shift with an optional opening float (الرصيد الافتتاحي). Callers
+   *  that pass no float open with 0 (backward compatible). */
+  openShiftNow: (openingFloat?: number) => void;
   openingShift: boolean;
   onShiftClosed: () => void;
 
@@ -569,7 +571,7 @@ export function PosProvider({ children }: { children: ReactNode }) {
     setChannel,
     shiftId,
     shiftLoading: shiftQuery.isLoading,
-    openShiftNow: () => openShiftMutation.mutate(),
+    openShiftNow: (openingFloat?: number) => openShiftMutation.mutate(openingFloat),
     openingShift: openShiftMutation.isPending,
     onShiftClosed,
     cart,

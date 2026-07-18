@@ -5,8 +5,9 @@
  * with a bottom cart sheet. Keyboard: F2 search, F4 pay, F9 hold, Esc close.
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { ChefHat, LogIn, PauseCircle, ShoppingBasket, Store, Tag } from "lucide-react";
+import { ChefHat, PauseCircle, ShoppingBasket, Store, Tag } from "lucide-react";
 import { usePos } from "@/state/store";
+import { clearToken } from "@/lib/auth";
 import { listOrders } from "@/lib/api";
 import { initPwa } from "@/lib/pwa";
 import { runLegacyDrainOnce, getDrainStatus } from "@/lib/legacyDrain";
@@ -29,32 +30,13 @@ import { SyncReportDialog } from "@/components/dialogs/SyncReportDialog";
 import { MyInvoicesDialog } from "@/components/dialogs/MyInvoicesDialog";
 import { StocktakeDialog } from "@/components/dialogs/StocktakeDialog";
 import { RequisitionsDialog } from "@/components/dialogs/RequisitionsDialog";
+import { PosLogin } from "@/components/PosLogin";
 import { Button, ErrorBanner, Money } from "@/components/ui";
-
-function LoginRequired() {
-  return (
-    <main className="flex min-h-screen flex-col items-center justify-center gap-4 p-6 text-center">
-      <div className="flex h-20 w-20 items-center justify-center rounded-3xl bg-ink text-saffron-500 shadow-lift">
-        <ChefHat className="h-10 w-10" aria-hidden />
-      </div>
-      <h1 className="text-xl font-extrabold text-ink">المذاق المغربي — كاشير V2</h1>
-      <p className="max-w-sm text-sm font-bold text-slate-500">
-        لا توجد جلسة دخول نشطة على هذا الجهاز. سجّل الدخول من النظام الرئيسي ثم عد إلى هذه الصفحة.
-      </p>
-      <a
-        href="/"
-        className="btn-press inline-flex min-h-11 items-center gap-2 rounded-xl bg-teal-600 px-6 text-sm font-bold text-white shadow-sm hover:bg-teal-700"
-      >
-        <LogIn className="h-4 w-4" aria-hidden />
-        سجّل الدخول من النظام الرئيسي
-      </a>
-    </main>
-  );
-}
 
 export default function App() {
   const {
     user,
+    shiftId,
     catalog,
     catalogLoading,
     catalogError,
@@ -96,6 +78,9 @@ export default function App() {
   const [lastHeld, setLastHeld] = useState<LocalOrder | null>(null);
   const [cartSheetOpen, setCartSheetOpen] = useState(false);
   const [drainOpen, setDrainOpen] = useState(false);
+  // A cashier switch requested while a shift is open: we open the ShiftDialog so
+  // they close/hand over the shift FIRST, then log out once it's closed.
+  const [pendingSwitch, setPendingSwitch] = useState(false);
 
   // ── PWA (SW registration + install prompt) + legacy-queue drain ──────────
   useEffect(() => {
@@ -235,7 +220,37 @@ export default function App() {
     return m;
   }, [cart.lines]);
 
-  if (!user) return <LoginRequired />;
+  // Clear the session and return to the login screen (reload re-mounts the
+  // provider, which re-reads the now-absent token → PosLogin).
+  function performLogout() {
+    clearToken();
+    window.location.reload();
+  }
+
+  // Safe cashier switch: NEVER drop an open shift silently. If a shift is open,
+  // route through the ShiftDialog's close/handover flow first; the logout only
+  // happens once the shift is confirmed closed (handled in ShiftDialog onClose).
+  function handleSwitchCashier() {
+    if (shiftId) {
+      setPendingSwitch(true);
+      setShiftOpen(true);
+      pushToast("info", "أغلق الوردية الحالية لإتمام تبديل الكاشير");
+    } else {
+      performLogout();
+    }
+  }
+
+  // Called when the ShiftDialog closes. If a switch was pending, complete it
+  // only when the shift is actually closed (shiftId cleared); otherwise the
+  // cashier cancelled — stay signed in.
+  function handleShiftDialogClose() {
+    setShiftOpen(false);
+    if (!pendingSwitch) return;
+    if (!shiftId) performLogout();
+    else setPendingSwitch(false);
+  }
+
+  if (!user) return <PosLogin />;
 
   const itemCount = cart.lines.reduce((s, l) => s + l.qty, 0);
 
@@ -262,6 +277,7 @@ export default function App() {
         onOpenStocktake={() => setStocktakeOpen(true)}
         onOpenRequisitions={() => setRequisitionsOpen(true)}
         onOpenDrainReport={() => setDrainOpen(true)}
+        onSwitchCashier={handleSwitchCashier}
       />
 
       <main className="flex min-h-0 flex-1 gap-3 p-3">
@@ -368,7 +384,7 @@ export default function App() {
         }}
       />
       <HeldOrdersDialog open={heldOpen} onClose={() => setHeldOpen(false)} onCountChange={setHeldCount} />
-      <ShiftDialog open={shiftOpen} onClose={() => setShiftOpen(false)} />
+      <ShiftDialog open={shiftOpen} onClose={handleShiftDialogClose} />
       <VoidDialog open={voidOpen} onClose={() => setVoidOpen(false)} onConfirm={(r) => void voidCurrent(r)} busy={voidBusy} />
       <DiscountDialog open={discountOpen} onClose={() => setDiscountOpen(false)} />
       <SyncReportDialog open={syncOpen} onClose={() => setSyncOpen(false)} />

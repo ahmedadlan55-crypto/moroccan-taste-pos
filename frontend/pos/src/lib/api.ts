@@ -155,11 +155,14 @@ export function postSync(ops: Array<{ opId: string; type: string; orderId?: stri
 }
 
 // ── Shifts (legacy endpoints) ────────────────────────────────────────────────
-export function openShift(): Promise<{ success: boolean; shiftId: string }> {
-  return request("/api/shifts/open", {
-    method: "POST",
-    body: { device: { ua: typeof navigator !== "undefined" ? navigator.userAgent : "pos-v2" } },
-  });
+/** POST /api/shifts/open. `openingFloat` (الرصيد الافتتاحي) is the real cash
+ *  placed in the drawer at shift start; sent only when provided so old callers
+ *  are unaffected. The server validates + persists it and returns the stored
+ *  value (unchanged on an idempotent re-open). */
+export function openShift(openingFloat?: number): Promise<{ success: boolean; shiftId: string; openingFloat?: number }> {
+  const body: Json = { device: { ua: typeof navigator !== "undefined" ? navigator.userAgent : "pos-v2" } };
+  if (openingFloat != null) body.openingFloat = openingFloat;
+  return request("/api/shifts/open", { method: "POST", body });
 }
 
 /** GET /api/shifts?username=&status=OPEN → raw array (legacy shape, no envelope). */

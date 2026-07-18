@@ -29,6 +29,7 @@ import { fmt2, fmtInt } from "@/lib/format";
 import { buildShiftReportHtml, printHtml, resolvePaperWidth } from "@/lib/receipt";
 import type { ClosingDataV3, CloseV3Result, ShiftSummary } from "@/lib/types";
 import { Dialog } from "../Dialog";
+import { Numpad } from "../Numpad";
 import { Button, cn, ErrorBanner, Money, Skeleton } from "../ui";
 
 type Mode = "info" | "closing" | "closed";
@@ -103,6 +104,9 @@ export function ShiftDialog({ open, onClose }: { open: boolean; onClose: () => v
   const [closing, setClosing] = useState<ClosingDataV3 | null>(null);
   const [counted, setCounted] = useState<Record<string, string>>({});
   const [denoms, setDenoms] = useState<Record<string, string>>({});
+  /** Opening float entered on the "no open shift" screen (الرصيد الافتتاحي) —
+   *  the real cash the cashier puts in the drawer before selling. */
+  const [openingFloatInput, setOpeningFloatInput] = useState("");
   /** Blind-count reveal (legacy scToggleReveal): expected/variance stay hidden
    *  until the cashier declares the physical count finished. */
   const [revealed, setRevealed] = useState(false);
@@ -123,6 +127,7 @@ export function ShiftDialog({ open, onClose }: { open: boolean; onClose: () => v
     setNotes("");
     setCounted({});
     setDenoms({});
+    setOpeningFloatInput("");
     setRevealed(false);
     setClosedShiftId(null);
     setSummary(null);
@@ -203,7 +208,11 @@ export function ShiftDialog({ open, onClose }: { open: boolean; onClose: () => v
       }));
       const res = await closeShiftV3({
         shiftId,
-        openingFloat: 0,
+        // The server IGNORES this numerically (it reads the stored float under
+        // the row lock) — we echo the closing-data value for request-shape
+        // parity with clients that still send it. Never a client-authored money
+        // input.
+        openingFloat: closing.openingFloat ?? 0,
         denominations,
         paymentTotals: Object.fromEntries(varianceRows.map((r) => [String(r.method.id), r.actual])),
         notes: notes.trim(),
@@ -245,14 +254,28 @@ export function ShiftDialog({ open, onClose }: { open: boolean; onClose: () => v
   return (
     <Dialog open={open} onClose={onClose} title="الوردية" widthClass="max-w-2xl" locked={busy}>
       {!shiftId && mode !== "closed" ? (
-        <div className="flex flex-col items-center gap-3 py-8 text-center">
+        <div className="flex flex-col items-center gap-3 py-6 text-center">
           <Clock3 className="h-12 w-12 text-slate-300" aria-hidden />
           <p className="text-sm font-extrabold text-slate-600">لا توجد وردية مفتوحة</p>
           <p className="text-xs font-bold text-slate-400">افتح وردية لبدء البيع — الدفع يتطلب وردية مفتوحة</p>
+
+          {/* Opening float (الرصيد الافتتاحي) — real cash the drawer starts with.
+              Recorded server-side so the close reconciliation accounts for it. */}
+          <div className="w-full max-w-xs">
+            <label className="mb-1 block text-start text-xs font-extrabold text-slate-500">
+              الرصيد الافتتاحي (نقدية بدء الوردية)
+            </label>
+            <div className="mb-2 flex items-center justify-between rounded-xl border border-slate-200 bg-slate-50 px-3 py-2.5">
+              <span className="text-xs font-bold text-slate-400">المبلغ</span>
+              <Money value={`${fmt2(Number(openingFloatInput) || 0)} ر.س`} className="text-base font-extrabold text-ink" />
+            </div>
+            <Numpad value={openingFloatInput} onChange={setOpeningFloatInput} />
+          </div>
+
           <Button
             variant="saffron"
             size="lg"
-            onClick={openShiftNow}
+            onClick={() => openShiftNow(round2(Number(openingFloatInput) || 0))}
             loading={openingShift}
             disabled={!online}
             title={online ? undefined : "فتح الوردية يتطلب اتصالًا بالخادم"}
@@ -356,6 +379,16 @@ export function ShiftDialog({ open, onClose }: { open: boolean; onClose: () => v
             أدخل المبالغ المعدودة فعليًا لكل طريقة دفع — <span className="num">{fmtInt(closing.orderCount)}</span> فاتورة في
             الوردية
           </p>
+
+          {/* Read-only opening float — recorded at open time and folded into the
+              cash «المتوقع» server-side. NOT editable: the server ignores any
+              client float for money math. */}
+          {(closing.openingFloat ?? 0) > 0 ? (
+            <div className="mb-3 flex items-center justify-between rounded-xl border border-slate-200 bg-slate-50 px-3 py-2">
+              <span className="text-xs font-extrabold text-slate-500">الرصيد الافتتاحي (ضمن المتوقع نقدًا)</span>
+              <Money value={`${fmt2(closing.openingFloat ?? 0)} ر.س`} className="text-sm font-extrabold text-ink" />
+            </div>
+          ) : null}
 
           {/* ── Physical cash count — the SAMA denomination grid ── */}
           {cashMethod ? (

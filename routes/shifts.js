@@ -56,7 +56,11 @@ const _ELECTRONIC_ALIASES = ['mada','visa','master','mastercard','amex','network
 const _CASH_ALIASES = ['cash','نقد','كاش','نقدي'];
 const _KITA_ALIASES = ['kita','كيتا','آجل','ajl','اجل'];
 
-async function aggregateShiftPayments(shiftId) {
+// openingFloat (default 0) is the REAL cash the drawer started with. It is
+// folded into the CASH method's expected figure below so the physical count
+// (which contains that same float) reconciles to zero. Callers MUST pass the
+// value from the shifts row — never a client-supplied number.
+async function aggregateShiftPayments(shiftId, openingFloat = 0) {
   // 1. Pull all active payment methods (with backward-compat fallback)
   let methods = [];
   try {
@@ -159,6 +163,23 @@ async function aggregateShiftPayments(shiftId) {
     }
   }
 
+  // 3b. Fold the opening float into the CASH method's EXPECTED figure. Done
+  //   AFTER sales aggregation and BEFORE the filter/map below so a float-only
+  //   (zero-sales) shift still surfaces a nonzero expected-cash row rather than
+  //   being dropped as an empty synthetic method. The float is real cash that
+  //   started in the drawer — the physical count already contains it, so this
+  //   is what makes a float-only shift reconcile to zero variance.
+  const _openingFloat = Number(openingFloat) || 0;
+  if (_openingFloat > 0) {
+    const cashMethod = methods.find(
+      (m) => String(m.group_type || '').toLowerCase() === 'cash' || _normPM(m.name) === 'cash',
+    );
+    if (cashMethod) {
+      expectedById[cashMethod.id] = (expectedById[cashMethod.id] || 0) + _openingFloat;
+      expectedTotal += _openingFloat;
+    }
+  }
+
   // 4. Aggregate sold items
   let soldItems = [];
   try {
@@ -213,6 +234,24 @@ router.post('/open', requireCapability('pos.use'), async (req, res) => {
     const { geoLat, geoLng, geoAddress, deviceInfo, device } = req.body;
     const ip = req.ip || req.headers['x-forwarded-for'] || req.connection.remoteAddress || '';
 
+    // Opening float (الرصيد الافتتاحي) — the real cash placed in the drawer when
+    // the shift starts. Validate strictly: it must be a finite, non-negative
+    // number, and no larger than a sane ceiling (a mistyped float must never
+    // silently distort the whole shift's expected-cash reconciliation). Rounded
+    // to 2 decimals (halalas) before it is persisted.
+    const OPENING_FLOAT_CAP = 50000;
+    const rawFloat = req.body.openingFloat;
+    const floatNum = Number(rawFloat);
+    if (rawFloat != null && rawFloat !== '') {
+      if (!Number.isFinite(floatNum) || floatNum < 0) {
+        return res.status(400).json({ success: false, error: 'الرصيد الافتتاحي يجب أن يكون رقمًا موجبًا' });
+      }
+      if (floatNum > OPENING_FLOAT_CAP) {
+        return res.status(400).json({ success: false, error: `الرصيد الافتتاحي يتجاوز الحد المسموح (${OPENING_FLOAT_CAP})` });
+      }
+    }
+    const openingFloat = Math.round((Number.isFinite(floatNum) && floatNum > 0 ? floatNum : 0) * 100) / 100;
+
     // v5.12.2 — accept structured device { brand, model, os, ua, mobile }
     // sent by /shared/device-info.js, fall back to legacy raw deviceInfo
     // string for backwards compatibility with older clients.
@@ -228,16 +267,18 @@ router.post('/open', requireCapability('pos.use'), async (req, res) => {
     const out = await db.withTransaction(async (conn) => {
       await conn.query('SELECT id FROM users WHERE username = ? FOR UPDATE', [username]);
       const [existing] = await conn.query(
-        'SELECT id FROM shifts WHERE username = ? AND status = "OPEN" LIMIT 1', [username]);
-      if (existing.length) return { shiftId: existing[0].id };
+        'SELECT id, opening_float FROM shifts WHERE username = ? AND status = "OPEN" LIMIT 1', [username]);
+      // Idempotent open (double-tap / retry): a second /open MUST NOT change an
+      // already-open shift's float — return the ALREADY-STORED value untouched.
+      if (existing.length) return { shiftId: existing[0].id, openingFloat: Number(existing[0].opening_float || 0) };
 
       const shiftId = 'SH-' + Date.now();
       const now = new Date();
       await conn.query(
-        'INSERT INTO shifts (id, username, start_time, status, geo_lat, geo_lng, geo_address, device_info, device_brand, device_model, device_os, ip_address) ' +
-        'VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+        'INSERT INTO shifts (id, username, start_time, status, opening_float, geo_lat, geo_lng, geo_address, device_info, device_brand, device_model, device_os, ip_address) ' +
+        'VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
         [
-          shiftId, username, now, 'OPEN',
+          shiftId, username, now, 'OPEN', openingFloat,
           geoLat || null, geoLng || null, geoAddress || '',
           rawUA,
           (dev.brand || '').toString().slice(0, 50),
@@ -246,10 +287,10 @@ router.post('/open', requireCapability('pos.use'), async (req, res) => {
           ip
         ]
       );
-      return { shiftId };
+      return { shiftId, openingFloat };
     });
 
-    res.json({ success: true, shiftId: out.shiftId });
+    res.json({ success: true, shiftId: out.shiftId, openingFloat: out.openingFloat });
   } catch (e) {
     // G-SALES error honesty — was res.json({success:false}) with HTTP 200.
     console.error('[POST /shifts/open]', e.message);
@@ -352,87 +393,18 @@ router.post('/close-v3', requireCapability('pos.shift_close'), async (req, res) 
     const { shiftId, openingFloat, denominations, paymentTotals, notes } = req.body;
     if (!shiftId) return res.json({ success: false, error: 'shiftId مطلوب' });
     const now = new Date();
-
-    // V5.7.17 — use the SHARED matcher so the variance saved here is
-    //   identical to what the UI shows during the close flow. The
-    //   previous implementation rolled its own (broken) matcher that
-    //   missed Mada and any non-cash/card/kita method.
-    const agg = await aggregateShiftPayments(shiftId);
-    const expectedById = agg.expectedById;
-    const expectedTotal = agg.expectedTotal;
-    const methods = agg.methods;
-
-    // ── 1. Sum cash from denominations ──
-    let cashCounted = 0;
     const denomList = Array.isArray(denominations) ? denominations : [];
-    for (const d of denomList) {
-      cashCounted += (Number(d.value) || 0) * (Number(d.count) || 0);
-    }
-    cashCounted += Number(openingFloat || 0);
 
-    // ── 2. Map incoming paymentTotals → actualsById (canonical key) ──
-    //   Frontend sends BOTH `String(method.id)` AND name-based keys for the
-    //   same method (defensive redundancy). To avoid double-counting, we
-    //   process id keys FIRST (so they win) and skip name keys whose id
-    //   was already credited. last-write-wins per method.id.
-    const incoming = paymentTotals || {};
-    const actualsById = {}; // { methodId: amount }
-    const incomingKeys = Object.keys(incoming);
-    // Pass 1: id-keyed (highest priority)
-    incomingKeys.forEach(rawKey => {
-      const amount = Number(incoming[rawKey]) || 0;
-      const directIdHit = methods.find(m => String(m.id) === String(rawKey));
-      if (directIdHit) actualsById[directIdHit.id] = amount;  // replace, not add
-    });
-    // Pass 2: name-keyed (only fills gaps not already filled by id)
-    incomingKeys.forEach(rawKey => {
-      const amount = Number(incoming[rawKey]) || 0;
-      const k = _normPM(rawKey);
-      // If the key is itself a numeric id we already handled, skip
-      const directIdHit = methods.find(m => String(m.id) === String(rawKey));
-      if (directIdHit) return;
-      const nameHit = methods.find(m => _normPM(m.name) === k || _normPM(m.nameAr) === k);
-      if (nameHit && actualsById[nameHit.id] == null) {
-        actualsById[nameHit.id] = amount;
-        return;
-      }
-      // Special: explicit 'cash' alias → first cash-group method
-      if ((k === 'cash' || _CASH_ALIASES.indexOf(k) >= 0)) {
-        const cashMethod = methods.find(m => m.groupType === 'cash');
-        if (cashMethod && actualsById[cashMethod.id] == null) actualsById[cashMethod.id] = amount;
-      }
-    });
-
-    // ── 3. Cash from denominations overrides any explicit 'cash' actual ──
-    //   (the cashier counted real notes; that's authoritative)
-    if (cashCounted > 0) {
-      const cashMethod = methods.find(m => m.groupType === 'cash');
-      if (cashMethod) actualsById[cashMethod.id] = cashCounted;
-    }
-
-    // ── 4. Compute totals + variance ──
-    let actualTotal = 0;
-    Object.keys(actualsById).forEach(k => { actualTotal += actualsById[k]; });
-    const variance = actualTotal - expectedTotal;
-
-    // ── 5. Build per-method breakdown (saved + returned) ──
-    const breakdown = methods.map(m => ({
-      id: m.id,
-      name: m.name,
-      nameAr: m.nameAr,
-      groupType: m.groupType,
-      expected: expectedById[m.id] || 0,
-      actual: actualsById[m.id] || 0,
-      variance: (actualsById[m.id] || 0) - (expectedById[m.id] || 0)
-    }));
-
-    // ── 6+8. Persist denominations + close the shift ATOMICALLY ──
-    // v7.5 — one transaction with a status guard: a re-POST after close
-    // (network retry / stale client) used to silently overwrite the saved
-    // reconciliation; now it gets 400 shift_already_closed and the original
-    // close survives intact.
-    await db.withTransaction(async (conn) => {
-      const [stRows] = await conn.query('SELECT status FROM shifts WHERE id = ? FOR UPDATE', [shiftId]);
+    // The ENTIRE close — lock, float read, aggregation, money math, and the
+    // writes — runs inside ONE transaction so the opening float is read UNDER
+    // the same row lock that guards the status, and can never race a concurrent
+    // open/close. The client-supplied `openingFloat` is accepted for backward
+    // compat but NEVER used for money math; the DB value is authoritative.
+    const out = await db.withTransaction(async (conn) => {
+      // v7.5 — lock the row + refuse a non-OPEN close (retry double-close used to
+      // silently overwrite the saved reconciliation). Extended to also read the
+      // stored opening_float in the SAME round-trip (no second query).
+      const [stRows] = await conn.query('SELECT status, opening_float FROM shifts WHERE id = ? FOR UPDATE', [shiftId]);
       if (!stRows.length) {
         const e = new Error('الوردية غير موجودة · Shift not found'); e.status = 404; throw e;
       }
@@ -440,7 +412,89 @@ router.post('/close-v3', requireCapability('pos.shift_close'), async (req, res) 
         const e = new Error('الوردية مغلقة مسبقاً · Shift already closed');
         e.status = 400; e.code = 'shift_already_closed'; throw e;
       }
+      // DB-authoritative float. A not-yet-updated client may still send its own
+      // `openingFloat` (historically always 0); we log a mismatch for
+      // observability but NEVER trust the client value or throw on it — the
+      // server overrides it with the stored value for all money math.
+      const dbOpeningFloat = Number(stRows[0].opening_float || 0);
+      const clientFloat = Number(openingFloat || 0);
+      if (clientFloat !== dbOpeningFloat) {
+        console.warn(`[POST /shifts/close-v3] client openingFloat ${clientFloat} != stored ${dbOpeningFloat} for shift ${shiftId} — using stored value`);
+      }
 
+      // V5.7.17 — use the SHARED matcher so the variance saved here is identical
+      //   to what the UI shows during the close flow. Fold the DB float into the
+      //   cash EXPECTED figure (never into cashCounted — see below).
+      const agg = await aggregateShiftPayments(shiftId, dbOpeningFloat);
+      const expectedById = agg.expectedById;
+      const expectedTotal = agg.expectedTotal;
+      const methods = agg.methods;
+
+      // ── 1. Sum cash from denominations — the PHYSICAL count only. The float
+      //   is already sitting in the drawer, so the counted notes contain it;
+      //   adding it again here would double-count on the actual side. ──
+      let cashCounted = 0;
+      for (const d of denomList) {
+        cashCounted += (Number(d.value) || 0) * (Number(d.count) || 0);
+      }
+
+      // ── 2. Map incoming paymentTotals → actualsById (canonical key) ──
+      //   Frontend sends BOTH `String(method.id)` AND name-based keys for the
+      //   same method (defensive redundancy). To avoid double-counting, we
+      //   process id keys FIRST (so they win) and skip name keys whose id
+      //   was already credited. last-write-wins per method.id.
+      const incoming = paymentTotals || {};
+      const actualsById = {}; // { methodId: amount }
+      const incomingKeys = Object.keys(incoming);
+      // Pass 1: id-keyed (highest priority)
+      incomingKeys.forEach(rawKey => {
+        const amount = Number(incoming[rawKey]) || 0;
+        const directIdHit = methods.find(m => String(m.id) === String(rawKey));
+        if (directIdHit) actualsById[directIdHit.id] = amount;  // replace, not add
+      });
+      // Pass 2: name-keyed (only fills gaps not already filled by id)
+      incomingKeys.forEach(rawKey => {
+        const amount = Number(incoming[rawKey]) || 0;
+        const k = _normPM(rawKey);
+        // If the key is itself a numeric id we already handled, skip
+        const directIdHit = methods.find(m => String(m.id) === String(rawKey));
+        if (directIdHit) return;
+        const nameHit = methods.find(m => _normPM(m.name) === k || _normPM(m.nameAr) === k);
+        if (nameHit && actualsById[nameHit.id] == null) {
+          actualsById[nameHit.id] = amount;
+          return;
+        }
+        // Special: explicit 'cash' alias → first cash-group method
+        if ((k === 'cash' || _CASH_ALIASES.indexOf(k) >= 0)) {
+          const cashMethod = methods.find(m => m.groupType === 'cash');
+          if (cashMethod && actualsById[cashMethod.id] == null) actualsById[cashMethod.id] = amount;
+        }
+      });
+
+      // ── 3. Cash from denominations overrides any explicit 'cash' actual ──
+      //   (the cashier counted real notes; that's authoritative)
+      if (cashCounted > 0) {
+        const cashMethod = methods.find(m => m.groupType === 'cash');
+        if (cashMethod) actualsById[cashMethod.id] = cashCounted;
+      }
+
+      // ── 4. Compute totals + variance ──
+      let actualTotal = 0;
+      Object.keys(actualsById).forEach(k => { actualTotal += actualsById[k]; });
+      const variance = actualTotal - expectedTotal;
+
+      // ── 5. Build per-method breakdown (saved + returned) ──
+      const breakdown = methods.map(m => ({
+        id: m.id,
+        name: m.name,
+        nameAr: m.nameAr,
+        groupType: m.groupType,
+        expected: expectedById[m.id] || 0,
+        actual: actualsById[m.id] || 0,
+        variance: (actualsById[m.id] || 0) - (expectedById[m.id] || 0)
+      }));
+
+      // ── 6. Persist denominations ──
       await conn.query('DELETE FROM shift_close_denominations WHERE shift_id = ?', [shiftId]);
       for (let i = 0; i < denomList.length; i++) {
         const d = denomList[i];
@@ -454,52 +508,53 @@ router.post('/close-v3', requireCapability('pos.shift_close'), async (req, res) 
         }
       }
 
-    // ── 7. Compose payment_totals_json ──
-    //   Stored shape (V5.7.17+ canonical):  { expectedById, actualsById, breakdown }
-    //   Plus legacy aliases (expected, actuals) so older client builds still work.
-    const legacyExpected = {};
-    const legacyActuals  = {};
-    methods.forEach(m => {
-      const nameKey = _normPM(m.name) || _normPM(m.nameAr) || String(m.id);
-      legacyExpected[nameKey] = expectedById[m.id] || 0;
-      legacyActuals[nameKey]  = actualsById[m.id] || 0;
-    });
+      // ── 7. Compose payment_totals_json ──
+      //   Stored shape (V5.7.17+ canonical):  { expectedById, actualsById, breakdown }
+      //   Plus legacy aliases (expected, actuals) so older client builds still work.
+      const legacyExpected = {};
+      const legacyActuals  = {};
+      methods.forEach(m => {
+        const nameKey = _normPM(m.name) || _normPM(m.nameAr) || String(m.id);
+        legacyExpected[nameKey] = expectedById[m.id] || 0;
+        legacyActuals[nameKey]  = actualsById[m.id] || 0;
+      });
 
-    // ── V5.7.19 — properly compute per-group totals so the admin shifts
-    //   list (which still reads diff_cash/diff_card/diff_kita columns)
-    //   shows accurate per-group variance, not all-zeros. Without this,
-    //   the user could only see the NET diff and couldn't tell that a
-    //   "+31 net" was actually "+31 cash surplus AND -31 mada deficit".
-    const cashMethods = methods.filter(m => (m.groupType || '').toLowerCase() === 'cash');
-    const cardMethods = methods.filter(m => {
-      const gt = (m.groupType || '').toLowerCase();
-      return gt === 'electronic' || gt === 'card';
-    });
-    const kitaMethods = methods.filter(m => {
-      const gt = (m.groupType || '').toLowerCase();
-      return gt === 'voucher' || _normPM(m.name) === 'kita';
-    });
-    const sumExp = arr => arr.reduce((s, m) => s + (expectedById[m.id] || 0), 0);
-    const sumAct = arr => arr.reduce((s, m) => s + (actualsById[m.id]   || 0), 0);
-    const cashExpected = sumExp(cashMethods);
-    const cardExpected = sumExp(cardMethods);
-    const kitaExpected = sumExp(kitaMethods);
-    // Cash actual: prefer counted denominations (authoritative); fall back to method actuals
-    const cashActual   = cashCounted > 0 ? cashCounted : sumAct(cashMethods);
-    const cardActual   = sumAct(cardMethods);
-    const kitaActual   = sumAct(kitaMethods);
-    const diffCash = cashActual - cashExpected;
-    const diffCard = cardActual - cardExpected;
-    const diffKita = kitaActual - kitaExpected;
+      // ── V5.7.19 — properly compute per-group totals so the admin shifts
+      //   list (which still reads diff_cash/diff_card/diff_kita columns)
+      //   shows accurate per-group variance, not all-zeros. Without this,
+      //   the user could only see the NET diff and couldn't tell that a
+      //   "+31 net" was actually "+31 cash surplus AND -31 mada deficit".
+      const cashMethods = methods.filter(m => (m.groupType || '').toLowerCase() === 'cash');
+      const cardMethods = methods.filter(m => {
+        const gt = (m.groupType || '').toLowerCase();
+        return gt === 'electronic' || gt === 'card';
+      });
+      const kitaMethods = methods.filter(m => {
+        const gt = (m.groupType || '').toLowerCase();
+        return gt === 'voucher' || _normPM(m.name) === 'kita';
+      });
+      const sumExp = arr => arr.reduce((s, m) => s + (expectedById[m.id] || 0), 0);
+      const sumAct = arr => arr.reduce((s, m) => s + (actualsById[m.id]   || 0), 0);
+      const cashExpected = sumExp(cashMethods);
+      const cardExpected = sumExp(cardMethods);
+      const kitaExpected = sumExp(kitaMethods);
+      // Cash actual: prefer counted denominations (authoritative); fall back to method actuals
+      const cashActual   = cashCounted > 0 ? cashCounted : sumAct(cashMethods);
+      const cardActual   = sumAct(cardMethods);
+      const kitaActual   = sumAct(kitaMethods);
+      const diffCash = cashActual - cashExpected;
+      const diffCard = cardActual - cardExpected;
+      const diffKita = kitaActual - kitaExpected;
 
-    const paymentTotalsJson = JSON.stringify({
-      version: 'v5.7.19',
-      expectedById, actualsById, breakdown,
-      // legacy aliases — older clients read these
-      expected: legacyExpected, actuals: legacyActuals
-    });
+      const paymentTotalsJson = JSON.stringify({
+        version: 'v5.7.19',
+        expectedById, actualsById, breakdown,
+        // legacy aliases — older clients read these
+        expected: legacyExpected, actuals: legacyActuals
+      });
 
-    // ── 8. Update the shift row (now writes ALL legacy per-group columns) ──
+      // ── 8. Update the shift row (writes the DB-read float — a harmless
+      //   self-write — never the client's; plus ALL legacy per-group columns) ──
       await conn.query(
         `UPDATE shifts SET
            end_time = ?, status = 'closed',
@@ -512,7 +567,7 @@ router.post('/close-v3', requireCapability('pos.shift_close'), async (req, res) 
          WHERE id = ?`,
         [
           now,
-          Number(openingFloat || 0), expectedTotal, actualTotal, variance,
+          dbOpeningFloat, expectedTotal, actualTotal, variance,
           paymentTotalsJson, JSON.stringify(denomList), notes || '',
           expectedTotal,
           cashExpected, cardExpected, kitaExpected,
@@ -521,18 +576,24 @@ router.post('/close-v3', requireCapability('pos.shift_close'), async (req, res) 
           shiftId
         ]
       );
+
+      return {
+        legacyExpected, legacyActuals, expectedById, actualsById, breakdown,
+        expectedTotal, actualTotal, variance, cashCounted,
+        orderCount: agg.orderCount, soldItems: agg.soldItems, methods: agg.methods,
+      };
     });
 
     res.json({
       success: true,
       shiftId,
-      expected: legacyExpected, actuals: legacyActuals,
-      expectedById, actualsById, breakdown,
-      expectedTotal, actualTotal, variance,
-      cashCounted, denominations: denomList,
-      orderCount: agg.orderCount,
-      soldItems: agg.soldItems,
-      methods: agg.methods
+      expected: out.legacyExpected, actuals: out.legacyActuals,
+      expectedById: out.expectedById, actualsById: out.actualsById, breakdown: out.breakdown,
+      expectedTotal: out.expectedTotal, actualTotal: out.actualTotal, variance: out.variance,
+      cashCounted: out.cashCounted, denominations: denomList,
+      orderCount: out.orderCount,
+      soldItems: out.soldItems,
+      methods: out.methods
     });
   } catch (e) {
     res.status(e.status || 500).json({ success: false, error: e.message, code: e.code || undefined });
@@ -610,6 +671,28 @@ router.get('/closing-data-v3/:shiftId', async (req, res) => {
       }
     }
 
+    // MINIMAL fold-in (matches aggregateShiftPayments 3b — this handler keeps its
+    // own aggregation rather than calling the shared helper, so we replicate the
+    // 2-line fix locally). The opening float is real drawer cash the cashier will
+    // count, so it belongs in the cash EXPECTED figure. Read it from the shift
+    // row; a failure is logged (never swallowed) and degrades to a 0 float.
+    let openingFloat = 0;
+    try {
+      const [srow] = await db.query('SELECT opening_float FROM shifts WHERE id = ?', [shiftId]);
+      if (srow.length) openingFloat = Number(srow[0].opening_float || 0);
+    } catch (e) {
+      console.error('[GET /shifts/closing-data-v3] opening_float read failed:', e.message);
+    }
+    if (openingFloat > 0) {
+      const cashMethod = methods.find(
+        (m) => String(m.group_type || '').toLowerCase() === 'cash' || norm(m.name) === 'cash',
+      );
+      if (cashMethod) {
+        expectedById[cashMethod.id] = (expectedById[cashMethod.id] || 0) + openingFloat;
+        expectedTotal += openingFloat;
+      }
+    }
+
     // Back-compat 'expected' shape — keyed by lowercased name
     const expected = {};
     methods.forEach(m => { expected[(m.name || '').toLowerCase()] = expectedById[m.id] || 0; });
@@ -620,7 +703,7 @@ router.get('/closing-data-v3/:shiftId', async (req, res) => {
         groupType: m.group_type,
         expectedAmount: expectedById[m.id] || 0
       })),
-      expected, expectedTotal, orderCount, unmatchedTotal
+      expected, expectedTotal, orderCount, unmatchedTotal, openingFloat
     });
   } catch (e) {
     // G-SALES error honesty — was res.json({error}) with HTTP 200; the
@@ -696,7 +779,7 @@ router.get('/:shiftId/full-report', async (req, res) => {
     } catch (_) { /* cosmetic — company header labels; defaults already set */ }
 
     // 5. Live aggregation (items + methods + expected)
-    const agg = await aggregateShiftPayments(shiftId);
+    const agg = await aggregateShiftPayments(shiftId, Number(s.opening_float || 0));
 
     // 6. Saved actuals (parsed)
     let savedActuals = {};
@@ -872,7 +955,7 @@ router.get('/:shiftId/full-report-print', async (req, res) => {
       companyLogo  = map.logo         || '';
     } catch (_) { /* cosmetic — company header labels; defaults already set */ }
 
-    const agg = await aggregateShiftPayments(shiftId);
+    const agg = await aggregateShiftPayments(shiftId, Number(s.opening_float || 0));
     let savedActuals = {}, savedBreakdown = null;
     try {
       if (s.payment_totals_json) {

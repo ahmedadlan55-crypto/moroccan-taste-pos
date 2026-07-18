@@ -4,7 +4,7 @@
  *     (which had ZERO hotkeys): F2 focuses search, F4 opens payment, F9 holds
  *   onscreen-tender-keypad — the payment dialog exposes quick-tender buttons +
  *     a decimal tender input with live change math
- *   hard-auth-gate / auth-require-auth — no session ⇒ LoginRequired screen,
+ *   hard-auth-gate / auth-require-auth — no session ⇒ the PosLogin form,
  *     nothing else renders
  *   generic-confirm-modal / keyboard-modal-esc-enter / keyboard-escape-close-menu
  *     — the shared Dialog closes on Escape (and refuses while locked)
@@ -150,10 +150,14 @@ beforeEach(() => {
 afterEach(() => vi.unstubAllGlobals());
 
 describe("hard-auth-gate — no session renders ONLY the login screen", () => {
-  it("shows LoginRequired and no cashier surface", () => {
+  it("shows the POS login form and no cashier surface", () => {
     renderApp({ user: null });
-    expect(screen.getByText(/لا توجد جلسة دخول نشطة/)).toBeInTheDocument();
-    expect(screen.getByRole("link", { name: /سجّل الدخول من النظام الرئيسي/ })).toBeInTheDocument();
+    // The POS now has its own login form (username/password) instead of a
+    // bounce-to-main-system placeholder.
+    expect(screen.getByLabelText("اسم المستخدم")).toBeInTheDocument();
+    expect(screen.getByLabelText("كلمة المرور")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /تسجيل الدخول/ })).toBeInTheDocument();
+    // …and none of the cashier surface leaks through the gate.
     expect(screen.queryByLabelText("بحث في الأصناف أو مسح باركود")).not.toBeInTheDocument();
   });
 });

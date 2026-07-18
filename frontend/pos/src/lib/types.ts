@@ -362,6 +362,9 @@ export interface ClosingDataV3 {
   expectedTotal: number;
   orderCount: number;
   unmatchedTotal: number;
+  /** The shift's stored opening float — already folded into the cash method's
+   *  expectedAmount server-side; surfaced here for a read-only display row. */
+  openingFloat?: number;
   error?: string;
 }
 

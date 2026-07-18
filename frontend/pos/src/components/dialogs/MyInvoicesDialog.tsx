@@ -30,6 +30,7 @@ import { usePos } from "@/state/store";
 import { Dialog } from "../Dialog";
 import { Button, EmptyState, ErrorBanner, Money, Skeleton, cn } from "../ui";
 import { ManagerApprovalDialog } from "./ManagerApprovalDialog";
+import { ReturnRequestDialog } from "./ReturnRequestDialog";
 
 type Filter = "all" | "active" | "cancelled" | "returned";
 
@@ -136,6 +137,15 @@ export function reprintHtmlFromInvoice(inv: InvoiceDetail, catalog: unknown, fal
 
   const total = Number(inv.totalFinal) || 0;
   const subtotal = round2((inv.items ?? []).reduce((s, it) => s + (Number(it.total) || 0), 0));
+  // VAT for the reprint: prefer the PERSISTED per-category snapshot (taxSubtotals,
+  // added to GET /api/sales/invoice/:orderId by the companion routes/sales.js
+  // stream) over recomputing from the LIVE catalog rate. The old total/(1+rate)
+  // formula recomputes from today's rate — a real bug when the catalog rate has
+  // changed since the sale — so it survives ONLY as a fallback for pre-migration
+  // sales that carry no snapshot. Read defensively so the base InvoiceDetail type
+  // (which does not declare taxSubtotals) is left untouched.
+  const snapshotVat = (inv as InvoiceDetail & { taxSubtotals?: { vat?: number } | null }).taxSubtotals?.vat;
+  const vatTotal = typeof snapshotVat === "number" ? round2(snapshotVat) : round2(total - total / (1 + vatRate / 100));
   const parsedDate = new Date(inv.date);
 
   return buildReceiptHtml({
@@ -156,7 +166,7 @@ export function reprintHtmlFromInvoice(inv: InvoiceDetail, catalog: unknown, fal
       subtotal,
       lineDiscountTotal: 0,
       discountAmount: Number(inv.discountAmount) || 0,
-      vatTotal: round2(total - total / (1 + vatRate / 100)),
+      vatTotal,
       total,
     },
   });
@@ -205,13 +215,16 @@ function Stat({ label, value, tone }: { label: string; value: string; tone: stri
 }
 
 export function MyInvoicesDialog({ open, onClose }: { open: boolean; onClose: () => void }) {
-  const { user, shiftId, pushToast, engineStatus, catalog } = usePos();
+  const { user, shiftId, pushToast, engineStatus, catalog, o2cEnabled } = usePos();
   const queryClient = useQueryClient();
   const [query, setQuery] = useState("");
   const [filter, setFilter] = useState<Filter>("all");
   const [pending, setPending] = useState<{ row: SaleRow; action: "void" | "return" } | null>(null);
   const [approvalError, setApprovalError] = useState<string | null>(null);
   const [printingId, setPrintingId] = useState<string | null>(null);
+  // When O2C is on, «مرتجع» opens the new O2C return-request dialog instead of the
+  // legacy (gated) returnSale path. Null = closed.
+  const [returnRow, setReturnRow] = useState<SaleRow | null>(null);
 
   // Privileged roles skip the approval dialog — the server still authorizes.
   const isPrivileged = ["admin", "manager"].includes(String(user?.role ?? "").toLowerCase());
@@ -221,12 +234,18 @@ export function MyInvoicesDialog({ open, onClose }: { open: boolean; onClose: ()
 
   const invoicesQuery = useQuery({
     queryKey: ["my-invoices", user?.username, shiftId],
-    queryFn: () => listSales({ startDate: todayISO(), endDate: todayISO(), username: user?.username }),
+    // shiftId now filters SERVER-SIDE (companion routes/sales.js stream) instead of
+    // pulling the whole day and narrowing in the browser. `shiftId ?? undefined`
+    // so listSales' `if (v)` guard omits it when there's no open shift.
+    queryFn: () =>
+      listSales({ startDate: todayISO(), endDate: todayISO(), username: user?.username, shiftId: shiftId ?? undefined }),
     enabled: open && !!user && engineStatus.online,
   });
 
-  // Narrow to the active shift exactly like the legacy POS. With no open shift
-  // we show nothing rather than the whole day — matching legacy's empty state.
+  // The server already scoped the list to this shift. We keep a trivial defensive
+  // filter as a NO-OP safety net (in case an older backend without the shiftId
+  // filter is deployed) AND to preserve the legacy "no open shift → show nothing"
+  // behaviour rather than the whole day.
   const rows = useMemo(() => {
     const all = invoicesQuery.data ?? [];
     return shiftId ? all.filter((r) => r.shiftId === shiftId) : [];
@@ -487,7 +506,10 @@ export function MyInvoicesDialog({ open, onClose }: { open: boolean; onClose: ()
                                   size="sm"
                                   variant="secondary"
                                   disabled={busy}
-                                  onClick={() => start(r, "return")}
+                                  // O2C ON → the new O2C return-request dialog (the
+                                  // legacy returnSale path is gated 409 in that mode).
+                                  // O2C OFF → untouched legacy behaviour (rollback-safe).
+                                  onClick={() => (o2cEnabled ? setReturnRow(r) : start(r, "return"))}
                                   className="border-orange-200 bg-orange-50 text-orange-700 hover:bg-orange-100"
                                 >
                                   <Undo2 className="h-3.5 w-3.5" aria-hidden />
@@ -522,6 +544,13 @@ export function MyInvoicesDialog({ open, onClose }: { open: boolean; onClose: ()
           if (!pending) return;
           reverse.mutate({ row: pending.row, action: pending.action, creds, reason });
         }}
+      />
+
+      <ReturnRequestDialog
+        open={!!returnRow}
+        row={returnRow}
+        onClose={() => setReturnRow(null)}
+        onCreated={refresh}
       />
     </>
   );

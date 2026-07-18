@@ -235,8 +235,10 @@ export function getServerFlags(): Promise<{ orderToCash?: boolean; posV2?: boole
 
 /**
  * GET /api/sales — returns up to 500 rows, newest first.
- * The endpoint has NO shift filter, so callers narrow by shiftId themselves
- * (exactly what the legacy POS does at app.js:3300).
+ * `shiftId` narrows to a single shift SERVER-SIDE (added by the companion
+ * routes/sales.js stream). Older callers that omit it get the legacy behaviour
+ * (whole window, narrowed client-side); MyInvoicesDialog now passes it so the
+ * server does the filtering instead of pulling the whole day into the browser.
  */
 export function listSales(params: {
   startDate?: string;
@@ -244,6 +246,7 @@ export function listSales(params: {
   username?: string;
   paymentMethod?: string;
   customerId?: string;
+  shiftId?: string;
 } = {}): Promise<SaleRow[]> {
   const p = new URLSearchParams();
   for (const [k, v] of Object.entries(params)) if (v) p.set(k, String(v));
@@ -653,4 +656,86 @@ export interface CustomerSummaryData {
 
 export function getCustomerSummary(id: string): Promise<CustomerSummaryData> {
   return request<CustomerSummaryData>(`/api/erp/customers/${encodeURIComponent(id)}/summary`);
+}
+
+// ═════════════════════════════════════════════════════════════════════════════
+// APPEND-ONLY BLOCK — close2/pos-returns (O2C sales-return raised by the cashier).
+// New exports only; nothing above this line was modified EXCEPT listSales gained
+// an optional `shiftId` param (server-side shift filtering).
+//   • POST /api/order-to-cash/returns  — cashier raises a partial per-line return.
+// Contract confirmed by reading the ACTUAL route files:
+//   - mount: routes/order-to-cash/index.js → router.use('/returns', ...) under
+//     /api/order-to-cash (server.js:639), so the endpoint is
+//     POST /api/order-to-cash/returns.
+//   - capability: routes/order-to-cash/returns.js requireCapability('returns.create');
+//     db/migrations/order-to-cash/capabilities.js ROLE_GRANTS.cashier includes
+//     'returns.create' → the cashier may raise (but not approve/post) a return.
+//   - body: services/order-to-cash/SalesReturnService.create reads originalSaleId
+//     (resolves the original ar_document via source_type='pos' AND source_id),
+//     lines[{ originalLineId (=ar_document_lines.id), returnQty, restock }],
+//     reason, refundMethod (default 'ar_reduction'). Over-return, tax/cost
+//     snapshotting and separation-of-duties are all enforced server-side.
+//   - response: 201 with the O2C envelope { success, data, documentNumber,
+//     status, version } — a fresh return is status 'draft' / DRAFT-xxxx.
+// ═════════════════════════════════════════════════════════════════════════════
+
+export interface SalesReturnLineInput {
+  /**
+   * The ORIGINAL invoice line's ar_document_lines.id — the server maps a return
+   * line against THIS id (SalesReturnService.create: byId[l.id]), not the POS
+   * sales_items id. Supplied per-line by the invoice-detail response.
+   */
+  originalLineId: string;
+  returnQty: number;
+}
+
+export interface CreateSalesReturnInput {
+  /** The POS sale id; the server resolves the original ar_document from it. */
+  originalSaleId: string;
+  /** Mandatory human reason — surfaced on the credit note / audit trail. */
+  reason: string;
+  lines: SalesReturnLineInput[];
+  /** Defaults to 'ar_reduction' server-side; the cashier dialog never overrides. */
+  refundMethod?: string;
+}
+
+/**
+ * The O2C success envelope for a freshly created return (HTTP 201). A new return
+ * is always status 'draft' (documentNumber 'DRAFT-xxxx') — POSTING it (the money
+ * movement + credit note) is a separate MANAGER action, so the cashier only ever
+ * sees the draft that awaits approval.
+ */
+export interface SalesReturnCreated {
+  success: boolean;
+  data: { id: string; status: string; version: number; return_number?: string } & Record<string, unknown>;
+  documentNumber: string | null;
+  status: string | null;
+  version: number | null;
+}
+
+/**
+ * POST /api/order-to-cash/returns — raise a partial, per-line sales return.
+ * `Idempotency-Key` makes a retry safe (the server replays the same draft).
+ * `expectedVersion`, when known, rides as `If-Match` — the codebase's optimistic-
+ * concurrency convention (lib/order-to-cash/http.js expectedVersionOf reads the
+ * if-match header). `restock` is forced FALSE on every line: deciding goods go
+ * back on the shelf moves stock + reverses COGS and needs returns.restock, a
+ * manager capability the cashier does not hold.
+ */
+export function createSalesReturn(
+  input: CreateSalesReturnInput,
+  opts: { idempotencyKey: string; expectedVersion?: number | null },
+): Promise<SalesReturnCreated> {
+  const headers: Record<string, string> = { "Idempotency-Key": opts.idempotencyKey };
+  if (opts.expectedVersion != null) headers["If-Match"] = String(opts.expectedVersion);
+  return request<SalesReturnCreated>("/api/order-to-cash/returns", {
+    method: "POST",
+    body: {
+      originalSaleId: input.originalSaleId,
+      reason: input.reason,
+      refundMethod: input.refundMethod ?? "ar_reduction",
+      lines: input.lines.map((l) => ({ originalLineId: l.originalLineId, returnQty: l.returnQty, restock: false })),
+    },
+    headers,
+  });
 }

@@ -78,7 +78,11 @@ async function seedTrackedLots() {
   console.log('\n═══ Legacy/raw writers + lots ═══\n');
   await seed();
   const admin = tok(0, ADMIN, 'admin', true);
-  const server = spawn(process.execPath, ['server.js'], { cwd: process.cwd(), env: { ...process.env, PORT: String(PORT) }, stdio: ['ignore', 'ignore', 'ignore'] });
+  // PROCUREMENT_P2P_ENABLE pinned OFF: this suite proves the LEGACY writers'
+  // lot-awareness guards (422 WRITER_NOT_LOT_AWARE), which sit BEHIND the P2P
+  // gate — with the gate on they 409 V2_RECEIPTS_LINKED before the guard runs.
+  // The gate's own contract is covered by test:procurement-gate.
+  const server = spawn(process.execPath, ['server.js'], { cwd: process.cwd(), env: { ...process.env, PORT: String(PORT), PROCUREMENT_P2P_ENABLE: '0' }, stdio: ['ignore', 'ignore', 'ignore'] });
   let exitCode = 0;
   try {
     if (!(await waitForServer())) { console.error('server did not start'); process.exit(2); }

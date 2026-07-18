@@ -123,7 +123,11 @@ async function receipt(token, qty, lots, key) {
     check('over-receipt (101st) → 422 OVER_RECEIPT', r3.status === 422 && r3.code === 'OVER_RECEIPT', r3);
 
     const legacyRecv = await req('POST', `/api/purchases/receive/${PO}`, admin, { warehouseId: WH });
-    check('legacy receive → 409 ALREADY_RECEIVED_IN_V2', legacyRecv.status === 409 && legacyRecv.body && legacyRecv.body.code === 'ALREADY_RECEIVED_IN_V2', { s: legacyRecv.status, c: legacyRecv.body && legacyRecv.body.code });
+    // Two valid guards can answer here: the specific ALREADY_RECEIVED_IN_V2
+    // check, or — when PROCUREMENT_P2P_ENABLE=1 — the P2P boundary gate's
+    // V2_RECEIPTS_LINKED, which fires FIRST. Either way the legacy receive of
+    // a v2-received PO is a 409 and never double-adds stock (asserted below).
+    check('legacy receive → 409 (ALREADY_RECEIVED_IN_V2 or P2P gate)', legacyRecv.status === 409 && legacyRecv.body && ['ALREADY_RECEIVED_IN_V2', 'V2_RECEIPTS_LINKED'].includes(legacyRecv.body.code), { s: legacyRecv.status, c: legacyRecv.body && legacyRecv.body.code });
     // legacy revert of a V2-linked purchase is refused: the purchase can never
     // reach legacy status='received' (the ALREADY_RECEIVED_IN_V2 guard blocks
     // the legacy receive), so revert returns "not received" — either way, no

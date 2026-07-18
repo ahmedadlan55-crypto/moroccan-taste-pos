@@ -71,10 +71,12 @@ async function cleanup() { try { await db.query('DELETE FROM users WHERE usernam
 
     // E) the OTHER (old) session is now invalid (token_version bumped)
     // allow the 15s cache a moment to be bypassed: bump() was called → immediate.
-    const s2use = await req('GET', '/api/auth/template', sess2);
+    // Probe endpoint: /api/auth/users-list (GET /api/auth/template was retired with
+    // the legacy shell at the FC-W3 cutover — any JWT-gated endpoint works).
+    const s2use = await req('GET', '/api/auth/users-list', sess2);
     check('old OTHER session → 401 (revoked)', s2use.status === 401, s2use.status);
     // the fresh token for THIS session still works
-    const s1use = await req('GET', '/api/auth/template', sess1b);
+    const s1use = await req('GET', '/api/auth/users-list', sess1b);
     check('fresh current-session token → 200', s1use.status === 200, s1use.status);
 
     // F) old password no longer logs in; new one does

@@ -70,9 +70,11 @@ async function waitForServer() {
     const read = await req('GET', '/api/inventory/v2/lots?pageSize=1', token);
     check('v2 read stays available (not V2_DISABLED)', read.status !== 503 && !(read.body && read.body.code === 'V2_DISABLED'), { status: read.status, code: read.body && read.body.code });
 
-    // 3) SPA → maintenance notice (503), legacy core unaffected
+    // 3) The standalone /warehouse SPA is RETIRED (Closure Sprint v2): the old
+    // paths 302 into the unified app REGARDLESS of the v2 flag — the flag
+    // governs the API surface only (checks 1-2 above). Legacy core unaffected.
     const spa = await req('GET', '/warehouse-v2/inventory', null);
-    check('SPA → 503 maintenance notice', spa.status === 503 && /صيانة|متوقف/.test(spa.raw || ''), { status: spa.status });
+    check('retired SPA path → redirect into /app/inventory', spa.status === 302 && String((spa.headers && spa.headers.location) || '').indexOf('/app/inventory') === 0, { status: spa.status });
     const ver = await req('GET', '/api/version', null);
     check('legacy core unaffected (/api/version → 200)', ver.status === 200, ver.status);
   } finally {

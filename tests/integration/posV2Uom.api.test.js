@@ -105,7 +105,12 @@ async function sell(token, shiftId, orderId, menuId, line) {
 
 (async () => {
   const ids = await seed();
-  const server = spawn(process.execPath, ['server.js'], { cwd: path.join(__dirname, '..', '..'), env: { ...process.env, PORT: String(PORT), POS_MAX_CASHIER_DISCOUNT_PCT: '10' }, stdio: ['ignore', 'ignore', 'ignore'] });
+  const server = spawn(process.execPath, ['server.js'], { cwd: path.join(__dirname, '..', '..'), env: { ...process.env, PORT: String(PORT), POS_MAX_CASHIER_DISCOUNT_PCT: '10',
+    // This suite proves the UNIT ECHO through the LEGACY return → credit-note
+    // path, which stays supported as the documented O2C rollback lever. With
+    // ORDER_TO_CASH_ENABLE=1 the gate 409s legacy returns by design (its own
+    // suites cover that); pin it OFF here so the echo contract stays proven.
+    ORDER_TO_CASH_ENABLE: '0' }, stdio: ['ignore', 'ignore', 'ignore'] });
   const t = tok(ids[U]);
   const mgr = tok(ids[U_MGR], U_MGR, 'manager');
   try {

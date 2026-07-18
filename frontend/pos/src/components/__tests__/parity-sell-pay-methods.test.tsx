@@ -115,3 +115,62 @@ describe("pay-notes-block + pay-notes-counter + pay-notes-required — the 'othe
     expect(opts.paymentNotes).toBe("تحويل عهدة");
   });
 });
+
+describe("split-credit-gate — the مختلط tab's آجل leg is supervisor-gated too", () => {
+  it("non-supervisor: the آجل input in the split tab is disabled with the same tooltip as the credit tab", () => {
+    openDialog(makeCtx({ supervisor: false }));
+    fireEvent.click(screen.getByRole("tab", { name: "مختلط" }));
+    const [, , creditInput] = screen.getAllByPlaceholderText("0.00") as HTMLInputElement[];
+    expect(creditInput).toBeDisabled();
+    expect(creditInput).toHaveAttribute("title", "البيع الآجل يتطلب مشرفًا/مديرًا");
+    // Same wording the dedicated credit tab already uses.
+    expect(screen.getByRole("tab", { name: "آجل" })).toHaveAttribute("title", "البيع الآجل يتطلب مشرفًا/مديرًا");
+  });
+
+  it("typing into the disabled آجل split input does nothing — value stays empty", () => {
+    openDialog(makeCtx({ supervisor: false }));
+    fireEvent.click(screen.getByRole("tab", { name: "مختلط" }));
+    const [, , creditInput] = screen.getAllByPlaceholderText("0.00") as HTMLInputElement[];
+    fireEvent.change(creditInput, { target: { value: "50" } });
+    expect(creditInput.value).toBe("");
+    // The live sum still reads 0 — the keystroke never reached state.
+    expect(screen.getByText("0.00 / 46.00")).toBeInTheDocument();
+  });
+
+  it("supervisor: the split آجل input is enabled and behaves exactly as before (no regression)", () => {
+    openDialog(makeCtx({ supervisor: true }));
+    fireEvent.click(screen.getByRole("tab", { name: "مختلط" }));
+    const [cashInput, , creditInput] = screen.getAllByPlaceholderText("0.00") as HTMLInputElement[];
+    expect(creditInput).toBeEnabled();
+    expect(creditInput).not.toHaveAttribute("title");
+    fireEvent.change(cashInput, { target: { value: "20" } });
+    fireEvent.change(creditInput, { target: { value: "26" } });
+    expect(screen.getByText("المجموع مطابق")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /تأكيد الدفع/ })).toBeEnabled();
+  });
+
+  it("confirmDisabled: non-supervisor cash+credit split summing to the total is still blocked (role gate, not a sum check)", () => {
+    openDialog(makeCtx({ supervisor: false }));
+    fireEvent.click(screen.getByRole("tab", { name: "مختلط" }));
+    const [cashInput, , creditInput] = screen.getAllByPlaceholderText("0.00") as HTMLInputElement[];
+    fireEvent.change(cashInput, { target: { value: "20" } });
+    // Bypasses the disabled attribute directly (as fireEvent does) to prove
+    // confirmDisabled's own role check — not just the input's disabled state
+    // — is what blocks the button.
+    fireEvent.change(creditInput, { target: { value: "26" } });
+    expect(screen.getByRole("button", { name: /تأكيد الدفع/ })).toBeDisabled();
+  });
+
+  it("supervisor status dropping mid-session clears a stale split-credit amount", () => {
+    const ctx = makeCtx({ supervisor: true });
+    const { rerender } = openDialog(ctx);
+    fireEvent.click(screen.getByRole("tab", { name: "مختلط" }));
+    const [, , creditInput] = screen.getAllByPlaceholderText("0.00") as HTMLInputElement[];
+    fireEvent.change(creditInput, { target: { value: "30" } });
+    expect(creditInput.value).toBe("30");
+    currentCtx = makeCtx({ supervisor: false });
+    rerender(<PaymentDialog open onClose={() => {}} />);
+    const [, , creditInputAfter] = screen.getAllByPlaceholderText("0.00") as HTMLInputElement[];
+    expect(creditInputAfter.value).toBe("");
+  });
+});

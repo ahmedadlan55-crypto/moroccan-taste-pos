@@ -9,7 +9,7 @@
  *
  * Each assertion is a field reaching PAPER, not a field existing in a payload.
  */
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import {
   buildKitchenTicketHtml,
   buildReceiptHtml,
@@ -18,6 +18,7 @@ import {
   type ReceiptOptions,
 } from "../receipt";
 import type { LocalOrder, ReceiptIdentity } from "../types";
+import * as invoiceTemplate from "../../../../shared/invoiceTemplate";
 
 const IDENTITY: ReceiptIdentity = {
   sellerName: "مطاعم الأصالة",
@@ -220,5 +221,24 @@ describe("reprint fidelity", () => {
     expect(html).toContain("شبكة");
     expect(html).toContain("المستلَم");
     expect(html).toContain("الباقي");
+  });
+});
+
+// ═════════════════════════════════════════════════════════════════════════════
+// The wrapper is a thin adapter over the SHARED renderer — it must actually CALL
+// buildSaleReceiptHtml (not carry a duplicated, drifting copy of the template).
+// ═════════════════════════════════════════════════════════════════════════════
+describe("receipt.ts delegates to the shared invoice template", () => {
+  it("buildReceiptHtml routes through shared buildSaleReceiptHtml with the adapted shape", () => {
+    const spy = vi.spyOn(invoiceTemplate, "buildSaleReceiptHtml");
+    const html = buildReceiptHtml(opts());
+    expect(spy).toHaveBeenCalledTimes(1);
+    // The adaptation flattens the LocalOrder into DocumentLine[] + resolved totals.
+    const arg = spy.mock.calls[0][0];
+    expect(arg.lines[0]).toMatchObject({ name: "برجر", qty: 2, unitPrice: 20 });
+    expect(arg.totals).toMatchObject({ subtotal: 40, total: 40 });
+    // And the shared renderer's output is what buildReceiptHtml returns.
+    expect(html).toContain("مطاعم الأصالة");
+    spy.mockRestore();
   });
 });

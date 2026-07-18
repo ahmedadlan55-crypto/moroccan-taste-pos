@@ -3,6 +3,7 @@
  * routes/pos-v2.js + lib/posOrderMachine.js EXACTLY — do not "improve" shapes
  * here without changing the server first.
  */
+import type { DocumentIdentity, DocumentShowFields } from "../../../shared/invoiceTemplate";
 
 export type TaxCategory = "S" | "Z" | "E" | "O";
 export type OrderType = "dine_in" | "takeaway" | "delivery";
@@ -69,43 +70,15 @@ export interface CatalogItem {
   imageVersion?: string | null;
 }
 
-/** Owner-configured seller identity, resolved server-side for this cashier's
- *  branch (lib/invoiceIdentity.js). Rides in the catalog because the catalog is
- *  the one payload the client already caches — so an OFFLINE receipt still
- *  prints the real seller, not the browser tab title. */
-export interface ReceiptIdentity {
-  sellerName: string;
-  legalName: string;
-  taxNumber: string;
-  crNumber: string;
-  address: string;
-  nationalAddress: string;
-  phone: string;
-  email: string;
-  logo: string;
-  currency: string;
-  vatRate: number;
-  header: string;
-  footer: string;
-  thankYou: string;
-  returnPolicy: string;
-  branchName: string;
-  branchCompanyName: string;
-  brandName: string;
-}
-
-/** Which optional blocks the owner wants printed. Server defaults are all-on. */
-export interface ReceiptShowFields {
-  logo: boolean;
-  taxNumber: boolean;
-  crNumber: boolean;
-  nationalAddress: boolean;
-  phone: boolean;
-  email: boolean;
-  cashier: boolean;
-  customer: boolean;
-  qr: boolean;
-}
+/** Owner-configured seller identity + the owner's print toggles. Both types now
+ *  live in the SHARED invoice template (frontend/shared/invoiceTemplate.ts) so
+ *  the POS and ERP apps render the identical document; POS keeps its historical
+ *  names via these aliases (zero breakage for every existing importer, and the
+ *  names remain usable locally — e.g. in `Catalog` below). Identity rides in the
+ *  catalog because the catalog is the one payload the client already caches — so
+ *  an OFFLINE receipt still prints the real seller, not the browser tab title. */
+export type ReceiptIdentity = DocumentIdentity;
+export type ReceiptShowFields = DocumentShowFields;
 
 // ── العروض / Combos (close/w25-combos) ──────────────────────────────────────
 // Definitions ride IN the catalog payload (the one payload the client already

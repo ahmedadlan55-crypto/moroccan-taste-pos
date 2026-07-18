@@ -3,14 +3,17 @@ import { useNavigate } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ArrowRight, Printer, CheckCircle2, XCircle, Undo2, HandCoins } from "lucide-react";
 import {
-  Button, Card, CardHeader, CardTitle, CardBody, PageHeader, LoadingState, ErrorState, safeUserMessage,
+  Button, Card, CardHeader, CardTitle, CardBody, PageHeader, LoadingState, ErrorState, safeUserMessage, useToast,
 } from "@/shared/ui";
 import { useCan } from "@/app/providers";
 import { o2cApi, qk, VAT_CATEGORY_LABEL, SalesStatus, Money, Num, DateCell, Info, type InvoiceLine } from "@/modules/sales/lib";
+import { buildSaleReceiptHtml, printHtml } from "../../../../../shared/invoiceTemplate";
+import { toSaleReceiptOptions } from "./invoiceReceiptAdapter";
 
 export function InvoiceDetail({ id, onBack }: { id: string; onBack: () => void }) {
   const nav = useNavigate();
   const qc = useQueryClient();
+  const { toast } = useToast();
   const canIssue = useCan("invoices.issue");
   const canCreatePayment = useCan("payments.create");
   const canReturn = useCan("returns.create");
@@ -36,7 +39,10 @@ export function InvoiceDetail({ id, onBack }: { id: string; onBack: () => void }
         subtitle={inv.customer_name || undefined}
         action={
           <div className="flex flex-wrap items-center gap-2 no-print">
-            <Button variant="secondary" onClick={() => window.print()}><Printer className="h-4 w-4" /> طباعة</Button>
+            <Button variant="secondary" onClick={() => {
+              const ok = printHtml(buildSaleReceiptHtml(toSaleReceiptOptions(inv)));
+              if (!ok) toast({ title: "تعذّرت الطباعة", description: "المتصفح منع نافذة الطباعة — اسمح بالنوافذ المنبثقة", tone: "error" });
+            }}><Printer className="h-4 w-4" /> طباعة</Button>
             {isDraft && canIssue && <Button onClick={() => issue.mutate()} disabled={busy}><CheckCircle2 className="h-4 w-4" /> إصدار</Button>}
             {isDraft && <Button variant="danger" onClick={() => cancel.mutate()} disabled={busy}><XCircle className="h-4 w-4" /> إلغاء</Button>}
             {!isDraft && Number(inv.balance_amount) > 0 && canCreatePayment && <Button variant="secondary" onClick={() => nav(`/sales/payments?customerId=${inv.customer_id ?? ""}&new=1`)}><HandCoins className="h-4 w-4" /> تحصيل</Button>}

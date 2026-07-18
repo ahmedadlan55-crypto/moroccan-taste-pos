@@ -36,6 +36,7 @@ const MENU = P('MENU');
 const SHIFT = P('SH');
 const OLD_SALE = P('OLDSALE');     // stamped before the column existed → rebuild path
 const CORRUPT_SALE = P('BADSALE'); // corrupt subtotal blob → honestly no QR
+const MULTI_SALE = P('MULTISALE'); // multi-category tax_subtotals_json → taxSubtotals field
 let pass = 0, fail = 0; const fails = [];
 function check(n, c, extra) { if (c) { pass++; console.log('  ✅', n); } else { fail++; fails.push(n); console.log('  ❌', n, extra != null ? '→ ' + JSON.stringify(extra).slice(0, 240) : ''); } }
 
@@ -100,7 +101,7 @@ async function cleanup() {
   const del = async (sql, a) => { try { await db.query(sql, a || []); } catch (_) {} };
   await del('DELETE FROM users WHERE username = ?', [CASHIER]);
   // checkout side effects for any sale this run created (found via client_order_id prefix)
-  const [sales] = await db.query("SELECT id FROM sales WHERE client_order_id LIKE ? OR id IN (?,?)", [`ITEST-QR-%`, OLD_SALE, CORRUPT_SALE]).catch(() => [[]]);
+  const [sales] = await db.query("SELECT id FROM sales WHERE client_order_id LIKE ? OR id IN (?,?,?)", [`ITEST-QR-%`, OLD_SALE, CORRUPT_SALE, MULTI_SALE]).catch(() => [[]]);
   for (const s of sales) {
     for (const t of ['Sale', 'ChannelCommission']) {
       const [js] = await db.query('SELECT id FROM gl_journals WHERE reference_type=? AND reference_id=?', [t, s.id]).catch(() => [[]]);
@@ -139,6 +140,13 @@ async function cleanup() {
   await db.query(
     `INSERT INTO sales (id, order_date, total_final, payment_method, username, shift_id, zatca_type, tax_subtotals_json)
      VALUES (?, NOW(), 23.00, 'Cash', ?, ?, 'simplified', 'NOT-JSON{{{')`, [CORRUPT_SALE, CASHIER, SHIFT]);
+  // A multi-category sale: standard (15%) + zero-rated. 30.00 net + 3.00 vat =
+  // 33.00 total. The new taxSubtotals response field must echo BOTH categories
+  // and their summed net/vat exactly.
+  await db.query(
+    `INSERT INTO sales (id, order_date, total_final, payment_method, username, shift_id, zatca_type, tax_subtotals_json)
+     VALUES (?, NOW(), 33.00, 'Cash', ?, ?, 'simplified',
+       '{"S":{"net":20.00,"vat":3.00,"rate":15},"Z":{"net":10.00,"vat":0.00,"rate":0}}')`, [MULTI_SALE, CASHIER, SHIFT]);
 
   const server = spawn(process.execPath, ['server.js'], { cwd: path.join(__dirname, '..', '..'), env: { ...process.env, PORT: String(PORT) }, stdio: ['ignore', 'ignore', 'ignore'] });
   try {
@@ -202,6 +210,26 @@ async function cleanup() {
     console.log('\n▶ corrupt tax_subtotals_json');
     const inv3 = await call('GET', `/api/sales/invoice/${CORRUPT_SALE}`, cashier);
     check('a sale whose VAT is indeterminable gets NO QR — never a guessed one', inv3.body?.zatcaQr == null, inv3.body?.zatcaQr);
+    check('  …and its taxSubtotals is null (indeterminable, never zero)', inv3.body?.taxSubtotals === null, inv3.body?.taxSubtotals);
+
+    // ── taxSubtotals: the RECORDED per-category breakdown reaches the client ──
+    console.log('\n▶ taxSubtotals field (recorded per-category VAT)');
+    // Single-category (OLD_SALE, S only): net 20 / vat 3.
+    check('single-category sale echoes summed net/vat', inv2.body?.taxSubtotals?.net === 20 && inv2.body?.taxSubtotals?.vat === 3,
+      inv2.body?.taxSubtotals);
+    check('  …with a per-category S bucket', inv2.body?.taxSubtotals?.byCategory?.S?.net === 20 && inv2.body?.taxSubtotals?.byCategory?.S?.vat === 3,
+      inv2.body?.taxSubtotals?.byCategory);
+
+    // Multi-category (MULTI_SALE, S 15% + Z 0%): net 30 / vat 3 across two buckets.
+    const invM = await call('GET', `/api/sales/invoice/${MULTI_SALE}`, cashier);
+    check('multi-category sale sums BOTH categories (net 30, vat 3)', invM.body?.taxSubtotals?.net === 30 && invM.body?.taxSubtotals?.vat === 3,
+      invM.body?.taxSubtotals);
+    check('  …S bucket {net:20, vat:3}', invM.body?.taxSubtotals?.byCategory?.S?.net === 20 && invM.body?.taxSubtotals?.byCategory?.S?.vat === 3,
+      invM.body?.taxSubtotals?.byCategory?.S);
+    check('  …Z bucket {net:10, vat:0}', invM.body?.taxSubtotals?.byCategory?.Z?.net === 10 && invM.body?.taxSubtotals?.byCategory?.Z?.vat === 0,
+      invM.body?.taxSubtotals?.byCategory?.Z);
+    check('  …exactly the two recorded categories, nothing invented', invM.body?.taxSubtotals && Object.keys(invM.body.taxSubtotals.byCategory).sort().join(',') === 'S,Z',
+      invM.body?.taxSubtotals?.byCategory && Object.keys(invM.body.taxSubtotals.byCategory));
 
     console.log(`\n${fail === 0 ? '✅' : '❌'} receiptQr: ${pass} passed, ${fail} failed`);
     if (fail) console.log('   failed:', fails.join(' | '));

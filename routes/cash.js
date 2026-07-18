@@ -2,6 +2,8 @@ const router = require('express').Router();
 const db = require('../db/connection');
 // FC-P1b — capability guard + JWT actor for voucher approval (double-approve safe).
 const requireCapability = require('../middleware/requireCapability');
+const glPosting = require('../lib/glPosting');
+const { ymd: _toYmd } = require('../lib/expiryPolicy');
 function _actor(req) { return (req.user && (req.user.username || req.user.name)) || ''; }
 
 // ═══════════════════════════════════════════════════════════════
@@ -121,78 +123,65 @@ async function getSourceAccount(type, id) {
 // includes voucher activity. Each entry inherits the header dims unless
 // the line explicitly overrides — same inheritance contract that
 // gl/journals POST uses.
-async function createJournal(date, description, lines, username, dims) {
+//
+// Previously this hand-rolled its own header/entry inserts with a numbering
+// scheme that read the single most-recent gl_journals row (by created_at)
+// and regex'd a "\d+" out of its journal_number to increment. Once the
+// DB-atomic per-day sequence (lib/glPosting.js, "JV-YYYYMMDD-NNNN") became
+// the dominant format elsewhere, that regex matched the embedded DATE
+// instead of a serial, so every cash-voucher approval on a given calendar
+// day derived the SAME "JE-<date+1>" number — the first approval that day
+// posted it, and every approval after (this one included, and any that
+// come after a server restart) hit uq_journal_number and failed outright.
+// It also inserted via the pool, not the caller's `conn`, so on a genuine
+// failure downstream the journal could survive a rollback of the voucher
+// status update. Delegating to the shared, collision-proof poster (already
+// used by every other financial route) fixes both: atomic numbering with
+// bounded retry-on-duplicate, and — when the caller passes its transaction
+// connection — the journal insert is now genuinely part of the same
+// atomic unit as the row lock and status update.
+async function createJournal(connOrDb, date, description, lines, username, dims) {
   dims = dims || {};
-  const journalId = 'GLJ-' + Date.now() + '-' + Math.random().toString(36).substr(2,4);
-  const [last] = await db.query('SELECT journal_number FROM gl_journals ORDER BY created_at DESC LIMIT 1');
-  let num = 1;
-  if (last.length && last[0].journal_number) {
-    const m = last[0].journal_number.match(/(\d+)/);
-    if (m) num = parseInt(m[1]) + 1;
-  }
-  const jNum = 'JE-' + String(num).padStart(5, '0');
-  let totalD = 0, totalC = 0;
-  lines.forEach(l => { totalD += Number(l.debit)||0; totalC += Number(l.credit)||0; });
-  if (Math.abs(totalD - totalC) > 0.01) throw new Error('القيد غير متوازن');
-  // Header insert: try the wide form (with dim columns) first; fall back
-  // to the legacy column set if the migration hasn't applied yet.
-  const headerCols = ['id','journal_number','journal_date','reference_type','description',
-                      'total_debit','total_credit','status','created_by','posted_by','posted_at'];
-  const headerVals = [journalId, jNum, date, 'cash', description, totalD, totalC,
-                      'posted', username||'', username||'', new Date()];
-  const dimMap = [
-    ['brandId','brand_id'], ['branchId','branch_id'],
-    ['projectId','project_id'], ['costCenterId','cost_center_id']
-  ];
-  const dimCols = [], dimVals = [];
-  for (const [k, col] of dimMap) {
-    if (dims[k]) { dimCols.push(col); dimVals.push(dims[k]); }
-  }
-  const allCols = headerCols.concat(dimCols);
-  const allVals = headerVals.concat(dimVals);
-  try {
-    await db.query(
-      'INSERT INTO gl_journals (' + allCols.join(',') + ') VALUES (' + allCols.map(() => '?').join(',') + ')',
-      allVals);
-  } catch (err) {
-    if (dimCols.length) {
-      await db.query(
-        'INSERT INTO gl_journals (' + headerCols.slice(0, -1).join(',') + ', posted_at) VALUES (' + headerCols.map(() => '?').join(',') + ')',
-        headerVals);
-    } else throw err;
-  }
+  // Callers pass either a 'YYYY-MM-DD' string (request body) or a raw DATE
+  // column value read back from a row lock (a JS Date, since this pool
+  // doesn't set dateStrings) — glPosting.postJournal requires a string.
+  const journalDate = _toYmd(date) || _toYmd(new Date());
+  // glPosting.postJournal resolves each entry's account by `accountCode`
+  // (SELECT id FROM gl_accounts WHERE code=?), but l.accountCode here is
+  // sometimes the SOURCE record's own business code (e.g. a cash box's
+  // `code` column), not its GL account's code — those two aren't the same
+  // string. l.accountId is always the already-resolved GL account id
+  // (from getSourceAccount/_receiptSourceGl/_paymentRecipientGl or the
+  // manual-lines lookup), so re-derive the real gl_accounts.code from it
+  // to guarantee the entry resolves to the account the caller actually meant.
+  const entries = [];
   for (const l of lines) {
-    const entryId = 'GLE-' + Date.now() + '-' + Math.random().toString(36).substr(2,4);
-    // Per-entry insert with dim inheritance (line value wins, header is fallback)
-    const entryCols = ['id','journal_id','account_id','account_code','account_name',
-                       'debit','credit','description'];
-    const entryVals = [entryId, journalId, l.accountId||null, l.accountCode||'',
-                       l.accountName||'', Number(l.debit)||0, Number(l.credit)||0,
-                       l.description || description];
-    const entryDimCols = [], entryDimVals = [];
-    for (const [k, col] of dimMap.concat([['warehouseId','warehouse_id']])) {
-      const v = (l[k] != null && l[k] !== '') ? l[k] : dims[k];
-      if (v) { entryDimCols.push(col); entryDimVals.push(v); }
-    }
-    const allEntryCols = entryCols.concat(entryDimCols);
-    const allEntryVals = entryVals.concat(entryDimVals);
-    try {
-      await db.query(
-        'INSERT INTO gl_entries (' + allEntryCols.join(',') + ') VALUES (' + allEntryCols.map(() => '?').join(',') + ')',
-        allEntryVals);
-    } catch (err) {
-      if (entryDimCols.length) {
-        await db.query(
-          'INSERT INTO gl_entries (' + entryCols.join(',') + ') VALUES (' + entryCols.map(() => '?').join(',') + ')',
-          entryVals);
-      } else throw err;
-    }
+    let code = l.accountCode;
     if (l.accountId) {
-      const net = (Number(l.debit)||0) - (Number(l.credit)||0);
-      await db.query('UPDATE gl_accounts SET balance = balance + ? WHERE id = ?', [net, l.accountId]);
+      const [g] = await connOrDb.query('SELECT code FROM gl_accounts WHERE id=?', [l.accountId]);
+      if (g.length) code = g[0].code;
     }
+    entries.push({
+      accountCode: code,
+      debit: Number(l.debit) || 0,
+      credit: Number(l.credit) || 0,
+      description: l.description || description,
+      branchId: l.branchId, brandId: l.brandId, projectId: l.projectId,
+      costCenterId: l.costCenterId, warehouseId: l.warehouseId,
+    });
   }
-  return { id: journalId, journalNumber: jNum };
+  const out = await glPosting.postJournal(connOrDb, {
+    journalDate,
+    description,
+    referenceType: 'cash',
+    postedBy: username,
+    status: 'posted',
+    entries,
+    brandId: dims.brandId, branchId: dims.branchId,
+    projectId: dims.projectId, costCenterId: dims.costCenterId,
+  });
+  if (!out.success) throw new Error(out.error || 'تعذّر ترحيل القيد');
+  return { id: out.journalId, journalNumber: out.journalNumber };
 }
 
 async function nextNumber(table, column, prefix) {
@@ -559,7 +548,7 @@ router.post('/receipts/:id/approve', requireCapability('finance.cash.approve'), 
 
     // v5.11.4 — pass voucher dims into the journal so reports sliced by
     // brand/branch/cost-center/project pick up cash receipts.
-    const journal = await createJournal(r.receipt_date,
+    const journal = await createJournal(conn, r.receipt_date,
       'سند قبض ' + r.receipt_number + ' — ' + (r.source_name || ''),
       lines, username, {
         brandId: r.brand_id || null,
@@ -777,7 +766,7 @@ router.post('/payments/:id/approve', requireCapability('finance.cash.approve'), 
     }
 
     // v5.11.4 — pass voucher dims into the journal
-    const journal = await createJournal(p.payment_date,
+    const journal = await createJournal(conn, p.payment_date,
       'سند صرف ' + p.payment_number + ' — ' + (p.recipient_name || ''),
       lines, username, {
         brandId: p.brand_id || null,
@@ -877,7 +866,7 @@ router.post('/transfers', async (req, res) => {
     const number = await nextNumber('cash_transfers', 'transfer_number', 'TRF-');
     const id = 'TRF-' + Date.now();
 
-    const journal = await createJournal(transferDate, 'تحويل ' + number + ' من ' + fromAcc.name + ' إلى ' + toAcc.name, [
+    const journal = await createJournal(db, transferDate, 'تحويل ' + number + ' من ' + fromAcc.name + ' إلى ' + toAcc.name, [
       { accountId: toAcc.glId, accountCode: toAcc.code, accountName: toAcc.name, debit: amount, credit: 0 },
       { accountId: fromAcc.glId, accountCode: fromAcc.code, accountName: fromAcc.name, debit: 0, credit: amount }
     ], username);

@@ -42,6 +42,17 @@ async function main() {
   }
 
   const SUP = 'TEST-P2P-SUP', ITEM = 'TEST-P2P-ITEM', WH = 'TEST-P2P-WH';
+  // These POs/receipts never get posted (approve stops short of /post, receipts
+  // never get approved+posted here), so no GL journal/inventory movement is
+  // ever created — but the header/line rows themselves must not be left behind.
+  async function cleanup() {
+    await db.query('DELETE prl FROM purchase_receipt_lines prl JOIN purchase_receipts pr ON pr.id=prl.receipt_id WHERE pr.supplier_id=?', [SUP]).catch(() => {});
+    await db.query('DELETE FROM purchase_receipts WHERE supplier_id=?', [SUP]).catch(() => {});
+    await db.query('DELETE pl FROM po_lines pl JOIN purchase_orders po ON po.id=pl.po_id WHERE po.supplier_id=?', [SUP]).catch(() => {});
+    await db.query('DELETE FROM purchase_orders WHERE supplier_id=?', [SUP]).catch(() => {});
+    await db.query('DELETE FROM suppliers WHERE id=?', [SUP]).catch(() => {});
+  }
+  await cleanup();
   await db.query('INSERT INTO warehouses (id,code,name,is_active) VALUES (?,?,?,1) ON DUPLICATE KEY UPDATE name=VALUES(name)', [WH, 'TWH', 'wh']);
   await db.query("INSERT INTO inv_items (id,name,kind,unit,cost,stock,tracking_mode) VALUES (?,?,?,?,0,0,'none') ON DUPLICATE KEY UPDATE stock=stock", [ITEM, 'مادة', 'raw', 'حبة']);
   await db.query("INSERT INTO suppliers (id,name,is_active) VALUES (?,?,1) ON DUPLICATE KEY UPDATE is_active=1", [SUP, 'مورد']);
@@ -49,6 +60,7 @@ async function main() {
   const invBody = { supplierId: SUP, invoiceKind: 'non_stock', lines: [{ itemId: ITEM, description: 'x', enteredQty: 1, factor: 1, unitPriceEntered: 10, vatRate: 0 }] };
   const rcvBody = { supplierId: SUP, warehouseId: WH, lines: [{ itemId: ITEM, enteredQty: 1, factor: 1, unitCost: 10 }] };
 
+  try {
   console.log('\n── capability enforcement per endpoint/role ──');
   // cashier has NO procurement grants
   ok((await call('POST', '/api/procurement/orders', poBody, 'cashier')).status === 403, 'cashier POST /orders → 403');
@@ -79,6 +91,9 @@ async function main() {
     const [[row]] = await db.query('SELECT created_by FROM suppliers WHERE id=?', [sup.json.data.id]);
     ok(row.created_by === 'realuser', `supplier created_by = JWT user 'realuser' (ignored body 'HACKER') — got '${row.created_by}'`);
     await db.query('DELETE FROM suppliers WHERE id=?', [sup.json.data.id]).catch(() => {});
+  }
+  } finally {
+    await cleanup();
   }
 
   server.close();

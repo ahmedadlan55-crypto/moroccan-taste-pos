@@ -39,22 +39,43 @@ async function main() {
 
   const SUP = 'TEST-P2P-SUP', ITEM = 'TEST-P2P-ITEM', WH = 'TEST-P2P-WH';
   // full clean of the shared test supplier's transactional data so the DB is
-  // left consistent for reconcile (no orphaned cached balances).
-  await db.query('DELETE pa FROM payment_allocations pa JOIN payment_records p ON p.id=pa.payment_id WHERE p.supplier_id=?', [SUP]).catch(() => {});
-  await db.query('DELETE FROM payment_records WHERE supplier_id=?', [SUP]).catch(() => {});
-  await db.query('DELETE sim FROM supplier_invoice_matches sim JOIN supplier_invoices si ON si.id=sim.invoice_id WHERE si.supplier_id=?', [SUP]).catch(() => {});
-  await db.query('DELETE sil FROM supplier_invoice_lines sil JOIN supplier_invoices si ON si.id=sil.invoice_id WHERE si.supplier_id=?', [SUP]).catch(() => {});
-  await db.query('DELETE FROM supplier_invoices WHERE supplier_id=?', [SUP]).catch(() => {});
-  await db.query('DELETE prl FROM purchase_receipt_lines prl JOIN purchase_receipts pr ON pr.id=prl.receipt_id WHERE pr.supplier_id=?', [SUP]).catch(() => {});
-  await db.query('DELETE FROM purchase_receipts WHERE supplier_id=?', [SUP]).catch(() => {});
-  await db.query('DELETE pl FROM po_lines pl JOIN purchase_orders po ON po.id=pl.po_id WHERE po.supplier_id=?', [SUP]).catch(() => {});
-  await db.query('DELETE FROM purchase_orders WHERE supplier_id=?', [SUP]).catch(() => {});
-  await db.query('DELETE FROM warehouse_stock WHERE item_id=?', [ITEM]).catch(() => {});
-  await db.query('DELETE FROM purchase_lots WHERE inv_item_id=?', [ITEM]).catch(() => {});
+  // left consistent for reconcile (no orphaned cached balances). Posted
+  // receipts leave real gl_journals/gl_entries + inventory_movements behind
+  // (this test's own concurrent-receipts scenario posts one of its two 80-qty
+  // receipts) — those must go too, or they inflate any global movement/GL
+  // count a later test relies on (e.g. inventoryMethod's movementsSinceLastClose).
+  async function cleanup() {
+    await db.query("DELETE ge FROM gl_entries ge JOIN gl_journals gj ON gj.id=ge.journal_id WHERE gj.reference_type='GoodsReceipt' AND gj.reference_id IN (SELECT id FROM purchase_receipts WHERE supplier_id=?)", [SUP]).catch(() => {});
+    await db.query("DELETE FROM gl_journals WHERE reference_type='GoodsReceipt' AND reference_id IN (SELECT id FROM purchase_receipts WHERE supplier_id=?)", [SUP]).catch(() => {});
+    await db.query("DELETE ge FROM gl_entries ge JOIN gl_journals gj ON gj.id=ge.journal_id WHERE gj.reference_type='SupplierInvoice' AND gj.reference_id IN (SELECT id FROM supplier_invoices WHERE supplier_id=?)", [SUP]).catch(() => {});
+    await db.query("DELETE FROM gl_journals WHERE reference_type='SupplierInvoice' AND reference_id IN (SELECT id FROM supplier_invoices WHERE supplier_id=?)", [SUP]).catch(() => {});
+    await db.query("DELETE ge FROM gl_entries ge JOIN gl_journals gj ON gj.id=ge.journal_id WHERE gj.reference_type='SupplierPayment' AND gj.reference_id IN (SELECT id FROM payment_records WHERE supplier_id=?)", [SUP]).catch(() => {});
+    await db.query("DELETE FROM gl_journals WHERE reference_type='SupplierPayment' AND reference_id IN (SELECT id FROM payment_records WHERE supplier_id=?)", [SUP]).catch(() => {});
+    await db.query('DELETE pa FROM payment_allocations pa JOIN payment_records p ON p.id=pa.payment_id WHERE p.supplier_id=?', [SUP]).catch(() => {});
+    await db.query('DELETE FROM payment_records WHERE supplier_id=?', [SUP]).catch(() => {});
+    await db.query('DELETE sim FROM supplier_invoice_matches sim JOIN supplier_invoices si ON si.id=sim.invoice_id WHERE si.supplier_id=?', [SUP]).catch(() => {});
+    await db.query('DELETE sil FROM supplier_invoice_lines sil JOIN supplier_invoices si ON si.id=sil.invoice_id WHERE si.supplier_id=?', [SUP]).catch(() => {});
+    await db.query('DELETE FROM supplier_invoices WHERE supplier_id=?', [SUP]).catch(() => {});
+    await db.query('DELETE prl FROM purchase_receipt_lines prl JOIN purchase_receipts pr ON pr.id=prl.receipt_id WHERE pr.supplier_id=?', [SUP]).catch(() => {});
+    await db.query('DELETE FROM purchase_receipts WHERE supplier_id=?', [SUP]).catch(() => {});
+    await db.query('DELETE pl FROM po_lines pl JOIN purchase_orders po ON po.id=pl.po_id WHERE po.supplier_id=?', [SUP]).catch(() => {});
+    await db.query('DELETE FROM purchase_orders WHERE supplier_id=?', [SUP]).catch(() => {});
+    await db.query('DELETE FROM inventory_movements WHERE item_id=? OR warehouse_id=?', [ITEM, WH]).catch(() => {});
+    await db.query('DELETE FROM inventory_cost_history WHERE item_id=?', [ITEM]).catch(() => {});
+    await db.query('DELETE FROM warehouse_stock WHERE item_id=?', [ITEM]).catch(() => {});
+    await db.query('DELETE FROM purchase_lots WHERE inv_item_id=?', [ITEM]).catch(() => {});
+    // Receipt posting bumps inv_items.stock alongside warehouse_stock — wiping
+    // the warehouse row without resetting this leaves the item's own stock
+    // counter permanently out of sync with Σwarehouse_stock (caught by
+    // scripts/procurement/reconcile.js's stock_rollup check).
+    await db.query('UPDATE inv_items SET stock=0, cost=0 WHERE id=?', [ITEM]).catch(() => {});
+  }
+  await cleanup();
   await db.query('INSERT INTO warehouses (id,code,name,is_active) VALUES (?,?,?,1) ON DUPLICATE KEY UPDATE name=VALUES(name)', [WH, 'TWH', 'مستودع اختبار']);
   await db.query("INSERT INTO inv_items (id,name,kind,unit,cost,stock,tracking_mode) VALUES (?,?,?,?,0,0,'none') ON DUPLICATE KEY UPDATE stock=0,cost=0", [ITEM, 'مادة', 'raw', 'حبة']);
   await db.query("INSERT INTO suppliers (id,name,is_active) VALUES (?,?,1) ON DUPLICATE KEY UPDATE is_active=1", [SUP, 'مورد']);
 
+  try {
   // ── concurrent receipts vs one PO (ordered 120; two receipts of 80 each) ──
   console.log('\n── concurrent receipts never exceed PO ──');
   const po = await call('POST', '/api/procurement/orders', { supplierId: SUP, warehouseId: WH, lines: [{ itemId: ITEM, enteredQty: 120, factor: 1, unitPriceEntered: 10, vatRate: 15 }] });
@@ -113,6 +134,9 @@ async function main() {
   ok(payWins === 1 && overAlloc === 1, `one payment settled, one PAYMENT_OVER_ALLOCATION (paid=${payWins}, over=${overAlloc})`);
   const [[bal]] = [await db.query('SELECT balance_amount FROM supplier_invoices WHERE id=?', [inv.json.data.id])];
   ok(Math.abs(Number(bal[0].balance_amount)) < 0.01, `invoice fully settled once (balance=${bal[0].balance_amount})`);
+  } finally {
+    await cleanup();
+  }
 
   server.close();
   await db.end();

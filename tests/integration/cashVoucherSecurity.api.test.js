@@ -20,6 +20,7 @@ const { spawn } = require('child_process');
 const fs = require('fs');
 const path = require('path');
 const ROOT = path.join(__dirname, '..', '..');
+const db = require(path.join(ROOT, 'db', 'connection'));
 
 const ENV = {};
 for (const line of fs.readFileSync(path.join(ROOT, '.env'), 'utf8').split(/\r?\n/)) {
@@ -107,13 +108,35 @@ async function main() {
     const cb = Array.isArray(boxes.data) ? boxes.data.find(b => b.id === boxId) : null;
     check('cashbox balance = exactly one voucher (100)', !!cb && Number(cb.balance) === 100, cb && { balance: cb.balance });
 
-    // cleanup (best-effort)
-    try { await api('DELETE', '/cash/cash-boxes/' + boxId, T.admin); } catch (_) {}
+    // cleanup — the winning approve posted a real GL journal; leaving it (or
+    // the accounts/receipt/box) behind pollutes the ledger for every test
+    // that runs after this one on the same day (this is exactly what caused
+    // the numbering bug this file exists to guard against to keep colliding
+    // on reruns).
+    try {
+      const [recRow] = await db.query('SELECT journal_id FROM cash_receipts WHERE id=?', [recId]);
+      const journalId = recRow.length ? recRow[0].journal_id : null;
+      if (journalId) {
+        await db.query('DELETE FROM gl_entries WHERE journal_id=?', [journalId]);
+        await db.query('DELETE FROM gl_journals WHERE id=?', [journalId]);
+      }
+      await db.query('DELETE FROM cash_receipts WHERE id=?', [recId]);
+      // /cash/cash-boxes/:id only soft-deletes (is_active=0) — correct for a
+      // real admin action on a box with history, but it would leave this
+      // run's disposable fixture box in the table forever. Hard-delete it
+      // directly; its own GL cash-account row too (created by
+      // ensureCashAccount the first time this box was credited).
+      const [boxRow] = await db.query('SELECT gl_account_id FROM cash_boxes WHERE id=?', [boxId]);
+      await db.query('DELETE FROM cash_boxes WHERE id=?', [boxId]);
+      if (boxRow.length && boxRow[0].gl_account_id) await db.query('DELETE FROM gl_accounts WHERE id=?', [boxRow[0].gl_account_id]);
+      await db.query('DELETE FROM gl_accounts WHERE id IN (?, ?)', [A, B]);
+    } catch (_) {}
   } catch (e) {
     check('no exception', false, e && e.message);
     console.log(childLog.slice(-2000));
   } finally {
     child.kill('SIGKILL');
+    try { await db.end(); } catch (_) {}
   }
   console.log(`\n─── ${_p} passed, ${_f} failed ───\n`);
   process.exit(_f ? 1 : 0);

@@ -56,23 +56,43 @@ async function main() {
   // ── seed master data (idempotent, unique ids) ──
   const SUP = 'TEST-P2P-SUP', ITEM = 'TEST-P2P-ITEM', WH = 'TEST-P2P-WH';
   const RUN = Date.now();
-  // clean prior test transactional data so the run is repeatable
-  await db.query('DELETE pa FROM payment_allocations pa JOIN payment_records p ON p.id=pa.payment_id WHERE p.supplier_id=?', [SUP]).catch(() => {});
-  await db.query('DELETE FROM payment_records WHERE supplier_id=?', [SUP]).catch(() => {});
-  await db.query('DELETE sim FROM supplier_invoice_matches sim JOIN supplier_invoices si ON si.id=sim.invoice_id WHERE si.supplier_id=?', [SUP]).catch(() => {});
-  await db.query('DELETE sil FROM supplier_invoice_lines sil JOIN supplier_invoices si ON si.id=sil.invoice_id WHERE si.supplier_id=?', [SUP]).catch(() => {});
-  await db.query('DELETE FROM supplier_invoices WHERE supplier_id=?', [SUP]).catch(() => {});
-  await db.query('DELETE prl FROM purchase_receipt_lines prl JOIN purchase_receipts pr ON pr.id=prl.receipt_id WHERE pr.supplier_id=?', [SUP]).catch(() => {});
-  await db.query('DELETE FROM purchase_receipts WHERE supplier_id=?', [SUP]).catch(() => {});
-  await db.query('DELETE pl FROM po_lines pl JOIN purchase_orders po ON po.id=pl.po_id WHERE po.supplier_id=?', [SUP]).catch(() => {});
-  await db.query('DELETE FROM purchase_orders WHERE supplier_id=?', [SUP]).catch(() => {});
-  await db.query('DELETE FROM purchase_returns WHERE supplier_id=?', [SUP]).catch(() => {});
-  await db.query('DELETE FROM warehouse_stock WHERE item_id = ?', [ITEM]).catch(() => {});
-  await db.query('DELETE FROM purchase_lots WHERE inv_item_id = ?', [ITEM]).catch(() => {});
+  // clean prior + this run's transactional data so the DB never accumulates
+  // test residue (GL journals/entries and inventory movements are keyed off
+  // rows this same cleanup deletes, so they must go first, via JOIN, before
+  // the parent rows disappear out from under them).
+  async function cleanup() {
+    await db.query("DELETE ge FROM gl_entries ge JOIN gl_journals gj ON gj.id=ge.journal_id WHERE gj.reference_type='GoodsReceipt' AND gj.reference_id IN (SELECT id FROM purchase_receipts WHERE supplier_id=?)", [SUP]).catch(() => {});
+    await db.query("DELETE FROM gl_journals WHERE reference_type='GoodsReceipt' AND reference_id IN (SELECT id FROM purchase_receipts WHERE supplier_id=?)", [SUP]).catch(() => {});
+    await db.query("DELETE ge FROM gl_entries ge JOIN gl_journals gj ON gj.id=ge.journal_id WHERE gj.reference_type='SupplierInvoice' AND gj.reference_id IN (SELECT id FROM supplier_invoices WHERE supplier_id=?)", [SUP]).catch(() => {});
+    await db.query("DELETE FROM gl_journals WHERE reference_type='SupplierInvoice' AND reference_id IN (SELECT id FROM supplier_invoices WHERE supplier_id=?)", [SUP]).catch(() => {});
+    await db.query("DELETE ge FROM gl_entries ge JOIN gl_journals gj ON gj.id=ge.journal_id WHERE gj.reference_type='SupplierPayment' AND gj.reference_id IN (SELECT id FROM payment_records WHERE supplier_id=?)", [SUP]).catch(() => {});
+    await db.query("DELETE FROM gl_journals WHERE reference_type='SupplierPayment' AND reference_id IN (SELECT id FROM payment_records WHERE supplier_id=?)", [SUP]).catch(() => {});
+    await db.query('DELETE pa FROM payment_allocations pa JOIN payment_records p ON p.id=pa.payment_id WHERE p.supplier_id=?', [SUP]).catch(() => {});
+    await db.query('DELETE FROM payment_records WHERE supplier_id=?', [SUP]).catch(() => {});
+    await db.query('DELETE sim FROM supplier_invoice_matches sim JOIN supplier_invoices si ON si.id=sim.invoice_id WHERE si.supplier_id=?', [SUP]).catch(() => {});
+    await db.query('DELETE sil FROM supplier_invoice_lines sil JOIN supplier_invoices si ON si.id=sil.invoice_id WHERE si.supplier_id=?', [SUP]).catch(() => {});
+    await db.query('DELETE FROM supplier_invoices WHERE supplier_id=?', [SUP]).catch(() => {});
+    await db.query('DELETE prl FROM purchase_receipt_lines prl JOIN purchase_receipts pr ON pr.id=prl.receipt_id WHERE pr.supplier_id=?', [SUP]).catch(() => {});
+    await db.query('DELETE FROM purchase_receipts WHERE supplier_id=?', [SUP]).catch(() => {});
+    await db.query('DELETE pl FROM po_lines pl JOIN purchase_orders po ON po.id=pl.po_id WHERE po.supplier_id=?', [SUP]).catch(() => {});
+    await db.query('DELETE FROM purchase_orders WHERE supplier_id=?', [SUP]).catch(() => {});
+    await db.query('DELETE FROM purchase_returns WHERE supplier_id=?', [SUP]).catch(() => {});
+    await db.query('DELETE FROM inventory_movements WHERE item_id=? OR warehouse_id=?', [ITEM, WH]).catch(() => {});
+    await db.query('DELETE FROM inventory_cost_history WHERE item_id=?', [ITEM]).catch(() => {});
+    await db.query('DELETE FROM warehouse_stock WHERE item_id = ?', [ITEM]).catch(() => {});
+    await db.query('DELETE FROM purchase_lots WHERE inv_item_id = ?', [ITEM]).catch(() => {});
+    // Receipt posting bumps inv_items.stock alongside warehouse_stock — wiping
+    // the warehouse row without resetting this leaves the item's own stock
+    // counter permanently out of sync with Σwarehouse_stock (caught by
+    // scripts/procurement/reconcile.js's stock_rollup check).
+    await db.query('UPDATE inv_items SET stock=0, cost=0 WHERE id=?', [ITEM]).catch(() => {});
+  }
+  await cleanup();
   await db.query('INSERT INTO warehouses (id, code, name, is_active) VALUES (?,?,?,1) ON DUPLICATE KEY UPDATE name=VALUES(name)', [WH, 'TWH', 'مستودع اختبار']);
   await db.query('INSERT INTO inv_items (id, name, kind, unit, big_unit, conv_rate, cost, stock, tracking_mode) VALUES (?,?,?,?,?,?,?,?,\'none\') ON DUPLICATE KEY UPDATE name=VALUES(name), stock=0, cost=0', [ITEM, 'مادة اختبار', 'raw', 'حبة', 'كرتون', 12, 0, 0]);
   await db.query('INSERT INTO suppliers (id, name, is_active, payment_terms) VALUES (?,?,1,\'Net30\') ON DUPLICATE KEY UPDATE is_active=1', [SUP, 'مورد اختبار']);
 
+  try {
   console.log('\n── PO create / submit / approve (maker-checker) ──');
   const glBefore = (await db.query('SELECT COUNT(*) c FROM gl_journals'))[0][0].c;
   const poRes = await call('POST', '/api/procurement/orders', {
@@ -185,6 +205,11 @@ async function main() {
   eqn(bal.d, bal.c, 'global GL debits == credits');
   const [[unbalanced]] = await db.query('SELECT COUNT(*) c FROM gl_journals WHERE ABS(total_debit - total_credit) > 0.01');
   ok(Number(unbalanced.c) === 0, 'zero unbalanced journals');
+  } finally {
+    // leave the dev DB exactly as clean as we found it — no orphaned GL
+    // journals/entries or inventory movements, regardless of pass/fail.
+    await cleanup();
+  }
 
   server.close();
   await db.end();

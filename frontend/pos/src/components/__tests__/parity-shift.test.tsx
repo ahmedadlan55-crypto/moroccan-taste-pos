@@ -87,6 +87,8 @@ const HEADER_PROPS = {
   onOpenShiftDialog: vi.fn(),
   onOpenSyncReport: vi.fn(),
   onOpenMyInvoices: vi.fn(),
+  onOpenStocktake: vi.fn(),
+  onOpenRequisitions: vi.fn(),
 };
 
 afterEach(() => vi.unstubAllGlobals());

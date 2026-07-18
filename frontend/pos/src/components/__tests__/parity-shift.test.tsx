@@ -64,6 +64,21 @@ const CLOSE_RESULT = {
   ],
 };
 
+// A shift opened with a 25 SAR float: the server already folded it into the
+// cash method's expectedAmount (125 = 100 sales + 25 float) and surfaces the
+// raw float as `openingFloat` for a read-only display row.
+const CLOSING_WITH_FLOAT = {
+  methods: [
+    { id: 1, name: "Cash", nameAr: "كاش", icon: null, color: null, groupType: "cash", expectedAmount: 125 },
+    { id: 2, name: "Mada", nameAr: "شبكة", icon: null, color: null, groupType: "card", expectedAmount: 50 },
+  ],
+  expected: { "1": 125, "2": 50 },
+  expectedTotal: 175,
+  orderCount: 3,
+  unmatchedTotal: 0,
+  openingFloat: 25,
+};
+
 /** URL-routing fetch stub for the ShiftDialog's three endpoints. */
 function stubShiftFetch() {
   const captured: { closeBody: Record<string, unknown> | null } = { closeBody: null };
@@ -73,6 +88,25 @@ function stubShiftFetch() {
       return jsonRes({ success: true, data: { byStatus: { completed: { count: 3, amount: 150 } }, completedByMethod: { cash: 100, card: 50 } } });
     }
     if (url.includes("/api/shifts/closing-data-v3/")) return jsonRes(CLOSING);
+    if (url.includes("/api/shifts/close-v3")) {
+      captured.closeBody = JSON.parse(String(init?.body)) as Record<string, unknown>;
+      return jsonRes(CLOSE_RESULT);
+    }
+    throw new Error("unexpected fetch: " + url);
+  });
+  vi.stubGlobal("fetch", fn as unknown as typeof fetch);
+  return { fn, captured };
+}
+
+/** Same as stubShiftFetch but serves a caller-supplied closing-data fixture. */
+function stubShiftFetchWith(closing: unknown) {
+  const captured: { closeBody: Record<string, unknown> | null } = { closeBody: null };
+  const fn = vi.fn(async (input: unknown, init?: { body?: unknown }) => {
+    const url = String(input);
+    if (url.includes("/api/pos/v2/shift-summary/")) {
+      return jsonRes({ success: true, data: { byStatus: {}, completedByMethod: {} } });
+    }
+    if (url.includes("/api/shifts/closing-data-v3/")) return jsonRes(closing);
     if (url.includes("/api/shifts/close-v3")) {
       captured.closeBody = JSON.parse(String(init?.body)) as Record<string, unknown>;
       return jsonRes(CLOSE_RESULT);
@@ -112,16 +146,21 @@ describe("shift-badge-indicator — شارة حالة الوردية في الت
 });
 
 describe("shift-open / shift-open-commit — فتح وردية", () => {
-  it("clicking «فتح وردية» triggers the open-shift mutation", () => {
+  it("clicking «فتح وردية» in the header opens the ShiftDialog (float screen), never a quick-open", () => {
+    // Redirecting the header button through the ShiftDialog is the anti-bypass:
+    // a cashier must not be able to open a shift without the opening-float
+    // screen, so the header must NOT call openShiftNow directly.
+    const onOpenShiftDialog = vi.fn();
     const openShiftNow = vi.fn();
     h.ctx = baseCtx({ shiftId: null, openShiftNow });
-    render(<Header {...HEADER_PROPS} />);
+    render(<Header {...HEADER_PROPS} onOpenShiftDialog={onOpenShiftDialog} />);
     fireEvent.click(screen.getByRole("button", { name: "فتح وردية" }));
-    expect(openShiftNow).toHaveBeenCalledTimes(1);
+    expect(onOpenShiftDialog).toHaveBeenCalledTimes(1);
+    expect(openShiftNow).not.toHaveBeenCalled();
   });
 
-  it("while the open is in flight the button is disabled (single commit — the openOnce latch equivalent)", () => {
-    h.ctx = baseCtx({ shiftId: null, openingShift: true });
+  it("offline: the header فتح وردية button is disabled (open requires the server)", () => {
+    h.ctx = baseCtx({ shiftId: null, engineStatus: { online: false, syncing: false, queueCount: 0 } });
     render(<Header {...HEADER_PROPS} />);
     expect(screen.getByRole("button", { name: "فتح وردية" })).toBeDisabled();
   });
@@ -203,5 +242,40 @@ describe("إغلاق الوردية — التدفّق الكامل (close-start
     fireEvent.click(screen.getByRole("button", { name: "رجوع" }));
     expect(await screen.findByRole("button", { name: "إغلاق الوردية" })).toBeInTheDocument();
     expect(screen.queryByLabelText("المعدود — كاش")).not.toBeInTheDocument();
+  });
+});
+
+describe("الرصيد الافتتاحي — opening float in the close flow", () => {
+  it("renders the stored float READ-ONLY (no input) and still rides in the close payload", async () => {
+    h.ctx = baseCtx({ shiftId: "SH-9" });
+    const { captured } = stubShiftFetchWith(CLOSING_WITH_FLOAT);
+    render(<ShiftDialog open onClose={vi.fn()} />);
+
+    fireEvent.click(await screen.findByRole("button", { name: "إغلاق الوردية" }));
+    const cashInput = await screen.findByLabelText("المعدود — كاش");
+    const madaInput = screen.getByLabelText("المعدود — شبكة");
+
+    // The float shows as a plain read-only row — never an editable input the
+    // cashier could tamper with (the server ignores client float values anyway).
+    expect(screen.getByText("الرصيد الافتتاحي (ضمن المتوقع نقدًا)")).toBeInTheDocument();
+    expect(screen.getByText("25.00 ر.س")).toBeInTheDocument();
+    expect(screen.queryByDisplayValue("25")).toBeNull();
+    expect(screen.queryByDisplayValue("25.00")).toBeNull();
+
+    // Count exactly the expected (cash 125 = 100 sales + 25 float, mada 50) →
+    // zero variance → close unlocks with no note.
+    fireEvent.change(cashInput, { target: { value: "125" } });
+    fireEvent.change(madaInput, { target: { value: "50" } });
+    fireEvent.click(screen.getByRole("checkbox"));
+    fireEvent.click(screen.getByRole("button", { name: "تأكيد إغلاق الوردية" }));
+    await screen.findByText("أُغلقت الوردية");
+
+    // The close payload echoes the stored float for request-shape parity even
+    // though the server recomputes it authoritatively from the DB.
+    expect(captured.closeBody).toMatchObject({
+      shiftId: "SH-9",
+      openingFloat: 25,
+      paymentTotals: { "1": 125, "2": 50 },
+    });
   });
 });

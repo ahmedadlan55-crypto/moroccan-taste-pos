@@ -69,6 +69,10 @@ export function ShiftDetailDrawer({ shift, onClose }: ShiftDetailDrawerProps) {
               label="الفعلي"
               value={<span dir="ltr" className="tabular-nums">{formatCurrency(shiftActual(shift))}</span>}
             />
+            <DetailStat
+              label="الرصيد الافتتاحي"
+              value={<span dir="ltr" className="tabular-nums">{formatCurrency(shift.openingFloat ?? 0)}</span>}
+            />
           </div>
 
           <div>

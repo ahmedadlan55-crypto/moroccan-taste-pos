@@ -2174,7 +2174,42 @@ router.get('/invoice/:orderId', async (req, res) => {
       return res.status(403).json({ success: false, code: 'PERMISSION_DENIED', error: 'لا تملك صلاحية عرض فاتورة كاشير آخر' });
     }
 
-    const [items] = await db.query('SELECT * FROM sales_items WHERE order_id = ?', [req.params.orderId]);
+    // ORDER BY id ASC: sales_items rows are inserted one per line, in cart
+    // order, at checkout (see the `for (let lineIdx ...)` loop above) — this
+    // is the only way to recover each row's original ordinal, which is also
+    // its O2C source_line_id ('L' + lineIdx). No column records the ordinal
+    // directly.
+    const [items] = await db.query('SELECT * FROM sales_items WHERE order_id = ? ORDER BY id ASC', [req.params.orderId]);
+
+    // ─── close2/pos-returns · ReturnRequestDialog contract ───
+    // The returns flow needs each line's REAL ar_document_lines.id
+    // (originalLineId) and the ar_documents.version (expectedVersion) —
+    // ReturnRequestDialog.tsx has read these as `lineId`/`version` since it
+    // was built, but this endpoint never actually supplied them, so every
+    // real return request submitted lineId "0"/"1"/... (the array position)
+    // and the server correctly rejected it with VALIDATION_ERROR "سطر أصلي
+    // غير موجود". Degrades to no lineId/version (dialog falls back to the
+    // position, which still fails server-side) for a pre-O2C-projection sale
+    // or when O2C is disabled — never fatal to the receipt/reprint path this
+    // endpoint also serves.
+    let arDocVersion = null;
+    const lineIdByOrdinal = {};
+    try {
+      const [arDocs] = await db.query(
+        "SELECT id, version FROM ar_documents WHERE source_type='pos' AND source_id=? LIMIT 1",
+        [req.params.orderId]);
+      if (arDocs.length) {
+        arDocVersion = arDocs[0].version;
+        const [arLines] = await db.query(
+          'SELECT id, source_line_id FROM ar_document_lines WHERE document_id=?', [arDocs[0].id]);
+        arLines.forEach(l => {
+          const m = /^L(\d+)$/.exec(l.source_line_id || '');
+          if (m) lineIdByOrdinal[Number(m[1])] = l.id;
+        });
+      }
+    } catch (e) {
+      console.warn('[sales/invoice] ar_document_lines lookup failed for sale', req.params.orderId, '—', e.code || e.message);
+    }
 
     // ── Lookup cashier display name from settings.user_meta ──
     // The receipt shows "You were served by : <FullName>, <empNo>".
@@ -2334,7 +2369,13 @@ router.get('/invoice/:orderId', async (req, res) => {
       splitDetails: (function () { try { return sale.split_details_json ? JSON.parse(sale.split_details_json) : null; } catch (e) { return null; } })(),
       cashTendered: Number(sale.cash_tendered) || 0,
       changeDue: Number(sale.change_due) || 0,
-      items: items.map(i => ({ name: i.item_name, qty: i.qty, price: Number(i.price), total: Number(i.total) })),
+      items: items.map((i, idx) => ({
+        name: i.item_name, qty: i.qty, price: Number(i.price), total: Number(i.total),
+        lineId: lineIdByOrdinal[idx] ?? null,
+      })),
+      // O2C document version — required by ReturnRequestDialog as
+      // expectedVersion (optimistic-concurrency guard on the return create).
+      version: arDocVersion,
       // V5.7.9 — receipt enrichment
       cashierName: cashierName,
       cashierEmpNo: cashierEmpNo,

@@ -28,8 +28,8 @@ function invoice(overrides: Partial<InvoiceDetail> = {}): InvoiceDetail {
     cashTendered: 50,
     changeDue: 4,
     items: [
-      { name: "شاي أتاي", qty: 2, price: 23, total: 46 },
-      { name: "ماء", qty: 3, price: 10, total: 30 },
+      { name: "شاي أتاي", qty: 2, price: 23, total: 46, lineId: null },
+      { name: "ماء", qty: 3, price: 10, total: 30, lineId: null },
     ],
     cashierName: "أحمد الكاشير",
     branchName: "فرع العليا",
@@ -57,6 +57,7 @@ function invoice(overrides: Partial<InvoiceDetail> = {}): InvoiceDetail {
     invoiceNumber: "INV-20260710-0042",
     voidSerial: null,
     returnSerial: null,
+    version: null,
     ...overrides,
   };
 }

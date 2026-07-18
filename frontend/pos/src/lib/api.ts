@@ -554,7 +554,13 @@ export interface InvoiceDetail {
   splitDetails: Array<{ method: string; amount: number }> | null;
   cashTendered: number;
   changeDue: number;
-  items: Array<{ name: string; qty: number; price: number; total: number }>;
+  // lineId = the real ar_document_lines.id for this line (null for a
+  // pre-O2C-projection sale, or when O2C is disabled) — ReturnRequestDialog
+  // requires it as originalLineId; the array position is rejected server-side.
+  items: Array<{ name: string; qty: number; price: number; total: number; lineId: string | null }>;
+  // ar_documents.version for this sale's O2C projection — required as
+  // expectedVersion on a return create (null under the same conditions as lineId).
+  version: number | null;
   cashierName: string;
   branchName: string;
   branchAddress: string;

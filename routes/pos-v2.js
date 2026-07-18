@@ -799,7 +799,7 @@ router.get('/catalog', POS, async (req, res) => {
     // identity is part of the ETag: an owner editing the receipt header must
     // reach cached offline clients on their next sync, not never. Same for the
     // print preferences — a paper-width change must reach cached clients too.
-    const etag = '"' + crypto.createHash('sha1').update(JSON.stringify({ i: data.items, c: data.combos, pm: data.paymentMethods, ch: data.channels, sel: reqChannelId || null, v: data.vatRate, id: identity, sf: receiptShowFields, rs: receiptSettings })).digest('hex') + '"';
+    const etag = '"' + crypto.createHash('sha1').update(JSON.stringify({ i: data.items, c: data.combos, pm: data.paymentMethods, ch: data.channels, cn: data.channel, sel: reqChannelId || null, v: data.vatRate, id: identity, sf: receiptShowFields, rs: receiptSettings })).digest('hex') + '"';
     if (req.get('If-None-Match') === etag) return res.status(304).end();
     res.setHeader('ETag', etag);
     res.json({ success: true, data });

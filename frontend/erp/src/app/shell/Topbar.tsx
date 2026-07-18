@@ -41,8 +41,9 @@ export function Topbar() {
             </div>
           </div>
 
-          {/* Desktop: search + scope inline */}
-          <div className="hidden items-center gap-2 lg:flex">
+          {/* Wide desktop: keep the complete labels visible instead of shrinking
+              the scope selects into clipped native controls. */}
+          <div className="hidden items-center gap-2 2xl:flex">
             <GlobalSearch />
             <CompanyBranchSelect />
           </div>
@@ -50,7 +51,7 @@ export function Topbar() {
           <div className="flex shrink-0 items-center gap-1.5 sm:gap-2">
             <button
               type="button"
-              className="inline-flex min-h-10 items-center gap-2 rounded-xl border border-slate-200 bg-white px-2.5 text-xs font-extrabold text-slate-600 transition hover:border-slate-300 hover:text-slate-900 focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-teal-100 lg:hidden"
+              className="inline-flex min-h-11 items-center gap-2 rounded-xl border border-slate-200 bg-white px-3 text-xs font-extrabold text-slate-600 shadow-sm transition hover:border-slate-300 hover:text-slate-900 focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-teal-100 2xl:hidden"
               aria-label={mobileToolsOpen ? "إغلاق البحث ونطاق العمل" : "فتح البحث ونطاق العمل"}
               aria-expanded={mobileToolsOpen}
               aria-controls="mobile-shell-tools"
@@ -65,11 +66,12 @@ export function Topbar() {
           </div>
         </div>
 
-        {/* Mobile/tablet: full-width search + scope row */}
+        {/* Mobile/laptop: full-width search + scope row. At these widths a
+            deliberate second row is clearer than three compressed controls. */}
         {mobileToolsOpen && (
           <div
             id="mobile-shell-tools"
-            className="mt-2.5 grid gap-2 border-t border-slate-200/70 pt-2.5 lg:hidden md:grid-cols-[minmax(0,1fr)_minmax(20rem,1fr)]"
+            className="mt-2.5 grid gap-2 border-t border-slate-200/70 pt-2.5 2xl:hidden md:grid-cols-[minmax(0,1fr)_minmax(22rem,1fr)]"
           >
             <GlobalSearch />
             <CompanyBranchSelect fullWidth />

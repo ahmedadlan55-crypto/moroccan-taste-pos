@@ -1862,5 +1862,82 @@
   "boot-lang-toggle": {
     "status": "not-required",
     "reason": "قرار منتج موثَّق: المنظومة الموحدة (ERP + POS الجديد) عربية فقط بالتصميم — dynamic-i18n القديمة كانت وحدة مشتركة تُحذف مع القشرة القديمة؛ يُسجَّل في التقرير النهائي كقرار قابل للمراجعة"
+  },
+  "combo-chooser-open": {
+    "status": "covered",
+    "react": "frontend/pos/src/state/store.tsx — addItem intercepts isCombo items and opens ComboDialog (mounted by PosProvider) instead of adding; the cart stays empty until confirm (legacy openComboChooser)",
+    "api": "GET /api/pos/v2/catalog — combos:[{id,menuId,name,price,fixedComponents,groups:[{id,name,min,max,options:[{menuId,name,priceDelta}]}]}] + isCombo on combo items (pinned close/w25 contract; parallel backend stream ships it — the server validates comboChoices at submit)",
+    "cap": "none",
+    "test": "frontend/pos/src/state/__tests__/parity-store-combos.test.tsx (combo-chooser-open)"
+  },
+  "combo-defs-cache": {
+    "status": "covered",
+    "react": "frontend/pos/src/state/store.tsx findComboDef — definitions resolve from Catalog.combos in the SAME cached catalog payload (legacy kept a separate pos_combos_cache + on-demand fetch); a missing definition toasts and adds NOTHING rather than charging a combo without its picks",
+    "api": "GET /api/pos/v2/catalog — combos:[{id,menuId,name,price,fixedComponents,groups:[{id,name,min,max,options:[{menuId,name,priceDelta}]}]}] + isCombo on combo items (pinned close/w25 contract; parallel backend stream ships it — the server validates comboChoices at submit)",
+    "cap": "none",
+    "test": "frontend/pos/src/state/__tests__/parity-store-combos.test.tsx (combo-defs-cache — orphan combo toasts, adds nothing)"
+  },
+  "combo-fixed-components": {
+    "status": "covered",
+    "react": "frontend/pos/src/components/dialogs/ComboDialog.tsx — «يشمل دائماً: …» block, read-only (no buttons), qty ×N when >1 (legacy fixedHtml)",
+    "api": "GET /api/pos/v2/catalog — combos:[{id,menuId,name,price,fixedComponents,groups:[{id,name,min,max,options:[{menuId,name,priceDelta}]}]}] + isCombo on combo items (pinned close/w25 contract; parallel backend stream ships it — the server validates comboChoices at submit)",
+    "cap": "none",
+    "test": "frontend/pos/src/components/__tests__/ComboDialog.test.tsx (fixed components — read-only)"
+  },
+  "combo-choice-groups": {
+    "status": "covered",
+    "react": "frontend/pos/src/components/dialogs/ComboDialog.tsx — one fieldset per group with the legacy rule line (اختر حتى N / اختر واحداً · مطلوب / اختياري); empty groups render لا خيارات متاحة; a combo with no groups shows هذا العرض بلا خيارات and is confirmable",
+    "api": "GET /api/pos/v2/catalog — combos:[{id,menuId,name,price,fixedComponents,groups:[{id,name,min,max,options:[{menuId,name,priceDelta}]}]}] + isCombo on combo items (pinned close/w25 contract; parallel backend stream ships it — the server validates comboChoices at submit)",
+    "cap": "none",
+    "test": "frontend/pos/src/components/__tests__/ComboDialog.test.tsx (gate + no-groups cases)"
+  },
+  "combo-option-toggle": {
+    "status": "covered",
+    "react": "frontend/pos/src/components/dialogs/ComboDialog.tsx toggleOption — off always allowed; max<=1 replaces the pick; at max further picks are refused (unpicked options also disabled visually)",
+    "api": "GET /api/pos/v2/catalog — combos:[{id,menuId,name,price,fixedComponents,groups:[{id,name,min,max,options:[{menuId,name,priceDelta}]}]}] + isCombo on combo items (pinned close/w25 contract; parallel backend stream ships it — the server validates comboChoices at submit)",
+    "cap": "none",
+    "test": "frontend/pos/src/components/__tests__/ComboDialog.test.tsx (combo-option-toggle — max enforced)"
+  },
+  "combo-confirm-gate": {
+    "status": "covered",
+    "react": "frontend/pos/src/components/dialogs/ComboDialog.tsx gateSatisfied — «أضف للسلة» disabled until EVERY group has >= min picks; re-locks if a required pick is toggled off; belt-and-braces re-check inside onClick",
+    "api": "GET /api/pos/v2/catalog — combos:[{id,menuId,name,price,fixedComponents,groups:[{id,name,min,max,options:[{menuId,name,priceDelta}]}]}] + isCombo on combo items (pinned close/w25 contract; parallel backend stream ships it — the server validates comboChoices at submit)",
+    "cap": "none",
+    "test": "frontend/pos/src/components/__tests__/ComboDialog.test.tsx (combo-confirm-gate)"
+  },
+  "combo-finalize": {
+    "status": "covered",
+    "react": "frontend/pos/src/components/dialogs/ComboDialog.tsx finalizeCombo + store.tsx confirmCombo — ONE cart line: comboChoices frozen as {[groupId]: menuId[]} for the server, notes = human summary (CartPanel + buildKitchenTicketHtml already print notes), unitPrice = combo price + picked deltas frozen at add; identical picks stack, different picks split (legacy _comboFinalize/modifiers-key stacking)",
+    "api": "GET /api/pos/v2/catalog — combos:[{id,menuId,name,price,fixedComponents,groups:[{id,name,min,max,options:[{menuId,name,priceDelta}]}]}] + isCombo on combo items (pinned close/w25 contract; parallel backend stream ships it — the server validates comboChoices at submit)",
+    "cap": "none",
+    "test": "frontend/pos/src/state/__tests__/parity-store-combos.test.tsx (combo-finalize) + frontend/pos/src/components/__tests__/ComboDialog.test.tsx (exact frozen shape)"
+  },
+  "combo-modal-title-price": {
+    "status": "covered",
+    "react": "frontend/pos/src/components/dialogs/ComboDialog.tsx — Dialog title = «name — price ر.س», price recomputes live as priceDelta options are picked/replaced (legacy title was static because legacy combos had no deltas)",
+    "api": "GET /api/pos/v2/catalog — combos:[{id,menuId,name,price,fixedComponents,groups:[{id,name,min,max,options:[{menuId,name,priceDelta}]}]}] + isCombo on combo items (pinned close/w25 contract; parallel backend stream ships it — the server validates comboChoices at submit)",
+    "cap": "none",
+    "test": "frontend/pos/src/components/__tests__/ComboDialog.test.tsx (combo-modal-title-price)"
+  },
+  "product-card-combo-badge": {
+    "status": "covered",
+    "react": "frontend/pos/src/components/ProductGrid.tsx ProductCard — amber «عرض» badge (data-testid=combo-badge) rendered only when item.isCombo; decoration only, virtualizer/image/search untouched",
+    "api": "GET /api/pos/v2/catalog — combos:[{id,menuId,name,price,fixedComponents,groups:[{id,name,min,max,options:[{menuId,name,priceDelta}]}]}] + isCombo on combo items (pinned close/w25 contract; parallel backend stream ships it — the server validates comboChoices at submit)",
+    "cap": "none",
+    "test": "frontend/pos/src/components/__tests__/ProductGrid.badge.test.tsx"
+  },
+  "offline-combos-cache": {
+    "status": "covered",
+    "react": "frontend/pos/src/lib/catalogCache.ts — the Catalog object is persisted to IndexedDB wholesale (no field picking), so combos + isCombo ride the existing cache; offline combo sales need zero extra plumbing (legacy needed its own pos_combos_cache)",
+    "api": "GET /api/pos/v2/catalog — combos:[{id,menuId,name,price,fixedComponents,groups:[{id,name,min,max,options:[{menuId,name,priceDelta}]}]}] + isCombo on combo items (pinned close/w25 contract; parallel backend stream ships it — the server validates comboChoices at submit)",
+    "cap": "none",
+    "test": "frontend/pos/src/lib/__tests__/catalogCache.combos.test.ts (200 persists combos intact; offline serves them)"
+  },
+  "boot-combos-cache-restore": {
+    "status": "covered",
+    "react": "frontend/pos/src/lib/catalogCache.ts loadCatalog offline branch + store.tsx catalog query — an offline boot restores the cached catalog object as-is (combos included) before any network; 304 keeps serving it; a pre-combos cache (no field) still loads (legacy app.js boot restored pos_combos_cache separately)",
+    "api": "GET /api/pos/v2/catalog — combos:[{id,menuId,name,price,fixedComponents,groups:[{id,name,min,max,options:[{menuId,name,priceDelta}]}]}] + isCombo on combo items (pinned close/w25 contract; parallel backend stream ships it — the server validates comboChoices at submit)",
+    "cap": "none",
+    "test": "frontend/pos/src/lib/__tests__/catalogCache.combos.test.ts (offline boot restore + 304 + pre-combos catalog)"
   }
 }

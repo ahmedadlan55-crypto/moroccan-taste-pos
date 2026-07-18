@@ -87,6 +87,8 @@ const HEADER_PROPS = {
   onOpenShiftDialog: vi.fn(),
   onOpenSyncReport: vi.fn(),
   onOpenMyInvoices: vi.fn(),
+  onOpenStocktake: vi.fn(),
+  onOpenRequisitions: vi.fn(),
 };
 
 afterEach(() => vi.unstubAllGlobals());
@@ -150,17 +152,27 @@ describe("إغلاق الوردية — التدفّق الكامل (close-start
     expect(cashInput).toBeInTheDocument();
     expect(madaInput).toBeInTheDocument();
 
-    // shift-close-recalc + shift-close-per-method-diff + shift-close-comparison-panel:
-    // typing recomputes the per-method variance live
+    // BLIND COUNT (close/b2-pos-daily): typing counted amounts must NOT show
+    // expected/variance — they stay hidden until the cashier ticks «أنهيت العدّ»
     fireEvent.change(cashInput, { target: { value: "90" } });
     fireEvent.change(madaInput, { target: { value: "50" } });
+    expect(screen.queryByText("-10.00")).not.toBeInTheDocument();
+    expect(screen.queryByText("المتوقع")).not.toBeInTheDocument();
+
+    // shift-close-recalc + shift-close-per-method-diff + shift-close-comparison-panel:
+    // the reveal gate shows the live variance comparison
+    fireEvent.click(screen.getByRole("checkbox"));
     // كاش row variance −10.00 AND the totals row −10.00
     expect(screen.getAllByText("-10.00").length).toBeGreaterThanOrEqual(2);
     // totals: counted 140.00 vs expected 150.00
     expect(screen.getByText("140.00")).toBeInTheDocument();
 
+    // variance ≠ 0 ⇒ the close button stays LOCKED (its label becomes the
+    // closeGate reason) until a ≥10-char explanation is typed
+    expect(screen.getByRole("button", { name: /اشرح سبب الفرق/ })).toBeDisabled();
+
     // shift-close-general-notes: free-text notes ride in the close payload
-    fireEvent.change(screen.getByLabelText("ملاحظات الإغلاق"), { target: { value: "عدّ مسائي" } });
+    fireEvent.change(screen.getByLabelText(/ملاحظات الإغلاق/), { target: { value: "عجز عشرة ريالات — عدّ مسائي" } });
 
     // shift-close-confirm: POST /api/shifts/close-v3 with paymentTotals keyed by method id
     fireEvent.click(screen.getByRole("button", { name: "تأكيد إغلاق الوردية" }));
@@ -170,7 +182,7 @@ describe("إغلاق الوردية — التدفّق الكامل (close-start
       openingFloat: 0,
       denominations: [],
       paymentTotals: { "1": 90, "2": 50 },
-      notes: "عدّ مسائي",
+      notes: "عجز عشرة ريالات — عدّ مسائي",
     });
 
     // shift-report-modal-fallback: the close report renders inline — ALWAYS,

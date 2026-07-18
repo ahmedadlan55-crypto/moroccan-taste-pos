@@ -4,6 +4,7 @@ import { Building2, Image as ImageIcon, Layers, ListChecks, MapPin, Printer, Rec
 import { apiClient } from "@/shared/api";
 import { Button, EmptyState, ErrorState, Input, LoadingState, PageHeader, PanelTitle, StatusBadge, Toggle } from "@/shared/ui";
 import { Field } from "@/shared/forms";
+import { buildSaleReceiptHtml, type PaperWidth } from "../../../../../shared/invoiceTemplate";
 
 // /administration/invoice-settings — every value the printed invoice carries,
 // with WHERE it comes from.
@@ -219,6 +220,39 @@ export function InvoiceSettingsPage() {
       returnPolicy: draft.ReceiptReturnPolicy ?? identity.returnPolicy,
     };
   }, [identity, draft]);
+
+  /** Real preview: builds the EXACT HTML the cashier's print window renders
+   *  (buildSaleReceiptHtml, the same function receipt.ts wraps), fed a sample
+   *  invoice + the draft identity/showFields — not a mock card. */
+  const previewHtml = (paperWidth: PaperWidth): string => {
+    if (!preview) return "";
+    return buildSaleReceiptHtml({
+      lines: [
+        { name: "قهوة عربية", qty: 2, unitPrice: 12, lineDiscount: 0 },
+        { name: "كرواسون", qty: 1, unitPrice: 9, lineDiscount: 0 },
+      ],
+      payments: [{ method: "cash", amount: 33.35 }],
+      totals: { subtotal: 33, lineDiscountTotal: 0, discountAmount: 0, vatTotal: 4.35, total: 33.35 },
+      invoiceNumber: "INV-PREVIEW-0001",
+      fallbackSellerName: preview.sellerName || "معاينة",
+      cashierName: "معاينة",
+      vatRate: preview.vatRate || 15,
+      paperWidth,
+      identity: preview,
+      showFields: {
+        logo: showFields.logo !== false,
+        taxNumber: showFields.taxNumber !== false,
+        crNumber: showFields.crNumber !== false,
+        nationalAddress: showFields.nationalAddress !== false,
+        phone: showFields.phone !== false,
+        email: showFields.email !== false,
+        cashier: showFields.cashier !== false,
+        customer: showFields.customer !== false,
+        qr: showFields.qr !== false,
+      },
+      zatcaQrDataUrl: null,
+    });
+  };
 
   if (isLoading) return <LoadingState />;
   if (isError) return <ErrorState error={error} onRetry={() => refetch()} />;
@@ -515,40 +549,23 @@ export function InvoiceSettingsPage() {
       </section>
 
       <section className="surface">
-        <PanelTitle icon={ReceiptText} title="معاينة" subtitle="شكل كتلة البائع أعلى الفاتورة وأسفلها — تحترم مفاتيح الإظهار أعلاه." />
-        <div className="mx-auto my-5 w-full max-w-[320px] rounded-xl border-2 border-dashed border-slate-300 bg-white p-4 text-center" dir="rtl">
-          {showFields.logo !== false && (
-            logoValue ? (
-              <img src={logoValue} alt="شعار" className="mx-auto mb-2 max-h-16 max-w-[120px] object-contain" />
-            ) : (
-              <div className="mx-auto mb-2 grid h-16 w-[120px] place-items-center rounded bg-slate-100 text-[10px] font-bold text-slate-400">لا يوجد شعار</div>
-            )
-          )}
-          <div className="text-sm font-extrabold text-slate-900">{preview?.sellerName || "—"}</div>
-          {preview?.header && <div className="mt-1 whitespace-pre-line text-[11px] text-slate-600">{preview.header}</div>}
-          {identity.branchName && <div className="text-[11px] text-slate-500">{identity.branchName}</div>}
-          {showFields.nationalAddress !== false && preview?.nationalAddress && (
-            <div className="text-[11px] text-slate-500">{preview.nationalAddress}</div>
-          )}
-          {showFields.taxNumber !== false && (
-            <div className="mt-1 font-mono text-[11px] text-slate-600">
-              {preview?.taxNumber ? `الرقم الضريبي: ${preview.taxNumber}` : "الرقم الضريبي: —"}
+        <PanelTitle
+          icon={ReceiptText}
+          title="معاينة"
+          subtitle="نفس مسار العرض الذي تطبعه نقطة البيع فعليًا (buildSaleReceiptHtml) — ليست محاكاة، بل الفاتورة الحقيقية بفاتورة نموذجية، لكل مقاس ورق."
+        />
+        <div className="grid gap-4 p-5 lg:grid-cols-3">
+          {(["58", "80", "A4"] as const).map((w) => (
+            <div key={w} className="flex flex-col items-center gap-2">
+              <StatusBadge>{w === "A4" ? "A4" : `${w}mm`}</StatusBadge>
+              <iframe
+                title={`معاينة الفاتورة — ${w}`}
+                srcDoc={previewHtml(w)}
+                className="h-[520px] w-full rounded-xl border-2 border-dashed border-slate-300 bg-white"
+                sandbox=""
+              />
             </div>
-          )}
-          {showFields.crNumber !== false && preview?.crNumber && (
-            <div className="font-mono text-[11px] text-slate-600">س.ت: {preview.crNumber}</div>
-          )}
-          <div className="my-2 border-t border-dashed border-slate-300" />
-          <div className="text-[10px] text-slate-400">— بنود الفاتورة —</div>
-          <div className="my-2 border-t border-dashed border-slate-300" />
-          {showFields.qr !== false && (
-            <div className="mx-auto my-2 grid h-14 w-14 place-items-center rounded border border-dashed border-slate-300 text-[9px] font-bold text-slate-400">
-              QR
-            </div>
-          )}
-          <div className="text-[11px] font-bold text-slate-700">{preview?.thankYou || "شُكرًا لِزيارَتِكم"}</div>
-          {preview?.footer && <div className="mt-1 whitespace-pre-line text-[10px] text-slate-500">{preview.footer}</div>}
-          {preview?.returnPolicy && <div className="mt-1 whitespace-pre-line text-[10px] text-slate-500">{preview.returnPolicy}</div>}
+          ))}
         </div>
       </section>
 

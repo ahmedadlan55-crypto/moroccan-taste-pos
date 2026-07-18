@@ -100,7 +100,19 @@ export function ChangePasswordPage() {
       // fresh one or this session logs itself out on the next request.
       if (data.token) localStorage.setItem("pos_token", data.token);
       const redirect = params.get("redirect");
-      navigate(redirect && redirect.startsWith("/") ? redirect : "/overview", { replace: true });
+      if (redirect && redirect.startsWith("/")) {
+        // `redirect` is an absolute path that may target a DIFFERENT app
+        // (e.g. PosLogin.tsx sends cashiers here with redirect=/pos/, since
+        // this is the one shared change-password screen for both apps).
+        // react-router's navigate() resolves relative to this router's own
+        // basename ("/app" in production), so navigate("/pos/") actually
+        // lands on "/app/pos/" — the ERP's own NotFound page, not the POS
+        // till. A real cross-app hop needs a full navigation, not client
+        // routing.
+        window.location.assign(redirect);
+        return;
+      }
+      navigate("/overview", { replace: true });
     } catch {
       setErrors(["تعذّر الاتصال بالخادم. حاول مجددًا."]);
       setBusy(false);

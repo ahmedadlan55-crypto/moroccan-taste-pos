@@ -101,6 +101,13 @@ export default function App() {
 
   // ── Held count (badge) ───────────────────────────────────────────────────
   const refreshHeldCount = useCallback(async () => {
+    // Runs from a top-level effect that fires on every mount — including the
+    // still-unauthenticated first render that shows <PosLogin/> — so without
+    // this guard it fired an authenticated GET /pos/v2/orders?status=held
+    // before there was any token, throwing a background 401 on the login
+    // screen (a real console/network violation this project treats as a
+    // hard failure everywhere else).
+    if (!user) { setHeldCount(0); return; }
     try {
       const local = await engine.localHeldOrders();
       const ids = new Set(local.map((d) => d.id));
@@ -116,7 +123,7 @@ export default function App() {
     } catch {
       setHeldCount(0);
     }
-  }, [engine, engineStatus.online]);
+  }, [engine, engineStatus.online, user]);
 
   useEffect(() => {
     void refreshHeldCount();

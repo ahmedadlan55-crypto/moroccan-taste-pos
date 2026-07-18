@@ -52,17 +52,17 @@ export default defineConfig({
     },
     {
       name: "mobile-390",
-      testMatch: "**/responsive.spec.ts",
+      testMatch: ["**/responsive.spec.ts", "**/critical-cashier-shift.spec.ts"],
       use: { ...devices["Desktop Chrome"], viewport: { width: 390, height: 844 }, hasTouch: true },
     },
     {
       name: "tablet-768",
-      testMatch: "**/responsive.spec.ts",
+      testMatch: ["**/responsive.spec.ts", "**/critical-cashier-shift.spec.ts"],
       use: { ...devices["Desktop Chrome"], viewport: { width: 768, height: 1024 }, hasTouch: true },
     },
     {
       name: "laptop-1024",
-      testMatch: "**/responsive.spec.ts",
+      testMatch: ["**/responsive.spec.ts", "**/critical-cashier-shift.spec.ts"],
       use: { ...devices["Desktop Chrome"], viewport: { width: 1024, height: 768 } },
     },
   ],

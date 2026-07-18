@@ -1,0 +1,463 @@
+{
+  "cust-add-modal": {
+    "status": "covered",
+    "react": "frontend/pos/src/components/dialogs/CustomerAddDialog.tsx",
+    "api": "POST /api/erp/customers",
+    "cap": "customers.create (cashier holds it; route CUSTOMER_WRITE = admin/manager/cashier)",
+    "test": "frontend/pos/src/components/__tests__/customerDialogs.test.tsx"
+  },
+  "cust-add-validation": {
+    "status": "covered",
+    "react": "frontend/pos/src/components/dialogs/CustomerAddDialog.tsx (validateNewCustomer — mirrors doSave :1820-22)",
+    "test": "frontend/pos/src/components/__tests__/customerDialogs.test.tsx"
+  },
+  "cust-add-save-link": {
+    "status": "covered",
+    "react": "frontend/pos/src/components/dialogs/CustomerAddDialog.tsx → onCreated → CustomerPicker.onChange → store.setCustomerRef (auto-attach)",
+    "api": "POST /api/erp/customers (exact legacy doSave body, id:'' = INSERT)",
+    "test": "frontend/pos/src/components/__tests__/customerDialogs.test.tsx"
+  },
+  "cust-add-dup-phone": {
+    "status": "covered",
+    "react": "frontend/pos/src/components/dialogs/CustomerAddDialog.tsx (server message + «استدعاء العميل الموجود» → search prefilled with the phone)",
+    "test": "frontend/pos/src/components/__tests__/customerDialogs.test.tsx"
+  },
+  "cust-add-enter-submit": {
+    "status": "covered",
+    "react": "frontend/pos/src/components/dialogs/CustomerAddDialog.tsx (native <form> onSubmit — Enter in any field saves)",
+    "test": "frontend/pos/src/components/__tests__/customerDialogs.test.tsx"
+  },
+  "cust-add-readback": {
+    "status": "not-required",
+    "reason": "The legacy readback (app.js:1863-80) guarded a GAS-bridge failure mode: a 'successful' save that never reached the DB. The React client's typed fetch throws ApiError on !success or any HTTP failure, so a silent no-row success cannot occur; the picker re-queries the live server on demand."
+  },
+  "cust-search-open": {
+    "status": "covered",
+    "react": "frontend/pos/src/components/CartPanel.tsx (CustomerAttach) → frontend/pos/src/components/CustomerPicker.tsx",
+    "api": "GET /api/order-to-cash/customers/search",
+    "test": "frontend/pos/src/components/__tests__/CustomerPicker.test.tsx"
+  },
+  "cust-search-recent": {
+    "status": "covered",
+    "react": "frontend/pos/src/components/CustomerPicker.tsx (first page renders on open, before any typing)",
+    "test": "frontend/pos/src/components/__tests__/CustomerPicker.test.tsx"
+  },
+  "cust-search-debounce": {
+    "status": "covered",
+    "react": "frontend/pos/src/components/CustomerPicker.tsx (250ms debounce — same interval as app.js:1648)",
+    "test": "frontend/pos/src/components/__tests__/CustomerPicker.test.tsx"
+  },
+  "cust-search-enter-autoselect": {
+    "status": "covered",
+    "react": "frontend/pos/src/components/CustomerPicker.tsx (Enter picks the keyboard-active row — superset of the legacy single-result case)",
+    "test": "frontend/pos/src/components/__tests__/CustomerPicker.test.tsx"
+  },
+  "cust-search-click-select": {
+    "status": "covered",
+    "react": "frontend/pos/src/components/CustomerPicker.tsx (row click resolves the REAL customerId)",
+    "test": "frontend/pos/src/components/__tests__/CustomerPicker.test.tsx"
+  },
+  "cust-search-refresh": {
+    "status": "not-required",
+    "reason": "The legacy refresh button re-ran a statically rendered snapshot. The React picker queries live per keystroke (react-query, staleTime 15s, refetch on reopen) and surfaces a retry button on failure — a manual refresh would duplicate built-in behavior."
+  },
+  "cust-search-add-prefill": {
+    "status": "covered",
+    "react": "frontend/pos/src/components/CustomerPicker.tsx («عميل جديد» under the list; query prefills phone when digits, else name)",
+    "test": "frontend/pos/src/components/__tests__/customerDialogs.test.tsx"
+  },
+  "cust-search-empty-result": {
+    "status": "covered",
+    "react": "frontend/pos/src/components/CustomerPicker.tsx («لا عملاء مطابقون» + the add affordance stays reachable)",
+    "test": "frontend/pos/src/components/__tests__/customerDialogs.test.tsx"
+  },
+  "cust-search-null-guard": {
+    "status": "not-required",
+    "reason": "The legacy null-guard (app.js:1655-65) detected the GAS bridge returning null for an unregistered function. The fetch client cannot return null for a live route — failures throw ApiError and render the tested error+retry state instead."
+  },
+  "cust-status-bar": {
+    "status": "covered",
+    "react": "frontend/pos/src/components/CustomerPicker.tsx (linked chip: name/phone/totals) + CartPanel CustomerAttach button label",
+    "test": "frontend/pos/src/components/__tests__/customerDialogs.test.tsx"
+  },
+  "cust-unlink": {
+    "status": "covered",
+    "react": "frontend/pos/src/components/CustomerPicker.tsx (مسح العميل ×) + CartPanel إزالة",
+    "test": "frontend/pos/src/components/__tests__/customerDialogs.test.tsx"
+  },
+  "cust-totals-strip": {
+    "status": "covered",
+    "react": "frontend/pos/src/components/CustomerPicker.tsx (always-visible totalSpent strip on the linked chip)",
+    "api": "GET /api/erp/customers/:id/summary",
+    "test": "frontend/pos/src/components/__tests__/customerDialogs.test.tsx"
+  },
+  "cust-history-modal": {
+    "status": "covered",
+    "react": "frontend/pos/src/components/dialogs/CustomerHistoryDialog.tsx (4 KPIs + last-50 table; entry: السجل on the linked chip)",
+    "api": "GET /api/erp/customers/:id/summary",
+    "test": "frontend/pos/src/components/__tests__/customerDialogs.test.tsx"
+  },
+  "cust-history-meta": {
+    "status": "covered",
+    "react": "frontend/pos/src/components/dialogs/CustomerHistoryDialog.tsx (phone · first visit · customer type line)",
+    "test": "frontend/pos/src/components/__tests__/customerDialogs.test.tsx"
+  },
+  "cust-history-table": {
+    "status": "covered",
+    "react": "frontend/pos/src/components/dialogs/CustomerHistoryDialog.tsx (invoiceBadge — verbatim legacy mapping :1444-56)",
+    "test": "frontend/pos/src/components/__tests__/customerDialogs.test.tsx"
+  },
+  "cust-history-no-detail": {
+    "status": "not-required",
+    "reason": "Negative finding in the matrix itself: legacy rows are plain <tr> with no onclick (app.js:1462-71) — there is no behavior to port. The React table reproduces the same read-only rows."
+  },
+  "cust-modal-scaffold": {
+    "status": "covered",
+    "react": "frontend/pos/src/components/Dialog.tsx (Esc / backdrop click / × / focus containment — shared by the add+history+picker dialogs)",
+    "test": "frontend/pos/src/components/__tests__/customerDialogs.test.tsx"
+  },
+  "cust-crud-delete-unexposed": {
+    "status": "not-required",
+    "reason": "Deliberate: customer deletion is a master-data operation, server-gated to admin/manager (routes/erp/customers.js:26-28 CUSTOMER_ADMIN, v7.4). The POS never exposed it and must not — the legacy row records its absence."
+  },
+
+  "shift-close-start": {
+    "status": "covered",
+    "react": "frontend/pos/src/components/dialogs/ShiftDialog.tsx (startClosing)",
+    "api": "GET /api/shifts/closing-data-v3/:shiftId",
+    "test": "frontend/pos/src/components/__tests__/shiftClose.test.ts"
+  },
+  "shift-close-denomination-grid": {
+    "status": "covered",
+    "react": "frontend/pos/src/components/dialogs/ShiftDialog.tsx (CASH_DENOMS grid — full SAMA set mirroring _v3CashDenoms :5537; drives the cash counted figure and is submitted so shift_close_denominations persists)",
+    "api": "POST /api/shifts/close-v3 (denominations[])",
+    "test": "frontend/pos/src/components/__tests__/shiftClose.test.ts"
+  },
+  "shift-close-electronic-methods": {
+    "status": "covered",
+    "react": "frontend/pos/src/components/dialogs/ShiftDialog.tsx (per-method counted inputs for every non-cash method from closing-data-v3)",
+    "test": "frontend/pos/src/components/__tests__/shiftClose.test.ts"
+  },
+  "shift-close-recalc": {
+    "status": "covered",
+    "react": "frontend/pos/src/components/dialogs/ShiftDialog.tsx (varianceRows/denomSum/totals useMemo — recomputed on every input, like scV3Recalc)",
+    "test": "frontend/pos/src/components/__tests__/shiftClose.test.ts"
+  },
+  "shift-close-per-method-diff": {
+    "status": "covered",
+    "react": "frontend/pos/src/components/dialogs/ShiftDialog.tsx (post-reveal variance column + closed-mode breakdown table)",
+    "test": "frontend/pos/src/components/__tests__/shiftClose.test.ts"
+  },
+  "shift-close-reveal-gate": {
+    "status": "covered",
+    "react": "frontend/pos/src/components/dialogs/ShiftDialog.tsx (blind count: expected/variance columns hidden until «أنهيت العدّ»; closeGate)",
+    "test": "frontend/pos/src/components/__tests__/shiftClose.test.ts"
+  },
+  "shift-close-comparison-panel": {
+    "status": "covered",
+    "react": "frontend/pos/src/components/dialogs/ShiftDialog.tsx (revealed expected/counted/variance columns + totals row)",
+    "test": "frontend/pos/src/components/__tests__/shiftClose.test.ts"
+  },
+  "shift-close-variance-note-gate": {
+    "status": "covered",
+    "react": "frontend/pos/src/components/dialogs/ShiftDialog.tsx (closeGate — non-zero variance requires ≥10-char explanation, legacy :5767)",
+    "test": "frontend/pos/src/components/__tests__/shiftClose.test.ts"
+  },
+  "shift-close-button-lock-unlock": {
+    "status": "covered",
+    "react": "frontend/pos/src/components/dialogs/ShiftDialog.tsx (closeGate → disabled button showing the lock reason, legacy :5793-5812)",
+    "test": "frontend/pos/src/components/__tests__/shiftClose.test.ts"
+  },
+  "shift-close-general-notes": {
+    "status": "covered",
+    "react": "frontend/pos/src/components/dialogs/ShiftDialog.tsx (notes textarea → close-v3 notes)",
+    "api": "POST /api/shifts/close-v3 (notes)",
+    "test": "frontend/pos/src/components/__tests__/shiftClose.test.ts"
+  },
+  "shift-close-confirm": {
+    "status": "covered",
+    "react": "frontend/pos/src/components/dialogs/ShiftDialog.tsx (confirmClose — paymentTotals keyed by method id + counted denominations)",
+    "api": "POST /api/shifts/close-v3",
+    "test": "frontend/pos/src/components/__tests__/shiftClose.test.ts"
+  },
+  "shift-close-cancel": {
+    "status": "covered",
+    "react": "frontend/pos/src/components/dialogs/ShiftDialog.tsx (رجوع + Dialog Esc/backdrop/×; locked while busy)",
+    "test": "frontend/pos/src/components/__tests__/shiftClose.test.ts"
+  },
+  "shift-close-items-sold": {
+    "status": "not-required",
+    "reason": "The V2 close flow reads GET /api/shifts/closing-data-v3, which returns methods/expected only — routes/shifts.js:502-513 selects payment_method+total_final and builds no items array. The sold-items audit table ships on the X/Z thermal report instead (buildShiftReportHtml prints soldItems from /full-report), where the data actually exists."
+  },
+  "shift-close-modal-print-orphan": {
+    "status": "not-required",
+    "reason": "Matrix evidence (print row 4): 'NONE — no element in public/pos/index.html references scV3Print. Reachable only from the console' (app.js:6179-97). Dead code in legacy itself — nothing to port."
+  },
+  "shift-variance-modal-orphan": {
+    "status": "not-required",
+    "reason": "Matrix evidence (shift row 16): 'grep across public/pos/app.js finds zero references to #modalShiftVariance or #varianceBody. Never invoked' (index.html:783-93). Orphan markup — nothing to port."
+  },
+  "shift-thermal-report-print": {
+    "status": "covered",
+    "react": "frontend/pos/src/components/dialogs/ShiftDialog.tsx (طباعة تقرير Z after close) + frontend/pos/src/lib/receipt.ts (buildShiftReportHtml)",
+    "api": "GET /api/shifts/:id/full-report (Bearer attached by lib/api request())",
+    "test": "frontend/pos/src/components/__tests__/shiftClose.test.ts"
+  },
+  "shift-report-print": {
+    "status": "covered",
+    "react": "frontend/pos/src/components/dialogs/ShiftDialog.tsx (printReport) + frontend/pos/src/lib/receipt.ts (buildShiftReportHtml, 80mm-first with 58/A4)",
+    "api": "GET /api/shifts/:id/full-report",
+    "test": "frontend/pos/src/components/__tests__/shiftClose.test.ts"
+  },
+  "shift-report-print-window": {
+    "status": "covered",
+    "react": "frontend/pos/src/lib/receipt.ts (printHtml — the same print-window path receipts use; popup-block surfaces a toast)",
+    "test": "frontend/pos/src/components/__tests__/shiftClose.test.ts"
+  },
+  "shift-report-print-legacy": {
+    "status": "covered",
+    "react": "frontend/pos/src/components/dialogs/ShiftDialog.tsx + lib/receipt.ts — ONE React print path replaces both legacy duplicates (printShiftReport :2925 and _openShiftPrintWindow :6280)",
+    "test": "frontend/pos/src/components/__tests__/shiftClose.test.ts"
+  },
+  "shift-report-modal-fallback": {
+    "status": "covered",
+    "react": "frontend/pos/src/components/dialogs/ShiftDialog.tsx (closed-mode breakdown renders from the close RESPONSE — offline-safe like the legacy fallback; print failures surface as a toast)",
+    "test": "frontend/pos/src/components/__tests__/shiftClose.test.ts"
+  },
+  "shift-report-whatsapp": {
+    "status": "covered",
+    "react": "frontend/pos/src/components/dialogs/ShiftDialog.tsx (shareWhatsApp → wa.me/?text= of buildShiftWhatsAppText — Z totals + per-method lines)",
+    "test": "frontend/pos/src/components/__tests__/shiftClose.test.ts"
+  },
+  "xz-reports-absent": {
+    "status": "covered",
+    "react": "frontend/pos/src/components/dialogs/ShiftDialog.tsx — the legacy NEGATIVE finding is now filled: X-report (expected-only snapshot) from an open shift, Z-report after close",
+    "api": "GET /api/shifts/:id/full-report",
+    "test": "frontend/pos/src/components/__tests__/shiftClose.test.ts"
+  },
+
+  "receipt-paper-width": {
+    "status": "covered",
+    "react": "frontend/pos/src/lib/receipt.ts (resolvePaperWidth + baseCss — 58/80/A4 from catalog.receiptSettings, defensive default 80)",
+    "api": "GET /api/pos/v2/catalog (receiptSettings.paperWidth)",
+    "test": "frontend/pos/src/lib/__tests__/receipt.test.ts"
+  },
+  "receipt-paper-switch-receipt-modal": {
+    "status": "covered",
+    "react": "frontend/pos/src/lib/receipt.ts — the paper size is the OWNER setting applied to every print (resolvePaperWidth); the per-print 80/58 toggle moved into settings, deliberately",
+    "test": "frontend/pos/src/lib/__tests__/receipt.test.ts"
+  },
+  "receipt-paper-switch-printer-modal": {
+    "status": "covered",
+    "react": "frontend/pos/src/lib/receipt.ts — same owner-setting mechanism (the legacy printer-modal switch wrote a localStorage key only that browser saw)",
+    "test": "frontend/pos/src/lib/__tests__/receipt.test.ts"
+  },
+  "receipt-paper-persist": {
+    "status": "covered",
+    "react": "frontend/pos/src/lib/receipt.ts (resolvePaperWidth) — persistence is server-side (settings → catalog → offline catalog cache), surviving devices and reinstalls where the legacy localStorage key did not",
+    "test": "frontend/pos/src/lib/__tests__/receipt.test.ts"
+  },
+  "receipt-css-58-80": {
+    "status": "covered",
+    "react": "frontend/pos/src/lib/receipt.ts (baseCss — 48mm/72mm/190mm bodies with scaled type; body[data-paper])",
+    "test": "frontend/pos/src/lib/__tests__/receipt.test.ts"
+  },
+  "receipt-no-a4": {
+    "status": "covered",
+    "react": "frontend/pos/src/lib/receipt.ts — the legacy NEGATIVE finding (58/80 only) is now filled: A4 full-width layout",
+    "test": "frontend/pos/src/lib/__tests__/receipt.test.ts"
+  },
+  "receipt-reprint-last": {
+    "status": "covered",
+    "react": "frontend/pos/src/components/dialogs/MyInvoicesDialog.tsx (طباعة on every فواتيري row — the last invoice included)",
+    "api": "GET /api/sales/invoice/:orderId",
+    "test": "frontend/pos/src/components/__tests__/myInvoices.test.ts"
+  },
+  "receipt-reprint-arbitrary-MISSING": {
+    "status": "covered",
+    "react": "frontend/pos/src/components/dialogs/MyInvoicesDialog.tsx (reprintHtmlFromInvoice) — the legacy GAP is now filled: any shift invoice reprints with the stamped QR + frozen identity",
+    "api": "GET /api/sales/invoice/:orderId",
+    "test": "frontend/pos/src/components/__tests__/myInvoices.test.ts"
+  },
+  "receipt-silent-print": {
+    "status": "not-required",
+    "reason": "The hidden-iframe silent print (shared/receipt-template.js:332-48) was the delivery mechanism for auto-print, not a user-facing function. The React POS prints through an explicit window (printHtml) with a popup-block toast — one mechanism, no separate behavior to port."
+  },
+  "receipt-qr-render": {
+    "status": "covered",
+    "react": "frontend/pos/src/lib/receipt.ts (QR block renders the SERVER-stamped PNG data-URL; offline queued sales print an honest no-stamp line — never a CDN-encoded client QR)",
+    "api": "POST /api/sales (zatca.qrDataUrl) + GET /api/sales/invoice/:orderId (zatcaQr.qrDataUrl)",
+    "test": "frontend/pos/src/lib/__tests__/receipt.test.ts"
+  },
+  "receipt-zatca-tlv": {
+    "status": "not-required",
+    "reason": "Client-side TLV derivation is DELIBERATELY not ported: the server stamps the QR and the client must never re-derive it (offline-first + stamp integrity — receipt.ts documents the contract; the legacy template additionally pulled its QR encoder from a CDN, failing exactly where a POS must work: offline)."
+  },
+  "receipt-zatca-phase2-ignored": {
+    "status": "covered",
+    "react": "frontend/pos/src/components/dialogs/MyInvoicesDialog.tsx + lib/receipt.ts — the legacy DEFECT (backend phase-2 stamp ignored on paper) is fixed: reprints embed the stored zatcaQr.qrDataUrl verbatim",
+    "test": "frontend/pos/src/components/__tests__/myInvoices.test.ts"
+  },
+  "receipt-content-template": {
+    "status": "covered",
+    "react": "frontend/pos/src/lib/receipt.ts (buildReceiptHtml — one renderer for first prints and reprints)",
+    "test": "frontend/pos/src/lib/__tests__/receipt.test.ts"
+  },
+  "receipt-tax-snapshot": {
+    "status": "covered",
+    "react": "frontend/pos/src/lib/receipt.ts (totalsOverride: RECORDED figures win) + MyInvoicesDialog reprint derivation for the VAT line (same fallback the legacy template used)",
+    "test": "frontend/pos/src/components/__tests__/myInvoices.test.ts"
+  },
+  "receipt-payment-labels": {
+    "status": "covered",
+    "react": "frontend/pos/src/lib/receipt.ts (PAY_LABELS + verbatim passthrough for Arabic method names on reprints)",
+    "test": "frontend/pos/src/components/__tests__/myInvoices.test.ts"
+  },
+  "receipt-split-rows": {
+    "status": "covered",
+    "react": "frontend/pos/src/lib/receipt.ts (one row per payment) + MyInvoicesDialog (splitDetails from the invoice endpoint)",
+    "api": "GET /api/sales/invoice/:orderId (splitDetails)",
+    "test": "frontend/pos/src/components/__tests__/myInvoices.test.ts"
+  },
+  "receipt-tendered-change": {
+    "status": "covered",
+    "react": "frontend/pos/src/lib/receipt.ts (المستلَم/الباقي rows) + MyInvoicesDialog (cash_tendered/change_due from the invoice)",
+    "test": "frontend/pos/src/lib/__tests__/receipt.test.ts"
+  },
+  "receipt-void-return-stamp": {
+    "status": "covered",
+    "react": "frontend/pos/src/lib/receipt.ts (stamp box) + MyInvoicesDialog (ملغاة · VOIDED / مرتجع · RETURNED + serial from zatcaType on reprints)",
+    "test": "frontend/pos/src/components/__tests__/myInvoices.test.ts"
+  },
+  "receipt-preview-modal": {
+    "status": "covered",
+    "react": "frontend/pos/src/lib/receipt.ts (printHtml — the print window renders the full receipt before the print dialog; it IS the preview)",
+    "test": "frontend/pos/src/lib/__tests__/receipt.test.ts"
+  },
+  "invoice-fetch": {
+    "status": "covered",
+    "react": "frontend/pos/src/lib/api.ts (getInvoice — Bearer attached; null contract handled by callers)",
+    "api": "GET /api/sales/invoice/:orderId",
+    "test": "frontend/pos/src/components/__tests__/myInvoices.test.ts"
+  },
+  "receipt-print": {
+    "status": "covered",
+    "react": "frontend/pos/src/components/dialogs/PaymentDialog.tsx (manual print after payment) + MyInvoicesDialog reprint + lib/receipt.ts",
+    "api": "GET /api/sales/invoice/:orderId",
+    "test": "frontend/pos/src/lib/__tests__/receipt.test.ts"
+  },
+
+  "printer-config-dead": {
+    "status": "not-required",
+    "reason": "Matrix evidence (print row 32): app.js:2996-99 carries the explicit comment that saved printer config is never read by any print job — configuration with zero behavioral effect. React prints through the browser dialog where the OS printer is chosen."
+  },
+  "printer-settings-hidden": {
+    "status": "not-required",
+    "reason": "Matrix evidence (print row 5): 'UNREACHABLE from the UI' — the only trigger is a button inside the collapsed float cluster (index.html:422), and the config it writes is dead (see printer-config-dead)."
+  },
+  "printer-settings-modal": {
+    "status": "not-required",
+    "reason": "Part of the dead printer-config cluster: the modal writes a device selection no print path ever reads (app.js:2996-99). Printing routes through the browser/OS print dialog where the device is chosen."
+  },
+  "printer-support-probe": {
+    "status": "not-required",
+    "reason": "Probes Bluetooth/USB support for the dead printer-config cluster (see printer-config-dead) — the capability it advertises feeds a selection nothing consumes."
+  },
+  "printer-tabs": {
+    "status": "not-required",
+    "reason": "Navigation inside the dead printer-config modal (see printer-config-dead) — no behavior of its own to port."
+  },
+  "printer-bluetooth-scan": {
+    "status": "not-required",
+    "reason": "Pairs a Bluetooth printer into the dead config (see printer-config-dead) — the paired device is never used by any print job."
+  },
+  "printer-bluetooth-pair": {
+    "status": "not-required",
+    "reason": "Same dead cluster as printer-bluetooth-scan: the stored pairing is never read by any print path (app.js:2996-99)."
+  },
+  "printer-usb-scan": {
+    "status": "not-required",
+    "reason": "Pairs a USB printer into the dead config (see printer-config-dead) — never consumed by any print job."
+  },
+  "printer-usb-pair": {
+    "status": "not-required",
+    "reason": "Same dead cluster as printer-usb-scan: the stored pairing is never read by any print path (app.js:2996-99)."
+  },
+  "printer-network-save": {
+    "status": "not-required",
+    "reason": "Saves an IP/port into the dead printer config (see printer-config-dead) — no print path ever opens a socket to it."
+  },
+  "printer-current-clear": {
+    "status": "not-required",
+    "reason": "Displays/clears the dead printer selection (see printer-config-dead) — housekeeping for configuration with no effect."
+  },
+  "printer-current-and-clear": {
+    "status": "not-required",
+    "reason": "Duplicate matrix row of printer-current-clear — same dead-cluster housekeeping (see printer-config-dead)."
+  },
+
+  "void-optout-setting": {
+    "status": "covered",
+    "react": "frontend/pos/src/components/dialogs/MyInvoicesDialog.tsx (needsApprovalGate — void skips the ManagerApprovalDialog when catalog.requireVoidApproval=false; returns never opt out) + routes/pos-v2.js catalog (requireVoidApproval from settings.RequireManagerApprovalForVoid, ETag-invalidated)",
+    "api": "GET /api/pos/v2/catalog (requireVoidApproval); server enforcement stays routes/sales.js:_requireManagerApproval",
+    "test": "frontend/pos/src/components/__tests__/myInvoices.test.ts"
+  },
+
+  "myinv-open": {
+    "status": "covered",
+    "react": "frontend/pos/src/components/dialogs/MyInvoicesDialog.tsx",
+    "api": "GET /api/sales?username=&startDate=&endDate=",
+    "test": "frontend/pos/src/components/__tests__/myInvoices.test.ts"
+  },
+  "myinv-load": {
+    "status": "covered",
+    "react": "frontend/pos/src/components/dialogs/MyInvoicesDialog.tsx (today's sales narrowed to the active shift client-side — same reason as legacy: the endpoint has no shift filter)",
+    "api": "GET /api/sales",
+    "test": "frontend/pos/src/components/__tests__/myInvoices.test.ts"
+  },
+  "myinv-refresh": {
+    "status": "covered",
+    "react": "frontend/pos/src/components/dialogs/MyInvoicesDialog.tsx (تحديث → react-query invalidate)",
+    "test": "frontend/pos/src/components/__tests__/myInvoices.test.ts"
+  },
+  "myinv-stats": {
+    "status": "covered",
+    "react": "frontend/pos/src/components/dialogs/MyInvoicesDialog.tsx (stat strip; amount excludes reversed docs like app.js:3355)",
+    "test": "frontend/pos/src/components/__tests__/myInvoices.test.ts"
+  },
+  "myinv-table": {
+    "status": "covered",
+    "react": "frontend/pos/src/components/dialogs/MyInvoicesDialog.tsx (7-column table incl. per-row actions + طباعة)",
+    "test": "frontend/pos/src/components/__tests__/myInvoices.test.ts"
+  },
+  "myinv-badges": {
+    "status": "covered",
+    "react": "frontend/pos/src/components/dialogs/MyInvoicesDialog.tsx (StatusBadge — ملغاة/مرتجع + serials, سارية)",
+    "test": "frontend/pos/src/components/__tests__/myInvoices.test.ts"
+  },
+  "myinv-time-fmt": {
+    "status": "covered",
+    "react": "frontend/pos/src/components/dialogs/MyInvoicesDialog.tsx (time column via toLocaleTimeString)",
+    "test": "frontend/pos/src/components/__tests__/myInvoices.test.ts"
+  },
+  "myinv-prod-chips": {
+    "status": "covered",
+    "react": "frontend/pos/src/components/dialogs/MyInvoicesDialog.tsx (first 3 product chips + '+N')",
+    "test": "frontend/pos/src/components/__tests__/myInvoices.test.ts"
+  },
+  "myinv-invnum-sysref": {
+    "status": "covered",
+    "react": "frontend/pos/src/components/dialogs/MyInvoicesDialog.tsx (invoiceNumber on top, orderId beneath)",
+    "test": "frontend/pos/src/components/__tests__/myInvoices.test.ts"
+  },
+  "myinv-empty": {
+    "status": "covered",
+    "react": "frontend/pos/src/components/dialogs/MyInvoicesDialog.tsx (no-shift / no-invoices / no-matches empty states)",
+    "test": "frontend/pos/src/components/__tests__/myInvoices.test.ts"
+  },
+  "myinv-no-search-filter": {
+    "status": "covered",
+    "react": "frontend/pos/src/components/dialogs/MyInvoicesDialog.tsx — the audited legacy GAP is filled: search + status filter chips",
+    "test": "frontend/pos/src/components/__tests__/myInvoices.test.ts"
+  }
+}

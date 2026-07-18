@@ -5,9 +5,33 @@
  *   • buildShiftReportHtml — X vs Z thermal report content.
  */
 import { describe, expect, it } from "vitest";
-import { CASH_DENOMS, buildShiftWhatsAppText, denomTotal } from "../dialogs/ShiftDialog";
+import { CASH_DENOMS, buildShiftWhatsAppText, closeGate, denomTotal } from "../dialogs/ShiftDialog";
 import { buildShiftReportHtml, type ShiftReportData } from "@/lib/receipt";
 import type { CloseV3Result } from "@/lib/types";
+
+describe("closeGate — blind-count reveal + variance gates (legacy :5530/:5767)", () => {
+  it("locked until the reveal, whatever else is true", () => {
+    expect(closeGate(false, true, 0, "").locked).toBe(true);
+    expect(closeGate(false, true, 0, "").reason).toMatch(/أنهيت العدّ/);
+  });
+
+  it("revealed but nothing counted → still locked", () => {
+    const g = closeGate(true, false, 0, "");
+    expect(g.locked).toBe(true);
+    expect(g.reason).toMatch(/أدخل المبالغ/);
+  });
+
+  it("non-zero variance demands a ≥10-char explanation", () => {
+    expect(closeGate(true, true, -4.5, "").locked).toBe(true);
+    expect(closeGate(true, true, -4.5, "قصير").locked).toBe(true);
+    expect(closeGate(true, true, -4.5, "         ").locked).toBe(true); // spaces don't count
+    expect(closeGate(true, true, -4.5, "عجز بسبب استرجاع نقدي مسائي").locked).toBe(false);
+  });
+
+  it("zero variance + revealed + counted → unlocked with no note", () => {
+    expect(closeGate(true, true, 0, "")).toEqual({ locked: false });
+  });
+});
 
 describe("denomTotal — physical cash count", () => {
   it("mirrors the legacy _v3CashDenoms set (app.js:5537) exactly", () => {

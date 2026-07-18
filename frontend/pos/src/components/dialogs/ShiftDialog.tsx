@@ -58,6 +58,26 @@ export function denomTotal(counts: Record<string, string | number>): number {
   return round2(total);
 }
 
+/**
+ * The close-button lock (legacy _scLockClose/_scUnlockClose :5793-5812 +
+ * variance gate :5767): blind-count reveal first, then something counted, then
+ * a non-zero variance needs a ≥10-char explanation. Pure so the gate matrix is
+ * unit-testable.
+ */
+export function closeGate(
+  revealed: boolean,
+  countEntered: boolean,
+  totalVariance: number,
+  notes: string,
+): { locked: boolean; reason?: string } {
+  if (!revealed) return { locked: true, reason: "أنهِ العدّ ثم فعِّل «أنهيت العدّ» أولًا" };
+  if (!countEntered) return { locked: true, reason: "أدخل المبالغ المعدودة أولًا" };
+  if (totalVariance !== 0 && notes.trim().length < 10) {
+    return { locked: true, reason: "اشرح سبب الفرق أولًا (١٠ أحرف على الأقل)" };
+  }
+  return { locked: false };
+}
+
 /** Plain-text Z summary for the wa.me share (legacy shareShiftReportWhatsApp,
  *  public/pos/app.js:2872). Pure so it is unit-testable. */
 export function buildShiftWhatsAppText(res: CloseV3Result, username: string): string {
@@ -162,20 +182,10 @@ export function ShiftDialog({ open, onClose }: { open: boolean; onClose: () => v
 
   // Something was actually counted — a blank sheet must not close a shift.
   const countEntered = denomsUsed || varianceRows.some((r) => counted[String(r.method.id)] !== "");
-  // Legacy variance gate (app.js:5767): a non-zero variance must be explained
-  // (≥10 chars) before the close button unlocks. Only meaningful post-reveal —
-  // before it the cashier cannot even see that a variance exists.
+  const gate = closeGate(revealed, countEntered, totalVariance, notes);
+  const closeLocked = gate.locked;
+  const closeLockReason = gate.reason;
   const varianceNeedsNote = revealed && totalVariance !== 0 && notes.trim().length < 10;
-  // Legacy close lock (app.js:5530): reveal first, count something, explain a
-  // variance — then the button unlocks.
-  const closeLocked = !revealed || !countEntered || varianceNeedsNote;
-  const closeLockReason = !revealed
-    ? "أنهِ العدّ ثم فعِّل «أنهيت العدّ» أولًا"
-    : !countEntered
-      ? "أدخل المبالغ المعدودة أولًا"
-      : varianceNeedsNote
-        ? "اشرح سبب الفرق أولًا (١٠ أحرف على الأقل)"
-        : undefined;
 
   async function confirmClose() {
     if (!shiftId || !closing || closeLocked) return;

@@ -441,6 +441,14 @@ if (!ERP_UNIFIED_ENABLED) {
         }
       }
     }));
+    // A tab left open across a deployment can request a hashed chunk from the
+    // previous build. Keep that failure as a real 404: the global catch-all
+    // below redirects unknown paths to /app/, which would otherwise return HTML
+    // with status 200 to a JavaScript import and leave navigation frozen.
+    app.all(/^\/app\/assets(?:\/.*)?$/, function(req, res) {
+      res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
+      res.status(404).type('text').send('Asset not found');
+    });
     // History fallback: any extensionless path under /app (a client route like
     // /app/inventory, incl. hard refresh) returns index.html. Paths that look
     // like a file (have an extension) fall through to a normal 404.

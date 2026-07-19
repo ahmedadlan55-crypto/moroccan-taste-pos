@@ -107,23 +107,35 @@ export function Sidebar() {
               const active = activeGroupId === group.id;
               return (
                 <section key={group.id} className="rounded-2xl">
-                  <button
-                    type="button"
-                    onClick={() => setOpenGroup(expanded ? null : group.id)}
+                  <div
                     className={cn(
-                      "flex min-h-11 w-full items-center gap-3 rounded-xl px-3 text-right text-sm font-semibold text-slate-300 transition hover:bg-white/10 hover:text-white",
-                      active && "text-white",
+                      "flex min-h-11 w-full items-stretch rounded-xl text-sm font-semibold text-slate-300 transition hover:bg-white/10 hover:text-white",
+                      active && "bg-white/5 text-white",
                     )}
-                    aria-expanded={expanded}
-                    aria-controls={`nav-group-${group.id}`}
                   >
-                    <GroupIcon className={cn("h-[18px] w-[18px] shrink-0", active && "text-teal-300")} />
-                    <span className="min-w-0 flex-1 truncate">{group.label}</span>
-                    <span className="rounded-full bg-white/5 px-2 py-0.5 text-[11px] font-medium text-slate-400">
-                      {group.items.length}
-                    </span>
-                    <ChevronDown className={cn("h-4 w-4 transition-transform", expanded && "rotate-180")} />
-                  </button>
+                    <NavLink
+                      to={group.items[0].path}
+                      aria-label={group.label}
+                      onClick={() => setOpenGroup(group.id)}
+                      className="flex min-w-0 flex-1 items-center gap-3 rounded-r-xl px-3 text-right"
+                    >
+                      <GroupIcon className={cn("h-[18px] w-[18px] shrink-0", active && "text-teal-300")} />
+                      <span className="min-w-0 flex-1 truncate">{group.label}</span>
+                      <span className="rounded-full bg-white/5 px-2 py-0.5 text-[11px] font-medium text-slate-400">
+                        {group.items.length}
+                      </span>
+                    </NavLink>
+                    <button
+                      type="button"
+                      onClick={() => setOpenGroup(expanded ? null : group.id)}
+                      className="grid w-11 shrink-0 place-items-center rounded-l-xl text-slate-400 transition hover:bg-white/10 hover:text-white"
+                      aria-label={`${expanded ? "طي" : "فتح"} صفحات ${group.label}`}
+                      aria-expanded={expanded}
+                      aria-controls={`nav-group-${group.id}`}
+                    >
+                      <ChevronDown className={cn("h-4 w-4 transition-transform", expanded && "rotate-180")} />
+                    </button>
+                  </div>
 
                   {expanded && (
                     <div

@@ -94,6 +94,14 @@ const SHOTS: { path: string; file: string }[] = [
 
 test.describe.configure({ mode: "serial" });
 
+test("missing ERP assets stay 404 instead of falling through to SPA HTML", async ({ request }) => {
+  const response = await request.get("/app/assets/__missing-deployment-chunk__.js", {
+    maxRedirects: 0,
+  });
+  expect(response.status()).toBe(404);
+  expect(response.headers()["content-type"] || "").not.toContain("text/html");
+});
+
 /** Let in-flight XHRs settle so we never assert against a half-rendered screen. */
 async function settle(page: Page) {
   await page.waitForLoadState("networkidle", { timeout: 20_000 }).catch(() => {});

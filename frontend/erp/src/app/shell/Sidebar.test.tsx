@@ -52,7 +52,7 @@ function LocationProbe() {
 }
 
 describe("Sidebar section navigation", () => {
-  it("keeps a user-selected section open and lets its leaf navigate", async () => {
+  it("opens a selected section and navigates from its heading", async () => {
     render(
       <MemoryRouter initialEntries={["/overview"]}>
         <Sidebar />
@@ -60,17 +60,25 @@ describe("Sidebar section navigation", () => {
       </MemoryRouter>,
     );
 
-    const overview = screen.getByRole("button", { name: /الرئيسية/ });
-    const sales = screen.getByRole("button", { name: /المبيعات/ });
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: "طي صفحات الرئيسية" })).toHaveAttribute(
+        "aria-expanded",
+        "true",
+      ),
+    );
 
-    await waitFor(() => expect(overview).toHaveAttribute("aria-expanded", "true"));
+    fireEvent.click(screen.getByRole("button", { name: "فتح صفحات المبيعات" }));
 
-    fireEvent.click(sales);
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: "طي صفحات المبيعات" })).toHaveAttribute(
+        "aria-expanded",
+        "true",
+      ),
+    );
+    expect(screen.getByTestId("location")).toHaveTextContent("/overview");
+    expect(screen.getByRole("link", { name: "الطلبات" })).toBeInTheDocument();
 
-    await waitFor(() => expect(sales).toHaveAttribute("aria-expanded", "true"));
-    expect(overview).toHaveAttribute("aria-expanded", "false");
-
-    fireEvent.click(screen.getByRole("link", { name: "الطلبات" }));
+    fireEvent.click(screen.getByRole("link", { name: "المبيعات" }));
     await waitFor(() => expect(screen.getByTestId("location")).toHaveTextContent("/sales/orders"));
   });
 });

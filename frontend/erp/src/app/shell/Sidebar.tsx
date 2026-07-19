@@ -40,8 +40,8 @@ export function Sidebar() {
 
   useEffect(() => {
     if (activeGroupId) setOpenGroup(activeGroupId);
-    else if (!openGroup && firstGroupId) setOpenGroup(firstGroupId);
-  }, [activeGroupId, firstGroupId, openGroup]);
+    else if (firstGroupId) setOpenGroup((current) => current ?? firstGroupId);
+  }, [activeGroupId, firstGroupId]);
 
   return (
     <aside

@@ -104,3 +104,37 @@ describe("no legacy coupling in erp source", () => {
     expect(offenders.map((f) => path.relative(SRC_DIR, f))).toEqual([]);
   });
 });
+
+describe("full-page workflow integrity", () => {
+  const workflowFiles: string[] = [];
+  collectSources(SRC_DIR, workflowFiles);
+  const drawerSource = readFileSync(path.join(SRC_DIR, "shared", "ui", "drawer.tsx"), "utf8");
+  const dialogSource = readFileSync(path.join(SRC_DIR, "shared", "ui", "dialog.tsx"), "utf8");
+  const confirmSource = readFileSync(path.join(SRC_DIR, "shared", "ui", "confirm-dialog.tsx"), "utf8");
+  const alertSource = readFileSync(path.join(SRC_DIR, "shared", "ui", "alert-dialog.tsx"), "utf8");
+
+  it("the legacy Drawer API cannot render a side panel", () => {
+    expect(drawerSource).toContain("FullPageFlow");
+    expect(drawerSource).not.toMatch(/right-0|translateX|x:\s*["']100%/);
+  });
+
+  it("normal dialogs default to a full-page workspace", () => {
+    expect(dialogSource).toContain('presentation = "workspace"');
+    expect(dialogSource).toContain("FullPageFlow");
+  });
+
+  it("short confirmation primitives remain explicitly compact", () => {
+    expect(confirmSource).toContain('presentation="compact"');
+    expect(alertSource).toContain('presentation="compact"');
+  });
+
+  it("business modules do not hand-build full-screen overlays", () => {
+    const moduleRoot = `${path.sep}modules${path.sep}`;
+    const allowed = `${path.sep}inventory${path.sep}features${path.sep}_shared${path.sep}ReasonDialog.tsx`;
+    const offenders = workflowFiles.filter((file) => {
+      if (!file.includes(moduleRoot) || file.endsWith(allowed)) return false;
+      return /fixed\s+inset-0/.test(readFileSync(file, "utf8"));
+    });
+    expect(offenders.map((file) => path.relative(SRC_DIR, file))).toEqual([]);
+  });
+});

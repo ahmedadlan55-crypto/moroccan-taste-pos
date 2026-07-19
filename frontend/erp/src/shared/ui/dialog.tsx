@@ -5,6 +5,7 @@ import { X } from "lucide-react";
 import { cn } from "@/shared/lib";
 import { IconButton } from "./icon-button";
 import { useFocusTrap } from "./overlay";
+import { FullPageFlow } from "./full-page-flow";
 
 export type DialogSize = "sm" | "md" | "lg" | "xl";
 
@@ -27,13 +28,36 @@ export interface DialogProps {
   hideClose?: boolean;
   /** Disable Escape / backdrop close (e.g. while a request is in flight). */
   dismissable?: boolean;
+  /** Full-page is the default for data entry. Compact is reserved for short confirmations. */
+  presentation?: "workspace" | "compact";
 }
 
 /**
  * Accessible modal dialog: portal to <body>, focus trap, Escape + backdrop
  * close, focus restore, scroll lock, aria-modal + labelled title/description.
  */
-export function Dialog({
+export function Dialog({ presentation = "workspace", size = "md", ...props }: DialogProps) {
+  if (presentation === "workspace") {
+    return (
+      <FullPageFlow
+        open={props.open}
+        onClose={props.onClose}
+        title={props.title}
+        description={props.description}
+        footer={props.footer}
+        size={size}
+        hideClose={props.hideClose}
+        dismissable={props.dismissable}
+      >
+        {props.children}
+      </FullPageFlow>
+    );
+  }
+
+  return <CompactDialog {...props} size={size} presentation="compact" />;
+}
+
+function CompactDialog({
   open,
   onClose,
   title,
@@ -88,12 +112,12 @@ export function Dialog({
                 <div className="flex shrink-0 items-start justify-between gap-3 border-b border-slate-100 px-4 py-4 sm:px-5">
                   <div className="min-w-0">
                     {title && (
-                      <h2 id={titleId} className="text-lg font-extrabold text-slate-900">
+                      <h2 id={titleId} className="text-lg font-bold text-slate-900">
                         {title}
                       </h2>
                     )}
                     {description && (
-                      <div id={descId} className="mt-1 text-sm font-medium text-slate-500">
+                      <div id={descId} className="mt-1 text-sm font-normal leading-6 text-slate-600">
                         {description}
                       </div>
                     )}

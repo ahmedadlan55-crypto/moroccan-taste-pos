@@ -12,7 +12,9 @@ const jwt = require("jsonwebtoken");
 
 function readEnv(): Record<string, string> {
   const e: Record<string, string> = {};
-  const txt = fs.readFileSync(path.join(process.cwd(), ".env"), "utf8");
+  const envPath = path.join(process.cwd(), ".env");
+  if (!fs.existsSync(envPath)) return e;
+  const txt = fs.readFileSync(envPath, "utf8");
   for (const line of txt.split(/\r?\n/)) {
     const m = line.match(/^\s*([A-Z_]+)\s*=\s*(.*)\s*$/);
     if (m) e[m[1]] = m[2];
@@ -22,12 +24,13 @@ function readEnv(): Record<string, string> {
 
 export default async function globalSetup() {
   const e = readEnv();
-  if (!e.JWT_SECRET) throw new Error("JWT_SECRET missing from .env");
+  const secret = process.env.JWT_SECRET || e.JWT_SECRET;
+  if (!secret) throw new Error("JWT_SECRET missing from the environment and .env");
   // tokenVersion:1 matches users.token_version for the local admin (id=1) —
   // required by the session-version gate in server.js / lib/sessionVersion.js.
   const token = jwt.sign(
     { id: 1, username: "admin", role: "admin", name: "المدير", tokenVersion: 1 },
-    e.JWT_SECRET,
+    secret,
     { expiresIn: "3h" }
   );
   fs.writeFileSync(path.join(process.cwd(), "e2e", ".token"), token);

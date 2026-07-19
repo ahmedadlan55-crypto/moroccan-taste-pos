@@ -1,8 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
-import { AnimatePresence, motion } from "framer-motion";
 import { Warehouse as WarehouseIcon } from "lucide-react";
-import { Button } from "@/shared/ui";
-import { Spinner } from "@/shared/ui";
+import { Button, FullPageFlow, Spinner } from "@/shared/ui";
 import { warehouseTypeLabel } from "@/modules/inventory/lib/status-labels";
 import { ApiError } from "@/shared/api";
 import {
@@ -13,7 +11,7 @@ import {
 } from "@/modules/inventory/lib/hooks/useWarehouseAdmin";
 import type { WarehouseAdmin } from "@/modules/inventory/lib/adapters/warehouse-admin.adapter";
 
-// Create + edit modal for a warehouse (Phase W6). Validates name/code inline,
+// Create + edit workspace for a warehouse (Phase W6). Validates name/code inline,
 // surfaces the backend's 409 DUPLICATE_CODE / 422 messages next to the form,
 // and never double-submits (buttons disabled while pending).
 
@@ -119,43 +117,40 @@ export function WarehouseFormDialog({
   const labelCls = "block text-xs font-bold text-slate-600";
 
   return (
-    <AnimatePresence>
-      {open && (
+    <FullPageFlow
+      open={open}
+      onClose={onClose}
+      title={isEdit ? `تعديل «${warehouse!.name}»` : "مستودع جديد"}
+      description={
+        isEdit
+          ? "تعديل البيانات الأساسية — الكود يبقى فريدًا على مستوى النظام."
+          : "أدخل البيانات الأساسية؛ يمكنك ضبط صلاحيات الوصول بعد الإنشاء."
+      }
+      eyebrow="إدارة المخزون"
+      icon={WarehouseIcon}
+      size="md"
+      dismissable={!pending}
+      footer={
         <>
-          <motion.div
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            exit={{ opacity: 0 }}
-            className="fixed inset-0 z-[70] bg-slate-950/40"
-            onClick={() => !pending && onClose()}
-            aria-hidden="true"
-          />
-          <motion.div
-            initial={{ opacity: 0, y: 16 }}
-            animate={{ opacity: 1, y: 0 }}
-            exit={{ opacity: 0, y: 16 }}
-            role="dialog"
-            aria-modal="true"
-            aria-label={isEdit ? "تعديل مستودع" : "مستودع جديد"}
-            className="fixed inset-x-3 top-[6vh] z-[80] mx-auto max-h-[88vh] max-w-2xl overflow-y-auto rounded-2xl border border-slate-200 bg-white p-5 shadow-2xl"
-          >
-            <div className="flex items-center gap-3">
-              <span className="grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-teal-50 text-teal-700">
-                <WarehouseIcon className="h-5 w-5" />
-              </span>
-              <div>
-                <h3 className="text-lg font-extrabold text-slate-900">
-                  {isEdit ? `تعديل «${warehouse!.name}»` : "مستودع جديد"}
-                </h3>
-                <p className="text-xs font-medium text-slate-500">
-                  {isEdit
-                    ? "تعديل البيانات الأساسية — الكود يبقى فريدًا على مستوى النظام."
-                    : "أدخل البيانات الأساسية؛ يمكنك ضبط صلاحيات الوصول بعد الإنشاء."}
-                </p>
-              </div>
-            </div>
-
-            <div className="mt-5 grid grid-cols-1 gap-4 sm:grid-cols-2">
+          <Button variant="secondary" onClick={onClose} disabled={pending}>
+            إلغاء
+          </Button>
+          <Button onClick={submit} disabled={pending || (touched && !valid)}>
+            {pending ? (
+              <>
+                <Spinner className="h-4 w-4" /> جارٍ الحفظ…
+              </>
+            ) : isEdit ? (
+              "حفظ التعديلات"
+            ) : (
+              "إنشاء المستودع"
+            )}
+          </Button>
+        </>
+      }
+    >
+      <section className="surface p-5 sm:p-6 lg:p-8">
+            <div className="grid grid-cols-1 gap-5 sm:grid-cols-2">
               <label className="sm:col-span-2">
                 <span className={labelCls}>
                   اسم المستودع <span className="text-rose-600">*</span>
@@ -276,31 +271,12 @@ export function WarehouseFormDialog({
               </label>
             </div>
 
-            {serverMsg && (
-              <div className="mt-4 rounded-xl border border-rose-200 bg-rose-50 px-3 py-2 text-xs font-bold text-rose-700">
-                {serverMsg}
-              </div>
-            )}
-
-            <div className="mt-5 flex flex-wrap justify-end gap-2">
-              <Button variant="secondary" onClick={onClose} disabled={pending}>
-                إلغاء
-              </Button>
-              <Button onClick={submit} disabled={pending || (touched && !valid)}>
-                {pending ? (
-                  <>
-                    <Spinner className="h-4 w-4" /> جارٍ الحفظ…
-                  </>
-                ) : isEdit ? (
-                  "حفظ التعديلات"
-                ) : (
-                  "إنشاء المستودع"
-                )}
-              </Button>
-            </div>
-          </motion.div>
-        </>
-      )}
-    </AnimatePresence>
+        {serverMsg && (
+          <div className="mt-5 rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm font-semibold text-rose-700">
+            {serverMsg}
+          </div>
+        )}
+      </section>
+    </FullPageFlow>
   );
 }

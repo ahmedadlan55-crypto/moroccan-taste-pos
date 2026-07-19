@@ -25,7 +25,7 @@ export function PageLayout({
   className,
 }: PageLayoutProps) {
   return (
-    <div className={cn("p-4 sm:p-6", constrained && "mx-auto w-full max-w-7xl", className)}>
+    <div className={cn("w-full", constrained && "mx-auto max-w-7xl", className)}>
       <PageHeader eyebrow={eyebrow} title={title} subtitle={subtitle} action={actions} />
       {children}
     </div>

@@ -36,6 +36,7 @@ export function AlertDialog({
       open={open}
       onClose={onClose}
       size="sm"
+      presentation="compact"
       hideClose
       dismissable={!processing}
       footer={

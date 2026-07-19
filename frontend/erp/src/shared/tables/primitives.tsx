@@ -21,14 +21,14 @@ export function TableShell({
 }) {
   return (
     <div className={cn("scrollbar-thin w-full overflow-x-auto", scrollClassName)}>
-      <table className={cn("w-full border-collapse text-sm", className)}>{children}</table>
+      <table className={cn("w-full border-collapse text-[15px]", className)}>{children}</table>
     </div>
   );
 }
 
 export function Thead({ children, className }: { children: ReactNode; className?: string }) {
   return (
-    <thead className={cn("border-b border-slate-200 bg-slate-50/80 text-xs", className)}>{children}</thead>
+    <thead className={cn("border-b border-slate-200 bg-slate-50/80 text-[13px]", className)}>{children}</thead>
   );
 }
 
@@ -43,7 +43,7 @@ export function Th({
     <th
       scope="col"
       className={cn(
-        "whitespace-nowrap px-3 py-2.5 font-extrabold text-slate-500",
+        "whitespace-nowrap px-3 py-3 font-semibold text-slate-600",
         numeric ? "text-left" : ALIGN_CLASS[align],
         className,
       )}
@@ -64,7 +64,7 @@ export function Td({
   return (
     <td
       className={cn(
-        "px-3 py-2.5 align-middle text-slate-700",
+        "px-3 py-3 align-middle leading-6 text-slate-700",
         numeric ? "text-left tabular-nums" : ALIGN_CLASS[align],
         numeric && "font-semibold",
         className,

@@ -22,6 +22,7 @@ export * from "./tooltip";
 
 // ── overlays ──
 export * from "./overlay";
+export * from "./full-page-flow";
 export * from "./dialog";
 export * from "./alert-dialog";
 export * from "./confirm-dialog";

@@ -1,21 +1,31 @@
-import { NavLink } from "react-router-dom";
-import { LayoutGrid, MoreHorizontal, ChevronsRight, ChevronsLeft } from "lucide-react";
+import { useEffect, useState } from "react";
+import { NavLink, useLocation } from "react-router-dom";
+import {
+  ChevronDown,
+  ChevronsLeft,
+  ChevronsRight,
+  LayoutGrid,
+  MoreHorizontal,
+} from "lucide-react";
 import { NAV } from "@/app/navigation/manifest";
-import { useAuth } from "@/app/providers";
-import { usePermissions } from "@/app/providers";
+import { useAuth, usePermissions } from "@/app/providers";
 import { useServerFlags } from "@/app/server-flags";
 import { getIcon } from "./icons";
 import { useShell } from "./shell-context";
 import { cn } from "@/shared/lib";
 
-// Dark fixed sidebar (RTL: pinned to the right). Renders the ONE navigation
-// manifest, filtering each item by the user's capability AND its optional server
-// flag. Active state comes from the URL via NavLink. Collapsible to an icon rail.
+/**
+ * Section-first navigation: the expanded sidebar shows one clear business
+ * section at a time, while the collapsed rail shows one icon per section rather
+ * than the former wall of more than one hundred route icons.
+ */
 export function Sidebar() {
+  const { pathname } = useLocation();
   const { user } = useAuth();
   const { can } = usePermissions();
   const flags = useServerFlags();
   const { collapsed, toggleCollapsed } = useShell();
+  const [openGroup, setOpenGroup] = useState<string | null>(null);
   const initials = (user?.name || user?.username || "؟").slice(0, 2);
 
   const groups = NAV.map((group) => ({
@@ -24,6 +34,14 @@ export function Sidebar() {
       (item) => (!item.cap || can(item.cap)) && (!item.flag || flags[item.flag] === true),
     ),
   })).filter((group) => group.items.length > 0);
+
+  const activeGroupId = groups.find((group) => group.items.some((item) => item.path === pathname))?.id;
+  const firstGroupId = groups[0]?.id;
+
+  useEffect(() => {
+    if (activeGroupId) setOpenGroup(activeGroupId);
+    else if (!openGroup && firstGroupId) setOpenGroup(firstGroupId);
+  }, [activeGroupId, firstGroupId, openGroup]);
 
   return (
     <aside
@@ -39,8 +57,8 @@ export function Sidebar() {
         </span>
         {!collapsed && (
           <div className="min-w-0">
-            <div className="truncate text-base font-extrabold">المذاق المغربي</div>
-            <div className="mt-0.5 text-[11px] font-bold text-slate-400">الإدارة الموحّدة</div>
+            <div className="truncate text-base font-bold">المذاق المغربي</div>
+            <div className="mt-0.5 text-xs font-medium text-slate-400">الإدارة الموحّدة</div>
           </div>
         )}
       </div>
@@ -50,50 +68,103 @@ export function Sidebar() {
         onClick={toggleCollapsed}
         aria-label={collapsed ? "توسيع الشريط الجانبي" : "طي الشريط الجانبي"}
         aria-pressed={collapsed}
-        className="mb-2 mt-1 flex min-h-9 items-center justify-center gap-2 rounded-xl border border-white/10 bg-white/5 px-2 text-[11px] font-bold text-slate-300 transition hover:bg-white/10 hover:text-white"
+        className="mb-2 mt-1 flex min-h-10 items-center justify-center gap-2 rounded-xl border border-white/10 bg-white/5 px-2 text-xs font-medium text-slate-300 transition hover:bg-white/10 hover:text-white"
       >
-        {collapsed ? <ChevronsLeft className="h-4 w-4" /> : <><ChevronsRight className="h-4 w-4" /> طي القائمة</>}
+        {collapsed ? (
+          <ChevronsLeft className="h-4 w-4" />
+        ) : (
+          <>
+            <ChevronsRight className="h-4 w-4" />
+            طي القائمة
+          </>
+        )}
       </button>
 
-      <nav className="mt-2 flex-1 overflow-y-auto pl-1 scrollbar-thin" aria-label="التنقل الرئيسي">
-        {groups.map((group) => (
-          <div key={group.id} className="mb-4">
-            {!collapsed && (
-              <div className="mb-2 px-3 text-[10px] font-extrabold tracking-wider text-slate-500">{group.label}</div>
-            )}
-            <div className="space-y-1">
-              {group.items.map((item) => {
-                const Icon = getIcon(item.icon);
-                return (
-                  <NavLink
-                    key={item.id}
-                    to={item.path}
-                    end
-                    title={collapsed ? item.label : undefined}
-                    className={({ isActive }) =>
-                      cn("nav-item", collapsed && "justify-center px-0", isActive && "nav-item-active")
-                    }
-                  >
-                    <Icon className="h-[18px] w-[18px] shrink-0" />
-                    {!collapsed && <span className="flex-1 truncate">{item.label}</span>}
-                  </NavLink>
-                );
-              })}
-            </div>
+      <nav className="scrollbar-thin mt-2 flex-1 overflow-y-auto pl-1" aria-label="التنقل الرئيسي">
+        {collapsed ? (
+          <div className="space-y-1.5">
+            {groups.map((group) => {
+              const Icon = getIcon(group.items[0].icon);
+              const active = activeGroupId === group.id;
+              return (
+                <NavLink
+                  key={group.id}
+                  to={group.items[0].path}
+                  title={group.label}
+                  aria-label={group.label}
+                  className={cn("nav-item justify-center px-0", active && "nav-item-active")}
+                >
+                  <Icon className="h-5 w-5" />
+                </NavLink>
+              );
+            })}
           </div>
-        ))}
+        ) : (
+          <div className="space-y-2">
+            {groups.map((group) => {
+              const GroupIcon = getIcon(group.items[0].icon);
+              const expanded = openGroup === group.id;
+              const active = activeGroupId === group.id;
+              return (
+                <section key={group.id} className="rounded-2xl">
+                  <button
+                    type="button"
+                    onClick={() => setOpenGroup(expanded ? null : group.id)}
+                    className={cn(
+                      "flex min-h-11 w-full items-center gap-3 rounded-xl px-3 text-right text-sm font-semibold text-slate-300 transition hover:bg-white/10 hover:text-white",
+                      active && "text-white",
+                    )}
+                    aria-expanded={expanded}
+                    aria-controls={`nav-group-${group.id}`}
+                  >
+                    <GroupIcon className={cn("h-[18px] w-[18px] shrink-0", active && "text-teal-300")} />
+                    <span className="min-w-0 flex-1 truncate">{group.label}</span>
+                    <span className="rounded-full bg-white/5 px-2 py-0.5 text-[11px] font-medium text-slate-400">
+                      {group.items.length}
+                    </span>
+                    <ChevronDown className={cn("h-4 w-4 transition-transform", expanded && "rotate-180")} />
+                  </button>
+
+                  {expanded && (
+                    <div
+                      id={`nav-group-${group.id}`}
+                      className="mt-1 space-y-1 border-r border-white/10 pr-2"
+                    >
+                      {group.items.map((item) => {
+                        const Icon = getIcon(item.icon);
+                        return (
+                          <NavLink
+                            key={item.id}
+                            to={item.path}
+                            end
+                            className={({ isActive }) => cn("nav-item", isActive && "nav-item-active")}
+                          >
+                            <Icon className="h-[18px] w-[18px] shrink-0" />
+                            <span className="flex-1 truncate">{item.label}</span>
+                          </NavLink>
+                        );
+                      })}
+                    </div>
+                  )}
+                </section>
+              );
+            })}
+          </div>
+        )}
       </nav>
 
-      <div className={cn("rounded-2xl border border-white/10 bg-white/5 p-3", collapsed && "px-2")}>
+      <div className={cn("mt-3 rounded-2xl border border-white/10 bg-white/5 p-3", collapsed && "px-2")}>
         <div className={cn("flex items-center gap-3", collapsed && "justify-center")}>
-          <span className="grid h-9 w-9 shrink-0 place-items-center rounded-xl bg-saffron-500 text-sm font-extrabold uppercase text-white">
+          <span className="grid h-9 w-9 shrink-0 place-items-center rounded-xl bg-saffron-500 text-sm font-bold uppercase text-white">
             {initials}
           </span>
           {!collapsed && (
             <>
               <div className="min-w-0 flex-1">
-                <div className="truncate text-sm font-extrabold">{user?.name || user?.username || "زائر"}</div>
-                <div className="text-[10px] font-bold text-slate-400">{user?.role ? roleLabel(String(user.role)) : "غير مسجّل"}</div>
+                <div className="truncate text-sm font-semibold">{user?.name || user?.username || "زائر"}</div>
+                <div className="text-xs font-medium text-slate-400">
+                  {user?.role ? roleLabel(String(user.role)) : "غير مسجّل"}
+                </div>
               </div>
               <MoreHorizontal className="h-4 w-4 text-slate-500" />
             </>

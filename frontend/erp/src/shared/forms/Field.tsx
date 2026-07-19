@@ -31,7 +31,7 @@ export function Field({ label, htmlFor, required, error, hint, className, childr
   return (
     <div className={cn("flex flex-col gap-1", className)}>
       {label != null && (
-        <label htmlFor={id} className="text-xs font-bold text-slate-600">
+        <label htmlFor={id} className="text-sm font-semibold text-slate-700">
           {label}
           {required && (
             <span className="text-rose-600" aria-hidden="true">
@@ -45,7 +45,7 @@ export function Field({ label, htmlFor, required, error, hint, className, childr
         {typeof children === "function" ? children({ id, invalid }) : children}
       </div>
       {hint && !message && (
-        <p id={hintId} className="text-[11px] font-medium text-slate-400">
+        <p id={hintId} className="text-xs font-normal leading-5 text-slate-500">
           {hint}
         </p>
       )}

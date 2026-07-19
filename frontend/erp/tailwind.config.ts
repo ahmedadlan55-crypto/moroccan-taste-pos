@@ -7,5 +7,18 @@ import { adlanPreset } from "../shared/design-tokens";
 export default {
   content: ["./index.html", "./src/**/*.{ts,tsx}"],
   presets: [adlanPreset],
-  theme: { extend: {} },
+  theme: {
+    extend: {
+      // IBM Plex Sans Arabic is shipped only through weight 700. Mapping the
+      // existing utility names avoids synthetic 800 weight and restores a clear
+      // hierarchy across the legacy screens without a risky mass rewrite.
+      fontWeight: {
+        normal: "400",
+        medium: "500",
+        semibold: "600",
+        bold: "600",
+        extrabold: "700",
+      },
+    },
+  },
 } satisfies Config;

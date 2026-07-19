@@ -1,16 +1,13 @@
-// Phase W2 — upsert dialog for one negative-stock policy row. Modeled on
-// ConfirmDialog (overlay + centered panel, Escape closes when idle, processing
-// state blocks double-submit) with the policy form: policy select (the `allow`
+// Phase W2 — full-page workspace for one negative-stock policy row. The
+// processing state blocks double-submit and the policy form keeps the `allow`
 // option renders ONLY for a developer), maxNegativeQty (controlled only),
 // requireReason / isEnabled toggles. Saves via PUT with expectedVersion; a 409
 // VERSION_CONFLICT and 403/422 policy errors surface inline.
 
-import { useEffect, useRef, useState } from "react";
-import { AnimatePresence, motion } from "framer-motion";
+import { useEffect, useState } from "react";
 import { RefreshCw, ShieldAlert } from "lucide-react";
 import { useQueryClient } from "@tanstack/react-query";
-import { Button } from "@/shared/ui";
-import { Spinner } from "@/shared/ui";
+import { Button, FullPageFlow, Spinner } from "@/shared/ui";
 import { useAuth } from "@/app/providers";
 import { ApiError } from "@/shared/api";
 import { queryKeys } from "@/modules/inventory/lib/query-keys";
@@ -42,7 +39,6 @@ export function PolicyDialog({ open, onClose, scope, row = null, warehouseOption
   const isDeveloper = !!user?.isDeveloper;
   const qc = useQueryClient();
   const save = useSavePolicy();
-  const panelRef = useRef<HTMLDivElement>(null);
 
   const [warehouseId, setWarehouseId] = useState("");
   const [item, setItem] = useState<ItemOption | null>(null);
@@ -68,22 +64,6 @@ export function PolicyDialog({ open, onClose, scope, row = null, warehouseOption
     save.reset();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open]);
-
-  useEffect(() => {
-    if (!open) return;
-    const t = window.setTimeout(
-      () => panelRef.current?.querySelector<HTMLElement>("select, input, button")?.focus(),
-      20,
-    );
-    function onKey(e: KeyboardEvent) {
-      if (e.key === "Escape" && !processing) onClose();
-    }
-    document.addEventListener("keydown", onKey);
-    return () => {
-      window.clearTimeout(t);
-      document.removeEventListener("keydown", onKey);
-    };
-  }, [open, processing, onClose]);
 
   function submit() {
     setClientError(null);
@@ -130,43 +110,34 @@ export function PolicyDialog({ open, onClose, scope, row = null, warehouseOption
   const showAllowOption = isDeveloper || row?.policy === "allow";
 
   return (
-    <AnimatePresence>
-      {open && (
+    <FullPageFlow
+      open={open}
+      onClose={onClose}
+      title={TITLES[scope]}
+      description={row?.version != null ? `الإصدار ${row.version} — تُحفظ التغييرات مع التحقق من عدم وجود تعديل متزامن.` : "حدد قواعد التعامل مع الرصيد السالب بوضوح لهذا النطاق."}
+      eyebrow={`سياسات المخزون · نطاق ${SCOPE_LABELS[scope]}`}
+      icon={ShieldAlert}
+      size="sm"
+      dismissable={!processing}
+      footer={
         <>
-          <motion.div
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            exit={{ opacity: 0 }}
-            className="fixed inset-0 z-[70] bg-slate-950/40"
-            aria-hidden="true"
-            onClick={() => !processing && onClose()}
-          />
-          <div className="fixed inset-0 z-[80] grid place-items-center overflow-y-auto p-4">
-            <motion.div
-              ref={panelRef}
-              initial={{ opacity: 0, scale: 0.96, y: 8 }}
-              animate={{ opacity: 1, scale: 1, y: 0 }}
-              exit={{ opacity: 0, scale: 0.96, y: 8 }}
-              transition={{ type: "spring", damping: 26, stiffness: 320 }}
-              role="dialog"
-              aria-modal="true"
-              aria-label={TITLES[scope]}
-              className="w-full max-w-lg rounded-2xl border border-slate-200 bg-white p-5 shadow-2xl focus:outline-none"
-            >
-              <div className="flex items-start gap-3">
-                <span className="grid h-11 w-11 shrink-0 place-items-center rounded-xl bg-teal-50 text-teal-700">
-                  <ShieldAlert className="h-5 w-5" />
-                </span>
-                <div className="min-w-0 flex-1">
-                  <div className="text-xs font-extrabold text-teal-700">
-                    نطاق: {SCOPE_LABELS[scope]}
-                    {row?.version != null && <span className="mr-2 text-slate-400">· الإصدار {row.version}</span>}
-                  </div>
-                  <h2 className="text-lg font-extrabold text-slate-900">{TITLES[scope]}</h2>
-                </div>
-              </div>
-
-              <div className="mt-4 space-y-3">
+          <Button variant="secondary" onClick={onClose} disabled={processing}>
+            إلغاء
+          </Button>
+          <Button variant="primary" onClick={submit} disabled={processing}>
+            {processing ? (
+              <>
+                <Spinner className="h-4 w-4" /> جارٍ الحفظ…
+              </>
+            ) : (
+              "حفظ السياسة"
+            )}
+          </Button>
+        </>
+      }
+    >
+      <section className="surface p-5 sm:p-6 lg:p-8">
+              <div className="space-y-5">
                 {scope !== "global" && (
                   <label className="block">
                     <span className="text-xs font-bold text-slate-600">
@@ -278,24 +249,7 @@ export function PolicyDialog({ open, onClose, scope, row = null, warehouseOption
                 </div>
               )}
 
-              <div className="mt-5 flex flex-wrap justify-end gap-2">
-                <Button variant="secondary" onClick={onClose} disabled={processing}>
-                  إلغاء
-                </Button>
-                <Button variant="primary" onClick={submit} disabled={processing}>
-                  {processing ? (
-                    <>
-                      <Spinner className="h-4 w-4" /> جارٍ الحفظ…
-                    </>
-                  ) : (
-                    "حفظ السياسة"
-                  )}
-                </Button>
-              </div>
-            </motion.div>
-          </div>
-        </>
-      )}
-    </AnimatePresence>
+      </section>
+    </FullPageFlow>
   );
 }

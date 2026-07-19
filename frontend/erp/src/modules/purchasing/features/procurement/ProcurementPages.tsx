@@ -3,11 +3,12 @@
 // and the useProcurement hooks. All money/qty rendered via formatters (English
 // digits). Backend enforces permissions; useCan hides obviously-forbidden buttons.
 import { useState, type ReactNode } from "react";
-import { Link } from "react-router-dom";
+import { Link, useSearchParams } from "react-router-dom";
 import {
   ShoppingBag, ClipboardList, AlarmClock, PackageCheck, FileWarning, Wallet, TriangleAlert, ArrowLeftRight,
 } from "lucide-react";
-import { PanelTitle } from "@/shared/ui";
+import { Dialog, PanelTitle } from "@/shared/ui";
+import { Field } from "@/shared/forms";
 import { MetricCard } from "@/modules/inventory/lib/MetricCard";
 import { StatusBadge } from "@/shared/ui";
 import { Button } from "@/shared/ui";
@@ -105,33 +106,114 @@ export function ProcurementDashboard() {
 
 // ── Suppliers ─────────────────────────────────────────────────────────────
 export function SuppliersPage() {
+  const [searchParams, setSearchParams] = useSearchParams();
   const [params, patch] = useListState();
   const { data, isLoading, isError, error, refetch } = useSuppliers(params);
   const canManage = useCan("procurement.manage");
   const create = useCreateSupplier();
-  const [showNew, setShowNew] = useState(false);
-  const [name, setName] = useState("");
-  const [vat, setVat] = useState("");
+  const showNew = searchParams.get("new") === "1";
+  const [draft, setDraft] = useState({
+    name: "",
+    nameEn: "",
+    vatNumber: "",
+    phone: "",
+    email: "",
+    city: "",
+    paymentTerms: "Cash",
+  });
+
+  const updateDraft = (field: keyof typeof draft, value: string) =>
+    setDraft((current) => ({ ...current, [field]: value }));
+
+  const closeCreate = () => {
+    if (create.isPending) return;
+    const next = new URLSearchParams(searchParams);
+    next.delete("new");
+    setSearchParams(next, { replace: true });
+  };
+
+  const openCreate = () => {
+    const next = new URLSearchParams(searchParams);
+    next.set("new", "1");
+    setSearchParams(next);
+  };
+
+  const saveSupplier = () => {
+    if (draft.name.trim().length < 2) return;
+    create.mutate(
+      { ...draft, name: draft.name.trim() },
+      {
+        onSuccess: () => {
+          setDraft({ name: "", nameEn: "", vatNumber: "", phone: "", email: "", city: "", paymentTerms: "Cash" });
+          const next = new URLSearchParams(searchParams);
+          next.delete("new");
+          setSearchParams(next, { replace: true });
+          refetch();
+        },
+      },
+    );
+  };
 
   return (
     <div>
       <div className="mb-4 flex flex-wrap items-center gap-2">
         <input className="field w-64" placeholder="بحث بالاسم / الضريبي / الهاتف…" value={params.q ?? ""} onChange={(e) => patch({ q: e.target.value, page: 1 })} />
         <div className="grow" />
-        {canManage && <Button onClick={() => setShowNew((s) => !s)}>{showNew ? "إغلاق" : "+ مورد جديد"}</Button>}
+        {canManage && <Button onClick={openCreate}>+ مورد جديد</Button>}
       </div>
-      {showNew && canManage && (
-        <div className="surface mb-4 p-4">
-          <div className="grid gap-3 sm:grid-cols-3">
-            <input className="field" placeholder="اسم المورد" value={name} onChange={(e) => setName(e.target.value)} />
-            <input className="field" placeholder="الرقم الضريبي (اختياري)" value={vat} onChange={(e) => setVat(e.target.value)} />
-            <Button disabled={create.isPending || name.trim().length < 2} onClick={() => create.mutate({ name, vatNumber: vat }, { onSuccess: () => { setName(""); setVat(""); setShowNew(false); refetch(); } })}>
-              {create.isPending ? "جارٍ الحفظ…" : "حفظ"}
-            </Button>
+      <Dialog
+        open={showNew && canManage}
+        onClose={closeCreate}
+        title="إضافة مورد جديد"
+        description="سجّل البيانات التجارية وبيانات التواصل وشروط الدفع في ملف مورد واحد واضح."
+        size="lg"
+        dismissable={!create.isPending}
+        footer={
+          <>
+            <Button variant="secondary" onClick={closeCreate} disabled={create.isPending}>إلغاء</Button>
+            <Button loading={create.isPending} disabled={draft.name.trim().length < 2} onClick={saveSupplier}>حفظ المورد</Button>
+          </>
+        }
+      >
+        <section className="surface p-5 sm:p-6">
+          <div className="mb-5 border-b border-slate-100 pb-4">
+            <h2 className="text-lg font-bold text-slate-900">بيانات المورد</h2>
+            <p className="mt-1 text-sm leading-6 text-slate-600">الحقول المعلّمة بنجمة مطلوبة لإتمام الحفظ.</p>
           </div>
-          {create.isError && <p className="mt-2 text-sm font-semibold text-rose-600">{(create.error as ApiError)?.message}</p>}
-        </div>
-      )}
+          <div className="grid gap-5 md:grid-cols-2">
+            <Field label="اسم المورد" required>
+              <input className="field" value={draft.name} onChange={(e) => updateDraft("name", e.target.value)} autoFocus />
+            </Field>
+            <Field label="الاسم بالإنجليزية">
+              <input className="field" dir="ltr" value={draft.nameEn} onChange={(e) => updateDraft("nameEn", e.target.value)} />
+            </Field>
+            <Field label="الرقم الضريبي" hint="أدخل الرقم كما يظهر في شهادة التسجيل الضريبي.">
+              <input className="field" dir="ltr" inputMode="numeric" value={draft.vatNumber} onChange={(e) => updateDraft("vatNumber", e.target.value)} />
+            </Field>
+            <Field label="الهاتف">
+              <input className="field" dir="ltr" inputMode="tel" value={draft.phone} onChange={(e) => updateDraft("phone", e.target.value)} />
+            </Field>
+            <Field label="البريد الإلكتروني">
+              <input className="field" dir="ltr" type="email" value={draft.email} onChange={(e) => updateDraft("email", e.target.value)} />
+            </Field>
+            <Field label="المدينة">
+              <input className="field" value={draft.city} onChange={(e) => updateDraft("city", e.target.value)} />
+            </Field>
+            <Field label="شروط الدفع">
+              <select className="field" value={draft.paymentTerms} onChange={(e) => updateDraft("paymentTerms", e.target.value)}>
+                <option value="Cash">نقدي</option>
+                <option value="Net30">آجل 30 يومًا</option>
+                <option value="Net60">آجل 60 يومًا</option>
+              </select>
+            </Field>
+          </div>
+          {create.isError && (
+            <p className="mt-5 rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm font-semibold text-rose-700">
+              {(create.error as ApiError)?.message}
+            </p>
+          )}
+        </section>
+      </Dialog>
       {isLoading ? <LoadingState /> : isError ? <ErrorState error={error} onRetry={() => refetch()} /> : !data || data.rows.length === 0 ? (
         <EmptyState title="لا موردين" body="ابدأ بإضافة مورد." />
       ) : (

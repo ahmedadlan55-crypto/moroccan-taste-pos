@@ -61,24 +61,26 @@ export function baseCss(paper: PaperWidth): string {
   return `
   * { margin: 0; padding: 0; box-sizing: border-box; }
   body { font-family: "Tajawal", "Segoe UI", Tahoma, Arial, sans-serif; direction: rtl;
-         width: ${p.width}; margin: 0 auto; padding: 4mm 2mm; color: #000; background: #fff; font-size: ${p.font}; }
+         width: ${p.width}; margin: 0 auto; padding: 4mm 2mm;
+         color: var(--mt-text, CanvasText); background: var(--mt-surface, Canvas); font-size: ${p.font}; }
   .num { direction: ltr; unicode-bidi: embed; font-variant-numeric: tabular-nums; }
   h1 { font-size: ${p.h1}; text-align: center; margin-bottom: 2px; }
-  .sub { text-align: center; font-size: 0.92em; color: #333; }
-  hr { border: none; border-top: 1px dashed #000; margin: 6px 0; }
+  .sub { text-align: center; font-size: 0.92em; color: var(--mt-text-muted, GrayText); }
+  hr { border: none; border-top: 1px dashed currentColor; margin: 6px 0; }
   table { width: 100%; border-collapse: collapse; }
-  th { text-align: right; font-size: 0.92em; border-bottom: 1px solid #000; padding: 2px 0; }
+  th { text-align: right; font-size: 0.92em; border-bottom: 1px solid currentColor; padding: 2px 0; }
   td { padding: 2px 0; vertical-align: top; }
   .l { text-align: left; }
   .tot td { padding: 1px 0; }
-  .grand { font-size: ${p.grand}; font-weight: 800; border-top: 1px solid #000; }
+  .grand { font-size: ${p.grand}; font-weight: 800; border-top: 1px solid currentColor; }
   .foot { text-align: center; margin-top: 8px; font-weight: 700; }
   .qr { text-align: center; margin-top: 8px; }
   .qr img { image-rendering: pixelated; }
-  .stamp { border: 2px solid #000; text-align: center; font-weight: 900; padding: 3px 6px; margin: 6px auto; width: fit-content; }
+  .stamp { border: 2px solid currentColor; text-align: center; font-weight: 900; padding: 3px 6px; margin: 6px auto; width: fit-content; }
   .kitchen { font-size: ${p.kitchen}; }
   .kitchen td { font-weight: 700; padding: 4px 0; }
-  .kitchen .note { font-size: 0.8em; font-weight: 400; color: #111; }
+  .kitchen .note { font-size: 0.8em; font-weight: 400; color: var(--mt-text, currentColor); }
+  .line-note { font-size: 10px; color: var(--mt-text-muted, GrayText); }
   ${paper === "A4" ? "" : "@media print { body { width: auto; } }"}
 `;
 }
@@ -256,7 +258,7 @@ export function buildSaleReceiptHtml(opts: SaleReceiptOptions): string {
       const qtyLabel = factor > 1 && l.enteredUnitName ? `${fmt2(l.qty)} ${esc(l.enteredUnitName)}` : fmt2(l.qty);
       const lineGross = baseQty * l.unitPrice - (l.lineDiscount || 0);
       return `<tr>
-        <td>${esc(l.name)}${l.notes ? `<div style="font-size:10px;color:#333">${esc(l.notes)}</div>` : ""}</td>
+        <td>${esc(l.name)}${l.notes ? `<div class="line-note">${esc(l.notes)}</div>` : ""}</td>
         <td class="l num">${qtyLabel}</td>
         <td class="l num">${fmt2(l.unitPrice)}</td>
         <td class="l num">${fmt2(lineGross)}</td>
@@ -358,10 +360,10 @@ export function buildCreditNoteHtml(opts: CreditNoteOptions): string {
       // Returned / sold context under the item name.
       const qtyNote =
         l.returnQty != null || l.soldQty != null
-          ? `<div style="font-size:10px;color:#333">مُرجَع <span class="num">${fmt2(Number(l.returnQty ?? l.qty))}</span>${l.soldQty != null ? ` من <span class="num">${fmt2(Number(l.soldQty))}</span> مباع` : ""}</div>`
+          ? `<div class="line-note">مُرجَع <span class="num">${fmt2(Number(l.returnQty ?? l.qty))}</span>${l.soldQty != null ? ` من <span class="num">${fmt2(Number(l.soldQty))}</span> مباع` : ""}</div>`
           : "";
       return `<tr>
-        <td>${esc(l.name)}${qtyNote}${l.notes ? `<div style="font-size:10px;color:#333">${esc(l.notes)}</div>` : ""}</td>
+        <td>${esc(l.name)}${qtyNote}${l.notes ? `<div class="line-note">${esc(l.notes)}</div>` : ""}</td>
         <td class="l num">${fmt2(Number(l.returnQty ?? l.qty))}</td>
         <td class="l num">${fmt2(l.unitPrice)}</td>
         <td class="l num">${fmt2(lineGross)}</td>

@@ -16,21 +16,10 @@ const MGR = verifyToken.requireRole('admin', 'manager');
 // saving, so a decoded payload over 300KB — or anything that is not a
 // JPEG/PNG/WebP data-URL — is a bug or abuse, never a legitimate save.
 // '' (and null) still clear the image; absent leaves it untouched (PUT).
-const IMAGE_MAX_BYTES = 300 * 1024;
-const IMAGE_DATA_URL_RE = /^data:image\/(jpeg|png|webp);base64,([A-Za-z0-9+/]+={0,2})$/;
-function imageDataError(imageData) {
-  if (typeof imageData === 'undefined' || imageData === null || imageData === '') return null;
-  if (typeof imageData !== 'string' || !IMAGE_DATA_URL_RE.test(imageData)) {
-    return 'صيغة الصورة غير مدعومة — المسموح: JPEG أو PNG أو WebP بصيغة data:image/...;base64';
-  }
-  const b64 = imageData.slice(imageData.indexOf(',') + 1);
-  const padding = b64.endsWith('==') ? 2 : (b64.endsWith('=') ? 1 : 0);
-  const decodedBytes = (b64.length * 3) / 4 - padding; // size math — no decode round-trip
-  if (decodedBytes > IMAGE_MAX_BYTES) {
-    return 'حجم الصورة كبير جدًا — الحد الأقصى 300 كيلوبايت بعد الضغط. صغِّر الصورة وأعد المحاولة';
-  }
-  return null;
-}
+// bilingual-i18n-images (Owner C) — extracted into lib/imageValidation.js so
+// routes/product-images.js (bulk image API) can reuse the exact same contract
+// instead of a second, potentially-drifting copy. Pure move, zero behavior change.
+const { IMAGE_MAX_BYTES, IMAGE_DATA_URL_RE, imageDataError } = require('../lib/imageValidation');
 
 // ─── Helper: map a menu row to API response (includes semi-finished fields) ───
 function _mapMenu(m) {
@@ -499,6 +488,90 @@ router.delete('/:id', verifyToken, MGR, async (req, res) => {
     if (!r.affectedRows) return res.status(404).json({ success: false, error: 'الصنف غير موجود' });
     res.json({ success: true, softDeleted: true });
   } catch (e) { res.json({ success: false, error: e.message }); }
+});
+
+// ═══════════════════════════════════════════════════════════════════
+// bilingual-i18n-images (Owner C) — category EN labels + name_en coverage.
+// menu_category_i18n is created by Owner A's migration
+// (db/migrations/0013_bilingual_catalog.sql): category_ar (PK) + category_en.
+// ═══════════════════════════════════════════════════════════════════
+
+// GET /api/menu/categories — every distinct category in use, its English
+// label (if translated), and how many (non-deleted) items sit in it. Public
+// read, same as the rest of the catalog-shaped GETs in this file.
+router.get('/categories', async (req, res) => {
+  try {
+    const [rows] = await db.query(
+      `SELECT m.category AS categoryAr,
+              mci.category_en AS categoryEn,
+              COUNT(*) AS itemCount
+         FROM menu m
+         LEFT JOIN menu_category_i18n mci ON mci.category_ar = m.category
+        WHERE COALESCE(m.is_deleted,0) = 0
+        GROUP BY m.category, mci.category_en
+        ORDER BY m.category`);
+    res.json(rows.map(r => ({
+      categoryAr: r.categoryAr,
+      categoryEn: r.categoryEn || '',
+      itemCount: Number(r.itemCount) || 0
+    })));
+  } catch (e) { res.status(500).json({ success: false, error: e.message }); }
+});
+
+// PUT /api/menu/categories/:categoryAr — set/replace the English label for an
+// Arabic category name. MGR-gated (mirrors every other admin write below).
+router.put('/categories/:categoryAr', verifyToken, MGR, async (req, res) => {
+  try {
+    const categoryAr = req.params.categoryAr;
+    const categoryEn = ((req.body && req.body.categoryEn) || '').toString().trim();
+    if (!categoryEn) return res.status(400).json({ success: false, error: 'الاسم الإنجليزي للفئة مطلوب' });
+    await db.query(
+      `INSERT INTO menu_category_i18n (category_ar, category_en) VALUES (?, ?)
+       ON DUPLICATE KEY UPDATE category_en = VALUES(category_en)`,
+      [categoryAr, categoryEn]);
+    res.json({ success: true, categoryAr, categoryEn });
+  } catch (e) { res.status(500).json({ success: false, error: e.message }); }
+});
+
+// GET /api/menu/name-en-coverage — MGR-gated dashboard stat: how much of the
+// sellable catalog has an English name, and where that name came from.
+// name_en_source / name_en_needs_review are added by Owner D's migration
+// (db/migrations/0015_name_en_backfill.sql):
+//   name_en_source ENUM('owner','machine_translation','transliteration') NULL
+//   name_en_needs_review TINYINT(1) DEFAULT 0
+// "Sellable" mirrors the rest of this file's convention: not soft-deleted and
+// not a synthetic SEED-% fixture row.
+router.get('/name-en-coverage', verifyToken, MGR, async (req, res) => {
+  try {
+    const [[cov]] = await db.query(
+      `SELECT COUNT(*) AS total_sellable,
+              SUM(CASE WHEN name_en IS NOT NULL AND name_en <> '' THEN 1 ELSE 0 END) AS translated,
+              SUM(CASE WHEN name_en_source = 'owner' THEN 1 ELSE 0 END) AS owner_authored,
+              SUM(CASE WHEN name_en_source = 'machine_translation' THEN 1 ELSE 0 END) AS machine_translated,
+              SUM(CASE WHEN name_en_source = 'transliteration' THEN 1 ELSE 0 END) AS transliterated,
+              SUM(CASE WHEN COALESCE(name_en_needs_review,0) = 1 THEN 1 ELSE 0 END) AS needs_review
+         FROM menu
+        WHERE COALESCE(is_deleted,0) = 0 AND id NOT LIKE 'SEED-%'`);
+    // Lightweight image-storage stat, sharing this dashboard endpoint rather
+    // than adding a whole sibling route for two numbers.
+    const [[img]] = await db.query(
+      `SELECT SUM(LENGTH(image_data)) AS total_image_bytes,
+              COUNT(image_data) AS items_with_image
+         FROM menu`);
+    res.json({
+      success: true,
+      totalSellable: Number(cov.total_sellable) || 0,
+      translated: Number(cov.translated) || 0,
+      ownerAuthored: Number(cov.owner_authored) || 0,
+      machineTranslated: Number(cov.machine_translated) || 0,
+      transliterated: Number(cov.transliterated) || 0,
+      needsReview: Number(cov.needs_review) || 0,
+      imageStorage: {
+        totalImageBytes: Number(img.total_image_bytes) || 0,
+        itemsWithImage: Number(img.items_with_image) || 0
+      }
+    });
+  } catch (e) { res.status(500).json({ success: false, error: e.message }); }
 });
 
 // Bulk import menu items

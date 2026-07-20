@@ -28,8 +28,16 @@ const UC = require('../lib/unitConversion');
 const IDEM = require('../lib/idempotencyStore');
 const invoiceIdentity = require('../lib/invoiceIdentity');
 const requireRole = require('../middleware/auth').requireRole;
+const hasCapability = require('../middleware/requireCapability').hasCapability;
 
 const POS = requireRole('admin', 'manager', 'cashier');
+
+// Brand/branch scope fix (bilingual-i18n-images, Owner A). Every catalog/order
+// caller — INCLUDING admin/manager — defaults to their OWN resolved brand
+// (see _cashierBrandId / _resolveBrandScope below). This capability is the
+// ONLY way to widen that to ?brandId=/?allBranches=1 — introduced here, not
+// yet seeded anywhere; report it to the wiring stage to grant it.
+const BRAND_SCOPE_CAP = 'pos.catalog.viewAllBrands';
 
 // Cashier order-level discount ceiling (percent of subtotal). Above it → manager.
 const MAX_CASHIER_DISC_PCT = (() => { const n = Number(process.env.POS_MAX_CASHIER_DISCOUNT_PCT); return Number.isFinite(n) && n >= 0 ? n : 10; })();
@@ -60,6 +68,15 @@ const ULID_RE = /^[0-9A-Za-z_-]{10,40}$/;
 //     rebuild the EXACT legacy /api/sales payload for recipe deductions.
 //   • pos_payments.method VARCHAR(20) → VARCHAR(50) — owner-configured payment
 //     method names (payment_methods.name) exceed the built-in 20-char budget.
+//   • pos_orders.branch_id — brand/branch scope fix (bilingual-i18n-images,
+//     Owner A): a snapshot of the cashier's branch at order-CREATION time
+//     (never rewritten on edits — same convention as name_snapshot /
+//     channel_name), so GET /orders can brand-scope supervisors. Reference
+//     SQL lives in db/migrations/0014_brand_branch_scope.sql; this ensure
+//     keeps the router self-sufficient until that (or the server.js wiring
+//     stage) lands.
+//   • menu_category_i18n — AR→EN category-name overlay for the catalog's
+//     categoryEn field. Reference SQL in db/migrations/0013_bilingual_catalog.sql.
 let _schemaEnsured = false;
 async function _ensureSchema() {
   if (_schemaEnsured) return;
@@ -76,6 +93,26 @@ async function _ensureSchema() {
   if (mcol.length && Number(mcol[0].len) < 50) {
     await db.query('ALTER TABLE pos_payments MODIFY method VARCHAR(50) NOT NULL');
     console.log('[pos-v2] widened pos_payments.method to VARCHAR(50)');
+  }
+  const [bcol] = await db.query(
+    "SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS " +
+    "WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'pos_orders' AND COLUMN_NAME = 'branch_id'");
+  if (!bcol.length) {
+    await db.query('ALTER TABLE pos_orders ADD COLUMN branch_id VARCHAR(50) NULL');
+    console.log('[pos-v2] added pos_orders.branch_id');
+  }
+  const [catTbl] = await db.query(
+    "SELECT TABLE_NAME FROM INFORMATION_SCHEMA.TABLES " +
+    "WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'menu_category_i18n'");
+  if (!catTbl.length) {
+    await db.query(
+      'CREATE TABLE menu_category_i18n (' +
+      'category_ar VARCHAR(100) PRIMARY KEY, ' +
+      'category_en VARCHAR(100) NULL, ' +
+      'updated_by VARCHAR(100) NULL, ' +
+      'updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP' +
+      ') ENGINE=InnoDB');
+    console.log('[pos-v2] created menu_category_i18n');
   }
   _schemaEnsured = true;
 }
@@ -236,7 +273,7 @@ async function _loadComboDefs(q, comboIds) {
 //                     price = override_price > price-list price > base.
 async function _loadActiveChannel(q, channelId) {
   const [rows] = await q.query(
-    'SELECT id, code, name, channel_type, is_active, price_list_id, COALESCE(use_full_menu,0) AS use_full_menu ' +
+    'SELECT id, code, name, name_en, channel_type, is_active, price_list_id, COALESCE(use_full_menu,0) AS use_full_menu ' +
     'FROM sales_channels WHERE id=? LIMIT 1', [channelId]);
   if (!rows.length) throw _err('VALIDATION_ERROR', 'قناة البيع غير موجودة: ' + channelId);
   if (!rows[0].is_active) throw _err('VALIDATION_ERROR', 'قناة البيع "' + rows[0].name + '" غير نشطة');
@@ -248,6 +285,56 @@ async function _cashierBranchId(q, user) {
   if (!uname) return null;
   const [u] = await q.query('SELECT branch_id, default_branch_id FROM users WHERE username = ? LIMIT 1', [uname]);
   return u.length ? (u[0].branch_id || u[0].default_branch_id || null) : null;
+}
+
+// Brand/branch scope fix — resolve the cashier's BRAND (not just branch):
+// users.brand_id directly if set, else the brand of whichever branch they
+// belong to (COALESCE(users.branch_id, users.default_branch_id) → branches.brand_id).
+// null means "no brand context" — the caller then only sees NULL-brand rows.
+async function _cashierBrandId(q, user) {
+  const uname = _userName(user);
+  if (!uname) return null;
+  const [u] = await q.query('SELECT brand_id, branch_id, default_branch_id FROM users WHERE username = ? LIMIT 1', [uname]);
+  if (!u.length) return null;
+  if (u[0].brand_id) return u[0].brand_id;
+  const branchId = u[0].branch_id || u[0].default_branch_id || null;
+  if (!branchId) return null;
+  const [b] = await q.query('SELECT brand_id FROM branches WHERE id = ? LIMIT 1', [branchId]);
+  return b.length ? (b[0].brand_id || null) : null;
+}
+
+// Resolve the effective brand scope for a request. EVERY caller — INCLUDING
+// admin/manager — defaults to their OWN resolved brand; there is no blanket
+// supervisor bypass. ?brandId=<id> or ?allBranches=1 asks for a wider scope,
+// honored ONLY when the caller holds BRAND_SCOPE_CAP (checked inline via
+// hasCapability — this is conditional on a query flag, not a route-level
+// requireCapability gate). Without the capability the params are silently
+// ignored and default (own-brand) scoping still applies — never a silent
+// widening of access.
+async function _resolveBrandScope(q, req) {
+  const rawBrandId = req.query && req.query.brandId != null ? String(req.query.brandId).trim() : '';
+  const wantsAll = /^(1|true|on|yes)$/i.test(String((req.query && req.query.allBranches) || '').trim());
+  if (rawBrandId || wantsAll) {
+    let ok = false;
+    try { ok = await hasCapability(req.user, BRAND_SCOPE_CAP); } catch (_) { ok = false; }
+    if (ok) {
+      return rawBrandId ? { brandId: rawBrandId.slice(0, 50), allBrands: false } : { brandId: null, allBrands: true };
+    }
+    // No capability → bypass params ignored; fall through to default scope.
+  }
+  const brandId = await _cashierBrandId(q, req.user);
+  if (brandId == null) {
+    // No resolvable brand context for this caller (never assigned a brand or
+    // a branch with a brand). Do NOT restrict to brand_id-IS-NULL-only rows —
+    // today's baseline (pre-scope-fix) had zero scoping at all, so "can't
+    // determine brand -> show everything" is never a security regression,
+    // and it prevents any untagged admin/manager/cashier account from seeing
+    // an empty catalog the moment this scope fix ships. Real cross-brand
+    // isolation still holds for every account that DOES have a resolvable
+    // brand (the common case going forward).
+    return { brandId: null, allBrands: true };
+  }
+  return { brandId, allBrands: false };
 }
 
 async function _channelPricing(q, channel, branchId) {
@@ -400,13 +487,18 @@ async function doUpsert(user, body) {
   const out = await db.withTransaction(async (conn) => {
     const existing = await _loadOrder(id, conn); // FOR UPDATE
     if (!existing) {
+      // Brand/branch scope fix — snapshot the cashier's branch at CREATION
+      // time only (never rewritten on later edits), same convention as
+      // name_snapshot / channel_name. Powers the brand-scoped GET /orders.
+      const branchId = await _cashierBranchId(conn, user);
       await conn.query(
-        `INSERT INTO pos_orders (id, status, order_type, table_no, shift_id, username, device_id, warehouse_id, channel_id, channel_name, customer_id,
+        `INSERT INTO pos_orders (id, status, order_type, table_no, shift_id, username, device_id, warehouse_id, branch_id, channel_id, channel_name, customer_id,
            discount_type, discount_value, discount_name, subtotal, line_discount_total, discount_total, vat_total, total, note, origin, version)
-         VALUES (?,'open',?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,1)`,
+         VALUES (?,'open',?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,1)`,
         [id, orderType, (b.tableNo || '').toString().slice(0, 20) || null, shiftId, actor,
          (b.deviceId || '').toString().slice(0, 60) || null,
          (b.warehouseId || '').toString().slice(0, 50) || null,
+         branchId,
          channelId,
          channelName,
          (b.customerId || '').toString().slice(0, 50) || null,
@@ -598,6 +690,15 @@ router.get('/catalog', POS, async (req, res) => {
       chPricing = await _channelPricing(db, channel, branchId);
     }
 
+    // Brand/branch scope fix — EVERY caller (including admin/manager) is
+    // scoped by default to their own resolved brand; menu.brand_id IS NULL
+    // rows are unscoped/global and stay visible to everyone. The
+    // ?brandId=/?allBranches=1 bypass only widens this for a holder of
+    // BRAND_SCOPE_CAP (see _resolveBrandScope) — silently ignored otherwise.
+    const brandScope = await _resolveBrandScope(db, req);
+    const brandCond = brandScope.allBrands ? '' : ' AND (menu.brand_id IS NULL OR menu.brand_id = ?)';
+    const brandParams = brandScope.allBrands ? [] : [brandScope.brandId];
+
     // close/d-images — the catalog carries an image VERSION, never the image.
     // menu.image_data is a base64 data-URL in a LONGTEXT (66MB across the live
     // catalog); shipping it here is exactly the legacy full-menu-in-localStorage
@@ -607,9 +708,24 @@ router.get('/catalog', POS, async (req, res) => {
     // data.items and therefore this route's ETag, invalidating cached catalogs.
     // Measured on the live 2,000-row / 68MB-of-blobs table: ~28ms → ~100ms.
     const [items] = await db.query(
-      "SELECT id, name, price, category, active, tax_category, stock, COALESCE(is_combo,0) AS is_combo, " +
+      "SELECT id, name, name_en, price, category, active, tax_category, stock, COALESCE(is_combo,0) AS is_combo, " +
       "CASE WHEN image_data IS NULL OR image_data='' THEN NULL ELSE SUBSTRING(SHA1(image_data),1,8) END AS image_ver " +
-      "FROM menu WHERE COALESCE(is_deleted,0)=0 ORDER BY category, name");
+      "FROM menu WHERE COALESCE(is_deleted,0)=0" + brandCond + " ORDER BY category, name", brandParams);
+
+    // Bilingual — AR→EN category overlay (menu_category_i18n). Additive and
+    // fail-soft: a missing/mid-migration table must not cost the cashier the
+    // whole catalog, only the categoryEn field (stays null).
+    const categoryEnMap = {};
+    try {
+      const cats = [...new Set(items.map((m) => m.category || 'عام'))];
+      if (cats.length) {
+        const [catRows] = await db.query(
+          'SELECT category_ar, category_en FROM menu_category_i18n WHERE category_ar IN (?)', [cats]);
+        for (const c of catRows) categoryEnMap[c.category_ar] = c.category_en || null;
+      }
+    } catch (e) {
+      console.error('[pos-v2] menu_category_i18n load failed (catalog ships without categoryEn):', e.message);
+    }
     let vatRate = 15;
     try {
       // Was: SELECT `value` ... WHERE `key`=... — columns that do not exist. The
@@ -633,12 +749,16 @@ router.get('/catalog', POS, async (req, res) => {
     if (ids.length) {
       try {
         const [us] = await db.query(
-          'SELECT iu.item_id, iu.id AS unit_id, iu.unit_code, iu.unit_name, iu.is_base, iu.conversion_to_base, ib.code AS barcode ' +
-          'FROM item_units iu LEFT JOIN item_barcodes ib ON ib.id=iu.barcode_id ' +
+          'SELECT iu.item_id, iu.id AS unit_id, iu.unit_code, iu.unit_name, iu.is_base, iu.conversion_to_base, ib.code AS barcode, un.name_en AS unit_name_en ' +
+          'FROM item_units iu LEFT JOIN item_barcodes ib ON ib.id=iu.barcode_id LEFT JOIN units un ON un.id=iu.unit_id ' +
           'WHERE iu.item_id IN (?) AND iu.is_active=1 AND iu.allow_sale=1 ORDER BY iu.is_base DESC, iu.conversion_to_base ASC', [ids]);
         for (const u of us) {
           (unitsByItem[u.item_id] = unitsByItem[u.item_id] || []).push({
             unitId: u.unit_id, unitCode: u.unit_code, unitName: u.unit_name,
+            // unitNameEn resolves via the master `units` table (units.id =
+            // item_units.unit_id). unit_id is an honest optional link — a unit
+            // never wired to the master row stays null here, not a bug.
+            unitNameEn: u.unit_name_en ?? null,
             isBase: u.is_base === 1 || u.is_base === true, factor: Number(u.conversion_to_base), barcode: u.barcode || null,
           });
         }
@@ -661,7 +781,7 @@ router.get('/catalog', POS, async (req, res) => {
     let combos = [];
     try {
       let [comboRows] = await db.query(
-        "SELECT id, name, price FROM menu WHERE COALESCE(is_combo,0)=1 AND COALESCE(is_deleted,0)=0 ORDER BY category, name");
+        "SELECT id, name, name_en, price FROM menu WHERE COALESCE(is_combo,0)=1 AND COALESCE(is_deleted,0)=0" + brandCond + " ORDER BY category, name", brandParams);
       // A non-full-menu channel restricts combos exactly like plain items.
       if (chPricing && chPricing.availableSet) comboRows = comboRows.filter((c) => chPricing.availableSet.has(String(c.id)));
       if (comboRows.length) {
@@ -683,7 +803,7 @@ router.get('/catalog', POS, async (req, res) => {
           }
           // Combo price is FIXED but still channel-priced like any menu row.
           const resolved = chPricing ? _channelPriceFor(chPricing, c.id, c.price) : { price: Number(c.price), source: null };
-          return { id: String(c.id), menuId: String(c.id), name: c.name, price: resolved.price, priceSource: resolved.source, fixedComponents, groups };
+          return { id: String(c.id), menuId: String(c.id), name: c.name, nameEn: c.name_en ?? null, price: resolved.price, priceSource: resolved.source, fixedComponents, groups };
         });
       }
     } catch (e) {
@@ -763,8 +883,8 @@ router.get('/catalog', POS, async (req, res) => {
     let channels = [];
     try {
       const [chRows] = await db.query(
-        'SELECT id, name, code, COALESCE(use_full_menu,0) AS use_full_menu FROM sales_channels WHERE is_active = 1 ORDER BY display_order, name');
-      channels = chRows.map((c) => ({ id: c.id, name: c.name, code: c.code, useFullMenu: !!c.use_full_menu }));
+        'SELECT id, name, name_en, code, COALESCE(use_full_menu,0) AS use_full_menu FROM sales_channels WHERE is_active = 1 ORDER BY display_order, name');
+      channels = chRows.map((c) => ({ id: c.id, name: c.name, nameEn: c.name_en ?? null, code: c.code, useFullMenu: !!c.use_full_menu }));
     } catch (e) {
       // Loud fallback: the catalog still serves the grid; the switcher is empty.
       console.error('[pos-v2] channels load failed (catalog ships without channels):', e.message);
@@ -777,7 +897,8 @@ router.get('/catalog', POS, async (req, res) => {
         const base = units.find((u) => u.isBase);
         const resolved = chPricing ? _channelPriceFor(chPricing, m.id, m.price) : { price: Number(m.price), source: null };
         return {
-          id: String(m.id), name: m.name, price: resolved.price, category: m.category || 'عام',
+          id: String(m.id), name: m.name, nameEn: m.name_en ?? null, price: resolved.price, category: m.category || 'عام',
+          categoryEn: categoryEnMap[m.category || 'عام'] ?? null,
           active: !(m.active === 0 || m.active === false),
           taxCategory: ['S', 'Z', 'E', 'O'].includes(m.tax_category) ? m.tax_category : 'S',
           basePrice: Number(m.price), warehouseQty: m.stock == null ? null : Number(m.stock),
@@ -797,7 +918,7 @@ router.get('/catalog', POS, async (req, res) => {
       channels,
       // Echo of the requested channel (badge + price-list chip in the client).
       channel: channel ? {
-        id: channel.id, name: channel.name, useFullMenu: !!channel.use_full_menu,
+        id: channel.id, name: channel.name, nameEn: channel.name_en ?? null, useFullMenu: !!channel.use_full_menu,
         priceListId: chPricing ? chPricing.priceListId : null,
         priceListName: chPricing ? chPricing.priceListName : null,
       } : null,
@@ -866,12 +987,28 @@ router.get('/orders', POS, async (req, res) => {
   try {
     const where = []; const params = [];
     const status = String(req.query.status || '');
-    if (M.STATUSES.includes(status)) { where.push('status=?'); params.push(status); }
-    else { where.push("status IN ('open','held','submitted')"); }
-    if (req.query.shiftId) { where.push('shift_id=?'); params.push(String(req.query.shiftId).slice(0, 40)); }
-    // Cashiers see their own orders; supervisors see everything.
-    if (!_userIsSuper(req.user)) { where.push('username=?'); params.push(_userName(req.user)); }
-    const [rows] = await db.query('SELECT * FROM pos_orders WHERE ' + where.join(' AND ') + ' ORDER BY updated_at DESC LIMIT 200', params);
+    if (M.STATUSES.includes(status)) { where.push('pos_orders.status=?'); params.push(status); }
+    else { where.push("pos_orders.status IN ('open','held','submitted')"); }
+    if (req.query.shiftId) { where.push('pos_orders.shift_id=?'); params.push(String(req.query.shiftId).slice(0, 40)); }
+    let join = '';
+    if (!_userIsSuper(req.user)) {
+      // Cashiers/employees always see only their own orders — unchanged.
+      where.push('pos_orders.username=?'); params.push(_userName(req.user));
+    } else {
+      // Supervisors: brand-scoped by DEFAULT via the order's branch snapshot
+      // (branch_id) joined to branches.brand_id. NULL branch_id (pre-migration
+      // rows) and NULL-brand branches stay visible to everyone — same
+      // "unscoped = global" rule the catalog applies. ?brandId=/?allBranches=1
+      // bypass requires BRAND_SCOPE_CAP (see _resolveBrandScope).
+      const scope = await _resolveBrandScope(db, req);
+      if (!scope.allBrands) {
+        join = ' LEFT JOIN branches ON branches.id = pos_orders.branch_id';
+        where.push('(pos_orders.branch_id IS NULL OR branches.brand_id IS NULL OR branches.brand_id = ?)');
+        params.push(scope.brandId);
+      }
+    }
+    const [rows] = await db.query(
+      'SELECT pos_orders.* FROM pos_orders' + join + ' WHERE ' + where.join(' AND ') + ' ORDER BY pos_orders.updated_at DESC LIMIT 200', params);
     const ids = rows.map((r) => r.id);
     let lines = [];
     if (ids.length) { const [lr] = await db.query('SELECT * FROM pos_order_lines WHERE order_id IN (?) ORDER BY sort, id', [ids]); lines = lr; }
@@ -884,6 +1021,18 @@ router.get('/orders/:id', POS, async (req, res) => {
     const o = await _loadOrder(req.params.id);
     if (!o) { const e = new Error('الطلب غير موجود'); e.status = 404; throw e; }
     if (!_userIsSuper(req.user) && o.username && o.username !== _userName(req.user)) return _fail(res, 'PERMISSION_DENIED', 'هذا الطلب يخص كاشيرًا آخر');
+    // Supervisors: same brand-scope as the list route, with the same
+    // allBranches+capability bypass. Reuses PERMISSION_DENIED — no new code.
+    if (_userIsSuper(req.user) && o.branch_id) {
+      const scope = await _resolveBrandScope(db, req);
+      if (!scope.allBrands) {
+        const [br] = await db.query('SELECT brand_id FROM branches WHERE id=? LIMIT 1', [o.branch_id]);
+        const orderBrandId = br.length ? br[0].brand_id : null;
+        if (orderBrandId != null && orderBrandId !== scope.brandId) {
+          return _fail(res, 'PERMISSION_DENIED', 'هذا الطلب خارج نطاق البراند الخاص بك');
+        }
+      }
+    }
     res.json({ success: true, data: _publicOrder(o, await _loadLines(o.id), await _loadPayments(o.id)) });
   } catch (e) { _catch(res, e); }
 });

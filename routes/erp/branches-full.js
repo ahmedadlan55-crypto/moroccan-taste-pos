@@ -22,7 +22,10 @@ router.get('/branches-full', async (req, res) => {
        LEFT JOIN brands br      ON b.brand_id      = br.id
        ORDER BY b.name`);
     res.json(rows.map(b => ({
-      id: b.id, code: b.code || '', name: b.name || '', location: b.location || '',
+      // nameEn is additive (bilingual-i18n-images, Owner A): `SELECT b.*`
+      // never errors on a missing column, so b.name_en is simply undefined
+      // on an older schema — no try/catch needed for the READ side.
+      id: b.id, code: b.code || '', name: b.name || '', nameEn: b.name_en || '', location: b.location || '',
       type: b.type || 'main',
       isActive: b.is_active !== 0 && b.is_active !== false,
       brandId: b.brand_id || '', brandName: b.brand_name || '',
@@ -47,6 +50,7 @@ router.post('/branches-full', async (req, res) => {
     if (name.length > 200) return res.json({ success: false, error: 'الاسم طويل جداً (200 حرف كحد أقصى)' });
 
     const code        = String(body.code || '').trim().slice(0, 20);
+    const nameEn      = body.nameEn ? String(body.nameEn).trim().slice(0, 200) : null;
     const companyName = body.companyName ? String(body.companyName).trim().slice(0, 200) : null;
     const location    = String(body.location || '').trim().slice(0, 500);
     const manager     = String(body.manager || '').trim().slice(0, 100);
@@ -87,28 +91,55 @@ router.post('/branches-full', async (req, res) => {
     if (id) {
       // Use COALESCE for `type` so we don't downgrade an existing branch type
       // when the form doesn't expose a type selector.
-      await db.query(
-        `UPDATE branches SET brand_id=?, code=?, name=?, company_name=?, location=?,
-                             type = COALESCE(?, type),
-                             warehouse_id=?, cost_center_id=?, manager=?, supply_mode=?,
-                             geo_lat=?, geo_lng=?, geo_radius=?
-         WHERE id=?`,
-        [brandId, code, name, companyName, location,
-         type,
-         warehouseId, costCenter, manager, supplyMode,
-         geoLat, geoLng, geoRadius, id]);
+      try {
+        await db.query(
+          `UPDATE branches SET brand_id=?, code=?, name=?, name_en=?, company_name=?, location=?,
+                               type = COALESCE(?, type),
+                               warehouse_id=?, cost_center_id=?, manager=?, supply_mode=?,
+                               geo_lat=?, geo_lng=?, geo_radius=?
+           WHERE id=?`,
+          [brandId, code, name, nameEn, companyName, location,
+           type,
+           warehouseId, costCenter, manager, supplyMode,
+           geoLat, geoLng, geoRadius, id]);
+      } catch (e) {
+        // Fallback for older deploys without branches.name_en (bilingual-i18n-images,
+        // Owner A — same try/catch-fallback-for-older-schema pattern as brands.js).
+        await db.query(
+          `UPDATE branches SET brand_id=?, code=?, name=?, company_name=?, location=?,
+                               type = COALESCE(?, type),
+                               warehouse_id=?, cost_center_id=?, manager=?, supply_mode=?,
+                               geo_lat=?, geo_lng=?, geo_radius=?
+           WHERE id=?`,
+          [brandId, code, name, companyName, location,
+           type,
+           warehouseId, costCenter, manager, supplyMode,
+           geoLat, geoLng, geoRadius, id]);
+      }
       return res.json({ success: true, id });
     }
 
     const newId = 'BR-' + Date.now();
-    await db.query(
-      `INSERT INTO branches (id, brand_id, code, name, company_name, location, type,
-                             warehouse_id, cost_center_id, manager, supply_mode,
-                             geo_lat, geo_lng, geo_radius)
-       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
-      [newId, brandId, code, name, companyName, location, type || 'main',
-       warehouseId, costCenter, manager, supplyMode,
-       geoLat, geoLng, geoRadius]);
+    try {
+      await db.query(
+        `INSERT INTO branches (id, brand_id, code, name, name_en, company_name, location, type,
+                               warehouse_id, cost_center_id, manager, supply_mode,
+                               geo_lat, geo_lng, geo_radius)
+         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+        [newId, brandId, code, name, nameEn, companyName, location, type || 'main',
+         warehouseId, costCenter, manager, supplyMode,
+         geoLat, geoLng, geoRadius]);
+    } catch (e) {
+      // Fallback for older deploys without branches.name_en
+      await db.query(
+        `INSERT INTO branches (id, brand_id, code, name, company_name, location, type,
+                               warehouse_id, cost_center_id, manager, supply_mode,
+                               geo_lat, geo_lng, geo_radius)
+         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+        [newId, brandId, code, name, companyName, location, type || 'main',
+         warehouseId, costCenter, manager, supplyMode,
+         geoLat, geoLng, geoRadius]);
+    }
     res.json({ success: true, id: newId });
   } catch(e) { res.json({ success: false, error: e.message }); }
 });

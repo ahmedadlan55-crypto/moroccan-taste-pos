@@ -20,6 +20,74 @@ function _userFromRequest(req) {
   return null;
 }
 
+// ── Additive schema ensure (idempotent, INFORMATION_SCHEMA-guarded) ──────────
+// Pattern: routes/pos-v2.js `_ensureSchema` — shifts.branch_id is a NEW
+// branch-level snapshot (populated at OPEN time, see POST /open below) that
+// lets GET / brand-scope supervisors' shift listings. Reference SQL lives in
+// db/migrations/0014_brand_branch_scope.sql; this ensure keeps the router
+// self-sufficient until that (or the server.js wiring stage) lands.
+let _shiftsSchemaEnsured = false;
+async function _ensureShiftsSchema() {
+  if (_shiftsSchemaEnsured) return;
+  const [col] = await db.query(
+    "SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS " +
+    "WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'shifts' AND COLUMN_NAME = 'branch_id'");
+  if (!col.length) {
+    await db.query('ALTER TABLE shifts ADD COLUMN branch_id VARCHAR(50) NULL');
+    console.log('[shifts] added shifts.branch_id');
+  }
+  _shiftsSchemaEnsured = true;
+}
+_ensureShiftsSchema().catch((e) => console.error('[shifts] schema ensure at init failed (will retry on first request):', e.message));
+router.use(async (req, res, next) => {
+  if (_shiftsSchemaEnsured) return next();
+  try { await _ensureShiftsSchema(); } catch (e) { console.error('[shifts] schema ensure failed:', e.message); }
+  next();
+});
+
+// Brand/branch scope fix (bilingual-i18n-images, Owner A) — GET / authz.
+// Non-supervisors are ALWAYS self-scoped (username=self, no capability gate —
+// mirrors GET /api/pos/v2/orders). Supervisors default to their own resolved
+// BRAND (shifts are branch-level, but scoping is still by brand, same as
+// routes/pos-v2.js), with the same ?brandId=/?allBranches=1 bypass gated on
+// the SAME capability introduced there.
+const SHIFTS_BRAND_SCOPE_CAP = 'pos.catalog.viewAllBrands';
+function _isSupervisor(user) {
+  return ['admin', 'manager'].includes(String((user && user.role) || '').toLowerCase()) || !!(user && user.isDeveloper);
+}
+// Resolve a user's BRAND: users.brand_id directly if set, else the brand of
+// COALESCE(users.branch_id, users.default_branch_id) via branches.brand_id.
+async function _userBrandId(username) {
+  if (!username) return null;
+  const [u] = await db.query('SELECT brand_id, branch_id, default_branch_id FROM users WHERE username = ? LIMIT 1', [username]);
+  if (!u.length) return null;
+  if (u[0].brand_id) return u[0].brand_id;
+  const branchId = u[0].branch_id || u[0].default_branch_id || null;
+  if (!branchId) return null;
+  const [b] = await db.query('SELECT brand_id FROM branches WHERE id = ? LIMIT 1', [branchId]);
+  return b.length ? (b[0].brand_id || null) : null;
+}
+async function _resolveShiftBrandScope(req) {
+  const rawBrandId = req.query && req.query.brandId != null ? String(req.query.brandId).trim() : '';
+  const wantsAll = /^(1|true|on|yes)$/i.test(String((req.query && req.query.allBranches) || '').trim());
+  if (rawBrandId || wantsAll) {
+    let ok = false;
+    try { ok = await hasCapability(req.user, SHIFTS_BRAND_SCOPE_CAP); } catch (_) { ok = false; }
+    if (ok) {
+      return rawBrandId ? { brandId: rawBrandId.slice(0, 50), allBrands: false } : { brandId: null, allBrands: true };
+    }
+    // No capability → bypass params ignored; fall through to default scope.
+  }
+  const brandId = await _userBrandId(req.user && req.user.username);
+  if (brandId == null) {
+    // Same rule as routes/pos-v2.js's _resolveBrandScope: no resolvable
+    // brand -> don't restrict, never regress to an empty list for an
+    // untagged supervisor account.
+    return { brandId: null, allBrands: true };
+  }
+  return { brandId, allBrands: false };
+}
+
 // Shift reports are financial documents: only the shift OWNER (the cashier who
 // ran it) or a holder of the manager-level `sales.reports.view` capability
 // (admin/developer bypass inside hasCapability) may read them.
@@ -265,7 +333,12 @@ router.post('/open', requireCapability('pos.use'), async (req, res) => {
     // insert inside ONE transaction. MySQL has no partial unique indexes,
     // so this row lock is the serialization point.
     const out = await db.withTransaction(async (conn) => {
-      await conn.query('SELECT id FROM users WHERE username = ? FOR UPDATE', [username]);
+      // Brand/branch scope fix — resolve branch_id in the SAME locked read (no
+      // extra round-trip), snapshotted at OPEN time only (never rewritten
+      // later), exactly like the existing name_snapshot / channel_name
+      // convention elsewhere in this codebase.
+      const [urow] = await conn.query('SELECT id, branch_id, default_branch_id FROM users WHERE username = ? FOR UPDATE', [username]);
+      const branchId = urow.length ? (urow[0].branch_id || urow[0].default_branch_id || null) : null;
       const [existing] = await conn.query(
         'SELECT id, opening_float FROM shifts WHERE username = ? AND status = "OPEN" LIMIT 1', [username]);
       // Idempotent open (double-tap / retry): a second /open MUST NOT change an
@@ -275,10 +348,10 @@ router.post('/open', requireCapability('pos.use'), async (req, res) => {
       const shiftId = 'SH-' + Date.now();
       const now = new Date();
       await conn.query(
-        'INSERT INTO shifts (id, username, start_time, status, opening_float, geo_lat, geo_lng, geo_address, device_info, device_brand, device_model, device_os, ip_address) ' +
-        'VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+        'INSERT INTO shifts (id, username, branch_id, start_time, status, opening_float, geo_lat, geo_lng, geo_address, device_info, device_brand, device_model, device_os, ip_address) ' +
+        'VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
         [
-          shiftId, username, now, 'OPEN', openingFloat,
+          shiftId, username, branchId, now, 'OPEN', openingFloat,
           geoLat || null, geoLng || null, geoAddress || '',
           rawUA,
           (dev.brand || '').toString().slice(0, 50),
@@ -1199,18 +1272,44 @@ router.get('/:shiftId/full-report-print', async (req, res) => {
 });
 
 // Get all shifts
+// G-SALES/bilingual-i18n-images (Owner A) — this route had NO authz guard and
+// NO branch/username filter at all: any authenticated caller (any role) could
+// list every shift, system-wide, including another cashier's drawer counts.
+// Now: every non-supervisor role is self-scoped (own username only, no
+// capability gate); supervisors default to their own resolved brand
+// (_resolveShiftBrandScope), with the same allBranches+capability bypass
+// routes/pos-v2.js uses.
 router.get('/', async (req, res) => {
   try {
-    let query = 'SELECT * FROM shifts WHERE 1=1';
+    if (!req.user || !req.user.username) {
+      return res.status(401).json({ success: false, code: 'PERMISSION_DENIED', error: 'مطلوب تسجيل الدخول' });
+    }
+    const where = ['1=1'];
     const params = [];
+    let join = '';
 
-    if (req.query.startDate) { query += ' AND DATE(start_time) >= ?'; params.push(req.query.startDate); }
-    if (req.query.endDate) { query += ' AND DATE(start_time) <= ?'; params.push(req.query.endDate); }
-    if (req.query.username) { query += ' AND username = ?'; params.push(req.query.username); }
-    if (req.query.status) { query += ' AND status = ?'; params.push(req.query.status); }
+    if (req.query.startDate) { where.push('DATE(shifts.start_time) >= ?'); params.push(req.query.startDate); }
+    if (req.query.endDate) { where.push('DATE(shifts.start_time) <= ?'); params.push(req.query.endDate); }
+    if (req.query.status) { where.push('shifts.status = ?'); params.push(req.query.status); }
 
-    query += ' ORDER BY start_time DESC LIMIT 200';
+    if (!_isSupervisor(req.user)) {
+      // Self-scope — identity from the verified token, never the query string.
+      where.push('shifts.username = ?'); params.push(req.user.username);
+    } else {
+      // Supervisors may still narrow by an explicit ?username=, PLUS the
+      // brand scope below (own resolved brand by default). NULL branch_id
+      // (pre-migration rows) and NULL-brand branches stay visible to
+      // everyone — same "unscoped = global" rule the catalog applies.
+      if (req.query.username) { where.push('shifts.username = ?'); params.push(req.query.username); }
+      const scope = await _resolveShiftBrandScope(req);
+      if (!scope.allBrands) {
+        join = ' LEFT JOIN branches ON branches.id = shifts.branch_id';
+        where.push('(shifts.branch_id IS NULL OR branches.brand_id IS NULL OR branches.brand_id = ?)');
+        params.push(scope.brandId);
+      }
+    }
 
+    const query = 'SELECT shifts.* FROM shifts' + join + ' WHERE ' + where.join(' AND ') + ' ORDER BY shifts.start_time DESC LIMIT 200';
     const [rows] = await db.query(query, params);
     // Get user display names
     let userMap = {};

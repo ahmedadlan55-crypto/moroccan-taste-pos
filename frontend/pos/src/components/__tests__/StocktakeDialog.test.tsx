@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { render, screen, fireEvent, waitFor } from "@testing-library/react";
+import { render, screen, fireEvent, waitFor, within } from "@testing-library/react";
 import { StocktakeDialog, dualUnitTotal, normalizeArabic } from "../dialogs/StocktakeDialog";
 // StocktakeDialog resolves strings via useT(), which throws without an
 // ancestor I18nProvider (see i18n/I18nProvider.tsx).
@@ -279,5 +279,66 @@ describe("StocktakeDialog", () => {
     const stored = JSON.parse(localStorage.getItem("pos_stocktake_cart") || "[]");
     expect(stored).toHaveLength(1);
     expect(stored[0]).toMatchObject({ id: "INV-1", actualQty: 5 });
+  });
+
+  it("picking a search result keeps it visible+toggleable in the list (not removed); a second click un-picks it", async () => {
+    installFetch();
+    render(
+      <I18nProvider>
+        <StocktakeDialog open onClose={vi.fn()} />
+      </I18nProvider>,
+    );
+    const search = await screen.findByLabelText("البحث عن مادة");
+    await waitFor(() => expect(search).not.toBeDisabled());
+    fireEvent.change(search, { target: { value: "أرز" } });
+
+    const listbox = await screen.findByRole("listbox");
+    const row = within(listbox).getByText("أرز بسمتي").closest("button")!;
+    expect(row).toHaveAttribute("aria-pressed", "false");
+
+    fireEvent.click(row);
+
+    // Added to the cart table…
+    expect(screen.getByLabelText("الكمية الصغيرة — أرز بسمتي")).toBeInTheDocument();
+    // …search text is NOT reset, and the row stays in the results, now checked.
+    expect(search).toHaveValue("أرز");
+    expect(within(listbox).getByText("أرز بسمتي")).toBeInTheDocument();
+    expect(row).toHaveAttribute("aria-pressed", "true");
+
+    // Clicking the same row again removes it (toggle-off), mirroring ComboDialog.
+    fireEvent.click(row);
+    expect(row).toHaveAttribute("aria-pressed", "false");
+    expect(screen.queryByLabelText("الكمية الصغيرة — أرز بسمتي")).toBeNull();
+  });
+
+  it("notes are cleared after closing without submitting, then reopening", async () => {
+    installFetch();
+    const onClose = vi.fn();
+    const { rerender } = render(
+      <I18nProvider>
+        <StocktakeDialog open onClose={onClose} />
+      </I18nProvider>,
+    );
+    const search = await screen.findByLabelText("البحث عن مادة");
+    await waitFor(() => expect(search).not.toBeDisabled());
+
+    const notesInput = screen.getByLabelText("ملاحظات الجرد") as HTMLInputElement;
+    fireEvent.change(notesInput, { target: { value: "ملاحظة مؤقتة" } });
+    expect(notesInput.value).toBe("ملاحظة مؤقتة");
+
+    // Close WITHOUT submitting.
+    rerender(
+      <I18nProvider>
+        <StocktakeDialog open={false} onClose={onClose} />
+      </I18nProvider>,
+    );
+    // Reopen.
+    rerender(
+      <I18nProvider>
+        <StocktakeDialog open onClose={onClose} />
+      </I18nProvider>,
+    );
+    await waitFor(() => expect(screen.getByLabelText("البحث عن مادة")).not.toBeDisabled());
+    expect((screen.getByLabelText("ملاحظات الجرد") as HTMLInputElement).value).toBe("");
   });
 });

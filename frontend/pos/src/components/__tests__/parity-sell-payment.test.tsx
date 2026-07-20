@@ -20,10 +20,17 @@ vi.mock("@/state/store", () => ({
 }));
 
 import { PaymentDialog } from "../dialogs/PaymentDialog";
+// PaymentDialog resolves strings via useT(), which throws without an
+// ancestor I18nProvider (see i18n/I18nProvider.tsx).
+import { I18nProvider } from "@/i18n/I18nProvider";
 
 function openDialog(ctx: PosContextValue) {
   currentCtx = ctx;
-  return render(<PaymentDialog open onClose={() => {}} />);
+  return render(
+    <I18nProvider>
+      <PaymentDialog open onClose={() => {}} />
+    </I18nProvider>,
+  );
 }
 
 beforeEach(() => {

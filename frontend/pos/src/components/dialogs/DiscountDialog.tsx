@@ -14,7 +14,7 @@ import { Dialog } from "../Dialog";
 import { Button, cn, Money } from "../ui";
 
 export function DiscountDialog({ open, onClose }: { open: boolean; onClose: () => void }) {
-  const { cart, setDiscount, catalog, supervisor } = usePos();
+  const { cart, setDiscount, catalog, supervisor, posCan } = usePos();
   const [type, setType] = useState<DiscountType>("PERCENT");
   const [value, setValue] = useState("");
   const [name, setName] = useState("");
@@ -33,7 +33,10 @@ export function DiscountDialog({ open, onClose }: { open: boolean; onClose: () =
   );
   const pct = orderDiscountPct(preview);
   const ceiling = catalog?.maxCashierDiscountPct ?? 10;
-  const overCeiling = !supervisor && preview.discountAmount > 0 && pct > ceiling + 1e-9;
+  // Capability-aware: a non-supervisor with the granted capability also
+  // bypasses the ceiling warning (broadening only — see lib/capabilities.ts).
+  const canOverrideDiscountCeiling = supervisor || posCan("pos.discount.override");
+  const overCeiling = !canOverrideDiscountCeiling && preview.discountAmount > 0 && pct > ceiling + 1e-9;
 
   // Preset cards (خصومات جاهزة) from the owner's discounts settings — a preset
   // click only FILLS the form (type/value/name) exactly like manual typing; the

@@ -123,6 +123,11 @@ export function makeCtx(opts: MakeCtxOpts = {}): PosContextValue {
   const ctx: PosContextValue = {
     user: { username: "cashier1", role: "cashier" },
     supervisor: opts.supervisor ?? false,
+    // Capability-aware fallback defaults to false so existing supervisor-only
+    // expectations are unaffected; pass overrides.posCan / overrides.caps to
+    // exercise capability-granted behavior in a specific test.
+    caps: null,
+    posCan: vi.fn(() => false),
     deviceId: "DEV-1",
     engine,
     engineStatus: { online: opts.online ?? true, syncing: false, queueCount: 0, lastReport: null },

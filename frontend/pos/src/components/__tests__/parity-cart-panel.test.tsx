@@ -22,6 +22,10 @@ import { CartPanel, type CartPanelProps } from "../CartPanel";
 import { DiscountDialog } from "../dialogs/DiscountDialog";
 import { VoidDialog } from "../dialogs/VoidDialog";
 import { Toasts } from "../Toasts";
+// CartPanel resolves strings via useT(), which throws without an ancestor
+// I18nProvider (see i18n/I18nProvider.tsx). DiscountDialog/VoidDialog/Toasts
+// do not use i18n, so their render() calls below are left unwrapped.
+import { I18nProvider } from "@/i18n/I18nProvider";
 
 function renderPanel(ctx: PosContextValue, props: Partial<CartPanelProps> = {}) {
   currentCtx = ctx;
@@ -36,7 +40,11 @@ function renderPanel(ctx: PosContextValue, props: Partial<CartPanelProps> = {}) 
     voidDisabledReason: null,
     ...props,
   };
-  render(<CartPanel {...p} />);
+  render(
+    <I18nProvider>
+      <CartPanel {...p} />
+    </I18nProvider>,
+  );
   return p;
 }
 

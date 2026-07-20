@@ -23,6 +23,10 @@ vi.mock("@/state/store", () => ({
 
 import { DiscountDialog } from "../dialogs/DiscountDialog";
 import { CartPanel, type CartPanelProps } from "../CartPanel";
+// CartPanel resolves strings via useT(), which throws without an ancestor
+// I18nProvider (see i18n/I18nProvider.tsx). DiscountDialog does not use i18n,
+// so renderDialog() below is left unwrapped.
+import { I18nProvider } from "@/i18n/I18nProvider";
 
 const ROWS = [
   { id: 1, name: "عرض الافتتاح", type: "percentage", value: 10, enabled: true, showInPos: true, discountScope: "invoice" },
@@ -61,7 +65,11 @@ function renderPanel(ctx: PosContextValue) {
     holdBusy: false,
     voidDisabledReason: null,
   };
-  render(<CartPanel {...p} />);
+  render(
+    <I18nProvider>
+      <CartPanel {...p} />
+    </I18nProvider>,
+  );
 }
 
 beforeEach(() => {

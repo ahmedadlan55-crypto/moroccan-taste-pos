@@ -12,6 +12,9 @@ const sessionVersion = require('../lib/sessionVersion');
 // v6.2.0 Wave F.5 — 2FA required for admin / developer
 const { generateSecret: _genTotpSecret, verifyTOTP, generateOTPAuthURI: _genOtpUri } = require('../lib/twoFactor');
 const { appendAuditEntry, verifyAuditChain } = require('../lib/auditLogger');
+// Owner B — cashier account validation: shared branch/warehouse existence +
+// active-state guard used by POST /users and PUT /users/:username below.
+const _validateBranchWarehouse = require('../lib/branchWarehouseValidation');
 
 // ─── In-memory rate limiter (per IP) ───
 const loginAttempts = {}; // { ip: { count, firstAttempt, blockedUntil } }
@@ -737,11 +740,15 @@ router.post('/users', requireAdmin, async (req, res) => {
     const dbRole = ROLES.isAssignable(role) ? role : 'cashier';
 
     // V3: explicit defaultWarehouseId from request OR auto-derive from branch's warehouse
-    let defaultWarehouseId = req.body.defaultWarehouseId || null;
-    if (!defaultWarehouseId && branchId) {
-      const [branchRow] = await db.query('SELECT warehouse_id FROM branches WHERE id = ?', [branchId]);
-      if (branchRow.length && branchRow[0].warehouse_id) defaultWarehouseId = branchRow[0].warehouse_id;
+    // Owner B — reject a nonexistent/inactive branch or the warehouse it resolves to
+    // up front (real HTTP status + code, matching the duplicate-username 409 / invalid-role
+    // 400 style just above — not the older bare res.json(200) style used elsewhere in
+    // this same handler).
+    const bwCheck = await _validateBranchWarehouse(db, branchId, req.body.defaultWarehouseId || null);
+    if (!bwCheck.ok) {
+      return res.status(422).json({ success: false, code: bwCheck.code, error: bwCheck.error });
     }
+    const defaultWarehouseId = bwCheck.warehouseId;
 
     const positionId = req.body.positionId || null;
     const canChangeBranch = req.body.canChangeBranch ? 1 : 0;
@@ -932,11 +939,13 @@ router.put('/users/:username', requireAdmin, async (req, res) => {
     if (brandId !== undefined) await db.query('UPDATE users SET brand_id = ? WHERE username = ?', [brandId || null, username]);
     if (branchId !== undefined) {
       // Resolve default warehouse: explicit > branch's warehouse > null
-      let whId = req.body.defaultWarehouseId || null;
-      if (!whId && branchId) {
-        const [br] = await db.query('SELECT warehouse_id FROM branches WHERE id = ?', [branchId]);
-        if (br.length && br[0].warehouse_id) whId = br[0].warehouse_id;
+      // Owner B — same branch/warehouse existence + active-state guard as POST
+      // /users (real 422 + code, not the older bare res.json(200) style below).
+      const bwCheck = await _validateBranchWarehouse(db, branchId, req.body.defaultWarehouseId || null);
+      if (!bwCheck.ok) {
+        return res.status(422).json({ success: false, code: bwCheck.code, error: bwCheck.error });
       }
+      const whId = bwCheck.warehouseId;
       await db.query('UPDATE users SET branch_id = ?, default_branch_id = ?, default_warehouse_id = ? WHERE username = ?',
         [branchId || null, branchId || null, whId, username]);
     } else if (req.body.defaultWarehouseId !== undefined) {

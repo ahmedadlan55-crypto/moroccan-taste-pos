@@ -18,6 +18,13 @@ import { fmt2, fmtDateTime, shortRef } from "./format";
 import type { LocalOrder, Payment, ReceiptIdentity, ReceiptShowFields } from "./types";
 import { baseCss, esc, buildSaleReceiptHtml } from "../../../shared/invoiceTemplate";
 import type { PaperWidth } from "../../../shared/invoiceTemplate";
+import { receipt as receiptAr } from "../i18n/dictionaries/ar/receipt";
+import { receipt as receiptEn } from "../i18n/dictionaries/en/receipt";
+
+/** Language for the two POS-only print builders below (kitchen ticket + shift
+ *  X/Z report). Default "ar" everywhere so existing callers that don't pass it
+ *  keep printing exactly what they printed before this migration. */
+export type ReceiptLanguage = "ar" | "en";
 
 // Re-exported so existing POS call sites keep their import paths unchanged:
 //   import { printHtml } from "./receipt"  /  from "@/lib/receipt"
@@ -139,8 +146,19 @@ export function buildReceiptHtml(opts: ReceiptOptions): string {
 
 /** Kitchen ticket — items + qty + notes + table only, big font. Stays in POS:
  *  no ERP consumer, and it carries no money or seller identity. */
-export function buildKitchenTicketHtml(order: LocalOrder, paperWidth: PaperWidth = "80"): string {
-  const orderTypeLabel = order.orderType === "dine_in" ? "محلي" : order.orderType === "delivery" ? "توصيل" : "سفري";
+export function buildKitchenTicketHtml(
+  order: LocalOrder,
+  paperWidth: PaperWidth = "80",
+  language: ReceiptLanguage = "ar",
+): string {
+  const t = (language === "en" ? receiptEn : receiptAr).kitchen;
+  const dir = language === "en" ? "ltr" : "rtl";
+  const orderTypeLabel =
+    order.orderType === "dine_in"
+      ? t.orderType.dine_in
+      : order.orderType === "delivery"
+        ? t.orderType.delivery
+        : t.orderType.takeaway;
   const linesHtml = order.lines
     .map(
       (l) => `<tr>
@@ -149,9 +167,9 @@ export function buildKitchenTicketHtml(order: LocalOrder, paperWidth: PaperWidth
       </tr>`,
     )
     .join("");
-  return `<!doctype html><html lang="ar" dir="rtl"><head><meta charset="utf-8">
-  <title>تذكرة مطبخ</title><style>${baseCss(paperWidth)}</style></head><body class="kitchen" data-paper="${paperWidth}">
-  <h1>المطبخ — ${orderTypeLabel}${order.tableNo ? ` · طاولة <span class="num">${esc(order.tableNo)}</span>` : ""}</h1>
+  return `<!doctype html><html lang="${language}" dir="${dir}"><head><meta charset="utf-8">
+  <title>${t.docTitle}</title><style>${baseCss(paperWidth)}</style></head><body class="kitchen" data-paper="${paperWidth}">
+  <h1>${t.heading} — ${orderTypeLabel}${order.tableNo ? ` · ${t.table} <span class="num">${esc(order.tableNo)}</span>` : ""}</h1>
   <div class="sub num">${fmtDateTime(new Date())} · ${esc(shortRef(order.id))}</div>
   <hr>
   <table><tbody>${linesHtml}</tbody></table>
@@ -181,11 +199,17 @@ export interface ShiftReportData {
   notes?: string;
 }
 
-export function buildShiftReportHtml(rep: ShiftReportData, opts: { mode: "X" | "Z"; paperWidth?: PaperWidth }): string {
+export function buildShiftReportHtml(
+  rep: ShiftReportData,
+  opts: { mode: "X" | "Z"; paperWidth?: PaperWidth; language?: ReceiptLanguage },
+): string {
   const paper = opts.paperWidth ?? "80";
+  const language = opts.language ?? "ar";
+  const dir = language === "en" ? "ltr" : "rtl";
+  const t = (language === "en" ? receiptEn : receiptAr).shift;
   const isZ = opts.mode === "Z";
   const f = rep.financials ?? {};
-  const title = isZ ? "تقرير إغلاق وردية · Z" : "تقرير منتصف وردية · X";
+  const title = isZ ? t.titleZ : t.titleX;
   const cashier = rep.cashier ?? {};
   const methods = rep.methods ?? [];
   const denoms = (rep.denominations ?? []).filter((d) => Number(d.count) > 0);
@@ -193,7 +217,7 @@ export function buildShiftReportHtml(rep: ShiftReportData, opts: { mode: "X" | "
 
   const methodRows = methods
     .map((m) => {
-      const label = esc(m.nameAr || m.name || "—");
+      const label = esc(m.nameAr || m.name || t.dash);
       if (!isZ) return `<tr><td>${label}</td><td class="l num">${fmt2(m.expected ?? 0)}</td></tr>`;
       const v = m.variance ?? 0;
       return `<tr><td>${label}</td><td class="l num">${fmt2(m.expected ?? 0)}</td><td class="l num">${fmt2(m.actual ?? 0)}</td><td class="l num">${v > 0 ? "+" : ""}${fmt2(v)}</td></tr>`;
@@ -203,47 +227,47 @@ export function buildShiftReportHtml(rep: ShiftReportData, opts: { mode: "X" | "
   const denomRows = denoms
     .map((d) => {
       const val = Number(d.value) || 0;
-      const face = val < 1 ? `${Math.round(val * 100)} هللة` : `${fmt2(val)} ر.س`;
+      const face = val < 1 ? `${Math.round(val * 100)} ${t.halala}` : `${fmt2(val)} ${t.currency}`;
       return `<tr><td>${face}</td><td class="l num">× ${Number(d.count) || 0}</td><td class="l num">${fmt2(val * (Number(d.count) || 0))}</td></tr>`;
     })
     .join("");
 
   const itemRows = items
-    .map((i) => `<tr><td>${esc(i.name || "—")}</td><td class="l num">${fmt2(i.qty ?? 0)}</td><td class="l num">${fmt2(i.total ?? 0)}</td></tr>`)
+    .map((i) => `<tr><td>${esc(i.name || t.dash)}</td><td class="l num">${fmt2(i.qty ?? 0)}</td><td class="l num">${fmt2(i.total ?? 0)}</td></tr>`)
     .join("");
 
   const variance = f.variance ?? 0;
 
-  return `<!doctype html><html lang="ar" dir="rtl"><head><meta charset="utf-8">
+  return `<!doctype html><html lang="${language}" dir="${dir}"><head><meta charset="utf-8">
   <title>${title}</title><style>${baseCss(paper)}</style></head><body data-paper="${paper}">
   <h1>${esc(rep.company?.name || rep.company?.nameAr || brandNameFallback())}</h1>
   ${rep.branch?.name ? `<div class="sub">${esc(rep.branch.name)}</div>` : ""}
   <div class="stamp">${title}</div>
-  <div class="sub">وردية: <span class="num">${esc(rep.shiftId)}</span></div>
-  <div class="sub">الكاشير: ${esc(cashier.name || cashier.username || "—")}${cashier.empNo ? ` · <span class="num">${esc(cashier.empNo)}</span>` : ""}</div>
-  ${rep.times?.start ? `<div class="sub">البداية: <span class="num">${fmtDateTime(new Date(rep.times.start))}</span></div>` : ""}
-  ${isZ && rep.times?.end ? `<div class="sub">الإغلاق: <span class="num">${fmtDateTime(new Date(rep.times.end))}</span></div>` : ""}
-  <div class="sub">طُبع: <span class="num">${fmtDateTime(new Date())}</span></div>
+  <div class="sub">${t.shift} <span class="num">${esc(rep.shiftId)}</span></div>
+  <div class="sub">${t.cashier} ${esc(cashier.name || cashier.username || t.dash)}${cashier.empNo ? ` · <span class="num">${esc(cashier.empNo)}</span>` : ""}</div>
+  ${rep.times?.start ? `<div class="sub">${t.start} <span class="num">${fmtDateTime(new Date(rep.times.start))}</span></div>` : ""}
+  ${isZ && rep.times?.end ? `<div class="sub">${t.end} <span class="num">${fmtDateTime(new Date(rep.times.end))}</span></div>` : ""}
+  <div class="sub">${t.printed} <span class="num">${fmtDateTime(new Date())}</span></div>
   <hr>
   <table class="tot">
-    <tr><td>عدد الفواتير</td><td class="l num">${Number(rep.orderCount ?? 0)}</td></tr>
-    <tr><td>عدد الأصناف المباعة</td><td class="l num">${Number(rep.itemsCount ?? 0)}</td></tr>
-    <tr><td>رصيد افتتاحي</td><td class="l num">${fmt2(f.openingFloat ?? 0)}</td></tr>
+    <tr><td>${t.orderCount}</td><td class="l num">${Number(rep.orderCount ?? 0)}</td></tr>
+    <tr><td>${t.itemsCount}</td><td class="l num">${Number(rep.itemsCount ?? 0)}</td></tr>
+    <tr><td>${t.openingFloat}</td><td class="l num">${fmt2(f.openingFloat ?? 0)}</td></tr>
   </table>
   <hr>
   <table>
-    <thead><tr><th>طريقة الدفع</th><th class="l">متوقع</th>${isZ ? '<th class="l">معدود</th><th class="l">فرق</th>' : ""}</tr></thead>
+    <thead><tr><th>${t.paymentMethod}</th><th class="l">${t.expected}</th>${isZ ? `<th class="l">${t.counted}</th><th class="l">${t.variance}</th>` : ""}</tr></thead>
     <tbody>${methodRows}</tbody>
   </table>
   <table class="tot">
-    <tr class="grand"><td>الإجمالي المتوقع</td><td class="l num">${fmt2(f.expectedTotal ?? 0)}</td></tr>
-    ${isZ ? `<tr class="grand"><td>الإجمالي المعدود</td><td class="l num">${fmt2(f.actualTotal ?? 0)}</td></tr>
-    <tr class="grand"><td>الفرق</td><td class="l num">${variance > 0 ? "+" : ""}${fmt2(variance)}</td></tr>` : ""}
-    ${(f.unmatched ?? 0) > 0 ? `<tr><td>غير مطابق لأي طريقة</td><td class="l num">${fmt2(f.unmatched ?? 0)}</td></tr>` : ""}
+    <tr class="grand"><td>${t.expectedTotal}</td><td class="l num">${fmt2(f.expectedTotal ?? 0)}</td></tr>
+    ${isZ ? `<tr class="grand"><td>${t.countedTotal}</td><td class="l num">${fmt2(f.actualTotal ?? 0)}</td></tr>
+    <tr class="grand"><td>${t.difference}</td><td class="l num">${variance > 0 ? "+" : ""}${fmt2(variance)}</td></tr>` : ""}
+    ${(f.unmatched ?? 0) > 0 ? `<tr><td>${t.unmatched}</td><td class="l num">${fmt2(f.unmatched ?? 0)}</td></tr>` : ""}
   </table>
-  ${isZ && denomRows ? `<hr><table><thead><tr><th>الفئة</th><th class="l">العدد</th><th class="l">الإجمالي</th></tr></thead><tbody>${denomRows}</tbody></table>` : ""}
-  ${itemRows ? `<hr><table><thead><tr><th>الصنف</th><th class="l">كمية</th><th class="l">إجمالي</th></tr></thead><tbody>${itemRows}</tbody></table>` : ""}
+  ${isZ && denomRows ? `<hr><table><thead><tr><th>${t.denomFace}</th><th class="l">${t.count}</th><th class="l">${t.total}</th></tr></thead><tbody>${denomRows}</tbody></table>` : ""}
+  ${itemRows ? `<hr><table><thead><tr><th>${t.item}</th><th class="l">${t.qty}</th><th class="l">${t.itemTotal}</th></tr></thead><tbody>${itemRows}</tbody></table>` : ""}
   ${rep.notes ? `<hr><div class="sub">${esc(rep.notes)}</div>` : ""}
-  ${!isZ ? `<div class="foot">تقرير X — الوردية ما زالت مفتوحة</div>` : `<div class="foot">نهاية تقرير الوردية</div>`}
+  ${!isZ ? `<div class="foot">${t.footerX}</div>` : `<div class="foot">${t.footerZ}</div>`}
   </body></html>`;
 }

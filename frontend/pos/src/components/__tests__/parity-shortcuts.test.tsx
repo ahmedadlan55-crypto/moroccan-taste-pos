@@ -34,6 +34,12 @@ vi.mock("@/lib/api", async (importOriginal) => {
 import App from "@/App";
 import { Dialog } from "@/components/Dialog";
 import { CustomerPicker } from "@/components/CustomerPicker";
+// App renders Header/PosLogin/CartPanel/PaymentDialog, which resolve strings
+// via useT() and throw without an ancestor I18nProvider (see
+// i18n/I18nProvider.tsx) — normally supplied by main.tsx. Dialog and
+// CustomerPicker below don't use i18n themselves, so their standalone
+// render() calls are left unwrapped.
+import { I18nProvider } from "@/i18n/I18nProvider";
 
 const CATALOG: Catalog = {
   items: [{ id: "M1", name: "شاي مغربي", price: 23, category: "مشروبات", active: true, taxCategory: "S" }],
@@ -91,6 +97,8 @@ function makeFixture(overrides: Partial<PosContextValue> = {}): PosContextValue 
   return {
     user: { username: "kashier1", role: "cashier" },
     supervisor: false,
+    caps: null,
+    posCan: () => false,
     deviceId: "DEV-1",
     engine: engine as unknown as PosContextValue["engine"],
     engineStatus: { online: true, syncing: false, queueCount: 0, lastReport: null },
@@ -137,9 +145,11 @@ function renderApp(overrides: Partial<PosContextValue> = {}) {
   fixture.value = makeFixture(overrides);
   const client = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: 0 } } });
   render(
-    <QueryClientProvider client={client}>
-      <App />
-    </QueryClientProvider>,
+    <I18nProvider>
+      <QueryClientProvider client={client}>
+        <App />
+      </QueryClientProvider>
+    </I18nProvider>,
   );
   return fixture.value;
 }

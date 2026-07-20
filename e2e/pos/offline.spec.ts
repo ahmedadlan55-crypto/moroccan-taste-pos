@@ -182,6 +182,10 @@ test("eight-step offline sale lifecycle — queue offline, shell from SW, replay
   // ── (2) go offline ─────────────────────────────────────────────────────────
   await context.setOffline(true);
   await page.evaluate(() => window.dispatchEvent(new Event("offline")));
+  // ConnectionIndicator moved from the always-visible header bar into the
+  // collapsible "More" menu (see Header.tsx's header.more.* panel) — open it
+  // first, then check the connectivity label inside.
+  await page.getByRole("button", { name: "المزيد" }).click();
   await expect(page.getByText("غير متصل").first()).toBeVisible({ timeout: 15_000 });
   expect(await page.evaluate(() => navigator.onLine), "navigator.onLine offline").toBe(false);
 
@@ -227,6 +231,10 @@ test("eight-step offline sale lifecycle — queue offline, shell from SW, replay
     return !!(await cache.match(new URL("./", location.href).href));
   });
   expect(shellCached, "app shell precached under mt-posv2-*").toBe(true);
+  // ConnectionIndicator + the pending-count chip both live in the collapsible
+  // "More" menu — open it once, it stays open (no intervening outside-click)
+  // through both the pending-count check below and the reconnect check in (7).
+  await page2.getByRole("button", { name: "المزيد" }).click();
   // the queued ops are visible in state: the connectivity chip carries the
   // pending count. (The chip LABEL on this reopened page follows Chromium's
   // navigator.onLine, which the emulation misreports for a page created after

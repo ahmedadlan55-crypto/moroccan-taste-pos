@@ -1,0 +1,9 @@
+[
+  {
+    "id": "menu.image.manage",
+    "label_ar": "إدارة صور المنتجات بالجملة",
+    "label_en": "Bulk manage product images (list/upload/replace/delete via /api/product-images)",
+    "is_sensitive": 0,
+    "roles": ["admin", "manager"]
+  }
+]

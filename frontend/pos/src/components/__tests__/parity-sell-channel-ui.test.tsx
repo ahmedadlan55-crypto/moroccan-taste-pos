@@ -41,14 +41,20 @@ vi.mock("@/lib/api", () => ({
 }));
 
 import App from "../../App";
+// App renders Header/CartPanel/dialogs which resolve strings via useT(),
+// which throws without an ancestor I18nProvider (see i18n/I18nProvider.tsx).
+// Production main.tsx wraps App with it; tests must do the same.
+import { I18nProvider } from "@/i18n/I18nProvider";
 
 async function renderApp(ctx: PosContextValue) {
   currentCtx = ctx;
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   const utils = render(
-    <QueryClientProvider client={qc}>
-      <App />
-    </QueryClientProvider>,
+    <I18nProvider>
+      <QueryClientProvider client={qc}>
+        <App />
+      </QueryClientProvider>
+    </I18nProvider>,
   );
   await act(async () => {});
   return utils;

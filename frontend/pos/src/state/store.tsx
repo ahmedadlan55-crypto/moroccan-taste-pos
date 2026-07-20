@@ -16,6 +16,7 @@ import {
 } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { currentUser, getToken, isSupervisor } from "@/lib/auth";
+import { fetchEffectiveCaps, posCan as posCanBase, type EffectiveCaps } from "@/lib/capabilities";
 import { loadCatalog, type LoadedCatalog } from "@/lib/catalogCache";
 import { idbPut } from "@/lib/idb";
 import { openShift as apiOpenShift, findOpenShift, getServerFlags } from "@/lib/api";
@@ -155,6 +156,14 @@ export interface Toast {
 export interface PosContextValue {
   user: AuthUser | null;
   supervisor: boolean;
+  /** Effective capability set from GET /api/auth/permissions/me (Owner J).
+   *  null until the query resolves (or when there's no user yet) — callers
+   *  should use `posCan()` below rather than reading this directly. */
+  caps: EffectiveCaps | null;
+  /** Capability-aware permission check with a role-fallback for the handful
+   *  of actions this app already role-gates (see lib/capabilities.ts). Never
+   *  narrows what isSupervisor()-based checks already allow. */
+  posCan: (capId: string) => boolean;
   deviceId: string;
   engine: OfflineEngine;
   engineStatus: EngineStatus;
@@ -264,6 +273,18 @@ export function PosProvider({ children }: { children: ReactNode }) {
     // a switch must never blank the grid mid-shift.
     placeholderData: (prev) => prev,
   });
+
+  // ── Effective capabilities (Owner J) ────────────────────────────────────────
+  // Same gating pattern as catalogQuery above: no point fetching before there's
+  // a logged-in user (an unauthenticated GET would just 401).
+  const capsQuery = useQuery({
+    queryKey: ["effective-caps", user?.username],
+    queryFn: fetchEffectiveCaps,
+    enabled: !!user,
+    staleTime: 5 * 60_000,
+  });
+  const caps: EffectiveCaps | null = capsQuery.data ?? null;
+  const posCan = useCallback((capId: string) => posCanBase(caps, user?.role ?? "", capId), [caps, user?.role]);
 
   // ── Shift ──────────────────────────────────────────────────────────────────
   const shiftQuery = useQuery({
@@ -557,6 +578,8 @@ export function PosProvider({ children }: { children: ReactNode }) {
   const value: PosContextValue = {
     user,
     supervisor: isSupervisor(user),
+    caps,
+    posCan,
     deviceId,
     engine,
     engineStatus,

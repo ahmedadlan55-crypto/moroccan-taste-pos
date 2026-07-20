@@ -25,7 +25,7 @@
 
 /* eslint-disable no-restricted-globals */
 
-const SW_VERSION = "1.0.1"; // 1.0.1: ignoreVary matches (cors Vary: Origin broke offline shell)
+const SW_VERSION = "1.1.0"; // 1.1.0: offline item-image cache carve-out (Owner I)
 const CACHE_NAME = "mt-posv2-" + SW_VERSION;
 
 // Scope root, base-relative: '/pos-v2/' today, '/pos/' after cutover.
@@ -104,6 +104,15 @@ self.addEventListener("fetch", (event) => {
   if (request.method !== "GET") return;
 
   const url = new URL(request.url);
+
+  // 0. Owner I — offline item-image cache. A narrow carve-out placed BEFORE the
+  //    blanket /api/ exclusion below: item photos (see lib/offlineImages.ts,
+  //    which populates a mt-posv2-images-* bucket) must serve from Cache Storage
+  //    when offline. Every other /api/* route falls through untouched to rule 1.
+  if (url.pathname.startsWith("/api/pos/v2/item-image/")) {
+    event.respondWith(caches.match(request, { ignoreVary: true }).then((cached) => cached || fetch(request)));
+    return;
+  }
 
   // 1. API is sacred — always network, never cached, never intercepted.
   if (url.pathname.startsWith("/api/")) return;

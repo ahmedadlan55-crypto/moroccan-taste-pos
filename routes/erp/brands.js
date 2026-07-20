@@ -18,7 +18,10 @@ router.get('/brands', async (req, res) => {
       let linkedBranches = [];
       try { if (b.linked_branches) linkedBranches = JSON.parse(b.linked_branches); } catch(e) {}
       return {
-        id: b.id, name: b.name, code: b.code, logo: b.logo, isActive: !!b.is_active,
+        // nameEn is additive (bilingual-i18n-images, Owner A): `SELECT *`
+        // never errors on a missing column, so b.name_en is simply undefined
+        // on an older schema — no try/catch needed for the READ side.
+        id: b.id, name: b.name, nameEn: b.name_en || null, code: b.code, logo: b.logo, isActive: !!b.is_active,
         linkedBranches: linkedBranches
       };
     }));
@@ -27,15 +30,16 @@ router.get('/brands', async (req, res) => {
 
 router.post('/brands', async (req, res) => {
   try {
-    const { id, name, code, logo, isActive, linkedBranches } = req.body;
+    const { id, name, code, logo, isActive, linkedBranches, nameEn } = req.body;
     if (!name) return res.json({ success: false, error: 'الاسم مطلوب' });
     const linkedBranchesJson = Array.isArray(linkedBranches) ? JSON.stringify(linkedBranches) : null;
+    const nameEnVal = nameEn != null ? (String(nameEn).trim().slice(0, 200) || null) : null;
     if (id) {
       try {
-        await db.query('UPDATE brands SET name=?, code=?, logo=?, is_active=?, linked_branches=? WHERE id=?',
-          [name, code||'', logo||null, isActive!==false?1:0, linkedBranchesJson, id]);
+        await db.query('UPDATE brands SET name=?, name_en=?, code=?, logo=?, is_active=?, linked_branches=? WHERE id=?',
+          [name, nameEnVal, code||'', logo||null, isActive!==false?1:0, linkedBranchesJson, id]);
       } catch(e) {
-        // Fallback for older deploys without linked_branches column
+        // Fallback for older deploys without name_en / linked_branches columns
         await db.query('UPDATE brands SET name=?, code=?, logo=?, is_active=? WHERE id=?',
           [name, code||'', logo||null, isActive!==false?1:0, id]);
       }
@@ -43,8 +47,8 @@ router.post('/brands', async (req, res) => {
     }
     const newId = 'BR-' + Date.now();
     try {
-      await db.query('INSERT INTO brands (id, name, code, logo, linked_branches) VALUES (?,?,?,?,?)',
-        [newId, name, code||'', logo||null, linkedBranchesJson]);
+      await db.query('INSERT INTO brands (id, name, name_en, code, logo, linked_branches) VALUES (?,?,?,?,?,?)',
+        [newId, name, nameEnVal, code||'', logo||null, linkedBranchesJson]);
     } catch(e) {
       await db.query('INSERT INTO brands (id, name, code, logo) VALUES (?,?,?,?)', [newId, name, code||'', logo||null]);
     }

@@ -21,6 +21,9 @@ vi.mock("@/state/store", () => ({
 }));
 
 import { PaymentDialog } from "../dialogs/PaymentDialog";
+// PaymentDialog resolves strings via useT(), which throws without an
+// ancestor I18nProvider (see i18n/I18nProvider.tsx).
+import { I18nProvider } from "@/i18n/I18nProvider";
 
 const OWNER_METHODS: CatalogPaymentMethod[] = [
   { id: 7, name: "Bank Transfer", nameAr: "تحويل بنكي", groupType: "bank" },
@@ -31,7 +34,11 @@ const OWNER_METHODS: CatalogPaymentMethod[] = [
 
 function openDialog(ctx: PosContextValue) {
   currentCtx = ctx;
-  return render(<PaymentDialog open onClose={() => {}} />);
+  return render(
+    <I18nProvider>
+      <PaymentDialog open onClose={() => {}} />
+    </I18nProvider>,
+  );
 }
 
 function ctxWithMethods(opts: Parameters<typeof makeCtx>[0] = {}) {
@@ -169,7 +176,11 @@ describe("split-credit-gate — the مختلط tab's آجل leg is supervisor-ga
     fireEvent.change(creditInput, { target: { value: "30" } });
     expect(creditInput.value).toBe("30");
     currentCtx = makeCtx({ supervisor: false });
-    rerender(<PaymentDialog open onClose={() => {}} />);
+    rerender(
+      <I18nProvider>
+        <PaymentDialog open onClose={() => {}} />
+      </I18nProvider>,
+    );
     const [, , creditInputAfter] = screen.getAllByPlaceholderText("0.00") as HTMLInputElement[];
     expect(creditInputAfter.value).toBe("");
   });

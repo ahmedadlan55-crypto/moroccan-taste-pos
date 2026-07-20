@@ -665,6 +665,13 @@ app.use('/api/sales', require('./routes/sales'));
 app.use('/api/shifts', require('./routes/shifts'));
 // Cashier V2 — cart lifecycle ONLY (checkout money path stays /api/sales).
 app.use('/api/pos/v2', require('./routes/pos-v2'));
+// bilingual-i18n-images — Owner B: read-only cashier-readiness diagnostics.
+// Deliberately NOT mounted under /menu* — the global /api gate above does a
+// naive prefix-match on '/menu' that would otherwise make this public.
+app.use('/api/cashier-readiness', require('./routes/cashier-readiness'));
+// bilingual-i18n-images — Owner C: bulk product image management. Same
+// /menu*-prefix-match caveat as above — mounted at its own top-level path.
+app.use('/api/product-images', require('./routes/product-images'));
 // Phase 3B — independent inventory transactions (receipts / issues / adjustments)
 // at a CLEAN namespace /api/inventory/v2/* so the legacy /api/inventory/adjustments
 // (delta model + legacy HTML UI) is never shadowed. Mounted BEFORE inventory.js so
@@ -1139,6 +1146,119 @@ async function runMigrations() {
   // V5.7.22 — bilingual product naming (printed on receipt + admin)
   await addColumnIfMissing('menu', 'name_en', "VARCHAR(200) DEFAULT NULL");
   await addColumnIfMissing('inv_items', 'name_en', "VARCHAR(200) DEFAULT NULL");
+
+  // ─── bilingual-i18n-images — Owner A: catalog bilingual (AR/EN) contract ───
+  // (db/migrations/0013_bilingual_catalog.sql — wiring notes copied verbatim)
+  await addColumnIfMissing('price_lists', 'name_en', "VARCHAR(200) DEFAULT NULL");
+  await addColumnIfMissing('brands',      'name_en', "VARCHAR(200) DEFAULT NULL");
+  await addColumnIfMissing('branches',    'name_en', "VARCHAR(200) DEFAULT NULL");
+
+  await createTableIfMissing('menu_category_i18n', `
+    CREATE TABLE menu_category_i18n (
+      category_ar VARCHAR(100) PRIMARY KEY,
+      category_en VARCHAR(100) NULL,
+      updated_by VARCHAR(100) NULL,
+      updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+  `);
+
+  // ─── bilingual-i18n-images — Owner A: brand/branch scope (0014) ───
+  // (db/migrations/0014_brand_branch_scope.sql — wiring notes copied verbatim)
+  await addColumnIfMissing('pos_orders', 'branch_id', "VARCHAR(50) NULL");
+  await addColumnIfMissing('shifts',     'branch_id', "VARCHAR(50) NULL");
+  // Indexes from the same file — CREATE INDEX has no IF NOT EXISTS on this
+  // MySQL version, so guard the same way idx_menu_semi_id does just below.
+  try { await db.query('CREATE INDEX idx_pos_orders_branch ON pos_orders(branch_id)'); } catch (e) {}
+  try { await db.query('CREATE INDEX idx_shifts_branch ON shifts(branch_id)'); } catch (e) {}
+
+  // ─── bilingual-i18n-images — Owner D: name_en backfill provenance (0015) ───
+  // (db/migrations/0015_name_en_backfill.sql — wiring notes copied verbatim)
+  await addColumnIfMissing('menu', 'name_en_source', "ENUM('owner','machine_translation','transliteration') NULL");
+  await addColumnIfMissing('menu', 'name_en_needs_review', "TINYINT(1) NOT NULL DEFAULT 0");
+  await addColumnIfMissing('menu', 'name_en_reviewed_by', "VARCHAR(100) NULL");
+  await addColumnIfMissing('menu', 'name_en_reviewed_at', "DATETIME NULL");
+  await createTableIfMissing('name_en_backfill_queue', `
+    CREATE TABLE name_en_backfill_queue (
+      id VARCHAR(50) PRIMARY KEY,
+      menu_id VARCHAR(50) NOT NULL,
+      status ENUM('pending','running','done','failed','skipped') NOT NULL DEFAULT 'pending',
+      attempt_count INT NOT NULL DEFAULT 0,
+      next_attempt_at DATETIME NOT NULL,
+      last_error VARCHAR(1000) NULL,
+      source_used ENUM('machine_translation','transliteration') NULL,
+      proposed_name_en VARCHAR(200) NULL,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+      INDEX idx_nebq_status (status, next_attempt_at)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+  `);
+
+  // ─── bilingual-i18n-images — Owner D: image sourcing pipeline (0016) ───
+  // (db/migrations/0016_image_sourcing_pipeline.sql — wiring notes copied
+  // verbatim; table bodies copied from the file's CREATE TABLE statements)
+  await createTableIfMissing('image_sourcing_jobs', `
+    CREATE TABLE image_sourcing_jobs (
+      id                 VARCHAR(50) NOT NULL PRIMARY KEY,
+      status             ENUM('pending','running','done','failed') NOT NULL DEFAULT 'pending',
+      dry_run            TINYINT(1) NOT NULL DEFAULT 1,
+      filter_json        LONGTEXT NULL,
+      total_items        INT NOT NULL DEFAULT 0,
+      processed_items    INT NOT NULL DEFAULT 0,
+      matched_items      INT NOT NULL DEFAULT 0,
+      queued_for_review  INT NOT NULL DEFAULT 0,
+      created_by         VARCHAR(100) NULL,
+      created_at         TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      finished_at        DATETIME NULL
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+  `);
+  await createTableIfMissing('image_sourcing_queue', `
+    CREATE TABLE image_sourcing_queue (
+      id                VARCHAR(50) NOT NULL PRIMARY KEY,
+      job_id            VARCHAR(50) NOT NULL,
+      menu_id           VARCHAR(50) NOT NULL,
+      status            ENUM('pending','running','done','failed') NOT NULL DEFAULT 'pending',
+      attempt_count     INT NOT NULL DEFAULT 0,
+      next_attempt_at   DATETIME NOT NULL,
+      last_error        VARCHAR(1000) NULL,
+      INDEX idx_isq_status (status, next_attempt_at),
+      INDEX idx_isq_job (job_id)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+  `);
+  await createTableIfMissing('image_candidates', `
+    CREATE TABLE image_candidates (
+      id               VARCHAR(50) NOT NULL PRIMARY KEY,
+      menu_id          VARCHAR(50) NOT NULL,
+      job_id           VARCHAR(50) NOT NULL,
+      source_provider  VARCHAR(50) NOT NULL,
+      source_url       VARCHAR(1000) NOT NULL,
+      query_used       VARCHAR(300) NULL,
+      license          VARCHAR(100) NULL,
+      attribution      VARCHAR(500) NULL,
+      author           VARCHAR(200) NULL,
+      confidence       DECIMAL(5,4) NOT NULL DEFAULT 0,
+      sha256           CHAR(64) NOT NULL,
+      phash            CHAR(16) NOT NULL,
+      mime             VARCHAR(30) NOT NULL,
+      bytes            INT NOT NULL,
+      review_status    ENUM('pending','approved','rejected','auto_applied') NOT NULL DEFAULT 'pending',
+      reviewer         VARCHAR(100) NULL,
+      reviewed_at      DATETIME NULL,
+      applied_at       DATETIME NULL,
+      created_at       TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      UNIQUE KEY uq_candidate_dedupe (menu_id, sha256),
+      INDEX idx_ic_phash (phash),
+      INDEX idx_ic_review (review_status)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+  `);
+  await createTableIfMissing('image_sourcing_rollback', `
+    CREATE TABLE image_sourcing_rollback (
+      id               VARCHAR(50) NOT NULL PRIMARY KEY,
+      menu_id          VARCHAR(50) NOT NULL,
+      job_id           VARCHAR(50) NOT NULL,
+      prev_image_data  LONGTEXT NULL,
+      created_at       TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+  `);
 
   // ─── Semi-finished products (منتجات غير تامة / نصف مصنعة) ───
   // is_semi_finished = TRUE → this menu row is an intermediate (e.g. براد شاي مغربي)
@@ -7188,6 +7308,19 @@ async function runMigrations() {
       require('./lib/zatca-worker').start();
     } catch (e) {
       console.warn('[zatca-worker] failed to start:', e.message);
+    }
+    // bilingual-i18n-images — Owner D: name_en backfill + image sourcing
+    // workers, started the same way/place as the ZATCA worker above (after
+    // migrations complete so their queue tables are guaranteed to exist).
+    try {
+      require('./lib/name-en-backfill-worker').start();
+    } catch (e) {
+      console.warn('[name-en-backfill-worker] failed to start:', e.message);
+    }
+    try {
+      require('./lib/image-sourcing-worker').start();
+    } catch (e) {
+      console.warn('[image-sourcing-worker] failed to start:', e.message);
     }
   });
 })();

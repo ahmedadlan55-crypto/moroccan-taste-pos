@@ -25,6 +25,14 @@
     "test:waste-entries": "node tests/integration/wasteEntries.api.test.js",
     "test:auth-gate": "node tests/integration/authGate.api.test.js",
     "test:item-image": "node tests/integration/itemImage.api.test.js",
+    "test:product-images-upload": "node tests/integration/productImagesUpload.api.test.js",
+    "test:catalog-bilingual": "node tests/integration/catalogBilingual.api.test.js",
+    "test:catalog-brand-scope": "node tests/integration/catalogBrandScope.api.test.js",
+    "test:shifts-authz-scope": "node tests/integration/shiftsAuthzScope.api.test.js",
+    "test:cashier-readiness": "node tests/integration/cashierReadiness.api.test.js",
+    "test:safe-image-fetch": "node tests/integration/safeImageFetch.test.js",
+    "test:image-sourcing-job": "node tests/integration/imageSourcingJob.api.test.js",
+    "test:name-en-backfill": "node tests/integration/nameEnBackfill.test.js",
     "test:people-writes": "node tests/integration/peopleWrites.api.test.js",
     "test:sales-returns": "node tests/integration/salesReturns.api.test.js",
     "test:receipt-qr": "node tests/integration/receiptQr.api.test.js",
@@ -115,7 +123,8 @@
     "test:o2c-gate": "node tests/o2cLegacyGate.integration.test.js",
     "test:pos-o2c-payload": "node tests/posO2CPayload.test.js",
     "test:pos-o2c-projection": "node tests/integration/posO2cProjection.api.test.js",
-    "tokens:check": "node scripts/check-design-tokens.mjs"
+    "tokens:check": "node scripts/check-design-tokens.mjs",
+    "check:rtl-literals": "node scripts/check-rtl-literals.mjs"
   },
   "dependencies": {
     "bcryptjs": "^2.4.3",
@@ -127,7 +136,8 @@
     "helmet": "^7.1.0",
     "jsonwebtoken": "^9.0.2",
     "mysql2": "^3.6.5",
-    "qrcode": "^1.5.4"
+    "qrcode": "^1.5.4",
+    "sharp": "^0.33.5"
   },
   "devDependencies": {
     "@playwright/test": "^1.61.1",

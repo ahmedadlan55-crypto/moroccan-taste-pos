@@ -14,6 +14,9 @@ import { render, screen, fireEvent, cleanup } from "@testing-library/react";
 import type { PosContextValue } from "@/state/store";
 import { makeCtx } from "./parityTestkit";
 import { Numpad, applyNumpadKey } from "../Numpad";
+// PaymentDialog resolves strings via useT(), which throws without an
+// ancestor I18nProvider (see i18n/I18nProvider.tsx).
+import { I18nProvider } from "@/i18n/I18nProvider";
 
 let currentCtx: PosContextValue;
 vi.mock("@/state/store", () => ({
@@ -75,7 +78,11 @@ describe("Numpad component", () => {
 describe("PaymentDialog — keypad wired to the real amount states", () => {
   function openDialog() {
     currentCtx = makeCtx();
-    return render(<PaymentDialog open onClose={() => {}} />);
+    return render(
+      <I18nProvider>
+        <PaymentDialog open onClose={() => {}} />
+      </I18nProvider>,
+    );
   }
 
   it("cash: taps fill «المستلَم» and the change row recomputes (50 − 46 = 4.00)", () => {

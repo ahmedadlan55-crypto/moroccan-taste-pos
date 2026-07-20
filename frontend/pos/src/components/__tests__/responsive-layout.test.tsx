@@ -23,6 +23,9 @@ vi.mock("@/lib/legacyDrain", () => ({
 import { Header } from "../Header";
 import { CartPanel, type CartPanelProps } from "../CartPanel";
 import { productColumnsForWidth } from "../ProductGrid";
+// Header and CartPanel resolve strings via useT(), which throws without an
+// ancestor I18nProvider (see i18n/I18nProvider.tsx).
+import { I18nProvider } from "@/i18n/I18nProvider";
 
 afterEach(() => cleanup());
 
@@ -41,7 +44,11 @@ describe("responsive cashier header", () => {
   it("keeps the cashier identity and every primary action label in the DOM on mobile", () => {
     currentCtx = makeCtx();
     const props = headerProps();
-    render(<Header {...props} />);
+    render(
+      <I18nProvider>
+        <Header {...props} />
+      </I18nProvider>,
+    );
 
     expect(screen.getByTestId("cashier-identity")).toHaveTextContent("cashier");
     const quick = screen.getByTestId("pos-quick-actions");
@@ -60,7 +67,11 @@ describe("responsive cashier header", () => {
 
   it("removes the obsolete cashier link and keeps system/status controls under المزيد", () => {
     currentCtx = makeCtx();
-    render(<Header {...headerProps()} />);
+    render(
+      <I18nProvider>
+        <Header {...headerProps()} />
+      </I18nProvider>,
+    );
 
     expect(screen.queryByText("الكاشير القديم")).not.toBeInTheDocument();
     const more = screen.getByRole("button", { name: "المزيد" });
@@ -96,7 +107,11 @@ describe("cart line responsive structure", () => {
       holdBusy: false,
       voidDisabledReason: null,
     };
-    render(<CartPanel {...props} />);
+    render(
+      <I18nProvider>
+        <CartPanel {...props} />
+      </I18nProvider>,
+    );
 
     const name = screen.getByText(longName);
     expect(name).toHaveClass("break-words");

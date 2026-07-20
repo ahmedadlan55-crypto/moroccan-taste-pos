@@ -4,7 +4,7 @@ import { Building2, Image as ImageIcon, Layers, ListChecks, MapPin, Printer, Rec
 import { apiClient } from "@/shared/api";
 import { Button, EmptyState, ErrorState, Input, LoadingState, PageHeader, PanelTitle, StatusBadge, Toggle } from "@/shared/ui";
 import { Field } from "@/shared/forms";
-import { buildSaleReceiptHtml, type PaperWidth } from "../../../../../shared/invoiceTemplate";
+import { buildSaleReceiptHtml, type DocumentLanguage, type PaperWidth } from "../../../../../shared/invoiceTemplate";
 
 // /administration/invoice-settings — every value the printed invoice carries,
 // with WHERE it comes from.
@@ -208,8 +208,15 @@ export function InvoiceSettingsPage() {
 
   const preview = useMemo(() => {
     if (!identity) return null;
+    // identity.language is a free-form string on the wire (an old / unrecognized
+    // ReceiptLanguage setting value); narrow it the same defensive way
+    // invoiceTemplate.ts's own normalizeLanguage() does, so DocumentIdentity's
+    // typed `language?: DocumentLanguage` is honored without changing behavior.
+    const language: DocumentLanguage =
+      identity.language === "en" || identity.language === "both" ? identity.language : "ar";
     return {
       ...identity,
+      language,
       sellerName: draft.name ?? identity.sellerName,
       taxNumber: draft.taxNumber ?? identity.taxNumber,
       crNumber: draft.CrNumber ?? identity.crNumber,

@@ -36,7 +36,10 @@ export function isVersionConflict(e: unknown): boolean {
 
 type Json = Record<string, unknown>;
 
-async function request<T>(
+// Exported so lib/capabilities.ts (GET /api/auth/permissions/me) can reuse the
+// exact same Authorization/error-envelope handling as every other call here —
+// no parallel fetch wrapper.
+export async function request<T>(
   path: string,
   opts: { method?: string; body?: unknown; headers?: Record<string, string> } = {},
 ): Promise<T> {

@@ -5,25 +5,21 @@
  * collapse into a «more» menu under the sm breakpoint.
  */
 import { useEffect, useRef, useState, useSyncExternalStore } from "react";
-import { AlertTriangle, ChefHat, ClipboardCheck, CloudOff, DownloadCloud, ExternalLink, FileText, Inbox, Loader2, MapPin, MoreHorizontal, PackageSearch, RefreshCw, Repeat, UserRound, Wifi } from "lucide-react";
+import { AlertTriangle, ChefHat, ClipboardCheck, CloudOff, DownloadCloud, ExternalLink, FileText, Inbox, Languages, Loader2, MapPin, MoreHorizontal, PackageSearch, RefreshCw, Repeat, UserRound, Wifi } from "lucide-react";
 import { usePos } from "@/state/store";
 import { fmtInt } from "@/lib/format";
 import { getPwaStatus, subscribePwa, promptInstall, applyUpdate } from "@/lib/pwa";
 import { getDrainStatus, subscribeDrain } from "@/lib/legacyDrain";
+import { useLang, useSetLang, useT } from "../i18n";
 import { cn, Button } from "./ui";
 
-const ROLE_LABELS: Record<string, string> = {
-  admin: "مدير النظام",
-  manager: "مدير",
-  cashier: "كاشير",
-  custody: "أمين عهدة",
-  employee: "موظف",
-  accountant: "محاسب",
-  finance: "مالية",
-  sales: "مبيعات",
-};
+/** Keys that have a translated role label (header.roles.*) — any OTHER role
+ *  string on the user record is shown as-is (never silently dropped), same
+ *  as the original ROLE_LABELS[role] ?? role fallback behaviour. */
+const KNOWN_ROLE_KEYS = ["admin", "manager", "cashier", "custody", "employee", "accountant", "finance", "sales"] as const;
 
 export function ConnectionIndicator({ onOpenReport }: { onOpenReport: () => void }) {
+  const t = useT();
   const { engineStatus } = usePos();
   const { online, syncing, queueCount } = engineStatus;
 
@@ -34,7 +30,7 @@ export function ConnectionIndicator({ onOpenReport }: { onOpenReport: () => void
     label = (
       <>
         <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden />
-        جارٍ المزامنة
+        {t("header.connection.syncing")}
       </>
     );
   } else if (online) {
@@ -42,7 +38,7 @@ export function ConnectionIndicator({ onOpenReport }: { onOpenReport: () => void
     label = (
       <>
         <Wifi className="h-3.5 w-3.5" aria-hidden />
-        متصل
+        {t("header.connection.online")}
         {queueCount > 0 ? <span className="num">({fmtInt(queueCount)})</span> : null}
       </>
     );
@@ -51,9 +47,9 @@ export function ConnectionIndicator({ onOpenReport }: { onOpenReport: () => void
     label = (
       <>
         <CloudOff className="h-3.5 w-3.5" aria-hidden />
-        غير متصل
+        {t("header.connection.offline")}
         {queueCount > 0 ? (
-          <span className="num" title="عمليات بانتظار المزامنة">
+          <span className="num" title={t("header.connection.queueTitle")}>
             ({fmtInt(queueCount)})
           </span>
         ) : null}
@@ -65,7 +61,7 @@ export function ConnectionIndicator({ onOpenReport }: { onOpenReport: () => void
     <button
       type="button"
       onClick={onOpenReport}
-      title="عرض تقرير المزامنة"
+      title={t("header.connection.reportTitle")}
       className={cn("chip btn-press min-h-11 cursor-pointer px-3 text-xs", cls)}
     >
       {label}
@@ -73,13 +69,11 @@ export function ConnectionIndicator({ onOpenReport }: { onOpenReport: () => void
   );
 }
 
-/** Humanises a cache age for the cashier — "٣ ساعات", "يومان", never raw ms. */
-function humanAge(ms: number): string {
-  const h = Math.floor(ms / 3_600_000);
-  if (h < 1) return "أقل من ساعة";
-  if (h < 24) return `${h} ساعة`;
-  const d = Math.floor(h / 24);
-  return d === 1 ? "يوم" : d === 2 ? "يومان" : `${d} أيام`;
+/** ms → whole hours. Pure unit conversion only — the day-bucketing branch
+ *  (1 يوم / يومان / N أيام) lives in the dictionary's header.staleAge()
+ *  function, since it is inseparable from the chosen string per language. */
+function msToHours(ms: number): number {
+  return Math.floor(ms / 3_600_000);
 }
 
 /**
@@ -88,29 +82,27 @@ function humanAge(ms: number): string {
  * be confirmed, and how old it is. Previously this was completely silent.
  */
 export function StaleCatalogChip() {
+  const t = useT();
   const { catalogStale, catalogAgeMs, refetchCatalog, engineStatus } = usePos();
   if (!catalogStale) return null;
-  const age = catalogAgeMs == null ? "غير معروف" : humanAge(catalogAgeMs);
+  const age = catalogAgeMs == null ? t("header.staleCatalog.unknownAge") : t("header.staleAge", { count: msToHours(catalogAgeMs) });
   return (
     <button
       type="button"
       onClick={refetchCatalog}
       disabled={!engineStatus.online}
-      title={
-        engineStatus.online
-          ? "قائمة الأصناف غير مؤكَّدة — اضغط لإعادة التحميل"
-          : "قائمة الأصناف محفوظة محليًا ولم يتم تأكيدها — ستُحدَّث عند عودة الاتصال"
-      }
+      title={engineStatus.online ? t("header.staleCatalog.titleOnline") : t("header.staleCatalog.titleOffline")}
       className="chip btn-press min-h-11 border-amber-300 bg-amber-50 px-3 text-xs font-bold text-amber-800"
     >
       <AlertTriangle className="h-3.5 w-3.5" aria-hidden />
-      قائمة قديمة ({age})
+      {t("header.staleCatalog.label")} ({age})
     </button>
   );
 }
 
 /** PWA install button + «نسخة جديدة» update action + migration-queue status. */
 export function PwaControls({ onOpenDrainReport }: { onOpenDrainReport?: () => void }) {
+  const t = useT();
   const pwa = useSyncExternalStore(subscribePwa, getPwaStatus);
   const drain = useSyncExternalStore(subscribeDrain, getDrainStatus);
   return (
@@ -119,7 +111,7 @@ export function PwaControls({ onOpenDrainReport }: { onOpenDrainReport?: () => v
         <button
           type="button"
           onClick={onOpenDrainReport}
-          title="عمليات من الكاشير القديم بانتظار المزامنة"
+          title={t("header.pwa.drainTitle")}
           className="chip btn-press min-h-11 cursor-pointer border-amber-300 bg-amber-50 px-3 text-xs text-amber-800"
         >
           {drain.state === "running" ? (
@@ -127,22 +119,45 @@ export function PwaControls({ onOpenDrainReport }: { onOpenDrainReport?: () => v
           ) : (
             <Inbox className="h-3.5 w-3.5" aria-hidden />
           )}
-          قديم <span className="num">({fmtInt(drain.pending)})</span>
+          {t("header.pwa.legacyLabel")} <span className="num">({fmtInt(drain.pending)})</span>
         </button>
       ) : null}
       {pwa.updateReady ? (
-        <Button size="sm" variant="saffron" onClick={applyUpdate} title="توفرت نسخة جديدة من التطبيق">
+        <Button size="sm" variant="saffron" onClick={applyUpdate} title={t("header.pwa.updateTitle")}>
           <RefreshCw className="h-3.5 w-3.5" aria-hidden />
-          نسخة جديدة — تحديث
+          {t("header.pwa.updateAction")}
         </Button>
       ) : null}
       {pwa.canInstall ? (
-        <Button size="sm" variant="secondary" onClick={() => void promptInstall()} title="تثبيت الكاشير كتطبيق على هذا الجهاز">
+        <Button size="sm" variant="secondary" onClick={() => void promptInstall()} title={t("header.pwa.installTitle")}>
           <DownloadCloud className="h-3.5 w-3.5" aria-hidden />
-          تثبيت التطبيق
+          {t("header.pwa.installAction")}
         </Button>
       ) : null}
     </>
+  );
+}
+
+/** Min-44px language toggle chip — switches ar↔en. Lives inside the «more»
+ *  panel per the i18n plan; label always names the language you'll switch
+ *  TO (kept in its own script in both dictionaries, so it stays recognisable
+ *  regardless of the current UI language). */
+function LanguageToggle() {
+  const t = useT();
+  const lang = useLang();
+  const setLang = useSetLang();
+  const nextLang = lang === "ar" ? "en" : "ar";
+  return (
+    <button
+      type="button"
+      onClick={() => setLang(nextLang)}
+      title={t("header.languageToggle.ariaLabel")}
+      aria-label={t("header.languageToggle.ariaLabel")}
+      className="btn-press flex min-h-11 items-center justify-center gap-1.5 rounded-xl border border-slate-200 bg-white px-3 text-xs font-bold text-slate-600 hover:bg-slate-50 hover:text-slate-800"
+    >
+      <Languages className="h-3.5 w-3.5" aria-hidden />
+      {lang === "ar" ? t("header.languageToggle.switchToEnglish") : t("header.languageToggle.switchToArabic")}
+    </button>
   );
 }
 
@@ -165,8 +180,16 @@ export function Header({
    *  close flow before it clears the token. */
   onSwitchCashier?: () => void;
 }) {
+  const t = useT();
   const { user, shiftId, shiftLoading, engineStatus, catalog } = usePos();
   const branchName = catalog?.identity?.branchName || catalog?.identity?.branchCompanyName || "";
+  // Real brand name comes from the owner-configured seller identity (rides in
+  // the catalog payload, so it's available offline too — see ReceiptIdentity
+  // in lib/types.ts). Only when that's empty/unresolved do we fall back to
+  // the dictionary string instead of the old hardcoded literal.
+  const brandName = catalog?.identity?.brandName || t("header.brandFallback");
+  const role = user?.role;
+  const roleLabel = role && (KNOWN_ROLE_KEYS as readonly string[]).includes(role) ? t(`header.roles.${role}`) : role || t("header.roleFallback");
   const [moreOpen, setMoreOpen] = useState(false);
   const moreRef = useRef<HTMLDivElement>(null);
 
@@ -195,12 +218,12 @@ export function Header({
             <ChefHat className="h-6 w-6" aria-hidden />
           </div>
           <div className="min-w-0 leading-tight">
-            <p className="truncate text-sm font-extrabold text-ink">المذاق المغربي</p>
+            <p className="truncate text-sm font-extrabold text-ink">{brandName}</p>
             <p className="mt-0.5 flex min-w-0 items-center gap-1 text-[11px] font-bold text-slate-500">
               <UserRound className="h-3.5 w-3.5 shrink-0 text-slate-400" aria-hidden />
-              <span className="truncate" data-testid="cashier-identity">{user?.username || "مستخدم غير معروف"}</span>
+              <span className="truncate" data-testid="cashier-identity">{user?.username || t("header.unknownUser")}</span>
               <span aria-hidden>·</span>
-              <span className="shrink-0 text-slate-400">{ROLE_LABELS[user?.role ?? ""] ?? user?.role ?? "كاشير"}</span>
+              <span className="shrink-0 text-slate-400">{roleLabel}</span>
               {branchName ? (
                 <>
                   <span aria-hidden>·</span>
@@ -219,20 +242,20 @@ export function Header({
         {shiftLoading ? (
           <span className="chip min-h-11 border-slate-200 bg-slate-50 px-2.5 text-xs text-slate-400 sm:px-3">
             <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden />
-            الوردية…
+            {t("header.shift.loading")}
           </span>
         ) : shiftId ? (
           <button
             type="button"
             onClick={onOpenShiftDialog}
-            title="تفاصيل الوردية / الإغلاق"
+            title={t("header.shift.detailsTitle")}
             className="chip btn-press min-h-11 max-w-32 border-teal-200 bg-teal-50 px-2.5 text-xs text-teal-700 sm:max-w-none sm:px-3"
           >
-            وردية <span className="num">{shiftId.replace(/^SH-/, "")}</span>
+            {t("header.shift.chipLabel")} <span className="num">{shiftId.replace(/^SH-/, "")}</span>
           </button>
         ) : (
           <span className="flex min-w-0 items-center gap-1">
-            <span className="hidden min-h-11 items-center rounded-xl border border-amber-300 bg-amber-50 px-2 text-xs font-bold text-amber-800 min-[430px]:inline-flex">لا وردية</span>
+            <span className="hidden min-h-11 items-center rounded-xl border border-amber-300 bg-amber-50 px-2 text-xs font-bold text-amber-800 min-[430px]:inline-flex">{t("header.shift.none")}</span>
             {/* Opening a shift MUST go through the full ShiftDialog so the cashier
                 enters the opening float — never a header quick-open that would
                 bypass the float screen and record a 0 float silently. */}
@@ -241,9 +264,9 @@ export function Header({
               variant="saffron"
               onClick={onOpenShiftDialog}
               disabled={!engineStatus.online}
-              title={engineStatus.online ? "فتح وردية جديدة" : "فتح الوردية يتطلب اتصالًا بالخادم"}
+              title={engineStatus.online ? t("header.shift.openTitle") : t("header.shift.openTitleOffline")}
             >
-              فتح وردية
+              {t("header.shift.openAction")}
             </Button>
           </span>
         )}
@@ -251,33 +274,34 @@ export function Header({
       </div>
 
       {/* Operational actions use a deterministic 2×2 mobile grid. Primary action
-          labels are never hidden; secondary/system actions live under المزيد. */}
+          labels are never hidden; secondary/system actions live under the
+          «more» menu (header.more.label). */}
       <div
         className="mt-2 grid grid-cols-2 gap-2 sm:grid-cols-4 lg:ms-auto lg:max-w-[44rem]"
         data-testid="pos-quick-actions"
-        aria-label="إجراءات الكاشير السريعة"
+        aria-label={t("header.quickActions.ariaLabel")}
       >
-        <Button className="min-w-0 px-2" size="sm" variant="secondary" onClick={onOpenMyInvoices} title="فواتير الوردية الحالية">
+        <Button className="min-w-0 px-2" size="sm" variant="secondary" onClick={onOpenMyInvoices} title={t("header.quickActions.myInvoicesTitle")}>
           <FileText className="h-3.5 w-3.5" aria-hidden />
-          <span>فواتيري</span>
+          <span>{t("header.quickActions.myInvoices")}</span>
         </Button>
         <button
           type="button"
           onClick={onOpenStocktake}
-          title="جرد المخزون"
+          title={t("header.quickActions.stocktake")}
           className="btn-press flex min-h-11 min-w-0 items-center justify-center gap-1.5 rounded-xl border border-slate-200 bg-white px-2 text-xs font-bold text-slate-700 shadow-sm hover:border-slate-300 hover:bg-slate-50"
         >
           <ClipboardCheck className="h-4 w-4" aria-hidden />
-          <span>جرد المخزون</span>
+          <span>{t("header.quickActions.stocktake")}</span>
         </button>
         <button
           type="button"
           onClick={onOpenRequisitions}
-          title="طلب النواقص والاستلام"
+          title={t("header.quickActions.requisitionsTitle")}
           className="btn-press flex min-h-11 min-w-0 items-center justify-center gap-1.5 rounded-xl border border-slate-200 bg-white px-2 text-xs font-bold text-slate-700 shadow-sm hover:border-slate-300 hover:bg-slate-50"
         >
           <PackageSearch className="h-4 w-4" aria-hidden />
-          <span>طلب النواقص</span>
+          <span>{t("header.quickActions.requisitions")}</span>
         </button>
 
         <div ref={moreRef} className="relative min-w-0">
@@ -289,24 +313,25 @@ export function Header({
             className="btn-press flex min-h-11 w-full items-center justify-center gap-1.5 rounded-xl border border-slate-200 bg-white px-2 text-xs font-bold text-slate-700 shadow-sm hover:border-slate-300 hover:bg-slate-50"
           >
             <MoreHorizontal className="h-4 w-4" aria-hidden />
-            <span>المزيد</span>
+            <span>{t("header.more.label")}</span>
           </button>
           {moreOpen && <div role="menu" className="absolute end-0 top-full z-50 mt-2 grid w-[min(20rem,calc(100vw-1.5rem))] gap-2 rounded-2xl border border-slate-200 bg-white p-3 shadow-lift">
-            <p className="text-[11px] font-extrabold text-slate-400">حالة الجهاز والنظام</p>
+            <p className="text-[11px] font-extrabold text-slate-400">{t("header.more.systemStatusHeading")}</p>
             <ConnectionIndicator onOpenReport={onOpenSyncReport} />
             <StaleCatalogChip />
             <div className="grid gap-2 [&>button]:w-full">
               <PwaControls onOpenDrainReport={onOpenDrainReport} />
             </div>
+            <LanguageToggle />
             {onSwitchCashier ? (
               <button
                 type="button"
                 onClick={() => { setMoreOpen(false); onSwitchCashier(); }}
-                title="تبديل الكاشير — يتطلب إغلاق الوردية المفتوحة أولًا"
+                title={t("header.more.switchCashierTitle")}
                 className="btn-press flex min-h-11 items-center justify-center gap-1.5 rounded-xl border border-slate-200 bg-white px-3 text-xs font-bold text-slate-600 hover:bg-slate-50 hover:text-slate-800"
               >
                 <Repeat className="h-3.5 w-3.5" aria-hidden />
-                تبديل الكاشير
+                {t("header.more.switchCashier")}
               </button>
             ) : null}
             <a
@@ -314,7 +339,7 @@ export function Header({
               className="btn-press flex min-h-11 items-center justify-center gap-1.5 rounded-xl border border-slate-200 bg-white px-3 text-xs font-bold text-slate-600 hover:bg-slate-50 hover:text-slate-800"
             >
               <ExternalLink className="h-3.5 w-3.5" aria-hidden />
-              العودة للنظام الرئيسي
+              {t("header.more.backToSystem")}
             </a>
           </div>}
         </div>

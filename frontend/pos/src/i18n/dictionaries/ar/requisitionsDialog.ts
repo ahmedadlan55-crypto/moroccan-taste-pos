@@ -1,0 +1,100 @@
+// Arabic dictionary for RequisitionsDialog (طلب النواقص والاستلام).
+// NOTE: this namespace covers UI chrome ONLY. The backend-authored rejection
+// tag "[رفض: ...]" parsed by extractRejectionReason() in RequisitionsDialog.tsx
+// is DATA, not UI copy, and must never be sourced from here.
+export const requisitionsDialog = {
+  title: "طلب النواقص والاستلام",
+  tabsAriaLabel: "أقسام طلب النواقص",
+  tabs: {
+    new: "طلب نواقص",
+    history: "طلباتي والاستلام",
+  },
+  offline: {
+    title: "طلب النواقص والاستلام يتطلب اتصالًا",
+    hint: "أعد المحاولة عند عودة الاتصال بالخادم — مسودة الطلب محفوظة على هذا الجهاز",
+  },
+  editingBanner: {
+    label: "تعديل الطلب",
+    cancel: "إلغاء التعديل",
+  },
+  search: {
+    placeholder: "ابحث عن مادة لإضافتها للطلب…",
+    ariaLabel: "البحث عن مادة",
+    resultsAriaLabel: "نتائج البحث",
+    noResults: "لا نتائج مطابقة",
+  },
+  cart: {
+    emptyTitle: "سلة النواقص فارغة",
+    emptyHint: "ابحث عن مادة وأضفها ثم أدخل الكمية المطلوبة",
+    table: {
+      item: "المادة",
+      bigQty: "كمية كبرى",
+      bigUnit: "وحدة كبرى",
+      smallQty: "كمية صغرى",
+      smallUnit: "وحدة صغرى",
+      available: "المتوفر",
+      delete: "حذف",
+    },
+    bigQtyAriaLabel: "الكمية الكبرى — {name}",
+    smallQtyAriaLabel: "الكمية الصغرى — {name}",
+    deleteLineAriaLabel: "حذف {name}",
+  },
+  notes: {
+    placeholder: "ملاحظات (اختياري)",
+    ariaLabel: "ملاحظات الطلب",
+  },
+  receive: {
+    back: "رجوع للطلبات",
+    heading: "استلام مواد",
+    table: {
+      item: "المادة",
+      ordered: "المطلوب",
+      received: "المستلم فعلياً",
+      unit: "الوحدة",
+      diff: "الفرق",
+    },
+    receivedAriaLabel: "المستلم فعلياً — {name}",
+    footnote: "سيتم إرسال الكميات المستلمة للموافقة قبل تحديث المخزون.",
+  },
+  history: {
+    emptyTitle: "لا توجد طلبات منك",
+    emptyHint: "أرسل طلب نواقص ليظهر هنا مع حالته",
+    itemsUnit: "مادة",
+    rejectionLabel: "سبب الرفض:",
+    edit: "تعديل",
+    deleteAriaLabel: "حذف الطلب {number}",
+    deleteConfirm: "حذف طلب النقص {number}؟",
+    confirmDelete: "تأكيد الحذف",
+    receiveMaterials: "استلام المواد",
+  },
+  status: {
+    pending: "بانتظار",
+    approved: "معتمد",
+    converted: "تم التحويل لـ PO",
+    rejected: "مرفوض",
+    partiallyReceived: "استلام جزئي",
+    fullyReceived: "تم الاستلام",
+    closed: "مغلق",
+  },
+  footer: {
+    clearCartTitle: "إفراغ سلة النواقص",
+    clearCartLabel: "إفراغ السلة",
+    autosaveHint: "تُحفظ المسودة تلقائيًا",
+    saveEdits: "حفظ التعديلات",
+    submitNew: "إرسال الطلب",
+    submitReceive: "إرسال طلب الاستلام",
+  },
+  toast: {
+    cartCleared: "تم إفراغ سلة النواقص",
+    addAtLeastOne: "أضف مادة واحدة على الأقل",
+    enterQtyAtLeastOne: "أدخل كمية لمادة واحدة على الأقل",
+    editSaved: "تم حفظ التعديلات على الطلب {number}",
+    created: "تم إرسال طلب النواقص: {number}",
+    onlyPendingEditable: "فقط الطلبات المعلقة يمكن تعديلها",
+    loadedForEdit: "تم تحميل الطلب للتعديل — عدّل واحفظ",
+    deleted: "تم حذف الطلب {number}",
+    notConvertedYet: "هذا الطلب لم يُحوّل لأمر شراء بعد",
+    purchaseNotFound: "لم يتم العثور على فاتورة الشراء",
+    receiveSubmitted: "تم إرسال طلب الاستلام للاعتماد",
+  },
+} as const;

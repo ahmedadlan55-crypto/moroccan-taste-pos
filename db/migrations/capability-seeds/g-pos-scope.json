@@ -1,0 +1,9 @@
+[
+  {
+    "id": "pos.catalog.viewAllBrands",
+    "label_ar": "عرض كل البراندات في الكاشير (تجاوز نطاق البراند)",
+    "label_en": "View all brands in POS catalog/orders/shifts (bypass default brand scope via ?brandId=/?allBranches=1)",
+    "is_sensitive": 1,
+    "roles": ["admin"]
+  }
+]

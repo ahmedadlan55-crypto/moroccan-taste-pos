@@ -25,6 +25,7 @@ export const qk = {
   semiFinished: (brandId?: string) => [...KEY, "semi-finished", brandId ?? "all"] as const,
   combos: (brandId?: string) => [...KEY, "combos", brandId ?? "all"] as const,
   invItems: (brandId?: string) => [...KEY, "inv-items", brandId ?? "all"] as const,
+  images: (params?: unknown) => [...KEY, "images", params ?? {}] as const,
 };
 
 // ── Shared mutation ack ──────────────────────────────────────────────────────
@@ -82,6 +83,16 @@ export interface MenuItem {
    *  optional so older payload mocks stay valid. The POS catalog never carries
    *  it — cards fetch bytes from /api/pos/v2/item-image/:id instead. */
   imageData?: string | null;
+  /** close/d-images bulk manager (ImageManager) — FORWARD-LOOKING optional
+   *  fields for an image review/audit workflow. NEITHER /menu/all NOR the
+   *  verified GET /api/product-images contract (routes/product-images.js)
+   *  populates these today — there is no review-status workflow anywhere in
+   *  the backend yet. Kept here (always undefined at runtime right now) so
+   *  ImageManager's review-status filter and status column have somewhere to
+   *  read from the moment such a workflow ships, without another type change. */
+  imageReviewStatus?: "pending" | "approved" | "rejected" | null;
+  imageUpdatedAt?: string | null;
+  imageUpdatedBy?: string | null;
 }
 
 /** POST /menu + PUT /menu/:id body (create/update a catalog item). On PUT the
@@ -244,6 +255,70 @@ export interface BulkPriceResult extends MutationAck {
   items: Array<{ id: string; name: string; oldPrice: number; newPrice: number; cost: number; marginPct: number }>;
 }
 
+// ── close/d-images bulk manager (ImageManager) ──────────────────────────────
+// GET/POST/PUT/DELETE /api/product-images* — routes/product-images.js (Owner
+// C), confirmed against the ACTUAL router source in this worktree on
+// 2026-07-20 (it already exists, just not yet mounted in server.js — see
+// ImageManager.tsx's header comment for why the live table still sources
+// from useMenuItems instead of useImageList).
+//
+// IMPORTANT: the list row is NOT a MenuItem. routes/product-images.js
+// deliberately never selects image_data in the list query ("the 66MB rule")
+// — it ships only a content-hash version tag (imageVer) + byte length, no
+// brandName/price/cost/thumbnail. So this can power filters and audit
+// columns but NEVER the thumbnail preview column; /menu/all remains the only
+// source with the actual image bytes.
+export interface ImageListFilters {
+  brandId?: string;
+  category?: string;
+  /** true = only items WITH an image, false = only items MISSING one. */
+  hasImage?: boolean;
+  q?: string;
+  page?: number;
+  pageSize?: number;
+}
+export interface ProductImageListItem {
+  id: string;
+  name: string;
+  nameEn: string;
+  category: string;
+  brandId: string;
+  /** 8-char content hash of image_data; null when the item has no image. */
+  imageVer: string | null;
+  /** Decoded byte length of image_data (0 when there is no image). */
+  imageBytes: number;
+}
+export interface ImageListPage extends MutationAck {
+  page: number;
+  pageSize: number;
+  total: number;
+  totalPages: number;
+  items: ProductImageListItem[];
+}
+
+export interface BulkImageUploadItem {
+  menuId: string;
+  /** ≤512px JPEG q0.8 base64 data URL, already run through downscaleImageFile. */
+  imageData: string;
+}
+export interface BulkImageUploadResult {
+  menuId: string | null;
+  ok: boolean;
+  code?: string;
+  error?: string;
+  dryRun?: boolean;
+  /** sha1 content hash before/after the write (null = no image). */
+  before?: string | null;
+  after?: string | null;
+}
+export interface BulkImageUploadResponse extends MutationAck {
+  dryRun: boolean;
+  total: number;
+  succeeded: number;
+  failed: number;
+  results: BulkImageUploadResult[];
+}
+
 // ════════════════════════════════════════════════════════════════════════════
 // Queries
 // ════════════════════════════════════════════════════════════════════════════
@@ -307,6 +382,34 @@ export function useCombos(brandId?: string) {
     queryKey: qk.combos(brandId),
     queryFn: ({ signal }) =>
       apiClient.get<Combo[]>("/menu/combos", { signal, params: { brandId: brandId || undefined } }),
+  });
+}
+
+/** GET /product-images — paginated, filterable image-audit list (id/name/
+ *  category/brandId/imageVer/imageBytes — NO image bytes, see the type doc
+ *  above). `pageSize` caps at 200 server-side (routes/product-images.js).
+ *  NOTE (2026-07-20): the router exists in this worktree but is not yet
+ *  mounted in server.js (Owner C's in-progress work) — ImageManager's live
+ *  table currently sources from useMenuItems instead (see ImageManager.tsx's
+ *  header comment for why: this endpoint could never power the thumbnail
+ *  column anyway). Kept here, verified against the real router source, ready
+ *  for whatever audit/status view eventually wants it. */
+export function useImageList(filters: ImageListFilters = {}) {
+  const { brandId, category, hasImage, q, page = 1, pageSize = 50 } = filters;
+  return useQuery({
+    queryKey: qk.images({ brandId, category, hasImage, q, page, pageSize }),
+    queryFn: ({ signal }) =>
+      apiClient.get<ImageListPage>("/product-images", {
+        signal,
+        params: {
+          brandId: brandId || undefined,
+          category: category || undefined,
+          hasImage,
+          q: q || undefined,
+          page,
+          pageSize,
+        },
+      }),
   });
 }
 
@@ -389,6 +492,59 @@ export function useSaveRecipeBom() {
       qc.invalidateQueries({ queryKey: qk.recipeBom(v.menuId) });
       qc.invalidateQueries({ queryKey: [...KEY, "items"] });
       qc.invalidateQueries({ queryKey: qk.recipes() });
+    },
+  });
+}
+
+/** POST /product-images/bulk — {items:[{menuId,imageData}]} → {results:[...]}.
+ *  Server caps a batch at 100 items (MAX_BULK_ITEMS in routes/product-images.js)
+ *  and rejects the whole request with code BULK_LIMIT_EXCEEDED above that — the
+ *  caller only needs a normal mutation onError handler, apiClient already
+ *  throws on the 400 before ensureOk runs. NOTE (2026-07-20): the router
+ *  exists in this worktree (verified against source) but is not yet mounted
+ *  in server.js. There is no legacy bulk-image equivalent on /api/menu, so
+ *  this is the only path ImageManagerBulkUpload can call — it will start
+ *  working the moment Owner C's mount lands, no frontend change needed. */
+export function useBulkUploadImages() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (items: BulkImageUploadItem[]) =>
+      apiClient.post<BulkImageUploadResponse>("/product-images/bulk", { items }).then(ensureOk),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: qk.images() });
+      qc.invalidateQueries({ queryKey: [...KEY, "items"] });
+    },
+  });
+}
+
+/** DELETE /product-images/:menuId — clears the stored image for one item.
+ *  NOTE (2026-07-20): router exists but not yet mounted (see useImageList).
+ *  ImageManager's row action currently falls back to
+ *  useUpdateMenuItem({imageData:""}) (the EXISTING /menu/:id path) for
+ *  standalone usability; swap the call site to this hook once server.js
+ *  mounts the router. */
+export function useDeleteImage() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (menuId: string) => apiClient.delete<MutationAck>(`/product-images/${menuId}`).then(ensureOk),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: qk.images() });
+      qc.invalidateQueries({ queryKey: [...KEY, "items"] });
+    },
+  });
+}
+
+/** PUT /product-images/:menuId — {imageData} → replaces one item's image.
+ *  NOTE (2026-07-20): router exists but not yet mounted — same fallback story
+ *  as useDeleteImage. */
+export function useReplaceImage() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (v: { menuId: string; imageData: string }) =>
+      apiClient.put<MutationAck>(`/product-images/${v.menuId}`, { imageData: v.imageData }).then(ensureOk),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: qk.images() });
+      qc.invalidateQueries({ queryKey: [...KEY, "items"] });
     },
   });
 }

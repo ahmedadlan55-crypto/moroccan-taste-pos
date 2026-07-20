@@ -4,6 +4,7 @@
  * discount, totals, actions (hold / held board / void / pay).
  */
 import { useState } from "react";
+import { useT } from "@/i18n/I18nProvider";
 import { CustomerPicker } from "./CustomerPicker";
 import {
   BadgePercent,
@@ -30,16 +31,17 @@ import type { CartLine, OrderType } from "@/lib/types";
 import { Button, cn, EmptyState, Money } from "./ui";
 import { UnitPicker } from "./UnitPicker";
 
-const ORDER_TYPES: Array<{ value: OrderType; label: string; icon: typeof Utensils }> = [
-  { value: "dine_in", label: "محلي", icon: Utensils },
-  { value: "takeaway", label: "سفري", icon: ShoppingBasket },
-  { value: "delivery", label: "توصيل", icon: Bike },
+const ORDER_TYPES: Array<{ value: OrderType; labelKey: string; icon: typeof Utensils }> = [
+  { value: "dine_in", labelKey: "cartPanel.orderTypes.dineIn", icon: Utensils },
+  { value: "takeaway", labelKey: "cartPanel.orderTypes.takeaway", icon: ShoppingBasket },
+  { value: "delivery", labelKey: "cartPanel.orderTypes.delivery", icon: Bike },
 ];
 
 function CartLineRow({ line, index }: { line: CartLine; index: number }) {
+  const t = useT();
   const { setQty, setLineUnit, removeLine, setLineNotes, setLineDiscount, catalog } = usePos();
   const [expanded, setExpanded] = useState(false);
-  const t = lineTotals(line);
+  const lineTotal = lineTotals(line);
   const item = catalog?.items.find((i) => i.id === line.menuId) || null;
   const units = item?.units || [];
   const baseUnitName = item?.baseUnitName || null;
@@ -62,12 +64,12 @@ function CartLineRow({ line, index }: { line: CartLine; index: number }) {
           onClick={() => setExpanded((v) => !v)}
           className="flex min-h-11 min-w-0 items-center gap-1 text-start"
           aria-expanded={expanded}
-          aria-label={`تفاصيل ${line.name}`}
+          aria-label={t("cartPanel.line.detailsAria", { name: line.name })}
         >
           <span className="min-w-0 flex-1">
             <span className="line-clamp-2 block break-words text-sm font-extrabold leading-tight text-ink [overflow-wrap:anywhere]" title={line.name}>{line.name}</span>
             <span className="mt-0.5 block break-words text-[11px] font-bold text-slate-400">
-              <Money value={fmt2(line.unitPrice)} /> ر.س{isMajor && baseUnitName ? `/${baseUnitName}` : ""}
+              <Money value={fmt2(line.unitPrice)} /> {t("cartPanel.currency")}{isMajor && baseUnitName ? `/${baseUnitName}` : ""}
               {isMajor ? (
                 <span className="ms-1.5 text-teal-600">
                   = <span className="num">{fmt2(baseQty)}</span> {baseUnitName || ""}
@@ -75,7 +77,7 @@ function CartLineRow({ line, index }: { line: CartLine; index: number }) {
               ) : null}
               {line.lineDiscount > 0 ? (
                 <span className="ms-1.5 text-saffron-600">
-                  خصم <Money value={fmt2(line.lineDiscount)} />
+                  {t("cartPanel.line.discountPrefix")} <Money value={fmt2(line.lineDiscount)} />
                 </span>
               ) : null}
               {line.notes ? <span className="ms-1.5 text-teal-600">📝</span> : null}
@@ -91,7 +93,7 @@ function CartLineRow({ line, index }: { line: CartLine; index: number }) {
         <button
           type="button"
           onClick={() => removeLine(index)}
-          aria-label={`حذف ${line.name}`}
+          aria-label={t("cartPanel.line.deleteAria", { name: line.name })}
           className="btn-press flex h-11 w-11 shrink-0 items-center justify-center rounded-xl text-red-400 hover:bg-red-50 hover:text-red-600"
         >
           <Trash2 className="h-4 w-4" aria-hidden />
@@ -103,7 +105,7 @@ function CartLineRow({ line, index }: { line: CartLine; index: number }) {
           <button
             type="button"
             onClick={() => setQty(index, line.qty + 1)}
-            aria-label={`زيادة ${line.name}`}
+            aria-label={t("cartPanel.line.increaseAria", { name: line.name })}
             className="btn-press flex h-10 w-10 items-center justify-center rounded-lg bg-white text-teal-600 shadow-sm hover:bg-teal-50"
           >
             <Plus className="h-4 w-4" aria-hidden />
@@ -112,7 +114,7 @@ function CartLineRow({ line, index }: { line: CartLine; index: number }) {
           <button
             type="button"
             onClick={() => setQty(index, line.qty - 1)}
-            aria-label={`إنقاص ${line.name}`}
+            aria-label={t("cartPanel.line.decreaseAria", { name: line.name })}
             className="btn-press flex h-10 w-10 items-center justify-center rounded-lg bg-white text-slate-500 shadow-sm hover:bg-slate-100"
           >
             <Minus className="h-4 w-4" aria-hidden />
@@ -125,14 +127,14 @@ function CartLineRow({ line, index }: { line: CartLine; index: number }) {
               "shrink-0 rounded-lg px-1.5 py-1 text-[11px] font-extrabold",
               isMajor ? "bg-teal-50 text-teal-700" : "text-slate-400",
             )}
-            aria-label={`الوحدة ${line.enteredUnitName}`}
+            aria-label={t("cartPanel.line.unitAria", { unit: line.enteredUnitName })}
           >
             {line.enteredUnitName}
           </span>
           ) : null}
 
           <div className="ms-auto shrink-0 text-end">
-            <Money value={fmt2(t.gross)} className="text-sm font-extrabold text-ink" />
+            <Money value={fmt2(lineTotal.gross)} className="text-sm font-extrabold text-ink" />
           </div>
         </div>
       </div>
@@ -142,7 +144,8 @@ function CartLineRow({ line, index }: { line: CartLine; index: number }) {
           {units.length > 1 ? (
             <label className="block sm:col-span-2">
               <span className="mb-1 block text-[11px] font-extrabold text-slate-500">
-                الوحدة{isMajor && baseUnitName ? ` — 1 ${line.enteredUnitName} = ` : ""}
+                {t("cartPanel.line.unitFieldLabel")}
+                {isMajor && baseUnitName ? ` ${t("cartPanel.line.unitConversion", { unit: line.enteredUnitName ?? "" })} ` : ""}
                 {isMajor && baseUnitName ? (
                   <>
                     <span className="num">{fmt2(factor)}</span> {baseUnitName}
@@ -158,19 +161,19 @@ function CartLineRow({ line, index }: { line: CartLine; index: number }) {
             </label>
           ) : null}
           <label className="block">
-            <span className="mb-1 block text-[11px] font-extrabold text-slate-500">ملاحظات للمطبخ</span>
+            <span className="mb-1 block text-[11px] font-extrabold text-slate-500">{t("cartPanel.line.notesLabel")}</span>
             <input
               type="text"
               value={line.notes ?? ""}
               onChange={(e) => setLineNotes(index, e.target.value || null)}
-              placeholder="بدون بصل، حار…"
+              placeholder={t("cartPanel.line.notesPlaceholder")}
               className="field"
               maxLength={300}
             />
           </label>
           <label className="block">
             <span className="mb-1 block text-[11px] font-extrabold text-slate-500">
-              خصم السطر (ر.س) — الحد <Money value={fmt2(line.qty * line.unitPrice)} />
+              {t("cartPanel.line.discountCapLabel")} <Money value={fmt2(line.qty * line.unitPrice)} />
             </span>
             <input
               type="number"
@@ -183,14 +186,14 @@ function CartLineRow({ line, index }: { line: CartLine; index: number }) {
                 const v = Math.min(Number(e.target.value) || 0, line.qty * line.unitPrice);
                 setLineDiscount(index, v);
               }}
-              placeholder="0.00"
+              placeholder={t("cartPanel.line.discountInputPlaceholder")}
               className="field num"
-              dir="ltr"
+              dir="ltr" /* LTR forced: numeric/phone - do not remove, see i18n plan */
             />
           </label>
           {linePresets.length > 0 ? (
             <div className="sm:col-span-2">
-              <p className="mb-1 text-[11px] font-extrabold text-slate-500">خصومات جاهزة</p>
+              <p className="mb-1 text-[11px] font-extrabold text-slate-500">{t("cartPanel.line.presetsLabel")}</p>
               <div className="flex flex-wrap gap-1.5">
                 {linePresets.map((p) => {
                   const belowMin = p.minOrder != null && lineGross < p.minOrder;
@@ -199,7 +202,7 @@ function CartLineRow({ line, index }: { line: CartLine; index: number }) {
                       key={p.id}
                       type="button"
                       disabled={belowMin}
-                      title={belowMin ? `الحد الأدنى للسطر ${fmt2(p.minOrder!)} ر.س` : undefined}
+                      title={belowMin ? t("cartPanel.line.presetMinOrder", { amount: fmt2(p.minOrder!) }) : undefined}
                       onClick={() => setLineDiscount(index, presetLineAmount(p, lineGross))}
                       className="btn-press flex min-h-9 items-center gap-1 rounded-lg border border-slate-200 bg-white px-2.5 text-[11px] font-extrabold text-slate-600 transition hover:border-teal-200 hover:bg-teal-50 disabled:cursor-not-allowed disabled:opacity-40"
                     >
@@ -219,6 +222,7 @@ function CartLineRow({ line, index }: { line: CartLine; index: number }) {
 }
 
 function CustomerAttach() {
+  const t = useT();
   const { cart, setCustomer, setCustomerRef, o2cEnabled } = usePos();
   const [open, setOpen] = useState(false);
   const hasCustomer = !!(cart.customerName || cart.customerPhone || cart.customerId);
@@ -237,7 +241,7 @@ function CustomerAttach() {
         )}
       >
         <UserPlus className="h-4 w-4" aria-hidden />
-        {hasCustomer ? (cart.customerName || cart.customerPhone) : "عميل"}
+        {hasCustomer ? (cart.customerName || cart.customerPhone) : t("cartPanel.customer.button")}
       </button>
       {open ? (
         <div className="dialog-in absolute bottom-full z-20 mb-2 w-72 rounded-2xl border border-slate-200 bg-white p-3 shadow-lift">
@@ -252,34 +256,34 @@ function CustomerAttach() {
             /* Legacy path (O2C off) — name/phone only, ride in the order note. */
             <>
               <label className="mb-2 block">
-                <span className="mb-1 block text-[11px] font-extrabold text-slate-500">اسم العميل</span>
+                <span className="mb-1 block text-[11px] font-extrabold text-slate-500">{t("cartPanel.customer.nameLabel")}</span>
                 <input
                   type="text"
                   value={cart.customerName ?? ""}
                   onChange={(e) => setCustomer(e.target.value || null, cart.customerPhone)}
-                  placeholder="محمد أحمد"
+                  placeholder={t("cartPanel.customer.namePlaceholder")}
                   className="field"
                 />
               </label>
               <label className="block">
                 <span className="mb-1 flex items-center gap-1 text-[11px] font-extrabold text-slate-500">
-                  <Phone className="h-3 w-3" aria-hidden /> الجوال
+                  <Phone className="h-3 w-3" aria-hidden /> {t("cartPanel.customer.phoneLabel")}
                 </span>
                 <input
                   type="tel"
                   inputMode="tel"
                   value={cart.customerPhone ?? ""}
                   onChange={(e) => setCustomer(cart.customerName, e.target.value || null)}
-                  placeholder="05xxxxxxxx"
+                  placeholder={t("cartPanel.customer.phonePlaceholder")}
                   className="field num"
-                  dir="ltr"
+                  dir="ltr" /* LTR forced: numeric/phone - do not remove, see i18n plan */
                 />
               </label>
             </>
           )}
           <div className="mt-2.5 flex gap-2">
             <Button size="sm" variant="primary" className="flex-1" onClick={() => setOpen(false)}>
-              تم
+              {t("cartPanel.customer.done")}
             </Button>
             {hasCustomer ? (
               <Button
@@ -290,7 +294,7 @@ function CustomerAttach() {
                   setOpen(false);
                 }}
               >
-                إزالة
+                {t("cartPanel.customer.remove")}
               </Button>
             ) : null}
           </div>
@@ -321,18 +325,22 @@ export function CartPanel({
   holdBusy,
   voidDisabledReason,
 }: CartPanelProps) {
-  const { cart, totals, catalog, setOrderType, setTableNo, supervisor } = usePos();
+  const t = useT();
+  const { cart, totals, catalog, setOrderType, setTableNo, supervisor, posCan } = usePos();
   const empty = cart.lines.length === 0;
   const discPct = orderDiscountPct(totals);
   const ceiling = catalog?.maxCashierDiscountPct ?? 10;
-  const overCeiling = !supervisor && totals.discountAmount > 0 && discPct > ceiling + 1e-9;
+  // Capability-aware: a non-supervisor with the granted capability also
+  // bypasses the ceiling warning (broadening only — see lib/capabilities.ts).
+  const canOverrideDiscountCeiling = supervisor || posCan("pos.discount.override");
+  const overCeiling = !canOverrideDiscountCeiling && totals.discountAmount > 0 && discPct > ceiling + 1e-9;
 
   return (
-    <section className="surface flex h-full min-h-0 flex-col" aria-label="سلة الطلب">
+    <section className="surface flex h-full min-h-0 flex-col" aria-label={t("cartPanel.section.aria")}>
       {/* Order type */}
       <div className="border-b border-slate-100 p-2.5">
-        <div className="grid grid-cols-3 gap-1.5" role="radiogroup" aria-label="نوع الطلب">
-          {ORDER_TYPES.map(({ value, label, icon: Icon }) => (
+        <div className="grid grid-cols-3 gap-1.5" role="radiogroup" aria-label={t("cartPanel.orderTypes.ariaLabel")}>
+          {ORDER_TYPES.map(({ value, labelKey, icon: Icon }) => (
             <button
               key={value}
               type="button"
@@ -347,7 +355,7 @@ export function CartPanel({
               )}
             >
               <Icon className="h-4 w-4" aria-hidden />
-              {label}
+              {t(labelKey)}
             </button>
           ))}
         </div>
@@ -358,10 +366,10 @@ export function CartPanel({
               inputMode="numeric"
               value={cart.tableNo ?? ""}
               onChange={(e) => setTableNo(e.target.value || null)}
-              placeholder="رقم الطاولة"
-              aria-label="رقم الطاولة"
+              placeholder={t("cartPanel.tableNo.label")}
+              aria-label={t("cartPanel.tableNo.label")}
               className="field num"
-              dir="ltr"
+              dir="ltr" /* LTR forced: numeric/phone - do not remove, see i18n plan */
               maxLength={20}
             />
             <CustomerAttach />
@@ -378,8 +386,8 @@ export function CartPanel({
         {empty ? (
           <EmptyState
             icon={<ShoppingBasket className="h-10 w-10" aria-hidden />}
-            title="سلة فارغة"
-            hint="اختر أصنافًا من القائمة أو امسح باركود"
+            title={t("cartPanel.empty.title")}
+            hint={t("cartPanel.empty.hint")}
           />
         ) : (
           <ul className="flex flex-col gap-1.5">
@@ -406,28 +414,31 @@ export function CartPanel({
           <span className="flex items-center gap-1.5">
             <BadgePercent className="h-4 w-4" aria-hidden />
             {totals.discountAmount > 0
-              ? `خصم${cart.discountName ? ` «${cart.discountName}»` : ""}`
-              : "إضافة خصم على الطلب"}
+              ? cart.discountName
+                ? t("cartPanel.discount.appliedNamedLabel", { name: cart.discountName })
+                : t("cartPanel.discount.appliedLabel")
+              : t("cartPanel.discount.addLabel")}
           </span>
           {totals.discountAmount > 0 ? <Money value={`-${fmt2(totals.discountAmount)}`} /> : null}
         </button>
         {overCeiling ? (
           <p role="alert" className="mb-2 rounded-xl bg-amber-50 px-3 py-2 text-[11px] font-bold text-amber-800">
-            الخصم <Money value={fmt2(discPct)} />% يتجاوز حد الكاشير (<Money value={fmt2(ceiling)} />%) — سيرفضه
-            الخادم بدون مدير
+            {t("cartPanel.overCeiling.before")} <Money value={fmt2(discPct)} />
+            {t("cartPanel.overCeiling.between")}<Money value={fmt2(ceiling)} />
+            {t("cartPanel.overCeiling.after")}
           </p>
         ) : null}
 
         <dl className="space-y-1 text-sm">
           <div className="flex justify-between text-slate-500">
-            <dt className="font-bold">المجموع</dt>
+            <dt className="font-bold">{t("cartPanel.totals.subtotal")}</dt>
             <dd>
               <Money value={fmt2(totals.subtotal)} className="font-bold" />
             </dd>
           </div>
           {totals.lineDiscountTotal > 0 ? (
             <div className="flex justify-between text-slate-500">
-              <dt className="font-bold">خصومات الأسطر</dt>
+              <dt className="font-bold">{t("cartPanel.totals.lineDiscounts")}</dt>
               <dd>
                 <Money value={`-${fmt2(totals.lineDiscountTotal)}`} className="font-bold text-saffron-600" />
               </dd>
@@ -435,22 +446,22 @@ export function CartPanel({
           ) : null}
           {totals.discountAmount > 0 ? (
             <div className="flex justify-between text-slate-500">
-              <dt className="font-bold">خصم الطلب</dt>
+              <dt className="font-bold">{t("cartPanel.totals.orderDiscount")}</dt>
               <dd>
                 <Money value={`-${fmt2(totals.discountAmount)}`} className="font-bold text-saffron-600" />
               </dd>
             </div>
           ) : null}
           <div className="flex justify-between text-slate-500">
-            <dt className="font-bold">الضريبة (مشمولة)</dt>
+            <dt className="font-bold">{t("cartPanel.totals.tax")}</dt>
             <dd>
               <Money value={fmt2(totals.vatTotal)} className="font-bold" />
             </dd>
           </div>
           <div className="flex items-center justify-between border-t border-slate-200 pt-1.5 text-ink">
-            <dt className="text-base font-extrabold">الإجمالي</dt>
+            <dt className="text-base font-extrabold">{t("cartPanel.totals.total")}</dt>
             <dd className="text-xl font-extrabold">
-              <Money value={fmt2(totals.total)} /> <span className="text-xs font-bold text-slate-400">ر.س</span>
+              <Money value={fmt2(totals.total)} /> <span className="text-xs font-bold text-slate-400">{t("cartPanel.currency")}</span>
             </dd>
           </div>
         </dl>
@@ -458,12 +469,12 @@ export function CartPanel({
 
       {/* Actions */}
       <div className="grid grid-cols-3 gap-1.5 border-t border-slate-100 p-2.5">
-        <Button variant="secondary" onClick={onHold} disabled={empty || holdBusy} loading={holdBusy} title="تعليق الطلب (F9)">
+        <Button variant="secondary" onClick={onHold} disabled={empty || holdBusy} loading={holdBusy} title={t("cartPanel.actions.holdTitle")}>
           <PauseCircle className="h-4 w-4" aria-hidden />
-          تعليق
+          {t("cartPanel.actions.hold")}
         </Button>
-        <Button variant="secondary" onClick={onOpenHeld} className="relative" title="الطلبات المعلقة">
-          الطلبات المعلقة
+        <Button variant="secondary" onClick={onOpenHeld} className="relative" title={t("cartPanel.actions.held")}>
+          {t("cartPanel.actions.held")}
           {heldCount > 0 ? (
             <span className="num absolute -top-1.5 start-1 rounded-full bg-saffron-500 px-1.5 py-0.5 text-[10px] font-extrabold text-white">
               {fmtInt(heldCount)}
@@ -474,14 +485,14 @@ export function CartPanel({
           variant="danger"
           onClick={onVoid}
           disabled={empty || !!voidDisabledReason}
-          title={voidDisabledReason ?? "إلغاء الطلب"}
+          title={voidDisabledReason ?? t("cartPanel.actions.voidTitle")}
         >
           <XCircle className="h-4 w-4" aria-hidden />
-          إلغاء
+          {t("cartPanel.actions.void")}
         </Button>
-        <Button variant="primary" size="lg" className="col-span-3" onClick={onPay} disabled={empty} title="الدفع (F4)">
+        <Button variant="primary" size="lg" className="col-span-3" onClick={onPay} disabled={empty} title={t("cartPanel.actions.payTitle")}>
           <Banknote className="h-5 w-5" aria-hidden />
-          دفع — <Money value={fmt2(totals.total)} /> ر.س
+          {t("cartPanel.actions.pay")} <Money value={fmt2(totals.total)} /> {t("cartPanel.currency")}
         </Button>
       </div>
     </section>

@@ -133,6 +133,19 @@ export function useT(): TFunction {
   return useI18nContext().t;
 }
 
+/**
+ * Like useT(), but returns null outside an I18nProvider instead of throwing.
+ * For cross-cutting singletons that live outside the React tree (e.g.
+ * lib/offline.ts's OfflineEngine, constructed once via getEngine() and only
+ * OPTIONALLY handed a live translator by whichever component mounts first)
+ * and for tests that render a provider's consumer (e.g. PosProvider) without
+ * an ancestor I18nProvider — those must keep working, just without
+ * translated toast text.
+ */
+export function useOptionalT(): TFunction | null {
+  return useContext(I18nContext)?.t ?? null;
+}
+
 export function useLang(): Lang {
   return useI18nContext().lang;
 }

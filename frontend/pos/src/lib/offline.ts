@@ -25,6 +25,8 @@ import { idbStore } from "./idb";
 import * as realApi from "./api";
 import { ApiError } from "./api";
 import { ulid } from "./ulid";
+import { translateApiError } from "../i18n/errorCodes";
+import type { TFunction } from "../i18n/types";
 import type {
   CartLine,
   LocalOrder,
@@ -35,6 +37,19 @@ import type {
   SyncOpReport,
   SyncReport,
 } from "./types";
+
+// This module lives OUTSIDE the React tree (a singleton constructed lazily by
+// getEngine(), independent of any component's lifecycle) so it cannot call
+// useT() itself. IDENTITY_T mirrors I18nProvider's own documented "miss"
+// contract (a lookup miss returns the dotted path unchanged) — passing it to
+// translateApiError() makes every `errors.<code>` lookup miss on purpose, so
+// translateApiError() falls through to the real per-error `message` exactly
+// as it did before any translator was wired in. Whichever component mounts
+// first inside an <I18nProvider> (PosProvider, via useOptionalT()) calls
+// setTranslator() with the live t() so toasts become properly localized;
+// until then — and in any test harness that never calls setTranslator() —
+// this safe default keeps every message meaningful (never a blank string).
+const IDENTITY_T: TFunction = (path) => path;
 
 // ── Injected dependency surfaces ─────────────────────────────────────────────
 export interface EngineApi {
@@ -56,6 +71,10 @@ export interface EngineDeps {
   debounceMs: number;
   /** start timers + window listeners (false in tests) */
   autoStart: boolean;
+  /** Optional — the live i18n t() (see setTranslator()/IDENTITY_T above for
+   *  why this can't be required at construction time). Omit in tests that
+   *  don't care about toast text; the engine falls back to IDENTITY_T. */
+  t?: TFunction;
 }
 
 export interface EngineStatus {
@@ -160,12 +179,31 @@ export class OfflineEngine {
   private lastReport: SyncReport | null = null;
   private statusSnapshot: EngineStatus;
   private intervalId: ReturnType<typeof setInterval> | null = null;
+  private t: TFunction;
 
   constructor(deps: EngineDeps) {
     this.deps = deps;
+    this.t = deps.t ?? IDENTITY_T;
     this.statusSnapshot = { online: deps.isOnline(), syncing: false, queueCount: 0, lastReport: null };
     this.seqReady = this.initSeq();
     if (deps.autoStart) this.start();
+  }
+
+  /** Wire in the live i18n t() after construction — PosProvider calls this
+   *  from a useEffect (via useOptionalT()) on mount and on every language
+   *  change, since the engine singleton is created once outside React and
+   *  can't call useT() itself. Safe to never call (see IDENTITY_T above). */
+  setTranslator(t: TFunction): void {
+    this.t = t;
+  }
+
+  /** Turn a caught error / a per-op {code,error} result into user-facing
+   *  toast text — routes through translateApiError() so a known code (e.g.
+   *  VERSION_CONFLICT, O2C_MODULE_ACTIVE) gets a friendly localized message,
+   *  and everything else falls back to the real server-provided message
+   *  rather than a raw HTTP-status string. */
+  private toastMessage(e: unknown): string {
+    return translateApiError(e, this.t);
   }
 
   private async initSeq(): Promise<void> {
@@ -532,9 +570,12 @@ export class OfflineEngine {
       resp = await this.deps.api.postSync(wire);
     } catch (e) {
       if (isNetworkError(e)) return true; // transient — keep everything, stop
-      // Envelope-level rejection (auth, validation of the batch itself): stop
-      // without dropping ops; surface once.
-      this.emitEvent({ type: "toast", kind: "error", message: (e as Error).message });
+      // Envelope-level rejection (auth, or a rejection of the BATCH itself —
+      // e.g. too many ops / malformed ops array — which DOES carry a real
+      // code+message from the server, unlike a per-op partial failure, which
+      // postSync() no longer throws for at all; see api.ts's
+      // allowPartialSuccess). Stop without dropping ops; surface once.
+      this.emitEvent({ type: "toast", kind: "error", message: this.toastMessage(e) });
       return true;
     }
 
@@ -570,9 +611,16 @@ export class OfflineEngine {
         else this.emitEvent({ type: "toast", kind: "error", message: `تعارض نسخ في الطلب ${op.orderId.slice(-6)} — اعتُمدت نسخة الخادم` });
       } else {
         // Permanent domain failure (VALIDATION_ERROR / PERMISSION_DENIED /
-        // IDEMPOTENCY_CONFLICT…) — drop so the queue never jams.
+        // IDEMPOTENCY_CONFLICT…) — drop so the queue never jams. Build an
+        // ApiError-shaped object from THIS op's own code/error (this is the
+        // per-op detail that used to be unreachable: postSync() previously
+        // threw for the whole batch — with the literal message `HTTP 200` —
+        // the instant ANY op in it failed, so this branch never ran on a
+        // partial failure). Default the code to SERVER_ERROR (never blank)
+        // so translateApiError always resolves to a real, meaningful string.
         await this.deps.queue.delete(op.opId);
-        this.emitEvent({ type: "toast", kind: "error", message: r.error || r.code || "فشلت المزامنة" });
+        const opError = new ApiError(200, r.code || "SERVER_ERROR", r.error || "");
+        this.emitEvent({ type: "toast", kind: "error", message: this.toastMessage(opError) });
       }
     }
     return false;
@@ -601,7 +649,9 @@ export class OfflineEngine {
       changeDue?: number;
       paymentNotes?: string;
     };
-    const fail = async (error: string, code?: string): Promise<void> => {
+    const fail = async (e: unknown): Promise<void> => {
+      const code = e instanceof ApiError ? e.code : undefined;
+      const error = this.toastMessage(e);
       reports.push({ opId: op.opId, type: op.type, orderId, ok: false, code, error });
       await this.deps.queue.delete(op.opId);
       const doc = await this.deps.orders.get(orderId);
@@ -633,7 +683,7 @@ export class OfflineEngine {
       cursor.set(orderId, sub.version ?? null);
     } catch (e) {
       if (isNetworkError(e)) return true; // retry whole op later
-      await fail((e as ApiError).message, (e as ApiError).code);
+      await fail(e);
       return false;
     }
 
@@ -657,7 +707,7 @@ export class OfflineEngine {
       } catch {
         /* best-effort; server state machine will still allow manual reopen */
       }
-      await fail((e as ApiError).message, (e as ApiError).code);
+      await fail(e);
       return false;
     }
 
@@ -670,9 +720,11 @@ export class OfflineEngine {
       if (isNetworkError(e)) return true; // replaying re-runs complete only (submit+sale replay idempotently)
       // Even if complete failed with a domain error the SALE EXISTS — never
       // "fail" the checkout financially. Record and move on.
-      reports.push({ opId: op.opId, type: op.type, orderId, ok: false, code: (e as ApiError).code, error: (e as ApiError).message });
+      const code = e instanceof ApiError ? e.code : undefined;
+      const message = this.toastMessage(e);
+      reports.push({ opId: op.opId, type: op.type, orderId, ok: false, code, error: message });
       await this.deps.queue.delete(op.opId);
-      this.emitEvent({ type: "toast", kind: "error", message: "تم تسجيل البيع لكن تعذّر إكمال الطلب: " + (e as ApiError).message });
+      this.emitEvent({ type: "toast", kind: "error", message: "تم تسجيل البيع لكن تعذّر إكمال الطلب: " + message });
       return false;
     }
 

@@ -38,6 +38,14 @@ function _shape(row) {
     email: row.email || null,
     address: row.address || null,
     city: row.city || null,
+    vatRegistered: row.vat_registered == null ? true : !!Number(row.vat_registered),
+    street: row.street || null,
+    buildingNumber: row.building_number || null,
+    district: row.district || null,
+    additionalNo: row.additional_no || null,
+    postalCode: row.postal_code || null,
+    defaultRevenueAccountId: row.default_revenue_account_id || null,
+    defaultRevenueCostCenterId: row.default_revenue_cost_center_id || null,
     customerType: row.customer_type || 'B2C',
     creditLimit: Number(row.credit_limit || 0),
     balance: Number(row.balance || 0),           // legacy manual field (informational only)
@@ -132,8 +140,10 @@ function _validate(data, { partial = false } = {}) {
   }
   if (data.creditLimit != null && Number(data.creditLimit) < 0) throw err('VALIDATION_ERROR', 'حد الائتمان لا يمكن أن يكون سالبًا');
   if (data.creditDays != null && Number(data.creditDays) < 0) throw err('VALIDATION_ERROR', 'أيام الائتمان لا يمكن أن تكون سالبة');
-  // B2B/B2G on credit terms must carry a VAT number for ZATCA B2B invoices
-  if (data.customerType && data.customerType !== 'B2C' && data.vatNumber != null && String(data.vatNumber).trim() && !/^\d{15}$/.test(String(data.vatNumber).trim())) {
+  // B2B/B2G on credit terms must carry a VAT number for ZATCA B2B invoices —
+  // only enforced while the customer is actually marked VAT-registered.
+  if (data.vatRegistered !== false && data.customerType && data.customerType !== 'B2C' &&
+      data.vatNumber != null && String(data.vatNumber).trim() && !/^\d{15}$/.test(String(data.vatNumber).trim())) {
     throw err('VALIDATION_ERROR', 'رقم ضريبي غير صالح (يجب 15 رقمًا)');
   }
 }
@@ -148,12 +158,17 @@ async function create(conn, data, actor) {
   await conn.query(
     `INSERT INTO customers
        (id, name, name_en, phone, vat_number, email, address, city, gender, customer_type,
-        credit_limit, balance, payment_terms, credit_days, brand_id, is_active, created_by, updated_by)
-     VALUES (?,?,?,?,?,?,?,?,?,?,?,0,?,?,?,1,?,?)`,
+        credit_limit, balance, payment_terms, credit_days, brand_id, is_active, created_by, updated_by,
+        vat_registered, street, building_number, district, additional_no, postal_code,
+        default_revenue_account_id, default_revenue_cost_center_id)
+     VALUES (?,?,?,?,?,?,?,?,?,?,?,0,?,?,?,1,?,?,?,?,?,?,?,?,?,?)`,
     [id, String(data.name).trim(), data.nameEn || null, data.phone || null, data.vatNumber || null,
      data.email || null, data.address || null, data.city || null, data.gender || 'unknown',
      data.customerType || 'B2C', Number(data.creditLimit || 0),
-     data.paymentTerms || 'Cash', Number(data.creditDays || 0), data.brandId || null, actor || '', actor || '']);
+     data.paymentTerms || 'Cash', Number(data.creditDays || 0), data.brandId || null, actor || '', actor || '',
+     data.vatRegistered === false ? 0 : 1, data.street || null, data.buildingNumber || null,
+     data.district || null, data.additionalNo || null, data.postalCode || null,
+     data.defaultRevenueAccountId || null, data.defaultRevenueCostCenterId || null]);
   return get(id, conn);
 }
 
@@ -165,6 +180,9 @@ async function update(conn, id, data, actor) {
     name: 'name', nameEn: 'name_en', phone: 'phone', vatNumber: 'vat_number', email: 'email',
     address: 'address', city: 'city', gender: 'gender', customerType: 'customer_type',
     creditLimit: 'credit_limit', paymentTerms: 'payment_terms', creditDays: 'credit_days', brandId: 'brand_id',
+    vatRegistered: 'vat_registered', street: 'street', buildingNumber: 'building_number',
+    district: 'district', additionalNo: 'additional_no', postalCode: 'postal_code',
+    defaultRevenueAccountId: 'default_revenue_account_id', defaultRevenueCostCenterId: 'default_revenue_cost_center_id',
   };
   const sets = [], args = [];
   for (const [k, col] of Object.entries(map)) {

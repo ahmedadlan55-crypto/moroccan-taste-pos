@@ -46,9 +46,17 @@ export interface Customer {
   nameEn?: string | null;
   phone?: string | null;
   vatNumber?: string | null;
+  vatRegistered?: boolean;
   email?: string | null;
   address?: string | null;
   city?: string | null;
+  street?: string | null;
+  buildingNumber?: string | null;
+  district?: string | null;
+  additionalNo?: string | null;
+  postalCode?: string | null;
+  defaultRevenueAccountId?: string | null;
+  defaultRevenueCostCenterId?: string | null;
   customerType: "B2C" | "B2B" | "B2G";
   creditLimit: number;
   balance: number;

@@ -2,14 +2,32 @@
 // authoritative for totals). Used with react-hook-form's zodResolver.
 import { z } from "zod";
 
+export const beneficiarySchema = z.object({
+  serverId: z.string().optional(),
+  bankName: z.string().min(1, "اسم البنك مطلوب"),
+  accountName: z.string().optional(),
+  accountNumber: z.string().optional(),
+  iban: z.string().optional(),
+});
+export type BeneficiaryInput = z.infer<typeof beneficiarySchema>;
+
 export const supplierSchema = z.object({
   name: z.string().min(2, "اسم المورد مطلوب"),
   nameEn: z.string().optional(),
-  vatNumber: z.string().optional(),
+  vatRegistered: z.boolean().default(true),
+  vatNumber: z.string().optional().refine((v) => !v || /^\d{15}$/.test(v), "الرقم الضريبي يجب أن يكون 15 رقمًا"),
   phone: z.string().optional(),
   email: z.string().email("بريد غير صالح").optional().or(z.literal("")),
   city: z.string().optional(),
+  street: z.string().optional(),
+  buildingNumber: z.string().optional(),
+  district: z.string().optional(),
+  additionalNo: z.string().optional(),
+  postalCode: z.string().optional(),
   paymentTerms: z.enum(["Cash", "Net30", "Net60"]).default("Cash"),
+  defaultExpenseAccountId: z.string().optional(),
+  defaultExpenseCostCenterId: z.string().optional(),
+  beneficiaries: z.array(beneficiarySchema).default([]),
 });
 export type SupplierInput = z.infer<typeof supplierSchema>;
 

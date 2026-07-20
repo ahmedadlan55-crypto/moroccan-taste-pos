@@ -3,12 +3,11 @@
 // and the useProcurement hooks. All money/qty rendered via formatters (English
 // digits). Backend enforces permissions; useCan hides obviously-forbidden buttons.
 import { useState, type ReactNode } from "react";
-import { Link, useSearchParams } from "react-router-dom";
+import { Link } from "react-router-dom";
 import {
   ShoppingBag, ClipboardList, AlarmClock, PackageCheck, FileWarning, Wallet, TriangleAlert, ArrowLeftRight,
 } from "lucide-react";
-import { Dialog, PanelTitle } from "@/shared/ui";
-import { Field } from "@/shared/forms";
+import { PanelTitle } from "@/shared/ui";
 import { MetricCard } from "@/modules/inventory/lib/MetricCard";
 import { StatusBadge } from "@/shared/ui";
 import { Button } from "@/shared/ui";
@@ -16,10 +15,9 @@ import { LoadingState, ErrorState, EmptyState } from "@/shared/ui";
 import { formatCurrency, formatDate } from "@/shared/lib";
 import { useCan } from "@/modules/inventory/lib/permission-provider";
 import {
-  useProcurementDashboard, useSuppliers, useOrders, useReceipts, useInvoices, usePayments,
-  useReturns, useProcurementReport, useCreateSupplier, type ListParams,
+  useProcurementDashboard, useOrders, useReceipts, useInvoices, usePayments,
+  useReturns, useProcurementReport, type ListParams,
 } from "@/modules/inventory/lib/hooks/useProcurement";
-import type { ApiError } from "@/shared/api";
 
 // ── shared bits ──────────────────────────────────────────────────────────────
 const STATUS_AR: Record<string, string> = {
@@ -100,143 +98,6 @@ export function ProcurementDashboard() {
           ))}
         </div>
       </section>
-    </div>
-  );
-}
-
-// ── Suppliers ─────────────────────────────────────────────────────────────
-export function SuppliersPage() {
-  const [searchParams, setSearchParams] = useSearchParams();
-  const [params, patch] = useListState();
-  const { data, isLoading, isError, error, refetch } = useSuppliers(params);
-  const canManage = useCan("procurement.manage");
-  const create = useCreateSupplier();
-  const showNew = searchParams.get("new") === "1";
-  const [draft, setDraft] = useState({
-    name: "",
-    nameEn: "",
-    vatNumber: "",
-    phone: "",
-    email: "",
-    city: "",
-    paymentTerms: "Cash",
-  });
-
-  const updateDraft = (field: keyof typeof draft, value: string) =>
-    setDraft((current) => ({ ...current, [field]: value }));
-
-  const closeCreate = () => {
-    if (create.isPending) return;
-    const next = new URLSearchParams(searchParams);
-    next.delete("new");
-    setSearchParams(next, { replace: true });
-  };
-
-  const openCreate = () => {
-    const next = new URLSearchParams(searchParams);
-    next.set("new", "1");
-    setSearchParams(next);
-  };
-
-  const saveSupplier = () => {
-    if (draft.name.trim().length < 2) return;
-    create.mutate(
-      { ...draft, name: draft.name.trim() },
-      {
-        onSuccess: () => {
-          setDraft({ name: "", nameEn: "", vatNumber: "", phone: "", email: "", city: "", paymentTerms: "Cash" });
-          const next = new URLSearchParams(searchParams);
-          next.delete("new");
-          setSearchParams(next, { replace: true });
-          refetch();
-        },
-      },
-    );
-  };
-
-  return (
-    <div>
-      <div className="mb-4 flex flex-wrap items-center gap-2">
-        <input className="field w-64" placeholder="بحث بالاسم / الضريبي / الهاتف…" value={params.q ?? ""} onChange={(e) => patch({ q: e.target.value, page: 1 })} />
-        <div className="grow" />
-        {canManage && <Button onClick={openCreate}>+ مورد جديد</Button>}
-      </div>
-      <Dialog
-        open={showNew && canManage}
-        onClose={closeCreate}
-        title="إضافة مورد جديد"
-        description="سجّل البيانات التجارية وبيانات التواصل وشروط الدفع في ملف مورد واحد واضح."
-        size="lg"
-        dismissable={!create.isPending}
-        footer={
-          <>
-            <Button variant="secondary" onClick={closeCreate} disabled={create.isPending}>إلغاء</Button>
-            <Button loading={create.isPending} disabled={draft.name.trim().length < 2} onClick={saveSupplier}>حفظ المورد</Button>
-          </>
-        }
-      >
-        <section className="surface p-5 sm:p-6">
-          <div className="mb-5 border-b border-slate-100 pb-4">
-            <h2 className="text-lg font-bold text-slate-900">بيانات المورد</h2>
-            <p className="mt-1 text-sm leading-6 text-slate-600">الحقول المعلّمة بنجمة مطلوبة لإتمام الحفظ.</p>
-          </div>
-          <div className="grid gap-5 md:grid-cols-2">
-            <Field label="اسم المورد" required>
-              <input className="field" value={draft.name} onChange={(e) => updateDraft("name", e.target.value)} autoFocus />
-            </Field>
-            <Field label="الاسم بالإنجليزية">
-              <input className="field" dir="ltr" value={draft.nameEn} onChange={(e) => updateDraft("nameEn", e.target.value)} />
-            </Field>
-            <Field label="الرقم الضريبي" hint="أدخل الرقم كما يظهر في شهادة التسجيل الضريبي.">
-              <input className="field" dir="ltr" inputMode="numeric" value={draft.vatNumber} onChange={(e) => updateDraft("vatNumber", e.target.value)} />
-            </Field>
-            <Field label="الهاتف">
-              <input className="field" dir="ltr" inputMode="tel" value={draft.phone} onChange={(e) => updateDraft("phone", e.target.value)} />
-            </Field>
-            <Field label="البريد الإلكتروني">
-              <input className="field" dir="ltr" type="email" value={draft.email} onChange={(e) => updateDraft("email", e.target.value)} />
-            </Field>
-            <Field label="المدينة">
-              <input className="field" value={draft.city} onChange={(e) => updateDraft("city", e.target.value)} />
-            </Field>
-            <Field label="شروط الدفع">
-              <select className="field" value={draft.paymentTerms} onChange={(e) => updateDraft("paymentTerms", e.target.value)}>
-                <option value="Cash">نقدي</option>
-                <option value="Net30">آجل 30 يومًا</option>
-                <option value="Net60">آجل 60 يومًا</option>
-              </select>
-            </Field>
-          </div>
-          {create.isError && (
-            <p className="mt-5 rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm font-semibold text-rose-700">
-              {(create.error as ApiError)?.message}
-            </p>
-          )}
-        </section>
-      </Dialog>
-      {isLoading ? <LoadingState /> : isError ? <ErrorState error={error} onRetry={() => refetch()} /> : !data || data.rows.length === 0 ? (
-        <EmptyState title="لا موردين" body="ابدأ بإضافة مورد." />
-      ) : (
-        <div className="surface overflow-hidden">
-          <div className="overflow-x-auto">
-            <table className="w-full border-collapse">
-              <thead className="bg-slate-50"><tr><Th>المورد</Th><Th>الرقم الضريبي</Th><Th>المدينة</Th><Th>شروط الدفع</Th><Th className="text-left">الرصيد المستحق</Th></tr></thead>
-              <tbody className="divide-y divide-slate-100">
-                {data.rows.map((s) => (
-                  <tr key={s.id} className="hover:bg-slate-50">
-                    <Td><Link className="font-bold text-teal-700 hover:underline" to={`/purchasing/suppliers?doc=${s.id}`}>{s.name}</Link></Td>
-                    <Td className="tabular-nums text-slate-500" >{s.vatNumber || "—"}</Td>
-                    <Td>{s.city || "—"}</Td>
-                    <Td>{s.paymentTerms}</Td>
-                    <Td className="text-left font-bold tabular-nums">{formatCurrency(s.apBalance)}</Td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        </div>
-      )}
-      {data && <Pager page={data.page} totalPages={data.totalPages} onPage={(p) => patch({ page: p })} />}
     </div>
   );
 }

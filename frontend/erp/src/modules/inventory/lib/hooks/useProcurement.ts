@@ -164,6 +164,51 @@ export function useCreateSupplier() {
     onSuccess: () => inv(queryKeys.procurement.suppliers.all),
   });
 }
+export function useUpdateSupplier() {
+  const inv = useInvalidate();
+  return useMutation<MutationResult, Error, { id: string; body: Record<string, unknown> }>({
+    mutationFn: ({ id, body }) => apiClient.patch<MutationResult>(`${P}/suppliers/${id}`, body),
+    onSuccess: (_r, v) => inv(queryKeys.procurement.suppliers.all, v.id, queryKeys.procurement.suppliers.detail),
+  });
+}
+
+// ── Supplier beneficiaries (المستفيدون) — the supplier's OWN bank details for
+// direct-transfer payment. No GL linkage (unlike bank_accounts, the company's
+// own accounts under 1102) — just payee info stored per supplier.
+export interface SupplierBeneficiary {
+  id: string;
+  bankName: string;
+  accountName: string | null;
+  accountNumber: string | null;
+  iban: string | null;
+  isPrimary: boolean;
+}
+function beneficiariesKey(supplierId: string) {
+  return ["procurement", "suppliers", "beneficiaries", supplierId] as const;
+}
+export function useSupplierBeneficiaries(supplierId: string | null) {
+  return useQuery({
+    enabled: !!supplierId,
+    queryKey: beneficiariesKey(supplierId ?? ""),
+    queryFn: ({ signal }) =>
+      apiClient.get<{ data: SupplierBeneficiary[] }>(`${P}/suppliers/${supplierId}/beneficiaries`, { signal }).then((r) => r.data ?? []),
+  });
+}
+export function useSaveSupplierBeneficiary() {
+  const qc = useQueryClient();
+  return useMutation<MutationResult, Error, { supplierId: string; body: Record<string, unknown> }>({
+    mutationFn: ({ supplierId, body }) => apiClient.post<MutationResult>(`${P}/suppliers/${supplierId}/beneficiaries`, body),
+    onSuccess: (_r, v) => qc.invalidateQueries({ queryKey: beneficiariesKey(v.supplierId) }),
+  });
+}
+export function useDeleteSupplierBeneficiary() {
+  const qc = useQueryClient();
+  return useMutation<MutationResult, Error, { supplierId: string; beneficiaryId: string }>({
+    mutationFn: ({ supplierId, beneficiaryId }) =>
+      apiClient.delete<MutationResult>(`${P}/suppliers/${supplierId}/beneficiaries/${beneficiaryId}`),
+    onSuccess: (_r, v) => qc.invalidateQueries({ queryKey: beneficiariesKey(v.supplierId) }),
+  });
+}
 export function useCreateOrder() {
   const inv = useInvalidate();
   return useMutation<MutationResult, Error, Record<string, unknown>>({

@@ -7236,6 +7236,45 @@ async function runMigrations() {
   } catch (e) {
     console.error('[v6.5.0 semi-unify] migration failed (non-fatal):', e.message);
   }
+
+  // Contact master data (ZATCA-style) — structured address + explicit VAT
+  // registration flag + default GL account/cost-center dimensions for
+  // customers (sales side) and suppliers (purchase side), plus a new
+  // supplier_beneficiaries table (the supplier's OWN bank details for
+  // direct-transfer payment — distinct from `bank_accounts`, which holds the
+  // company's own accounts under GL 1102). Mirrors db/migrations/0013_contact_master_data.sql.
+  await addColumnIfMissing('customers', 'vat_registered', "TINYINT(1) NOT NULL DEFAULT 1");
+  await addColumnIfMissing('customers', 'street', "VARCHAR(200) NULL");
+  await addColumnIfMissing('customers', 'building_number', "VARCHAR(10) NULL");
+  await addColumnIfMissing('customers', 'district', "VARCHAR(120) NULL");
+  await addColumnIfMissing('customers', 'additional_no', "VARCHAR(10) NULL");
+  await addColumnIfMissing('customers', 'postal_code', "VARCHAR(10) NULL");
+  await addColumnIfMissing('customers', 'default_revenue_account_id', "VARCHAR(50) NULL");
+  await addColumnIfMissing('customers', 'default_revenue_cost_center_id', "VARCHAR(50) NULL");
+
+  await addColumnIfMissing('suppliers', 'vat_registered', "TINYINT(1) NOT NULL DEFAULT 1");
+  await addColumnIfMissing('suppliers', 'street', "VARCHAR(200) NULL");
+  await addColumnIfMissing('suppliers', 'building_number', "VARCHAR(10) NULL");
+  await addColumnIfMissing('suppliers', 'district', "VARCHAR(120) NULL");
+  await addColumnIfMissing('suppliers', 'additional_no', "VARCHAR(10) NULL");
+  await addColumnIfMissing('suppliers', 'postal_code', "VARCHAR(10) NULL");
+  await addColumnIfMissing('suppliers', 'default_expense_account_id', "VARCHAR(50) NULL");
+  await addColumnIfMissing('suppliers', 'default_expense_cost_center_id', "VARCHAR(50) NULL");
+
+  await createTableIfMissing('supplier_beneficiaries', `CREATE TABLE IF NOT EXISTS supplier_beneficiaries (
+    id             VARCHAR(50) NOT NULL PRIMARY KEY,
+    supplier_id    VARCHAR(50) NOT NULL,
+    bank_name      VARCHAR(150) NOT NULL,
+    account_name   VARCHAR(150) NULL,
+    account_number VARCHAR(50) NULL,
+    iban           VARCHAR(34) NULL,
+    is_primary     TINYINT(1) NOT NULL DEFAULT 0,
+    is_active      TINYINT(1) NOT NULL DEFAULT 1,
+    created_by     VARCHAR(64) NULL,
+    created_at     TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    KEY idx_supplier (supplier_id),
+    CONSTRAINT fk_sb_supplier FOREIGN KEY (supplier_id) REFERENCES suppliers(id)
+  ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`);
 }
 
 // Phase 4A — run ALL migrations to completion BEFORE binding the port. The old

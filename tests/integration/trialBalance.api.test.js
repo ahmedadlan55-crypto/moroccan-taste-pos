@@ -236,7 +236,7 @@ async function setupFixtures() {
     }
 
     // ── 3. Mutation guard: Grand Total must be leaves-only, never rolled-up folders ──
-    const bal = await computeTrialBalance(db, { includeZero: true });
+    const bal = await computeTrialBalance(db, { from: '2026-06-01', to: '2026-06-30', includeZero: true });
     const balTotalPeriodDebit = bal.totals.periodDebit;
     const parentRow = bal.rows.find((r) => r.code === SCAFFOLD_PARENT_CODE);
     check('scaffold parent row is present and marked non-leaf (folder rollup)', !!parentRow && parentRow.hasChildren === true, parentRow);

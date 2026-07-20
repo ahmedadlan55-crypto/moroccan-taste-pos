@@ -50,7 +50,7 @@ function baseTrialBalanceRow(overrides: Record<string, unknown> = {}) {
     closeDebit: 130,
     closeCredit: 0,
     abnormalSign: false,
-    rowCount: 1,
+    journalCount: 1,
     ...overrides,
   };
 }
@@ -108,9 +108,13 @@ describe("TrialBalance", () => {
         isOpeningBalanced: false, isPeriodBalanced: false, isClosingBalanced: false, isBalanced: false,
       }),
       diagnostics: {
-        nullAccountEntries: 2, nullAccountDebit: 40, nullAccountCredit: 40,
+        nullAccountOpening: { count: 2, debit: 40, credit: 40 },
+        nullAccountPeriod: { count: 0, debit: 0, credit: 0 },
         futureDatedOpeningJournals: { count: 0, debit: 0, credit: 0 },
+        grossHistoricalMovement: { debit: 0, credit: 0 },
+        orphanAccounts: [],
         nonLeafPostingActivity: [], cycleAccounts: [], levelMismatches: [],
+        unbalancedJournals: [], headerLineMismatches: [],
         note: "test",
       },
     });

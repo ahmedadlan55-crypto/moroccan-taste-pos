@@ -1,4 +1,4 @@
-import { useMemo } from "react";
+import { useMemo, type ReactNode } from "react";
 import { DatePicker } from "@/shared/ui";
 import { formatDate } from "@/shared/lib";
 import {
@@ -47,11 +47,23 @@ function buildTree(rows: TrialBalanceRow[]): { flat: FlatRow[]; roots: TrialBala
   for (const arr of childrenOf.values()) arr.sort(byCode);
   const roots = (childrenOf.get(null) ?? []).slice();
   const flat: FlatRow[] = [];
+  // Tier A.2 corrective gate — a hierarchy CYCLE (A.parent=B, B.parent=A)
+  // means neither node ever has parentId=null, so neither ever lands in
+  // `roots`, and a walk that only starts from roots never reaches either —
+  // both rows would silently vanish from the table (`diagnostics.
+  // cycleAccounts` would flag them, but the reader would never actually see
+  // the row to investigate). `visited` guards against re-entering a cycle
+  // mid-walk; the sweep below catches every row a root-only walk could
+  // never reach and renders it as a pseudo-root instead.
+  const visited = new Set<string>();
   const visit = (r: TrialBalanceRow, depth: number) => {
+    if (visited.has(r.accountId)) return;
+    visited.add(r.accountId);
     flat.push({ ...r, depth });
     (childrenOf.get(r.accountId) ?? []).forEach((c) => visit(c, depth + 1));
   };
   roots.forEach((r) => visit(r, 0));
+  rows.forEach((r) => visit(r, 0));
   return { flat, roots };
 }
 
@@ -170,9 +182,8 @@ export function TrialBalancePage() {
 
 // Tier A.1 corrective gate — three INDEPENDENT balance checks (Opening/
 // Period/Closing can each be off separately; a closing-only check can miss
-// an opening-side imbalance that happens to cancel out), plus a diagnostics
-// warning. All values come straight from the server response — none of
-// this is recomputed here.
+// an opening-side imbalance that happens to cancel out). All values come
+// straight from the server response — none of this is recomputed here.
 function BalanceStatus({
   totals,
   isClean,
@@ -187,30 +198,27 @@ function BalanceStatus({
     { label: "حركة الفترة", ok: totals.isPeriodBalanced },
     { label: "آخر المدة", ok: totals.isClosingBalanced },
   ];
-  const diagCount =
-    (diagnostics?.nullAccountEntries ?? 0) +
-    (diagnostics?.futureDatedOpeningJournals.count ?? 0) +
-    (diagnostics?.nonLeafPostingActivity.length ?? 0) +
-    (diagnostics?.cycleAccounts.length ?? 0);
 
   return (
-    <div className="mt-4 flex flex-wrap items-center gap-2">
-      {chips.map((c) => (
-        <span
-          key={c.label}
-          className={`inline-flex items-center gap-1.5 rounded-xl border px-3 py-2 text-xs font-bold ${
-            c.ok ? "border-emerald-200 bg-emerald-50 text-emerald-700" : "border-amber-200 bg-amber-50 text-amber-700"
-          }`}
-        >
-          {c.ok ? `متوازن — ${c.label}` : `غير متوازن — ${c.label}`}
-        </span>
-      ))}
-      {isClean === false && diagCount > 0 && (
-        <span className="inline-flex items-center gap-1.5 rounded-xl border border-rose-200 bg-rose-50 px-3 py-2 text-xs font-bold text-rose-700">
-          تنبيه: التقرير غير Clean — {diagCount} بند يحتاج مراجعة (قيود بحساب غير معروف، ترحيل على Folder/Parent،
-          دورة في الشجرة، أو قيد افتتاحي مؤرَّخ بعد الفترة). راجع سجل التشخيص.
-        </span>
-      )}
+    <div className="mt-4">
+      <div className="flex flex-wrap items-center gap-2">
+        {chips.map((c) => (
+          <span
+            key={c.label}
+            className={`inline-flex items-center gap-1.5 rounded-xl border px-3 py-2 text-xs font-bold ${
+              c.ok ? "border-emerald-200 bg-emerald-50 text-emerald-700" : "border-amber-200 bg-amber-50 text-amber-700"
+            }`}
+          >
+            {c.ok ? `متوازن — ${c.label}` : `غير متوازن — ${c.label}`}
+          </span>
+        ))}
+        {isClean === false && (
+          <span className="inline-flex items-center gap-1.5 rounded-xl border border-rose-200 bg-rose-50 px-3 py-2 text-xs font-bold text-rose-700">
+            تنبيه: التقرير غير Clean — راجع بنود التشخيص أدناه
+          </span>
+        )}
+      </div>
+      {isClean === false && diagnostics && <DiagnosticsPanel diagnostics={diagnostics} />}
     </div>
   );
 }
@@ -219,3 +227,137 @@ type TrialBalanceTotalsForStatus = {
   isPeriodBalanced: boolean;
   isClosingBalanced: boolean;
 };
+
+// Tier A.2 corrective gate — this used to be a single sentence ("راجع سجل
+// التشخيص") pointing at nothing; there was no log, no page, nothing to
+// actually review. Every diagnostic bucket the server computes is now
+// itemized here, with its real rows/counts, so "غير Clean" is always
+// immediately actionable instead of a dead end.
+function DiagnosticsPanel({ diagnostics: d }: { diagnostics: TrialBalanceDiagnostics }) {
+  const sections: Array<{ key: string; label: string; count: number; render: () => ReactNode }> = [
+    {
+      key: "nullOpen",
+      label: "قيود بحساب غير معروف (NULL) — ضمن رصيد أول المدة",
+      count: d.nullAccountOpening.count,
+      render: () => (
+        <p>عدد السطور: {d.nullAccountOpening.count} — مدين: <Num value={d.nullAccountOpening.debit} /> — دائن: <Num value={d.nullAccountOpening.credit} /></p>
+      ),
+    },
+    {
+      key: "nullPeriod",
+      label: "قيود بحساب غير معروف (NULL) — ضمن حركة الفترة",
+      count: d.nullAccountPeriod.count,
+      render: () => (
+        <p>عدد السطور: {d.nullAccountPeriod.count} — مدين: <Num value={d.nullAccountPeriod.debit} /> — دائن: <Num value={d.nullAccountPeriod.credit} /></p>
+      ),
+    },
+    {
+      key: "futureOpen",
+      label: "قيود افتتاحية مؤرَّخة بعد بداية الفترة (مستبعدة من رصيد أول المدة)",
+      count: d.futureDatedOpeningJournals.count,
+      render: () => (
+        <p>
+          عدد القيود: {d.futureDatedOpeningJournals.count} — مدين: <Num value={d.futureDatedOpeningJournals.debit} /> —
+          دائن: <Num value={d.futureDatedOpeningJournals.credit} />
+        </p>
+      ),
+    },
+    {
+      key: "orphans",
+      label: "حسابات بأب غير موجود (parent_id لا يطابق حسابًا فعليًا)",
+      count: d.orphanAccounts.length,
+      render: () => (
+        <ul className="list-disc pe-4">
+          {d.orphanAccounts.map((a) => (
+            <li key={a.code}>{a.code} — {a.nameAr} (parent_id={a.parentId})</li>
+          ))}
+        </ul>
+      ),
+    },
+    {
+      key: "nonLeaf",
+      label: "ترحيل مباشر على حساب Folder أو Parent له أبناء (مخالف للسياسة)",
+      count: d.nonLeafPostingActivity.length,
+      render: () => (
+        <ul className="list-disc pe-4">
+          {d.nonLeafPostingActivity.map((a) => (
+            <li key={a.code}>
+              {a.code} — {a.nameAr} — أول المدة: <Num value={a.openDebit} />/<Num value={a.openCredit} /> — الفترة:{" "}
+              <Num value={a.periodDebit} />/<Num value={a.periodCredit} />
+            </li>
+          ))}
+        </ul>
+      ),
+    },
+    {
+      key: "cycles",
+      label: "دورة في شجرة الحسابات (Parent يعود لأحد أبنائه)",
+      count: d.cycleAccounts.length,
+      render: () => (
+        <ul className="list-disc pe-4">
+          {d.cycleAccounts.map((a) => (
+            <li key={a.code}>{a.code} — {a.nameAr}</li>
+          ))}
+        </ul>
+      ),
+    },
+    {
+      key: "levels",
+      label: "اختلاف المستوى المخزَّن عن عمق الشجرة الفعلي",
+      count: d.levelMismatches.length,
+      render: () => (
+        <ul className="list-disc pe-4">
+          {d.levelMismatches.map((a) => (
+            <li key={a.code}>{a.code} — {a.nameAr} (مخزَّن={a.storedLevel}, فعلي={a.computedLevel})</li>
+          ))}
+        </ul>
+      ),
+    },
+    {
+      key: "unbalanced",
+      label: "قيود مُرحَّلة غير متوازنة فرديًا (رأس القيد نفسه)",
+      count: d.unbalancedJournals.length,
+      render: () => (
+        <ul className="list-disc pe-4">
+          {d.unbalancedJournals.map((j) => (
+            <li key={j.id}>
+              {j.journalNumber} ({formatDate(j.journalDate)}) — مدين: <Num value={j.totalDebit} /> — دائن: <Num value={j.totalCredit} />
+            </li>
+          ))}
+        </ul>
+      ),
+    },
+    {
+      key: "headerLine",
+      label: "عدم تطابق رأس القيد مع مجموع سطوره الفعلية",
+      count: d.headerLineMismatches.length,
+      render: () => (
+        <ul className="list-disc pe-4">
+          {d.headerLineMismatches.map((j) => (
+            <li key={j.id}>
+              {j.journalNumber} ({formatDate(j.journalDate)}) — رأس: <Num value={j.headerDebit} />/<Num value={j.headerCredit} /> —
+              سطور: <Num value={j.lineDebit} />/<Num value={j.lineCredit} />
+            </li>
+          ))}
+        </ul>
+      ),
+    },
+  ];
+  const active = sections.filter((s) => s.count > 0);
+  if (active.length === 0) return null;
+  return (
+    <div className="mt-3 space-y-3 rounded-xl border border-rose-200 bg-rose-50/60 p-4 text-xs text-slate-700">
+      {active.map((s) => (
+        <div key={s.key}>
+          <p className="mb-1 font-extrabold text-rose-700">{s.label} ({s.count})</p>
+          {s.render()}
+        </div>
+      ))}
+      <p className="border-t border-rose-200 pt-2 text-slate-500">{d.note}</p>
+      <p className="text-slate-400">
+        رصيد أول المدة الخام (grossHistoricalMovement، للاطلاع فقط، ليس رصيد أول المدة): مدين{" "}
+        <Num value={d.grossHistoricalMovement.debit} /> — دائن <Num value={d.grossHistoricalMovement.credit} />
+      </p>
+    </div>
+  );
+}

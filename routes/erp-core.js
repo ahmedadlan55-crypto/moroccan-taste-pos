@@ -2202,6 +2202,15 @@ async function _dimCols() {
 router.get('/reports/trial-balance', requireCapability('finance.reports.view'), async (req, res) => {
   try {
     const { from, to, branch, brand, costCenter, warehouse, includeZero } = req.query;
+    // Tier A.2 — real warehouse-access authorization, not just "does the
+    // column exist" (that check still happens inside the engine). Reuses
+    // the SAME middleware/warehouseScope.js infrastructure every other
+    // warehouse-scoped route in this repo already depends on (mounted on
+    // /api/erp in server.js). Writes its own 403 and returns false when the
+    // caller's scope doesn't include the requested warehouse; shadow-logs
+    // instead of blocking when WAREHOUSE_SCOPE_ENFORCE is off, matching
+    // every other guarded route's rollout behavior.
+    if (warehouse && req.guardWh && !req.guardWh(res, warehouse)) return;
     const result = await trialBalanceEngine.computeTrialBalance(db, {
       from, to, branch, brand, costCenter, warehouse,
       includeZero: includeZero === '1' || includeZero === 'true',
@@ -2218,8 +2227,11 @@ router.get('/reports/trial-balance', requireCapability('finance.reports.view'), 
     // (including this endpoint's own frontend consumer) would treat as a
     // successful-but-empty report instead of a failure. Never do that for a
     // financial report: unified {success:false, code, error} envelope, 500.
+    // Tier A.2 — the real error (e.message) never reaches the client on a
+    // 500; only a fixed, generic message does. console.error still carries
+    // the full error for the server-side log.
     console.error('[trial-balance] unexpected error', e);
-    res.status(500).json({ success: false, code: 'TB_INTERNAL_ERROR', error: e.message, rows: [], totals: {} });
+    res.status(500).json({ success: false, code: 'TB_INTERNAL_ERROR', error: 'تعذّر إنشاء ميزان المراجعة — خطأ داخلي في الخادم', rows: [], totals: {} });
   }
 });
 

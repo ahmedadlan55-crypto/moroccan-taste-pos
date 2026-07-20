@@ -19,6 +19,7 @@ const { computeTrialBalance, TrialBalanceError, resetDimColsCache } = require('.
 
 let pass = 0, fail = 0; const fails = [];
 function check(n, c, extra) { if (c) { pass++; console.log('  ✅', n); } else { fail++; fails.push(n); console.log('  ❌', n, extra != null ? '→ ' + JSON.stringify(extra).slice(0, 400) : ''); } }
+function round2(n) { return Math.round((Number(n) || 0) * 100) / 100; }
 
 const IDS = {
   // Self-contained scaffold — the isolated test DB has no pre-existing
@@ -85,6 +86,42 @@ async function tableCounts() {
     const realParent = { id: IDS.scaffoldParent };
     const realCash = { id: IDS.scaffoldCash };
 
+    // ── 0. Null-account entry flips isClean from true to false in an
+    // otherwise-clean window — run FIRST, right after the two scaffold
+    // accounts, before any other test in this file adds its own fixtures.
+    // isClean now aggregates structural diagnostics (cycles, level
+    // mismatches, orphans) that are NOT scoped to any date window — several
+    // later tests in this file deliberately create malformed hierarchies
+    // (a 2-node parent cycle, hardcoded `level` values that don't match
+    // their fixture's real depth) that persist until the final cleanup(),
+    // so "the whole report is clean" stops being a safe assumption once
+    // those fixtures exist. Running this proof before they do keeps it valid.
+    const cleanWindow = { from: '2010-01-01', to: '2010-01-31', includeZero: true };
+    const clean1 = await computeTrialBalance(db, cleanWindow);
+    check('a window with zero fixture activity is clean to start with', clean1.isClean === true && clean1.diagnostics.nullAccountPeriod.count === 0 && clean1.diagnostics.nullAccountOpening.count === 0, { isClean: clean1.isClean, diagnostics: clean1.diagnostics });
+    await db.query(
+      "INSERT INTO gl_journals (id, journal_number, journal_date, reference_type, total_debit, total_credit, status) VALUES (?,?,?,?,?,?, 'posted')",
+      [JOURNALS[5], 'ITEST-TBE-CWNA', '2010-01-15', 'itest_fixture', 9, 9]
+    );
+    await db.query(
+      'INSERT INTO gl_entries (id, journal_id, account_id, account_code, debit, credit) VALUES (?,?,NULL,?,?,0), (?,?,?,?,0,?)',
+      ['ITEST-TBE-E-NA1', JOURNALS[5], 'ITEST-DELETED-CODE', 9,
+       'ITEST-TBE-E-NA2', JOURNALS[5], realCash.id, 'ITEST900001', 9]
+    );
+    const clean2 = await computeTrialBalance(db, cleanWindow);
+    check('inserting ONE null-account entry flips isClean to false (Debit=Credit is not sufficient to call a report clean)', clean2.isClean === false && clean2.diagnostics.nullAccountPeriod.count === 1, { isClean: clean2.isClean, nullAccountPeriod: clean2.diagnostics.nullAccountPeriod });
+    // The source JOURNAL is balanced (total_debit=total_credit=9), but its
+    // debit leg has no resolvable account — correctly excluded from the
+    // "valid, attributable" totals below, which is EXACTLY why this must
+    // surface as an imbalance too, not just a diagnostic count. Hiding this
+    // behind a "still balanced" claim would be the same false-comfort bug
+    // this whole gate exists to close.
+    check('the credit leg alone (9) makes periodDebit/periodCredit genuinely unequal — a second, independent signal beyond the diagnostic count', clean2.totals.periodDebit === 0 && clean2.totals.periodCredit === 9 && clean2.totals.isPeriodBalanced === false, clean2.totals);
+    // This fixture's job is done — clean it up now instead of waiting for
+    // the file's final cleanup(), so it can't shadow any later diagnostic.
+    await db.query('DELETE FROM gl_entries WHERE journal_id = ?', [JOURNALS[5]]);
+    await db.query('DELETE FROM gl_journals WHERE id = ?', [JOURNALS[5]]);
+
     // ── 1. Inactive account WITH history must still appear ──
     await db.query(
       'INSERT INTO gl_accounts (id, code, name_ar, type, parent_id, level, is_active, is_folder) VALUES (?,?,?,?,?,?,0,0)',
@@ -98,7 +135,8 @@ async function tableCounts() {
       'INSERT INTO gl_entries (id, journal_id, account_id, debit, credit) VALUES (?,?,?,?,0), (?,?,?,0,?)',
       ['ITEST-TBE-E-INA1', JOURNALS[2], IDS.inactiveWithHistory, 40, 'ITEST-TBE-E-INA2', JOURNALS[2], realCash.id, 40]
     );
-    const r1 = await computeTrialBalance(db, { includeZero: true });
+    const YEAR_2026 = { from: '2026-01-01', to: '2026-12-31' };
+    const r1 = await computeTrialBalance(db, { ...YEAR_2026, includeZero: true });
     const inactiveRow = r1.rows.find((r) => r.accountId === IDS.inactiveWithHistory);
     check('inactive account WITH history is present in the report (not dropped upstream)', !!inactiveRow, inactiveRow);
     if (inactiveRow) {
@@ -120,7 +158,7 @@ async function tableCounts() {
       'INSERT INTO gl_entries (id, journal_id, account_id, debit, credit) VALUES (?,?,?,?,0), (?,?,?,0,?)',
       ['ITEST-TBE-E-CH1', JOURNALS[0], IDS.childlessFolder, 25, 'ITEST-TBE-E-CH2', JOURNALS[0], realCash.id, 25]
     );
-    const r2 = await computeTrialBalance(db, { includeZero: true });
+    const r2 = await computeTrialBalance(db, { ...YEAR_2026, includeZero: true });
     const folderRow = r2.rows.find((r) => r.accountId === IDS.childlessFolder);
     check('childless Folder row is present', !!folderRow, folderRow);
     if (folderRow) {
@@ -148,7 +186,7 @@ async function tableCounts() {
       'INSERT INTO gl_entries (id, journal_id, account_id, debit, credit) VALUES (?,?,?,?,0), (?,?,?,0,?)',
       ['ITEST-TBE-E-PA1', JOURNALS[1], IDS.parentWithActivity, 15, 'ITEST-TBE-E-PA2', JOURNALS[1], realCash.id, 15]
     );
-    const r3 = await computeTrialBalance(db, { includeZero: true });
+    const r3 = await computeTrialBalance(db, { ...YEAR_2026, includeZero: true });
     const parentActRow = r3.rows.find((r) => r.accountId === IDS.parentWithActivity);
     check('"non-aggregating parent" (is_folder=0, has children) is present and NOT a posting leaf', !!parentActRow && parentActRow.isPostingLeaf === false && parentActRow.hasChildren === true, parentActRow);
     const parentActDiag = r3.diagnostics.nonLeafPostingActivity.find((d) => d.code === 'ITEST900012');
@@ -174,7 +212,7 @@ async function tableCounts() {
     );
     await db.query('UPDATE gl_accounts SET parent_id = ? WHERE id = ?', [IDS.cycleB, IDS.cycleA]); // A.parent = B, B.parent = A
     const startCycle = Date.now();
-    const r4 = await computeTrialBalance(db, { includeZero: true });
+    const r4 = await computeTrialBalance(db, { ...YEAR_2026, includeZero: true });
     const cycleElapsedMs = Date.now() - startCycle;
     check('a 2-node parent cycle does not hang (completed in ' + cycleElapsedMs + 'ms, cycle-guard bounds the walk)', cycleElapsedMs < 5000, cycleElapsedMs);
     const cycleRowA = r4.rows.find((r) => r.accountId === IDS.cycleA);
@@ -242,7 +280,7 @@ async function tableCounts() {
     };
     let schemaCode = null, schemaStatus = null;
     try {
-      await computeTrialBalance(fakeDb, { warehouse: 'WH-1' });
+      await computeTrialBalance(fakeDb, { ...YEAR_2026, warehouse: 'WH-1' });
     } catch (e) {
       schemaCode = e instanceof TrialBalanceError ? e.code : 'WRONG_TYPE';
       schemaStatus = e.status;
@@ -250,32 +288,208 @@ async function tableCounts() {
     check('requesting a dimension filter whose column is missing -> SCHEMA_NOT_READY, 409 (not silently dropped)', schemaCode === 'SCHEMA_NOT_READY' && schemaStatus === 409, { schemaCode, schemaStatus });
     resetDimColsCache(); // restore real cache for subsequent calls
 
-    // ── 9. Null-account entry flips isClean from true to false in an otherwise-clean window ──
-    // Window chosen BEFORE the earliest real journal in this DB (2026-01-08)
-    // and before every other fixture in this file (all 2026+), so Opening
-    // (which aggregates everything dated before `from`, unbounded) is
-    // genuinely empty rather than accidentally picking up prior activity.
-    const cleanWindow = { from: '2010-01-01', to: '2010-01-31', includeZero: true };
-    const clean1 = await computeTrialBalance(db, cleanWindow);
-    check('a window with zero fixture activity is clean to start with', clean1.isClean === true && clean1.diagnostics.nullAccountEntries === 0, { isClean: clean1.isClean, diagnostics: clean1.diagnostics });
+    // ── 9. Opening net-vs-gross (Tier A.2 core fix): totals.openDebit/
+    // openCredit must be the SUM OF PER-ACCOUNT NET balances, never a raw
+    // gross ledger column sum. Account A: historical Dr100 (J1) + Cr80 (J2),
+    // net Dr20. Counter account B carries the balancing legs (Cr100 in J1,
+    // Dr80 in J2), net Cr20. The TRUE opening footer for this perfectly
+    // balanced ledger is 20/20 — the old bug would have shown 180/180 (the
+    // raw column sums: 100+80 debit, 100+80 credit). ──
+    const openA = 'ITEST-TBE-OPEN-A', openB = 'ITEST-TBE-OPEN-B';
+    const openJ1 = 'ITEST-TBE-OPEN-J1', openJ2 = 'ITEST-TBE-OPEN-J2';
+    await db.query(
+      'INSERT INTO gl_accounts (id, code, name_ar, type, parent_id, level, is_active, is_folder) VALUES (?,?,?,?,?,?,1,0)',
+      [openA, 'ITEST900020', 'حساب أصل — صافي افتتاحي (ITEST)', 'asset', realParent.id, 2]
+    );
+    await db.query(
+      'INSERT INTO gl_accounts (id, code, name_ar, type, parent_id, level, is_active, is_folder) VALUES (?,?,?,?,?,?,1,0)',
+      [openB, 'ITEST900021', 'حساب التزام — صافي افتتاحي مقابل (ITEST)', 'liability', realParent.id, 2]
+    );
     await db.query(
       "INSERT INTO gl_journals (id, journal_number, journal_date, reference_type, total_debit, total_credit, status) VALUES (?,?,?,?,?,?, 'posted')",
-      [JOURNALS[5], 'ITEST-TBE-CWNA', '2010-01-15', 'itest_fixture', 9, 9]
+      [openJ1, 'ITEST-TBE-OPENJ1', '2020-01-10', 'itest_fixture', 100, 100]
     );
     await db.query(
-      'INSERT INTO gl_entries (id, journal_id, account_id, account_code, debit, credit) VALUES (?,?,NULL,?,?,0), (?,?,?,?,0,?)',
-      ['ITEST-TBE-E-NA1', JOURNALS[5], 'ITEST-DELETED-CODE', 9,
-       'ITEST-TBE-E-NA2', JOURNALS[5], realCash.id, 'ITEST900001', 9]
+      'INSERT INTO gl_entries (id, journal_id, account_id, debit, credit) VALUES (?,?,?,?,0), (?,?,?,0,?)',
+      ['ITEST-TBE-E-OJ1A', openJ1, openA, 100, 'ITEST-TBE-E-OJ1B', openJ1, openB, 100]
     );
-    const clean2 = await computeTrialBalance(db, cleanWindow);
-    check('inserting ONE null-account entry flips isClean to false (Debit=Credit is not sufficient to call a report clean)', clean2.isClean === false && clean2.diagnostics.nullAccountEntries === 1, { isClean: clean2.isClean, nullAccountEntries: clean2.diagnostics.nullAccountEntries });
-    // The source JOURNAL is balanced (total_debit=total_credit=9), but its
-    // debit leg has no resolvable account — correctly excluded from the
-    // "valid, attributable" totals below, which is EXACTLY why this must
-    // surface as an imbalance too, not just a diagnostic count. Hiding this
-    // behind a "still balanced" claim would be the same false-comfort bug
-    // this whole gate exists to close.
-    check('the credit leg alone (9) makes periodDebit/periodCredit genuinely unequal — a second, independent signal beyond the diagnostic count', clean2.totals.periodDebit === 0 && clean2.totals.periodCredit === 9 && clean2.totals.isPeriodBalanced === false, clean2.totals);
+    await db.query(
+      "INSERT INTO gl_journals (id, journal_number, journal_date, reference_type, total_debit, total_credit, status) VALUES (?,?,?,?,?,?, 'posted')",
+      [openJ2, 'ITEST-TBE-OPENJ2', '2020-02-15', 'itest_fixture', 80, 80]
+    );
+    await db.query(
+      'INSERT INTO gl_entries (id, journal_id, account_id, debit, credit) VALUES (?,?,?,?,0), (?,?,?,0,?)',
+      ['ITEST-TBE-E-OJ2B', openJ2, openB, 80, 'ITEST-TBE-E-OJ2A', openJ2, openA, 80]
+    );
+    const rOpen = await computeTrialBalance(db, { from: '2020-06-01', to: '2020-06-30', includeZero: true });
+    const rowA = rOpen.rows.find((r) => r.accountId === openA);
+    const rowB = rOpen.rows.find((r) => r.accountId === openB);
+    check('account A (Dr100/Cr80 historical) shows Opening = Dr20 only, not Dr100', !!rowA && rowA.openDebit === 20 && rowA.openCredit === 0, rowA);
+    check('account B (counter legs Cr100/Dr80 historical) shows Opening = Cr20 only', !!rowB && rowB.openDebit === 0 && rowB.openCredit === 20, rowB);
+    check(
+      'Grand Total Opening footer is 20/20 (sum of PER-ACCOUNT nets), NOT 180/180 (the old raw-gross-column-sum bug)',
+      rOpen.totals.openDebit === 20 && rOpen.totals.openCredit === 20,
+      rOpen.totals
+    );
+    check(
+      'diagnostics.grossHistoricalMovement still exposes the raw 180/180 figure, honestly labeled — never presented as the opening balance',
+      rOpen.diagnostics.grossHistoricalMovement.debit === 180 && rOpen.diagnostics.grossHistoricalMovement.credit === 180,
+      rOpen.diagnostics.grossHistoricalMovement
+    );
+    check(
+      'reconciliation identity: grossHistoricalMovement.debit − .credit === totals.opening (net is invariant to gross-vs-net presentation, only the D/C split changes)',
+      round2(rOpen.diagnostics.grossHistoricalMovement.debit - rOpen.diagnostics.grossHistoricalMovement.credit) === rOpen.totals.opening,
+      { gross: rOpen.diagnostics.grossHistoricalMovement, opening: rOpen.totals.opening }
+    );
+    await db.query('DELETE FROM gl_entries WHERE journal_id IN (?, ?)', [openJ1, openJ2]);
+    await db.query('DELETE FROM gl_journals WHERE id IN (?, ?)', [openJ1, openJ2]);
+    await db.query('DELETE FROM gl_accounts WHERE id IN (?, ?)', [openA, openB]);
+
+    // ── 10. A DRAFT journal dated before `from` must NEVER enter Opening
+    // (nor any total) — draft rows are proposals, not posted fact. ──
+    const draftJ = 'ITEST-TBE-DRAFT-OPEN';
+    await db.query(
+      "INSERT INTO gl_journals (id, journal_number, journal_date, reference_type, total_debit, total_credit, status) VALUES (?,?,?,?,?,?, 'draft')",
+      [draftJ, 'ITEST-TBE-DRAFTJ', '2021-01-01', 'itest_fixture', 500, 500]
+    );
+    await db.query(
+      'INSERT INTO gl_entries (id, journal_id, account_id, debit, credit) VALUES (?,?,?,?,0), (?,?,?,0,?)',
+      ['ITEST-TBE-E-DR1', draftJ, realCash.id, 500, 'ITEST-TBE-E-DR2', draftJ, IDS.parentWithActivityChild, 500]
+    );
+    const rDraft = await computeTrialBalance(db, { from: '2021-06-01', to: '2021-06-30', includeZero: true });
+    const cashRowDraft = rDraft.rows.find((r) => r.accountId === realCash.id);
+    check(
+      'a DRAFT journal dated before `from` contributes NOTHING to Opening (status=posted only)',
+      !cashRowDraft || (cashRowDraft.openDebit === 0 && cashRowDraft.openCredit === 0),
+      cashRowDraft
+    );
+    check(
+      'draft-only historical activity leaves grossHistoricalMovement at zero for this window too',
+      rDraft.diagnostics.grossHistoricalMovement.debit === 0 && rDraft.diagnostics.grossHistoricalMovement.credit === 0,
+      rDraft.diagnostics.grossHistoricalMovement
+    );
+    await db.query('DELETE FROM gl_entries WHERE journal_id = ?', [draftJ]);
+    await db.query('DELETE FROM gl_journals WHERE id = ?', [draftJ]);
+
+    // ── 11. from/to are mandatory — no more silently dropping Opening when `from` is absent ──
+    let noFromCode = null;
+    try { await computeTrialBalance(db, { to: '2026-01-31' }); } catch (e) { noFromCode = e instanceof TrialBalanceError ? e.code : 'WRONG_TYPE'; }
+    check('missing `from` -> TB_RANGE_REQUIRED', noFromCode === 'TB_RANGE_REQUIRED', noFromCode);
+    let noToCode = null;
+    try { await computeTrialBalance(db, { from: '2026-01-01' }); } catch (e) { noToCode = e instanceof TrialBalanceError ? e.code : 'WRONG_TYPE'; }
+    check('missing `to` -> TB_RANGE_REQUIRED', noToCode === 'TB_RANGE_REQUIRED', noToCode);
+    let noneCode = null;
+    try { await computeTrialBalance(db, {}); } catch (e) { noneCode = e instanceof TrialBalanceError ? e.code : 'WRONG_TYPE'; }
+    check('missing both from and to -> TB_RANGE_REQUIRED', noneCode === 'TB_RANGE_REQUIRED', noneCode);
+
+    // ── 12. Real calendar-date validation — the YYYY-MM-DD regex alone
+    // would accept these; an explicit Date round-trip must reject them. ──
+    let feb31Code = null;
+    try { await computeTrialBalance(db, { from: '2026-02-31', to: '2026-03-01' }); } catch (e) { feb31Code = e instanceof TrialBalanceError ? e.code : 'WRONG_TYPE'; }
+    check('2026-02-31 (February has no 31st) -> TB_INVALID_DATE_VALUE', feb31Code === 'TB_INVALID_DATE_VALUE', feb31Code);
+    let month13Code = null;
+    try { await computeTrialBalance(db, { from: '2026-13-01', to: '2026-13-02' }); } catch (e) { month13Code = e instanceof TrialBalanceError ? e.code : 'WRONG_TYPE'; }
+    check('2026-13-01 (no 13th month) -> TB_INVALID_DATE_VALUE', month13Code === 'TB_INVALID_DATE_VALUE', month13Code);
+
+    // ── 13. Orphan account (parent_id set but dangling) — flagged, and flips isClean ──
+    const orphanId = 'ITEST-TBE-ORPHAN';
+    await db.query(
+      'INSERT INTO gl_accounts (id, code, name_ar, type, parent_id, level, is_active, is_folder) VALUES (?,?,?,?,?,?,1,0)',
+      [orphanId, 'ITEST900030', 'حساب يتيم (ITEST)', 'asset', 'ITEST-DOES-NOT-EXIST', 2]
+    );
+    const rOrphan = await computeTrialBalance(db, { ...YEAR_2026, includeZero: true });
+    const orphanDiag = rOrphan.diagnostics.orphanAccounts.find((a) => a.code === 'ITEST900030');
+    check('an account with a dangling parent_id is surfaced in diagnostics.orphanAccounts', !!orphanDiag && orphanDiag.parentId === 'ITEST-DOES-NOT-EXIST', rOrphan.diagnostics.orphanAccounts);
+    check('an orphan account makes the report non-clean', rOrphan.isClean === false, rOrphan.isClean);
+    await db.query('DELETE FROM gl_accounts WHERE id = ?', [orphanId]);
+
+    // ── 14. Individually-unbalanced posted journals — checked PER JOURNAL,
+    // so two journals that are each unbalanced but happen to cancel out in
+    // aggregate can never hide behind a false "clean" report. ──
+    const unbalX = 'ITEST-TBE-UNBAL-X', unbalY = 'ITEST-TBE-UNBAL-Y';
+    await db.query(
+      "INSERT INTO gl_journals (id, journal_number, journal_date, reference_type, total_debit, total_credit, status) VALUES (?,?,?,?,?,?, 'posted')",
+      [unbalX, 'ITEST-TBE-UNBALX', '2026-05-05', 'itest_fixture', 110, 100]
+    );
+    await db.query(
+      "INSERT INTO gl_journals (id, journal_number, journal_date, reference_type, total_debit, total_credit, status) VALUES (?,?,?,?,?,?, 'posted')",
+      [unbalY, 'ITEST-TBE-UNBALY', '2026-05-06', 'itest_fixture', 100, 110]
+    );
+    const rUnbal = await computeTrialBalance(db, { ...YEAR_2026, includeZero: true });
+    const foundX = rUnbal.diagnostics.unbalancedJournals.find((j) => j.id === unbalX);
+    const foundY = rUnbal.diagnostics.unbalancedJournals.find((j) => j.id === unbalY);
+    check('journal X (110 debit / 100 credit) is individually flagged unbalanced', !!foundX && foundX.totalDebit === 110 && foundX.totalCredit === 100, foundX);
+    check(
+      'journal Y (100 debit / 110 credit) is ALSO individually flagged — X and Y net to zero in aggregate ((110-100)+(100-110)=0), proving they are checked per-journal and cannot cancel each other into a false-clean report',
+      !!foundY && foundY.totalDebit === 100 && foundY.totalCredit === 110,
+      foundY
+    );
+    check('unbalanced journals make the report non-clean', rUnbal.isClean === false, rUnbal.isClean);
+    await db.query('DELETE FROM gl_journals WHERE id IN (?, ?)', [unbalX, unbalY]);
+
+    // ── header-vs-lines mismatch: header is internally balanced (100=100)
+    // but its actual gl_entries lines add up to something else entirely. ──
+    const mismatchJ = 'ITEST-TBE-HDRMISMATCH';
+    await db.query(
+      "INSERT INTO gl_journals (id, journal_number, journal_date, reference_type, total_debit, total_credit, status) VALUES (?,?,?,?,?,?, 'posted')",
+      [mismatchJ, 'ITEST-TBE-HDRMIS', '2026-05-07', 'itest_fixture', 100, 100]
+    );
+    await db.query(
+      'INSERT INTO gl_entries (id, journal_id, account_id, debit, credit) VALUES (?,?,?,?,0), (?,?,?,0,?)',
+      ['ITEST-TBE-E-HM1', mismatchJ, realCash.id, 60, 'ITEST-TBE-E-HM2', mismatchJ, IDS.parentWithActivityChild, 60]
+    );
+    const rMismatch = await computeTrialBalance(db, { ...YEAR_2026, includeZero: true });
+    const hlm = rMismatch.diagnostics.headerLineMismatches.find((j) => j.id === mismatchJ);
+    check(
+      'a journal whose header (100/100) disagrees with its actual line sum (60/60) is flagged in headerLineMismatches',
+      !!hlm && hlm.headerDebit === 100 && hlm.lineDebit === 60,
+      hlm
+    );
+    check('a header/line mismatch makes the report non-clean', rMismatch.isClean === false, rMismatch.isClean);
+    await db.query('DELETE FROM gl_entries WHERE journal_id = ?', [mismatchJ]);
+    await db.query('DELETE FROM gl_journals WHERE id = ?', [mismatchJ]);
+
+    // ── 15. Stored level disagreeing with the real computed tree depth
+    // flips isClean — this diagnostic already existed before Tier A.2 but
+    // did NOT affect isClean until this gate. ──
+    const levelMismatchId = 'ITEST-TBE-LEVELMISMATCH';
+    await db.query(
+      'INSERT INTO gl_accounts (id, code, name_ar, type, parent_id, level, is_active, is_folder) VALUES (?,?,?,?,?,?,1,0)',
+      [levelMismatchId, 'ITEST900031', 'مستوى غير مطابق (ITEST)', 'asset', realParent.id, 99]
+    );
+    const rLevel = await computeTrialBalance(db, { ...YEAR_2026, includeZero: true });
+    const lm = rLevel.diagnostics.levelMismatches.find((a) => a.code === 'ITEST900031');
+    check('an account whose stored level (99) disagrees with its real computed depth (2, one below scaffoldParent) is flagged', !!lm && lm.storedLevel === 99 && lm.computedLevel === 2, lm);
+    check('a level mismatch makes the report non-clean', rLevel.isClean === false, rLevel.isClean);
+    await db.query('DELETE FROM gl_accounts WHERE id = ?', [levelMismatchId]);
+
+    // ── 16. journalCount is COUNT(DISTINCT journal_id), never a raw
+    // gl_entries row count — a single journal with 2 lines touching the
+    // SAME account must count as 1 journal, not 2. ──
+    const splitJ = 'ITEST-TBE-SPLIT-J';
+    const splitAcc = 'ITEST-TBE-SPLIT-ACC';
+    await db.query(
+      'INSERT INTO gl_accounts (id, code, name_ar, type, parent_id, level, is_active, is_folder) VALUES (?,?,?,?,?,?,1,0)',
+      [splitAcc, 'ITEST900032', 'حساب سطرين لنفس القيد (ITEST)', 'asset', realParent.id, 2]
+    );
+    await db.query(
+      "INSERT INTO gl_journals (id, journal_number, journal_date, reference_type, total_debit, total_credit, status) VALUES (?,?,?,?,?,?, 'posted')",
+      [splitJ, 'ITEST-TBE-SPLITJ', '2026-05-08', 'itest_fixture', 30, 30]
+    );
+    await db.query(
+      'INSERT INTO gl_entries (id, journal_id, account_id, debit, credit) VALUES (?,?,?,?,0), (?,?,?,?,0), (?,?,?,0,?)',
+      ['ITEST-TBE-E-SP1', splitJ, splitAcc, 10, 'ITEST-TBE-E-SP2', splitJ, splitAcc, 20, 'ITEST-TBE-E-SP3', splitJ, realCash.id, 30]
+    );
+    const rSplit = await computeTrialBalance(db, { ...YEAR_2026, includeZero: true });
+    const splitRow = rSplit.rows.find((r) => r.accountId === splitAcc);
+    check(
+      'an account touched by 2 lines from the SAME journal shows journalCount=1 (COUNT(DISTINCT journal_id)), not 2 (a raw gl_entries row count would have given 2)',
+      !!splitRow && splitRow.journalCount === 1 && splitRow.periodDebit === 30,
+      splitRow
+    );
+    await db.query('DELETE FROM gl_entries WHERE journal_id = ?', [splitJ]);
+    await db.query('DELETE FROM gl_journals WHERE id = ?', [splitJ]);
+    await db.query('DELETE FROM gl_accounts WHERE id = ?', [splitAcc]);
   } catch (e) {
     console.error('UNEXPECTED EXCEPTION during test run:', e);
     fail++; fails.push('unexpected exception: ' + e.message);

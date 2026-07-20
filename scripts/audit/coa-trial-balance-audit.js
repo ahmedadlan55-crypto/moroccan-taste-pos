@@ -22,21 +22,33 @@ const path = require('path');
 const db = require('../../db/connection');
 
 // ── Known hardcoded legacy account-code schemes we're checking for drift ──
-// lib/glPosting.js CORE_ACCOUNTS (verified against mt-pos:main on this audit date)
+// lib/glPosting.js CORE_ACCOUNTS, WITH the parent code each entry declares
+// (verified against mt-pos:main on this audit date) — used for both
+// existence AND parent-match checks below (item 8 of the corrective gate:
+// "count Parent expectation for every CORE/SALARY account, not just
+// whether the code exists").
 const CORE_ACCOUNTS = {
-  CASH: '1110', BANK: '1120', AR: '1150', INVENTORY: '1200', BRANCH_INVENTORY: '1210',
-  WIP: '1220', FINISHED_GOODS: '1230', INPUT_VAT: '1290', AP: '2100', OUTPUT_VAT: '2210',
-  ROYALTY_PAYABLE: '2310', SALES_REVENUE: '4100', STOCK_GAIN: '4910', COGS: '5100',
-  WASTE_EXPENSE: '5200', WASTE_RAW: '5121', WASTE_FINISHED: '5122', WASTE_EXPIRED: '5123',
-  WASTE_SPILL: '5124', WASTE_RETURNS: '5125', STOCK_VARIANCE: '5300', PPV: '5350',
-  LABOR_APPLIED: '5400', OVERHEAD_APPLIED: '5410', PRODUCTION_VARIANCE: '5420',
-  FRANCHISE_FEE: '6100', PLATFORM_COMMISSION: '5500', PLATFORM_PAYABLE: '2320',
+  CASH: { code: '1110', parent: '111' }, BANK: { code: '1120', parent: '111' },
+  AR: { code: '1150', parent: '112' }, INVENTORY: { code: '1200', parent: '113' },
+  BRANCH_INVENTORY: { code: '1210', parent: '113' }, WIP: { code: '1220', parent: '113' },
+  FINISHED_GOODS: { code: '1230', parent: '113' }, INPUT_VAT: { code: '1290', parent: '116' },
+  AP: { code: '2100', parent: '211' }, OUTPUT_VAT: { code: '2210', parent: '213' },
+  ROYALTY_PAYABLE: { code: '2310', parent: '215' }, SALES_REVENUE: { code: '4100', parent: '411' },
+  STOCK_GAIN: { code: '4910', parent: '422' }, COGS: { code: '5100', parent: '51' },
+  WASTE_EXPENSE: { code: '5200', parent: '521' }, WASTE_RAW: { code: '5121', parent: '521' },
+  WASTE_FINISHED: { code: '5122', parent: '521' }, WASTE_EXPIRED: { code: '5123', parent: '521' },
+  WASTE_SPILL: { code: '5124', parent: '521' }, WASTE_RETURNS: { code: '5125', parent: '521' },
+  STOCK_VARIANCE: { code: '5300', parent: '522' }, PPV: { code: '5350', parent: '523' },
+  LABOR_APPLIED: { code: '5400', parent: '53' }, OVERHEAD_APPLIED: { code: '5410', parent: '6' },
+  PRODUCTION_VARIANCE: { code: '5420', parent: '522' }, FRANCHISE_FEE: { code: '6100', parent: '651' },
+  PLATFORM_COMMISSION: { code: '5500', parent: '6' }, PLATFORM_PAYABLE: { code: '2320', parent: '215' },
 };
 // lib/hrGLPosting.js SALARY_ACCOUNTS (verified against mt-pos:main on this audit date)
 const SALARY_ACCOUNTS = {
-  SALARY_EXPENSE: '5301', ALLOWANCES_EXPENSE: '5302', OVERTIME_EXPENSE: '5303',
-  GOSI_COMPANY_SHARE: '5304', SALARIES_PAYABLE: '2201', GOSI_EMPLOYEE_SHARE: '2202',
-  EMPLOYEE_ADVANCES: '1130', PENALTY_REVENUE: '4201',
+  SALARY_EXPENSE: { code: '5301', parent: '611' }, ALLOWANCES_EXPENSE: { code: '5302', parent: '611' },
+  OVERTIME_EXPENSE: { code: '5303', parent: '611' }, GOSI_COMPANY_SHARE: { code: '5304', parent: '612' },
+  SALARIES_PAYABLE: { code: '2201', parent: '212' }, GOSI_EMPLOYEE_SHARE: { code: '2202', parent: '216' },
+  EMPLOYEE_ADVANCES: { code: '1130', parent: '115' }, PENALTY_REVENUE: { code: '4201', parent: '42' },
 };
 const SALARY_PARENTS_ALWAYS_ENSURED = ['53', '22', '11', '42'];
 
@@ -188,51 +200,99 @@ async function main() {
   report.sections.nullAccountEntries = nullAccountEntries;
 
   // ── 9. balance column vs derived from posted gl_entries ──
+  // Corrective fix: the FIRST audit draft compared `balance` against a
+  // type-flipped ("normal side") derivation (asset/expense=+1, else -1).
+  // That is NOT how gl_accounts.balance is actually maintained — every
+  // writer (routes/erp.js's approve_post / delete-reversal paths) does
+  // `balance = balance + (debit - credit)` UNCONDITIONALLY, with no type
+  // sign flip. Comparing against the wrong convention doesn't just get the
+  // SIGN of a mismatch wrong, it can hide a real match or invent a fake
+  // one for every liability/equity/revenue account. `derivedRaw` below
+  // matches the real maintenance code exactly; `derivedNormalSide` is kept
+  // ONLY as a separate, clearly-labeled, human-readability view — it is
+  // never compared against the stored column.
   const [postedEntries] = await db.query(
     `SELECT e.account_id, e.debit, e.credit
      FROM gl_entries e JOIN gl_journals j ON j.id = e.journal_id
      WHERE j.status = 'posted' AND e.account_id IS NOT NULL`
   );
-  const derived = new Map();
+  const derivedRaw = new Map();
+  const derivedNormalSide = new Map();
   for (const e of postedEntries) {
     const acc = byId.get(e.account_id);
     if (!acc) continue; // covered by null/orphan checks elsewhere
+    const raw = Number(e.debit) - Number(e.credit);
+    derivedRaw.set(e.account_id, (derivedRaw.get(e.account_id) || 0) + raw);
     const sign = (acc.type === 'asset' || acc.type === 'expense') ? 1 : -1;
-    const delta = sign * (Number(e.debit) - Number(e.credit));
-    derived.set(e.account_id, (derived.get(e.account_id) || 0) + delta);
+    derivedNormalSide.set(e.account_id, (derivedNormalSide.get(e.account_id) || 0) + sign * raw);
   }
   const balanceMismatch = [];
   for (const a of accounts) {
-    const d = round2(derived.get(a.id) || 0);
+    const dRaw = round2(derivedRaw.get(a.id) || 0);
+    const dNormal = round2(derivedNormalSide.get(a.id) || 0);
     const stored = round2(Number(a.balance) || 0);
-    if (Math.abs(d - stored) > 0.01) {
-      balanceMismatch.push({ code: a.code, name: a.name_ar, storedBalance: stored, derivedFromPostedEntries: d });
+    if (Math.abs(dRaw - stored) > 0.01) {
+      balanceMismatch.push({
+        code: a.code, name: a.name_ar, type: a.type,
+        storedBalance: stored,
+        derivedRawDebitMinusCredit: dRaw,
+        derivedNormalSidePresentation: dNormal,
+      });
     }
   }
   report.sections.balanceMismatch = {
-    note: 'Per rule 6, gl_accounts.balance must never be treated as the source of truth — this section exists only to show HOW STALE it already is.',
+    note: 'Per rule 6, gl_accounts.balance must never be treated as the source of truth — this section ' +
+          'exists only to show HOW STALE it already is. derivedRawDebitMinusCredit matches the ACTUAL ' +
+          'maintenance code (routes/erp.js: balance = balance + (debit - credit), unconditionally, no ' +
+          'type sign flip) and is what storedBalance is compared against. derivedNormalSidePresentation ' +
+          'is a SEPARATE, human-readability-only view (type-flipped so liability/equity/revenue read ' +
+          'positive-when-credit) — it is never compared against storedBalance directly.',
     mismatches: balanceMismatch,
   };
 
-  // ── 10. Legacy hardcoded code sets vs actual accounts ──
+  // ── 10. Legacy hardcoded code sets vs actual accounts — existence AND
+  // parent-match. A code existing under the WRONG parent is just as much a
+  // hybrid-tree symptom as the code being entirely missing. ──
   const codeSet = new Set(accounts.map(a => a.code));
-  const coreAccountsDrift = Object.entries(CORE_ACCOUNTS)
-    .map(([key, code]) => ({ key, code, exists: codeSet.has(code) }))
-    .filter(x => !x.exists);
-  const salaryAccountsDrift = Object.entries(SALARY_ACCOUNTS)
-    .map(([key, code]) => ({ key, code, exists: codeSet.has(code) }))
-    .filter(x => !x.exists);
+  const byCode = new Map(accounts.map(a => [a.code, a]));
+  function checkLegacySet(entries) {
+    const missing = [];
+    const wrongParent = [];
+    const incompleteMetadata = [];
+    for (const [key, def] of Object.entries(entries)) {
+      if (!codeSet.has(def.code)) { missing.push({ key, code: def.code }); continue; }
+      const acc = byCode.get(def.code);
+      const actualParent = acc.parent_id ? (byId.get(acc.parent_id) || {}).code : null;
+      if (actualParent !== def.parent) {
+        wrongParent.push({ key, code: def.code, declaredParent: def.parent, actualParent: actualParent || '(no parent / orphan)' });
+      }
+      const missingFields = [];
+      if (!acc.name_en) missingFields.push('name_en');
+      if (!acc.report_section) missingFields.push('report_section');
+      if (!acc.account_class) missingFields.push('account_class');
+      if (missingFields.length) incompleteMetadata.push({ key, code: def.code, missingFields });
+    }
+    return { missing, wrongParent, incompleteMetadata };
+  }
+  const coreCheck = checkLegacySet(CORE_ACCOUNTS);
+  const salaryCheck = checkLegacySet(SALARY_ACCOUNTS);
   const salaryParentsDrift = SALARY_PARENTS_ALWAYS_ENSURED
     .map(code => ({ code, exists: codeSet.has(code) }))
     .filter(x => !x.exists);
   report.sections.legacyCodeDrift = {
     note: 'These are the accounts that lib/glPosting.js ensureCoreAccounts() / lib/hrGLPosting.js ' +
           'ensurePayrollAccounts() will SILENTLY RE-CREATE (with parent lookups keyed to the OLD ' +
-          '1-3 digit scheme) the next time ANY journal posts, if missing. A non-empty list here on ' +
+          '1-3 digit scheme) the next time ANY journal posts, if missing. A non-empty "missing" list on ' +
           'a database already seeded from the new 6-digit template is the hybrid-tree landmine ' +
-          'described in the brief, confirmed live.',
-    CORE_ACCOUNTS_missing: coreAccountsDrift,
-    SALARY_ACCOUNTS_missing: salaryAccountsDrift,
+          'described in the brief, confirmed live. "wrongParent" catches the subtler case: the code ' +
+          'exists but was re-parented (or never correctly parented) — checked against every account\'s ' +
+          'ACTUAL parent_id chain, not just "does the code exist somewhere".',
+    CORE_ACCOUNTS_missing: coreCheck.missing,
+    CORE_ACCOUNTS_wrongParent: coreCheck.wrongParent,
+    CORE_ACCOUNTS_incompleteMetadata: coreCheck.incompleteMetadata,
+    SALARY_ACCOUNTS_missing: salaryCheck.missing,
+    SALARY_ACCOUNTS_wrongParent: salaryCheck.wrongParent,
+    SALARY_ACCOUNTS_incompleteMetadata: salaryCheck.incompleteMetadata,
     SALARY_PARENTS_missing: salaryParentsDrift,
   };
 
@@ -282,6 +342,25 @@ async function main() {
   );
   report.sections.journals = { totals: journalTotals, imbalancedHeaders: imbalanced };
 
+  // ── 14. Journal headers vs the sum of their own lines ──
+  // Section 13 above only checks total_debit == total_credit WITHIN a
+  // header row. This checks the header against gl_entries — a header could
+  // be internally balanced (debit=credit) while still disagreeing with
+  // what its lines actually add up to (a stale header after a line edit,
+  // or a header written independently of its lines by some import path).
+  const [headerVsLines] = await db.query(
+    `SELECT j.id, j.journal_number, j.journal_date, j.total_debit AS headerDebit, j.total_credit AS headerCredit,
+            COALESCE(SUM(e.debit),0) AS lineDebit, COALESCE(SUM(e.credit),0) AS lineCredit
+     FROM gl_journals j LEFT JOIN gl_entries e ON e.journal_id = j.id
+     GROUP BY j.id, j.journal_number, j.journal_date, j.total_debit, j.total_credit
+     HAVING ABS(j.total_debit - lineDebit) > 0.01 OR ABS(j.total_credit - lineCredit) > 0.01`
+  );
+  report.sections.headerVsLinesTieOut = {
+    note: 'Every gl_journals row\'s total_debit/total_credit compared against SUM(gl_entries.debit/credit) ' +
+          'for that journal\'s own lines — independent of the header-internal debit=credit check above.',
+    mismatches: headerVsLines,
+  };
+
   writeReport(report, outPath);
   console.log('Audit complete. Report written to:', outPath);
   console.log(JSON.stringify({
@@ -297,8 +376,12 @@ async function main() {
     nullAccountEntries: report.sections.nullAccountEntries.length,
     balanceMismatch: report.sections.balanceMismatch.mismatches.length,
     coreAccountsMissing: report.sections.legacyCodeDrift.CORE_ACCOUNTS_missing.length,
+    coreAccountsWrongParent: report.sections.legacyCodeDrift.CORE_ACCOUNTS_wrongParent.length,
+    coreAccountsIncompleteMetadata: report.sections.legacyCodeDrift.CORE_ACCOUNTS_incompleteMetadata.length,
     salaryAccountsMissing: report.sections.legacyCodeDrift.SALARY_ACCOUNTS_missing.length,
+    salaryAccountsWrongParent: report.sections.legacyCodeDrift.SALARY_ACCOUNTS_wrongParent.length,
     taxNatureFlags: report.sections.taxNatureFlags.flags.length,
+    headerVsLinesMismatch: report.sections.headerVsLinesTieOut.mismatches.length,
   }, null, 2));
 
   await db.end();
@@ -378,14 +461,18 @@ function renderMarkdown(r) {
   lines.push('');
   lines.push(`> ${s.balanceMismatch.note}`);
   lines.push('');
-  lines.push(fmtList(s.balanceMismatch.mismatches, m => `${m.code} ${m.name} — مخزَّن=${m.storedBalance}، مُشتق=${m.derivedFromPostedEntries}`) || 'لا شيء');
+  lines.push(fmtList(s.balanceMismatch.mismatches, m => `${m.code} ${m.name} (${m.type}) — مخزَّن=${m.storedBalance}، خام(مدين-دائن)=${m.derivedRawDebitMinusCredit}، عرض-الجانب-الطبيعي=${m.derivedNormalSidePresentation}`) || 'لا شيء');
   lines.push('');
   lines.push('## 10. انحراف الأكواد الثابتة القديمة (CORE_ACCOUNTS / SALARY_ACCOUNTS)');
   lines.push('');
   lines.push(`> ${s.legacyCodeDrift.note}`);
   lines.push('');
   lines.push(`- CORE_ACCOUNTS المفقودة من الشجرة الحالية: ${fmtList(s.legacyCodeDrift.CORE_ACCOUNTS_missing, x => `${x.key}=${x.code}`) || 'لا شيء (كلها موجودة بالفعل — الشجرة الحالية لا تزال بالنظام القديم)'}`);
+  lines.push(`- CORE_ACCOUNTS بأب خاطئ (الكود موجود لكن تحت أب مختلف عمّا يُعرِّفه الكود المصدري): ${fmtList(s.legacyCodeDrift.CORE_ACCOUNTS_wrongParent, x => `${x.key}=${x.code} (مُعلَن=${x.declaredParent}، فعلي=${x.actualParent})`) || 'لا شيء'}`);
+  lines.push(`- CORE_ACCOUNTS بحقول تصنيف/تقرير ناقصة (name_en/report_section/account_class): ${fmtList(s.legacyCodeDrift.CORE_ACCOUNTS_incompleteMetadata, x => `${x.key}=${x.code} (ناقص: ${x.missingFields.join(', ')})`) || 'لا شيء'}`);
   lines.push(`- SALARY_ACCOUNTS المفقودة: ${fmtList(s.legacyCodeDrift.SALARY_ACCOUNTS_missing, x => `${x.key}=${x.code}`) || 'لا شيء'}`);
+  lines.push(`- SALARY_ACCOUNTS بأب خاطئ: ${fmtList(s.legacyCodeDrift.SALARY_ACCOUNTS_wrongParent, x => `${x.key}=${x.code} (مُعلَن=${x.declaredParent}، فعلي=${x.actualParent})`) || 'لا شيء'}`);
+  lines.push(`- SALARY_ACCOUNTS بحقول تصنيف/تقرير ناقصة: ${fmtList(s.legacyCodeDrift.SALARY_ACCOUNTS_incompleteMetadata, x => `${x.key}=${x.code} (ناقص: ${x.missingFields.join(', ')})`) || 'لا شيء'}`);
   lines.push(`- SALARY parents المفقودة: ${fmtList(s.legacyCodeDrift.SALARY_PARENTS_missing, x => x.code) || 'لا شيء'}`);
   lines.push('');
   lines.push('## 11. تصنيف ضريبي مشكوك (tax_nature)');
@@ -405,6 +492,12 @@ function renderMarkdown(r) {
   lines.push(`- الإجمالي: ${s.journals.totals.n} (posted=${s.journals.totals.posted}, draft=${s.journals.totals.draft}, approved=${s.journals.totals.approved})`);
   lines.push(`- إجمالي مدين=${s.journals.totals.totalDebit}, إجمالي دائن=${s.journals.totals.totalCredit}`);
   lines.push(`- قيود غير متوازنة على مستوى الرأس (${s.journals.imbalancedHeaders.length}): ${fmtList(s.journals.imbalancedHeaders, j => `${j.journal_number} (${fmtDate(j.journal_date)}) مدين=${j.total_debit} دائن=${j.total_credit}`) || 'لا شيء'}`);
+  lines.push('');
+  lines.push('## 14. تطابق رأس القيد مع مجموع سطوره');
+  lines.push('');
+  lines.push(`> ${s.headerVsLinesTieOut.note}`);
+  lines.push('');
+  lines.push(fmtList(s.headerVsLinesTieOut.mismatches, j => `${j.journal_number} (${fmtDate(j.journal_date)}) — رأس: مدين=${j.headerDebit} دائن=${j.headerCredit}؛ سطور: مدين=${j.lineDebit} دائن=${j.lineCredit}`) || 'لا شيء');
   lines.push('');
   return lines.join('\n');
 }

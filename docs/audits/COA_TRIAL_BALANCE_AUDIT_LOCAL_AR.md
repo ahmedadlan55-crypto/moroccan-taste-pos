@@ -2,7 +2,7 @@
 
 > **تحذير:** هذا التقرير يعكس قاعدة بيانات `moroccan_taste_pos` على المضيف `DESKTOP-PG1F13S` فقط. **لا يمثل بيانات الإنتاج.** لم يُدقَّق الإنتاج بعد (بموافقة المستخدم على تأجيله).
 
-تاريخ التوليد: 2026-07-20T05:13:57.340Z — MySQL 8.4.9
+تاريخ التوليد: 2026-07-20T07:23:24.920Z — MySQL 8.4.9
 
 ## 1. الإجماليات
 
@@ -47,16 +47,20 @@ journal JE-20260713 (2026-01-07, posted) — كود مسجَّل تاريخيً�
 
 ## 9. اختلاف gl_accounts.balance عن المُشتق من القيود المرحّلة
 
-> Per rule 6, gl_accounts.balance must never be treated as the source of truth — this section exists only to show HOW STALE it already is.
+> Per rule 6, gl_accounts.balance must never be treated as the source of truth — this section exists only to show HOW STALE it already is. derivedRawDebitMinusCredit matches the ACTUAL maintenance code (routes/erp.js: balance = balance + (debit - credit), unconditionally, no type sign flip) and is what storedBalance is compared against. derivedNormalSidePresentation is a SEPARATE, human-readability-only view (type-flipped so liability/equity/revenue read positive-when-credit) — it is never compared against storedBalance directly.
 
-1110 النقدية — مخزَّن=23257، مُشتق=85؛ 1120 البنوك — مخزَّن=-18088، مُشتق=-715؛ 1150 ذمم العملاء — مخزَّن=8923.5، مُشتق=0؛ 1200 المخزون الرئيسي — مخزَّن=95630.48، مُشتق=1315؛ 1210 مخزون الفروع — مخزَّن=-69700، مُشتق=50؛ 1220 الإنتاج تحت التشغيل — مخزَّن=230.4، مُشتق=0؛ 1230 المنتجات التامة — مخزَّن=945.6، مُشتق=700؛ 1290 ضريبة المدخلات — مخزَّن=2160، مُشتق=180؛ 2100 ذمم الموردين — مخزَّن=-400، مُشتق=400؛ 2140 دفعات مقدمة من العملاء — مخزَّن=-4980، مُشتق=0؛ 2150 بضاعة مستلمة لم تُفوتر (GRNI) — مخزَّن=-7400، مُشتق=0؛ 2210 ضريبة المخرجات — مخزَّن=-4457.75، مُشتق=97.83؛ 2310 مستحقات الامتياز — مخزَّن=-59.84، مُشتق=0؛ 4100 إيرادات المبيعات — مخزَّن=-31094.75، مُشتق=652.17؛ 4203 إيرادات أخرى — مخزَّن=-500، مُشتق=0؛ 4910 إيراد فروقات جرد — مخزَّن=-12644، مُشتق=555؛ 5100 تكلفة المبيعات — مخزَّن=13016.5، مُشتق=0؛ 5123 تالف منتهي الصلاحية — مخزَّن=490، مُشتق=10؛ 5205 مصروفات أخرى — مخزَّن=100، مُشتق=0؛ 5300 فروقات الجرد — مخزَّن=6848.36، مُشتق=80؛ 6100 مصروف رسوم الامتياز — مخزَّن=59.84، مُشتق=0
+1110 النقدية (asset) — مخزَّن=23277، خام(مدين-دائن)=85، عرض-الجانب-الطبيعي=85؛ 1120 البنوك (asset) — مخزَّن=-17093، خام(مدين-دائن)=280، عرض-الجانب-الطبيعي=280؛ 1150 ذمم العملاء (asset) — مخزَّن=8923.5، خام(مدين-دائن)=0، عرض-الجانب-الطبيعي=0؛ 1200 المخزون الرئيسي (asset) — مخزَّن=95630.48، خام(مدين-دائن)=1315، عرض-الجانب-الطبيعي=1315؛ 1210 مخزون الفروع (asset) — مخزَّن=-69700، خام(مدين-دائن)=50، عرض-الجانب-الطبيعي=50؛ 1220 الإنتاج تحت التشغيل (asset) — مخزَّن=230.4، خام(مدين-دائن)=0، عرض-الجانب-الطبيعي=0؛ 1230 المنتجات التامة (asset) — مخزَّن=945.6، خام(مدين-دائن)=700، عرض-الجانب-الطبيعي=700؛ 1290 ضريبة المدخلات (asset) — مخزَّن=2160، خام(مدين-دائن)=180، عرض-الجانب-الطبيعي=180؛ 2140 دفعات مقدمة من العملاء (liability) — مخزَّن=-4980، خام(مدين-دائن)=0، عرض-الجانب-الطبيعي=0؛ 2150 بضاعة مستلمة لم تُفوتر (GRNI) (liability) — مخزَّن=-7400، خام(مدين-دائن)=0، عرض-الجانب-الطبيعي=0؛ 2210 ضريبة المخرجات (liability) — مخزَّن=-4587.52، خام(مدين-دائن)=-227.6، عرض-الجانب-الطبيعي=227.6؛ 2310 مستحقات الامتياز (liability) — مخزَّن=-59.84، خام(مدين-دائن)=0، عرض-الجانب-الطبيعي=0؛ 4100 إيرادات المبيعات (revenue) — مخزَّن=-31979.98، خام(مدين-دائن)=-1517.4، عرض-الجانب-الطبيعي=1517.4؛ 4203 إيرادات أخرى (revenue) — مخزَّن=-500، خام(مدين-دائن)=0، عرض-الجانب-الطبيعي=0؛ 4910 إيراد فروقات جرد (revenue) — مخزَّن=-12644، خام(مدين-دائن)=-555، عرض-الجانب-الطبيعي=555؛ 5100 تكلفة المبيعات (expense) — مخزَّن=13016.5، خام(مدين-دائن)=0، عرض-الجانب-الطبيعي=0؛ 5123 تالف منتهي الصلاحية (expense) — مخزَّن=490، خام(مدين-دائن)=10، عرض-الجانب-الطبيعي=10؛ 5205 مصروفات أخرى (expense) — مخزَّن=100، خام(مدين-دائن)=0، عرض-الجانب-الطبيعي=0؛ 5300 فروقات الجرد (expense) — مخزَّن=6848.36، خام(مدين-دائن)=80، عرض-الجانب-الطبيعي=80؛ 6100 مصروف رسوم الامتياز (expense) — مخزَّن=59.84، خام(مدين-دائن)=0، عرض-الجانب-الطبيعي=0
 
 ## 10. انحراف الأكواد الثابتة القديمة (CORE_ACCOUNTS / SALARY_ACCOUNTS)
 
-> These are the accounts that lib/glPosting.js ensureCoreAccounts() / lib/hrGLPosting.js ensurePayrollAccounts() will SILENTLY RE-CREATE (with parent lookups keyed to the OLD 1-3 digit scheme) the next time ANY journal posts, if missing. A non-empty list here on a database already seeded from the new 6-digit template is the hybrid-tree landmine described in the brief, confirmed live.
+> These are the accounts that lib/glPosting.js ensureCoreAccounts() / lib/hrGLPosting.js ensurePayrollAccounts() will SILENTLY RE-CREATE (with parent lookups keyed to the OLD 1-3 digit scheme) the next time ANY journal posts, if missing. A non-empty "missing" list on a database already seeded from the new 6-digit template is the hybrid-tree landmine described in the brief, confirmed live. "wrongParent" catches the subtler case: the code exists but was re-parented (or never correctly parented) — checked against every account's ACTUAL parent_id chain, not just "does the code exist somewhere".
 
 - CORE_ACCOUNTS المفقودة من الشجرة الحالية: لا شيء (كلها موجودة بالفعل — الشجرة الحالية لا تزال بالنظام القديم)
+- CORE_ACCOUNTS بأب خاطئ (الكود موجود لكن تحت أب مختلف عمّا يُعرِّفه الكود المصدري): INPUT_VAT=1290 (مُعلَن=116، فعلي=11)؛ ROYALTY_PAYABLE=2310 (مُعلَن=215، فعلي=21)؛ WASTE_RAW=5121 (مُعلَن=521، فعلي=512)؛ OVERHEAD_APPLIED=5410 (مُعلَن=6، فعلي=(no parent / orphan))؛ FRANCHISE_FEE=6100 (مُعلَن=651، فعلي=(no parent / orphan))؛ PLATFORM_COMMISSION=5500 (مُعلَن=6، فعلي=(no parent / orphan))؛ PLATFORM_PAYABLE=2320 (مُعلَن=215، فعلي=21)
+- CORE_ACCOUNTS بحقول تصنيف/تقرير ناقصة (name_en/report_section/account_class): CASH=1110 (ناقص: name_en)؛ BANK=1120 (ناقص: name_en)؛ AR=1150 (ناقص: name_en)؛ INVENTORY=1200 (ناقص: name_en, report_section)؛ BRANCH_INVENTORY=1210 (ناقص: name_en)؛ WIP=1220 (ناقص: name_en)؛ FINISHED_GOODS=1230 (ناقص: name_en)؛ INPUT_VAT=1290 (ناقص: name_en, report_section)؛ AP=2100 (ناقص: name_en, report_section)؛ OUTPUT_VAT=2210 (ناقص: name_en)؛ ROYALTY_PAYABLE=2310 (ناقص: name_en, report_section)؛ SALES_REVENUE=4100 (ناقص: name_en)؛ STOCK_GAIN=4910 (ناقص: name_en)؛ COGS=5100 (ناقص: name_en)؛ WASTE_EXPENSE=5200 (ناقص: name_en)؛ WASTE_RAW=5121 (ناقص: name_en)؛ WASTE_FINISHED=5122 (ناقص: name_en)؛ WASTE_EXPIRED=5123 (ناقص: name_en)؛ WASTE_SPILL=5124 (ناقص: name_en)؛ WASTE_RETURNS=5125 (ناقص: name_en)؛ STOCK_VARIANCE=5300 (ناقص: name_en)؛ PPV=5350 (ناقص: name_en)؛ LABOR_APPLIED=5400 (ناقص: name_en)؛ OVERHEAD_APPLIED=5410 (ناقص: name_en)؛ PRODUCTION_VARIANCE=5420 (ناقص: name_en)؛ FRANCHISE_FEE=6100 (ناقص: name_en)؛ PLATFORM_COMMISSION=5500 (ناقص: name_en)؛ PLATFORM_PAYABLE=2320 (ناقص: name_en, report_section)
 - SALARY_ACCOUNTS المفقودة: SALARY_EXPENSE=5301؛ ALLOWANCES_EXPENSE=5302؛ OVERTIME_EXPENSE=5303؛ GOSI_COMPANY_SHARE=5304؛ SALARIES_PAYABLE=2201؛ GOSI_EMPLOYEE_SHARE=2202؛ PENALTY_REVENUE=4201
+- SALARY_ACCOUNTS بأب خاطئ: EMPLOYEE_ADVANCES=1130 (مُعلَن=115، فعلي=113)
+- SALARY_ACCOUNTS بحقول تصنيف/تقرير ناقصة: EMPLOYEE_ADVANCES=1130 (ناقص: name_en)
 - SALARY parents المفقودة: 22
 
 ## 11. تصنيف ضريبي مشكوك (tax_nature)
@@ -90,6 +94,12 @@ journal JE-20260713 (2026-01-07, posted) — كود مسجَّل تاريخيً�
 
 ## 13. سلامة القيود (gl_journals)
 
-- الإجمالي: 55 (posted=55, draft=0, approved=0)
-- إجمالي مدين=7905.00, إجمالي دائن=7905.00
+- الإجمالي: 76 (posted=76, draft=0, approved=0)
+- إجمالي مدين=8900.00, إجمالي دائن=8900.00
 - قيود غير متوازنة على مستوى الرأس (0): لا شيء
+
+## 14. تطابق رأس القيد مع مجموع سطوره
+
+> Every gl_journals row's total_debit/total_credit compared against SUM(gl_entries.debit/credit) for that journal's own lines — independent of the header-internal debit=credit check above.
+
+لا شيء

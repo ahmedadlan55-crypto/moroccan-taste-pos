@@ -1819,8 +1819,17 @@ async function runMigrations() {
   // hr/inventory/purchasing stay grant-only (role_permissions groupings, not
   // storable roles) — making them assignable is a product decision nobody has
   // made; accountant/finance/sales are assignable per the roles directive.
+  // Tier A.1 corrective gate — this exact statement re-narrowing the enum
+  // on every boot is precisely the failure mode the comment above already
+  // warns about (a legacy ALTER silently reverting a widening one). It just
+  // happened again from the other direction: db/migrations/0016_auditor_
+  // role.sql widened the enum to add 'auditor', but since THIS statement
+  // runs unconditionally on every server start (unlike db/migrate.js, which
+  // nothing invokes automatically — see db/migrations/README.md) it reset
+  // the enum back to the 8-value list on the very next boot, breaking any
+  // attempt to create/keep an auditor account. Kept in sync with 0016 here.
   try {
-    await db.query("ALTER TABLE users MODIFY COLUMN role ENUM('admin','cashier','manager','custody','employee','accountant','finance','sales') DEFAULT 'cashier'");
+    await db.query("ALTER TABLE users MODIFY COLUMN role ENUM('admin','cashier','manager','custody','employee','accountant','finance','sales','auditor') DEFAULT 'cashier'");
   } catch(e) { console.error('[migrations] users.role widen failed:', e && (e.code || e.message)); }
 
   // Seed permissions catalog (idempotent)

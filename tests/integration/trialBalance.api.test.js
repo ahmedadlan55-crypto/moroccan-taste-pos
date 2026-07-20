@@ -35,6 +35,7 @@ const PORT = 3988;
 const CASHIER = 'itest_tb_cashier';
 const ACCOUNTANT = 'itest_tb_accountant';
 const FINANCE = 'itest_tb_finance';
+const AUDITOR = 'itest_tb_auditor';
 const DEVELOPER = 'itest_tb_developer';
 const PW = 'TrialBalance#Test!2026';
 let pass = 0, fail = 0; const fails = [];
@@ -102,7 +103,7 @@ async function mergeDeveloperIntoUserMeta() {
 }
 
 async function cleanupFixtures() {
-  for (const u of [CASHIER, ACCOUNTANT, FINANCE, DEVELOPER]) {
+  for (const u of [CASHIER, ACCOUNTANT, FINANCE, DEVELOPER, AUDITOR]) {
     try { await db.query('DELETE FROM users WHERE username=?', [u]); } catch (_) {}
   }
   for (const jid of ALL_TEST_JOURNALS) {
@@ -176,6 +177,17 @@ async function setupFixtures() {
 
     server = spawn(process.execPath, ['server.js'], { cwd: path.join(__dirname, '..', '..'), env: { ...process.env, PORT: String(PORT) }, stdio: ['ignore', 'ignore', 'ignore'] });
     if (!(await waitUp())) { console.error('server did not start'); process.exit(2); }
+
+    // 'auditor' — migration 0016 added it to the users.role ENUM, but
+    // server.js's legacy runMigrations() also runs an unconditional
+    // ALTER TABLE users MODIFY COLUMN role ENUM(...) on every boot (see the
+    // comment at that line) — until it was updated to include 'auditor'
+    // too, it silently reverted 0016's widening on every single server
+    // start. Creating this user only AFTER the server above has finished
+    // booting (and therefore run its own, now-corrected, widening ALTER)
+    // is what actually proves the role is usable end-to-end, not just that
+    // db/migrate.js's one-time migration succeeded in isolation.
+    await db.query('INSERT INTO users (username,password,role,active) VALUES (?,?,?,1)', [AUDITOR, hash, 'auditor']);
     console.log('\n═══ Trial Balance (canonical engine + endpoint) ═══');
 
     await setupFixtures();
@@ -196,6 +208,12 @@ async function setupFixtures() {
 
     const fResp = await call('GET', '/api/erp/reports/trial-balance?from=2026-06-01&to=2026-06-30', finance);
     check('finance CAN view trial balance (200)', fResp.status === 200 && fResp.body && fResp.body.success, { status: fResp.status });
+
+    // ── Tier A.1 corrective gate: 'auditor' end-to-end, not just claimed ──
+    const auditor = await login(AUDITOR);
+    check('a real auditor account authenticates (migration 0016 — role now exists in users.role)', !!auditor);
+    const auResp = await call('GET', '/api/erp/reports/trial-balance?from=2026-06-01&to=2026-06-30', auditor);
+    check('auditor CAN view trial balance (200) — the grant was reachable all along in code, now reachable by an actual account too', auResp.status === 200 && auResp.body && auResp.body.success, { status: auResp.status, body: auResp.body });
 
     // ── 2. Engine correctness — isolated ITEST account, exact numbers ──
     const scoped = await computeTrialBalance(db, { from: '2026-06-01', to: '2026-06-30', includeZero: true });

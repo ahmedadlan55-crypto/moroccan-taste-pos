@@ -1,6 +1,6 @@
 {
   "envLabel": "local",
-  "generatedAt": "2026-07-20T05:13:57.340Z",
+  "generatedAt": "2026-07-20T07:23:24.920Z",
   "sections": {
     "totals": {
       "totalAccounts": 118,
@@ -188,174 +188,465 @@
       }
     ],
     "balanceMismatch": {
-      "note": "Per rule 6, gl_accounts.balance must never be treated as the source of truth — this section exists only to show HOW STALE it already is.",
+      "note": "Per rule 6, gl_accounts.balance must never be treated as the source of truth — this section exists only to show HOW STALE it already is. derivedRawDebitMinusCredit matches the ACTUAL maintenance code (routes/erp.js: balance = balance + (debit - credit), unconditionally, no type sign flip) and is what storedBalance is compared against. derivedNormalSidePresentation is a SEPARATE, human-readability-only view (type-flipped so liability/equity/revenue read positive-when-credit) — it is never compared against storedBalance directly.",
       "mismatches": [
         {
           "code": "1110",
           "name": "النقدية",
-          "storedBalance": 23257,
-          "derivedFromPostedEntries": 85
+          "type": "asset",
+          "storedBalance": 23277,
+          "derivedRawDebitMinusCredit": 85,
+          "derivedNormalSidePresentation": 85
         },
         {
           "code": "1120",
           "name": "البنوك",
-          "storedBalance": -18088,
-          "derivedFromPostedEntries": -715
+          "type": "asset",
+          "storedBalance": -17093,
+          "derivedRawDebitMinusCredit": 280,
+          "derivedNormalSidePresentation": 280
         },
         {
           "code": "1150",
           "name": "ذمم العملاء",
+          "type": "asset",
           "storedBalance": 8923.5,
-          "derivedFromPostedEntries": 0
+          "derivedRawDebitMinusCredit": 0,
+          "derivedNormalSidePresentation": 0
         },
         {
           "code": "1200",
           "name": "المخزون الرئيسي",
+          "type": "asset",
           "storedBalance": 95630.48,
-          "derivedFromPostedEntries": 1315
+          "derivedRawDebitMinusCredit": 1315,
+          "derivedNormalSidePresentation": 1315
         },
         {
           "code": "1210",
           "name": "مخزون الفروع",
+          "type": "asset",
           "storedBalance": -69700,
-          "derivedFromPostedEntries": 50
+          "derivedRawDebitMinusCredit": 50,
+          "derivedNormalSidePresentation": 50
         },
         {
           "code": "1220",
           "name": "الإنتاج تحت التشغيل",
+          "type": "asset",
           "storedBalance": 230.4,
-          "derivedFromPostedEntries": 0
+          "derivedRawDebitMinusCredit": 0,
+          "derivedNormalSidePresentation": 0
         },
         {
           "code": "1230",
           "name": "المنتجات التامة",
+          "type": "asset",
           "storedBalance": 945.6,
-          "derivedFromPostedEntries": 700
+          "derivedRawDebitMinusCredit": 700,
+          "derivedNormalSidePresentation": 700
         },
         {
           "code": "1290",
           "name": "ضريبة المدخلات",
+          "type": "asset",
           "storedBalance": 2160,
-          "derivedFromPostedEntries": 180
-        },
-        {
-          "code": "2100",
-          "name": "ذمم الموردين",
-          "storedBalance": -400,
-          "derivedFromPostedEntries": 400
+          "derivedRawDebitMinusCredit": 180,
+          "derivedNormalSidePresentation": 180
         },
         {
           "code": "2140",
           "name": "دفعات مقدمة من العملاء",
+          "type": "liability",
           "storedBalance": -4980,
-          "derivedFromPostedEntries": 0
+          "derivedRawDebitMinusCredit": 0,
+          "derivedNormalSidePresentation": 0
         },
         {
           "code": "2150",
           "name": "بضاعة مستلمة لم تُفوتر (GRNI)",
+          "type": "liability",
           "storedBalance": -7400,
-          "derivedFromPostedEntries": 0
+          "derivedRawDebitMinusCredit": 0,
+          "derivedNormalSidePresentation": 0
         },
         {
           "code": "2210",
           "name": "ضريبة المخرجات",
-          "storedBalance": -4457.75,
-          "derivedFromPostedEntries": 97.83
+          "type": "liability",
+          "storedBalance": -4587.52,
+          "derivedRawDebitMinusCredit": -227.6,
+          "derivedNormalSidePresentation": 227.6
         },
         {
           "code": "2310",
           "name": "مستحقات الامتياز",
+          "type": "liability",
           "storedBalance": -59.84,
-          "derivedFromPostedEntries": 0
+          "derivedRawDebitMinusCredit": 0,
+          "derivedNormalSidePresentation": 0
         },
         {
           "code": "4100",
           "name": "إيرادات المبيعات",
-          "storedBalance": -31094.75,
-          "derivedFromPostedEntries": 652.17
+          "type": "revenue",
+          "storedBalance": -31979.98,
+          "derivedRawDebitMinusCredit": -1517.4,
+          "derivedNormalSidePresentation": 1517.4
         },
         {
           "code": "4203",
           "name": "إيرادات أخرى",
+          "type": "revenue",
           "storedBalance": -500,
-          "derivedFromPostedEntries": 0
+          "derivedRawDebitMinusCredit": 0,
+          "derivedNormalSidePresentation": 0
         },
         {
           "code": "4910",
           "name": "إيراد فروقات جرد",
+          "type": "revenue",
           "storedBalance": -12644,
-          "derivedFromPostedEntries": 555
+          "derivedRawDebitMinusCredit": -555,
+          "derivedNormalSidePresentation": 555
         },
         {
           "code": "5100",
           "name": "تكلفة المبيعات",
+          "type": "expense",
           "storedBalance": 13016.5,
-          "derivedFromPostedEntries": 0
+          "derivedRawDebitMinusCredit": 0,
+          "derivedNormalSidePresentation": 0
         },
         {
           "code": "5123",
           "name": "تالف منتهي الصلاحية",
+          "type": "expense",
           "storedBalance": 490,
-          "derivedFromPostedEntries": 10
+          "derivedRawDebitMinusCredit": 10,
+          "derivedNormalSidePresentation": 10
         },
         {
           "code": "5205",
           "name": "مصروفات أخرى",
+          "type": "expense",
           "storedBalance": 100,
-          "derivedFromPostedEntries": 0
+          "derivedRawDebitMinusCredit": 0,
+          "derivedNormalSidePresentation": 0
         },
         {
           "code": "5300",
           "name": "فروقات الجرد",
+          "type": "expense",
           "storedBalance": 6848.36,
-          "derivedFromPostedEntries": 80
+          "derivedRawDebitMinusCredit": 80,
+          "derivedNormalSidePresentation": 80
         },
         {
           "code": "6100",
           "name": "مصروف رسوم الامتياز",
+          "type": "expense",
           "storedBalance": 59.84,
-          "derivedFromPostedEntries": 0
+          "derivedRawDebitMinusCredit": 0,
+          "derivedNormalSidePresentation": 0
         }
       ]
     },
     "legacyCodeDrift": {
-      "note": "These are the accounts that lib/glPosting.js ensureCoreAccounts() / lib/hrGLPosting.js ensurePayrollAccounts() will SILENTLY RE-CREATE (with parent lookups keyed to the OLD 1-3 digit scheme) the next time ANY journal posts, if missing. A non-empty list here on a database already seeded from the new 6-digit template is the hybrid-tree landmine described in the brief, confirmed live.",
+      "note": "These are the accounts that lib/glPosting.js ensureCoreAccounts() / lib/hrGLPosting.js ensurePayrollAccounts() will SILENTLY RE-CREATE (with parent lookups keyed to the OLD 1-3 digit scheme) the next time ANY journal posts, if missing. A non-empty \"missing\" list on a database already seeded from the new 6-digit template is the hybrid-tree landmine described in the brief, confirmed live. \"wrongParent\" catches the subtler case: the code exists but was re-parented (or never correctly parented) — checked against every account's ACTUAL parent_id chain, not just \"does the code exist somewhere\".",
       "CORE_ACCOUNTS_missing": [],
+      "CORE_ACCOUNTS_wrongParent": [
+        {
+          "key": "INPUT_VAT",
+          "code": "1290",
+          "declaredParent": "116",
+          "actualParent": "11"
+        },
+        {
+          "key": "ROYALTY_PAYABLE",
+          "code": "2310",
+          "declaredParent": "215",
+          "actualParent": "21"
+        },
+        {
+          "key": "WASTE_RAW",
+          "code": "5121",
+          "declaredParent": "521",
+          "actualParent": "512"
+        },
+        {
+          "key": "OVERHEAD_APPLIED",
+          "code": "5410",
+          "declaredParent": "6",
+          "actualParent": "(no parent / orphan)"
+        },
+        {
+          "key": "FRANCHISE_FEE",
+          "code": "6100",
+          "declaredParent": "651",
+          "actualParent": "(no parent / orphan)"
+        },
+        {
+          "key": "PLATFORM_COMMISSION",
+          "code": "5500",
+          "declaredParent": "6",
+          "actualParent": "(no parent / orphan)"
+        },
+        {
+          "key": "PLATFORM_PAYABLE",
+          "code": "2320",
+          "declaredParent": "215",
+          "actualParent": "21"
+        }
+      ],
+      "CORE_ACCOUNTS_incompleteMetadata": [
+        {
+          "key": "CASH",
+          "code": "1110",
+          "missingFields": [
+            "name_en"
+          ]
+        },
+        {
+          "key": "BANK",
+          "code": "1120",
+          "missingFields": [
+            "name_en"
+          ]
+        },
+        {
+          "key": "AR",
+          "code": "1150",
+          "missingFields": [
+            "name_en"
+          ]
+        },
+        {
+          "key": "INVENTORY",
+          "code": "1200",
+          "missingFields": [
+            "name_en",
+            "report_section"
+          ]
+        },
+        {
+          "key": "BRANCH_INVENTORY",
+          "code": "1210",
+          "missingFields": [
+            "name_en"
+          ]
+        },
+        {
+          "key": "WIP",
+          "code": "1220",
+          "missingFields": [
+            "name_en"
+          ]
+        },
+        {
+          "key": "FINISHED_GOODS",
+          "code": "1230",
+          "missingFields": [
+            "name_en"
+          ]
+        },
+        {
+          "key": "INPUT_VAT",
+          "code": "1290",
+          "missingFields": [
+            "name_en",
+            "report_section"
+          ]
+        },
+        {
+          "key": "AP",
+          "code": "2100",
+          "missingFields": [
+            "name_en",
+            "report_section"
+          ]
+        },
+        {
+          "key": "OUTPUT_VAT",
+          "code": "2210",
+          "missingFields": [
+            "name_en"
+          ]
+        },
+        {
+          "key": "ROYALTY_PAYABLE",
+          "code": "2310",
+          "missingFields": [
+            "name_en",
+            "report_section"
+          ]
+        },
+        {
+          "key": "SALES_REVENUE",
+          "code": "4100",
+          "missingFields": [
+            "name_en"
+          ]
+        },
+        {
+          "key": "STOCK_GAIN",
+          "code": "4910",
+          "missingFields": [
+            "name_en"
+          ]
+        },
+        {
+          "key": "COGS",
+          "code": "5100",
+          "missingFields": [
+            "name_en"
+          ]
+        },
+        {
+          "key": "WASTE_EXPENSE",
+          "code": "5200",
+          "missingFields": [
+            "name_en"
+          ]
+        },
+        {
+          "key": "WASTE_RAW",
+          "code": "5121",
+          "missingFields": [
+            "name_en"
+          ]
+        },
+        {
+          "key": "WASTE_FINISHED",
+          "code": "5122",
+          "missingFields": [
+            "name_en"
+          ]
+        },
+        {
+          "key": "WASTE_EXPIRED",
+          "code": "5123",
+          "missingFields": [
+            "name_en"
+          ]
+        },
+        {
+          "key": "WASTE_SPILL",
+          "code": "5124",
+          "missingFields": [
+            "name_en"
+          ]
+        },
+        {
+          "key": "WASTE_RETURNS",
+          "code": "5125",
+          "missingFields": [
+            "name_en"
+          ]
+        },
+        {
+          "key": "STOCK_VARIANCE",
+          "code": "5300",
+          "missingFields": [
+            "name_en"
+          ]
+        },
+        {
+          "key": "PPV",
+          "code": "5350",
+          "missingFields": [
+            "name_en"
+          ]
+        },
+        {
+          "key": "LABOR_APPLIED",
+          "code": "5400",
+          "missingFields": [
+            "name_en"
+          ]
+        },
+        {
+          "key": "OVERHEAD_APPLIED",
+          "code": "5410",
+          "missingFields": [
+            "name_en"
+          ]
+        },
+        {
+          "key": "PRODUCTION_VARIANCE",
+          "code": "5420",
+          "missingFields": [
+            "name_en"
+          ]
+        },
+        {
+          "key": "FRANCHISE_FEE",
+          "code": "6100",
+          "missingFields": [
+            "name_en"
+          ]
+        },
+        {
+          "key": "PLATFORM_COMMISSION",
+          "code": "5500",
+          "missingFields": [
+            "name_en"
+          ]
+        },
+        {
+          "key": "PLATFORM_PAYABLE",
+          "code": "2320",
+          "missingFields": [
+            "name_en",
+            "report_section"
+          ]
+        }
+      ],
       "SALARY_ACCOUNTS_missing": [
         {
           "key": "SALARY_EXPENSE",
-          "code": "5301",
-          "exists": false
+          "code": "5301"
         },
         {
           "key": "ALLOWANCES_EXPENSE",
-          "code": "5302",
-          "exists": false
+          "code": "5302"
         },
         {
           "key": "OVERTIME_EXPENSE",
-          "code": "5303",
-          "exists": false
+          "code": "5303"
         },
         {
           "key": "GOSI_COMPANY_SHARE",
-          "code": "5304",
-          "exists": false
+          "code": "5304"
         },
         {
           "key": "SALARIES_PAYABLE",
-          "code": "2201",
-          "exists": false
+          "code": "2201"
         },
         {
           "key": "GOSI_EMPLOYEE_SHARE",
-          "code": "2202",
-          "exists": false
+          "code": "2202"
         },
         {
           "key": "PENALTY_REVENUE",
-          "code": "4201",
-          "exists": false
+          "code": "4201"
+        }
+      ],
+      "SALARY_ACCOUNTS_wrongParent": [
+        {
+          "key": "EMPLOYEE_ADVANCES",
+          "code": "1130",
+          "declaredParent": "115",
+          "actualParent": "113"
+        }
+      ],
+      "SALARY_ACCOUNTS_incompleteMetadata": [
+        {
+          "key": "EMPLOYEE_ADVANCES",
+          "code": "1130",
+          "missingFields": [
+            "name_en"
+          ]
         }
       ],
       "SALARY_PARENTS_missing": [
@@ -609,14 +900,18 @@
     },
     "journals": {
       "totals": {
-        "n": 55,
-        "posted": "55",
+        "n": 76,
+        "posted": "76",
         "draft": "0",
         "approved": "0",
-        "totalDebit": "7905.00",
-        "totalCredit": "7905.00"
+        "totalDebit": "8900.00",
+        "totalCredit": "8900.00"
       },
       "imbalancedHeaders": []
+    },
+    "headerVsLinesTieOut": {
+      "note": "Every gl_journals row's total_debit/total_credit compared against SUM(gl_entries.debit/credit) for that journal's own lines — independent of the header-internal debit=credit check above.",
+      "mismatches": []
     }
   },
   "target": {

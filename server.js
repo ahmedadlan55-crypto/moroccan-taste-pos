@@ -494,6 +494,14 @@ app.get('/api/version', (req, res) => {
     message: process.env.RAILWAY_GIT_COMMIT_MESSAGE || '',
     deployId: process.env.RAILWAY_DEPLOYMENT_ID || '',
     env:     process.env.NODE_ENV || 'development',
+    pid: process.pid,
+    // Tier A.2 test harness (tests/helpers/testHarness.js) — when a test
+    // spawns this process with TEST_HARNESS_TOKEN set, it polls this
+    // endpoint and checks the token round-trips, proving the response came
+    // from the exact child process it just spawned on a freshly-allocated
+    // port, not a stale/unrelated server left listening there. Undefined
+    // (and harmless) outside the test harness — no real deployment sets it.
+    harnessToken: process.env.TEST_HARNESS_TOKEN || null,
     startedAt: SERVER_BOOT_ISO,
     now: new Date().toISOString(),
     // The shared header reads this to decide which warehouse link to render

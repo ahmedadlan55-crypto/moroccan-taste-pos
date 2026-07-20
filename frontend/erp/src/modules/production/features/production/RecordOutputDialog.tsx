@@ -1,7 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
-import { AnimatePresence, motion } from "framer-motion";
 import { PackagePlus } from "lucide-react";
-import { Button } from "@/shared/ui";
+import { Button, FullPageFlow } from "@/shared/ui";
 import { formatCurrency, formatQty } from "@/shared/lib";
 import { useProductionMutations } from "@/modules/inventory/lib/hooks/useProduction";
 import type { ProductionDetail } from "@/modules/inventory/lib/adapters/production.adapter";
@@ -69,26 +68,26 @@ export function RecordOutputDialog({
   }
 
   return (
-    <AnimatePresence>
-      {open && (
+    <FullPageFlow
+      open={open}
+      onClose={onClose}
+      title={`تسجيل إنتاج — ${o.number}`}
+      description={`المنجز ${formatQty(o.qtyProduced)} + هدر ${formatQty(o.qtyWaste)} من مخطط ${formatQty(o.qtyPlanned, o.productUnit)} · WIP ${formatCurrency(o.wipBalance)}`}
+      eyebrow="أوامر الإنتاج"
+      icon={PackagePlus}
+      size="md"
+      dismissable={!recordOutput.isPending}
+      footer={
         <>
-          <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="fixed inset-0 z-[70] bg-slate-950/40" onClick={() => !recordOutput.isPending && onClose()} aria-hidden="true" />
-          <motion.div
-            initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: 16 }}
-            role="dialog" aria-modal="true" aria-label="تسجيل إنتاج"
-            className="fixed inset-x-3 top-[10vh] z-[80] mx-auto max-h-[80vh] max-w-xl overflow-y-auto rounded-2xl border border-slate-200 bg-white p-5 shadow-2xl"
-          >
-            <div className="flex items-center gap-2">
-              <span className="grid h-10 w-10 place-items-center rounded-xl bg-emerald-50 text-emerald-700"><PackagePlus className="h-5 w-5" /></span>
-              <div>
-                <h3 className="text-lg font-extrabold text-slate-900">تسجيل إنتاج — {o.number}</h3>
-                <p className="text-xs font-medium text-slate-500">
-                  المنجز {formatQty(o.qtyProduced)} + هدر {formatQty(o.qtyWaste)} من مخطط {formatQty(o.qtyPlanned, o.productUnit)} · WIP {formatCurrency(o.wipBalance)}
-                </p>
-              </div>
-            </div>
-
-            <div className="mt-4 grid gap-3 sm:grid-cols-2">
+          <Button variant="secondary" onClick={onClose} disabled={recordOutput.isPending}>إلغاء</Button>
+          <Button variant="primary" disabled={recordOutput.isPending || invalid} onClick={() => void submit()}>
+            {recordOutput.isPending ? "جارٍ التسجيل…" : "تسجيل الإنتاج"}
+          </Button>
+        </>
+      }
+    >
+      <section className="surface p-5 sm:p-6 lg:p-8">
+            <div className="grid gap-5 sm:grid-cols-2">
               <label className="block text-xs font-bold text-slate-500">
                 الكمية الجيدة (تدخل {o.outputWarehouseName})
                 <input type="number" min="0" step="any" dir="ltr" className="field mt-1 w-full tabular-nums" value={goodQty} onChange={(e) => setGoodQty(e.target.value)} aria-label="الكمية الجيدة" />
@@ -132,16 +131,8 @@ export function RecordOutputDialog({
 
             {errMsg && <p className="mt-3 rounded-lg bg-rose-50 px-3 py-2 text-xs font-bold text-rose-700">{errMsg}</p>}
 
-            <div className="mt-4 flex justify-end gap-2">
-              <Button variant="ghost" onClick={onClose} disabled={recordOutput.isPending}>إغلاق</Button>
-              <Button variant="primary" disabled={recordOutput.isPending || invalid} onClick={() => void submit()}>
-                {recordOutput.isPending ? "جارٍ التسجيل…" : "تسجيل الإنتاج"}
-              </Button>
-            </div>
-          </motion.div>
-        </>
-      )}
-    </AnimatePresence>
+      </section>
+    </FullPageFlow>
   );
 }
 

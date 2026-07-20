@@ -6,7 +6,7 @@ import { cn } from "@/shared/lib";
 // ADLAN button — enterprise, calm, dense. Every variant keeps a 44px min touch
 // target, hover/active/disabled + a visible focus-visible ring (WCAG 2.4.7).
 const buttonVariants = cva(
-  "inline-flex min-h-11 items-center justify-center gap-2 rounded-xl text-sm font-bold transition disabled:cursor-not-allowed disabled:opacity-50 focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-teal-100",
+  "inline-flex min-h-11 items-center justify-center gap-2 rounded-xl text-sm font-semibold transition disabled:cursor-not-allowed disabled:opacity-50 focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-teal-100",
   {
     variants: {
       variant: {

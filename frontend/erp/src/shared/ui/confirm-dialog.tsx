@@ -51,6 +51,7 @@ export function ConfirmDialog({
       open={open}
       onClose={onClose}
       size="md"
+      presentation="compact"
       hideClose
       dismissable={!processing}
       footer={

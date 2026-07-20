@@ -45,7 +45,7 @@ function ShellFrame() {
         aria-label="المحتوى الرئيسي"
         tabIndex={-1}
       >
-        <div className="mx-auto max-w-[1680px]">
+        <div className="mx-auto max-w-[1520px]">
           <AnimatePresence mode="wait">
             <motion.div
               key={location.pathname}

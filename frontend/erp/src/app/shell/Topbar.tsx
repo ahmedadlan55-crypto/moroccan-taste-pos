@@ -1,7 +1,6 @@
 import { useEffect, useState } from "react";
 import { SlidersHorizontal, X } from "lucide-react";
 import { useLocation } from "react-router-dom";
-import { navByPath } from "@/app/navigation/manifest";
 import { Breadcrumbs } from "./Breadcrumbs";
 import { GlobalSearch } from "./GlobalSearch";
 import { CompanyBranchSelect } from "./CompanyBranchSelect";
@@ -19,7 +18,6 @@ export function Topbar() {
   const { pathname } = useLocation();
   const { collapsed } = useShell();
   const [mobileToolsOpen, setMobileToolsOpen] = useState(false);
-  const title = navByPath(pathname)?.label ?? "الإدارة الموحّدة";
 
   useEffect(() => {
     setMobileToolsOpen(false);
@@ -32,18 +30,15 @@ export function Topbar() {
         collapsed ? "lg:mr-20" : "lg:mr-72",
       )}
     >
-      <div className="mx-auto max-w-[1680px]">
+      <div className="mx-auto max-w-[1520px]">
         <div className="flex items-center gap-3">
-          <div className="min-w-0 flex-1">
-            <h1 className="truncate text-lg font-extrabold text-slate-900">{title}</h1>
-            <div className="mt-0.5 hidden sm:block">
-              <Breadcrumbs />
-            </div>
+          <div className="min-w-0 flex-1 overflow-hidden">
+            <Breadcrumbs />
           </div>
 
           {/* Wide desktop: keep the complete labels visible instead of shrinking
               the scope selects into clipped native controls. */}
-          <div className="hidden items-center gap-2 2xl:flex">
+          <div className="hidden items-center gap-2 xl:flex">
             <GlobalSearch />
             <CompanyBranchSelect />
           </div>
@@ -51,7 +46,7 @@ export function Topbar() {
           <div className="flex shrink-0 items-center gap-1.5 sm:gap-2">
             <button
               type="button"
-              className="inline-flex min-h-11 items-center gap-2 rounded-xl border border-slate-200 bg-white px-3 text-xs font-extrabold text-slate-600 shadow-sm transition hover:border-slate-300 hover:text-slate-900 focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-teal-100 2xl:hidden"
+              className="inline-flex min-h-11 items-center gap-2 rounded-xl border border-slate-200 bg-white px-3 text-xs font-semibold text-slate-600 shadow-sm transition hover:border-slate-300 hover:text-slate-900 focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-teal-100 xl:hidden"
               aria-label={mobileToolsOpen ? "إغلاق البحث ونطاق العمل" : "فتح البحث ونطاق العمل"}
               aria-expanded={mobileToolsOpen}
               aria-controls="mobile-shell-tools"
@@ -71,7 +66,7 @@ export function Topbar() {
         {mobileToolsOpen && (
           <div
             id="mobile-shell-tools"
-            className="mt-2.5 grid gap-2 border-t border-slate-200/70 pt-2.5 2xl:hidden md:grid-cols-[minmax(0,1fr)_minmax(22rem,1fr)]"
+            className="mt-2.5 grid gap-2 border-t border-slate-200/70 pt-2.5 xl:hidden md:grid-cols-[minmax(0,1fr)_minmax(22rem,1fr)]"
           >
             <GlobalSearch />
             <CompanyBranchSelect fullWidth />

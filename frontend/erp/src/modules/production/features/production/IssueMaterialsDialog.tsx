@@ -1,7 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
-import { AnimatePresence, motion } from "framer-motion";
 import { PackageMinus, TriangleAlert } from "lucide-react";
-import { Button } from "@/shared/ui";
+import { Button, FullPageFlow } from "@/shared/ui";
 import { useCan } from "@/modules/inventory/lib/permission-provider";
 import { formatCurrency, formatQty } from "@/shared/lib";
 import { useProductionMutations } from "@/modules/inventory/lib/hooks/useProduction";
@@ -78,23 +77,29 @@ export function IssueMaterialsDialog({
   }
 
   return (
-    <AnimatePresence>
-      {open && (
+    <FullPageFlow
+      open={open}
+      onClose={onClose}
+      title={`إصدار مواد — ${detail.order.number}`}
+      description={`يخصم من ${detail.order.warehouseName} بتكلفة WAC لحظة الإصدار؛ المواد المتتبعة تُخصص FEFO تلقائيًا.`}
+      eyebrow="أوامر الإنتاج"
+      icon={PackageMinus}
+      size="lg"
+      dismissable={!issueMaterials.isPending}
+      footer={
         <>
-          <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="fixed inset-0 z-[70] bg-slate-950/40" onClick={() => !issueMaterials.isPending && onClose()} aria-hidden="true" />
-          <motion.div
-            initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: 16 }}
-            role="dialog" aria-modal="true" aria-label="إصدار مواد"
-            className="fixed inset-x-3 top-[6vh] z-[80] mx-auto max-h-[88vh] max-w-3xl overflow-y-auto rounded-2xl border border-slate-200 bg-white p-5 shadow-2xl"
+          <Button variant="secondary" onClick={onClose} disabled={issueMaterials.isPending}>إلغاء</Button>
+          <Button
+            variant="primary"
+            disabled={issueMaterials.isPending || lines.length === 0 || (overIssue && !allowOverIssue)}
+            onClick={() => void submit()}
           >
-            <div className="flex items-center gap-2">
-              <span className="grid h-10 w-10 place-items-center rounded-xl bg-teal-50 text-teal-700"><PackageMinus className="h-5 w-5" /></span>
-              <div>
-                <h3 className="text-lg font-extrabold text-slate-900">إصدار مواد — {detail.order.number}</h3>
-                <p className="text-xs font-medium text-slate-500">يخصم من {detail.order.warehouseName} بتكلفة WAC لحظة الإصدار؛ المواد المتتبعة تُخصص FEFO تلقائيًا.</p>
-              </div>
-            </div>
-
+            {issueMaterials.isPending ? "جارٍ الإصدار…" : "إصدار المواد"}
+          </Button>
+        </>
+      }
+    >
+      <section className="surface overflow-hidden">
             <div className="mt-4 overflow-x-auto">
               <table className="w-full text-sm">
                 <thead className="bg-slate-50 text-xs font-bold text-slate-500">
@@ -133,7 +138,8 @@ export function IssueMaterialsDialog({
               </table>
             </div>
 
-            <div className="mt-4 grid gap-3 sm:grid-cols-3">
+        <div className="border-t border-slate-200 p-5 sm:p-6">
+            <div className="grid gap-4 sm:grid-cols-3">
               <label className="block text-xs font-bold text-slate-500">
                 تكلفة عمالة (اختياري)
                 <input type="number" min="0" step="any" dir="ltr" className="field mt-1 w-full tabular-nums" value={laborCost} onChange={(e) => setLaborCost(e.target.value)} aria-label="تكلفة العمالة" />
@@ -177,19 +183,8 @@ export function IssueMaterialsDialog({
 
             {errMsg && !needsAck && <p className="mt-3 rounded-lg bg-rose-50 px-3 py-2 text-xs font-bold text-rose-700">{errMsg}</p>}
 
-            <div className="mt-4 flex justify-end gap-2">
-              <Button variant="ghost" onClick={onClose} disabled={issueMaterials.isPending}>إغلاق</Button>
-              <Button
-                variant="primary"
-                disabled={issueMaterials.isPending || lines.length === 0 || (overIssue && !allowOverIssue)}
-                onClick={() => void submit()}
-              >
-                {issueMaterials.isPending ? "جارٍ الإصدار…" : "إصدار المواد"}
-              </Button>
-            </div>
-          </motion.div>
-        </>
-      )}
-    </AnimatePresence>
+        </div>
+      </section>
+    </FullPageFlow>
   );
 }

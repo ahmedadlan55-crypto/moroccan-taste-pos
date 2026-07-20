@@ -94,6 +94,14 @@ const SHOTS: { path: string; file: string }[] = [
 
 test.describe.configure({ mode: "serial" });
 
+test("missing ERP assets stay 404 instead of falling through to SPA HTML", async ({ request }) => {
+  const response = await request.get("/app/assets/__missing-deployment-chunk__.js", {
+    maxRedirects: 0,
+  });
+  expect(response.status()).toBe(404);
+  expect(response.headers()["content-type"] || "").not.toContain("text/html");
+});
+
 /** Let in-flight XHRs settle so we never assert against a half-rendered screen. */
 async function settle(page: Page) {
   await page.waitForLoadState("networkidle", { timeout: 20_000 }).catch(() => {});
@@ -292,6 +300,7 @@ test("company and branch scope stays readable from 390px through 1920px", async 
     { width: 390, height: 844 },
     { width: 768, height: 1024 },
     { width: 1024, height: 768 },
+    { width: 1280, height: 800 },
     { width: 1440, height: 900 },
     { width: 1920, height: 1080 },
   ];
@@ -303,7 +312,9 @@ test("company and branch scope stays readable from 390px through 1920px", async 
       await waitRendered(page, `/overview scope ${size.width}`);
       await settle(page);
 
-      if (size.width < 1536) {
+      // The redesigned top bar exposes search + scope from Tailwind's `xl`
+      // breakpoint (1280px). Below it they remain available in the tools row.
+      if (size.width < 1280) {
         await page.getByRole("button", { name: /فتح البحث ونطاق العمل/ }).click();
       }
 
@@ -360,5 +371,69 @@ test("company and branch scope stays readable from 390px through 1920px", async 
         animations: "disabled",
       });
     });
+  }
+});
+
+test("create and edit workflows use a full-page work area instead of side panels", async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name !== "desktop", "one serial visual matrix is enough");
+
+  await page.addInitScript(
+    ([token, session]) => {
+      localStorage.setItem("pos_token", token);
+      localStorage.setItem("pos_session", session);
+    },
+    [TOKEN, JSON.stringify({ user: "admin", role: "admin" })],
+  );
+
+  const flows = [
+    { id: "supplier", path: "/app/purchasing/suppliers", trigger: /مورد جديد/, title: "إضافة مورد جديد" },
+    { id: "customer", path: "/app/customers", trigger: /عميل جديد/, title: "إضافة عميل" },
+    { id: "employee", path: "/app/people/employees", trigger: /موظف جديد/, title: "موظف جديد" },
+  ];
+  const sizes = [
+    { label: "mobile", width: 390, height: 844 },
+    { label: "desktop", width: 1440, height: 900 },
+  ];
+
+  for (const size of sizes) {
+    await page.setViewportSize({ width: size.width, height: size.height });
+    for (const flow of flows) {
+      await test.step(`${size.label} ${flow.id} workspace`, async () => {
+        await page.goto(flow.path);
+        await waitRendered(page, `${flow.id} ${size.label}`);
+        await settle(page);
+        await page.getByRole("button", { name: flow.trigger }).click();
+
+        const workspace = page.getByRole("region", { name: flow.title });
+        await expect(workspace).toBeVisible();
+        await expect(workspace).toHaveAttribute("data-presentation", "full-page");
+        await expect(page.getByRole("dialog")).toHaveCount(0);
+
+        const probe = await workspace.evaluate((element) => {
+          const rect = element.getBoundingClientRect();
+          return {
+            width: rect.width,
+            height: rect.height,
+            viewportWidth: window.innerWidth,
+            viewportHeight: window.innerHeight,
+            bodyOverflow: document.documentElement.scrollWidth - document.documentElement.clientWidth,
+          };
+        });
+        expect(probe.width).toBeGreaterThanOrEqual(probe.viewportWidth - 1);
+        expect(probe.height).toBeGreaterThanOrEqual(probe.viewportHeight - 1);
+        expect(probe.bodyOverflow).toBeLessThanOrEqual(1);
+
+        const dir = path.join(OUT_ROOT, "workspaces");
+        fs.mkdirSync(dir, { recursive: true });
+        await page.screenshot({
+          path: path.join(dir, `${size.label}-${flow.id}.png`),
+          fullPage: false,
+          animations: "disabled",
+        });
+
+        await page.getByRole("button", { name: "العودة إلى الصفحة السابقة" }).click();
+        await expect(workspace).toBeHidden();
+      });
+    }
   }
 });

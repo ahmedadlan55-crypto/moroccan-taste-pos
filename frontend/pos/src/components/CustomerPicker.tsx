@@ -78,7 +78,7 @@ export function CustomerPicker({ value, onChange }: CustomerPickerProps) {
             <button
               type="button"
               onClick={() => setHistOpen(true)}
-              className="grid h-7 w-7 place-items-center rounded-lg text-teal-500 transition hover:bg-white hover:text-teal-700"
+              className="grid min-h-11 min-w-11 place-items-center rounded-lg text-teal-500 transition hover:bg-white hover:text-teal-700"
               aria-label="سجل العميل"
               title="سجل العميل"
             >
@@ -87,7 +87,7 @@ export function CustomerPicker({ value, onChange }: CustomerPickerProps) {
             <button
               type="button"
               onClick={() => onChange(null)}
-              className="grid h-7 w-7 place-items-center rounded-lg text-teal-500 transition hover:bg-white hover:text-rose-600"
+              className="grid min-h-11 min-w-11 place-items-center rounded-lg text-teal-500 transition hover:bg-white hover:text-rose-600"
               aria-label="مسح العميل"
             >
               <X className="h-4 w-4" aria-hidden />

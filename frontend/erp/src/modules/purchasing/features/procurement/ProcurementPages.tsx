@@ -15,10 +15,9 @@ import { LoadingState, ErrorState, EmptyState } from "@/shared/ui";
 import { formatCurrency, formatDate } from "@/shared/lib";
 import { useCan } from "@/modules/inventory/lib/permission-provider";
 import {
-  useProcurementDashboard, useSuppliers, useOrders, useReceipts, useInvoices, usePayments,
-  useReturns, useProcurementReport, useCreateSupplier, type ListParams,
+  useProcurementDashboard, useOrders, useReceipts, useInvoices, usePayments,
+  useReturns, useProcurementReport, type ListParams,
 } from "@/modules/inventory/lib/hooks/useProcurement";
-import type { ApiError } from "@/shared/api";
 
 // ── shared bits ──────────────────────────────────────────────────────────────
 const STATUS_AR: Record<string, string> = {
@@ -99,62 +98,6 @@ export function ProcurementDashboard() {
           ))}
         </div>
       </section>
-    </div>
-  );
-}
-
-// ── Suppliers ─────────────────────────────────────────────────────────────
-export function SuppliersPage() {
-  const [params, patch] = useListState();
-  const { data, isLoading, isError, error, refetch } = useSuppliers(params);
-  const canManage = useCan("procurement.manage");
-  const create = useCreateSupplier();
-  const [showNew, setShowNew] = useState(false);
-  const [name, setName] = useState("");
-  const [vat, setVat] = useState("");
-
-  return (
-    <div>
-      <div className="mb-4 flex flex-wrap items-center gap-2">
-        <input className="field w-64" placeholder="بحث بالاسم / الضريبي / الهاتف…" value={params.q ?? ""} onChange={(e) => patch({ q: e.target.value, page: 1 })} />
-        <div className="grow" />
-        {canManage && <Button onClick={() => setShowNew((s) => !s)}>{showNew ? "إغلاق" : "+ مورد جديد"}</Button>}
-      </div>
-      {showNew && canManage && (
-        <div className="surface mb-4 p-4">
-          <div className="grid gap-3 sm:grid-cols-3">
-            <input className="field" placeholder="اسم المورد" value={name} onChange={(e) => setName(e.target.value)} />
-            <input className="field" placeholder="الرقم الضريبي (اختياري)" value={vat} onChange={(e) => setVat(e.target.value)} />
-            <Button disabled={create.isPending || name.trim().length < 2} onClick={() => create.mutate({ name, vatNumber: vat }, { onSuccess: () => { setName(""); setVat(""); setShowNew(false); refetch(); } })}>
-              {create.isPending ? "جارٍ الحفظ…" : "حفظ"}
-            </Button>
-          </div>
-          {create.isError && <p className="mt-2 text-sm font-semibold text-rose-600">{(create.error as ApiError)?.message}</p>}
-        </div>
-      )}
-      {isLoading ? <LoadingState /> : isError ? <ErrorState error={error} onRetry={() => refetch()} /> : !data || data.rows.length === 0 ? (
-        <EmptyState title="لا موردين" body="ابدأ بإضافة مورد." />
-      ) : (
-        <div className="surface overflow-hidden">
-          <div className="overflow-x-auto">
-            <table className="w-full border-collapse">
-              <thead className="bg-slate-50"><tr><Th>المورد</Th><Th>الرقم الضريبي</Th><Th>المدينة</Th><Th>شروط الدفع</Th><Th className="text-left">الرصيد المستحق</Th></tr></thead>
-              <tbody className="divide-y divide-slate-100">
-                {data.rows.map((s) => (
-                  <tr key={s.id} className="hover:bg-slate-50">
-                    <Td><Link className="font-bold text-teal-700 hover:underline" to={`/purchasing/suppliers?doc=${s.id}`}>{s.name}</Link></Td>
-                    <Td className="tabular-nums text-slate-500" >{s.vatNumber || "—"}</Td>
-                    <Td>{s.city || "—"}</Td>
-                    <Td>{s.paymentTerms}</Td>
-                    <Td className="text-left font-bold tabular-nums">{formatCurrency(s.apBalance)}</Td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        </div>
-      )}
-      {data && <Pager page={data.page} totalPages={data.totalPages} onPage={(p) => patch({ page: p })} />}
     </div>
   );
 }

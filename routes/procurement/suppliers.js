@@ -82,12 +82,21 @@ router.post('/', requireCapability('suppliers.create'), async (req, res) => {
     const b = req.body || {};
     const name = String(b.name || '').trim();
     if (!name) throw err('VALIDATION_ERROR', 'اسم المورد مطلوب');
+    const vatRegistered = b.vatRegistered !== false;
+    if (vatRegistered && b.vatNumber != null && String(b.vatNumber).trim() && !/^\d{15}$/.test(String(b.vatNumber).trim())) {
+      throw err('VALIDATION_ERROR', 'رقم ضريبي غير صالح (يجب 15 رقمًا)');
+    }
     const id = genId();
     await db.query(
-      `INSERT INTO suppliers (id, name, name_en, vat_number, phone, email, address, city, payment_terms, is_active, created_by, brand_id)
-       VALUES (?,?,?,?,?,?,?,?,?,1,?,?)`,
+      `INSERT INTO suppliers
+         (id, name, name_en, vat_number, phone, email, address, city, payment_terms, is_active, created_by, brand_id,
+          vat_registered, street, building_number, district, additional_no, postal_code,
+          default_expense_account_id, default_expense_cost_center_id)
+       VALUES (?,?,?,?,?,?,?,?,?,1,?,?,?,?,?,?,?,?,?,?)`,
       [id, name, b.nameEn || null, b.vatNumber || null, b.phone || null, b.email || null,
-       b.address || null, b.city || null, b.paymentTerms || 'Cash', H.actorOf(req), b.brandId || null]);
+       b.address || null, b.city || null, b.paymentTerms || 'Cash', H.actorOf(req), b.brandId || null,
+       vatRegistered ? 1 : 0, b.street || null, b.buildingNumber || null, b.district || null,
+       b.additionalNo || null, b.postalCode || null, b.defaultExpenseAccountId || null, b.defaultExpenseCostCenterId || null]);
     const [row] = await db.query('SELECT * FROM suppliers WHERE id = ?', [id]);
     return H.sendData(res, row[0], {}, 201);
   } catch (e) { return H.sendErr(res, e); }
@@ -115,16 +124,33 @@ router.get('/:id', requireCapability('suppliers.view'), async (req, res) => {
 });
 
 // ── PATCH /:id — edit (mass-assignment protected, no status/balance) ─────────
-const EDITABLE = ['name', 'name_en', 'vat_number', 'phone', 'email', 'address', 'city', 'payment_terms', 'brand_id'];
-const BODY_MAP = { name: 'name', nameEn: 'name_en', vatNumber: 'vat_number', phone: 'phone', email: 'email', address: 'address', city: 'city', paymentTerms: 'payment_terms', brandId: 'brand_id' };
+const EDITABLE = [
+  'name', 'name_en', 'vat_number', 'phone', 'email', 'address', 'city', 'payment_terms', 'brand_id',
+  'vat_registered', 'street', 'building_number', 'district', 'additional_no', 'postal_code',
+  'default_expense_account_id', 'default_expense_cost_center_id',
+];
+const BODY_MAP = {
+  name: 'name', nameEn: 'name_en', vatNumber: 'vat_number', phone: 'phone', email: 'email', address: 'address',
+  city: 'city', paymentTerms: 'payment_terms', brandId: 'brand_id',
+  vatRegistered: 'vat_registered', street: 'street', buildingNumber: 'building_number', district: 'district',
+  additionalNo: 'additional_no', postalCode: 'postal_code',
+  defaultExpenseAccountId: 'default_expense_account_id', defaultExpenseCostCenterId: 'default_expense_cost_center_id',
+};
 router.patch('/:id', requireCapability('suppliers.edit'), async (req, res) => {
   try {
     const [rows] = await db.query('SELECT id FROM suppliers WHERE id = ?', [req.params.id]);
     if (!rows.length) throw err('NOT_FOUND', 'المورد غير موجود');
+    const body = req.body || {};
+    const vatRegistered = body.vatRegistered !== false;
+    if (Object.prototype.hasOwnProperty.call(body, 'vatNumber') && vatRegistered &&
+        body.vatNumber != null && String(body.vatNumber).trim() && !/^\d{15}$/.test(String(body.vatNumber).trim())) {
+      throw err('VALIDATION_ERROR', 'رقم ضريبي غير صالح (يجب 15 رقمًا)');
+    }
     const sets = [], params = [];
     for (const [bodyKey, col] of Object.entries(BODY_MAP)) {
-      if (req.body && Object.prototype.hasOwnProperty.call(req.body, bodyKey) && EDITABLE.includes(col)) {
-        sets.push(`${col} = ?`); params.push(req.body[bodyKey]);
+      if (Object.prototype.hasOwnProperty.call(body, bodyKey) && EDITABLE.includes(col)) {
+        const v = body[bodyKey];
+        sets.push(`${col} = ?`); params.push(col === 'vat_registered' ? (v === false ? 0 : 1) : v);
       }
     }
     if (!sets.length) throw err('VALIDATION_ERROR', 'لا توجد حقول للتعديل');
@@ -227,6 +253,71 @@ router.get('/:id/price-history', requireCapability('suppliers.view'), async (req
       itemId: r.item_id, itemName: r.item_name, date: r.receipt_date,
       unitCost: calc.rate(r.base_unit_cost != null ? r.base_unit_cost : r.unit_cost),
     })));
+  } catch (e) { return H.sendErr(res, e); }
+});
+
+// ── Beneficiaries (المستفيدون) — the supplier's OWN bank details, for direct-
+// transfer payment. Distinct from `bank_accounts` (the company's own accounts
+// under GL 1102): these rows have no GL linkage, they're just payee info.
+function genBeneficiaryId() { return 'SB-' + Date.now() + '-' + Math.random().toString(36).slice(2, 6); }
+
+router.get('/:id/beneficiaries', requireCapability('suppliers.view'), async (req, res) => {
+  try {
+    const [sup] = await db.query('SELECT id FROM suppliers WHERE id = ?', [req.params.id]);
+    if (!sup.length) throw err('NOT_FOUND', 'المورد غير موجود');
+    const [rows] = await db.query(
+      `SELECT id, bank_name, account_name, account_number, iban, is_primary, is_active, created_at
+         FROM supplier_beneficiaries WHERE supplier_id = ? AND is_active = 1 ORDER BY is_primary DESC, created_at ASC`,
+      [req.params.id]);
+    return H.sendData(res, rows.map((r) => ({
+      id: r.id, bankName: r.bank_name, accountName: r.account_name, accountNumber: r.account_number,
+      iban: r.iban, isPrimary: !!Number(r.is_primary), createdAt: r.created_at,
+    })));
+  } catch (e) { return H.sendErr(res, e); }
+});
+
+router.post('/:id/beneficiaries', requireCapability('suppliers.edit'), async (req, res) => {
+  try {
+    const [sup] = await db.query('SELECT id FROM suppliers WHERE id = ?', [req.params.id]);
+    if (!sup.length) throw err('NOT_FOUND', 'المورد غير موجود');
+    const b = req.body || {};
+    const bankName = String(b.bankName || '').trim();
+    if (!bankName) throw err('VALIDATION_ERROR', 'اسم البنك مطلوب');
+    const id = genBeneficiaryId();
+    await db.query(
+      `INSERT INTO supplier_beneficiaries (id, supplier_id, bank_name, account_name, account_number, iban, is_primary, created_by)
+       VALUES (?,?,?,?,?,?,?,?)`,
+      [id, req.params.id, bankName, b.accountName || null, b.accountNumber || null, b.iban || null,
+       b.isPrimary ? 1 : 0, H.actorOf(req)]);
+    return H.sendData(res, { id }, {}, 201);
+  } catch (e) { return H.sendErr(res, e); }
+});
+
+router.patch('/:id/beneficiaries/:beneficiaryId', requireCapability('suppliers.edit'), async (req, res) => {
+  try {
+    const [rows] = await db.query('SELECT id FROM supplier_beneficiaries WHERE id = ? AND supplier_id = ?', [req.params.beneficiaryId, req.params.id]);
+    if (!rows.length) throw err('NOT_FOUND', 'المستفيد غير موجود');
+    const b = req.body || {};
+    const MAP = { bankName: 'bank_name', accountName: 'account_name', accountNumber: 'account_number', iban: 'iban', isPrimary: 'is_primary' };
+    const sets = [], params = [];
+    for (const [bodyKey, col] of Object.entries(MAP)) {
+      if (Object.prototype.hasOwnProperty.call(b, bodyKey)) {
+        sets.push(`${col} = ?`); params.push(bodyKey === 'isPrimary' ? (b[bodyKey] ? 1 : 0) : b[bodyKey]);
+      }
+    }
+    if (!sets.length) throw err('VALIDATION_ERROR', 'لا توجد حقول للتعديل');
+    params.push(req.params.beneficiaryId);
+    await db.query(`UPDATE supplier_beneficiaries SET ${sets.join(', ')} WHERE id = ?`, params);
+    return H.sendData(res, { id: req.params.beneficiaryId });
+  } catch (e) { return H.sendErr(res, e); }
+});
+
+router.delete('/:id/beneficiaries/:beneficiaryId', requireCapability('suppliers.edit'), async (req, res) => {
+  try {
+    const [rows] = await db.query('SELECT id FROM supplier_beneficiaries WHERE id = ? AND supplier_id = ?', [req.params.beneficiaryId, req.params.id]);
+    if (!rows.length) throw err('NOT_FOUND', 'المستفيد غير موجود');
+    await db.query('UPDATE supplier_beneficiaries SET is_active = 0 WHERE id = ?', [req.params.beneficiaryId]);
+    return H.sendData(res, { id: req.params.beneficiaryId, deleted: true });
   } catch (e) { return H.sendErr(res, e); }
 });
 

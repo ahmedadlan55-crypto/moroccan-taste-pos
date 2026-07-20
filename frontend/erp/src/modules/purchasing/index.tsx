@@ -10,13 +10,14 @@ import { useLocation, useSearchParams } from "react-router-dom";
 import { WarehouseModuleProviders } from "@/modules/inventory/lib/providers";
 import { ProcurementLayout } from "./features/procurement/ProcurementLayout";
 import {
-  SuppliersPage, OrdersPage, ReceiptsListPage, InvoicesListPage, PaymentsListPage, ReturnsPage,
+  OrdersPage, ReceiptsListPage, InvoicesListPage, PaymentsListPage, ReturnsPage,
 } from "./features/procurement/ProcurementPages";
 import {
-  SupplierDetailPage, OrderDetailPage, ReceiptDetailPage, InvoiceDetailPage, PaymentDetailPage, ReturnDetailPage,
+  OrderDetailPage, ReceiptDetailPage, InvoiceDetailPage, PaymentDetailPage, ReturnDetailPage,
 } from "./features/procurement/DetailPages";
 import { OrderCreatePage } from "./features/procurement/OrderCreatePage";
 import { RequisitionsPage } from "./requisitions/RequisitionsPage";
+import { SuppliersList, SupplierDetail } from "@/modules/suppliers";
 
 function Section() {
   const { pathname } = useLocation();
@@ -26,7 +27,7 @@ function Section() {
 
   switch (pathname) {
     case "/purchasing/suppliers":
-      return doc ? <SupplierDetailPage /> : <SuppliersPage />;
+      return doc ? <SupplierDetail /> : <SuppliersList />;
     case "/purchasing/requisitions":
       return <RequisitionsPage />;
     case "/purchasing/orders":
@@ -40,7 +41,7 @@ function Section() {
     case "/purchasing/returns":
       return doc ? <ReturnDetailPage /> : <ReturnsPage />;
     default:
-      return <SuppliersPage />;
+      return <SuppliersList />;
   }
 }
 

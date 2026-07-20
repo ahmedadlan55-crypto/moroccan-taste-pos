@@ -33,6 +33,16 @@ const CAPS = [
   ['zatca.manage',             1, 150, 'إدارة ربط هيئة الزكاة (فوترة)', 'Manage ZATCA onboarding'],
   // ── Workflow builder (definitions / positions / routes DSL) ──
   ['workflow.manage',          1, 160, 'إدارة مسارات الاعتماد',       'Manage approval workflows'],
+  // ── Financial reports (Trial Balance, P&L, Balance Sheet, ...) ──
+  // Tier A COA/Trial Balance overhaul — this id already existed and was
+  // enforced (see routes/erp/reports/equity-changes.js), and was already
+  // seeded/granted to finance/manager via the base seeder in server.js.
+  // Re-declaring it here (idempotent INSERT IGNORE) is what actually closes
+  // the gap: it was NEVER granted to accountant/auditor in this, the more
+  // actively maintained finance capability seed — the base seeder in
+  // server.js only fills role_permissions when the table is EMPTY, so a
+  // fresh accountant/auditor account never received it.
+  ['finance.reports.view',     0, 170, 'عرض التقارير المالية (ميزان المراجعة، الأرباح والخسائر، الميزانية)', 'View financial reports (Trial Balance, P&L, Balance Sheet)'],
 ];
 
 // role → capability ids (admin top-up handled below; developer bypasses in-middleware)
@@ -44,6 +54,7 @@ const ROLE_GRANTS = {
     'finance.accounts.manage',
     'finance.cash.approve',
     'finance.bankrec.view', 'finance.bankrec.manage',
+    'finance.reports.view',
   ],
   finance: [
     'finance.gl.view', 'finance.gl.create', 'finance.gl.approve', 'finance.gl.post', 'finance.gl.reverse',
@@ -51,10 +62,12 @@ const ROLE_GRANTS = {
     'finance.cash.approve', 'finance.cash.close',
     'finance.bankrec.view', 'finance.bankrec.manage', 'finance.bankrec.close',
     'hr.payroll.approve', 'hr.payroll.pay',
+    'finance.reports.view',
   ],
   auditor: [
     'finance.gl.view',
     'finance.bankrec.view',
+    'finance.reports.view',
   ],
 };
 

@@ -44,6 +44,12 @@ const IDENTITY: DocumentIdentity = {
   brandName: "الأصالة",
 };
 
+// Owner-entered free text (header/footer/thankYou/branchName/…) stays exactly
+// as typed regardless of `language` — only the STATIC chrome around it (column
+// headers, "الضريبة"/"VAT", …) switches. Same values as IDENTITY, +language.
+const IDENTITY_EN: DocumentIdentity = { ...IDENTITY, language: "en" };
+const IDENTITY_BOTH: DocumentIdentity = { ...IDENTITY, language: "both" };
+
 function saleOpts(partial?: Partial<SaleReceiptOptions>): SaleReceiptOptions {
   return {
     lines: [{ name: "برجر", qty: 2, unitPrice: 20, lineDiscount: 0 }],
@@ -247,6 +253,128 @@ describe("buildCreditNoteHtml — the مرتجع / إشعار دائن document"
   it("omits the reason line when there is no reason", () => {
     const html = buildCreditNoteHtml(cnOpts({ returnReason: null }));
     expect(html).not.toContain("سبب المرتجع");
+  });
+});
+
+describe("buildSaleReceiptHtml — bilingual (identity.language)", () => {
+  it("no language on identity → today's Arabic-only behavior (backward compatible)", () => {
+    const html = buildSaleReceiptHtml(saleOpts());
+    expect(html).toContain('<html lang="ar" dir="rtl">');
+    expect(html).toContain("المجموع");
+    expect(html).toContain("الإجمالي");
+    expect(html).not.toContain("Subtotal");
+  });
+
+  it("language: 'en' → English chrome, <html lang dir> flip to ltr", () => {
+    const html = buildSaleReceiptHtml(saleOpts({ identity: IDENTITY_EN }));
+    expect(html).toContain('<html lang="en" dir="ltr">');
+    expect(html).toContain("Item");
+    expect(html).toContain("Qty");
+    expect(html).toContain("Subtotal");
+    expect(html).toContain("VAT");
+    expect(html).toContain("Grand Total");
+    expect(html).toContain("Cash"); // PAY_LABELS_EN
+    expect(html).not.toContain("المجموع");
+  });
+
+  it("language: 'en' translates payment methods and the cashier/order-type line", () => {
+    const html = buildSaleReceiptHtml(
+      saleOpts({
+        identity: IDENTITY_EN,
+        payments: [{ method: "cash", amount: 46 }, { method: "card", amount: 30 }],
+        orderType: "dine_in",
+      }),
+    );
+    expect(html).toContain("Cash");
+    expect(html).toContain("Card");
+    expect(html).toContain("Dine-in");
+    expect(html).toContain("Cashier:");
+  });
+
+  it("language: 'en' keeps owner-entered free text verbatim (never machine-translated)", () => {
+    const html = buildSaleReceiptHtml(saleOpts({ identity: IDENTITY_EN }));
+    // header/thankYou/returnPolicy/footer are Arabic strings the owner typed —
+    // they print as-is even though the surrounding chrome is English.
+    expect(html).toContain("فرع العليا — فاتورة ضريبية مبسطة");
+    expect(html).toContain("نشكر لكم زيارتكم ونتشرف بخدمتكم");
+  });
+
+  it("language: 'en' offline-ref note and QR-pending note are translated", () => {
+    const html = buildSaleReceiptHtml(saleOpts({ identity: IDENTITY_EN, offlineRef: true, zatcaQrDataUrl: null }));
+    expect(html).toContain("Local ref:");
+    expect(html).toContain("will sync once back online");
+    expect(html).toContain("The tax QR code will be issued after sync");
+  });
+
+  it("language: 'en' with no identity fields configured → English default thank-you", () => {
+    const html = buildSaleReceiptHtml(saleOpts({ identity: { ...IDENTITY_EN, thankYou: "", header: "", footer: "", returnPolicy: "" } }));
+    expect(html).toContain("Thank you for visiting us");
+  });
+
+  it("language: 'both' renders BOTH the Arabic and English documents stacked in one page", () => {
+    const html = buildSaleReceiptHtml(saleOpts({ identity: IDENTITY_BOTH }));
+    expect(html).toContain('<html lang="ar" dir="rtl">');
+    // Arabic block
+    expect(html).toContain("المجموع");
+    expect(html).toContain("الإجمالي");
+    // English block
+    expect(html).toContain("Subtotal");
+    expect(html).toContain("Grand Total");
+    expect(html).toContain('<div dir="ltr" lang="en">');
+  });
+});
+
+describe("buildCreditNoteHtml — bilingual (identity.language)", () => {
+  function cnOptsBase(partial?: Partial<CreditNoteOptions>): CreditNoteOptions {
+    return {
+      lines: [{ name: "برجر", qty: 1, unitPrice: 23, returnQty: 1, soldQty: 2 }],
+      totals: { subtotal: 23, lineDiscountTotal: 0, discountAmount: 0, vatTotal: 3, total: 23 },
+      invoiceNumber: "CN-20260715-0007",
+      originalInvoiceNumber: "INV-20260715-0001",
+      returnReason: "منتج تالف",
+      fallbackSellerName: "إشعار دائن ضريبي",
+      vatRate: 15,
+      identity: IDENTITY,
+      zatcaQrDataUrl: "data:image/png;base64,iVBORwCREDITNOTE",
+      customerName: "متجر الأمل",
+      ...partial,
+    };
+  }
+
+  it("no language on identity → today's Arabic-only behavior (backward compatible)", () => {
+    const html = buildCreditNoteHtml(cnOptsBase());
+    expect(html).toContain('<html lang="ar" dir="rtl">');
+    expect(html).toContain("مرتجع");
+    expect(html).toContain("إجمالي المرتجع");
+    expect(html).not.toContain("Credit Total");
+  });
+
+  it("language: 'en' → English chrome, <html lang dir> flip to ltr", () => {
+    const html = buildCreditNoteHtml(cnOptsBase({ identity: IDENTITY_EN }));
+    expect(html).toContain('<html lang="en" dir="ltr">');
+    expect(html).toContain("RETURN · CREDIT NOTE");
+    expect(html).toContain("Tax Credit Note");
+    expect(html).toContain("Original Invoice:");
+    expect(html).toContain("Return Reason:");
+    expect(html).toContain("Returned");
+    expect(html).toContain("Credit Total");
+    expect(html).not.toContain("مرتجع");
+  });
+
+  it("language: 'en' — the returned/sold-quantity note translates too", () => {
+    const html = buildCreditNoteHtml(cnOptsBase({ identity: IDENTITY_EN }));
+    expect(html).toContain("Returned");
+    expect(html).toContain("of");
+    expect(html).toContain("sold");
+  });
+
+  it("language: 'both' renders BOTH the Arabic and English credit notes stacked in one page", () => {
+    const html = buildCreditNoteHtml(cnOptsBase({ identity: IDENTITY_BOTH }));
+    expect(html).toContain('<html lang="ar" dir="rtl">');
+    expect(html).toContain('data-doc="credit-note"');
+    expect(html).toContain("مرتجع");
+    expect(html).toContain("RETURN · CREDIT NOTE");
+    expect(html).toContain('<div dir="ltr" lang="en">');
   });
 });
 

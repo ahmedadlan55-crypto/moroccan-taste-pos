@@ -42,8 +42,147 @@ export function esc(s: string): string {
   return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
 }
 
+// ── Bilingual labels ─────────────────────────────────────────────────────────
+// 'ar' (default, unchanged historical behavior) | 'en' | 'both' (stacked ar
+// then en in one printed document). Owner-entered free text on DocumentIdentity
+// (header/footer/thankYou/returnPolicy/branchName/…) is NEVER translated here —
+// it prints verbatim in whichever language the owner typed it; only the STATIC
+// chrome around it (column headers, "الضريبة"/"VAT", payment-method names, …)
+// is bilingual.
+export type DocumentLanguage = "ar" | "en" | "both";
+
+/** Defensive coercion: an old server / an unrecognized ReceiptLanguage setting
+ *  value prints today's Arabic-only behavior instead of throwing. */
+function normalizeLanguage(raw: unknown): DocumentLanguage {
+  return raw === "en" || raw === "both" ? raw : "ar";
+}
+
 /** Payment-method → Arabic label (built-in methods; unknown names pass through). */
 export const PAY_LABELS: Record<string, string> = { cash: "كاش", card: "شبكة", credit: "آجل" };
+/** English counterpart of PAY_LABELS. */
+export const PAY_LABELS_EN: Record<string, string> = { cash: "Cash", card: "Card", credit: "Credit" };
+
+interface DocLabels {
+  pay: Record<string, string>;
+  orderType: { dine_in: string; delivery: string; takeaway: string };
+  taxNumber: string;
+  crNumber: string;
+  cashier: string;
+  table: string;
+  customer: string;
+  offlineRef: string;
+  offlineRefNote: string;
+  invoiceRef: string;
+  colItem: string;
+  colQty: string;
+  colPrice: string;
+  colTotal: string;
+  subtotal: string;
+  lineDiscounts: string;
+  discount: string;
+  vat: string;
+  vatIncluded: string;
+  grandTotal: string;
+  received: string;
+  change: string;
+  currency: string;
+  defaultThankYou: string;
+  qrPending: string;
+  receiptTitle: string;
+  creditNoteTitle: string;
+  creditNoteDefaultStamp: string;
+  creditNoteSubtitle: string;
+  docNumber: string;
+  originalInvoice: string;
+  returnReason: string;
+  colReturned: string;
+  returnedWord: string;
+  ofWord: string;
+  soldWord: string;
+  creditGrandTotal: string;
+}
+
+/** Every static printed label the two builders below use, per language. */
+const LABELS: Record<"ar" | "en", DocLabels> = {
+  ar: {
+    pay: PAY_LABELS,
+    orderType: { dine_in: "محلي", delivery: "توصيل", takeaway: "سفري" },
+    taxNumber: "الرقم الضريبي:",
+    crNumber: "س.ت:",
+    cashier: "الكاشير:",
+    table: "طاولة",
+    customer: "العميل:",
+    offlineRef: "مرجع محلي:",
+    offlineRefNote: "سيُرحَّل عند عودة الاتصال",
+    invoiceRef: "فاتورة:",
+    colItem: "الصنف",
+    colQty: "كمية",
+    colPrice: "سعر",
+    colTotal: "إجمالي",
+    subtotal: "المجموع",
+    lineDiscounts: "خصومات الأسطر",
+    discount: "الخصم",
+    vat: "الضريبة",
+    vatIncluded: "مشمولة",
+    grandTotal: "الإجمالي",
+    received: "المستلَم",
+    change: "الباقي",
+    currency: "ر.س",
+    defaultThankYou: "شكرًا لزيارتكم",
+    qrPending: "رمز الفاتورة الضريبي يصدر بعد المزامنة",
+    receiptTitle: "إيصال",
+    creditNoteTitle: "إشعار دائن",
+    creditNoteDefaultStamp: "مرتجع · إشعار دائن",
+    creditNoteSubtitle: "إشعار دائن ضريبي",
+    docNumber: "رقم:",
+    originalInvoice: "الفاتورة الأصلية:",
+    returnReason: "سبب المرتجع:",
+    colReturned: "مُرجَع",
+    returnedWord: "مُرجَع",
+    ofWord: "من",
+    soldWord: "مباع",
+    creditGrandTotal: "إجمالي المرتجع",
+  },
+  en: {
+    pay: PAY_LABELS_EN,
+    orderType: { dine_in: "Dine-in", delivery: "Delivery", takeaway: "Takeaway" },
+    taxNumber: "VAT Number:",
+    crNumber: "CR:",
+    cashier: "Cashier:",
+    table: "Table",
+    customer: "Customer:",
+    offlineRef: "Local ref:",
+    offlineRefNote: "will sync once back online",
+    invoiceRef: "Invoice:",
+    colItem: "Item",
+    colQty: "Qty",
+    colPrice: "Price",
+    colTotal: "Total",
+    subtotal: "Subtotal",
+    lineDiscounts: "Line discounts",
+    discount: "Discount",
+    vat: "VAT",
+    vatIncluded: "incl.",
+    grandTotal: "Grand Total",
+    received: "Received",
+    change: "Change",
+    currency: "SAR",
+    defaultThankYou: "Thank you for visiting us",
+    qrPending: "The tax QR code will be issued after sync",
+    receiptTitle: "Receipt",
+    creditNoteTitle: "Credit Note",
+    creditNoteDefaultStamp: "RETURN · CREDIT NOTE",
+    creditNoteSubtitle: "Tax Credit Note",
+    docNumber: "No.:",
+    originalInvoice: "Original Invoice:",
+    returnReason: "Return Reason:",
+    colReturned: "Returned",
+    returnedWord: "Returned",
+    ofWord: "of",
+    soldWord: "sold",
+    creditGrandTotal: "Credit Total",
+  },
+};
 
 // ── Paper width (owner setting: ReceiptPaperWidth '58'|'80'|'A4') ────────────
 // 58mm thermal paper prints ~48mm wide; 80mm paper prints ~72mm (the historical
@@ -105,6 +244,10 @@ export interface DocumentIdentity {
   vatRate: number;
   /** Optional custom tax name (server identity carries it; the POS type never did). */
   salesTaxName?: string;
+  /** 'ar' (default when absent) | 'en' | 'both'. Server-resolved from the
+   *  ReceiptLanguage setting (lib/invoiceIdentity.js) — every existing caller
+   *  that never set it keeps today's Arabic-only output exactly. */
+  language?: DocumentLanguage;
   header: string;
   footer: string;
   thankYou: string;
@@ -162,26 +305,31 @@ export type ReceiptOrderType = "dine_in" | "takeaway" | "delivery";
 
 // ── Shared identity/QR helpers ───────────────────────────────────────────────
 
-function orderTypeLabel(orderType?: ReceiptOrderType | null): string {
-  return orderType === "dine_in" ? "محلي" : orderType === "delivery" ? "توصيل" : orderType === "takeaway" ? "سفري" : "";
+function orderTypeLabel(orderType: ReceiptOrderType | null | undefined, lang: "ar" | "en"): string {
+  const t = LABELS[lang].orderType;
+  return orderType === "dine_in" ? t.dine_in : orderType === "delivery" ? t.delivery : orderType === "takeaway" ? t.takeaway : "";
 }
 
 /** Render the seller identity block (h1 + the owner-configured sub-lines the
  *  showFields toggles allow). `fallbackSellerName` is the h1 when no identity is
  *  configured — the caller supplies it (POS: a tab-title fallback; ERP: a doc
- *  label) since a shared module can't assume either app's convention. */
+ *  label) since a shared module can't assume either app's convention. Only the
+ *  static labels ("الرقم الضريبي:"/"VAT Number:", …) are bilingual — every value
+ *  is owner-entered free text and prints verbatim regardless of `lang`. */
 function sellerBlock(
   idn: DocumentIdentity | null,
   show: DocumentShowFields | null,
   fallbackSellerName: string,
+  lang: "ar" | "en",
 ): { sellerName: string; lines: string[] } {
   const on = (k: keyof DocumentShowFields) => !show || show[k] !== false;
+  const t = LABELS[lang];
   const sellerName = idn?.sellerName || idn?.brandName || fallbackSellerName;
   const lines: string[] = [];
   if (idn) {
     if (idn.branchName) lines.push(`<div class="sub">${esc(idn.branchName)}</div>`);
-    if (on("taxNumber") && idn.taxNumber) lines.push(`<div class="sub">الرقم الضريبي: <span class="num">${esc(idn.taxNumber)}</span></div>`);
-    if (on("crNumber") && idn.crNumber) lines.push(`<div class="sub">س.ت: <span class="num">${esc(idn.crNumber)}</span></div>`);
+    if (on("taxNumber") && idn.taxNumber) lines.push(`<div class="sub">${t.taxNumber} <span class="num">${esc(idn.taxNumber)}</span></div>`);
+    if (on("crNumber") && idn.crNumber) lines.push(`<div class="sub">${t.crNumber} <span class="num">${esc(idn.crNumber)}</span></div>`);
     if (on("nationalAddress") && idn.nationalAddress) lines.push(`<div class="sub">${esc(idn.nationalAddress)}</div>`);
     if (on("phone") && idn.phone) lines.push(`<div class="sub num">${esc(idn.phone)}</div>`);
     if (idn.header) lines.push(`<div class="sub">${esc(idn.header)}</div>`);
@@ -192,15 +340,18 @@ function sellerBlock(
 /** The ZATCA QR block: the server-stamped PNG, an honest "arrives after sync"
  *  note for a queued offline sale, or nothing. Never a client-side re-derivation
  *  (no QR encoder ships to the browser). */
-function qrBlock(zatcaQrDataUrl: string | null | undefined, offlineRef: boolean, showQr: boolean): string {
+function qrBlock(zatcaQrDataUrl: string | null | undefined, offlineRef: boolean, showQr: boolean, lang: "ar" | "en"): string {
   if (!showQr) return "";
   if (zatcaQrDataUrl) return `<div class="qr"><img src="${zatcaQrDataUrl}" alt="ZATCA QR" width="120" height="120"></div>`;
-  if (offlineRef) return `<div class="sub">رمز الفاتورة الضريبي يصدر بعد المزامنة</div>`;
+  if (offlineRef) return `<div class="sub">${LABELS[lang].qrPending}</div>`;
   return "";
 }
 
-function footerBlock(idn: DocumentIdentity | null, defaultThankYou: string): string {
-  return `<div class="foot">${esc(idn?.thankYou || defaultThankYou)}</div>
+/** `defaultThankYou`, when passed, must already be the caller's language-correct
+ *  fallback (the two builders below pass a per-language value from LABELS). */
+function footerBlock(idn: DocumentIdentity | null, lang: "ar" | "en", defaultThankYou?: string): string {
+  const thankYou = idn?.thankYou || defaultThankYou || LABELS[lang].defaultThankYou;
+  return `<div class="foot">${esc(thankYou)}</div>
   ${idn?.returnPolicy ? `<div class="sub">${esc(idn.returnPolicy)}</div>` : ""}
   ${idn?.footer ? `<div class="sub">${esc(idn.footer)}</div>` : ""}`;
 }
@@ -241,12 +392,15 @@ export interface SaleReceiptOptions {
   saleId?: string | null;
 }
 
-export function buildSaleReceiptHtml(opts: SaleReceiptOptions): string {
-  const paper = opts.paperWidth ?? "80";
+/** Everything between `<body>` and `</body>` for one language — factored out so
+ *  language==='both' can render the SAME content twice (ar then en) inside one
+ *  document shell without duplicating the whole builder. */
+function saleReceiptBody(opts: SaleReceiptOptions, lang: "ar" | "en"): string {
   const totals = opts.totals;
   const show = opts.showFields ?? null;
   const on = (k: keyof DocumentShowFields) => !show || show[k] !== false;
-  const label = orderTypeLabel(opts.orderType);
+  const t = LABELS[lang];
+  const label = orderTypeLabel(opts.orderType, lang);
   const localRef = opts.localRef ?? "";
 
   const linesHtml = opts.lines
@@ -267,50 +421,78 @@ export function buildSaleReceiptHtml(opts: SaleReceiptOptions): string {
     .join("");
 
   const payHtml = opts.payments
-    .map((p) => `<tr><td>${PAY_LABELS[p.method] ?? esc(p.method)}</td><td class="l num">${fmt2(p.amount)}</td></tr>`)
+    .map((p) => `<tr><td>${t.pay[p.method] ?? esc(p.method)}</td><td class="l num">${fmt2(p.amount)}</td></tr>`)
     .join("");
 
   const refLine = opts.offlineRef
-    ? `<div class="sub">مرجع محلي: <span class="num">${esc(localRef)}</span> — سيُرحَّل عند عودة الاتصال</div>`
-    : `<div class="sub">فاتورة: <span class="num">${esc(opts.invoiceNumber || opts.saleId || localRef)}</span></div>`;
+    ? `<div class="sub">${t.offlineRef} <span class="num">${esc(localRef)}</span> — ${t.offlineRefNote}</div>`
+    : `<div class="sub">${t.invoiceRef} <span class="num">${esc(opts.invoiceNumber || opts.saleId || localRef)}</span></div>`;
 
-  const { sellerName, lines: sellerLines } = sellerBlock(opts.identity ?? null, show, opts.fallbackSellerName);
+  const { sellerName, lines: sellerLines } = sellerBlock(opts.identity ?? null, show, opts.fallbackSellerName, lang);
 
-  const cashierBits = [opts.cashierName ? `الكاشير: ${esc(opts.cashierName)}` : null, label || null].filter(Boolean);
+  const cashierBits = [opts.cashierName ? `${t.cashier} ${esc(opts.cashierName)}` : null, label || null].filter(Boolean);
   const cashierLine =
     on("cashier") && (cashierBits.length || opts.tableNo)
-      ? `<div class="sub">${cashierBits.join(" · ")}${opts.tableNo ? ` · طاولة <span class="num">${esc(opts.tableNo)}</span>` : ""}</div>`
+      ? `<div class="sub">${cashierBits.join(" · ")}${opts.tableNo ? ` · ${t.table} <span class="num">${esc(opts.tableNo)}</span>` : ""}</div>`
       : "";
 
-  return `<!doctype html><html lang="ar" dir="rtl"><head><meta charset="utf-8">
-  <title>إيصال</title><style>${baseCss(paper)}</style></head><body data-paper="${paper}">
-  <h1>${esc(sellerName)}</h1>
+  return `<h1>${esc(sellerName)}</h1>
   ${sellerLines.join("\n  ")}
   ${opts.stamp ? `<div class="stamp">${esc(opts.stamp)}</div>` : ""}
   ${refLine}
   <div class="sub num">${fmtDateTime(opts.printedAt ?? new Date())}</div>
   ${cashierLine}
-  ${on("customer") && (opts.customerName || opts.customerPhone) ? `<div class="sub">العميل: ${esc([opts.customerName, opts.customerPhone].filter(Boolean).join(" "))}</div>` : ""}
+  ${on("customer") && (opts.customerName || opts.customerPhone) ? `<div class="sub">${t.customer} ${esc([opts.customerName, opts.customerPhone].filter(Boolean).join(" "))}</div>` : ""}
   <hr>
   <table>
-    <thead><tr><th>الصنف</th><th class="l">كمية</th><th class="l">سعر</th><th class="l">إجمالي</th></tr></thead>
+    <thead><tr><th>${t.colItem}</th><th class="l">${t.colQty}</th><th class="l">${t.colPrice}</th><th class="l">${t.colTotal}</th></tr></thead>
     <tbody>${linesHtml}</tbody>
   </table>
   <hr>
   <table class="tot">
-    <tr><td>المجموع</td><td class="l num">${fmt2(totals.subtotal)}</td></tr>
-    ${totals.lineDiscountTotal > 0 ? `<tr><td>خصومات الأسطر</td><td class="l num">-${fmt2(totals.lineDiscountTotal)}</td></tr>` : ""}
-    ${totals.discountAmount > 0 ? `<tr><td>الخصم${opts.discountName ? ` (${esc(opts.discountName)})` : ""}</td><td class="l num">-${fmt2(totals.discountAmount)}</td></tr>` : ""}
-    <tr><td>الضريبة (${fmt2(opts.vatRate)}% مشمولة)</td><td class="l num">${fmt2(totals.vatTotal)}</td></tr>
-    <tr class="grand"><td>الإجمالي</td><td class="l num">${fmt2(totals.total)} ر.س</td></tr>
+    <tr><td>${t.subtotal}</td><td class="l num">${fmt2(totals.subtotal)}</td></tr>
+    ${totals.lineDiscountTotal > 0 ? `<tr><td>${t.lineDiscounts}</td><td class="l num">-${fmt2(totals.lineDiscountTotal)}</td></tr>` : ""}
+    ${totals.discountAmount > 0 ? `<tr><td>${t.discount}${opts.discountName ? ` (${esc(opts.discountName)})` : ""}</td><td class="l num">-${fmt2(totals.discountAmount)}</td></tr>` : ""}
+    <tr><td>${t.vat} (${fmt2(opts.vatRate)}% ${t.vatIncluded})</td><td class="l num">${fmt2(totals.vatTotal)}</td></tr>
+    <tr class="grand"><td>${t.grandTotal}</td><td class="l num">${fmt2(totals.total)} ${t.currency}</td></tr>
   </table>
   <hr>
   <table class="tot">${payHtml}
-    ${opts.cashTendered ? `<tr><td>المستلَم</td><td class="l num">${fmt2(opts.cashTendered)}</td></tr>` : ""}
-    ${opts.changeDue ? `<tr><td>الباقي</td><td class="l num">${fmt2(opts.changeDue)}</td></tr>` : ""}
+    ${opts.cashTendered ? `<tr><td>${t.received}</td><td class="l num">${fmt2(opts.cashTendered)}</td></tr>` : ""}
+    ${opts.changeDue ? `<tr><td>${t.change}</td><td class="l num">${fmt2(opts.changeDue)}</td></tr>` : ""}
   </table>
-  ${qrBlock(opts.zatcaQrDataUrl, !!opts.offlineRef, on("qr"))}
-  ${footerBlock(opts.identity ?? null, "شكرًا لزيارتكم")}
+  ${qrBlock(opts.zatcaQrDataUrl, !!opts.offlineRef, on("qr"), lang)}
+  ${footerBlock(opts.identity ?? null, lang)}`;
+}
+
+export function buildSaleReceiptHtml(opts: SaleReceiptOptions): string {
+  const paper = opts.paperWidth ?? "80";
+  const language = normalizeLanguage(opts.identity?.language);
+
+  if (language === "both") {
+    // Stacked (not side-by-side): the least invasive way to fit a full second
+    // language block into the existing thermal/A4 layout without redesigning
+    // every table into two columns. Arabic block first (today's primary
+    // audience), English block second, separated by a heavier divider.
+    const arBody = saleReceiptBody(opts, "ar");
+    const enBody = saleReceiptBody(opts, "en");
+    return `<!doctype html><html lang="ar" dir="rtl"><head><meta charset="utf-8">
+  <title>${LABELS.ar.receiptTitle} / ${LABELS.en.receiptTitle}</title><style>${baseCss(paper)}</style></head>
+  <body data-paper="${paper}" data-lang="both">
+  ${arBody}
+  <hr style="border-top: 3px double currentColor; margin: 10px 0;">
+  <div dir="ltr" lang="en">
+  ${enBody}
+  </div>
+  </body></html>`;
+  }
+
+  const dir = language === "en" ? "ltr" : "rtl";
+  const body = saleReceiptBody(opts, language);
+  return `<!doctype html><html lang="${language}" dir="${dir}"><head><meta charset="utf-8">
+  <title>${LABELS[language].receiptTitle}</title><style>${baseCss(paper)}</style></head>
+  <body data-paper="${paper}" data-lang="${language}">
+  ${body}
   </body></html>`;
 }
 
@@ -345,13 +527,15 @@ export interface CreditNoteOptions {
   customerPhone?: string | null;
 }
 
-export function buildCreditNoteHtml(opts: CreditNoteOptions): string {
-  const paper = opts.paperWidth ?? "80";
+/** Everything between `<body>` and `</body>` for one language — factored out for
+ *  the same reason as saleReceiptBody above (language==='both' reuses it twice). */
+function creditNoteBody(opts: CreditNoteOptions, lang: "ar" | "en"): string {
   const totals = opts.totals;
   const show = opts.showFields ?? null;
   const on = (k: keyof DocumentShowFields) => !show || show[k] !== false;
+  const t = LABELS[lang];
   // The default stamp is what distinguishes this from a sale receipt at a glance.
-  const stamp = opts.stamp || "مرتجع · إشعار دائن";
+  const stamp = opts.stamp || t.creditNoteDefaultStamp;
 
   const linesHtml = opts.lines
     .map((l) => {
@@ -360,7 +544,7 @@ export function buildCreditNoteHtml(opts: CreditNoteOptions): string {
       // Returned / sold context under the item name.
       const qtyNote =
         l.returnQty != null || l.soldQty != null
-          ? `<div class="line-note">مُرجَع <span class="num">${fmt2(Number(l.returnQty ?? l.qty))}</span>${l.soldQty != null ? ` من <span class="num">${fmt2(Number(l.soldQty))}</span> مباع` : ""}</div>`
+          ? `<div class="line-note">${t.returnedWord} <span class="num">${fmt2(Number(l.returnQty ?? l.qty))}</span>${l.soldQty != null ? ` ${t.ofWord} <span class="num">${fmt2(Number(l.soldQty))}</span> ${t.soldWord}` : ""}</div>`
           : "";
       return `<tr>
         <td>${esc(l.name)}${qtyNote}${l.notes ? `<div class="line-note">${esc(l.notes)}</div>` : ""}</td>
@@ -371,33 +555,57 @@ export function buildCreditNoteHtml(opts: CreditNoteOptions): string {
     })
     .join("");
 
-  const { sellerName, lines: sellerLines } = sellerBlock(opts.identity ?? null, show, opts.fallbackSellerName);
+  const { sellerName, lines: sellerLines } = sellerBlock(opts.identity ?? null, show, opts.fallbackSellerName, lang);
 
-  return `<!doctype html><html lang="ar" dir="rtl"><head><meta charset="utf-8">
-  <title>إشعار دائن</title><style>${baseCss(paper)}</style></head><body data-paper="${paper}" data-doc="credit-note">
-  <h1>${esc(sellerName)}</h1>
+  return `<h1>${esc(sellerName)}</h1>
   ${sellerLines.join("\n  ")}
   <div class="stamp">${esc(stamp)}</div>
-  <div class="sub">إشعار دائن ضريبي</div>
-  <div class="sub">رقم: <span class="num">${esc(opts.invoiceNumber || "—")}</span></div>
-  ${opts.originalInvoiceNumber ? `<div class="sub">الفاتورة الأصلية: <span class="num">${esc(opts.originalInvoiceNumber)}</span></div>` : ""}
+  <div class="sub">${t.creditNoteSubtitle}</div>
+  <div class="sub">${t.docNumber} <span class="num">${esc(opts.invoiceNumber || "—")}</span></div>
+  ${opts.originalInvoiceNumber ? `<div class="sub">${t.originalInvoice} <span class="num">${esc(opts.originalInvoiceNumber)}</span></div>` : ""}
   <div class="sub num">${fmtDateTime(opts.printedAt ?? new Date())}</div>
-  ${on("customer") && (opts.customerName || opts.customerPhone) ? `<div class="sub">العميل: ${esc([opts.customerName, opts.customerPhone].filter(Boolean).join(" "))}</div>` : ""}
-  ${opts.returnReason ? `<div class="sub">سبب المرتجع: ${esc(opts.returnReason)}</div>` : ""}
+  ${on("customer") && (opts.customerName || opts.customerPhone) ? `<div class="sub">${t.customer} ${esc([opts.customerName, opts.customerPhone].filter(Boolean).join(" "))}</div>` : ""}
+  ${opts.returnReason ? `<div class="sub">${t.returnReason} ${esc(opts.returnReason)}</div>` : ""}
   <hr>
   <table>
-    <thead><tr><th>الصنف</th><th class="l">مُرجَع</th><th class="l">سعر</th><th class="l">إجمالي</th></tr></thead>
+    <thead><tr><th>${t.colItem}</th><th class="l">${t.colReturned}</th><th class="l">${t.colPrice}</th><th class="l">${t.colTotal}</th></tr></thead>
     <tbody>${linesHtml}</tbody>
   </table>
   <hr>
   <table class="tot">
-    <tr><td>المجموع</td><td class="l num">${fmt2(totals.subtotal)}</td></tr>
-    ${totals.discountAmount > 0 ? `<tr><td>الخصم</td><td class="l num">-${fmt2(totals.discountAmount)}</td></tr>` : ""}
-    <tr><td>الضريبة (${fmt2(opts.vatRate)}% مشمولة)</td><td class="l num">${fmt2(totals.vatTotal)}</td></tr>
-    <tr class="grand"><td>إجمالي المرتجع</td><td class="l num">${fmt2(totals.total)} ر.س</td></tr>
+    <tr><td>${t.subtotal}</td><td class="l num">${fmt2(totals.subtotal)}</td></tr>
+    ${totals.discountAmount > 0 ? `<tr><td>${t.discount}</td><td class="l num">-${fmt2(totals.discountAmount)}</td></tr>` : ""}
+    <tr><td>${t.vat} (${fmt2(opts.vatRate)}% ${t.vatIncluded})</td><td class="l num">${fmt2(totals.vatTotal)}</td></tr>
+    <tr class="grand"><td>${t.creditGrandTotal}</td><td class="l num">${fmt2(totals.total)} ${t.currency}</td></tr>
   </table>
-  ${qrBlock(opts.zatcaQrDataUrl, false, on("qr"))}
-  ${footerBlock(opts.identity ?? null, "إشعار دائن ضريبي")}
+  ${qrBlock(opts.zatcaQrDataUrl, false, on("qr"), lang)}
+  ${footerBlock(opts.identity ?? null, lang, t.creditNoteSubtitle)}`;
+}
+
+export function buildCreditNoteHtml(opts: CreditNoteOptions): string {
+  const paper = opts.paperWidth ?? "80";
+  const language = normalizeLanguage(opts.identity?.language);
+
+  if (language === "both") {
+    const arBody = creditNoteBody(opts, "ar");
+    const enBody = creditNoteBody(opts, "en");
+    return `<!doctype html><html lang="ar" dir="rtl"><head><meta charset="utf-8">
+  <title>${LABELS.ar.creditNoteTitle} / ${LABELS.en.creditNoteTitle}</title><style>${baseCss(paper)}</style></head>
+  <body data-paper="${paper}" data-doc="credit-note" data-lang="both">
+  ${arBody}
+  <hr style="border-top: 3px double currentColor; margin: 10px 0;">
+  <div dir="ltr" lang="en">
+  ${enBody}
+  </div>
+  </body></html>`;
+  }
+
+  const dir = language === "en" ? "ltr" : "rtl";
+  const body = creditNoteBody(opts, language);
+  return `<!doctype html><html lang="${language}" dir="${dir}"><head><meta charset="utf-8">
+  <title>${LABELS[language].creditNoteTitle}</title><style>${baseCss(paper)}</style></head>
+  <body data-paper="${paper}" data-doc="credit-note" data-lang="${language}">
+  ${body}
   </body></html>`;
 }
 

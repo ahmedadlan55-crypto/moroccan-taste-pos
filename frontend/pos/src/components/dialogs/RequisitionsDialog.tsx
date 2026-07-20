@@ -33,20 +33,28 @@ import {
   type ShortageLinePayload,
   type ShortageRequestSummary,
 } from "@/lib/api";
+import { useT } from "@/i18n/I18nProvider";
+import { translateApiError } from "@/i18n/errorCodes";
+import type { TFunction } from "@/i18n/types";
 import { Dialog } from "../Dialog";
 import { Button, EmptyState, ErrorBanner, Skeleton, cn } from "../ui";
 import { dualUnitTotal, hasBigUnit, normalizeArabic } from "./StocktakeDialog";
 
 // ── Status map — port of _shrLoadHistory (app.js:4526-4529) ──────────────────
+// Values are i18n dotted-paths under requisitionsDialog.status.*, not literal text.
 export const SHR_STATUS_LABELS: Record<string, string> = {
-  pending: "بانتظار",
-  approved: "معتمد",
-  converted: "تم التحويل لـ PO",
-  rejected: "مرفوض",
-  partially_received: "استلام جزئي",
-  fully_received: "تم الاستلام",
-  closed: "مغلق",
+  pending: "requisitionsDialog.status.pending",
+  approved: "requisitionsDialog.status.approved",
+  converted: "requisitionsDialog.status.converted",
+  rejected: "requisitionsDialog.status.rejected",
+  partially_received: "requisitionsDialog.status.partiallyReceived",
+  fully_received: "requisitionsDialog.status.fullyReceived",
+  closed: "requisitionsDialog.status.closed",
 };
+function shrStatusLabel(status: string, t: TFunction): string {
+  const path = SHR_STATUS_LABELS[status];
+  return path ? t(path) : status;
+}
 const SHR_STATUS_CLASSES: Record<string, string> = {
   pending: "border-amber-300 bg-amber-50 text-amber-800",
   approved: "border-sky-200 bg-sky-50 text-sky-700",
@@ -135,6 +143,7 @@ interface RcvState {
 type Tab = "new" | "history";
 
 export function RequisitionsDialog({ open, onClose }: { open: boolean; onClose: () => void }) {
+  const t = useT();
   const { user, engineStatus, pushToast } = usePos();
   const online = engineStatus.online;
   const username = user?.username ?? "";
@@ -183,9 +192,9 @@ export function RequisitionsDialog({ open, onClose }: { open: boolean; onClose: 
         return next;
       });
     } catch (e) {
-      setLoadError((e as Error).message);
+      setLoadError(translateApiError(e, t));
     }
-  }, []);
+  }, [t]);
 
   const loadHistory = useCallback(async () => {
     setHistoryError(null);
@@ -195,10 +204,10 @@ export function RequisitionsDialog({ open, onClose }: { open: boolean; onClose: 
       // Client-side filter to my own requests — same as legacy app.js:4536.
       setHistory(list.filter((r) => r.username === username));
     } catch (e) {
-      setHistoryError((e as Error).message);
+      setHistoryError(translateApiError(e, t));
       setHistory([]);
     }
-  }, [username]);
+  }, [username, t]);
 
   useEffect(() => {
     if (!open) return;
@@ -293,14 +302,14 @@ export function RequisitionsDialog({ open, onClose }: { open: boolean; onClose: 
     setCart([]);
     setEditingId(null);
     setEditingNumber("");
-    pushToast("info", "تم إفراغ سلة النواقص");
+    pushToast("info", t("requisitionsDialog.toast.cartCleared"));
   }
 
   const validLines = useMemo(() => cart.filter((c) => c.requestedQty > 0), [cart]);
 
   async function submit() {
-    if (!cart.length) return pushToast("error", "أضف مادة واحدة على الأقل");
-    if (!validLines.length) return pushToast("error", "أدخل كمية لمادة واحدة على الأقل");
+    if (!cart.length) return pushToast("error", t("requisitionsDialog.toast.addAtLeastOne"));
+    if (!validLines.length) return pushToast("error", t("requisitionsDialog.toast.enterQtyAtLeastOne"));
     const lines: ShortageLinePayload[] = validLines.map((c) => ({
       invItemId: c.id,
       invItemName: c.name,
@@ -314,10 +323,10 @@ export function RequisitionsDialog({ open, onClose }: { open: boolean; onClose: 
     try {
       if (editingId) {
         await updateShortageRequest(editingId, { items: lines, notes: notes.trim() });
-        pushToast("success", `تم حفظ التعديلات على الطلب ${editingNumber}`.trim());
+        pushToast("success", t("requisitionsDialog.toast.editSaved", { number: editingNumber }).trim());
       } else {
         const r = await createShortageRequest({ items: lines, username, notes: notes.trim() });
-        pushToast("success", `تم إرسال طلب النواقص: ${r.requestNumber}`);
+        pushToast("success", t("requisitionsDialog.toast.created", { number: r.requestNumber }));
       }
       try {
         localStorage.removeItem(CART_KEY);
@@ -331,7 +340,7 @@ export function RequisitionsDialog({ open, onClose }: { open: boolean; onClose: 
       setTab("history");
       void loadHistory();
     } catch (e) {
-      pushToast("error", (e as Error).message);
+      pushToast("error", translateApiError(e, t));
     } finally {
       setBusy(false);
     }
@@ -343,7 +352,7 @@ export function RequisitionsDialog({ open, onClose }: { open: boolean; onClose: 
     try {
       const detail = await getShortageRequest(row.id);
       if (detail.status !== "pending") {
-        pushToast("error", "فقط الطلبات المعلقة يمكن تعديلها");
+        pushToast("error", t("requisitionsDialog.toast.onlyPendingEditable"));
         return;
       }
       const list = items ?? [];
@@ -375,9 +384,9 @@ export function RequisitionsDialog({ open, onClose }: { open: boolean; onClose: 
       setEditingId(row.id);
       setEditingNumber(row.requestNumber || "");
       setTab("new");
-      pushToast("info", "تم تحميل الطلب للتعديل — عدّل واحفظ");
+      pushToast("info", t("requisitionsDialog.toast.loadedForEdit"));
     } catch (e) {
-      pushToast("error", (e as Error).message);
+      pushToast("error", translateApiError(e, t));
     } finally {
       setRowBusyId(null);
     }
@@ -387,11 +396,11 @@ export function RequisitionsDialog({ open, onClose }: { open: boolean; onClose: 
     setRowBusyId(row.id);
     try {
       await deleteShortageRequest(row.id);
-      pushToast("success", `تم حذف الطلب ${row.requestNumber || ""}`.trim());
+      pushToast("success", t("requisitionsDialog.toast.deleted", { number: row.requestNumber || "" }).trim());
       setDeletingId(null);
       await loadHistory();
     } catch (e) {
-      pushToast("error", (e as Error).message);
+      pushToast("error", translateApiError(e, t));
     } finally {
       setRowBusyId(null);
     }
@@ -403,13 +412,13 @@ export function RequisitionsDialog({ open, onClose }: { open: boolean; onClose: 
     try {
       const detail = await getShortageRequest(row.id);
       if (detail.status !== "converted" || !detail.poId) {
-        pushToast("error", "هذا الطلب لم يُحوّل لأمر شراء بعد");
+        pushToast("error", t("requisitionsDialog.toast.notConvertedYet"));
         return;
       }
       const purchases = await getPurchases();
       const pur = purchases.find((p) => p.poId === detail.poId);
       if (!pur) {
-        pushToast("error", "لم يتم العثور على فاتورة الشراء");
+        pushToast("error", t("requisitionsDialog.toast.purchaseNotFound"));
         return;
       }
       const lines: RcvLine[] = (pur.items || []).map((it) => ({
@@ -422,7 +431,7 @@ export function RequisitionsDialog({ open, onClose }: { open: boolean; onClose: 
       }));
       setRcv({ requestNumber: detail.requestNumber || "", purchaseId: pur.id, lines });
     } catch (e) {
-      pushToast("error", (e as Error).message);
+      pushToast("error", translateApiError(e, t));
     } finally {
       setRowBusyId(null);
     }
@@ -452,11 +461,11 @@ export function RequisitionsDialog({ open, onClose }: { open: boolean; onClose: 
     setRcvBusy(true);
     try {
       await submitReceiveRequest({ purchaseId: rcv.purchaseId, items: lines, username });
-      pushToast("success", "تم إرسال طلب الاستلام للاعتماد");
+      pushToast("success", t("requisitionsDialog.toast.receiveSubmitted"));
       setRcv(null);
       await loadHistory();
     } catch (e) {
-      pushToast("error", (e as Error).message);
+      pushToast("error", translateApiError(e, t));
     } finally {
       setRcvBusy(false);
     }
@@ -467,19 +476,19 @@ export function RequisitionsDialog({ open, onClose }: { open: boolean; onClose: 
   const offlineBody = (
     <EmptyState
       icon={<PackageSearch className="h-10 w-10" aria-hidden />}
-      title="طلب النواقص والاستلام يتطلب اتصالًا"
-      hint="أعد المحاولة عند عودة الاتصال بالخادم — مسودة الطلب محفوظة على هذا الجهاز"
+      title={t("requisitionsDialog.offline.title")}
+      hint={t("requisitionsDialog.offline.hint")}
     />
   );
 
+  const tabDefs: { key: Tab; label: string }[] = [
+    { key: "new", label: t("requisitionsDialog.tabs.new") },
+    { key: "history", label: t("requisitionsDialog.tabs.history") },
+  ];
+
   const tabs = (
-    <div className="mb-3 grid grid-cols-2 gap-1 rounded-2xl bg-slate-100 p-1" role="tablist" aria-label="أقسام طلب النواقص">
-      {(
-        [
-          ["new", "طلب نواقص"],
-          ["history", "طلباتي والاستلام"],
-        ] as const
-      ).map(([key, label]) => (
+    <div className="mb-3 grid grid-cols-2 gap-1 rounded-2xl bg-slate-100 p-1" role="tablist" aria-label={t("requisitionsDialog.tabsAriaLabel")}>
+      {tabDefs.map(({ key, label }) => (
         <button
           key={key}
           type="button"
@@ -507,10 +516,10 @@ export function RequisitionsDialog({ open, onClose }: { open: boolean; onClose: 
       {editingId ? (
         <div className="flex items-center justify-between gap-2 rounded-2xl border border-sky-200 bg-sky-50 px-4 py-2.5">
           <p className="text-xs font-extrabold text-sky-800">
-            تعديل الطلب <span className="num">{editingNumber}</span>
+            {t("requisitionsDialog.editingBanner.label")} <span className="num">{editingNumber}</span>
           </p>
           <Button size="sm" variant="ghost" onClick={clearCart}>
-            إلغاء التعديل
+            {t("requisitionsDialog.editingBanner.cancel")}
           </Button>
         </div>
       ) : null}
@@ -522,8 +531,8 @@ export function RequisitionsDialog({ open, onClose }: { open: boolean; onClose: 
             type="text"
             value={query}
             onChange={(e) => setQuery(e.target.value)}
-            placeholder="ابحث عن مادة لإضافتها للطلب…"
-            aria-label="البحث عن مادة"
+            placeholder={t("requisitionsDialog.search.placeholder")}
+            aria-label={t("requisitionsDialog.search.ariaLabel")}
             className="field min-h-11 w-full"
             disabled={!items}
           />
@@ -535,9 +544,9 @@ export function RequisitionsDialog({ open, onClose }: { open: boolean; onClose: 
           </div>
         ) : null}
         {items && query.trim() ? (
-          <ul className="scrollbar-thin mt-1 max-h-48 overflow-y-auto rounded-xl border border-slate-200 bg-white shadow-sm" role="listbox" aria-label="نتائج البحث">
+          <ul className="scrollbar-thin mt-1 max-h-48 overflow-y-auto rounded-xl border border-slate-200 bg-white shadow-sm" role="listbox" aria-label={t("requisitionsDialog.search.resultsAriaLabel")}>
             {matches.length === 0 ? (
-              <li className="px-4 py-3 text-center text-xs font-bold text-slate-400">لا نتائج مطابقة</li>
+              <li className="px-4 py-3 text-center text-xs font-bold text-slate-400">{t("requisitionsDialog.search.noResults")}</li>
             ) : (
               matches.slice(0, 50).map((i) => {
                 const low = (Number(i.stock) || 0) <= (Number(i.minStock) || 0);
@@ -568,21 +577,21 @@ export function RequisitionsDialog({ open, onClose }: { open: boolean; onClose: 
       {cart.length === 0 ? (
         <EmptyState
           icon={<PackageSearch className="h-10 w-10" aria-hidden />}
-          title="سلة النواقص فارغة"
-          hint="ابحث عن مادة وأضفها ثم أدخل الكمية المطلوبة"
+          title={t("requisitionsDialog.cart.emptyTitle")}
+          hint={t("requisitionsDialog.cart.emptyHint")}
         />
       ) : (
         <div className="overflow-x-auto rounded-2xl border border-slate-200">
           <table className="w-full min-w-[560px] text-sm">
             <thead>
               <tr className="bg-slate-50 text-[11px] font-extrabold text-slate-500">
-                <th className="px-3 py-2 text-start">المادة</th>
-                <th className="px-2 py-2 text-center">كمية كبرى</th>
-                <th className="px-2 py-2 text-center">وحدة كبرى</th>
-                <th className="px-2 py-2 text-center">كمية صغرى</th>
-                <th className="px-2 py-2 text-center">وحدة صغرى</th>
-                <th className="px-2 py-2 text-center">المتوفر</th>
-                <th className="px-2 py-2 text-center">حذف</th>
+                <th className="px-3 py-2 text-start">{t("requisitionsDialog.cart.table.item")}</th>
+                <th className="px-2 py-2 text-center">{t("requisitionsDialog.cart.table.bigQty")}</th>
+                <th className="px-2 py-2 text-center">{t("requisitionsDialog.cart.table.bigUnit")}</th>
+                <th className="px-2 py-2 text-center">{t("requisitionsDialog.cart.table.smallQty")}</th>
+                <th className="px-2 py-2 text-center">{t("requisitionsDialog.cart.table.smallUnit")}</th>
+                <th className="px-2 py-2 text-center">{t("requisitionsDialog.cart.table.available")}</th>
+                <th className="px-2 py-2 text-center">{t("requisitionsDialog.cart.table.delete")}</th>
               </tr>
             </thead>
             <tbody>
@@ -602,7 +611,7 @@ export function RequisitionsDialog({ open, onClose }: { open: boolean; onClose: 
                           value={c._bigInput ?? ""}
                           onChange={(e) => updateDual(i, e.target.value === "" ? "" : Number(e.target.value), null)}
                           placeholder="0"
-                          aria-label={`الكمية الكبرى — ${c.name}`}
+                          aria-label={t("requisitionsDialog.cart.bigQtyAriaLabel", { name: c.name })}
                           className="field num min-h-11 w-16 text-center font-extrabold"
                         />
                       ) : (
@@ -619,7 +628,7 @@ export function RequisitionsDialog({ open, onClose }: { open: boolean; onClose: 
                         value={c._smallInput ?? ""}
                         onChange={(e) => updateDual(i, null, e.target.value === "" ? "" : Number(e.target.value))}
                         placeholder="0"
-                        aria-label={`الكمية الصغرى — ${c.name}`}
+                        aria-label={t("requisitionsDialog.cart.smallQtyAriaLabel", { name: c.name })}
                         className="field num min-h-11 w-16 text-center font-extrabold"
                       />
                     </td>
@@ -631,7 +640,7 @@ export function RequisitionsDialog({ open, onClose }: { open: boolean; onClose: 
                       <button
                         type="button"
                         onClick={() => removeLine(i)}
-                        aria-label={`حذف ${c.name}`}
+                        aria-label={t("requisitionsDialog.cart.deleteLineAriaLabel", { name: c.name })}
                         className="btn-press inline-flex h-11 w-11 items-center justify-center rounded-xl text-red-500 hover:bg-red-50"
                       >
                         <Trash2 className="h-4 w-4" aria-hidden />
@@ -649,8 +658,8 @@ export function RequisitionsDialog({ open, onClose }: { open: boolean; onClose: 
         type="text"
         value={notes}
         onChange={(e) => setNotes(e.target.value)}
-        placeholder="ملاحظات (اختياري)"
-        aria-label="ملاحظات الطلب"
+        placeholder={t("requisitionsDialog.notes.placeholder")}
+        aria-label={t("requisitionsDialog.notes.ariaLabel")}
         className="field min-h-11 w-full"
         maxLength={300}
       />
@@ -662,21 +671,21 @@ export function RequisitionsDialog({ open, onClose }: { open: boolean; onClose: 
       <div className="flex items-center gap-2">
         <Button size="sm" variant="ghost" onClick={() => setRcv(null)} disabled={rcvBusy}>
           <ArrowRight className="h-4 w-4" aria-hidden />
-          رجوع للطلبات
+          {t("requisitionsDialog.receive.back")}
         </Button>
         <p className="text-sm font-extrabold text-ink">
-          استلام مواد — <span className="num">{rcv.requestNumber}</span>
+          {t("requisitionsDialog.receive.heading")} — <span className="num">{rcv.requestNumber}</span>
         </p>
       </div>
       <div className="overflow-x-auto rounded-2xl border border-slate-200">
         <table className="w-full min-w-[520px] text-sm">
           <thead>
             <tr className="bg-slate-50 text-[11px] font-extrabold text-slate-500">
-              <th className="px-3 py-2 text-start">المادة</th>
-              <th className="px-2 py-2 text-center">المطلوب</th>
-              <th className="px-2 py-2 text-center">المستلم فعلياً</th>
-              <th className="px-2 py-2 text-center">الوحدة</th>
-              <th className="px-2 py-2 text-center">الفرق</th>
+              <th className="px-3 py-2 text-start">{t("requisitionsDialog.receive.table.item")}</th>
+              <th className="px-2 py-2 text-center">{t("requisitionsDialog.receive.table.ordered")}</th>
+              <th className="px-2 py-2 text-center">{t("requisitionsDialog.receive.table.received")}</th>
+              <th className="px-2 py-2 text-center">{t("requisitionsDialog.receive.table.unit")}</th>
+              <th className="px-2 py-2 text-center">{t("requisitionsDialog.receive.table.diff")}</th>
             </tr>
           </thead>
           <tbody>
@@ -694,7 +703,7 @@ export function RequisitionsDialog({ open, onClose }: { open: boolean; onClose: 
                       inputMode="numeric"
                       value={it.receivedQty}
                       onChange={(e) => rcvUpdateQty(i, e.target.value === "" ? "" : Number(e.target.value))}
-                      aria-label={`المستلم فعلياً — ${it.name}`}
+                      aria-label={t("requisitionsDialog.receive.receivedAriaLabel", { name: it.name })}
                       className="field num min-h-11 w-20 text-center font-extrabold"
                     />
                   </td>
@@ -713,7 +722,7 @@ export function RequisitionsDialog({ open, onClose }: { open: boolean; onClose: 
           </tbody>
         </table>
       </div>
-      <p className="text-[11px] font-bold text-slate-400">سيتم إرسال الكميات المستلمة للموافقة قبل تحديث المخزون.</p>
+      <p className="text-[11px] font-bold text-slate-400">{t("requisitionsDialog.receive.footnote")}</p>
     </div>
   ) : null;
 
@@ -728,19 +737,21 @@ export function RequisitionsDialog({ open, onClose }: { open: boolean; onClose: 
               <Skeleton className="h-20" />
             </div>
           ) : history.length === 0 ? (
-            <EmptyState icon={<Boxes className="h-10 w-10" aria-hidden />} title="لا توجد طلبات منك" hint="أرسل طلب نواقص ليظهر هنا مع حالته" />
+            <EmptyState icon={<Boxes className="h-10 w-10" aria-hidden />} title={t("requisitionsDialog.history.emptyTitle")} hint={t("requisitionsDialog.history.emptyHint")} />
           ) : (
             <ul className="space-y-2">
               {history.map((r) => {
                 const canReceive = r.status === "converted";
                 const isPending = r.status === "pending";
+                // extractRejectionReason() parses the backend-authored "[رفض: ...]" data tag —
+                // DATA, not UI copy; must never be translated (see function definition above).
                 const rejection = r.status === "rejected" ? extractRejectionReason(r.notes) : null;
                 return (
                   <li key={r.id} className="rounded-2xl border border-slate-200 bg-white p-3 shadow-sm">
                     <div className="flex items-center justify-between gap-2">
                       <span className="num text-sm font-extrabold text-teal-700">{r.requestNumber || ""}</span>
                       <span className={cn("chip text-[11px]", SHR_STATUS_CLASSES[r.status] ?? "border-slate-200 bg-slate-50 text-slate-500")}>
-                        {SHR_STATUS_LABELS[r.status] ?? r.status}
+                        {shrStatusLabel(r.status, t)}
                       </span>
                     </div>
                     <div className="mt-1 flex items-center gap-3 text-[11px] font-bold text-slate-400">
@@ -750,26 +761,26 @@ export function RequisitionsDialog({ open, onClose }: { open: boolean; onClose: 
                       </span>
                       <span className="flex items-center gap-1">
                         <Boxes className="h-3.5 w-3.5" aria-hidden />
-                        <span className="num">{r.totalItems || 0}</span> مادة
+                        <span className="num">{r.totalItems || 0}</span> {t("requisitionsDialog.history.itemsUnit")}
                       </span>
                     </div>
                     {rejection ? (
                       <div className="mt-2 rounded-xl bg-red-50 px-3 py-2 text-xs font-bold text-red-800" role="note">
-                        سبب الرفض: {rejection}
+                        {t("requisitionsDialog.history.rejectionLabel")} {rejection}
                       </div>
                     ) : null}
                     {isPending ? (
                       <div className="mt-2 flex gap-2">
                         <Button size="sm" variant="primary" className="flex-1" loading={rowBusyId === r.id} onClick={() => void startEdit(r)}>
                           <Pencil className="h-3.5 w-3.5" aria-hidden />
-                          تعديل
+                          {t("requisitionsDialog.history.edit")}
                         </Button>
                         <Button
                           size="sm"
                           variant="danger"
                           disabled={rowBusyId === r.id}
                           onClick={() => setDeletingId(deletingId === r.id ? null : r.id)}
-                          aria-label={`حذف الطلب ${r.requestNumber || ""}`}
+                          aria-label={t("requisitionsDialog.history.deleteAriaLabel", { number: r.requestNumber || "" })}
                         >
                           <Trash2 className="h-3.5 w-3.5" aria-hidden />
                         </Button>
@@ -777,16 +788,18 @@ export function RequisitionsDialog({ open, onClose }: { open: boolean; onClose: 
                     ) : null}
                     {deletingId === r.id ? (
                       <div className="mt-2 flex items-center justify-between gap-2 rounded-xl bg-red-50 px-3 py-2">
-                        <p className="text-xs font-bold text-red-800">حذف طلب النقص {r.requestNumber}؟</p>
+                        <p className="text-xs font-bold text-red-800">
+                          {t("requisitionsDialog.history.deleteConfirm", { number: r.requestNumber })}
+                        </p>
                         <Button size="sm" variant="danger" loading={rowBusyId === r.id} onClick={() => void confirmDelete(r)}>
-                          تأكيد الحذف
+                          {t("requisitionsDialog.history.confirmDelete")}
                         </Button>
                       </div>
                     ) : null}
                     {canReceive ? (
                       <Button size="sm" variant="primary" className="mt-2 w-full" loading={rowBusyId === r.id} onClick={() => void openReceive(r)}>
                         <PackageOpen className="h-4 w-4" aria-hidden />
-                        استلام المواد
+                        {t("requisitionsDialog.history.receiveMaterials")}
                       </Button>
                     ) : null}
                   </li>
@@ -802,13 +815,13 @@ export function RequisitionsDialog({ open, onClose }: { open: boolean; onClose: 
     : tab === "new"
       ? (
           <div className="flex items-center gap-2">
-            <Button variant="danger" size="sm" onClick={clearCart} disabled={!cart.length} title="إفراغ سلة النواقص">
+            <Button variant="danger" size="sm" onClick={clearCart} disabled={!cart.length} title={t("requisitionsDialog.footer.clearCartTitle")}>
               <Trash2 className="h-4 w-4" aria-hidden />
-              إفراغ السلة
+              {t("requisitionsDialog.footer.clearCartLabel")}
             </Button>
-            <span className="ms-auto text-[11px] font-bold text-slate-400">تُحفظ المسودة تلقائيًا</span>
+            <span className="ms-auto text-[11px] font-bold text-slate-400">{t("requisitionsDialog.footer.autosaveHint")}</span>
             <Button variant="primary" onClick={() => void submit()} loading={busy} disabled={!validLines.length}>
-              {editingId ? "حفظ التعديلات" : "إرسال الطلب"} (<span className="num">{validLines.length}</span>)
+              {editingId ? t("requisitionsDialog.footer.saveEdits") : t("requisitionsDialog.footer.submitNew")} (<span className="num">{validLines.length}</span>)
             </Button>
           </div>
         )
@@ -816,7 +829,7 @@ export function RequisitionsDialog({ open, onClose }: { open: boolean; onClose: 
         ? (
             <Button variant="primary" className="w-full" onClick={() => void submitReceive()} loading={rcvBusy}>
               <PackageOpen className="h-4 w-4" aria-hidden />
-              إرسال طلب الاستلام
+              {t("requisitionsDialog.footer.submitReceive")}
             </Button>
           )
         : null;
@@ -825,7 +838,7 @@ export function RequisitionsDialog({ open, onClose }: { open: boolean; onClose: 
     <Dialog
       open={open}
       onClose={onClose}
-      title="طلب النواقص والاستلام"
+      title={t("requisitionsDialog.title")}
       widthClass="max-w-3xl"
       footer={footer}
       locked={busy || rcvBusy}

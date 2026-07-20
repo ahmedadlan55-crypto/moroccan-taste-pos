@@ -19,10 +19,17 @@ vi.mock("@/state/store", () => ({
 }));
 
 import { PaymentDialog, CHECKOUT_WATCHDOG_MS } from "../dialogs/PaymentDialog";
+// PaymentDialog resolves strings via useT(), which throws without an
+// ancestor I18nProvider (see i18n/I18nProvider.tsx).
+import { I18nProvider } from "@/i18n/I18nProvider";
 
 function openDialog(ctx: PosContextValue, onClose = vi.fn()) {
   currentCtx = ctx;
-  render(<PaymentDialog open onClose={onClose} />);
+  render(
+    <I18nProvider>
+      <PaymentDialog open onClose={onClose} />
+    </I18nProvider>,
+  );
   return onClose;
 }
 

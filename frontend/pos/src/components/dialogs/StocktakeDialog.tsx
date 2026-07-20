@@ -43,6 +43,10 @@ import {
 } from "@/lib/api";
 import { fmtDateTime } from "@/lib/format";
 import { printHtml } from "@/lib/receipt";
+import { useLang, useT } from "@/i18n/I18nProvider";
+import { translateApiError } from "@/i18n/errorCodes";
+import { stocktakeDialog as stocktakeDialogAr } from "@/i18n/dictionaries/ar/stocktakeDialog";
+import { stocktakeDialog as stocktakeDialogEn } from "@/i18n/dictionaries/en/stocktakeDialog";
 import { Dialog } from "../Dialog";
 import { Button, EmptyState, ErrorBanner, Skeleton, cn } from "../ui";
 
@@ -131,17 +135,36 @@ export interface CountSheetLine {
   counted: number;
 }
 
-export function buildCountSheetHtml(stNumber: string, items: CountSheetLine[], cashier: string, notes: string): string {
+export type StocktakeLang = "ar" | "en";
+
+/**
+ * Builds the printable A4 count sheet as a standalone HTML string. This runs
+ * OUTSIDE React (called from a plain onClick handler, then handed to
+ * printHtml/window.open), so it cannot use the useT() hook — it imports the
+ * ar/en dictionary objects directly and picks one by `lang` (default 'ar',
+ * matching pos_lang's own default).
+ */
+export function buildCountSheetHtml(
+  stNumber: string,
+  items: CountSheetLine[],
+  cashier: string,
+  notes: string,
+  lang: StocktakeLang = "ar",
+): string {
+  const cs = (lang === "en" ? stocktakeDialogEn : stocktakeDialogAr).countSheet;
+  const dir = lang === "en" ? "ltr" : "rtl";
+  // LTR forced: numeric/phone - do not remove, see i18n plan
+  const stNumberHtml = `<b dir="ltr">${esc(stNumber)}</b>`;
   const rows = items
     .map(
       (c, i) => `<tr>
-        <td>${i + 1}</td><td style="text-align:right">${esc(c.name)}</td><td>${esc(c.unit)}</td>
+        <td>${i + 1}</td><td style="text-align:start">${esc(c.name)}</td><td>${esc(c.unit)}</td>
         <td style="font-weight:800">${c.counted}</td>
       </tr>`,
     )
     .join("");
-  return `<!doctype html><html dir="rtl" lang="ar"><head><meta charset="utf-8">
-  <title>محضر جرد ${esc(stNumber)}</title>
+  return `<!doctype html><html dir="${dir}" lang="${lang}"><head><meta charset="utf-8">
+  <title>${esc(cs.docTitle)} ${esc(stNumber)}</title>
   <style>
     @page { size: A4 portrait; margin: 12mm; }
     body { font-family: 'Cairo', 'Segoe UI', Tahoma, sans-serif; color: #0f172a; margin: 0; }
@@ -154,14 +177,14 @@ export function buildCountSheetHtml(stNumber: string, items: CountSheetLine[], c
     .print-btn { margin: 12px 0; padding: 10px 18px; font-size: 14px; border-radius: 10px; border: 0; background: #0f766e; color: #fff; }
     @media print { .print-btn { display: none; } }
   </style></head><body>
-  <h1>محضر جرد المخزون</h1>
-  <p class="muted">رقم المحضر: <b dir="ltr">${esc(stNumber)}</b> · الكاشير: ${esc(cashier)} · ${fmtDateTime(new Date())}</p>
-  <p><span class="badge">أُرسل للاعتماد — بانتظار مراجعة الإدارة</span></p>
-  ${notes ? `<p class="muted">ملاحظات: ${esc(notes)}</p>` : ""}
-  <button class="print-btn" onclick="window.print()">🖨 طباعة / PDF</button>
-  <table><thead><tr><th>#</th><th style="text-align:right">المادة</th><th>الوحدة</th><th>الكمية المعدودة</th></tr></thead>
+  <h1>${esc(cs.heading)}</h1>
+  <p class="muted">${esc(cs.numberLabel)} ${stNumberHtml} · ${esc(cs.cashierLabel)} ${esc(cashier)} · ${fmtDateTime(new Date())}</p>
+  <p><span class="badge">${esc(cs.pendingApprovalBadge)}</span></p>
+  ${notes ? `<p class="muted">${esc(cs.notesLabel)} ${esc(notes)}</p>` : ""}
+  <button class="print-btn" onclick="window.print()">${esc(cs.printButton)}</button>
+  <table><thead><tr><th>${esc(cs.colIndex)}</th><th style="text-align:start">${esc(cs.colItem)}</th><th>${esc(cs.colUnit)}</th><th>${esc(cs.colCounted)}</th></tr></thead>
   <tbody>${rows}</tbody></table>
-  <p class="tot">عدد المواد المعدودة: ${items.length}</p>
+  <p class="tot">${esc(cs.totalCountedLabel)} ${items.length}</p>
   </body></html>`;
 }
 
@@ -177,6 +200,8 @@ interface DoneResult {
 
 export function StocktakeDialog({ open, onClose }: { open: boolean; onClose: () => void }) {
   const { user, engineStatus, pushToast } = usePos();
+  const t = useT();
+  const lang = useLang();
 
   const [items, setItems] = useState<InvItem[] | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -297,20 +322,20 @@ export function StocktakeDialog({ open, onClose }: { open: boolean; onClose: () 
       /* ignore */
     }
     setCart([]);
-    pushToast("info", "تم مسح المحضر");
+    pushToast("info", t("stocktakeDialog.toasts.cartCleared"));
   }
 
   const counted = useMemo(() => cart.filter((c) => c.actualQty !== "" && c.actualQty !== null), [cart]);
 
   function goReview() {
-    if (!cart.length) return pushToast("error", "أضف مادة واحدة على الأقل");
-    if (!counted.length) return pushToast("error", "أدخل الكمية الفعلية لمادة واحدة على الأقل");
+    if (!cart.length) return pushToast("error", t("stocktakeDialog.toasts.addAtLeastOneItem"));
+    if (!counted.length) return pushToast("error", t("stocktakeDialog.toasts.enterQtyAtLeastOne"));
     setStep("review");
   }
 
   async function submit() {
     const username = user?.username ?? "";
-    const finalNotes = notes.trim() || `جرد بواسطة ${username}`;
+    const finalNotes = notes.trim() || t("stocktakeDialog.misc.defaultNotesPrefix", { username });
     const sheetLines: CountSheetLine[] = counted.map((c) => ({
       name: c.name,
       unit: c.unit || "",
@@ -323,10 +348,7 @@ export function StocktakeDialog({ open, onClose }: { open: boolean; onClose: () 
       // 422s on a missing warehouse rather than auto-resolving.
       const warehouseId = await resolveStocktakeWarehouseId();
       if (!warehouseId) {
-        pushToast(
-          "error",
-          "تعذّر تحديد مستودع الكاشير — لا يوجد مستودع افتراضي مرتبط بحسابك. راجع الإدارة قبل الجرد.",
-        );
+        pushToast("error", t("stocktakeDialog.toasts.noWarehouse"));
         setBusy(false);
         return;
       }
@@ -341,7 +363,7 @@ export function StocktakeDialog({ open, onClose }: { open: boolean; onClose: () 
         stkIdempotencyKey(),
       );
       const id = created.id ?? created.data?.id;
-      if (!id) throw new Error("لم يُرجِع الخادم رقم محضر الجرد");
+      if (!id) throw new Error(t("stocktakeDialog.errors.noDocumentNumber"));
       let version = created.version ?? 1;
       const stNumber = created.documentNumber ?? created.number ?? id;
 
@@ -352,11 +374,11 @@ export function StocktakeDialog({ open, onClose }: { open: boolean; onClose: () 
       // 3. counts — record the counted base-unit quantities.
       const saved = await saveStocktakeCountsV2(id, countsPayload);
       if (!saved.applied) {
-        throw new Error("تعذّر تسجيل الكميات المعدودة — لم يُجمَّد أي صنف لهذا المستودع");
+        throw new Error(t("stocktakeDialog.errors.countsNotSaved"));
       }
       if (Array.isArray(saved.conflicts) && saved.conflicts.length) {
         // Rare online: a movement raced the count. Surface it; the cashier recounts.
-        throw new Error(saved.conflicts[0]?.message || "حدثت حركة مخزون أثناء العدّ — أعد المحاولة");
+        throw new Error(saved.conflicts[0]?.message || t("stocktakeDialog.errors.stockMovementConflict"));
       }
 
       // 4. submit — hand off for the manager's approval. Cashier's job ends here.
@@ -371,9 +393,9 @@ export function StocktakeDialog({ open, onClose }: { open: boolean; onClose: () 
       setNotes("");
       setResult({ stocktakeNumber: stNumber, lines: sheetLines, notes: finalNotes });
       setStep("done");
-      pushToast("success", "أُرسل محضر الجرد للاعتماد");
+      pushToast("success", t("stocktakeDialog.toasts.submittedForApproval"));
     } catch (e) {
-      pushToast("error", (e as Error).message); // server message verbatim
+      pushToast("error", translateApiError(e, t));
     } finally {
       setBusy(false);
     }
@@ -384,8 +406,8 @@ export function StocktakeDialog({ open, onClose }: { open: boolean; onClose: () 
   const offlineBody = (
     <EmptyState
       icon={<ClipboardCheck className="h-10 w-10" aria-hidden />}
-      title="الجرد يتطلب اتصالًا"
-      hint="أعد المحاولة عند عودة الاتصال بالخادم — مسودة المحضر محفوظة على هذا الجهاز"
+      title={t("stocktakeDialog.offline.title")}
+      hint={t("stocktakeDialog.offline.hint")}
     />
   );
 
@@ -401,8 +423,8 @@ export function StocktakeDialog({ open, onClose }: { open: boolean; onClose: () 
             type="text"
             value={query}
             onChange={(e) => setQuery(e.target.value)}
-            placeholder="ابحث عن مادة خام لإضافتها للمحضر…"
-            aria-label="البحث عن مادة"
+            placeholder={t("stocktakeDialog.search.placeholder")}
+            aria-label={t("stocktakeDialog.search.ariaLabel")}
             className="field min-h-11 w-full"
             disabled={!items}
           />
@@ -414,9 +436,9 @@ export function StocktakeDialog({ open, onClose }: { open: boolean; onClose: () 
           </div>
         ) : null}
         {items && query.trim() ? (
-          <ul className="scrollbar-thin mt-1 max-h-48 overflow-y-auto rounded-xl border border-slate-200 bg-white shadow-sm" role="listbox" aria-label="نتائج البحث">
+          <ul className="scrollbar-thin mt-1 max-h-48 overflow-y-auto rounded-xl border border-slate-200 bg-white shadow-sm" role="listbox" aria-label={t("stocktakeDialog.search.resultsAriaLabel")}>
             {matches.length === 0 ? (
-              <li className="px-4 py-3 text-center text-xs font-bold text-slate-400">لا نتائج مطابقة</li>
+              <li className="px-4 py-3 text-center text-xs font-bold text-slate-400">{t("stocktakeDialog.search.noResults")}</li>
             ) : (
               matches.slice(0, 50).map((i) => {
                 const low = (Number(i.stock) || 0) <= (Number(i.minStock) || 0);
@@ -444,22 +466,22 @@ export function StocktakeDialog({ open, onClose }: { open: boolean; onClose: () 
       {cart.length === 0 ? (
         <EmptyState
           icon={<ClipboardCheck className="h-10 w-10" aria-hidden />}
-          title="محضر الجرد فارغ"
-          hint="ابحث عن مادة وأضفها ثم أدخل الكمية الفعلية المعدودة"
+          title={t("stocktakeDialog.cart.emptyTitle")}
+          hint={t("stocktakeDialog.cart.emptyHint")}
         />
       ) : (
         <div className="overflow-x-auto rounded-2xl border border-slate-200">
           <table className="w-full min-w-[560px] text-sm">
             <thead>
               <tr className="bg-slate-50 text-[11px] font-extrabold text-slate-500">
-                <th className="px-3 py-2 text-start">المادة</th>
-                <th className="px-2 py-2 text-center">الكمية الكبيرة</th>
-                <th className="px-2 py-2 text-center">وحدة كبرى</th>
-                <th className="px-2 py-2 text-center">الكمية الصغيرة</th>
-                <th className="px-2 py-2 text-center">وحدة صغرى</th>
-                <th className="px-2 py-2 text-center">النظام</th>
-                <th className="px-2 py-2 text-center">الفرق</th>
-                <th className="px-2 py-2 text-center">حذف</th>
+                <th className="px-3 py-2 text-start">{t("stocktakeDialog.table.item")}</th>
+                <th className="px-2 py-2 text-center">{t("stocktakeDialog.table.bigQty")}</th>
+                <th className="px-2 py-2 text-center">{t("stocktakeDialog.table.bigUnit")}</th>
+                <th className="px-2 py-2 text-center">{t("stocktakeDialog.table.smallQty")}</th>
+                <th className="px-2 py-2 text-center">{t("stocktakeDialog.table.smallUnit")}</th>
+                <th className="px-2 py-2 text-center">{t("stocktakeDialog.table.system")}</th>
+                <th className="px-2 py-2 text-center">{t("stocktakeDialog.table.variance")}</th>
+                <th className="px-2 py-2 text-center">{t("common.delete")}</th>
               </tr>
             </thead>
             <tbody>
@@ -478,7 +500,7 @@ export function StocktakeDialog({ open, onClose }: { open: boolean; onClose: () 
                           value={c._bigInput ?? ""}
                           onChange={(e) => updateDual(i, e.target.value === "" ? "" : Number(e.target.value), null)}
                           placeholder="0"
-                          aria-label={`الكمية الكبيرة — ${c.name}`}
+                          aria-label={t("stocktakeDialog.table.bigQtyAria", { name: c.name })}
                           className="field num min-h-11 w-16 text-center font-extrabold"
                         />
                       ) : (
@@ -495,7 +517,7 @@ export function StocktakeDialog({ open, onClose }: { open: boolean; onClose: () 
                         value={c._smallInput ?? ""}
                         onChange={(e) => updateDual(i, null, e.target.value === "" ? "" : Number(e.target.value))}
                         placeholder="0"
-                        aria-label={`الكمية الصغيرة — ${c.name}`}
+                        aria-label={t("stocktakeDialog.table.smallQtyAria", { name: c.name })}
                         className="field num min-h-11 w-16 text-center font-extrabold"
                       />
                     </td>
@@ -511,7 +533,7 @@ export function StocktakeDialog({ open, onClose }: { open: boolean; onClose: () 
                       <button
                         type="button"
                         onClick={() => removeLine(i)}
-                        aria-label={`حذف ${c.name}`}
+                        aria-label={t("stocktakeDialog.table.deleteAria", { name: c.name })}
                         className="btn-press inline-flex h-11 w-11 items-center justify-center rounded-xl text-red-500 hover:bg-red-50"
                       >
                         <Trash2 className="h-4 w-4" aria-hidden />
@@ -529,8 +551,8 @@ export function StocktakeDialog({ open, onClose }: { open: boolean; onClose: () 
         type="text"
         value={notes}
         onChange={(e) => setNotes(e.target.value)}
-        placeholder="ملاحظات الجرد (اختياري)"
-        aria-label="ملاحظات الجرد"
+        placeholder={t("stocktakeDialog.notes.placeholder")}
+        aria-label={t("stocktakeDialog.notes.ariaLabel")}
         className="field min-h-11 w-full"
         maxLength={300}
       />
@@ -540,9 +562,10 @@ export function StocktakeDialog({ open, onClose }: { open: boolean; onClose: () 
   const reviewBody = (
     <div className="flex flex-col gap-3">
       <p className="text-sm font-bold text-slate-500">
-        مراجعة المحضر قبل الإرسال — <span className="num">{counted.length}</span> مادة معدودة
+        {t("stocktakeDialog.review.summaryPrefix")} <span className="num">{counted.length}</span>{" "}
+        {t("stocktakeDialog.review.countedSuffix")}
         {cart.length > counted.length ? (
-          <span className="text-slate-400"> (سيتم تجاهل {cart.length - counted.length} مادة بلا كمية)</span>
+          <span className="text-slate-400"> ({t("stocktakeDialog.review.ignoredHint", { count: cart.length - counted.length })})</span>
         ) : null}
       </p>
       <ul className="divide-y divide-slate-100 rounded-2xl border border-slate-200">
@@ -564,59 +587,58 @@ export function StocktakeDialog({ open, onClose }: { open: boolean; onClose: () 
       </ul>
       {/* Still blind: no system qty / variance. The manager reviews the variance
           on the ERP approval screen after this is submitted. */}
-      <p className="text-[11px] font-bold text-slate-400">
-        يُرسَل المحضر إلى مستودعك لاعتماد الإدارة — يُحتسب الفرق ويُراجَع بعد الإرسال (جرد أعمى).
-      </p>
+      <p className="text-[11px] font-bold text-slate-400">{t("stocktakeDialog.review.blindNotice")}</p>
     </div>
   );
 
   const doneBody = result ? (
     <div className="flex flex-col items-center gap-3 py-4 text-center">
       <CheckCircle2 className="h-12 w-12 text-teal-600" aria-hidden />
-      <p className="text-sm font-extrabold text-ink">أُرسل محضر الجرد للاعتماد</p>
+      <p className="text-sm font-extrabold text-ink">{t("stocktakeDialog.done.submittedTitle")}</p>
       <p className="text-xs font-bold text-slate-500">
-        رقم المحضر: <span className="num text-sm font-extrabold text-teal-700">{result.stocktakeNumber || "—"}</span>
+        {t("stocktakeDialog.done.numberLabel")}{" "}
+        <span className="num text-sm font-extrabold text-teal-700">{result.stocktakeNumber || "—"}</span>
       </p>
       <p className="rounded-xl bg-amber-50 px-3 py-2 text-[11px] font-bold text-amber-800">
-        بانتظار مراجعة الإدارة واعتمادها — لا يلزمك أي إجراء إضافي.
+        {t("stocktakeDialog.done.pendingNotice")}
       </p>
       <Button
         variant="secondary"
         onClick={() => {
-          if (!printHtml(buildCountSheetHtml(result.stocktakeNumber, result.lines, user?.username ?? "", result.notes))) {
-            pushToast("error", "المتصفح منع نافذة الطباعة");
+          if (!printHtml(buildCountSheetHtml(result.stocktakeNumber, result.lines, user?.username ?? "", result.notes, lang))) {
+            pushToast("error", t("stocktakeDialog.errors.printBlocked"));
           }
         }}
       >
         <Printer className="h-4 w-4" aria-hidden />
-        طباعة محضر العدّ / PDF
+        {t("stocktakeDialog.done.printButton")}
       </Button>
     </div>
   ) : null;
 
   const footer = !online ? null : step === "entry" ? (
     <div className="flex items-center gap-2">
-      <Button variant="danger" size="sm" onClick={clearCart} disabled={!cart.length} title="مسح كامل المحضر">
+      <Button variant="danger" size="sm" onClick={clearCart} disabled={!cart.length} title={t("stocktakeDialog.footer.clearCartTitle")}>
         <Trash2 className="h-4 w-4" aria-hidden />
-        مسح المحضر
+        {t("stocktakeDialog.footer.clearCart")}
       </Button>
-      <span className="ms-auto text-[11px] font-bold text-slate-400">تُحفظ المسودة تلقائيًا</span>
+      <span className="ms-auto text-[11px] font-bold text-slate-400">{t("stocktakeDialog.footer.autoSaveHint")}</span>
       <Button variant="primary" onClick={goReview} disabled={!counted.length}>
-        مراجعة وإرسال (<span className="num">{counted.length}</span>)
+        {t("stocktakeDialog.footer.reviewAndSend")} (<span className="num">{counted.length}</span>)
       </Button>
     </div>
   ) : step === "review" ? (
     <div className="flex items-center justify-between gap-2">
       <Button variant="secondary" onClick={() => setStep("entry")} disabled={busy}>
-        رجوع للتعديل
+        {t("stocktakeDialog.footer.backToEdit")}
       </Button>
       <Button variant="primary" onClick={() => void submit()} loading={busy}>
-        إرسال للاعتماد
+        {t("stocktakeDialog.footer.sendForApproval")}
       </Button>
     </div>
   ) : (
     <Button variant="primary" className="w-full" onClick={onClose}>
-      إغلاق
+      {t("common.close")}
     </Button>
   );
 
@@ -624,7 +646,7 @@ export function StocktakeDialog({ open, onClose }: { open: boolean; onClose: () 
     <Dialog
       open={open}
       onClose={onClose}
-      title={step === "done" ? "أُرسل الجرد للاعتماد" : "جرد المخزون"}
+      title={step === "done" ? t("stocktakeDialog.doneTitle") : t("stocktakeDialog.title")}
       widthClass="max-w-3xl"
       footer={footer}
       locked={busy}

@@ -27,6 +27,8 @@ import { fmt2, fmtInt } from "@/lib/format";
 import { buildReceiptHtml, printHtml, resolvePaperWidth } from "@/lib/receipt";
 import type { ApproverCredentials, LocalOrder, Payment, ReceiptIdentity, SaleRow } from "@/lib/types";
 import { usePos } from "@/state/store";
+import { translateApiError } from "@/i18n/errorCodes";
+import { useT } from "@/i18n/I18nProvider";
 import { Dialog } from "../Dialog";
 import { Button, EmptyState, ErrorBanner, Money, Skeleton, cn } from "../ui";
 import { ManagerApprovalDialog } from "./ManagerApprovalDialog";
@@ -61,7 +63,15 @@ export function needsApprovalGate(action: "void" | "return", privileged: boolean
  *    endpoint does not echo per-line categories.
  *  • a reversed document prints with its ملغاة/مرتجع stamp + serial.
  */
-export function reprintHtmlFromInvoice(inv: InvoiceDetail, catalog: unknown, fallbackCashier: string): string {
+export function reprintHtmlFromInvoice(
+  inv: InvoiceDetail,
+  catalog: unknown,
+  fallbackCashier: string,
+  // Localized reversal-stamp labels. Optional + defaulted to the legacy
+  // bilingual Arabic stamp so existing (language-agnostic) callers/tests keep
+  // working unchanged; the dialog passes translated labels via useT().
+  stampLabels?: { voided: string; returned: string },
+): string {
   const cat = catalog as { identity?: ReceiptIdentity | null; receiptShowFields?: null; vatRate?: number } | null;
   const vatRate = Number(cat?.vatRate) || 15;
   const now = Date.now();
@@ -130,9 +140,9 @@ export function reprintHtmlFromInvoice(inv: InvoiceDetail, catalog: unknown, fal
 
   const stamp =
     inv.zatcaType === "cancellation"
-      ? `ملغاة · VOIDED${inv.voidSerial ? ` #${inv.voidSerial}` : ""}`
+      ? `${stampLabels?.voided ?? "ملغاة · VOIDED"}${inv.voidSerial ? ` #${inv.voidSerial}` : ""}`
       : inv.zatcaType === "credit_note"
-        ? `مرتجع · RETURNED${inv.returnSerial ? ` #${inv.returnSerial}` : ""}`
+        ? `${stampLabels?.returned ?? "مرتجع · RETURNED"}${inv.returnSerial ? ` #${inv.returnSerial}` : ""}`
         : null;
 
   const total = Number(inv.totalFinal) || 0;
@@ -185,10 +195,11 @@ function todayISO(): string {
 }
 
 function StatusBadge({ row }: { row: SaleRow }) {
+  const t = useT();
   if (isCancelled(row)) {
     return (
       <span className="chip border-red-200 bg-red-50 px-2 py-0.5 text-[10px] font-extrabold text-red-700">
-        ملغاة
+        {t("myInvoicesDialog.badgeCancelled")}
         {row.voidSerial ? <span className="num opacity-70">#{row.voidSerial}</span> : null}
       </span>
     );
@@ -196,13 +207,15 @@ function StatusBadge({ row }: { row: SaleRow }) {
   if (isReturned(row)) {
     return (
       <span className="chip border-orange-200 bg-orange-50 px-2 py-0.5 text-[10px] font-extrabold text-orange-700">
-        مرتجع
+        {t("myInvoicesDialog.badgeReturned")}
         {row.returnSerial ? <span className="num opacity-70">#{row.returnSerial}</span> : null}
       </span>
     );
   }
   return (
-    <span className="chip border-teal-200 bg-teal-50 px-2 py-0.5 text-[10px] font-extrabold text-teal-700">سارية</span>
+    <span className="chip border-teal-200 bg-teal-50 px-2 py-0.5 text-[10px] font-extrabold text-teal-700">
+      {t("myInvoicesDialog.badgeActive")}
+    </span>
   );
 }
 
@@ -215,7 +228,8 @@ function Stat({ label, value, tone }: { label: string; value: string; tone: stri
 }
 
 export function MyInvoicesDialog({ open, onClose }: { open: boolean; onClose: () => void }) {
-  const { user, shiftId, pushToast, engineStatus, catalog, o2cEnabled } = usePos();
+  const { user, shiftId, pushToast, engineStatus, catalog, o2cEnabled, posCan } = usePos();
+  const t = useT();
   const queryClient = useQueryClient();
   const [query, setQuery] = useState("");
   const [filter, setFilter] = useState<Filter>("all");
@@ -227,7 +241,10 @@ export function MyInvoicesDialog({ open, onClose }: { open: boolean; onClose: ()
   const [returnRow, setReturnRow] = useState<SaleRow | null>(null);
 
   // Privileged roles skip the approval dialog — the server still authorizes.
-  const isPrivileged = ["admin", "manager"].includes(String(user?.role ?? "").toLowerCase());
+  // Capability-aware: posCan grants the same skip (broadening only — see
+  // lib/capabilities.ts); the server re-authorizes every void/return either way.
+  const isPrivileged =
+    ["admin", "manager"].includes(String(user?.role ?? "").toLowerCase()) || posCan("pos.sale.void.override");
   // Owner opt-out (void only) — rides in on the catalog; absent → gated.
   const requireVoidApproval =
     (catalog as unknown as { requireVoidApproval?: boolean } | null)?.requireVoidApproval !== false;
@@ -288,7 +305,7 @@ export function MyInvoicesDialog({ open, onClose }: { open: boolean; onClose: ()
     mutationFn: async (v: { row: SaleRow; action: "void" | "return"; creds?: ApproverCredentials; reason: string }) =>
       v.action === "void" ? voidSale(v.row.orderId, v.creds) : returnSale(v.row.orderId, v.reason, v.creds),
     onSuccess: (_d, v) => {
-      pushToast("success", v.action === "void" ? "أُلغيت الفاتورة" : "سُجّل المرتجع (إشعار دائن)");
+      pushToast("success", v.action === "void" ? t("myInvoicesDialog.voidSuccessToast") : t("myInvoicesDialog.returnSuccessToast"));
       setPending(null);
       setApprovalError(null);
       refresh();
@@ -302,10 +319,7 @@ export function MyInvoicesDialog({ open, onClose }: { open: boolean; onClose: ()
       // rather than showing the raw gate message, which redirects to /sales — a
       // SPA that no longer exists.
       if (err?.code === "O2C_MODULE_ACTIVE") {
-        pushToast(
-          "error",
-          "الإلغاء والمرتجع منقولان إلى وحدة «المبيعات والعملاء» — غير متاحين من الكاشير حاليًا.",
-        );
+        pushToast("error", t("myInvoicesDialog.o2cModuleActiveToast"));
         setPending(null);
         return;
       }
@@ -313,15 +327,15 @@ export function MyInvoicesDialog({ open, onClose }: { open: boolean; onClose: ()
       // were sent) — keep the dialog open so the manager can retry.
       if (err?.code === "approval_required" || err?.status === 403) {
         if (pending) {
-          setApprovalError(err.message);
+          setApprovalError(translateApiError(e, t));
           return;
         }
         // Privileged path that still got refused → open the gate as a fallback.
-        setApprovalError(err.message);
+        setApprovalError(translateApiError(e, t));
         setPending({ row: v.row, action: v.action });
         return;
       }
-      pushToast("error", err?.message ?? "تعذّر تنفيذ الإجراء");
+      pushToast("error", translateApiError(e, t));
       setPending(null);
     },
   });
@@ -332,7 +346,7 @@ export function MyInvoicesDialog({ open, onClose }: { open: boolean; onClose: ()
       // No dialog: admin/manager (legacy bypass, app.js:3527) or the owner
       // opted voids out (app.js:3519 — the server skips the same gate).
       // A return still needs a reason; legacy defaults it (app.js:3547).
-      reverse.mutate({ row, action, reason: action === "return" ? "مرتجع عميل" : "" });
+      reverse.mutate({ row, action, reason: action === "return" ? t("myInvoicesDialog.returnDefaultReason") : "" });
       return;
     }
     setPending({ row, action });
@@ -345,11 +359,16 @@ export function MyInvoicesDialog({ open, onClose }: { open: boolean; onClose: ()
     setPrintingId(row.orderId);
     try {
       const inv = await getInvoice(row.orderId);
-      if (!inv) throw new Error("تعذّر تحميل بيانات الفاتورة للطباعة");
-      const ok = printHtml(reprintHtmlFromInvoice(inv, catalog, row.username || user?.username || ""));
-      if (!ok) pushToast("error", "المتصفح منع نافذة الطباعة — اسمح بالنوافذ المنبثقة");
+      if (!inv) throw new Error(t("myInvoicesDialog.reprintLoadFailed"));
+      const ok = printHtml(
+        reprintHtmlFromInvoice(inv, catalog, row.username || user?.username || "", {
+          voided: t("myInvoicesDialog.stampVoided"),
+          returned: t("myInvoicesDialog.stampReturned"),
+        }),
+      );
+      if (!ok) pushToast("error", t("myInvoicesDialog.popupBlocked"));
     } catch (e) {
-      pushToast("error", (e as Error).message || "تعذّرت طباعة الفاتورة");
+      pushToast("error", translateApiError(e, t));
     } finally {
       setPrintingId(null);
     }
@@ -359,18 +378,18 @@ export function MyInvoicesDialog({ open, onClose }: { open: boolean; onClose: ()
 
   return (
     <>
-      <Dialog open={open} onClose={onClose} title="فواتيري · My Invoices" widthClass="max-w-5xl">
+      <Dialog open={open} onClose={onClose} title={t("myInvoicesDialog.title")} widthClass="max-w-5xl">
         <div className="flex flex-col gap-3">
           {/* Stat strip — parity with legacy #myInvStats */}
           <div className="flex flex-wrap items-center gap-1.5">
-            <Stat label="الإجمالي" value={fmtInt(stats.total)} tone="border-slate-200 bg-slate-50 text-slate-600" />
-            <Stat label="سارية" value={fmtInt(stats.active)} tone="border-teal-200 bg-teal-50 text-teal-700" />
-            <Stat label="ملغاة" value={fmtInt(stats.cancelled)} tone="border-red-200 bg-red-50 text-red-700" />
-            <Stat label="مرتجع" value={fmtInt(stats.returned)} tone="border-orange-200 bg-orange-50 text-orange-700" />
-            <Stat label="ر.س" value={fmt2(stats.amount)} tone="border-sky-200 bg-sky-50 text-sky-700" />
+            <Stat label={t("myInvoicesDialog.statTotal")} value={fmtInt(stats.total)} tone="border-slate-200 bg-slate-50 text-slate-600" />
+            <Stat label={t("myInvoicesDialog.statActive")} value={fmtInt(stats.active)} tone="border-teal-200 bg-teal-50 text-teal-700" />
+            <Stat label={t("myInvoicesDialog.statCancelled")} value={fmtInt(stats.cancelled)} tone="border-red-200 bg-red-50 text-red-700" />
+            <Stat label={t("myInvoicesDialog.statReturned")} value={fmtInt(stats.returned)} tone="border-orange-200 bg-orange-50 text-orange-700" />
+            <Stat label={t("myInvoicesDialog.statAmount")} value={fmt2(stats.amount)} tone="border-sky-200 bg-sky-50 text-sky-700" />
             <Button size="sm" variant="ghost" className="ms-auto" onClick={refresh} disabled={invoicesQuery.isFetching}>
               <RotateCcw className={cn("h-3.5 w-3.5", invoicesQuery.isFetching && "animate-spin")} aria-hidden />
-              تحديث
+              {t("myInvoicesDialog.refresh")}
             </Button>
           </div>
 
@@ -382,17 +401,17 @@ export function MyInvoicesDialog({ open, onClose }: { open: boolean; onClose: ()
                 type="search"
                 value={query}
                 onChange={(e) => setQuery(e.target.value)}
-                placeholder="بحث برقم الفاتورة أو العميل أو الصنف…"
+                placeholder={t("myInvoicesDialog.searchPlaceholder")}
                 className="min-h-11 w-full rounded-xl border border-slate-200 ps-9 pe-3 text-sm font-bold text-ink outline-none focus:border-teal-500"
               />
             </div>
             <div className="flex gap-1">
               {(
                 [
-                  ["all", "الكل"],
-                  ["active", "سارية"],
-                  ["cancelled", "ملغاة"],
-                  ["returned", "مرتجع"],
+                  ["all", t("myInvoicesDialog.filterAll")],
+                  ["active", t("myInvoicesDialog.filterActive")],
+                  ["cancelled", t("myInvoicesDialog.filterCancelled")],
+                  ["returned", t("myInvoicesDialog.filterReturned")],
                 ] as [Filter, string][]
               ).map(([f, label]) => (
                 <button
@@ -412,9 +431,9 @@ export function MyInvoicesDialog({ open, onClose }: { open: boolean; onClose: ()
 
           {/* Body */}
           {!engineStatus.online ? (
-            <ErrorBanner message="عرض الفواتير يتطلب اتصالًا بالخادم — الفواتير السابقة غير محفوظة على الجهاز." />
+            <ErrorBanner message={t("myInvoicesDialog.offlineBanner")} />
           ) : !shiftId ? (
-            <EmptyState icon={<FileText className="h-10 w-10" />} title="لا توجد وردية مفتوحة" hint="افتح وردية لعرض فواتيرها." />
+            <EmptyState icon={<FileText className="h-10 w-10" />} title={t("myInvoicesDialog.noShiftTitle")} hint={t("myInvoicesDialog.noShiftHint")} />
           ) : invoicesQuery.isLoading ? (
             <div className="flex flex-col gap-2">
               {[0, 1, 2, 3].map((i) => (
@@ -422,25 +441,25 @@ export function MyInvoicesDialog({ open, onClose }: { open: boolean; onClose: ()
               ))}
             </div>
           ) : invoicesQuery.isError ? (
-            <ErrorBanner message={(invoicesQuery.error as Error).message} onRetry={refresh} />
+            <ErrorBanner message={translateApiError(invoicesQuery.error, t)} onRetry={refresh} />
           ) : visible.length === 0 ? (
             <EmptyState
               icon={<FileText className="h-10 w-10" />}
-              title={rows.length === 0 ? "لا توجد فواتير في هذه الوردية بعد" : "لا نتائج مطابقة"}
-              hint={rows.length === 0 ? "ستظهر الفواتير هنا فور إتمام أول عملية بيع." : "جرّب بحثًا أو تصفية مختلفة."}
+              title={rows.length === 0 ? t("myInvoicesDialog.emptyTitleNoRows") : t("myInvoicesDialog.emptyTitleNoMatch")}
+              hint={rows.length === 0 ? t("myInvoicesDialog.emptyHintNoRows") : t("myInvoicesDialog.emptyHintNoMatch")}
             />
           ) : (
             <div className="scrollbar-thin max-h-[55vh] overflow-y-auto rounded-xl border border-slate-200">
               <table className="w-full text-start text-xs">
                 <thead className="sticky top-0 bg-slate-50 text-[11px] font-extrabold text-slate-500">
                   <tr>
-                    <th className="p-2 text-start">الحالة</th>
-                    <th className="p-2 text-start">الوقت</th>
-                    <th className="p-2 text-start">رقم الفاتورة</th>
-                    <th className="hidden p-2 text-start sm:table-cell">المنتجات</th>
-                    <th className="p-2 text-start">الإجمالي</th>
-                    <th className="hidden p-2 text-start md:table-cell">الدفع</th>
-                    <th className="p-2 text-start">إجراءات</th>
+                    <th className="p-2 text-start">{t("myInvoicesDialog.tableStatus")}</th>
+                    <th className="p-2 text-start">{t("myInvoicesDialog.tableTime")}</th>
+                    <th className="p-2 text-start">{t("myInvoicesDialog.tableInvoiceNumber")}</th>
+                    <th className="hidden p-2 text-start sm:table-cell">{t("myInvoicesDialog.tableProducts")}</th>
+                    <th className="p-2 text-start">{t("myInvoicesDialog.tableTotal")}</th>
+                    <th className="hidden p-2 text-start md:table-cell">{t("myInvoicesDialog.tablePayment")}</th>
+                    <th className="p-2 text-start">{t("myInvoicesDialog.tableActions")}</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -489,18 +508,18 @@ export function MyInvoicesDialog({ open, onClose }: { open: boolean; onClose: ()
                               disabled={busy || printingId === r.orderId}
                               loading={printingId === r.orderId}
                               onClick={() => void reprint(r)}
-                              title="إعادة طباعة الفاتورة (برمز ZATCA المختوم)"
+                              title={t("myInvoicesDialog.printTooltip")}
                             >
                               <Printer className="h-3.5 w-3.5" aria-hidden />
-                              طباعة
+                              {t("myInvoicesDialog.printButton")}
                             </Button>
                             {reversed ? (
-                              <span className="self-center text-[10px] font-bold text-slate-400">تم — لا إجراءات</span>
+                              <span className="self-center text-[10px] font-bold text-slate-400">{t("myInvoicesDialog.reversedNoActions")}</span>
                             ) : (
                               <>
                                 <Button size="sm" variant="danger" disabled={busy} onClick={() => start(r, "void")}>
                                   <Ban className="h-3.5 w-3.5" aria-hidden />
-                                  إلغاء
+                                  {t("myInvoicesDialog.voidButton")}
                                 </Button>
                                 <Button
                                   size="sm"
@@ -513,7 +532,7 @@ export function MyInvoicesDialog({ open, onClose }: { open: boolean; onClose: ()
                                   className="border-orange-200 bg-orange-50 text-orange-700 hover:bg-orange-100"
                                 >
                                   <Undo2 className="h-3.5 w-3.5" aria-hidden />
-                                  مرتجع
+                                  {t("myInvoicesDialog.returnButton")}
                                 </Button>
                               </>
                             )}
@@ -531,9 +550,9 @@ export function MyInvoicesDialog({ open, onClose }: { open: boolean; onClose: ()
 
       <ManagerApprovalDialog
         open={!!pending}
-        title={pending?.action === "void" ? "اعتماد إلغاء فاتورة" : "اعتماد مرتجع"}
-        reasonLabel={pending?.action === "return" ? "سبب الإرجاع" : undefined}
-        defaultReason={pending?.action === "return" ? "مرتجع عميل" : undefined}
+        title={pending?.action === "void" ? t("myInvoicesDialog.voidApprovalTitle") : t("myInvoicesDialog.returnApprovalTitle")}
+        reasonLabel={pending?.action === "return" ? t("myInvoicesDialog.returnReasonLabel") : undefined}
+        defaultReason={pending?.action === "return" ? t("myInvoicesDialog.returnDefaultReason") : undefined}
         busy={busy}
         error={approvalError}
         onClose={() => {

@@ -11,6 +11,8 @@ import { round2, paymentsError } from "@/lib/cartMath";
 import { fmt2, shortRef } from "@/lib/format";
 import { buildKitchenTicketHtml, buildReceiptHtml, printHtml } from "@/lib/receipt";
 import type { CatalogPaymentMethod, LocalOrder, Payment } from "@/lib/types";
+import { useT } from "@/i18n/I18nProvider";
+import { translateApiError } from "@/i18n/errorCodes";
 import { Dialog } from "../Dialog";
 import { Numpad } from "../Numpad";
 import { Button, cn, Money } from "../ui";
@@ -42,14 +44,13 @@ type Phase =
  *  handler, and the dialog would stay locked forever. */
 export const CHECKOUT_WATCHDOG_MS = 120_000;
 
-const STAGE_LABELS: Record<"submit" | "sale" | "complete", string> = {
-  submit: "تثبيت الطلب…",
-  sale: "تسجيل الفاتورة…",
-  complete: "إكمال الطلب…",
-};
-
 export function PaymentDialog({ open, onClose }: { open: boolean; onClose: () => void }) {
-  const { cart, totals, engine, engineStatus, supervisor, user, catalog, startNewOrder, loadOrderDoc, pushToast, shiftId, o2cEnabled } = usePos();
+  const t = useT();
+  const { cart, totals, engine, engineStatus, supervisor, posCan, user, catalog, startNewOrder, loadOrderDoc, pushToast, shiftId, o2cEnabled } = usePos();
+  // Capability-aware: a non-supervisor with the granted capability also
+  // unlocks البيع الآجل (broadening only — see lib/capabilities.ts). Every
+  // `supervisor` reference below that gates credit uses this instead.
+  const canCredit = supervisor || posCan("pos.sale.credit");
   const online = engineStatus.online;
   const total = totals.total;
   // Offline the live shift query is disabled — fall back to the shift stored
@@ -114,13 +115,13 @@ export function PaymentDialog({ open, onClose }: { open: boolean; onClose: () =>
     if (tab.startsWith("owner:") && !ownerMethod) setTab("cash");
   }, [tab, ownerMethod]);
 
-  // The split tab's آجل leg requires a supervisor, same as the dedicated
-  // credit tab — if supervisor status drops mid-session (or the dialog was
-  // left open), a stale nonzero value must not silently keep counting toward
-  // the split sum once the field is disabled.
+  // The split tab's آجل leg requires a supervisor (or the equivalent
+  // capability), same as the dedicated credit tab — if that status drops
+  // mid-session (or the dialog was left open), a stale nonzero value must not
+  // silently keep counting toward the split sum once the field is disabled.
   useEffect(() => {
-    if (!supervisor) setSplitCredit("");
-  }, [supervisor]);
+    if (!canCredit) setSplitCredit("");
+  }, [canCredit]);
 
   // Progress events from the engine's checkout chain.
   useEffect(() => {
@@ -186,10 +187,10 @@ export function PaymentDialog({ open, onClose }: { open: boolean; onClose: () =>
   const creditNeedsCustomer = o2cEnabled && creditAmount > 0;
   const creditBlocked = creditNeedsCustomer && !cart.customerId;
 
-  // Split's آجل leg needs a supervisor too — checked BEFORE any network call,
-  // even when the arithmetic sum already matches the total (a role gate, not
-  // a sum-mismatch check).
-  const splitCreditNeedsSupervisor = tab === "split" && !supervisor && splitCreditNum > 0;
+  // Split's آجل leg needs a supervisor (or the capability) too — checked
+  // BEFORE any network call, even when the arithmetic sum already matches the
+  // total (a role gate, not a sum-mismatch check).
+  const splitCreditNeedsSupervisor = tab === "split" && !canCredit && splitCreditNum > 0;
 
   const confirmDisabled =
     total <= 0 ||
@@ -221,7 +222,7 @@ export function PaymentDialog({ open, onClose }: { open: boolean; onClose: () =>
         // copy so the cart stays editable (status back to 'open').
         const fresh = await engine.getOrder(snapshot.id);
         if (fresh) loadOrderDoc(fresh);
-        setPhase({ name: "failed", error: outcome.error || "فشل الدفع" });
+        setPhase({ name: "failed", error: outcome.error || t("paymentDialog.failedDefault") });
         return;
       }
       setPhase({
@@ -238,7 +239,7 @@ export function PaymentDialog({ open, onClose }: { open: boolean; onClose: () =>
     } catch (e) {
       const fresh = await engine.getOrder(snapshot.id);
       if (fresh) loadOrderDoc(fresh);
-      setPhase({ name: "failed", error: (e as Error).message });
+      setPhase({ name: "failed", error: translateApiError(e, t) });
     }
   }
 
@@ -265,16 +266,24 @@ export function PaymentDialog({ open, onClose }: { open: boolean; onClose: () =>
         zatcaQrDataUrl: p.zatcaQrDataUrl,
       }),
     );
-    if (!ok) pushToast("error", "المتصفح منع نافذة الطباعة — اسمح بالنوافذ المنبثقة");
+    if (!ok) pushToast("error", t("paymentDialog.printBlockedFull"));
   }
 
   const locked = phase.name === "working";
+
+  // Checkout progress stage labels — built here (not module scope) since
+  // t() is only available inside the component.
+  const stageLabels: Record<"submit" | "sale" | "complete", string> = {
+    submit: t("paymentDialog.stageSubmit"),
+    sale: t("paymentDialog.stageSale"),
+    complete: t("paymentDialog.stageComplete"),
+  };
 
   return (
     <Dialog
       open={open}
       onClose={phase.name === "success" ? finishAndNew : onClose}
-      title="الدفع"
+      title={t("paymentDialog.title")}
       widthClass="max-w-xl"
       locked={locked}
     >
@@ -288,50 +297,54 @@ export function PaymentDialog({ open, onClose }: { open: boolean; onClose: () =>
 
           {!effectiveShiftId ? (
             <div role="alert" className="mb-3 rounded-2xl border border-amber-300 bg-amber-50 px-4 py-3 text-sm font-bold text-amber-800">
-              لا يمكن الدفع بلا وردية مفتوحة — افتح وردية أولًا من الشريط العلوي
+              {t("paymentDialog.noShiftOpen")}
             </div>
           ) : null}
 
           {/* Total */}
           <div className="mb-4 rounded-2xl bg-ink px-5 py-4 text-center text-white">
-            <p className="text-xs font-bold text-slate-300">الإجمالي المستحق</p>
+            <p className="text-xs font-bold text-slate-300">{t("paymentDialog.totalDue")}</p>
             <p className="text-3xl font-extrabold">
-              <Money value={fmt2(total)} /> <span className="text-sm font-bold text-slate-300">ر.س</span>
+              <Money value={fmt2(total)} /> <span className="text-sm font-bold text-slate-300">{t("paymentDialog.currency")}</span>
             </p>
           </div>
 
           {/* Method tiles — built-ins always; owner methods appended (pay-method-tiles) */}
-          <div className="mb-4 grid grid-cols-4 gap-1.5" role="tablist" aria-label="طريقة الدفع">
+          <div className="mb-4 grid grid-cols-4 gap-1.5" role="tablist" aria-label={t("paymentDialog.methodTablistLabel")}>
             {(
               [
-                { key: "cash" as Tab, label: "كاش", icon: Banknote, disabled: false, tip: undefined },
+                { key: "cash" as Tab, label: t("paymentDialog.methodCash"), icon: Banknote, disabled: false, tip: undefined },
                 {
                   key: "card" as Tab,
-                  label: "شبكة",
+                  label: t("paymentDialog.methodCard"),
                   icon: CreditCard,
                   disabled: !online,
-                  tip: !online ? "دفع الشبكة غير متاح بلا اتصال" : undefined,
+                  tip: !online ? t("paymentDialog.cardOfflineTip") : undefined,
                 },
                 {
                   key: "split" as Tab,
-                  label: "مختلط",
+                  label: t("paymentDialog.methodSplit"),
                   icon: SplitSquareHorizontal,
                   disabled: !online,
-                  tip: !online ? "الدفع المختلط غير متاح بلا اتصال" : undefined,
+                  tip: !online ? t("paymentDialog.splitOfflineTip") : undefined,
                 },
                 {
                   key: "credit" as Tab,
-                  label: "آجل",
+                  label: t("paymentDialog.methodCredit"),
                   icon: HandCoins,
-                  disabled: !online || !supervisor,
-                  tip: !online ? "البيع الآجل غير متاح بلا اتصال" : !supervisor ? "البيع الآجل يتطلب مشرفًا/مديرًا" : undefined,
+                  disabled: !online || !canCredit,
+                  tip: !online
+                    ? t("paymentDialog.creditOfflineTip")
+                    : !canCredit
+                      ? t("paymentDialog.creditNeedsSupervisorTip")
+                      : undefined,
                 },
                 ...ownerMethods.map((m) => ({
                   key: `owner:${m.name}` as Tab,
                   label: m.nameAr || m.name,
                   icon: Wallet,
                   disabled: !online,
-                  tip: !online ? "طرق الدفع الإضافية غير متاحة بلا اتصال" : undefined,
+                  tip: !online ? t("paymentDialog.ownerMethodOfflineTip") : undefined,
                 })),
               ] as ReadonlyArray<{ key: Tab; label: string; icon: typeof Banknote; disabled: boolean; tip: string | undefined }>
             ).map(({ key, label, icon: Icon, disabled, tip }) => (
@@ -356,7 +369,7 @@ export function PaymentDialog({ open, onClose }: { open: boolean; onClose: () =>
 
           {!online ? (
             <p className="mb-3 rounded-xl bg-amber-50 px-3 py-2 text-[11px] font-bold text-amber-800">
-              أنت غير متصل — الدفع كاش فقط، وسيُرحَّل البيع عند عودة الاتصال
+              {t("paymentDialog.offlineBanner")}
             </p>
           ) : null}
 
@@ -365,7 +378,7 @@ export function PaymentDialog({ open, onClose }: { open: boolean; onClose: () =>
             <div>
               <div className="mb-2 grid grid-cols-4 gap-1.5">
                 {[
-                  { label: "المبلغ بالضبط", v: total },
+                  { label: t("paymentDialog.exactAmount"), v: total },
                   { label: "50", v: 50 },
                   { label: "100", v: 100 },
                   { label: "200", v: 200 },
@@ -381,7 +394,7 @@ export function PaymentDialog({ open, onClose }: { open: boolean; onClose: () =>
                 ))}
               </div>
               <label className="block">
-                <span className="mb-1 block text-[11px] font-extrabold text-slate-500">المستلَم من العميل (ر.س)</span>
+                <span className="mb-1 block text-[11px] font-extrabold text-slate-500">{t("paymentDialog.tenderedLabel")}</span>
                 <input
                   ref={tenderedRef}
                   type="number"
@@ -392,7 +405,7 @@ export function PaymentDialog({ open, onClose }: { open: boolean; onClose: () =>
                   onChange={(e) => setTendered(e.target.value)}
                   placeholder={fmt2(total)}
                   className="field num text-lg"
-                  dir="ltr"
+                  dir="ltr" /* LTR forced: numeric/phone - do not remove, see i18n plan */
                 />
               </label>
               <div
@@ -401,7 +414,9 @@ export function PaymentDialog({ open, onClose }: { open: boolean; onClose: () =>
                   cashShort ? "bg-red-50 text-red-700" : "bg-teal-50 text-teal-800",
                 )}
               >
-                <span className="text-sm font-extrabold">{cashShort ? "المبلغ غير كافٍ" : "الباقي للعميل"}</span>
+                <span className="text-sm font-extrabold">
+                  {cashShort ? t("paymentDialog.insufficientAmount") : t("paymentDialog.changeDueLabel")}
+                </span>
                 <Money value={fmt2(cashShort ? total - tenderedNum : changeDue)} className="text-lg font-extrabold" />
               </div>
               {/* On-screen keypad (touch POS) — edits the same `tendered` state
@@ -416,45 +431,48 @@ export function PaymentDialog({ open, onClose }: { open: boolean; onClose: () =>
               <div className="grid grid-cols-3 gap-2">
                 <label className="block">
                   <span className="mb-1 flex items-center gap-1 text-[11px] font-extrabold text-slate-500">
-                    <Banknote className="h-3.5 w-3.5" aria-hidden /> كاش
+                    <Banknote className="h-3.5 w-3.5" aria-hidden /> {t("paymentDialog.methodCash")}
                   </span>
                   <input
                     type="number" inputMode="decimal" min={0} step="0.01"
                     value={splitCash}
                     onChange={(e) => setSplitCash(e.target.value)}
                     onFocus={() => setActiveSplitField("cash")}
-                    placeholder="0.00" dir="ltr"
+                    placeholder="0.00"
+                    dir="ltr" /* LTR forced: numeric/phone - do not remove, see i18n plan */
                     className={cn("field num", activeSplitField === "cash" && "ring-2 ring-teal-500/60")}
                   />
                 </label>
                 <label className="block">
                   <span className="mb-1 flex items-center gap-1 text-[11px] font-extrabold text-slate-500">
-                    <CreditCard className="h-3.5 w-3.5" aria-hidden /> شبكة
+                    <CreditCard className="h-3.5 w-3.5" aria-hidden /> {t("paymentDialog.methodCard")}
                   </span>
                   <input
                     type="number" inputMode="decimal" min={0} step="0.01"
                     value={splitCard}
                     onChange={(e) => setSplitCard(e.target.value)}
                     onFocus={() => setActiveSplitField("card")}
-                    placeholder="0.00" dir="ltr"
+                    placeholder="0.00"
+                    dir="ltr" /* LTR forced: numeric/phone - do not remove, see i18n plan */
                     className={cn("field num", activeSplitField === "card" && "ring-2 ring-teal-500/60")}
                   />
                 </label>
                 <label className="block">
                   <span className="mb-1 flex items-center gap-1 text-[11px] font-extrabold text-slate-500">
-                    <HandCoins className="h-3.5 w-3.5" aria-hidden /> آجل
+                    <HandCoins className="h-3.5 w-3.5" aria-hidden /> {t("paymentDialog.methodCredit")}
                   </span>
                   <input
                     type="number" inputMode="decimal" min={0} step="0.01"
                     value={splitCredit}
-                    // Guard (not just the `disabled` attribute): a non-supervisor
-                    // must never get a nonzero splitCredit into state, from any
-                    // input path.
-                    onChange={(e) => { if (supervisor) setSplitCredit(e.target.value); }}
+                    // Guard (not just the `disabled` attribute): a user without
+                    // credit permission must never get a nonzero splitCredit
+                    // into state, from any input path.
+                    onChange={(e) => { if (canCredit) setSplitCredit(e.target.value); }}
                     onFocus={() => setActiveSplitField("credit")}
-                    placeholder="0.00" dir="ltr"
-                    disabled={!supervisor}
-                    title={!supervisor ? "البيع الآجل يتطلب مشرفًا/مديرًا" : undefined}
+                    placeholder="0.00"
+                    dir="ltr" /* LTR forced: numeric/phone - do not remove, see i18n plan */
+                    disabled={!canCredit}
+                    title={!canCredit ? t("paymentDialog.creditNeedsSupervisorTip") : undefined}
                     className={cn(
                       "field num disabled:cursor-not-allowed disabled:opacity-40",
                       activeSplitField === "credit" && "ring-2 ring-teal-500/60",
@@ -469,7 +487,7 @@ export function PaymentDialog({ open, onClose }: { open: boolean; onClose: () =>
                 )}
                 role={splitError ? "alert" : undefined}
               >
-                <span>{splitError ? splitError : "المجموع مطابق"}</span>
+                <span>{splitError ? splitError : t("paymentDialog.splitSumMatches")}</span>
                 <Money value={`${fmt2(splitSum)} / ${fmt2(total)}`} />
               </div>
               {/* On-screen keypad — edits the ACTIVE (ringed) split leg. */}
@@ -484,12 +502,14 @@ export function PaymentDialog({ open, onClose }: { open: boolean; onClose: () =>
           {/* Card / credit info line */}
           {tab === "card" ? (
             <p className="rounded-xl bg-slate-50 px-3 py-2.5 text-xs font-bold text-slate-500">
-              حصّل <Money value={fmt2(total)} /> ر.س عبر جهاز الشبكة ثم أكّد
+              {t("paymentDialog.cardCollectInfoPrefix")} <Money value={fmt2(total)} /> {t("paymentDialog.currency")}{" "}
+              {t("paymentDialog.cardCollectInfoSuffix")}
             </p>
           ) : null}
           {tab === "credit" ? (
             <p className="rounded-xl bg-slate-50 px-3 py-2.5 text-xs font-bold text-slate-500">
-              بيع آجل بقيمة <Money value={fmt2(total)} /> ر.س — يُسجَّل على حساب العميل (يتطلب صلاحية مشرف)
+              {t("paymentDialog.creditInfoPrefix")} <Money value={fmt2(total)} /> {t("paymentDialog.currency")}{" "}
+              {t("paymentDialog.creditInfoSuffix")}
             </p>
           ) : null}
 
@@ -497,14 +517,25 @@ export function PaymentDialog({ open, onClose }: { open: boolean; onClose: () =>
           {ownerMethod ? (
             <div>
               <p className="rounded-xl bg-slate-50 px-3 py-2.5 text-xs font-bold text-slate-500">
-                حصّل <Money value={fmt2(total)} /> ر.س عبر «{ownerMethod.nameAr || ownerMethod.name}» ثم أكّد
+                {t("paymentDialog.cardCollectInfoPrefix")} <Money value={fmt2(total)} /> {t("paymentDialog.currency")}{" "}
+                {t("paymentDialog.ownerCollectInfoMiddle")}
+                {ownerMethod.nameAr || ownerMethod.name}
+                {t("paymentDialog.ownerCollectInfoSuffix")}
               </p>
               {noteRequired ? (
                 <div className="mt-3">
                   <label className="block">
                     <span className="mb-1 flex items-center justify-between text-[11px] font-extrabold text-slate-500">
-                      <span>ملاحظات الدفع — سبب اختيار «{ownerMethod.nameAr || ownerMethod.name}» (إلزامية)</span>
-                      <span className="num text-slate-400" dir="ltr" data-testid="pay-notes-counter">
+                      <span>
+                        {t("paymentDialog.ownerNoteLabelPrefix")}
+                        {ownerMethod.nameAr || ownerMethod.name}
+                        {t("paymentDialog.ownerNoteLabelSuffix")}
+                      </span>
+                      <span
+                        className="num text-slate-400"
+                        dir="ltr" /* LTR forced: numeric/phone - do not remove, see i18n plan */
+                        data-testid="pay-notes-counter"
+                      >
                         {payNote.length}/200
                       </span>
                     </span>
@@ -513,14 +544,14 @@ export function PaymentDialog({ open, onClose }: { open: boolean; onClose: () =>
                       onChange={(e) => setPayNote(e.target.value)}
                       maxLength={200}
                       rows={2}
-                      placeholder="مثال: تحويل بنكي — إيصال رقم 123"
-                      aria-label="ملاحظات الدفع"
+                      placeholder={t("paymentDialog.ownerNotePlaceholder")}
+                      aria-label={t("paymentDialog.paymentNotesAriaLabel")}
                       className="field resize-none"
                     />
                   </label>
                   {noteTooShort ? (
                     <p role="alert" className="mt-1 rounded-xl bg-amber-50 px-3 py-2 text-[11px] font-bold text-amber-800">
-                      اكتب ٣ أحرف على الأقل لوصف الدفعة — الخادم يرفض «أخرى» بلا ملاحظة
+                      {t("paymentDialog.noteTooShortWarning")}
                     </p>
                   ) : null}
                 </div>
@@ -531,12 +562,12 @@ export function PaymentDialog({ open, onClose }: { open: boolean; onClose: () =>
           {/* Order-to-Cash: a credit sale must be attached to a real customer. */}
           {creditBlocked ? (
             <p role="alert" className="mt-3 rounded-xl border border-amber-300 bg-amber-50 px-3 py-2.5 text-xs font-extrabold text-amber-800">
-              البيع الآجل يتطلب اختيار عميل — اختر عميلًا من السلة أولًا
+              {t("paymentDialog.creditBlockedWarning")}
             </p>
           ) : null}
 
           <Button variant="primary" size="lg" className="mt-4 w-full" onClick={() => void confirm()} disabled={confirmDisabled}>
-            تأكيد الدفع — <Money value={fmt2(total)} /> ر.س
+            {t("paymentDialog.confirmButtonPrefix")} <Money value={fmt2(total)} /> {t("paymentDialog.currency")}
           </Button>
         </div>
       ) : null}
@@ -546,7 +577,7 @@ export function PaymentDialog({ open, onClose }: { open: boolean; onClose: () =>
         <div className="flex flex-col items-center gap-4 py-10">
           <Loader2 className="h-10 w-10 animate-spin text-teal-600" aria-hidden />
           <p className="text-sm font-extrabold text-slate-600" role="status">
-            {STAGE_LABELS[phase.stage]}
+            {stageLabels[phase.stage]}
           </p>
           <ol className="flex items-center gap-2 text-[11px] font-bold text-slate-400">
             {(["submit", "sale", "complete"] as const).map((s, i) => (
@@ -557,7 +588,7 @@ export function PaymentDialog({ open, onClose }: { open: boolean; onClose: () =>
                   phase.stage === s ? "border-teal-300 bg-teal-50 text-teal-700" : "border-slate-200",
                 )}
               >
-                {i + 1}. {STAGE_LABELS[s].replace("…", "")}
+                {i + 1}. {stageLabels[s].replace("…", "")}
               </li>
             ))}
           </ol>
@@ -568,18 +599,15 @@ export function PaymentDialog({ open, onClose }: { open: boolean; onClose: () =>
       {phase.name === "timeout" ? (
         <div data-testid="pay-timeout-panel" className="flex flex-col items-center gap-3 py-6 text-center">
           <p role="alert" className="rounded-2xl border border-amber-300 bg-amber-50 px-4 py-3 text-sm font-extrabold text-amber-800">
-            انتهت مهلة الطلب — تحقق من الاتصال ثم أعد المحاولة
+            {t("paymentDialog.timeoutTitle")}
           </p>
-          <p className="max-w-sm text-xs font-bold text-slate-500">
-            لم يُلغَ الطلب — قد يكون البيع وصل للخادم رغم انقطاع الرد. إعادة المحاولة آمنة: إن كان البيع قد سُجّل فلن
-            يتكرر (محمي ضد الازدواج)، ويمكنك أيضًا التحقق من «فواتيري».
-          </p>
+          <p className="max-w-sm text-xs font-bold text-slate-500">{t("paymentDialog.timeoutBody")}</p>
           <div className="grid w-full grid-cols-2 gap-2">
             <Button variant="secondary" onClick={onClose}>
-              إغلاق
+              {t("common.close")}
             </Button>
             <Button variant="primary" onClick={() => void confirm()}>
-              إعادة المحاولة
+              {t("common.retry")}
             </Button>
           </div>
         </div>
@@ -591,40 +619,41 @@ export function PaymentDialog({ open, onClose }: { open: boolean; onClose: () =>
           <CheckCircle2 className="h-14 w-14 text-teal-500" aria-hidden />
           {phase.queued ? (
             <>
-              <p className="text-lg font-extrabold text-ink">حُفظ الطلب — سيُرحَّل عند عودة الاتصال</p>
+              <p className="text-lg font-extrabold text-ink">{t("paymentDialog.queuedTitle")}</p>
               <p className="text-sm font-bold text-slate-500">
-                مرجع محلي: <Money value={shortRef(phase.doc.id)} className="text-base" />
+                {t("paymentDialog.localRefLabel")} <Money value={shortRef(phase.doc.id)} className="text-base" />
               </p>
             </>
           ) : (
             <>
-              <p className="text-lg font-extrabold text-ink">تم الدفع بنجاح</p>
+              <p className="text-lg font-extrabold text-ink">{t("paymentDialog.successTitle")}</p>
               <p className="text-sm font-bold text-slate-500">
-                فاتورة: <Money value={phase.invoiceNumber || phase.saleId || shortRef(phase.doc.id)} className="text-base" />
+                {t("paymentDialog.invoiceLabel")}{" "}
+                <Money value={phase.invoiceNumber || phase.saleId || shortRef(phase.doc.id)} className="text-base" />
               </p>
             </>
           )}
           {phase.changeDue > 0 ? (
             <p className="rounded-xl bg-saffron-50 px-4 py-2 text-sm font-extrabold text-saffron-600">
-              الباقي للعميل: <Money value={fmt2(phase.changeDue)} /> ر.س
+              {t("paymentDialog.changeDueLabelColon")} <Money value={fmt2(phase.changeDue)} /> {t("paymentDialog.currency")}
             </p>
           ) : null}
           <div className="mt-2 grid w-full grid-cols-2 gap-2">
             <Button variant="secondary" onClick={() => printReceipt(phase)}>
               <Printer className="h-4 w-4" aria-hidden />
-              طباعة الإيصال
+              {t("paymentDialog.printReceiptButton")}
             </Button>
             <Button
               variant="secondary"
               onClick={() => {
-                if (!printHtml(buildKitchenTicketHtml(phase.doc))) pushToast("error", "المتصفح منع نافذة الطباعة");
+                if (!printHtml(buildKitchenTicketHtml(phase.doc))) pushToast("error", t("paymentDialog.printBlockedShort"));
               }}
             >
               <ChefHat className="h-4 w-4" aria-hidden />
-              طباعة للمطبخ
+              {t("paymentDialog.printKitchenButton")}
             </Button>
             <Button variant="primary" size="lg" className="col-span-2" onClick={finishAndNew}>
-              طلب جديد
+              {t("paymentDialog.newOrderButton")}
             </Button>
           </div>
         </div>

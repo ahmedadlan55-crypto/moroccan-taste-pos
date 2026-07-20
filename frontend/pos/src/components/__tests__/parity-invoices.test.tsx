@@ -18,6 +18,10 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { MyInvoicesDialog } from "../dialogs/MyInvoicesDialog";
 import { ManagerApprovalDialog } from "../dialogs/ManagerApprovalDialog";
 import type { SaleRow } from "@/lib/types";
+// MyInvoicesDialog resolves strings via useT(), which throws without an
+// ancestor I18nProvider (see i18n/I18nProvider.tsx). ManagerApprovalDialog
+// does not use i18n, so its direct render() below is left unwrapped.
+import { I18nProvider } from "@/i18n/I18nProvider";
 
 const h = vi.hoisted(() => ({ ctx: {} as Record<string, unknown> }));
 vi.mock("@/state/store", () => ({ usePos: () => h.ctx }));
@@ -28,6 +32,8 @@ function baseCtx(over: Record<string, unknown> = {}): Record<string, unknown> {
     shiftId: "SH-1",
     pushToast: vi.fn(),
     engineStatus: { online: true, syncing: false, queueCount: 0 },
+    caps: null,
+    posCan: () => false,
     ...over,
   };
 }
@@ -107,9 +113,11 @@ function stubSalesFetch(rows: SaleRow[], reverse?: { status: number; body: unkno
 function renderDialog() {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: 0 }, mutations: { retry: false } } });
   return render(
-    <QueryClientProvider client={client}>
-      <MyInvoicesDialog open onClose={vi.fn()} />
-    </QueryClientProvider>,
+    <I18nProvider>
+      <QueryClientProvider client={client}>
+        <MyInvoicesDialog open onClose={vi.fn()} />
+      </QueryClientProvider>
+    </I18nProvider>,
   );
 }
 

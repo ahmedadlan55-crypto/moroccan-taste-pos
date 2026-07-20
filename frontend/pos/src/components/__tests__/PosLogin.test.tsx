@@ -13,6 +13,10 @@ import { describe, expect, it, vi, beforeEach, afterEach } from "vitest";
 import { render, screen, fireEvent, waitFor, cleanup } from "@testing-library/react";
 import { PosLogin } from "../PosLogin";
 import { TOKEN_KEY } from "@/lib/auth";
+// PosLogin now resolves strings via useT()/useLang()/useSetLang() (login-
+// screen language toggle), which throw without an ancestor I18nProvider —
+// see i18n/I18nProvider.tsx.
+import { I18nProvider } from "@/i18n/I18nProvider";
 
 function fakeJwt(payload: Record<string, unknown>): string {
   const b64url = (obj: unknown) =>
@@ -51,7 +55,11 @@ describe("PosLogin", () => {
       "fetch",
       vi.fn().mockResolvedValue({ json: () => Promise.resolve({ success: true, token, role: "cashier" }) }),
     );
-    render(<PosLogin />);
+    render(
+      <I18nProvider>
+        <PosLogin />
+      </I18nProvider>,
+    );
     fillAndSubmit("test.cashier", "RealPassw0rd!");
 
     await waitFor(() => expect(reloadMock).toHaveBeenCalled());
@@ -67,7 +75,11 @@ describe("PosLogin", () => {
         json: () => Promise.resolve({ success: true, token, role: "cashier", mustChangePassword: true }),
       }),
     );
-    render(<PosLogin />);
+    render(
+      <I18nProvider>
+        <PosLogin />
+      </I18nProvider>,
+    );
     fillAndSubmit("test.cashier", "TempPassw0rd!");
 
     await waitFor(() => expect(assignMock).toHaveBeenCalled());
@@ -85,7 +97,11 @@ describe("PosLogin", () => {
       "fetch",
       vi.fn().mockResolvedValue({ json: () => Promise.resolve({ success: true, token, role: "accountant" }) }),
     );
-    render(<PosLogin />);
+    render(
+      <I18nProvider>
+        <PosLogin />
+      </I18nProvider>,
+    );
     fillAndSubmit("acct1", "Passw0rd!");
 
     expect(await screen.findByText(/لا يملك صلاحية الدخول إلى الكاشير/)).toBeInTheDocument();

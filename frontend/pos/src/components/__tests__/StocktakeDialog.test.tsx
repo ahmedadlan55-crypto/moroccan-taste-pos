@@ -1,6 +1,9 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 import { StocktakeDialog, dualUnitTotal, normalizeArabic } from "../dialogs/StocktakeDialog";
+// StocktakeDialog resolves strings via useT(), which throws without an
+// ancestor I18nProvider (see i18n/I18nProvider.tsx).
+import { I18nProvider } from "@/i18n/I18nProvider";
 
 // ── usePos mock (user + online flag + toasts only — the dialog needs no more) ─
 const mocks = vi.hoisted(() => ({
@@ -102,7 +105,11 @@ function installFetch(overrides: Record<string, Handler> = {}): FetchCall[] {
 }
 
 async function addRiceToCart() {
-  render(<StocktakeDialog open onClose={vi.fn()} />);
+  render(
+    <I18nProvider>
+      <StocktakeDialog open onClose={vi.fn()} />
+    </I18nProvider>,
+  );
   const search = await screen.findByLabelText("البحث عن مادة");
   await waitFor(() => expect(search).not.toBeDisabled()); // items loaded
   fireEvent.change(search, { target: { value: "أرز" } });
@@ -256,7 +263,11 @@ describe("StocktakeDialog", () => {
   it("offline: shows «الجرد يتطلب اتصالًا» and fetches nothing", () => {
     const calls = installFetch();
     mocks.online.value = false;
-    render(<StocktakeDialog open onClose={vi.fn()} />);
+    render(
+      <I18nProvider>
+        <StocktakeDialog open onClose={vi.fn()} />
+      </I18nProvider>,
+    );
     expect(screen.getByText("الجرد يتطلب اتصالًا")).toBeInTheDocument();
     expect(calls).toHaveLength(0);
   });

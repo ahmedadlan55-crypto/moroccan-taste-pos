@@ -21,6 +21,9 @@ import { StaleCatalogChip } from "../Header";
 import { Toasts } from "../Toasts";
 import { ErrorBoundary } from "../ErrorBoundary";
 import { ProductGrid } from "../ProductGrid";
+// StaleCatalogChip (from Header.tsx) resolves strings via useT(), which
+// throws without an ancestor I18nProvider (see i18n/I18nProvider.tsx).
+import { I18nProvider } from "@/i18n/I18nProvider";
 
 afterEach(() => {
   fixture.value = {};
@@ -35,7 +38,11 @@ describe("boot-manual-refresh-all — StaleCatalogChip", () => {
       refetchCatalog: vi.fn(),
       engineStatus: { online: true, syncing: false, queueCount: 0, lastReport: null },
     };
-    const { container } = render(<StaleCatalogChip />);
+    const { container } = render(
+      <I18nProvider>
+        <StaleCatalogChip />
+      </I18nProvider>,
+    );
     expect(container).toBeEmptyDOMElement();
   });
 
@@ -47,7 +54,11 @@ describe("boot-manual-refresh-all — StaleCatalogChip", () => {
       refetchCatalog,
       engineStatus: { online: true, syncing: false, queueCount: 0, lastReport: null },
     };
-    render(<StaleCatalogChip />);
+    render(
+      <I18nProvider>
+        <StaleCatalogChip />
+      </I18nProvider>,
+    );
     const chip = screen.getByRole("button", { name: /قائمة قديمة/ });
     expect(chip).toHaveTextContent("3 ساعة");
     fireEvent.click(chip);
@@ -61,7 +72,11 @@ describe("boot-manual-refresh-all — StaleCatalogChip", () => {
       refetchCatalog: vi.fn(),
       engineStatus: { online: false, syncing: false, queueCount: 0, lastReport: null },
     };
-    render(<StaleCatalogChip />);
+    render(
+      <I18nProvider>
+        <StaleCatalogChip />
+      </I18nProvider>,
+    );
     const chip = screen.getByRole("button", { name: /قائمة قديمة/ });
     expect(chip).toBeDisabled();
     expect(chip).toHaveTextContent("يومان");

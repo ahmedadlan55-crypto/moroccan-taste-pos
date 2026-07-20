@@ -19,6 +19,11 @@ import { CustomerPicker } from "../CustomerPicker";
 import { Dialog } from "../Dialog";
 import { PaymentDialog } from "../dialogs/PaymentDialog";
 import type { CartTotals, LocalOrder } from "@/lib/types";
+// CartPanel/PaymentDialog resolve strings via useT(), which throws without
+// an ancestor I18nProvider (see i18n/I18nProvider.tsx). qcp() below wraps
+// every render() through it — harmless for the CustomerPicker/Dialog cases
+// that don't consume i18n context.
+import { I18nProvider } from "@/i18n/I18nProvider";
 
 // ── Mock the POS store hook (vi.mock is hoisted; state via vi.hoisted) ──────
 const h = vi.hoisted(() => ({ ctx: {} as Record<string, unknown> }));
@@ -55,6 +60,8 @@ function baseCtx(over: Record<string, unknown> = {}): Record<string, unknown> {
   return {
     user: { username: "c1", role: "cashier" },
     supervisor: false,
+    caps: null,
+    posCan: () => false,
     cart: makeCart(),
     totals: ZERO_TOTALS,
     catalog: null,
@@ -99,7 +106,11 @@ function stubFetch(body: unknown) {
 
 function qcp(ui: React.ReactElement) {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: 0 } } });
-  return render(<QueryClientProvider client={client}>{ui}</QueryClientProvider>);
+  return render(
+    <I18nProvider>
+      <QueryClientProvider client={client}>{ui}</QueryClientProvider>
+    </I18nProvider>,
+  );
 }
 
 const PANEL_PROPS = {

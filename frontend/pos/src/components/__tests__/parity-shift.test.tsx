@@ -13,6 +13,10 @@ import { describe, it, expect, vi, afterEach } from "vitest";
 import { render, screen, fireEvent, within } from "@testing-library/react";
 import { Header } from "../Header";
 import { ShiftDialog } from "../dialogs/ShiftDialog";
+// Header + ShiftDialog both resolve strings via useT()/useLang(), which throw
+// without an ancestor I18nProvider (see i18n/I18nProvider.tsx) — every render()
+// below needs the wrapper now that both components are i18n-migrated.
+import { I18nProvider } from "@/i18n/I18nProvider";
 
 const h = vi.hoisted(() => ({ ctx: {} as Record<string, unknown> }));
 vi.mock("@/state/store", () => ({ usePos: () => h.ctx }));
@@ -130,7 +134,11 @@ afterEach(() => vi.unstubAllGlobals());
 describe("shift-badge-indicator — شارة حالة الوردية في الترويسة", () => {
   it("an open shift renders the وردية chip with the shift number", () => {
     h.ctx = baseCtx({ shiftId: "SH-77" });
-    render(<Header {...HEADER_PROPS} />);
+    render(
+      <I18nProvider>
+        <Header {...HEADER_PROPS} />
+      </I18nProvider>,
+    );
     const chip = screen.getByRole("button", { name: /وردية 77/ });
     expect(chip).toBeInTheDocument();
     fireEvent.click(chip);
@@ -139,7 +147,11 @@ describe("shift-badge-indicator — شارة حالة الوردية في الت
 
   it("no shift renders «لا وردية» plus an open-shift button", () => {
     h.ctx = baseCtx({ shiftId: null });
-    render(<Header {...HEADER_PROPS} />);
+    render(
+      <I18nProvider>
+        <Header {...HEADER_PROPS} />
+      </I18nProvider>,
+    );
     expect(screen.getByText("لا وردية")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "فتح وردية" })).toBeInTheDocument();
   });
@@ -153,7 +165,11 @@ describe("shift-open / shift-open-commit — فتح وردية", () => {
     const onOpenShiftDialog = vi.fn();
     const openShiftNow = vi.fn();
     h.ctx = baseCtx({ shiftId: null, openShiftNow });
-    render(<Header {...HEADER_PROPS} onOpenShiftDialog={onOpenShiftDialog} />);
+    render(
+      <I18nProvider>
+        <Header {...HEADER_PROPS} onOpenShiftDialog={onOpenShiftDialog} />
+      </I18nProvider>,
+    );
     fireEvent.click(screen.getByRole("button", { name: "فتح وردية" }));
     expect(onOpenShiftDialog).toHaveBeenCalledTimes(1);
     expect(openShiftNow).not.toHaveBeenCalled();
@@ -161,14 +177,22 @@ describe("shift-open / shift-open-commit — فتح وردية", () => {
 
   it("offline: the header فتح وردية button is disabled (open requires the server)", () => {
     h.ctx = baseCtx({ shiftId: null, engineStatus: { online: false, syncing: false, queueCount: 0 } });
-    render(<Header {...HEADER_PROPS} />);
+    render(
+      <I18nProvider>
+        <Header {...HEADER_PROPS} />
+      </I18nProvider>,
+    );
     expect(screen.getByRole("button", { name: "فتح وردية" })).toBeDisabled();
   });
 
   it("ShiftDialog with no shift offers فتح وردية and blocks it offline", () => {
     h.ctx = baseCtx({ shiftId: null, engineStatus: { online: false, syncing: false, queueCount: 0 } });
     stubShiftFetch();
-    render(<ShiftDialog open onClose={vi.fn()} />);
+    render(
+      <I18nProvider>
+        <ShiftDialog open onClose={vi.fn()} />
+      </I18nProvider>,
+    );
     expect(screen.getByText("لا توجد وردية مفتوحة")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "فتح وردية" })).toBeDisabled();
   });
@@ -180,7 +204,11 @@ describe("إغلاق الوردية — التدفّق الكامل (close-start
     const pushToast = vi.fn();
     h.ctx = baseCtx({ shiftId: "SH-1", onShiftClosed, pushToast });
     const { captured } = stubShiftFetch();
-    render(<ShiftDialog open onClose={vi.fn()} />);
+    render(
+      <I18nProvider>
+        <ShiftDialog open onClose={vi.fn()} />
+      </I18nProvider>,
+    );
 
     // shift-close-start: the close button loads closing-data-v3 and shows the counting table
     fireEvent.click(await screen.findByRole("button", { name: "إغلاق الوردية" }));
@@ -236,7 +264,11 @@ describe("إغلاق الوردية — التدفّق الكامل (close-start
   it("shift-close-cancel — «رجوع» abandons the count and returns to the shift info", async () => {
     h.ctx = baseCtx({ shiftId: "SH-1" });
     stubShiftFetch();
-    render(<ShiftDialog open onClose={vi.fn()} />);
+    render(
+      <I18nProvider>
+        <ShiftDialog open onClose={vi.fn()} />
+      </I18nProvider>,
+    );
     fireEvent.click(await screen.findByRole("button", { name: "إغلاق الوردية" }));
     await screen.findByLabelText("المعدود — كاش");
     fireEvent.click(screen.getByRole("button", { name: "رجوع" }));
@@ -249,7 +281,11 @@ describe("الرصيد الافتتاحي — opening float in the close flow", 
   it("renders the stored float READ-ONLY (no input) and still rides in the close payload", async () => {
     h.ctx = baseCtx({ shiftId: "SH-9" });
     const { captured } = stubShiftFetchWith(CLOSING_WITH_FLOAT);
-    render(<ShiftDialog open onClose={vi.fn()} />);
+    render(
+      <I18nProvider>
+        <ShiftDialog open onClose={vi.fn()} />
+      </I18nProvider>,
+    );
 
     fireEvent.click(await screen.findByRole("button", { name: "إغلاق الوردية" }));
     const cashInput = await screen.findByLabelText("المعدود — كاش");

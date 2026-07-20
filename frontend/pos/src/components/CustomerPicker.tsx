@@ -114,7 +114,7 @@ export function CustomerPicker({ value, onChange }: CustomerPickerProps) {
   return (
     <div>
       <label className="relative block">
-        <Search className="pointer-events-none absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" aria-hidden />
+        <Search className="pointer-events-none absolute start-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" aria-hidden />
         <input
           ref={inputRef}
           type="text"
@@ -122,7 +122,7 @@ export function CustomerPicker({ value, onChange }: CustomerPickerProps) {
           onChange={(e) => setQ(e.target.value)}
           onKeyDown={onKeyDown}
           placeholder="ابحث بالاسم أو الهاتف أو الرقم الضريبي…"
-          className="field w-full pr-9"
+          className="field w-full ps-9"
           role="combobox"
           aria-expanded="true"
           aria-controls="o2c-cust-list"
@@ -156,7 +156,7 @@ export function CustomerPicker({ value, onChange }: CustomerPickerProps) {
               onMouseEnter={() => setActive(i)}
               onClick={() => pick(c)}
               className={cn(
-                "flex w-full items-center justify-between gap-2 px-3 py-2 text-right transition",
+                "flex w-full items-center justify-between gap-2 px-3 py-2 text-start transition",
                 i === active ? "bg-teal-50" : "hover:bg-slate-50",
               )}
             >

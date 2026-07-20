@@ -10,6 +10,7 @@ import { usePos } from "@/state/store";
 import { clearToken } from "@/lib/auth";
 import { listOrders } from "@/lib/api";
 import { initPwa } from "@/lib/pwa";
+import { clearImageCache } from "@/lib/offlineImages";
 import { runLegacyDrainOnce, getDrainStatus } from "@/lib/legacyDrain";
 import { fmt2, fmtInt } from "@/lib/format";
 import { buildKitchenTicketHtml, printHtml } from "@/lib/receipt";
@@ -234,9 +235,22 @@ export default function App() {
 
   // Clear the session and return to the login screen (reload re-mounts the
   // provider, which re-reads the now-absent token → PosLogin).
+  //
+  // Image cache: the catalog/identity payload carries no branchId today (see
+  // lib/types.ts Catalog — this POS build has no multi-branch concept exposed
+  // to the client), so branch-change detection between logins can't be done
+  // cleanly. Clearing the WHOLE offline image cache unconditionally on every
+  // logout is the safe default the task calls out for that case: a fresh
+  // cashier re-downloads photos on next sync rather than risking a stale/wrong
+  // branch's images lingering across a shift handover.
   function performLogout() {
     clearToken();
-    window.location.reload();
+    // Best-effort: awaited so the reload below doesn't cut the async Cache
+    // Storage + IndexedDB cleanup off mid-flight, but never blocks logout on
+    // it failing (private-mode / storage errors must still let the cashier out).
+    void clearImageCache()
+      .catch(() => undefined)
+      .finally(() => window.location.reload());
   }
 
   // Safe cashier switch: NEVER drop an open shift silently. If a shift is open,

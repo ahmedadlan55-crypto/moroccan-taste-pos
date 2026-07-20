@@ -244,6 +244,11 @@ export const ROLE_GRANTS: Record<Capability, readonly Role[]> = {
   "menu.catalog.manage": MGR,
   "menu.pricing.manage": [...ADM, "manager", "accountant"],
   "menu.recipes.manage": [...ADM, "manager"],
+  // Same role grant as menu.catalog.manage (MGR = admin/developer/manager) —
+  // matches the backend seed (admin+manager) in
+  // db/migrations/capability-seeds/g-menu-images.json exactly; admin/developer
+  // are covered by can()'s hard bypass either way.
+  "menu.image.manage": MGR,
   // ── Purchasing requisitions (Closure Sprint v2) ──
   "purchasing.requisitions.manage": BACKOFFICE,
   "purchasing.requisitions.approve": MGR,

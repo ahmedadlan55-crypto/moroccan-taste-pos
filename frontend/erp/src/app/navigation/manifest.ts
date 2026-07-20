@@ -66,6 +66,7 @@ export const NAV: NavGroup[] = [
       { id: "mn-price-lists", path: "/menu/price-lists", label: "قوائم الأسعار", icon: "Tags", cap: "menu.view", module: "menu" },
       { id: "mn-combos", path: "/menu/combos", label: "الوجبات المركّبة", icon: "Layers", cap: "menu.view", module: "menu" },
       { id: "mn-semi", path: "/menu/semi-finished", label: "المنتجات نصف المصنّعة", icon: "Soup", cap: "menu.view", module: "menu" },
+      { id: "mn-images", path: "/menu/images", label: "صور الأصناف", icon: "Image", cap: "menu.view", module: "menu" },
     ],
   },
   {

@@ -224,6 +224,13 @@ export const ALL_CAPS = [
   "menu.catalog.manage",
   "menu.pricing.manage",
   "menu.recipes.manage",
+  // Bulk product-image management (bilingual-i18n-images) — backend
+  // routes/product-images.js gates on requireCapability('menu.image.manage')
+  // (MGR role-gate + this capability layered on top), seeded to admin+manager
+  // in db/migrations/capability-seeds/g-menu-images.json. Kept as its own key
+  // (not reused menu.catalog.manage) so a future non-manager role can be
+  // granted/revoked image access independently, matching the backend's intent.
+  "menu.image.manage",
   // ── Purchasing requisitions (Closure Sprint v2 — new subsystem) ──
   "purchasing.requisitions.manage",
   "purchasing.requisitions.approve",

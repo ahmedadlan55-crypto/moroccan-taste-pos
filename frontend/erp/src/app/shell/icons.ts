@@ -71,6 +71,7 @@ import {
   LayoutGrid,
   ChefHat,
   Soup,
+  Image,
   Circle,
   type LucideIcon,
 } from "lucide-react";
@@ -145,6 +146,7 @@ const ICONS: Record<string, LucideIcon> = {
   LayoutGrid,
   ChefHat,
   Soup,
+  Image,
 };
 
 export function getIcon(name: string): LucideIcon {

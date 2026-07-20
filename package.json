@@ -37,6 +37,8 @@
     "test:reports-equations": "node tests/integration/reportsEquations.api.test.js",
     "test:trial-balance": "node tests/integration/trialBalance.api.test.js",
     "test:trial-balance-engine": "node tests/integration/trialBalanceEngine.test.js",
+    "test:account-roles": "node tests/integration/accountRoles.test.js",
+    "test:migration-lifecycle": "node tests/integration/migrationLifecycle.test.js",
     "db:clean-test-residue": "node scripts/clean-test-residue.js",
     "test:inventory-method": "node tests/integration/inventoryMethod.api.test.js",
     "test:search-api": "node tests/integration/search.api.test.js",

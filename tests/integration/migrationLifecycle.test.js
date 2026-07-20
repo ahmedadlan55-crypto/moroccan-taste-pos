@@ -31,6 +31,12 @@ const mysql = require('mysql2/promise');
 const fs = require('fs');
 const path = require('path');
 const { _splitStatements, _checksum } = require('../../db/migrate');
+// Tier A.2 — this file never touches db/connection.js's shared pool (it
+// speaks raw mysql2 against its own throwaway CREATE/DROP DATABASE), so
+// harness.activate() (which redirects that pool) is not needed here. Only
+// the shared local-environment guard is reused, for consistency with every
+// other integration test in this suite.
+const { assertLocalTestEnvironment, TestHarnessError } = require('../helpers/testHarness');
 
 let pass = 0, fail = 0; const fails = [];
 function check(n, c, extra) { if (c) { pass++; console.log('  ✅', n); } else { fail++; fails.push(n); console.log('  ❌', n, extra != null ? '→ ' + JSON.stringify(extra).slice(0, 300) : ''); } }
@@ -38,10 +44,14 @@ function check(n, c, extra) { if (c) { pass++; console.log('  ✅', n); } else {
 const TEST_DB_NAME = 'moroccan_taste_pos_migration_lifecycle_test';
 
 function assertTestEnvironment() {
-  const looksProd = !!(process.env.DATABASE_URL || process.env.MYSQL_URL || process.env.MYSQLHOST);
-  if (looksProd) {
-    console.error('REFUSING TO RUN: this looks like a non-local database (DATABASE_URL/MYSQLHOST set). This test CREATEs and DROPs a throwaway database and must only run against a local MySQL server.');
-    process.exit(2);
+  try {
+    assertLocalTestEnvironment();
+  } catch (e) {
+    if (e instanceof TestHarnessError) {
+      console.error('REFUSING TO RUN:', e.message, 'This test CREATEs and DROPs a throwaway database and must only run against a local MySQL server.');
+      process.exit(2);
+    }
+    throw e;
   }
 }
 

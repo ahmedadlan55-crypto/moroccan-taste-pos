@@ -24,14 +24,14 @@
  * Run: node tests/integration/trialBalance.api.test.js
  */
 require('dotenv').config();
-const { spawn } = require('child_process');
+// Tier A.2 — MUST be required and activated before db/connection.js.
+const harness = require('../helpers/testHarness');
+harness.activate();
 const http = require('http');
-const path = require('path');
 const bcrypt = require('bcryptjs');
 const db = require('../../db/connection');
 const { computeTrialBalance, TrialBalanceError } = require('../../lib/reports/trialBalance');
 
-const PORT = 3988;
 const CASHIER = 'itest_tb_cashier';
 const ACCOUNTANT = 'itest_tb_accountant';
 const FINANCE = 'itest_tb_finance';
@@ -41,36 +41,28 @@ const PW = 'TrialBalance#Test!2026';
 let pass = 0, fail = 0; const fails = [];
 function check(n, c, extra) { if (c) { pass++; console.log('  ✅', n); } else { fail++; fails.push(n); console.log('  ❌', n, extra != null ? '→ ' + JSON.stringify(extra).slice(0, 300) : ''); } }
 
-// Never let this file write anything against a database that isn't the
-// local dev instance — see db/connection.js: DATABASE_URL/MYSQLHOST are how
-// Railway injects production config; their presence here means this is NOT
-// the local environment this test assumes.
-function assertTestEnvironment() {
-  const looksProd = !!(process.env.DATABASE_URL || process.env.MYSQL_URL || process.env.MYSQLHOST);
-  const dbName = process.env.DB_NAME || process.env.MYSQL_DATABASE || process.env.MYSQLDATABASE || '';
-  if (looksProd || (dbName && dbName !== 'moroccan_taste_pos')) {
-    console.error('REFUSING TO RUN: this looks like a non-local database (DATABASE_URL/MYSQLHOST set, or DB_NAME=' + dbName + '). This test writes and deletes fixture data and must only run against the local dev DB.');
-    process.exit(2);
-  }
-}
-
-function call(method, p, token, body) {
+function call(port, method, p, token, body) {
   return new Promise((res) => {
     const d = body ? JSON.stringify(body) : null;
     const headers = { Accept: 'application/json' };
     if (token) headers.Authorization = 'Bearer ' + token;
     if (d) { headers['Content-Type'] = 'application/json'; headers['Content-Length'] = Buffer.byteLength(d); }
-    const r = http.request({ host: '127.0.0.1', port: PORT, method, path: p, headers }, (s) => {
+    const r = http.request({ host: '127.0.0.1', port, method, path: p, headers }, (s) => {
       let b = ''; s.on('data', (c) => (b += c)); s.on('end', () => { let j = null; try { j = JSON.parse(b); } catch (_) {} res({ status: s.statusCode, body: j }); });
     });
     r.on('error', () => res({ status: 0 })); if (d) r.write(d); r.end();
   });
 }
-const login = async (u) => (await call('POST', '/api/auth/login', null, { username: u, password: PW })).body?.token || '';
-async function waitUp() { for (let i = 0; i < 120; i++) { const ok = await new Promise((z) => http.get('http://127.0.0.1:' + PORT + '/api/version', (s) => z(s.statusCode === 200)).on('error', () => z(false))); if (ok) return true; await new Promise((z) => setTimeout(z, 500)); } return false; }
+const login = async (port, u) => (await call(port, 'POST', '/api/auth/login', null, { username: u, password: PW })).body?.token || '';
 
 const TEST_ACCOUNT_ID = 'ITEST-TB-ACC-1';
 const TEST_ACCOUNT_CODE = 'ITEST900001';
+// Isolated test DB has no pre-existing chart of accounts — self-contained
+// scaffold instead of depending on ambient code='111'/'1110' rows.
+const SCAFFOLD_PARENT_ID = 'ITEST-TB-SCAFFOLD-PARENT';
+const SCAFFOLD_PARENT_CODE = 'ITEST900000';
+const SCAFFOLD_CASH_ID = 'ITEST-TB-SCAFFOLD-CASH';
+const SCAFFOLD_CASH_CODE = 'ITEST900099';
 const TEST_JOURNAL_OPEN = 'ITEST-TB-J-OPEN';
 const TEST_JOURNAL_PERIOD = 'ITEST-TB-J-PERIOD';
 const TEST_JOURNAL_APPROVED_DEL = 'ITEST-TB-J-APPROVED-DEL';
@@ -110,7 +102,9 @@ async function cleanupFixtures() {
     try { await db.query('DELETE FROM gl_entries WHERE journal_id = ?', [jid]); } catch (_) {}
     try { await db.query('DELETE FROM gl_journals WHERE id = ?', [jid]); } catch (_) {}
   }
-  try { await db.query('DELETE FROM gl_accounts WHERE id = ?', [TEST_ACCOUNT_ID]); } catch (_) {}
+  for (const id of [TEST_ACCOUNT_ID, SCAFFOLD_CASH_ID, SCAFFOLD_PARENT_ID]) {
+    try { await db.query('DELETE FROM gl_accounts WHERE id = ?', [id]); } catch (_) {}
+  }
 }
 
 async function tableCounts() {
@@ -123,9 +117,18 @@ async function tableCounts() {
 }
 
 async function setupFixtures() {
-  const [[cashAcc]] = await db.query("SELECT id FROM gl_accounts WHERE code = '1110' LIMIT 1");
-  const [[parentAcc]] = await db.query("SELECT id FROM gl_accounts WHERE code = '111' LIMIT 1");
-  if (!cashAcc || !parentAcc) throw new Error('fixture accounts 1110/111 not found — cannot run test');
+  // Isolated test DB has no pre-existing chart of accounts — build our own
+  // minimal parent+leaf scaffold instead of depending on ambient rows.
+  await db.query(
+    'INSERT INTO gl_accounts (id, code, name_ar, type, parent_id, level, is_active, is_folder) VALUES (?,?,?,?,NULL,1,1,1)',
+    [SCAFFOLD_PARENT_ID, SCAFFOLD_PARENT_CODE, 'مجلّد سقالة (ITEST)', 'asset']
+  );
+  await db.query(
+    'INSERT INTO gl_accounts (id, code, name_ar, type, parent_id, level, is_active, is_folder) VALUES (?,?,?,?,?,2,1,0)',
+    [SCAFFOLD_CASH_ID, SCAFFOLD_CASH_CODE, 'نقدية سقالة (ITEST)', 'asset', SCAFFOLD_PARENT_ID]
+  );
+  const cashAcc = { id: SCAFFOLD_CASH_ID };
+  const parentAcc = { id: SCAFFOLD_PARENT_ID };
 
   await db.query(
     'INSERT INTO gl_accounts (id, code, name_ar, type, parent_id, level, is_active, is_folder) VALUES (?,?,?,?,?,?,1,0)',
@@ -141,7 +144,7 @@ async function setupFixtures() {
   await db.query(
     'INSERT INTO gl_entries (id, journal_id, account_id, account_code, debit, credit) VALUES (?,?,?,?,?,0), (?,?,?,?,0,?)',
     ['ITEST-TB-E-O1', TEST_JOURNAL_OPEN, TEST_ACCOUNT_ID, TEST_ACCOUNT_CODE, 100,
-     'ITEST-TB-E-O2', TEST_JOURNAL_OPEN, cashAcc.id, '1110', 100]
+     'ITEST-TB-E-O2', TEST_JOURNAL_OPEN, cashAcc.id, SCAFFOLD_CASH_CODE, 100]
   );
 
   // Period movement: inside the test window [2026-06-01, 2026-06-30].
@@ -152,19 +155,21 @@ async function setupFixtures() {
   await db.query(
     'INSERT INTO gl_entries (id, journal_id, account_id, account_code, debit, credit) VALUES (?,?,?,?,?,0), (?,?,?,?,0,?)',
     ['ITEST-TB-E-P1', TEST_JOURNAL_PERIOD, TEST_ACCOUNT_ID, TEST_ACCOUNT_CODE, 50,
-     'ITEST-TB-E-P2', TEST_JOURNAL_PERIOD, cashAcc.id, '1110', 50]
+     'ITEST-TB-E-P2', TEST_JOURNAL_PERIOD, cashAcc.id, SCAFFOLD_CASH_CODE, 50]
   );
 
   return { cashAcc, parentAcc };
 }
 
 (async () => {
-  assertTestEnvironment();
-  await snapshotUserMeta();
-  await cleanupFixtures();
-  const before = await tableCounts();
   let server = null;
+  let before = null;
   try {
+    await harness.ensureSchema();
+    await snapshotUserMeta();
+    await cleanupFixtures();
+    before = await tableCounts();
+
     const hash = await bcrypt.hash(PW, 12);
     await db.query('INSERT INTO users (username,password,role,active) VALUES (?,?,?,1)', [CASHIER, hash, 'cashier']);
     await db.query('INSERT INTO users (username,password,role,active) VALUES (?,?,?,1)', [ACCOUNTANT, hash, 'accountant']);
@@ -175,44 +180,48 @@ async function setupFixtures() {
     await db.query('INSERT INTO users (username,password,role,active) VALUES (?,?,?,1)', [DEVELOPER, hash, 'manager']);
     await mergeDeveloperIntoUserMeta();
 
-    server = spawn(process.execPath, ['server.js'], { cwd: path.join(__dirname, '..', '..'), env: { ...process.env, PORT: String(PORT) }, stdio: ['ignore', 'ignore', 'ignore'] });
-    if (!(await waitUp())) { console.error('server did not start'); process.exit(2); }
+    // harness.spawnServer() allocates a genuinely free port and verifies
+    // the first successful /api/version response came from THIS process
+    // (token round-trip) — no more hardcoded-port collisions with a
+    // leftover process, and no more trusting an arbitrary 200 on that port.
+    server = await harness.spawnServer();
+    const port = server.port;
 
-    // 'auditor' — migration 0016 added it to the users.role ENUM, but
-    // server.js's legacy runMigrations() also runs an unconditional
-    // ALTER TABLE users MODIFY COLUMN role ENUM(...) on every boot (see the
-    // comment at that line) — until it was updated to include 'auditor'
-    // too, it silently reverted 0016's widening on every single server
-    // start. Creating this user only AFTER the server above has finished
-    // booting (and therefore run its own, now-corrected, widening ALTER)
-    // is what actually proves the role is usable end-to-end, not just that
-    // db/migrate.js's one-time migration succeeded in isolation.
+    // 'auditor' — migration 0020 (renumbered from 0016 after the origin/main
+    // merge) added it to the users.role ENUM, but server.js's legacy
+    // runMigrations() also runs an unconditional ALTER TABLE users MODIFY
+    // COLUMN role ENUM(...) on every boot (see the comment at that line) —
+    // until it was updated to include 'auditor' too, it silently reverted
+    // that widening on every single server start. Creating this user only
+    // AFTER the server above has finished booting (and therefore run its
+    // own, now-corrected, widening ALTER) is what actually proves the role
+    // is usable end-to-end, not just that the migration succeeded in isolation.
     await db.query('INSERT INTO users (username,password,role,active) VALUES (?,?,?,1)', [AUDITOR, hash, 'auditor']);
-    console.log('\n═══ Trial Balance (canonical engine + endpoint) ═══');
+    console.log('\n═══ Trial Balance (canonical engine + endpoint), isolated test DB ═══');
 
     await setupFixtures();
 
     // ── 1. RBAC ──
-    const cashier = await login(CASHIER);
-    const accountant = await login(ACCOUNTANT);
-    const finance = await login(FINANCE);
+    const cashier = await login(port, CASHIER);
+    const accountant = await login(port, ACCOUNTANT);
+    const finance = await login(port, FINANCE);
     check('all test users authenticate', !!cashier && !!accountant && !!finance);
 
-    const cResp = await call('GET', '/api/erp/reports/trial-balance', cashier);
+    const cResp = await call(port, 'GET', '/api/erp/reports/trial-balance', cashier);
     check('cashier is DENIED trial balance (403)', cResp.status === 403, { status: cResp.status, body: cResp.body });
     check('cashier denial carries a specific permission code, not just >=400', cResp.body && (cResp.body.code === 'PERMISSION_DENIED'), { code: cResp.body && cResp.body.code });
 
-    const aResp = await call('GET', '/api/erp/reports/trial-balance?from=2026-06-01&to=2026-06-30', accountant);
+    const aResp = await call(port, 'GET', '/api/erp/reports/trial-balance?from=2026-06-01&to=2026-06-30', accountant);
     check('accountant CAN view trial balance (200) — closes the finance.reports.view gap', aResp.status === 200 && aResp.body && aResp.body.success, { status: aResp.status, body: aResp.body && aResp.body.success });
     check('the HTTP response itself carries isClean/diagnostics (not just the engine function)', aResp.body && typeof aResp.body.isClean === 'boolean' && !!aResp.body.diagnostics, { isClean: aResp.body && aResp.body.isClean, hasDiagnostics: aResp.body && !!aResp.body.diagnostics });
 
-    const fResp = await call('GET', '/api/erp/reports/trial-balance?from=2026-06-01&to=2026-06-30', finance);
+    const fResp = await call(port, 'GET', '/api/erp/reports/trial-balance?from=2026-06-01&to=2026-06-30', finance);
     check('finance CAN view trial balance (200)', fResp.status === 200 && fResp.body && fResp.body.success, { status: fResp.status });
 
-    // ── Tier A.1 corrective gate: 'auditor' end-to-end, not just claimed ──
-    const auditor = await login(AUDITOR);
-    check('a real auditor account authenticates (migration 0016 — role now exists in users.role)', !!auditor);
-    const auResp = await call('GET', '/api/erp/reports/trial-balance?from=2026-06-01&to=2026-06-30', auditor);
+    // ── 'auditor' end-to-end, not just claimed ──
+    const auditor = await login(port, AUDITOR);
+    check('a real auditor account authenticates (migration 0020 — role now exists in users.role)', !!auditor);
+    const auResp = await call(port, 'GET', '/api/erp/reports/trial-balance?from=2026-06-01&to=2026-06-30', auditor);
     check('auditor CAN view trial balance (200) — the grant was reachable all along in code, now reachable by an actual account too', auResp.status === 200 && auResp.body && auResp.body.success, { status: auResp.status, body: auResp.body });
 
     // ── 2. Engine correctness — isolated ITEST account, exact numbers ──
@@ -229,8 +238,8 @@ async function setupFixtures() {
     // ── 3. Mutation guard: Grand Total must be leaves-only, never rolled-up folders ──
     const bal = await computeTrialBalance(db, { includeZero: true });
     const balTotalPeriodDebit = bal.totals.periodDebit;
-    const parentRow = bal.rows.find((r) => r.code === '111');
-    check('parent account "111" row is present and marked non-leaf (folder rollup)', !!parentRow && parentRow.hasChildren === true, parentRow);
+    const parentRow = bal.rows.find((r) => r.code === SCAFFOLD_PARENT_CODE);
+    check('scaffold parent row is present and marked non-leaf (folder rollup)', !!parentRow && parentRow.hasChildren === true, parentRow);
     if (parentRow) {
       check('parent rollup row is NOT counted in isPostingLeaf (excluded from Grand Total by construction)', parentRow.isPostingLeaf === false, parentRow);
     }
@@ -265,11 +274,11 @@ async function setupFixtures() {
     check('combined date+dimension filter query does not throw (params stayed aligned with placeholders)', combinedOk, combinedErr);
 
     // ── 6. Journal deletion governance: draft-only ──
-    const developer = await login(DEVELOPER);
+    const developer = await login(port, DEVELOPER);
     check('developer authenticates', !!developer);
 
     // 6a. non-existent id -> real 404, not a fake success
-    const delMissing = await call('DELETE', '/api/erp/gl/journals/' + TEST_JOURNAL_MISSING_ID, developer);
+    const delMissing = await call(port, 'DELETE', '/api/erp/gl/journals/' + TEST_JOURNAL_MISSING_ID, developer);
     check('DELETE on a non-existent journal id returns 404 with code=not_found (not a fake success)', delMissing.status === 404 && delMissing.body && delMissing.body.code === 'not_found' && delMissing.body.success === false, { status: delMissing.status, body: delMissing.body });
 
     // 6b. posted -> blocked, still present
@@ -282,7 +291,7 @@ async function setupFixtures() {
       ['ITEST-TB-E-D1', TEST_JOURNAL_POSTED_DEL, TEST_ACCOUNT_ID, TEST_ACCOUNT_CODE, 10,
        'ITEST-TB-E-D2', TEST_JOURNAL_POSTED_DEL, TEST_ACCOUNT_ID, TEST_ACCOUNT_CODE, 10]
     );
-    const delPosted = await call('DELETE', '/api/erp/gl/journals/' + TEST_JOURNAL_POSTED_DEL, developer);
+    const delPosted = await call(port, 'DELETE', '/api/erp/gl/journals/' + TEST_JOURNAL_POSTED_DEL, developer);
     check('DELETE on a posted journal is BLOCKED (409, posted_journal_immutable)', delPosted.status === 409 && delPosted.body && delPosted.body.code === 'posted_journal_immutable', { status: delPosted.status, body: delPosted.body });
     const [[stillPosted]] = await db.query('SELECT id, status FROM gl_journals WHERE id = ?', [TEST_JOURNAL_POSTED_DEL]);
     check('posted journal STILL EXISTS after the blocked delete attempt', !!stillPosted && stillPosted.status === 'posted', stillPosted);
@@ -292,7 +301,7 @@ async function setupFixtures() {
       "INSERT INTO gl_journals (id, journal_number, journal_date, total_debit, total_credit, status, approved_by) VALUES (?,?,?,?,?, 'approved', ?)",
       [TEST_JOURNAL_APPROVED_DEL, 'ITEST-TB-APPR-DEL', '2026-06-10', 7, 7, 'someone-else']
     );
-    const delApproved = await call('DELETE', '/api/erp/gl/journals/' + TEST_JOURNAL_APPROVED_DEL, developer);
+    const delApproved = await call(port, 'DELETE', '/api/erp/gl/journals/' + TEST_JOURNAL_APPROVED_DEL, developer);
     check('DELETE on an APPROVED journal is BLOCKED (409, approved_journal_requires_governed_action)', delApproved.status === 409 && delApproved.body && delApproved.body.code === 'approved_journal_requires_governed_action', { status: delApproved.status, body: delApproved.body });
     const [[stillApproved]] = await db.query('SELECT id, status FROM gl_journals WHERE id = ?', [TEST_JOURNAL_APPROVED_DEL]);
     check('approved journal STILL EXISTS after the blocked delete attempt', !!stillApproved && stillApproved.status === 'approved', stillApproved);
@@ -316,7 +325,7 @@ async function setupFixtures() {
       ['ITEST-TB-E-DFT1', TEST_JOURNAL_DRAFT_DEL, TEST_ACCOUNT_ID, TEST_ACCOUNT_CODE, 5,
        'ITEST-TB-E-DFT2', TEST_JOURNAL_DRAFT_DEL, TEST_ACCOUNT_ID, TEST_ACCOUNT_CODE, 5]
     );
-    const delDraft = await call('DELETE', '/api/erp/gl/journals/' + TEST_JOURNAL_DRAFT_DEL, developer);
+    const delDraft = await call(port, 'DELETE', '/api/erp/gl/journals/' + TEST_JOURNAL_DRAFT_DEL, developer);
     check('DELETE on a DRAFT journal succeeds (200)', delDraft.status === 200 && delDraft.body && delDraft.body.success === true, { status: delDraft.status, body: delDraft.body });
     const [draftGone] = await db.query('SELECT id FROM gl_journals WHERE id = ?', [TEST_JOURNAL_DRAFT_DEL]);
     check('draft journal (header + 2 lines) was actually removed', draftGone.length === 0, draftGone);
@@ -338,9 +347,13 @@ async function setupFixtures() {
     await restoreUserMeta();
   }
 
-  const after = await tableCounts();
-  for (const t of Object.keys(before)) {
-    check(`table "${t}" row count restored to baseline after cleanup`, before[t] === after[t], { before: before[t], after: after[t] });
+  if (before) {
+    const after = await tableCounts();
+    for (const t of Object.keys(before)) {
+      check(`table "${t}" row count restored to baseline after cleanup`, before[t] === after[t], { before: before[t], after: after[t] });
+    }
+  } else {
+    fail++; fails.push('setup failed before a baseline row-count snapshot could be taken — cleanup-verification skipped');
   }
   const [userMetaFinal] = await db.query("SELECT setting_value FROM settings WHERE setting_key = 'user_meta'");
   check(

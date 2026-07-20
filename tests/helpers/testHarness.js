@@ -220,6 +220,55 @@ async function ensureSchema() {
   await new Promise((r) => setTimeout(r, 300));
 }
 
+/**
+ * server.js's boot sequence creates every TABLE but seeds no chart-of-
+ * accounts rows — lib/glPosting.js#ensureCoreAccounts() only runs lazily,
+ * on the first postJournal() call. Many fixtures (this repo's existing
+ * tests included) assume baseline accounts like code='111'/'1110'/'4100'
+ * already exist. Call this once, against the now-activated test database,
+ * after ensureSchema() (or after your own spawned server has come up), to
+ * seed the same ~28 legacy CORE_ACCOUNTS the real dev DB already has —
+ * reuses the existing, already-proven seeding function instead of a
+ * parallel hand-rolled fixture set.
+ * @param {object} db - a pool/connection (db/connection.js, already bound
+ *   to the test database via activate())
+ */
+async function ensureCoreAccounts(db) {
+  requireActivated();
+  const glPosting = require('../../lib/glPosting');
+  await glPosting.ensureCoreAccounts(db);
+}
+
+/**
+ * Applies specific numbered migration file(s) from db/migrations/ against
+ * the (now-activated) isolated test database, idempotently — skips any
+ * version already recorded in _migrations. server.js's boot sequence
+ * (ensureSchema()) provisions everything the LEGACY runMigrations() path
+ * creates, but tables that only exist via a versioned db/migrations/*.sql
+ * file (account_roles/account_role_history, for example — see ADR 0002)
+ * are NOT created by ensureSchema() alone and need this.
+ * @param {object} db - pool/connection bound to the test database
+ * @param {string[]} filenames - e.g. ['0018_account_role_registry.sql', '0019_account_role_registry_scope_fix.sql']
+ */
+async function applyMigrations(db, filenames) {
+  requireActivated();
+  const fs = require('fs');
+  const path2 = require('path');
+  const { _splitStatements, _checksum } = require('../../db/migrate');
+  await db.query(
+    'CREATE TABLE IF NOT EXISTS _migrations (version VARCHAR(20) NOT NULL PRIMARY KEY, filename VARCHAR(255) NOT NULL, applied_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP, checksum VARCHAR(64)) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci'
+  );
+  for (const filename of filenames) {
+    const version = filename.match(/^(\d{4})_/)[1];
+    const [already] = await db.query('SELECT version FROM _migrations WHERE version = ?', [version]);
+    if (already.length) continue;
+    const fullPath = path2.join(REPO_ROOT, 'db', 'migrations', filename);
+    const content = fs.readFileSync(fullPath, 'utf8');
+    for (const stmt of _splitStatements(content)) await db.query(stmt);
+    await db.query('INSERT INTO _migrations (version, filename, checksum) VALUES (?, ?, ?)', [version, filename, _checksum(content)]);
+  }
+}
+
 module.exports = {
   TestHarnessError,
   assertLocalTestEnvironment,
@@ -229,4 +278,6 @@ module.exports = {
   getFreePort,
   spawnServer,
   ensureSchema,
+  ensureCoreAccounts,
+  applyMigrations,
 };

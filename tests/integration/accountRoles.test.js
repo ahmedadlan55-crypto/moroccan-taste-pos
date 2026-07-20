@@ -10,23 +10,18 @@
  * Run: node tests/integration/accountRoles.test.js
  */
 require('dotenv').config();
+// Tier A.2 — MUST be required and activated before db/connection.js.
+const harness = require('../helpers/testHarness');
+harness.activate();
 const db = require('../../db/connection');
 const { getAccountByRole, setAccountRole, AccountRoleError } = require('../../lib/accountRoles');
 
 let pass = 0, fail = 0; const fails = [];
 function check(n, c, extra) { if (c) { pass++; console.log('  ✅', n); } else { fail++; fails.push(n); console.log('  ❌', n, extra != null ? '→ ' + JSON.stringify(extra).slice(0, 300) : ''); } }
 
-function assertTestEnvironment() {
-  const looksProd = !!(process.env.DATABASE_URL || process.env.MYSQL_URL || process.env.MYSQLHOST);
-  const dbName = process.env.DB_NAME || process.env.MYSQL_DATABASE || process.env.MYSQLDATABASE || '';
-  if (looksProd || (dbName && dbName !== 'moroccan_taste_pos')) {
-    console.error('REFUSING TO RUN: non-local database detected.');
-    process.exit(2);
-  }
-}
-
 const IDS = {
   companyB: 'ITEST-AR-COMPANY-B',
+  scaffoldParent: 'ITEST-AR-SCAFFOLD-PARENT',
   leafAsset: 'ITEST-AR-LEAF-ASSET',
   leafLiability: 'ITEST-AR-LEAF-LIAB',
   folder: 'ITEST-AR-FOLDER',
@@ -44,7 +39,7 @@ async function cleanup() {
   try { await db.query('DELETE FROM account_role_history WHERE role_key IN (?, ?)', TEST_ROLE_KEYS); } catch (_) {}
   try { await db.query('DELETE FROM account_roles WHERE role_key IN (?, ?)', TEST_ROLE_KEYS); } catch (_) {}
   try { await db.query('DELETE FROM account_role_history WHERE role_key = ?', ['ITEST_NOT_IN_CATALOG_UNUSED']); } catch (_) {}
-  for (const id of [IDS.leafAsset, IDS.leafLiability, IDS.folder]) {
+  for (const id of [IDS.leafAsset, IDS.leafLiability, IDS.folder, IDS.scaffoldParent]) {
     try { await db.query('DELETE FROM gl_accounts WHERE id = ?', [id]); } catch (_) {}
   }
   try { await db.query('DELETE FROM companies WHERE id = ?', [IDS.companyB]); } catch (_) {}
@@ -60,7 +55,13 @@ async function tableCounts() {
 }
 
 async function setupFixtures() {
-  const [[parentAcc]] = await db.query("SELECT id FROM gl_accounts WHERE code = '111' LIMIT 1");
+  // Isolated test DB has no pre-existing chart of accounts — create our own
+  // parent instead of depending on an ambient code='111' account existing.
+  await db.query(
+    'INSERT INTO gl_accounts (id, code, name_ar, type, parent_id, level, is_active, is_folder) VALUES (?,?,?,?,NULL,1,1,1)',
+    [IDS.scaffoldParent, 'ITEST900029', 'مجلّد سقالة (ITEST)', 'asset']
+  );
+  const parentAcc = { id: IDS.scaffoldParent };
   await db.query(
     'INSERT INTO gl_accounts (id, code, name_ar, type, parent_id, level, is_active, is_folder) VALUES (?,?,?,?,?,?,1,0)',
     [IDS.leafAsset, 'ITEST900030', 'حساب أصل قابل للترحيل (ITEST)', 'asset', parentAcc.id, 4]
@@ -80,7 +81,8 @@ async function setupFixtures() {
 }
 
 (async () => {
-  assertTestEnvironment();
+  await harness.ensureSchema(); // provisions companies (incl. seeded CO-MAIN), gl_accounts, users, etc.
+  await harness.applyMigrations(db, ['0018_account_role_registry.sql', '0019_account_role_registry_scope_fix.sql']);
   await cleanup();
   const before = await tableCounts();
 

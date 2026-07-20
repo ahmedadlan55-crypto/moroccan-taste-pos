@@ -9,28 +9,27 @@
  * Run: node tests/integration/trialBalanceEngine.test.js
  */
 require('dotenv').config();
+// Tier A.2 — MUST be required and activated before db/connection.js, so the
+// shared pool binds to the isolated *_test database from its first connection
+// (never the real moroccan_taste_pos dev DB). See tests/helpers/testHarness.js.
+const harness = require('../helpers/testHarness');
+harness.activate();
 const db = require('../../db/connection');
 const { computeTrialBalance, TrialBalanceError, resetDimColsCache } = require('../../lib/reports/trialBalance');
 
 let pass = 0, fail = 0; const fails = [];
 function check(n, c, extra) { if (c) { pass++; console.log('  ✅', n); } else { fail++; fails.push(n); console.log('  ❌', n, extra != null ? '→ ' + JSON.stringify(extra).slice(0, 400) : ''); } }
 
-// Guard against ever running fixture writes against a non-local/non-test DB.
-// db/connection.js falls through to individual DB_* vars when DATABASE_URL /
-// MYSQLHOST are unset — those are how Railway injects production config, so
-// their presence here is the signal this is NOT the local dev environment.
-function assertTestEnvironment() {
-  const looksProd = !!(process.env.DATABASE_URL || process.env.MYSQL_URL || process.env.MYSQLHOST);
-  const dbName = process.env.DB_NAME || process.env.MYSQL_DATABASE || process.env.MYSQLDATABASE || '';
-  if (looksProd || (dbName && dbName !== 'moroccan_taste_pos')) {
-    console.error('REFUSING TO RUN: this looks like a non-local database (DATABASE_URL/MYSQLHOST set, or DB_NAME=' + dbName + '). This test writes fixture data and must only run against the local dev DB.');
-    process.exit(2);
-  }
-}
-
 const IDS = {
-  parentFolder: 'ITEST-TBE-FOLDER',
-  childLeaf: 'ITEST-TBE-LEAF',
+  // Self-contained scaffold — the isolated test DB has no pre-existing
+  // chart of accounts (ensureCoreAccounts() only creates the ~28 LEAF
+  // CORE_ACCOUNTS, never their parent codes like '111' — see the comment
+  // at this file's IIFE start), so this file no longer depends on any
+  // ambient/pre-seeded account existing. scaffoldParent stands in for
+  // "some folder to attach ITEST accounts under"; scaffoldCash stands in
+  // for "some other real posting-leaf account to balance a journal against".
+  scaffoldParent: 'ITEST-TBE-SCAFFOLD-PARENT',
+  scaffoldCash: 'ITEST-TBE-SCAFFOLD-CASH',
   childlessFolder: 'ITEST-TBE-CHILDLESS-FOLDER',
   parentWithActivity: 'ITEST-TBE-PARENT-ACTIVE',
   parentWithActivityChild: 'ITEST-TBE-PARENT-ACTIVE-CHILD',
@@ -63,16 +62,28 @@ async function tableCounts() {
 }
 
 (async () => {
-  assertTestEnvironment();
+  // Isolated test DB starts with every TABLE but no chart-of-accounts rows
+  // (ensureCoreAccounts() only runs lazily on the first real postJournal()
+  // call) — provision schema, then seed the same baseline CORE_ACCOUNTS the
+  // real dev DB already has, so code='111'/'1110' below resolve for real.
+  await harness.ensureSchema();
+  await harness.ensureCoreAccounts(db);
   await cleanup();
   const before = await tableCounts();
 
   try {
-    console.log('\n═══ Trial Balance Engine correctness (Tier A.1) ═══');
+    console.log('\n═══ Trial Balance Engine correctness (Tier A.2, isolated test DB) ═══');
 
-    const [[realParent]] = await db.query("SELECT id FROM gl_accounts WHERE code = '111' LIMIT 1");
-    const [[realCash]] = await db.query("SELECT id FROM gl_accounts WHERE code = '1110' LIMIT 1");
-    if (!realParent || !realCash) throw new Error('fixture accounts 111/1110 not found');
+    await db.query(
+      'INSERT INTO gl_accounts (id, code, name_ar, type, parent_id, level, is_active, is_folder) VALUES (?,?,?,?,NULL,?,1,1)',
+      [IDS.scaffoldParent, 'ITEST900000', 'مجلّد سقالة (ITEST)', 'asset', 1]
+    );
+    await db.query(
+      'INSERT INTO gl_accounts (id, code, name_ar, type, parent_id, level, is_active, is_folder) VALUES (?,?,?,?,?,?,1,0)',
+      [IDS.scaffoldCash, 'ITEST900001', 'نقدية سقالة (ITEST)', 'asset', IDS.scaffoldParent, 2]
+    );
+    const realParent = { id: IDS.scaffoldParent };
+    const realCash = { id: IDS.scaffoldCash };
 
     // ── 1. Inactive account WITH history must still appear ──
     await db.query(
@@ -254,7 +265,7 @@ async function tableCounts() {
     await db.query(
       'INSERT INTO gl_entries (id, journal_id, account_id, account_code, debit, credit) VALUES (?,?,NULL,?,?,0), (?,?,?,?,0,?)',
       ['ITEST-TBE-E-NA1', JOURNALS[5], 'ITEST-DELETED-CODE', 9,
-       'ITEST-TBE-E-NA2', JOURNALS[5], realCash.id, '1110', 9]
+       'ITEST-TBE-E-NA2', JOURNALS[5], realCash.id, 'ITEST900001', 9]
     );
     const clean2 = await computeTrialBalance(db, cleanWindow);
     check('inserting ONE null-account entry flips isClean to false (Debit=Credit is not sufficient to call a report clean)', clean2.isClean === false && clean2.diagnostics.nullAccountEntries === 1, { isClean: clean2.isClean, nullAccountEntries: clean2.diagnostics.nullAccountEntries });

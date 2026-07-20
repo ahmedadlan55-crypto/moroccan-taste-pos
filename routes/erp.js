@@ -81,7 +81,17 @@ router.use(require('./erp/vat'));
 // v5.17.2 — Financial reports: each report in its own sub-file. Every
 // endpoint behavior is identical to the inline version — these files
 // were extracted verbatim from routes/erp.js without behavior changes.
-router.use(require('./erp/reports/trial-balance'));
+//
+// Tier A COA/Trial Balance overhaul — routes/erp/reports/trial-balance.js's
+// GET /reports/trial-balance was UNMOUNTED here (not just left to lose the
+// mount-order race). It was already unreachable in practice: erp-core.js
+// registers the same path earlier in server.js and never calls next(), and
+// no frontend/test consumer used this file's distinct contract (confirmed
+// by repo-wide search — see docs/adr/0002-chart-of-accounts-trial-balance.md
+// section 6). Its calculation logic (opening-journal handling, abnormalSign,
+// granular balance checks) now lives in lib/reports/trialBalance.js, used by
+// the one live endpoint in routes/erp-core.js. The file itself is kept
+// on disk (see its own header comment) but no longer required anywhere.
 router.use(require('./erp/reports/income'));
 router.use(require('./erp/reports/balance-sheet'));
 router.use(require('./erp/reports/cash-flow'));
@@ -3117,10 +3127,18 @@ router.post('/gl/journals/bulk', requireCapability('finance.gl.view'), async (re
 // everyone else; this is the server-side safety net for direct calls.
 router.delete('/gl/journals/:id', guardDeveloper, async (req, res) => {
   try {
+    // Tier A immutability fix (COA/Trial Balance overhaul, rule 5): a posted
+    // journal must never be hard-deleted — same invariant POST /gl/journals/bulk
+    // already enforces for its 'delete' action (see 'is-posted-needs-reverse'
+    // above). This endpoint previously had NO status check at all, so any
+    // guardDeveloper-authorized caller could erase a posted journal's history.
+    // The only valid correction for a posted journal is a new reversing entry.
+    let blocked = false;
     // FC-P1 — atomic: reverse balances + delete under the journal-row lock.
     await db.withTransaction(async (conn) => {
-      const [jrn] = await conn.query('SELECT id FROM gl_journals WHERE id = ? FOR UPDATE', [req.params.id]);
+      const [jrn] = await conn.query('SELECT id, status FROM gl_journals WHERE id = ? FOR UPDATE', [req.params.id]);
       if (!jrn.length) return;
+      if (jrn[0].status === 'posted') { blocked = true; return; }
       const [entries] = await conn.query('SELECT account_id, debit, credit FROM gl_entries WHERE journal_id = ? AND account_id IS NOT NULL ORDER BY account_id', [req.params.id]);
       for (const e of entries) {
         const reverseAmount = (Number(e.credit) || 0) - (Number(e.debit) || 0);
@@ -3129,6 +3147,13 @@ router.delete('/gl/journals/:id', guardDeveloper, async (req, res) => {
       await conn.query('DELETE FROM gl_entries WHERE journal_id = ?', [req.params.id]);
       await conn.query('DELETE FROM gl_journals WHERE id = ?', [req.params.id]);
     });
+    if (blocked) {
+      return res.status(409).json({
+        success: false,
+        code: 'posted_journal_immutable',
+        error: 'القيد مُرحَّل — لا يمكن حذفه. أنشئ قيد عكس (Reversal) بدلاً من ذلك.',
+      });
+    }
     await auditLog('delete_journal', 'gl_journal', req.params.id, _actor(req), {}, req.ip);
     res.json({ success: true });
   } catch (e) { res.json({ success: false, error: e.message }); }

@@ -1,10 +1,10 @@
 'use strict';
-/* Integration — migration lifecycle for 0014/0015 (account_roles), against
+/* Integration — migration lifecycle for 0018/0019 (account_roles), against
  * an ISOLATED THROWAWAY DATABASE — never the real local dev DB, and
  * absolutely never anything that could be production.
  *
  * Tier A.1 Corrective Gate, item 6. Proves:
- *   1. A fresh/empty database (only the prerequisite tables 0014/0015
+ *   1. A fresh/empty database (only the prerequisite tables 0018/0019
  *      depend on — companies, gl_accounts) can apply both migrations
  *      cleanly via the SAME statement-splitting/checksum logic
  *      db/migrate.js uses (imported directly, not reimplemented).
@@ -71,7 +71,7 @@ async function applyMigrationFile(conn, filename) {
   let conn = null;
 
   try {
-    console.log('\n═══ Migration lifecycle (0014/0015) — isolated throwaway database ═══');
+    console.log('\n═══ Migration lifecycle (0018/0019) — isolated throwaway database ═══');
 
     await root.query('DROP DATABASE IF EXISTS `' + TEST_DB_NAME + '`'); // in case a prior crashed run left it behind
     await root.query('CREATE DATABASE `' + TEST_DB_NAME + '` DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci');
@@ -85,7 +85,7 @@ async function applyMigrationFile(conn, filename) {
       database: TEST_DB_NAME,
     });
 
-    // ── 1. Empty database: create ONLY the prerequisite tables 0014/0015
+    // ── 1. Empty database: create ONLY the prerequisite tables 0018/0019
     // depend on (companies, gl_accounts) — proves the dependency ordering
     // documented in the migration files is both necessary and sufficient. ──
     // Charset/collation must match account_roles' explicit
@@ -101,24 +101,24 @@ async function applyMigrationFile(conn, filename) {
     await conn.query("INSERT INTO gl_accounts (id, code, name_ar, type) VALUES ('GL-1', '1', 'Assets', 'asset')");
     check('prerequisite schema (companies, gl_accounts) created on an otherwise-empty database', true);
 
-    // ── 2. Apply 0014 then 0015 (dependency order matters: 0015 ALTERs
-    // tables 0014 creates) ──
-    const r14 = await applyMigrationFile(conn, '0014_account_role_registry.sql');
-    check('0014 applies cleanly to the empty (prerequisites-only) database', r14.stmtCount === 2, r14);
-    const r15 = await applyMigrationFile(conn, '0015_account_role_registry_scope_fix.sql');
-    check('0015 applies cleanly immediately after 0014', r15.stmtCount === 11, r15);
+    // ── 2. Apply 0018 then 0019 (dependency order matters: 0019 ALTERs
+    // tables 0018 creates) ──
+    const r18 = await applyMigrationFile(conn, '0018_account_role_registry.sql');
+    check('0018 applies cleanly to the empty (prerequisites-only) database', r18.stmtCount === 2, r18);
+    const r19 = await applyMigrationFile(conn, '0019_account_role_registry_scope_fix.sql');
+    check('0019 applies cleanly immediately after 0018', r19.stmtCount === 11, r19);
 
     const [cols] = await conn.query('SHOW COLUMNS FROM account_roles');
     const colNames = cols.map((c) => c.Field);
     check(
-      '0015\'s changes are actually present (version column, company_id NOT NULL)',
+      '0019\'s changes are actually present (version column, company_id NOT NULL)',
       colNames.includes('version') && cols.find((c) => c.Field === 'company_id').Null === 'NO',
       cols.map((c) => ({ f: c.Field, null: c.Null }))
     );
 
     // ── 3. Re-running is idempotent: applying again should be a no-op
     // (both versions already recorded in _migrations) ──
-    const [appliedVersions] = await conn.query("SELECT version FROM _migrations WHERE version IN ('0014','0015') ORDER BY version");
+    const [appliedVersions] = await conn.query("SELECT version FROM _migrations WHERE version IN ('0018','0019') ORDER BY version");
     check('both versions are recorded in _migrations after the first apply', appliedVersions.length === 2, appliedVersions);
     // Simulate what db/migrate.js's runPendingMigrations() does: it reads
     // _migrations first and skips anything already there. We assert that
@@ -129,8 +129,8 @@ async function applyMigrationFile(conn, filename) {
       .filter((f) => /^\d{4}_[a-z0-9_]+\.sql$/i.test(f))
       .map((f) => f.match(/^(\d{4})_/)[1]);
     const appliedSet = new Set(appliedVersions.map((r) => r.version));
-    const wouldBePending = onDiskVersions.filter((v) => v === '0014' || v === '0015').filter((v) => !appliedSet.has(v));
-    check('after applying, 0014/0015 are no longer in the "pending" set a rerun would compute', wouldBePending.length === 0, wouldBePending);
+    const wouldBePending = onDiskVersions.filter((v) => v === '0018' || v === '0019').filter((v) => !appliedSet.has(v));
+    check('after applying, 0018/0019 are no longer in the "pending" set a rerun would compute', wouldBePending.length === 0, wouldBePending);
 
     // ── 4. Rollback actually reverses both, and cleans up _migrations ──
     // scripts/migrate-rollback-account-role-registry.js runs through
@@ -154,23 +154,23 @@ async function applyMigrationFile(conn, filename) {
       'ALTER TABLE account_roles DROP COLUMN version',
     ];
     for (const s of rollbackStatements) await conn.query(s);
-    await conn.query("DELETE FROM _migrations WHERE version = '0015'");
+    await conn.query("DELETE FROM _migrations WHERE version = '0019'");
     const [[rCount]] = await conn.query('SELECT COUNT(*) n FROM account_roles');
     const [[hCount]] = await conn.query('SELECT COUNT(*) n FROM account_role_history');
-    check('tables are empty, so 0014 is also safe to fully roll back (drop)', Number(rCount.n) === 0 && Number(hCount.n) === 0, { rCount: rCount.n, hCount: hCount.n });
+    check('tables are empty, so 0018 is also safe to fully roll back (drop)', Number(rCount.n) === 0 && Number(hCount.n) === 0, { rCount: rCount.n, hCount: hCount.n });
     await conn.query('DROP TABLE account_role_history');
     await conn.query('DROP TABLE account_roles');
-    await conn.query("DELETE FROM _migrations WHERE version = '0014'");
+    await conn.query("DELETE FROM _migrations WHERE version = '0018'");
 
     const [tablesAfterRollback] = await conn.query("SHOW TABLES LIKE 'account_role%'");
     check('rollback removed both tables entirely', tablesAfterRollback.length === 0, tablesAfterRollback);
-    const [migrationsAfterRollback] = await conn.query("SELECT version FROM _migrations WHERE version IN ('0014','0015')");
+    const [migrationsAfterRollback] = await conn.query("SELECT version FROM _migrations WHERE version IN ('0018','0019')");
     check('rollback removed both _migrations bookkeeping rows', migrationsAfterRollback.length === 0, migrationsAfterRollback);
 
     // ── 5. Full round trip: re-apply after rollback succeeds again ──
-    const r14b = await applyMigrationFile(conn, '0014_account_role_registry.sql');
-    const r15b = await applyMigrationFile(conn, '0015_account_role_registry_scope_fix.sql');
-    check('re-applying 0014+0015 after a full rollback succeeds (genuine round trip, not just forward-only)', r14b.version === '0014' && r15b.version === '0015');
+    const r18b = await applyMigrationFile(conn, '0018_account_role_registry.sql');
+    const r19b = await applyMigrationFile(conn, '0019_account_role_registry_scope_fix.sql');
+    check('re-applying 0018+0019 after a full rollback succeeds (genuine round trip, not just forward-only)', r18b.version === '0018' && r19b.version === '0019');
     const [colsAfterReapply] = await conn.query('SHOW COLUMNS FROM account_roles');
     check('re-applied schema matches the original (version column present again)', colsAfterReapply.some((c) => c.Field === 'version'), colsAfterReapply.map((c) => c.Field));
 

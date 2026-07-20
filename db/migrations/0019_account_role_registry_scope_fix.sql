@@ -1,12 +1,12 @@
--- Corrective migration for account_roles (0014) scope design — Tier A.1
+-- Corrective migration for account_roles (0018) scope design — Tier A.1
 -- Corrective Gate, item 5. Read docs/adr/0002-chart-of-accounts-trial-balance.md
--- section 5 for the full reasoning. 0014 is already applied in every
+-- section 5 for the full reasoning. 0018 is already applied in every
 -- environment that ran it, so this file ALTERs the existing tables rather
--- than silently editing 0014's file — migration history stays immutable.
+-- than silently editing 0018's file — migration history stays immutable.
 --
 -- MySQL DDL is NOT transactional: each statement below commits on its own
 -- as it runs. If this file aborts partway through, db/migrate.js will
--- retry the WHOLE file on next start (0015 is not yet recorded as
+-- retry the WHOLE file on next start (0019 is not yet recorded as
 -- applied) — and re-running an already-applied ADD COLUMN / ADD KEY /
 -- ADD CONSTRAINT below will error ("Duplicate column name", "Duplicate key
 -- name", "Duplicate foreign key constraint name"), NOT silently succeed.
@@ -34,14 +34,14 @@ ALTER TABLE account_roles ADD COLUMN version INT NOT NULL DEFAULT 1 AFTER is_act
 UPDATE account_roles SET company_id = 'CO-MAIN' WHERE company_id IS NULL;
 ALTER TABLE account_roles MODIFY COLUMN company_id VARCHAR(50) NOT NULL DEFAULT 'CO-MAIN';
 
--- 3. Replace 0014's single-tenant UNIQUE(role_key) with a real per-company
+-- 3. Replace 0018's single-tenant UNIQUE(role_key) with a real per-company
 --    scope. Practically single-tenant today (only CO-MAIN exists), but the
 --    constraint itself is now correct for when a second company lands.
 ALTER TABLE account_roles DROP INDEX uq_role_key;
 ALTER TABLE account_roles ADD UNIQUE KEY uq_role_company (role_key, company_id);
 
 -- 4. account_role_history: same company_id tightening, plus the columns and
---    FKs 0014 omitted. old_account_id stays nullable (a role's first-ever
+--    FKs 0018 omitted. old_account_id stays nullable (a role's first-ever
 --    assignment has no prior account) — MySQL FKs tolerate NULL values.
 UPDATE account_role_history SET company_id = 'CO-MAIN' WHERE company_id IS NULL;
 ALTER TABLE account_role_history MODIFY COLUMN company_id VARCHAR(50) NOT NULL DEFAULT 'CO-MAIN';

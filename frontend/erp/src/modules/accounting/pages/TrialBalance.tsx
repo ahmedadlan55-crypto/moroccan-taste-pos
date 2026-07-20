@@ -7,6 +7,7 @@ import {
   todayISO,
   type DateRange,
   type TrialBalanceRow,
+  type TrialBalanceDiagnostics,
 } from "../api";
 import {
   Num,
@@ -54,30 +55,22 @@ function buildTree(rows: TrialBalanceRow[]): { flat: FlatRow[]; roots: TrialBala
   return { flat, roots };
 }
 
-const dr = (v: number) => (v > 0 ? v : 0);
-const cr = (v: number) => (v < 0 ? -v : 0);
-
 export function TrialBalancePage() {
   const filter = useAppliedFilter<DateRange>({ from: startOfYearISO(), to: todayISO() });
   const query = useTrialBalance(filter.applied);
 
-  const { flat, totals } = useMemo(() => {
-    const rows = query.data?.rows ?? [];
-    const { flat: f, roots } = buildTree(rows);
-    const t = roots.reduce(
-      (acc, r) => {
-        acc.openD += dr(r.opening);
-        acc.openC += cr(r.opening);
-        acc.perD += r.periodDebit;
-        acc.perC += r.periodCredit;
-        acc.closeD += dr(r.closing);
-        acc.closeC += cr(r.closing);
-        return acc;
-      },
-      { openD: 0, openC: 0, perD: 0, perC: 0, closeD: 0, closeC: 0 },
-    );
-    return { flat: f, totals: t };
-  }, [query.data]);
+  // Tier A.1 corrective gate: this used to recompute the footer totals by
+  // summing root-level rows client-side (`roots.reduce(...)`), which not
+  // only duplicated logic the server already computed correctly, but was
+  // ALSO WRONG the moment the tree had more than one meaningful depth of
+  // rollup or any non-leaf posting activity — the server's totals come from
+  // a tree-independent raw-ledger sum (see lib/reports/trialBalance.js) and
+  // the two numbers are not guaranteed to agree. `buildTree` below is used
+  // ONLY to order/indent rows for display — never to derive a total.
+  const flat = useMemo(() => buildTree(query.data?.rows ?? []).flat, [query.data]);
+  const totals = query.data?.totals;
+  const diagnostics = query.data?.diagnostics;
+  const isClean = query.data?.isClean;
 
   const period = `${formatDate(filter.applied.from)} — ${formatDate(filter.applied.to)}`;
 
@@ -144,28 +137,30 @@ export function TrialBalancePage() {
                         <code className="text-[11px] text-slate-400">{r.code}</code>
                       </span>
                     </td>
-                    <td className="border-r border-slate-100 px-3 py-2 text-left"><Num value={dr(r.opening)} /></td>
-                    <td className="px-3 py-2 text-left"><Num value={cr(r.opening)} /></td>
+                    <td className="border-r border-slate-100 px-3 py-2 text-left"><Num value={r.openDebit} /></td>
+                    <td className="px-3 py-2 text-left"><Num value={r.openCredit} /></td>
                     <td className="border-r border-slate-100 px-3 py-2 text-left"><Num value={r.periodDebit} /></td>
                     <td className="px-3 py-2 text-left"><Num value={r.periodCredit} /></td>
-                    <td className="border-r border-slate-100 px-3 py-2 text-left"><Num value={dr(r.closing)} strong /></td>
-                    <td className="px-3 py-2 text-left"><Num value={cr(r.closing)} strong /></td>
+                    <td className="border-r border-slate-100 px-3 py-2 text-left"><Num value={r.closeDebit} strong /></td>
+                    <td className="px-3 py-2 text-left"><Num value={r.closeCredit} strong /></td>
                   </tr>
                 ))}
               </tbody>
-              <tfoot>
-                <tr className="border-t-2 border-slate-300 bg-slate-50 text-sm font-extrabold">
-                  <td className="px-3 py-2.5 text-right">الإجمالي</td>
-                  <td className="border-r border-slate-100 px-3 py-2.5 text-left"><Num value={totals.openD} strong /></td>
-                  <td className="px-3 py-2.5 text-left"><Num value={totals.openC} strong /></td>
-                  <td className="border-r border-slate-100 px-3 py-2.5 text-left"><Num value={totals.perD} strong /></td>
-                  <td className="px-3 py-2.5 text-left"><Num value={totals.perC} strong /></td>
-                  <td className="border-r border-slate-100 px-3 py-2.5 text-left"><Num value={totals.closeD} strong /></td>
-                  <td className="px-3 py-2.5 text-left"><Num value={totals.closeC} strong /></td>
-                </tr>
-              </tfoot>
+              {totals && (
+                <tfoot>
+                  <tr className="border-t-2 border-slate-300 bg-slate-50 text-sm font-extrabold">
+                    <td className="px-3 py-2.5 text-right">الإجمالي</td>
+                    <td className="border-r border-slate-100 px-3 py-2.5 text-left"><Num value={totals.openDebit} strong /></td>
+                    <td className="px-3 py-2.5 text-left"><Num value={totals.openCredit} strong /></td>
+                    <td className="border-r border-slate-100 px-3 py-2.5 text-left"><Num value={totals.periodDebit} strong /></td>
+                    <td className="px-3 py-2.5 text-left"><Num value={totals.periodCredit} strong /></td>
+                    <td className="border-r border-slate-100 px-3 py-2.5 text-left"><Num value={totals.closeDebit} strong /></td>
+                    <td className="px-3 py-2.5 text-left"><Num value={totals.closeCredit} strong /></td>
+                  </tr>
+                </tfoot>
+              )}
             </table>
-            <BalanceHint balanced={Math.abs(totals.closeD - totals.closeC) < 0.01} />
+            {totals && <BalanceStatus totals={totals} isClean={isClean} diagnostics={diagnostics} />}
           </div>
         </PrintArea>
       </ReportState>
@@ -173,16 +168,54 @@ export function TrialBalancePage() {
   );
 }
 
-function BalanceHint({ balanced }: { balanced: boolean }) {
+// Tier A.1 corrective gate — three INDEPENDENT balance checks (Opening/
+// Period/Closing can each be off separately; a closing-only check can miss
+// an opening-side imbalance that happens to cancel out), plus a diagnostics
+// warning. All values come straight from the server response — none of
+// this is recomputed here.
+function BalanceStatus({
+  totals,
+  isClean,
+  diagnostics,
+}: {
+  totals: TrialBalanceTotalsForStatus;
+  isClean?: boolean;
+  diagnostics?: TrialBalanceDiagnostics;
+}) {
+  const chips: Array<{ label: string; ok: boolean }> = [
+    { label: "أول المدة", ok: totals.isOpeningBalanced },
+    { label: "حركة الفترة", ok: totals.isPeriodBalanced },
+    { label: "آخر المدة", ok: totals.isClosingBalanced },
+  ];
+  const diagCount =
+    (diagnostics?.nullAccountEntries ?? 0) +
+    (diagnostics?.futureDatedOpeningJournals.count ?? 0) +
+    (diagnostics?.nonLeafPostingActivity.length ?? 0) +
+    (diagnostics?.cycleAccounts.length ?? 0);
+
   return (
-    <div
-      className={`mt-4 inline-flex items-center gap-2 rounded-xl border px-3 py-2 text-xs font-bold ${
-        balanced
-          ? "border-emerald-200 bg-emerald-50 text-emerald-700"
-          : "border-amber-200 bg-amber-50 text-amber-700"
-      }`}
-    >
-      {balanced ? "الميزان متوازن — إجمالي المدين = إجمالي الدائن" : "تنبيه: الميزان غير متوازن"}
+    <div className="mt-4 flex flex-wrap items-center gap-2">
+      {chips.map((c) => (
+        <span
+          key={c.label}
+          className={`inline-flex items-center gap-1.5 rounded-xl border px-3 py-2 text-xs font-bold ${
+            c.ok ? "border-emerald-200 bg-emerald-50 text-emerald-700" : "border-amber-200 bg-amber-50 text-amber-700"
+          }`}
+        >
+          {c.ok ? `متوازن — ${c.label}` : `غير متوازن — ${c.label}`}
+        </span>
+      ))}
+      {isClean === false && diagCount > 0 && (
+        <span className="inline-flex items-center gap-1.5 rounded-xl border border-rose-200 bg-rose-50 px-3 py-2 text-xs font-bold text-rose-700">
+          تنبيه: التقرير غير Clean — {diagCount} بند يحتاج مراجعة (قيود بحساب غير معروف، ترحيل على Folder/Parent،
+          دورة في الشجرة، أو قيد افتتاحي مؤرَّخ بعد الفترة). راجع سجل التشخيص.
+        </span>
+      )}
     </div>
   );
 }
+type TrialBalanceTotalsForStatus = {
+  isOpeningBalanced: boolean;
+  isPeriodBalanced: boolean;
+  isClosingBalanced: boolean;
+};

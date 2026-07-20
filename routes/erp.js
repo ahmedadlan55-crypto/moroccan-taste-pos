@@ -3039,6 +3039,19 @@ router.put('/gl/journals/:id', requireCapability('finance.gl.create'), async (re
   } catch (e) { res.json({ success: false, error: e.message }); }
 });
 
+// Tier A.1 corrective gate — shared draft-only deletion policy, used by BOTH
+// the bulk action executor and the single DELETE route below so they can
+// never drift apart again. Only a DRAFT journal may ever be hard-deleted:
+// approved needs a governed "return to draft" action (not implemented by
+// this endpoint — deletion is refused, not silently downgraded), and
+// posted/reversed are immutable (the only correction is a reversing entry).
+// Returns null when deletion is allowed, or a denial code otherwise.
+function _journalDeleteDenialCode(status) {
+  if (status === 'draft') return null;
+  if (status === 'approved') return 'approved_journal_requires_governed_action';
+  return 'posted_journal_immutable'; // posted, or any other/unexpected status — fail closed
+}
+
 // v5.11.0 — bulk action endpoint. Accepts { ids:[], action:'approve|post|unpost|delete', username }.
 // Per-id outcome is reported so the UI can show partial-failure states.
 // Each action goes through the same gating as its single-id counterpart;
@@ -3084,6 +3097,17 @@ router.post('/gl/journals/bulk', requireCapability('finance.gl.view'), async (re
         const [rows] = await conn.query('SELECT * FROM gl_journals WHERE id = ? FOR UPDATE', [id]);
         if (!rows.length) return { ok: false, reason: 'not-found' };
         const jrn = rows[0];
+        // Tier A.1 corrective gate — maker/checker: the person who CREATED a
+        // journal may not be the one who approves/posts it (segregation of
+        // duties). Previously unchecked — a single user with finance.gl.post
+        // could create and self-approve every journal end to end. admin/
+        // developer are exempt (same bypass the rest of the RBAC layer uses
+        // for break-glass access), everyone else is blocked, no override.
+        const isMakerChecker = action === 'approve' || action === 'approve_post';
+        if (isMakerChecker && jrn.created_by && jrn.created_by === actor) {
+          const isAdminOrDev = (req.user && (req.user.role === 'admin' || req.user.isDeveloper)) || actor === 'admin';
+          if (!isAdminOrDev) return { ok: false, reason: 'sod-self-approval-denied', denied: true, status: jrn.status };
+        }
         if (action === 'approve') {
           if (jrn.status !== 'draft') return { ok: false, reason: 'not-draft' };
           await conn.query('UPDATE gl_journals SET status = "approved", approved_by = ?, approved_at = ? WHERE id = ?', [actor, new Date(), id]);
@@ -3103,7 +3127,13 @@ router.post('/gl/journals/bulk', requireCapability('finance.gl.view'), async (re
           await conn.query('UPDATE gl_journals SET status = "posted", posted_by = ?, posted_at = ? WHERE id = ?', [actor, new Date(), id]);
           return { ok: true, audit: action === 'approve_post' ? 'approve_post_journal' : 'post_journal' };
         } else if (action === 'delete') {
-          if (jrn.status === 'posted') return { ok: false, reason: 'is-posted-needs-reverse' };
+          // Tier A.1 — unified with the single DELETE route via
+          // _journalDeleteDenialCode: draft-only, 'approved' now also
+          // refused (previously only 'posted' was blocked here).
+          const denyCode = _journalDeleteDenialCode(jrn.status);
+          if (denyCode) return { ok: false, reason: denyCode, denied: true, status: jrn.status };
+          // Only a draft reaches here — a draft never touched gl_accounts.balance
+          // (only approve_post does), so there is nothing to reverse.
           await conn.query('DELETE FROM gl_entries WHERE journal_id = ?', [id]);
           await conn.query('DELETE FROM gl_journals WHERE id = ?', [id]);
           return { ok: true, audit: 'delete_journal' };
@@ -3111,7 +3141,13 @@ router.post('/gl/journals/bulk', requireCapability('finance.gl.view'), async (re
         return { ok: false, reason: 'unsupported' };
       });
       if (r.ok) { await auditLog(r.audit, 'gl_journal', id, actor, { bulk: true }, req.ip); results.push({ id, ok: true }); ok++; }
-      else { results.push({ id, ok: false, reason: r.reason }); failed++; }
+      else {
+        if (r.denied) {
+          const deniedEvent = action === 'delete' ? 'delete_journal_denied' : 'approve_journal_denied_sod';
+          await auditLog(deniedEvent, 'gl_journal', id, actor, { bulk: true, status: r.status, code: r.reason }, req.ip);
+        }
+        results.push({ id, ok: false, reason: r.reason }); failed++;
+      }
     } catch (e) {
       results.push({ id, ok: false, reason: e.message });
       failed++;
@@ -3126,37 +3162,45 @@ router.post('/gl/journals/bulk', requireCapability('finance.gl.view'), async (re
 // role can erase journal records. Frontend hides the button for
 // everyone else; this is the server-side safety net for direct calls.
 router.delete('/gl/journals/:id', guardDeveloper, async (req, res) => {
+  const actor = _actor(req);
+  const DENIAL_MESSAGES = {
+    posted_journal_immutable: 'القيد مُرحَّل — لا يمكن حذفه. أنشئ قيد عكس (Reversal) بدلاً من ذلك.',
+    approved_journal_requires_governed_action: 'القيد معتمَد — لا يُحذف مباشرة. استخدم إجراء إلغاء الاعتماد (Return-to-draft) الموثَّق بدلاً من الحذف.',
+  };
   try {
-    // Tier A immutability fix (COA/Trial Balance overhaul, rule 5): a posted
-    // journal must never be hard-deleted — same invariant POST /gl/journals/bulk
-    // already enforces for its 'delete' action (see 'is-posted-needs-reverse'
-    // above). This endpoint previously had NO status check at all, so any
-    // guardDeveloper-authorized caller could erase a posted journal's history.
-    // The only valid correction for a posted journal is a new reversing entry.
-    let blocked = false;
-    // FC-P1 — atomic: reverse balances + delete under the journal-row lock.
+    // Tier A.1 corrective gate: this endpoint used to (a) have no status
+    // check at all beyond 'posted' — 'approved' was still deletable — (b)
+    // reverse gl_accounts.balance for ANY journal including drafts, which
+    // never touched balance in the first place (only approve_post does),
+    // and (c) return {success:true} for a non-existent id with no 404 and
+    // an audit-log entry implying a real deletion happened. All three fixed
+    // below; DENIAL_MESSAGES/status/audit mirror the bulk 'delete' branch.
+    let outcome = null; // { type: 'not_found' } | { type: 'denied', code, status } | { type: 'deleted' }
     await db.withTransaction(async (conn) => {
       const [jrn] = await conn.query('SELECT id, status FROM gl_journals WHERE id = ? FOR UPDATE', [req.params.id]);
-      if (!jrn.length) return;
-      if (jrn[0].status === 'posted') { blocked = true; return; }
-      const [entries] = await conn.query('SELECT account_id, debit, credit FROM gl_entries WHERE journal_id = ? AND account_id IS NOT NULL ORDER BY account_id', [req.params.id]);
-      for (const e of entries) {
-        const reverseAmount = (Number(e.credit) || 0) - (Number(e.debit) || 0);
-        await conn.query('UPDATE gl_accounts SET balance = balance + ? WHERE id = ?', [reverseAmount, e.account_id]);
-      }
+      if (!jrn.length) { outcome = { type: 'not_found' }; return; }
+      const denyCode = _journalDeleteDenialCode(jrn[0].status);
+      if (denyCode) { outcome = { type: 'denied', code: denyCode, status: jrn[0].status }; return; }
+      // Only a draft reaches here — a draft never affected gl_accounts.balance,
+      // so there is nothing to reverse; reversing here would have been wrong.
       await conn.query('DELETE FROM gl_entries WHERE journal_id = ?', [req.params.id]);
       await conn.query('DELETE FROM gl_journals WHERE id = ?', [req.params.id]);
+      outcome = { type: 'deleted' };
     });
-    if (blocked) {
-      return res.status(409).json({
-        success: false,
-        code: 'posted_journal_immutable',
-        error: 'القيد مُرحَّل — لا يمكن حذفه. أنشئ قيد عكس (Reversal) بدلاً من ذلك.',
-      });
+
+    if (outcome.type === 'not_found') {
+      return res.status(404).json({ success: false, code: 'not_found', error: 'القيد غير موجود' });
     }
-    await auditLog('delete_journal', 'gl_journal', req.params.id, _actor(req), {}, req.ip);
+    if (outcome.type === 'denied') {
+      await auditLog('delete_journal_denied', 'gl_journal', req.params.id, actor, { status: outcome.status, code: outcome.code }, req.ip);
+      return res.status(409).json({ success: false, code: outcome.code, error: DENIAL_MESSAGES[outcome.code] });
+    }
+    await auditLog('delete_journal', 'gl_journal', req.params.id, actor, {}, req.ip);
     res.json({ success: true });
-  } catch (e) { res.json({ success: false, error: e.message }); }
+  } catch (e) {
+    console.error('[gl/journals/:id DELETE] error', e);
+    res.status(500).json({ success: false, code: 'DB_ERROR', error: e.message });
+  }
 });
 
 // Repair: fix gl_entries with NULL account_id by matching account_code
@@ -4013,10 +4057,18 @@ router.post('/gl/sync-inventory', requireCapability('finance.accounts.manage'), 
 
 async function auditLog(action, entityType, entityId, username, details, ip) {
   try {
-    const id = 'AUD-' + Date.now() + '-' + Math.random().toString(36).substr(2,4);
-    await db.query('INSERT INTO audit_logs (id, action, entity_type, entity_id, username, details, ip_address) VALUES (?,?,?,?,?,?,?)',
-      [id, action, entityType||'', entityId||'', username||'', typeof details === 'object' ? JSON.stringify(details) : (details||''), ip||'']);
-  } catch(e) { /* Production: removed debug log */ }
+    // Tier A.1 corrective gate — this INSERT targeted a column named
+    // 'username' and an explicit string 'id' that don't exist on
+    // audit_logs (real columns: auto_increment `id`, `user_username`; see
+    // every OTHER audit_logs writer in the codebase, e.g. lib/auditLogger.js,
+    // routes/auth.js, routes/workflow.js). Both mismatches made every single
+    // call to this specific helper fail silently (caught, swallowed, no
+    // log) — EVERY gl_journal approve/post/reverse/delete audit entry this
+    // file ever tried to write was silently lost, not just the new
+    // delete-denial one this gate added. Fixed to match the real schema.
+    await db.query('INSERT INTO audit_logs (action, entity_type, entity_id, user_username, details, ip_address) VALUES (?,?,?,?,?,?)',
+      [action, entityType||'', entityId||'', username||'', typeof details === 'object' ? JSON.stringify(details) : (details||''), ip||'']);
+  } catch(e) { console.error('[auditLog] insert failed:', e.message); }
 }
 
 // v5.17.1 — /audit-logs moved to routes/erp/audit-logs.js

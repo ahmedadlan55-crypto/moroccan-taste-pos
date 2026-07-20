@@ -26,6 +26,11 @@ function unwrap<T extends { success?: boolean; error?: string }>(data: T): T {
 }
 
 // ── Trial Balance — GET /api/erp/reports/trial-balance ──────────────────────
+// Tier A.1 corrective gate: these types now mirror lib/reports/trialBalance.js
+// in full (openDebit/openCredit/closeDebit/closeCredit/abnormalSign/isFolder/
+// isPostingLeaf/isActive/diagnostics/isClean) — the PAGE that consumes this
+// must read totals/isClean/diagnostics from the response, never recompute
+// them client-side (see TrialBalance.tsx).
 export interface TrialBalanceRow {
   accountId: string;
   code: string;
@@ -34,24 +39,55 @@ export interface TrialBalanceRow {
   parentId: string | null;
   level: number;
   hasChildren: boolean;
+  isFolder: boolean;
+  isPostingLeaf: boolean;
+  isActive: boolean;
+  isCycleMember: boolean;
   opening: number;
+  openDebit: number;
+  openCredit: number;
   periodDebit: number;
   periodCredit: number;
   net: number;
   closing: number;
+  closeDebit: number;
+  closeCredit: number;
+  abnormalSign: boolean;
   rowCount: number;
+}
+export interface TrialBalanceTotals {
+  openDebit: number;
+  openCredit: number;
+  opening: number;
+  periodDebit: number;
+  periodCredit: number;
+  closing: number;
+  closeDebit: number;
+  closeCredit: number;
+  isOpeningBalanced: boolean;
+  isPeriodBalanced: boolean;
+  isClosingBalanced: boolean;
+  isBalanced: boolean;
+  abnormalCount: number;
+}
+export interface TrialBalanceDiagnostics {
+  nullAccountEntries: number;
+  nullAccountDebit: number;
+  nullAccountCredit: number;
+  futureDatedOpeningJournals: { count: number; debit: number; credit: number };
+  nonLeafPostingActivity: Array<{ code: string; nameAr: string; isFolder: boolean; hasChildren: boolean; openDebit: number; openCredit: number; periodDebit: number; periodCredit: number }>;
+  cycleAccounts: Array<{ code: string; nameAr: string }>;
+  levelMismatches: Array<{ code: string; nameAr: string; storedLevel: number; computedLevel: number }>;
+  note: string;
 }
 export interface TrialBalanceResponse {
   success?: boolean;
   error?: string;
+  code?: string;
+  isClean?: boolean;
   rows: TrialBalanceRow[];
-  totals: {
-    opening?: number;
-    periodDebit?: number;
-    periodCredit?: number;
-    closing?: number;
-    isBalanced?: boolean;
-  };
+  totals: TrialBalanceTotals;
+  diagnostics?: TrialBalanceDiagnostics;
 }
 export interface DateRange {
   from: string;

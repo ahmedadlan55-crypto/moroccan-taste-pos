@@ -2209,9 +2209,17 @@ router.get('/reports/trial-balance', requireCapability('finance.reports.view'), 
     res.json(result);
   } catch (e) {
     if (e instanceof trialBalanceEngine.TrialBalanceError) {
-      return res.status(400).json({ success: false, code: e.code, error: e.message, rows: [], totals: {} });
+      // Tier A.1 corrective fix — status carried on the error itself (400 for
+      // bad input, 409 SCHEMA_NOT_READY for an unsupported dimension filter).
+      return res.status(e.status || 400).json({ success: false, code: e.code, error: e.message, rows: [], totals: {} });
     }
-    res.json({ success: false, error: e.message, rows: [], totals: {} });
+    // Tier A.1 corrective fix — an unexpected/DB error used to return HTTP 200
+    // with success:false, which every naive `res.ok`/`status < 400` caller
+    // (including this endpoint's own frontend consumer) would treat as a
+    // successful-but-empty report instead of a failure. Never do that for a
+    // financial report: unified {success:false, code, error} envelope, 500.
+    console.error('[trial-balance] unexpected error', e);
+    res.status(500).json({ success: false, code: 'TB_INTERNAL_ERROR', error: e.message, rows: [], totals: {} });
   }
 });
 

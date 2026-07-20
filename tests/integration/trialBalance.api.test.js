@@ -1,8 +1,8 @@
 'use strict';
 /* Integration — Trial Balance (canonical engine + live /api/erp endpoint) and
- * the posted-journal-delete immutability fix. Real server + real DB.
+ * journal-deletion governance (draft-only). Real server + real DB.
  *
- * Chart of Accounts / Trial Balance overhaul, Tier A. Covers:
+ * Tier A.1 Corrective Gate. Covers:
  *   1. RBAC: cashier 403 (specific code), accountant/finance/manager 200.
  *   2. Engine correctness: opening + period = closing per account, using a
  *      fully isolated ITEST account so the assertion is exact, not "close to".
@@ -12,8 +12,14 @@
  *   4. from > to rejected with a typed error.
  *   5. Combined date + dimension filter (SQL param order regression) still
  *      returns success and correctly-filtered (not misaligned/erroring) data.
- *   6. DELETE /api/erp/gl/journals/:id blocks a posted journal (409,
- *      code=posted_journal_immutable) but still allows deleting a draft one.
+ *   6. Journal deletion governance: draft-only. Approved and posted are both
+ *      refused (distinct codes), a non-existent id is a real 404 (not a fake
+ *      success), denial is audit-logged, deleting a draft never touches
+ *      gl_accounts.balance (proven by reading the balance before/after).
+ *   7. Test isolation: settings.user_meta is snapshotted and restored
+ *      (never blind-deleted), an environment guard refuses to run against
+ *      anything that looks like production, and every affected table's row
+ *      count is checked before/after to prove zero residue.
  *
  * Run: node tests/integration/trialBalance.api.test.js
  */
@@ -34,6 +40,19 @@ const PW = 'TrialBalance#Test!2026';
 let pass = 0, fail = 0; const fails = [];
 function check(n, c, extra) { if (c) { pass++; console.log('  ✅', n); } else { fail++; fails.push(n); console.log('  ❌', n, extra != null ? '→ ' + JSON.stringify(extra).slice(0, 300) : ''); } }
 
+// Never let this file write anything against a database that isn't the
+// local dev instance — see db/connection.js: DATABASE_URL/MYSQLHOST are how
+// Railway injects production config; their presence here means this is NOT
+// the local environment this test assumes.
+function assertTestEnvironment() {
+  const looksProd = !!(process.env.DATABASE_URL || process.env.MYSQL_URL || process.env.MYSQLHOST);
+  const dbName = process.env.DB_NAME || process.env.MYSQL_DATABASE || process.env.MYSQLDATABASE || '';
+  if (looksProd || (dbName && dbName !== 'moroccan_taste_pos')) {
+    console.error('REFUSING TO RUN: this looks like a non-local database (DATABASE_URL/MYSQLHOST set, or DB_NAME=' + dbName + '). This test writes and deletes fixture data and must only run against the local dev DB.');
+    process.exit(2);
+  }
+}
+
 function call(method, p, token, body) {
   return new Promise((res) => {
     const d = body ? JSON.stringify(body) : null;
@@ -53,21 +72,53 @@ const TEST_ACCOUNT_ID = 'ITEST-TB-ACC-1';
 const TEST_ACCOUNT_CODE = 'ITEST900001';
 const TEST_JOURNAL_OPEN = 'ITEST-TB-J-OPEN';
 const TEST_JOURNAL_PERIOD = 'ITEST-TB-J-PERIOD';
+const TEST_JOURNAL_APPROVED_DEL = 'ITEST-TB-J-APPROVED-DEL';
 const TEST_JOURNAL_POSTED_DEL = 'ITEST-TB-J-POSTED-DEL';
 const TEST_JOURNAL_DRAFT_DEL = 'ITEST-TB-J-DRAFT-DEL';
+const TEST_JOURNAL_MISSING_ID = 'ITEST-TB-J-DOES-NOT-EXIST';
+const ALL_TEST_JOURNALS = [TEST_JOURNAL_OPEN, TEST_JOURNAL_PERIOD, TEST_JOURNAL_APPROVED_DEL, TEST_JOURNAL_POSTED_DEL, TEST_JOURNAL_DRAFT_DEL];
 
-async function cleanup() {
+// ── settings.user_meta snapshot/restore — never a blind DELETE ──
+let _userMetaSnapshot = { existed: false, value: null };
+async function snapshotUserMeta() {
+  const [rows] = await db.query("SELECT setting_value FROM settings WHERE setting_key = 'user_meta'");
+  _userMetaSnapshot = rows.length ? { existed: true, value: rows[0].setting_value } : { existed: false, value: null };
+}
+async function restoreUserMeta() {
+  if (_userMetaSnapshot.existed) {
+    await db.query("REPLACE INTO settings (setting_key, setting_value) VALUES ('user_meta', ?)", [_userMetaSnapshot.value]);
+  } else {
+    await db.query("DELETE FROM settings WHERE setting_key = 'user_meta'");
+  }
+}
+async function mergeDeveloperIntoUserMeta() {
+  const [rows] = await db.query("SELECT setting_value FROM settings WHERE setting_key = 'user_meta'");
+  const meta = rows.length && rows[0].setting_value ? JSON.parse(rows[0].setting_value) : {};
+  meta[DEVELOPER] = { isDeveloper: true };
+  await db.query(
+    "INSERT INTO settings (setting_key, setting_value) VALUES ('user_meta', ?) ON DUPLICATE KEY UPDATE setting_value = VALUES(setting_value)",
+    [JSON.stringify(meta)]
+  );
+}
+
+async function cleanupFixtures() {
   for (const u of [CASHIER, ACCOUNTANT, FINANCE, DEVELOPER]) {
     try { await db.query('DELETE FROM users WHERE username=?', [u]); } catch (_) {}
   }
-  for (const jid of [TEST_JOURNAL_OPEN, TEST_JOURNAL_PERIOD, TEST_JOURNAL_POSTED_DEL, TEST_JOURNAL_DRAFT_DEL]) {
+  for (const jid of ALL_TEST_JOURNALS) {
     try { await db.query('DELETE FROM gl_entries WHERE journal_id = ?', [jid]); } catch (_) {}
     try { await db.query('DELETE FROM gl_journals WHERE id = ?', [jid]); } catch (_) {}
   }
   try { await db.query('DELETE FROM gl_accounts WHERE id = ?', [TEST_ACCOUNT_ID]); } catch (_) {}
-  // settings.user_meta had NO row before this test ran (verified) — DELETE
-  // restores that exact original state rather than guessing at a merge.
-  try { await db.query("DELETE FROM settings WHERE setting_key = 'user_meta'"); } catch (_) {}
+}
+
+async function tableCounts() {
+  const out = {};
+  for (const t of ['users', 'gl_accounts', 'gl_journals', 'gl_entries', 'settings']) {
+    const [[r]] = await db.query('SELECT COUNT(*) n FROM ' + t);
+    out[t] = r.n;
+  }
+  return out;
 }
 
 async function setupFixtures() {
@@ -107,23 +158,23 @@ async function setupFixtures() {
 }
 
 (async () => {
-  await cleanup();
-  const hash = await bcrypt.hash(PW, 12);
-  await db.query('INSERT INTO users (username,password,role,active) VALUES (?,?,?,1)', [CASHIER, hash, 'cashier']);
-  await db.query('INSERT INTO users (username,password,role,active) VALUES (?,?,?,1)', [ACCOUNTANT, hash, 'accountant']);
-  await db.query('INSERT INTO users (username,password,role,active) VALUES (?,?,?,1)', [FINANCE, hash, 'finance']);
-  // users.role is an ENUM without a 'developer' value and this schema has no
-  // is_developer column — guardDeveloper's DB-column check can't be used
-  // here. Its settings.user_meta JSON fallback can: no such row exists yet
-  // (verified before writing this test), so INSERT/DELETE is a clean round trip.
-  await db.query('INSERT INTO users (username,password,role,active) VALUES (?,?,?,1)', [DEVELOPER, hash, 'manager']);
-  await db.query(
-    "INSERT INTO settings (setting_key, setting_value) VALUES ('user_meta', ?)",
-    [JSON.stringify({ [DEVELOPER]: { isDeveloper: true } })]
-  );
-
-  const server = spawn(process.execPath, ['server.js'], { cwd: path.join(__dirname, '..', '..'), env: { ...process.env, PORT: String(PORT) }, stdio: ['ignore', 'ignore', 'ignore'] });
+  assertTestEnvironment();
+  await snapshotUserMeta();
+  await cleanupFixtures();
+  const before = await tableCounts();
+  let server = null;
   try {
+    const hash = await bcrypt.hash(PW, 12);
+    await db.query('INSERT INTO users (username,password,role,active) VALUES (?,?,?,1)', [CASHIER, hash, 'cashier']);
+    await db.query('INSERT INTO users (username,password,role,active) VALUES (?,?,?,1)', [ACCOUNTANT, hash, 'accountant']);
+    await db.query('INSERT INTO users (username,password,role,active) VALUES (?,?,?,1)', [FINANCE, hash, 'finance']);
+    // users.role is an ENUM without a 'developer' value and this schema has no
+    // is_developer column — guardDeveloper's DB-column check can't be used
+    // here. Its settings.user_meta JSON fallback can, merged (not overwritten).
+    await db.query('INSERT INTO users (username,password,role,active) VALUES (?,?,?,1)', [DEVELOPER, hash, 'manager']);
+    await mergeDeveloperIntoUserMeta();
+
+    server = spawn(process.execPath, ['server.js'], { cwd: path.join(__dirname, '..', '..'), env: { ...process.env, PORT: String(PORT) }, stdio: ['ignore', 'ignore', 'ignore'] });
     if (!(await waitUp())) { console.error('server did not start'); process.exit(2); }
     console.log('\n═══ Trial Balance (canonical engine + endpoint) ═══');
 
@@ -141,6 +192,7 @@ async function setupFixtures() {
 
     const aResp = await call('GET', '/api/erp/reports/trial-balance?from=2026-06-01&to=2026-06-30', accountant);
     check('accountant CAN view trial balance (200) — closes the finance.reports.view gap', aResp.status === 200 && aResp.body && aResp.body.success, { status: aResp.status, body: aResp.body && aResp.body.success });
+    check('the HTTP response itself carries isClean/diagnostics (not just the engine function)', aResp.body && typeof aResp.body.isClean === 'boolean' && !!aResp.body.diagnostics, { isClean: aResp.body && aResp.body.isClean, hasDiagnostics: aResp.body && !!aResp.body.diagnostics });
 
     const fResp = await call('GET', '/api/erp/reports/trial-balance?from=2026-06-01&to=2026-06-30', finance);
     check('finance CAN view trial balance (200)', fResp.status === 200 && fResp.body && fResp.body.success, { status: fResp.status });
@@ -157,22 +209,18 @@ async function setupFixtures() {
     }
 
     // ── 3. Mutation guard: Grand Total must be leaves-only, never rolled-up folders ──
-    const before = await computeTrialBalance(db, { includeZero: true });
-    const beforeTotalPeriodDebit = before.totals.periodDebit;
-    const parentRow = before.rows.find((r) => r.code === '111');
+    const bal = await computeTrialBalance(db, { includeZero: true });
+    const balTotalPeriodDebit = bal.totals.periodDebit;
+    const parentRow = bal.rows.find((r) => r.code === '111');
     check('parent account "111" row is present and marked non-leaf (folder rollup)', !!parentRow && parentRow.hasChildren === true, parentRow);
     if (parentRow) {
       check('parent rollup row is NOT counted in isPostingLeaf (excluded from Grand Total by construction)', parentRow.isPostingLeaf === false, parentRow);
     }
-    // Direct proof: sum ALL rows' periodDebit (leaves + folders) vs the engine's own
-    // leaves-only total — if they were equal, folders would NOT be double-booked
-    // relative to leaves, which is actually impossible once any folder has children
-    // with activity (its own periodDebit already equals the sum of its descendants').
-    const naiveSumAllRows = before.rows.reduce((s, r) => s + r.periodDebit, 0);
+    const naiveSumAllRows = bal.rows.reduce((s, r) => s + r.periodDebit, 0);
     check(
       'naive "sum every row incl. folders" OVERSTATES the true total (proves folders roll up on top of, not instead of, their leaves — Grand Total correctly excludes them)',
-      naiveSumAllRows > beforeTotalPeriodDebit + 0.001,
-      { naiveSumAllRows, correctGrandTotal: beforeTotalPeriodDebit }
+      naiveSumAllRows > balTotalPeriodDebit + 0.001,
+      { naiveSumAllRows, correctGrandTotal: balTotalPeriodDebit }
     );
 
     // ── 4. from > to rejected ──
@@ -198,10 +246,15 @@ async function setupFixtures() {
     } catch (e) { combinedErr = e.message; }
     check('combined date+dimension filter query does not throw (params stayed aligned with placeholders)', combinedOk, combinedErr);
 
-    // ── 6. Posted-journal delete immutability ──
+    // ── 6. Journal deletion governance: draft-only ──
     const developer = await login(DEVELOPER);
     check('developer authenticates', !!developer);
 
+    // 6a. non-existent id -> real 404, not a fake success
+    const delMissing = await call('DELETE', '/api/erp/gl/journals/' + TEST_JOURNAL_MISSING_ID, developer);
+    check('DELETE on a non-existent journal id returns 404 with code=not_found (not a fake success)', delMissing.status === 404 && delMissing.body && delMissing.body.code === 'not_found' && delMissing.body.success === false, { status: delMissing.status, body: delMissing.body });
+
+    // 6b. posted -> blocked, still present
     await db.query(
       "INSERT INTO gl_journals (id, journal_number, journal_date, total_debit, total_credit, status) VALUES (?,?,?,?,?, 'posted')",
       [TEST_JOURNAL_POSTED_DEL, 'ITEST-TB-POSTED-DEL', '2026-06-10', 10, 10]
@@ -213,24 +266,73 @@ async function setupFixtures() {
     );
     const delPosted = await call('DELETE', '/api/erp/gl/journals/' + TEST_JOURNAL_POSTED_DEL, developer);
     check('DELETE on a posted journal is BLOCKED (409, posted_journal_immutable)', delPosted.status === 409 && delPosted.body && delPosted.body.code === 'posted_journal_immutable', { status: delPosted.status, body: delPosted.body });
-    const [[stillThere]] = await db.query('SELECT id, status FROM gl_journals WHERE id = ?', [TEST_JOURNAL_POSTED_DEL]);
-    check('posted journal STILL EXISTS in the database after the blocked delete attempt', !!stillThere && stillThere.status === 'posted', stillThere);
+    const [[stillPosted]] = await db.query('SELECT id, status FROM gl_journals WHERE id = ?', [TEST_JOURNAL_POSTED_DEL]);
+    check('posted journal STILL EXISTS after the blocked delete attempt', !!stillPosted && stillPosted.status === 'posted', stillPosted);
 
+    // 6c. approved -> ALSO blocked (Tier A only blocked 'posted' — this is the fix)
+    await db.query(
+      "INSERT INTO gl_journals (id, journal_number, journal_date, total_debit, total_credit, status, approved_by) VALUES (?,?,?,?,?, 'approved', ?)",
+      [TEST_JOURNAL_APPROVED_DEL, 'ITEST-TB-APPR-DEL', '2026-06-10', 7, 7, 'someone-else']
+    );
+    const delApproved = await call('DELETE', '/api/erp/gl/journals/' + TEST_JOURNAL_APPROVED_DEL, developer);
+    check('DELETE on an APPROVED journal is BLOCKED (409, approved_journal_requires_governed_action)', delApproved.status === 409 && delApproved.body && delApproved.body.code === 'approved_journal_requires_governed_action', { status: delApproved.status, body: delApproved.body });
+    const [[stillApproved]] = await db.query('SELECT id, status FROM gl_journals WHERE id = ?', [TEST_JOURNAL_APPROVED_DEL]);
+    check('approved journal STILL EXISTS after the blocked delete attempt', !!stillApproved && stillApproved.status === 'approved', stillApproved);
+
+    // 6d. denied attempts are audit-logged as denials, not silently dropped
+    const [deniedAudit] = await db.query(
+      "SELECT action, entity_id FROM audit_logs WHERE entity_id IN (?, ?) AND action = 'delete_journal_denied' ORDER BY created_at DESC LIMIT 5",
+      [TEST_JOURNAL_POSTED_DEL, TEST_JOURNAL_APPROVED_DEL]
+    );
+    check('both denied delete attempts produced a delete_journal_denied audit entry', Array.isArray(deniedAudit) && deniedAudit.length >= 2, deniedAudit);
+
+    // 6e. draft -> succeeds, and critically does NOT touch gl_accounts.balance
+    // (a draft never contributed to it — only approve_post does).
+    const [[balBeforeDraftDelete]] = await db.query('SELECT balance FROM gl_accounts WHERE id = ?', [TEST_ACCOUNT_ID]);
     await db.query(
       "INSERT INTO gl_journals (id, journal_number, journal_date, total_debit, total_credit, status) VALUES (?,?,?,?,?, 'draft')",
       [TEST_JOURNAL_DRAFT_DEL, 'ITEST-TB-DRAFT-DEL', '2026-06-10', 5, 5]
     );
+    await db.query(
+      'INSERT INTO gl_entries (id, journal_id, account_id, account_code, debit, credit) VALUES (?,?,?,?,?,0), (?,?,?,?,0,?)',
+      ['ITEST-TB-E-DFT1', TEST_JOURNAL_DRAFT_DEL, TEST_ACCOUNT_ID, TEST_ACCOUNT_CODE, 5,
+       'ITEST-TB-E-DFT2', TEST_JOURNAL_DRAFT_DEL, TEST_ACCOUNT_ID, TEST_ACCOUNT_CODE, 5]
+    );
     const delDraft = await call('DELETE', '/api/erp/gl/journals/' + TEST_JOURNAL_DRAFT_DEL, developer);
-    check('DELETE on a DRAFT journal still succeeds (fix did not break legitimate deletion)', delDraft.status === 200 && delDraft.body && delDraft.body.success === true, { status: delDraft.status, body: delDraft.body });
+    check('DELETE on a DRAFT journal succeeds (200)', delDraft.status === 200 && delDraft.body && delDraft.body.success === true, { status: delDraft.status, body: delDraft.body });
     const [draftGone] = await db.query('SELECT id FROM gl_journals WHERE id = ?', [TEST_JOURNAL_DRAFT_DEL]);
-    check('draft journal was actually removed', draftGone.length === 0, draftGone);
+    check('draft journal (header + 2 lines) was actually removed', draftGone.length === 0, draftGone);
+    const [[balAfterDraftDelete]] = await db.query('SELECT balance FROM gl_accounts WHERE id = ?', [TEST_ACCOUNT_ID]);
+    check(
+      'deleting a 2-line draft did NOT change gl_accounts.balance (a draft never affected it, so deleting it must not either)',
+      Number(balBeforeDraftDelete.balance) === Number(balAfterDraftDelete.balance),
+      { before: balBeforeDraftDelete.balance, after: balAfterDraftDelete.balance }
+    );
 
     console.log(`\n${fail === 0 ? '✅' : '❌'} trialBalance: ${pass} passed, ${fail} failed`);
     if (fail) console.log('   failed:', fails.join(' | '));
+  } catch (e) {
+    console.error('UNEXPECTED EXCEPTION during test run:', e);
+    fail++; fails.push('unexpected exception: ' + e.message);
   } finally {
-    server.kill();
-    await cleanup();
-    try { await db.end(); } catch (_) {}
+    if (server) server.kill();
+    await cleanupFixtures();
+    await restoreUserMeta();
   }
+
+  const after = await tableCounts();
+  for (const t of Object.keys(before)) {
+    check(`table "${t}" row count restored to baseline after cleanup`, before[t] === after[t], { before: before[t], after: after[t] });
+  }
+  const [userMetaFinal] = await db.query("SELECT setting_value FROM settings WHERE setting_key = 'user_meta'");
+  check(
+    'settings.user_meta restored to its EXACT pre-test state (not blind-deleted)',
+    _userMetaSnapshot.existed ? (userMetaFinal.length === 1 && userMetaFinal[0].setting_value === _userMetaSnapshot.value) : userMetaFinal.length === 0,
+    { existedBefore: _userMetaSnapshot.existed, existsAfter: userMetaFinal.length === 1 }
+  );
+
+  console.log(`\n${fail === 0 ? '✅' : '❌'} trialBalance (final, incl. cleanup verification): ${pass} passed, ${fail} failed`);
+  if (fail) console.log('   failed:', fails.join(' | '));
+  try { await db.end(); } catch (_) {}
   process.exit(fail === 0 ? 0 : 1);
 })();

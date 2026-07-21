@@ -2415,19 +2415,20 @@ router.post('/gl/journals', requireCapability('finance.gl.create'), async (req, 
 });
 
 // Approve journal (draft → approved)
+// Tier A.2 corrective gate — delegates to lib/glTransitions.js#approve, which
+// is what actually closes the maker/checker gap on this exact route: this is
+// the FIRST call frontend/erp's usePostJournal() makes (see JournalList.tsx/
+// JournalEditor.tsx's "ترحيل"/"حفظ وترحيل" buttons), and before this fix it
+// had no self-approval check at all — only the (frontend-unreachable) bulk
+// endpoint did. Response envelope ({success,error}, implicit 200 on a
+// business-rule denial) is unchanged so existing frontend error handling
+// (usePostJournal throwing on success:false) keeps working; `code` is a new,
+// additive field for callers that want it.
 router.post('/gl/journals/:id/approve', requireCapability('finance.gl.approve'), async (req, res) => {
+  const glTransitions = require('../lib/glTransitions');
   try {
-    const actor = _actor(req); // FC-P1 — actor from JWT
-    const out = await db.withTransaction(async (conn) => {
-      const [jrn] = await conn.query('SELECT status FROM gl_journals WHERE id = ? FOR UPDATE', [req.params.id]);
-      if (!jrn.length) return { error: 'القيد غير موجود' };
-      if (jrn[0].status !== 'draft') return { error: 'فقط القيود المسودة يمكن اعتمادها' };
-      await conn.query('UPDATE gl_journals SET status = "approved", approved_by = ?, approved_at = ? WHERE id = ?',
-        [actor, new Date(), req.params.id]);
-      return { ok: true };
-    });
-    if (out.error) return res.json({ success: false, error: out.error });
-    await auditLog('approve_journal', 'gl_journal', req.params.id, actor, {}, req.ip);
+    const out = await glTransitions.approve(req.params.id, req.user, { ip: req.ip });
+    if (!out.ok) return res.json({ success: false, error: out.message, code: out.code });
     res.json({ success: true });
   } catch (e) { res.json({ success: false, error: e.message }); }
 });
@@ -2741,61 +2742,22 @@ async function _reverseClosingEntries(periodId, actorUsername) {
 router._generateClosingEntries = _generateClosingEntries;
 router._reverseClosingEntries  = _reverseClosingEntries;
 
-// V5.10.0 — Helper: refuse to post into a closed accounting period.
-// `closed` periods are hard-locked (no posting at all). `soft_closed`
-// allows admin override via {force:true}. `open` periods accept any post.
-async function _checkPeriodOpen(journalDate, allowForce) {
-  if (!journalDate) return { ok: true };
-  const [p] = await db.query(
-    `SELECT id, period_name, status FROM accounting_periods
-     WHERE start_date <= ? AND end_date >= ? LIMIT 1`,
-    [journalDate, journalDate]);
-  if (!p.length) return { ok: true }; // no period defined for that date — allow
-  const period = p[0];
-  if (period.status === 'open') return { ok: true, period };
-  if (period.status === 'soft_closed' && allowForce) return { ok: true, period, forced: true };
-  return {
-    ok: false,
-    period,
-    error: period.status === 'closed'
-      ? `لا يمكن الترحيل: الفترة «${period.period_name}» مُقفلة نهائياً.`
-      : `الفترة «${period.period_name}» مُقفلة (إقفال مبدئي). تواصل مع المحاسب الرئيسي للسماح بالترحيل.`
-  };
-}
-
-// Post journal (approved → posted) — updates account balances
+// Post journal (approved → posted) — updates account balances.
+// Tier A.2 corrective gate — delegates to lib/glTransitions.js#post, which
+// replaces the local _checkPeriodOpen this route used to hand-roll (it only
+// recognized 'closed'/'soft_closed', not the 'locked'/'soft_close' states
+// lib/glPosting.js#isPeriodClosed already knew about, and honored `force`
+// for ANY caller holding finance.gl.post — no distinct capability gated the
+// override despite a comment implying an admin-only bypass). The unified
+// service's checkPeriodOpen requires Admin/Developer or the new
+// finance.periods.override_lock capability before `force` clears a
+// soft-closed period.
 router.post('/gl/journals/:id/post', requireCapability('finance.gl.post'), async (req, res) => {
+  const glTransitions = require('../lib/glTransitions');
   try {
     const { force } = req.body || {};
-    const actor = _actor(req); // FC-P1 — actor from JWT
-    // FC-P1 — the whole post runs inside ONE transaction with the journal row
-    // LOCKED (SELECT … FOR UPDATE) and the status re-checked under the lock, so
-    // two concurrent posts can never both apply the balances (double-post race).
-    const out = await db.withTransaction(async (conn) => {
-      const [jrn] = await conn.query('SELECT status, journal_date FROM gl_journals WHERE id = ? FOR UPDATE', [req.params.id]);
-      if (!jrn.length) return { error: 'القيد غير موجود' };
-      if (jrn[0].status !== 'approved') return { error: 'يجب اعتماد القيد أولاً قبل الترحيل' };
-
-      // V5.10.0 — period lock guard
-      const guard = await _checkPeriodOpen(jrn[0].journal_date, !!force);
-      if (!guard.ok) return { error: guard.error };
-
-      // Apply balances — sorted by account id so concurrent posters take the
-      // per-account row locks in a consistent order (matches lib/glPosting).
-      const [entries] = await conn.query(
-        'SELECT account_id, debit, credit FROM gl_entries WHERE journal_id = ? AND account_id IS NOT NULL ORDER BY account_id',
-        [req.params.id]
-      );
-      for (const e of entries) {
-        const netAmount = (Number(e.debit) || 0) - (Number(e.credit) || 0);
-        await conn.query('UPDATE gl_accounts SET balance = balance + ? WHERE id = ?', [netAmount, e.account_id]);
-      }
-      await conn.query('UPDATE gl_journals SET status = "posted", posted_by = ?, posted_at = ? WHERE id = ?',
-        [actor, new Date(), req.params.id]);
-      return { ok: true };
-    });
-    if (out.error) return res.json({ success: false, error: out.error });
-    await auditLog('post_journal', 'gl_journal', req.params.id, actor, {}, req.ip);
+    const out = await glTransitions.post(req.params.id, req.user, { force: !!force, ip: req.ip });
+    if (!out.ok) return res.json({ success: false, error: out.message, code: out.code });
     res.json({ success: true });
   } catch (e) { res.json({ success: false, error: e.message }); }
 });
@@ -2827,93 +2789,29 @@ router.post('/gl/journals/:id/unpost', requireCapability('finance.gl.post'), asy
 //      journal (referenceType='reversal', referenceId=<original.id>).
 //   5. Stamp the linking columns on both rows so the UI can hide the
 //      Reverse button on already-reversed journals.
+// Tier A.2 corrective gate — delegates to lib/glTransitions.js#reverse, which
+// already routed through lib/glPosting.js#postJournal before this file
+// existed (the one transition that already had correct period-lock
+// behavior). Centralized here purely for a single call surface alongside
+// approve/post/delete — its internals are unchanged from the inline version
+// this replaces. Response contract preserved exactly: same status codes per
+// failure code (not_found→404, only_posted_can_be_reversed→400,
+// already_reversed→400, no_entries→400, reversal_post_failed→500), same
+// success body shape.
 router.post('/gl/journals/:id/reverse', requireCapability('finance.gl.reverse'), async (req, res) => {
+  const glTransitions = require('../lib/glTransitions');
   try {
-    const result = await db.withTransaction(async (conn) => {
-      // 1. Lock the original
-      const [orig] = await conn.query(
-        'SELECT * FROM gl_journals WHERE id = ? FOR UPDATE',
-        [req.params.id]
-      );
-      if (!orig.length) {
-        const err = new Error('original-not-found'); err.status = 404; throw err;
-      }
-      const j = orig[0];
-      if (j.status !== 'posted') {
-        const err = new Error('only-posted-journals-can-be-reversed');
-        err.status = 400; throw err;
-      }
-      if (j.reversed_by_journal_id) {
-        const err = new Error('already-reversed'); err.status = 400; throw err;
-      }
-
-      // 2. Load original entries
-      const [entries] = await conn.query(
-        'SELECT * FROM gl_entries WHERE journal_id = ? ORDER BY id',
-        [j.id]
-      );
-      if (!entries.length) {
-        const err = new Error('original-has-no-entries'); err.status = 400; throw err;
-      }
-
-      // 3. Build mirrored set — DEBIT ↔ CREDIT swap, dimensions preserved
-      const username = _actor(req) || 'system'; // FC-P1 — actor from JWT only
-      const reason = String((req.body && req.body.reason) || 'correction').slice(0, 200);
-      const reversedEntries = entries.map(function (e) {
-        return {
-          accountCode:  e.account_code,
-          debit:        Number(e.credit) || 0,
-          credit:       Number(e.debit)  || 0,
-          description:  'REVERSAL of ' + (j.journal_number || j.id) +
-                        (reason ? ' — ' + reason : ''),
-          brandId:      e.brand_id     || null,
-          branchId:     e.branch_id    || null,
-          projectId:    e.project_id   || null,
-          costCenterId: e.cost_center_id || null,
-          warehouseId:  e.warehouse_id || null
-        };
-      });
-
-      // 4. Post the reversal — use the existing helper so journal-number
-      //    sequencing, balance updates, and audit fields all flow the
-      //    same way real journals do.
-      const gl = require('../lib/glPosting');
-      const post = await gl.postJournal(conn, {
-        journalDate:   new Date().toISOString().slice(0, 10),
-        description:   'REVERSAL of ' + (j.journal_number || j.id) + ' — ' + reason,
-        referenceType: 'reversal',
-        referenceId:   j.id,
-        entries:       reversedEntries,
-        postedBy:      username
-      });
-      if (!post || !post.success) {
-        throw new Error('reversal-post-failed: ' + ((post && post.error) || 'unknown'));
-      }
-
-      // 5. Link both rows for the audit trail
-      try {
-        await conn.query(
-          'UPDATE gl_journals SET reversed_by_journal_id = ?, reversed_at = NOW(), reversed_by = ? WHERE id = ?',
-          [post.journalId, username, j.id]
-        );
-        await conn.query(
-          'UPDATE gl_journals SET reverses_journal_id = ? WHERE id = ?',
-          [j.id, post.journalId]
-        );
-      } catch (_) { /* schema may not have the columns on a very old deploy — non-fatal */ }
-
-      return {
-        originalJournalId:     j.id,
-        originalJournalNumber: j.journal_number,
-        newJournalId:          post.journalId,
-        newJournalNumber:      post.journalNumber,
-        reason:                reason
-      };
+    const out = await glTransitions.reverse(req.params.id, req.user, {
+      reason: req.body && req.body.reason,
+      ip: req.ip,
     });
+    if (!out.ok) {
+      return res.status(out.status || 500).json({ success: false, error: out.message, code: out.code });
+    }
+    const { ok, audit, ...result } = out; // strip internal fields — keep the response shape identical to before
     res.json({ success: true, ...result });
   } catch (e) {
-    const status = e.status || 500;
-    res.status(status).json({ success: false, error: e.message });
+    res.status(500).json({ success: false, error: e.message });
   }
 });
 
@@ -3039,38 +2937,35 @@ router.put('/gl/journals/:id', requireCapability('finance.gl.create'), async (re
   } catch (e) { res.json({ success: false, error: e.message }); }
 });
 
-// Tier A.1 corrective gate — shared draft-only deletion policy, used by BOTH
-// the bulk action executor and the single DELETE route below so they can
-// never drift apart again. Only a DRAFT journal may ever be hard-deleted:
-// approved needs a governed "return to draft" action (not implemented by
-// this endpoint — deletion is refused, not silently downgraded), and
-// posted/reversed are immutable (the only correction is a reversing entry).
-// Returns null when deletion is allowed, or a denial code otherwise.
-function _journalDeleteDenialCode(status) {
-  if (status === 'draft') return null;
-  if (status === 'approved') return 'approved_journal_requires_governed_action';
-  return 'posted_journal_immutable'; // posted, or any other/unexpected status — fail closed
-}
-
-// v5.11.0 — bulk action endpoint. Accepts { ids:[], action:'approve|post|unpost|delete', username }.
+// v5.11.0 — bulk action endpoint. Accepts { ids:[], action:'approve|post|delete|approve_post', force }.
 // Per-id outcome is reported so the UI can show partial-failure states.
-// Each action goes through the same gating as its single-id counterpart;
-// posted journals are protected by the same rules.
+// Tier A.2 corrective gate — every action now calls the EXACT SAME
+// lib/glTransitions.js function its single-id counterpart calls (no more
+// hand-rolled SQL duplicated between the two paths). approve/post/delete
+// keep their capability pre-checks here (those glTransitions functions do
+// NOT self-check capabilities — that's a route-level concern, matching the
+// single-id routes' requireCapability middleware). approve_post's pre-check
+// is deliberately REMOVED: glTransitions.approvePost() already requires
+// BOTH finance.gl.approve AND finance.gl.post internally — this bulk route
+// used to require only finance.gl.post for approve_post, which is exactly
+// the gap that internal check closes; checking it a second time here would
+// just be a second, driftable copy of the same rule.
 router.post('/gl/journals/bulk', requireCapability('finance.gl.view'), async (req, res) => {
-  const { ids, action } = req.body || {};
-  const actor = _actor(req); // FC-P1 — actor from JWT
+  const glTransitions = require('../lib/glTransitions');
+  const { ids, action, force } = req.body || {};
   if (!Array.isArray(ids) || !ids.length) return res.json({ success: false, error: 'لا توجد قيود محدَّدة' });
-  // FC-P1 — 'unpost' is gone (posted journals are immutable; use reverse).
-  const allowed = ['approve','post','delete','approve_post'];
+  const allowed = ['approve', 'post', 'delete', 'approve_post'];
   if (allowed.indexOf(action) < 0) return res.json({ success: false, error: 'إجراء غير مدعوم' });
 
-  // FC-P1 — enforce the SAME capability the single-id route requires, per action.
-  const capFor = { approve: 'finance.gl.approve', post: 'finance.gl.post', approve_post: 'finance.gl.post' };
+  const capFor = { approve: 'finance.gl.approve', post: 'finance.gl.post' };
   if (capFor[action]) {
     const okCap = await requireCapability.hasCapability(req.user, capFor[action]);
     if (!okCap) return res.status(403).json({ success: false, code: 'PERMISSION_DENIED', error: 'صلاحية غير كافية لهذه العملية' });
   }
-  // Bulk delete stays developer-only (matches the single DELETE guard).
+  // Bulk delete stays developer-only (matches the single DELETE guard) — this
+  // check MUST stay here: glTransitions.deleteJournal() does not itself
+  // check developer authorization (that's the route's job, same as the
+  // single DELETE route's guardDeveloper middleware).
   if (action === 'delete') {
     let isDev = false;
     if (req.user && req.user.isDeveloper) isDev = true;
@@ -3090,112 +2985,37 @@ router.post('/gl/journals/bulk', requireCapability('finance.gl.view'), async (re
   const results = [];
   let ok = 0, failed = 0;
   for (const id of ids) {
+    let r;
     try {
-      // FC-P1 — each id is processed under its own row lock inside a txn, with
-      // the status re-checked in the lock (no bulk double-post race).
-      const r = await db.withTransaction(async (conn) => {
-        const [rows] = await conn.query('SELECT * FROM gl_journals WHERE id = ? FOR UPDATE', [id]);
-        if (!rows.length) return { ok: false, reason: 'not-found' };
-        const jrn = rows[0];
-        // Tier A.1 corrective gate — maker/checker: the person who CREATED a
-        // journal may not be the one who approves/posts it (segregation of
-        // duties). Previously unchecked — a single user with finance.gl.post
-        // could create and self-approve every journal end to end. admin/
-        // developer are exempt (same bypass the rest of the RBAC layer uses
-        // for break-glass access), everyone else is blocked, no override.
-        const isMakerChecker = action === 'approve' || action === 'approve_post';
-        if (isMakerChecker && jrn.created_by && jrn.created_by === actor) {
-          const isAdminOrDev = (req.user && (req.user.role === 'admin' || req.user.isDeveloper)) || actor === 'admin';
-          if (!isAdminOrDev) return { ok: false, reason: 'sod-self-approval-denied', denied: true, status: jrn.status };
-        }
-        if (action === 'approve') {
-          if (jrn.status !== 'draft') return { ok: false, reason: 'not-draft' };
-          await conn.query('UPDATE gl_journals SET status = "approved", approved_by = ?, approved_at = ? WHERE id = ?', [actor, new Date(), id]);
-          return { ok: true, audit: 'approve_journal' };
-        } else if (action === 'approve_post' || action === 'post') {
-          if (action === 'approve_post' && jrn.status !== 'draft') return { ok: false, reason: 'not-draft' };
-          if (action === 'post' && jrn.status === 'posted') return { ok: false, reason: 'already-posted' };
-          if (action === 'post' && jrn.status !== 'approved') return { ok: false, reason: 'not-approved' };
-          if (action === 'approve_post') {
-            await conn.query('UPDATE gl_journals SET status = "approved", approved_by = ?, approved_at = ? WHERE id = ?', [actor, new Date(), id]);
-          }
-          const [entries] = await conn.query('SELECT account_id, debit, credit FROM gl_entries WHERE journal_id = ? AND account_id IS NOT NULL ORDER BY account_id', [id]);
-          for (const e of entries) {
-            const net = (Number(e.debit) || 0) - (Number(e.credit) || 0);
-            await conn.query('UPDATE gl_accounts SET balance = balance + ? WHERE id = ?', [net, e.account_id]);
-          }
-          await conn.query('UPDATE gl_journals SET status = "posted", posted_by = ?, posted_at = ? WHERE id = ?', [actor, new Date(), id]);
-          return { ok: true, audit: action === 'approve_post' ? 'approve_post_journal' : 'post_journal' };
-        } else if (action === 'delete') {
-          // Tier A.1 — unified with the single DELETE route via
-          // _journalDeleteDenialCode: draft-only, 'approved' now also
-          // refused (previously only 'posted' was blocked here).
-          const denyCode = _journalDeleteDenialCode(jrn.status);
-          if (denyCode) return { ok: false, reason: denyCode, denied: true, status: jrn.status };
-          // Only a draft reaches here — a draft never touched gl_accounts.balance
-          // (only approve_post does), so there is nothing to reverse.
-          await conn.query('DELETE FROM gl_entries WHERE journal_id = ?', [id]);
-          await conn.query('DELETE FROM gl_journals WHERE id = ?', [id]);
-          return { ok: true, audit: 'delete_journal' };
-        }
-        return { ok: false, reason: 'unsupported' };
-      });
-      if (r.ok) { await auditLog(r.audit, 'gl_journal', id, actor, { bulk: true }, req.ip); results.push({ id, ok: true }); ok++; }
-      else {
-        if (r.denied) {
-          const deniedEvent = action === 'delete' ? 'delete_journal_denied' : 'approve_journal_denied_sod';
-          await auditLog(deniedEvent, 'gl_journal', id, actor, { bulk: true, status: r.status, code: r.reason }, req.ip);
-        }
-        results.push({ id, ok: false, reason: r.reason }); failed++;
-      }
+      if (action === 'approve') r = await glTransitions.approve(id, req.user, { ip: req.ip });
+      else if (action === 'post') r = await glTransitions.post(id, req.user, { force: !!force, ip: req.ip });
+      else if (action === 'approve_post') r = await glTransitions.approvePost(id, req.user, { force: !!force, ip: req.ip });
+      else if (action === 'delete') r = await glTransitions.deleteJournal(id, req.user, { ip: req.ip });
     } catch (e) {
-      results.push({ id, ok: false, reason: e.message });
-      failed++;
+      r = { ok: false, code: 'exception', message: e.message };
     }
+    if (r.ok) { results.push({ id, ok: true }); ok++; }
+    else { results.push({ id, ok: false, reason: r.code, message: r.message }); failed++; }
   }
   console.log('[gl/journals/bulk] action=' + action + ' total=' + ids.length + ' ok=' + ok + ' failed=' + failed);
   res.json({ success: true, action, ok, failed, results });
 });
 
-// Delete journal — reverse balances then delete.
+// Delete journal — draft-only hard delete.
 // v5.11.3 — gated behind guardDeveloper so only the developer/admin
 // role can erase journal records. Frontend hides the button for
 // everyone else; this is the server-side safety net for direct calls.
+// Tier A.2 corrective gate — delegates to lib/glTransitions.js#deleteJournal,
+// which now owns the denial-code logic (byte-identical Arabic messages) AND
+// the audit-log writes (success + denial) — do NOT add an auditLog(...) call
+// back into this handler, that would double-log every deletion/denial.
 router.delete('/gl/journals/:id', guardDeveloper, async (req, res) => {
-  const actor = _actor(req);
-  const DENIAL_MESSAGES = {
-    posted_journal_immutable: 'القيد مُرحَّل — لا يمكن حذفه. أنشئ قيد عكس (Reversal) بدلاً من ذلك.',
-    approved_journal_requires_governed_action: 'القيد معتمَد — لا يُحذف مباشرة. استخدم إجراء إلغاء الاعتماد (Return-to-draft) الموثَّق بدلاً من الحذف.',
-  };
+  const glTransitions = require('../lib/glTransitions');
   try {
-    // Tier A.1 corrective gate: this endpoint used to (a) have no status
-    // check at all beyond 'posted' — 'approved' was still deletable — (b)
-    // reverse gl_accounts.balance for ANY journal including drafts, which
-    // never touched balance in the first place (only approve_post does),
-    // and (c) return {success:true} for a non-existent id with no 404 and
-    // an audit-log entry implying a real deletion happened. All three fixed
-    // below; DENIAL_MESSAGES/status/audit mirror the bulk 'delete' branch.
-    let outcome = null; // { type: 'not_found' } | { type: 'denied', code, status } | { type: 'deleted' }
-    await db.withTransaction(async (conn) => {
-      const [jrn] = await conn.query('SELECT id, status FROM gl_journals WHERE id = ? FOR UPDATE', [req.params.id]);
-      if (!jrn.length) { outcome = { type: 'not_found' }; return; }
-      const denyCode = _journalDeleteDenialCode(jrn[0].status);
-      if (denyCode) { outcome = { type: 'denied', code: denyCode, status: jrn[0].status }; return; }
-      // Only a draft reaches here — a draft never affected gl_accounts.balance,
-      // so there is nothing to reverse; reversing here would have been wrong.
-      await conn.query('DELETE FROM gl_entries WHERE journal_id = ?', [req.params.id]);
-      await conn.query('DELETE FROM gl_journals WHERE id = ?', [req.params.id]);
-      outcome = { type: 'deleted' };
-    });
-
-    if (outcome.type === 'not_found') {
-      return res.status(404).json({ success: false, code: 'not_found', error: 'القيد غير موجود' });
+    const out = await glTransitions.deleteJournal(req.params.id, req.user, { ip: req.ip });
+    if (!out.ok) {
+      return res.status(out.status || 500).json({ success: false, code: out.code, error: out.message });
     }
-    if (outcome.type === 'denied') {
-      await auditLog('delete_journal_denied', 'gl_journal', req.params.id, actor, { status: outcome.status, code: outcome.code }, req.ip);
-      return res.status(409).json({ success: false, code: outcome.code, error: DENIAL_MESSAGES[outcome.code] });
-    }
-    await auditLog('delete_journal', 'gl_journal', req.params.id, actor, {}, req.ip);
     res.json({ success: true });
   } catch (e) {
     console.error('[gl/journals/:id DELETE] error', e);

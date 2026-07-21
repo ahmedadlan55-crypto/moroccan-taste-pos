@@ -38,13 +38,20 @@ function call(port, method, p, token, body) {
 const login = async (port, u) => (await call(port, 'POST', '/api/auth/login', null, { username: u, password: PW })).body?.token || '';
 
 const J_SELF = 'ITEST-MC-J-SELF';
+// Tier A.2 corrective gate — a SECOND fixture for the sequential single-id
+// path (/approve then /post), the one frontend/erp's usePostJournal() (and
+// therefore the real "ترحيل"/"حفظ وترحيل" buttons) actually calls. The bulk
+// scenario above already proved SoD on POST /gl/journals/bulk; this proves
+// the SAME rule holds on the route the product UI drives, via the SAME
+// lib/glTransitions.js functions — not a second, divergent implementation.
+const J_SELF_SINGLE = 'ITEST-MC-J-SELF-SINGLE';
 const SCAFFOLD_PARENT_ID = 'ITEST-MC-SCAFFOLD-PARENT';
 const SCAFFOLD_CASH_ID = 'ITEST-MC-SCAFFOLD-CASH';
 const SCAFFOLD_REV_ID = 'ITEST-MC-SCAFFOLD-REV';
 
 async function cleanup() {
   for (const u of [MAKER, CHECKER]) { try { await db.query('DELETE FROM users WHERE username=?', [u]); } catch (_) {} }
-  for (const jid of [J_SELF]) {
+  for (const jid of [J_SELF, J_SELF_SINGLE]) {
     try { await db.query('DELETE FROM gl_entries WHERE journal_id = ?', [jid]); } catch (_) {}
     try { await db.query('DELETE FROM gl_journals WHERE id = ?', [jid]); } catch (_) {}
   }
@@ -121,6 +128,38 @@ async function makeDraftJournal(id, journalNumber, createdBy) {
       [J_SELF]
     );
     check('the self-approval denial was audit-logged as approve_journal_denied_sod', sodAudit.length >= 1, sodAudit);
+
+    // ── SAME scenario via the single-id sequential path (/approve then
+    // /post) — the REAL UI flow (usePostJournal() calls /approve then
+    // /post, never /bulk). Proves single-id/bulk parity: same denial code,
+    // same audit action name, same eventual state, both funneling through
+    // lib/glTransitions.js. ──
+    await makeDraftJournal(J_SELF_SINGLE, 'ITEST-MC-SELF-SINGLE', MAKER);
+
+    const selfApproveSingle = await call(port, 'POST', '/api/erp/gl/journals/' + J_SELF_SINGLE + '/approve', maker, {});
+    check(
+      'single-id /approve: creator self-approving is denied (200, success:false, code=sod-self-approval-denied)',
+      selfApproveSingle.status === 200 && selfApproveSingle.body && selfApproveSingle.body.success === false && selfApproveSingle.body.code === 'sod-self-approval-denied',
+      selfApproveSingle.body
+    );
+    const [[stillDraftSingle]] = await db.query('SELECT status FROM gl_journals WHERE id = ?', [J_SELF_SINGLE]);
+    check("single-id self-approval attempt did NOT change status", stillDraftSingle.status === 'draft', stillDraftSingle);
+
+    const checkerApproveSingle = await call(port, 'POST', '/api/erp/gl/journals/' + J_SELF_SINGLE + '/approve', checker, {});
+    check('single-id /approve: a DIFFERENT user (checker) approving succeeds', checkerApproveSingle.body && checkerApproveSingle.body.success === true, checkerApproveSingle.body);
+    const [[approvedSingle]] = await db.query('SELECT status FROM gl_journals WHERE id = ?', [J_SELF_SINGLE]);
+    check("journal is approved after checker's single-id /approve", approvedSingle.status === 'approved', approvedSingle);
+
+    const checkerPostSingle = await call(port, 'POST', '/api/erp/gl/journals/' + J_SELF_SINGLE + '/post', checker, {});
+    check('single-id /post: checker posts → ok', checkerPostSingle.body && checkerPostSingle.body.success === true, checkerPostSingle.body);
+    const [[postedSingle]] = await db.query('SELECT status FROM gl_journals WHERE id = ?', [J_SELF_SINGLE]);
+    check('journal is posted after sequential /approve then /post (matches usePostJournal())', postedSingle.status === 'posted', postedSingle);
+
+    const [sodAuditSingle] = await db.query(
+      "SELECT action, entity_id FROM audit_logs WHERE entity_id = ? AND action = 'approve_journal_denied_sod' ORDER BY created_at DESC LIMIT 3",
+      [J_SELF_SINGLE]
+    );
+    check('single-id denial audit-logged under the SAME action name as bulk (approve_journal_denied_sod)', sodAuditSingle.length >= 1, sodAuditSingle);
 
     console.log(`\n${fail === 0 ? '✅' : '❌'} journalMakerChecker: ${pass} passed, ${fail} failed`);
     if (fail) console.log('   failed:', fails.join(' | '));

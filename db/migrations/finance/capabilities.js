@@ -25,6 +25,16 @@ const CAPS = [
   ['finance.gl.post',          1, 113, 'ترحيل قيد يومية',             'Post GL journal', 'finance'],
   ['finance.gl.reverse',       1, 114, 'عكس قيد مُرحَّل',             'Reverse posted GL journal', 'finance'],
   ['finance.accounts.manage',  1, 115, 'إدارة دليل الحسابات',         'Manage chart of accounts', 'finance'],
+  // Tier A.2 corrective gate — force:true on a journal post/approve_post
+  // into a soft-closed period used to be honored for ANY caller who already
+  // held finance.gl.post (accountant/finance both do) — no distinct
+  // capability gated it despite a code comment implying an admin-only
+  // override. This id is that real gate: granted to admin (top-up below)
+  // and manager (via FIN_ALL, "managers get everything" — already this
+  // repo's stance for every other finance cap), deliberately NOT granted to
+  // accountant/finance/auditor, so holding finance.gl.post alone is no
+  // longer enough to force past a period lock.
+  ['finance.periods.override_lock', 1, 116, 'تجاوز إقفال الفترة عند الترحيل (force)', 'Override period lock when posting (force)', 'finance'],
   // ── Cash / vouchers ──
   ['finance.cash.approve',     1, 120, 'اعتماد سندات القبض/الصرف',    'Approve cash vouchers', 'finance'],
   ['finance.cash.close',       1, 121, 'إقفال الصندوق',               'Close cashbox', 'finance'],

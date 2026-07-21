@@ -315,7 +315,16 @@ async function setupFixtures() {
 
     // 6e. draft -> succeeds, and critically does NOT touch gl_accounts.balance
     // (a draft never contributed to it — only approve_post does).
+    // Tier A.2 corrective gate — the debit and credit legs used to BOTH sit
+    // on TEST_ACCOUNT_ID, which makes the "balance unchanged" check below a
+    // false-pass: a single account's own debit+credit net to zero by
+    // construction, so the assertion would hold even if the deletion logic
+    // wrongly reversed balances. Two DIFFERENT real accounts (debit on
+    // TEST_ACCOUNT_ID, credit on the scaffold cash account already used
+    // elsewhere in this file), each checked independently, is what actually
+    // proves nothing moved.
     const [[balBeforeDraftDelete]] = await db.query('SELECT balance FROM gl_accounts WHERE id = ?', [TEST_ACCOUNT_ID]);
+    const [[cashBalBeforeDraftDelete]] = await db.query('SELECT balance FROM gl_accounts WHERE id = ?', [SCAFFOLD_CASH_ID]);
     await db.query(
       "INSERT INTO gl_journals (id, journal_number, journal_date, total_debit, total_credit, status) VALUES (?,?,?,?,?, 'draft')",
       [TEST_JOURNAL_DRAFT_DEL, 'ITEST-TB-DRAFT-DEL', '2026-06-10', 5, 5]
@@ -323,17 +332,23 @@ async function setupFixtures() {
     await db.query(
       'INSERT INTO gl_entries (id, journal_id, account_id, account_code, debit, credit) VALUES (?,?,?,?,?,0), (?,?,?,?,0,?)',
       ['ITEST-TB-E-DFT1', TEST_JOURNAL_DRAFT_DEL, TEST_ACCOUNT_ID, TEST_ACCOUNT_CODE, 5,
-       'ITEST-TB-E-DFT2', TEST_JOURNAL_DRAFT_DEL, TEST_ACCOUNT_ID, TEST_ACCOUNT_CODE, 5]
+       'ITEST-TB-E-DFT2', TEST_JOURNAL_DRAFT_DEL, SCAFFOLD_CASH_ID, SCAFFOLD_CASH_CODE, 5]
     );
     const delDraft = await call(port, 'DELETE', '/api/erp/gl/journals/' + TEST_JOURNAL_DRAFT_DEL, developer);
     check('DELETE on a DRAFT journal succeeds (200)', delDraft.status === 200 && delDraft.body && delDraft.body.success === true, { status: delDraft.status, body: delDraft.body });
     const [draftGone] = await db.query('SELECT id FROM gl_journals WHERE id = ?', [TEST_JOURNAL_DRAFT_DEL]);
     check('draft journal (header + 2 lines) was actually removed', draftGone.length === 0, draftGone);
     const [[balAfterDraftDelete]] = await db.query('SELECT balance FROM gl_accounts WHERE id = ?', [TEST_ACCOUNT_ID]);
+    const [[cashBalAfterDraftDelete]] = await db.query('SELECT balance FROM gl_accounts WHERE id = ?', [SCAFFOLD_CASH_ID]);
     check(
-      'deleting a 2-line draft did NOT change gl_accounts.balance (a draft never affected it, so deleting it must not either)',
+      "deleting the draft's DEBIT-leg account balance is unchanged (a draft never affected it)",
       Number(balBeforeDraftDelete.balance) === Number(balAfterDraftDelete.balance),
       { before: balBeforeDraftDelete.balance, after: balAfterDraftDelete.balance }
+    );
+    check(
+      "deleting the draft's CREDIT-leg account balance is ALSO unchanged (proves this isn't a same-account net-zero artifact)",
+      Number(cashBalBeforeDraftDelete.balance) === Number(cashBalAfterDraftDelete.balance),
+      { before: cashBalBeforeDraftDelete.balance, after: cashBalAfterDraftDelete.balance }
     );
 
     console.log(`\n${fail === 0 ? '✅' : '❌'} trialBalance: ${pass} passed, ${fail} failed`);

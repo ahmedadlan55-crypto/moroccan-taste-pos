@@ -315,3 +315,40 @@ describe("الرصيد الافتتاحي — opening float in the close flow", 
     });
   });
 });
+
+describe("header-logout — تسجيل الخروج مستقل عن حالة الوردية", () => {
+  it("logout button lives in the «more» menu and fires onLogout directly, even with an open shift", () => {
+    const onLogout = vi.fn();
+    const onSwitchCashier = vi.fn();
+    h.ctx = baseCtx({ shiftId: "SH-42" });
+    render(
+      <I18nProvider>
+        <Header {...HEADER_PROPS} onSwitchCashier={onSwitchCashier} onLogout={onLogout} />
+      </I18nProvider>,
+    );
+    fireEvent.click(screen.getByRole("button", { name: "المزيد" }));
+    fireEvent.click(screen.getByRole("button", { name: "تسجيل الخروج" }));
+    expect(onLogout).toHaveBeenCalledTimes(1);
+    // Logging out is not the same action as switching cashier — the shift-close
+    // guard that onSwitchCashier routes through must never fire for logout.
+    expect(onSwitchCashier).not.toHaveBeenCalled();
+  });
+
+  it("logout button renders with no shift open too, and is absent entirely without an onLogout handler", () => {
+    h.ctx = baseCtx({ shiftId: null });
+    const { rerender } = render(
+      <I18nProvider>
+        <Header {...HEADER_PROPS} onLogout={vi.fn()} />
+      </I18nProvider>,
+    );
+    fireEvent.click(screen.getByRole("button", { name: "المزيد" }));
+    expect(screen.getByRole("button", { name: "تسجيل الخروج" })).toBeInTheDocument();
+
+    rerender(
+      <I18nProvider>
+        <Header {...HEADER_PROPS} />
+      </I18nProvider>,
+    );
+    expect(screen.queryByRole("button", { name: "تسجيل الخروج" })).toBeNull();
+  });
+});

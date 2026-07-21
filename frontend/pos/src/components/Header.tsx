@@ -5,7 +5,7 @@
  * collapse into a «more» menu under the sm breakpoint.
  */
 import { useEffect, useRef, useState, useSyncExternalStore } from "react";
-import { AlertTriangle, ChefHat, ClipboardCheck, CloudOff, DownloadCloud, ExternalLink, FileText, Inbox, Languages, Loader2, MapPin, MoreHorizontal, PackageSearch, RefreshCw, Repeat, UserRound, Wifi } from "lucide-react";
+import { AlertTriangle, ChefHat, ClipboardCheck, CloudOff, DownloadCloud, ExternalLink, FileText, Inbox, Languages, LogOut, Loader2, MapPin, MoreHorizontal, PackageSearch, RefreshCw, Repeat, UserRound, Wifi } from "lucide-react";
 import { usePos } from "@/state/store";
 import { fmtInt } from "@/lib/format";
 import { getPwaStatus, subscribePwa, promptInstall, applyUpdate } from "@/lib/pwa";
@@ -169,6 +169,7 @@ export function Header({
   onOpenRequisitions,
   onOpenDrainReport,
   onSwitchCashier,
+  onLogout,
 }: {
   onOpenShiftDialog: () => void;
   onOpenSyncReport: () => void;
@@ -177,8 +178,13 @@ export function Header({
   onOpenRequisitions: () => void;
   onOpenDrainReport?: () => void;
   /** Safe cashier switch — App checks for an open shift and routes through the
-   *  close flow before it clears the token. */
+   *  close flow before it clears the token. Intended for handing the till to a
+   *  DIFFERENT named cashier, so shift accountability stays clean. */
   onSwitchCashier?: () => void;
+  /** Plain sign-out — ends this session only, never touches shift state. The
+   *  open shift (if any) stays open server-side and is exactly where the
+   *  cashier left it on next login. Deliberately independent of shift status. */
+  onLogout?: () => void;
 }) {
   const t = useT();
   const { user, shiftId, shiftLoading, engineStatus, catalog } = usePos();
@@ -341,6 +347,17 @@ export function Header({
               <ExternalLink className="h-3.5 w-3.5" aria-hidden />
               {t("header.more.backToSystem")}
             </a>
+            {onLogout ? (
+              <button
+                type="button"
+                onClick={() => { setMoreOpen(false); onLogout(); }}
+                title={t("header.more.logoutTitle")}
+                className="btn-press flex min-h-11 items-center justify-center gap-1.5 rounded-xl border border-rose-200 bg-rose-50 px-3 text-xs font-bold text-rose-700 hover:bg-rose-100"
+              >
+                <LogOut className="h-3.5 w-3.5" aria-hidden />
+                {t("header.more.logout")}
+              </button>
+            ) : null}
           </div>}
         </div>
       </div>

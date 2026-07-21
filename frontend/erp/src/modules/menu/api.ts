@@ -19,6 +19,10 @@ export const qk = {
   all: KEY,
   brands: () => [...KEY, "brands"] as const,
   items: (params?: unknown) => [...KEY, "items", params ?? {}] as const,
+  /** D3 server-mode product list (GET /api/menu/list). */
+  list: (params?: unknown) => [...KEY, "list", params ?? {}] as const,
+  /** D3 single-item detail read (GET /api/menu/:id). */
+  detail: (id: string) => [...KEY, "detail", id] as const,
   priceHistory: (id: string) => [...KEY, "price-history", id] as const,
   recipes: () => [...KEY, "recipes"] as const,
   recipeBom: (id: string | null) => [...KEY, "recipe-bom", id] as const,
@@ -79,6 +83,12 @@ export interface MenuItem {
   yieldQuantity: number;
   yieldUnit: string | null;
   isTaxInclusive: boolean;
+  /** Sprint 3 · D3 — _mapMenu now surfaces these on every read so the edit
+   *  screen can display AND preserve the ZATCA tax category, and lock a
+   *  recipe-derived cost. `taxCategory` defaults to 'S'; `costSource` is null
+   *  for legacy rows never stamped with a provenance. */
+  taxCategory?: TaxCategory;
+  costSource?: CostSource | null;
   /** close/d-images — stored product image as a base64 data URL (null = none).
    *  _mapMenu (routes/menu.js) has always shipped it on /menu/all; typed
    *  optional so older payload mocks stay valid. The POS catalog never carries
@@ -122,6 +132,18 @@ export interface MenuItemInput {
    *  leave the stored image untouched (PUT); '' = clear it. The server 400s
    *  anything that is not data:image/(jpeg|png|webp);base64 ≤ 300KB decoded. */
   imageData?: string;
+  // ── Sprint 3 · D2 (menu frontend) ──
+  /** Bilingual descriptions from the full-page product editor. Forward-looking:
+   *  the current write path ignores unknown fields, so these are harmless no-ops
+   *  until a backend column lands (mirrors the codebase's other forward-looking
+   *  optional fields). */
+  descAr?: string;
+  descEn?: string;
+  /** Explicit acknowledgement that a manual `cost` write should override a
+   *  recipe-derived cost. D3's PUT refuses a manual cost with COST_LOCKED_BY_RECIPE
+   *  when cost_source='recipe' UNLESS this override is set — the product page
+   *  surfaces it as an "unlock to edit" workflow, never a raw error. */
+  costOverride?: boolean;
 }
 
 export interface PriceHistoryRow {
@@ -132,6 +154,96 @@ export interface PriceHistoryRow {
   newPrice: number;
   cost: number;
   reason: string;
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// Sprint 3 · D3 contract — paginated product list + single-item detail read.
+//
+// GET /api/menu/list (owner D3) is the server-mode source for the redesigned
+// BrandMenu table: paginated, NO image bytes (thumbnails fetch bytes per-item
+// from GET /api/pos/v2/item-image/:id), with derived branch/channel counts,
+// margin value+%, the cost source, and the ZATCA tax category. `cost` and the
+// margin fields are only meaningful to callers holding `menu.cost.view`.
+//
+// GET /api/menu/:id (owner D3) is the detail read the full-page editor hydrates
+// from; unlike /menu/all it exposes tax_category + cost_source (and, going
+// forward, descriptions and the derived branch/channel lists).
+//
+// These reads are D3-owned and live in a sibling task; the frontend is coded to
+// this documented contract and unit-tested against mocks. The write path
+// (POST/PUT/PATCH/DELETE /menu) is unchanged and already live.
+// ════════════════════════════════════════════════════════════════════════════
+
+export type CostSource = "recipe" | "manual" | "imported";
+export type TaxCategory = "S" | "Z" | "E" | "O";
+
+/** One row of GET /api/menu/list — no image bytes (see `imageVer`). Field names
+ *  mirror the backend response EXACTLY (routes/menu.js `/list`): `name` is the
+ *  Arabic name; `nameEn` is '' when unset. */
+export interface MenuListRow {
+  /** Menu code (the item id). */
+  id: string;
+  /** Arabic (primary) name. */
+  name: string;
+  /** '' when the English name has not been entered. */
+  nameEn: string;
+  category: string;
+  brandId: string;
+  brandName: string;
+  price: number;
+  /** Recipe/actual cost. Only meaningful with menu.cost.view. */
+  cost: number;
+  costSource: CostSource | null;
+  /** Recipe-computed cost (0 when none). */
+  computedCost: number;
+  /** Price net of VAT (VAT stripped only when tax-inclusive AND standard-rated). */
+  preTaxPrice: number;
+  /** preTaxPrice − cost (absolute margin). */
+  marginValue: number;
+  /** Margin as a percent of preTaxPrice. */
+  marginPct: number;
+  taxCategory: TaxCategory;
+  isTaxInclusive: boolean;
+  /** Count of branches the item is available at. */
+  branchCount: number;
+  /** Count of sales channels the item is on. */
+  channelCount: number;
+  active: boolean;
+  hasImage: boolean;
+  /** 8-char content hash of the stored image (null = none) — busts the
+   *  per-item image cache; NOT the bytes. */
+  imageVer: string | null;
+  hasRecipe: boolean;
+}
+
+/** GET /api/menu/list envelope (routes/menu.js `/list`). */
+export interface MenuListResponse {
+  data: MenuListRow[];
+  pagination: { page: number; pageSize: number; total: number };
+  /** settings.VATRate echoed back (never hardcoded 15). */
+  vatRate: number;
+  filters?: Record<string, unknown>;
+}
+
+/** Query params accepted by GET /api/menu/list. Sort is TWO params server-side:
+ *  `sort` (a whitelisted column key) + `dir`. */
+export interface MenuListParams {
+  page?: number;
+  pageSize?: number;
+  q?: string;
+  brandId?: string;
+  category?: string;
+  channel?: string;
+  /** "active" | "inactive" | "" (all). */
+  status?: "active" | "inactive" | "";
+  hasRecipe?: boolean;
+  hasImage?: boolean;
+  missingNameEn?: boolean;
+  negativeMargin?: boolean;
+  /** Whitelisted server sort key: name | price | cost | category | active |
+   *  marginValue | marginPct | branchCount | channelCount. */
+  sort?: string;
+  dir?: "asc" | "desc";
 }
 
 export interface InvItem {
@@ -359,6 +471,55 @@ export function useMenuItems(opts: { brandId?: string; type?: "all" | "finished"
   });
 }
 
+/** GET /api/menu/list — server-mode paginated product list (D3). Drives the
+ *  redesigned BrandMenu DataTable in mode="server"; the caller reports table
+ *  state (page/pageSize/sort/search) + the FilterBar values through `params`.
+ *  Sort is sent as two params (`sort` + `dir`) to match the backend whitelist. */
+export function useMenuList(params: MenuListParams = {}, options: { enabled?: boolean } = {}) {
+  return useQuery<MenuListResponse>({
+    queryKey: qk.list(params),
+    enabled: options.enabled ?? true,
+    // Keep the previous page visible while the next one loads (no flash to the
+    // empty state on paginate/sort/filter) — react-query v5 placeholderData.
+    placeholderData: (prev) => prev,
+    queryFn: ({ signal }) =>
+      apiClient.get<MenuListResponse>("/menu/list", {
+        signal,
+        params: {
+          page: params.page,
+          pageSize: params.pageSize,
+          q: params.q || undefined,
+          brandId: params.brandId || undefined,
+          category: params.category || undefined,
+          channel: params.channel || undefined,
+          status: params.status || undefined,
+          hasRecipe: params.hasRecipe,
+          hasImage: params.hasImage,
+          missingNameEn: params.missingNameEn,
+          negativeMargin: params.negativeMargin,
+          sort: params.sort || undefined,
+          dir: params.dir || undefined,
+        },
+      }),
+  });
+}
+
+/** Single-item detail the full-page editor hydrates from. There is no dedicated
+ *  GET /menu/:id; the "detail read" is the shared _mapMenu on GET /menu/all,
+ *  which D3 extended to expose tax_category + cost_source (plus the full
+ *  editable field set: unit/bigUnit/convRate/imageData/stock/pricing/…). We
+ *  select the one item out of the (cached, shared) admin list. `type:"all"` so
+ *  an inactive item still resolves. */
+export function useMenuItemDetail(id: string | null) {
+  return useQuery({
+    queryKey: qk.items({ brandId: "", type: "all" }),
+    enabled: !!id,
+    queryFn: ({ signal }) =>
+      apiClient.get<MenuItem[]>("/menu/all", { signal, params: { type: "all" } }),
+    select: (rows): MenuItem | null => rows.find((r) => r.id === id) ?? null,
+  });
+}
+
 export function usePriceHistory(id: string | null) {
   return useQuery({
     queryKey: qk.priceHistory(id ?? ""),
@@ -440,6 +601,25 @@ export function useCategoryList() {
   });
 }
 
+/** GET /settings → the numeric VAT rate for the ZATCA "S" (standard) category.
+ *  Reads settings.VATRate (never hardcodes 15%); shares the ["settings"] cache
+ *  with the administration Settings screen. Falls back to 15 ONLY when the
+ *  setting is entirely absent/invalid, so a standard-rated item never shows an
+ *  obviously-wrong 0%. */
+export function useVatRate() {
+  return useQuery({
+    queryKey: ["settings"],
+    staleTime: 300_000,
+    queryFn: ({ signal }) =>
+      apiClient.get<Record<string, unknown>>("/settings", { signal }),
+    select: (s): number => {
+      const raw = s?.VATRate ?? s?.vat_rate;
+      const n = Number(raw);
+      return Number.isFinite(n) && n >= 0 ? n : 15;
+    },
+  });
+}
+
 /** Inventory items catalog (raw + semi) — the component source for recipe BOM
  *  lines. The legacy /inventory/items route returns a plain array. */
 export function useInventoryItems(brandId?: string) {
@@ -460,7 +640,10 @@ export function useCreateMenuItem() {
   return useMutation({
     mutationFn: (input: MenuItemInput) =>
       apiClient.post<MutationAck & { id?: string }>("/menu", input).then(ensureOk),
-    onSuccess: () => qc.invalidateQueries({ queryKey: [...KEY, "items"] }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: [...KEY, "items"] });
+      qc.invalidateQueries({ queryKey: [...KEY, "list"] });
+    },
   });
 }
 
@@ -469,7 +652,11 @@ export function useUpdateMenuItem() {
   return useMutation({
     mutationFn: (v: { id: string; input: MenuItemInput }) =>
       apiClient.put<MutationAck>(`/menu/${v.id}`, v.input).then(ensureOk),
-    onSuccess: () => qc.invalidateQueries({ queryKey: [...KEY, "items"] }),
+    onSuccess: (_res, v) => {
+      qc.invalidateQueries({ queryKey: [...KEY, "items"] });
+      qc.invalidateQueries({ queryKey: [...KEY, "list"] });
+      qc.invalidateQueries({ queryKey: qk.detail(v.id) });
+    },
   });
 }
 
@@ -477,7 +664,11 @@ export function useDeleteMenuItem() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (id: string) => apiClient.delete<MutationAck>(`/menu/${id}`).then(ensureOk),
-    onSuccess: () => qc.invalidateQueries({ queryKey: [...KEY, "items"] }),
+    onSuccess: (_res, id) => {
+      qc.invalidateQueries({ queryKey: [...KEY, "items"] });
+      qc.invalidateQueries({ queryKey: [...KEY, "list"] });
+      qc.invalidateQueries({ queryKey: qk.detail(id) });
+    },
   });
 }
 
@@ -512,6 +703,8 @@ export function useUpdatePrice() {
         .then(ensureOk),
     onSuccess: (_res, v) => {
       qc.invalidateQueries({ queryKey: [...KEY, "items"] });
+      qc.invalidateQueries({ queryKey: [...KEY, "list"] });
+      qc.invalidateQueries({ queryKey: qk.detail(v.id) });
       qc.invalidateQueries({ queryKey: qk.priceHistory(v.id) });
     },
   });
@@ -522,7 +715,10 @@ export function useBulkPriceUpdate() {
   return useMutation({
     mutationFn: (input: BulkPriceInput) =>
       apiClient.post<BulkPriceResult>("/menu/bulk-price-update", input).then(ensureOk),
-    onSuccess: () => qc.invalidateQueries({ queryKey: [...KEY, "items"] }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: [...KEY, "items"] });
+      qc.invalidateQueries({ queryKey: [...KEY, "list"] });
+    },
   });
 }
 
@@ -536,6 +732,8 @@ export function useSaveRecipeBom() {
     onSuccess: (_res, v) => {
       qc.invalidateQueries({ queryKey: qk.recipeBom(v.menuId) });
       qc.invalidateQueries({ queryKey: [...KEY, "items"] });
+      qc.invalidateQueries({ queryKey: [...KEY, "list"] });
+      qc.invalidateQueries({ queryKey: qk.detail(v.menuId) });
       qc.invalidateQueries({ queryKey: qk.recipes() });
     },
   });
@@ -558,6 +756,7 @@ export function useBulkUploadImages() {
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: qk.images() });
       qc.invalidateQueries({ queryKey: [...KEY, "items"] });
+      qc.invalidateQueries({ queryKey: [...KEY, "list"] });
     },
   });
 }
@@ -575,6 +774,7 @@ export function useDeleteImage() {
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: qk.images() });
       qc.invalidateQueries({ queryKey: [...KEY, "items"] });
+      qc.invalidateQueries({ queryKey: [...KEY, "list"] });
     },
   });
 }
@@ -590,6 +790,7 @@ export function useReplaceImage() {
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: qk.images() });
       qc.invalidateQueries({ queryKey: [...KEY, "items"] });
+      qc.invalidateQueries({ queryKey: [...KEY, "list"] });
     },
   });
 }

@@ -9,6 +9,8 @@ import { validation } from "./validation";
 import { nav } from "./nav";
 import { shell } from "./shell";
 import { login } from "./login";
+import { menu } from "./menu";
+import { items } from "./items";
 
 /**
  * Merged Arabic dictionary barrel — one namespace per shared concern / module.
@@ -32,4 +34,6 @@ export const ar = {
   nav,
   shell,
   login,
+  menu,
+  items,
 } as const;

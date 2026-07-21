@@ -8,6 +8,7 @@
 import { useLocation } from "react-router-dom";
 import { Hub } from "./Hub";
 import { BrandMenu } from "./BrandMenu";
+import { MenuItemPage } from "./MenuItemPage";
 import { RecipesBom } from "./RecipesBom";
 import { PriceLists } from "./PriceLists";
 import { Combos } from "./Combos";
@@ -36,12 +37,32 @@ function sectionFromPath(pathname: string): Section {
   }
 }
 
+/**
+ * Brand section router — the brand item OWNS its subtree (manifest subRoutes),
+ * so the shell mounts this module for /menu/brand/new|:id|:id/edit too (D2).
+ * Resolve the deeper segments to the full-page product screen:
+ *   /menu/brand            → BrandMenu (server-mode list)
+ *   /menu/brand/new        → MenuItemPage (create)
+ *   /menu/brand/:id        → MenuItemPage (details / read)
+ *   /menu/brand/:id/edit   → MenuItemPage (edit)
+ */
+function BrandSection({ pathname }: { pathname: string }) {
+  const parts = pathname.replace(/\/+$/, "").split("/").filter(Boolean);
+  const brandIdx = parts.indexOf("brand");
+  const seg = brandIdx >= 0 ? (parts[brandIdx + 1] ?? "") : "";
+  if (!seg) return <BrandMenu />;
+  if (seg === "new") return <MenuItemPage mode="new" />;
+  const id = decodeURIComponent(seg);
+  const isEdit = (parts[brandIdx + 2] ?? "") === "edit";
+  return <MenuItemPage mode={isEdit ? "edit" : "view"} id={id} />;
+}
+
 export default function MenuModule() {
   const { pathname } = useLocation();
   const section = sectionFromPath(pathname);
 
   switch (section) {
-    case "brand": return <BrandMenu />;
+    case "brand": return <BrandSection pathname={pathname} />;
     case "recipes-bom": return <RecipesBom />;
     case "price-lists": return <PriceLists />;
     case "combos": return <Combos />;

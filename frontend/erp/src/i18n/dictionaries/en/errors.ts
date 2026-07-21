@@ -14,4 +14,7 @@ export const errors = {
   PERMISSION_DENIED: "You don't have permission to perform this action",
   NOT_FOUND: "The requested item was not found or has been removed",
   RATE_LIMITED: "Too many attempts — please wait a moment and try again",
+  // Menu D2/D3 — a manual cost write was refused because the item's cost is
+  // recipe-derived; the product page surfaces this as an "unlock to edit" flow.
+  COST_LOCKED_BY_RECIPE: "This cost is recipe-derived — unlock it on the product page to set it manually",
 } as const;

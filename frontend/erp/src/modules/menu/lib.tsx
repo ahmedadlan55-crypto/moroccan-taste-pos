@@ -5,6 +5,7 @@ import { useCallback } from "react";
 import { useSearchParams } from "react-router-dom";
 import { formatCurrency, formatNumber, cn } from "@/shared/lib";
 import { Select } from "@/shared/ui";
+import { useLang, formatCurrency as fmtCurrencyLang, formatNumber as fmtNumberLang, type Lang } from "@/i18n";
 import type { Brand } from "./api";
 
 /** Money cell — English digits, LTR, tabular; Arabic currency label. */
@@ -20,6 +21,33 @@ export function Num({ value, className }: { value: number | null | undefined; cl
 /** Margin % from price/cost, rendered as a coloured chip via caller. */
 export function marginPct(price: number, cost: number): number {
   return price > 0 ? Math.round(((price - cost) / price) * 10000) / 100 : 0;
+}
+
+// ── Bilingual helpers (Sprint 3 · D2) ────────────────────────────────────────
+
+/** Business-data name policy: render the English name when the UI language is
+ *  English AND an English name exists, otherwise the Arabic name. */
+export function pickName(nameAr: string, nameEn: string | null | undefined, lang: Lang): string {
+  if (lang === "en" && nameEn && nameEn.trim()) return nameEn;
+  return nameAr;
+}
+
+/** Language-aware currency/number formatters bound to the active UI language.
+ *  Digits stay Latin in both languages (app numbering policy); only the currency
+ *  label/position follows the locale ("SAR 1,234.50" vs "1,234.50 ر.س."). */
+export function useFmt() {
+  const lang = useLang();
+  return {
+    lang,
+    money: (v: number | null | undefined) => fmtCurrencyLang(Number(v) || 0, lang),
+    num: (v: number | null | undefined) => fmtNumberLang(Number(v) || 0, lang),
+  };
+}
+
+/** Language-aware money cell — LTR tabular, label follows the active language. */
+export function MoneyI18n({ value, className }: { value: number | null | undefined; className?: string }) {
+  const { money } = useFmt();
+  return <span dir="ltr" className={cn("tabular-nums", className)}>{money(value)}</span>;
 }
 
 // ── URL-addressable brand scope (?brandId=) shared by every menu section ──

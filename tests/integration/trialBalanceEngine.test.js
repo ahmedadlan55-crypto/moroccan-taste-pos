@@ -217,8 +217,16 @@ async function tableCounts() {
     const cycleElapsedMs = Date.now() - startCycle;
     check('a 2-node parent cycle does not hang (completed in ' + cycleElapsedMs + 'ms, cycle-guard bounds the walk)', cycleElapsedMs < 5000, cycleElapsedMs);
     const cycleRowA = r4.rows.find((r) => r.accountId === IDS.cycleA);
-    check('cycle member is flagged isCycleMember', !!cycleRowA && cycleRowA.isCycleMember === true, cycleRowA);
-    check('cycle is surfaced in diagnostics.cycleAccounts', r4.diagnostics.cycleAccounts.some((c) => c.code === 'ITEST900013'), r4.diagnostics.cycleAccounts);
+    const cycleRowB = r4.rows.find((r) => r.accountId === IDS.cycleB);
+    // Tier A.3 Release Gate item 4 — a plain A<->B cycle used to flag only
+    // the node where the back-edge was detected (A), never B, even though
+    // B is equally part of the same 2-node cycle. Both must be flagged now,
+    // in both rows and diagnostics.cycleAccounts — not A alone.
+    check('cycle member A is flagged isCycleMember', !!cycleRowA && cycleRowA.isCycleMember === true, cycleRowA);
+    check('cycle member B is ALSO flagged isCycleMember (not just A)', !!cycleRowB && cycleRowB.isCycleMember === true, cycleRowB);
+    check('cycle member A is surfaced in diagnostics.cycleAccounts', r4.diagnostics.cycleAccounts.some((c) => c.code === 'ITEST900013'), r4.diagnostics.cycleAccounts);
+    check('cycle member B is ALSO surfaced in diagnostics.cycleAccounts (not just A)', r4.diagnostics.cycleAccounts.some((c) => c.code === 'ITEST900014'), r4.diagnostics.cycleAccounts);
+    check('exactly 2 accounts are flagged as cycle members — the two real cycle nodes, nothing more', r4.diagnostics.cycleAccounts.length === 2, r4.diagnostics.cycleAccounts);
     check('a detected cycle makes the report non-clean', r4.isClean === false, r4.isClean);
     await db.query("UPDATE gl_accounts SET parent_id = NULL WHERE id IN (?, ?)", [IDS.cycleA, IDS.cycleB]); // untangle before further tests / cleanup
 

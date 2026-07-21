@@ -21,7 +21,8 @@ import { WarehouseScopeSelect } from "./lib/WarehouseScopeSelect";
 import { DashboardPage } from "./features/dashboard/DashboardPage";
 import { InventoryPage } from "./features/inventory/InventoryPage";
 import { ItemsPage } from "./features/items/ItemsPage";
-import { ItemWizard } from "./features/items/ItemWizard";
+import { ItemFormPage } from "./features/items/ItemFormPage";
+import { ItemDetailPage } from "./features/items/ItemDetailPage";
 import { WarehousesPage } from "./features/warehouses/WarehousesPage";
 import { TransfersPage } from "./features/transfers/TransfersPage";
 import { TransferCreateWizard } from "./features/transfers/TransferCreateWizard";
@@ -106,14 +107,17 @@ function Section() {
 
   // Items OWNS its subtree (manifest subRoutes:true), so the shell mounts this
   // module for /inventory/items/new, /inventory/items/:id and .../:id/edit too.
-  // Phase D replaces this with the real full-page screens; until then, resolve
-  // any deeper segment back onto the items surface so the route mounts without
-  // crashing (never a 404), keeping the base /inventory/items behaviour intact:
-  //   .../new         → the existing create wizard (identical to ?new=1)
-  //   .../<id>[/...]  → the items list (item detail stays an inline ?view= drawer)
+  // D1 resolves each deeper segment to its real full-page screen:
+  //   .../new          → ItemFormPage (create)
+  //   .../<id>/edit    → ItemFormPage (edit, reads :id)
+  //   .../<id>         → ItemDetailPage (read, reads :id)
   if (route.startsWith("/inventory/items/")) {
-    const seg = route.slice("/inventory/items/".length).split("/")[0] ?? "";
-    return seg === "new" || isNew ? <ItemWizard /> : <ItemsPage />;
+    const parts = route.slice("/inventory/items/".length).split("/").filter(Boolean);
+    const seg = parts[0] ?? "";
+    if (seg === "new") return <ItemFormPage mode="create" />;
+    if (seg && parts[1] === "edit") return <ItemFormPage mode="edit" itemId={seg} />;
+    if (seg) return <ItemDetailPage itemId={seg} />;
+    return <ItemsPage />;
   }
 
   switch (route) {
@@ -124,7 +128,9 @@ function Section() {
     case "/inventory/waste":
       return <WastePage />;
     case "/inventory/items":
-      return isNew ? <ItemWizard /> : <ItemsPage />;
+      // Create/edit/detail are real routes now (…/new, …/:id, …/:id/edit); the
+      // legacy ?new=1 overlay redirects to the full-page create screen.
+      return isNew ? <ItemFormPage mode="create" /> : <ItemsPage />;
     case "/inventory/units-barcodes":
       return <UnitsBarcodes />;
     case "/inventory/warehouses":

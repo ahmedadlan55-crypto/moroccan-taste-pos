@@ -711,4 +711,110 @@ router.put('/items/:id/units', MGR, async (req, res) => {
   } catch (e) { _catch(res, e); }
 });
 
+// ════════════════════════════════════════════════════════════════════════════
+// Sprint 3 D3 — Item ↔ Warehouse ASSIGNMENTS (membership, independent of stock)
+//   GET /items/:id/assignments   — list the item's warehouse memberships
+//   PUT /items/:id/assignments   — replace/upsert the membership set (txn)
+//
+// The EXISTING warehouse_item_rules (min/max/reorder per location) stays as the
+// replenishment layer; this is the "which warehouses does this item belong to"
+// membership layer on top. is_main = the per-item primary warehouse (≤1).
+//
+// SECURITY: the server re-validates EVERY warehouse against the warehouses table
+// (exists + active) AND the caller's warehouse scope (req.guardWh). warehouseId /
+// branchId are NEVER trusted from the client — an out-of-scope (e.g. another
+// branch's) warehouse is rejected with a generic 403 by guardWh, so this table
+// cannot be used to bind an item to a warehouse the caller may not see. Saving
+// assignments NEVER touches warehouse_stock balances.
+// ════════════════════════════════════════════════════════════════════════════
+function _assignmentOut(r) {
+  return {
+    id: r.id, itemId: r.item_id, warehouseId: r.warehouse_id,
+    warehouseName: r.warehouse_name || null, warehouseCode: r.warehouse_code || null,
+    branchId: r.branch_id || null,
+    isActive: r.is_active === 1 || r.is_active === true,
+    isMain: r.is_main === 1 || r.is_main === true,
+    createdAt: r.created_at || null,
+  };
+}
+const _ASSIGN_SELECT =
+  'SELECT a.id, a.item_id, a.warehouse_id, a.is_active, a.is_main, a.created_at, ' +
+  ' w.name AS warehouse_name, w.code AS warehouse_code, w.branch_id ' +
+  'FROM item_warehouse_assignments a LEFT JOIN warehouses w ON w.id=a.warehouse_id ' +
+  'WHERE a.item_id=? ORDER BY a.is_main DESC, w.name';
+
+router.get('/items/:id/assignments', async (req, res) => {
+  try {
+    const item = await _loadItem(req.params.id);
+    if (!item) { const e = new Error('الصنف غير موجود'); e.status = 404; throw e; }
+    const [rows] = await db.query(_ASSIGN_SELECT, [req.params.id]);
+    const data = rows.map(_assignmentOut);
+    const main = data.find((d) => d.isMain);
+    res.json({ data, mainWarehouseId: main ? main.warehouseId : null });
+  } catch (e) { _catch(res, e); }
+});
+
+router.put('/items/:id/assignments', BACKOFFICE, async (req, res) => {
+  try {
+    const actor = _actor(req); const id = req.params.id; const b = req.body || {};
+    const item = await _loadItem(id);
+    if (!item) { const e = new Error('الصنف غير موجود'); e.status = 404; throw e; }
+    const list = Array.isArray(b.assignments) ? b.assignments : null;
+    if (!list) return _fail(res, 'VALIDATION_ERROR', 'assignments مطلوبة (مصفوفة)');
+
+    // Normalize + de-dup by warehouseId. A client-supplied branchId is IGNORED —
+    // branch scope is derived server-side from the warehouse + the caller's scope.
+    const seen = new Set(); const norm = []; let mainCount = 0;
+    for (const a of list) {
+      const wid = String((a && (a.warehouseId || a.warehouse_id)) || '').trim();
+      if (!wid) return _fail(res, 'VALIDATION_ERROR', 'كل تخصيص يجب أن يحدد warehouseId');
+      if (seen.has(wid)) return _fail(res, 'VALIDATION_ERROR', 'مستودع مكرر في الطلب: ' + wid);
+      seen.add(wid);
+      const isMain = a.isMain === true || a.is_main === 1 || a.is_main === true;
+      if (isMain) mainCount++;
+      norm.push({ warehouseId: wid, isActive: !(a.isActive === false || a.is_active === 0), isMain });
+    }
+    if (mainCount > 1) return _fail(res, 'VALIDATION_ERROR', 'لا يُسمح بأكثر من مستودع رئيسي واحد للصنف');
+
+    // SCOPE first — guardWh writes a 403 and returns false on the first
+    // out-of-scope (e.g. cross-branch) warehouse; bail immediately.
+    for (const n of norm) {
+      if (req.guardWh && !req.guardWh(res, n.warehouseId)) return; // 403 already written
+    }
+    // EXISTENCE + active — never trust the id; every warehouse must be a real,
+    // active row. (Runs even when scope enforcement is off.)
+    if (norm.length) {
+      const ids = norm.map((n) => n.warehouseId);
+      const ph = ids.map(() => '?').join(',');
+      const [whs] = await db.query('SELECT id, is_active FROM warehouses WHERE id IN (' + ph + ')', ids);
+      const byId = new Map(whs.map((w) => [String(w.id), w]));
+      for (const n of norm) {
+        const w = byId.get(n.warehouseId);
+        if (!w) return _fail(res, 'VALIDATION_ERROR', 'المستودع غير موجود: ' + n.warehouseId);
+        if (!Number(w.is_active)) return _fail(res, 'VALIDATION_ERROR', 'المستودع غير نشط: ' + n.warehouseId);
+      }
+    }
+
+    const out = await db.withTransaction(async (conn) => {
+      const [ex] = await conn.query('SELECT id, warehouse_id FROM item_warehouse_assignments WHERE item_id=? FOR UPDATE', [id]);
+      const keep = new Set(norm.map((n) => n.warehouseId));
+      for (const row of ex) {
+        if (!keep.has(String(row.warehouse_id))) await conn.query('DELETE FROM item_warehouse_assignments WHERE id=?', [row.id]);
+      }
+      for (const n of norm) {
+        await conn.query(
+          'INSERT INTO item_warehouse_assignments (id, item_id, warehouse_id, is_active, is_main, created_by, updated_by) VALUES (?,?,?,?,?,?,?) ' +
+          'ON DUPLICATE KEY UPDATE is_active=VALUES(is_active), is_main=VALUES(is_main), updated_by=VALUES(updated_by)',
+          ['IWA-' + crypto.randomBytes(7).toString('hex'), id, n.warehouseId, n.isActive ? 1 : 0, n.isMain ? 1 : 0, actor, actor]);
+      }
+      await _audit(conn, id, 'assignments', null, null, actor, 'تعديل تخصيص المستودعات للصنف',
+        { warehouses: norm.map((n) => n.warehouseId), main: (norm.find((n) => n.isMain) || {}).warehouseId || null });
+      const [rows] = await conn.query(_ASSIGN_SELECT, [id]);
+      return { assignments: rows.map(_assignmentOut) };
+    });
+    const main = out.assignments.find((d) => d.isMain);
+    return res.status(200).json({ success: true, data: { id, assignments: out.assignments }, mainWarehouseId: main ? main.warehouseId : null, status: 'saved' });
+  } catch (e) { _catch(res, e); }
+});
+
 module.exports = router;

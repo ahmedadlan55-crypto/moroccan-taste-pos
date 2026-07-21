@@ -1,6 +1,7 @@
 import { Suspense } from "react";
 import { Outlet, useLocation } from "react-router-dom";
 import { AnimatePresence, motion } from "framer-motion";
+import { useT } from "@/i18n";
 import { Sidebar } from "./Sidebar";
 import { Topbar } from "./Topbar";
 import { MobileNav } from "./MobileNav";
@@ -23,6 +24,7 @@ export function AppShell() {
 }
 
 function ShellFrame() {
+  const t = useT();
   const location = useLocation();
   const { collapsed } = useShell();
 
@@ -30,7 +32,7 @@ function ShellFrame() {
     <div className="min-h-screen min-h-[100dvh] overflow-x-hidden">
       {/* a11y — keyboard users jump straight to the routed content (WCAG 2.4.1). */}
       <a href="#main" className="skip-link no-print">
-        تخطٍّ إلى المحتوى
+        {t("shell.appShell.skipToContent")}
       </a>
       <Sidebar />
       <Topbar />
@@ -39,10 +41,10 @@ function ShellFrame() {
       <main
         className={cn(
           "px-4 py-6 pb-[calc(7.75rem+env(safe-area-inset-bottom))] transition-[margin] sm:px-6 lg:pb-6 xl:px-8",
-          collapsed ? "lg:mr-20" : "lg:mr-72",
+          collapsed ? "lg:ms-20" : "lg:ms-72",
         )}
         id="main"
-        aria-label="المحتوى الرئيسي"
+        aria-label={t("shell.appShell.mainContent")}
         tabIndex={-1}
       >
         <div className="mx-auto max-w-[1520px]">

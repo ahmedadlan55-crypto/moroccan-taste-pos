@@ -50,6 +50,7 @@
     "test:journal-maker-checker": "node tests/integration/journalMakerChecker.test.js",
     "test:audit-atomicity": "node tests/integration/auditAtomicity.test.js",
     "test:auditor-role": "node tests/integration/auditorRole.test.js",
+    "test:coa-gl-gate": "npm run test:trial-balance-engine && npm run test:trial-balance && npm run test:account-roles && npm run test:migration-lifecycle && npm run test:journal-maker-checker && npm run test:audit-atomicity && npm run test:auditor-role && npm run test:gl-security",
     "db:clean-test-residue": "node scripts/clean-test-residue.js",
     "test:db:setup": "node scripts/test-db-setup.js",
     "test:inventory-method": "node tests/integration/inventoryMethod.api.test.js",

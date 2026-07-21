@@ -41,6 +41,7 @@ const IDS = {
 const JOURNALS = [
   'ITEST-TBE-J-CHILDLESS', 'ITEST-TBE-J-PARENTACT', 'ITEST-TBE-J-INACTIVE',
   'ITEST-TBE-J-NULLREF', 'ITEST-TBE-J-OPEN-LATE', 'ITEST-TBE-J-CLEANWIN-NULLACC',
+  'ITEST-TBE-J-OPEN-BEYOND-TO',
 ];
 
 async function cleanup() {
@@ -258,6 +259,38 @@ async function tableCounts() {
     // future-dated relative to the earlier `from` used by test 9 below.
     await db.query('DELETE FROM gl_entries WHERE journal_id = ?', [JOURNALS[4]]);
     await db.query('DELETE FROM gl_journals WHERE id = ?', [JOURNALS[4]]);
+
+    // ── 6b. Tier A.3 Release Gate item 3 — an opening-tagged journal dated
+    // AFTER `to` (a genuinely future REPORTING PERIOD, not a problem with
+    // THIS report) must NOT be counted in futureDatedOpeningJournals and
+    // must NOT flip isClean=false. Before the fix this diagnostic had no
+    // upper bound at `to` at all, so this case was indistinguishable from
+    // test 6 above (dated just after `from`, correctly flagged). ──
+    await db.query(
+      "INSERT INTO gl_journals (id, journal_number, journal_date, reference_type, total_debit, total_credit, status) VALUES (?,?,?,?,?,?, 'posted')",
+      [JOURNALS[6], 'ITEST-TBE-OPEN-FAR', '2027-01-10', 'opening', 30, 30]
+    );
+    await db.query(
+      'INSERT INTO gl_entries (id, journal_id, account_id, debit, credit) VALUES (?,?,?,?,0), (?,?,?,0,?)',
+      ['ITEST-TBE-E-OF1', JOURNALS[6], realCash.id, 30, 'ITEST-TBE-E-OF2', JOURNALS[6], IDS.parentWithActivityChild, 30]
+    );
+    const r6b = await computeTrialBalance(db, { from: '2026-06-01', to: '2026-06-30', includeZero: true });
+    check(
+      'an opening journal dated well beyond `to` (a future reporting period) is NOT counted in futureDatedOpeningJournals',
+      r6b.diagnostics.futureDatedOpeningJournals.count === 0,
+      r6b.diagnostics.futureDatedOpeningJournals
+    );
+    // Not asserting isClean===true here: by this point in the file several
+    // EARLIER, deliberately-unrelated fixtures (the childless folder with
+    // direct activity, the cycle accounts, the orphan account, etc.) are
+    // still present in the DB and correctly keep isClean=false on their own
+    // — this test's job is only to prove futureDatedOpeningJournals itself
+    // no longer contributes to that, which the count===0 check above
+    // already does precisely.
+    const cashRowBeyondTo = r6b.rows.find((r) => r.accountId === realCash.id);
+    check('the beyond-`to` opening entry does not leak into that account\'s Opening OR Period figures either', !cashRowBeyondTo || (cashRowBeyondTo.openDebit === 0 && cashRowBeyondTo.periodDebit === 0), cashRowBeyondTo);
+    await db.query('DELETE FROM gl_entries WHERE journal_id = ?', [JOURNALS[6]]);
+    await db.query('DELETE FROM gl_journals WHERE id = ?', [JOURNALS[6]]);
 
     // ── 7. from > to / bad format ──
     let rangeCode = null;

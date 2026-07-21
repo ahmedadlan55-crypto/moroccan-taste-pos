@@ -22,6 +22,17 @@ export interface NavItem {
   flag?: string;
   /** The src/modules/<module> folder this item routes into. */
   module: string;
+  /**
+   * Opt-in: the module OWNS this item's whole subtree. When true the router
+   * registers a splat child (`<path>/*`) IN ADDITION to the exact route, so
+   * full-page New/Details/Edit screens can live at real URLs
+   * (e.g. `/inventory/items/new`, `/inventory/items/:id`, `.../:id/edit`) and
+   * the module dispatches internally on the deeper pathname. Items WITHOUT this
+   * flag register a single exact route exactly as before. Kept a plain boolean
+   * (not a path list) so the sidebar/breadcrumbs/command-palette that derive
+   * from the flat exact `path` are untouched — only the router reads it.
+   */
+  subRoutes?: boolean;
 }
 
 export interface NavGroup {
@@ -61,7 +72,7 @@ export const NAV: NavGroup[] = [
     label: "القوائم والوصفات",
     items: [
       { id: "mn-hub", path: "/menu/hub", label: "لوحة القوائم", icon: "LayoutGrid", cap: "menu.view", module: "menu" },
-      { id: "mn-brand", path: "/menu/brand", label: "قائمة العلامة التجارية", icon: "BookOpen", cap: "menu.view", module: "menu" },
+      { id: "mn-brand", path: "/menu/brand", label: "قائمة العلامة التجارية", icon: "BookOpen", cap: "menu.view", module: "menu", subRoutes: true },
       { id: "mn-recipes", path: "/menu/recipes-bom", label: "الوصفات ومكوّنات التصنيع", icon: "ChefHat", cap: "menu.view", module: "menu" },
       { id: "mn-price-lists", path: "/menu/price-lists", label: "قوائم الأسعار", icon: "Tags", cap: "menu.view", module: "menu" },
       { id: "mn-combos", path: "/menu/combos", label: "الوجبات المركّبة", icon: "Layers", cap: "menu.view", module: "menu" },
@@ -86,7 +97,7 @@ export const NAV: NavGroup[] = [
     label: "المخزون",
     items: [
       { id: "inv-overview", path: "/inventory", label: "نظرة عامة", icon: "LayoutDashboard", cap: "inventory.view", module: "inventory" },
-      { id: "inv-items", path: "/inventory/items", label: "الأصناف", icon: "Package", cap: "item.view", module: "inventory" },
+      { id: "inv-items", path: "/inventory/items", label: "الأصناف", icon: "Package", cap: "item.view", module: "inventory", subRoutes: true },
       { id: "inv-warehouses", path: "/inventory/warehouses", label: "المستودعات", icon: "Warehouse", cap: "warehouse.view", module: "inventory" },
       { id: "inv-balances", path: "/inventory/balances", label: "الأرصدة", icon: "Boxes", cap: "inventory.balances.view", module: "inventory" },
       { id: "inv-transfers", path: "/inventory/transfers", label: "التحويلات", icon: "Truck", cap: "inventory.transfers.view", module: "inventory" },

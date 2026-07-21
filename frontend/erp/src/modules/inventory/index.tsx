@@ -102,7 +102,21 @@ function Section() {
   // Normalised: react-router matches a route ignoring a trailing slash and case,
   // but useLocation().pathname returns it RAW — so "/inventory/items/" used to
   // fall through this switch to the default and render the wrong screen.
-  switch (normalizeRoutePath(pathname)) {
+  const route = normalizeRoutePath(pathname);
+
+  // Items OWNS its subtree (manifest subRoutes:true), so the shell mounts this
+  // module for /inventory/items/new, /inventory/items/:id and .../:id/edit too.
+  // Phase D replaces this with the real full-page screens; until then, resolve
+  // any deeper segment back onto the items surface so the route mounts without
+  // crashing (never a 404), keeping the base /inventory/items behaviour intact:
+  //   .../new         → the existing create wizard (identical to ?new=1)
+  //   .../<id>[/...]  → the items list (item detail stays an inline ?view= drawer)
+  if (route.startsWith("/inventory/items/")) {
+    const seg = route.slice("/inventory/items/".length).split("/")[0] ?? "";
+    return seg === "new" || isNew ? <ItemWizard /> : <ItemsPage />;
+  }
+
+  switch (route) {
     case "/inventory":
       return <DashboardPage />;
     case "/inventory/method":

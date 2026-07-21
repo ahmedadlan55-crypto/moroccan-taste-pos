@@ -67,15 +67,34 @@
 --   try { require('./lib/name-en-backfill-worker').start(); }
 --   catch (e) { console.warn('[name-en-backfill-worker] failed to start:', e.message); }
 --
--- This file is the readable reference / fresh-install supplement — NOT
--- the live migration path until one of the two wiring options above lands.
+-- Tier A.2 corrective gate, Section 6 — the claim above ("until this file
+-- is copied in there") was FALSE: server.js's runMigrations() already has
+-- all 4 addColumnIfMissing('menu', 'name_en_*', ...) calls wired in (same
+-- stale-comment pattern found in 0013/0014/0017). Since `menu` is a
+-- baseline-schema table (exists before runMigrations() runs), server.js's
+-- boot reliably adds these columns first — so this file's plain multi-
+-- clause ALTER TABLE would hit "Duplicate column name" the moment
+-- db/migrate.js runs against a DB that already booted once. Same
+-- INFORMATION_SCHEMA + PREPARE/EXECUTE guard pattern as
+-- 0002_sales_numbering.sql, one guard per column since MySQL's dynamic SQL
+-- can't parameterize a multi-clause ALTER conditionally in one PREPARE.
 -- ════════════════════════════════════════════════════════════════════
 
-ALTER TABLE menu
-  ADD COLUMN name_en_source ENUM('owner','machine_translation','transliteration') NULL,
-  ADD COLUMN name_en_needs_review TINYINT(1) NOT NULL DEFAULT 0,
-  ADD COLUMN name_en_reviewed_by VARCHAR(100) NULL,
-  ADD COLUMN name_en_reviewed_at DATETIME NULL;
+SET @col_exists = (SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'menu' AND COLUMN_NAME = 'name_en_source');
+SET @stmt = IF(@col_exists = 0, "ALTER TABLE menu ADD COLUMN name_en_source ENUM('owner','machine_translation','transliteration') NULL", 'SELECT 1');
+PREPARE stmt FROM @stmt; EXECUTE stmt; DEALLOCATE PREPARE stmt;
+
+SET @col_exists = (SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'menu' AND COLUMN_NAME = 'name_en_needs_review');
+SET @stmt = IF(@col_exists = 0, 'ALTER TABLE menu ADD COLUMN name_en_needs_review TINYINT(1) NOT NULL DEFAULT 0', 'SELECT 1');
+PREPARE stmt FROM @stmt; EXECUTE stmt; DEALLOCATE PREPARE stmt;
+
+SET @col_exists = (SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'menu' AND COLUMN_NAME = 'name_en_reviewed_by');
+SET @stmt = IF(@col_exists = 0, 'ALTER TABLE menu ADD COLUMN name_en_reviewed_by VARCHAR(100) NULL', 'SELECT 1');
+PREPARE stmt FROM @stmt; EXECUTE stmt; DEALLOCATE PREPARE stmt;
+
+SET @col_exists = (SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'menu' AND COLUMN_NAME = 'name_en_reviewed_at');
+SET @stmt = IF(@col_exists = 0, 'ALTER TABLE menu ADD COLUMN name_en_reviewed_at DATETIME NULL', 'SELECT 1');
+PREPARE stmt FROM @stmt; EXECUTE stmt; DEALLOCATE PREPARE stmt;
 
 CREATE TABLE IF NOT EXISTS name_en_backfill_queue (
   id                VARCHAR(50)  NOT NULL PRIMARY KEY,

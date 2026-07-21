@@ -1,59 +1,66 @@
 'use strict';
-/* Integration — migration lifecycle for 0018/0019 (account_roles), against
- * an ISOLATED THROWAWAY DATABASE — never the real local dev DB, and
- * absolutely never anything that could be production.
+/* Integration — the REAL db/migrate.js runner lifecycle (Tier A.2
+ * corrective gate, Section 6).
  *
- * Tier A.1 Corrective Gate, item 6. Proves:
- *   1. A fresh/empty database (only the prerequisite tables 0018/0019
- *      depend on — companies, gl_accounts) can apply both migrations
- *      cleanly via the SAME statement-splitting/checksum logic
- *      db/migrate.js uses (imported directly, not reimplemented).
- *   2. Re-running is idempotent: with the versions already recorded in
- *      `_migrations`, nothing is re-executed.
- *   3. The documented rollback (scripts/migrate-rollback-account-role-
- *      registry.js) actually reverses both migrations and cleans up
- *      `_migrations` bookkeeping.
- *   4. Re-applying after rollback succeeds again (a full round trip).
+ * The previous version of this file manually read + split each migration
+ * file's SQL itself (its own applyMigrationFile() helper) instead of
+ * calling the actual shipped runner (runPendingMigrations()) — meaning it
+ * only ever proved the SQL text was valid when executed by a hand-rolled
+ * loop, never that `node db/migrate.js` (the real CLI entry point anyone
+ * deploying this app would actually run) behaves correctly. Every check
+ * below calls migrate.runPendingMigrations() directly.
  *
- * Also documents (not fixed here — out of this gate's scope, see the
- * corrective delivery report): db/migrate.js's runPendingMigrations() is
- * NEVER invoked automatically by any deployment path in this repo —
- * Dockerfile's CMD is `node server.js` directly, there is no railway.json/
- * railway.toml release phase, and server.js has no require('./db/migrate')
- * call. Migrations only apply when someone runs `npm run db:migrate`
- * manually. This is a real, verified, pre-existing gap affecting ALL
- * numbered migrations, not something this gate introduced.
+ * Uses its own throwaway CREATE/DROP DATABASE (never the shared
+ * db/connection.js pool bound to the real dev DB) — this file swaps
+ * process.env.DB_NAME BEFORE requiring db/migrate.js, so its internal
+ * require('./connection') binds to the throwaway DB from the first
+ * connection, same activation pattern as tests/helpers/testHarness.js.
+ *
+ * Covers:
+ *   1. FRESH/bare DB — the runner stops cleanly on the first genuinely
+ *      unmet prerequisite (0002 needs `sales` to exist), earlier
+ *      migrations stay correctly recorded, nothing corrupts.
+ *   2. EXISTING DB — once the full legacy schema is provisioned (a real
+ *      spawned server.js boot against this same throwaway DB, matching
+ *      every other isolated-DB test in this gate), resuming the SAME
+ *      runner call applies every remaining migration, including 0002
+ *      (whose columns may already exist from the legacy boot path — this
+ *      is what actually proves Section 6's idempotent-guard rewrite
+ *      through the real runner, not a hand-copied statement list) and
+ *      this gate's own 0018/0019/0020/0021.
+ *   3. RERUN — a further call reports zero pending, zero applied.
+ *   4. PARTIAL FAILURE, then RESUME through the REAL runner — simulates
+ *      the exact state a genuine crash leaves behind (no _migrations row
+ *      for the interrupted version, since _applyMigration only inserts
+ *      after every statement succeeds) and confirms runPendingMigrations()
+ *      re-applies the whole file cleanly, completing only what's missing.
+ *   5. Checksum drift — a stored checksum manipulated to no longer match
+ *      on-disk content is detected and WARNED about (never thrown, never
+ *      blocks other migrations).
  *
  * Run: node tests/integration/migrationLifecycle.test.js
  */
 require('dotenv').config();
 const mysql = require('mysql2/promise');
-const fs = require('fs');
 const path = require('path');
-const { _splitStatements, _checksum } = require('../../db/migrate');
-// Tier A.2 — this file never touches db/connection.js's shared pool (it
-// speaks raw mysql2 against its own throwaway CREATE/DROP DATABASE), so
-// harness.activate() (which redirects that pool) is not needed here. Only
-// the shared local-environment guard is reused, for consistency with every
-// other integration test in this suite.
 const { assertLocalTestEnvironment, TestHarnessError } = require('../helpers/testHarness');
 
 let pass = 0, fail = 0; const fails = [];
-function check(n, c, extra) { if (c) { pass++; console.log('  ✅', n); } else { fail++; fails.push(n); console.log('  ❌', n, extra != null ? '→ ' + JSON.stringify(extra).slice(0, 300) : ''); } }
-
-const TEST_DB_NAME = 'moroccan_taste_pos_migration_lifecycle_test';
+function check(n, c, extra) { if (c) { pass++; console.log('  ✅', n); } else { fail++; fails.push(n); console.log('  ❌', n, extra != null ? '→ ' + JSON.stringify(extra).slice(0, 400) : ''); } }
 
 function assertTestEnvironment() {
   try {
     assertLocalTestEnvironment();
   } catch (e) {
     if (e instanceof TestHarnessError) {
-      console.error('REFUSING TO RUN:', e.message, 'This test CREATEs and DROPs a throwaway database and must only run against a local MySQL server.');
+      console.error('REFUSING TO RUN:', e.message, 'This test CREATEs/DROPs a throwaway database and must only run against a local MySQL server.');
       process.exit(2);
     }
     throw e;
   }
 }
+
+const TEST_DB_NAME = 'moroccan_taste_pos_migration_runner_test';
 
 async function connectRoot() {
   return mysql.createConnection({
@@ -65,124 +72,139 @@ async function connectRoot() {
   });
 }
 
-async function applyMigrationFile(conn, filename) {
-  const fullPath = path.join(__dirname, '..', '..', 'db', 'migrations', filename);
-  const content = fs.readFileSync(fullPath, 'utf8');
-  const stmts = _splitStatements(content);
-  for (const s of stmts) await conn.query(s);
-  const version = filename.match(/^(\d{4})_/)[1];
-  await conn.query('INSERT INTO _migrations (version, filename, checksum) VALUES (?, ?, ?)', [version, filename, _checksum(content)]);
-  return { version, stmtCount: stmts.length };
+// Captures info/warn events instead of only printing them, so checks below
+// can assert on exactly what the runner reported — not just its return value.
+function captureLogger() {
+  const warnings = []; const infos = [];
+  return {
+    logger: {
+      info: (obj, msg) => infos.push({ obj, msg }),
+      warn: (obj, msg) => warnings.push({ obj, msg }),
+      error: (obj, msg) => console.error('[migrate:error]', msg, obj && obj.event ? JSON.stringify(obj) : ''),
+    },
+    warnings, infos,
+  };
+}
+
+function getFreePort() {
+  const net = require('net');
+  return new Promise((resolve, reject) => {
+    const srv = net.createServer();
+    srv.on('error', reject);
+    srv.listen(0, '127.0.0.1', () => { const { port } = srv.address(); srv.close((err) => (err ? reject(err) : resolve(port))); });
+  });
 }
 
 (async () => {
   assertTestEnvironment();
   const root = await connectRoot();
-  let conn = null;
-
+  let serverProc = null;
   try {
-    console.log('\n═══ Migration lifecycle (0018/0019) — isolated throwaway database ═══');
+    console.log('\n═══ Real db/migrate.js runner lifecycle — isolated throwaway database ═══');
 
     await root.query('DROP DATABASE IF EXISTS `' + TEST_DB_NAME + '`'); // in case a prior crashed run left it behind
     await root.query('CREATE DATABASE `' + TEST_DB_NAME + '` DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci');
     console.log(`  (created throwaway database ${TEST_DB_NAME})`);
 
-    conn = await mysql.createConnection({
-      host: process.env.DB_HOST || 'localhost',
-      port: Number(process.env.DB_PORT) || 3306,
-      user: process.env.DB_USER || 'root',
-      password: process.env.DB_PASSWORD || '',
-      database: TEST_DB_NAME,
+    process.env.DB_NAME = TEST_DB_NAME;
+    delete process.env.DATABASE_URL; delete process.env.MYSQL_URL; delete process.env.MYSQLHOST;
+    delete process.env.MYSQL_DATABASE; delete process.env.MYSQLDATABASE;
+
+    const migrate = require('../../db/migrate');
+    const db = require('../../db/connection');
+
+    // ── 1. FRESH/bare DB — stops cleanly on the first real missing prerequisite ──
+    const cap1 = captureLogger();
+    let freshError = null;
+    try {
+      await migrate.runPendingMigrations({ logger: cap1.logger });
+    } catch (e) { freshError = e; }
+    check('a fresh/bare DB run THROWS (does not silently succeed or corrupt state) once it hits a migration whose prerequisite table is genuinely missing', !!freshError, freshError && freshError.message);
+    check("the failure is the expected one — 0002 needs `sales`, which doesn't exist yet on a bare DB", freshError && /sales.*doesn.?t exist/i.test(freshError.message || ''), freshError && freshError.message);
+    const [appliedAfterFresh] = await db.query('SELECT version FROM _migrations ORDER BY version');
+    check('0001 (a true no-op) is recorded as applied; 0002 onward is NOT (clean partial state, safe to retry)', appliedAfterFresh.length === 1 && appliedAfterFresh[0].version === '0001', appliedAfterFresh);
+
+    // ── 2. EXISTING DB — provision the full legacy schema via a real
+    // server.js boot against this SAME throwaway DB, then resume the SAME
+    // runner call. ──
+    const port = await getFreePort();
+    serverProc = require('child_process').spawn(process.execPath, ['server.js'], {
+      cwd: path.join(__dirname, '..', '..'),
+      env: { ...process.env, PORT: String(port) },
+      stdio: ['ignore', 'ignore', 'ignore'],
     });
+    // A full legacy-schema boot (hundreds of addColumnIfMissing/
+    // createTableIfMissing calls) genuinely takes over a minute on a
+    // loaded dev machine — measured ~66s on a clean run. 60s was too tight
+    // and produced a false failure (server killed mid-boot, before
+    // pos_orders even existed yet, which then made the runner's own retry
+    // look like a real bug). 3 minutes gives real margin without masking
+    // an actually-hung boot.
+    const deadline = Date.now() + 180000;
+    let up = false;
+    while (Date.now() < deadline) {
+      const ok = await new Promise((resolve) => {
+        const req = require('http').get({ host: '127.0.0.1', port, path: '/api/version', timeout: 2000 }, (res) => { resolve(res.statusCode === 200); res.resume(); });
+        req.on('error', () => resolve(false));
+        req.on('timeout', () => { req.destroy(); resolve(false); });
+      });
+      if (ok) { up = true; break; }
+      await new Promise((r) => setTimeout(r, 300));
+    }
+    check('a real server.js boot against the throwaway DB comes up (provisions the full legacy schema)', up);
+    if (serverProc) { serverProc.kill(); serverProc = null; }
 
-    // ── 1. Empty database: create ONLY the prerequisite tables 0018/0019
-    // depend on (companies, gl_accounts) — proves the dependency ordering
-    // documented in the migration files is both necessary and sufficient. ──
-    // Charset/collation must match account_roles' explicit
-    // utf8mb4_unicode_ci (db/migrations/README.md rule 5) — MySQL refuses
-    // to create a FK between VARCHAR columns of differing collations, and
-    // the server/database default here is utf8mb4_0900_ai_ci, not
-    // utf8mb4_unicode_ci, unless stated explicitly on every table.
-    const CHARSET = 'ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci';
-    await conn.query(`CREATE TABLE _migrations (version VARCHAR(20) NOT NULL PRIMARY KEY, filename VARCHAR(255) NOT NULL, applied_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP, checksum VARCHAR(64)) ${CHARSET}`);
-    await conn.query(`CREATE TABLE companies (id VARCHAR(50) NOT NULL PRIMARY KEY, name VARCHAR(200) NOT NULL, base_currency VARCHAR(3) DEFAULT 'SAR') ${CHARSET}`);
-    await conn.query(`CREATE TABLE gl_accounts (id VARCHAR(50) NOT NULL PRIMARY KEY, code VARCHAR(20) NOT NULL UNIQUE, name_ar VARCHAR(200) NOT NULL, type ENUM('asset','liability','equity','revenue','expense') NOT NULL, parent_id VARCHAR(50), level INT DEFAULT 1, is_active TINYINT(1) DEFAULT 1, is_folder TINYINT(1) DEFAULT 0) ${CHARSET}`);
-    await conn.query("INSERT INTO companies (id, name) VALUES ('CO-MAIN', 'Test Co')");
-    await conn.query("INSERT INTO gl_accounts (id, code, name_ar, type) VALUES ('GL-1', '1', 'Assets', 'asset')");
-    check('prerequisite schema (companies, gl_accounts) created on an otherwise-empty database', true);
-
-    // ── 2. Apply 0018 then 0019 (dependency order matters: 0019 ALTERs
-    // tables 0018 creates) ──
-    const r18 = await applyMigrationFile(conn, '0018_account_role_registry.sql');
-    check('0018 applies cleanly to the empty (prerequisites-only) database', r18.stmtCount === 2, r18);
-    const r19 = await applyMigrationFile(conn, '0019_account_role_registry_scope_fix.sql');
-    check('0019 applies cleanly immediately after 0018', r19.stmtCount === 11, r19);
-
-    const [cols] = await conn.query('SHOW COLUMNS FROM account_roles');
-    const colNames = cols.map((c) => c.Field);
+    const cap2 = captureLogger();
+    const result2 = await migrate.runPendingMigrations({ logger: cap2.logger });
+    check('resuming the SAME runner call now applies every remaining migration (0002 through the newest) once the legacy schema exists', result2.pending.length === 0 && result2.applied.length > 0, result2);
     check(
-      '0019\'s changes are actually present (version column, company_id NOT NULL)',
-      colNames.includes('version') && cols.find((c) => c.Field === 'company_id').Null === 'NO',
-      cols.map((c) => ({ f: c.Field, null: c.Null }))
+      "0002 specifically applied cleanly even though server.js's legacy boot may already have created some of its columns — proves Section 6's idempotent guards through the REAL runner, not hand-copied SQL",
+      result2.applied.includes('0002_sales_numbering.sql'),
+      result2.applied
     );
+    const [appliedAfterExisting] = await db.query("SELECT version FROM _migrations WHERE version IN ('0018','0019','0020','0021') ORDER BY version");
+    check("this gate's own migrations (0018/0019/0020/0021) are all recorded as applied", appliedAfterExisting.length === 4, appliedAfterExisting);
 
-    // ── 3. Re-running is idempotent: applying again should be a no-op
-    // (both versions already recorded in _migrations) ──
-    const [appliedVersions] = await conn.query("SELECT version FROM _migrations WHERE version IN ('0018','0019') ORDER BY version");
-    check('both versions are recorded in _migrations after the first apply', appliedVersions.length === 2, appliedVersions);
-    // Simulate what db/migrate.js's runPendingMigrations() does: it reads
-    // _migrations first and skips anything already there. We assert that
-    // behavior directly here rather than re-executing the DDL (which WOULD
-    // legitimately fail with "Duplicate column" — that failure mode itself
-    // is what makes the runner's applied-version check load-bearing).
-    const onDiskVersions = fs.readdirSync(path.join(__dirname, '..', '..', 'db', 'migrations'))
-      .filter((f) => /^\d{4}_[a-z0-9_]+\.sql$/i.test(f))
-      .map((f) => f.match(/^(\d{4})_/)[1]);
-    const appliedSet = new Set(appliedVersions.map((r) => r.version));
-    const wouldBePending = onDiskVersions.filter((v) => v === '0018' || v === '0019').filter((v) => !appliedSet.has(v));
-    check('after applying, 0018/0019 are no longer in the "pending" set a rerun would compute', wouldBePending.length === 0, wouldBePending);
+    // ── 3. RERUN — idempotent, zero pending, zero errors ──
+    const cap3 = captureLogger();
+    const result3 = await migrate.runPendingMigrations({ logger: cap3.logger });
+    check('re-running immediately afterward reports zero pending and zero newly-applied (idempotent)', result3.pending.length === 0 && result3.applied.length === 0, result3);
 
-    // ── 4. Rollback actually reverses both, and cleans up _migrations ──
-    // scripts/migrate-rollback-account-role-registry.js runs through
-    // db/connection.js's module-cached singleton pool, which is already
-    // bound to the REAL local dev DB by the time anything in this process
-    // requires it — there is no clean way to redirect an already-created
-    // pool to a different database from within the same process. So this
-    // step runs the EXACT statements that script documents directly against
-    // our isolated connection instead: it proves the documented rollback
-    // procedure is correct SQL against a real schema, without needing a
-    // second Node process just to get a fresh module cache.
-    const rollbackStatements = [
-      'ALTER TABLE account_role_history DROP FOREIGN KEY fk_arh_new_account',
-      'ALTER TABLE account_role_history DROP FOREIGN KEY fk_arh_old_account',
-      'ALTER TABLE account_role_history DROP FOREIGN KEY fk_arh_company',
-      'ALTER TABLE account_role_history DROP COLUMN expected_version',
-      'ALTER TABLE account_role_history MODIFY COLUMN company_id VARCHAR(50) NULL DEFAULT NULL',
-      'ALTER TABLE account_roles DROP INDEX uq_role_company',
-      'ALTER TABLE account_roles ADD UNIQUE KEY uq_role_key (role_key)',
-      'ALTER TABLE account_roles MODIFY COLUMN company_id VARCHAR(50) NULL DEFAULT NULL',
-      'ALTER TABLE account_roles DROP COLUMN version',
-    ];
-    for (const s of rollbackStatements) await conn.query(s);
-    await conn.query("DELETE FROM _migrations WHERE version = '0019'");
-    const [[rCount]] = await conn.query('SELECT COUNT(*) n FROM account_roles');
-    const [[hCount]] = await conn.query('SELECT COUNT(*) n FROM account_role_history');
-    check('tables are empty, so 0018 is also safe to fully roll back (drop)', Number(rCount.n) === 0 && Number(hCount.n) === 0, { rCount: rCount.n, hCount: hCount.n });
-    await conn.query('DROP TABLE account_role_history');
-    await conn.query('DROP TABLE account_roles');
-    await conn.query("DELETE FROM _migrations WHERE version = '0018'");
+    // ── 4. PARTIAL FAILURE, then RESUME through the REAL runner. A genuine
+    // partial DDL failure leaves NO row in _migrations for that version
+    // (_applyMigration only INSERTs after every statement in the file
+    // succeeds) — simulate exactly that: delete 0019's bookkeeping row and
+    // undo one of its effects (as if the process crashed after most of the
+    // file ran but before finishing), then let runPendingMigrations() see
+    // it as pending again and re-apply the WHOLE file. ──
+    await db.query("DELETE FROM _migrations WHERE version = '0019'");
+    await db.query('ALTER TABLE account_role_history DROP FOREIGN KEY fk_arh_new_account');
+    const [beforeResume] = await db.query("SELECT CONSTRAINT_NAME FROM INFORMATION_SCHEMA.TABLE_CONSTRAINTS WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='account_role_history' AND CONSTRAINT_TYPE='FOREIGN KEY'");
+    check('simulated partial failure: fk_arh_new_account is gone, the other two FKs remain, 0019 no longer recorded as applied', beforeResume.length === 2, beforeResume);
 
-    const [tablesAfterRollback] = await conn.query("SHOW TABLES LIKE 'account_role%'");
-    check('rollback removed both tables entirely', tablesAfterRollback.length === 0, tablesAfterRollback);
-    const [migrationsAfterRollback] = await conn.query("SELECT version FROM _migrations WHERE version IN ('0018','0019')");
-    check('rollback removed both _migrations bookkeeping rows', migrationsAfterRollback.length === 0, migrationsAfterRollback);
+    const cap4 = captureLogger();
+    const result4 = await migrate.runPendingMigrations({ logger: cap4.logger });
+    check(
+      'the REAL runner sees 0019 as pending again and re-applies the WHOLE file cleanly — no "duplicate column/key/constraint" error on the steps that never actually broke',
+      result4.applied.includes('0019_account_role_registry_scope_fix.sql'),
+      result4
+    );
+    const [afterResume] = await db.query("SELECT CONSTRAINT_NAME FROM INFORMATION_SCHEMA.TABLE_CONSTRAINTS WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='account_role_history' AND CONSTRAINT_TYPE='FOREIGN KEY'");
+    check('fk_arh_new_account is restored — the runner completed exactly the missing step', afterResume.length === 3, afterResume);
 
-    // ── 5. Full round trip: re-apply after rollback succeeds again ──
-    const r18b = await applyMigrationFile(conn, '0018_account_role_registry.sql');
-    const r19b = await applyMigrationFile(conn, '0019_account_role_registry_scope_fix.sql');
-    check('re-applying 0018+0019 after a full rollback succeeds (genuine round trip, not just forward-only)', r18b.version === '0018' && r19b.version === '0019');
-    const [colsAfterReapply] = await conn.query('SHOW COLUMNS FROM account_roles');
-    check('re-applied schema matches the original (version column present again)', colsAfterReapply.some((c) => c.Field === 'version'), colsAfterReapply.map((c) => c.Field));
+    // ── 5. Checksum drift — detected and WARNED, never thrown, never blocks ──
+    const [[stored0021]] = await db.query("SELECT checksum FROM _migrations WHERE version = '0021'");
+    await db.query("UPDATE _migrations SET checksum = 'deadbeef-simulated-drift' WHERE version = '0021'");
+    const cap5 = captureLogger();
+    const result5 = await migrate.runPendingMigrations({ logger: cap5.logger });
+    check('a manipulated stored checksum does NOT throw — drift is reported, not fatal', result5.pending.length === 0, result5);
+    check('exactly one drifted entry is reported, naming the tampered version (0021)', Array.isArray(result5.drifted) && result5.drifted.length === 1 && result5.drifted[0].version === '0021', result5.drifted);
+    check('a warning was actually logged for the drift (not just silently returned)', cap5.warnings.some((w) => w.obj && w.obj.event === 'migration_checksum_drift'), cap5.warnings);
+
+    await db.query('UPDATE _migrations SET checksum = ? WHERE version = ?', [stored0021.checksum, '0021']);
+    const cap6 = captureLogger();
+    const result6 = await migrate.runPendingMigrations({ logger: cap6.logger });
+    check('after restoring the real checksum, no drift is reported', Array.isArray(result6.drifted) && result6.drifted.length === 0, result6.drifted);
 
     console.log(`\n${fail === 0 ? '✅' : '❌'} migrationLifecycle: ${pass} passed, ${fail} failed`);
     if (fail) console.log('   failed:', fails.join(' | '));
@@ -190,7 +212,11 @@ async function applyMigrationFile(conn, filename) {
     console.error('UNEXPECTED EXCEPTION during test run:', e);
     fail++; fails.push('unexpected exception: ' + e.message);
   } finally {
-    if (conn) await conn.end().catch(() => {});
+    if (serverProc) { try { serverProc.kill('SIGKILL'); } catch (_) {} }
+    try {
+      const db2 = require('../../db/connection');
+      await db2.end();
+    } catch (_) {}
     await root.query('DROP DATABASE IF EXISTS `' + TEST_DB_NAME + '`').catch(() => {});
     console.log(`  (dropped throwaway database ${TEST_DB_NAME})`);
     await root.end().catch(() => {});

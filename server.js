@@ -1172,11 +1172,16 @@ async function runMigrations() {
 
   // ─── bilingual-i18n-images — Owner A: brand/branch scope (0014) ───
   // (db/migrations/0014_brand_branch_scope.sql — wiring notes copied verbatim)
-  await addColumnIfMissing('pos_orders', 'branch_id', "VARCHAR(50) NULL");
-  await addColumnIfMissing('shifts',     'branch_id', "VARCHAR(50) NULL");
-  // Indexes from the same file — CREATE INDEX has no IF NOT EXISTS on this
-  // MySQL version, so guard the same way idx_menu_semi_id does just below.
-  try { await db.query('CREATE INDEX idx_pos_orders_branch ON pos_orders(branch_id)'); } catch (e) {}
+  // `shifts` is part of the baseline schema (created before runMigrations()
+  // ever runs) so its column/index are safe here. `pos_orders` is NOT — it's
+  // only created later in this same function (createTableIfMissing('pos_orders', ...)
+  // below) — the pos_orders.branch_id column+index moved there. Tier A.2
+  // corrective gate, Section 6: this ordering bug meant a fresh install's
+  // FIRST boot silently swallowed the pos_orders.branch_id ADD COLUMN
+  // (addColumnIfMissing logs-and-continues on "table doesn't exist"), so the
+  // column only ever appeared after a SECOND server restart. Discovered via
+  // tests/integration/migrationLifecycle.test.js's real server.js boot.
+  await addColumnIfMissing('shifts', 'branch_id', "VARCHAR(50) NULL");
   try { await db.query('CREATE INDEX idx_shifts_branch ON shifts(branch_id)'); } catch (e) {}
 
   // ─── bilingual-i18n-images — Owner D: name_en backfill provenance (0015) ───
@@ -1956,8 +1961,24 @@ async function runMigrations() {
   // nothing invokes automatically — see db/migrations/README.md) it reset
   // the enum back to the 8-value list on the very next boot, breaking any
   // attempt to create/keep an auditor account. Kept in sync with 0016 here.
+  // Tier A.2 corrective gate — this ALTER ran unconditionally on every
+  // single boot, forever, even when the enum already matched (which is
+  // every boot after the very first one). Real DDL, however cheap it
+  // looks, still takes a metadata lock on `users` — a hot table read on
+  // nearly every request — for no reason once the schema is already
+  // correct. Now compares the column's CURRENT enum definition (read from
+  // INFORMATION_SCHEMA, not assumed) against the target and only runs the
+  // ALTER when they genuinely differ.
   try {
-    await db.query("ALTER TABLE users MODIFY COLUMN role ENUM('admin','cashier','manager','custody','employee','accountant','finance','sales','auditor') DEFAULT 'cashier'");
+    const TARGET_ROLE_ENUM = "enum('admin','cashier','manager','custody','employee','accountant','finance','sales','auditor')";
+    const [roleCol] = await db.query(
+      `SELECT COLUMN_TYPE FROM INFORMATION_SCHEMA.COLUMNS
+       WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'users' AND COLUMN_NAME = 'role'`
+    );
+    const currentRoleEnum = roleCol.length ? String(roleCol[0].COLUMN_TYPE || '').toLowerCase() : '';
+    if (currentRoleEnum !== TARGET_ROLE_ENUM) {
+      await db.query("ALTER TABLE users MODIFY COLUMN role ENUM('admin','cashier','manager','custody','employee','accountant','finance','sales','auditor') DEFAULT 'cashier'");
+    }
   } catch(e) { console.error('[migrations] users.role widen failed:', e && (e.code || e.message)); }
 
   // Seed permissions catalog (idempotent)
@@ -5608,6 +5629,11 @@ async function runMigrations() {
       INDEX idx_pos_sale (sale_id)
     ) ENGINE=InnoDB
   `);
+  // pos_orders.branch_id + its index moved here (was mis-ordered above the
+  // table's own creation — see the Tier A.2 Section 6 comment near the old
+  // location). Must run AFTER the CREATE TABLE immediately above.
+  await addColumnIfMissing('pos_orders', 'branch_id', "VARCHAR(50) NULL");
+  try { await db.query('CREATE INDEX idx_pos_orders_branch ON pos_orders(branch_id)'); } catch (e) {}
   await createTableIfMissing('pos_order_lines', `
     CREATE TABLE pos_order_lines (
       id VARCHAR(50) PRIMARY KEY,

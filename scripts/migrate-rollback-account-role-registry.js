@@ -18,6 +18,17 @@
  *     UNIQUE(role_key) would silently violate the constraint (and lose the
  *     ability to distinguish rows) if two rows ever share a role_key across
  *     different companies — checked and refused, not merged/guessed.
+ *   - Tier A.2 corrective gate — the DROP TABLE guard above was the ONLY
+ *     destructive-change check; two of 0019's OWN reversal statements
+ *     (`DROP COLUMN expected_version`, `DROP COLUMN version`) are
+ *     themselves capable of losing real data even when neither table is
+ *     empty enough to trigger the table-drop guard: if any
+ *     account_role_history row has ever recorded a real expectedVersion
+ *     (not NULL), or any account_roles row has ever been reassigned past
+ *     its default version=1 (real optimistic-concurrency activity), those
+ *     specific values are gone forever once the column is dropped. Both
+ *     are now checked and refused explicitly, exactly like the table-drop
+ *     guard — not inferred from "the tables happen to be empty".
  *   - Removes the corresponding `_migrations` bookkeeping rows so
  *     db/migrate.js will re-apply cleanly if run again afterward.
  *
@@ -42,6 +53,38 @@ async function main() {
   if (crossCompanyDupes.length) {
     console.error('REFUSING: these role_keys have mappings in more than one company — reverting to ' +
       'UNIQUE(role_key) alone would violate the constraint:', crossCompanyDupes);
+    process.exitCode = 1;
+    return;
+  }
+
+  // Tier A.2 corrective gate — the table-drop guard above only protects
+  // 0018's DROP TABLE statements. 0019's OWN reversal includes two DROP
+  // COLUMN statements that are independently destructive: dropping a
+  // column loses whatever real values it holds, regardless of whether the
+  // ENCLOSING TABLE has "enough" rows to trip the table-drop guard. Refuse
+  // explicitly, the same way, if there is any real (non-default) value to
+  // lose — not inferred from row counts alone.
+  const [[expectedVersionInUse]] = await db.query(
+    'SELECT COUNT(*) n FROM account_role_history WHERE expected_version IS NOT NULL'
+  ).catch(() => [[{ n: 0 }]]);
+  if (Number(expectedVersionInUse.n) > 0) {
+    console.error(
+      `REFUSING: account_role_history.expected_version has ${expectedVersionInUse.n} row(s) with a real ` +
+      "(non-NULL) value — 0019's reversal DROPs this column, which would permanently lose that data. " +
+      'Not a table-drop, but just as destructive.'
+    );
+    process.exitCode = 1;
+    return;
+  }
+  const [[versionInUse]] = await db.query(
+    'SELECT COUNT(*) n FROM account_roles WHERE version <> 1'
+  ).catch(() => [[{ n: 0 }]]);
+  if (Number(versionInUse.n) > 0) {
+    console.error(
+      `REFUSING: account_roles.version has ${versionInUse.n} row(s) past the default (version=1) — real ` +
+      "optimistic-concurrency activity happened. 0019's reversal DROPs this column, which would permanently " +
+      'lose that state.'
+    );
     process.exitCode = 1;
     return;
   }

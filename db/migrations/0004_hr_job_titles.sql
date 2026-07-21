@@ -97,20 +97,38 @@ INSERT IGNORE INTO hr_job_titles (id, code, name_ar, name_en, rank_level, catego
 -- enforcing presence on insert/update; Wave 3 (0006) will FK the
 -- employee link.
 --
--- MySQL 8 supports `ADD COLUMN IF NOT EXISTS`; older versions ignore
--- the clause silently and may error if the column already exists.
--- We wrap each ADD in its own statement so a single duplicate failure
--- doesn't abort the rest of the migration when re-running by hand.
-ALTER TABLE users ADD COLUMN IF NOT EXISTS iqama_number   VARCHAR(30)  NULL AFTER email;
+-- Tier A.2 corrective gate, Section 6 — REWRITTEN for real idempotency.
+-- `ADD COLUMN IF NOT EXISTS` is NOT valid MySQL 8 syntax (verified
+-- directly against this repo's MySQL 8.4.9 — a MariaDB-ism, the comment
+-- this replaced was wrong) — it fails with a parse error, not silently
+-- tolerated. Discovered empirically via tests/integration/
+-- migrationLifecycle.test.js's real-runner "existing DB" scenario. Every
+-- ADD COLUMN / CREATE INDEX below is now guarded by a real
+-- INFORMATION_SCHEMA check via PREPARE/EXECUTE dynamic SQL (same pattern
+-- as db/migrations/0002_sales_numbering.sql) — genuinely idempotent and
+-- resumable after a partial failure, not "ignore the duplicate-name error
+-- by hand on rerun".
+SET @col_exists = (SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'users' AND COLUMN_NAME = 'iqama_number');
+SET @stmt = IF(@col_exists = 0, 'ALTER TABLE users ADD COLUMN iqama_number VARCHAR(30) NULL AFTER email', 'SELECT 1');
+PREPARE stmt FROM @stmt; EXECUTE stmt; DEALLOCATE PREPARE stmt;
 
-ALTER TABLE users ADD COLUMN IF NOT EXISTS iban           VARCHAR(50)  NULL AFTER iqama_number;
+SET @col_exists = (SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'users' AND COLUMN_NAME = 'iban');
+SET @stmt = IF(@col_exists = 0, 'ALTER TABLE users ADD COLUMN iban VARCHAR(50) NULL AFTER iqama_number', 'SELECT 1');
+PREPARE stmt FROM @stmt; EXECUTE stmt; DEALLOCATE PREPARE stmt;
 
-ALTER TABLE users ADD COLUMN IF NOT EXISTS job_title_code VARCHAR(30)  NULL AFTER iban;
+SET @col_exists = (SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'users' AND COLUMN_NAME = 'job_title_code');
+SET @stmt = IF(@col_exists = 0, 'ALTER TABLE users ADD COLUMN job_title_code VARCHAR(30) NULL AFTER iban', 'SELECT 1');
+PREPARE stmt FROM @stmt; EXECUTE stmt; DEALLOCATE PREPARE stmt;
 
-ALTER TABLE users ADD COLUMN IF NOT EXISTS full_name      VARCHAR(200) NULL AFTER job_title_code;
+SET @col_exists = (SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'users' AND COLUMN_NAME = 'full_name');
+SET @stmt = IF(@col_exists = 0, 'ALTER TABLE users ADD COLUMN full_name VARCHAR(200) NULL AFTER job_title_code', 'SELECT 1');
+PREPARE stmt FROM @stmt; EXECUTE stmt; DEALLOCATE PREPARE stmt;
 
 -- Indexes for the new columns — searched in the user-listing UI.
--- Wrapped each in its own statement; ignore "duplicate key name" on rerun.
-CREATE INDEX idx_users_iqama_number   ON users (iqama_number);
+SET @idx_exists = (SELECT COUNT(*) FROM INFORMATION_SCHEMA.STATISTICS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'users' AND INDEX_NAME = 'idx_users_iqama_number');
+SET @stmt = IF(@idx_exists = 0, 'CREATE INDEX idx_users_iqama_number ON users (iqama_number)', 'SELECT 1');
+PREPARE stmt FROM @stmt; EXECUTE stmt; DEALLOCATE PREPARE stmt;
 
-CREATE INDEX idx_users_job_title_code ON users (job_title_code);
+SET @idx_exists = (SELECT COUNT(*) FROM INFORMATION_SCHEMA.STATISTICS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'users' AND INDEX_NAME = 'idx_users_job_title_code');
+SET @stmt = IF(@idx_exists = 0, 'CREATE INDEX idx_users_job_title_code ON users (job_title_code)', 'SELECT 1');
+PREPARE stmt FROM @stmt; EXECUTE stmt; DEALLOCATE PREPARE stmt;

@@ -41,7 +41,7 @@ const IDS = {
 const JOURNALS = [
   'ITEST-TBE-J-CHILDLESS', 'ITEST-TBE-J-PARENTACT', 'ITEST-TBE-J-INACTIVE',
   'ITEST-TBE-J-NULLREF', 'ITEST-TBE-J-OPEN-LATE', 'ITEST-TBE-J-CLEANWIN-NULLACC',
-  'ITEST-TBE-J-OPEN-BEYOND-TO',
+  'ITEST-TBE-J-OPEN-BEYOND-TO', 'ITEST-TBE-J-DANGLE-OPEN', 'ITEST-TBE-J-DANGLE-PERIOD',
 ];
 
 async function cleanup() {
@@ -299,6 +299,73 @@ async function tableCounts() {
     check('the beyond-`to` opening entry does not leak into that account\'s Opening OR Period figures either', !cashRowBeyondTo || (cashRowBeyondTo.openDebit === 0 && cashRowBeyondTo.periodDebit === 0), cashRowBeyondTo);
     await db.query('DELETE FROM gl_entries WHERE journal_id = ?', [JOURNALS[6]]);
     await db.query('DELETE FROM gl_journals WHERE id = ?', [JOURNALS[6]]);
+
+    // ── 6c. Tier A.3 Release Gate item 5 — a NON-NULL gl_entries.account_id
+    // that matches no row in gl_accounts at all was invisible to every
+    // existing diagnostic: nullAccountOpening/Period only catch account_id
+    // IS NULL; orphanAccounts is about gl_accounts.parent_id, a different
+    // thing entirely. db/schema.sql DOES declare a real FK (ON DELETE SET
+    // NULL) — a normal INSERT is correctly rejected (verified directly: it
+    // throws ER_NO_REFERENCED_ROW), and a normal account deletion auto-
+    // nulls the reference instead of leaving it dangling. The only genuine
+    // way to reach this state is the same way production data can: a bulk
+    // import/migration that ran with FOREIGN_KEY_CHECKS=0. Simulated
+    // faithfully here — not a test-only cheat, the same mechanism a real
+    // bad import would use. Checked separately in Opening scope (a
+    // dangling entry dated before `from`) and Period scope (dated within
+    // [from, to]) — must flip isClean=false in both cases. ──
+    const DANGLING_ACCOUNT_ID = 'ITEST-TBE-GHOST-ACCOUNT';
+    await db.query(
+      "INSERT INTO gl_journals (id, journal_number, journal_date, reference_type, total_debit, total_credit, status) VALUES (?,?,?,?,?,?, 'posted')",
+      [JOURNALS[7], 'ITEST-TBE-DANGLE-O', '2026-05-10', 'itest_fixture', 7, 7]
+    );
+    // Prove the FK genuinely protects the normal path first — a plain
+    // INSERT (checks ON) referencing a nonexistent account_id must be
+    // REJECTED by MySQL itself, not silently accepted.
+    let fkRejected = false;
+    try {
+      await db.query(
+        'INSERT INTO gl_entries (id, journal_id, account_id, debit, credit) VALUES (?,?,?,?,0)',
+        ['ITEST-TBE-E-FKPROOF', JOURNALS[7], DANGLING_ACCOUNT_ID, 1]
+      );
+    } catch (e) { fkRejected = e.code === 'ER_NO_REFERENCED_ROW_2' || e.code === 'ER_NO_REFERENCED_ROW'; }
+    check('a normal INSERT referencing a nonexistent account_id is genuinely rejected by the real FK constraint (proves the diagnostic below only matters for the abnormal path)', fkRejected);
+    await db.query('SET FOREIGN_KEY_CHECKS=0');
+    await db.query(
+      'INSERT INTO gl_entries (id, journal_id, account_id, debit, credit) VALUES (?,?,?,?,0), (?,?,?,0,?)',
+      ['ITEST-TBE-E-DO1', JOURNALS[7], DANGLING_ACCOUNT_ID, 7, 'ITEST-TBE-E-DO2', JOURNALS[7], realCash.id, 7]
+    );
+    await db.query('SET FOREIGN_KEY_CHECKS=1');
+    const rDangleOpen = await computeTrialBalance(db, { from: '2026-06-01', to: '2026-06-30', includeZero: true });
+    check(
+      'a gl_entries row whose account_id matches NO gl_accounts row (dated before `from`) is caught in danglingAccountOpening',
+      rDangleOpen.diagnostics.danglingAccountOpening.count === 1 && rDangleOpen.diagnostics.danglingAccountOpening.debit === 7,
+      rDangleOpen.diagnostics.danglingAccountOpening
+    );
+    check('the dangling-account Opening diagnostic makes the report non-clean', rDangleOpen.isClean === false, rDangleOpen.isClean);
+    await db.query('DELETE FROM gl_entries WHERE journal_id = ?', [JOURNALS[7]]);
+    await db.query('DELETE FROM gl_journals WHERE id = ?', [JOURNALS[7]]);
+
+    await db.query(
+      "INSERT INTO gl_journals (id, journal_number, journal_date, reference_type, total_debit, total_credit, status) VALUES (?,?,?,?,?,?, 'posted')",
+      [JOURNALS[8], 'ITEST-TBE-DANGLE-P', '2026-06-15', 'itest_fixture', 11, 11]
+    );
+    await db.query('SET FOREIGN_KEY_CHECKS=0');
+    await db.query(
+      'INSERT INTO gl_entries (id, journal_id, account_id, debit, credit) VALUES (?,?,?,?,0), (?,?,?,0,?)',
+      ['ITEST-TBE-E-DP1', JOURNALS[8], DANGLING_ACCOUNT_ID, 11, 'ITEST-TBE-E-DP2', JOURNALS[8], realCash.id, 11]
+    );
+    await db.query('SET FOREIGN_KEY_CHECKS=1');
+    const rDanglePeriod = await computeTrialBalance(db, { from: '2026-06-01', to: '2026-06-30', includeZero: true });
+    check(
+      'a gl_entries row whose account_id matches NO gl_accounts row (dated within the period) is caught in danglingAccountPeriod',
+      rDanglePeriod.diagnostics.danglingAccountPeriod.count === 1 && rDanglePeriod.diagnostics.danglingAccountPeriod.debit === 11,
+      rDanglePeriod.diagnostics.danglingAccountPeriod
+    );
+    check('a dangling account_id does NOT accidentally trip the Opening diagnostic too (correctly scoped to Period only)', rDanglePeriod.diagnostics.danglingAccountOpening.count === 0, rDanglePeriod.diagnostics.danglingAccountOpening);
+    check('the dangling-account Period diagnostic makes the report non-clean', rDanglePeriod.isClean === false, rDanglePeriod.isClean);
+    await db.query('DELETE FROM gl_entries WHERE journal_id = ?', [JOURNALS[8]]);
+    await db.query('DELETE FROM gl_journals WHERE id = ?', [JOURNALS[8]]);
 
     // ── 7. from > to / bad format ──
     let rangeCode = null;

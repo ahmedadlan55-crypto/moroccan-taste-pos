@@ -110,6 +110,8 @@ describe("TrialBalance", () => {
       diagnostics: {
         nullAccountOpening: { count: 2, debit: 40, credit: 40 },
         nullAccountPeriod: { count: 0, debit: 0, credit: 0 },
+        danglingAccountOpening: { count: 0, debit: 0, credit: 0 },
+        danglingAccountPeriod: { count: 0, debit: 0, credit: 0 },
         futureDatedOpeningJournals: { count: 0, debit: 0, credit: 0 },
         grossHistoricalMovement: { debit: 0, credit: 0 },
         orphanAccounts: [],

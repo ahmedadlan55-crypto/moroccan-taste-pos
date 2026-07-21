@@ -252,6 +252,22 @@ function DiagnosticsPanel({ diagnostics: d }: { diagnostics: TrialBalanceDiagnos
       ),
     },
     {
+      key: "danglingOpen",
+      label: "قيود بحساب غير موجود إطلاقًا في دليل الحسابات (account_id لا يطابق أي حساب) — ضمن رصيد أول المدة",
+      count: d.danglingAccountOpening.count,
+      render: () => (
+        <p>عدد السطور: {d.danglingAccountOpening.count} — مدين: <Num value={d.danglingAccountOpening.debit} /> — دائن: <Num value={d.danglingAccountOpening.credit} /></p>
+      ),
+    },
+    {
+      key: "danglingPeriod",
+      label: "قيود بحساب غير موجود إطلاقًا في دليل الحسابات (account_id لا يطابق أي حساب) — ضمن حركة الفترة",
+      count: d.danglingAccountPeriod.count,
+      render: () => (
+        <p>عدد السطور: {d.danglingAccountPeriod.count} — مدين: <Num value={d.danglingAccountPeriod.debit} /> — دائن: <Num value={d.danglingAccountPeriod.credit} /></p>
+      ),
+    },
+    {
       key: "futureOpen",
       label: "قيود افتتاحية مؤرَّخة بعد بداية الفترة (مستبعدة من رصيد أول المدة)",
       count: d.futureDatedOpeningJournals.count,

@@ -81,6 +81,9 @@ export interface TrialBalanceHeaderLineMismatch { id: string; journalNumber: str
 export interface TrialBalanceDiagnostics {
   nullAccountOpening: TrialBalanceDiagnosticBucket;
   nullAccountPeriod: TrialBalanceDiagnosticBucket;
+  /** Tier A.3 — a NON-NULL gl_entries.account_id matching no gl_accounts row at all (distinct from the NULL-account buckets above). */
+  danglingAccountOpening: TrialBalanceDiagnosticBucket;
+  danglingAccountPeriod: TrialBalanceDiagnosticBucket;
   futureDatedOpeningJournals: { count: number; debit: number; credit: number };
   /** Raw gross historical turnover before `from` — diagnostic only, NEVER the opening balance (that's totals.openDebit/openCredit). */
   grossHistoricalMovement: { debit: number; credit: number };

@@ -316,3 +316,68 @@ describe("void semantics", () => {
     expect((await h.orders.get("SYNCED"))?.status).toBe("voided");
   });
 });
+
+// ── Fix B — no more raw "HTTP 200" toast on a partial sync-batch failure ────
+// Root cause: POST /api/pos/v2/sync always answers HTTP 200 with
+// {success: results.every(r=>r.ok), results} — a legitimate partial-failure
+// report, no top-level error/message. api.ts's postSync() now opts OUT of
+// the generic success:false hard-throw (allowPartialSuccess; see
+// lib/__tests__/api.test.ts for that half), so — exactly like the REAL
+// api.postSync() would now behave — the mock below resolves (never rejects)
+// with a mixed-outcome batch, and runSyncBatch must read results[] itself.
+function errorToasts(events: EngineEvent[]): Array<Extract<EngineEvent, { type: "toast" }>> {
+  return events.filter((e): e is Extract<EngineEvent, { type: "toast" }> => e.type === "toast" && e.kind === "error");
+}
+
+describe("Fix B — partial sync-batch failure toasts a real message, never a raw HTTP-status string", () => {
+  it("a failing op in an otherwise-200 batch surfaces ITS OWN error, never the literal HTTP-status fallback", async () => {
+    await h.engine.enqueue("hold", "ORDERA", {});
+    const opId = (await h.engine.queuedOps())[0].opId;
+    h.api.postSync.mockResolvedValueOnce({
+      success: false, // the batch-level flag the OLD code used to hard-throw on
+      results: [{ opId, ok: false, code: "VALIDATION_ERROR", error: "لا يمكن تعليق طلب فارغ" }],
+    });
+
+    await h.engine.flush();
+
+    const toasts = errorToasts(h.events);
+    expect(toasts.length).toBeGreaterThan(0);
+    for (const toast of toasts) {
+      expect(toast.message).not.toMatch(/^HTTP \d+$/); // the exact bug this fix kills
+    }
+    expect(toasts.some((t) => t.message === "لا يمكن تعليق طلب فارغ")).toBe(true);
+    // Permanent domain failure — dropped so the queue never jams.
+    expect(await h.engine.queuedOps()).toHaveLength(0);
+  });
+
+  it("setTranslator(t) resolves a KNOWN error code to the localized string instead of the server's raw per-op message", async () => {
+    const fakeT = (path: string) => (path === "errors.O2C_MODULE_ACTIVE" ? "هذه الميزة معطلة مؤقتًا" : path);
+    h.engine.setTranslator(fakeT);
+
+    await h.engine.enqueue("hold", "ORDERB", {});
+    const opId = (await h.engine.queuedOps())[0].opId;
+    h.api.postSync.mockResolvedValueOnce({
+      success: false,
+      results: [{ opId, ok: false, code: "O2C_MODULE_ACTIVE", error: "some raw technical string" }],
+    });
+
+    await h.engine.flush();
+
+    const toasts = errorToasts(h.events);
+    expect(toasts.some((t) => t.message === "هذه الميزة معطلة مؤقتًا")).toBe(true);
+    expect(toasts.some((t) => t.message === "some raw technical string")).toBe(false);
+  });
+
+  it("checkout: a domain failure at the 'complete' step (sale already booked) keeps its translated-message prefix, never a raw .message", async () => {
+    h.setOnline(true);
+    const doc = makeDoc("ORDERCOMPLETEFAIL");
+    await h.orders.put(doc.id, doc);
+    h.api.completeOrder.mockRejectedValueOnce(new ApiError(409, "SOME_UNMAPPED_CODE", "فشل تسجيل الإتمام"));
+
+    await h.engine.checkout(doc, [{ method: "cash", amount: 46 }], {});
+
+    const toasts = errorToasts(h.events);
+    expect(toasts.some((t) => t.message === "تم تسجيل البيع لكن تعذّر إكمال الطلب: فشل تسجيل الإتمام")).toBe(true);
+    for (const toast of toasts) expect(toast.message).not.toMatch(/HTTP \d+/);
+  });
+});

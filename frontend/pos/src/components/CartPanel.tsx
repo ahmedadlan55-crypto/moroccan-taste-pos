@@ -106,7 +106,7 @@ function CartLineRow({ line, index }: { line: CartLine; index: number }) {
             type="button"
             onClick={() => setQty(index, line.qty + 1)}
             aria-label={t("cartPanel.line.increaseAria", { name: line.name })}
-            className="btn-press flex h-10 w-10 items-center justify-center rounded-lg bg-white text-teal-600 shadow-sm hover:bg-teal-50"
+            className="btn-press flex min-h-11 min-w-11 items-center justify-center rounded-lg bg-white text-teal-600 shadow-sm hover:bg-teal-50"
           >
             <Plus className="h-4 w-4" aria-hidden />
           </button>
@@ -115,7 +115,7 @@ function CartLineRow({ line, index }: { line: CartLine; index: number }) {
             type="button"
             onClick={() => setQty(index, line.qty - 1)}
             aria-label={t("cartPanel.line.decreaseAria", { name: line.name })}
-            className="btn-press flex h-10 w-10 items-center justify-center rounded-lg bg-white text-slate-500 shadow-sm hover:bg-slate-100"
+            className="btn-press flex min-h-11 min-w-11 items-center justify-center rounded-lg bg-white text-slate-500 shadow-sm hover:bg-slate-100"
           >
             <Minus className="h-4 w-4" aria-hidden />
           </button>

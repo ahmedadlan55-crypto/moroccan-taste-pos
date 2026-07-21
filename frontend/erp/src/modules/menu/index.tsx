@@ -11,8 +11,9 @@ import { PriceLists } from "./PriceLists";
 import { Combos } from "./Combos";
 import { SemiFinished } from "./SemiFinished";
 import { ImageManager } from "./ImageManager";
+import { CategoryTranslations } from "./CategoryTranslations";
 
-type Section = "hub" | "brand" | "recipes-bom" | "price-lists" | "combos" | "semi-finished" | "images";
+type Section = "hub" | "brand" | "recipes-bom" | "price-lists" | "combos" | "semi-finished" | "images" | "categories";
 
 function sectionFromPath(pathname: string): Section {
   const seg = pathname.replace(/\/+$/, "").split("/").pop() ?? "";
@@ -23,6 +24,7 @@ function sectionFromPath(pathname: string): Section {
     case "combos": return "combos";
     case "semi-finished": return "semi-finished";
     case "images": return "images";
+    case "categories": return "categories";
     case "hub":
     default: return "hub";
   }
@@ -39,6 +41,7 @@ export default function MenuModule() {
     case "combos": return <Combos />;
     case "semi-finished": return <SemiFinished />;
     case "images": return <ImageManager />;
+    case "categories": return <CategoryTranslations />;
     case "hub":
     default: return <Hub />;
   }

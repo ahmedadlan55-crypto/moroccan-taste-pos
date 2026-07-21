@@ -72,6 +72,7 @@ import {
   ChefHat,
   Soup,
   Image,
+  Languages,
   Circle,
   type LucideIcon,
 } from "lucide-react";
@@ -147,6 +148,7 @@ const ICONS: Record<string, LucideIcon> = {
   ChefHat,
   Soup,
   Image,
+  Languages,
 };
 
 export function getIcon(name: string): LucideIcon {

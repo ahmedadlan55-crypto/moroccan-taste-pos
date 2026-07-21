@@ -208,7 +208,7 @@ const ProductCard = memo(function ProductCard({
             type="button"
             onClick={() => onDec?.(item)}
             aria-label={`إنقاص ${item.name}`}
-            className="btn-press absolute bottom-1.5 end-1.5 flex h-8 w-8 items-center justify-center rounded-lg border border-slate-200 bg-white text-slate-500 shadow-sm hover:bg-slate-100 hover:text-red-600"
+            className="btn-press absolute bottom-1.5 end-1.5 flex min-h-11 min-w-11 items-center justify-center rounded-lg border border-slate-200 bg-white text-slate-500 shadow-sm hover:bg-slate-100 hover:text-red-600"
           >
             <Minus className="h-4 w-4" aria-hidden />
           </button>
@@ -262,14 +262,14 @@ export const SearchBox = forwardRef<HTMLInputElement, Pick<ProductGridProps, "qu
           }}
           placeholder="بحث أو مسح باركود… (F2)"
           aria-label="بحث في الأصناف أو مسح باركود"
-          className="field pe-9"
+          className="field ps-9 pe-9"
         />
         {query ? (
           <button
             type="button"
             onClick={() => onQueryChange("")}
             aria-label="مسح البحث"
-            className="absolute start-1.5 top-1/2 flex h-8 w-8 -translate-y-1/2 items-center justify-center rounded-lg text-slate-400 hover:bg-slate-100"
+            className="absolute start-1.5 top-1/2 flex min-h-11 min-w-11 -translate-y-1/2 items-center justify-center rounded-lg text-slate-400 hover:bg-slate-100"
           >
             <X className="h-4 w-4" aria-hidden />
           </button>

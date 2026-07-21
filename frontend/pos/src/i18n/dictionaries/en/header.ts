@@ -76,6 +76,8 @@ export const header = {
     switchCashier: "Switch cashier",
     switchCashierTitle: "Switch cashier — requires closing the open shift first",
     backToSystem: "Back to main system",
+    logout: "Log out",
+    logoutTitle: "Sign out of this session — the open shift, if any, stays open and is exactly as you left it next time you log in",
   },
 
   languageToggle: {

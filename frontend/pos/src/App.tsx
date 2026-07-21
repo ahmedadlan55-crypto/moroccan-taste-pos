@@ -304,6 +304,7 @@ export default function App() {
         onOpenRequisitions={() => setRequisitionsOpen(true)}
         onOpenDrainReport={() => setDrainOpen(true)}
         onSwitchCashier={handleSwitchCashier}
+        onLogout={performLogout}
       />
 
       <main className="flex min-h-0 flex-1 gap-3 px-3 pb-[calc(5rem+env(safe-area-inset-bottom))] pt-3 md:pb-3">

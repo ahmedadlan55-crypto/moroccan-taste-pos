@@ -39,9 +39,26 @@ type Json = Record<string, unknown>;
 // Exported so lib/capabilities.ts (GET /api/auth/permissions/me) can reuse the
 // exact same Authorization/error-envelope handling as every other call here —
 // no parallel fetch wrapper.
+//
+// `allowPartialSuccess` is a per-call OPT-OUT of the generic `body.success ===
+// false` hard-throw — it does NOT relax the `!res.ok` check (a non-2xx status
+// always throws, exactly as before). It exists for endpoints whose 2xx
+// envelope legitimately carries `success:false` as a PARTIAL-failure report
+// (e.g. POST /api/pos/v2/sync — `{success: results.every(r=>r.ok), results}`
+// with no top-level error/message) rather than a hard domain error. Without
+// it, request() would throw an ApiError whose message falls back to the
+// useless literal `HTTP ${res.status}` (there is no error/message field to
+// read), and callers have no access to the per-item results to explain what
+// actually failed. Only postSync() passes this — every other call site keeps
+// throwing on success:false exactly as before.
 export async function request<T>(
   path: string,
-  opts: { method?: string; body?: unknown; headers?: Record<string, string> } = {},
+  opts: {
+    method?: string;
+    body?: unknown;
+    headers?: Record<string, string>;
+    allowPartialSuccess?: boolean;
+  } = {},
 ): Promise<T> {
   const headers: Record<string, string> = {
     Accept: "application/json",
@@ -61,7 +78,8 @@ export async function request<T>(
   } catch {
     body = null;
   }
-  if (!res.ok || (body && body.success === false)) {
+  const isPartialSuccess = opts.allowPartialSuccess && res.ok && body && body.success === false;
+  if (!res.ok || (body && body.success === false && !isPartialSuccess)) {
     const code = String(body?.code ?? (res.status === 401 ? "UNAUTHORIZED" : "SERVER_ERROR"));
     const msg = String(body?.error ?? body?.message ?? `HTTP ${res.status}`);
     throw new ApiError(res.status, code, msg);
@@ -150,11 +168,21 @@ export interface SyncResultRow {
   result?: Json;
 }
 
+/**
+ * POST /api/pos/v2/sync — a legitimate PARTIAL-batch-failure envelope:
+ * `{success: results.every(r=>r.ok), results}`, HTTP 200 even when some ops
+ * failed, and no top-level error/message field. `allowPartialSuccess` tells
+ * request() not to hard-throw on `success:false` here — the caller
+ * (offline.ts's runSyncBatch) reads `results[]` itself and reports/toasts
+ * each failed op using ITS OWN code/error, instead of getting a generic
+ * ApiError whose message would otherwise fall back to the literal `HTTP 200`.
+ * A real transport/auth failure (non-2xx) still throws exactly as before.
+ */
 export function postSync(ops: Array<{ opId: string; type: string; orderId?: string; payload: unknown }>): Promise<{
   success: boolean;
   results: SyncResultRow[];
 }> {
-  return request("/api/pos/v2/sync", { method: "POST", body: { ops } });
+  return request("/api/pos/v2/sync", { method: "POST", body: { ops }, allowPartialSuccess: true });
 }
 
 // ── Shifts (legacy endpoints) ────────────────────────────────────────────────

@@ -36,7 +36,7 @@ export function Toasts() {
               type="button"
               onClick={() => dismissToast(t.id)}
               aria-label="إغلاق التنبيه"
-              className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg opacity-60 hover:bg-black/5 hover:opacity-100"
+              className="flex min-h-11 min-w-11 shrink-0 items-center justify-center rounded-lg opacity-60 hover:bg-black/5 hover:opacity-100"
             >
               <X className="h-4 w-4" aria-hidden />
             </button>

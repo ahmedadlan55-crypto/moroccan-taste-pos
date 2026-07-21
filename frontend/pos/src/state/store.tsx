@@ -21,6 +21,7 @@ import { loadCatalog, type LoadedCatalog } from "@/lib/catalogCache";
 import { idbPut } from "@/lib/idb";
 import { openShift as apiOpenShift, findOpenShift, getServerFlags } from "@/lib/api";
 import { getEngine, type EngineStatus, type OfflineEngine } from "@/lib/offline";
+import { useOptionalT } from "@/i18n/I18nProvider";
 import { cartTotals } from "@/lib/cartMath";
 import { ulid } from "@/lib/ulid";
 import { ComboDialog, type ComboFinalizeResult } from "@/components/dialogs/ComboDialog";
@@ -240,6 +241,17 @@ export function PosProvider({ children }: { children: ReactNode }) {
     useCallback((cb: () => void) => engine.subscribe(cb), [engine]),
     () => engine.getStatus(),
   );
+
+  // The engine is a singleton constructed OUTSIDE the React tree (getEngine()),
+  // so it cannot call useT() itself — hand it the live translator here (null
+  // in tests that render PosProvider without an ancestor I18nProvider; the
+  // engine falls back to a safe identity translator in that case). Re-runs on
+  // every language switch so queued-op toasts translate into whichever
+  // language is active at flush time.
+  const t = useOptionalT();
+  useEffect(() => {
+    if (t) engine.setTranslator(t);
+  }, [engine, t]);
 
   // ── Toasts ─────────────────────────────────────────────────────────────────
   const [toasts, setToasts] = useState<Toast[]>([]);

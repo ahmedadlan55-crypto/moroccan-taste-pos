@@ -17,7 +17,18 @@
  * Online-only, like the legacy flow.
  */
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { ArrowRight, Boxes, CalendarDays, PackageOpen, PackageSearch, Pencil, Search, Trash2 } from "lucide-react";
+import {
+  ArrowRight,
+  Boxes,
+  CalendarDays,
+  CheckCircle2,
+  Circle,
+  PackageOpen,
+  PackageSearch,
+  Pencil,
+  Search,
+  Trash2,
+} from "lucide-react";
 import { usePos } from "@/state/store";
 import {
   createShortageRequest,
@@ -217,6 +228,7 @@ export function RequisitionsDialog({ open, onClose }: { open: boolean; onClose: 
     setEditingId(null);
     setEditingNumber("");
     setCart(loadCart()); // draft survives close/reopen (shortage-persistent-cart)
+    setNotes(""); // notes are NOT persisted — every open starts from a blank note
     if (online) void fetchItems();
   }, [open, online, fetchItems]);
 
@@ -233,19 +245,22 @@ export function RequisitionsDialog({ open, onClose }: { open: boolean; onClose: 
   }, []);
 
   // ── New-request tab actions ─────────────────────────────────────────────────
+  // Search results include items already in the cart (picked state is derived
+  // from `inCartIds` below and rendered as a checkmark) so a row stays visible
+  // and toggleable after being picked — mirrors ComboDialog's toggleOption UX.
   const matches = useMemo(() => {
     if (!items) return [];
-    const inCart = new Set(cart.map((c) => c.id));
-    const available = items.filter((i) => !inCart.has(i.id));
     const qn = normalizeArabic(query);
-    if (!qn) return available;
-    return available.filter(
+    if (!qn) return items;
+    return items.filter(
       (i) =>
         normalizeArabic(i.name || "").includes(qn) ||
         normalizeArabic(i.category || "").includes(qn) ||
         normalizeArabic(i.id || "").includes(qn),
     );
-  }, [items, cart, query]);
+  }, [items, query]);
+
+  const inCartIds = useMemo(() => new Set(cart.map((c) => c.id)), [cart]);
 
   function addItem(item: InvItem) {
     mutateCart((c) => {
@@ -267,7 +282,6 @@ export function RequisitionsDialog({ open, onClose }: { open: boolean; onClose: 
         },
       ];
     });
-    setQuery("");
   }
 
   function updateDual(idx: number, bigVal: number | "" | null, smallVal: number | "" | null) {
@@ -291,6 +305,14 @@ export function RequisitionsDialog({ open, onClose }: { open: boolean; onClose: 
 
   function removeLine(idx: number) {
     mutateCart((c) => c.filter((_, i) => i !== idx));
+  }
+
+  /** Search-result row toggle — ComboDialog's toggleOption semantics: already
+   *  in the cart → remove; otherwise → add. */
+  function toggleItem(item: InvItem) {
+    const idx = cart.findIndex((c) => c.id === item.id);
+    if (idx >= 0) removeLine(idx);
+    else addItem(item);
   }
 
   function clearCart() {
@@ -550,18 +572,30 @@ export function RequisitionsDialog({ open, onClose }: { open: boolean; onClose: 
             ) : (
               matches.slice(0, 50).map((i) => {
                 const low = (Number(i.stock) || 0) <= (Number(i.minStock) || 0);
+                const isPicked = inCartIds.has(i.id);
                 return (
                   <li key={i.id}>
                     <button
                       type="button"
-                      onClick={() => addItem(i)}
-                      className="btn-press flex min-h-11 w-full items-center justify-between gap-2 border-b border-slate-100 px-4 py-2 text-start hover:bg-slate-50"
+                      onClick={() => toggleItem(i)}
+                      aria-pressed={isPicked}
+                      className={cn(
+                        "btn-press flex min-h-11 w-full items-center gap-2 border-b px-4 py-2 text-start transition",
+                        isPicked
+                          ? "border-teal-500 bg-teal-50 text-teal-700"
+                          : "border-slate-100 hover:bg-slate-50",
+                      )}
                     >
-                      <span>
+                      {isPicked ? (
+                        <CheckCircle2 className="h-4 w-4 shrink-0 text-teal-600" aria-hidden />
+                      ) : (
+                        <Circle className="h-4 w-4 shrink-0 text-slate-300" aria-hidden />
+                      )}
+                      <span className="min-w-0 flex-1">
                         <span className="block text-sm font-bold text-ink">{i.name}</span>
                         {i.category ? <span className="block text-[11px] text-slate-400">{i.category}</span> : null}
                       </span>
-                      <span className={cn("num text-xs font-extrabold", low ? "text-red-500" : "text-emerald-600")}>
+                      <span className={cn("num shrink-0 text-xs font-extrabold", low ? "text-red-500" : "text-emerald-600")}>
                         {Number(i.stock) || 0} {i.unit || ""}
                         {low ? " ⚠" : ""}
                       </span>

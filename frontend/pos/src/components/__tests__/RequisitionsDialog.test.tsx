@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { render, screen, fireEvent, waitFor } from "@testing-library/react";
+import { render, screen, fireEvent, waitFor, within } from "@testing-library/react";
 import { RequisitionsDialog, extractRejectionReason, splitDualQty } from "../dialogs/RequisitionsDialog";
 // RequisitionsDialog resolves strings via useT(), which throws without an
 // ancestor I18nProvider (see i18n/I18nProvider.tsx).
@@ -163,6 +163,60 @@ describe("RequisitionsDialog — طلب نواقص", () => {
     expect(submitBtn).toBeDisabled();
     fireEvent.change(screen.getByLabelText("الكمية الصغرى — زيت زيتون"), { target: { value: "3" } });
     expect(submitBtn).not.toBeDisabled();
+  });
+
+  it("picking a search result keeps it visible+toggleable in the list (not removed); a second click un-picks it", async () => {
+    installFetch();
+    const search = await openDialog();
+    fireEvent.change(search, { target: { value: "أرز" } });
+    const listbox = await screen.findByRole("listbox");
+    const row = within(listbox).getByText("أرز بسمتي").closest("button")!;
+    expect(row).toHaveAttribute("aria-pressed", "false");
+
+    fireEvent.click(row);
+
+    // Added to the cart table…
+    expect(screen.getByLabelText("الكمية الصغرى — أرز بسمتي")).toBeInTheDocument();
+    // …search text is NOT reset, and the row stays in the results, now checked.
+    expect(search).toHaveValue("أرز");
+    expect(within(listbox).getByText("أرز بسمتي")).toBeInTheDocument();
+    expect(row).toHaveAttribute("aria-pressed", "true");
+
+    // Clicking the same row again removes it (toggle-off), mirroring ComboDialog.
+    fireEvent.click(row);
+    expect(row).toHaveAttribute("aria-pressed", "false");
+    expect(screen.queryByLabelText("الكمية الصغرى — أرز بسمتي")).toBeNull();
+  });
+
+  it("notes are cleared after closing without submitting, then reopening", async () => {
+    installFetch();
+    const onClose = vi.fn();
+    const { rerender } = render(
+      <I18nProvider>
+        <RequisitionsDialog open onClose={onClose} />
+      </I18nProvider>,
+    );
+    const search = await screen.findByLabelText("البحث عن مادة");
+    await waitFor(() => expect(search).not.toBeDisabled());
+
+    const notesInput = screen.getByLabelText("ملاحظات الطلب") as HTMLInputElement;
+    fireEvent.change(notesInput, { target: { value: "ملاحظة مؤقتة" } });
+    expect(notesInput.value).toBe("ملاحظة مؤقتة");
+
+    // Close WITHOUT submitting.
+    rerender(
+      <I18nProvider>
+        <RequisitionsDialog open={false} onClose={onClose} />
+      </I18nProvider>,
+    );
+    // Reopen.
+    rerender(
+      <I18nProvider>
+        <RequisitionsDialog open onClose={onClose} />
+      </I18nProvider>,
+    );
+    await waitFor(() => expect(screen.getByLabelText("البحث عن مادة")).not.toBeDisabled());
+    expect((screen.getByLabelText("ملاحظات الطلب") as HTMLInputElement).value).toBe("");
   });
 });
 

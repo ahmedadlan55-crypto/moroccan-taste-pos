@@ -29,7 +29,7 @@
  *  • Online-only: without a connection the dialog shows «الجرد يتطلب اتصالًا».
  */
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { CheckCircle2, ClipboardCheck, Printer, Search, Trash2 } from "lucide-react";
+import { CheckCircle2, Circle, ClipboardCheck, Printer, Search, Trash2 } from "lucide-react";
 import { usePos } from "@/state/store";
 import {
   createStocktakeV2,
@@ -250,6 +250,7 @@ export function StocktakeDialog({ open, onClose }: { open: boolean; onClose: () 
     setResult(null);
     setQuery("");
     setCart(loadCart()); // draft survives close/reopen (stocktake-persistent-cart)
+    setNotes(""); // notes are NOT persisted — every open starts from a blank note
     if (online) void fetchItems();
   }, [open, online, fetchItems]);
 
@@ -261,17 +262,20 @@ export function StocktakeDialog({ open, onClose }: { open: boolean; onClose: () 
     });
   }, []);
 
-  // Search: exclude items already in the cart; Arabic-normalized match on name/id.
+  // Search: Arabic-normalized match on name/id. Results include items already
+  // in the cart — picked state is derived from `inCartIds` below and rendered
+  // as a checkmark, so a row stays visible and toggleable after being picked
+  // (mirrors ComboDialog's toggleOption UX).
   const matches = useMemo(() => {
     if (!items) return [];
-    const inCart = new Set(cart.map((c) => c.id));
-    const available = items.filter((i) => !inCart.has(i.id));
     const qn = normalizeArabic(query);
-    if (!qn) return available;
-    return available.filter(
+    if (!qn) return items;
+    return items.filter(
       (i) => normalizeArabic(i.name || "").includes(qn) || normalizeArabic(i.id || "").includes(qn),
     );
-  }, [items, cart, query]);
+  }, [items, query]);
+
+  const inCartIds = useMemo(() => new Set(cart.map((c) => c.id)), [cart]);
 
   function addItem(item: InvItem) {
     mutateCart((c) => {
@@ -290,7 +294,6 @@ export function StocktakeDialog({ open, onClose }: { open: boolean; onClose: () 
         },
       ];
     });
-    setQuery("");
   }
 
   function updateDual(idx: number, bigVal: number | "" | null, smallVal: number | "" | null) {
@@ -313,6 +316,14 @@ export function StocktakeDialog({ open, onClose }: { open: boolean; onClose: () 
 
   function removeLine(idx: number) {
     mutateCart((c) => c.filter((_, i) => i !== idx));
+  }
+
+  /** Search-result row toggle — ComboDialog's toggleOption semantics: already
+   *  in the cart → remove; otherwise → add. */
+  function toggleItem(item: InvItem) {
+    const idx = cart.findIndex((c) => c.id === item.id);
+    if (idx >= 0) removeLine(idx);
+    else addItem(item);
   }
 
   function clearCart() {
@@ -442,17 +453,29 @@ export function StocktakeDialog({ open, onClose }: { open: boolean; onClose: () 
             ) : (
               matches.slice(0, 50).map((i) => {
                 const low = (Number(i.stock) || 0) <= (Number(i.minStock) || 0);
+                const isPicked = inCartIds.has(i.id);
                 return (
                   <li key={i.id}>
                     <button
                       type="button"
-                      onClick={() => addItem(i)}
-                      className="btn-press flex min-h-11 w-full items-center justify-between gap-2 border-b border-slate-100 px-4 py-2 text-start hover:bg-slate-50"
+                      onClick={() => toggleItem(i)}
+                      aria-pressed={isPicked}
+                      className={cn(
+                        "btn-press flex min-h-11 w-full items-center gap-2 border-b px-4 py-2 text-start transition",
+                        isPicked
+                          ? "border-teal-500 bg-teal-50 text-teal-700"
+                          : "border-slate-100 hover:bg-slate-50",
+                      )}
                     >
-                      <span className="text-sm font-bold text-ink">{i.name}</span>
+                      {isPicked ? (
+                        <CheckCircle2 className="h-4 w-4 shrink-0 text-teal-600" aria-hidden />
+                      ) : (
+                        <Circle className="h-4 w-4 shrink-0 text-slate-300" aria-hidden />
+                      )}
+                      <span className="min-w-0 flex-1 text-sm font-bold text-ink">{i.name}</span>
                       {/* BLIND: current stock is NOT echoed here as a countable figure —
                           only a low-stock hint color, exactly like legacy shows unit. */}
-                      <span className={cn("text-[11px] font-bold", low ? "text-red-500" : "text-slate-400")}>{i.unit || ""}</span>
+                      <span className={cn("shrink-0 text-[11px] font-bold", low ? "text-red-500" : "text-slate-400")}>{i.unit || ""}</span>
                     </button>
                   </li>
                 );

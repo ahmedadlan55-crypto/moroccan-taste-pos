@@ -26,6 +26,7 @@ export const qk = {
   combos: (brandId?: string) => [...KEY, "combos", brandId ?? "all"] as const,
   invItems: (brandId?: string) => [...KEY, "inv-items", brandId ?? "all"] as const,
   images: (params?: unknown) => [...KEY, "images", params ?? {}] as const,
+  categories: () => [...KEY, "categories"] as const,
 };
 
 // ── Shared mutation ack ──────────────────────────────────────────────────────
@@ -319,6 +320,22 @@ export interface BulkImageUploadResponse extends MutationAck {
   results: BulkImageUploadResult[];
 }
 
+// ── bilingual-i18n-images — category translations (CategoryTranslations) ───
+// GET/PUT /api/menu/categories* — routes/menu.js, backed by
+// db/migrations/0013_bilingual_catalog.sql (menu_category_i18n: category_ar
+// PK + category_en). GET is public (no auth), same as the rest of the
+// catalog-shaped reads in this file; PUT is MGR-gated (admin/developer/
+// manager), matching capability "menu.catalog.manage" below.
+export interface CategoryTranslation {
+  /** The Arabic category name as stored on `menu.category` — the stable key
+   *  (GROUP BY m.category server-side), NOT a synthetic id. */
+  categoryAr: string;
+  /** '' when no translation has been saved yet for this Arabic name. */
+  categoryEn: string;
+  /** Count of non-deleted menu items currently in this category. */
+  itemCount: number;
+}
+
 // ════════════════════════════════════════════════════════════════════════════
 // Queries
 // ════════════════════════════════════════════════════════════════════════════
@@ -413,6 +430,16 @@ export function useImageList(filters: ImageListFilters = {}) {
   });
 }
 
+/** GET /menu/categories — every distinct category in use, its English label
+ *  (if translated) and how many items sit in it. Public read (no auth), so
+ *  this is safe to call from any screen with menu.view. */
+export function useCategoryList() {
+  return useQuery({
+    queryKey: qk.categories(),
+    queryFn: ({ signal }) => apiClient.get<CategoryTranslation[]>("/menu/categories", { signal }),
+  });
+}
+
 /** Inventory items catalog (raw + semi) — the component source for recipe BOM
  *  lines. The legacy /inventory/items route returns a plain array. */
 export function useInventoryItems(brandId?: string) {
@@ -451,6 +478,24 @@ export function useDeleteMenuItem() {
   return useMutation({
     mutationFn: (id: string) => apiClient.delete<MutationAck>(`/menu/${id}`).then(ensureOk),
     onSuccess: () => qc.invalidateQueries({ queryKey: [...KEY, "items"] }),
+  });
+}
+
+/** PUT /menu/categories/:categoryAr — set/replace the English label for an
+ *  Arabic category name (upsert into menu_category_i18n). MGR-gated
+ *  server-side; the caller must hold "menu.catalog.manage". `categoryAr` is
+ *  Arabic text living in the URL path, so it MUST be percent-encoded. */
+export function useUpdateCategoryEn() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (v: { categoryAr: string; categoryEn: string }) =>
+      apiClient
+        .put<MutationAck & { categoryAr?: string; categoryEn?: string }>(
+          `/menu/categories/${encodeURIComponent(v.categoryAr)}`,
+          { categoryEn: v.categoryEn },
+        )
+        .then(ensureOk),
+    onSuccess: () => qc.invalidateQueries({ queryKey: qk.categories() }),
   });
 }
 

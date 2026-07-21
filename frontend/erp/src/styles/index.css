@@ -1,5 +1,5 @@
-/* IBM Plex Sans Arabic (ADLAN design system) is self-hosted (fonts.css), with a
-   graceful fallback to Tajawal / the system Arabic stack (Segoe UI / Tahoma). */
+/* Cairo (ADLAN design system) is self-hosted (fonts.css), with a graceful
+   fallback to IBM Plex Sans Arabic / the system Arabic stack (Segoe UI / Tahoma). */
 @import "./fonts.css";
 @tailwind base;
 @tailwind components;

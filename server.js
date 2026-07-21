@@ -2442,22 +2442,17 @@ async function runMigrations() {
   // Users: can change branch (default false for cashier — per spec)
   await addColumnIfMissing('users', 'can_change_branch', "BOOLEAN DEFAULT FALSE");
 
-  // Audit log table
-  await createTableIfMissing('audit_logs', `
-    CREATE TABLE audit_logs (
-      id VARCHAR(50) PRIMARY KEY,
-      action VARCHAR(100) NOT NULL,
-      entity_type VARCHAR(50),
-      entity_id VARCHAR(50),
-      username VARCHAR(100),
-      details LONGTEXT,
-      ip_address VARCHAR(50),
-      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-      INDEX idx_audit_entity (entity_type, entity_id),
-      INDEX idx_audit_user (username),
-      INDEX idx_audit_date (created_at)
-    ) ENGINE=InnoDB
-  `);
+  // Tier A.2 corrective gate — a SECOND, conflicting audit_logs CREATE TABLE
+  // definition used to live here (id VARCHAR(50), `username` not
+  // `user_username`, no INDEX idx_audit_action). It was 100% dead code —
+  // createTableIfMissing('audit_logs', ...) at V4.11 above (~line 1730)
+  // always runs first and always wins on a fresh boot, so this definition
+  // never actually created anything, ever. Its only effect was a landmine:
+  // if that FIRST definition were ever removed or reordered, the table
+  // would silently come up with the wrong schema (a VARCHAR(50) id and a
+  // `username` column lib/auditLogger.js#logAudit/#logAuditTx don't write
+  // to). Removed rather than left as confusing dead code — see the V4.11
+  // definition (~line 1730) for the one canonical schema.
 
   // Phase 3A.1 — self-healing GL core. db/schema.sql creates gl_accounts/
   // gl_journals/gl_entries on a TRULY empty DB, but a PARTIAL DB (users table
@@ -3000,23 +2995,12 @@ async function runMigrations() {
   // Remove plain_pass column (security fix — passwords must never be stored in plain text)
   try { await db.query('ALTER TABLE users DROP COLUMN plain_pass'); } catch(e) {}
 
-  // Ensure audit_logs table exists with proper structure
-  await createTableIfMissing('audit_logs', `
-    CREATE TABLE audit_logs (
-      id VARCHAR(50) PRIMARY KEY,
-      action VARCHAR(100) NOT NULL,
-      entity_type VARCHAR(50),
-      entity_id VARCHAR(100),
-      username VARCHAR(100),
-      details LONGTEXT,
-      ip_address VARCHAR(50),
-      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-      INDEX idx_audit_entity (entity_type, entity_id),
-      INDEX idx_audit_user (username),
-      INDEX idx_audit_date (created_at),
-      INDEX idx_audit_action (action)
-    ) ENGINE=InnoDB
-  `);
+  // Tier A.2 corrective gate — a THIRD, conflicting audit_logs CREATE TABLE
+  // definition used to live here (id VARCHAR(50), `username`, no
+  // user_username) — same dead-code landmine as the one removed near line
+  // 2445 (V4.11's definition at ~line 1730, BIGINT id / user_username, is
+  // the only one that ever actually runs). See that comment for the full
+  // reasoning; removed here for the same reason.
 
   // Soft delete columns on critical tables
   await addColumnIfMissing('sales', 'deleted_at', "DATETIME DEFAULT NULL");

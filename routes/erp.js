@@ -13,6 +13,11 @@ const requireCapability = require('../middleware/requireCapability');
 // mutations (a warehouse with movement may never be hard-deleted) and for the
 // legacy warehouse_transfers stock-moving endpoints.
 const MGR = require('../middleware/auth').requireRole('admin', 'manager');
+// Tier A.2 corrective gate, Section 3 — the single canonical audit writer.
+// This file used to keep its own local auditLog() helper, a duplicate that
+// had drifted onto the wrong audit_logs column names for a while (fixed in
+// Tier A.1) — exactly the risk a second copy of the same logic invites.
+const { logAudit } = require('../lib/auditLogger');
 // Phase 0 §5 — actor identity from the authenticated JWT, never a body field.
 function _actor(req) {
   return (req.user && (req.user.username || req.user.name)) || '';
@@ -2403,7 +2408,7 @@ router.post('/gl/journals', requireCapability('finance.gl.create'), async (req, 
     });
 
     // Audit log — payload now includes the dimensions for full traceability
-    await auditLog('create_journal', 'gl_journal', journalId, actor,
+    await logAudit('create_journal', 'gl_journal', journalId, actor,
       { journalNumber, totalDebit, totalCredit, description,
         brandId: brandId || null, branchId: branchId || null,
         projectId: projectId || null, costCenterId: costCenterId || null },
@@ -2929,7 +2934,7 @@ router.put('/gl/journals/:id', requireCapability('finance.gl.create'), async (re
 
     if (out.error) return res.status(out.status || 400).json({ success: false, code: out.code, error: out.error });
 
-    await auditLog('update_journal', 'gl_journal', journalId, actor,
+    await logAudit('update_journal', 'gl_journal', journalId, actor,
       { brandId: out.effBrand, branchId: out.effBranch, projectId: out.effProject, costCenterId: out.effCC,
         totalDebit, totalCredit, lineCount: (entries || []).length }, req.ip);
 
@@ -3875,25 +3880,16 @@ router.post('/gl/sync-inventory', requireCapability('finance.accounts.manage'), 
 
 // ─── Audit Log (سجل التدقيق) ───
 
-async function auditLog(action, entityType, entityId, username, details, ip) {
-  try {
-    // Tier A.1 corrective gate — this INSERT targeted a column named
-    // 'username' and an explicit string 'id' that don't exist on
-    // audit_logs (real columns: auto_increment `id`, `user_username`; see
-    // every OTHER audit_logs writer in the codebase, e.g. lib/auditLogger.js,
-    // routes/auth.js, routes/workflow.js). Both mismatches made every single
-    // call to this specific helper fail silently (caught, swallowed, no
-    // log) — EVERY gl_journal approve/post/reverse/delete audit entry this
-    // file ever tried to write was silently lost, not just the new
-    // delete-denial one this gate added. Fixed to match the real schema.
-    await db.query('INSERT INTO audit_logs (action, entity_type, entity_id, user_username, details, ip_address) VALUES (?,?,?,?,?,?)',
-      [action, entityType||'', entityId||'', username||'', typeof details === 'object' ? JSON.stringify(details) : (details||''), ip||'']);
-  } catch(e) { console.error('[auditLog] insert failed:', e.message); }
-}
+// Tier A.2 corrective gate, Section 3 — this file used to keep its own
+// local auditLog() helper, a byte-for-byte duplicate of lib/auditLogger.js#
+// logAudit (both insert into audit_logs with the same column order), except
+// this copy had drifted onto the WRONG column names for a while (fixed in
+// Tier A.1, see git history) — exactly the kind of divergence a duplicated
+// helper invites. Both of this file's remaining call sites (create_journal,
+// update_journal) now call the one real implementation directly (imported
+// at the top of this file); the local function is gone.
 
 // v5.17.1 — /audit-logs moved to routes/erp/audit-logs.js
-// The auditLog() helper (above) stays here because many endpoints in
-// this file (and elsewhere) still call it inline.
 
 // v5.17.1 — /purchase-reports moved to routes/erp/purchase-reports.js
 

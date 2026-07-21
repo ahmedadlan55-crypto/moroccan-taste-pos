@@ -2762,7 +2762,15 @@ router.post('/gl/journals/:id/post', requireCapability('finance.gl.post'), async
   try {
     const { force } = req.body || {};
     const out = await glTransitions.post(req.params.id, req.user, { force: !!force, ip: req.ip });
-    if (!out.ok) return res.json({ success: false, error: out.message, code: out.code });
+    if (!out.ok) {
+      // Tier A.3 Release Gate item 2 — the self-post denial specifically
+      // gets a real HTTP 403 (not this route's usual implicit-200
+      // success:false, which every OTHER denial here keeps unchanged, to
+      // avoid touching already-tested behavior for not-approved/already-
+      // posted/period-lock).
+      if (out.code === 'sod-self-post-denied') return res.status(403).json({ success: false, error: out.message, code: out.code });
+      return res.json({ success: false, error: out.message, code: out.code });
+    }
     res.json({ success: true });
   } catch (e) { res.json({ success: false, error: e.message }); }
 });

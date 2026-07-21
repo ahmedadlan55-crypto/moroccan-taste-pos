@@ -45,13 +45,21 @@ const J_SELF = 'ITEST-MC-J-SELF';
 // the SAME rule holds on the route the product UI drives, via the SAME
 // lib/glTransitions.js functions — not a second, divergent implementation.
 const J_SELF_SINGLE = 'ITEST-MC-J-SELF-SINGLE';
+// Tier A.3 Release Gate item 2 — post() never checked self-approval at all:
+// once a DIFFERENT user approved the creator's journal, the creator was
+// free to POST it themselves. This fixture proves the fix: A creates, B
+// (a genuinely different user) approves ONLY (not approve_post), then A
+// attempts /post and must be denied — the creator is blocked from BOTH
+// halves of the workflow, not just approve.
+const J_SELF_POST = 'ITEST-MC-J-SELF-POST';
+const J_SELF_POST_BULK = 'ITEST-MC-J-SELF-POST-BULK';
 const SCAFFOLD_PARENT_ID = 'ITEST-MC-SCAFFOLD-PARENT';
 const SCAFFOLD_CASH_ID = 'ITEST-MC-SCAFFOLD-CASH';
 const SCAFFOLD_REV_ID = 'ITEST-MC-SCAFFOLD-REV';
 
 async function cleanup() {
   for (const u of [MAKER, CHECKER]) { try { await db.query('DELETE FROM users WHERE username=?', [u]); } catch (_) {} }
-  for (const jid of [J_SELF, J_SELF_SINGLE]) {
+  for (const jid of [J_SELF, J_SELF_SINGLE, J_SELF_POST, J_SELF_POST_BULK]) {
     try { await db.query('DELETE FROM gl_entries WHERE journal_id = ?', [jid]); } catch (_) {}
     try { await db.query('DELETE FROM gl_journals WHERE id = ?', [jid]); } catch (_) {}
   }
@@ -160,6 +168,61 @@ async function makeDraftJournal(id, journalNumber, createdBy) {
       [J_SELF_SINGLE]
     );
     check('single-id denial audit-logged under the SAME action name as bulk (approve_journal_denied_sod)', sodAuditSingle.length >= 1, sodAuditSingle);
+
+    // ── Tier A.3 Release Gate item 2 — creator blocked from POSTING too,
+    // even once a DIFFERENT user has already approved. A creates, B
+    // approves (stops there — does NOT post), then A attempts /post and
+    // must be denied; B (or any other authorized user) then posts
+    // successfully. ──
+    await makeDraftJournal(J_SELF_POST, 'ITEST-MC-SELF-POST', MAKER);
+
+    const checkerApprovePost = await call(port, 'POST', '/api/erp/gl/journals/' + J_SELF_POST + '/approve', checker, {});
+    check('setup: checker (different user) approves the maker\'s journal', checkerApprovePost.body && checkerApprovePost.body.success === true, checkerApprovePost.body);
+    const [[approvedPost]] = await db.query('SELECT status FROM gl_journals WHERE id = ?', [J_SELF_POST]);
+    check('setup: journal is approved, not yet posted', approvedPost.status === 'approved', approvedPost);
+
+    const makerPostAttempt = await call(port, 'POST', '/api/erp/gl/journals/' + J_SELF_POST + '/post', maker, {});
+    check(
+      'the ORIGINAL CREATOR attempting to /post their own (already-approved-by-someone-else) journal is denied with a real HTTP 403',
+      makerPostAttempt.status === 403 && makerPostAttempt.body && makerPostAttempt.body.success === false && makerPostAttempt.body.code === 'sod-self-post-denied',
+      makerPostAttempt.body
+    );
+    const [[stillApprovedPost]] = await db.query('SELECT status FROM gl_journals WHERE id = ?', [J_SELF_POST]);
+    check('the denied self-post attempt did NOT change the journal\'s status', stillApprovedPost.status === 'approved', stillApprovedPost);
+
+    const checkerPostFinal = await call(port, 'POST', '/api/erp/gl/journals/' + J_SELF_POST + '/post', checker, {});
+    check('the SAME different user (checker) who approved can also post — maker/checker policy satisfied, not a blanket lockout', checkerPostFinal.status === 200 && checkerPostFinal.body && checkerPostFinal.body.success === true, checkerPostFinal.body);
+    const [[postedFinal]] = await db.query('SELECT status FROM gl_journals WHERE id = ?', [J_SELF_POST]);
+    check('journal is posted once a non-creator posts it', postedFinal.status === 'posted', postedFinal);
+
+    const [sodAuditPost] = await db.query(
+      "SELECT action, entity_id FROM audit_logs WHERE entity_id = ? AND action = 'post_journal_denied_sod' ORDER BY created_at DESC LIMIT 3",
+      [J_SELF_POST]
+    );
+    check('the self-post denial was audit-logged as post_journal_denied_sod', sodAuditPost.length >= 1, sodAuditPost);
+
+    // ── SAME scenario via POST /gl/journals/bulk, action='post' — proves
+    // the fix holds "via Single or Bulk" (both paths funnel through the
+    // SAME glTransitions.post(), not a second, divergent implementation). ──
+    await makeDraftJournal(J_SELF_POST_BULK, 'ITEST-MC-SPOST-BLK', MAKER);
+    const checkerApproveBulk = await call(port, 'POST', '/api/erp/gl/journals/' + J_SELF_POST_BULK + '/approve', checker, {});
+    check('bulk setup: checker approves the maker\'s journal', checkerApproveBulk.body && checkerApproveBulk.body.success === true, checkerApproveBulk.body);
+
+    const makerPostBulk = await call(port, 'POST', '/api/erp/gl/journals/bulk', maker, { ids: [J_SELF_POST_BULK], action: 'post' });
+    const makerPostBulkResult = makerPostBulk.body && makerPostBulk.body.results && makerPostBulk.body.results[0];
+    check(
+      'bulk action=post: the ORIGINAL CREATOR posting their own (approved-by-someone-else) journal is denied (reason=sod-self-post-denied)',
+      makerPostBulkResult && makerPostBulkResult.ok === false && makerPostBulkResult.reason === 'sod-self-post-denied',
+      makerPostBulkResult
+    );
+    const [[stillApprovedBulk]] = await db.query('SELECT status FROM gl_journals WHERE id = ?', [J_SELF_POST_BULK]);
+    check('bulk denial did NOT change the journal\'s status', stillApprovedBulk.status === 'approved', stillApprovedBulk);
+
+    const checkerPostBulk = await call(port, 'POST', '/api/erp/gl/journals/bulk', checker, { ids: [J_SELF_POST_BULK], action: 'post' });
+    const checkerPostBulkResult = checkerPostBulk.body && checkerPostBulk.body.results && checkerPostBulk.body.results[0];
+    check('bulk action=post: the same different user (checker) posts successfully', checkerPostBulkResult && checkerPostBulkResult.ok === true, checkerPostBulkResult);
+    const [[postedBulk]] = await db.query('SELECT status FROM gl_journals WHERE id = ?', [J_SELF_POST_BULK]);
+    check('journal posted via bulk once a non-creator posts it', postedBulk.status === 'posted', postedBulk);
 
     console.log(`\n${fail === 0 ? '✅' : '❌'} journalMakerChecker: ${pass} passed, ${fail} failed`);
     if (fail) console.log('   failed:', fails.join(' | '));

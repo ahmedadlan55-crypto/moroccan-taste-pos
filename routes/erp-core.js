@@ -30,6 +30,7 @@ const { nextDocNumber } = require('../lib/docNumber');
 // with requireRole('admin','manager').
 const requireCapability = require('../middleware/requireCapability');
 const trialBalanceEngine = require('../lib/reports/trialBalance');
+const warehouseScopeLib = require('../lib/warehouseScope');
 
 // ═══════════════════════════════════════
 // HELPERS
@@ -2202,15 +2203,20 @@ async function _dimCols() {
 router.get('/reports/trial-balance', requireCapability('finance.reports.view'), async (req, res) => {
   try {
     const { from, to, branch, brand, costCenter, warehouse, includeZero } = req.query;
-    // Tier A.2 — real warehouse-access authorization, not just "does the
-    // column exist" (that check still happens inside the engine). Reuses
-    // the SAME middleware/warehouseScope.js infrastructure every other
-    // warehouse-scoped route in this repo already depends on (mounted on
-    // /api/erp in server.js). Writes its own 403 and returns false when the
-    // caller's scope doesn't include the requested warehouse; shadow-logs
-    // instead of blocking when WAREHOUSE_SCOPE_ENFORCE is off, matching
-    // every other guarded route's rollout behavior.
-    if (warehouse && req.guardWh && !req.guardWh(res, warehouse)) return;
+    // Tier A.3 Release Gate item 7 — req.guardWh() shadow-logs instead of
+    // blocking when WAREHOUSE_SCOPE_ENFORCE is off, a deliberate rollout
+    // mechanism for the BROADER warehouse-ops routes (stock movements,
+    // transfers, ...) that is the wrong default for a FINANCIAL REPORT:
+    // a caller with no access to warehouse X should never be able to read
+    // X's trial balance just because the ops-rollout flag hasn't been
+    // flipped yet. Checked directly against req.warehouseScope (populated
+    // by middleware/warehouseScope.js regardless of ENFORCE) using the
+    // same lib/warehouseScope.js#hasWarehouseAccess every other guard
+    // ultimately calls — always enforced here, no shadow mode, whatever
+    // the global flag says.
+    if (warehouse && req.warehouseScope && !warehouseScopeLib.hasWarehouseAccess(req.warehouseScope, warehouse)) {
+      return res.status(403).json({ success: false, code: 'WAREHOUSE_ACCESS_DENIED', error: warehouseScopeLib.ACCESS_DENIED_MSG });
+    }
     const result = await trialBalanceEngine.computeTrialBalance(db, {
       from, to, branch, brand, costCenter, warehouse,
       includeZero: includeZero === '1' || includeZero === 'true',

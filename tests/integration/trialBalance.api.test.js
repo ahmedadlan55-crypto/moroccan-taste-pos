@@ -68,6 +68,8 @@ const TEST_JOURNAL_APPROVED_DEL = 'ITEST-TB-J-APPROVED-DEL';
 const TEST_JOURNAL_POSTED_DEL = 'ITEST-TB-J-POSTED-DEL';
 const TEST_JOURNAL_DRAFT_DEL = 'ITEST-TB-J-DRAFT-DEL';
 const TEST_JOURNAL_MISSING_ID = 'ITEST-TB-J-DOES-NOT-EXIST';
+const WH_ALLOWED = 'ITEST-TB-WH-ALLOWED';
+const WH_DENIED = 'ITEST-TB-WH-DENIED';
 const ALL_TEST_JOURNALS = [TEST_JOURNAL_OPEN, TEST_JOURNAL_PERIOD, TEST_JOURNAL_APPROVED_DEL, TEST_JOURNAL_POSTED_DEL, TEST_JOURNAL_DRAFT_DEL];
 
 // ── settings.user_meta snapshot/restore — never a blind DELETE ──
@@ -94,6 +96,13 @@ async function mergeDeveloperIntoUserMeta() {
 }
 
 async function cleanupFixtures() {
+  // Tier A.3 — user_warehouse_access rows reference users.id; clear them
+  // BEFORE deleting the users, as a crash-recovery safety net (the happy
+  // path already cleans these up inline right after use).
+  try {
+    const [rows] = await db.query('SELECT id FROM users WHERE username IN (?, ?, ?, ?)', [CASHIER, ACCOUNTANT, FINANCE, DEVELOPER]);
+    for (const r of rows) { try { await db.query('DELETE FROM user_warehouse_access WHERE user_id = ?', [r.id]); } catch (_) {} }
+  } catch (_) {}
   for (const u of [CASHIER, ACCOUNTANT, FINANCE, DEVELOPER]) {
     try { await db.query('DELETE FROM users WHERE username=?', [u]); } catch (_) {}
   }
@@ -104,11 +113,14 @@ async function cleanupFixtures() {
   for (const id of [TEST_ACCOUNT_ID, SCAFFOLD_CASH_ID, SCAFFOLD_PARENT_ID]) {
     try { await db.query('DELETE FROM gl_accounts WHERE id = ?', [id]); } catch (_) {}
   }
+  for (const id of [WH_ALLOWED, WH_DENIED]) {
+    try { await db.query('DELETE FROM warehouses WHERE id = ?', [id]); } catch (_) {}
+  }
 }
 
 async function tableCounts() {
   const out = {};
-  for (const t of ['users', 'gl_accounts', 'gl_journals', 'gl_entries', 'settings']) {
+  for (const t of ['users', 'gl_accounts', 'gl_journals', 'gl_entries', 'settings', 'warehouses', 'user_warehouse_access']) {
     const [[r]] = await db.query('SELECT COUNT(*) n FROM ' + t);
     out[t] = r.n;
   }
@@ -212,6 +224,28 @@ async function setupFixtures() {
     // WRITE-denied on every journal mutation) now has its own dedicated
     // test — see tests/integration/auditorRole.test.js.
 
+    // ── 1b. Tier A.3 Release Gate item 7 — warehouse scope is ALWAYS
+    // enforced on this report, not shadow-mode. Deliberately NOT setting
+    // WAREHOUSE_SCOPE_ENFORCE=1 anywhere in this test process — the whole
+    // point is proving the report doesn't inherit that flag's rollout-
+    // friendly default the way other warehouse-ops routes correctly do. ──
+    check('WAREHOUSE_SCOPE_ENFORCE is genuinely unset for this test run (proves the enforcement below is NOT coming from the shadow-mode flag)', !process.env.WAREHOUSE_SCOPE_ENFORCE || process.env.WAREHOUSE_SCOPE_ENFORCE === '0');
+    const [[accountantRow]] = await db.query('SELECT id FROM users WHERE username = ?', [ACCOUNTANT]);
+    await db.query(
+      "INSERT IGNORE INTO warehouses (id, code, name, type) VALUES (?,?,?, 'branch'), (?,?,?, 'branch')",
+      [WH_ALLOWED, 'ITEST-WH-A', 'مستودع مسموح (ITEST)', WH_DENIED, 'ITEST-WH-D', 'مستودع ممنوع (ITEST)']
+    );
+    await db.query('INSERT IGNORE INTO user_warehouse_access (user_id, warehouse_id) VALUES (?, ?)', [accountantRow.id, WH_ALLOWED]);
+
+    const whAllowedResp = await call(port, 'GET', `/api/erp/reports/trial-balance?from=2026-06-01&to=2026-06-30&warehouse=${WH_ALLOWED}`, accountant);
+    check('positive: accountant CAN view the trial balance for a warehouse they are explicitly granted (200)', whAllowedResp.status === 200 && whAllowedResp.body && whAllowedResp.body.success === true, { status: whAllowedResp.status, body: whAllowedResp.body });
+
+    const whDeniedResp = await call(port, 'GET', `/api/erp/reports/trial-balance?from=2026-06-01&to=2026-06-30&warehouse=${WH_DENIED}`, accountant);
+    check('negative: accountant is DENIED (403) for a warehouse they are NOT granted — genuinely enforced, not shadow-logged', whDeniedResp.status === 403 && whDeniedResp.body && whDeniedResp.body.code === 'WAREHOUSE_ACCESS_DENIED', { status: whDeniedResp.status, body: whDeniedResp.body });
+
+    await db.query('DELETE FROM user_warehouse_access WHERE user_id = ?', [accountantRow.id]);
+    await db.query('DELETE FROM warehouses WHERE id IN (?, ?)', [WH_ALLOWED, WH_DENIED]);
+
     // ── 2. Engine correctness — isolated ITEST account, exact numbers ──
     const scoped = await computeTrialBalance(db, { from: '2026-06-01', to: '2026-06-30', includeZero: true });
     const row = scoped.rows.find((r) => r.accountId === TEST_ACCOUNT_ID);
@@ -247,19 +281,37 @@ async function setupFixtures() {
     }
     check('from > to throws TrialBalanceError TB_INVALID_RANGE', rangeErrorCode === 'TB_INVALID_RANGE', rangeErrorCode);
 
-    // ── 5. Combined date + dimension filter (SQL param order regression) ──
+    // ── 5. Combined date + dimension filter (SQL param order regression).
+    // Tier A.3 Release Gate item 7 — switched from `branch` to `costCenter`:
+    // `branch` is now categorically rejected (see test 5b below), so it can
+    // no longer serve this regression's original purpose (proving from/to
+    // + a dimension filter don't misalign SQL placeholders). costCenter
+    // exercises the exact same dimFrag()/buildWhere() machinery. ──
     let combinedOk = false, combinedErr = null;
     try {
-      const combined = await computeTrialBalance(db, { from: '2026-06-01', to: '2026-06-30', branch: 'ITEST-NONEXISTENT-BRANCH', includeZero: true });
+      const combined = await computeTrialBalance(db, { from: '2026-06-01', to: '2026-06-30', costCenter: 'ITEST-NONEXISTENT-CC', includeZero: true });
       combinedOk = combined.success === true;
       const testRowUnderFilter = combined.rows.find((r) => r.accountId === TEST_ACCOUNT_ID);
       check(
-        'combined date+branch filter correctly excludes the ITEST fixture (branch never set on it) — proves params landed on the right placeholders',
+        'combined date+costCenter filter correctly excludes the ITEST fixture (cost center never set on it) — proves params landed on the right placeholders',
         !testRowUnderFilter || (testRowUnderFilter.periodDebit === 0 && testRowUnderFilter.periodCredit === 0),
         testRowUnderFilter
       );
     } catch (e) { combinedErr = e.message; }
     check('combined date+dimension filter query does not throw (params stayed aligned with placeholders)', combinedOk, combinedErr);
+
+    // ── 5b. Tier A.3 Release Gate item 7 — `branch` is categorically
+    // rejected: there is no branch-scope authorization infrastructure in
+    // this codebase, so allowing the filter at all would mean arbitrary
+    // branch reads for anyone holding finance.reports.view. Refused with a
+    // dedicated code, not silently ignored and not treated as a missing-
+    // column SCHEMA_NOT_READY (this IS a real column — it's an
+    // authorization gap, not a schema one). ──
+    let branchErrorCode = null;
+    try {
+      await computeTrialBalance(db, { from: '2026-06-01', to: '2026-06-30', branch: 'ANY-BRANCH-ID' });
+    } catch (e) { branchErrorCode = e instanceof TrialBalanceError ? e.code : 'WRONG_ERROR_TYPE:' + e.message; }
+    check('the `branch` filter is categorically refused (TB_BRANCH_SCOPE_NOT_SUPPORTED, 409) — no branch-scope authorization exists, so no arbitrary branch reads are possible', branchErrorCode === 'TB_BRANCH_SCOPE_NOT_SUPPORTED', branchErrorCode);
 
     // ── 6. Journal deletion governance: draft-only ──
     const developer = await login(port, DEVELOPER);

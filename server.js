@@ -672,6 +672,11 @@ app.use('/api/cashier-readiness', require('./routes/cashier-readiness'));
 // bilingual-i18n-images — Owner C: bulk product image management. Same
 // /menu*-prefix-match caveat as above — mounted at its own top-level path.
 app.use('/api/product-images', require('./routes/product-images'));
+// Sprint 3 (A2) — per-user preferences (UI language persistence) + server-backed
+// saved table views. Both at clean top-level paths (not /menu*), each chains
+// its own verifyToken.
+app.use('/api/user-preferences', require('./routes/user-preferences'));
+app.use('/api/saved-views', require('./routes/saved-views'));
 // Phase 3B — independent inventory transactions (receipts / issues / adjustments)
 // at a CLEAN namespace /api/inventory/v2/* so the legacy /api/inventory/adjustments
 // (delta model + legacy HTML UI) is never shadowed. Mounted BEFORE inventory.js so
@@ -6557,6 +6562,22 @@ async function runMigrations() {
       sort_json VARCHAR(200),
       created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
       INDEX idx_user_mod (username, module)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+  `);
+
+  // 15b) User Preferences (تفضيلات المستخدم — اللغة + إعدادات الواجهة)
+  //   Sprint 3 (A2). Per-user key/value blob keyed by username (the same
+  //   token-derived identity every other route uses). prefs_json stores
+  //   { language: 'ar'|'en', ...arbitrary UI prefs }. Backs GET/PUT
+  //   /api/user-preferences (routes/user-preferences.js). Additive + fully
+  //   isolated — touches no existing table. Raw SQL reference lives in
+  //   db/migrations/0017_user_preferences.sql. createTableIfMissing no-ops
+  //   safely once the table exists, so this is safe to run on every boot.
+  await createTableIfMissing('user_preferences', `
+    CREATE TABLE user_preferences (
+      username VARCHAR(80) PRIMARY KEY,
+      prefs_json LONGTEXT NULL,
+      updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
   `);
 

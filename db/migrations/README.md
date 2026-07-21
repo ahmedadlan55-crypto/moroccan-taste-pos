@@ -85,42 +85,74 @@ nothing corrupts), a DB already provisioned by a real `server.js` boot
 against columns the legacy path already added), a rerun (zero pending,
 zero errors), a simulated partial-DDL-failure-then-resume on 0019 (the
 whole file re-applies, no "duplicate" error on the steps that never broke),
-and checksum drift detection (warned, never fatal). 15/15 checks pass.
+and checksum drift detection (warned, never fatal). 18/18 checks pass.
 
-### Recommended release step (documented only — NOT wired in)
+### The real release sequence — proven end-to-end, Tier A.3
 
-Per this gate's mandate, nothing below is activated automatically; wiring
-any of it in is a separate, explicit decision for a future change, not
-implied by this documentation existing. To run migrations as a deploy step
-ahead of server start (the standard pattern once a migration runner is
-confirmed safe to re-run), the two options are:
+`npm start` still just runs `node server.js` — there is no automatic
+migration step wired into boot, and this gate does not change that (a
+failed migration must fail the deploy loudly, not silently fall back to
+whatever schema happens to exist, which an automatic retry-forever step
+inside `server.js` itself would risk). What Tier A.3 adds is a genuine,
+provable, **four-step manual/CI release sequence** — not three, and not
+"run db:migrate, hope for the best":
 
-1. **A platform release/predeploy command**, if the hosting platform
-   supports one (e.g. Railway's `deploy.startCommand` alongside a separate
-   pre-deploy step, or a Docker `ENTRYPOINT` wrapper script) —
-   `npm run db:migrate && node server.js`, so the migration runs once per
-   release, before the app binds its port. This repo does not currently
-   define such a step in `Dockerfile` or any `railway.*` config — adding
-   one is a deploy-infrastructure change outside this gate's scope and
-   needs its own review (a failed migration should fail the deploy, not
-   silently fall back to the old schema, so it needs an explicit rollout
-   plan — not a one-line addition). There is no generic rollback story for
-   an arbitrary migration file yet — `db/migrate.js` only applies forward.
-   The one migration-specific reversal that exists today,
-   `scripts/migrate-rollback-account-role-registry.js` (covers 0018/0019
-   only, dry-run by default), is the template to follow for any future
-   migration that needs one: refuse on real data, not just an empty table.
-2. **A manual pre-deploy step** — run `npm run db:migrate` against the
-   target database before restarting/redeploying `server.js`. This is the
-   current, safe, always-available option and requires no infrastructure
-   change.
+```bash
+node db/init.js                # 1. day-one db/schema.sql baseline
+MIGRATE_ONLY=1 node server.js  # 2. legacy runMigrations() schema evolution
+node db/migrate.js             # 3. the newest versioned migrations
+node server.js                 # 4. the real start — HTTP server up
+```
 
-Either way, `server.js`'s own `runMigrations()` legacy boot path keeps
-running as before (it does not know about `db/migrate.js` or `_migrations`
-bookkeeping) — the two are independent and both idempotent, so applying a
-migration via one path and then booting `server.js` is safe; it just means
-some columns may already exist by the time `db/migrate.js` gets to them,
-which the guards above now handle correctly.
+**Why four steps, not `db:init && db:migrate && start`:** `db/schema.sql`
+is this project's very first schema snapshot — a handful of tables, no
+`users.email`, `role` ENUM missing 6 of the 9 roles that exist today.
+Almost the entire current schema (thousands of `addColumnIfMissing()` /
+`createTableIfMissing()` calls) only exists via `server.js`'s legacy
+`runMigrations()`, accumulated over the project's whole life. Every
+numbered migration in this directory was authored — and originally proven,
+see `migrationLifecycle.test.js`'s "existing DB" scenario — assuming that
+accumulated schema already exists, not the bare `schema.sql` baseline.
+Running `db/migrate.js` right after `db/init.js` alone genuinely fails
+(0004's `ALTER TABLE users ... AFTER email` — `email` doesn't exist yet;
+then 0005 fails the same way on `hr_employees`, a table only
+`runMigrations()` creates). That is not a bug to guard away with more
+`INFORMATION_SCHEMA` checks forever — it is the real, honest shape of this
+codebase's schema history, and step 2 above is what actually resolves it:
+run the legacy evolution as its OWN release step, before the newest
+migrations, exactly the order they were built against.
+
+**Step 2, `MIGRATE_ONLY=1 node server.js`,** is new in this gate — before
+it, `runMigrations()` only ever ran as a side effect of booting the HTTP
+server, with no way to run it standalone. Setting `MIGRATE_ONLY=1` makes
+`server.js` run the exact same `autoInitDB()` sequence, then do one real DB
+round-trip to confirm the schema actually landed (`autoInitDB()`'s own
+retry loop swallows a final failure internally rather than throwing, so a
+bare `try/catch` around it can't tell success from failure — the round-trip
+is the honest signal), and exit **0** on success or **1** on failure —
+without ever binding a port. A deploy pipeline can treat that exit code as
+a real gate.
+
+Verified end-to-end, as separate child processes (the same commands a
+deploy would run) against one throwaway database, by
+`tests/integration/releaseSequence.test.js` (`npm run test:release-sequence`)
+— 9/9 checks, no step allowed to fail and be silently rescued by a later
+one.
+
+**Rollback:** there is no generic rollback story for an arbitrary migration
+file — `db/migrate.js` only applies forward. The one migration-specific
+reversal that exists today, `scripts/migrate-rollback-account-role-registry.js`
+(covers 0018/0019 only, dry-run by default), is the template to follow for
+any future migration that needs one: refuse on real data, not just an
+empty table.
+
+**Wiring this into an actual platform (Railway `deploy.startCommand`, a
+Docker `ENTRYPOINT` wrapper, a CI release job) is a separate, explicit
+infrastructure decision** — this repo does not currently define such a step
+in `Dockerfile` or any `railway.*` config, and adding one needs its own
+review of what "the deploy fails" should look like on that specific
+platform. What this gate delivers is the proven, scriptable sequence
+itself, ready to be called from wherever that decision lands.
 
 ## Relationship to legacy schema management
 

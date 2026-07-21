@@ -108,8 +108,22 @@ INSERT IGNORE INTO hr_job_titles (id, code, name_ar, name_en, rank_level, catego
 -- as db/migrations/0002_sales_numbering.sql) — genuinely idempotent and
 -- resumable after a partial failure, not "ignore the duplicate-name error
 -- by hand on rerun".
+-- Tier A.3 Release Gate — `AFTER email` assumed `users.email` already
+-- exists, but db/schema.sql's baseline `users` table (the ONLY schema a
+-- genuinely fresh `db:init` produces, before server.js's legacy
+-- runMigrations() ever runs) never had an `email` column — it's added only
+-- by server.js's own addColumnIfMissing('users','email',...). On a database
+-- that only ever went through db:init -> db:migrate (the real release
+-- sequence, proven end-to-end for the first time by this gate), this AFTER
+-- reference doesn't exist and the ALTER hard-fails. Made conditional: use
+-- the nice positioning when `email` is already there (the common case,
+-- almost every real environment), fall back to a plain ADD COLUMN otherwise
+-- — purely cosmetic column ordering either way, never a functional change.
 SET @col_exists = (SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'users' AND COLUMN_NAME = 'iqama_number');
-SET @stmt = IF(@col_exists = 0, 'ALTER TABLE users ADD COLUMN iqama_number VARCHAR(30) NULL AFTER email', 'SELECT 1');
+SET @email_exists = (SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'users' AND COLUMN_NAME = 'email');
+SET @stmt = IF(@col_exists = 0,
+  IF(@email_exists = 0, 'ALTER TABLE users ADD COLUMN iqama_number VARCHAR(30) NULL', 'ALTER TABLE users ADD COLUMN iqama_number VARCHAR(30) NULL AFTER email'),
+  'SELECT 1');
 PREPARE stmt FROM @stmt; EXECUTE stmt; DEALLOCATE PREPARE stmt;
 
 SET @col_exists = (SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'users' AND COLUMN_NAME = 'iban');

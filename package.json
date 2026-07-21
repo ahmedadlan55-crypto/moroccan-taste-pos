@@ -47,6 +47,7 @@
     "test:trial-balance-engine": "node tests/integration/trialBalanceEngine.test.js",
     "test:account-roles": "node tests/integration/accountRoles.test.js",
     "test:migration-lifecycle": "node tests/integration/migrationLifecycle.test.js",
+    "test:release-sequence": "node tests/integration/releaseSequence.test.js",
     "test:journal-maker-checker": "node tests/integration/journalMakerChecker.test.js",
     "test:audit-atomicity": "node tests/integration/auditAtomicity.test.js",
     "test:auditor-role": "node tests/integration/auditorRole.test.js",

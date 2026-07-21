@@ -49,6 +49,7 @@
     "test:migration-lifecycle": "node tests/integration/migrationLifecycle.test.js",
     "test:journal-maker-checker": "node tests/integration/journalMakerChecker.test.js",
     "test:audit-atomicity": "node tests/integration/auditAtomicity.test.js",
+    "test:auditor-role": "node tests/integration/auditorRole.test.js",
     "db:clean-test-residue": "node scripts/clean-test-residue.js",
     "test:db:setup": "node scripts/test-db-setup.js",
     "test:inventory-method": "node tests/integration/inventoryMethod.api.test.js",

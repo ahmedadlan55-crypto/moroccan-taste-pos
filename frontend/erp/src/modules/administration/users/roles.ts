@@ -1,9 +1,15 @@
 // Assignable user roles — MIRRORS the backend catalog (lib/roles.js:
 // ASSIGNABLE_ROLES + ROLE_LABELS_AR) exactly. The server 400s any role outside
-// this set ("الدور غير صالح"), so `auditor`/`developer` (grant-only / not a role)
-// are deliberately absent — the previous ROLE_OPTS listed both and every save
-// with them was silently rejected. Labels are copied verbatim from
-// ROLE_LABELS_AR — do not invent new Arabic copy here.
+// this set ("الدور غير صالح"), so `developer` (not a real role — a
+// capability-only bypass) is deliberately absent. Labels are copied verbatim
+// from ROLE_LABELS_AR — do not invent new Arabic copy here.
+//
+// Tier A.2 corrective gate — `auditor` moved from lib/roles.js's
+// GRANT_ONLY_ROLES to ASSIGNABLE_ROLES (it already had real capability
+// grants — finance.reports.view/finance.gl.view/finance.bankrec.view — that
+// no account could ever actually hold through this UI). Added here so the
+// role is actually selectable in UserDialog.tsx, not just accepted by the
+// server if a caller somehow sent it directly.
 export interface RoleOption {
   value: string;
   label: string;
@@ -18,6 +24,7 @@ export const ROLE_OPTS: RoleOption[] = [
   { value: "finance", label: "مالية" },
   { value: "sales", label: "مبيعات" },
   { value: "employee", label: "موظف" },
+  { value: "auditor", label: "مدقق" },
 ];
 
 /** The bare role values the server accepts (for zod enum + guards). */

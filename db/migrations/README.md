@@ -104,7 +104,12 @@ confirmed safe to re-run), the two options are:
    one is a deploy-infrastructure change outside this gate's scope and
    needs its own review (a failed migration should fail the deploy, not
    silently fall back to the old schema, so it needs an explicit rollout
-   plan — see the "Rollback" note below — not a one-line addition).
+   plan — not a one-line addition). There is no generic rollback story for
+   an arbitrary migration file yet — `db/migrate.js` only applies forward.
+   The one migration-specific reversal that exists today,
+   `scripts/migrate-rollback-account-role-registry.js` (covers 0018/0019
+   only, dry-run by default), is the template to follow for any future
+   migration that needs one: refuse on real data, not just an empty table.
 2. **A manual pre-deploy step** — run `npm run db:migrate` against the
    target database before restarting/redeploying `server.js`. This is the
    current, safe, always-available option and requires no infrastructure

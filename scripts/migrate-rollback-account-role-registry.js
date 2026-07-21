@@ -64,9 +64,26 @@ async function main() {
   // ENCLOSING TABLE has "enough" rows to trip the table-drop guard. Refuse
   // explicitly, the same way, if there is any real (non-default) value to
   // lose — not inferred from row counts alone.
+  //
+  // Adversarial review caught a real defect in the first version of this
+  // guard: catching EVERY error and defaulting to n=0 ("nothing to lose")
+  // meant a transient failure on the SELECT itself (a lock-wait timeout, a
+  // dropped connection, anything other than the column genuinely not
+  // existing yet) would silently wave the script through into DROP COLUMN
+  // — the exact data loss this guard exists to prevent, unlike
+  // crossCompanyDupes above whose fail-open case is naturally backstopped
+  // by the later ADD UNIQUE KEY throwing on a real violation. Only the one
+  // tolerable cases — the column doesn't exist yet (ER_BAD_FIELD_ERROR,
+  // errno 1054) or the whole table doesn't exist (ER_NO_SUCH_TABLE, errno
+  // 1146, e.g. 0018 was never applied at all) — default to n=0; anything
+  // else (a lock-wait timeout, a dropped connection, a privilege error)
+  // re-throws and aborts instead of silently proceeding.
   const [[expectedVersionInUse]] = await db.query(
     'SELECT COUNT(*) n FROM account_role_history WHERE expected_version IS NOT NULL'
-  ).catch(() => [[{ n: 0 }]]);
+  ).catch((e) => {
+    if (e && (e.code === 'ER_BAD_FIELD_ERROR' || e.code === 'ER_NO_SUCH_TABLE')) return [[{ n: 0 }]];
+    throw e;
+  });
   if (Number(expectedVersionInUse.n) > 0) {
     console.error(
       `REFUSING: account_role_history.expected_version has ${expectedVersionInUse.n} row(s) with a real ` +
@@ -78,7 +95,10 @@ async function main() {
   }
   const [[versionInUse]] = await db.query(
     'SELECT COUNT(*) n FROM account_roles WHERE version <> 1'
-  ).catch(() => [[{ n: 0 }]]);
+  ).catch((e) => {
+    if (e && (e.code === 'ER_BAD_FIELD_ERROR' || e.code === 'ER_NO_SUCH_TABLE')) return [[{ n: 0 }]];
+    throw e;
+  });
   if (Number(versionInUse.n) > 0) {
     console.error(
       `REFUSING: account_roles.version has ${versionInUse.n} row(s) past the default (version=1) — real ` +

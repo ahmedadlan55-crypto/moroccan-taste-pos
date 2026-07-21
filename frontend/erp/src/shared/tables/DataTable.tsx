@@ -16,6 +16,7 @@ import {
   LoadingState,
   Skeleton,
 } from "@/shared/ui";
+import { useTx } from "@/shared/ui/i18n";
 import { useDebounce, useTableState, type TableStateApi } from "@/shared/hooks";
 import { apiClient } from "@/shared/api";
 import type { ColumnDef } from "./types";
@@ -207,6 +208,7 @@ export function DataTable<T>(props: DataTableProps<T>) {
     [permittedColumns],
   );
 
+  const tx = useTx();
   const t: TableStateApi = useTableState({
     persistKey: tableId,
     initialPageSize,
@@ -429,7 +431,7 @@ export function DataTable<T>(props: DataTableProps<T>) {
                 <Checkbox
                   checked={isSel}
                   onChange={() => toggleRow(id)}
-                  aria-label="تحديد الصف"
+                  aria-label={tx("table.selectRow")}
                 />
               </td>
             )}
@@ -484,7 +486,7 @@ export function DataTable<T>(props: DataTableProps<T>) {
               checked={allPageSelected}
               indeterminate={!allPageSelected && somePageSelected}
               onChange={toggleAllOnPage}
-              aria-label="تحديد كل الصفوف"
+              aria-label={tx("table.selectAllRows")}
             />
           </Th>
         )}
@@ -549,7 +551,7 @@ export function DataTable<T>(props: DataTableProps<T>) {
                   onClick={handleExport}
                   className="inline-flex min-h-11 items-center gap-2 rounded-xl border border-slate-200 bg-white px-3 text-sm font-bold text-slate-600 transition hover:bg-slate-50 focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-teal-100"
                 >
-                  <Download className="h-4 w-4" /> تصدير CSV
+                  <Download className="h-4 w-4" /> {tx("table.exportCsv")}
                 </button>
               )}
               {savedViewsModule && (
@@ -646,7 +648,7 @@ export function DataTable<T>(props: DataTableProps<T>) {
                           type="button"
                           onClick={() => onRowClick(row)}
                           className="min-w-0 flex-1 rounded-xl text-right outline-none transition active:bg-slate-50 focus-visible:ring-4 focus-visible:ring-teal-100"
-                          aria-label={typeof mobileTitle?.(row) === "string" ? String(mobileTitle(row)) : "فتح تفاصيل الصف"}
+                          aria-label={typeof mobileTitle?.(row) === "string" ? String(mobileTitle(row)) : tx("table.openRowDetails")}
                         >
                           {mobileContent}
                         </button>
@@ -657,7 +659,7 @@ export function DataTable<T>(props: DataTableProps<T>) {
                             <Checkbox
                               checked={selected.has(id)}
                               onChange={() => toggleRow(id)}
-                              aria-label="تحديد الصف"
+                              aria-label={tx("table.selectRow")}
                             />
                           </span>
                         )}

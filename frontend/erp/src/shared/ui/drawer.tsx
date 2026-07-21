@@ -1,6 +1,7 @@
 import { type ReactNode } from "react";
 import type { LucideIcon } from "lucide-react";
 import { FullPageFlow } from "./full-page-flow";
+import { useTx } from "./i18n";
 
 // Compatibility API: every former side drawer is now rendered as a full-page
 // work area. Keeping this API converts all modules centrally without touching
@@ -21,18 +22,19 @@ export function Drawer({
   open,
   onClose,
   title,
-  eyebrow = "تفاصيل السجل",
+  eyebrow,
   icon,
   children,
   footer,
   size = "md",
 }: DrawerProps) {
+  const t = useTx();
   return (
     <FullPageFlow
       open={open}
       onClose={onClose}
       title={title}
-      eyebrow={eyebrow}
+      eyebrow={eyebrow ?? t("sharedUi.drawer.eyebrow")}
       icon={icon}
       footer={footer}
       size={size}

@@ -6,6 +6,7 @@ import { cn } from "@/shared/lib";
 import { IconButton } from "./icon-button";
 import { useFocusTrap } from "./overlay";
 import { FullPageFlow } from "./full-page-flow";
+import { useTx } from "./i18n";
 
 export type DialogSize = "sm" | "md" | "lg" | "xl";
 
@@ -68,6 +69,7 @@ function CompactDialog({
   hideClose = false,
   dismissable = true,
 }: DialogProps) {
+  const t = useTx();
   const panelRef = useFocusTrap<HTMLDivElement>({
     active: open,
     onClose,
@@ -123,7 +125,7 @@ function CompactDialog({
                     )}
                   </div>
                   {!hideClose && (
-                    <IconButton aria-label="إغلاق" size="sm" onClick={onClose}>
+                    <IconButton aria-label={t("common.close")} size="sm" onClick={onClose}>
                       <X className="h-5 w-5" />
                     </IconButton>
                   )}

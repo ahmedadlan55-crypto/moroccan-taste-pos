@@ -1,6 +1,7 @@
 import { useId, useRef, useState, type DragEvent } from "react";
 import { FileUp, Paperclip, X } from "lucide-react";
 import { cn } from "@/shared/lib";
+import { useTx } from "./i18n";
 
 export interface FileUploaderProps {
   /** Fires with the accepted File list whenever the selection changes. */
@@ -26,8 +27,9 @@ export function FileUploader({
   disabled = false,
   maxSize,
   onReject,
-  hint = "اسحب الملفات هنا أو اضغط للاختيار",
+  hint,
 }: FileUploaderProps) {
+  const t = useTx();
   const inputRef = useRef<HTMLInputElement>(null);
   const [dragging, setDragging] = useState(false);
   const id = useId();
@@ -37,7 +39,7 @@ export function FileUploader({
     if (maxSize == null) return files;
     return files.filter((f) => {
       if (f.size > maxSize) {
-        onReject?.("الملف أكبر من الحد المسموح.", f);
+        onReject?.(t("sharedUi.fileUploader.tooLarge"), f);
         return false;
       }
       return true;
@@ -79,7 +81,7 @@ export function FileUploader({
         )}
       >
         <FileUp className={cn("h-6 w-6", dragging ? "text-teal-600" : "text-slate-400")} aria-hidden="true" />
-        <span className="text-sm font-bold text-slate-600">{hint}</span>
+        <span className="text-sm font-bold text-slate-600">{hint ?? t("sharedUi.fileUploader.hint")}</span>
       </button>
     </div>
   );
@@ -111,10 +113,11 @@ export interface AttachmentViewerProps {
 export function AttachmentViewer({
   attachments,
   onRemove,
-  emptyText = "لا مرفقات.",
+  emptyText,
 }: AttachmentViewerProps) {
+  const t = useTx();
   if (attachments.length === 0) {
-    return <p className="text-sm font-medium text-slate-400">{emptyText}</p>;
+    return <p className="text-sm font-medium text-slate-400">{emptyText ?? t("sharedUi.fileUploader.empty")}</p>;
   }
   return (
     <ul className="space-y-2">
@@ -146,7 +149,7 @@ export function AttachmentViewer({
           {onRemove && (
             <button
               type="button"
-              aria-label={`إزالة ${a.name}`}
+              aria-label={t("sharedUi.fileUploader.remove", { name: a.name })}
               onClick={() => onRemove(a.id)}
               className="grid h-8 w-8 shrink-0 place-items-center rounded-lg text-slate-400 transition hover:bg-rose-50 hover:text-rose-600 focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-teal-100"
             >

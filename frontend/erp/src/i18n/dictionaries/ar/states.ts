@@ -17,4 +17,7 @@ export const states = {
   retryBtn: "إعادة المحاولة",
   conflict: "تغيّرت البيانات منذ آخر تحميل",
   refreshBtn: "تحديث",
+  /** Generic safe fallback for safeUserMessage() when the raw error looks like a
+   *  DB/stack dump. */
+  unexpectedError: "حدث خطأ غير متوقع. أعد المحاولة، وإن استمرت المشكلة تواصل مع المسؤول.",
 } as const;

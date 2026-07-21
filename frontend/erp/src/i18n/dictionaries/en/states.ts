@@ -17,4 +17,5 @@ export const states = {
   retryBtn: "Retry",
   conflict: "The data changed since it was last loaded",
   refreshBtn: "Refresh",
+  unexpectedError: "An unexpected error occurred. Try again, and if the problem persists contact your administrator.",
 } as const;

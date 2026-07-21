@@ -3,6 +3,7 @@ import { Bookmark, Check, Plus, Trash2 } from "lucide-react";
 import { useLocalStorage } from "@/shared/hooks";
 import { apiClient } from "@/shared/api";
 import { Button, DropdownMenu, Dialog, Input } from "@/shared/ui";
+import { useTx } from "@/shared/ui/i18n";
 import type { TableSort } from "./types";
 
 export interface SavedViewState {
@@ -162,6 +163,7 @@ export interface SavedViewsProps {
 
 /** A "Saved views" menu: apply / save / delete per-table view presets. */
 export function SavedViews({ tableId, current, onApply, module }: SavedViewsProps) {
+  const t = useTx();
   const { views, save, remove } = useSavedViewsSource(tableId, module);
   const [dialogOpen, setDialogOpen] = useState(false);
   const [name, setName] = useState("");
@@ -169,10 +171,10 @@ export function SavedViews({ tableId, current, onApply, module }: SavedViewsProp
   return (
     <>
       <DropdownMenu
-        aria-label="طرق العرض المحفوظة"
+        aria-label={t("table.savedViews.ariaMenu")}
         trigger={
           <span className="inline-flex min-h-11 items-center gap-2 rounded-xl border border-slate-200 bg-white px-3 text-sm font-bold text-slate-600 hover:bg-slate-50">
-            <Bookmark className="h-4 w-4" /> طرق العرض
+            <Bookmark className="h-4 w-4" /> {t("table.savedViews.menu")}
           </span>
         }
         items={[
@@ -184,14 +186,14 @@ export function SavedViews({ tableId, current, onApply, module }: SavedViewsProp
           })),
           ...views.map((v) => ({
             key: `del-${v.id}`,
-            label: `حذف: ${v.name}`,
+            label: t("table.savedViews.delete", { name: v.name }),
             icon: <Trash2 className="h-4 w-4" />,
             tone: "danger" as const,
             onSelect: () => remove(v.id),
           })),
           {
             key: "__save__",
-            label: "حفظ العرض الحالي…",
+            label: t("table.savedViews.saveCurrent"),
             icon: <Plus className="h-4 w-4" />,
             onSelect: () => {
               setName("");
@@ -203,12 +205,12 @@ export function SavedViews({ tableId, current, onApply, module }: SavedViewsProp
       <Dialog
         open={dialogOpen}
         onClose={() => setDialogOpen(false)}
-        title="حفظ طريقة العرض"
+        title={t("table.savedViews.saveTitle")}
         size="sm"
         footer={
           <>
             <Button variant="secondary" onClick={() => setDialogOpen(false)}>
-              إلغاء
+              {t("common.cancel")}
             </Button>
             <Button
               disabled={name.trim().length === 0}
@@ -217,18 +219,18 @@ export function SavedViews({ tableId, current, onApply, module }: SavedViewsProp
                 setDialogOpen(false);
               }}
             >
-              حفظ
+              {t("common.save")}
             </Button>
           </>
         }
       >
         <label className="block">
-          <span className="text-xs font-bold text-slate-600">اسم العرض</span>
+          <span className="text-xs font-bold text-slate-600">{t("table.savedViews.nameLabel")}</span>
           <Input
             className="mt-1"
             value={name}
             onChange={(e) => setName(e.target.value)}
-            placeholder="مثال: الفواتير المتأخرة"
+            placeholder={t("table.savedViews.namePlaceholder")}
             autoFocus
           />
         </label>

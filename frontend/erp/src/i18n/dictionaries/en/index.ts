@@ -1,6 +1,14 @@
 import { common } from "./common";
+import { confirmDialog } from "./confirmDialog";
 import { errors } from "./errors";
+import { sharedUi } from "./sharedUi";
 import { states } from "./states";
+import { status } from "./status";
+import { table } from "./table";
+import { validation } from "./validation";
+import { nav } from "./nav";
+import { shell } from "./shell";
+import { login } from "./login";
 
 /**
  * Merged English dictionary barrel — one namespace per shared concern / module.
@@ -14,6 +22,14 @@ import { states } from "./states";
  */
 export const en = {
   common,
+  confirmDialog,
   errors,
+  sharedUi,
   states,
+  status,
+  table,
+  validation,
+  nav,
+  shell,
+  login,
 } as const;

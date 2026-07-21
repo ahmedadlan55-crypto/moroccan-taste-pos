@@ -2,6 +2,7 @@ import type { ReactNode } from "react";
 import { Check, Circle, Clock, Dot, X } from "lucide-react";
 import { cn } from "@/shared/lib";
 import { formatDateTime } from "@/shared/lib";
+import { useTx } from "./i18n";
 
 export interface AuditEntry {
   id: string | number;
@@ -16,8 +17,9 @@ export interface AuditEntry {
  * formatters (Arabic labels, Latin digits). Ordered list for a11y.
  */
 export function AuditTimeline({ entries }: { entries: AuditEntry[] }) {
+  const t = useTx();
   if (entries.length === 0) {
-    return <p className="text-sm font-medium text-slate-400">لا يوجد سجل بعد.</p>;
+    return <p className="text-sm font-medium text-slate-400">{t("sharedUi.timeline.empty")}</p>;
   }
   return (
     <ol className="relative space-y-4 border-r border-slate-200 pr-4">

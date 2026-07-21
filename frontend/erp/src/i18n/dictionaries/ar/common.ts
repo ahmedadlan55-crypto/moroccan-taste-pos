@@ -1,0 +1,30 @@
+/** Generic reusable strings — use t("common.xxx") instead of duplicating
+ *  these in a module's own namespace. Other agents extend the module
+ *  namespaces; this shared set is meant to stay stable. */
+export const common = {
+  save: "حفظ",
+  cancel: "إلغاء",
+  confirm: "تأكيد",
+  delete: "حذف",
+  edit: "تعديل",
+  add: "إضافة",
+  close: "إغلاق",
+  back: "رجوع",
+  next: "التالي",
+  search: "بحث",
+  filter: "تصفية",
+  loading: "جارٍ التحميل",
+  retry: "إعادة المحاولة",
+  yes: "نعم",
+  no: "لا",
+  all: "الكل",
+  none: "لا شيء",
+  active: "نشط",
+  inactive: "غير نشط",
+  status: "الحالة",
+  actions: "إجراءات",
+  reset: "إعادة تعيين",
+  apply: "تطبيق",
+  clear: "مسح",
+  export: "تصدير",
+} as const;

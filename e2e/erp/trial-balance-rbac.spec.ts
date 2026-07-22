@@ -36,6 +36,18 @@ import { test, expect, type Page } from "@playwright/test";
 import fs from "fs";
 import path from "path";
 
+/** Host/port/credentials from .env — the DATABASE always comes from
+ *  e2e/e2e-db-name.ts, never from here. See the note at its use site. */
+function readDotEnv(): Record<string, string> {
+  const values: Record<string, string> = {};
+  const txt = fs.readFileSync(path.join(process.cwd(), ".env"), "utf8");
+  for (const line of txt.split(/\r?\n/)) {
+    const m = line.match(/^\s*([A-Z_]+)\s*=\s*(.*)\s*$/);
+    if (m) values[m[1]] = m[2];
+  }
+  return values;
+}
+
 const ADMIN_TOKEN = fs.readFileSync(path.join(process.cwd(), "e2e", ".token"), "utf8").trim();
 const API_BASE = "http://127.0.0.1:3027";
 const TB_PATH = "/accounting/trial-balance";
@@ -97,11 +109,29 @@ test.beforeAll(async () => {
   // real product API has no endpoint to clear that flag (only the change-
   // password flow itself does) — same class of fixture-setup exception
   // auditorRole.test.js already uses for its non-subject admin actor.
-  const db = require("../../db/connection");
-  await db.query(
-    `UPDATE users SET must_change_password = 0 WHERE username IN (?, ?, ?)`,
-    Object.values(IDENTITIES).map((i) => i.username)
-  );
+  // CLOSEOUT — this used to be `require("../../db/connection")`, the APP's
+  // shared pool. That pool binds at require time to whatever process.env holds
+  // in the PLAYWRIGHT RUNNER process, which is `.env` — i.e. the DEVELOPMENT
+  // database. Two bugs in one line:
+  //   1. it wrote to the developer's real database on every run (an UPDATE, so
+  //      it changed no row COUNTS and slipped straight past a counts-based
+  //      "zero dev writes" check);
+  //   2. once the server under test moved to the isolated clone, this cleared
+  //      the flag in the WRONG database entirely — so all three logins below
+  //      were redirected to /app/change-password?must=1 and the spec failed
+  //      with a navigation timeout that looks nothing like its actual cause.
+  // Use the same database the server is serving, resolved in exactly one place.
+  const mysql = require("mysql2/promise");
+  const { e2eDbConfig } = require("../e2e-db-name");
+  const fixtureDb = await mysql.createConnection(e2eDbConfig(readDotEnv()));
+  try {
+    await fixtureDb.query(
+      `UPDATE users SET must_change_password = 0 WHERE username IN (?, ?, ?)`,
+      Object.values(IDENTITIES).map((i) => i.username)
+    );
+  } finally {
+    await fixtureDb.end();
+  }
 });
 
 // Tier A.3 Release Gate item 8 — every identity's DELETE is now independently

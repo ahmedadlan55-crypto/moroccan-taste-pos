@@ -145,6 +145,7 @@ import { test, expect, type Page } from "@playwright/test";
 import fs from "fs";
 import path from "path";
 
+import { e2eDbConfig } from "../e2e-db-name";
 /* eslint-disable @typescript-eslint/no-var-requires */
 const mysql = require("mysql2/promise");
 const bcrypt = require("bcryptjs");
@@ -232,7 +233,7 @@ test.describe.configure({ mode: "serial" });
 test.beforeAll(async () => {
   const e = readEnv();
   db = await mysql.createConnection({
-    host: e.DB_HOST, port: Number(e.DB_PORT), user: e.DB_USER, password: e.DB_PASSWORD, database: e.DB_NAME,
+    ...e2eDbConfig(e), // database ALWAYS from e2e/e2e-db-name.ts — never .env DB_NAME
   });
   // Defensive pre-clean, same rationale as critical-cashier-shift.spec.ts: a
   // prior crashed run must never leave an OPEN shift blocking this one.

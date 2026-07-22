@@ -37,6 +37,7 @@ import { test, expect } from "@playwright/test";
 import fs from "fs";
 import path from "path";
 
+import { e2eDbConfig } from "../e2e-db-name";
 /* eslint-disable @typescript-eslint/no-var-requires */
 const bcrypt = require("bcryptjs");
 const mysql = require("mysql2/promise");
@@ -171,7 +172,7 @@ test.describe.configure({ mode: "serial" });
 test.beforeAll(async () => {
   const e = readEnv();
   db = await mysql.createConnection({
-    host: e.DB_HOST, port: Number(e.DB_PORT), user: e.DB_USER, password: e.DB_PASSWORD, database: e.DB_NAME,
+    ...e2eDbConfig(e), // database ALWAYS from e2e/e2e-db-name.ts — never .env DB_NAME
   });
   // Defensive pre-clean: a prior crashed run must never block this one with a
   // leftover OPEN shift for the fixture cashier.

@@ -20,11 +20,15 @@ export default defineConfig({
   workers: 1,
   retries: 0,
   reporter: [["list"]],
+  // Provisions the isolated E2E database clone before any spec runs.
+  globalSetup: "./e2e/e2e-db-global-setup.ts",
   outputDir: "./artifacts/e2e/pos/_output",
   use: {
     baseURL: "http://127.0.0.1:3028",
-    trace: "off",
-    video: "off",
+    // Diagnostics on failure only — a trace + video is what turns "the payment
+    // step went red again" into an actual root cause, and costs nothing green.
+    trace: "retain-on-failure",
+    video: "retain-on-failure",
     screenshot: "only-on-failure",
     // Service workers must be ALLOWED (default, but explicit — the whole
     // point of the offline spec is the SW-served app shell).
@@ -38,6 +42,13 @@ export default defineConfig({
     env: {
       PORT: "3028",
       NODE_ENV: "development",
+      // ISOLATION — see the same block in playwright.erp.config.ts. This suite
+      // SELLS: it creates orders, takes payments and opens shifts. Every one of
+      // those writes used to land in the real development database, which is
+      // also why these specs' visual baselines drifted. BOTH names are set
+      // because db/connection.js resolves MYSQL_DATABASE before DB_NAME.
+      DB_NAME: process.env.E2E_DB_NAME || "moroccan_taste_pos_e2e",
+      MYSQL_DATABASE: process.env.E2E_DB_NAME || "moroccan_taste_pos_e2e",
       POS_V2_ENABLED: "1",
       WAREHOUSE_V2_ENABLED: "1",
       // The spec reloads the SPA several times from one IP; keep the prod

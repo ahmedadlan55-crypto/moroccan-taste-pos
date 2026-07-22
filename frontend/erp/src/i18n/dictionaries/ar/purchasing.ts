@@ -340,7 +340,11 @@ export const purchasing = {
     },
     form: {
       editEyebrow: "تعديل مورد",
-      addTitle: "إضافة مورد",
+      // "جديد" is load-bearing, not decoration: the create-mode eyebrow is
+      // "مورد جديد", so a title of plain "إضافة مورد" reads as a near-duplicate
+      // of it. Closure-gate fix af80f2f; e2e/erp/erp.spec.ts asserts this exact
+      // title in the supplier full-page-workspace flow.
+      addTitle: "إضافة مورد جديد",
       saveSupplier: "حفظ المورد",
       entityVatSection: "المنشأة والتسجيل الضريبي",
       name: "اسم المورد",

@@ -141,7 +141,18 @@ export const NAV: NavGroup[] = [
       { id: "ac-coa", path: "/accounting/chart-of-accounts", label: "nav.items.ac-coa", icon: "BookText", cap: "accounting.view", module: "accounting" },
       { id: "ac-journals", path: "/accounting/journals", label: "nav.items.ac-journals", icon: "BookOpen", cap: "accounting.journals.view", module: "accounting" },
       { id: "ac-gl", path: "/accounting/general-ledger", label: "nav.items.ac-gl", icon: "Layers", cap: "accounting.reports.view", module: "accounting" },
-      { id: "ac-tb", path: "/accounting/trial-balance", label: "nav.items.ac-tb", icon: "Scale", cap: "accounting.reports.view", module: "accounting" },
+      // Tier A.1 corrective gate — this cap matches routes/erp-core.js's real
+      // requireCapability('finance.reports.view') gate exactly. (The other
+      // report nav items below still use 'accounting.reports.view', whose
+      // matching backend gate has not been individually verified — see
+      // ADR 0002 section 7; not changed here to avoid guessing.)
+      // Release integration — the i18n sprint rewrote every label in this block
+      // into a t() key and, doing so, carried this cap back to
+      // 'accounting.reports.view'. Restored, because it is load-bearing:
+      // e2e/erp/trial-balance-rbac.spec.ts asserts a cashier is never offered
+      // this link, and that only holds while the nav cap matches the backend
+      // gate. Nothing else in the block changed.
+      { id: "ac-tb", path: "/accounting/trial-balance", label: "nav.items.ac-tb", icon: "Scale", cap: "finance.reports.view", module: "accounting" },
       { id: "ac-pnl", path: "/accounting/income-statement", label: "nav.items.ac-pnl", icon: "TrendingUp", cap: "accounting.reports.view", module: "accounting" },
       { id: "ac-bs", path: "/accounting/balance-sheet", label: "nav.items.ac-bs", icon: "Building2", cap: "accounting.reports.view", module: "accounting" },
       { id: "ac-cf", path: "/accounting/cash-flow", label: "nav.items.ac-cf", icon: "LineChart", cap: "accounting.reports.view", module: "accounting" },

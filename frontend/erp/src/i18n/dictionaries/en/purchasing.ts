@@ -305,7 +305,9 @@ export const purchasing = {
     },
     form: {
       editEyebrow: "Edit supplier",
-      addTitle: "Add supplier",
+      // Mirrors the ar side (see the note there): the create-mode eyebrow is
+      // "New supplier", so the title has to be distinguishable from it.
+      addTitle: "Add new supplier",
       saveSupplier: "Save supplier",
       entityVatSection: "Entity & tax registration",
       name: "Supplier name",

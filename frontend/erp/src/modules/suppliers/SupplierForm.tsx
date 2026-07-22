@@ -104,6 +104,14 @@ export function SupplierForm({ open, onClose, supplierId }: { open: boolean; onC
       open={open}
       onClose={onClose}
       icon={Building2}
+      /* Release integration — sprint's t() side is kept (its editTitle also
+         prefers name_en in the English UI, which the accounting side could not
+         do). The accounting side's real change here was the create-mode title
+         "إضافة مورد" -> "إضافة مورد جديد" (closure-gate fix af80f2f: the old
+         title collided with the eyebrow "مورد جديد"). That fix now lives in
+         the dictionary — see purchasing.suppliers.form.addTitle in
+         i18n/dictionaries/ar. Resolving to sprint's side alone would have
+         silently reverted it, with no conflict marker pointing anywhere. */
       eyebrow={editing ? t("purchasing.suppliers.form.editEyebrow") : t("purchasing.suppliers.newSupplier")}
       title={editing ? editTitle : t("purchasing.suppliers.form.addTitle")}
       footer={

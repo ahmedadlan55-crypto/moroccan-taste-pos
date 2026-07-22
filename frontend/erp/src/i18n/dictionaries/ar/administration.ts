@@ -111,6 +111,7 @@ export const administration = {
       finance: "مالية",
       sales: "مبيعات",
       employee: "موظف",
+      auditor: "مدقق",
     },
     // EffectivePermissions tab
     perms: {

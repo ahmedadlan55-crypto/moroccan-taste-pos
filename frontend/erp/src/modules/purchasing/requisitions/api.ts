@@ -7,6 +7,10 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { apiClient } from "@/shared/api";
 import type { EntityFetcher } from "@/shared/ui";
+// Tier A.2 corrective gate — todayISO() moved to @/shared/lib/dates
+// (local-time components, not toISOString()'s UTC calendar date);
+// re-exported here so every existing `from "../api"` import keeps working.
+export { todayISO } from "@/shared/lib";
 
 const KEY = ["procurement", "requisitions"] as const;
 
@@ -226,7 +230,3 @@ export const supplierFetcher: EntityFetcher<SupplierHit> = ({ q, page, signal })
       const nextPage = pg && pg.page < pg.totalPages ? pg.page + 1 : null;
       return { items: data, nextPage, total: pg?.total ?? data.length };
     });
-
-export function todayISO(): string {
-  return new Date().toISOString().slice(0, 10);
-}

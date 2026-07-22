@@ -98,6 +98,7 @@ export const administration = {
       finance: "Finance",
       sales: "Sales",
       employee: "Employee",
+      auditor: "Auditor",
     },
     perms: {
       thPermission: "Permission",

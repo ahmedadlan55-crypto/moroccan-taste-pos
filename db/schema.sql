@@ -24,6 +24,15 @@ CREATE TABLE settings (
 INSERT INTO settings VALUES ('CompanyName','Moroccan Taste'),('TaxNumber','314170726400003'),('Currency','SAR'),('VATRate','15');
 
 -- ─── Payment Methods ───
+-- RC (Release-Candidate gate) — `name` gained a UNIQUE key and the seed below
+-- became INSERT IGNORE. Before this, `name` carried no unique constraint and
+-- the seed was a plain INSERT into an AUTO_INCREMENT table, so it could not
+-- fail: every re-run of `node db/init.js` APPENDED five more payment methods.
+-- That is user-visible, not cosmetic — routes/pos-v2.js loads
+-- `WHERE is_active = 1` straight into the cashier's payment screen, so after
+-- N runs the cashier would see 5N buttons. It never bit anyone only because
+-- db/init.js has never actually run in production; wiring a release chain is
+-- precisely when it would have started biting.
 CREATE TABLE payment_methods (
   id INT AUTO_INCREMENT PRIMARY KEY,
   name VARCHAR(50) NOT NULL,
@@ -31,10 +40,11 @@ CREATE TABLE payment_methods (
   icon VARCHAR(50) DEFAULT 'fa-money-bill',
   is_active BOOLEAN DEFAULT TRUE,
   service_fee_rate DECIMAL(5,2) DEFAULT 0,
-  sort_order INT DEFAULT 0
+  sort_order INT DEFAULT 0,
+  UNIQUE KEY uq_payment_methods_name (name)
 ) ENGINE=InnoDB;
 
-INSERT INTO payment_methods (name, name_ar, icon, is_active, sort_order) VALUES
+INSERT IGNORE INTO payment_methods (name, name_ar, icon, is_active, sort_order) VALUES
   ('Cash','كاش','fa-money-bill-wave',1,1),
   ('Card','مدى/شبكة','fa-credit-card',1,2),
   ('Kita','كيتا','fa-calculator',1,3),

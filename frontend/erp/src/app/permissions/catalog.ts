@@ -154,6 +154,13 @@ export const ALL_CAPS = [
   "accounting.periods.view",
   "accounting.periods.manage",
   "accounting.reports.view",
+  // Tier A.1 corrective gate — trial-balance's route (routes/erp-core.js)
+  // is gated server-side by requireCapability('finance.reports.view')
+  // specifically, not 'accounting.reports.view' (which no backend route
+  // currently enforces under that exact name — see ADR 0002). Added as its
+  // own key rather than renaming 'accounting.reports.view' everywhere,
+  // per this file's own stated policy of never renaming existing keys.
+  "finance.reports.view",
   // ── Accounting write caps (E1 — UI-only gating; backend stays authoritative) ──
   "accounting.accounts.manage",
   "accounting.journals.create",

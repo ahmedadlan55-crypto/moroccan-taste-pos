@@ -19,6 +19,16 @@ const { spawn } = require('child_process');
 const fs = require('fs');
 const path = require('path');
 const ROOT = path.join(__dirname, '..', '..');
+// Tier A.2 corrective gate — used ONLY for fixture-reclamation cleanup
+// (below), never for HTTP calls (those still go through the spawned
+// server via api()). The mgrCreate journal below is a REAL journal that
+// gets approved+posted during this test — posted journals are correctly
+// immutable via the API (DELETE /gl/journals/:id refuses them), so the old
+// cleanup ("DELETE via the API, swallow any failure") silently leaked one
+// journal row into the real dev DB on every single run that reached
+// 'posted'. Direct SQL is the test reclaiming its OWN fixture data, not a
+// business operation — same pattern trialBalance.api.test.js already uses.
+const db = require(path.join(ROOT, 'db', 'connection'));
 
 const ENV = {};
 for (const line of fs.readFileSync(path.join(ROOT, '.env'), 'utf8').split(/\r?\n/)) {
@@ -30,9 +40,17 @@ const PORT = 3241;
 const BASE = `http://127.0.0.1:${PORT}`;
 
 const T = {
-  admin:   jwt.sign({ id: 1, username: 'admin', role: 'admin', tokenVersion: 1 }, ENV.JWT_SECRET, { expiresIn: '1h' }),
-  manager: jwt.sign({ id: 900201, username: 'glsec_mgr', role: 'manager', tokenVersion: 1 }, ENV.JWT_SECRET, { expiresIn: '1h' }),
-  cashier: jwt.sign({ id: 900202, username: 'glsec_cash', role: 'cashier', tokenVersion: 1 }, ENV.JWT_SECRET, { expiresIn: '1h' }),
+  admin:    jwt.sign({ id: 1, username: 'admin', role: 'admin', tokenVersion: 1 }, ENV.JWT_SECRET, { expiresIn: '1h' }),
+  manager:  jwt.sign({ id: 900201, username: 'glsec_mgr', role: 'manager', tokenVersion: 1 }, ENV.JWT_SECRET, { expiresIn: '1h' }),
+  // Tier A.2 corrective gate — a SECOND manager identity, distinct from the
+  // one that creates the journal below. lib/glTransitions.js now enforces
+  // maker/checker (self-approval denied) on the single-id /approve route —
+  // the exact route this file's approve→post lifecycle drives. Approving
+  // with the SAME user that created the journal would now be correctly
+  // refused; this checker identity is what makes "approve → ok" a true
+  // statement again, instead of accidentally asserting a security hole.
+  manager2: jwt.sign({ id: 900203, username: 'glsec_mgr2', role: 'manager', tokenVersion: 1 }, ENV.JWT_SECRET, { expiresIn: '1h' }),
+  cashier:  jwt.sign({ id: 900202, username: 'glsec_cash', role: 'cashier', tokenVersion: 1 }, ENV.JWT_SECRET, { expiresIn: '1h' }),
 };
 
 let _p = 0, _f = 0;
@@ -132,11 +150,14 @@ async function main() {
     const row = Array.isArray(listed.data) ? listed.data.find((r) => r.id === jid) : null;
     check('created_by = JWT user (not body HACKER)', !!row && row.createdBy === 'glsec_mgr', row && { createdBy: row.createdBy });
 
-    // ── 3. approve + post lifecycle (manager) ────────────────────────────────
-    const appr = await j('POST', `/erp/gl/journals/${jid}/approve`, T.manager, { username: 'HACKER' });
-    check('manager approve → ok', appr.data && appr.data.success === true, appr.data);
-    const posted = await j('POST', `/erp/gl/journals/${jid}/post`, T.manager, {});
-    check('manager post → ok', posted.data && posted.data.success === true, posted.data);
+    // ── 3. approve + post lifecycle — checker (manager2) ≠ creator (manager) ──
+    // Tier A.2 — glTransitions.js's maker/checker enforcement means the
+    // CREATOR approving their own journal is denied; manager2 here is a
+    // different user, so this correctly proves the happy path still works.
+    const appr = await j('POST', `/erp/gl/journals/${jid}/approve`, T.manager2, { username: 'HACKER' });
+    check('manager2 (different user) approve → ok', appr.data && appr.data.success === true, appr.data);
+    const posted = await j('POST', `/erp/gl/journals/${jid}/post`, T.manager2, {});
+    check('manager2 post → ok', posted.data && posted.data.success === true, posted.data);
     // cashier cannot post
     const cashPost = await j('POST', `/erp/gl/journals/${jid}/post`, T.cashier, {});
     check('cashier post → 403', cashPost.status === 403, { status: cashPost.status });
@@ -181,9 +202,17 @@ async function main() {
     check('no exception', false, e && e.message);
     console.log(childLog.slice(-2000));
   } finally {
-    // cleanup — delete journals (admin/dev) then accounts
-    for (const id of madeJournals) { try { await api('DELETE', '/erp/gl/journals/' + id, T.admin); } catch (_) {} }
+    // cleanup — direct SQL for journals (this is fixture reclamation, not a
+    // business operation; the API's DELETE correctly REFUSES a posted
+    // journal, and mgrCreate's journal above is posted by the time cleanup
+    // runs, so calling the API here would silently leak it — see the note
+    // on the `db` require above), then accounts via the API.
+    for (const id of madeJournals) {
+      try { await db.query('DELETE FROM gl_entries WHERE journal_id = ?', [id]); } catch (_) {}
+      try { await db.query('DELETE FROM gl_journals WHERE id = ?', [id]); } catch (_) {}
+    }
     for (const id of madeAccounts.reverse()) { try { await api('DELETE', '/erp/gl/accounts/' + id, T.admin); } catch (_) {} }
+    try { await db.end(); } catch (_) {}
     child.kill('SIGKILL');
   }
 

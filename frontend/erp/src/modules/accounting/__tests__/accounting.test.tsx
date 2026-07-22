@@ -32,34 +32,120 @@ beforeEach(() => {
   get.mockReset();
 });
 
+function baseTrialBalanceRow(overrides: Record<string, unknown> = {}) {
+  return {
+    accountId: "a1",
+    code: "1101",
+    nameAr: "الصندوق",
+    type: "asset",
+    parentId: null,
+    level: 1,
+    hasChildren: false,
+    isFolder: false,
+    isPostingLeaf: true,
+    isActive: true,
+    isCycleMember: false,
+    opening: 100,
+    openDebit: 100,
+    openCredit: 0,
+    periodDebit: 50,
+    periodCredit: 20,
+    net: 30,
+    closing: 130,
+    closeDebit: 130,
+    closeCredit: 0,
+    abnormalSign: false,
+    journalCount: 1,
+    ...overrides,
+  };
+}
+function baseTrialBalanceTotals(overrides: Record<string, unknown> = {}) {
+  return {
+    openDebit: 100, openCredit: 0, opening: 100,
+    periodDebit: 50, periodCredit: 20,
+    closing: 130, closeDebit: 130, closeCredit: 0,
+    isOpeningBalanced: true, isPeriodBalanced: true, isClosingBalanced: true,
+    isBalanced: true, abnormalCount: 0,
+    ...overrides,
+  };
+}
+
 describe("TrialBalance", () => {
   it("renders rows returned by the (mocked) apiClient", async () => {
     get.mockResolvedValue({
       success: true,
-      rows: [
-        {
-          accountId: "a1",
-          code: "1101",
-          nameAr: "الصندوق",
-          type: "asset",
-          parentId: null,
-          level: 1,
-          hasChildren: false,
-          opening: 100,
-          periodDebit: 50,
-          periodCredit: 20,
-          net: 30,
-          closing: 130,
-          rowCount: 1,
-        },
-      ],
-      totals: { opening: 100, periodDebit: 50, periodCredit: 20, closing: 130, isBalanced: true },
+      isClean: true,
+      rows: [baseTrialBalanceRow()],
+      totals: baseTrialBalanceTotals(),
     });
 
     wrap(<TrialBalancePage />);
     expect(await screen.findByText("الصندوق")).toBeInTheDocument();
     // The trial-balance endpoint was hit with the exact legacy path.
     expect(get).toHaveBeenCalledWith("/erp/reports/trial-balance", expect.anything());
+  });
+
+  it("Tier A.1 corrective gate: displays the SERVER's totals, never a client-side re-sum of root rows", async () => {
+    // Two depths (a root folder rolling up its own child leaf) so a naive
+    // "sum root-level rows" algorithm — the exact bug this test guards
+    // against — would compute periodDebit = 300 (the root's own rolled-up
+    // figure). The server total below is deliberately a THIRD, unrelated
+    // number that could never arise from summing anything shown in these
+    // rows, so if the UI ever recomputes client-side instead of reading
+    // `totals` from the response, this assertion fails loudly.
+    get.mockResolvedValue({
+      success: true,
+      isClean: false,
+      rows: [
+        baseTrialBalanceRow({
+          accountId: "root-1", code: "1", nameAr: "الأصول", parentId: null,
+          level: 1, hasChildren: true, isFolder: true, isPostingLeaf: false,
+          periodDebit: 300, periodCredit: 0, closing: 300, closeDebit: 300, closeCredit: 0,
+        }),
+        baseTrialBalanceRow({
+          accountId: "leaf-1", code: "1101", nameAr: "الصندوق", parentId: "root-1",
+          level: 2, hasChildren: false, isFolder: false, isPostingLeaf: true,
+          periodDebit: 300, periodCredit: 0, closing: 300, closeDebit: 300, closeCredit: 0,
+        }),
+      ],
+      totals: baseTrialBalanceTotals({
+        periodDebit: 987654, periodCredit: 987654, closing: 987654, closeDebit: 987654, closeCredit: 987654,
+        isOpeningBalanced: false, isPeriodBalanced: false, isClosingBalanced: false, isBalanced: false,
+      }),
+      diagnostics: {
+        nullAccountOpening: { count: 2, debit: 40, credit: 40 },
+        nullAccountPeriod: { count: 0, debit: 0, credit: 0 },
+        danglingAccountOpening: { count: 0, debit: 0, credit: 0 },
+        danglingAccountPeriod: { count: 0, debit: 0, credit: 0 },
+        futureDatedOpeningJournals: { count: 0, debit: 0, credit: 0 },
+        grossHistoricalMovement: { debit: 0, credit: 0 },
+        orphanAccounts: [],
+        nonLeafPostingActivity: [], cycleAccounts: [], levelMismatches: [],
+        unbalancedJournals: [], headerLineMismatches: [],
+        note: "test",
+      },
+    });
+
+    wrap(<TrialBalancePage />);
+    await screen.findByText("الصندوق");
+
+    // The FOOTER (Grand Total row) must show the server's improbable total
+    // (987654) — individual line rows legitimately still show 300 each
+    // (that's real per-account data), so the proof has to be scoped to the
+    // footer specifically, not "987,654 appears somewhere on the page".
+    // Money is formatted "en-US", 2 decimals (see components.tsx `NUM`).
+    const tfoot = await screen.findByText("الإجمالي").then((el) => el.closest("tfoot"));
+    expect(tfoot).toBeTruthy();
+    expect(tfoot!.textContent).toContain("987,654.00");
+    expect(tfoot!.textContent).not.toContain("300.00");
+    expect(tfoot!.textContent).not.toContain("600.00");
+
+    // All three independent balance chips reflect the server's flags, and
+    // the diagnostics warning (isClean:false, 2 null-account entries) shows.
+    expect(await screen.findByText(/غير متوازن — أول المدة/)).toBeInTheDocument();
+    expect(await screen.findByText(/غير متوازن — حركة الفترة/)).toBeInTheDocument();
+    expect(await screen.findByText(/غير متوازن — آخر المدة/)).toBeInTheDocument();
+    expect(await screen.findByText(/تنبيه: التقرير غير Clean/)).toBeInTheDocument();
   });
 });
 

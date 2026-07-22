@@ -205,12 +205,19 @@ router.get('/items', async (req, res) => {
     const where = ['ii.deleted_at IS NULL']; const params = [];
     if (status === 'active') where.push('ii.active=1'); else if (status === 'inactive') where.push('ii.active=0');
     if (category) { where.push('ii.category=?'); params.push(category); }
+    if (req.query.unit) { where.push('ii.unit=?'); params.push(String(req.query.unit)); }
+    // The redesigned list ships a "missing English name" facet driving the
+    // name-completion workflow — filter the rows whose name_en is blank.
+    if (String(req.query.missingNameEn) === '1') where.push("(ii.name_en IS NULL OR ii.name_en = '')");
     if (p.q) {
       // Phase W4 — also match the (normalized) barcode so a scanner typing into
       // the search box finds the item directly (primary + secondary codes).
       const bq = require('../lib/barcode').normalize(p.q);
-      where.push('(ii.name LIKE ? OR ii.sku LIKE ? OR ii.barcode_norm=? OR EXISTS (SELECT 1 FROM item_barcodes ib WHERE ib.item_id=ii.id AND ib.code_norm=?))');
-      params.push('%' + p.q + '%', '%' + p.q + '%', bq, bq);
+      // Search Arabic name, English name, SKU, and (normalized) barcode so the
+      // one search box works in either UI language — the redesigned list shows a
+      // name_en column, so it must be searchable too.
+      where.push('(ii.name LIKE ? OR ii.name_en LIKE ? OR ii.sku LIKE ? OR ii.barcode_norm=? OR EXISTS (SELECT 1 FROM item_barcodes ib WHERE ib.item_id=ii.id AND ib.code_norm=?))');
+      params.push('%' + p.q + '%', '%' + p.q + '%', '%' + p.q + '%', bq, bq);
     }
     let join = '';
     if (warehouseId) { join = ' JOIN warehouse_stock ws ON ws.item_id=ii.id AND ws.warehouse_id=?'; params.unshift(warehouseId); }

@@ -1,7 +1,20 @@
 -- ════════════════════════════════════════════════════════════════════
--- 0017_user_preferences.sql
+-- 0022_user_preferences.sql
 -- ────────────────────────────────────────────────────────────────────
 -- Sprint 3 (A2) — bilingual-i18n / per-user preferences.
+--
+-- RENUMBERED 0017 -> 0022 during the release integration merge. The
+-- accounting branch had independently renumbered 0013_bilingual_catalog.sql
+-- to 0017_bilingual_catalog.sql, so both branches ended up claiming 0017.
+-- Git merges the two cleanly — different filenames, both pure additions —
+-- but db/migrate.js keys its ledger on the 4-digit prefix (`version` is the
+-- PRIMARY KEY of _migrations), so whichever file ran second would hit
+-- ER_DUP_ENTRY on that INSERT and `node db/migrate.js` would exit 1. That
+-- command is now release step 2/3, so the collision would have failed every
+-- deploy — and it would never have surfaced as a merge conflict. THIS file
+-- was the one renumbered because it has never been applied anywhere, whereas
+-- 0017_bilingual_catalog.sql's number is already referenced by
+-- db/migrations/README.md's guarded-DDL registry.
 --
 -- WHAT THIS MIGRATION DOES:
 --   1) user_preferences — one row per user (PK = username), holding a

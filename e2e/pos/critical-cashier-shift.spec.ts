@@ -44,12 +44,23 @@ const mysql = require("mysql2/promise");
 const CASHIER_USERNAME = "test.cashier";
 const OPENING_FLOAT = 200;
 
-// This exact scratchpad file is the source of truth for the cashier's CURRENT
-// real password (never hardcoded, never logged) — see the task's own mandate.
-// It is read fresh in beforeAll and overwritten in afterAll so the value
-// stored here always matches what's actually in the database.
+// This file is the source of truth for the cashier's CURRENT real password
+// (never hardcoded as a user secret, never logged). It is read fresh in
+// beforeAll and overwritten in afterAll so the stored value always matches
+// what is actually in the database.
+//
+// Release-Candidate gate — this used to be an ABSOLUTE path pointing into one
+// particular Claude session's scratchpad directory
+// (…\claude\<project>\57b1b816-a57e-4200-95f4-fc3dfbc9ef99\scratchpad\…), so
+// the spec could only ever run inside that one session: every other run died
+// in beforeAll with ENOENT before a single assertion executed. Confirmed
+// pre-existing rather than a merge regression — the line is byte-identical on
+// origin/main. An explicit E2E_ACCOUNTS_FILE wins; otherwise the handoff file
+// lives in the repo's own gitignored artifacts/ directory, so it is portable
+// across machines and sessions and still never committed.
 const SCRATCHPAD_ACCOUNTS_FILE =
-  "C:\\Users\\5CF8~1\\AppData\\Local\\Temp\\claude\\C--Users------------Downloads-moroccan-taste-pos-main\\57b1b816-a57e-4200-95f4-fc3dfbc9ef99\\scratchpad\\test-accounts.txt";
+  process.env.E2E_ACCOUNTS_FILE ||
+  path.join(process.cwd(), "artifacts", "e2e", "test-accounts.txt");
 const CASHIER_BLOCK_MARKER = "[CASHIER (branch + warehouse)]";
 
 // The password this spec ALWAYS resets the account back to in afterAll — a
@@ -88,13 +99,67 @@ function readCashierPassword(): string {
  *  block (custody, manager) and all commentary untouched. Best-effort: a
  *  missing marker must never throw out of afterAll. */
 function writeCashierPassword(newPassword: string): void {
+  fs.mkdirSync(path.dirname(SCRATCHPAD_ACCOUNTS_FILE), { recursive: true });
+  // No handoff file yet (fresh machine / fresh checkout) — create one rather
+  // than silently returning, which is what left the next run with nothing to
+  // read.
+  if (!fs.existsSync(SCRATCHPAD_ACCOUNTS_FILE)) {
+    fs.writeFileSync(
+      SCRATCHPAD_ACCOUNTS_FILE,
+      `${CASHIER_BLOCK_MARKER}\nusername: ${CASHIER_USERNAME}\npassword: ${newPassword}\n`,
+      "utf8",
+    );
+    return;
+  }
   const original = fs.readFileSync(SCRATCHPAD_ACCOUNTS_FILE, "utf8");
   const idx = original.indexOf(CASHIER_BLOCK_MARKER);
-  if (idx === -1) return;
+  if (idx === -1) {
+    fs.appendFileSync(
+      SCRATCHPAD_ACCOUNTS_FILE,
+      `\n${CASHIER_BLOCK_MARKER}\nusername: ${CASHIER_USERNAME}\npassword: ${newPassword}\n`,
+      "utf8",
+    );
+    return;
+  }
   const before = original.slice(0, idx);
   const after = original.slice(idx);
   const updatedAfter = after.replace(/(password:\s*)\S+/, `$1${newPassword}`);
   fs.writeFileSync(SCRATCHPAD_ACCOUNTS_FILE, before + updatedAfter, "utf8");
+}
+
+/**
+ * Return the cashier's current password, bootstrapping if there is no usable
+ * handoff file.
+ *
+ * Release-Candidate gate — beforeAll used to call readCashierPassword()
+ * directly, so a missing file (a fresh machine, or the old hardcoded
+ * foreign-session path) threw ENOENT and took down all 14 tests in this file
+ * and bilingual-flow.spec.ts before anything ran. Recovery is deterministic
+ * and uses machinery this spec already has: afterAll ALWAYS resets the account
+ * to RESET_PASSWORD, so bootstrapping is simply performing that same reset up
+ * front and recording it. No new secret is introduced — RESET_PASSWORD is
+ * already a constant in this file — and the file remains the source of truth
+ * from then on.
+ */
+async function readCashierPasswordOrBootstrap(): Promise<string> {
+  try {
+    return readCashierPassword();
+  } catch {
+    const hash = await bcrypt.hash(RESET_PASSWORD, 12);
+    const [res] = await db.query(
+      "UPDATE users SET password=?, must_change_password=1, password_changed_at=NULL, " +
+      "failed_attempts=0, locked_until=NULL WHERE username=?",
+      [hash, CASHIER_USERNAME],
+    );
+    if (!res || res.affectedRows === 0) {
+      throw new Error(
+        `No handoff file at ${SCRATCHPAD_ACCOUNTS_FILE} AND no '${CASHIER_USERNAME}' account to bootstrap. ` +
+        "Create the fixture cashier first, or point E2E_ACCOUNTS_FILE at a file containing its password.",
+      );
+    }
+    writeCashierPassword(RESET_PASSWORD);
+    return RESET_PASSWORD;
+  }
 }
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -112,7 +177,8 @@ test.beforeAll(async () => {
   // leftover OPEN shift for the fixture cashier.
   await db.query("DELETE FROM shifts WHERE username = ?", [CASHIER_USERNAME]);
   // Read the account's CURRENT real password — never hardcoded, never logged.
-  seedPassword = readCashierPassword();
+  // Bootstraps itself if there is no usable handoff file yet (see the helper).
+  seedPassword = await readCashierPasswordOrBootstrap();
 });
 
 test.afterAll(async () => {

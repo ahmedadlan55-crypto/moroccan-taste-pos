@@ -257,9 +257,38 @@ async function assertHealthyPopulatedReport(page: Page) {
   await expect(page.locator('[data-state="empty"]'), "must show REAL data, not the empty-report state").toHaveCount(0);
   await expect(page.getByRole("heading", { name: "ميزان المراجعة" }).first()).toBeVisible({ timeout: 20_000 });
 
+  // Release-Candidate gate — every assertion ABOVE can pass against a report
+  // that is still FETCHING, so the content checks below have to wait for a
+  // real settle signal first. Each one is blind to loading for its own
+  // reason: data-state="loading" is deliberately NOT in BAD_STATES (loading
+  // is a legitimate state, exactly like empty), the empty-state element does
+  // not exist yet while loading, and the heading is static page chrome that
+  // paints before any data arrives. The row count then used a bare .count(),
+  // which — unlike expect().toHaveCount() — is a ONE-SHOT read with no
+  // auto-retry, so it sampled an empty tbody and failed.
+  //
+  // That is exactly what happened: this assertion failed once on `desktop`
+  // and once on `tablet-768`, in different runs, while the other three
+  // viewport projects passed against the SAME database in the SAME run.
+  // Same data, same moment, different viewport is the signature of a race,
+  // not of missing data. So the fix waits for the fetch to settle; it does
+  // NOT relax what is asserted — every check below is unchanged in strength.
+  await expect(
+    page.locator('[data-state="loading"]'),
+    "the report must finish loading before its contents are judged",
+  ).toHaveCount(0, { timeout: 30_000 });
+  await expect(
+    main.locator("table tbody tr").first(),
+    "at least one real account row must be rendered, not just the report's chrome",
+  ).toBeVisible({ timeout: 30_000 });
+
   const rowCount = await main.locator("table tbody tr").count();
   expect(rowCount, "at least one real account row must be rendered, not just the report's chrome").toBeGreaterThan(0);
 
+  // The footer is rendered conditionally ({totals && …}) so it can also be
+  // absent mid-fetch — wait for it rather than calling innerText() on a
+  // locator that may not have resolved yet.
+  await expect(main.locator("tfoot").first(), "the totals footer must be rendered").toBeVisible({ timeout: 30_000 });
   const footerText = await main.locator("tfoot").first().innerText();
   const numbers = footerText.match(/[\d,]+\.\d{2}/g) || [];
   expect(numbers.length, "the footer must contain real parseable money figures, not blank/placeholder cells").toBeGreaterThan(0);

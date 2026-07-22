@@ -15,6 +15,7 @@ import {
 } from "@/shared/ui";
 import { Field } from "@/shared/forms";
 import { Can, useCan } from "@/shared/permissions";
+import { useT, useLang } from "@/i18n";
 import {
   useBrands,
   useMenuItems,
@@ -24,11 +25,12 @@ import {
   useSaveRecipeBom,
   makeInvItemFetcher,
   makeMenuItemFetcher,
+  menuErrorText,
   type MenuItem,
   type InvItem,
   type RecipeBomInput,
 } from "./api";
-import { Money, useBrandScope, useItemScope, BrandSelect } from "./lib";
+import { Money, useBrandScope, useItemScope, BrandSelect, useFmt, pickName } from "./lib";
 
 interface EditLine {
   key: string;
@@ -44,6 +46,8 @@ let _seq = 0;
 const nextKey = () => `ln-${Date.now()}-${_seq++}`;
 
 export function RecipesBom() {
+  const t = useT();
+  const lang = useLang();
   const { brandId, setBrandId } = useBrandScope();
   const { itemId, setItemId } = useItemScope();
 
@@ -64,29 +68,29 @@ export function RecipesBom() {
   return (
     <div>
       <PageHeader
-        eyebrow="القوائم والوصفات"
-        title="الوصفات ومكوّنات التصنيع"
-        subtitle="اختر صنفًا لتحرير وصفته (BOM). عند بيع الصنف تُخصم مكوّناته من مخزون الفرع."
+        eyebrow={t("menuRest.eyebrow")}
+        title={t("menuRest.recipes.title")}
+        subtitle={t("menuRest.recipes.subtitle")}
       />
 
       <Card className="mb-6 flex flex-col gap-3 p-5 sm:flex-row sm:items-end">
         <div className="w-full sm:w-56">
-          <label className="mb-1 block text-xs font-bold text-slate-600">العلامة التجارية</label>
+          <label className="mb-1 block text-xs font-bold text-slate-600">{t("menuRest.fields.brand")}</label>
           <BrandSelect brands={brandsQ.data ?? []} value={brandId} onChange={(v) => { setBrandId(v); setItemId(""); }} className="w-full" />
         </div>
         <div className="min-w-0 flex-1">
-          <label className="mb-1 block text-xs font-bold text-slate-600">الصنف</label>
+          <label className="mb-1 block text-xs font-bold text-slate-600">{t("menuRest.fields.item")}</label>
           <SearchableEntityCombobox<MenuItem>
             value={selectedItem}
             onChange={(v) => setItemId(v?.id ?? "")}
             fetcher={makeMenuItemFetcher(menuItems)}
             queryKey={["menu", "recipe-item-picker", brandId]}
             getKey={(i) => i.id}
-            getLabel={(i) => i.name}
-            getSublabel={(i) => [i.category, hasRecipe(i) ? "له وصفة" : "بلا وصفة"].filter(Boolean).join(" · ") || undefined}
-            placeholder="ابحث عن صنف لتحرير وصفته…"
-            ariaLabel="اختيار صنف"
-            emptyText="لا توجد أصناف مطابقة."
+            getLabel={(i) => pickName(i.name, i.nameEn, lang)}
+            getSublabel={(i) => [i.category, hasRecipe(i) ? t("menuRest.recipes.hasRecipe") : t("menuRest.recipes.noRecipe")].filter(Boolean).join(" · ") || undefined}
+            placeholder={t("menuRest.recipes.searchItemPlaceholder")}
+            ariaLabel={t("menuRest.aria.selectItem")}
+            emptyText={t("menuRest.combobox.noItems")}
           />
         </div>
       </Card>
@@ -94,7 +98,7 @@ export function RecipesBom() {
       {itemsQ.isLoading ? (
         <LoadingState rows={2} />
       ) : !selectedItem ? (
-        <EmptyState icon={<ChefHat className="h-6 w-6" />} title="اختر صنفًا" body="اختر صنفًا من الأعلى لعرض أو تحرير وصفته ومكوّناته." />
+        <EmptyState icon={<ChefHat className="h-6 w-6" />} title={t("menuRest.recipes.pickItemTitle")} body={t("menuRest.recipes.pickItemBody")} />
       ) : (
         <RecipeEditor key={selectedItem.id} item={selectedItem} brandId={brandId} />
       )}
@@ -103,6 +107,8 @@ export function RecipesBom() {
 }
 
 function RecipeEditor({ item, brandId }: { item: MenuItem; brandId: string }) {
+  const t = useT();
+  const fmt = useFmt();
   const { toast } = useToast();
   const canManage = useCan("menu.recipes.manage");
   const bomQ = useRecipeBom(item.id);
@@ -172,8 +178,8 @@ function RecipeEditor({ item, brandId }: { item: MenuItem; brandId: string }) {
     save.mutate(
       { menuId: item.id, input },
       {
-        onSuccess: (res) => toast({ title: "تم حفظ الوصفة", description: res.computedCost != null ? `التكلفة المحسوبة: ${res.computedCost.toFixed(2)} ر.س` : undefined, tone: "success" }),
-        onError: (e: Error) => toast({ title: "تعذّر حفظ الوصفة", description: e.message, tone: "error" }),
+        onSuccess: (res) => toast({ title: t("menuRest.recipes.savedTitle"), description: res.computedCost != null ? t("menuRest.recipes.computedCost", { cost: fmt.money(res.computedCost) }) : undefined, tone: "success" }),
+        onError: (e: Error) => toast({ title: t("menuRest.recipes.saveFailed"), description: menuErrorText(e, t), tone: "error" }),
       },
     );
   }
@@ -185,19 +191,19 @@ function RecipeEditor({ item, brandId }: { item: MenuItem; brandId: string }) {
     <div className="space-y-6">
       {bomQ.data?.hasLegacyRecipe && (
         <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm font-medium text-amber-700">
-          هذه الوصفة مُخزّنة بالنظام القديم. حفظها الآن سيحوّلها إلى صيغة BOM الحديثة.
+          {t("menuRest.recipes.legacyWarning")}
         </div>
       )}
 
       <Card className="p-5">
         <div className="mb-4 grid gap-4 sm:grid-cols-3">
-          <Field label="كمية الإنتاج (Yield)">
+          <Field label={t("menuRest.recipes.yieldQty")}>
             {({ id }) => <NumberInput id={id} value={yieldQty} onChange={setYieldQty} min={0.0001} step="any" disabled={!canManage} />}
           </Field>
-          <Field label="وحدة الإنتاج">
+          <Field label={t("menuRest.recipes.yieldUnit")}>
             {({ id }) => <Input id={id} value={yieldUnit} onChange={(e) => setYieldUnit(e.target.value)} disabled={!canManage} />}
           </Field>
-          <Field label="ملاحظات (اختياري)">
+          <Field label={t("menuRest.recipes.notesOptional")}>
             {({ id }) => <Input id={id} value={notes} onChange={(e) => setNotes(e.target.value)} disabled={!canManage} />}
           </Field>
         </div>
@@ -206,7 +212,7 @@ function RecipeEditor({ item, brandId }: { item: MenuItem; brandId: string }) {
         <div className="space-y-3">
           {lines.length === 0 && (
             <p className="rounded-xl border border-dashed border-slate-200 px-4 py-6 text-center text-sm font-medium text-slate-400">
-              لا توجد مكوّنات بعد. أضف مكوّنًا لبدء الوصفة.
+              {t("menuRest.recipes.noLines")}
             </p>
           )}
           {lines.map((l) => {
@@ -227,19 +233,19 @@ function RecipeEditor({ item, brandId }: { item: MenuItem; brandId: string }) {
                     getKey={(i) => i.id}
                     getLabel={(i) => i.name}
                     getSublabel={(i) => `${i.category || ""}${i.unit ? " · " + i.unit : ""}`.trim() || undefined}
-                    placeholder="اختر مكوّنًا من المخزون…"
-                    ariaLabel="اختيار مكوّن"
+                    placeholder={t("menuRest.recipes.pickComponentPlaceholder")}
+                    ariaLabel={t("menuRest.aria.selectComponent")}
                     disabled={!canManage}
-                    emptyText="لا مكوّنات مطابقة."
+                    emptyText={t("menuRest.combobox.noComponents")}
                   />
                 </div>
-                <NumberInput value={l.quantity} onChange={(v) => patchLine(l.key, { quantity: v })} min={0} step="any" invalid={qtyInvalid} suffix={l.unit} aria-label="الكمية" disabled={!canManage} />
-                <Input value={l.unit} onChange={(e) => patchLine(l.key, { unit: e.target.value })} aria-label="الوحدة" disabled={!canManage} />
-                <NumberInput value={l.wastePct} onChange={(v) => patchLine(l.key, { wastePct: v })} min={0} step="any" suffix="٪" aria-label="نسبة الهدر" disabled={!canManage} />
+                <NumberInput value={l.quantity} onChange={(v) => patchLine(l.key, { quantity: v })} min={0} step="any" invalid={qtyInvalid} suffix={l.unit} aria-label={t("menuRest.aria.quantity")} disabled={!canManage} />
+                <Input value={l.unit} onChange={(e) => patchLine(l.key, { unit: e.target.value })} aria-label={t("menuRest.aria.unit")} disabled={!canManage} />
+                <NumberInput value={l.wastePct} onChange={(v) => patchLine(l.key, { wastePct: v })} min={0} step="any" suffix={t("menuRest.units.percent")} aria-label={t("menuRest.recipes.wasteAria")} disabled={!canManage} />
                 <div className="flex items-center justify-between gap-2 md:justify-end">
                   <Money value={lineCost(l)} className="text-xs font-bold text-slate-500" />
                   {canManage && (
-                    <IconButton size="sm" aria-label="حذف المكوّن" onClick={() => removeLine(l.key)}>
+                    <IconButton size="sm" aria-label={t("menuRest.recipes.deleteComponent")} onClick={() => removeLine(l.key)}>
                       <Trash2 className="h-4 w-4 text-rose-500" />
                     </IconButton>
                   )}
@@ -252,7 +258,7 @@ function RecipeEditor({ item, brandId }: { item: MenuItem; brandId: string }) {
         {canManage && (
           <div className="mt-3">
             <Button variant="secondary" size="sm" onClick={addLine}>
-              <Plus className="h-4 w-4" /> إضافة مكوّن
+              <Plus className="h-4 w-4" /> {t("menuRest.recipes.addComponent")}
             </Button>
           </div>
         )}
@@ -262,22 +268,22 @@ function RecipeEditor({ item, brandId }: { item: MenuItem; brandId: string }) {
       <div className="flex flex-col items-stretch justify-between gap-3 rounded-xl border border-slate-200 bg-white p-4 sm:flex-row sm:items-center">
         <div className="flex flex-wrap gap-6">
           <div>
-            <div className="text-[11px] font-bold text-slate-400">إجمالي تكلفة المكوّنات</div>
+            <div className="text-[11px] font-bold text-slate-400">{t("menuRest.recipes.totalCost")}</div>
             <Money value={totalCost} className="text-lg font-extrabold text-slate-800" />
           </div>
           <div>
-            <div className="text-[11px] font-bold text-slate-400">تكلفة الوحدة المنتجة</div>
+            <div className="text-[11px] font-bold text-slate-400">{t("menuRest.recipes.unitCost")}</div>
             <Money value={unitCost} className="text-lg font-extrabold text-slate-800" />
           </div>
         </div>
         <Can cap="menu.recipes.manage">
           <Button onClick={submit} loading={save.isPending} disabled={!canSave}>
-            <Save className="h-4 w-4" /> حفظ الوصفة
+            <Save className="h-4 w-4" /> {t("menuRest.recipes.saveRecipe")}
           </Button>
         </Can>
       </div>
       {!canManage && (
-        <p className="text-xs font-medium text-slate-400">عرض فقط — تحتاج صلاحية إدارة الوصفات للتعديل.</p>
+        <p className="text-xs font-medium text-slate-400">{t("menuRest.recipes.viewOnly")}</p>
       )}
     </div>
   );

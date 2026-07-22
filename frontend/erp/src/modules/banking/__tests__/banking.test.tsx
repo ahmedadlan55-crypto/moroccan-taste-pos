@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach, type Mock } from "vitest";
 import { render, screen } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { I18nProvider } from "@/i18n";
 import type { ReactNode } from "react";
 
 vi.mock("@/shared/api", async (importOriginal) => {
@@ -18,7 +19,11 @@ const get = apiClient.get as Mock;
 
 function wrap(ui: ReactNode) {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-  return render(<QueryClientProvider client={qc}>{ui}</QueryClientProvider>);
+  return render(
+    <QueryClientProvider client={qc}>
+      <I18nProvider>{ui}</I18nProvider>
+    </QueryClientProvider>,
+  );
 }
 
 beforeEach(() => get.mockReset());

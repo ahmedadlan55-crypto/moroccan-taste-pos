@@ -2,6 +2,7 @@ import type { ReactNode } from "react";
 import { QueryProvider } from "./query-provider";
 import { AuthProvider } from "./auth-provider";
 import { PermissionProvider } from "./permission-provider";
+import { LanguagePreferenceSync } from "./language-sync";
 import { ToastProvider } from "@/shared/ui";
 
 // App-wide providers, composed once. Order matters: QueryProvider wraps
@@ -13,6 +14,9 @@ export function AppProviders({ children }: { children: ReactNode }) {
   return (
     <QueryProvider>
       <AuthProvider>
+        {/* Hydrates the per-user saved UI language once a session exists;
+            renders nothing and never blocks boot. */}
+        <LanguagePreferenceSync />
         <PermissionProvider>
           <ToastProvider>{children}</ToastProvider>
         </PermissionProvider>

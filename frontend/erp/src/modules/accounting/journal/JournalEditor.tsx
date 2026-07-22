@@ -21,6 +21,7 @@ import {
 } from "@/shared/ui";
 import { Field } from "@/shared/forms";
 import { useCan } from "@/app/providers";
+import { useT } from "@/i18n";
 import {
   todayISO,
   useBranches,
@@ -67,6 +68,7 @@ function seedLines(journal: Journal | null): JournalLine[] {
 }
 
 export function JournalEditor({ journal, onDone }: JournalEditorProps) {
+  const t = useT();
   const canCreate = useCan(CREATE_CAP);
   const canPost = useCan(POST_CAP);
   const canReverse = useCan(REVERSE_CAP);
@@ -87,18 +89,18 @@ export function JournalEditor({ journal, onDone }: JournalEditorProps) {
       {
         onSuccess: (res) => {
           if (res && res.success === false) {
-            setReverseError(mapJournalError(res.error));
+            setReverseError(mapJournalError(t, res.error));
             return;
           }
           toast({
             tone: "success",
-            title: "تم عكس القيد",
-            description: res.newJournalNumber ? `القيد العكسي: ${res.newJournalNumber}` : undefined,
+            title: t("accounting.journal.toast.reversed"),
+            description: res.newJournalNumber ? t("accounting.journal.toast.reversedDesc", { number: res.newJournalNumber }) : undefined,
           });
           setReverseOpen(false);
           onDone();
         },
-        onError: (e) => setReverseError(mapJournalError(e instanceof Error ? e.message : "")),
+        onError: (e) => setReverseError(mapJournalError(t, e instanceof Error ? e.message : "")),
       },
     );
   }
@@ -107,7 +109,7 @@ export function JournalEditor({ journal, onDone }: JournalEditorProps) {
     return (
       <div>
         <div className="mb-4 rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm font-bold text-amber-700">
-          هذا القيد مُرحَّل ومحفوظ — للتصحيح أنشئ قيدًا عكسيًا.
+          {t("accounting.journal.editor.postedBanner")}
         </div>
         <JournalDetail
           journal={journal}
@@ -116,12 +118,12 @@ export function JournalEditor({ journal, onDone }: JournalEditorProps) {
         />
         <ConfirmDialog
           open={reverseOpen}
-          title="عكس القيد"
-          description="سيُنشأ قيد عكسي معاكس لهذا القيد. اذكر سبب العكس للتوثيق."
+          title={t("accounting.journal.editor.reverseTitle")}
+          description={t("accounting.journal.editor.reverseDesc")}
           tone="danger"
-          confirmLabel="تأكيد العكس"
+          confirmLabel={t("accounting.journal.editor.reverseConfirm")}
           requireReason
-          reasonLabel="سبب العكس"
+          reasonLabel={t("accounting.journal.editor.reverseReason")}
           processing={reverse.isPending}
           error={reverseError}
           onConfirm={confirmReverse}
@@ -143,6 +145,7 @@ interface JournalFormProps {
 }
 
 function JournalForm({ journal, onDone, canCreate, canPost }: JournalFormProps) {
+  const t = useT();
   const { toast } = useToast();
 
   // Header state
@@ -160,7 +163,7 @@ function JournalForm({ journal, onDone, canCreate, canPost }: JournalFormProps) 
 
   // Attachment (base64 data URL, rides inline in the payload)
   const [attachment, setAttachment] = useState<string | null>(journal?.attachment ?? null);
-  const [attachmentName, setAttachmentName] = useState<string>(journal?.attachment ? "مرفق" : "");
+  const [attachmentName, setAttachmentName] = useState<string>(journal?.attachment ? t("accounting.journal.attachmentDefault") : "");
 
   const [formError, setFormError] = useState<string | null>(null);
 
@@ -205,7 +208,7 @@ function JournalForm({ journal, onDone, canCreate, canPost }: JournalFormProps) 
       setAttachment(typeof reader.result === "string" ? reader.result : null);
       setAttachmentName(file.name);
     };
-    reader.onerror = () => toast({ tone: "error", title: "تعذّرت قراءة الملف." });
+    reader.onerror = () => toast({ tone: "error", title: t("accounting.journal.editor.fileReadError") });
     reader.readAsDataURL(file);
   }
 
@@ -260,7 +263,7 @@ function JournalForm({ journal, onDone, canCreate, canPost }: JournalFormProps) 
       if (res && res.success === false) throw new Error(res.error || "");
       return res.id;
     } catch (e) {
-      const msg = mapJournalError(e instanceof Error ? e.message : "");
+      const msg = mapJournalError(t, e instanceof Error ? e.message : "");
       setFormError(msg);
       toast({ tone: "error", title: msg });
       return null;
@@ -270,7 +273,7 @@ function JournalForm({ journal, onDone, canCreate, canPost }: JournalFormProps) 
   async function onSaveDraft() {
     const id = await persist();
     if (!id) return;
-    toast({ tone: "success", title: journal?.id ? "تم حفظ التعديلات." : "تم حفظ القيد كمسودة." });
+    toast({ tone: "success", title: journal?.id ? t("accounting.journal.toast.updated") : t("accounting.journal.toast.savedDraft") });
     onDone();
   }
 
@@ -279,17 +282,17 @@ function JournalForm({ journal, onDone, canCreate, canPost }: JournalFormProps) 
     if (!id) return;
     try {
       await postJournal.mutateAsync({ id, status: "draft" });
-      toast({ tone: "success", title: "تم حفظ القيد وترحيله." });
+      toast({ tone: "success", title: t("accounting.journal.toast.savedAndPosted") });
       onDone();
     } catch (e) {
-      const msg = mapJournalError(e instanceof Error ? e.message : "");
+      const msg = mapJournalError(t, e instanceof Error ? e.message : "");
       setFormError(msg);
       toast({ tone: "error", title: msg });
     }
   }
 
   const attachmentList: Attachment[] = attachment
-    ? [{ id: "att", name: attachmentName || "مرفق", url: attachment }]
+    ? [{ id: "att", name: attachmentName || t("accounting.journal.attachmentDefault"), url: attachment }]
     : [];
 
   return (
@@ -297,26 +300,26 @@ function JournalForm({ journal, onDone, canCreate, canPost }: JournalFormProps) 
       {/* Header card */}
       <div className="surface p-5">
         <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-          <Field label="تاريخ القيد" required>
+          <Field label={t("accounting.journal.editor.date")} required>
             <DatePicker value={journalDate} onChange={setJournalDate} />
           </Field>
-          <Field label="الوصف" required className="sm:col-span-2">
+          <Field label={t("accounting.journal.editor.description")} required className="sm:col-span-2">
             <Input
               value={description}
               onChange={(e) => {
                 setFormError(null);
                 setDescription(e.target.value);
               }}
-              placeholder="وصف القيد بالعربية"
+              placeholder={t("accounting.journal.editor.descPlaceholder")}
             />
           </Field>
-          <Field label="الوصف بالإنجليزية">
+          <Field label={t("accounting.journal.editor.descEn")}>
             <Input value={notes} dir="ltr" onChange={(e) => setNotes(e.target.value)} />
           </Field>
 
-          <Field label="البراند">
+          <Field label={t("accounting.journal.editor.brand")}>
             <Select value={brandId} onChange={(e) => setBrandId(e.target.value)}>
-              <option value="">— الكل —</option>
+              <option value="">{t("accounting.journal.editor.optAll")}</option>
               {(brands.data ?? []).map((b) => (
                 <option key={b.id} value={b.id}>
                   {b.name}
@@ -324,9 +327,9 @@ function JournalForm({ journal, onDone, canCreate, canPost }: JournalFormProps) 
               ))}
             </Select>
           </Field>
-          <Field label="الفرع">
+          <Field label={t("accounting.journal.editor.branch")}>
             <Select value={branchId} onChange={(e) => setBranchId(e.target.value)}>
-              <option value="">— الكل —</option>
+              <option value="">{t("accounting.journal.editor.optAll")}</option>
               {(branches.data ?? []).map((b) => (
                 <option key={b.id} value={b.id}>
                   {b.name}
@@ -334,9 +337,9 @@ function JournalForm({ journal, onDone, canCreate, canPost }: JournalFormProps) 
               ))}
             </Select>
           </Field>
-          <Field label="المشروع">
+          <Field label={t("accounting.journal.editor.project")}>
             <Select value={projectId} onChange={(e) => setProjectId(e.target.value)}>
-              <option value="">— بدون —</option>
+              <option value="">{t("accounting.journal.editor.optNone")}</option>
               {(projects.data ?? []).map((p) => (
                 <option key={p.id} value={p.id}>
                   {p.code ? `${p.code} — ${p.nameAr}` : p.nameAr}
@@ -344,9 +347,9 @@ function JournalForm({ journal, onDone, canCreate, canPost }: JournalFormProps) 
               ))}
             </Select>
           </Field>
-          <Field label="مركز التكلفة (يُورَّث للسطور)">
+          <Field label={t("accounting.journal.editor.costCenter")}>
             <Select value={costCenterId} onChange={(e) => setCostCenterId(e.target.value)}>
-              <option value="">— بدون —</option>
+              <option value="">{t("accounting.journal.editor.optNone")}</option>
               {costCenterOptions.map((c) => (
                 <option key={c.id} value={c.id}>
                   {c.label}
@@ -357,7 +360,7 @@ function JournalForm({ journal, onDone, canCreate, canPost }: JournalFormProps) 
 
           <label className="flex items-center gap-3 self-end pb-2">
             <Toggle checked={isOpening} onChange={setIsOpening} />
-            <span className="text-sm font-bold text-slate-700">قيد افتتاحي</span>
+            <span className="text-sm font-bold text-slate-700">{t("accounting.journal.editor.opening")}</span>
           </label>
         </div>
       </div>
@@ -365,9 +368,9 @@ function JournalForm({ journal, onDone, canCreate, canPost }: JournalFormProps) 
       {/* Lines card */}
       <div className="surface overflow-hidden">
         <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-100 px-5 py-3">
-          <h3 className="text-base font-extrabold text-slate-900">بنود القيد</h3>
+          <h3 className="text-base font-extrabold text-slate-900">{t("accounting.journal.editor.lines")}</h3>
           <Button variant="secondary" onClick={addLine}>
-            <Plus className="h-4 w-4" /> إضافة سطر
+            <Plus className="h-4 w-4" /> {t("accounting.journal.editor.addLine")}
           </Button>
         </div>
 
@@ -375,11 +378,11 @@ function JournalForm({ journal, onDone, canCreate, canPost }: JournalFormProps) 
           <table className="w-full min-w-[52rem] text-sm">
             <thead>
               <tr className="border-b border-slate-100 text-[11px] font-extrabold text-slate-500">
-                <th className="px-2 py-2 text-right">الحساب</th>
-                <th className="px-2 py-2 text-left">مدين</th>
-                <th className="px-2 py-2 text-left">دائن</th>
-                <th className="px-2 py-2 text-right">البيان</th>
-                <th className="px-2 py-2 text-right">مركز التكلفة</th>
+                <th className="px-2 py-2 text-right">{t("accounting.common.account")}</th>
+                <th className="px-2 py-2 text-left">{t("accounting.common.debit")}</th>
+                <th className="px-2 py-2 text-left">{t("accounting.common.credit")}</th>
+                <th className="px-2 py-2 text-right">{t("accounting.common.statement")}</th>
+                <th className="px-2 py-2 text-right">{t("accounting.journal.editor.costCenterCol")}</th>
                 <th className="px-2 py-2" />
               </tr>
             </thead>
@@ -397,7 +400,7 @@ function JournalForm({ journal, onDone, canCreate, canPost }: JournalFormProps) 
             {/* RULE 2 — totals + balance footer */}
             <tfoot>
               <tr className="border-t border-slate-200 bg-slate-50 text-xs font-extrabold">
-                <td className="px-3 py-2.5 text-right">الإجمالي</td>
+                <td className="px-3 py-2.5 text-right">{t("accounting.common.total")}</td>
                 <td className="px-3 py-2.5 text-left">
                   <MoneyText value={totals.totalDebit} strong />
                 </td>
@@ -406,10 +409,10 @@ function JournalForm({ journal, onDone, canCreate, canPost }: JournalFormProps) 
                 </td>
                 <td className="px-3 py-2.5" colSpan={3}>
                   {totals.balanced ? (
-                    <span className="font-extrabold text-emerald-600">متوازن</span>
+                    <span className="font-extrabold text-emerald-600">{t("accounting.journal.editor.balanced")}</span>
                   ) : (
                     <span className="font-extrabold text-rose-600">
-                      غير متوازن — الفرق: <span dir="ltr" className="tabular-nums">{fmtMoney(totals.diff)}</span>
+                      {t("accounting.journal.editor.unbalancedPrefix")} <span dir="ltr" className="tabular-nums">{fmtMoney(totals.diff)}</span>
                     </span>
                   )}
                 </td>
@@ -421,7 +424,7 @@ function JournalForm({ journal, onDone, canCreate, canPost }: JournalFormProps) 
 
       {/* Attachment */}
       <div className="surface p-5">
-        <h3 className="mb-3 text-base font-extrabold text-slate-900">المرفق</h3>
+        <h3 className="mb-3 text-base font-extrabold text-slate-900">{t("accounting.journal.editor.attachment")}</h3>
         {attachmentList.length > 0 ? (
           <AttachmentViewer
             attachments={attachmentList}
@@ -436,7 +439,7 @@ function JournalForm({ journal, onDone, canCreate, canPost }: JournalFormProps) 
             accept="image/*,application/pdf"
             maxSize={MAX_ATTACHMENT}
             onReject={(reason) => toast({ tone: "error", title: reason })}
-            hint="أرفق صورة أو PDF (حتى 4 ميجابايت)"
+            hint={t("accounting.journal.editor.attachmentHint")}
           />
         )}
       </div>
@@ -451,16 +454,16 @@ function JournalForm({ journal, onDone, canCreate, canPost }: JournalFormProps) 
       {/* Actions */}
       <div className="flex flex-wrap items-center justify-end gap-2">
         <Button variant="secondary" onClick={onDone} disabled={busy}>
-          إلغاء
+          {t("common.cancel")}
         </Button>
         {canCreate && (
           <Button variant="secondary" onClick={onSaveDraft} loading={busy}>
-            حفظ
+            {t("common.save")}
           </Button>
         )}
         {canPost && (
           <Button variant="primary" onClick={onSaveAndPost} loading={busy}>
-            حفظ وترحيل
+            {t("accounting.journal.editor.saveAndPost")}
           </Button>
         )}
       </div>

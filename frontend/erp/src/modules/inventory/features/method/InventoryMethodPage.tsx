@@ -6,6 +6,7 @@ import {
   Button, ConfirmDialog, ErrorState, LoadingState, PageHeader, PanelTitle, StatusBadge, useToast,
 } from "@/shared/ui";
 import { usePermissions } from "@/app/providers";
+import { useT } from "@/i18n";
 
 // /inventory/method — converted from the legacy-only `erpLoadInventoryMethod`.
 //
@@ -27,30 +28,35 @@ interface MethodResponse {
   canChange: boolean;
 }
 
-const COPY: Record<Method, { title: string; body: string; cogs: string; gl: string; icon: typeof RefreshCw }> = {
-  perpetual: {
-    title: "الجرد المستمر",
-    body: "يُحدَّث المخزون وتُحتسب التكلفة مع كل حركة بيع.",
-    cogs: "لحظي (مع كل بيع)",
-    gl: "ترحيل تلقائي مع البيع",
-    icon: RefreshCw,
-  },
-  periodic: {
-    title: "الجرد الدوري",
-    body: "تُحتسب التكلفة عند الجرد في نهاية الفترة.",
-    cogs: "دوري (عند كل جرد)",
-    gl: "ترحيل عند الجرد",
-    icon: CalendarCheck,
-  },
+const METHOD_ICON: Record<Method, typeof RefreshCw> = {
+  perpetual: RefreshCw,
+  periodic: CalendarCheck,
 };
 
 export function InventoryMethodPage() {
+  const t = useT();
   const { can } = usePermissions();
   const canManage = can("inventory.method.manage");
   const { toast } = useToast();
   const qc = useQueryClient();
   const [pending, setPending] = useState<Method | null>(null);
   const [force, setForce] = useState(false);
+  const COPY: Record<Method, { title: string; body: string; cogs: string; gl: string; icon: typeof RefreshCw }> = {
+    perpetual: {
+      title: t("inventoryRest.method.perpetualTitle"),
+      body: t("inventoryRest.method.perpetualBody"),
+      cogs: t("inventoryRest.method.perpetualCogs"),
+      gl: t("inventoryRest.method.perpetualGl"),
+      icon: METHOD_ICON.perpetual,
+    },
+    periodic: {
+      title: t("inventoryRest.method.periodicTitle"),
+      body: t("inventoryRest.method.periodicBody"),
+      cogs: t("inventoryRest.method.periodicCogs"),
+      gl: t("inventoryRest.method.periodicGl"),
+      icon: METHOD_ICON.periodic,
+    },
+  };
 
   const { data, isLoading, isError, error, refetch } = useQuery({
     queryKey: ["inv", "method"],
@@ -62,15 +68,15 @@ export function InventoryMethodPage() {
       const r = await apiClient.post<{ success: boolean; blocked?: boolean; error?: string; movementsSinceLastClose?: number }>(
         "/erp/inventory-method", input,
       );
-      if (r && r.success === false) throw new Error(r.error || "تعذّر تغيير الطريقة");
+      if (r && r.success === false) throw new Error(r.error || t("inventoryRest.method.changeFailed"));
       return r;
     },
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["inv", "method"] });
-      toast({ title: "تم تغيير طريقة التقييم", tone: "success" });
+      toast({ title: t("inventoryRest.method.changed"), tone: "success" });
       setPending(null); setForce(false);
     },
-    onError: (e: Error) => toast({ title: "تعذّر تغيير الطريقة", description: e.message, tone: "error" }),
+    onError: (e: Error) => toast({ title: t("inventoryRest.method.changeFailed"), description: e.message, tone: "error" }),
   });
 
   if (isLoading) return <LoadingState />;
@@ -82,9 +88,9 @@ export function InventoryMethodPage() {
   return (
     <div className="space-y-5">
       <PageHeader
-        eyebrow="المخزون"
-        title="طريقة تقييم المخزون"
-        subtitle="تحدّد كيفية احتساب تكلفة البضاعة المباعة وترحيلها إلى الأستاذ العام (IAS 2)."
+        eyebrow={t("inventoryRest.method.eyebrow")}
+        title={t("inventoryRest.method.title")}
+        subtitle={t("inventoryRest.method.subtitle")}
       />
 
       {blocked && (
@@ -93,12 +99,12 @@ export function InventoryMethodPage() {
           <div className="space-y-1">
             <div>
               {data.movementsSinceLastClose < 0
-                ? "تعذّر التحقق من حركات المخزون، لذلك تغيير الطريقة موقوف احترازيًا."
-                : `توجد ${data.movementsSinceLastClose} حركة مخزون في فترة غير مُقفلة حُسبت تكلفتها بالطريقة الحالية.`}
+                ? t("inventoryRest.method.blockedUnknown")
+                : t("inventoryRest.method.blockedCount", { count: data.movementsSinceLastClose })}
             </div>
             <div className="font-medium">
-              تغيير الطريقة الآن يجعل تكلفة الفترة الواحدة محسوبة بطريقتين. أقفل الفترة أولًا
-              {data.lastCloseDate ? ` (آخر إقفال: ${String(data.lastCloseDate).slice(0, 10)})` : ""}.
+              {t("inventoryRest.method.blockedAdvice")}
+              {data.lastCloseDate ? t("inventoryRest.method.lastClose", { date: String(data.lastCloseDate).slice(0, 10) }) : ""}.
             </div>
           </div>
         </div>
@@ -115,19 +121,19 @@ export function InventoryMethodPage() {
                 icon={Icon}
                 title={c.title}
                 subtitle={c.body}
-                action={isActive ? <StatusBadge tone="success">مفعّلة</StatusBadge> : undefined}
+                action={isActive ? <StatusBadge tone="success">{t("inventoryRest.method.active")}</StatusBadge> : undefined}
               />
               <div className="grid gap-2 p-5 text-xs">
                 <div className="flex justify-between border-b border-slate-100 pb-2">
-                  <span className="text-slate-500">احتساب COGS</span>
+                  <span className="text-slate-500">{t("inventoryRest.method.cogsLabel")}</span>
                   <span className="font-bold text-slate-700">{c.cogs}</span>
                 </div>
                 <div className="flex justify-between border-b border-slate-100 pb-2">
-                  <span className="text-slate-500">ترحيل GL</span>
+                  <span className="text-slate-500">{t("inventoryRest.method.glLabel")}</span>
                   <span className="font-bold text-slate-700">{c.gl}</span>
                 </div>
                 <div className="flex justify-between pb-2">
-                  <span className="text-slate-500">المعيار</span>
+                  <span className="text-slate-500">{t("inventoryRest.method.standardLabel")}</span>
                   <span className="font-bold text-slate-700">IAS 2</span>
                 </div>
                 {!isActive && canManage && (
@@ -137,11 +143,11 @@ export function InventoryMethodPage() {
                     onClick={() => { setForce(blocked); setPending(m); }}
                   >
                     <Check className="h-4 w-4" />
-                    {blocked ? "تفعيل رغم الحركات" : `تفعيل ${c.title}`}
+                    {blocked ? t("inventoryRest.method.activateDespite") : t("inventoryRest.method.activate", { name: c.title })}
                   </Button>
                 )}
                 {!isActive && !canManage && (
-                  <span className="mt-2 text-[11px] text-slate-400">لا تملك صلاحية تغيير الطريقة.</span>
+                  <span className="mt-2 text-[11px] text-slate-400">{t("inventoryRest.method.noPermission")}</span>
                 )}
               </div>
             </section>
@@ -150,24 +156,22 @@ export function InventoryMethodPage() {
       </div>
 
       <section className="surface">
-        <PanelTitle icon={Scale} title="الأثر المحاسبي" subtitle="ما الذي يتغيّر فعليًا عند التبديل." />
+        <PanelTitle icon={Scale} title={t("inventoryRest.method.impactTitle")} subtitle={t("inventoryRest.method.impactSubtitle")} />
         <p className="p-5 text-xs leading-relaxed text-slate-600">
-          الطريقة تحكم توقيت احتساب تكلفة البضاعة المباعة وترحيلها. الحركات التي رُحّلت بالطريقة
-          السابقة لا يُعاد احتسابها بأثر رجعي، لذلك يُفضَّل التبديل بعد إقفال الفترة حتى تبقى تكلفة
-          كل فترة محسوبة بطريقة واحدة.
+          {t("inventoryRest.method.impactBody")}
         </p>
       </section>
 
       <ConfirmDialog
         open={!!pending}
         onClose={() => { setPending(null); setForce(false); }}
-        title={pending ? `تفعيل ${COPY[pending].title}` : ""}
+        title={pending ? t("inventoryRest.method.activate", { name: COPY[pending].title }) : ""}
         description={
           force
-            ? `سيتم التغيير رغم وجود ${data.movementsSinceLastClose} حركة في فترة غير مُقفلة. تكلفة هذه الفترة ستكون محسوبة بطريقتين مختلطتين، ولن يُعاد احتساب ما رُحّل سابقًا.`
-            : "سيتم تغيير طريقة احتساب تكلفة البضاعة المباعة للحركات القادمة."
+            ? t("inventoryRest.method.confirmForce", { count: data.movementsSinceLastClose })
+            : t("inventoryRest.method.confirmNormal")
         }
-        confirmLabel={force ? "تأكيد التغيير رغم الحركات" : "تأكيد"}
+        confirmLabel={force ? t("inventoryRest.method.confirmForceLabel") : t("inventoryRest.method.confirmLabel")}
         tone={force ? "danger" : "primary"}
         processing={save.isPending}
         onConfirm={() => pending && save.mutate({ method: pending, force })}

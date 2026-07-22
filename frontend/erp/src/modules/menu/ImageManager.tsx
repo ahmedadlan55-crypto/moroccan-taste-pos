@@ -50,35 +50,26 @@ import {
   type StatusTone,
 } from "@/shared/ui";
 import { DataTable, type ColumnDef } from "@/shared/tables";
+import { useTx } from "@/shared/ui/i18n";
 import { Can, useCan } from "@/shared/permissions";
 import { formatDateTime } from "@/shared/lib";
-import { useBrands, useMenuItems, useUpdateMenuItem, type MenuItem, type MenuItemInput } from "./api";
+import type { TFunction } from "@/i18n";
+import { useBrands, useMenuItems, useUpdateMenuItem, menuErrorText, type MenuItem, type MenuItemInput } from "./api";
 import { useBrandScope, BrandSelect } from "./lib";
-import { downscaleImageFile } from "./imageCompression";
+import { downscaleImageFile, imagePrepMessage } from "./imageCompression";
 import { ImageManagerBulkUpload } from "./ImageManagerBulkUpload";
 
 type ImageFilter = "all" | "has" | "missing";
 type ReviewFilter = "" | "pending" | "approved" | "rejected";
 
-const IMAGE_FILTER_OPTIONS: { value: ImageFilter; label: string }[] = [
-  { value: "all", label: "الكل" },
-  { value: "has", label: "له صورة" },
-  { value: "missing", label: "بلا صورة" },
-];
-
-const REVIEW_OPTIONS: { value: ReviewFilter; label: string }[] = [
-  { value: "", label: "كل حالات المراجعة" },
-  { value: "pending", label: "قيد المراجعة" },
-  { value: "approved", label: "معتمد" },
-  { value: "rejected", label: "مرفوض" },
-];
-
-function imageStatus(item: MenuItem): { label: string; tone: StatusTone } {
-  if (!item.imageData) return { label: "بلا صورة", tone: "neutral" };
-  if (item.imageReviewStatus === "approved") return { label: "معتمد", tone: "success" };
-  if (item.imageReviewStatus === "pending") return { label: "قيد المراجعة", tone: "warning" };
-  if (item.imageReviewStatus === "rejected") return { label: "مرفوض", tone: "danger" };
-  return { label: "له صورة", tone: "success" };
+/** Image presence + (forward-looking) review-status label, localized via t. The
+ *  review states reuse the shared status.* codes; presence is menuRest-owned. */
+function imageStatus(item: MenuItem, t: TFunction): { label: string; tone: StatusTone } {
+  if (!item.imageData) return { label: t("menuRest.imageManager.noImage"), tone: "neutral" };
+  if (item.imageReviewStatus === "approved") return { label: t("status.approved"), tone: "success" };
+  if (item.imageReviewStatus === "pending") return { label: t("status.underReview"), tone: "warning" };
+  if (item.imageReviewStatus === "rejected") return { label: t("status.rejected"), tone: "danger" };
+  return { label: t("menuRest.imageManager.hasImage"), tone: "success" };
 }
 
 /** The PUT /menu/:id route resets stock/unit/pricing/yield columns when they
@@ -120,6 +111,7 @@ export function ImageManager() {
 }
 
 function ImageManagerScreen() {
+  const t = useTx();
   const { toast } = useToast();
   const { brandId, setBrandId } = useBrandScope();
   const canManage = useCan("menu.image.manage");
@@ -127,6 +119,19 @@ function ImageManagerScreen() {
   const brandsQ = useBrands();
   const itemsQ = useMenuItems({ brandId: brandId || undefined, type: "all" });
   const update = useUpdateMenuItem();
+
+  const IMAGE_FILTER_OPTIONS = useMemo<{ value: ImageFilter; label: string }[]>(() => [
+    { value: "all", label: t("common.all") },
+    { value: "has", label: t("menuRest.imageManager.hasImage") },
+    { value: "missing", label: t("menuRest.imageManager.noImage") },
+  ], [t]);
+
+  const REVIEW_OPTIONS = useMemo<{ value: ReviewFilter; label: string }[]>(() => [
+    { value: "", label: t("menuRest.imageManager.allReview") },
+    { value: "pending", label: t("status.underReview") },
+    { value: "approved", label: t("status.approved") },
+    { value: "rejected", label: t("status.rejected") },
+  ], [t]);
 
   const [category, setCategory] = useState("");
   const [imageFilter, setImageFilter] = useState<ImageFilter>("all");
@@ -166,8 +171,8 @@ function ImageManagerScreen() {
     update.mutate(
       { id: item.id, input: buildImageOnlyUpdate(item, imageData) },
       {
-        onSuccess: () => toast({ title: `تم تحديث صورة «${item.name}»`, tone: "success" }),
-        onError: (e: Error) => toast({ title: "تعذّر رفع الصورة", description: e.message, tone: "error" }),
+        onSuccess: () => toast({ title: t("menuRest.imageManager.imageUpdated", { name: item.name }), tone: "success" }),
+        onError: (e: Error) => toast({ title: t("menuRest.imageManager.uploadFailed"), description: menuErrorText(e, t), tone: "error" }),
         onSettled: () => setBusyRowId(null),
       },
     );
@@ -180,7 +185,7 @@ function ImageManagerScreen() {
       const imageData = await downscaleImageFile(file);
       doReplace(item, imageData);
     } catch (e) {
-      toast({ title: "تعذّر تجهيز الصورة", description: e instanceof Error ? e.message : undefined, tone: "error" });
+      toast({ title: t("menuRest.imagePrep.title"), description: imagePrepMessage(e, t), tone: "error" });
       setBusyRowId(null);
     }
   }
@@ -190,8 +195,8 @@ function ImageManagerScreen() {
     update.mutate(
       { id: item.id, input: buildImageOnlyUpdate(item, "") },
       {
-        onSuccess: () => toast({ title: `تم حذف صورة «${item.name}»`, tone: "success" }),
-        onError: (e: Error) => toast({ title: "تعذّر حذف الصورة", description: e.message, tone: "error" }),
+        onSuccess: () => toast({ title: t("menuRest.imageManager.imageDeleted", { name: item.name }), tone: "success" }),
+        onError: (e: Error) => toast({ title: t("menuRest.imageManager.deleteFailed"), description: menuErrorText(e, t), tone: "error" }),
         onSettled: () => setBusyRowId(null),
       },
     );
@@ -201,7 +206,7 @@ function ImageManagerScreen() {
     () => [
       {
         id: "thumbnail",
-        header: "الصورة",
+        header: t("menuRest.imageManager.imageCol"),
         hideable: false,
         sortable: false,
         cell: (r) => (
@@ -216,7 +221,7 @@ function ImageManagerScreen() {
       },
       {
         id: "name",
-        header: "الصنف",
+        header: t("menuRest.fields.item"),
         accessor: (r) => r.name,
         sortable: true,
         cell: (r) => (
@@ -230,20 +235,20 @@ function ImageManagerScreen() {
           </div>
         ),
       },
-      { id: "brand", header: "العلامة التجارية", accessor: (r) => r.brandName, sortable: true },
-      { id: "category", header: "الفئة", accessor: (r) => r.category || "—", sortable: true },
+      { id: "brand", header: t("menuRest.fields.brand"), accessor: (r) => r.brandName, sortable: true },
+      { id: "category", header: t("menuRest.fields.category"), accessor: (r) => r.category || "—", sortable: true },
       {
         id: "status",
-        header: "حالة الصورة",
-        accessor: (r) => imageStatus(r).label,
+        header: t("menuRest.imageManager.imageStatusCol"),
+        accessor: (r) => imageStatus(r, t).label,
         cell: (r) => {
-          const s = imageStatus(r);
+          const s = imageStatus(r, t);
           return <StatusBadge tone={s.tone}>{s.label}</StatusBadge>;
         },
       },
       {
         id: "updated",
-        header: "آخر تحديث",
+        header: t("menuRest.imageManager.lastUpdated"),
         accessor: (r) => r.imageUpdatedAt,
         cell: (r) => (
           <div className="flex flex-col">
@@ -256,20 +261,20 @@ function ImageManagerScreen() {
         mobileHidden: true,
       },
     ],
-    [],
+    [t],
   );
 
   return (
     <div>
       <PageHeader
-        eyebrow="القوائم والوصفات"
-        title="إدارة صور الأصناف"
-        subtitle="استعرض ورشّح الأصناف حسب حالة الصورة، وارفع صورًا لعدة أصناف دفعة واحدة."
+        eyebrow={t("menuRest.eyebrow")}
+        title={t("menuRest.imageManager.title")}
+        subtitle={t("menuRest.imageManager.subtitle")}
         action={
           <Can cap="menu.image.manage">
             <Button onClick={() => { setBulkScope(selected.length > 0 ? filtered.filter((r) => selected.includes(r.id)) : filtered); setBulkOpen(true); }}>
               <UploadCloud className="h-4 w-4" />
-              {selected.length > 0 ? `رفع صور لـ ${selected.length} محدد` : "رفع صور جماعي"}
+              {selected.length > 0 ? t("menuRest.imageManager.uploadForSelected", { count: selected.length }) : t("menuRest.imageManager.bulkUpload")}
             </Button>
           </Can>
         }
@@ -278,32 +283,32 @@ function ImageManagerScreen() {
       <Card className="mb-6 p-5">
         <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
           <div>
-            <label className="mb-1 block text-xs font-bold text-slate-600">العلامة التجارية</label>
+            <label className="mb-1 block text-xs font-bold text-slate-600">{t("menuRest.fields.brand")}</label>
             <BrandSelect brands={brandsQ.data ?? []} value={brandId} onChange={(v) => { setBrandId(v); setSelected([]); }} className="w-full" />
           </div>
           <div>
-            <label className="mb-1 block text-xs font-bold text-slate-600">الفئة</label>
-            <Select className="h-10 w-full" value={category} onChange={(e) => { setCategory(e.target.value); setSelected([]); }} aria-label="تصفية بالفئة">
-              <option value="">كل الفئات</option>
+            <label className="mb-1 block text-xs font-bold text-slate-600">{t("menuRest.fields.category")}</label>
+            <Select className="h-10 w-full" value={category} onChange={(e) => { setCategory(e.target.value); setSelected([]); }} aria-label={t("menuRest.aria.filterByCategory")}>
+              <option value="">{t("menuRest.filters.allCategories")}</option>
               {categories.map((c) => <option key={c} value={c}>{c}</option>)}
             </Select>
           </div>
           <div>
-            <label className="mb-1 block text-xs font-bold text-slate-600">حالة الصورة</label>
+            <label className="mb-1 block text-xs font-bold text-slate-600">{t("menuRest.imageManager.imageStatusCol")}</label>
             <SegmentedControl
               options={IMAGE_FILTER_OPTIONS}
               value={imageFilter}
               onChange={setImageFilter}
               className="w-full justify-between"
-              aria-label="تصفية حسب وجود الصورة"
+              aria-label={t("menuRest.imageManager.filterByImageAria")}
             />
           </div>
           <div>
-            <label className="mb-1 block text-xs font-bold text-slate-600">حالة المراجعة</label>
-            <Select className="h-10 w-full" value={reviewFilter} onChange={(e) => setReviewFilter(e.target.value as ReviewFilter)} options={REVIEW_OPTIONS} aria-label="تصفية بحالة المراجعة" />
+            <label className="mb-1 block text-xs font-bold text-slate-600">{t("menuRest.imageManager.reviewStatus")}</label>
+            <Select className="h-10 w-full" value={reviewFilter} onChange={(e) => setReviewFilter(e.target.value as ReviewFilter)} options={REVIEW_OPTIONS} aria-label={t("menuRest.imageManager.filterByReviewAria")} />
             {reviewFilter && (
               <p className="mt-1 text-[11px] font-medium text-slate-400">
-                ميزة مراجعة الصور غير مفعّلة بعد على الخادم — لن تظهر نتائج بهذا الفلتر حاليًا.
+                {t("menuRest.imageManager.reviewInactive")}
               </p>
             )}
           </div>
@@ -323,9 +328,9 @@ function ImageManagerScreen() {
           selectable={canManage}
           onSelectionChange={setSelected}
           searchable
-          searchPlaceholder="ابحث باسم الصنف…"
-          emptyTitle="لا توجد أصناف"
-          emptyBody="غيّر عوامل التصفية أو اختر علامة تجارية أخرى."
+          searchPlaceholder={t("menuRest.filters.searchByItem")}
+          emptyTitle={t("menuRest.filters.noItemsTitle")}
+          emptyBody={t("menuRest.imageManager.emptyBody")}
           mobileTitle={(r) => r.name}
           rowActions={canManage ? (r) => (
             <div className="flex items-center gap-1">
@@ -334,13 +339,13 @@ function ImageManagerScreen() {
                 type="file"
                 accept="image/jpeg,image/png,image/webp"
                 className="sr-only"
-                aria-label={`استبدال صورة ${r.name}`}
+                aria-label={t("menuRest.imageManager.replaceImageAria", { name: r.name })}
                 disabled={busyRowId === r.id}
                 onChange={(e) => { void onPickReplace(r, e.target.files?.[0] ?? null); e.target.value = ""; }}
               />
               <IconButton
                 size="sm"
-                aria-label={`${r.imageData ? "تغيير" : "إضافة"} صورة ${r.name}`}
+                aria-label={t(r.imageData ? "menuRest.imageManager.changeImageAria" : "menuRest.imageManager.addImageAria", { name: r.name })}
                 disabled={busyRowId === r.id}
                 onClick={() => fileInputs.current.get(r.id)?.click()}
               >
@@ -350,7 +355,7 @@ function ImageManagerScreen() {
                 <IconButton
                   size="sm"
                   variant="danger"
-                  aria-label={`حذف صورة ${r.name}`}
+                  aria-label={t("menuRest.imageManager.deleteImageAria", { name: r.name })}
                   disabled={busyRowId === r.id}
                   onClick={() => onRemove(r)}
                 >
@@ -361,7 +366,7 @@ function ImageManagerScreen() {
           ) : undefined}
           bulkActions={canManage ? (ids) => (
             <Button size="sm" onClick={() => { setBulkScope(filtered.filter((r) => ids.includes(r.id))); setBulkOpen(true); }}>
-              <UploadCloud className="h-4 w-4" /> رفع صور لـ {ids.length} محدد
+              <UploadCloud className="h-4 w-4" /> {t("menuRest.imageManager.uploadForSelected", { count: ids.length })}
             </Button>
           ) : undefined}
         />

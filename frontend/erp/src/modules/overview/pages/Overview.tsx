@@ -1,25 +1,30 @@
 import { Link } from "react-router-dom";
-import { CheckCheck, ListTodo, RefreshCw, ArrowLeft } from "lucide-react";
+import { CheckCheck, ListTodo, RefreshCw, ArrowLeft, ArrowRight } from "lucide-react";
 import { Button, LoadingState, EmptyState, PageHeader } from "@/shared/ui";
+import { useT, useLang } from "@/i18n";
 import { useDashboardOverview, KpiGrid, OpsGrid } from "../_common";
 
 const QUICK_LINKS = [
-  { to: "/overview/tasks", label: "المهام والتنبيهات", description: "الوارد والمهام التي تحتاج انتباهك.", icon: ListTodo },
-  { to: "/overview/approvals", label: "الموافقات المطلوبة", description: "المعاملات بانتظار اعتمادك.", icon: CheckCheck },
-];
+  { to: "/overview/tasks", labelKey: "overview.tasks.title", descKey: "overview.home.quickTasksDesc", icon: ListTodo },
+  { to: "/overview/approvals", labelKey: "overview.approvals.title", descKey: "overview.approvals.subtitle", icon: CheckCheck },
+] as const;
 
 export default function OverviewPage() {
+  const t = useT();
+  const lang = useLang();
   const query = useDashboardOverview();
+  // Card "open" chevron follows the reading direction.
+  const DirArrow = lang === "ar" ? ArrowLeft : ArrowRight;
 
   return (
     <div>
       <PageHeader
-        eyebrow="الرئيسية"
-        title="نظرة عامة"
-        subtitle="ملخّص الأداء المالي والتشغيلي للمجموعة."
+        eyebrow={t("overview.eyebrow")}
+        title={t("overview.home.title")}
+        subtitle={t("overview.home.subtitle")}
         action={
           <Button variant="secondary" onClick={() => query.refetch()} loading={query.isFetching}>
-            <RefreshCw className="h-4 w-4" /> تحديث
+            <RefreshCw className="h-4 w-4" /> {t("states.refreshBtn")}
           </Button>
         }
       />
@@ -29,11 +34,11 @@ export default function OverviewPage() {
       ) : query.error || !query.data ? (
         // Resilient: never crash the home screen — offer a retry.
         <EmptyState
-          title="تعذّر تحميل لوحة المؤشرات"
-          body="لم نتمكّن من جلب بيانات النظرة العامة الآن."
+          title={t("overview.home.loadErrorTitle")}
+          body={t("overview.home.loadErrorBody")}
           action={
             <Button variant="secondary" onClick={() => query.refetch()}>
-              <RefreshCw className="h-4 w-4" /> إعادة المحاولة
+              <RefreshCw className="h-4 w-4" /> {t("common.retry")}
             </Button>
           }
         />
@@ -41,7 +46,7 @@ export default function OverviewPage() {
         <div className="space-y-6">
           <KpiGrid data={query.data} />
           <section className="space-y-3">
-            <h2 className="text-sm font-extrabold text-slate-500">الأرصدة التشغيلية</h2>
+            <h2 className="text-sm font-extrabold text-slate-500">{t("overview.opsHeading")}</h2>
             <OpsGrid data={query.data} />
           </section>
         </div>
@@ -61,10 +66,10 @@ export default function OverviewPage() {
               </span>
               <div className="min-w-0 flex-1">
                 <div className="flex items-center justify-between gap-2">
-                  <span className="text-sm font-extrabold text-slate-900">{link.label}</span>
-                  <ArrowLeft className="h-4 w-4 text-slate-300 transition group-hover:text-teal-600" />
+                  <span className="text-sm font-extrabold text-slate-900">{t(link.labelKey)}</span>
+                  <DirArrow className="h-4 w-4 text-slate-300 transition group-hover:text-teal-600" />
                 </div>
-                <p className="mt-1 text-xs font-medium leading-5 text-slate-500">{link.description}</p>
+                <p className="mt-1 text-xs font-medium leading-5 text-slate-500">{t(link.descKey)}</p>
               </div>
             </Link>
           );

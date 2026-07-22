@@ -4,6 +4,7 @@ import { Building2, Image as ImageIcon, Layers, ListChecks, MapPin, Printer, Rec
 import { apiClient } from "@/shared/api";
 import { Button, EmptyState, ErrorState, Input, LoadingState, PageHeader, PanelTitle, StatusBadge, Toggle } from "@/shared/ui";
 import { Field } from "@/shared/forms";
+import { useT, type TFunction } from "@/i18n";
 import { buildSaleReceiptHtml, type DocumentLanguage, type PaperWidth } from "../../../../../shared/invoiceTemplate";
 
 // /administration/invoice-settings — every value the printed invoice carries,
@@ -38,65 +39,65 @@ interface IdentityResponse {
   receiptSettings?: ReceiptSettings;
 }
 
-/** Fields the owner edits HERE (settings), vs fields derived from another record. */
-const EDITABLE: Array<{ key: keyof Identity; settingKey: string; label: string; hint?: string; multiline?: boolean }> = [
-  { key: "sellerName", settingKey: "name", label: "الاسم التجاري" },
-  { key: "taxNumber", settingKey: "taxNumber", label: "الرقم الضريبي", hint: "يظهر على الفاتورة وداخل رمز ZATCA." },
-  { key: "crNumber", settingKey: "CrNumber", label: "السجل التجاري" },
-  { key: "nationalAddress", settingKey: "NationalAddress", label: "العنوان الوطني" },
-  { key: "phone", settingKey: "companyPhone", label: "الهاتف" },
-  { key: "email", settingKey: "companyEmail", label: "البريد الإلكتروني" },
-  { key: "currency", settingKey: "currency", label: "العملة" },
-  { key: "salesTaxName", settingKey: "SalesTaxName", label: "اسم الضريبة على الفاتورة" },
-  { key: "header", settingKey: "ReceiptHeader", label: "رأس الفاتورة", multiline: true },
-  { key: "footer", settingKey: "receiptFooter", label: "تذييل الفاتورة", multiline: true },
-  { key: "thankYou", settingKey: "ReceiptThankYou", label: "رسالة الشكر" },
-  { key: "returnPolicy", settingKey: "ReceiptReturnPolicy", label: "سياسة الاسترجاع", multiline: true },
+/** Fields the owner edits HERE (settings), vs fields derived from another record.
+ *  `key` doubles as the i18n leaf under administration.invoice.field.*. */
+const EDITABLE: Array<{ key: keyof Identity; settingKey: string; hintKey?: string; multiline?: boolean }> = [
+  { key: "sellerName", settingKey: "name" },
+  { key: "taxNumber", settingKey: "taxNumber", hintKey: "administration.invoice.field.taxNumberHint" },
+  { key: "crNumber", settingKey: "CrNumber" },
+  { key: "nationalAddress", settingKey: "NationalAddress" },
+  { key: "phone", settingKey: "companyPhone" },
+  { key: "email", settingKey: "companyEmail" },
+  { key: "currency", settingKey: "currency" },
+  { key: "salesTaxName", settingKey: "SalesTaxName" },
+  { key: "header", settingKey: "ReceiptHeader", multiline: true },
+  { key: "footer", settingKey: "receiptFooter", multiline: true },
+  { key: "thankYou", settingKey: "ReceiptThankYou" },
+  { key: "returnPolicy", settingKey: "ReceiptReturnPolicy", multiline: true },
 ];
 
-/** Resolved elsewhere — shown read-only with the record that owns them. */
-const DERIVED: Array<{ key: keyof Identity; label: string; owner: string }> = [
-  { key: "legalName", label: "الاسم القانوني", owner: "الشركات والعلامات التجارية" },
-  { key: "brandName", label: "العلامة التجارية", owner: "الشركات والعلامات التجارية" },
-  { key: "branchName", label: "الفرع", owner: "الفروع" },
-  { key: "address", label: "عنوان الفرع", owner: "الفروع" },
-  { key: "branchCompanyName", label: "الشركة المشغّلة للفرع", owner: "الفروع" },
-  { key: "vatRate", label: "نسبة الضريبة", owner: "الضرائب" },
+/** Resolved elsewhere — shown read-only with the record that owns them.
+ *  labelKey → administration.invoice.derived.*; ownerKey → administration.invoice.owner.* */
+const DERIVED: Array<{ key: keyof Identity; labelKey: string; ownerKey: string }> = [
+  { key: "legalName", labelKey: "legalName", ownerKey: "companiesBrands" },
+  { key: "brandName", labelKey: "brandName", ownerKey: "companiesBrands" },
+  { key: "branchName", labelKey: "branchName", ownerKey: "branches" },
+  { key: "address", labelKey: "branchAddress", ownerKey: "branches" },
+  { key: "branchCompanyName", labelKey: "branchCompany", ownerKey: "branches" },
+  { key: "vatRate", labelKey: "vatRate", ownerKey: "taxes" },
 ];
 
-/** The 9 optional receipt blocks (settings.ReceiptShowFields, all-true defaults). */
-const SHOW_FIELD_DEFS: Array<{ key: string; label: string }> = [
-  { key: "logo", label: "الشعار" },
-  { key: "taxNumber", label: "الرقم الضريبي" },
-  { key: "crNumber", label: "السجل التجاري" },
-  { key: "nationalAddress", label: "العنوان الوطني" },
-  { key: "phone", label: "الهاتف" },
-  { key: "email", label: "البريد الإلكتروني" },
-  { key: "cashier", label: "الكاشير" },
-  { key: "customer", label: "العميل" },
-  { key: "qr", label: "رمز QR" },
+/** The 9 optional receipt blocks (settings.ReceiptShowFields, all-true defaults).
+ *  `key` doubles as the i18n leaf under administration.invoice.showField.*. */
+const SHOW_FIELD_DEFS: Array<{ key: string }> = [
+  { key: "logo" },
+  { key: "taxNumber" },
+  { key: "crNumber" },
+  { key: "nationalAddress" },
+  { key: "phone" },
+  { key: "email" },
+  { key: "cashier" },
+  { key: "customer" },
+  { key: "qr" },
 ];
 
-const PAPER_WIDTHS: Array<{ value: string; label: string }> = [
-  { value: "58", label: "58مم (حراري ضيّق)" },
-  { value: "80", label: "80مم (حراري قياسي)" },
-  { value: "A4", label: "A4 (طابعة مكتبية)" },
-];
+/** `value` doubles as the i18n leaf under administration.invoice.paper.*. */
+const PAPER_WIDTHS: Array<{ value: string }> = [{ value: "58" }, { value: "80" }, { value: "A4" }];
 
 const LOGO_MAX_DIMENSION = 256;
 const LOGO_MAX_BYTES = 100 * 1024;
 
 /** file → downscaled (≤256px) PNG/JPEG data-URL, rejected when >100KB after compression. */
-async function compressLogo(file: File): Promise<string> {
+async function compressLogo(file: File, t: TFunction): Promise<string> {
   if (!/^image\/(png|jpeg)$/.test(file.type)) {
-    throw new Error("صيغة غير مدعومة — PNG أو JPEG فقط.");
+    throw new Error(t("administration.invoice.logo.unsupported"));
   }
   const url = URL.createObjectURL(file);
   try {
     const img = await new Promise<HTMLImageElement>((resolve, reject) => {
       const el = new Image();
       el.onload = () => resolve(el);
-      el.onerror = () => reject(new Error("تعذّر قراءة الصورة."));
+      el.onerror = () => reject(new Error(t("administration.invoice.logo.readFailed")));
       el.src = url;
     });
     const scale = Math.min(1, LOGO_MAX_DIMENSION / Math.max(img.naturalWidth || 1, img.naturalHeight || 1));
@@ -104,14 +105,14 @@ async function compressLogo(file: File): Promise<string> {
     canvas.width = Math.max(1, Math.round((img.naturalWidth || 1) * scale));
     canvas.height = Math.max(1, Math.round((img.naturalHeight || 1) * scale));
     const ctx = canvas.getContext("2d");
-    if (!ctx) throw new Error("المتصفح لا يدعم معالجة الصور.");
+    if (!ctx) throw new Error(t("administration.invoice.logo.canvasUnsupported"));
     ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
     const bytesOf = (dataUrl: string) => Math.ceil(((dataUrl.length - dataUrl.indexOf(",") - 1) * 3) / 4);
     // PNG first (keeps transparency); JPEG as the smaller fallback.
     let out = canvas.toDataURL("image/png");
     if (bytesOf(out) > LOGO_MAX_BYTES) out = canvas.toDataURL("image/jpeg", 0.85);
     if (bytesOf(out) > LOGO_MAX_BYTES) {
-      throw new Error("الشعار أكبر من 100KB بعد الضغط — اختر صورة أبسط أو أصغر.");
+      throw new Error(t("administration.invoice.logo.tooLarge"));
     }
     return out;
   } finally {
@@ -119,16 +120,19 @@ async function compressLogo(file: File): Promise<string> {
   }
 }
 
-function scopeLabel(source: string | undefined): string {
-  if (!source) return "افتراضي";
-  if (source.startsWith("branches.")) return "فرع";
-  if (source.startsWith("brands.")) return "علامة تجارية";
-  if (source.startsWith("companies.")) return "شركة";
-  if (source.startsWith("settings.")) return "عام";
-  return "افتراضي";
+/** Resolve source prefix → scope code (administration.invoice.scope.*). */
+function scopeCode(source: string | undefined): "default" | "branch" | "brand" | "company" | "global" {
+  if (!source) return "default";
+  if (source.startsWith("branches.")) return "branch";
+  if (source.startsWith("brands.")) return "brand";
+  if (source.startsWith("companies.")) return "company";
+  if (source.startsWith("settings.")) return "global";
+  return "default";
 }
 
 export function InvoiceSettingsPage() {
+  const t = useT();
+  const scopeText = (source: string | undefined) => t(`administration.invoice.scope.${scopeCode(source)}`);
   const qc = useQueryClient();
   const [branchId, setBranchId] = useState("");
   const [brandId, setBrandId] = useState("");
@@ -198,11 +202,11 @@ export function InvoiceSettingsPage() {
     if (!file) return;
     setLogoError("");
     try {
-      const dataUrl = await compressLogo(file);
+      const dataUrl = await compressLogo(file, t);
       if (target === "global") setDraft((d) => ({ ...d, logo: dataUrl }));
       else setScopeDraft((d) => ({ ...d, logo: dataUrl }));
     } catch (e) {
-      setLogoError(e instanceof Error ? e.message : "تعذّرت معالجة الصورة.");
+      setLogoError(e instanceof Error ? e.message : t("administration.invoice.logo.processFailed"));
     }
   };
 
@@ -235,14 +239,14 @@ export function InvoiceSettingsPage() {
     if (!preview) return "";
     return buildSaleReceiptHtml({
       lines: [
-        { name: "قهوة عربية", qty: 2, unitPrice: 12, lineDiscount: 0 },
-        { name: "كرواسون", qty: 1, unitPrice: 9, lineDiscount: 0 },
+        { name: t("administration.invoice.preview.line1"), qty: 2, unitPrice: 12, lineDiscount: 0 },
+        { name: t("administration.invoice.preview.line2"), qty: 1, unitPrice: 9, lineDiscount: 0 },
       ],
       payments: [{ method: "cash", amount: 33.35 }],
       totals: { subtotal: 33, lineDiscountTotal: 0, discountAmount: 0, vatTotal: 4.35, total: 33.35 },
       invoiceNumber: "INV-PREVIEW-0001",
-      fallbackSellerName: preview.sellerName || "معاينة",
-      cashierName: "معاينة",
+      fallbackSellerName: preview.sellerName || t("administration.invoice.preview.sellerFallback"),
+      cashierName: t("administration.invoice.preview.cashier"),
       vatRate: preview.vatRate || 15,
       paperWidth,
       identity: preview,
@@ -263,14 +267,14 @@ export function InvoiceSettingsPage() {
 
   if (isLoading) return <LoadingState />;
   if (isError) return <ErrorState error={error} onRetry={() => refetch()} />;
-  if (!identity) return <EmptyState title="لا توجد بيانات فاتورة" body="لم يتعذّر التحميل، لكن الخادم لم يُعِد هوية فاتورة." />;
+  if (!identity) return <EmptyState title={t("administration.invoice.empty.title")} body={t("administration.invoice.empty.body")} />;
 
   return (
     <div className="space-y-5">
       <PageHeader
-        eyebrow="الإدارة"
-        title="بيانات وتصميم الفاتورة"
-        subtitle="كل قيمة تُطبع على الفاتورة ومصدرها. التعديل يسري على الفواتير الجديدة فقط."
+        eyebrow={t("administration.eyebrow")}
+        title={t("administration.invoice.title")}
+        subtitle={t("administration.invoice.subtitle")}
         action={
           <Button
             variant="primary"
@@ -278,33 +282,32 @@ export function InvoiceSettingsPage() {
             loading={save.isPending}
             onClick={() => save.mutate(draft)}
           >
-            <Save className="h-4 w-4" /> حفظ
+            <Save className="h-4 w-4" /> {t("common.save")}
           </Button>
         }
       />
 
       <div className="rounded-xl border border-teal-200 bg-teal-50 px-4 py-3 text-xs font-bold text-teal-900">
-        الفاتورة الصادرة تحتفظ ببياناتها وقت الإصدار ولا تتغيّر بعد ذلك — تغيير الشعار أو الرقم
-        الضريبي هنا يؤثّر على الفواتير الجديدة فقط.
+        {t("administration.invoice.issuedNote")}
       </div>
 
       <section className="surface">
-        <PanelTitle icon={Layers} title="النطاق" subtitle="اختر فرعًا أو علامة تجارية لمعاينة القيم التي تُطبع لهما. الأخص يفوز." />
+        <PanelTitle icon={Layers} title={t("administration.invoice.scope.panelTitle")} subtitle={t("administration.invoice.scope.panelSubtitle")} />
         <div className="grid gap-4 p-5 sm:grid-cols-2">
-          <Field label="الفرع">
+          <Field label={t("administration.invoice.scope.branchLabel")}>
             {({ id }) => (
               <select id={id} className="field" value={branchId} onChange={(e) => setBranchId(e.target.value)}>
-                <option value="">— عام (بدون فرع) —</option>
+                <option value="">{t("administration.invoice.scope.branchGlobal")}</option>
                 {(data?.branches ?? []).map((b) => (
                   <option key={b.id} value={b.id}>{b.name}</option>
                 ))}
               </select>
             )}
           </Field>
-          <Field label="العلامة التجارية">
+          <Field label={t("administration.invoice.scope.brandLabel")}>
             {({ id }) => (
               <select id={id} className="field" value={brandId} onChange={(e) => setBrandId(e.target.value)}>
-                <option value="">— عام (بدون علامة) —</option>
+                <option value="">{t("administration.invoice.scope.brandGlobal")}</option>
                 {(data?.brands ?? []).map((b) => (
                   <option key={b.id} value={b.id}>{b.name}</option>
                 ))}
@@ -318,13 +321,13 @@ export function InvoiceSettingsPage() {
         <section className="surface">
           <PanelTitle
             icon={MapPin}
-            title="تخصيص لهذا النطاق"
-            subtitle="يُحفظ على سجل الفرع/العلامة نفسه (وليس في الإعدادات العامة) — الحقول ذات الأعمدة المخصّصة فقط. بقية الحقول عامة دائمًا."
+            title={t("administration.invoice.custom.panelTitle")}
+            subtitle={t("administration.invoice.custom.panelSubtitle")}
           />
           <div className="grid gap-4 p-5 md:grid-cols-2">
             {branchId && (
               <>
-                <Field label="عنوان الفرع" hint="يُحفظ في branches.location — يظهر لفواتير هذا الفرع فقط.">
+                <Field label={t("administration.invoice.custom.branchAddress")} hint={t("administration.invoice.custom.branchAddressHint")}>
                   {({ id }) => (
                     <Input
                       id={id}
@@ -333,7 +336,7 @@ export function InvoiceSettingsPage() {
                     />
                   )}
                 </Field>
-                <Field label="الشركة المشغّلة للفرع" hint="يُحفظ في branches.company_name.">
+                <Field label={t("administration.invoice.custom.branchCompany")} hint={t("administration.invoice.custom.branchCompanyHint")}>
                   {({ id }) => (
                     <Input
                       id={id}
@@ -346,7 +349,7 @@ export function InvoiceSettingsPage() {
             )}
             {brandId && (
               <>
-                <Field label="اسم العلامة التجارية" hint="يُحفظ في brands.name — يظهر على فواتير هذه العلامة.">
+                <Field label={t("administration.invoice.custom.brandName")} hint={t("administration.invoice.custom.brandNameHint")}>
                   {({ id }) => (
                     <Input
                       id={id}
@@ -355,24 +358,24 @@ export function InvoiceSettingsPage() {
                     />
                   )}
                 </Field>
-                <Field label="شعار العلامة التجارية" hint="يُحفظ في brands.logo ويتقدّم على شعار الشركة والإعدادات العامة.">
+                <Field label={t("administration.invoice.custom.brandLogo")} hint={t("administration.invoice.custom.brandLogoHint")}>
                   <div className="flex items-center gap-3">
                     {(scopeDraft.logo ?? "") !== "" ? (
-                      <img src={scopeDraft.logo} alt="شعار العلامة (غير محفوظ)" className="h-12 w-12 rounded border border-slate-200 object-contain" />
+                      <img src={scopeDraft.logo} alt={t("administration.invoice.custom.brandLogoUnsavedAlt")} className="h-12 w-12 rounded border border-slate-200 object-contain" />
                     ) : sources.logo === "brands.logo" && identity.logo ? (
-                      <img src={identity.logo} alt="شعار العلامة" className="h-12 w-12 rounded border border-slate-200 object-contain" />
+                      <img src={identity.logo} alt={t("administration.invoice.custom.brandLogoAlt")} className="h-12 w-12 rounded border border-slate-200 object-contain" />
                     ) : (
-                      <div className="grid h-12 w-12 place-items-center rounded bg-slate-100 text-[9px] font-bold text-slate-400">لا شعار</div>
+                      <div className="grid h-12 w-12 place-items-center rounded bg-slate-100 text-[9px] font-bold text-slate-400">{t("administration.invoice.custom.noLogo")}</div>
                     )}
                     <input
                       type="file"
                       accept="image/png,image/jpeg"
-                      aria-label="رفع شعار العلامة"
+                      aria-label={t("administration.invoice.custom.uploadBrandLogo")}
                       className="text-xs"
                       onChange={(e) => void onLogoFile(e.target.files?.[0], "brand")}
                     />
                     <Button variant="ghost" onClick={() => setScopeDraft((d) => ({ ...d, logo: "" }))}>
-                      إزالة
+                      {t("administration.invoice.logo.remove")}
                     </Button>
                   </div>
                 </Field>
@@ -392,20 +395,28 @@ export function InvoiceSettingsPage() {
                 })
               }
             >
-              <Save className="h-4 w-4" /> حفظ التخصيص
+              <Save className="h-4 w-4" /> {t("administration.invoice.custom.saveScopeBtn")}
             </Button>
             {scopeSave.isError && (
-              <span className="text-xs font-bold text-rose-700">تعذّر حفظ التخصيص. حاول مجددًا.</span>
+              <span className="text-xs font-bold text-rose-700">{t("administration.invoice.custom.scopeSaveFailed")}</span>
             )}
           </div>
         </section>
       )}
 
       <section className="surface">
-        <PanelTitle icon={Building2} title="حقول قابلة للتعديل" subtitle="تُحفظ في الإعدادات العامة." />
+        <PanelTitle icon={Building2} title={t("administration.invoice.editable.panelTitle")} subtitle={t("administration.invoice.editable.panelSubtitle")} />
         <div className="grid gap-4 p-5 md:grid-cols-2">
           {EDITABLE.map((f) => (
-            <Field key={f.settingKey} label={f.label} hint={`المصدر: ${sources[f.key] ?? "—"} · النطاق: ${scopeLabel(sources[f.key])}${f.hint ? ` · ${f.hint}` : ""}`}>
+            <Field
+              key={f.settingKey}
+              label={t(`administration.invoice.field.${f.key}`)}
+              hint={
+                f.hintKey
+                  ? t("administration.invoice.editable.hintWithNote", { source: sources[f.key] ?? "—", scope: scopeText(sources[f.key]), note: t(f.hintKey) })
+                  : t("administration.invoice.editable.hint", { source: sources[f.key] ?? "—", scope: scopeText(sources[f.key]) })
+              }
+            >
               {({ id }) =>
                 f.multiline ? (
                   <textarea
@@ -430,27 +441,27 @@ export function InvoiceSettingsPage() {
       <section className="surface">
         <PanelTitle
           icon={ImageIcon}
-          title="الشعار"
-          subtitle="يُصغَّر تلقائيًا إلى 256px كحد أقصى ويُحفظ في الإعدادات العامة (settings.logo). شعار العلامة/الشركة — إن وُجد — يتقدّم عليه."
+          title={t("administration.invoice.logo.panelTitle")}
+          subtitle={t("administration.invoice.logo.panelSubtitle")}
         />
         <div className="flex flex-wrap items-center gap-4 p-5">
           {logoValue ? (
-            <img src={logoValue} alt="الشعار الحالي" className="h-16 max-w-[140px] rounded border border-slate-200 object-contain" />
+            <img src={logoValue} alt={t("administration.invoice.logo.currentAlt")} className="h-16 max-w-[140px] rounded border border-slate-200 object-contain" />
           ) : (
-            <div className="grid h-16 w-[140px] place-items-center rounded bg-slate-100 text-[10px] font-bold text-slate-400">لا يوجد شعار</div>
+            <div className="grid h-16 w-[140px] place-items-center rounded bg-slate-100 text-[10px] font-bold text-slate-400">{t("administration.invoice.logo.none")}</div>
           )}
           <input
             type="file"
             accept="image/png,image/jpeg"
-            aria-label="رفع شعار"
+            aria-label={t("administration.invoice.logo.upload")}
             className="text-xs"
             onChange={(e) => void onLogoFile(e.target.files?.[0], "global")}
           />
           <Button variant="ghost" disabled={!logoValue} onClick={() => setDraft((d) => ({ ...d, logo: "" }))}>
-            إزالة
+            {t("administration.invoice.logo.remove")}
           </Button>
           <span className="text-[11px] font-medium text-slate-400">
-            PNG أو JPEG · حتى 100KB بعد الضغط · المصدر: {sources.logo ?? "—"} · النطاق: {scopeLabel(sources.logo)}
+            {t("administration.invoice.logo.meta", { source: sources.logo ?? "—", scope: scopeText(sources.logo) })}
           </span>
           {logoError && <span className="w-full text-xs font-bold text-rose-700">{logoError}</span>}
         </div>
@@ -459,27 +470,30 @@ export function InvoiceSettingsPage() {
       <section className="surface">
         <PanelTitle
           icon={ListChecks}
-          title="حقول تظهر على الفاتورة"
-          subtitle="تشغيل/إيقاف الكتل الاختيارية (settings.ReceiptShowFields). الافتراضي: الكل ظاهر."
+          title={t("administration.invoice.showFieldsPanel.title")}
+          subtitle={t("administration.invoice.showFieldsPanel.subtitle")}
         />
         <div className="grid gap-3 p-5 sm:grid-cols-2 md:grid-cols-3">
-          {SHOW_FIELD_DEFS.map((f) => (
-            <Toggle
-              key={f.key}
-              checked={showFields[f.key] !== false}
-              onChange={(next) => toggleShowField(f.key, next)}
-              label={f.label}
-              aria-label={f.label}
-            />
-          ))}
+          {SHOW_FIELD_DEFS.map((f) => {
+            const label = t(`administration.invoice.showField.${f.key}`);
+            return (
+              <Toggle
+                key={f.key}
+                checked={showFields[f.key] !== false}
+                onChange={(next) => toggleShowField(f.key, next)}
+                label={label}
+                aria-label={label}
+              />
+            );
+          })}
         </div>
       </section>
 
       <section className="surface">
-        <PanelTitle icon={Printer} title="الطباعة" subtitle="عرض الورق والطباعة التلقائية ولغة الفاتورة — إعدادات عامة لكل الفروع." />
+        <PanelTitle icon={Printer} title={t("administration.invoice.print.panelTitle")} subtitle={t("administration.invoice.print.panelSubtitle")} />
         <div className="grid gap-5 p-5 md:grid-cols-3">
-          <Field label="عرض الورق" hint="يصل للكاشير ضمن كتالوج نقطة البيع (receiptSettings.paperWidth).">
-            <div className="flex flex-col gap-2" role="radiogroup" aria-label="عرض الورق">
+          <Field label={t("administration.invoice.print.paperWidth")} hint={t("administration.invoice.print.paperWidthHint")}>
+            <div className="flex flex-col gap-2" role="radiogroup" aria-label={t("administration.invoice.print.paperWidth")}>
               {PAPER_WIDTHS.map((w) => (
                 <label key={w.value} className="inline-flex cursor-pointer items-center gap-2 text-sm font-semibold text-slate-700">
                   <input
@@ -490,22 +504,22 @@ export function InvoiceSettingsPage() {
                     onChange={() => setDraft((d) => ({ ...d, ReceiptPaperWidth: w.value }))}
                     className="h-4 w-4 accent-teal-600"
                   />
-                  {w.label}
+                  {t(`administration.invoice.paper.${w.value}`)}
                 </label>
               ))}
             </div>
           </Field>
-          <Field label="طباعة تلقائية" hint="فتح نافذة الطباعة تلقائيًا بعد إتمام البيع.">
+          <Field label={t("administration.invoice.print.autoPrint")} hint={t("administration.invoice.print.autoPrintHint")}>
             <Toggle
               checked={autoPrint}
               onChange={(next) => setDraft((d) => ({ ...d, ReceiptAutoPrint: next ? "1" : "0" }))}
-              label={autoPrint ? "مفعّلة" : "متوقفة"}
-              aria-label="طباعة تلقائية"
+              label={autoPrint ? t("administration.invoice.print.autoPrintOn") : t("administration.invoice.print.autoPrintOff")}
+              aria-label={t("administration.invoice.print.autoPrint")}
             />
           </Field>
           <Field
-            label="لغة الفاتورة"
-            hint="قالب الطباعة الحالي يطبع بالعربية فقط — خيار English/ثنائي اللغة معروض للتوثيق وسيُفعَّل عندما يدعمه قالب الفاتورة."
+            label={t("administration.invoice.print.language")}
+            hint={t("administration.invoice.print.languageHint")}
           >
             {({ id }) => (
               <select
@@ -514,12 +528,12 @@ export function InvoiceSettingsPage() {
                 value={language}
                 onChange={(e) => setDraft((d) => ({ ...d, ReceiptLanguage: e.target.value }))}
               >
-                <option value="ar">العربية</option>
-                <option value="en" disabled title="قالب الفاتورة لا يدعم الإنجليزية بعد">
-                  English (غير مدعومة بعد)
+                <option value="ar">{t("administration.invoice.lang.ar")}</option>
+                <option value="en" disabled title={t("administration.invoice.print.langEnTitle")}>
+                  {t("administration.invoice.lang.en")}
                 </option>
-                <option value="both" disabled title="قالب الفاتورة لا يدعم الطباعة ثنائية اللغة بعد">
-                  ثنائية اللغة (غير مدعومة بعد)
+                <option value="both" disabled title={t("administration.invoice.print.langBothTitle")}>
+                  {t("administration.invoice.lang.both")}
                 </option>
               </select>
             )}
@@ -528,26 +542,26 @@ export function InvoiceSettingsPage() {
       </section>
 
       <section className="surface">
-        <PanelTitle icon={Receipt} title="حقول مشتقّة" subtitle="تُدار من سجلاتها، وتظهر هنا للشفافية فقط." />
+        <PanelTitle icon={Receipt} title={t("administration.invoice.derivedPanel.title")} subtitle={t("administration.invoice.derivedPanel.subtitle")} />
         <div className="overflow-x-auto p-5">
           <table className="w-full text-sm">
             <thead>
-              <tr className="text-right text-xs font-bold text-slate-500">
-                <th className="px-3 py-2">الحقل</th>
-                <th className="px-3 py-2">القيمة</th>
-                <th className="px-3 py-2">المصدر</th>
-                <th className="px-3 py-2">النطاق</th>
-                <th className="px-3 py-2">تُدار من</th>
+              <tr className="text-start text-xs font-bold text-slate-500">
+                <th className="px-3 py-2">{t("administration.invoice.derivedPanel.thField")}</th>
+                <th className="px-3 py-2">{t("administration.invoice.derivedPanel.thValue")}</th>
+                <th className="px-3 py-2">{t("administration.invoice.derivedPanel.thSource")}</th>
+                <th className="px-3 py-2">{t("administration.invoice.derivedPanel.thScope")}</th>
+                <th className="px-3 py-2">{t("administration.invoice.derivedPanel.thOwner")}</th>
               </tr>
             </thead>
             <tbody>
               {DERIVED.map((f) => (
                 <tr key={String(f.key)} className="border-t border-slate-100">
-                  <td className="px-3 py-2 font-bold text-slate-700">{f.label}</td>
+                  <td className="px-3 py-2 font-bold text-slate-700">{t(`administration.invoice.derived.${f.labelKey}`)}</td>
                   <td className="px-3 py-2 text-slate-600">{String(identity[f.key] ?? "") || "—"}</td>
                   <td className="px-3 py-2 font-mono text-[11px] text-slate-400">{sources[f.key] ?? "—"}</td>
-                  <td className="px-3 py-2"><StatusBadge>{scopeLabel(sources[f.key])}</StatusBadge></td>
-                  <td className="px-3 py-2 text-slate-500">{f.owner}</td>
+                  <td className="px-3 py-2"><StatusBadge>{scopeText(sources[f.key])}</StatusBadge></td>
+                  <td className="px-3 py-2 text-slate-500">{t(`administration.invoice.owner.${f.ownerKey}`)}</td>
                 </tr>
               ))}
             </tbody>
@@ -558,15 +572,15 @@ export function InvoiceSettingsPage() {
       <section className="surface">
         <PanelTitle
           icon={ReceiptText}
-          title="معاينة"
-          subtitle="نفس مسار العرض الذي تطبعه نقطة البيع فعليًا (buildSaleReceiptHtml) — ليست محاكاة، بل الفاتورة الحقيقية بفاتورة نموذجية، لكل مقاس ورق."
+          title={t("administration.invoice.previewPanel.title")}
+          subtitle={t("administration.invoice.previewPanel.subtitle")}
         />
         <div className="grid gap-4 p-5 lg:grid-cols-3">
           {(["58", "80", "A4"] as const).map((w) => (
             <div key={w} className="flex flex-col items-center gap-2">
               <StatusBadge>{w === "A4" ? "A4" : `${w}mm`}</StatusBadge>
               <iframe
-                title={`معاينة الفاتورة — ${w}`}
+                title={t("administration.invoice.previewPanel.iframeTitle", { width: w })}
                 srcDoc={previewHtml(w)}
                 className="h-[520px] w-full rounded-xl border-2 border-dashed border-slate-300 bg-white"
                 sandbox=""
@@ -578,7 +592,7 @@ export function InvoiceSettingsPage() {
 
       {save.isError && (
         <div className="rounded-xl border border-rose-200 bg-rose-50 px-3 py-2 text-xs font-bold text-rose-700">
-          تعذّر الحفظ. حاول مجددًا.
+          {t("administration.invoice.saveFailed")}
         </div>
       )}
     </div>

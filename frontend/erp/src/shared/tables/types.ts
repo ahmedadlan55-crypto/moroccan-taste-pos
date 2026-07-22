@@ -20,6 +20,29 @@ export interface ColumnDef<T> {
   defaultHidden?: boolean;
   /** Hide this column from the compact mobile-card representation. */
   mobileHidden?: boolean;
+  /**
+   * Mobile-card ordering hint. On the stacked mobile view, columns render in
+   * ascending `priority` order (lower number = shown first); columns without a
+   * priority keep their declared order after the prioritized ones. No priority
+   * anywhere → unchanged (declaration order). `mobileHidden` still wins.
+   */
+  priority?: number;
+  /**
+   * Truncate the cell to a single line with an ellipsis (…) + a native `title`
+   * tooltip instead of wrapping and growing the row. OPT-IN (default: wrap, the
+   * pre-existing behavior) so existing tables are untouched. When set, the cell
+   * is capped at `width` (or ~18rem) and the raw string value drives the tooltip.
+   */
+  ellipsis?: boolean;
+  /**
+   * Capability required to see this column. When set and the resolver denies it,
+   * the column is omitted ENTIRELY — header, cells, columns-menu entry, and CSV
+   * export. Resolution is via the DataTable `canColumn` prop (wire it from the
+   * screen's `useCan`/`usePermissions`); with no resolver the default is
+   * show-all, so pass `canColumn` when you rely on `requireCap`. Unset → always
+   * shown (backward-compatible).
+   */
+  requireCap?: string;
   /** Fixed width (e.g. "8rem" or 120). */
   width?: string | number;
   /** Numeric cell → tabular-nums, LTR, end-aligned. */

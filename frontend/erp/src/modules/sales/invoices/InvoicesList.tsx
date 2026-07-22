@@ -2,27 +2,29 @@ import { useCallback, useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Plus } from "lucide-react";
 import { Button, PageHeader } from "@/shared/ui";
+import { useTx } from "@/shared/ui/i18n";
 import { DataTable, type ColumnDef } from "@/shared/tables";
 import { Can } from "@/shared/permissions";
 import { o2cApi, qk, SalesStatus, Money, DateCell, useDocNav, type Invoice } from "@/modules/sales/lib";
 import { InvoiceForm } from "./InvoiceForm";
 
-const STATUS_OPTIONS: { value: string; label: string }[] = [
-  { value: "", label: "كل الحالات" },
-  { value: "draft", label: "مسودة" },
-  { value: "issued", label: "صادرة" },
-  { value: "partially_paid", label: "جزئية" },
-  { value: "paid", label: "مدفوعة" },
-  { value: "credited", label: "إشعار دائن" },
-  { value: "cancelled", label: "ملغاة" },
-];
-
 interface TableState { page: number; pageSize: number; search: string }
 
 export function InvoicesList() {
+  const t = useTx();
   const { isNew, openDoc, openNew, closeNew } = useDocNav();
   const [status, setStatus] = useState("");
   const [ts, setTs] = useState<TableState>({ page: 1, pageSize: 25, search: "" });
+
+  const statusOptions = useMemo(() => [
+    { value: "", label: t("sales.filters.allStatuses") },
+    { value: "draft", label: t("sales.invoices.filter.draft") },
+    { value: "issued", label: t("sales.invoices.filter.issued") },
+    { value: "partially_paid", label: t("sales.invoices.filter.partial") },
+    { value: "paid", label: t("sales.invoices.filter.paid") },
+    { value: "credited", label: t("sales.invoices.filter.credited") },
+    { value: "cancelled", label: t("sales.invoices.filter.cancelled") },
+  ], [t]);
 
   const params = useMemo(() => ({ q: ts.search, status, page: ts.page, pageSize: ts.pageSize }), [ts, status]);
   const list = useQuery({ queryKey: qk.invoices(params), queryFn: ({ signal }) => o2cApi.invoices(params, signal) });
@@ -32,23 +34,23 @@ export function InvoicesList() {
   }, []);
 
   const columns = useMemo<ColumnDef<Invoice>[]>(() => [
-    { id: "document_number", header: "رقم الفاتورة", accessor: (i) => i.document_number, cell: (i) => <span className="font-bold text-teal-700">{i.document_number}</span> },
-    { id: "customer", header: "العميل", accessor: (i) => i.customer_name ?? "—" },
-    { id: "issue_date", header: "التاريخ", cell: (i) => <DateCell value={i.issue_date} /> },
-    { id: "due_date", header: "الاستحقاق", cell: (i) => <DateCell value={i.due_date} /> },
-    { id: "total", header: "الإجمالي", align: "end", cell: (i) => <Money value={i.total_amount} /> },
-    { id: "balance", header: "المتبقّي", align: "end", cell: (i) => <Money value={i.balance_amount} className="font-bold" /> },
-    { id: "status", header: "الحالة", cell: (i) => <SalesStatus status={i.status} /> },
-    { id: "zatca", header: "زاتكا", cell: (i) => <SalesStatus status={i.zatca_status} /> },
-  ], []);
+    { id: "document_number", header: t("sales.invoices.col.number"), accessor: (i) => i.document_number, cell: (i) => <span className="font-bold text-teal-700">{i.document_number}</span> },
+    { id: "customer", header: t("sales.col.customer"), accessor: (i) => i.customer_name ?? "—" },
+    { id: "issue_date", header: t("sales.col.date"), cell: (i) => <DateCell value={i.issue_date} /> },
+    { id: "due_date", header: t("sales.invoices.col.due"), cell: (i) => <DateCell value={i.due_date} /> },
+    { id: "total", header: t("sales.col.total"), align: "end", cell: (i) => <Money value={i.total_amount} /> },
+    { id: "balance", header: t("sales.col.remaining"), align: "end", cell: (i) => <Money value={i.balance_amount} className="font-bold" /> },
+    { id: "status", header: t("common.status"), cell: (i) => <SalesStatus status={i.status} /> },
+    { id: "zatca", header: t("sales.invoices.col.zatca"), cell: (i) => <SalesStatus status={i.zatca_status} /> },
+  ], [t]);
 
   return (
     <div>
       <PageHeader
-        eyebrow="الفواتير"
-        title="فواتير العملاء"
-        subtitle="المصدر الموحّد للذمم — فاتورة صادرة غير قابلة للتعديل."
-        action={<Can cap="invoices.create"><Button onClick={openNew}><Plus className="h-4 w-4" /> فاتورة جديدة</Button></Can>}
+        eyebrow={t("sales.invoices.eyebrow")}
+        title={t("sales.invoices.title")}
+        subtitle={t("sales.invoices.subtitle")}
+        action={<Can cap="invoices.create"><Button onClick={openNew}><Plus className="h-4 w-4" /> {t("sales.invoices.newBtn")}</Button></Can>}
       />
       <DataTable<Invoice>
         mode="server"
@@ -63,16 +65,16 @@ export function InvoicesList() {
         onStateChange={onStateChange}
         initialPageSize={25}
         searchable
-        searchPlaceholder="ابحث برقم الفاتورة أو العميل…"
+        searchPlaceholder={t("sales.invoices.searchPlaceholder")}
         columnMenu={false}
-        emptyTitle="لا توجد فواتير"
-        emptyBody="أنشئ فاتورة جديدة للبدء."
+        emptyTitle={t("sales.invoices.emptyTitle")}
+        emptyBody={t("sales.invoices.emptyBody")}
         mobileTitle={(i) => i.document_number}
         filterBar={
           <label className="flex items-center">
-            <span className="sr-only">تصفية بالحالة</span>
-            <select className="field h-10" value={status} onChange={(e) => setStatus(e.target.value)} aria-label="تصفية بالحالة">
-              {STATUS_OPTIONS.map((s) => <option key={s.value} value={s.value}>{s.label}</option>)}
+            <span className="sr-only">{t("sales.filters.byStatus")}</span>
+            <select className="field h-10" value={status} onChange={(e) => setStatus(e.target.value)} aria-label={t("sales.filters.byStatus")}>
+              {statusOptions.map((s) => <option key={s.value} value={s.value}>{s.label}</option>)}
             </select>
           </label>
         }

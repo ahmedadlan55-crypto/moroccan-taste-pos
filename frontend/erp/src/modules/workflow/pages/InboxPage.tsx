@@ -1,4 +1,5 @@
 import { Inbox } from "lucide-react";
+import { useTx } from "@/shared/ui/i18n";
 import { TxnListScreen } from "../components/TxnListScreen";
 import { fetchIncoming } from "../lib/api";
 import { qk } from "../lib/query-keys";
@@ -8,16 +9,17 @@ import { qk } from "../lib/query-keys";
 // (اعتماد/رفض/إرجاع/إحالة) posting to /workflow/:id/action — gated by the
 // workflow.actions.act capability AND the server's per-transaction permissions.
 export function InboxPage() {
+  const t = useTx();
   return (
     <TxnListScreen
       icon={Inbox}
-      description="المعاملات الواردة إليك بانتظار الاطلاع أو الإجراء."
+      description={t("workflow.inbox.description")}
       tableId="wf-inbox"
-      peopleColumn={{ id: "from", header: "من", value: (r) => r.creatorName || r.createdBy || "" }}
+      peopleColumn={{ id: "from", header: t("workflow.inbox.from"), value: (r) => r.creatorName || r.createdBy || "" }}
       queryKey={qk.incoming}
       fetcher={fetchIncoming}
-      emptyTitle="لا توجد معاملات واردة"
-      emptyBody="لا توجد معاملات بانتظار إجراء منك حاليًا."
+      emptyTitle={t("workflow.inbox.emptyTitle")}
+      emptyBody={t("workflow.inbox.emptyBody")}
       canAct
     />
   );

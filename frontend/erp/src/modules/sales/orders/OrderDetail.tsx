@@ -4,13 +4,15 @@ import { ArrowRight, CheckCircle2, PackageCheck, FileText, XCircle } from "lucid
 import {
   Button, Card, CardHeader, CardTitle, CardBody, PageHeader, LoadingState, ErrorState, safeUserMessage,
 } from "@/shared/ui";
+import { useTx } from "@/shared/ui/i18n";
 import { useCan } from "@/app/providers";
 import { formatDateTime } from "@/shared/lib";
-import { o2cApi, qk, statusMeta, SalesStatus, Money, DateCell, Info, type TimelineEvent } from "@/modules/sales/lib";
+import { o2cApi, qk, statusLabel, SalesStatus, Money, DateCell, Info, type TimelineEvent } from "@/modules/sales/lib";
 
 const STEPS = ["draft", "confirmed", "fulfilled", "invoiced", "closed"];
 
 export function OrderDetail({ id, onBack }: { id: string; onBack: () => void }) {
+  const t = useTx();
   const nav = useNavigate();
   const qc = useQueryClient();
   const canConfirm = useCan("sales_orders.confirm");
@@ -35,18 +37,18 @@ export function OrderDetail({ id, onBack }: { id: string; onBack: () => void }) 
 
   return (
     <div>
-      <button type="button" onClick={onBack} className="mb-3 inline-flex items-center gap-1 text-sm font-bold text-slate-500 hover:text-teal-700"><ArrowRight className="h-4 w-4" /> رجوع للأوامر</button>
+      <button type="button" onClick={onBack} className="mb-3 inline-flex items-center gap-1 text-sm font-bold text-slate-500 hover:text-teal-700"><ArrowRight className="h-4 w-4" /> {t("sales.orders.detail.back")}</button>
       <PageHeader
-        eyebrow={o.is_credit_sale ? "أمر بيع آجل" : "أمر بيع نقدي"}
+        eyebrow={o.is_credit_sale ? t("sales.orders.detail.creditOrder") : t("sales.orders.detail.cashOrder")}
         title={o.order_number}
         subtitle={o.customer_name || undefined}
         action={
           <div className="flex flex-wrap items-center gap-2">
-            {o.status === "draft" && canConfirm && <Button onClick={() => confirm.mutate()} disabled={busy}><CheckCircle2 className="h-4 w-4" /> تأكيد</Button>}
-            {o.status === "confirmed" && canFulfill && <Button onClick={() => fulfill.mutate()} disabled={busy}><PackageCheck className="h-4 w-4" /> تنفيذ</Button>}
-            {o.status === "fulfilled" && canInvoice && <Button onClick={() => invoice.mutate()} disabled={busy}><FileText className="h-4 w-4" /> تفويتر</Button>}
-            {o.status === "invoiced" && o.invoice_id && <Button variant="secondary" onClick={() => nav(`/sales/invoices?doc=${o.invoice_id}`)}>عرض الفاتورة</Button>}
-            {(o.status === "draft" || o.status === "confirmed") && <Button variant="ghost" onClick={() => cancel.mutate()} disabled={busy}><XCircle className="h-4 w-4" /> إلغاء</Button>}
+            {o.status === "draft" && canConfirm && <Button onClick={() => confirm.mutate()} disabled={busy}><CheckCircle2 className="h-4 w-4" /> {t("sales.actions.confirm")}</Button>}
+            {o.status === "confirmed" && canFulfill && <Button onClick={() => fulfill.mutate()} disabled={busy}><PackageCheck className="h-4 w-4" /> {t("sales.actions.fulfill")}</Button>}
+            {o.status === "fulfilled" && canInvoice && <Button onClick={() => invoice.mutate()} disabled={busy}><FileText className="h-4 w-4" /> {t("sales.actions.invoice")}</Button>}
+            {o.status === "invoiced" && o.invoice_id && <Button variant="secondary" onClick={() => nav(`/sales/invoices?doc=${o.invoice_id}`)}>{t("sales.actions.viewInvoice")}</Button>}
+            {(o.status === "draft" || o.status === "confirmed") && <Button variant="ghost" onClick={() => cancel.mutate()} disabled={busy}><XCircle className="h-4 w-4" /> {t("common.cancel")}</Button>}
           </div>
         }
       />
@@ -56,7 +58,7 @@ export function OrderDetail({ id, onBack }: { id: string; onBack: () => void }) 
         <ol className="mb-6 flex items-center gap-2 overflow-x-auto">
           {STEPS.map((s, i) => (
             <li key={s} className="flex items-center gap-2">
-              <span className={`whitespace-nowrap rounded-full px-3 py-1 text-xs font-bold ${i <= stepIdx ? "bg-teal-600 text-white" : "bg-slate-100 text-slate-400"}`}>{statusMeta(s).label}</span>
+              <span className={`whitespace-nowrap rounded-full px-3 py-1 text-xs font-bold ${i <= stepIdx ? "bg-teal-600 text-white" : "bg-slate-100 text-slate-400"}`}>{statusLabel(s, t)}</span>
               {i < STEPS.length - 1 && <span className={`h-0.5 w-6 ${i < stepIdx ? "bg-teal-500" : "bg-slate-200"}`} />}
             </li>
           ))}
@@ -64,20 +66,20 @@ export function OrderDetail({ id, onBack }: { id: string; onBack: () => void }) 
       )}
 
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-        <Info label="الحالة" value={<SalesStatus status={o.status} />} />
-        <Info label="التاريخ" value={<DateCell value={o.order_date} />} />
-        <Info label="الإجمالي" value={<Money value={o.total_amount} />} />
-        <Info label="الفاتورة" value={o.invoice_id ? <button type="button" onClick={() => nav(`/sales/invoices?doc=${o.invoice_id}`)} className="text-xs text-teal-700 hover:underline">عرض</button> : "—"} />
+        <Info label={t("common.status")} value={<SalesStatus status={o.status} />} />
+        <Info label={t("sales.col.date")} value={<DateCell value={o.order_date} />} />
+        <Info label={t("sales.col.total")} value={<Money value={o.total_amount} />} />
+        <Info label={t("sales.orders.detail.invoice")} value={o.invoice_id ? <button type="button" onClick={() => nav(`/sales/invoices?doc=${o.invoice_id}`)} className="text-xs text-teal-700 hover:underline">{t("sales.actions.view")}</button> : "—"} />
       </div>
 
       {timeline.length > 0 && (
         <Card className="mt-6">
-          <CardHeader><CardTitle>السجل الزمني</CardTitle></CardHeader>
+          <CardHeader><CardTitle>{t("sales.orders.detail.timeline")}</CardTitle></CardHeader>
           <CardBody>
             <ul className="flex flex-col gap-2">
               {timeline.map((e, i) => (
                 <li key={i} className="flex items-center justify-between text-sm">
-                  <span className="font-bold text-slate-700">{statusMeta(e.to_status).label || e.event_type}</span>
+                  <span className="font-bold text-slate-700">{statusLabel(e.to_status, t) || e.event_type}</span>
                   <span className="flex items-center gap-3">
                     <span className="text-xs text-slate-400">{e.actor_username || "—"}</span>
                     <span dir="ltr" className="text-xs tabular-nums text-slate-400">{formatDateTime(e.created_at)}</span>

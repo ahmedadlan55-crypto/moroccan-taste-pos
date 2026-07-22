@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, screen } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { MemoryRouter } from "react-router-dom";
+import { I18nProvider } from "@/i18n";
 
 // Generic canned payload — broad enough that any list/detail adapter can read a
 // shape off it without throwing before the page's header renders.
@@ -24,11 +25,13 @@ import InventoryModule from "@/modules/inventory";
 function renderAt(path: string) {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   return render(
-    <QueryClientProvider client={qc}>
-      <MemoryRouter initialEntries={[path]}>
-        <InventoryModule />
-      </MemoryRouter>
-    </QueryClientProvider>,
+    <I18nProvider>
+      <QueryClientProvider client={qc}>
+        <MemoryRouter initialEntries={[path]}>
+          <InventoryModule />
+        </MemoryRouter>
+      </QueryClientProvider>
+    </I18nProvider>,
   );
 }
 

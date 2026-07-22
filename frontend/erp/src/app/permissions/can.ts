@@ -244,11 +244,23 @@ export const ROLE_GRANTS: Record<Capability, readonly Role[]> = {
   "menu.catalog.manage": MGR,
   "menu.pricing.manage": [...ADM, "manager", "accountant"],
   "menu.recipes.manage": [...ADM, "manager"],
+  // Cost/margin visibility (Sprint 3 · D2) — the finance-ish roles trusted with
+  // cost figures. `sales` keeps menu.view but NOT cost.view, so it sees the
+  // catalog without cost or margin. Sibling of item.cost.view (D1); EXACT mirror
+  // of db/migrations/capability-seeds/g-cost-visibility.json. admin/developer
+  // bypass in can().
+  "menu.cost.view": [...ADM, "manager", "accountant"],
   // Same role grant as menu.catalog.manage (MGR = admin/developer/manager) —
   // matches the backend seed (admin+manager) in
   // db/migrations/capability-seeds/g-menu-images.json exactly; admin/developer
   // are covered by can()'s hard bypass either way.
   "menu.image.manage": MGR,
+  // ── Inventory-item cost / profit column visibility (Sprint 3 D3) ──
+  // Gate the cost & margin columns in the item (D1) table. Granted to
+  // admin/manager/accountant — NOT sales. Its menu sibling `menu.cost.view` is
+  // granted in the menu group above (D2). EXACT mirror of the backend seed
+  // db/migrations/capability-seeds/g-cost-visibility.json.
+  "item.cost.view": [...ADM, "manager", "accountant"],
   // ── Purchasing requisitions (Closure Sprint v2) ──
   "purchasing.requisitions.manage": BACKOFFICE,
   "purchasing.requisitions.approve": MGR,

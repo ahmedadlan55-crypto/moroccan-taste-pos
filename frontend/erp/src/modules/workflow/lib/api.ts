@@ -500,7 +500,10 @@ export function useWorkflowRoutes() {
       // under /api/workflow. On failure it answers { error } instead of an array.
       const res = await apiClient.get<WorkflowRoute[] | { error?: string }>("/workflow-routes");
       if (Array.isArray(res)) return res;
-      throw new Error((res as { error?: string })?.error || "تعذّر تحميل قواعد التوجيه");
+      // The caller (RoutesDslTab) renders a translated <ErrorState> body for this
+      // failure; surface the server's error text when present, else an empty
+      // Error so the shared state falls back to its localized generic message.
+      throw new Error((res as { error?: string })?.error || "");
     },
   });
 }

@@ -1,5 +1,6 @@
 import { DatePicker } from "@/shared/ui";
 import { formatDate } from "@/shared/lib";
+import { useT } from "@/i18n";
 import { usePnl, startOfYearISO, todayISO, type DateRange, type PnlRow } from "../api";
 import {
   Num,
@@ -26,6 +27,7 @@ function Kpi({ label, value, tone }: { label: string; value: string; tone: strin
 }
 
 function Section({ title, rows, total, totalTone }: { title: string; rows: PnlRow[]; total: number; totalTone: string }) {
+  const t = useT();
   return (
     <div className="surface overflow-hidden">
       <div className="flex items-center justify-between border-b border-slate-100 px-5 py-3">
@@ -38,7 +40,7 @@ function Section({ title, rows, total, totalTone }: { title: string; rows: PnlRo
         <tbody>
           {rows.length === 0 ? (
             <tr>
-              <td className="px-5 py-3 text-sm font-medium text-slate-400">لا توجد حسابات بحركة</td>
+              <td className="px-5 py-3 text-sm font-medium text-slate-400">{t("accounting.incomeStatement.noAccounts")}</td>
             </tr>
           ) : (
             rows.map((r) => (
@@ -60,6 +62,7 @@ function Section({ title, rows, total, totalTone }: { title: string; rows: PnlRo
 }
 
 export function IncomeStatementPage() {
+  const t = useT();
   const filter = useAppliedFilter<DateRange>({ from: startOfYearISO(), to: todayISO() });
   const query = usePnl(filter.applied);
   const data = query.data;
@@ -69,15 +72,15 @@ export function IncomeStatementPage() {
   return (
     <div>
       <ReportHeader
-        title="قائمة الدخل"
-        subtitle="الإيرادات مطروحًا منها المصروفات لفترة محدّدة — يحسبها الخادم من القيود المُرحَّلة."
+        title={t("accounting.incomeStatement.title")}
+        subtitle={t("accounting.incomeStatement.subtitle")}
         onPrint={printReport}
       />
       <FilterCard onRun={filter.run} running={query.isFetching}>
-        <FilterField label="من تاريخ">
+        <FilterField label={t("accounting.common.fromDate")}>
           <DatePicker value={filter.draft.from} onChange={(from) => filter.patch({ from })} />
         </FilterField>
-        <FilterField label="إلى تاريخ">
+        <FilterField label={t("accounting.common.toDate")}>
           <DatePicker value={filter.draft.to} onChange={(to) => filter.patch({ to })} />
         </FilterField>
       </FilterCard>
@@ -91,26 +94,26 @@ export function IncomeStatementPage() {
         {data && (
           <PrintArea>
             <div className="surface mb-5 p-4">
-              <PrintBanner title="قائمة الدخل" period={period} />
+              <PrintBanner title={t("accounting.incomeStatement.title")} period={period} />
               <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
-                <Kpi label="إجمالي الإيرادات" value={fmt(data.summary.totalRevenue)} tone="text-emerald-600" />
-                <Kpi label="إجمالي المصروفات" value={fmt(data.summary.totalExpense)} tone="text-rose-600" />
+                <Kpi label={t("accounting.incomeStatement.totalRevenue")} value={fmt(data.summary.totalRevenue)} tone="text-emerald-600" />
+                <Kpi label={t("accounting.incomeStatement.totalExpense")} value={fmt(data.summary.totalExpense)} tone="text-rose-600" />
                 <Kpi
-                  label="صافي الربح"
+                  label={t("accounting.incomeStatement.netProfit")}
                   value={fmt(data.summary.netProfit)}
                   tone={data.summary.netProfit >= 0 ? "text-teal-700" : "text-rose-600"}
                 />
-                <Kpi label="هامش الربح" value={`${fmt(data.summary.grossMargin)}%`} tone="text-slate-900" />
+                <Kpi label={t("accounting.incomeStatement.grossMargin")} value={`${fmt(data.summary.grossMargin)}%`} tone="text-slate-900" />
               </div>
             </div>
 
             <div className="grid gap-5 lg:grid-cols-2">
-              <Section title="الإيرادات" rows={data.revenue} total={data.summary.totalRevenue} totalTone="text-emerald-600" />
-              <Section title="المصروفات" rows={data.expenses} total={data.summary.totalExpense} totalTone="text-rose-600" />
+              <Section title={t("accounting.accountType.revenue")} rows={data.revenue} total={data.summary.totalRevenue} totalTone="text-emerald-600" />
+              <Section title={t("accounting.accountType.expense")} rows={data.expenses} total={data.summary.totalExpense} totalTone="text-rose-600" />
             </div>
 
             <div className="surface mt-5 flex items-center justify-between px-5 py-4">
-              <span className="text-base font-extrabold text-slate-900">صافي ربح الفترة</span>
+              <span className="text-base font-extrabold text-slate-900">{t("accounting.incomeStatement.netProfitPeriod")}</span>
               <span
                 className={`text-xl font-extrabold tabular-nums ${
                   data.summary.netProfit >= 0 ? "text-teal-700" : "text-rose-600"

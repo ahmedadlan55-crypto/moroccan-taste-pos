@@ -672,6 +672,11 @@ app.use('/api/cashier-readiness', require('./routes/cashier-readiness'));
 // bilingual-i18n-images — Owner C: bulk product image management. Same
 // /menu*-prefix-match caveat as above — mounted at its own top-level path.
 app.use('/api/product-images', require('./routes/product-images'));
+// Sprint 3 (A2) — per-user preferences (UI language persistence) + server-backed
+// saved table views. Both at clean top-level paths (not /menu*), each chains
+// its own verifyToken.
+app.use('/api/user-preferences', require('./routes/user-preferences'));
+app.use('/api/saved-views', require('./routes/saved-views'));
 // Phase 3B — independent inventory transactions (receipts / issues / adjustments)
 // at a CLEAN namespace /api/inventory/v2/* so the legacy /api/inventory/adjustments
 // (delta model + legacy HTML UI) is never shadowed. Mounted BEFORE inventory.js so
@@ -6560,6 +6565,22 @@ async function runMigrations() {
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
   `);
 
+  // 15b) User Preferences (تفضيلات المستخدم — اللغة + إعدادات الواجهة)
+  //   Sprint 3 (A2). Per-user key/value blob keyed by username (the same
+  //   token-derived identity every other route uses). prefs_json stores
+  //   { language: 'ar'|'en', ...arbitrary UI prefs }. Backs GET/PUT
+  //   /api/user-preferences (routes/user-preferences.js). Additive + fully
+  //   isolated — touches no existing table. Raw SQL reference lives in
+  //   db/migrations/0017_user_preferences.sql. createTableIfMissing no-ops
+  //   safely once the table exists, so this is safe to run on every boot.
+  await createTableIfMissing('user_preferences', `
+    CREATE TABLE user_preferences (
+      username VARCHAR(80) PRIMARY KEY,
+      prefs_json LONGTEXT NULL,
+      updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+  `);
+
   // Enrich position_workflow_steps with policy linkage if not present
   await addColumnIfMissing('position_workflow_steps', 'policy_id', 'VARCHAR(40)');
   await addColumnIfMissing('position_workflow_steps', 'sla_hours', 'INT DEFAULT 24');
@@ -6709,6 +6730,53 @@ async function runMigrations() {
     "ENUM('on_sale','on_production','none') DEFAULT 'on_sale'");
   await addColumnIfMissing('menu', 'allow_negative_stock', 'BOOLEAN DEFAULT TRUE');
   await addColumnIfMissing('menu', 'min_stock_alert', 'DECIMAL(10,3) DEFAULT 0');
+
+  // ═══════════════════════════════════════════════════════════════════
+  // Sprint 3 Phase D3 — inventory-items + menu redesign (ADDITIVE, idempotent)
+  // WIRING NOTE: route MOUNTS are unchanged — /api/menu (routes/menu.js) and
+  // /api/inventory/v2 (routes/inventory-items.js) are already mounted; the new
+  // /menu/list + /items/:id/assignments endpoints live inside those existing
+  // routers. Only the schema is added here (established single-file convention).
+  // ═══════════════════════════════════════════════════════════════════
+  // (3) menu.cost_source — labels WHERE the stored cost came from so the item
+  // PUT can lock a recipe-derived cost against silent manual edits. NULL until
+  // stamped. It is provenance ONLY — it never reads or writes the cost NUMBER.
+  await addColumnIfMissing('menu', 'cost_source', "ENUM('recipe','manual','imported') NULL");
+  // One-time backfill of the LABEL only (guarded by a settings flag). A row with
+  // a bom_id is recipe-costed; a row with a non-zero cost but no bom_id is manual.
+  // This is pure labeling — the UPDATE touches only cost_source, never cost.
+  try {
+    const [csDone] = await db.query("SELECT setting_value FROM settings WHERE setting_key = 'MenuCostSourceBackfill_D3' LIMIT 1");
+    if (!csDone.length) {
+      await db.query("UPDATE menu SET cost_source = 'recipe' WHERE cost_source IS NULL AND bom_id IS NOT NULL");
+      await db.query("UPDATE menu SET cost_source = 'manual' WHERE cost_source IS NULL AND bom_id IS NULL AND cost IS NOT NULL AND cost <> 0");
+      await db.query("INSERT INTO settings (setting_key, setting_value) VALUES ('MenuCostSourceBackfill_D3','1') ON DUPLICATE KEY UPDATE setting_value = '1'");
+      console.log('[DB] D3 menu.cost_source backfill: labeled existing rows (no cost VALUE changed).');
+    }
+  } catch (e) { console.log('[DB] D3 cost_source backfill warning:', e.message.substring(0, 120)); }
+
+  // (4) item_warehouse_assignments — explicit item↔warehouse MEMBERSHIP, kept
+  // separate from stock. warehouse_item_rules stays the min/max/reorder layer;
+  // this is the "which warehouses does this item belong to" layer. is_main is
+  // the per-item primary warehouse. Writing assignments NEVER touches
+  // warehouse_stock balances. UNIQUE(item_id,warehouse_id).
+  await createTableIfMissing('item_warehouse_assignments', `
+    CREATE TABLE item_warehouse_assignments (
+      id VARCHAR(60) PRIMARY KEY,
+      item_id VARCHAR(50) NOT NULL,
+      warehouse_id VARCHAR(50) NOT NULL,
+      is_active TINYINT(1) NOT NULL DEFAULT 1,
+      is_main TINYINT(1) NOT NULL DEFAULT 0,
+      created_by VARCHAR(100),
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      updated_by VARCHAR(100),
+      updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+      UNIQUE KEY uq_iwa_item_wh (item_id, warehouse_id),
+      INDEX idx_iwa_item (item_id),
+      INDEX idx_iwa_wh (warehouse_id)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+  `);
+
   await addColumnIfMissing('bom', 'product_source',
     "ENUM('menu','inv') DEFAULT 'inv'");
   await addColumnIfMissing('bom', 'consumption_warehouse_id', 'VARCHAR(50)');

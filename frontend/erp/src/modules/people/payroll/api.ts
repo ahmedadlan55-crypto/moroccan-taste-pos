@@ -9,6 +9,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { apiClient, getToken } from "@/shared/api";
 import type { StatusTone } from "@/shared/ui";
+import type { TFunction } from "@/i18n";
 
 // ── Types ────────────────────────────────────────────────────────────────────
 export type PayrollStatus = "draft" | "calculated" | "approved" | "paid";
@@ -173,26 +174,27 @@ function ensureOk<T extends MutationResult>(d: T): T {
   return d;
 }
 
-// ── Display helpers ──────────────────────────────────────────────────────────
-const MONTHS_AR = [
-  "يناير", "فبراير", "مارس", "أبريل", "مايو", "يونيو",
-  "يوليو", "أغسطس", "سبتمبر", "أكتوبر", "نوفمبر", "ديسمبر",
-];
-export function monthName(m: number): string {
-  return MONTHS_AR[(num(m) || 1) - 1] ?? String(m);
+// ── Display helpers (localized via t; month names + status labels live in the
+// people.payroll.* namespace) ─────────────────────────────────────────────────
+export function monthName(m: number, t: TFunction): string {
+  const i = num(m) || 0;
+  if (i < 1 || i > 12) return String(m);
+  return t(`people.payroll.months.${i}`);
 }
-export function periodLabel(run: { month: number; year: number }): string {
-  return `${monthName(run.month)} ${run.year}`;
+export function periodLabel(run: { month: number; year: number }, t: TFunction): string {
+  return `${monthName(run.month, t)} ${run.year}`;
 }
 
-export const PAYROLL_STATUS: Record<PayrollStatus, { label: string; tone: StatusTone }> = {
-  draft: { label: "مسودة", tone: "neutral" },
-  calculated: { label: "محسوبة", tone: "info" },
-  approved: { label: "معتمدة", tone: "warning" },
-  paid: { label: "مدفوعة", tone: "success" },
+const PAYROLL_STATUS_TONE: Record<PayrollStatus, StatusTone> = {
+  draft: "neutral",
+  calculated: "info",
+  approved: "warning",
+  paid: "success",
 };
-export function payrollStatusMeta(status: string): { label: string; tone: StatusTone } {
-  return PAYROLL_STATUS[status as PayrollStatus] ?? { label: status || "—", tone: "neutral" };
+export function payrollStatusMeta(status: string, t: TFunction): { label: string; tone: StatusTone } {
+  const tone = PAYROLL_STATUS_TONE[status as PayrollStatus];
+  if (!tone) return { label: status || "—", tone: "neutral" };
+  return { label: t(`people.payroll.status.${status}`), tone };
 }
 
 const _money = new Intl.NumberFormat("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });

@@ -3,6 +3,7 @@ import { Plus, Pencil, Trash2 } from "lucide-react";
 import { Button, IconButton, Dialog, Input, Select, ConfirmDialog, PageHeader, Badge } from "@/shared/ui";
 import { Field } from "@/shared/forms";
 import { DataTable, type ColumnDef } from "@/shared/tables";
+import { useT, translateApiError } from "@/i18n";
 import {
   useCashBoxes,
   useSaveCashBox,
@@ -10,9 +11,9 @@ import {
   type CashBox,
   type CashBoxInput,
 } from "../api";
-import { Money, GlLinkSection, mapError } from "../components";
+import { Money, GlLinkSection } from "../components";
 
-const TYPE_LABEL: Record<string, string> = { main: "رئيسي", branch: "فرعي", petty: "نثرية" };
+const TYPE_CODES = ["main", "branch", "petty"] as const;
 
 interface FormState {
   id?: string;
@@ -35,9 +36,13 @@ const EMPTY: FormState = {
 };
 
 export function CashboxesPage() {
+  const t = useT();
   const listQuery = useCashBoxes();
   const save = useSaveCashBox();
   const del = useDeleteCashBox();
+  // main/branch/petty → translated label, unknown codes fall back to the raw value.
+  const typeLabel = (type: string) =>
+    (TYPE_CODES as readonly string[]).includes(type) ? t(`banking.cashboxes.types.${type}`) : type;
 
   const [form, setForm] = useState<FormState | null>(null);
   const [glParentId, setGlParentId] = useState("");
@@ -73,7 +78,7 @@ export function CashboxesPage() {
   function submit() {
     if (!form) return;
     if (!form.name.trim()) {
-      setNameError("اسم الصندوق مطلوب.");
+      setNameError(t("banking.cashboxes.nameRequired"));
       return;
     }
     setFormError(null);
@@ -92,10 +97,10 @@ export function CashboxesPage() {
     }
     save.mutate(input, {
       onSuccess: (res) => {
-        if (res && res.success === false) return setFormError(mapError(new Error(res.error)));
+        if (res && res.success === false) return setFormError(translateApiError(new Error(res.error), t));
         setForm(null);
       },
-      onError: (e) => setFormError(mapError(e)),
+      onError: (e) => setFormError(translateApiError(e, t)),
     });
   }
 
@@ -105,28 +110,28 @@ export function CashboxesPage() {
     setDeleteError(null);
     del.mutate(toDelete.id, {
       onSuccess: (res) => {
-        if (res && res.success === false) return setDeleteError(mapError(new Error(res.error)));
+        if (res && res.success === false) return setDeleteError(translateApiError(new Error(res.error), t));
         setToDelete(null);
       },
-      onError: (e) => setDeleteError(mapError(e)),
+      onError: (e) => setDeleteError(translateApiError(e, t)),
     });
   }
 
   const columns: ColumnDef<CashBox>[] = [
-    { id: "name", header: "الصندوق", accessor: (r) => r.name, sortable: true },
-    { id: "code", header: "الرمز", accessor: (r) => r.code || "—" },
+    { id: "name", header: t("banking.shared.box"), accessor: (r) => r.name, sortable: true },
+    { id: "code", header: t("banking.cashboxes.cols.code"), accessor: (r) => r.code || "—" },
     {
       id: "type",
-      header: "النوع",
-      accessor: (r) => TYPE_LABEL[r.type] ?? r.type,
-      cell: (r) => <Badge tone="teal">{TYPE_LABEL[r.type] ?? r.type}</Badge>,
+      header: t("banking.shared.type"),
+      accessor: (r) => typeLabel(r.type),
+      cell: (r) => <Badge tone="teal">{typeLabel(r.type)}</Badge>,
     },
-    { id: "branch", header: "الفرع", accessor: (r) => r.branchName || "—" },
-    { id: "keeper", header: "الأمين", accessor: (r) => r.keeperUsername || "—", defaultHidden: true },
-    { id: "gl", header: "حساب الأستاذ", accessor: (r) => r.glAccountCode || "—" },
+    { id: "branch", header: t("banking.shared.branch"), accessor: (r) => r.branchName || "—" },
+    { id: "keeper", header: t("banking.cashboxes.cols.keeper"), accessor: (r) => r.keeperUsername || "—", defaultHidden: true },
+    { id: "gl", header: t("banking.shared.ledgerAccount"), accessor: (r) => r.glAccountCode || "—" },
     {
       id: "balance",
-      header: "الرصيد",
+      header: t("banking.shared.balance"),
       numeric: true,
       accessor: (r) => r.balance,
       cell: (r) => <Money value={r.balance} currency={r.currency} tone="text-emerald-600" />,
@@ -136,12 +141,12 @@ export function CashboxesPage() {
   return (
     <div>
       <PageHeader
-        eyebrow="النقد والبنوك"
-        title="الخزائن"
-        subtitle="إدارة صناديق النقد وربطها بحسابات الأستاذ العام تحت النقدية (1101)."
+        eyebrow={t("banking.shared.eyebrow")}
+        title={t("banking.cashboxes.title")}
+        subtitle={t("banking.cashboxes.subtitle")}
         action={
           <Button variant="primary" onClick={openNew}>
-            <Plus className="h-4 w-4" /> صندوق جديد
+            <Plus className="h-4 w-4" /> {t("banking.cashboxes.newTitle")}
           </Button>
         }
       />
@@ -154,15 +159,15 @@ export function CashboxesPage() {
         error={listQuery.error}
         onRetry={() => listQuery.refetch()}
         searchable
-        searchPlaceholder="بحث عن صندوق…"
-        emptyTitle="لا توجد صناديق"
-        emptyBody="أضف أول صندوق نقدي للبدء."
+        searchPlaceholder={t("banking.cashboxes.searchPlaceholder")}
+        emptyTitle={t("banking.cashboxes.emptyTitle")}
+        emptyBody={t("banking.cashboxes.emptyBody")}
         rowActions={(r) => (
           <div className="flex items-center gap-1">
-            <IconButton aria-label="تعديل" size="sm" onClick={() => openEdit(r)}>
+            <IconButton aria-label={t("common.edit")} size="sm" onClick={() => openEdit(r)}>
               <Pencil className="h-4 w-4" />
             </IconButton>
-            <IconButton aria-label="حذف" size="sm" onClick={() => { setDeleteError(null); setToDelete(r); }}>
+            <IconButton aria-label={t("common.delete")} size="sm" onClick={() => { setDeleteError(null); setToDelete(r); }}>
               <Trash2 className="h-4 w-4 text-rose-600" />
             </IconButton>
           </div>
@@ -172,15 +177,15 @@ export function CashboxesPage() {
       <Dialog
         open={!!form}
         onClose={() => setForm(null)}
-        title={isNew ? "صندوق جديد" : "تعديل الصندوق"}
+        title={isNew ? t("banking.cashboxes.newTitle") : t("banking.cashboxes.editTitle")}
         size="lg"
         footer={
           <>
             <Button variant="secondary" onClick={() => setForm(null)} disabled={save.isPending}>
-              إلغاء
+              {t("common.cancel")}
             </Button>
             <Button variant="primary" onClick={submit} loading={save.isPending}>
-              حفظ
+              {t("common.save")}
             </Button>
           </>
         }
@@ -188,7 +193,7 @@ export function CashboxesPage() {
         {form && (
           <div className="space-y-4">
             <div className="grid gap-4 sm:grid-cols-2">
-              <Field label="اسم الصندوق" required error={nameError ?? undefined}>
+              <Field label={t("banking.cashboxes.fields.name")} required error={nameError ?? undefined}>
                 <Input
                   value={form.name}
                   invalid={!!nameError}
@@ -198,36 +203,36 @@ export function CashboxesPage() {
                   }}
                 />
               </Field>
-              <Field label="الرمز">
+              <Field label={t("banking.cashboxes.fields.code")}>
                 <Input value={form.code} onChange={(e) => setForm({ ...form, code: e.target.value })} />
               </Field>
-              <Field label="النوع">
+              <Field label={t("banking.shared.type")}>
                 <Select
                   value={form.type}
                   onChange={(e) => setForm({ ...form, type: e.target.value })}
                   options={[
-                    { value: "main", label: "رئيسي" },
-                    { value: "branch", label: "فرعي" },
-                    { value: "petty", label: "نثرية" },
+                    { value: "main", label: t("banking.cashboxes.types.main") },
+                    { value: "branch", label: t("banking.cashboxes.types.branch") },
+                    { value: "petty", label: t("banking.cashboxes.types.petty") },
                   ]}
                 />
               </Field>
-              <Field label="أمين الصندوق (اسم المستخدم)">
+              <Field label={t("banking.cashboxes.fields.keeper")}>
                 <Input
                   value={form.keeperUsername}
                   onChange={(e) => setForm({ ...form, keeperUsername: e.target.value })}
                 />
               </Field>
-              <Field label="العملة">
+              <Field label={t("banking.shared.currency")}>
                 <Input value={form.currency} onChange={(e) => setForm({ ...form, currency: e.target.value })} />
               </Field>
             </div>
 
             {isNew ? (
-              <GlLinkSection root="1101" rootLabel="النقدية (1101)" parentId={glParentId} onParentChange={setGlParentId} />
+              <GlLinkSection root="1101" rootLabel={t("banking.cashboxes.glRoot")} parentId={glParentId} onParentChange={setGlParentId} />
             ) : (
               <div className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-xs font-bold text-slate-500">
-                حساب الأستاذ المرتبط: <code className="text-teal-700">{form.glAccountCode || "—"}</code> — لا يتغيّر عند التعديل.
+                {t("banking.shared.linkedLedgerPrefix")} <code className="text-teal-700">{form.glAccountCode || "—"}</code> {t("banking.shared.linkedLedgerSuffix")}
               </div>
             )}
 
@@ -242,10 +247,10 @@ export function CashboxesPage() {
 
       <ConfirmDialog
         open={!!toDelete}
-        title="حذف الصندوق"
-        description={toDelete ? `سيتم تعطيل الصندوق «${toDelete.name}».` : ""}
+        title={t("banking.cashboxes.deleteTitle")}
+        description={toDelete ? t("banking.cashboxes.deleteDesc", { name: toDelete.name }) : ""}
         tone="danger"
-        confirmLabel="حذف"
+        confirmLabel={t("common.delete")}
         processing={del.isPending}
         error={deleteError}
         onConfirm={confirmDelete}

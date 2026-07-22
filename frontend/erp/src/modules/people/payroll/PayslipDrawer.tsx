@@ -1,6 +1,8 @@
 import type { ReactNode } from "react";
 import { Printer } from "lucide-react";
 import { Button, Drawer, ErrorState, LoadingState } from "@/shared/ui";
+import { useTx } from "@/shared/ui/i18n";
+import { useLang } from "@/i18n";
 import { money, periodLabel, usePayslip, type Payslip } from "./api";
 
 interface PayslipDrawerProps {
@@ -41,6 +43,7 @@ function Section({ title, children }: { title: string; children: ReactNode }) {
 }
 
 export function PayslipDrawer({ runId, empId, employeeName, onClose }: PayslipDrawerProps) {
+  const t = useTx();
   const open = !!runId && !!empId;
   const query = usePayslip(runId, empId);
   const p = query.data;
@@ -49,16 +52,16 @@ export function PayslipDrawer({ runId, empId, employeeName, onClose }: PayslipDr
     <Drawer
       open={open}
       onClose={onClose}
-      title={employeeName || "قسيمة الراتب"}
-      eyebrow="قسيمة راتب"
+      title={employeeName || t("people.payroll.payslip.title")}
+      eyebrow={t("people.payroll.payslip.eyebrow")}
       icon={Printer}
       footer={
         <div className="no-print flex w-full items-center justify-between gap-2">
           <Button variant="secondary" onClick={onClose}>
-            إغلاق
+            {t("common.close")}
           </Button>
           <Button variant="primary" onClick={() => window.print()} disabled={!p}>
-            <Printer className="h-4 w-4" /> طباعة
+            <Printer className="h-4 w-4" /> {t("people.payroll.payslip.print")}
           </Button>
         </div>
       }
@@ -75,21 +78,23 @@ export function PayslipDrawer({ runId, empId, employeeName, onClose }: PayslipDr
 }
 
 function PayslipBody({ p }: { p: Payslip }) {
+  const t = useTx();
+  const lang = useLang();
   const allowances = p.housingAllowance + p.transportAllowance + p.otherAllowance;
   return (
-    <div className="print-document space-y-4" dir="rtl">
+    <div className="print-document space-y-4" dir={lang === "ar" ? "rtl" : "ltr"}>
       {/* Header */}
       <div className="flex items-start justify-between gap-3 border-b border-slate-100 pb-3">
         <div>
-          <h3 className="text-lg font-extrabold text-slate-900">قسيمة راتب</h3>
+          <h3 className="text-lg font-extrabold text-slate-900">{t("people.payroll.payslip.heading")}</h3>
           <p className="mt-0.5 text-xs font-bold text-slate-500">
-            {p.companyName || "نظام ADLAN"}
+            {p.companyName || t("people.payroll.payslip.systemName")}
           </p>
         </div>
-        <div className="text-left">
-          <div className="text-xs font-bold text-slate-500">الفترة</div>
+        <div className="text-end">
+          <div className="text-xs font-bold text-slate-500">{t("people.payroll.payslip.period")}</div>
           <div className="text-sm font-extrabold text-slate-800">
-            {p.month ? periodLabel({ month: p.month, year: p.year }) : "—"}
+            {p.month ? periodLabel({ month: p.month, year: p.year }, t) : "—"}
           </div>
         </div>
       </div>
@@ -97,50 +102,50 @@ function PayslipBody({ p }: { p: Payslip }) {
       {/* Employee */}
       <div className="grid grid-cols-2 gap-3">
         <div>
-          <div className="text-[11px] font-bold text-slate-400">الموظف</div>
+          <div className="text-[11px] font-bold text-slate-400">{t("people.field.employee")}</div>
           <div className="text-sm font-extrabold text-slate-800">{p.employeeName || "—"}</div>
         </div>
         <div>
-          <div className="text-[11px] font-bold text-slate-400">الرقم الوظيفي</div>
+          <div className="text-[11px] font-bold text-slate-400">{t("people.field.empNumber")}</div>
           <div dir="ltr" className="text-sm font-extrabold text-slate-800 tabular-nums">
             {p.employeeNumber || "—"}
           </div>
         </div>
         {p.branchName && (
           <div>
-            <div className="text-[11px] font-bold text-slate-400">الفرع</div>
+            <div className="text-[11px] font-bold text-slate-400">{t("people.field.branch")}</div>
             <div className="text-sm font-extrabold text-slate-800">{p.branchName}</div>
           </div>
         )}
       </div>
 
       {/* Earnings */}
-      <Section title="المستحقات">
-        <Line label="الراتب الأساسي" value={money(p.basicSalary)} />
-        <Line label="بدل السكن" value={money(p.housingAllowance)} />
-        <Line label="بدل النقل" value={money(p.transportAllowance)} />
-        <Line label="بدلات أخرى" value={money(p.otherAllowance)} />
+      <Section title={t("people.payroll.payslip.earnings")}>
+        <Line label={t("people.payroll.payslip.basicSalary")} value={money(p.basicSalary)} />
+        <Line label={t("people.payroll.payslip.housing")} value={money(p.housingAllowance)} />
+        <Line label={t("people.payroll.payslip.transport")} value={money(p.transportAllowance)} />
+        <Line label={t("people.payroll.payslip.other")} value={money(p.otherAllowance)} />
         <Line
-          label={`العمل الإضافي${p.overtimeHours ? ` (${money(p.overtimeHours)} ساعة)` : ""}`}
+          label={p.overtimeHours ? t("people.payroll.payslip.overtimeHours", { hours: money(p.overtimeHours) }) : t("people.payroll.payslip.overtime")}
           value={money(p.overtimeAmount)}
         />
-        <Line label="إجمالي البدلات" value={money(allowances)} />
-        <Line label="إجمالي المستحق" value={money(p.grossSalary)} strong />
+        <Line label={t("people.payroll.payslip.totalAllowances")} value={money(allowances)} />
+        <Line label={t("people.payroll.payslip.totalGross")} value={money(p.grossSalary)} strong />
       </Section>
 
       {/* Deductions */}
-      <Section title="الاستقطاعات">
-        <Line label="خصم الغياب" value={money(p.absenceDeduction)} />
-        <Line label="خصم التأخير" value={money(p.lateDeduction)} />
-        <Line label="سلف" value={money(p.advanceDeduction)} />
-        <Line label="إجمالي الاستقطاعات" value={money(p.totalDeductions)} strong />
+      <Section title={t("people.payroll.payslip.deductions")}>
+        <Line label={t("people.payroll.payslip.absence")} value={money(p.absenceDeduction)} />
+        <Line label={t("people.payroll.payslip.lateDeduction")} value={money(p.lateDeduction)} />
+        <Line label={t("people.payroll.payslip.advance")} value={money(p.advanceDeduction)} />
+        <Line label={t("people.payroll.payslip.totalDeductions")} value={money(p.totalDeductions)} strong />
       </Section>
 
       {/* Net */}
       <div className="flex items-center justify-between gap-3 rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3">
-        <span className="text-sm font-extrabold text-emerald-700">صافي الراتب</span>
+        <span className="text-sm font-extrabold text-emerald-700">{t("people.payroll.payslip.net")}</span>
         <span dir="ltr" className="text-lg font-extrabold text-emerald-700 tabular-nums">
-          {money(p.netSalary)} ر.س
+          {money(p.netSalary)} {t("people.payroll.payslip.sar")}
         </span>
       </div>
     </div>

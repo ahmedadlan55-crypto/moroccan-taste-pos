@@ -32,6 +32,7 @@ import { validateJournal, computeTotals } from "../journal/journalModel";
 import { useJournals, useReverseJournal, usePostJournal, type Journal, type JournalLine } from "../api";
 import { JournalEditor } from "../journal/JournalEditor";
 import { ToastProvider } from "@/shared/ui";
+import { I18nProvider } from "@/i18n";
 
 const get = apiClient.get as Mock;
 const post = apiClient.post as Mock;
@@ -51,7 +52,9 @@ function renderWithProviders(ui: ReactNode) {
   });
   return render(
     <QueryClientProvider client={qc}>
-      <ToastProvider>{ui}</ToastProvider>
+      <I18nProvider>
+        <ToastProvider>{ui}</ToastProvider>
+      </I18nProvider>
     </QueryClientProvider>,
   );
 }

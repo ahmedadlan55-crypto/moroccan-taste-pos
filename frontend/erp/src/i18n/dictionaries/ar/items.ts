@@ -1,0 +1,218 @@
+/** Inventory Item Master (كتالوج الأصناف) — screen-specific strings for the
+ *  D1 items surface: server-mode list, full-page New/Details/Edit, units &
+ *  conversion, cost & accounting (WAC read-only), and the branches/warehouses
+ *  assignment UI. Reuses the shared common / states / status / table namespaces
+ *  where they fit; everything here is item-specific. English mirror: en/items.ts
+ *  — identical shape (enforced by i18n/__tests__/dictionary.test.ts). */
+export const items = {
+  eyebrow: "البيانات الرئيسية",
+  listTitle: "كتالوج الأصناف",
+  listSubtitle: "إدارة بيانات الأصناف، الإسناد للفروع والمستودعات، وقواعد إعادة الطلب.",
+  newItem: "صنف جديد",
+
+  // KPI metric cards
+  kpi: {
+    total: "الإجمالي",
+    totalNote: "أصناف غير محذوفة",
+    active: "نشط",
+    activeNote: "قابل للاستخدام",
+    inactive: "غير نشط",
+    inactiveNote: "محفوظ التاريخ",
+    noSku: "بلا SKU",
+    noSkuNote: "أصناف قديمة",
+  },
+
+  // Column headers
+  col: {
+    code: "الرمز / SKU",
+    nameAr: "الاسم (عربي)",
+    nameEn: "الاسم (إنجليزي)",
+    category: "الفئة",
+    majorUnit: "الوحدة الكبرى",
+    baseUnit: "الوحدة الأساسية",
+    conversion: "التحويل",
+    baseCost: "تكلفة الوحدة الأساسية",
+    majorCost: "تكلفة الوحدة الكبرى",
+    locations: "الفروع/المستودعات",
+    availableQty: "المتاح",
+    reorderPoint: "نقطة إعادة الطلب",
+  },
+
+  // Filters (FilterBar)
+  filter: {
+    searchPlaceholder: "بحث بالرمز أو SKU أو الباركود أو الاسم…",
+    allBranches: "كل الفروع",
+    allWarehouses: "كل المستودعات",
+    allCategories: "كل الفئات",
+    allUnits: "كل الوحدات",
+    branch: "الفرع",
+    warehouse: "المستودع",
+    unit: "الوحدة",
+    missingNameEn: "بلا اسم إنجليزي",
+    belowReorder: "تحت نقطة إعادة الطلب",
+    image: "الصورة",
+    hasImage: "لها صورة",
+    noImage: "بلا صورة",
+  },
+
+  badge: {
+    missingNameEn: "الاسم الإنجليزي مفقود",
+    main: "رئيسي",
+    semi: "نصف مصنّع",
+    raw: "خام",
+  },
+
+  empty: {
+    title: "لا توجد أصناف مطابقة",
+    withFilters: "جرّب تعديل عوامل التصفية.",
+    noItems: "ابدأ بإضافة صنف.",
+  },
+
+  // Conversion preview: "1 {major} = {factor} {base}"
+  conversionPreview: "1 {major} = {factor} {base}",
+  conversionNone: "وحدة واحدة",
+
+  // ── Full-page form (New / Edit) ──
+  form: {
+    newTitle: "صنف جديد",
+    editTitle: "تعديل صنف",
+    createSubtitle: "أدخل بيانات الصنف الأساسية والوحدات والتكلفة والإسناد.",
+    editSubtitle: "متوسط تكلفة المستودع (WAC) لا يُحرَّر من هنا.",
+    saved: "تم الحفظ بنجاح.",
+    createdSummary: "أُنشئ الصنف «{name}».",
+    updatedSummary: "حُفظت تعديلات الصنف «{name}».",
+
+    section: {
+      basics: "البيانات الأساسية",
+      basicsHint: "الرمز، الاسم، الفئة، النوع، الحالة، الصور، والباركود.",
+      units: "الوحدات والتحويل",
+      unitsHint: "الوحدة الأساسية والوحدة الكبرى وعامل التحويل.",
+      cost: "التكلفة والمحاسبة",
+      costHint: "العملة وتكلفة الشراء والتكلفة المحسوبة والضريبة (عرض فقط لأرصدة WAC).",
+      assignments: "الفروع والمستودعات",
+      assignmentsHint: "إسناد الصنف للفروع والمستودعات وقواعد إعادة الطلب لكل موقع.",
+      images: "الصور",
+      barcodes: "الباركود",
+    },
+
+    field: {
+      code: "الرمز / SKU",
+      codeHint: "معرّف فريد للصنف.",
+      nameAr: "الاسم (عربي)",
+      nameEn: "الاسم (إنجليزي)",
+      descAr: "الوصف (عربي)",
+      descEn: "الوصف (إنجليزي)",
+      category: "الفئة",
+      subCategory: "الفئة الفرعية",
+      kind: "نوع المادة",
+      kindRaw: "خام",
+      kindSemi: "نصف مصنّع",
+      status: "الحالة",
+      defaultSupplier: "المورد الافتراضي",
+      notes: "ملاحظات",
+      currency: "العملة",
+      purchaseCostMajor: "تكلفة الشراء للوحدة الكبرى",
+      purchaseCostBase: "تكلفة الشراء للوحدة الأساسية",
+      computedBaseCost: "التكلفة المحسوبة للوحدة الأساسية",
+      costMethod: "طريقة التكلفة",
+      taxCategory: "فئة الضريبة",
+      taxRate: "نسبة الضريبة",
+      inventoryAccount: "حساب المخزون",
+      cogsAccount: "حساب تكلفة المبيعات",
+      baseUnitName: "اسم الوحدة الأساسية",
+      baseUnitCode: "رمز الوحدة الأساسية",
+      majorUnitName: "اسم الوحدة الكبرى",
+      majorUnitCode: "رمز الوحدة الكبرى",
+      conversionFactor: "عامل التحويل",
+    },
+
+    costMethodWac: "المتوسط المرجح (WAC)",
+    wacReadOnly: "متوسط تكلفة المستودع (WAC) للقراءة فقط ولا يُعدَّل من نموذج الصنف؛ يتغيّر فقط عبر حركات المخزون.",
+    vatFromSettings: "نسبة الضريبة مقروءة من إعدادات النظام (VATRate).",
+    glReadOnly: "حسابات الأستاذ للعرض فقط — لا تُحرَّر الأرصدة أو القيود من هذه الشاشة.",
+
+    validation: {
+      codeRequired: "الرمز / SKU مطلوب",
+      codeTaken: "هذا الرمز مستخدم لصنف آخر",
+      nameArRequired: "الاسم العربي مطلوب",
+      nameEnRequiredNew: "الاسم الإنجليزي مطلوب للأصناف الجديدة",
+      unitRequired: "الوحدة الأساسية مطلوبة",
+      factorPositive: "عامل التحويل يجب أن يكون أكبر من صفر",
+      factorInteger: "عامل التحويل يجب أن يكون رقمًا صحيحًا موجبًا",
+      fixBeforeSave: "صحّح الحقول المميّزة قبل الحفظ.",
+    },
+
+    unitsLockedByHistory: "لهذا الصنف حركات مُرحّلة — لا يمكن تغيير الوحدة الأساسية أو عامل التحويل (محظور حفاظًا على سلامة التاريخ). يمكنك إضافة وحدات جديدة فقط.",
+
+    save: "حفظ",
+    create: "إنشاء الصنف",
+    saveEdit: "حفظ التعديل",
+    saveAndAddAnother: "حفظ وإضافة آخر",
+    saving: "جارٍ الحفظ…",
+    cancel: "إلغاء",
+    unsavedTitle: "تغييرات غير محفوظة",
+    unsavedBody: "لديك تغييرات لم تُحفظ. هل تريد المغادرة وتجاهلها؟",
+    unsavedIndicator: "تغييرات غير محفوظة",
+    leave: "مغادرة دون حفظ",
+    stay: "البقاء",
+  },
+
+  // ── Full-page detail (read) ──
+  detail: {
+    eyebrow: "كتالوج الأصناف",
+    back: "الأصناف",
+    edit: "تعديل",
+    activate: "تفعيل",
+    deactivate: "تعطيل",
+    version: "الإصدار",
+    section: {
+      basics: "البيانات الأساسية",
+      units: "الوحدات والتحويل",
+      barcodes: "الباركود",
+      cost: "التكلفة والمحاسبة",
+      assignments: "الفروع والمستودعات",
+      stock: "الرصيد وWAC",
+      movements: "الحركات",
+      audit: "سجل التدقيق",
+    },
+    noBarcodes: "لا باركودات لهذا الصنف.",
+    noMovements: "لا توجد حركات.",
+    noAssignments: "غير مُسند لأي مستودع.",
+    totalStock: "إجمالي الرصيد",
+    fallbackCost: "التكلفة العامة (احتياطية)",
+  },
+
+  // ── Branches & warehouses assignment UI ──
+  assign: {
+    title: "الفروع والمستودعات",
+    subtitle: "أسند الصنف إلى فروع ومستودعات، وحدّد المستودع الافتراضي وقواعد كل موقع.",
+    addLocation: "إضافة موقع",
+    branch: "الفرع",
+    warehouse: "المستودع",
+    pickBranch: "اختر الفرع",
+    pickWarehouse: "اختر المستودع",
+    defaultWarehouse: "المستودع الافتراضي",
+    setDefault: "تعيين كافتراضي",
+    isDefault: "افتراضي",
+    activeHere: "نشط في هذا الموقع",
+    minQty: "الحد الأدنى",
+    maxStock: "الحد الأقصى",
+    reorderPoint: "نقطة إعادة الطلب",
+    reorderQty: "كمية إعادة الطلب",
+    safetyStock: "مخزون الأمان",
+    leadTimeDays: "مهلة التوريد (أيام)",
+    remove: "إزالة الموقع",
+    allBranches: "إسناد لكل الفروع والمستودعات",
+    allBranchesHint: "يُنشئ إسنادًا لكل مستودع نشط تحت كل فرع.",
+    crossBranchError: "لا يمكن إسناد مستودع لا يتبع الفرع المختار: «{warehouse}» ليس تحت «{branch}».",
+    duplicateWarehouse: "المستودع «{warehouse}» مُسند بالفعل.",
+    noWarehousesInBranch: "لا مستودعات نشطة تحت هذا الفرع.",
+    emptyAssignments: "لم تُسند أي مستودعات بعد — أضف موقعًا أو استخدم «إسناد لكل الفروع».",
+    reorderQtyPositive: "كمية إعادة الطلب يجب أن تكون أكبر من صفر عند التفعيل.",
+    maxGteReorder: "الحد الأقصى يجب أن يكون ≥ نقطة إعادة الطلب.",
+    reorderGteSafety: "نقطة إعادة الطلب يجب أن تكون ≥ مخزون الأمان.",
+    savedAssignments: "حُفظت الإسنادات.",
+    createFirst: "احفظ الصنف أولًا ثم أسند المستودعات.",
+    savePending: "ستُطبّق الإسنادات عند حفظ الصنف.",
+  },
+} as const;

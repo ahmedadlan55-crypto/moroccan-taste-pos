@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, screen } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { MemoryRouter } from "react-router-dom";
+import { I18nProvider } from "@/i18n";
 
 const MOCK = vi.hoisted(() => ({
   data: [], rows: [], items: [], warehouses: [],
@@ -24,11 +25,13 @@ describe("production module smoke", () => {
   it("renders the production orders list", async () => {
     const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
     render(
-      <QueryClientProvider client={qc}>
-        <MemoryRouter initialEntries={["/inventory/production"]}>
-          <ProductionModule />
-        </MemoryRouter>
-      </QueryClientProvider>,
+      <I18nProvider>
+        <QueryClientProvider client={qc}>
+          <MemoryRouter initialEntries={["/inventory/production"]}>
+            <ProductionModule />
+          </MemoryRouter>
+        </QueryClientProvider>
+      </I18nProvider>,
     );
     expect(await screen.findByText("أوامر الإنتاج")).toBeInTheDocument();
   });

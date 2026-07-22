@@ -1,4 +1,12 @@
-import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type CSSProperties,
+  type ReactNode,
+} from "react";
 import { ArrowDown, ArrowUp, ChevronsUpDown, Download } from "lucide-react";
 import { cn } from "@/shared/lib";
 import {
@@ -8,13 +16,16 @@ import {
   LoadingState,
   Skeleton,
 } from "@/shared/ui";
-import { useTableState, type TableStateApi } from "@/shared/hooks";
+import { useTx } from "@/shared/ui/i18n";
+import { useDebounce, useTableState, type TableStateApi } from "@/shared/hooks";
+import { apiClient } from "@/shared/api";
 import type { ColumnDef } from "./types";
 import { TableShell, Th, Thead } from "./primitives";
 import { Pagination } from "./Pagination";
 import { FilterBar } from "./FilterBar";
 import { BulkActionBar } from "./BulkActionBar";
 import { ColumnsMenu } from "./ColumnsMenu";
+import { SavedViews, type SavedViewState } from "./SavedViews";
 import { downloadRowsCsv } from "./csv";
 
 const ALIGN: Record<"start" | "center" | "end", string> = {
@@ -59,6 +70,9 @@ export interface DataTableProps<T> {
   // ── toolbar ──
   searchable?: boolean;
   searchPlaceholder?: string;
+  /** Debounce (ms) applied before the toolbar search commits to filtering /
+   *  onStateChange. The input echoes immediately; downstream is debounced. */
+  searchDebounceMs?: number;
   filterBar?: ReactNode;
   toolbarActions?: ReactNode;
   columnMenu?: boolean;
@@ -66,6 +80,13 @@ export interface DataTableProps<T> {
   /** Override CSV export (e.g. to call the server `downloadCsv`). Receives the
    *  current filtered+sorted rows. When omitted, a client-side CSV is downloaded. */
   onExport?: (rows: T[]) => void;
+  /**
+   * When set, a "Saved views" control is rendered in the toolbar and views are
+   * persisted/loaded via `/api/saved-views?module=<savedViewsModule>` (A2), with
+   * a localStorage fallback if that endpoint is not reachable. A view captures
+   * `{ hiddenColumns, sort, pageSize, filters }`.
+   */
+  savedViewsModule?: string;
 
   // ── selection ──
   selectable?: boolean;
@@ -86,6 +107,9 @@ export interface DataTableProps<T> {
   /** Persist column visibility / page size / sort per table id. Also reported
    *  to onStateChange so server callers can key their queries. */
   tableId?: string;
+  /** When true (and `tableId` set), per-user column visibility additionally
+   *  syncs via `/api/user-preferences` (A2), still with localStorage fallback. */
+  syncColumnPrefs?: boolean;
   onStateChange?: (state: {
     page: number;
     pageSize: number;
@@ -93,10 +117,24 @@ export interface DataTableProps<T> {
     search: string;
   }) => void;
 
+  /**
+   * Resolve whether the current user holds a column's `requireCap`. When a
+   * column sets `requireCap`, pass this from the screen's permission hook (e.g.
+   * `canColumn={(cap) => can(cap)}` using `useCan`/`usePermissions`) to gate the
+   * column. DEFAULT: show all — DataTable stays decoupled from the permission
+   * modules (importing the hook here crashes suites that partially-mock them),
+   * so a `requireCap` column is only hidden when a `canColumn` resolver denies it.
+   * Columns with no `requireCap` are always shown.
+   */
+  canColumn?: (cap: string) => boolean;
+
   className?: string;
 }
 
 const OVERSCAN = 6;
+/** Above this many rendered rows we virtualize even without an explicit
+ *  `virtualize` prop (and regardless of client/server mode). */
+const VIRTUAL_ROW_THRESHOLD = 200;
 
 /**
  * The ONE generic data table. Column defs (header/accessor/cell/align/sortable/
@@ -124,11 +162,13 @@ export function DataTable<T>(props: DataTableProps<T>) {
     paginate = true,
     searchable = false,
     searchPlaceholder,
+    searchDebounceMs = 300,
     filterBar,
     toolbarActions,
     columnMenu = true,
     exportFilename,
     onExport,
+    savedViewsModule,
     selectable = false,
     onSelectionChange,
     bulkActions,
@@ -137,20 +177,38 @@ export function DataTable<T>(props: DataTableProps<T>) {
     stackOnMobile = true,
     mobileTitle,
     virtualize = false,
-    rowHeight = 48,
+    rowHeight = 52,
     maxBodyHeight = 560,
     tableId,
+    syncColumnPrefs = false,
     onStateChange,
+    canColumn,
     className,
   } = props;
 
   const isServer = mode === "server";
 
-  const initialHidden = useMemo(
-    () => columns.filter((c) => c.defaultHidden).map((c) => c.id),
-    [columns],
+  // ── permission-gated columns ──
+  // A column is dropped (header + cells + columns-menu + CSV export) when it sets
+  // `requireCap` and the injected `canColumn` resolver denies it. Default is
+  // show-all: DataTable does NOT import the permission modules (calling the hook
+  // here crashes consumer suites that partially-mock them), so callers wire caps
+  // via the `canColumn` prop from their own `useCan`/`usePermissions`.
+  const resolveCap = useCallback(
+    (cap: string) => (canColumn ? canColumn(cap) : true),
+    [canColumn],
+  );
+  const permittedColumns = useMemo(
+    () => columns.filter((c) => !c.requireCap || resolveCap(c.requireCap)),
+    [columns, resolveCap],
   );
 
+  const initialHidden = useMemo(
+    () => permittedColumns.filter((c) => c.defaultHidden).map((c) => c.id),
+    [permittedColumns],
+  );
+
+  const tx = useTx();
   const t: TableStateApi = useTableState({
     persistKey: tableId,
     initialPageSize,
@@ -160,31 +218,39 @@ export function DataTable<T>(props: DataTableProps<T>) {
 
   const [selected, setSelected] = useState<Set<string>>(new Set());
 
-  // report state for server-mode callers
+  // ── debounced search ──
+  // The input echoes immediately and CLIENT-mode in-memory filtering stays
+  // instant (t.search is set on every keystroke). Only the DOWNSTREAM, expensive
+  // signal — the onStateChange report that server callers use to refetch — is
+  // debounced, so a server table refetches once the user pauses (~searchDebounceMs)
+  // instead of on every keystroke.
+  const debouncedSearch = useDebounce(t.search, searchDebounceMs);
+
+  // report state for server-mode callers (search is debounced; the rest is live)
   useEffect(() => {
-    onStateChange?.({ page: t.page, pageSize: t.pageSize, sort: t.sort, search: t.search });
-  }, [t.page, t.pageSize, t.sort, t.search, onStateChange]);
+    onStateChange?.({ page: t.page, pageSize: t.pageSize, sort: t.sort, search: debouncedSearch });
+  }, [t.page, t.pageSize, t.sort, debouncedSearch, onStateChange]);
 
   // ── derive the view (client mode does the work in-memory) ──
   const searched = useMemo(() => {
     if (isServer || !t.search.trim()) return rows;
     const needle = t.search.trim().toLowerCase();
     return rows.filter((row) =>
-      columns.some((c) => {
+      permittedColumns.some((c) => {
         const v = c.accessor ? c.accessor(row) : undefined;
         return v != null && String(v).toLowerCase().includes(needle);
       }),
     );
-  }, [rows, columns, t.search, isServer]);
+  }, [rows, permittedColumns, t.search, isServer]);
 
   const sorted = useMemo(() => {
     if (isServer || !t.sort) return searched;
-    const col = columns.find((c) => c.id === t.sort?.columnId);
+    const col = permittedColumns.find((c) => c.id === t.sort?.columnId);
     if (!col?.accessor) return searched;
     const acc = col.accessor;
     const dir = t.sort.dir === "asc" ? 1 : -1;
     return [...searched].sort((a, b) => compareValues(acc(a), acc(b)) * dir);
-  }, [searched, columns, t.sort, isServer]);
+  }, [searched, permittedColumns, t.sort, isServer]);
 
   const total = isServer ? (rowCount ?? rows.length) : sorted.length;
   const pageCount = Math.max(1, Math.ceil(total / Math.max(1, t.pageSize)));
@@ -196,9 +262,23 @@ export function DataTable<T>(props: DataTableProps<T>) {
   }, [sorted, isServer, paginate, t.page, t.pageSize]);
 
   const visibleColumns = useMemo(
-    () => columns.filter((c) => !t.hiddenColumns.includes(c.id)),
-    [columns, t.hiddenColumns],
+    () => permittedColumns.filter((c) => !t.hiddenColumns.includes(c.id)),
+    [permittedColumns, t.hiddenColumns],
   );
+
+  // Mobile-card column order: keep declaration order, then float columns with an
+  // explicit `priority` to the front in ascending order (stable for ties / undefined).
+  const mobileColumns = useMemo(() => {
+    const shown = visibleColumns.filter((c) => !c.mobileHidden);
+    return shown
+      .map((col, idx) => ({ col, idx }))
+      .sort((a, b) => {
+        const pa = a.col.priority ?? Number.POSITIVE_INFINITY;
+        const pb = b.col.priority ?? Number.POSITIVE_INFINITY;
+        return pa - pb || a.idx - b.idx;
+      })
+      .map((x) => x.col);
+  }, [visibleColumns]);
 
   // ── selection ──
   const pageIds = useMemo(() => paged.map(getRowId), [paged, getRowId]);
@@ -224,9 +304,14 @@ export function DataTable<T>(props: DataTableProps<T>) {
   const clearSelection = () => emitSelection(new Set());
 
   // ── virtualization window (non-mobile table body) ──
+  // Virtualize when explicitly requested OR when the rendered page exceeds the
+  // threshold — regardless of client/server mode (a 200-row server page benefits
+  // just as much). Basing this on the RENDERED array (`paged`) keeps small
+  // paginated pages untouched. Sticky header still works: the scroll container
+  // wraps the whole <table>, so <thead className="sticky top-0"> pins inside it.
   const bodyRef = useRef<HTMLDivElement>(null);
   const [scrollTop, setScrollTop] = useState(0);
-  const virtualActive = virtualize && !isServer;
+  const virtualActive = virtualize || paged.length > VIRTUAL_ROW_THRESHOLD;
   const vStart = virtualActive ? Math.max(0, Math.floor(scrollTop / rowHeight) - OVERSCAN) : 0;
   const vCount = virtualActive ? Math.ceil(maxBodyHeight / rowHeight) + OVERSCAN * 2 : paged.length;
   const vEnd = virtualActive ? Math.min(paged.length, vStart + vCount) : paged.length;
@@ -237,13 +322,66 @@ export function DataTable<T>(props: DataTableProps<T>) {
   const colSpan = visibleColumns.length + (selectable ? 1 : 0) + (rowActions ? 1 : 0);
 
   const canExport = !!exportFilename || !!onExport;
-  const showToolbar = searchable || filterBar || toolbarActions || columnMenu || canExport;
+  const showToolbar =
+    searchable || filterBar || toolbarActions || columnMenu || canExport || !!savedViewsModule;
 
   function handleExport() {
     const data = isServer ? rows : sorted;
     if (onExport) onExport(data);
+    // `visibleColumns` already excludes cap-denied + hidden columns, so a
+    // permission-gated column never leaks into the CSV.
     else if (exportFilename) downloadRowsCsv(visibleColumns, data, exportFilename);
   }
+
+  // Apply a saved view onto the live table state.
+  const applySavedView = (s: SavedViewState) => {
+    if (s.hiddenColumns) t.setHiddenColumns(s.hiddenColumns);
+    if (s.sort !== undefined) t.setSort(s.sort ?? null);
+    if (s.pageSize) t.setPageSize(s.pageSize);
+    if (s.filters) {
+      t.clearFilters();
+      for (const [k, v] of Object.entries(s.filters)) t.setFilter(k, v);
+    }
+  };
+
+  // ── optional per-user column-visibility sync (A2 /api/user-preferences) ──
+  // Hydrate once from the server (overriding localStorage when present), then
+  // push updates. Fully best-effort: any failure leaves the localStorage-backed
+  // useTableState persistence as the source of truth.
+  const prefHydrated = useRef(false);
+  useEffect(() => {
+    if (!syncColumnPrefs || !tableId) return;
+    let alive = true;
+    apiClient
+      .get<{ value?: { hiddenColumns?: string[] } }>("/user-preferences", {
+        params: { key: `table:${tableId}` },
+      })
+      .then((pref) => {
+        if (alive && Array.isArray(pref?.value?.hiddenColumns)) {
+          t.setHiddenColumns(pref.value.hiddenColumns as string[]);
+        }
+      })
+      .catch(() => {
+        /* 404 while A2 ships / unreachable → keep localStorage state */
+      })
+      .finally(() => {
+        prefHydrated.current = true;
+      });
+    return () => {
+      alive = false;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [syncColumnPrefs, tableId]);
+
+  useEffect(() => {
+    if (!syncColumnPrefs || !tableId || !prefHydrated.current) return;
+    apiClient
+      .put("/user-preferences", { key: `table:${tableId}`, value: { hiddenColumns: t.hiddenColumns } })
+      .catch(() => {
+        /* best-effort */
+      });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [t.hiddenColumns]);
 
   const sortIcon = (colId: string) => {
     if (t.sort?.columnId !== colId) return <ChevronsUpDown className="h-3.5 w-3.5 text-slate-300" />;
@@ -258,6 +396,13 @@ export function DataTable<T>(props: DataTableProps<T>) {
     if (col.cell) return col.cell(row);
     const v = col.accessor ? col.accessor(row) : undefined;
     return v == null ? "—" : String(v);
+  }
+
+  /** Best-effort native tooltip for an ellipsized cell (from the raw string value). */
+  function cellTitle(col: ColumnDef<T>, row: T): string | undefined {
+    if (!col.ellipsis) return undefined;
+    const v = col.accessor ? col.accessor(row) : undefined;
+    return v == null ? undefined : String(v);
   }
 
   const bodyRows = (
@@ -282,29 +427,42 @@ export function DataTable<T>(props: DataTableProps<T>) {
             style={virtualActive ? { height: rowHeight } : undefined}
           >
             {selectable && (
-              <td className="w-10 px-3 py-2.5" onClick={(e) => e.stopPropagation()}>
+              <td className="w-10 px-3 py-3.5" onClick={(e) => e.stopPropagation()}>
                 <Checkbox
                   checked={isSel}
                   onChange={() => toggleRow(id)}
-                  aria-label="تحديد الصف"
+                  aria-label={tx("table.selectRow")}
                 />
               </td>
             )}
-            {visibleColumns.map((col) => (
-              <td
-                key={col.id}
-                dir={col.numeric ? "ltr" : undefined}
-                style={col.width != null ? { width: col.width } : undefined}
-                className={cn(
-                  "px-3 py-2.5 align-middle text-slate-700",
-                  col.numeric ? "text-left font-semibold tabular-nums" : ALIGN[col.align ?? "start"],
-                )}
-              >
-                {renderCell(col, row)}
-              </td>
-            ))}
+            {visibleColumns.map((col) => {
+              const style: CSSProperties = {};
+              if (col.width != null) style.width = col.width;
+              // Ellipsis needs a cap to truncate against; fall back to ~18rem.
+              if (col.ellipsis) style.maxWidth = col.width ?? "18rem";
+              const content = renderCell(col, row);
+              return (
+                <td
+                  key={col.id}
+                  dir={col.numeric ? "ltr" : undefined}
+                  style={Object.keys(style).length ? style : undefined}
+                  className={cn(
+                    "px-3 py-3.5 align-middle text-slate-700",
+                    col.numeric ? "text-left font-semibold tabular-nums" : ALIGN[col.align ?? "start"],
+                  )}
+                >
+                  {col.ellipsis ? (
+                    <div className="truncate" title={cellTitle(col, row)}>
+                      {content}
+                    </div>
+                  ) : (
+                    content
+                  )}
+                </td>
+              );
+            })}
             {rowActions && (
-              <td className="w-px px-3 py-2.5 text-left" onClick={(e) => e.stopPropagation()}>
+              <td className="w-px px-3 py-3.5 text-left" onClick={(e) => e.stopPropagation()}>
                 {rowActions(row)}
               </td>
             )}
@@ -328,7 +486,7 @@ export function DataTable<T>(props: DataTableProps<T>) {
               checked={allPageSelected}
               indeterminate={!allPageSelected && somePageSelected}
               onChange={toggleAllOnPage}
-              aria-label="تحديد كل الصفوف"
+              aria-label={tx("table.selectAllRows")}
             />
           </Th>
         )}
@@ -393,11 +551,24 @@ export function DataTable<T>(props: DataTableProps<T>) {
                   onClick={handleExport}
                   className="inline-flex min-h-11 items-center gap-2 rounded-xl border border-slate-200 bg-white px-3 text-sm font-bold text-slate-600 transition hover:bg-slate-50 focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-teal-100"
                 >
-                  <Download className="h-4 w-4" /> تصدير CSV
+                  <Download className="h-4 w-4" /> {tx("table.exportCsv")}
                 </button>
               )}
-              {columnMenu && columns.some((c) => c.hideable !== false) && (
-                <ColumnsMenu columns={columns} hiddenColumns={t.hiddenColumns} onToggle={t.toggleColumn} />
+              {savedViewsModule && (
+                <SavedViews
+                  tableId={tableId ?? savedViewsModule}
+                  module={savedViewsModule}
+                  current={{
+                    hiddenColumns: t.hiddenColumns,
+                    sort: t.sort,
+                    pageSize: t.pageSize,
+                    filters: t.filters,
+                  }}
+                  onApply={applySavedView}
+                />
+              )}
+              {columnMenu && permittedColumns.some((c) => c.hideable !== false) && (
+                <ColumnsMenu columns={permittedColumns} hiddenColumns={t.hiddenColumns} onToggle={t.toggleColumn} />
               )}
             </>
           }
@@ -451,7 +622,7 @@ export function DataTable<T>(props: DataTableProps<T>) {
                     {mobileTitle && (
                       <div className="break-words text-sm font-extrabold text-slate-900">{mobileTitle(row)}</div>
                     )}
-                    {visibleColumns.filter((col) => !col.mobileHidden).map((col) => (
+                    {mobileColumns.map((col) => (
                       <div key={col.id} className="flex min-w-0 items-baseline justify-between gap-3 text-xs">
                         <span className="shrink-0 font-bold text-slate-400">
                           {typeof col.header === "string" ? col.header : (col.label ?? col.id)}
@@ -477,7 +648,7 @@ export function DataTable<T>(props: DataTableProps<T>) {
                           type="button"
                           onClick={() => onRowClick(row)}
                           className="min-w-0 flex-1 rounded-xl text-right outline-none transition active:bg-slate-50 focus-visible:ring-4 focus-visible:ring-teal-100"
-                          aria-label={typeof mobileTitle?.(row) === "string" ? String(mobileTitle(row)) : "فتح تفاصيل الصف"}
+                          aria-label={typeof mobileTitle?.(row) === "string" ? String(mobileTitle(row)) : tx("table.openRowDetails")}
                         >
                           {mobileContent}
                         </button>
@@ -488,7 +659,7 @@ export function DataTable<T>(props: DataTableProps<T>) {
                             <Checkbox
                               checked={selected.has(id)}
                               onChange={() => toggleRow(id)}
-                              aria-label="تحديد الصف"
+                              aria-label={tx("table.selectRow")}
                             />
                           </span>
                         )}

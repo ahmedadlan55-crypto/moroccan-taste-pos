@@ -21,6 +21,7 @@ import { Button } from "@/shared/ui";
 import { LoadingState, ErrorState } from "@/shared/ui";
 import { Spinner } from "@/shared/ui";
 import { formatCurrency, formatNumber, formatDateTime } from "@/shared/lib";
+import { useT } from "@/i18n";
 import { useWarehouseScope, ALL_WAREHOUSES } from "@/modules/inventory/lib/warehouse-scope-provider";
 import { useWarehouseDashboard } from "@/modules/inventory/lib/hooks/useDashboard";
 import { warehouseHealth, alertCount } from "@/modules/inventory/lib/status-labels";
@@ -29,23 +30,24 @@ import { warehouseHealth, alertCount } from "@/modules/inventory/lib/status-labe
 // Honors the warehouse scope (?wh) — "all" shows the company aggregate, a
 // warehouse id narrows to it. Changing scope aborts the previous request.
 export function DashboardPage() {
+  const t = useT();
   const navigate = useNavigate();
   const { scope } = useWarehouseScope();
   const { data, isLoading, isError, error, refetch, isFetching } = useWarehouseDashboard(scope);
 
   const subtitle =
     scope === ALL_WAREHOUSES
-      ? "صورة موحّدة لكل المستودعات والحركة والمهام التي تحتاج قرارًا اليوم."
-      : "بيانات المستودع المحدّد فقط — غيّر النطاق من الشريط العلوي لعرض الكل.";
+      ? t("inventoryRest.dashboard.subtitleAll")
+      : t("inventoryRest.dashboard.subtitleScoped");
 
   const header = (
     <PageHeader
-      eyebrow="لوحة القيادة"
-      title="مركز قيادة المستودعات"
+      eyebrow={t("inventoryRest.dashboard.eyebrow")}
+      title={t("inventoryRest.dashboard.title")}
       subtitle={subtitle}
       action={
         <Button variant="secondary" onClick={() => refetch()} disabled={isFetching}>
-          <RefreshCw className="h-4 w-4" /> تحديث
+          <RefreshCw className="h-4 w-4" /> {t("inventoryRest.ui.refresh")}
         </Button>
       }
     />
@@ -78,25 +80,25 @@ export function DashboardPage() {
       {/* Background-refresh hint (data already shown). */}
       {isFetching && (
         <div className="mb-3 flex items-center gap-2 text-xs font-bold text-slate-400" aria-live="polite">
-          <Spinner className="h-3.5 w-3.5" /> جارٍ تحديث البيانات…
+          <Spinner className="h-3.5 w-3.5" /> {t("inventoryRest.ui.updating")}
         </div>
       )}
 
       <section className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
-        <MetricCard label="قيمة المخزون" value={formatCurrency(k.inventoryValue)} note="بمتوسط تكلفة المستودع (WAC)" icon={CircleDollarSign} />
-        <MetricCard label="الأصناف المسجلة" value={formatNumber(k.itemCount)} note="أصناف لها رصيد في النطاق" icon={Boxes} tone="blue" onClick={() => navigate("/inventory/balances")} />
-        <MetricCard label="أصناف منخفضة" value={formatNumber(k.lowCount)} note="عند حد إعادة الطلب أو دونه" icon={PackageMinus} tone="amber" onClick={() => navigate("/inventory/balances?status=low")} />
-        <MetricCard label="أصناف نافدة" value={formatNumber(k.outCount)} note="رصيد صفري" icon={PackageX} tone="rose" onClick={() => navigate("/inventory/balances?status=out")} />
+        <MetricCard label={t("inventoryRest.dashboard.kpi.inventoryValue")} value={formatCurrency(k.inventoryValue)} note={t("inventoryRest.dashboard.kpi.inventoryValueNote")} icon={CircleDollarSign} />
+        <MetricCard label={t("inventoryRest.dashboard.kpi.itemCount")} value={formatNumber(k.itemCount)} note={t("inventoryRest.dashboard.kpi.itemCountNote")} icon={Boxes} tone="blue" onClick={() => navigate("/inventory/balances")} />
+        <MetricCard label={t("inventoryRest.dashboard.kpi.low")} value={formatNumber(k.lowCount)} note={t("inventoryRest.dashboard.kpi.lowNote")} icon={PackageMinus} tone="amber" onClick={() => navigate("/inventory/balances?status=low")} />
+        <MetricCard label={t("inventoryRest.dashboard.kpi.out")} value={formatNumber(k.outCount)} note={t("inventoryRest.dashboard.kpi.outNote")} icon={PackageX} tone="rose" onClick={() => navigate("/inventory/balances?status=out")} />
       </section>
 
       <section className="mt-4 grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
-        <MetricCard label="تحويلات معلّقة" value={formatNumber(data.transfers.pending)} note="مسودة / بانتظار الاعتماد" icon={Truck} tone="amber" onClick={() => navigate("/inventory/transfers")} />
-        <MetricCard label="تحويلات قيد النقل" value={formatNumber(data.transfers.inTransit)} note="مصروفة لم تُستلَم بالكامل" icon={Truck} tone="blue" onClick={() => navigate("/inventory/transfers")} />
-        <MetricCard label="مستودعات نشطة" value={formatNumber(k.activeWarehouses)} note={`${formatNumber(warehouses.length)} مستودع ضمن النطاق`} icon={WarehouseIcon} onClick={() => navigate("/inventory/warehouses")} />
+        <MetricCard label={t("inventoryRest.dashboard.kpi.transfersPending")} value={formatNumber(data.transfers.pending)} note={t("inventoryRest.dashboard.kpi.transfersPendingNote")} icon={Truck} tone="amber" onClick={() => navigate("/inventory/transfers")} />
+        <MetricCard label={t("inventoryRest.dashboard.kpi.transfersInTransit")} value={formatNumber(data.transfers.inTransit)} note={t("inventoryRest.dashboard.kpi.transfersInTransitNote")} icon={Truck} tone="blue" onClick={() => navigate("/inventory/transfers")} />
+        <MetricCard label={t("inventoryRest.dashboard.kpi.activeWarehouses")} value={formatNumber(k.activeWarehouses)} note={t("inventoryRest.dashboard.kpi.activeWarehousesNote", { count: formatNumber(warehouses.length) })} icon={WarehouseIcon} onClick={() => navigate("/inventory/warehouses")} />
         <MetricCard
-          label="دفعات قاربت الصلاحية"
-          value={data.expiry.available ? formatNumber(data.expiry.count) : "غير متاح"}
-          note={data.expiry.available ? `تقديري · قيمة معرّضة ${formatCurrency(data.expiry.atRiskValue)} خلال ${data.expiry.days} يومًا` : "بيانات الدفعات غير متوفرة"}
+          label={t("inventoryRest.dashboard.kpi.expirySoon")}
+          value={data.expiry.available ? formatNumber(data.expiry.count) : t("inventoryRest.dashboard.kpi.expiryUnavailable")}
+          note={data.expiry.available ? t("inventoryRest.dashboard.kpi.expirySoonNote", { value: formatCurrency(data.expiry.atRiskValue), days: data.expiry.days }) : t("inventoryRest.dashboard.kpi.expiryNoData")}
           icon={Hourglass}
           tone="violet"
           onClick={data.expiry.available ? () => navigate("/inventory") : undefined}
@@ -107,22 +109,22 @@ export function DashboardPage() {
         <article className="surface overflow-hidden">
           <PanelTitle
             icon={Gauge}
-            title="صحة المستودعات"
-            subtitle="القيمة، الكمية، والتنبيهات المفتوحة لكل مستودع"
-            action={<Button variant="ghost" onClick={() => navigate("/inventory/warehouses")}>عرض الكل</Button>}
+            title={t("inventoryRest.dashboard.healthTitle")}
+            subtitle={t("inventoryRest.dashboard.healthSubtitle")}
+            action={<Button variant="ghost" onClick={() => navigate("/inventory/warehouses")}>{t("inventoryRest.dashboard.viewAll")}</Button>}
           />
           {warehouses.length === 0 ? (
-            <div className="p-10 text-center text-sm font-bold text-slate-400">لا توجد مستودعات ضمن هذا النطاق.</div>
+            <div className="p-10 text-center text-sm font-bold text-slate-400">{t("inventoryRest.dashboard.healthEmpty")}</div>
           ) : (
             <div className="overflow-x-auto">
               <table className="w-full min-w-[620px] text-right">
                 <thead className="bg-slate-50 text-[11px] font-extrabold text-slate-400">
                   <tr>
-                    <th className="px-5 py-3">المستودع</th>
-                    <th className="px-4 py-3">القيمة</th>
-                    <th className="px-4 py-3">الكمية</th>
-                    <th className="px-4 py-3">تنبيهات</th>
-                    <th className="px-5 py-3">الحالة</th>
+                    <th className="px-5 py-3">{t("inventoryRest.dashboard.col.warehouse")}</th>
+                    <th className="px-4 py-3">{t("inventoryRest.dashboard.col.value")}</th>
+                    <th className="px-4 py-3">{t("inventoryRest.dashboard.col.qty")}</th>
+                    <th className="px-4 py-3">{t("inventoryRest.dashboard.col.alerts")}</th>
+                    <th className="px-5 py-3">{t("inventoryRest.dashboard.col.status")}</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -150,10 +152,10 @@ export function DashboardPage() {
         </article>
 
         <article className="surface overflow-hidden">
-          <PanelTitle icon={Activity} title="آخر الحركات" subtitle="مرجع واحد لكل حركة مع أثرها" />
+          <PanelTitle icon={Activity} title={t("inventoryRest.dashboard.recentTitle")} subtitle={t("inventoryRest.dashboard.recentSubtitle")} />
           <div className="p-5">
             {data.recentMovements.length === 0 ? (
-              <div className="py-8 text-center text-sm font-bold text-slate-400">لا توجد حركات حديثة ضمن هذا النطاق.</div>
+              <div className="py-8 text-center text-sm font-bold text-slate-400">{t("inventoryRest.dashboard.recentEmpty")}</div>
             ) : (
               data.recentMovements.map((m, index) => {
                 const positive = m.type === "in";
@@ -186,7 +188,7 @@ export function DashboardPage() {
       {data.kpis.negativeCount > 0 && (
         <div className="surface mt-4 flex items-center gap-3 border-rose-200 bg-rose-50/60 p-4 text-sm font-bold text-rose-700">
           <AlertTriangle className="h-5 w-5 shrink-0" />
-          يوجد {formatNumber(data.kpis.negativeCount)} صنف برصيد سالب — راجع المخزون لتصحيح العجز.
+          {t("inventoryRest.dashboard.negativeBanner", { count: formatNumber(data.kpis.negativeCount) })}
         </div>
       )}
     </>

@@ -8,6 +8,7 @@ import { MetricCard } from "@/modules/inventory/lib/MetricCard";
 import { LoadingState, ErrorState } from "@/shared/ui";
 import { ApiError } from "@/shared/api";
 import { formatQty, formatNumber } from "@/shared/lib";
+import { useT } from "@/i18n";
 import { useStocktakeDetail, useStocktakeMutations } from "@/modules/inventory/lib/hooks/useStocktakes";
 import type { StocktakeLine } from "@/modules/inventory/lib/adapters/stocktake.adapter";
 
@@ -15,6 +16,7 @@ type Edit = { countedQty: number | null; notes: string; observedSeq?: number };
 const AUTOSAVE_MS = 700;
 
 export function CountingWorkspace() {
+  const t = useT();
   const [csp] = useSearchParams();
   const id = csp.get("count") ?? "";
   const navigate = useNavigate();
@@ -110,50 +112,50 @@ export function CountingWorkspace() {
   if (d.status !== "counting") {
     return (
       <div className="p-4">
-        <PageHeader eyebrow="الجرد" title={`العد — ${d.number}`} subtitle="هذا المحضر ليس في حالة العد." action={<Button variant="ghost" onClick={() => navigate(`/inventory/stocktakes?view=${d.id}`)}>عودة</Button>} />
-        <div className="surface p-8 text-center text-sm text-slate-500">حالة المحضر «{d.status}» — لا يمكن العد إلا أثناء «قيد العد».</div>
+        <PageHeader eyebrow={t("inventoryRest.stocktakes.counting.eyebrow")} title={t("inventoryRest.stocktakes.counting.notCountingTitle", { number: d.number })} subtitle={t("inventoryRest.stocktakes.counting.notCountingSubtitle")} action={<Button variant="ghost" onClick={() => navigate(`/inventory/stocktakes?view=${d.id}`)}>{t("inventoryRest.stocktakes.counting.back")}</Button>} />
+        <div className="surface p-8 text-center text-sm text-slate-500">{t("inventoryRest.stocktakes.counting.notCountingBody", { status: d.status })}</div>
       </div>
     );
   }
 
   return (
     <div>
-      <PageHeader eyebrow="الجرد" title={`ورشة العد — ${d.number}`} subtitle={`${d.warehouse.name}${d.blindCount ? " · عدّ أعمى" : ""}`}
+      <PageHeader eyebrow={t("inventoryRest.stocktakes.counting.eyebrow")} title={t("inventoryRest.stocktakes.counting.workspaceTitle", { number: d.number })} subtitle={`${d.warehouse.name}${d.blindCount ? t("inventoryRest.stocktakes.counting.blindSuffix") : ""}`}
         action={<div className="flex items-center gap-2"><SaveBadge state={saveState} online={online} />
-          <Button variant="ghost" onClick={() => navigate(`/inventory/stocktakes?view=${d.id}`)}>إنهاء</Button></div>} />
+          <Button variant="ghost" onClick={() => navigate(`/inventory/stocktakes?view=${d.id}`)}>{t("inventoryRest.stocktakes.counting.finish")}</Button></div>} />
 
       {!online && (
         <div className="mb-4 flex items-center gap-2 rounded-xl border border-amber-200 bg-amber-50 px-4 py-2 text-sm font-bold text-amber-800">
-          <WifiOff className="h-4 w-4" /> أنت غير متصل — يُحفظ العد محليًا ويُرسل تلقائيًا عند عودة الاتصال. لا يمكن التقديم دون اتصال.
+          <WifiOff className="h-4 w-4" /> {t("inventoryRest.stocktakes.counting.offlineBanner")}
         </div>
       )}
       {staleItems.length > 0 && (
         <div className="mb-4 rounded-xl border border-rose-200 bg-rose-50 px-4 py-2 text-sm font-bold text-rose-700">
-          حدثت حركات على {formatNumber(staleItems.length)} صنف منذ عدّه دون اتصال — لم يُحفَظ العد. أعد عدّ الأصناف المظلّلة ثم احفظ.
+          {t("inventoryRest.stocktakes.counting.staleBanner", { count: formatNumber(staleItems.length) })}
         </div>
       )}
       {saveState === "conflict" && staleItems.length === 0 && (
-        <div className="mb-4 rounded-xl border border-rose-200 bg-rose-50 px-4 py-2 text-sm font-bold text-rose-700">تغيّرت حالة المحضر (ربما طُلبت إعادة عد أو قُدّم) — أُعيد التحميل. تحقق ثم تابع.</div>
+        <div className="mb-4 rounded-xl border border-rose-200 bg-rose-50 px-4 py-2 text-sm font-bold text-rose-700">{t("inventoryRest.stocktakes.counting.conflictBanner")}</div>
       )}
 
       <section className="grid gap-4 sm:grid-cols-3">
-        <MetricCard label="المعدود" value={`${formatNumber(countedN)} / ${formatNumber(lines.length)}`} note="أصناف عُدّت" icon={Check} tone="teal" />
-        <MetricCard label="المتبقّي" value={formatNumber(lines.length - countedN)} note="لم يُعدّ بعد" icon={CloudOff} tone="amber" />
-        <MetricCard label="فروقات مرصودة" value={formatNumber(varianceN)} note="تختلف عن النظري" icon={Send} tone="rose" />
+        <MetricCard label={t("inventoryRest.stocktakes.counting.counted")} value={`${formatNumber(countedN)} / ${formatNumber(lines.length)}`} note={t("inventoryRest.stocktakes.counting.countedNote")} icon={Check} tone="teal" />
+        <MetricCard label={t("inventoryRest.stocktakes.counting.remaining")} value={formatNumber(lines.length - countedN)} note={t("inventoryRest.stocktakes.counting.remainingNote")} icon={CloudOff} tone="amber" />
+        <MetricCard label={t("inventoryRest.stocktakes.counting.variance")} value={formatNumber(varianceN)} note={t("inventoryRest.stocktakes.counting.varianceNote")} icon={Send} tone="rose" />
       </section>
       <div className="mt-3"><Progress value={progress} tone={progress === 100 ? "teal" : "amber"} /></div>
 
       <section className="surface mt-4 p-4">
         <label className="relative mb-3 block">
           <Search className="pointer-events-none absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
-          <input className="field w-full pr-10" placeholder="بحث بالاسم أو الرمز (SKU)…" value={search} onChange={(e) => setSearch(e.target.value)} aria-label="بحث" />
+          <input className="field w-full pr-10" placeholder={t("inventoryRest.stocktakes.counting.searchPlaceholder")} value={search} onChange={(e) => setSearch(e.target.value)} aria-label={t("inventoryRest.invtx.list.searchAria")} />
         </label>
 
         {/* Desktop table */}
         <div className="hidden overflow-x-auto md:block">
           <table className="w-full text-sm">
             <thead className="text-xs text-slate-400"><tr>
-              <th className="py-2 text-right">الصنف</th>{!d.blindCount && <th>النظري</th>}<th>المعدود</th><th>الفرق</th><th>ملاحظة</th>
+              <th className="py-2 text-right">{t("inventoryRest.stocktakes.counting.colItem")}</th>{!d.blindCount && <th>{t("inventoryRest.stocktakes.counting.colTheoretical")}</th>}<th>{t("inventoryRest.stocktakes.counting.colCounted")}</th><th>{t("inventoryRest.stocktakes.counting.colDelta")}</th><th>{t("inventoryRest.stocktakes.counting.colNote")}</th>
             </tr></thead>
             <tbody className="divide-y divide-slate-100">
               {filtered.map((l) => <Row key={l.id} l={l} blind={d.blindCount} value={val(l)} notes={l.item.id in edits ? edits[l.item.id].notes : (l.notes ?? "")} onChange={setEdit} />)}
@@ -167,12 +169,12 @@ export function CountingWorkspace() {
             const v = val(l); const delta = v === null ? null : v - l.theoreticalQty;
             return (
               <div key={l.id} className="rounded-xl border border-slate-100 p-3">
-                <div className="mb-2 flex items-center justify-between"><span className="font-bold text-slate-800">{l.item.name}</span>{!d.blindCount && <span className="text-xs text-slate-400">النظري {formatQty(l.theoreticalQty)}</span>}</div>
+                <div className="mb-2 flex items-center justify-between"><span className="font-bold text-slate-800">{l.item.name}</span>{!d.blindCount && <span className="text-xs text-slate-400">{t("inventoryRest.stocktakes.counting.theoreticalShort", { qty: formatQty(l.theoreticalQty) })}</span>}</div>
                 <div className="flex items-center gap-2">
-                  <input type="number" min={0} step="any" inputMode="decimal" className="field w-28 text-center" value={v ?? ""} onChange={(e) => setEdit(l.item.id, { countedQty: e.target.value === "" ? null : Number(e.target.value) }, l)} aria-label={`عدّ ${l.item.name}`} />
+                  <input type="number" min={0} step="any" inputMode="decimal" className="field w-28 text-center" value={v ?? ""} onChange={(e) => setEdit(l.item.id, { countedQty: e.target.value === "" ? null : Number(e.target.value) }, l)} aria-label={t("inventoryRest.stocktakes.counting.countAria", { name: l.item.name })} />
                   {delta !== null && <span className={`text-sm font-extrabold tabular-nums ${delta < 0 ? "text-rose-600" : delta > 0 ? "text-emerald-600" : "text-slate-400"}`}>{delta > 0 ? "+" : ""}{formatQty(delta)}</span>}
                 </div>
-                <input className="field mt-2 w-full text-xs" placeholder="ملاحظة" value={l.item.id in edits ? edits[l.item.id].notes : (l.notes ?? "")} onChange={(e) => setEdit(l.item.id, { notes: e.target.value }, l)} aria-label="ملاحظة" />
+                <input className="field mt-2 w-full text-xs" placeholder={t("inventoryRest.stocktakes.counting.notePlaceholder")} value={l.item.id in edits ? edits[l.item.id].notes : (l.notes ?? "")} onChange={(e) => setEdit(l.item.id, { notes: e.target.value }, l)} aria-label={t("inventoryRest.stocktakes.counting.noteAria")} />
               </div>
             );
           })}
@@ -181,7 +183,7 @@ export function CountingWorkspace() {
 
       <div className="mt-4 flex justify-end">
         <Button variant="primary" disabled={!online || m.submit.isPending} onClick={() => { flush(); m.submit.mutate({ id: d.id, expectedVersion: d.version }, { onSuccess: () => navigate(`/inventory/stocktakes?view=${d.id}`), onError: () => q.refetch() }); }}>
-          <Send className="h-4 w-4" /> تقديم للاعتماد <ArrowRight className="h-4 w-4" />
+          <Send className="h-4 w-4" /> {t("inventoryRest.stocktakes.counting.submitForApproval")} <ArrowRight className="h-4 w-4" />
         </Button>
       </div>
     </div>
@@ -189,22 +191,24 @@ export function CountingWorkspace() {
 }
 
 function Row({ l, blind, value, notes, onChange }: { l: StocktakeLine; blind: boolean; value: number | null; notes: string; onChange: (id: string, p: Partial<Edit>, base: StocktakeLine) => void }) {
+  const t = useT();
   const delta = value === null ? null : value - l.theoreticalQty;
   return (
     <tr>
       <td className="py-2 font-bold text-slate-700">{l.item.name}<span className="mr-2 text-[10px] font-normal text-slate-400">{l.item.id}</span></td>
       {!blind && <td className="text-center tabular-nums text-slate-500">{formatQty(l.theoreticalQty)}</td>}
-      <td className="text-center"><input type="number" min={0} step="any" inputMode="decimal" className="field w-24 text-center" value={value ?? ""} onChange={(e) => onChange(l.item.id, { countedQty: e.target.value === "" ? null : Number(e.target.value) }, l)} aria-label={`عدّ ${l.item.name}`} /></td>
+      <td className="text-center"><input type="number" min={0} step="any" inputMode="decimal" className="field w-24 text-center" value={value ?? ""} onChange={(e) => onChange(l.item.id, { countedQty: e.target.value === "" ? null : Number(e.target.value) }, l)} aria-label={t("inventoryRest.stocktakes.counting.countAria", { name: l.item.name })} /></td>
       <td className={`text-center font-extrabold tabular-nums ${delta === null ? "text-slate-300" : delta < 0 ? "text-rose-600" : delta > 0 ? "text-emerald-600" : "text-slate-400"}`}>{delta === null ? "—" : `${delta > 0 ? "+" : ""}${formatQty(delta)}`}</td>
-      <td><input className="field w-full text-xs" placeholder="ملاحظة" value={notes} onChange={(e) => onChange(l.item.id, { notes: e.target.value }, l)} aria-label="ملاحظة" /></td>
+      <td><input className="field w-full text-xs" placeholder={t("inventoryRest.stocktakes.counting.notePlaceholder")} value={notes} onChange={(e) => onChange(l.item.id, { notes: e.target.value }, l)} aria-label={t("inventoryRest.stocktakes.counting.noteAria")} /></td>
     </tr>
   );
 }
 
 function SaveBadge({ state, online }: { state: string; online: boolean }) {
-  if (!online) return <span className="flex items-center gap-1 text-xs font-bold text-amber-700"><WifiOff className="h-3.5 w-3.5" /> غير متصل</span>;
-  if (state === "saving") return <span className="flex items-center gap-1 text-xs font-bold text-slate-500"><Loader2 className="h-3.5 w-3.5 animate-spin" /> حفظ…</span>;
-  if (state === "saved") return <span className="flex items-center gap-1 text-xs font-bold text-emerald-600"><Check className="h-3.5 w-3.5" /> محفوظ</span>;
-  if (state === "conflict") return <span className="text-xs font-bold text-rose-600">تعارض</span>;
+  const t = useT();
+  if (!online) return <span className="flex items-center gap-1 text-xs font-bold text-amber-700"><WifiOff className="h-3.5 w-3.5" /> {t("inventoryRest.stocktakes.counting.saveOffline")}</span>;
+  if (state === "saving") return <span className="flex items-center gap-1 text-xs font-bold text-slate-500"><Loader2 className="h-3.5 w-3.5 animate-spin" /> {t("inventoryRest.stocktakes.counting.saveSaving")}</span>;
+  if (state === "saved") return <span className="flex items-center gap-1 text-xs font-bold text-emerald-600"><Check className="h-3.5 w-3.5" /> {t("inventoryRest.stocktakes.counting.saveSaved")}</span>;
+  if (state === "conflict") return <span className="text-xs font-bold text-rose-600">{t("inventoryRest.stocktakes.counting.saveConflict")}</span>;
   return null;
 }

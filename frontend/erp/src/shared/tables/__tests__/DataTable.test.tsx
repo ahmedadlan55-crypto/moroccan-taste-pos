@@ -1,5 +1,6 @@
 import { describe, it, expect, vi } from "vitest";
-import { render, screen, fireEvent, within } from "@testing-library/react";
+import { render, screen, fireEvent, within, act } from "@testing-library/react";
+import { apiClient } from "@/shared/api";
 import { DataTable, type ColumnDef } from "@/shared/tables";
 
 interface Row {
@@ -155,5 +156,151 @@ describe("DataTable", () => {
     fireEvent.keyDown(openButton, { key: "Enter" });
     fireEvent.click(openButton);
     expect(onRowClick).toHaveBeenCalledTimes(1);
+  });
+
+  // ── A4 additions ────────────────────────────────────────────────────────
+
+  it("debounces the onStateChange search callback (immediate echo, deferred report)", () => {
+    vi.useFakeTimers();
+    try {
+      const onStateChange = vi.fn();
+      render(
+        <DataTable
+          columns={COLUMNS}
+          rows={ROWS}
+          getRowId={(r) => r.id}
+          searchable
+          searchPlaceholder="بحث"
+          onStateChange={onStateChange}
+          stackOnMobile={false}
+        />,
+      );
+      // drop the initial mount report (search: "")
+      onStateChange.mockClear();
+
+      act(() => {
+        fireEvent.change(screen.getByRole("searchbox"), { target: { value: "Alpha" } });
+      });
+      // the input echoes immediately …
+      expect((screen.getByRole("searchbox") as HTMLInputElement).value).toBe("Alpha");
+      // … but the downstream report has NOT fired with the new search yet
+      expect(onStateChange).not.toHaveBeenCalledWith(expect.objectContaining({ search: "Alpha" }));
+
+      act(() => {
+        vi.advanceTimersByTime(300);
+      });
+      expect(onStateChange).toHaveBeenCalledWith(expect.objectContaining({ search: "Alpha" }));
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("omits a requireCap column when the cap is absent and shows it when present", () => {
+    const withSecret: ColumnDef<Row>[] = [
+      ...COLUMNS,
+      { id: "secret", header: "سري", accessor: (r) => r.name, requireCap: "secret.view" },
+    ];
+    const { rerender } = render(
+      <DataTable
+        columns={withSecret}
+        rows={ROWS}
+        getRowId={(r) => r.id}
+        canColumn={() => false}
+        stackOnMobile={false}
+        paginate={false}
+      />,
+    );
+    // header + cells absent when the cap is missing
+    expect(screen.queryByText("سري")).not.toBeInTheDocument();
+
+    rerender(
+      <DataTable
+        columns={withSecret}
+        rows={ROWS}
+        getRowId={(r) => r.id}
+        canColumn={() => true}
+        stackOnMobile={false}
+        paginate={false}
+      />,
+    );
+    expect(screen.getByText("سري")).toBeInTheDocument();
+  });
+
+  it("truncates an ellipsis column with a native title tooltip", () => {
+    const longText = "قيمة نصية طويلة جدًا لا ينبغي أن تلتف إلى عدة أسطر في الجدول";
+    const cols: ColumnDef<Row>[] = [
+      { id: "desc", header: "الوصف", accessor: () => longText, ellipsis: true },
+    ];
+    render(
+      <DataTable
+        columns={cols}
+        rows={[ROWS[0]]}
+        getRowId={(r) => r.id}
+        stackOnMobile={false}
+        paginate={false}
+      />,
+    );
+    const el = screen.getByTitle(longText);
+    expect(el).toBeInTheDocument();
+    expect(el).toHaveClass("truncate");
+  });
+
+  it("defaults rows to a 52px comfortable density when virtualized", () => {
+    render(
+      <DataTable
+        columns={COLUMNS}
+        rows={ROWS}
+        getRowId={(r) => r.id}
+        virtualize
+        stackOnMobile={false}
+        paginate={false}
+      />,
+    );
+    const rows = screen.getAllByRole("row");
+    // rows[0] = header; rows[1] = first data row (no top pad at scrollTop 0)
+    expect((rows[1] as HTMLElement).style.height).toBe("52px");
+  });
+
+  it("virtualizes automatically once the rendered page exceeds 200 rows", () => {
+    const many: Row[] = Array.from({ length: 250 }, (_, i) => ({
+      id: String(i),
+      name: `row-${i}`,
+      amount: i,
+    }));
+    const { container } = render(
+      <DataTable
+        columns={COLUMNS}
+        rows={many}
+        getRowId={(r) => r.id}
+        paginate={false}
+        stackOnMobile={false}
+      />,
+    );
+    // a scroll viewport wraps the sticky-header table
+    expect(container.querySelector(".overflow-y-auto")).not.toBeNull();
+    // early rows render; far rows are windowed out of the DOM
+    expect(screen.getByText("row-0")).toBeInTheDocument();
+    expect(screen.queryByText("row-249")).not.toBeInTheDocument();
+  });
+
+  it("renders the saved-views control when savedViewsModule is set (localStorage fallback)", async () => {
+    // Simulate A2's endpoint not being reachable → the control still renders and
+    // degrades to localStorage rather than hard-breaking.
+    const getSpy = vi.spyOn(apiClient, "get").mockRejectedValue(new Error("endpoint not available"));
+    try {
+      render(
+        <DataTable
+          columns={COLUMNS}
+          rows={ROWS}
+          getRowId={(r) => r.id}
+          savedViewsModule="test-module"
+          stackOnMobile={false}
+          paginate={false}
+        />,
+      );
+      expect(await screen.findByText("طرق العرض")).toBeInTheDocument();
+    } finally {
+      getSpy.mockRestore();
+    }
   });
 });

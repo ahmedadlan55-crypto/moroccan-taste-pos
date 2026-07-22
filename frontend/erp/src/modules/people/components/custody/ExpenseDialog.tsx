@@ -2,6 +2,7 @@ import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { AlertTriangle } from "lucide-react";
 import { FileUploader, Button, Dialog, Input, Select, safeUserMessage, useToast } from "@/shared/ui";
+import { useTx } from "@/shared/ui/i18n";
 import { peopleApi } from "../../lib/api";
 import { qk } from "../../lib/query-keys";
 import { fileToInvoiceDataUrl } from "../../lib/custody";
@@ -40,6 +41,7 @@ export function ExpenseDialog({
   open: boolean;
   onClose: () => void;
 }) {
+  const t = useTx();
   const { toast } = useToast();
   const qc = useQueryClient();
 
@@ -67,7 +69,7 @@ export function ExpenseDialog({
     const desc = description.trim();
     const amt = Number(amount) || 0;
     if (!desc || amt <= 0) {
-      toast({ title: "البيان والقيمة مطلوبة", tone: "error" });
+      toast({ title: t("people.custody.expense.required"), tone: "error" });
       return null;
     }
     const acc = expenseAccounts.find((a) => a.id === glAccountId);
@@ -95,8 +97,8 @@ export function ExpenseDialog({
         toast({
           title:
             r.status === "override_pending"
-              ? "تم إرسال طلب تجاوز الرصيد — بانتظار موافقة المدير"
-              : "تم إرسال المصروف — بانتظار الموافقة",
+              ? t("people.custody.expense.overrideSent")
+              : t("people.custody.expense.sent"),
           tone: "success",
         });
         reset();
@@ -106,12 +108,12 @@ export function ExpenseDialog({
       }
       if (r && r.needsOverride) {
         // Balance exceeded — the legacy override confirmation.
-        setOverridePrompt(r.error || "المبلغ يتجاوز الرصيد المتاح.");
+        setOverridePrompt(r.error || t("people.custody.expense.overBalance"));
         return;
       }
-      toast({ title: (r && r.error) || "فشل الحفظ", tone: "error" });
+      toast({ title: (r && r.error) || t("people.custody.expense.saveFailed"), tone: "error" });
     },
-    onError: (e) => toast({ title: "تعذّر إرسال المصروف", description: safeUserMessage(e), tone: "error" }),
+    onError: (e) => toast({ title: t("people.custody.expense.sendFailed"), description: safeUserMessage(e, t), tone: "error" }),
   });
 
   function reset() {
@@ -157,17 +159,17 @@ export function ExpenseDialog({
     <Dialog
       open={open && !!custodyId}
       onClose={close}
-      title="تسجيل مصروف عهدة"
-      description="يُرسل المصروف للاعتماد ويُخصم من رصيد العهدة بعد الموافقة."
+      title={t("people.custody.expense.title")}
+      description={t("people.custody.expense.desc")}
       size="lg"
       dismissable={!submit.isPending}
       footer={
         <>
           <Button variant="secondary" onClick={close} disabled={submit.isPending}>
-            إلغاء
+            {t("common.cancel")}
           </Button>
           <Button variant="primary" loading={submit.isPending} disabled={fileBusy} onClick={() => send(false)}>
-            إرسال المصروف
+            {t("people.custody.expense.submit")}
           </Button>
         </>
       }
@@ -180,14 +182,14 @@ export function ExpenseDialog({
               {overridePrompt}
             </p>
             <p className="mt-1 text-xs font-medium text-amber-700">
-              هل تريد إرسال طلب تجاوز الرصيد للمدير للموافقة عليه؟
+              {t("people.custody.expense.overridePromptQuestion")}
             </p>
             <div className="mt-2 flex gap-2">
               <Button variant="danger" size="sm" loading={submit.isPending} onClick={() => send(true)}>
-                إرسال طلب التجاوز
+                {t("people.custody.expense.overrideSend")}
               </Button>
               <Button variant="secondary" size="sm" onClick={() => setOverridePrompt(null)} disabled={submit.isPending}>
-                تراجع
+                {t("people.custody.expense.overrideCancel")}
               </Button>
             </div>
           </div>
@@ -196,13 +198,13 @@ export function ExpenseDialog({
         <div className="grid gap-4 sm:grid-cols-2">
           <label className="block">
             <span className="text-xs font-bold text-slate-600">
-              التاريخ <span className="text-rose-600">*</span>
+              {t("people.custody.expense.date")} <span className="text-rose-600">*</span>
             </span>
             <Input className="mt-1" type="date" dir="ltr" value={expenseDate} onChange={(e) => setExpenseDate(e.target.value)} />
           </label>
           <label className="block">
             <span className="text-xs font-bold text-slate-600">
-              القيمة <span className="text-rose-600">*</span>
+              {t("people.custody.expense.value")} <span className="text-rose-600">*</span>
             </span>
             <Input
               className="mt-1"
@@ -218,11 +220,11 @@ export function ExpenseDialog({
 
         <label className="block">
           <span className="text-xs font-bold text-slate-600">
-            البيان <span className="text-rose-600">*</span>
+            {t("people.custody.expense.statement")} <span className="text-rose-600">*</span>
           </span>
           <Input
             className="mt-1"
-            placeholder="وصف المصروف…"
+            placeholder={t("people.custody.expense.statementPlaceholder")}
             value={description}
             onChange={(e) => setDescription(e.target.value)}
           />
@@ -230,9 +232,9 @@ export function ExpenseDialog({
 
         <div className="grid gap-4 sm:grid-cols-2">
           <label className="block">
-            <span className="text-xs font-bold text-slate-600">نوع المصروف (حساب الأستاذ)</span>
+            <span className="text-xs font-bold text-slate-600">{t("people.custody.expense.glType")}</span>
             <Select className="mt-1" value={glAccountId} onChange={(e) => setGlAccountId(e.target.value)}>
-              <option value="">— اختياري —</option>
+              <option value="">{t("people.custody.expense.optional")}</option>
               {expenseAccounts.map((a) => (
                 <option key={a.id} value={a.id}>
                   {a.name} — {a.code}
@@ -241,9 +243,9 @@ export function ExpenseDialog({
             </Select>
           </label>
           <label className="block">
-            <span className="text-xs font-bold text-slate-600">مركز التكلفة</span>
+            <span className="text-xs font-bold text-slate-600">{t("people.custody.expense.costCenter")}</span>
             <Select className="mt-1" value={costCenterId} onChange={(e) => setCostCenterId(e.target.value)}>
-              <option value="">— اختياري —</option>
+              <option value="">{t("people.custody.expense.optional")}</option>
               {(costCenters.data ?? []).map((c) => (
                 <option key={c.id} value={c.id}>
                   {c.code ? `${c.code} — ` : ""}
@@ -256,15 +258,15 @@ export function ExpenseDialog({
 
         <div className="grid gap-4 sm:grid-cols-2">
           <label className="block">
-            <span className="text-xs font-bold text-slate-600">هل يوجد ضريبة؟</span>
+            <span className="text-xs font-bold text-slate-600">{t("people.custody.expense.hasVat")}</span>
             <Select className="mt-1" value={hasVat ? "1" : "0"} onChange={(e) => setHasVat(e.target.value === "1")}>
-              <option value="0">لا</option>
-              <option value="1">نعم</option>
+              <option value="0">{t("common.no")}</option>
+              <option value="1">{t("people.bool.yes")}</option>
             </Select>
           </label>
           {hasVat && (
             <label className="block">
-              <span className="text-xs font-bold text-slate-600">نسبة الضريبة (%)</span>
+              <span className="text-xs font-bold text-slate-600">{t("people.custody.expense.vatRate")}</span>
               <Input
                 className="mt-1"
                 type="number"
@@ -278,16 +280,16 @@ export function ExpenseDialog({
         </div>
 
         <label className="block">
-          <span className="text-xs font-bold text-slate-600">ملاحظات</span>
+          <span className="text-xs font-bold text-slate-600">{t("people.custody.expense.notes")}</span>
           <Input className="mt-1" value={notes} onChange={(e) => setNotes(e.target.value)} />
         </label>
 
         <div>
-          <span className="text-xs font-bold text-slate-600">صورة الفاتورة أو PDF (اختياري)</span>
+          <span className="text-xs font-bold text-slate-600">{t("people.custody.expense.invoice")}</span>
           <div className="mt-1">
             <FileUploader accept="image/*,application/pdf" onFiles={(f) => void onFiles(f)} disabled={fileBusy} />
           </div>
-          {invoice && <p className="mt-1 text-xs font-medium text-teal-700">تم إرفاق: {invoice.name}</p>}
+          {invoice && <p className="mt-1 text-xs font-medium text-teal-700">{t("people.custody.expense.attached", { name: invoice.name })}</p>}
         </div>
       </div>
     </Dialog>

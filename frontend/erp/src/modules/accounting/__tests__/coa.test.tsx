@@ -38,6 +38,7 @@ import {
   type GlAccount,
 } from "../api";
 import { ChartOfAccountsPage } from "../pages/ChartOfAccounts";
+import { I18nProvider } from "@/i18n";
 
 const get = apiClient.get as Mock;
 const post = apiClient.post as Mock;
@@ -54,7 +55,11 @@ function qcWrapper() {
 
 function wrap(ui: ReactNode) {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-  return render(<QueryClientProvider client={qc}>{ui}</QueryClientProvider>);
+  return render(
+    <QueryClientProvider client={qc}>
+      <I18nProvider>{ui}</I18nProvider>
+    </QueryClientProvider>,
+  );
 }
 
 function acc(p: Partial<GlAccount> & { id: string; code: string }): GlAccount {

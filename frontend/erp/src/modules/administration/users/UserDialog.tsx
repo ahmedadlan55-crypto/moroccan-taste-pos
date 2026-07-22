@@ -6,9 +6,10 @@ import { Button, Checkbox, Dialog, Input, Select, Tabs, useToast } from "@/share
 import { Field, FormActions, zodResolver } from "@/shared/forms";
 import { z, arabicText } from "@/shared/schemas";
 import { useAuth, useCan } from "@/app/providers";
+import { useT, type TFunction } from "@/i18n";
 import { ensureAck, type MutationAck } from "../_common";
 import type { User } from "./types";
-import { ASSIGNABLE_ROLES, ROLE_OPTS } from "./roles";
+import { ASSIGNABLE_ROLES, roleLabelKey } from "./roles";
 import { checkPasswordStrength } from "./password";
 import { useBrandOptions, useBranchOptions, useWarehouseOptions } from "./pickers";
 import { ResetPasswordDialog } from "./ResetPasswordDialog";
@@ -21,19 +22,21 @@ export type UserDialogMode = "create" | "edit";
 // enforced on create (edit renames aren't offered, and the password is rotated
 // through the dedicated reset action). Mirrors the server contract in
 // routes/auth.js (username regex, assignable-role guard, password strength).
-function makeUserSchema(mode: UserDialogMode) {
+function makeUserSchema(mode: UserDialogMode, t: TFunction) {
   return z
     .object({
       username: z.string(),
+      // arabicText's required/min/max messages carry a runtime {label}; per the
+      // shared-primitives contract these interpolated messages stay Arabic.
       displayName: arabicText({ label: "الاسم", min: 1, max: 120 }),
       password: z.string(),
       confirmPassword: z.string(),
-      role: z.string().refine((v) => ASSIGNABLE_ROLES.includes(v), "الدور غير صالح"),
+      role: z.string().refine((v) => ASSIGNABLE_ROLES.includes(v), t("administration.users.err.invalidRole")),
       email: z
         .string()
         .trim()
-        .refine((v) => v === "" || /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v), "البريد الإلكتروني غير صحيح"),
-      phone: z.string().trim().max(20, "رقم الجوال يتجاوز الحد الأقصى"),
+        .refine((v) => v === "" || /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v), t("validation.email.invalid")),
+      phone: z.string().trim().max(20, t("administration.users.err.phoneTooLong")),
       brandId: z.string(),
       branchId: z.string(),
       defaultWarehouseId: z.string(),
@@ -48,18 +51,18 @@ function makeUserSchema(mode: UserDialogMode) {
         ctx.addIssue({
           code: z.ZodIssueCode.custom,
           path: ["username"],
-          message: "اسم المستخدم غير صالح (أحرف/أرقام/نقطة/شرطة/@ فقط، 2-50 خانة، بلا مسافات)",
+          message: t("administration.users.err.invalidUsername"),
         });
       }
       const strength = checkPasswordStrength(val.password);
       if (!strength.ok) {
-        ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["password"], message: strength.error! });
+        ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["password"], message: t(`administration.users.pwd.${strength.code}`) });
       }
       if (val.password !== val.confirmPassword) {
         ctx.addIssue({
           code: z.ZodIssueCode.custom,
           path: ["confirmPassword"],
-          message: "كلمتا المرور غير متطابقتين",
+          message: t("administration.users.err.passwordMismatch"),
         });
       }
     });
@@ -95,6 +98,7 @@ export function UserDialog({
   initial: User | null;
   onClose: () => void;
 }) {
+  const t = useT();
   const qc = useQueryClient();
   const { toast } = useToast();
   const { user } = useAuth();
@@ -108,7 +112,11 @@ export function UserDialog({
   const [tab, setTab] = useState<"details" | "permissions" | "audit">("details");
   const [resetOpen, setResetOpen] = useState(false);
 
-  const schema = useMemo(() => makeUserSchema(mode), [mode]);
+  const schema = useMemo(() => makeUserSchema(mode, t), [mode, t]);
+  const roleOptions = useMemo(
+    () => ASSIGNABLE_ROLES.map((v) => ({ value: v, label: t(roleLabelKey(v)) })),
+    [t],
+  );
   const {
     register,
     handleSubmit,
@@ -178,7 +186,7 @@ export function UserDialog({
 
   const surfaceError = (e: Error) => {
     if (e instanceof ApiError && (e.status === 409 || e.kind === "conflict")) {
-      setError("username", { type: "server", message: e.message || "اسم المستخدم مستخدم بالفعل" });
+      setError("username", { type: "server", message: e.message || t("administration.users.err.usernameTaken") });
       return;
     }
     if (e instanceof ApiError && e.status === 400) {
@@ -189,7 +197,7 @@ export function UserDialog({
       setError("password", { type: "server", message: e.message });
       return;
     }
-    toast({ title: "تعذّر الحفظ", description: e.message, tone: "error" });
+    toast({ title: t("administration.users.toast.saveFailed"), description: e.message, tone: "error" });
   };
 
   const createMutation = useMutation({
@@ -197,7 +205,7 @@ export function UserDialog({
       ensureAck(await apiClient.post<MutationAck>("/auth/users", buildBody(v, true))),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["auth", "users"] });
-      toast({ title: "تم إنشاء المستخدم", tone: "success" });
+      toast({ title: t("administration.users.toast.created"), tone: "success" });
       onClose();
     },
     onError: surfaceError,
@@ -215,7 +223,7 @@ export function UserDialog({
     },
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["auth", "users"] });
-      toast({ title: "تم تحديث المستخدم", tone: "success" });
+      toast({ title: t("administration.users.toast.updated"), tone: "success" });
       onClose();
     },
     onError: surfaceError,
@@ -232,27 +240,27 @@ export function UserDialog({
     },
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["auth", "users"] });
-      toast({ title: "تم تغيير حالة المستخدم", tone: "success" });
+      toast({ title: t("administration.users.toast.statusChanged"), tone: "success" });
       onClose();
     },
     onError: (e: Error) =>
-      toast({ title: "تعذّر تغيير الحالة", description: e.message, tone: "error" }),
+      toast({ title: t("administration.users.toast.statusFailed"), description: e.message, tone: "error" }),
   });
 
   const active = mode === "create" ? createMutation : editMutation;
   const busy = active.isPending || toggleMutation.isPending;
 
   const tabItems = [
-    { value: "details", label: "البيانات" },
-    ...(canManageUsers ? [{ value: "permissions", label: "الصلاحيات الفعلية" }] : []),
-    ...(canAudit ? [{ value: "audit", label: "سجل التدقيق" }] : []),
+    { value: "details", label: t("administration.users.tab.details") },
+    ...(canManageUsers ? [{ value: "permissions", label: t("administration.users.tab.permissions") }] : []),
+    ...(canAudit ? [{ value: "audit", label: t("administration.users.tab.audit") }] : []),
   ];
 
   return (
     <Dialog
       open={open}
       onClose={onClose}
-      title={mode === "create" ? "مستخدم جديد" : `تعديل: ${initial?.username ?? ""}`}
+      title={mode === "create" ? t("administration.users.createTitle") : t("administration.users.editTitle", { username: initial?.username ?? "" })}
       size="xl"
       dismissable={!busy}
     >
@@ -261,7 +269,7 @@ export function UserDialog({
           items={tabItems}
           value={tab}
           onChange={(v) => setTab(v as typeof tab)}
-          aria-label="أقسام المستخدم"
+          aria-label={t("administration.users.sectionsAria")}
           className="mb-4"
         />
       )}
@@ -274,34 +282,34 @@ export function UserDialog({
         >
           <div className="grid gap-4 sm:grid-cols-2">
             {mode === "create" ? (
-              <Field label="اسم المستخدم" required error={errors.username}>
+              <Field label={t("administration.users.field.username")} required error={errors.username}>
                 {({ id, invalid }) => (
                   <Input id={id} dir="ltr" invalid={invalid} autoComplete="off" {...register("username")} />
                 )}
               </Field>
             ) : (
-              <Field label="اسم المستخدم">
+              <Field label={t("administration.users.field.username")}>
                 {({ id }) => <Input id={id} dir="ltr" value={initial?.username ?? ""} disabled readOnly />}
               </Field>
             )}
 
-            <Field label="الاسم الظاهر" required error={errors.displayName}>
+            <Field label={t("administration.users.field.displayName")} required error={errors.displayName}>
               {({ id, invalid }) => <Input id={id} invalid={invalid} {...register("displayName")} />}
             </Field>
 
             {mode === "create" && (
               <>
                 <Field
-                  label="كلمة المرور"
+                  label={t("administration.users.field.password")}
                   required
                   error={errors.password}
-                  hint="6 خانات على الأقل، وتتضمن حرفًا ورقمًا ورمزًا خاصًا."
+                  hint={t("administration.users.passwordHint")}
                 >
                   {({ id, invalid }) => (
                     <Input id={id} type="password" dir="ltr" autoComplete="new-password" invalid={invalid} {...register("password")} />
                   )}
                 </Field>
-                <Field label="تأكيد كلمة المرور" required error={errors.confirmPassword}>
+                <Field label={t("administration.users.field.confirmPassword")} required error={errors.confirmPassword}>
                   {({ id, invalid }) => (
                     <Input id={id} type="password" dir="ltr" autoComplete="new-password" invalid={invalid} {...register("confirmPassword")} />
                   )}
@@ -309,24 +317,24 @@ export function UserDialog({
               </>
             )}
 
-            <Field label="الدور" error={errors.role}>
-              {({ id, invalid }) => <Select id={id} invalid={invalid} options={ROLE_OPTS} {...register("role")} />}
+            <Field label={t("administration.users.field.role")} error={errors.role}>
+              {({ id, invalid }) => <Select id={id} invalid={invalid} options={roleOptions} {...register("role")} />}
             </Field>
 
-            <Field label="البريد الإلكتروني" error={errors.email}>
+            <Field label={t("administration.users.field.email")} error={errors.email}>
               {({ id, invalid }) => (
                 <Input id={id} type="email" dir="ltr" invalid={invalid} {...register("email")} />
               )}
             </Field>
 
-            <Field label="الجوال" error={errors.phone}>
+            <Field label={t("administration.users.field.phone")} error={errors.phone}>
               {({ id, invalid }) => <Input id={id} dir="ltr" inputMode="tel" invalid={invalid} {...register("phone")} />}
             </Field>
 
-            <Field label="العلامة التجارية">
+            <Field label={t("administration.users.field.brand")}>
               {({ id }) => (
                 <Select id={id} {...register("brandId")}>
-                  <option value="">بدون علامة</option>
+                  <option value="">{t("administration.users.brandNone")}</option>
                   {brands.map((b) => (
                     <option key={b.id} value={b.id}>
                       {b.name}
@@ -336,10 +344,10 @@ export function UserDialog({
               )}
             </Field>
 
-            <Field label="الفرع">
+            <Field label={t("administration.users.field.branch")}>
               {({ id }) => (
                 <Select id={id} {...register("branchId")}>
-                  <option value="">بدون فرع</option>
+                  <option value="">{t("administration.users.branchNone")}</option>
                   {branches.map((b) => (
                     <option key={b.id} value={b.id}>
                       {b.name}
@@ -349,10 +357,10 @@ export function UserDialog({
               )}
             </Field>
 
-            <Field label="المستودع الافتراضي" hint="إن تُرك فارغًا يُشتق تلقائيًا من مستودع الفرع.">
+            <Field label={t("administration.users.field.warehouse")} hint={t("administration.users.warehouseHint")}>
               {({ id }) => (
                 <Select id={id} {...register("defaultWarehouseId")}>
-                  <option value="">تلقائي من الفرع</option>
+                  <option value="">{t("administration.users.warehouseAuto")}</option>
                   {warehouses.map((w) => (
                     <option key={w.id} value={w.id}>
                       {w.name}
@@ -364,11 +372,11 @@ export function UserDialog({
           </div>
 
           <fieldset className="grid gap-3 rounded-xl border border-slate-200 p-4 sm:grid-cols-2">
-            <legend className="px-1 text-xs font-extrabold text-slate-500">الصلاحيات والبوابات</legend>
-            <Checkbox label="يمكنه تغيير الفرع" {...register("canChangeBranch")} />
-            <Checkbox label="بوابة الموظف (Self-Service)" {...register("employeePortal")} />
-            <Checkbox label="بوابة العهدة" {...register("custodyPortal")} />
-            {showDeveloper && <Checkbox label="مطوّر (صلاحيات كاملة)" {...register("isDeveloper")} />}
+            <legend className="px-1 text-xs font-extrabold text-slate-500">{t("administration.users.gates.legend")}</legend>
+            <Checkbox label={t("administration.users.gates.canChangeBranch")} {...register("canChangeBranch")} />
+            <Checkbox label={t("administration.users.gates.employeePortal")} {...register("employeePortal")} />
+            <Checkbox label={t("administration.users.gates.custodyPortal")} {...register("custodyPortal")} />
+            {showDeveloper && <Checkbox label={t("administration.users.gates.developer")} {...register("isDeveloper")} />}
           </fieldset>
 
           {mode === "edit" && initial && (
@@ -379,20 +387,20 @@ export function UserDialog({
                 onClick={() => toggleMutation.mutate()}
                 loading={toggleMutation.isPending}
               >
-                {initial.active ? "تعطيل الحساب" : "تفعيل الحساب"}
+                {initial.active ? t("administration.users.disableAccount") : t("administration.users.enableAccount")}
               </Button>
               <Button type="button" variant="secondary" onClick={() => setResetOpen(true)}>
-                إعادة تعيين كلمة المرور
+                {t("administration.users.resetPassword")}
               </Button>
             </div>
           )}
 
           <FormActions>
             <Button variant="secondary" onClick={onClose} disabled={busy}>
-              إلغاء
+              {t("common.cancel")}
             </Button>
             <Button type="submit" loading={active.isPending}>
-              {mode === "create" ? "إنشاء المستخدم" : "حفظ التغييرات"}
+              {mode === "create" ? t("administration.users.createBtn") : t("administration.users.saveChanges")}
             </Button>
           </FormActions>
         </form>

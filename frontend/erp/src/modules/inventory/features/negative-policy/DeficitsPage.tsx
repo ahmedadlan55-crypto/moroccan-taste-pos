@@ -20,8 +20,9 @@ import { useWarehouses } from "@/modules/inventory/lib/hooks/useWarehouses";
 import { useWarehouseScope } from "@/modules/inventory/lib/warehouse-scope-provider";
 import { useDeficits, downloadDeficitsCsv } from "@/modules/inventory/lib/hooks/useNegativePolicy";
 import { formatCurrency, formatDateTime, formatNumber, formatQty } from "@/shared/lib";
+import { useT } from "@/i18n";
 import type { DeficitRow } from "@/modules/inventory/lib/adapters/negative-policy.adapter";
-import { DEFICIT_STATUS_OPTIONS, originDocLabel } from "./labels";
+import { DEFICIT_STATUS_FILTER_CODES, deficitStatusLabel, originDocLabel } from "./labels";
 import { DeficitStatusBadge } from "./shared";
 
 const PAGE_SIZES = [10, 25, 50];
@@ -50,6 +51,7 @@ function matchesQuery(r: DeficitRow, q: string): boolean {
 }
 
 export function DeficitsPage() {
+  const t = useT();
   const canView = useCan("negativePolicy.view");
   const [params, setParams] = useSearchParams();
   const { accessibleWarehouses, allWarehousesAccess } = useWarehouseScope();
@@ -123,7 +125,7 @@ export function DeficitsPage() {
       // client-side filters). Server 'open' = open+partial by contract.
       await downloadDeficitsCsv({ status: status || "all", warehouseId: warehouseId || undefined });
     } catch (e) {
-      setExportError(e instanceof Error ? e.message : "تعذّر تصدير سجل العجوزات.");
+      setExportError(e instanceof Error && e.message ? e.message : t("inventoryRest.negativePolicy.csvExportFailed"));
     } finally {
       setExporting(false);
     }
@@ -136,13 +138,13 @@ export function DeficitsPage() {
   return (
     <div>
       <PageHeader
-        eyebrow="الرقابة المخزنية"
-        title="سجل العجوزات المخزنية"
-        subtitle="كل صرف تحت الصفر جرى السماح به وفق سياسة «مقيّد/سماح» يُقيَّد هنا كعجز بتكلفة لحظة الصرف — ويبقى مفتوحًا حتى تغطيه استلامات لاحقة أو تسوية."
+        eyebrow={t("inventoryRest.negativePolicy.deficits.eyebrow")}
+        title={t("inventoryRest.negativePolicy.deficits.title")}
+        subtitle={t("inventoryRest.negativePolicy.deficits.subtitle")}
         action={
           <Button variant="secondary" onClick={onExport} disabled={exporting || isLoading}>
             {exporting ? <Spinner className="h-4 w-4" /> : <Download className="h-4 w-4" />}
-            تصدير CSV
+            {t("inventoryRest.ui.exportCsv")}
           </Button>
         }
       />
@@ -161,30 +163,30 @@ export function DeficitsPage() {
         <>
           <section className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
             <MetricCard
-              label="عجوزات بحاجة تسوية"
+              label={t("inventoryRest.negativePolicy.deficits.kpi.open")}
               value={formatNumber(kpis.openCount)}
-              note="مفتوحة أو مغطّاة جزئيًا"
+              note={t("inventoryRest.negativePolicy.deficits.kpi.openNote")}
               icon={AlertTriangle}
               tone="rose"
             />
             <MetricCard
-              label="كمية متبقية دون تغطية"
+              label={t("inventoryRest.negativePolicy.deficits.kpi.remainingQty")}
               value={formatQty(kpis.remainingQty)}
-              note="مجموع المتبقي في العجوزات المفتوحة"
+              note={t("inventoryRest.negativePolicy.deficits.kpi.remainingQtyNote")}
               icon={Layers}
               tone="amber"
             />
             <MetricCard
-              label="قيمة العجز المتبقي"
+              label={t("inventoryRest.negativePolicy.deficits.kpi.remainingValue")}
               value={formatCurrency(kpis.remainingValue)}
-              note="بتكلفة الوحدة لحظة الصرف"
+              note={t("inventoryRest.negativePolicy.deficits.kpi.remainingValueNote")}
               icon={Wallet}
               tone="violet"
             />
             <MetricCard
-              label="مغطّى / مسوّى"
+              label={t("inventoryRest.negativePolicy.deficits.kpi.settled")}
               value={formatNumber(kpis.settledCount)}
-              note="عجوزات أُغلقت بالتغطية أو التسوية"
+              note={t("inventoryRest.negativePolicy.deficits.kpi.settledNote")}
               icon={ShieldCheck}
               tone="teal"
             />
@@ -196,39 +198,39 @@ export function DeficitsPage() {
                 <Search className="pointer-events-none absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
                 <input
                   className="field w-full pr-10"
-                  placeholder="بحث بالصنف أو المستند الأصل أو السبب…"
+                  placeholder={t("inventoryRest.negativePolicy.deficits.searchPlaceholder")}
                   defaultValue={q}
                   onChange={(e) => patch({ q: e.target.value })}
-                  aria-label="بحث في العجوزات"
+                  aria-label={t("inventoryRest.negativePolicy.deficits.searchAria")}
                 />
               </label>
               <select
                 className="field lg:w-52"
                 value={warehouseId}
                 onChange={(e) => patch({ wh: e.target.value })}
-                aria-label="المستودع"
+                aria-label={t("inventoryRest.negativePolicy.col.warehouse")}
               >
-                <option value="">كل المستودعات</option>
+                <option value="">{t("inventoryRest.filter.allWarehouses")}</option>
                 {whOptions.map((w) => (
                   <option key={w.id} value={w.id}>{w.name}</option>
                 ))}
               </select>
-              <input type="date" className="field lg:w-40" value={dateFrom} onChange={(e) => patch({ dateFrom: e.target.value })} aria-label="من تاريخ" />
-              <input type="date" className="field lg:w-40" value={dateTo} onChange={(e) => patch({ dateTo: e.target.value })} aria-label="إلى تاريخ" />
+              <input type="date" className="field lg:w-40" value={dateFrom} onChange={(e) => patch({ dateFrom: e.target.value })} aria-label={t("inventoryRest.negativePolicy.deficits.dateFromAria")} />
+              <input type="date" className="field lg:w-40" value={dateTo} onChange={(e) => patch({ dateTo: e.target.value })} aria-label={t("inventoryRest.negativePolicy.deficits.dateToAria")} />
             </div>
             <div className="flex flex-wrap gap-1">
-              {DEFICIT_STATUS_OPTIONS.map((o) => (
+              {DEFICIT_STATUS_FILTER_CODES.map((code) => (
                 <button
-                  key={o.value}
+                  key={code}
                   type="button"
-                  onClick={() => patch({ status: o.value })}
+                  onClick={() => patch({ status: code })}
                   className={`min-h-10 rounded-xl border px-3 text-xs font-extrabold transition ${
-                    status === o.value
+                    status === code
                       ? "border-teal-600 bg-teal-600 text-white"
                       : "border-slate-200 bg-white text-slate-600 hover:bg-slate-50"
                   }`}
                 >
-                  {o.label}
+                  {code === "" ? t("common.all") : deficitStatusLabel(t, code)}
                 </button>
               ))}
             </div>
@@ -237,11 +239,11 @@ export function DeficitsPage() {
           <section className="mt-4">
             {filtered.length === 0 ? (
               <EmptyState
-                title="لا توجد عجوزات مطابقة"
+                title={t("inventoryRest.negativePolicy.deficits.emptyTitle")}
                 body={
                   hasFilters
-                    ? "جرّب تعديل عوامل التصفية."
-                    : "لم يُسجَّل أي عجز مخزني بعد — كل الصرف يتم من رصيد متاح."
+                    ? t("inventoryRest.ui.fixFilters")
+                    : t("inventoryRest.negativePolicy.deficits.emptyBody")
                 }
               />
             ) : (
@@ -251,15 +253,15 @@ export function DeficitsPage() {
                   <table className="w-full text-sm">
                     <thead className="bg-slate-50 text-xs font-bold text-slate-500">
                       <tr>
-                        <th className="px-4 py-3 text-right">الصنف</th>
-                        <th className="px-4 py-3 text-right">المستودع</th>
-                        <th className="px-4 py-3 text-right">المستند الأصل</th>
-                        <th className="px-4 py-3 text-right">العجز</th>
-                        <th className="px-4 py-3 text-right">المتبقي</th>
-                        <th className="px-4 py-3 text-right">القيمة المتبقية</th>
-                        <th className="px-4 py-3 text-right">الحالة</th>
-                        <th className="px-4 py-3 text-right">السبب</th>
-                        <th className="px-4 py-3 text-right">التاريخ</th>
+                        <th className="px-4 py-3 text-right">{t("inventoryRest.negativePolicy.col.item")}</th>
+                        <th className="px-4 py-3 text-right">{t("inventoryRest.negativePolicy.col.warehouse")}</th>
+                        <th className="px-4 py-3 text-right">{t("inventoryRest.negativePolicy.col.originDoc")}</th>
+                        <th className="px-4 py-3 text-right">{t("inventoryRest.negativePolicy.col.deficit")}</th>
+                        <th className="px-4 py-3 text-right">{t("inventoryRest.negativePolicy.col.remaining")}</th>
+                        <th className="px-4 py-3 text-right">{t("inventoryRest.negativePolicy.col.remainingValue")}</th>
+                        <th className="px-4 py-3 text-right">{t("common.status")}</th>
+                        <th className="px-4 py-3 text-right">{t("inventoryRest.negativePolicy.col.reason")}</th>
+                        <th className="px-4 py-3 text-right">{t("inventoryRest.negativePolicy.col.date")}</th>
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-slate-100">
@@ -268,7 +270,7 @@ export function DeficitsPage() {
                           <td className="px-4 py-3 font-extrabold text-slate-900">{r.itemName}</td>
                           <td className="px-4 py-3 text-slate-600">{r.warehouseName}</td>
                           <td className="px-4 py-3">
-                            <span className="text-xs font-bold text-slate-700">{originDocLabel(r.originDocType)}</span>
+                            <span className="text-xs font-bold text-slate-700">{originDocLabel(t, r.originDocType)}</span>
                             <span className="mr-1 text-[11px] font-medium text-slate-400" dir="ltr">{r.originDocId}</span>
                           </td>
                           <td className="px-4 py-3 tabular-nums text-rose-700">{formatQty(r.deficitQty)}</td>
@@ -297,15 +299,15 @@ export function DeficitsPage() {
                         <DeficitStatusBadge status={r.status} />
                       </div>
                       <div className="mt-1 text-xs font-medium text-slate-500">
-                        {r.warehouseName} · {originDocLabel(r.originDocType)}{" "}
+                        {r.warehouseName} · {originDocLabel(t, r.originDocType)}{" "}
                         <span dir="ltr">{r.originDocId}</span>
                       </div>
                       <div className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-1 text-xs font-medium text-slate-500">
-                        <span>العجز: <span className="font-bold tabular-nums text-rose-700">{formatQty(r.deficitQty)}</span></span>
-                        <span>المتبقي: <span className="font-bold tabular-nums text-slate-800">{formatQty(r.remainingQty)}</span></span>
-                        <span>القيمة: <span className="font-bold tabular-nums text-slate-800">{formatCurrency(r.remainingValue)}</span></span>
+                        <span>{t("inventoryRest.negativePolicy.col.deficit")}: <span className="font-bold tabular-nums text-rose-700">{formatQty(r.deficitQty)}</span></span>
+                        <span>{t("inventoryRest.negativePolicy.col.remaining")}: <span className="font-bold tabular-nums text-slate-800">{formatQty(r.remainingQty)}</span></span>
+                        <span>{t("inventoryRest.negativePolicy.col.value")}: <span className="font-bold tabular-nums text-slate-800">{formatCurrency(r.remainingValue)}</span></span>
                       </div>
-                      {r.reason && <div className="mt-2 text-xs font-medium text-slate-500">السبب: {r.reason}</div>}
+                      {r.reason && <div className="mt-2 text-xs font-medium text-slate-500">{t("inventoryRest.negativePolicy.col.reason")}: {r.reason}</div>}
                       <div className="mt-2 text-[11px] font-medium text-slate-400">
                         {formatDateTime(r.createdAt)} · {r.createdBy}
                       </div>
@@ -316,28 +318,28 @@ export function DeficitsPage() {
                 <div className="mt-4 flex flex-col items-center justify-between gap-3 sm:flex-row">
                   <div className="flex items-center gap-3 text-xs font-medium text-slate-500">
                     <span>
-                      عرض {formatNumber(from)}–{formatNumber(to)} من {formatNumber(filtered.length)}
+                      {t("inventoryRest.ui.showingRange", { from: formatNumber(from), to: formatNumber(to), total: formatNumber(filtered.length) })}
                     </span>
                     <select
                       className="field min-h-9 py-1 text-xs"
                       value={pageSize}
                       onChange={(e) => patch({ pageSize: e.target.value })}
-                      aria-label="حجم الصفحة"
+                      aria-label={t("inventoryRest.negativePolicy.deficits.pageSizeAria")}
                     >
                       {PAGE_SIZES.map((s) => (
-                        <option key={s} value={s}>{s} / صفحة</option>
+                        <option key={s} value={s}>{t("inventoryRest.ui.perPage", { count: s })}</option>
                       ))}
                     </select>
-                    {isFetching && <span className="text-teal-600">تحديث…</span>}
+                    {isFetching && <span className="text-teal-600">{t("inventoryRest.ui.updatingShort")}</span>}
                   </div>
                   <div className="flex items-center gap-2">
-                    <Button variant="ghost" size="icon" aria-label="السابق" disabled={safePage <= 1} onClick={() => patch({ page: safePage - 1 }, false)}>
+                    <Button variant="ghost" size="icon" aria-label={t("inventoryRest.ui.prev")} disabled={safePage <= 1} onClick={() => patch({ page: safePage - 1 }, false)}>
                       <ChevronRight className="h-4 w-4" />
                     </Button>
                     <span className="text-xs font-bold text-slate-600">
-                      {formatNumber(safePage)} / {formatNumber(totalPages)}
+                      {t("inventoryRest.ui.pageOf", { page: formatNumber(safePage), total: formatNumber(totalPages) })}
                     </span>
-                    <Button variant="ghost" size="icon" aria-label="التالي" disabled={safePage >= totalPages} onClick={() => patch({ page: safePage + 1 }, false)}>
+                    <Button variant="ghost" size="icon" aria-label={t("inventoryRest.ui.next")} disabled={safePage >= totalPages} onClick={() => patch({ page: safePage + 1 }, false)}>
                       <ChevronLeft className="h-4 w-4" />
                     </Button>
                   </div>

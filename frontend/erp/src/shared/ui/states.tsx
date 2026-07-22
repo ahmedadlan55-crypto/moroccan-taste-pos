@@ -1,8 +1,10 @@
 import type { ReactNode } from "react";
 import { AlertTriangle, Inbox, Lock, LogIn, RefreshCw, WifiOff } from "lucide-react";
 import { ApiError } from "@/shared/api";
+import type { TFunction } from "@/i18n";
 import { Button } from "./button";
 import { Skeleton } from "./skeleton";
+import { arT, useTx } from "./i18n";
 
 // The canonical page states: loading skeleton, empty (first-use and filtered),
 // server error, permission denied, offline, and a 409 conflict with a Refresh CTA.
@@ -60,6 +62,7 @@ function Shell({
 }
 
 export function LoadingState({ rows = 4 }: { rows?: number }) {
+  const t = useTx();
   return (
     <div data-state="loading" className="space-y-4" role="status" aria-live="polite" aria-busy="true">
       <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
@@ -69,13 +72,13 @@ export function LoadingState({ rows = 4 }: { rows?: number }) {
       </div>
       <Skeleton className="h-64" />
       {rows > 4 && <Skeleton className="h-40" />}
-      <span className="sr-only">جارٍ التحميل…</span>
+      <span className="sr-only">{t("states.loading")}</span>
     </div>
   );
 }
 
 export function EmptyState({
-  title = "لا توجد بيانات بعد",
+  title,
   body,
   action,
   icon,
@@ -85,26 +88,44 @@ export function EmptyState({
   action?: ReactNode;
   icon?: ReactNode;
 }) {
-  return <Shell state="empty" icon={icon ?? <Inbox className="h-6 w-6" />} title={title} body={body} action={action} />;
+  const t = useTx();
+  return (
+    <Shell
+      state="empty"
+      icon={icon ?? <Inbox className="h-6 w-6" />}
+      title={title ?? t("states.emptyDefault")}
+      body={body}
+      action={action}
+    />
+  );
 }
 
 export function PermissionDenied({
-  title = "لا تملك صلاحية لعرض هذا القسم",
-  body = "هذه العملية تتطلب صلاحية أعلى. تواصل مع المدير إن كنت تظن أن هذا خطأ.",
+  title,
+  body,
 }: {
   title?: string;
   body?: string;
 }) {
-  return <Shell state="permission-denied" icon={<Lock className="h-6 w-6" />} title={title} body={body} />;
+  const t = useTx();
+  return (
+    <Shell
+      state="permission-denied"
+      icon={<Lock className="h-6 w-6" />}
+      title={title ?? t("states.permissionDenied")}
+      body={body ?? t("states.permissionDeniedBody")}
+    />
+  );
 }
 
 export function SessionExpired() {
+  const t = useTx();
   return (
     <Shell
       state="session-expired"
       icon={<LogIn className="h-6 w-6" />}
-      title="انتهت الجلسة"
-      body="انتهت صلاحية تسجيل الدخول. سجّل الدخول من جديد ثم عُد إلى هذه الصفحة."
+      title={t("states.sessionExpired")}
+      body={t("states.sessionExpiredBody")}
       action={
         <Button
           variant="primary"
@@ -114,7 +135,7 @@ export function SessionExpired() {
             window.location.assign(`${base}/login`);
           }}
         >
-          <LogIn className="h-4 w-4" /> تسجيل الدخول
+          <LogIn className="h-4 w-4" /> {t("states.loginBtn")}
         </Button>
       }
     />
@@ -122,16 +143,17 @@ export function SessionExpired() {
 }
 
 export function OfflineState({ onRetry }: { onRetry?: () => void }) {
+  const t = useTx();
   return (
     <Shell
       state="offline"
       icon={<WifiOff className="h-6 w-6" />}
-      title="أنت غير متصل بالإنترنت"
-      body="تعذّر الوصول إلى الخادم. سنعيد المحاولة تلقائيًا عند عودة الاتصال."
+      title={t("states.offline")}
+      body={t("states.offlineBody")}
       action={
         onRetry && (
           <Button variant="secondary" onClick={onRetry}>
-            <RefreshCw className="h-4 w-4" /> إعادة المحاولة
+            <RefreshCw className="h-4 w-4" /> {t("states.retryBtn")}
           </Button>
         )
       }
@@ -141,9 +163,11 @@ export function OfflineState({ onRetry }: { onRetry?: () => void }) {
 
 // Never render raw technical / DB / stack error text to the user. Intentional
 // short domain messages pass through; anything resembling SQL, driver internals,
-// or a stack trace is replaced by a safe generic Arabic message.
-export function safeUserMessage(error: unknown): string {
-  const GENERIC = "حدث خطأ غير متوقع. أعد المحاولة، وإن استمرت المشكلة تواصل مع المسؤول.";
+// or a stack trace is replaced by a safe generic message. `t` defaults to the
+// Arabic-bound fallback so the many module call sites that pass only the error
+// keep working; ErrorState threads its own active-language `t` in.
+export function safeUserMessage(error: unknown, t: TFunction = arT): string {
+  const GENERIC = t("states.unexpectedError");
   const raw = error instanceof Error ? String(error.message || "") : "";
   if (!raw) return GENERIC;
   if (
@@ -168,6 +192,7 @@ export function ErrorState({
   title?: string;
   body?: string;
 }) {
+  const t = useTx();
   if (error instanceof ApiError) {
     if (error.kind === "network") return <OfflineState onRetry={onRetry} />;
     if (error.kind === "unauthorized") return <SessionExpired />;
@@ -177,12 +202,12 @@ export function ErrorState({
         <Shell
           state="conflict"
           icon={<RefreshCw className="h-6 w-6" />}
-          title="تغيّرت البيانات منذ آخر تحميل"
-          body={safeUserMessage(error)}
+          title={t("states.conflict")}
+          body={safeUserMessage(error, t)}
           action={
             onRetry && (
               <Button onClick={onRetry}>
-                <RefreshCw className="h-4 w-4" /> تحديث
+                <RefreshCw className="h-4 w-4" /> {t("states.refreshBtn")}
               </Button>
             )
           }
@@ -194,12 +219,12 @@ export function ErrorState({
     <Shell
       state="error"
       icon={<AlertTriangle className="h-6 w-6 text-rose-600" />}
-      title={title ?? "تعذّر تحميل البيانات"}
-      body={body ?? safeUserMessage(error)}
+      title={title ?? t("states.errorDefault")}
+      body={body ?? safeUserMessage(error, t)}
       action={
         onRetry && (
           <Button variant="secondary" onClick={onRetry}>
-            <RefreshCw className="h-4 w-4" /> إعادة المحاولة
+            <RefreshCw className="h-4 w-4" /> {t("states.retryBtn")}
           </Button>
         )
       }

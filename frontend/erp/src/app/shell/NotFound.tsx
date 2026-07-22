@@ -1,5 +1,6 @@
 import { Link } from "react-router-dom";
 import { Compass } from "lucide-react";
+import { useT } from "@/i18n";
 import { StateShell } from "@/shared/ui";
 
 /**
@@ -8,15 +9,16 @@ import { StateShell } from "@/shared/ui";
  * the closure E2E gate treats as a failure: no manifest leaf may ever render it.
  */
 export function NotFound() {
+  const t = useT();
   return (
     <StateShell
       state="not-found"
       icon={<Compass className="h-6 w-6" />}
-      title="الصفحة غير موجودة"
-      body="لا يوجد قسم على هذا المسار. عُد إلى نظرة عامة وتابع من القائمة الجانبية."
+      title={t("shell.notFound.title")}
+      body={t("shell.notFound.body")}
       action={
         <Link className="text-sm font-bold text-teal-700 hover:underline" to="/overview">
-          العودة إلى نظرة عامة
+          {t("shell.notFound.back")}
         </Link>
       }
     />

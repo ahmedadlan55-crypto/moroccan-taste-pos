@@ -4,6 +4,7 @@ import { AnimatePresence, motion } from "framer-motion";
 import { ArrowRight, type LucideIcon } from "lucide-react";
 import { cn } from "@/shared/lib";
 import { useFocusTrap } from "./overlay";
+import { useTx } from "./i18n";
 
 export type FullPageFlowSize = "sm" | "md" | "lg" | "xl";
 
@@ -48,6 +49,7 @@ export function FullPageFlow({
   dismissable = true,
   layer = "modal",
 }: FullPageFlowProps) {
+  const t = useTx();
   const pageRef = useFocusTrap<HTMLDivElement>({
     active: open,
     onClose,
@@ -74,7 +76,7 @@ export function FullPageFlow({
             layer === "drawer" ? "z-drawer" : "z-modal",
           )}
           role="region"
-          aria-label={!title ? "مساحة عمل" : undefined}
+          aria-label={!title ? t("sharedUi.fullPageFlow.workspace") : undefined}
           aria-labelledby={title ? titleId : undefined}
           aria-describedby={description ? descId : undefined}
           tabIndex={-1}
@@ -89,10 +91,10 @@ export function FullPageFlow({
                   onClick={onClose}
                   disabled={!dismissable}
                   className="inline-flex min-h-11 shrink-0 items-center gap-2 rounded-xl border border-slate-200 bg-white px-3.5 text-sm font-semibold text-slate-700 shadow-sm transition hover:border-slate-300 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50 focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-teal-100"
-                  aria-label="العودة إلى الصفحة السابقة"
+                  aria-label={t("sharedUi.fullPageFlow.backAria")}
                 >
                   <ArrowRight className="h-5 w-5" aria-hidden="true" />
-                  <span className="hidden sm:inline">العودة</span>
+                  <span className="hidden sm:inline">{t("sharedUi.fullPageFlow.back")}</span>
                 </button>
               )}
 

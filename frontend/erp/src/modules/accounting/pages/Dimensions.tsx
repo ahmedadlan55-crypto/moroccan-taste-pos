@@ -1,28 +1,28 @@
 import { Badge, PageHeader } from "@/shared/ui";
 import { DataTable, type ColumnDef } from "@/shared/tables";
+import { useT } from "@/i18n";
 import { useProjects, type Project } from "../api";
 
-const STATUS_LABEL: Record<string, string> = {
-  active: "نشط",
-  closed: "مغلق",
-  on_hold: "معلّق",
-};
+const DIM_STATUSES = ["active", "closed", "on_hold"];
 
 export function DimensionsPage() {
+  const t = useT();
   const query = useProjects("");
   const rows = query.data ?? [];
 
+  const statusLabel = (s: string) => (DIM_STATUSES.includes(s) ? t(`accounting.dimensions.status.${s}`) : s);
+
   const columns: ColumnDef<Project>[] = [
-    { id: "code", header: "الرمز", accessor: (r) => r.code || "—", sortable: true },
-    { id: "nameAr", header: "المشروع", accessor: (r) => r.nameAr, sortable: true },
-    { id: "nameEn", header: "الاسم (EN)", accessor: (r) => r.nameEn || "—", defaultHidden: true },
+    { id: "code", header: t("accounting.dimensions.col.code"), accessor: (r) => r.code || "—", sortable: true },
+    { id: "nameAr", header: t("accounting.dimensions.col.project"), accessor: (r) => r.nameAr, sortable: true },
+    { id: "nameEn", header: t("accounting.dimensions.col.nameEn"), accessor: (r) => r.nameEn || "—", defaultHidden: true },
     {
       id: "status",
-      header: "الحالة",
-      accessor: (r) => STATUS_LABEL[r.status] ?? r.status,
+      header: t("accounting.dimensions.col.status"),
+      accessor: (r) => statusLabel(r.status),
       cell: (r) => (
         <Badge tone={r.status === "active" ? "success" : "neutral"}>
-          {STATUS_LABEL[r.status] ?? r.status}
+          {statusLabel(r.status)}
         </Badge>
       ),
     },
@@ -31,9 +31,9 @@ export function DimensionsPage() {
   return (
     <div>
       <PageHeader
-        eyebrow="المحاسبة"
-        title="المشروعات والأبعاد"
-        subtitle="دليل المشروعات المستخدمة كأبعاد تحليلية على القيود المحاسبية (عرض فقط)."
+        eyebrow={t("accounting.eyebrow")}
+        title={t("accounting.dimensions.title")}
+        subtitle={t("accounting.dimensions.subtitle")}
       />
       <DataTable
         columns={columns}
@@ -43,9 +43,9 @@ export function DimensionsPage() {
         error={query.error}
         onRetry={() => query.refetch()}
         searchable
-        searchPlaceholder="بحث عن مشروع…"
-        emptyTitle="لا توجد مشروعات"
-        emptyBody="لم تُضَف أي مشروعات كأبعاد تحليلية بعد."
+        searchPlaceholder={t("accounting.dimensions.searchPlaceholder")}
+        emptyTitle={t("accounting.dimensions.empty.title")}
+        emptyBody={t("accounting.dimensions.empty.body")}
       />
     </div>
   );

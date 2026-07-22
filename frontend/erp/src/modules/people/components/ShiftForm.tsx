@@ -1,25 +1,29 @@
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { useForm } from "react-hook-form";
 import { Field, FormActions, zodResolver } from "@/shared/forms";
-import { z, arabicText } from "@/shared/schemas";
+import { z } from "@/shared/schemas";
 import { Button, Checkbox, Input } from "@/shared/ui";
+import { useTx } from "@/shared/ui/i18n";
 import { cn } from "@/shared/lib";
+import type { TFunction } from "@/i18n";
 import type { Shift, ShiftInput } from "../lib/types";
 
-const shiftSchema = z.object({
-  name: arabicText({ label: "اسم الوردية" }),
-  code: z.string().max(30).optional(),
-  startTime: z.string().min(1, "وقت البداية مطلوب"),
-  endTime: z.string().min(1, "وقت النهاية مطلوب"),
-  breakMinutes: z.coerce.number().min(0, "لا يمكن أن يكون سالبًا"),
-  graceLateMinutes: z.coerce.number().min(0, "لا يمكن أن يكون سالبًا"),
-  graceEarlyLeaveMinutes: z.coerce.number().min(0, "لا يمكن أن يكون سالبًا"),
-  isDefault: z.boolean().optional(),
-});
+const makeShiftSchema = (t: TFunction) =>
+  z.object({
+    name: z
+      .string({ required_error: t("people.shiftForm.nameRequired") })
+      .trim()
+      .min(1, t("people.shiftForm.nameRequired")),
+    code: z.string().max(30).optional(),
+    startTime: z.string().min(1, t("people.shiftForm.startRequired")),
+    endTime: z.string().min(1, t("people.shiftForm.endRequired")),
+    breakMinutes: z.coerce.number().min(0, t("people.shiftForm.nonNegative")),
+    graceLateMinutes: z.coerce.number().min(0, t("people.shiftForm.nonNegative")),
+    graceEarlyLeaveMinutes: z.coerce.number().min(0, t("people.shiftForm.nonNegative")),
+    isDefault: z.boolean().optional(),
+  });
 
-type ShiftFormValues = z.infer<typeof shiftSchema>;
-
-const DAYS = ["الأحد", "الإثنين", "الثلاثاء", "الأربعاء", "الخميس", "الجمعة", "السبت"];
+type ShiftFormValues = z.infer<ReturnType<typeof makeShiftSchema>>;
 
 export interface ShiftFormProps {
   shift?: Shift | null;
@@ -29,7 +33,10 @@ export interface ShiftFormProps {
 }
 
 export function ShiftForm({ shift, submitting, onSubmit, onCancel }: ShiftFormProps) {
+  const t = useTx();
   const isEdit = !!shift?.id;
+  const schema = useMemo(() => makeShiftSchema(t), [t]);
+  const DAYS = [0, 1, 2, 3, 4, 5, 6].map((d) => t(`people.day.${d}`));
   const [workDays, setWorkDays] = useState<number[]>(
     (shift?.workDays ?? "0,1,2,3,4")
       .split(",")
@@ -42,7 +49,7 @@ export function ShiftForm({ shift, submitting, onSubmit, onCancel }: ShiftFormPr
     handleSubmit,
     formState: { errors },
   } = useForm<ShiftFormValues>({
-    resolver: zodResolver(shiftSchema),
+    resolver: zodResolver(schema),
     defaultValues: {
       name: shift?.name ?? "",
       code: shift?.code ?? "",
@@ -76,31 +83,31 @@ export function ShiftForm({ shift, submitting, onSubmit, onCancel }: ShiftFormPr
   return (
     <form onSubmit={handleSubmit(submit)} className="space-y-4" noValidate>
       <div className="grid gap-4 sm:grid-cols-2">
-        <Field label="اسم الوردية" required error={errors.name}>
+        <Field label={t("people.shiftForm.name")} required error={errors.name}>
           {({ id, invalid }) => <Input id={id} invalid={invalid} {...register("name")} />}
         </Field>
-        <Field label="الرمز" error={errors.code}>
+        <Field label={t("people.shiftForm.code")} error={errors.code}>
           {({ id }) => <Input id={id} dir="ltr" {...register("code")} />}
         </Field>
       </div>
 
       <div className="grid gap-4 sm:grid-cols-2">
-        <Field label="وقت البداية" required error={errors.startTime}>
+        <Field label={t("people.shiftForm.startTime")} required error={errors.startTime}>
           {({ id, invalid }) => <Input id={id} type="time" dir="ltr" invalid={invalid} {...register("startTime")} />}
         </Field>
-        <Field label="وقت النهاية" required error={errors.endTime}>
+        <Field label={t("people.shiftForm.endTime")} required error={errors.endTime}>
           {({ id, invalid }) => <Input id={id} type="time" dir="ltr" invalid={invalid} {...register("endTime")} />}
         </Field>
       </div>
 
       <div className="grid gap-4 sm:grid-cols-3">
-        <Field label="دقائق الراحة" error={errors.breakMinutes}>
+        <Field label={t("people.shiftForm.breakMinutes")} error={errors.breakMinutes}>
           {({ id, invalid }) => <Input id={id} type="number" dir="ltr" invalid={invalid} {...register("breakMinutes")} />}
         </Field>
-        <Field label="سماح التأخير (دقيقة)" error={errors.graceLateMinutes}>
+        <Field label={t("people.shiftForm.graceLate")} error={errors.graceLateMinutes}>
           {({ id, invalid }) => <Input id={id} type="number" dir="ltr" invalid={invalid} {...register("graceLateMinutes")} />}
         </Field>
-        <Field label="سماح الانصراف المبكر" error={errors.graceEarlyLeaveMinutes}>
+        <Field label={t("people.shiftForm.graceEarly")} error={errors.graceEarlyLeaveMinutes}>
           {({ id, invalid }) => (
             <Input id={id} type="number" dir="ltr" invalid={invalid} {...register("graceEarlyLeaveMinutes")} />
           )}
@@ -108,7 +115,7 @@ export function ShiftForm({ shift, submitting, onSubmit, onCancel }: ShiftFormPr
       </div>
 
       <div>
-        <span className="mb-1 block text-xs font-bold text-slate-600">أيام العمل</span>
+        <span className="mb-1 block text-xs font-bold text-slate-600">{t("people.shiftForm.workDays")}</span>
         <div className="flex flex-wrap gap-2">
           {DAYS.map((label, d) => {
             const on = workDays.includes(d);
@@ -132,14 +139,14 @@ export function ShiftForm({ shift, submitting, onSubmit, onCancel }: ShiftFormPr
         </div>
       </div>
 
-      <Checkbox label="اجعلها الوردية الافتراضية" {...register("isDefault")} />
+      <Checkbox label={t("people.shiftForm.makeDefault")} {...register("isDefault")} />
 
       <FormActions>
         <Button type="button" variant="secondary" onClick={onCancel} disabled={submitting}>
-          إلغاء
+          {t("common.cancel")}
         </Button>
         <Button type="submit" variant="primary" loading={submitting}>
-          {isEdit ? "حفظ التعديلات" : "إضافة الوردية"}
+          {isEdit ? t("people.shiftForm.saveEdit") : t("people.shiftForm.add")}
         </Button>
       </FormActions>
     </form>

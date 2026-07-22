@@ -1,20 +1,20 @@
-// Arabic status labels shared across procurement detail screens.
-export const STATUS_AR: Record<string, string> = {
-  draft: "مسودة", submitted: "مُقدّم", approved: "معتمد", sent: "مُرسل",
-  partially_received: "استلام جزئي", received: "مستلم", fully_received: "مستلم كليًا",
-  posted: "مُرحّل", reversed: "معكوس", cancelled: "ملغى", closed: "مغلق",
-  pending_review: "قيد المراجعة", pending_approval: "بانتظار الاعتماد",
-  partially_paid: "مسدد جزئيًا", paid: "مسدد", overdue: "متأخر", settled: "مُسوّى",
-  requested: "مطلوب", authorized: "مُخوّل",
-  unmatched: "غير مطابقة", partial: "جزئية", matched: "مطابقة", overmatched: "زائدة",
-  before_invoice: "قبل الفاتورة", after_invoice: "بعد الفاتورة",
-};
-export const st = (s: string | null | undefined): string => (s ? STATUS_AR[s] || s : "—");
+// Status/action label helpers for procurement detail screens. Both resolve the
+// bilingual label through the i18n `purchasing.*` namespace and fall back to the
+// raw backend code when a code isn't mapped (matching the old `MAP[code] || code`
+// behavior, and staying graceful pre-barrel-merge). Callers pass their `t` from
+// useT() — these stay plain functions so they can be used in list cells, table
+// text and StatusBadge children alike.
+import type { TFunction } from "@/i18n";
 
-export const ACTION_AR: Record<string, string> = {
-  create: "إنشاء", submit: "تقديم", approve: "اعتماد", send: "إرسال", cancel: "إلغاء",
-  close: "إغلاق", receive: "استلام", change_order: "أمر تغيير", post: "ترحيل",
-  reverse: "عكس", match: "مطابقة", credit_note: "إشعار دائن", authorize: "تخويل",
-  pay: "سداد", allocate: "تخصيص", settle: "تسوية",
+export const st = (t: TFunction, s: string | null | undefined): string => {
+  if (!s) return "—";
+  const path = `purchasing.status.${s}`;
+  const out = t(path);
+  return out === path ? s : out;
 };
-export const act = (a: string): string => ACTION_AR[a] || a;
+
+export const act = (t: TFunction, a: string): string => {
+  const path = `purchasing.action.${a}`;
+  const out = t(path);
+  return out === path ? a : out;
+};

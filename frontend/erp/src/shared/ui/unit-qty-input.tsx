@@ -7,6 +7,7 @@
 
 import { useMemo } from "react";
 import { formatQty } from "@/shared/lib";
+import { useTx } from "./i18n";
 
 export interface ItemUnitLite {
   code: string;
@@ -41,7 +42,7 @@ export function UnitQtyInput({
   mode = "single",
   baseUnitName,
   disabled = false,
-  qtyLabel = "الكمية",
+  qtyLabel,
   minQty = 0,
 }: {
   units: ItemUnitLite[];
@@ -53,6 +54,7 @@ export function UnitQtyInput({
   qtyLabel?: string;
   minQty?: number;
 }) {
+  const t = useTx();
   const base = useMemo(() => units.find((u) => u.isBase), [units]);
   const baseName = baseUnitName || base?.name || base?.code || "";
   const majors = units.filter((u) => !u.isBase);
@@ -81,11 +83,11 @@ export function UnitQtyInput({
                   majorQty: e.target.value === "" ? 0 : Number(e.target.value),
                 })
               }
-              aria-label={`عدد ${majorUnit?.name ?? "الوحدة الكبرى"}`}
+              aria-label={t("sharedUi.unitQty.countAria", { unit: majorUnit?.name ?? t("sharedUi.unitQty.majorFallback") })}
               dir="ltr"
             />
             <span className="mt-0.5 text-center text-[10px] font-bold text-slate-400">
-              {majorUnit?.name ?? "كبرى"}
+              {majorUnit?.name ?? t("sharedUi.unitQty.majorShort")}
             </span>
           </div>
           <span className="text-slate-400">+</span>
@@ -100,7 +102,7 @@ export function UnitQtyInput({
               onChange={(e) =>
                 onChange({ ...value, minorQty: e.target.value === "" ? 0 : Number(e.target.value) })
               }
-              aria-label={`عدد ${baseName}`}
+              aria-label={t("sharedUi.unitQty.countAria", { unit: baseName })}
               dir="ltr"
             />
             <span className="mt-0.5 text-center text-[10px] font-bold text-slate-400">{baseName}</span>
@@ -139,7 +141,7 @@ export function UnitQtyInput({
           className="field h-10 w-24 py-2 text-center tabular-nums"
           value={value.qty ?? ""}
           onChange={(e) => onChange({ ...value, qty: e.target.value === "" ? 0 : Number(e.target.value) })}
-          aria-label={qtyLabel}
+          aria-label={qtyLabel ?? t("sharedUi.unitQty.qtyLabel")}
           dir="ltr"
         />
         {units.length > 1 ? (
@@ -148,7 +150,7 @@ export function UnitQtyInput({
             disabled={disabled}
             value={value.unitCode || base?.code || ""}
             onChange={(e) => onChange({ ...value, unitCode: e.target.value })}
-            aria-label="الوحدة"
+            aria-label={t("sharedUi.unitQty.unitLabel")}
           >
             {units.map((u) => (
               <option key={u.code} value={u.code}>

@@ -7,15 +7,49 @@ function bool(v: unknown): boolean { return v === 1 || v === true || v === "1"; 
 export interface ItemRow {
   id: string; name: string; nameEn: string; sku: string; category: string; unit: string;
   cost: number; stock: number; minStock: number; active: boolean; kind: string; version: number; createdAt: string | null;
+  // Enriched, OPTIONAL columns. Present when the list endpoint (D3) sends them;
+  // otherwise they degrade to sensible fallbacks so every column still renders.
+  subCategory: string;
+  baseUnit: string;        // base-unit label (falls back to `unit`)
+  majorUnit: string;       // major/purchase unit label ("" when none)
+  convRate: number;        // 1 major = convRate base ( <=1 → no major unit )
+  baseCost: number;        // base-unit cost (falls back to `cost`)
+  majorCost: number | null; // major-unit cost (computed baseCost*convRate when absent)
+  availableQty: number;    // available qty (falls back to `stock`)
+  reorderPoint: number | null; // per-item reorder point (null when unknown)
+  assignedCount: number | null; // assigned branches/warehouses count (null when unknown)
+  hasImage: boolean;
 }
 export interface ItemKpis { total: number; active: number; inactive: number; noSku: number }
 export interface ItemPage { rows: ItemRow[]; kpis: ItemKpis; pagination: { page: number; pageSize: number; total: number; totalPages: number }; filters: Record<string, unknown> }
 
+function has(r: Record<string, unknown>, k: string): boolean {
+  return Object.prototype.hasOwnProperty.call(r, k) && r[k] != null && r[k] !== "";
+}
 function toRow(r: Record<string, unknown>): ItemRow {
+  const unit = s(r.unit);
+  const baseUnit = has(r, "base_unit") ? s(r.base_unit) : unit;
+  const majorUnit = has(r, "major_unit") ? s(r.major_unit) : s(r.big_unit);
+  const convRate = has(r, "conv_rate") ? num(r.conv_rate) : 0;
+  const baseCost = has(r, "base_cost") ? num(r.base_cost) : num(r.cost);
+  const majorCost = has(r, "major_cost")
+    ? num(r.major_cost)
+    : convRate > 1
+      ? baseCost * convRate
+      : null;
   return {
-    id: s(r.id), name: s(r.name), nameEn: s(r.name_en), sku: s(r.sku), category: s(r.category), unit: s(r.unit),
+    id: s(r.id), name: s(r.name), nameEn: s(r.name_en), sku: s(r.sku), category: s(r.category), unit,
     cost: num(r.cost), stock: num(r.stock), minStock: num(r.min_stock), active: bool(r.active), kind: s(r.kind) || "raw",
     version: num(r.version) || 1, createdAt: r.created_at ? s(r.created_at) : null,
+    subCategory: s(r.sub_category), baseUnit, majorUnit, convRate, baseCost, majorCost,
+    availableQty: has(r, "available_qty") ? num(r.available_qty) : num(r.stock),
+    reorderPoint: has(r, "reorder_point") ? num(r.reorder_point) : null,
+    assignedCount: has(r, "assigned_count")
+      ? num(r.assigned_count)
+      : has(r, "warehouse_count")
+        ? num(r.warehouse_count)
+        : null,
+    hasImage: bool(r.has_image),
   };
 }
 export function toItemPage(raw: unknown): ItemPage {

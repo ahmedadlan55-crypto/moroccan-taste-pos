@@ -46,6 +46,7 @@ import {
   useToast,
 } from "@/shared/ui";
 import { Field } from "@/shared/forms";
+import { useT } from "@/i18n";
 import { ensureAck, type MutationAck } from "../_common";
 
 // ── Created-entity shapes kept in wizard state ───────────────────────────────
@@ -55,20 +56,7 @@ interface Created {
   extra?: string;
 }
 
-const STEPS = [
-  "البراند",
-  "الفروع",
-  "المستودعات",
-  "التصنيفات",
-  "الأصناف الخام",
-  "المنيو",
-  "تم",
-];
-
-const WH_TYPES = [
-  { value: "main", label: "رئيسي" },
-  { value: "branch", label: "فرعي" },
-];
+const WH_TYPE_VALUES = ["main", "branch"] as const;
 
 async function post<T extends MutationAck>(path: string, body: unknown): Promise<T> {
   const res = await apiClient.post<T>(path, body);
@@ -108,8 +96,19 @@ function StepError({ message }: { message: string | null }) {
 }
 
 export function BrandWizard({ onDone, onCancel }: { onDone: () => void; onCancel: () => void }) {
+  const t = useT();
   const qc = useQueryClient();
   const { toast } = useToast();
+  const STEPS = [
+    t("administration.wizard.steps.brand"),
+    t("administration.wizard.steps.branches"),
+    t("administration.wizard.steps.warehouses"),
+    t("administration.wizard.steps.categories"),
+    t("administration.wizard.steps.rawItems"),
+    t("administration.wizard.steps.menu"),
+    t("administration.wizard.steps.done"),
+  ];
+  const whTypeOptions = WH_TYPE_VALUES.map((v) => ({ value: v, label: t(`administration.wizard.whType.${v}`) }));
 
   const [step, setStep] = useState(1);
   const [busy, setBusy] = useState(false);
@@ -163,7 +162,7 @@ export function BrandWizard({ onDone, onCancel }: { onDone: () => void; onCancel
   async function submitBrand() {
     if (brandId) return goto(2);
     if (!brandName.trim()) {
-      setErr("اسم البراند مطلوب.");
+      setErr(t("administration.wizard.err.brandName"));
       return;
     }
     setBusy(true);
@@ -176,10 +175,10 @@ export function BrandWizard({ onDone, onCancel }: { onDone: () => void; onCancel
         logo: brandLogo.trim() || undefined,
       });
       setBrandId(String(res.id ?? ""));
-      toast({ title: "تم إنشاء البراند", tone: "success" });
+      toast({ title: t("administration.wizard.toast.brandCreated"), tone: "success" });
       goto(2);
     } catch (e) {
-      setErr(e instanceof Error ? e.message : "تعذّر إنشاء البراند.");
+      setErr(e instanceof Error ? e.message : t("administration.wizard.err.brandCreate"));
     } finally {
       setBusy(false);
     }
@@ -187,7 +186,7 @@ export function BrandWizard({ onDone, onCancel }: { onDone: () => void; onCancel
 
   async function addBranch() {
     if (!brandId || !bName.trim()) {
-      setErr("اسم الفرع مطلوب.");
+      setErr(t("administration.wizard.err.branchName"));
       return;
     }
     setBusy(true);
@@ -203,9 +202,9 @@ export function BrandWizard({ onDone, onCancel }: { onDone: () => void; onCancel
       setBName("");
       setBCode("");
       setBLocation("");
-      toast({ title: "تمت إضافة الفرع", tone: "success" });
+      toast({ title: t("administration.wizard.toast.branchAdded"), tone: "success" });
     } catch (e) {
-      setErr(e instanceof Error ? e.message : "تعذّر إضافة الفرع.");
+      setErr(e instanceof Error ? e.message : t("administration.wizard.err.branchAdd"));
     } finally {
       setBusy(false);
     }
@@ -213,7 +212,7 @@ export function BrandWizard({ onDone, onCancel }: { onDone: () => void; onCancel
 
   async function addWarehouse() {
     if (!brandId || !wName.trim() || !wCode.trim()) {
-      setErr("رمز واسم المستودع مطلوبان.");
+      setErr(t("administration.wizard.err.warehouse"));
       return;
     }
     setBusy(true);
@@ -237,15 +236,15 @@ export function BrandWizard({ onDone, onCancel }: { onDone: () => void; onCancel
       }
       setWarehouses((xs) => [
         ...xs,
-        { id, name: wName.trim(), extra: wIsMain ? "رئيسي للبراند" : wCode.trim() },
+        { id, name: wName.trim(), extra: wIsMain ? t("administration.wizard.step3.mainExtra") : wCode.trim() },
       ]);
       setWName("");
       setWCode("");
       setWBranchId("");
       setWIsMain(false);
-      toast({ title: "تمت إضافة المستودع", tone: "success" });
+      toast({ title: t("administration.wizard.toast.warehouseAdded"), tone: "success" });
     } catch (e) {
-      setErr(e instanceof Error ? e.message : "تعذّر إضافة المستودع.");
+      setErr(e instanceof Error ? e.message : t("administration.wizard.err.warehouseAdd"));
     } finally {
       setBusy(false);
     }
@@ -253,7 +252,7 @@ export function BrandWizard({ onDone, onCancel }: { onDone: () => void; onCancel
 
   async function addCategory() {
     if (!brandId || !catName.trim()) {
-      setErr("اسم التصنيف مطلوب.");
+      setErr(t("administration.wizard.err.category"));
       return;
     }
     setBusy(true);
@@ -262,9 +261,9 @@ export function BrandWizard({ onDone, onCancel }: { onDone: () => void; onCancel
       const res = await post<MutationAck>("/erp/item-categories", { name: catName.trim(), brandId });
       setCategories((xs) => [...xs, { id: String(res.id ?? catName), name: catName.trim() }]);
       setCatName("");
-      toast({ title: "تمت إضافة التصنيف", tone: "success" });
+      toast({ title: t("administration.wizard.toast.categoryAdded"), tone: "success" });
     } catch (e) {
-      setErr(e instanceof Error ? e.message : "تعذّر إضافة التصنيف.");
+      setErr(e instanceof Error ? e.message : t("administration.wizard.err.categoryAdd"));
     } finally {
       setBusy(false);
     }
@@ -272,11 +271,11 @@ export function BrandWizard({ onDone, onCancel }: { onDone: () => void; onCancel
 
   async function addRawItem() {
     if (!brandId || !riName.trim()) {
-      setErr("اسم الصنف مطلوب.");
+      setErr(t("administration.wizard.err.rawItemName"));
       return;
     }
     if (!riWarehouseId) {
-      setErr("اختر مستودعًا لتسجيل الصنف الخام فيه.");
+      setErr(t("administration.wizard.err.rawItemWarehouse"));
       return;
     }
     setBusy(true);
@@ -296,9 +295,9 @@ export function BrandWizard({ onDone, onCancel }: { onDone: () => void; onCancel
       setRiCategory("");
       setRiUnit("");
       setRiCost(null);
-      toast({ title: "تمت إضافة الصنف الخام", tone: "success" });
+      toast({ title: t("administration.wizard.toast.rawItemAdded"), tone: "success" });
     } catch (e) {
-      setErr(e instanceof Error ? e.message : "تعذّر إضافة الصنف.");
+      setErr(e instanceof Error ? e.message : t("administration.wizard.err.rawItemAdd"));
     } finally {
       setBusy(false);
     }
@@ -306,11 +305,11 @@ export function BrandWizard({ onDone, onCancel }: { onDone: () => void; onCancel
 
   async function addMenuItem() {
     if (!brandId || !miName.trim()) {
-      setErr("اسم المنتج مطلوب.");
+      setErr(t("administration.wizard.err.menuName"));
       return;
     }
     if (miPrice == null || miPrice < 0) {
-      setErr("أدخل سعرًا صحيحًا للمنتج.");
+      setErr(t("administration.wizard.err.menuPrice"));
       return;
     }
     setBusy(true);
@@ -325,14 +324,14 @@ export function BrandWizard({ onDone, onCancel }: { onDone: () => void; onCancel
       });
       setMenuItems((xs) => [
         ...xs,
-        { id: String(res.id ?? miName), name: miName.trim(), extra: `${miPrice} ر.س` },
+        { id: String(res.id ?? miName), name: miName.trim(), extra: `${miPrice} ${t("sharedUi.currencySymbol")}` },
       ]);
       setMiName("");
       setMiCategory("");
       setMiPrice(null);
-      toast({ title: "تمت إضافة المنتج", tone: "success" });
+      toast({ title: t("administration.wizard.toast.menuAdded"), tone: "success" });
     } catch (e) {
-      setErr(e instanceof Error ? e.message : "تعذّر إضافة المنتج.");
+      setErr(e instanceof Error ? e.message : t("administration.wizard.err.menuAdd"));
     } finally {
       setBusy(false);
     }
@@ -341,32 +340,32 @@ export function BrandWizard({ onDone, onCancel }: { onDone: () => void; onCancel
   function finish() {
     qc.invalidateQueries({ queryKey: ["erp", "brands-stats"] });
     qc.invalidateQueries({ queryKey: ["erp", "brands"] });
-    toast({ title: "اكتمل إعداد البراند", tone: "success" });
+    toast({ title: t("administration.wizard.toast.done"), tone: "success" });
     onDone();
   }
 
   const categoryOptions = [
-    { value: "", label: "— بدون تصنيف —" },
+    { value: "", label: t("administration.wizard.categoryNone") },
     ...categories.map((c) => ({ value: c.name, label: c.name })),
   ];
   const warehouseOptions = [
-    { value: "", label: "— اختر مستودعًا —" },
+    { value: "", label: t("administration.wizard.warehousePick") },
     ...warehouses.map((w) => ({ value: w.id, label: w.name })),
   ];
   const branchOptions = [
-    { value: "", label: "— بدون فرع —" },
+    { value: "", label: t("administration.wizard.branchNone") },
     ...branches.map((b) => ({ value: b.id, label: b.name })),
   ];
 
   return (
     <div>
       <PageHeader
-        eyebrow="الإدارة"
-        title="معالج البراند"
-        subtitle="أنشئ البراند وفروعه ومستودعاته وقوائمه خطوة بخطوة — يُحفظ كل عنصر فور إضافته."
+        eyebrow={t("administration.eyebrow")}
+        title={t("administration.wizard.title")}
+        subtitle={t("administration.wizard.subtitle")}
         action={
           <Button variant="ghost" onClick={onCancel}>
-            الرجوع إلى العلامات
+            {t("administration.wizard.backToBrands")}
           </Button>
         }
       />
@@ -379,31 +378,31 @@ export function BrandWizard({ onDone, onCancel }: { onDone: () => void; onCancel
       {step === 1 && (
         <div className="surface space-y-4 p-5">
           <div className="flex items-center gap-2 text-sm font-extrabold text-slate-800">
-            <Building2 className="h-4 w-4 text-teal-600" /> بيانات البراند
+            <Building2 className="h-4 w-4 text-teal-600" /> {t("administration.wizard.step1.title")}
           </div>
           <div className="grid gap-4 sm:grid-cols-2">
-            <Field label="اسم البراند" required className="sm:col-span-2">
+            <Field label={t("administration.wizard.step1.name")} required className="sm:col-span-2">
               <Input value={brandName} disabled={!!brandId} onChange={(e) => setBrandName(e.target.value)} />
             </Field>
-            <Field label="الرمز" hint="رمز مختصر يميّز البراند (اختياري)">
+            <Field label={t("administration.wizard.step1.code")} hint={t("administration.wizard.step1.codeHint")}>
               <Input value={brandCode} disabled={!!brandId} onChange={(e) => setBrandCode(e.target.value)} />
             </Field>
-            <Field label="الرقم الضريبي" hint="اختياري">
+            <Field label={t("administration.wizard.step1.vat")} hint={t("administration.wizard.step1.vatHint")}>
               <Input value={brandVat} inputMode="numeric" disabled={!!brandId} onChange={(e) => setBrandVat(e.target.value)} />
             </Field>
-            <Field label="رابط الشعار (Logo URL)" className="sm:col-span-2" hint="اختياري">
+            <Field label={t("administration.wizard.step1.logo")} className="sm:col-span-2" hint={t("administration.wizard.step1.logoHint")}>
               <Input value={brandLogo} dir="ltr" disabled={!!brandId} onChange={(e) => setBrandLogo(e.target.value)} />
             </Field>
           </div>
           {brandId && (
             <p className="flex items-center gap-2 text-xs font-bold text-teal-700">
-              <Check className="h-4 w-4" /> تم إنشاء البراند — يمكنك المتابعة لإضافة الفروع.
+              <Check className="h-4 w-4" /> {t("administration.wizard.step1.created")}
             </p>
           )}
           <StepError message={err} />
           <div className="flex justify-end">
             <Button variant="primary" loading={busy} onClick={submitBrand}>
-              {brandId ? "التالي" : "إنشاء ومتابعة"} <ChevronLeft className="h-4 w-4" />
+              {brandId ? t("administration.wizard.step1.nextBtn") : t("administration.wizard.step1.createBtn")} <ChevronLeft className="h-4 w-4" />
             </Button>
           </div>
         </div>
@@ -413,33 +412,33 @@ export function BrandWizard({ onDone, onCancel }: { onDone: () => void; onCancel
       {step === 2 && (
         <div className="surface space-y-4 p-5">
           <div className="flex items-center gap-2 text-sm font-extrabold text-slate-800">
-            <Store className="h-4 w-4 text-teal-600" /> الفروع
+            <Store className="h-4 w-4 text-teal-600" /> {t("administration.wizard.step2.title")}
             <Badge tone="teal">{branches.length}</Badge>
           </div>
           <div className="grid items-end gap-4 sm:grid-cols-4">
-            <Field label="اسم الفرع" required className="sm:col-span-2">
+            <Field label={t("administration.wizard.step2.name")} required className="sm:col-span-2">
               <Input value={bName} onChange={(e) => setBName(e.target.value)} />
             </Field>
-            <Field label="الرمز">
+            <Field label={t("administration.wizard.step2.code")}>
               <Input value={bCode} onChange={(e) => setBCode(e.target.value)} />
             </Field>
-            <Field label="الموقع">
+            <Field label={t("administration.wizard.step2.location")}>
               <Input value={bLocation} onChange={(e) => setBLocation(e.target.value)} />
             </Field>
           </div>
           <div>
             <Button variant="secondary" loading={busy} onClick={addBranch}>
-              <Plus className="h-4 w-4" /> إضافة فرع
+              <Plus className="h-4 w-4" /> {t("administration.wizard.step2.addBtn")}
             </Button>
           </div>
-          <AddedList items={branches} empty="لم تُضف فروعًا بعد — يمكنك إضافة فرع أو أكثر أو المتابعة." />
+          <AddedList items={branches} empty={t("administration.wizard.step2.empty")} />
           <StepError message={err} />
           <div className="flex justify-between">
             <Button variant="secondary" onClick={() => goto(1)}>
-              <ChevronRight className="h-4 w-4" /> السابق
+              <ChevronRight className="h-4 w-4" /> {t("administration.wizard.nav.prev")}
             </Button>
             <Button variant="primary" onClick={() => goto(3)}>
-              التالي <ChevronLeft className="h-4 w-4" />
+              {t("administration.wizard.nav.next")} <ChevronLeft className="h-4 w-4" />
             </Button>
           </div>
         </div>
@@ -449,39 +448,39 @@ export function BrandWizard({ onDone, onCancel }: { onDone: () => void; onCancel
       {step === 3 && (
         <div className="surface space-y-4 p-5">
           <div className="flex items-center gap-2 text-sm font-extrabold text-slate-800">
-            <Warehouse className="h-4 w-4 text-teal-600" /> المستودعات
+            <Warehouse className="h-4 w-4 text-teal-600" /> {t("administration.wizard.step3.title")}
             <Badge tone="teal">{warehouses.length}</Badge>
           </div>
           <div className="grid items-end gap-4 sm:grid-cols-4">
-            <Field label="اسم المستودع" required className="sm:col-span-2">
+            <Field label={t("administration.wizard.step3.name")} required className="sm:col-span-2">
               <Input value={wName} onChange={(e) => setWName(e.target.value)} />
             </Field>
-            <Field label="الرمز" required>
+            <Field label={t("administration.wizard.step3.code")} required>
               <Input value={wCode} onChange={(e) => setWCode(e.target.value)} />
             </Field>
-            <Field label="النوع">
-              <Select options={WH_TYPES} value={wType} onChange={(e) => setWType(e.target.value)} />
+            <Field label={t("administration.wizard.step3.type")}>
+              <Select options={whTypeOptions} value={wType} onChange={(e) => setWType(e.target.value)} />
             </Field>
-            <Field label="الفرع" className="sm:col-span-2">
+            <Field label={t("administration.wizard.step3.branch")} className="sm:col-span-2">
               <Select options={branchOptions} value={wBranchId} onChange={(e) => setWBranchId(e.target.value)} />
             </Field>
             <div className="sm:col-span-2 flex items-center">
-              <Toggle checked={wIsMain} onChange={setWIsMain} label="مستودع رئيسي للبراند" />
+              <Toggle checked={wIsMain} onChange={setWIsMain} label={t("administration.wizard.step3.mainToggle")} />
             </div>
           </div>
           <div>
             <Button variant="secondary" loading={busy} onClick={addWarehouse}>
-              <Plus className="h-4 w-4" /> إضافة مستودع
+              <Plus className="h-4 w-4" /> {t("administration.wizard.step3.addBtn")}
             </Button>
           </div>
-          <AddedList items={warehouses} empty="لم تُضف مستودعات بعد. (المستودع مطلوب لإضافة أصناف خام في الخطوة التالية.)" />
+          <AddedList items={warehouses} empty={t("administration.wizard.step3.empty")} />
           <StepError message={err} />
           <div className="flex justify-between">
             <Button variant="secondary" onClick={() => goto(2)}>
-              <ChevronRight className="h-4 w-4" /> السابق
+              <ChevronRight className="h-4 w-4" /> {t("administration.wizard.nav.prev")}
             </Button>
             <Button variant="primary" onClick={() => goto(4)}>
-              التالي <ChevronLeft className="h-4 w-4" />
+              {t("administration.wizard.nav.next")} <ChevronLeft className="h-4 w-4" />
             </Button>
           </div>
         </div>
@@ -491,26 +490,26 @@ export function BrandWizard({ onDone, onCancel }: { onDone: () => void; onCancel
       {step === 4 && (
         <div className="surface space-y-4 p-5">
           <div className="flex items-center gap-2 text-sm font-extrabold text-slate-800">
-            <Tags className="h-4 w-4 text-teal-600" /> تصنيفات الأصناف
+            <Tags className="h-4 w-4 text-teal-600" /> {t("administration.wizard.step4.title")}
             <Badge tone="teal">{categories.length}</Badge>
-            <span className="text-[11px] font-medium text-slate-400">(اختياري)</span>
+            <span className="text-[11px] font-medium text-slate-400">{t("administration.wizard.step4.optional")}</span>
           </div>
           <div className="grid items-end gap-4 sm:grid-cols-4">
-            <Field label="اسم التصنيف" required className="sm:col-span-3">
+            <Field label={t("administration.wizard.step4.name")} required className="sm:col-span-3">
               <Input value={catName} onChange={(e) => setCatName(e.target.value)} />
             </Field>
             <Button variant="secondary" loading={busy} onClick={addCategory}>
-              <Plus className="h-4 w-4" /> إضافة
+              <Plus className="h-4 w-4" /> {t("administration.wizard.step4.addBtn")}
             </Button>
           </div>
-          <AddedList items={categories} empty="لا تصنيفات — يمكنك التخطّي." />
+          <AddedList items={categories} empty={t("administration.wizard.step4.empty")} />
           <StepError message={err} />
           <div className="flex justify-between">
             <Button variant="secondary" onClick={() => goto(3)}>
-              <ChevronRight className="h-4 w-4" /> السابق
+              <ChevronRight className="h-4 w-4" /> {t("administration.wizard.nav.prev")}
             </Button>
             <Button variant="primary" onClick={() => goto(5)}>
-              {categories.length ? "التالي" : "تخطّي"} <ChevronLeft className="h-4 w-4" />
+              {categories.length ? t("administration.wizard.nav.next") : t("administration.wizard.nav.skip")} <ChevronLeft className="h-4 w-4" />
             </Button>
           </div>
         </div>
@@ -520,48 +519,48 @@ export function BrandWizard({ onDone, onCancel }: { onDone: () => void; onCancel
       {step === 5 && (
         <div className="surface space-y-4 p-5">
           <div className="flex items-center gap-2 text-sm font-extrabold text-slate-800">
-            <Package className="h-4 w-4 text-teal-600" /> الأصناف الخام
+            <Package className="h-4 w-4 text-teal-600" /> {t("administration.wizard.step5.title")}
             <Badge tone="teal">{rawItems.length}</Badge>
-            <span className="text-[11px] font-medium text-slate-400">(اختياري)</span>
+            <span className="text-[11px] font-medium text-slate-400">{t("administration.wizard.step5.optional")}</span>
           </div>
           {warehouses.length === 0 ? (
             <p className="rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs font-bold text-amber-700">
-              لإضافة أصناف خام يلزم إنشاء مستودع أولًا (الخطوة الثالثة). يمكنك الرجوع أو تخطّي هذه الخطوة.
+              {t("administration.wizard.step5.warnNoWarehouse")}
             </p>
           ) : (
             <>
               <div className="grid items-end gap-4 sm:grid-cols-4">
-                <Field label="اسم الصنف" required className="sm:col-span-2">
+                <Field label={t("administration.wizard.step5.name")} required className="sm:col-span-2">
                   <Input value={riName} onChange={(e) => setRiName(e.target.value)} />
                 </Field>
-                <Field label="التصنيف">
+                <Field label={t("administration.wizard.step5.category")}>
                   <Select options={categoryOptions} value={riCategory} onChange={(e) => setRiCategory(e.target.value)} />
                 </Field>
-                <Field label="الوحدة">
-                  <Input value={riUnit} onChange={(e) => setRiUnit(e.target.value)} placeholder="كجم / حبة…" />
+                <Field label={t("administration.wizard.step5.unit")}>
+                  <Input value={riUnit} onChange={(e) => setRiUnit(e.target.value)} placeholder={t("administration.wizard.step5.unitPlaceholder")} />
                 </Field>
-                <Field label="التكلفة">
+                <Field label={t("administration.wizard.step5.cost")}>
                   <CurrencyInput value={riCost} onChange={setRiCost} />
                 </Field>
-                <Field label="المستودع" required className="sm:col-span-2">
+                <Field label={t("administration.wizard.step5.warehouse")} required className="sm:col-span-2">
                   <Select options={warehouseOptions} value={riWarehouseId} onChange={(e) => setRiWarehouseId(e.target.value)} />
                 </Field>
               </div>
               <div>
                 <Button variant="secondary" loading={busy} onClick={addRawItem}>
-                  <Plus className="h-4 w-4" /> إضافة صنف
+                  <Plus className="h-4 w-4" /> {t("administration.wizard.step5.addBtn")}
                 </Button>
               </div>
             </>
           )}
-          <AddedList items={rawItems} empty="لا أصناف خام — يمكنك التخطّي." />
+          <AddedList items={rawItems} empty={t("administration.wizard.step5.empty")} />
           <StepError message={err} />
           <div className="flex justify-between">
             <Button variant="secondary" onClick={() => goto(4)}>
-              <ChevronRight className="h-4 w-4" /> السابق
+              <ChevronRight className="h-4 w-4" /> {t("administration.wizard.nav.prev")}
             </Button>
             <Button variant="primary" onClick={() => goto(6)}>
-              {rawItems.length ? "التالي" : "تخطّي"} <ChevronLeft className="h-4 w-4" />
+              {rawItems.length ? t("administration.wizard.nav.next") : t("administration.wizard.nav.skip")} <ChevronLeft className="h-4 w-4" />
             </Button>
           </div>
         </div>
@@ -571,34 +570,34 @@ export function BrandWizard({ onDone, onCancel }: { onDone: () => void; onCancel
       {step === 6 && (
         <div className="surface space-y-4 p-5">
           <div className="flex items-center gap-2 text-sm font-extrabold text-slate-800">
-            <UtensilsCrossed className="h-4 w-4 text-teal-600" /> المنيو
+            <UtensilsCrossed className="h-4 w-4 text-teal-600" /> {t("administration.wizard.step6.title")}
             <Badge tone="teal">{menuItems.length}</Badge>
-            <span className="text-[11px] font-medium text-slate-400">(اختياري)</span>
+            <span className="text-[11px] font-medium text-slate-400">{t("administration.wizard.step6.optional")}</span>
           </div>
           <div className="grid items-end gap-4 sm:grid-cols-4">
-            <Field label="اسم المنتج" required className="sm:col-span-2">
+            <Field label={t("administration.wizard.step6.name")} required className="sm:col-span-2">
               <Input value={miName} onChange={(e) => setMiName(e.target.value)} />
             </Field>
-            <Field label="التصنيف">
+            <Field label={t("administration.wizard.step6.category")}>
               <Select options={categoryOptions} value={miCategory} onChange={(e) => setMiCategory(e.target.value)} />
             </Field>
-            <Field label="السعر" required>
+            <Field label={t("administration.wizard.step6.price")} required>
               <CurrencyInput value={miPrice} onChange={setMiPrice} />
             </Field>
           </div>
           <div>
             <Button variant="secondary" loading={busy} onClick={addMenuItem}>
-              <Plus className="h-4 w-4" /> إضافة منتج
+              <Plus className="h-4 w-4" /> {t("administration.wizard.step6.addBtn")}
             </Button>
           </div>
-          <AddedList items={menuItems} empty="لا منتجات — يمكنك التخطّي." />
+          <AddedList items={menuItems} empty={t("administration.wizard.step6.empty")} />
           <StepError message={err} />
           <div className="flex justify-between">
             <Button variant="secondary" onClick={() => goto(5)}>
-              <ChevronRight className="h-4 w-4" /> السابق
+              <ChevronRight className="h-4 w-4" /> {t("administration.wizard.nav.prev")}
             </Button>
             <Button variant="primary" onClick={() => goto(7)}>
-              {menuItems.length ? "التالي" : "تخطّي"} <ChevronLeft className="h-4 w-4" />
+              {menuItems.length ? t("administration.wizard.nav.next") : t("administration.wizard.nav.skip")} <ChevronLeft className="h-4 w-4" />
             </Button>
           </div>
         </div>
@@ -608,25 +607,25 @@ export function BrandWizard({ onDone, onCancel }: { onDone: () => void; onCancel
       {step === 7 && (
         <div className="surface space-y-5 p-5">
           <div className="flex items-center gap-2 text-base font-extrabold text-slate-900">
-            <PartyPopper className="h-5 w-5 text-teal-600" /> اكتمل إعداد البراند
+            <PartyPopper className="h-5 w-5 text-teal-600" /> {t("administration.wizard.step7.title")}
           </div>
           <p className="text-sm font-medium text-slate-500">
-            تم حفظ كل عنصر في حينه. هذا ملخّص ما أنشأته:
+            {t("administration.wizard.step7.body")}
           </p>
           <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
-            <SummaryTile label="البراند" value={brandName || "—"} />
-            <SummaryTile label="الفروع" value={String(branches.length)} />
-            <SummaryTile label="المستودعات" value={String(warehouses.length)} />
-            <SummaryTile label="التصنيفات" value={String(categories.length)} />
-            <SummaryTile label="الأصناف الخام" value={String(rawItems.length)} />
-            <SummaryTile label="منتجات المنيو" value={String(menuItems.length)} />
+            <SummaryTile label={t("administration.wizard.step7.tile.brand")} value={brandName || "—"} />
+            <SummaryTile label={t("administration.wizard.step7.tile.branches")} value={String(branches.length)} />
+            <SummaryTile label={t("administration.wizard.step7.tile.warehouses")} value={String(warehouses.length)} />
+            <SummaryTile label={t("administration.wizard.step7.tile.categories")} value={String(categories.length)} />
+            <SummaryTile label={t("administration.wizard.step7.tile.rawItems")} value={String(rawItems.length)} />
+            <SummaryTile label={t("administration.wizard.step7.tile.menu")} value={String(menuItems.length)} />
           </div>
           <div className="flex justify-between">
             <Button variant="secondary" onClick={() => goto(6)}>
-              <ChevronRight className="h-4 w-4" /> السابق
+              <ChevronRight className="h-4 w-4" /> {t("administration.wizard.nav.prev")}
             </Button>
             <Button variant="primary" onClick={finish}>
-              <Check className="h-4 w-4" /> تم
+              <Check className="h-4 w-4" /> {t("administration.wizard.step7.doneBtn")}
             </Button>
           </div>
         </div>
@@ -636,12 +635,13 @@ export function BrandWizard({ onDone, onCancel }: { onDone: () => void; onCancel
 }
 
 function SummaryTile({ label, value }: { label: string; value: string }) {
+  const t = useT();
   return (
     <div className="surface p-4">
       <div className="text-xs font-bold text-slate-400">{label}</div>
       <div className="mt-1 flex items-center gap-2">
         <span className="text-lg font-extrabold text-slate-900">{value}</span>
-        <StatusBadge tone="success">محفوظ</StatusBadge>
+        <StatusBadge tone="success">{t("administration.wizard.saved")}</StatusBadge>
       </div>
     </div>
   );

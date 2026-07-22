@@ -12,10 +12,17 @@ import { useBoms, usePreviewAvailability, useProductionDetail, useProductionMuta
 import { formatCurrency, formatQty, formatNumber } from "@/shared/lib";
 import type { BomOption } from "@/modules/inventory/lib/adapters/production.adapter";
 import { ApiError } from "@/shared/api";
+import { useT } from "@/i18n";
 
-const STEPS = ["المنتج والوصفة", "الكميات والمستودعات", "توفر المواد", "المراجعة والإنشاء"] as const;
+const STEP_KEYS = [
+  "production.wizard.steps.product",
+  "production.wizard.steps.quantities",
+  "production.wizard.steps.availability",
+  "production.wizard.steps.review",
+] as const;
 
 export function ProductionCreateWizard() {
+  const t = useT();
   const navigate = useNavigate();
   const [psp] = useSearchParams();
   const editId = psp.get("edit") ?? undefined;
@@ -106,16 +113,16 @@ export function ProductionCreateWizard() {
   return (
     <div>
       <PageHeader
-        eyebrow="العمليات · أوامر الإنتاج"
-        title="أمر إنتاج جديد"
-        subtitle="أنشئ مسودة من وصفة نشطة — الاعتماد والإصدار خطوات لاحقة لا تُحرّك المخزون الآن."
-        action={<Button variant="ghost" onClick={() => navigate("/inventory/production")}>عودة للقائمة</Button>}
+        eyebrow={t("production.opsEyebrow")}
+        title={t("production.wizard.title")}
+        subtitle={t("production.wizard.subtitle")}
+        action={<Button variant="ghost" onClick={() => navigate("/inventory/production")}>{t("production.wizard.backToList")}</Button>}
       />
 
-      <ol className="mb-6 grid grid-cols-2 gap-2 sm:grid-cols-4" aria-label="خطوات الإنشاء">
-        {STEPS.map((s, i) => (
+      <ol className="mb-6 grid grid-cols-2 gap-2 sm:grid-cols-4" aria-label={t("production.wizard.stepsAria")}>
+        {STEP_KEYS.map((s, i) => (
           <li key={s} className={`rounded-xl border px-3 py-2 text-xs font-extrabold ${i === step ? "border-teal-600 bg-teal-50 text-teal-800" : i < step ? "border-emerald-200 bg-emerald-50 text-emerald-700" : "border-slate-200 bg-white text-slate-400"}`}>
-            <span className="ml-1 tabular-nums">{i + 1}.</span> {s} {i < step && <Check className="mr-1 inline h-3.5 w-3.5" />}
+            <span className="ml-1 tabular-nums">{i + 1}.</span> {t(s)} {i < step && <Check className="mr-1 inline h-3.5 w-3.5" />}
           </li>
         ))}
       </ol>
@@ -125,10 +132,10 @@ export function ProductionCreateWizard() {
           <div>
             <label className="relative mb-4 block">
               <Search className="pointer-events-none absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
-              <input className="field w-full pr-10" placeholder="ابحث عن منتج أو وصفة…" value={bomQuery} onChange={(e) => setBomQuery(e.target.value)} aria-label="بحث الوصفات" />
+              <input className="field w-full pr-10" placeholder={t("production.wizard.searchPlaceholder")} value={bomQuery} onChange={(e) => setBomQuery(e.target.value)} aria-label={t("production.wizard.searchAria")} />
             </label>
             {boms.isLoading ? <LoadingState rows={2} /> : boms.isError ? <ErrorState error={boms.error} onRetry={() => boms.refetch()} /> : !boms.data || boms.data.length === 0 ? (
-              <EmptyState title="لا توجد وصفات نشطة" body="أنشئ وصفة (BOM) بمكوّناتها من شاشة الوصفات أولًا." />
+              <EmptyState title={t("production.wizard.emptyTitle")} body={t("production.wizard.emptyBody")} />
             ) : (
               <ul className="grid gap-2 md:grid-cols-2">
                 {boms.data.map((b) => (
@@ -137,10 +144,10 @@ export function ProductionCreateWizard() {
                       className={`w-full rounded-xl border p-4 text-right transition ${bom?.id === b.id ? "border-teal-600 bg-teal-50 ring-2 ring-teal-100" : "border-slate-200 bg-white hover:border-slate-300"}`}>
                       <div className="flex items-center justify-between gap-2">
                         <span className="font-extrabold text-slate-900">{b.productName}</span>
-                        {b.trackingMode !== "none" && <StatusBadge>{b.trackingMode === "expiry" ? "تتبع صلاحية" : "تتبع دفعات"}</StatusBadge>}
+                        {b.trackingMode !== "none" && <StatusBadge>{b.trackingMode === "expiry" ? t("production.wizard.trackExpiry") : t("production.wizard.trackLot")}</StatusBadge>}
                       </div>
                       <div className="mt-1 text-xs font-medium text-slate-500">
-                        دفعة الوصفة تنتج {formatQty(b.yieldQuantity, b.yieldUnit || b.productUnit)} · {formatNumber(b.lineCount)} مكوّن
+                        {t("production.wizard.bomYields", { yield: formatQty(b.yieldQuantity, b.yieldUnit || b.productUnit), count: formatNumber(b.lineCount) })}
                       </div>
                     </button>
                   </li>
@@ -153,49 +160,49 @@ export function ProductionCreateWizard() {
         {step === 1 && bom && (
           <div className="grid gap-4 md:grid-cols-2">
             <label className="block text-xs font-bold text-slate-500">
-              الكمية المخططة ({bom.yieldUnit || bom.productUnit || "وحدة"})
-              <input type="number" min="0.0001" step="any" dir="ltr" className="field mt-1 w-full tabular-nums" value={qtyPlanned} onChange={(e) => setQtyPlanned(e.target.value)} aria-label="الكمية المخططة" />
-              {qtyNum > 0 && <span className="mt-1 block text-[11px] font-medium text-slate-400">= {formatNumber(qtyNum / bom.yieldQuantity)} دفعة من الوصفة</span>}
+              {t("production.wizard.qtyLabel", { unit: bom.yieldUnit || bom.productUnit || t("production.wizard.unitFallback") })}
+              <input type="number" min="0.0001" step="any" dir="ltr" className="field mt-1 w-full tabular-nums" value={qtyPlanned} onChange={(e) => setQtyPlanned(e.target.value)} aria-label={t("production.wizard.qtyAria")} />
+              {qtyNum > 0 && <span className="mt-1 block text-[11px] font-medium text-slate-400">{t("production.wizard.recipeBatches", { count: formatNumber(qtyNum / bom.yieldQuantity) })}</span>}
             </label>
             <label className="block text-xs font-bold text-slate-500">
-              تاريخ الإنتاج المخطط
-              <input type="date" className="field mt-1 w-full" value={plannedDate} onChange={(e) => setPlannedDate(e.target.value)} aria-label="تاريخ الإنتاج" />
+              {t("production.wizard.plannedDateLabel")}
+              <input type="date" className="field mt-1 w-full" value={plannedDate} onChange={(e) => setPlannedDate(e.target.value)} aria-label={t("production.wizard.plannedDateAria")} />
             </label>
             <label className="block text-xs font-bold text-slate-500">
-              مستودع المواد (المصدر)
-              <select className="field mt-1 w-full" value={warehouseId} onChange={(e) => setWarehouseId(e.target.value)} aria-label="مستودع المواد">
-                <option value="">اختر مستودعًا…</option>
+              {t("production.wizard.sourceWarehouseLabel")}
+              <select className="field mt-1 w-full" value={warehouseId} onChange={(e) => setWarehouseId(e.target.value)} aria-label={t("production.wizard.sourceWarehouseAria")}>
+                <option value="">{t("production.wizard.chooseWarehouse")}</option>
                 {whOptions.map((w) => <option key={w.id} value={w.id}>{w.name}</option>)}
               </select>
             </label>
             <label className="block text-xs font-bold text-slate-500">
-              مستودع الإخراج (المنتج النهائي)
-              <select className="field mt-1 w-full" value={outputWarehouseId} onChange={(e) => setOutputWarehouseId(e.target.value)} aria-label="مستودع الإخراج">
-                <option value="">نفس مستودع المواد</option>
+              {t("production.wizard.outputWarehouseLabel")}
+              <select className="field mt-1 w-full" value={outputWarehouseId} onChange={(e) => setOutputWarehouseId(e.target.value)} aria-label={t("production.wizard.outputWarehouseAria")}>
+                <option value="">{t("production.wizard.sameAsSource")}</option>
                 {whOptions.map((w) => <option key={w.id} value={w.id}>{w.name}</option>)}
               </select>
             </label>
             <label className="block text-xs font-bold text-slate-500">
-              الأولوية
-              <select className="field mt-1 w-full" value={priority} onChange={(e) => setPriority(e.target.value)} aria-label="الأولوية">
-                <option value="normal">عادية</option>
-                <option value="high">عالية</option>
-                <option value="urgent">عاجلة</option>
+              {t("production.wizard.priorityLabel")}
+              <select className="field mt-1 w-full" value={priority} onChange={(e) => setPriority(e.target.value)} aria-label={t("production.wizard.priorityLabel")}>
+                <option value="normal">{t("production.priority.normal")}</option>
+                <option value="high">{t("production.priority.high")}</option>
+                <option value="urgent">{t("production.priority.urgent")}</option>
               </select>
             </label>
             <label className="block text-xs font-bold text-slate-500">
-              سماحية الهدر % (تجاوزها يتطلب مديرًا)
-              <input type="number" min="0" max="100" step="any" dir="ltr" className="field mt-1 w-full tabular-nums" value={allowedScrapPct} onChange={(e) => setAllowedScrapPct(e.target.value)} aria-label="سماحية الهدر" />
+              {t("production.wizard.scrapLabel")}
+              <input type="number" min="0" max="100" step="any" dir="ltr" className="field mt-1 w-full tabular-nums" value={allowedScrapPct} onChange={(e) => setAllowedScrapPct(e.target.value)} aria-label={t("production.wizard.scrapAria")} />
             </label>
             {bom.trackingMode !== "none" && (
               <label className="block text-xs font-bold text-slate-500">
-                رقم دفعة المنتج (افتراضي — يمكن تغييره عند التسجيل)
-                <input className="field mt-1 w-full" value={batchNumber} onChange={(e) => setBatchNumber(e.target.value)} aria-label="رقم الدفعة" />
+                {t("production.wizard.batchLabel")}
+                <input className="field mt-1 w-full" value={batchNumber} onChange={(e) => setBatchNumber(e.target.value)} aria-label={t("production.wizard.batchAria")} />
               </label>
             )}
             <label className="block text-xs font-bold text-slate-500 md:col-span-2">
-              ملاحظات
-              <textarea className="field mt-1 min-h-20 w-full" value={notes} onChange={(e) => setNotes(e.target.value)} aria-label="ملاحظات" />
+              {t("production.wizard.notesLabel")}
+              <textarea className="field mt-1 min-h-20 w-full" value={notes} onChange={(e) => setNotes(e.target.value)} aria-label={t("production.wizard.notesAria")} />
             </label>
           </div>
         )}
@@ -205,19 +212,19 @@ export function ProductionCreateWizard() {
             <div>
               <div className={`mb-4 flex items-center gap-2 rounded-xl border p-3 text-sm font-bold ${preview.data.summary.allAvailable ? "border-emerald-200 bg-emerald-50 text-emerald-800" : "border-amber-200 bg-amber-50 text-amber-800"}`}>
                 {preview.data.summary.allAvailable
-                  ? <><Check className="h-4 w-4" /> كل المواد متوفرة — القيمة التقديرية {formatCurrency(preview.data.summary.reservedValue ?? 0)}</>
-                  : <><TriangleAlert className="h-4 w-4" /> {formatNumber(preview.data.summary.shortageCount)} مادة ناقصة — يمكنك إنشاء المسودة الآن وإصدار المواد جزئيًا لاحقًا</>}
+                  ? <><Check className="h-4 w-4" /> {t("production.wizard.preview.allAvailable", { value: formatCurrency(preview.data.summary.reservedValue ?? 0) })}</>
+                  : <><TriangleAlert className="h-4 w-4" /> {t("production.wizard.preview.shortage", { count: formatNumber(preview.data.summary.shortageCount) })}</>}
               </div>
               <div className="overflow-x-auto">
                 <table className="w-full text-sm">
                   <thead className="bg-slate-50 text-xs font-bold text-slate-500">
                     <tr>
-                      <th className="px-3 py-2 text-right">المادة</th>
-                      <th className="px-3 py-2 text-right">المطلوب</th>
-                      <th className="px-3 py-2 text-right">المتاح</th>
-                      <th className="px-3 py-2 text-right">FEFO متاح</th>
-                      <th className="px-3 py-2 text-right">العجز/الفائض</th>
-                      <th className="px-3 py-2 text-left">التكلفة</th>
+                      <th className="px-3 py-2 text-right">{t("production.wizard.preview.col.material")}</th>
+                      <th className="px-3 py-2 text-right">{t("production.wizard.preview.col.required")}</th>
+                      <th className="px-3 py-2 text-right">{t("production.wizard.preview.col.available")}</th>
+                      <th className="px-3 py-2 text-right">{t("production.wizard.preview.col.fefo")}</th>
+                      <th className="px-3 py-2 text-right">{t("production.wizard.preview.col.delta")}</th>
+                      <th className="px-3 py-2 text-left">{t("production.wizard.preview.col.cost")}</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-100">
@@ -240,18 +247,18 @@ export function ProductionCreateWizard() {
 
         {step === 3 && bom && (
           <div className="grid gap-3 text-sm md:grid-cols-2">
-            <ReviewCell label="المنتج" value={bom.productName} />
-            <ReviewCell label="الكمية المخططة" value={formatQty(qtyNum, bom.yieldUnit || bom.productUnit)} />
-            <ReviewCell label="مستودع المواد" value={whOptions.find((w) => w.id === warehouseId)?.name ?? warehouseId} />
-            <ReviewCell label="مستودع الإخراج" value={whOptions.find((w) => w.id === (outputWarehouseId || warehouseId))?.name ?? "نفس مستودع المواد"} />
-            <ReviewCell label="الأولوية" value={priority === "urgent" ? "عاجلة" : priority === "high" ? "عالية" : "عادية"} />
-            <ReviewCell label="سماحية الهدر" value={allowedScrapPct !== "" ? `${allowedScrapPct}%` : "—"} />
-            {plannedDate && <ReviewCell label="التاريخ المخطط" value={plannedDate} />}
-            {batchNumber && <ReviewCell label="رقم الدفعة" value={batchNumber} />}
-            {notes && <ReviewCell label="ملاحظات" value={notes} />}
+            <ReviewCell label={t("production.wizard.review.product")} value={bom.productName} />
+            <ReviewCell label={t("production.wizard.review.plannedQty")} value={formatQty(qtyNum, bom.yieldUnit || bom.productUnit)} />
+            <ReviewCell label={t("production.wizard.review.sourceWarehouse")} value={whOptions.find((w) => w.id === warehouseId)?.name ?? warehouseId} />
+            <ReviewCell label={t("production.wizard.review.outputWarehouse")} value={whOptions.find((w) => w.id === (outputWarehouseId || warehouseId))?.name ?? t("production.wizard.sameAsSource")} />
+            <ReviewCell label={t("production.wizard.review.priority")} value={priority === "urgent" ? t("production.priority.urgent") : priority === "high" ? t("production.priority.high") : t("production.priority.normal")} />
+            <ReviewCell label={t("production.wizard.review.scrapAllowance")} value={allowedScrapPct !== "" ? `${allowedScrapPct}%` : "—"} />
+            {plannedDate && <ReviewCell label={t("production.wizard.review.plannedDate")} value={plannedDate} />}
+            {batchNumber && <ReviewCell label={t("production.wizard.review.batch")} value={batchNumber} />}
+            {notes && <ReviewCell label={t("production.wizard.review.notes")} value={notes} />}
             <div className="md:col-span-2 rounded-xl border border-teal-200 bg-teal-50 p-3 text-xs font-bold text-teal-800">
               <Factory className="ml-1 inline h-4 w-4" />
-              سيُنشأ الأمر كمسودة — لا يتحرك أي مخزون قبل الاعتماد ثم إصدار المواد.
+              {t("production.wizard.review.draftNote")}
             </div>
             {err && <p className="md:col-span-2 rounded-lg bg-rose-50 px-3 py-2 text-xs font-bold text-rose-700">{err}</p>}
           </div>
@@ -260,15 +267,15 @@ export function ProductionCreateWizard() {
 
       <div className="mt-4 flex items-center justify-between">
         <Button variant="secondary" disabled={step === 0 || create.isPending} onClick={() => setStep((s) => s - 1)}>
-          <ArrowRight className="h-4 w-4" /> السابق
+          <ArrowRight className="h-4 w-4" /> {t("production.wizard.prev")}
         </Button>
-        {step < STEPS.length - 1 ? (
+        {step < STEP_KEYS.length - 1 ? (
           <Button variant="primary" disabled={!canNext} onClick={() => setStep((s) => s + 1)}>
-            التالي <ArrowLeft className="h-4 w-4" />
+            {t("common.next")} <ArrowLeft className="h-4 w-4" />
           </Button>
         ) : (
           <Button variant="primary" disabled={create.isPending} onClick={() => void submit()}>
-            {create.isPending ? "جارٍ الإنشاء…" : "إنشاء المسودة"} <Check className="h-4 w-4" />
+            {create.isPending ? t("production.wizard.creating") : t("production.wizard.create")} <Check className="h-4 w-4" />
           </Button>
         )}
       </div>

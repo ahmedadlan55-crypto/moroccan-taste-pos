@@ -17,6 +17,7 @@ import {
 } from "@/shared/ui";
 import { useCan } from "@/app/providers";
 import { useMediaQuery } from "@/shared/hooks";
+import { useT } from "@/i18n";
 import {
   useGlAccounts,
   type GlAccount,
@@ -43,6 +44,7 @@ const NEW_ACCOUNT: GlAccountInput = {
 };
 
 export function ChartOfAccountsPage() {
+  const t = useT();
   const canManage = useCan(MANAGE_CAP);
   const query = useGlAccounts();
   const accounts = useMemo(() => query.data ?? [], [query.data]);
@@ -106,13 +108,13 @@ export function ChartOfAccountsPage() {
   return (
     <div>
       <PageHeader
-        eyebrow="المحاسبة"
-        title="دليل الحسابات"
-        subtitle="شجرة الحسابات المحاسبية مع الأرصدة — تصفّح، ابحث، وأدِر الحسابات وحركاتها."
+        eyebrow={t("accounting.eyebrow")}
+        title={t("accounting.coa.title")}
+        subtitle={t("accounting.coa.subtitle")}
         action={
           canManage ? (
             <Button variant="primary" onClick={openNew}>
-              <Plus className="h-4 w-4" /> حساب جديد
+              <Plus className="h-4 w-4" /> {t("accounting.coa.newAccount")}
             </Button>
           ) : undefined
         }
@@ -146,8 +148,8 @@ export function ChartOfAccountsPage() {
               <Card className="grid min-h-[24rem] place-items-center p-6">
                 <EmptyState
                   icon={<ListTree className="h-6 w-6" />}
-                  title="اختر حسابًا"
-                  body="اختر حسابًا من الشجرة لعرض تفاصيله وأرصدته وآخر حركاته."
+                  title={t("accounting.coa.selectAccount")}
+                  body={t("accounting.coa.selectAccountBody")}
                 />
               </Card>
             )}

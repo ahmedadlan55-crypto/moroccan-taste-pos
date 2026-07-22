@@ -14,6 +14,7 @@ import {
 } from "@/shared/ui";
 import { DataTable, type ColumnDef } from "@/shared/tables";
 import { formatCurrency, formatDate } from "@/shared/lib";
+import { useTx } from "@/shared/ui/i18n";
 import { peopleApi } from "../../lib/api";
 import { qk } from "../../lib/query-keys";
 import { statusMeta } from "../../lib/labels";
@@ -27,6 +28,7 @@ import type { CustodyExpense, MyCustodyHistoryRow } from "../../lib/types";
 // history (GET /custody/my-history — legacy loadHistory).
 
 export function MyCustodyTab() {
+  const t = useTx();
   const { toast } = useToast();
   const qc = useQueryClient();
   const [expenseOpen, setExpenseOpen] = useState(false);
@@ -42,12 +44,12 @@ export function MyCustodyTab() {
   const requestClose = useMutation({
     mutationFn: () => peopleApi.requestCloseCustody(bundle.data?.custody?.id as string, closeNotes.trim()),
     onSuccess: () => {
-      toast({ title: "تم إرسال طلب الإقفال — بانتظار موافقة المدير", tone: "success" });
+      toast({ title: t("people.custody.mine.closeSent"), tone: "success" });
       setCloseOpen(false);
       setCloseNotes("");
       void qc.invalidateQueries({ queryKey: [...qk.all, "custody"] });
     },
-    onError: (e) => toast({ title: "تعذّر إرسال طلب الإقفال", description: safeUserMessage(e), tone: "error" }),
+    onError: (e) => toast({ title: t("people.custody.mine.closeSendFailed"), description: safeUserMessage(e, t), tone: "error" }),
   });
 
   if (bundle.isLoading) return <LoadingState rows={4} />;
@@ -58,46 +60,46 @@ export function MyCustodyTab() {
     return (
       <Card className="p-6 text-center">
         <Wallet className="mx-auto h-8 w-8 text-slate-300" aria-hidden="true" />
-        <p className="mt-2 text-sm font-bold text-slate-600">{data?.error || "لا توجد عهدة مرتبطة بحسابك"}</p>
+        <p className="mt-2 text-sm font-bold text-slate-600">{data?.error || t("people.custody.mine.noCustody")}</p>
       </Card>
     );
   }
 
   const c = data.custody;
   const active = c.status === "active";
-  const meta = statusMeta(c.status);
+  const meta = statusMeta(c.status, t);
   const expenses = data.expenses ?? [];
 
   const columns: ColumnDef<CustodyExpense>[] = [
-    { id: "description", header: "البيان", accessor: (r) => r.description || "—" },
-    { id: "glAccountName", header: "النوع", accessor: (r) => r.glAccountName || "—", defaultHidden: true },
-    { id: "expenseDate", header: "التاريخ", accessor: (r) => r.expenseDate, cell: (r) => formatDate(r.expenseDate), sortable: true },
-    { id: "totalWithVat", header: "الإجمالي", accessor: (r) => r.totalWithVat, cell: (r) => formatCurrency(r.totalWithVat), numeric: true, sortable: true },
+    { id: "description", header: t("people.custody.col.statement"), accessor: (r) => r.description || "—" },
+    { id: "glAccountName", header: t("people.custody.col.glType"), accessor: (r) => r.glAccountName || "—", defaultHidden: true },
+    { id: "expenseDate", header: t("people.field.date"), accessor: (r) => r.expenseDate, cell: (r) => formatDate(r.expenseDate), sortable: true },
+    { id: "totalWithVat", header: t("people.custody.col.total"), accessor: (r) => r.totalWithVat, cell: (r) => formatCurrency(r.totalWithVat), numeric: true, sortable: true },
     {
       id: "status",
-      header: "الحالة",
+      header: t("common.status"),
       accessor: (r) => r.status,
       cell: (r) => {
-        const m = statusMeta(r.status);
+        const m = statusMeta(r.status, t);
         return <StatusBadge tone={m.tone}>{m.label}</StatusBadge>;
       },
     },
-    { id: "rejectionReason", header: "سبب الرفض/الإرجاع", accessor: (r) => r.rejectionReason || "—", defaultHidden: true },
+    { id: "rejectionReason", header: t("people.custody.mine.col.rejectionReason"), accessor: (r) => r.rejectionReason || "—", defaultHidden: true },
   ];
 
   const historyColumns: ColumnDef<MyCustodyHistoryRow>[] = [
-    { id: "custodyNumber", header: "رقم العهدة", accessor: (r) => r.custodyNumber },
-    { id: "createdDate", header: "فُتحت", accessor: (r) => r.createdDate ?? "", cell: (r) => formatDate(r.createdDate) },
-    { id: "closeApprovedAt", header: "أُغلقت", accessor: (r) => r.closeApprovedAt ?? "", cell: (r) => (r.closeApprovedAt ? formatDate(r.closeApprovedAt) : "—") },
-    { id: "totalTopups", header: "التغذية", accessor: (r) => r.totalTopups, cell: (r) => formatCurrency(r.totalTopups), numeric: true },
-    { id: "totalExpenses", header: "المصروفات", accessor: (r) => r.totalExpenses, cell: (r) => formatCurrency(r.totalExpenses), numeric: true },
-    { id: "balance", header: "الرصيد", accessor: (r) => r.balance, cell: (r) => formatCurrency(r.balance), numeric: true },
+    { id: "custodyNumber", header: t("people.custody.col.custodyNumber"), accessor: (r) => r.custodyNumber },
+    { id: "createdDate", header: t("people.custody.mine.col.opened"), accessor: (r) => r.createdDate ?? "", cell: (r) => formatDate(r.createdDate) },
+    { id: "closeApprovedAt", header: t("people.custody.mine.col.closedAt"), accessor: (r) => r.closeApprovedAt ?? "", cell: (r) => (r.closeApprovedAt ? formatDate(r.closeApprovedAt) : "—") },
+    { id: "totalTopups", header: t("people.custody.col.topupsTotal"), accessor: (r) => r.totalTopups, cell: (r) => formatCurrency(r.totalTopups), numeric: true },
+    { id: "totalExpenses", header: t("people.custody.col.expenses"), accessor: (r) => r.totalExpenses, cell: (r) => formatCurrency(r.totalExpenses), numeric: true },
+    { id: "balance", header: t("people.custody.col.balance"), accessor: (r) => r.balance, cell: (r) => formatCurrency(r.balance), numeric: true },
     {
       id: "status",
-      header: "الحالة",
+      header: t("common.status"),
       accessor: (r) => r.status,
       cell: (r) => {
-        const m = statusMeta(r.status);
+        const m = statusMeta(r.status, t);
         return <StatusBadge tone={m.tone}>{m.label}</StatusBadge>;
       },
     },
@@ -111,7 +113,7 @@ export function MyCustodyTab() {
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div>
             <div className="flex items-center gap-2">
-              <h2 className="text-base font-extrabold text-slate-900">عهدتي — {c.custodyNumber}</h2>
+              <h2 className="text-base font-extrabold text-slate-900">{t("people.custody.mine.heading", { number: c.custodyNumber })}</h2>
               <StatusBadge tone={meta.tone}>{meta.label}</StatusBadge>
             </div>
             <p className="mt-0.5 text-xs font-medium text-slate-500">
@@ -121,35 +123,35 @@ export function MyCustodyTab() {
           </div>
           <div className="flex flex-wrap gap-2">
             <Button variant="primary" size="sm" disabled={!active} onClick={() => setExpenseOpen(true)}>
-              <Plus className="h-4 w-4" aria-hidden="true" /> تسجيل مصروف
+              <Plus className="h-4 w-4" aria-hidden="true" /> {t("people.custody.mine.addExpense")}
             </Button>
             <Button variant="secondary" size="sm" disabled={!active} onClick={() => setCloseOpen(true)}>
               <Lock className="h-4 w-4" aria-hidden="true" />
-              {c.status === "close_pending" ? "بانتظار الإقفال" : c.status === "closed" ? "العهدة مغلقة" : "طلب إقفال العهدة"}
+              {c.status === "close_pending" ? t("people.custody.mine.closePending") : c.status === "closed" ? t("people.custody.mine.closed") : t("people.custody.mine.requestClose")}
             </Button>
           </div>
         </div>
         <div className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-3">
-          <DetailStat label="الرصيد" value={formatCurrency(c.balance)} />
-          <DetailStat label="إجمالي التغذية" value={formatCurrency(c.totalTopups)} />
-          <DetailStat label="إجمالي المصروفات" value={formatCurrency(c.totalExpenses)} />
+          <DetailStat label={t("people.custody.mine.balance")} value={formatCurrency(c.balance)} />
+          <DetailStat label={t("people.custody.mine.totalTopups")} value={formatCurrency(c.totalTopups)} />
+          <DetailStat label={t("people.custody.mine.totalExpenses")} value={formatCurrency(c.totalExpenses)} />
         </div>
       </Card>
 
       <section>
-        <h3 className="mb-3 text-sm font-extrabold text-slate-800">مصروفات العهدة ({expenses.length})</h3>
+        <h3 className="mb-3 text-sm font-extrabold text-slate-800">{t("people.custody.mine.expensesTitle", { count: expenses.length })}</h3>
         <DataTable
           columns={columns}
           rows={expenses}
           getRowId={(r) => r.id}
           tableId="people.myCustodyExpenses"
           initialPageSize={10}
-          emptyTitle="لا توجد مصروفات بعد"
+          emptyTitle={t("people.custody.mine.expensesEmpty")}
         />
       </section>
 
       <section>
-        <h3 className="mb-3 text-sm font-extrabold text-slate-800">عُهدي السابقة ({previous.length})</h3>
+        <h3 className="mb-3 text-sm font-extrabold text-slate-800">{t("people.custody.mine.historyTitle", { count: previous.length })}</h3>
         <DataTable
           columns={historyColumns}
           rows={previous}
@@ -159,7 +161,7 @@ export function MyCustodyTab() {
           onRetry={() => history.refetch()}
           tableId="people.myCustodyHistory"
           initialPageSize={5}
-          emptyTitle="لا توجد عهد سابقة"
+          emptyTitle={t("people.custody.mine.historyEmpty")}
         />
       </section>
 
@@ -174,26 +176,26 @@ export function MyCustodyTab() {
       <Dialog
         open={closeOpen}
         onClose={() => !requestClose.isPending && setCloseOpen(false)}
-        title="طلب إقفال العهدة"
-        description="يُرسل الطلب للمدير للاعتماد — تُقفل العهدة وتُسوّى الفروقات بعد الموافقة."
+        title={t("people.custody.mine.closeTitle")}
+        description={t("people.custody.mine.closeDesc")}
         dismissable={!requestClose.isPending}
         footer={
           <>
             <Button variant="secondary" onClick={() => setCloseOpen(false)} disabled={requestClose.isPending}>
-              إلغاء
+              {t("common.cancel")}
             </Button>
             <Button variant="danger" loading={requestClose.isPending} onClick={() => requestClose.mutate()}>
-              تأكيد طلب الإقفال
+              {t("people.custody.mine.closeConfirm")}
             </Button>
           </>
         }
       >
         <div className="space-y-3">
           <div className="rounded-xl border border-slate-100 bg-slate-50 p-3 text-sm font-bold text-slate-700">
-            <div className="flex justify-between"><span>إجمالي التغذية</span><span dir="ltr">{formatCurrency(c.totalTopups)}</span></div>
-            <div className="mt-1 flex justify-between"><span>إجمالي المصروفات</span><span dir="ltr">{formatCurrency(c.totalExpenses)}</span></div>
+            <div className="flex justify-between"><span>{t("people.custody.mine.totalTopups")}</span><span dir="ltr">{formatCurrency(c.totalTopups)}</span></div>
+            <div className="mt-1 flex justify-between"><span>{t("people.custody.mine.totalExpenses")}</span><span dir="ltr">{formatCurrency(c.totalExpenses)}</span></div>
             <div className="mt-1 flex justify-between border-t border-slate-200 pt-1">
-              <span>الرصيد المتبقي</span>
+              <span>{t("people.custody.col.remainingBalance")}</span>
               <span dir="ltr" className={c.balance >= 0 ? "text-emerald-700" : "text-rose-700"}>
                 {formatCurrency(c.balance)}
               </span>
@@ -201,16 +203,16 @@ export function MyCustodyTab() {
           </div>
           {c.balance < 0 && (
             <p className="text-xs font-bold text-rose-700">
-              تم تجاوز الرصيد — سيتم تسوية الفرق بعد الموافقة.
+              {t("people.custody.mine.overBalanceNote")}
             </p>
           )}
           {c.balance > 0 && (
             <p className="text-xs font-bold text-emerald-700">
-              سيتم استرجاع المبلغ المتبقي بعد الموافقة.
+              {t("people.custody.mine.refundNote")}
             </p>
           )}
           <label className="block">
-            <span className="text-xs font-bold text-slate-600">ملاحظات (اختياري)</span>
+            <span className="text-xs font-bold text-slate-600">{t("people.custody.mine.notesOptional")}</span>
             <textarea
               rows={3}
               className="field mt-1 w-full resize-y py-2"

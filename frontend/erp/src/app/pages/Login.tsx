@@ -2,13 +2,20 @@ import { useState, type FormEvent } from "react";
 import { LayoutGrid, LogIn } from "lucide-react";
 import { Button, Input } from "@/shared/ui";
 import { Field } from "@/shared/forms";
+import { useT } from "@/i18n";
+import { LanguageToggle } from "@/app/shell/LanguageToggle";
 
 // FC-P4 — the unified Back-Office login. The legacy app and the ERP share ONE
 // JWT (localStorage `pos_token`); this screen lets a user sign in without
 // bouncing to the legacy shell, which is what makes `/app` viable as the default
 // entry point (see the ERP_DEFAULT_ENABLED cutover in server.js). It posts to
 // the existing public POST /api/auth/login and stores the returned token.
+//
+// i18n — this is a PRE-AUTH screen: the language resolves from localStorage
+// (erp_lang) before any user identity exists (the I18nProvider does this at
+// mount), and the language toggle lets a user pick EN/عربي before signing in.
 export function LoginPage() {
+  const t = useT();
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [code, setCode] = useState("");
@@ -29,12 +36,12 @@ export function LoginPage() {
       const data = await res.json().catch(() => ({}));
       if (data && data.requires2faCode) {
         setNeeds2fa(true);
-        setError(data.error || "أدخل رمز التحقق الثنائي");
+        setError(data.error || t("login.errors.totpRequired"));
         setBusy(false);
         return;
       }
       if (!data || data.success !== true || !data.token) {
-        setError((data && data.error) || "تعذّر تسجيل الدخول");
+        setError((data && data.error) || t("login.errors.loginFailed"));
         setBusy(false);
         return;
       }
@@ -57,25 +64,27 @@ export function LoginPage() {
       }
       window.location.assign(base + "/overview");
     } catch {
-      setError("تعذّر الاتصال بالخادم. حاول مجددًا.");
+      setError(t("login.errors.network"));
       setBusy(false);
     }
   }
 
   return (
     <div className="grid min-h-screen place-items-center bg-slate-50 p-6">
-      <form onSubmit={submit} className="surface grid w-full max-w-sm gap-5 p-8">
+      <form onSubmit={submit} className="surface relative grid w-full max-w-sm gap-5 p-8">
+        <LanguageToggle className="absolute end-4 top-4 shadow-sm" />
+
         <div className="grid place-items-center gap-3 text-center">
           <span className="grid h-14 w-14 place-items-center rounded-2xl bg-teal-600 text-white">
             <LayoutGrid className="h-6 w-6" />
           </span>
           <div>
-            <h1 className="text-xl font-extrabold text-slate-900">المذاق المغربي</h1>
-            <p className="text-sm font-medium text-slate-500">الإدارة الموحّدة — تسجيل الدخول</p>
+            <h1 className="text-xl font-extrabold text-slate-900">{t("login.brand")}</h1>
+            <p className="text-sm font-medium text-slate-500">{t("login.subtitle")}</p>
           </div>
         </div>
 
-        <Field label="اسم المستخدم" required>
+        <Field label={t("login.usernameLabel")} required>
           <Input
             value={username}
             onChange={(e) => setUsername(e.target.value)}
@@ -83,7 +92,7 @@ export function LoginPage() {
             autoFocus
           />
         </Field>
-        <Field label="كلمة المرور" required>
+        <Field label={t("login.passwordLabel")} required>
           <Input
             type="password"
             value={password}
@@ -92,13 +101,13 @@ export function LoginPage() {
           />
         </Field>
         {needs2fa && (
-          <Field label="رمز التحقق الثنائي">
+          <Field label={t("login.totpLabel")}>
             <Input
               value={code}
               onChange={(e) => setCode(e.target.value)}
               inputMode="numeric"
               dir="ltr"
-              placeholder="000000"
+              placeholder={t("login.totpPlaceholder")}
             />
           </Field>
         )}
@@ -110,7 +119,7 @@ export function LoginPage() {
         )}
 
         <Button type="submit" variant="primary" loading={busy} disabled={!username || !password}>
-          <LogIn className="h-4 w-4" /> تسجيل الدخول
+          <LogIn className="h-4 w-4" /> {t("login.submit")}
         </Button>
       </form>
     </div>

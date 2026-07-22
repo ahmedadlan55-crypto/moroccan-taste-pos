@@ -9,6 +9,7 @@
 // NOT resolved live here: re-reading current settings at print time is exactly
 // the post-issue drift defect the O2C side already eliminated. The shared
 // renderer degrades gracefully, printing whatever identity fields are present.
+import type { TFunction } from "@/i18n";
 import type { Invoice } from "@/modules/sales/lib";
 import type { DocumentIdentity, SaleReceiptOptions } from "../../../../../shared/invoiceTemplate";
 
@@ -44,7 +45,7 @@ function toIdentity(inv: Invoice): DocumentIdentity | null {
   };
 }
 
-export function toSaleReceiptOptions(inv: Invoice): SaleReceiptOptions {
+export function toSaleReceiptOptions(inv: Invoice, t: TFunction): SaleReceiptOptions {
   // The shared receipt is tax-INCLUSIVE (subtotal contains VAT; subtotal −
   // discount = total). The ERP invoice records EXCLUSIVE figures (subtotal is
   // net; net + VAT = total), so rebuild an inclusive subtotal and derive any
@@ -73,13 +74,13 @@ export function toSaleReceiptOptions(inv: Invoice): SaleReceiptOptions {
       total,
     },
     invoiceNumber: inv.document_number || null,
-    fallbackSellerName: inv.seller?.sellerName || "فاتورة ضريبية",
+    fallbackSellerName: inv.seller?.sellerName || t("sales.print.invoiceFallbackSeller"),
     vatRate: DEFAULT_VAT_RATE,
     paperWidth: "A4",
     identity: toIdentity(inv),
     zatcaQrDataUrl: inv.zatca_qr_data_url ?? null,
     printedAt: inv.issue_date ? new Date(inv.issue_date) : undefined,
-    stamp: inv.status === "cancelled" ? "ملغاة · CANCELLED" : null,
+    stamp: inv.status === "cancelled" ? t("sales.print.cancelledStamp") : null,
     customerName: inv.customer_name ?? null,
   };
 }

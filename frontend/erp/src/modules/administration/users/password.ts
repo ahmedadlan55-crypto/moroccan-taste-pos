@@ -4,25 +4,29 @@
 // round-trip rejection. The server stays authoritative; this is UX only.
 //
 // Rule: ≥ 6 chars AND at least one letter AND one digit AND one special char.
+//
+// i18n: this pure helper can't call useT(); it returns a stable `code` and the
+// React call sites translate it via t("administration.users.pwd.<code>").
+export type PasswordErrorCode = "tooShort" | "noLetter" | "noDigit" | "noSpecial";
 export interface PasswordCheck {
   ok: boolean;
-  error?: string;
+  code?: PasswordErrorCode;
 }
 
 const SPECIAL = /[!@#$%^&*()_+\-=[\]{};':"|,.<>/?]/;
 
 export function checkPasswordStrength(pw: string): PasswordCheck {
   if (!pw || pw.length < 6) {
-    return { ok: false, error: "كلمة المرور يجب أن تكون 6 أحرف على الأقل" };
+    return { ok: false, code: "tooShort" };
   }
   if (!/[a-zA-Z]/.test(pw)) {
-    return { ok: false, error: "كلمة المرور يجب أن تحتوي على حروف" };
+    return { ok: false, code: "noLetter" };
   }
   if (!/[0-9]/.test(pw)) {
-    return { ok: false, error: "كلمة المرور يجب أن تحتوي على أرقام" };
+    return { ok: false, code: "noDigit" };
   }
   if (!SPECIAL.test(pw)) {
-    return { ok: false, error: "كلمة المرور يجب أن تحتوي على رمز خاص (!@#$...)" };
+    return { ok: false, code: "noSpecial" };
   }
   return { ok: true };
 }

@@ -11,6 +11,7 @@ import {
   useToast,
 } from "@/shared/ui";
 import { useCan } from "@/app/providers";
+import { useT } from "@/i18n";
 import { ensureAck, type MutationAck } from "../_common";
 import { useSecurityPolicies } from "../security/api";
 import { PasswordPolicyCard } from "../security/PasswordPolicyCard";
@@ -25,6 +26,7 @@ type SettingsMap = Record<string, string>;
 const boolFrom = (v: string | undefined): boolean => v === "true" || v === "1" || v === "on";
 
 export default function SecurityPage() {
+  const t = useT();
   const canManage = useCan("administration.security");
   const canManageSecurity = useCan("administration.security.manage");
   const qc = useQueryClient();
@@ -53,22 +55,22 @@ export default function SecurityPage() {
       ),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["settings"] });
-      toast({ title: "تم تحديث إعداد الأمان", tone: "success" });
+      toast({ title: t("administration.security.toast.updated"), tone: "success" });
     },
-    onError: (e: Error) => toast({ title: "تعذّر التحديث", description: e.message, tone: "error" }),
+    onError: (e: Error) => toast({ title: t("administration.security.toast.updateFailed"), description: e.message, tone: "error" }),
   });
 
   return (
     <div>
       <PageHeader
-        eyebrow="الإدارة"
-        title="الأمان"
-        subtitle="التحقق بخطوتين وضوابط الحماية للحساب والنظام."
+        eyebrow={t("administration.eyebrow")}
+        title={t("administration.security.title")}
+        subtitle={t("administration.security.subtitle")}
       />
 
       <div className="space-y-5">
         <section className="surface">
-          <PanelTitle icon={KeyRound} title="التحقق بخطوتين (2FA)" subtitle="حالة التحقق بخطوتين لحسابك الحالي." />
+          <PanelTitle icon={KeyRound} title={t("administration.security.twoFa.panelTitle")} subtitle={t("administration.security.twoFa.panelSubtitle")} />
           <div className="p-5">
             {twoFa.isLoading ? (
               <LoadingState rows={1} />
@@ -88,15 +90,15 @@ export default function SecurityPage() {
                   </span>
                   <div>
                     <div className="text-sm font-extrabold text-slate-900">
-                      {twoFa.data?.enabled ? "التحقق بخطوتين مُفعّل" : "التحقق بخطوتين غير مُفعّل"}
+                      {twoFa.data?.enabled ? t("administration.security.twoFa.enabled") : t("administration.security.twoFa.disabled")}
                     </div>
                     <p className="mt-0.5 text-xs font-medium text-slate-500">
-                      يُدار تفعيل/إلغاء التحقق بخطوتين عبر تطبيق المصادقة عند تسجيل الدخول.
+                      {t("administration.security.twoFa.note")}
                     </p>
                   </div>
                 </div>
                 <StatusBadge tone={twoFa.data?.enabled ? "success" : "warning"}>
-                  {twoFa.data?.enabled ? "مُفعّل" : "غير مُفعّل"}
+                  {twoFa.data?.enabled ? t("administration.security.twoFa.badgeEnabled") : t("administration.security.twoFa.badgeDisabled")}
                 </StatusBadge>
               </div>
             )}
@@ -104,7 +106,7 @@ export default function SecurityPage() {
         </section>
 
         <section className="surface">
-          <PanelTitle icon={ShieldCheck} title="ضوابط الحماية" subtitle="قواعد الاعتماد الحسّاسة في نقاط البيع." />
+          <PanelTitle icon={ShieldCheck} title={t("administration.security.controls.panelTitle")} subtitle={t("administration.security.controls.panelSubtitle")} />
           <div className="p-5">
             {settings.isLoading ? (
               <LoadingState rows={1} />
@@ -113,16 +115,16 @@ export default function SecurityPage() {
             ) : (
               <div className="flex flex-wrap items-center justify-between gap-3">
                 <div>
-                  <div className="text-sm font-extrabold text-slate-900">طلب اعتماد المدير للإلغاء</div>
+                  <div className="text-sm font-extrabold text-slate-900">{t("administration.security.controls.voidApprovalTitle")}</div>
                   <p className="mt-0.5 text-xs font-medium text-slate-500">
-                    يمنع الكاشير من إلغاء الفواتير دون موافقة مدير.
+                    {t("administration.security.controls.voidApprovalBody")}
                   </p>
                 </div>
                 <Toggle
                   checked={voidApproval}
                   disabled={!canManage || toggleSetting.isPending}
                   onChange={(v) => toggleSetting.mutate(v)}
-                  aria-label="طلب اعتماد المدير للإلغاء"
+                  aria-label={t("administration.security.controls.voidApprovalAria")}
                 />
               </div>
             )}

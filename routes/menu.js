@@ -9,6 +9,25 @@ const verifyToken = require('./authMiddleware');
 // v7.4 — menu writes are pricing/tax-sensitive → managers/admins only (chained
 // AFTER verifyToken, which sets req.user since the global /api gate skips /menu).
 const MGR = verifyToken.requireRole('admin', 'manager');
+// Sprint 3 D3 — menu PRICING writes accept `accountant` too. This reconciles a
+// frontend↔backend RBAC mismatch: the ERP UI grants `menu.pricing.manage` to
+// accountant (mirroring the already-live `sales.pricing.manage` accountant grant
+// + `sales.pricing.view`/`menu.pricing.view`), while these price routes were
+// admin/manager-only — so an accountant saw the price button and then got 403.
+// Widened to admin/manager/accountant to match the documented intent (accountant
+// is a pricing role). Applied ONLY to the two price endpoints below; every OTHER
+// menu write (create/edit/delete/recipes/combos/categories) stays MGR.
+const PRICING = verifyToken.requireRole('admin', 'manager', 'accountant');
+
+// Sprint 3 D3 — query-flag parsers for the /list filters.
+function _isOn(v) { const s = String(v == null ? '' : v).toLowerCase(); return s === '1' || s === 'true' || s === 'yes' || s === 'on'; }
+function _triBool(v) {
+  if (v == null || v === '') return null;
+  const s = String(v).toLowerCase();
+  if (s === '1' || s === 'true' || s === 'yes') return true;
+  if (s === '0' || s === 'false' || s === 'no') return false;
+  return null;
+}
 
 // close/d-images — product image write validation. Storage stays a base64
 // data-URL in menu.image_data (legacy-compatible, no new infra), but the write
@@ -62,7 +81,14 @@ function _mapMenu(m) {
     // Combos (العروض) — this menu row is a combo/offer with a variable choice.
     // The POS opens a chooser modal on tap and expands it into its component
     // recipes at sale time. Definition lives in combo_groups/combo_group_items.
-    isCombo: !!m.is_combo
+    isCombo: !!m.is_combo,
+    // v7.1 ZATCA tax category (S/Z/E/O). Sprint 3 D3 — now surfaced on READ so
+    // the edit screen can display AND preserve it (previously _mapMenu dropped it).
+    taxCategory: m.tax_category || 'S',
+    // Sprint 3 D3 — provenance of the stored cost: 'recipe' | 'manual' |
+    // 'imported' | null. Read-only signal; the item PUT uses it to lock a
+    // recipe-derived cost against silent manual edits.
+    costSource: m.cost_source || null
   };
 }
 
@@ -129,6 +155,136 @@ router.get('/all', async (req, res) => {
     const [rows] = await db.query(sql, params);
     res.json(rows.map(_mapMenu));
   } catch (e) { res.json([]); }
+});
+
+// ═══════════════════════════════════════════════════════════════════
+// Sprint 3 D2 — paginated menu LIST for the redesigned admin table.
+// GET /api/menu/list?page&pageSize&q&brandId&category&channel&status
+//                    &hasRecipe&hasImage&missingNameEn&negativeMargin&sort&dir
+//
+// EXCLUDES image_data bytes (ships only hasImage + an 8-char SHA1 imageVer,
+// exactly like the POS catalog route) — this is the fix for the full-base64
+// payload that GET /api/menu/all still ships. AUTH: requires a valid token
+// (the global /api gate blanket-exempts /menu for the public POS read, so this
+// route re-verifies inline) because it returns cost/margin data.
+//
+// Derived per row: branchCount + channelCount aggregated from
+// channel_menu_items (COUNT DISTINCT branch_id / channel_id where
+// is_available=1). marginValue/marginPct = PRE-TAX price − cost: VAT is stripped
+// from the stored price ONLY when it is tax-inclusive AND standard-rated ('S'),
+// using settings.VATRate (never hardcoded 15); Z/E/O carry no VAT to strip.
+// Semi-finished rows are excluded (they moved to inv_items, kind='semi').
+// ═══════════════════════════════════════════════════════════════════
+router.get('/list', verifyToken, async (req, res) => {
+  try {
+    const q = String(req.query.q || '').trim();
+    const brandId = req.query.brandId ? String(req.query.brandId) : '';
+    const category = req.query.category ? String(req.query.category) : '';
+    const channel = req.query.channel ? String(req.query.channel) : '';
+    const status = ['active', 'inactive'].indexOf(String(req.query.status || '')) !== -1 ? String(req.query.status) : '';
+    const hasRecipe = _triBool(req.query.hasRecipe);
+    const hasImage = _triBool(req.query.hasImage);
+    const missingNameEn = _isOn(req.query.missingNameEn);
+    const negativeMargin = _isOn(req.query.negativeMargin);
+    const page = Math.max(1, Number(req.query.page) || 1);
+    const pageSize = Math.min(200, Math.max(1, Number(req.query.pageSize) || 25));
+    const offset = (page - 1) * pageSize;
+
+    // VAT rate from settings (never hardcode 15). Coerced to a finite number so
+    // it is safe to inline into the SQL price expression below.
+    let vatRate = 15;
+    try {
+      const [s] = await db.query("SELECT setting_value FROM settings WHERE setting_key = 'VATRate' LIMIT 1");
+      if (s.length && Number.isFinite(Number(s[0].setting_value))) vatRate = Number(s[0].setting_value);
+    } catch (_) { /* default 15 */ }
+    const vatDiv = 1 + (vatRate / 100); // always ≥ 1 (rate ≥ 0); a plain number, not user input
+
+    // Pre-tax price + margin expressions (used for the negativeMargin filter and
+    // the margin sort so pagination stays correct in SQL).
+    const preTax = `(CASE WHEN COALESCE(m.is_tax_inclusive,1)=1 AND COALESCE(m.tax_category,'S')='S' THEN m.price/${vatDiv} ELSE m.price END)`;
+    const marginValExpr = `(${preTax} - COALESCE(m.cost,0))`;
+
+    const where = ['COALESCE(m.is_deleted,0) = 0', '(m.is_semi_finished IS NULL OR m.is_semi_finished = 0)'];
+    const params = [];
+    if (q) { where.push('(m.name LIKE ? OR m.name_en LIKE ? OR m.id LIKE ?)'); params.push('%' + q + '%', '%' + q + '%', '%' + q + '%'); }
+    if (brandId) { where.push('m.brand_id = ?'); params.push(brandId); }
+    if (category) { where.push('m.category = ?'); params.push(category); }
+    if (status === 'active') where.push('m.active = 1'); else if (status === 'inactive') where.push('m.active = 0');
+    if (hasRecipe === true) where.push('m.bom_id IS NOT NULL'); else if (hasRecipe === false) where.push('m.bom_id IS NULL');
+    if (hasImage === true) where.push("m.image_data IS NOT NULL AND m.image_data <> ''");
+    else if (hasImage === false) where.push("(m.image_data IS NULL OR m.image_data = '')");
+    if (missingNameEn) where.push("(m.name_en IS NULL OR m.name_en = '')");
+    if (channel) { where.push('EXISTS (SELECT 1 FROM channel_menu_items cmi WHERE cmi.menu_item_id = m.id AND cmi.channel_id = ? AND cmi.is_available = 1)'); params.push(channel); }
+    if (negativeMargin) where.push(`${marginValExpr} < 0`);
+    const whereSql = where.join(' AND ');
+
+    // Sort whitelist — every value is a constant column/expression (no user text).
+    const sortMap = {
+      name: 'm.name', price: 'm.price', cost: 'm.cost', category: 'm.category', active: 'm.active',
+      margin: marginValExpr, marginValue: marginValExpr,
+      marginPct: `(CASE WHEN ${preTax} > 0 THEN ${marginValExpr}/${preTax} ELSE 0 END)`,
+      channelCount: 'channel_count', branchCount: 'branch_count',
+    };
+    const sortKey = Object.prototype.hasOwnProperty.call(sortMap, String(req.query.sort || '')) ? String(req.query.sort) : 'name';
+    const sortCol = sortMap[sortKey];
+    const dir = String(req.query.dir || 'asc').toLowerCase() === 'desc' ? 'DESC' : 'ASC';
+
+    const [cnt] = await db.query(`SELECT COUNT(*) AS total FROM menu m WHERE ${whereSql}`, params);
+    const total = Number(cnt[0].total) || 0;
+
+    const [rows] = await db.query(
+      `SELECT m.id, m.name, m.name_en, m.category, m.brand_id, b.name AS brand_name,
+              m.price, m.cost, m.cost_source, m.computed_cost, m.tax_category, m.active,
+              m.is_tax_inclusive, m.bom_id,
+              CASE WHEN m.image_data IS NULL OR m.image_data='' THEN 0 ELSE 1 END AS has_image,
+              CASE WHEN m.image_data IS NULL OR m.image_data='' THEN NULL ELSE SUBSTRING(SHA1(m.image_data),1,8) END AS image_ver,
+              (SELECT COUNT(DISTINCT cmi.channel_id) FROM channel_menu_items cmi WHERE cmi.menu_item_id = m.id AND cmi.is_available = 1) AS channel_count,
+              (SELECT COUNT(DISTINCT cmi.branch_id) FROM channel_menu_items cmi WHERE cmi.menu_item_id = m.id AND cmi.is_available = 1) AS branch_count
+         FROM menu m LEFT JOIN brands b ON b.id = m.brand_id
+        WHERE ${whereSql}
+        ORDER BY ${sortCol} ${dir}, m.name ASC
+        LIMIT ? OFFSET ?`,
+      params.concat([pageSize, offset]));
+
+    const data = rows.map((r) => {
+      const price = Number(r.price) || 0;
+      const cost = Number(r.cost) || 0;
+      const isIncl = r.is_tax_inclusive === null || typeof r.is_tax_inclusive === 'undefined' ? true : !!Number(r.is_tax_inclusive);
+      const std = (r.tax_category || 'S') === 'S';
+      const preTaxPrice = (isIncl && std) ? price / vatDiv : price;
+      const marginValue = Math.round((preTaxPrice - cost) * 10000) / 10000;
+      const marginPct = preTaxPrice > 0 ? Math.round((marginValue / preTaxPrice) * 10000) / 100 : 0;
+      return {
+        id: r.id, name: r.name, nameEn: r.name_en || '',
+        category: r.category, brandId: r.brand_id || '', brandName: r.brand_name || '',
+        price, cost, costSource: r.cost_source || null,
+        computedCost: Number(r.computed_cost) || 0,
+        preTaxPrice: Math.round(preTaxPrice * 10000) / 10000,
+        marginValue, marginPct,
+        taxCategory: r.tax_category || 'S',
+        isTaxInclusive: isIncl,
+        hasImage: !!Number(r.has_image),
+        imageVer: r.image_ver || null,
+        hasRecipe: !!r.bom_id,
+        branchCount: Number(r.branch_count) || 0,
+        channelCount: Number(r.channel_count) || 0,
+        active: r.active === 1 || r.active === true
+      };
+    });
+
+    res.json({
+      data,
+      pagination: { page, pageSize, total },
+      vatRate,
+      filters: {
+        q, brandId, category, channel, status,
+        hasRecipe: req.query.hasRecipe != null ? req.query.hasRecipe : null,
+        hasImage: req.query.hasImage != null ? req.query.hasImage : null,
+        missingNameEn: !!missingNameEn, negativeMargin: !!negativeMargin,
+        sort: sortKey, dir: dir.toLowerCase()
+      }
+    });
+  } catch (e) { res.status(500).json({ success: false, error: e.message }); }
 });
 
 // Get only semi-finished products (helper endpoint for production/sales pages)
@@ -234,8 +390,8 @@ router.post('/', verifyToken, MGR, async (req, res) => {
       `INSERT INTO menu (id, name, name_en, price, is_tax_inclusive, tax_category, category, cost, stock, min_stock, active, pricing_mode, markup_pct, brand_id,
                          is_semi_finished, production_unit, consumes_semi_id, consumes_semi_qty,
                          production_warehouse_id, sales_warehouse_id,
-                         unit, big_unit, conv_rate, yield_quantity, yield_unit, image_data)
-       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+                         unit, big_unit, conv_rate, yield_quantity, yield_unit, image_data, cost_source)
+       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
       [id, name, nameEn || null, price || 0, taxInclusive ? 1 : 0, taxCategory,
        category || 'عام', cost || 0, stock || 0, minStock || 0, active !== false,
        pricingMode || 'fixed', markupPct || 30, brandId || null,
@@ -243,7 +399,8 @@ router.post('/', verifyToken, MGR, async (req, res) => {
        productionWarehouseId || null, salesWarehouseId || null,
        unit || null, bigUnit || null, Number(convRate) || 1,
        Number(yieldQuantity) || 1, yieldUnit || null,
-       imageData || null]
+       // Sprint 3 D3 — a manual create stamps the cost provenance as 'manual'.
+       imageData || null, 'manual']
     );
     res.json({ success: true, id });
   } catch (e) { res.json({ success: false, error: e.message }); }
@@ -292,12 +449,37 @@ router.put('/:id', verifyToken, MGR, async (req, res) => {
     const setTaxCat = (typeof req.body.taxCategory !== 'undefined');
     let _taxCat = String(req.body.taxCategory || 'S').toUpperCase();
     if (['S','Z','E','O'].indexOf(_taxCat) < 0) _taxCat = 'S';
+    // Sprint 3 D3 — cost-source lock. A cost derived from the recipe
+    // (cost_source='recipe') must NOT be silently overwritten by a manual form
+    // save. Reject a cost CHANGE on a recipe-locked row unless the caller passes
+    // { costOverride: true }. Any accepted manual cost write (a real change, or
+    // the first stamp of an unlabeled row) sets cost_source='manual'; an
+    // UNCHANGED cost preserves the existing label — so re-saving other fields
+    // (name, image, tax) never relabels or touches a recipe cost.
+    let _curCost = null, _curSource = null;
+    try {
+      const [_cr] = await db.query('SELECT cost AS c, cost_source AS s FROM menu WHERE id = ?', [req.params.id]);
+      if (_cr.length) { _curCost = _cr[0].c == null ? null : Number(_cr[0].c); _curSource = _cr[0].s || null; }
+    } catch (_) { /* row lookup best-effort; INSERT fallback handles a missing row */ }
+    const _newCost = Number(cost) || 0;
+    const _costChanged = _curCost === null || Math.abs(_newCost - _curCost) > 0.0001;
+    const _costOverride = req.body.costOverride === true || req.body.costOverride === 1 || req.body.costOverride === '1';
+    if (_costChanged && _curSource === 'recipe' && !_costOverride) {
+      return res.status(409).json({
+        success: false,
+        code: 'COST_LOCKED_BY_RECIPE',
+        error: 'تكلفة هذا الصنف محسوبة من الوصفة (BOM). لتعديلها يدويًا مرّر costOverride=true أو عدّل الوصفة.'
+      });
+    }
+    let _costSource = _curSource;
+    if (_costChanged) _costSource = 'manual';
+    else if (!_curSource && _newCost) _costSource = 'manual';
     const sql =
       `UPDATE menu SET name=?, name_en=?, price=?, category=?, cost=?, stock=?, min_stock=?, active=?,
                        pricing_mode=COALESCE(?, pricing_mode), markup_pct=?, brand_id=?,
                        is_semi_finished=?, production_unit=?, consumes_semi_id=?, consumes_semi_qty=?,
                        production_warehouse_id=?, sales_warehouse_id=?,
-                       unit=?, big_unit=?, conv_rate=?, yield_quantity=?, yield_unit=?` +
+                       unit=?, big_unit=?, conv_rate=?, yield_quantity=?, yield_unit=?, cost_source=?` +
       (setImage ? ', image_data=?' : '') +
       (setTaxIncl ? ', is_tax_inclusive=?' : '') +
       (setTaxCat ? ', tax_category=?' : '') +
@@ -307,7 +489,7 @@ router.put('/:id', verifyToken, MGR, async (req, res) => {
        isSemiFinished ? 1 : 0, productionUnit || 'pcs', consumesSemiId || null, consumesSemiQty || 0,
        productionWarehouseId || null, salesWarehouseId || null,
        unit || null, bigUnit || null, Number(convRate) || 1,
-       Number(yieldQuantity) || 1, yieldUnit || null];
+       Number(yieldQuantity) || 1, yieldUnit || null, _costSource];
     if (setImage) params.push(imageData || null);
     if (setTaxIncl) params.push(req.body.taxInclusive ? 1 : 0);
     if (setTaxCat) params.push(_taxCat);
@@ -318,15 +500,15 @@ router.put('/:id', verifyToken, MGR, async (req, res) => {
         `INSERT INTO menu (id, name, name_en, price, category, cost, stock, min_stock, active, pricing_mode, markup_pct, brand_id,
                            is_semi_finished, production_unit, consumes_semi_id, consumes_semi_qty,
                            production_warehouse_id, sales_warehouse_id,
-                           unit, big_unit, conv_rate, yield_quantity, yield_unit, image_data)
-         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+                           unit, big_unit, conv_rate, yield_quantity, yield_unit, image_data, cost_source)
+         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
         [req.params.id, name, nameEn || null, price || 0, category || 'عام', cost || 0, stock || 0, minStock || 0, active !== false,
          pricingMode || 'fixed', markupPct || 30, brandId || null,
          isSemiFinished ? 1 : 0, productionUnit || 'pcs', consumesSemiId || null, consumesSemiQty || 0,
          productionWarehouseId || null, salesWarehouseId || null,
          unit || null, bigUnit || null, Number(convRate) || 1,
          Number(yieldQuantity) || 1, yieldUnit || null,
-         imageData || null]
+         imageData || null, _costSource || 'manual']
       );
     }
     // v5.10.16 — when this is a semi-finished product, mirror the unit/
@@ -349,7 +531,7 @@ router.put('/:id', verifyToken, MGR, async (req, res) => {
 
 // Update price only
 // V5.7.4: now records price history for traceability + returns the new price + cost margin.
-router.patch('/:id/price', verifyToken, MGR, async (req, res) => {
+router.patch('/:id/price', verifyToken, PRICING, async (req, res) => {
   try {
     const newPrice = Number(req.body.price);
     const reason = (req.body.reason || '').toString().slice(0, 200);
@@ -382,7 +564,7 @@ router.patch('/:id/price', verifyToken, MGR, async (req, res) => {
 //   - fixed_set     → newPrice = value (set to exact)
 //   - fixed_add     → newPrice = oldPrice + value
 // Returns: { affected, before, after, items: [...] }
-router.post('/bulk-price-update', verifyToken, MGR, async (req, res) => {
+router.post('/bulk-price-update', verifyToken, PRICING, async (req, res) => {
   try {
     const b = req.body || {};
     const mode = b.mode || 'percent';
@@ -595,15 +777,17 @@ router.post('/import', verifyToken, MGR, async (req, res) => {
       if (['S','Z','E','O'].indexOf(_cat) < 0) _cat = 'S';
 
       if (existing.length) {
+        // Sprint 3 D3 — a bulk import writes the cost straight from the sheet, so
+        // its provenance is 'imported'.
         await db.query(
-          `UPDATE menu SET name=?, price=?, category=?, cost=?, stock=?, min_stock=?, active=?, is_tax_inclusive=?, tax_category=? WHERE id=?`,
+          `UPDATE menu SET name=?, price=?, category=?, cost=?, stock=?, min_stock=?, active=?, is_tax_inclusive=?, tax_category=?, cost_source='imported' WHERE id=?`,
           [item.name, item.price || 0, item.category || 'عام', item.cost || 0, item.stock || 999, item.minStock || 5, item.active !== false, _incl, _cat, existing[0].id]
         );
         updated++;
       } else {
         await db.query(
-          `INSERT INTO menu (id, name, price, category, cost, stock, min_stock, active, is_tax_inclusive, tax_category) VALUES (?,?,?,?,?,?,?,?,?,?)`,
-          [id, item.name, item.price || 0, item.category || 'عام', item.cost || 0, item.stock || 999, item.minStock || 5, item.active !== false, _incl, _cat]
+          `INSERT INTO menu (id, name, price, category, cost, stock, min_stock, active, is_tax_inclusive, tax_category, cost_source) VALUES (?,?,?,?,?,?,?,?,?,?,?)`,
+          [id, item.name, item.price || 0, item.category || 'عام', item.cost || 0, item.stock || 999, item.minStock || 5, item.active !== false, _incl, _cat, 'imported']
         );
         imported++;
       }
@@ -988,7 +1172,10 @@ router.post('/:id/recipe-bom', verifyToken, MGR, async (req, res) => {
       if (agg.length && agg[0].total_cost != null) {
         const yieldQ = Number(b.yieldQuantity)||1;
         computedCost = Number(agg[0].total_cost) / Math.max(1, yieldQ);
-        await db.query('UPDATE menu SET cost = ? WHERE id = ?', [computedCost, menuId]);
+        // Sprint 3 D3 — the BOM recipe save is the authoritative writer of a
+        // recipe-derived cost: stamp cost_source='recipe' so the item PUT locks
+        // this value against silent manual edits (COST_LOCKED_BY_RECIPE).
+        await db.query("UPDATE menu SET cost = ?, cost_source = 'recipe' WHERE id = ?", [computedCost, menuId]);
       }
     } catch(_){}
 

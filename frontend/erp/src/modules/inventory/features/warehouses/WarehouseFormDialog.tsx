@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useState } from "react";
 import { Warehouse as WarehouseIcon } from "lucide-react";
 import { Button, FullPageFlow, Spinner } from "@/shared/ui";
-import { warehouseTypeLabel } from "@/modules/inventory/lib/status-labels";
+import { useT } from "@/i18n";
+import { warehouseTypeLabel } from "./WarehousesPage";
 import { ApiError } from "@/shared/api";
 import {
   useCreateWarehouse,
@@ -54,6 +55,7 @@ export function WarehouseFormDialog({
   onClose: () => void;
   onSaved?: (id: string) => void;
 }) {
+  const t = useT();
   const isEdit = !!warehouse;
   const create = useCreateWarehouse();
   const update = useUpdateWarehouse();
@@ -74,11 +76,11 @@ export function WarehouseFormDialog({
 
   const errors = useMemo(() => {
     const e: Partial<Record<keyof FormState, string>> = {};
-    if (!form.name.trim()) e.name = "اسم المستودع مطلوب";
-    if (!form.code.trim()) e.code = "كود المستودع مطلوب";
-    else if (!CODE_RE.test(form.code.trim())) e.code = "الكود يقبل حروفًا وأرقامًا وشرطات فقط (بدون مسافات)";
+    if (!form.name.trim()) e.name = t("inventoryRest.warehouses.form.nameRequired");
+    if (!form.code.trim()) e.code = t("inventoryRest.warehouses.form.codeRequired");
+    else if (!CODE_RE.test(form.code.trim())) e.code = t("inventoryRest.warehouses.form.codePattern");
     return e;
-  }, [form]);
+  }, [form, t]);
   const valid = Object.keys(errors).length === 0;
 
   const mutationError = (create.error ?? update.error) as Error | null;
@@ -120,30 +122,30 @@ export function WarehouseFormDialog({
     <FullPageFlow
       open={open}
       onClose={onClose}
-      title={isEdit ? `تعديل «${warehouse!.name}»` : "مستودع جديد"}
+      title={isEdit ? t("inventoryRest.warehouses.form.editTitle", { name: warehouse!.name }) : t("inventoryRest.warehouses.form.newTitle")}
       description={
         isEdit
-          ? "تعديل البيانات الأساسية — الكود يبقى فريدًا على مستوى النظام."
-          : "أدخل البيانات الأساسية؛ يمكنك ضبط صلاحيات الوصول بعد الإنشاء."
+          ? t("inventoryRest.warehouses.form.editDesc")
+          : t("inventoryRest.warehouses.form.newDesc")
       }
-      eyebrow="إدارة المخزون"
+      eyebrow={t("inventoryRest.warehouses.form.eyebrow")}
       icon={WarehouseIcon}
       size="md"
       dismissable={!pending}
       footer={
         <>
           <Button variant="secondary" onClick={onClose} disabled={pending}>
-            إلغاء
+            {t("common.cancel")}
           </Button>
           <Button onClick={submit} disabled={pending || (touched && !valid)}>
             {pending ? (
               <>
-                <Spinner className="h-4 w-4" /> جارٍ الحفظ…
+                <Spinner className="h-4 w-4" /> {t("inventoryRest.ui.saving")}
               </>
             ) : isEdit ? (
-              "حفظ التعديلات"
+              t("inventoryRest.warehouses.form.saveEdits")
             ) : (
-              "إنشاء المستودع"
+              t("inventoryRest.warehouses.form.createWarehouse")
             )}
           </Button>
         </>
@@ -153,13 +155,13 @@ export function WarehouseFormDialog({
             <div className="grid grid-cols-1 gap-5 sm:grid-cols-2">
               <label className="sm:col-span-2">
                 <span className={labelCls}>
-                  اسم المستودع <span className="text-rose-600">*</span>
+                  {t("inventoryRest.warehouses.form.nameLabel")} <span className="text-rose-600">*</span>
                 </span>
                 <input
                   className={fieldCls}
                   value={form.name}
                   disabled={pending}
-                  placeholder="مثال: مستودع المواد الخام — الرياض"
+                  placeholder={t("inventoryRest.warehouses.form.namePlaceholder")}
                   onChange={(e) => set("name", e.target.value)}
                 />
                 {touched && errors.name && (
@@ -169,7 +171,7 @@ export function WarehouseFormDialog({
 
               <label>
                 <span className={labelCls}>
-                  الكود <span className="text-rose-600">*</span>
+                  {t("inventoryRest.warehouses.form.codeLabel")} <span className="text-rose-600">*</span>
                 </span>
                 <input
                   className={`${fieldCls} font-mono uppercase`}
@@ -185,30 +187,30 @@ export function WarehouseFormDialog({
               </label>
 
               <label>
-                <span className={labelCls}>النوع</span>
+                <span className={labelCls}>{t("inventoryRest.warehouses.form.typeLabel")}</span>
                 <select
                   className={fieldCls}
                   value={form.type}
                   disabled={pending}
                   onChange={(e) => set("type", e.target.value)}
                 >
-                  {TYPE_OPTIONS.map((t) => (
-                    <option key={t} value={t}>
-                      {warehouseTypeLabel(t)}
+                  {TYPE_OPTIONS.map((opt) => (
+                    <option key={opt} value={opt}>
+                      {warehouseTypeLabel(t, opt)}
                     </option>
                   ))}
                 </select>
               </label>
 
               <label>
-                <span className={labelCls}>العلامة التجارية</span>
+                <span className={labelCls}>{t("inventoryRest.warehouses.form.brandLabel")}</span>
                 <select
                   className={fieldCls}
                   value={form.brandId}
                   disabled={pending || options.isLoading}
                   onChange={(e) => set("brandId", e.target.value)}
                 >
-                  <option value="">— بدون —</option>
+                  <option value="">{t("inventoryRest.warehouses.form.none")}</option>
                   {(options.data?.brands ?? []).map((b) => (
                     <option key={b.id} value={b.id}>
                       {b.name}
@@ -218,14 +220,14 @@ export function WarehouseFormDialog({
               </label>
 
               <label>
-                <span className={labelCls}>الفرع</span>
+                <span className={labelCls}>{t("inventoryRest.warehouses.form.branchLabel")}</span>
                 <select
                   className={fieldCls}
                   value={form.branchId}
                   disabled={pending || options.isLoading}
                   onChange={(e) => set("branchId", e.target.value)}
                 >
-                  <option value="">— بدون —</option>
+                  <option value="">{t("inventoryRest.warehouses.form.none")}</option>
                   {(options.data?.branches ?? []).map((b) => (
                     <option key={b.id} value={b.id}>
                       {b.name}
@@ -235,23 +237,23 @@ export function WarehouseFormDialog({
               </label>
 
               <label>
-                <span className={labelCls}>الموقع</span>
+                <span className={labelCls}>{t("inventoryRest.warehouses.form.locationLabel")}</span>
                 <input
                   className={fieldCls}
                   value={form.location}
                   disabled={pending}
-                  placeholder="المدينة / الحي"
+                  placeholder={t("inventoryRest.warehouses.form.locationPlaceholder")}
                   onChange={(e) => set("location", e.target.value)}
                 />
               </label>
 
               <label>
-                <span className={labelCls}>المسؤول</span>
+                <span className={labelCls}>{t("inventoryRest.warehouses.form.managerLabel")}</span>
                 <input
                   className={fieldCls}
                   value={form.manager}
                   disabled={pending}
-                  placeholder="اسم أمين المستودع"
+                  placeholder={t("inventoryRest.warehouses.form.managerPlaceholder")}
                   onChange={(e) => set("manager", e.target.value)}
                 />
               </label>
@@ -264,9 +266,9 @@ export function WarehouseFormDialog({
                   disabled={pending}
                   onChange={(e) => set("isMain", e.target.checked)}
                 />
-                <span className="text-sm font-bold text-slate-700">مستودع رئيسي</span>
+                <span className="text-sm font-bold text-slate-700">{t("inventoryRest.warehouses.form.isMain")}</span>
                 <span className="text-xs font-medium text-slate-400">
-                  (يظهر أولًا في القوائم والتقارير)
+                  {t("inventoryRest.warehouses.form.isMainHint")}
                 </span>
               </label>
             </div>

@@ -14,6 +14,7 @@ import {
 } from "@/shared/ui";
 import { DataTable, type ColumnDef } from "@/shared/tables";
 import { formatDateTime } from "@/shared/lib";
+import { useT } from "@/i18n";
 import { asArray } from "../_common";
 
 interface AuditRow {
@@ -38,19 +39,15 @@ interface UserLite {
   fullName: string;
 }
 
-const ACTION_AR: Record<string, string> = {
-  create: "إنشاء",
-  update: "تعديل",
-  delete: "حذف",
-  login: "دخول",
-  logout: "خروج",
-  approve: "اعتماد",
-  reverse: "عكس",
-  post: "ترحيل",
-};
+// Known audit action codes localized under administration.auditLog.action.*;
+// any other code falls back to the raw string from the server.
+const ACTION_KEYS = new Set(["create", "update", "delete", "login", "logout", "approve", "reverse", "post"]);
 
 export default function AuditLogPage() {
+  const t = useT();
   const { toast } = useToast();
+  const actionLabel = (action: string): string =>
+    action && ACTION_KEYS.has(action) ? t(`administration.auditLog.action.${action}`) : action || "—";
   const [from, setFrom] = useState("");
   const [to, setTo] = useState("");
   const [user, setUser] = useState("");
@@ -88,16 +85,16 @@ export default function AuditLogPage() {
     onSuccess: (res) => {
       setVerifyResult(res);
       if (res.success === false) {
-        toast({ title: "تعذّر الفحص", description: res.error, tone: "error" });
+        toast({ title: t("administration.auditLog.verify.toastFailed"), description: res.error, tone: "error" });
       }
     },
-    onError: (e: Error) => toast({ title: "تعذّر فحص السجل", description: e.message, tone: "error" }),
+    onError: (e: Error) => toast({ title: t("administration.auditLog.verify.toastError"), description: e.message, tone: "error" }),
   });
 
   const columns: ColumnDef<AuditRow>[] = [
     {
       id: "createdAt",
-      header: "التاريخ",
+      header: t("administration.auditLog.col.date"),
       accessor: (r) => r.createdAt,
       cell: (r) => formatDateTime(r.createdAt),
       sortable: true,
@@ -105,15 +102,15 @@ export default function AuditLogPage() {
     },
     {
       id: "action",
-      header: "الإجراء",
-      accessor: (r) => ACTION_AR[r.action] ?? r.action,
-      cell: (r) => <Badge tone="teal">{ACTION_AR[r.action] ?? r.action ?? "—"}</Badge>,
+      header: t("administration.auditLog.col.action"),
+      accessor: (r) => actionLabel(r.action),
+      cell: (r) => <Badge tone="teal">{actionLabel(r.action)}</Badge>,
     },
-    { id: "entity", header: "الكيان", accessor: (r) => r.entityType || "—" },
-    { id: "entityId", header: "المرجع", accessor: (r) => r.entityId || "—" },
-    { id: "username", header: "المستخدم", accessor: (r) => r.username || "—", sortable: true },
-    { id: "details", header: "التفاصيل", accessor: (r) => r.details || "—" },
-    { id: "ip", header: "IP", accessor: (r) => r.ipAddress || "—", numeric: true, defaultHidden: true },
+    { id: "entity", header: t("administration.auditLog.col.entity"), accessor: (r) => r.entityType || "—" },
+    { id: "entityId", header: t("administration.auditLog.col.reference"), accessor: (r) => r.entityId || "—" },
+    { id: "username", header: t("administration.auditLog.col.username"), accessor: (r) => r.username || "—", sortable: true },
+    { id: "details", header: t("administration.auditLog.col.details"), accessor: (r) => r.details || "—" },
+    { id: "ip", header: t("administration.auditLog.col.ip"), accessor: (r) => r.ipAddress || "—", numeric: true, defaultHidden: true },
   ];
 
   const filterCtl = (label: string, node: React.ReactNode) => (
@@ -126,12 +123,12 @@ export default function AuditLogPage() {
   return (
     <div>
       <PageHeader
-        eyebrow="الإدارة"
-        title="سجل التدقيق"
-        subtitle="سجل غير قابل للتعديل لكل عملية حسّاسة في النظام."
+        eyebrow={t("administration.eyebrow")}
+        title={t("administration.auditLog.title")}
+        subtitle={t("administration.auditLog.subtitle")}
         action={
           <Button variant="secondary" onClick={() => verify.mutate()} loading={verify.isPending}>
-            <ShieldCheck className="h-4 w-4" /> فحص سلامة السجل
+            <ShieldCheck className="h-4 w-4" /> {t("administration.auditLog.verifyBtn")}
           </Button>
         }
       />
@@ -143,22 +140,22 @@ export default function AuditLogPage() {
         error={query.error}
         onRetry={() => query.refetch()}
         searchable
-        searchPlaceholder="بحث سريع في التفاصيل…"
+        searchPlaceholder={t("administration.auditLog.searchPlaceholder")}
         exportFilename="audit-logs.csv"
         tableId="admin-audit-log"
         initialSort={{ columnId: "createdAt", dir: "desc" }}
         initialPageSize={50}
-        emptyTitle="لا توجد سجلات مطابقة"
-        emptyBody="عدّل عوامل التصفية لعرض سجلات أخرى."
+        emptyTitle={t("administration.auditLog.empty")}
+        emptyBody={t("administration.auditLog.emptyBody")}
         filterBar={
           <div className="flex flex-wrap items-end gap-2">
-            {filterCtl("من", <Input className="w-40" type="date" dir="ltr" value={from} onChange={(e) => setFrom(e.target.value)} />)}
-            {filterCtl("إلى", <Input className="w-40" type="date" dir="ltr" value={to} onChange={(e) => setTo(e.target.value)} />)}
+            {filterCtl(t("administration.auditLog.filter.from"), <Input className="w-40" type="date" dir="ltr" value={from} onChange={(e) => setFrom(e.target.value)} />)}
+            {filterCtl(t("administration.auditLog.filter.to"), <Input className="w-40" type="date" dir="ltr" value={to} onChange={(e) => setTo(e.target.value)} />)}
             {filterCtl(
-              "المستخدم",
+              t("administration.auditLog.filter.user"),
               <div className="w-40">
                 <Select value={user} onChange={(e) => setUser(e.target.value)}>
-                  <option value="">الكل</option>
+                  <option value="">{t("common.all")}</option>
                   {users.map((u) => (
                     <option key={u.username} value={u.username}>
                       {u.fullName || u.username}
@@ -168,10 +165,10 @@ export default function AuditLogPage() {
               </div>,
             )}
             {filterCtl(
-              "الكيان",
+              t("administration.auditLog.filter.entity"),
               <div className="w-40">
                 <Select value={entity} onChange={(e) => setEntity(e.target.value)}>
-                  <option value="">الكل</option>
+                  <option value="">{t("common.all")}</option>
                   {entityOptions.map((x) => (
                     <option key={x} value={x}>
                       {x}
@@ -181,13 +178,13 @@ export default function AuditLogPage() {
               </div>,
             )}
             {filterCtl(
-              "الإجراء",
+              t("administration.auditLog.filter.action"),
               <div className="w-36">
                 <Select value={action} onChange={(e) => setAction(e.target.value)}>
-                  <option value="">الكل</option>
+                  <option value="">{t("common.all")}</option>
                   {actionOptions.map((x) => (
                     <option key={x} value={x}>
-                      {ACTION_AR[x] ?? x}
+                      {actionLabel(x)}
                     </option>
                   ))}
                 </Select>
@@ -205,7 +202,7 @@ export default function AuditLogPage() {
                   setAction("");
                 }}
               >
-                مسح
+                {t("common.clear")}
               </Button>
             )}
           </div>
@@ -215,29 +212,29 @@ export default function AuditLogPage() {
       <Dialog
         open={!!verifyResult}
         onClose={() => setVerifyResult(null)}
-        title="نتيجة فحص سلامة السجل"
+        title={t("administration.auditLog.verify.title")}
         size="md"
         footer={
-          <Button onClick={() => setVerifyResult(null)}>إغلاق</Button>
+          <Button onClick={() => setVerifyResult(null)}>{t("common.close")}</Button>
         }
       >
         {verifyResult && (
           <div className="space-y-3">
             <div className="flex items-center justify-between">
-              <span className="text-sm font-bold text-slate-600">الحالة</span>
+              <span className="text-sm font-bold text-slate-600">{t("administration.auditLog.verify.statusLabel")}</span>
               <StatusBadge tone={verifyResult.verified ? "success" : "danger"}>
-                {verifyResult.verified ? "السلسلة سليمة" : "تم اكتشاف تلاعب"}
+                {verifyResult.verified ? t("administration.auditLog.verify.intact") : t("administration.auditLog.verify.tampered")}
               </StatusBadge>
             </div>
             <div className="flex items-center justify-between">
-              <span className="text-sm font-bold text-slate-600">عدد السجلات المفحوصة</span>
+              <span className="text-sm font-bold text-slate-600">{t("administration.auditLog.verify.checkedLabel")}</span>
               <span className="font-extrabold tabular-nums" dir="ltr">
                 {verifyResult.count ?? 0}
               </span>
             </div>
             {!verifyResult.verified && verifyResult.brokenAt != null && (
               <div className="rounded-xl border border-rose-200 bg-rose-50 px-3 py-2 text-xs font-bold text-rose-700">
-                أول سجل مكسور عند المعرّف #{verifyResult.brokenAt}
+                {t("administration.auditLog.verify.brokenAt", { id: verifyResult.brokenAt })}
               </div>
             )}
           </div>

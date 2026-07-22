@@ -22,6 +22,7 @@ import {
   useToast,
 } from "@/shared/ui";
 import { Field } from "@/shared/forms";
+import { useT, translateApiError } from "@/i18n";
 import { useCan } from "@/app/providers";
 import {
   customerFetcher,
@@ -44,26 +45,26 @@ import {
   type PaymentInput,
   type ReceiptInput,
 } from "../api";
-import { fmt, mapError } from "../components";
+import { fmt } from "../components";
 
 const CREATE_CAP = "banking.vouchers.create" as const;
 const APPROVE_CAP = "banking.vouchers.approve" as const;
 
 export type VoucherKind = "receipt" | "payment";
 
-const PARTY_TYPES: Record<VoucherKind, { value: string; label: string }[]> = {
+const PARTY_TYPES: Record<VoucherKind, { value: string; labelKey: string }[]> = {
   receipt: [
-    { value: "customer", label: "عميل" },
-    { value: "employee", label: "موظف" },
-    { value: "rent", label: "إيجار" },
-    { value: "sales", label: "مبيعات" },
-    { value: "other", label: "أخرى" },
+    { value: "customer", labelKey: "banking.voucherForm.party.customer" },
+    { value: "employee", labelKey: "banking.voucherForm.party.employee" },
+    { value: "rent", labelKey: "banking.voucherForm.party.rent" },
+    { value: "sales", labelKey: "banking.voucherForm.party.sales" },
+    { value: "other", labelKey: "banking.voucherForm.party.other" },
   ],
   payment: [
-    { value: "supplier", label: "مورد" },
-    { value: "employee", label: "موظف" },
-    { value: "expense", label: "مصروف" },
-    { value: "other", label: "أخرى" },
+    { value: "supplier", labelKey: "banking.voucherForm.party.supplier" },
+    { value: "employee", labelKey: "banking.voucherForm.party.employee" },
+    { value: "expense", labelKey: "banking.voucherForm.party.expense" },
+    { value: "other", labelKey: "banking.voucherForm.party.other" },
   ],
 };
 
@@ -89,16 +90,17 @@ export interface VoucherFormProps {
 /** Keeps the Dialog mounted for its exit animation while resetting the body's
  *  state on every open (the body only mounts while `open`). */
 export function VoucherForm({ kind, open, onClose }: VoucherFormProps) {
+  const t = useT();
   return (
     <Dialog
       open={open}
       onClose={onClose}
       size="xl"
-      title={kind === "receipt" ? "سند قبض جديد" : "سند صرف جديد"}
+      title={kind === "receipt" ? t("banking.voucherForm.receiptTitle") : t("banking.voucherForm.paymentTitle")}
       description={
         kind === "receipt"
-          ? "يُحفظ كمسودة ثم يُعتمد لترحيل قيده المحاسبي وإضافة المبلغ للخزينة/البنك."
-          : "يُحفظ كمسودة ثم يُعتمد لترحيل قيده المحاسبي وخصم المبلغ من الخزينة/البنك."
+          ? t("banking.voucherForm.receiptDesc")
+          : t("banking.voucherForm.paymentDesc")
       }
     >
       {open && <VoucherFormBody kind={kind} onClose={onClose} />}
@@ -107,6 +109,7 @@ export function VoucherForm({ kind, open, onClose }: VoucherFormProps) {
 }
 
 function VoucherFormBody({ kind, onClose }: { kind: VoucherKind; onClose: () => void }) {
+  const t = useT();
   const isReceipt = kind === "receipt";
   const { toast } = useToast();
   const canApprove = useCan(APPROVE_CAP);
@@ -220,28 +223,28 @@ function VoucherFormBody({ kind, onClose }: { kind: VoucherKind; onClose: () => 
   type ValidateResult = { manual?: ManualGlLine[]; error?: undefined } | { error: string };
   function validate(): ValidateResult {
     const amt = Number(amount) || 0;
-    if (!amt || amt <= 0) return { error: "أدخل مبلغاً صحيحاً أكبر من صفر." };
+    if (!amt || amt <= 0) return { error: t("banking.voucherForm.validation.amount") };
     if (!channelId)
       return {
         error: isReceipt
-          ? "اختر الخزينة أو الحساب البنكي المستلِم."
-          : "اختر الخزينة أو الحساب البنكي الدافع.",
+          ? t("banking.voucherForm.validation.channelReceipt")
+          : t("banking.voucherForm.validation.channelPayment"),
       };
     if (showExpensePicker && !expenseAccount)
-      return { error: "اختر حساب المصروف من شجرة الحسابات." };
+      return { error: t("banking.voucherForm.validation.expenseAccount") };
     if (!manualOn) return {};
 
     const filled = manualRows.filter((r) => r.account || r.debit || r.credit);
-    if (filled.length < 2) return { error: "القيد اليدوي يحتاج سطرين على الأقل." };
+    if (filled.length < 2) return { error: t("banking.voucherForm.validation.manualMinRows") };
     for (const r of filled) {
-      if (!r.account) return { error: "كل سطر في القيد اليدوي يحتاج حساباً." };
+      if (!r.account) return { error: t("banking.voucherForm.validation.manualRowAccount") };
       const d = Number(r.debit) || 0;
       const c = Number(r.credit) || 0;
-      if (d > 0 && c > 0) return { error: "لا يمكن أن يكون السطر مديناً ودائناً معاً." };
-      if (d === 0 && c === 0) return { error: "كل سطر يحتاج مبلغاً مديناً أو دائناً." };
+      if (d > 0 && c > 0) return { error: t("banking.voucherForm.validation.manualDrCr") };
+      if (d === 0 && c === 0) return { error: t("banking.voucherForm.validation.manualRowAmount") };
     }
-    if (!totals.balanced) return { error: "القيد اليدوي غير متوازن — المدين لا يساوي الدائن." };
-    if (!totals.matches) return { error: "إجمالي القيد اليدوي يجب أن يساوي مبلغ السند." };
+    if (!totals.balanced) return { error: t("banking.voucherForm.validation.manualUnbalanced") };
+    if (!totals.matches) return { error: t("banking.voucherForm.validation.manualMismatch") };
 
     const manual: ManualGlLine[] = filled.map((r) => ({
       accountId: r.account!.id,
@@ -289,7 +292,7 @@ function VoucherFormBody({ kind, onClose }: { kind: VoucherKind; onClose: () => 
   async function submit(approveAfter: boolean) {
     const v = validate();
     if ("error" in v) {
-      const msg = v.error ?? "بيانات غير صالحة";
+      const msg = v.error ?? t("banking.voucherForm.validation.invalid");
       setFormError(msg);
       toast({ tone: "error", title: msg });
       return;
@@ -301,7 +304,7 @@ function VoucherFormBody({ kind, onClose }: { kind: VoucherKind; onClose: () => 
         ? await createReceipt.mutateAsync(payload as ReceiptInput)
         : await createPayment.mutateAsync(payload as PaymentInput);
       if (res && res.success === false) {
-        const msg = mapError(new Error(res.error));
+        const msg = translateApiError(new Error(res.error), t);
         setFormError(msg);
         toast({ tone: "error", title: msg });
         return;
@@ -315,46 +318,50 @@ function VoucherFormBody({ kind, onClose }: { kind: VoucherKind; onClose: () => 
           // Draft saved but posting failed — it stays in the register to approve there.
           toast({
             tone: "warning",
-            title: "حُفظ السند كمسودة، وتعذّر اعتماده",
-            description: mapError(new Error(ar.error)),
+            title: t("banking.voucherForm.toast.savedDraftApproveFailed"),
+            description: translateApiError(new Error(ar.error), t),
           });
           onClose();
           return;
         }
         toast({
           tone: "success",
-          title: isReceipt ? "تم حفظ سند القبض واعتماده" : "تم حفظ سند الصرف واعتماده",
+          title: isReceipt
+            ? t("banking.voucherForm.toast.receiptSavedApproved")
+            : t("banking.voucherForm.toast.paymentSavedApproved"),
         });
       } else {
         toast({
           tone: "success",
-          title: isReceipt ? "تم حفظ سند القبض كمسودة" : "تم حفظ سند الصرف كمسودة",
+          title: isReceipt
+            ? t("banking.voucherForm.toast.receiptSavedDraft")
+            : t("banking.voucherForm.toast.paymentSavedDraft"),
         });
       }
       onClose();
     } catch (e) {
-      const msg = mapError(e);
+      const msg = translateApiError(e, t);
       setFormError(msg);
       toast({ tone: "error", title: msg });
     }
   }
 
-  const channelLabel = isReceipt ? "الجهة المستلِمة" : "الجهة الدافعة";
-  const partyLabel = isReceipt ? "المصدر" : "المستفيد";
+  const channelLabel = isReceipt ? t("banking.voucherForm.channelLabelReceipt") : t("banking.voucherForm.channelLabelPayment");
+  const partyLabel = isReceipt ? t("banking.shared.source") : t("banking.shared.beneficiary");
 
   return (
     <div className="space-y-5">
       {/* Core fields */}
       <div className="grid gap-4 sm:grid-cols-2">
-        <Field label="التاريخ" required>
+        <Field label={t("banking.shared.date")} required>
           <DatePicker value={date} onChange={setDate} />
         </Field>
-        <Field label="المبلغ" required>
+        <Field label={t("banking.shared.amount")} required>
           <CurrencyInput
             value={amount}
             onChange={setAmount}
             invalid={!!formError && !(Number(amount) > 0)}
-            aria-label="المبلغ"
+            aria-label={t("banking.shared.amount")}
           />
         </Field>
 
@@ -366,8 +373,8 @@ function VoucherFormBody({ kind, onClose }: { kind: VoucherKind; onClose: () => 
               value={channel}
               onChange={selectChannel}
               options={[
-                { value: "cash", label: "صندوق" },
-                { value: "bank", label: "بنك" },
+                { value: "cash", label: t("banking.shared.cashLabel") },
+                { value: "bank", label: t("banking.shared.bankLabel") },
               ]}
             />
             <Select
@@ -377,7 +384,7 @@ function VoucherFormBody({ kind, onClose }: { kind: VoucherKind; onClose: () => 
               disabled={channel === "cash" ? cashBoxes.isLoading : bankAccounts.isLoading}
             >
               <option value="">
-                {channel === "cash" ? "— اختر الخزينة —" : "— اختر الحساب البنكي —"}
+                {channel === "cash" ? t("banking.voucherForm.selectCashbox") : t("banking.voucherForm.selectBankAccount")}
               </option>
               {channelOptions.map((o) => (
                 <option key={o.value} value={o.value}>
@@ -389,12 +396,12 @@ function VoucherFormBody({ kind, onClose }: { kind: VoucherKind; onClose: () => 
         </Field>
 
         {/* party type + picker / free-text name */}
-        <Field label={`نوع ${partyLabel}`}>
+        <Field label={t("banking.voucherForm.partyTypeLabel", { party: partyLabel })}>
           <div className="space-y-2">
             <Select value={partyType} onChange={(e) => selectPartyType(e.target.value)}>
-              {partyTypes.map((t) => (
-                <option key={t.value} value={t.value}>
-                  {t.label}
+              {partyTypes.map((pt) => (
+                <option key={pt.value} value={pt.value}>
+                  {t(pt.labelKey)}
                 </option>
               ))}
             </Select>
@@ -407,13 +414,13 @@ function VoucherFormBody({ kind, onClose }: { kind: VoucherKind; onClose: () => 
                 getKey={(p) => p.id}
                 getLabel={(p) => p.name}
                 getSublabel={(p) => p.phone ?? undefined}
-                placeholder={isReceipt ? "ابحث عن عميل…" : "ابحث عن مورد…"}
+                placeholder={isReceipt ? t("banking.voucherForm.searchCustomer") : t("banking.voucherForm.searchSupplier")}
                 ariaLabel={partyLabel}
               />
             )}
             {showExpensePicker &&
               (coa.isLoading ? (
-                <p className="text-[11px] font-bold text-slate-400">جارٍ تحميل شجرة الحسابات…</p>
+                <p className="text-[11px] font-bold text-slate-400">{t("banking.voucherForm.loadingCoa")}</p>
               ) : (
                 <SearchableEntityCombobox<CoaAccount>
                   value={expenseAccount}
@@ -422,15 +429,15 @@ function VoucherFormBody({ kind, onClose }: { kind: VoucherKind; onClose: () => 
                   queryKey={["banking-expense-acc", postable.length]}
                   getKey={(a) => a.id}
                   getLabel={(a) => `${a.code} — ${a.nameAr}`}
-                  placeholder="ابحث عن حساب المصروف…"
-                  ariaLabel="حساب المصروف"
+                  placeholder={t("banking.voucherForm.searchExpenseAccount")}
+                  ariaLabel={t("banking.voucherForm.expenseAccount")}
                 />
               ))}
             <Input
               value={partyName}
               onChange={(e) => setPartyName(e.target.value)}
-              placeholder={`اسم ${partyLabel} (اختياري)`}
-              aria-label={`اسم ${partyLabel}`}
+              placeholder={t("banking.voucherForm.partyNamePlaceholder", { party: partyLabel })}
+              aria-label={t("banking.voucherForm.partyNameAria", { party: partyLabel })}
             />
           </div>
         </Field>
@@ -438,19 +445,19 @@ function VoucherFormBody({ kind, onClose }: { kind: VoucherKind; onClose: () => 
 
       {/* Reference + description */}
       <div className="grid gap-4 sm:grid-cols-2">
-        <Field label="المرجع">
+        <Field label={t("banking.voucherForm.reference")}>
           <Input value={reference} onChange={(e) => setReference(e.target.value)} dir="ltr" />
         </Field>
-        <Field label="البيان">
+        <Field label={t("banking.voucherForm.statement")}>
           <Input value={description} onChange={(e) => setDescription(e.target.value)} />
         </Field>
       </div>
 
       {/* Optional dimensions */}
       <div className="grid gap-4 sm:grid-cols-3">
-        <Field label="البراند">
+        <Field label={t("banking.voucherForm.brand")}>
           <Select value={brandId} onChange={(e) => setBrandId(e.target.value)}>
-            <option value="">— الكل —</option>
+            <option value="">{t("banking.shared.allOption")}</option>
             {(brands.data ?? []).map((b) => (
               <option key={b.id} value={b.id}>
                 {b.label}
@@ -458,9 +465,9 @@ function VoucherFormBody({ kind, onClose }: { kind: VoucherKind; onClose: () => 
             ))}
           </Select>
         </Field>
-        <Field label="الفرع">
+        <Field label={t("banking.shared.branch")}>
           <Select value={branchId} onChange={(e) => setBranchId(e.target.value)}>
-            <option value="">— الكل —</option>
+            <option value="">{t("banking.shared.allOption")}</option>
             {(branches.data ?? []).map((b) => (
               <option key={b.id} value={b.id}>
                 {b.label}
@@ -468,9 +475,9 @@ function VoucherFormBody({ kind, onClose }: { kind: VoucherKind; onClose: () => 
             ))}
           </Select>
         </Field>
-        <Field label="مركز التكلفة">
+        <Field label={t("banking.voucherForm.costCenter")}>
           <Select value={costCenterId} onChange={(e) => setCostCenterId(e.target.value)}>
-            <option value="">— بدون —</option>
+            <option value="">{t("banking.voucherForm.noneOption")}</option>
             {(costCenters.data ?? []).map((c) => (
               <option key={c.id} value={c.id}>
                 {c.label}
@@ -484,9 +491,9 @@ function VoucherFormBody({ kind, onClose }: { kind: VoucherKind; onClose: () => 
       <div className="rounded-2xl border border-slate-200 bg-slate-50/60 p-4">
         <label className="flex items-center gap-3">
           <Toggle checked={manualOn} onChange={setManualOn} />
-          <span className="text-sm font-bold text-slate-700">قيد يدوي (اختياري)</span>
+          <span className="text-sm font-bold text-slate-700">{t("banking.voucherForm.manualToggle")}</span>
           <span className="text-[11px] font-medium text-slate-400">
-            حدّد المدين/الدائن بنفسك بدل التوجيه التلقائي — يجب أن يوازن مبلغ السند.
+            {t("banking.voucherForm.manualHint")}
           </span>
         </label>
 
@@ -500,10 +507,10 @@ function VoucherFormBody({ kind, onClose }: { kind: VoucherKind; onClose: () => 
                   <table className="w-full min-w-[40rem] text-sm">
                     <thead>
                       <tr className="border-b border-slate-200 text-[11px] font-extrabold text-slate-500">
-                        <th className="px-2 py-2 text-right">الحساب</th>
-                        <th className="px-2 py-2 text-left">مدين</th>
-                        <th className="px-2 py-2 text-left">دائن</th>
-                        <th className="px-2 py-2 text-right">البيان</th>
+                        <th className="px-2 py-2 text-right">{t("banking.voucherForm.manual.account")}</th>
+                        <th className="px-2 py-2 text-left">{t("banking.voucherForm.manual.debit")}</th>
+                        <th className="px-2 py-2 text-left">{t("banking.voucherForm.manual.credit")}</th>
+                        <th className="px-2 py-2 text-right">{t("banking.voucherForm.statement")}</th>
                         <th className="px-2 py-2" />
                       </tr>
                     </thead>
@@ -518,35 +525,35 @@ function VoucherFormBody({ kind, onClose }: { kind: VoucherKind; onClose: () => 
                               queryKey={["banking-manual-acc", postable.length]}
                               getKey={(a) => a.id}
                               getLabel={(a) => `${a.code} — ${a.nameAr}`}
-                              placeholder="ابحث عن حساب…"
-                              ariaLabel="حساب السطر"
+                              placeholder={t("banking.voucherForm.searchAccount")}
+                              ariaLabel={t("banking.voucherForm.manual.rowAccountAria")}
                             />
                           </td>
                           <td className="px-2 py-2 w-36">
                             <CurrencyInput
                               value={r.debit ?? null}
                               onChange={(n) => setRowDebit(r.key, n)}
-                              aria-label="مدين"
+                              aria-label={t("banking.voucherForm.manual.debit")}
                             />
                           </td>
                           <td className="px-2 py-2 w-36">
                             <CurrencyInput
                               value={r.credit ?? null}
                               onChange={(n) => setRowCredit(r.key, n)}
-                              aria-label="دائن"
+                              aria-label={t("banking.voucherForm.manual.credit")}
                             />
                           </td>
                           <td className="px-2 py-2 min-w-[10rem]">
                             <Input
                               value={r.description}
                               onChange={(e) => patchRow(r.key, { description: e.target.value })}
-                              placeholder="بيان السطر"
-                              aria-label="بيان السطر"
+                              placeholder={t("banking.voucherForm.manual.rowStatement")}
+                              aria-label={t("banking.voucherForm.manual.rowStatement")}
                             />
                           </td>
                           <td className="px-2 py-2 w-10 text-left">
                             <IconButton
-                              aria-label="حذف السطر"
+                              aria-label={t("banking.voucherForm.manual.removeRow")}
                               size="sm"
                               onClick={() => removeRow(r.key)}
                             >
@@ -558,7 +565,7 @@ function VoucherFormBody({ kind, onClose }: { kind: VoucherKind; onClose: () => 
                     </tbody>
                     <tfoot>
                       <tr className="border-t border-slate-200 bg-white text-xs font-extrabold">
-                        <td className="px-2 py-2.5 text-right">الإجمالي</td>
+                        <td className="px-2 py-2.5 text-right">{t("banking.voucherForm.manual.total")}</td>
                         <td className="px-2 py-2.5 text-left">
                           <span dir="ltr" className="tabular-nums text-slate-800">
                             {fmt(totals.dr)}
@@ -572,18 +579,18 @@ function VoucherFormBody({ kind, onClose }: { kind: VoucherKind; onClose: () => 
                         <td className="px-2 py-2.5" colSpan={2}>
                           {totals.balanced && totals.matches ? (
                             <span className="font-extrabold text-emerald-600">
-                              متوازن ويطابق مبلغ السند
+                              {t("banking.voucherForm.manual.balancedMatches")}
                             </span>
                           ) : !totals.balanced ? (
                             <span className="font-extrabold text-rose-600">
-                              غير متوازن — الفرق:{" "}
+                              {t("banking.voucherForm.manual.unbalancedDiff")}{" "}
                               <span dir="ltr" className="tabular-nums">
                                 {fmt(totals.diff)}
                               </span>
                             </span>
                           ) : (
                             <span className="font-extrabold text-amber-600">
-                              الإجمالي لا يطابق مبلغ السند
+                              {t("banking.voucherForm.manual.totalMismatch")}
                             </span>
                           )}
                         </td>
@@ -593,7 +600,7 @@ function VoucherFormBody({ kind, onClose }: { kind: VoucherKind; onClose: () => 
                 </div>
                 <div className="mt-3">
                   <Button variant="secondary" size="sm" onClick={addRow}>
-                    <Plus className="h-4 w-4" /> إضافة سطر
+                    <Plus className="h-4 w-4" /> {t("banking.voucherForm.manual.addRow")}
                   </Button>
                 </div>
               </>
@@ -611,14 +618,14 @@ function VoucherFormBody({ kind, onClose }: { kind: VoucherKind; onClose: () => 
       {/* Actions */}
       <div className="flex flex-wrap items-center justify-end gap-2 border-t border-slate-100 pt-4">
         <Button variant="secondary" onClick={onClose} disabled={busy}>
-          إلغاء
+          {t("common.cancel")}
         </Button>
         <Button variant="secondary" onClick={() => submit(false)} loading={busy}>
-          حفظ كمسودة
+          {t("banking.voucherForm.saveDraft")}
         </Button>
         {canApprove && (
           <Button variant="primary" onClick={() => submit(true)} loading={busy}>
-            حفظ واعتماد
+            {t("banking.voucherForm.saveApprove")}
           </Button>
         )}
       </div>

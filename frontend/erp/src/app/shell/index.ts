@@ -8,6 +8,7 @@ export { CompanyBranchSelect } from "./CompanyBranchSelect";
 export { NotificationCenter } from "./NotificationCenter";
 export { ApprovalsInbox } from "./ApprovalsInbox";
 export { UserMenu } from "./UserMenu";
+export { LanguageToggle } from "./LanguageToggle";
 export { GlobalSearch } from "./GlobalSearch";
 export { CapGuard } from "./CapGuard";
 export { NotFound } from "./NotFound";

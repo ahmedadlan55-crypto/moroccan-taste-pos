@@ -253,6 +253,42 @@ export const accounting = {
     closingCol: "رصيد آخر المدة",
     balanced: "الميزان متوازن — إجمالي المدين = إجمالي الدائن",
     unbalanced: "تنبيه: الميزان غير متوازن",
+    // Three independent balance chips + the not-Clean banner rendered by
+    // <BalanceStatus>. `balanced`/`unbalanced` take the chip scope via {scope}.
+    balanceStatus: {
+      balanced: "متوازن — {scope}",
+      unbalanced: "غير متوازن — {scope}",
+      opening: "أول المدة",
+      period: "حركة الفترة",
+      closing: "آخر المدة",
+      notClean: "تنبيه: التقرير غير Clean — راجع بنود التشخيص أدناه",
+    },
+    // <DiagnosticsPanel> — one label per diagnostic bucket the server reports,
+    // plus the inline detail labels used inside each bucket's row list.
+    diagnostics: {
+      nullAccountOpening: "قيود بحساب غير معروف (NULL) — ضمن رصيد أول المدة",
+      nullAccountPeriod: "قيود بحساب غير معروف (NULL) — ضمن حركة الفترة",
+      danglingAccountOpening: "قيود بحساب غير موجود إطلاقًا في دليل الحسابات (account_id لا يطابق أي حساب) — ضمن رصيد أول المدة",
+      danglingAccountPeriod: "قيود بحساب غير موجود إطلاقًا في دليل الحسابات (account_id لا يطابق أي حساب) — ضمن حركة الفترة",
+      futureDatedOpening: "قيود افتتاحية مؤرَّخة بعد بداية الفترة (مستبعدة من رصيد أول المدة)",
+      orphanAccounts: "حسابات بأب غير موجود (parent_id لا يطابق حسابًا فعليًا)",
+      nonLeafPosting: "ترحيل مباشر على حساب Folder أو Parent له أبناء (مخالف للسياسة)",
+      cycleAccounts: "دورة في شجرة الحسابات (Parent يعود لأحد أبنائه)",
+      levelMismatches: "اختلاف المستوى المخزَّن عن عمق الشجرة الفعلي",
+      unbalancedJournals: "قيود مُرحَّلة غير متوازنة فرديًا (رأس القيد نفسه)",
+      headerLineMismatches: "عدم تطابق رأس القيد مع مجموع سطوره الفعلية",
+      lineCount: "عدد السطور:",
+      journalCount: "عدد القيود:",
+      debit: "مدين:",
+      credit: "دائن:",
+      opening: "أول المدة:",
+      period: "الفترة:",
+      storedLevel: "مخزَّن",
+      computedLevel: "فعلي",
+      header: "رأس:",
+      lines: "سطور:",
+      grossNote: "رصيد أول المدة الخام (grossHistoricalMovement، للاطلاع فقط، ليس رصيد أول المدة):",
+    },
   },
 
   // ── Income Statement ───────────────────────────────────────────────────────

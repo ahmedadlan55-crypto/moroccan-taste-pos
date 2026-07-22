@@ -237,6 +237,41 @@ export const accounting = {
     closingCol: "Closing balance",
     balanced: "The trial balance is balanced — total debit = total credit",
     unbalanced: "Warning: the trial balance is not balanced",
+    balanceStatus: {
+      balanced: "Balanced — {scope}",
+      unbalanced: "Not balanced — {scope}",
+      opening: "opening balance",
+      period: "period movement",
+      closing: "closing balance",
+      notClean: "Warning: this report is not Clean — review the diagnostic items below",
+    },
+    diagnostics: {
+      nullAccountOpening: "Entries whose account is unknown (NULL) — within the opening balance",
+      nullAccountPeriod: "Entries whose account is unknown (NULL) — within the period movement",
+      danglingAccountOpening:
+        "Entries posted to an account that does not exist in the chart of accounts (account_id matches no account) — within the opening balance",
+      danglingAccountPeriod:
+        "Entries posted to an account that does not exist in the chart of accounts (account_id matches no account) — within the period movement",
+      futureDatedOpening: "Opening entries dated after the start of the period (excluded from the opening balance)",
+      orphanAccounts: "Accounts whose parent does not exist (parent_id matches no actual account)",
+      nonLeafPosting: "Direct posting to a folder or a parent account that has children (against policy)",
+      cycleAccounts: "Cycle in the account tree (a parent points back to one of its own children)",
+      levelMismatches: "Stored level differs from the actual depth in the tree",
+      unbalancedJournals: "Posted journals that are unbalanced on their own (the journal header itself)",
+      headerLineMismatches: "Journal header does not agree with the sum of its actual lines",
+      lineCount: "Line count:",
+      journalCount: "Journal count:",
+      debit: "Debit:",
+      credit: "Credit:",
+      opening: "Opening:",
+      period: "Period:",
+      storedLevel: "stored",
+      computedLevel: "actual",
+      header: "Header:",
+      lines: "Lines:",
+      grossNote:
+        "Gross historical movement (grossHistoricalMovement — for reference only; this is not the opening balance):",
+    },
   },
 
   incomeStatement: {

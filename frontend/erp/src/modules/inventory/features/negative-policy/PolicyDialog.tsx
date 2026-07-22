@@ -10,10 +10,11 @@ import { useQueryClient } from "@tanstack/react-query";
 import { Button, FullPageFlow, Spinner } from "@/shared/ui";
 import { useAuth } from "@/app/providers";
 import { ApiError } from "@/shared/api";
+import { useT } from "@/i18n";
 import { queryKeys } from "@/modules/inventory/lib/query-keys";
 import { useSavePolicy } from "@/modules/inventory/lib/hooks/useNegativePolicy";
 import type { PolicyMode, PolicyRow, PolicyScope } from "@/modules/inventory/lib/adapters/negative-policy.adapter";
-import { POLICY_LABELS, SCOPE_LABELS } from "./labels";
+import { policyLabel, scopeLabel } from "./labels";
 import { ToggleField } from "./shared";
 import { ItemSearchSelect, type ItemOption } from "./ItemSearchSelect";
 
@@ -28,13 +29,8 @@ export interface PolicyDialogProps {
   allowEnabled: boolean;
 }
 
-const TITLES: Record<PolicyScope, string> = {
-  global: "السياسة العامة للمخزون السالب",
-  warehouse: "سياسة مستودع",
-  item: "سياسة صنف داخل مستودع",
-};
-
 export function PolicyDialog({ open, onClose, scope, row = null, warehouseOptions, allowEnabled }: PolicyDialogProps) {
+  const t = useT();
   const { user } = useAuth();
   const isDeveloper = !!user?.isDeveloper;
   const qc = useQueryClient();
@@ -68,16 +64,16 @@ export function PolicyDialog({ open, onClose, scope, row = null, warehouseOption
   function submit() {
     setClientError(null);
     if (scope !== "global" && !warehouseId) {
-      setClientError("اختر المستودع أولًا.");
+      setClientError(t("inventoryRest.negativePolicy.dialog.pickWarehouseFirst"));
       return;
     }
     if (scope === "item" && !item) {
-      setClientError("اختر الصنف أولًا.");
+      setClientError(t("inventoryRest.negativePolicy.dialog.pickItemFirst"));
       return;
     }
     const maxN = Number(maxQty);
     if (policy === "controlled" && (!Number.isFinite(maxN) || maxN < 0)) {
-      setClientError("الحد الأقصى للعجز يجب أن يكون رقمًا ≥ 0.");
+      setClientError(t("inventoryRest.negativePolicy.dialog.maxDeficitInvalid"));
       return;
     }
     save.mutate(
@@ -103,7 +99,7 @@ export function PolicyDialog({ open, onClose, scope, row = null, warehouseOption
   const err = save.error;
   const apiErr = err instanceof ApiError ? err : null;
   const isConflict = !!apiErr?.isConflict;
-  const errorMessage = err ? (err instanceof Error ? err.message : "حدث خطأ غير متوقع") : clientError;
+  const errorMessage = err ? (err instanceof Error ? err.message : t("inventoryRest.negativePolicy.dialog.unexpectedError")) : clientError;
 
   // A non-developer editing a stored `allow` row keeps seeing the current
   // value (disabled) — saving it as-is would 403, so the hint nudges a switch.
@@ -113,24 +109,24 @@ export function PolicyDialog({ open, onClose, scope, row = null, warehouseOption
     <FullPageFlow
       open={open}
       onClose={onClose}
-      title={TITLES[scope]}
-      description={row?.version != null ? `الإصدار ${row.version} — تُحفظ التغييرات مع التحقق من عدم وجود تعديل متزامن.` : "حدد قواعد التعامل مع الرصيد السالب بوضوح لهذا النطاق."}
-      eyebrow={`سياسات المخزون · نطاق ${SCOPE_LABELS[scope]}`}
+      title={t(`inventoryRest.negativePolicy.dialogTitle.${scope}`)}
+      description={row?.version != null ? t("inventoryRest.negativePolicy.dialog.descVersion", { version: row.version }) : t("inventoryRest.negativePolicy.dialog.descNew")}
+      eyebrow={t("inventoryRest.negativePolicy.dialog.eyebrow", { scope: scopeLabel(t, scope) })}
       icon={ShieldAlert}
       size="sm"
       dismissable={!processing}
       footer={
         <>
           <Button variant="secondary" onClick={onClose} disabled={processing}>
-            إلغاء
+            {t("common.cancel")}
           </Button>
           <Button variant="primary" onClick={submit} disabled={processing}>
             {processing ? (
               <>
-                <Spinner className="h-4 w-4" /> جارٍ الحفظ…
+                <Spinner className="h-4 w-4" /> {t("inventoryRest.ui.saving")}
               </>
             ) : (
-              "حفظ السياسة"
+              t("inventoryRest.negativePolicy.dialog.save")
             )}
           </Button>
         </>
@@ -141,7 +137,7 @@ export function PolicyDialog({ open, onClose, scope, row = null, warehouseOption
                 {scope !== "global" && (
                   <label className="block">
                     <span className="text-xs font-bold text-slate-600">
-                      المستودع <span className="text-rose-600">*</span>
+                      {t("inventoryRest.negativePolicy.col.warehouse")} <span className="text-rose-600">*</span>
                     </span>
                     {editing ? (
                       <div className="field mt-1 flex items-center bg-slate-50 text-slate-500">
@@ -154,7 +150,7 @@ export function PolicyDialog({ open, onClose, scope, row = null, warehouseOption
                         disabled={processing}
                         onChange={(e) => setWarehouseId(e.target.value)}
                       >
-                        <option value="">اختر المستودع…</option>
+                        <option value="">{t("inventoryRest.negativePolicy.pickWarehouse")}</option>
                         {warehouseOptions.map((w) => (
                           <option key={w.id} value={w.id}>{w.name}</option>
                         ))}
@@ -166,36 +162,36 @@ export function PolicyDialog({ open, onClose, scope, row = null, warehouseOption
                 {scope === "item" && (
                   <div>
                     <span className="text-xs font-bold text-slate-600">
-                      الصنف <span className="text-rose-600">*</span>
+                      {t("inventoryRest.negativePolicy.col.item")} <span className="text-rose-600">*</span>
                     </span>
                     <div className="mt-1">
                       <ItemSearchSelect value={item} onChange={setItem} disabled={editing || processing} />
                     </div>
                     <p className="mt-1 text-[11px] font-medium leading-4 text-slate-400">
-                      الأصناف المتتبَّعة (دفعات/صلاحية) تُمنع دائمًا — سيرفض الخادم أي سياسة غير «منع» لها.
+                      {t("inventoryRest.negativePolicy.dialog.trackedItemHint")}
                     </p>
                   </div>
                 )}
 
                 <label className="block">
-                  <span className="text-xs font-bold text-slate-600">السياسة</span>
+                  <span className="text-xs font-bold text-slate-600">{t("inventoryRest.negativePolicy.col.policy")}</span>
                   <select
                     className="field mt-1"
                     value={policy}
                     disabled={processing}
                     onChange={(e) => setPolicy(e.target.value as PolicyMode)}
                   >
-                    <option value="block">{POLICY_LABELS.block}</option>
-                    <option value="controlled">{POLICY_LABELS.controlled}</option>
+                    <option value="block">{policyLabel(t, "block")}</option>
+                    <option value="controlled">{policyLabel(t, "controlled")}</option>
                     {showAllowOption && (
                       <option value="allow" disabled={!isDeveloper}>
-                        {POLICY_LABELS.allow} — للمطوّر فقط
+                        {policyLabel(t, "allow")} — {t("inventoryRest.negativePolicy.dialog.developerOnlySuffix")}
                       </option>
                     )}
                   </select>
                   {policy === "allow" && !allowEnabled && (
                     <span className="mt-1 block rounded-lg bg-amber-50 px-2 py-1 text-[11px] font-bold text-amber-700">
-                      بوابة NEGATIVE_STOCK_ALLOW_ENABLED معطّلة — ستعمل هذه السياسة فعليًا كـ«مقيّد».
+                      {t("inventoryRest.negativePolicy.dialog.allowGateWarning")}
                     </span>
                   )}
                 </label>
@@ -203,7 +199,7 @@ export function PolicyDialog({ open, onClose, scope, row = null, warehouseOption
                 {policy === "controlled" && (
                   <label className="block">
                     <span className="text-xs font-bold text-slate-600">
-                      الحد الأقصى للعجز <span className="text-rose-600">*</span>
+                      {t("inventoryRest.negativePolicy.col.maxDeficit")} <span className="text-rose-600">*</span>
                     </span>
                     <input
                       type="number"
@@ -214,24 +210,24 @@ export function PolicyDialog({ open, onClose, scope, row = null, warehouseOption
                       value={maxQty}
                       disabled={processing}
                       onChange={(e) => setMaxQty(e.target.value)}
-                      aria-label="الحد الأقصى للعجز"
+                      aria-label={t("inventoryRest.negativePolicy.col.maxDeficit")}
                     />
                     <span className="mt-1 block text-[11px] font-medium text-slate-400">
-                      أقصى كمية مسموح بها تحت الصفر (بوحدة الصنف). صفر يعني عدم السماح بأي عجز فعليًا.
+                      {t("inventoryRest.negativePolicy.dialog.maxDeficitHint")}
                     </span>
                   </label>
                 )}
 
                 <ToggleField
-                  label="سبب إلزامي"
-                  hint="يُطلب سبب نصي عند كل عملية صرف تُنشئ عجزًا."
+                  label={t("inventoryRest.negativePolicy.col.requireReason")}
+                  hint={t("inventoryRest.negativePolicy.dialog.requireReasonHint")}
                   checked={requireReason}
                   disabled={processing}
                   onChange={setRequireReason}
                 />
                 <ToggleField
-                  label="الصف مفعّل"
-                  hint="تعطيل الصف يجعله غير مُعتبر في القرار الفعلي دون حذفه."
+                  label={t("inventoryRest.negativePolicy.dialog.rowEnabledLabel")}
+                  hint={t("inventoryRest.negativePolicy.dialog.rowEnabledHint")}
                   checked={isEnabled}
                   disabled={processing}
                   onChange={setIsEnabled}
@@ -243,7 +239,7 @@ export function PolicyDialog({ open, onClose, scope, row = null, warehouseOption
                   <span className="min-w-0 flex-1">{errorMessage}</span>
                   {isConflict && (
                     <Button variant="secondary" size="sm" onClick={refreshAfterConflict}>
-                      <RefreshCw className="h-3.5 w-3.5" /> تحديث
+                      <RefreshCw className="h-3.5 w-3.5" /> {t("inventoryRest.ui.refresh")}
                     </Button>
                   )}
                 </div>

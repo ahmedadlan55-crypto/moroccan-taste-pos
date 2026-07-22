@@ -4,28 +4,26 @@ import { ArrowRight, Download, Printer, ArrowUpDown, AlertTriangle } from "lucid
 import { PageHeader } from "@/shared/ui";
 import { Button } from "@/shared/ui";
 import { LoadingState, EmptyState, ErrorState } from "@/shared/ui";
+import { useT, translateApiError } from "@/i18n";
+import type { TFunction } from "@/i18n";
 import { useWarehouseScope, ALL_WAREHOUSES } from "@/modules/inventory/lib/warehouse-scope-provider";
 import { useReport } from "@/modules/inventory/lib/hooks/useReport";
 import { downloadReportCsv } from "@/shared/lib";
 import { formatCurrency, formatNumber, formatQty, formatDate, formatDateTime } from "@/shared/lib";
 import { REPORTS, type ColFormat, type ReportColumn } from "@/modules/inventory/lib/reports-config";
 
-const STATUS_OPTIONS: Record<string, { value: string; label: string }[]> = {
-  "stock-balance": [
-    { value: "available", label: "متوفر" }, { value: "low", label: "منخفض" },
-    { value: "out", label: "نافد" }, { value: "negative", label: "سالب" },
-  ],
-  transfers: [
-    { value: "approved", label: "معتمد" }, { value: "issued", label: "مُصدر" },
-    { value: "partially_received", label: "استلام جزئي" }, { value: "received", label: "مستلم" },
-    { value: "cancelled", label: "ملغى" }, { value: "reversed", label: "معكوس" },
-  ],
-  "receipts-issues": [
-    { value: "approved", label: "معتمد" }, { value: "issued", label: "مُصدر" },
-    { value: "received", label: "مستلم" }, { value: "cancelled", label: "ملغى" },
-  ],
-  adjustments: [{ value: "pending", label: "بانتظار" }, { value: "approved", label: "معتمد" }],
+// Status filter option VALUES per report; labels resolve via
+// inventoryRest.reports.statusFilter.<key> (partially_received → partiallyReceived).
+const STATUS_OPTION_VALUES: Record<string, string[]> = {
+  "stock-balance": ["available", "low", "out", "negative"],
+  transfers: ["approved", "issued", "partially_received", "received", "cancelled", "reversed"],
+  "receipts-issues": ["approved", "issued", "received", "cancelled"],
+  adjustments: ["pending", "approved"],
 };
+const STATUS_KEY_MAP: Record<string, string> = { partially_received: "partiallyReceived" };
+function statusFilterLabel(t: TFunction, v: string): string {
+  return t(`inventoryRest.reports.statusFilter.${STATUS_KEY_MAP[v] ?? v}`);
+}
 
 function fmt(v: unknown, format?: ColFormat): string {
   const numeric = format === "currency" || format === "qty" || format === "number";
@@ -41,6 +39,8 @@ function fmt(v: unknown, format?: ColFormat): string {
 }
 
 function StatusPill({ label }: { label: string }) {
+  // Classify the server-provided (Arabic) status text for tone. These literals
+  // match business DATA, not UI copy — they are never rendered.
   const bad = /سالب|نافد|منتهٍ|حرج|مرفوض|ملغى/.test(label);
   const warn = /منخفض|قريب|جزئي|بانتظار/.test(label);
   const cls = bad ? "bg-rose-50 text-rose-700" : warn ? "bg-amber-50 text-amber-700" : "bg-teal-50 text-teal-700";
@@ -48,6 +48,7 @@ function StatusPill({ label }: { label: string }) {
 }
 
 export function ReportDetailPage() {
+  const t = useT();
   const { reportType = "" } = useParams();
   const config = REPORTS[reportType];
   const { scope } = useWarehouseScope();
@@ -75,8 +76,8 @@ export function ReportDetailPage() {
   if (!config) {
     return (
       <div>
-        <PageHeader eyebrow="التقارير" title="تقرير غير معروف" />
-        <EmptyState title="تقرير غير معروف" body="لا يوجد تقرير بهذا الاسم." action={<Link className="text-sm font-bold text-teal-700" to="/reports">العودة لمركز التقارير</Link>} />
+        <PageHeader eyebrow={t("inventoryRest.reports.eyebrow")} title={t("inventoryRest.reports.unknownTitle")} />
+        <EmptyState title={t("inventoryRest.reports.unknownTitle")} body={t("inventoryRest.reports.unknownBody")} action={<Link className="text-sm font-bold text-teal-700" to="/reports">{t("inventoryRest.reports.backToCenter")}</Link>} />
       </div>
     );
   }
@@ -107,7 +108,7 @@ export function ReportDetailPage() {
         type: filters.type, q: filters.q, window: filters.window, sort: filters.sort, dir,
       });
     } catch (e) {
-      setExportError(e instanceof Error ? e.message : "تعذّر التصدير.");
+      setExportError(translateApiError(e, t));
     } finally {
       setExporting(false);
     }
@@ -120,71 +121,71 @@ export function ReportDetailPage() {
   const totalPages = pagination?.totalPages ?? 1;
   const fromRow = total === 0 ? 0 : (page - 1) * pageSize + 1;
   const toRow = Math.min(page * pageSize, total);
-  const scopeLabel = data?.scope?.allWarehousesAccess && scope === ALL_WAREHOUSES ? "كل المستودعات المتاحة" : `مستودع: ${scope}`;
+  const scopeLabel = data?.scope?.allWarehousesAccess && scope === ALL_WAREHOUSES ? t("inventoryRest.reports.scopeAll") : t("inventoryRest.reports.scopeScoped", { scope });
   const hasDateRange = config.filters.includes("dateRange");
-  const statusOpts = STATUS_OPTIONS[reportType];
+  const statusOpts = STATUS_OPTION_VALUES[reportType];
 
   const actions = (
     <div className="no-print flex flex-wrap items-center gap-2">
       <Button variant="secondary" onClick={onExport} disabled={exporting}>
-        <Download className="h-4 w-4" /> {exporting ? "جارٍ التصدير…" : "تصدير CSV"}
+        <Download className="h-4 w-4" /> {exporting ? t("inventoryRest.reports.exporting") : t("inventoryRest.reports.exportCsv")}
       </Button>
       <Button variant="secondary" onClick={() => window.print()}>
-        <Printer className="h-4 w-4" /> طباعة
+        <Printer className="h-4 w-4" /> {t("inventoryRest.ui.print")}
       </Button>
       <Link to="/reports" className="inline-flex items-center gap-1 rounded-xl px-3 py-2 text-sm font-bold text-slate-500 hover:bg-slate-100">
-        <ArrowRight className="h-4 w-4" /> التقارير
+        <ArrowRight className="h-4 w-4" /> {t("inventoryRest.reports.reportsLink")}
       </Link>
     </div>
   );
 
   return (
     <div>
-      <PageHeader eyebrow="تقرير" title={config.label} subtitle={`${scopeLabel} · ${total} صف`} action={actions} />
+      <PageHeader eyebrow={t("inventoryRest.reports.detailEyebrow")} title={t(config.label)} subtitle={t("inventoryRest.reports.scopeSubtitle", { scope: scopeLabel, count: formatNumber(total) })} action={actions} />
 
       {/* Filters */}
       {(config.filters.length > 0) && (
         <div className="no-print surface mb-4 flex flex-wrap items-end gap-3 p-4">
           {hasDateRange && (
             <>
-              <label className="text-xs font-bold text-slate-500">من
-                <input type="date" className="field mt-1 block" value={filters.from ?? ""} onChange={(e) => patch({ from: e.target.value })} />
+              <label className="text-xs font-bold text-slate-500">{t("inventoryRest.reports.filterFrom")}
+                <input type="date" dir="ltr" className="field mt-1 block" value={filters.from ?? ""} onChange={(e) => patch({ from: e.target.value })} />
               </label>
-              <label className="text-xs font-bold text-slate-500">إلى
-                <input type="date" className="field mt-1 block" value={filters.to ?? ""} onChange={(e) => patch({ to: e.target.value })} />
+              <label className="text-xs font-bold text-slate-500">{t("inventoryRest.reports.filterTo")}
+                <input type="date" dir="ltr" className="field mt-1 block" value={filters.to ?? ""} onChange={(e) => patch({ to: e.target.value })} />
               </label>
             </>
           )}
           {config.filters.includes("category") && (
-            <label className="text-xs font-bold text-slate-500">الفئة
-              <input type="text" className="field mt-1 block" placeholder="كل الفئات" value={filters.category ?? ""} onChange={(e) => patch({ category: e.target.value })} />
+            <label className="text-xs font-bold text-slate-500">{t("inventoryRest.reports.filterCategory")}
+              <input type="text" className="field mt-1 block" placeholder={t("inventoryRest.reports.filterCategoryPlaceholder")} value={filters.category ?? ""} onChange={(e) => patch({ category: e.target.value })} />
             </label>
           )}
           {config.filters.includes("type") && (
-            <label className="text-xs font-bold text-slate-500">نوع الحركة
+            <label className="text-xs font-bold text-slate-500">{t("inventoryRest.reports.filterType")}
               <select className="field mt-1 block" value={filters.type ?? ""} onChange={(e) => patch({ type: e.target.value })}>
-                <option value="">الكل</option><option value="in">وارد</option><option value="out">صادر</option>
+                <option value="">{t("inventoryRest.reports.filterTypeAll")}</option><option value="in">{t("inventoryRest.reports.filterTypeIn")}</option><option value="out">{t("inventoryRest.reports.filterTypeOut")}</option>
               </select>
             </label>
           )}
           {config.filters.includes("status") && statusOpts && (
-            <label className="text-xs font-bold text-slate-500">الحالة
+            <label className="text-xs font-bold text-slate-500">{t("inventoryRest.reports.filterStatus")}
               <select className="field mt-1 block" value={filters.status ?? ""} onChange={(e) => patch({ status: e.target.value })}>
-                <option value="">الكل</option>
-                {statusOpts.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
+                <option value="">{t("inventoryRest.reports.filterStatusAll")}</option>
+                {statusOpts.map((v) => <option key={v} value={v}>{statusFilterLabel(t, v)}</option>)}
               </select>
             </label>
           )}
           {config.filters.includes("window") && (
-            <label className="text-xs font-bold text-slate-500">نافذة عدم الحركة
+            <label className="text-xs font-bold text-slate-500">{t("inventoryRest.reports.filterWindow")}
               <select className="field mt-1 block" value={filters.window ?? 90} onChange={(e) => patch({ window: e.target.value })}>
-                {[30, 60, 90, 180].map((w) => <option key={w} value={w}>{w} يومًا</option>)}
+                {[30, 60, 90, 180].map((w) => <option key={w} value={w}>{t("inventoryRest.reports.filterWindowDays", { days: formatNumber(w) })}</option>)}
               </select>
             </label>
           )}
           {config.filters.includes("q") && (
-            <label className="text-xs font-bold text-slate-500">بحث
-              <input type="text" className="field mt-1 block" placeholder="اسم الصنف…" value={filters.q ?? ""} onChange={(e) => patch({ q: e.target.value })} />
+            <label className="text-xs font-bold text-slate-500">{t("inventoryRest.reports.filterSearch")}
+              <input type="text" className="field mt-1 block" placeholder={t("inventoryRest.reports.filterSearchPlaceholder")} value={filters.q ?? ""} onChange={(e) => patch({ q: e.target.value })} />
             </label>
           )}
         </div>
@@ -214,19 +215,19 @@ export function ReportDetailPage() {
         <article className="surface overflow-hidden">
           {/* Totals strip */}
           <div className="flex flex-wrap gap-x-8 gap-y-2 border-b border-slate-100 px-5 py-4">
-            {config.totals.map((t) => (
-              <div key={t.key}>
-                <div className="text-xs font-bold text-slate-400">{t.label}</div>
-                <div className="text-base font-extrabold text-slate-900 tabular-nums">{fmt(totals[t.key], t.format)}</div>
+            {config.totals.map((tot) => (
+              <div key={tot.key}>
+                <div className="text-xs font-bold text-slate-400">{t(tot.label)}</div>
+                <div className="text-base font-extrabold text-slate-900 tabular-nums">{fmt(totals[tot.key], tot.format)}</div>
               </div>
             ))}
             <div className="ms-auto self-end text-xs font-medium text-slate-400">
-              تم التوليد: {formatDateTime(data.generatedAt)} {isFetching && !isLoading ? "· جارٍ التحديث…" : ""}
+              {t("inventoryRest.reports.generated", { date: formatDateTime(data.generatedAt) })}{isFetching && !isLoading ? t("inventoryRest.reports.updating") : ""}
             </div>
           </div>
 
           {rows.length === 0 ? (
-            <EmptyState title="لا توجد بيانات مطابقة" body="جرّب توسيع الفلاتر أو تغيير الفترة." />
+            <EmptyState title={t("inventoryRest.reports.emptyTitle")} body={t("inventoryRest.reports.emptyBody")} />
           ) : (
             <div className="overflow-x-auto">
               <table className="w-full min-w-[640px] text-sm">
@@ -236,10 +237,10 @@ export function ReportDetailPage() {
                       <th key={c.key} className="px-4 py-3 text-start">
                         {c.sortKey ? (
                           <button type="button" onClick={() => toggleSort(c)} className="inline-flex items-center gap-1 hover:text-teal-700">
-                            {c.label}
+                            {t(c.label)}
                             <ArrowUpDown className={`h-3 w-3 ${sort === c.sortKey ? "text-teal-600" : "text-slate-300"}`} />
                           </button>
-                        ) : c.label}
+                        ) : t(c.label)}
                       </th>
                     ))}
                   </tr>
@@ -266,14 +267,14 @@ export function ReportDetailPage() {
           {/* Pagination */}
           {pagination && total > 0 && (
             <div className="no-print flex flex-wrap items-center justify-between gap-3 border-t border-slate-100 px-5 py-4 text-sm">
-              <div className="font-medium text-slate-500">عرض {formatNumber(fromRow)}–{formatNumber(toRow)} من {formatNumber(total)}</div>
+              <div className="font-medium text-slate-500">{t("inventoryRest.ui.showingRange", { from: formatNumber(fromRow), to: formatNumber(toRow), total: formatNumber(total) })}</div>
               <div className="flex items-center gap-2">
                 <select className="field" value={pageSize} onChange={(e) => patch({ pageSize: e.target.value })}>
-                  {[25, 50, 100, 200].map((s) => <option key={s} value={s}>{s} / صفحة</option>)}
+                  {[25, 50, 100, 200].map((s) => <option key={s} value={s}>{t("inventoryRest.ui.perPage", { count: s })}</option>)}
                 </select>
-                <Button variant="secondary" disabled={page <= 1} onClick={() => patch({ page: page - 1 }, false)} aria-label="السابق">السابق</Button>
+                <Button variant="secondary" disabled={page <= 1} onClick={() => patch({ page: page - 1 }, false)} aria-label={t("inventoryRest.ui.prev")}>{t("inventoryRest.ui.prev")}</Button>
                 <span className="px-1 font-bold text-slate-600">{formatNumber(page)} / {formatNumber(totalPages)}</span>
-                <Button variant="secondary" disabled={page >= totalPages} onClick={() => patch({ page: page + 1 }, false)} aria-label="التالي">التالي</Button>
+                <Button variant="secondary" disabled={page >= totalPages} onClick={() => patch({ page: page + 1 }, false)} aria-label={t("inventoryRest.ui.next")}>{t("inventoryRest.ui.next")}</Button>
               </div>
             </div>
           )}

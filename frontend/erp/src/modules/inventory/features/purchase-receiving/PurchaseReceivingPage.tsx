@@ -6,15 +6,16 @@ import { StatusBadge } from "@/shared/ui";
 import { Button } from "@/shared/ui";
 import { LoadingState, EmptyState, ErrorState } from "@/shared/ui";
 import { Progress } from "@/shared/ui";
+import { useT } from "@/i18n";
 import { formatCurrency, formatNumber, formatDate, formatQty } from "@/shared/lib";
 import { useOpenPurchases } from "@/modules/inventory/lib/hooks/usePurchaseReceiving";
 
 const PAGE_SIZES = [10, 25, 50];
-const RECEIVE_STATUS_LABEL: Record<string, string> = { none: "لم يبدأ", partial: "استلام جزئي" };
 
 // The purchase-receiving work queue: legacy purchases still receivable through
 // the V2 receipts flow (requested / previously received / remaining per line).
 export function PurchaseReceivingPage() {
+  const t = useT();
   const [params, setParams] = useSearchParams();
   const navigate = useNavigate();
 
@@ -37,28 +38,33 @@ export function PurchaseReceivingPage() {
   const totalPages = pg?.totalPages ?? 1;
   const notStarted = rows.filter((r) => r.v2ReceiveStatus === "none").length;
   const partial = rows.filter((r) => r.v2ReceiveStatus === "partial").length;
+  const statusOptions = [
+    { value: "", label: t("inventoryRest.purchaseReceiving.statusFilterAll") },
+    { value: "none", label: t("inventoryRest.purchaseReceiving.statusFilterNone") },
+    { value: "partial", label: t("inventoryRest.purchaseReceiving.statusFilterPartial") },
+  ];
 
   return (
     <div>
       <PageHeader
-        eyebrow="العمليات"
-        title="استلام المشتريات"
-        subtitle="قائمة أوامر الشراء المفتوحة — استلم كليًا أو جزئيًا عبر إذن استلام V2 (بدفعات وصلاحية للأصناف المتتبعة). النظام يمنع ازدواج الاستلام مع المسار القديم."
+        eyebrow={t("inventoryRest.purchaseReceiving.eyebrow")}
+        title={t("inventoryRest.purchaseReceiving.title")}
+        subtitle={t("inventoryRest.purchaseReceiving.subtitle")}
       />
 
       <section className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-        <MetricCard label="أوامر مفتوحة" value={formatNumber(pg?.total ?? 0)} note="بانتظار استلام كلي أو جزئي" icon={Truck} tone="amber" />
-        <MetricCard label="لم يبدأ استلامها" value={formatNumber(notStarted)} note="في هذه الصفحة" icon={ClipboardList} tone="blue" />
-        <MetricCard label="استلام جزئي" value={formatNumber(partial)} note="في هذه الصفحة" icon={PackageCheck} tone="teal" />
+        <MetricCard label={t("inventoryRest.purchaseReceiving.kpi.open")} value={formatNumber(pg?.total ?? 0)} note={t("inventoryRest.purchaseReceiving.kpi.openNote")} icon={Truck} tone="amber" />
+        <MetricCard label={t("inventoryRest.purchaseReceiving.kpi.notStarted")} value={formatNumber(notStarted)} note={t("inventoryRest.purchaseReceiving.kpi.notStartedNote")} icon={ClipboardList} tone="blue" />
+        <MetricCard label={t("inventoryRest.purchaseReceiving.kpi.partial")} value={formatNumber(partial)} note={t("inventoryRest.purchaseReceiving.kpi.partialNote")} icon={PackageCheck} tone="teal" />
       </section>
 
       <section className="surface mt-4 flex flex-col gap-3 p-4 lg:flex-row lg:items-center">
         <label className="relative flex-1">
           <Search className="pointer-events-none absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
-          <input className="field w-full pr-10" placeholder="بحث برقم الأمر أو المورد…" defaultValue={q} onChange={(e) => patch({ q: e.target.value })} aria-label="بحث" />
+          <input className="field w-full pr-10" placeholder={t("inventoryRest.purchaseReceiving.searchPlaceholder")} defaultValue={q} onChange={(e) => patch({ q: e.target.value })} aria-label={t("common.search")} />
         </label>
         <div className="flex gap-1">
-          {[{ value: "", label: "الكل" }, { value: "none", label: "لم يبدأ" }, { value: "partial", label: "جزئي" }].map((o) => (
+          {statusOptions.map((o) => (
             <button key={o.value} type="button" onClick={() => patch({ status: o.value })}
               className={`min-h-10 rounded-xl border px-3 text-xs font-extrabold transition ${status === o.value ? "border-teal-600 bg-teal-600 text-white" : "border-slate-200 bg-white text-slate-600 hover:bg-slate-50"}`}>
               {o.label}
@@ -69,20 +75,20 @@ export function PurchaseReceivingPage() {
 
       <section className="mt-4">
         {isLoading ? <LoadingState /> : isError ? <ErrorState error={error} onRetry={() => refetch()} /> : rows.length === 0 ? (
-          <EmptyState title="لا توجد أوامر شراء مفتوحة" body={q || status ? "جرّب تعديل عوامل التصفية." : "كل أوامر الشراء مُستلمة — أنشئ أمر شراء جديدًا من شاشة المشتريات."} />
+          <EmptyState title={t("inventoryRest.purchaseReceiving.emptyTitle")} body={q || status ? t("inventoryRest.ui.fixFilters") : t("inventoryRest.purchaseReceiving.emptyBody")} />
         ) : (
           <>
             <div className="surface hidden overflow-hidden md:block">
               <table className="w-full text-sm">
                 <thead className="bg-slate-50 text-xs font-bold text-slate-500">
                   <tr>
-                    <th className="px-4 py-3 text-right">أمر الشراء</th>
-                    <th className="px-4 py-3 text-right">المورد</th>
-                    <th className="px-4 py-3 text-right">المستودع</th>
-                    <th className="px-4 py-3 text-right">التاريخ</th>
-                    <th className="px-4 py-3 text-right">حالة الاستلام</th>
-                    <th className="px-4 py-3 text-right">التقدم</th>
-                    <th className="px-4 py-3 text-left">القيمة</th>
+                    <th className="px-4 py-3 text-right">{t("inventoryRest.purchaseReceiving.col.po")}</th>
+                    <th className="px-4 py-3 text-right">{t("inventoryRest.purchaseReceiving.col.supplier")}</th>
+                    <th className="px-4 py-3 text-right">{t("inventoryRest.purchaseReceiving.col.warehouse")}</th>
+                    <th className="px-4 py-3 text-right">{t("inventoryRest.purchaseReceiving.col.date")}</th>
+                    <th className="px-4 py-3 text-right">{t("inventoryRest.purchaseReceiving.col.receiveStatus")}</th>
+                    <th className="px-4 py-3 text-right">{t("inventoryRest.purchaseReceiving.col.progress")}</th>
+                    <th className="px-4 py-3 text-left">{t("inventoryRest.purchaseReceiving.col.value")}</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100">
@@ -97,7 +103,7 @@ export function PurchaseReceivingPage() {
                         <td className="px-4 py-3 text-slate-600">{r.supplierName || "—"}</td>
                         <td className="px-4 py-3 text-slate-500">{r.warehouseName || "—"}</td>
                         <td className="px-4 py-3 text-slate-500">{formatDate(r.purchaseDate)}</td>
-                        <td className="px-4 py-3"><StatusBadge>{RECEIVE_STATUS_LABEL[r.v2ReceiveStatus]}</StatusBadge></td>
+                        <td className="px-4 py-3"><StatusBadge>{t(`inventoryRest.purchaseReceiving.receiveStatus.${r.v2ReceiveStatus}`)}</StatusBadge></td>
                         <td className="px-4 py-3">
                           <div className="flex items-center gap-2">
                             <div className="w-24"><Progress value={pct} tone={pct >= 100 ? "teal" : "amber"} /></div>
@@ -117,7 +123,7 @@ export function PurchaseReceivingPage() {
                 <button key={r.id} type="button" onClick={() => navigate(`/purchase-receiving/${r.id}`)} className="surface block w-full p-4 text-right">
                   <div className="flex items-center justify-between gap-2">
                     <span className="font-extrabold text-slate-900">{r.id}</span>
-                    <StatusBadge>{RECEIVE_STATUS_LABEL[r.v2ReceiveStatus]}</StatusBadge>
+                    <StatusBadge>{t(`inventoryRest.purchaseReceiving.receiveStatus.${r.v2ReceiveStatus}`)}</StatusBadge>
                   </div>
                   <div className="mt-1 text-sm text-slate-600">{r.supplierName || "—"} · {r.warehouseName || "—"}</div>
                   <div className="mt-2 flex items-center justify-between text-xs text-slate-500">
@@ -130,14 +136,14 @@ export function PurchaseReceivingPage() {
 
             <div className="mt-4 flex flex-col items-center justify-between gap-3 sm:flex-row">
               <div className="flex items-center gap-3 text-xs font-medium text-slate-500">
-                <span>الإجمالي {formatNumber(pg?.total ?? 0)}</span>
-                <select className="field min-h-9 py-1 text-xs" value={pageSize} onChange={(e) => patch({ pageSize: e.target.value })} aria-label="حجم الصفحة">{PAGE_SIZES.map((s) => <option key={s} value={s}>{s} / صفحة</option>)}</select>
-                {isFetching && <span className="text-teal-600">تحديث…</span>}
+                <span>{t("inventoryRest.purchaseReceiving.totalLabel", { count: formatNumber(pg?.total ?? 0) })}</span>
+                <select className="field min-h-9 py-1 text-xs" value={pageSize} onChange={(e) => patch({ pageSize: e.target.value })} aria-label={t("table.rowsPerPage")}>{PAGE_SIZES.map((s) => <option key={s} value={s}>{t("inventoryRest.ui.perPage", { count: s })}</option>)}</select>
+                {isFetching && <span className="text-teal-600">{t("inventoryRest.ui.updatingShort")}</span>}
               </div>
               <div className="flex items-center gap-2">
-                <Button variant="ghost" size="icon" aria-label="السابق" disabled={page <= 1} onClick={() => patch({ page: page - 1 }, false)}><ChevronRight className="h-4 w-4" /></Button>
+                <Button variant="ghost" size="icon" aria-label={t("inventoryRest.ui.prev")} disabled={page <= 1} onClick={() => patch({ page: page - 1 }, false)}><ChevronRight className="h-4 w-4" /></Button>
                 <span className="text-xs font-bold text-slate-600">{formatNumber(page)} / {formatNumber(totalPages)}</span>
-                <Button variant="ghost" size="icon" aria-label="التالي" disabled={page >= totalPages} onClick={() => patch({ page: page + 1 }, false)}><ChevronLeft className="h-4 w-4" /></Button>
+                <Button variant="ghost" size="icon" aria-label={t("inventoryRest.ui.next")} disabled={page >= totalPages} onClick={() => patch({ page: page + 1 }, false)}><ChevronLeft className="h-4 w-4" /></Button>
               </div>
             </div>
           </>

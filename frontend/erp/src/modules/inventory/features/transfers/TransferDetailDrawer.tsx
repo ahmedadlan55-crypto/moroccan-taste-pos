@@ -16,18 +16,20 @@ import {
 } from "@/modules/inventory/lib/hooks/useTransferMutations";
 import { useCan } from "@/modules/inventory/lib/permission-provider";
 import { formatCurrency, formatNumber, formatQty, formatDateTime } from "@/shared/lib";
+import { useT } from "@/i18n";
+import type { TFunction } from "@/i18n";
 import { transferStatusToLabel } from "@/modules/inventory/lib/status-labels";
 import type { TransferDetail, TransferLine } from "@/modules/inventory/lib/adapters/transfer.adapter";
 import { ReceiveDialog } from "./ReceiveDialog";
 
-const ACTION_LABEL: Record<string, string> = {
-  create: "أُنشئ", approve: "اعتُمد", issue: "صُرف", receive: "استُلم",
-  reverse: "أُرجِع", cancel: "أُلغي", delete: "حُذف",
-};
+const KNOWN_ACTIONS = new Set(["create", "approve", "issue", "receive", "reverse", "cancel", "delete"]);
+const actionLabel = (t: TFunction, action: string) =>
+  KNOWN_ACTIONS.has(action) ? t(`inventoryRest.transfers.detail.action.${action}`) : action;
 
 type DialogKind = "approve" | "issue" | "cancel" | "reverse" | "delete" | null;
 
 export function TransferDetailDrawer({ id, onClose }: { id: string | null; onClose: () => void }) {
+  const t = useT();
   const navigate = useNavigate();
   const { data, isLoading, isError, error, refetch } = useTransferDetail(id);
   const [dialog, setDialog] = useState<DialogKind>(null);
@@ -49,7 +51,7 @@ export function TransferDetailDrawer({ id, onClose }: { id: string | null; onClo
   // Close any open dialog when the drawer switches to a different document.
   useEffect(() => { setDialog(null); setReceiveOpen(false); }, [id]);
 
-  const title = data ? data.number : "تفاصيل التحويل";
+  const title = data ? data.number : t("inventoryRest.transfers.detail.title");
 
   return (
     <>
@@ -57,7 +59,7 @@ export function TransferDetailDrawer({ id, onClose }: { id: string | null; onClo
         open={!!id}
         onClose={onClose}
         title={title}
-        eyebrow="مستند تحويل"
+        eyebrow={t("inventoryRest.transfers.detail.eyebrow")}
         icon={Truck}
         footer={data ? <Footer
           d={data}
@@ -79,9 +81,9 @@ export function TransferDetailDrawer({ id, onClose }: { id: string | null; onClo
       {/* Confirmation dialogs for the simple lifecycle actions */}
       <ConfirmDialog
         open={dialog === "approve"}
-        title="اعتماد التحويل"
-        description="سيُسمح بالإصدار بعد الاعتماد. الاعتماد لا يحرّك المخزون."
-        confirmLabel="اعتماد"
+        title={t("inventoryRest.transfers.detail.confirmApproveTitle")}
+        description={t("inventoryRest.transfers.detail.confirmApproveBody")}
+        confirmLabel={t("inventoryRest.transfers.detail.approve")}
         processing={approve.isPending}
         error={approve.error ? approve.error.message : null}
         onClose={() => setDialog(null)}
@@ -89,9 +91,9 @@ export function TransferDetailDrawer({ id, onClose }: { id: string | null; onClo
       />
       <ConfirmDialog
         open={dialog === "issue"}
-        title="إصدار التحويل"
-        description="سيُخصم المخزون من المستودع المصدر ويُرحّل قيد محاسبي. لا يمكن التراجع إلا عبر الإرجاع."
-        confirmLabel="إصدار"
+        title={t("inventoryRest.transfers.detail.confirmIssueTitle")}
+        description={t("inventoryRest.transfers.detail.confirmIssueBody")}
+        confirmLabel={t("inventoryRest.transfers.detail.issue")}
         tone="danger"
         processing={issue.isPending}
         error={issue.error ? issue.error.message : null}
@@ -100,12 +102,12 @@ export function TransferDetailDrawer({ id, onClose }: { id: string | null; onClo
       />
       <ConfirmDialog
         open={dialog === "cancel"}
-        title="إلغاء التحويل"
-        description="يمكن الإلغاء قبل الإصدار فقط."
-        confirmLabel="تأكيد الإلغاء"
+        title={t("inventoryRest.transfers.detail.confirmCancelTitle")}
+        description={t("inventoryRest.transfers.detail.confirmCancelBody")}
+        confirmLabel={t("inventoryRest.transfers.detail.confirmCancel")}
         tone="danger"
         requireReason
-        reasonLabel="سبب الإلغاء"
+        reasonLabel={t("inventoryRest.transfers.detail.cancelReason")}
         processing={cancel.isPending}
         error={cancel.error ? cancel.error.message : null}
         onClose={() => setDialog(null)}
@@ -113,12 +115,12 @@ export function TransferDetailDrawer({ id, onClose }: { id: string | null; onClo
       />
       <ConfirmDialog
         open={dialog === "reverse"}
-        title="إرجاع التحويل"
-        description="سيُعاد المخزون إلى المصدر ويُسحب من الوجهة، مع قيد عكسي. السبب إلزامي للتدقيق."
-        confirmLabel="تأكيد الإرجاع"
+        title={t("inventoryRest.transfers.detail.confirmReverseTitle")}
+        description={t("inventoryRest.transfers.detail.confirmReverseBody")}
+        confirmLabel={t("inventoryRest.transfers.detail.confirmReverse")}
         tone="danger"
         requireReason
-        reasonLabel="سبب الإرجاع"
+        reasonLabel={t("inventoryRest.transfers.detail.reverseReasonLabel")}
         processing={reverse.isPending}
         error={reverse.error ? reverse.error.message : null}
         onClose={() => setDialog(null)}
@@ -126,9 +128,9 @@ export function TransferDetailDrawer({ id, onClose }: { id: string | null; onClo
       />
       <ConfirmDialog
         open={dialog === "delete"}
-        title="حذف المسودة"
-        description="سيُحذف هذا المستند نهائيًا. الحذف متاح للمسودات فقط."
-        confirmLabel="حذف"
+        title={t("inventoryRest.transfers.detail.confirmDeleteTitle")}
+        description={t("inventoryRest.transfers.detail.confirmDeleteBody")}
+        confirmLabel={t("inventoryRest.transfers.detail.deleteBtn")}
         tone="danger"
         processing={del.isPending}
         error={del.error ? del.error.message : null}
@@ -157,43 +159,44 @@ export function TransferDetailDrawer({ id, onClose }: { id: string | null; onClo
 }
 
 function Document({ d }: { d: TransferDetail }) {
+  const t = useT();
   return (
     <div className="print-document space-y-5">
       {/* Status + route */}
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div className="flex items-center gap-2">
           <StatusBadge>{transferStatusToLabel(d.status)}</StatusBadge>
-          <span className="text-xs font-medium text-slate-400">الإصدار {formatNumber(d.version)}</span>
+          <span className="text-xs font-medium text-slate-400">{t("inventoryRest.ui.version")} {formatNumber(d.version)}</span>
         </div>
         <div className="text-sm font-bold text-slate-700">{formatCurrency(d.totalCost)}</div>
       </div>
 
       <div className="grid grid-cols-2 gap-3">
-        <DetailStat label="من مستودع" value={d.fromWarehouse.name} />
-        <DetailStat label="إلى مستودع" value={<span className="inline-flex items-center gap-1">{d.toWarehouse.name}<ArrowLeftRight className="h-3.5 w-3.5 text-slate-400" /></span>} />
-        <DetailStat label="أنشأ" value={d.actors.createdBy || "—"} />
-        <DetailStat label="اعتمد" value={d.actors.approvedBy || "—"} />
-        <DetailStat label="صرف" value={d.actors.issuedBy || "—"} />
-        <DetailStat label="استلم" value={d.actors.receivedBy || "—"} />
+        <DetailStat label={t("inventoryRest.transfers.detail.from")} value={d.fromWarehouse.name} />
+        <DetailStat label={t("inventoryRest.transfers.detail.to")} value={<span className="inline-flex items-center gap-1">{d.toWarehouse.name}<ArrowLeftRight className="h-3.5 w-3.5 text-slate-400" /></span>} />
+        <DetailStat label={t("inventoryRest.transfers.detail.createdBy")} value={d.actors.createdBy || "—"} />
+        <DetailStat label={t("inventoryRest.transfers.detail.approvedBy")} value={d.actors.approvedBy || "—"} />
+        <DetailStat label={t("inventoryRest.transfers.detail.issuedBy")} value={d.actors.issuedBy || "—"} />
+        <DetailStat label={t("inventoryRest.transfers.detail.receivedBy")} value={d.actors.receivedBy || "—"} />
       </div>
 
       {d.reverseReason && (
         <div className="rounded-xl border border-rose-200 bg-rose-50 px-3 py-2 text-xs font-bold text-rose-700">
-          سبب الإرجاع: {d.reverseReason} {d.actors.reversedBy ? `· ${d.actors.reversedBy}` : ""}
+          {t("inventoryRest.transfers.detail.reverseReason", { reason: d.reverseReason })} {d.actors.reversedBy ? `· ${d.actors.reversedBy}` : ""}
         </div>
       )}
 
       {/* Lines */}
-      <Section icon={Layers} title="الأصناف">
+      <Section icon={Layers} title={t("inventoryRest.transfers.detail.linesTitle")}>
         <table className="w-full text-xs">
           <thead className="text-slate-400">
             <tr>
-              <th className="py-1.5 text-right">الصنف</th>
-              <th className="py-1.5 text-center">مطلوب</th>
-              <th className="py-1.5 text-center">مصروف</th>
-              <th className="py-1.5 text-center">مستلم</th>
-              <th className="py-1.5 text-center">متبقٍ</th>
-              <th className="py-1.5 text-left">التكلفة</th>
+              <th className="py-1.5 text-right">{t("inventoryRest.transfers.detail.colItem")}</th>
+              <th className="py-1.5 text-center">{t("inventoryRest.transfers.detail.colRequested")}</th>
+              <th className="py-1.5 text-center">{t("inventoryRest.transfers.detail.colIssued")}</th>
+              <th className="py-1.5 text-center">{t("inventoryRest.transfers.detail.colReceived")}</th>
+              <th className="py-1.5 text-center">{t("inventoryRest.transfers.detail.colRemaining")}</th>
+              <th className="py-1.5 text-left">{t("inventoryRest.transfers.detail.colCost")}</th>
             </tr>
           </thead>
           <tbody className="divide-y divide-slate-100">
@@ -212,9 +215,9 @@ function Document({ d }: { d: TransferDetail }) {
       </Section>
 
       {/* Timeline */}
-      <Section icon={Clock} title="سجل التدقيق">
+      <Section icon={Clock} title={t("inventoryRest.transfers.detail.timelineTitle")}>
         {d.timeline.length === 0 ? (
-          <p className="text-xs text-slate-400">لا توجد أحداث.</p>
+          <p className="text-xs text-slate-400">{t("inventoryRest.transfers.detail.timelineEmpty")}</p>
         ) : (
           <ol className="space-y-2.5">
             {d.timeline.map((e, i) => (
@@ -224,7 +227,7 @@ function Document({ d }: { d: TransferDetail }) {
                 </span>
                 <div className="min-w-0 flex-1">
                   <div className="text-xs font-bold text-slate-800">
-                    {ACTION_LABEL[e.action] ?? e.action}
+                    {actionLabel(t, e.action)}
                     {e.actor ? <span className="font-medium text-slate-500"> · {e.actor}</span> : null}
                   </div>
                   <div className="text-[11px] text-slate-400">{formatDateTime(e.at)}{e.note ? ` — ${e.note}` : ""}</div>
@@ -237,7 +240,7 @@ function Document({ d }: { d: TransferDetail }) {
 
       {/* Movements + GL */}
       {(d.movements.length > 0 || d.gl.issueJournalId || d.gl.reverseJournalId) && (
-        <Section icon={FileText} title="الحركات والقيود المرتبطة">
+        <Section icon={FileText} title={t("inventoryRest.transfers.detail.movementsTitle")}>
           {d.movements.length > 0 && (
             <ul className="mb-2 space-y-1 text-[11px] text-slate-500">
               {d.movements.map((m) => (
@@ -251,8 +254,8 @@ function Document({ d }: { d: TransferDetail }) {
             </ul>
           )}
           <div className="flex flex-wrap gap-2 text-[11px] font-bold text-slate-500">
-            {d.gl.issueJournalId && <span className="chip border-slate-200 bg-slate-50">قيد الصرف: {d.gl.issueJournalId}</span>}
-            {d.gl.reverseJournalId && <span className="chip border-slate-200 bg-slate-50">قيد الإرجاع: {d.gl.reverseJournalId}</span>}
+            {d.gl.issueJournalId && <span className="chip border-slate-200 bg-slate-50">{t("inventoryRest.transfers.detail.issueJournal", { id: d.gl.issueJournalId })}</span>}
+            {d.gl.reverseJournalId && <span className="chip border-slate-200 bg-slate-50">{t("inventoryRest.transfers.detail.reverseJournal", { id: d.gl.reverseJournalId })}</span>}
           </div>
         </Section>
       )}
@@ -280,26 +283,27 @@ function Footer({
   onReceive: () => void;
   onEdit: () => void;
 }) {
+  const t = useT();
   const s = d.status; // UI status: draft|approved|in_transit|partially_received|received|cancelled|reversed
   const actions: React.ReactNode[] = [];
 
   if (s === "draft") {
-    if (can.canCreate) actions.push(<Button key="edit" variant="secondary" onClick={onEdit}><Pencil className="h-4 w-4" /> تعديل</Button>);
-    if (can.canApprove) actions.push(<Button key="approve" variant="primary" onClick={() => onAction("approve")}><CheckCircle2 className="h-4 w-4" /> اعتماد</Button>);
-    if (can.canCreate) actions.push(<Button key="delete" variant="danger" onClick={() => onAction("delete")}><Trash2 className="h-4 w-4" /> حذف</Button>);
+    if (can.canCreate) actions.push(<Button key="edit" variant="secondary" onClick={onEdit}><Pencil className="h-4 w-4" /> {t("inventoryRest.transfers.detail.edit")}</Button>);
+    if (can.canApprove) actions.push(<Button key="approve" variant="primary" onClick={() => onAction("approve")}><CheckCircle2 className="h-4 w-4" /> {t("inventoryRest.transfers.detail.approve")}</Button>);
+    if (can.canCreate) actions.push(<Button key="delete" variant="danger" onClick={() => onAction("delete")}><Trash2 className="h-4 w-4" /> {t("inventoryRest.transfers.detail.deleteBtn")}</Button>);
   } else if (s === "approved") {
-    if (can.canIssue) actions.push(<Button key="issue" variant="primary" onClick={() => onAction("issue")}><Send className="h-4 w-4" /> إصدار</Button>);
-    if (can.canApprove) actions.push(<Button key="cancel" variant="danger" onClick={() => onAction("cancel")}><XCircle className="h-4 w-4" /> إلغاء</Button>);
+    if (can.canIssue) actions.push(<Button key="issue" variant="primary" onClick={() => onAction("issue")}><Send className="h-4 w-4" /> {t("inventoryRest.transfers.detail.issueBtn")}</Button>);
+    if (can.canApprove) actions.push(<Button key="cancel" variant="danger" onClick={() => onAction("cancel")}><XCircle className="h-4 w-4" /> {t("inventoryRest.transfers.detail.cancelBtn")}</Button>);
   } else if (s === "in_transit" || s === "partially_received") {
-    if (can.canReceive) actions.push(<Button key="receive" variant="primary" onClick={onReceive}><PackageCheck className="h-4 w-4" /> استلام</Button>);
-    if (can.canReverse) actions.push(<Button key="reverse" variant="danger" onClick={() => onAction("reverse")}><Undo2 className="h-4 w-4" /> إرجاع</Button>);
+    if (can.canReceive) actions.push(<Button key="receive" variant="primary" onClick={onReceive}><PackageCheck className="h-4 w-4" /> {t("inventoryRest.transfers.detail.receiveBtn")}</Button>);
+    if (can.canReverse) actions.push(<Button key="reverse" variant="danger" onClick={() => onAction("reverse")}><Undo2 className="h-4 w-4" /> {t("inventoryRest.transfers.detail.reverseBtn")}</Button>);
   } else if (s === "received") {
-    if (can.canReverse) actions.push(<Button key="reverse" variant="secondary" onClick={() => onAction("reverse")}><Undo2 className="h-4 w-4" /> إرجاع</Button>);
+    if (can.canReverse) actions.push(<Button key="reverse" variant="secondary" onClick={() => onAction("reverse")}><Undo2 className="h-4 w-4" /> {t("inventoryRest.transfers.detail.reverseBtn")}</Button>);
   }
 
   return (
     <div className="no-print flex w-full flex-wrap items-center justify-between gap-2">
-      <Button variant="ghost" onClick={() => window.print()}><Printer className="h-4 w-4" /> طباعة</Button>
+      <Button variant="ghost" onClick={() => window.print()}><Printer className="h-4 w-4" /> {t("inventoryRest.ui.print")}</Button>
       <div className="flex flex-wrap gap-2">{actions}</div>
     </div>
   );

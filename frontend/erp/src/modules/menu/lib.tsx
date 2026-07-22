@@ -5,6 +5,7 @@ import { useCallback } from "react";
 import { useSearchParams } from "react-router-dom";
 import { formatCurrency, formatNumber, cn } from "@/shared/lib";
 import { Select } from "@/shared/ui";
+import { useTx } from "@/shared/ui/i18n";
 import { useLang, formatCurrency as fmtCurrencyLang, formatNumber as fmtNumberLang, type Lang } from "@/i18n";
 import type { Brand } from "./api";
 
@@ -98,9 +99,9 @@ export function BrandSelect({
   value,
   onChange,
   allowAll = true,
-  allLabel = "كل العلامات",
+  allLabel,
   className,
-  "aria-label": ariaLabel = "تصفية بالعلامة التجارية",
+  "aria-label": ariaLabel,
 }: {
   brands: Brand[];
   value: string;
@@ -110,14 +111,15 @@ export function BrandSelect({
   className?: string;
   "aria-label"?: string;
 }) {
+  const t = useTx();
   return (
     <Select
       className={cn("h-10", className)}
       value={value}
       onChange={(e) => onChange(e.target.value)}
-      aria-label={ariaLabel}
+      aria-label={ariaLabel ?? t("menuRest.brandScope.filterByBrand")}
     >
-      {allowAll && <option value="">{allLabel}</option>}
+      {allowAll && <option value="">{allLabel ?? t("menuRest.brandScope.allBrands")}</option>}
       {brands.map((b) => (
         <option key={b.id} value={b.id}>
           {b.name}

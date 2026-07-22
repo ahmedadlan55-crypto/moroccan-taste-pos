@@ -13,6 +13,7 @@
 import { useLocation, useSearchParams } from "react-router-dom";
 import { Barcode } from "lucide-react";
 import { PageHeader, EmptyState } from "@/shared/ui";
+import { useT } from "@/i18n";
 import { normalizeRoutePath } from "@/shared/lib";
 import { NotFound } from "@/app/shell/NotFound";
 import { WarehouseModuleProviders } from "./lib/providers";
@@ -48,27 +49,28 @@ const SCOPE_FIRST = new Set<string>([
 ]);
 
 function LotsExpiry() {
+  const t = useT();
   const [sp, setSp] = useSearchParams();
   const tab = sp.get("tab") === "expiry" ? "expiry" : "lots";
-  const go = (t: "lots" | "expiry") => {
+  const go = (target: "lots" | "expiry") => {
     const n = new URLSearchParams(sp);
-    if (t === "lots") n.delete("tab");
+    if (target === "lots") n.delete("tab");
     else n.set("tab", "expiry");
     setSp(n, { replace: true });
   };
   return (
     <div>
       <div className="mb-4 flex flex-wrap gap-1.5">
-        {(["lots", "expiry"] as const).map((t) => (
+        {(["lots", "expiry"] as const).map((tabId) => (
           <button
-            key={t}
+            key={tabId}
             type="button"
-            onClick={() => go(t)}
+            onClick={() => go(tabId)}
             className={`min-h-10 rounded-xl border px-4 text-sm font-extrabold transition ${
-              tab === t ? "border-teal-600 bg-teal-600 text-white" : "border-slate-200 bg-white text-slate-600 hover:bg-slate-50"
+              tab === tabId ? "border-teal-600 bg-teal-600 text-white" : "border-slate-200 bg-white text-slate-600 hover:bg-slate-50"
             }`}
           >
-            {t === "lots" ? "الدفعات (التشغيلات)" : "تحذيرات الصلاحية"}
+            {tabId === "lots" ? t("inventoryRest.hub.lotsTab") : t("inventoryRest.hub.expiryTab")}
           </button>
         ))}
       </div>
@@ -78,17 +80,18 @@ function LotsExpiry() {
 }
 
 function UnitsBarcodes() {
+  const t = useT();
   return (
     <div>
       <PageHeader
-        eyebrow="البيانات الرئيسية"
-        title="الوحدات والباركود"
-        subtitle="تُدار وحدات القياس والباركود لكل صنف من داخل بطاقة الصنف (تبويبا «الوحدات» و«الباركود»)."
+        eyebrow={t("inventoryRest.hub.unitsBarcodes.eyebrow")}
+        title={t("inventoryRest.hub.unitsBarcodes.title")}
+        subtitle={t("inventoryRest.hub.unitsBarcodes.subtitle")}
       />
       <EmptyState
         icon={<Barcode className="h-6 w-6" />}
-        title="تُدار من بطاقة الصنف"
-        body="افتح صنفًا من «الأصناف» ثم انتقل إلى تبويب الوحدات أو الباركود لإضافة العبوات والأكواد وإدارتها."
+        title={t("inventoryRest.hub.unitsBarcodes.emptyTitle")}
+        body={t("inventoryRest.hub.unitsBarcodes.emptyBody")}
       />
     </div>
   );

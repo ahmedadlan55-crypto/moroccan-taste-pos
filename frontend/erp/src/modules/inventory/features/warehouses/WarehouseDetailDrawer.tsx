@@ -18,7 +18,9 @@ import { ErrorState, EmptyState } from "@/shared/ui";
 import { StatusBadge } from "@/shared/ui";
 import { useCan } from "@/modules/inventory/lib/permission-provider";
 import { formatCurrency, formatNumber, formatDateTime, formatQty } from "@/shared/lib";
-import { warehouseHealth, warehouseTypeLabel } from "@/modules/inventory/lib/status-labels";
+import { useT } from "@/i18n";
+import { warehouseHealth } from "@/modules/inventory/lib/status-labels";
+import { warehouseTypeLabel } from "./WarehousesPage";
 import { ApiError } from "@/shared/api";
 import {
   useWarehouseAdminDetail,
@@ -38,11 +40,11 @@ import { ScopeAssignmentsSection } from "./ScopeAssignmentsSection";
 type Tab = "info" | "stock" | "movements" | "access" | "admin";
 
 const TABS: { id: Tab; label: string }[] = [
-  { id: "info", label: "بيانات المستودع" },
-  { id: "stock", label: "الرصيد والقيمة" },
-  { id: "movements", label: "آخر الحركات" },
-  { id: "access", label: "صلاحيات الوصول" },
-  { id: "admin", label: "الإدارة" },
+  { id: "info", label: "inventoryRest.warehouses.tabs.info" },
+  { id: "stock", label: "inventoryRest.warehouses.tabs.stock" },
+  { id: "movements", label: "inventoryRest.warehouses.tabs.movements" },
+  { id: "access", label: "inventoryRest.warehouses.tabs.access" },
+  { id: "admin", label: "inventoryRest.warehouses.tabs.admin" },
 ];
 
 export function WarehouseDetailDrawer({
@@ -52,6 +54,7 @@ export function WarehouseDetailDrawer({
   warehouseId: string | null;
   onClose: () => void;
 }) {
+  const t = useT();
   const open = !!warehouseId;
   const { data, isLoading, isError, error, refetch } = useWarehouseAdminDetail(warehouseId);
   const canEdit = useCan("warehouse.edit");
@@ -64,7 +67,7 @@ export function WarehouseDetailDrawer({
   }, [open, warehouseId]);
 
   const w = data?.warehouse ?? null;
-  const visibleTabs = TABS.filter((t) => (t.id === "access" ? canAssign : true));
+  const visibleTabs = TABS.filter((tabDef) => (tabDef.id === "access" ? canAssign : true));
 
   return (
     <>
@@ -72,7 +75,7 @@ export function WarehouseDetailDrawer({
         open={open}
         onClose={onClose}
         title={w?.name ?? "…"}
-        eyebrow="إدارة المستودع"
+        eyebrow={t("inventoryRest.warehouses.drawerEyebrow")}
         icon={WarehouseIcon}
       >
         {isLoading && (
@@ -93,19 +96,19 @@ export function WarehouseDetailDrawer({
             </div>
 
             <div className="scrollbar-thin -mx-1 mb-5 flex gap-1 overflow-x-auto border-b border-slate-100 px-1">
-              {visibleTabs.map((t) => (
+              {visibleTabs.map((tabDef) => (
                 <button
-                  key={t.id}
+                  key={tabDef.id}
                   type="button"
-                  onClick={() => setTab(t.id)}
+                  onClick={() => setTab(tabDef.id)}
                   className={`whitespace-nowrap rounded-t-xl px-3 py-2.5 text-xs font-extrabold transition ${
-                    tab === t.id
+                    tab === tabDef.id
                       ? "border-b-2 border-teal-600 text-teal-700"
                       : "text-slate-400 hover:text-slate-600"
                   }`}
-                  aria-pressed={tab === t.id}
+                  aria-pressed={tab === tabDef.id}
                 >
-                  {t.label}
+                  {t(tabDef.label)}
                 </button>
               ))}
             </div>
@@ -136,17 +139,18 @@ export function WarehouseDetailDrawer({
 
 // ── بيانات المستودع ──────────────────────────────────────────────────────────
 function InfoTab({ w, canEdit, onEdit }: { w: WarehouseAdmin; canEdit: boolean; onEdit: () => void }) {
+  const t = useT();
   return (
     <>
       <div className="grid grid-cols-2 gap-3">
-        <DetailStat label="الكود" value={<span dir="ltr">{w.code}</span>} />
-        <DetailStat label="النوع" value={warehouseTypeLabel(w.type)} />
-        <DetailStat label="العلامة التجارية" value={w.brandName || (w.brandId ? w.brandId : "—")} />
-        <DetailStat label="الفرع" value={w.branchName || (w.branchId ? w.branchId : "—")} />
-        <DetailStat label="الموقع" value={w.location || "—"} />
-        <DetailStat label="المسؤول" value={w.manager || "—"} />
-        <DetailStat label="مستودع رئيسي" value={w.isMain ? "نعم" : "لا"} />
-        <DetailStat label="تاريخ الإنشاء" value={formatDateTime(w.createdAt)} />
+        <DetailStat label={t("inventoryRest.warehouses.info.code")} value={<span dir="ltr">{w.code}</span>} />
+        <DetailStat label={t("inventoryRest.warehouses.info.type")} value={warehouseTypeLabel(t, w.type)} />
+        <DetailStat label={t("inventoryRest.warehouses.info.brand")} value={w.brandName || (w.brandId ? w.brandId : "—")} />
+        <DetailStat label={t("inventoryRest.warehouses.info.branch")} value={w.branchName || (w.branchId ? w.branchId : "—")} />
+        <DetailStat label={t("inventoryRest.warehouses.info.location")} value={w.location || "—"} />
+        <DetailStat label={t("inventoryRest.warehouses.info.manager")} value={w.manager || "—"} />
+        <DetailStat label={t("inventoryRest.warehouses.info.isMain")} value={w.isMain ? t("inventoryRest.warehouses.info.yes") : t("inventoryRest.warehouses.info.no")} />
+        <DetailStat label={t("inventoryRest.warehouses.info.createdAt")} value={formatDateTime(w.createdAt)} />
       </div>
       {w.description && (
         <p className="mt-4 rounded-xl border border-slate-100 bg-slate-50 px-3 py-3 text-sm font-medium text-slate-600">
@@ -155,7 +159,7 @@ function InfoTab({ w, canEdit, onEdit }: { w: WarehouseAdmin; canEdit: boolean; 
       )}
       {canEdit && (
         <Button className="mt-5 w-full" variant="secondary" onClick={onEdit}>
-          <Pencil className="h-4 w-4" /> تعديل البيانات
+          <Pencil className="h-4 w-4" /> {t("inventoryRest.warehouses.info.editBtn")}
         </Button>
       )}
     </>
@@ -164,23 +168,23 @@ function InfoTab({ w, canEdit, onEdit }: { w: WarehouseAdmin; canEdit: boolean; 
 
 // ── الرصيد والقيمة ───────────────────────────────────────────────────────────
 function StockTab({ w }: { w: WarehouseAdmin }) {
+  const t = useT();
   return (
     <>
       <div className="grid grid-cols-2 gap-3">
-        <DetailStat label="قيمة المخزون" value={formatCurrency(w.totalValue)} />
-        <DetailStat label="إجمالي الكمية" value={formatNumber(w.totalQty)} />
-        <DetailStat label="عدد الأصناف" value={formatNumber(w.itemCount)} />
-        <DetailStat label="عدد الحركات" value={formatNumber(w.movementCount)} />
+        <DetailStat label={t("inventoryRest.warehouses.stock.value")} value={formatCurrency(w.totalValue)} />
+        <DetailStat label={t("inventoryRest.warehouses.stock.totalQty")} value={formatNumber(w.totalQty)} />
+        <DetailStat label={t("inventoryRest.warehouses.stock.itemCount")} value={formatNumber(w.itemCount)} />
+        <DetailStat label={t("inventoryRest.warehouses.stock.movementCount")} value={formatNumber(w.movementCount)} />
       </div>
-      <h3 className="mt-6 text-sm font-extrabold text-slate-900">تفصيل التنبيهات</h3>
+      <h3 className="mt-6 text-sm font-extrabold text-slate-900">{t("inventoryRest.warehouses.stock.alertsTitle")}</h3>
       <div className="mt-3 grid grid-cols-3 gap-2">
-        <DetailStat label="منخفض" value={formatNumber(w.lowCount)} />
-        <DetailStat label="نافد" value={formatNumber(w.outCount)} />
-        <DetailStat label="سالب" value={formatNumber(w.negativeCount)} />
+        <DetailStat label={t("inventoryRest.warehouses.stock.low")} value={formatNumber(w.lowCount)} />
+        <DetailStat label={t("inventoryRest.warehouses.stock.out")} value={formatNumber(w.outCount)} />
+        <DetailStat label={t("inventoryRest.warehouses.stock.negative")} value={formatNumber(w.negativeCount)} />
       </div>
       <div className="mt-6 flex items-center gap-2 text-xs font-bold text-slate-400">
-        <Building2 className="h-4 w-4" /> القيم بمتوسط تكلفة المستودع (WAC)؛ تُقدَّر بالتكلفة
-        العامة عند غياب WAC. آخر حركة: {formatDateTime(w.lastMovementAt)}
+        <Building2 className="h-4 w-4" /> {t("inventoryRest.warehouses.stock.wacNote", { date: formatDateTime(w.lastMovementAt) })}
       </div>
     </>
   );
@@ -188,13 +192,14 @@ function StockTab({ w }: { w: WarehouseAdmin }) {
 
 // ── آخر الحركات ──────────────────────────────────────────────────────────────
 function MovementsTab({ data }: { data: import("@/modules/inventory/lib/adapters/warehouse-admin.adapter").WarehouseMovementRow[] }) {
+  const t = useT();
   if (!data.length) {
-    return <EmptyState title="لا توجد حركات" body="لم تُسجَّل أي حركة مخزنية على هذا المستودع بعد." />;
+    return <EmptyState title={t("inventoryRest.warehouses.movements.emptyTitle")} body={t("inventoryRest.warehouses.movements.emptyBody")} />;
   }
   return (
     <div className="space-y-2">
       <div className="flex items-center gap-2 text-xs font-bold text-slate-400">
-        <History className="h-4 w-4" /> آخر {formatNumber(data.length)} حركة
+        <History className="h-4 w-4" /> {t("inventoryRest.warehouses.movements.lastN", { count: formatNumber(data.length) })}
       </div>
       {data.map((m) => (
         <div key={m.id} className="flex items-center gap-3 rounded-xl border border-slate-100 px-3 py-3">
@@ -235,6 +240,7 @@ function AdminTab({
   warehouseId: string;
   onDeleted: () => void;
 }) {
+  const t = useT();
   const canDeactivate = useCan("warehouse.deactivate");
   // The hard delete is admin-only on the backend; warehouse.scopeAssign is the
   // client-side admin mirror (permissions.ts has no dedicated warehouse.delete).
@@ -274,8 +280,8 @@ function AdminTab({
   if (!canDeactivate && !isAdmin) {
     return (
       <EmptyState
-        title="لا تملك صلاحية الإدارة"
-        body="تفعيل/تعطيل المستودع أو حذفه يتطلب صلاحية مدير أو مسؤول."
+        title={t("inventoryRest.warehouses.admin.noPermTitle")}
+        body={t("inventoryRest.warehouses.admin.noPermBody")}
       />
     );
   }
@@ -287,12 +293,12 @@ function AdminTab({
           <div className="flex items-center justify-between gap-3">
             <div>
               <div className="text-sm font-extrabold text-slate-800">
-                {w.isActive ? "تعطيل المستودع" : "تفعيل المستودع"}
+                {w.isActive ? t("inventoryRest.warehouses.admin.deactivateTitle") : t("inventoryRest.warehouses.admin.activateTitle")}
               </div>
               <p className="mt-1 text-xs font-medium text-slate-500">
                 {w.isActive
-                  ? "يمنع الحركات الجديدة. يتطلب أن تكون كل الأرصدة صفرًا."
-                  : "يعيد المستودع للعمل ويظهر في القوائم التشغيلية."}
+                  ? t("inventoryRest.warehouses.admin.deactivateBody")
+                  : t("inventoryRest.warehouses.admin.activateBody")}
               </p>
             </div>
             <Button
@@ -303,7 +309,7 @@ function AdminTab({
                 setConfirm("toggle");
               }}
             >
-              <Power className="h-4 w-4" /> {w.isActive ? "تعطيل" : "تفعيل"}
+              <Power className="h-4 w-4" /> {w.isActive ? t("inventoryRest.warehouses.admin.deactivate") : t("inventoryRest.warehouses.admin.activate")}
             </Button>
           </div>
         </div>
@@ -313,10 +319,9 @@ function AdminTab({
         <div className="rounded-xl border border-rose-100 bg-rose-50/40 p-4">
           <div className="flex items-center justify-between gap-3">
             <div>
-              <div className="text-sm font-extrabold text-rose-700">حذف صلب</div>
+              <div className="text-sm font-extrabold text-rose-700">{t("inventoryRest.warehouses.admin.hardDeleteTitle")}</div>
               <p className="mt-1 text-xs font-medium text-slate-500">
-                يحذف المستودع نهائيًا. مسموح فقط لمستودع لم يُستخدم إطلاقًا (بلا أرصدة وبلا
-                حركات) — وإلا استخدم التعطيل.
+                {t("inventoryRest.warehouses.admin.hardDeleteBody")}
               </p>
             </div>
             <Button
@@ -326,26 +331,26 @@ function AdminTab({
                 setConfirm("delete");
               }}
             >
-              <Trash2 className="h-4 w-4" /> حذف
+              <Trash2 className="h-4 w-4" /> {t("inventoryRest.warehouses.admin.delete")}
             </Button>
           </div>
         </div>
       )}
 
       <div className="flex items-center gap-2 text-xs font-bold text-slate-400">
-        <ShieldCheck className="h-4 w-4" /> كل إجراء يُسجَّل في سجل التدقيق باسم منفّذه.
+        <ShieldCheck className="h-4 w-4" /> {t("inventoryRest.warehouses.admin.auditNote")}
       </div>
 
       <ConfirmDialog
         open={confirm === "toggle"}
-        title={w.isActive ? `تعطيل «${w.name}»؟` : `تفعيل «${w.name}»؟`}
+        title={w.isActive ? t("inventoryRest.warehouses.admin.confirmDeactivate", { name: w.name }) : t("inventoryRest.warehouses.admin.confirmActivate", { name: w.name })}
         description={
           w.isActive
-            ? "سيُمنع إنشاء حركات جديدة على هذا المستودع. إذا كانت هناك أرصدة غير صفرية سيرفض النظام التعطيل."
-            : "سيعود المستودع للظهور في القوائم التشغيلية."
+            ? t("inventoryRest.warehouses.admin.confirmDeactivateBody")
+            : t("inventoryRest.warehouses.admin.confirmActivateBody")
         }
         tone={w.isActive ? "danger" : "primary"}
-        confirmLabel={w.isActive ? "تعطيل" : "تفعيل"}
+        confirmLabel={w.isActive ? t("inventoryRest.warehouses.admin.deactivate") : t("inventoryRest.warehouses.admin.activate")}
         processing={activate.isPending || deactivate.isPending}
         error={toggleErr}
         onConfirm={doToggle}
@@ -354,10 +359,10 @@ function AdminTab({
 
       <ConfirmDialog
         open={confirm === "delete"}
-        title={`حذف «${w.name}» نهائيًا؟`}
-        description="لا يمكن التراجع عن الحذف الصلب. سيرفض النظام الحذف إذا وُجد أي رصيد أو حركة على المستودع."
+        title={t("inventoryRest.warehouses.admin.confirmDeleteTitle", { name: w.name })}
+        description={t("inventoryRest.warehouses.admin.confirmDeleteBody")}
         tone="danger"
-        confirmLabel="حذف نهائي"
+        confirmLabel={t("inventoryRest.warehouses.admin.confirmDeleteLabel")}
         processing={remove.isPending}
         error={deleteErr}
         onConfirm={doDelete}

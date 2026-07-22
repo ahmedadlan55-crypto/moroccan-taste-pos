@@ -36,6 +36,7 @@ import {
   formatQty,
   formatDateTime,
 } from "@/shared/lib";
+import { useT } from "@/i18n";
 import { useWarehouseScope, ALL_WAREHOUSES } from "@/modules/inventory/lib/warehouse-scope-provider";
 import { useAnalytics, type AnalyticsFilters } from "@/modules/inventory/lib/hooks/useAnalytics";
 import type {
@@ -89,6 +90,7 @@ const fmtCurrencyTick = (v: RechartsValue): string => formatCurrency(toScalar(v)
 const fmtNumberTick = (v: RechartsValue): string => formatNumber(toScalar(v));
 
 export function AnalyticsPage() {
+  const t = useT();
   const { scope } = useWarehouseScope();
   const [params, setParams] = useSearchParams();
 
@@ -120,8 +122,8 @@ export function AnalyticsPage() {
 
   const allWarehouses = data ? data.scope.allWarehousesAccess && scope === ALL_WAREHOUSES : scope === ALL_WAREHOUSES;
   const subtitle = allWarehouses
-    ? "تحليلات موحّدة لكل المستودعات — القيمة، الحركة، الفئات، وجودة البيانات."
-    : "تحليلات المستودع المحدّد فقط — غيّر النطاق من الشريط العلوي لعرض الكل.";
+    ? t("inventoryRest.analytics.subtitleAll")
+    : t("inventoryRest.analytics.subtitleScoped");
 
   const filterBar = (
     <FilterBar
@@ -137,12 +139,12 @@ export function AnalyticsPage() {
 
   const header = (
     <PageHeader
-      eyebrow="التحليلات"
-      title="تحليلات المخزون"
+      eyebrow={t("inventoryRest.analytics.eyebrow")}
+      title={t("inventoryRest.analytics.title")}
       subtitle={subtitle}
       action={
         <Button variant="secondary" onClick={() => refetch()} disabled={isFetching}>
-          <RefreshCw className="h-4 w-4" /> تحديث
+          <RefreshCw className="h-4 w-4" /> {t("inventoryRest.ui.refresh")}
         </Button>
       }
     />
@@ -182,14 +184,15 @@ export function AnalyticsPage() {
         {header}
         {filterBar}
         <EmptyState
-          title="لا توجد بيانات لعرضها"
-          body="لا توجد أرصدة أو حركة ضمن النطاق والمرشّحات الحالية. جرّب توسيع نطاق التاريخ أو تغيير المستودع."
+          title={t("inventoryRest.analytics.emptyTitle")}
+          body={t("inventoryRest.analytics.emptyBody")}
         />
       </>
     );
   }
 
   const k = data.kpis;
+  const cov = data.dataQualityIndicators.expiryCoverage;
 
   return (
     <>
@@ -198,7 +201,7 @@ export function AnalyticsPage() {
 
       {isFetching && (
         <div className="mb-3 flex items-center gap-2 text-xs font-bold text-slate-400" aria-live="polite">
-          <Spinner className="h-3.5 w-3.5" /> جارٍ التحديث…
+          <Spinner className="h-3.5 w-3.5" /> {t("inventoryRest.analytics.updating")}
         </div>
       )}
 
@@ -207,50 +210,50 @@ export function AnalyticsPage() {
       {/* Primary KPI row */}
       <section className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
         <MetricCard
-          label="قيمة المخزون الموجب"
+          label={t("inventoryRest.analytics.kpi.positiveValue")}
           value={formatCurrency(k.inventoryValueWac)}
           note={
             k.estimatedCostValue > 0
-              ? `بمتوسط التكلفة (WAC) · منها تقديري ${formatCurrency(k.estimatedCostValue)} (جزء من القيمة، لا يُضاف)`
-              : "بمتوسط التكلفة المرجّح (WAC) — رصيد موجب فقط"
+              ? t("inventoryRest.analytics.kpi.positiveValueWithEst", { value: formatCurrency(k.estimatedCostValue) })
+              : t("inventoryRest.analytics.kpi.positiveValueNote")
           }
           icon={CircleDollarSign}
         />
         <MetricCard
-          label="أثر المخزون السالب بالقيمة"
+          label={t("inventoryRest.analytics.kpi.negativeImpact")}
           value={formatCurrency(k.negativeStockValueImpact)}
           note={
             k.negativeStockValueImpact < 0
-              ? "قيمة العجز (سالبة) — غير محتسبة ضمن قيمة المخزون"
-              : "لا يوجد رصيد سالب"
+              ? t("inventoryRest.analytics.kpi.negativeImpactNote")
+              : t("inventoryRest.analytics.kpi.negativeImpactNone")
           }
           icon={Coins}
           tone="rose"
         />
         <MetricCard
-          label="الأصناف"
+          label={t("inventoryRest.analytics.kpi.items")}
           value={formatNumber(k.itemCount)}
-          note={`إجمالي الكمية ${formatQty(k.totalQty)}`}
+          note={t("inventoryRest.analytics.kpi.itemsNote", { qty: formatQty(k.totalQty) })}
           icon={Boxes}
           tone="blue"
         />
         <MetricCard
-          label="مستودعات نشطة"
+          label={t("inventoryRest.analytics.kpi.activeWarehouses")}
           value={formatNumber(k.activeWarehouses)}
-          note="ضمن النطاق الحالي"
+          note={t("inventoryRest.analytics.kpi.activeWarehousesNote")}
           icon={WarehouseIcon}
         />
       </section>
 
       {/* Stock-state KPI row */}
       <section className="mt-4 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-        <MetricCard label="متوفر" value={formatNumber(k.availableCount)} note="أصناف فوق حد إعادة الطلب" icon={PackageCheck} tone="teal" />
-        <MetricCard label="منخفض" value={formatNumber(k.lowCount)} note="عند حد إعادة الطلب أو دونه" icon={PackageMinus} tone="amber" />
-        <MetricCard label="نافد" value={formatNumber(k.outCount)} note="رصيد صفري" icon={PackageX} tone="rose" />
+        <MetricCard label={t("inventoryRest.analytics.kpi.available")} value={formatNumber(k.availableCount)} note={t("inventoryRest.analytics.kpi.availableNote")} icon={PackageCheck} tone="teal" />
+        <MetricCard label={t("inventoryRest.analytics.kpi.low")} value={formatNumber(k.lowCount)} note={t("inventoryRest.analytics.kpi.lowNote")} icon={PackageMinus} tone="amber" />
+        <MetricCard label={t("inventoryRest.analytics.kpi.out")} value={formatNumber(k.outCount)} note={t("inventoryRest.analytics.kpi.outNote")} icon={PackageX} tone="rose" />
         <MetricCard
-          label="رصيد سالب"
+          label={t("inventoryRest.analytics.kpi.negative")}
           value={formatNumber(k.negativeCount)}
-          note={k.negativeCount > 0 ? "عجز يحتاج تصحيحًا" : "لا يوجد عجز"}
+          note={k.negativeCount > 0 ? t("inventoryRest.analytics.kpi.negativeNote") : t("inventoryRest.analytics.kpi.negativeNone")}
           icon={TrendingDown}
           tone="rose"
         />
@@ -259,37 +262,37 @@ export function AnalyticsPage() {
       {/* Operational KPI row */}
       <section className="mt-4 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
         <MetricCard
-          label={`راكد (بلا حركة ${formatNumber(data.slowNoMovement.window || activeWindow)}ي)`}
+          label={t("inventoryRest.analytics.kpi.stagnant", { days: formatNumber(data.slowNoMovement.window || activeWindow) })}
           value={formatNumber(data.slowNoMovement.count)}
-          note="أصناف بلا حركة خلال النافذة"
+          note={t("inventoryRest.analytics.kpi.stagnantNote")}
           icon={TrendingDown}
           tone="amber"
         />
         <MetricCard
-          label="قيد النقل"
+          label={t("inventoryRest.analytics.kpi.inTransit")}
           value={formatNumber(data.transfers.inTransit)}
-          note={`متبقٍ استلامه ${formatQty(data.transfers.remainingQty)}`}
+          note={t("inventoryRest.analytics.kpi.inTransitNote", { qty: formatQty(data.transfers.remainingQty) })}
           icon={Truck}
           tone="blue"
         />
         <MetricCard
-          label="تحويلات معلّقة"
+          label={t("inventoryRest.analytics.kpi.transfersPending")}
           value={formatNumber(data.transfers.pending)}
-          note="مسودة / بانتظار الاعتماد"
+          note={t("inventoryRest.analytics.kpi.transfersPendingNote")}
           icon={Truck}
           tone="amber"
         />
         <MetricCard
-          label="تغطية الصلاحية"
+          label={t("inventoryRest.analytics.kpi.expiryCoverage")}
           value={
-            data.dataQualityIndicators.expiryCoverage.lots > 0
-              ? formatNumber(data.dataQualityIndicators.expiryCoverage.covered)
-              : "غير متاح"
+            cov.lots > 0
+              ? formatNumber(cov.covered)
+              : t("inventoryRest.analytics.kpi.expiryUnavailable")
           }
           note={
-            data.dataQualityIndicators.expiryCoverage.lots > 0
-              ? `${formatNumber(data.dataQualityIndicators.expiryCoverage.covered)} من ${formatNumber(data.dataQualityIndicators.expiryCoverage.lots)} دفعة${data.dataQualityIndicators.expiryCoverage.reliable ? "" : " · بيانات جزئية"}`
-              : "بيانات الدفعات غير متوفرة"
+            cov.lots > 0
+              ? t("inventoryRest.analytics.kpi.expiryCoverageNote", { covered: formatNumber(cov.covered), lots: formatNumber(cov.lots) }) + (cov.reliable ? "" : t("inventoryRest.analytics.kpi.expiryPartial"))
+              : t("inventoryRest.analytics.kpi.expiryNoData")
           }
           icon={PackageCheck}
           tone="violet"
@@ -309,10 +312,10 @@ export function AnalyticsPage() {
 
       {/* Footer */}
       <footer className="mt-6 border-t border-slate-100 pt-4 text-xs font-bold text-slate-400">
-        تم التوليد: {formatDateTime(data.generatedAt)} ·{" "}
+        {t("inventoryRest.analytics.generated", { date: formatDateTime(data.generatedAt) })}
         {allWarehouses
-          ? "النطاق: كل المستودعات"
-          : `النطاق: مستودع محدّد${data.scope.warehouseId ? ` (${data.scope.warehouseId})` : ""}`}
+          ? t("inventoryRest.analytics.scopeAll")
+          : `${t("inventoryRest.analytics.scopeScoped")}${data.scope.warehouseId ? ` (${data.scope.warehouseId})` : ""}`}
       </footer>
     </>
   );
@@ -333,13 +336,15 @@ interface FilterBarProps {
 }
 
 function FilterBar({ from, to, category, type, window, onChange, onReset }: FilterBarProps) {
+  const t = useT();
   const hasAny = Boolean(from || to || category || type) || window !== DEFAULT_WINDOW;
   return (
     <div className="no-print surface mb-4 flex flex-wrap items-end gap-3 p-4">
       <label className="flex min-w-[8.5rem] flex-1 flex-col gap-1.5">
-        <span className="text-xs font-extrabold text-slate-500">من تاريخ</span>
+        <span className="text-xs font-extrabold text-slate-500">{t("inventoryRest.analytics.filter.from")}</span>
         <input
           type="date"
+          dir="ltr"
           className="field"
           value={from}
           max={to || undefined}
@@ -348,9 +353,10 @@ function FilterBar({ from, to, category, type, window, onChange, onReset }: Filt
       </label>
 
       <label className="flex min-w-[8.5rem] flex-1 flex-col gap-1.5">
-        <span className="text-xs font-extrabold text-slate-500">إلى تاريخ</span>
+        <span className="text-xs font-extrabold text-slate-500">{t("inventoryRest.analytics.filter.to")}</span>
         <input
           type="date"
+          dir="ltr"
           className="field"
           value={to}
           min={from || undefined}
@@ -359,27 +365,27 @@ function FilterBar({ from, to, category, type, window, onChange, onReset }: Filt
       </label>
 
       <label className="flex min-w-[10rem] flex-1 flex-col gap-1.5">
-        <span className="text-xs font-extrabold text-slate-500">الفئة</span>
+        <span className="text-xs font-extrabold text-slate-500">{t("inventoryRest.analytics.filter.category")}</span>
         <input
           type="text"
           className="field"
-          placeholder="كل الفئات"
+          placeholder={t("inventoryRest.analytics.filter.categoryPlaceholder")}
           value={category}
           onChange={(e) => onChange({ category: e.target.value || null })}
         />
       </label>
 
       <label className="flex min-w-[8.5rem] flex-1 flex-col gap-1.5">
-        <span className="text-xs font-extrabold text-slate-500">نوع الحركة</span>
+        <span className="text-xs font-extrabold text-slate-500">{t("inventoryRest.analytics.filter.type")}</span>
         <select className="field" value={type} onChange={(e) => onChange({ type: e.target.value || null })}>
-          <option value="">الكل</option>
-          <option value="in">وارد</option>
-          <option value="out">صادر</option>
+          <option value="">{t("inventoryRest.analytics.filter.typeAll")}</option>
+          <option value="in">{t("inventoryRest.analytics.filter.typeIn")}</option>
+          <option value="out">{t("inventoryRest.analytics.filter.typeOut")}</option>
         </select>
       </label>
 
       <label className="flex min-w-[8.5rem] flex-1 flex-col gap-1.5">
-        <span className="text-xs font-extrabold text-slate-500">نافذة الركود</span>
+        <span className="text-xs font-extrabold text-slate-500">{t("inventoryRest.analytics.filter.window")}</span>
         <select
           className="field"
           value={String(window)}
@@ -387,14 +393,14 @@ function FilterBar({ from, to, category, type, window, onChange, onReset }: Filt
         >
           {WINDOWS.map((w) => (
             <option key={w} value={String(w)}>
-              {formatNumber(w)} يوم
+              {t("inventoryRest.analytics.filter.windowDays", { days: formatNumber(w) })}
             </option>
           ))}
         </select>
       </label>
 
       <Button variant="ghost" onClick={onReset} disabled={!hasAny} className="shrink-0">
-        تصفير المرشّحات
+        {t("inventoryRest.analytics.filter.reset")}
       </Button>
     </div>
   );
@@ -405,12 +411,13 @@ function FilterBar({ from, to, category, type, window, onChange, onReset }: Filt
  * ------------------------------------------------------------------------- */
 
 function WarningsBanner({ data }: { data: Analytics }) {
+  const t = useT();
   if (data.warnings.length === 0) return null;
   return (
     <div className="surface mb-4 border-amber-200 bg-amber-50/70 p-4" role="alert">
       <div className="flex items-center gap-2 text-sm font-extrabold text-amber-800">
         <AlertTriangle className="h-5 w-5 shrink-0" />
-        مؤشرات جودة البيانات
+        {t("inventoryRest.analytics.warningsTitle")}
       </div>
       <ul className="mt-2 list-inside list-disc space-y-1 pr-1 text-xs font-bold text-amber-700">
         {data.warnings.map((w, i) => (
@@ -436,6 +443,7 @@ function ChartCard({
   isEmpty: boolean;
   children: ReactNode;
 }) {
+  const t = useT();
   return (
     <article className="surface overflow-hidden p-5">
       <header className="mb-4">
@@ -444,7 +452,7 @@ function ChartCard({
       </header>
       {isEmpty ? (
         <div className="grid h-[260px] place-items-center text-sm font-bold text-slate-400">
-          لا توجد بيانات كافية لهذا الرسم.
+          {t("inventoryRest.analytics.chartEmpty")}
         </div>
       ) : (
         children
@@ -466,8 +474,9 @@ const tooltipStyle = {
  * ------------------------------------------------------------------------- */
 
 function MovementTrendCard({ rows }: { rows: TrendPoint[] }) {
+  const t = useT();
   return (
-    <ChartCard title="اتجاه الحركة" subtitle="الوارد مقابل الصادر عبر الزمن" isEmpty={rows.length === 0}>
+    <ChartCard title={t("inventoryRest.analytics.movementTrend.title")} subtitle={t("inventoryRest.analytics.movementTrend.subtitle")} isEmpty={rows.length === 0}>
       <ResponsiveContainer width="100%" height={280}>
         <LineChart data={rows} margin={{ top: 8, right: 8, left: 8, bottom: 8 }}>
           <CartesianGrid stroke={COLORS.grid} strokeDasharray="3 3" />
@@ -475,15 +484,15 @@ function MovementTrendCard({ rows }: { rows: TrendPoint[] }) {
           <YAxis tick={{ fontSize: 11, fill: COLORS.axis }} tickFormatter={fmtNumberTick} width={56} orientation="right" />
           <Tooltip contentStyle={tooltipStyle} formatter={fmtNumberTick} />
           <Legend wrapperStyle={{ fontSize: 12, fontWeight: 700 }} />
-          <Line type="monotone" dataKey="in" name="وارد" stroke={COLORS.teal} strokeWidth={2} dot={false} />
-          <Line type="monotone" dataKey="out" name="صادر" stroke={COLORS.rose} strokeWidth={2} dot={false} />
+          <Line type="monotone" dataKey="in" name={t("inventoryRest.analytics.movementTrend.in")} stroke={COLORS.teal} strokeWidth={2} dot={false} />
+          <Line type="monotone" dataKey="out" name={t("inventoryRest.analytics.movementTrend.out")} stroke={COLORS.rose} strokeWidth={2} dot={false} />
         </LineChart>
       </ResponsiveContainer>
 
       {rows.length > 0 && (
         <DataTable
-          caption="جدول بديل: اتجاه الحركة"
-          head={["الفترة", "وارد", "صادر"]}
+          caption={t("inventoryRest.analytics.movementTrend.tableCaption")}
+          head={[t("inventoryRest.analytics.movementTrend.colPeriod"), t("inventoryRest.analytics.movementTrend.in"), t("inventoryRest.analytics.movementTrend.out")]}
           rows={rows.map((r) => [r.bucket, formatNumber(r.in), formatNumber(r.out)])}
         />
       )}
@@ -496,22 +505,23 @@ function MovementTrendCard({ rows }: { rows: TrendPoint[] }) {
  * ------------------------------------------------------------------------- */
 
 function ValueByWarehouseCard({ rows }: { rows: ValueByWarehouse[] }) {
+  const t = useT();
   return (
-    <ChartCard title="القيمة حسب المستودع" subtitle="قيمة المخزون (WAC) لكل مستودع" isEmpty={rows.length === 0}>
+    <ChartCard title={t("inventoryRest.analytics.valueByWarehouse.title")} subtitle={t("inventoryRest.analytics.valueByWarehouse.subtitle")} isEmpty={rows.length === 0}>
       <ResponsiveContainer width="100%" height={280}>
         <BarChart data={rows} margin={{ top: 8, right: 8, left: 8, bottom: 8 }}>
           <CartesianGrid stroke={COLORS.grid} strokeDasharray="3 3" />
           <XAxis dataKey="name" tick={{ fontSize: 11, fill: COLORS.axis }} interval={0} />
           <YAxis tick={{ fontSize: 11, fill: COLORS.axis }} tickFormatter={fmtNumberTick} width={64} orientation="right" />
           <Tooltip contentStyle={tooltipStyle} formatter={fmtCurrencyTick} />
-          <Bar dataKey="value" name="القيمة" fill={COLORS.teal} radius={[6, 6, 0, 0]} maxBarSize={56} />
+          <Bar dataKey="value" name={t("inventoryRest.analytics.valueByWarehouse.value")} fill={COLORS.teal} radius={[6, 6, 0, 0]} maxBarSize={56} />
         </BarChart>
       </ResponsiveContainer>
 
       {rows.length > 0 && (
         <DataTable
-          caption="جدول بديل: القيمة حسب المستودع"
-          head={["المستودع", "الرمز", "القيمة", "الكمية"]}
+          caption={t("inventoryRest.analytics.valueByWarehouse.tableCaption")}
+          head={[t("inventoryRest.analytics.valueByWarehouse.colWarehouse"), t("inventoryRest.analytics.valueByWarehouse.colCode"), t("inventoryRest.analytics.valueByWarehouse.colValue"), t("inventoryRest.analytics.valueByWarehouse.colQty")]}
           rows={rows.map((r) => [r.name, r.code, formatCurrency(r.value), formatNumber(r.qty)])}
         />
       )}
@@ -524,23 +534,24 @@ function ValueByWarehouseCard({ rows }: { rows: ValueByWarehouse[] }) {
  * ------------------------------------------------------------------------- */
 
 function ValueByCategoryCard({ rows }: { rows: ValueByCategory[] }) {
+  const t = useT();
   return (
-    <ChartCard title="القيمة حسب الفئة" subtitle="توزيع قيمة المخزون على الفئات" isEmpty={rows.length === 0}>
+    <ChartCard title={t("inventoryRest.analytics.valueByCategory.title")} subtitle={t("inventoryRest.analytics.valueByCategory.subtitle")} isEmpty={rows.length === 0}>
       <ResponsiveContainer width="100%" height={280}>
         <BarChart data={rows} margin={{ top: 8, right: 8, left: 8, bottom: 8 }}>
           <CartesianGrid stroke={COLORS.grid} strokeDasharray="3 3" />
           <XAxis dataKey="category" tick={{ fontSize: 11, fill: COLORS.axis }} interval={0} />
           <YAxis tick={{ fontSize: 11, fill: COLORS.axis }} tickFormatter={fmtNumberTick} width={64} orientation="right" />
           <Tooltip contentStyle={tooltipStyle} formatter={fmtCurrencyTick} />
-          <Bar dataKey="value" name="القيمة" fill={COLORS.amber} radius={[6, 6, 0, 0]} maxBarSize={56} />
+          <Bar dataKey="value" name={t("inventoryRest.analytics.valueByCategory.value")} fill={COLORS.amber} radius={[6, 6, 0, 0]} maxBarSize={56} />
         </BarChart>
       </ResponsiveContainer>
 
       {rows.length > 0 && (
         <DataTable
-          caption="جدول بديل: القيمة حسب الفئة"
-          head={["الفئة", "القيمة", "الكمية", "الأصناف"]}
-          rows={rows.map((r) => [r.category || "غير مصنّف", formatCurrency(r.value), formatNumber(r.qty), formatNumber(r.items)])}
+          caption={t("inventoryRest.analytics.valueByCategory.tableCaption")}
+          head={[t("inventoryRest.analytics.valueByCategory.colCategory"), t("inventoryRest.analytics.valueByCategory.colValue"), t("inventoryRest.analytics.valueByCategory.colQty"), t("inventoryRest.analytics.valueByCategory.colItems")]}
+          rows={rows.map((r) => [r.category || t("inventoryRest.analytics.uncategorized"), formatCurrency(r.value), formatNumber(r.qty), formatNumber(r.items)])}
         />
       )}
     </ChartCard>
@@ -552,8 +563,9 @@ function ValueByCategoryCard({ rows }: { rows: ValueByCategory[] }) {
  * ------------------------------------------------------------------------- */
 
 function TopItemsCard({ rows }: { rows: TopItem[] }) {
+  const t = useT();
   return (
-    <ChartCard title="أعلى الأصناف بالقيمة" subtitle="الأصناف الأكثر تأثيرًا في قيمة المخزون" isEmpty={rows.length === 0}>
+    <ChartCard title={t("inventoryRest.analytics.topItems.title")} subtitle={t("inventoryRest.analytics.topItems.subtitle")} isEmpty={rows.length === 0}>
       <ResponsiveContainer width="100%" height={Math.max(280, rows.length * 34 + 40)}>
         <BarChart data={rows} layout="vertical" margin={{ top: 8, right: 16, left: 8, bottom: 8 }}>
           <CartesianGrid stroke={COLORS.grid} strokeDasharray="3 3" horizontal={false} />
@@ -567,15 +579,15 @@ function TopItemsCard({ rows }: { rows: TopItem[] }) {
             interval={0}
           />
           <Tooltip contentStyle={tooltipStyle} formatter={fmtCurrencyTick} />
-          <Bar dataKey="value" name="القيمة" fill={COLORS.slate} radius={[0, 6, 6, 0]} maxBarSize={26} />
+          <Bar dataKey="value" name={t("inventoryRest.analytics.topItems.value")} fill={COLORS.slate} radius={[0, 6, 6, 0]} maxBarSize={26} />
         </BarChart>
       </ResponsiveContainer>
 
       {rows.length > 0 && (
         <DataTable
-          caption="جدول بديل: أعلى الأصناف بالقيمة"
-          head={["الصنف", "الفئة", "الكمية", "القيمة"]}
-          rows={rows.map((r) => [r.name, r.category || "غير مصنّف", formatNumber(r.qty), formatCurrency(r.value)])}
+          caption={t("inventoryRest.analytics.topItems.tableCaption")}
+          head={[t("inventoryRest.analytics.topItems.colItem"), t("inventoryRest.analytics.topItems.colCategory"), t("inventoryRest.analytics.topItems.colQty"), t("inventoryRest.analytics.topItems.colValue")]}
+          rows={rows.map((r) => [r.name, r.category || t("inventoryRest.analytics.uncategorized"), formatNumber(r.qty), formatCurrency(r.value)])}
         />
       )}
     </ChartCard>
@@ -587,29 +599,30 @@ function TopItemsCard({ rows }: { rows: TopItem[] }) {
  * ------------------------------------------------------------------------- */
 
 function WarehouseComparisonSection({ rows }: { rows: WarehouseComparison[] }) {
+  const t = useT();
   return (
     <section className="surface mt-6 overflow-hidden">
       <header className="border-b border-slate-100 px-5 py-4">
-        <h2 className="text-base font-extrabold text-slate-900">مقارنة المستودعات</h2>
-        <p className="mt-0.5 text-xs font-medium text-slate-500">القيمة والكمية والتنبيهات لكل مستودع ضمن النطاق</p>
+        <h2 className="text-base font-extrabold text-slate-900">{t("inventoryRest.analytics.comparison.title")}</h2>
+        <p className="mt-0.5 text-xs font-medium text-slate-500">{t("inventoryRest.analytics.comparison.subtitle")}</p>
       </header>
       {rows.length === 0 ? (
-        <div className="p-10 text-center text-sm font-bold text-slate-400">لا توجد مستودعات للمقارنة ضمن هذا النطاق.</div>
+        <div className="p-10 text-center text-sm font-bold text-slate-400">{t("inventoryRest.analytics.comparison.empty")}</div>
       ) : (
         <div className="overflow-x-auto scrollbar-thin">
           <table className="w-full min-w-[820px] text-right">
-            <caption className="sr-only">مقارنة المستودعات: الاسم والرمز والنوع وعدد الأصناف والكمية والقيمة والمنخفض والنافد والسالب</caption>
+            <caption className="sr-only">{t("inventoryRest.analytics.comparison.caption")}</caption>
             <thead className="bg-slate-50 text-[11px] font-extrabold text-slate-400">
               <tr>
-                <th scope="col" className="px-5 py-3">المستودع</th>
-                <th scope="col" className="px-4 py-3">الرمز</th>
-                <th scope="col" className="px-4 py-3">النوع</th>
-                <th scope="col" className="px-4 py-3">الأصناف</th>
-                <th scope="col" className="px-4 py-3">الكمية</th>
-                <th scope="col" className="px-4 py-3">القيمة</th>
-                <th scope="col" className="px-4 py-3">منخفض</th>
-                <th scope="col" className="px-4 py-3">نافد</th>
-                <th scope="col" className="px-5 py-3">سالب</th>
+                <th scope="col" className="px-5 py-3">{t("inventoryRest.analytics.comparison.colWarehouse")}</th>
+                <th scope="col" className="px-4 py-3">{t("inventoryRest.analytics.comparison.colCode")}</th>
+                <th scope="col" className="px-4 py-3">{t("inventoryRest.analytics.comparison.colType")}</th>
+                <th scope="col" className="px-4 py-3">{t("inventoryRest.analytics.comparison.colItems")}</th>
+                <th scope="col" className="px-4 py-3">{t("inventoryRest.analytics.comparison.colQty")}</th>
+                <th scope="col" className="px-4 py-3">{t("inventoryRest.analytics.comparison.colValue")}</th>
+                <th scope="col" className="px-4 py-3">{t("inventoryRest.analytics.comparison.colLow")}</th>
+                <th scope="col" className="px-4 py-3">{t("inventoryRest.analytics.comparison.colOut")}</th>
+                <th scope="col" className="px-5 py-3">{t("inventoryRest.analytics.comparison.colNegative")}</th>
               </tr>
             </thead>
             <tbody>
@@ -639,10 +652,11 @@ function WarehouseComparisonSection({ rows }: { rows: WarehouseComparison[] }) {
  * ------------------------------------------------------------------------- */
 
 function DataTable({ caption, head, rows }: { caption: string; head: string[]; rows: string[][] }) {
+  const t = useT();
   return (
     <details className="mt-4 text-sm">
       <summary className="cursor-pointer select-none text-xs font-extrabold text-teal-700 hover:text-teal-800">
-        عرض الجدول البديل
+        {t("inventoryRest.analytics.showTable")}
       </summary>
       <div className="mt-3 overflow-x-auto scrollbar-thin">
         <table className="w-full min-w-[360px] text-right">

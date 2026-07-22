@@ -17,8 +17,9 @@
 import { useMemo, useState } from "react";
 import { Languages } from "lucide-react";
 import { PageHeader, Card, Button, Input, LoadingState, ErrorState, EmptyState, useToast } from "@/shared/ui";
+import { useTx } from "@/shared/ui/i18n";
 import { Can, useCan } from "@/shared/permissions";
-import { useCategoryList, useUpdateCategoryEn, type CategoryTranslation } from "./api";
+import { useCategoryList, useUpdateCategoryEn, menuErrorText, type CategoryTranslation } from "./api";
 
 /** Gate the whole page — the screen (and its query/mutation) only mounts once
  *  menu.view is confirmed, matching ImageManager/PricingPage's idiom (a thin
@@ -32,6 +33,7 @@ export function CategoryTranslations() {
 }
 
 function CategoryTranslationsScreen() {
+  const t = useTx();
   const { toast } = useToast();
   const canManage = useCan("menu.catalog.manage");
 
@@ -61,7 +63,7 @@ function CategoryTranslationsScreen() {
   function save(row: CategoryTranslation) {
     const categoryEn = draftFor(row).trim();
     if (!categoryEn) {
-      toast({ title: "الاسم الإنجليزي للقسم مطلوب", tone: "error" });
+      toast({ title: t("menuRest.categoryTranslations.enRequired"), tone: "error" });
       return;
     }
     setSavingAr(row.categoryAr);
@@ -69,7 +71,7 @@ function CategoryTranslationsScreen() {
       { categoryAr: row.categoryAr, categoryEn },
       {
         onSuccess: () => {
-          toast({ title: `تم حفظ ترجمة قسم «${row.categoryAr}»`, tone: "success" });
+          toast({ title: t("menuRest.categoryTranslations.savedTitle", { name: row.categoryAr }), tone: "success" });
           setDrafts((prev) => {
             if (!(row.categoryAr in prev)) return prev;
             const next = { ...prev };
@@ -77,7 +79,7 @@ function CategoryTranslationsScreen() {
             return next;
           });
         },
-        onError: (e: Error) => toast({ title: "تعذّر حفظ الترجمة", description: e.message, tone: "error" }),
+        onError: (e: Error) => toast({ title: t("menuRest.categoryTranslations.saveFailed"), description: menuErrorText(e, t), tone: "error" }),
         onSettled: () => setSavingAr((cur) => (cur === row.categoryAr ? null : cur)),
       },
     );
@@ -86,9 +88,9 @@ function CategoryTranslationsScreen() {
   return (
     <div>
       <PageHeader
-        eyebrow="القوائم والوصفات"
-        title="ترجمة أسماء الأقسام"
-        subtitle="أدخل الاسم الإنجليزي لكل قسم كما يظهر في القائمة والفواتير ثنائية اللغة. القائمة أدناه تُقرأ مباشرة من أقسام القائمة الحالية."
+        eyebrow={t("menuRest.eyebrow")}
+        title={t("menuRest.categoryTranslations.title")}
+        subtitle={t("menuRest.categoryTranslations.subtitle")}
       />
 
       <Card>
@@ -102,16 +104,16 @@ function CategoryTranslationsScreen() {
           </div>
         ) : rows.length === 0 ? (
           <div className="p-5">
-            <EmptyState title="لا توجد أقسام بعد" body="أضف أصنافًا إلى القائمة أولًا لتظهر أقسامها هنا." />
+            <EmptyState title={t("menuRest.categoryTranslations.emptyTitle")} body={t("menuRest.categoryTranslations.emptyBody")} />
           </div>
         ) : (
           <div className="overflow-x-auto">
             <table className="w-full min-w-[640px] border-collapse text-sm">
               <thead>
-                <tr className="border-b border-slate-100 text-right">
-                  <th scope="col" className="px-5 py-3 text-xs font-bold text-slate-600">القسم</th>
-                  <th scope="col" className="px-5 py-3 text-xs font-bold text-slate-600">عدد الأصناف</th>
-                  <th scope="col" className="px-5 py-3 text-xs font-bold text-slate-600">الاسم الإنجليزي</th>
+                <tr className="border-b border-slate-100 text-start">
+                  <th scope="col" className="px-5 py-3 text-xs font-bold text-slate-600">{t("menuRest.categoryTranslations.colCategory")}</th>
+                  <th scope="col" className="px-5 py-3 text-xs font-bold text-slate-600">{t("menuRest.categoryTranslations.colItemCount")}</th>
+                  <th scope="col" className="px-5 py-3 text-xs font-bold text-slate-600">{t("menuRest.categoryTranslations.colEnName")}</th>
                   {canManage && <th scope="col" className="px-5 py-3 text-xs font-bold text-slate-600" />}
                 </tr>
               </thead>
@@ -129,7 +131,7 @@ function CategoryTranslationsScreen() {
                           value={draftFor(row)}
                           onChange={(e) => onChangeDraft(row.categoryAr, e.target.value)}
                           placeholder="Category name in English"
-                          aria-label={`الاسم الإنجليزي لقسم ${row.categoryAr}`}
+                          aria-label={t("menuRest.categoryTranslations.enNameAria", { name: row.categoryAr })}
                           className="max-w-xs"
                         />
                       ) : (
@@ -144,7 +146,7 @@ function CategoryTranslationsScreen() {
                           disabled={!isDirty(row)}
                           loading={savingAr === row.categoryAr}
                         >
-                          حفظ
+                          {t("common.save")}
                         </Button>
                       </td>
                     )}
@@ -158,7 +160,7 @@ function CategoryTranslationsScreen() {
 
       {!canManage && (
         <p className="mt-3 text-xs font-medium text-slate-400">
-          <Languages className="mb-0.5 inline h-3.5 w-3.5" aria-hidden /> تحتاج صلاحية إدارة القوائم لتعديل الترجمات.
+          <Languages className="mb-0.5 inline h-3.5 w-3.5" aria-hidden /> {t("menuRest.categoryTranslations.needManagePermission")}
         </p>
       )}
     </div>

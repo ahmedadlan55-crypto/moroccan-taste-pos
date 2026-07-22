@@ -12,6 +12,7 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { apiClient } from "@/shared/api";
 import type { EntityFetcher, EntityPage } from "@/shared/ui";
+import { translateApiError, type TFunction } from "@/i18n";
 
 // ── Query keys ─────────────────────────────────────────────────────────────────
 const KEY = ["menu"] as const;
@@ -39,10 +40,31 @@ export interface MutationAck {
   error?: string;
   [k: string]: unknown;
 }
-/** Throw on the legacy `{ success:false, error }` 200-response shape. */
+/** Stable code carried by the ensureOk fallback when the legacy ack has no
+ *  error text — localized via menuErrorText (menuRest.errors.writeFailed). */
+export const MENU_WRITE_FAILED = "MENU_WRITE_FAILED";
+
+/** Throw on the legacy `{ success:false, error }` 200-response shape. A server
+ *  error string is passed through verbatim (server-owned copy); an EMPTY error
+ *  becomes a coded throw so the UI can localize the fallback instead of showing
+ *  a hardcoded Arabic string from this non-React module. */
 function ensureOk<T extends MutationAck>(d: T): T {
-  if (d && d.success === false) throw new Error(String(d.error || "تعذّر تنفيذ العملية"));
+  if (d && d.success === false) {
+    if (d.error) throw new Error(String(d.error));
+    throw Object.assign(new Error(MENU_WRITE_FAILED), { code: MENU_WRITE_FAILED });
+  }
   return d;
+}
+
+/** Localize a menu mutation error for a toast/inline message. The coded
+ *  empty-ack fallback resolves to menuRest.errors.writeFailed; everything else
+ *  (ApiError codes, server error text) goes through the shared translateApiError
+ *  contract. Call sites hold the active `t` (useT/useTx). */
+export function menuErrorText(e: unknown, t: TFunction): string {
+  if (e && typeof e === "object" && (e as { code?: unknown }).code === MENU_WRITE_FAILED) {
+    return t("menuRest.errors.writeFailed");
+  }
+  return translateApiError(e, t);
 }
 
 // ════════════════════════════════════════════════════════════════════════════

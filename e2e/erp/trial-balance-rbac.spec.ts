@@ -257,6 +257,18 @@ async function assertHealthyPopulatedReport(page: Page) {
   await expect(page.locator('[data-state="empty"]'), "must show REAL data, not the empty-report state").toHaveCount(0);
   await expect(page.getByRole("heading", { name: "ميزان المراجعة" }).first()).toBeVisible({ timeout: 20_000 });
 
+  // The report table only mounts after React Query resolves; on the mobilenav
+  // fallback path (a hard page.goto reload, used by the mobile/tablet-768
+  // projects) the static heading paints BEFORE the data settles, so a one-shot
+  // .count() here read the table mid-load (ReportState still shows its loading
+  // state, the <table> not yet in the DOM) and saw 0. Wait for the first row to
+  // attach first — same assertion (at least one real account row), just no
+  // longer sampled before the async fetch finishes. Not a weaker check: the
+  // >0 assertion below still stands.
+  await expect(
+    main.locator("table tbody tr").first(),
+    "at least one real account row must be rendered, not just the report's chrome"
+  ).toBeVisible({ timeout: 20_000 });
   const rowCount = await main.locator("table tbody tr").count();
   expect(rowCount, "at least one real account row must be rendered, not just the report's chrome").toBeGreaterThan(0);
 

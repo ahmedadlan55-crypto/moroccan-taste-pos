@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { Bookmark, RefreshCw, Trash2 } from "lucide-react";
 import { Badge, Button, IconButton, PageHeader, EmptyState } from "@/shared/ui";
+import { useT } from "@/i18n";
 
 // "التقارير المحفوظة" — a localStorage-backed list of the named table views the
 // user saved across the app (DataTable's SavedViews store under adlan.views.*).
@@ -35,19 +36,23 @@ function readSaved(): SavedEntry[] {
   return out.sort((a, b) => a.tableId.localeCompare(b.tableId));
 }
 
-// Human labels for the known table ids so the source reads nicely.
-const TABLE_LABELS: Record<string, string> = {
-  "admin-companies": "الشركات",
-  "admin-brands": "العلامات التجارية",
-  "admin-branches": "الفروع",
-  "admin-users": "المستخدمون",
-  "admin-payment-methods": "طرق الدفع",
-  "admin-audit-log": "سجل التدقيق",
-  "admin-vat-reports": "إقرارات القيمة المضافة",
-};
+// Known table ids that have a translated label (misc.reports.saved.tableLabels.*).
+// Any other id is shown raw — matching the original `map[id] ?? id` fallback.
+const KNOWN_TABLE_IDS = new Set([
+  "admin-companies",
+  "admin-brands",
+  "admin-branches",
+  "admin-users",
+  "admin-payment-methods",
+  "admin-audit-log",
+  "admin-vat-reports",
+]);
 
 export default function SavedReportsPage() {
+  const t = useT();
   const [entries, setEntries] = useState<SavedEntry[]>([]);
+  const tableLabel = (tableId: string) =>
+    KNOWN_TABLE_IDS.has(tableId) ? t(`misc.reports.saved.tableLabels.${tableId}`) : tableId;
   const refresh = useCallback(() => setEntries(readSaved()), []);
   useEffect(() => {
     refresh();
@@ -69,20 +74,20 @@ export default function SavedReportsPage() {
   return (
     <div>
       <PageHeader
-        eyebrow="التقارير"
-        title="التقارير المحفوظة"
-        subtitle="طرق العرض التي حفظتها من الجداول عبر النظام."
+        eyebrow={t("misc.reports.eyebrow")}
+        title={t("misc.reports.saved.title")}
+        subtitle={t("misc.reports.saved.subtitle")}
         action={
           <Button variant="secondary" onClick={refresh}>
-            <RefreshCw className="h-4 w-4" /> تحديث
+            <RefreshCw className="h-4 w-4" /> {t("states.refreshBtn")}
           </Button>
         }
       />
       {entries.length === 0 ? (
         <EmptyState
           icon={<Bookmark className="h-6 w-6" />}
-          title="لا توجد تقارير محفوظة"
-          body="احفظ طريقة عرض من أي جدول (زر «طرق العرض») لتظهر هنا."
+          title={t("misc.reports.saved.emptyTitle")}
+          body={t("misc.reports.saved.emptyBody", { menu: t("table.savedViews.menu") })}
         />
       ) : (
         <ul className="surface divide-y divide-slate-100">
@@ -95,13 +100,13 @@ export default function SavedReportsPage() {
                 <div className="min-w-0">
                   <div className="truncate text-sm font-extrabold text-slate-900">{entry.name}</div>
                   <div className="mt-0.5 text-xs font-medium text-slate-400">
-                    المصدر: {TABLE_LABELS[entry.tableId] ?? entry.tableId}
+                    {t("misc.reports.saved.source")}: {tableLabel(entry.tableId)}
                   </div>
                 </div>
               </div>
               <div className="flex shrink-0 items-center gap-2">
-                <Badge tone="neutral">عرض محفوظ</Badge>
-                <IconButton aria-label={`حذف ${entry.name}`} size="sm" variant="danger" onClick={() => remove(entry)}>
+                <Badge tone="neutral">{t("misc.reports.saved.badge")}</Badge>
+                <IconButton aria-label={t("misc.reports.saved.deleteView", { name: entry.name })} size="sm" variant="danger" onClick={() => remove(entry)}>
                   <Trash2 className="h-4 w-4" />
                 </IconButton>
               </div>

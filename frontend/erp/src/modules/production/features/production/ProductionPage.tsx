@@ -10,12 +10,15 @@ import { useWarehouses } from "@/modules/inventory/lib/hooks/useWarehouses";
 import { useWarehouseScope } from "@/modules/inventory/lib/warehouse-scope-provider";
 import { useCan } from "@/modules/inventory/lib/permission-provider";
 import { formatCurrency, formatNumber, formatDate, formatQty } from "@/shared/lib";
-import { productionStatusToLabel, PRODUCTION_STATUS_OPTIONS, PRODUCTION_PARTIAL_LABEL } from "@/modules/inventory/lib/status-labels";
+import { productionStatusToLabel, PRODUCTION_STATUS_OPTIONS } from "@/modules/inventory/lib/status-labels";
 import { useProductionList } from "@/modules/inventory/lib/hooks/useProduction";
+import { useT } from "@/i18n";
+import { productionStatusLabel } from "./status-i18n";
 
 const PAGE_SIZES = [10, 25, 50];
 
 export function ProductionPage() {
+  const t = useT();
   const [params, setParams] = useSearchParams();
   const navigate = useNavigate();
   const { accessibleWarehouses, allWarehousesAccess } = useWarehouseScope();
@@ -60,37 +63,37 @@ export function ProductionPage() {
   return (
     <div>
       <PageHeader
-        eyebrow="العمليات"
-        title="أوامر الإنتاج"
-        subtitle="دورة تصنيع كاملة: مسودة ← اعتماد ← إصدار مواد (FEFO) ← تسجيل إنتاج جزئي وهدر ← إكمال وإغلاق — بتكلفة فعلية وقيود متوازنة."
-        action={canCreate ? (<Button variant="primary" onClick={() => navigate("/inventory/production?new=1")}><Plus className="h-4 w-4" /> أمر إنتاج جديد</Button>) : null}
+        eyebrow={t("production.list.eyebrow")}
+        title={t("production.list.title")}
+        subtitle={t("production.list.subtitle")}
+        action={canCreate ? (<Button variant="primary" onClick={() => navigate("/inventory/production?new=1")}><Plus className="h-4 w-4" /> {t("production.list.newOrder")}</Button>) : null}
       />
 
       <section className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-        <MetricCard label="قيد التنفيذ" value={formatNumber(k?.inProgress ?? 0)} note={`${formatNumber(k?.partiallyCompleted ?? 0)} منها منجز جزئيًا`} icon={Factory} tone="blue" />
-        <MetricCard label="بانتظار الإجراء" value={formatNumber((k?.draft ?? 0) + (k?.approved ?? 0))} note="مسودة أو معتمدة" icon={ClipboardList} tone="amber" />
-        <MetricCard label="قيمة WIP الجارية" value={formatCurrency(k?.wipValue ?? 0)} note="مواد صُرفت ولم تُنتج بعد" icon={Wallet} tone="teal" />
-        <MetricCard label="مكتملة/مغلقة" value={formatNumber((k?.completed ?? 0) + (k?.closed ?? 0))} note={`قيمة الإنتاج ${formatCurrency(k?.producedValue ?? 0)}`} icon={PackageCheck} tone="teal" />
+        <MetricCard label={t("production.list.kpi.inProgress")} value={formatNumber(k?.inProgress ?? 0)} note={t("production.list.kpi.inProgressNote", { count: formatNumber(k?.partiallyCompleted ?? 0) })} icon={Factory} tone="blue" />
+        <MetricCard label={t("production.list.kpi.pending")} value={formatNumber((k?.draft ?? 0) + (k?.approved ?? 0))} note={t("production.list.kpi.pendingNote")} icon={ClipboardList} tone="amber" />
+        <MetricCard label={t("production.list.kpi.wip")} value={formatCurrency(k?.wipValue ?? 0)} note={t("production.list.kpi.wipNote")} icon={Wallet} tone="teal" />
+        <MetricCard label={t("production.list.kpi.completed")} value={formatNumber((k?.completed ?? 0) + (k?.closed ?? 0))} note={t("production.list.kpi.completedNote", { value: formatCurrency(k?.producedValue ?? 0) })} icon={PackageCheck} tone="teal" />
       </section>
 
       <section className="surface mt-4 flex flex-col gap-3 p-4">
         <div className="flex flex-col gap-3 lg:flex-row lg:items-center">
           <label className="relative flex-1">
             <Search className="pointer-events-none absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
-            <input className="field w-full pr-10" placeholder="بحث برقم الأمر أو الدفعة…" defaultValue={q} onChange={(e) => patch({ q: e.target.value })} aria-label="بحث" />
+            <input className="field w-full pr-10" placeholder={t("production.list.searchPlaceholder")} defaultValue={q} onChange={(e) => patch({ q: e.target.value })} aria-label={t("common.search")} />
           </label>
-          <select className="field lg:w-52" value={warehouseId} onChange={(e) => patch({ wh: e.target.value })} aria-label="المستودع">
-            <option value="">كل المستودعات</option>
+          <select className="field lg:w-52" value={warehouseId} onChange={(e) => patch({ wh: e.target.value })} aria-label={t("production.list.warehouseAria")}>
+            <option value="">{t("production.list.allWarehouses")}</option>
             {whOptions.map((w) => <option key={w.id} value={w.id}>{w.name}</option>)}
           </select>
-          <input type="date" className="field lg:w-40" value={dateFrom} onChange={(e) => patch({ dateFrom: e.target.value })} aria-label="من تاريخ" />
-          <input type="date" className="field lg:w-40" value={dateTo} onChange={(e) => patch({ dateTo: e.target.value })} aria-label="إلى تاريخ" />
+          <input type="date" className="field lg:w-40" value={dateFrom} onChange={(e) => patch({ dateFrom: e.target.value })} aria-label={t("production.list.dateFromAria")} />
+          <input type="date" className="field lg:w-40" value={dateTo} onChange={(e) => patch({ dateTo: e.target.value })} aria-label={t("production.list.dateToAria")} />
         </div>
         <div className="flex flex-wrap gap-1">
           {PRODUCTION_STATUS_OPTIONS.map((o) => (
             <button key={o.value} type="button" onClick={() => patch({ status: o.value })}
               className={`min-h-10 rounded-xl border px-3 text-xs font-extrabold transition ${status === o.value ? "border-teal-600 bg-teal-600 text-white" : "border-slate-200 bg-white text-slate-600 hover:bg-slate-50"}`}>
-              {o.label}
+              {o.value === "" ? t("production.filters.allStatuses") : productionStatusLabel(t, o.value)}
             </button>
           ))}
         </div>
@@ -102,19 +105,19 @@ export function ProductionPage() {
         ) : isError ? (
           <ErrorState error={error} onRetry={() => refetch()} />
         ) : !data || data.rows.length === 0 ? (
-          <EmptyState title="لا توجد أوامر إنتاج مطابقة" body={q || status || warehouseId ? "جرّب تعديل عوامل التصفية." : "ابدأ بإنشاء أمر إنتاج من وصفة (BOM)."} action={canCreate ? <Button onClick={() => navigate("/inventory/production?new=1")}><Plus className="h-4 w-4" /> أمر إنتاج جديد</Button> : undefined} />
+          <EmptyState title={t("production.list.emptyTitle")} body={q || status || warehouseId ? t("production.list.emptyWithFilters") : t("production.list.emptyNoOrders")} action={canCreate ? <Button onClick={() => navigate("/inventory/production?new=1")}><Plus className="h-4 w-4" /> {t("production.list.newOrder")}</Button> : undefined} />
         ) : (
           <>
             <div className="surface hidden overflow-hidden md:block">
               <table className="w-full text-sm">
                 <thead className="bg-slate-50 text-xs font-bold text-slate-500">
                   <tr>
-                    <th className="px-4 py-3 text-right"><SortBtn label="رقم الأمر" col="order_number" sort={sort} dir={dir} onSort={toggleSort} /></th>
-                    <th className="px-4 py-3 text-right">المنتج</th>
-                    <th className="px-4 py-3 text-right"><SortBtn label="الحالة" col="status" sort={sort} dir={dir} onSort={toggleSort} /></th>
-                    <th className="px-4 py-3 text-right"><SortBtn label="الكمية" col="qty_planned" sort={sort} dir={dir} onSort={toggleSort} /></th>
-                    <th className="px-4 py-3 text-right">المستودعات</th>
-                    <th className="px-4 py-3 text-right"><SortBtn label="التاريخ" col="planned_date" sort={sort} dir={dir} onSort={toggleSort} /></th>
+                    <th className="px-4 py-3 text-right"><SortBtn label={t("production.list.col.orderNumber")} col="order_number" sort={sort} dir={dir} onSort={toggleSort} /></th>
+                    <th className="px-4 py-3 text-right">{t("production.list.col.product")}</th>
+                    <th className="px-4 py-3 text-right"><SortBtn label={t("common.status")} col="status" sort={sort} dir={dir} onSort={toggleSort} /></th>
+                    <th className="px-4 py-3 text-right"><SortBtn label={t("production.list.col.qty")} col="qty_planned" sort={sort} dir={dir} onSort={toggleSort} /></th>
+                    <th className="px-4 py-3 text-right">{t("production.list.col.warehouses")}</th>
+                    <th className="px-4 py-3 text-right"><SortBtn label={t("production.list.col.date")} col="planned_date" sort={sort} dir={dir} onSort={toggleSort} /></th>
                     <th className="px-4 py-3 text-left">WIP</th>
                   </tr>
                 </thead>
@@ -123,13 +126,13 @@ export function ProductionPage() {
                     <tr key={r.id} className="cursor-pointer transition hover:bg-slate-50" onClick={() => navigate(`/inventory/production?doc=${r.id}`)}>
                       <td className="px-4 py-3">
                         <span className="font-extrabold text-slate-900">{r.number}</span>
-                        {r.source === "legacy" && <span className="mr-2 rounded-md bg-slate-100 px-1.5 py-0.5 text-[10px] font-bold text-slate-500">قديم — للعرض</span>}
+                        {r.source === "legacy" && <span className="mr-2 rounded-md bg-slate-100 px-1.5 py-0.5 text-[10px] font-bold text-slate-500">{t("production.list.legacyBadge")}</span>}
                       </td>
                       <td className="px-4 py-3 text-slate-600">{r.productName}</td>
                       <td className="px-4 py-3">
                         <div className="flex flex-wrap items-center gap-1">
                           <StatusBadge>{productionStatusToLabel(r.status)}</StatusBadge>
-                          {r.partiallyCompleted && <StatusBadge>{PRODUCTION_PARTIAL_LABEL}</StatusBadge>}
+                          {r.partiallyCompleted && <StatusBadge>{t("production.status.partial")}</StatusBadge>}
                         </div>
                       </td>
                       <td className="px-4 py-3 tabular-nums text-slate-700">
@@ -162,14 +165,14 @@ export function ProductionPage() {
 
             <div className="mt-4 flex flex-col items-center justify-between gap-3 sm:flex-row">
               <div className="flex items-center gap-3 text-xs font-medium text-slate-500">
-                <span>عرض {formatNumber(from)}–{formatNumber(to)} من {formatNumber(pg?.total ?? 0)}</span>
-                <select className="field min-h-9 py-1 text-xs" value={pageSize} onChange={(e) => patch({ pageSize: e.target.value })} aria-label="حجم الصفحة">{PAGE_SIZES.map((s) => <option key={s} value={s}>{s} / صفحة</option>)}</select>
-                {isFetching && <span className="text-teal-600">تحديث…</span>}
+                <span>{t("table.showing")} {formatNumber(from)}–{formatNumber(to)} {t("table.of")} {formatNumber(pg?.total ?? 0)}</span>
+                <select className="field min-h-9 py-1 text-xs" value={pageSize} onChange={(e) => patch({ pageSize: e.target.value })} aria-label={t("table.rowsPerPage")}>{PAGE_SIZES.map((s) => <option key={s} value={s}>{t("table.perPage", { count: s })}</option>)}</select>
+                {isFetching && <span className="text-teal-600">{t("production.list.updating")}</span>}
               </div>
               <div className="flex items-center gap-2">
-                <Button variant="ghost" size="icon" aria-label="السابق" disabled={page <= 1} onClick={() => patch({ page: page - 1 }, false)}><ChevronRight className="h-4 w-4" /></Button>
+                <Button variant="ghost" size="icon" aria-label={t("table.prevPage")} disabled={page <= 1} onClick={() => patch({ page: page - 1 }, false)}><ChevronRight className="h-4 w-4" /></Button>
                 <span className="text-xs font-bold text-slate-600">{formatNumber(page)} / {formatNumber(totalPages)}</span>
-                <Button variant="ghost" size="icon" aria-label="التالي" disabled={page >= totalPages} onClick={() => patch({ page: page + 1 }, false)}><ChevronLeft className="h-4 w-4" /></Button>
+                <Button variant="ghost" size="icon" aria-label={t("table.nextPage")} disabled={page >= totalPages} onClick={() => patch({ page: page + 1 }, false)}><ChevronLeft className="h-4 w-4" /></Button>
               </div>
             </div>
           </>

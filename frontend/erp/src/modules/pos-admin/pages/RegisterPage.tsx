@@ -12,9 +12,10 @@ import {
 import { Can } from "@/shared/permissions";
 import { DataTable, type ColumnDef } from "@/shared/tables";
 import { formatCurrency } from "@/shared/lib";
+import { useT } from "@/i18n";
 import { posAdminApi } from "../lib/api";
 import { posAdminKeys } from "../lib/shifts";
-import { PM_GROUP_LABELS, PM_GROUP_OPTIONS, PM_GROUP_TONE } from "../lib/labels";
+import { pmGroupLabel, pmGroupOptions, PM_GROUP_TONE } from "../lib/labels";
 import type { PaymentMethod, PaymentMethodInput } from "../lib/types";
 import { PaymentMethodDialog } from "../components/PaymentMethodDialog";
 import { PosLauncherCard } from "../components/PosLauncherCard";
@@ -26,7 +27,9 @@ function feeText(pm: PaymentMethod): string {
 }
 
 export function RegisterPage() {
+  const t = useT();
   const qc = useQueryClient();
+  const groupOptions = useMemo(() => pmGroupOptions(t), [t]);
   const query = useQuery({
     queryKey: posAdminKeys.paymentMethods,
     queryFn: ({ signal }) => posAdminApi.paymentMethods(signal),
@@ -55,7 +58,7 @@ export function RegisterPage() {
   const saveMut = useMutation({
     mutationFn: async (input: PaymentMethodInput) => {
       const r = await posAdminApi.savePaymentMethod(input);
-      if (r && r.success === false) throw new Error(r.error || "فشل الحفظ");
+      if (r && r.success === false) throw new Error(r.error || t("posAdmin.register.saveFailed"));
       return r;
     },
     onSuccess: () => {
@@ -69,7 +72,7 @@ export function RegisterPage() {
   const deleteMut = useMutation({
     mutationFn: async (id: string | number) => {
       const r = await posAdminApi.deletePaymentMethod(id);
-      if (r && r.success === false) throw new Error(r.error || "فشل الحذف");
+      if (r && r.success === false) throw new Error(r.error || t("posAdmin.register.deleteFailed"));
       return r;
     },
     onSuccess: () => {
@@ -93,7 +96,7 @@ export function RegisterPage() {
   const columns: ColumnDef<PaymentMethod>[] = [
     {
       id: "sortOrder",
-      header: "الترتيب",
+      header: t("posAdmin.col.order"),
       accessor: (r) => Number(r.sortOrder) || 0,
       numeric: true,
       sortable: true,
@@ -101,7 +104,7 @@ export function RegisterPage() {
     },
     {
       id: "name",
-      header: "الاسم",
+      header: t("posAdmin.col.name"),
       accessor: (r) => r.nameAr || r.name,
       sortable: true,
       cell: (r) => (
@@ -117,30 +120,30 @@ export function RegisterPage() {
     },
     {
       id: "groupType",
-      header: "المجموعة",
-      accessor: (r) => PM_GROUP_LABELS[r.groupType || "cash"] ?? r.groupType,
+      header: t("posAdmin.col.group"),
+      accessor: (r) => pmGroupLabel(t, r.groupType),
       cell: (r) => {
         const g = r.groupType || "cash";
-        return <Badge tone={PM_GROUP_TONE[g] ?? "neutral"}>{PM_GROUP_LABELS[g] ?? g}</Badge>;
+        return <Badge tone={PM_GROUP_TONE[g] ?? "neutral"}>{pmGroupLabel(t, g)}</Badge>;
       },
     },
     {
       id: "fee",
-      header: "رسوم الخدمة",
+      header: t("posAdmin.col.fee"),
       accessor: (r) => feeText(r),
     },
     {
       id: "shiftClose",
-      header: "إغلاق الشيفت",
-      accessor: (r) => (r.showInShiftClose ? "نعم" : "لا"),
+      header: t("posAdmin.col.shiftClose"),
+      accessor: (r) => (r.showInShiftClose ? t("common.yes") : t("common.no")),
     },
     {
       id: "status",
-      header: "الحالة",
-      accessor: (r) => (r.isActive ? "مفعّل" : "معطّل"),
+      header: t("common.status"),
+      accessor: (r) => (r.isActive ? t("posAdmin.register.enabled") : t("posAdmin.register.disabled")),
       cell: (r) => (
         <StatusBadge tone={r.isActive ? "success" : "neutral"}>
-          {r.isActive ? "مفعّل" : "معطّل"}
+          {r.isActive ? t("posAdmin.register.enabled") : t("posAdmin.register.disabled")}
         </StatusBadge>
       ),
     },
@@ -150,17 +153,17 @@ export function RegisterPage() {
     <div className="space-y-5">
       <PosLauncherCard
         icon={Monitor}
-        title="فتح الكاشير"
-        description="طرق الدفع المُعرّفة هنا تظهر مباشرةً في شاشة الكاشير. لبدء البيع افتح تطبيق نقطة البيع."
-        ctaLabel="فتح شاشة الكاشير"
+        title={t("posAdmin.register.launcherTitle")}
+        description={t("posAdmin.register.launcherDesc")}
+        ctaLabel={t("posAdmin.register.launcherCta")}
       />
 
       <div>
         <div className="mb-3 flex items-center justify-between gap-3">
           <div>
-            <h2 className="text-base font-extrabold text-slate-900">طرق الدفع</h2>
+            <h2 className="text-base font-extrabold text-slate-900">{t("posAdmin.register.heading")}</h2>
             <p className="mt-0.5 text-xs font-medium text-slate-500">
-              إدارة طرق الدفع التي تُشغّل الكاشير وإغلاق الشيفت.
+              {t("posAdmin.register.subtitle")}
             </p>
           </div>
         </div>
@@ -173,10 +176,10 @@ export function RegisterPage() {
           error={query.isError ? query.error : undefined}
           onRetry={() => query.refetch()}
           searchable
-          searchPlaceholder="ابحث بالاسم…"
+          searchPlaceholder={t("posAdmin.register.searchPlaceholder")}
           exportFilename="payment-methods"
-          emptyTitle="لا توجد طرق دفع"
-          emptyBody="أضف أول طريقة دفع لتظهر في شاشة الكاشير."
+          emptyTitle={t("posAdmin.register.emptyTitle")}
+          emptyBody={t("posAdmin.register.emptyBody")}
           initialSort={{ columnId: "sortOrder", dir: "asc" }}
           tableId="pos-admin-payment-methods"
           filterBar={
@@ -185,10 +188,10 @@ export function RegisterPage() {
                 className="h-10 w-40 py-1.5"
                 value={group}
                 onChange={(e) => setGroup(e.target.value)}
-                aria-label="المجموعة"
+                aria-label={t("posAdmin.col.group")}
               >
-                <option value="">كل المجموعات</option>
-                {PM_GROUP_OPTIONS.map((o) => (
+                <option value="">{t("posAdmin.register.groupAll")}</option>
+                {groupOptions.map((o) => (
                   <option key={o.value} value={o.value}>
                     {o.label}
                   </option>
@@ -198,11 +201,11 @@ export function RegisterPage() {
                 className="h-10 w-36 py-1.5"
                 value={status}
                 onChange={(e) => setStatus(e.target.value)}
-                aria-label="الحالة"
+                aria-label={t("common.status")}
               >
-                <option value="">الكل</option>
-                <option value="1">مفعّل</option>
-                <option value="0">معطّل</option>
+                <option value="">{t("common.all")}</option>
+                <option value="1">{t("posAdmin.register.enabled")}</option>
+                <option value="0">{t("posAdmin.register.disabled")}</option>
               </Select>
             </>
           }
@@ -213,18 +216,18 @@ export function RegisterPage() {
                 onClick={openCreate}
                 className="inline-flex min-h-11 items-center gap-2 rounded-xl bg-teal-600 px-3 text-sm font-bold text-white transition hover:bg-teal-700 focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-teal-100"
               >
-                <Plus className="h-4 w-4" /> طريقة دفع جديدة
+                <Plus className="h-4 w-4" /> {t("posAdmin.register.newMethod")}
               </button>
             </Can>
           }
           rowActions={(r) => (
             <Can cap="pos.register.view">
               <div className="flex items-center gap-1">
-                <IconButton aria-label="تعديل" size="sm" onClick={() => openEdit(r)}>
+                <IconButton aria-label={t("common.edit")} size="sm" onClick={() => openEdit(r)}>
                   <Pencil className="h-4 w-4" />
                 </IconButton>
                 <IconButton
-                  aria-label="حذف"
+                  aria-label={t("common.delete")}
                   size="sm"
                   variant="danger"
                   onClick={() => {
@@ -256,13 +259,13 @@ export function RegisterPage() {
 
       <ConfirmDialog
         open={deleteTarget != null}
-        title="حذف طريقة الدفع"
+        title={t("posAdmin.register.deleteTitle")}
         description={
           deleteTarget
-            ? `سيتم حذف «${deleteTarget.nameAr || deleteTarget.name}». لن تتأثر المبيعات السابقة.`
+            ? t("posAdmin.register.deleteBody", { name: deleteTarget.nameAr || deleteTarget.name })
             : ""
         }
-        confirmLabel="حذف"
+        confirmLabel={t("common.delete")}
         tone="danger"
         processing={deleteMut.isPending}
         error={deleteError}

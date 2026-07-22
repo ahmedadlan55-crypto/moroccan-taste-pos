@@ -1,37 +1,46 @@
+import { useMemo } from "react";
 import { useForm, Controller } from "react-hook-form";
 import { z } from "zod";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { UserPlus } from "lucide-react";
 import { Drawer, Button, Select, SegmentedControl, safeUserMessage } from "@/shared/ui";
 import { Field, zodResolver } from "@/shared/forms";
+import { useT, useLang, type TFunction } from "@/i18n";
 import { o2cApi, qk, type Customer } from "@/modules/sales/lib";
 import { useCoaAccounts, useCostCenterDims } from "@/modules/banking/api";
 
-const schema = z.object({
-  name: z.string().min(1, "اسم العميل مطلوب"),
-  nameEn: z.string().optional(),
-  phone: z.string().optional(),
-  vatRegistered: z.boolean().default(true),
-  vatNumber: z.string().optional().refine((v) => !v || /^\d{15}$/.test(v), "الرقم الضريبي يجب أن يكون 15 رقمًا"),
-  email: z.string().email("بريد غير صالح").optional().or(z.literal("")),
-  city: z.string().optional(),
-  street: z.string().optional(),
-  buildingNumber: z.string().optional(),
-  district: z.string().optional(),
-  additionalNo: z.string().optional(),
-  postalCode: z.string().optional(),
-  defaultRevenueAccountId: z.string().optional(),
-  defaultRevenueCostCenterId: z.string().optional(),
-  customerType: z.enum(["B2C", "B2B", "B2G"]),
-  creditLimit: z.coerce.number().min(0, "لا يمكن أن يكون سالبًا"),
-  paymentTerms: z.string().min(1),
-  creditDays: z.coerce.number().int().min(0),
-});
-type FormValues = z.infer<typeof schema>;
+// Schema is built per-render from t() so validation messages follow the UI
+// language. The FormValues type is derived from the factory's return shape.
+const makeSchema = (t: TFunction) =>
+  z.object({
+    name: z.string().min(1, t("misc.customers.form.validation.nameRequired")),
+    nameEn: z.string().optional(),
+    phone: z.string().optional(),
+    vatRegistered: z.boolean().default(true),
+    vatNumber: z.string().optional().refine((v) => !v || /^\d{15}$/.test(v), t("misc.customers.form.validation.vatDigits")),
+    email: z.string().email(t("misc.customers.form.validation.emailInvalid")).optional().or(z.literal("")),
+    city: z.string().optional(),
+    street: z.string().optional(),
+    buildingNumber: z.string().optional(),
+    district: z.string().optional(),
+    additionalNo: z.string().optional(),
+    postalCode: z.string().optional(),
+    defaultRevenueAccountId: z.string().optional(),
+    defaultRevenueCostCenterId: z.string().optional(),
+    customerType: z.enum(["B2C", "B2B", "B2G"]),
+    creditLimit: z.coerce.number().min(0, t("misc.customers.form.validation.notNegative")),
+    paymentTerms: z.string().min(1),
+    creditDays: z.coerce.number().int().min(0),
+  });
+type FormValues = z.infer<ReturnType<typeof makeSchema>>;
 
 export function CustomerForm({ open, onClose, customer }: { open: boolean; onClose: () => void; customer?: Customer | null }) {
+  const t = useT();
+  const lang = useLang();
   const qc = useQueryClient();
   const editing = !!customer;
+  const editingName = customer ? (lang === "en" ? customer.nameEn || customer.name : customer.name) : "";
+  const schema = useMemo(() => makeSchema(t), [t]);
   const { register, handleSubmit, control, watch, formState: { errors } } = useForm<FormValues>({
     resolver: zodResolver(schema),
     defaultValues: {
@@ -64,13 +73,13 @@ export function CustomerForm({ open, onClose, customer }: { open: boolean; onClo
       open={open}
       onClose={onClose}
       icon={UserPlus}
-      eyebrow={editing ? "تعديل عميل" : "عميل جديد"}
-      title={editing ? customer!.name : "إضافة عميل"}
+      eyebrow={editing ? t("misc.customers.form.editEyebrow") : t("misc.customers.form.newEyebrow")}
+      title={editing ? editingName : t("misc.customers.form.addTitle")}
       footer={
         <div className="flex w-full items-center justify-end gap-2">
-          <Button variant="ghost" onClick={onClose}>إلغاء</Button>
+          <Button variant="ghost" onClick={onClose}>{t("common.cancel")}</Button>
           <Button loading={mutation.isPending} onClick={handleSubmit((v) => mutation.mutate(v))}>
-            {editing ? "حفظ التعديلات" : "حفظ العميل"}
+            {editing ? t("misc.customers.form.saveChanges") : t("misc.customers.form.saveCustomer")}
           </Button>
         </div>
       }
@@ -83,32 +92,32 @@ export function CustomerForm({ open, onClose, customer }: { open: boolean; onClo
         )}
 
         <div className="rounded-xl border border-slate-200 bg-slate-50/60 p-3">
-          <div className="mb-2 text-xs font-extrabold text-slate-500">المنشأة والتسجيل الضريبي</div>
+          <div className="mb-2 text-xs font-extrabold text-slate-500">{t("misc.customers.form.section.entity")}</div>
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-            <Field label="الاسم" required error={errors.name} className="sm:col-span-2">
-              <input className="field w-full" aria-label="اسم العميل" {...register("name")} />
+            <Field label={t("misc.customers.form.field.name")} required error={errors.name} className="sm:col-span-2">
+              <input className="field w-full" aria-label={t("misc.customers.form.field.nameAria")} {...register("name")} />
             </Field>
-            <Field label="الاسم بالإنجليزية"><input dir="ltr" className="field w-full" {...register("nameEn")} /></Field>
-            <Field label="الهاتف"><input dir="ltr" className="field w-full tabular-nums" {...register("phone")} /></Field>
-            <Field label="التسجيل في ضريبة القيمة المضافة" className="sm:col-span-2">
+            <Field label={t("misc.customers.form.field.nameEn")}><input dir="ltr" className="field w-full" {...register("nameEn")} /></Field>
+            <Field label={t("misc.customers.form.field.phone")}><input dir="ltr" className="field w-full tabular-nums" {...register("phone")} /></Field>
+            <Field label={t("misc.customers.form.field.vatRegistration")} className="sm:col-span-2">
               <Controller
                 control={control}
                 name="vatRegistered"
                 render={({ field }) => (
                   <SegmentedControl
-                    aria-label="التسجيل في ضريبة القيمة المضافة"
+                    aria-label={t("misc.customers.form.field.vatRegistration")}
                     value={field.value ? "registered" : "unregistered"}
                     onChange={(v) => field.onChange(v === "registered")}
                     options={[
-                      { value: "registered", label: "مسجَّل في الضريبة" },
-                      { value: "unregistered", label: "غير مسجَّل" },
+                      { value: "registered", label: t("misc.customers.form.vat.registered") },
+                      { value: "unregistered", label: t("misc.customers.form.vat.unregistered") },
                     ]}
                   />
                 )}
               />
             </Field>
             {vatRegistered && (
-              <Field label="الرقم الضريبي" error={errors.vatNumber} className="sm:col-span-2">
+              <Field label={t("misc.customers.form.field.vatNumber")} error={errors.vatNumber} className="sm:col-span-2">
                 <input dir="ltr" className="field w-full tabular-nums" {...register("vatNumber")} />
               </Field>
             )}
@@ -116,29 +125,29 @@ export function CustomerForm({ open, onClose, customer }: { open: boolean; onClo
         </div>
 
         <div className="rounded-xl border border-slate-200 bg-slate-50/60 p-3">
-          <div className="mb-2 text-xs font-extrabold text-slate-500">العنوان</div>
+          <div className="mb-2 text-xs font-extrabold text-slate-500">{t("misc.customers.form.section.address")}</div>
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
-            <Field label="المدينة"><input className="field w-full" {...register("city")} /></Field>
-            <Field label="الحي"><input className="field w-full" {...register("district")} /></Field>
-            <Field label="الرمز البريدي"><input dir="ltr" className="field w-full tabular-nums" {...register("postalCode")} /></Field>
-            <Field label="الشارع" className="sm:col-span-2"><input className="field w-full" {...register("street")} /></Field>
-            <Field label="رقم المبنى"><input dir="ltr" className="field w-full tabular-nums" {...register("buildingNumber")} /></Field>
-            <Field label="الرقم الفرعي للعنوان" hint="اختياري" className="sm:col-span-3"><input dir="ltr" className="field w-full tabular-nums sm:w-1/3" {...register("additionalNo")} /></Field>
+            <Field label={t("misc.customers.form.field.city")}><input className="field w-full" {...register("city")} /></Field>
+            <Field label={t("misc.customers.form.field.district")}><input className="field w-full" {...register("district")} /></Field>
+            <Field label={t("misc.customers.form.field.postalCode")}><input dir="ltr" className="field w-full tabular-nums" {...register("postalCode")} /></Field>
+            <Field label={t("misc.customers.form.field.street")} className="sm:col-span-2"><input className="field w-full" {...register("street")} /></Field>
+            <Field label={t("misc.customers.form.field.buildingNumber")}><input dir="ltr" className="field w-full tabular-nums" {...register("buildingNumber")} /></Field>
+            <Field label={t("misc.customers.form.field.additionalNo")} hint={t("misc.customers.form.hint.optional")} className="sm:col-span-3"><input dir="ltr" className="field w-full tabular-nums sm:w-1/3" {...register("additionalNo")} /></Field>
           </div>
         </div>
 
         <div className="rounded-xl border border-teal-100 bg-teal-50/40 p-3">
-          <div className="mb-2 text-xs font-extrabold text-teal-800">البيانات الافتراضية في المبيعات (اختياري)</div>
+          <div className="mb-2 text-xs font-extrabold text-teal-800">{t("misc.customers.form.section.salesDefaults")}</div>
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-            <Field label="حساب الإيرادات الافتراضي">
-              <Select {...register("defaultRevenueAccountId")} disabled={coa.isLoading} placeholder="بدون">
+            <Field label={t("misc.customers.form.field.revenueAccount")}>
+              <Select {...register("defaultRevenueAccountId")} disabled={coa.isLoading} placeholder={t("misc.customers.form.selectNone")}>
                 {revenueAccounts.map((a) => (
                   <option key={a.id} value={a.id}>{a.code} — {a.nameAr}</option>
                 ))}
               </Select>
             </Field>
-            <Field label="مركز تكلفة الإيرادات الافتراضي">
-              <Select {...register("defaultRevenueCostCenterId")} disabled={costCenters.isLoading} placeholder="بدون">
+            <Field label={t("misc.customers.form.field.revenueCostCenter")}>
+              <Select {...register("defaultRevenueCostCenterId")} disabled={costCenters.isLoading} placeholder={t("misc.customers.form.selectNone")}>
                 {(costCenters.data ?? []).map((c) => (
                   <option key={c.id} value={c.id}>{c.label}</option>
                 ))}
@@ -148,19 +157,19 @@ export function CustomerForm({ open, onClose, customer }: { open: boolean; onClo
         </div>
 
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-          <Field label="البريد الإلكتروني" error={errors.email}><input dir="ltr" className="field w-full" {...register("email")} /></Field>
-          <Field label="نوع العميل">
+          <Field label={t("misc.customers.form.field.email")} error={errors.email}><input dir="ltr" className="field w-full" {...register("email")} /></Field>
+          <Field label={t("misc.customers.form.field.customerType")}>
             <select className="field w-full" {...register("customerType")}>
-              <option value="B2C">أفراد B2C</option>
-              <option value="B2B">شركات B2B</option>
-              <option value="B2G">حكومي B2G</option>
+              <option value="B2C">{t("misc.customers.form.type.b2c")}</option>
+              <option value="B2B">{t("misc.customers.form.type.b2b")}</option>
+              <option value="B2G">{t("misc.customers.form.type.b2g")}</option>
             </select>
           </Field>
-          <Field label="حد الائتمان" hint="0 = لا يُسمح بالبيع الآجل" error={errors.creditLimit}>
+          <Field label={t("misc.customers.form.field.creditLimit")} hint={t("misc.customers.form.hint.creditLimit")} error={errors.creditLimit}>
             <input dir="ltr" type="number" step="0.01" className="field w-full tabular-nums" {...register("creditLimit")} />
           </Field>
-          <Field label="شروط السداد" hint="Cash = نقدي فقط"><input dir="ltr" className="field w-full" {...register("paymentTerms")} /></Field>
-          <Field label="أيام الائتمان"><input dir="ltr" type="number" className="field w-full tabular-nums" {...register("creditDays")} /></Field>
+          <Field label={t("misc.customers.form.field.paymentTerms")} hint={t("misc.customers.form.hint.paymentTerms")}><input dir="ltr" className="field w-full" {...register("paymentTerms")} /></Field>
+          <Field label={t("misc.customers.form.field.creditDays")}><input dir="ltr" type="number" className="field w-full tabular-nums" {...register("creditDays")} /></Field>
         </div>
       </form>
     </Drawer>

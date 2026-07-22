@@ -97,7 +97,7 @@ export function SupplierForm({ open, onClose, supplierId }: { open: boolean; onC
       onClose={onClose}
       icon={Building2}
       eyebrow={editing ? "تعديل مورد" : "مورد جديد"}
-      title={editing ? String((detail.data as Record<string, unknown> | undefined)?.name ?? "") : "إضافة مورد"}
+      title={editing ? String((detail.data as Record<string, unknown> | undefined)?.name ?? "") : "إضافة مورد جديد"}
       footer={
         <div className="flex w-full items-center justify-end gap-2">
           <Button variant="ghost" onClick={onClose}>إلغاء</Button>

@@ -128,6 +128,53 @@ function getFreePort() {
     // ── 2. EXISTING DB — provision the full legacy schema via a real
     // server.js boot against this SAME throwaway DB, then resume the SAME
     // runner call. ──
+    // RC-1 (Release-Candidate gate) — this step used to spawn the HTTP server
+    // directly onto the bare database and poll /api/version against a fixed
+    // 180s wall clock. That is a guess, not a proof, and measurement showed
+    // it was a bad guess. A cold server.js boot issues ~668 sequential DDL
+    // statements (558 `addColumnIfMissing` + 173 `createTableIfMissing` call
+    // sites in server.js); on MySQL 8.4 each one costs ~135ms because every
+    // DDL is its own durable data-dictionary commit. That is ~120s of
+    // irreducible grind — measured 118.1s / 119.5s / 123.1s / 125.9s across
+    // four solo runs, with the largest single gap anywhere in the boot being
+    // 2.3s (i.e. no stall, no lock wait — a flat loop). Binlog fsync is NOT
+    // the driver: the same DDL with `sql_log_bin=0` measured 137.0ms/stmt,
+    // statistically identical. Warm re-boot of the same DB: 3.7s (33x less),
+    // so 100% of the cost is one-time provisioning.
+    //
+    // 120s under a 180s budget is only 1.4x margin, and it was routinely
+    // consumed by unrelated machine load: two concurrent cold boots measured
+    // 198.9s each (already over), four measured 332-344s. The assertion was
+    // failing on contention, never on anything server.js did wrong. Raising
+    // the number would just move the guess.
+    //
+    // The real fix is to stop timing a wall clock and start waiting for a
+    // genuine terminating signal. MIGRATE_ONLY=1 runs the IDENTICAL
+    // autoInitDB() -> runMigrations() path and then exits, so provisioning is
+    // awaited by process EXIT — arbitrary machine slowness can no longer
+    // flake it. The HTTP proof is deliberately kept (this check must keep
+    // meaning "a real server.js boot comes up"), but it now runs against the
+    // already-warm schema where it costs ~4s, so its 60s budget carries ~15x
+    // margin instead of 1.4x. BOTH halves must pass for this check to pass.
+    // The 600s below is a hang-detector, not the success criterion.
+    const bootStartedAt = Date.now();
+    let provisionCode = 0;
+    let provisionOut = '';
+    try {
+      provisionOut = require('child_process').execFileSync(process.execPath, ['server.js'], {
+        cwd: path.join(__dirname, '..', '..'),
+        env: { ...process.env, MIGRATE_ONLY: '1' },
+        timeout: 600000,
+        encoding: 'utf8',
+        maxBuffer: 64 * 1024 * 1024,
+      });
+    } catch (e) {
+      provisionCode = e.status == null ? 1 : e.status;
+      provisionOut = (e.stdout || '') + (e.stderr || '');
+    }
+    const provisionedMs = Date.now() - bootStartedAt;
+
+    // Now prove the real HTTP server comes up — against the warm schema.
     const port = await getFreePort();
     // Adversarial review — stdio:['ignore','ignore','ignore'] discarded the
     // child's entire console output, so a boot failure or the deadline
@@ -146,15 +193,8 @@ function getFreePort() {
     serverProc.stderr.on('data', (d) => { childLog += d; });
     let exitInfo = null;
     serverProc.on('exit', (code, signal) => { exitInfo = { code, signal }; });
-    // A full legacy-schema boot (hundreds of addColumnIfMissing/
-    // createTableIfMissing calls) genuinely takes over a minute on a
-    // loaded dev machine — measured ~66s on a clean run. 60s was too tight
-    // and produced a false failure (server killed mid-boot, before
-    // pos_orders even existed yet, which then made the runner's own retry
-    // look like a real bug). 3 minutes gives real margin without masking
-    // an actually-hung boot.
-    const bootStartedAt = Date.now();
-    const deadline = bootStartedAt + 180000;
+    const httpStartedAt = Date.now();
+    const deadline = httpStartedAt + 60000;
     let up = false;
     while (Date.now() < deadline) {
       const ok = await new Promise((resolve) => {
@@ -165,10 +205,20 @@ function getFreePort() {
       if (ok) { up = true; break; }
       await new Promise((r) => setTimeout(r, 300));
     }
+    const provisioned = provisionCode === 0 && /schema ready/.test(provisionOut);
     check(
       'a real server.js boot against the throwaway DB comes up (provisions the full legacy schema)',
-      up,
-      up ? undefined : { elapsedMs: Date.now() - bootStartedAt, exitInfo, tailOfChildLog: childLog.slice(-2000) }
+      provisioned && up,
+      (provisioned && up) ? undefined : {
+        provisionCode,
+        provisionedMs,
+        provisionSawSchemaReady: /schema ready/.test(provisionOut),
+        httpUp: up,
+        httpWaitedMs: Date.now() - httpStartedAt,
+        exitInfo,
+        tailOfProvisionLog: provisionOut.slice(-1200),
+        tailOfChildLog: childLog.slice(-1200),
+      }
     );
     if (serverProc) { serverProc.kill(); serverProc = null; }
 

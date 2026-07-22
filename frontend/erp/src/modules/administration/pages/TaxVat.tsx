@@ -12,6 +12,7 @@ import {
 } from "@/shared/ui";
 import { DataTable, type ColumnDef } from "@/shared/tables";
 import { formatCurrency, formatDate } from "@/shared/lib";
+import { useT } from "@/i18n";
 import { asArray } from "../_common";
 import { ZatcaOnboardingWizard } from "../zatca/OnboardingWizard";
 import { useZatcaStatus } from "../zatca/api";
@@ -26,62 +27,65 @@ interface VatReport {
   status: string;
   createdBy: string;
 }
-const VAT_STATUS_AR: Record<string, string> = {
-  submitted: "مُرسل",
-  closed: "مغلق",
-  draft: "مسودة",
-  open: "قيد التنفيذ",
+// VAT report statuses map onto the shared record-status codes so <StatusBadge>
+// localizes them (status.*). Unknown values fall through to the raw string.
+const VAT_STATUS_CODE: Record<string, string> = {
+  submitted: "sent",
+  closed: "closed",
+  draft: "draft",
+  open: "inProgress",
 };
-const CSID_AR: Record<string, string> = {
-  none: "غير مُفعّل",
-  compliance: "امتثال (تجريبي)",
-  production: "إنتاج (مُفعّل)",
-  revoked: "مُبطلة",
-};
+const CSID_CODES = ["none", "compliance", "production", "revoked"];
 
 function VatReportsTab() {
+  const t = useT();
   const query = useQuery({
     queryKey: ["erp", "vat-reports"],
     queryFn: ({ signal }) => apiClient.get<unknown>("/erp/vat/reports", { signal }),
   });
   const rows = asArray<VatReport>(query.data);
 
+  const statusLabel = (status: string): string => {
+    const code = VAT_STATUS_CODE[status];
+    return code ? t(`status.${code}`) : status || "—";
+  };
+
   const columns: ColumnDef<VatReport>[] = [
     {
       id: "period",
-      header: "الفترة",
+      header: t("administration.tax.vat.col.period"),
       accessor: (r) => r.periodStart,
       cell: (r) => `${formatDate(r.periodStart)} — ${formatDate(r.periodEnd)}`,
       sortable: true,
     },
     {
       id: "output",
-      header: "ضريبة المخرجات",
+      header: t("administration.tax.vat.col.output"),
       accessor: (r) => r.totalOutputVat,
       cell: (r) => formatCurrency(r.totalOutputVat),
       numeric: true,
     },
     {
       id: "input",
-      header: "ضريبة المدخلات",
+      header: t("administration.tax.vat.col.input"),
       accessor: (r) => r.totalInputVat,
       cell: (r) => formatCurrency(r.totalInputVat),
       numeric: true,
     },
     {
       id: "net",
-      header: "صافي الضريبة",
+      header: t("administration.tax.vat.col.net"),
       accessor: (r) => r.netVat,
       cell: (r) => formatCurrency(r.netVat),
       numeric: true,
     },
     {
       id: "status",
-      header: "الحالة",
-      accessor: (r) => VAT_STATUS_AR[r.status] ?? r.status,
-      cell: (r) => <StatusBadge>{VAT_STATUS_AR[r.status] ?? r.status ?? "—"}</StatusBadge>,
+      header: t("administration.tax.vat.col.status"),
+      accessor: (r) => statusLabel(r.status),
+      cell: (r) => <StatusBadge>{VAT_STATUS_CODE[r.status] ?? r.status ?? "—"}</StatusBadge>,
     },
-    { id: "createdBy", header: "أنشأها", accessor: (r) => r.createdBy || "—" },
+    { id: "createdBy", header: t("administration.tax.vat.col.createdBy"), accessor: (r) => r.createdBy || "—" },
   ];
 
   return (
@@ -95,13 +99,14 @@ function VatReportsTab() {
       exportFilename="vat-reports.csv"
       tableId="admin-vat-reports"
       initialSort={{ columnId: "period", dir: "desc" }}
-      emptyTitle="لا توجد إقرارات ضريبية"
-      emptyBody="ستظهر هنا إقرارات ضريبة القيمة المضافة بعد إقفال الفترات."
+      emptyTitle={t("administration.tax.vat.empty")}
+      emptyBody={t("administration.tax.vat.emptyBody")}
     />
   );
 }
 
 function ZatcaTab() {
+  const t = useT();
   const query = useZatcaStatus();
 
   if (query.isLoading) return <LoadingState />;
@@ -112,6 +117,7 @@ function ZatcaTab() {
   const q = s.queueStats ?? {};
   const csid = s.csidStatus ?? "none";
   const active = csid === "production";
+  const csidLabel = CSID_CODES.includes(csid) ? t(`administration.tax.csid.${csid}`) : csid;
 
   const stat = (label: string, value: string | number, tone?: "success" | "warning" | "danger") => (
     <div className="surface p-4">
@@ -120,7 +126,15 @@ function ZatcaTab() {
         <span className="text-lg font-extrabold text-slate-900" dir="ltr">
           {value}
         </span>
-        {tone && <Badge tone={tone}>{tone === "success" ? "سليم" : tone === "warning" ? "انتباه" : "خطأ"}</Badge>}
+        {tone && (
+          <Badge tone={tone}>
+            {tone === "success"
+              ? t("administration.tax.zatca.toneSuccess")
+              : tone === "warning"
+                ? t("administration.tax.zatca.toneWarning")
+                : t("administration.tax.zatca.toneDanger")}
+          </Badge>
+        )}
       </div>
     </div>
   );
@@ -133,20 +147,20 @@ function ZatcaTab() {
             <ShieldCheck className="h-5 w-5" />
           </span>
           <div>
-            <div className="text-base font-extrabold text-slate-900">حالة الربط مع هيئة الزكاة (ZATCA)</div>
+            <div className="text-base font-extrabold text-slate-900">{t("administration.tax.zatca.statusTitle")}</div>
             <div className="text-xs font-medium text-slate-500">
-              {s?.sellerName || "—"} · الرقم الضريبي {s?.sellerVat || "—"}
+              {s?.sellerName || "—"} · {t("administration.tax.zatca.taxNumberLabel", { vat: s?.sellerVat || "—" })}
             </div>
           </div>
         </div>
-        <StatusBadge tone={active ? "success" : "warning"}>{CSID_AR[csid] ?? csid}</StatusBadge>
+        <StatusBadge tone={active ? "success" : "warning"}>{csidLabel}</StatusBadge>
       </div>
 
       <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
-        {stat("تاريخ إصدار الشهادة", s?.csidObtainedAt ? formatDate(s.csidObtainedAt) : "—")}
-        {stat("آخر إرسال فاتورة", s?.lastSubmittedAt ? formatDate(s.lastSubmittedAt) : "—")}
-        {stat("قيد الانتظار", q.pending ?? 0)}
-        {stat("فشل", q.failed ?? 0, (q.failed ?? 0) > 0 ? "danger" : undefined)}
+        {stat(t("administration.tax.zatca.certDate"), s?.csidObtainedAt ? formatDate(s.csidObtainedAt) : "—")}
+        {stat(t("administration.tax.zatca.lastSubmit"), s?.lastSubmittedAt ? formatDate(s.lastSubmittedAt) : "—")}
+        {stat(t("administration.tax.zatca.pending"), q.pending ?? 0)}
+        {stat(t("administration.tax.zatca.failed"), q.failed ?? 0, (q.failed ?? 0) > 0 ? "danger" : undefined)}
       </div>
 
       <ZatcaOnboardingWizard status={s} />
@@ -155,16 +169,17 @@ function ZatcaTab() {
 }
 
 export default function TaxVatPage() {
+  const t = useT();
   const [tab, setTab] = useState("vat");
   return (
     <div>
       <PageHeader
-        eyebrow="الإدارة"
-        title="الضرائب"
-        subtitle="إقرارات ضريبة القيمة المضافة وحالة الربط مع هيئة الزكاة والضريبة."
+        eyebrow={t("administration.eyebrow")}
+        title={t("administration.tax.title")}
+        subtitle={t("administration.tax.subtitle")}
       />
       <Tabs
-        aria-label="أقسام الضرائب"
+        aria-label={t("administration.tax.tabsAria")}
         value={tab}
         onChange={setTab}
         className="mb-4"
@@ -173,7 +188,7 @@ export default function TaxVatPage() {
             value: "vat",
             label: (
               <span className="inline-flex items-center gap-1.5">
-                <FileBarChart className="h-4 w-4" /> إقرارات القيمة المضافة
+                <FileBarChart className="h-4 w-4" /> {t("administration.tax.tabVat")}
               </span>
             ),
           },
@@ -181,7 +196,7 @@ export default function TaxVatPage() {
             value: "zatca",
             label: (
               <span className="inline-flex items-center gap-1.5">
-                <ShieldCheck className="h-4 w-4" /> حالة ZATCA
+                <ShieldCheck className="h-4 w-4" /> {t("administration.tax.tabZatca")}
               </span>
             ),
           },

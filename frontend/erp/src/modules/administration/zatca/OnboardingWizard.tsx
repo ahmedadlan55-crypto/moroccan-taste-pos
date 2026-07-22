@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useForm } from "react-hook-form";
 import {
   Ban,
@@ -13,6 +13,7 @@ import { Button, ConfirmDialog, Input, Select, StatusBadge, Stepper, useToast } 
 import { Field, zodResolver } from "@/shared/forms";
 import { z } from "@/shared/schemas";
 import { Can } from "@/shared/permissions";
+import { useT, type TFunction } from "@/i18n";
 import {
   useOnboardCompliance,
   useOnboardProduction,
@@ -21,32 +22,28 @@ import {
   type ZatcaStatus,
 } from "./api";
 
-const STEPS = ["بيانات الامتثال", "اختبار", "الإنتاج", "مكتمل"];
-
-const INVOICE_TYPES = [
-  { value: "1100", label: "ضريبية ومبسّطة (B2B + B2C)" },
-  { value: "1000", label: "ضريبية فقط (B2B)" },
-  { value: "0100", label: "مبسّطة فقط (B2C)" },
-];
+const INVOICE_TYPE_VALUES = ["1100", "1000", "0100"] as const;
 
 // The OTP is user-entered input, sent ONCE to the compliance endpoint. It is
 // never written to localStorage or any persistent store — it lives only in this
 // form's in-memory state and is cleared on success (reset()).
-const complianceSchema = z.object({
-  otp: z.string().trim().min(1, "رمز OTP مطلوب"),
-  vatNumber: z
-    .string()
-    .trim()
-    .regex(/^\d{15}$/, "الرقم الضريبي يجب أن يكون 15 رقمًا"),
-  organizationName: z.string().trim().max(200).optional().or(z.literal("")),
-  commonName: z.string().trim().max(200).optional().or(z.literal("")),
-  organizationalUnitName: z.string().trim().max(200).optional().or(z.literal("")),
-  invoiceType: z.string(),
-  sellerLocation: z.string().trim().max(120).optional().or(z.literal("")),
-  industryCode: z.string().trim().max(60).optional().or(z.literal("")),
-  crNumber: z.string().trim().max(60).optional().or(z.literal("")),
-});
-type ComplianceForm = z.infer<typeof complianceSchema>;
+function makeComplianceSchema(t: TFunction) {
+  return z.object({
+    otp: z.string().trim().min(1, t("administration.zatca.err.otpRequired")),
+    vatNumber: z
+      .string()
+      .trim()
+      .regex(/^\d{15}$/, t("administration.zatca.err.vatDigits")),
+    organizationName: z.string().trim().max(200).optional().or(z.literal("")),
+    commonName: z.string().trim().max(200).optional().or(z.literal("")),
+    organizationalUnitName: z.string().trim().max(200).optional().or(z.literal("")),
+    invoiceType: z.string(),
+    sellerLocation: z.string().trim().max(120).optional().or(z.literal("")),
+    industryCode: z.string().trim().max(60).optional().or(z.literal("")),
+    crNumber: z.string().trim().max(60).optional().or(z.literal("")),
+  });
+}
+type ComplianceForm = z.infer<ReturnType<typeof makeComplianceSchema>>;
 
 function currentStep(csid: string): number {
   if (csid === "production") return 4;
@@ -56,15 +53,21 @@ function currentStep(csid: string): number {
 
 // ── Step 1 — compliance CSID request (OTP + CSR fields) ──────────────────────
 function ComplianceStep({ status }: { status: ZatcaStatus }) {
+  const t = useT();
   const { toast } = useToast();
   const mutation = useOnboardCompliance();
+  const schema = useMemo(() => makeComplianceSchema(t), [t]);
+  const invoiceTypeOptions = useMemo(
+    () => INVOICE_TYPE_VALUES.map((v) => ({ value: v, label: t(`administration.zatca.invoiceType.${v}`) })),
+    [t],
+  );
   const {
     register,
     handleSubmit,
     reset,
     formState: { errors },
   } = useForm<ComplianceForm>({
-    resolver: zodResolver(complianceSchema),
+    resolver: zodResolver(schema),
     defaultValues: {
       otp: "",
       vatNumber: status.sellerVat || "",
@@ -105,10 +108,10 @@ function ComplianceStep({ status }: { status: ZatcaStatus }) {
       {
         onSuccess: (r) => {
           reset(); // clear the OTP (and the rest) from memory immediately
-          toast({ title: r.message || "تم تفعيل شهادة الامتثال (CSID)", tone: "success" });
+          toast({ title: r.message || t("administration.zatca.compliance.toastSuccess"), tone: "success" });
         },
         onError: (e: Error) =>
-          toast({ title: "تعذّر طلب الشهادة", description: e.message, tone: "error" }),
+          toast({ title: t("administration.zatca.compliance.toastFailed"), description: e.message, tone: "error" }),
       },
     );
 
@@ -116,14 +119,11 @@ function ComplianceStep({ status }: { status: ZatcaStatus }) {
     <form onSubmit={handleSubmit(onSubmit)} className="space-y-4" noValidate>
       <div className="flex items-start gap-2 rounded-xl border border-sky-200 bg-sky-50 px-3 py-2 text-xs font-medium text-sky-800">
         <Info className="mt-0.5 h-4 w-4 shrink-0" aria-hidden="true" />
-        <span>
-          احصل على رمز OTP من بوابة فاتورة (Fatoora) لدى هيئة الزكاة والضريبة والجمارك، ثم أدخله
-          هنا مع بيانات المنشأة لإصدار شهادة الامتثال.
-        </span>
+        <span>{t("administration.zatca.compliance.infoBanner")}</span>
       </div>
 
       <div className="grid gap-4 sm:grid-cols-2">
-        <Field label="رمز OTP من بوابة فاتورة" required error={errors.otp}>
+        <Field label={t("administration.zatca.compliance.otp")} required error={errors.otp}>
           {({ id, invalid }) => (
             <Input
               id={id}
@@ -137,37 +137,37 @@ function ComplianceStep({ status }: { status: ZatcaStatus }) {
             />
           )}
         </Field>
-        <Field label="الرقم الضريبي (15 رقمًا)" required error={errors.vatNumber}>
+        <Field label={t("administration.zatca.compliance.vatNumber")} required error={errors.vatNumber}>
           {({ id, invalid }) => (
             <Input id={id} dir="ltr" inputMode="numeric" invalid={invalid} {...register("vatNumber")} />
           )}
         </Field>
-        <Field label="اسم المنشأة" error={errors.organizationName}>
+        <Field label={t("administration.zatca.compliance.orgName")} error={errors.organizationName}>
           {({ id }) => <Input id={id} {...register("organizationName")} />}
         </Field>
-        <Field label="الاسم الشائع للشهادة" hint="اتركه فارغًا لاستخدام الرقم الضريبي" error={errors.commonName}>
+        <Field label={t("administration.zatca.compliance.commonName")} hint={t("administration.zatca.compliance.commonNameHint")} error={errors.commonName}>
           {({ id }) => <Input id={id} dir="ltr" {...register("commonName")} />}
         </Field>
-        <Field label="الوحدة التنظيمية / الفرع" error={errors.organizationalUnitName}>
+        <Field label={t("administration.zatca.compliance.orgUnit")} error={errors.organizationalUnitName}>
           {({ id }) => <Input id={id} {...register("organizationalUnitName")} />}
         </Field>
-        <Field label="نوع الفواتير" error={errors.invoiceType}>
-          {({ id }) => <Select id={id} options={INVOICE_TYPES} {...register("invoiceType")} />}
+        <Field label={t("administration.zatca.compliance.invoiceTypeLabel")} error={errors.invoiceType}>
+          {({ id }) => <Select id={id} options={invoiceTypeOptions} {...register("invoiceType")} />}
         </Field>
-        <Field label="المدينة / الموقع" error={errors.sellerLocation}>
+        <Field label={t("administration.zatca.compliance.location")} error={errors.sellerLocation}>
           {({ id }) => <Input id={id} {...register("sellerLocation")} />}
         </Field>
-        <Field label="رمز النشاط الاقتصادي" error={errors.industryCode}>
+        <Field label={t("administration.zatca.compliance.industryCode")} error={errors.industryCode}>
           {({ id }) => <Input id={id} dir="ltr" inputMode="numeric" {...register("industryCode")} />}
         </Field>
-        <Field label="رقم السجل التجاري" error={errors.crNumber} className="sm:col-span-2">
+        <Field label={t("administration.zatca.compliance.crNumber")} error={errors.crNumber} className="sm:col-span-2">
           {({ id }) => <Input id={id} dir="ltr" inputMode="numeric" {...register("crNumber")} />}
         </Field>
       </div>
 
       <div className="flex justify-end">
         <Button type="submit" loading={mutation.isPending}>
-          <ShieldCheck className="h-4 w-4" /> طلب شهادة الامتثال
+          <ShieldCheck className="h-4 w-4" /> {t("administration.zatca.compliance.submitBtn")}
         </Button>
       </div>
     </form>
@@ -176,6 +176,7 @@ function ComplianceStep({ status }: { status: ZatcaStatus }) {
 
 // ── Step 2 + 3 — synthetic test, then graduate to production ─────────────────
 function TestAndProductionStep({ status }: { status: ZatcaStatus }) {
+  const t = useT();
   const { toast } = useToast();
   const testMut = useZatcaTest();
   const prodMut = useOnboardProduction();
@@ -185,43 +186,48 @@ function TestAndProductionStep({ status }: { status: ZatcaStatus }) {
     testMut.mutate(undefined, {
       onSuccess: (r) =>
         toast({
-          title: r.success ? "تم قبول الفاتورة الاختبارية" : "لم تُقبل الفاتورة الاختبارية",
-          description: r.httpStatus ? `استجابة الهيئة: HTTP ${r.httpStatus}` : r.error || undefined,
+          title: r.success ? t("administration.zatca.test.toastAccepted") : t("administration.zatca.test.toastRejected"),
+          description: r.httpStatus ? t("administration.zatca.test.toastResponse", { status: r.httpStatus }) : r.error || undefined,
           tone: r.success ? "success" : "warning",
         }),
       onError: (e: Error) =>
-        toast({ title: "تعذّر تنفيذ الاختبار", description: e.message, tone: "error" }),
+        toast({ title: t("administration.zatca.test.toastTestFailed"), description: e.message, tone: "error" }),
     });
 
   const graduate = () =>
     prodMut.mutate(undefined, {
-      onSuccess: (r) => toast({ title: r.message || "تم الانتقال إلى الإنتاج", tone: "success" }),
+      onSuccess: (r) => toast({ title: r.message || t("administration.zatca.test.toastProdSuccess"), tone: "success" }),
       onError: (e: Error) =>
-        toast({ title: "تعذّر الانتقال إلى الإنتاج", description: e.message, tone: "error" }),
+        toast({ title: t("administration.zatca.test.toastProdFailed"), description: e.message, tone: "error" }),
     });
 
   return (
     <div className="space-y-4">
       <div className="flex items-center gap-2 rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs font-bold text-emerald-700">
         <CheckCircle2 className="h-4 w-4 shrink-0" aria-hidden="true" />
-        شهادة الامتثال مُفعّلة{status.requestId ? ` · معرّف الطلب ${status.requestId}` : ""}. أرسِل
-        فاتورة اختبارية للتحقق ثم انتقل إلى الإنتاج.
+        {status.requestId
+          ? t("administration.zatca.test.bannerWithId", { requestId: status.requestId })
+          : t("administration.zatca.test.banner")}
       </div>
 
       <div className="grid gap-4 sm:grid-cols-2">
         <div className="surface p-4">
           <div className="flex items-center gap-2 text-sm font-extrabold text-slate-900">
-            <FlaskConical className="h-4 w-4 text-teal-700" /> اختبار الامتثال
+            <FlaskConical className="h-4 w-4 text-teal-700" /> {t("administration.zatca.test.testTitle")}
           </div>
           <p className="mt-1 text-xs font-medium text-slate-500">
-            يُرسل فاتورة اصطناعية إلى بيئة الامتثال للتحقق من صحة التوقيع والربط.
+            {t("administration.zatca.test.testBody")}
           </p>
           {test && (
             <div className="mt-2">
               <StatusBadge tone={test.success ? "success" : "warning"}>
                 {test.success
-                  ? `مقبولة${test.httpStatus ? ` (HTTP ${test.httpStatus})` : ""}`
-                  : `مرفوضة${test.httpStatus ? ` (HTTP ${test.httpStatus})` : ""}`}
+                  ? test.httpStatus
+                    ? t("administration.zatca.test.acceptedWithStatus", { status: test.httpStatus })
+                    : t("administration.zatca.test.accepted")
+                  : test.httpStatus
+                    ? t("administration.zatca.test.rejectedWithStatus", { status: test.httpStatus })
+                    : t("administration.zatca.test.rejected")}
               </StatusBadge>
             </div>
           )}
@@ -231,19 +237,19 @@ function TestAndProductionStep({ status }: { status: ZatcaStatus }) {
             loading={testMut.isPending}
             onClick={runTest}
           >
-            <FlaskConical className="h-4 w-4" /> إرسال فاتورة اختبارية
+            <FlaskConical className="h-4 w-4" /> {t("administration.zatca.test.runBtn")}
           </Button>
         </div>
 
         <div className="surface p-4">
           <div className="flex items-center gap-2 text-sm font-extrabold text-slate-900">
-            <Rocket className="h-4 w-4 text-teal-700" /> الانتقال إلى الإنتاج
+            <Rocket className="h-4 w-4 text-teal-700" /> {t("administration.zatca.test.prodTitle")}
           </div>
           <p className="mt-1 text-xs font-medium text-slate-500">
-            بعد نجاح الاختبار، رقِّ الشهادة إلى الإنتاج (Production CSID) لبدء إرسال الفواتير الفعلية.
+            {t("administration.zatca.test.prodBody")}
           </p>
           <Button className="mt-3 w-full" loading={prodMut.isPending} onClick={graduate}>
-            <Rocket className="h-4 w-4" /> ترقية إلى الإنتاج
+            <Rocket className="h-4 w-4" /> {t("administration.zatca.test.prodBtn")}
           </Button>
         </div>
       </div>
@@ -253,6 +259,7 @@ function TestAndProductionStep({ status }: { status: ZatcaStatus }) {
 
 // ── Step 4 — production active ───────────────────────────────────────────────
 function DoneStep({ status }: { status: ZatcaStatus }) {
+  const t = useT();
   return (
     <div className="flex items-start gap-3 rounded-xl border border-emerald-200 bg-emerald-50 p-4">
       <span className="grid h-11 w-11 shrink-0 place-items-center rounded-xl bg-emerald-100 text-emerald-700">
@@ -260,11 +267,12 @@ function DoneStep({ status }: { status: ZatcaStatus }) {
       </span>
       <div className="min-w-0">
         <div className="text-sm font-extrabold text-emerald-800">
-          الربط مُفعّل في الإنتاج (Production CSID)
+          {t("administration.zatca.done.title")}
         </div>
         <p className="mt-1 text-xs font-medium text-emerald-700">
-          يجري توقيع فواتير المبيعات وإرسالها إلى هيئة الزكاة والضريبة والجمارك تلقائيًا.
-          {status.requestId ? ` معرّف الطلب: ${status.requestId}.` : ""}
+          {status.requestId
+            ? t("administration.zatca.done.bodyWithId", { requestId: status.requestId })
+            : t("administration.zatca.done.body")}
         </p>
       </div>
     </div>
@@ -273,6 +281,7 @@ function DoneStep({ status }: { status: ZatcaStatus }) {
 
 // ── Revoke — clears all server-side credentials (requires a reason) ──────────
 function RevokeAction() {
+  const t = useT();
   const { toast } = useToast();
   const [open, setOpen] = useState(false);
   const revokeMut = useRevokeZatca();
@@ -281,27 +290,27 @@ function RevokeAction() {
     <>
       <div className="flex justify-end border-t border-slate-100 pt-4">
         <Button variant="ghost" className="text-rose-600 hover:bg-rose-50" onClick={() => setOpen(true)}>
-          <Ban className="h-4 w-4" /> إبطال الشهادة
+          <Ban className="h-4 w-4" /> {t("administration.zatca.revoke.btn")}
         </Button>
       </div>
       <ConfirmDialog
         open={open}
-        title="إبطال شهادة ZATCA"
-        description="سيتم مسح جميع بيانات الاعتماد المشفّرة من الخادم، ويتوقف إرسال الفواتير حتى إعادة التهيئة."
+        title={t("administration.zatca.revoke.confirmTitle")}
+        description={t("administration.zatca.revoke.confirmDesc")}
         tone="danger"
-        confirmLabel="إبطال"
+        confirmLabel={t("administration.zatca.revoke.confirmLabel")}
         requireReason
-        reasonLabel="سبب الإبطال"
+        reasonLabel={t("administration.zatca.revoke.reasonLabel")}
         processing={revokeMut.isPending}
         error={revokeMut.isError ? (revokeMut.error as Error).message : null}
         onConfirm={(reason) =>
           revokeMut.mutate(reason, {
             onSuccess: () => {
               setOpen(false);
-              toast({ title: "تم إبطال الشهادة", tone: "success" });
+              toast({ title: t("administration.zatca.revoke.toastSuccess"), tone: "success" });
             },
             onError: (e: Error) =>
-              toast({ title: "تعذّر الإبطال", description: e.message, tone: "error" }),
+              toast({ title: t("administration.zatca.revoke.toastFailed"), description: e.message, tone: "error" }),
           })
         }
         onClose={() => setOpen(false)}
@@ -317,24 +326,31 @@ function RevokeAction() {
  * displayed, stored, or logged; only the non-sensitive status flags are used.
  */
 export function ZatcaOnboardingWizard({ status }: { status: ZatcaStatus }) {
+  const t = useT();
   const csid = status.csidStatus || "none";
   const step = currentStep(csid);
   const hasCredentials = csid === "compliance" || csid === "production";
+  const steps = [
+    t("administration.zatca.step.compliance"),
+    t("administration.zatca.step.test"),
+    t("administration.zatca.step.production"),
+    t("administration.zatca.step.done"),
+  ];
 
   return (
     <Can cap="administration.zatca.manage" showDenied>
       <div className="surface space-y-5 p-5">
         <div className="flex flex-wrap items-center justify-between gap-2">
           <div>
-            <div className="text-base font-extrabold text-slate-900">تهيئة الربط (المرحلة الثانية)</div>
+            <div className="text-base font-extrabold text-slate-900">{t("administration.zatca.wizard.title")}</div>
             <div className="text-xs font-medium text-slate-500">
-              التسجيل والحصول على شهادة الامتثال ثم الإنتاج (Onboarding Phase 2).
+              {t("administration.zatca.wizard.subtitle")}
             </div>
           </div>
-          {csid === "revoked" && <StatusBadge tone="danger">مُبطلة</StatusBadge>}
+          {csid === "revoked" && <StatusBadge tone="danger">{t("administration.zatca.wizard.revokedBadge")}</StatusBadge>}
         </div>
 
-        <Stepper steps={STEPS} current={step} />
+        <Stepper steps={steps} current={step} />
 
         {step === 1 && <ComplianceStep status={status} />}
         {step === 2 && <TestAndProductionStep status={status} />}
@@ -342,7 +358,7 @@ export function ZatcaOnboardingWizard({ status }: { status: ZatcaStatus }) {
 
         <p className="flex items-start gap-2 text-[11px] font-medium text-slate-400">
           <Info className="mt-0.5 h-3.5 w-3.5 shrink-0" aria-hidden="true" />
-          المفتاح الخاص والرموز السرية تُحفظ مشفّرة في الخادم ولا تُعرض أو تُخزّن في المتصفح.
+          {t("administration.zatca.wizard.footerNote")}
         </p>
 
         {hasCredentials && <RevokeAction />}

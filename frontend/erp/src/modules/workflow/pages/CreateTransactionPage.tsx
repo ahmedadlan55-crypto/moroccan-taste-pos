@@ -30,6 +30,8 @@ import {
   Stepper,
   useToast,
 } from "@/shared/ui";
+import { useTx } from "@/shared/ui/i18n";
+import { formatCurrency } from "@/shared/lib";
 import {
   useCreateTransaction,
   useRoutableUsers,
@@ -68,27 +70,14 @@ const EMPTY_DRAFT: LocalDraft = {
   updatedAt: "",
 };
 
-const STEPS = ["البيانات الأساسية", "التوجيه", "المحتوى والمرفقات", "المراجعة والإرسال"];
-
-const IMPORTANCE_OPTIONS = [
-  { value: "low", label: "منخفضة" },
-  { value: "medium", label: "متوسطة" },
-  { value: "high", label: "عالية" },
-  { value: "critical", label: "حرجة" },
-];
-
-const SECRECY_OPTIONS = [
-  { value: "normal", label: "عادي" },
-  { value: "confidential", label: "سري" },
-  { value: "secret", label: "سري جدًا" },
-  { value: "top_secret", label: "مقيد للغاية" },
-];
+const IMPORTANCE_VALUES: Importance[] = ["low", "medium", "high", "critical"];
+const SECRECY_VALUES: Secrecy[] = ["normal", "confidential", "secret", "top_secret"];
 
 function fileToDataUrl(file: File): Promise<string> {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
     reader.onload = () => resolve(String(reader.result || ""));
-    reader.onerror = () => reject(reader.error ?? new Error("تعذّر قراءة الملف"));
+    reader.onerror = () => reject(reader.error ?? new Error("file read failed"));
     reader.readAsDataURL(file);
   });
 }
@@ -105,6 +94,10 @@ function isMeaningfulDraft(draft: LocalDraft) {
 }
 
 export function CreateTransactionPage() {
+  const t = useTx();
+  // Reading direction is taken from the document (the i18n provider keeps it in
+  // sync) instead of useLang(), so this page still renders in provider-less tests.
+  const rtl = typeof document !== "undefined" && document.documentElement.dir === "rtl";
   const { user } = useAuth();
   const username = user?.username ?? "";
   const navigate = useNavigate();
@@ -122,11 +115,29 @@ export function CreateTransactionPage() {
   const [error, setError] = useState<string | null>(null);
   const [completed, setCompleted] = useState(false);
 
+  const steps = useMemo(
+    () => [
+      t("workflow.create.steps.basic"),
+      t("workflow.create.steps.routing"),
+      t("workflow.create.steps.content"),
+      t("workflow.create.steps.review"),
+    ],
+    [t],
+  );
+  const importanceOptions = useMemo(
+    () => IMPORTANCE_VALUES.map((value) => ({ value, label: t(`workflow.importance.${value}`) })),
+    [t],
+  );
+  const secrecyOptions = useMemo(
+    () => SECRECY_VALUES.map((value) => ({ value, label: t(`workflow.create.secrecyOpt.${value}`) })),
+    [t],
+  );
+
   const isDirty = isMeaningfulDraft(draft) || !!attachment;
   useUnsavedGuard(isDirty && !completed);
 
   const typeOptions = useMemo(
-    () => (types.data ?? []).filter((t) => t.isActive !== false).map((t) => ({ value: t.id, label: t.name })),
+    () => (types.data ?? []).filter((type) => type.isActive !== false).map((type) => ({ value: type.id, label: type.name })),
     [types.data],
   );
   const recipientOptions = useMemo(() => {
@@ -142,24 +153,30 @@ export function CreateTransactionPage() {
       }),
     );
   }, [recipients.data]);
-  const selectedType = (types.data ?? []).find((t) => t.id === draft.transactionTypeId);
+  const selectedType = (types.data ?? []).find((type) => type.id === draft.transactionTypeId);
   const selectedRecipient = recipientOptions.find((r) => r.value === draft.recipientUsername);
+
+  // Directional nav arrows follow the reading direction (previous ← / next →).
+  const PrevIcon = rtl ? ArrowRight : ArrowLeft;
+  const NextIcon = rtl ? ArrowLeft : ArrowRight;
 
   function update<K extends keyof LocalDraft>(key: K, value: LocalDraft[K]) {
     setDraft((previous) => ({ ...previous, [key]: value, updatedAt: new Date().toISOString() }));
     setError(null);
   }
 
-  function validateStep(target = step): string | null {
+  // Returns the offending step + its message (or null), so the step-jump logic
+  // never has to parse the translated message text.
+  function validateStep(target = step): { step: number; message: string } | null {
     if (target >= 1) {
-      if (!draft.transactionTypeId) return "اختر نوع المعاملة.";
-      if (draft.title.trim().length < 5) return "اكتب موضوعًا واضحًا من 5 أحرف على الأقل.";
+      if (!draft.transactionTypeId) return { step: 1, message: t("workflow.create.valid.typeRequired") };
+      if (draft.title.trim().length < 5) return { step: 1, message: t("workflow.create.valid.subjectMin") };
     }
     if (target >= 2 && draft.scope === "external" && !draft.recipientUsername) {
-      return "اختر مستلمًا للمعاملة الخارجية.";
+      return { step: 2, message: t("workflow.create.valid.recipientRequired") };
     }
     if (target >= 3 && draft.description.trim().length < 5) {
-      return "أضف وصفًا أو محتوى يوضح المطلوب.";
+      return { step: 3, message: t("workflow.create.valid.descRequired") };
     }
     return null;
   }
@@ -167,7 +184,7 @@ export function CreateTransactionPage() {
   function goNext() {
     const nextError = validateStep(step);
     if (nextError) {
-      setError(nextError);
+      setError(nextError.message);
       return;
     }
     setStep((value) => Math.min(4, value + 1));
@@ -182,7 +199,7 @@ export function CreateTransactionPage() {
     try {
       setAttachment({ file, dataUrl: await fileToDataUrl(file) });
     } catch {
-      setError("تعذّر تجهيز المرفق. اختر ملفًا آخر.");
+      setError(t("workflow.create.valid.attachPrepFailed"));
     } finally {
       setAttachmentBusy(false);
     }
@@ -191,12 +208,12 @@ export function CreateTransactionPage() {
   function submit(saveAsDraft: boolean) {
     const submitError = validateStep(saveAsDraft ? 1 : 3);
     if (submitError) {
-      setError(submitError);
-      setStep(submitError.includes("مستلم") ? 2 : submitError.includes("وصف") ? 3 : 1);
+      setError(submitError.message);
+      setStep(submitError.step);
       return;
     }
     if (!username) {
-      setError("تعذّر تحديد المستخدم الحالي. أعد تسجيل الدخول ثم حاول مرة أخرى.");
+      setError(t("workflow.create.valid.noUser"));
       return;
     }
     setError(null);
@@ -221,20 +238,20 @@ export function CreateTransactionPage() {
       {
         onSuccess: (result) => {
           if (result.success === false) {
-            setError(result.error || "تعذّر حفظ المعاملة.");
+            setError(result.error || t("workflow.create.valid.saveFailed"));
             return;
           }
           setCompleted(true);
           setDraft(EMPTY_DRAFT);
           setAttachment(null);
           toast({
-            title: saveAsDraft ? "تم حفظ المسودة" : "تم إرسال المعاملة",
-            description: result.txnNumber ? `رقم المعاملة: ${result.txnNumber}` : undefined,
+            title: saveAsDraft ? t("workflow.create.toast.draftSaved") : t("workflow.create.toast.sent"),
+            description: result.txnNumber ? t("workflow.create.toast.txnNumber", { num: result.txnNumber }) : undefined,
             tone: "success",
           });
           navigate("/workflow/my-requests");
         },
-        onError: (reason) => setError(reason instanceof Error ? reason.message : "تعذّر حفظ المعاملة."),
+        onError: (reason) => setError(reason instanceof Error ? reason.message : t("workflow.create.valid.saveFailed")),
       },
     );
   }
@@ -248,21 +265,23 @@ export function CreateTransactionPage() {
               <FileText className="h-5 w-5" aria-hidden="true" />
             </span>
             <div>
-              <h1 className="text-xl font-extrabold text-slate-950">إنشاء معاملة إدارية</h1>
+              <h1 className="text-xl font-extrabold text-slate-950">{t("workflow.create.header")}</h1>
               <p className="mt-1 text-sm font-medium text-slate-500">
-                أدخل البيانات ثم راجع مسار الإرسال قبل اعتماده.
+                {t("workflow.create.headerSub")}
               </p>
             </div>
           </div>
           <div className="flex items-center gap-2 rounded-xl bg-slate-50 px-3 py-2 text-xs font-bold text-slate-500">
             <Clock3 className="h-4 w-4 text-teal-600" aria-hidden="true" />
-            {draft.updatedAt ? `حُفظ محليًا ${new Date(draft.updatedAt).toLocaleTimeString("ar-SA", { hour: "2-digit", minute: "2-digit" })}` : "الحفظ المحلي التلقائي مفعّل"}
+            {draft.updatedAt
+              ? t("workflow.create.localSavedAt", { time: new Date(draft.updatedAt).toLocaleTimeString(rtl ? "ar-SA" : "en-US", { hour: "2-digit", minute: "2-digit" }) })
+              : t("workflow.create.localAutosave")}
           </div>
         </section>
 
         <Card>
           <CardBody className="overflow-x-auto">
-            <Stepper steps={STEPS} current={step} />
+            <Stepper steps={steps} current={step} />
           </CardBody>
         </Card>
 
@@ -270,48 +289,48 @@ export function CreateTransactionPage() {
           <Card>
             <CardHeader>
               <div>
-                <CardTitle>{STEPS[step - 1]}</CardTitle>
-                <p className="mt-1 text-xs font-medium text-slate-500">الخطوة {step} من {STEPS.length}</p>
+                <CardTitle>{steps[step - 1]}</CardTitle>
+                <p className="mt-1 text-xs font-medium text-slate-500">{t("workflow.create.stepCounter", { step, total: steps.length })}</p>
               </div>
-              <Badge tone="info">مسودة محلية</Badge>
+              <Badge tone="info">{t("workflow.create.localDraftBadge")}</Badge>
             </CardHeader>
             <CardBody className="space-y-5">
               {step === 1 && (
                 <div className="grid gap-4 md:grid-cols-2">
-                  <Field label="نوع المعاملة" required>
+                  <Field label={t("workflow.create.field.type")} required>
                     <Select
                       value={draft.transactionTypeId}
                       onChange={(event) => update("transactionTypeId", event.target.value)}
                       options={typeOptions}
-                      placeholder={types.isLoading ? "جارٍ تحميل الأنواع…" : "اختر النوع"}
+                      placeholder={types.isLoading ? t("workflow.create.typePlaceholderLoading") : t("workflow.create.typePlaceholder")}
                     />
                   </Field>
-                  <Field label="الأولوية" required>
+                  <Field label={t("workflow.create.field.priority")} required>
                     <Select
                       value={draft.importance}
                       onChange={(event) => update("importance", event.target.value as Importance)}
-                      options={IMPORTANCE_OPTIONS}
+                      options={importanceOptions}
                     />
                   </Field>
-                  <Field label="موضوع المعاملة" required className="md:col-span-2" hint="اكتب عنوانًا قصيرًا يمكن تمييزه في الوارد والتقارير.">
+                  <Field label={t("workflow.create.field.subject")} required className="md:col-span-2" hint={t("workflow.create.subjectHint")}>
                     <Input
                       value={draft.title}
                       maxLength={300}
                       onChange={(event) => update("title", event.target.value)}
-                      placeholder="مثال: اعتماد شراء معدات الفرع"
+                      placeholder={t("workflow.create.subjectPlaceholder")}
                     />
                   </Field>
-                  <Field label="النطاق">
+                  <Field label={t("workflow.create.field.scope")}>
                     <Select
                       value={draft.scope}
                       onChange={(event) => update("scope", event.target.value as LocalDraft["scope"])}
                       options={[
-                        { value: "internal", label: "داخلي" },
-                        { value: "external", label: "خارجي" },
+                        { value: "internal", label: t("workflow.create.scopeInternal") },
+                        { value: "external", label: t("workflow.create.scopeExternal") },
                       ]}
                     />
                   </Field>
-                  <Field label="المبلغ المرتبط" hint="اختياري — بالريال السعودي.">
+                  <Field label={t("workflow.create.field.amount")} hint={t("workflow.create.amountHint")}>
                     <Input
                       type="number"
                       inputMode="decimal"
@@ -329,17 +348,17 @@ export function CreateTransactionPage() {
               {step === 2 && (
                 <div className="space-y-5">
                   <div className="rounded-xl border border-teal-100 bg-teal-50 p-4 text-sm font-medium leading-6 text-teal-900">
-                    يختار النظام أول خطوة اعتماد وفق نوع المعاملة ومنصب المنشئ. اختيار مستلم مباشر يضمن وصول المعاملة عندما لا يوجد مسار معرف.
+                    {t("workflow.create.routingNote")}
                   </div>
-                  <Field label="المستلم" required={draft.scope === "external"} hint="يمكن تركه فارغًا إذا كان لهذا النوع مسار اعتماد مكتمل.">
+                  <Field label={t("workflow.create.field.recipient")} required={draft.scope === "external"} hint={t("workflow.create.recipientHint")}>
                     <Select
                       value={draft.recipientUsername}
                       onChange={(event) => update("recipientUsername", event.target.value)}
                       options={recipientOptions}
-                      placeholder={recipients.isLoading ? "جارٍ تحميل المستلمين…" : "التوجيه التلقائي حسب المسار"}
+                      placeholder={recipients.isLoading ? t("workflow.create.recipientLoading") : t("workflow.create.recipientAuto")}
                     />
                   </Field>
-                  <Field label="موعد الاستحقاق">
+                  <Field label={t("workflow.create.field.dueDate")}>
                     <Input type="date" value={draft.dueDate} onChange={(event) => update("dueDate", event.target.value)} />
                   </Field>
                 </div>
@@ -347,28 +366,28 @@ export function CreateTransactionPage() {
 
               {step === 3 && (
                 <div className="space-y-5">
-                  <Field label="الوصف والمطلوب" required hint="يوضع هذا المحتوى داخل تفاصيل المعاملة للمراجعين.">
+                  <Field label={t("workflow.create.descLabel")} required hint={t("workflow.create.descHint")}>
                     <textarea
                       className="field min-h-40 resize-y py-3"
                       maxLength={10000}
                       value={draft.description}
                       onChange={(event) => update("description", event.target.value)}
-                      placeholder="اشرح خلفية الطلب والقرار المطلوب والمبررات…"
+                      placeholder={t("workflow.create.descPlaceholder")}
                     />
                   </Field>
                   <div className="grid gap-4 md:grid-cols-2">
-                    <Field label="سرية المحتوى">
-                      <Select value={draft.contentSecrecy} onChange={(event) => update("contentSecrecy", event.target.value as Secrecy)} options={SECRECY_OPTIONS} />
+                    <Field label={t("workflow.create.contentSecrecyLabel")}>
+                      <Select value={draft.contentSecrecy} onChange={(event) => update("contentSecrecy", event.target.value as Secrecy)} options={secrecyOptions} />
                     </Field>
-                    <Field label="سرية المرفق">
-                      <Select value={draft.attachmentsSecrecy} onChange={(event) => update("attachmentsSecrecy", event.target.value as Secrecy)} options={SECRECY_OPTIONS} />
+                    <Field label={t("workflow.create.attachSecrecyLabel")}>
+                      <Select value={draft.attachmentsSecrecy} onChange={(event) => update("attachmentsSecrecy", event.target.value as Secrecy)} options={secrecyOptions} />
                     </Field>
                   </div>
                   <section aria-labelledby="attachment-heading" className="space-y-3">
                     <div className="flex items-center gap-2">
                       <Paperclip className="h-4 w-4 text-teal-600" aria-hidden="true" />
-                      <h3 id="attachment-heading" className="text-sm font-extrabold text-slate-800">المرفق</h3>
-                      <Badge tone="neutral">ملف واحد</Badge>
+                      <h3 id="attachment-heading" className="text-sm font-extrabold text-slate-800">{t("workflow.create.attachHeading")}</h3>
+                      <Badge tone="neutral">{t("workflow.create.attachBadge")}</Badge>
                     </div>
                     {!attachment && (
                       <FileUploader
@@ -376,16 +395,16 @@ export function CreateTransactionPage() {
                         multiple={false}
                         disabled={attachmentBusy}
                         maxSize={1_500_000}
-                        onReject={() => setError("الحد الأقصى للمرفق في المعاملة 1.5 ميجابايت.")}
-                        hint="PDF أو صورة أو مستند — بحد أقصى 1.5 ميجابايت"
+                        onReject={() => setError(t("workflow.create.attachReject"))}
+                        hint={t("workflow.create.attachHint")}
                       />
                     )}
                     <AttachmentViewer
                       attachments={attachment ? [{ id: "new", name: attachment.file.name, size: attachment.file.size }] : []}
                       onRemove={attachment ? () => setAttachment(null) : undefined}
-                      emptyText="لم يُضف مرفق بعد."
+                      emptyText={t("workflow.create.attachEmpty")}
                     />
-                    <p className="text-[11px] font-medium text-slate-400">لا يُخزّن محتوى الملف داخل المسودة المحلية؛ أعد اختياره بعد إعادة تحميل الصفحة.</p>
+                    <p className="text-[11px] font-medium text-slate-400">{t("workflow.create.attachNote")}</p>
                   </section>
                 </div>
               )}
@@ -395,19 +414,19 @@ export function CreateTransactionPage() {
                   <div className="flex items-center gap-3 rounded-xl border border-emerald-200 bg-emerald-50 p-4">
                     <CheckCircle2 className="h-6 w-6 shrink-0 text-emerald-600" aria-hidden="true" />
                     <div>
-                      <div className="text-sm font-extrabold text-emerald-900">المعاملة جاهزة للمراجعة</div>
-                      <div className="mt-1 text-xs font-medium text-emerald-700">راجع الملخص قبل الحفظ كمسودة أو الإرسال إلى المسار.</div>
+                      <div className="text-sm font-extrabold text-emerald-900">{t("workflow.create.review.ready")}</div>
+                      <div className="mt-1 text-xs font-medium text-emerald-700">{t("workflow.create.review.readySub")}</div>
                     </div>
                   </div>
                   <dl className="grid gap-3 sm:grid-cols-2">
-                    <ReviewRow label="النوع" value={selectedType?.name || "—"} />
-                    <ReviewRow label="الأولوية" value={IMPORTANCE_OPTIONS.find((option) => option.value === draft.importance)?.label || "—"} />
-                    <ReviewRow label="الموضوع" value={draft.title || "—"} wide />
-                    <ReviewRow label="المستلم" value={selectedRecipient?.label || "توجيه تلقائي حسب المسار"} />
-                    <ReviewRow label="الاستحقاق" value={draft.dueDate || "غير محدد"} />
-                    <ReviewRow label="المبلغ" value={draft.amount ? `${Number(draft.amount).toLocaleString("ar-SA", { minimumFractionDigits: 2 })} ر.س` : "غير مرتبط"} />
-                    <ReviewRow label="المرفق" value={attachment?.file.name || "لا يوجد"} />
-                    <ReviewRow label="الوصف" value={draft.description || "—"} wide />
+                    <ReviewRow label={t("workflow.create.field.type")} value={selectedType?.name || "—"} />
+                    <ReviewRow label={t("workflow.create.field.priority")} value={importanceOptions.find((option) => option.value === draft.importance)?.label || "—"} />
+                    <ReviewRow label={t("workflow.create.review.subject")} value={draft.title || "—"} wide />
+                    <ReviewRow label={t("workflow.create.field.recipient")} value={selectedRecipient?.label || t("workflow.create.review.recipientAuto")} />
+                    <ReviewRow label={t("workflow.create.field.dueDate")} value={draft.dueDate || t("workflow.create.review.dueUnset")} />
+                    <ReviewRow label={t("workflow.create.field.amount")} value={draft.amount ? formatCurrency(Number(draft.amount)) : t("workflow.create.review.amountUnset")} />
+                    <ReviewRow label={t("workflow.create.review.attachment")} value={attachment?.file.name || t("workflow.create.review.attachmentNone")} />
+                    <ReviewRow label={t("workflow.create.review.description")} value={draft.description || "—"} wide />
                   </dl>
                 </div>
               )}
@@ -425,17 +444,17 @@ export function CreateTransactionPage() {
               <CardBody className="space-y-4">
                 <div className="flex items-center gap-2 text-sm font-extrabold text-slate-800">
                   <ShieldCheck className="h-5 w-5 text-teal-600" aria-hidden="true" />
-                  معاينة التوجيه
+                  {t("workflow.create.preview.heading")}
                 </div>
                 <div className="space-y-3 text-xs font-medium text-slate-600">
-                  <PreviewLine icon={FileText} label="النوع" value={selectedType?.name || "لم يُحدد"} />
-                  <PreviewLine icon={UserRound} label="المستلم" value={selectedRecipient?.label || "حسب المسار"} />
-                  <PreviewLine icon={Clock3} label="الاستحقاق" value={draft.dueDate || "غير محدد"} />
+                  <PreviewLine icon={FileText} label={t("workflow.create.field.type")} value={selectedType?.name || t("workflow.create.preview.typeUnset")} />
+                  <PreviewLine icon={UserRound} label={t("workflow.create.field.recipient")} value={selectedRecipient?.label || t("workflow.create.preview.recipientByPath")} />
+                  <PreviewLine icon={Clock3} label={t("workflow.create.field.dueDate")} value={draft.dueDate || t("workflow.create.preview.dueUnset")} />
                 </div>
               </CardBody>
             </Card>
             <div className="rounded-xl border border-slate-200 bg-slate-50 p-3 text-xs font-medium leading-5 text-slate-500">
-              الحفظ المحلي يحمي المدخلات على هذا الجهاز. استخدم «حفظ كمسودة» لإنشاء مسودة مرئية في حسابك.
+              {t("workflow.create.localGuard")}
             </div>
           </aside>
         </div>
@@ -443,20 +462,20 @@ export function CreateTransactionPage() {
         <div className="fixed inset-x-0 bottom-0 z-30 border-t border-slate-200 bg-white/95 px-4 py-3 shadow-[0_-8px_24px_rgba(15,23,42,0.08)] backdrop-blur lg:static lg:rounded-2xl lg:border lg:shadow-sm">
           <div className="mx-auto flex max-w-6xl flex-wrap items-center justify-between gap-2">
             <Button variant="secondary" onClick={() => (step === 1 ? navigate("/workflow/my-requests") : setStep((value) => value - 1))}>
-              <ArrowRight className="h-4 w-4" aria-hidden="true" />
-              {step === 1 ? "إلغاء" : "السابق"}
+              <PrevIcon className="h-4 w-4" aria-hidden="true" />
+              {step === 1 ? t("common.cancel") : t("workflow.create.prev")}
             </Button>
             <div className="flex flex-1 flex-wrap justify-end gap-2">
               <Button variant="secondary" onClick={() => submit(true)} loading={create.isPending}>
-                <Save className="h-4 w-4" aria-hidden="true" /> حفظ كمسودة
+                <Save className="h-4 w-4" aria-hidden="true" /> {t("workflow.create.saveDraft")}
               </Button>
               {step < 4 ? (
                 <Button variant="primary" onClick={goNext}>
-                  التالي <ArrowLeft className="h-4 w-4" aria-hidden="true" />
+                  {t("common.next")} <NextIcon className="h-4 w-4" aria-hidden="true" />
                 </Button>
               ) : (
                 <Button variant="primary" onClick={() => submit(false)} loading={create.isPending}>
-                  <Send className="h-4 w-4" aria-hidden="true" /> إرسال المعاملة
+                  <Send className="h-4 w-4" aria-hidden="true" /> {t("workflow.create.submit")}
                 </Button>
               )}
             </div>

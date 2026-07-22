@@ -16,6 +16,8 @@ import {
   Spinner,
   useToast,
 } from "@/shared/ui";
+import { useTx } from "@/shared/ui/i18n";
+import { useLang } from "@/i18n";
 import { Field } from "@/shared/forms";
 import { DataTable, type ColumnDef } from "@/shared/tables";
 import { Can, useCan } from "@/shared/permissions";
@@ -32,21 +34,18 @@ import {
   type BulkMode,
 } from "./api";
 
+const BULK_MODE_CODES: BulkMode[] = ["percent", "fixed_set", "fixed_add"];
+
 // Money cell — LTR + tabular, matches the rest of the back-office.
 function Money({ value, tone = "text-slate-800" }: { value: number; tone?: string }) {
+  const t = useTx();
   return (
     <span dir="ltr" className={`tabular-nums font-extrabold ${tone}`}>
       {formatNumber(value)}
-      <span className="ms-1 text-xs font-bold text-slate-400">ر.س</span>
+      <span className="ms-1 text-xs font-bold text-slate-400">{t("sales.currency")}</span>
     </span>
   );
 }
-
-const BULK_MODE_LABEL: Record<BulkMode, string> = {
-  percent: "نسبة مئوية (%)",
-  fixed_set: "تعيين سعر ثابت",
-  fixed_add: "إضافة مبلغ ثابت",
-};
 
 export function PricingPage() {
   return (
@@ -57,6 +56,9 @@ export function PricingPage() {
 }
 
 function PricingScreen() {
+  const t = useTx();
+  const lang = useLang();
+  const itemName = (r: MenuItem) => (lang === "en" && r.nameEn ? r.nameEn : r.name);
   const { toast } = useToast();
   const canManage = useCan("sales.pricing.manage");
 
@@ -76,24 +78,24 @@ function PricingScreen() {
   );
 
   const columns: ColumnDef<MenuItem>[] = [
-    { id: "name", header: "الصنف", accessor: (r) => r.name, sortable: true },
+    { id: "name", header: t("sales.pricing.col.item"), accessor: (r) => itemName(r), sortable: true },
     {
       id: "category",
-      header: "التصنيف",
+      header: t("sales.pricing.col.category"),
       accessor: (r) => r.category || "—",
       cell: (r) => (r.category ? <Badge tone="neutral">{r.category}</Badge> : "—"),
     },
-    { id: "brand", header: "العلامة", accessor: (r) => r.brandName || "—", defaultHidden: true },
+    { id: "brand", header: t("sales.pricing.col.brand"), accessor: (r) => r.brandName || "—", defaultHidden: true },
     {
       id: "cost",
-      header: "التكلفة",
+      header: t("sales.pricing.col.cost"),
       numeric: true,
       accessor: (r) => r.cost,
       cell: (r) => <Money value={r.cost} tone="text-slate-500" />,
     },
     {
       id: "price",
-      header: "السعر",
+      header: t("sales.pricing.col.price"),
       numeric: true,
       accessor: (r) => r.price,
       sortable: true,
@@ -101,7 +103,7 @@ function PricingScreen() {
     },
     {
       id: "margin",
-      header: "الهامش",
+      header: t("sales.pricing.col.margin"),
       numeric: true,
       accessor: (r) => marginPct(r.price, r.cost),
       cell: (r) => {
@@ -119,13 +121,13 @@ function PricingScreen() {
   return (
     <div>
       <PageHeader
-        eyebrow="المبيعات"
-        title="قوائم الأسعار"
-        subtitle="تحرير أسعار الأصناف، التحديث الجماعي حسب العلامة/التصنيف، وسجل تغيّر السعر."
+        eyebrow={t("sales.salesEyebrow")}
+        title={t("sales.pricing.title")}
+        subtitle={t("sales.pricing.subtitle")}
         action={
           canManage ? (
             <Button variant="primary" onClick={() => setBulkOpen(true)}>
-              <Layers className="h-4 w-4" /> تحديث جماعي
+              <Layers className="h-4 w-4" /> {t("sales.pricing.bulkUpdate")}
             </Button>
           ) : undefined
         }
@@ -139,22 +141,22 @@ function PricingScreen() {
         error={itemsQuery.error}
         onRetry={() => itemsQuery.refetch()}
         searchable
-        searchPlaceholder="بحث عن صنف…"
+        searchPlaceholder={t("sales.pricing.searchPlaceholder")}
         selectable={canManage}
         onSelectionChange={setSelectedIds}
         exportFilename="menu-prices.csv"
-        emptyTitle="لا توجد أصناف"
-        emptyBody="اختر علامة أخرى أو أضف أصنافًا من قسم المنيو."
+        emptyTitle={t("sales.pricing.emptyTitle")}
+        emptyBody={t("sales.pricing.emptyBody")}
         filterBar={
           <label className="flex items-center gap-2">
-            <span className="text-xs font-bold text-slate-500">العلامة</span>
+            <span className="text-xs font-bold text-slate-500">{t("sales.pricing.brand")}</span>
             <Select
               value={brandId}
               onChange={(e) => setBrandId(e.target.value)}
               disabled={brands.isLoading}
               className="min-w-40"
             >
-              <option value="">كل العلامات</option>
+              <option value="">{t("sales.allBrands")}</option>
               {(brands.data ?? []).map((b) => (
                 <option key={b.id} value={b.id}>
                   {b.name}
@@ -165,11 +167,11 @@ function PricingScreen() {
         }
         rowActions={(r) => (
           <div className="flex items-center gap-1">
-            <IconButton aria-label="سجل السعر" size="sm" onClick={() => setHistoryItem(r)}>
+            <IconButton aria-label={t("sales.pricing.priceHistory")} size="sm" onClick={() => setHistoryItem(r)}>
               <History className="h-4 w-4" />
             </IconButton>
             {canManage && (
-              <IconButton aria-label="تعديل السعر" size="sm" onClick={() => setEditItem(r)}>
+              <IconButton aria-label={t("sales.pricing.editPrice")} size="sm" onClick={() => setEditItem(r)}>
                 <Pencil className="h-4 w-4" />
               </IconButton>
             )}
@@ -196,7 +198,7 @@ function PricingScreen() {
           selectedIds={selectedIds}
           onClose={() => setBulkOpen(false)}
           onDone={(affected) => {
-            toast({ title: `تم تحديث ${formatNumber(affected)} صنف`, tone: "success" });
+            toast({ title: t("sales.pricing.bulkUpdated", { count: formatNumber(affected) }), tone: "success" });
             setBulkOpen(false);
           }}
         />
@@ -217,6 +219,9 @@ function PriceEditDialog({
   onClose: () => void;
   onDone: (message: string) => void;
 }) {
+  const t = useTx();
+  const lang = useLang();
+  const displayName = lang === "en" && item.nameEn ? item.nameEn : item.name;
   const update = useUpdatePrice();
   const [price, setPrice] = useState<number | null>(item.price);
   const [reason, setReason] = useState("");
@@ -233,10 +238,10 @@ function PriceEditDialog({
       { id: item.id, price: price as number, reason: reason.trim() },
       {
         onSuccess: (res) => {
-          if (res && res.success === false) return setError(pricingError(new Error(res.error)));
-          onDone(res?.noop ? "لا تغيير على السعر" : "تم تحديث السعر");
+          if (res && res.success === false) return setError(pricingError(new Error(res.error), t));
+          onDone(res?.noop ? t("sales.pricing.noChange") : t("sales.pricing.priceUpdated"));
         },
-        onError: (e) => setError(pricingError(e)),
+        onError: (e) => setError(pricingError(e, t)),
       },
     );
   }
@@ -245,26 +250,26 @@ function PriceEditDialog({
     <Dialog
       open
       onClose={onClose}
-      title="تعديل السعر"
-      description={item.name}
+      title={t("sales.pricing.editTitle")}
+      description={displayName}
       size="md"
       footer={
         <>
           <Button variant="secondary" onClick={onClose} disabled={update.isPending}>
-            إلغاء
+            {t("common.cancel")}
           </Button>
           <Button variant="primary" onClick={submit} loading={update.isPending} disabled={!priceOk || !reasonOk}>
-            حفظ
+            {t("common.save")}
           </Button>
         </>
       }
     >
       <div className="space-y-4">
         <div className="grid grid-cols-3 gap-3">
-          <DetailStat label="السعر الحالي" value={<Money value={item.price} />} />
-          <DetailStat label="التكلفة" value={<Money value={item.cost} tone="text-slate-500" />} />
+          <DetailStat label={t("sales.pricing.currentPrice")} value={<Money value={item.price} />} />
+          <DetailStat label={t("sales.pricing.col.cost")} value={<Money value={item.cost} tone="text-slate-500" />} />
           <DetailStat
-            label="الهامش الجديد"
+            label={t("sales.pricing.newMargin")}
             value={
               <span dir="ltr" className="tabular-nums">
                 {formatNumber(newMargin)}%
@@ -273,14 +278,14 @@ function PriceEditDialog({
           />
         </div>
 
-        <Field label="السعر الجديد" required>
+        <Field label={t("sales.pricing.newPrice")} required>
           <CurrencyInput value={price} onChange={setPrice} invalid={!priceOk} min={0} />
         </Field>
-        <Field label="سبب التغيير" required error={reason.length > 0 && !reasonOk ? "3 أحرف على الأقل." : undefined}>
+        <Field label={t("sales.pricing.reason")} required error={reason.length > 0 && !reasonOk ? t("sales.pricing.reasonMin") : undefined}>
           <Input
             value={reason}
             invalid={reason.length > 0 && !reasonOk}
-            placeholder="مثال: مواءمة أسعار المنافسين"
+            placeholder={t("sales.pricing.reasonPlaceholder")}
             onChange={(e) => setReason(e.target.value)}
           />
         </Field>
@@ -311,6 +316,7 @@ function BulkPriceDialog({
   onClose: () => void;
   onDone: (affected: number) => void;
 }) {
+  const t = useTx();
   const bulk = useBulkPriceUpdate();
   const useSelection = selectedIds.length > 0;
 
@@ -338,10 +344,10 @@ function BulkPriceDialog({
       },
       {
         onSuccess: (res) => {
-          if (res && res.success === false) return setError(pricingError(new Error(res.error)));
+          if (res && res.success === false) return setError(pricingError(new Error(res.error), t));
           onDone(res?.affected ?? 0);
         },
-        onError: (e) => setError(pricingError(e)),
+        onError: (e) => setError(pricingError(e, t)),
       },
     );
   }
@@ -350,15 +356,15 @@ function BulkPriceDialog({
     <Dialog
       open
       onClose={onClose}
-      title="تحديث جماعي للأسعار"
+      title={t("sales.pricing.bulkTitle")}
       size="md"
       footer={
         <>
           <Button variant="secondary" onClick={onClose} disabled={bulk.isPending}>
-            إلغاء
+            {t("common.cancel")}
           </Button>
           <Button variant="primary" onClick={submit} loading={bulk.isPending} disabled={!scopeValid || !valueOk}>
-            تطبيق
+            {t("common.apply")}
           </Button>
         </>
       }
@@ -367,20 +373,20 @@ function BulkPriceDialog({
         {/* Scope */}
         <div className="rounded-xl border border-teal-100 bg-teal-50/40 p-3 text-xs font-bold text-teal-800">
           {useSelection ? (
-            <>سيُطبّق على {formatNumber(selectedIds.length)} صنف محدَّد.</>
+            <>{t("sales.pricing.scopeSelected", { count: formatNumber(selectedIds.length) })}</>
           ) : (
             <>
-              النطاق:{" "}
-              {brandId ? `علامة «${brandName ?? brandId}»` : "كل العلامات"}
-              {categoryFilter ? ` — تصنيف «${categoryFilter}»` : ""}.
+              {t("sales.pricing.scopePrefix")}{" "}
+              {brandId ? t("sales.pricing.scopeBrand", { brand: brandName ?? brandId }) : t("sales.allBrands")}
+              {categoryFilter ? t("sales.pricing.scopeCategory", { cat: categoryFilter }) : ""}.
             </>
           )}
         </div>
 
         {!useSelection && (
-          <Field label="التصنيف (اختياري)">
+          <Field label={t("sales.pricing.categoryOptional")}>
             <Select value={categoryFilter} onChange={(e) => setCategoryFilter(e.target.value)}>
-              <option value="">كل التصنيفات</option>
+              <option value="">{t("sales.pricing.allCategories")}</option>
               {categories.map((c) => (
                 <option key={c} value={c}>
                   {c}
@@ -392,27 +398,27 @@ function BulkPriceDialog({
 
         {!scopeValid && (
           <div className="rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs font-bold text-amber-700">
-            حدّد أصنافًا من الجدول، أو اختر علامة/تصنيفًا. لا يُسمح بتطبيق التغيير على كل المنيو دون نطاق.
+            {t("sales.pricing.scopeRequired")}
           </div>
         )}
 
         <div className="grid gap-4 sm:grid-cols-2">
-          <Field label="نوع التغيير">
+          <Field label={t("sales.pricing.changeType")}>
             <Select value={mode} onChange={(e) => setMode(e.target.value as BulkMode)}>
-              {(Object.keys(BULK_MODE_LABEL) as BulkMode[]).map((m) => (
+              {BULK_MODE_CODES.map((m) => (
                 <option key={m} value={m}>
-                  {BULK_MODE_LABEL[m]}
+                  {t(`sales.pricing.bulkMode.${m}`)}
                 </option>
               ))}
             </Select>
           </Field>
-          <Field label={mode === "percent" ? "النسبة (%)" : "القيمة (ر.س)"} required>
+          <Field label={mode === "percent" ? t("sales.pricing.percentLabel") : t("sales.pricing.valueLabel")} required>
             <NumberInput value={value} onChange={setValue} invalid={value != null && !valueOk} />
           </Field>
         </div>
 
-        <Field label="السبب (اختياري)">
-          <Input value={reason} placeholder="سبب التحديث الجماعي" onChange={(e) => setReason(e.target.value)} />
+        <Field label={t("sales.pricing.reasonOptional")}>
+          <Input value={reason} placeholder={t("sales.pricing.bulkReasonPlaceholder")} onChange={(e) => setReason(e.target.value)} />
         </Field>
 
         {error && (
@@ -427,24 +433,27 @@ function BulkPriceDialog({
 
 // ── Price history ─────────────────────────────────────────────────────────────
 function PriceHistoryDrawer({ item, onClose }: { item: MenuItem | null; onClose: () => void }) {
+  const t = useTx();
+  const lang = useLang();
   const history = usePriceHistory(item?.id ?? null);
   const entries = history.data ?? [];
+  const displayName = item ? (lang === "en" && item.nameEn ? item.nameEn : item.name) : "";
 
   return (
-    <Drawer open={!!item} onClose={onClose} title={item?.name ?? ""} eyebrow="سجل تغيّر السعر" icon={Tags}>
+    <Drawer open={!!item} onClose={onClose} title={displayName} eyebrow={t("sales.pricing.historyEyebrow")} icon={Tags}>
       {history.isLoading ? (
         <div className="grid place-items-center py-12">
           <Spinner />
         </div>
       ) : entries.length === 0 ? (
-        <EmptyState title="لا يوجد سجل بعد" body="لم يُسجَّل أي تغيير على سعر هذا الصنف." />
+        <EmptyState title={t("sales.pricing.historyEmptyTitle")} body={t("sales.pricing.historyEmptyBody")} />
       ) : (
         <ol className="space-y-3">
           {entries.map((e) => (
             <li key={e.id} className="rounded-xl border border-slate-100 bg-slate-50 p-3">
               <div className="flex items-center justify-between gap-2">
                 <span dir="ltr" className="tabular-nums text-sm font-extrabold text-slate-800">
-                  {formatNumber(e.oldPrice)} ← {formatNumber(e.newPrice)} ر.س
+                  {formatNumber(e.oldPrice)} ← {formatNumber(e.newPrice)} {t("sales.currency")}
                 </span>
                 <span dir="ltr" className="text-[11px] font-medium tabular-nums text-slate-400">
                   {formatDateTime(e.at)}

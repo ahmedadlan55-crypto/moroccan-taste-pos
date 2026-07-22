@@ -2,6 +2,7 @@ import { useState } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { Fingerprint, LogIn, LogOut, MapPin } from "lucide-react";
 import { Card, Button, safeUserMessage, useToast } from "@/shared/ui";
+import { useTx } from "@/shared/ui/i18n";
 import { useAuth } from "@/app/providers";
 import { peopleApi } from "../lib/api";
 import { qk } from "../lib/query-keys";
@@ -29,12 +30,6 @@ import type { MyAttendanceRow } from "../lib/types";
 // Deliberately NOT ported: the legacy WebAuthn "biometric" prompt — it proceeded
 // identically on success AND failure (decorative, enforced nothing).
 
-const STATE_LABEL: Record<ClockState, string> = {
-  in: "تسجيل حضور",
-  out: "تسجيل انصراف",
-  done: "اكتمل حضور اليوم",
-};
-
 async function reverseGeocode(lat: number, lng: number): Promise<string> {
   try {
     const r = await fetch(
@@ -57,10 +52,17 @@ function getPosition(): Promise<GeolocationPosition> {
 }
 
 export function ClockCard({ rows }: { rows: MyAttendanceRow[] }) {
+  const t = useTx();
   const { toast } = useToast();
   const { user } = useAuth();
   const qc = useQueryClient();
   const [locating, setLocating] = useState(false);
+
+  const STATE_LABEL: Record<ClockState, string> = {
+    in: t("people.clock.stateIn"),
+    out: t("people.clock.stateOut"),
+    done: t("people.clock.stateDone"),
+  };
 
   const state = deriveClockState(rows);
 
@@ -72,20 +74,20 @@ export function ClockCard({ rows }: { rows: MyAttendanceRow[] }) {
           r.device && (r.device.brand || r.device.model)
             ? " — " + [r.device.brand, r.device.model, r.device.os].filter(Boolean).join(" · ")
             : "";
-        toast({ title: (r.message || "تم التسجيل") + devLine, tone: "success" });
+        toast({ title: (r.message || t("people.clock.registered")) + devLine, tone: "success" });
         void qc.invalidateQueries({ queryKey: [...qk.all, "self"] });
       } else {
-        toast({ title: clockErrorMessage(r), tone: "error" });
+        toast({ title: clockErrorMessage(r, t), tone: "error" });
       }
     },
-    onError: (e) => toast({ title: "تعذّر تسجيل الحضور", description: safeUserMessage(e), tone: "error" }),
+    onError: (e) => toast({ title: t("people.clock.clockFailed"), description: safeUserMessage(e, t), tone: "error" }),
   });
 
   async function onClock() {
     if (state === "done" || locating || clock.isPending) return;
     // REQUIRE location — same rule as the legacy portal (no coordinates, no clock).
     if (typeof navigator === "undefined" || !("geolocation" in navigator)) {
-      toast({ title: "جهازك لا يدعم تحديد الموقع", tone: "error" });
+      toast({ title: t("people.clock.noGeolocation"), tone: "error" });
       return;
     }
     setLocating(true);
@@ -104,7 +106,7 @@ export function ClockCard({ rows }: { rows: MyAttendanceRow[] }) {
       );
     } catch {
       // Geolocation denied / timed out — the legacy app refuses to clock.
-      toast({ title: "يجب السماح بالموقع لتسجيل الحضور — افتح إعدادات المتصفح", tone: "error" });
+      toast({ title: t("people.clock.permissionNeeded"), tone: "error" });
     } finally {
       setLocating(false);
     }
@@ -121,10 +123,10 @@ export function ClockCard({ rows }: { rows: MyAttendanceRow[] }) {
             <Fingerprint className="h-6 w-6" aria-hidden="true" />
           </div>
           <div>
-            <h2 className="text-base font-extrabold text-slate-900">الحضور والانصراف</h2>
+            <h2 className="text-base font-extrabold text-slate-900">{t("people.clock.heading")}</h2>
             <p className="mt-0.5 flex items-center gap-1 text-xs font-medium text-slate-500">
               <MapPin className="h-3.5 w-3.5" aria-hidden="true" />
-              يتطلب السماح بتحديد الموقع — يتحقق النظام من نطاق الفرع.
+              {t("people.clock.hint")}
             </p>
           </div>
         </div>
@@ -136,7 +138,7 @@ export function ClockCard({ rows }: { rows: MyAttendanceRow[] }) {
           onClick={() => void onClock()}
         >
           <Icon className="h-5 w-5" aria-hidden="true" />
-          {busy ? "جاري تحديد الموقع…" : STATE_LABEL[state]}
+          {busy ? t("people.clock.locating") : STATE_LABEL[state]}
         </Button>
       </div>
     </Card>

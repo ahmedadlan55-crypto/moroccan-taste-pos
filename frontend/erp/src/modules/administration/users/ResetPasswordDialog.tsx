@@ -3,6 +3,7 @@ import { useMutation } from "@tanstack/react-query";
 import { apiClient } from "@/shared/api";
 import { Button, Dialog, Input, useToast } from "@/shared/ui";
 import { Field, FormActions } from "@/shared/forms";
+import { useT } from "@/i18n";
 import { ensureAck, type MutationAck } from "../_common";
 import { checkPasswordStrength } from "./password";
 
@@ -22,6 +23,7 @@ export function ResetPasswordDialog({
   username: string | null;
   onClose: () => void;
 }) {
+  const t = useT();
   const { toast } = useToast();
   const [password, setPassword] = useState("");
   const [confirm, setConfirm] = useState("");
@@ -45,7 +47,7 @@ export function ResetPasswordDialog({
       return ensureAck(res);
     },
     onSuccess: () => {
-      toast({ title: "تم تعيين كلمة مرور جديدة", tone: "success" });
+      toast({ title: t("administration.users.reset.toastSuccess"), tone: "success" });
       onClose();
     },
     onError: (e: Error) => setError(e.message),
@@ -55,11 +57,11 @@ export function ResetPasswordDialog({
     setError(null);
     const strength = checkPasswordStrength(password);
     if (!strength.ok) {
-      setError(strength.error ?? "كلمة المرور غير صالحة");
+      setError(strength.code ? t(`administration.users.pwd.${strength.code}`) : t("administration.users.pwd.invalid"));
       return;
     }
     if (password !== confirm) {
-      setError("كلمتا المرور غير متطابقتين");
+      setError(t("administration.users.err.passwordMismatch"));
       return;
     }
     mutation.mutate();
@@ -69,8 +71,8 @@ export function ResetPasswordDialog({
     <Dialog
       open={open}
       onClose={onClose}
-      title={username ? `إعادة تعيين كلمة المرور — ${username}` : "إعادة تعيين كلمة المرور"}
-      description="سيتم تسجيل خروج جلسات المستخدم الحالية وإجباره على تغيير كلمة المرور عند الدخول التالي."
+      title={username ? t("administration.users.reset.titleWith", { username }) : t("administration.users.reset.title")}
+      description={t("administration.users.reset.description")}
       size="sm"
       dismissable={!mutation.isPending}
     >
@@ -82,7 +84,7 @@ export function ResetPasswordDialog({
         className="space-y-4"
         noValidate
       >
-        <Field label="كلمة المرور الجديدة" required>
+        <Field label={t("administration.users.reset.newPassword")} required>
           {({ id }) => (
             <Input
               id={id}
@@ -94,7 +96,7 @@ export function ResetPasswordDialog({
             />
           )}
         </Field>
-        <Field label="تأكيد كلمة المرور" required>
+        <Field label={t("administration.users.reset.confirmPassword")} required>
           {({ id }) => (
             <Input
               id={id}
@@ -113,10 +115,10 @@ export function ResetPasswordDialog({
         )}
         <FormActions>
           <Button variant="secondary" onClick={onClose} disabled={mutation.isPending}>
-            إلغاء
+            {t("common.cancel")}
           </Button>
           <Button type="submit" loading={mutation.isPending}>
-            تعيين كلمة المرور
+            {t("administration.users.reset.submit")}
           </Button>
         </FormActions>
       </form>

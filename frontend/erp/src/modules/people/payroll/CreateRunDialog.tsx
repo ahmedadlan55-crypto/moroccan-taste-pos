@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { Button, Dialog, Input, Select, safeUserMessage } from "@/shared/ui";
 import { Field } from "@/shared/forms";
+import { useTx } from "@/shared/ui/i18n";
 import { monthName, useBranches, useCreatePayrollRun } from "./api";
 
 interface CreateRunDialogProps {
@@ -13,6 +14,7 @@ interface CreateRunDialogProps {
 const now = new Date();
 
 export function CreateRunDialog({ open, onClose, onCreated }: CreateRunDialogProps) {
+  const t = useTx();
   const create = useCreatePayrollRun();
   const branchesQuery = useBranches();
   const branches = branchesQuery.data ?? [];
@@ -38,7 +40,7 @@ export function CreateRunDialog({ open, onClose, onCreated }: CreateRunDialogPro
   function submit() {
     setError(null);
     if (!Number.isInteger(year) || year < 2000 || year > 2100) {
-      setError("أدخل سنة صحيحة.");
+      setError(t("people.payroll.create.invalidYear"));
       return;
     }
     create.mutate(
@@ -48,7 +50,7 @@ export function CreateRunDialog({ open, onClose, onCreated }: CreateRunDialogPro
           reset();
           onCreated(res?.id ? String(res.id) : null);
         },
-        onError: (e) => setError(safeUserMessage(e)),
+        onError: (e) => setError(safeUserMessage(e, t)),
       },
     );
   }
@@ -57,33 +59,33 @@ export function CreateRunDialog({ open, onClose, onCreated }: CreateRunDialogPro
     <Dialog
       open={open}
       onClose={close}
-      title="مسير رواتب جديد"
-      description="أنشئ مسير رواتب لشهرٍ وسنة. يمكنك بعد الإنشاء احتساب المستحقات."
+      title={t("people.payroll.create.title")}
+      description={t("people.payroll.create.desc")}
       size="md"
       dismissable={!create.isPending}
       footer={
         <>
           <Button variant="secondary" onClick={close} disabled={create.isPending}>
-            إلغاء
+            {t("common.cancel")}
           </Button>
           <Button variant="primary" onClick={submit} loading={create.isPending}>
-            إنشاء
+            {t("people.payroll.create.submit")}
           </Button>
         </>
       }
     >
       <div className="space-y-4">
         <div className="grid gap-4 sm:grid-cols-2">
-          <Field label="الشهر" required>
+          <Field label={t("people.payroll.create.month")} required>
             <Select value={String(month)} onChange={(e) => setMonth(Number(e.target.value))}>
               {Array.from({ length: 12 }, (_, i) => i + 1).map((m) => (
                 <option key={m} value={m}>
-                  {monthName(m)}
+                  {monthName(m, t)}
                 </option>
               ))}
             </Select>
           </Field>
-          <Field label="السنة" required>
+          <Field label={t("people.payroll.create.year")} required>
             <Input
               type="number"
               inputMode="numeric"
@@ -97,13 +99,13 @@ export function CreateRunDialog({ open, onClose, onCreated }: CreateRunDialogPro
           </Field>
         </div>
 
-        <Field label="الفرع" hint="اترك الحقل فارغًا لإنشاء مسير لكل الفروع.">
+        <Field label={t("people.payroll.create.branch")} hint={t("people.payroll.create.branchHint")}>
           <Select
             value={branchId}
             onChange={(e) => setBranchId(e.target.value)}
             disabled={branchesQuery.isLoading || branches.length === 0}
           >
-            <option value="">كل الفروع</option>
+            <option value="">{t("people.payroll.allBranches")}</option>
             {branches.map((b) => (
               <option key={b.id} value={b.id}>
                 {b.label}

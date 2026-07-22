@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { Plus, Pencil, Trash2, ListChecks, Power } from "lucide-react";
 import {
   PageHeader,
@@ -13,6 +13,8 @@ import {
   Badge,
   StatusBadge,
 } from "@/shared/ui";
+import { useTx } from "@/shared/ui/i18n";
+import { useLang } from "@/i18n";
 import { Field } from "@/shared/forms";
 import { DataTable, type ColumnDef } from "@/shared/tables";
 import { Can, useCan } from "@/shared/permissions";
@@ -30,16 +32,7 @@ import {
   type ChannelInput,
 } from "./api";
 
-const CHANNEL_TYPES: { value: string; label: string }[] = [
-  { value: "dine_in", label: "صالة" },
-  { value: "takeaway", label: "سفري" },
-  { value: "delivery", label: "توصيل" },
-  { value: "aggregator", label: "تطبيق وسيط" },
-  { value: "phone", label: "هاتف" },
-  { value: "app", label: "تطبيق" },
-  { value: "online", label: "متجر إلكتروني" },
-];
-const TYPE_LABEL: Record<string, string> = Object.fromEntries(CHANNEL_TYPES.map((t) => [t.value, t.label]));
+const CHANNEL_TYPE_CODES = ["dine_in", "takeaway", "delivery", "aggregator", "phone", "app", "online"] as const;
 
 interface FormState extends ChannelInput {
   id?: string;
@@ -69,12 +62,22 @@ export function ChannelsPage() {
 }
 
 function ChannelsScreen() {
+  const t = useTx();
+  const lang = useLang();
   const canManage = useCan("sales.channels.manage");
   const listQuery = useChannels();
   const create = useCreateChannel();
   const update = useUpdateChannel();
   const del = useDeleteChannel();
   const toggle = useToggleChannel();
+
+  const channelTypes = useMemo(
+    () => CHANNEL_TYPE_CODES.map((code) => ({ value: code, label: t(`sales.channels.type.${code}`) })),
+    [t],
+  );
+  const typeLabel = (code: string) => (CHANNEL_TYPE_CODES as readonly string[]).includes(code) ? t(`sales.channels.type.${code}`) : code;
+  // Business data: render the English channel name when the UI is English and one exists.
+  const channelName = (c: SalesChannel) => (lang === "en" && c.nameEn ? c.nameEn : c.name);
 
   const rows = listQuery.data ?? [];
 
@@ -131,7 +134,7 @@ function ChannelsScreen() {
   function submit() {
     if (!form) return;
     if (!form.name?.trim()) {
-      setNameError("اسم القناة مطلوب.");
+      setNameError(t("sales.channels.nameRequired"));
       return;
     }
     setFormError(null);
@@ -139,10 +142,10 @@ function ChannelsScreen() {
     const input: ChannelInput = { ...rest, name: form.name.trim() };
     const onSettled = {
       onSuccess: (res: { success: boolean; error?: string }) => {
-        if (res && res.success === false) return setFormError(channelError(new Error(res.error)));
+        if (res && res.success === false) return setFormError(channelError(new Error(res.error), t));
         setForm(null);
       },
-      onError: (e: unknown) => setFormError(channelError(e)),
+      onError: (e: unknown) => setFormError(channelError(e, t)),
     };
     if (id) update.mutate({ id, input }, onSettled);
     else create.mutate(input, onSettled);
@@ -153,22 +156,22 @@ function ChannelsScreen() {
     setDeleteError(null);
     del.mutate(toDelete.id, {
       onSuccess: (res) => {
-        if (res && res.success === false) return setDeleteError(channelError(new Error(res.error)));
+        if (res && res.success === false) return setDeleteError(channelError(new Error(res.error), t));
         setToDelete(null);
       },
-      onError: (e) => setDeleteError(channelError(e)),
+      onError: (e) => setDeleteError(channelError(e, t)),
     });
   }
 
   const columns: ColumnDef<SalesChannel>[] = [
     {
       id: "name",
-      header: "القناة",
-      accessor: (r) => r.name,
+      header: t("sales.channels.col.channel"),
+      accessor: (r) => channelName(r),
       sortable: true,
       cell: (r) => (
         <div className="flex flex-col">
-          <span className="font-bold text-slate-800">{r.name}</span>
+          <span className="font-bold text-slate-800">{channelName(r)}</span>
           <span dir="ltr" className="text-[11px] font-medium tabular-nums text-slate-400">
             {r.code}
           </span>
@@ -177,14 +180,14 @@ function ChannelsScreen() {
     },
     {
       id: "type",
-      header: "النوع",
-      accessor: (r) => TYPE_LABEL[r.channelType] ?? r.channelType,
-      cell: (r) => <Badge tone="teal">{TYPE_LABEL[r.channelType] ?? r.channelType}</Badge>,
+      header: t("sales.channels.col.type"),
+      accessor: (r) => typeLabel(r.channelType),
+      cell: (r) => <Badge tone="teal">{typeLabel(r.channelType)}</Badge>,
     },
-    { id: "priceList", header: "قائمة الأسعار", accessor: (r) => r.priceListName || "—" },
+    { id: "priceList", header: t("sales.channels.col.priceList"), accessor: (r) => r.priceListName || "—" },
     {
       id: "commission",
-      header: "العمولة",
+      header: t("sales.channels.col.commission"),
       numeric: true,
       accessor: (r) => r.commissionPct,
       cell: (r) => (
@@ -196,28 +199,28 @@ function ChannelsScreen() {
     },
     {
       id: "fullMenu",
-      header: "القائمة",
-      accessor: (r) => (r.useFullMenu ? "كاملة" : "مستقلّة"),
-      cell: (r) => <Badge tone={r.useFullMenu ? "neutral" : "info"}>{r.useFullMenu ? "كاملة" : "مستقلّة"}</Badge>,
+      header: t("sales.channels.col.menu"),
+      accessor: (r) => (r.useFullMenu ? t("sales.channels.fullMenu") : t("sales.channels.independent")),
+      cell: (r) => <Badge tone={r.useFullMenu ? "neutral" : "info"}>{r.useFullMenu ? t("sales.channels.fullMenu") : t("sales.channels.independent")}</Badge>,
     },
     {
       id: "status",
-      header: "الحالة",
-      accessor: (r) => (r.isActive ? "نشط" : "معطّل"),
-      cell: (r) => <StatusBadge tone={r.isActive ? "success" : "neutral"}>{r.isActive ? "نشط" : "معطّل"}</StatusBadge>,
+      header: t("common.status"),
+      accessor: (r) => (r.isActive ? t("common.active") : t("status.disabled")),
+      cell: (r) => <StatusBadge tone={r.isActive ? "success" : "neutral"}>{r.isActive ? t("common.active") : t("status.disabled")}</StatusBadge>,
     },
   ];
 
   return (
     <div>
       <PageHeader
-        eyebrow="المبيعات"
-        title="قنوات البيع"
-        subtitle="إدارة قنوات ومنافذ البيع وأصناف كل قناة (صالة، توصيل، تطبيقات وسيطة)."
+        eyebrow={t("sales.salesEyebrow")}
+        title={t("sales.channels.title")}
+        subtitle={t("sales.channels.subtitle")}
         action={
           canManage ? (
             <Button variant="primary" onClick={openNew}>
-              <Plus className="h-4 w-4" /> قناة جديدة
+              <Plus className="h-4 w-4" /> {t("sales.channels.newBtn")}
             </Button>
           ) : undefined
         }
@@ -231,29 +234,29 @@ function ChannelsScreen() {
         error={listQuery.error}
         onRetry={() => listQuery.refetch()}
         searchable
-        searchPlaceholder="بحث عن قناة…"
-        emptyTitle="لا توجد قنوات بيع"
-        emptyBody="أضف أول قناة بيع للبدء."
+        searchPlaceholder={t("sales.channels.searchPlaceholder")}
+        emptyTitle={t("sales.channels.emptyTitle")}
+        emptyBody={t("sales.channels.emptyBody")}
         onRowClick={(r) => setManaging(r)}
         rowActions={(r) => (
           <div className="flex items-center gap-1">
-            <IconButton aria-label="إدارة الأصناف" size="sm" onClick={() => setManaging(r)}>
+            <IconButton aria-label={t("sales.channels.manageItems")} size="sm" onClick={() => setManaging(r)}>
               <ListChecks className="h-4 w-4" />
             </IconButton>
             {canManage && (
               <>
                 <IconButton
-                  aria-label={r.isActive ? "تعطيل" : "تفعيل"}
+                  aria-label={r.isActive ? t("sales.channels.deactivate") : t("sales.channels.activate")}
                   size="sm"
                   onClick={() => toggle.mutate(r.id)}
                 >
                   <Power className={`h-4 w-4 ${r.isActive ? "text-emerald-600" : "text-slate-400"}`} />
                 </IconButton>
-                <IconButton aria-label="تعديل" size="sm" onClick={() => openEdit(r)}>
+                <IconButton aria-label={t("common.edit")} size="sm" onClick={() => openEdit(r)}>
                   <Pencil className="h-4 w-4" />
                 </IconButton>
                 <IconButton
-                  aria-label="حذف"
+                  aria-label={t("common.delete")}
                   size="sm"
                   onClick={() => {
                     setDeleteError(null);
@@ -271,15 +274,15 @@ function ChannelsScreen() {
       <Dialog
         open={!!form}
         onClose={() => setForm(null)}
-        title={isNew ? "قناة جديدة" : "تعديل القناة"}
+        title={isNew ? t("sales.channels.newBtn") : t("sales.channels.editTitle")}
         size="lg"
         footer={
           <>
             <Button variant="secondary" onClick={() => setForm(null)} disabled={saving}>
-              إلغاء
+              {t("common.cancel")}
             </Button>
             <Button variant="primary" onClick={submit} loading={saving}>
-              حفظ
+              {t("common.save")}
             </Button>
           </>
         }
@@ -287,7 +290,7 @@ function ChannelsScreen() {
         {form && (
           <div className="space-y-4">
             <div className="grid gap-4 sm:grid-cols-2">
-              <Field label="اسم القناة" required error={nameError ?? undefined}>
+              <Field label={t("sales.channels.field.name")} required error={nameError ?? undefined}>
                 <Input
                   value={form.name}
                   invalid={!!nameError}
@@ -297,39 +300,39 @@ function ChannelsScreen() {
                   }}
                 />
               </Field>
-              <Field label="الاسم بالإنجليزية">
+              <Field label={t("sales.channels.field.nameEn")}>
                 <Input value={form.nameEn ?? ""} onChange={(e) => setForm({ ...form, nameEn: e.target.value })} />
               </Field>
-              <Field label="الرمز" hint="يُولّد تلقائيًا إن تُرك فارغًا.">
+              <Field label={t("sales.channels.field.code")} hint={t("sales.channels.field.codeHint")}>
                 <Input
                   value={form.code ?? ""}
                   dir="ltr"
                   onChange={(e) => setForm({ ...form, code: e.target.value })}
                 />
               </Field>
-              <Field label="النوع">
+              <Field label={t("sales.channels.field.type")}>
                 <Select
                   value={form.channelType}
                   onChange={(e) => setForm({ ...form, channelType: e.target.value })}
-                  options={CHANNEL_TYPES}
+                  options={channelTypes}
                 />
               </Field>
-              <Field label="قائمة الأسعار">
+              <Field label={t("sales.channels.field.priceList")}>
                 <Select
                   value={form.priceListId ?? ""}
                   onChange={(e) => setForm({ ...form, priceListId: e.target.value })}
                   disabled={priceLists.isLoading}
                 >
-                  <option value="">— بدون قائمة أسعار —</option>
+                  <option value="">{t("sales.channels.noPriceList")}</option>
                   {(priceLists.data ?? []).map((p) => (
                     <option key={p.id} value={p.id}>
                       {p.name}
-                      {p.isActive ? "" : " (غير نشطة)"}
+                      {p.isActive ? "" : ` ${t("sales.channels.inactiveSuffix")}`}
                     </option>
                   ))}
                 </Select>
               </Field>
-              <Field label="ترتيب العرض">
+              <Field label={t("sales.channels.field.displayOrder")}>
                 <NumberInput
                   value={form.displayOrder ?? 0}
                   onChange={(v) => setForm({ ...form, displayOrder: v ?? 0 })}
@@ -337,14 +340,14 @@ function ChannelsScreen() {
                   step={1}
                 />
               </Field>
-              <Field label="نسبة العمولة (%)">
+              <Field label={t("sales.channels.field.commission")}>
                 <NumberInput
                   value={form.commissionPct ?? 0}
                   onChange={(v) => setForm({ ...form, commissionPct: v ?? 0 })}
                   min={0}
                 />
               </Field>
-              <Field label="نسبة رسوم الخدمة (%)">
+              <Field label={t("sales.channels.field.serviceFee")}>
                 <NumberInput
                   value={form.serviceFeePct ?? 0}
                   onChange={(v) => setForm({ ...form, serviceFeePct: v ?? 0 })}
@@ -353,7 +356,7 @@ function ChannelsScreen() {
               </Field>
             </div>
 
-            <Field label="ملاحظات">
+            <Field label={t("sales.channels.field.notes")}>
               <Input value={form.notes ?? ""} onChange={(e) => setForm({ ...form, notes: e.target.value })} />
             </Field>
 
@@ -361,22 +364,22 @@ function ChannelsScreen() {
               <Toggle
                 checked={!!form.isActive}
                 onChange={(v) => setForm({ ...form, isActive: v })}
-                label="نشطة"
+                label={t("sales.channels.toggle.active")}
               />
               <Toggle
                 checked={!!form.useFullMenu}
                 onChange={(v) => setForm({ ...form, useFullMenu: v })}
-                label="عرض القائمة الكاملة"
+                label={t("sales.channels.toggle.fullMenu")}
               />
               <Toggle
                 checked={!!form.allowDiscount}
                 onChange={(v) => setForm({ ...form, allowDiscount: v })}
-                label="السماح بالخصم"
+                label={t("sales.channels.toggle.allowDiscount")}
               />
               <Toggle
                 checked={!!form.requiresExternalRef}
                 onChange={(v) => setForm({ ...form, requiresExternalRef: v })}
-                label="يتطلب مرجعًا خارجيًا"
+                label={t("sales.channels.toggle.requiresExternalRef")}
               />
             </div>
 
@@ -391,10 +394,10 @@ function ChannelsScreen() {
 
       <ConfirmDialog
         open={!!toDelete}
-        title="حذف القناة"
-        description={toDelete ? `سيتم حذف القناة «${toDelete.name}» نهائيًا.` : ""}
+        title={t("sales.channels.deleteTitle")}
+        description={toDelete ? t("sales.channels.deleteBody", { name: channelName(toDelete) }) : ""}
         tone="danger"
-        confirmLabel="حذف"
+        confirmLabel={t("common.delete")}
         processing={del.isPending}
         error={deleteError}
         onConfirm={confirmDelete}

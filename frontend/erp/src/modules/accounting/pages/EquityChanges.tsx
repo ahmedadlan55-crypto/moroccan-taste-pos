@@ -1,6 +1,7 @@
 import { Download } from "lucide-react";
 import { Button, DatePicker } from "@/shared/ui";
 import { formatDate } from "@/shared/lib";
+import { useT, type TFunction } from "@/i18n";
 import {
   useEquityChanges,
   startOfYearISO,
@@ -29,32 +30,33 @@ import {
 // this screen only renders the pinned /erp/reports/equity-changes payload.
 
 function BucketSection({ bucket }: { bucket: EquityBucket }) {
+  const t = useT();
   return (
     <div className="surface mb-5 overflow-hidden">
       <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-200 bg-teal-50/60 px-4 py-3">
         <span className="text-sm font-extrabold text-teal-800">{bucket.label}</span>
         <span className="flex items-center gap-4 text-xs font-bold text-slate-600">
           <span>
-            افتتاحي: <Num value={bucket.opening} signed />
+            {t("accounting.common.opening")}: <Num value={bucket.opening} signed />
           </span>
           <span>
-            ختامي: <Num value={bucket.closing} signed strong />
+            {t("accounting.common.closing")}: <Num value={bucket.closing} signed strong />
           </span>
         </span>
       </div>
       {bucket.accounts.length === 0 ? (
         // An empty bucket is stated honestly — no fabricated zero rows.
-        <div className="px-4 py-4 text-sm font-semibold text-slate-400">لا يوجد</div>
+        <div className="px-4 py-4 text-sm font-semibold text-slate-400">{t("accounting.equity.none")}</div>
       ) : (
         <div className="overflow-x-auto">
           <table className="w-full min-w-[42rem] text-sm">
             <thead>
               <tr className="border-b border-slate-200 text-[11px] font-extrabold text-slate-500">
-                <th className="px-4 py-2 text-right">الحساب</th>
-                <th className="px-4 py-2 text-left">افتتاحي</th>
-                <th className="px-4 py-2 text-left">حركة مدين</th>
-                <th className="px-4 py-2 text-left">حركة دائن</th>
-                <th className="px-4 py-2 text-left">ختامي</th>
+                <th className="px-4 py-2 text-right">{t("accounting.common.account")}</th>
+                <th className="px-4 py-2 text-left">{t("accounting.equity.opening")}</th>
+                <th className="px-4 py-2 text-left">{t("accounting.equity.periodDebit")}</th>
+                <th className="px-4 py-2 text-left">{t("accounting.equity.periodCredit")}</th>
+                <th className="px-4 py-2 text-left">{t("accounting.equity.closing")}</th>
               </tr>
             </thead>
             <tbody>
@@ -102,52 +104,62 @@ function StatementLine({
 }
 
 function ReconciliationBadge({ rec, closing }: { rec: EquityChangesResponse["reconciliation"]; closing: number }) {
+  const t = useT();
   if (rec.matches) {
     return (
       <div className="mb-5 inline-flex items-center gap-2 rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs font-bold text-emerald-700">
-        مطابق للميزانية ✓
+        {t("accounting.equity.reconciled")}
       </div>
     );
   }
   // A mismatch is a books problem — it is NEVER hidden or softened.
   return (
     <div className="mb-5 rounded-xl border-2 border-rose-300 bg-rose-50 px-4 py-3 text-sm font-extrabold text-rose-800">
-      <div>تحذير: القائمة غير مطابقة للميزانية!</div>
+      <div>{t("accounting.equity.mismatch")}</div>
       <div className="mt-1 text-xs font-bold">
-        ختامي حقوق الملكية في هذه القائمة: <span dir="ltr" className="tabular-nums">{fmt(closing)}</span>
+        {t("accounting.equity.mismatchClosing")} <span dir="ltr" className="tabular-nums">{fmt(closing)}</span>
         {" — "}
-        حقوق الملكية في الميزانية: <span dir="ltr" className="tabular-nums">{fmt(rec.bsTotEq)}</span>
+        {t("accounting.equity.mismatchBs")} <span dir="ltr" className="tabular-nums">{fmt(rec.bsTotEq)}</span>
         {" — "}
-        الفرق: <span dir="ltr" className="tabular-nums">{fmt(closing - rec.bsTotEq)}</span>
+        {t("accounting.equity.mismatchDiff")} <span dir="ltr" className="tabular-nums">{fmt(closing - rec.bsTotEq)}</span>
       </div>
     </div>
   );
 }
 
-function exportCsv(data: EquityChangesResponse) {
-  const header = ["البند", "الحساب", "الرمز", "افتتاحي", "حركة مدين", "حركة دائن", "ختامي"];
+function exportCsv(t: TFunction, data: EquityChangesResponse) {
+  const header = [
+    t("accounting.equity.csv.item"),
+    t("accounting.equity.csv.account"),
+    t("accounting.equity.csv.code"),
+    t("accounting.equity.csv.opening"),
+    t("accounting.equity.csv.periodDebit"),
+    t("accounting.equity.csv.periodCredit"),
+    t("accounting.equity.csv.closing"),
+  ];
   const rows: (string | number)[][] = [];
   for (const b of data.buckets) {
     if (b.accounts.length === 0) {
-      rows.push([b.label, "لا يوجد", "", b.opening, "", "", b.closing]);
+      rows.push([b.label, t("accounting.equity.none"), "", b.opening, "", "", b.closing]);
       continue;
     }
     for (const a of b.accounts) {
       rows.push([b.label, a.name, a.code, a.opening, a.periodDebit, a.periodCredit, a.closing]);
     }
-    rows.push([`إجمالي ${b.label}`, "", "", b.opening, "", "", b.closing]);
+    rows.push([t("accounting.equity.csv.bucketTotal", { label: b.label }), "", "", b.opening, "", "", b.closing]);
   }
   if (data.netIncomeLine) {
-    rows.push([data.netIncomeLine.label || "صافي دخل الفترة", "", "", "", "", "", data.netIncomeLine.amount]);
+    rows.push([data.netIncomeLine.label || t("accounting.equity.netIncome"), "", "", "", "", "", data.netIncomeLine.amount]);
   }
   if (data.closingEntriesLine) {
-    rows.push([data.closingEntriesLine.label || "قيود الإقفال", "", "", "", "", "", data.closingEntriesLine.amount]);
+    rows.push([data.closingEntriesLine.label || t("accounting.equity.closingEntries"), "", "", "", "", "", data.closingEntriesLine.amount]);
   }
-  rows.push(["إجمالي حقوق الملكية", "", "", data.totals.opening, "", "", data.totals.closing]);
+  rows.push([t("accounting.equity.totalEquity"), "", "", data.totals.opening, "", "", data.totals.closing]);
   exportRowsCsv(`equity-changes-${data.from}-${data.to}.csv`, header, rows);
 }
 
 export function EquityChangesPage() {
+  const t = useT();
   const filter = useAppliedFilter<DateRange>({ from: startOfYearISO(), to: todayISO() });
   const query = useEquityChanges(filter.applied);
   const data = query.data;
@@ -156,22 +168,22 @@ export function EquityChangesPage() {
   return (
     <div>
       <ReportHeader
-        title="التغيرات في حقوق الملكية"
-        subtitle="حركة حقوق الملكية خلال الفترة: رأس المال، الأرباح المحتجزة، المسحوبات، الاحتياطيات والزكاة — مع مطابقة الميزانية."
+        title={t("accounting.equity.title")}
+        subtitle={t("accounting.equity.subtitle")}
         onPrint={printReport}
         extraActions={
           data && (
-            <Button variant="secondary" onClick={() => exportCsv(data)}>
-              <Download className="h-4 w-4" /> تصدير CSV
+            <Button variant="secondary" onClick={() => exportCsv(t, data)}>
+              <Download className="h-4 w-4" /> {t("table.exportCsv")}
             </Button>
           )
         }
       />
       <FilterCard onRun={filter.run} running={query.isFetching}>
-        <FilterField label="من تاريخ">
+        <FilterField label={t("accounting.common.fromDate")}>
           <DatePicker value={filter.draft.from} onChange={(from) => filter.patch({ from })} />
         </FilterField>
-        <FilterField label="إلى تاريخ">
+        <FilterField label={t("accounting.common.toDate")}>
           <DatePicker value={filter.draft.to} onChange={(to) => filter.patch({ to })} />
         </FilterField>
       </FilterCard>
@@ -181,12 +193,12 @@ export function EquityChangesPage() {
         error={query.error}
         isEmpty={!!data && data.buckets.length === 0}
         onRetry={() => query.refetch()}
-        emptyBody="لا توجد حسابات حقوق ملكية في هذه الفترة."
+        emptyBody={t("accounting.equity.emptyBody")}
       >
         {data && (
           <PrintArea>
             <div className="surface mb-5 p-4">
-              <PrintBanner title="قائمة التغيرات في حقوق الملكية" period={period} />
+              <PrintBanner title={t("accounting.equity.printTitle")} period={period} />
               <ReconciliationBadge rec={data.reconciliation} closing={data.totals.closing} />
             </div>
 
@@ -194,17 +206,17 @@ export function EquityChangesPage() {
               <BucketSection key={b.key} bucket={b} />
             ))}
 
-            <StatementLine line={data.netIncomeLine} fallbackLabel="صافي دخل الفترة" tone="emerald" />
-            <StatementLine line={data.closingEntriesLine} fallbackLabel="قيود الإقفال" tone="violet" />
+            <StatementLine line={data.netIncomeLine} fallbackLabel={t("accounting.equity.netIncome")} tone="emerald" />
+            <StatementLine line={data.closingEntriesLine} fallbackLabel={t("accounting.equity.closingEntries")} tone="violet" />
 
             <div className="surface flex flex-wrap items-center justify-between gap-3 border-t-2 border-slate-300 bg-slate-50 px-4 py-3">
-              <span className="text-sm font-extrabold text-slate-900">إجمالي حقوق الملكية</span>
+              <span className="text-sm font-extrabold text-slate-900">{t("accounting.equity.totalEquity")}</span>
               <span className="flex items-center gap-6 text-sm font-bold text-slate-700">
                 <span>
-                  افتتاحي: <Num value={data.totals.opening} signed strong />
+                  {t("accounting.common.opening")}: <Num value={data.totals.opening} signed strong />
                 </span>
                 <span>
-                  ختامي: <Num value={data.totals.closing} signed strong />
+                  {t("accounting.common.closing")}: <Num value={data.totals.closing} signed strong />
                 </span>
               </span>
             </div>

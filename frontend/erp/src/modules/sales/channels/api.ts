@@ -6,6 +6,7 @@
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { apiClient } from "@/shared/api";
+import type { TFunction } from "@/i18n";
 
 const CH_KEY = ["sales-channels"] as const;
 const MENU_KEY = ["channel-menus"] as const;
@@ -293,8 +294,9 @@ export function usePriceLists() {
   });
 }
 
-// Server error strings → surfaced as-is (already Arabic on these routes).
-export function channelError(error: unknown): string {
+// Server error strings → surfaced as-is (already localized on these routes);
+// only the generic fallback is translated via t.
+export function channelError(error: unknown, t: TFunction): string {
   const raw = error instanceof Error ? error.message : "";
-  return raw || "تعذّرت العملية. أعد المحاولة.";
+  return raw || t("sales.opFailed");
 }

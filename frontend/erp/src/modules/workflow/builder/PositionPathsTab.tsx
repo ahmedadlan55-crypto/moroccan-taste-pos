@@ -16,6 +16,7 @@ import {
 } from "@/shared/ui";
 import { Field } from "@/shared/forms";
 import { DataTable, type ColumnDef } from "@/shared/tables";
+import { useTx } from "@/shared/ui/i18n";
 import {
   usePositions,
   usePositionWorkflowsSummary,
@@ -45,6 +46,7 @@ function newStep(): EditorStep {
 }
 
 export function PositionPathsTab() {
+  const t = useTx();
   const summary = usePositionWorkflowsSummary();
   const positions = usePositions();
   const [initiatorId, setInitiatorId] = useState<string>("");
@@ -60,9 +62,9 @@ export function PositionPathsTab() {
     () =>
       (summary.data ?? []).map((p) => ({
         value: p.id,
-        label: p.stepCount ? `${p.name} (${p.stepCount} خطوة)` : p.name,
+        label: p.stepCount ? t("workflow.paths.initiatorOption", { name: p.name, count: p.stepCount }) : p.name,
       })),
-    [summary.data],
+    [summary.data, t],
   );
   const positionOptions = useMemo(
     () => (positions.data ?? []).map((p) => ({ value: p.id, label: p.name })),
@@ -77,13 +79,13 @@ export function PositionPathsTab() {
       {
         onSuccess: (res) => {
           if (res && res.success === false) {
-            setDeleteError(res.error || "تعذّر حذف المسار.");
+            setDeleteError(res.error || t("workflow.paths.deleteFailed"));
             return;
           }
-          toast({ title: "تم حذف المسار", tone: "success" });
+          toast({ title: t("workflow.paths.toastDeleted"), tone: "success" });
           setToDelete(null);
         },
-        onError: (e) => setDeleteError(e instanceof Error ? e.message : "تعذّر حذف المسار."),
+        onError: (e) => setDeleteError(e instanceof Error ? e.message : t("workflow.paths.deleteFailed")),
       },
     );
   }
@@ -91,7 +93,7 @@ export function PositionPathsTab() {
   const columns: ColumnDef<PositionWorkflowPath>[] = [
     {
       id: "pathName",
-      header: "المسار",
+      header: t("workflow.paths.colPath"),
       accessor: (r) => r.pathName,
       cell: (r) => (
         <div className="min-w-0">
@@ -104,7 +106,7 @@ export function PositionPathsTab() {
     },
     {
       id: "stepCount",
-      header: "الخطوات",
+      header: t("workflow.paths.colSteps"),
       accessor: (r) => r.stepCount,
       numeric: true,
       sortable: true,
@@ -116,15 +118,15 @@ export function PositionPathsTab() {
         </Badge>
       ),
     },
-    { id: "description", header: "الوصف", accessor: (r) => r.description || "—" },
+    { id: "description", header: t("workflow.paths.colDescription"), accessor: (r) => r.description || "—" },
   ];
 
   return (
     <div className="space-y-4">
-      <Field label="المنصب البادئ" hint="المنصب الذي ينشئ المعاملة ويبدأ مسار اعتمادها.">
+      <Field label={t("workflow.paths.initiatorLabel")} hint={t("workflow.paths.initiatorHint")}>
         <Select
           value={initiatorId}
-          placeholder="— اختر المنصب البادئ —"
+          placeholder={t("workflow.paths.initiatorPlaceholder")}
           options={initiatorOptions}
           onChange={(e) => setInitiatorId(e.target.value)}
           disabled={summary.isLoading}
@@ -135,8 +137,8 @@ export function PositionPathsTab() {
 
       {!initiatorId ? (
         <EmptyState
-          title="لم يتم اختيار منصب بادئ"
-          body="اختر منصبًا من الأعلى لعرض مساراته أو إضافة مسار جديد."
+          title={t("workflow.paths.emptyNoInitiatorTitle")}
+          body={t("workflow.paths.emptyNoInitiatorBody")}
         />
       ) : paths.isLoading ? (
         <LoadingState rows={4} />
@@ -146,7 +148,7 @@ export function PositionPathsTab() {
         <>
           <div className="flex justify-end">
             <Button variant="primary" onClick={() => setEditor("new")}>
-              <Plus className="h-4 w-4" /> مسار جديد
+              <Plus className="h-4 w-4" /> {t("workflow.paths.newBtn")}
             </Button>
           </div>
           <DataTable
@@ -154,15 +156,15 @@ export function PositionPathsTab() {
             rows={paths.data ?? []}
             getRowId={(r) => r.pathKey}
             tableId="wf-position-paths"
-            emptyTitle="لا توجد مسارات"
-            emptyBody="أضف أول مسار اعتماد لهذا المنصب."
+            emptyTitle={t("workflow.paths.emptyTitle")}
+            emptyBody={t("workflow.paths.emptyBody")}
             rowActions={(r) => (
               <div className="flex items-center gap-1">
-                <IconButton aria-label="تعديل" size="sm" onClick={() => setEditor(r)}>
+                <IconButton aria-label={t("common.edit")} size="sm" onClick={() => setEditor(r)}>
                   <Pencil className="h-4 w-4" />
                 </IconButton>
                 <IconButton
-                  aria-label="حذف"
+                  aria-label={t("common.delete")}
                   size="sm"
                   variant="danger"
                   onClick={() => {
@@ -189,10 +191,10 @@ export function PositionPathsTab() {
 
       <ConfirmDialog
         open={!!toDelete}
-        title="حذف المسار"
-        description={toDelete ? `سيتم حذف مسار «${toDelete.pathName}» بكل خطواته.` : ""}
+        title={t("workflow.paths.confirmDeleteTitle")}
+        description={toDelete ? t("workflow.paths.confirmDeleteDesc", { name: toDelete.pathName }) : ""}
         tone="danger"
-        confirmLabel="حذف"
+        confirmLabel={t("common.delete")}
         processing={del.isPending}
         error={deleteError}
         onConfirm={confirmDelete}
@@ -214,6 +216,7 @@ function PathEditor({
   positionOptions: { value: string; label: string }[];
   onClose: () => void;
 }) {
+  const t = useTx();
   const isEdit = !!existing;
   const loaded = usePositionWorkflow(initiatorPositionId, existing?.pathKey ?? "default", isEdit);
   const save = useSavePositionWorkflow();
@@ -225,6 +228,10 @@ function PathEditor({
   const [steps, setSteps] = useState<EditorStep[]>(existing ? [] : [newStep()]);
   const [error, setError] = useState<string | null>(null);
   const [seeded, setSeeded] = useState(!isEdit);
+  const strategyOptions = useMemo(
+    () => STRATEGY_OPTIONS.map((o) => ({ value: o.value, label: t(`workflow.strategy.${o.value}`) })),
+    [t],
+  );
 
   // Seed the step list from the loaded chain exactly once when editing.
   useEffect(() => {
@@ -261,35 +268,35 @@ function PathEditor({
     setError(null);
     const key = pathKey.trim();
     if (!isEdit && !key) {
-      setError("مفتاح المسار مطلوب (حروف/أرقام إنجليزية).");
+      setError(t("workflow.paths.keyRequired"));
       return;
     }
     if (!steps.length) {
-      setError("يجب إضافة خطوة واحدة على الأقل.");
+      setError(t("workflow.paths.oneStepRequired"));
       return;
     }
     if (steps.some((s) => !s.positionId)) {
-      setError("لكل خطوة يجب اختيار منصب.");
+      setError(t("workflow.paths.stepPositionRequired"));
       return;
     }
     save.mutate(
       {
         initiatorPositionId,
         pathKey: key || existing?.pathKey || "default",
-        pathName: pathName.trim() || "المسار الأساسي",
+        pathName: pathName.trim() || t("workflow.paths.namePlaceholder"),
         description: description.trim(),
         steps: steps.map((s, i) => ({ ...s, stepOrder: i + 1 })),
       },
       {
         onSuccess: (res) => {
           if (res && res.success === false) {
-            setError(res.error || "تعذّر حفظ المسار.");
+            setError(res.error || t("workflow.paths.saveFailed"));
             return;
           }
-          toast({ title: isEdit ? "تم تحديث المسار" : "تم إنشاء المسار", tone: "success" });
+          toast({ title: isEdit ? t("workflow.paths.toastUpdated") : t("workflow.paths.toastCreated"), tone: "success" });
           onClose();
         },
-        onError: (e) => setError(e instanceof Error ? e.message : "تعذّر حفظ المسار."),
+        onError: (e) => setError(e instanceof Error ? e.message : t("workflow.paths.saveFailed")),
       },
     );
   }
@@ -301,14 +308,14 @@ function PathEditor({
       open
       onClose={onClose}
       size="xl"
-      title={isEdit ? `تعديل مسار: ${existing?.pathName}` : "مسار اعتماد جديد"}
+      title={isEdit ? t("workflow.paths.editorEditTitle", { name: existing?.pathName ?? "" }) : t("workflow.paths.editorNewTitle")}
       footer={
         <>
           <Button variant="secondary" onClick={onClose} disabled={save.isPending}>
-            إلغاء
+            {t("common.cancel")}
           </Button>
           <Button variant="primary" onClick={submit} loading={save.isPending} disabled={busy}>
-            حفظ المسار
+            {t("workflow.paths.saveBtn")}
           </Button>
         </>
       }
@@ -318,7 +325,7 @@ function PathEditor({
       ) : (
         <div className="space-y-4">
           <div className="grid grid-cols-2 gap-3">
-            <Field label="مفتاح المسار" hint="إنجليزي فقط — لا يُعدّل بعد الإنشاء.">
+            <Field label={t("workflow.paths.keyLabel")} hint={t("workflow.paths.keyHint")}>
               <Input
                 dir="ltr"
                 value={pathKey}
@@ -327,33 +334,33 @@ function PathEditor({
                 placeholder="default"
               />
             </Field>
-            <Field label="اسم المسار">
+            <Field label={t("workflow.paths.nameLabel")}>
               <Input
                 value={pathName}
                 onChange={(e) => setPathName(e.target.value)}
-                placeholder="المسار الأساسي"
+                placeholder={t("workflow.paths.namePlaceholder")}
               />
             </Field>
           </div>
-          <Field label="الوصف (اختياري)">
+          <Field label={t("workflow.paths.descLabel")}>
             <Input
               value={description}
               onChange={(e) => setDescription(e.target.value)}
-              placeholder="متى يُستخدم هذا المسار؟"
+              placeholder={t("workflow.paths.descPlaceholder")}
             />
           </Field>
 
           <div className="space-y-3">
             <div className="flex items-center justify-between">
-              <div className="text-xs font-bold text-slate-600">الخطوات (بالترتيب)</div>
+              <div className="text-xs font-bold text-slate-600">{t("workflow.paths.stepsHeading")}</div>
               <Button variant="secondary" size="sm" onClick={() => setSteps((p) => [...p, newStep()])}>
-                <Plus className="h-4 w-4" /> إضافة خطوة
+                <Plus className="h-4 w-4" /> {t("workflow.paths.addStep")}
               </Button>
             </div>
 
             {steps.length === 0 && (
               <div className="rounded-xl border border-dashed border-slate-200 p-4 text-center text-xs font-semibold text-slate-400">
-                لا توجد خطوات — أضف خطوة واحدة على الأقل.
+                {t("workflow.paths.noSteps")}
               </div>
             )}
 
@@ -361,10 +368,10 @@ function PathEditor({
               <div key={i} className="rounded-xl border border-slate-200 p-3">
                 <div className="mb-2 flex items-center justify-between gap-2">
                   <span className="chip border-slate-200 bg-slate-50 text-slate-600">
-                    خطوة <span dir="ltr">{i + 1}</span>
+                    {t("workflow.paths.stepLabel")} <span dir="ltr">{i + 1}</span>
                   </span>
                   <IconButton
-                    aria-label="حذف الخطوة"
+                    aria-label={t("workflow.paths.removeStepAria")}
                     size="sm"
                     variant="danger"
                     onClick={() => removeStep(i)}
@@ -373,18 +380,18 @@ function PathEditor({
                   </IconButton>
                 </div>
                 <div className="grid grid-cols-2 gap-2">
-                  <Field label="المنصب">
+                  <Field label={t("workflow.paths.stepPositionLabel")}>
                     <Select
                       value={s.positionId ?? ""}
-                      placeholder="— المنصب —"
+                      placeholder={t("workflow.paths.stepPositionPlaceholder")}
                       options={positionOptions}
                       onChange={(e) => patchStep(i, { positionId: e.target.value || null })}
                     />
                   </Field>
-                  <Field label="الإسناد">
+                  <Field label={t("workflow.paths.stepAssignLabel")}>
                     <Select
                       value={s.assignmentStrategy}
-                      options={STRATEGY_OPTIONS}
+                      options={strategyOptions}
                       onChange={(e) =>
                         patchStep(i, {
                           assignmentStrategy: e.target.value as AssignmentStrategy,
@@ -397,13 +404,13 @@ function PathEditor({
                   {FLAG_DEFS.map((f) => (
                     <Checkbox
                       key={f.key}
-                      label={f.label}
+                      label={t(`workflow.flag.${f.key}`)}
                       checked={s[f.key]}
                       onChange={(e) => patchStep(i, { [f.key]: e.target.checked })}
                     />
                   ))}
                   <Checkbox
-                    label="خطوة نهائية"
+                    label={t("workflow.paths.finalCheckbox")}
                     checked={s.isFinal}
                     onChange={(e) => patchStep(i, { isFinal: e.target.checked })}
                   />

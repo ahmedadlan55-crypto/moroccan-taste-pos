@@ -16,6 +16,7 @@ import {
 } from "@/shared/ui";
 import { Field } from "@/shared/forms";
 import { DataTable, type ColumnDef } from "@/shared/tables";
+import { useTx } from "@/shared/ui/i18n";
 import {
   usePositions,
   useTransactionTypes,
@@ -51,6 +52,7 @@ function emptyStep(typeId: string): WorkflowDefinitionInput {
 }
 
 export function StepsTab() {
+  const t = useTx();
   const types = useTransactionTypes();
   const positions = usePositions();
   const [typeId, setTypeId] = useState<string>("");
@@ -65,12 +67,16 @@ export function StepsTab() {
   const [deleteError, setDeleteError] = useState<string | null>(null);
 
   const typeOptions = useMemo(
-    () => (types.data ?? []).map((t) => ({ value: t.id, label: t.name })),
+    () => (types.data ?? []).map((type) => ({ value: type.id, label: type.name })),
     [types.data],
   );
   const positionOptions = useMemo(
     () => (positions.data ?? []).map((p) => ({ value: p.id, label: p.name })),
     [positions.data],
+  );
+  const strategyOptions = useMemo(
+    () => STRATEGY_OPTIONS.map((o) => ({ value: o.value, label: t(`workflow.strategy.${o.value}`) })),
+    [t],
   );
   const rows = defs.data ?? [];
   const nextOrder = rows.length ? Math.max(...rows.map((r) => Number(r.stepOrder) || 0)) + 1 : 1;
@@ -105,13 +111,13 @@ export function StepsTab() {
     save.mutate(editing, {
       onSuccess: (res) => {
         if (res && res.success === false) {
-          setFormError(res.error || "تعذّر حفظ الخطوة.");
+          setFormError(res.error || t("workflow.steps.saveFailed"));
           return;
         }
-        toast({ title: editing.id ? "تم تحديث الخطوة" : "تمت إضافة الخطوة", tone: "success" });
+        toast({ title: editing.id ? t("workflow.steps.toastUpdated") : t("workflow.steps.toastAdded"), tone: "success" });
         setEditing(null);
       },
-      onError: (e) => setFormError(e instanceof Error ? e.message : "تعذّر حفظ الخطوة."),
+      onError: (e) => setFormError(e instanceof Error ? e.message : t("workflow.steps.saveFailed")),
     });
   }
 
@@ -121,13 +127,13 @@ export function StepsTab() {
     del.mutate(toDelete.id, {
       onSuccess: (res) => {
         if (res && res.success === false) {
-          setDeleteError(res.error || "تعذّر حذف الخطوة.");
+          setDeleteError(res.error || t("workflow.steps.deleteFailed"));
           return;
         }
-        toast({ title: "تم حذف الخطوة", tone: "success" });
+        toast({ title: t("workflow.steps.toastDeleted"), tone: "success" });
         setToDelete(null);
       },
-      onError: (e) => setDeleteError(e instanceof Error ? e.message : "تعذّر حذف الخطوة."),
+      onError: (e) => setDeleteError(e instanceof Error ? e.message : t("workflow.steps.deleteFailed")),
     });
   }
 
@@ -145,17 +151,17 @@ export function StepsTab() {
         </span>
       ),
     },
-    { id: "stepName", header: "الخطوة", accessor: (r) => r.stepName || "—" },
-    { id: "position", header: "المنصب", accessor: (r) => r.positionName || "—" },
+    { id: "stepName", header: t("workflow.steps.colStep"), accessor: (r) => r.stepName || "—" },
+    { id: "position", header: t("workflow.steps.colPosition"), accessor: (r) => r.positionName || "—" },
     {
       id: "flags",
-      header: "الصلاحيات",
+      header: t("workflow.steps.colFlags"),
       accessor: () => "",
       cell: (r) => (
         <div className="flex flex-wrap gap-1">
           {FLAG_DEFS.filter((f) => (r as unknown as StepFlags)[f.key]).map((f) => (
             <Badge key={f.key} tone="teal">
-              {f.label}
+              {t(`workflow.flag.${f.key}`)}
             </Badge>
           ))}
         </div>
@@ -163,19 +169,19 @@ export function StepsTab() {
     },
     {
       id: "isFinal",
-      header: "نهائية",
-      accessor: (r) => (r.isFinal ? "نعم" : "لا"),
+      header: t("workflow.steps.colFinal"),
+      accessor: (r) => (r.isFinal ? t("common.yes") : t("common.no")),
       cell: (r) =>
-        r.isFinal ? <Badge tone="success">نهائية</Badge> : <span className="text-slate-400">—</span>,
+        r.isFinal ? <Badge tone="success">{t("workflow.term.final")}</Badge> : <span className="text-slate-400">—</span>,
     },
   ];
 
   return (
     <div className="space-y-4">
-      <Field label="نوع المعاملة" hint="اختر النوع لعرض خطوات اعتماده وتحريرها.">
+      <Field label={t("workflow.steps.typeSelectLabel")} hint={t("workflow.steps.typeSelectHint")}>
         <Select
           value={typeId}
-          placeholder="— اختر نوع المعاملة —"
+          placeholder={t("workflow.steps.typeSelectPlaceholder")}
           options={typeOptions}
           onChange={(e) => setTypeId(e.target.value)}
           disabled={types.isLoading}
@@ -186,8 +192,8 @@ export function StepsTab() {
 
       {!typeId ? (
         <EmptyState
-          title="لم يتم اختيار نوع معاملة"
-          body="اختر نوع معاملة من الأعلى لبدء تعريف خطوات اعتماده."
+          title={t("workflow.steps.emptyNoTypeTitle")}
+          body={t("workflow.steps.emptyNoTypeBody")}
         />
       ) : defs.isLoading ? (
         <LoadingState rows={4} />
@@ -197,7 +203,7 @@ export function StepsTab() {
         <>
           <div className="flex justify-end">
             <Button variant="primary" onClick={openNew}>
-              <Plus className="h-4 w-4" /> خطوة جديدة
+              <Plus className="h-4 w-4" /> {t("workflow.steps.newBtn")}
             </Button>
           </div>
           <DataTable
@@ -205,15 +211,15 @@ export function StepsTab() {
             rows={rows}
             getRowId={(r) => r.id}
             tableId="wf-steps"
-            emptyTitle="لا توجد خطوات"
-            emptyBody="أضف أول خطوة لهذا النوع لبناء سلسلة اعتماده."
+            emptyTitle={t("workflow.steps.emptyTitle")}
+            emptyBody={t("workflow.steps.emptyBody")}
             rowActions={(r) => (
               <div className="flex items-center gap-1">
-                <IconButton aria-label="تعديل" size="sm" onClick={() => openEdit(r)}>
+                <IconButton aria-label={t("common.edit")} size="sm" onClick={() => openEdit(r)}>
                   <Pencil className="h-4 w-4" />
                 </IconButton>
                 <IconButton
-                  aria-label="حذف"
+                  aria-label={t("common.delete")}
                   size="sm"
                   variant="danger"
                   onClick={() => {
@@ -232,14 +238,14 @@ export function StepsTab() {
       <Dialog
         open={!!editing}
         onClose={() => setEditing(null)}
-        title={editing?.id ? "تعديل الخطوة" : "خطوة جديدة"}
+        title={editing?.id ? t("workflow.steps.dialogEdit") : t("workflow.steps.dialogNew")}
         footer={
           <>
             <Button variant="secondary" onClick={() => setEditing(null)} disabled={save.isPending}>
-              إلغاء
+              {t("common.cancel")}
             </Button>
             <Button variant="primary" onClick={submit} loading={save.isPending}>
-              حفظ
+              {t("common.save")}
             </Button>
           </>
         }
@@ -247,7 +253,7 @@ export function StepsTab() {
         {editing && (
           <div className="space-y-4">
             <div className="grid grid-cols-2 gap-3">
-              <Field label="الترتيب">
+              <Field label={t("workflow.steps.orderLabel")}>
                 <Input
                   type="number"
                   min={1}
@@ -257,10 +263,10 @@ export function StepsTab() {
                   }
                 />
               </Field>
-              <Field label="سياسة الإسناد">
+              <Field label={t("workflow.steps.strategyLabel")}>
                 <Select
                   value={editing.assignmentStrategy}
-                  options={STRATEGY_OPTIONS}
+                  options={strategyOptions}
                   onChange={(e) =>
                     setEditing({
                       ...editing,
@@ -270,34 +276,34 @@ export function StepsTab() {
                 />
               </Field>
             </div>
-            <Field label="المنصب" hint="المنصب الذي تُسند إليه هذه الخطوة.">
+            <Field label={t("workflow.steps.positionLabel")} hint={t("workflow.steps.positionHint")}>
               <Select
                 value={editing.positionId ?? ""}
-                placeholder="— اختر المنصب —"
+                placeholder={t("workflow.steps.positionPlaceholder")}
                 options={positionOptions}
                 onChange={(e) => setEditing({ ...editing, positionId: e.target.value || null })}
               />
             </Field>
-            <Field label="اسم الخطوة (اختياري)" hint="يُشتق تلقائيًا من اسم المنصب إن تُرك فارغًا.">
+            <Field label={t("workflow.steps.stepNameLabel")} hint={t("workflow.steps.stepNameHint")}>
               <Input
                 value={editing.stepName ?? ""}
                 onChange={(e) => setEditing({ ...editing, stepName: e.target.value })}
-                placeholder="مثال: مراجعة المدير المالي"
+                placeholder={t("workflow.steps.stepNamePlaceholder")}
               />
             </Field>
             <div>
-              <div className="mb-2 text-xs font-bold text-slate-600">الصلاحيات</div>
+              <div className="mb-2 text-xs font-bold text-slate-600">{t("workflow.steps.permissionsHeading")}</div>
               <div className="grid grid-cols-2 gap-2">
                 {FLAG_DEFS.map((f) => (
                   <Checkbox
                     key={f.key}
-                    label={f.label}
+                    label={t(`workflow.flag.${f.key}`)}
                     checked={editing[f.key]}
                     onChange={(e) => setEditing({ ...editing, [f.key]: e.target.checked })}
                   />
                 ))}
                 <Checkbox
-                  label="خطوة نهائية"
+                  label={t("workflow.steps.finalCheckbox")}
                   checked={editing.isFinal}
                   onChange={(e) => setEditing({ ...editing, isFinal: e.target.checked })}
                 />
@@ -314,10 +320,10 @@ export function StepsTab() {
 
       <ConfirmDialog
         open={!!toDelete}
-        title="حذف الخطوة"
-        description={toDelete ? `سيتم حذف «${toDelete.stepName || "خطوة"}» من سلسلة الاعتماد.` : ""}
+        title={t("workflow.steps.confirmDeleteTitle")}
+        description={toDelete ? t("workflow.steps.confirmDeleteDesc", { name: toDelete.stepName || t("workflow.steps.stepFallback") }) : ""}
         tone="danger"
-        confirmLabel="حذف"
+        confirmLabel={t("common.delete")}
         processing={del.isPending}
         error={deleteError}
         onConfirm={confirmDelete}

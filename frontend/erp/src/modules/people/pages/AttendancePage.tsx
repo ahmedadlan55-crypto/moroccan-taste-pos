@@ -3,19 +3,13 @@ import { useQuery } from "@tanstack/react-query";
 import { Badge, Input, PageHeader, StatusBadge, Tabs } from "@/shared/ui";
 import { DataTable, type ColumnDef } from "@/shared/tables";
 import { formatDate, formatNumber } from "@/shared/lib";
+import { useTx } from "@/shared/ui/i18n";
 import { peopleApi } from "../lib/api";
 import { qk } from "../lib/query-keys";
-import { EXCEPTION_TYPE_LABEL, statusMeta, weekdayLabels } from "../lib/labels";
+import { exceptionTypeLabel, statusMeta, weekdayLabels } from "../lib/labels";
 import type { AttendanceRow, Holiday, HrException, WeeklyOffEmployee } from "../lib/types";
 
 type TabKey = "attendance" | "exceptions" | "weekly-off" | "holidays";
-
-const TABS = [
-  { value: "attendance", label: "سجل الحضور" },
-  { value: "exceptions", label: "الاستثناءات" },
-  { value: "weekly-off", label: "الإجازات الأسبوعية" },
-  { value: "holidays", label: "العطل الرسمية" },
-];
 
 function clockLabel(value?: string | null): string {
   if (!value) return "—";
@@ -25,15 +19,22 @@ function clockLabel(value?: string | null): string {
 }
 
 export function AttendancePage() {
+  const t = useTx();
   const [tab, setTab] = useState<TabKey>("attendance");
+  const TABS = [
+    { value: "attendance", label: t("people.attendance.tabs.attendance") },
+    { value: "exceptions", label: t("people.attendance.tabs.exceptions") },
+    { value: "weekly-off", label: t("people.attendance.tabs.weeklyOff") },
+    { value: "holidays", label: t("people.attendance.tabs.holidays") },
+  ];
   return (
     <div className="space-y-6">
       <PageHeader
-        eyebrow="الموارد البشرية"
-        title="الحضور والانصراف"
-        subtitle="سجل الحضور اليومي والاستثناءات والإجازات الأسبوعية والعطل الرسمية."
+        eyebrow={t("people.eyebrow")}
+        title={t("people.attendance.title")}
+        subtitle={t("people.attendance.subtitle")}
       />
-      <Tabs items={TABS} value={tab} onChange={(v) => setTab(v as TabKey)} aria-label="أقسام الحضور" />
+      <Tabs items={TABS} value={tab} onChange={(v) => setTab(v as TabKey)} aria-label={t("people.attendance.tabsAria")} />
       {tab === "attendance" && <AttendanceTab />}
       {tab === "exceptions" && <ExceptionsTab />}
       {tab === "weekly-off" && <WeeklyOffTab />}
@@ -43,6 +44,7 @@ export function AttendancePage() {
 }
 
 function AttendanceTab() {
+  const t = useTx();
   const [date, setDate] = useState("");
   const params = useMemo(() => (date ? { date } : {}), [date]);
   const query = useQuery({
@@ -51,20 +53,20 @@ function AttendanceTab() {
   });
 
   const columns: ColumnDef<AttendanceRow>[] = [
-    { id: "employeeName", header: "الموظف", accessor: (r) => r.employeeName, sortable: true },
-    { id: "employeeNumber", header: "الرقم", accessor: (r) => r.employeeNumber || "—" },
+    { id: "employeeName", header: t("people.field.employee"), accessor: (r) => r.employeeName, sortable: true },
+    { id: "employeeNumber", header: t("people.field.number"), accessor: (r) => r.employeeNumber || "—" },
     {
       id: "attendanceDate",
-      header: "التاريخ",
+      header: t("people.field.date"),
       accessor: (r) => r.attendanceDate,
       cell: (r) => formatDate(r.attendanceDate),
       sortable: true,
     },
-    { id: "clockIn", header: "الدخول", accessor: (r) => r.clockIn ?? "", cell: (r) => clockLabel(r.clockIn) },
-    { id: "clockOut", header: "الخروج", accessor: (r) => r.clockOut ?? "", cell: (r) => clockLabel(r.clockOut) },
+    { id: "clockIn", header: t("people.attendance.col.clockIn"), accessor: (r) => r.clockIn ?? "", cell: (r) => clockLabel(r.clockIn) },
+    { id: "clockOut", header: t("people.attendance.col.clockOut"), accessor: (r) => r.clockOut ?? "", cell: (r) => clockLabel(r.clockOut) },
     {
       id: "totalHours",
-      header: "الساعات",
+      header: t("people.attendance.col.hours"),
       accessor: (r) => r.totalHours,
       cell: (r) => formatNumber(r.totalHours),
       numeric: true,
@@ -72,17 +74,17 @@ function AttendanceTab() {
     },
     {
       id: "lateMinutes",
-      header: "تأخير (د)",
+      header: t("people.attendance.col.late"),
       accessor: (r) => r.lateMinutes,
       numeric: true,
       defaultHidden: true,
     },
     {
       id: "status",
-      header: "الحالة",
+      header: t("common.status"),
       accessor: (r) => r.status,
       cell: (r) => {
-        const m = statusMeta(r.status);
+        const m = statusMeta(r.status, t);
         return <StatusBadge tone={m.tone}>{m.label}</StatusBadge>;
       },
     },
@@ -98,12 +100,12 @@ function AttendanceTab() {
       onRetry={() => query.refetch()}
       tableId="people.attendance"
       searchable
-      searchPlaceholder="بحث باسم الموظف…"
-      emptyTitle="لا توجد سجلات حضور"
+      searchPlaceholder={t("people.attendance.searchPlaceholder")}
+      emptyTitle={t("people.attendance.emptyTitle")}
       exportFilename="attendance.csv"
       filterBar={
         <label className="flex items-center gap-2 text-xs font-bold text-slate-500">
-          التاريخ
+          {t("people.field.date")}
           <Input type="date" dir="ltr" value={date} onChange={(e) => setDate(e.target.value)} className="h-10" />
         </label>
       }
@@ -112,22 +114,23 @@ function AttendanceTab() {
 }
 
 function ExceptionsTab() {
+  const t = useTx();
   const query = useQuery({
     queryKey: qk.exceptions({}),
     queryFn: ({ signal }) => peopleApi.listExceptions({}, signal),
   });
 
   const columns: ColumnDef<HrException>[] = [
-    { id: "employeeName", header: "الموظف", accessor: (r) => r.employeeName, sortable: true },
+    { id: "employeeName", header: t("people.field.employee"), accessor: (r) => r.employeeName, sortable: true },
     {
       id: "type",
-      header: "النوع",
-      accessor: (r) => EXCEPTION_TYPE_LABEL[r.type] ?? r.type,
-      cell: (r) => <Badge tone="info">{EXCEPTION_TYPE_LABEL[r.type] ?? r.type}</Badge>,
+      header: t("people.field.type"),
+      accessor: (r) => exceptionTypeLabel(r.type, t),
+      cell: (r) => <Badge tone="info">{exceptionTypeLabel(r.type, t)}</Badge>,
     },
-    { id: "startDate", header: "من", accessor: (r) => r.startDate, cell: (r) => formatDate(r.startDate), sortable: true },
-    { id: "endDate", header: "إلى", accessor: (r) => r.endDate, cell: (r) => formatDate(r.endDate) },
-    { id: "reason", header: "السبب", accessor: (r) => r.reason || "—" },
+    { id: "startDate", header: t("people.field.from"), accessor: (r) => r.startDate, cell: (r) => formatDate(r.startDate), sortable: true },
+    { id: "endDate", header: t("people.field.to"), accessor: (r) => r.endDate, cell: (r) => formatDate(r.endDate) },
+    { id: "reason", header: t("people.field.reason"), accessor: (r) => r.reason || "—" },
   ];
 
   return (
@@ -140,27 +143,28 @@ function ExceptionsTab() {
       onRetry={() => query.refetch()}
       tableId="people.exceptions"
       searchable
-      emptyTitle="لا توجد استثناءات"
+      emptyTitle={t("people.exceptions.emptyTitle")}
     />
   );
 }
 
 function WeeklyOffTab() {
+  const t = useTx();
   const query = useQuery({
     queryKey: qk.weeklyOff(),
     queryFn: ({ signal }) => peopleApi.weeklyOffEmployees(signal),
   });
 
   const columns: ColumnDef<WeeklyOffEmployee>[] = [
-    { id: "name", header: "الموظف", accessor: (r) => r.name, sortable: true },
-    { id: "branchName", header: "الفرع", accessor: (r) => r.branchName || "—" },
-    { id: "positionName", header: "المنصب", accessor: (r) => r.positionName || "—" },
-    { id: "days", header: "أيام الإجازة", accessor: (r) => weekdayLabels(r.days) },
+    { id: "name", header: t("people.field.employee"), accessor: (r) => r.name, sortable: true },
+    { id: "branchName", header: t("people.field.branch"), accessor: (r) => r.branchName || "—" },
+    { id: "positionName", header: t("people.weeklyOff.col.position"), accessor: (r) => r.positionName || "—" },
+    { id: "days", header: t("people.weeklyOff.col.offDays"), accessor: (r) => weekdayLabels(r.days, t) },
     {
       id: "hasOverride",
-      header: "مخصّص",
-      accessor: (r) => (r.hasOverride ? "نعم" : "الافتراضي"),
-      cell: (r) => <Badge tone={r.hasOverride ? "teal" : "neutral"}>{r.hasOverride ? "مخصّص" : "الافتراضي"}</Badge>,
+      header: t("people.weeklyOff.col.custom"),
+      accessor: (r) => (r.hasOverride ? t("people.bool.yes") : t("people.bool.default")),
+      cell: (r) => <Badge tone={r.hasOverride ? "teal" : "neutral"}>{r.hasOverride ? t("people.bool.custom") : t("people.bool.default")}</Badge>,
     },
   ];
 
@@ -168,7 +172,7 @@ function WeeklyOffTab() {
     <div className="space-y-3">
       {query.data && (
         <p className="text-xs font-bold text-slate-500">
-          الإجازة الأسبوعية الافتراضية للمؤسسة: {weekdayLabels(query.data.orgDefault)}
+          {t("people.weeklyOff.orgDefault", { days: weekdayLabels(query.data.orgDefault, t) })}
         </p>
       )}
       <DataTable
@@ -180,13 +184,14 @@ function WeeklyOffTab() {
         onRetry={() => query.refetch()}
         tableId="people.weeklyOff"
         searchable
-        emptyTitle="لا يوجد موظفون"
+        emptyTitle={t("people.weeklyOff.emptyTitle")}
       />
     </div>
   );
 }
 
 function HolidaysTab() {
+  const t = useTx();
   const year = new Date().getFullYear();
   const query = useQuery({
     queryKey: qk.holidays(year),
@@ -194,15 +199,15 @@ function HolidaysTab() {
   });
 
   const columns: ColumnDef<Holiday>[] = [
-    { id: "name", header: "المناسبة", accessor: (r) => r.name, sortable: true },
-    { id: "startDate", header: "من", accessor: (r) => r.startDate, cell: (r) => formatDate(r.startDate), sortable: true },
-    { id: "endDate", header: "إلى", accessor: (r) => r.endDate, cell: (r) => formatDate(r.endDate) },
-    { id: "scope", header: "النطاق", accessor: (r) => r.scope || "—" },
+    { id: "name", header: t("people.holidays.col.occasion"), accessor: (r) => r.name, sortable: true },
+    { id: "startDate", header: t("people.field.from"), accessor: (r) => r.startDate, cell: (r) => formatDate(r.startDate), sortable: true },
+    { id: "endDate", header: t("people.field.to"), accessor: (r) => r.endDate, cell: (r) => formatDate(r.endDate) },
+    { id: "scope", header: t("people.holidays.col.scope"), accessor: (r) => r.scope || "—" },
     {
       id: "isPaid",
-      header: "مدفوعة",
-      accessor: (r) => (r.isPaid ? "نعم" : "لا"),
-      cell: (r) => <StatusBadge tone={r.isPaid ? "success" : "neutral"}>{r.isPaid ? "مدفوعة" : "غير مدفوعة"}</StatusBadge>,
+      header: t("people.holidays.col.paid"),
+      accessor: (r) => (r.isPaid ? t("people.bool.yes") : t("common.no")),
+      cell: (r) => <StatusBadge tone={r.isPaid ? "success" : "neutral"}>{r.isPaid ? t("people.bool.paid") : t("people.bool.unpaid")}</StatusBadge>,
     },
   ];
 
@@ -216,7 +221,7 @@ function HolidaysTab() {
       onRetry={() => query.refetch()}
       tableId="people.holidays"
       searchable
-      emptyTitle={`لا توجد عطل مسجّلة لعام ${year}`}
+      emptyTitle={t("people.holidays.emptyTitle", { year })}
     />
   );
 }

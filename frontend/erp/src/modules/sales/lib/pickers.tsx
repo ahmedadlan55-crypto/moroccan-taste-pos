@@ -3,6 +3,7 @@
 // via the API pagination. Reused across orders / invoices / payments / returns.
 // Rewired onto the SHARED combobox (@/shared/ui) — no local picker duplication.
 import { SearchableEntityCombobox, type EntityPage } from "@/shared/ui";
+import { useTx } from "@/shared/ui/i18n";
 import { formatCurrency } from "@/shared/lib";
 import { o2cApi } from "./api";
 import type { Customer, Invoice } from "./types";
@@ -13,22 +14,23 @@ function toPage<T>(data: T[], pagination: { page: number; totalPages: number; to
 }
 
 export function CustomerPicker({ value, onChange, disabled }: { value: Customer | null; onChange: (c: Customer | null) => void; disabled?: boolean }) {
+  const t = useTx();
   return (
     <SearchableEntityCombobox<Customer>
       value={value}
       onChange={onChange}
       disabled={disabled}
       queryKey={["o2c", "customer-picker"]}
-      placeholder="ابحث عن عميل بالاسم أو الهاتف أو الرقم الضريبي…"
-      ariaLabel="اختيار عميل"
+      placeholder={t("sales.pickers.customerPlaceholder")}
+      ariaLabel={t("sales.pickers.customerAria")}
       getKey={(c) => c.id}
       getLabel={(c) => c.name}
       getSublabel={(c) => {
         const bits: string[] = [];
         if (c.phone) bits.push(c.phone);
-        if (Number(c.creditLimit) > 0) bits.push(`الحد ${formatCurrency(c.creditLimit)}`);
+        if (Number(c.creditLimit) > 0) bits.push(t("sales.pickers.creditLimit", { amount: formatCurrency(c.creditLimit) }));
         const bal = c.derived?.arBalance ?? c.balance;
-        if (Number(bal) > 0) bits.push(`الرصيد ${formatCurrency(bal)}`);
+        if (Number(bal) > 0) bits.push(t("sales.pickers.balance", { amount: formatCurrency(bal) }));
         return bits.join(" · ") || undefined;
       }}
       fetcher={async ({ q, page, signal }) => {
@@ -40,17 +42,18 @@ export function CustomerPicker({ value, onChange, disabled }: { value: Customer 
 }
 
 export function OpenInvoicePicker({ customerId, value, onChange, disabled }: { customerId?: string; value: Invoice | null; onChange: (v: Invoice | null) => void; disabled?: boolean }) {
+  const t = useTx();
   return (
     <SearchableEntityCombobox<Invoice>
       value={value}
       onChange={onChange}
       disabled={disabled}
       queryKey={["o2c", "open-invoice-picker", customerId ?? ""]}
-      placeholder="ابحث عن فاتورة مفتوحة…"
-      ariaLabel="اختيار فاتورة"
+      placeholder={t("sales.pickers.invoicePlaceholder")}
+      ariaLabel={t("sales.pickers.invoiceAria")}
       getKey={(i) => i.id}
       getLabel={(i) => i.document_number}
-      getSublabel={(i) => `${i.customer_name ?? ""} · المتبقّي ${formatCurrency(i.balance_amount)}`}
+      getSublabel={(i) => `${i.customer_name ?? ""} · ${t("sales.pickers.remaining", { amount: formatCurrency(i.balance_amount) })}`}
       fetcher={async ({ q, page, signal }) => {
         const res = await o2cApi.invoices({ q, page, pageSize: 20, status: "issued", customerId }, signal);
         // also include partially_paid — the API filters one status; merge a 2nd call on page 1 only

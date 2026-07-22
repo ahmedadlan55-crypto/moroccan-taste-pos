@@ -1,5 +1,6 @@
 import { DatePicker } from "@/shared/ui";
 import { formatDate } from "@/shared/lib";
+import { useT } from "@/i18n";
 import { useCashFlow, startOfYearISO, todayISO, type DateRange, type CashFlowSection } from "../api";
 import {
   Num,
@@ -15,6 +16,7 @@ import {
 } from "../components";
 
 function Section({ title, section }: { title: string; section: CashFlowSection }) {
+  const t = useT();
   return (
     <div className="surface overflow-hidden">
       <div className="border-b border-slate-100 bg-slate-50/70 px-5 py-3 text-sm font-extrabold text-slate-800">
@@ -33,7 +35,7 @@ function Section({ title, section }: { title: string; section: CashFlowSection }
         </tbody>
         <tfoot>
           <tr className="border-t border-slate-200 bg-slate-50 text-sm font-extrabold">
-            <td className="px-5 py-2.5 text-slate-900">صافي {title}</td>
+            <td className="px-5 py-2.5 text-slate-900">{t("accounting.cashFlow.netPrefix", { title })}</td>
             <td className="px-5 py-2.5 text-left">
               <Num value={section.total} signed strong />
             </td>
@@ -54,6 +56,7 @@ function ReconRow({ label, value, signed = false }: { label: string; value: numb
 }
 
 export function CashFlowPage() {
+  const t = useT();
   const filter = useAppliedFilter<DateRange>({ from: startOfYearISO(), to: todayISO() });
   const query = useCashFlow(filter.applied);
   const data = query.data;
@@ -62,15 +65,15 @@ export function CashFlowPage() {
   return (
     <div>
       <ReportHeader
-        title="قائمة التدفقات النقدية"
-        subtitle="الطريقة غير المباشرة (IAS 7): تشغيلية، استثمارية، وتمويلية — مع تسوية مع حركة النقد الفعلية."
+        title={t("accounting.cashFlow.title")}
+        subtitle={t("accounting.cashFlow.subtitle")}
         onPrint={printReport}
       />
       <FilterCard onRun={filter.run} running={query.isFetching}>
-        <FilterField label="من تاريخ">
+        <FilterField label={t("accounting.common.fromDate")}>
           <DatePicker value={filter.draft.from} onChange={(from) => filter.patch({ from })} />
         </FilterField>
-        <FilterField label="إلى تاريخ">
+        <FilterField label={t("accounting.common.toDate")}>
           <DatePicker value={filter.draft.to} onChange={(to) => filter.patch({ to })} />
         </FilterField>
       </FilterCard>
@@ -84,7 +87,7 @@ export function CashFlowPage() {
         {data && (
           <PrintArea>
             <div className="surface mb-5 p-4">
-              <PrintBanner title="قائمة التدفقات النقدية" period={period} />
+              <PrintBanner title={t("accounting.cashFlow.title")} period={period} />
               <div
                 className={`inline-flex items-center gap-2 rounded-xl border px-3 py-2 text-xs font-bold ${
                   data.isReconciled
@@ -93,25 +96,25 @@ export function CashFlowPage() {
                 }`}
               >
                 {data.isReconciled
-                  ? "التدفقات مطابقة لحركة النقد الفعلية"
-                  : `فرق تسوية: ${fmt(data.reconciliationDiff)}`}
+                  ? t("accounting.cashFlow.reconciled")
+                  : t("accounting.cashFlow.reconDiff", { amount: fmt(data.reconciliationDiff) })}
               </div>
             </div>
 
             <div className="grid gap-5">
-              <Section title="الأنشطة التشغيلية" section={data.operating} />
-              <Section title="الأنشطة الاستثمارية" section={data.investing} />
-              <Section title="الأنشطة التمويلية" section={data.financing} />
+              <Section title={t("accounting.cashFlow.operating")} section={data.operating} />
+              <Section title={t("accounting.cashFlow.investing")} section={data.investing} />
+              <Section title={t("accounting.cashFlow.financing")} section={data.financing} />
 
               <div className="surface overflow-hidden">
                 <div className="border-b border-slate-100 bg-slate-50/70 px-5 py-3 text-sm font-extrabold text-slate-800">
-                  صافي التغيّر في النقد والتسوية
+                  {t("accounting.cashFlow.netChangeTitle")}
                 </div>
-                <ReconRow label="صافي التغيّر في النقد" value={data.netChange} signed />
+                <ReconRow label={t("accounting.cashFlow.netChange")} value={data.netChange} signed />
                 <div className="border-t border-slate-50" />
-                <ReconRow label="النقد أول الفترة" value={data.cashOpening} />
-                <ReconRow label="النقد آخر الفترة" value={data.cashClosing} />
-                <ReconRow label="الحركة الفعلية للنقد" value={data.actualMovement} signed />
+                <ReconRow label={t("accounting.cashFlow.cashOpening")} value={data.cashOpening} />
+                <ReconRow label={t("accounting.cashFlow.cashClosing")} value={data.cashClosing} />
+                <ReconRow label={t("accounting.cashFlow.actualMovement")} value={data.actualMovement} signed />
               </div>
             </div>
           </PrintArea>

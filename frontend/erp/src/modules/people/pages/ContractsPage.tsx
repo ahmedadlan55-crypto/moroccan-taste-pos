@@ -3,12 +3,14 @@ import { useQuery } from "@tanstack/react-query";
 import { DetailStat, Drawer, LoadingState, PageHeader, StatusBadge, ErrorState } from "@/shared/ui";
 import { DataTable, type ColumnDef } from "@/shared/tables";
 import { formatCurrency, formatDate } from "@/shared/lib";
+import { useTx } from "@/shared/ui/i18n";
 import { peopleApi } from "../lib/api";
 import { qk } from "../lib/query-keys";
-import { EMPLOYMENT_TYPE_LABEL, statusMeta } from "../lib/labels";
+import { employmentTypeLabel, statusMeta } from "../lib/labels";
 import type { Employee } from "../lib/types";
 
 export function ContractsPage() {
+  const t = useTx();
   const [detailId, setDetailId] = useState<string | null>(null);
 
   const query = useQuery({
@@ -17,28 +19,28 @@ export function ContractsPage() {
   });
 
   const columns: ColumnDef<Employee>[] = [
-    { id: "employeeNumber", header: "الرقم", accessor: (r) => r.employeeNumber, sortable: true },
-    { id: "fullName", header: "الموظف", accessor: (r) => r.fullName, sortable: true },
-    { id: "jobTitle", header: "المسمى", accessor: (r) => r.jobTitle || "—" },
+    { id: "employeeNumber", header: t("people.field.number"), accessor: (r) => r.employeeNumber, sortable: true },
+    { id: "fullName", header: t("people.field.employee"), accessor: (r) => r.fullName, sortable: true },
+    { id: "jobTitle", header: t("people.field.jobTitle"), accessor: (r) => r.jobTitle || "—" },
     {
       id: "employmentType",
-      header: "نوع التوظيف",
-      accessor: (r) => (r.employmentType ? EMPLOYMENT_TYPE_LABEL[r.employmentType] ?? r.employmentType : "—"),
+      header: t("people.field.employmentType"),
+      accessor: (r) => (r.employmentType ? employmentTypeLabel(r.employmentType, t) : "—"),
     },
-    { id: "hireDate", header: "تاريخ التعيين", accessor: (r) => r.hireDate ?? "", cell: (r) => formatDate(r.hireDate), sortable: true },
+    { id: "hireDate", header: t("people.field.hireDate"), accessor: (r) => r.hireDate ?? "", cell: (r) => formatDate(r.hireDate), sortable: true },
     {
       id: "grossSalary",
-      header: "الإجمالي",
+      header: t("people.field.gross"),
       accessor: (r) => r.grossSalary,
       cell: (r) => formatCurrency(r.grossSalary),
       numeric: true,
     },
     {
       id: "status",
-      header: "الحالة",
+      header: t("common.status"),
       accessor: (r) => r.status,
       cell: (r) => {
-        const m = statusMeta(r.status);
+        const m = statusMeta(r.status, t);
         return <StatusBadge tone={m.tone}>{m.label}</StatusBadge>;
       },
     },
@@ -47,9 +49,9 @@ export function ContractsPage() {
   return (
     <div className="space-y-6">
       <PageHeader
-        eyebrow="الموارد البشرية"
-        title="العقود"
-        subtitle="عقود الموظفين وتواريخ التعيين ونهاية العقد. اضغط على أي صف لعرض تفاصيل العقد."
+        eyebrow={t("people.eyebrow")}
+        title={t("people.contracts.title")}
+        subtitle={t("people.contracts.subtitle")}
       />
       <DataTable
         columns={columns}
@@ -60,8 +62,8 @@ export function ContractsPage() {
         onRetry={() => query.refetch()}
         tableId="people.contracts"
         searchable
-        searchPlaceholder="بحث باسم الموظف…"
-        emptyTitle="لا توجد عقود"
+        searchPlaceholder={t("people.contracts.searchPlaceholder")}
+        emptyTitle={t("people.contracts.emptyTitle")}
         onRowClick={(r) => setDetailId(r.id)}
       />
       <ContractDetailDrawer id={detailId} onClose={() => setDetailId(null)} />
@@ -70,6 +72,7 @@ export function ContractsPage() {
 }
 
 function ContractDetailDrawer({ id, onClose }: { id: string | null; onClose: () => void }) {
+  const t = useTx();
   const query = useQuery({
     queryKey: qk.employee(id ?? ""),
     queryFn: ({ signal }) => peopleApi.getEmployee(id ?? "", signal),
@@ -78,38 +81,38 @@ function ContractDetailDrawer({ id, onClose }: { id: string | null; onClose: () 
   const emp = query.data;
 
   return (
-    <Drawer open={!!id} onClose={onClose} title={emp ? emp.fullName : "تفاصيل العقد"} eyebrow="العقود">
+    <Drawer open={!!id} onClose={onClose} title={emp ? emp.fullName : t("people.contracts.detailTitle")} eyebrow={t("people.contracts.drawerEyebrow")}>
       {query.isLoading && <LoadingState rows={2} />}
       {query.error && <ErrorState error={query.error} onRetry={() => query.refetch()} />}
       {emp && (
         <div className="space-y-4">
           <div className="grid grid-cols-2 gap-3">
-            <DetailStat label="الرقم الوظيفي" value={emp.employeeNumber || "—"} />
-            <DetailStat label="المسمى" value={emp.jobTitle || "—"} />
+            <DetailStat label={t("people.field.empNumber")} value={emp.employeeNumber || "—"} />
+            <DetailStat label={t("people.field.jobTitle")} value={emp.jobTitle || "—"} />
             <DetailStat
-              label="نوع التوظيف"
-              value={emp.employmentType ? EMPLOYMENT_TYPE_LABEL[emp.employmentType] ?? emp.employmentType : "—"}
+              label={t("people.field.employmentType")}
+              value={emp.employmentType ? employmentTypeLabel(emp.employmentType, t) : "—"}
             />
-            <DetailStat label="الحالة" value={statusMeta(emp.status).label} />
-            <DetailStat label="تاريخ التعيين" value={formatDate(emp.hireDate)} />
-            <DetailStat label="نهاية العقد" value={formatDate(emp.contractEndDate)} />
-            <DetailStat label="نهاية التجربة" value={formatDate(emp.probationEndDate)} />
-            <DetailStat label="الراتب الأساسي" value={formatCurrency(emp.basicSalary)} />
-            <DetailStat label="رقم الهوية" value={emp.nationalId || "—"} />
-            <DetailStat label="رقم الإقامة" value={emp.iqamaNumber || "—"} />
-            <DetailStat label="القسم" value={emp.departmentName || "—"} />
-            <DetailStat label="الفرع" value={emp.branchName || "—"} />
+            <DetailStat label={t("common.status")} value={statusMeta(emp.status, t).label} />
+            <DetailStat label={t("people.field.hireDate")} value={formatDate(emp.hireDate)} />
+            <DetailStat label={t("people.contracts.stat.contractEnd")} value={formatDate(emp.contractEndDate)} />
+            <DetailStat label={t("people.contracts.stat.probationEnd")} value={formatDate(emp.probationEndDate)} />
+            <DetailStat label={t("people.field.basicSalary")} value={formatCurrency(emp.basicSalary)} />
+            <DetailStat label={t("people.field.idNumber")} value={emp.nationalId || "—"} />
+            <DetailStat label={t("people.contracts.stat.iqama")} value={emp.iqamaNumber || "—"} />
+            <DetailStat label={t("people.field.department")} value={emp.departmentName || "—"} />
+            <DetailStat label={t("people.field.branch")} value={emp.branchName || "—"} />
           </div>
           {(emp.bankName || emp.bankIban) && (
             <div className="grid grid-cols-2 gap-3">
-              <DetailStat label="البنك" value={emp.bankName || "—"} />
-              <DetailStat label="الآيبان" value={emp.bankIban || "—"} />
+              <DetailStat label={t("people.contracts.stat.bank")} value={emp.bankName || "—"} />
+              <DetailStat label={t("people.contracts.stat.iban")} value={emp.bankIban || "—"} />
             </div>
           )}
           {emp.status === "terminated" && (
             <div className="grid grid-cols-2 gap-3">
-              <DetailStat label="تاريخ إنهاء الخدمة" value={formatDate(emp.terminationDate)} />
-              <DetailStat label="سبب الإنهاء" value={emp.terminationReason || "—"} />
+              <DetailStat label={t("people.contracts.stat.terminationDate")} value={formatDate(emp.terminationDate)} />
+              <DetailStat label={t("people.contracts.stat.terminationReason")} value={emp.terminationReason || "—"} />
             </div>
           )}
         </div>

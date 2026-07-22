@@ -849,6 +849,15 @@ async function flagDefaultPasswordUsers() {
   if (flagged) console.log('[pw-flag] flagged ' + flagged + ' user(s) still on a default password → must_change_password=1');
 }
 
+// RC (Release-Candidate gate) — autoInitDB() deliberately never throws: its
+// retry loop logs and RETURNS on final failure so the server still comes up
+// for diagnostics when the DB is unreachable. That is right for `npm start`,
+// but it means a caller cannot tell success from failure — and the release
+// chain MUST be able to, or it would happily start a server on a half-built
+// schema. This flag is the honest signal: it is set ONLY on the path that
+// actually completed runMigrations() + normalizeCollations().
+let __autoInitSucceeded = false;
+
 async function autoInitDB() {
   // Retry loop — Railway MySQL may not be ready immediately on cold start
   const MAX_RETRIES = 5;
@@ -917,6 +926,7 @@ async function autoInitDB() {
       // to the in-system change-password page after login (best-effort, cheap:
       // only never-changed accounts, only the top defaults).
       try { await flagDefaultPasswordUsers(); } catch (e) { console.warn('[pw-flag]', e.message); }
+      __autoInitSucceeded = true; // see the flag's declaration — the ONLY honest success signal
       return; // success — exit retry loop
     } catch (e) {
       console.error(`[DB] Connection attempt ${attempt}/${MAX_RETRIES} failed: ${e.message}`);
@@ -7416,9 +7426,35 @@ async function runMigrations() {
   // signal, and its failure is what turns into a non-zero exit code a
   // deploy pipeline can act on.
   if (process.env.MIGRATE_ONLY === '1' || process.env.MIGRATE_ONLY === 'true') {
+    // RC (Release-Candidate gate) — this used to be a bare `SELECT 1`, which
+    // proves the DB is REACHABLE and nothing else. Combined with autoInitDB()
+    // swallowing its own final failure, `MIGRATE_ONLY=1` could exit 0 on a
+    // schema that never finished provisioning — i.e. the release chain's
+    // fail-closed guarantee was fail-OPEN in exactly the case it exists for.
+    // Two independent signals are required now:
+    //   1. __autoInitSucceeded — set only on autoInitDB()'s completion path,
+    //      so a failure that its retry loop swallowed is still caught here.
+    //   2. A real schema probe — tables provisioned at different stages of
+    //      runMigrations() (baseline / legacy-only / capability infrastructure)
+    //      must all actually exist. A crash partway through runMigrations()
+    //      leaves the later ones missing, which (1) alone would not reveal if
+    //      the crash happened outside the retry loop's try block.
+    const REQUIRED_TABLES = ['users', 'hr_employees', 'pos_orders', 'permissions_v3', 'role_permissions'];
     try {
-      await db.query('SELECT 1');
-      console.log('[boot] MIGRATE_ONLY=1 — schema ready, exiting without starting the HTTP server.');
+      if (!__autoInitSucceeded) {
+        throw new Error('autoInitDB() did not reach its success path — schema provisioning failed or the DB was unreachable (see the [DB] errors above)');
+      }
+      const [present] = await db.query(
+        `SELECT TABLE_NAME FROM INFORMATION_SCHEMA.TABLES
+          WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME IN (?)`,
+        [REQUIRED_TABLES]
+      );
+      const found = new Set(present.map(r => r.TABLE_NAME));
+      const missing = REQUIRED_TABLES.filter(t => !found.has(t));
+      if (missing.length) {
+        throw new Error('schema incomplete — missing table(s): ' + missing.join(', '));
+      }
+      console.log('[boot] MIGRATE_ONLY=1 — schema ready (' + REQUIRED_TABLES.length + '/' + REQUIRED_TABLES.length + ' probe tables present), exiting without starting the HTTP server.');
       process.exit(0);
     } catch (e) {
       console.error('[boot] MIGRATE_ONLY=1 — schema is NOT ready:', e && e.message);

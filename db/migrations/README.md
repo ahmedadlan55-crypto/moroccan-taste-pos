@@ -36,16 +36,49 @@ Examples:
 
 ## Running
 
-**This does NOT run automatically anywhere in this repo today** — verified
-directly: `Dockerfile`'s `CMD` is `node server.js` with no migration step,
-there is no `railway.json`/`railway.toml` release phase, and `server.js`
-never `require()`s `db/migrate.js`. Every numbered migration only applies
-when someone runs the command below by hand (locally, or as a manual step
-in a deploy).
+**This DOES run automatically in production now** (Release-Candidate gate).
+What used to be here — "this does NOT run automatically anywhere in this
+repo today" — was accurate for a long time and is now obsolete. It was also
+the single most consequential fact in this file: `Dockerfile`'s `CMD` was
+`node server.js`, so **no numbered migration had ever applied in
+production** and the live schema was only ever whatever `server.js`'s legacy
+`runMigrations()` built at boot.
+
+`Dockerfile`'s `CMD` is now `node scripts/release-start.js` — the single
+definition of the release chain, also exposed as `npm run release:start` and
+exercised against a genuinely empty database by
+`tests/integration/releaseChain.test.js`. It runs, in order, failing closed
+at every step:
+
+```
+0/3  node db/init.js               skipped unless RUN_DB_INIT=1 (see below)
+1/3  MIGRATE_ONLY=1 node server.js  legacy runMigrations() schema evolution
+2/3  node db/migrate.js             the numbered migrations in this directory
+3/3  node server.js                 the real start — reached ONLY if 1 and 2 exited 0
+```
+
+Two things about that order are load-bearing and easy to get wrong:
+
+* **`db/migrate.js` cannot run directly after `db/init.js`.** The numbered
+  migrations were authored against the schema as `runMigrations()` had
+  already evolved it — `0005` ALTERs `hr_employees`, `0014` ALTERs
+  `pos_orders`, and neither table exists in `db/schema.sql` or in any
+  numbered migration. The `INFORMATION_SCHEMA` guards in rule 3 protect
+  against a duplicate COLUMN, not a missing TABLE, so on a bare baseline
+  those files raise `ER_NO_SUCH_TABLE` and the runner exits 1. Step 1 is
+  what makes step 2 possible.
+* **`db/init.js` is deliberately NOT a per-start step.** `autoInitDB()`
+  already applies `db/schema.sql` on an empty database and does it more
+  safely — it filters schema.sql's hardcoded `CREATE DATABASE` (which
+  raises "Access denied" on a privilege-scoped managed credential and would
+  brick a fail-closed chain) and `USE` (which would redirect the pool off
+  the env-configured database). Use `RUN_DB_INIT=1` only for a deliberate
+  one-time bootstrap.
+
+The migration step can still be run alone, by hand:
 
 ```bash
-# Apply all pending migrations (a manual step — see "Recommended release
-# step" below for exactly when to run this in a deploy)
+# Apply all pending migrations
 npm run db:migrate   # = node db/migrate.js
 
 # Inspect applied versions

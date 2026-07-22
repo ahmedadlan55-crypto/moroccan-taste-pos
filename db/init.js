@@ -29,6 +29,17 @@ async function initDB() {
       // statement here would silently redirect the connection away from
       // that env-configured target database onto the hardcoded literal.
       if (/^USE\s/i.test(stmt)) continue;
+      // RC (Release-Candidate gate) — schema.sql also hardcodes
+      // `CREATE DATABASE IF NOT EXISTS moroccan_taste_pos` for the same
+      // standalone-CLI reason, and it was NOT filtered here (server.js:870
+      // already filters both). On a managed host the real database is named
+      // by DATABASE_URL/MYSQL_DATABASE (commonly `railway`), so executing it
+      // either creates a stray empty `moroccan_taste_pos` beside the real one,
+      // or — on a privilege-scoped credential that cannot CREATE DATABASE —
+      // raises "Access denied", which contains neither 'already exists' nor
+      // 'Duplicate', lands in sqlErrors, and exits 1. In a fail-closed release
+      // chain that would permanently brick the deploy.
+      if (/^CREATE\s+DATABASE\b/i.test(stmt)) continue;
       try {
         await db.query(stmt);
       } catch (e) {

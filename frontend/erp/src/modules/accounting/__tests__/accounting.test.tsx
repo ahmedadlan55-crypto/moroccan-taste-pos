@@ -145,7 +145,9 @@ describe("TrialBalance", () => {
     expect(await screen.findByText(/غير متوازن — أول المدة/)).toBeInTheDocument();
     expect(await screen.findByText(/غير متوازن — حركة الفترة/)).toBeInTheDocument();
     expect(await screen.findByText(/غير متوازن — آخر المدة/)).toBeInTheDocument();
-    expect(await screen.findByText(/تنبيه: التقرير غير Clean/)).toBeInTheDocument();
+    // Copy moved to i18n (accounting.trialBalance.status.notClean): "غير Clean"
+    // → proper-Arabic "غير سليم". Same alert, same intent.
+    expect(await screen.findByText(/تنبيه: التقرير غير سليم/)).toBeInTheDocument();
   });
 });
 

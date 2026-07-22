@@ -89,6 +89,11 @@ export const items = {
     field: {
       code: "Code / SKU",
       codeHint: "A unique identifier for the item.",
+      // Optional on existing items: the column is deliberately nullable and
+      // legacy items predate it. A blank field with no explanation reads as
+      // lost data.
+      codeOptionalHint: "This item has no SKU — optional for legacy items.",
+      codeEmptyPlaceholder: "No SKU",
       nameAr: "Name (Arabic)",
       nameEn: "Name (English)",
       descAr: "Description (Arabic)",

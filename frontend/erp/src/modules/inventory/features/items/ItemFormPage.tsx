@@ -138,7 +138,21 @@ export function ItemFormPage({ mode, itemId }: { mode: "create" | "edit"; itemId
   // ── validation ──
   function validate(): Record<string, string> {
     const e: Record<string, string> = {};
-    if (!f.code.trim()) e.code = t("items.form.validation.codeRequired");
+    // SKU is REQUIRED ON CREATE and OPTIONAL ON EDIT — matching what the rest
+    // of the stack already does, which this check used to contradict:
+    //   • the column is nullable by design (server.js adds `sku` with a UNIQUE
+    //     on the NORMALISED column precisely so, in its own words, legacy rows
+    //     can have no SKU — MySQL permits many NULLs in a unique index);
+    //   • routes/inventory-items.js requires it on POST (_validateBasics with
+    //     requireSku: true) but on PATCH only validates `sku` when it is
+    //     actually SENT and changed — omitting it is legal;
+    //   • the product treats no-SKU as a first-class state: the items list has
+    //     a "بلا SKU / أصناف قديمة" KPI card, computed server-side.
+    // This function was mode-agnostic, and handleSave returns before any
+    // network call when it produces errors — so every legacy item without a
+    // SKU (17 of the 19 rows in this database) was UNEDITABLE through the UI:
+    // open it, change anything, press save, and it silently refused.
+    if (mode === "create" && !f.code.trim()) e.code = t("items.form.validation.codeRequired");
     if (!f.nameAr.trim()) e.nameAr = t("items.form.validation.nameArRequired");
     if (mode === "create" && !f.nameEn.trim()) e.nameEn = t("items.form.validation.nameEnRequiredNew");
     if (!f.baseUnit.trim()) e.baseUnit = t("items.form.validation.unitRequired");
@@ -256,8 +270,25 @@ export function ItemFormPage({ mode, itemId }: { mode: "create" | "edit"; itemId
       {/* (a) Basic data */}
       <Section icon={Boxes} title={t("items.form.section.basics")} subtitle={t("items.form.section.basicsHint")}>
         <div className="grid gap-4 p-5 sm:grid-cols-2">
-          <Field label={t("items.form.field.code")} hint={t("items.form.field.codeHint")} error={errors.code}>
-            <input className="field w-full font-mono" dir="ltr" value={f.code} disabled={hasMovements} onChange={(e) => set("code", e.target.value)} aria-label={t("items.form.field.code")} />
+          {/* An EMPTY SKU on an existing item is a legitimate state (legacy
+              rows predate the field — see validate() above), not missing data.
+              Say so, instead of rendering a blank box that reads as "we lost
+              your value": the hint switches to an explicit "this item has no
+              SKU — optional" and the placeholder repeats it inside the input. */}
+          <Field
+            label={t("items.form.field.code")}
+            hint={mode === "edit" && !f.code.trim() ? t("items.form.field.codeOptionalHint") : t("items.form.field.codeHint")}
+            error={errors.code}
+          >
+            <input
+              className="field w-full font-mono"
+              dir="ltr"
+              value={f.code}
+              disabled={hasMovements}
+              placeholder={mode === "edit" ? t("items.form.field.codeEmptyPlaceholder") : undefined}
+              onChange={(e) => set("code", e.target.value)}
+              aria-label={t("items.form.field.code")}
+            />
           </Field>
           <Field label={t("items.form.field.kind")}>
             <Select className="w-full" value={f.kind} disabled={mode === "edit"} onChange={(e) => set("kind", e.target.value as "raw" | "semi")} aria-label={t("items.form.field.kind")}>

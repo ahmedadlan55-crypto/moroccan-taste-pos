@@ -156,6 +156,39 @@ async function apiCall(method: string, urlPath: string, token: string | null) {
 
 /** Inject the admin session the way erp.spec.ts does (89-route walk pattern). */
 async function injectSession(page: Page, lang?: Lang) {
+  // When a language is forced, pin BOTH of the things that decide it. Seeding
+  // only one is not deterministic:
+  //
+  //   • localStorage "erp_lang" is read PRE-PAINT (public/lang-init.js and
+  //     I18nProvider's readInitialLang), so it decides the FIRST paint — which
+  //     is what makes the font run start from a genuinely cold cache and the
+  //     woff2 actually get requested.
+  //   • GET /api/user-preferences is the SERVER-persisted per-user preference
+  //     that app/providers/language-sync.tsx applies on mount: for any stored
+  //     "ar"|"en" it calls setLang(), which overwrites the in-memory language
+  //     AND, via the I18nProvider effect, the localStorage value just seeded.
+  //
+  // Those two used to agree only by accident: routes/user-preferences.js has no
+  // DELETE, so `user_preferences` simply had no row for admin, GET returned {}
+  // and the seed survived. This file's afterEach — added to stop the language
+  // leaking between tests and across viewport projects — upserts a permanent
+  // row, so from the first test onward the server always answers "ar" and would
+  // always win, reverting the seeded "en" a few hundred ms into boot.
+  //
+  // Fulfilling the GET for THIS PAGE ONLY keeps both sources in agreement
+  // without mutating shared server state and without depending on test order.
+  // PUTs still reach the real server, so nothing about the preference API is
+  // stubbed out from under the tests that actually exercise it.
+  if (lang) {
+    await page.route("**/api/user-preferences", async (route) => {
+      if (route.request().method() !== "GET") return route.fallback();
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({ language: lang }),
+      });
+    });
+  }
   await page.addInitScript(
     ([token, session, forcedLang]) => {
       localStorage.setItem("pos_token", token);
@@ -764,10 +797,28 @@ test("inventory item CRUD surface — list, full-page new, detail, edit (no writ
   await assertHealthy(page, `/inventory/items/${itemId}/edit`);
   await expect(page.getByRole("dialog"), "edit is a page, not a dialog").toHaveCount(0);
   await expect(page.locator("#main h1").first()).toContainText(AR.itemEditTitle);
+  // Assert prefill FIDELITY, not a hardcoded expectation of non-emptiness.
+  //
+  // This previously asserted /\S/ — "the SKU box must contain something" — and
+  // went red. Investigating it end to end showed the PRODUCT was right and the
+  // TEST was wrong: inv_items.sku is deliberately nullable (server.js adds it
+  // with a UNIQUE on the NORMALISED column so, in its own words, legacy rows
+  // can have no SKU), 17 of the 19 rows in this database have none, and the row
+  // this test picks is whatever `?pageSize=1` returns — which, because
+  // parseListQuery defaults to ORDER BY name DESC, is an inactive legacy
+  // fixture whose sku IS NULL. The blank box was the truth, faithfully
+  // round-tripped (the adapter maps null -> "").
+  //
+  // So compare against what the API actually holds for THIS record. That is a
+  // strictly stronger check: it catches a genuinely dropped value for any row,
+  // and it stays correct whichever row the list happens to return.
+  const detail = await apiCall("GET", `/api/inventory/v2/items/${itemId}`, TOKEN);
+  expect(detail.status, "GET item detail must succeed").toBe(200);
+  const expectedSku = String((detail.body?.data as { sku?: unknown } | undefined)?.sku ?? "");
   await expect(
     page.locator(`input[aria-label="${AR.itemFieldCode}"]`),
-    "the edit form must be prefilled from the record (code)",
-  ).toHaveValue(/\S/);
+    `the edit form must show exactly the record's stored SKU (${JSON.stringify(expectedSku)})`,
+  ).toHaveValue(expectedSku);
   await expect(
     page.locator(`input[aria-label="${AR.itemFieldNameAr}"]`),
     "the edit form must be prefilled from the record (Arabic name)",

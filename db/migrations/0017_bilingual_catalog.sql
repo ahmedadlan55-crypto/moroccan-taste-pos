@@ -58,10 +58,24 @@ CREATE TABLE IF NOT EXISTS menu_category_i18n (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- ─── price_lists / brands / branches — nullable English names ───
--- Plain ALTER TABLE (MySQL < 8.0 has no `ADD COLUMN IF NOT EXISTS`). Re-running
--- this file against a DB that already has the column will error on these
--- three lines — expected for a reference/fresh-install supplement, not a
--- repeatable script; the live idempotent path is addColumnIfMissing() above.
-ALTER TABLE price_lists ADD COLUMN name_en VARCHAR(200) NULL;
-ALTER TABLE brands      ADD COLUMN name_en VARCHAR(200) NULL;
-ALTER TABLE branches    ADD COLUMN name_en VARCHAR(200) NULL;
+-- Tier A.2 corrective gate, Section 6 — this file's own header claimed it
+-- is "NOT the live migration path... a reference/fresh-install supplement",
+-- but db/migrate.js's real runner does not know or care about that claim:
+-- _listMigrationFiles() matches any NNNN_name.sql directly under
+-- db/migrations/ (this file included) and WILL attempt to run it — and
+-- WILL be re-run/collide if server.js's addColumnIfMissing() path or
+-- routes/pos-v2.js's self-sufficient _ensureSchema() already added these
+-- columns first, a real possible race depending on deployment order.
+-- Discovered via the same real-runner test that caught 0002/0004/0005/0013.
+-- Same INFORMATION_SCHEMA + PREPARE/EXECUTE guard pattern for consistency.
+SET @col_exists = (SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'price_lists' AND COLUMN_NAME = 'name_en');
+SET @stmt = IF(@col_exists = 0, 'ALTER TABLE price_lists ADD COLUMN name_en VARCHAR(200) NULL', 'SELECT 1');
+PREPARE stmt FROM @stmt; EXECUTE stmt; DEALLOCATE PREPARE stmt;
+
+SET @col_exists = (SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'brands' AND COLUMN_NAME = 'name_en');
+SET @stmt = IF(@col_exists = 0, 'ALTER TABLE brands ADD COLUMN name_en VARCHAR(200) NULL', 'SELECT 1');
+PREPARE stmt FROM @stmt; EXECUTE stmt; DEALLOCATE PREPARE stmt;
+
+SET @col_exists = (SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'branches' AND COLUMN_NAME = 'name_en');
+SET @stmt = IF(@col_exists = 0, 'ALTER TABLE branches ADD COLUMN name_en VARCHAR(200) NULL', 'SELECT 1');
+PREPARE stmt FROM @stmt; EXECUTE stmt; DEALLOCATE PREPARE stmt;

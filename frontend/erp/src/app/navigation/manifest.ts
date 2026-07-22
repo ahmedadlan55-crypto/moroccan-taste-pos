@@ -141,7 +141,12 @@ export const NAV: NavGroup[] = [
       { id: "ac-coa", path: "/accounting/chart-of-accounts", label: "nav.items.ac-coa", icon: "BookText", cap: "accounting.view", module: "accounting" },
       { id: "ac-journals", path: "/accounting/journals", label: "nav.items.ac-journals", icon: "BookOpen", cap: "accounting.journals.view", module: "accounting" },
       { id: "ac-gl", path: "/accounting/general-ledger", label: "nav.items.ac-gl", icon: "Layers", cap: "accounting.reports.view", module: "accounting" },
-      { id: "ac-tb", path: "/accounting/trial-balance", label: "nav.items.ac-tb", icon: "Scale", cap: "accounting.reports.view", module: "accounting" },
+      // Tier A.1 corrective gate — cap matches routes/erp-core.js's real
+      // requireCapability('finance.reports.view') gate exactly (the other
+      // report nav items below still use 'accounting.reports.view', whose
+      // matching backend gate has not been individually verified — see
+      // ADR 0002 section 7; not changed here to avoid guessing).
+      { id: "ac-tb", path: "/accounting/trial-balance", label: "nav.items.ac-tb", icon: "Scale", cap: "finance.reports.view", module: "accounting" },
       { id: "ac-pnl", path: "/accounting/income-statement", label: "nav.items.ac-pnl", icon: "TrendingUp", cap: "accounting.reports.view", module: "accounting" },
       { id: "ac-bs", path: "/accounting/balance-sheet", label: "nav.items.ac-bs", icon: "Building2", cap: "accounting.reports.view", module: "accounting" },
       { id: "ac-cf", path: "/accounting/cash-flow", label: "nav.items.ac-cf", icon: "LineChart", cap: "accounting.reports.view", module: "accounting" },

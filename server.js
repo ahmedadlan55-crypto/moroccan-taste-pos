@@ -494,6 +494,14 @@ app.get('/api/version', (req, res) => {
     message: process.env.RAILWAY_GIT_COMMIT_MESSAGE || '',
     deployId: process.env.RAILWAY_DEPLOYMENT_ID || '',
     env:     process.env.NODE_ENV || 'development',
+    pid: process.pid,
+    // Tier A.2 test harness (tests/helpers/testHarness.js) — when a test
+    // spawns this process with TEST_HARNESS_TOKEN set, it polls this
+    // endpoint and checks the token round-trips, proving the response came
+    // from the exact child process it just spawned on a freshly-allocated
+    // port, not a stale/unrelated server left listening there. Undefined
+    // (and harmless) outside the test harness — no real deployment sets it.
+    harnessToken: process.env.TEST_HARNESS_TOKEN || null,
     startedAt: SERVER_BOOT_ISO,
     now: new Date().toISOString(),
     // The shared header reads this to decide which warehouse link to render
@@ -1115,27 +1123,26 @@ async function runMigrations() {
     console.log('[DB] Migration warning (cost_centers backfill):', e.message.substring(0, 120));
   }
   // (3) Full O2C additive schema (7 AR/SO tables + customers evolve + the
-  // v_customer_ar_balance view) + o2c.* capabilities — previously applied only
-  // by the manual scripts/order-to-cash/migrate.js, never by boot. The service
-  // layer reads the view even outside the O2C flag (CustomerService.get →
-  // derivedBalance), so the schema must ride the canonical boot path. Both
-  // modules are idempotent (guarded creates / CREATE OR REPLACE / INSERT IGNORE).
+  // v_customer_ar_balance view) — previously applied only by the manual
+  // scripts/order-to-cash/migrate.js, never by boot. The service layer reads
+  // the view even outside the O2C flag (CustomerService.get → derivedBalance),
+  // so the schema must ride the canonical boot path. Idempotent (guarded
+  // creates / CREATE OR REPLACE / INSERT IGNORE). The o2c.* capabilities seed
+  // used to run right here too — moved below createTableIfMissing('permissions_v3'
+  // / 'role_permissions', ...) — see the comment at that call site.
   try {
     await require('./db/migrations/order-to-cash/schema').apply(db, (m) => console.log('[o2c-schema]', m));
-    await require('./db/migrations/order-to-cash/capabilities').seedO2CCapabilities(db, (m) => console.log('[o2c-caps]', m));
   } catch (e) {
     console.log('[DB] Migration warning (o2c schema):', e.message.substring(0, 160));
   }
 
-  // Closure-stream capability declarations (db/migrations/capability-seeds/*.json).
-  // Loud on failure: a capability that silently fails to seed turns into a 403
-  // for a role that legitimately holds the work — the exact class of bug the
-  // one-shot seeder caused before the late-seed block existed.
-  try {
-    await require('./db/migrations/capability-seeds/apply').applyCapabilitySeeds(db, (m) => console.log('[cap-seeds]', m));
-  } catch (e) {
-    console.error('[DB] capability-seeds FAILED (roles may 403 on new routes):', e.message);
-  }
+  // Closure-stream capability declarations (db/migrations/capability-seeds/*.json)
+  // moved to right after the o2c.* capabilities seed below — it INSERT
+  // IGNOREs into permissions_v3 + role_permissions, which don't exist yet
+  // at this point in a fresh install (createTableIfMissing for both runs
+  // later in this same function). Same ordering-bug class as Tier A.2
+  // Section 6 (pos_orders.branch_id) — the seed silently failed here on a
+  // fresh install's first boot and only succeeded on a second restart.
 
   // PO lines — unit conversion columns
   await addColumnIfMissing('po_lines', 'unit', "VARCHAR(50) DEFAULT ''");
@@ -1169,11 +1176,16 @@ async function runMigrations() {
 
   // ─── bilingual-i18n-images — Owner A: brand/branch scope (0014) ───
   // (db/migrations/0014_brand_branch_scope.sql — wiring notes copied verbatim)
-  await addColumnIfMissing('pos_orders', 'branch_id', "VARCHAR(50) NULL");
-  await addColumnIfMissing('shifts',     'branch_id', "VARCHAR(50) NULL");
-  // Indexes from the same file — CREATE INDEX has no IF NOT EXISTS on this
-  // MySQL version, so guard the same way idx_menu_semi_id does just below.
-  try { await db.query('CREATE INDEX idx_pos_orders_branch ON pos_orders(branch_id)'); } catch (e) {}
+  // `shifts` is part of the baseline schema (created before runMigrations()
+  // ever runs) so its column/index are safe here. `pos_orders` is NOT — it's
+  // only created later in this same function (createTableIfMissing('pos_orders', ...)
+  // below) — the pos_orders.branch_id column+index moved there. Tier A.2
+  // corrective gate, Section 6: this ordering bug meant a fresh install's
+  // FIRST boot silently swallowed the pos_orders.branch_id ADD COLUMN
+  // (addColumnIfMissing logs-and-continues on "table doesn't exist"), so the
+  // column only ever appeared after a SECOND server restart. Discovered via
+  // tests/integration/migrationLifecycle.test.js's real server.js boot.
+  await addColumnIfMissing('shifts', 'branch_id', "VARCHAR(50) NULL");
   try { await db.query('CREATE INDEX idx_shifts_branch ON shifts(branch_id)'); } catch (e) {}
 
   // ─── bilingual-i18n-images — Owner D: name_en backfill provenance (0015) ───
@@ -1496,10 +1508,13 @@ async function runMigrations() {
   await addColumnIfMissing('branches', 'manager', "VARCHAR(100)");
   await addColumnIfMissing('branches', 'supply_mode', "ENUM('parent_company','warehouse','auto') DEFAULT 'parent_company'");
 
-  // Custody expenses: add cost_center
-  await addColumnIfMissing('custody_expenses', 'cost_center_id', "VARCHAR(50)");
-  await addColumnIfMissing('custody_expenses', 'cost_center_name', "VARCHAR(200)");
-  await addColumnIfMissing('custody_expenses', 'pre_approval_status', "ENUM('none','requested','approved','rejected') DEFAULT 'none'");
+  // Custody expenses: cost_center_id/cost_center_name/pre_approval_status
+  // moved to right after createTableIfMissing('custody_expenses', ...) below
+  // — `custody_expenses` is not part of the baseline schema, it's only
+  // created later in this same function, so on a fresh install these ADD
+  // COLUMNs silently failed here (addColumnIfMissing logs-and-continues on
+  // "table doesn't exist") and only appeared after a second server restart.
+  // Same ordering-bug class as Tier A.2 Section 6 (pos_orders.branch_id).
 
   // ═══════════════════════════════════════
   // WORKFLOW ENGINE TABLES (نظام المعاملات)
@@ -1668,19 +1683,43 @@ async function runMigrations() {
   await addColumnIfMissing('transactions', 'escalated_at', "DATETIME DEFAULT NULL");
   await addColumnIfMissing('transactions', 'escalation_count', "INT DEFAULT 0");
 
-  // V4.6 — Per-recipient sub-status (multi-recipient awareness)
-  await addColumnIfMissing('txn_recipients', 'sub_status', "ENUM('pending','viewed','replied','approved','rejected') DEFAULT 'pending'");
-  await addColumnIfMissing('txn_recipients', 'viewed_at', "DATETIME DEFAULT NULL");
-  await addColumnIfMissing('txn_recipients', 'acted_at', "DATETIME DEFAULT NULL");
-  await addColumnIfMissing('txn_recipients', 'acted_action', "VARCHAR(40) DEFAULT NULL");
+  // V4.6 — Per-recipient sub-status (multi-recipient awareness). Moved to
+  // right after createTableIfMissing('txn_recipients', ...) further down —
+  // `txn_recipients` isn't part of the baseline schema, it's only created
+  // later in this same function, so on a fresh install these ADD COLUMNs
+  // silently failed here (addColumnIfMissing logs-and-continues on "table
+  // doesn't exist") and only appeared after a second server restart. Same
+  // ordering-bug class as Tier A.2 Section 6 (pos_orders.branch_id).
 
-  // V4.7 — Reply-stage linking (so we can enforce "one reply per stage per actor")
-  await addColumnIfMissing('transaction_replies', 'stage_step_id', "VARCHAR(50) DEFAULT NULL");
+  // V4.7 — Reply-stage linking (so we can enforce "one reply per stage per
+  // actor"). Moved to right after createTableIfMissing('transaction_replies',
+  // ...) further up in this function, for the same reason as V4.6 above —
+  // `transaction_replies` is created later than this line.
 
   // V4.8 — Action log enhancements (link reply + step + previous step for return)
   await addColumnIfMissing('transaction_steps_log', 'reply_id', "VARCHAR(60) DEFAULT NULL");
   await addColumnIfMissing('transaction_steps_log', 'from_step_id', "VARCHAR(50) DEFAULT NULL");
   await addColumnIfMissing('transaction_steps_log', 'to_step_id', "VARCHAR(50) DEFAULT NULL");
+
+  // Tier A.3 Release Gate — current_assignee/subject/content_html are
+  // (idempotently) added again later in this same function (~line 4174-4185)
+  // — that's still where their canonical addColumnIfMissing calls live, not
+  // duplicated logic. But three things BETWEEN here and there reference them
+  // first: the CREATE INDEX just below, the "counters backfill" block
+  // further down (current_assignee), and the utf8mb4 MODIFY COLUMN pass
+  // right after it (subject, content_html) — all three used to silently
+  // no-op/skip on a fresh install (index never created, backfill silently
+  // caught its own error, utf8mb4 enforcement skipped a column "that may
+  // not exist yet" per its own comment) and only start working on a SECOND
+  // restart, once the later addColumnIfMissing calls had already run once.
+  // Ensuring the columns exist right here — before any of the three — makes
+  // all of them converge on the FIRST boot, same ordering-bug class as
+  // pos_orders.branch_id (Tier A.2 Section 6). addColumnIfMissing is a
+  // pure no-op on the real second call further down, so nothing here
+  // changes behavior for any environment that already boots cleanly today.
+  await addColumnIfMissing('transactions', 'current_assignee', "VARCHAR(100) DEFAULT ''");
+  await addColumnIfMissing('transactions', 'subject', "VARCHAR(500) DEFAULT ''");
+  await addColumnIfMissing('transactions', 'content_html', "LONGTEXT");
 
   // V4.9 — Performance indexes
   // Inbox query (most common): WHERE current_assignee = ? AND status IN ...
@@ -1842,6 +1881,10 @@ async function runMigrations() {
       INDEX idx_replies_author (author_username)
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
   `);
+  // V4.7 — transaction_replies.stage_step_id moved here (was mis-ordered
+  // above the table's own creation — see the comment near the old location).
+  // Must run AFTER the CREATE TABLE immediately above.
+  await addColumnIfMissing('transaction_replies', 'stage_step_id', "VARCHAR(50) DEFAULT NULL");
   // V3.1: rich attachment metadata + ensure utf8mb4 on existing deploys
   await addColumnIfMissing('transaction_replies', 'attachment_name', "VARCHAR(255) DEFAULT NULL");
   await addColumnIfMissing('transaction_replies', 'attachment_mime', "VARCHAR(100) DEFAULT NULL");
@@ -1923,6 +1966,31 @@ async function runMigrations() {
       INDEX idx_rp_role (role)
     ) ENGINE=InnoDB
   `);
+  // o2c.* capabilities seed (db/migrations/order-to-cash/capabilities.js)
+  // moved here — it INSERT IGNOREs into permissions_v3 + role_permissions,
+  // but those tables were only created just above (createTableIfMissing,
+  // this same function). It used to run right after schema.apply() near the
+  // top of runMigrations(), long before permissions_v3/role_permissions
+  // existed on a fresh install — the INSERTs silently failed (caught by the
+  // try/catch there, which just logs a warning), so o2c.* capabilities and
+  // role grants never appeared until a second server restart. Same
+  // ordering-bug class as Tier A.2 Section 6 (pos_orders.branch_id).
+  try {
+    await require('./db/migrations/order-to-cash/capabilities').seedO2CCapabilities(db, (m) => console.log('[o2c-caps]', m));
+  } catch (e) {
+    console.log('[DB] Migration warning (o2c capabilities):', e.message.substring(0, 160));
+  }
+  // Closure-stream capability declarations (db/migrations/capability-seeds/*.json)
+  // — moved here from right after schema.apply() near the top of this
+  // function (see the comment at the old location). Loud on failure: a
+  // capability that silently fails to seed turns into a 403 for a role that
+  // legitimately holds the work — the exact class of bug the one-shot
+  // seeder caused before the late-seed block existed.
+  try {
+    await require('./db/migrations/capability-seeds/apply').applyCapabilitySeeds(db, (m) => console.log('[cap-seeds]', m));
+  } catch (e) {
+    console.error('[DB] capability-seeds FAILED (roles may 403 on new routes):', e.message);
+  }
   await createTableIfMissing('user_permission_overrides', `
     CREATE TABLE user_permission_overrides (
       username VARCHAR(100) NOT NULL,
@@ -1944,8 +2012,33 @@ async function runMigrations() {
   // hr/inventory/purchasing stay grant-only (role_permissions groupings, not
   // storable roles) — making them assignable is a product decision nobody has
   // made; accountant/finance/sales are assignable per the roles directive.
+  // Tier A.1 corrective gate — this exact statement re-narrowing the enum
+  // on every boot is precisely the failure mode the comment above already
+  // warns about (a legacy ALTER silently reverting a widening one). It just
+  // happened again from the other direction: db/migrations/0016_auditor_
+  // role.sql widened the enum to add 'auditor', but since THIS statement
+  // runs unconditionally on every server start (unlike db/migrate.js, which
+  // nothing invokes automatically — see db/migrations/README.md) it reset
+  // the enum back to the 8-value list on the very next boot, breaking any
+  // attempt to create/keep an auditor account. Kept in sync with 0016 here.
+  // Tier A.2 corrective gate — this ALTER ran unconditionally on every
+  // single boot, forever, even when the enum already matched (which is
+  // every boot after the very first one). Real DDL, however cheap it
+  // looks, still takes a metadata lock on `users` — a hot table read on
+  // nearly every request — for no reason once the schema is already
+  // correct. Now compares the column's CURRENT enum definition (read from
+  // INFORMATION_SCHEMA, not assumed) against the target and only runs the
+  // ALTER when they genuinely differ.
   try {
-    await db.query("ALTER TABLE users MODIFY COLUMN role ENUM('admin','cashier','manager','custody','employee','accountant','finance','sales') DEFAULT 'cashier'");
+    const TARGET_ROLE_ENUM = "enum('admin','cashier','manager','custody','employee','accountant','finance','sales','auditor')";
+    const [roleCol] = await db.query(
+      `SELECT COLUMN_TYPE FROM INFORMATION_SCHEMA.COLUMNS
+       WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'users' AND COLUMN_NAME = 'role'`
+    );
+    const currentRoleEnum = roleCol.length ? String(roleCol[0].COLUMN_TYPE || '').toLowerCase() : '';
+    if (currentRoleEnum !== TARGET_ROLE_ENUM) {
+      await db.query("ALTER TABLE users MODIFY COLUMN role ENUM('admin','cashier','manager','custody','employee','accountant','finance','sales','auditor') DEFAULT 'cashier'");
+    }
   } catch(e) { console.error('[migrations] users.role widen failed:', e && (e.code || e.message)); }
 
   // Seed permissions catalog (idempotent)
@@ -2430,22 +2523,17 @@ async function runMigrations() {
   // Users: can change branch (default false for cashier — per spec)
   await addColumnIfMissing('users', 'can_change_branch', "BOOLEAN DEFAULT FALSE");
 
-  // Audit log table
-  await createTableIfMissing('audit_logs', `
-    CREATE TABLE audit_logs (
-      id VARCHAR(50) PRIMARY KEY,
-      action VARCHAR(100) NOT NULL,
-      entity_type VARCHAR(50),
-      entity_id VARCHAR(50),
-      username VARCHAR(100),
-      details LONGTEXT,
-      ip_address VARCHAR(50),
-      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-      INDEX idx_audit_entity (entity_type, entity_id),
-      INDEX idx_audit_user (username),
-      INDEX idx_audit_date (created_at)
-    ) ENGINE=InnoDB
-  `);
+  // Tier A.2 corrective gate — a SECOND, conflicting audit_logs CREATE TABLE
+  // definition used to live here (id VARCHAR(50), `username` not
+  // `user_username`, no INDEX idx_audit_action). It was 100% dead code —
+  // createTableIfMissing('audit_logs', ...) at V4.11 above (~line 1730)
+  // always runs first and always wins on a fresh boot, so this definition
+  // never actually created anything, ever. Its only effect was a landmine:
+  // if that FIRST definition were ever removed or reordered, the table
+  // would silently come up with the wrong schema (a VARCHAR(50) id and a
+  // `username` column lib/auditLogger.js#logAudit/#logAuditTx don't write
+  // to). Removed rather than left as confusing dead code — see the V4.11
+  // definition (~line 1730) for the one canonical schema.
 
   // Phase 3A.1 — self-healing GL core. db/schema.sql creates gl_accounts/
   // gl_journals/gl_entries on a TRULY empty DB, but a PARTIAL DB (users table
@@ -2627,6 +2715,13 @@ async function runMigrations() {
       FOREIGN KEY (custody_id) REFERENCES custodies(id) ON DELETE CASCADE
     ) ENGINE=InnoDB
   `);
+  // custody_expenses.cost_center_id/cost_center_name/pre_approval_status
+  // moved here (was mis-ordered above the table's own creation — see the
+  // comment near the old location). Must run AFTER the CREATE TABLE
+  // immediately above.
+  await addColumnIfMissing('custody_expenses', 'cost_center_id', "VARCHAR(50)");
+  await addColumnIfMissing('custody_expenses', 'cost_center_name', "VARCHAR(200)");
+  await addColumnIfMissing('custody_expenses', 'pre_approval_status', "ENUM('none','requested','approved','rejected') DEFAULT 'none'");
 
   // Custody close request columns + override status
   await addColumnIfMissing('custodies', 'close_requested_by', "VARCHAR(100) DEFAULT ''");
@@ -2911,9 +3006,13 @@ async function runMigrations() {
   await addColumnIfMissing('hr_payroll_runs', 'created_by', "VARCHAR(100)");
   await addColumnIfMissing('hr_payroll_runs', 'updated_at', "TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP");
 
-  // hr_advances missing columns
-  await addColumnIfMissing('hr_advances', 'remaining', "DECIMAL(12,2) DEFAULT 0");
-  await addColumnIfMissing('hr_advances', 'monthly_deduction', "DECIMAL(12,2) DEFAULT 0");
+  // hr_advances missing columns — moved to right after
+  // createTableIfMissing('hr_advances', ...) below. `hr_advances` isn't part
+  // of the baseline schema, it's only created later in this same function,
+  // so on a fresh install these ADD COLUMNs silently failed here
+  // (addColumnIfMissing logs-and-continues on "table doesn't exist") and
+  // only appeared after a second server restart. Same ordering-bug class as
+  // Tier A.2 Section 6 (pos_orders.branch_id).
 
   // hr_departments missing columns
   await addColumnIfMissing('hr_departments', 'name_en', "VARCHAR(200)");
@@ -2962,6 +3061,11 @@ async function runMigrations() {
       created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     ) ENGINE=InnoDB
   `);
+  // hr_advances.remaining/monthly_deduction moved here (was mis-ordered
+  // above the table's own creation — see the comment near the old location).
+  // Must run AFTER the CREATE TABLE immediately above.
+  await addColumnIfMissing('hr_advances', 'remaining', "DECIMAL(12,2) DEFAULT 0");
+  await addColumnIfMissing('hr_advances', 'monthly_deduction', "DECIMAL(12,2) DEFAULT 0");
 
   // Seed default leave types
   try {
@@ -2988,23 +3092,12 @@ async function runMigrations() {
   // Remove plain_pass column (security fix — passwords must never be stored in plain text)
   try { await db.query('ALTER TABLE users DROP COLUMN plain_pass'); } catch(e) {}
 
-  // Ensure audit_logs table exists with proper structure
-  await createTableIfMissing('audit_logs', `
-    CREATE TABLE audit_logs (
-      id VARCHAR(50) PRIMARY KEY,
-      action VARCHAR(100) NOT NULL,
-      entity_type VARCHAR(50),
-      entity_id VARCHAR(100),
-      username VARCHAR(100),
-      details LONGTEXT,
-      ip_address VARCHAR(50),
-      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-      INDEX idx_audit_entity (entity_type, entity_id),
-      INDEX idx_audit_user (username),
-      INDEX idx_audit_date (created_at),
-      INDEX idx_audit_action (action)
-    ) ENGINE=InnoDB
-  `);
+  // Tier A.2 corrective gate — a THIRD, conflicting audit_logs CREATE TABLE
+  // definition used to live here (id VARCHAR(50), `username`, no
+  // user_username) — same dead-code landmine as the one removed near line
+  // 2445 (V4.11's definition at ~line 1730, BIGINT id / user_username, is
+  // the only one that ever actually runs). See that comment for the full
+  // reasoning; removed here for the same reason.
 
   // Soft delete columns on critical tables
   await addColumnIfMissing('sales', 'deleted_at', "DATETIME DEFAULT NULL");
@@ -3172,16 +3265,14 @@ async function runMigrations() {
   await addColumnIfMissing('cash_payments', 'project_id',     "VARCHAR(50)");
 
   // v5.10.5 — Fixed Assets registry: GL linkage + depreciation tracking +
-  // project + audit columns. The base `assets` table is created earlier in
-  // server.js (~line 3388) — these are additive columns for the new page.
-  await addColumnIfMissing('assets', 'dep_start_month',           "DATE");
-  await addColumnIfMissing('assets', 'dep_until_date',            "DATE");
-  await addColumnIfMissing('assets', 'gl_asset_account_id',       "VARCHAR(40)");
-  await addColumnIfMissing('assets', 'gl_dep_expense_account_id', "VARCHAR(40)");
-  await addColumnIfMissing('assets', 'gl_accum_dep_account_id',   "VARCHAR(40)");
-  await addColumnIfMissing('assets', 'project_id',                "VARCHAR(40)");
-  await addColumnIfMissing('assets', 'created_by',                "VARCHAR(80)");
-  await addColumnIfMissing('assets', 'updated_at',                "TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP");
+  // project + audit columns, moved to right after createTableIfMissing('assets',
+  // ...) further down. The comment that used to sit here ("the base `assets`
+  // table is created earlier in server.js ~line 3388") was wrong — there is
+  // only one `assets` CREATE TABLE in this file, and it's later in this same
+  // function — so on a fresh install these ADD COLUMNs silently failed here
+  // (addColumnIfMissing logs-and-continues on "table doesn't exist") and only
+  // appeared after a second server restart. Same ordering-bug class as
+  // Tier A.2 Section 6 (pos_orders.branch_id).
 
   // v5.10.5 — Self-heal inventory misclassification once at boot. Any
   // user-created "مخزون / منتجات تامة / WIP" account whose ancestry leads
@@ -4196,6 +4287,13 @@ async function runMigrations() {
       INDEX idx_txn (transaction_id)
     ) ENGINE=InnoDB
   `);
+  // V4.6 — Per-recipient sub-status columns moved here (was mis-ordered
+  // above the table's own creation — see the comment near the old location).
+  // Must run AFTER the CREATE TABLE immediately above.
+  await addColumnIfMissing('txn_recipients', 'sub_status', "ENUM('pending','viewed','replied','approved','rejected') DEFAULT 'pending'");
+  await addColumnIfMissing('txn_recipients', 'viewed_at', "DATETIME DEFAULT NULL");
+  await addColumnIfMissing('txn_recipients', 'acted_at', "DATETIME DEFAULT NULL");
+  await addColumnIfMissing('txn_recipients', 'acted_action', "VARCHAR(40) DEFAULT NULL");
 
   // Transaction number column widened to fit BR-DEP-TYP-YYYYMMDD-NNNN format
   // (legacy schemas had VARCHAR(20) which truncates the v2 structured number).
@@ -5612,6 +5710,11 @@ async function runMigrations() {
       INDEX idx_pos_sale (sale_id)
     ) ENGINE=InnoDB
   `);
+  // pos_orders.branch_id + its index moved here (was mis-ordered above the
+  // table's own creation — see the Tier A.2 Section 6 comment near the old
+  // location). Must run AFTER the CREATE TABLE immediately above.
+  await addColumnIfMissing('pos_orders', 'branch_id', "VARCHAR(50) NULL");
+  try { await db.query('CREATE INDEX idx_pos_orders_branch ON pos_orders(branch_id)'); } catch (e) {}
   await createTableIfMissing('pos_order_lines', `
     CREATE TABLE pos_order_lines (
       id VARCHAR(50) PRIMARY KEY,
@@ -6269,6 +6372,18 @@ async function runMigrations() {
       INDEX idx_next_mnt (next_maintenance_date)
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
   `);
+  // v5.10.5 — GL linkage + depreciation tracking + project + audit columns
+  // moved here (was mis-ordered above the table's own creation — see the
+  // comment near the old location). Must run AFTER the CREATE TABLE
+  // immediately above.
+  await addColumnIfMissing('assets', 'dep_start_month',           "DATE");
+  await addColumnIfMissing('assets', 'dep_until_date',            "DATE");
+  await addColumnIfMissing('assets', 'gl_asset_account_id',       "VARCHAR(40)");
+  await addColumnIfMissing('assets', 'gl_dep_expense_account_id', "VARCHAR(40)");
+  await addColumnIfMissing('assets', 'gl_accum_dep_account_id',   "VARCHAR(40)");
+  await addColumnIfMissing('assets', 'project_id',                "VARCHAR(40)");
+  await addColumnIfMissing('assets', 'created_by',                "VARCHAR(80)");
+  await addColumnIfMissing('assets', 'updated_at',                "TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP");
 
   // 6) Work Orders (أوامر العمل والصيانة)
   await createTableIfMissing('work_orders', `
@@ -7358,6 +7473,25 @@ async function runMigrations() {
     await autoInitDB();
   } catch (e) {
     console.error('[boot] autoInitDB error (starting anyway):', e && e.message);
+  }
+  // Tier A.3 Release Gate — a dedicated migration-only mode so a deploy can
+  // run `MIGRATE_ONLY=1 node server.js` as its OWN release step (schema
+  // provisioning), fully separate from starting the HTTP server — instead
+  // of migrations only ever running as a side effect of boot. autoInitDB()
+  // never throws (its own retry loop swallows a final failure and just
+  // logs), so the try/catch above can't tell us whether it actually
+  // succeeded — a real DB round-trip here is the only honest success
+  // signal, and its failure is what turns into a non-zero exit code a
+  // deploy pipeline can act on.
+  if (process.env.MIGRATE_ONLY === '1' || process.env.MIGRATE_ONLY === 'true') {
+    try {
+      await db.query('SELECT 1');
+      console.log('[boot] MIGRATE_ONLY=1 — schema ready, exiting without starting the HTTP server.');
+      process.exit(0);
+    } catch (e) {
+      console.error('[boot] MIGRATE_ONLY=1 — schema is NOT ready:', e && e.message);
+      process.exit(1);
+    }
   }
   app.listen(PORT, () => {
     console.log(`Moroccan Taste POS running on port ${PORT}`);

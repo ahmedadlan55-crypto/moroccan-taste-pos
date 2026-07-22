@@ -53,15 +53,33 @@
 -- ════════════════════════════════════════════════════════════════════
 
 -- ─── A. Ensure the linking columns exist on both sides ─────────────
-ALTER TABLE hr_employees ADD COLUMN IF NOT EXISTS linked_username VARCHAR(100) NULL;
+-- Tier A.2 corrective gate, Section 6 — REWRITTEN for real idempotency.
+-- `ADD COLUMN IF NOT EXISTS` is NOT valid MySQL 8 syntax (verified
+-- directly against this repo's MySQL 8.4.9) and the two CREATE INDEX
+-- statements had no guard at all — both would fail on a genuine rerun
+-- despite this file's own "every statement uses IF NOT EXISTS" claim.
+-- Discovered empirically via tests/integration/migrationLifecycle.test.js's
+-- real-runner "existing DB" scenario. Same INFORMATION_SCHEMA + PREPARE/
+-- EXECUTE guard pattern as 0002_sales_numbering.sql.
+SET @col_exists = (SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'hr_employees' AND COLUMN_NAME = 'linked_username');
+SET @stmt = IF(@col_exists = 0, 'ALTER TABLE hr_employees ADD COLUMN linked_username VARCHAR(100) NULL', 'SELECT 1');
+PREPARE stmt FROM @stmt; EXECUTE stmt; DEALLOCATE PREPARE stmt;
 
-ALTER TABLE hr_employees ADD COLUMN IF NOT EXISTS linked_user_id INT NULL;
+SET @col_exists = (SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'hr_employees' AND COLUMN_NAME = 'linked_user_id');
+SET @stmt = IF(@col_exists = 0, 'ALTER TABLE hr_employees ADD COLUMN linked_user_id INT NULL', 'SELECT 1');
+PREPARE stmt FROM @stmt; EXECUTE stmt; DEALLOCATE PREPARE stmt;
 
-ALTER TABLE users ADD COLUMN IF NOT EXISTS employee_id VARCHAR(50) NULL;
+SET @col_exists = (SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'users' AND COLUMN_NAME = 'employee_id');
+SET @stmt = IF(@col_exists = 0, 'ALTER TABLE users ADD COLUMN employee_id VARCHAR(50) NULL', 'SELECT 1');
+PREPARE stmt FROM @stmt; EXECUTE stmt; DEALLOCATE PREPARE stmt;
 
-CREATE INDEX idx_hr_emp_linked_username ON hr_employees(linked_username);
+SET @idx_exists = (SELECT COUNT(*) FROM INFORMATION_SCHEMA.STATISTICS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'hr_employees' AND INDEX_NAME = 'idx_hr_emp_linked_username');
+SET @stmt = IF(@idx_exists = 0, 'CREATE INDEX idx_hr_emp_linked_username ON hr_employees(linked_username)', 'SELECT 1');
+PREPARE stmt FROM @stmt; EXECUTE stmt; DEALLOCATE PREPARE stmt;
 
-CREATE INDEX idx_users_employee_id ON users(employee_id);
+SET @idx_exists = (SELECT COUNT(*) FROM INFORMATION_SCHEMA.STATISTICS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'users' AND INDEX_NAME = 'idx_users_employee_id');
+SET @stmt = IF(@idx_exists = 0, 'CREATE INDEX idx_users_employee_id ON users(employee_id)', 'SELECT 1');
+PREPARE stmt FROM @stmt; EXECUTE stmt; DEALLOCATE PREPARE stmt;
 
 -- ─── B. Existing linkage: hr_employees.linked_username -> users.username ─
 -- For users without employee_id where an hr_employees row already

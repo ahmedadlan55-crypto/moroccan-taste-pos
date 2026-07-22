@@ -6,6 +6,10 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { apiClient } from "@/shared/api";
 import type { EntityFetcher, EntityPage } from "@/shared/ui";
+// Tier A.2 corrective gate — todayISO() moved to @/shared/lib/dates
+// (local-time components, not toISOString()'s UTC calendar date);
+// re-exported here so every existing `from "../api"` import keeps working.
+export { todayISO } from "@/shared/lib";
 
 const KEY = ["cash"] as const;
 
@@ -374,10 +378,6 @@ export function useCreateTransfer() {
       qc.invalidateQueries({ queryKey: [...KEY, "summary"] });
     },
   });
-}
-
-export function todayISO(): string {
-  return new Date().toISOString().slice(0, 10);
 }
 
 // ════════════════════════════════════════════════════════════════════════════

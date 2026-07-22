@@ -10,29 +10,55 @@
  */
 'use strict';
 
-// [id, is_sensitive, sort_order, label_ar, label_en]
+// [id, is_sensitive, sort_order, label_ar, label_en, category]
+// Tier A.1 corrective gate — category was hardcoded to 'finance' for EVERY
+// row below, including hr.payroll.*/zatca.*/workflow.* ids that plainly
+// belong in their own sections. permissions_v3 already has established
+// category values for exactly this (verified: 'hr', 'tax', 'workflow' are
+// all in live use elsewhere in the catalog) — this just stops mis-filing
+// these three under 'finance'.
 const CAPS = [
   // ── General Ledger ──
-  ['finance.gl.view',          0, 110, 'عرض القيود ودليل الحسابات',   'View GL journals & accounts'],
-  ['finance.gl.create',        0, 111, 'إنشاء/تعديل قيد يومية',       'Create/edit GL journal'],
-  ['finance.gl.approve',       1, 112, 'اعتماد قيد يومية',            'Approve GL journal'],
-  ['finance.gl.post',          1, 113, 'ترحيل قيد يومية',             'Post GL journal'],
-  ['finance.gl.reverse',       1, 114, 'عكس قيد مُرحَّل',             'Reverse posted GL journal'],
-  ['finance.accounts.manage',  1, 115, 'إدارة دليل الحسابات',         'Manage chart of accounts'],
+  ['finance.gl.view',          0, 110, 'عرض القيود ودليل الحسابات',   'View GL journals & accounts', 'finance'],
+  ['finance.gl.create',        0, 111, 'إنشاء/تعديل قيد يومية',       'Create/edit GL journal', 'finance'],
+  ['finance.gl.approve',       1, 112, 'اعتماد قيد يومية',            'Approve GL journal', 'finance'],
+  ['finance.gl.post',          1, 113, 'ترحيل قيد يومية',             'Post GL journal', 'finance'],
+  ['finance.gl.reverse',       1, 114, 'عكس قيد مُرحَّل',             'Reverse posted GL journal', 'finance'],
+  ['finance.accounts.manage',  1, 115, 'إدارة دليل الحسابات',         'Manage chart of accounts', 'finance'],
+  // Tier A.2 corrective gate — force:true on a journal post/approve_post
+  // into a soft-closed period used to be honored for ANY caller who already
+  // held finance.gl.post (accountant/finance both do) — no distinct
+  // capability gated it despite a code comment implying an admin-only
+  // override. This id is that real gate: granted to admin (top-up below)
+  // and manager (via FIN_ALL, "managers get everything" — already this
+  // repo's stance for every other finance cap), deliberately NOT granted to
+  // accountant/finance/auditor, so holding finance.gl.post alone is no
+  // longer enough to force past a period lock.
+  ['finance.periods.override_lock', 1, 116, 'تجاوز إقفال الفترة عند الترحيل (force)', 'Override period lock when posting (force)', 'finance'],
   // ── Cash / vouchers ──
-  ['finance.cash.approve',     1, 120, 'اعتماد سندات القبض/الصرف',    'Approve cash vouchers'],
-  ['finance.cash.close',       1, 121, 'إقفال الصندوق',               'Close cashbox'],
+  ['finance.cash.approve',     1, 120, 'اعتماد سندات القبض/الصرف',    'Approve cash vouchers', 'finance'],
+  ['finance.cash.close',       1, 121, 'إقفال الصندوق',               'Close cashbox', 'finance'],
   // ── Bank reconciliation ──
-  ['finance.bankrec.view',     0, 130, 'عرض التسويات البنكية',        'View bank reconciliation'],
-  ['finance.bankrec.manage',   0, 131, 'إدارة التسويات البنكية',      'Manage bank reconciliation'],
-  ['finance.bankrec.close',    1, 132, 'إقفال تسوية بنكية',           'Close bank reconciliation'],
+  ['finance.bankrec.view',     0, 130, 'عرض التسويات البنكية',        'View bank reconciliation', 'finance'],
+  ['finance.bankrec.manage',   0, 131, 'إدارة التسويات البنكية',      'Manage bank reconciliation', 'finance'],
+  ['finance.bankrec.close',    1, 132, 'إقفال تسوية بنكية',           'Close bank reconciliation', 'finance'],
   // ── Payroll (approve/pay on top of the existing hr.payroll.view/run) ──
-  ['hr.payroll.approve',       1, 140, 'اعتماد مسير الرواتب',         'Approve payroll run'],
-  ['hr.payroll.pay',           1, 141, 'صرف مسير الرواتب',            'Pay payroll run'],
+  ['hr.payroll.approve',       1, 140, 'اعتماد مسير الرواتب',         'Approve payroll run', 'hr'],
+  ['hr.payroll.pay',           1, 141, 'صرف مسير الرواتب',            'Pay payroll run', 'hr'],
   // ── ZATCA phase-2 credentials ──
-  ['zatca.manage',             1, 150, 'إدارة ربط هيئة الزكاة (فوترة)', 'Manage ZATCA onboarding'],
+  ['zatca.manage',             1, 150, 'إدارة ربط هيئة الزكاة (فوترة)', 'Manage ZATCA onboarding', 'tax'],
   // ── Workflow builder (definitions / positions / routes DSL) ──
-  ['workflow.manage',          1, 160, 'إدارة مسارات الاعتماد',       'Manage approval workflows'],
+  ['workflow.manage',          1, 160, 'إدارة مسارات الاعتماد',       'Manage approval workflows', 'workflow'],
+  // ── Financial reports (Trial Balance, P&L, Balance Sheet, ...) ──
+  // Tier A COA/Trial Balance overhaul — this id already existed and was
+  // enforced (see routes/erp/reports/equity-changes.js), and was already
+  // seeded/granted to finance/manager via the base seeder in server.js.
+  // Re-declaring it here (idempotent INSERT IGNORE) is what actually closes
+  // the gap: it was NEVER granted to accountant/auditor in this, the more
+  // actively maintained finance capability seed — the base seeder in
+  // server.js only fills role_permissions when the table is EMPTY, so a
+  // fresh accountant/auditor account never received it.
+  ['finance.reports.view',     0, 170, 'عرض التقارير المالية (ميزان المراجعة، الأرباح والخسائر، الميزانية)', 'View financial reports (Trial Balance, P&L, Balance Sheet)', 'finance'],
 ];
 
 // role → capability ids (admin top-up handled below; developer bypasses in-middleware)
@@ -44,6 +70,7 @@ const ROLE_GRANTS = {
     'finance.accounts.manage',
     'finance.cash.approve',
     'finance.bankrec.view', 'finance.bankrec.manage',
+    'finance.reports.view',
   ],
   finance: [
     'finance.gl.view', 'finance.gl.create', 'finance.gl.approve', 'finance.gl.post', 'finance.gl.reverse',
@@ -51,20 +78,29 @@ const ROLE_GRANTS = {
     'finance.cash.approve', 'finance.cash.close',
     'finance.bankrec.view', 'finance.bankrec.manage', 'finance.bankrec.close',
     'hr.payroll.approve', 'hr.payroll.pay',
+    'finance.reports.view',
   ],
   auditor: [
     'finance.gl.view',
     'finance.bankrec.view',
+    'finance.reports.view',
   ],
 };
 
 async function seedFinanceCapabilities(db, log = () => {}) {
-  // 1. catalog
-  for (const [id, sensitive, order, ar, en] of CAPS) {
+  // 1. catalog — ON DUPLICATE KEY UPDATE category so an environment that
+  // already ran this seeder (before the category fix) self-heals on next
+  // boot too, not just fresh installs. Every hr.payroll.*/zatca.*/
+  // workflow.* row in THIS repo's local dev DB was verified to already
+  // have category='finance' before this fix — a plain INSERT IGNORE would
+  // never have corrected it. Only `category` is corrected on conflict;
+  // label/sensitivity/sort_order are left untouched for an existing row.
+  for (const [id, sensitive, order, ar, en, category] of CAPS) {
     await db.query(
-      `INSERT IGNORE INTO permissions_v3 (id, category, label_ar, label_en, is_sensitive, sort_order)
-       VALUES (?, 'finance', ?, ?, ?, ?)`,
-      [id, ar, en, sensitive, order]
+      `INSERT INTO permissions_v3 (id, category, label_ar, label_en, is_sensitive, sort_order)
+       VALUES (?, ?, ?, ?, ?, ?)
+       ON DUPLICATE KEY UPDATE category = VALUES(category)`,
+      [id, category, ar, en, sensitive, order]
     );
   }
   log(`  + ${CAPS.length} finance capabilities`);

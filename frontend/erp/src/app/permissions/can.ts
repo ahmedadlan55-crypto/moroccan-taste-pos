@@ -175,6 +175,11 @@ export const ROLE_GRANTS: Record<Capability, readonly Role[]> = {
   "accounting.periods.view": FIN_READ,
   "accounting.periods.manage": FIN,
   "accounting.reports.view": FIN_READ,
+  // Tier A.1 corrective gate — matches routes/erp-core.js's actual
+  // requireCapability('finance.reports.view') gate on trial-balance
+  // (db/migrations/finance/capabilities.js grants it to
+  // admin/manager/accountant/finance/auditor — same set as FIN_READ).
+  "finance.reports.view": FIN_READ,
   // ── Accounting write caps (E1) — reverse is tighter (excludes plain accountant) ──
   "accounting.accounts.manage": FIN,
   "accounting.journals.create": FIN,

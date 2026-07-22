@@ -8,13 +8,11 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { apiClient } from "@/shared/api";
 import type { TFunction } from "@/i18n";
 
-// ── date helpers (defaults mirror the legacy loaders) ───────────────────────
-export function todayISO(): string {
-  return new Date().toISOString().slice(0, 10);
-}
-export function startOfYearISO(): string {
-  return `${new Date().getFullYear()}-01-01`;
-}
+// Tier A.2 corrective gate — todayISO()/startOfYearISO() moved to
+// @/shared/lib/dates (local-time components, not toISOString()'s UTC
+// calendar date); re-exported here so every existing `from "../api"`
+// import in this module keeps working unchanged.
+export { todayISO, startOfYearISO } from "@/shared/lib";
 
 // Legacy endpoints answer HTTP 200 even on failure, carrying { success:false }
 // or { error }. Normalize that into a thrown Error so React Query shows the
@@ -27,6 +25,11 @@ function unwrap<T extends { success?: boolean; error?: string }>(data: T): T {
 }
 
 // ── Trial Balance — GET /api/erp/reports/trial-balance ──────────────────────
+// Tier A.1 corrective gate: these types now mirror lib/reports/trialBalance.js
+// in full (openDebit/openCredit/closeDebit/closeCredit/abnormalSign/isFolder/
+// isPostingLeaf/isActive/diagnostics/isClean) — the PAGE that consumes this
+// must read totals/isClean/diagnostics from the response, never recompute
+// them client-side (see TrialBalance.tsx).
 export interface TrialBalanceRow {
   accountId: string;
   code: string;
@@ -35,24 +38,75 @@ export interface TrialBalanceRow {
   parentId: string | null;
   level: number;
   hasChildren: boolean;
+  isFolder: boolean;
+  isPostingLeaf: boolean;
+  isActive: boolean;
+  isCycleMember: boolean;
   opening: number;
+  openDebit: number;
+  openCredit: number;
   periodDebit: number;
   periodCredit: number;
   net: number;
   closing: number;
-  rowCount: number;
+  closeDebit: number;
+  closeCredit: number;
+  abnormalSign: boolean;
+  /** Distinct journals touching this account in the period (COUNT(DISTINCT journal_id), not a GL line count). */
+  journalCount: number;
+}
+export interface TrialBalanceTotals {
+  openDebit: number;
+  openCredit: number;
+  opening: number;
+  periodDebit: number;
+  periodCredit: number;
+  closing: number;
+  closeDebit: number;
+  closeCredit: number;
+  isOpeningBalanced: boolean;
+  isPeriodBalanced: boolean;
+  isClosingBalanced: boolean;
+  isBalanced: boolean;
+  abnormalCount: number;
+}
+// Tier A.2 corrective gate — mirrors lib/reports/trialBalance.js exactly.
+// nullAccountEntries/nullAccountDebit/nullAccountCredit (Period-only, Tier
+// A.1) split into nullAccountOpening/nullAccountPeriod so an anomaly dated
+// before `from` is no longer invisible to the report. orphanAccounts,
+// unbalancedJournals, headerLineMismatches, and grossHistoricalMovement are
+// new; every diagnostic field here (except grossHistoricalMovement, which
+// is informational only) contributes to isClean.
+export interface TrialBalanceDiagnosticBucket { count: number; debit: number; credit: number }
+export interface TrialBalanceUnbalancedJournal { id: string; journalNumber: string; journalDate: string; totalDebit: number; totalCredit: number }
+export interface TrialBalanceHeaderLineMismatch { id: string; journalNumber: string; journalDate: string; headerDebit: number; headerCredit: number; lineDebit: number; lineCredit: number }
+export interface TrialBalanceDiagnostics {
+  nullAccountOpening: TrialBalanceDiagnosticBucket;
+  nullAccountPeriod: TrialBalanceDiagnosticBucket;
+  /** Tier A.3 — a NON-NULL gl_entries.account_id matching no gl_accounts row at all (distinct from the NULL-account buckets above). */
+  danglingAccountOpening: TrialBalanceDiagnosticBucket;
+  danglingAccountPeriod: TrialBalanceDiagnosticBucket;
+  futureDatedOpeningJournals: { count: number; debit: number; credit: number };
+  /** Raw gross historical turnover before `from` — diagnostic only, NEVER the opening balance (that's totals.openDebit/openCredit). */
+  grossHistoricalMovement: { debit: number; credit: number };
+  orphanAccounts: Array<{ code: string; nameAr: string; parentId: string }>;
+  nonLeafPostingActivity: Array<{ code: string; nameAr: string; isFolder: boolean; hasChildren: boolean; openDebit: number; openCredit: number; periodDebit: number; periodCredit: number }>;
+  cycleAccounts: Array<{ code: string; nameAr: string }>;
+  levelMismatches: Array<{ code: string; nameAr: string; storedLevel: number; computedLevel: number }>;
+  unbalancedJournals: TrialBalanceUnbalancedJournal[];
+  headerLineMismatches: TrialBalanceHeaderLineMismatch[];
+  note: string;
 }
 export interface TrialBalanceResponse {
   success?: boolean;
   error?: string;
+  code?: string;
+  isClean?: boolean;
+  /** Fixed at 'CO-MAIN' — this report has no company/ledger isolation (gl_accounts has no company_id). */
+  ledgerScope?: string;
   rows: TrialBalanceRow[];
-  totals: {
-    opening?: number;
-    periodDebit?: number;
-    periodCredit?: number;
-    closing?: number;
-    isBalanced?: boolean;
-  };
+  totals: TrialBalanceTotals;
+  diagnostics?: TrialBalanceDiagnostics;
 }
 export interface DateRange {
   from: string;

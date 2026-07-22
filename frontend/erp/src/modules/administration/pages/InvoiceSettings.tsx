@@ -583,7 +583,24 @@ export function InvoiceSettingsPage() {
                 title={t("administration.invoice.previewPanel.iframeTitle", { width: w })}
                 srcDoc={previewHtml(w)}
                 className="h-[520px] w-full rounded-xl border-2 border-dashed border-slate-300 bg-white"
-                sandbox=""
+                // Tier A.3 Release Gate item 10 — a bare `sandbox=""` gives a
+                // srcDoc document a null/opaque origin, which throws a
+                // SecurityError (caught by nothing, surfacing as a page
+                // console error) the moment ANYTHING probes localStorage
+                // from inside it — verified directly this isn't
+                // buildSaleReceiptHtml's own output (it emits zero <script>
+                // tags by design, confirmed in frontend/shared/invoiceTemplate.ts's
+                // own header comment) but something else (devtools/browser
+                // instrumentation) touching every frame on the page,
+                // including this one. `allow-same-origin` alone — deliberately
+                // WITHOUT `allow-scripts` — fixes it: the security property
+                // that actually matters here (this iframe can never execute
+                // arbitrary script, since the receipt template has none and
+                // none is added) is unaffected; only the null-origin
+                // localStorage access is resolved. (`allow-scripts` +
+                // `allow-same-origin` TOGETHER would be the real anti-pattern —
+                // that combination is not used here.)
+                sandbox="allow-same-origin"
               />
             </div>
           ))}

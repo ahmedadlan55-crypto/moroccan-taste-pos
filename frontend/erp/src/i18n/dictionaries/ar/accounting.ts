@@ -253,6 +253,38 @@ export const accounting = {
     closingCol: "رصيد آخر المدة",
     balanced: "الميزان متوازن — إجمالي المدين = إجمالي الدائن",
     unbalanced: "تنبيه: الميزان غير متوازن",
+    // Independent balance-check chips (Opening / Period / Closing) + the
+    // "not clean" alert + the itemized diagnostics buckets (Tier A.1/A.2 GL work).
+    status: {
+      opening: "أول المدة",
+      period: "حركة الفترة",
+      closing: "آخر المدة",
+      balancedSeg: "متوازن — {segment}",
+      unbalancedSeg: "غير متوازن — {segment}",
+      notClean: "تنبيه: التقرير غير سليم — راجع بنود التشخيص أدناه",
+    },
+    diag: {
+      rows: "عدد السطور",
+      entries: "عدد القيود",
+      opening: "أول المدة",
+      period: "الفترة",
+      header: "رأس",
+      lines: "سطور",
+      stored: "مخزَّن",
+      actual: "فعلي",
+      grossNote: "رصيد أول المدة الخام (للاطلاع فقط، ليس رصيد أول المدة)",
+      nullOpen: "قيود بحساب غير معروف (NULL) — ضمن رصيد أول المدة",
+      nullPeriod: "قيود بحساب غير معروف (NULL) — ضمن حركة الفترة",
+      danglingOpen: "قيود بحساب غير موجود في دليل الحسابات — ضمن رصيد أول المدة",
+      danglingPeriod: "قيود بحساب غير موجود في دليل الحسابات — ضمن حركة الفترة",
+      futureOpen: "قيود افتتاحية مؤرَّخة بعد بداية الفترة (مستبعدة من رصيد أول المدة)",
+      orphans: "حسابات بأب غير موجود (parent_id لا يطابق حسابًا فعليًا)",
+      nonLeaf: "ترحيل مباشر على حساب مجموعة أو حساب له أبناء (مخالف للسياسة)",
+      cycles: "دورة في شجرة الحسابات (أب يعود لأحد أبنائه)",
+      levels: "اختلاف المستوى المخزَّن عن عمق الشجرة الفعلي",
+      unbalanced: "قيود مُرحَّلة غير متوازنة فرديًا (رأس القيد نفسه)",
+      headerLine: "عدم تطابق رأس القيد مع مجموع سطوره الفعلية",
+    },
   },
 
   // ── Income Statement ───────────────────────────────────────────────────────

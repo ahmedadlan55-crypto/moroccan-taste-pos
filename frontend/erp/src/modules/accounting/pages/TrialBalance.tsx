@@ -195,10 +195,11 @@ function BalanceStatus({
   isClean?: boolean;
   diagnostics?: TrialBalanceDiagnostics;
 }) {
+  const t = useT();
   const chips: Array<{ label: string; ok: boolean }> = [
-    { label: "أول المدة", ok: totals.isOpeningBalanced },
-    { label: "حركة الفترة", ok: totals.isPeriodBalanced },
-    { label: "آخر المدة", ok: totals.isClosingBalanced },
+    { label: t("accounting.trialBalance.status.opening"), ok: totals.isOpeningBalanced },
+    { label: t("accounting.trialBalance.status.period"), ok: totals.isPeriodBalanced },
+    { label: t("accounting.trialBalance.status.closing"), ok: totals.isClosingBalanced },
   ];
 
   return (
@@ -211,12 +212,14 @@ function BalanceStatus({
               c.ok ? "border-emerald-200 bg-emerald-50 text-emerald-700" : "border-amber-200 bg-amber-50 text-amber-700"
             }`}
           >
-            {c.ok ? `متوازن — ${c.label}` : `غير متوازن — ${c.label}`}
+            {c.ok
+              ? t("accounting.trialBalance.status.balancedSeg", { segment: c.label })
+              : t("accounting.trialBalance.status.unbalancedSeg", { segment: c.label })}
           </span>
         ))}
         {isClean === false && (
           <span className="inline-flex items-center gap-1.5 rounded-xl border border-rose-200 bg-rose-50 px-3 py-2 text-xs font-bold text-rose-700">
-            تنبيه: التقرير غير Clean — راجع بنود التشخيص أدناه
+            {t("accounting.trialBalance.status.notClean")}
           </span>
         )}
       </div>
@@ -236,53 +239,57 @@ type TrialBalanceTotalsForStatus = {
 // itemized here, with its real rows/counts, so "غير Clean" is always
 // immediately actionable instead of a dead end.
 function DiagnosticsPanel({ diagnostics: d }: { diagnostics: TrialBalanceDiagnostics }) {
+  const t = useT();
+  const dg = (k: string) => t(`accounting.trialBalance.diag.${k}`);
+  const debit = t("accounting.common.debit");
+  const credit = t("accounting.common.credit");
   const sections: Array<{ key: string; label: string; count: number; render: () => ReactNode }> = [
     {
       key: "nullOpen",
-      label: "قيود بحساب غير معروف (NULL) — ضمن رصيد أول المدة",
+      label: dg("nullOpen"),
       count: d.nullAccountOpening.count,
       render: () => (
-        <p>عدد السطور: {d.nullAccountOpening.count} — مدين: <Num value={d.nullAccountOpening.debit} /> — دائن: <Num value={d.nullAccountOpening.credit} /></p>
+        <p>{dg("rows")}: {d.nullAccountOpening.count} — {debit}: <Num value={d.nullAccountOpening.debit} /> — {credit}: <Num value={d.nullAccountOpening.credit} /></p>
       ),
     },
     {
       key: "nullPeriod",
-      label: "قيود بحساب غير معروف (NULL) — ضمن حركة الفترة",
+      label: dg("nullPeriod"),
       count: d.nullAccountPeriod.count,
       render: () => (
-        <p>عدد السطور: {d.nullAccountPeriod.count} — مدين: <Num value={d.nullAccountPeriod.debit} /> — دائن: <Num value={d.nullAccountPeriod.credit} /></p>
+        <p>{dg("rows")}: {d.nullAccountPeriod.count} — {debit}: <Num value={d.nullAccountPeriod.debit} /> — {credit}: <Num value={d.nullAccountPeriod.credit} /></p>
       ),
     },
     {
       key: "danglingOpen",
-      label: "قيود بحساب غير موجود إطلاقًا في دليل الحسابات (account_id لا يطابق أي حساب) — ضمن رصيد أول المدة",
+      label: dg("danglingOpen"),
       count: d.danglingAccountOpening.count,
       render: () => (
-        <p>عدد السطور: {d.danglingAccountOpening.count} — مدين: <Num value={d.danglingAccountOpening.debit} /> — دائن: <Num value={d.danglingAccountOpening.credit} /></p>
+        <p>{dg("rows")}: {d.danglingAccountOpening.count} — {debit}: <Num value={d.danglingAccountOpening.debit} /> — {credit}: <Num value={d.danglingAccountOpening.credit} /></p>
       ),
     },
     {
       key: "danglingPeriod",
-      label: "قيود بحساب غير موجود إطلاقًا في دليل الحسابات (account_id لا يطابق أي حساب) — ضمن حركة الفترة",
+      label: dg("danglingPeriod"),
       count: d.danglingAccountPeriod.count,
       render: () => (
-        <p>عدد السطور: {d.danglingAccountPeriod.count} — مدين: <Num value={d.danglingAccountPeriod.debit} /> — دائن: <Num value={d.danglingAccountPeriod.credit} /></p>
+        <p>{dg("rows")}: {d.danglingAccountPeriod.count} — {debit}: <Num value={d.danglingAccountPeriod.debit} /> — {credit}: <Num value={d.danglingAccountPeriod.credit} /></p>
       ),
     },
     {
       key: "futureOpen",
-      label: "قيود افتتاحية مؤرَّخة بعد بداية الفترة (مستبعدة من رصيد أول المدة)",
+      label: dg("futureOpen"),
       count: d.futureDatedOpeningJournals.count,
       render: () => (
         <p>
-          عدد القيود: {d.futureDatedOpeningJournals.count} — مدين: <Num value={d.futureDatedOpeningJournals.debit} /> —
-          دائن: <Num value={d.futureDatedOpeningJournals.credit} />
+          {dg("entries")}: {d.futureDatedOpeningJournals.count} — {debit}: <Num value={d.futureDatedOpeningJournals.debit} /> —
+          {credit}: <Num value={d.futureDatedOpeningJournals.credit} />
         </p>
       ),
     },
     {
       key: "orphans",
-      label: "حسابات بأب غير موجود (parent_id لا يطابق حسابًا فعليًا)",
+      label: dg("orphans"),
       count: d.orphanAccounts.length,
       render: () => (
         <ul className="list-disc pe-4">
@@ -294,13 +301,13 @@ function DiagnosticsPanel({ diagnostics: d }: { diagnostics: TrialBalanceDiagnos
     },
     {
       key: "nonLeaf",
-      label: "ترحيل مباشر على حساب Folder أو Parent له أبناء (مخالف للسياسة)",
+      label: dg("nonLeaf"),
       count: d.nonLeafPostingActivity.length,
       render: () => (
         <ul className="list-disc pe-4">
           {d.nonLeafPostingActivity.map((a) => (
             <li key={a.code}>
-              {a.code} — {a.nameAr} — أول المدة: <Num value={a.openDebit} />/<Num value={a.openCredit} /> — الفترة:{" "}
+              {a.code} — {a.nameAr} — {dg("opening")}: <Num value={a.openDebit} />/<Num value={a.openCredit} /> — {dg("period")}:{" "}
               <Num value={a.periodDebit} />/<Num value={a.periodCredit} />
             </li>
           ))}
@@ -309,7 +316,7 @@ function DiagnosticsPanel({ diagnostics: d }: { diagnostics: TrialBalanceDiagnos
     },
     {
       key: "cycles",
-      label: "دورة في شجرة الحسابات (Parent يعود لأحد أبنائه)",
+      label: dg("cycles"),
       count: d.cycleAccounts.length,
       render: () => (
         <ul className="list-disc pe-4">
@@ -321,25 +328,25 @@ function DiagnosticsPanel({ diagnostics: d }: { diagnostics: TrialBalanceDiagnos
     },
     {
       key: "levels",
-      label: "اختلاف المستوى المخزَّن عن عمق الشجرة الفعلي",
+      label: dg("levels"),
       count: d.levelMismatches.length,
       render: () => (
         <ul className="list-disc pe-4">
           {d.levelMismatches.map((a) => (
-            <li key={a.code}>{a.code} — {a.nameAr} (مخزَّن={a.storedLevel}, فعلي={a.computedLevel})</li>
+            <li key={a.code}>{a.code} — {a.nameAr} ({dg("stored")}={a.storedLevel}, {dg("actual")}={a.computedLevel})</li>
           ))}
         </ul>
       ),
     },
     {
       key: "unbalanced",
-      label: "قيود مُرحَّلة غير متوازنة فرديًا (رأس القيد نفسه)",
+      label: dg("unbalanced"),
       count: d.unbalancedJournals.length,
       render: () => (
         <ul className="list-disc pe-4">
           {d.unbalancedJournals.map((j) => (
             <li key={j.id}>
-              {j.journalNumber} ({formatDate(j.journalDate)}) — مدين: <Num value={j.totalDebit} /> — دائن: <Num value={j.totalCredit} />
+              {j.journalNumber} ({formatDate(j.journalDate)}) — {debit}: <Num value={j.totalDebit} /> — {credit}: <Num value={j.totalCredit} />
             </li>
           ))}
         </ul>
@@ -347,14 +354,14 @@ function DiagnosticsPanel({ diagnostics: d }: { diagnostics: TrialBalanceDiagnos
     },
     {
       key: "headerLine",
-      label: "عدم تطابق رأس القيد مع مجموع سطوره الفعلية",
+      label: dg("headerLine"),
       count: d.headerLineMismatches.length,
       render: () => (
         <ul className="list-disc pe-4">
           {d.headerLineMismatches.map((j) => (
             <li key={j.id}>
-              {j.journalNumber} ({formatDate(j.journalDate)}) — رأس: <Num value={j.headerDebit} />/<Num value={j.headerCredit} /> —
-              سطور: <Num value={j.lineDebit} />/<Num value={j.lineCredit} />
+              {j.journalNumber} ({formatDate(j.journalDate)}) — {dg("header")}: <Num value={j.headerDebit} />/<Num value={j.headerCredit} /> —
+              {dg("lines")}: <Num value={j.lineDebit} />/<Num value={j.lineCredit} />
             </li>
           ))}
         </ul>
@@ -373,8 +380,8 @@ function DiagnosticsPanel({ diagnostics: d }: { diagnostics: TrialBalanceDiagnos
       ))}
       <p className="border-t border-rose-200 pt-2 text-slate-500">{d.note}</p>
       <p className="text-slate-400">
-        رصيد أول المدة الخام (grossHistoricalMovement، للاطلاع فقط، ليس رصيد أول المدة): مدين{" "}
-        <Num value={d.grossHistoricalMovement.debit} /> — دائن <Num value={d.grossHistoricalMovement.credit} />
+        {dg("grossNote")}: {debit}{" "}
+        <Num value={d.grossHistoricalMovement.debit} /> — {credit} <Num value={d.grossHistoricalMovement.credit} />
       </p>
     </div>
   );

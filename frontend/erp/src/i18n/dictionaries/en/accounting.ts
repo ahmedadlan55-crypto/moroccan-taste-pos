@@ -237,6 +237,38 @@ export const accounting = {
     closingCol: "Closing balance",
     balanced: "The trial balance is balanced — total debit = total credit",
     unbalanced: "Warning: the trial balance is not balanced",
+    // Independent balance-check chips (Opening / Period / Closing) + the
+    // "not clean" alert + the itemized diagnostics buckets (Tier A.1/A.2 GL work).
+    status: {
+      opening: "Opening",
+      period: "Period movement",
+      closing: "Closing",
+      balancedSeg: "Balanced — {segment}",
+      unbalancedSeg: "Unbalanced — {segment}",
+      notClean: "Warning: report is not clean — review the diagnostics below",
+    },
+    diag: {
+      rows: "Rows",
+      entries: "Entries",
+      opening: "Opening",
+      period: "Period",
+      header: "Header",
+      lines: "Lines",
+      stored: "stored",
+      actual: "actual",
+      grossNote: "Raw historical movement (for reference only, not the opening balance)",
+      nullOpen: "Entries with an unknown (NULL) account — within the opening balance",
+      nullPeriod: "Entries with an unknown (NULL) account — within period movement",
+      danglingOpen: "Entries whose account_id matches no account — within the opening balance",
+      danglingPeriod: "Entries whose account_id matches no account — within period movement",
+      futureOpen: "Opening entries dated after the period start (excluded from the opening balance)",
+      orphans: "Accounts with a missing parent (parent_id matches no real account)",
+      nonLeaf: "Direct posting to a folder/parent account that has children (policy violation)",
+      cycles: "Cycle in the account tree (a parent points back to a descendant)",
+      levels: "Stored level differs from the actual tree depth",
+      unbalanced: "Posted journals individually unbalanced (the header itself)",
+      headerLine: "Journal header doesn't match the sum of its actual lines",
+    },
   },
 
   incomeStatement: {

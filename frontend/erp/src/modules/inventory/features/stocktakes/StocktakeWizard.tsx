@@ -11,10 +11,12 @@ import { useStocktakeMutations } from "@/modules/inventory/lib/hooks/useStocktak
 import { createStocktakeInput } from "@/modules/inventory/lib/schemas/stocktake.schema";
 import { SearchableEntityCombobox } from "@/shared/ui";
 import { makeItemFetcher, type ItemHit } from "@/modules/inventory/lib/hooks/useEntitySearch";
+import { useT } from "@/i18n";
 
 type Scope = "full" | "category" | "items";
 
 export function StocktakeWizard() {
+  const t = useT();
   const navigate = useNavigate();
   const { accessibleWarehouses, allWarehousesAccess } = useWarehouseScope();
   const allWh = useWarehouses();
@@ -54,10 +56,10 @@ export function StocktakeWizard() {
     setErr(null);
     const payload = buildPayload();
     const r = createStocktakeInput.safeParse(payload);
-    if (!r.success) { setErr(r.error.issues[0]?.message ?? "تحقّق من المدخلات"); return; }
+    if (!r.success) { setErr(r.error.issues[0]?.message ?? t("inventoryRest.stocktakes.wizard.validateFallback")); return; }
     m.create.mutate(payload, {
       onSuccess: (res) => navigate(`/inventory/stocktakes?view=${(res.data?.id as string) ?? ""}`),
-      onError: (e) => setErr(e instanceof ApiError ? e.message : "تعذّر إنشاء المحضر."),
+      onError: (e) => setErr(e instanceof ApiError ? e.message : t("inventoryRest.stocktakes.wizard.createFailed")),
     });
   }
 
@@ -65,59 +67,59 @@ export function StocktakeWizard() {
 
   return (
     <div>
-      <PageHeader eyebrow="الجرد والتسويات" title="جرد جديد" subtitle="حدّد المستودع والنطاق وإعدادات العد. تُجمّد قائمة الأصناف عند بدء العد."
-        action={<Button variant="ghost" onClick={() => navigate("/inventory/stocktakes")}><X className="h-4 w-4" /> إغلاق</Button>} />
+      <PageHeader eyebrow={t("inventoryRest.stocktakes.wizard.eyebrow")} title={t("inventoryRest.stocktakes.wizard.title")} subtitle={t("inventoryRest.stocktakes.wizard.subtitle")}
+        action={<Button variant="ghost" onClick={() => navigate("/inventory/stocktakes")}><X className="h-4 w-4" /> {t("inventoryRest.ui.close")}</Button>} />
 
       <div className="surface space-y-4 p-5">
         {err && <p className="rounded-lg bg-rose-50 px-3 py-2 text-sm font-bold text-rose-700">{err}</p>}
 
         <div className="grid gap-4 sm:grid-cols-2">
-          <label className="block text-xs font-bold text-slate-500">المستودع
-            <select className="field mt-1 w-full" value={warehouseId} onChange={(e) => { setWarehouseId(e.target.value); setChosenItems([]); }} aria-label="المستودع">
-              <option value="">اختر المستودع</option>
+          <label className="block text-xs font-bold text-slate-500">{t("inventoryRest.stocktakes.wizard.warehouse")}
+            <select className="field mt-1 w-full" value={warehouseId} onChange={(e) => { setWarehouseId(e.target.value); setChosenItems([]); }} aria-label={t("inventoryRest.stocktakes.wizard.warehouse")}>
+              <option value="">{t("inventoryRest.stocktakes.wizard.pickWarehouse")}</option>
               {whOptions.map((w) => <option key={w.id} value={w.id}>{w.name}</option>)}
             </select>
           </label>
-          <label className="block text-xs font-bold text-slate-500">التاريخ
-            <input type="date" className="field mt-1 w-full" value={date} onChange={(e) => setDate(e.target.value)} aria-label="التاريخ" />
+          <label className="block text-xs font-bold text-slate-500">{t("inventoryRest.stocktakes.wizard.date")}
+            <input type="date" className="field mt-1 w-full" value={date} onChange={(e) => setDate(e.target.value)} aria-label={t("inventoryRest.stocktakes.wizard.date")} />
           </label>
 
-          <label className="block text-xs font-bold text-slate-500">نطاق الجرد
-            <select className="field mt-1 w-full" value={scopeType} onChange={(e) => setScopeType(e.target.value as Scope)} aria-label="نطاق الجرد">
-              <option value="full">كامل المستودع</option>
-              <option value="category">حسب الفئة</option>
-              <option value="items">أصناف محددة</option>
+          <label className="block text-xs font-bold text-slate-500">{t("inventoryRest.stocktakes.wizard.scopeLabel")}
+            <select className="field mt-1 w-full" value={scopeType} onChange={(e) => setScopeType(e.target.value as Scope)} aria-label={t("inventoryRest.stocktakes.wizard.scopeLabel")}>
+              <option value="full">{t("inventoryRest.stocktakes.wizard.scopeFull")}</option>
+              <option value="category">{t("inventoryRest.stocktakes.wizard.scopeCategory")}</option>
+              <option value="items">{t("inventoryRest.stocktakes.wizard.scopeItems")}</option>
             </select>
           </label>
           {scopeType === "category" && (
-            <label className="block text-xs font-bold text-slate-500">الفئة
-              <input className="field mt-1 w-full" value={categoryId} onChange={(e) => setCategoryId(e.target.value)} placeholder="اسم الفئة كما في الأصناف" aria-label="الفئة" />
+            <label className="block text-xs font-bold text-slate-500">{t("inventoryRest.stocktakes.wizard.category")}
+              <input className="field mt-1 w-full" value={categoryId} onChange={(e) => setCategoryId(e.target.value)} placeholder={t("inventoryRest.stocktakes.wizard.categoryPlaceholder")} aria-label={t("inventoryRest.stocktakes.wizard.category")} />
             </label>
           )}
 
-          <label className="block text-xs font-bold text-slate-500 sm:col-span-2">السبب (إلزامي)
-            <input className="field mt-1 w-full" value={reason} onChange={(e) => setReason(e.target.value)} placeholder="مثال: جرد دوري شهري" aria-label="السبب" />
+          <label className="block text-xs font-bold text-slate-500 sm:col-span-2">{t("inventoryRest.stocktakes.wizard.reason")}
+            <input className="field mt-1 w-full" value={reason} onChange={(e) => setReason(e.target.value)} placeholder={t("inventoryRest.stocktakes.wizard.reasonPlaceholder")} aria-label={t("inventoryRest.reasonDialog.reasonAria")} />
           </label>
 
-          <label className="flex items-center gap-2 text-xs font-bold text-slate-600"><input type="checkbox" checked={includeZero} onChange={(e) => setIncludeZero(e.target.checked)} /> تضمين الأصناف ذات الرصيد صفر</label>
-          <label className="flex items-center gap-2 text-xs font-bold text-slate-600"><input type="checkbox" checked={blindCount} onChange={(e) => setBlindCount(e.target.checked)} /> عدّ أعمى (إخفاء رصيد النظام أثناء العد)</label>
+          <label className="flex items-center gap-2 text-xs font-bold text-slate-600"><input type="checkbox" checked={includeZero} onChange={(e) => setIncludeZero(e.target.checked)} /> {t("inventoryRest.stocktakes.wizard.includeZero")}</label>
+          <label className="flex items-center gap-2 text-xs font-bold text-slate-600"><input type="checkbox" checked={blindCount} onChange={(e) => setBlindCount(e.target.checked)} /> {t("inventoryRest.stocktakes.wizard.blindCount")}</label>
 
-          <label className="block text-xs font-bold text-slate-500">عتبة الدليل للفرق الكبير (اختياري)
-            <input type="number" min={0} step="any" className="field mt-1 w-full" value={evidenceThreshold} onChange={(e) => setEvidenceThreshold(e.target.value)} placeholder="القيمة التي تستوجب دليلًا" aria-label="عتبة الدليل" />
+          <label className="block text-xs font-bold text-slate-500">{t("inventoryRest.stocktakes.wizard.evidenceThreshold")}
+            <input type="number" min={0} step="any" className="field mt-1 w-full" value={evidenceThreshold} onChange={(e) => setEvidenceThreshold(e.target.value)} placeholder={t("inventoryRest.stocktakes.wizard.evidenceThresholdPlaceholder")} aria-label={t("inventoryRest.stocktakes.wizard.evidenceThreshold")} />
           </label>
-          <label className="block text-xs font-bold text-slate-500">دليل/مرجع (للفروقات الكبيرة)
-            <input className="field mt-1 w-full" value={evidence} onChange={(e) => setEvidence(e.target.value)} aria-label="الدليل" />
+          <label className="block text-xs font-bold text-slate-500">{t("inventoryRest.stocktakes.wizard.evidence")}
+            <input className="field mt-1 w-full" value={evidence} onChange={(e) => setEvidence(e.target.value)} aria-label={t("inventoryRest.stocktakes.detail.evidence")} />
           </label>
 
-          <label className="block text-xs font-bold text-slate-500 sm:col-span-2">ملاحظات
-            <textarea className="field mt-1 w-full" value={notes} onChange={(e) => setNotes(e.target.value)} aria-label="ملاحظات" />
+          <label className="block text-xs font-bold text-slate-500 sm:col-span-2">{t("inventoryRest.stocktakes.wizard.notes")}
+            <textarea className="field mt-1 w-full" value={notes} onChange={(e) => setNotes(e.target.value)} aria-label={t("inventoryRest.stocktakes.wizard.notes")} />
           </label>
         </div>
 
         {scopeType === "items" && (
           <div className="rounded-xl border border-slate-100 p-3">
             <div className="mb-2 flex flex-col gap-1">
-              <span className="text-xs font-bold text-slate-500">الأصناف المحددة (بحث بالاسم/SKU/الباركود)</span>
+              <span className="text-xs font-bold text-slate-500">{t("inventoryRest.stocktakes.wizard.selectedItems")}</span>
               <div className="max-w-md">
                 <SearchableEntityCombobox<ItemHit>
                   value={null}
@@ -127,18 +129,18 @@ export function StocktakeWizard() {
                   getKey={(it) => it.id}
                   getLabel={(it) => it.name}
                   getSublabel={(it) => [it.sku, it.warehouseQty != null ? `${formatQty(it.warehouseQty)} ${it.baseUnit.name}` : null].filter(Boolean).join(" · ") || undefined}
-                  placeholder="ابحث عن صنف لإضافته للنطاق…"
-                  ariaLabel="إضافة صنف للجرد"
+                  placeholder={t("inventoryRest.stocktakes.wizard.itemSearch")}
+                  ariaLabel={t("inventoryRest.stocktakes.wizard.addItemAria")}
                   autoSelectExact
-                  emptyText="لا أصناف مطابقة."
+                  emptyText={t("inventoryRest.stocktakes.wizard.itemsEmptyPicker")}
                 />
               </div>
             </div>
-            {chosenItems.length === 0 ? <p className="text-xs text-slate-400">لم تُحدَّد أصناف بعد.</p> : (
+            {chosenItems.length === 0 ? <p className="text-xs text-slate-400">{t("inventoryRest.stocktakes.wizard.noItemsChosen")}</p> : (
               <div className="flex flex-wrap gap-2">
                 {chosenItems.map((r) => (
                   <span key={r.id} className="flex items-center gap-1 rounded-lg bg-slate-100 px-2 py-1 text-xs font-bold text-slate-700">{r.name}
-                    <button type="button" aria-label="حذف" onClick={() => setChosenItems((s) => s.filter((x) => x.id !== r.id))}><Trash2 className="h-3.5 w-3.5 text-slate-400 hover:text-rose-600" /></button>
+                    <button type="button" aria-label={t("inventoryRest.stocktakes.wizard.removeAria")} onClick={() => setChosenItems((s) => s.filter((x) => x.id !== r.id))}><Trash2 className="h-3.5 w-3.5 text-slate-400 hover:text-rose-600" /></button>
                   </span>
                 ))}
               </div>
@@ -147,7 +149,7 @@ export function StocktakeWizard() {
         )}
 
         <div className="flex justify-end">
-          <Button variant="primary" disabled={!canSubmit || m.create.isPending} onClick={submit}><Plus className="h-4 w-4" /> {m.create.isPending ? "جارٍ الإنشاء…" : "إنشاء المحضر"}</Button>
+          <Button variant="primary" disabled={!canSubmit || m.create.isPending} onClick={submit}><Plus className="h-4 w-4" /> {m.create.isPending ? t("inventoryRest.stocktakes.wizard.creating") : t("inventoryRest.stocktakes.wizard.create")}</Button>
         </div>
       </div>
     </div>

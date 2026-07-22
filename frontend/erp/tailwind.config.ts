@@ -9,9 +9,10 @@ export default {
   presets: [adlanPreset],
   theme: {
     extend: {
-      // IBM Plex Sans Arabic is shipped only through weight 700. Mapping the
-      // existing utility names avoids synthetic 800 weight and restores a clear
-      // hierarchy across the legacy screens without a risky mass rewrite.
+      // Cairo ships a variable 400–700 weight axis (no real 800/900). Mapping
+      // the existing utility names caps bold/extrabold at real weights and
+      // avoids a synthetic 800, keeping a clear hierarchy across the legacy
+      // screens without a risky mass rewrite.
       fontWeight: {
         normal: "400",
         medium: "500",

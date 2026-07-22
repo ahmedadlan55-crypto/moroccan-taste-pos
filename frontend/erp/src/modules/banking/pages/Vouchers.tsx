@@ -3,6 +3,7 @@ import { Plus } from "lucide-react";
 import { Button, PageHeader, ConfirmDialog } from "@/shared/ui";
 import { DataTable, type ColumnDef } from "@/shared/tables";
 import { formatDate } from "@/shared/lib";
+import { useT, translateApiError } from "@/i18n";
 import { useCan } from "@/app/providers";
 import {
   useReceipts,
@@ -12,7 +13,7 @@ import {
   useApprovePayment,
   useCancelPayment,
 } from "../api";
-import { Money, StatusPill, mapError } from "../components";
+import { Money, StatusPill } from "../components";
 import { VoucherForm, VOUCHER_CREATE_CAP, type VoucherKind } from "../vouchers/VoucherForm";
 
 // A normalized voucher row so one register renders both receipts and payments.
@@ -58,6 +59,7 @@ function VoucherRegister({
   approve: (id: string, cb: { onDone: () => void; onError: (m: string) => void }) => void;
   cancel: (id: string, cb: { onDone: () => void; onError: (m: string) => void }) => void;
 }) {
+  const t = useT();
   const canCreate = useCan(VOUCHER_CREATE_CAP);
   const [formOpen, setFormOpen] = useState(false);
   const [pending, setPending] = useState<PendingAction>(null);
@@ -82,10 +84,10 @@ function VoucherRegister({
   }
 
   const columns: ColumnDef<VoucherRow>[] = [
-    { id: "number", header: "الرقم", accessor: (r) => r.number, sortable: true },
+    { id: "number", header: t("banking.shared.number"), accessor: (r) => r.number, sortable: true },
     {
       id: "date",
-      header: "التاريخ",
+      header: t("banking.shared.date"),
       accessor: (r) => r.date,
       cell: (r) => <span dir="ltr" className="tabular-nums text-slate-600">{formatDate(r.date)}</span>,
     },
@@ -100,18 +102,18 @@ function VoucherRegister({
         </span>
       ),
     },
-    { id: "channel", header: "المصدر/الوجهة", accessor: (r) => r.channel },
+    { id: "channel", header: t("banking.vouchers.channel"), accessor: (r) => r.channel },
     {
       id: "amount",
-      header: "المبلغ",
+      header: t("banking.shared.amount"),
       numeric: true,
       accessor: (r) => r.amount,
       cell: (r) => <Money value={r.amount} tone={amountTone} />,
     },
-    { id: "createdBy", header: "المُنشئ", accessor: (r) => r.createdByName || "—", defaultHidden: true },
+    { id: "createdBy", header: t("banking.vouchers.createdBy"), accessor: (r) => r.createdByName || "—", defaultHidden: true },
     {
       id: "status",
-      header: "الحالة",
+      header: t("common.status"),
       accessor: (r) => r.status,
       cell: (r) => <StatusPill status={r.status} />,
     },
@@ -126,7 +128,7 @@ function VoucherRegister({
         action={
           canCreate ? (
             <Button variant="primary" onClick={() => setFormOpen(true)}>
-              <Plus className="h-4 w-4" /> سند جديد
+              <Plus className="h-4 w-4" /> {t("banking.vouchers.newBtn")}
             </Button>
           ) : undefined
         }
@@ -144,17 +146,17 @@ function VoucherRegister({
         error={error}
         onRetry={onRetry}
         searchable
-        searchPlaceholder="بحث بالرقم أو الطرف…"
+        searchPlaceholder={t("banking.vouchers.searchPlaceholder")}
         initialSort={{ columnId: "number", dir: "desc" }}
-        emptyTitle="لا توجد سندات"
+        emptyTitle={t("banking.vouchers.emptyTitle")}
         rowActions={(r) =>
           r.status === "draft" ? (
             <div className="flex items-center gap-2">
               <Button size="sm" variant="primary" onClick={() => { setActionError(null); setPending({ kind: "approve", row: r }); }}>
-                اعتماد
+                {t("banking.shared.approve")}
               </Button>
               <Button size="sm" variant="secondary" onClick={() => { setActionError(null); setPending({ kind: "cancel", row: r }); }}>
-                إلغاء
+                {t("common.cancel")}
               </Button>
             </div>
           ) : null
@@ -163,17 +165,17 @@ function VoucherRegister({
 
       <ConfirmDialog
         open={!!pending}
-        title={pending?.kind === "approve" ? "اعتماد السند" : "إلغاء السند"}
+        title={pending?.kind === "approve" ? t("banking.vouchers.approveTitle") : t("banking.vouchers.cancelTitle")}
         description={
           pending?.kind === "approve"
-            ? `سيتم اعتماد السند «${pending.row.number}» وترحيل القيد المحاسبي تلقائيًا.`
+            ? t("banking.vouchers.approveDesc", { number: pending.row.number })
             : pending
-              ? `سيتم إلغاء السند «${pending.row.number}».`
+              ? t("banking.vouchers.cancelDesc", { number: pending.row.number })
               : ""
         }
         tone={pending?.kind === "cancel" ? "danger" : "primary"}
-        confirmLabel={pending?.kind === "approve" ? "اعتماد وترحيل" : "إلغاء السند"}
-        cancelLabel="رجوع"
+        confirmLabel={pending?.kind === "approve" ? t("banking.shared.approveAndPost") : t("banking.vouchers.cancelTitle")}
+        cancelLabel={t("common.back")}
         processing={busy}
         error={actionError}
         onConfirm={run}
@@ -184,6 +186,7 @@ function VoucherRegister({
 }
 
 export function ReceiptsPage() {
+  const t = useT();
   const listQuery = useReceipts();
   const approve = useApproveReceipt();
   const cancel = useCancelReceipt();
@@ -193,7 +196,7 @@ export function ReceiptsPage() {
     date: r.receiptDate,
     party: r.sourceName,
     partyKind: r.sourceType,
-    channel: r.destinationType === "cash" ? "صندوق" : "بنك",
+    channel: r.destinationType === "cash" ? t("banking.shared.cashLabel") : t("banking.shared.bankLabel"),
     amount: r.amount,
     status: r.status,
     createdByName: r.createdByName,
@@ -203,10 +206,10 @@ export function ReceiptsPage() {
   return (
     <VoucherRegister
       kind="receipt"
-      eyebrow="النقد والبنوك"
-      title="سندات القبض"
-      subtitle="متابعة سندات القبض واعتماد المسودات لترحيل قيودها المحاسبية."
-      partyHeader="المصدر"
+      eyebrow={t("banking.shared.eyebrow")}
+      title={t("banking.receipts.title")}
+      subtitle={t("banking.receipts.subtitle")}
+      partyHeader={t("banking.shared.source")}
       amountTone="text-emerald-600"
       rows={rows}
       isLoading={listQuery.isLoading}
@@ -214,14 +217,14 @@ export function ReceiptsPage() {
       onRetry={() => listQuery.refetch()}
       approve={(id, cb) =>
         approve.mutate(id, {
-          onSuccess: (res) => (res && res.success === false ? cb.onError(mapError(new Error(res.error))) : cb.onDone()),
-          onError: (e) => cb.onError(mapError(e)),
+          onSuccess: (res) => (res && res.success === false ? cb.onError(translateApiError(new Error(res.error), t)) : cb.onDone()),
+          onError: (e) => cb.onError(translateApiError(e, t)),
         })
       }
       cancel={(id, cb) =>
         cancel.mutate(id, {
-          onSuccess: (res) => (res && res.success === false ? cb.onError(mapError(new Error(res.error))) : cb.onDone()),
-          onError: (e) => cb.onError(mapError(e)),
+          onSuccess: (res) => (res && res.success === false ? cb.onError(translateApiError(new Error(res.error), t)) : cb.onDone()),
+          onError: (e) => cb.onError(translateApiError(e, t)),
         })
       }
     />
@@ -229,6 +232,7 @@ export function ReceiptsPage() {
 }
 
 export function PaymentsPage() {
+  const t = useT();
   const listQuery = usePayments();
   const approve = useApprovePayment();
   const cancel = useCancelPayment();
@@ -238,7 +242,7 @@ export function PaymentsPage() {
     date: p.paymentDate,
     party: p.recipientName,
     partyKind: p.recipientType,
-    channel: p.sourceType === "cash" ? "صندوق" : "بنك",
+    channel: p.sourceType === "cash" ? t("banking.shared.cashLabel") : t("banking.shared.bankLabel"),
     amount: p.amount,
     status: p.status,
     createdByName: p.createdByName,
@@ -248,10 +252,10 @@ export function PaymentsPage() {
   return (
     <VoucherRegister
       kind="payment"
-      eyebrow="النقد والبنوك"
-      title="سندات الصرف"
-      subtitle="متابعة سندات الصرف واعتماد المسودات لترحيل قيودها المحاسبية."
-      partyHeader="المستفيد"
+      eyebrow={t("banking.shared.eyebrow")}
+      title={t("banking.payments.title")}
+      subtitle={t("banking.payments.subtitle")}
+      partyHeader={t("banking.shared.beneficiary")}
       amountTone="text-rose-600"
       rows={rows}
       isLoading={listQuery.isLoading}
@@ -259,14 +263,14 @@ export function PaymentsPage() {
       onRetry={() => listQuery.refetch()}
       approve={(id, cb) =>
         approve.mutate(id, {
-          onSuccess: (res) => (res && res.success === false ? cb.onError(mapError(new Error(res.error))) : cb.onDone()),
-          onError: (e) => cb.onError(mapError(e)),
+          onSuccess: (res) => (res && res.success === false ? cb.onError(translateApiError(new Error(res.error), t)) : cb.onDone()),
+          onError: (e) => cb.onError(translateApiError(e, t)),
         })
       }
       cancel={(id, cb) =>
         cancel.mutate(id, {
-          onSuccess: (res) => (res && res.success === false ? cb.onError(mapError(new Error(res.error))) : cb.onDone()),
-          onError: (e) => cb.onError(mapError(e)),
+          onSuccess: (res) => (res && res.success === false ? cb.onError(translateApiError(new Error(res.error), t)) : cb.onDone()),
+          onError: (e) => cb.onError(translateApiError(e, t)),
         })
       }
     />

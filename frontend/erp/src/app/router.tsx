@@ -40,8 +40,22 @@ const MODULE_COMPONENTS: Record<string, LazyExoticComponent<ComponentType>> = Ob
 const BASENAME = import.meta.env.BASE_URL.replace(/\/$/, "") || "/";
 
 // ── Route contract (consumed by the architecture tests) ─────────────────────
-/** Every leaf route path the router registers (one per nav item). */
-export const ROUTE_PATHS: ReadonlySet<string> = new Set(NAV_ITEMS.map((i) => i.path));
+/**
+ * Every route path string the router registers: one exact path per nav item,
+ * PLUS a `<path>/*` splat for each item that OWNS its subtree (subRoutes:true),
+ * so deep New/Details/Edit URLs mount the module instead of 404-ing.
+ */
+export const ROUTE_PATHS: ReadonlySet<string> = new Set<string>(
+  NAV_ITEMS.flatMap((i) => (i.subRoutes ? [i.path, `${i.path}/*`] : [i.path])),
+);
+/**
+ * Base paths of the subtree-owning items (subRoutes:true). A registered route is
+ * legitimate — not an orphan — when it IS or lives UNDER one of these, so the
+ * architecture coverage test can accept the splat routes without weakening.
+ */
+export const SUBROUTE_BASE_PATHS: ReadonlySet<string> = new Set<string>(
+  NAV_ITEMS.filter((i) => i.subRoutes).map((i) => i.path),
+);
 /** Non-nav paths that are allowed to exist as routes (redirects + login + not-found). */
 export const REDIRECT_PATHS: ReadonlySet<string> = new Set<string>([
   "/",
@@ -77,21 +91,25 @@ export function AppRouter() {
           {/* Units & barcodes moved into the item card — redirect the old path. */}
           <Route path="inventory/units-barcodes" element={<Navigate to="/inventory/items" replace />} />
 
-          {/* One lazy, capability-gated route per manifest item. */}
-          {NAV_ITEMS.map((item) => {
+          {/* One lazy, capability-gated route per manifest item. Items that OWN
+              their subtree (subRoutes) additionally register a `<path>/*` splat,
+              so deep URLs (/inventory/items/new, /inventory/items/:id, .../edit)
+              mount the SAME module — which dispatches internally on the pathname.
+              Every non-subRoutes item registers exactly one exact route, unchanged. */}
+          {NAV_ITEMS.flatMap((item) => {
             const Page = MODULE_COMPONENTS[item.module];
-            if (!Page) return null;
-            return (
-              <Route
-                key={item.id}
-                path={item.path.replace(/^\//, "")}
-                element={
-                  <CapGuard cap={item.cap}>
-                    <Page />
-                  </CapGuard>
-                }
-              />
+            if (!Page) return [];
+            const base = item.path.replace(/^\//, "");
+            const element = (
+              <CapGuard cap={item.cap}>
+                <Page />
+              </CapGuard>
             );
+            const routes = [<Route key={item.id} path={base} element={element} />];
+            if (item.subRoutes) {
+              routes.push(<Route key={`${item.id}:splat`} path={`${base}/*`} element={element} />);
+            }
+            return routes;
           })}
 
           <Route path="*" element={<NotFound />} />

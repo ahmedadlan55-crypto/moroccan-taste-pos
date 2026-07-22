@@ -6,6 +6,7 @@
 
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { apiClient } from "@/shared/api";
+import type { TFunction } from "@/i18n";
 
 // ── date helpers (defaults mirror the legacy loaders) ───────────────────────
 export function todayISO(): string {
@@ -290,13 +291,18 @@ export function useApAging(asOfDate: string | null) {
 }
 
 export const AGING_BUCKETS: AgingBucketKey[] = ["0-30", "31-60", "61-90", "91-120", "120+"];
-export const AGING_BUCKET_LABELS: Record<AgingBucketKey, string> = {
-  "0-30": "0 – 30 يوم",
-  "31-60": "31 – 60 يوم",
-  "61-90": "61 – 90 يوم",
-  "91-120": "91 – 120 يوم",
-  "120+": "أكثر من 120 يوم",
+// Bucket key → i18n leaf (the range keys carry "-"/"+", not valid as dotted paths).
+const AGING_BUCKET_KEY: Record<AgingBucketKey, string> = {
+  "0-30": "b0_30",
+  "31-60": "b31_60",
+  "61-90": "b61_90",
+  "91-120": "b91_120",
+  "120+": "b120plus",
 };
+/** Aging bucket → localized label; `t` is supplied by the calling component. */
+export function agingBucketLabel(t: TFunction, b: AgingBucketKey): string {
+  return t(`accounting.aging.buckets.${AGING_BUCKET_KEY[b]}`);
+}
 
 // ── Cost Centers — /api/erp/cost-centers (CRUD) ─────────────────────────────
 export interface CostCenter {
@@ -383,13 +389,12 @@ export const GL_ACCOUNT_TYPES: GlAccountType[] = [
   "revenue",
   "expense",
 ];
-export const GL_TYPE_LABEL: Record<GlAccountType, string> = {
-  asset: "الأصول",
-  liability: "الالتزامات",
-  equity: "حقوق الملكية",
-  revenue: "الإيرادات",
-  expense: "المصروفات",
-};
+/** GL account type → localized label; `t` is supplied by the calling component.
+ *  An unknown/blank type falls back to its raw value (never an empty cell). */
+export function glTypeLabel(t: TFunction, type: string | null | undefined): string {
+  const s = String(type ?? "");
+  return (GL_ACCOUNT_TYPES as string[]).includes(s) ? t(`accounting.accountType.${s}`) : s;
+}
 // Normal balance side, derived from type (mirrors legacy typeNature).
 export const GL_TYPE_NATURE: Record<GlAccountType, "debit" | "credit"> = {
   asset: "debit",
@@ -824,11 +829,10 @@ export const PROFITABILITY_DIMENSIONS: ProfitabilityDimension[] = [
   "branch",
   "cost_center",
 ];
-export const PROFITABILITY_DIMENSION_LABEL: Record<ProfitabilityDimension, string> = {
-  brand: "علامة تجارية",
-  branch: "فرع",
-  cost_center: "مركز تكلفة",
-};
+/** Profitability dimension → localized label; `t` is supplied by the caller. */
+export function profitabilityDimLabel(t: TFunction, dim: ProfitabilityDimension): string {
+  return t(`accounting.profitability.dimension.${dim}`);
+}
 export interface ProfitabilityRow {
   id: string | null;
   name: string;

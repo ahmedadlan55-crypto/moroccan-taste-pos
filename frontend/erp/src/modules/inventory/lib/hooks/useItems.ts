@@ -15,7 +15,13 @@ function uid(): string {
   return "idem-" + Math.random().toString(36).slice(2) + Date.now().toString(36);
 }
 
-export interface ItemListQuery { q?: string; status?: string; category?: string; warehouseId?: string; page?: number; pageSize?: number; sort?: string; dir?: string }
+export interface ItemListQuery {
+  q?: string; status?: string; category?: string; warehouseId?: string;
+  page?: number; pageSize?: number; sort?: string; dir?: string;
+  // D3-enriched filter facets. Unknown params are ignored by the current
+  // backend and consumed by D3's list endpoint once merged.
+  branchId?: string; unit?: string; missingNameEn?: string; belowReorder?: string; hasImage?: string;
+}
 
 export function useItemList(query: ItemListQuery) {
   const params: Record<string, string | number> = {};

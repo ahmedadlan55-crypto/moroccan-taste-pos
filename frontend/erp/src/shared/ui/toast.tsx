@@ -12,6 +12,7 @@ import { createPortal } from "react-dom";
 import { AnimatePresence, motion } from "framer-motion";
 import { AlertTriangle, CheckCircle2, Info, X, XCircle } from "lucide-react";
 import { cn } from "@/shared/lib";
+import { useTx } from "./i18n";
 
 export type ToastTone = "success" | "error" | "info" | "warning";
 
@@ -43,6 +44,7 @@ const TONE_STYLES: Record<ToastTone, { ring: string; icon: ReactNode }> = {
 };
 
 export function ToastProvider({ children }: { children: ReactNode }) {
+  const t = useTx();
   const [toasts, setToasts] = useState<ToastRecord[]>([]);
   const seq = useRef(0);
   const timers = useRef<Map<number, ReturnType<typeof setTimeout>>>(new Map());
@@ -96,21 +98,21 @@ export function ToastProvider({ children }: { children: ReactNode }) {
           <div
             className="fixed inset-x-0 top-4 z-modal flex flex-col items-center gap-2 px-4"
             role="region"
-            aria-label="التنبيهات"
+            aria-label={t("sharedUi.toast.region")}
           >
             <AnimatePresence initial={false}>
-              {toasts.map((t) => {
-                const style = TONE_STYLES[t.tone];
+              {toasts.map((toastRecord) => {
+                const style = TONE_STYLES[toastRecord.tone];
                 return (
                   <motion.div
-                    key={t.id}
+                    key={toastRecord.id}
                     layout
                     initial={{ opacity: 0, y: -12, scale: 0.98 }}
                     animate={{ opacity: 1, y: 0, scale: 1 }}
                     exit={{ opacity: 0, y: -8, scale: 0.98 }}
                     transition={{ type: "spring", damping: 26, stiffness: 320 }}
                     role="status"
-                    aria-live={t.tone === "error" ? "assertive" : "polite"}
+                    aria-live={toastRecord.tone === "error" ? "assertive" : "polite"}
                     dir="rtl"
                     className={cn(
                       "pointer-events-auto flex w-full max-w-sm items-start gap-3 rounded-2xl border bg-white p-4 shadow-lift",
@@ -121,15 +123,15 @@ export function ToastProvider({ children }: { children: ReactNode }) {
                       {style.icon}
                     </span>
                     <div className="min-w-0 flex-1">
-                      <div className="text-sm font-extrabold text-slate-900">{t.title}</div>
-                      {t.description && (
-                        <div className="mt-0.5 text-xs font-medium text-slate-500">{t.description}</div>
+                      <div className="text-sm font-extrabold text-slate-900">{toastRecord.title}</div>
+                      {toastRecord.description && (
+                        <div className="mt-0.5 text-xs font-medium text-slate-500">{toastRecord.description}</div>
                       )}
                     </div>
                     <button
                       type="button"
-                      aria-label="إغلاق التنبيه"
-                      onClick={() => dismiss(t.id)}
+                      aria-label={t("sharedUi.toast.close")}
+                      onClick={() => dismiss(toastRecord.id)}
                       className="grid h-7 w-7 shrink-0 place-items-center rounded-lg text-slate-400 transition hover:bg-slate-100 hover:text-slate-700"
                     >
                       <X className="h-4 w-4" />

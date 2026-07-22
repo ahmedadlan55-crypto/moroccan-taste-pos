@@ -10,17 +10,28 @@ import { useWarehouses } from "@/modules/inventory/lib/hooks/useWarehouses";
 import { useWarehouseScope } from "@/modules/inventory/lib/warehouse-scope-provider";
 import { useCan } from "@/modules/inventory/lib/permission-provider";
 import { formatCurrency, formatNumber, formatDate } from "@/shared/lib";
-import { stocktakeStatusToLabel, STOCKTAKE_STATUS_OPTIONS } from "@/modules/inventory/lib/status-labels";
+import { useT } from "@/i18n";
+import { stocktakeStatusToLabel } from "@/modules/inventory/lib/status-labels";
 import { useStocktakeList } from "@/modules/inventory/lib/hooks/useStocktakes";
 import { StocktakeDetailDrawer } from "./StocktakeDetailDrawer";
 
 const PAGE_SIZES = [10, 25, 50];
 
 export function StocktakesPage() {
+  const t = useT();
   const [params, setParams] = useSearchParams();
   const navigate = useNavigate();
   const { accessibleWarehouses, allWarehousesAccess } = useWarehouseScope();
   const canCreate = useCan("stocktake.create");
+  const statusOptions = [
+    { value: "", label: t("inventoryRest.stocktakes.statusFilter.all") },
+    { value: "draft", label: t("status.draft") },
+    { value: "counting", label: t("status.counting") },
+    { value: "submitted", label: t("status.pendingApproval") },
+    { value: "approved", label: t("status.approved") },
+    { value: "posted", label: t("status.posted") },
+    { value: "cancelled", label: t("status.cancelled") },
+  ];
 
   const q = params.get("q") ?? "";
   const status = params.get("status") ?? "";
@@ -51,29 +62,29 @@ export function StocktakesPage() {
 
   return (
     <div>
-      <PageHeader eyebrow="الرقابة" title="الجرد والتسويات" subtitle="عدّ محكوم، تسوية الفروقات عبر محرّك التعديل، واعتماد يفصل بين العادّ والمراجع."
-        action={canCreate ? <Button variant="primary" onClick={() => navigate("/inventory/stocktakes?new=1")}><Plus className="h-4 w-4" /> جرد جديد</Button> : null} />
+      <PageHeader eyebrow={t("inventoryRest.stocktakes.eyebrow")} title={t("inventoryRest.stocktakes.title")} subtitle={t("inventoryRest.stocktakes.subtitle")}
+        action={canCreate ? <Button variant="primary" onClick={() => navigate("/inventory/stocktakes?new=1")}><Plus className="h-4 w-4" /> {t("inventoryRest.stocktakes.newStocktake")}</Button> : null} />
 
       <section className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-        <MetricCard label="قيد العد" value={formatNumber(k?.counting ?? 0)} note="جارٍ عدّها الآن" icon={ClipboardCheck} tone="amber" />
-        <MetricCard label="بانتظار الاعتماد" value={formatNumber(k?.submitted ?? 0)} note="مقدَّمة للمراجع" icon={ClipboardList} tone="blue" />
-        <MetricCard label="فروقات مرصودة" value={formatNumber(k?.varianceLines ?? 0)} note="أسطر باختلاف" icon={AlertTriangle} tone="rose" />
-        <MetricCard label="قيمة الفروقات المرحّلة" value={formatCurrency(k?.postedVarianceValue ?? 0)} note="من محاضر مُرحّلة" icon={Wallet} tone="teal" />
+        <MetricCard label={t("inventoryRest.stocktakes.kpi.counting")} value={formatNumber(k?.counting ?? 0)} note={t("inventoryRest.stocktakes.kpi.countingNote")} icon={ClipboardCheck} tone="amber" />
+        <MetricCard label={t("inventoryRest.stocktakes.kpi.submitted")} value={formatNumber(k?.submitted ?? 0)} note={t("inventoryRest.stocktakes.kpi.submittedNote")} icon={ClipboardList} tone="blue" />
+        <MetricCard label={t("inventoryRest.stocktakes.kpi.variance")} value={formatNumber(k?.varianceLines ?? 0)} note={t("inventoryRest.stocktakes.kpi.varianceNote")} icon={AlertTriangle} tone="rose" />
+        <MetricCard label={t("inventoryRest.stocktakes.kpi.postedVariance")} value={formatCurrency(k?.postedVarianceValue ?? 0)} note={t("inventoryRest.stocktakes.kpi.postedVarianceNote")} icon={Wallet} tone="teal" />
       </section>
 
       <section className="surface mt-4 flex flex-col gap-3 p-4">
         <div className="flex flex-col gap-3 lg:flex-row lg:items-center">
           <label className="relative flex-1">
             <Search className="pointer-events-none absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
-            <input className="field w-full pr-10" placeholder="بحث برقم المحضر أو السبب…" defaultValue={q} onChange={(e) => patch({ q: e.target.value })} aria-label="بحث" />
+            <input className="field w-full pr-10" placeholder={t("inventoryRest.stocktakes.searchPlaceholder")} defaultValue={q} onChange={(e) => patch({ q: e.target.value })} aria-label={t("inventoryRest.invtx.list.searchAria")} />
           </label>
-          <select className="field lg:w-52" value={warehouseId} onChange={(e) => patch({ wh: e.target.value })} aria-label="المستودع">
-            <option value="">كل المستودعات</option>
+          <select className="field lg:w-52" value={warehouseId} onChange={(e) => patch({ wh: e.target.value })} aria-label={t("inventoryRest.stocktakes.warehouseAria")}>
+            <option value="">{t("inventoryRest.filter.allWarehouses")}</option>
             {whOptions.map((w) => <option key={w.id} value={w.id}>{w.name}</option>)}
           </select>
         </div>
         <div className="flex flex-wrap gap-1">
-          {STOCKTAKE_STATUS_OPTIONS.map((o) => (
+          {statusOptions.map((o) => (
             <button key={o.value} type="button" onClick={() => patch({ status: o.value })}
               className={`min-h-10 rounded-xl border px-3 text-xs font-extrabold transition ${status === o.value ? "border-teal-600 bg-teal-600 text-white" : "border-slate-200 bg-white text-slate-600 hover:bg-slate-50"}`}>{o.label}</button>
           ))}
@@ -82,14 +93,14 @@ export function StocktakesPage() {
 
       <section className="mt-4">
         {isLoading ? <LoadingState /> : isError ? <ErrorState error={error} onRetry={() => refetch()} /> : !data || data.rows.length === 0 ? (
-          <EmptyState title="لا توجد محاضر جرد" body={q || status || warehouseId ? "جرّب تعديل عوامل التصفية." : "ابدأ بإنشاء محضر جرد."} action={canCreate ? <Button onClick={() => navigate("/inventory/stocktakes?new=1")}><Plus className="h-4 w-4" /> جرد جديد</Button> : undefined} />
+          <EmptyState title={t("inventoryRest.stocktakes.emptyTitle")} body={q || status || warehouseId ? t("inventoryRest.ui.fixFilters") : t("inventoryRest.stocktakes.emptyBody")} action={canCreate ? <Button onClick={() => navigate("/inventory/stocktakes?new=1")}><Plus className="h-4 w-4" /> {t("inventoryRest.stocktakes.newStocktake")}</Button> : undefined} />
         ) : (
           <>
             <div className="surface hidden overflow-hidden md:block">
               <table className="w-full text-sm">
                 <thead className="bg-slate-50 text-xs font-bold text-slate-500"><tr>
-                  <th className="px-4 py-3 text-right">رقم المحضر</th><th className="px-4 py-3 text-right">المستودع</th><th className="px-4 py-3 text-right">الحالة</th>
-                  <th className="px-4 py-3 text-right">المعدود/الإجمالي</th><th className="px-4 py-3 text-right">فروقات</th><th className="px-4 py-3 text-left">قيمة الفرق</th>
+                  <th className="px-4 py-3 text-right">{t("inventoryRest.stocktakes.col.number")}</th><th className="px-4 py-3 text-right">{t("inventoryRest.stocktakes.col.warehouse")}</th><th className="px-4 py-3 text-right">{t("inventoryRest.stocktakes.col.status")}</th>
+                  <th className="px-4 py-3 text-right">{t("inventoryRest.stocktakes.col.countedTotal")}</th><th className="px-4 py-3 text-right">{t("inventoryRest.stocktakes.col.variance")}</th><th className="px-4 py-3 text-left">{t("inventoryRest.stocktakes.col.varianceValue")}</th>
                 </tr></thead>
                 <tbody className="divide-y divide-slate-100">
                   {data.rows.map((r) => (
@@ -115,14 +126,14 @@ export function StocktakesPage() {
             </div>
             <div className="mt-4 flex flex-col items-center justify-between gap-3 sm:flex-row">
               <div className="flex items-center gap-3 text-xs font-medium text-slate-500">
-                <span>عرض {formatNumber(from)}–{formatNumber(to)} من {formatNumber(pg?.total ?? 0)}</span>
-                <select className="field min-h-9 py-1 text-xs" value={pageSize} onChange={(e) => patch({ pageSize: e.target.value })} aria-label="حجم الصفحة">{PAGE_SIZES.map((s) => <option key={s} value={s}>{s} / صفحة</option>)}</select>
-                {isFetching && <span className="text-teal-600">تحديث…</span>}
+                <span>{t("inventoryRest.ui.showingRange", { from: formatNumber(from), to: formatNumber(to), total: formatNumber(pg?.total ?? 0) })}</span>
+                <select className="field min-h-9 py-1 text-xs" value={pageSize} onChange={(e) => patch({ pageSize: e.target.value })} aria-label={t("table.rowsPerPage")}>{PAGE_SIZES.map((s) => <option key={s} value={s}>{t("inventoryRest.ui.perPage", { count: s })}</option>)}</select>
+                {isFetching && <span className="text-teal-600">{t("inventoryRest.ui.updatingShort")}</span>}
               </div>
               <div className="flex items-center gap-2">
-                <Button variant="ghost" size="icon" aria-label="السابق" disabled={page <= 1} onClick={() => patch({ page: page - 1 }, false)}><ChevronRight className="h-4 w-4" /></Button>
+                <Button variant="ghost" size="icon" aria-label={t("inventoryRest.ui.prev")} disabled={page <= 1} onClick={() => patch({ page: page - 1 }, false)}><ChevronRight className="h-4 w-4" /></Button>
                 <span className="text-xs font-bold text-slate-600">{formatNumber(page)} / {formatNumber(totalPages)}</span>
-                <Button variant="ghost" size="icon" aria-label="التالي" disabled={page >= totalPages} onClick={() => patch({ page: page + 1 }, false)}><ChevronLeft className="h-4 w-4" /></Button>
+                <Button variant="ghost" size="icon" aria-label={t("inventoryRest.ui.next")} disabled={page >= totalPages} onClick={() => patch({ page: page + 1 }, false)}><ChevronLeft className="h-4 w-4" /></Button>
               </div>
             </div>
           </>

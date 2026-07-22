@@ -2,6 +2,7 @@ import { describe, it, expect, beforeEach, vi, type Mock } from "vitest";
 import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { ToastProvider } from "@/shared/ui";
+import { I18nProvider } from "@/i18n";
 import { apiClient, ApiError } from "@/shared/api";
 import { UserDialog } from "../users/UserDialog";
 
@@ -19,9 +20,11 @@ function renderCreate() {
   });
   render(
     <QueryClientProvider client={qc}>
-      <ToastProvider>
-        <UserDialog mode="create" open initial={null} onClose={onClose} />
-      </ToastProvider>
+      <I18nProvider>
+        <ToastProvider>
+          <UserDialog mode="create" open initial={null} onClose={onClose} />
+        </ToastProvider>
+      </I18nProvider>
     </QueryClientProvider>,
   );
   return { onClose };

@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useForm } from "react-hook-form";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Pencil, Plus, Trash2 } from "lucide-react";
@@ -20,6 +20,7 @@ import { Field, FormActions, zodResolver } from "@/shared/forms";
 import { z, arabicText } from "@/shared/schemas";
 import { formatNumber } from "@/shared/lib";
 import { useCan } from "@/app/providers";
+import { useT, type TFunction } from "@/i18n";
 import { asArray, ensureAck, type MutationAck } from "../_common";
 
 interface PaymentMethod {
@@ -37,41 +38,33 @@ interface PaymentMethod {
   [key: string]: unknown;
 }
 
-const GROUP_OPTS = [
-  { value: "cash", label: "نقد" },
-  { value: "card", label: "شبكة / بطاقة" },
-  { value: "transfer", label: "تحويل بنكي" },
-  { value: "credit", label: "آجل" },
-  { value: "wallet", label: "محفظة إلكترونية" },
-];
-const GROUP_AR = new Map(GROUP_OPTS.map((g) => [g.value, g.label]));
-const FEE_OPTS = [
-  { value: "none", label: "بدون رسوم" },
-  { value: "percent", label: "نسبة مئوية %" },
-  { value: "fixed", label: "مبلغ ثابت" },
-];
+const GROUP_VALUES = ["cash", "card", "transfer", "credit", "wallet"] as const;
+const FEE_VALUES = ["none", "percent", "fixed"] as const;
 
-const pmSchema = z.object({
-  name: arabicText({ label: "اسم طريقة الدفع", max: 120 }),
-  nameAr: z.string().trim().max(120).optional().or(z.literal("")),
-  groupType: z.string(),
-  serviceFeeType: z.string(),
-  serviceFeeValue: z
-    .string()
-    .trim()
-    .optional()
-    .or(z.literal(""))
-    .refine((v) => !v || (!Number.isNaN(Number(v)) && Number(v) >= 0), "قيمة غير صحيحة"),
-  sortOrder: z
-    .string()
-    .trim()
-    .optional()
-    .or(z.literal(""))
-    .refine((v) => !v || !Number.isNaN(Number(v)), "أدخل رقمًا"),
-  isActive: z.boolean(),
-  description: z.string().trim().max(300).optional().or(z.literal("")),
-});
-type PmForm = z.infer<typeof pmSchema>;
+function makePmSchema(t: TFunction) {
+  return z.object({
+    // arabicText's interpolated {label} message stays Arabic (shared-primitives contract).
+    name: arabicText({ label: "اسم طريقة الدفع", max: 120 }),
+    nameAr: z.string().trim().max(120).optional().or(z.literal("")),
+    groupType: z.string(),
+    serviceFeeType: z.string(),
+    serviceFeeValue: z
+      .string()
+      .trim()
+      .optional()
+      .or(z.literal(""))
+      .refine((v) => !v || (!Number.isNaN(Number(v)) && Number(v) >= 0), t("administration.payments.err.invalidValue")),
+    sortOrder: z
+      .string()
+      .trim()
+      .optional()
+      .or(z.literal(""))
+      .refine((v) => !v || !Number.isNaN(Number(v)), t("administration.payments.err.invalidNumber")),
+    isActive: z.boolean(),
+    description: z.string().trim().max(300).optional().or(z.literal("")),
+  });
+}
+type PmForm = z.infer<ReturnType<typeof makePmSchema>>;
 
 function PaymentMethodDialog({
   open,
@@ -82,8 +75,12 @@ function PaymentMethodDialog({
   initial: PaymentMethod | null;
   onClose: () => void;
 }) {
+  const t = useT();
   const qc = useQueryClient();
   const { toast } = useToast();
+  const schema = useMemo(() => makePmSchema(t), [t]);
+  const groupOptions = useMemo(() => GROUP_VALUES.map((v) => ({ value: v, label: t(`administration.payments.group.${v}`) })), [t]);
+  const feeOptions = useMemo(() => FEE_VALUES.map((v) => ({ value: v, label: t(`administration.payments.fee.${v}`) })), [t]);
   const {
     register,
     handleSubmit,
@@ -92,7 +89,7 @@ function PaymentMethodDialog({
     setValue,
     formState: { errors, isSubmitting },
   } = useForm<PmForm>({
-    resolver: zodResolver(pmSchema),
+    resolver: zodResolver(schema),
     defaultValues: {
       name: "",
       nameAr: "",
@@ -138,51 +135,51 @@ function PaymentMethodDialog({
     },
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["settings", "payment-methods-full"] });
-      toast({ title: initial ? "تم تحديث طريقة الدفع" : "تم إنشاء طريقة الدفع", tone: "success" });
+      toast({ title: initial ? t("administration.payments.toast.updated") : t("administration.payments.toast.created"), tone: "success" });
       onClose();
     },
-    onError: (e: Error) => toast({ title: "تعذّر الحفظ", description: e.message, tone: "error" }),
+    onError: (e: Error) => toast({ title: t("administration.payments.toast.saveFailed"), description: e.message, tone: "error" }),
   });
 
   return (
     <Dialog
       open={open}
       onClose={onClose}
-      title={initial ? "تعديل طريقة دفع" : "طريقة دفع جديدة"}
+      title={initial ? t("administration.payments.form.editTitle") : t("administration.payments.form.createTitle")}
       size="lg"
       dismissable={!isSubmitting}
     >
       <form onSubmit={handleSubmit((v) => mutation.mutate(v))} className="space-y-4" noValidate>
         <div className="grid gap-4 sm:grid-cols-2">
-          <Field label="الاسم" required error={errors.name}>
+          <Field label={t("administration.payments.form.name")} required error={errors.name}>
             {({ id, invalid }) => <Input id={id} invalid={invalid} {...register("name")} />}
           </Field>
-          <Field label="الاسم بالعربية" error={errors.nameAr}>
+          <Field label={t("administration.payments.form.nameAr")} error={errors.nameAr}>
             {({ id }) => <Input id={id} {...register("nameAr")} />}
           </Field>
-          <Field label="المجموعة" error={errors.groupType}>
-            {({ id }) => <Select id={id} options={GROUP_OPTS} {...register("groupType")} />}
+          <Field label={t("administration.payments.form.group")} error={errors.groupType}>
+            {({ id }) => <Select id={id} options={groupOptions} {...register("groupType")} />}
           </Field>
-          <Field label="نوع الرسوم" error={errors.serviceFeeType}>
-            {({ id }) => <Select id={id} options={FEE_OPTS} {...register("serviceFeeType")} />}
+          <Field label={t("administration.payments.form.feeType")} error={errors.serviceFeeType}>
+            {({ id }) => <Select id={id} options={feeOptions} {...register("serviceFeeType")} />}
           </Field>
-          <Field label="قيمة الرسوم" error={errors.serviceFeeValue} hint="نسبة أو مبلغ حسب النوع">
+          <Field label={t("administration.payments.form.feeValue")} error={errors.serviceFeeValue} hint={t("administration.payments.form.feeValueHint")}>
             {({ id, invalid }) => <Input id={id} dir="ltr" inputMode="decimal" invalid={invalid} {...register("serviceFeeValue")} />}
           </Field>
-          <Field label="الترتيب" error={errors.sortOrder}>
+          <Field label={t("administration.payments.form.sortOrder")} error={errors.sortOrder}>
             {({ id, invalid }) => <Input id={id} dir="ltr" inputMode="numeric" invalid={invalid} {...register("sortOrder")} />}
           </Field>
-          <Field label="وصف" error={errors.description} className="sm:col-span-2">
+          <Field label={t("administration.payments.form.description")} error={errors.description} className="sm:col-span-2">
             {({ id }) => <Input id={id} {...register("description")} />}
           </Field>
         </div>
-        <Toggle checked={watch("isActive")} onChange={(v) => setValue("isActive", v)} label="طريقة نشطة" />
+        <Toggle checked={watch("isActive")} onChange={(v) => setValue("isActive", v)} label={t("administration.payments.form.activeToggle")} />
         <FormActions>
           <Button variant="secondary" onClick={onClose} disabled={isSubmitting}>
-            إلغاء
+            {t("common.cancel")}
           </Button>
           <Button type="submit" loading={mutation.isPending}>
-            {initial ? "حفظ التغييرات" : "إنشاء"}
+            {initial ? t("administration.payments.form.saveChanges") : t("administration.payments.form.create")}
           </Button>
         </FormActions>
       </form>
@@ -191,9 +188,11 @@ function PaymentMethodDialog({
 }
 
 export default function PaymentMethodsPage() {
+  const t = useT();
   const canManage = useCan("administration.payment-methods");
   const qc = useQueryClient();
   const { toast } = useToast();
+  const groupLabel = (v: string) => (GROUP_VALUES.includes(v as (typeof GROUP_VALUES)[number]) ? t(`administration.payments.group.${v}`) : v);
   const [editing, setEditing] = useState<PaymentMethod | null>(null);
   const [dialogOpen, setDialogOpen] = useState(false);
   const [deleting, setDeleting] = useState<PaymentMethod | null>(null);
@@ -209,10 +208,10 @@ export default function PaymentMethodsPage() {
       ensureAck(await apiClient.delete<MutationAck>(`/settings/payment-methods-full/${id}`)),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["settings", "payment-methods-full"] });
-      toast({ title: "تم حذف طريقة الدفع", tone: "success" });
+      toast({ title: t("administration.payments.toast.deleted"), tone: "success" });
       setDeleting(null);
     },
-    onError: (e: Error) => toast({ title: "تعذّر الحذف", description: e.message, tone: "error" }),
+    onError: (e: Error) => toast({ title: t("administration.payments.toast.deleteFailed"), description: e.message, tone: "error" }),
   });
 
   const feeText = (m: PaymentMethod): string => {
@@ -225,7 +224,7 @@ export default function PaymentMethodsPage() {
   const columns: ColumnDef<PaymentMethod>[] = [
     {
       id: "name",
-      header: "طريقة الدفع",
+      header: t("administration.payments.col.name"),
       accessor: (r) => r.nameAr || r.name,
       cell: (r) => (
         <span className="flex items-center gap-2">
@@ -239,23 +238,23 @@ export default function PaymentMethodsPage() {
       ),
       sortable: true,
     },
-    { id: "group", header: "المجموعة", accessor: (r) => GROUP_AR.get(r.groupType) ?? r.groupType },
-    { id: "fee", header: "الرسوم", accessor: (r) => feeText(r) },
-    { id: "sort", header: "الترتيب", accessor: (r) => r.sortOrder ?? 0, numeric: true, sortable: true },
+    { id: "group", header: t("administration.payments.col.group"), accessor: (r) => groupLabel(r.groupType) },
+    { id: "fee", header: t("administration.payments.col.fee"), accessor: (r) => feeText(r) },
+    { id: "sort", header: t("administration.payments.col.sort"), accessor: (r) => r.sortOrder ?? 0, numeric: true, sortable: true },
     {
       id: "status",
-      header: "الحالة",
-      accessor: (r) => (r.isActive ? "نشط" : "معطّل"),
-      cell: (r) => <StatusBadge>{r.isActive ? "نشط" : "معطّل"}</StatusBadge>,
+      header: t("administration.payments.col.status"),
+      accessor: (r) => t(r.isActive ? "status.active" : "status.disabled"),
+      cell: (r) => <StatusBadge>{r.isActive ? "active" : "disabled"}</StatusBadge>,
     },
   ];
 
   return (
     <div>
       <PageHeader
-        eyebrow="الإدارة"
-        title="طرق الدفع"
-        subtitle="طرق الدفع المتاحة في نقاط البيع، رسومها ومجموعاتها المحاسبية."
+        eyebrow={t("administration.eyebrow")}
+        title={t("administration.payments.title")}
+        subtitle={t("administration.payments.subtitle")}
         action={
           canManage && (
             <Button
@@ -264,7 +263,7 @@ export default function PaymentMethodsPage() {
                 setDialogOpen(true);
               }}
             >
-              <Plus className="h-4 w-4" /> طريقة جديدة
+              <Plus className="h-4 w-4" /> {t("administration.payments.newBtn")}
             </Button>
           )
         }
@@ -277,18 +276,18 @@ export default function PaymentMethodsPage() {
         error={query.error}
         onRetry={() => query.refetch()}
         searchable
-        searchPlaceholder="بحث عن طريقة دفع…"
+        searchPlaceholder={t("administration.payments.searchPlaceholder")}
         exportFilename="payment-methods.csv"
         tableId="admin-payment-methods"
         initialSort={{ columnId: "sort", dir: "asc" }}
-        emptyTitle="لا توجد طرق دفع"
+        emptyTitle={t("administration.payments.empty")}
         mobileTitle={(r) => r.nameAr || r.name}
         rowActions={
           canManage
             ? (r) => (
                 <div className="flex items-center gap-1">
                   <IconButton
-                    aria-label={`تعديل ${r.nameAr || r.name}`}
+                    aria-label={t("administration.payments.editAria", { name: r.nameAr || r.name })}
                     size="sm"
                     onClick={() => {
                       setEditing(r);
@@ -298,7 +297,7 @@ export default function PaymentMethodsPage() {
                     <Pencil className="h-4 w-4" />
                   </IconButton>
                   <IconButton
-                    aria-label={`حذف ${r.nameAr || r.name}`}
+                    aria-label={t("administration.payments.deleteAria", { name: r.nameAr || r.name })}
                     size="sm"
                     variant="danger"
                     onClick={() => setDeleting(r)}
@@ -313,10 +312,10 @@ export default function PaymentMethodsPage() {
       <PaymentMethodDialog open={dialogOpen} initial={editing} onClose={() => setDialogOpen(false)} />
       <ConfirmDialog
         open={!!deleting}
-        title="حذف طريقة الدفع"
-        description={deleting ? `سيتم حذف «${deleting.nameAr || deleting.name}».` : ""}
+        title={t("administration.payments.deleteTitle")}
+        description={deleting ? t("administration.payments.deleteDesc", { name: deleting.nameAr || deleting.name }) : ""}
         tone="danger"
-        confirmLabel="حذف"
+        confirmLabel={t("common.delete")}
         processing={deleteMutation.isPending}
         error={deleteMutation.isError ? (deleteMutation.error as Error).message : null}
         onConfirm={() => deleting && deleteMutation.mutate(String(deleting.id))}

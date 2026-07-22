@@ -3,6 +3,7 @@ import { Plus, Pencil, Trash2 } from "lucide-react";
 import { Button, IconButton, Dialog, Input, ConfirmDialog, PageHeader } from "@/shared/ui";
 import { Field } from "@/shared/forms";
 import { DataTable, type ColumnDef } from "@/shared/tables";
+import { useT, translateApiError } from "@/i18n";
 import {
   useBankAccounts,
   useSaveBankAccount,
@@ -10,7 +11,7 @@ import {
   type BankAccount,
   type BankAccountInput,
 } from "../api";
-import { Money, GlLinkSection, mapError } from "../components";
+import { Money, GlLinkSection } from "../components";
 
 interface FormState {
   id?: string;
@@ -33,6 +34,7 @@ const EMPTY: FormState = {
 };
 
 export function BankAccountsPage() {
+  const t = useT();
   const listQuery = useBankAccounts();
   const save = useSaveBankAccount();
   const del = useDeleteBankAccount();
@@ -71,7 +73,7 @@ export function BankAccountsPage() {
   function submit() {
     if (!form) return;
     if (!form.bankName.trim()) {
-      setNameError("اسم البنك مطلوب.");
+      setNameError(t("banking.bankAccounts.nameRequired"));
       return;
     }
     setFormError(null);
@@ -90,10 +92,10 @@ export function BankAccountsPage() {
     }
     save.mutate(input, {
       onSuccess: (res) => {
-        if (res && res.success === false) return setFormError(mapError(new Error(res.error)));
+        if (res && res.success === false) return setFormError(translateApiError(new Error(res.error), t));
         setForm(null);
       },
-      onError: (e) => setFormError(mapError(e)),
+      onError: (e) => setFormError(translateApiError(e, t)),
     });
   }
 
@@ -103,22 +105,22 @@ export function BankAccountsPage() {
     setDeleteError(null);
     del.mutate(toDelete.id, {
       onSuccess: (res) => {
-        if (res && res.success === false) return setDeleteError(mapError(new Error(res.error)));
+        if (res && res.success === false) return setDeleteError(translateApiError(new Error(res.error), t));
         setToDelete(null);
       },
-      onError: (e) => setDeleteError(mapError(e)),
+      onError: (e) => setDeleteError(translateApiError(e, t)),
     });
   }
 
   const columns: ColumnDef<BankAccount>[] = [
-    { id: "bankName", header: "البنك", accessor: (r) => r.bankName, sortable: true },
-    { id: "accountName", header: "اسم الحساب", accessor: (r) => r.accountName || "—" },
-    { id: "accountNumber", header: "رقم الحساب", accessor: (r) => r.accountNumber || "—" },
-    { id: "iban", header: "الآيبان", accessor: (r) => r.iban || "—", defaultHidden: true },
-    { id: "gl", header: "حساب الأستاذ", accessor: (r) => r.glAccountCode || "—" },
+    { id: "bankName", header: t("banking.shared.bank"), accessor: (r) => r.bankName, sortable: true },
+    { id: "accountName", header: t("banking.bankAccounts.cols.accountName"), accessor: (r) => r.accountName || "—" },
+    { id: "accountNumber", header: t("banking.bankAccounts.cols.accountNumber"), accessor: (r) => r.accountNumber || "—" },
+    { id: "iban", header: t("banking.bankAccounts.cols.iban"), accessor: (r) => r.iban || "—", defaultHidden: true },
+    { id: "gl", header: t("banking.shared.ledgerAccount"), accessor: (r) => r.glAccountCode || "—" },
     {
       id: "balance",
-      header: "الرصيد",
+      header: t("banking.shared.balance"),
       numeric: true,
       accessor: (r) => r.balance,
       cell: (r) => <Money value={r.balance} currency={r.currency} tone="text-sky-700" />,
@@ -128,12 +130,12 @@ export function BankAccountsPage() {
   return (
     <div>
       <PageHeader
-        eyebrow="النقد والبنوك"
-        title="الحسابات البنكية"
-        subtitle="إدارة الحسابات البنكية وربطها بحسابات الأستاذ العام تحت البنوك (1102)."
+        eyebrow={t("banking.shared.eyebrow")}
+        title={t("banking.bankAccounts.title")}
+        subtitle={t("banking.bankAccounts.subtitle")}
         action={
           <Button variant="primary" onClick={openNew}>
-            <Plus className="h-4 w-4" /> حساب بنكي جديد
+            <Plus className="h-4 w-4" /> {t("banking.bankAccounts.newTitle")}
           </Button>
         }
       />
@@ -146,15 +148,15 @@ export function BankAccountsPage() {
         error={listQuery.error}
         onRetry={() => listQuery.refetch()}
         searchable
-        searchPlaceholder="بحث عن حساب بنكي…"
-        emptyTitle="لا توجد حسابات بنكية"
-        emptyBody="أضف أول حساب بنكي للبدء."
+        searchPlaceholder={t("banking.bankAccounts.searchPlaceholder")}
+        emptyTitle={t("banking.bankAccounts.emptyTitle")}
+        emptyBody={t("banking.bankAccounts.emptyBody")}
         rowActions={(r) => (
           <div className="flex items-center gap-1">
-            <IconButton aria-label="تعديل" size="sm" onClick={() => openEdit(r)}>
+            <IconButton aria-label={t("common.edit")} size="sm" onClick={() => openEdit(r)}>
               <Pencil className="h-4 w-4" />
             </IconButton>
-            <IconButton aria-label="حذف" size="sm" onClick={() => { setDeleteError(null); setToDelete(r); }}>
+            <IconButton aria-label={t("common.delete")} size="sm" onClick={() => { setDeleteError(null); setToDelete(r); }}>
               <Trash2 className="h-4 w-4 text-rose-600" />
             </IconButton>
           </div>
@@ -164,15 +166,15 @@ export function BankAccountsPage() {
       <Dialog
         open={!!form}
         onClose={() => setForm(null)}
-        title={isNew ? "حساب بنكي جديد" : "تعديل الحساب البنكي"}
+        title={isNew ? t("banking.bankAccounts.newTitle") : t("banking.bankAccounts.editTitle")}
         size="lg"
         footer={
           <>
             <Button variant="secondary" onClick={() => setForm(null)} disabled={save.isPending}>
-              إلغاء
+              {t("common.cancel")}
             </Button>
             <Button variant="primary" onClick={submit} loading={save.isPending}>
-              حفظ
+              {t("common.save")}
             </Button>
           </>
         }
@@ -180,7 +182,7 @@ export function BankAccountsPage() {
         {form && (
           <div className="space-y-4">
             <div className="grid gap-4 sm:grid-cols-2">
-              <Field label="اسم البنك" required error={nameError ?? undefined}>
+              <Field label={t("banking.bankAccounts.fields.bankName")} required error={nameError ?? undefined}>
                 <Input
                   value={form.bankName}
                   invalid={!!nameError}
@@ -190,25 +192,25 @@ export function BankAccountsPage() {
                   }}
                 />
               </Field>
-              <Field label="اسم الحساب">
+              <Field label={t("banking.bankAccounts.fields.accountName")}>
                 <Input value={form.accountName} onChange={(e) => setForm({ ...form, accountName: e.target.value })} />
               </Field>
-              <Field label="رقم الحساب">
+              <Field label={t("banking.bankAccounts.fields.accountNumber")}>
                 <Input value={form.accountNumber} onChange={(e) => setForm({ ...form, accountNumber: e.target.value })} />
               </Field>
-              <Field label="الآيبان (IBAN)">
+              <Field label={t("banking.bankAccounts.fields.iban")}>
                 <Input value={form.iban} onChange={(e) => setForm({ ...form, iban: e.target.value })} dir="ltr" />
               </Field>
-              <Field label="العملة">
+              <Field label={t("banking.shared.currency")}>
                 <Input value={form.currency} onChange={(e) => setForm({ ...form, currency: e.target.value })} />
               </Field>
             </div>
 
             {isNew ? (
-              <GlLinkSection root="1102" rootLabel="البنوك (1102)" parentId={glParentId} onParentChange={setGlParentId} />
+              <GlLinkSection root="1102" rootLabel={t("banking.bankAccounts.glRoot")} parentId={glParentId} onParentChange={setGlParentId} />
             ) : (
               <div className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-xs font-bold text-slate-500">
-                حساب الأستاذ المرتبط: <code className="text-teal-700">{form.glAccountCode || "—"}</code> — لا يتغيّر عند التعديل.
+                {t("banking.shared.linkedLedgerPrefix")} <code className="text-teal-700">{form.glAccountCode || "—"}</code> {t("banking.shared.linkedLedgerSuffix")}
               </div>
             )}
 
@@ -223,10 +225,10 @@ export function BankAccountsPage() {
 
       <ConfirmDialog
         open={!!toDelete}
-        title="حذف الحساب البنكي"
-        description={toDelete ? `سيتم تعطيل الحساب «${toDelete.bankName}».` : ""}
+        title={t("banking.bankAccounts.deleteTitle")}
+        description={toDelete ? t("banking.bankAccounts.deleteDesc", { name: toDelete.bankName }) : ""}
         tone="danger"
-        confirmLabel="حذف"
+        confirmLabel={t("common.delete")}
         processing={del.isPending}
         error={deleteError}
         onConfirm={confirmDelete}

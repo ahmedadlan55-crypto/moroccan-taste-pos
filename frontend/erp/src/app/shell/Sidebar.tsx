@@ -10,9 +10,26 @@ import {
 import { NAV } from "@/app/navigation/manifest";
 import { useAuth, usePermissions } from "@/app/providers";
 import { useServerFlags } from "@/app/server-flags";
+import { useLang, useT } from "@/i18n";
 import { getIcon } from "./icons";
 import { useShell } from "./shell-context";
 import { cn } from "@/shared/lib";
+
+/** Roles that have a translated label (shell.roles.*) — any OTHER role string
+ *  on the user record is shown as-is, preserving the original `map[role] ?? role`
+ *  fallback. */
+const KNOWN_ROLE_KEYS = [
+  "admin",
+  "developer",
+  "manager",
+  "employee",
+  "custody",
+  "cashier",
+  "auditor",
+  "sales",
+  "accountant",
+  "finance",
+] as const;
 
 /**
  * Section-first navigation: the expanded sidebar shows one clear business
@@ -20,6 +37,8 @@ import { cn } from "@/shared/lib";
  * than the former wall of more than one hundred route icons.
  */
 export function Sidebar() {
+  const t = useT();
+  const lang = useLang();
   const { pathname } = useLocation();
   const { user } = useAuth();
   const { can } = usePermissions();
@@ -27,6 +46,12 @@ export function Sidebar() {
   const { collapsed, toggleCollapsed } = useShell();
   const [openGroup, setOpenGroup] = useState<string | null>(null);
   const initials = (user?.name || user?.username || "؟").slice(0, 2);
+
+  // Directional rail chevrons flip with the writing direction: in RTL the
+  // sidebar is pinned to the (right) start edge, in LTR to the (left) start
+  // edge, so the collapse/expand arrows must point the matching way.
+  const RailCollapsed = lang === "ar" ? ChevronsLeft : ChevronsRight;
+  const RailExpanded = lang === "ar" ? ChevronsRight : ChevronsLeft;
 
   const groups = NAV.map((group) => ({
     ...group,
@@ -46,10 +71,10 @@ export function Sidebar() {
   return (
     <aside
       className={cn(
-        "no-print fixed inset-y-0 right-0 z-30 hidden flex-col bg-navy px-3 pb-5 pt-4 text-white transition-[width] lg:flex",
+        "no-print fixed inset-y-0 start-0 z-30 hidden flex-col bg-navy px-3 pb-5 pt-4 text-white transition-[width] lg:flex",
         collapsed ? "w-20" : "w-72",
       )}
-      aria-label="الشريط الجانبي"
+      aria-label={t("shell.sidebar.ariaLabel")}
     >
       <div className={cn("flex items-center gap-3 px-1 py-3", collapsed && "justify-center")}>
         <span className="grid h-11 w-11 shrink-0 place-items-center rounded-2xl bg-teal-600 text-white shadow-lg shadow-black/20">
@@ -57,8 +82,8 @@ export function Sidebar() {
         </span>
         {!collapsed && (
           <div className="min-w-0">
-            <div className="truncate text-base font-bold">المذاق المغربي</div>
-            <div className="mt-0.5 text-xs font-medium text-slate-400">الإدارة الموحّدة</div>
+            <div className="truncate text-base font-bold">{t("shell.brand.name")}</div>
+            <div className="mt-0.5 text-xs font-medium text-slate-400">{t("shell.brand.tagline")}</div>
           </div>
         )}
       </div>
@@ -66,32 +91,33 @@ export function Sidebar() {
       <button
         type="button"
         onClick={toggleCollapsed}
-        aria-label={collapsed ? "توسيع الشريط الجانبي" : "طي الشريط الجانبي"}
+        aria-label={collapsed ? t("shell.sidebar.expandRail") : t("shell.sidebar.collapseRail")}
         aria-pressed={collapsed}
         className="mb-2 mt-1 flex min-h-10 items-center justify-center gap-2 rounded-xl border border-white/10 bg-white/5 px-2 text-xs font-medium text-slate-300 transition hover:bg-white/10 hover:text-white"
       >
         {collapsed ? (
-          <ChevronsLeft className="h-4 w-4" />
+          <RailCollapsed className="h-4 w-4" />
         ) : (
           <>
-            <ChevronsRight className="h-4 w-4" />
-            طي القائمة
+            <RailExpanded className="h-4 w-4" />
+            {t("shell.sidebar.collapse")}
           </>
         )}
       </button>
 
-      <nav className="scrollbar-thin mt-2 flex-1 overflow-y-auto pl-1" aria-label="التنقل الرئيسي">
+      <nav className="scrollbar-thin mt-2 flex-1 overflow-y-auto pe-1" aria-label={t("shell.sidebar.nav")}>
         {collapsed ? (
           <div className="space-y-1.5">
             {groups.map((group) => {
               const Icon = getIcon(group.items[0].icon);
               const active = activeGroupId === group.id;
+              const groupLabel = t(group.label);
               return (
                 <NavLink
                   key={group.id}
                   to={group.items[0].path}
-                  title={group.label}
-                  aria-label={group.label}
+                  title={groupLabel}
+                  aria-label={groupLabel}
                   className={cn("nav-item justify-center px-0", active && "nav-item-active")}
                 >
                   <Icon className="h-5 w-5" />
@@ -105,6 +131,7 @@ export function Sidebar() {
               const GroupIcon = getIcon(group.items[0].icon);
               const expanded = openGroup === group.id;
               const active = activeGroupId === group.id;
+              const groupLabel = t(group.label);
               return (
                 <section key={group.id} className="rounded-2xl">
                   <div
@@ -115,12 +142,12 @@ export function Sidebar() {
                   >
                     <NavLink
                       to={group.items[0].path}
-                      aria-label={group.label}
+                      aria-label={groupLabel}
                       onClick={() => setOpenGroup(group.id)}
-                      className="flex min-w-0 flex-1 items-center gap-3 rounded-r-xl px-3 text-right"
+                      className="flex min-w-0 flex-1 items-center gap-3 rounded-s-xl px-3 text-start"
                     >
                       <GroupIcon className={cn("h-[18px] w-[18px] shrink-0", active && "text-teal-300")} />
-                      <span className="min-w-0 flex-1 truncate">{group.label}</span>
+                      <span className="min-w-0 flex-1 truncate">{groupLabel}</span>
                       <span className="rounded-full bg-white/5 px-2 py-0.5 text-[11px] font-medium text-slate-400">
                         {group.items.length}
                       </span>
@@ -128,8 +155,8 @@ export function Sidebar() {
                     <button
                       type="button"
                       onClick={() => setOpenGroup(expanded ? null : group.id)}
-                      className="grid w-11 shrink-0 place-items-center rounded-l-xl text-slate-400 transition hover:bg-white/10 hover:text-white"
-                      aria-label={`${expanded ? "طي" : "فتح"} صفحات ${group.label}`}
+                      className="grid w-11 shrink-0 place-items-center rounded-e-xl text-slate-400 transition hover:bg-white/10 hover:text-white"
+                      aria-label={t(expanded ? "shell.sidebar.collapseGroup" : "shell.sidebar.expandGroup", { group: groupLabel })}
                       aria-expanded={expanded}
                       aria-controls={`nav-group-${group.id}`}
                     >
@@ -140,7 +167,7 @@ export function Sidebar() {
                   {expanded && (
                     <div
                       id={`nav-group-${group.id}`}
-                      className="mt-1 space-y-1 border-r border-white/10 pr-2"
+                      className="mt-1 space-y-1 border-s border-white/10 ps-2"
                     >
                       {group.items.map((item) => {
                         const Icon = getIcon(item.icon);
@@ -152,7 +179,7 @@ export function Sidebar() {
                             className={({ isActive }) => cn("nav-item", isActive && "nav-item-active")}
                           >
                             <Icon className="h-[18px] w-[18px] shrink-0" />
-                            <span className="flex-1 truncate">{item.label}</span>
+                            <span className="flex-1 truncate">{t(item.label)}</span>
                           </NavLink>
                         );
                       })}
@@ -173,9 +200,9 @@ export function Sidebar() {
           {!collapsed && (
             <>
               <div className="min-w-0 flex-1">
-                <div className="truncate text-sm font-semibold">{user?.name || user?.username || "زائر"}</div>
+                <div className="truncate text-sm font-semibold">{user?.name || user?.username || t("shell.identity.guest")}</div>
                 <div className="text-xs font-medium text-slate-400">
-                  {user?.role ? roleLabel(String(user.role)) : "غير مسجّل"}
+                  {user?.role ? roleLabel(String(user.role), t) : t("shell.identity.unregistered")}
                 </div>
               </div>
               <MoreHorizontal className="h-4 w-4 text-slate-500" />
@@ -187,18 +214,7 @@ export function Sidebar() {
   );
 }
 
-function roleLabel(role: string): string {
-  const map: Record<string, string> = {
-    admin: "مدير النظام",
-    developer: "مطوّر",
-    manager: "مشرف",
-    employee: "موظف",
-    custody: "أمين عهدة",
-    cashier: "كاشير",
-    auditor: "مدقق",
-    sales: "مندوب مبيعات",
-    accountant: "محاسب",
-    finance: "مالية",
-  };
-  return map[role] || role;
+/** Translate a known role via shell.roles.*, else show the raw role string. */
+function roleLabel(role: string, t: ReturnType<typeof useT>): string {
+  return (KNOWN_ROLE_KEYS as readonly string[]).includes(role) ? t(`shell.roles.${role}`) : role;
 }

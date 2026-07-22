@@ -27,6 +27,7 @@ export type WarehouseAction =
   | "item.create"
   | "item.edit"
   | "item.activate"
+  | "item.cost.view"
   | "replenishment.view"
   | "lot.view"
   | "lot.create"
@@ -91,6 +92,10 @@ const MATRIX: Record<WarehouseAction, Role[]> = {
   "item.create": ["admin", "manager", "employee", "custody"],
   "item.edit": ["admin", "manager", "employee", "custody"],
   "item.activate": ["admin", "manager"],
+  // D1/D3 — item cost visibility (base-unit + major-unit cost columns and the
+  // cost & accounting section). Server-authoritative cap is `item.cost.view`;
+  // this mirror hides cost from the cashier by default. Backend stays the gate.
+  "item.cost.view": ["admin", "manager", "employee", "custody", "auditor"],
   "replenishment.view": ["admin", "manager", "employee", "custody", "auditor"],
   // Phase 4B — lots / expiry. view = everyone; create/edit = back-office;
   // quarantine/recall = managerial (mirrors routes/inventory-lots.js BACKOFFICE/MGR).

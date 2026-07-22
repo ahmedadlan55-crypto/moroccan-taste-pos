@@ -2,6 +2,7 @@ import { useState } from "react";
 import { Link } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Button, Dialog, ErrorState, LoadingState, Select, safeUserMessage, useToast } from "@/shared/ui";
+import { useTx } from "@/shared/ui/i18n";
 import { peopleApi } from "../../lib/api";
 import { qk } from "../../lib/query-keys";
 
@@ -15,6 +16,7 @@ import { qk } from "../../lib/query-keys";
 // points the operator at it, exactly like the legacy two-step flow.
 
 export function CreateCustodyDialog({ open, onClose }: { open: boolean; onClose: () => void }) {
+  const t = useTx();
   const { toast } = useToast();
   const qc = useQueryClient();
   const [userId, setUserId] = useState("");
@@ -31,15 +33,15 @@ export function CreateCustodyDialog({ open, onClose }: { open: boolean; onClose:
     mutationFn: () => peopleApi.createCustody({ userId, userName: picked?.name ?? "" }),
     onSuccess: (r) => {
       toast({
-        title: "تم إنشاء العهدة: " + (r.custodyNumber || ""),
-        description: "لتفعيلها بمبلغ افتتاحي استخدم «تغذية» من قائمة العهدة.",
+        title: t("people.custody.create.created", { number: r.custodyNumber || "" }),
+        description: t("people.custody.create.createdDesc"),
         tone: "success",
       });
       setUserId("");
       onClose();
       void qc.invalidateQueries({ queryKey: [...qk.all, "custody"] });
     },
-    onError: (e) => toast({ title: "تعذّر إنشاء العهدة", description: safeUserMessage(e), tone: "error" }),
+    onError: (e) => toast({ title: t("people.custody.create.createFailed"), description: safeUserMessage(e, t), tone: "error" }),
   });
 
   function close() {
@@ -52,16 +54,16 @@ export function CreateCustodyDialog({ open, onClose }: { open: boolean; onClose:
     <Dialog
       open={open}
       onClose={close}
-      title="إنشاء عهدة جديدة"
-      description="اختر مسؤول العهدة — يُنشأ رقم العهدة تلقائيًا وتُموَّل لاحقًا عبر «تغذية»."
+      title={t("people.custody.create.title")}
+      description={t("people.custody.create.desc")}
       dismissable={!create.isPending}
       footer={
         <>
           <Button variant="secondary" onClick={close} disabled={create.isPending}>
-            إلغاء
+            {t("common.cancel")}
           </Button>
           <Button variant="primary" loading={create.isPending} disabled={!userId} onClick={() => create.mutate()}>
-            إنشاء
+            {t("people.custody.create.submitBtn")}
           </Button>
         </>
       }
@@ -71,10 +73,10 @@ export function CreateCustodyDialog({ open, onClose }: { open: boolean; onClose:
       {!users.isLoading && !users.error && (
         <label className="block">
           <span className="text-xs font-bold text-slate-600">
-            مسؤول العهدة <span className="text-rose-600">*</span>
+            {t("people.custody.create.holderLabel")} <span className="text-rose-600">*</span>
           </span>
           <Select className="mt-1" value={userId} onChange={(e) => setUserId(e.target.value)}>
-            <option value="">— اختر مسؤول العهدة —</option>
+            <option value="">{t("people.custody.create.pickHolder")}</option>
             {active.map((u) => (
               <option key={u.id} value={u.id}>
                 {u.name}
@@ -84,13 +86,13 @@ export function CreateCustodyDialog({ open, onClose }: { open: boolean; onClose:
           </Select>
           {!active.length && (
             <p className="mt-2 text-xs font-medium text-slate-500">
-              لا يوجد مسؤولو عهدة نشطون —{" "}
+              {t("people.custody.create.noActiveHolders")}{" "}
               <Link
                 to="/people/custody-officers"
                 onClick={onClose}
                 className="font-bold text-teal-700 underline underline-offset-2 hover:text-teal-800"
               >
-                أضفهم من شاشة «مسؤولو العهدة»
+                {t("people.custody.create.addFromOfficers")}
               </Link>
               .
             </p>

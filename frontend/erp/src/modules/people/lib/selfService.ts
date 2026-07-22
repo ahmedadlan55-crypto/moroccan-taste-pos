@@ -9,6 +9,7 @@
 // sent a clock without coordinates — a denied/missing geolocation aborts with
 // an error toast. We keep that: no silent "clock without coords" fallback.
 
+import type { TFunction } from "@/i18n";
 import type { MyAttendanceRow } from "./types";
 
 // ── Device fingerprint (port of legacy _fallbackDevice, app.js:1386) ─────────
@@ -137,10 +138,17 @@ export interface ClockResponse {
   device?: Partial<DeviceInfo>;
 }
 
-export function clockErrorMessage(r: ClockResponse | null | undefined): string {
-  if (!r) return "فشل تسجيل الحضور";
+// `t` is optional: the ClockCard passes its active-language translator to
+// localize this, but unit tests (and any no-provider caller) call it with one
+// argument and get the exact legacy Arabic — the same no-provider fallback
+// pattern the shared kit uses.
+export function clockErrorMessage(r: ClockResponse | null | undefined, t?: TFunction): string {
+  const failed = t ? t("people.clock.failed") : "فشل تسجيل الحضور";
+  if (!r) return failed;
   if (r.code === "outside_fence" && r.distance && r.radius) {
-    return "أنت بعيد عن الفرع بـ " + r.distance + " متر — قَرِّب نَفسك ضمن " + r.radius + " متر.";
+    return t
+      ? t("people.clock.outsideFence", { distance: r.distance, radius: r.radius })
+      : "أنت بعيد عن الفرع بـ " + r.distance + " متر — قَرِّب نَفسك ضمن " + r.radius + " متر.";
   }
-  return r.error || "فشل تسجيل الحضور";
+  return r.error || failed;
 }

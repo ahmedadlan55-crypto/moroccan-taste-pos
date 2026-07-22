@@ -1,45 +1,53 @@
-// Arabic status labels + tone for every O2C document status. Ported verbatim from
-// the standalone O2C app. The `tone` is mapped onto the shared <StatusBadge>
-// semantic tones in ./format.tsx (SalesStatus).
+// Status tone + localized label for every O2C document status. Ported from the
+// standalone O2C app, then rewired for i18n: the tone stays here (mapped onto the
+// shared <StatusBadge> semantic tones in ./format.tsx), while the visible label is
+// resolved at render time via t("sales.status.<code>") so it follows the active
+// UI language. Unknown codes fall back to the raw status string (data), never a
+// dotted key.
+import type { TFunction } from "@/i18n";
 
 export type Tone = "slate" | "teal" | "amber" | "blue" | "green" | "rose" | "violet";
 
-interface StatusMeta { label: string; tone: Tone }
-
-const MAP: Record<string, StatusMeta> = {
+// status CODE → tone. Keys are the STABLE backend enum values (unchanged from the
+// legacy MAP); the Arabic/English labels for these codes live under sales.status.*
+// in the i18n dictionaries.
+const TONE: Record<string, Tone> = {
   // shared
-  draft: { label: "مسودة", tone: "slate" },
-  cancelled: { label: "ملغى", tone: "rose" },
-  reversed: { label: "معكوس", tone: "rose" },
+  draft: "slate",
+  cancelled: "rose",
+  reversed: "rose",
   // ar_document
-  issued: { label: "صادرة", tone: "blue" },
-  partially_paid: { label: "مدفوعة جزئيًا", tone: "amber" },
-  paid: { label: "مدفوعة", tone: "green" },
-  credited: { label: "مُصدَّرة إشعارًا", tone: "violet" },
-  closed: { label: "مغلقة", tone: "slate" },
+  issued: "blue",
+  partially_paid: "amber",
+  paid: "green",
+  credited: "violet",
+  closed: "slate",
   // sales_order
-  confirmed: { label: "مؤكَّد", tone: "blue" },
-  fulfilled: { label: "مُنفَّذ", tone: "teal" },
-  invoiced: { label: "مُفوتَر", tone: "green" },
+  confirmed: "blue",
+  fulfilled: "teal",
+  invoiced: "green",
   // payment / return
-  approved: { label: "معتمد", tone: "blue" },
-  posted: { label: "مُرحّل", tone: "green" },
+  approved: "blue",
+  posted: "green",
   // zatca
-  pending: { label: "بانتظار زاتكا", tone: "amber" },
-  submitted: { label: "مُرسَلة", tone: "blue" },
-  accepted: { label: "مقبولة", tone: "green" },
-  rejected: { label: "مرفوضة", tone: "rose" },
-  not_required: { label: "غير مطلوبة", tone: "slate" },
+  pending: "amber",
+  submitted: "blue",
+  accepted: "green",
+  rejected: "rose",
+  not_required: "slate",
 };
 
-export function statusMeta(status: string | null | undefined): StatusMeta {
-  const key = String(status || "").toLowerCase();
-  return MAP[key] || { label: status ? String(status) : "—", tone: "slate" };
+const KNOWN = new Set(Object.keys(TONE));
+
+/** Semantic tone for a status code (defaults to neutral "slate"). */
+export function statusTone(status: string | null | undefined): Tone {
+  return TONE[String(status || "").toLowerCase()] || "slate";
 }
 
-export const VAT_CATEGORY_LABEL: Record<string, string> = {
-  S: "خاضع 15%",
-  Z: "صفري 0%",
-  E: "معفى",
-  O: "خارج النطاق",
-};
+/** Localized status label via t("sales.status.<code>"). A code we don't know is
+ *  echoed back as-is (it's backend data), and null/empty renders "—". */
+export function statusLabel(status: string | null | undefined, t: TFunction): string {
+  const key = String(status || "").toLowerCase();
+  if (KNOWN.has(key)) return t(`sales.status.${key}`);
+  return status ? String(status) : "—";
+}

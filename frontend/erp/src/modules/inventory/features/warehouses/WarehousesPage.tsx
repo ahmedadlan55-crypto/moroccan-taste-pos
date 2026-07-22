@@ -12,12 +12,22 @@ import { Button } from "@/shared/ui";
 import { LoadingState, ErrorState, EmptyState } from "@/shared/ui";
 import { Spinner } from "@/shared/ui";
 import { formatCurrency, formatNumber, formatDateTime } from "@/shared/lib";
+import { useT } from "@/i18n";
+import type { TFunction } from "@/i18n";
 import { useCan } from "@/modules/inventory/lib/permission-provider";
 import { useWarehouseAdminList } from "@/modules/inventory/lib/hooks/useWarehouseAdmin";
-import { warehouseHealth, alertCount, warehouseTypeLabel } from "@/modules/inventory/lib/status-labels";
+import { warehouseHealth, alertCount } from "@/modules/inventory/lib/status-labels";
 import type { WarehouseAdmin } from "@/modules/inventory/lib/adapters/warehouse-admin.adapter";
 import { WarehouseFormDialog } from "./WarehouseFormDialog";
 import { WarehouseDetailDrawer } from "./WarehouseDetailDrawer";
+
+// Warehouse `type` code → translated label, with the legacy raw-value fallback.
+const WH_TYPE_KEYS = new Set(["main", "central", "branch", "sub", "production", "transit", "virtual", "store", "waste", "raw", "finished"]);
+export function warehouseTypeLabel(t: TFunction, type: string | null | undefined): string {
+  const k = String(type ?? "").toLowerCase().trim();
+  if (!k) return "—";
+  return WH_TYPE_KEYS.has(k) ? t(`inventoryRest.warehouseType.${k}`) : (type ?? "—");
+}
 
 // المستودعات — Phase W6: full management (create / edit / activate / deactivate /
 // hard delete / scope assignments) on top of the read-only stats grid.
@@ -26,6 +36,7 @@ import { WarehouseDetailDrawer } from "./WarehouseDetailDrawer";
 type ActiveFilter = "all" | "active" | "inactive";
 
 export function WarehousesPage() {
+  const t = useT();
   const { data, isLoading, isError, error, refetch, isFetching } = useWarehouseAdminList();
   const canCreate = useCan("warehouse.create");
   const [query, setQuery] = useState("");
@@ -46,17 +57,17 @@ export function WarehousesPage() {
 
   const header = (
     <PageHeader
-      eyebrow="البيانات الرئيسية"
-      title="المستودعات والهيكل"
-      subtitle="إدارة كاملة — البيانات، الرصيد والقيمة، الحركات، صلاحيات الوصول والتفعيل."
+      eyebrow={t("inventoryRest.warehouses.eyebrow")}
+      title={t("inventoryRest.warehouses.title")}
+      subtitle={t("inventoryRest.warehouses.subtitle")}
       action={
         <div className="flex flex-wrap gap-2">
           <Button variant="secondary" onClick={() => refetch()} disabled={isFetching}>
-            <RefreshCw className="h-4 w-4" /> تحديث
+            <RefreshCw className="h-4 w-4" /> {t("inventoryRest.ui.refresh")}
           </Button>
           {canCreate && (
             <Button onClick={() => setCreateOpen(true)}>
-              <Plus className="h-4 w-4" /> مستودع جديد
+              <Plus className="h-4 w-4" /> {t("inventoryRest.warehouses.newWarehouse")}
             </Button>
           )}
         </div>
@@ -78,8 +89,8 @@ export function WarehousesPage() {
           <Search className="pointer-events-none absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
           <input
             className="field pr-10"
-            placeholder="بحث بالاسم أو الكود أو المسؤول..."
-            aria-label="بحث في المستودعات"
+            placeholder={t("inventoryRest.warehouses.searchPlaceholder")}
+            aria-label={t("inventoryRest.warehouses.searchAria")}
             value={query}
             onChange={(e) => setQuery(e.target.value)}
           />
@@ -94,24 +105,24 @@ export function WarehousesPage() {
                 activeFilter === f ? "border-teal-600 bg-teal-600 text-white" : "border-slate-200 bg-white text-slate-600 hover:bg-slate-50"
               }`}
             >
-              {f === "all" ? "الكل" : f === "active" ? "نشط" : "معطّل"}
+              {f === "all" ? t("inventoryRest.warehouses.filterAll") : f === "active" ? t("inventoryRest.warehouses.filterActive") : t("inventoryRest.warehouses.filterInactive")}
             </button>
           ))}
         </div>
         <span className="mr-auto flex items-center gap-2 text-xs font-bold text-slate-400">
           {isFetching && <Spinner className="h-3.5 w-3.5" />}
-          {formatNumber(totals.activeCount)} نشط من {formatNumber(totals.warehouseCount)} · القيمة {formatCurrency(totals.totalValue)}
+          {t("inventoryRest.warehouses.summary", { active: formatNumber(totals.activeCount), total: formatNumber(totals.warehouseCount), value: formatCurrency(totals.totalValue) })}
         </span>
       </div>
 
       {rows.length === 0 ? (
         <EmptyState
-          title={query || activeFilter !== "all" ? "لا نتائج مطابقة" : "لا توجد مستودعات"}
-          body={query || activeFilter !== "all" ? "جرّب تعديل البحث أو الفلتر." : "ابدأ بإنشاء أول مستودع لهذا النطاق."}
+          title={query || activeFilter !== "all" ? t("inventoryRest.warehouses.emptyMatchTitle") : t("inventoryRest.warehouses.emptyTitle")}
+          body={query || activeFilter !== "all" ? t("inventoryRest.warehouses.emptyMatchBody") : t("inventoryRest.warehouses.emptyBody")}
           action={
             !query && activeFilter === "all" && canCreate ? (
               <Button onClick={() => setCreateOpen(true)}>
-                <Plus className="h-4 w-4" /> مستودع جديد
+                <Plus className="h-4 w-4" /> {t("inventoryRest.warehouses.newWarehouse")}
               </Button>
             ) : undefined
           }
@@ -131,15 +142,15 @@ export function WarehousesPage() {
               <table className="w-full min-w-[880px] text-right">
                 <thead className="bg-slate-50 text-[11px] font-extrabold text-slate-400">
                   <tr>
-                    <th className="px-5 py-3">المستودع</th>
-                    <th className="px-4 py-3">النوع</th>
-                    <th className="px-4 py-3">الأصناف</th>
-                    <th className="px-4 py-3">الكمية</th>
-                    <th className="px-4 py-3">القيمة</th>
-                    <th className="px-4 py-3">الحركات</th>
-                    <th className="px-4 py-3">تنبيهات</th>
-                    <th className="px-4 py-3">آخر حركة</th>
-                    <th className="px-4 py-3">الحالة</th>
+                    <th className="px-5 py-3">{t("inventoryRest.warehouses.col.warehouse")}</th>
+                    <th className="px-4 py-3">{t("inventoryRest.warehouses.col.type")}</th>
+                    <th className="px-4 py-3">{t("inventoryRest.warehouses.col.items")}</th>
+                    <th className="px-4 py-3">{t("inventoryRest.warehouses.col.qty")}</th>
+                    <th className="px-4 py-3">{t("inventoryRest.warehouses.col.value")}</th>
+                    <th className="px-4 py-3">{t("inventoryRest.warehouses.col.movements")}</th>
+                    <th className="px-4 py-3">{t("inventoryRest.warehouses.col.alerts")}</th>
+                    <th className="px-4 py-3">{t("inventoryRest.warehouses.col.lastMovement")}</th>
+                    <th className="px-4 py-3">{t("inventoryRest.warehouses.col.status")}</th>
                     <th className="px-5 py-3" />
                   </tr>
                 </thead>
@@ -150,12 +161,12 @@ export function WarehousesPage() {
                         <div className="font-extrabold text-slate-800">
                           {w.name}
                           {w.isMain && (
-                            <span className="mr-2 rounded-md bg-teal-50 px-1.5 py-0.5 text-[10px] font-bold text-teal-700">رئيسي</span>
+                            <span className="mr-2 rounded-md bg-teal-50 px-1.5 py-0.5 text-[10px] font-bold text-teal-700">{t("inventoryRest.warehouses.main")}</span>
                           )}
                         </div>
                         <div className="mt-1 text-xs font-bold text-slate-400">{w.code}{w.location ? ` · ${w.location}` : ""}</div>
                       </td>
-                      <td className="px-4 py-4 text-sm font-bold text-slate-500">{warehouseTypeLabel(w.type)}</td>
+                      <td className="px-4 py-4 text-sm font-bold text-slate-500">{warehouseTypeLabel(t, w.type)}</td>
                       <td className="px-4 py-4 text-sm font-bold text-slate-600 tabular-nums">{formatNumber(w.itemCount)}</td>
                       <td className="px-4 py-4 text-sm font-bold text-slate-600 tabular-nums">{formatNumber(w.totalQty)}</td>
                       <td className="px-4 py-4 text-sm font-extrabold text-slate-800 tabular-nums">{formatCurrency(w.totalValue)}</td>
@@ -188,6 +199,7 @@ export function WarehousesPage() {
 }
 
 function WarehouseCard({ w, onOpen }: { w: WarehouseAdmin; onOpen: () => void }) {
+  const t = useT();
   return (
     <button type="button" onClick={onOpen} className="surface group overflow-hidden text-right transition hover:-translate-y-0.5 hover:border-teal-200 hover:shadow-lift">
       <div className="relative h-20 bg-slate-950 p-4 text-white">
@@ -199,11 +211,11 @@ function WarehouseCard({ w, onOpen }: { w: WarehouseAdmin; onOpen: () => void })
       <div className="p-4">
         <h3 className="font-extrabold text-slate-900">
           {w.name}
-          {w.isMain && <span className="mr-2 rounded-md bg-teal-50 px-1.5 py-0.5 text-[10px] font-bold text-teal-700">رئيسي</span>}
+          {w.isMain && <span className="mr-2 rounded-md bg-teal-50 px-1.5 py-0.5 text-[10px] font-bold text-teal-700">{t("inventoryRest.warehouses.main")}</span>}
         </h3>
-        <p className="mt-1 text-xs font-bold text-slate-400">{w.code}{w.type ? ` · ${warehouseTypeLabel(w.type)}` : ""}</p>
+        <p className="mt-1 text-xs font-bold text-slate-400">{w.code}{w.type ? ` · ${warehouseTypeLabel(t, w.type)}` : ""}</p>
         <div className="mt-4 grid grid-cols-3 gap-2">
-          {[["القيمة", formatCurrency(w.totalValue)], ["الأصناف", formatNumber(w.itemCount)], ["تنبيهات", formatNumber(alertCount(w))]].map(([l, v]) => (
+          {[[t("inventoryRest.warehouses.card.value"), formatCurrency(w.totalValue)], [t("inventoryRest.warehouses.card.items"), formatNumber(w.itemCount)], [t("inventoryRest.warehouses.card.alerts"), formatNumber(alertCount(w))]].map(([l, v]) => (
             <div key={l} className="rounded-xl bg-slate-50 px-2 py-3 text-center">
               <div className="truncate text-xs font-extrabold text-slate-800 tabular-nums">{v}</div>
               <div className="mt-1 text-[10px] font-bold text-slate-400">{l}</div>

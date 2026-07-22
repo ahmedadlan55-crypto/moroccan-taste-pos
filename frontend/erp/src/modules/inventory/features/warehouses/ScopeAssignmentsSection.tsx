@@ -3,6 +3,7 @@ import { Search, ShieldCheck, Users } from "lucide-react";
 import { Button } from "@/shared/ui";
 import { Spinner } from "@/shared/ui";
 import { ErrorState } from "@/shared/ui";
+import { useT } from "@/i18n";
 import {
   useWarehouseScopeAssignments,
   useSaveScopeAssignments,
@@ -12,16 +13,13 @@ import {
 // Checkbox list of active users; Save REPLACES the warehouse's rows via PUT.
 // Admins/developers have implicit global access and are shown as such.
 
-const ROLE_LABEL: Record<string, string> = {
-  admin: "مسؤول",
-  manager: "مدير",
-  employee: "موظف",
-  custody: "عهدة",
-  cashier: "كاشير",
-  auditor: "مدقق",
-};
+// Roles that have a translated label in the shared shell.roles namespace; any
+// other role string is shown verbatim.
+const KNOWN_ROLES = new Set(["admin", "manager", "employee", "custody", "cashier", "auditor"]);
 
 export function ScopeAssignmentsSection({ warehouseId }: { warehouseId: string }) {
+  const t = useT();
+  const roleLabel = (role: string) => (KNOWN_ROLES.has(role) ? t(`shell.roles.${role}`) : role);
   const { data, isLoading, isError, error, refetch } = useWarehouseScopeAssignments(warehouseId);
   const save = useSaveScopeAssignments();
   const [selected, setSelected] = useState<Set<number>>(new Set());
@@ -80,8 +78,7 @@ export function ScopeAssignmentsSection({ warehouseId }: { warehouseId: string }
       <div className="flex items-start gap-2 rounded-xl border border-sky-100 bg-sky-50 px-3 py-3 text-xs font-bold text-sky-700">
         <ShieldCheck className="h-4 w-4 shrink-0" />
         <span>
-          المحدَّدون فقط يمكنهم رؤية هذا المستودع والعمل عليه عند تفعيل نطاق المستودعات.
-          المسؤولون (admin) لديهم وصول ضمني دائم ولا يحتاجون تحديدًا.
+          {t("inventoryRest.warehouses.scope.intro")}
         </span>
       </div>
 
@@ -89,8 +86,8 @@ export function ScopeAssignmentsSection({ warehouseId }: { warehouseId: string }
         <Search className="pointer-events-none absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
         <input
           className="field w-full pr-10"
-          placeholder="بحث عن مستخدم…"
-          aria-label="بحث في المستخدمين"
+          placeholder={t("inventoryRest.warehouses.scope.searchPlaceholder")}
+          aria-label={t("inventoryRest.warehouses.scope.searchAria")}
           value={query}
           onChange={(e) => setQuery(e.target.value)}
         />
@@ -99,7 +96,7 @@ export function ScopeAssignmentsSection({ warehouseId }: { warehouseId: string }
       {scopedUsers.length === 0 && globalUsers.length === 0 ? (
         <div className="mt-4 grid place-items-center gap-2 rounded-xl border border-slate-100 bg-slate-50 p-6 text-center">
           <Users className="h-5 w-5 text-slate-400" />
-          <span className="text-sm font-bold text-slate-500">لا نتائج مطابقة</span>
+          <span className="text-sm font-bold text-slate-500">{t("inventoryRest.warehouses.scope.empty")}</span>
         </div>
       ) : (
         <div className="mt-4 max-h-80 space-y-1 overflow-y-auto rounded-xl border border-slate-100 p-2">
@@ -128,7 +125,7 @@ export function ScopeAssignmentsSection({ warehouseId }: { warehouseId: string }
                 </span>
               </span>
               <span className="rounded-md bg-slate-100 px-2 py-0.5 text-[10px] font-extrabold text-slate-500">
-                {ROLE_LABEL[u.role.toLowerCase()] ?? u.role}
+                {roleLabel(u.role.toLowerCase())}
               </span>
             </label>
           ))}
@@ -144,7 +141,7 @@ export function ScopeAssignmentsSection({ warehouseId }: { warehouseId: string }
                 </span>
               </span>
               <span className="rounded-md bg-teal-50 px-2 py-0.5 text-[10px] font-extrabold text-teal-700">
-                وصول ضمني — مسؤول
+                {t("inventoryRest.warehouses.scope.implicitAccess")}
               </span>
             </div>
           ))}
@@ -153,26 +150,26 @@ export function ScopeAssignmentsSection({ warehouseId }: { warehouseId: string }
 
       {save.isError && (
         <div className="mt-3 rounded-xl border border-rose-200 bg-rose-50 px-3 py-2 text-xs font-bold text-rose-700">
-          {save.error instanceof Error ? save.error.message : "تعذّر حفظ الصلاحيات"}
+          {save.error instanceof Error ? save.error.message : t("inventoryRest.warehouses.scope.saveError")}
         </div>
       )}
       {savedFlash && !dirty && (
         <div className="mt-3 rounded-xl border border-teal-200 bg-teal-50 px-3 py-2 text-xs font-bold text-teal-700">
-          تم حفظ صلاحيات الوصول.
+          {t("inventoryRest.warehouses.scope.saved")}
         </div>
       )}
 
       <div className="mt-4 flex items-center justify-between gap-3">
         <span className="text-xs font-bold text-slate-400">
-          المحدَّدون: {selected.size}
+          {t("inventoryRest.warehouses.scope.selectedCount", { count: selected.size })}
         </span>
         <Button onClick={submit} disabled={save.isPending || !dirty}>
           {save.isPending ? (
             <>
-              <Spinner className="h-4 w-4" /> جارٍ الحفظ…
+              <Spinner className="h-4 w-4" /> {t("inventoryRest.ui.saving")}
             </>
           ) : (
-            "حفظ الصلاحيات"
+            t("inventoryRest.warehouses.scope.save")
           )}
         </Button>
       </div>

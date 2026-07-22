@@ -17,16 +17,25 @@ import { LoadingState, ErrorState, EmptyState } from "@/shared/ui";
 import { Spinner } from "@/shared/ui";
 import { Drawer, DetailStat } from "@/shared/ui";
 import { formatCurrency, formatNumber, formatQty, formatDateTime } from "@/shared/lib";
+import { useT } from "@/i18n";
 import { useWarehouseScope, ALL_WAREHOUSES } from "@/modules/inventory/lib/warehouse-scope-provider";
 import { useWarehouseInventory, useInventoryCategories } from "@/modules/inventory/lib/hooks/useInventory";
 import { useInventoryItem } from "@/modules/inventory/lib/hooks/useInventoryItem";
 import { useDebouncedValue } from "@/modules/inventory/lib/hooks/useDebouncedValue";
-import { itemStatusLabel, ITEM_STATUS_OPTIONS, movementTypeLabel } from "@/modules/inventory/lib/status-labels";
+import { itemStatusLabel } from "@/modules/inventory/lib/status-labels";
 import type { InventoryRow } from "@/modules/inventory/lib/adapters/inventory.adapter";
 
 export function InventoryPage() {
+  const t = useT();
   const { scope } = useWarehouseScope();
   const [params, setParams] = useSearchParams();
+  const statusOptions = [
+    { value: "", label: t("inventoryRest.balances.statusFilter.all") },
+    { value: "available", label: t("status.available") },
+    { value: "low", label: t("status.low") },
+    { value: "out", label: t("status.outOfStock") },
+    { value: "negative", label: t("status.negative") },
+  ];
 
   const [search, setSearch] = useState("");
   const debouncedSearch = useDebouncedValue(search, 350);
@@ -76,16 +85,16 @@ export function InventoryPage() {
 
   const header = (
     <PageHeader
-      eyebrow="المواد والأرصدة"
-      title="كتالوج المخزون"
+      eyebrow={t("inventoryRest.balances.eyebrow")}
+      title={t("inventoryRest.balances.title")}
       subtitle={
         scope === ALL_WAREHOUSES
-          ? "رصيد موحّد عبر كل المستودعات — للقراءة فقط. القيمة بمتوسط تكلفة المستودع (WAC)."
-          : "رصيد المستودع المحدّد فقط — للقراءة فقط."
+          ? t("inventoryRest.balances.subtitleAll")
+          : t("inventoryRest.balances.subtitleScoped")
       }
       action={
         <Button variant="secondary" onClick={() => refetch()} disabled={isFetching}>
-          <RefreshCw className="h-4 w-4" /> تحديث
+          <RefreshCw className="h-4 w-4" /> {t("inventoryRest.ui.refresh")}
         </Button>
       }
     />
@@ -109,18 +118,18 @@ export function InventoryPage() {
             <Search className="pointer-events-none absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
             <input
               className="field pr-10"
-              placeholder="بحث بالاسم أو SKU..."
-              aria-label="بحث في المخزون"
+              placeholder={t("inventoryRest.balances.searchPlaceholder")}
+              aria-label={t("inventoryRest.balances.searchAria")}
               value={search}
               onChange={(e) => setSearch(e.target.value)}
             />
           </label>
-          <select className="field max-w-44" aria-label="الفئة" value={category} onChange={(e) => setCategory(e.target.value)}>
-            <option value="">كل الفئات</option>
+          <select className="field max-w-44" aria-label={t("inventoryRest.balances.categoryAria")} value={category} onChange={(e) => setCategory(e.target.value)}>
+            <option value="">{t("inventoryRest.filter.allCategories")}</option>
             {(categories ?? []).map((c) => (<option key={c} value={c}>{c}</option>))}
           </select>
           <div className="flex flex-wrap gap-1">
-            {ITEM_STATUS_OPTIONS.map((o) => (
+            {statusOptions.map((o) => (
               <button
                 key={o.value || "all"}
                 type="button"
@@ -135,36 +144,36 @@ export function InventoryPage() {
           </div>
           <span className="mr-auto flex items-center gap-2 text-xs font-bold text-slate-400">
             {isFetching && <Spinner className="h-3.5 w-3.5" />}
-            {formatNumber(data.total)} سطر
+            {formatNumber(data.total)} {t("inventoryRest.ui.rowsSuffix")}
           </span>
         </div>
 
         {anyEstimated && (
           <div className="flex items-center gap-2 border-b border-amber-100 bg-amber-50/60 px-4 py-2 text-[11px] font-bold text-amber-700">
-            <Info className="h-3.5 w-3.5" /> القيمة المعلَّمة (≈) محسوبة بالتكلفة العامة لغياب متوسط تكلفة المستودع.
+            <Info className="h-3.5 w-3.5" /> {t("inventoryRest.balances.estimatedNote")}
           </div>
         )}
 
         {data.rows.length === 0 ? (
           <EmptyState
-            title={debouncedSearch || category || status ? "لا نتائج مطابقة" : "لا توجد أصناف"}
-            body={debouncedSearch || category || status ? "جرّب تعديل البحث أو الفلاتر." : "لا توجد أصناف ذات رصيد ضمن هذا النطاق."}
+            title={debouncedSearch || category || status ? t("inventoryRest.balances.emptyMatchTitle") : t("inventoryRest.balances.emptyTitle")}
+            body={debouncedSearch || category || status ? t("inventoryRest.balances.emptyMatchBody") : t("inventoryRest.balances.emptyBody")}
           />
         ) : (
           <div className={`overflow-x-auto transition-opacity ${isPlaceholderData ? "opacity-60" : ""}`}>
             <table className="w-full min-w-[1040px] text-right">
               <thead className="bg-slate-50 text-[11px] font-extrabold text-slate-400">
                 <tr>
-                  <SortableTh label="الصنف" col="name" sort={sort} dir={dir} onSort={toggleSort} />
-                  <th className="px-4 py-3">المستودع</th>
-                  <SortableTh label="الكمية" col="qty" sort={sort} dir={dir} onSort={toggleSort} />
-                  <th className="px-4 py-3">المحجوز</th>
-                  <th className="px-4 py-3">المتاح</th>
-                  <SortableTh label="التكلفة" col="cost" sort={sort} dir={dir} onSort={toggleSort} />
-                  <SortableTh label="القيمة" col="value" sort={sort} dir={dir} onSort={toggleSort} />
-                  <th className="px-4 py-3">حد الطلب</th>
-                  <th className="px-4 py-3">الحالة</th>
-                  <th className="px-4 py-3">آخر حركة</th>
+                  <SortableTh label={t("inventoryRest.balances.col.item")} col="name" sort={sort} dir={dir} onSort={toggleSort} />
+                  <th className="px-4 py-3">{t("inventoryRest.balances.col.warehouse")}</th>
+                  <SortableTh label={t("inventoryRest.balances.col.qty")} col="qty" sort={sort} dir={dir} onSort={toggleSort} />
+                  <th className="px-4 py-3">{t("inventoryRest.balances.col.reserved")}</th>
+                  <th className="px-4 py-3">{t("inventoryRest.balances.col.available")}</th>
+                  <SortableTh label={t("inventoryRest.balances.col.cost")} col="cost" sort={sort} dir={dir} onSort={toggleSort} />
+                  <SortableTh label={t("inventoryRest.balances.col.value")} col="value" sort={sort} dir={dir} onSort={toggleSort} />
+                  <th className="px-4 py-3">{t("inventoryRest.balances.col.reorder")}</th>
+                  <th className="px-4 py-3">{t("inventoryRest.balances.col.status")}</th>
+                  <th className="px-4 py-3">{t("inventoryRest.balances.col.lastMovement")}</th>
                   <th className="px-5 py-3" />
                 </tr>
               </thead>
@@ -199,17 +208,17 @@ export function InventoryPage() {
         {/* Pagination */}
         <div className="flex flex-wrap items-center justify-between gap-3 border-t border-slate-100 px-5 py-4 text-xs font-bold text-slate-400">
           <div className="flex items-center gap-3">
-            <span>عرض {formatNumber(from)}–{formatNumber(to)} من {formatNumber(data.total)}</span>
-            <select className="field h-9 min-h-9 w-auto py-0 text-xs" aria-label="حجم الصفحة" value={pageSize} onChange={(e) => setPageSize(Number(e.target.value))}>
-              {[10, 25, 50, 100].map((n) => (<option key={n} value={n}>{n} / صفحة</option>))}
+            <span>{t("inventoryRest.ui.showingRange", { from: formatNumber(from), to: formatNumber(to), total: formatNumber(data.total) })}</span>
+            <select className="field h-9 min-h-9 w-auto py-0 text-xs" aria-label={t("table.rowsPerPage")} value={pageSize} onChange={(e) => setPageSize(Number(e.target.value))}>
+              {[10, 25, 50, 100].map((n) => (<option key={n} value={n}>{t("inventoryRest.ui.perPage", { count: n })}</option>))}
             </select>
           </div>
           <div className="flex items-center gap-1">
-            <Button variant="ghost" size="icon" className="h-9 w-9" aria-label="السابق" disabled={data.page <= 1} onClick={() => setPage((p) => Math.max(1, p - 1))}>
+            <Button variant="ghost" size="icon" className="h-9 w-9" aria-label={t("inventoryRest.ui.prev")} disabled={data.page <= 1} onClick={() => setPage((p) => Math.max(1, p - 1))}>
               <ChevronRight className="h-4 w-4" />
             </Button>
             <span className="px-2 tabular-nums">{formatNumber(data.page)} / {formatNumber(data.totalPages)}</span>
-            <Button variant="ghost" size="icon" className="h-9 w-9" aria-label="التالي" disabled={data.page >= data.totalPages} onClick={() => setPage((p) => p + 1)}>
+            <Button variant="ghost" size="icon" className="h-9 w-9" aria-label={t("inventoryRest.ui.next")} disabled={data.page >= data.totalPages} onClick={() => setPage((p) => p + 1)}>
               <ChevronLeft className="h-4 w-4" />
             </Button>
           </div>
@@ -220,7 +229,7 @@ export function InventoryPage() {
         open={!!selected}
         onClose={() => setSelected(null)}
         title={selected?.name ?? ""}
-        eyebrow="تفاصيل الصنف"
+        eyebrow={t("inventoryRest.balances.detailEyebrow")}
         icon={Boxes}
       >
         {selected && <ItemDetail row={selected} />}
@@ -242,6 +251,7 @@ function SortableTh({ label, col, sort, dir, onSort }: { label: string; col: str
 }
 
 function ItemDetail({ row }: { row: InventoryRow }) {
+  const t = useT();
   const { distribution, movements } = useInventoryItem(row.itemId);
   return (
     <>
@@ -256,48 +266,48 @@ function ItemDetail({ row }: { row: InventoryRow }) {
       </div>
 
       <div className="mt-4 grid grid-cols-2 gap-3">
-        <DetailStat label="القيمة" value={<>{row.costEstimated && <span className="text-amber-600">≈ </span>}{formatCurrency(row.value)}</>} />
-        <DetailStat label="تكلفة الوحدة (WAC)" value={<>{row.costEstimated && <span className="text-amber-600">≈ </span>}{formatCurrency(row.avgCost)}</>} />
-        <DetailStat label="حد إعادة الطلب" value={row.reorderPoint > 0 ? formatQty(row.reorderPoint, row.unit) : "—"} />
-        <DetailStat label="المستودع" value={row.warehouseName || "—"} />
+        <DetailStat label={t("inventoryRest.balances.detail.value")} value={<>{row.costEstimated && <span className="text-amber-600">≈ </span>}{formatCurrency(row.value)}</>} />
+        <DetailStat label={t("inventoryRest.balances.detail.unitCostWac")} value={<>{row.costEstimated && <span className="text-amber-600">≈ </span>}{formatCurrency(row.avgCost)}</>} />
+        <DetailStat label={t("inventoryRest.balances.detail.reorderPoint")} value={row.reorderPoint > 0 ? formatQty(row.reorderPoint, row.unit) : "—"} />
+        <DetailStat label={t("inventoryRest.balances.detail.warehouse")} value={row.warehouseName || "—"} />
       </div>
       {row.costEstimated && (
         <div className="mt-3 flex items-center gap-2 rounded-xl border border-amber-100 bg-amber-50 px-3 py-2 text-[11px] font-bold text-amber-700">
-          <Info className="h-3.5 w-3.5" /> القيمة تقديرية: لا يوجد متوسط تكلفة لهذا المستودع، فاستُخدمت التكلفة العامة.
+          <Info className="h-3.5 w-3.5" /> {t("inventoryRest.balances.detail.estimated")}
         </div>
       )}
 
-      <h3 className="mb-3 mt-6 text-sm font-extrabold text-slate-900">التوزيع حسب المستودع</h3>
+      <h3 className="mb-3 mt-6 text-sm font-extrabold text-slate-900">{t("inventoryRest.balances.detail.distributionTitle")}</h3>
       {distribution.isLoading ? (
         <div className="py-4"><Spinner /></div>
       ) : distribution.isError ? (
-        <div className="rounded-xl border border-rose-100 bg-rose-50 p-3 text-xs font-bold text-rose-700">تعذّر تحميل التوزيع.</div>
+        <div className="rounded-xl border border-rose-100 bg-rose-50 p-3 text-xs font-bold text-rose-700">{t("inventoryRest.balances.detail.distributionError")}</div>
       ) : (distribution.data ?? []).length === 0 ? (
-        <div className="text-xs font-bold text-slate-400">لا يوجد توزيع مسجّل.</div>
+        <div className="text-xs font-bold text-slate-400">{t("inventoryRest.balances.detail.distributionEmpty")}</div>
       ) : (
         <div className="space-y-2">
           {(distribution.data ?? []).map((d) => (
             <div key={d.warehouseId} className="flex items-center justify-between gap-3 rounded-xl border border-slate-100 px-3 py-3 text-sm">
-              <span className="font-extrabold text-slate-700">{d.warehouseName}{d.isMain ? " · رئيسي" : ""}</span>
+              <span className="font-extrabold text-slate-700">{d.warehouseName}{d.isMain ? ` · ${t("inventoryRest.balances.detail.main")}` : ""}</span>
               <span className="font-bold text-slate-500 tabular-nums">{formatNumber(d.qty)} {row.unit} · {formatCurrency(d.value)}</span>
             </div>
           ))}
         </div>
       )}
 
-      <h3 className="mb-3 mt-6 text-sm font-extrabold text-slate-900">آخر الحركات</h3>
+      <h3 className="mb-3 mt-6 text-sm font-extrabold text-slate-900">{t("inventoryRest.balances.detail.movementsTitle")}</h3>
       {movements.isLoading ? (
         <div className="py-4"><Spinner /></div>
       ) : movements.isError ? (
-        <div className="rounded-xl border border-rose-100 bg-rose-50 p-3 text-xs font-bold text-rose-700">تعذّر تحميل الحركات.</div>
+        <div className="rounded-xl border border-rose-100 bg-rose-50 p-3 text-xs font-bold text-rose-700">{t("inventoryRest.balances.detail.movementsError")}</div>
       ) : (movements.data ?? []).length === 0 ? (
-        <div className="text-xs font-bold text-slate-400">لا توجد حركات مسجّلة لهذا الصنف.</div>
+        <div className="text-xs font-bold text-slate-400">{t("inventoryRest.balances.detail.movementsEmpty")}</div>
       ) : (
         <div className="space-y-2">
           {(movements.data ?? []).map((m) => (
             <div key={m.id} className="flex items-center justify-between gap-3 rounded-xl border border-slate-100 px-3 py-2 text-xs">
               <div className="min-w-0">
-                <div className="truncate font-extrabold text-slate-700">{m.reason || movementTypeLabel(m.type)}</div>
+                <div className="truncate font-extrabold text-slate-700">{m.reason || (m.type === "in" ? t("inventoryRest.movementType.in") : t("inventoryRest.movementType.out"))}</div>
                 <div className="mt-0.5 text-[11px] font-bold text-slate-400">{formatDateTime(m.date)}{m.warehouseName ? ` · ${m.warehouseName}` : ""}</div>
               </div>
               <span className={`shrink-0 font-extrabold tabular-nums ${m.type === "in" ? "text-emerald-600" : "text-sky-600"}`}>

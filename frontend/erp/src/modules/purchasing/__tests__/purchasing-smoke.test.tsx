@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, screen } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { MemoryRouter } from "react-router-dom";
+import { I18nProvider } from "@/i18n";
 
 // procurementP2P:true unlocks the ProcurementLayout (otherwise it renders the
 // dormant "not enabled" state).
@@ -28,9 +29,11 @@ describe("purchasing module smoke", () => {
     const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
     render(
       <QueryClientProvider client={qc}>
-        <MemoryRouter initialEntries={["/purchasing/orders"]}>
-          <PurchasingModule />
-        </MemoryRouter>
+        <I18nProvider>
+          <MemoryRouter initialEntries={["/purchasing/orders"]}>
+            <PurchasingModule />
+          </MemoryRouter>
+        </I18nProvider>
       </QueryClientProvider>,
     );
     expect(await screen.findByText("المشتريات والموردون")).toBeInTheDocument();

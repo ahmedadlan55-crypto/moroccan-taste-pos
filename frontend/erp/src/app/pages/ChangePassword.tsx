@@ -3,6 +3,8 @@ import { useNavigate, useSearchParams } from "react-router-dom";
 import { Eye, EyeOff, KeyRound, ShieldAlert } from "lucide-react";
 import { Button, Input } from "@/shared/ui";
 import { Field } from "@/shared/forms";
+import { useT } from "@/i18n";
+import { LanguageToggle } from "@/app/shell/LanguageToggle";
 
 // The self-service credential screen for /app. It replaces public/security/,
 // which was the ONLY change-password UI in the product — and which /app had no
@@ -26,18 +28,20 @@ const COMMON = new Set([
 ]);
 const SPECIAL = /[!@#$%^&*()_+\-=[\]{};':"\\|,.<>/?~`]/;
 
+/** A single password-policy check. `key` indexes login.changePassword.checks.* —
+ *  the label text is resolved at render time via t(), not stored here. */
 interface Check {
-  label: string;
+  key: string;
   ok: boolean;
 }
 
 function checksFor(pw: string): Check[] {
   return [
-    { label: "12 حرفًا على الأقل", ok: pw.length >= 12 },
-    { label: "تحتوي على حرف", ok: /[a-zA-Z؀-ۿ]/.test(pw) },
-    { label: "تحتوي على رقم", ok: /[0-9]/.test(pw) },
-    { label: "تحتوي على رمز خاص (‏!@#$…)", ok: SPECIAL.test(pw) },
-    { label: "ليست كلمة مرور شائعة", ok: pw.length > 0 && !COMMON.has(pw.toLowerCase().trim()) },
+    { key: "minLength", ok: pw.length >= 12 },
+    { key: "hasLetter", ok: /[a-zA-Z؀-ۿ]/.test(pw) },
+    { key: "hasNumber", ok: /[0-9]/.test(pw) },
+    { key: "hasSpecial", ok: SPECIAL.test(pw) },
+    { key: "notCommon", ok: pw.length > 0 && !COMMON.has(pw.toLowerCase().trim()) },
   ];
 }
 
@@ -51,7 +55,8 @@ function strengthOf(pw: string): number {
   return Math.min(4, score);
 }
 
-const STRENGTH_LABEL = ["ضعيفة جدًا", "ضعيفة", "متوسطة", "جيدة", "قوية"];
+// score (0-4) → login.changePassword.strength.* key.
+const STRENGTH_KEYS = ["veryWeak", "weak", "medium", "good", "strong"] as const;
 const STRENGTH_TONE = [
   "bg-rose-500",
   "bg-rose-400",
@@ -61,6 +66,7 @@ const STRENGTH_TONE = [
 ];
 
 export function ChangePasswordPage() {
+  const t = useT();
   const [params] = useSearchParams();
   const navigate = useNavigate();
   const mandatory = params.get("must") === "1";
@@ -92,7 +98,7 @@ export function ChangePasswordPage() {
       const data = await res.json().catch(() => ({}));
       if (!data || data.success !== true) {
         // Prefer the server's list — it knows the effective policy, we don't.
-        setErrors(data?.errors?.length ? data.errors : [data?.error || "تعذّر تغيير كلمة المرور"]);
+        setErrors(data?.errors?.length ? data.errors : [data?.error || t("login.changePassword.genericError")]);
         setBusy(false);
         return;
       }
@@ -114,32 +120,34 @@ export function ChangePasswordPage() {
       }
       navigate("/overview", { replace: true });
     } catch {
-      setErrors(["تعذّر الاتصال بالخادم. حاول مجددًا."]);
+      setErrors([t("login.errors.network")]);
       setBusy(false);
     }
   }
 
   return (
     <div className="grid min-h-screen place-items-center bg-slate-50 p-6">
-      <form onSubmit={submit} className="surface grid w-full max-w-sm gap-5 p-8">
+      <form onSubmit={submit} className="surface relative grid w-full max-w-sm gap-5 p-8">
+        <LanguageToggle className="absolute end-4 top-4 shadow-sm" />
+
         <div className="grid place-items-center gap-3 text-center">
           <span className="grid h-14 w-14 place-items-center rounded-2xl bg-teal-600 text-white">
             <KeyRound className="h-6 w-6" />
           </span>
           <div>
-            <h1 className="text-xl font-extrabold text-slate-900">تغيير كلمة المرور</h1>
-            <p className="text-sm font-medium text-slate-500">اختر كلمة مرور قوية لحسابك</p>
+            <h1 className="text-xl font-extrabold text-slate-900">{t("login.changePassword.title")}</h1>
+            <p className="text-sm font-medium text-slate-500">{t("login.changePassword.subtitle")}</p>
           </div>
         </div>
 
         {mandatory && (
           <div className="flex items-start gap-2 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs font-bold text-amber-800">
             <ShieldAlert className="mt-0.5 h-4 w-4 shrink-0" />
-            <span>حسابك يستخدم كلمة مرور افتراضية. يجب تغييرها قبل المتابعة.</span>
+            <span>{t("login.changePassword.mandatory")}</span>
           </div>
         )}
 
-        <Field label="كلمة المرور الحالية" required>
+        <Field label={t("login.changePassword.currentLabel")} required>
           <Input
             type={reveal ? "text" : "password"}
             value={currentPassword}
@@ -149,20 +157,20 @@ export function ChangePasswordPage() {
           />
         </Field>
 
-        <Field label="كلمة المرور الجديدة" required>
+        <Field label={t("login.changePassword.newLabel")} required>
           <div className="relative">
             <Input
               type={reveal ? "text" : "password"}
               value={newPassword}
               onChange={(e) => setNewPassword(e.target.value)}
               autoComplete="new-password"
-              className="pl-10"
+              className="pe-10"
             />
             <button
               type="button"
               onClick={() => setReveal((v) => !v)}
-              aria-label={reveal ? "إخفاء كلمة المرور" : "إظهار كلمة المرور"}
-              className="absolute inset-y-0 left-0 grid w-10 place-items-center text-slate-400 hover:text-slate-600"
+              aria-label={reveal ? t("login.changePassword.hide") : t("login.changePassword.reveal")}
+              className="absolute inset-y-0 end-0 grid w-10 place-items-center text-slate-400 hover:text-slate-600"
             >
               {reveal ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
             </button>
@@ -178,22 +186,22 @@ export function ChangePasswordPage() {
                   style={{ width: `${((score + 1) / 5) * 100}%` }}
                 />
               </div>
-              <span className="text-xs font-bold text-slate-500">{STRENGTH_LABEL[score]}</span>
+              <span className="text-xs font-bold text-slate-500">{t(`login.changePassword.strength.${STRENGTH_KEYS[score]}`)}</span>
             </div>
             <ul className="grid gap-1">
               {checks.map((c) => (
                 <li
-                  key={c.label}
+                  key={c.key}
                   className={`text-xs font-medium ${c.ok ? "text-teal-700" : "text-slate-400"}`}
                 >
-                  {c.ok ? "✓" : "○"} {c.label}
+                  {c.ok ? "✓" : "○"} {t(`login.changePassword.checks.${c.key}`)}
                 </li>
               ))}
             </ul>
           </div>
         )}
 
-        <Field label="تأكيد كلمة المرور الجديدة" required>
+        <Field label={t("login.changePassword.confirmLabel")} required>
           <Input
             type={reveal ? "text" : "password"}
             value={confirm}
@@ -202,7 +210,7 @@ export function ChangePasswordPage() {
           />
         </Field>
         {confirm && !matches && (
-          <p className="text-xs font-bold text-rose-700">الكلمتان غير متطابقتين</p>
+          <p className="text-xs font-bold text-rose-700">{t("login.changePassword.mismatch")}</p>
         )}
 
         {errors.length > 0 && (
@@ -214,7 +222,7 @@ export function ChangePasswordPage() {
         )}
 
         <Button type="submit" variant="primary" loading={busy} disabled={!canSubmit}>
-          <KeyRound className="h-4 w-4" /> حفظ كلمة المرور
+          <KeyRound className="h-4 w-4" /> {t("login.changePassword.submit")}
         </Button>
 
         {!mandatory && (
@@ -223,7 +231,7 @@ export function ChangePasswordPage() {
             onClick={() => navigate("/overview", { replace: true })}
             className="text-xs font-bold text-slate-500 hover:text-slate-700"
           >
-            العودة إلى نظرة عامة
+            {t("login.changePassword.back")}
           </button>
         )}
       </form>

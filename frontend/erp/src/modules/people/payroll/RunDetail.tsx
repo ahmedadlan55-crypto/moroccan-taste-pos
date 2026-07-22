@@ -12,6 +12,7 @@ import {
   safeUserMessage,
   useToast,
 } from "@/shared/ui";
+import { useTx } from "@/shared/ui/i18n";
 import { useCan } from "@/app/providers";
 import { DataTable, type ColumnDef } from "@/shared/tables";
 import { PayslipDrawer } from "./PayslipDrawer";
@@ -35,6 +36,7 @@ interface RunDetailProps {
 }
 
 export function RunDetail({ runId, onBack }: RunDetailProps) {
+  const t = useTx();
   const { toast } = useToast();
   const canManage = useCan("people.payroll.manage");
   const canApprove = useCan("people.payroll.approve");
@@ -66,8 +68,8 @@ export function RunDetail({ runId, onBack }: RunDetailProps) {
   function runCalculate() {
     if (!run) return;
     calculate.mutate(run.id, {
-      onSuccess: () => toast({ title: status === "draft" ? "تم احتساب المسير" : "تمت إعادة الاحتساب", tone: "success" }),
-      onError: (e) => toast({ title: "تعذّر الاحتساب", description: safeUserMessage(e), tone: "error" }),
+      onSuccess: () => toast({ title: status === "draft" ? t("people.payroll.detail.calcDone") : t("people.payroll.detail.recalcDone"), tone: "success" }),
+      onError: (e) => toast({ title: t("people.payroll.detail.calcFailed"), description: safeUserMessage(e, t), tone: "error" }),
     });
   }
 
@@ -78,12 +80,12 @@ export function RunDetail({ runId, onBack }: RunDetailProps) {
       onSuccess: (res) => {
         setConfirmApprove(false);
         if (res?.glWarning) {
-          toast({ title: "تم الاعتماد مع تنبيه محاسبي", description: res.glWarning, tone: "warning" });
+          toast({ title: t("people.payroll.detail.approvedWithWarning"), description: res.glWarning, tone: "warning" });
         } else {
-          toast({ title: "تم اعتماد المسير وترحيله محاسبيًا", tone: "success" });
+          toast({ title: t("people.payroll.detail.approvedDone"), tone: "success" });
         }
       },
-      onError: (e) => setApproveError(safeUserMessage(e)),
+      onError: (e) => setApproveError(safeUserMessage(e, t)),
     });
   }
 
@@ -91,7 +93,7 @@ export function RunDetail({ runId, onBack }: RunDetailProps) {
     if (!run) return;
     setPayError(null);
     if (!bankAccountId) {
-      setPayError("اختر الحساب البنكي.");
+      setPayError(t("people.payroll.detail.pickBank"));
       return;
     }
     pay.mutate(
@@ -100,9 +102,9 @@ export function RunDetail({ runId, onBack }: RunDetailProps) {
         onSuccess: () => {
           setPayOpen(false);
           setBankAccountId("");
-          toast({ title: "تم صرف الرواتب وترحيل قيد الدفع", tone: "success" });
+          toast({ title: t("people.payroll.detail.paidDone"), tone: "success" });
         },
-        onError: (e) => setPayError(safeUserMessage(e)),
+        onError: (e) => setPayError(safeUserMessage(e, t)),
       },
     );
   }
@@ -113,7 +115,7 @@ export function RunDetail({ runId, onBack }: RunDetailProps) {
     try {
       await downloadPayrollCsv(run);
     } catch (e) {
-      toast({ title: "تعذّر تصدير الملف", description: safeUserMessage(e), tone: "error" });
+      toast({ title: t("people.payroll.detail.exportFailed"), description: safeUserMessage(e, t), tone: "error" });
     } finally {
       setExporting(false);
     }
@@ -122,7 +124,7 @@ export function RunDetail({ runId, onBack }: RunDetailProps) {
   const columns: ColumnDef<PayrollItem>[] = [
     {
       id: "employee",
-      header: "الموظف",
+      header: t("people.field.employee"),
       accessor: (r) => r.employeeName,
       cell: (r) => (
         <div className="min-w-0">
@@ -136,26 +138,26 @@ export function RunDetail({ runId, onBack }: RunDetailProps) {
       ),
       sortable: true,
     },
-    { id: "basic", header: "الأساسي", accessor: (r) => r.basicSalary, cell: (r) => money(r.basicSalary), numeric: true, sortable: true },
+    { id: "basic", header: t("people.payroll.item.basic"), accessor: (r) => r.basicSalary, cell: (r) => money(r.basicSalary), numeric: true, sortable: true },
     {
       id: "allowances",
-      header: "البدلات",
+      header: t("people.payroll.item.allowances"),
       accessor: (r) => r.housingAllowance + r.transportAllowance + r.otherAllowance,
       cell: (r) => money(r.housingAllowance + r.transportAllowance + r.otherAllowance),
       numeric: true,
     },
-    { id: "overtime", header: "الإضافي", accessor: (r) => r.overtimeAmount, cell: (r) => money(r.overtimeAmount), numeric: true },
-    { id: "gross", header: "الإجمالي", accessor: (r) => r.grossSalary, cell: (r) => money(r.grossSalary), numeric: true, sortable: true },
+    { id: "overtime", header: t("people.payroll.item.overtime"), accessor: (r) => r.overtimeAmount, cell: (r) => money(r.overtimeAmount), numeric: true },
+    { id: "gross", header: t("people.payroll.item.gross"), accessor: (r) => r.grossSalary, cell: (r) => money(r.grossSalary), numeric: true, sortable: true },
     {
       id: "deductions",
-      header: "الاستقطاعات",
+      header: t("people.payroll.item.deductions"),
       accessor: (r) => r.totalDeductions,
       cell: (r) => <span className="text-rose-600">{money(r.totalDeductions)}</span>,
       numeric: true,
     },
     {
       id: "net",
-      header: "الصافي",
+      header: t("people.payroll.item.net"),
       accessor: (r) => r.netSalary,
       cell: (r) => <span className="font-extrabold text-emerald-700">{money(r.netSalary)}</span>,
       numeric: true,
@@ -170,39 +172,39 @@ export function RunDetail({ runId, onBack }: RunDetailProps) {
     return (
       <div>
         <Button variant="secondary" onClick={onBack}>
-          <ArrowRight className="h-4 w-4" /> رجوع
+          <ArrowRight className="h-4 w-4" /> {t("common.back")}
         </Button>
         <div className="surface mt-4 p-8 text-center text-sm font-bold text-slate-500">
-          المسير غير موجود أو تم حذفه.
+          {t("people.payroll.detail.notFound")}
         </div>
       </div>
     );
   }
 
-  const meta = payrollStatusMeta(run.status);
+  const meta = payrollStatusMeta(run.status, t);
 
   return (
     <div className="space-y-5">
       {/* Header + action bar */}
       <div className="flex flex-col gap-4">
         <Button variant="ghost" size="sm" className="self-start" onClick={onBack}>
-          <ArrowRight className="h-4 w-4" /> رجوع للمسيّرات
+          <ArrowRight className="h-4 w-4" /> {t("people.payroll.detail.back")}
         </Button>
 
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div>
             <div className="mb-1 flex flex-wrap items-center gap-2">
-              <h1 className="text-2xl font-extrabold tracking-tight text-slate-950">{periodLabel(run)}</h1>
+              <h1 className="text-2xl font-extrabold tracking-tight text-slate-950">{periodLabel(run, t)}</h1>
               <StatusBadge tone={meta.tone}>{meta.label}</StatusBadge>
             </div>
-            <p className="text-sm font-medium text-slate-500">{run.branchName || "كل الفروع"}</p>
+            <p className="text-sm font-medium text-slate-500">{run.branchName || t("people.payroll.allBranches")}</p>
           </div>
 
           <div className="flex flex-wrap items-center gap-2">
             {showCalc && (
               <Button variant="secondary" onClick={runCalculate} loading={calculate.isPending}>
                 {status === "draft" ? <Calculator className="h-4 w-4" /> : <RefreshCw className="h-4 w-4" />}
-                {status === "draft" ? "حساب" : "إعادة احتساب"}
+                {status === "draft" ? t("people.payroll.detail.calc") : t("people.payroll.detail.recalc")}
               </Button>
             )}
             {showApprove && (
@@ -213,7 +215,7 @@ export function RunDetail({ runId, onBack }: RunDetailProps) {
                   setConfirmApprove(true);
                 }}
               >
-                <BadgeCheck className="h-4 w-4" /> اعتماد
+                <BadgeCheck className="h-4 w-4" /> {t("people.payroll.detail.approve")}
               </Button>
             )}
             {showPay && (
@@ -225,20 +227,20 @@ export function RunDetail({ runId, onBack }: RunDetailProps) {
                   setPayOpen(true);
                 }}
               >
-                <Banknote className="h-4 w-4" /> صرف
+                <Banknote className="h-4 w-4" /> {t("people.payroll.detail.pay")}
               </Button>
             )}
             <Button variant="secondary" onClick={runExport} loading={exporting}>
-              <Download className="h-4 w-4" /> تصدير CSV
+              <Download className="h-4 w-4" /> {t("people.payroll.detail.exportCsv")}
             </Button>
           </div>
         </div>
 
         {/* Totals */}
         <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-          <DetailStat label="عدد الموظفين" value={<span className="tabular-nums">{run.employeeCount}</span>} />
+          <DetailStat label={t("people.payroll.totals.employeeCount")} value={<span className="tabular-nums">{run.employeeCount}</span>} />
           <DetailStat
-            label="إجمالي المستحق"
+            label={t("people.payroll.totals.totalGross")}
             value={
               <span dir="ltr" className="tabular-nums">
                 {money(run.totalGross)}
@@ -246,14 +248,14 @@ export function RunDetail({ runId, onBack }: RunDetailProps) {
             }
           />
           <DetailStat
-            label="صافي المستحق"
+            label={t("people.payroll.totals.totalNet")}
             value={
               <span dir="ltr" className="tabular-nums text-emerald-700">
                 {money(run.totalNet)}
               </span>
             }
           />
-          <DetailStat label="الحالة" value={<StatusBadge tone={meta.tone}>{meta.label}</StatusBadge>} />
+          <DetailStat label={t("common.status")} value={<StatusBadge tone={meta.tone}>{meta.label}</StatusBadge>} />
         </div>
       </div>
 
@@ -267,16 +269,16 @@ export function RunDetail({ runId, onBack }: RunDetailProps) {
         onRetry={() => itemsQuery.refetch()}
         tableId="people.payroll.items"
         searchable
-        searchPlaceholder="بحث باسم الموظف…"
-        emptyTitle="لا توجد بنود بعد"
-        emptyBody={showCalc ? "اضغط «حساب» لاحتساب مستحقات الموظفين." : "لم تُحتسب مستحقات هذا المسير بعد."}
+        searchPlaceholder={t("people.payroll.detail.searchByEmployee")}
+        emptyTitle={t("people.payroll.detail.itemsEmpty")}
+        emptyBody={showCalc ? t("people.payroll.detail.itemsEmptyBodyManage") : t("people.payroll.detail.itemsEmptyBodyView")}
         rowActions={(r) => (
           <Button
             variant="ghost"
             size="sm"
             onClick={() => setPayslipEmp({ id: r.employeeId, name: r.employeeName })}
           >
-            <FileText className="h-4 w-4" /> قسيمة
+            <FileText className="h-4 w-4" /> {t("people.payroll.detail.payslipBtn")}
           </Button>
         )}
       />
@@ -284,10 +286,10 @@ export function RunDetail({ runId, onBack }: RunDetailProps) {
       {/* Approve confirmation */}
       <ConfirmDialog
         open={confirmApprove}
-        title="اعتماد مسير الرواتب؟"
-        description={`سيتم اعتماد مسير «${periodLabel(run)}» وترحيل قيود الاستحقاق محاسبيًا. لا يمكن التراجع بسهولة.`}
+        title={t("people.payroll.detail.confirmApproveTitle")}
+        description={t("people.payroll.detail.confirmApproveDesc", { period: periodLabel(run, t) })}
         tone="primary"
-        confirmLabel="اعتماد"
+        confirmLabel={t("people.payroll.detail.approve")}
         processing={approve.isPending}
         error={approveError}
         onConfirm={runApprove}
@@ -298,17 +300,17 @@ export function RunDetail({ runId, onBack }: RunDetailProps) {
       <Dialog
         open={payOpen}
         onClose={() => !pay.isPending && setPayOpen(false)}
-        title="صرف الرواتب"
-        description={`اختر الحساب البنكي لصرف صافي رواتب «${periodLabel(run)}».`}
+        title={t("people.payroll.detail.payTitle")}
+        description={t("people.payroll.detail.payDesc", { period: periodLabel(run, t) })}
         size="md"
         dismissable={!pay.isPending}
         footer={
           <>
             <Button variant="secondary" onClick={() => setPayOpen(false)} disabled={pay.isPending}>
-              إلغاء
+              {t("common.cancel")}
             </Button>
             <Button variant="primary" onClick={runPay} loading={pay.isPending}>
-              تأكيد الصرف
+              {t("people.payroll.detail.payConfirm")}
             </Button>
           </>
         }
@@ -316,7 +318,7 @@ export function RunDetail({ runId, onBack }: RunDetailProps) {
         <div className="space-y-3">
           <label className="block">
             <span className="text-xs font-bold text-slate-600">
-              الحساب البنكي <span className="text-rose-600">*</span>
+              {t("people.payroll.detail.bankAccount")} <span className="text-rose-600">*</span>
             </span>
             <Select
               value={bankAccountId}
@@ -325,7 +327,7 @@ export function RunDetail({ runId, onBack }: RunDetailProps) {
               className="mt-1"
             >
               <option value="" disabled>
-                {bankQuery.isLoading ? "جارٍ التحميل…" : "— اختر حسابًا —"}
+                {bankQuery.isLoading ? t("people.payroll.detail.bankLoading") : t("people.payroll.detail.bankPick")}
               </option>
               {(bankQuery.data ?? []).map((b) => (
                 <option key={b.id} value={b.id}>
@@ -335,7 +337,7 @@ export function RunDetail({ runId, onBack }: RunDetailProps) {
             </Select>
           </label>
           {bankQuery.error && (
-            <div className="text-xs font-bold text-rose-600">تعذّر تحميل الحسابات البنكية.</div>
+            <div className="text-xs font-bold text-rose-600">{t("people.payroll.detail.bankLoadFailed")}</div>
           )}
           {payError && (
             <div className="rounded-xl border border-rose-200 bg-rose-50 px-3 py-2 text-xs font-bold text-rose-700">

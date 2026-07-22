@@ -2,12 +2,13 @@ import { useMemo, useState } from "react";
 import { ArrowDown, ArrowUp, ChevronsUpDown, Download } from "lucide-react";
 import { Button, DatePicker, Select } from "@/shared/ui";
 import { formatDate } from "@/shared/lib";
+import { useT } from "@/i18n";
 import {
   useProfitability,
   startOfYearISO,
   todayISO,
   PROFITABILITY_DIMENSIONS,
-  PROFITABILITY_DIMENSION_LABEL,
+  profitabilityDimLabel,
   type ProfitabilityFilter,
   type ProfitabilityRow,
 } from "../api";
@@ -35,13 +36,20 @@ interface SortState {
   dir: "asc" | "desc";
 }
 
-const COLUMNS: Array<{ key: SortKey; label: string; numeric: boolean }> = [
-  { key: "name", label: "البعد", numeric: false },
-  { key: "revenue", label: "الإيرادات", numeric: true },
-  { key: "expenses", label: "المصروفات", numeric: true },
-  { key: "profit", label: "الربح", numeric: true },
-  { key: "margin", label: "الهامش %", numeric: true },
+const COLUMN_KEYS: Array<{ key: SortKey; numeric: boolean }> = [
+  { key: "name", numeric: false },
+  { key: "revenue", numeric: true },
+  { key: "expenses", numeric: true },
+  { key: "profit", numeric: true },
+  { key: "margin", numeric: true },
 ];
+const COLUMN_LABEL_KEY: Record<SortKey, string> = {
+  name: "accounting.profitability.col.dimension",
+  revenue: "accounting.profitability.col.revenue",
+  expenses: "accounting.profitability.col.expenses",
+  profit: "accounting.profitability.col.profit",
+  margin: "accounting.profitability.col.margin",
+};
 
 /** Margin is only meaningful with positive revenue — otherwise show a dash,
  *  never a fabricated 0%. */
@@ -55,6 +63,7 @@ function MarginCell({ row }: { row: ProfitabilityRow }) {
 }
 
 export function ProfitabilityPage() {
+  const t = useT();
   const filter = useAppliedFilter<ProfitabilityFilter>({
     dimension: "brand",
     from: startOfYearISO(),
@@ -89,8 +98,8 @@ export function ProfitabilityPage() {
     [rows],
   );
 
-  const dimLabel = PROFITABILITY_DIMENSION_LABEL[filter.applied.dimension];
-  const period = `${formatDate(filter.applied.from)} — ${formatDate(filter.applied.to)} · حسب: ${dimLabel}`;
+  const dimLabel = profitabilityDimLabel(t, filter.applied.dimension);
+  const period = `${formatDate(filter.applied.from)} — ${formatDate(filter.applied.to)} · ${t("accounting.profitability.periodBy", { dimension: dimLabel })}`;
 
   const toggleSort = (key: SortKey) =>
     setSort((s) => (s.key === key ? { key, dir: s.dir === "desc" ? "asc" : "desc" } : { key, dir: "desc" }));
@@ -107,8 +116,8 @@ export function ProfitabilityPage() {
   return (
     <div>
       <ReportHeader
-        title="الربحية حسب البعد"
-        subtitle="الإيرادات مقابل المصروفات لكل علامة تجارية أو فرع أو مركز تكلفة — من القيود المرحّلة فقط."
+        title={t("accounting.profitability.title")}
+        subtitle={t("accounting.profitability.subtitle")}
         onPrint={printReport}
         extraActions={
           rows.length > 0 && (
@@ -117,18 +126,18 @@ export function ProfitabilityPage() {
               onClick={() =>
                 exportRowsCsv(
                   `profitability-${filter.applied.dimension}-${filter.applied.from}-${filter.applied.to}.csv`,
-                  COLUMNS.map((c) => c.label),
+                  COLUMN_KEYS.map((c) => t(COLUMN_LABEL_KEY[c.key])),
                   rows.map((r) => [r.name, r.revenue, r.expenses, r.profit, r.revenue > 0 ? r.margin : "—"]),
                 )
               }
             >
-              <Download className="h-4 w-4" /> تصدير CSV
+              <Download className="h-4 w-4" /> {t("table.exportCsv")}
             </Button>
           )
         }
       />
       <FilterCard onRun={filter.run} running={query.isFetching}>
-        <FilterField label="البعد">
+        <FilterField label={t("accounting.profitability.dimensionLabel")}>
           <Select
             value={filter.draft.dimension}
             onChange={(e) =>
@@ -136,14 +145,14 @@ export function ProfitabilityPage() {
             }
             options={PROFITABILITY_DIMENSIONS.map((d) => ({
               value: d,
-              label: PROFITABILITY_DIMENSION_LABEL[d],
+              label: profitabilityDimLabel(t, d),
             }))}
           />
         </FilterField>
-        <FilterField label="من تاريخ">
+        <FilterField label={t("accounting.common.fromDate")}>
           <DatePicker value={filter.draft.from} onChange={(from) => filter.patch({ from })} />
         </FilterField>
-        <FilterField label="إلى تاريخ">
+        <FilterField label={t("accounting.common.toDate")}>
           <DatePicker value={filter.draft.to} onChange={(to) => filter.patch({ to })} />
         </FilterField>
       </FilterCard>
@@ -153,23 +162,23 @@ export function ProfitabilityPage() {
         error={query.error}
         isEmpty={!!data && rows.length === 0}
         onRetry={() => query.refetch()}
-        emptyBody="لا توجد قيود مرحّلة على هذا البعد في الفترة المحددة."
+        emptyBody={t("accounting.profitability.empty")}
       >
         {data && (
           <PrintArea>
             <div className="surface overflow-x-auto p-4">
-              <PrintBanner title="الربحية حسب البعد" period={period} />
+              <PrintBanner title={t("accounting.profitability.title")} period={period} />
               <table className="w-full min-w-[42rem] text-sm">
                 <thead>
                   <tr className="border-b border-slate-200 text-[11px] font-extrabold text-slate-500">
-                    {COLUMNS.map((c) => (
+                    {COLUMN_KEYS.map((c) => (
                       <th key={c.key} className={`px-3 py-2 ${c.numeric ? "text-left" : "text-right"}`}>
                         <button
                           type="button"
                           onClick={() => toggleSort(c.key)}
                           className="inline-flex items-center gap-1 font-extrabold transition hover:text-slate-800 focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-teal-100"
                         >
-                          {c.label}
+                          {t(COLUMN_LABEL_KEY[c.key])}
                           {sortIcon(c.key)}
                         </button>
                       </th>
@@ -189,7 +198,7 @@ export function ProfitabilityPage() {
                 </tbody>
                 <tfoot>
                   <tr className="border-t-2 border-slate-300 bg-slate-50 text-sm font-extrabold">
-                    <td className="px-3 py-2.5 text-right">الإجمالي</td>
+                    <td className="px-3 py-2.5 text-right">{t("accounting.common.total")}</td>
                     <td className="px-3 py-2.5 text-left"><Num value={totals.revenue} strong /></td>
                     <td className="px-3 py-2.5 text-left"><Num value={totals.expenses} strong /></td>
                     <td className="px-3 py-2.5 text-left"><Num value={totals.profit} signed strong /></td>

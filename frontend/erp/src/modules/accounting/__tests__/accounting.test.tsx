@@ -13,6 +13,7 @@ vi.mock("@/shared/api", async (importOriginal) => {
 });
 
 import { apiClient } from "@/shared/api";
+import { I18nProvider } from "@/i18n";
 import { TrialBalancePage } from "../pages/TrialBalance";
 import { CostCentersPage } from "../pages/CostCenters";
 
@@ -20,7 +21,11 @@ const get = apiClient.get as Mock;
 
 function wrap(ui: ReactNode) {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-  return render(<QueryClientProvider client={qc}>{ui}</QueryClientProvider>);
+  return render(
+    <QueryClientProvider client={qc}>
+      <I18nProvider>{ui}</I18nProvider>
+    </QueryClientProvider>,
+  );
 }
 
 beforeEach(() => {

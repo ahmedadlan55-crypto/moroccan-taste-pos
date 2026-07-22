@@ -7,8 +7,9 @@ import {
 } from "@/shared/ui";
 import { Field } from "@/shared/forms";
 import { usePermissions } from "@/app/providers";
+import { useT } from "@/i18n";
 import {
-  allowedPeriodTransitions, PERIOD_STATUS_LABEL, useLockPeriod, usePeriods, useSavePeriod,
+  allowedPeriodTransitions, useLockPeriod, usePeriods, useSavePeriod,
   type AccountingPeriod, type PeriodStatus,
 } from "../api";
 
@@ -26,22 +27,12 @@ const TONE: Record<PeriodStatus, "success" | "warning" | "danger"> = {
   closed: "danger",
 };
 
-const TRANSITION_COPY: Record<PeriodStatus, { label: string; icon: typeof Lock; body: string }> = {
-  soft_closed: {
-    label: "إقفال مبدئي",
-    icon: ShieldHalf,
-    body: "يمنع الترحيل الجديد في هذه الفترة، ويمكن التراجع عنه بإعادة الفتح. لا يُنشئ قيود إقفال.",
-  },
-  closed: {
-    label: "إقفال نهائي",
-    icon: Lock,
-    body: "يُنشئ قيود الإقفال ويمنع أي ترحيل في الفترة. إعادة الفتح بعد ذلك تتطلّب تأكيدًا إضافيًا وتعكس قيود الإقفال.",
-  },
-  open: {
-    label: "إعادة فتح",
-    icon: LockOpen,
-    body: "يسمح بالترحيل في الفترة من جديد.",
-  },
+// Transition icon per target status; the label/body copy lives in the i18n dict
+// (accounting.periods.transition.<status>.{label,body}).
+const TRANSITION_ICON: Record<PeriodStatus, typeof Lock> = {
+  soft_closed: ShieldHalf,
+  closed: Lock,
+  open: LockOpen,
 };
 
 interface PeriodForm {
@@ -51,6 +42,7 @@ interface PeriodForm {
 }
 
 export function PeriodsPage() {
+  const t = useT();
   const { can } = usePermissions();
   const canManage = can("accounting.periods.manage");
   const { toast } = useToast();
@@ -69,8 +61,8 @@ export function PeriodsPage() {
 
   function submitCreate(v: PeriodForm) {
     save.mutate(v, {
-      onSuccess: () => { toast({ title: "تم إنشاء الفترة", tone: "success" }); setCreating(false); reset(); },
-      onError: (e: Error) => toast({ title: "تعذّر إنشاء الفترة", description: e.message, tone: "error" }),
+      onSuccess: () => { toast({ title: t("accounting.periods.toast.created"), tone: "success" }); setCreating(false); reset(); },
+      onError: (e: Error) => toast({ title: t("accounting.periods.toast.createError"), description: e.message, tone: "error" }),
     });
   }
 
@@ -78,21 +70,21 @@ export function PeriodsPage() {
     if (!pending) return;
     const { period, to, force } = pending;
     lock.mutate({ id: period.id, status: to, force }, {
-      onSuccess: () => { toast({ title: `تم: ${TRANSITION_COPY[to].label}`, tone: "success" }); setPending(null); },
-      onError: (e: Error) => toast({ title: "تعذّر تغيير حالة الفترة", description: e.message, tone: "error" }),
+      onSuccess: () => { toast({ title: t("accounting.periods.toast.transitioned", { label: t(`accounting.periods.transition.${to}.label`) }), tone: "success" }); setPending(null); },
+      onError: (e: Error) => toast({ title: t("accounting.periods.toast.transitionError"), description: e.message, tone: "error" }),
     });
   }
 
   return (
     <div className="space-y-5">
       <PageHeader
-        eyebrow="المحاسبة"
-        title="الفترات المحاسبية"
-        subtitle="فتح وإقفال الفترات. الإقفال النهائي يُنشئ قيود الإقفال، وإعادة الفتح تعكسها."
+        eyebrow={t("accounting.eyebrow")}
+        title={t("accounting.periods.title")}
+        subtitle={t("accounting.periods.subtitle")}
         action={
           canManage ? (
             <Button variant="primary" onClick={() => setCreating(true)}>
-              <Plus className="h-4 w-4" /> فترة جديدة
+              <Plus className="h-4 w-4" /> {t("accounting.periods.newPeriod")}
             </Button>
           ) : undefined
         }
@@ -104,23 +96,23 @@ export function PeriodsPage() {
         <LoadingState />
       ) : periods.length === 0 ? (
         <EmptyState
-          title="لا توجد فترات محاسبية"
-          body="ابدأ بإنشاء فترة لتتمكّن من إقفالها لاحقًا."
-          action={canManage ? <Button onClick={() => setCreating(true)}><Plus className="h-4 w-4" /> فترة جديدة</Button> : undefined}
+          title={t("accounting.periods.empty.title")}
+          body={t("accounting.periods.empty.body")}
+          action={canManage ? <Button onClick={() => setCreating(true)}><Plus className="h-4 w-4" /> {t("accounting.periods.newPeriod")}</Button> : undefined}
         />
       ) : (
         <section className="surface">
-          <PanelTitle icon={CalendarRange} title="الفترات" subtitle={`${periods.length} فترة`} />
+          <PanelTitle icon={CalendarRange} title={t("accounting.periods.panelTitle")} subtitle={t("accounting.periods.count", { count: periods.length })} />
           <div className="overflow-x-auto p-5">
             <table className="w-full text-sm">
               <thead>
                 <tr className="text-right text-xs font-bold text-slate-500">
-                  <th className="px-3 py-2">الفترة</th>
-                  <th className="px-3 py-2">من</th>
-                  <th className="px-3 py-2">إلى</th>
-                  <th className="px-3 py-2">الحالة</th>
-                  <th className="px-3 py-2">أُقفلت بواسطة</th>
-                  <th className="px-3 py-2">إجراءات</th>
+                  <th className="px-3 py-2">{t("accounting.periods.col.name")}</th>
+                  <th className="px-3 py-2">{t("accounting.periods.col.from")}</th>
+                  <th className="px-3 py-2">{t("accounting.periods.col.to")}</th>
+                  <th className="px-3 py-2">{t("accounting.periods.col.status")}</th>
+                  <th className="px-3 py-2">{t("accounting.periods.col.closedBy")}</th>
+                  <th className="px-3 py-2">{t("common.actions")}</th>
                 </tr>
               </thead>
               <tbody>
@@ -130,30 +122,29 @@ export function PeriodsPage() {
                     <td className="px-3 py-3 font-mono text-xs text-slate-600">{String(p.startDate).slice(0, 10)}</td>
                     <td className="px-3 py-3 font-mono text-xs text-slate-600">{String(p.endDate).slice(0, 10)}</td>
                     <td className="px-3 py-3">
-                      <StatusBadge tone={TONE[p.status]}>{PERIOD_STATUS_LABEL[p.status] ?? p.status}</StatusBadge>
+                      <StatusBadge tone={TONE[p.status]}>{t(`accounting.periods.statusLabel.${p.status}`)}</StatusBadge>
                     </td>
                     <td className="px-3 py-3 text-xs text-slate-500">{p.closedBy || "—"}</td>
                     <td className="px-3 py-3">
                       {canManage ? (
                         <div className="flex flex-wrap gap-2">
-                          {allowedPeriodTransitions(p.status).map((t) => {
-                            const copy = TRANSITION_COPY[t.to];
-                            const Icon = t.force ? KeyRound : copy.icon;
+                          {allowedPeriodTransitions(p.status).map((tr) => {
+                            const Icon = tr.force ? KeyRound : TRANSITION_ICON[tr.to];
                             return (
                               <Button
-                                key={t.to}
+                                key={tr.to}
                                 size="sm"
-                                variant={t.to === "closed" ? "danger" : t.to === "open" ? "secondary" : "ghost"}
-                                onClick={() => setPending({ period: p, to: t.to, force: t.force })}
+                                variant={tr.to === "closed" ? "danger" : tr.to === "open" ? "secondary" : "ghost"}
+                                onClick={() => setPending({ period: p, to: tr.to, force: tr.force })}
                               >
                                 <Icon className="h-3.5 w-3.5" />
-                                {t.force ? "إعادة فتح (تأكيد إضافي)" : copy.label}
+                                {tr.force ? t("accounting.periods.reopenForced") : t(`accounting.periods.transition.${tr.to}.label`)}
                               </Button>
                             );
                           })}
                         </div>
                       ) : (
-                        <span className="text-xs text-slate-400">للعرض فقط</span>
+                        <span className="text-xs text-slate-400">{t("accounting.periods.viewOnly")}</span>
                       )}
                     </td>
                   </tr>
@@ -164,27 +155,27 @@ export function PeriodsPage() {
         </section>
       )}
 
-      <Dialog open={creating} onClose={() => setCreating(false)} title="فترة محاسبية جديدة">
+      <Dialog open={creating} onClose={() => setCreating(false)} title={t("accounting.periods.dialogTitle")}>
         <form onSubmit={handleSubmit(submitCreate)} className="grid gap-4" noValidate>
-          <Field label="الاسم" required error={errors.periodName}>
+          <Field label={t("accounting.periods.field.name")} required error={errors.periodName}>
             {({ id, invalid }) => (
-              <Input id={id} invalid={invalid} placeholder="مثال: يناير 2026"
-                {...register("periodName", { required: "الاسم مطلوب" })} />
+              <Input id={id} invalid={invalid} placeholder={t("accounting.periods.field.namePlaceholder")}
+                {...register("periodName", { required: t("accounting.periods.validation.name") })} />
             )}
           </Field>
-          <Field label="تاريخ البداية" required error={errors.startDate}>
+          <Field label={t("accounting.periods.field.start")} required error={errors.startDate}>
             {({ id, invalid }) => (
-              <Input id={id} invalid={invalid} type="date" {...register("startDate", { required: "تاريخ البداية مطلوب" })} />
+              <Input id={id} invalid={invalid} type="date" {...register("startDate", { required: t("accounting.periods.validation.start") })} />
             )}
           </Field>
-          <Field label="تاريخ النهاية" required error={errors.endDate}>
+          <Field label={t("accounting.periods.field.end")} required error={errors.endDate}>
             {({ id, invalid }) => (
-              <Input id={id} invalid={invalid} type="date" {...register("endDate", { required: "تاريخ النهاية مطلوب" })} />
+              <Input id={id} invalid={invalid} type="date" {...register("endDate", { required: t("accounting.periods.validation.end") })} />
             )}
           </Field>
           <div className="flex justify-end gap-2">
-            <Button type="button" variant="ghost" onClick={() => setCreating(false)}>إلغاء</Button>
-            <Button type="submit" variant="primary" loading={save.isPending}>حفظ</Button>
+            <Button type="button" variant="ghost" onClick={() => setCreating(false)}>{t("common.cancel")}</Button>
+            <Button type="submit" variant="primary" loading={save.isPending}>{t("common.save")}</Button>
           </div>
         </form>
       </Dialog>
@@ -192,15 +183,15 @@ export function PeriodsPage() {
       <ConfirmDialog
         open={!!pending}
         onClose={() => setPending(null)}
-        title={pending ? `${TRANSITION_COPY[pending.to].label} — ${pending.period.periodName}` : ""}
+        title={pending ? `${t(`accounting.periods.transition.${pending.to}.label`)} — ${pending.period.periodName}` : ""}
         description={
           pending
             ? pending.force
-              ? "هذه الفترة مُقفلة نهائيًا. إعادة الفتح ستعكس قيود الإقفال بقيد مقابل (لا تُحذف)، وتسمح بالترحيل من جديد."
-              : TRANSITION_COPY[pending.to].body
+              ? t("accounting.periods.reopenForcedDesc")
+              : t(`accounting.periods.transition.${pending.to}.body`)
             : ""
         }
-        confirmLabel={pending?.force ? "إعادة الفتح رغم الإقفال" : "تأكيد"}
+        confirmLabel={pending?.force ? t("accounting.periods.reopenForcedConfirm") : t("common.confirm")}
         tone={pending?.to === "closed" || pending?.force ? "danger" : "primary"}
         processing={lock.isPending}
         onConfirm={confirmTransition}

@@ -1,6 +1,7 @@
 import { useMemo } from "react";
 import { DatePicker } from "@/shared/ui";
 import { formatDate } from "@/shared/lib";
+import { useT } from "@/i18n";
 import {
   useTrialBalance,
   startOfYearISO,
@@ -58,6 +59,7 @@ const dr = (v: number) => (v > 0 ? v : 0);
 const cr = (v: number) => (v < 0 ? -v : 0);
 
 export function TrialBalancePage() {
+  const t = useT();
   const filter = useAppliedFilter<DateRange>({ from: startOfYearISO(), to: todayISO() });
   const query = useTrialBalance(filter.applied);
 
@@ -84,15 +86,15 @@ export function TrialBalancePage() {
   return (
     <div>
       <ReportHeader
-        title="ميزان المراجعة"
-        subtitle="أرصدة الحسابات: افتتاحي، حركة الفترة، وختامي — مع تحقّق التوازن."
+        title={t("accounting.trialBalance.title")}
+        subtitle={t("accounting.trialBalance.subtitle")}
         onPrint={printReport}
       />
       <FilterCard onRun={filter.run} running={query.isFetching}>
-        <FilterField label="من تاريخ">
+        <FilterField label={t("accounting.common.fromDate")}>
           <DatePicker value={filter.draft.from} onChange={(from) => filter.patch({ from })} />
         </FilterField>
-        <FilterField label="إلى تاريخ">
+        <FilterField label={t("accounting.common.toDate")}>
           <DatePicker value={filter.draft.to} onChange={(to) => filter.patch({ to })} />
         </FilterField>
       </FilterCard>
@@ -105,28 +107,28 @@ export function TrialBalancePage() {
       >
         <PrintArea>
           <div className="surface overflow-x-auto p-4">
-            <PrintBanner title="ميزان المراجعة" period={period} />
+            <PrintBanner title={t("accounting.trialBalance.title")} period={period} />
             <table className="w-full min-w-[52rem] text-sm">
               <thead>
                 <tr className="border-b border-slate-200 text-xs font-extrabold text-slate-500">
-                  <th rowSpan={2} className="px-3 py-2 text-right">الحساب</th>
+                  <th rowSpan={2} className="px-3 py-2 text-right">{t("accounting.common.account")}</th>
                   <th colSpan={2} className="border-r border-slate-100 px-3 py-2 text-center">
-                    رصيد أول المدة
+                    {t("accounting.trialBalance.openingCol")}
                   </th>
                   <th colSpan={2} className="border-r border-slate-100 px-3 py-2 text-center">
-                    حركة الفترة
+                    {t("accounting.trialBalance.periodCol")}
                   </th>
                   <th colSpan={2} className="border-r border-slate-100 px-3 py-2 text-center">
-                    رصيد آخر المدة
+                    {t("accounting.trialBalance.closingCol")}
                   </th>
                 </tr>
                 <tr className="border-b border-slate-200 text-[11px] font-bold text-slate-400">
-                  <th className="border-r border-slate-100 px-3 py-1.5 text-left">مدين</th>
-                  <th className="px-3 py-1.5 text-left">دائن</th>
-                  <th className="border-r border-slate-100 px-3 py-1.5 text-left">مدين</th>
-                  <th className="px-3 py-1.5 text-left">دائن</th>
-                  <th className="border-r border-slate-100 px-3 py-1.5 text-left">مدين</th>
-                  <th className="px-3 py-1.5 text-left">دائن</th>
+                  <th className="border-r border-slate-100 px-3 py-1.5 text-left">{t("accounting.common.debit")}</th>
+                  <th className="px-3 py-1.5 text-left">{t("accounting.common.credit")}</th>
+                  <th className="border-r border-slate-100 px-3 py-1.5 text-left">{t("accounting.common.debit")}</th>
+                  <th className="px-3 py-1.5 text-left">{t("accounting.common.credit")}</th>
+                  <th className="border-r border-slate-100 px-3 py-1.5 text-left">{t("accounting.common.debit")}</th>
+                  <th className="px-3 py-1.5 text-left">{t("accounting.common.credit")}</th>
                 </tr>
               </thead>
               <tbody>
@@ -155,7 +157,7 @@ export function TrialBalancePage() {
               </tbody>
               <tfoot>
                 <tr className="border-t-2 border-slate-300 bg-slate-50 text-sm font-extrabold">
-                  <td className="px-3 py-2.5 text-right">الإجمالي</td>
+                  <td className="px-3 py-2.5 text-right">{t("accounting.common.total")}</td>
                   <td className="border-r border-slate-100 px-3 py-2.5 text-left"><Num value={totals.openD} strong /></td>
                   <td className="px-3 py-2.5 text-left"><Num value={totals.openC} strong /></td>
                   <td className="border-r border-slate-100 px-3 py-2.5 text-left"><Num value={totals.perD} strong /></td>
@@ -174,6 +176,7 @@ export function TrialBalancePage() {
 }
 
 function BalanceHint({ balanced }: { balanced: boolean }) {
+  const t = useT();
   return (
     <div
       className={`mt-4 inline-flex items-center gap-2 rounded-xl border px-3 py-2 text-xs font-bold ${
@@ -182,7 +185,7 @@ function BalanceHint({ balanced }: { balanced: boolean }) {
           : "border-amber-200 bg-amber-50 text-amber-700"
       }`}
     >
-      {balanced ? "الميزان متوازن — إجمالي المدين = إجمالي الدائن" : "تنبيه: الميزان غير متوازن"}
+      {balanced ? t("accounting.trialBalance.balanced") : t("accounting.trialBalance.unbalanced")}
     </div>
   );
 }

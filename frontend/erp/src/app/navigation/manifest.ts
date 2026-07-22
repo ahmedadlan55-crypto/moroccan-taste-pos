@@ -4,6 +4,15 @@
 // item has a UNIQUE id + UNIQUE path and a capability from the ONE catalog
 // (@/app/permissions). `icon` is a lucide icon NAME (resolved in the shell), and
 // `module` names the folder under src/modules/ the route renders into.
+//
+// i18n — labels are TRANSLATION KEYS, not literal text. This module is a plain
+// data structure evaluated at import time (before React mounts), so it cannot
+// call useT(). Each `label` is therefore a stable key into the `nav` dictionary
+// namespace (nav.groups.<groupId> / nav.items.<itemId>, see
+// src/i18n/dictionaries/{ar,en}/nav.ts) and every consumer resolves it with
+// t(label) at its render site (Sidebar / MobileNav / Breadcrumbs /
+// CommandPalette). Keys reuse the manifest's own unique ids, so this stays 1:1
+// with the manifest and can never collide.
 
 import type { Capability } from "@/app/permissions";
 
@@ -12,7 +21,7 @@ export interface NavItem {
   id: string;
   /** Unique route path, under the /app basename via the router. */
   path: string;
-  /** Arabic sidebar label. */
+  /** Translation key for the sidebar label (nav.items.<id>); resolved via t() at the render sites. */
   label: string;
   /** lucide-react icon name (PascalCase), resolved to a component in the shell. */
   icon: string;
@@ -22,12 +31,23 @@ export interface NavItem {
   flag?: string;
   /** The src/modules/<module> folder this item routes into. */
   module: string;
+  /**
+   * Opt-in: the module OWNS this item's whole subtree. When true the router
+   * registers a splat child (`<path>/*`) IN ADDITION to the exact route, so
+   * full-page New/Details/Edit screens can live at real URLs
+   * (e.g. `/inventory/items/new`, `/inventory/items/:id`, `.../:id/edit`) and
+   * the module dispatches internally on the deeper pathname. Items WITHOUT this
+   * flag register a single exact route exactly as before. Kept a plain boolean
+   * (not a path list) so the sidebar/breadcrumbs/command-palette that derive
+   * from the flat exact `path` are untouched — only the router reads it.
+   */
+  subRoutes?: boolean;
 }
 
 export interface NavGroup {
   /** Unique group id. */
   id: string;
-  /** Arabic group heading. */
+  /** Translation key for the group heading (nav.groups.<id>); resolved via t() at the render sites. */
   label: string;
   items: NavItem[];
 }
@@ -35,178 +55,178 @@ export interface NavGroup {
 export const NAV: NavGroup[] = [
   {
     id: "overview",
-    label: "الرئيسية",
+    label: "nav.groups.overview",
     items: [
-      { id: "ov-overview", path: "/overview", label: "نظرة عامة", icon: "LayoutDashboard", cap: "overview.view", module: "overview" },
-      { id: "ov-tasks", path: "/overview/tasks", label: "المهام والتنبيهات", icon: "ListTodo", cap: "overview.tasks.view", module: "overview" },
-      { id: "ov-approvals", path: "/overview/approvals", label: "الموافقات المطلوبة", icon: "CheckCheck", cap: "overview.approvals.view", module: "overview" },
-      { id: "ov-kpis", path: "/overview/kpis", label: "مؤشرات الأداء", icon: "Gauge", cap: "overview.kpis.view", module: "overview" },
+      { id: "ov-overview", path: "/overview", label: "nav.items.ov-overview", icon: "LayoutDashboard", cap: "overview.view", module: "overview" },
+      { id: "ov-tasks", path: "/overview/tasks", label: "nav.items.ov-tasks", icon: "ListTodo", cap: "overview.tasks.view", module: "overview" },
+      { id: "ov-approvals", path: "/overview/approvals", label: "nav.items.ov-approvals", icon: "CheckCheck", cap: "overview.approvals.view", module: "overview" },
+      { id: "ov-kpis", path: "/overview/kpis", label: "nav.items.ov-kpis", icon: "Gauge", cap: "overview.kpis.view", module: "overview" },
     ],
   },
   {
     id: "sales",
-    label: "المبيعات",
+    label: "nav.groups.sales",
     items: [
-      { id: "sl-orders", path: "/sales/orders", label: "الطلبات", icon: "ShoppingCart", cap: "sales_orders.view", module: "sales" },
-      { id: "sl-invoices", path: "/sales/invoices", label: "الفواتير", icon: "FileText", cap: "invoices.view", module: "sales" },
-      { id: "sl-returns", path: "/sales/returns", label: "المرتجعات", icon: "Undo2", cap: "returns.view", module: "sales" },
-      { id: "sl-payments", path: "/sales/payments", label: "المدفوعات", icon: "Banknote", cap: "payments.view", module: "sales" },
-      { id: "sl-customers", path: "/customers", label: "العملاء", icon: "Users", cap: "customers.view", module: "customers" },
-      { id: "sl-channels", path: "/sales/channels", label: "قنوات البيع", icon: "Store", cap: "sales.channels.view", module: "sales" },
-      { id: "sl-pricing", path: "/sales/pricing", label: "قوائم الأسعار والخصومات", icon: "Tags", cap: "sales.pricing.view", module: "sales" },
+      { id: "sl-orders", path: "/sales/orders", label: "nav.items.sl-orders", icon: "ShoppingCart", cap: "sales_orders.view", module: "sales" },
+      { id: "sl-invoices", path: "/sales/invoices", label: "nav.items.sl-invoices", icon: "FileText", cap: "invoices.view", module: "sales" },
+      { id: "sl-returns", path: "/sales/returns", label: "nav.items.sl-returns", icon: "Undo2", cap: "returns.view", module: "sales" },
+      { id: "sl-payments", path: "/sales/payments", label: "nav.items.sl-payments", icon: "Banknote", cap: "payments.view", module: "sales" },
+      { id: "sl-customers", path: "/customers", label: "nav.items.sl-customers", icon: "Users", cap: "customers.view", module: "customers" },
+      { id: "sl-channels", path: "/sales/channels", label: "nav.items.sl-channels", icon: "Store", cap: "sales.channels.view", module: "sales" },
+      { id: "sl-pricing", path: "/sales/pricing", label: "nav.items.sl-pricing", icon: "Tags", cap: "sales.pricing.view", module: "sales" },
     ],
   },
   {
     id: "menu",
-    label: "القوائم والوصفات",
+    label: "nav.groups.menu",
     items: [
-      { id: "mn-hub", path: "/menu/hub", label: "لوحة القوائم", icon: "LayoutGrid", cap: "menu.view", module: "menu" },
-      { id: "mn-brand", path: "/menu/brand", label: "قائمة العلامة التجارية", icon: "BookOpen", cap: "menu.view", module: "menu" },
-      { id: "mn-recipes", path: "/menu/recipes-bom", label: "الوصفات ومكوّنات التصنيع", icon: "ChefHat", cap: "menu.view", module: "menu" },
-      { id: "mn-price-lists", path: "/menu/price-lists", label: "قوائم الأسعار", icon: "Tags", cap: "menu.view", module: "menu" },
-      { id: "mn-combos", path: "/menu/combos", label: "الوجبات المركّبة", icon: "Layers", cap: "menu.view", module: "menu" },
-      { id: "mn-semi", path: "/menu/semi-finished", label: "المنتجات نصف المصنّعة", icon: "Soup", cap: "menu.view", module: "menu" },
-      { id: "mn-images", path: "/menu/images", label: "صور الأصناف", icon: "Image", cap: "menu.view", module: "menu" },
-      { id: "mn-categories", path: "/menu/categories", label: "ترجمة الأقسام", icon: "Languages", cap: "menu.view", module: "menu" },
+      { id: "mn-hub", path: "/menu/hub", label: "nav.items.mn-hub", icon: "LayoutGrid", cap: "menu.view", module: "menu" },
+      { id: "mn-brand", path: "/menu/brand", label: "nav.items.mn-brand", icon: "BookOpen", cap: "menu.view", module: "menu", subRoutes: true },
+      { id: "mn-recipes", path: "/menu/recipes-bom", label: "nav.items.mn-recipes", icon: "ChefHat", cap: "menu.view", module: "menu" },
+      { id: "mn-price-lists", path: "/menu/price-lists", label: "nav.items.mn-price-lists", icon: "Tags", cap: "menu.view", module: "menu" },
+      { id: "mn-combos", path: "/menu/combos", label: "nav.items.mn-combos", icon: "Layers", cap: "menu.view", module: "menu" },
+      { id: "mn-semi", path: "/menu/semi-finished", label: "nav.items.mn-semi", icon: "Soup", cap: "menu.view", module: "menu" },
+      { id: "mn-images", path: "/menu/images", label: "nav.items.mn-images", icon: "Image", cap: "menu.view", module: "menu" },
+      { id: "mn-categories", path: "/menu/categories", label: "nav.items.mn-categories", icon: "Languages", cap: "menu.view", module: "menu" },
     ],
   },
   {
     id: "pos-admin",
-    label: "نقاط البيع",
+    label: "nav.groups.pos-admin",
     items: [
-      { id: "pa-register", path: "/pos-admin/register", label: "فتح الكاشير", icon: "Monitor", cap: "pos.register.view", module: "pos-admin" },
-      { id: "pa-shifts", path: "/pos-admin/shifts", label: "الورديات", icon: "Clock", cap: "pos.shifts.view", module: "pos-admin" },
-      { id: "pa-parked", path: "/pos-admin/parked-orders", label: "الطلبات المعلقة", icon: "PauseCircle", cap: "pos.parked.view", module: "pos-admin" },
-      { id: "pa-devices", path: "/pos-admin/devices", label: "مزامنة الأجهزة", icon: "RefreshCw", cap: "pos.devices.view", module: "pos-admin" },
-      { id: "pa-reports", path: "/pos-admin/reports", label: "تقارير الكاشير", icon: "Receipt", cap: "pos.reports.view", module: "pos-admin" },
+      { id: "pa-register", path: "/pos-admin/register", label: "nav.items.pa-register", icon: "Monitor", cap: "pos.register.view", module: "pos-admin" },
+      { id: "pa-shifts", path: "/pos-admin/shifts", label: "nav.items.pa-shifts", icon: "Clock", cap: "pos.shifts.view", module: "pos-admin" },
+      { id: "pa-parked", path: "/pos-admin/parked-orders", label: "nav.items.pa-parked", icon: "PauseCircle", cap: "pos.parked.view", module: "pos-admin" },
+      { id: "pa-devices", path: "/pos-admin/devices", label: "nav.items.pa-devices", icon: "RefreshCw", cap: "pos.devices.view", module: "pos-admin" },
+      { id: "pa-reports", path: "/pos-admin/reports", label: "nav.items.pa-reports", icon: "Receipt", cap: "pos.reports.view", module: "pos-admin" },
     ],
   },
   {
     id: "inventory",
-    label: "المخزون",
+    label: "nav.groups.inventory",
     items: [
-      { id: "inv-overview", path: "/inventory", label: "نظرة عامة", icon: "LayoutDashboard", cap: "inventory.view", module: "inventory" },
-      { id: "inv-items", path: "/inventory/items", label: "الأصناف", icon: "Package", cap: "item.view", module: "inventory" },
-      { id: "inv-warehouses", path: "/inventory/warehouses", label: "المستودعات", icon: "Warehouse", cap: "warehouse.view", module: "inventory" },
-      { id: "inv-balances", path: "/inventory/balances", label: "الأرصدة", icon: "Boxes", cap: "inventory.balances.view", module: "inventory" },
-      { id: "inv-transfers", path: "/inventory/transfers", label: "التحويلات", icon: "Truck", cap: "inventory.transfers.view", module: "inventory" },
-      { id: "inv-receiving", path: "/inventory/receiving", label: "الاستلام", icon: "PackageCheck", cap: "inventory.receiving.view", module: "inventory" },
-      { id: "inv-issues", path: "/inventory/issues", label: "الصرف", icon: "PackageMinus", cap: "inventory.issues.view", module: "inventory" },
-      { id: "inv-adjustments", path: "/inventory/adjustments", label: "التسويات", icon: "SlidersHorizontal", cap: "inventory.adjustments.view", module: "inventory" },
-      { id: "inv-stocktakes", path: "/inventory/stocktakes", label: "الجرد", icon: "ClipboardCheck", cap: "inventory.stocktakes.view", module: "inventory" },
-      { id: "inv-waste", path: "/inventory/waste", label: "الهدر", icon: "PackageMinus", cap: "inventory.view", module: "inventory" },
-      { id: "inv-lots-expiry", path: "/inventory/lots-expiry", label: "التشغيلات والصلاحية", icon: "CalendarClock", cap: "expiry.view", module: "inventory" },
-      { id: "inv-replenishment", path: "/inventory/replenishment", label: "إعادة الطلب", icon: "RefreshCcw", cap: "replenishment.view", module: "inventory" },
-      { id: "inv-production", path: "/inventory/production", label: "الإنتاج", icon: "Factory", cap: "production.view", module: "production" },
-      { id: "inv-method", path: "/inventory/method", label: "طريقة تقييم المخزون", icon: "Scale", cap: "inventory.method.view", module: "inventory" },
+      { id: "inv-overview", path: "/inventory", label: "nav.items.inv-overview", icon: "LayoutDashboard", cap: "inventory.view", module: "inventory" },
+      { id: "inv-items", path: "/inventory/items", label: "nav.items.inv-items", icon: "Package", cap: "item.view", module: "inventory", subRoutes: true },
+      { id: "inv-warehouses", path: "/inventory/warehouses", label: "nav.items.inv-warehouses", icon: "Warehouse", cap: "warehouse.view", module: "inventory" },
+      { id: "inv-balances", path: "/inventory/balances", label: "nav.items.inv-balances", icon: "Boxes", cap: "inventory.balances.view", module: "inventory" },
+      { id: "inv-transfers", path: "/inventory/transfers", label: "nav.items.inv-transfers", icon: "Truck", cap: "inventory.transfers.view", module: "inventory" },
+      { id: "inv-receiving", path: "/inventory/receiving", label: "nav.items.inv-receiving", icon: "PackageCheck", cap: "inventory.receiving.view", module: "inventory" },
+      { id: "inv-issues", path: "/inventory/issues", label: "nav.items.inv-issues", icon: "PackageMinus", cap: "inventory.issues.view", module: "inventory" },
+      { id: "inv-adjustments", path: "/inventory/adjustments", label: "nav.items.inv-adjustments", icon: "SlidersHorizontal", cap: "inventory.adjustments.view", module: "inventory" },
+      { id: "inv-stocktakes", path: "/inventory/stocktakes", label: "nav.items.inv-stocktakes", icon: "ClipboardCheck", cap: "inventory.stocktakes.view", module: "inventory" },
+      { id: "inv-waste", path: "/inventory/waste", label: "nav.items.inv-waste", icon: "PackageMinus", cap: "inventory.view", module: "inventory" },
+      { id: "inv-lots-expiry", path: "/inventory/lots-expiry", label: "nav.items.inv-lots-expiry", icon: "CalendarClock", cap: "expiry.view", module: "inventory" },
+      { id: "inv-replenishment", path: "/inventory/replenishment", label: "nav.items.inv-replenishment", icon: "RefreshCcw", cap: "replenishment.view", module: "inventory" },
+      { id: "inv-production", path: "/inventory/production", label: "nav.items.inv-production", icon: "Factory", cap: "production.view", module: "production" },
+      { id: "inv-method", path: "/inventory/method", label: "nav.items.inv-method", icon: "Scale", cap: "inventory.method.view", module: "inventory" },
     ],
   },
   {
     id: "purchasing",
-    label: "المشتريات",
+    label: "nav.groups.purchasing",
     items: [
-      { id: "pu-suppliers", path: "/purchasing/suppliers", label: "الموردون", icon: "Contact", cap: "procurement.view", module: "purchasing" },
-      { id: "pu-requisitions", path: "/purchasing/requisitions", label: "طلبات الشراء", icon: "ClipboardList", cap: "procurement.view", module: "purchasing" },
-      { id: "pu-orders", path: "/purchasing/orders", label: "أوامر الشراء", icon: "ShoppingBag", cap: "procurement.view", module: "purchasing" },
-      { id: "pu-receiving", path: "/purchasing/receiving", label: "استلام البضاعة", icon: "PackageOpen", cap: "procurement.view", module: "purchasing" },
-      { id: "pu-invoices", path: "/purchasing/invoices", label: "فواتير الموردين", icon: "FileText", cap: "procurement.view", module: "purchasing" },
-      { id: "pu-payments", path: "/purchasing/payments", label: "مدفوعات الموردين", icon: "Wallet", cap: "procurement.view", module: "purchasing" },
-      { id: "pu-returns", path: "/purchasing/returns", label: "مرتجعات المشتريات", icon: "CornerUpLeft", cap: "procurement.view", module: "purchasing" },
+      { id: "pu-suppliers", path: "/purchasing/suppliers", label: "nav.items.pu-suppliers", icon: "Contact", cap: "procurement.view", module: "purchasing" },
+      { id: "pu-requisitions", path: "/purchasing/requisitions", label: "nav.items.pu-requisitions", icon: "ClipboardList", cap: "procurement.view", module: "purchasing" },
+      { id: "pu-orders", path: "/purchasing/orders", label: "nav.items.pu-orders", icon: "ShoppingBag", cap: "procurement.view", module: "purchasing" },
+      { id: "pu-receiving", path: "/purchasing/receiving", label: "nav.items.pu-receiving", icon: "PackageOpen", cap: "procurement.view", module: "purchasing" },
+      { id: "pu-invoices", path: "/purchasing/invoices", label: "nav.items.pu-invoices", icon: "FileText", cap: "procurement.view", module: "purchasing" },
+      { id: "pu-payments", path: "/purchasing/payments", label: "nav.items.pu-payments", icon: "Wallet", cap: "procurement.view", module: "purchasing" },
+      { id: "pu-returns", path: "/purchasing/returns", label: "nav.items.pu-returns", icon: "CornerUpLeft", cap: "procurement.view", module: "purchasing" },
     ],
   },
   {
     id: "accounting",
-    label: "المحاسبة",
+    label: "nav.groups.accounting",
     items: [
-      { id: "ac-coa", path: "/accounting/chart-of-accounts", label: "دليل الحسابات", icon: "BookText", cap: "accounting.view", module: "accounting" },
-      { id: "ac-journals", path: "/accounting/journals", label: "القيود اليومية", icon: "BookOpen", cap: "accounting.journals.view", module: "accounting" },
-      { id: "ac-gl", path: "/accounting/general-ledger", label: "الأستاذ العام", icon: "Layers", cap: "accounting.reports.view", module: "accounting" },
-      { id: "ac-tb", path: "/accounting/trial-balance", label: "ميزان المراجعة", icon: "Scale", cap: "accounting.reports.view", module: "accounting" },
-      { id: "ac-pnl", path: "/accounting/income-statement", label: "قائمة الدخل", icon: "TrendingUp", cap: "accounting.reports.view", module: "accounting" },
-      { id: "ac-bs", path: "/accounting/balance-sheet", label: "الميزانية", icon: "Building2", cap: "accounting.reports.view", module: "accounting" },
-      { id: "ac-cf", path: "/accounting/cash-flow", label: "التدفقات النقدية", icon: "LineChart", cap: "accounting.reports.view", module: "accounting" },
-      { id: "ac-ar-aging", path: "/accounting/ar-aging", label: "أعمار الذمم المدينة", icon: "HandCoins", cap: "accounting.reports.view", module: "accounting" },
-      { id: "ac-ap-aging", path: "/accounting/ap-aging", label: "أعمار الذمم الدائنة", icon: "PiggyBank", cap: "accounting.reports.view", module: "accounting" },
-      { id: "ac-ratios", path: "/accounting/financial-ratios", label: "النسب المالية", icon: "Gauge", cap: "accounting.reports.view", module: "accounting" },
-      { id: "ac-equity-changes", path: "/accounting/equity-changes", label: "التغيرات في حقوق الملكية", icon: "Landmark", cap: "accounting.reports.view", module: "accounting" },
-      { id: "ac-profitability", path: "/accounting/profitability", label: "الربحية حسب البعد", icon: "TrendingUp", cap: "accounting.reports.view", module: "accounting" },
-      { id: "ac-inventory-valuation", path: "/accounting/inventory-valuation", label: "تقييم المخزون", icon: "Boxes", cap: "accounting.reports.view", module: "accounting" },
-      { id: "ac-sales-analytics", path: "/accounting/sales-analytics", label: "تحليلات المبيعات", icon: "BarChart3", cap: "sales.reports.advanced", module: "accounting" },
-      { id: "ac-royalties", path: "/accounting/royalties", label: "امتياز العلامات", icon: "Crown", cap: "royalty.view", module: "accounting" },
-      { id: "ac-periods", path: "/accounting/periods", label: "الفترات المحاسبية", icon: "CalendarRange", cap: "accounting.periods.view", module: "accounting" },
-      { id: "ac-cost-centers", path: "/accounting/cost-centers", label: "مراكز التكلفة", icon: "Target", cap: "accounting.view", module: "accounting" },
-      { id: "ac-dimensions", path: "/accounting/dimensions", label: "المشروعات والأبعاد", icon: "GitBranch", cap: "accounting.view", module: "accounting" },
+      { id: "ac-coa", path: "/accounting/chart-of-accounts", label: "nav.items.ac-coa", icon: "BookText", cap: "accounting.view", module: "accounting" },
+      { id: "ac-journals", path: "/accounting/journals", label: "nav.items.ac-journals", icon: "BookOpen", cap: "accounting.journals.view", module: "accounting" },
+      { id: "ac-gl", path: "/accounting/general-ledger", label: "nav.items.ac-gl", icon: "Layers", cap: "accounting.reports.view", module: "accounting" },
+      { id: "ac-tb", path: "/accounting/trial-balance", label: "nav.items.ac-tb", icon: "Scale", cap: "accounting.reports.view", module: "accounting" },
+      { id: "ac-pnl", path: "/accounting/income-statement", label: "nav.items.ac-pnl", icon: "TrendingUp", cap: "accounting.reports.view", module: "accounting" },
+      { id: "ac-bs", path: "/accounting/balance-sheet", label: "nav.items.ac-bs", icon: "Building2", cap: "accounting.reports.view", module: "accounting" },
+      { id: "ac-cf", path: "/accounting/cash-flow", label: "nav.items.ac-cf", icon: "LineChart", cap: "accounting.reports.view", module: "accounting" },
+      { id: "ac-ar-aging", path: "/accounting/ar-aging", label: "nav.items.ac-ar-aging", icon: "HandCoins", cap: "accounting.reports.view", module: "accounting" },
+      { id: "ac-ap-aging", path: "/accounting/ap-aging", label: "nav.items.ac-ap-aging", icon: "PiggyBank", cap: "accounting.reports.view", module: "accounting" },
+      { id: "ac-ratios", path: "/accounting/financial-ratios", label: "nav.items.ac-ratios", icon: "Gauge", cap: "accounting.reports.view", module: "accounting" },
+      { id: "ac-equity-changes", path: "/accounting/equity-changes", label: "nav.items.ac-equity-changes", icon: "Landmark", cap: "accounting.reports.view", module: "accounting" },
+      { id: "ac-profitability", path: "/accounting/profitability", label: "nav.items.ac-profitability", icon: "TrendingUp", cap: "accounting.reports.view", module: "accounting" },
+      { id: "ac-inventory-valuation", path: "/accounting/inventory-valuation", label: "nav.items.ac-inventory-valuation", icon: "Boxes", cap: "accounting.reports.view", module: "accounting" },
+      { id: "ac-sales-analytics", path: "/accounting/sales-analytics", label: "nav.items.ac-sales-analytics", icon: "BarChart3", cap: "sales.reports.advanced", module: "accounting" },
+      { id: "ac-royalties", path: "/accounting/royalties", label: "nav.items.ac-royalties", icon: "Crown", cap: "royalty.view", module: "accounting" },
+      { id: "ac-periods", path: "/accounting/periods", label: "nav.items.ac-periods", icon: "CalendarRange", cap: "accounting.periods.view", module: "accounting" },
+      { id: "ac-cost-centers", path: "/accounting/cost-centers", label: "nav.items.ac-cost-centers", icon: "Target", cap: "accounting.view", module: "accounting" },
+      { id: "ac-dimensions", path: "/accounting/dimensions", label: "nav.items.ac-dimensions", icon: "GitBranch", cap: "accounting.view", module: "accounting" },
     ],
   },
   {
     id: "banking",
-    label: "النقد والبنوك",
+    label: "nav.groups.banking",
     items: [
-      { id: "bk-cashboxes", path: "/banking/cashboxes", label: "الخزائن", icon: "Vault", cap: "banking.view", module: "banking" },
-      { id: "bk-accounts", path: "/banking/bank-accounts", label: "الحسابات البنكية", icon: "Landmark", cap: "banking.view", module: "banking" },
-      { id: "bk-receipts", path: "/banking/receipts", label: "المقبوضات", icon: "Receipt", cap: "banking.view", module: "banking" },
-      { id: "bk-payments", path: "/banking/payments", label: "المدفوعات", icon: "CreditCard", cap: "banking.view", module: "banking" },
-      { id: "bk-transfers", path: "/banking/transfers", label: "التحويلات البنكية", icon: "ArrowLeftRight", cap: "banking.view", module: "banking" },
-      { id: "bk-reconciliation", path: "/banking/reconciliation", label: "التسويات البنكية", icon: "Scale", cap: "banking.view", module: "banking" },
-      { id: "bk-cash-closing", path: "/banking/cash-closing", label: "إقفال الصندوق", icon: "Lock", cap: "banking.view", module: "banking" },
+      { id: "bk-cashboxes", path: "/banking/cashboxes", label: "nav.items.bk-cashboxes", icon: "Vault", cap: "banking.view", module: "banking" },
+      { id: "bk-accounts", path: "/banking/bank-accounts", label: "nav.items.bk-accounts", icon: "Landmark", cap: "banking.view", module: "banking" },
+      { id: "bk-receipts", path: "/banking/receipts", label: "nav.items.bk-receipts", icon: "Receipt", cap: "banking.view", module: "banking" },
+      { id: "bk-payments", path: "/banking/payments", label: "nav.items.bk-payments", icon: "CreditCard", cap: "banking.view", module: "banking" },
+      { id: "bk-transfers", path: "/banking/transfers", label: "nav.items.bk-transfers", icon: "ArrowLeftRight", cap: "banking.view", module: "banking" },
+      { id: "bk-reconciliation", path: "/banking/reconciliation", label: "nav.items.bk-reconciliation", icon: "Scale", cap: "banking.view", module: "banking" },
+      { id: "bk-cash-closing", path: "/banking/cash-closing", label: "nav.items.bk-cash-closing", icon: "Lock", cap: "banking.view", module: "banking" },
     ],
   },
   {
     id: "people",
-    label: "الموارد البشرية",
+    label: "nav.groups.people",
     items: [
-      { id: "pe-employees", path: "/people/employees", label: "الموظفون", icon: "Users", cap: "people.employees.view", module: "people" },
-      { id: "pe-attendance", path: "/people/attendance", label: "الحضور والانصراف", icon: "CalendarCheck", cap: "people.attendance.view", module: "people" },
-      { id: "pe-shifts", path: "/people/shifts", label: "الورديات", icon: "Clock", cap: "people.shifts.view", module: "people" },
-      { id: "pe-leaves", path: "/people/leaves", label: "الإجازات", icon: "Plane", cap: "people.leaves.view", module: "people" },
-      { id: "pe-contracts", path: "/people/contracts", label: "العقود", icon: "FileSignature", cap: "people.contracts.view", module: "people" },
-      { id: "pe-payroll", path: "/people/payroll", label: "الرواتب", icon: "Banknote", cap: "people.payroll.view", module: "people" },
-      { id: "pe-org-tree", path: "/people/org-tree", label: "الهيكل الإداري", icon: "Network", cap: "workflow.view", module: "people" },
-      { id: "pe-custody", path: "/people/custody", label: "العهد والمستندات", icon: "Briefcase", cap: "people.custody.view", module: "people" },
-      { id: "pe-custody-officers", path: "/people/custody-officers", label: "مسؤولو العهدة", icon: "Contact", cap: "people.employees.view", module: "people" },
-      { id: "pe-self-service", path: "/people/self-service", label: "الخدمة الذاتية", icon: "UserCircle", cap: "people.selfservice.view", module: "people" },
+      { id: "pe-employees", path: "/people/employees", label: "nav.items.pe-employees", icon: "Users", cap: "people.employees.view", module: "people" },
+      { id: "pe-attendance", path: "/people/attendance", label: "nav.items.pe-attendance", icon: "CalendarCheck", cap: "people.attendance.view", module: "people" },
+      { id: "pe-shifts", path: "/people/shifts", label: "nav.items.pe-shifts", icon: "Clock", cap: "people.shifts.view", module: "people" },
+      { id: "pe-leaves", path: "/people/leaves", label: "nav.items.pe-leaves", icon: "Plane", cap: "people.leaves.view", module: "people" },
+      { id: "pe-contracts", path: "/people/contracts", label: "nav.items.pe-contracts", icon: "FileSignature", cap: "people.contracts.view", module: "people" },
+      { id: "pe-payroll", path: "/people/payroll", label: "nav.items.pe-payroll", icon: "Banknote", cap: "people.payroll.view", module: "people" },
+      { id: "pe-org-tree", path: "/people/org-tree", label: "nav.items.pe-org-tree", icon: "Network", cap: "workflow.view", module: "people" },
+      { id: "pe-custody", path: "/people/custody", label: "nav.items.pe-custody", icon: "Briefcase", cap: "people.custody.view", module: "people" },
+      { id: "pe-custody-officers", path: "/people/custody-officers", label: "nav.items.pe-custody-officers", icon: "Contact", cap: "people.employees.view", module: "people" },
+      { id: "pe-self-service", path: "/people/self-service", label: "nav.items.pe-self-service", icon: "UserCircle", cap: "people.selfservice.view", module: "people" },
     ],
   },
   {
     id: "workflow",
-    label: "المعاملات والموافقات",
+    label: "nav.groups.workflow",
     items: [
-      { id: "wf-new", path: "/workflow/new", label: "إنشاء معاملة", icon: "FileText", cap: "txn.create", module: "workflow" },
-      { id: "wf-inbox", path: "/workflow/inbox", label: "صندوق الوارد", icon: "Inbox", cap: "workflow.inbox.view", module: "workflow" },
-      { id: "wf-outbox", path: "/workflow/outbox", label: "صندوق الصادر", icon: "Send", cap: "workflow.outbox.view", module: "workflow" },
-      { id: "wf-my-requests", path: "/workflow/my-requests", label: "طلباتي", icon: "FileClock", cap: "workflow.myrequests.view", module: "workflow" },
-      { id: "wf-approval-flows", path: "/workflow/approval-flows", label: "مسارات الاعتماد", icon: "GitBranch", cap: "workflow.approvals.view", module: "workflow" },
-      { id: "wf-action-log", path: "/workflow/action-log", label: "سجل الإجراءات", icon: "ScrollText", cap: "workflow.audit.view", module: "workflow" },
+      { id: "wf-new", path: "/workflow/new", label: "nav.items.wf-new", icon: "FileText", cap: "txn.create", module: "workflow" },
+      { id: "wf-inbox", path: "/workflow/inbox", label: "nav.items.wf-inbox", icon: "Inbox", cap: "workflow.inbox.view", module: "workflow" },
+      { id: "wf-outbox", path: "/workflow/outbox", label: "nav.items.wf-outbox", icon: "Send", cap: "workflow.outbox.view", module: "workflow" },
+      { id: "wf-my-requests", path: "/workflow/my-requests", label: "nav.items.wf-my-requests", icon: "FileClock", cap: "workflow.myrequests.view", module: "workflow" },
+      { id: "wf-approval-flows", path: "/workflow/approval-flows", label: "nav.items.wf-approval-flows", icon: "GitBranch", cap: "workflow.approvals.view", module: "workflow" },
+      { id: "wf-action-log", path: "/workflow/action-log", label: "nav.items.wf-action-log", icon: "ScrollText", cap: "workflow.audit.view", module: "workflow" },
     ],
   },
   {
     id: "reports",
-    label: "التقارير",
+    label: "nav.groups.reports",
     items: [
-      { id: "rp-sales", path: "/reports/sales", label: "تقارير المبيعات", icon: "BarChart3", cap: "reports.view", module: "reports" },
-      { id: "rp-inventory", path: "/reports/inventory", label: "تقارير المخزون", icon: "FileBarChart", cap: "reports.view", module: "reports" },
-      { id: "rp-purchasing", path: "/reports/purchasing", label: "تقارير المشتريات", icon: "FileBarChart", cap: "reports.view", module: "reports" },
-      { id: "rp-financial", path: "/reports/financial", label: "التقارير المالية", icon: "LineChart", cap: "reports.view", module: "reports" },
-      { id: "rp-people", path: "/reports/people", label: "تقارير الموظفين", icon: "FileBarChart", cap: "reports.view", module: "reports" },
-      { id: "rp-operations", path: "/reports/operations", label: "تقارير التشغيل", icon: "FileBarChart", cap: "reports.view", module: "reports" },
-      { id: "rp-saved", path: "/reports/saved", label: "التقارير المحفوظة", icon: "Files", cap: "reports.view", module: "reports" },
+      { id: "rp-sales", path: "/reports/sales", label: "nav.items.rp-sales", icon: "BarChart3", cap: "reports.view", module: "reports" },
+      { id: "rp-inventory", path: "/reports/inventory", label: "nav.items.rp-inventory", icon: "FileBarChart", cap: "reports.view", module: "reports" },
+      { id: "rp-purchasing", path: "/reports/purchasing", label: "nav.items.rp-purchasing", icon: "FileBarChart", cap: "reports.view", module: "reports" },
+      { id: "rp-financial", path: "/reports/financial", label: "nav.items.rp-financial", icon: "LineChart", cap: "reports.view", module: "reports" },
+      { id: "rp-people", path: "/reports/people", label: "nav.items.rp-people", icon: "FileBarChart", cap: "reports.view", module: "reports" },
+      { id: "rp-operations", path: "/reports/operations", label: "nav.items.rp-operations", icon: "FileBarChart", cap: "reports.view", module: "reports" },
+      { id: "rp-saved", path: "/reports/saved", label: "nav.items.rp-saved", icon: "Files", cap: "reports.view", module: "reports" },
     ],
   },
   {
     id: "administration",
-    label: "الإدارة",
+    label: "nav.groups.administration",
     items: [
-      { id: "ad-companies", path: "/administration/companies", label: "الشركات والعلامات التجارية", icon: "Building2", cap: "administration.companies", module: "administration" },
-      { id: "ad-branches", path: "/administration/branches", label: "الفروع", icon: "Building", cap: "administration.branches", module: "administration" },
-      { id: "ad-warehouses", path: "/administration/warehouses", label: "المستودعات", icon: "Warehouse", cap: "administration.warehouses", module: "administration" },
-      { id: "ad-users", path: "/administration/users", label: "المستخدمون", icon: "Users", cap: "administration.users", module: "administration" },
-      { id: "ad-roles", path: "/administration/roles", label: "الأدوار والصلاحيات", icon: "ShieldCheck", cap: "administration.roles", module: "administration" },
-      { id: "ad-settings", path: "/administration/settings", label: "الإعدادات", icon: "SlidersHorizontal", cap: "administration.settings", module: "administration" },
-      { id: "ad-invoice-settings", path: "/administration/invoice-settings", label: "بيانات وتصميم الفاتورة", icon: "ReceiptText", cap: "administration.invoice-settings", module: "administration" },
-      { id: "ad-tax", path: "/administration/tax", label: "الضرائب", icon: "Percent", cap: "administration.tax", module: "administration" },
-      { id: "ad-payment-methods", path: "/administration/payment-methods", label: "طرق الدفع", icon: "CreditCard", cap: "administration.payment-methods", module: "administration" },
-      { id: "ad-security", path: "/administration/security", label: "الأمان", icon: "Lock", cap: "administration.security", module: "administration" },
-      { id: "ad-audit-log", path: "/administration/audit-log", label: "سجل التدقيق", icon: "History", cap: "administration.audit", module: "administration" },
+      { id: "ad-companies", path: "/administration/companies", label: "nav.items.ad-companies", icon: "Building2", cap: "administration.companies", module: "administration" },
+      { id: "ad-branches", path: "/administration/branches", label: "nav.items.ad-branches", icon: "Building", cap: "administration.branches", module: "administration" },
+      { id: "ad-warehouses", path: "/administration/warehouses", label: "nav.items.ad-warehouses", icon: "Warehouse", cap: "administration.warehouses", module: "administration" },
+      { id: "ad-users", path: "/administration/users", label: "nav.items.ad-users", icon: "Users", cap: "administration.users", module: "administration" },
+      { id: "ad-roles", path: "/administration/roles", label: "nav.items.ad-roles", icon: "ShieldCheck", cap: "administration.roles", module: "administration" },
+      { id: "ad-settings", path: "/administration/settings", label: "nav.items.ad-settings", icon: "SlidersHorizontal", cap: "administration.settings", module: "administration" },
+      { id: "ad-invoice-settings", path: "/administration/invoice-settings", label: "nav.items.ad-invoice-settings", icon: "ReceiptText", cap: "administration.invoice-settings", module: "administration" },
+      { id: "ad-tax", path: "/administration/tax", label: "nav.items.ad-tax", icon: "Percent", cap: "administration.tax", module: "administration" },
+      { id: "ad-payment-methods", path: "/administration/payment-methods", label: "nav.items.ad-payment-methods", icon: "CreditCard", cap: "administration.payment-methods", module: "administration" },
+      { id: "ad-security", path: "/administration/security", label: "nav.items.ad-security", icon: "Lock", cap: "administration.security", module: "administration" },
+      { id: "ad-audit-log", path: "/administration/audit-log", label: "nav.items.ad-audit-log", icon: "History", cap: "administration.audit", module: "administration" },
     ],
   },
 ];

@@ -13,6 +13,7 @@
 import { useLocation, useSearchParams } from "react-router-dom";
 import { Barcode } from "lucide-react";
 import { PageHeader, EmptyState } from "@/shared/ui";
+import { useT } from "@/i18n";
 import { normalizeRoutePath } from "@/shared/lib";
 import { NotFound } from "@/app/shell/NotFound";
 import { WarehouseModuleProviders } from "./lib/providers";
@@ -21,7 +22,8 @@ import { WarehouseScopeSelect } from "./lib/WarehouseScopeSelect";
 import { DashboardPage } from "./features/dashboard/DashboardPage";
 import { InventoryPage } from "./features/inventory/InventoryPage";
 import { ItemsPage } from "./features/items/ItemsPage";
-import { ItemWizard } from "./features/items/ItemWizard";
+import { ItemFormPage } from "./features/items/ItemFormPage";
+import { ItemDetailPage } from "./features/items/ItemDetailPage";
 import { WarehousesPage } from "./features/warehouses/WarehousesPage";
 import { TransfersPage } from "./features/transfers/TransfersPage";
 import { TransferCreateWizard } from "./features/transfers/TransferCreateWizard";
@@ -47,27 +49,28 @@ const SCOPE_FIRST = new Set<string>([
 ]);
 
 function LotsExpiry() {
+  const t = useT();
   const [sp, setSp] = useSearchParams();
   const tab = sp.get("tab") === "expiry" ? "expiry" : "lots";
-  const go = (t: "lots" | "expiry") => {
+  const go = (target: "lots" | "expiry") => {
     const n = new URLSearchParams(sp);
-    if (t === "lots") n.delete("tab");
+    if (target === "lots") n.delete("tab");
     else n.set("tab", "expiry");
     setSp(n, { replace: true });
   };
   return (
     <div>
       <div className="mb-4 flex flex-wrap gap-1.5">
-        {(["lots", "expiry"] as const).map((t) => (
+        {(["lots", "expiry"] as const).map((tabId) => (
           <button
-            key={t}
+            key={tabId}
             type="button"
-            onClick={() => go(t)}
+            onClick={() => go(tabId)}
             className={`min-h-10 rounded-xl border px-4 text-sm font-extrabold transition ${
-              tab === t ? "border-teal-600 bg-teal-600 text-white" : "border-slate-200 bg-white text-slate-600 hover:bg-slate-50"
+              tab === tabId ? "border-teal-600 bg-teal-600 text-white" : "border-slate-200 bg-white text-slate-600 hover:bg-slate-50"
             }`}
           >
-            {t === "lots" ? "الدفعات (التشغيلات)" : "تحذيرات الصلاحية"}
+            {tabId === "lots" ? t("inventoryRest.hub.lotsTab") : t("inventoryRest.hub.expiryTab")}
           </button>
         ))}
       </div>
@@ -77,17 +80,18 @@ function LotsExpiry() {
 }
 
 function UnitsBarcodes() {
+  const t = useT();
   return (
     <div>
       <PageHeader
-        eyebrow="البيانات الرئيسية"
-        title="الوحدات والباركود"
-        subtitle="تُدار وحدات القياس والباركود لكل صنف من داخل بطاقة الصنف (تبويبا «الوحدات» و«الباركود»)."
+        eyebrow={t("inventoryRest.hub.unitsBarcodes.eyebrow")}
+        title={t("inventoryRest.hub.unitsBarcodes.title")}
+        subtitle={t("inventoryRest.hub.unitsBarcodes.subtitle")}
       />
       <EmptyState
         icon={<Barcode className="h-6 w-6" />}
-        title="تُدار من بطاقة الصنف"
-        body="افتح صنفًا من «الأصناف» ثم انتقل إلى تبويب الوحدات أو الباركود لإضافة العبوات والأكواد وإدارتها."
+        title={t("inventoryRest.hub.unitsBarcodes.emptyTitle")}
+        body={t("inventoryRest.hub.unitsBarcodes.emptyBody")}
       />
     </div>
   );
@@ -102,7 +106,24 @@ function Section() {
   // Normalised: react-router matches a route ignoring a trailing slash and case,
   // but useLocation().pathname returns it RAW — so "/inventory/items/" used to
   // fall through this switch to the default and render the wrong screen.
-  switch (normalizeRoutePath(pathname)) {
+  const route = normalizeRoutePath(pathname);
+
+  // Items OWNS its subtree (manifest subRoutes:true), so the shell mounts this
+  // module for /inventory/items/new, /inventory/items/:id and .../:id/edit too.
+  // D1 resolves each deeper segment to its real full-page screen:
+  //   .../new          → ItemFormPage (create)
+  //   .../<id>/edit    → ItemFormPage (edit, reads :id)
+  //   .../<id>         → ItemDetailPage (read, reads :id)
+  if (route.startsWith("/inventory/items/")) {
+    const parts = route.slice("/inventory/items/".length).split("/").filter(Boolean);
+    const seg = parts[0] ?? "";
+    if (seg === "new") return <ItemFormPage mode="create" />;
+    if (seg && parts[1] === "edit") return <ItemFormPage mode="edit" itemId={seg} />;
+    if (seg) return <ItemDetailPage itemId={seg} />;
+    return <ItemsPage />;
+  }
+
+  switch (route) {
     case "/inventory":
       return <DashboardPage />;
     case "/inventory/method":
@@ -110,7 +131,9 @@ function Section() {
     case "/inventory/waste":
       return <WastePage />;
     case "/inventory/items":
-      return isNew ? <ItemWizard /> : <ItemsPage />;
+      // Create/edit/detail are real routes now (…/new, …/:id, …/:id/edit); the
+      // legacy ?new=1 overlay redirects to the full-page create screen.
+      return isNew ? <ItemFormPage mode="create" /> : <ItemsPage />;
     case "/inventory/units-barcodes":
       return <UnitsBarcodes />;
     case "/inventory/warehouses":

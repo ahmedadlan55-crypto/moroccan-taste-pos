@@ -13,6 +13,17 @@
 
 export type RatioGroup = "liquidity" | "profit" | "solvency" | "efficiency";
 
+/** Stable code for the "why is this indicator unavailable" reason. The screen
+ *  renders it via the i18n dict (accounting.ratios.reason.<code>); the Arabic
+ *  `unavailableReason` string below is the single source of truth pinned by
+ *  ratios.test.ts (which asserts it contains "51xx"/"11xx"/"21xx"). */
+export type RatioReasonCode =
+  | "noCogs"
+  | "noCurrentAssets"
+  | "noCurrentLiab"
+  | "noInventory"
+  | "noRevenue";
+
 export interface AccountRow {
   code?: string;
   balance?: number;
@@ -42,14 +53,9 @@ export interface Ratio {
   explanation: string;
   /** Why the value is null — shown so the gap is actionable, not mysterious. */
   unavailableReason?: string;
+  /** i18n-friendly twin of unavailableReason; the screen localizes via this. */
+  unavailableReasonCode?: RatioReasonCode;
 }
-
-export const GROUP_LABEL: Record<RatioGroup, string> = {
-  liquidity: "السيولة",
-  profit: "الربحية",
-  solvency: "الملاءة",
-  efficiency: "الكفاءة",
-};
 
 /** Sum balances of accounts whose code starts with any of `prefixes`.
  *  Returns null when NO account matches — the caller must not substitute a
@@ -72,11 +78,21 @@ const NO_CURRENT_LIAB = "لا توجد حسابات التزامات متداو�
 const NO_INVENTORY = "لا توجد حسابات مخزون (112x) في دليل الحسابات.";
 const NO_REVENUE = "لا توجد إيرادات في الفترة المحددة.";
 
+// Arabic reason text → stable code (so the UI can localize the reason without
+// re-deriving which input was missing).
+const REASON_CODE: Record<string, RatioReasonCode> = {
+  [NO_COGS]: "noCogs",
+  [NO_CURRENT_ASSETS]: "noCurrentAssets",
+  [NO_CURRENT_LIAB]: "noCurrentLiab",
+  [NO_INVENTORY]: "noInventory",
+  [NO_REVENUE]: "noRevenue",
+};
+
 export function computeRatios(i: RatioInputs): Ratio[] {
   const pct = (v: number | null) => (v === null ? null : v * 100);
   const revenueOrNull = i.revenue ? i.revenue : null;
 
-  return [
+  const rows: Ratio[] = [
     {
       key: "current", group: "liquidity", name: "النسبة الجارية",
       formula: "الأصول المتداولة ÷ الالتزامات المتداولة",
@@ -153,6 +169,12 @@ export function computeRatios(i: RatioInputs): Ratio[] {
       unavailableReason: i.cogs === null ? NO_COGS : i.inventory === null ? NO_INVENTORY : undefined,
     },
   ];
+
+  // Attach the stable reason code alongside the (test-pinned) Arabic reason.
+  return rows.map((r) => ({
+    ...r,
+    unavailableReasonCode: r.unavailableReason ? REASON_CODE[r.unavailableReason] : undefined,
+  }));
 }
 
 /** Map the balance-sheet + P&L API payloads onto the ratio inputs. */

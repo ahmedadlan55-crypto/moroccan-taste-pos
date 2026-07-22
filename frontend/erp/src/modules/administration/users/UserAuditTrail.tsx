@@ -2,6 +2,7 @@ import { useQuery } from "@tanstack/react-query";
 import { apiClient } from "@/shared/api";
 import { Badge, ErrorState, LoadingState } from "@/shared/ui";
 import { formatDateTime } from "@/shared/lib";
+import { useT } from "@/i18n";
 import { asArray } from "../_common";
 
 // GET /api/auth/users/:username/audit (routes/auth.js, added in close2) — the
@@ -16,15 +17,20 @@ interface AuditRow {
   createdAt: string;
 }
 
-const ACTION_AR: Record<string, string> = {
-  create_user: "إنشاء المستخدم",
-  update_user: "تعديل المستخدم",
-  delete_user: "حذف المستخدم",
-  toggle_user_active: "تفعيل/تعطيل",
-  reset_password: "إعادة تعيين كلمة المرور",
-};
+// Known user-management action codes → t() key suffix under
+// administration.users.audit.action.*; unknown codes fall back to the raw code.
+const ACTION_KEYS = new Set([
+  "create_user",
+  "update_user",
+  "delete_user",
+  "toggle_user_active",
+  "reset_password",
+]);
 
 export function UserAuditTrail({ username }: { username: string }) {
+  const t = useT();
+  const actionLabel = (action: string): string =>
+    action && ACTION_KEYS.has(action) ? t(`administration.users.audit.action.${action}`) : action || "—";
   const query = useQuery({
     queryKey: ["auth", "users", username, "audit"],
     queryFn: ({ signal }) =>
@@ -40,10 +46,10 @@ export function UserAuditTrail({ username }: { username: string }) {
       <table className="w-full border-collapse text-sm">
         <thead className="sticky top-0 z-10 bg-slate-50">
           <tr>
-            <th className="px-3 py-2 text-right font-extrabold text-slate-600">التاريخ</th>
-            <th className="px-3 py-2 text-right font-extrabold text-slate-600">الإجراء</th>
-            <th className="px-3 py-2 text-right font-extrabold text-slate-600">المنفّذ</th>
-            <th className="px-3 py-2 text-right font-extrabold text-slate-600">التفاصيل</th>
+            <th className="px-3 py-2 text-start font-extrabold text-slate-600">{t("administration.users.audit.thDate")}</th>
+            <th className="px-3 py-2 text-start font-extrabold text-slate-600">{t("administration.users.audit.thAction")}</th>
+            <th className="px-3 py-2 text-start font-extrabold text-slate-600">{t("administration.users.audit.thActor")}</th>
+            <th className="px-3 py-2 text-start font-extrabold text-slate-600">{t("administration.users.audit.thDetails")}</th>
           </tr>
         </thead>
         <tbody>
@@ -52,14 +58,14 @@ export function UserAuditTrail({ username }: { username: string }) {
               key={String(r.id ?? `${r.createdAt}-${i}`)}
               className="border-b border-slate-100 last:border-0 hover:bg-slate-50/60"
             >
-              <td className="whitespace-nowrap px-3 py-2 text-right font-medium tabular-nums text-slate-600" dir="ltr">
+              <td className="whitespace-nowrap px-3 py-2 text-start font-medium tabular-nums text-slate-600" dir="ltr">
                 {formatDateTime(r.createdAt)}
               </td>
-              <td className="px-3 py-2 text-right">
-                <Badge tone="teal">{ACTION_AR[r.action] ?? r.action ?? "—"}</Badge>
+              <td className="px-3 py-2 text-start">
+                <Badge tone="teal">{actionLabel(r.action)}</Badge>
               </td>
-              <td className="px-3 py-2 text-right font-semibold text-slate-700">{r.username || "—"}</td>
-              <td className="px-3 py-2 text-right font-medium text-slate-500" dir="ltr">
+              <td className="px-3 py-2 text-start font-semibold text-slate-700">{r.username || "—"}</td>
+              <td className="px-3 py-2 text-start font-medium text-slate-500" dir="ltr">
                 {r.details && r.details !== "{}" ? r.details : "—"}
               </td>
             </tr>
@@ -67,7 +73,7 @@ export function UserAuditTrail({ username }: { username: string }) {
           {rows.length === 0 && (
             <tr>
               <td colSpan={4} className="px-3 py-8 text-center font-semibold text-slate-500">
-                لا توجد سجلات لهذا المستخدم
+                {t("administration.users.audit.empty")}
               </td>
             </tr>
           )}

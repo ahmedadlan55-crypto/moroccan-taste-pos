@@ -16,6 +16,7 @@ import {
 } from "@/shared/ui";
 import { DataTable, type ColumnDef } from "@/shared/tables";
 import { formatDate } from "@/shared/lib";
+import { useTx } from "@/shared/ui/i18n";
 import { useAuth } from "@/app/providers";
 import { peopleApi } from "../lib/api";
 import { qk } from "../lib/query-keys";
@@ -25,21 +26,21 @@ import { LeaveRequestForm, type LeaveFormValues } from "../components/LeaveReque
 
 type TabKey = "requests" | "types";
 
-const TABS = [
-  { value: "requests", label: "طلبات الإجازة" },
-  { value: "types", label: "أنواع الإجازات" },
-];
-
 export function LeavesPage() {
+  const t = useTx();
   const [tab, setTab] = useState<TabKey>("requests");
+  const TABS = [
+    { value: "requests", label: t("people.leaves.tabs.requests") },
+    { value: "types", label: t("people.leaves.tabs.types") },
+  ];
   return (
     <div className="space-y-6">
       <PageHeader
-        eyebrow="الموارد البشرية"
-        title="الإجازات"
-        subtitle="طلبات الإجازة واعتمادها وأنواع الإجازات المعتمدة."
+        eyebrow={t("people.eyebrow")}
+        title={t("people.leaves.title")}
+        subtitle={t("people.leaves.subtitle")}
       />
-      <Tabs items={TABS} value={tab} onChange={(v) => setTab(v as TabKey)} aria-label="أقسام الإجازات" />
+      <Tabs items={TABS} value={tab} onChange={(v) => setTab(v as TabKey)} aria-label={t("people.leaves.tabsAria")} />
       {tab === "requests" && <RequestsTab />}
       {tab === "types" && <TypesTab />}
     </div>
@@ -49,6 +50,7 @@ export function LeavesPage() {
 type Confirm = { kind: "approve" | "reject"; req: LeaveRequest } | null;
 
 function RequestsTab() {
+  const t = useTx();
   const { toast } = useToast();
   const { user } = useAuth();
   const qc = useQueryClient();
@@ -85,14 +87,14 @@ function RequestsTab() {
       }),
     onSuccess: (res) => {
       toast({
-        title: "تم إرسال الطلب",
+        title: t("people.leaves.sent"),
         description: res.warning || undefined,
         tone: res.warning ? "warning" : "success",
       });
       setDrawer(false);
       invalidate();
     },
-    onError: (e) => toast({ title: "تعذّر إرسال الطلب", description: safeUserMessage(e), tone: "error" }),
+    onError: (e) => toast({ title: t("people.leaves.sendFailed"), description: safeUserMessage(e, t), tone: "error" }),
   });
 
   const act = useMutation({
@@ -101,32 +103,32 @@ function RequestsTab() {
         ? peopleApi.approveLeave(v.id, user?.username ?? "", "hr")
         : peopleApi.rejectLeave(v.id, user?.username ?? "", v.reason),
     onSuccess: () => {
-      toast({ title: "تم تنفيذ العملية", tone: "success" });
+      toast({ title: t("people.toast.done"), tone: "success" });
       setConfirm(null);
       invalidate();
     },
-    onError: (e) => toast({ title: "تعذّر تنفيذ العملية", description: safeUserMessage(e), tone: "error" }),
+    onError: (e) => toast({ title: t("people.toast.actionFailed"), description: safeUserMessage(e, t), tone: "error" }),
   });
 
   const columns: ColumnDef<LeaveRequest>[] = [
-    { id: "employeeName", header: "الموظف", accessor: (r) => r.employeeName, sortable: true },
-    { id: "leaveTypeName", header: "النوع", accessor: (r) => r.leaveTypeName || "—" },
-    { id: "startDate", header: "من", accessor: (r) => r.startDate, cell: (r) => formatDate(r.startDate), sortable: true },
-    { id: "endDate", header: "إلى", accessor: (r) => r.endDate, cell: (r) => formatDate(r.endDate) },
-    { id: "daysCount", header: "الأيام", accessor: (r) => r.daysCount, numeric: true, sortable: true },
+    { id: "employeeName", header: t("people.field.employee"), accessor: (r) => r.employeeName, sortable: true },
+    { id: "leaveTypeName", header: t("people.field.type"), accessor: (r) => r.leaveTypeName || "—" },
+    { id: "startDate", header: t("people.field.from"), accessor: (r) => r.startDate, cell: (r) => formatDate(r.startDate), sortable: true },
+    { id: "endDate", header: t("people.field.to"), accessor: (r) => r.endDate, cell: (r) => formatDate(r.endDate) },
+    { id: "daysCount", header: t("people.field.days"), accessor: (r) => r.daysCount, numeric: true, sortable: true },
     {
       id: "leaveTypePaid",
-      header: "مدفوعة",
-      accessor: (r) => (r.leaveTypePaid ? "نعم" : "لا"),
-      cell: (r) => <Badge tone={r.leaveTypePaid ? "success" : "neutral"}>{r.leaveTypePaid ? "مدفوعة" : "غير مدفوعة"}</Badge>,
+      header: t("people.leaves.col.paid"),
+      accessor: (r) => (r.leaveTypePaid ? t("people.bool.yes") : t("common.no")),
+      cell: (r) => <Badge tone={r.leaveTypePaid ? "success" : "neutral"}>{r.leaveTypePaid ? t("people.bool.paid") : t("people.bool.unpaid")}</Badge>,
       defaultHidden: true,
     },
     {
       id: "status",
-      header: "الحالة",
+      header: t("common.status"),
       accessor: (r) => r.status,
       cell: (r) => {
-        const m = statusMeta(r.status);
+        const m = statusMeta(r.status, t);
         return <StatusBadge tone={m.tone}>{m.label}</StatusBadge>;
       },
     },
@@ -145,37 +147,37 @@ function RequestsTab() {
         onRetry={() => query.refetch()}
         tableId="people.leaveRequests"
         searchable
-        searchPlaceholder="بحث باسم الموظف…"
-        emptyTitle="لا توجد طلبات إجازة"
+        searchPlaceholder={t("people.leaves.searchPlaceholder")}
+        emptyTitle={t("people.leaves.emptyTitle")}
         exportFilename="leave-requests.csv"
         filterBar={
           <label className="flex items-center gap-2 text-xs font-bold text-slate-500">
-            الحالة
+            {t("common.status")}
             <Select
               value={status}
               onChange={(e) => setStatus(e.target.value)}
               className="h-10 min-w-36"
               options={[
-                { value: "", label: "الكل" },
-                { value: "pending", label: "قيد الاعتماد" },
-                { value: "hr_approved", label: "معتمدة" },
-                { value: "rejected", label: "مرفوضة" },
+                { value: "", label: t("common.all") },
+                { value: "pending", label: t("people.leaves.filter.pending") },
+                { value: "hr_approved", label: t("people.leaves.filter.approved") },
+                { value: "rejected", label: t("people.leaves.filter.rejected") },
               ]}
             />
           </label>
         }
         toolbarActions={
           <Button variant="primary" size="sm" onClick={() => setDrawer(true)}>
-            <Plus className="h-4 w-4" /> طلب إجازة
+            <Plus className="h-4 w-4" /> {t("people.leaves.newBtn")}
           </Button>
         }
         rowActions={(r) =>
           pending(r) ? (
             <div className="flex items-center gap-1">
-              <IconButton aria-label="اعتماد" size="sm" variant="ghost" onClick={() => setConfirm({ kind: "approve", req: r })}>
+              <IconButton aria-label={t("people.advances.aria.approve")} size="sm" variant="ghost" onClick={() => setConfirm({ kind: "approve", req: r })}>
                 <Check className="h-4 w-4" />
               </IconButton>
-              <IconButton aria-label="رفض" size="sm" variant="danger" onClick={() => setConfirm({ kind: "reject", req: r })}>
+              <IconButton aria-label={t("people.advances.aria.reject")} size="sm" variant="danger" onClick={() => setConfirm({ kind: "reject", req: r })}>
                 <X className="h-4 w-4" />
               </IconButton>
             </div>
@@ -183,7 +185,7 @@ function RequestsTab() {
         }
       />
 
-      <Drawer open={drawer} onClose={() => setDrawer(false)} title="طلب إجازة جديد" eyebrow="الإجازات">
+      <Drawer open={drawer} onClose={() => setDrawer(false)} title={t("people.leaves.newDrawerTitle")} eyebrow={t("people.leaves.drawerEyebrow")}>
         <LeaveRequestForm
           employees={employees.data ?? []}
           leaveTypes={leaveTypes.data ?? []}
@@ -195,11 +197,11 @@ function RequestsTab() {
 
       <ConfirmDialog
         open={!!confirm}
-        title={confirm?.kind === "approve" ? "اعتماد طلب الإجازة؟" : "رفض طلب الإجازة؟"}
-        description={confirm ? `${confirm.req.employeeName} — ${confirm.req.daysCount} يوم` : ""}
+        title={confirm?.kind === "approve" ? t("people.leaves.confirm.approveTitle") : t("people.leaves.confirm.rejectTitle")}
+        description={confirm ? t("people.leaves.confirm.desc", { name: confirm.req.employeeName, days: confirm.req.daysCount }) : ""}
         tone={confirm?.kind === "reject" ? "danger" : "primary"}
         requireReason={confirm?.kind === "reject"}
-        reasonLabel="سبب الرفض"
+        reasonLabel={t("people.leaves.rejectReasonLabel")}
         processing={act.isPending}
         onClose={() => setConfirm(null)}
         onConfirm={(reason) => confirm && act.mutate({ kind: confirm.kind, id: confirm.req.id, reason })}
@@ -209,23 +211,24 @@ function RequestsTab() {
 }
 
 function TypesTab() {
+  const t = useTx();
   const query = useQuery({ queryKey: qk.leaveTypes(), queryFn: ({ signal }) => peopleApi.listLeaveTypes(signal) });
 
   const columns: ColumnDef<LeaveType>[] = [
-    { id: "name", header: "النوع", accessor: (r) => r.name, sortable: true },
-    { id: "nameEn", header: "بالإنجليزية", accessor: (r) => r.nameEn || "—" },
-    { id: "defaultDays", header: "الأيام الافتراضية", accessor: (r) => r.defaultDays, numeric: true, sortable: true },
+    { id: "name", header: t("people.field.type"), accessor: (r) => r.name, sortable: true },
+    { id: "nameEn", header: t("people.field.nameEn"), accessor: (r) => r.nameEn || "—" },
+    { id: "defaultDays", header: t("people.leaveTypes.col.defaultDays"), accessor: (r) => r.defaultDays, numeric: true, sortable: true },
     {
       id: "isPaid",
-      header: "مدفوعة",
-      accessor: (r) => (r.isPaid ? "نعم" : "لا"),
-      cell: (r) => <StatusBadge tone={r.isPaid ? "success" : "neutral"}>{r.isPaid ? "مدفوعة" : "غير مدفوعة"}</StatusBadge>,
+      header: t("people.leaves.col.paid"),
+      accessor: (r) => (r.isPaid ? t("people.bool.yes") : t("common.no")),
+      cell: (r) => <StatusBadge tone={r.isPaid ? "success" : "neutral"}>{r.isPaid ? t("people.bool.paid") : t("people.bool.unpaid")}</StatusBadge>,
     },
     {
       id: "isActive",
-      header: "الحالة",
-      accessor: (r) => (r.isActive ? "فعّال" : "معطّل"),
-      cell: (r) => <Badge tone={r.isActive ? "teal" : "neutral"}>{r.isActive ? "فعّال" : "معطّل"}</Badge>,
+      header: t("common.status"),
+      accessor: (r) => (r.isActive ? t("people.bool.enabled") : t("people.bool.disabled")),
+      cell: (r) => <Badge tone={r.isActive ? "teal" : "neutral"}>{r.isActive ? t("people.bool.enabled") : t("people.bool.disabled")}</Badge>,
     },
   ];
 
@@ -238,7 +241,7 @@ function TypesTab() {
       error={query.error}
       onRetry={() => query.refetch()}
       tableId="people.leaveTypes"
-      emptyTitle="لا توجد أنواع إجازات"
+      emptyTitle={t("people.leaveTypes.emptyTitle")}
     />
   );
 }

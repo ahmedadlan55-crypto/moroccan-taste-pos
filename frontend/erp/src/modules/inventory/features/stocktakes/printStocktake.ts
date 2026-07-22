@@ -1,5 +1,6 @@
 import type { StocktakeDetail } from "@/modules/inventory/lib/adapters/stocktake.adapter";
 import { stocktakeStatusToLabel } from "@/modules/inventory/lib/status-labels";
+import type { TFunction } from "@/i18n";
 
 // Self-contained RTL print for a stocktake. mode="count" → a blank/blind count
 // sheet (for the floor); mode="variance" → the reconciled variance report. All
@@ -7,12 +8,13 @@ import { stocktakeStatusToLabel } from "@/modules/inventory/lib/status-labels";
 function esc(v: unknown): string { return String(v ?? "").replace(/[&<>]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" }[c] as string)); }
 function n(v: number, dp = 2): string { return (Number(v) || 0).toLocaleString("en-US", { minimumFractionDigits: dp, maximumFractionDigits: dp }); }
 
-export function printStocktake(d: StocktakeDetail, mode: "count" | "variance"): void {
+export function printStocktake(d: StocktakeDetail, mode: "count" | "variance", t: TFunction): void {
+  const p = (k: string, vars?: Record<string, string | number>) => t(`inventoryRest.stocktakes.print.${k}`, vars);
   const blind = d.blindCount && mode === "count";
-  const title = mode === "count" ? "ورقة عدّ" : "تقرير فروقات الجرد";
+  const title = mode === "count" ? p("countTitle") : p("varianceTitle");
   const head = mode === "count"
-    ? `<tr><th>الصنف</th><th>الوحدة</th>${blind ? "" : "<th>النظري وقت العد</th>"}<th>المعدود</th><th>ملاحظات</th></tr>`
-    : `<tr><th>الصنف</th><th>اللقطة</th><th>حركات أثناء العد</th><th>النظري وقت العد</th><th>المعدود</th><th>فرق الكمية</th><th>التكلفة</th><th>فرق القيمة</th></tr>`;
+    ? `<tr><th>${esc(p("colItem"))}</th><th>${esc(p("colUnit"))}</th>${blind ? "" : `<th>${esc(p("colTheoretical"))}</th>`}<th>${esc(p("colCounted"))}</th><th>${esc(p("colNotes"))}</th></tr>`
+    : `<tr><th>${esc(p("colItem"))}</th><th>${esc(p("colSnapshot"))}</th><th>${esc(p("colCountMovements"))}</th><th>${esc(p("colTheoretical"))}</th><th>${esc(p("colCounted"))}</th><th>${esc(p("colQtyVariance"))}</th><th>${esc(p("colCost"))}</th><th>${esc(p("colValueVariance"))}</th></tr>`;
   const rows = d.lines.map((l) => {
     if (mode === "count") {
       return `<tr><td class="r">${esc(l.item.name)}</td><td>${esc(l.item.unit)}</td>${blind ? "" : `<td>${n(l.theoreticalQty, 3)}</td>`}<td class="blank"></td><td></td></tr>`;
@@ -21,7 +23,7 @@ export function printStocktake(d: StocktakeDetail, mode: "count" | "variance"): 
     const vcls = l.variance < 0 ? "neg" : l.variance > 0 ? "pos" : "";
     return `<tr><td class="r">${esc(l.item.name)}</td><td>${n(l.snapshotQty, 3)}</td><td>${n(l.netMovements, 3)}</td><td>${n(l.theoreticalQty, 3)}</td><td>${counted}</td><td class="${vcls}">${l.counted ? n(l.variance, 3) : "—"}</td><td>${n(l.unitCost, 4)}</td><td class="${vcls}">${l.counted ? n(l.varianceValue) : "—"}</td></tr>`;
   }).join("");
-  const totalVar = mode === "variance" ? `<div class="total">إجمالي قيمة الفروقات: <b>${n(d.totalVarianceValue)}</b></div>` : "";
+  const totalVar = mode === "variance" ? `<div class="total">${esc(p("totalVariance"))} <b>${n(d.totalVarianceValue)}</b></div>` : "";
 
   const html = `<!doctype html><html dir="rtl" lang="ar"><head><meta charset="utf-8"><title>${esc(title)} ${esc(d.number)}</title>
 <style>
@@ -37,16 +39,16 @@ th{background:#f8fafc;font-weight:800} td.r{text-align:right;font-weight:700} td
 @media print{body{margin:8mm}}
 </style></head><body>
 <h1>${esc(title)} — ${esc(d.number)}</h1>
-<div class="sub">المستودع: ${esc(d.warehouse.name)} · الحالة: ${esc(stocktakeStatusToLabel(d.status))} · ${esc(d.date ?? "")}</div>
+<div class="sub">${esc(p("warehouseLine", { warehouse: d.warehouse.name, status: stocktakeStatusToLabel(d.status), date: d.date ?? "" }))}</div>
 <div class="grid">
-  <div class="cell"><div class="k">عدد الأصناف</div><div class="v">${n(d.totalLines, 0)}</div></div>
-  <div class="cell"><div class="k">المعدود</div><div class="v">${n(d.countedLines, 0)}</div></div>
-  <div class="cell"><div class="k">أسطر الفروقات</div><div class="v">${n(d.varianceLines, 0)}</div></div>
-  <div class="cell"><div class="k">${mode === "count" ? "النوع" : "إجمالي قيمة الفرق"}</div><div class="v">${mode === "count" ? (blind ? "عدّ أعمى" : "عدّ مفتوح") : n(d.totalVarianceValue)}</div></div>
+  <div class="cell"><div class="k">${esc(p("itemCount"))}</div><div class="v">${n(d.totalLines, 0)}</div></div>
+  <div class="cell"><div class="k">${esc(p("counted"))}</div><div class="v">${n(d.countedLines, 0)}</div></div>
+  <div class="cell"><div class="k">${esc(p("varianceLines"))}</div><div class="v">${n(d.varianceLines, 0)}</div></div>
+  <div class="cell"><div class="k">${mode === "count" ? esc(p("type")) : esc(p("totalVarianceValue"))}</div><div class="v">${mode === "count" ? (blind ? esc(p("blindCount")) : esc(p("openCount"))) : n(d.totalVarianceValue)}</div></div>
 </div>
 <table><thead>${head}</thead><tbody>${rows}</tbody></table>
 ${totalVar}
-<div class="sign"><span>العادّ: ${esc(d.actors.createdBy || "____________")}</span><span>المراجع: ${esc(d.actors.approvedBy || "____________")}</span><span>المرحّل: ${esc(d.actors.postedBy || "____________")}</span></div>
+<div class="sign"><span>${esc(p("counter"))} ${esc(d.actors.createdBy || "____________")}</span><span>${esc(p("reviewer"))} ${esc(d.actors.approvedBy || "____________")}</span><span>${esc(p("poster"))} ${esc(d.actors.postedBy || "____________")}</span></div>
 </body></html>`;
 
   const w = window.open("", "_blank", "width=900,height=700");

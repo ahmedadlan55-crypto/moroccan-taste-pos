@@ -12,10 +12,10 @@ import {
   Select,
 } from "@/shared/ui";
 import { cn } from "@/shared/lib";
+import { useT } from "@/i18n";
 import {
-  GL_TYPE_LABEL,
+  glTypeLabel,
   searchPostableAccounts,
-  type GlAccountType,
   type JournalLine,
   type PostableAccount,
 } from "../api";
@@ -41,6 +41,7 @@ export function JournalLineRow({
   costCenters,
   readOnly = false,
 }: JournalLineRowProps) {
+  const t = useT();
   // Reconstruct the picker's current selection from the flat line fields.
   const account: PostableAccount | null = value.accountId
     ? {
@@ -101,9 +102,9 @@ export function JournalLineRow({
             queryKey={["postable-accounts"]}
             getKey={(a) => a.id}
             getLabel={(a) => `${a.code} — ${a.name}`}
-            getSublabel={(a) => GL_TYPE_LABEL[a.type as GlAccountType] ?? a.type}
-            placeholder="ابحث عن حساب…"
-            ariaLabel="حساب السطر"
+            getSublabel={(a) => glTypeLabel(t, a.type)}
+            placeholder={t("accounting.journal.line.searchAccount")}
+            ariaLabel={t("accounting.journal.line.accountAria")}
             searchOnEmpty
           />
         )}
@@ -115,7 +116,7 @@ export function JournalLineRow({
           value={value.debit || null}
           onChange={setDebit}
           disabled={readOnly}
-          aria-label="مدين"
+          aria-label={t("accounting.common.debit")}
         />
       </td>
 
@@ -125,7 +126,7 @@ export function JournalLineRow({
           value={value.credit || null}
           onChange={setCredit}
           disabled={readOnly}
-          aria-label="دائن"
+          aria-label={t("accounting.common.credit")}
         />
       </td>
 
@@ -135,8 +136,8 @@ export function JournalLineRow({
           value={value.description}
           onChange={(e) => onChange({ ...value, description: e.target.value })}
           disabled={readOnly}
-          placeholder="بيان السطر"
-          aria-label="بيان السطر"
+          placeholder={t("accounting.journal.line.descPlaceholder")}
+          aria-label={t("accounting.journal.line.descPlaceholder")}
         />
       </td>
 
@@ -147,10 +148,10 @@ export function JournalLineRow({
           invalid={ccMissing}
           disabled={readOnly}
           onChange={(e) => setCostCenter(e.target.value)}
-          aria-label="مركز التكلفة"
+          aria-label={t("accounting.journal.line.costCenterAria")}
           className={cn(ccMissing && "border-rose-400")}
         >
-          <option value="">{pnl ? "— مطلوب —" : "— بدون —"}</option>
+          <option value="">{pnl ? t("accounting.journal.line.required") : t("accounting.journal.editor.optNone")}</option>
           {costCenters.map((c) => (
             <option key={c.id} value={c.id}>
               {c.label}
@@ -159,7 +160,7 @@ export function JournalLineRow({
         </Select>
         {ccMissing && (
           <span className="mt-1 block text-[11px] font-bold text-rose-600">
-            إلزامي لسطور الإيراد/المصروف
+            {t("accounting.journal.line.pnlRequired")}
           </span>
         )}
       </td>
@@ -167,7 +168,7 @@ export function JournalLineRow({
       {/* Delete */}
       <td className="px-2 py-2 w-12 text-left">
         {!readOnly && (
-          <IconButton aria-label="حذف السطر" size="sm" onClick={onRemove}>
+          <IconButton aria-label={t("accounting.journal.line.removeLine")} size="sm" onClick={onRemove}>
             <Trash2 className="h-4 w-4 text-rose-600" />
           </IconButton>
         )}

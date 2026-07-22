@@ -1,18 +1,22 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { MemoryRouter, useLocation } from "react-router-dom";
 import { describe, expect, it, vi } from "vitest";
+import { I18nProvider } from "@/i18n";
 import { Sidebar } from "./Sidebar";
 
+// The mock manifest carries the same translation KEYS the real manifest now
+// uses; the real I18nProvider (default "ar") resolves them, so the assertions
+// below expect the translated Arabic output.
 vi.mock("@/app/navigation/manifest", () => ({
   NAV: [
     {
       id: "overview",
-      label: "الرئيسية",
+      label: "nav.groups.overview",
       items: [
         {
           id: "overview-home",
           path: "/overview",
-          label: "نظرة عامة",
+          label: "nav.items.ov-overview",
           icon: "LayoutDashboard",
           module: "overview",
         },
@@ -20,12 +24,12 @@ vi.mock("@/app/navigation/manifest", () => ({
     },
     {
       id: "sales",
-      label: "المبيعات",
+      label: "nav.groups.sales",
       items: [
         {
           id: "sales-orders",
           path: "/sales/orders",
-          label: "الطلبات",
+          label: "nav.items.sl-orders",
           icon: "ShoppingCart",
           module: "sales",
         },
@@ -54,10 +58,12 @@ function LocationProbe() {
 describe("Sidebar section navigation", () => {
   it("opens a selected section and navigates from its heading", async () => {
     render(
-      <MemoryRouter initialEntries={["/overview"]}>
-        <Sidebar />
-        <LocationProbe />
-      </MemoryRouter>,
+      <I18nProvider>
+        <MemoryRouter initialEntries={["/overview"]}>
+          <Sidebar />
+          <LocationProbe />
+        </MemoryRouter>
+      </I18nProvider>,
     );
 
     await waitFor(() =>

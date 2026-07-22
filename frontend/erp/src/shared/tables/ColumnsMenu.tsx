@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { Columns3 } from "lucide-react";
 import { Checkbox } from "@/shared/ui";
+import { useTx } from "@/shared/ui/i18n";
 import type { ColumnDef } from "./types";
 
 export interface ColumnsMenuProps<T> {
@@ -11,6 +12,7 @@ export interface ColumnsMenuProps<T> {
 
 /** A popover of checkboxes to show/hide hideable columns. */
 export function ColumnsMenu<T>({ columns, hiddenColumns, onToggle }: ColumnsMenuProps<T>) {
+  const t = useTx();
   const [open, setOpen] = useState(false);
   const rootRef = useRef<HTMLDivElement>(null);
 
@@ -34,14 +36,14 @@ export function ColumnsMenu<T>({ columns, hiddenColumns, onToggle }: ColumnsMenu
         onClick={() => setOpen((o) => !o)}
         className="inline-flex min-h-11 items-center gap-2 rounded-xl border border-slate-200 bg-white px-3 text-sm font-bold text-slate-600 transition hover:bg-slate-50 focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-teal-100"
       >
-        <Columns3 className="h-4 w-4" /> الأعمدة
+        <Columns3 className="h-4 w-4" /> {t("table.columns")}
       </button>
       {open && (
         <div
           dir="rtl"
           className="absolute left-0 z-popover mt-1 w-52 rounded-xl border border-slate-200 bg-white p-2 shadow-xl ring-1 ring-black/5"
         >
-          <div className="px-2 py-1 text-[11px] font-extrabold text-slate-400">إظهار الأعمدة</div>
+          <div className="px-2 py-1 text-[11px] font-extrabold text-slate-400">{t("table.showColumns")}</div>
           <ul className="max-h-64 space-y-0.5 overflow-y-auto">
             {hideable.map((c) => (
               <li key={c.id}>

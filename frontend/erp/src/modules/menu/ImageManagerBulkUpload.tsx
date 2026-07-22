@@ -16,10 +16,12 @@
 import { useMemo, useState } from "react";
 import { CheckCircle2, Trash2, XCircle } from "lucide-react";
 import { Dialog, Button, IconButton, FileUploader, SearchableEntityCombobox, useToast } from "@/shared/ui";
-import { downscaleImageFile } from "./imageCompression";
+import { useTx } from "@/shared/ui/i18n";
+import { downscaleImageFile, imagePrepMessage } from "./imageCompression";
 import {
   useBulkUploadImages,
   makeMenuItemFetcher,
+  menuErrorText,
   type MenuItem,
   type BulkImageUploadItem,
 } from "./api";
@@ -83,6 +85,7 @@ export interface ImageManagerBulkUploadProps {
 }
 
 export function ImageManagerBulkUpload({ open, onClose, items }: ImageManagerBulkUploadProps) {
+  const t = useTx();
   const { toast } = useToast();
   const bulk = useBulkUploadImages();
   const fetcher = useMemo(() => makeMenuItemFetcher(items), [items]);
@@ -125,7 +128,7 @@ export function ImageManagerBulkUpload({ open, onClose, items }: ImageManagerBul
         const imageData = await downscaleImageFile(f.file);
         compressed.push({ fileKey: f.fileKey, upload: { menuId: f.matchedItem!.id, imageData } });
       } catch (e) {
-        failures.push({ fileKey: f.fileKey, reason: e instanceof Error ? e.message : "تعذّر تجهيز الصورة" });
+        failures.push({ fileKey: f.fileKey, reason: imagePrepMessage(e, t) });
       }
     }
     setPrepFailures(failures);
@@ -148,13 +151,13 @@ export function ImageManagerBulkUpload({ open, onClose, items }: ImageManagerBul
           setSubmitting(false);
           const okCount = mapped.filter((m) => m.ok).length;
           toast({
-            title: `تم رفع ${okCount} من ${mapped.length} صورة`,
+            title: t("menuRest.bulkUpload.uploadedCount", { ok: okCount, total: mapped.length }),
             tone: okCount === mapped.length ? "success" : "warning",
           });
         },
         onError: (e: Error) => {
           setSubmitting(false);
-          toast({ title: "تعذّر رفع الصور", description: e.message, tone: "error" });
+          toast({ title: t("menuRest.bulkUpload.uploadFailed"), description: menuErrorText(e, t), tone: "error" });
         },
       },
     );
@@ -175,20 +178,20 @@ export function ImageManagerBulkUpload({ open, onClose, items }: ImageManagerBul
     <Dialog
       open={open}
       onClose={handleClose}
-      title="رفع صور جماعي"
-      description="اسحب صور الأصناف — سيتم مطابقتها تلقائيًا برقم الصنف الظاهر في اسم الملف، وما لا يُطابَق يُخصَّص يدويًا أدناه."
+      title={t("menuRest.imageManager.bulkUpload")}
+      description={t("menuRest.bulkUpload.dialogDesc")}
       size="lg"
       dismissable={!submitting}
       footer={
         step === "pick" ? (
           <>
-            <Button variant="secondary" onClick={handleClose} disabled={submitting}>إلغاء</Button>
+            <Button variant="secondary" onClick={handleClose} disabled={submitting}>{t("common.cancel")}</Button>
             <Button onClick={() => void submit()} loading={submitting} disabled={readyCount === 0}>
-              {readyCount > 0 ? `رفع ${readyCount} صورة` : "رفع"}
+              {readyCount > 0 ? t("menuRest.bulkUpload.uploadN", { count: readyCount }) : t("menuRest.bulkUpload.upload")}
             </Button>
           </>
         ) : (
-          <Button onClick={handleClose}>تم</Button>
+          <Button onClick={handleClose}>{t("menuRest.actions.done")}</Button>
         )
       }
     >
@@ -200,19 +203,19 @@ export function ImageManagerBulkUpload({ open, onClose, items }: ImageManagerBul
             multiple
             disabled={submitting}
             maxSize={MAX_FILE_BYTES}
-            onReject={(reason, file) => toast({ title: `تعذّر قبول ${file.name}`, description: reason, tone: "error" })}
-            hint="اسحب صور الأصناف هنا أو اضغط للاختيار (JPEG, PNG, WebP)"
+            onReject={(reason, file) => toast({ title: t("menuRest.bulkUpload.rejectFile", { name: file.name }), description: reason, tone: "error" })}
+            hint={t("menuRest.bulkUpload.uploaderHint")}
           />
 
           {picked.length === 0 ? (
             <p className="rounded-xl border border-dashed border-slate-200 px-4 py-6 text-center text-xs font-medium text-slate-400">
-              لم تُختَر أي ملفات بعد.
+              {t("menuRest.bulkUpload.noFiles")}
             </p>
           ) : (
             <div className="space-y-4">
               {matched.length > 0 && (
                 <div>
-                  <h3 className="mb-2 text-sm font-extrabold text-slate-800">مطابقة تلقائيًا ({matched.length})</h3>
+                  <h3 className="mb-2 text-sm font-extrabold text-slate-800">{t("menuRest.bulkUpload.autoMatched", { count: matched.length })}</h3>
                   <ul className="divide-y divide-slate-100 rounded-xl border border-slate-200">
                     {matched.map((f) => (
                       <FileRow key={f.fileKey} f={f} fetcher={fetcher} onAssign={assign} onRemove={removeFile} disabled={submitting} />
@@ -222,7 +225,7 @@ export function ImageManagerBulkUpload({ open, onClose, items }: ImageManagerBul
               )}
               {unmatched.length > 0 && (
                 <div>
-                  <h3 className="mb-2 text-sm font-extrabold text-slate-800">بحاجة إلى تخصيص يدوي ({unmatched.length})</h3>
+                  <h3 className="mb-2 text-sm font-extrabold text-slate-800">{t("menuRest.bulkUpload.needsManual", { count: unmatched.length })}</h3>
                   <ul className="divide-y divide-amber-100 rounded-xl border border-amber-200 bg-amber-50/40">
                     {unmatched.map((f) => (
                       <FileRow key={f.fileKey} f={f} fetcher={fetcher} onAssign={assign} onRemove={removeFile} disabled={submitting} />
@@ -235,7 +238,7 @@ export function ImageManagerBulkUpload({ open, onClose, items }: ImageManagerBul
 
           {prepFailures.length > 0 && (
             <div className="rounded-xl border border-rose-200 bg-rose-50 p-3">
-              <h3 className="mb-1 text-xs font-extrabold text-rose-700">تعذّر تجهيز {prepFailures.length} ملف</h3>
+              <h3 className="mb-1 text-xs font-extrabold text-rose-700">{t("menuRest.bulkUpload.prepFailedCount", { count: prepFailures.length })}</h3>
               <ul className="space-y-0.5 text-xs font-medium text-rose-600">
                 {prepFailures.map((f) => (
                   <li key={f.fileKey}>{byKey.get(f.fileKey)?.file.name ?? "—"} — {f.reason}</li>
@@ -273,7 +276,7 @@ export function ImageManagerBulkUpload({ open, onClose, items }: ImageManagerBul
           </ul>
           {prepFailures.length > 0 && (
             <div className="rounded-xl border border-rose-200 bg-rose-50 p-3">
-              <h3 className="mb-1 text-xs font-extrabold text-rose-700">لم تُرفَع {prepFailures.length} ملف (فشل التجهيز قبل الإرسال)</h3>
+              <h3 className="mb-1 text-xs font-extrabold text-rose-700">{t("menuRest.bulkUpload.notUploadedCount", { count: prepFailures.length })}</h3>
               <ul className="space-y-0.5 text-xs font-medium text-rose-600">
                 {prepFailures.map((f) => (
                   <li key={f.fileKey}>{byKey.get(f.fileKey)?.file.name ?? "—"} — {f.reason}</li>
@@ -300,6 +303,7 @@ function FileRow({
   onRemove: (fileKey: string) => void;
   disabled?: boolean;
 }) {
+  const t = useTx();
   return (
     <li className="flex items-center gap-3 p-3">
       <span dir="ltr" className="min-w-0 flex-1 truncate text-sm font-semibold text-slate-700">
@@ -314,13 +318,13 @@ function FileRow({
           getKey={(m) => m.id}
           getLabel={(m) => m.name}
           getSublabel={(m) => m.category || undefined}
-          placeholder="اختر صنفًا…"
-          ariaLabel={`تخصيص صنف لـ ${f.file.name}`}
-          emptyText="لا أصناف مطابقة."
+          placeholder={t("menuRest.combobox.pickItem")}
+          ariaLabel={t("menuRest.bulkUpload.assignItemAria", { name: f.file.name })}
+          emptyText={t("menuRest.combobox.noItems")}
           disabled={disabled}
         />
       </div>
-      <IconButton size="sm" aria-label={`إزالة ${f.file.name}`} disabled={disabled} onClick={() => onRemove(f.fileKey)}>
+      <IconButton size="sm" aria-label={t("menuRest.bulkUpload.removeFileAria", { name: f.file.name })} disabled={disabled} onClick={() => onRemove(f.fileKey)}>
         <Trash2 className="h-4 w-4 text-rose-500" />
       </IconButton>
     </li>

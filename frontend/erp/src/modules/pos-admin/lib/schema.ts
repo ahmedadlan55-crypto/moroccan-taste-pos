@@ -3,30 +3,43 @@
 // loaded record on edit (see toPaymentMethodInput) so no data is lost and no raw
 // hex/icon literal ever appears in this source.
 import { z } from "@/shared/schemas";
+import type { TFunction } from "@/i18n";
 import type { PaymentMethod, PaymentMethodInput } from "./types";
 
-export const paymentMethodSchema = z.object({
-  nameAr: z.string().trim().min(1, "الاسم بالعربية مطلوب").max(120, "الاسم طويل جدًا"),
-  name: z.string().trim().max(120, "الاسم طويل جدًا"),
-  groupType: z.enum(["cash", "electronic", "voucher", "loyalty", "transfer", "other"]),
-  sortOrder: z.number({ invalid_type_error: "أدخل رقمًا صحيحًا" }).min(0, "لا يمكن أن يكون سالبًا"),
-  serviceFeeType: z.enum(["none", "percent", "fixed"]),
-  serviceFeeValue: z
-    .number({ invalid_type_error: "أدخل رقمًا صحيحًا" })
-    .min(0, "لا يمكن أن يكون سالبًا"),
-  isActive: z.boolean(),
-  showInShiftClose: z.boolean(),
-  showInReports: z.boolean(),
-  allowManualTotal: z.boolean(),
-  requireReference: z.boolean(),
-  requireTransactionNumber: z.boolean(),
-  requireTerminal: z.boolean(),
-  allowRefund: z.boolean(),
-  allowCancel: z.boolean(),
-  description: z.string().max(500, "الوصف طويل جدًا"),
-});
+/** Build the payment-method form schema with localized messages. The field
+ *  SHAPE is fixed regardless of language, so `PaymentMethodFormValues` stays a
+ *  stable type; only the validation copy is resolved through t(). Consumers
+ *  memoize this against the active t (see PaymentMethodDialog). */
+export function makePaymentMethodSchema(t: TFunction) {
+  return z.object({
+    nameAr: z
+      .string()
+      .trim()
+      .min(1, t("posAdmin.valid.nameArRequired"))
+      .max(120, t("posAdmin.valid.nameTooLong")),
+    name: z.string().trim().max(120, t("posAdmin.valid.nameTooLong")),
+    groupType: z.enum(["cash", "electronic", "voucher", "loyalty", "transfer", "other"]),
+    sortOrder: z
+      .number({ invalid_type_error: t("posAdmin.valid.numberInvalid") })
+      .min(0, t("posAdmin.valid.notNegative")),
+    serviceFeeType: z.enum(["none", "percent", "fixed"]),
+    serviceFeeValue: z
+      .number({ invalid_type_error: t("posAdmin.valid.numberInvalid") })
+      .min(0, t("posAdmin.valid.notNegative")),
+    isActive: z.boolean(),
+    showInShiftClose: z.boolean(),
+    showInReports: z.boolean(),
+    allowManualTotal: z.boolean(),
+    requireReference: z.boolean(),
+    requireTransactionNumber: z.boolean(),
+    requireTerminal: z.boolean(),
+    allowRefund: z.boolean(),
+    allowCancel: z.boolean(),
+    description: z.string().max(500, t("posAdmin.valid.descTooLong")),
+  });
+}
 
-export type PaymentMethodFormValues = z.infer<typeof paymentMethodSchema>;
+export type PaymentMethodFormValues = z.infer<ReturnType<typeof makePaymentMethodSchema>>;
 
 const GROUPS = ["cash", "electronic", "voucher", "loyalty", "transfer", "other"] as const;
 const FEE_TYPES = ["none", "percent", "fixed"] as const;

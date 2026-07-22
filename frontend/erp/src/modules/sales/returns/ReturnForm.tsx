@@ -2,12 +2,14 @@ import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Undo2 } from "lucide-react";
 import { Drawer, Button, LoadingState, safeUserMessage } from "@/shared/ui";
+import { useTx } from "@/shared/ui/i18n";
 import { Field } from "@/shared/forms";
 import { o2cApi, qk, OpenInvoicePicker, Num, Money, type Invoice } from "@/modules/sales/lib";
 
 const today = new Date().toISOString().slice(0, 10);
 
 export function ReturnForm({ open, onClose, onCreated, presetInvoiceId }: { open: boolean; onClose: () => void; onCreated?: (id: string) => void; presetInvoiceId?: string }) {
+  const t = useTx();
   const qc = useQueryClient();
   const [picked, setPicked] = useState<Invoice | null>(null);
   const [date, setDate] = useState(today);
@@ -52,39 +54,39 @@ export function ReturnForm({ open, onClose, onCreated, presetInvoiceId }: { open
 
   return (
     <Drawer
-      open={open} onClose={onClose} icon={Undo2} eyebrow="مرتجع جديد" title="إنشاء مرتجع بيع"
+      open={open} onClose={onClose} icon={Undo2} eyebrow={t("sales.returns.form.eyebrow")} title={t("sales.returns.form.title")}
       footer={
         <div className="flex w-full items-center justify-end gap-2">
-          <Button variant="ghost" onClick={onClose}>إلغاء</Button>
-          <Button loading={mutation.isPending} disabled={!canSubmit} onClick={() => mutation.mutate()}>حفظ كمسودة</Button>
+          <Button variant="ghost" onClick={onClose}>{t("common.cancel")}</Button>
+          <Button loading={mutation.isPending} disabled={!canSubmit} onClick={() => mutation.mutate()}>{t("sales.actions.saveDraft")}</Button>
         </div>
       }
     >
       <div className="flex flex-col gap-4">
         {mutation.isError && <div className="rounded-xl border border-rose-200 bg-rose-50 px-3 py-2 text-sm font-bold text-rose-700">{safeUserMessage(mutation.error)}</div>}
-        {!presetInvoiceId && <Field label="الفاتورة الأصلية" required><OpenInvoicePicker value={picked} onChange={setPicked} /></Field>}
+        {!presetInvoiceId && <Field label={t("sales.returns.detail.originalInvoice")} required><OpenInvoicePicker value={picked} onChange={setPicked} /></Field>}
         <div className="grid grid-cols-2 gap-3">
-          <Field label="تاريخ المرتجع" required><input dir="ltr" type="date" className="field w-full tabular-nums" value={date} onChange={(e) => setDate(e.target.value)} /></Field>
-          <Field label="طريقة الرد">
+          <Field label={t("sales.returns.form.returnDate")} required><input dir="ltr" type="date" className="field w-full tabular-nums" value={date} onChange={(e) => setDate(e.target.value)} /></Field>
+          <Field label={t("sales.returns.col.refund")}>
             <select className="field w-full" value={refund} onChange={(e) => setRefund(e.target.value)}>
-              <option value="ar_reduction">تخفيض الذمم</option>
-              <option value="cash">رد نقدي</option>
-              <option value="bank">رد بنكي</option>
-              <option value="customer_deposit">رصيد دائن للعميل</option>
+              <option value="ar_reduction">{t("sales.returns.refundOpt.ar_reduction")}</option>
+              <option value="cash">{t("sales.returns.refundOpt.cash")}</option>
+              <option value="bank">{t("sales.returns.refundOpt.bank")}</option>
+              <option value="customer_deposit">{t("sales.returns.refundOpt.customer_deposit")}</option>
             </select>
           </Field>
         </div>
-        <Field label="السبب"><input className="field w-full" value={reason} onChange={(e) => setReason(e.target.value)} /></Field>
+        <Field label={t("sales.returns.form.reason")}><input className="field w-full" value={reason} onChange={(e) => setReason(e.target.value)} /></Field>
 
         <div className="rounded-2xl border border-slate-200">
-          <div className="border-b border-slate-100 px-3 py-2 text-sm font-extrabold text-slate-700">أسطر المرتجع</div>
+          <div className="border-b border-slate-100 px-3 py-2 text-sm font-extrabold text-slate-700">{t("sales.returns.detail.linesTitle")}</div>
           <div className="p-3">
             {!invoiceId ? (
-              <p className="text-xs font-semibold text-slate-400">اختر فاتورة لعرض أسطرها.</p>
+              <p className="text-xs font-semibold text-slate-400">{t("sales.returns.form.pickInvoiceFirst")}</p>
             ) : detail.isLoading ? (
               <LoadingState rows={3} />
             ) : lines.length === 0 ? (
-              <p className="text-xs font-semibold text-slate-400">لا توجد أسطر.</p>
+              <p className="text-xs font-semibold text-slate-400">{t("sales.returns.form.noLines")}</p>
             ) : (
               <div className="flex flex-col gap-2">
                 {lines.map((l) => {
@@ -94,14 +96,14 @@ export function ReturnForm({ open, onClose, onCreated, presetInvoiceId }: { open
                     <div key={l.id} className="rounded-xl bg-slate-50 px-3 py-2">
                       <div className="grid grid-cols-12 items-center gap-2">
                         <span className="col-span-6 truncate text-sm font-bold text-slate-700">{l.description || "—"}</span>
-                        <span className="col-span-2 text-xs text-slate-500">متاح: <Num value={remaining} /></span>
+                        <span className="col-span-2 text-xs text-slate-500">{t("sales.returns.form.available")}: <Num value={remaining} /></span>
                         <span className="col-span-2 text-xs text-slate-500"><Money value={l.unit_price} /></span>
                         <input
                           dir="ltr" type="number" step="0.01" min={0} max={remaining}
                           disabled={remaining <= 0}
                           className="field col-span-2 w-full tabular-nums"
-                          placeholder="كمية"
-                          aria-label={`كمية إرجاع ${l.description || l.id}`}
+                          placeholder={t("sales.returns.form.qtyPlaceholder")}
+                          aria-label={t("sales.returns.form.returnQtyAria", { name: l.description || l.id })}
                           value={qtys[l.id] || ""}
                           onChange={(e) => {
                             const v = Math.max(0, Math.min(Number(e.target.value) || 0, remaining));
@@ -115,17 +117,17 @@ export function ReturnForm({ open, onClose, onCreated, presetInvoiceId }: { open
                             type="checkbox"
                             checked={!!restock[l.id]}
                             onChange={(e) => setRestock((s) => ({ ...s, [l.id]: e.target.checked }))}
-                            aria-label={`إعادة ${l.description || l.id} للمخزون`}
+                            aria-label={t("sales.returns.form.restockAria", { name: l.description || l.id })}
                           />
-                          <span className="text-xs font-bold text-slate-600">إعادة للمخزون</span>
+                          <span className="text-xs font-bold text-slate-600">{t("sales.returns.form.restock")}</span>
                           <span className="text-[11px] font-semibold text-slate-400">
                             {restock[l.id]
-                              ? "ستُعاد مكوّنات هذا الصنف للمخزون وتُعكس تكلفتها."
-                              : "لن يتغيّر المخزون ولا التكلفة — الإشعار الدائن فقط."}
+                              ? t("sales.returns.form.restockOn")
+                              : t("sales.returns.form.restockOff")}
                           </span>
                         </label>
                       )}
-                      {remaining <= 0 && <p className="mt-1 text-[11px] font-semibold text-slate-400">أُرجع هذا السطر بالكامل.</p>}
+                      {remaining <= 0 && <p className="mt-1 text-[11px] font-semibold text-slate-400">{t("sales.returns.form.fullyReturned")}</p>}
                     </div>
                   );
                 })}
@@ -133,7 +135,7 @@ export function ReturnForm({ open, onClose, onCreated, presetInvoiceId }: { open
             )}
           </div>
         </div>
-        <p className="text-[11px] font-semibold text-slate-400">القيم تُحتسب تناسبيًا في الخادم من الفاتورة الأصلية (سعر/ضريبة/تكلفة).</p>
+        <p className="text-[11px] font-semibold text-slate-400">{t("sales.returns.form.serverCalcNote")}</p>
       </div>
     </Drawer>
   );

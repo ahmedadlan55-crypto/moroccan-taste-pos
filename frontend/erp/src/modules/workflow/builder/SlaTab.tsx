@@ -12,6 +12,7 @@ import {
   useToast,
 } from "@/shared/ui";
 import { DataTable, type ColumnDef } from "@/shared/tables";
+import { useTx } from "@/shared/ui/i18n";
 import {
   useSlaOverdue,
   useSlaStats,
@@ -23,13 +24,6 @@ import {
 // due-soon counts + system-wide overdue list, plus an admin "escalate now" sweep
 // (the same sweep the background worker runs every 30 min). System-wide view →
 // overdue is fetched with an EMPTY username.
-
-const PRIORITY_LABEL: Record<string, string> = {
-  high: "عالية",
-  medium: "متوسطة",
-  low: "منخفضة",
-  urgent: "عاجلة",
-};
 
 function StatCard({
   icon,
@@ -58,6 +52,7 @@ function StatCard({
 }
 
 export function SlaTab() {
+  const t = useTx();
   const { user } = useAuth();
   const stats = useSlaStats();
   const overdue = useSlaOverdue(""); // empty → system-wide (admin) view
@@ -67,29 +62,37 @@ export function SlaTab() {
   const [confirming, setConfirming] = useState(false);
   const [escalateError, setEscalateError] = useState<string | null>(null);
 
+  // Priority chips reuse the shared importance labels; "urgent" is SLA-specific.
+  const priorityLabel = (key: string) =>
+    key === "urgent"
+      ? t("workflow.sla.priorityUrgent")
+      : ["high", "medium", "low"].includes(key)
+        ? t(`workflow.importance.${key}`)
+        : key;
+
   function runEscalation() {
     setEscalateError(null);
     escalate.mutate(user?.username ?? "", {
       onSuccess: (res) => {
         if (res && res.success === false) {
-          setEscalateError(res.error || "تعذّر تنفيذ التصعيد.");
+          setEscalateError(res.error || t("workflow.sla.escalateFailed"));
           return;
         }
         toast({
-          title: "اكتمل التصعيد",
-          description: `تم فحص ${res.checked ?? 0} وتصعيد ${res.escalated ?? 0}.`,
+          title: t("workflow.sla.escalateDone"),
+          description: t("workflow.sla.escalateDoneDesc", { checked: res.checked ?? 0, escalated: res.escalated ?? 0 }),
           tone: "success",
         });
         setConfirming(false);
       },
-      onError: (e) => setEscalateError(e instanceof Error ? e.message : "تعذّر تنفيذ التصعيد."),
+      onError: (e) => setEscalateError(e instanceof Error ? e.message : t("workflow.sla.escalateFailed")),
     });
   }
 
   const columns: ColumnDef<SlaOverdueItem>[] = [
     {
       id: "txnNumber",
-      header: "المعاملة",
+      header: t("workflow.sla.colTxn"),
       accessor: (r) => r.txnNumber || r.id,
       cell: (r) => (
         <div className="min-w-0">
@@ -100,11 +103,11 @@ export function SlaTab() {
         </div>
       ),
     },
-    { id: "typeName", header: "النوع", accessor: (r) => r.typeName || "—" },
-    { id: "assignee", header: "المسند إليه", accessor: (r) => r.currentAssignee || "—" },
+    { id: "typeName", header: t("workflow.col.type"), accessor: (r) => r.typeName || "—" },
+    { id: "assignee", header: t("workflow.sla.colAssignee"), accessor: (r) => r.currentAssignee || "—" },
     {
       id: "hoursOverdue",
-      header: "التأخّر (ساعة)",
+      header: t("workflow.sla.colHoursOverdue"),
       accessor: (r) => r.hoursOverdue,
       numeric: true,
       sortable: true,
@@ -114,7 +117,7 @@ export function SlaTab() {
     },
     {
       id: "escalationCount",
-      header: "مرات التصعيد",
+      header: t("workflow.sla.colEscalationCount"),
       accessor: (r) => r.escalationCount,
       numeric: true,
       sortable: true,
@@ -138,24 +141,24 @@ export function SlaTab() {
         <div className="grid grid-cols-2 gap-3 xl:grid-cols-4">
           <StatCard
             icon={<Clock className="h-5 w-5" />}
-            label="مفتوحة"
+            label={t("workflow.sla.statOpen")}
             value={stats.data.totalOpen}
           />
           <StatCard
             icon={<AlarmClock className="h-5 w-5" />}
-            label="متأخرة"
+            label={t("workflow.sla.statOverdue")}
             value={stats.data.overdueCount}
             tone="text-rose-600"
           />
           <StatCard
             icon={<Timer className="h-5 w-5" />}
-            label="تستحق خلال 24 ساعة"
+            label={t("workflow.sla.statDue24h")}
             value={stats.data.due24h}
             tone="text-amber-600"
           />
           <StatCard
             icon={<TrendingUp className="h-5 w-5" />}
-            label="متوسط الإغلاق (ساعة)"
+            label={t("workflow.sla.statAvgClose")}
             value={Math.round(stats.data.avgCloseHours)}
           />
         </div>
@@ -163,19 +166,19 @@ export function SlaTab() {
 
       {stats.data?.overdueByPriority && Object.keys(stats.data.overdueByPriority).length > 0 && (
         <div className="flex flex-wrap items-center gap-2">
-          <span className="text-xs font-bold text-slate-500">المتأخر حسب الأولوية:</span>
+          <span className="text-xs font-bold text-slate-500">{t("workflow.sla.overdueByPriority")}</span>
           {Object.entries(stats.data.overdueByPriority).map(([k, v]) => (
             <Badge key={k} tone="warning">
-              {PRIORITY_LABEL[k] || k}: <span dir="ltr">{v}</span>
+              {priorityLabel(k)}: <span dir="ltr">{v}</span>
             </Badge>
           ))}
         </div>
       )}
 
       <div className="flex items-center justify-between">
-        <h3 className="text-sm font-extrabold text-slate-800">المعاملات المتأخرة</h3>
+        <h3 className="text-sm font-extrabold text-slate-800">{t("workflow.sla.overdueTitle")}</h3>
         <Button variant="primary" onClick={() => setConfirming(true)}>
-          <Zap className="h-4 w-4" /> تصعيد الآن
+          <Zap className="h-4 w-4" /> {t("workflow.sla.escalateNow")}
         </Button>
       </div>
 
@@ -189,16 +192,16 @@ export function SlaTab() {
           rows={overdue.data ?? []}
           getRowId={(r) => r.id}
           tableId="wf-sla-overdue"
-          emptyTitle="لا توجد معاملات متأخرة"
-          emptyBody="جميع المعاملات ضمن اتفاقية الخدمة — لا شيء متأخر حاليًا."
+          emptyTitle={t("workflow.sla.emptyTitle")}
+          emptyBody={t("workflow.sla.emptyBody")}
         />
       )}
 
       <ConfirmDialog
         open={confirming}
-        title="تصعيد المعاملات المتأخرة الآن"
-        description="سيتم فحص كل المعاملات المتأخرة وإرسال إشعارات التصعيد للمسؤولين عنها. هذا الإجراء يتطلب صلاحية المسؤول."
-        confirmLabel="تصعيد الآن"
+        title={t("workflow.sla.confirmTitle")}
+        description={t("workflow.sla.confirmDesc")}
+        confirmLabel={t("workflow.sla.escalateNow")}
         processing={escalate.isPending}
         error={escalateError}
         onConfirm={runEscalation}

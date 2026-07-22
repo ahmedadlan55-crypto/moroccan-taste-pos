@@ -87,9 +87,10 @@
   --mt-shadow-md:   0 8px 20px rgba(15, 23, 42, 0.10);
   --mt-shadow-lg:   0 16px 40px rgba(15, 23, 42, 0.20);
 
-  /* Typography */
-  --mt-font:        "IBM Plex Sans Arabic", "Tajawal", "Segoe UI",
-                    "Tahoma", "Cairo", Arial, sans-serif;
+  /* Typography — Cairo (self-hosted, both apps) leads; IBM Plex Sans Arabic
+   * and the system Arabic stack remain as graceful fallbacks. */
+  --mt-font:        "Cairo", "IBM Plex Sans Arabic", "Segoe UI",
+                    "Tahoma", Arial, sans-serif;
   --mt-font-mono:   ui-monospace, "SFMono-Regular", "Menlo", monospace;
 
   /* ══════════════════════════════════════════════════════════════

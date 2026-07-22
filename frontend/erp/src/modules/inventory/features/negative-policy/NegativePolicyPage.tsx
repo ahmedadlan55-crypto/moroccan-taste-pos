@@ -17,8 +17,9 @@ import { useWarehouseScope } from "@/modules/inventory/lib/warehouse-scope-provi
 import { useNegativePolicySettings } from "@/modules/inventory/lib/hooks/useNegativePolicy";
 import { formatDateTime, formatQty } from "@/shared/lib";
 import { cn } from "@/shared/lib";
+import { useT } from "@/i18n";
 import type { PolicyMode, PolicyRow, PolicyScope } from "@/modules/inventory/lib/adapters/negative-policy.adapter";
-import { POLICY_HINTS } from "./labels";
+import { policyHint } from "./labels";
 import { EnabledBadge, PolicyBadge } from "./shared";
 import { PolicyDialog } from "./PolicyDialog";
 import { EffectiveTester } from "./EffectiveTester";
@@ -30,6 +31,7 @@ interface DialogState {
 }
 
 export function NegativePolicyPage() {
+  const t = useT();
   const canView = useCan("negativePolicy.view");
   const canEdit = useCan("negativePolicy.edit");
   const { user } = useAuth();
@@ -53,13 +55,13 @@ export function NegativePolicyPage() {
   return (
     <div>
       <PageHeader
-        eyebrow="الإعدادات"
-        title="سياسة المخزون السالب"
-        subtitle="تتحكم هذه السياسة في قرار المحرك عندما يحاول صرفٌ ما أخذ رصيد صنف تحت الصفر: منع (الافتراضي) / مقيّد بشروط وحدود / سماح مفتوح للمطوّر فقط. الحسم بين المستويات: الأكثر تحديدًا يفوز (صنف ← مستودع ← عام)، والأصناف المتتبَّعة تُمنع دائمًا."
+        eyebrow={t("inventoryRest.negativePolicy.page.eyebrow")}
+        title={t("inventoryRest.negativePolicy.page.title")}
+        subtitle={t("inventoryRest.negativePolicy.page.subtitle")}
         action={
           !canEdit ? (
             <span className="chip border-slate-200 bg-slate-50 text-slate-600">
-              <Eye className="h-3.5 w-3.5" /> عرض فقط — التعديل يتطلب صلاحية أدمن
+              <Eye className="h-3.5 w-3.5" /> {t("inventoryRest.negativePolicy.page.viewOnly")}
             </span>
           ) : null
         }
@@ -75,27 +77,26 @@ export function NegativePolicyPage() {
             <div className="mb-4 flex items-start gap-3 rounded-2xl border border-amber-200 bg-amber-50 p-4">
               <ShieldAlert className="mt-0.5 h-5 w-5 shrink-0 text-amber-600" />
               <div className="text-sm font-bold leading-6 text-amber-800">
-                التطبيق الفعلي للسياسة معطّل حاليًا (NEGATIVE_STOCK_POLICY_ENABLED غير مفعّلة) — الإعدادات هنا
-                تُحفظ وتُعرض، لكن الحارس لا يعمل وقت الصرف حتى يفعّل المطوّر البوابة.
+                {t("inventoryRest.negativePolicy.page.gateDisabledBanner")}
               </div>
             </div>
           )}
 
           <section className="grid gap-4 lg:grid-cols-3">
-            <ExplainerCard policy="block" badge="الافتراضي" />
+            <ExplainerCard policy="block" badge={t("inventoryRest.negativePolicy.badge.default")} />
             <ExplainerCard policy="controlled" />
             {isDeveloper ? (
-              <ExplainerCard policy="allow" badge={data.allowEnabled ? "البوابة مفعّلة" : "البوابة معطّلة"} />
+              <ExplainerCard policy="allow" badge={data.allowEnabled ? t("inventoryRest.negativePolicy.badge.gateOn") : t("inventoryRest.negativePolicy.badge.gateOff")} />
             ) : (
               <article className="surface p-4 opacity-70">
                 <div className="flex items-center gap-2">
                   <span className="grid h-9 w-9 place-items-center rounded-xl bg-slate-100 text-slate-500">
                     <Ban className="h-4 w-4" />
                   </span>
-                  <span className="text-sm font-extrabold text-slate-700">سماح (allow)</span>
+                  <span className="text-sm font-extrabold text-slate-700">{t("inventoryRest.negativePolicy.policy.allow")}</span>
                 </div>
                 <p className="mt-3 text-xs font-medium leading-5 text-slate-500">
-                  معطّل ومخفي — متاح للمطوّر فقط وخلف بوابة بيئة، ويتخفّض تلقائيًا إلى «مقيّد» عند إيقافها.
+                  {t("inventoryRest.negativePolicy.page.allowHiddenBody")}
                 </p>
               </article>
             )}
@@ -105,12 +106,12 @@ export function NegativePolicyPage() {
           <section className="surface mt-4 overflow-hidden">
             <PanelTitle
               icon={SlidersHorizontal}
-              title="السياسة العامة"
-              subtitle="تسري على كل المستودعات والأصناف ما لم يوجد صف أكثر تحديدًا."
+              title={t("inventoryRest.negativePolicy.global.title")}
+              subtitle={t("inventoryRest.negativePolicy.global.subtitle")}
               action={
                 canEdit ? (
                   <Button variant="secondary" size="sm" onClick={() => openDialog("global", data.globalRow)}>
-                    <Pencil className="h-3.5 w-3.5" /> {data.globalRow ? "تعديل" : "ضبط السياسة"}
+                    <Pencil className="h-3.5 w-3.5" /> {data.globalRow ? t("common.edit") : t("inventoryRest.negativePolicy.global.setPolicy")}
                   </Button>
                 ) : undefined
               }
@@ -119,19 +120,19 @@ export function NegativePolicyPage() {
               {data.globalRow ? (
                 <div className="flex flex-wrap items-center gap-x-6 gap-y-2">
                   <PolicyBadge policy={data.globalRow.policy} />
-                  <MetaText label="الحد الأقصى للعجز">
+                  <MetaText label={t("inventoryRest.negativePolicy.col.maxDeficit")}>
                     {data.globalRow.policy === "controlled" ? formatQty(data.globalRow.maxNegativeQty) : "—"}
                   </MetaText>
-                  <MetaText label="سبب إلزامي">{data.globalRow.requireReason ? "نعم" : "لا"}</MetaText>
+                  <MetaText label={t("inventoryRest.negativePolicy.col.requireReason")}>{data.globalRow.requireReason ? t("common.yes") : t("common.no")}</MetaText>
                   <EnabledBadge enabled={data.globalRow.isEnabled} />
-                  <MetaText label="آخر تحديث">
+                  <MetaText label={t("inventoryRest.negativePolicy.col.lastUpdate")}>
                     {data.globalRow.updatedBy || "—"} · {formatDateTime(data.globalRow.updatedAt)}
                   </MetaText>
                 </div>
               ) : (
                 <p className="text-sm font-medium text-slate-500">
-                  لا توجد سياسة عامة مضبوطة — يسري الافتراضي:{" "}
-                  <span className="font-extrabold text-slate-800">منع (block)</span>، أي يُرفض أي صرف يجعل الرصيد سالبًا.
+                  {t("inventoryRest.negativePolicy.global.noPolicyPrefix")}{" "}
+                  <span className="font-extrabold text-slate-800">{t("inventoryRest.negativePolicy.policy.block")}</span>{t("inventoryRest.negativePolicy.global.noPolicySuffix")}
                 </p>
               )}
             </div>
@@ -140,26 +141,26 @@ export function NegativePolicyPage() {
           {/* ── سياسات المستودعات ─────────────────────────────────────── */}
           <PolicyRowsSection
             icon={WarehouseIcon}
-            title="سياسات المستودعات"
-            subtitle="استثناء على مستوى مستودع كامل — يتقدّم على السياسة العامة."
-            emptyText="لا توجد سياسات مستودعات — تسري السياسة العامة على الجميع."
+            title={t("inventoryRest.negativePolicy.warehouse.title")}
+            subtitle={t("inventoryRest.negativePolicy.warehouse.subtitle")}
+            emptyText={t("inventoryRest.negativePolicy.warehouse.empty")}
             rows={data.warehouseRows}
-            firstCol="المستودع"
+            firstCol={t("inventoryRest.negativePolicy.col.warehouse")}
             firstCell={(r) => r.warehouseName ?? r.warehouseId ?? "—"}
             canEdit={canEdit}
             onAdd={() => openDialog("warehouse")}
             onEdit={(r) => openDialog("warehouse", r)}
-            addLabel="سياسة مستودع"
+            addLabel={t("inventoryRest.negativePolicy.warehouse.addLabel")}
           />
 
           {/* ── سياسات الأصناف ────────────────────────────────────────── */}
           <PolicyRowsSection
             icon={Package}
-            title="سياسات الأصناف"
-            subtitle="استثناء لصنف بعينه داخل مستودع محدد — المستوى الأعلى تحديدًا وأولويةً."
-            emptyText="لا توجد سياسات أصناف — تُحسم الأصناف من مستويي المستودع والعام."
+            title={t("inventoryRest.negativePolicy.item.title")}
+            subtitle={t("inventoryRest.negativePolicy.item.subtitle")}
+            emptyText={t("inventoryRest.negativePolicy.item.empty")}
             rows={data.itemRows}
-            firstCol="الصنف / المستودع"
+            firstCol={t("inventoryRest.negativePolicy.col.itemWarehouse")}
             firstCell={(r) => (
               <span>
                 <span className="font-extrabold text-slate-900">{r.itemName ?? r.itemId ?? "—"}</span>
@@ -169,7 +170,7 @@ export function NegativePolicyPage() {
             canEdit={canEdit}
             onAdd={() => openDialog("item")}
             onEdit={(r) => openDialog("item", r)}
-            addLabel="سياسة صنف"
+            addLabel={t("inventoryRest.negativePolicy.item.addLabel")}
           />
 
           <EffectiveTester warehouseOptions={whOptions} />
@@ -189,6 +190,7 @@ export function NegativePolicyPage() {
 }
 
 function ExplainerCard({ policy, badge }: { policy: PolicyMode; badge?: string }) {
+  const t = useT();
   return (
     <article className="surface p-4">
       <div className="flex items-center justify-between gap-2">
@@ -197,7 +199,7 @@ function ExplainerCard({ policy, badge }: { policy: PolicyMode; badge?: string }
           <span className="rounded-md bg-slate-100 px-1.5 py-0.5 text-[10px] font-bold text-slate-500">{badge}</span>
         )}
       </div>
-      <p className="mt-3 text-xs font-medium leading-5 text-slate-500">{POLICY_HINTS[policy]}</p>
+      <p className="mt-3 text-xs font-medium leading-5 text-slate-500">{policyHint(t, policy)}</p>
     </article>
   );
 }
@@ -235,6 +237,7 @@ function PolicyRowsSection({
   onEdit: (r: PolicyRow) => void;
   addLabel: string;
 }) {
+  const t = useT();
   return (
     <section className="surface mt-4 overflow-hidden">
       <PanelTitle
@@ -259,12 +262,12 @@ function PolicyRowsSection({
               <thead className="bg-slate-50 text-xs font-bold text-slate-500">
                 <tr>
                   <th className="px-4 py-3 text-right">{firstCol}</th>
-                  <th className="px-4 py-3 text-right">السياسة</th>
-                  <th className="px-4 py-3 text-right">الحد الأقصى للعجز</th>
-                  <th className="px-4 py-3 text-right">سبب إلزامي</th>
-                  <th className="px-4 py-3 text-right">الحالة</th>
-                  <th className="px-4 py-3 text-right">آخر تحديث</th>
-                  {canEdit && <th className="px-4 py-3 text-left">إجراء</th>}
+                  <th className="px-4 py-3 text-right">{t("inventoryRest.negativePolicy.col.policy")}</th>
+                  <th className="px-4 py-3 text-right">{t("inventoryRest.negativePolicy.col.maxDeficit")}</th>
+                  <th className="px-4 py-3 text-right">{t("inventoryRest.negativePolicy.col.requireReason")}</th>
+                  <th className="px-4 py-3 text-right">{t("common.status")}</th>
+                  <th className="px-4 py-3 text-right">{t("inventoryRest.negativePolicy.col.lastUpdate")}</th>
+                  {canEdit && <th className="px-4 py-3 text-left">{t("inventoryRest.negativePolicy.col.action")}</th>}
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100">
@@ -275,15 +278,15 @@ function PolicyRowsSection({
                     <td className="px-4 py-3 tabular-nums text-slate-700">
                       {r.policy === "controlled" ? formatQty(r.maxNegativeQty) : "—"}
                     </td>
-                    <td className="px-4 py-3 text-slate-600">{r.requireReason ? "نعم" : "لا"}</td>
+                    <td className="px-4 py-3 text-slate-600">{r.requireReason ? t("common.yes") : t("common.no")}</td>
                     <td className="px-4 py-3"><EnabledBadge enabled={r.isEnabled} /></td>
                     <td className="px-4 py-3 text-xs text-slate-500">
                       {r.updatedBy || "—"} · {formatDateTime(r.updatedAt)}
                     </td>
                     {canEdit && (
                       <td className="px-4 py-3 text-left">
-                        <Button variant="ghost" size="sm" onClick={() => onEdit(r)} aria-label={`تعديل ${title}`}>
-                          <Pencil className="h-3.5 w-3.5" /> تعديل
+                        <Button variant="ghost" size="sm" onClick={() => onEdit(r)} aria-label={t("inventoryRest.negativePolicy.editAria", { title })}>
+                          <Pencil className="h-3.5 w-3.5" /> {t("common.edit")}
                         </Button>
                       </td>
                     )}
@@ -302,14 +305,14 @@ function PolicyRowsSection({
                   <PolicyBadge policy={r.policy} />
                 </div>
                 <div className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-1 text-xs font-medium text-slate-500">
-                  <span>الحد: <span className="font-extrabold tabular-nums text-slate-800">{r.policy === "controlled" ? formatQty(r.maxNegativeQty) : "—"}</span></span>
-                  <span>سبب إلزامي: {r.requireReason ? "نعم" : "لا"}</span>
+                  <span>{t("inventoryRest.negativePolicy.limitLabel")}: <span className="font-extrabold tabular-nums text-slate-800">{r.policy === "controlled" ? formatQty(r.maxNegativeQty) : "—"}</span></span>
+                  <span>{t("inventoryRest.negativePolicy.col.requireReason")}: {r.requireReason ? t("common.yes") : t("common.no")}</span>
                   <EnabledBadge enabled={r.isEnabled} />
                 </div>
                 {canEdit && (
                   <div className="mt-3">
                     <Button variant="secondary" size="sm" onClick={() => onEdit(r)}>
-                      <Pencil className="h-3.5 w-3.5" /> تعديل
+                      <Pencil className="h-3.5 w-3.5" /> {t("common.edit")}
                     </Button>
                   </div>
                 )}

@@ -1,0 +1,283 @@
+/** "menu-remainder" module — every menu screen EXCEPT the D2-redesigned
+ *  product pages (BrandMenu / MenuItemPage / MenuItemThumb / PriceDialogs, which
+ *  own the "menu" namespace). Covers Hub, RecipesBom, PriceLists, Combos,
+ *  SemiFinished, ImageManager (+ bulk upload), CategoryTranslations,
+ *  ItemImageEditor and the shared menu lib. English mirror: en/menuRest.ts —
+ *  identical key shape.
+ *
+ *  Generic strings (save/cancel/delete/apply/all/status, record-status codes,
+ *  page-state copy, API-error codes) are intentionally NOT duplicated here — the
+ *  screens reuse common.* / status.* / states.* / errors.* instead. */
+export const menuRest = {
+  // Shared eyebrow across every menu section header.
+  eyebrow: "القوائم والوصفات",
+
+  // Reused field / column labels across the menu screens.
+  fields: {
+    brand: "العلامة التجارية",
+    item: "الصنف",
+    category: "الفئة",
+    price: "السعر",
+    cost: "التكلفة",
+    margin: "الهامش",
+    stock: "المخزون",
+    unit: "الوحدة",
+  },
+
+  // aria-labels shared by more than one screen.
+  aria: {
+    selectItem: "اختيار صنف",
+    selectComponent: "اختيار مكوّن",
+    quantity: "الكمية",
+    unit: "الوحدة",
+    filterByCategory: "تصفية بالفئة",
+  },
+
+  // Input suffixes (units) — kept short; digits stay Latin per the app policy.
+  units: {
+    percent: "٪",
+    sar: "ر.س",
+  },
+
+  // Shared filter chrome.
+  filters: {
+    allCategories: "كل الفئات",
+    searchByItem: "ابحث باسم الصنف…",
+    noItemsTitle: "لا توجد أصناف",
+  },
+
+  // Shared SearchableEntityCombobox copy.
+  combobox: {
+    pickItem: "اختر صنفًا…",
+    noItems: "لا توجد أصناف مطابقة.",
+    noComponents: "لا مكوّنات مطابقة.",
+  },
+
+  // BrandSelect (lib.tsx) defaults.
+  brandScope: {
+    allBrands: "كل العلامات",
+    filterByBrand: "تصفية بالعلامة التجارية",
+  },
+
+  actions: {
+    done: "تم",
+  },
+
+  hub: {
+    title: "لوحة القوائم",
+    subtitle: "نظرة عامة على قوائم العلامات التجارية والفروع.",
+    noBrand: "بدون علامة تجارية",
+    kpiBrands: "العلامات التجارية",
+    kpiProducts: "أصناف القائمة",
+    kpiCombos: "الوجبات المركّبة",
+    kpiSemi: "منتجات نصف مصنّعة",
+    emptyTitle: "لا توجد أصناف بعد",
+    emptyBody: "أضف علامة تجارية وأصنافها من قائمة العلامة التجارية لتظهر هنا.",
+    inactiveCount: "{count} صنف معطّل",
+    allActive: "كل الأصناف نشطة",
+    statProducts: "أصناف",
+    statCombos: "مركّبة",
+    statSemi: "نصف مصنّعة",
+    linkMenu: "القائمة",
+    linkRecipes: "الوصفات",
+    linkCombos: "المركّبة",
+  },
+
+  recipes: {
+    title: "الوصفات ومكوّنات التصنيع",
+    subtitle: "اختر صنفًا لتحرير وصفته (BOM). عند بيع الصنف تُخصم مكوّناته من مخزون الفرع.",
+    hasRecipe: "له وصفة",
+    noRecipe: "بلا وصفة",
+    searchItemPlaceholder: "ابحث عن صنف لتحرير وصفته…",
+    pickItemTitle: "اختر صنفًا",
+    pickItemBody: "اختر صنفًا من الأعلى لعرض أو تحرير وصفته ومكوّناته.",
+    savedTitle: "تم حفظ الوصفة",
+    computedCost: "التكلفة المحسوبة: {cost}",
+    saveFailed: "تعذّر حفظ الوصفة",
+    legacyWarning: "هذه الوصفة مُخزّنة بالنظام القديم. حفظها الآن سيحوّلها إلى صيغة BOM الحديثة.",
+    yieldQty: "كمية الإنتاج (Yield)",
+    yieldUnit: "وحدة الإنتاج",
+    notesOptional: "ملاحظات (اختياري)",
+    noLines: "لا توجد مكوّنات بعد. أضف مكوّنًا لبدء الوصفة.",
+    pickComponentPlaceholder: "اختر مكوّنًا من المخزون…",
+    wasteAria: "نسبة الهدر",
+    deleteComponent: "حذف المكوّن",
+    addComponent: "إضافة مكوّن",
+    totalCost: "إجمالي تكلفة المكوّنات",
+    unitCost: "تكلفة الوحدة المنتجة",
+    saveRecipe: "حفظ الوصفة",
+    viewOnly: "عرض فقط — تحتاج صلاحية إدارة الوصفات للتعديل.",
+  },
+
+  priceLists: {
+    title: "قوائم الأسعار",
+    subtitle: "تحديث الأسعار جماعيًا حسب العلامة أو الفئة أو الأصناف المحددة. يُسجَّل التغيير في سجل التدقيق.",
+    modePercent: "نسبة مئوية (٪ +/−)",
+    modeFixedSet: "تعيين سعر ثابت",
+    modeFixedAdd: "إضافة مبلغ ثابت",
+    changeType: "نوع التعديل",
+    percentLabel: "النسبة ٪",
+    amountLabel: "المبلغ",
+    hintPercent: "موجب يرفع السعر وسالب يخفضه (مثال: 10 = +10٪).",
+    hintFixedSet: "تعيين نفس السعر لكل الأصناف المستهدفة.",
+    hintFixedAdd: "إضافة (أو طرح) مبلغ ثابت لسعر كل صنف.",
+    reasonOptional: "السبب (اختياري)",
+    reasonPlaceholder: "مثال: تحديث أسعار الموسم",
+    needPricePermission: "تحتاج صلاحية إدارة الأسعار.",
+    applyToSelected: "تطبيق على {count} محدد",
+    applyToItems: "تطبيق على {count} صنف",
+    applyToN: "تطبيق على {count}",
+    emptyBody: "اختر علامة تجارية أو أضف أصنافًا.",
+    updatedCount: "تم تحديث {count} صنف",
+    bulkFailed: "تعذّر التحديث الجماعي",
+    confirmTitle: "تأكيد التحديث الجماعي",
+    confirmSelected: "سيتم تعديل أسعار {count} صنف محدد.",
+    confirmScope: "سيتم تعديل أسعار {count} صنف ضمن النطاق المحدد ({scope}).",
+    scopeBrand: "علامة",
+    scopeAllBrands: "كل العلامات",
+    resultTitle: "نتيجة التحديث",
+    resultDesc: "تم تعديل {count} صنف.",
+    noChanges: "لم تتغيّر أي أسعار (القيم مطابقة).",
+  },
+
+  combos: {
+    title: "الوجبات المركّبة",
+    subtitle: "عروض ووجبات مركّبة من عدة أصناف (مثال: أي ساندويتش مع عصير). تُوسّع لمكوّناتها عند البيع.",
+    newCombo: "عرض جديد",
+    emptyTitle: "لا توجد عروض",
+    emptyBody: "أنشئ عرضًا مركّبًا من عدة أصناف.",
+    typeFixed: "ثابت",
+    typeChoice: "اختيار",
+    choiceRange: "اختيار ({min}-{max})",
+    optionSeparator: "، ",
+    noComponentsShort: "لا مكوّنات",
+    editComboAria: "تعديل العرض",
+    deleteComboAria: "حذف العرض",
+    deleteTitle: "حذف العرض",
+    deleteConfirm: "سيتم إخفاء العرض «{name}» (حذف ناعم).",
+    deletedTitle: "تم حذف العرض",
+    deleteFailed: "تعذّر الحذف",
+    valNameRequired: "اسم العرض مطلوب",
+    valPriceMin: "سعر العرض يجب أن يكون صفرًا أو أكثر",
+    valNeedGroup: "أضف مكوّنًا ثابتًا أو مجموعة اختيار واحدة على الأقل",
+    valGroupEmpty: "كل مجموعة يجب أن تحتوي عنصرًا واحدًا على الأقل: {name}",
+    valChoiceBounds: "حدود الاختيار غير صحيحة في: {name}",
+    valMaxExceeds: "الحد الأقصى للاختيار أكبر من عدد الخيارات في: {name}",
+    savedTitle: "تم حفظ العرض",
+    createdTitle: "تم إنشاء العرض",
+    editTitle: "تعديل عرض",
+    newTitle: "عرض جديد",
+    drawerEyebrow: "وجبة مركّبة",
+    create: "إنشاء",
+    comboName: "اسم العرض",
+    nameEn: "الاسم بالإنجليزية",
+    noBrandOption: "بدون علامة",
+    activeToggle: "عرض نشط",
+    components: "المكوّنات",
+    groupsHint: "أضف مكوّنًا ثابتًا (يُضاف دائمًا) أو مجموعة اختيار (يختار منها العميل).",
+    groupNameAria: "اسم المجموعة",
+    rangeFrom: "من",
+    rangeTo: "إلى",
+    minSelectAria: "أدنى اختيار",
+    maxSelectAria: "أقصى اختيار",
+    deleteGroupAria: "حذف المجموعة",
+    deleteItemAria: "حذف الصنف",
+    addItem: "إضافة صنف",
+  },
+
+  semiFinished: {
+    title: "المنتجات نصف المصنّعة",
+    subtitle: "الأصناف الوسيطة الناتجة عن الإنتاج وتُستهلك في وصفات الأصناف النهائية (عرض فقط).",
+    product: "المنتج",
+    consumers: "أصناف تستهلكه",
+    brandCol: "العلامة",
+    searchPlaceholder: "ابحث باسم المنتج…",
+    emptyTitle: "لا توجد منتجات نصف مصنّعة",
+    emptyBody: "أنشئ منتجًا نصف مصنّع من قسم المواد الخام (kind=semi).",
+  },
+
+  imageManager: {
+    title: "إدارة صور الأصناف",
+    subtitle: "استعرض ورشّح الأصناف حسب حالة الصورة، وارفع صورًا لعدة أصناف دفعة واحدة.",
+    hasImage: "له صورة",
+    noImage: "بلا صورة",
+    allReview: "كل حالات المراجعة",
+    imageCol: "الصورة",
+    imageStatusCol: "حالة الصورة",
+    lastUpdated: "آخر تحديث",
+    reviewStatus: "حالة المراجعة",
+    filterByImageAria: "تصفية حسب وجود الصورة",
+    filterByReviewAria: "تصفية بحالة المراجعة",
+    reviewInactive: "ميزة مراجعة الصور غير مفعّلة بعد على الخادم — لن تظهر نتائج بهذا الفلتر حاليًا.",
+    bulkUpload: "رفع صور جماعي",
+    uploadForSelected: "رفع صور لـ {count} محدد",
+    emptyBody: "غيّر عوامل التصفية أو اختر علامة تجارية أخرى.",
+    imageUpdated: "تم تحديث صورة «{name}»",
+    imageDeleted: "تم حذف صورة «{name}»",
+    uploadFailed: "تعذّر رفع الصورة",
+    deleteFailed: "تعذّر حذف الصورة",
+    replaceImageAria: "استبدال صورة {name}",
+    changeImageAria: "تغيير صورة {name}",
+    addImageAria: "إضافة صورة {name}",
+    deleteImageAria: "حذف صورة {name}",
+  },
+
+  bulkUpload: {
+    dialogDesc: "اسحب صور الأصناف — سيتم مطابقتها تلقائيًا برقم الصنف الظاهر في اسم الملف، وما لا يُطابَق يُخصَّص يدويًا أدناه.",
+    upload: "رفع",
+    uploadN: "رفع {count} صورة",
+    uploaderHint: "اسحب صور الأصناف هنا أو اضغط للاختيار (JPEG, PNG, WebP)",
+    noFiles: "لم تُختَر أي ملفات بعد.",
+    autoMatched: "مطابقة تلقائيًا ({count})",
+    needsManual: "بحاجة إلى تخصيص يدوي ({count})",
+    prepFailedCount: "تعذّر تجهيز {count} ملف",
+    notUploadedCount: "لم تُرفَع {count} ملف (فشل التجهيز قبل الإرسال)",
+    uploadedCount: "تم رفع {ok} من {total} صورة",
+    uploadFailed: "تعذّر رفع الصور",
+    rejectFile: "تعذّر قبول {name}",
+    assignItemAria: "تخصيص صنف لـ {name}",
+    removeFileAria: "إزالة {name}",
+  },
+
+  categoryTranslations: {
+    title: "ترجمة أسماء الأقسام",
+    subtitle: "أدخل الاسم الإنجليزي لكل قسم كما يظهر في القائمة والفواتير ثنائية اللغة. القائمة أدناه تُقرأ مباشرة من أقسام القائمة الحالية.",
+    enRequired: "الاسم الإنجليزي للقسم مطلوب",
+    savedTitle: "تم حفظ ترجمة قسم «{name}»",
+    saveFailed: "تعذّر حفظ الترجمة",
+    emptyTitle: "لا توجد أقسام بعد",
+    emptyBody: "أضف أصنافًا إلى القائمة أولًا لتظهر أقسامها هنا.",
+    colCategory: "القسم",
+    colItemCount: "عدد الأصناف",
+    colEnName: "الاسم الإنجليزي",
+    enNameAria: "الاسم الإنجليزي لقسم {name}",
+    needManagePermission: "تحتاج صلاحية إدارة القوائم لتعديل الترجمات.",
+  },
+
+  itemImage: {
+    label: "صورة الصنف",
+    previewAlt: "صورة الصنف",
+    pickAria: "اختيار صورة الصنف",
+    change: "تغيير الصورة",
+    add: "إضافة صورة",
+    remove: "إزالة الصورة",
+    hint: "تُصغَّر تلقائيًا إلى {size} بكسل (JPEG) قبل الحفظ، وتظهر في شاشة الكاشير بعد الحفظ.",
+  },
+
+  // Client-side image-prep failures thrown by imageCompression.ts, keyed by a
+  // stable code the module throws (never Arabic-as-key).
+  imagePrep: {
+    title: "تعذّر تجهيز الصورة",
+    generic: "تعذّر تجهيز الصورة",
+    readFailed: "تعذّر قراءة الملف",
+    notImage: "الملف ليس صورة صالحة",
+    noCanvas: "المتصفح لا يدعم معالجة الصور (canvas)",
+    tooLarge: "الصورة كبيرة جدًا حتى بعد الضغط — اختر صورة أبسط",
+  },
+
+  // Menu-write fallback when the legacy `{ success:false }` ack carries no error
+  // text (api.ts ensureOk); real server / ApiError codes go through errors.*.
+  errors: {
+    writeFailed: "تعذّر تنفيذ العملية",
+  },
+} as const;

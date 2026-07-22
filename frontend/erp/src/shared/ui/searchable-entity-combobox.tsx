@@ -22,6 +22,7 @@ import { createPortal } from "react-dom";
 import { useInfiniteQuery } from "@tanstack/react-query";
 import { Search, X, AlertTriangle, Loader2 } from "lucide-react";
 import { cn } from "@/shared/lib";
+import { useTx } from "./i18n";
 
 export interface EntityPage<T> {
   items: T[];
@@ -72,6 +73,7 @@ interface PopupPos {
 }
 
 export function SearchableEntityCombobox<T>(props: SearchableEntityComboboxProps<T>) {
+  const t = useTx();
   const {
     value,
     onChange,
@@ -81,9 +83,9 @@ export function SearchableEntityCombobox<T>(props: SearchableEntityComboboxProps
     getLabel,
     getSublabel,
     renderOption,
-    placeholder = "ابحث بالاسم أو الرمز…",
+    placeholder = t("sharedUi.entityCombobox.placeholder"),
     disabled = false,
-    emptyText = "لا نتائج مطابقة.",
+    emptyText = t("sharedUi.entityCombobox.empty"),
     autoSelectExact = false,
     id,
     ariaLabel,
@@ -259,7 +261,7 @@ export function SearchableEntityCombobox<T>(props: SearchableEntityComboboxProps
           <button
             type="button"
             className="grid h-7 w-7 shrink-0 place-items-center rounded-lg text-slate-400 transition hover:bg-white hover:text-rose-600 focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-teal-100"
-            aria-label="مسح المحدد"
+            aria-label={t("sharedUi.entityCombobox.clearSelected")}
             onClick={() => onChange(null)}
           >
             <X className="h-4 w-4" />
@@ -299,7 +301,7 @@ export function SearchableEntityCombobox<T>(props: SearchableEntityComboboxProps
             setOpen(true);
           }}
           onKeyDown={onKeyDown}
-          aria-label={ariaLabel || "بحث"}
+          aria-label={ariaLabel || t("sharedUi.entityCombobox.searchLabel")}
           role="combobox"
           aria-expanded={open}
           aria-controls={listId}
@@ -327,21 +329,21 @@ export function SearchableEntityCombobox<T>(props: SearchableEntityComboboxProps
             {isError ? (
               <div className="flex flex-col items-center gap-2 px-3 py-5 text-center">
                 <AlertTriangle className="h-5 w-5 text-amber-500" />
-                <span className="text-xs font-semibold text-slate-500">تعذّر تحميل النتائج.</span>
+                <span className="text-xs font-semibold text-slate-500">{t("sharedUi.entityCombobox.loadError")}</span>
                 <button
                   type="button"
                   onClick={() => query.refetch()}
                   className="rounded-lg bg-slate-100 px-3 py-1 text-xs font-bold text-slate-700 hover:bg-slate-200"
                 >
-                  إعادة المحاولة
+                  {t("common.retry")}
                 </button>
               </div>
             ) : isLoading ? (
               <div className="flex items-center justify-center gap-2 px-3 py-4 text-xs font-medium text-slate-400">
-                <Loader2 className="h-4 w-4 animate-spin" /> جارٍ البحث…
+                <Loader2 className="h-4 w-4 animate-spin" /> {t("sharedUi.entityCombobox.searching")}
               </div>
             ) : !enabled ? (
-              <div className="px-3 py-3 text-xs font-medium text-slate-400">اكتب للبحث…</div>
+              <div className="px-3 py-3 text-xs font-medium text-slate-400">{t("sharedUi.entityCombobox.typeToSearch")}</div>
             ) : rows.length === 0 ? (
               <div className="px-3 py-3 text-xs font-medium text-slate-400">{emptyText}</div>
             ) : (
@@ -383,7 +385,7 @@ export function SearchableEntityCombobox<T>(props: SearchableEntityComboboxProps
                 })}
                 {query.isFetchingNextPage && (
                   <div className="flex items-center justify-center gap-2 py-2 text-[11px] text-slate-400">
-                    <Loader2 className="h-3 w-3 animate-spin" /> تحميل المزيد…
+                    <Loader2 className="h-3 w-3 animate-spin" /> {t("sharedUi.entityCombobox.loadingMore")}
                   </div>
                 )}
               </div>

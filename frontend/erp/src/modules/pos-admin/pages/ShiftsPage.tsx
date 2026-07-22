@@ -2,6 +2,7 @@ import { useMemo, useState } from "react";
 import { Badge, StatusBadge } from "@/shared/ui";
 import { DataTable, type ColumnDef } from "@/shared/tables";
 import { formatCurrency, formatDate, formatDateTime } from "@/shared/lib";
+import { useT } from "@/i18n";
 import {
   cashierOptions,
   isShiftOpen,
@@ -10,13 +11,15 @@ import {
   shiftTheoretical,
   useShifts,
 } from "../lib/shifts";
+import { shiftStatusLabel } from "../lib/labels";
 import type { Shift, ShiftFilters as ShiftFiltersValue } from "../lib/types";
 import { ShiftFilters } from "../components/ShiftFilters";
 import { ShiftDetailDrawer } from "../components/ShiftDetailDrawer";
 
 function DiffBadge({ shift }: { shift: Shift }) {
+  const t = useT();
   const diff = shiftDiff(shift);
-  if (Math.abs(diff) < 0.01) return <Badge tone="success">متطابق</Badge>;
+  if (Math.abs(diff) < 0.01) return <Badge tone="success">{t("posAdmin.shift.balanced")}</Badge>;
   return (
     <Badge tone={diff < 0 ? "danger" : "warning"}>
       <span dir="ltr" className="tabular-nums">
@@ -28,6 +31,7 @@ function DiffBadge({ shift }: { shift: Shift }) {
 }
 
 export function ShiftsPage() {
+  const t = useT();
   const [filters, setFilters] = useState<ShiftFiltersValue>({});
   const [selected, setSelected] = useState<Shift | null>(null);
   const { query, rows } = useShifts(filters);
@@ -37,14 +41,14 @@ export function ShiftsPage() {
   const columns: ColumnDef<Shift>[] = [
     {
       id: "date",
-      header: "التاريخ",
+      header: t("posAdmin.col.date"),
       accessor: (r) => r.startTime ?? "",
       cell: (r) => formatDate(r.startTime),
       sortable: true,
     },
     {
       id: "cashier",
-      header: "الكاشير",
+      header: t("posAdmin.col.cashier"),
       accessor: (r) => r.displayName || r.username || "",
       sortable: true,
       cell: (r) => (
@@ -60,19 +64,19 @@ export function ShiftsPage() {
     },
     {
       id: "start",
-      header: "بدء الوردية",
+      header: t("posAdmin.col.start"),
       accessor: (r) => r.startTime ?? "",
       cell: (r) => formatDateTime(r.startTime),
     },
     {
       id: "end",
-      header: "الإغلاق",
+      header: t("posAdmin.col.close"),
       accessor: (r) => r.endTime ?? "",
-      cell: (r) => (r.endTime ? formatDateTime(r.endTime) : "مفتوحة"),
+      cell: (r) => (r.endTime ? formatDateTime(r.endTime) : t("posAdmin.shift.open")),
     },
     {
       id: "expected",
-      header: "المتوقّع",
+      header: t("posAdmin.col.expected"),
       accessor: (r) => shiftTheoretical(r),
       cell: (r) => formatCurrency(shiftTheoretical(r)),
       numeric: true,
@@ -80,7 +84,7 @@ export function ShiftsPage() {
     },
     {
       id: "actual",
-      header: "الفعلي",
+      header: t("posAdmin.col.actual"),
       accessor: (r) => shiftActual(r),
       cell: (r) => formatCurrency(shiftActual(r)),
       numeric: true,
@@ -88,7 +92,7 @@ export function ShiftsPage() {
     },
     {
       id: "diff",
-      header: "الفرق",
+      header: t("posAdmin.col.diff"),
       accessor: (r) => shiftDiff(r),
       cell: (r) => <DiffBadge shift={r} />,
       align: "center",
@@ -96,11 +100,11 @@ export function ShiftsPage() {
     },
     {
       id: "status",
-      header: "الحالة",
-      accessor: (r) => (isShiftOpen(r) ? "مفتوحة" : "مغلقة"),
+      header: t("common.status"),
+      accessor: (r) => shiftStatusLabel(t, isShiftOpen(r)),
       cell: (r) => (
         <StatusBadge tone={isShiftOpen(r) ? "warning" : "success"}>
-          {isShiftOpen(r) ? "مفتوحة" : "مغلقة"}
+          {shiftStatusLabel(t, isShiftOpen(r))}
         </StatusBadge>
       ),
     },
@@ -108,9 +112,7 @@ export function ShiftsPage() {
 
   return (
     <div className="space-y-4">
-      <p className="text-sm font-medium text-slate-500">
-        مراجعة ورديات الكاشير — المتوقّع مقابل الفعلي والفروقات. اضغط أي وردية لعرض توزيع طرق الدفع.
-      </p>
+      <p className="text-sm font-medium text-slate-500">{t("posAdmin.shifts.subtitle")}</p>
 
       <DataTable
         columns={columns}
@@ -121,8 +123,8 @@ export function ShiftsPage() {
         onRetry={() => query.refetch()}
         onRowClick={(r) => setSelected(r)}
         exportFilename="shifts"
-        emptyTitle="لا توجد ورديات"
-        emptyBody="لا توجد ورديات مطابقة لعوامل التصفية المحددة."
+        emptyTitle={t("posAdmin.shifts.emptyTitle")}
+        emptyBody={t("posAdmin.shifts.emptyBody")}
         initialSort={{ columnId: "date", dir: "desc" }}
         tableId="pos-admin-shifts"
         filterBar={<ShiftFilters value={filters} onChange={setFilters} cashiers={cashiers} />}

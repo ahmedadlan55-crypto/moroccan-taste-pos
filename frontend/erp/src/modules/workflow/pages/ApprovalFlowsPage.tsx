@@ -3,6 +3,7 @@ import {
   Activity,
   Building2,
   ChevronLeft,
+  ChevronRight,
   GitBranch,
   ListChecks,
   Route,
@@ -11,6 +12,7 @@ import {
 } from "lucide-react";
 import { Can } from "@/shared/permissions";
 import { Badge, Card, CardBody, Select } from "@/shared/ui";
+import { useTx } from "@/shared/ui/i18n";
 import { cn } from "@/shared/lib";
 import { PositionsTab } from "../builder/PositionsTab";
 import { TransactionTypesTab } from "../builder/TransactionTypesTab";
@@ -20,74 +22,43 @@ import { RoutesDslTab } from "../builder/RoutesDslTab";
 import { SlaTab } from "../builder/SlaTab";
 
 type SectionId = "types" | "steps" | "position-paths" | "routes" | "positions" | "sla";
+type Phase = "define" | "design" | "operate";
 
 interface BuilderSection {
   id: SectionId;
-  label: string;
-  description: string;
   icon: ComponentType<{ className?: string }>;
   component: ComponentType;
-  phase: "تعريف" | "تصميم" | "تشغيل";
+  phase: Phase;
 }
 
+// Section labels + descriptions live in the i18n "workflow.builder.section.*"
+// namespace, keyed by id; the phase code drives grouping + a translated heading.
 const SECTIONS: BuilderSection[] = [
-  {
-    id: "types",
-    label: "أنواع المعاملات",
-    description: "تعريف النماذج والرموز التي تبدأ منها مسارات الاعتماد.",
-    icon: ListChecks,
-    component: TransactionTypesTab,
-    phase: "تعريف",
-  },
-  {
-    id: "positions",
-    label: "المناصب والصلاحيات",
-    description: "تحديد المناصب الإدارية ومستوى كل منصب داخل سلسلة القرار.",
-    icon: UsersRound,
-    component: PositionsTab,
-    phase: "تعريف",
-  },
-  {
-    id: "steps",
-    label: "خطوات الاعتماد",
-    description: "بناء الخطوات القياسية لكل نوع مع صلاحيات القرار والإرجاع.",
-    icon: GitBranch,
-    component: StepsTab,
-    phase: "تصميم",
-  },
-  {
-    id: "position-paths",
-    label: "مسارات المناصب",
-    description: "مسار مختلف بحسب منصب منشئ المعاملة والفرع أو الإدارة.",
-    icon: Building2,
-    component: PositionPathsTab,
-    phase: "تصميم",
-  },
-  {
-    id: "routes",
-    label: "قواعد التوجيه",
-    description: "قواعد شرطية مرئية للحالات والمبالغ مع اختبار آمن قبل الاستخدام.",
-    icon: Route,
-    component: RoutesDslTab,
-    phase: "تصميم",
-  },
-  {
-    id: "sla",
-    label: "اتفاقيات الخدمة",
-    description: "مراقبة الاستحقاق والتأخير والتصعيد التشغيلي للمعاملات.",
-    icon: Activity,
-    component: SlaTab,
-    phase: "تشغيل",
-  },
+  { id: "types", icon: ListChecks, component: TransactionTypesTab, phase: "define" },
+  { id: "positions", icon: UsersRound, component: PositionsTab, phase: "define" },
+  { id: "steps", icon: GitBranch, component: StepsTab, phase: "design" },
+  { id: "position-paths", icon: Building2, component: PositionPathsTab, phase: "design" },
+  { id: "routes", icon: Route, component: RoutesDslTab, phase: "design" },
+  { id: "sla", icon: Activity, component: SlaTab, phase: "operate" },
 ];
 
+const PHASES: Phase[] = ["define", "design", "operate"];
+
 export function ApprovalFlowsPage() {
+  const t = useTx();
   const [sectionId, setSectionId] = useState<SectionId>("types");
   const section = useMemo(
     () => SECTIONS.find((item) => item.id === sectionId) ?? SECTIONS[0],
     [sectionId],
   );
   const ActiveSection = section.component;
+  const sectionLabel = (id: SectionId) => t(`workflow.builder.section.${id}.label`);
+  const sectionDesc = (id: SectionId) => t(`workflow.builder.section.${id}.desc`);
+  // The "drill into" chevron follows the reading direction toward the section.
+  // Direction is read from the document (maintained by the i18n provider) so this
+  // page still renders under provider-less unit tests.
+  const rtl = typeof document !== "undefined" && document.documentElement.dir === "rtl";
+  const IntoIcon = rtl ? ChevronLeft : ChevronRight;
 
   return (
     <Can cap="workflow.builder.manage" showDenied>
@@ -98,38 +69,41 @@ export function ApprovalFlowsPage() {
               <ShieldCheck className="h-5 w-5" aria-hidden="true" />
             </span>
             <div>
-              <h2 className="text-lg font-extrabold text-slate-950">استوديو مسارات الاعتماد</h2>
+              <h2 className="text-lg font-extrabold text-slate-950">{t("workflow.builder.header")}</h2>
               <p className="mt-1 max-w-2xl text-sm font-medium leading-6 text-slate-500">
-                عرّف الهيكل أولًا، ثم صمّم المسار واختبر قواعده، وأخيرًا راقب الالتزام بمواعيد الخدمة.
+                {t("workflow.builder.headerSub")}
               </p>
             </div>
           </div>
           <div className="flex flex-wrap items-center gap-2">
-            <Badge tone="success">متصل بالخادم</Badge>
-            <Badge tone="info">حفظ كل قسم مستقل</Badge>
+            <Badge tone="success">{t("workflow.builder.badgeConnected")}</Badge>
+            <Badge tone="info">{t("workflow.builder.badgeIndependent")}</Badge>
           </div>
         </section>
 
         <div className="lg:hidden">
           <label htmlFor="workflow-builder-section" className="mb-1 block text-xs font-bold text-slate-600">
-            قسم إعداد المسار
+            {t("workflow.builder.mobileSectionLabel")}
           </label>
           <Select
             id="workflow-builder-section"
             value={sectionId}
             onChange={(event) => setSectionId(event.target.value as SectionId)}
-            options={SECTIONS.map((item) => ({ value: item.id, label: `${item.phase} — ${item.label}` }))}
+            options={SECTIONS.map((item) => ({
+              value: item.id,
+              label: `${t(`workflow.builder.phase.${item.phase}`)} — ${sectionLabel(item.id)}`,
+            }))}
           />
         </div>
 
         <div className="grid min-w-0 gap-5 lg:grid-cols-[17rem_minmax(0,1fr)]">
-          <aside className="hidden lg:block" aria-label="مراحل إعداد مسار الاعتماد">
+          <aside className="hidden lg:block" aria-label={t("workflow.builder.asideAria")}>
             <Card className="sticky top-5 overflow-hidden">
               <CardBody className="p-2">
-                {(["تعريف", "تصميم", "تشغيل"] as const).map((phase) => (
+                {PHASES.map((phase) => (
                   <div key={phase} className="mb-3 last:mb-0">
                     <div className="px-3 pb-1 pt-2 text-[10px] font-extrabold uppercase tracking-wide text-slate-400">
-                      {phase}
+                      {t(`workflow.builder.phase.${phase}`)}
                     </div>
                     <div className="space-y-1">
                       {SECTIONS.filter((item) => item.phase === phase).map((item) => {
@@ -149,8 +123,8 @@ export function ApprovalFlowsPage() {
                             )}
                           >
                             <Icon className={cn("h-4 w-4 shrink-0", active ? "text-teal-600" : "text-slate-400")} aria-hidden="true" />
-                            <span className="min-w-0 flex-1 text-sm font-bold">{item.label}</span>
-                            <ChevronLeft className={cn("h-4 w-4 shrink-0", active ? "text-teal-500" : "text-slate-300")} aria-hidden="true" />
+                            <span className="min-w-0 flex-1 text-sm font-bold">{sectionLabel(item.id)}</span>
+                            <IntoIcon className={cn("h-4 w-4 shrink-0", active ? "text-teal-500" : "text-slate-300")} aria-hidden="true" />
                           </button>
                         );
                       })}
@@ -166,8 +140,8 @@ export function ApprovalFlowsPage() {
               <div className="flex items-start gap-3">
                 <section.icon className="mt-0.5 h-5 w-5 shrink-0 text-teal-600" aria-hidden="true" />
                 <div>
-                  <h3 className="text-base font-extrabold text-slate-900">{section.label}</h3>
-                  <p className="mt-1 text-xs font-medium leading-5 text-slate-500">{section.description}</p>
+                  <h3 className="text-base font-extrabold text-slate-900">{sectionLabel(section.id)}</h3>
+                  <p className="mt-1 text-xs font-medium leading-5 text-slate-500">{sectionDesc(section.id)}</p>
                 </div>
               </div>
             </div>

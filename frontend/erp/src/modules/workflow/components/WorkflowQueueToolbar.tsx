@@ -1,5 +1,6 @@
 import { AlertTriangle, CheckCircle2, EyeOff, Search, SlidersHorizontal } from "lucide-react";
 import { Button, Input, Select } from "@/shared/ui";
+import { useTx } from "@/shared/ui/i18n";
 import { cn } from "@/shared/lib";
 
 export type QueueSegment = "all" | "unread" | "overdue" | "active";
@@ -11,15 +12,16 @@ export interface QueueFilterState {
   importance: string;
 }
 
+// Segment metadata; the visible label resolves via t("workflow.toolbar.seg*").
 const SEGMENTS: Array<{
   value: QueueSegment;
-  label: string;
+  labelKey: string;
   icon: typeof CheckCircle2;
 }> = [
-  { value: "all", label: "الكل", icon: SlidersHorizontal },
-  { value: "active", label: "تحتاج متابعة", icon: CheckCircle2 },
-  { value: "unread", label: "غير مقروءة", icon: EyeOff },
-  { value: "overdue", label: "متأخرة", icon: AlertTriangle },
+  { value: "all", labelKey: "workflow.toolbar.segAll", icon: SlidersHorizontal },
+  { value: "active", labelKey: "workflow.toolbar.segActive", icon: CheckCircle2 },
+  { value: "unread", labelKey: "workflow.toolbar.segUnread", icon: EyeOff },
+  { value: "overdue", labelKey: "workflow.toolbar.segOverdue", icon: AlertTriangle },
 ];
 
 export function WorkflowQueueToolbar({
@@ -33,53 +35,54 @@ export function WorkflowQueueToolbar({
   counts: Record<QueueSegment, number>;
   searchPlaceholder?: string;
 }) {
+  const t = useTx();
   const filtered = value.status || value.importance || value.segment !== "all";
 
   return (
-    <section className="surface overflow-hidden" aria-label="تصفية المعاملات">
+    <section className="surface overflow-hidden" aria-label={t("workflow.toolbar.filterAria")}>
       <div className="grid gap-3 border-b border-slate-100 p-4 lg:grid-cols-[minmax(18rem,1fr)_12rem_12rem_auto]">
         <Input
           value={value.search}
           onChange={(event) => onChange({ ...value, search: event.target.value })}
-          placeholder={searchPlaceholder ?? "ابحث بالرقم أو الموضوع أو الجهة…"}
-          aria-label="البحث في المعاملات"
+          placeholder={searchPlaceholder ?? t("workflow.toolbar.searchPlaceholder")}
+          aria-label={t("workflow.toolbar.searchAria")}
           leading={<Search className="h-4 w-4" aria-hidden="true" />}
         />
         <Select
           value={value.status}
-          aria-label="تصفية حسب الحالة"
+          aria-label={t("workflow.toolbar.statusAria")}
           onChange={(event) => onChange({ ...value, status: event.target.value })}
         >
-          <option value="">كل الحالات</option>
-          <option value="pending">قيد الانتظار</option>
-          <option value="in_progress">قيد التنفيذ</option>
-          <option value="approved">معتمدة</option>
-          <option value="returned">معادة للتعديل</option>
-          <option value="rejected">مرفوضة</option>
-          <option value="closed">مغلقة</option>
+          <option value="">{t("workflow.toolbar.statusAll")}</option>
+          <option value="pending">{t("workflow.status.pending")}</option>
+          <option value="in_progress">{t("workflow.status.in_progress")}</option>
+          <option value="approved">{t("workflow.status.approved")}</option>
+          <option value="returned">{t("workflow.status.returned")}</option>
+          <option value="rejected">{t("workflow.status.rejected")}</option>
+          <option value="closed">{t("workflow.status.closed")}</option>
         </Select>
         <Select
           value={value.importance}
-          aria-label="تصفية حسب الأهمية"
+          aria-label={t("workflow.toolbar.importanceAria")}
           onChange={(event) => onChange({ ...value, importance: event.target.value })}
         >
-          <option value="">كل الأولويات</option>
-          <option value="critical">حرجة</option>
-          <option value="high">عالية</option>
-          <option value="medium">متوسطة</option>
-          <option value="low">منخفضة</option>
+          <option value="">{t("workflow.toolbar.importanceAll")}</option>
+          <option value="critical">{t("workflow.importance.critical")}</option>
+          <option value="high">{t("workflow.importance.high")}</option>
+          <option value="medium">{t("workflow.importance.medium")}</option>
+          <option value="low">{t("workflow.importance.low")}</option>
         </Select>
         <Button
           variant="ghost"
           disabled={!filtered && !value.search}
           onClick={() => onChange({ search: "", segment: "all", status: "", importance: "" })}
         >
-          مسح الفلاتر
+          {t("workflow.toolbar.clearFilters")}
         </Button>
       </div>
 
-      <div className="flex gap-2 overflow-x-auto p-3 scrollbar-thin" role="group" aria-label="نطاق المعاملات">
-        {SEGMENTS.map(({ value: segment, label, icon: Icon }) => {
+      <div className="flex gap-2 overflow-x-auto p-3 scrollbar-thin" role="group" aria-label={t("workflow.toolbar.segmentAria")}>
+        {SEGMENTS.map(({ value: segment, labelKey, icon: Icon }) => {
           const selected = value.segment === segment;
           return (
             <button
@@ -95,7 +98,7 @@ export function WorkflowQueueToolbar({
               )}
             >
               <Icon className="h-4 w-4" aria-hidden="true" />
-              {label}
+              {t(labelKey)}
               <span className="rounded-full bg-white/80 px-1.5 py-0.5 text-xs tabular-nums">{counts[segment]}</span>
             </button>
           );

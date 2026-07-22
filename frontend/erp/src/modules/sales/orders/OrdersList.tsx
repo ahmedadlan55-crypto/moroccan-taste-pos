@@ -2,26 +2,28 @@ import { useCallback, useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Plus } from "lucide-react";
 import { Button, Badge, PageHeader } from "@/shared/ui";
+import { useTx } from "@/shared/ui/i18n";
 import { DataTable, type ColumnDef } from "@/shared/tables";
 import { Can } from "@/shared/permissions";
 import { o2cApi, qk, SalesStatus, Money, DateCell, useDocNav, type SalesOrder } from "@/modules/sales/lib";
 import { OrderForm } from "./OrderForm";
 
-const STATUS_OPTIONS: { value: string; label: string }[] = [
-  { value: "", label: "كل الحالات" },
-  { value: "draft", label: "مسودة" },
-  { value: "confirmed", label: "مؤكَّد" },
-  { value: "fulfilled", label: "مُنفَّذ" },
-  { value: "invoiced", label: "مُفوتَر" },
-  { value: "cancelled", label: "ملغى" },
-];
-
 interface TableState { page: number; pageSize: number; search: string }
 
 export function OrdersList() {
+  const t = useTx();
   const { isNew, openDoc, openNew, closeNew } = useDocNav();
   const [status, setStatus] = useState("");
   const [ts, setTs] = useState<TableState>({ page: 1, pageSize: 25, search: "" });
+
+  const statusOptions = useMemo(() => [
+    { value: "", label: t("sales.filters.allStatuses") },
+    { value: "draft", label: t("sales.orders.filter.draft") },
+    { value: "confirmed", label: t("sales.orders.filter.confirmed") },
+    { value: "fulfilled", label: t("sales.orders.filter.fulfilled") },
+    { value: "invoiced", label: t("sales.orders.filter.invoiced") },
+    { value: "cancelled", label: t("sales.orders.filter.cancelled") },
+  ], [t]);
 
   const params = useMemo(
     () => ({ q: ts.search, status, page: ts.page, pageSize: ts.pageSize }),
@@ -38,21 +40,21 @@ export function OrdersList() {
   }, []);
 
   const columns = useMemo<ColumnDef<SalesOrder>[]>(() => [
-    { id: "order_number", header: "رقم الأمر", accessor: (o) => o.order_number, cell: (o) => <span className="font-bold text-teal-700">{o.order_number}</span> },
-    { id: "customer", header: "العميل", accessor: (o) => o.customer_name ?? "—" },
-    { id: "date", header: "التاريخ", cell: (o) => <DateCell value={o.order_date} /> },
-    { id: "total", header: "الإجمالي", align: "end", cell: (o) => <Money value={o.total_amount} /> },
-    { id: "credit", header: "آجل؟", cell: (o) => (o.is_credit_sale ? <Badge tone="warning">آجل</Badge> : <span className="text-slate-400">نقدي</span>) },
-    { id: "status", header: "الحالة", cell: (o) => <SalesStatus status={o.status} /> },
-  ], []);
+    { id: "order_number", header: t("sales.orders.col.number"), accessor: (o) => o.order_number, cell: (o) => <span className="font-bold text-teal-700">{o.order_number}</span> },
+    { id: "customer", header: t("sales.col.customer"), accessor: (o) => o.customer_name ?? "—" },
+    { id: "date", header: t("sales.col.date"), cell: (o) => <DateCell value={o.order_date} /> },
+    { id: "total", header: t("sales.col.total"), align: "end", cell: (o) => <Money value={o.total_amount} /> },
+    { id: "credit", header: t("sales.orders.col.credit"), cell: (o) => (o.is_credit_sale ? <Badge tone="warning">{t("sales.orders.credit")}</Badge> : <span className="text-slate-400">{t("sales.orders.cash")}</span>) },
+    { id: "status", header: t("common.status"), cell: (o) => <SalesStatus status={o.status} /> },
+  ], [t]);
 
   return (
     <div>
       <PageHeader
-        eyebrow="أوامر البيع"
-        title="أوامر البيع"
-        subtitle="مسودة ← تأكيد ← تنفيذ ← تفويتر."
-        action={<Can cap="sales_orders.create"><Button onClick={openNew}><Plus className="h-4 w-4" /> أمر بيع</Button></Can>}
+        eyebrow={t("sales.orders.eyebrow")}
+        title={t("sales.orders.title")}
+        subtitle={t("sales.orders.subtitle")}
+        action={<Can cap="sales_orders.create"><Button onClick={openNew}><Plus className="h-4 w-4" /> {t("sales.orders.newBtn")}</Button></Can>}
       />
       <DataTable<SalesOrder>
         mode="server"
@@ -67,16 +69,16 @@ export function OrdersList() {
         onStateChange={onStateChange}
         initialPageSize={25}
         searchable
-        searchPlaceholder="ابحث برقم الأمر أو العميل…"
+        searchPlaceholder={t("sales.orders.searchPlaceholder")}
         columnMenu={false}
-        emptyTitle="لا توجد أوامر بيع"
-        emptyBody="أنشئ أمر بيع جديد."
+        emptyTitle={t("sales.orders.emptyTitle")}
+        emptyBody={t("sales.orders.emptyBody")}
         mobileTitle={(o) => o.order_number}
         filterBar={
           <label className="flex items-center">
-            <span className="sr-only">تصفية بالحالة</span>
-            <select className="field h-10" value={status} onChange={(e) => setStatus(e.target.value)} aria-label="تصفية بالحالة">
-              {STATUS_OPTIONS.map((s) => <option key={s.value} value={s.value}>{s.label}</option>)}
+            <span className="sr-only">{t("sales.filters.byStatus")}</span>
+            <select className="field h-10" value={status} onChange={(e) => setStatus(e.target.value)} aria-label={t("sales.filters.byStatus")}>
+              {statusOptions.map((s) => <option key={s.value} value={s.value}>{s.label}</option>)}
             </select>
           </label>
         }

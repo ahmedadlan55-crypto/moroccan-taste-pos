@@ -2,11 +2,13 @@ import { NavLink } from "react-router-dom";
 import { NAV_ITEMS } from "@/app/navigation/manifest";
 import { usePermissions } from "@/app/providers";
 import { useServerFlags } from "@/app/server-flags";
+import { useT } from "@/i18n";
 import { getIcon } from "./icons";
 import { cn } from "@/shared/lib";
 
-// Bottom RTL nav for phones — the first 5 items the user is permitted to see.
+// Bottom nav for phones — the first 5 items the user is permitted to see.
 export function MobileNav() {
+  const t = useT();
   const { can } = usePermissions();
   const flags = useServerFlags();
   const items = NAV_ITEMS.filter(
@@ -16,7 +18,7 @@ export function MobileNav() {
   return (
     <nav
       className="no-print fixed inset-x-3 bottom-[max(0.75rem,env(safe-area-inset-bottom))] z-40 mx-auto flex max-w-lg items-center justify-around rounded-2xl border border-slate-200 bg-white/95 p-1.5 shadow-lift backdrop-blur lg:hidden"
-      aria-label="تنقل سريع"
+      aria-label={t("shell.mobileNav.ariaLabel")}
     >
       {items.map((item) => {
         const Icon = getIcon(item.icon);
@@ -33,7 +35,7 @@ export function MobileNav() {
             }
           >
             <Icon className="h-4 w-4" />
-            <span className="max-w-[3.5rem] truncate">{item.label}</span>
+            <span className="max-w-[3.5rem] truncate">{t(item.label)}</span>
           </NavLink>
         );
       })}

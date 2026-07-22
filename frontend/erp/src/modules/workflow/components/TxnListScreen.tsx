@@ -6,6 +6,7 @@ import { Link } from "react-router-dom";
 import { Badge, EmptyState, ErrorState, LoadingState, buttonVariants } from "@/shared/ui";
 import { DataTable } from "@/shared/tables";
 import { useAuth, useCan } from "@/app/providers";
+import { useTx } from "@/shared/ui/i18n";
 import { cn } from "@/shared/lib";
 import type { TxnListItem } from "../lib/types";
 import { buildTxnColumns, type PeopleColumn } from "./txn-columns";
@@ -49,6 +50,7 @@ export function TxnListScreen({
   searchPlaceholder,
   canAct = false,
 }: Props) {
+  const t = useTx();
   const { user } = useAuth();
   const username = user?.username ?? "";
   const canCreate = useCan("txn.create");
@@ -68,7 +70,7 @@ export function TxnListScreen({
     importance: "",
   });
 
-  const columns = useMemo(() => buildTxnColumns(peopleColumn), [peopleColumn]);
+  const columns = useMemo(() => buildTxnColumns(peopleColumn, t), [peopleColumn, t]);
   const rows = query.data ?? [];
   const counts = useMemo<Record<QueueSegment, number>>(() => ({
     all: rows.length,
@@ -112,22 +114,22 @@ export function TxnListScreen({
         description={description}
         action={
           <div className="flex flex-wrap items-center justify-end gap-2">
-            {rows.length > 0 && <Badge tone="teal">{`${rows.length} معاملة`}</Badge>}
+            {rows.length > 0 && <Badge tone="teal">{t("workflow.list.countBadge", { count: rows.length })}</Badge>}
             {canCreate && (
               <Link to="/workflow/new" className={cn(buttonVariants({ variant: "primary", size: "sm" }))}>
-                <Plus className="h-4 w-4" aria-hidden="true" /> معاملة جديدة
+                <Plus className="h-4 w-4" aria-hidden="true" /> {t("workflow.list.newTxn")}
               </Link>
             )}
           </div>
         }
       />
 
-      <div className="grid grid-cols-2 gap-3 xl:grid-cols-4" aria-label="مؤشرات صندوق المعاملات">
+      <div className="grid grid-cols-2 gap-3 xl:grid-cols-4" aria-label={t("workflow.list.kpiAria")}>
         {[
-          { label: "إجمالي المعاملات", value: counts.all, Icon: Inbox, tone: "text-slate-700 bg-slate-50" },
-          { label: "تحتاج متابعة", value: counts.active, Icon: CheckCircle2, tone: "text-sky-700 bg-sky-50" },
-          { label: "غير مقروءة", value: counts.unread, Icon: EyeOff, tone: "text-teal-700 bg-teal-50" },
-          { label: "متأخرة عن SLA", value: counts.overdue, Icon: AlertTriangle, tone: "text-rose-700 bg-rose-50" },
+          { label: t("workflow.list.kpiTotal"), value: counts.all, Icon: Inbox, tone: "text-slate-700 bg-slate-50" },
+          { label: t("workflow.list.kpiActive"), value: counts.active, Icon: CheckCircle2, tone: "text-sky-700 bg-sky-50" },
+          { label: t("workflow.list.kpiUnread"), value: counts.unread, Icon: EyeOff, tone: "text-teal-700 bg-teal-50" },
+          { label: t("workflow.list.kpiOverdue"), value: counts.overdue, Icon: AlertTriangle, tone: "text-rose-700 bg-rose-50" },
         ].map(({ label, value, Icon: KpiIcon, tone }) => (
           <div key={label} className="surface flex min-w-0 items-center gap-3 p-4">
             <span className={`grid h-10 w-10 shrink-0 place-items-center rounded-xl ${tone}`}>
@@ -172,8 +174,8 @@ export function TxnListScreen({
           <ErrorState error={query.error} onRetry={() => query.refetch()} />
         ) : filteredRows.length === 0 ? (
           <EmptyState
-            title={filters.search || filters.segment !== "all" || filters.status || filters.importance ? "لا توجد نتائج مطابقة" : emptyTitle}
-            body={filters.search || filters.segment !== "all" || filters.status || filters.importance ? "غيّر كلمات البحث أو امسح بعض الفلاتر." : emptyBody}
+            title={filters.search || filters.segment !== "all" || filters.status || filters.importance ? t("workflow.list.noMatchTitle") : emptyTitle}
+            body={filters.search || filters.segment !== "all" || filters.status || filters.importance ? t("workflow.list.noMatchBody") : emptyBody}
           />
         ) : (
           <ul className="space-y-3">

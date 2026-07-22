@@ -9,6 +9,8 @@
 // a cycle has never been fatal there. Rendering real nesting IS a recursive walk.
 // Unguarded, one bad row would hang the browser.
 
+import type { TFunction } from "@/i18n";
+
 export interface OrgPermissions {
   create: boolean; approve: boolean; reject: boolean;
   return: boolean; forward: boolean; close: boolean;
@@ -48,16 +50,19 @@ export interface OrgTree {
   cycleIds: string[];
 }
 
-export const PERMISSION_LABELS: Record<keyof OrgPermissions, string> = {
-  create: "إنشاء",
-  approve: "اعتماد",
-  reject: "رفض",
-  return: "إرجاع",
-  forward: "تحويل",
-  close: "إقفال",
-};
+export const PERMISSION_KEYS: Array<keyof OrgPermissions> = [
+  "create",
+  "approve",
+  "reject",
+  "return",
+  "forward",
+  "close",
+];
 
-export const PERMISSION_KEYS = Object.keys(PERMISSION_LABELS) as Array<keyof OrgPermissions>;
+/** Localized label for an org-tree transaction permission (people.orgTree.perm.*). */
+export function permissionLabel(k: keyof OrgPermissions, t: TFunction): string {
+  return t(`people.orgTree.perm.${k}`);
+}
 
 /**
  * Find every id that sits on a manager cycle.

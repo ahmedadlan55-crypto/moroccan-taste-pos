@@ -15,7 +15,42 @@
  * PURE MOVE (2026-07-20): this is a verbatim relocation of the functions that
  * used to live at the top of ItemImageEditor.tsx — no behavior change. See
  * ItemImageEditor.tsx, which re-exports these for backward compatibility.
+ *
+ * i18n (bilingual-i18n-images): this module is not a React component, so it
+ * cannot call a hook. It throws an ImagePrepError carrying a STABLE code
+ * instead of a hardcoded Arabic message; the React call sites localize it via
+ * imagePrepMessage(e, t) against the menuRest.imagePrep.* namespace. The
+ * error's `.message` is the code (English, stable) — a safe non-Arabic value
+ * if anything renders it raw.
  */
+import type { TFunction } from "@/i18n";
+
+/** Stable image-prep failure codes → menuRest.imagePrep.<code>. */
+export type ImagePrepCode = "readFailed" | "notImage" | "noCanvas" | "tooLarge";
+const IMAGE_PREP_CODES: readonly ImagePrepCode[] = ["readFailed", "notImage", "noCanvas", "tooLarge"];
+
+/** A client-side image-preparation failure, tagged with a stable code so the
+ *  React boundary can translate it (see imagePrepMessage). */
+export class ImagePrepError extends Error {
+  readonly code: ImagePrepCode;
+  constructor(code: ImagePrepCode) {
+    super(code);
+    this.name = "ImagePrepError";
+    this.code = code;
+  }
+}
+
+/** Localize an image-prep failure to the active language. Any error that isn't
+ *  a recognized ImagePrepError falls back to the generic prep message. */
+export function imagePrepMessage(e: unknown, t: TFunction): string {
+  const code =
+    e instanceof ImagePrepError
+      ? e.code
+      : e && typeof e === "object" && "code" in e && IMAGE_PREP_CODES.includes((e as { code: ImagePrepCode }).code)
+        ? (e as { code: ImagePrepCode }).code
+        : null;
+  return code ? t(`menuRest.imagePrep.${code}`) : t("menuRest.imagePrep.generic");
+}
 
 export const IMAGE_MAX_SIDE = 512;
 export const IMAGE_JPEG_QUALITY = 0.8;
@@ -44,7 +79,7 @@ function readAsDataURL(file: File): Promise<string> {
   return new Promise((resolve, reject) => {
     const r = new FileReader();
     r.onload = () => resolve(String(r.result));
-    r.onerror = () => reject(new Error("تعذّر قراءة الملف"));
+    r.onerror = () => reject(new ImagePrepError("readFailed"));
     r.readAsDataURL(file);
   });
 }
@@ -53,7 +88,7 @@ function loadImageElement(src: string): Promise<HTMLImageElement> {
   return new Promise((resolve, reject) => {
     const img = new Image();
     img.onload = () => resolve(img);
-    img.onerror = () => reject(new Error("الملف ليس صورة صالحة"));
+    img.onerror = () => reject(new ImagePrepError("notImage"));
     img.src = src;
   });
 }
@@ -67,7 +102,7 @@ export async function downscaleImageFile(file: File): Promise<string> {
   canvas.width = width;
   canvas.height = height;
   const ctx = canvas.getContext("2d");
-  if (!ctx) throw new Error("المتصفح لا يدعم معالجة الصور (canvas)");
+  if (!ctx) throw new ImagePrepError("noCanvas");
   // Matte color comes from the design-token source (--mt-surface), not a
   // hardcoded literal here — see frontend/shared/design-tokens.css.
   const matte = getComputedStyle(document.documentElement).getPropertyValue("--mt-surface").trim();
@@ -76,7 +111,7 @@ export async function downscaleImageFile(file: File): Promise<string> {
   ctx.drawImage(img, 0, 0, width, height);
   const out = canvas.toDataURL("image/jpeg", IMAGE_JPEG_QUALITY);
   if (dataUrlDecodedBytes(out) > IMAGE_MAX_DECODED_BYTES) {
-    throw new Error("الصورة كبيرة جدًا حتى بعد الضغط — اختر صورة أبسط");
+    throw new ImagePrepError("tooLarge");
   }
   return out;
 }

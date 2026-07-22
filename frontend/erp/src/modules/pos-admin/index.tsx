@@ -8,6 +8,7 @@ import { type ComponentType } from "react";
 import { useLocation } from "react-router-dom";
 import { PauseCircle, RefreshCw } from "lucide-react";
 import { normalizeRoutePath } from "@/shared/lib";
+import { useT } from "@/i18n";
 import { NotFound } from "@/app/shell/NotFound";
 import { RegisterPage } from "./pages/RegisterPage";
 import { ShiftsPage } from "./pages/ShiftsPage";
@@ -15,21 +16,23 @@ import { ReportsPage } from "./pages/ReportsPage";
 import { DeferredNoticePage } from "./pages/DeferredNoticePage";
 
 function ParkedOrdersPage() {
+  const t = useT();
   return (
     <DeferredNoticePage
       icon={PauseCircle}
-      title="الطلبات المعلقة تُدار من الكاشير"
-      body="الطلبات المعلقة (المحفوظة مؤقتًا) حالة تشغيلية تعيش داخل تطبيق نقطة البيع ولا يوجد لها مصدر بيانات في الواجهة الخلفية — استكملها من شاشة الكاشير."
+      title={t("posAdmin.deferred.parkedTitle")}
+      body={t("posAdmin.deferred.parkedBody")}
     />
   );
 }
 
 function DeviceSyncPage() {
+  const t = useT();
   return (
     <DeferredNoticePage
       icon={RefreshCw}
-      title="مزامنة الأجهزة تُدار من الكاشير"
-      body="مزامنة أجهزة نقاط البيع تُنفَّذ داخل تطبيق الكاشير على كل جهاز، ولا تملك الواجهة الخلفية نقطة نهاية للتحكم بها — افتح تطبيق نقطة البيع للمزامنة."
+      title={t("posAdmin.deferred.deviceTitle")}
+      body={t("posAdmin.deferred.deviceBody")}
     />
   );
 }

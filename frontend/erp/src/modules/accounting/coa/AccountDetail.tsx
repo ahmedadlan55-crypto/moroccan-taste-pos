@@ -20,8 +20,9 @@ import {
 } from "@/shared/ui";
 import { useCan } from "@/app/providers";
 import { formatDate } from "@/shared/lib";
+import { useT, type TFunction } from "@/i18n";
 import {
-  GL_TYPE_LABEL,
+  glTypeLabel,
   GL_TYPE_NATURE,
   useAccountLedger,
   useDeleteGlAccount,
@@ -38,14 +39,14 @@ import {
 
 const MANAGE_CAP = "accounting.accounts.manage" as const;
 
-function mapError(raw: string | undefined): string {
+function mapError(t: TFunction, raw: string | undefined): string {
   const s = raw ?? "";
-  if (/has-children|children/i.test(s)) return "لا يمكن حذف حساب له حسابات فرعية.";
+  if (/has-children|children/i.test(s)) return t("accounting.coa.detail.errors.hasChildren");
   if (/has-(entries|movements|journals)|movement/i.test(s))
-    return "لا يمكن حذف حساب له حركات مسجّلة.";
-  if (/not-found/i.test(s)) return "الحساب غير موجود.";
-  if (/protected|reserved|system/i.test(s)) return "لا يمكن حذف حساب رئيسي في النظام.";
-  return s || "تعذّرت العملية. أعد المحاولة.";
+    return t("accounting.coa.detail.errors.hasMovements");
+  if (/not-found/i.test(s)) return t("accounting.coa.detail.errors.notFound");
+  if (/protected|reserved|system/i.test(s)) return t("accounting.coa.detail.errors.protected");
+  return s || t("accounting.coa.detail.errors.generic");
 }
 
 export interface AccountDetailProps {
@@ -56,6 +57,7 @@ export interface AccountDetailProps {
 }
 
 export function AccountDetail({ account, accounts, onEdit, onAddChild }: AccountDetailProps) {
+  const t = useT();
   const canManage = useCan(MANAGE_CAP);
   const { toast } = useToast();
   const setActive = useSetAccountActive();
@@ -100,12 +102,12 @@ export function AccountDetail({ account, accounts, onEdit, onAddChild }: Account
       {
         onSuccess: (res) => {
           if (res && res.success === false) {
-            toast({ tone: "error", title: mapError(res.error) });
+            toast({ tone: "error", title: mapError(t, res.error) });
             return;
           }
-          toast({ tone: "success", title: next ? "تم تفعيل الحساب." : "تم تعطيل الحساب." });
+          toast({ tone: "success", title: next ? t("accounting.coa.detail.activated") : t("accounting.coa.detail.deactivated") });
         },
-        onError: (e) => toast({ tone: "error", title: mapError(e instanceof Error ? e.message : "") }),
+        onError: (e) => toast({ tone: "error", title: mapError(t, e instanceof Error ? e.message : "") }),
       },
     );
   }
@@ -115,13 +117,13 @@ export function AccountDetail({ account, accounts, onEdit, onAddChild }: Account
     del.mutate(account.id, {
       onSuccess: (res) => {
         if (res && res.success === false) {
-          setDeleteError(mapError(res.error));
+          setDeleteError(mapError(t, res.error));
           return;
         }
         setConfirmOpen(false);
-        toast({ tone: "success", title: "تم حذف الحساب." });
+        toast({ tone: "success", title: t("accounting.coa.detail.deleted") });
       },
-      onError: (e) => setDeleteError(mapError(e instanceof Error ? e.message : "")),
+      onError: (e) => setDeleteError(mapError(t, e instanceof Error ? e.message : "")),
     });
   }
 
@@ -138,10 +140,10 @@ export function AccountDetail({ account, accounts, onEdit, onAddChild }: Account
               >
                 {account.code}
               </code>
-              <Badge tone="teal">{GL_TYPE_LABEL[account.type]}</Badge>
-              <Badge tone="neutral">{nature === "debit" ? "طبيعته مدين" : "طبيعته دائن"}</Badge>
-              {folder && <Badge tone="info">مجموعة</Badge>}
-              {!account.isActive && <Badge tone="neutral">متوقّف</Badge>}
+              <Badge tone="teal">{glTypeLabel(t, account.type)}</Badge>
+              <Badge tone="neutral">{nature === "debit" ? t("accounting.coa.detail.natureDebit") : t("accounting.coa.detail.natureCredit")}</Badge>
+              {folder && <Badge tone="info">{t("accounting.coa.folder")}</Badge>}
+              {!account.isActive && <Badge tone="neutral">{t("accounting.common.suspended")}</Badge>}
             </div>
             <h2 className="truncate text-xl font-extrabold text-slate-900">{account.nameAr}</h2>
             {account.nameEn && (
@@ -152,7 +154,7 @@ export function AccountDetail({ account, accounts, onEdit, onAddChild }: Account
           </div>
           <div className="text-left">
             <div className="text-[11px] font-bold text-slate-400">
-              {folder ? "الرصيد الإجمالي" : "الرصيد"}
+              {folder ? t("accounting.coa.detail.rollupBalance") : t("accounting.coa.detail.balance")}
             </div>
             <Money value={rollup} strong className="text-2xl" />
           </div>
@@ -161,13 +163,13 @@ export function AccountDetail({ account, accounts, onEdit, onAddChild }: Account
         {canManage && (
           <div className="mt-4 flex flex-wrap gap-2">
             <Button variant="secondary" onClick={() => onEdit(account)}>
-              <Pencil className="h-4 w-4" /> تعديل
+              <Pencil className="h-4 w-4" /> {t("common.edit")}
             </Button>
             <Button variant="secondary" onClick={() => onAddChild(account)}>
-              <Plus className="h-4 w-4" /> إضافة حساب فرعي
+              <Plus className="h-4 w-4" /> {t("accounting.coa.detail.addChild")}
             </Button>
             <Button variant="secondary" onClick={toggleActive} loading={setActive.isPending}>
-              <Power className="h-4 w-4" /> {account.isActive ? "تعطيل" : "تفعيل"}
+              <Power className="h-4 w-4" /> {account.isActive ? t("accounting.coa.detail.deactivate") : t("accounting.coa.detail.activate")}
             </Button>
             {canDelete && (
               <Button
@@ -177,7 +179,7 @@ export function AccountDetail({ account, accounts, onEdit, onAddChild }: Account
                   setConfirmOpen(true);
                 }}
               >
-                <Trash2 className="h-4 w-4" /> حذف
+                <Trash2 className="h-4 w-4" /> {t("common.delete")}
               </Button>
             )}
           </div>
@@ -187,17 +189,17 @@ export function AccountDetail({ account, accounts, onEdit, onAddChild }: Account
       {/* Recent movements */}
       <div className="min-h-0 flex-1 overflow-y-auto">
         <CardHeader className="border-b-0">
-          <CardTitle>آخر الحركات</CardTitle>
+          <CardTitle>{t("accounting.coa.detail.recentMovements")}</CardTitle>
           {!folder && lines.length > 0 && (
             <span className="text-xs font-bold text-slate-400">
-              {account.movementCount} حركة إجمالاً
+              {t("accounting.coa.detail.movementsTotal", { count: account.movementCount })}
             </span>
           )}
         </CardHeader>
         <CardBody className="pt-0">
           {folder ? (
             <p className="rounded-xl border border-slate-100 bg-slate-50 px-4 py-6 text-center text-sm font-medium text-slate-500">
-              هذا حساب تجميعي (مجموعة). تُعرض الحركات على الحسابات النهائية فقط.
+              {t("accounting.coa.detail.folderNote")}
             </p>
           ) : ledger.isLoading ? (
             <div className="space-y-2">
@@ -208,18 +210,18 @@ export function AccountDetail({ account, accounts, onEdit, onAddChild }: Account
           ) : ledger.error ? (
             <ErrorState error={ledger.error} />
           ) : lines.length === 0 ? (
-            <EmptyState title="لا توجد حركات" body="لم تُسجّل أي حركات على هذا الحساب بعد." />
+            <EmptyState title={t("accounting.coa.detail.noMovements")} body={t("accounting.coa.detail.noMovementsBody")} />
           ) : (
             <div className="overflow-x-auto">
               <table className="w-full min-w-[40rem] text-sm">
                 <thead>
                   <tr className="border-b border-slate-100 text-[11px] font-extrabold text-slate-500">
-                    <th className="px-3 py-2 text-right">التاريخ</th>
-                    <th className="px-3 py-2 text-right">القيد</th>
-                    <th className="px-3 py-2 text-right">البيان</th>
-                    <th className="px-3 py-2 text-left">مدين</th>
-                    <th className="px-3 py-2 text-left">دائن</th>
-                    <th className="px-3 py-2 text-left">الرصيد</th>
+                    <th className="px-3 py-2 text-right">{t("accounting.common.date")}</th>
+                    <th className="px-3 py-2 text-right">{t("accounting.common.journalNo")}</th>
+                    <th className="px-3 py-2 text-right">{t("accounting.common.statement")}</th>
+                    <th className="px-3 py-2 text-left">{t("accounting.common.debit")}</th>
+                    <th className="px-3 py-2 text-left">{t("accounting.common.credit")}</th>
+                    <th className="px-3 py-2 text-left">{t("accounting.common.balance")}</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -263,10 +265,10 @@ export function AccountDetail({ account, accounts, onEdit, onAddChild }: Account
 
       <ConfirmDialog
         open={confirmOpen}
-        title="حذف الحساب"
-        description={`سيتم حذف «${account.nameAr}» نهائيًا. لا يمكن التراجع عن هذا الإجراء.`}
+        title={t("accounting.coa.detail.deleteTitle")}
+        description={t("accounting.coa.detail.deleteDesc", { name: account.nameAr })}
         tone="danger"
-        confirmLabel="حذف"
+        confirmLabel={t("common.delete")}
         processing={del.isPending}
         error={deleteError}
         onConfirm={confirmDelete}

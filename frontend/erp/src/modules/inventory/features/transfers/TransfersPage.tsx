@@ -21,28 +21,41 @@ import { useWarehouses } from "@/modules/inventory/lib/hooks/useWarehouses";
 import { useWarehouseScope } from "@/modules/inventory/lib/warehouse-scope-provider";
 import { useCan } from "@/modules/inventory/lib/permission-provider";
 import { formatCurrency, formatNumber, formatQty, formatDate } from "@/shared/lib";
-import { transferStatusToLabel, TRANSFER_STATUS_OPTIONS } from "@/modules/inventory/lib/status-labels";
+import { useT } from "@/i18n";
+import { transferStatusToLabel } from "@/modules/inventory/lib/status-labels";
 import type { TransferListRow } from "@/modules/inventory/lib/adapters/transfer.adapter";
 import { TransferDetailDrawer } from "./TransferDetailDrawer";
 
 const PAGE_SIZES = [10, 25, 50];
 
-// Sortable columns → backend sort key (the read router whitelists these).
+// Sortable columns → backend sort key (the read router whitelists these). `label`
+// is an i18n key path — the header renders t(c.label).
 const COLUMNS: { key: string; label: string; sort?: string; className?: string }[] = [
-  { key: "number", label: "رقم التحويل", sort: "issue_number" },
-  { key: "route", label: "من ← إلى" },
-  { key: "status", label: "الحالة", sort: "status" },
-  { key: "date", label: "التاريخ", sort: "issue_date" },
-  { key: "lines", label: "الأصناف", className: "text-center" },
-  { key: "remaining", label: "المتبقي", className: "text-center" },
-  { key: "value", label: "القيمة", sort: "total_cost", className: "text-left" },
+  { key: "number", label: "inventoryRest.transfers.col.number", sort: "issue_number" },
+  { key: "route", label: "inventoryRest.transfers.col.route" },
+  { key: "status", label: "inventoryRest.transfers.col.status", sort: "status" },
+  { key: "date", label: "inventoryRest.transfers.col.date", sort: "issue_date" },
+  { key: "lines", label: "inventoryRest.transfers.col.lines", className: "text-center" },
+  { key: "remaining", label: "inventoryRest.transfers.col.remaining", className: "text-center" },
+  { key: "value", label: "inventoryRest.transfers.col.value", sort: "total_cost", className: "text-left" },
 ];
 
 export function TransfersPage() {
+  const t = useT();
   const [params, setParams] = useSearchParams();
   const navigate = useNavigate();
   const { accessibleWarehouses, allWarehousesAccess } = useWarehouseScope();
   const canCreate = useCan("transfer.create");
+  const statusOptions = [
+    { value: "", label: t("inventoryRest.transfers.statusFilter.all") },
+    { value: "draft", label: t("status.draft") },
+    { value: "approved", label: t("status.approved") },
+    { value: "issued", label: t("status.inTransit") },
+    { value: "partially_received", label: t("status.partiallyReceived") },
+    { value: "received", label: t("status.received") },
+    { value: "cancelled", label: t("status.cancelled") },
+    { value: "reversed", label: t("status.reversed") },
+  ];
 
   const q = params.get("q") ?? "";
   const status = params.get("status") ?? "";
@@ -91,13 +104,13 @@ export function TransfersPage() {
   return (
     <div>
       <PageHeader
-        eyebrow="العمليات"
-        title="التحويلات وإذونات الصرف"
-        subtitle="نقل المخزون بين المستودعات عبر دورة اعتماد وصرف واستلام قابلة للتدقيق."
+        eyebrow={t("inventoryRest.transfers.eyebrow")}
+        title={t("inventoryRest.transfers.title")}
+        subtitle={t("inventoryRest.transfers.subtitle")}
         action={
           canCreate ? (
             <Button variant="primary" onClick={() => navigate("/inventory/transfers?new=1")}>
-              <Plus className="h-4 w-4" /> تحويل جديد
+              <Plus className="h-4 w-4" /> {t("inventoryRest.transfers.newTransfer")}
             </Button>
           ) : null
         }
@@ -105,10 +118,10 @@ export function TransfersPage() {
 
       {/* KPI row */}
       <section className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-        <MetricCard label="قيد النقل" value={formatNumber(k?.inTransit ?? 0)} note={`متبقٍ استلامه ${formatQty(k?.remainingQty ?? 0)}`} icon={Truck} tone="blue" />
-        <MetricCard label="بانتظار الإجراء" value={formatNumber(k?.pending ?? 0)} note="مسودة أو بانتظار الاعتماد" icon={Hourglass} tone="amber" />
-        <MetricCard label="مسودات" value={formatNumber(k?.draft ?? 0)} note="لم تُعتمد بعد" icon={ClipboardList} />
-        <MetricCard label="مكتملة" value={formatNumber(k?.received ?? 0)} note="استُلمت بالكامل" icon={PackageCheck} tone="teal" />
+        <MetricCard label={t("inventoryRest.transfers.kpi.inTransit")} value={formatNumber(k?.inTransit ?? 0)} note={t("inventoryRest.transfers.kpi.inTransitNote", { qty: formatQty(k?.remainingQty ?? 0) })} icon={Truck} tone="blue" />
+        <MetricCard label={t("inventoryRest.transfers.kpi.pending")} value={formatNumber(k?.pending ?? 0)} note={t("inventoryRest.transfers.kpi.pendingNote")} icon={Hourglass} tone="amber" />
+        <MetricCard label={t("inventoryRest.transfers.kpi.draft")} value={formatNumber(k?.draft ?? 0)} note={t("inventoryRest.transfers.kpi.draftNote")} icon={ClipboardList} />
+        <MetricCard label={t("inventoryRest.transfers.kpi.received")} value={formatNumber(k?.received ?? 0)} note={t("inventoryRest.transfers.kpi.receivedNote")} icon={PackageCheck} tone="teal" />
       </section>
 
       {/* Filters */}
@@ -118,25 +131,25 @@ export function TransfersPage() {
             <Search className="pointer-events-none absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
             <input
               className="field w-full pr-10"
-              placeholder="بحث برقم التحويل أو اسم المستودع…"
+              placeholder={t("inventoryRest.transfers.searchPlaceholder")}
               defaultValue={q}
               onChange={(e) => patch({ q: e.target.value })}
-              aria-label="بحث"
+              aria-label={t("inventoryRest.invtx.list.searchAria")}
             />
           </label>
-          <select className="field lg:w-48" value={fromWh} onChange={(e) => patch({ from: e.target.value })} aria-label="المستودع المصدر">
-            <option value="">كل المصادر</option>
+          <select className="field lg:w-48" value={fromWh} onChange={(e) => patch({ from: e.target.value })} aria-label={t("inventoryRest.transfers.fromAria")}>
+            <option value="">{t("inventoryRest.filter.allSources")}</option>
             {whOptions.map((w) => <option key={w.id} value={w.id}>{w.name}</option>)}
           </select>
-          <select className="field lg:w-48" value={toWh} onChange={(e) => patch({ to: e.target.value })} aria-label="المستودع الوجهة">
-            <option value="">كل الوجهات</option>
+          <select className="field lg:w-48" value={toWh} onChange={(e) => patch({ to: e.target.value })} aria-label={t("inventoryRest.transfers.toAria")}>
+            <option value="">{t("inventoryRest.filter.allDestinations")}</option>
             {whOptions.map((w) => <option key={w.id} value={w.id}>{w.name}</option>)}
           </select>
-          <input type="date" className="field lg:w-40" value={dateFrom} onChange={(e) => patch({ dateFrom: e.target.value })} aria-label="من تاريخ" />
-          <input type="date" className="field lg:w-40" value={dateTo} onChange={(e) => patch({ dateTo: e.target.value })} aria-label="إلى تاريخ" />
+          <input type="date" className="field lg:w-40" value={dateFrom} onChange={(e) => patch({ dateFrom: e.target.value })} aria-label={t("inventoryRest.invtx.list.dateFromAria")} />
+          <input type="date" className="field lg:w-40" value={dateTo} onChange={(e) => patch({ dateTo: e.target.value })} aria-label={t("inventoryRest.invtx.list.dateToAria")} />
         </div>
         <div className="flex flex-wrap gap-1">
-          {TRANSFER_STATUS_OPTIONS.map((o) => (
+          {statusOptions.map((o) => (
             <button
               key={o.value}
               type="button"
@@ -159,9 +172,9 @@ export function TransfersPage() {
           <ErrorState error={error} onRetry={() => refetch()} />
         ) : !data || data.rows.length === 0 ? (
           <EmptyState
-            title="لا توجد تحويلات مطابقة"
-            body={q || status || fromWh || toWh ? "جرّب تعديل عوامل التصفية." : "ابدأ بإنشاء تحويل جديد بين مستودعين."}
-            action={canCreate ? <Button onClick={() => navigate("/inventory/transfers?new=1")}><Plus className="h-4 w-4" /> تحويل جديد</Button> : undefined}
+            title={t("inventoryRest.transfers.emptyTitle")}
+            body={q || status || fromWh || toWh ? t("inventoryRest.ui.fixFilters") : t("inventoryRest.transfers.emptyBody")}
+            action={canCreate ? <Button onClick={() => navigate("/inventory/transfers?new=1")}><Plus className="h-4 w-4" /> {t("inventoryRest.transfers.newTransfer")}</Button> : undefined}
           />
         ) : (
           <>
@@ -174,10 +187,10 @@ export function TransfersPage() {
                       <th key={c.key} className={`px-4 py-3 text-right ${c.className ?? ""}`}>
                         {c.sort ? (
                           <button type="button" className="inline-flex items-center gap-1 font-bold hover:text-slate-800" onClick={() => toggleSort(c.sort!)}>
-                            {c.label}
+                            {t(c.label)}
                             {sort === c.sort && <span aria-hidden="true">{dir === "asc" ? "▲" : "▼"}</span>}
                           </button>
-                        ) : c.label}
+                        ) : t(c.label)}
                       </th>
                     ))}
                   </tr>
@@ -216,7 +229,7 @@ export function TransfersPage() {
                     {r.fromWarehouse.name}<ArrowLeftRight className="h-3 w-3" />{r.toWarehouse.name}
                   </div>
                   <div className="mt-2 flex items-center justify-between text-xs text-slate-500">
-                    <span>{formatDate(r.issueDate)} · {formatNumber(r.lineCount)} صنف</span>
+                    <span>{formatDate(r.issueDate)} · {t("inventoryRest.transfers.lineCount", { count: formatNumber(r.lineCount) })}</span>
                     <span className="font-bold text-slate-800">{formatCurrency(r.totalCost)}</span>
                   </div>
                 </button>
@@ -226,18 +239,18 @@ export function TransfersPage() {
             {/* Pagination */}
             <div className="mt-4 flex flex-col items-center justify-between gap-3 sm:flex-row">
               <div className="flex items-center gap-3 text-xs font-medium text-slate-500">
-                <span>عرض {formatNumber(from)}–{formatNumber(to)} من {formatNumber(pg?.total ?? 0)}</span>
-                <select className="field min-h-9 py-1 text-xs" value={pageSize} onChange={(e) => patch({ pageSize: e.target.value })} aria-label="حجم الصفحة">
-                  {PAGE_SIZES.map((s) => <option key={s} value={s}>{s} / صفحة</option>)}
+                <span>{t("inventoryRest.ui.showingRange", { from: formatNumber(from), to: formatNumber(to), total: formatNumber(pg?.total ?? 0) })}</span>
+                <select className="field min-h-9 py-1 text-xs" value={pageSize} onChange={(e) => patch({ pageSize: e.target.value })} aria-label={t("table.rowsPerPage")}>
+                  {PAGE_SIZES.map((s) => <option key={s} value={s}>{t("inventoryRest.ui.perPage", { count: s })}</option>)}
                 </select>
-                {isFetching && <span className="text-teal-600">تحديث…</span>}
+                {isFetching && <span className="text-teal-600">{t("inventoryRest.ui.updatingShort")}</span>}
               </div>
               <div className="flex items-center gap-2">
-                <Button variant="ghost" size="icon" aria-label="السابق" disabled={page <= 1} onClick={() => patch({ page: page - 1 }, false)}>
+                <Button variant="ghost" size="icon" aria-label={t("inventoryRest.ui.prev")} disabled={page <= 1} onClick={() => patch({ page: page - 1 }, false)}>
                   <ChevronRight className="h-4 w-4" />
                 </Button>
                 <span className="text-xs font-bold text-slate-600">{formatNumber(page)} / {formatNumber(totalPages)}</span>
-                <Button variant="ghost" size="icon" aria-label="التالي" disabled={page >= totalPages} onClick={() => patch({ page: page + 1 }, false)}>
+                <Button variant="ghost" size="icon" aria-label={t("inventoryRest.ui.next")} disabled={page >= totalPages} onClick={() => patch({ page: page + 1 }, false)}>
                   <ChevronLeft className="h-4 w-4" />
                 </Button>
               </div>

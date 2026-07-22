@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { Plus } from "lucide-react";
 import { Button, PageHeader, StatusBadge } from "@/shared/ui";
+import { useTx } from "@/shared/ui/i18n";
 import { useCan } from "@/app/providers";
 import { DataTable, type ColumnDef } from "@/shared/tables";
 import { CreateRunDialog } from "./CreateRunDialog";
@@ -12,6 +13,7 @@ interface RunsListProps {
 }
 
 export function RunsList({ onOpen }: RunsListProps) {
+  const t = useTx();
   const canManage = useCan("people.payroll.manage");
   const runsQuery = usePayrollRuns();
   const [createOpen, setCreateOpen] = useState(false);
@@ -19,24 +21,24 @@ export function RunsList({ onOpen }: RunsListProps) {
   const columns: ColumnDef<PayrollRun>[] = [
     {
       id: "period",
-      header: "الفترة",
+      header: t("people.payroll.col.period"),
       accessor: (r) => r.year * 100 + r.month,
-      cell: (r) => <span className="font-bold text-slate-800">{periodLabel(r)}</span>,
+      cell: (r) => <span className="font-bold text-slate-800">{periodLabel(r, t)}</span>,
       sortable: true,
     },
-    { id: "branchName", header: "الفرع", accessor: (r) => r.branchName || "كل الفروع" },
+    { id: "branchName", header: t("people.field.branch"), accessor: (r) => r.branchName || t("people.payroll.allBranches") },
     {
       id: "status",
-      header: "الحالة",
+      header: t("common.status"),
       accessor: (r) => r.status,
       cell: (r) => {
-        const m = payrollStatusMeta(r.status);
+        const m = payrollStatusMeta(r.status, t);
         return <StatusBadge tone={m.tone}>{m.label}</StatusBadge>;
       },
     },
     {
       id: "employeeCount",
-      header: "عدد الموظفين",
+      header: t("people.payroll.col.employeeCount"),
       accessor: (r) => r.employeeCount,
       cell: (r) => <span className="tabular-nums">{r.employeeCount}</span>,
       numeric: true,
@@ -44,7 +46,7 @@ export function RunsList({ onOpen }: RunsListProps) {
     },
     {
       id: "totalGross",
-      header: "إجمالي المستحق",
+      header: t("people.payroll.col.totalGross"),
       accessor: (r) => r.totalGross,
       cell: (r) => money(r.totalGross),
       numeric: true,
@@ -52,7 +54,7 @@ export function RunsList({ onOpen }: RunsListProps) {
     },
     {
       id: "totalNet",
-      header: "صافي المستحق",
+      header: t("people.payroll.col.totalNet"),
       accessor: (r) => r.totalNet,
       cell: (r) => <span className="font-bold text-emerald-700">{money(r.totalNet)}</span>,
       numeric: true,
@@ -63,13 +65,13 @@ export function RunsList({ onOpen }: RunsListProps) {
   return (
     <div>
       <PageHeader
-        eyebrow="الموارد البشرية"
-        title="الرواتب"
-        subtitle="مسيّرات الرواتب الشهرية: الاحتساب، الاعتماد، الصرف، وقسائم الرواتب."
+        eyebrow={t("people.eyebrow")}
+        title={t("people.payroll.title")}
+        subtitle={t("people.payroll.subtitle")}
         action={
           canManage ? (
             <Button variant="primary" onClick={() => setCreateOpen(true)}>
-              <Plus className="h-4 w-4" /> مسير جديد
+              <Plus className="h-4 w-4" /> {t("people.payroll.newRunBtn")}
             </Button>
           ) : undefined
         }
@@ -85,13 +87,13 @@ export function RunsList({ onOpen }: RunsListProps) {
         tableId="people.payroll.runs"
         initialSort={{ columnId: "period", dir: "desc" }}
         searchable
-        searchPlaceholder="بحث بالفرع…"
-        emptyTitle="لا توجد مسيّرات رواتب"
-        emptyBody={canManage ? "أنشئ أول مسير رواتب للبدء." : "لم يُنشأ أي مسير رواتب بعد."}
+        searchPlaceholder={t("people.payroll.searchByBranch")}
+        emptyTitle={t("people.payroll.emptyTitle")}
+        emptyBody={canManage ? t("people.payroll.emptyBodyManage") : t("people.payroll.emptyBodyView")}
         emptyAction={
           canManage ? (
             <Button variant="primary" onClick={() => setCreateOpen(true)}>
-              <Plus className="h-4 w-4" /> مسير جديد
+              <Plus className="h-4 w-4" /> {t("people.payroll.newRunBtn")}
             </Button>
           ) : undefined
         }

@@ -3,6 +3,7 @@ import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { MemoryRouter } from "react-router-dom";
 import { ToastProvider } from "@/shared/ui";
+import { I18nProvider } from "@/i18n";
 import { apiClient } from "@/shared/api";
 import SettingsPage from "../pages/Settings";
 
@@ -17,11 +18,13 @@ function renderPage() {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   return render(
     <QueryClientProvider client={qc}>
-      <ToastProvider>
-        <MemoryRouter initialEntries={["/administration/settings"]}>
-          <SettingsPage />
-        </MemoryRouter>
-      </ToastProvider>
+      <I18nProvider>
+        <ToastProvider>
+          <MemoryRouter initialEntries={["/administration/settings"]}>
+            <SettingsPage />
+          </MemoryRouter>
+        </ToastProvider>
+      </I18nProvider>
     </QueryClientProvider>,
   );
 }

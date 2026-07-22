@@ -5,6 +5,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { Search, X } from "lucide-react";
+import { useT } from "@/i18n";
 import { useDebouncedValue } from "@/modules/inventory/lib/hooks/useDebouncedValue";
 import { useItemList } from "@/modules/inventory/lib/hooks/useItems";
 
@@ -17,17 +18,19 @@ export function ItemSearchSelect({
   value,
   onChange,
   disabled = false,
-  placeholder = "ابحث عن صنف بالاسم أو SKU…",
+  placeholder,
 }: {
   value: ItemOption | null;
   onChange: (v: ItemOption | null) => void;
   disabled?: boolean;
   placeholder?: string;
 }) {
+  const t = useT();
   const [q, setQ] = useState("");
   const [open, setOpen] = useState(false);
   const debounced = useDebouncedValue(q, 300);
   const boxRef = useRef<HTMLDivElement>(null);
+  const resolvedPlaceholder = placeholder ?? t("inventoryRest.negativePolicy.itemSearch.placeholder");
 
   const { data, isLoading } = useItemList({ q: debounced, status: "active", pageSize: 8 });
   const rows = data?.rows ?? [];
@@ -49,7 +52,7 @@ export function ItemSearchSelect({
           <button
             type="button"
             className="grid h-7 w-7 shrink-0 place-items-center rounded-lg text-slate-400 transition hover:bg-white hover:text-rose-600"
-            aria-label="مسح الصنف المحدد"
+            aria-label={t("inventoryRest.negativePolicy.itemSearch.clearAria")}
             onClick={() => onChange(null)}
           >
             <X className="h-4 w-4" />
@@ -65,12 +68,12 @@ export function ItemSearchSelect({
         <Search className="pointer-events-none absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
         <input
           className="field w-full pr-10"
-          placeholder={placeholder}
+          placeholder={resolvedPlaceholder}
           value={q}
           disabled={disabled}
           onFocus={() => setOpen(true)}
           onChange={(e) => { setQ(e.target.value); setOpen(true); }}
-          aria-label="بحث عن صنف"
+          aria-label={t("inventoryRest.negativePolicy.itemSearch.searchAria")}
           role="combobox"
           aria-expanded={open}
           aria-controls="item-search-results"
@@ -83,10 +86,10 @@ export function ItemSearchSelect({
           className="absolute z-30 mt-1 max-h-64 w-full overflow-y-auto rounded-xl border border-slate-200 bg-white p-1 shadow-lg"
         >
           {isLoading ? (
-            <div className="px-3 py-2 text-xs font-medium text-slate-400">جارٍ البحث…</div>
+            <div className="px-3 py-2 text-xs font-medium text-slate-400">{t("inventoryRest.negativePolicy.itemSearch.searching")}</div>
           ) : rows.length === 0 ? (
             <div className="px-3 py-2 text-xs font-medium text-slate-400">
-              {debounced ? "لا نتائج مطابقة." : "اكتب للبحث عن صنف."}
+              {debounced ? t("inventoryRest.negativePolicy.itemSearch.noResults") : t("inventoryRest.negativePolicy.itemSearch.typeToSearch")}
             </div>
           ) : (
             rows.map((it) => (

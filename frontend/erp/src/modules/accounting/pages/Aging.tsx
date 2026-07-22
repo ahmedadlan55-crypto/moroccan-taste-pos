@@ -1,12 +1,13 @@
 import { DatePicker, Button } from "@/shared/ui";
 import { Download } from "lucide-react";
 import { formatDate } from "@/shared/lib";
+import { useT, type TFunction } from "@/i18n";
 import {
   useArAging,
   useApAging,
   todayISO,
   AGING_BUCKETS,
-  AGING_BUCKET_LABELS,
+  agingBucketLabel,
   type AgingBuckets,
 } from "../api";
 import {
@@ -51,18 +52,19 @@ function AgingTable({
   overdueRatio: number;
   onExport: () => void;
 }) {
+  const t = useT();
   return (
     <PrintArea>
       <div className="surface mb-5 flex flex-wrap items-center gap-4 p-4">
         <div className="flex-1">
           <PrintBanner title={title} period={period} />
           <div className="flex flex-wrap gap-4 text-xs font-bold text-slate-600">
-            <span>الإجمالي المستحق: <Num value={grandTotal} strong /></span>
-            <span>نسبة المتأخر (+90 يوم): <span dir="ltr" className="tabular-nums">{fmt(overdueRatio)}%</span></span>
+            <span>{t("accounting.aging.grandTotal")} <Num value={grandTotal} strong /></span>
+            <span>{t("accounting.aging.overdueRatio")} <span dir="ltr" className="tabular-nums">{fmt(overdueRatio)}%</span></span>
           </div>
         </div>
         <Button className="no-print" variant="secondary" onClick={onExport}>
-          <Download className="h-4 w-4" /> تصدير CSV
+          <Download className="h-4 w-4" /> {t("table.exportCsv")}
         </Button>
       </div>
 
@@ -72,9 +74,9 @@ function AgingTable({
             <tr className="border-b border-slate-200 text-[11px] font-extrabold text-slate-500">
               <th className="px-3 py-2 text-right">{nameHeader}</th>
               {AGING_BUCKETS.map((b) => (
-                <th key={b} className="px-3 py-2 text-left">{AGING_BUCKET_LABELS[b]}</th>
+                <th key={b} className="px-3 py-2 text-left">{agingBucketLabel(t, b)}</th>
               ))}
-              <th className="px-3 py-2 text-left">الإجمالي</th>
+              <th className="px-3 py-2 text-left">{t("accounting.common.total")}</th>
             </tr>
           </thead>
           <tbody>
@@ -93,7 +95,7 @@ function AgingTable({
           </tbody>
           <tfoot>
             <tr className="border-t-2 border-slate-300 bg-slate-50 text-sm font-extrabold">
-              <td className="px-3 py-2.5 text-right">الإجمالي</td>
+              <td className="px-3 py-2.5 text-right">{t("accounting.common.total")}</td>
               {AGING_BUCKETS.map((b) => (
                 <td key={b} className="px-3 py-2.5 text-left"><Num value={grandBuckets[b]} strong /></td>
               ))}
@@ -106,17 +108,18 @@ function AgingTable({
   );
 }
 
-function csvRows(nameHeader: string, rows: AgingRow[]): { header: string[]; body: (string | number)[][] } {
-  const header = [nameHeader, ...AGING_BUCKETS.map((b) => AGING_BUCKET_LABELS[b]), "الإجمالي"];
+function csvRows(t: TFunction, nameHeader: string, rows: AgingRow[]): { header: string[]; body: (string | number)[][] } {
+  const header = [nameHeader, ...AGING_BUCKETS.map((b) => agingBucketLabel(t, b)), t("accounting.common.total")];
   const body = rows.map((r) => [r.name, ...AGING_BUCKETS.map((b) => r.buckets[b]), r.total]);
   return { header, body };
 }
 
 export function ArAgingPage() {
+  const t = useT();
   const filter = useAppliedFilter<{ asOf: string }>({ asOf: todayISO() });
   const query = useArAging(filter.applied.asOf);
   const data = query.data;
-  const period = `كما في ${formatDate(filter.applied.asOf)}`;
+  const period = `${t("accounting.common.asOfPrefix")} ${formatDate(filter.applied.asOf)}`;
   const rows: AgingRow[] = (data?.customers ?? []).map((c) => ({
     id: c.customerId,
     name: c.customerName,
@@ -128,12 +131,12 @@ export function ArAgingPage() {
   return (
     <div>
       <ReportHeader
-        title="أعمار الذمم المدينة"
-        subtitle="أرصدة العملاء المستحقة موزّعة حسب أعمار الدين — يحسبها الخادم من المبيعات الآجلة."
+        title={t("accounting.aging.ar.title")}
+        subtitle={t("accounting.aging.ar.subtitle")}
         onPrint={printReport}
       />
       <FilterCard onRun={filter.run} running={query.isFetching}>
-        <FilterField label="كما في تاريخ">
+        <FilterField label={t("accounting.common.asOfDate")}>
           <DatePicker value={filter.draft.asOf} onChange={(asOf) => filter.patch({ asOf })} />
         </FilterField>
       </FilterCard>
@@ -142,19 +145,19 @@ export function ArAgingPage() {
         error={query.error}
         isEmpty={rows.length === 0}
         onRetry={() => query.refetch()}
-        emptyBody="لا توجد ذمم مدينة مستحقة في هذا التاريخ."
+        emptyBody={t("accounting.aging.ar.empty")}
       >
         {data && (
           <AgingTable
-            title="أعمار الذمم المدينة"
+            title={t("accounting.aging.ar.title")}
             period={period}
-            nameHeader="العميل"
+            nameHeader={t("accounting.aging.ar.name")}
             rows={rows}
             grandTotal={data.grandTotal}
             grandBuckets={data.grandBuckets}
             overdueRatio={data.overdue90PlusRatio}
             onExport={() => {
-              const { header, body } = csvRows("العميل", rows);
+              const { header, body } = csvRows(t, t("accounting.aging.ar.name"), rows);
               exportRowsCsv(`ar-aging-${filter.applied.asOf}.csv`, header, body);
             }}
           />
@@ -165,10 +168,11 @@ export function ArAgingPage() {
 }
 
 export function ApAgingPage() {
+  const t = useT();
   const filter = useAppliedFilter<{ asOf: string }>({ asOf: todayISO() });
   const query = useApAging(filter.applied.asOf);
   const data = query.data;
-  const period = `كما في ${formatDate(filter.applied.asOf)}`;
+  const period = `${t("accounting.common.asOfPrefix")} ${formatDate(filter.applied.asOf)}`;
   const rows: AgingRow[] = (data?.suppliers ?? []).map((s, i) => ({
     id: s.supplierId ?? `sup-${i}`,
     name: s.supplierName,
@@ -179,12 +183,12 @@ export function ApAgingPage() {
   return (
     <div>
       <ReportHeader
-        title="أعمار الذمم الدائنة"
-        subtitle="أرصدة الموردين المستحقة موزّعة حسب أعمار الدين — يحسبها الخادم من المشتريات الآجلة."
+        title={t("accounting.aging.ap.title")}
+        subtitle={t("accounting.aging.ap.subtitle")}
         onPrint={printReport}
       />
       <FilterCard onRun={filter.run} running={query.isFetching}>
-        <FilterField label="كما في تاريخ">
+        <FilterField label={t("accounting.common.asOfDate")}>
           <DatePicker value={filter.draft.asOf} onChange={(asOf) => filter.patch({ asOf })} />
         </FilterField>
       </FilterCard>
@@ -193,19 +197,19 @@ export function ApAgingPage() {
         error={query.error}
         isEmpty={rows.length === 0}
         onRetry={() => query.refetch()}
-        emptyBody="لا توجد ذمم دائنة مستحقة في هذا التاريخ."
+        emptyBody={t("accounting.aging.ap.empty")}
       >
         {data && (
           <AgingTable
-            title="أعمار الذمم الدائنة"
+            title={t("accounting.aging.ap.title")}
             period={period}
-            nameHeader="المورّد"
+            nameHeader={t("accounting.aging.ap.name")}
             rows={rows}
             grandTotal={data.grandTotal}
             grandBuckets={data.grandBuckets}
             overdueRatio={data.overdue90PlusRatio}
             onExport={() => {
-              const { header, body } = csvRows("المورّد", rows);
+              const { header, body } = csvRows(t, t("accounting.aging.ap.name"), rows);
               exportRowsCsv(`ap-aging-${filter.applied.asOf}.csv`, header, body);
             }}
           />

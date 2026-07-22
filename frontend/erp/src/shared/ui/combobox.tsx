@@ -1,6 +1,7 @@
 import { useEffect, useId, useMemo, useRef, useState } from "react";
 import { ChevronDown, Search, X } from "lucide-react";
 import { cn } from "@/shared/lib";
+import { useTx } from "./i18n";
 
 export interface ComboboxOption<T extends string> {
   value: T;
@@ -31,14 +32,15 @@ export function Combobox<T extends string>({
   options,
   value,
   onChange,
-  placeholder = "اختر…",
-  emptyText = "لا نتائج مطابقة.",
+  placeholder,
+  emptyText,
   disabled = false,
   clearable = true,
   id,
   invalid,
   "aria-label": ariaLabel,
 }: ComboboxProps<T>) {
+  const t = useTx();
   const [open, setOpen] = useState(false);
   const [q, setQ] = useState("");
   const [active, setActive] = useState(0);
@@ -116,14 +118,14 @@ export function Combobox<T extends string>({
         )}
       >
         <span className={cn("truncate", selected ? "text-slate-800" : "font-normal text-slate-400")}>
-          {selected ? selected.label : placeholder}
+          {selected ? selected.label : (placeholder ?? t("sharedUi.combobox.placeholder"))}
         </span>
         <span className="flex items-center gap-1">
           {clearable && selected && !disabled && (
             <span
               role="button"
               tabIndex={-1}
-              aria-label="مسح"
+              aria-label={t("sharedUi.combobox.clear")}
               className="grid h-6 w-6 place-items-center rounded-md text-slate-400 hover:bg-slate-100 hover:text-rose-600"
               onClick={(e) => {
                 e.stopPropagation();
@@ -151,14 +153,14 @@ export function Combobox<T extends string>({
                 onChange={(e) => setQ(e.target.value)}
                 onKeyDown={onKeyDown}
                 className="field h-9 w-full py-1 pr-9 text-sm"
-                placeholder="ابحث…"
-                aria-label="بحث"
+                placeholder={t("sharedUi.combobox.searchPlaceholder")}
+                aria-label={t("sharedUi.combobox.searchLabel")}
               />
             </label>
           </div>
           <ul id={listId} role="listbox" className="max-h-64 overflow-y-auto p-1">
             {filtered.length === 0 ? (
-              <li className="px-3 py-3 text-xs font-medium text-slate-400">{emptyText}</li>
+              <li className="px-3 py-3 text-xs font-medium text-slate-400">{emptyText ?? t("sharedUi.combobox.empty")}</li>
             ) : (
               filtered.map((o, i) => (
                 <li key={o.value} role="option" aria-selected={o.value === value}>

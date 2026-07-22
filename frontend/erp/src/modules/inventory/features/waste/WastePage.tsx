@@ -6,6 +6,8 @@ import {
   Button, ConfirmDialog, Dialog, EmptyState, ErrorState, LoadingState, PageHeader, PanelTitle,
   StatusBadge, useToast,
 } from "@/shared/ui";
+import { useT, translateApiError } from "@/i18n";
+import type { TFunction } from "@/i18n";
 import { usePermissions } from "@/app/providers";
 import { useItemList } from "@/modules/inventory/lib/hooks/useItems";
 import { useWarehouses } from "@/modules/inventory/lib/hooks/useWarehouses";
@@ -22,16 +24,9 @@ import { useWarehouses } from "@/modules/inventory/lib/hooks/useWarehouses";
 //  · The server may answer HTTP 200 with { success:false } (validation,
 //    closed period) — the UI checks the flag, never just the status.
 
-const REASONS = [
-  { value: "expired", label: "منتهي الصلاحية" },
-  { value: "damaged", label: "تالف" },
-  { value: "spill", label: "انسكاب / تشغيل" },
-  { value: "prep_loss", label: "فاقد تحضير" },
-  { value: "customer_return", label: "مرتجع عميل (هدر)" },
-  { value: "other", label: "أخرى" },
-] as const;
-type Reason = (typeof REASONS)[number]["value"];
-const REASON_LABEL: Record<string, string> = Object.fromEntries(REASONS.map((r) => [r.value, r.label]));
+const REASONS = ["expired", "damaged", "spill", "prep_loss", "customer_return", "other"] as const;
+type Reason = (typeof REASONS)[number];
+const reasonLabel = (t: TFunction, value: string) => t(`inventoryRest.waste.reason.${value}`);
 
 interface WasteRow {
   id: string;
@@ -65,6 +60,7 @@ const uid = () => {
 };
 
 export function WastePage() {
+  const t = useT();
   const { can } = usePermissions();
   const canCreate = can("waste.create");
   const { toast } = useToast();
@@ -86,12 +82,12 @@ export function WastePage() {
   const del = useMutation({
     mutationFn: (id: string) => apiClient.delete<{ success: boolean; error?: string }>(`/erp/waste-entries/${id}`),
     onSuccess: (r) => {
-      if (!r.success) { toast({ tone: "error", title: r.error || "تعذّر الحذف" }); return; }
-      toast({ tone: "success", title: "أُلغي قيد الهدر وعُكست آثاره (المخزون + القيد)" });
+      if (!r.success) { toast({ tone: "error", title: r.error || t("inventoryRest.waste.deleteFailed") }); return; }
+      toast({ tone: "success", title: t("inventoryRest.waste.reversed") });
       qc.invalidateQueries({ queryKey: ["inv", "waste"] });
       setToDelete(null);
     },
-    onError: (e) => toast({ tone: "error", title: e instanceof Error ? e.message : "تعذّر الحذف" }),
+    onError: (e) => toast({ tone: "error", title: translateApiError(e, t) }),
   });
 
   const rows = list.data?.items ?? [];
@@ -100,33 +96,33 @@ export function WastePage() {
   return (
     <div>
       <PageHeader
-        eyebrow="المخزون"
-        title="الهدر"
-        subtitle="خصم فوري من المخزون مع قيد محاسبي بحساب فرعي لكل سبب"
+        eyebrow={t("inventoryRest.waste.eyebrow")}
+        title={t("inventoryRest.waste.title")}
+        subtitle={t("inventoryRest.waste.subtitle")}
         action={canCreate ? (
-          <Button onClick={() => setCreateOpen(true)}><Plus className="h-4 w-4" /> تسجيل هدر</Button>
+          <Button onClick={() => setCreateOpen(true)}><Plus className="h-4 w-4" /> {t("inventoryRest.waste.newEntry")}</Button>
         ) : undefined}
       />
 
       {/* No approval workflow exists for waste — the entry posts on create. Said
           here so nobody hunts for a nonexistent "اعتماد" button. */}
       <p className="mb-4 text-xs font-semibold text-slate-400">
-        قيد الهدر يُرحَّل محاسبيًا فور تسجيله ويخصم المخزون مباشرة — لا توجد خطوة اعتماد ولا مرفقات في هذا الإصدار؛ الحذف يعكس الأثرين معًا.
+        {t("inventoryRest.waste.disclaimer")}
       </p>
 
       {summary && (
         <div className="mb-4 grid grid-cols-2 gap-3 sm:grid-cols-4">
           <div className="section surface p-3">
-            <p className="text-xs font-bold text-slate-500">إجمالي القيود</p>
+            <p className="text-xs font-bold text-slate-500">{t("inventoryRest.waste.totalEntries")}</p>
             <p className="text-lg font-extrabold tabular-nums text-slate-800">{summary.total}</p>
           </div>
           <div className="section surface p-3">
-            <p className="text-xs font-bold text-slate-500">إجمالي التكلفة</p>
+            <p className="text-xs font-bold text-slate-500">{t("inventoryRest.waste.totalCost")}</p>
             <p className="text-lg font-extrabold tabular-nums text-slate-800">{fmt(summary.totalCost)}</p>
           </div>
           {(["expired", "damaged"] as const).map((k) => (
             <div key={k} className="section surface p-3">
-              <p className="text-xs font-bold text-slate-500">{REASON_LABEL[k]}</p>
+              <p className="text-xs font-bold text-slate-500">{reasonLabel(t, k)}</p>
               <p className="text-lg font-extrabold tabular-nums text-slate-800">
                 {summary.byReason?.[k]?.count ?? 0} <span className="text-xs font-bold text-slate-400">({fmt(summary.byReason?.[k]?.cost ?? 0)})</span>
               </p>
@@ -138,11 +134,11 @@ export function WastePage() {
       <section className="section surface">
         <PanelTitle
           icon={PackageMinus}
-          title="سجل الهدر"
+          title={t("inventoryRest.waste.logTitle")}
           action={
-            <select className="field" value={reasonFilter} onChange={(e) => setReasonFilter(e.target.value)} aria-label="تصفية بالسبب">
-              <option value="">كل الأسباب</option>
-              {REASONS.map((r) => <option key={r.value} value={r.value}>{r.label}</option>)}
+            <select className="field" value={reasonFilter} onChange={(e) => setReasonFilter(e.target.value)} aria-label={t("inventoryRest.waste.filterAria")}>
+              <option value="">{t("inventoryRest.filter.allReasons")}</option>
+              {REASONS.map((r) => <option key={r} value={r}>{reasonLabel(t, r)}</option>)}
             </select>
           }
         />
@@ -151,18 +147,18 @@ export function WastePage() {
         ) : list.isError ? (
           <ErrorState error={list.error} onRetry={() => list.refetch()} />
         ) : rows.length === 0 ? (
-          <EmptyState title="لا يوجد هدر مسجّل" body={reasonFilter ? "لا قيود بهذا السبب." : "سجّل أول قيد هدر من الزر أعلاه."} />
+          <EmptyState title={t("inventoryRest.waste.emptyTitle")} body={reasonFilter ? t("inventoryRest.waste.emptyBodyFiltered") : t("inventoryRest.waste.emptyBody")} />
         ) : (
           <div className="overflow-x-auto">
             <table className="w-full text-sm">
               <thead>
                 <tr className="border-b border-slate-200 text-right text-xs font-extrabold text-slate-500">
-                  <th className="py-2">الرقم</th>
-                  <th className="py-2">التاريخ</th>
-                  <th className="py-2">المستودع</th>
-                  <th className="py-2">السبب</th>
-                  <th className="py-2">التكلفة</th>
-                  <th className="py-2">بواسطة</th>
+                  <th className="py-2">{t("inventoryRest.waste.col.number")}</th>
+                  <th className="py-2">{t("inventoryRest.waste.col.date")}</th>
+                  <th className="py-2">{t("inventoryRest.waste.col.warehouse")}</th>
+                  <th className="py-2">{t("inventoryRest.waste.col.reason")}</th>
+                  <th className="py-2">{t("inventoryRest.waste.col.cost")}</th>
+                  <th className="py-2">{t("inventoryRest.waste.col.by")}</th>
                   <th className="py-2" />
                 </tr>
               </thead>
@@ -186,7 +182,7 @@ export function WastePage() {
         <CreateWasteDialog
           onClose={() => setCreateOpen(false)}
           onCreated={(n) => {
-            toast({ tone: "success", title: n ? `سُجّل الهدر ${n}` : "سُجّل الهدر" });
+            toast({ tone: "success", title: n ? t("inventoryRest.waste.createdWithNumber", { number: n }) : t("inventoryRest.waste.created") });
             qc.invalidateQueries({ queryKey: ["inv", "waste"] });
             setCreateOpen(false);
           }}
@@ -196,10 +192,10 @@ export function WastePage() {
       <ConfirmDialog
         open={!!toDelete}
         onClose={() => setToDelete(null)}
-        title={`إلغاء قيد الهدر ${toDelete?.wasteNumber || ""}؟`}
-        description="سيُعاد المخزون المخصوم ويُعكس القيد المحاسبي داخل معاملة واحدة."
+        title={t("inventoryRest.waste.confirmCancelTitle", { number: toDelete?.wasteNumber || "" })}
+        description={t("inventoryRest.waste.confirmCancelBody")}
         tone="danger"
-        confirmLabel="إلغاء القيد"
+        confirmLabel={t("inventoryRest.waste.confirmCancelLabel")}
         processing={del.isPending}
         onConfirm={() => toDelete && del.mutate(toDelete.id)}
       />
@@ -208,6 +204,7 @@ export function WastePage() {
 }
 
 function WasteRowView({ row, expanded, onToggle, onDelete }: { row: WasteRow; expanded: boolean; onToggle: () => void; onDelete?: () => void }) {
+  const t = useT();
   const items = useQuery({
     enabled: expanded,
     queryKey: ["inv", "waste", row.id, "items"],
@@ -223,12 +220,12 @@ function WasteRowView({ row, expanded, onToggle, onDelete }: { row: WasteRow; ex
         </td>
         <td className="py-2 tabular-nums text-slate-600" dir="ltr">{String(row.wasteDate).slice(0, 10)}</td>
         <td className="py-2 text-slate-600">{row.warehouseName || row.warehouseId}</td>
-        <td className="py-2"><StatusBadge dot>{REASON_LABEL[row.reason] || row.reason}</StatusBadge></td>
+        <td className="py-2"><StatusBadge dot>{reasonLabel(t, row.reason)}</StatusBadge></td>
         <td className="py-2 tabular-nums font-bold text-slate-700">{fmt(row.totalCost)}</td>
         <td className="py-2 text-slate-500">{row.createdBy}</td>
         <td className="py-2 text-left">
           {onDelete && (
-            <Button size="sm" variant="ghost" onClick={onDelete} aria-label={`إلغاء ${row.wasteNumber || row.id}`}>
+            <Button size="sm" variant="ghost" onClick={onDelete} aria-label={t("inventoryRest.waste.cancelAria", { number: row.wasteNumber || row.id })}>
               <Trash2 className="h-4 w-4" />
             </Button>
           )}
@@ -250,7 +247,7 @@ function WasteRowView({ row, expanded, onToggle, onDelete }: { row: WasteRow; ex
                     {" = "}<span className="tabular-nums font-bold">{fmt(l.lineCost)}</span>
                   </li>
                 ))}
-                {row.notes ? <li className="pt-1 text-xs text-slate-400">ملاحظات: {row.notes}</li> : null}
+                {row.notes ? <li className="pt-1 text-xs text-slate-400">{t("inventoryRest.waste.notesLabel", { notes: row.notes })}</li> : null}
               </ul>
             )}
           </td>
@@ -263,6 +260,7 @@ function WasteRowView({ row, expanded, onToggle, onDelete }: { row: WasteRow; ex
 const today = () => new Date().toISOString().slice(0, 10);
 
 function CreateWasteDialog({ onClose, onCreated }: { onClose: () => void; onCreated: (wasteNumber: string | null) => void }) {
+  const t = useT();
   const { toast } = useToast();
   const [warehouseId, setWarehouseId] = useState("");
   const [wasteDate, setWasteDate] = useState(today());
@@ -292,22 +290,22 @@ function CreateWasteDialog({ onClose, onCreated }: { onClose: () => void; onCrea
     onSuccess: (r) => {
       // The server answers 200 with success:false for validation/closed-period —
       // treating that as success would report a deduction that never happened.
-      if (!r.success) { toast({ tone: "error", title: r.error || "رفض الخادم تسجيل الهدر" }); return; }
+      if (!r.success) { toast({ tone: "error", title: r.error || t("inventoryRest.waste.dialog.rejected") }); return; }
       onCreated(r.wasteNumber ?? null);
     },
-    onError: (e) => toast({ tone: "error", title: e instanceof Error ? e.message : "تعذّر تسجيل الهدر" }),
+    onError: (e) => toast({ tone: "error", title: translateApiError(e, t) }),
   });
 
   const canSubmit = !!warehouseId && lines.length > 0 && lines.every((l) => l.quantity > 0) && !save.isPending;
 
   return (
-    <Dialog open onClose={onClose} title="تسجيل هدر" size="lg"
+    <Dialog open onClose={onClose} title={t("inventoryRest.waste.dialog.title")} size="lg"
       footer={
         <div className="flex w-full items-center justify-between">
-          <span className="text-sm font-extrabold tabular-nums text-slate-700">الإجمالي: {fmt(total)}</span>
+          <span className="text-sm font-extrabold tabular-nums text-slate-700">{t("inventoryRest.waste.dialog.total", { value: fmt(total) })}</span>
           <div className="flex items-center gap-2">
-            <Button variant="ghost" onClick={onClose}>إغلاق</Button>
-            <Button loading={save.isPending} disabled={!canSubmit} onClick={() => save.mutate()}>تسجيل وترحيل</Button>
+            <Button variant="ghost" onClick={onClose}>{t("common.close")}</Button>
+            <Button loading={save.isPending} disabled={!canSubmit} onClick={() => save.mutate()}>{t("inventoryRest.waste.dialog.submit")}</Button>
           </div>
         </div>
       }
@@ -315,35 +313,35 @@ function CreateWasteDialog({ onClose, onCreated }: { onClose: () => void; onCrea
       <div className="flex flex-col gap-3">
         <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
           <label className="flex flex-col gap-1 text-xs font-bold text-slate-600">
-            المستودع
+            {t("inventoryRest.waste.dialog.warehouse")}
             <select className="field" value={warehouseId} onChange={(e) => setWarehouseId(e.target.value)}>
-              <option value="">— اختر —</option>
+              <option value="">{t("inventoryRest.waste.dialog.pickWarehouse")}</option>
               {(warehouses.data?.warehouses ?? []).map((w) => (
                 <option key={w.id} value={w.id}>{w.name}</option>
               ))}
             </select>
           </label>
           <label className="flex flex-col gap-1 text-xs font-bold text-slate-600">
-            التاريخ
+            {t("inventoryRest.waste.dialog.date")}
             <input dir="ltr" type="date" className="field tabular-nums" value={wasteDate} onChange={(e) => setWasteDate(e.target.value)} />
           </label>
           <label className="flex flex-col gap-1 text-xs font-bold text-slate-600">
-            السبب — يحدد الحساب المحاسبي
+            {t("inventoryRest.waste.dialog.reasonLabel")}
             <select className="field" value={reason} onChange={(e) => setReason(e.target.value as Reason)}>
-              {REASONS.map((r) => <option key={r.value} value={r.value}>{r.label}</option>)}
+              {REASONS.map((r) => <option key={r} value={r}>{reasonLabel(t, r)}</option>)}
             </select>
           </label>
         </div>
 
         <div className="rounded-2xl border border-slate-200 p-3">
-          <p className="mb-2 text-xs font-extrabold text-slate-600">الأصناف</p>
+          <p className="mb-2 text-xs font-extrabold text-slate-600">{t("inventoryRest.waste.dialog.itemsTitle")}</p>
           {lines.map((l, i) => (
             <div key={l.itemId} className="mb-2 grid grid-cols-12 items-center gap-2 rounded-xl bg-slate-50 px-3 py-2">
               <span className="col-span-5 truncate text-sm font-bold text-slate-700">{l.itemName}</span>
               <input
                 dir="ltr" type="number" step="0.01" min={0.01}
                 className="field col-span-3 tabular-nums" value={l.quantity || ""}
-                aria-label={`كمية ${l.itemName}`}
+                aria-label={t("inventoryRest.waste.dialog.qtyAria", { name: l.itemName })}
                 onChange={(e) => {
                   const v = Math.max(0, Number(e.target.value) || 0);
                   setLines((s) => s.map((x, j) => (j === i ? { ...x, quantity: v } : x)));
@@ -351,16 +349,16 @@ function CreateWasteDialog({ onClose, onCreated }: { onClose: () => void; onCrea
               />
               <span className="col-span-2 text-xs tabular-nums text-slate-500">{fmt(l.unitCost)} / {l.unit}</span>
               <button
-                type="button" aria-label={`إزالة ${l.itemName}`}
+                type="button" aria-label={t("inventoryRest.waste.dialog.removeAria", { name: l.itemName })}
                 className="col-span-2 text-xs font-bold text-rose-600 hover:underline"
                 onClick={() => setLines((s) => s.filter((_, j) => j !== i))}
-              >إزالة</button>
+              >{t("inventoryRest.waste.dialog.remove")}</button>
             </div>
           ))}
           <input
-            className="field w-full" placeholder="ابحث عن صنف لإضافته…"
+            className="field w-full" placeholder={t("inventoryRest.waste.dialog.itemSearch")}
             value={search} onChange={(e) => setSearch(e.target.value)}
-            aria-label="بحث الأصناف"
+            aria-label={t("inventoryRest.waste.dialog.searchAria")}
           />
           {search && (
             <ul className="mt-1 max-h-40 overflow-y-auto rounded-xl border border-slate-200">
@@ -384,14 +382,14 @@ function CreateWasteDialog({ onClose, onCreated }: { onClose: () => void; onCrea
                   </li>
                 ))}
               {!items.isLoading && (items.data?.rows ?? []).length === 0 && (
-                <li className="px-3 py-2 text-xs font-semibold text-slate-400">لا نتائج.</li>
+                <li className="px-3 py-2 text-xs font-semibold text-slate-400">{t("inventoryRest.waste.dialog.noResults")}</li>
               )}
             </ul>
           )}
         </div>
 
         <label className="flex flex-col gap-1 text-xs font-bold text-slate-600">
-          ملاحظات
+          {t("inventoryRest.waste.dialog.notes")}
           <input className="field" value={notes} onChange={(e) => setNotes(e.target.value)} />
         </label>
       </div>

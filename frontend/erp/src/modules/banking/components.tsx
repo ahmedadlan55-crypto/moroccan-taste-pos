@@ -2,6 +2,7 @@
 import { useEffect } from "react";
 import { Badge, Select } from "@/shared/ui";
 import { Field } from "@/shared/forms";
+import { useT } from "@/i18n";
 import { useGlTree, nextChildCode } from "./api";
 
 const NUM = new Intl.NumberFormat("en-US", {
@@ -35,20 +36,12 @@ const STATUS_TONE: Record<string, "neutral" | "success" | "danger"> = {
   posted: "success",
   cancelled: "danger",
 };
-const STATUS_LABEL: Record<string, string> = {
-  draft: "مسودة",
-  posted: "مُرحَّل",
-  cancelled: "ملغى",
-};
 export function StatusPill({ status }: { status: string }) {
-  return <Badge tone={STATUS_TONE[status] ?? "neutral"}>{STATUS_LABEL[status] ?? status}</Badge>;
-}
-
-// Server error strings → friendly Arabic.
-export function mapError(error: unknown): string {
-  const raw = error instanceof Error ? error.message : "";
-  if (!raw) return "تعذّرت العملية. أعد المحاولة.";
-  return raw;
+  const t = useT();
+  // draft/posted/cancelled are stable status codes shared with status.* — any
+  // other raw status string is shown as-is (preserving the old fallback).
+  const label = status in STATUS_TONE ? t(`status.${status}`) : status;
+  return <Badge tone={STATUS_TONE[status] ?? "neutral"}>{label}</Badge>;
 }
 
 // ── GL account linking (new box / bank) ─────────────────────────────────────
@@ -66,6 +59,7 @@ export function GlLinkSection({
   parentId: string;
   onParentChange: (id: string) => void;
 }) {
+  const t = useT();
   const tree = useGlTree(root, true);
   const nodes = tree.data ?? [];
 
@@ -82,9 +76,9 @@ export function GlLinkSection({
   return (
     <div className="rounded-xl border border-teal-100 bg-teal-50/40 p-3">
       <div className="mb-2 text-xs font-extrabold text-teal-800">
-        ربط حساب الأستاذ (تحت {rootLabel})
+        {t("banking.gl.linkTitle", { label: rootLabel })}
       </div>
-      <Field label="الحساب الأب">
+      <Field label={t("banking.gl.parentAccount")}>
         <Select
           value={parentId}
           onChange={(e) => onParentChange(e.target.value)}
@@ -99,8 +93,9 @@ export function GlLinkSection({
       </Field>
       {preview && (
         <div className="mt-2 text-[11px] font-bold text-slate-500">
-          كود الحساب الجديد المتوقّع: <code className="text-teal-700">{preview.code}</code> (مستوى{" "}
-          {preview.level}) — يحسبه الخادم نهائيًا عند الحفظ.
+          {t("banking.gl.previewLabel")} <code className="text-teal-700">{preview.code}</code>{" "}
+          {t("banking.gl.previewLevel", { level: preview.level })}{" "}
+          {t("banking.gl.previewServerNote")}
         </div>
       )}
     </div>

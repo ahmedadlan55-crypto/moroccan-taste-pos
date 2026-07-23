@@ -40,6 +40,15 @@ export default defineConfig(({ command }) => ({
         // chunking, which respects the route-level dynamic-import boundaries
         // (each lazy module lands in its own chunk).
         manualChunks(id: string) {
+          // App-code splitting (keeps every emitted chunk < 500 KB). Sprint 3
+          // added ~0.4 MB of ar+en per-module i18n dictionaries that the
+          // provider imports eagerly, so they landed in the shared entry chunk
+          // and pushed it to ~583 KB. Peel them (and the heavy shared table
+          // surface) into their own cache-stable chunks. Route-level import()
+          // boundaries in app/router.tsx are untouched.
+          if (/[\\/]src[\\/]i18n[\\/]dictionaries[\\/]ar[\\/]/.test(id)) return "i18n-dict-ar";
+          if (/[\\/]src[\\/]i18n[\\/]dictionaries[\\/]en[\\/]/.test(id)) return "i18n-dict-en";
+          if (/[\\/]src[\\/]shared[\\/]tables[\\/]/.test(id)) return "shared-tables";
           if (!id.includes("node_modules")) return;
           if (/[\\/]node_modules[\\/](react|react-dom|react-is|scheduler|react-router|react-router-dom|@remix-run)[\\/]/.test(id)) return "vendor-react";
           if (/[\\/]node_modules[\\/](framer-motion|motion-dom|motion-utils)[\\/]/.test(id)) return "vendor-motion";

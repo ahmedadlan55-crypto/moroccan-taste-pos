@@ -26,6 +26,25 @@ export default defineConfig(({ command }) => ({
     // sits in a dotfile directory, which express.static ignores by default
     // (dotfiles: 'ignore') — the SW could never fetch it in production.
     manifest: "asset-manifest.json",
+    rollupOptions: {
+      output: {
+        // Vendor split so no emitted JS chunk exceeds Vite's 500 KB budget (the
+        // cashier had grown to one ~518 KB bundle). The WHOLE react family
+        // (react, react-dom, scheduler) stays in ONE chunk — splitting
+        // react-dom from react/scheduler breaks hook dispatch at runtime. App
+        // code (no route-level dynamic imports here) stays in the entry chunk,
+        // so behaviour is unchanged — only smaller, longer-lived cache units.
+        // OFFLINE-SAFE: every emitted chunk lands in asset-manifest.json, which
+        // public/sw.js precaches at install, so the offline boot is unaffected.
+        manualChunks(id: string) {
+          if (!id.includes("node_modules")) return;
+          if (/[\\/]node_modules[\\/](react|react-dom|react-is|scheduler)[\\/]/.test(id)) return "vendor-react";
+          if (/[\\/]node_modules[\\/]@tanstack[\\/]/.test(id)) return "vendor-query";
+          if (/[\\/]node_modules[\\/]lucide-react[\\/]/.test(id)) return "vendor-icons";
+          if (/[\\/]node_modules[\\/]zod[\\/]/.test(id)) return "vendor-zod";
+        },
+      },
+    },
   },
   server: {
     port: 5175,

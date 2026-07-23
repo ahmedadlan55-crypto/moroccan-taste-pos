@@ -223,6 +223,13 @@ export function idbAtomicRunner(): AtomicRunner {
                   t.objectStore(s).delete(k);
                 },
               });
+              // The contract is easy to break silently: one `await` inside
+              // `decide` — or a helper that quietly becomes async — tears the
+              // critical section (writes before the await commit, writes after
+              // throw) and every guarantee evaporates with no error. Fail loudly.
+              if (outcome && typeof (outcome as { then?: unknown }).then === "function") {
+                throw new Error("idbAtomicRunner: decide() must be synchronous — it returned a thenable, which tears the transaction");
+              }
             };
 
             for (const s of prefetch.all ?? []) {

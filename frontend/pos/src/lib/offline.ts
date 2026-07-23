@@ -915,6 +915,29 @@ export class OfflineEngine {
       cursor.set(orderId, sub.version ?? null);
     } catch (e) {
       if (isNetworkError(e)) return true; // retry whole op later
+      // CO-1 follow-on. The atomic barrier serializes ENQUEUE, but no
+      // transaction can span three network calls, so the DRAIN is still
+      // per-instance: flush()'s `syncing` guard belongs to one tab, while the
+      // 'online' event and the 30s interval fire in EVERY tab at once.
+      //
+      // When two tabs drain the same checkout op, both POST /submit with the
+      // same Idempotency-Key. The server answers the loser with
+      // IDEMPOTENCY_CONFLICT (routes/pos-v2.js — «طلب إرسال مكرر»), an ApiError,
+      // so isNetworkError is false and this used to fall straight into fail():
+      // the op was deleted and the order reverted to 'open' WHILE THE OTHER TAB
+      // WAS COMPLETING THE SALE. The cashier saw a failed checkout for a payment
+      // that actually went through — the same class of lie as the 404 this
+      // release fixes, in the same money path.
+      //
+      // It is not a domain failure; it means "this exact op is already in
+      // flight". Retrying is safe precisely BECAUSE it is idempotent — the
+      // server's replay branch returns the original response. Guarded on saleId
+      // so a conflict arriving after this device already recorded the sale still
+      // falls through to fail() instead of looping forever.
+      if (e instanceof ApiError && e.code === "IDEMPOTENCY_CONFLICT") {
+        const local = await this.deps.orders.get(orderId);
+        if (!local?.saleId) return true; // transient — replay on the next flush
+      }
       await fail(e);
       return false;
     }

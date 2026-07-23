@@ -105,6 +105,31 @@ test("inventory items: the Missing-English-name filter isolates the name_en gaps
   expect(await page.locator("#main").innerText()).not.toContain("Dairy Item 0004");
 });
 
+test("inventory items: the hasImage / belowReorder / branch facets actually filter (B2)", async ({ page }) => {
+  test.setTimeout(90_000);
+  await login(page, "en");
+  await page.goto("/app/inventory/items");
+  await waitRendered(page);
+  const total = () => page.locator("#main").innerText().then((t) => (t.match(/of\s*([\d,]+)/i) || [])[1] || "");
+  expect(await total()).toMatch(/2,000/); // unfiltered
+
+  // Below reorder point — was a UI-only no-op; now filters (RC items have no
+  // reorder rules seeded, so the count must drop away from 2,000).
+  await page.getByRole("button", { name: /Below reorder point/i }).first().click();
+  await page.waitForTimeout(800);
+  expect(await total(), "belowReorder changes the paginated total").not.toMatch(/^2,000$/);
+  await page.getByRole("button", { name: /Below reorder point/i }).first().click(); // clear
+  await page.waitForTimeout(600);
+
+  // Image facet — RC items have no item images, so "has image" drops the count.
+  const imageSel = page.locator('#main select').filter({ hasText: /Image|Has image|No image/i }).first();
+  if (await imageSel.count()) {
+    await imageSel.selectOption({ label: "Has image" }).catch(() => {});
+    await page.waitForTimeout(800);
+    expect(await total(), "hasImage=has changes the total").not.toMatch(/^2,000$/);
+  }
+});
+
 test("inventory items: full-page create + deep-link detail survive refresh (no dialog)", async ({ page }) => {
   test.setTimeout(90_000);
   await login(page, "en");

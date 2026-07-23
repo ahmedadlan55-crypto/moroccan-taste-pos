@@ -3902,6 +3902,8 @@ router.post('/gl/sync-inventory', requireCapability('finance.accounts.manage'), 
 router.get('/warehouses-list', async (req, res) => {
   try {
     const scope = req.whScopeClause('w.id');
+    // B3 — filter the warehouses still missing an English name (completion workflow).
+    const missingEn = String(req.query.missingNameEn) === '1' ? " AND (w.name_en IS NULL OR w.name_en = '')" : '';
     const [rows] = await db.query(`
       SELECT w.*,
         b.name AS branch_name,
@@ -3911,13 +3913,13 @@ router.get('/warehouses-list', async (req, res) => {
       LEFT JOIN branches b ON w.branch_id = b.id
       LEFT JOIN brands bd ON w.brand_id = bd.id
       LEFT JOIN cost_centers cc ON w.cost_center_id = cc.id
-      WHERE 1=1${scope.sql}
+      WHERE 1=1${scope.sql}${missingEn}
       ORDER BY w.code`, scope.params);
     res.json(rows.map(w => {
       let allowedBrands = [];
       try { if (w.allowed_brands) allowedBrands = JSON.parse(w.allowed_brands); } catch(e) {}
       return {
-        id: w.id, code: w.code, name: w.name, type: w.type,
+        id: w.id, code: w.code, name: w.name, nameEn: w.name_en || '', type: w.type,
         branchId: w.branch_id || '', branchName: w.branch_name||'',
         brandId: w.brand_id || '', brandName: w.brand_name||'',
         costCenterId: w.cost_center_id || '', costCenterName: w.cost_center_name||'',
@@ -3938,28 +3940,35 @@ router.get('/warehouses-list', async (req, res) => {
 // the harder DELETE below stays MGR.
 router.post('/warehouses-list', requireCapability('inventory.edit'), async (req, res) => {
   try {
-    const { id, code, name, type, brandId, branchId, costCenterId, location, manager, allowedBrands } = req.body;
+    const { id, code, name, nameEn, type, brandId, branchId, costCenterId, location, manager, allowedBrands } = req.body;
     if (!code || !name) return res.json({ success: false, error: 'الرمز والاسم مطلوبان' });
+    // B3 — the English name is mandatory for NEW warehouses (bilingual master
+    // data). Existing rows may still lack it and are completed via the
+    // missing-English-name filter, so it is not forced on update.
+    if (!id && (nameEn == null || String(nameEn).trim() === '')) {
+      return res.status(422).json({ success: false, code: 'NAME_EN_REQUIRED', error: 'الاسم بالإنجليزية مطلوب للمستودعات الجديدة' });
+    }
+    const nEn = (nameEn != null && String(nameEn).trim() !== '') ? String(nameEn).trim() : null;
     const allowedBrandsJson = Array.isArray(allowedBrands) ? JSON.stringify(allowedBrands) : null;
     if (id) {
       if (!req.guardWh(res, id)) return;
       try {
-        await db.query('UPDATE warehouses SET code=?, name=?, type=?, brand_id=?, branch_id=?, cost_center_id=?, location=?, manager=?, allowed_brands=? WHERE id=?',
-          [code, name, type||'branch', brandId||null, branchId||null, costCenterId||null, location||'', manager||'', allowedBrandsJson, id]);
+        await db.query('UPDATE warehouses SET code=?, name=?, name_en=?, type=?, brand_id=?, branch_id=?, cost_center_id=?, location=?, manager=?, allowed_brands=? WHERE id=?',
+          [code, name, nEn, type||'branch', brandId||null, branchId||null, costCenterId||null, location||'', manager||'', allowedBrandsJson, id]);
       } catch(e) {
         // Fallback for older deploys without allowed_brands column
-        await db.query('UPDATE warehouses SET code=?, name=?, type=?, brand_id=?, branch_id=?, cost_center_id=?, location=?, manager=? WHERE id=?',
-          [code, name, type||'branch', brandId||null, branchId||null, costCenterId||null, location||'', manager||'', id]);
+        await db.query('UPDATE warehouses SET code=?, name=?, name_en=?, type=?, brand_id=?, branch_id=?, cost_center_id=?, location=?, manager=? WHERE id=?',
+          [code, name, nEn, type||'branch', brandId||null, branchId||null, costCenterId||null, location||'', manager||'', id]);
       }
       return res.json({ success: true, id });
     }
-    const newId = 'WH-' + Date.now();
+    const newId = 'WH-' + Date.now() + '-' + Math.random().toString(36).slice(2, 6);
     try {
-      await db.query('INSERT INTO warehouses (id, code, name, type, brand_id, branch_id, cost_center_id, location, manager, allowed_brands) VALUES (?,?,?,?,?,?,?,?,?,?)',
-        [newId, code, name, type||'branch', brandId||null, branchId||null, costCenterId||null, location||'', manager||'', allowedBrandsJson]);
+      await db.query('INSERT INTO warehouses (id, code, name, name_en, type, brand_id, branch_id, cost_center_id, location, manager, allowed_brands) VALUES (?,?,?,?,?,?,?,?,?,?,?)',
+        [newId, code, name, nEn, type||'branch', brandId||null, branchId||null, costCenterId||null, location||'', manager||'', allowedBrandsJson]);
     } catch(e) {
-      await db.query('INSERT INTO warehouses (id, code, name, type, brand_id, branch_id, cost_center_id, location, manager) VALUES (?,?,?,?,?,?,?,?,?)',
-        [newId, code, name, type||'branch', brandId||null, branchId||null, costCenterId||null, location||'', manager||'']);
+      await db.query('INSERT INTO warehouses (id, code, name, name_en, type, brand_id, branch_id, cost_center_id, location, manager) VALUES (?,?,?,?,?,?,?,?,?,?)',
+        [newId, code, name, nEn, type||'branch', brandId||null, branchId||null, costCenterId||null, location||'', manager||'']);
     }
     res.json({ success: true, id: newId });
   } catch(e) { res.json({ success: false, error: e.message }); }

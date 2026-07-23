@@ -209,6 +209,22 @@ router.get('/items', async (req, res) => {
     // The redesigned list ships a "missing English name" facet driving the
     // name-completion workflow — filter the rows whose name_en is blank.
     if (String(req.query.missingNameEn) === '1') where.push("(ii.name_en IS NULL OR ii.name_en = '')");
+    // B2 — three redesigned-list facets, wired server-side (were UI-only no-ops).
+    // Item images live in menu.image_data (the POS thumbnail store, keyed by the
+    // same id for sellable items); presence-only, never SELECTed into the list.
+    if (req.query.hasImage === 'has') where.push("EXISTS (SELECT 1 FROM menu mi WHERE mi.id=ii.id AND mi.image_data IS NOT NULL AND mi.image_data <> '')");
+    else if (req.query.hasImage === 'none') where.push("NOT EXISTS (SELECT 1 FROM menu mi WHERE mi.id=ii.id AND mi.image_data IS NOT NULL AND mi.image_data <> '')");
+    // Below reorder point: on-hand at/under the warehouse's reorder_point (rule
+    // row required). Restricted to an explicit warehouseId when supplied.
+    if (String(req.query.belowReorder) === '1') {
+      if (warehouseId) { where.push('EXISTS (SELECT 1 FROM warehouse_stock ws2 JOIN warehouse_item_rules wir ON wir.warehouse_id=ws2.warehouse_id AND wir.item_id=ws2.item_id WHERE ws2.item_id=ii.id AND ws2.warehouse_id=? AND ws2.qty <= wir.reorder_point)'); params.push(warehouseId); }
+      else where.push('EXISTS (SELECT 1 FROM warehouse_stock ws2 JOIN warehouse_item_rules wir ON wir.warehouse_id=ws2.warehouse_id AND wir.item_id=ws2.item_id WHERE ws2.item_id=ii.id AND ws2.qty <= wir.reorder_point)');
+    }
+    // Branch: item stocked in — or defaulting to — a warehouse of that branch.
+    if (req.query.branchId) {
+      where.push('(EXISTS (SELECT 1 FROM warehouse_stock ws3 JOIN warehouses w3 ON w3.id=ws3.warehouse_id WHERE ws3.item_id=ii.id AND w3.branch_id=?) OR EXISTS (SELECT 1 FROM warehouses w4 WHERE w4.id=ii.default_warehouse_id AND w4.branch_id=?))');
+      params.push(String(req.query.branchId), String(req.query.branchId));
+    }
     if (p.q) {
       // Phase W4 — also match the (normalized) barcode so a scanner typing into
       // the search box finds the item directly (primary + secondary codes).

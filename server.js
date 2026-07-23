@@ -915,8 +915,10 @@ async function autoInitDB() {
       } else {
         console.log('Database connection OK — tables already exist.');
       }
-      // Idempotent migrations — run on every startup, skip if already applied
-      await runMigrations();
+      // Idempotent migrations — run on every startup, skip if already applied.
+      // B5 — serialized under a DB advisory lock so concurrent instance boots
+      // (Railway scale-out) can't run them / double-seed simultaneously.
+      await withMigrationLock(runMigrations);
       // v6.20.0 — unify collations AFTER all tables exist (fixes mixed
       // utf8mb4_unicode_ci / utf8mb4_0900_ai_ci JOIN failures on MySQL 8).
       await normalizeCollations();
@@ -1074,6 +1076,27 @@ async function normalizeCollations() {
     console.warn('[collation] normalization skipped:', String(e.message).substring(0, 160));
   } finally {
     if (conn) conn.release();
+  }
+}
+
+// B5 — serialize concurrent boots. Two Railway instances (or a MIGRATE_ONLY
+// release step racing a starting container) must not run migrations — or
+// double-seed payment methods — at the same time. Hold a MySQL user-level lock
+// on a DEDICATED connection for the whole run; a second booter blocks up to the
+// timeout, then finds the (idempotent) migrations already applied. Fail-closed:
+// if the lock cannot be obtained we THROW rather than silently skip migrations.
+async function withMigrationLock(fn) {
+  const LOCK = 'mt_pos_migrations';
+  let conn = null;
+  try {
+    conn = await db.getConnection();
+    const [rows] = await conn.query('SELECT GET_LOCK(?, 600) AS got', [LOCK]);
+    const got = rows && rows[0] && Number(rows[0].got) === 1;
+    if (!got) throw new Error('could not acquire migration advisory lock "' + LOCK + '" within timeout');
+    try { return await fn(); }
+    finally { try { await conn.query('SELECT RELEASE_LOCK(?)', [LOCK]); } catch (_) {} }
+  } finally {
+    if (conn) { try { conn.release(); } catch (_) {} }
   }
 }
 
@@ -1455,6 +1478,7 @@ async function runMigrations() {
   // Warehouses: add brand + cost center columns
   await addColumnIfMissing('warehouses', 'brand_id', "VARCHAR(50)");
   await addColumnIfMissing('warehouses', 'cost_center_id', "VARCHAR(50)");
+  await addColumnIfMissing('warehouses', 'name_en', "VARCHAR(200) NULL"); // B3 — bilingual warehouse name
 
   // Warehouse stock (per-warehouse inventory)
   await createTableIfMissing('warehouse_stock', `
@@ -2367,6 +2391,15 @@ async function runMigrations() {
   await addColumnIfMissing('payment_methods', 'allow_refund', "BOOLEAN DEFAULT TRUE");
   await addColumnIfMissing('payment_methods', 'allow_cancel', "BOOLEAN DEFAULT TRUE");
   await addColumnIfMissing('payment_methods', 'color', "VARCHAR(20) DEFAULT '#3b82f6'");
+  // B5 — dedup payment_methods by name (keep the lowest id) + enforce
+  // UNIQUE(name) so default seeding is idempotent even on a long-lived DB that
+  // may already carry duplicates from a pre-lock concurrent boot. The ALTER is a
+  // no-op once the index exists.
+  try {
+    await db.query('DELETE p1 FROM payment_methods p1 JOIN payment_methods p2 ON p1.name = p2.name AND p1.id > p2.id');
+    try { await db.query('ALTER TABLE payment_methods ADD UNIQUE KEY uq_pm_name (name)'); }
+    catch (e) { if (!/duplicate key name|Duplicate key name|already exists/i.test(e.message || '')) throw e; }
+  } catch (e) { console.error('[migrations] payment_methods dedup/unique:', e && (e.code || e.message)); }
 
   // Branch payment methods
   await createTableIfMissing('branch_payment_methods', `

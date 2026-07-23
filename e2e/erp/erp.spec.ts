@@ -285,8 +285,9 @@ test("closure gate — every leaf is real, healthy, contained, legacy-free", asy
   expect(failedRequests, "zero failed requests expected (both viewports, no whitelist)").toEqual([]);
 });
 
-test("company and branch scope stays readable from 390px through 1920px", async ({ page }, testInfo) => {
-  test.skip(testInfo.project.name !== "desktop", "one serial responsive matrix is enough");
+test("company and branch scope stays readable from 390px through 1920px", async ({ page }) => {
+  // Sets its own viewport matrix internally, so it runs identically on every
+  // project (no project-scoping skip — the RC gate requires zero skipped).
 
   await page.addInitScript(
     ([token, session]) => {
@@ -374,8 +375,9 @@ test("company and branch scope stays readable from 390px through 1920px", async 
   }
 });
 
-test("create and edit workflows use a full-page work area instead of side panels", async ({ page }, testInfo) => {
-  test.skip(testInfo.project.name !== "desktop", "one serial visual matrix is enough");
+test("create and edit workflows use a full-page work area instead of side panels", async ({ page }) => {
+  // Sets its own viewport matrix internally; runs on every project (no
+  // project-scoping skip — the RC gate requires zero skipped).
 
   await page.addInitScript(
     ([token, session]) => {

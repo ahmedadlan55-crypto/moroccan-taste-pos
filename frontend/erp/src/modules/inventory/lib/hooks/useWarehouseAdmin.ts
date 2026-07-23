@@ -30,6 +30,7 @@ const BASE = "/inventory/v2/warehouses";
 
 export interface WarehouseFormInput {
   name: string;
+  nameEn?: string | null;
   code: string;
   type: string;
   brandId?: string | null;

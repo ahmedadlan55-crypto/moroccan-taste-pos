@@ -12,7 +12,7 @@ import { Button } from "@/shared/ui";
 import { LoadingState, ErrorState, EmptyState } from "@/shared/ui";
 import { Spinner } from "@/shared/ui";
 import { formatCurrency, formatNumber, formatDateTime } from "@/shared/lib";
-import { useT } from "@/i18n";
+import { useT, useLang } from "@/i18n";
 import type { TFunction } from "@/i18n";
 import { useCan } from "@/modules/inventory/lib/permission-provider";
 import { useWarehouseAdminList } from "@/modules/inventory/lib/hooks/useWarehouseAdmin";
@@ -37,6 +37,10 @@ type ActiveFilter = "all" | "active" | "inactive";
 
 export function WarehousesPage() {
   const t = useT();
+  const lang = useLang();
+  // Business data: show the English name in English mode when present, else the
+  // Arabic name (fallback) — never a machine translation. B3.
+  const whName = (w: WarehouseAdmin) => (lang === "en" && w.nameEn ? w.nameEn : w.name);
   const { data, isLoading, isError, error, refetch, isFetching } = useWarehouseAdminList();
   const canCreate = useCan("warehouse.create");
   const [query, setQuery] = useState("");
@@ -48,7 +52,7 @@ export function WarehousesPage() {
     const list = data?.warehouses ?? [];
     const q = query.trim();
     return list.filter((w) => {
-      const matchesQ = !q || `${w.name} ${w.code} ${w.manager} ${w.location}`.includes(q);
+      const matchesQ = !q || `${w.name} ${w.nameEn} ${w.code} ${w.manager} ${w.location}`.includes(q);
       const matchesActive =
         activeFilter === "all" || (activeFilter === "active" ? w.isActive : !w.isActive);
       return matchesQ && matchesActive;
@@ -159,7 +163,10 @@ export function WarehousesPage() {
                     <tr key={w.id} className="table-row cursor-pointer" onClick={() => setSelectedId(w.id)}>
                       <td className="px-5 py-4">
                         <div className="font-extrabold text-slate-800">
-                          {w.name}
+                          {whName(w)}
+                          {!w.nameEn && (
+                            <span className="mx-2 rounded-md bg-amber-50 px-1.5 py-0.5 text-[10px] font-bold text-amber-700">{t("inventoryRest.warehouses.form.nameEnMissing")}</span>
+                          )}
                           {w.isMain && (
                             <span className="mr-2 rounded-md bg-teal-50 px-1.5 py-0.5 text-[10px] font-bold text-teal-700">{t("inventoryRest.warehouses.main")}</span>
                           )}
@@ -200,6 +207,7 @@ export function WarehousesPage() {
 
 function WarehouseCard({ w, onOpen }: { w: WarehouseAdmin; onOpen: () => void }) {
   const t = useT();
+  const lang = useLang();
   return (
     <button type="button" onClick={onOpen} className="surface group overflow-hidden text-right transition hover:-translate-y-0.5 hover:border-teal-200 hover:shadow-lift">
       <div className="relative h-20 bg-slate-950 p-4 text-white">
@@ -210,7 +218,8 @@ function WarehouseCard({ w, onOpen }: { w: WarehouseAdmin; onOpen: () => void })
       </div>
       <div className="p-4">
         <h3 className="font-extrabold text-slate-900">
-          {w.name}
+          {lang === "en" && w.nameEn ? w.nameEn : w.name}
+          {!w.nameEn && <span className="mx-2 rounded-md bg-amber-50 px-1.5 py-0.5 text-[10px] font-bold text-amber-700">{t("inventoryRest.warehouses.form.nameEnMissing")}</span>}
           {w.isMain && <span className="mr-2 rounded-md bg-teal-50 px-1.5 py-0.5 text-[10px] font-bold text-teal-700">{t("inventoryRest.warehouses.main")}</span>}
         </h3>
         <p className="mt-1 text-xs font-bold text-slate-400">{w.code}{w.type ? ` · ${warehouseTypeLabel(t, w.type)}` : ""}</p>

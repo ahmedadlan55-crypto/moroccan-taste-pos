@@ -21,6 +21,7 @@ const CODE_RE = /^[A-Za-z0-9_.-]+$/;
 
 interface FormState {
   name: string;
+  nameEn: string;
   code: string;
   type: string;
   brandId: string;
@@ -33,6 +34,7 @@ interface FormState {
 function initialState(w: WarehouseAdmin | null): FormState {
   return {
     name: w?.name ?? "",
+    nameEn: w?.nameEn ?? "",
     code: w?.code ?? "",
     type: w?.type ?? "branch",
     brandId: w?.brandId ?? "",
@@ -77,10 +79,12 @@ export function WarehouseFormDialog({
   const errors = useMemo(() => {
     const e: Partial<Record<keyof FormState, string>> = {};
     if (!form.name.trim()) e.name = t("inventoryRest.warehouses.form.nameRequired");
+    // B3 — English name is required for NEW warehouses (bilingual master data).
+    if (!isEdit && !form.nameEn.trim()) e.nameEn = t("inventoryRest.warehouses.form.nameEnRequired");
     if (!form.code.trim()) e.code = t("inventoryRest.warehouses.form.codeRequired");
     else if (!CODE_RE.test(form.code.trim())) e.code = t("inventoryRest.warehouses.form.codePattern");
     return e;
-  }, [form, t]);
+  }, [form, t, isEdit]);
   const valid = Object.keys(errors).length === 0;
 
   const mutationError = (create.error ?? update.error) as Error | null;
@@ -96,6 +100,7 @@ export function WarehouseFormDialog({
     if (!valid || pending) return;
     const input: WarehouseFormInput = {
       name: form.name.trim(),
+      nameEn: form.nameEn.trim() || null,
       code: form.code.trim(),
       type: form.type,
       brandId: form.brandId || null,
@@ -166,6 +171,23 @@ export function WarehouseFormDialog({
                 />
                 {touched && errors.name && (
                   <span className="mt-1 block text-xs font-bold text-rose-600">{errors.name}</span>
+                )}
+              </label>
+
+              <label className="sm:col-span-2">
+                <span className={labelCls}>
+                  {t("inventoryRest.warehouses.form.nameEnLabel")}{!isEdit && <span className="text-rose-600"> *</span>}
+                </span>
+                <input
+                  className={fieldCls}
+                  dir="ltr"
+                  value={form.nameEn}
+                  disabled={pending}
+                  placeholder={t("inventoryRest.warehouses.form.nameEnPlaceholder")}
+                  onChange={(e) => set("nameEn", e.target.value)}
+                />
+                {touched && errors.nameEn && (
+                  <span className="mt-1 block text-xs font-bold text-rose-600">{errors.nameEn}</span>
                 )}
               </label>
 

@@ -102,9 +102,11 @@ async function _statsRows(warehouseId, req) {
   if (warehouseId) { where.push('w.id = ?'); params.push(warehouseId); }
   const sc = req && req.whScopeClause ? req.whScopeClause('w.id') : { sql: '', params: [] };
   if (sc.sql) { where.push(sc.sql.replace(/^\s*AND\s+/i, '')); params.push(...sc.params); }
+  // B3 — filter warehouses still missing an English name (completion workflow).
+  if (req && String(req.query.missingNameEn) === '1') where.push("(w.name_en IS NULL OR w.name_en = '')");
   const whereSql = where.length ? (' WHERE ' + where.join(' AND ')) : '';
   const [rows] = await db.query(
-    `SELECT w.id, w.code, w.name, w.type, w.branch_id, w.brand_id, w.cost_center_id,
+    `SELECT w.id, w.code, w.name, w.name_en, w.type, w.branch_id, w.brand_id, w.cost_center_id,
             w.location, w.manager, w.description, w.is_main, w.is_active, w.created_at,
             COUNT(DISTINCT ws.item_id) AS item_count,
             COALESCE(SUM(ws.qty), 0) AS total_qty,
@@ -116,7 +118,7 @@ async function _statsRows(warehouseId, req) {
        LEFT JOIN warehouse_stock ws ON ws.warehouse_id = w.id
        LEFT JOIN inv_items i ON i.id = ws.item_id
        ${whereSql}
-      GROUP BY w.id, w.code, w.name, w.type, w.branch_id, w.brand_id, w.cost_center_id,
+      GROUP BY w.id, w.code, w.name, w.name_en, w.type, w.branch_id, w.brand_id, w.cost_center_id,
                w.location, w.manager, w.description, w.is_main, w.is_active, w.created_at
       ORDER BY w.is_active DESC, w.is_main DESC, w.code`,
     params
@@ -149,6 +151,7 @@ async function _statsRows(warehouseId, req) {
       id: String(r.id),
       code: r.code || '',
       name: r.name || '',
+      nameEn: r.name_en || '',
       type: r.type || 'branch',
       brandId: r.brand_id || null,
       brandName: r.brand_id ? (brandMap[String(r.brand_id)] || null) : null,
@@ -285,6 +288,13 @@ function _buildFields(body, existing) {
     const name = _str(b.name, 200);
     if (!name) throw _err('VALIDATION_ERROR', 'اسم المستودع مطلوب');
     out.name = name;
+  }
+  // B3 — English name: mandatory on CREATE (bilingual master data), settable on
+  // UPDATE (existing rows completed via the missing-English-name filter).
+  if (b.nameEn !== undefined || b.name_en !== undefined || !existing) {
+    const nameEn = _str(b.nameEn != null ? b.nameEn : b.name_en, 200);
+    if (!existing && !nameEn) throw _err('VALIDATION_ERROR', 'الاسم بالإنجليزية مطلوب للمستودعات الجديدة');
+    out.name_en = nameEn || null;
   }
   if (b.code !== undefined || !existing) {
     const code = _str(b.code, 20);

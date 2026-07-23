@@ -22,6 +22,7 @@ export interface WarehouseAdmin {
   id: string;
   code: string;
   name: string;
+  nameEn: string;
   type: string;
   brandId: string;
   brandName: string;
@@ -130,6 +131,7 @@ export function toWarehouseAdmin(raw: Record<string, unknown>): WarehouseAdmin {
     id: str(raw.id),
     code: str(raw.code),
     name: str(raw.name),
+    nameEn: str(raw.nameEn),
     type: str(raw.type) || "branch",
     brandId: str(raw.brandId),
     brandName: str(raw.brandName),

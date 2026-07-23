@@ -1445,6 +1445,7 @@ async function runMigrations() {
   // Warehouses: add brand + cost center columns
   await addColumnIfMissing('warehouses', 'brand_id', "VARCHAR(50)");
   await addColumnIfMissing('warehouses', 'cost_center_id', "VARCHAR(50)");
+  await addColumnIfMissing('warehouses', 'name_en', "VARCHAR(200) NULL"); // B3 — bilingual warehouse name
 
   // Warehouse stock (per-warehouse inventory)
   await createTableIfMissing('warehouse_stock', `

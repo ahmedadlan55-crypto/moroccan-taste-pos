@@ -32,9 +32,11 @@ CREATE TABLE payment_methods (
   is_active BOOLEAN DEFAULT TRUE,
   service_fee_rate DECIMAL(5,2) DEFAULT 0,
   sort_order INT DEFAULT 0,
-  UNIQUE KEY uq_pm_name (name)  -- B5: idempotent default seeding under concurrent boot
+  UNIQUE KEY uq_pm_name (name)
 ) ENGINE=InnoDB;
 
+-- B5: idempotent default seeding (UNIQUE(name) above + INSERT IGNORE) so a
+-- concurrent fresh boot can never double-seed the default payment methods.
 INSERT IGNORE INTO payment_methods (name, name_ar, icon, is_active, sort_order) VALUES
   ('Cash','كاش','fa-money-bill-wave',1,1),
   ('Card','مدى/شبكة','fa-credit-card',1,2),

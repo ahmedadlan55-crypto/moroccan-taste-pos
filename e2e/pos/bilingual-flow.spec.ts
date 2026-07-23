@@ -380,22 +380,67 @@ test("full bilingual cashier flow — language toggle, sell, shift, back-office"
   // it just tried to click straight through its own backdrop) — confirmed
   // by a real run.
   const cartSheetCloseHandle = page.getByRole("button", { name: "إغلاق السلة", exact: true });
+  /**
+   * Bring the cart into an interactable state, whatever the viewport.
+   *
+   * CO-1. The previous implementation was built entirely out of
+   * `locator.isVisible()`, which is a ONE-SHOT, NON-RETRYING snapshot — the
+   * exact hazard GAP #6 above records having already been fixed once in step 22
+   * of this same file. Here it was worse than a false negative in an assertion,
+   * because both checks were failure-tolerant: if the sheet was mid-animation,
+   * or if the "السلة (N)" trigger happened to be re-rendering because the cart
+   * count had just changed (which is precisely when this helper is called — right
+   * after adding an item), BOTH probes read false and the function returned
+   * having done NOTHING. No click, no error. The failure then surfaced further
+   * down as "Pay — … button not found", pointing at the wrong step entirely.
+   *
+   * That is why the failure looked viewport-flaky: the bottom sheet only exists
+   * below 768px, so only mobile-390 could hit it, and only when the machine was
+   * loaded enough for the re-render to straddle the probe.
+   *
+   * Now: the layout is decided by the VIEWPORT WIDTH, which is configuration and
+   * cannot race, instead of by probing the DOM. Above 768px App.tsx renders the
+   * inline `<aside>` and no sheet exists, so there is nothing to open and the
+   * helper is a genuine no-op. Below it, the sheet is the cart, and the helper
+   * waits for it to be actually open before returning — so a cart that never
+   * opens fails HERE, naming the sheet, instead of silently corrupting every
+   * later step.
+   *
+   * The sheet's close handle stays the authoritative "is it open" signal and is
+   * checked FIRST: per the note above, the bottom-bar trigger remains `visible`
+   * to Playwright even while the open sheet's z-50 backdrop covers it, so
+   * clicking the trigger when the sheet is already open clicks into the backdrop
+   * and hangs.
+   */
   async function openCartSheetIfCollapsed(): Promise<void> {
-    if (await cartSheetCloseHandle.isVisible().catch(() => false)) return; // already open
+    const width = page.viewportSize()?.width ?? 1440;
+    if (width >= 768) return; // inline aside — this viewport has no bottom sheet
+
+    if (await cartSheetCloseHandle.isVisible()) return; // already open
+
     const trigger = page.getByRole("button", { name: /^السلة \(/ });
-    if (await trigger.isVisible().catch(() => false)) {
-      await trigger.click();
-    }
+    // Auto-retrying, unlike the isVisible() probe this replaces: the trigger's
+    // accessible name embeds the cart COUNT ("السلة (2)…"), so it re-renders on
+    // the very action that precedes every call to this helper.
+    await expect(trigger, "the mobile cart trigger is present below 768px").toBeVisible({ timeout: 15_000 });
+    await trigger.click();
+    await expect(cartSheetCloseHandle, "the mobile cart sheet actually opened").toBeVisible({ timeout: 10_000 });
   }
   async function closeCartSheetIfOpen(): Promise<void> {
     // Closing is required before any HEADER-triggered dialog below
     // (Stocktake/Requisitions/etc.) — the sheet is a `fixed inset-0 z-50`
     // full-viewport backdrop that otherwise covers the header and blocks
     // Playwright's actionability check on it.
-    if (await cartSheetCloseHandle.isVisible().catch(() => false)) {
-      await cartSheetCloseHandle.click();
-      await expect(cartSheetCloseHandle).toBeHidden({ timeout: 5_000 }).catch(() => {});
-    }
+    const width = page.viewportSize()?.width ?? 1440;
+    if (width >= 768) return; // no sheet exists at this viewport
+
+    if (!(await cartSheetCloseHandle.isVisible())) return;
+    await cartSheetCloseHandle.click();
+    // CO-1: this used to swallow its own failure with `.catch(() => {})`, so a
+    // sheet that stayed open left its full-viewport z-50 backdrop over the
+    // header — and the NEXT header-triggered dialog failed instead, pointing at
+    // the wrong step. If the sheet will not close, say so here.
+    await expect(cartSheetCloseHandle, "the mobile cart sheet closed again").toBeHidden({ timeout: 10_000 });
   }
 
   // ═══ Step 4/5 — switch to English (the REAL, working toggle — see GAP #1) ═
@@ -494,11 +539,22 @@ test("full bilingual cashier flow — language toggle, sell, shift, back-office"
     invRes.ok() ? await invRes.json() : [];
   const materialTarget = invItems.find((it) => it.active && it.name);
 
+  // CO-5.6 — no conditional skips. These fixtures used to gate four steps behind
+  // `test.skip(!target, …)`, which silently downgraded "the catalog API came back
+  // empty" to a pass. Since CO-0 the suite runs against a DETERMINISTIC clone of
+  // the dev database (19 inventory items, 2005 menu rows, asserted by the
+  // provisioner), so an empty catalog is a genuine failure of the seed or the
+  // API — not an environment condition worth skipping over. Assert once, here,
+  // where the diagnosis is obvious, instead of four times further down.
+  expect(items.length, "menu catalog API returned no items — the E2E database clone is not seeded as expected").toBeGreaterThan(0);
+  expect(searchTarget, "no active menu item to search for — check /api/pos/v2/catalog").toBeTruthy();
+  expect(invRes.ok(), "inventory items API (/api/inventory/items) was not reachable").toBe(true);
+  expect(materialTarget, "no active raw material to search for — check /api/inventory/items").toBeTruthy();
+
   const searchInput = page.getByPlaceholder("بحث أو مسح باركود… (F2)");
 
   // ═══ Step 10 — search by Arabic text ═══════════════════════════════════════
   await test.step("10. search by Arabic text (real catalog item name)", async () => {
-    test.skip(!searchTarget, "catalog returned no active items to search for");
     await searchInput.fill(searchTarget!.name);
     await expect(catalogSection.getByText(searchTarget!.name, { exact: false }).first()).toBeVisible({ timeout: 5_000 });
     await searchInput.fill("");
@@ -508,7 +564,6 @@ test("full bilingual cashier flow — language toggle, sell, shift, back-office"
   // GAP #3 — proxied via the item's Latin/ASCII id (filterItems also matches
   // `it.id`), NOT a translated product name (none exists yet).
   await test.step('11. search by "English" text [PROXY — see GAP #3]', async () => {
-    test.skip(!searchTarget, "catalog returned no active items to search for");
     const idQuery = searchTarget!.id.slice(0, Math.max(3, Math.min(6, searchTarget!.id.length)));
     await searchInput.fill(idQuery);
     const matched = await productCards.count();
@@ -661,7 +716,6 @@ test("full bilingual cashier flow — language toggle, sell, shift, back-office"
     if (await stDialog.getByText("Stocktake requires a connection").isVisible().catch(() => false)) {
       throw new Error("Stocktake dialog reports offline — expected an online connection for this run");
     }
-    test.skip(!materialTarget, "inventory API returned no active material to search for");
     await stDialog.getByLabel("Search for a material", { exact: true }).fill(materialTarget!.name.slice(0, 3));
     const firstResult = stDialog.getByRole("listbox").getByRole("option").first().or(stDialog.getByRole("listbox").locator("li").first());
     await expect(firstResult).toBeVisible({ timeout: 10_000 });
@@ -686,7 +740,6 @@ test("full bilingual cashier flow — language toggle, sell, shift, back-office"
     if (await reqDialog.getByText("Shortage requests & receiving requires a connection").isVisible().catch(() => false)) {
       throw new Error("Requisitions dialog reports offline — expected an online connection for this run");
     }
-    test.skip(!materialTarget, "inventory API returned no active material to search for");
     await reqDialog.getByLabel("Search for an item", { exact: true }).fill(materialTarget!.name.slice(0, 3));
     const firstResult = reqDialog.getByRole("listbox").getByRole("option").first().or(reqDialog.getByRole("listbox").locator("li").first());
     await expect(firstResult).toBeVisible({ timeout: 10_000 });

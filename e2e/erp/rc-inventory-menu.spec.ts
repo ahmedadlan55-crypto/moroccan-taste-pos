@@ -187,17 +187,63 @@ const SCREENS = [
   { id: "trial-balance", url: "/app/accounting/trial-balance" },
   { id: "admin-users", url: "/app/administration/users" },
 ];
+// CO-3(b) + CO-5.6 — pinned visual baselines, every viewport, both languages.
+//
+// This used to be an unpinned screenshot DUMP that additionally skipped itself
+// at runtime on two of the four projects. Two problems with that:
+//
+//   * Writing a PNG to artifacts/ asserts nothing. Nobody diffs it, so a layout
+//     regression at 768 or 1024 shipped silently — the exact class of bug the
+//     laptop-1024 Transfers overflow turned out to be.
+//   * `test.skip()` inside the body reports the test as SKIPPED on tablet-768
+//     and laptop-1024, which is a red mark against the "zero skipped" gate and
+//     hides the missing coverage rather than stating it.
+//
+// Now: toHaveScreenshot at all four configured viewports (1440 / 390 / 768 /
+// 1024) in ar and en — 7 screens × 2 languages × 4 viewports = 56 baselines,
+// diffed on every run.
+//
+// DETERMINISM. Baselines are only honest if the page is genuinely stable:
+//   * animations disabled and the caret hidden, so no frame-timing noise;
+//   * the DB is the isolated, seeded clone, so row content is fixed;
+//   * the CLOCK IS FROZEN. TrialBalance.tsx seeds its filter with
+//     `{ from: startOfYearISO(), to: todayISO() }`, so the rendered date range
+//     changes every single day. Masking those inputs was the first instinct and
+//     it is the wrong tool — the repo has no testids on them, a selector-based
+//     mask would silently match nothing, and a baseline that quietly stops
+//     covering the region it claims to cover is worse than no baseline. Fixing
+//     Date instead removes the variance at the source, so the pixels are
+//     genuinely reproducible rather than merely blanked out.
+//
+// setFixedTime (not clock.install) deliberately: it pins Date/now() without
+// pausing timers, so react-query intervals and transitions still run normally.
+const FROZEN_CLOCK = new Date("2026-06-15T09:00:00.000Z");
+
 for (const lang of ["ar", "en"] as const) {
-  test(`screenshots [${lang}] @ ${"desktop+mobile"}`, async ({ page }, testInfo) => {
-    test.setTimeout(120_000);
-    if (testInfo.project.name !== "desktop" && testInfo.project.name !== "mobile") test.skip();
+  test(`visual baseline [${lang}]`, async ({ page }, testInfo) => {
+    test.setTimeout(180_000);
     fs.mkdirSync(SHOTS, { recursive: true });
+    await page.clock.setFixedTime(FROZEN_CLOCK);
     await login(page, lang);
-    const vp = testInfo.project.name; // desktop 1440 / mobile 390 from config
+    const vp = testInfo.project.name;
     for (const s of SCREENS) {
       await page.goto(s.url);
       await waitRendered(page);
-      await page.waitForTimeout(400);
+      // Settle: fonts resolved (Cairo swaps in late and shifts metrics) and no
+      // pending layout work, instead of a fixed sleep.
+      await page.evaluate(() => (document as any).fonts?.ready);
+      await expect(page.locator("#main")).toBeVisible();
+      // Playwright appends `-{project}-{platform}` itself (see the existing
+      // e2e/pos/rtl-visual.spec.ts-snapshots naming), so the viewport must NOT
+      // be repeated here or every file ends up "…-desktop-desktop-win32.png".
+      await expect(page).toHaveScreenshot(`${s.id}--${lang}.png`, {
+        animations: "disabled",
+        caret: "hide",
+        maxDiffPixelRatio: 0.01,
+        timeout: 20_000,
+      });
+      // Keep the flat artifacts/ copy too — it is what a human actually browses
+      // during visual review, and it costs one extra write.
       await page.screenshot({ path: path.join(SHOTS, `${s.id}--${lang}--${vp}.png`), fullPage: false });
     }
   });

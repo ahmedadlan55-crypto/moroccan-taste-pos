@@ -37,6 +37,7 @@
 const fs   = require('fs');
 const path = require('path');
 const db   = require('./connection');
+const { withMigrationLock } = require('./migrationLock');
 
 const MIGRATIONS_DIR = path.join(__dirname, 'migrations');
 const MIGRATIONS_TABLE = '_migrations';
@@ -168,8 +169,24 @@ async function _applyMigration(filename, logger) {
 }
 
 // ─── 6. Main entry — run pending migrations ──────────────────────────
+//
+// CO-5: this is step 2/3 of the release chain and it is a SEPARATE process from
+// step 1/3 (MIGRATE_ONLY=1 node server.js). B5's advisory lock only ever wrapped
+// step 1, so two overlapping deploys serialized on the legacy schema and then
+// both ran the numbered DDL migrations at the same time. The lock is now taken
+// here too, from the shared db/migrationLock.js under the same name, so the
+// whole chain is serialized end to end.
+//
+// Pass { lock: false } to run unlocked — used only by the migration-lifecycle
+// test's deliberate concurrency scenarios, never on any production path.
 async function runPendingMigrations(opts) {
   opts = opts || {};
+  if (opts.lock !== false) {
+    return withMigrationLock(
+      () => runPendingMigrations(Object.assign({}, opts, { lock: false })),
+      { logger: opts.logger || _defaultLogger() }
+    );
+  }
   const logger = opts.logger || _defaultLogger();
   try {
     await _ensureMigrationsTable();

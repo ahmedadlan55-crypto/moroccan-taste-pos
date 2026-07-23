@@ -52,6 +52,8 @@
     "test:migration-lifecycle": "node tests/integration/migrationLifecycle.test.js",
     "test:release-sequence": "node tests/integration/releaseSequence.test.js",
     "test:release-chain": "node tests/integration/releaseChain.test.js",
+    "test:migration-concurrency": "node tests/integration/migrationConcurrency.test.js",
+    "gate": "node scripts/gate/run-full-gate.js",
     "test:journal-maker-checker": "node tests/integration/journalMakerChecker.test.js",
     "test:audit-atomicity": "node tests/integration/auditAtomicity.test.js",
     "test:auditor-role": "node tests/integration/auditorRole.test.js",

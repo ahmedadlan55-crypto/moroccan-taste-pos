@@ -832,6 +832,10 @@ app.get('*', (req, res) => {
 // Auto-initialize database tables on first run
 const fs = require('fs');
 const db = require('./db/connection');
+// CO-5 — the migration advisory lock, shared with step 2/3 of the release chain
+// (db/migrate.js). Required HERE, above autoInitDB(), so it is initialized well
+// before the first call site rather than sitting in a temporal dead zone.
+const { withMigrationLock } = require('./db/migrationLock');
 
 // Phase A — mark users still on a default password with must_change_password=1
 // so login routes them to the in-system change-password page (without blocking
@@ -1085,20 +1089,12 @@ async function normalizeCollations() {
 // on a DEDICATED connection for the whole run; a second booter blocks up to the
 // timeout, then finds the (idempotent) migrations already applied. Fail-closed:
 // if the lock cannot be obtained we THROW rather than silently skip migrations.
-async function withMigrationLock(fn) {
-  const LOCK = 'mt_pos_migrations';
-  let conn = null;
-  try {
-    conn = await db.getConnection();
-    const [rows] = await conn.query('SELECT GET_LOCK(?, 600) AS got', [LOCK]);
-    const got = rows && rows[0] && Number(rows[0].got) === 1;
-    if (!got) throw new Error('could not acquire migration advisory lock "' + LOCK + '" within timeout');
-    try { return await fn(); }
-    finally { try { await conn.query('SELECT RELEASE_LOCK(?)', [LOCK]); } catch (_) {} }
-  } finally {
-    if (conn) { try { conn.release(); } catch (_) {} }
-  }
-}
+//
+// CO-5: the implementation moved to db/migrationLock.js so that step 2/3 of the
+// release chain (node db/migrate.js — the numbered migrations, a SEPARATE
+// process that this function never covered) holds the SAME lock. See that file
+// for why the name is qualified with the target database. It is required at the
+// top of this file, next to `db`, so it exists before autoInitDB() runs.
 
 async function runMigrations() {
   // ─── Release Gate 2026-07 — schema-drift repairs (idempotent) ───

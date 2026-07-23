@@ -50,6 +50,13 @@ const STEPS = [
   { id: 'root:tests',         cmd: NPM, args: ['test'] },
   { id: 'backend:coa-gl-gate', cmd: NPM, args: ['run', 'test:coa-gl-gate'] },
   { id: 'backend:jv-concurrency', cmd: process.execPath, args: ['tests/integration/glJournalConcurrency.api.test.js'] },
+  // CO-4 item 7 — the recipe cost-lock (COST_LOCKED_BY_RECIPE + costOverride
+  // unlock) and the "assignments never touch balances" invariant are proven by
+  // these backend integration tests. They belong in the gate so the contract is
+  // enforced continuously, not just asserted once in the E2E.
+  { id: 'backend:cost-source', cmd: NPM, args: ['run', 'test:cost-source'] },
+  { id: 'backend:menu-list', cmd: NPM, args: ['run', 'test:menu-list'] },
+  { id: 'backend:item-assignments', cmd: NPM, args: ['run', 'test:item-assignments'] },
   { id: 'schema:release-chain', cmd: NPM, args: ['run', 'test:release-chain'] },
   { id: 'schema:release-sequence', cmd: NPM, args: ['run', 'test:release-sequence'] },
   { id: 'schema:migration-concurrency', cmd: NPM, args: ['run', 'test:migration-concurrency'] },

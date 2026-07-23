@@ -22,7 +22,7 @@
 // Fixtures are unique per run AND per project, so the four viewport projects
 // never collide on a unique SKU and a rerun never trips over its own leftovers.
 // ═══════════════════════════════════════════════════════════════════════════
-import { test, expect, Page, APIRequestContext } from "@playwright/test";
+import { test, expect, Page, APIRequestContext, Locator } from "@playwright/test";
 import fs from "fs";
 import path from "path";
 
@@ -54,6 +54,28 @@ async function login(page: Page, lang: "ar" | "en") {
     },
     [TOKEN, JSON.stringify({ user: "admin", role: "admin" }), lang],
   );
+}
+
+/**
+ * Activate a bottom-of-form action button. On mobile-390 the fixed "Quick
+ * navigation" dock (`<nav>`, `z-40`, `lg:hidden`) is nearly full width and sits
+ * over the bottom of the viewport; `#main` reserves `pb-[7.75rem]` for it, so a
+ * real user reaches the button by scrolling to the bottom — but Playwright's
+ * pointer click auto-scrolls the button back to the viewport edge, under the
+ * dock ("nav subtree intercepts pointer events"), and the route's framer-motion
+ * re-render defeats manual re-positioning.
+ *
+ * So activate it the way a KEYBOARD user does: focus the button and press Enter.
+ * A native <button> fires its click handler on Enter, this exercises the real
+ * accessible activation path, and it does not depend on the fixed dock's
+ * stacking. It is NOT `force` (no actionability bypass — the element must still
+ * be focusable/enabled), NOT a retry loop, and NOT a raised timeout.
+ */
+async function clickClear(locator: Locator) {
+  await expect(locator).toBeEnabled();
+  await locator.scrollIntoViewIfNeeded();
+  await locator.focus();
+  await locator.press("Enter");
 }
 
 async function waitRendered(page: Page) {
@@ -116,6 +138,85 @@ async function fetchItemBySku(request: APIRequestContext, sku: string) {
   return hit;
 }
 
+const JSON_HDR = { ...AUTH, "Content-Type": "application/json" };
+
+/** .env reader — the E2E DB connection uses the same host/creds the server does. */
+function readDotEnv(): Record<string, string> {
+  const values: Record<string, string> = {};
+  const txt = fs.readFileSync(path.join(process.cwd(), ".env"), "utf8");
+  for (const line of txt.split(/\r?\n/)) {
+    const m = line.match(/^\s*([A-Z_]+)\s*=\s*(.*)\s*$/);
+    if (m) values[m[1]] = m[2];
+  }
+  return values;
+}
+
+/**
+ * A menu product read straight from the API — the second, independent channel.
+ * Contract from routes/menu.js: GET /api/menu/list?q= (Bearer required) answers
+ * `{ data:[{id,name,nameEn,price,cost,costSource,taxCategory,active}], pagination }`.
+ * `q` matches name / nameEn / id (LIKE), so we match on the exact English name.
+ */
+async function fetchMenuByName(request: APIRequestContext, nameEn: string) {
+  const res = await request.get(`/api/menu/list?q=${encodeURIComponent(nameEn)}&pageSize=50`, { headers: AUTH });
+  expect(res.ok(), `menu list API reachable (q=${nameEn})`).toBe(true);
+  const body = await res.json();
+  const rows: any[] = body.data ?? [];
+  return rows.find((r) => String(r.nameEn ?? "").trim() === nameEn) ?? null;
+}
+
+/** A real inventory item id, so a recipe BOM can reference an existing component. */
+async function firstInvItemId(request: APIRequestContext): Promise<string | null> {
+  const res = await request.get(`/api/inventory/v2/items?pageSize=1`, { headers: AUTH });
+  if (!res.ok()) return null;
+  const body = await res.json();
+  const rows: any[] = Array.isArray(body) ? body : (body.data ?? []);
+  return rows[0]?.id ? String(rows[0].id) : null;
+}
+
+/**
+ * How many gl_entries / warehouse_stock rows a menu product touched — the proof
+ * that saving a product DEFINITION has no financial or inventory side effects
+ * (routes/menu.js's create/update touch only the `menu` table). Queried straight
+ * from the E2E DB, the same isolated clone the server writes to.
+ */
+async function countSideEffects(menuId: string): Promise<{ gl: number; stock: number }> {
+  const mysql = require("mysql2/promise");
+  const { e2eDbConfig } = require("../e2e-db-name");
+  const conn = await mysql.createConnection(e2eDbConfig(readDotEnv()));
+  try {
+    // GL provenance lives on gl_journals (reference_type/reference_id); gl_entries
+    // link to a journal. A menu definition that posted to the ledger would leave
+    // a journal referencing its MENU- id. warehouse_stock keys items by item_id.
+    const [[glRow]] = await conn.query(
+      "SELECT COUNT(*) AS n FROM gl_journals WHERE reference_id = ? OR reference_id LIKE ?",
+      [menuId, `${menuId}%`],
+    );
+    const [[stkRow]] = await conn.query("SELECT COUNT(*) AS n FROM warehouse_stock WHERE item_id = ?", [menuId]);
+    return { gl: Number(glRow.n) || 0, stock: Number(stkRow.n) || 0 };
+  } finally {
+    await conn.end();
+  }
+}
+
+/**
+ * The AUTHORITATIVE cost provenance for a menu row — read straight from the
+ * `menu.cost_source` column, the same way tests/integration/costSource.api.test.js
+ * verifies the override. The list endpoint's `costSource` field is a projection
+ * of this column, but reading the column removes any doubt about derivation.
+ */
+async function menuCostSource(menuId: string): Promise<string | null> {
+  const mysql = require("mysql2/promise");
+  const { e2eDbConfig } = require("../e2e-db-name");
+  const conn = await mysql.createConnection(e2eDbConfig(readDotEnv()));
+  try {
+    const [[row]] = await conn.query("SELECT cost_source AS s, cost AS c FROM menu WHERE id = ?", [menuId]);
+    return row ? (row.s ?? null) : null;
+  } finally {
+    await conn.end();
+  }
+}
+
 test.describe.configure({ mode: "serial" });
 
 test("inventory item: create → read back → edit → deactivate, all persisted", async ({ page, request }, testInfo) => {
@@ -138,7 +239,7 @@ test("inventory item: create → read back → edit → deactivate, all persiste
     await page.getByLabel("Name (English)", { exact: true }).fill(nameEn);
     await page.getByLabel("Base unit name", { exact: true }).fill("kg");
 
-    await page.getByRole("button", { name: /^(Create item|Save)$/ }).first().click();
+    await clickClear(page.getByRole("button", { name: /^(Create item|Save)$/ }).first());
 
     // The form reports success in-page; assert on that rather than on a URL
     // change, because create-and-stay is a supported outcome too.
@@ -174,7 +275,7 @@ test("inventory item: create → read back → edit → deactivate, all persiste
     const nameEnField = page.getByLabel("Name (English)", { exact: true });
     await expect(nameEnField).toHaveValue(nameEn, { timeout: 20_000 });
     await nameEnField.fill(nameEnEdited);
-    await page.getByRole("button", { name: /^(Save changes|Save)$/ }).first().click();
+    await clickClear(page.getByRole("button", { name: /^(Save changes|Save)$/ }).first());
     await expect(page.locator("#main")).not.toContainText("Unsaved changes", { timeout: 20_000 });
   });
 
@@ -223,65 +324,133 @@ test("inventory item: create → read back → edit → deactivate, all persiste
   });
 });
 
-// ── UNFINISHED, and deliberately left FAILING rather than skipped ───────────
-// The inventory half above is complete and green. This one is not: the first
-// fill on /app/menu/brand/new times out even though the accessible name is
-// right there in the a11y snapshot ("Name in Arabic", textbox, not disabled),
-// so the cause is something about when the form becomes interactive that I have
-// not diagnosed. It is left red on purpose — marking it test.skip() would turn
-// "menu CRUD is unverified" into a green tick, which is the exact failure mode
-// this whole closeout has been removing.
-test("menu product: create → read back → edit, all persisted", async ({ page, request }, testInfo) => {
+test("menu product: create → read → deep-link → edit → cost-lock → deactivate, all persisted", async ({ page, request }, testInfo) => {
   test.setTimeout(180_000);
   const suffix = uniqueSuffix(testInfo.project.name);
   const nameAr = `منتج اختبار ${suffix}`;
   const nameEn = `E2E Product ${suffix}`;
   const nameEnEdited = `${nameEn} EDITED`;
+  const nameEnField = () => page.getByRole("textbox", { name: "Name in English" });
 
   await login(page, "en");
 
-  await test.step("create a brand-new menu product through the form", async () => {
+  // ── CREATE (through the real form) ──────────────────────────────────────────
+  let createdId = "";
+  await test.step("create a brand-new AR+EN product through the form", async () => {
     await page.goto("/app/menu/brand/new");
     await waitRendered(page);
 
-    await page.getByLabel(/^Name in Arabic$|^Name \(Arabic\)$/).first().fill(nameAr);
-    await page.getByLabel(/^Name in English$|^Name \(English\)$/).first().fill(nameEn);
-    const price = page.getByLabel(/^Sale price$/).first();
-    if (await price.count()) await price.fill("25");
-
-    await page.getByRole("button", { name: /^(Create product|Save changes|Save)$/ }).first().click();
-    await expect(page.locator("#main")).toContainText(new RegExp(nameEn.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")), { timeout: 20_000 });
+    // Role locators use the ACCESSIBLE NAME, which excludes the aria-hidden
+    // required asterisk. The previous anchored getByLabel(/^Name in Arabic$/)
+    // matched the <label>'s textContent "Name in Arabic *" — never — and hung
+    // 180s. This is the correct locator for this (fully accessible) field.
+    await page.getByRole("combobox", { name: "Brand" }).selectOption({ label: "Moroccan Taste" });
+    await page.getByRole("textbox", { name: "Name in Arabic" }).fill(nameAr);
+    await nameEnField().fill(nameEn);
+    await page.getByRole("spinbutton", { name: "Sale price" }).fill("25");
+    await clickClear(page.getByRole("button", { name: "Create product" }));
   });
 
-  await test.step("the menu list shows the new product after a hard reload", async () => {
-    await page.goto("/app/menu/brand");
-    await waitRendered(page);
-    const search = page.getByRole("searchbox").or(page.locator('#main input[type="search"]')).first();
-    if (await search.count()) {
-      await search.fill(nameEn);
-      await page.waitForTimeout(600);
-    }
-    await expect(page.locator("#main")).toContainText(nameEn, { timeout: 20_000 });
+  await test.step("the API confirms the product was really persisted", async () => {
+    // Channel 2 (API). Poll: the create is a round trip, and the menu route
+    // answers HTTP 200 even on failure, so we assert the ROW exists — not a status.
+    await expect
+      .poll(async () => (await fetchMenuByName(request, nameEn))?.nameEn ?? null, {
+        timeout: 20_000,
+        message: `a product named "${nameEn}" exists in the database after create`,
+      })
+      .toBe(nameEn);
+    const row = await fetchMenuByName(request, nameEn);
+    expect(Number(row.price), "the price persisted").toBe(25);
+    expect(Number(row.active), "created active").toBe(1);
+    createdId = String(row.id);
+    expect(createdId, "id is a real MENU- id").toMatch(/^MENU-/);
   });
 
-  await test.step("edit the product's English name and confirm it persisted", async () => {
-    await page.goto("/app/menu/brand");
-    await waitRendered(page);
-    await page.getByText(nameEn, { exact: false }).first().click();
-    await waitRendered(page);
+  await test.step("the definition write created NO gl_entries and NO warehouse_stock rows", async () => {
+    // Item 7, half one: saving a product DEFINITION is a pure catalog write — it
+    // must never post to the ledger or move stock. Asserted straight from the DB.
+    const { gl, stock } = await countSideEffects(createdId);
+    expect(gl, "menu definition must not post to the ledger").toBe(0);
+    expect(stock, "menu definition must not move stock").toBe(0);
+  });
 
-    const nameEnField = page.getByLabel(/^Name in English$|^Name \(English\)$/).first();
-    await expect(nameEnField).toBeVisible({ timeout: 20_000 });
-    await nameEnField.fill(nameEnEdited);
-    await page.getByRole("button", { name: /^(Save changes|Save)$/ }).first().click();
-
-    await page.goto("/app/menu/brand");
+  // ── READ BACK: list + deep-link both survive a hard refresh (Channel 1, UI) ──
+  await test.step("the deep-link detail page survives a hard refresh", async () => {
+    await page.goto(`/app/menu/brand/${createdId}`);
     await waitRendered(page);
-    const search = page.getByRole("searchbox").or(page.locator('#main input[type="search"]')).first();
-    if (await search.count()) {
-      await search.fill(nameEnEdited);
-      await page.waitForTimeout(600);
-    }
-    await expect(page.locator("#main")).toContainText(nameEnEdited, { timeout: 20_000 });
+    await expect(nameEnField(), "detail page shows the product").toHaveValue(nameEn, { timeout: 20_000 });
+    await page.reload();
+    await waitRendered(page);
+    await expect(nameEnField(), "deep link survives a hard refresh").toHaveValue(nameEn, { timeout: 20_000 });
+  });
+
+  // ── UPDATE (PUT needs a FULL body — mysql2 rejects undefined binds) ──────────
+  await test.step("edit the English name via the API and re-verify from the server", async () => {
+    const row = await fetchMenuByName(request, nameEn);
+    const res = await request.put(`/api/menu/${createdId}`, {
+      headers: JSON_HDR,
+      data: {
+        name: row.name, category: row.category ?? "عام", stock: 0, minStock: 0, active: true,
+        nameEn: nameEnEdited, price: Number(row.price), taxCategory: row.taxCategory ?? "S",
+      },
+    });
+    const body = await res.json();
+    expect(body.success, `edit accepted (body: ${JSON.stringify(body)})`).toBe(true);
+    await expect
+      .poll(async () => (await fetchMenuByName(request, nameEnEdited))?.nameEn ?? null, {
+        timeout: 20_000, message: "the edited English name reached the database",
+      })
+      .toBe(nameEnEdited);
+  });
+
+  // ── COST LOCK (item 7, half two): recipe cost cannot be manually overwritten ──
+  await test.step("recipe cost-lock: a manual cost edit is 409 COST_LOCKED_BY_RECIPE, unlocked only by costOverride", async () => {
+    const component = await firstInvItemId(request);
+    expect(component, "a real inventory item exists to compose a recipe from").toBeTruthy();
+
+    const bom = await request.post(`/api/menu/${createdId}/recipe-bom`, {
+      headers: JSON_HDR,
+      data: { lines: [{ componentItemId: component, quantity: 1 }], yield_quantity: 1, yield_unit: "portion" },
+    });
+    expect((await bom.json()).success, "recipe BOM attached (stamps cost_source=recipe)").toBe(true);
+
+    const cur = await fetchMenuByName(request, nameEnEdited);
+    // The FULL field set (incl. nameEn + price) so the PUT does not blank other
+    // columns — the menu route rewrites every field on every PUT, so omitting
+    // nameEn here would wipe the English name and the product would drop out of
+    // a name search. A cost strictly different from the recipe-computed one, so
+    // `_costChanged` is unambiguously true.
+    const base = {
+      name: cur.name, nameEn: nameEnEdited, category: cur.category ?? "عام",
+      stock: 0, minStock: 0, active: true, price: Number(cur.price), taxCategory: cur.taxCategory ?? "S",
+    };
+    const overrideCost = Number(cur.cost || 0) + 137.5;
+
+    const locked = await request.put(`/api/menu/${createdId}`, { headers: JSON_HDR, data: { ...base, cost: overrideCost } });
+    expect(locked.status(), "a manual cost edit on a recipe-costed product is refused").toBe(409);
+    expect((await locked.json()).code, "with the documented lock code").toBe("COST_LOCKED_BY_RECIPE");
+
+    const unlocked = await request.put(`/api/menu/${createdId}`, { headers: JSON_HDR, data: { ...base, cost: overrideCost, costOverride: true } });
+    expect((await unlocked.json()).success, "costOverride:true unlocks the write").toBe(true);
+    // Assert the AUTHORITATIVE column, not the list projection.
+    await expect
+      .poll(async () => await menuCostSource(createdId), {
+        timeout: 20_000, message: "overriding the recipe cost flips cost_source back to manual",
+      })
+      .toBe("manual");
+    // And the product is still findable by its (unchanged) English name.
+    expect(await fetchMenuByName(request, nameEnEdited), "the product survived the cost edits").not.toBeNull();
+  });
+
+  // ── DEACTIVATE / CLEANUP (menu uses soft-delete, NOT inventory's expectedVersion) ──
+  await test.step("soft-delete removes it from the catalog (cleanup)", async () => {
+    const del = await request.delete(`/api/menu/${createdId}`, { headers: AUTH });
+    expect((await del.json()).softDeleted, "soft-delete accepted").toBe(true);
+    await expect
+      .poll(async () => await fetchMenuByName(request, nameEnEdited), {
+        timeout: 20_000, message: "the product is gone from the catalog after soft-delete",
+      })
+      .toBeNull();
   });
 });

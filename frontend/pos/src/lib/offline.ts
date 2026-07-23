@@ -189,7 +189,11 @@ export class OfflineEngine {
   /** Resolves once the persisted queue has been repaired (see repairQueue). */
   private seqReady: Promise<void>;
   private syncing = false;
-  private pendingFlush = false;
+  /**
+   * CO-1 — flushes are serialized through this chain so `await flush()` really
+   * means "a drain covering my ops has finished". See flush().
+   */
+  private flushChain: Promise<void> = Promise.resolve();
   private queueCount = 0;
   private lastReport: SyncReport | null = null;
   private statusSnapshot: EngineStatus;
@@ -378,6 +382,22 @@ export class OfflineEngine {
    */
   async saveCart(doc: LocalOrder): Promise<void> {
     doc = await this.mergeServerVersion(doc);
+
+    // CO-1, the other half of invariant 2. The barrier stops a stale UPSERT
+    // being queued after checkout — but this write bypasses the barrier, and
+    // the React tree can still be holding a doc snapshot whose status is
+    // 'open' from before Pay was tapped. Writing it back would DOWNGRADE the
+    // stored 'submitted' order to 'open', which re-arms the debounce below and
+    // re-opens the very window the barrier exists to close.
+    //
+    // An order only ever moves forward out of 'open'. A save carrying 'open'
+    // for an order the store has already advanced is by definition stale, so
+    // it is dropped rather than merged: the cart it describes no longer exists.
+    if (doc.status === "open") {
+      const stored = await this.deps.orders.get(doc.id);
+      if (stored && stored.status !== "open") return;
+    }
+
     await this.deps.orders.put(doc.id, doc);
     this.cancelDebounce(doc.id);
     if (!doc.lines.length || doc.status !== "open") return;
@@ -720,11 +740,42 @@ export class OfflineEngine {
   }
 
   // ── Flush engine ────────────────────────────────────────────────────────────
+  /**
+   * Drain the queue, and — this is the part that matters — RESOLVE ONLY WHEN A
+   * DRAIN THAT STARTED AFTER THIS CALLER'S OPS WERE ENQUEUED HAS FINISHED.
+   *
+   * This used to return immediately whenever another drain was in flight:
+   *
+   *     if (this.syncing) { this.pendingFlush = true; return; }
+   *
+   * so `await flush()` was a lie. checkout() awaits flush() and then reads the
+   * order to decide what to tell the cashier; when a debounced upsert's own
+   * `void flush()` happened to be mid-drain, checkout's await returned at once,
+   * the doc was still 'submitted', and checkout reported
+   *
+   *     "Order saved — will sync when the connection returns"
+   *
+   * for a sale that submitted, posted and completed successfully milliseconds
+   * later. The cashier is told a completed payment is pending.
+   *
+   * It was always latent. The CO-1 barrier made it frequent — checkout now
+   * queues behind the debounce's critical section, so it lands squarely inside
+   * the window where that debounce's flush is still running. Found by the same
+   * regression run that proved the 404 fixed, which is exactly what the run is
+   * for.
+   *
+   * Flushes are now serialized through a promise chain, so a caller's await
+   * covers its own ops by construction.
+   */
   async flush(): Promise<void> {
-    if (this.syncing) {
-      this.pendingFlush = true;
-      return;
-    }
+    const run = this.flushChain.then(() => this.drainQueue());
+    // Keep the chain alive on failure, or one rejected drain would wedge every
+    // later flush for the lifetime of the tab.
+    this.flushChain = run.catch(() => undefined);
+    return run;
+  }
+
+  private async drainQueue(): Promise<void> {
     if (!this.deps.isOnline()) {
       this.emitStatus();
       return;
@@ -766,10 +817,6 @@ export class OfflineEngine {
       this.syncing = false;
       this.emitStatus();
       if (reports.length) this.emitEvent({ type: "toast", kind: "info", message: syncSummaryText(reports) });
-      if (this.pendingFlush) {
-        this.pendingFlush = false;
-        void this.flush();
-      }
     }
   }
 

@@ -76,6 +76,11 @@ function makeServer() {
   const invoices: string[] = [];
   const idempotencyKeys: string[] = [];
   let saleCounter = 0;
+  // A controllable stall. Without it the in-memory api resolves instantly, so
+  // a drain is never actually in flight and any "concurrent flush" test passes
+  // vacuously — which is exactly what the first version of scenario (h) did.
+  let stall: Promise<void> | null = null;
+  let releaseStall: (() => void) | null = null;
 
   const notFound = (): Error => {
     const e = new Error("الطلب غير موجود") as Error & { status?: number; code?: string };
@@ -120,6 +125,7 @@ function makeServer() {
       return { success: true, idempotent: false, data: { id, saleId: body.saleId }, version: 6 };
     }),
     postSync: vi.fn(async (ops: Array<{ opId: string; type: string; orderId?: string; payload?: { id?: string } }>) => {
+      if (stall) await stall;
       for (const o of ops) {
         if (o.type === "upsert" && o.orderId) known.add(o.orderId);
         calls.push(`${o.type}:${o.orderId}`);
@@ -128,7 +134,11 @@ function makeServer() {
     }),
   };
 
-  return { api, calls, sales, invoices, idempotencyKeys, known };
+  return {
+    api, calls, sales, invoices, idempotencyKeys, known,
+    holdSync: () => { stall = new Promise<void>((r) => { releaseStall = r; }); },
+    releaseSync: () => { const r = releaseStall; stall = null; releaseStall = null; r?.(); },
+  };
 }
 
 interface GateControl {
@@ -429,6 +439,44 @@ describe("CO-1 — the checkout can never outrun the order that creates it", () 
     await vi.runOnlyPendingTimersAsync();
     assertUpsertBeforeSubmit(h.server.calls, "ORD-F");
     expect(h.server.sales, "ONE sale from two tabs").toEqual(["ORD-F"]);
+  });
+
+  it("(h) checkout reports COMPLETED, not 'will sync later', when a drain is already in flight", async () => {
+    // The bug this pins: flush() used to return immediately whenever another
+    // drain was running (`if (this.syncing) { pendingFlush = true; return; }`),
+    // so checkout()'s `await flush()` resolved before its own ops had been
+    // sent. checkout then read a doc still marked 'submitted' and told the
+    // cashier "Order saved — will sync when the connection returns" for a sale
+    // that submitted, posted and completed successfully milliseconds later.
+    //
+    // The stall is what makes this real: a drain must still be RUNNING when
+    // checkout calls flush. Without it the fake api resolves synchronously,
+    // `syncing` is never true, and the test proves nothing.
+    const h = makeHarness();
+    const doc = makeDoc("ORD-H");
+    await h.engine.saveCart(doc);
+
+    h.server.holdSync();
+    await vi.advanceTimersByTimeAsync(600); // debounce fires -> its flush blocks in postSync
+    const checkout = h.engine.checkout(doc, [{ method: "cash", amount: 46 }], { cashTendered: 46, changeDue: 0 });
+    // Release only once checkout has ACTUALLY reached its flush() — signalled by
+    // its ops being in the queue. Releasing after a fixed microtask count let
+    // the first drain finish first, which is why the earlier version of this
+    // test survived the mutation.
+    for (let i = 0; i < 100; i++) {
+      if ((await h.queue.getAll()).some((o) => o.type === "submit-and-sale")) break;
+      await Promise.resolve();
+    }
+    await Promise.resolve();
+    h.server.releaseSync();
+
+    const res = await checkout;
+    await vi.runOnlyPendingTimersAsync();
+
+    expect(res.state, "a sale that completed must NOT be reported as queued").toBe("completed");
+    expect(res.invoiceNumber, "and it carries its invoice number").toBeTruthy();
+    assertUpsertBeforeSubmit(h.server.calls, "ORD-H");
+    expect(h.server.sales).toEqual(["ORD-H"]);
   });
 
   it("(g) a legacy queue already persisted as submit-before-upsert is repaired, without a duplicate sale", async () => {

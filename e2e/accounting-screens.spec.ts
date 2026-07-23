@@ -37,6 +37,20 @@ const NETWORK_WHITELIST: RegExp[] = [];
 
 test.describe.configure({ mode: "serial" });
 
+// RETIRED 2026-07 (RC gate): this spec drives the LEGACY vanilla-JS admin shell
+// (public/js/app.js → window.erpNav()/#adminView). That shell was DELETED in the
+// "/"→"/app" cutover — server.js unconditionally 302-redirects "/" to "/app/"
+// ("the legacy shell it used to serve is deleted"), and the hooks it walks
+// (#adminView, erpNav, coaTreeBody, erpJournalsBody, erpLoadTrialBalance) now
+// exist ONLY in this file and e2e/flags-off.spec.ts — no production source.
+// It is therefore unsatisfiable by any data fixture. The accounting screens it
+// used to shoot are now covered by the React unified app under /app and its
+// live E2E: e2e/erp/erp.spec.ts (closure gate walks every /app/accounting/*
+// leaf), e2e/erp/trial-balance-rbac.spec.ts (real login → populated, balanced
+// Trial Balance), and e2e/erp/rc-bilingual.spec.ts (accounting in ar+en).
+// Skipped (not deleted) so the retirement + its rationale stay visible; delete
+// the spec + playwright.accounting[.prod].config.ts when trimming legacy tests.
+
 // small settle helper — fonts/paint
 const SETTLE_MS = 500;
 
@@ -52,7 +66,7 @@ async function erpNavTo(page: Page, key: string) {
   await expect(page.locator(`#${key}`)).toBeVisible({ timeout: 15_000 });
 }
 
-test("accounting screens baseline", async ({ page }, testInfo) => {
+test.skip("accounting screens baseline — RETIRED (legacy admin shell deleted; see header)", async ({ page }, testInfo) => {
   const project = testInfo.project.name;
   const results: string[] = [];
 

@@ -3,6 +3,7 @@
  */
 const router = require('express').Router();
 const db = require('../db/connection');
+const { nextFlatJournalNumber } = require('../lib/glPosting'); // FC-B1 atomic JV numbering
 
 // ═══════════════════════════════════════════════════════════════════
 // v7.7 — AUTHORIZATION HELPERS (custody endpoints)
@@ -467,14 +468,8 @@ router.post('/:id/topup', async (req, res) => {
 
     if (custAccId && sourceAccId) {
       const ts = Date.now();
-      const jrnId = 'JRN-TOP-' + ts;
-      const [lastJrn] = await db.query('SELECT journal_number FROM gl_journals ORDER BY created_at DESC LIMIT 1');
-      let jrnNum = 1;
-      if (lastJrn.length && lastJrn[0].journal_number) {
-        const m = lastJrn[0].journal_number.match(/(\d+)/);
-        if (m) jrnNum = parseInt(m[1]) + 1;
-      }
-      const journalNumber = 'JV-' + String(jrnNum).padStart(6, '0');
+      const jrnId = 'JRN-TOP-' + ts + '-' + Math.random().toString(36).slice(2, 6); // FC-B1 unique under concurrency
+      const journalNumber = await nextFlatJournalNumber(); // FC-B1 atomic (was created_at DESC race)
       const desc = 'تغذية عهدة ' + custNum + ' — ' + custName;
       const now = new Date();
 
@@ -679,14 +674,8 @@ router.post('/expenses/:expId/post', async (req, res) => {
 
     // Build GL journal entries
     const now = new Date();
-    const jrnId = 'JRN-' + Date.now();
-    const [lastJrn] = await db.query('SELECT journal_number FROM gl_journals ORDER BY created_at DESC LIMIT 1');
-    let jrnNum = 1;
-    if (lastJrn.length && lastJrn[0].journal_number) {
-      const m = lastJrn[0].journal_number.match(/(\d+)/);
-      if (m) jrnNum = parseInt(m[1]) + 1;
-    }
-    const journalNumber = 'JV-' + String(jrnNum).padStart(6, '0');
+    const jrnId = 'JRN-' + Date.now() + '-' + Math.random().toString(36).slice(2, 6); // FC-B1 unique under concurrency
+    const journalNumber = await nextFlatJournalNumber(); // FC-B1 atomic (was created_at DESC race)
 
     const amt = Number(exp.amount) || 0;
     const vat = Number(exp.vat_amount) || 0;

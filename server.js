@@ -4066,6 +4066,13 @@ async function runMigrations() {
   // routes/sales.js threw "Unknown column 'brand_id'". Defensively add
   // the missing columns + widen the status enum to include 'soft_close'
   // (no 'd') and 'locked' that the v6.2.0 endpoints write.
+  // period_name is created NOT NULL by the fresh CREATE TABLE above, but a table
+  // that predates it (older installs / test DBs) never gets it — the CREATE ...
+  // IF NOT EXISTS is a no-op — so GET /api/erp/periods' `SELECT ... period_name`
+  // threw ER_BAD_FIELD_ERROR (a hard 500). Add it idempotently as NULLABLE, which
+  // is exactly how the route treats it (prefers period_name, falls back to
+  // period_label). Same defensive pattern as the four siblings below.
+  await addColumnIfMissing('accounting_periods', 'period_name',   'VARCHAR(20) NULL');
   await addColumnIfMissing('accounting_periods', 'period_label',  'VARCHAR(20) NULL');
   await addColumnIfMissing('accounting_periods', 'brand_id',      'VARCHAR(50) NULL');
   await addColumnIfMissing('accounting_periods', 'branch_id',     'VARCHAR(50) NULL');

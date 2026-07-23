@@ -261,7 +261,10 @@ export const accounting = {
       opening: "أول المدة",
       period: "حركة الفترة",
       closing: "آخر المدة",
-      notClean: "تنبيه: التقرير غير Clean — راجع بنود التشخيص أدناه",
+      // «غير سليم» لا «غير Clean» — عربية سليمة بدل تبديل لغوي داخل الجملة.
+      // النص مأخوذ من فرع التكامل الموازي (6e92447) والبنية من هذا الفرع؛
+      // accounting.test.tsx يؤكد هذه الصيغة تحديدًا.
+      notClean: "تنبيه: التقرير غير سليم — راجع بنود التشخيص أدناه",
     },
     // <DiagnosticsPanel> — one label per diagnostic bucket the server reports,
     // plus the inline detail labels used inside each bucket's row list.

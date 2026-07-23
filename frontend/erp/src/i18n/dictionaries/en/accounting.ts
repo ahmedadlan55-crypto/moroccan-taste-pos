@@ -243,7 +243,9 @@ export const accounting = {
       opening: "opening balance",
       period: "period movement",
       closing: "closing balance",
-      notClean: "Warning: this report is not Clean — review the diagnostic items below",
+      // Mirrors the ar side, which the parallel integration branch rewrote from
+      // the code-switched "غير Clean" to proper Arabic "غير سليم".
+      notClean: "Warning: this report is not sound — review the diagnostic items below",
     },
     diagnostics: {
       nullAccountOpening: "Entries whose account is unknown (NULL) — within the opening balance",

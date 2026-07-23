@@ -386,7 +386,7 @@ test("create and edit workflows use a full-page work area instead of side panels
   );
 
   const flows = [
-    { id: "supplier", path: "/app/purchasing/suppliers", trigger: /مورد جديد/, title: "إضافة مورد جديد" },
+    { id: "supplier", path: "/app/purchasing/suppliers", trigger: /مورد جديد/, title: "إضافة مورد" },
     { id: "customer", path: "/app/customers", trigger: /عميل جديد/, title: "إضافة عميل" },
     { id: "employee", path: "/app/people/employees", trigger: /موظف جديد/, title: "موظف جديد" },
   ];

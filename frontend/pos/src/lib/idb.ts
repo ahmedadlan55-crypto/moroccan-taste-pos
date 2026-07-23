@@ -9,6 +9,20 @@ const DB_NAME = "pos-v2";
 // v2 (Owner I — offline image cache): adds the 'imageManifest' store, with
 // 'branchId' + 'lastAccess' indices so offlineImages.ts can bulk-clear a
 // branch's rows and LRU-evict the oldest ones without a full table scan.
+//
+// CO-1 deliberately did NOT bump this. The checkout-ordering fix first carried
+// a 'meta' store for a durable sequence counter, which would have required
+// v3 — and a version bump here is far more dangerous than it looks: openDb()
+// memoizes dbPromise and never clears it on rejection, onblocked rejects, and
+// (before the handler added below) nothing closed an old connection on
+// versionchange. A cashier with a v2 tab still open would have blocked the
+// upgrade indefinitely, permanently poisoning the new tab's dbPromise and
+// leaving a POS with no storage at all.
+//
+// It turned out the counter was unnecessary: seq is allocated as
+// max(live queue) + 1 INSIDE the serialized transaction, so two allocators can
+// never collide, and a queue that drains to empty has no surviving op left to
+// misorder. Zero schema change, zero migration, invariant 5 satisfied trivially.
 const DB_VERSION = 2;
 export const STORES = ["catalog", "orders", "queue"] as const;
 export type StoreName = (typeof STORES)[number];
@@ -38,9 +52,33 @@ function openDb(): Promise<IDBDatabase> {
         store.createIndex("lastAccess", "lastAccess", { unique: false });
       }
     };
-    req.onsuccess = () => resolve(req.result);
-    req.onerror = () => reject(req.error ?? new Error("indexedDB open failed"));
-    req.onblocked = () => reject(new Error("indexedDB open blocked"));
+    req.onsuccess = () => {
+      const db = req.result;
+      // Without this, an OLDER tab holding this connection blocks any future
+      // version upgrade forever (the newer tab's open() fires onblocked and its
+      // memoized dbPromise stays permanently rejected — a cashier tab with no
+      // storage at all). Closing on request lets the upgrade proceed; the next
+      // call to openDb() in this tab simply reopens.
+      db.onversionchange = () => {
+        db.close();
+        dbPromise = null;
+      };
+      db.onclose = () => {
+        dbPromise = null;
+      };
+      resolve(db);
+    };
+    req.onerror = () => {
+      // Never memoize a REJECTED promise: a single transient failure (quota
+      // prompt, private-mode quirk) would otherwise make every later call fail
+      // for the lifetime of the tab.
+      dbPromise = null;
+      reject(req.error ?? new Error("indexedDB open failed"));
+    };
+    req.onblocked = () => {
+      dbPromise = null;
+      reject(new Error("indexedDB open blocked"));
+    };
   });
   return dbPromise;
 }
@@ -108,6 +146,174 @@ export function memoryStore<T>(seed?: Map<string, T>): KVStore<T> {
       map.delete(k);
     },
     getAll: async () => [...map.values()],
+  };
+}
+
+// ─── CO-1 — the atomic critical section ─────────────────────────────────────
+//
+// The offline engine used to build queue ops with a plain
+// `getAll() -> decide -> ++inMemoryCounter -> put()` sequence. Every one of
+// those steps is an await, so two callers (a 600ms debounce firing while
+// checkout runs) interleave freely, and the engine reached the state
+//
+//     submit-and-sale(seq = n)   BEFORE   upsert(seq = n + 1)
+//
+// which makes the drain POST /submit for an order the server has never seen →
+// 404 «الطلب غير موجود» → the payment fails. An in-memory mutex cannot fix
+// this: the counter is per-instance, so two TABS still collide, and it does not
+// survive a reload.
+//
+// IndexedDB already provides exactly the primitive needed — a readwrite
+// transaction is serialized against every other readwrite transaction on the
+// same stores, in the same browser, across tabs. So the critical section
+// becomes one transaction spanning 'orders' + 'queue' + 'meta'.
+//
+// HARD CONTRACT: `decide` is SYNCHRONOUS. An IndexedDB transaction
+// auto-commits as soon as control returns to the event loop with no pending
+// request against it, so awaiting anything inside `decide` would silently
+// close the transaction and the writes would throw TransactionInactiveError.
+// Everything `decide` needs is therefore PREFETCHED before it is called.
+
+export interface AtomicTxn {
+  /** Snapshot of every row in a prefetched store, taken inside this txn. */
+  getAll<T>(store: StoreName): T[];
+  /** A prefetched single row. */
+  get<T>(store: StoreName, key: string): T | undefined;
+  put<T>(store: StoreName, key: string, value: T): void;
+  delete(store: StoreName, key: string): void;
+}
+
+export interface AtomicPrefetch {
+  /** Stores to snapshot in full. */
+  all?: StoreName[];
+  /** Individual [store, key] rows to snapshot. */
+  keys?: Array<[StoreName, string]>;
+}
+
+/** Runs `decide` inside ONE readwrite IndexedDB transaction. See the contract above. */
+export interface AtomicRunner {
+  transact<R>(stores: StoreName[], prefetch: AtomicPrefetch, decide: (txn: AtomicTxn) => R): Promise<R>;
+}
+
+export function idbAtomicRunner(): AtomicRunner {
+  return {
+    transact<R>(stores: StoreName[], prefetch: AtomicPrefetch, decide: (txn: AtomicTxn) => R): Promise<R> {
+      return openDb().then(
+        (db) =>
+          new Promise<R>((resolve, reject) => {
+            const t = db.transaction(stores, "readwrite");
+            const allSnap = new Map<StoreName, unknown[]>();
+            const keySnap = new Map<string, unknown>();
+            const wanted = (prefetch.all?.length ?? 0) + (prefetch.keys?.length ?? 0);
+            let got = 0;
+            let outcome: R;
+            let decided = false;
+
+            const maybeDecide = (): void => {
+              if (decided || got < wanted) return;
+              decided = true;
+              // Synchronous by contract — see above.
+              outcome = decide({
+                getAll: <T,>(s: StoreName) => (allSnap.get(s) ?? []) as T[],
+                get: <T,>(s: StoreName, k: string) => keySnap.get(`${s} ${k}`) as T | undefined,
+                put: <T,>(s: StoreName, k: string, v: T) => {
+                  t.objectStore(s).put(v, k);
+                },
+                delete: (s: StoreName, k: string) => {
+                  t.objectStore(s).delete(k);
+                },
+              });
+            };
+
+            for (const s of prefetch.all ?? []) {
+              const r = t.objectStore(s).getAll();
+              r.onsuccess = () => {
+                allSnap.set(s, r.result as unknown[]);
+                got++;
+                maybeDecide();
+              };
+            }
+            for (const [s, k] of prefetch.keys ?? []) {
+              const r = t.objectStore(s).get(k);
+              r.onsuccess = () => {
+                keySnap.set(`${s} ${k}`, r.result);
+                got++;
+                maybeDecide();
+              };
+            }
+            if (wanted === 0) maybeDecide();
+
+            t.oncomplete = () => resolve(outcome);
+            t.onerror = () => reject(t.error ?? new Error("idb transaction failed"));
+            t.onabort = () => reject(t.error ?? new Error("idb transaction aborted"));
+          }),
+      );
+    },
+  };
+}
+
+/**
+ * In-memory AtomicRunner for tests.
+ *
+ * Serialized through a single promise chain, which is what makes the
+ * interleaving tests meaningful: `gate` is awaited between the prefetch and
+ * `decide`, so a test can hold one critical section open at a precise point and
+ * drive a second caller into it. Real IndexedDB gives the same mutual exclusion
+ * for free; this reproduces it — including the ordering — without a browser.
+ */
+export function memoryAtomicRunner(
+  stores: Partial<Record<StoreName, KVStore<never>>>,
+  gate?: (phase: "before-decide" | "after-decide") => Promise<void> | void,
+): AtomicRunner {
+  let chain: Promise<unknown> = Promise.resolve();
+  const extra = new Map<StoreName, KVStore<unknown>>();
+  const storeFor = (s: StoreName): KVStore<unknown> => {
+    const injected = stores[s] as KVStore<unknown> | undefined;
+    if (injected) return injected;
+    let made = extra.get(s);
+    if (!made) {
+      made = memoryStore<unknown>();
+      extra.set(s, made);
+    }
+    return made;
+  };
+
+  return {
+    transact<R>(_stores: StoreName[], prefetch: AtomicPrefetch, decide: (txn: AtomicTxn) => R): Promise<R> {
+      const run = chain.then(async () => {
+        const allSnap = new Map<StoreName, unknown[]>();
+        const keySnap = new Map<string, unknown>();
+        for (const s of prefetch.all ?? []) allSnap.set(s, await storeFor(s).getAll());
+        for (const [s, k] of prefetch.keys ?? []) keySnap.set(s + " " + k, await storeFor(s).get(k));
+
+        if (gate) await gate("before-decide");
+
+        // `decide` is synchronous in BOTH runners (the real one has no choice —
+        // an IndexedDB transaction auto-commits the moment it yields), so its
+        // writes are COLLECTED here and applied immediately after. Still atomic:
+        // the whole block runs inside this serialized chain, so no other
+        // transact() can observe the midpoint.
+        const writes: Array<() => Promise<void>> = [];
+        const out = decide({
+          getAll: (s: StoreName) => (allSnap.get(s) ?? []) as never[],
+          get: (s: StoreName, k: string) => keySnap.get(s + " " + k) as never,
+          put: (s: StoreName, k: string, v: unknown) => {
+            writes.push(() => storeFor(s).put(k, v));
+          },
+          delete: (s: StoreName, k: string) => {
+            writes.push(() => storeFor(s).delete(k));
+          },
+        } as AtomicTxn);
+        for (const w of writes) await w();
+
+        if (gate) await gate("after-decide");
+        return out;
+      });
+      // Keep the chain alive even when a caller rejects, or one failed critical
+      // section would deadlock every later one.
+      chain = run.catch(() => undefined);
+      return run;
+    },
   };
 }
 

@@ -9,7 +9,7 @@
  *                             drains the queue (engine.start() wiring)
  */
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { memoryStore, type KVStore } from "../idb";
+import { memoryAtomicRunner, memoryStore, type KVStore } from "../idb";
 import { OfflineEngine, type EngineApi } from "../offline";
 import type { LocalOrder, QueueOp } from "../types";
 
@@ -65,6 +65,7 @@ function makeEngine(opts: {
   const engine = new OfflineEngine({
     orders,
     queue,
+    atomic: memoryAtomicRunner({ orders, queue } as never),
     api: api as unknown as EngineApi,
     isOnline: opts.online ?? (() => true),
     now: () => 1_700_000_000_000,

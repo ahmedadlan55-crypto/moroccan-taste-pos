@@ -5,7 +5,7 @@
  * opId stability across network retries, and VERSION_CONFLICT → park-as-draft.
  */
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { memoryStore } from "../idb";
+import { memoryAtomicRunner, memoryStore } from "../idb";
 import { OfflineEngine, type EngineApi, type EngineEvent } from "../offline";
 import { ApiError } from "../api";
 import type { LocalOrder, QueueOp } from "../types";
@@ -92,6 +92,7 @@ function makeHarness(): Harness {
   const engine = new OfflineEngine({
     orders,
     queue,
+    atomic: memoryAtomicRunner({ orders, queue } as never),
     api: api as unknown as EngineApi,
     isOnline: () => online,
     now: () => 1_700_000_000_000,

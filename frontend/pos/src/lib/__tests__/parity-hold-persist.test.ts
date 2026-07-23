@@ -9,7 +9,7 @@
  *                         recently updated open one after a refresh.
  */
 import { beforeEach, describe, expect, it } from "vitest";
-import { memoryStore } from "../idb";
+import { memoryAtomicRunner, memoryStore } from "../idb";
 import { OfflineEngine, type EngineApi } from "../offline";
 import type { LocalOrder, QueueOp } from "../types";
 
@@ -49,6 +49,7 @@ beforeEach(() => {
   engine = new OfflineEngine({
     orders,
     queue,
+    atomic: memoryAtomicRunner({ orders, queue } as never),
     // OFFLINE the whole time — holds and drafts must work with no server.
     api: {} as EngineApi,
     isOnline: () => false,

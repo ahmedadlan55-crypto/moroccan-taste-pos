@@ -20,8 +20,8 @@
  * The engine takes injected stores + api so tests can run it against
  * in-memory Maps and a scripted api (src/lib/__tests__/offline.test.ts).
  */
-import type { KVStore } from "./idb";
-import { idbStore } from "./idb";
+import type { AtomicRunner, AtomicTxn, KVStore } from "./idb";
+import { idbAtomicRunner, idbStore } from "./idb";
 import * as realApi from "./api";
 import { ApiError } from "./api";
 import { ulid } from "./ulid";
@@ -51,6 +51,11 @@ import type {
 // this safe default keeps every message meaningful (never a blank string).
 const IDENTITY_T: TFunction = (path) => path;
 
+// CO-1 — the stores the ordering critical section spans. 'orders' is in here
+// because checkout must mark the order submitted in the SAME transaction that
+// queues its submit; being able to observe one without the other IS the bug.
+const ORDER_TX: Array<"orders" | "queue"> = ["orders", "queue"];
+
 // ── Injected dependency surfaces ─────────────────────────────────────────────
 export interface EngineApi {
   upsertOrder: typeof realApi.upsertOrder;
@@ -64,6 +69,14 @@ export interface EngineApi {
 export interface EngineDeps {
   orders: KVStore<LocalOrder>;
   queue: KVStore<QueueOp>;
+  /**
+   * CO-1 — the serialized critical section for everything that decides QUEUE
+   * ORDER. `orders`/`queue` above stay for plain reads and for the drain, but
+   * any read-modify-write that allocates a seq, replaces a trailing upsert, or
+   * moves an order into checkout MUST go through here. See idb.ts for why an
+   * in-memory mutex is not sufficient (two tabs, and reloads).
+   */
+  atomic: AtomicRunner;
   api: EngineApi;
   isOnline: () => boolean;
   now: () => number;
@@ -171,7 +184,9 @@ export class OfflineEngine {
   private listeners = new Set<() => void>();
   private eventListeners = new Set<(e: EngineEvent) => void>();
   private debouncers = new Map<string, ReturnType<typeof setTimeout>>();
-  private seqCounter = 0;
+  /** CO-1 — see cancelDebounce(): invalidates a timer that has ALREADY fired. */
+  private debounceGen = new Map<string, number>();
+  /** Resolves once the persisted queue has been repaired (see repairQueue). */
   private seqReady: Promise<void>;
   private syncing = false;
   private pendingFlush = false;
@@ -206,16 +221,80 @@ export class OfflineEngine {
     return translateApiError(e, this.t);
   }
 
+  /**
+   * CO-1 — repair queues persisted by the PRE-FIX build, then seed the durable
+   * counter. Runs once at construction, inside the same barrier every enqueue
+   * uses, so it cannot race a checkout started immediately after boot.
+   *
+   * The bug shipped ops to IndexedDB in the shape
+   *
+   *     submit-and-sale(seq = n)   BEFORE   upsert(seq = n + 1)
+   *
+   * and those rows are still on real devices, mid-flight, right now. Draining
+   * them as-is reproduces the 404 forever, because the drain sorts by seq.
+   *
+   * The repair REORDERS rather than deletes: for each order, every upsert that
+   * sorts after that order's checkout is moved just before it, preserving the
+   * relative order of the rest. opIds are NEVER changed — they are the server's
+   * idempotency keys, so rewriting one would turn a replay into a SECOND sale.
+   * Renumbering seq only changes the order we send them in, which is precisely
+   * the thing that was wrong.
+   *
+   * Idempotent: a queue already in the right order renumbers to itself.
+   */
   private async initSeq(): Promise<void> {
     try {
-      const ops = await this.deps.queue.getAll();
-      this.seqCounter = ops.reduce((m, o) => Math.max(m, o.seq), 0);
-      this.queueCount = ops.length;
+      await this.deps.atomic.transact(
+        ORDER_TX,
+        { all: ["queue"] },
+        (txn: AtomicTxn) => {
+          const all = txn.getAll<QueueOp>("queue").sort((a, b) => a.seq - b.seq);
+          this.queueCount = all.length;
+          if (!all.length) return;
+
+          const byOrder = new Map<string, QueueOp[]>();
+          for (const o of all) {
+            const list = byOrder.get(o.orderId) ?? [];
+            list.push(o);
+            byOrder.set(o.orderId, list);
+          }
+
+          const moved = new Set<string>();
+          for (const [, ops] of byOrder) {
+            const checkoutIdx = ops.findIndex((o) => o.type === "submit-and-sale");
+            if (checkoutIdx === -1) continue;
+            for (const stray of ops.slice(checkoutIdx + 1)) {
+              if (stray.type === "upsert") moved.add(stray.opId);
+            }
+          }
+          if (!moved.size) return; // already well-ordered — nothing to rewrite
+
+          // Rebuild the global order: each stray upsert hops to just before its
+          // own order's checkout. Other orders' ops keep their relative places.
+          const ordered: QueueOp[] = [];
+          for (const op of all) {
+            if (moved.has(op.opId)) continue;
+            if (op.type === "submit-and-sale") {
+              for (const s of all) {
+                if (moved.has(s.opId) && s.orderId === op.orderId) ordered.push(s);
+              }
+            }
+            ordered.push(op);
+          }
+
+          let seq = 0;
+          for (const op of ordered) txn.put("queue", op.opId, { ...op, seq: ++seq });
+          this.repairedOnBoot = moved.size;
+        },
+      );
       this.emitStatus();
     } catch {
       /* fresh db */
     }
   }
+
+  /** How many mis-sequenced upserts the boot repair had to move (diagnostics). */
+  repairedOnBoot = 0;
 
   start(): void {
     if (typeof window !== "undefined") {
@@ -300,34 +379,67 @@ export class OfflineEngine {
   async saveCart(doc: LocalOrder): Promise<void> {
     doc = await this.mergeServerVersion(doc);
     await this.deps.orders.put(doc.id, doc);
-    const old = this.debouncers.get(doc.id);
-    if (old) clearTimeout(old);
+    this.cancelDebounce(doc.id);
     if (!doc.lines.length || doc.status !== "open") return;
+    // Capture the generation this timer belongs to. If anything cancels the
+    // debounce after the timer has fired but before its async body reaches the
+    // barrier, the generation moves and the body drops out — clearTimeout alone
+    // cannot do that, and that gap is exactly how an upsert used to land AFTER
+    // a submit.
+    const gen = this.debounceGen.get(doc.id) ?? 0;
     this.debouncers.set(
       doc.id,
       setTimeout(() => {
         this.debouncers.delete(doc.id);
-        void this.enqueueUpsertFor(doc.id).then(() => {
-          if (this.deps.isOnline()) void this.flush();
+        void this.enqueueUpsertFor(doc.id, gen).then((appended) => {
+          if (appended && this.deps.isOnline()) void this.flush();
         });
       }, this.deps.debounceMs),
     );
   }
 
-  /** Cancel the pending debounce and enqueue the upsert immediately. */
-  async flushCartNow(orderId: string): Promise<void> {
+  /**
+   * Cancel any pending debounce for an order AND invalidate one that has
+   * already fired. Bumping the generation is the half clearTimeout cannot do.
+   */
+  private cancelDebounce(orderId: string): void {
     const t = this.debouncers.get(orderId);
     if (t) {
       clearTimeout(t);
       this.debouncers.delete(orderId);
     }
+    this.debounceGen.set(orderId, (this.debounceGen.get(orderId) ?? 0) + 1);
+  }
+
+  /** Cancel the pending debounce and enqueue the upsert immediately. */
+  async flushCartNow(orderId: string): Promise<void> {
+    this.cancelDebounce(orderId);
+    // Deliberately ungated: this is a direct, synchronous-intent request from a
+    // caller that is not racing itself (holdOrder), not a stale timer.
     await this.enqueueUpsertFor(orderId);
   }
 
-  private async enqueueUpsertFor(orderId: string): Promise<void> {
+  /**
+   * @param gen when given, the debounce generation this call belongs to; the
+   *        call is abandoned if the generation has moved on since.
+   * @returns whether an op was actually appended.
+   */
+  private async enqueueUpsertFor(orderId: string, gen?: number): Promise<boolean> {
+    if (gen !== undefined && (this.debounceGen.get(orderId) ?? 0) !== gen) return false;
     const doc = await this.deps.orders.get(orderId);
-    if (!doc || !doc.lines.length) return;
-    await this.enqueue("upsert", orderId, upsertPayloadFrom(doc), { replaceTrailingUpsert: true });
+    if (!doc || !doc.lines.length || doc.status !== "open") return false;
+    // Re-check the generation after the await, then let the barrier itself do
+    // the authoritative check: requireOpenOrder re-reads the order INSIDE the
+    // transaction, so even a generation check that passes here cannot append an
+    // upsert to an order that entered checkout in the meantime.
+    if (gen !== undefined && (this.debounceGen.get(orderId) ?? 0) !== gen) return false;
+    const res = await this.atomicAppend({
+      orderId,
+      append: [{ type: "upsert", payload: upsertPayloadFrom(doc) }],
+      replaceTrailingUpsert: true,
+      requireOpenOrder: true,
+    });
+    return res.rejected === null;
   }
 
   /**
@@ -335,6 +447,11 @@ export class OfflineEngine {
    * this order is an 'upsert', it is replaced (deleted + re-appended under a
    * NEW opId — the payload changed, so reusing the opId would trip the
    * server's idempotency-content check). Ops for other orders are unaffected.
+   *
+   * CO-1: the whole read-modify-write now runs inside ONE atomic transaction
+   * (see atomicAppend). It used to be four separate awaits, which is what let a
+   * debounced upsert and a checkout interleave into
+   * `submit-and-sale(seq=n)` BEFORE `upsert(seq=n+1)`.
    */
   async enqueue(
     type: QueueOpType,
@@ -342,25 +459,109 @@ export class OfflineEngine {
     payload: Record<string, unknown>,
     opts: { replaceTrailingUpsert?: boolean } = {},
   ): Promise<QueueOp> {
-    await this.seqReady;
-    if (opts.replaceTrailingUpsert) {
-      const ops = (await this.deps.queue.getAll()).sort((a, b) => a.seq - b.seq);
-      const mine = ops.filter((o) => o.orderId === orderId);
-      const last = mine[mine.length - 1];
-      if (last && last.type === "upsert") await this.deps.queue.delete(last.opId);
-    }
-    const op: QueueOp = {
-      opId: this.deps.newId(),
-      type,
+    const res = await this.atomicAppend({
       orderId,
-      payload,
-      ts: this.deps.now(),
-      seq: ++this.seqCounter,
-    };
-    await this.deps.queue.put(op.opId, op);
-    this.queueCount = (await this.deps.queue.getAll()).length;
+      append: [{ type, payload }],
+      replaceTrailingUpsert: opts.replaceTrailingUpsert,
+    });
+    // Callers of the generic enqueue() (hold/resume/void) are never gated, so
+    // an op always comes back; the non-null assertion is the type system
+    // catching up with that, not an assumption about the guarded paths.
+    return res.appended[0];
+  }
+
+  /**
+   * THE critical section. Everything that decides queue ORDER goes through
+   * here, and nothing else may allocate a seq.
+   *
+   * Runs as a single transaction over orders+queue+meta, so between the read of
+   * the queue and the write of the new ops no other caller — in this tab or
+   * another one — can interleave. `decide` below is synchronous by IndexedDB's
+   * transaction contract; every input it needs is prefetched.
+   *
+   * Guards, all evaluated against state read INSIDE the transaction rather than
+   * against a snapshot that may already be stale by the time we write:
+   *
+   *   requireOpenOrder  — refuse to append an upsert once the order has left
+   *                       'open'. This is invariant 2, and it is what makes a
+   *                       debounce that fired just before checkout HARMLESS:
+   *                       it loses the race and is dropped, instead of
+   *                       appending an upsert after the submit.
+   *   rejectIfCheckedOut— refuse a second checkout for an order that already
+   *                       has one queued (invariant 3 — a double-tap on Pay).
+   *   setOrder          — write the order doc in the SAME transaction, so
+   *                       "mark submitted" and "queue the submit" cannot be
+   *                       observed apart.
+   */
+  private async atomicAppend(spec: {
+    orderId: string;
+    append: Array<{ type: QueueOpType; payload: Record<string, unknown> }>;
+    replaceTrailingUpsert?: boolean;
+    requireOpenOrder?: boolean;
+    rejectIfCheckedOut?: boolean;
+    setOrder?: LocalOrder;
+  }): Promise<{ appended: QueueOp[]; rejected: null | "not-open" | "already-checked-out" }> {
+    const out = await this.deps.atomic.transact(
+      ORDER_TX,
+      { all: ["queue"], keys: [["orders", spec.orderId]] },
+      (txn: AtomicTxn) => {
+        const all = txn.getAll<QueueOp>("queue");
+        const mine = all.filter((o) => o.orderId === spec.orderId).sort((a, b) => a.seq - b.seq);
+
+        if (spec.rejectIfCheckedOut && mine.some((o) => o.type === "submit-and-sale")) {
+          return { appended: [] as QueueOp[], rejected: "already-checked-out" as const, count: all.length };
+        }
+        if (spec.requireOpenOrder) {
+          const doc = txn.get<LocalOrder>("orders", spec.orderId);
+          if (!doc || doc.status !== "open") {
+            return { appended: [] as QueueOp[], rejected: "not-open" as const, count: all.length };
+          }
+          // Belt and braces: even while still nominally 'open', an order that
+          // already has a checkout queued must never gain another upsert.
+          if (mine.some((o) => o.type === "submit-and-sale")) {
+            return { appended: [] as QueueOp[], rejected: "not-open" as const, count: all.length };
+          }
+        }
+
+        let removed = 0;
+        if (spec.replaceTrailingUpsert) {
+          const last = mine[mine.length - 1];
+          if (last && last.type === "upsert") {
+            txn.delete("queue", last.opId);
+            removed = 1;
+          }
+        }
+
+        // Sequence allocation, INSIDE the critical section. Reading the live
+        // maximum here — rather than from a counter held in this instance's
+        // memory — is what makes two TABS safe: whichever transaction runs
+        // second sees the first one's op and allocates above it. A queue that
+        // has fully drained restarts at 1, which is harmless precisely because
+        // there is then no surviving op left to sort against.
+        let seq = all.reduce((m, o) => Math.max(m, o.seq), 0);
+
+        if (spec.setOrder) txn.put("orders", spec.orderId, spec.setOrder);
+
+        const appended: QueueOp[] = spec.append.map((a) => {
+          const op: QueueOp = {
+            opId: this.deps.newId(),
+            type: a.type,
+            orderId: spec.orderId,
+            payload: a.payload,
+            ts: this.deps.now(),
+            seq: ++seq,
+          };
+          txn.put("queue", op.opId, op);
+          return op;
+        });
+
+        return { appended, rejected: null, count: all.length - removed + appended.length };
+      },
+    );
+
+    this.queueCount = out.count;
     this.emitStatus();
-    return op;
+    return { appended: out.appended, rejected: out.rejected };
   }
 
   async queuedOps(): Promise<QueueOp[]> {
@@ -427,22 +628,53 @@ export class OfflineEngine {
     opts: { cashTendered?: number; changeDue?: number; paymentNotes?: string },
   ): Promise<CheckoutOutcome> {
     const submitted: LocalOrder = { ...(await this.mergeServerVersion(doc)), status: "submitted", updatedAt: this.deps.now() };
-    await this.deps.orders.put(submitted.id, submitted);
-    // The doc was open moments ago; enqueue its final lines before the submit.
-    const t = this.debouncers.get(doc.id);
-    if (t) {
-      clearTimeout(t);
-      this.debouncers.delete(doc.id);
-    }
-    if (submitted.lines.length) {
-      await this.enqueue("upsert", submitted.id, upsertPayloadFrom(submitted), { replaceTrailingUpsert: true });
-    }
-    await this.enqueue("submit-and-sale", doc.id, {
-      payments,
-      cashTendered: opts.cashTendered ?? 0,
-      changeDue: opts.changeDue ?? 0,
-      paymentNotes: opts.paymentNotes ?? undefined,
+
+    // Cancel the debounce BEFORE the barrier, and bump the generation so a
+    // callback that has ALREADY fired (clearTimeout cannot un-fire it — this is
+    // the window the 404 came through) finds itself stale and refuses to write.
+    this.cancelDebounce(doc.id);
+
+    // ONE transaction: mark the order submitted, append its FINAL upsert, and
+    // append the submit-and-sale — in that order, with sequence numbers issued
+    // inside the same critical section. Nothing can interleave between them, so
+    // the submit can never precede the upsert that creates the order server-side.
+    //
+    // rejectIfCheckedOut makes a double-tap on Pay a no-op rather than a second
+    // sale: the second call sees the first call's queued checkout and returns.
+    const append: Array<{ type: QueueOpType; payload: Record<string, unknown> }> = [];
+    if (submitted.lines.length) append.push({ type: "upsert", payload: upsertPayloadFrom(submitted) });
+    append.push({
+      type: "submit-and-sale",
+      payload: {
+        payments,
+        cashTendered: opts.cashTendered ?? 0,
+        changeDue: opts.changeDue ?? 0,
+        paymentNotes: opts.paymentNotes ?? undefined,
+      },
     });
+
+    const res = await this.atomicAppend({
+      orderId: doc.id,
+      append,
+      replaceTrailingUpsert: true,
+      rejectIfCheckedOut: true,
+      setOrder: submitted,
+    });
+
+    if (res.rejected === "already-checked-out") {
+      // Not an error: the first tap owns this checkout. Report its outcome
+      // rather than starting a second one.
+      const existing = await this.deps.orders.get(doc.id);
+      if (existing?.status === "completed") {
+        return { state: "completed", invoiceNumber: existing.invoiceNumber, saleId: existing.saleId, zatcaQrDataUrl: existing.zatcaQrDataUrl ?? null };
+      }
+      if (this.deps.isOnline()) await this.flush();
+      const settled = await this.deps.orders.get(doc.id);
+      if (settled?.status === "completed") {
+        return { state: "completed", invoiceNumber: settled.invoiceNumber, saleId: settled.saleId, zatcaQrDataUrl: settled.zatcaQrDataUrl ?? null };
+      }
+      return { state: "queued", invoiceNumber: null, saleId: null };
+    }
 
     if (!this.deps.isOnline()) {
       this.emitEvent({ type: "checkout-done", orderId: doc.id, ok: true, queued: true, invoiceNumber: null, saleId: null });
@@ -781,6 +1013,7 @@ export function getEngine(): OfflineEngine {
     engineSingleton = new OfflineEngine({
       orders: idbStore<LocalOrder>("orders"),
       queue: idbStore<QueueOp>("queue"),
+      atomic: idbAtomicRunner(),
       api: {
         upsertOrder: realApi.upsertOrder,
         transition: realApi.transition,

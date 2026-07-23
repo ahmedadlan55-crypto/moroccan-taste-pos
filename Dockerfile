@@ -26,4 +26,11 @@ RUN npm run build:erp \
  && rm -rf frontend/erp/node_modules
 
 EXPOSE 3000
-CMD ["node", "server.js"]
+# B5 — fail-closed release chain. Migrations run FIRST as a dedicated step
+# (MIGRATE_ONLY=1 provisions the schema under a DB advisory lock, then does a
+# real `SELECT 1` and exits non-zero if the schema is NOT ready) — so a failed
+# migration aborts the deploy instead of serving a half-migrated schema. Only on
+# its success (`&&`) does the HTTP server start (its own boot re-runs the now-
+# idempotent migrations quickly, still under the advisory lock). Concurrent
+# instance boots serialize on the lock, so migrations never run twice at once.
+CMD ["sh", "-c", "MIGRATE_ONLY=1 node server.js && exec node server.js"]

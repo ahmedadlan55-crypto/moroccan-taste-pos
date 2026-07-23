@@ -30,7 +30,22 @@ const TOKEN = fs.readFileSync(path.join(process.cwd(), "e2e", ".token"), "utf8")
 const CRASH_TEXT = "حدث خطأ غير متوقّع";
 const AUTH = { Authorization: `Bearer ${TOKEN}` };
 
-function login(page: Page, lang: "ar" | "en") {
+/**
+ * Seeding localStorage is NOT enough to pick the language.
+ *
+ * app/providers/language-sync.tsx applies the SERVER-persisted preference from
+ * GET /api/user-preferences on mount, and setLang() overwrites both the
+ * in-memory language and the localStorage value just seeded. This spec's very
+ * first run proved it: every field rendered as «الرمز / SKU» and the English
+ * selector timed out. i18n-cairo-crud.spec.ts documents the same trap — and its
+ * own afterEach upserts a permanent row, so the server now always has an
+ * answer. Pin the response instead of hoping the seed survives.
+ */
+async function login(page: Page, lang: "ar" | "en") {
+  await page.route("**/api/user-preferences", async (route) => {
+    if (route.request().method() !== "GET") return route.fallback();
+    await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ language: lang }) });
+  });
   return page.addInitScript(
     ([token, session, l]) => {
       localStorage.setItem("pos_token", token);
@@ -67,18 +82,38 @@ function uniqueSuffix(project: string): string {
 /**
  * The persisted item, straight from the API — the second, independent channel.
  *
- * Contract read from routes/inventory-items.js, not guessed: the list route is
- * GET /api/inventory/items, its free-text parameter is `q` (parseListQuery maps
- * query.q → p.q), it answers `{ data, pagination, kpis, filters }`, and the
- * item's SKU column is `sku`. Inactive rows are included unless `status` is
- * passed, which is what lets the deactivate step below still find the row.
+ * Contract read from routes/inventory-items.js: free-text parameter `q`
+ * (parseListQuery maps query.q → p.q), response `{ data, pagination, kpis,
+ * filters }`, SKU column `sku`, and inactive rows included unless `status` is
+ * passed — which is what lets the deactivate step below still find the row.
+ *
+ * The PATH cost a run to get right, and the lesson is worth keeping: reading
+ * routes/inventory-items.js was not the same as reading the route that serves
+ * this URL. `/api/inventory/items` is owned by the LEGACY routes/inventory.js
+ * (server.js mounts it at /api/inventory), which answers a bare array with no
+ * `sku` at all — so the lookup returned 20 rows of `sku: null` and the test
+ * reported "not persisted" for an item that had been written perfectly.
+ * inventory-items.js is mounted at /api/inventory/V2 (server.js:726), which is
+ * also what the UI calls (ItemsPage.tsx). Verify against the endpoint the
+ * product actually uses.
  */
 async function fetchItemBySku(request: APIRequestContext, sku: string) {
-  const res = await request.get(`/api/inventory/items?q=${encodeURIComponent(sku)}&pageSize=50`, { headers: AUTH });
+  const res = await request.get(`/api/inventory/v2/items?q=${encodeURIComponent(sku)}&pageSize=50`, { headers: AUTH });
   expect(res.ok(), `inventory items API reachable (q=${sku})`).toBe(true);
   const body = await res.json();
   const rows: any[] = Array.isArray(body) ? body : (body.data ?? []);
-  return rows.find((r) => String(r.sku ?? "").trim() === sku) ?? null;
+  const hit = rows.find((r) => String(r.sku ?? "").trim() === sku) ?? null;
+  if (!hit) {
+    // Say WHY, instead of just "null". Guessing at this cost a run already.
+    console.log(
+      "[crud-writes] no match for sku=" + sku +
+      " | rows=" + rows.length +
+      " | total=" + JSON.stringify(body?.pagination?.total) +
+      " | filters=" + JSON.stringify(body?.filters) +
+      " | skus=" + JSON.stringify(rows.slice(0, 5).map((r) => r.sku)),
+    );
+  }
+  return hit;
 }
 
 test.describe.configure({ mode: "serial" });
@@ -165,15 +200,17 @@ test("inventory item: create → read back → edit → deactivate, all persiste
   // movements must never vanish from history. Deactivation IS this module's
   // delete, so that is what gets proven.
   await test.step("deactivate the item and confirm the state change persisted", async () => {
-    // PATCH /items/:id enforces optimistic concurrency — it rejects with
-    // VALIDATION_ERROR unless the caller supplies the version it last read, and
-    // with VERSION_CONFLICT if that version is stale. Read the current row
-    // first and echo its version back, exactly as the UI does.
+    // Deactivation is a STATE TRANSITION, not a field edit: PATCH /items/:id
+    // ignores `active` entirely, and routes/inventory-items.js:485 exposes
+    // POST /items/:id/deactivate for it. Both enforce optimistic concurrency,
+    // so the caller must echo back the version it last read — exactly as the
+    // UI does. Getting this wrong is what made the first run report "still
+    // active": the PATCH succeeded and changed nothing at all.
     const current = await fetchItemBySku(request, code);
     expect(current, "the item is still readable before deactivating").not.toBeNull();
-    const res = await request.patch(`/api/inventory/items/${createdId}`, {
+    const res = await request.post(`/api/inventory/v2/items/${createdId}/deactivate`, {
       headers: { ...AUTH, "Content-Type": "application/json" },
-      data: { active: 0, expectedVersion: Number(current.version) },
+      data: { expectedVersion: Number(current.version), reason: "E2E CRUD coverage" },
     });
     expect(res.status(), `deactivate request accepted (body: ${await res.text()})`).toBeLessThan(400);
 
@@ -186,6 +223,14 @@ test("inventory item: create → read back → edit → deactivate, all persiste
   });
 });
 
+// ── UNFINISHED, and deliberately left FAILING rather than skipped ───────────
+// The inventory half above is complete and green. This one is not: the first
+// fill on /app/menu/brand/new times out even though the accessible name is
+// right there in the a11y snapshot ("Name in Arabic", textbox, not disabled),
+// so the cause is something about when the form becomes interactive that I have
+// not diagnosed. It is left red on purpose — marking it test.skip() would turn
+// "menu CRUD is unverified" into a green tick, which is the exact failure mode
+// this whole closeout has been removing.
 test("menu product: create → read back → edit, all persisted", async ({ page, request }, testInfo) => {
   test.setTimeout(180_000);
   const suffix = uniqueSuffix(testInfo.project.name);

@@ -34,7 +34,7 @@
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { memoryStore, memoryAtomicRunner, type AtomicPrefetch, type AtomicRunner, type AtomicTxn, type KVStore, type StoreName } from "../idb";
-import { OfflineEngine, type EngineApi } from "../offline";
+import { OfflineEngine, type EngineApi, type EngineEvent } from "../offline";
 import type { LocalOrder, QueueOp } from "../types";
 
 // ── Fixtures ────────────────────────────────────────────────────────────────
@@ -81,6 +81,8 @@ function makeServer() {
   // vacuously — which is exactly what the first version of scenario (h) did.
   let stall: Promise<void> | null = null;
   let releaseStall: (() => void) | null = null;
+  // Force a PERMANENT per-op failure, the way a VALIDATION_ERROR arrives.
+  let failUpsertsFor: string | null = null;
 
   const notFound = (): Error => {
     const e = new Error("الطلب غير موجود") as Error & { status?: number; code?: string };
@@ -126,16 +128,22 @@ function makeServer() {
     }),
     postSync: vi.fn(async (ops: Array<{ opId: string; type: string; orderId?: string; payload?: { id?: string } }>) => {
       if (stall) await stall;
-      for (const o of ops) {
+      const results = ops.map((o) => {
+        if (o.type === "upsert" && o.orderId === failUpsertsFor) {
+          calls.push(`upsert-REJECTED:${o.orderId}`);
+          return { opId: o.opId, ok: false, code: "VALIDATION_ERROR", error: "رفض دائم" };
+        }
         if (o.type === "upsert" && o.orderId) known.add(o.orderId);
         calls.push(`${o.type}:${o.orderId}`);
-      }
-      return { success: true, results: ops.map((o) => ({ opId: o.opId, ok: true, result: { version: 2 } })) };
+        return { opId: o.opId, ok: true, result: { version: 2 } };
+      });
+      return { success: results.every((r) => r.ok), results };
     }),
   };
 
   return {
     api, calls, sales, invoices, idempotencyKeys, known,
+    failUpsertsFor: (orderId: string | null) => { failUpsertsFor = orderId; },
     holdSync: () => { stall = new Promise<void>((r) => { releaseStall = r; }); },
     releaseSync: () => { const r = releaseStall; stall = null; releaseStall = null; r?.(); },
   };
@@ -198,6 +206,7 @@ function makeGate(): { gate: (phase: "before-decide" | "after-decide") => Promis
 
 interface Harness {
   engine: OfflineEngine;
+  events: EngineEvent[];
   orders: KVStore<LocalOrder>;
   queue: KVStore<QueueOp>;
   server: ReturnType<typeof makeServer>;
@@ -234,8 +243,12 @@ function makeHarness(opts: { online?: boolean; ordersMap?: Map<string, LocalOrde
       autoStart: false,
     });
 
+  const events: EngineEvent[] = [];
+  const engine = build();
+  engine.onEvent((e) => events.push(e));
   return {
-    engine: build(),
+    engine,
+    events,
     orders,
     queue,
     server,
@@ -477,6 +490,60 @@ describe("CO-1 — the checkout can never outrun the order that creates it", () 
     expect(res.invoiceNumber, "and it carries its invoice number").toBeTruthy();
     assertUpsertBeforeSubmit(h.server.calls, "ORD-H");
     expect(h.server.sales).toEqual(["ORD-H"]);
+  });
+
+  it("(i) a checkout whose own upsert failed permanently is NOT submitted — the 404 with no concurrency", async () => {
+    // Ordering alone was never enough. When the pre-checkout upsert fails
+    // permanently the batch branch DELETES it so the queue cannot jam, and the
+    // drain used to walk straight on to that order's submit-and-sale — POSTing
+    // /submit for an order the server had just refused to create. Same 404, no
+    // concurrency required.
+    const h = makeHarness({ online: false });
+    const doc = makeDoc("ORD-I");
+    await h.engine.saveCart(doc);
+    await vi.advanceTimersByTimeAsync(600);
+    await h.engine.checkout(doc, [{ method: "cash", amount: 46 }], { cashTendered: 46, changeDue: 0 });
+
+    h.server.failUpsertsFor("ORD-I");
+    h.setOnline(true);
+    await h.engine.flush();
+    await vi.runOnlyPendingTimersAsync();
+
+    expect(h.server.calls, "the upsert was rejected").toContain("upsert-REJECTED:ORD-I");
+    expect(h.server.calls.filter((c) => c === "submit:ORD-I"), "and NO submit was attempted").toHaveLength(0);
+    expect(h.server.sales, "no sale was created").toEqual([]);
+    // The cashier is told the truth rather than left with a silent 404.
+    // The LAST one: the offline checkout legitimately emitted an earlier
+    // checkout-done{ok:true, queued:true} when it parked the sale in the queue.
+    const doneEvents = h.events.filter((e) => e.type === "checkout-done" && e.orderId === "ORD-I");
+    const done = doneEvents[doneEvents.length - 1];
+    expect(done && "ok" in done ? done.ok : null, "checkout-done reports failure").toBe(false);
+    const after = await h.orders.get("ORD-I");
+    expect(after?.status, "and the order is reopened so it can be retried").toBe("open");
+  });
+
+  it("(j) a second tap on Pay AFTER the drain consumed the checkout does not start a second sale", async () => {
+    // rejectIfCheckedOut only sees a checkout that is still QUEUED. Once the
+    // drain consumes it the queue is clean again, so the stored doc's status is
+    // the only durable evidence the order is already sold.
+    const h = makeHarness();
+    const doc = makeDoc("ORD-J");
+    await h.engine.saveCart(doc);
+    const first = await h.engine.checkout(doc, [{ method: "cash", amount: 46 }], { cashTendered: 46, changeDue: 0 });
+    await vi.runOnlyPendingTimersAsync();
+    expect(first.state).toBe("completed");
+    expect((await h.queue.getAll()).filter((o) => o.orderId === "ORD-J"), "the queue is drained clean").toHaveLength(0);
+
+    // The stale doc the UI still holds says 'open'.
+    await h.engine.checkout(doc, [{ method: "cash", amount: 46 }], { cashTendered: 46, changeDue: 0 });
+    await vi.runOnlyPendingTimersAsync();
+
+    // Assert on the ATTEMPT, not just the outcome: the server dedupes by
+    // clientOrderId, so counting sales alone would pass even if the client
+    // fired a whole second checkout — which is the bug.
+    expect(h.server.calls.filter((c) => c === "submit:ORD-J"), "no SECOND submit was ever attempted").toHaveLength(1);
+    expect(h.server.sales, "still exactly ONE sale").toEqual(["ORD-J"]);
+    expect(h.server.invoices, "still exactly ONE invoice").toHaveLength(1);
   });
 
   it("(g) a legacy queue already persisted as submit-before-upsert is repaired, without a duplicate sale", async () => {

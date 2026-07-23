@@ -1088,20 +1088,29 @@ router.post('/sync', POS, async (req, res) => {
     const opId = String(op.opId || '').slice(0, 80);
     const type = String(op.type || '');
     const orderId = String(op.orderId || (op.payload && op.payload.id) || '');
+    // CO-1: the reservation this op opened, so the catch below can ABORT it.
+    // Without that, any throw left idempotency_keys with status_code IS NULL —
+    // an in-progress reservation that never completes — so the client's own
+    // legitimate retry of the SAME opId came back IDEMPOTENCY_CONFLICT forever
+    // and the op could never drain. /orders/:id/submit already aborts; /sync
+    // did not, and /sync is the path every offline upsert takes.
+    let syncIdemId = null;
     try {
       if (!opId) throw _err('VALIDATION_ERROR', 'opId مطلوب');
       if (!SYNC_OPS.has(type)) throw _err('VALIDATION_ERROR', 'نوع عملية غير مدعوم في المزامنة: ' + type);
       const idem = await IDEM.begin(db, 'pos:sync:' + type, orderId, opId, _userName(req.user), op.payload || {});
       if (idem.mode === 'replay') { results.push({ opId, ok: true, replay: true, result: idem.body }); continue; }
       if (idem.mode === 'conflict') { results.push({ opId, ok: false, code: 'IDEMPOTENCY_CONFLICT', error: 'عملية قيد التنفيذ أو بمحتوى مختلف' }); continue; }
+      if (idem.mode === 'proceed') syncIdemId = idem.idemId;
       let result;
       const payload = Object.assign({}, op.payload, type === 'upsert' ? { origin: 'offline' } : null);
       if (type === 'upsert') result = await doUpsert(req.user, payload);
       else if (type === 'complete') result = await doComplete(req.user, orderId, payload);
       else result = await doTransition(req.user, orderId, type, payload);
-      if (idem.mode === 'proceed') await IDEM.complete(db, idem.idemId, 200, result);
+      if (idem.mode === 'proceed') { await IDEM.complete(db, idem.idemId, 200, result); syncIdemId = null; }
       results.push({ opId, ok: result.success !== false, result });
     } catch (e) {
+      if (syncIdemId) await IDEM.abort(db, syncIdemId).catch(() => {});
       results.push({ opId, ok: false, code: e.code || 'SERVER_ERROR', error: e.message });
     }
   }

@@ -89,8 +89,20 @@ function tx<T>(store: StoreName, mode: IDBTransactionMode, run: (s: IDBObjectSto
       new Promise<T>((resolve, reject) => {
         const t = db.transaction(store, mode);
         const req = run(t.objectStore(store));
-        req.onsuccess = () => resolve(req.result);
         req.onerror = () => reject(req.error ?? new Error("idb request failed"));
+        if (mode === "readwrite") {
+          // A write must not be reported as done before it is DURABLE.
+          // Resolving on req.onsuccess meant the drain's queue.delete(opId) and
+          // the completed-doc write returned while their transaction could
+          // still abort — a "deleted" checkout op that survives a kill replays
+          // and re-sends a sale.
+          let out: T;
+          req.onsuccess = () => { out = req.result; };
+          t.oncomplete = () => resolve(out);
+          t.onabort = () => reject(t.error ?? new Error("idb transaction aborted"));
+        } else {
+          req.onsuccess = () => resolve(req.result);
+        }
       }),
   );
 }
@@ -302,8 +314,14 @@ export function memoryAtomicRunner(
         // transact() can observe the midpoint.
         const writes: Array<() => Promise<void>> = [];
         const out = decide({
-          getAll: (s: StoreName) => (allSnap.get(s) ?? []) as never[],
-          get: (s: StoreName, k: string) => keySnap.get(s + " " + k) as never,
+          getAll: (s: StoreName) => {
+            if (!allSnap.has(s)) throw new Error(`memoryAtomicRunner: store "${s}" was read but not prefetched`);
+            return allSnap.get(s) as never[];
+          },
+          get: (s: StoreName, k: string) => {
+            if (!keySnap.has(s + " " + k)) throw new Error(`memoryAtomicRunner: key "${s}/${k}" was read but not prefetched`);
+            return keySnap.get(s + " " + k) as never;
+          },
           put: (s: StoreName, k: string, v: unknown) => {
             writes.push(() => storeFor(s).put(k, v));
           },

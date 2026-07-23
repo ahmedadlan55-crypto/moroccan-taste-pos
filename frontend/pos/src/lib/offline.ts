@@ -265,9 +265,19 @@ export class OfflineEngine {
 
           const moved = new Set<string>();
           for (const [, ops] of byOrder) {
-            const checkoutIdx = ops.findIndex((o) => o.type === "submit-and-sale");
-            if (checkoutIdx === -1) continue;
-            for (const stray of ops.slice(checkoutIdx + 1)) {
+            // findIndex would only ever see the FIRST checkout. Legacy rows
+            // written before rejectIfCheckedOut existed can carry two for one
+            // order; the earliest keeps its opId (it may already own a /submit
+            // idempotency reservation server-side) and the rest are dropped, or
+            // the device replays a duplicate sale.
+            const checkouts = ops.filter((o) => o.type === "submit-and-sale");
+            if (!checkouts.length) continue;
+            for (const dup of checkouts.slice(1)) {
+              txn.delete("queue", dup.opId);
+              this.repairedDuplicateCheckouts++;
+            }
+            const firstIdx = ops.indexOf(checkouts[0]);
+            for (const stray of ops.slice(firstIdx + 1)) {
               if (stray.type === "upsert") moved.add(stray.opId);
             }
           }
@@ -292,10 +302,21 @@ export class OfflineEngine {
         },
       );
       this.emitStatus();
-    } catch {
-      /* fresh db */
+    } catch (e) {
+      // NEVER swallow this. seqReady resolving after a failed repair lets
+      // flush() drain an UNREPAIRED queue — reproducing the 404 forever on
+      // exactly the devices the repair exists to rescue. Record it and make it
+      // visible; flush() refuses to drain while it is set.
+      this.repairFailed = e instanceof Error ? e : new Error(String(e));
+      this.emitEvent({ type: "toast", kind: "error", message: this.toastMessage(e) });
+      this.emitStatus();
     }
   }
+
+  /** Set when the boot repair failed — the queue cannot be trusted to drain. */
+  repairFailed: Error | null = null;
+  /** Duplicate legacy checkouts the boot repair had to drop (diagnostics). */
+  repairedDuplicateCheckouts = 0;
 
   /** How many mis-sequenced upserts the boot repair had to move (diagnostics). */
   repairedOnBoot = 0;
@@ -521,6 +542,11 @@ export class OfflineEngine {
     rejectIfCheckedOut?: boolean;
     setOrder?: LocalOrder;
   }): Promise<{ appended: QueueOp[]; rejected: null | "not-open" | "already-checked-out" }> {
+    // Ordering must not depend on an accident. Without this the repair happened
+    // to run first only because openDb() memoizes one promise, .then callbacks
+    // fire FIFO, and IndexedDB serializes by transaction-creation order — three
+    // implementation details, none of them a barrier. Wait for it explicitly.
+    await this.seqReady;
     const out = await this.deps.atomic.transact(
       ORDER_TX,
       { all: ["queue"], keys: [["orders", spec.orderId]] },
@@ -528,8 +554,17 @@ export class OfflineEngine {
         const all = txn.getAll<QueueOp>("queue");
         const mine = all.filter((o) => o.orderId === spec.orderId).sort((a, b) => a.seq - b.seq);
 
-        if (spec.rejectIfCheckedOut && mine.some((o) => o.type === "submit-and-sale")) {
-          return { appended: [] as QueueOp[], rejected: "already-checked-out" as const, count: all.length };
+        if (spec.rejectIfCheckedOut) {
+          // Two independent ways an order is already checked out, and the queue
+          // only knows the first: once the drain has CONSUMED the checkout op
+          // the queue is clean again, so a second tap on Pay would sail past
+          // every guard and start a whole second sale. The stored doc is the
+          // durable half of the answer.
+          const doc = txn.get<LocalOrder>("orders", spec.orderId);
+          const sealed = doc && doc.status !== "open" && doc.status !== "held";
+          if (sealed || mine.some((o) => o.type === "submit-and-sale")) {
+            return { appended: [] as QueueOp[], rejected: "already-checked-out" as const, count: all.length };
+          }
         }
         if (spec.requireOpenOrder) {
           const doc = txn.get<LocalOrder>("orders", spec.orderId);
@@ -622,11 +657,11 @@ export class OfflineEngine {
    *  queued 'void' op (UI forbids this offline for already-synced orders). */
   async voidOrder(doc: LocalOrder, reason: string): Promise<void> {
     const trackedRemotely = await this.isOrderSyncedOrQueued(doc.id);
-    const t = this.debouncers.get(doc.id);
-    if (t) {
-      clearTimeout(t);
-      this.debouncers.delete(doc.id);
-    }
+    // cancelDebounce, not a raw clearTimeout: the generation bump is what stops
+    // a timer that has ALREADY fired. requireOpenOrder catches the consequence
+    // anyway, but leaving one path on the weaker mechanism is how the next
+    // refactor reintroduces this.
+    this.cancelDebounce(doc.id);
     if (!trackedRemotely) {
       await this.deps.orders.delete(doc.id);
       return;
@@ -776,6 +811,13 @@ export class OfflineEngine {
   }
 
   private async drainQueue(): Promise<void> {
+    await this.seqReady;
+    if (this.repairFailed) {
+      // Fail closed: draining a queue whose ordering was never repaired is how
+      // the 404 becomes permanent on a legacy device.
+      this.emitStatus();
+      return;
+    }
     if (!this.deps.isOnline()) {
       this.emitStatus();
       return;
@@ -797,8 +839,22 @@ export class OfflineEngine {
         }
         let i = 0;
         let stopped = false;
+        // Orders whose earlier op failed PERMANENTLY in this drain. The
+        // ordering barrier guarantees the upsert is queued BEFORE the checkout,
+        // but it cannot make the upsert succeed: when one fails permanently the
+        // batch branch deletes it so the queue never jams, and the drain then
+        // walked straight on to that order's submit-and-sale — POSTing /submit
+        // for an order the server had just refused to create. That is the SAME
+        // 404, reachable with no concurrency whatsoever, and it is why fixing
+        // ordering alone was not enough.
+        const failedOrders = new Set<string>();
         while (i < ops.length && !stopped) {
           if (op_isCheckout(ops[i])) {
+            if (failedOrders.has(ops[i].orderId)) {
+              await this.failCheckoutAfterPrerequisite(ops[i], reports);
+              i++;
+              continue;
+            }
             stopped = await this.runCheckoutOp(ops[i], cursor, reports);
             i++;
           } else {
@@ -807,7 +863,7 @@ export class OfflineEngine {
               batch.push(ops[i]);
               i++;
             }
-            stopped = await this.runSyncBatch(batch, cursor, reports);
+            stopped = await this.runSyncBatch(batch, cursor, reports, failedOrders);
           }
         }
       }
@@ -825,6 +881,7 @@ export class OfflineEngine {
     batch: QueueOp[],
     cursor: Map<string, number | null>,
     reports: SyncOpReport[],
+    failedOrdersOut?: Set<string>,
   ): Promise<boolean> {
     if (!batch.length) return false;
     // Rewrite expectedVersion per the cursor walk.
@@ -898,6 +955,9 @@ export class OfflineEngine {
         // partial failure). Default the code to SERVER_ERROR (never blank)
         // so translateApiError always resolves to a real, meaningful string.
         await this.deps.queue.delete(op.opId);
+        // This order's prerequisite is gone for good. Tell the drain, so it
+        // does not go on to submit a sale for an order the server refused.
+        if (failedOrdersOut) failedOrdersOut.add(op.orderId);
         const opError = new ApiError(200, r.code || "SERVER_ERROR", r.error || "");
         this.emitEvent({ type: "toast", kind: "error", message: this.toastMessage(opError) });
       }
@@ -905,11 +965,41 @@ export class OfflineEngine {
     return false;
   }
 
+  /**
+   * A checkout whose own upsert failed permanently in this same drain.
+   *
+   * Submitting anyway is what produced the 404 with no concurrency involved.
+   * Nor may it be left queued: the upsert it depends on has been deleted, so it
+   * would 404 on every future flush forever. Fail it explicitly, reopen the
+   * order, and tell the cashier the truth — the sale did not go through.
+   */
+  private async failCheckoutAfterPrerequisite(op: QueueOp, reports: SyncOpReport[]): Promise<void> {
+    const error = this.t("errors.CHECKOUT_PREREQUISITE_FAILED");
+    const message = error === "errors.CHECKOUT_PREREQUISITE_FAILED"
+      ? "تعذّر حفظ الطلب على الخادم، فلم تُنفَّذ عملية الدفع — أعد المحاولة"
+      : error;
+    reports.push({ opId: op.opId, type: op.type, orderId: op.orderId, ok: false, code: "CHECKOUT_PREREQUISITE_FAILED", error: message });
+    await this.deps.queue.delete(op.opId);
+    const doc = await this.deps.orders.get(op.orderId);
+    if (doc) {
+      doc.status = "open";
+      doc.updatedAt = this.deps.now();
+      await this.deps.orders.put(doc.id, doc);
+    }
+    this.emitEvent({ type: "checkout-done", orderId: op.orderId, ok: false, queued: false, invoiceNumber: null, saleId: null, error: message });
+    this.emitEvent({ type: "toast", kind: "error", message });
+  }
+
   /** After a conflict every later queued op for that order is doomed — drop them. */
   private async dropOpsFor(orderId: string, exceptBatch: QueueOp[], reports: SyncOpReport[]): Promise<void> {
     const remaining = (await this.deps.queue.getAll()).filter((o) => o.orderId === orderId);
     for (const o of remaining) {
       if (exceptBatch.some((b) => b.opId === o.opId)) continue;
+      // A version conflict on an UPSERT must never destroy the cashier's queued
+      // offline SALE. Dropping it reported «أُسقطت بعد تعارض النسخ» and the
+      // money simply vanished — a far worse outcome than replaying a submit,
+      // which is idempotent by opId anyway.
+      if (o.type === "submit-and-sale") continue;
       await this.deps.queue.delete(o.opId);
       reports.push({ opId: o.opId, type: o.type, orderId, ok: false, code: "VERSION_CONFLICT", error: "أُسقطت بعد تعارض النسخ" });
     }

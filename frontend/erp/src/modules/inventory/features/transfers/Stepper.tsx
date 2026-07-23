@@ -1,15 +1,17 @@
 import { Check } from "lucide-react";
 import { cn } from "@/shared/lib";
+import { useT } from "@/i18n";
 
 // Compact 3-step indicator for the create-transfer wizard. Purely presentational
 // — the wizard owns the current step. Accessible: the active step is announced.
 export function Stepper({ steps, current }: { steps: string[]; current: number }) {
+  const t = useT();
   return (
     <>
       {/* RC a11y — announce step changes to screen readers (the visual list
           alone is not announced when `current` changes). */}
       <span aria-live="polite" className="sr-only">
-        الخطوة {current} من {steps.length}: {steps[current - 1] ?? ""}
+        {t("inventoryRest.ui.stepAnnounce", { current, total: steps.length, label: steps[current - 1] ?? "" })}
       </span>
       <ol className="flex flex-wrap items-center gap-x-2 gap-y-3">
       {steps.map((label, i) => {

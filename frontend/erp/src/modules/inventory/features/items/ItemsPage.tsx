@@ -1,122 +1,306 @@
-import { useSearchParams, useNavigate } from "react-router-dom";
-import { ChevronLeft, ChevronRight, Plus, Search, Boxes, CheckCircle2, XCircle, Tag } from "lucide-react";
-import { PageHeader } from "@/shared/ui";
+// D1 — Inventory Item Master list. Server-mode DataTable over the paginating
+// GET /api/inventory/v2/items. All list UI state (search, facet filters, page,
+// pageSize, sort) lives in the URL so it survives returning from a full-page
+// detail/edit route; scroll position is restored from sessionStorage. Cost
+// columns are gated by the `item.cost.view` capability (requireCap + canColumn).
+import { useCallback, useEffect, useMemo, useRef } from "react";
+import { useNavigate, useSearchParams } from "react-router-dom";
+import { Plus, Boxes, CheckCircle2, XCircle, Tag, Pencil } from "lucide-react";
+import { PageHeader, Button, IconButton, Badge, StatusBadge, Select } from "@/shared/ui";
+import { DataTable, Pagination, type ColumnDef } from "@/shared/tables";
 import { MetricCard } from "@/modules/inventory/lib/MetricCard";
-import { StatusBadge } from "@/shared/ui";
-import { Button } from "@/shared/ui";
-import { LoadingState, EmptyState, ErrorState } from "@/shared/ui";
-import { useCan } from "@/modules/inventory/lib/permission-provider";
-import { formatCurrency, formatNumber } from "@/shared/lib";
-import { ITEM_ACTIVE_OPTIONS } from "@/modules/inventory/lib/status-labels";
-import { useItemList, useItemCategories } from "@/modules/inventory/lib/hooks/useItems";
-import { ItemDetailDrawer } from "./ItemDetailDrawer";
+import { usePermissions, useCan } from "@/modules/inventory/lib/permission-provider";
+import type { WarehouseAction } from "@/modules/inventory/lib/permissions";
+import { formatCurrency, formatNumber, formatQty } from "@/shared/lib";
+import { useT, useLang } from "@/i18n";
+import { useItemList, useItemCategories, useUnits } from "@/modules/inventory/lib/hooks/useItems";
+import { useWarehouseAdminList } from "@/modules/inventory/lib/hooks/useWarehouseAdmin";
+import type { ItemRow } from "@/modules/inventory/lib/adapters/item.adapter";
 
-const PAGE_SIZES = [10, 25, 50];
+const PAGE_SIZES = [10, 25, 50, 100];
+const SCROLL_KEY = "inv-items:scrollY";
+const SORTABLE = new Set(["name", "sku", "category", "created_at"]);
 
 export function ItemsPage() {
-  const [params, setParams] = useSearchParams();
+  const t = useT();
+  const lang = useLang();
   const navigate = useNavigate();
+  const { can } = usePermissions();
   const canCreate = useCan("item.create");
+  const canEdit = useCan("item.edit");
+  const [params, setParams] = useSearchParams();
+
+  // ── URL is the single source of truth for every list control ──
   const q = params.get("q") ?? "";
   const status = params.get("status") ?? "";
   const category = params.get("category") ?? "";
+  const branch = params.get("branch") ?? "";
+  const warehouse = params.get("warehouse") ?? "";
+  const unit = params.get("unit") ?? "";
+  const missingEn = params.get("missingEn") === "1";
+  const belowReorder = params.get("belowReorder") === "1";
+  const image = params.get("image") ?? "";
+  const sort = SORTABLE.has(params.get("sort") ?? "") ? (params.get("sort") as string) : "name";
+  const dir = params.get("dir") === "desc" ? "desc" : "asc";
   const page = Math.max(1, Number(params.get("page")) || 1);
   const pageSize = PAGE_SIZES.includes(Number(params.get("pageSize"))) ? Number(params.get("pageSize")) : 25;
-  const view = params.get("view");
 
-  function patch(next: Record<string, string | number | null>, resetPage = true) {
-    const p = new URLSearchParams(params);
-    for (const [k, v] of Object.entries(next)) { if (v === null || v === "") p.delete(k); else p.set(k, String(v)); }
-    if (resetPage && !("page" in next)) p.delete("page");
-    setParams(p, { replace: true });
-  }
-  const { data, isLoading, isError, error, refetch, isFetching } = useItemList({ q, status, category, page, pageSize, sort: "name", dir: "asc" });
+  const patch = useCallback(
+    (next: Record<string, string | number | null>, resetPage = true) => {
+      setParams(
+        (prev) => {
+          const p = new URLSearchParams(prev);
+          for (const [k, v] of Object.entries(next)) {
+            if (v === null || v === "" || v === "0") p.delete(k);
+            else p.set(k, String(v));
+          }
+          if (resetPage && !("page" in next)) p.delete("page");
+          return p;
+        },
+        { replace: true },
+      );
+    },
+    [setParams],
+  );
+
+  const list = useItemList({
+    q, status, category, warehouseId: warehouse, branchId: branch, unit,
+    missingNameEn: missingEn ? "1" : "", belowReorder: belowReorder ? "1" : "", hasImage: image,
+    page, pageSize, sort, dir,
+  });
   const cats = useItemCategories();
-  const k = data?.kpis; const pg = data?.pagination; const totalPages = pg?.totalPages ?? 1;
-  const from = pg && pg.total > 0 ? (pg.page - 1) * pg.pageSize + 1 : 0;
-  const to = pg ? Math.min(pg.page * pg.pageSize, pg.total) : 0;
+  const units = useUnits();
+  const whList = useWarehouseAdminList();
+
+  const kpis = list.data?.kpis;
+  const rows = list.data?.rows ?? [];
+  const total = list.data?.pagination.total ?? 0;
+  const totalPages = list.data?.pagination.totalPages ?? 1;
+
+  // branches derived from the warehouse universe (id → name), and the warehouses
+  // under the currently-selected branch (for the dependent warehouse filter).
+  const branches = useMemo(() => {
+    const map = new Map<string, string>();
+    for (const w of whList.data?.warehouses ?? []) if (w.branchId) map.set(w.branchId, w.branchName || w.branchId);
+    return [...map.entries()].map(([id, name]) => ({ id, name }));
+  }, [whList.data]);
+  const warehousesForFilter = useMemo(
+    () => (whList.data?.warehouses ?? []).filter((w) => !branch || w.branchId === branch),
+    [whList.data, branch],
+  );
+
+  // ── scroll restore across the detail/edit round-trip ──
+  useEffect(() => {
+    const saved = sessionStorage.getItem(SCROLL_KEY);
+    if (saved) {
+      const y = Number(saved);
+      sessionStorage.removeItem(SCROLL_KEY);
+      requestAnimationFrame(() => window.scrollTo(0, Number.isFinite(y) ? y : 0));
+    }
+  }, []);
+  const goto = useCallback(
+    (to: string) => {
+      sessionStorage.setItem(SCROLL_KEY, String(window.scrollY));
+      navigate(to);
+    },
+    [navigate],
+  );
+
+  // ── DataTable owns only the sort header interaction; we mirror it to the URL ──
+  const initialSort = useMemo<{ columnId: string; dir: "asc" | "desc" }>(
+    () => ({ columnId: sort, dir }),
+    [sort, dir],
+  );
+  const lastSort = useRef<string>(`${sort}:${dir}`);
+  const onStateChange = useCallback(
+    (st: { page: number; pageSize: number; sort: { columnId: string; dir: "asc" | "desc" } | null; search: string }) => {
+      const nextCol = st.sort && SORTABLE.has(st.sort.columnId) ? st.sort.columnId : "name";
+      const nextDir = st.sort?.dir ?? "asc";
+      const key = `${nextCol}:${nextDir}`;
+      if (key === lastSort.current) return;
+      lastSort.current = key;
+      patch({ sort: nextCol, dir: nextDir });
+    },
+    [patch],
+  );
+
+  const bizName = (r: ItemRow) => (lang === "en" ? r.nameEn || r.name : r.name);
+
+  const columns = useMemo<ColumnDef<ItemRow>[]>(() => {
+    const dash = "—";
+    const conv = (r: ItemRow) =>
+      r.convRate > 1 && r.majorUnit
+        ? t("items.conversionPreview", { major: r.majorUnit, factor: formatNumber(r.convRate), base: r.baseUnit || r.unit })
+        : dash;
+    return [
+      {
+        id: "sku", header: t("items.col.code"), accessor: (r) => r.sku, sortable: true, hideable: false,
+        cell: (r) => <span className="font-mono text-xs text-slate-500" dir="ltr">{r.sku || dash}</span>,
+      },
+      {
+        id: "name", header: t("items.col.nameAr"), accessor: (r) => r.name, sortable: true, hideable: false,
+        cell: (r) => <span className="font-extrabold text-slate-900">{r.name}</span>,
+      },
+      {
+        id: "nameEn", header: t("items.col.nameEn"), accessor: (r) => r.nameEn,
+        cell: (r) => r.nameEn
+          ? <span dir="ltr" className="text-slate-700">{r.nameEn}</span>
+          : <Badge tone="warning">{t("items.badge.missingNameEn")}</Badge>,
+      },
+      { id: "category", header: t("items.col.category"), accessor: (r) => r.category || dash, sortable: true },
+      { id: "majorUnit", header: t("items.col.majorUnit"), accessor: (r) => r.majorUnit || dash, defaultHidden: true },
+      { id: "baseUnit", header: t("items.col.baseUnit"), accessor: (r) => r.baseUnit || r.unit || dash },
+      {
+        id: "conversion", header: t("items.col.conversion"), defaultHidden: true,
+        cell: (r) => <span dir="ltr" className="text-xs text-slate-600">{conv(r)}</span>,
+      },
+      {
+        id: "baseCost", header: t("items.col.baseCost"), numeric: true, requireCap: "item.cost.view",
+        accessor: (r) => r.baseCost, cell: (r) => formatCurrency(r.baseCost),
+      },
+      {
+        id: "majorCost", header: t("items.col.majorCost"), numeric: true, requireCap: "item.cost.view", defaultHidden: true,
+        accessor: (r) => r.majorCost ?? -1, cell: (r) => (r.majorCost == null ? dash : formatCurrency(r.majorCost)),
+      },
+      {
+        id: "locations", header: t("items.col.locations"), defaultHidden: true,
+        cell: (r) => (r.assignedCount == null ? dash : formatNumber(r.assignedCount)),
+      },
+      {
+        id: "availableQty", header: t("items.col.availableQty"), numeric: true,
+        accessor: (r) => r.availableQty, cell: (r) => formatQty(r.availableQty),
+      },
+      {
+        id: "reorderPoint", header: t("items.col.reorderPoint"), numeric: true, defaultHidden: true,
+        cell: (r) => (r.reorderPoint == null ? dash : formatQty(r.reorderPoint)),
+      },
+      {
+        id: "status", header: t("common.status"), hideable: false,
+        cell: (r) => <StatusBadge>{r.active ? t("status.active") : t("common.inactive")}</StatusBadge>,
+      },
+    ];
+  }, [t]);
+
+  const hasFacets = !!(q || status || category || branch || warehouse || unit || missingEn || belowReorder || image);
+
+  const filterBar = (
+    <>
+      <label className="relative min-w-0 flex-1 sm:min-w-56">
+        <input
+          className="field h-10 w-full py-2"
+          placeholder={t("items.filter.searchPlaceholder")}
+          value={q}
+          onChange={(e) => patch({ q: e.target.value })}
+          aria-label={t("common.search")}
+          type="search"
+        />
+      </label>
+      <Select className="h-10 w-auto" value={branch} onChange={(e) => patch({ branch: e.target.value, warehouse: null })} aria-label={t("items.filter.branch")}>
+        <option value="">{t("items.filter.allBranches")}</option>
+        {branches.map((b) => <option key={b.id} value={b.id}>{b.name}</option>)}
+      </Select>
+      <Select className="h-10 w-auto" value={warehouse} onChange={(e) => patch({ warehouse: e.target.value })} aria-label={t("items.filter.warehouse")}>
+        <option value="">{t("items.filter.allWarehouses")}</option>
+        {warehousesForFilter.map((w) => <option key={w.id} value={w.id}>{w.name}</option>)}
+      </Select>
+      <Select className="h-10 w-auto" value={category} onChange={(e) => patch({ category: e.target.value })} aria-label={t("items.col.category")}>
+        <option value="">{t("items.filter.allCategories")}</option>
+        {(cats.data ?? []).map((c) => <option key={c} value={c}>{c}</option>)}
+      </Select>
+      <Select className="h-10 w-auto" value={unit} onChange={(e) => patch({ unit: e.target.value })} aria-label={t("items.filter.unit")}>
+        <option value="">{t("items.filter.allUnits")}</option>
+        {(units.data ?? []).map((u) => <option key={u.code} value={u.code}>{lang === "en" ? u.nameEn || u.nameAr : u.nameAr}</option>)}
+      </Select>
+      <Select className="h-10 w-auto" value={status} onChange={(e) => patch({ status: e.target.value })} aria-label={t("common.status")}>
+        <option value="">{t("common.all")}</option>
+        <option value="active">{t("common.active")}</option>
+        <option value="inactive">{t("common.inactive")}</option>
+      </Select>
+      <Select className="h-10 w-auto" value={image} onChange={(e) => patch({ image: e.target.value })} aria-label={t("items.filter.image")}>
+        <option value="">{t("items.filter.image")}</option>
+        <option value="has">{t("items.filter.hasImage")}</option>
+        <option value="no">{t("items.filter.noImage")}</option>
+      </Select>
+      <FilterChip active={missingEn} onClick={() => patch({ missingEn: missingEn ? null : "1" })}>{t("items.filter.missingNameEn")}</FilterChip>
+      <FilterChip active={belowReorder} onClick={() => patch({ belowReorder: belowReorder ? null : "1" })}>{t("items.filter.belowReorder")}</FilterChip>
+    </>
+  );
 
   return (
     <div>
-      <PageHeader eyebrow="البيانات الرئيسية" title="كتالوج الأصناف" subtitle="إدارة بيانات الأصناف، الإسناد للمستودعات، وقواعد إعادة الطلب."
-        action={canCreate ? <Button variant="primary" onClick={() => navigate("/inventory/items?new=1")}><Plus className="h-4 w-4" /> صنف جديد</Button> : null} />
+      <PageHeader
+        eyebrow={t("items.eyebrow")}
+        title={t("items.listTitle")}
+        subtitle={t("items.listSubtitle")}
+        action={canCreate ? <Button variant="primary" onClick={() => goto("/inventory/items/new")}><Plus className="h-4 w-4" /> {t("items.newItem")}</Button> : null}
+      />
 
-      <section className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-        <MetricCard label="الإجمالي" value={formatNumber(k?.total ?? 0)} note="أصناف غير محذوفة" icon={Boxes} tone="blue" />
-        <MetricCard label="نشط" value={formatNumber(k?.active ?? 0)} note="قابل للاستخدام" icon={CheckCircle2} tone="teal" />
-        <MetricCard label="غير نشط" value={formatNumber(k?.inactive ?? 0)} note="محفوظ التاريخ" icon={XCircle} tone="rose" />
-        <MetricCard label="بلا SKU" value={formatNumber(k?.noSku ?? 0)} note="أصناف قديمة" icon={Tag} tone="amber" />
+      <section className="mb-4 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+        <MetricCard label={t("items.kpi.total")} value={formatNumber(kpis?.total ?? 0)} note={t("items.kpi.totalNote")} icon={Boxes} tone="blue" />
+        <MetricCard label={t("items.kpi.active")} value={formatNumber(kpis?.active ?? 0)} note={t("items.kpi.activeNote")} icon={CheckCircle2} tone="teal" />
+        <MetricCard label={t("items.kpi.inactive")} value={formatNumber(kpis?.inactive ?? 0)} note={t("items.kpi.inactiveNote")} icon={XCircle} tone="rose" />
+        <MetricCard label={t("items.kpi.noSku")} value={formatNumber(kpis?.noSku ?? 0)} note={t("items.kpi.noSkuNote")} icon={Tag} tone="amber" />
       </section>
 
-      <section className="surface mt-4 flex flex-col gap-3 p-4">
-        <div className="flex flex-col gap-3 lg:flex-row lg:items-center">
-          <label className="relative flex-1">
-            <Search className="pointer-events-none absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
-            <input className="field w-full pr-10" placeholder="بحث بالاسم أو SKU…" defaultValue={q} onChange={(e) => patch({ q: e.target.value })} aria-label="بحث" />
-          </label>
-          <select className="field lg:w-52" value={category} onChange={(e) => patch({ category: e.target.value })} aria-label="الفئة">
-            <option value="">كل الفئات</option>
-            {(cats.data ?? []).map((c) => <option key={c} value={c}>{c}</option>)}
-          </select>
+      <DataTable<ItemRow>
+        mode="server"
+        columns={columns}
+        rows={rows}
+        rowCount={total}
+        getRowId={(r) => r.id}
+        loading={list.isLoading || list.isFetching}
+        error={list.isError ? list.error : undefined}
+        onRetry={() => list.refetch()}
+        initialSort={initialSort}
+        onStateChange={onStateChange}
+        searchable={false}
+        paginate={false}
+        columnMenu
+        savedViewsModule="inventory-items"
+        canColumn={(cap) => can(cap as WarehouseAction)}
+        filterBar={filterBar}
+        onRowClick={(r) => goto(`/inventory/items/${r.id}`)}
+        mobileTitle={(r) => bizName(r)}
+        rowActions={(r) =>
+          canEdit ? (
+            <IconButton aria-label={t("items.detail.edit")} size="sm" variant="secondary" onClick={() => goto(`/inventory/items/${r.id}/edit`)}>
+              <Pencil className="h-4 w-4" />
+            </IconButton>
+          ) : null
+        }
+        emptyTitle={t("items.empty.title")}
+        emptyBody={hasFacets ? t("items.empty.withFilters") : t("items.empty.noItems")}
+        emptyAction={canCreate ? <Button onClick={() => goto("/inventory/items/new")}><Plus className="h-4 w-4" /> {t("items.newItem")}</Button> : undefined}
+      />
+
+      {total > 0 && (
+        <div className="surface mt-3">
+          <Pagination
+            page={page}
+            pageCount={totalPages}
+            total={total}
+            pageSize={pageSize}
+            onPageChange={(p) => patch({ page: p }, false)}
+            onPageSizeChange={(s) => patch({ pageSize: s })}
+            pageSizeOptions={PAGE_SIZES}
+          />
         </div>
-        <div className="flex flex-wrap gap-1">
-          {ITEM_ACTIVE_OPTIONS.map((o) => (
-            <button key={o.value} type="button" onClick={() => patch({ status: o.value })}
-              className={`min-h-10 rounded-xl border px-3 text-xs font-extrabold transition ${status === o.value ? "border-teal-600 bg-teal-600 text-white" : "border-slate-200 bg-white text-slate-600 hover:bg-slate-50"}`}>{o.label}</button>
-          ))}
-        </div>
-      </section>
-
-      <section className="mt-4">
-        {isLoading ? <LoadingState /> : isError ? <ErrorState error={error} onRetry={() => refetch()} /> : !data || data.rows.length === 0 ? (
-          <EmptyState title="لا توجد أصناف مطابقة" body={q || status || category ? "جرّب تعديل عوامل التصفية." : "ابدأ بإضافة صنف."} action={canCreate ? <Button onClick={() => navigate("/inventory/items?new=1")}><Plus className="h-4 w-4" /> صنف جديد</Button> : undefined} />
-        ) : (
-          <>
-            <div className="surface hidden overflow-hidden md:block">
-              <table className="w-full text-sm">
-                <thead className="bg-slate-50 text-xs font-bold text-slate-500"><tr>
-                  <th className="px-4 py-3 text-right">الصنف</th><th className="px-4 py-3 text-right">SKU</th><th className="px-4 py-3 text-right">الفئة</th>
-                  <th className="px-4 py-3 text-right">الوحدة</th><th className="px-4 py-3 text-left">التكلفة العامة</th><th className="px-4 py-3 text-right">الحالة</th>
-                </tr></thead>
-                <tbody className="divide-y divide-slate-100">
-                  {data.rows.map((r) => (
-                    <tr key={r.id} className="cursor-pointer transition hover:bg-slate-50" onClick={() => patch({ view: r.id }, false)}>
-                      <td className="px-4 py-3 font-extrabold text-slate-900">{r.name}</td>
-                      <td className="px-4 py-3 font-mono text-xs text-slate-500">{r.sku || "—"}</td>
-                      <td className="px-4 py-3 text-slate-600">{r.category || "—"}</td>
-                      <td className="px-4 py-3 text-slate-600">{r.unit}</td>
-                      <td className="px-4 py-3 text-left tabular-nums text-slate-700">{formatCurrency(r.cost)}</td>
-                      <td className="px-4 py-3"><StatusBadge>{r.active ? "نشط" : "غير نشط"}</StatusBadge></td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-            <div className="space-y-3 md:hidden">
-              {data.rows.map((r) => (
-                <button key={r.id} type="button" onClick={() => patch({ view: r.id }, false)} className="surface block w-full p-4 text-right">
-                  <div className="flex items-center justify-between gap-2"><span className="font-extrabold text-slate-900">{r.name}</span><StatusBadge>{r.active ? "نشط" : "غير نشط"}</StatusBadge></div>
-                  <div className="mt-2 flex items-center justify-between text-xs text-slate-500"><span className="font-mono">{r.sku || "—"} · {r.category || "—"}</span><span className="font-bold text-slate-800">{formatCurrency(r.cost)} / {r.unit}</span></div>
-                </button>
-              ))}
-            </div>
-            <div className="mt-4 flex flex-col items-center justify-between gap-3 sm:flex-row">
-              <div className="flex items-center gap-3 text-xs font-medium text-slate-500">
-                <span>عرض {formatNumber(from)}–{formatNumber(to)} من {formatNumber(pg?.total ?? 0)}</span>
-                <select className="field min-h-9 py-1 text-xs" value={pageSize} onChange={(e) => patch({ pageSize: e.target.value })} aria-label="حجم الصفحة">{PAGE_SIZES.map((s) => <option key={s} value={s}>{s} / صفحة</option>)}</select>
-                {isFetching && <span className="text-teal-600">تحديث…</span>}
-              </div>
-              <div className="flex items-center gap-2">
-                <Button variant="ghost" size="icon" aria-label="السابق" disabled={page <= 1} onClick={() => patch({ page: page - 1 }, false)}><ChevronRight className="h-4 w-4" /></Button>
-                <span className="text-xs font-bold text-slate-600">{formatNumber(page)} / {formatNumber(totalPages)}</span>
-                <Button variant="ghost" size="icon" aria-label="التالي" disabled={page >= totalPages} onClick={() => patch({ page: page + 1 }, false)}><ChevronLeft className="h-4 w-4" /></Button>
-              </div>
-            </div>
-          </>
-        )}
-      </section>
-
-      <ItemDetailDrawer id={view} onClose={() => patch({ view: null }, false)} onEdit={(id) => navigate(`/inventory/items?new=1&edit=${id}`)} />
+      )}
     </div>
+  );
+}
+
+function FilterChip({ active, onClick, children }: { active: boolean; onClick: () => void; children: React.ReactNode }) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      aria-pressed={active}
+      className={`inline-flex min-h-10 items-center rounded-xl border px-3 text-xs font-extrabold transition ${
+        active ? "border-teal-600 bg-teal-600 text-white" : "border-slate-200 bg-white text-slate-600 hover:bg-slate-50"
+      }`}
+    >
+      {children}
+    </button>
   );
 }

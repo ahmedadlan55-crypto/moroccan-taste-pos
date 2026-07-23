@@ -30,6 +30,7 @@ import { test, expect, type Page } from "@playwright/test";
 import fs from "fs";
 import path from "path";
 
+import { e2eDbConfig } from "../e2e-db-name";
 /* eslint-disable @typescript-eslint/no-var-requires */
 const mysql = require("mysql2/promise");
 
@@ -183,7 +184,7 @@ async function cleanupResidue(conn: import("mysql2/promise").Connection) {
 test.beforeAll(async () => {
   env = readEnv();
   db = await mysql.createConnection({
-    host: env.DB_HOST, port: Number(env.DB_PORT), user: env.DB_USER, password: env.DB_PASSWORD, database: env.DB_NAME,
+    ...e2eDbConfig(env), // database ALWAYS from e2e/e2e-db-name.ts — never .env DB_NAME
   });
 
   // Defensive pre-clean: a prior crashed run must never block this one.

@@ -4,7 +4,7 @@ import { fileURLToPath } from "node:url";
 import { describe, it, expect } from "vitest";
 import { NAV, NAV_ITEMS } from "@/app/navigation/manifest";
 import { ALL_CAPS, ROLE_GRANTS } from "@/app/permissions";
-import { ROUTE_PATHS, REDIRECT_PATHS } from "@/app/router";
+import { ROUTE_PATHS, REDIRECT_PATHS, SUBROUTE_BASE_PATHS } from "@/app/router";
 
 // ── Anti-duplication / integrity harness ────────────────────────────────────
 // The unified app has ONE nav manifest, ONE permission catalog and ONE router.
@@ -58,9 +58,17 @@ describe("router ↔ manifest coverage", () => {
     expect(missing).toEqual([]);
   });
 
-  it("no route exists without a nav item or an allowlisted redirect", () => {
+  it("no route exists without a nav item, an allowlisted redirect, or a sub-route home", () => {
+    // A registered route is legitimate when it is a manifest path, an allowlisted
+    // redirect, OR it is (or lives under) a subtree-owning item's base path — the
+    // `<base>/*` splats belong to their base item, not orphans. Anything else (a
+    // route with no home) still fails loudly, preserving the test's real purpose.
     const navPaths = new Set(NAV_ITEMS.map((i) => i.path));
-    const orphans = [...ROUTE_PATHS].filter((p) => !navPaths.has(p) && !REDIRECT_PATHS.has(p));
+    const bases = [...SUBROUTE_BASE_PATHS];
+    const underSubRoute = (p: string) => bases.some((b) => p === b || p.startsWith(`${b}/`));
+    const orphans = [...ROUTE_PATHS].filter(
+      (p) => !navPaths.has(p) && !REDIRECT_PATHS.has(p) && !underSubRoute(p),
+    );
     expect(orphans).toEqual([]);
   });
 });

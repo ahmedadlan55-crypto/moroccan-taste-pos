@@ -14,22 +14,14 @@ import { Button } from "@/shared/ui";
 import { LoadingState, ErrorState, EmptyState } from "@/shared/ui";
 import { formatCurrency, formatDate } from "@/shared/lib";
 import { useCan } from "@/modules/inventory/lib/permission-provider";
+import { useT } from "@/i18n";
+import { st } from "./labels";
 import {
   useProcurementDashboard, useOrders, useReceipts, useInvoices, usePayments,
   useReturns, useProcurementReport, type ListParams,
 } from "@/modules/inventory/lib/hooks/useProcurement";
 
 // ── shared bits ──────────────────────────────────────────────────────────────
-const STATUS_AR: Record<string, string> = {
-  draft: "مسودة", submitted: "مُقدّم", approved: "معتمد", sent: "مُرسل",
-  partially_received: "استلام جزئي", received: "مستلم", fully_received: "مستلم كليًا",
-  posted: "مُرحّل", reversed: "معكوس", cancelled: "ملغى", closed: "مغلق",
-  pending_review: "قيد المراجعة", pending_approval: "بانتظار الاعتماد",
-  partially_paid: "مسدد جزئيًا", paid: "مسدد", overdue: "متأخر", settled: "مُسوّى",
-  requested: "مطلوب", authorized: "مُخوّل", unmatched: "غير مطابقة", partial: "جزئية", matched: "مطابقة",
-};
-const st = (s: string) => STATUS_AR[s] || s;
-
 function Th({ children, className = "" }: { children: ReactNode; className?: string }) {
   return <th className={`px-3 py-2 text-right text-[11px] font-extrabold uppercase tracking-wide text-slate-400 ${className}`}>{children}</th>;
 }
@@ -43,39 +35,42 @@ function useListState(): [ListParams, (p: Partial<ListParams>) => void] {
 }
 
 function StatusFilter({ value, onChange, options }: { value?: string; onChange: (v: string) => void; options: string[] }) {
+  const t = useT();
   return (
-    <select className="field w-44" value={value ?? ""} onChange={(e) => onChange(e.target.value)} aria-label="تصفية الحالة">
-      <option value="">كل الحالات</option>
-      {options.map((o) => <option key={o} value={o}>{st(o)}</option>)}
+    <select className="field w-44" value={value ?? ""} onChange={(e) => onChange(e.target.value)} aria-label={t("purchasing.common.filterStatusAria")}>
+      <option value="">{t("purchasing.common.allStatuses")}</option>
+      {options.map((o) => <option key={o} value={o}>{st(t, o)}</option>)}
     </select>
   );
 }
 
 function Pager({ page, totalPages, onPage }: { page: number; totalPages: number; onPage: (p: number) => void }) {
+  const t = useT();
   if (totalPages <= 1) return null;
   return (
     <div className="mt-3 flex items-center justify-end gap-2 text-sm">
-      <Button variant="secondary" size="sm" disabled={page <= 1} onClick={() => onPage(page - 1)}>السابق</Button>
+      <Button variant="secondary" size="sm" disabled={page <= 1} onClick={() => onPage(page - 1)}>{t("purchasing.pager.prev")}</Button>
       <span className="tabular-nums text-slate-500">{page} / {totalPages}</span>
-      <Button variant="secondary" size="sm" disabled={page >= totalPages} onClick={() => onPage(page + 1)}>التالي</Button>
+      <Button variant="secondary" size="sm" disabled={page >= totalPages} onClick={() => onPage(page + 1)}>{t("purchasing.pager.next")}</Button>
     </div>
   );
 }
 
 // ── Dashboard ─────────────────────────────────────────────────────────────
 export function ProcurementDashboard() {
+  const t = useT();
   const { data, isLoading, isError, error, refetch } = useProcurementDashboard();
   if (isLoading) return <LoadingState />;
   if (isError || !data) return <ErrorState error={error} onRetry={() => refetch()} />;
   const cards = [
-    { label: "قيمة المشتريات", value: formatCurrency(data.purchaseValue), icon: ShoppingBag, tone: "teal" as const },
-    { label: "أوامر بانتظار الاعتماد", value: String(data.ordersPendingApproval), icon: ClipboardList, tone: "amber" as const },
-    { label: "أوامر متأخرة", value: String(data.ordersOverdue), icon: AlarmClock, tone: "rose" as const },
-    { label: "استلامات جزئية", value: String(data.partialReceipts), icon: PackageCheck, tone: "blue" as const },
-    { label: "فواتير غير مطابقة", value: String(data.unmatchedInvoices), icon: FileWarning, tone: "amber" as const },
-    { label: "ذمم مستحقة", value: formatCurrency(data.apDue), icon: Wallet, tone: "violet" as const },
-    { label: "ذمم متأخرة", value: formatCurrency(data.apOverdue), icon: TriangleAlert, tone: "rose" as const },
-    { label: "فروقات مطابقة", value: String(data.variances), icon: ArrowLeftRight, tone: "blue" as const },
+    { label: t("purchasing.dashboard.purchaseValue"), value: formatCurrency(data.purchaseValue), icon: ShoppingBag, tone: "teal" as const },
+    { label: t("purchasing.dashboard.ordersPendingApproval"), value: String(data.ordersPendingApproval), icon: ClipboardList, tone: "amber" as const },
+    { label: t("purchasing.dashboard.ordersOverdue"), value: String(data.ordersOverdue), icon: AlarmClock, tone: "rose" as const },
+    { label: t("purchasing.dashboard.partialReceipts"), value: String(data.partialReceipts), icon: PackageCheck, tone: "blue" as const },
+    { label: t("purchasing.dashboard.unmatchedInvoices"), value: String(data.unmatchedInvoices), icon: FileWarning, tone: "amber" as const },
+    { label: t("purchasing.dashboard.apDue"), value: formatCurrency(data.apDue), icon: Wallet, tone: "violet" as const },
+    { label: t("purchasing.dashboard.apOverdue"), value: formatCurrency(data.apOverdue), icon: TriangleAlert, tone: "rose" as const },
+    { label: t("purchasing.dashboard.variances"), value: String(data.variances), icon: ArrowLeftRight, tone: "blue" as const },
   ];
   return (
     <div className="grid gap-6">
@@ -83,15 +78,15 @@ export function ProcurementDashboard() {
         {cards.map((c) => <MetricCard key={c.label} label={c.label} value={c.value} icon={c.icon} tone={c.tone} />)}
       </div>
       <section className="surface">
-        <PanelTitle icon={ClipboardList} title="آخر النشاطات" />
+        <PanelTitle icon={ClipboardList} title={t("purchasing.dashboard.recentActivity")} />
         <div className="divide-y divide-slate-100">
           {data.recentActivity.length === 0 ? (
-            <div className="p-6"><EmptyState title="لا نشاط بعد" body="ستظهر آخر عمليات المشتريات هنا." /></div>
+            <div className="p-6"><EmptyState title={t("purchasing.dashboard.emptyTitle")} body={t("purchasing.dashboard.emptyBody")} /></div>
           ) : data.recentActivity.map((a, i) => (
             <div key={i} className="flex items-center justify-between px-5 py-3 text-sm">
               <span className="font-semibold text-slate-700">{a.documentType} · {a.action}</span>
               <span className="flex items-center gap-3 text-slate-400">
-                <StatusBadge>{st(a.toStatus)}</StatusBadge>
+                <StatusBadge>{st(t, a.toStatus)}</StatusBadge>
                 <span className="tabular-nums text-[11px]">{formatDate(a.createdAt)}</span>
               </span>
             </div>
@@ -104,29 +99,30 @@ export function ProcurementDashboard() {
 
 // ── Orders ────────────────────────────────────────────────────────────────
 export function OrdersPage() {
+  const t = useT();
   const [params, patch] = useListState();
   const { data, isLoading, isError, error, refetch } = useOrders(params);
   const canCreate = useCan("procurement.manage");
   return (
     <div>
       <div className="mb-4 flex flex-wrap items-center gap-2">
-        <input className="field w-56" placeholder="بحث برقم الأمر / المورد…" value={params.q ?? ""} onChange={(e) => patch({ q: e.target.value, page: 1 })} />
+        <input className="field w-56" placeholder={t("purchasing.orders.searchPlaceholder")} value={params.q ?? ""} onChange={(e) => patch({ q: e.target.value, page: 1 })} />
         <StatusFilter value={params.status} onChange={(v) => patch({ status: v, page: 1 })} options={["draft", "submitted", "approved", "sent", "partially_received", "fully_received", "closed", "cancelled"]} />
         <div className="grow" />
-        {canCreate && <Link to="/purchasing/orders?new=1"><Button>+ أمر شراء</Button></Link>}
+        {canCreate && <Link to="/purchasing/orders?new=1"><Button>+ {t("purchasing.orders.addOrder")}</Button></Link>}
       </div>
       {isLoading ? <LoadingState /> : isError ? <ErrorState error={error} onRetry={() => refetch()} /> : !data || data.rows.length === 0 ? (
-        <EmptyState title="لا أوامر شراء" body="أنشئ أول أمر شراء." />
+        <EmptyState title={t("purchasing.orders.emptyTitle")} body={t("purchasing.orders.emptyBody")} />
       ) : (
         <div className="surface overflow-hidden"><div className="overflow-x-auto">
           <table className="w-full border-collapse">
-            <thead className="bg-slate-50"><tr><Th>الرقم</Th><Th>المورد</Th><Th>التاريخ</Th><Th>الحالة</Th><Th className="text-left">الإجمالي</Th></tr></thead>
+            <thead className="bg-slate-50"><tr><Th>{t("purchasing.col.number")}</Th><Th>{t("purchasing.col.supplier")}</Th><Th>{t("purchasing.col.date")}</Th><Th>{t("common.status")}</Th><Th className="text-left">{t("purchasing.col.total")}</Th></tr></thead>
             <tbody className="divide-y divide-slate-100">
               {data.rows.map((o) => (
                 <tr key={o.id} className="hover:bg-slate-50">
                   <Td><Link className="font-bold text-teal-700 hover:underline" to={`/purchasing/orders?doc=${o.id}`}>{o.poNumber}</Link></Td>
                   <Td>{o.supplierName}</Td><Td className="tabular-nums">{formatDate(o.poDate)}</Td>
-                  <Td><StatusBadge>{st(o.status)}</StatusBadge></Td>
+                  <Td><StatusBadge>{st(t, o.status)}</StatusBadge></Td>
                   <Td className="text-left font-bold tabular-nums">{formatCurrency(o.total)}</Td>
                 </tr>
               ))}
@@ -141,52 +137,56 @@ export function OrdersPage() {
 
 // ── generic list pages (receipts / invoices / payments / returns) ────────────
 export function ReceiptsListPage() {
+  const t = useT();
   const [params, patch] = useListState();
   const { data, isLoading, isError, error, refetch } = useReceipts(params);
   return (
-    <SimpleList title="الاستلامات" isLoading={isLoading} isError={isError} error={error} onRetry={refetch}
-      empty="لا استلامات" rows={data?.rows ?? []} page={data?.page ?? 1} totalPages={data?.totalPages ?? 1} onPage={(p) => patch({ page: p })}
+    <SimpleList title={t("purchasing.receipts.title")} isLoading={isLoading} isError={isError} error={error} onRetry={refetch}
+      empty={t("purchasing.receipts.empty")} rows={data?.rows ?? []} page={data?.page ?? 1} totalPages={data?.totalPages ?? 1} onPage={(p) => patch({ page: p })}
       columns={[
-        { h: "الرقم", c: (r) => <Link className="font-bold text-teal-700 hover:underline" to={`/purchasing/receiving?doc=${r.id}`}>{r.receiptNumber}</Link> }, { h: "المورد", c: (r) => r.supplierName },
-        { h: "التاريخ", c: (r) => formatDate(r.receiptDate) }, { h: "الحالة", c: (r) => <StatusBadge>{st(r.status)}</StatusBadge> },
-        { h: "الإجمالي", c: (r) => formatCurrency(r.total), left: true },
+        { h: t("purchasing.col.number"), c: (r) => <Link className="font-bold text-teal-700 hover:underline" to={`/purchasing/receiving?doc=${r.id}`}>{r.receiptNumber}</Link> }, { h: t("purchasing.col.supplier"), c: (r) => r.supplierName },
+        { h: t("purchasing.col.date"), c: (r) => formatDate(r.receiptDate) }, { h: t("common.status"), c: (r) => <StatusBadge>{st(t, r.status)}</StatusBadge> },
+        { h: t("purchasing.col.total"), c: (r) => formatCurrency(r.total), left: true },
       ]} />
   );
 }
 export function InvoicesListPage() {
+  const t = useT();
   const [params, patch] = useListState();
   const { data, isLoading, isError, error, refetch } = useInvoices(params);
   return (
-    <SimpleList title="فواتير الموردين" isLoading={isLoading} isError={isError} error={error} onRetry={refetch}
-      empty="لا فواتير" rows={data?.rows ?? []} page={data?.page ?? 1} totalPages={data?.totalPages ?? 1} onPage={(p) => patch({ page: p })}
+    <SimpleList title={t("purchasing.invoices.title")} isLoading={isLoading} isError={isError} error={error} onRetry={refetch}
+      empty={t("purchasing.invoices.empty")} rows={data?.rows ?? []} page={data?.page ?? 1} totalPages={data?.totalPages ?? 1} onPage={(p) => patch({ page: p })}
       columns={[
-        { h: "الرقم", c: (r) => <Link className="font-bold text-teal-700 hover:underline" to={`/purchasing/invoices?doc=${r.id}`}>{r.invoiceNo || r.code}</Link> }, { h: "المورد", c: (r) => r.supplierName },
-        { h: "المطابقة", c: (r) => st(r.matchingStatus) }, { h: "الحالة", c: (r) => <StatusBadge>{st(r.status)}</StatusBadge> },
-        { h: "المتبقي", c: (r) => formatCurrency(r.balance), left: true },
+        { h: t("purchasing.col.number"), c: (r) => <Link className="font-bold text-teal-700 hover:underline" to={`/purchasing/invoices?doc=${r.id}`}>{r.invoiceNo || r.code}</Link> }, { h: t("purchasing.col.supplier"), c: (r) => r.supplierName },
+        { h: t("purchasing.invoices.colMatching"), c: (r) => st(t, r.matchingStatus) }, { h: t("common.status"), c: (r) => <StatusBadge>{st(t, r.status)}</StatusBadge> },
+        { h: t("purchasing.invoices.colBalance"), c: (r) => formatCurrency(r.balance), left: true },
       ]} />
   );
 }
 export function PaymentsListPage() {
+  const t = useT();
   const [params, patch] = useListState();
   const { data, isLoading, isError, error, refetch } = usePayments(params);
   return (
-    <SimpleList title="المدفوعات" isLoading={isLoading} isError={isError} error={error} onRetry={refetch}
-      empty="لا مدفوعات" rows={data?.rows ?? []} page={data?.page ?? 1} totalPages={data?.totalPages ?? 1} onPage={(p) => patch({ page: p })}
+    <SimpleList title={t("purchasing.payments.title")} isLoading={isLoading} isError={isError} error={error} onRetry={refetch}
+      empty={t("purchasing.payments.empty")} rows={data?.rows ?? []} page={data?.page ?? 1} totalPages={data?.totalPages ?? 1} onPage={(p) => patch({ page: p })}
       columns={[
-        { h: "الرقم", c: (r) => <Link className="font-bold text-teal-700 hover:underline" to={`/purchasing/payments?doc=${r.id}`}>{r.paymentNumber}</Link> }, { h: "الطريقة", c: (r) => r.method },
-        { h: "الحالة", c: (r) => <StatusBadge>{st(r.status)}</StatusBadge> }, { h: "المبلغ", c: (r) => formatCurrency(r.amount), left: true },
+        { h: t("purchasing.col.number"), c: (r) => <Link className="font-bold text-teal-700 hover:underline" to={`/purchasing/payments?doc=${r.id}`}>{r.paymentNumber}</Link> }, { h: t("purchasing.payments.colMethod"), c: (r) => r.method },
+        { h: t("common.status"), c: (r) => <StatusBadge>{st(t, r.status)}</StatusBadge> }, { h: t("purchasing.payments.colAmount"), c: (r) => formatCurrency(r.amount), left: true },
       ]} />
   );
 }
 export function ReturnsPage() {
+  const t = useT();
   const [params, patch] = useListState();
   const { data, isLoading, isError, error, refetch } = useReturns(params);
   return (
-    <SimpleList title="مرتجعات الشراء" isLoading={isLoading} isError={isError} error={error} onRetry={refetch}
-      empty="لا مرتجعات" rows={data?.rows ?? []} page={data?.page ?? 1} totalPages={data?.totalPages ?? 1} onPage={(p) => patch({ page: p })}
+    <SimpleList title={t("purchasing.returns.title")} isLoading={isLoading} isError={isError} error={error} onRetry={refetch}
+      empty={t("purchasing.returns.empty")} rows={data?.rows ?? []} page={data?.page ?? 1} totalPages={data?.totalPages ?? 1} onPage={(p) => patch({ page: p })}
       columns={[
-        { h: "الرقم", c: (r) => <Link className="font-bold text-teal-700 hover:underline" to={`/purchasing/returns?doc=${r.id}`}>{r.returnNumber}</Link> }, { h: "المرحلة", c: (r) => (r.phase === "after_invoice" ? "بعد الفاتورة" : "قبل الفاتورة") },
-        { h: "الحالة", c: (r) => <StatusBadge>{st(r.status)}</StatusBadge> }, { h: "الإجمالي", c: (r) => formatCurrency(r.total), left: true },
+        { h: t("purchasing.col.number"), c: (r) => <Link className="font-bold text-teal-700 hover:underline" to={`/purchasing/returns?doc=${r.id}`}>{r.returnNumber}</Link> }, { h: t("purchasing.returns.colPhase"), c: (r) => (r.phase === "after_invoice" ? t("purchasing.status.after_invoice") : t("purchasing.status.before_invoice")) },
+        { h: t("common.status"), c: (r) => <StatusBadge>{st(t, r.status)}</StatusBadge> }, { h: t("purchasing.col.total"), c: (r) => formatCurrency(r.total), left: true },
       ]} />
   );
 }
@@ -223,15 +223,16 @@ function SimpleList<T extends { id: string }>(props: {
 
 // ── Reports ───────────────────────────────────────────────────────────────
 const REPORTS = [
-  { key: "ap-aging", label: "أعمار الذمم" },
-  { key: "open-orders", label: "أوامر مفتوحة" },
-  { key: "three-way-match", label: "المطابقة الثلاثية" },
-  { key: "price-variance", label: "فروق الأسعار" },
-  { key: "purchase-analysis", label: "تحليل المشتريات" },
-  { key: "tax", label: "ضريبة المدخلات" },
-  { key: "data-quality", label: "جودة البيانات" },
+  { key: "ap-aging", labelKey: "purchasing.reports.apAging" },
+  { key: "open-orders", labelKey: "purchasing.reports.openOrders" },
+  { key: "three-way-match", labelKey: "purchasing.reports.threeWayMatch" },
+  { key: "price-variance", labelKey: "purchasing.reports.priceVariance" },
+  { key: "purchase-analysis", labelKey: "purchasing.reports.purchaseAnalysis" },
+  { key: "tax", labelKey: "purchasing.reports.inputTax" },
+  { key: "data-quality", labelKey: "purchasing.reports.dataQuality" },
 ];
 export function ProcurementReportsPage() {
+  const t = useT();
   const [type, setType] = useState("ap-aging");
   const { data, isLoading, isError, error, refetch } = useProcurementReport(type, {});
   const rows = Array.isArray((data as { data?: unknown })?.data) ? ((data as { data: Record<string, unknown>[] }).data) : [];
@@ -240,13 +241,13 @@ export function ProcurementReportsPage() {
     <div>
       <div className="mb-4 flex flex-wrap gap-2">
         {REPORTS.map((r) => (
-          <button key={r.key} onClick={() => setType(r.key)} className={`rounded-xl px-3 py-1.5 text-sm font-bold transition ${type === r.key ? "bg-teal-600 text-white" : "bg-slate-100 text-slate-600 hover:bg-slate-200"}`}>{r.label}</button>
+          <button key={r.key} onClick={() => setType(r.key)} className={`rounded-xl px-3 py-1.5 text-sm font-bold transition ${type === r.key ? "bg-teal-600 text-white" : "bg-slate-100 text-slate-600 hover:bg-slate-200"}`}>{t(r.labelKey)}</button>
         ))}
       </div>
       {isLoading ? <LoadingState /> : isError ? (
-        <ErrorState error={error} onRetry={() => refetch()} title="تعذّر تحميل تقرير المشتريات" body="أعد المحاولة، وإن استمرت المشكلة تواصل مع المسؤول." />
+        <ErrorState error={error} onRetry={() => refetch()} title={t("purchasing.reports.errorTitle")} body={t("purchasing.reports.errorBody")} />
       ) : rows.length === 0 ? (
-        <EmptyState title="لا بيانات" body="لا توجد صفوف لهذا التقرير." />
+        <EmptyState title={t("purchasing.reports.emptyTitle")} body={t("purchasing.reports.emptyBody")} />
       ) : (
         <div className="surface overflow-hidden"><div className="overflow-x-auto">
           <table className="w-full border-collapse">

@@ -145,16 +145,29 @@ import { test, expect, type Page } from "@playwright/test";
 import fs from "fs";
 import path from "path";
 
+import { e2eDbConfig } from "../e2e-db-name";
 /* eslint-disable @typescript-eslint/no-var-requires */
 const mysql = require("mysql2/promise");
+const bcrypt = require("bcryptjs");
 
 const CASHIER_USERNAME = "test.cashier";
 
-// Same scratchpad file / marker convention as critical-cashier-shift.spec.ts —
-// this spec reads (never writes) the cashier's current real password from it.
+// Same handoff file / marker convention as critical-cashier-shift.spec.ts —
+// this spec reads the cashier's current real password from it.
+//
+// Release-Candidate gate — this was an ABSOLUTE path into one particular
+// Claude session's scratchpad directory, so the spec only ran inside that one
+// session and died in beforeAll with ENOENT everywhere else. Pre-existing, not
+// a merge regression (byte-identical on origin/main). Now: E2E_ACCOUNTS_FILE
+// wins if set, otherwise the repo's own gitignored artifacts/ directory.
 const SCRATCHPAD_ACCOUNTS_FILE =
-  "C:\\Users\\5CF8~1\\AppData\\Local\\Temp\\claude\\C--Users------------Downloads-moroccan-taste-pos-main\\57b1b816-a57e-4200-95f4-fc3dfbc9ef99\\scratchpad\\test-accounts.txt";
+  process.env.E2E_ACCOUNTS_FILE ||
+  path.join(process.cwd(), "artifacts", "e2e", "test-accounts.txt");
 const CASHIER_BLOCK_MARKER = "[CASHIER (branch + warehouse)]";
+// Must match critical-cashier-shift.spec.ts's RESET_PASSWORD — that spec always
+// resets the fixture account back to this value in afterAll, so it is the value
+// to bootstrap to when no handoff file exists yet. Kept in sync deliberately.
+const BOOTSTRAP_PASSWORD = "E2eCashierReset!83Qz9";
 
 function readEnv(): Record<string, string> {
   const values: Record<string, string> = {};
@@ -177,6 +190,40 @@ function readCashierPassword(): string {
   return m[1];
 }
 
+/**
+ * Return the cashier's password, bootstrapping when no usable handoff file
+ * exists. Mirrors critical-cashier-shift.spec.ts. This matters here too and
+ * not only there: with a single worker Playwright runs spec files
+ * alphabetically, so bilingual-flow runs FIRST and cannot rely on the other
+ * spec having created the file. Recovery is the same reset that spec performs
+ * in its own afterAll, so no new secret is introduced.
+ */
+async function readCashierPasswordOrBootstrap(): Promise<string> {
+  try {
+    return readCashierPassword();
+  } catch {
+    const hash = await bcrypt.hash(BOOTSTRAP_PASSWORD, 12);
+    const [res] = await db.query(
+      "UPDATE users SET password=?, must_change_password=1, password_changed_at=NULL, " +
+      "failed_attempts=0, locked_until=NULL WHERE username=?",
+      [hash, CASHIER_USERNAME],
+    );
+    if (!res || res.affectedRows === 0) {
+      throw new Error(
+        `No handoff file at ${SCRATCHPAD_ACCOUNTS_FILE} AND no '${CASHIER_USERNAME}' account to bootstrap. ` +
+        "Create the fixture cashier first, or point E2E_ACCOUNTS_FILE at a file containing its password.",
+      );
+    }
+    fs.mkdirSync(path.dirname(SCRATCHPAD_ACCOUNTS_FILE), { recursive: true });
+    fs.writeFileSync(
+      SCRATCHPAD_ACCOUNTS_FILE,
+      `${CASHIER_BLOCK_MARKER}\nusername: ${CASHIER_USERNAME}\npassword: ${BOOTSTRAP_PASSWORD}\n`,
+      "utf8",
+    );
+    return BOOTSTRAP_PASSWORD;
+  }
+}
+
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 let db: any;
 let seedPassword: string;
@@ -186,12 +233,12 @@ test.describe.configure({ mode: "serial" });
 test.beforeAll(async () => {
   const e = readEnv();
   db = await mysql.createConnection({
-    host: e.DB_HOST, port: Number(e.DB_PORT), user: e.DB_USER, password: e.DB_PASSWORD, database: e.DB_NAME,
+    ...e2eDbConfig(e), // database ALWAYS from e2e/e2e-db-name.ts — never .env DB_NAME
   });
   // Defensive pre-clean, same rationale as critical-cashier-shift.spec.ts: a
   // prior crashed run must never leave an OPEN shift blocking this one.
   await db.query("DELETE FROM shifts WHERE username = ?", [CASHIER_USERNAME]);
-  seedPassword = readCashierPassword();
+  seedPassword = await readCashierPasswordOrBootstrap();
   // Bypass the mandatory-change gate for THIS run only — see file header.
   await db.query(
     "UPDATE users SET must_change_password=0, password_changed_at=NOW(), failed_attempts=0, locked_until=NULL WHERE username=?",

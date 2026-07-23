@@ -4,6 +4,7 @@ import { Badge, Button, ConfirmDialog, Dialog, IconButton, Input, useToast } fro
 import { Field } from "@/shared/forms";
 import { DataTable, type ColumnDef } from "@/shared/tables";
 import { ErrorState, LoadingState } from "@/shared/ui";
+import { useTx } from "@/shared/ui/i18n";
 import {
   usePositions,
   useSavePosition,
@@ -17,6 +18,7 @@ const EMPTY: PositionInput = { name: "", level: 1 };
 // المناصب — the org positions the approval steps route to (least-busy holder of
 // the position is auto-assigned). `level` orders seniority (higher = more senior).
 export function PositionsTab() {
+  const t = useTx();
   const list = usePositions();
   const save = useSavePosition();
   const del = useDeletePosition();
@@ -44,20 +46,20 @@ export function PositionsTab() {
   function submit() {
     if (!editing) return;
     if (!editing.name.trim()) {
-      setNameError("اسم المنصب مطلوب.");
+      setNameError(t("workflow.positions.nameRequired"));
       return;
     }
     setFormError(null);
     save.mutate(editing, {
       onSuccess: (res) => {
         if (res && res.success === false) {
-          setFormError(res.error || "تعذّر حفظ المنصب.");
+          setFormError(res.error || t("workflow.positions.saveFailed"));
           return;
         }
-        toast({ title: editing.id ? "تم تحديث المنصب" : "تم إضافة المنصب", tone: "success" });
+        toast({ title: editing.id ? t("workflow.positions.toastUpdated") : t("workflow.positions.toastAdded"), tone: "success" });
         setEditing(null);
       },
-      onError: (e) => setFormError(e instanceof Error ? e.message : "تعذّر حفظ المنصب."),
+      onError: (e) => setFormError(e instanceof Error ? e.message : t("workflow.positions.saveFailed")),
     });
   }
 
@@ -67,21 +69,21 @@ export function PositionsTab() {
     del.mutate(toDelete.id, {
       onSuccess: (res) => {
         if (res && res.success === false) {
-          setDeleteError(res.error || "تعذّر حذف المنصب.");
+          setDeleteError(res.error || t("workflow.positions.deleteFailed"));
           return;
         }
-        toast({ title: "تم حذف المنصب", tone: "success" });
+        toast({ title: t("workflow.positions.toastDeleted"), tone: "success" });
         setToDelete(null);
       },
-      onError: (e) => setDeleteError(e instanceof Error ? e.message : "تعذّر حذف المنصب."),
+      onError: (e) => setDeleteError(e instanceof Error ? e.message : t("workflow.positions.deleteFailed")),
     });
   }
 
   const columns: ColumnDef<Position>[] = [
-    { id: "name", header: "المنصب", accessor: (r) => r.name, sortable: true },
+    { id: "name", header: t("workflow.positions.colName"), accessor: (r) => r.name, sortable: true },
     {
       id: "level",
-      header: "المستوى",
+      header: t("workflow.positions.colLevel"),
       accessor: (r) => r.level,
       sortable: true,
       numeric: true,
@@ -93,11 +95,11 @@ export function PositionsTab() {
     },
     {
       id: "isActive",
-      header: "الحالة",
-      accessor: (r) => (r.isActive === false ? "متوقّف" : "نشط"),
+      header: t("common.status"),
+      accessor: (r) => (r.isActive === false ? t("workflow.term.stopped") : t("common.active")),
       cell: (r) => (
         <Badge tone={r.isActive === false ? "neutral" : "success"}>
-          {r.isActive === false ? "متوقّف" : "نشط"}
+          {r.isActive === false ? t("workflow.term.stopped") : t("common.active")}
         </Badge>
       ),
     },
@@ -110,7 +112,7 @@ export function PositionsTab() {
     <div className="space-y-4">
       <div className="flex justify-end">
         <Button variant="primary" onClick={openNew}>
-          <Plus className="h-4 w-4" /> منصب جديد
+          <Plus className="h-4 w-4" /> {t("workflow.positions.newBtn")}
         </Button>
       </div>
 
@@ -119,17 +121,17 @@ export function PositionsTab() {
         rows={rows}
         getRowId={(r) => r.id}
         searchable
-        searchPlaceholder="بحث بالاسم…"
+        searchPlaceholder={t("workflow.positions.searchPlaceholder")}
         tableId="wf-positions"
-        emptyTitle="لا توجد مناصب"
-        emptyBody="أضف أول منصب لبناء مسارات الاعتماد."
+        emptyTitle={t("workflow.positions.emptyTitle")}
+        emptyBody={t("workflow.positions.emptyBody")}
         rowActions={(r) => (
           <div className="flex items-center gap-1">
-            <IconButton aria-label="تعديل" size="sm" onClick={() => openEdit(r)}>
+            <IconButton aria-label={t("common.edit")} size="sm" onClick={() => openEdit(r)}>
               <Pencil className="h-4 w-4" />
             </IconButton>
             <IconButton
-              aria-label="حذف"
+              aria-label={t("common.delete")}
               size="sm"
               variant="danger"
               onClick={() => {
@@ -146,21 +148,21 @@ export function PositionsTab() {
       <Dialog
         open={!!editing}
         onClose={() => setEditing(null)}
-        title={editing?.id ? "تعديل المنصب" : "منصب جديد"}
+        title={editing?.id ? t("workflow.positions.dialogEdit") : t("workflow.positions.dialogNew")}
         footer={
           <>
             <Button variant="secondary" onClick={() => setEditing(null)} disabled={save.isPending}>
-              إلغاء
+              {t("common.cancel")}
             </Button>
             <Button variant="primary" onClick={submit} loading={save.isPending}>
-              حفظ
+              {t("common.save")}
             </Button>
           </>
         }
       >
         {editing && (
           <div className="space-y-4">
-            <Field label="اسم المنصب" required error={nameError ?? undefined}>
+            <Field label={t("workflow.positions.nameLabel")} required error={nameError ?? undefined}>
               <Input
                 value={editing.name}
                 invalid={!!nameError}
@@ -168,10 +170,10 @@ export function PositionsTab() {
                   setNameError(null);
                   setEditing({ ...editing, name: e.target.value });
                 }}
-                placeholder="مثال: مدير مالي"
+                placeholder={t("workflow.positions.namePlaceholder")}
               />
             </Field>
-            <Field label="المستوى" hint="رقم يرتّب الأقدمية — كلما زاد كان المنصب أعلى.">
+            <Field label={t("workflow.positions.levelLabel")} hint={t("workflow.positions.levelHint")}>
               <Input
                 type="number"
                 min={0}
@@ -190,10 +192,10 @@ export function PositionsTab() {
 
       <ConfirmDialog
         open={!!toDelete}
-        title="حذف المنصب"
-        description={toDelete ? `سيتم حذف «${toDelete.name}». قد تتأثر خطوات الاعتماد المرتبطة به.` : ""}
+        title={t("workflow.positions.confirmDeleteTitle")}
+        description={toDelete ? t("workflow.positions.confirmDeleteDesc", { name: toDelete.name }) : ""}
         tone="danger"
-        confirmLabel="حذف"
+        confirmLabel={t("common.delete")}
         processing={del.isPending}
         error={deleteError}
         onConfirm={confirmDelete}

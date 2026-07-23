@@ -1,0 +1,20 @@
+-- Tier A.1 Corrective Gate, item 7 — "حسم Auditor: إما Role قابل للتعيين
+-- end-to-end أو لا تدّعِ أن حساب Auditor يستطيع الدخول."
+--
+-- 'auditor' was already referenced as a real, assignable role throughout
+-- the permission system — granted finance.reports.view / finance.gl.view /
+-- finance.bankrec.view (db/migrations/finance/capabilities.js), included in
+-- frontend/erp/src/app/permissions/catalog.ts's Role type and every
+-- FIN_READ/READ_OPS/EVERYONE role group (can.ts) — but users.role's ENUM
+-- never included it. No account could ever actually hold role='auditor';
+-- every one of those grants was unreachable in practice. Verified directly
+-- against this schema (SHOW COLUMNS FROM users LIKE 'role') before writing
+-- this migration, not assumed.
+--
+-- Widening an ENUM to add a new value is additive and safe — it does not
+-- touch any existing row's stored role, and MySQL does not require
+-- reordering or renumbering existing values for this to work. Nullability
+-- and default are preserved EXACTLY as they were (verified via SHOW
+-- COLUMNS before writing this file: nullable, DEFAULT 'cashier') — this
+-- migration's only change is the added enum value.
+ALTER TABLE users MODIFY COLUMN role ENUM('admin','cashier','manager','custody','employee','accountant','finance','sales','auditor') NULL DEFAULT 'cashier';

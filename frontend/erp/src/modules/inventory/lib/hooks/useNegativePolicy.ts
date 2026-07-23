@@ -135,7 +135,9 @@ export async function downloadDeficitsCsv(params: DeficitsQuery): Promise<void> 
     credentials: "same-origin",
   });
   if (!res.ok) {
-    let msg = "تعذّر تصدير سجل العجوزات.";
+    // Prefer the server's message; otherwise throw with an empty message so the
+    // caller (DeficitsPage) supplies the localized fallback via t().
+    let msg = "";
     try {
       const j = await res.json();
       if (j && j.error) msg = String(j.error);

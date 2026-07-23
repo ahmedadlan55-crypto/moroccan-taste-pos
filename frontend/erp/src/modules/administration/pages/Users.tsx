@@ -5,9 +5,10 @@ import { apiClient, ApiError } from "@/shared/api";
 import { Badge, Button, IconButton, PageHeader, StatusBadge } from "@/shared/ui";
 import { DataTable, type ColumnDef } from "@/shared/tables";
 import { useCan } from "@/app/providers";
+import { useT } from "@/i18n";
 import { asArray } from "../_common";
 import type { User } from "../users/types";
-import { ROLE_LABEL } from "../users/roles";
+import { roleLabelKey } from "../users/roles";
 import { UserDialog, type UserDialogMode } from "../users/UserDialog";
 
 interface UsersResult {
@@ -16,8 +17,10 @@ interface UsersResult {
 }
 
 export default function UsersPage() {
+  const t = useT();
   const canManage = useCan("administration.users");
   const [dialog, setDialog] = useState<{ mode: UserDialogMode; user: User | null } | null>(null);
+  const roleLabel = (role: string) => t(roleLabelKey(role));
 
   const query = useQuery<UsersResult>({
     queryKey: ["auth", "users"],
@@ -49,54 +52,57 @@ export default function UsersPage() {
   const rows = query.data?.rows ?? [];
 
   const columns: ColumnDef<User>[] = [
-    { id: "username", header: "اسم المستخدم", accessor: (r) => r.username, sortable: true },
-    { id: "displayName", header: "الاسم", accessor: (r) => r.displayName || "—" },
+    { id: "username", header: t("administration.users.col.username"), accessor: (r) => r.username, sortable: true },
+    { id: "displayName", header: t("administration.users.col.displayName"), accessor: (r) => r.displayName || "—" },
     {
       id: "role",
-      header: "الدور",
-      accessor: (r) => (r.role ? ROLE_LABEL.get(r.role) ?? r.role : "—"),
+      header: t("administration.users.col.role"),
+      accessor: (r) => (r.role ? roleLabel(r.role) : "—"),
       cell: (r) =>
         r.role ? (
-          <Badge tone={r.isDeveloper ? "purple" : "teal"}>{ROLE_LABEL.get(r.role) ?? r.role}</Badge>
+          <Badge tone={r.isDeveloper ? "purple" : "teal"}>{roleLabel(r.role)}</Badge>
         ) : (
           "—"
         ),
     },
-    { id: "branch", header: "الفرع", accessor: (r) => r.branchName || "—", defaultHidden: limited },
-    { id: "brand", header: "العلامة", accessor: (r) => r.brandName || "—", defaultHidden: true },
+    { id: "branch", header: t("administration.users.col.branch"), accessor: (r) => r.branchName || "—", defaultHidden: limited },
+    { id: "brand", header: t("administration.users.col.brand"), accessor: (r) => r.brandName || "—", defaultHidden: true },
     {
       id: "warehouse",
-      header: "المستودع",
+      header: t("administration.users.col.warehouse"),
       accessor: (r) => r.defaultWarehouseName || "—",
       defaultHidden: true,
     },
     {
       id: "portals",
-      header: "البوابات",
-      accessor: (r) => [r.employeePortal ? "موظف" : "", r.custodyPortal ? "عهدة" : ""].filter(Boolean).join("، ") || "—",
+      header: t("administration.users.col.portals"),
+      accessor: (r) =>
+        [r.employeePortal ? t("administration.users.portal.employee") : "", r.custodyPortal ? t("administration.users.portal.custody") : ""]
+          .filter(Boolean)
+          .join(t("administration.users.portal.separator")) || "—",
       defaultHidden: true,
     },
-    { id: "email", header: "البريد", accessor: (r) => r.email || "—", defaultHidden: true },
+    { id: "email", header: t("administration.users.col.email"), accessor: (r) => r.email || "—", defaultHidden: true },
     {
       id: "status",
-      header: "الحالة",
-      accessor: (r) => (r.active ? "نشط" : "معطّل"),
-      cell: (r) => <StatusBadge>{r.active ? "نشط" : "معطّل"}</StatusBadge>,
+      header: t("administration.users.col.status"),
+      accessor: (r) => t(r.active ? "status.active" : "status.disabled"),
+      cell: (r) => <StatusBadge>{r.active ? "active" : "disabled"}</StatusBadge>,
     },
   ];
 
   return (
     <div>
       <PageHeader
-        eyebrow="الإدارة"
-        title="المستخدمون"
-        subtitle="حسابات الدخول والأدوار والبوابات. الإنشاء والتعديل متاح لمديري النظام فقط."
+        eyebrow={t("administration.eyebrow")}
+        title={t("administration.users.title")}
+        subtitle={t("administration.users.subtitle")}
         action={
           limited ? (
-            <Badge tone="warning">عرض محدود</Badge>
+            <Badge tone="warning">{t("administration.users.limitedBadge")}</Badge>
           ) : canManage ? (
             <Button onClick={() => setDialog({ mode: "create", user: null })}>
-              <Plus className="h-4 w-4" /> مستخدم جديد
+              <Plus className="h-4 w-4" /> {t("administration.users.newUser")}
             </Button>
           ) : undefined
         }
@@ -109,16 +115,16 @@ export default function UsersPage() {
         error={query.error}
         onRetry={() => query.refetch()}
         searchable
-        searchPlaceholder="بحث بالاسم أو اسم المستخدم…"
+        searchPlaceholder={t("administration.users.searchPlaceholder")}
         exportFilename="users.csv"
         tableId="admin-users"
-        emptyTitle="لا يوجد مستخدمون"
+        emptyTitle={t("administration.users.empty")}
         mobileTitle={(r) => r.displayName || r.username}
         rowActions={
           canManage && !limited
             ? (r) => (
                 <IconButton
-                  aria-label={`تعديل ${r.username}`}
+                  aria-label={t("administration.users.editAria", { name: r.username })}
                   size="sm"
                   onClick={() => setDialog({ mode: "edit", user: r })}
                 >

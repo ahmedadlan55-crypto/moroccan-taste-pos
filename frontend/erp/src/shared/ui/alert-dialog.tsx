@@ -2,6 +2,7 @@ import type { ReactNode } from "react";
 import { AlertTriangle } from "lucide-react";
 import { Dialog } from "./dialog";
 import { Button } from "./button";
+import { useTx } from "./i18n";
 
 export interface AlertDialogProps {
   open: boolean;
@@ -24,13 +25,14 @@ export function AlertDialog({
   open,
   title,
   description,
-  confirmLabel = "تأكيد",
-  cancelLabel = "إلغاء",
+  confirmLabel,
+  cancelLabel,
   tone = "primary",
   processing = false,
   onConfirm,
   onClose,
 }: AlertDialogProps) {
+  const t = useTx();
   return (
     <Dialog
       open={open}
@@ -42,10 +44,10 @@ export function AlertDialog({
       footer={
         <>
           <Button variant="secondary" onClick={onClose} disabled={processing}>
-            {cancelLabel}
+            {cancelLabel ?? t("common.cancel")}
           </Button>
           <Button variant={tone === "danger" ? "danger" : "primary"} onClick={onConfirm} loading={processing}>
-            {confirmLabel}
+            {confirmLabel ?? t("common.confirm")}
           </Button>
         </>
       }

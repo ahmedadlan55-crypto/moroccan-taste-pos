@@ -6,6 +6,7 @@ import { Button } from "@/shared/ui";
 import { Stepper } from "@/modules/inventory/features/transfers/Stepper";
 import { LoadingState } from "@/shared/ui";
 import { ApiError } from "@/shared/api";
+import { useT } from "@/i18n";
 import { useWarehouses } from "@/modules/inventory/lib/hooks/useWarehouses";
 import { useWarehouseScope } from "@/modules/inventory/lib/warehouse-scope-provider";
 import { formatCurrency, formatQty } from "@/shared/lib";
@@ -29,9 +30,9 @@ function unitsOf(hit: Pick<ItemHit, "baseUnit" | "majorUnits">): ItemUnitLite[] 
   ];
 }
 
-const STEPS = ["الأساسيات", "الأصناف", "المراجعة"];
-
 export function InvTxWizard({ config }: { config: InvTxConfig }) {
+  const t = useT();
+  const STEPS = [t("inventoryRest.invtx.wizard.stepBasics"), t("inventoryRest.invtx.wizard.stepItems"), t("inventoryRest.invtx.wizard.stepReview")];
   const navigate = useNavigate();
   const [sp] = useSearchParams();
   const editId = sp.get("edit");
@@ -139,7 +140,7 @@ export function InvTxWizard({ config }: { config: InvTxConfig }) {
     const payload = buildPayload();
     if (editId) payload.expectedVersion = edit.data?.version ?? 0;
     const r = schema.safeParse(payload);
-    if (!r.success) return r.error.issues[0]?.message ?? "تحقّق من المدخلات";
+    if (!r.success) return r.error.issues[0]?.message ?? t("inventoryRest.invtx.wizard.validateFallback");
     return null;
   }
 
@@ -149,7 +150,7 @@ export function InvTxWizard({ config }: { config: InvTxConfig }) {
     if (v) { setErr(v); return; }
     const payload = buildPayload();
     const onDone = (id?: string) => navigate(`${config.routeBase}?view=${id ?? editId}`);
-    const onErr = (e: unknown) => setErr(e instanceof ApiError ? (e.isConflict ? "تغيّرت المسودة منذ آخر تحميل — أعد التحميل وحاول مجددًا." : e.message) : "تعذّر الحفظ.");
+    const onErr = (e: unknown) => setErr(e instanceof ApiError ? (e.isConflict ? t("inventoryRest.invtx.wizard.draftChanged") : e.message) : t("inventoryRest.invtx.wizard.saveFailed"));
     if (editId) {
       m.update.mutate({ id: editId, input: { ...payload, expectedVersion: edit.data?.version ?? 0 } }, { onSuccess: () => onDone(editId), onError: onErr });
     } else {
@@ -166,10 +167,10 @@ export function InvTxWizard({ config }: { config: InvTxConfig }) {
   return (
     <div>
       <PageHeader
-        eyebrow={config.title}
-        title={editId ? `تعديل مسودة — ${edit.data?.number ?? ""}` : config.newLabel}
-        subtitle={config.subtitle}
-        action={<Button variant="ghost" onClick={() => navigate(config.routeBase)}><X className="h-4 w-4" /> إغلاق</Button>}
+        eyebrow={t(config.title)}
+        title={editId ? t("inventoryRest.invtx.wizard.editTitle", { number: edit.data?.number ?? "" }) : t(config.newLabel)}
+        subtitle={t(config.subtitle)}
+        action={<Button variant="ghost" onClick={() => navigate(config.routeBase)}><X className="h-4 w-4" /> {t("inventoryRest.ui.close")}</Button>}
       />
       <div className="surface p-5">
         <Stepper steps={STEPS} current={step} />
@@ -178,21 +179,21 @@ export function InvTxWizard({ config }: { config: InvTxConfig }) {
         {/* Step 1 — basics */}
         {step === 1 && (
           <div className="mt-5 grid gap-4 sm:grid-cols-2">
-            <label className="block text-xs font-bold text-slate-500">المستودع
-              <select className="field mt-1 w-full" value={warehouseId} onChange={(e) => { setWarehouseId(e.target.value); setLines([]); }} disabled={!!editId} aria-label="المستودع">
-                <option value="">اختر المستودع</option>
+            <label className="block text-xs font-bold text-slate-500">{t("inventoryRest.invtx.wizard.warehouse")}
+              <select className="field mt-1 w-full" value={warehouseId} onChange={(e) => { setWarehouseId(e.target.value); setLines([]); }} disabled={!!editId} aria-label={t("inventoryRest.invtx.wizard.warehouse")}>
+                <option value="">{t("inventoryRest.invtx.wizard.pickWarehouse")}</option>
                 {whOptions.map((w) => <option key={w.id} value={w.id}>{w.name}</option>)}
               </select>
             </label>
-            <label className="block text-xs font-bold text-slate-500">التاريخ
-              <input type="date" className="field mt-1 w-full" value={date} onChange={(e) => setDate(e.target.value)} aria-label="التاريخ" />
+            <label className="block text-xs font-bold text-slate-500">{t("inventoryRest.invtx.wizard.date")}
+              <input type="date" className="field mt-1 w-full" value={date} onChange={(e) => setDate(e.target.value)} aria-label={t("inventoryRest.invtx.wizard.date")} />
             </label>
-            <label className="block text-xs font-bold text-slate-500 sm:col-span-2">السبب (إلزامي)
-              <input className="field mt-1 w-full" value={reason} onChange={(e) => setReason(e.target.value)} placeholder={isReceipt ? "سبب الاستلام" : isAdj ? "سبب التعديل/الجرد" : "سبب الصرف"} aria-label="السبب" />
+            <label className="block text-xs font-bold text-slate-500 sm:col-span-2">{t("inventoryRest.invtx.wizard.reason")}
+              <input className="field mt-1 w-full" value={reason} onChange={(e) => setReason(e.target.value)} placeholder={isReceipt ? t("inventoryRest.invtx.wizard.reasonReceipt") : isAdj ? t("inventoryRest.invtx.wizard.reasonAdjustment") : t("inventoryRest.invtx.wizard.reasonIssue")} aria-label={t("inventoryRest.reasonDialog.reasonAria")} />
             </label>
             {needsAccount && (
               <div className="block text-xs font-bold text-slate-500 sm:col-span-2">
-                <span>{isReceipt ? "الحساب المقابل (دائن)" : "حساب المصروف (مدين)"} (إلزامي)</span>
+                <span>{isReceipt ? t("inventoryRest.invtx.wizard.counterAccount") : t("inventoryRest.invtx.wizard.expenseAccount")} {t("inventoryRest.invtx.wizard.required")}</span>
                 <div className="mt-1">
                   <SearchableEntityCombobox<AccountHit>
                     value={accountSel}
@@ -202,33 +203,33 @@ export function InvTxWizard({ config }: { config: InvTxConfig }) {
                     getKey={(a) => a.id}
                     getLabel={(a) => a.name}
                     getSublabel={(a) => `${a.code}`}
-                    placeholder="ابحث عن حساب بالكود أو الاسم…"
-                    ariaLabel="الحساب المحاسبي"
-                    emptyText="لا حسابات ترحيل مطابقة."
+                    placeholder={t("inventoryRest.invtx.wizard.accountSearch")}
+                    ariaLabel={t("inventoryRest.invtx.wizard.accountAria")}
+                    emptyText={t("inventoryRest.invtx.wizard.accountEmpty")}
                   />
                 </div>
               </div>
             )}
             {isReceipt && (
-              <label className="block text-xs font-bold text-slate-500 sm:col-span-2">المرجع (اختياري)
-                <input className="field mt-1 w-full" value={sourceRef} onChange={(e) => setSourceRef(e.target.value)} placeholder="مثال: رصيد افتتاحي" aria-label="المرجع" />
+              <label className="block text-xs font-bold text-slate-500 sm:col-span-2">{t("inventoryRest.invtx.wizard.sourceRef")}
+                <input className="field mt-1 w-full" value={sourceRef} onChange={(e) => setSourceRef(e.target.value)} placeholder={t("inventoryRest.invtx.wizard.sourceRefPlaceholder")} aria-label={t("inventoryRest.invtx.detail.ref")} />
               </label>
             )}
             {config.lineMode === "issue" && (
-              <label className="block text-xs font-bold text-slate-500">الجهة المستلِمة (اختياري)
-                <input className="field mt-1 w-full" value={recipient} onChange={(e) => setRecipient(e.target.value)} aria-label="الجهة المستلِمة" />
+              <label className="block text-xs font-bold text-slate-500">{t("inventoryRest.invtx.wizard.recipient")}
+                <input className="field mt-1 w-full" value={recipient} onChange={(e) => setRecipient(e.target.value)} aria-label={t("inventoryRest.invtx.detail.recipient")} />
               </label>
             )}
             {isAdj && (
-              <label className="block text-xs font-bold text-slate-500">إثبات/مرجع (للتعديلات الكبيرة)
-                <input className="field mt-1 w-full" value={evidence} onChange={(e) => setEvidence(e.target.value)} aria-label="إثبات" />
+              <label className="block text-xs font-bold text-slate-500">{t("inventoryRest.invtx.wizard.evidence")}
+                <input className="field mt-1 w-full" value={evidence} onChange={(e) => setEvidence(e.target.value)} aria-label={t("inventoryRest.invtx.detail.evidence")} />
               </label>
             )}
-            <label className="block text-xs font-bold text-slate-500 sm:col-span-2">ملاحظات
-              <textarea className="field mt-1 w-full" value={notes} onChange={(e) => setNotes(e.target.value)} aria-label="ملاحظات" />
+            <label className="block text-xs font-bold text-slate-500 sm:col-span-2">{t("inventoryRest.invtx.wizard.notes")}
+              <textarea className="field mt-1 w-full" value={notes} onChange={(e) => setNotes(e.target.value)} aria-label={t("inventoryRest.invtx.wizard.notes")} />
             </label>
             <div className="sm:col-span-2 flex justify-end">
-              <Button variant="primary" disabled={!canNext1} onClick={() => setStep(2)}>التالي <ArrowRight className="h-4 w-4" /></Button>
+              <Button variant="primary" disabled={!canNext1} onClick={() => setStep(2)}>{t("inventoryRest.ui.next")} <ArrowRight className="h-4 w-4" /></Button>
             </div>
           </div>
         )}
@@ -237,7 +238,7 @@ export function InvTxWizard({ config }: { config: InvTxConfig }) {
         {step === 2 && (
           <div className="mt-5 space-y-4">
             <div className="flex flex-col gap-1">
-              <span className="text-xs font-bold text-slate-500">أضف صنفًا (بحث بالاسم/SKU/الباركود)</span>
+              <span className="text-xs font-bold text-slate-500">{t("inventoryRest.invtx.wizard.addItem")}</span>
               <div className="max-w-md">
                 <SearchableEntityCombobox<ItemHit>
                   value={null}
@@ -247,24 +248,24 @@ export function InvTxWizard({ config }: { config: InvTxConfig }) {
                   getKey={(it) => it.id}
                   getLabel={(it) => it.name}
                   getSublabel={(it) => [it.sku, it.warehouseQty != null ? `${formatQty(it.warehouseQty)} ${it.baseUnit.name}` : null].filter(Boolean).join(" · ") || undefined}
-                  placeholder="ابحث عن صنف…"
-                  ariaLabel="إضافة صنف"
+                  placeholder={t("inventoryRest.invtx.wizard.itemSearch")}
+                  ariaLabel={t("inventoryRest.invtx.wizard.addItemAria")}
                   autoSelectExact
-                  emptyText="لا أصناف مطابقة."
+                  emptyText={t("inventoryRest.invtx.wizard.itemsEmptyPicker")}
                 />
               </div>
             </div>
             {lines.length === 0 ? (
-              <p className="rounded-lg border border-dashed border-slate-200 p-6 text-center text-sm text-slate-400">أضف صنفًا واحدًا على الأقل.</p>
+              <p className="rounded-lg border border-dashed border-slate-200 p-6 text-center text-sm text-slate-400">{t("inventoryRest.invtx.wizard.addAtLeastOne")}</p>
             ) : (
               <div className="overflow-x-auto">
                 <table className="w-full text-sm">
                   <thead className="text-xs text-slate-400">
                     <tr>
-                      <th className="py-2 text-right">الصنف</th>
-                      {isAdj ? (<><th>رصيد النظام</th><th>المجرود</th><th>الفرق</th></>) : (<th>الكمية</th>)}
-                      {isReceipt && <th>تكلفة الوحدة</th>}
-                      {!isAdj && <th>الإجمالي</th>}
+                      <th className="py-2 text-right">{t("inventoryRest.invtx.wizard.colItem")}</th>
+                      {isAdj ? (<><th>{t("inventoryRest.invtx.wizard.colSystemQty")}</th><th>{t("inventoryRest.invtx.wizard.colCounted")}</th><th>{t("inventoryRest.invtx.wizard.colDelta")}</th></>) : (<th>{t("inventoryRest.invtx.wizard.colQty")}</th>)}
+                      {isReceipt && <th>{t("inventoryRest.invtx.wizard.colUnitCost")}</th>}
+                      {!isAdj && <th>{t("inventoryRest.invtx.wizard.colTotal")}</th>}
                       <th></th>
                     </tr>
                   </thead>
@@ -279,23 +280,23 @@ export function InvTxWizard({ config }: { config: InvTxConfig }) {
                           {isAdj ? (
                             <>
                               <td className="text-center tabular-nums text-slate-500" dir="ltr">{formatQty(l.systemQty)} {l.unit}</td>
-                              <td className="text-center"><div className="inline-block"><UnitQtyInput units={l.units} value={l.uv} onChange={(uv) => updateLine(i, { uv })} mode="single" qtyLabel="الكمية المجرودة" minQty={0} /></div></td>
+                              <td className="text-center"><div className="inline-block"><UnitQtyInput units={l.units} value={l.uv} onChange={(uv) => updateLine(i, { uv })} mode="single" qtyLabel={t("inventoryRest.invtx.wizard.countedQtyLabel")} minQty={0} /></div></td>
                               <td className={`text-center font-bold tabular-nums ${delta < 0 ? "text-rose-600" : delta > 0 ? "text-emerald-600" : "text-slate-400"}`} dir="ltr">{delta > 0 ? "+" : ""}{formatQty(delta)}</td>
                             </>
                           ) : (
                             <td className="text-center"><div className="inline-block"><UnitQtyInput units={l.units} value={l.uv} onChange={(uv) => updateLine(i, { uv })} mode="single" /></div></td>
                           )}
-                          {isReceipt && <td className="text-center"><input type="number" min={0} step="any" className="field w-24 text-center" value={l.unitCost} onChange={(e) => updateLine(i, { unitCost: Number(e.target.value) })} aria-label="تكلفة الوحدة" dir="ltr" /></td>}
+                          {isReceipt && <td className="text-center"><input type="number" min={0} step="any" className="field w-24 text-center" value={l.unitCost} onChange={(e) => updateLine(i, { unitCost: Number(e.target.value) })} aria-label={t("inventoryRest.invtx.wizard.unitCostAria")} dir="ltr" /></td>}
                           {!isAdj && <td className="text-center tabular-nums text-slate-600">{formatCurrency(base * l.unitCost)}</td>}
-                          <td className="text-left"><Button variant="ghost" size="icon" aria-label="حذف" onClick={() => removeLine(i)}><Trash2 className="h-4 w-4" /></Button></td>
+                          <td className="text-left"><Button variant="ghost" size="icon" aria-label={t("inventoryRest.invtx.wizard.removeAria")} onClick={() => removeLine(i)}><Trash2 className="h-4 w-4" /></Button></td>
                         </tr>
                         {isReceipt && (
                           <tr className="bg-slate-50/50">
                             <td colSpan={6} className="px-2 pb-2">
                               <div className="flex flex-wrap items-center gap-2 text-xs">
-                                <span className="font-bold text-slate-400">دفعة (إلزامية للأصناف المُتتبعة):</span>
-                                <input className="field h-9 w-40" placeholder="رقم الدفعة" value={l.lotNumber ?? ""} onChange={(e) => updateLine(i, { lotNumber: e.target.value })} aria-label="رقم الدفعة" />
-                                <input type="date" className="field h-9 w-40" value={l.expiryDate ?? ""} onChange={(e) => updateLine(i, { expiryDate: e.target.value })} aria-label="تاريخ الصلاحية" />
+                                <span className="font-bold text-slate-400">{t("inventoryRest.invtx.wizard.lotLabel")}</span>
+                                <input className="field h-9 w-40" placeholder={t("inventoryRest.invtx.wizard.lotNumber")} value={l.lotNumber ?? ""} onChange={(e) => updateLine(i, { lotNumber: e.target.value })} aria-label={t("inventoryRest.invtx.wizard.lotNumber")} />
+                                <input type="date" className="field h-9 w-40" value={l.expiryDate ?? ""} onChange={(e) => updateLine(i, { expiryDate: e.target.value })} aria-label={t("inventoryRest.invtx.wizard.lotExpiryAria")} />
                               </div>
                             </td>
                           </tr>
@@ -308,8 +309,8 @@ export function InvTxWizard({ config }: { config: InvTxConfig }) {
               </div>
             )}
             <div className="flex justify-between">
-              <Button variant="ghost" onClick={() => setStep(1)}>السابق</Button>
-              <Button variant="primary" disabled={!canNext2} onClick={() => setStep(3)}>المراجعة <ArrowRight className="h-4 w-4" /></Button>
+              <Button variant="ghost" onClick={() => setStep(1)}>{t("inventoryRest.ui.prev")}</Button>
+              <Button variant="primary" disabled={!canNext2} onClick={() => setStep(3)}>{t("inventoryRest.invtx.wizard.stepReview")} <ArrowRight className="h-4 w-4" /></Button>
             </div>
           </div>
         )}
@@ -318,15 +319,15 @@ export function InvTxWizard({ config }: { config: InvTxConfig }) {
         {step === 3 && (
           <div className="mt-5 space-y-4">
             <div className="grid gap-2 sm:grid-cols-3 text-sm">
-              <Stat label="المستودع" value={whOptions.find((w) => w.id === warehouseId)?.name ?? warehouseId} />
-              <Stat label="عدد الأصناف" value={String(lines.length)} />
-              <Stat label={isAdj ? "صافي قيمة الفرق" : "القيمة الإجمالية"} value={formatCurrency(total)} />
-              {reason && <Stat label="السبب" value={reason} />}
+              <Stat label={t("inventoryRest.invtx.wizard.reviewWarehouse")} value={whOptions.find((w) => w.id === warehouseId)?.name ?? warehouseId} />
+              <Stat label={t("inventoryRest.invtx.wizard.reviewItemCount")} value={String(lines.length)} />
+              <Stat label={isAdj ? t("inventoryRest.invtx.wizard.reviewNetDelta") : t("inventoryRest.invtx.wizard.reviewTotal")} value={formatCurrency(total)} />
+              {reason && <Stat label={t("inventoryRest.invtx.wizard.reviewReason")} value={reason} />}
             </div>
-            {isAdj && <p className="rounded-lg bg-blue-50 px-3 py-2 text-xs font-bold text-blue-700">يحسب النظام الفرق (delta) ويعيد قراءة الرصيد عند الترحيل؛ إن تغيّر الرصيد منذ الجرد يُرفض الترحيل (QUANTITY_CONFLICT).</p>}
+            {isAdj && <p className="rounded-lg bg-blue-50 px-3 py-2 text-xs font-bold text-blue-700">{t("inventoryRest.invtx.wizard.adjHint")}</p>}
             <div className="flex justify-between">
-              <Button variant="ghost" onClick={() => setStep(2)}>السابق</Button>
-              <Button variant="primary" disabled={saving} onClick={submit}>{saving ? "جارٍ الحفظ…" : editId ? "حفظ التعديل" : "حفظ كمسودة"}</Button>
+              <Button variant="ghost" onClick={() => setStep(2)}>{t("inventoryRest.ui.prev")}</Button>
+              <Button variant="primary" disabled={saving} onClick={submit}>{saving ? t("inventoryRest.ui.saving") : editId ? t("inventoryRest.invtx.wizard.saveEdit") : t("inventoryRest.invtx.wizard.saveDraft")}</Button>
             </div>
           </div>
         )}

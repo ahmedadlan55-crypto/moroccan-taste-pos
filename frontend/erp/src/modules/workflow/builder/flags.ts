@@ -1,8 +1,11 @@
 // Shared step-permission metadata for the approval-step editors (StepsTab and
-// PositionPathsTab both edit a step's boolean flags — keep the labels + defaults
+// PositionPathsTab both edit a step's boolean flags — keep the field set + defaults
 // in one place so the two screens never drift). Field names mirror the backend
 // (routes/workflow.js: can_approve / can_reject / can_return_to_previous /
 // can_edit / can_edit_amount / require_same_branch / require_same_department).
+//
+// Visible labels are NOT here — each flag key maps 1:1 to the i18n
+// "workflow.flag.<key>" leaf, so consumers render t(`workflow.flag.${key}`).
 
 export interface StepFlags {
   canApprove: boolean;
@@ -14,15 +17,16 @@ export interface StepFlags {
   requireSameDepartment: boolean;
 }
 
-/** The 6 action/scoping flags shown as checkboxes, in display order. */
-export const FLAG_DEFS: { key: keyof StepFlags; label: string }[] = [
-  { key: "canApprove", label: "اعتماد" },
-  { key: "canReject", label: "رفض" },
-  { key: "canReturn", label: "إرجاع لسابق" },
-  { key: "canEdit", label: "تعديل" },
-  { key: "canEditAmount", label: "تعديل المبلغ" },
-  { key: "requireSameBranch", label: "نفس الفرع" },
-  { key: "requireSameDepartment", label: "نفس القسم" },
+/** The 6 action/scoping flags shown as checkboxes, in display order. Each key
+ *  resolves its label via t(`workflow.flag.${key}`). */
+export const FLAG_DEFS: { key: keyof StepFlags }[] = [
+  { key: "canApprove" },
+  { key: "canReject" },
+  { key: "canReturn" },
+  { key: "canEdit" },
+  { key: "canEditAmount" },
+  { key: "requireSameBranch" },
+  { key: "requireSameDepartment" },
 ];
 
 /** Sensible defaults matching the backend's "unset → true" for the action flags. */
@@ -36,7 +40,8 @@ export const DEFAULT_FLAGS: StepFlags = {
   requireSameDepartment: false,
 };
 
-export const STRATEGY_OPTIONS = [
-  { value: "least_busy", label: "الأقل انشغالًا" },
-  { value: "first", label: "الأول" },
+/** Assignment-strategy values; labels resolve via t(`workflow.strategy.${value}`). */
+export const STRATEGY_OPTIONS: { value: string }[] = [
+  { value: "least_busy" },
+  { value: "first" },
 ];

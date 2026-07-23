@@ -17,6 +17,7 @@ import {
 } from "@/shared/ui";
 import { DataTable, type ColumnDef } from "@/shared/tables";
 import { formatCurrency, formatDate } from "@/shared/lib";
+import { useTx } from "@/shared/ui/i18n";
 import { useAuth } from "@/app/providers";
 import { peopleApi } from "../lib/api";
 import { qk } from "../lib/query-keys";
@@ -40,6 +41,7 @@ import type { Custody, CustodyExpense } from "../lib/types";
 type TabKey = "mine" | "custodies" | "expenses" | "approvals";
 
 export function CustodyPage() {
+  const t = useTx();
   const { user } = useAuth();
   const role = String(user?.role ?? "").toLowerCase();
   // Mirror routes/custody.js _isAdmin (admin|manager) — NOT the UI-wide
@@ -48,36 +50,32 @@ export function CustodyPage() {
   const isHolder = role === "custody";
 
   const tabs = useMemo(() => {
-    const t: { value: TabKey; label: string }[] = [];
-    if (isHolder) t.push({ value: "mine", label: "عهدتي" });
+    const items: { value: TabKey; label: string }[] = [];
+    if (isHolder) items.push({ value: "mine", label: t("people.custody.tabs.mine") });
     if (isAdmin) {
-      t.push({ value: "custodies", label: "العُهد" });
-      t.push({ value: "expenses", label: "المصروفات" });
-      t.push({ value: "approvals", label: "الاعتمادات" });
+      items.push({ value: "custodies", label: t("people.custody.tabs.custodies") });
+      items.push({ value: "expenses", label: t("people.custody.tabs.expenses") });
+      items.push({ value: "approvals", label: t("people.custody.tabs.approvals") });
     }
     // Any other role that reaches the page (nav is capability-gated) gets the
     // read tabs; the server answers 403 and <ErrorState> surfaces it honestly.
-    if (!t.length) {
-      t.push({ value: "custodies", label: "العُهد" });
-      t.push({ value: "expenses", label: "المصروفات" });
+    if (!items.length) {
+      items.push({ value: "custodies", label: t("people.custody.tabs.custodies") });
+      items.push({ value: "expenses", label: t("people.custody.tabs.expenses") });
     }
-    return t;
-  }, [isAdmin, isHolder]);
+    return items;
+  }, [isAdmin, isHolder, t]);
 
   const [tab, setTab] = useState<TabKey>(tabs[0].value);
 
   return (
     <div className="space-y-6">
       <PageHeader
-        eyebrow="الموارد البشرية"
-        title="العهد والمستندات"
-        subtitle={
-          isHolder
-            ? "عهدتك: تسجيل المصروفات وطلب الإقفال ومتابعة الرصيد."
-            : "إنشاء العُهد وتغذيتها واعتماد مصروفاتها وإقفالها."
-        }
+        eyebrow={t("people.eyebrow")}
+        title={t("people.custody.title")}
+        subtitle={isHolder ? t("people.custody.subtitleHolder") : t("people.custody.subtitleAdmin")}
       />
-      <Tabs items={tabs} value={tab} onChange={(v) => setTab(v as TabKey)} aria-label="أقسام العهد" />
+      <Tabs items={tabs} value={tab} onChange={(v) => setTab(v as TabKey)} aria-label={t("people.custody.tabsAria")} />
       {tab === "mine" && <MyCustodyTab />}
       {tab === "custodies" && <CustodiesTab canManage={isAdmin} />}
       {tab === "expenses" && <ExpensesTab />}
@@ -88,6 +86,7 @@ export function CustodyPage() {
 
 // ── العُهد (admin list + create/topup/expense row actions) ────────────────────
 function CustodiesTab({ canManage }: { canManage: boolean }) {
+  const t = useTx();
   const [detailId, setDetailId] = useState<string | null>(null);
   const [createOpen, setCreateOpen] = useState(false);
   const [topupFor, setTopupFor] = useState<Custody | null>(null);
@@ -107,23 +106,23 @@ function CustodiesTab({ canManage }: { canManage: boolean }) {
     .map((a) => ({ id: a.id, code: a.code, name: a.nameAr }));
 
   const columns: ColumnDef<Custody>[] = [
-    { id: "custodyNumber", header: "رقم العهدة", accessor: (r) => r.custodyNumber, sortable: true },
-    { id: "userName", header: "المسؤول", accessor: (r) => r.userName || "—", sortable: true },
-    { id: "balance", header: "الرصيد", accessor: (r) => r.balance, cell: (r) => formatCurrency(r.balance), numeric: true, sortable: true },
-    { id: "totalTopups", header: "الإيداعات", accessor: (r) => r.totalTopups, cell: (r) => formatCurrency(r.totalTopups), numeric: true },
-    { id: "totalExpenses", header: "المصروفات", accessor: (r) => r.totalExpenses, cell: (r) => formatCurrency(r.totalExpenses), numeric: true },
+    { id: "custodyNumber", header: t("people.custody.col.custodyNumber"), accessor: (r) => r.custodyNumber, sortable: true },
+    { id: "userName", header: t("people.custody.col.holder"), accessor: (r) => r.userName || "—", sortable: true },
+    { id: "balance", header: t("people.custody.col.balance"), accessor: (r) => r.balance, cell: (r) => formatCurrency(r.balance), numeric: true, sortable: true },
+    { id: "totalTopups", header: t("people.custody.col.topups"), accessor: (r) => r.totalTopups, cell: (r) => formatCurrency(r.totalTopups), numeric: true },
+    { id: "totalExpenses", header: t("people.custody.col.expenses"), accessor: (r) => r.totalExpenses, cell: (r) => formatCurrency(r.totalExpenses), numeric: true },
     {
       id: "createdDate",
-      header: "تاريخ الفتح",
+      header: t("people.custody.col.openedDate"),
       accessor: (r) => r.createdDate ?? "",
       cell: (r) => formatDate(r.createdDate),
     },
     {
       id: "status",
-      header: "الحالة",
+      header: t("common.status"),
       accessor: (r) => r.status,
       cell: (r) => {
-        const m = statusMeta(r.status);
+        const m = statusMeta(r.status, t);
         return <StatusBadge tone={m.tone}>{m.label}</StatusBadge>;
       },
     },
@@ -140,14 +139,14 @@ function CustodiesTab({ canManage }: { canManage: boolean }) {
         onRetry={() => query.refetch()}
         tableId="people.custodies"
         searchable
-        searchPlaceholder="بحث برقم العهدة أو المسؤول…"
-        emptyTitle="لا توجد عُهد"
+        searchPlaceholder={t("people.custody.searchCustodies")}
+        emptyTitle={t("people.custody.emptyCustodies")}
         exportFilename="custodies.csv"
         onRowClick={(r) => setDetailId(r.id)}
         toolbarActions={
           canManage ? (
             <Button variant="primary" size="sm" onClick={() => setCreateOpen(true)}>
-              <Wallet className="h-4 w-4" aria-hidden="true" /> إنشاء عهدة
+              <Wallet className="h-4 w-4" aria-hidden="true" /> {t("people.custody.createBtn")}
             </Button>
           ) : undefined
         }
@@ -156,8 +155,8 @@ function CustodiesTab({ canManage }: { canManage: boolean }) {
             ? (r) => (
                 <div className="flex items-center gap-1">
                   <IconButton
-                    aria-label="تغذية رصيد"
-                    title="تغذية رصيد"
+                    aria-label={t("people.custody.aria.topup")}
+                    title={t("people.custody.aria.topup")}
                     size="sm"
                     variant="ghost"
                     onClick={() => setTopupFor(r)}
@@ -165,8 +164,8 @@ function CustodiesTab({ canManage }: { canManage: boolean }) {
                     <PlusCircle className="h-4 w-4" />
                   </IconButton>
                   <IconButton
-                    aria-label="تسجيل مصروف"
-                    title="تسجيل مصروف"
+                    aria-label={t("people.custody.aria.addExpense")}
+                    title={t("people.custody.aria.addExpense")}
                     size="sm"
                     variant="ghost"
                     onClick={() => setExpenseFor(r)}
@@ -197,6 +196,7 @@ function CustodiesTab({ canManage }: { canManage: boolean }) {
 }
 
 function CustodyDetailDrawer({ id, onClose }: { id: string | null; onClose: () => void }) {
+  const t = useTx();
   const query = useQuery({
     queryKey: qk.custody(id ?? ""),
     queryFn: ({ signal }) => peopleApi.custodyExpensesFor(id ?? "", signal),
@@ -204,16 +204,16 @@ function CustodyDetailDrawer({ id, onClose }: { id: string | null; onClose: () =
   });
 
   return (
-    <Drawer open={!!id} onClose={onClose} title="مصروفات العهدة" eyebrow="العهد">
+    <Drawer open={!!id} onClose={onClose} title={t("people.custody.detailTitle")} eyebrow={t("people.custody.detailEyebrow")}>
       {query.isLoading && <LoadingState rows={2} />}
       {query.error && <ErrorState error={query.error} onRetry={() => query.refetch()} />}
       {query.data && query.data.length === 0 && (
-        <p className="text-sm font-medium text-slate-500">لا توجد مصروفات مسجّلة لهذه العهدة.</p>
+        <p className="text-sm font-medium text-slate-500">{t("people.custody.detailEmpty")}</p>
       )}
       {query.data && query.data.length > 0 && (
         <ul className="space-y-2">
           {query.data.map((e) => {
-            const m = statusMeta(e.status);
+            const m = statusMeta(e.status, t);
             return (
               <li key={e.id} className="rounded-xl border border-slate-100 bg-slate-50 p-3">
                 <div className="flex items-start justify-between gap-3">
@@ -241,6 +241,7 @@ function CustodyDetailDrawer({ id, onClose }: { id: string | null; onClose: () =
 
 // ── المصروفات (read/filter — unchanged) ───────────────────────────────────────
 function ExpensesTab() {
+  const t = useTx();
   const [status, setStatus] = useState("");
   const params = useMemo(() => (status ? { status } : {}), [status]);
   const query = useQuery({
@@ -249,19 +250,19 @@ function ExpensesTab() {
   });
 
   const columns: ColumnDef<CustodyExpense>[] = [
-    { id: "custodyNumber", header: "العهدة", accessor: (r) => r.custodyNumber || "—", sortable: true },
-    { id: "userName", header: "المسؤول", accessor: (r) => r.userName || "—" },
-    { id: "description", header: "الوصف", accessor: (r) => r.description || "—" },
-    { id: "expenseDate", header: "التاريخ", accessor: (r) => r.expenseDate, cell: (r) => formatDate(r.expenseDate), sortable: true },
-    { id: "amount", header: "المبلغ", accessor: (r) => r.amount, cell: (r) => formatCurrency(r.amount), numeric: true, sortable: true },
-    { id: "vatAmount", header: "الضريبة", accessor: (r) => r.vatAmount, cell: (r) => formatCurrency(r.vatAmount), numeric: true, defaultHidden: true },
-    { id: "totalWithVat", header: "الإجمالي", accessor: (r) => r.totalWithVat, cell: (r) => formatCurrency(r.totalWithVat), numeric: true },
+    { id: "custodyNumber", header: t("people.custody.col.custody"), accessor: (r) => r.custodyNumber || "—", sortable: true },
+    { id: "userName", header: t("people.custody.col.holder"), accessor: (r) => r.userName || "—" },
+    { id: "description", header: t("people.custody.col.description"), accessor: (r) => r.description || "—" },
+    { id: "expenseDate", header: t("people.field.date"), accessor: (r) => r.expenseDate, cell: (r) => formatDate(r.expenseDate), sortable: true },
+    { id: "amount", header: t("people.field.amount"), accessor: (r) => r.amount, cell: (r) => formatCurrency(r.amount), numeric: true, sortable: true },
+    { id: "vatAmount", header: t("people.custody.col.tax"), accessor: (r) => r.vatAmount, cell: (r) => formatCurrency(r.vatAmount), numeric: true, defaultHidden: true },
+    { id: "totalWithVat", header: t("people.custody.col.total"), accessor: (r) => r.totalWithVat, cell: (r) => formatCurrency(r.totalWithVat), numeric: true },
     {
       id: "status",
-      header: "الحالة",
+      header: t("common.status"),
       accessor: (r) => r.status,
       cell: (r) => {
-        const m = statusMeta(r.status);
+        const m = statusMeta(r.status, t);
         return <StatusBadge tone={m.tone}>{m.label}</StatusBadge>;
       },
     },
@@ -277,24 +278,24 @@ function ExpensesTab() {
       onRetry={() => query.refetch()}
       tableId="people.custodyExpenses"
       searchable
-      searchPlaceholder="بحث بالوصف أو العهدة…"
-      emptyTitle="لا توجد مصروفات"
+      searchPlaceholder={t("people.custody.searchExpenses")}
+      emptyTitle={t("people.custody.emptyExpenses")}
       exportFilename="custody-expenses.csv"
       filterBar={
         <label className="flex items-center gap-2 text-xs font-bold text-slate-500">
-          الحالة
+          {t("common.status")}
           <Select
             value={status}
             onChange={(e) => setStatus(e.target.value)}
             className="h-10 min-w-36"
             options={[
-              { value: "", label: "الكل" },
-              { value: "pending", label: "قيد الاعتماد" },
-              { value: "override_pending", label: "طلب تجاوز رصيد" },
-              { value: "returned", label: "مُرجعة للتعديل" },
-              { value: "approved", label: "معتمدة" },
-              { value: "posted", label: "مُرحّلة" },
-              { value: "rejected", label: "مرفوضة" },
+              { value: "", label: t("common.all") },
+              { value: "pending", label: t("people.custody.expensesFilter.pending") },
+              { value: "override_pending", label: t("people.custody.expensesFilter.overridePending") },
+              { value: "returned", label: t("people.custody.expensesFilter.returned") },
+              { value: "approved", label: t("people.custody.expensesFilter.approved") },
+              { value: "posted", label: t("people.custody.expensesFilter.posted") },
+              { value: "rejected", label: t("people.custody.expensesFilter.rejected") },
             ]}
           />
         </label>
@@ -308,6 +309,7 @@ type ExpDecision = { kind: "approve" | "reject" | "approve-override"; exp: Custo
 type CloseDecision = { kind: "approve" | "reject"; custody: Custody } | null;
 
 function ApprovalsTab() {
+  const t = useTx();
   const { toast } = useToast();
   const qc = useQueryClient();
   const [expDecision, setExpDecision] = useState<ExpDecision>(null);
@@ -332,27 +334,27 @@ function ApprovalsTab() {
       toast({
         title:
           v.kind === "approve"
-            ? "تم اعتماد المصروف وخصمه من رصيد العهدة"
+            ? t("people.custody.approvals.expApproveToast")
             : v.kind === "approve-override"
-              ? "تمت الموافقة على التجاوز — المصروف بانتظار الاعتماد"
-              : "تم رفض المصروف",
+              ? t("people.custody.approvals.expOverrideToast")
+              : t("people.custody.approvals.expRejectToast"),
         tone: "success",
       });
       setExpDecision(null);
       invalidate();
     },
-    onError: (e) => toast({ title: "تعذّر تنفيذ العملية", description: safeUserMessage(e), tone: "error" }),
+    onError: (e) => toast({ title: t("people.toast.actionFailed"), description: safeUserMessage(e, t), tone: "error" }),
   });
 
   const decideClose = useMutation({
     mutationFn: (v: { kind: NonNullable<CloseDecision>["kind"]; id: string; reason: string }) =>
       v.kind === "approve" ? peopleApi.approveCloseCustody(v.id) : peopleApi.rejectCloseCustody(v.id, v.reason),
     onSuccess: (_r, v) => {
-      toast({ title: v.kind === "approve" ? "تم إقفال العهدة" : "تم رفض طلب الإقفال", tone: "success" });
+      toast({ title: v.kind === "approve" ? t("people.custody.approvals.closeApproveToast") : t("people.custody.approvals.closeRejectToast"), tone: "success" });
       setCloseDecision(null);
       invalidate();
     },
-    onError: (e) => toast({ title: "تعذّر تنفيذ العملية", description: safeUserMessage(e), tone: "error" }),
+    onError: (e) => toast({ title: t("people.toast.actionFailed"), description: safeUserMessage(e, t), tone: "error" }),
   });
 
   // Only the statuses a manager can act on here (the endpoint also returns
@@ -361,35 +363,35 @@ function ApprovalsTab() {
   const closeRequests = (custodies.data ?? []).filter((c) => c.status === "close_pending");
 
   const expColumns: ColumnDef<CustodyExpense>[] = [
-    { id: "custodyNumber", header: "العهدة", accessor: (r) => r.custodyNumber || "—" },
-    { id: "userName", header: "المسؤول", accessor: (r) => r.userName || "—" },
-    { id: "description", header: "البيان", accessor: (r) => r.description || "—" },
-    { id: "glAccountName", header: "النوع", accessor: (r) => r.glAccountName || "—", defaultHidden: true },
-    { id: "expenseDate", header: "التاريخ", accessor: (r) => r.expenseDate, cell: (r) => formatDate(r.expenseDate), sortable: true },
-    { id: "totalWithVat", header: "الإجمالي", accessor: (r) => r.totalWithVat, cell: (r) => formatCurrency(r.totalWithVat), numeric: true, sortable: true },
+    { id: "custodyNumber", header: t("people.custody.col.custody"), accessor: (r) => r.custodyNumber || "—" },
+    { id: "userName", header: t("people.custody.col.holder"), accessor: (r) => r.userName || "—" },
+    { id: "description", header: t("people.custody.col.statement"), accessor: (r) => r.description || "—" },
+    { id: "glAccountName", header: t("people.custody.col.glType"), accessor: (r) => r.glAccountName || "—", defaultHidden: true },
+    { id: "expenseDate", header: t("people.field.date"), accessor: (r) => r.expenseDate, cell: (r) => formatDate(r.expenseDate), sortable: true },
+    { id: "totalWithVat", header: t("people.custody.col.total"), accessor: (r) => r.totalWithVat, cell: (r) => formatCurrency(r.totalWithVat), numeric: true, sortable: true },
     {
       id: "status",
-      header: "الحالة",
+      header: t("common.status"),
       accessor: (r) => r.status,
       cell: (r) => {
-        const m = statusMeta(r.status);
+        const m = statusMeta(r.status, t);
         return <StatusBadge tone={m.tone}>{m.label}</StatusBadge>;
       },
     },
   ];
 
   const closeColumns: ColumnDef<Custody>[] = [
-    { id: "custodyNumber", header: "العهدة", accessor: (r) => r.custodyNumber },
-    { id: "userName", header: "المسؤول", accessor: (r) => r.userName || "—" },
-    { id: "totalTopups", header: "التغذية", accessor: (r) => r.totalTopups, cell: (r) => formatCurrency(r.totalTopups), numeric: true },
-    { id: "totalExpenses", header: "المصروفات", accessor: (r) => r.totalExpenses, cell: (r) => formatCurrency(r.totalExpenses), numeric: true },
-    { id: "balance", header: "الرصيد المتبقي", accessor: (r) => r.balance, cell: (r) => formatCurrency(r.balance), numeric: true },
+    { id: "custodyNumber", header: t("people.custody.col.custody"), accessor: (r) => r.custodyNumber },
+    { id: "userName", header: t("people.custody.col.holder"), accessor: (r) => r.userName || "—" },
+    { id: "totalTopups", header: t("people.custody.col.topupsTotal"), accessor: (r) => r.totalTopups, cell: (r) => formatCurrency(r.totalTopups), numeric: true },
+    { id: "totalExpenses", header: t("people.custody.col.expenses"), accessor: (r) => r.totalExpenses, cell: (r) => formatCurrency(r.totalExpenses), numeric: true },
+    { id: "balance", header: t("people.custody.col.remainingBalance"), accessor: (r) => r.balance, cell: (r) => formatCurrency(r.balance), numeric: true },
   ];
 
   return (
     <div className="space-y-6">
       <section>
-        <h3 className="mb-3 text-sm font-extrabold text-slate-800">مصروفات بانتظار القرار ({actionable.length})</h3>
+        <h3 className="mb-3 text-sm font-extrabold text-slate-800">{t("people.custody.approvals.expensesTitle", { count: actionable.length })}</h3>
         <DataTable
           columns={expColumns}
           rows={actionable}
@@ -398,12 +400,12 @@ function ApprovalsTab() {
           error={pending.error}
           onRetry={() => pending.refetch()}
           tableId="people.custodyApprovals"
-          emptyTitle="لا توجد مصروفات معلقة"
+          emptyTitle={t("people.custody.approvals.expensesEmpty")}
           rowActions={(r) => (
             <div className="flex items-center gap-1">
               <IconButton
-                aria-label={r.status === "override_pending" ? "موافقة تجاوز" : "اعتماد"}
-                title={r.status === "override_pending" ? "موافقة تجاوز" : "اعتماد"}
+                aria-label={r.status === "override_pending" ? t("people.custody.aria.approveOverride") : t("people.custody.aria.approve")}
+                title={r.status === "override_pending" ? t("people.custody.aria.approveOverride") : t("people.custody.aria.approve")}
                 size="sm"
                 variant="ghost"
                 onClick={() =>
@@ -413,8 +415,8 @@ function ApprovalsTab() {
                 <CheckCircle2 className="h-4 w-4" />
               </IconButton>
               <IconButton
-                aria-label="رفض"
-                title="رفض"
+                aria-label={t("people.custody.aria.reject")}
+                title={t("people.custody.aria.reject")}
                 size="sm"
                 variant="danger"
                 onClick={() => setExpDecision({ kind: "reject", exp: r })}
@@ -427,7 +429,7 @@ function ApprovalsTab() {
       </section>
 
       <section>
-        <h3 className="mb-3 text-sm font-extrabold text-slate-800">طلبات إقفال العهد ({closeRequests.length})</h3>
+        <h3 className="mb-3 text-sm font-extrabold text-slate-800">{t("people.custody.approvals.closeTitle", { count: closeRequests.length })}</h3>
         <DataTable
           columns={closeColumns}
           rows={closeRequests}
@@ -436,12 +438,12 @@ function ApprovalsTab() {
           error={custodies.error}
           onRetry={() => custodies.refetch()}
           tableId="people.custodyCloseRequests"
-          emptyTitle="لا توجد طلبات إقفال"
+          emptyTitle={t("people.custody.approvals.closeEmpty")}
           rowActions={(r) => (
             <div className="flex items-center gap-1">
               <IconButton
-                aria-label="اعتماد الإقفال"
-                title="اعتماد الإقفال"
+                aria-label={t("people.custody.aria.approveClose")}
+                title={t("people.custody.aria.approveClose")}
                 size="sm"
                 variant="ghost"
                 onClick={() => setCloseDecision({ kind: "approve", custody: r })}
@@ -449,8 +451,8 @@ function ApprovalsTab() {
                 <CheckCircle2 className="h-4 w-4" />
               </IconButton>
               <IconButton
-                aria-label="رفض الإقفال"
-                title="رفض الإقفال"
+                aria-label={t("people.custody.aria.rejectClose")}
+                title={t("people.custody.aria.rejectClose")}
                 size="sm"
                 variant="danger"
                 onClick={() => setCloseDecision({ kind: "reject", custody: r })}
@@ -467,20 +469,20 @@ function ApprovalsTab() {
         open={!!expDecision}
         title={
           expDecision?.kind === "approve"
-            ? "اعتماد المصروف وخصمه من رصيد العهدة؟"
+            ? t("people.custody.approvals.expApproveConfirm")
             : expDecision?.kind === "approve-override"
-              ? "الموافقة على تجاوز الرصيد لهذا المصروف؟"
-              : "رفض المصروف؟"
+              ? t("people.custody.approvals.expOverrideConfirm")
+              : t("people.custody.approvals.expRejectConfirm")
         }
         description={
           expDecision
             ? `${expDecision.exp.custodyNumber || ""} — ${expDecision.exp.description || ""} (${formatCurrency(expDecision.exp.totalWithVat)})` +
-              (expDecision.kind === "approve-override" ? " — سينتقل لقائمة الانتظار العادية." : "")
+              (expDecision.kind === "approve-override" ? t("people.custody.approvals.overrideMoveNote") : "")
             : ""
         }
         tone={expDecision?.kind === "reject" ? "danger" : "primary"}
         requireReason={expDecision?.kind === "reject"}
-        reasonLabel="سبب الرفض"
+        reasonLabel={t("people.custody.approvals.rejectReasonLabel")}
         processing={decideExpense.isPending}
         onClose={() => setExpDecision(null)}
         onConfirm={(reason) =>
@@ -491,15 +493,19 @@ function ApprovalsTab() {
       {/* Close-request decision — reject requires a reason (legacy prompt). */}
       <ConfirmDialog
         open={!!closeDecision}
-        title={closeDecision?.kind === "approve" ? "الموافقة على إقفال العهدة؟" : "رفض طلب الإقفال؟"}
+        title={closeDecision?.kind === "approve" ? t("people.custody.approvals.closeApproveConfirm") : t("people.custody.approvals.closeRejectConfirm")}
         description={
           closeDecision
-            ? `${closeDecision.custody.custodyNumber} — ${closeDecision.custody.userName} (الرصيد: ${formatCurrency(closeDecision.custody.balance)})`
+            ? t("people.custody.approvals.closeDesc", {
+                number: closeDecision.custody.custodyNumber,
+                holder: closeDecision.custody.userName,
+                balance: formatCurrency(closeDecision.custody.balance),
+              })
             : ""
         }
         tone={closeDecision?.kind === "reject" ? "danger" : "primary"}
         requireReason={closeDecision?.kind === "reject"}
-        reasonLabel="سبب رفض الإقفال"
+        reasonLabel={t("people.custody.approvals.rejectCloseReasonLabel")}
         processing={decideClose.isPending}
         onClose={() => setCloseDecision(null)}
         onConfirm={(reason) =>

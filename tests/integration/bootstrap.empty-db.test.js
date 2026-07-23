@@ -44,6 +44,13 @@ const REQUIRED_TABLES = [
   'inventory_lots', 'warehouse_lot_balances', 'inventory_lot_movements',
   // Phase 4B — transfer + production lot genealogy + lot-level stocktake.
   'lot_transfer_allocations', 'work_order_lot_consumption', 'production_output_lots', 'inv_stocktake_lot_items',
+  // `pos_orders` (~line 5594) and `assets` (~line 6262) are created LATER in
+  // runMigrations() than every table above — included explicitly so the
+  // "wait until REQUIRED_TABLES all exist" poll below doesn't stop early and
+  // race the REQUIRED_COLUMNS checks against tables/columns that haven't
+  // been created yet (assets is migrations' last table, so its presence
+  // proves every ordering-fix column below has had its chance to be added).
+  'pos_orders', 'assets',
 ];
 const REQUIRED_COLUMNS = [
   ['gl_journals', 'posted_by'], ['gl_journals', 'posted_at'],
@@ -73,7 +80,34 @@ const REQUIRED_COLUMNS = [
   // the rich cost_centers shape (was create-if-missing only, never upgraded).
   ['customers', 'payment_terms'], ['customers', 'credit_days'], ['customers', 'brand_id'],
   ['cost_centers', 'name_ar'], ['cost_centers', 'branch_id'], ['cost_centers', 'created_by'],
+  // runMigrations() ordering-bug class (addColumnIfMissing for a table whose
+  // own createTableIfMissing ran LATER in the same function — the ADD COLUMN
+  // silently failed on a fresh install's first boot, only succeeding on a
+  // second restart once the table already existed). pos_orders.branch_id was
+  // the first instance found (see the Tier A.2 Section 6 comment in
+  // server.js); these are the rest of that same bug class, discovered by a
+  // real fresh-DB boot log and fixed by moving each addColumnIfMissing call
+  // to right after its table's createTableIfMissing block.
+  ['pos_orders', 'branch_id'],
+  ['custody_expenses', 'cost_center_id'], ['custody_expenses', 'cost_center_name'],
+  ['custody_expenses', 'pre_approval_status'],
+  ['txn_recipients', 'sub_status'], ['txn_recipients', 'viewed_at'],
+  ['txn_recipients', 'acted_at'], ['txn_recipients', 'acted_action'],
+  ['transaction_replies', 'stage_step_id'],
+  ['hr_advances', 'remaining'], ['hr_advances', 'monthly_deduction'],
+  ['assets', 'dep_start_month'], ['assets', 'dep_until_date'],
+  ['assets', 'gl_asset_account_id'], ['assets', 'gl_dep_expense_account_id'],
+  ['assets', 'gl_accum_dep_account_id'], ['assets', 'project_id'],
+  ['assets', 'created_by'], ['assets', 'updated_at'],
 ];
+// permissions_v3/role_permissions ordering bug: seedO2CCapabilities() used to
+// run before permissions_v3/role_permissions existed on a fresh install, so
+// its INSERT IGNORE calls silently failed (caught by the call site's own
+// try/catch). Checked separately (not a plain column check) because the
+// regression signal is "capabilities/grants never got seeded", not "a column
+// is missing" — permissions_v3/role_permissions themselves always existed by
+// the time boot finished; only their o2c.* rows were the casualty.
+const REQUIRED_O2C_CAPABILITY_SEED = true;
 
 let _p = 0, _f = 0;
 function check(name, cond, extra) { if (cond) { _p++; console.log('  ✅', name); } else { _f++; console.log('  ❌', name, extra != null ? '→ ' + JSON.stringify(extra) : ''); } }
@@ -123,6 +157,13 @@ function bootServer(port, logBuf) {
       const [cols] = await conn.query(
         'SELECT 1 FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA=? AND TABLE_NAME=? AND COLUMN_NAME=?', [TEST_DB, t, c]);
       check('column present: ' + t + '.' + c, cols.length === 1);
+    }
+    if (REQUIRED_O2C_CAPABILITY_SEED) {
+      const [[capCnt]] = await conn.query("SELECT COUNT(*) AS n FROM permissions_v3 WHERE category='order_to_cash'");
+      check('o2c.* capabilities seeded into permissions_v3 on first boot', Number(capCnt.n) > 0, capCnt);
+      const [[grantCnt]] = await conn.query(
+        "SELECT COUNT(*) AS n FROM role_permissions rp JOIN permissions_v3 p ON p.id = rp.permission_id WHERE p.category='order_to_cash'");
+      check('o2c.* role grants seeded into role_permissions on first boot', Number(grantCnt.n) > 0, grantCnt);
     }
     // The default admin user is seeded by the official path.
     const [[u]] = await conn.query('SELECT COUNT(*) AS n FROM users');

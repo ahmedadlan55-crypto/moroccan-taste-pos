@@ -8,9 +8,10 @@ import { ChevronDown, ChevronLeft, FileText, Folder, FolderOpen, Search } from "
 import { Badge, Card, Input } from "@/shared/ui";
 import { useLocalStorage } from "@/shared/hooks";
 import { cn } from "@/shared/lib";
+import { useT } from "@/i18n";
 import {
   GL_ACCOUNT_TYPES,
-  GL_TYPE_LABEL,
+  glTypeLabel,
   type GlAccount,
   type GlAccountType,
 } from "../api";
@@ -56,6 +57,7 @@ export function CoaTree({
   search,
   onSearch,
 }: CoaTreeProps) {
+  const t = useT();
   const byParent = useMemo(() => buildChildrenMap(accounts), [accounts]);
   const rollups = useMemo(() => computeRollups(accounts, byParent), [accounts, byParent]);
   const byId = useMemo(() => new Map(accounts.map((a) => [a.id, a])), [accounts]);
@@ -69,7 +71,7 @@ export function CoaTree({
   const counts = useMemo(() => {
     const map = new Map<TypeFilter, number>();
     map.set("all", accounts.length);
-    for (const t of GL_ACCOUNT_TYPES) map.set(t, 0);
+    for (const tp of GL_ACCOUNT_TYPES) map.set(tp, 0);
     for (const a of accounts) map.set(a.type, (map.get(a.type) ?? 0) + 1);
     return map;
   }, [accounts]);
@@ -123,8 +125,8 @@ export function CoaTree({
   const visibleRoots = searching ? roots.filter((r) => visible.has(r.id)) : roots;
 
   const chips: Array<{ key: TypeFilter; label: string }> = [
-    { key: "all", label: "الكل" },
-    ...GL_ACCOUNT_TYPES.map((t) => ({ key: t as TypeFilter, label: GL_TYPE_LABEL[t] })),
+    { key: "all", label: t("common.all") },
+    ...GL_ACCOUNT_TYPES.map((tp) => ({ key: tp as TypeFilter, label: glTypeLabel(t, tp) })),
   ];
 
   return (
@@ -162,16 +164,16 @@ export function CoaTree({
         <Input
           value={search}
           onChange={(e) => onSearch(e.target.value)}
-          placeholder="بحث بالاسم أو الرمز…"
+          placeholder={t("accounting.coa.searchPlaceholder")}
           leading={<Search className="h-4 w-4" />}
-          aria-label="بحث في دليل الحسابات"
+          aria-label={t("accounting.coa.searchAria")}
         />
       </div>
 
       <div className="min-h-0 flex-1 overflow-y-auto p-2">
         {visibleRoots.length === 0 ? (
           <p className="px-3 py-10 text-center text-sm font-medium text-slate-400">
-            {searching || typeFilter !== "all" ? "لا توجد حسابات مطابقة." : "لا توجد حسابات بعد."}
+            {searching || typeFilter !== "all" ? t("accounting.coa.noMatches") : t("accounting.coa.noAccounts")}
           </p>
         ) : (
           visibleRoots.map((root) => <CoaNode key={root.id} node={root} depth={0} ctx={ctx} />)
@@ -182,6 +184,7 @@ export function CoaTree({
 }
 
 function CoaNode({ node, depth, ctx }: { node: GlAccount; depth: number; ctx: NodeCtx }) {
+  const t = useT();
   const children = ctx.byParent.get(node.id) ?? [];
   const hasChildren = children.length > 0;
   const visibleChildren = ctx.searching
@@ -213,7 +216,7 @@ function CoaNode({ node, depth, ctx }: { node: GlAccount; depth: number; ctx: No
         {hasChildren ? (
           <button
             type="button"
-            aria-label={open ? "طيّ" : "توسيع"}
+            aria-label={open ? t("accounting.coa.collapse") : t("accounting.coa.expand")}
             onClick={(e) => {
               e.stopPropagation();
               ctx.toggle(node.id);
@@ -258,7 +261,7 @@ function CoaNode({ node, depth, ctx }: { node: GlAccount; depth: number; ctx: No
 
         {!node.isActive && (
           <Badge tone="neutral" className="shrink-0">
-            متوقّف
+            {t("accounting.common.suspended")}
           </Badge>
         )}
         <Money value={balance} className="shrink-0 text-xs" />

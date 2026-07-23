@@ -13,6 +13,7 @@ import {
 import { Field } from "@/shared/forms";
 import { DataTable, type ColumnDef } from "@/shared/tables";
 import { PageHeader } from "@/shared/ui";
+import { useT, type TFunction } from "@/i18n";
 import {
   useCostCenters,
   useSaveCostCenter,
@@ -30,17 +31,18 @@ const EMPTY: CostCenterInput = {
   notes: "",
 };
 
-// Server error codes (409/400) → friendly Arabic messages.
-function mapError(error: unknown): string {
+// Server error codes (409/400) → localized messages via the caller-supplied `t`.
+function mapError(t: TFunction, error: unknown): string {
   const raw = error instanceof Error ? error.message : "";
-  if (/duplicate-code/.test(raw)) return "الرمز مستخدم مسبقًا لمركز آخر.";
-  if (/name-required/.test(raw)) return "الاسم بالعربية مطلوب.";
-  if (/has-children/.test(raw)) return "لا يمكن حذف مركز له مراكز فرعية.";
-  if (/not-found/.test(raw)) return "المركز غير موجود.";
-  return raw || "تعذّرت العملية. أعد المحاولة.";
+  if (/duplicate-code/.test(raw)) return t("accounting.costCenters.errors.dupCode");
+  if (/name-required/.test(raw)) return t("accounting.costCenters.errors.nameRequired");
+  if (/has-children/.test(raw)) return t("accounting.costCenters.errors.hasChildren");
+  if (/not-found/.test(raw)) return t("accounting.costCenters.errors.notFound");
+  return raw || t("accounting.costCenters.errors.generic");
 }
 
 export function CostCentersPage() {
+  const t = useT();
   const listQuery = useCostCenters("");
   const save = useSaveCostCenter();
   const del = useDeleteCostCenter();
@@ -76,19 +78,19 @@ export function CostCentersPage() {
   function submit() {
     if (!editing) return;
     if (!editing.nameAr.trim()) {
-      setNameError("الاسم بالعربية مطلوب.");
+      setNameError(t("accounting.costCenters.errors.nameRequired"));
       return;
     }
     setFormError(null);
     save.mutate(editing, {
       onSuccess: (res) => {
         if (res && res.success === false) {
-          setFormError(mapError(new Error(res.error)));
+          setFormError(mapError(t, new Error(res.error)));
           return;
         }
         setEditing(null);
       },
-      onError: (e) => setFormError(mapError(e)),
+      onError: (e) => setFormError(mapError(t, e)),
     });
   }
 
@@ -99,27 +101,27 @@ export function CostCentersPage() {
     del.mutate(toDelete.id, {
       onSuccess: (res) => {
         if (res && res.success === false) {
-          setDeleteError(mapError(new Error(res.error)));
+          setDeleteError(mapError(t, new Error(res.error)));
           return;
         }
         setToDelete(null);
       },
-      onError: (e) => setDeleteError(mapError(e)),
+      onError: (e) => setDeleteError(mapError(t, e)),
     });
   }
 
   const columns: ColumnDef<CostCenter>[] = [
-    { id: "code", header: "الرمز", accessor: (r) => r.code, sortable: true },
-    { id: "nameAr", header: "الاسم", accessor: (r) => r.nameAr, sortable: true },
-    { id: "nameEn", header: "الاسم (EN)", accessor: (r) => r.nameEn, defaultHidden: true },
-    { id: "parentName", header: "المركز الأب", accessor: (r) => r.parentName || "—" },
-    { id: "branchName", header: "الفرع", accessor: (r) => r.branchName || "—" },
+    { id: "code", header: t("accounting.costCenters.col.code"), accessor: (r) => r.code, sortable: true },
+    { id: "nameAr", header: t("accounting.costCenters.col.name"), accessor: (r) => r.nameAr, sortable: true },
+    { id: "nameEn", header: t("accounting.costCenters.col.nameEn"), accessor: (r) => r.nameEn, defaultHidden: true },
+    { id: "parentName", header: t("accounting.costCenters.col.parent"), accessor: (r) => r.parentName || "—" },
+    { id: "branchName", header: t("accounting.costCenters.col.branch"), accessor: (r) => r.branchName || "—" },
     {
       id: "isActive",
-      header: "الحالة",
-      accessor: (r) => (r.isActive ? "نشط" : "متوقّف"),
+      header: t("accounting.costCenters.col.status"),
+      accessor: (r) => (r.isActive ? t("common.active") : t("accounting.common.suspended")),
       cell: (r) => (
-        <Badge tone={r.isActive ? "success" : "neutral"}>{r.isActive ? "نشط" : "متوقّف"}</Badge>
+        <Badge tone={r.isActive ? "success" : "neutral"}>{r.isActive ? t("common.active") : t("accounting.common.suspended")}</Badge>
       ),
     },
   ];
@@ -127,12 +129,12 @@ export function CostCentersPage() {
   return (
     <div>
       <PageHeader
-        eyebrow="المحاسبة"
-        title="مراكز التكلفة"
-        subtitle="إدارة مراكز التكلفة المستخدمة في توزيع القيود على الأنشطة والأقسام."
+        eyebrow={t("accounting.eyebrow")}
+        title={t("accounting.costCenters.title")}
+        subtitle={t("accounting.costCenters.subtitle")}
         action={
           <Button variant="primary" onClick={openNew}>
-            <Plus className="h-4 w-4" /> مركز جديد
+            <Plus className="h-4 w-4" /> {t("accounting.costCenters.newCenter")}
           </Button>
         }
       />
@@ -145,15 +147,15 @@ export function CostCentersPage() {
         error={listQuery.error}
         onRetry={() => listQuery.refetch()}
         searchable
-        searchPlaceholder="بحث بالاسم أو الرمز…"
-        emptyTitle="لا توجد مراكز تكلفة"
-        emptyBody="أضف أول مركز تكلفة للبدء."
+        searchPlaceholder={t("accounting.costCenters.searchPlaceholder")}
+        emptyTitle={t("accounting.costCenters.empty.title")}
+        emptyBody={t("accounting.costCenters.empty.body")}
         rowActions={(r) => (
           <div className="flex items-center gap-1">
-            <IconButton aria-label="تعديل" size="sm" onClick={() => openEdit(r)}>
+            <IconButton aria-label={t("common.edit")} size="sm" onClick={() => openEdit(r)}>
               <Pencil className="h-4 w-4" />
             </IconButton>
-            <IconButton aria-label="حذف" size="sm" onClick={() => { setDeleteError(null); setToDelete(r); }}>
+            <IconButton aria-label={t("common.delete")} size="sm" onClick={() => { setDeleteError(null); setToDelete(r); }}>
               <Trash2 className="h-4 w-4 text-rose-600" />
             </IconButton>
           </div>
@@ -163,15 +165,15 @@ export function CostCentersPage() {
       <Dialog
         open={!!editing}
         onClose={() => setEditing(null)}
-        title={editing?.id ? "تعديل مركز التكلفة" : "مركز تكلفة جديد"}
+        title={editing?.id ? t("accounting.costCenters.editTitle") : t("accounting.costCenters.newTitle")}
         size="lg"
         footer={
           <>
             <Button variant="secondary" onClick={() => setEditing(null)} disabled={save.isPending}>
-              إلغاء
+              {t("common.cancel")}
             </Button>
             <Button variant="primary" onClick={submit} loading={save.isPending}>
-              حفظ
+              {t("common.save")}
             </Button>
           </>
         }
@@ -179,14 +181,14 @@ export function CostCentersPage() {
         {editing && (
           <div className="space-y-4">
             <div className="grid gap-4 sm:grid-cols-2">
-              <Field label="الرمز">
+              <Field label={t("accounting.costCenters.field.code")}>
                 <Input
                   value={editing.code}
                   onChange={(e) => setEditing({ ...editing, code: e.target.value })}
-                  placeholder="مثال: CC-01"
+                  placeholder={t("accounting.costCenters.field.codePlaceholder")}
                 />
               </Field>
-              <Field label="الاسم بالعربية" required error={nameError ?? undefined}>
+              <Field label={t("accounting.costCenters.field.nameAr")} required error={nameError ?? undefined}>
                 <Input
                   value={editing.nameAr}
                   invalid={!!nameError}
@@ -196,18 +198,18 @@ export function CostCentersPage() {
                   }}
                 />
               </Field>
-              <Field label="الاسم بالإنجليزية">
+              <Field label={t("accounting.costCenters.field.nameEn")}>
                 <Input
                   value={editing.nameEn}
                   onChange={(e) => setEditing({ ...editing, nameEn: e.target.value })}
                 />
               </Field>
-              <Field label="المركز الأب">
+              <Field label={t("accounting.costCenters.field.parent")}>
                 <Select
                   value={editing.parentId ?? ""}
                   onChange={(e) => setEditing({ ...editing, parentId: e.target.value || null })}
                 >
-                  <option value="">— بدون —</option>
+                  <option value="">{t("accounting.costCenters.field.noParent")}</option>
                   {parentOptions.map((p) => (
                     <option key={p.id} value={p.id}>
                       {p.code ? `${p.code} — ${p.nameAr}` : p.nameAr}
@@ -216,7 +218,7 @@ export function CostCentersPage() {
                 </Select>
               </Field>
             </div>
-            <Field label="ملاحظات">
+            <Field label={t("accounting.costCenters.field.notes")}>
               <textarea
                 className="field min-h-20 w-full resize-y py-2"
                 value={editing.notes}
@@ -228,7 +230,7 @@ export function CostCentersPage() {
                 checked={editing.isActive}
                 onChange={(v) => setEditing({ ...editing, isActive: v })}
               />
-              <span className="text-sm font-bold text-slate-700">نشط</span>
+              <span className="text-sm font-bold text-slate-700">{t("common.active")}</span>
             </label>
             {formError && (
               <div className="rounded-xl border border-rose-200 bg-rose-50 px-3 py-2 text-xs font-bold text-rose-700">
@@ -241,10 +243,10 @@ export function CostCentersPage() {
 
       <ConfirmDialog
         open={!!toDelete}
-        title="حذف مركز التكلفة"
-        description={toDelete ? `سيتم حذف «${toDelete.nameAr}». إن كان مستخدمًا في قيود سيُعطَّل بدلاً من حذفه.` : ""}
+        title={t("accounting.costCenters.deleteTitle")}
+        description={toDelete ? t("accounting.costCenters.deleteDesc", { name: toDelete.nameAr }) : ""}
         tone="danger"
-        confirmLabel="حذف"
+        confirmLabel={t("common.delete")}
         processing={del.isPending}
         error={deleteError}
         onConfirm={confirmDelete}

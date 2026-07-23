@@ -29,6 +29,8 @@ const { nextDocNumber } = require('../lib/docNumber');
 // and deduct warehouse stock. Sibling modules right next to the mount are gated
 // with requireRole('admin','manager').
 const requireCapability = require('../middleware/requireCapability');
+const trialBalanceEngine = require('../lib/reports/trialBalance');
+const warehouseScopeLib = require('../lib/warehouseScope');
 
 // ═══════════════════════════════════════
 // HELPERS
@@ -2184,148 +2186,59 @@ async function _dimCols() {
 }
 
 /**
- * GET /erp/reports/trial-balance?from=&to=&branch=&brand=&costCenter=&includeZero=
+ * GET /erp/reports/trial-balance?from=&to=&branch=&brand=&costCenter=&warehouse=&includeZero=
  *   Returns every account with opening balance, period movement (debit/credit),
  *   and closing balance. Filters by dimensions if provided.
+ *
+ * Tier A (COA/Trial Balance overhaul) — delegates to the canonical engine in
+ * lib/reports/trialBalance.js instead of the inline logic that used to live
+ * here. See docs/adr/0002-chart-of-accounts-trial-balance.md section 6 for
+ * why this file (not routes/erp/reports/trial-balance.js) stays the single
+ * live endpoint. Response shape is additive-only versus the old inline
+ * version — every field the frontend (frontend/erp/src/modules/accounting/
+ * api.ts) already reads is still present with the same meaning; new fields
+ * (openDebit/openCredit/closeDebit/closeCredit/abnormalSign/diagnostics/...)
+ * are new additions, not renames.
  */
-router.get('/reports/trial-balance', async (req, res) => {
+router.get('/reports/trial-balance', requireCapability('finance.reports.view'), async (req, res) => {
   try {
-    const { from, to, branch, brand, costCenter, includeZero } = req.query;
-    const dim = await _dimCols();
-
-    // Build dimension filter clause (only applies if the column exists)
-    const where = [];
-    const params = [];
-    if (branch && dim.branch_id) { where.push('e.branch_id = ?'); params.push(branch); }
-    if (brand && dim.brand_id)   { where.push('e.brand_id = ?');  params.push(brand); }
-    if (costCenter && dim.cost_center_id) { where.push('e.cost_center_id = ?'); params.push(costCenter); }
-    const dimClause = where.length ? ' AND ' + where.join(' AND ') : '';
-
-    // Only count posted journals
-    const statusClause = " AND j.status = 'posted'";
-
-    // 1) Opening balance: all entries strictly BEFORE `from`
-    let openingMap = {};
-    if (from) {
-      const [openRows] = await db.query(
-        `SELECT e.account_id,
-                COALESCE(SUM(e.debit),0)  AS d,
-                COALESCE(SUM(e.credit),0) AS c
-         FROM gl_entries e
-         JOIN gl_journals j ON e.journal_id = j.id
-         WHERE j.journal_date < ? ${statusClause} ${dimClause}
-         GROUP BY e.account_id`,
-        [from, ...params]);
-      openRows.forEach(r => {
-        openingMap[r.account_id] = Number(r.d) - Number(r.c);
-      });
+    const { from, to, branch, brand, costCenter, warehouse, includeZero } = req.query;
+    // Tier A.3 Release Gate item 7 — req.guardWh() shadow-logs instead of
+    // blocking when WAREHOUSE_SCOPE_ENFORCE is off, a deliberate rollout
+    // mechanism for the BROADER warehouse-ops routes (stock movements,
+    // transfers, ...) that is the wrong default for a FINANCIAL REPORT:
+    // a caller with no access to warehouse X should never be able to read
+    // X's trial balance just because the ops-rollout flag hasn't been
+    // flipped yet. Checked directly against req.warehouseScope (populated
+    // by middleware/warehouseScope.js regardless of ENFORCE) using the
+    // same lib/warehouseScope.js#hasWarehouseAccess every other guard
+    // ultimately calls — always enforced here, no shadow mode, whatever
+    // the global flag says.
+    if (warehouse && req.warehouseScope && !warehouseScopeLib.hasWarehouseAccess(req.warehouseScope, warehouse)) {
+      return res.status(403).json({ success: false, code: 'WAREHOUSE_ACCESS_DENIED', error: warehouseScopeLib.ACCESS_DENIED_MSG });
     }
-
-    // 2) Period movement
-    let sql = `
-      SELECT e.account_id,
-             COALESCE(SUM(e.debit),0)  AS period_debit,
-             COALESCE(SUM(e.credit),0) AS period_credit,
-             COUNT(*) AS row_count
-      FROM gl_entries e
-      JOIN gl_journals j ON e.journal_id = j.id
-      WHERE 1=1 ${statusClause}`;
-    const movParams = [...params];
-    if (from) { sql += ' AND j.journal_date >= ?'; movParams.push(from); }
-    if (to)   { sql += ' AND j.journal_date <= ?'; movParams.push(to); }
-    sql += dimClause + ' GROUP BY e.account_id';
-    const [movRows] = await db.query(sql, movParams);
-
-    // 3) Load all active accounts to join against
-    const [accts] = await db.query(
-      `SELECT id, code, name_ar, type, parent_id
-       FROM gl_accounts WHERE is_active = 1 OR is_active IS NULL
-       ORDER BY code`);
-
-    const movementMap = {};
-    movRows.forEach(r => { movementMap[r.account_id] = r; });
-
-    // Build a parent→children map to enable recursive roll-up
-    const childrenOf = {};
-    accts.forEach(a => {
-      const pid = a.parent_id || null;
-      if (!childrenOf[pid]) childrenOf[pid] = [];
-      childrenOf[pid].push(a);
+    const result = await trialBalanceEngine.computeTrialBalance(db, {
+      from, to, branch, brand, costCenter, warehouse,
+      includeZero: includeZero === '1' || includeZero === 'true',
     });
-    const hasChildren = (id) => !!(childrenOf[id] && childrenOf[id].length);
-
-    // Compute aggregated (own + descendants') totals for each account
-    const directRaw = {};  // account_id → { opening, d, c }
-    accts.forEach(a => {
-      directRaw[a.id] = {
-        opening: Number(openingMap[a.id] || 0),
-        d: Number((movementMap[a.id]||{}).period_debit || 0),
-        c: Number((movementMap[a.id]||{}).period_credit || 0)
-      };
-    });
-    const aggregatedCache = {};
-    function aggregate(id) {
-      if (aggregatedCache[id]) return aggregatedCache[id];
-      const self = directRaw[id] || { opening:0, d:0, c:0 };
-      let agg = { opening: self.opening, d: self.d, c: self.c };
-      (childrenOf[id] || []).forEach(ch => {
-        const childAgg = aggregate(ch.id);
-        agg.opening += childAgg.opening;
-        agg.d       += childAgg.d;
-        agg.c       += childAgg.c;
-      });
-      aggregatedCache[id] = agg;
-      return agg;
+    res.json(result);
+  } catch (e) {
+    if (e instanceof trialBalanceEngine.TrialBalanceError) {
+      // Tier A.1 corrective fix — status carried on the error itself (400 for
+      // bad input, 409 SCHEMA_NOT_READY for an unsupported dimension filter).
+      return res.status(e.status || 400).json({ success: false, code: e.code, error: e.message, rows: [], totals: {} });
     }
-
-    const rows = accts.map(a => {
-      const agg = aggregate(a.id);
-      const opening = agg.opening;
-      const d = agg.d, c = agg.c;
-      const closing = opening + d - c;
-      // Derive level from code length (1 char=1, 11=2, 111=3, ...)
-      const level = a.code ? String(a.code).length : 1;
-      return {
-        accountId: a.id,
-        code: a.code,
-        nameAr: a.name_ar,
-        type: a.type,
-        parentId: a.parent_id || null,
-        level: Math.min(level, 9),
-        hasChildren: hasChildren(a.id),
-        opening: Math.round(opening * 100) / 100,
-        periodDebit: Math.round(d * 100) / 100,
-        periodCredit: Math.round(c * 100) / 100,
-        net: Math.round((d - c) * 100) / 100,
-        closing: Math.round(closing * 100) / 100,
-        rowCount: Number((movementMap[a.id]||{}).row_count || 0)
-      };
-    });
-
-    const filtered = includeZero === '1' ? rows : rows.filter(r =>
-      r.opening !== 0 || r.periodDebit !== 0 || r.periodCredit !== 0 || r.closing !== 0);
-
-    // Totals for balance verification
-    const totals = filtered.reduce((t, r) => ({
-      opening: t.opening + r.opening,
-      periodDebit: t.periodDebit + r.periodDebit,
-      periodCredit: t.periodCredit + r.periodCredit,
-      closing: t.closing + r.closing
-    }), { opening: 0, periodDebit: 0, periodCredit: 0, closing: 0 });
-
-    res.json({
-      success: true,
-      filters: { from: from || null, to: to || null, branch: branch || null, brand: brand || null, costCenter: costCenter || null },
-      rows: filtered,
-      totals: {
-        opening: Math.round(totals.opening * 100) / 100,
-        periodDebit: Math.round(totals.periodDebit * 100) / 100,
-        periodCredit: Math.round(totals.periodCredit * 100) / 100,
-        closing: Math.round(totals.closing * 100) / 100,
-        isBalanced: Math.abs(totals.periodDebit - totals.periodCredit) < 0.01
-      }
-    });
-  } catch(e) { res.json({ success: false, error: e.message, rows: [], totals: {} }); }
+    // Tier A.1 corrective fix — an unexpected/DB error used to return HTTP 200
+    // with success:false, which every naive `res.ok`/`status < 400` caller
+    // (including this endpoint's own frontend consumer) would treat as a
+    // successful-but-empty report instead of a failure. Never do that for a
+    // financial report: unified {success:false, code, error} envelope, 500.
+    // Tier A.2 — the real error (e.message) never reaches the client on a
+    // 500; only a fixed, generic message does. console.error still carries
+    // the full error for the server-side log.
+    console.error('[trial-balance] unexpected error', e);
+    res.status(500).json({ success: false, code: 'TB_INTERNAL_ERROR', error: 'تعذّر إنشاء ميزان المراجعة — خطأ داخلي في الخادم', rows: [], totals: {} });
+  }
 });
 
 /**

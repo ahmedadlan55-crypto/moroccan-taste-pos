@@ -11,9 +11,9 @@ import { Button } from "@/shared/ui";
 import { SearchableEntityCombobox, type EntityPage } from "@/shared/ui";
 import { UnitQtyInput, baseFromValue, type ItemUnitLite, type UnitQtyValue } from "@/shared/ui";
 import { formatCurrency } from "@/shared/lib";
+import { useT, translateApiError } from "@/i18n";
 import { supplierFetcher, useCreateOrder } from "@/modules/inventory/lib/hooks/useProcurement";
 import { toSupplier, type Supplier } from "@/modules/inventory/lib/adapters/procurement.adapter";
-import type { ApiError } from "@/shared/api";
 
 interface ItemHit {
   id: string; name: string; sku: string;
@@ -47,6 +47,7 @@ let _k = 0;
 const newLine = (): LineState => ({ key: "L" + ++_k, item: null, qty: { unitCode: "", qty: 1 }, unitPrice: 0, vatRate: 15 });
 
 export function OrderCreatePage() {
+  const t = useT();
   const nav = useNavigate();
   const create = useCreateOrder();
   const [supplier, setSupplier] = useState<Supplier | null>(null);
@@ -89,34 +90,34 @@ export function OrderCreatePage() {
 
   return (
     <div className="grid gap-6">
-      <Link to="/purchasing/orders" className="text-sm font-bold text-teal-700 hover:underline">← أوامر الشراء</Link>
-      <PageHeader eyebrow="أمر شراء جديد" title="إنشاء أمر شراء" subtitle="اختر المورد والأصناف — تُحسب الإجماليات على الخادم." />
+      <Link to="/purchasing/orders" className="text-sm font-bold text-teal-700 hover:underline">← {t("purchasing.tabs.orders")}</Link>
+      <PageHeader eyebrow={t("purchasing.orderCreate.eyebrow")} title={t("purchasing.orderCreate.title")} subtitle={t("purchasing.orderCreate.subtitle")} />
 
       <section className="surface p-5">
         <div className="grid gap-4 sm:grid-cols-3">
           <div>
-            <label className="mb-1 block text-xs font-extrabold text-slate-500">المورد</label>
+            <label className="mb-1 block text-xs font-extrabold text-slate-500">{t("purchasing.col.supplier")}</label>
             <SearchableEntityCombobox<Supplier>
               value={supplier} onChange={setSupplier}
               fetcher={(a) => supplierFetcher(a).then((p) => ({ ...p, items: p.items.map((s) => toSupplier(s as unknown as Record<string, unknown>)) }))}
               queryKey={["procurement", "supplier-picker"]}
               getKey={(s) => s.id} getLabel={(s) => s.name} getSublabel={(s) => s.vatNumber || undefined}
-              placeholder="ابحث بالاسم / الرقم الضريبي / الهاتف…" ariaLabel="اختيار المورد"
+              placeholder={t("purchasing.orderCreate.supplierSearchPlaceholder")} ariaLabel={t("purchasing.common.selectSupplierAria")}
             />
           </div>
           <div>
-            <label className="mb-1 block text-xs font-extrabold text-slate-500">تاريخ التوريد المتوقع</label>
+            <label className="mb-1 block text-xs font-extrabold text-slate-500">{t("purchasing.orderCreate.expectedDateLabel")}</label>
             <input type="date" className="field w-full" value={expectedDate} onChange={(e) => setExpectedDate(e.target.value)} />
           </div>
           <div>
-            <label className="mb-1 block text-xs font-extrabold text-slate-500">ملاحظات</label>
-            <input className="field w-full" value={notes} onChange={(e) => setNotes(e.target.value)} placeholder="اختياري" />
+            <label className="mb-1 block text-xs font-extrabold text-slate-500">{t("purchasing.field.notes")}</label>
+            <input className="field w-full" value={notes} onChange={(e) => setNotes(e.target.value)} placeholder={t("purchasing.common.optional")} />
           </div>
         </div>
       </section>
 
       <section className="surface overflow-hidden">
-        <PanelTitle title="السطور" action={<Button variant="secondary" size="sm" onClick={() => setLines((ls) => [...ls, newLine()])}><Plus className="h-4 w-4" /> سطر</Button>} />
+        <PanelTitle title={t("purchasing.lines.title")} action={<Button variant="secondary" size="sm" onClick={() => setLines((ls) => [...ls, newLine()])}><Plus className="h-4 w-4" /> {t("purchasing.lines.addLine")}</Button>} />
         <div className="grid gap-4 p-4">
           {lines.map((l, idx) => {
             const units = l.item ? unitsOf(l.item) : [{ code: "", name: "", factor: 1, isBase: true }];
@@ -124,28 +125,28 @@ export function OrderCreatePage() {
             return (
               <div key={l.key} className="grid gap-3 rounded-xl border border-slate-200 p-3 lg:grid-cols-[2fr_1.6fr_1fr_0.8fr_auto]">
                 <div>
-                  <label className="mb-1 block text-[11px] font-bold text-slate-400">المادة</label>
+                  <label className="mb-1 block text-[11px] font-bold text-slate-400">{t("purchasing.col.item")}</label>
                   <SearchableEntityCombobox<ItemHit>
                     value={l.item} onChange={(it) => setLines((ls) => ls.map((x, i) => i === idx ? { ...x, item: it, qty: { unitCode: it ? it.baseUnit.code : "", qty: 1 } } : x))}
                     fetcher={itemFetcher} queryKey={["procurement", "item-picker"]}
                     getKey={(it) => it.id} getLabel={(it) => it.name} getSublabel={(it) => it.sku || undefined}
-                    placeholder="ابحث بالاسم / SKU / الباركود…" ariaLabel="اختيار المادة"
+                    placeholder={t("purchasing.orderCreate.itemSearchPlaceholder")} ariaLabel={t("purchasing.common.selectItemAria")}
                   />
                 </div>
                 <div>
-                  <label className="mb-1 block text-[11px] font-bold text-slate-400">الكمية {base > 0 && <span className="text-teal-600">= {base} (أساسية)</span>}</label>
+                  <label className="mb-1 block text-[11px] font-bold text-slate-400">{t("purchasing.lines.qty")} {base > 0 && <span className="text-teal-600">= {base} {t("purchasing.orderCreate.baseUnit")}</span>}</label>
                   <UnitQtyInput units={units} value={l.qty} onChange={(v) => setLines((ls) => ls.map((x, i) => i === idx ? { ...x, qty: v } : x))} mode="single" />
                 </div>
                 <div>
-                  <label className="mb-1 block text-[11px] font-bold text-slate-400">سعر الوحدة</label>
+                  <label className="mb-1 block text-[11px] font-bold text-slate-400">{t("purchasing.orderCreate.unitPrice")}</label>
                   <input type="number" min={0} step="0.0001" className="field w-full tabular-nums" value={l.unitPrice} onChange={(e) => setLines((ls) => ls.map((x, i) => i === idx ? { ...x, unitPrice: Number(e.target.value) } : x))} />
                 </div>
                 <div>
-                  <label className="mb-1 block text-[11px] font-bold text-slate-400">الضريبة %</label>
+                  <label className="mb-1 block text-[11px] font-bold text-slate-400">{t("purchasing.orderCreate.vatPct")}</label>
                   <input type="number" min={0} max={100} step="0.01" className="field w-full tabular-nums" value={l.vatRate} onChange={(e) => setLines((ls) => ls.map((x, i) => i === idx ? { ...x, vatRate: Number(e.target.value) } : x))} />
                 </div>
                 <div className="flex items-end">
-                  <button type="button" aria-label="حذف السطر" className="grid h-11 w-11 place-items-center rounded-xl text-slate-400 hover:bg-rose-50 hover:text-rose-600" onClick={() => setLines((ls) => ls.length > 1 ? ls.filter((_, i) => i !== idx) : ls)}>
+                  <button type="button" aria-label={t("purchasing.lines.deleteLine")} className="grid h-11 w-11 place-items-center rounded-xl text-slate-400 hover:bg-rose-50 hover:text-rose-600" onClick={() => setLines((ls) => ls.length > 1 ? ls.filter((_, i) => i !== idx) : ls)}>
                     <Trash2 className="h-4 w-4" />
                   </button>
                 </div>
@@ -154,12 +155,12 @@ export function OrderCreatePage() {
           })}
         </div>
         <div className="flex items-center justify-between border-t border-slate-100 px-5 py-4">
-          <div className="text-sm text-slate-500">معاينة: صافي <b className="tabular-nums text-slate-800">{formatCurrency(preview.net)}</b> · ضريبة <b className="tabular-nums text-slate-800">{formatCurrency(preview.vat)}</b> · إجمالي <b className="tabular-nums text-teal-700">{formatCurrency(preview.total)}</b></div>
+          <div className="text-sm text-slate-500">{t("purchasing.orderCreate.previewLabel")}: {t("purchasing.field.net")} <b className="tabular-nums text-slate-800">{formatCurrency(preview.net)}</b> · {t("purchasing.field.vat")} <b className="tabular-nums text-slate-800">{formatCurrency(preview.vat)}</b> · {t("purchasing.orderCreate.totalShort")} <b className="tabular-nums text-teal-700">{formatCurrency(preview.total)}</b></div>
           <Button disabled={!supplier || create.isPending || !lines.some((l) => l.item)} onClick={submit}>
-            {create.isPending ? "جارٍ الإنشاء…" : "إنشاء أمر الشراء"}
+            {create.isPending ? t("purchasing.orderCreate.creating") : t("purchasing.orderCreate.submit")}
           </Button>
         </div>
-        {create.isError && <p className="px-5 pb-4 text-sm font-semibold text-rose-600">{(create.error as ApiError)?.message}</p>}
+        {create.isError && <p className="px-5 pb-4 text-sm font-semibold text-rose-600">{translateApiError(create.error, t)}</p>}
       </section>
     </div>
   );

@@ -4,6 +4,7 @@
 // the four E1 save-validation rules, status labels and error mapping live here.
 
 import { cn } from "@/shared/lib";
+import type { TFunction } from "@/i18n";
 import { PNL_TYPES, type JournalLine, type JournalStatus } from "../api";
 
 // English-digit, 2-decimal grouping — matches the app-wide numbering policy
@@ -51,32 +52,14 @@ export function MoneyText({
 }
 
 // ── status ──────────────────────────────────────────────────────────────────
-// StatusBadge auto-maps these Arabic words (مسودة/معتمد/مُرحّل/معكوس) to tones.
+// These Arabic words (مسودة/معتمد/مُرحّل) are status CODES for <StatusBadge>,
+// which localizes them via the status.* reverse index (so they are NOT UI text
+// that needs its own translation — passing them through is the sanctioned bridge).
 export const STATUS_LABEL: Record<JournalStatus, string> = {
   draft: "مسودة",
   approved: "معتمد",
   posted: "مُرحّل",
 };
-
-export const STATUS_OPTIONS: { value: string; label: string }[] = [
-  { value: "", label: "كل الحالات" },
-  { value: "draft", label: "مسودة" },
-  { value: "approved", label: "معتمد" },
-  { value: "posted", label: "مُرحّل" },
-];
-
-// referenceType filter options (legacy journal sources).
-export const REFERENCE_TYPE_OPTIONS: { value: string; label: string }[] = [
-  { value: "", label: "كل الأنواع" },
-  { value: "manual", label: "يدوي" },
-  { value: "opening", label: "افتتاحي" },
-  { value: "sale", label: "مبيعات" },
-  { value: "purchase", label: "مشتريات" },
-  { value: "custody", label: "عهدة" },
-  { value: "payroll", label: "رواتب" },
-  { value: "depreciation", label: "إهلاك" },
-  { value: "reversal", label: "عكسي" },
-];
 
 // ── lines ─────────────────────────────────────────────────────────────────--
 export function emptyLine(): JournalLine {
@@ -131,6 +114,9 @@ export function computeTotals(lines: JournalLine[]): JournalTotals {
 }
 
 // ── RULE 3 — save validation (returns the FIRST Arabic error, or null) ───────
+// Returns Arabic directly (not i18n keys): this pure rule is pinned by
+// journals.test.tsx which asserts on the Arabic text, and it is the single source
+// of truth the editor surfaces verbatim in a toast.
 export function validateJournal(args: {
   description: string;
   lines: JournalLine[];
@@ -162,15 +148,16 @@ export function validateJournal(args: {
   return null;
 }
 
-// Legacy endpoints answer HTTP 200 with { success:false, error } — map to Arabic.
-export function mapJournalError(raw: string | undefined): string {
+// Legacy endpoints answer HTTP 200 with { success:false, error } — map the raw
+// error text/code to a localized message via the caller-supplied `t`.
+export function mapJournalError(t: TFunction, raw: string | undefined): string {
   const s = raw ?? "";
-  if (/unbalanced|not.?balanced|balance/i.test(s)) return "القيد غير متوازن.";
-  if (/already.?reversed|reversed/i.test(s)) return "القيد معكوس مسبقًا.";
-  if (/already.?posted|posted/i.test(s)) return "القيد مُرحَّل بالفعل — أنشئ قيدًا عكسيًا للتصحيح.";
-  if (/cost.?cent/i.test(s)) return "مركز التكلفة إلزامي لسطور الإيراد/المصروف.";
-  if (/account/i.test(s) && /(required|missing|invalid)/i.test(s)) return "اختر حسابًا صحيحًا لكل سطر.";
-  if (/not.?found/i.test(s)) return "القيد غير موجود.";
-  if (/permission|forbidden|denied/i.test(s)) return "لا تملك صلاحية لهذه العملية.";
-  return s || "تعذّرت العملية. أعد المحاولة.";
+  if (/unbalanced|not.?balanced|balance/i.test(s)) return t("accounting.journal.mapError.unbalanced");
+  if (/already.?reversed|reversed/i.test(s)) return t("accounting.journal.mapError.reversed");
+  if (/already.?posted|posted/i.test(s)) return t("accounting.journal.mapError.posted");
+  if (/cost.?cent/i.test(s)) return t("accounting.journal.mapError.costCenter");
+  if (/account/i.test(s) && /(required|missing|invalid)/i.test(s)) return t("accounting.journal.mapError.account");
+  if (/not.?found/i.test(s)) return t("accounting.journal.mapError.notFound");
+  if (/permission|forbidden|denied/i.test(s)) return t("accounting.journal.mapError.permission");
+  return s || t("accounting.journal.mapError.generic");
 }

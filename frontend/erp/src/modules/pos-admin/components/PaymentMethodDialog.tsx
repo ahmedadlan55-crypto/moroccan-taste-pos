@@ -1,4 +1,4 @@
-import { useEffect } from "react";
+import { useEffect, useMemo } from "react";
 import { useForm, Controller } from "react-hook-form";
 import { zodResolver } from "@/shared/forms";
 import { Field } from "@/shared/forms";
@@ -11,9 +11,10 @@ import {
   Select,
   Toggle,
 } from "@/shared/ui";
-import { PM_FEE_TYPE_OPTIONS, PM_GROUP_OPTIONS } from "../lib/labels";
+import { useT } from "@/i18n";
+import { pmFeeTypeOptions, pmGroupOptions } from "../lib/labels";
 import {
-  paymentMethodSchema,
+  makePaymentMethodSchema,
   toFormValues,
   toPaymentMethodInput,
   type PaymentMethodFormValues,
@@ -30,16 +31,17 @@ interface PaymentMethodDialogProps {
   onSave: (input: PaymentMethodInput) => void;
 }
 
-const FLAGS: { name: keyof PaymentMethodFormValues; label: string }[] = [
-  { name: "isActive", label: "مفعّل في النظام" },
-  { name: "showInShiftClose", label: "إظهار في إغلاق الشيفت" },
-  { name: "showInReports", label: "إظهار في التقارير" },
-  { name: "allowManualTotal", label: "السماح بإجمالي يدوي" },
-  { name: "requireReference", label: "يتطلب مرجع" },
-  { name: "requireTransactionNumber", label: "يتطلب رقم عملية" },
-  { name: "requireTerminal", label: "يتطلب جهاز" },
-  { name: "allowRefund", label: "يسمح بالاسترجاع" },
-  { name: "allowCancel", label: "يسمح بالإلغاء" },
+/** Boolean flag fields — the label i18n key lives under posAdmin.dialog.flags.*. */
+const FLAGS: { name: keyof PaymentMethodFormValues; labelKey: string }[] = [
+  { name: "isActive", labelKey: "posAdmin.dialog.flags.isActive" },
+  { name: "showInShiftClose", labelKey: "posAdmin.dialog.flags.showInShiftClose" },
+  { name: "showInReports", labelKey: "posAdmin.dialog.flags.showInReports" },
+  { name: "allowManualTotal", labelKey: "posAdmin.dialog.flags.allowManualTotal" },
+  { name: "requireReference", labelKey: "posAdmin.dialog.flags.requireReference" },
+  { name: "requireTransactionNumber", labelKey: "posAdmin.dialog.flags.requireTransactionNumber" },
+  { name: "requireTerminal", labelKey: "posAdmin.dialog.flags.requireTerminal" },
+  { name: "allowRefund", labelKey: "posAdmin.dialog.flags.allowRefund" },
+  { name: "allowCancel", labelKey: "posAdmin.dialog.flags.allowCancel" },
 ];
 
 /** Create/edit modal for a payment method. Drives /settings/payment-methods-full. */
@@ -51,6 +53,10 @@ export function PaymentMethodDialog({
   onClose,
   onSave,
 }: PaymentMethodDialogProps) {
+  const t = useT();
+  const schema = useMemo(() => makePaymentMethodSchema(t), [t]);
+  const groupOptions = useMemo(() => pmGroupOptions(t), [t]);
+  const feeTypeOptions = useMemo(() => pmFeeTypeOptions(t), [t]);
   const {
     control,
     register,
@@ -58,7 +64,7 @@ export function PaymentMethodDialog({
     reset,
     formState: { errors },
   } = useForm<PaymentMethodFormValues>({
-    resolver: zodResolver(paymentMethodSchema),
+    resolver: zodResolver(schema),
     defaultValues: toFormValues(method),
   });
 
@@ -74,32 +80,32 @@ export function PaymentMethodDialog({
       open={open}
       onClose={onClose}
       size="xl"
-      title={method ? "تعديل طريقة دفع" : "طريقة دفع جديدة"}
-      description="اضبط بيانات الطريقة والرسوم والخصائص — طرق الدفع تُشغّل شاشة الكاشير."
+      title={method ? t("posAdmin.dialog.editTitle") : t("posAdmin.dialog.newTitle")}
+      description={t("posAdmin.dialog.desc")}
       dismissable={!saving}
       footer={
         <>
           <Button variant="secondary" onClick={onClose} disabled={saving}>
-            إلغاء
+            {t("common.cancel")}
           </Button>
           <Button type="submit" form="pmDialogForm" loading={saving}>
-            حفظ
+            {t("common.save")}
           </Button>
         </>
       }
     >
       <form id="pmDialogForm" onSubmit={submit} className="space-y-5" noValidate>
         <div className="grid gap-4 sm:grid-cols-2">
-          <Field label="الاسم بالعربية" required error={errors.nameAr}>
+          <Field label={t("posAdmin.dialog.nameAr")} required error={errors.nameAr}>
             {({ id, invalid }) => <Input id={id} invalid={invalid} {...register("nameAr")} />}
           </Field>
-          <Field label="الاسم بالإنجليزية" error={errors.name}>
+          <Field label={t("posAdmin.dialog.nameEn")} error={errors.name}>
             {({ id, invalid }) => (
               <Input id={id} dir="ltr" invalid={invalid} {...register("name")} />
             )}
           </Field>
 
-          <Field label="المجموعة" required error={errors.groupType}>
+          <Field label={t("posAdmin.col.group")} required error={errors.groupType}>
             {({ id, invalid }) => (
               <Controller
                 control={control}
@@ -108,7 +114,7 @@ export function PaymentMethodDialog({
                   <Select
                     id={id}
                     invalid={invalid}
-                    options={PM_GROUP_OPTIONS}
+                    options={groupOptions}
                     value={field.value}
                     onChange={field.onChange}
                     onBlur={field.onBlur}
@@ -117,7 +123,7 @@ export function PaymentMethodDialog({
               />
             )}
           </Field>
-          <Field label="ترتيب العرض" error={errors.sortOrder}>
+          <Field label={t("posAdmin.dialog.sortOrder")} error={errors.sortOrder}>
             {({ id, invalid }) => (
               <Controller
                 control={control}
@@ -137,7 +143,7 @@ export function PaymentMethodDialog({
             )}
           </Field>
 
-          <Field label="نوع الرسوم" error={errors.serviceFeeType}>
+          <Field label={t("posAdmin.dialog.feeType")} error={errors.serviceFeeType}>
             {({ id, invalid }) => (
               <Controller
                 control={control}
@@ -146,7 +152,7 @@ export function PaymentMethodDialog({
                   <Select
                     id={id}
                     invalid={invalid}
-                    options={PM_FEE_TYPE_OPTIONS}
+                    options={feeTypeOptions}
                     value={field.value}
                     onChange={field.onChange}
                     onBlur={field.onBlur}
@@ -155,7 +161,7 @@ export function PaymentMethodDialog({
               />
             )}
           </Field>
-          <Field label="قيمة الرسوم" error={errors.serviceFeeValue}>
+          <Field label={t("posAdmin.dialog.feeValue")} error={errors.serviceFeeValue}>
             {({ id, invalid }) => (
               <Controller
                 control={control}
@@ -177,7 +183,9 @@ export function PaymentMethodDialog({
         </div>
 
         <fieldset className="space-y-3">
-          <legend className="text-xs font-extrabold text-slate-600">الخصائص</legend>
+          <legend className="text-xs font-extrabold text-slate-600">
+            {t("posAdmin.dialog.flagsLegend")}
+          </legend>
           <div className="grid gap-3 sm:grid-cols-2">
             {FLAGS.map((flag) => (
               <Controller
@@ -189,13 +197,13 @@ export function PaymentMethodDialog({
                     <Toggle
                       checked={Boolean(field.value)}
                       onChange={field.onChange}
-                      label={flag.label}
+                      label={t(flag.labelKey)}
                     />
                   ) : (
                     <Checkbox
                       checked={Boolean(field.value)}
                       onChange={(e) => field.onChange(e.target.checked)}
-                      label={flag.label}
+                      label={t(flag.labelKey)}
                     />
                   )
                 }
@@ -204,7 +212,7 @@ export function PaymentMethodDialog({
           </div>
         </fieldset>
 
-        <Field label="وصف" error={errors.description}>
+        <Field label={t("posAdmin.dialog.description")} error={errors.description}>
           {({ id }) => (
             <textarea
               id={id}

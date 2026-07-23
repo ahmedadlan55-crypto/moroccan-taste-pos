@@ -1,5 +1,6 @@
 import { DatePicker, Select } from "@/shared/ui";
 import { formatDate } from "@/shared/lib";
+import { useT } from "@/i18n";
 import { useGlLedger, startOfYearISO, todayISO, type GlSection } from "../api";
 import {
   Num,
@@ -20,6 +21,7 @@ interface GlFilter {
 }
 
 function AccountSection({ s }: { s: GlSection }) {
+  const t = useT();
   return (
     <div className="surface overflow-hidden">
       <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-100 bg-slate-50/70 px-4 py-3">
@@ -28,25 +30,25 @@ function AccountSection({ s }: { s: GlSection }) {
           <span className="text-sm font-extrabold text-slate-900">{s.nameAr}</span>
         </div>
         <div className="flex items-center gap-4 text-xs font-bold text-slate-500">
-          <span>افتتاحي: <Num value={s.opening} signed /></span>
-          <span>ختامي: <Num value={s.closingBalance} signed strong /></span>
+          <span>{t("accounting.common.opening")}: <Num value={s.opening} signed /></span>
+          <span>{t("accounting.common.closing")}: <Num value={s.closingBalance} signed strong /></span>
         </div>
       </div>
       <div className="overflow-x-auto">
         <table className="w-full min-w-[44rem] text-sm">
           <thead>
             <tr className="border-b border-slate-100 text-[11px] font-extrabold text-slate-500">
-              <th className="px-3 py-2 text-right">التاريخ</th>
-              <th className="px-3 py-2 text-right">القيد</th>
-              <th className="px-3 py-2 text-right">البيان</th>
-              <th className="px-3 py-2 text-left">مدين</th>
-              <th className="px-3 py-2 text-left">دائن</th>
-              <th className="px-3 py-2 text-left">الرصيد</th>
+              <th className="px-3 py-2 text-right">{t("accounting.common.date")}</th>
+              <th className="px-3 py-2 text-right">{t("accounting.common.journalNo")}</th>
+              <th className="px-3 py-2 text-right">{t("accounting.common.statement")}</th>
+              <th className="px-3 py-2 text-left">{t("accounting.common.debit")}</th>
+              <th className="px-3 py-2 text-left">{t("accounting.common.credit")}</th>
+              <th className="px-3 py-2 text-left">{t("accounting.common.balance")}</th>
             </tr>
           </thead>
           <tbody>
             <tr className="border-b border-slate-50 bg-slate-50/40 text-xs font-bold text-slate-500">
-              <td className="px-3 py-1.5" colSpan={5}>رصيد افتتاحي</td>
+              <td className="px-3 py-1.5" colSpan={5}>{t("accounting.generalLedger.openingBalance")}</td>
               <td className="px-3 py-1.5 text-left"><Num value={s.opening} signed /></td>
             </tr>
             {s.lines.map((l) => (
@@ -62,7 +64,7 @@ function AccountSection({ s }: { s: GlSection }) {
           </tbody>
           <tfoot>
             <tr className="border-t border-slate-200 bg-slate-50 text-xs font-extrabold">
-              <td className="px-3 py-2" colSpan={3}>الإجمالي ({s.lineCount} حركة)</td>
+              <td className="px-3 py-2" colSpan={3}>{t("accounting.generalLedger.totalMovements", { count: s.lineCount })}</td>
               <td className="px-3 py-2 text-left"><Num value={s.totalDebit} strong /></td>
               <td className="px-3 py-2 text-left"><Num value={s.totalCredit} strong /></td>
               <td className="px-3 py-2 text-left"><Num value={s.closingBalance} signed strong /></td>
@@ -75,6 +77,7 @@ function AccountSection({ s }: { s: GlSection }) {
 }
 
 export function GeneralLedgerPage() {
+  const t = useT();
   const filter = useAppliedFilter<GlFilter>({ from: startOfYearISO(), to: todayISO(), scope: "active" });
   const query = useGlLedger(filter.applied, filter.applied.scope);
   const data = query.data;
@@ -84,25 +87,25 @@ export function GeneralLedgerPage() {
   return (
     <div>
       <ReportHeader
-        title="الأستاذ العام"
-        subtitle="حركات الحسابات مع الرصيد الجاري لكل حساب — قابلة للتصفية بالنطاق والفترة."
+        title={t("accounting.generalLedger.title")}
+        subtitle={t("accounting.generalLedger.subtitle")}
         onPrint={printReport}
       />
       <FilterCard onRun={filter.run} running={query.isFetching}>
-        <FilterField label="من تاريخ">
+        <FilterField label={t("accounting.common.fromDate")}>
           <DatePicker value={filter.draft.from} onChange={(from) => filter.patch({ from })} />
         </FilterField>
-        <FilterField label="إلى تاريخ">
+        <FilterField label={t("accounting.common.toDate")}>
           <DatePicker value={filter.draft.to} onChange={(to) => filter.patch({ to })} />
         </FilterField>
-        <FilterField label="النطاق">
+        <FilterField label={t("accounting.report.scope")}>
           <Select
             value={filter.draft.scope}
             onChange={(e) => filter.patch({ scope: e.target.value })}
             options={[
-              { value: "active", label: "الحسابات ذات الحركة" },
-              { value: "leaf", label: "الحسابات النهائية فقط" },
-              { value: "all", label: "كل الحسابات" },
+              { value: "active", label: t("accounting.generalLedger.scope.active") },
+              { value: "leaf", label: t("accounting.generalLedger.scope.leaf") },
+              { value: "all", label: t("accounting.generalLedger.scope.all") },
             ]}
           />
         </FilterField>
@@ -113,17 +116,17 @@ export function GeneralLedgerPage() {
         error={query.error}
         isEmpty={sections.length === 0}
         onRetry={() => query.refetch()}
-        emptyBody="لا توجد حركات ضمن الفترة والنطاق المحدّدين."
+        emptyBody={t("accounting.generalLedger.empty")}
       >
         <PrintArea>
           <div className="surface mb-5 p-4">
-            <PrintBanner title="الأستاذ العام" period={period} />
+            <PrintBanner title={t("accounting.generalLedger.title")} period={period} />
             {data && (
               <div className="flex flex-wrap gap-4 text-xs font-bold text-slate-600">
-                <span>عدد الحسابات: {data.grandTotals.accountCount}</span>
-                <span>عدد الحركات: {data.grandTotals.lineCount}</span>
-                <span>إجمالي مدين: <Num value={data.grandTotals.debit} /></span>
-                <span>إجمالي دائن: <Num value={data.grandTotals.credit} /></span>
+                <span>{t("accounting.generalLedger.accountCount")} {data.grandTotals.accountCount}</span>
+                <span>{t("accounting.generalLedger.lineCount")} {data.grandTotals.lineCount}</span>
+                <span>{t("accounting.generalLedger.totalDebit")} <Num value={data.grandTotals.debit} /></span>
+                <span>{t("accounting.generalLedger.totalCredit")} <Num value={data.grandTotals.credit} /></span>
               </div>
             )}
           </div>

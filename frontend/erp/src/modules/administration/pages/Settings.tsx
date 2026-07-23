@@ -1,4 +1,4 @@
-import { useEffect } from "react";
+import { useEffect, useMemo } from "react";
 import { useForm } from "react-hook-form";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Building2, Percent, ReceiptText } from "lucide-react";
@@ -16,37 +16,40 @@ import {
 import { Field, FormActions, zodResolver } from "@/shared/forms";
 import { z } from "@/shared/schemas";
 import { useCan } from "@/app/providers";
+import { useT, type TFunction } from "@/i18n";
 import { ensureAck, type MutationAck } from "../_common";
 
 type SettingsMap = Record<string, string>;
 
 const boolFrom = (v: string | undefined): boolean => v === "true" || v === "1" || v === "on";
 
-const settingsSchema = z.object({
-  name: z.string().trim().max(200).optional().or(z.literal("")),
-  companyPhone: z.string().trim().max(30).optional().or(z.literal("")),
-  companyEmail: z
-    .string()
-    .trim()
-    .optional()
-    .refine((v) => !v || /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v), "البريد الإلكتروني غير صحيح"),
-  address: z.string().trim().max(500).optional().or(z.literal("")),
-  taxNumber: z.string().trim().max(50).optional().or(z.literal("")),
-  VATRate: z
-    .string()
-    .trim()
-    .optional()
-    .or(z.literal(""))
-    .refine(
-      (v) => !v || (!Number.isNaN(Number(v)) && Number(v) >= 0 && Number(v) <= 100),
-      "النسبة يجب أن تكون رقمًا بين 0 و 100",
-    ),
-  currency: z.string().trim().max(10).optional().or(z.literal("")),
-  receiptFooter: z.string().trim().max(500).optional().or(z.literal("")),
-  NewProductsTaxInclusive: z.boolean(),
-  RequireManagerApprovalForVoid: z.boolean(),
-});
-type SettingsForm = z.infer<typeof settingsSchema>;
+function makeSettingsSchema(t: TFunction) {
+  return z.object({
+    name: z.string().trim().max(200).optional().or(z.literal("")),
+    companyPhone: z.string().trim().max(30).optional().or(z.literal("")),
+    companyEmail: z
+      .string()
+      .trim()
+      .optional()
+      .refine((v) => !v || /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v), t("validation.email.invalid")),
+    address: z.string().trim().max(500).optional().or(z.literal("")),
+    taxNumber: z.string().trim().max(50).optional().or(z.literal("")),
+    VATRate: z
+      .string()
+      .trim()
+      .optional()
+      .or(z.literal(""))
+      .refine(
+        (v) => !v || (!Number.isNaN(Number(v)) && Number(v) >= 0 && Number(v) <= 100),
+        t("administration.settings.err.vatRange"),
+      ),
+    currency: z.string().trim().max(10).optional().or(z.literal("")),
+    receiptFooter: z.string().trim().max(500).optional().or(z.literal("")),
+    NewProductsTaxInclusive: z.boolean(),
+    RequireManagerApprovalForVoid: z.boolean(),
+  });
+}
+type SettingsForm = z.infer<ReturnType<typeof makeSettingsSchema>>;
 
 const DEFAULTS: SettingsForm = {
   name: "",
@@ -62,9 +65,12 @@ const DEFAULTS: SettingsForm = {
 };
 
 export default function SettingsPage() {
+  const t = useT();
   const canManage = useCan("administration.settings");
   const qc = useQueryClient();
   const { toast } = useToast();
+
+  const schema = useMemo(() => makeSettingsSchema(t), [t]);
 
   const query = useQuery({
     queryKey: ["settings"],
@@ -78,7 +84,7 @@ export default function SettingsPage() {
     watch,
     setValue,
     formState: { errors, isDirty },
-  } = useForm<SettingsForm>({ resolver: zodResolver(settingsSchema), defaultValues: DEFAULTS });
+  } = useForm<SettingsForm>({ resolver: zodResolver(schema), defaultValues: DEFAULTS });
 
   useEffect(() => {
     const s = query.data;
@@ -115,56 +121,56 @@ export default function SettingsPage() {
     },
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["settings"] });
-      toast({ title: "تم حفظ الإعدادات", tone: "success" });
+      toast({ title: t("administration.settings.toast.saved"), tone: "success" });
     },
-    onError: (e: Error) => toast({ title: "تعذّر حفظ الإعدادات", description: e.message, tone: "error" }),
+    onError: (e: Error) => toast({ title: t("administration.settings.toast.saveFailed"), description: e.message, tone: "error" }),
   });
 
   return (
     <div>
       <PageHeader
-        eyebrow="الإدارة"
-        title="الإعدادات"
-        subtitle="إعدادات الشركة والضريبة والفواتير المطبوعة."
+        eyebrow={t("administration.eyebrow")}
+        title={t("administration.settings.title")}
+        subtitle={t("administration.settings.subtitle")}
       />
       {query.error ? (
         <ErrorState error={query.error} onRetry={() => query.refetch()} />
       ) : query.isLoading ? (
         <LoadingState />
       ) : (
-        <form onSubmit={handleSubmit((v) => mutation.mutate(v))} className="space-y-5" aria-label="نموذج الإعدادات" noValidate>
+        <form onSubmit={handleSubmit((v) => mutation.mutate(v))} className="space-y-5" aria-label={t("administration.settings.formAria")} noValidate>
           <section className="surface">
-            <PanelTitle icon={Building2} title="معلومات الشركة" subtitle="تظهر على الفواتير وشاشة الدخول." />
+            <PanelTitle icon={Building2} title={t("administration.settings.company.panelTitle")} subtitle={t("administration.settings.company.panelSubtitle")} />
             <div className="grid gap-4 p-5 sm:grid-cols-2">
-              <Field label="اسم الشركة" error={errors.name}>
+              <Field label={t("administration.settings.company.name")} error={errors.name}>
                 {({ id, invalid }) => <Input id={id} invalid={invalid} disabled={!canManage} {...register("name")} />}
               </Field>
-              <Field label="الهاتف" error={errors.companyPhone}>
+              <Field label={t("administration.settings.company.phone")} error={errors.companyPhone}>
                 {({ id }) => <Input id={id} dir="ltr" disabled={!canManage} {...register("companyPhone")} />}
               </Field>
-              <Field label="البريد الإلكتروني" error={errors.companyEmail}>
+              <Field label={t("administration.settings.company.email")} error={errors.companyEmail}>
                 {({ id, invalid }) => (
                   <Input id={id} type="email" dir="ltr" invalid={invalid} disabled={!canManage} {...register("companyEmail")} />
                 )}
               </Field>
-              <Field label="العنوان" error={errors.address}>
+              <Field label={t("administration.settings.company.address")} error={errors.address}>
                 {({ id }) => <Input id={id} disabled={!canManage} {...register("address")} />}
               </Field>
             </div>
           </section>
 
           <section className="surface">
-            <PanelTitle icon={Percent} title="الضريبة والعملة" subtitle="الرقم الضريبي ونسبة ضريبة القيمة المضافة." />
+            <PanelTitle icon={Percent} title={t("administration.settings.tax.panelTitle")} subtitle={t("administration.settings.tax.panelSubtitle")} />
             <div className="grid gap-4 p-5 sm:grid-cols-2">
-              <Field label="الرقم الضريبي" error={errors.taxNumber}>
+              <Field label={t("administration.settings.tax.taxNumber")} error={errors.taxNumber}>
                 {({ id }) => <Input id={id} inputMode="numeric" dir="ltr" disabled={!canManage} {...register("taxNumber")} />}
               </Field>
-              <Field label="نسبة الضريبة %" error={errors.VATRate} hint="نسبة مئوية بين 0 و 100">
+              <Field label={t("administration.settings.tax.vatRate")} error={errors.VATRate} hint={t("administration.settings.tax.vatRateHint")}>
                 {({ id, invalid }) => (
                   <Input id={id} inputMode="decimal" dir="ltr" invalid={invalid} disabled={!canManage} {...register("VATRate")} />
                 )}
               </Field>
-              <Field label="العملة" error={errors.currency}>
+              <Field label={t("administration.settings.tax.currency")} error={errors.currency}>
                 {({ id }) => <Input id={id} dir="ltr" disabled={!canManage} {...register("currency")} />}
               </Field>
               <div className="flex items-end">
@@ -172,16 +178,16 @@ export default function SettingsPage() {
                   checked={watch("NewProductsTaxInclusive")}
                   onChange={(v) => setValue("NewProductsTaxInclusive", v, { shouldDirty: true })}
                   disabled={!canManage}
-                  label="الأسعار الجديدة شاملة الضريبة"
+                  label={t("administration.settings.tax.taxInclusiveToggle")}
                 />
               </div>
             </div>
           </section>
 
           <section className="surface">
-            <PanelTitle icon={ReceiptText} title="الفاتورة ونقاط البيع" subtitle="نص أسفل الفاتورة وقواعد الاعتماد." />
+            <PanelTitle icon={ReceiptText} title={t("administration.settings.receipt.panelTitle")} subtitle={t("administration.settings.receipt.panelSubtitle")} />
             <div className="grid gap-4 p-5 sm:grid-cols-2">
-              <Field label="نص أسفل الفاتورة" error={errors.receiptFooter} className="sm:col-span-2">
+              <Field label={t("administration.settings.receipt.footer")} error={errors.receiptFooter} className="sm:col-span-2">
                 {({ id }) => <Input id={id} disabled={!canManage} {...register("receiptFooter")} />}
               </Field>
               <div className="flex items-end">
@@ -189,7 +195,7 @@ export default function SettingsPage() {
                   checked={watch("RequireManagerApprovalForVoid")}
                   onChange={(v) => setValue("RequireManagerApprovalForVoid", v, { shouldDirty: true })}
                   disabled={!canManage}
-                  label="طلب اعتماد المدير للإلغاء"
+                  label={t("administration.settings.receipt.voidApprovalToggle")}
                 />
               </div>
             </div>
@@ -198,10 +204,10 @@ export default function SettingsPage() {
           {canManage && (
             <FormActions sticky>
               <Button variant="secondary" type="button" onClick={() => query.refetch()} disabled={mutation.isPending}>
-                إعادة تعيين
+                {t("administration.settings.resetBtn")}
               </Button>
               <Button type="submit" loading={mutation.isPending} disabled={!isDirty}>
-                حفظ الإعدادات
+                {t("administration.settings.saveBtn")}
               </Button>
             </FormActions>
           )}

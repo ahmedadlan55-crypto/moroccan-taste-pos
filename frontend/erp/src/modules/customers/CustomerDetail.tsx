@@ -1,15 +1,19 @@
 import { useState, type ReactNode } from "react";
 import { useNavigate } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
-import { ArrowRight, Printer, Wallet, CreditCard, Gauge, AlertTriangle, type LucideIcon } from "lucide-react";
+import { ArrowRight, ArrowLeft, Printer, Wallet, CreditCard, Gauge, AlertTriangle, type LucideIcon } from "lucide-react";
 import {
   Button, Card, CardHeader, CardTitle, CardBody, Dialog, PageHeader, LoadingState, ErrorState,
 } from "@/shared/ui";
 import { cn, formatCurrency } from "@/shared/lib";
+import { useT, useLang } from "@/i18n";
 import { o2cApi, qk, SalesStatus, Money, Num, DateCell } from "@/modules/sales/lib";
 
-const AGING_LABELS: Record<string, string> = {
-  current: "جاري", d1_30: "1-30", d31_60: "31-60", d61_90: "61-90", d91_120: "91-120", d120_plus: "+120",
+// Aging buckets in display order. `current` is a translated word; the rest are
+// dir-neutral numeric day-ranges kept as literals.
+const AGING_BUCKETS = ["current", "d1_30", "d31_60", "d61_90", "d91_120", "d120_plus"] as const;
+const AGING_RANGES: Record<string, string> = {
+  d1_30: "1-30", d31_60: "31-60", d61_90: "61-90", d91_120: "91-120", d120_plus: "+120",
 };
 
 type MetricTone = "violet" | "blue" | "amber" | "teal" | "rose";
@@ -37,8 +41,12 @@ function Metric({ label, value, note, icon: Icon, tone }: { label: string; value
 }
 
 export function CustomerDetail({ id, onBack }: { id: string; onBack: () => void }) {
+  const t = useT();
+  const lang = useLang();
   const nav = useNavigate();
   const [stmtOpen, setStmtOpen] = useState(false);
+  // "Back" chevron points against the reading direction (end→start).
+  const BackArrow = lang === "ar" ? ArrowRight : ArrowLeft;
 
   const q = useQuery({
     queryKey: qk.customer360(id),
@@ -51,21 +59,22 @@ export function CustomerDetail({ id, onBack }: { id: string; onBack: () => void 
   const d = q.data!;
   const c = d.customer;
   const ex = d.creditExposure;
+  const bizName = lang === "en" ? c.nameEn || c.name : c.name;
 
   return (
     <div>
       <button type="button" onClick={onBack} className="mb-3 inline-flex items-center gap-1 text-sm font-bold text-slate-500 hover:text-teal-700 no-print">
-        <ArrowRight className="h-4 w-4" /> رجوع للعملاء
+        <BackArrow className="h-4 w-4" /> {t("misc.customers.detail.back")}
       </button>
       <PageHeader
-        eyebrow={`عميل ${c.customerType}${c.isActive ? "" : " · معطّل"}`}
-        title={c.name}
+        eyebrow={t("misc.customers.detail.eyebrow", { type: c.customerType }) + (c.isActive ? "" : ` · ${t("status.disabled")}`)}
+        title={bizName}
         subtitle={[c.phone, c.vatNumber, c.city].filter(Boolean).join(" · ") || undefined}
         action={
           <div className="flex flex-wrap items-center gap-2 no-print">
-            <Button variant="secondary" onClick={() => setStmtOpen(true)}><Printer className="h-4 w-4" /> كشف حساب</Button>
-            <Button variant="secondary" onClick={() => nav(`/sales/payments?customerId=${c.id}&new=1`)}>تسجيل تحصيل</Button>
-            <Button onClick={() => nav(`/sales/orders?new=1`)}>أمر بيع</Button>
+            <Button variant="secondary" onClick={() => setStmtOpen(true)}><Printer className="h-4 w-4" /> {t("misc.customers.detail.statement")}</Button>
+            <Button variant="secondary" onClick={() => nav(`/sales/payments?customerId=${c.id}&new=1`)}>{t("misc.customers.detail.recordCollection")}</Button>
+            <Button onClick={() => nav(`/sales/orders?new=1`)}>{t("misc.customers.detail.salesOrder")}</Button>
           </div>
         }
       />
@@ -79,26 +88,26 @@ export function CustomerDetail({ id, onBack }: { id: string; onBack: () => void 
       )}
 
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
-        <Metric label="الرصيد (ذمم)" value={<Money value={d.balance} />} icon={Wallet} tone="violet" />
-        <Metric label="حد الائتمان" value={<Money value={ex.creditLimit} />} icon={CreditCard} tone="blue" />
-        <Metric label="التعرّض الائتماني" value={<Money value={ex.exposure} />} note={ex.utilizationPct != null ? `${ex.utilizationPct}% مستخدم` : undefined} icon={Gauge} tone="amber" />
-        <Metric label="المتاح" value={<Money value={ex.available} />} icon={CreditCard} tone={ex.available < 0 ? "rose" : "teal"} />
+        <Metric label={t("misc.customers.detail.metric.balance")} value={<Money value={d.balance} />} icon={Wallet} tone="violet" />
+        <Metric label={t("misc.customers.detail.metric.creditLimit")} value={<Money value={ex.creditLimit} />} icon={CreditCard} tone="blue" />
+        <Metric label={t("misc.customers.detail.metric.exposure")} value={<Money value={ex.exposure} />} note={ex.utilizationPct != null ? t("misc.customers.detail.metric.utilization", { pct: ex.utilizationPct }) : undefined} icon={Gauge} tone="amber" />
+        <Metric label={t("misc.customers.detail.metric.available")} value={<Money value={ex.available} />} icon={CreditCard} tone={ex.available < 0 ? "rose" : "teal"} />
       </div>
 
       <div className="mt-6 grid grid-cols-1 gap-6 lg:grid-cols-3">
         <Card className="lg:col-span-2">
-          <CardHeader><CardTitle>الفواتير الأخيرة</CardTitle></CardHeader>
+          <CardHeader><CardTitle>{t("misc.customers.detail.recentInvoices")}</CardTitle></CardHeader>
           <CardBody>
             {d.recentSales.length === 0 ? <Empty /> : (
               <div className="overflow-x-auto rounded-2xl border border-slate-200">
-                <table className="w-full min-w-[560px] border-collapse text-right text-sm">
+                <table className="w-full min-w-[560px] border-collapse text-start text-sm">
                   <thead className="bg-slate-50 text-xs font-bold text-slate-500">
                     <tr>
-                      <th className="px-4 py-3 font-bold">الفاتورة</th>
-                      <th className="px-4 py-3 font-bold">التاريخ</th>
-                      <th className="px-4 py-3 font-bold">الإجمالي</th>
-                      <th className="px-4 py-3 font-bold">المتبقّي</th>
-                      <th className="px-4 py-3 font-bold">الحالة</th>
+                      <th className="px-4 py-3 font-bold">{t("misc.customers.detail.invCol.invoice")}</th>
+                      <th className="px-4 py-3 font-bold">{t("misc.customers.detail.invCol.date")}</th>
+                      <th className="px-4 py-3 font-bold">{t("misc.customers.detail.total")}</th>
+                      <th className="px-4 py-3 font-bold">{t("misc.customers.detail.invCol.remaining")}</th>
+                      <th className="px-4 py-3 font-bold">{t("common.status")}</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-100">
@@ -119,17 +128,17 @@ export function CustomerDetail({ id, onBack }: { id: string; onBack: () => void 
         </Card>
 
         <Card>
-          <CardHeader><CardTitle>أعمار الذمم (حسب الاستحقاق)</CardTitle></CardHeader>
+          <CardHeader><CardTitle>{t("misc.customers.detail.agingTitle")}</CardTitle></CardHeader>
           <CardBody>
             <ul className="flex flex-col gap-2">
-              {Object.entries(AGING_LABELS).map(([k, label]) => (
+              {AGING_BUCKETS.map((k) => (
                 <li key={k} className="flex items-center justify-between text-sm">
-                  <span className="font-bold text-slate-600">{label}</span>
+                  <span className="font-bold text-slate-600">{k === "current" ? t("misc.customers.detail.aging.current") : AGING_RANGES[k]}</span>
                   <Money value={d.aging.buckets[k] ?? 0} className="font-bold" />
                 </li>
               ))}
               <li className="mt-1 flex items-center justify-between border-t border-slate-100 pt-2 text-sm">
-                <span className="font-extrabold text-slate-800">الإجمالي</span>
+                <span className="font-extrabold text-slate-800">{t("misc.customers.detail.total")}</span>
                 <Money value={d.aging.total} className="font-extrabold text-slate-900" />
               </li>
             </ul>
@@ -139,23 +148,23 @@ export function CustomerDetail({ id, onBack }: { id: string; onBack: () => void 
 
       <div className="mt-6 grid grid-cols-1 gap-6 lg:grid-cols-2">
         <Card>
-          <CardHeader><CardTitle>ملخص</CardTitle></CardHeader>
+          <CardHeader><CardTitle>{t("misc.customers.detail.summary")}</CardTitle></CardHeader>
           <CardBody>
             <dl className="grid grid-cols-2 gap-3 text-sm">
-              <Stat label="فواتير مفتوحة" value={<span dir="ltr" className="tabular-nums">{d.openInvoices.count}</span>} />
-              <Stat label="رصيد مفتوح" value={<Money value={d.openInvoices.balance} />} />
-              <Stat label="عدد التحصيلات" value={<span dir="ltr" className="tabular-nums">{d.collections.count}</span>} />
-              <Stat label="إجمالي التحصيلات" value={<Money value={d.collections.total} />} />
-              <Stat label="رصيد دائن غير مخصّص" value={<Money value={d.unappliedCredit} />} />
-              <Stat label="شروط السداد" value={`${ex.paymentTerms} · ${ex.creditDays} يوم`} />
-              <Stat label="أول تعامل" value={<DateCell value={d.firstDeal} />} />
-              <Stat label="آخر تعامل" value={<DateCell value={d.lastDeal} />} />
+              <Stat label={t("misc.customers.detail.stat.openInvoices")} value={<span dir="ltr" className="tabular-nums">{d.openInvoices.count}</span>} />
+              <Stat label={t("misc.customers.detail.stat.openBalance")} value={<Money value={d.openInvoices.balance} />} />
+              <Stat label={t("misc.customers.detail.stat.collectionsCount")} value={<span dir="ltr" className="tabular-nums">{d.collections.count}</span>} />
+              <Stat label={t("misc.customers.detail.stat.collectionsTotal")} value={<Money value={d.collections.total} />} />
+              <Stat label={t("misc.customers.detail.stat.unappliedCredit")} value={<Money value={d.unappliedCredit} />} />
+              <Stat label={t("misc.customers.detail.stat.paymentTerms")} value={`${ex.paymentTerms} · ${t("misc.customers.detail.daysValue", { days: ex.creditDays })}`} />
+              <Stat label={t("misc.customers.detail.stat.firstDeal")} value={<DateCell value={d.firstDeal} />} />
+              <Stat label={t("misc.customers.detail.stat.lastDeal")} value={<DateCell value={d.lastDeal} />} />
             </dl>
           </CardBody>
         </Card>
 
         <Card>
-          <CardHeader><CardTitle>أعلى المنتجات (بعد المرتجعات)</CardTitle></CardHeader>
+          <CardHeader><CardTitle>{t("misc.customers.detail.topProducts")}</CardTitle></CardHeader>
           <CardBody>
             {d.topProducts.length === 0 ? <Empty /> : (
               <ul className="divide-y divide-slate-100">
@@ -174,7 +183,7 @@ export function CustomerDetail({ id, onBack }: { id: string; onBack: () => void 
         </Card>
       </div>
 
-      {stmtOpen && <StatementDialog customerId={c.id} customerName={c.name} onClose={() => setStmtOpen(false)} />}
+      {stmtOpen && <StatementDialog customerId={c.id} customerName={bizName} onClose={() => setStmtOpen(false)} />}
     </div>
   );
 }
@@ -188,42 +197,51 @@ function Stat({ label, value }: { label: string; value: ReactNode }) {
   );
 }
 function Empty() {
-  return <p className="py-6 text-center text-sm font-medium text-slate-400">لا توجد بيانات.</p>;
+  const t = useT();
+  return <p className="py-6 text-center text-sm font-medium text-slate-400">{t("states.emptyDefault")}</p>;
 }
 
 function StatementDialog({ customerId, customerName, onClose }: { customerId: string; customerName: string; onClose: () => void }) {
+  const t = useT();
   const q = useQuery({
     queryKey: qk.customerStatement(customerId),
     queryFn: ({ signal }) => o2cApi.customerStatement(customerId, {}, signal).then((r) => r.data),
   });
+  // Statement-line kind → localized label. `kind` is a stable data code.
+  const kindLabel = (kind: string) =>
+    kind === "payment"
+      ? t("misc.customers.statement.kind.payment")
+      : kind === "credit_note"
+        ? t("misc.customers.statement.kind.creditNote")
+        : t("misc.customers.statement.kind.invoice");
   return (
     <Dialog
       open
       onClose={onClose}
       size="xl"
-      title={`كشف حساب — ${customerName}`}
+      title={t("misc.customers.statement.title", { name: customerName })}
       footer={
         <>
-          <Button variant="secondary" onClick={() => window.print()}><Printer className="h-4 w-4" /> طباعة</Button>
-          <Button variant="ghost" onClick={onClose}>إغلاق</Button>
+          <Button variant="secondary" onClick={() => window.print()}><Printer className="h-4 w-4" /> {t("misc.customers.statement.print")}</Button>
+          <Button variant="ghost" onClick={onClose}>{t("common.close")}</Button>
         </>
       }
     >
       {q.isLoading ? <LoadingState rows={4} /> : q.isError ? <ErrorState error={q.error} /> : (
         <>
           <div className="mb-3 flex items-center justify-between rounded-xl bg-slate-50 px-4 py-2 text-sm">
-            <span className="font-bold text-slate-600">الرصيد الافتتاحي</span>
+            <span className="font-bold text-slate-600">{t("misc.customers.statement.opening")}</span>
             <Money value={q.data!.opening} className="font-extrabold" />
           </div>
           <div className="overflow-x-auto rounded-2xl border border-slate-200">
-            <table className="w-full min-w-[560px] border-collapse text-right text-sm">
+            <table className="w-full min-w-[560px] border-collapse text-start text-sm">
               <thead className="bg-slate-50 text-xs font-bold text-slate-500">
                 <tr>
-                  <th className="px-4 py-3 font-bold">التاريخ</th>
-                  <th className="px-4 py-3 font-bold">المرجع</th>
-                  <th className="px-4 py-3 font-bold">النوع</th>
-                  <th className="px-4 py-3 font-bold">الحركة</th>
-                  <th className="px-4 py-3 font-bold">الرصيد</th>
+                  <th className="px-4 py-3 font-bold">{t("misc.customers.statement.col.date")}</th>
+                  <th className="px-4 py-3 font-bold">{t("misc.customers.statement.col.ref")}</th>
+                  <th className="px-4 py-3 font-bold">{t("misc.customers.statement.col.type")}</th>
+                  <th className="px-4 py-3 font-bold">{t("misc.customers.statement.col.movement")}</th>
+                  <th className="px-4 py-3 font-bold">{t("misc.customers.statement.col.balance")}</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100">
@@ -231,7 +249,7 @@ function StatementDialog({ customerId, customerName, onClose }: { customerId: st
                   <tr key={i}>
                     <td className="px-4 py-3 text-slate-700"><DateCell value={l.date} /></td>
                     <td className="px-4 py-3 font-bold text-slate-700">{l.ref}</td>
-                    <td className="px-4 py-3 text-slate-700">{l.kind === "payment" ? "تحصيل" : l.kind === "credit_note" ? "إشعار دائن" : "فاتورة"}</td>
+                    <td className="px-4 py-3 text-slate-700">{kindLabel(l.kind)}</td>
                     <td className="px-4 py-3 text-slate-700"><span dir="ltr" className="tabular-nums">{formatCurrency(l.amount)}</span></td>
                     <td className="px-4 py-3 text-slate-700"><Money value={l.balance} className="font-bold" /></td>
                   </tr>
@@ -240,7 +258,7 @@ function StatementDialog({ customerId, customerName, onClose }: { customerId: st
             </table>
           </div>
           <div className="mt-3 flex items-center justify-between rounded-xl bg-teal-50 px-4 py-2 text-sm">
-            <span className="font-bold text-teal-700">الرصيد الختامي</span>
+            <span className="font-bold text-teal-700">{t("misc.customers.statement.closing")}</span>
             <Money value={q.data!.closing} className="font-extrabold text-teal-800" />
           </div>
         </>

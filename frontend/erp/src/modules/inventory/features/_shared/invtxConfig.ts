@@ -9,6 +9,7 @@ import type { WarehouseAction } from "@/modules/inventory/lib/permissions";
 export interface InvTxConfig {
   docType: InvTxDocType;
   routeBase: string; // "/receipts"
+  /** i18n key path (title/subtitle/newLabel) — the consuming components render t(config.<x>). */
   title: string;
   subtitle: string;
   newLabel: string;
@@ -22,9 +23,9 @@ export const INVTX_CONFIG: Record<InvTxDocType, InvTxConfig> = {
   receipt: {
     docType: "receipt",
     routeBase: "/inventory/receiving",
-    title: "الاستلامات المستقلة",
-    subtitle: "إدخال مخزون إلى مستودع بدورة اعتماد وترحيل قابلة للتدقيق (غير مرتبط بأمر شراء).",
-    newLabel: "استلام جديد",
+    title: "inventoryRest.invtx.receipt.title",
+    subtitle: "inventoryRest.invtx.receipt.subtitle",
+    newLabel: "inventoryRest.invtx.receipt.newLabel",
     numberPrefix: "RCV",
     icon: PackagePlus,
     lineMode: "receipt",
@@ -33,9 +34,9 @@ export const INVTX_CONFIG: Record<InvTxDocType, InvTxConfig> = {
   issue: {
     docType: "issue",
     routeBase: "/inventory/issues",
-    title: "أذونات الصرف المستقلة",
-    subtitle: "صرف مخزون من مستودع إلى مصروف/قسم بسبب إلزامي وتحقق من الرصيد عند الترحيل.",
-    newLabel: "إذن صرف جديد",
+    title: "inventoryRest.invtx.issue.title",
+    subtitle: "inventoryRest.invtx.issue.subtitle",
+    newLabel: "inventoryRest.invtx.issue.newLabel",
     numberPrefix: "ISU",
     icon: PackageMinus,
     lineMode: "issue",
@@ -44,9 +45,9 @@ export const INVTX_CONFIG: Record<InvTxDocType, InvTxConfig> = {
   adjustment: {
     docType: "adjustment",
     routeBase: "/inventory/adjustments",
-    title: "التعديلات المخزنية",
-    subtitle: "تسوية الأرصدة بالجرد: تُدخل الكمية المجرودة ويحسب النظام الفرق (delta) بنفسه.",
-    newLabel: "تعديل جديد",
+    title: "inventoryRest.invtx.adjustment.title",
+    subtitle: "inventoryRest.invtx.adjustment.subtitle",
+    newLabel: "inventoryRest.invtx.adjustment.newLabel",
     numberPrefix: "ADV",
     icon: SlidersHorizontal,
     lineMode: "adjustment",

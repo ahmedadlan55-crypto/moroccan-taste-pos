@@ -6,6 +6,7 @@ import { useState, type ReactNode } from "react";
 import { Printer } from "lucide-react";
 import { Button } from "@/shared/ui";
 import { LoadingState, ErrorState, EmptyState } from "@/shared/ui";
+import { useT } from "@/i18n";
 
 // English-digit, 2-decimal grouping — matches the legacy report formatting and
 // the app-wide numbering policy (English numerals inside RTL layout).
@@ -80,10 +81,11 @@ export function ReportHeader({
   onPrint?: () => void;
   extraActions?: ReactNode;
 }) {
+  const t = useT();
   return (
     <div className="no-print mb-5 flex flex-col gap-4 xl:flex-row xl:items-end xl:justify-between">
       <div className="min-w-0">
-        <div className="mb-1 text-xs font-extrabold tracking-wide text-teal-700">المحاسبة</div>
+        <div className="mb-1 text-xs font-extrabold tracking-wide text-teal-700">{t("accounting.eyebrow")}</div>
         <h1 className="text-2xl font-extrabold tracking-tight text-slate-950 sm:text-3xl">{title}</h1>
         {subtitle && (
           <p className="mt-2 max-w-3xl text-sm font-medium leading-6 text-slate-500">{subtitle}</p>
@@ -93,7 +95,7 @@ export function ReportHeader({
         {extraActions}
         {onPrint && (
           <Button variant="secondary" onClick={onPrint}>
-            <Printer className="h-4 w-4" /> طباعة
+            <Printer className="h-4 w-4" /> {t("accounting.common.print")}
           </Button>
         )}
       </div>
@@ -106,19 +108,20 @@ export function FilterCard({
   children,
   onRun,
   running,
-  runLabel = "عرض التقرير",
+  runLabel,
 }: {
   children: ReactNode;
   onRun: () => void;
   running?: boolean;
   runLabel?: string;
 }) {
+  const t = useT();
   return (
     <div className="no-print surface mb-5 p-4">
       <div className="flex flex-wrap items-end gap-3">
         {children}
         <Button variant="primary" onClick={onRun} loading={running}>
-          {runLabel}
+          {runLabel ?? t("accounting.common.viewReport")}
         </Button>
       </div>
     </div>
@@ -137,11 +140,12 @@ export function FilterField({ label, children }: { label: string; children: Reac
 
 /** Screen + print banner shown at the top of the printable results area. */
 export function PrintBanner({ title, period }: { title: string; period: string }) {
+  const t = useT();
   return (
     <div className="mb-4 flex flex-col gap-1 border-b border-slate-200 pb-3">
       <div className="flex items-baseline justify-between gap-3">
         <h2 className="text-lg font-extrabold text-slate-900">{title}</h2>
-        <span className="text-xs font-extrabold text-teal-700">نظام ADLAN</span>
+        <span className="text-xs font-extrabold text-teal-700">{t("accounting.common.systemName")}</span>
       </div>
       <div className="text-xs font-bold text-slate-500">{period}</div>
     </div>
@@ -159,7 +163,7 @@ export function ReportState({
   error,
   isEmpty,
   onRetry,
-  emptyTitle = "لا توجد بيانات",
+  emptyTitle,
   emptyBody,
   children,
 }: {
@@ -171,9 +175,10 @@ export function ReportState({
   emptyBody?: string;
   children: ReactNode;
 }) {
+  const t = useT();
   if (isLoading) return <LoadingState />;
   if (error) return <ErrorState error={error} onRetry={onRetry} />;
-  if (isEmpty) return <EmptyState title={emptyTitle} body={emptyBody} />;
+  if (isEmpty) return <EmptyState title={emptyTitle ?? t("accounting.common.noData")} body={emptyBody} />;
   return <>{children}</>;
 }
 

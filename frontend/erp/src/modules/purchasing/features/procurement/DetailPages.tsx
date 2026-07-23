@@ -13,10 +13,19 @@ import { useCan } from "@/modules/inventory/lib/permission-provider";
 import {
   useOrder, useReceipt, useInvoice, usePayment, useReturn, useDocAction,
 } from "@/modules/inventory/lib/hooks/useProcurement";
+import { useT } from "@/i18n";
+import type { TFunction } from "@/i18n";
 import { BackLink, DetailHeader, Section, KV, StatusStepper, TimelinePanel, GLPanel, AttachmentsPanel, ErrorLine } from "./detail-shared";
 import { st } from "./labels";
 
 function s(v: unknown, d = "—"): string { return v == null || v === "" ? d : String(v); }
+// Stepper node label: two nodes use a shorter label than their status text
+// ("مستلم" for the fully_received node; "مراجعة" for the pending_review node).
+function stepLabel(t: TFunction, key: string): string {
+  if (key === "fully_received") return t("purchasing.status.received");
+  if (key === "pending_review") return t("purchasing.step.review");
+  return st(t, key);
+}
 function n(v: unknown): number { const x = Number(v); return Number.isFinite(x) ? x : 0; }
 function Th({ children, left }: { children: ReactNode; left?: boolean }) { return <th className={`px-3 py-2 text-[11px] font-extrabold uppercase text-slate-400 ${left ? "text-left" : "text-right"}`}>{children}</th>; }
 function Td({ children, left, bold }: { children: ReactNode; left?: boolean; bold?: boolean }) { return <td className={`px-3 py-2.5 text-sm text-slate-700 ${left ? "text-left tabular-nums" : ""} ${bold ? "font-bold" : ""}`}>{children}</td>; }
@@ -32,8 +41,9 @@ function useRun(entity: "orders" | "receipts" | "invoices" | "payments" | "retur
 }
 
 // ── Purchase Order ──────────────────────────────────────────────────────────
-const PO_STEPS = [{ key: "draft", label: "مسودة" }, { key: "submitted", label: "مُقدّم" }, { key: "approved", label: "معتمد" }, { key: "sent", label: "مُرسل" }, { key: "partially_received", label: "استلام جزئي" }, { key: "fully_received", label: "مستلم" }, { key: "closed", label: "مغلق" }];
+const PO_STEP_KEYS = ["draft", "submitted", "approved", "sent", "partially_received", "fully_received", "closed"];
 export function OrderDetailPage() {
+  const t = useT();
   const [sp] = useSearchParams();
   const id = sp.get("doc") ?? "";
   const { data, isLoading, isError, error, refetch } = useOrder(id);
@@ -48,44 +58,44 @@ export function OrderDetailPage() {
   const invoices = (o.invoices ?? []) as Record<string, unknown>[];
   return (
     <div className="grid gap-6 print:gap-4">
-      <BackLink to="/purchasing/orders" label="أوامر الشراء" />
-      <DetailHeader eyebrow="أمر شراء" title={s(o.po_number)} subtitle={s(o.supplier_name)} status={status}
+      <BackLink to="/purchasing/orders" label={t("purchasing.tabs.orders")} />
+      <DetailHeader eyebrow={t("purchasing.order.eyebrow")} title={s(o.po_number)} subtitle={s(o.supplier_name)} status={status}
         actions={<div className="flex flex-wrap gap-2 print:hidden">
-          {canManage && status === "draft" && <Button onClick={() => run("submit")}>تقديم</Button>}
-          {canApprove && status === "submitted" && <Button onClick={() => run("approve")}>اعتماد</Button>}
-          {canApprove && status === "approved" && <Button variant="secondary" onClick={() => run("send")}>إرسال</Button>}
-          {canApprove && ["approved", "sent", "fully_received"].includes(status) && <Button variant="secondary" onClick={() => run("close")}>إغلاق</Button>}
-          {canApprove && ["draft", "submitted", "approved"].includes(status) && <Button variant="danger" onClick={() => run("cancel")}>إلغاء</Button>}
+          {canManage && status === "draft" && <Button onClick={() => run("submit")}>{t("purchasing.action.submit")}</Button>}
+          {canApprove && status === "submitted" && <Button onClick={() => run("approve")}>{t("purchasing.action.approve")}</Button>}
+          {canApprove && status === "approved" && <Button variant="secondary" onClick={() => run("send")}>{t("purchasing.action.send")}</Button>}
+          {canApprove && ["approved", "sent", "fully_received"].includes(status) && <Button variant="secondary" onClick={() => run("close")}>{t("purchasing.action.close")}</Button>}
+          {canApprove && ["draft", "submitted", "approved"].includes(status) && <Button variant="danger" onClick={() => run("cancel")}>{t("purchasing.action.cancel")}</Button>}
         </div>} />
       <ErrorLine error={action.error} />
-      <Section title="الحالة"><StatusStepper steps={PO_STEPS} current={status === "received" ? "fully_received" : status} /></Section>
-      <Section title="بيانات الأمر">
+      <Section title={t("common.status")}><StatusStepper steps={PO_STEP_KEYS.map((k) => ({ key: k, label: stepLabel(t, k) }))} current={status === "received" ? "fully_received" : status} /></Section>
+      <Section title={t("purchasing.order.dataTitle")}>
         <KV items={[
-          { label: "التاريخ", value: formatDate(s(o.po_date, "")) }, { label: "التوريد المتوقع", value: formatDate(s(o.expected_date, "")) },
-          { label: "العملة", value: s(o.currency) }, { label: "الإصدار", value: s(o.version) },
-          { label: "صافي", value: formatCurrency(n(o.total_before_vat)) }, { label: "ضريبة", value: formatCurrency(n(o.vat_amount)) },
-          { label: "الإجمالي", value: formatCurrency(n(o.total_after_vat)) }, { label: "أنشأه", value: s(o.created_by) },
+          { label: t("purchasing.col.date"), value: formatDate(s(o.po_date, "")) }, { label: t("purchasing.order.expectedSupply"), value: formatDate(s(o.expected_date, "")) },
+          { label: t("purchasing.order.currency"), value: s(o.currency) }, { label: t("purchasing.field.version"), value: s(o.version) },
+          { label: t("purchasing.field.net"), value: formatCurrency(n(o.total_before_vat)) }, { label: t("purchasing.field.vat"), value: formatCurrency(n(o.vat_amount)) },
+          { label: t("purchasing.col.total"), value: formatCurrency(n(o.total_after_vat)) }, { label: t("purchasing.field.createdBy"), value: s(o.created_by) },
         ]} />
       </Section>
-      <Section icon={FileText} title="السطور">
-        <Table head={<><Th>المادة</Th><Th left>المدخلة</Th><Th left>الأساسية</Th><Th left>المستلم</Th><Th left>السعر</Th><Th left>الإجمالي</Th></>}>
+      <Section icon={FileText} title={t("purchasing.lines.title")}>
+        <Table head={<><Th>{t("purchasing.col.item")}</Th><Th left>{t("purchasing.lines.entered")}</Th><Th left>{t("purchasing.lines.base")}</Th><Th left>{t("purchasing.lines.received")}</Th><Th left>{t("purchasing.lines.price")}</Th><Th left>{t("purchasing.col.total")}</Th></>}>
           {lines.map((l, i) => (
             <tr key={i}><Td>{s(l.item_name)}</Td><Td left>{n(l.entered_qty)} {s(l.entered_unit_code, "")}</Td><Td left>{n(l.base_qty)}</Td>
               <Td left>{n(l.base_received_qty)}</Td><Td left>{formatCurrency(n(l.unit_price))}</Td><Td left bold>{formatCurrency(n(l.total))}</Td></tr>
           ))}
         </Table>
       </Section>
-      <Section icon={PackageCheck} title="الاستلامات">
-        {receipts.length === 0 ? <div className="p-5 text-sm text-slate-400">لا استلامات.</div> : (
-          <Table head={<><Th>الرقم</Th><Th>التاريخ</Th><Th>الحالة</Th><Th left>الإجمالي</Th></>}>
-            {receipts.map((r, i) => <tr key={i}><Td>{s(r.receipt_number)}</Td><Td>{formatDate(s(r.receipt_date, ""))}</Td><Td>{st(s(r.status))}</Td><Td left bold>{formatCurrency(n(r.total))}</Td></tr>)}
+      <Section icon={PackageCheck} title={t("purchasing.tabs.receiving")}>
+        {receipts.length === 0 ? <div className="p-5 text-sm text-slate-400">{t("purchasing.order.noReceipts")}</div> : (
+          <Table head={<><Th>{t("purchasing.col.number")}</Th><Th>{t("purchasing.col.date")}</Th><Th>{t("common.status")}</Th><Th left>{t("purchasing.col.total")}</Th></>}>
+            {receipts.map((r, i) => <tr key={i}><Td>{s(r.receipt_number)}</Td><Td>{formatDate(s(r.receipt_date, ""))}</Td><Td>{st(t, s(r.status))}</Td><Td left bold>{formatCurrency(n(r.total))}</Td></tr>)}
           </Table>
         )}
       </Section>
       {invoices.length > 0 && (
-        <Section icon={Receipt} title="الفواتير">
-          <Table head={<><Th>الرقم</Th><Th>الحالة</Th><Th left>الإجمالي</Th></>}>
-            {invoices.map((r, i) => <tr key={i}><Td>{s(r.invoice_no, s(r.code))}</Td><Td>{st(s(r.status))}</Td><Td left bold>{formatCurrency(n(r.total_amount))}</Td></tr>)}
+        <Section icon={Receipt} title={t("purchasing.tabs.invoices")}>
+          <Table head={<><Th>{t("purchasing.col.number")}</Th><Th>{t("common.status")}</Th><Th left>{t("purchasing.col.total")}</Th></>}>
+            {invoices.map((r, i) => <tr key={i}><Td>{s(r.invoice_no, s(r.code))}</Td><Td>{st(t, s(r.status))}</Td><Td left bold>{formatCurrency(n(r.total_amount))}</Td></tr>)}
           </Table>
         </Section>
       )}
@@ -95,8 +105,9 @@ export function OrderDetailPage() {
 }
 
 // ── Goods Receipt ───────────────────────────────────────────────────────────
-const GRN_STEPS = [{ key: "draft", label: "مسودة" }, { key: "approved", label: "معتمد" }, { key: "posted", label: "مُرحّل" }];
+const GRN_STEP_KEYS = ["draft", "approved", "posted"];
 export function ReceiptDetailPage() {
+  const t = useT();
   const [sp] = useSearchParams();
   const id = sp.get("doc") ?? "";
   const { data, isLoading, isError, error, refetch } = useReceipt(id);
@@ -109,24 +120,24 @@ export function ReceiptDetailPage() {
   const lines = (o.lines ?? []) as Record<string, unknown>[];
   return (
     <div className="grid gap-6 print:gap-4">
-      <BackLink to="/purchasing/receiving" label="الاستلامات" />
-      <DetailHeader eyebrow="استلام بضاعة" title={s(o.receipt_number)} subtitle={s(o.supplier_name_snapshot)} status={status}
+      <BackLink to="/purchasing/receiving" label={t("purchasing.tabs.receiving")} />
+      <DetailHeader eyebrow={t("purchasing.receipt.eyebrow")} title={s(o.receipt_number)} subtitle={s(o.supplier_name_snapshot)} status={status}
         actions={<div className="flex flex-wrap gap-2 print:hidden">
-          {canApprove && status === "draft" && <Button onClick={() => run("approve")}>اعتماد</Button>}
-          {canApprove && status === "approved" && <Button onClick={() => run("post")}>ترحيل (المخزون + GRNI)</Button>}
-          {canApprove && status === "posted" && <Button variant="secondary" onClick={() => run("reverse")}>عكس</Button>}
-          {canApprove && ["draft", "approved"].includes(status) && <Button variant="danger" onClick={() => run("cancel")}>إلغاء</Button>}
+          {canApprove && status === "draft" && <Button onClick={() => run("approve")}>{t("purchasing.action.approve")}</Button>}
+          {canApprove && status === "approved" && <Button onClick={() => run("post")}>{t("purchasing.receipt.postAction")}</Button>}
+          {canApprove && status === "posted" && <Button variant="secondary" onClick={() => run("reverse")}>{t("purchasing.action.reverse")}</Button>}
+          {canApprove && ["draft", "approved"].includes(status) && <Button variant="danger" onClick={() => run("cancel")}>{t("purchasing.action.cancel")}</Button>}
         </div>} />
       <ErrorLine error={action.error} />
-      <Section title="الحالة"><StatusStepper steps={GRN_STEPS} current={status} /></Section>
-      <Section title="بيانات الاستلام">
+      <Section title={t("common.status")}><StatusStepper steps={GRN_STEP_KEYS.map((k) => ({ key: k, label: stepLabel(t, k) }))} current={status} /></Section>
+      <Section title={t("purchasing.receipt.dataTitle")}>
         <KV items={[
-          { label: "التاريخ", value: formatDate(s(o.receipt_date, "")) }, { label: "المستودع", value: s(o.warehouse_id) },
-          { label: "أمر الشراء", value: s(o.po_id) }, { label: "الإجمالي", value: formatCurrency(n(o.total)) }, { label: "الإصدار", value: s(o.version) },
+          { label: t("purchasing.col.date"), value: formatDate(s(o.receipt_date, "")) }, { label: t("purchasing.field.warehouse"), value: s(o.warehouse_id) },
+          { label: t("purchasing.field.purchaseOrder"), value: s(o.po_id) }, { label: t("purchasing.col.total"), value: formatCurrency(n(o.total)) }, { label: t("purchasing.field.version"), value: s(o.version) },
         ]} />
       </Section>
-      <Section icon={PackageCheck} title="السطور">
-        <Table head={<><Th>المادة</Th><Th left>المدخلة</Th><Th left>الأساسية</Th><Th left>تكلفة الوحدة</Th><Th>الدفعة</Th><Th>الصلاحية</Th><Th left>الإجمالي</Th></>}>
+      <Section icon={PackageCheck} title={t("purchasing.lines.title")}>
+        <Table head={<><Th>{t("purchasing.col.item")}</Th><Th left>{t("purchasing.lines.entered")}</Th><Th left>{t("purchasing.lines.base")}</Th><Th left>{t("purchasing.lines.unitCost")}</Th><Th>{t("purchasing.lines.lot")}</Th><Th>{t("purchasing.lines.expiry")}</Th><Th left>{t("purchasing.col.total")}</Th></>}>
           {lines.map((l, i) => (
             <tr key={i}><Td>{s(l.item_id)}</Td><Td left>{n(l.entered_qty)} {s(l.entered_unit_code, "")}</Td><Td left>{n(l.base_qty)}</Td>
               <Td left>{formatCurrency(n(l.base_unit_cost))}</Td><Td>{s(l.lot_no)}</Td><Td>{l.expiry_date ? formatDate(s(l.expiry_date, "")) : "—"}</Td><Td left bold>{formatCurrency(n(l.line_total))}</Td></tr>
@@ -140,8 +151,9 @@ export function ReceiptDetailPage() {
 }
 
 // ── Supplier Invoice + three-way match ──────────────────────────────────────
-const INV_STEPS = [{ key: "draft", label: "مسودة" }, { key: "pending_review", label: "مراجعة" }, { key: "approved", label: "معتمد" }, { key: "paid", label: "مسدد" }];
+const INV_STEP_KEYS = ["draft", "pending_review", "approved", "paid"];
 export function InvoiceDetailPage() {
+  const t = useT();
   const [sp] = useSearchParams();
   const id = sp.get("doc") ?? "";
   const { data, isLoading, isError, error, refetch } = useInvoice(id);
@@ -156,31 +168,31 @@ export function InvoiceDetailPage() {
   const matchStatus = s(o.matching_status, "unmatched");
   return (
     <div className="grid gap-6 print:gap-4">
-      <BackLink to="/purchasing/invoices" label="الفواتير" />
-      <DetailHeader eyebrow="فاتورة مورد" title={s(o.invoice_no, s(o.code))} subtitle={`${s(o.supplier_name)} · مطابقة: ${st(matchStatus)}`} status={status}
+      <BackLink to="/purchasing/invoices" label={t("purchasing.tabs.invoices")} />
+      <DetailHeader eyebrow={t("purchasing.invoice.eyebrow")} title={s(o.invoice_no, s(o.code))} subtitle={`${s(o.supplier_name)} · ${t("purchasing.invoice.matchingLabel")}: ${st(t, matchStatus)}`} status={status}
         actions={<div className="flex flex-wrap gap-2 print:hidden">
-          {canManage && ["draft", "pending_review"].includes(status) && <Button variant="secondary" onClick={() => run("match")}>مطابقة ثلاثية</Button>}
-          {canManage && status === "draft" && <Button onClick={() => run("submit")}>تقديم</Button>}
-          {canApprove && ["pending_review", "pending_approval"].includes(status) && <Button onClick={() => run("approve")}>اعتماد (GRNI/AP)</Button>}
-          {canApprove && ["approved", "partially_paid"].includes(status) && <Button variant="secondary" onClick={() => run("credit-note")}>إشعار دائن</Button>}
-          {canManage && status === "draft" && <Button variant="danger" onClick={() => run("cancel")}>إلغاء</Button>}
+          {canManage && ["draft", "pending_review"].includes(status) && <Button variant="secondary" onClick={() => run("match")}>{t("purchasing.invoice.matchAction")}</Button>}
+          {canManage && status === "draft" && <Button onClick={() => run("submit")}>{t("purchasing.action.submit")}</Button>}
+          {canApprove && ["pending_review", "pending_approval"].includes(status) && <Button onClick={() => run("approve")}>{t("purchasing.invoice.approveAction")}</Button>}
+          {canApprove && ["approved", "partially_paid"].includes(status) && <Button variant="secondary" onClick={() => run("credit-note")}>{t("purchasing.action.credit_note")}</Button>}
+          {canManage && status === "draft" && <Button variant="danger" onClick={() => run("cancel")}>{t("purchasing.action.cancel")}</Button>}
         </div>} />
       <ErrorLine error={action.error} />
-      <Section title="الحالة"><StatusStepper steps={INV_STEPS} current={["partially_paid"].includes(status) ? "approved" : status} /></Section>
+      <Section title={t("common.status")}><StatusStepper steps={INV_STEP_KEYS.map((k) => ({ key: k, label: stepLabel(t, k) }))} current={["partially_paid"].includes(status) ? "approved" : status} /></Section>
       <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
-        <MetricCard label="الإجمالي" value={formatCurrency(n(o.total_amount))} icon={Receipt} tone="teal" />
-        <MetricCard label="المسدد" value={formatCurrency(n(o.paid_amount))} icon={Wallet} tone="blue" />
-        <MetricCard label="المتبقي" value={formatCurrency(n(o.balance_amount))} icon={Wallet} tone="violet" />
-        <MetricCard label="الضريبة" value={formatCurrency(n(o.vat_amount))} icon={FileText} tone="amber" />
+        <MetricCard label={t("purchasing.invoice.total")} value={formatCurrency(n(o.total_amount))} icon={Receipt} tone="teal" />
+        <MetricCard label={t("purchasing.invoice.paid")} value={formatCurrency(n(o.paid_amount))} icon={Wallet} tone="blue" />
+        <MetricCard label={t("purchasing.invoice.balance")} value={formatCurrency(n(o.balance_amount))} icon={Wallet} tone="violet" />
+        <MetricCard label={t("purchasing.invoice.tax")} value={formatCurrency(n(o.vat_amount))} icon={FileText} tone="amber" />
       </div>
-      <Section icon={FileText} title="السطور">
-        <Table head={<><Th>الوصف</Th><Th left>الكمية</Th><Th left>السعر</Th><Th left>الضريبة%</Th><Th left>الإجمالي</Th></>}>
+      <Section icon={FileText} title={t("purchasing.lines.title")}>
+        <Table head={<><Th>{t("purchasing.invoice.colDescription")}</Th><Th left>{t("purchasing.lines.qty")}</Th><Th left>{t("purchasing.lines.price")}</Th><Th left>{t("purchasing.invoice.colVatPct")}</Th><Th left>{t("purchasing.col.total")}</Th></>}>
           {lines.map((l, i) => <tr key={i}><Td>{s(l.description)}</Td><Td left>{n(l.quantity)}</Td><Td left>{formatCurrency(n(l.unit_price))}</Td><Td left>{s(l.vat_pct)}</Td><Td left bold>{formatCurrency(n(l.line_total))}</Td></tr>)}
         </Table>
       </Section>
-      <Section title="المطابقة الثلاثية (PO ↔ استلام ↔ فاتورة)">
-        {matches.length === 0 ? <div className="p-5 text-sm text-slate-400">لم تُجرَ المطابقة بعد — اضغط «مطابقة ثلاثية».</div> : (
-          <Table head={<><Th>سطر الاستلام</Th><Th left>الكمية المطابقة</Th><Th left>القيمة</Th><Th left>فرق السعر</Th><Th left>فرق الكمية</Th></>}>
+      <Section title={t("purchasing.invoice.matchTitle")}>
+        {matches.length === 0 ? <div className="p-5 text-sm text-slate-400">{t("purchasing.invoice.matchEmpty")}</div> : (
+          <Table head={<><Th>{t("purchasing.invoice.colReceiptLine")}</Th><Th left>{t("purchasing.invoice.colMatchedQty")}</Th><Th left>{t("purchasing.invoice.colMatchedValue")}</Th><Th left>{t("purchasing.invoice.colPriceVar")}</Th><Th left>{t("purchasing.invoice.colQtyVar")}</Th></>}>
             {matches.map((m, i) => (
               <tr key={i}><Td>{s(m.receipt_line_id)}</Td><Td left>{n(m.matched_qty)}</Td><Td left>{formatCurrency(n(m.matched_amount))}</Td>
                 <Td left><span className={n(m.price_variance) !== 0 ? "font-bold text-amber-600" : ""}>{formatCurrency(n(m.price_variance))}</span></Td>
@@ -197,8 +209,9 @@ export function InvoiceDetailPage() {
 }
 
 // ── Payment + allocations ───────────────────────────────────────────────────
-const PAY_STEPS = [{ key: "requested", label: "مطلوب" }, { key: "authorized", label: "مُخوّل" }, { key: "paid", label: "مسدد" }, { key: "closed", label: "مغلق" }];
+const PAY_STEP_KEYS = ["requested", "authorized", "paid", "closed"];
 export function PaymentDetailPage() {
+  const t = useT();
   const [sp] = useSearchParams();
   const id = sp.get("doc") ?? "";
   const { data, isLoading, isError, error, refetch } = usePayment(id);
@@ -211,26 +224,26 @@ export function PaymentDetailPage() {
   const allocations = (o.allocations ?? []) as Record<string, unknown>[];
   return (
     <div className="grid gap-6 print:gap-4">
-      <BackLink to="/purchasing/payments" label="المدفوعات" />
-      <DetailHeader eyebrow="سداد مورد" title={s(o.payment_number)} subtitle={`${s(o.payment_method)} · ${formatCurrency(n(o.amount))}`} status={status}
+      <BackLink to="/purchasing/payments" label={t("purchasing.tabs.payments")} />
+      <DetailHeader eyebrow={t("purchasing.payment.eyebrow")} title={s(o.payment_number)} subtitle={`${s(o.payment_method)} · ${formatCurrency(n(o.amount))}`} status={status}
         actions={<div className="flex flex-wrap gap-2 print:hidden">
-          {canApprove && status === "requested" && <Button onClick={() => run("authorize")}>تخويل</Button>}
-          {canApprove && status === "authorized" && <Button onClick={() => run("pay")}>تنفيذ السداد</Button>}
-          {canApprove && status === "paid" && <Button variant="secondary" onClick={() => run("close")}>إغلاق</Button>}
-          {canApprove && ["paid", "closed"].includes(status) && <Button variant="danger" onClick={() => run("reverse")}>عكس</Button>}
-          {canApprove && ["requested", "authorized"].includes(status) && <Button variant="danger" onClick={() => run("cancel")}>إلغاء</Button>}
+          {canApprove && status === "requested" && <Button onClick={() => run("authorize")}>{t("purchasing.action.authorize")}</Button>}
+          {canApprove && status === "authorized" && <Button onClick={() => run("pay")}>{t("purchasing.payment.payAction")}</Button>}
+          {canApprove && status === "paid" && <Button variant="secondary" onClick={() => run("close")}>{t("purchasing.action.close")}</Button>}
+          {canApprove && ["paid", "closed"].includes(status) && <Button variant="danger" onClick={() => run("reverse")}>{t("purchasing.action.reverse")}</Button>}
+          {canApprove && ["requested", "authorized"].includes(status) && <Button variant="danger" onClick={() => run("cancel")}>{t("purchasing.action.cancel")}</Button>}
         </div>} />
       <ErrorLine error={action.error} />
-      <Section title="الحالة"><StatusStepper steps={PAY_STEPS} current={status} /></Section>
-      <Section title="بيانات السداد">
+      <Section title={t("common.status")}><StatusStepper steps={PAY_STEP_KEYS.map((k) => ({ key: k, label: stepLabel(t, k) }))} current={status} /></Section>
+      <Section title={t("purchasing.payment.dataTitle")}>
         <KV items={[
-          { label: "المبلغ", value: formatCurrency(n(o.amount)) }, { label: "المخصص", value: formatCurrency(n(o.allocated_amount)) },
-          { label: "الطريقة", value: s(o.payment_method) }, { label: "المورد", value: s(o.supplier_id) }, { label: "الإصدار", value: s(o.version) },
+          { label: t("purchasing.payment.amount"), value: formatCurrency(n(o.amount)) }, { label: t("purchasing.payment.allocated"), value: formatCurrency(n(o.allocated_amount)) },
+          { label: t("purchasing.payment.method"), value: s(o.payment_method) }, { label: t("purchasing.col.supplier"), value: s(o.supplier_id) }, { label: t("purchasing.field.version"), value: s(o.version) },
         ]} />
       </Section>
-      <Section icon={Wallet} title="التخصيصات">
-        {allocations.length === 0 ? <div className="p-5 text-sm text-slate-400">لا تخصيصات.</div> : (
-          <Table head={<><Th>الفاتورة</Th><Th>التاريخ</Th><Th left>المبلغ المخصص</Th></>}>
+      <Section icon={Wallet} title={t("purchasing.payment.allocationsTitle")}>
+        {allocations.length === 0 ? <div className="p-5 text-sm text-slate-400">{t("purchasing.payment.allocationsEmpty")}</div> : (
+          <Table head={<><Th>{t("purchasing.payment.colInvoice")}</Th><Th>{t("purchasing.col.date")}</Th><Th left>{t("purchasing.payment.colAllocatedAmount")}</Th></>}>
             {allocations.map((a, i) => <tr key={i}><Td>{s(a.supplier_invoice_id)}</Td><Td>{formatDate(s(a.allocation_date, ""))}</Td><Td left bold>{formatCurrency(n(a.allocated_amount))}</Td></tr>)}
           </Table>
         )}
@@ -242,8 +255,9 @@ export function PaymentDetailPage() {
 }
 
 // ── Purchase Return ─────────────────────────────────────────────────────────
-const RET_STEPS = [{ key: "draft", label: "مسودة" }, { key: "approved", label: "معتمد" }, { key: "posted", label: "مُرحّل" }, { key: "settled", label: "مُسوّى" }];
+const RET_STEP_KEYS = ["draft", "approved", "posted", "settled"];
 export function ReturnDetailPage() {
+  const t = useT();
   const [sp] = useSearchParams();
   const id = sp.get("doc") ?? "";
   const { data, isLoading, isError, error, refetch } = useReturn(id);
@@ -256,23 +270,23 @@ export function ReturnDetailPage() {
   const lines = (o.lines ?? []) as Record<string, unknown>[];
   return (
     <div className="grid gap-6 print:gap-4">
-      <BackLink to="/purchasing/returns" label="المرتجعات" />
-      <DetailHeader eyebrow="مرتجع شراء" title={s(o.return_number)} subtitle={`${st(s(o.phase))} · ${formatCurrency(n(o.total))}`} status={status}
+      <BackLink to="/purchasing/returns" label={t("purchasing.tabs.returns")} />
+      <DetailHeader eyebrow={t("purchasing.return.eyebrow")} title={s(o.return_number)} subtitle={`${st(t, s(o.phase))} · ${formatCurrency(n(o.total))}`} status={status}
         actions={<div className="flex flex-wrap gap-2 print:hidden">
-          {canApprove && status === "draft" && <Button onClick={() => run("approve")}>اعتماد</Button>}
-          {canApprove && status === "approved" && <Button onClick={() => run("post")}>ترحيل</Button>}
-          {canApprove && status === "posted" && <Button variant="secondary" onClick={() => run("reverse")}>عكس</Button>}
+          {canApprove && status === "draft" && <Button onClick={() => run("approve")}>{t("purchasing.action.approve")}</Button>}
+          {canApprove && status === "approved" && <Button onClick={() => run("post")}>{t("purchasing.action.post")}</Button>}
+          {canApprove && status === "posted" && <Button variant="secondary" onClick={() => run("reverse")}>{t("purchasing.action.reverse")}</Button>}
         </div>} />
       <ErrorLine error={action.error} />
-      <Section title="الحالة"><StatusStepper steps={RET_STEPS} current={status} /></Section>
-      <Section title="بيانات المرتجع">
+      <Section title={t("common.status")}><StatusStepper steps={RET_STEP_KEYS.map((k) => ({ key: k, label: stepLabel(t, k) }))} current={status} /></Section>
+      <Section title={t("purchasing.return.dataTitle")}>
         <KV items={[
-          { label: "المرحلة", value: st(s(o.phase)) }, { label: "الاستلام", value: s(o.receipt_id) }, { label: "الفاتورة", value: s(o.invoice_id) },
-          { label: "المستودع", value: s(o.warehouse_id) }, { label: "صافي", value: formatCurrency(n(o.subtotal)) }, { label: "ضريبة", value: formatCurrency(n(o.vat_amount)) },
+          { label: t("purchasing.return.phase"), value: st(t, s(o.phase)) }, { label: t("purchasing.return.receipt"), value: s(o.receipt_id) }, { label: t("purchasing.return.invoice"), value: s(o.invoice_id) },
+          { label: t("purchasing.field.warehouse"), value: s(o.warehouse_id) }, { label: t("purchasing.field.net"), value: formatCurrency(n(o.subtotal)) }, { label: t("purchasing.field.vat"), value: formatCurrency(n(o.vat_amount)) },
         ]} />
       </Section>
-      <Section icon={Undo2} title="السطور">
-        <Table head={<><Th>المادة</Th><Th left>الكمية</Th><Th left>التكلفة</Th><Th left>الإجمالي</Th></>}>
+      <Section icon={Undo2} title={t("purchasing.lines.title")}>
+        <Table head={<><Th>{t("purchasing.col.item")}</Th><Th left>{t("purchasing.lines.qty")}</Th><Th left>{t("purchasing.return.colCost")}</Th><Th left>{t("purchasing.col.total")}</Th></>}>
           {lines.map((l, i) => <tr key={i}><Td>{s(l.item_name_snapshot, s(l.item_id))}</Td><Td left>{n(l.base_qty)}</Td><Td left>{formatCurrency(n(l.base_unit_cost))}</Td><Td left bold>{formatCurrency(n(l.line_total))}</Td></tr>)}
         </Table>
       </Section>

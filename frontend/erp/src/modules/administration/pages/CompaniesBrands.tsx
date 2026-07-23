@@ -21,6 +21,7 @@ import { DataTable, type ColumnDef } from "@/shared/tables";
 import { Field, FormActions, zodResolver } from "@/shared/forms";
 import { z, arabicText } from "@/shared/schemas";
 import { useCan } from "@/app/providers";
+import { useT } from "@/i18n";
 import { asArray, ensureAck, type MutationAck } from "../_common";
 import { BrandWizard } from "../brand-wizard";
 
@@ -46,15 +47,11 @@ interface BrandStat {
   employeeCount: number;
 }
 
-const CURRENCIES = [
-  { value: "SAR", label: "ريال سعودي (SAR)" },
-  { value: "AED", label: "درهم إماراتي (AED)" },
-  { value: "USD", label: "دولار أمريكي (USD)" },
-  { value: "EUR", label: "يورو (EUR)" },
-];
+const CURRENCY_VALUES = ["SAR", "AED", "USD", "EUR"] as const;
 
 // ── Company form ─────────────────────────────────────────────────────────────
 const companySchema = z.object({
+  // arabicText's interpolated {label} message stays Arabic (shared-primitives contract).
   name: arabicText({ label: "اسم الشركة" }),
   legalName: z.string().trim().max(200).optional().or(z.literal("")),
   crNumber: z.string().trim().max(50).optional().or(z.literal("")),
@@ -74,8 +71,10 @@ function CompanyFormDialog({
   initial: Company | null;
   onClose: () => void;
 }) {
+  const t = useT();
   const qc = useQueryClient();
   const { toast } = useToast();
+  const currencyOptions = CURRENCY_VALUES.map((v) => ({ value: v, label: t(`administration.companies.currency.${v}`) }));
   const {
     register,
     handleSubmit,
@@ -117,50 +116,50 @@ function CompanyFormDialog({
     },
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["erp", "companies"] });
-      toast({ title: initial ? "تم تحديث الشركة" : "تم إنشاء الشركة", tone: "success" });
+      toast({ title: initial ? t("administration.companies.toast.updated") : t("administration.companies.toast.created"), tone: "success" });
       onClose();
     },
-    onError: (e: Error) => toast({ title: "تعذّر الحفظ", description: e.message, tone: "error" }),
+    onError: (e: Error) => toast({ title: t("administration.companies.toast.saveFailed"), description: e.message, tone: "error" }),
   });
 
   return (
     <Dialog
       open={open}
       onClose={onClose}
-      title={initial ? "تعديل شركة" : "شركة جديدة"}
+      title={initial ? t("administration.companies.form.editTitle") : t("administration.companies.form.createTitle")}
       size="lg"
       dismissable={!isSubmitting}
     >
       <form onSubmit={handleSubmit((v) => mutation.mutate(v))} className="space-y-4" noValidate>
         <div className="grid gap-4 sm:grid-cols-2">
-          <Field label="اسم الشركة" required error={errors.name} className="sm:col-span-2">
+          <Field label={t("administration.companies.form.name")} required error={errors.name} className="sm:col-span-2">
             {({ id, invalid }) => <Input id={id} invalid={invalid} {...register("name")} />}
           </Field>
-          <Field label="الاسم القانوني" error={errors.legalName}>
+          <Field label={t("administration.companies.form.legalName")} error={errors.legalName}>
             {({ id }) => <Input id={id} {...register("legalName")} />}
           </Field>
-          <Field label="السجل التجاري" error={errors.crNumber}>
+          <Field label={t("administration.companies.form.crNumber")} error={errors.crNumber}>
             {({ id }) => <Input id={id} {...register("crNumber")} />}
           </Field>
-          <Field label="الرقم الضريبي" error={errors.taxNumber}>
+          <Field label={t("administration.companies.form.taxNumber")} error={errors.taxNumber}>
             {({ id }) => <Input id={id} inputMode="numeric" {...register("taxNumber")} />}
           </Field>
-          <Field label="المدينة" error={errors.city}>
+          <Field label={t("administration.companies.form.city")} error={errors.city}>
             {({ id }) => <Input id={id} {...register("city")} />}
           </Field>
-          <Field label="الدولة" error={errors.country}>
+          <Field label={t("administration.companies.form.country")} error={errors.country}>
             {({ id }) => <Input id={id} {...register("country")} />}
           </Field>
-          <Field label="العملة الأساسية" error={errors.baseCurrency}>
-            {({ id }) => <Select id={id} options={CURRENCIES} {...register("baseCurrency")} />}
+          <Field label={t("administration.companies.form.baseCurrency")} error={errors.baseCurrency}>
+            {({ id }) => <Select id={id} options={currencyOptions} {...register("baseCurrency")} />}
           </Field>
         </div>
         <FormActions>
           <Button variant="secondary" onClick={onClose} disabled={isSubmitting}>
-            إلغاء
+            {t("common.cancel")}
           </Button>
           <Button type="submit" loading={mutation.isPending}>
-            {initial ? "حفظ التغييرات" : "إنشاء"}
+            {initial ? t("administration.companies.form.saveChanges") : t("administration.companies.form.create")}
           </Button>
         </FormActions>
       </form>
@@ -170,6 +169,7 @@ function CompanyFormDialog({
 
 // ── Brand form ───────────────────────────────────────────────────────────────
 const brandSchema = z.object({
+  // arabicText's interpolated {label} message stays Arabic (shared-primitives contract).
   name: arabicText({ label: "اسم العلامة" }),
   code: z.string().trim().max(20).optional().or(z.literal("")),
   isActive: z.boolean(),
@@ -185,6 +185,7 @@ function BrandFormDialog({
   initial: BrandStat | null;
   onClose: () => void;
 }) {
+  const t = useT();
   const qc = useQueryClient();
   const { toast } = useToast();
   const {
@@ -211,38 +212,38 @@ function BrandFormDialog({
     },
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["erp", "brands-stats"] });
-      toast({ title: initial ? "تم تحديث العلامة" : "تم إنشاء العلامة", tone: "success" });
+      toast({ title: initial ? t("administration.companies.brand.toast.updated") : t("administration.companies.brand.toast.created"), tone: "success" });
       onClose();
     },
-    onError: (e: Error) => toast({ title: "تعذّر الحفظ", description: e.message, tone: "error" }),
+    onError: (e: Error) => toast({ title: t("administration.companies.brand.toast.saveFailed"), description: e.message, tone: "error" }),
   });
 
   return (
     <Dialog
       open={open}
       onClose={onClose}
-      title={initial ? "تعديل علامة تجارية" : "علامة تجارية جديدة"}
+      title={initial ? t("administration.companies.brand.form.editTitle") : t("administration.companies.brand.form.createTitle")}
       size="md"
       dismissable={!isSubmitting}
     >
       <form onSubmit={handleSubmit((v) => mutation.mutate(v))} className="space-y-4" noValidate>
-        <Field label="اسم العلامة" required error={errors.name}>
+        <Field label={t("administration.companies.brand.form.name")} required error={errors.name}>
           {({ id, invalid }) => <Input id={id} invalid={invalid} {...register("name")} />}
         </Field>
-        <Field label="الرمز" error={errors.code} hint="رمز مختصر يميّز العلامة (اختياري)">
+        <Field label={t("administration.companies.brand.form.code")} error={errors.code} hint={t("administration.companies.brand.form.codeHint")}>
           {({ id }) => <Input id={id} {...register("code")} />}
         </Field>
         <Toggle
           checked={watch("isActive")}
           onChange={(v) => setValue("isActive", v)}
-          label="علامة نشطة"
+          label={t("administration.companies.brand.form.activeToggle")}
         />
         <FormActions>
           <Button variant="secondary" onClick={onClose} disabled={isSubmitting}>
-            إلغاء
+            {t("common.cancel")}
           </Button>
           <Button type="submit" loading={mutation.isPending}>
-            {initial ? "حفظ التغييرات" : "إنشاء"}
+            {initial ? t("administration.companies.brand.form.saveChanges") : t("administration.companies.brand.form.create")}
           </Button>
         </FormActions>
       </form>
@@ -252,6 +253,7 @@ function BrandFormDialog({
 
 // ── Companies tab ────────────────────────────────────────────────────────────
 function CompaniesTab() {
+  const t = useT();
   const canManage = useCan("administration.companies");
   const [editing, setEditing] = useState<Company | null>(null);
   const [dialogOpen, setDialogOpen] = useState(false);
@@ -263,17 +265,17 @@ function CompaniesTab() {
   const rows = asArray<Company>(query.data);
 
   const columns: ColumnDef<Company>[] = [
-    { id: "name", header: "الشركة", accessor: (r) => r.name, sortable: true },
-    { id: "legalName", header: "الاسم القانوني", accessor: (r) => r.legalName || "—" },
-    { id: "crNumber", header: "السجل التجاري", accessor: (r) => r.crNumber || "—" },
-    { id: "taxNumber", header: "الرقم الضريبي", accessor: (r) => r.taxNumber || "—" },
-    { id: "city", header: "المدينة", accessor: (r) => r.city || "—" },
-    { id: "currency", header: "العملة", accessor: (r) => r.baseCurrency || "SAR" },
+    { id: "name", header: t("administration.companies.col.company"), accessor: (r) => r.name, sortable: true },
+    { id: "legalName", header: t("administration.companies.col.legalName"), accessor: (r) => r.legalName || "—" },
+    { id: "crNumber", header: t("administration.companies.col.crNumber"), accessor: (r) => r.crNumber || "—" },
+    { id: "taxNumber", header: t("administration.companies.col.taxNumber"), accessor: (r) => r.taxNumber || "—" },
+    { id: "city", header: t("administration.companies.col.city"), accessor: (r) => r.city || "—" },
+    { id: "currency", header: t("administration.companies.col.currency"), accessor: (r) => r.baseCurrency || "SAR" },
     {
       id: "status",
-      header: "الحالة",
-      accessor: (r) => (r.isActive ? "نشط" : "معطّل"),
-      cell: (r) => <StatusBadge>{r.isActive ? "نشط" : "معطّل"}</StatusBadge>,
+      header: t("administration.companies.col.status"),
+      accessor: (r) => t(r.isActive ? "status.active" : "status.disabled"),
+      cell: (r) => <StatusBadge>{r.isActive ? "active" : "disabled"}</StatusBadge>,
     },
   ];
 
@@ -287,11 +289,11 @@ function CompaniesTab() {
         error={query.error}
         onRetry={() => query.refetch()}
         searchable
-        searchPlaceholder="بحث عن شركة…"
+        searchPlaceholder={t("administration.companies.searchPlaceholder")}
         exportFilename="companies.csv"
         tableId="admin-companies"
-        emptyTitle="لا توجد شركات"
-        emptyBody="ابدأ بإضافة الشركة الأم لمجموعتك."
+        emptyTitle={t("administration.companies.empty")}
+        emptyBody={t("administration.companies.emptyBody")}
         mobileTitle={(r) => r.name}
         toolbarActions={
           canManage && (
@@ -302,7 +304,7 @@ function CompaniesTab() {
                 setDialogOpen(true);
               }}
             >
-              <Plus className="h-4 w-4" /> شركة جديدة
+              <Plus className="h-4 w-4" /> {t("administration.companies.newCompany")}
             </Button>
           )
         }
@@ -310,7 +312,7 @@ function CompaniesTab() {
           canManage
             ? (r) => (
                 <IconButton
-                  aria-label={`تعديل ${r.name}`}
+                  aria-label={t("administration.companies.editAria", { name: r.name })}
                   size="sm"
                   onClick={() => {
                     setEditing(r);
@@ -330,6 +332,7 @@ function CompaniesTab() {
 
 // ── Brands tab ───────────────────────────────────────────────────────────────
 function BrandsTab({ onOpenWizard }: { onOpenWizard?: () => void }) {
+  const t = useT();
   const canManage = useCan("administration.companies");
   const qc = useQueryClient();
   const { toast } = useToast();
@@ -347,23 +350,23 @@ function BrandsTab({ onOpenWizard }: { onOpenWizard?: () => void }) {
     mutationFn: async (id: string) => ensureAck(await apiClient.delete<MutationAck>(`/erp/brands/${id}`)),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["erp", "brands-stats"] });
-      toast({ title: "تم حذف العلامة", tone: "success" });
+      toast({ title: t("administration.companies.brand.toast.deleted"), tone: "success" });
       setDeleting(null);
     },
-    onError: (e: Error) => toast({ title: "تعذّر الحذف", description: e.message, tone: "error" }),
+    onError: (e: Error) => toast({ title: t("administration.companies.brand.toast.deleteFailed"), description: e.message, tone: "error" }),
   });
 
   const columns: ColumnDef<BrandStat>[] = [
-    { id: "name", header: "العلامة التجارية", accessor: (r) => r.name, sortable: true },
-    { id: "code", header: "الرمز", accessor: (r) => r.code || "—" },
-    { id: "branchCount", header: "الفروع", accessor: (r) => r.branchCount, numeric: true, sortable: true },
-    { id: "menuCount", header: "القوائم", accessor: (r) => r.menuCount, numeric: true },
-    { id: "employeeCount", header: "الموظفون", accessor: (r) => r.employeeCount, numeric: true },
+    { id: "name", header: t("administration.companies.brand.col.name"), accessor: (r) => r.name, sortable: true },
+    { id: "code", header: t("administration.companies.brand.col.code"), accessor: (r) => r.code || "—" },
+    { id: "branchCount", header: t("administration.companies.brand.col.branches"), accessor: (r) => r.branchCount, numeric: true, sortable: true },
+    { id: "menuCount", header: t("administration.companies.brand.col.menus"), accessor: (r) => r.menuCount, numeric: true },
+    { id: "employeeCount", header: t("administration.companies.brand.col.employees"), accessor: (r) => r.employeeCount, numeric: true },
     {
       id: "status",
-      header: "الحالة",
-      accessor: (r) => (r.isActive ? "نشط" : "معطّل"),
-      cell: (r) => <StatusBadge>{r.isActive ? "نشط" : "معطّل"}</StatusBadge>,
+      header: t("administration.companies.brand.col.status"),
+      accessor: (r) => t(r.isActive ? "status.active" : "status.disabled"),
+      cell: (r) => <StatusBadge>{r.isActive ? "active" : "disabled"}</StatusBadge>,
     },
   ];
 
@@ -377,17 +380,17 @@ function BrandsTab({ onOpenWizard }: { onOpenWizard?: () => void }) {
         error={query.error}
         onRetry={() => query.refetch()}
         searchable
-        searchPlaceholder="بحث عن علامة…"
+        searchPlaceholder={t("administration.companies.brand.searchPlaceholder")}
         exportFilename="brands.csv"
         tableId="admin-brands"
-        emptyTitle="لا توجد علامات تجارية"
+        emptyTitle={t("administration.companies.brand.empty")}
         mobileTitle={(r) => r.name}
         toolbarActions={
           canManage && (
             <div className="flex items-center gap-2">
               {onOpenWizard && (
                 <Button size="sm" variant="secondary" onClick={onOpenWizard}>
-                  <Wand2 className="h-4 w-4" /> معالج علامة جديدة
+                  <Wand2 className="h-4 w-4" /> {t("administration.companies.brand.wizardBtn")}
                 </Button>
               )}
               <Button
@@ -397,7 +400,7 @@ function BrandsTab({ onOpenWizard }: { onOpenWizard?: () => void }) {
                   setDialogOpen(true);
                 }}
               >
-                <Plus className="h-4 w-4" /> علامة جديدة
+                <Plus className="h-4 w-4" /> {t("administration.companies.brand.newBtn")}
               </Button>
             </div>
           )
@@ -407,7 +410,7 @@ function BrandsTab({ onOpenWizard }: { onOpenWizard?: () => void }) {
             ? (r) => (
                 <div className="flex items-center gap-1">
                   <IconButton
-                    aria-label={`تعديل ${r.name}`}
+                    aria-label={t("administration.companies.brand.editAria", { name: r.name })}
                     size="sm"
                     onClick={() => {
                       setEditing(r);
@@ -417,7 +420,7 @@ function BrandsTab({ onOpenWizard }: { onOpenWizard?: () => void }) {
                     <Pencil className="h-4 w-4" />
                   </IconButton>
                   <IconButton
-                    aria-label={`حذف ${r.name}`}
+                    aria-label={t("administration.companies.brand.deleteAria", { name: r.name })}
                     size="sm"
                     variant="danger"
                     onClick={() => setDeleting(r)}
@@ -432,14 +435,10 @@ function BrandsTab({ onOpenWizard }: { onOpenWizard?: () => void }) {
       <BrandFormDialog open={dialogOpen} initial={editing} onClose={() => setDialogOpen(false)} />
       <ConfirmDialog
         open={!!deleting}
-        title="حذف العلامة التجارية"
-        description={
-          deleting
-            ? `سيتم حذف «${deleting.name}». لا يمكن الحذف إذا كانت مرتبطة بفروع.`
-            : ""
-        }
+        title={t("administration.companies.brand.deleteTitle")}
+        description={deleting ? t("administration.companies.brand.deleteDesc", { name: deleting.name }) : ""}
         tone="danger"
-        confirmLabel="حذف"
+        confirmLabel={t("common.delete")}
         processing={deleteMutation.isPending}
         error={deleteMutation.isError ? (deleteMutation.error as Error).message : null}
         onConfirm={() => deleting && deleteMutation.mutate(deleting.id)}
@@ -450,6 +449,7 @@ function BrandsTab({ onOpenWizard }: { onOpenWizard?: () => void }) {
 }
 
 export default function CompaniesBrandsPage() {
+  const t = useT();
   const [tab, setTab] = useState("companies");
   const canWizard = useCan("administration.brands.wizard");
 
@@ -461,13 +461,13 @@ export default function CompaniesBrandsPage() {
   return (
     <div>
       <PageHeader
-        eyebrow="الإدارة"
-        title="الشركات والعلامات التجارية"
-        subtitle="إدارة الكيانات القانونية والعلامات التجارية للمجموعة."
-        action={<Badge tone="teal">هيكل المجموعة</Badge>}
+        eyebrow={t("administration.eyebrow")}
+        title={t("administration.companies.title")}
+        subtitle={t("administration.companies.subtitle")}
+        action={<Badge tone="teal">{t("administration.companies.structureBadge")}</Badge>}
       />
       <Tabs
-        aria-label="أقسام الشركات والعلامات"
+        aria-label={t("administration.companies.tabsAria")}
         value={tab === "wizard" ? "brands" : tab}
         onChange={setTab}
         className="mb-4"
@@ -476,7 +476,7 @@ export default function CompaniesBrandsPage() {
             value: "companies",
             label: (
               <span className="inline-flex items-center gap-1.5">
-                <Building2 className="h-4 w-4" /> الشركات
+                <Building2 className="h-4 w-4" /> {t("administration.companies.tabCompanies")}
               </span>
             ),
           },
@@ -484,7 +484,7 @@ export default function CompaniesBrandsPage() {
             value: "brands",
             label: (
               <span className="inline-flex items-center gap-1.5">
-                <Tags className="h-4 w-4" /> العلامات التجارية
+                <Tags className="h-4 w-4" /> {t("administration.companies.tabBrands")}
               </span>
             ),
           },

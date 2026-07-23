@@ -1,6 +1,7 @@
 import { useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { FileUploader, Button, Dialog, Input, Select, safeUserMessage, useToast } from "@/shared/ui";
+import { useTx } from "@/shared/ui/i18n";
 import { peopleApi } from "../../lib/api";
 import { qk } from "../../lib/query-keys";
 import { fileToInvoiceDataUrl, splitTopupAccounts, topupAccountOptions, topupRequiresAccount } from "../../lib/custody";
@@ -18,22 +19,22 @@ import type { Custody } from "../../lib/types";
 
 type Method = "cash" | "transfer" | "other";
 
-const METHOD_LABEL: Record<Method, string> = {
-  cash: "كاش",
-  transfer: "تحويل بنكي",
-  other: "أخرى",
-};
-
-const ACCOUNT_LABEL: Record<Method, string> = {
-  cash: "الصندوق النقدي",
-  transfer: "الحساب البنكي",
-  other: "مصدر التغذية (اختياري)",
-};
-
 export function TopupDialog({ custody, onClose }: { custody: Custody | null; onClose: () => void }) {
+  const t = useTx();
   const { toast } = useToast();
   const qc = useQueryClient();
   const open = !!custody;
+
+  const METHOD_LABEL: Record<Method, string> = {
+    cash: t("people.custody.topup.methodCash"),
+    transfer: t("people.custody.topup.methodTransfer"),
+    other: t("people.custody.topup.methodOther"),
+  };
+  const ACCOUNT_LABEL: Record<Method, string> = {
+    cash: t("people.custody.topup.accountCash"),
+    transfer: t("people.custody.topup.accountBank"),
+    other: t("people.custody.topup.accountOther"),
+  };
 
   const [amount, setAmount] = useState("");
   const [method, setMethod] = useState<Method>("cash");
@@ -60,12 +61,12 @@ export function TopupDialog({ custody, onClose }: { custody: Custody | null; onC
         notes,
       }),
     onSuccess: () => {
-      toast({ title: "تم تغذية الرصيد", tone: "success" });
+      toast({ title: t("people.custody.topup.done"), tone: "success" });
       reset();
       onClose();
       void qc.invalidateQueries({ queryKey: [...qk.all, "custody"] });
     },
-    onError: (e) => toast({ title: "تعذّرت التغذية", description: safeUserMessage(e), tone: "error" }),
+    onError: (e) => toast({ title: t("people.custody.topup.failed"), description: safeUserMessage(e, t), tone: "error" }),
   });
 
   function reset() {
@@ -84,9 +85,9 @@ export function TopupDialog({ custody, onClose }: { custody: Custody | null; onC
 
   function submit() {
     const amt = Number(amount) || 0;
-    if (amt <= 0) return toast({ title: "أدخل المبلغ", tone: "error" });
+    if (amt <= 0) return toast({ title: t("people.custody.topup.enterAmount"), tone: "error" });
     if (topupRequiresAccount(method) && !glAccountId) {
-      return toast({ title: method === "cash" ? "اختر الصندوق النقدي" : "اختر الحساب البنكي", tone: "error" });
+      return toast({ title: method === "cash" ? t("people.custody.topup.pickCashBox") : t("people.custody.topup.pickBankAccount"), tone: "error" });
     }
     topup.mutate();
   }
@@ -108,16 +109,16 @@ export function TopupDialog({ custody, onClose }: { custody: Custody | null; onC
     <Dialog
       open={open}
       onClose={close}
-      title="تغذية رصيد العهدة"
+      title={t("people.custody.topup.title")}
       description={custody ? `${custody.custodyNumber} — ${custody.userName}` : undefined}
       dismissable={!topup.isPending}
       footer={
         <>
           <Button variant="secondary" onClick={close} disabled={topup.isPending}>
-            إلغاء
+            {t("common.cancel")}
           </Button>
           <Button variant="primary" loading={topup.isPending} disabled={fileBusy} onClick={submit}>
-            تغذية
+            {t("people.custody.topup.submit")}
           </Button>
         </>
       }
@@ -126,7 +127,7 @@ export function TopupDialog({ custody, onClose }: { custody: Custody | null; onC
         <div className="grid gap-4 sm:grid-cols-2">
           <label className="block">
             <span className="text-xs font-bold text-slate-600">
-              المبلغ <span className="text-rose-600">*</span>
+              {t("people.custody.topup.amount")} <span className="text-rose-600">*</span>
             </span>
             <Input
               className="mt-1"
@@ -139,7 +140,7 @@ export function TopupDialog({ custody, onClose }: { custody: Custody | null; onC
             />
           </label>
           <label className="block">
-            <span className="text-xs font-bold text-slate-600">طريقة الدفع</span>
+            <span className="text-xs font-bold text-slate-600">{t("people.custody.topup.method")}</span>
             <Select
               className="mt-1"
               value={method}
@@ -168,7 +169,7 @@ export function TopupDialog({ custody, onClose }: { custody: Custody | null; onC
             disabled={accounts.isLoading}
             onChange={(e) => setGlAccountId(e.target.value)}
           >
-            <option value="">{accounts.isLoading ? "جارٍ تحميل الحسابات…" : "— اختر الحساب —"}</option>
+            <option value="">{accounts.isLoading ? t("people.custody.topup.accountsLoading") : t("people.custody.topup.pickAccount")}</option>
             {options.map((a) => (
               <option key={a.id} value={a.id}>
                 {a.code} — {a.nameAr || ""}
@@ -178,16 +179,16 @@ export function TopupDialog({ custody, onClose }: { custody: Custody | null; onC
         </label>
 
         <label className="block">
-          <span className="text-xs font-bold text-slate-600">ملاحظات</span>
+          <span className="text-xs font-bold text-slate-600">{t("people.custody.topup.notes")}</span>
           <Input className="mt-1" value={notes} onChange={(e) => setNotes(e.target.value)} />
         </label>
 
         <div>
-          <span className="text-xs font-bold text-slate-600">صورة الإيصال (اختياري)</span>
+          <span className="text-xs font-bold text-slate-600">{t("people.custody.topup.receipt")}</span>
           <div className="mt-1">
             <FileUploader accept="image/*,application/pdf" onFiles={(f) => void onFiles(f)} disabled={fileBusy} />
           </div>
-          {receipt && <p className="mt-1 text-xs font-medium text-teal-700">تم إرفاق: {receipt.name}</p>}
+          {receipt && <p className="mt-1 text-xs font-medium text-teal-700">{t("people.custody.topup.attached", { name: receipt.name })}</p>}
         </div>
       </div>
     </Dialog>

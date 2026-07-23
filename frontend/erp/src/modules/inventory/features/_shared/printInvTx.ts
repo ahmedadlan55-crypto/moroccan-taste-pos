@@ -1,6 +1,7 @@
 import type { InvTxConfig } from "./invtxConfig";
 import type { InvTxDetail } from "@/modules/inventory/lib/adapters/invtx.adapter";
 import { invTxStatusToLabel } from "@/modules/inventory/lib/status-labels";
+import type { TFunction } from "@/i18n";
 
 // Open a clean, RTL Arabic print view of a document in a new window and trigger
 // the browser print dialog. Self-contained (inline styles) so it prints
@@ -11,11 +12,12 @@ function esc(s: unknown): string {
 function money(n: number): string { return (Number(n) || 0).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 }); }
 function qty(n: number): string { return (Number(n) || 0).toLocaleString("en-US", { maximumFractionDigits: 2 }); }
 
-export function printInvTx(config: InvTxConfig, d: InvTxDetail): void {
+export function printInvTx(config: InvTxConfig, d: InvTxDetail, t: TFunction): void {
+  const p = (k: string, vars?: Record<string, string | number>) => t(`inventoryRest.invtxPrint.${k}`, vars);
   const isAdj = config.lineMode === "adjustment";
   const head = isAdj
-    ? "<tr><th>الصنف</th><th>رصيد النظام</th><th>المجرود</th><th>الفرق</th><th>القيمة</th></tr>"
-    : "<tr><th>الصنف</th><th>الكمية</th><th>تكلفة الوحدة</th><th>الإجمالي</th></tr>";
+    ? `<tr><th>${esc(p("colItem"))}</th><th>${esc(p("colSystemQty"))}</th><th>${esc(p("colCounted"))}</th><th>${esc(p("colDelta"))}</th><th>${esc(p("colValue"))}</th></tr>`
+    : `<tr><th>${esc(p("colItem"))}</th><th>${esc(p("colQty"))}</th><th>${esc(p("colUnitCost"))}</th><th>${esc(p("colTotal"))}</th></tr>`;
   const rows = d.lines
     .map((l) =>
       isAdj
@@ -41,16 +43,16 @@ export function printInvTx(config: InvTxConfig, d: InvTxDetail): void {
     <div style="text-align:left"><span class="badge">${esc(invTxStatusToLabel(d.status))}</span><div class="muted">${esc(d.date ?? "")}</div></div>
   </div>
   <div class="grid">
-    <div class="cell"><b>المستودع</b>${esc(d.warehouse.name || d.warehouse.id)}</div>
-    <div class="cell"><b>القيمة</b>${money(d.totalValue)}</div>
-    <div class="cell"><b>عدد الأصناف</b>${d.lines.length}</div>
-    ${d.reason ? `<div class="cell"><b>السبب</b>${esc(d.reason)}</div>` : ""}
-    ${d.sourceRef ? `<div class="cell"><b>المرجع</b>${esc(d.sourceRef)}</div>` : ""}
-    ${d.recipient ? `<div class="cell"><b>الجهة</b>${esc(d.recipient)}</div>` : ""}
+    <div class="cell"><b>${esc(p("warehouse"))}</b>${esc(d.warehouse.name || d.warehouse.id)}</div>
+    <div class="cell"><b>${esc(p("value"))}</b>${money(d.totalValue)}</div>
+    <div class="cell"><b>${esc(p("itemCount"))}</b>${d.lines.length}</div>
+    ${d.reason ? `<div class="cell"><b>${esc(p("reason"))}</b>${esc(d.reason)}</div>` : ""}
+    ${d.sourceRef ? `<div class="cell"><b>${esc(p("ref"))}</b>${esc(d.sourceRef)}</div>` : ""}
+    ${d.recipient ? `<div class="cell"><b>${esc(p("recipient"))}</b>${esc(d.recipient)}</div>` : ""}
   </div>
   <table><thead>${head}</thead><tbody>${rows}</tbody></table>
-  <div class="total">الإجمالي: ${money(d.totalValue)}</div>
-  <div class="sign"><span>أعدّه: ${esc(d.actors.createdBy || "—")}</span><span>اعتمده: ${esc(d.actors.approvedBy || "—")}</span><span>رحّله: ${esc(d.actors.postedBy || "—")}</span></div>
+  <div class="total">${esc(p("total", { value: money(d.totalValue) }))}</div>
+  <div class="sign"><span>${esc(p("preparedBy", { name: d.actors.createdBy || "—" }))}</span><span>${esc(p("approvedBy", { name: d.actors.approvedBy || "—" }))}</span><span>${esc(p("postedBy", { name: d.actors.postedBy || "—" }))}</span></div>
 </body></html>`;
   const w = window.open("", "_blank", "width=820,height=900");
   if (!w) return;

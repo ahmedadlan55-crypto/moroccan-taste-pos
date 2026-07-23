@@ -1,6 +1,7 @@
 import { render, screen, waitFor } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { I18nProvider } from "@/i18n";
 import CustomersModule from "@/modules/customers";
 
 // Mock only shared apiClient.get; the real o2cApi + shared kit render the list.
@@ -30,9 +31,11 @@ function renderAt(path: string) {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   return render(
     <QueryClientProvider client={client}>
-      <MemoryRouter initialEntries={[path]}>
-        <CustomersModule />
-      </MemoryRouter>
+      <I18nProvider>
+        <MemoryRouter initialEntries={[path]}>
+          <CustomersModule />
+        </MemoryRouter>
+      </I18nProvider>
     </QueryClientProvider>,
   );
 }

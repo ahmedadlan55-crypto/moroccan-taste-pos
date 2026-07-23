@@ -32,6 +32,7 @@ import { test, expect, request as pwRequest, type Page, type APIRequestContext }
 import fs from "fs";
 import path from "path";
 
+import { e2eDbConfig } from "../e2e-db-name";
 /* eslint-disable @typescript-eslint/no-var-requires */
 const jwt = require("jsonwebtoken");
 const mysql = require("mysql2/promise");
@@ -72,7 +73,7 @@ test.beforeAll(async () => {
   );
 
   db = await mysql.createConnection({
-    host: e.DB_HOST, port: Number(e.DB_PORT), user: e.DB_USER, password: e.DB_PASSWORD, database: e.DB_NAME,
+    ...e2eDbConfig(e), // database ALWAYS from e2e/e2e-db-name.ts — never .env DB_NAME
   });
 
   // ITEST- tagged catalog fixture (no recipe → no stock relief to unwind).

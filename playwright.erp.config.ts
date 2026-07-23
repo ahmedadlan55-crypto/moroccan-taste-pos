@@ -17,13 +17,17 @@ export default defineConfig({
   workers: 1,
   retries: 0,
   reporter: [["list"]],
-  globalSetup: "./e2e/accounting-global-setup.ts",
+  // Provisions the isolated E2E database clone, THEN signs the admin JWT.
+  globalSetup: "./e2e/erp-global-setup.ts",
   outputDir: "./artifacts/e2e/erp/_output",
   use: {
     baseURL: "http://127.0.0.1:3027",
-    trace: "off",
-    video: "off",
-    screenshot: "off",
+    // Diagnostics kept ON for failures only: a trace + video + the failure
+    // screenshot is the difference between "it went red again" and an actual
+    // root cause. `retain-on-failure` costs nothing on a green run.
+    trace: "retain-on-failure",
+    video: "retain-on-failure",
+    screenshot: "only-on-failure",
   },
   webServer: {
     command: "node server.js",
@@ -33,6 +37,17 @@ export default defineConfig({
     env: {
       PORT: "3027",
       NODE_ENV: "development",
+      // ISOLATION — the server under test talks to a throwaway CLONE of the
+      // development database, recreated by globalSetup before every run.
+      // Without these two lines this config ran `node server.js` with no
+      // override, so the entire gate wrote to the REAL development database:
+      // no run could honestly claim zero dev writes, state accumulated between
+      // runs (so a spec could legitimately pass alone and fail in the suite),
+      // and the visual baselines photographed a catalog that kept changing
+      // underneath them. BOTH names are set because db/connection.js resolves
+      // MYSQL_DATABASE first and falls back to DB_NAME.
+      DB_NAME: process.env.E2E_DB_NAME || "moroccan_taste_pos_e2e",
+      MYSQL_DATABASE: process.env.E2E_DB_NAME || "moroccan_taste_pos_e2e",
       ERP_UNIFIED_ENABLED: "1",
       WAREHOUSE_V2_ENABLED: "1",
       PROCUREMENT_P2P_ENABLE: "1",

@@ -16,6 +16,7 @@
 import { useRef, useState } from "react";
 import { ImagePlus, Trash2 } from "lucide-react";
 import { Button } from "@/shared/ui";
+import { useTx } from "@/shared/ui/i18n";
 import { useCan } from "@/shared/permissions";
 import {
   IMAGE_MAX_SIDE,
@@ -23,6 +24,7 @@ import {
   fitWithin,
   dataUrlDecodedBytes,
   downscaleImageFile,
+  imagePrepMessage,
 } from "./imageCompression";
 
 export { IMAGE_MAX_SIDE, IMAGE_MAX_DECODED_BYTES, fitWithin, dataUrlDecodedBytes, downscaleImageFile };
@@ -37,6 +39,7 @@ export interface ItemImageEditorProps {
 }
 
 export function ItemImageEditor({ current, pending, onChange, disabled }: ItemImageEditorProps) {
+  const t = useTx();
   const canManage = useCan("menu.catalog.manage");
   const inputRef = useRef<HTMLInputElement>(null);
   const [busy, setBusy] = useState(false);
@@ -52,7 +55,7 @@ export function ItemImageEditor({ current, pending, onChange, disabled }: ItemIm
     try {
       onChange(await downscaleImageFile(file));
     } catch (e) {
-      setError(e instanceof Error ? e.message : "تعذّر تجهيز الصورة");
+      setError(imagePrepMessage(e, t));
     } finally {
       setBusy(false);
       if (inputRef.current) inputRef.current.value = ""; // re-picking the same file must re-fire onChange
@@ -61,11 +64,11 @@ export function ItemImageEditor({ current, pending, onChange, disabled }: ItemIm
 
   return (
     <div className="rounded-xl border border-slate-100 bg-slate-50 p-3">
-      <span className="text-xs font-bold text-slate-600">صورة الصنف</span>
+      <span className="text-xs font-bold text-slate-600">{t("menuRest.itemImage.label")}</span>
       <div className="mt-2 flex items-center gap-3">
         <div className="flex h-20 w-20 shrink-0 items-center justify-center overflow-hidden rounded-xl border border-slate-200 bg-white">
           {preview ? (
-            <img src={preview} alt="صورة الصنف" data-testid="item-image-preview" className="h-full w-full object-cover" />
+            <img src={preview} alt={t("menuRest.itemImage.previewAlt")} data-testid="item-image-preview" className="h-full w-full object-cover" />
           ) : (
             <ImagePlus className="h-6 w-6 text-slate-300" aria-hidden />
           )}
@@ -76,12 +79,12 @@ export function ItemImageEditor({ current, pending, onChange, disabled }: ItemIm
             type="file"
             accept="image/jpeg,image/png,image/webp"
             className="sr-only"
-            aria-label="اختيار صورة الصنف"
+            aria-label={t("menuRest.itemImage.pickAria")}
             disabled={disabled || busy}
             onChange={(e) => void onPick(e.target.files?.[0] ?? null)}
           />
           <Button type="button" variant="secondary" size="sm" loading={busy} disabled={disabled} onClick={() => inputRef.current?.click()}>
-            <ImagePlus className="h-4 w-4" aria-hidden /> {preview ? "تغيير الصورة" : "إضافة صورة"}
+            <ImagePlus className="h-4 w-4" aria-hidden /> {preview ? t("menuRest.itemImage.change") : t("menuRest.itemImage.add")}
           </Button>
           {preview ? (
             <Button
@@ -97,13 +100,13 @@ export function ItemImageEditor({ current, pending, onChange, disabled }: ItemIm
                 onChange(current ? "" : undefined);
               }}
             >
-              <Trash2 className="h-4 w-4" aria-hidden /> إزالة الصورة
+              <Trash2 className="h-4 w-4" aria-hidden /> {t("menuRest.itemImage.remove")}
             </Button>
           ) : null}
         </div>
       </div>
       <p className="mt-2 text-[11px] font-medium text-slate-400">
-        تُصغَّر تلقائيًا إلى {IMAGE_MAX_SIDE} بكسل (JPEG) قبل الحفظ، وتظهر في شاشة الكاشير بعد الحفظ.
+        {t("menuRest.itemImage.hint", { size: IMAGE_MAX_SIDE })}
       </p>
       {error ? <p className="mt-1 text-xs font-bold text-rose-600">{error}</p> : null}
     </div>

@@ -31,12 +31,32 @@
 -- ensure their OWN column at startup/first-request (INFORMATION_SCHEMA-
 -- guarded — routes/pos-v2.js's existing `_ensureSchema()`, and the new
 -- `_ensureShiftsSchema()` added to routes/shifts.js following the same
--- pattern). This file is the readable reference / fresh-install supplement
--- — NOT the live migration path.
+-- pattern).
+--
+-- Tier A.2 corrective gate, Section 6 — this file's own header claimed it
+-- is "NOT the live migration path", but db/migrate.js's real runner picks
+-- it up regardless (same false-claim pattern as 0013/0017). Worse, on a
+-- real boot server.js's own legacy wiring (the "copy verbatim" block above,
+-- now correctly ordered after pos_orders' CREATE TABLE — see the Tier A.2
+-- Section 6 comment near that block) ALSO adds these same columns/indexes,
+-- so plain ALTER/CREATE INDEX here would hit "Duplicate column"/"Duplicate
+-- key" the moment both paths run against the same DB. Same
+-- INFORMATION_SCHEMA + PREPARE/EXECUTE guard pattern as
+-- 0002_sales_numbering.sql for genuine idempotency either way.
 -- ════════════════════════════════════════════════════════════════════
 
-ALTER TABLE pos_orders ADD COLUMN branch_id VARCHAR(50) NULL;
-ALTER TABLE shifts     ADD COLUMN branch_id VARCHAR(50) NULL;
+SET @col_exists = (SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'pos_orders' AND COLUMN_NAME = 'branch_id');
+SET @stmt = IF(@col_exists = 0, 'ALTER TABLE pos_orders ADD COLUMN branch_id VARCHAR(50) NULL', 'SELECT 1');
+PREPARE stmt FROM @stmt; EXECUTE stmt; DEALLOCATE PREPARE stmt;
 
-CREATE INDEX idx_pos_orders_branch ON pos_orders(branch_id);
-CREATE INDEX idx_shifts_branch     ON shifts(branch_id);
+SET @col_exists = (SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'shifts' AND COLUMN_NAME = 'branch_id');
+SET @stmt = IF(@col_exists = 0, 'ALTER TABLE shifts ADD COLUMN branch_id VARCHAR(50) NULL', 'SELECT 1');
+PREPARE stmt FROM @stmt; EXECUTE stmt; DEALLOCATE PREPARE stmt;
+
+SET @idx_exists = (SELECT COUNT(*) FROM INFORMATION_SCHEMA.STATISTICS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'pos_orders' AND INDEX_NAME = 'idx_pos_orders_branch');
+SET @stmt = IF(@idx_exists = 0, 'CREATE INDEX idx_pos_orders_branch ON pos_orders(branch_id)', 'SELECT 1');
+PREPARE stmt FROM @stmt; EXECUTE stmt; DEALLOCATE PREPARE stmt;
+
+SET @idx_exists = (SELECT COUNT(*) FROM INFORMATION_SCHEMA.STATISTICS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'shifts' AND INDEX_NAME = 'idx_shifts_branch');
+SET @stmt = IF(@idx_exists = 0, 'CREATE INDEX idx_shifts_branch ON shifts(branch_id)', 'SELECT 1');
+PREPARE stmt FROM @stmt; EXECUTE stmt; DEALLOCATE PREPARE stmt;

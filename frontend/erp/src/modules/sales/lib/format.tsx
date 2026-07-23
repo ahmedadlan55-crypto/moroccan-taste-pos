@@ -7,7 +7,8 @@
 import type { ReactNode } from "react";
 import { formatCurrency, formatNumber, formatDate } from "@/shared/lib";
 import { StatusBadge, type StatusTone } from "@/shared/ui";
-import { statusMeta, type Tone } from "./status-labels";
+import { useTx } from "@/shared/ui/i18n";
+import { statusTone, statusLabel, type Tone } from "./status-labels";
 import { cn } from "@/shared/lib";
 
 // Map the O2C status tone vocabulary onto the shared StatusBadge semantic tones.
@@ -21,11 +22,11 @@ const TONE_TO_STATUS: Record<Tone, StatusTone> = {
   violet: "purple",
 };
 
-/** Status pill — resolves the Arabic label + tone from the status string and
+/** Status pill — resolves the localized label + tone from the status string and
  *  renders the shared <StatusBadge> (dot + text, never colour-only). */
 export function SalesStatus({ status }: { status: string | null | undefined }) {
-  const m = statusMeta(status);
-  return <StatusBadge tone={TONE_TO_STATUS[m.tone]}>{m.label}</StatusBadge>;
+  const t = useTx();
+  return <StatusBadge tone={TONE_TO_STATUS[statusTone(status)]}>{statusLabel(status, t)}</StatusBadge>;
 }
 
 /** Money cell — English digits, LTR, tabular; Arabic currency label. */

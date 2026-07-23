@@ -1,4 +1,5 @@
 import type { ReactNode } from "react";
+import { useTx } from "./i18n";
 
 export interface PageHeaderProps {
   eyebrow?: string;
@@ -9,6 +10,7 @@ export interface PageHeaderProps {
 
 /** The one page title block: eyebrow + H1 + subtitle + right-aligned actions. */
 export function PageHeader({ eyebrow, title, subtitle, action }: PageHeaderProps) {
+  const t = useTx();
   return (
     <div className="mb-7 flex min-w-0 flex-col gap-4 xl:flex-row xl:items-end xl:justify-between">
       <div className="min-w-0">
@@ -19,7 +21,7 @@ export function PageHeader({ eyebrow, title, subtitle, action }: PageHeaderProps
       {action && (
         <div
           className="grid w-full min-w-0 grid-cols-1 gap-2 sm:flex sm:w-auto sm:flex-wrap sm:items-center sm:justify-end [&>*]:min-w-0 [&>button]:w-full sm:[&>button]:w-auto"
-          aria-label="إجراءات الصفحة"
+          aria-label={t("sharedUi.pageHeader.actions")}
         >
           {action}
         </div>

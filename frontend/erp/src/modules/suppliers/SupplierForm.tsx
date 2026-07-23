@@ -4,6 +4,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import { Building2, Plus, Trash2 } from "lucide-react";
 import { Drawer, Button, Select, SegmentedControl, IconButton, safeUserMessage } from "@/shared/ui";
 import { Field, zodResolver } from "@/shared/forms";
+import { useT, useLang } from "@/i18n";
 import { useCoaAccounts, useCostCenterDims } from "@/modules/banking/api";
 import {
   useSupplier, useCreateSupplier, useUpdateSupplier,
@@ -19,6 +20,8 @@ const EMPTY: SupplierInput = {
 };
 
 export function SupplierForm({ open, onClose, supplierId }: { open: boolean; onClose: () => void; supplierId?: string | null }) {
+  const t = useT();
+  const lang = useLang();
   const qc = useQueryClient();
   const editing = !!supplierId;
   const detail = useSupplier(editing ? supplierId! : null);
@@ -91,17 +94,30 @@ export function SupplierForm({ open, onClose, supplierId }: { open: boolean; onC
     onClose();
   }
 
+  // Editing title shows the record's own name (business data); prefer the
+  // English name in the English UI when the record carries one.
+  const editRecord = detail.data as Record<string, unknown> | undefined;
+  const editTitle = lang === "en" && editRecord?.name_en ? String(editRecord.name_en) : String(editRecord?.name ?? "");
+
   return (
     <Drawer
       open={open}
       onClose={onClose}
       icon={Building2}
-      eyebrow={editing ? "تعديل مورد" : "مورد جديد"}
-      title={editing ? String((detail.data as Record<string, unknown> | undefined)?.name ?? "") : "إضافة مورد"}
+      /* Release integration — sprint's t() side is kept (its editTitle also
+         prefers name_en in the English UI, which the accounting side could not
+         do). The accounting side's real change here was the create-mode title
+         "إضافة مورد" -> "إضافة مورد جديد" (closure-gate fix af80f2f: the old
+         title collided with the eyebrow "مورد جديد"). That fix now lives in
+         the dictionary — see purchasing.suppliers.form.addTitle in
+         i18n/dictionaries/ar. Resolving to sprint's side alone would have
+         silently reverted it, with no conflict marker pointing anywhere. */
+      eyebrow={editing ? t("purchasing.suppliers.form.editEyebrow") : t("purchasing.suppliers.newSupplier")}
+      title={editing ? editTitle : t("purchasing.suppliers.form.addTitle")}
       footer={
         <div className="flex w-full items-center justify-end gap-2">
-          <Button variant="ghost" onClick={onClose}>إلغاء</Button>
-          <Button loading={saving} onClick={handleSubmit(onSubmit)}>{editing ? "حفظ التعديلات" : "حفظ المورد"}</Button>
+          <Button variant="ghost" onClick={onClose}>{t("common.cancel")}</Button>
+          <Button loading={saving} onClick={handleSubmit(onSubmit)}>{editing ? t("purchasing.common.saveChanges") : t("purchasing.suppliers.form.saveSupplier")}</Button>
         </div>
       }
     >
@@ -113,32 +129,32 @@ export function SupplierForm({ open, onClose, supplierId }: { open: boolean; onC
         )}
 
         <div className="rounded-xl border border-slate-200 bg-slate-50/60 p-3">
-          <div className="mb-2 text-xs font-extrabold text-slate-500">المنشأة والتسجيل الضريبي</div>
+          <div className="mb-2 text-xs font-extrabold text-slate-500">{t("purchasing.suppliers.form.entityVatSection")}</div>
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-            <Field label="اسم المورد" required error={errors.name} className="sm:col-span-2">
-              <input className="field w-full" aria-label="اسم المورد" {...register("name")} />
+            <Field label={t("purchasing.suppliers.form.name")} required error={errors.name} className="sm:col-span-2">
+              <input className="field w-full" aria-label={t("purchasing.suppliers.form.name")} {...register("name")} />
             </Field>
-            <Field label="الاسم بالإنجليزية"><input dir="ltr" className="field w-full" {...register("nameEn")} /></Field>
-            <Field label="الهاتف"><input dir="ltr" className="field w-full tabular-nums" {...register("phone")} /></Field>
-            <Field label="التسجيل في ضريبة القيمة المضافة" className="sm:col-span-2">
+            <Field label={t("purchasing.suppliers.form.nameEn")}><input dir="ltr" className="field w-full" {...register("nameEn")} /></Field>
+            <Field label={t("purchasing.suppliers.field.phone")}><input dir="ltr" className="field w-full tabular-nums" {...register("phone")} /></Field>
+            <Field label={t("purchasing.suppliers.form.vatRegistration")} className="sm:col-span-2">
               <Controller
                 control={control}
                 name="vatRegistered"
                 render={({ field }) => (
                   <SegmentedControl
-                    aria-label="التسجيل في ضريبة القيمة المضافة"
+                    aria-label={t("purchasing.suppliers.form.vatRegistration")}
                     value={field.value ? "registered" : "unregistered"}
                     onChange={(v) => field.onChange(v === "registered")}
                     options={[
-                      { value: "registered", label: "مسجَّل في الضريبة" },
-                      { value: "unregistered", label: "غير مسجَّل" },
+                      { value: "registered", label: t("purchasing.suppliers.form.vatRegistered") },
+                      { value: "unregistered", label: t("purchasing.suppliers.form.vatUnregistered") },
                     ]}
                   />
                 )}
               />
             </Field>
             {vatRegistered && (
-              <Field label="الرقم الضريبي" error={errors.vatNumber} className="sm:col-span-2">
+              <Field label={t("purchasing.suppliers.field.vatNumber")} error={errors.vatNumber} className="sm:col-span-2">
                 <input dir="ltr" className="field w-full tabular-nums" {...register("vatNumber")} />
               </Field>
             )}
@@ -146,42 +162,42 @@ export function SupplierForm({ open, onClose, supplierId }: { open: boolean; onC
         </div>
 
         <div className="rounded-xl border border-slate-200 bg-slate-50/60 p-3">
-          <div className="mb-2 text-xs font-extrabold text-slate-500">العنوان</div>
+          <div className="mb-2 text-xs font-extrabold text-slate-500">{t("purchasing.suppliers.form.addressSection")}</div>
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
-            <Field label="المدينة"><input className="field w-full" {...register("city")} /></Field>
-            <Field label="الحي"><input className="field w-full" {...register("district")} /></Field>
-            <Field label="الرمز البريدي"><input dir="ltr" className="field w-full tabular-nums" {...register("postalCode")} /></Field>
-            <Field label="الشارع" className="sm:col-span-2"><input className="field w-full" {...register("street")} /></Field>
-            <Field label="رقم المبنى"><input dir="ltr" className="field w-full tabular-nums" {...register("buildingNumber")} /></Field>
-            <Field label="الرقم الفرعي للعنوان" hint="اختياري" className="sm:col-span-3">
+            <Field label={t("purchasing.suppliers.field.city")}><input className="field w-full" {...register("city")} /></Field>
+            <Field label={t("purchasing.suppliers.field.district")}><input className="field w-full" {...register("district")} /></Field>
+            <Field label={t("purchasing.suppliers.field.postalCode")}><input dir="ltr" className="field w-full tabular-nums" {...register("postalCode")} /></Field>
+            <Field label={t("purchasing.suppliers.field.street")} className="sm:col-span-2"><input className="field w-full" {...register("street")} /></Field>
+            <Field label={t("purchasing.suppliers.field.buildingNumber")}><input dir="ltr" className="field w-full tabular-nums" {...register("buildingNumber")} /></Field>
+            <Field label={t("purchasing.suppliers.form.additionalNo")} hint={t("purchasing.common.optional")} className="sm:col-span-3">
               <input dir="ltr" className="field w-full tabular-nums sm:w-1/3" {...register("additionalNo")} />
             </Field>
           </div>
         </div>
 
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-          <Field label="البريد الإلكتروني" error={errors.email}><input dir="ltr" className="field w-full" {...register("email")} /></Field>
-          <Field label="شروط الدفع">
+          <Field label={t("purchasing.suppliers.form.email")} error={errors.email}><input dir="ltr" className="field w-full" {...register("email")} /></Field>
+          <Field label={t("purchasing.suppliers.field.paymentTerms")}>
             <select className="field w-full" {...register("paymentTerms")}>
-              <option value="Cash">نقدي Cash</option>
-              <option value="Net30">آجل 30 يومًا</option>
-              <option value="Net60">آجل 60 يومًا</option>
+              <option value="Cash">{t("purchasing.suppliers.form.termCash")}</option>
+              <option value="Net30">{t("purchasing.suppliers.form.termNet30")}</option>
+              <option value="Net60">{t("purchasing.suppliers.form.termNet60")}</option>
             </select>
           </Field>
         </div>
 
         <div className="rounded-xl border border-teal-100 bg-teal-50/40 p-3">
-          <div className="mb-2 text-xs font-extrabold text-teal-800">البيانات الافتراضية في المشتريات (اختياري)</div>
+          <div className="mb-2 text-xs font-extrabold text-teal-800">{t("purchasing.suppliers.form.defaultsSection")}</div>
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-            <Field label="حساب المصروفات الافتراضي">
-              <Select {...register("defaultExpenseAccountId")} disabled={coa.isLoading} placeholder="بدون">
+            <Field label={t("purchasing.suppliers.form.defaultExpenseAccount")}>
+              <Select {...register("defaultExpenseAccountId")} disabled={coa.isLoading} placeholder={t("purchasing.suppliers.form.none")}>
                 {expenseAccounts.map((a) => (
                   <option key={a.id} value={a.id}>{a.code} — {a.nameAr}</option>
                 ))}
               </Select>
             </Field>
-            <Field label="مركز تكلفة المصروفات الافتراضي">
-              <Select {...register("defaultExpenseCostCenterId")} disabled={costCenters.isLoading} placeholder="بدون">
+            <Field label={t("purchasing.suppliers.form.defaultCostCenter")}>
+              <Select {...register("defaultExpenseCostCenterId")} disabled={costCenters.isLoading} placeholder={t("purchasing.suppliers.form.none")}>
                 {(costCenters.data ?? []).map((c) => (
                   <option key={c.id} value={c.id}>{c.label}</option>
                 ))}
@@ -192,26 +208,26 @@ export function SupplierForm({ open, onClose, supplierId }: { open: boolean; onC
 
         <div className="rounded-xl border border-slate-200 p-3">
           <div className="mb-2 flex items-center justify-between">
-            <span className="text-xs font-extrabold text-slate-500">المستفيدون (اختياري)</span>
+            <span className="text-xs font-extrabold text-slate-500">{t("purchasing.suppliers.form.beneficiariesSection")}</span>
             <Button
               size="sm"
               variant="secondary"
               onClick={() => append({ bankName: "", accountName: "", accountNumber: "", iban: "" })}
             >
-              <Plus className="h-4 w-4" /> أضف مستفيد
+              <Plus className="h-4 w-4" /> {t("purchasing.suppliers.form.addBeneficiary")}
             </Button>
           </div>
           {fields.length === 0 ? (
-            <p className="px-1 py-2 text-xs font-semibold text-slate-400">لا يوجد مستفيدون بعد.</p>
+            <p className="px-1 py-2 text-xs font-semibold text-slate-400">{t("purchasing.suppliers.form.noBeneficiaries")}</p>
           ) : (
             <div className="flex flex-col gap-3">
               {fields.map((f, i) => (
                 <div key={f.id} className="grid grid-cols-1 gap-2 rounded-lg border border-slate-100 bg-slate-50/60 p-2 sm:grid-cols-[1fr_1fr_1fr_1fr_auto]">
-                  <input className="field w-full" placeholder="اسم البنك" {...register(`beneficiaries.${i}.bankName` as const)} />
-                  <input className="field w-full" placeholder="اسم صاحب الحساب" {...register(`beneficiaries.${i}.accountName` as const)} />
-                  <input dir="ltr" className="field w-full tabular-nums" placeholder="رقم الحساب" {...register(`beneficiaries.${i}.accountNumber` as const)} />
+                  <input className="field w-full" placeholder={t("purchasing.suppliers.form.bankName")} {...register(`beneficiaries.${i}.bankName` as const)} />
+                  <input className="field w-full" placeholder={t("purchasing.suppliers.form.accountName")} {...register(`beneficiaries.${i}.accountName` as const)} />
+                  <input dir="ltr" className="field w-full tabular-nums" placeholder={t("purchasing.suppliers.form.accountNumber")} {...register(`beneficiaries.${i}.accountNumber` as const)} />
                   <input dir="ltr" className="field w-full tabular-nums" placeholder="IBAN" {...register(`beneficiaries.${i}.iban` as const)} />
-                  <IconButton aria-label="حذف المستفيد" variant="secondary" onClick={() => removeBeneficiary(i)}>
+                  <IconButton aria-label={t("purchasing.suppliers.form.removeBeneficiary")} variant="secondary" onClick={() => removeBeneficiary(i)}>
                     <Trash2 className="h-4 w-4 text-rose-600" />
                   </IconButton>
                 </div>

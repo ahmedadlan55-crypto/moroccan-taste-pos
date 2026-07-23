@@ -2,6 +2,7 @@ import { useEffect, useState, type ReactNode } from "react";
 import { AlertTriangle } from "lucide-react";
 import { Dialog } from "./dialog";
 import { Button } from "./button";
+import { useTx } from "./i18n";
 
 // Strong confirmation modal for lifecycle actions: centered dialog, optional
 // MANDATORY reason (cancel/reverse), a clear processing state that blocks a
@@ -26,17 +27,18 @@ export function ConfirmDialog({
   open,
   title,
   description,
-  confirmLabel = "تأكيد",
-  cancelLabel = "إلغاء",
+  confirmLabel,
+  cancelLabel,
   tone = "primary",
   requireReason = false,
-  reasonLabel = "السبب",
-  reasonPlaceholder = "اكتب السبب…",
+  reasonLabel,
+  reasonPlaceholder,
   processing = false,
   error = null,
   onConfirm,
   onClose,
 }: ConfirmDialogProps) {
+  const t = useTx();
   const [reason, setReason] = useState("");
 
   // Reset the reason whenever the dialog opens fresh.
@@ -57,7 +59,7 @@ export function ConfirmDialog({
       footer={
         <>
           <Button variant="secondary" onClick={onClose} disabled={processing}>
-            {cancelLabel}
+            {cancelLabel ?? t("common.cancel")}
           </Button>
           <Button
             variant={tone === "danger" ? "danger" : "primary"}
@@ -65,7 +67,7 @@ export function ConfirmDialog({
             disabled={!reasonOk}
             loading={processing}
           >
-            {confirmLabel}
+            {confirmLabel ?? t("common.confirm")}
           </Button>
         </>
       }
@@ -89,18 +91,18 @@ export function ConfirmDialog({
       {requireReason && (
         <label className="mt-4 block">
           <span className="text-xs font-bold text-slate-600">
-            {reasonLabel} <span className="text-rose-600">*</span>
+            {reasonLabel ?? t("confirmDialog.reasonLabel")} <span className="text-rose-600">*</span>
           </span>
           <textarea
             className="field mt-1 min-h-20 w-full resize-y py-2"
-            placeholder={reasonPlaceholder}
+            placeholder={reasonPlaceholder ?? t("confirmDialog.reasonPlaceholder")}
             value={reason}
             disabled={processing}
             onChange={(e) => setReason(e.target.value)}
           />
           {!reasonOk && reason.length > 0 && (
             <span className="mt-1 block text-xs font-bold text-rose-600">
-              السبب يجب أن يكون 3 أحرف على الأقل.
+              {t("confirmDialog.reasonTooShort")}
             </span>
           )}
         </label>

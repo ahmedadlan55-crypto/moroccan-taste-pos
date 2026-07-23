@@ -16,20 +16,24 @@ import {
 import { DataTable, type ColumnDef } from "@/shared/tables";
 import { Field } from "@/shared/forms";
 import { Can, useCan } from "@/shared/permissions";
-import { useBrands, useMenuItems, useBulkPriceUpdate, type MenuItem, type BulkPriceInput, type BulkPriceResult } from "./api";
-import { Money, marginPct, useBrandScope, BrandSelect } from "./lib";
+import { useT, useLang } from "@/i18n";
+import { useBrands, useMenuItems, useBulkPriceUpdate, menuErrorText, type MenuItem, type BulkPriceInput, type BulkPriceResult } from "./api";
+import { Money, marginPct, useBrandScope, BrandSelect, pickName } from "./lib";
 
 type Mode = "percent" | "fixed_set" | "fixed_add";
-const MODES: { value: Mode; label: string }[] = [
-  { value: "percent", label: "نسبة مئوية (٪ +/−)" },
-  { value: "fixed_set", label: "تعيين سعر ثابت" },
-  { value: "fixed_add", label: "إضافة مبلغ ثابت" },
-];
 
 export function PriceLists() {
+  const t = useT();
+  const lang = useLang();
   const { toast } = useToast();
   const { brandId, setBrandId } = useBrandScope();
   const canPrice = useCan("menu.pricing.manage");
+
+  const MODES = useMemo<{ value: Mode; label: string }[]>(() => [
+    { value: "percent", label: t("menuRest.priceLists.modePercent") },
+    { value: "fixed_set", label: t("menuRest.priceLists.modeFixedSet") },
+    { value: "fixed_add", label: t("menuRest.priceLists.modeFixedAdd") },
+  ], [t]);
 
   const brandsQ = useBrands();
   const itemsQ = useMenuItems({ brandId: brandId || undefined, type: "all" });
@@ -66,16 +70,16 @@ export function PriceLists() {
   const canApply = canPrice && valueOk && hasScope && targetCount > 0;
 
   const columns = useMemo<ColumnDef<MenuItem>[]>(() => [
-    { id: "name", header: "الصنف", accessor: (r) => r.name, sortable: true, cell: (r) => <span className="font-bold text-slate-800">{r.name}</span> },
-    { id: "category", header: "الفئة", accessor: (r) => r.category || "—", sortable: true },
-    { id: "price", header: "السعر", numeric: true, accessor: (r) => r.price, sortable: true, cell: (r) => <Money value={r.price} /> },
-    { id: "cost", header: "التكلفة", numeric: true, accessor: (r) => r.cost, cell: (r) => <Money value={r.cost} /> },
+    { id: "name", header: t("menuRest.fields.item"), accessor: (r) => pickName(r.name, r.nameEn, lang), sortable: true, cell: (r) => <span className="font-bold text-slate-800">{pickName(r.name, r.nameEn, lang)}</span> },
+    { id: "category", header: t("menuRest.fields.category"), accessor: (r) => r.category || "—", sortable: true },
+    { id: "price", header: t("menuRest.fields.price"), numeric: true, accessor: (r) => r.price, sortable: true, cell: (r) => <Money value={r.price} /> },
+    { id: "cost", header: t("menuRest.fields.cost"), numeric: true, accessor: (r) => r.cost, cell: (r) => <Money value={r.cost} /> },
     {
-      id: "margin", header: "الهامش", numeric: true, accessor: (r) => marginPct(r.price, r.cost),
+      id: "margin", header: t("menuRest.fields.margin"), numeric: true, accessor: (r) => marginPct(r.price, r.cost),
       cell: (r) => { const m = marginPct(r.price, r.cost); return <span dir="ltr" className={m > 0 ? "tabular-nums text-emerald-600" : "tabular-nums text-rose-600"}>{m}%</span>; },
     },
-    { id: "status", header: "الحالة", accessor: (r) => (r.active ? "نشط" : "معطّل"), cell: (r) => <StatusBadge tone={r.active ? "success" : "neutral"}>{r.active ? "نشط" : "معطّل"}</StatusBadge> },
-  ], []);
+    { id: "status", header: t("common.status"), accessor: (r) => t(r.active ? "status.active" : "status.disabled"), cell: (r) => <StatusBadge tone={r.active ? "success" : "neutral"}>{t(r.active ? "status.active" : "status.disabled")}</StatusBadge> },
+  ], [t, lang]);
 
   function apply() {
     const input: BulkPriceInput = usingSelection
@@ -86,53 +90,53 @@ export function PriceLists() {
         setConfirmOpen(false);
         setResult(res);
         setSelected([]);
-        toast({ title: `تم تحديث ${res.affected} صنف`, tone: "success" });
+        toast({ title: t("menuRest.priceLists.updatedCount", { count: res.affected }), tone: "success" });
       },
-      onError: (e: Error) => { setConfirmOpen(false); toast({ title: "تعذّر التحديث الجماعي", description: e.message, tone: "error" }); },
+      onError: (e: Error) => { setConfirmOpen(false); toast({ title: t("menuRest.priceLists.bulkFailed"), description: menuErrorText(e, t), tone: "error" }); },
     });
   }
 
   const modeHint =
-    mode === "percent" ? "موجب يرفع السعر وسالب يخفضه (مثال: 10 = +10٪)."
-    : mode === "fixed_set" ? "تعيين نفس السعر لكل الأصناف المستهدفة."
-    : "إضافة (أو طرح) مبلغ ثابت لسعر كل صنف.";
+    mode === "percent" ? t("menuRest.priceLists.hintPercent")
+    : mode === "fixed_set" ? t("menuRest.priceLists.hintFixedSet")
+    : t("menuRest.priceLists.hintFixedAdd");
 
   return (
     <div>
       <PageHeader
-        eyebrow="القوائم والوصفات"
-        title="قوائم الأسعار"
-        subtitle="تحديث الأسعار جماعيًا حسب العلامة أو الفئة أو الأصناف المحددة. يُسجَّل التغيير في سجل التدقيق."
+        eyebrow={t("menuRest.eyebrow")}
+        title={t("menuRest.priceLists.title")}
+        subtitle={t("menuRest.priceLists.subtitle")}
       />
 
       <Card className="mb-6 p-5">
         <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
           <div>
-            <label className="mb-1 block text-xs font-bold text-slate-600">العلامة التجارية</label>
+            <label className="mb-1 block text-xs font-bold text-slate-600">{t("menuRest.fields.brand")}</label>
             <BrandSelect brands={brandsQ.data ?? []} value={brandId} onChange={(v) => { setBrandId(v); setSelected([]); }} className="w-full" />
           </div>
           <div>
-            <label className="mb-1 block text-xs font-bold text-slate-600">الفئة</label>
-            <Select className="h-10 w-full" value={category} onChange={(e) => { setCategory(e.target.value); setSelected([]); }} aria-label="تصفية بالفئة">
-              <option value="">كل الفئات</option>
+            <label className="mb-1 block text-xs font-bold text-slate-600">{t("menuRest.fields.category")}</label>
+            <Select className="h-10 w-full" value={category} onChange={(e) => { setCategory(e.target.value); setSelected([]); }} aria-label={t("menuRest.aria.filterByCategory")}>
+              <option value="">{t("menuRest.filters.allCategories")}</option>
               {categories.map((c) => <option key={c} value={c}>{c}</option>)}
             </Select>
           </div>
-          <Field label="نوع التعديل">
+          <Field label={t("menuRest.priceLists.changeType")}>
             {({ id }) => <Select id={id} className="w-full" options={MODES} value={mode} onChange={(e) => setMode(e.target.value as Mode)} />}
           </Field>
-          <Field label={mode === "percent" ? "النسبة ٪" : "المبلغ"} hint={modeHint}>
-            {({ id }) => <NumberInput id={id} value={value} onChange={setValue} step="any" suffix={mode === "percent" ? "٪" : "ر.س"} />}
+          <Field label={mode === "percent" ? t("menuRest.priceLists.percentLabel") : t("menuRest.priceLists.amountLabel")} hint={modeHint}>
+            {({ id }) => <NumberInput id={id} value={value} onChange={setValue} step="any" suffix={mode === "percent" ? t("menuRest.units.percent") : t("menuRest.units.sar")} />}
           </Field>
         </div>
         <div className="mt-4 grid gap-4 md:grid-cols-[1fr_auto] md:items-end">
-          <Field label="السبب (اختياري)">
-            {({ id }) => <Input id={id} value={reason} onChange={(e) => setReason(e.target.value)} placeholder="مثال: تحديث أسعار الموسم" />}
+          <Field label={t("menuRest.priceLists.reasonOptional")}>
+            {({ id }) => <Input id={id} value={reason} onChange={(e) => setReason(e.target.value)} placeholder={t("menuRest.priceLists.reasonPlaceholder")} />}
           </Field>
-          <Can cap="menu.pricing.manage" fallback={<p className="text-xs font-medium text-slate-400">تحتاج صلاحية إدارة الأسعار.</p>}>
+          <Can cap="menu.pricing.manage" fallback={<p className="text-xs font-medium text-slate-400">{t("menuRest.priceLists.needPricePermission")}</p>}>
             <Button disabled={!canApply} onClick={() => setConfirmOpen(true)}>
               <Calculator className="h-4 w-4" />
-              {usingSelection ? `تطبيق على ${selected.length} محدد` : `تطبيق على ${targetCount} صنف`}
+              {usingSelection ? t("menuRest.priceLists.applyToSelected", { count: selected.length }) : t("menuRest.priceLists.applyToItems", { count: targetCount })}
             </Button>
           </Can>
         </div>
@@ -151,13 +155,13 @@ export function PriceLists() {
           selectable={canPrice}
           onSelectionChange={setSelected}
           searchable
-          searchPlaceholder="ابحث باسم الصنف…"
-          emptyTitle="لا توجد أصناف"
-          emptyBody="اختر علامة تجارية أو أضف أصنافًا."
-          mobileTitle={(r) => r.name}
+          searchPlaceholder={t("menuRest.filters.searchByItem")}
+          emptyTitle={t("menuRest.filters.noItemsTitle")}
+          emptyBody={t("menuRest.priceLists.emptyBody")}
+          mobileTitle={(r) => pickName(r.name, r.nameEn, lang)}
           bulkActions={canPrice ? (ids) => (
             <Button size="sm" onClick={() => setConfirmOpen(true)} disabled={!valueOk}>
-              <Calculator className="h-4 w-4" /> تطبيق على {ids.length}
+              <Calculator className="h-4 w-4" /> {t("menuRest.priceLists.applyToN", { count: ids.length })}
             </Button>
           ) : undefined}
         />
@@ -165,15 +169,18 @@ export function PriceLists() {
 
       <ConfirmDialog
         open={confirmOpen}
-        title="تأكيد التحديث الجماعي"
+        title={t("menuRest.priceLists.confirmTitle")}
         description={
           usingSelection
-            ? `سيتم تعديل أسعار ${selected.length} صنف محدد.`
-            : `سيتم تعديل أسعار ${targetCount} صنف ضمن النطاق المحدد (${brandId ? "علامة" : "كل العلامات"}${category ? " · " + category : ""}).`
+            ? t("menuRest.priceLists.confirmSelected", { count: selected.length })
+            : t("menuRest.priceLists.confirmScope", {
+                count: targetCount,
+                scope: (brandId ? t("menuRest.priceLists.scopeBrand") : t("menuRest.priceLists.scopeAllBrands")) + (category ? " · " + category : ""),
+              })
         }
-        confirmLabel="تطبيق"
+        confirmLabel={t("common.apply")}
         processing={bulk.isPending}
-        error={bulk.isError ? (bulk.error as Error).message : null}
+        error={bulk.isError ? menuErrorText(bulk.error, t) : null}
         onClose={() => { if (!bulk.isPending) setConfirmOpen(false); }}
         onConfirm={apply}
       />
@@ -184,17 +191,18 @@ export function PriceLists() {
 }
 
 function ResultDialog({ result, onClose }: { result: BulkPriceResult; onClose: () => void }) {
+  const t = useT();
   return (
     <Dialog
       open
       onClose={onClose}
-      title="نتيجة التحديث"
-      description={`تم تعديل ${result.affected} صنف.`}
+      title={t("menuRest.priceLists.resultTitle")}
+      description={t("menuRest.priceLists.resultDesc", { count: result.affected })}
       size="lg"
-      footer={<Button onClick={onClose}>تم</Button>}
+      footer={<Button onClick={onClose}>{t("menuRest.actions.done")}</Button>}
     >
       {result.items.length === 0 ? (
-        <p className="text-sm font-medium text-slate-500">لم تتغيّر أي أسعار (القيم مطابقة).</p>
+        <p className="text-sm font-medium text-slate-500">{t("menuRest.priceLists.noChanges")}</p>
       ) : (
         <div className="max-h-96 overflow-y-auto">
           <ul className="divide-y divide-slate-100">

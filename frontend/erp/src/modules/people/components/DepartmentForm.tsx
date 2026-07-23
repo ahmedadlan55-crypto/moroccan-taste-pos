@@ -1,15 +1,22 @@
+import { useMemo } from "react";
 import { useForm } from "react-hook-form";
 import { Field, FormActions, zodResolver } from "@/shared/forms";
-import { z, arabicText } from "@/shared/schemas";
+import { z } from "@/shared/schemas";
 import { Button, Input } from "@/shared/ui";
+import { useTx } from "@/shared/ui/i18n";
+import type { TFunction } from "@/i18n";
 import type { Department, DepartmentInput } from "../lib/types";
 
-const deptSchema = z.object({
-  name: arabicText({ label: "اسم القسم" }),
-  code: z.string().max(30).optional(),
-});
+const makeDeptSchema = (t: TFunction) =>
+  z.object({
+    name: z
+      .string({ required_error: t("people.departmentForm.nameRequired") })
+      .trim()
+      .min(1, t("people.departmentForm.nameRequired")),
+    code: z.string().max(30).optional(),
+  });
 
-type DeptFormValues = z.infer<typeof deptSchema>;
+type DeptFormValues = z.infer<ReturnType<typeof makeDeptSchema>>;
 
 export interface DepartmentFormProps {
   department?: Department | null;
@@ -19,12 +26,14 @@ export interface DepartmentFormProps {
 }
 
 export function DepartmentForm({ department, submitting, onSubmit, onCancel }: DepartmentFormProps) {
+  const t = useTx();
+  const schema = useMemo(() => makeDeptSchema(t), [t]);
   const {
     register,
     handleSubmit,
     formState: { errors },
   } = useForm<DeptFormValues>({
-    resolver: zodResolver(deptSchema),
+    resolver: zodResolver(schema),
     defaultValues: { name: department?.name ?? "", code: department?.code ?? "" },
   });
 
@@ -34,18 +43,18 @@ export function DepartmentForm({ department, submitting, onSubmit, onCancel }: D
       className="space-y-4"
       noValidate
     >
-      <Field label="اسم القسم" required error={errors.name}>
+      <Field label={t("people.departmentForm.name")} required error={errors.name}>
         {({ id, invalid }) => <Input id={id} invalid={invalid} {...register("name")} />}
       </Field>
-      <Field label="الرمز" hint="اتركه فارغًا للتوليد التلقائي" error={errors.code}>
+      <Field label={t("people.departmentForm.code")} hint={t("people.departmentForm.codeHint")} error={errors.code}>
         {({ id }) => <Input id={id} dir="ltr" {...register("code")} />}
       </Field>
       <FormActions>
         <Button type="button" variant="secondary" onClick={onCancel} disabled={submitting}>
-          إلغاء
+          {t("common.cancel")}
         </Button>
         <Button type="submit" variant="primary" loading={submitting}>
-          حفظ
+          {t("common.save")}
         </Button>
       </FormActions>
     </form>

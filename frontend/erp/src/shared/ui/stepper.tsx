@@ -1,15 +1,17 @@
 import { Check } from "lucide-react";
 import { cn } from "@/shared/lib";
+import { useTx } from "./i18n";
 
 // Shared multi-step indicator (lifted from the inventory transfer wizard for
 // FC-P3 so the payroll / brand-wizard / bank-rec flows reuse it). Purely
 // presentational — the parent owns `current` (1-based). Accessible: the active
 // step is announced via aria-live.
 export function Stepper({ steps, current }: { steps: string[]; current: number }) {
+  const t = useTx();
   return (
     <>
       <span aria-live="polite" className="sr-only">
-        الخطوة {current} من {steps.length}: {steps[current - 1] ?? ""}
+        {t("sharedUi.stepper.progress", { current, total: steps.length, label: steps[current - 1] ?? "" })}
       </span>
       <ol className="flex flex-wrap items-center gap-x-2 gap-y-3">
         {steps.map((label, i) => {

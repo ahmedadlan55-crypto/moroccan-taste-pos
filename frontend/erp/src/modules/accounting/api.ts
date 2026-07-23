@@ -6,14 +6,24 @@
 
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { apiClient } from "@/shared/api";
+import type { TFunction } from "@/i18n";
 
-// ── date helpers (defaults mirror the legacy loaders) ───────────────────────
-export function todayISO(): string {
-  return new Date().toISOString().slice(0, 10);
-}
-export function startOfYearISO(): string {
-  return `${new Date().getFullYear()}-01-01`;
-}
+// Tier A.2 corrective gate — todayISO()/startOfYearISO() moved to
+// @/shared/lib/dates (local-time components, not toISOString()'s UTC
+// calendar date); re-exported here so every existing `from "../api"`
+// import in this module keeps working unchanged.
+//
+// Release integration — BOTH sides of this conflict are kept deliberately.
+// The i18n sprint still carried the old local definitions, which use
+// new Date().toISOString().slice(0,10) — that is the UTC calendar date, while
+// db/connection.js pins every MySQL session to +03:00. Between 00:00 and 02:59
+// Riyadh the default "today" therefore resolved to YESTERDAY. Taking the
+// sprint side here would reinstate that bug and orphan shared/lib/dates.ts for
+// this module, while banking/api.ts and purchasing/requisitions/api.ts (merged
+// clean) keep using the shared helper — three modules disagreeing about what
+// day it is, which is precisely what dates.ts exists to prevent. A re-export
+// creates no local binding, so the sprint's TFunction import is unaffected.
+export { todayISO, startOfYearISO } from "@/shared/lib";
 
 // Legacy endpoints answer HTTP 200 even on failure, carrying { success:false }
 // or { error }. Normalize that into a thrown Error so React Query shows the
@@ -26,6 +36,11 @@ function unwrap<T extends { success?: boolean; error?: string }>(data: T): T {
 }
 
 // ── Trial Balance — GET /api/erp/reports/trial-balance ──────────────────────
+// Tier A.1 corrective gate: these types now mirror lib/reports/trialBalance.js
+// in full (openDebit/openCredit/closeDebit/closeCredit/abnormalSign/isFolder/
+// isPostingLeaf/isActive/diagnostics/isClean) — the PAGE that consumes this
+// must read totals/isClean/diagnostics from the response, never recompute
+// them client-side (see TrialBalance.tsx).
 export interface TrialBalanceRow {
   accountId: string;
   code: string;
@@ -34,24 +49,75 @@ export interface TrialBalanceRow {
   parentId: string | null;
   level: number;
   hasChildren: boolean;
+  isFolder: boolean;
+  isPostingLeaf: boolean;
+  isActive: boolean;
+  isCycleMember: boolean;
   opening: number;
+  openDebit: number;
+  openCredit: number;
   periodDebit: number;
   periodCredit: number;
   net: number;
   closing: number;
-  rowCount: number;
+  closeDebit: number;
+  closeCredit: number;
+  abnormalSign: boolean;
+  /** Distinct journals touching this account in the period (COUNT(DISTINCT journal_id), not a GL line count). */
+  journalCount: number;
+}
+export interface TrialBalanceTotals {
+  openDebit: number;
+  openCredit: number;
+  opening: number;
+  periodDebit: number;
+  periodCredit: number;
+  closing: number;
+  closeDebit: number;
+  closeCredit: number;
+  isOpeningBalanced: boolean;
+  isPeriodBalanced: boolean;
+  isClosingBalanced: boolean;
+  isBalanced: boolean;
+  abnormalCount: number;
+}
+// Tier A.2 corrective gate — mirrors lib/reports/trialBalance.js exactly.
+// nullAccountEntries/nullAccountDebit/nullAccountCredit (Period-only, Tier
+// A.1) split into nullAccountOpening/nullAccountPeriod so an anomaly dated
+// before `from` is no longer invisible to the report. orphanAccounts,
+// unbalancedJournals, headerLineMismatches, and grossHistoricalMovement are
+// new; every diagnostic field here (except grossHistoricalMovement, which
+// is informational only) contributes to isClean.
+export interface TrialBalanceDiagnosticBucket { count: number; debit: number; credit: number }
+export interface TrialBalanceUnbalancedJournal { id: string; journalNumber: string; journalDate: string; totalDebit: number; totalCredit: number }
+export interface TrialBalanceHeaderLineMismatch { id: string; journalNumber: string; journalDate: string; headerDebit: number; headerCredit: number; lineDebit: number; lineCredit: number }
+export interface TrialBalanceDiagnostics {
+  nullAccountOpening: TrialBalanceDiagnosticBucket;
+  nullAccountPeriod: TrialBalanceDiagnosticBucket;
+  /** Tier A.3 — a NON-NULL gl_entries.account_id matching no gl_accounts row at all (distinct from the NULL-account buckets above). */
+  danglingAccountOpening: TrialBalanceDiagnosticBucket;
+  danglingAccountPeriod: TrialBalanceDiagnosticBucket;
+  futureDatedOpeningJournals: { count: number; debit: number; credit: number };
+  /** Raw gross historical turnover before `from` — diagnostic only, NEVER the opening balance (that's totals.openDebit/openCredit). */
+  grossHistoricalMovement: { debit: number; credit: number };
+  orphanAccounts: Array<{ code: string; nameAr: string; parentId: string }>;
+  nonLeafPostingActivity: Array<{ code: string; nameAr: string; isFolder: boolean; hasChildren: boolean; openDebit: number; openCredit: number; periodDebit: number; periodCredit: number }>;
+  cycleAccounts: Array<{ code: string; nameAr: string }>;
+  levelMismatches: Array<{ code: string; nameAr: string; storedLevel: number; computedLevel: number }>;
+  unbalancedJournals: TrialBalanceUnbalancedJournal[];
+  headerLineMismatches: TrialBalanceHeaderLineMismatch[];
+  note: string;
 }
 export interface TrialBalanceResponse {
   success?: boolean;
   error?: string;
+  code?: string;
+  isClean?: boolean;
+  /** Fixed at 'CO-MAIN' — this report has no company/ledger isolation (gl_accounts has no company_id). */
+  ledgerScope?: string;
   rows: TrialBalanceRow[];
-  totals: {
-    opening?: number;
-    periodDebit?: number;
-    periodCredit?: number;
-    closing?: number;
-    isBalanced?: boolean;
-  };
+  totals: TrialBalanceTotals;
+  diagnostics?: TrialBalanceDiagnostics;
 }
 export interface DateRange {
   from: string;
@@ -290,13 +356,18 @@ export function useApAging(asOfDate: string | null) {
 }
 
 export const AGING_BUCKETS: AgingBucketKey[] = ["0-30", "31-60", "61-90", "91-120", "120+"];
-export const AGING_BUCKET_LABELS: Record<AgingBucketKey, string> = {
-  "0-30": "0 – 30 يوم",
-  "31-60": "31 – 60 يوم",
-  "61-90": "61 – 90 يوم",
-  "91-120": "91 – 120 يوم",
-  "120+": "أكثر من 120 يوم",
+// Bucket key → i18n leaf (the range keys carry "-"/"+", not valid as dotted paths).
+const AGING_BUCKET_KEY: Record<AgingBucketKey, string> = {
+  "0-30": "b0_30",
+  "31-60": "b31_60",
+  "61-90": "b61_90",
+  "91-120": "b91_120",
+  "120+": "b120plus",
 };
+/** Aging bucket → localized label; `t` is supplied by the calling component. */
+export function agingBucketLabel(t: TFunction, b: AgingBucketKey): string {
+  return t(`accounting.aging.buckets.${AGING_BUCKET_KEY[b]}`);
+}
 
 // ── Cost Centers — /api/erp/cost-centers (CRUD) ─────────────────────────────
 export interface CostCenter {
@@ -383,13 +454,12 @@ export const GL_ACCOUNT_TYPES: GlAccountType[] = [
   "revenue",
   "expense",
 ];
-export const GL_TYPE_LABEL: Record<GlAccountType, string> = {
-  asset: "الأصول",
-  liability: "الالتزامات",
-  equity: "حقوق الملكية",
-  revenue: "الإيرادات",
-  expense: "المصروفات",
-};
+/** GL account type → localized label; `t` is supplied by the calling component.
+ *  An unknown/blank type falls back to its raw value (never an empty cell). */
+export function glTypeLabel(t: TFunction, type: string | null | undefined): string {
+  const s = String(type ?? "");
+  return (GL_ACCOUNT_TYPES as string[]).includes(s) ? t(`accounting.accountType.${s}`) : s;
+}
 // Normal balance side, derived from type (mirrors legacy typeNature).
 export const GL_TYPE_NATURE: Record<GlAccountType, "debit" | "credit"> = {
   asset: "debit",
@@ -824,11 +894,10 @@ export const PROFITABILITY_DIMENSIONS: ProfitabilityDimension[] = [
   "branch",
   "cost_center",
 ];
-export const PROFITABILITY_DIMENSION_LABEL: Record<ProfitabilityDimension, string> = {
-  brand: "علامة تجارية",
-  branch: "فرع",
-  cost_center: "مركز تكلفة",
-};
+/** Profitability dimension → localized label; `t` is supplied by the caller. */
+export function profitabilityDimLabel(t: TFunction, dim: ProfitabilityDimension): string {
+  return t(`accounting.profitability.dimension.${dim}`);
+}
 export interface ProfitabilityRow {
   id: string | null;
   name: string;

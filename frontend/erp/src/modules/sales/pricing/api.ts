@@ -6,6 +6,7 @@
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { apiClient } from "@/shared/api";
+import type { TFunction } from "@/i18n";
 
 const KEY = ["sales-pricing"] as const;
 
@@ -143,7 +144,7 @@ export function marginPct(price: number, cost: number): number {
   return Math.round(((price - cost) / price) * 1000) / 10;
 }
 
-export function pricingError(error: unknown): string {
+export function pricingError(error: unknown, t: TFunction): string {
   const raw = error instanceof Error ? error.message : "";
-  return raw || "تعذّرت العملية. أعد المحاولة.";
+  return raw || t("sales.opFailed");
 }

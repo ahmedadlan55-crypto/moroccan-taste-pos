@@ -40,6 +40,8 @@ import {
 import { ApiError } from "@/shared/api";
 import { useCan } from "@/app/providers";
 import { formatCurrency, formatDate } from "@/shared/lib";
+import { useTx } from "@/shared/ui/i18n";
+import type { TFunction } from "@/i18n";
 import {
   fetchBundle,
   useMarkTxnRead,
@@ -53,6 +55,8 @@ import { actionTypeLabel, importanceMeta, statusMeta } from "../lib/labels";
 import type { TxnBundle, TxnLog, WorkflowPathStep } from "../lib/types";
 
 type DetailTab = "summary" | "content" | "attachments" | "conversation" | "path" | "audit";
+
+const SECRECY_CODES = ["normal", "confidential", "secret", "top_secret"];
 
 function htmlToText(html?: string) {
   if (!html) return "";
@@ -69,14 +73,10 @@ function safeAttachmentUrl(url?: string) {
   return undefined;
 }
 
-function secrecyLabel(value?: string) {
-  const labels: Record<string, string> = {
-    normal: "عادي",
-    confidential: "سري",
-    secret: "سري جدًا",
-    top_secret: "عالي السرية",
-  };
-  return labels[String(value || "normal")] || String(value || "عادي");
+function secrecyLabel(value: string | undefined, t: TFunction) {
+  const key = String(value || "normal");
+  if (SECRECY_CODES.includes(key)) return t(`workflow.drawer.secrecy.${key}`);
+  return value ? String(value) : t("workflow.drawer.secrecy.normal");
 }
 
 function stepStatus(step: WorkflowPathStep, txnStatus: string): WorkflowStepStatus {
@@ -86,20 +86,20 @@ function stepStatus(step: WorkflowPathStep, txnStatus: string): WorkflowStepStat
   return "pending";
 }
 
-function toWorkflowSteps(bundle: TxnBundle): WorkflowStep[] {
+function toWorkflowSteps(bundle: TxnBundle, t: TFunction): WorkflowStep[] {
   return (bundle.workflowPath ?? []).map((s) => ({
     id: s.id,
-    label: s.stepName || s.positionName || "خطوة",
+    label: s.stepName || s.positionName || t("workflow.drawer.stepFallback"),
     status: stepStatus(s, bundle.status),
     by: s.positionName || undefined,
   }));
 }
 
-function toAuditEntries(logs: TxnLog[]): AuditEntry[] {
+function toAuditEntries(logs: TxnLog[], t: TFunction): AuditEntry[] {
   return logs.map((l) => ({
     id: l.id,
     actor: l.actorFullName || l.actionBy || "—",
-    action: l.stepName ? `${actionTypeLabel(l.actionType)} — ${l.stepName}` : actionTypeLabel(l.actionType),
+    action: l.stepName ? `${actionTypeLabel(l.actionType, t)} — ${l.stepName}` : actionTypeLabel(l.actionType, t),
     at: l.createdAt,
     detail: l.note || undefined,
   }));
@@ -120,6 +120,7 @@ interface Props {
 }
 
 export function TxnDetailDrawer({ txnId, open, onClose, username, canAct = false }: Props) {
+  const t = useTx();
   const [tab, setTab] = useState<DetailTab>("summary");
   const query = useQuery({
     queryKey: qk.bundle(txnId ?? "", username),
@@ -163,16 +164,16 @@ export function TxnDetailDrawer({ txnId, open, onClose, username, canAct = false
   const canForward = actAllowed && !!perms?.canForward;
   const anyAction = canApprove || canReject || canReturn || canForward;
 
-  const title = bundle?.subject || bundle?.title || bundle?.txnNumber || "تفاصيل المعاملة";
+  const title = bundle?.subject || bundle?.title || bundle?.txnNumber || t("workflow.drawer.titleFallback");
   const contentText = useMemo(() => htmlToText(bundle?.contentHtml), [bundle?.contentHtml]);
   const detailTabs = useMemo(() => [
-    { value: "summary", label: "الملخص" },
-    { value: "content", label: "المحتوى" },
-    { value: "attachments", label: `المرفقات (${bundle?.attachments?.length ?? 0})` },
-    { value: "conversation", label: `المحادثة (${bundle?.replies?.length ?? 0})` },
-    { value: "path", label: "المسار" },
-    { value: "audit", label: "السجل" },
-  ], [bundle?.attachments?.length, bundle?.replies?.length]);
+    { value: "summary", label: t("workflow.drawer.tab.summary") },
+    { value: "content", label: t("workflow.drawer.tab.content") },
+    { value: "attachments", label: t("workflow.drawer.tab.attachments", { count: bundle?.attachments?.length ?? 0 }) },
+    { value: "conversation", label: t("workflow.drawer.tab.conversation", { count: bundle?.replies?.length ?? 0 }) },
+    { value: "path", label: t("workflow.drawer.tab.path") },
+    { value: "audit", label: t("workflow.drawer.tab.audit") },
+  ], [bundle?.attachments?.length, bundle?.replies?.length, t]);
 
   const footer =
     canAct && loaded && anyAction ? (
@@ -187,25 +188,25 @@ export function TxnDetailDrawer({ txnId, open, onClose, username, canAct = false
     ) : undefined;
 
   return (
-    <Drawer open={open} onClose={onClose} title={title} eyebrow="عرض المعاملة" icon={FileText} footer={footer} size="xl">
+    <Drawer open={open} onClose={onClose} title={title} eyebrow={t("workflow.drawer.eyebrow")} icon={FileText} footer={footer} size="xl">
       {query.isLoading ? (
         <LoadingState rows={6} />
       ) : query.isError ? (
         <ErrorState error={query.error} onRetry={() => query.refetch()} />
       ) : !bundle || bundle.error ? (
         <ErrorState
-          error={new Error(bundle?.error || "تعذّر تحميل المعاملة")}
+          error={new Error(bundle?.error || t("workflow.drawer.loadError"))}
           onRetry={() => query.refetch()}
         />
       ) : (
         <div className="space-y-5">
           <div className="flex flex-wrap items-center gap-2 rounded-2xl border border-slate-200 bg-slate-50 p-3">
-            <StatusBadge tone={statusMeta(bundle.status).tone}>{statusMeta(bundle.status).label}</StatusBadge>
-            <Badge tone={importanceMeta(bundle.importance).tone}>{importanceMeta(bundle.importance).label}</Badge>
-            {bundle.isOverdue && <Badge tone="danger">متأخرة عن SLA</Badge>}
+            <StatusBadge tone={statusMeta(bundle.status, t).tone}>{statusMeta(bundle.status, t).label}</StatusBadge>
+            <Badge tone={importanceMeta(bundle.importance, t).tone}>{importanceMeta(bundle.importance, t).label}</Badge>
+            {bundle.isOverdue && <Badge tone="danger">{t("workflow.drawer.overdueSla")}</Badge>}
             <span className="me-auto inline-flex items-center gap-1 text-xs font-bold text-slate-500">
               <CalendarClock className="h-4 w-4" aria-hidden="true" />
-              {bundle.dueDate ? `الاستحقاق ${formatDate(bundle.dueDate)}` : "لا يوجد موعد استحقاق"}
+              {bundle.dueDate ? t("workflow.drawer.dueOn", { date: formatDate(bundle.dueDate) }) : t("workflow.drawer.noDue")}
             </span>
           </div>
 
@@ -213,44 +214,44 @@ export function TxnDetailDrawer({ txnId, open, onClose, username, canAct = false
             items={detailTabs}
             value={tab}
             onChange={(value) => setTab(value as DetailTab)}
-            aria-label="أقسام تفاصيل المعاملة"
+            aria-label={t("workflow.drawer.tabsAria")}
           />
 
           {tab === "summary" && (
             <div className="space-y-5" role="tabpanel">
               <div className="grid grid-cols-2 gap-3">
-                <DetailStat label="رقم المعاملة" value={<span dir="ltr" className="tabular-nums">{bundle.txnNumber || "—"}</span>} />
-                <DetailStat label="النوع" value={bundle.typeName || "—"} />
-                <DetailStat label="المُرسِل" value={bundle.createdByName || bundle.creatorName || bundle.createdBy || "—"} />
-                <DetailStat label="لدى الآن" value={bundle.currentAssigneeName || bundle.assigneeName || bundle.currentAssignee || "—"} />
-                <DetailStat label="الخطوة الحالية" value={bundle.currentStepName || "—"} />
-                <DetailStat label="الفرع" value={bundle.createdByBranch || bundle.branchName || "—"} />
-                <DetailStat label="تاريخ الإنشاء" value={<span dir="ltr" className="tabular-nums">{formatDate(bundle.createdAt)}</span>} />
+                <DetailStat label={t("workflow.col.txnNumber")} value={<span dir="ltr" className="tabular-nums">{bundle.txnNumber || "—"}</span>} />
+                <DetailStat label={t("workflow.col.type")} value={bundle.typeName || "—"} />
+                <DetailStat label={t("workflow.drawer.stat.sender")} value={bundle.createdByName || bundle.creatorName || bundle.createdBy || "—"} />
+                <DetailStat label={t("workflow.drawer.stat.holderNow")} value={bundle.currentAssigneeName || bundle.assigneeName || bundle.currentAssignee || "—"} />
+                <DetailStat label={t("workflow.col.currentStep")} value={bundle.currentStepName || "—"} />
+                <DetailStat label={t("workflow.drawer.stat.branch")} value={bundle.createdByBranch || bundle.branchName || "—"} />
+                <DetailStat label={t("workflow.drawer.stat.createdAt")} value={<span dir="ltr" className="tabular-nums">{formatDate(bundle.createdAt)}</span>} />
                 {typeof bundle.amount === "number" && bundle.amount > 0 && (
-                  <DetailStat label="المبلغ" value={<span dir="ltr" className="tabular-nums">{formatCurrency(bundle.amount)}</span>} />
+                  <DetailStat label={t("workflow.drawer.stat.amount")} value={<span dir="ltr" className="tabular-nums">{formatCurrency(bundle.amount)}</span>} />
                 )}
               </div>
 
               {(bundle.issuingEntityName || bundle.createdByPosition) && (
                 <section className="rounded-2xl border border-slate-200 p-4">
                   <h3 className="flex items-center gap-2 text-sm font-extrabold text-slate-800">
-                    <Building2 className="h-4 w-4 text-teal-600" aria-hidden="true" /> بيانات الإصدار
+                    <Building2 className="h-4 w-4 text-teal-600" aria-hidden="true" /> {t("workflow.drawer.issuingData")}
                   </h3>
                   <dl className="mt-3 grid gap-3 text-sm sm:grid-cols-2">
-                    <div><dt className="text-xs font-bold text-slate-400">جهة الإصدار</dt><dd className="mt-1 font-semibold text-slate-700">{bundle.issuingEntityName || "—"}</dd></div>
-                    <div><dt className="text-xs font-bold text-slate-400">منصب المُرسِل</dt><dd className="mt-1 font-semibold text-slate-700">{bundle.createdByPosition || "—"}</dd></div>
+                    <div><dt className="text-xs font-bold text-slate-400">{t("workflow.drawer.issuingEntity")}</dt><dd className="mt-1 font-semibold text-slate-700">{bundle.issuingEntityName || "—"}</dd></div>
+                    <div><dt className="text-xs font-bold text-slate-400">{t("workflow.drawer.senderPosition")}</dt><dd className="mt-1 font-semibold text-slate-700">{bundle.createdByPosition || "—"}</dd></div>
                   </dl>
                 </section>
               )}
 
               {bundle.recipients && bundle.recipients.length > 0 && (
                 <section className="space-y-2">
-                  <h3 className="text-sm font-extrabold text-slate-800">الجهات والمستلمون</h3>
+                  <h3 className="text-sm font-extrabold text-slate-800">{t("workflow.drawer.recipients")}</h3>
                   <div className="flex flex-wrap gap-2">
                     {bundle.recipients.map((recipient) => (
                       <Badge key={recipient.id} tone={recipient.responseReceived ? "success" : "neutral"}>
                         {recipient.name || recipient.username || "—"}
-                        {recipient.needsResponse ? (recipient.responseReceived ? " · تم الرد" : " · ينتظر الرد") : ""}
+                        {recipient.needsResponse ? ` · ${recipient.responseReceived ? t("workflow.drawer.repliedSuffix") : t("workflow.drawer.awaitingReply")}` : ""}
                       </Badge>
                     ))}
                   </div>
@@ -263,19 +264,19 @@ export function TxnDetailDrawer({ txnId, open, onClose, username, canAct = false
             <section className="space-y-4" role="tabpanel">
               <div className="flex flex-wrap items-center gap-2">
                 <ShieldCheck className="h-4 w-4 text-teal-600" aria-hidden="true" />
-                <span className="text-xs font-bold text-slate-500">سرية المحتوى</span>
-                <Badge tone={bundle.contentSecrecy === "normal" ? "neutral" : "warning"}>{secrecyLabel(bundle.contentSecrecy)}</Badge>
+                <span className="text-xs font-bold text-slate-500">{t("workflow.drawer.contentSecrecy")}</span>
+                <Badge tone={bundle.contentSecrecy === "normal" ? "neutral" : "warning"}>{secrecyLabel(bundle.contentSecrecy, t)}</Badge>
               </div>
               {bundle.description && (
                 <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
-                  <h3 className="text-sm font-extrabold text-slate-800">الملخص التنفيذي</h3>
+                  <h3 className="text-sm font-extrabold text-slate-800">{t("workflow.drawer.execSummary")}</h3>
                   <p className="mt-2 whitespace-pre-wrap text-sm font-medium leading-7 text-slate-700">{bundle.description}</p>
                 </div>
               )}
               <div className="rounded-2xl border border-slate-200 bg-white p-4">
-                <h3 className="text-sm font-extrabold text-slate-800">نص المعاملة</h3>
+                <h3 className="text-sm font-extrabold text-slate-800">{t("workflow.drawer.txnText")}</h3>
                 <p className="mt-3 whitespace-pre-wrap text-sm font-medium leading-8 text-slate-700">
-                  {contentText || "لا يوجد محتوى نصي مسجل لهذه المعاملة."}
+                  {contentText || t("workflow.drawer.noContent")}
                 </p>
               </div>
             </section>
@@ -285,21 +286,21 @@ export function TxnDetailDrawer({ txnId, open, onClose, username, canAct = false
             <section className="space-y-4" role="tabpanel">
               <div className="flex flex-wrap items-center gap-2">
                 <Paperclip className="h-4 w-4 text-teal-600" aria-hidden="true" />
-                <span className="text-xs font-bold text-slate-500">سرية المرفقات</span>
-                <Badge tone={bundle.attachmentsSecrecy === "normal" ? "neutral" : "warning"}>{secrecyLabel(bundle.attachmentsSecrecy)}</Badge>
+                <span className="text-xs font-bold text-slate-500">{t("workflow.drawer.attachmentsSecrecy")}</span>
+                <Badge tone={bundle.attachmentsSecrecy === "normal" ? "neutral" : "warning"}>{secrecyLabel(bundle.attachmentsSecrecy, t)}</Badge>
               </div>
               <AttachmentViewer
                 attachments={(bundle.attachments ?? []).map((attachment) => ({
                   id: attachment.id,
-                  name: attachment.fileName || "مرفق",
+                  name: attachment.fileName || t("workflow.drawer.attachmentFallback"),
                   url: safeAttachmentUrl(attachment.dataUrl),
                   contentType: attachment.mime,
                 }))}
-                emptyText="لا توجد مرفقات لهذه المعاملة."
+                emptyText={t("workflow.drawer.noAttachments")}
               />
               {(bundle.attachments ?? []).map((attachment) => (
                 <div key={`meta-${attachment.id}`} className="text-xs font-medium text-slate-400">
-                  {attachment.fileName || "مرفق"} · رفعه {attachment.uploadedBy || "—"} · {formatDate(attachment.uploadedAt)}
+                  {attachment.fileName || t("workflow.drawer.attachmentFallback")} · {t("workflow.drawer.uploadedBy")} {attachment.uploadedBy || "—"} · {formatDate(attachment.uploadedAt)}
                 </div>
               ))}
             </section>
@@ -308,7 +309,7 @@ export function TxnDetailDrawer({ txnId, open, onClose, username, canAct = false
           {tab === "conversation" && (
             <section className="space-y-3" role="tabpanel">
               {(bundle.replies ?? []).length === 0 ? (
-                <p className="rounded-2xl border border-dashed border-slate-200 p-6 text-center text-sm font-medium text-slate-400">لا توجد ردود أو مناقشات بعد.</p>
+                <p className="rounded-2xl border border-dashed border-slate-200 p-6 text-center text-sm font-medium text-slate-400">{t("workflow.drawer.noReplies")}</p>
               ) : (bundle.replies ?? []).map((reply) => (
                 <article key={reply.id} className="rounded-2xl border border-slate-200 p-4">
                   <div className="flex items-start gap-3">
@@ -322,7 +323,7 @@ export function TxnDetailDrawer({ txnId, open, onClose, username, canAct = false
                       <p className="mt-2 whitespace-pre-wrap text-sm font-medium leading-7 text-slate-700">{reply.replyText || "—"}</p>
                       {safeAttachmentUrl(reply.attachment) && (
                         <a href={safeAttachmentUrl(reply.attachment)} target="_blank" rel="noreferrer" className="mt-3 inline-flex items-center gap-1 text-xs font-bold text-teal-700 hover:underline">
-                          <Paperclip className="h-3.5 w-3.5" aria-hidden="true" /> {reply.attachmentName || "فتح المرفق"}
+                          <Paperclip className="h-3.5 w-3.5" aria-hidden="true" /> {reply.attachmentName || t("workflow.drawer.openAttachment")}
                         </a>
                       )}
                     </div>
@@ -335,20 +336,20 @@ export function TxnDetailDrawer({ txnId, open, onClose, username, canAct = false
           {tab === "path" && (
             <section className="space-y-3" role="tabpanel">
               <h3 className="flex items-center gap-2 text-sm font-extrabold text-slate-800">
-                <GitBranch className="h-4 w-4 text-teal-600" aria-hidden="true" /> مسار الاعتماد
+                <GitBranch className="h-4 w-4 text-teal-600" aria-hidden="true" /> {t("workflow.drawer.approvalPath")}
               </h3>
               {(bundle.workflowPath ?? []).length > 0
-                ? <WorkflowTimeline steps={toWorkflowSteps(bundle)} />
-                : <p className="text-sm font-medium text-slate-400">لا يوجد مسار اعتماد مسجل.</p>}
+                ? <WorkflowTimeline steps={toWorkflowSteps(bundle, t)} />
+                : <p className="text-sm font-medium text-slate-400">{t("workflow.drawer.noPath")}</p>}
             </section>
           )}
 
           {tab === "audit" && (
             <section className="space-y-3" role="tabpanel">
               <h3 className="flex items-center gap-2 text-sm font-extrabold text-slate-800">
-                <History className="h-4 w-4 text-teal-600" aria-hidden="true" /> سجل الإجراءات
+                <History className="h-4 w-4 text-teal-600" aria-hidden="true" /> {t("workflow.drawer.actionLog")}
               </h3>
-              <AuditTimeline entries={toAuditEntries(bundle.logs ?? [])} />
+              <AuditTimeline entries={toAuditEntries(bundle.logs ?? [], t)} />
             </section>
           )}
         </div>
@@ -365,13 +366,6 @@ export function TxnDetailDrawer({ txnId, open, onClose, username, canAct = false
 // user retry.
 type DialogKind = TxnActionKind | null;
 
-const SUCCESS_MSG: Record<TxnActionKind, string> = {
-  approve: "تم اعتماد المعاملة",
-  reject: "تم رفض المعاملة",
-  return: "تمت إعادة المعاملة للتعديل",
-  forward: "تمت إحالة المعاملة",
-};
-
 function TxnActionBar({
   txnId,
   username,
@@ -387,8 +381,16 @@ function TxnActionBar({
   onActed: () => void;
   refetchPerms: () => void;
 }) {
+  const t = useTx();
   const { toast } = useToast();
   const action = useTxnAction();
+
+  const successMsg: Record<TxnActionKind, string> = {
+    approve: t("workflow.drawer.success.approve"),
+    reject: t("workflow.drawer.success.reject"),
+    return: t("workflow.drawer.success.return"),
+    forward: t("workflow.drawer.success.forward"),
+  };
 
   const [dialog, setDialog] = useState<DialogKind>(null);
   const [error, setError] = useState<string | null>(null);
@@ -418,21 +420,21 @@ function TxnActionBar({
       {
         onSuccess: (res) => {
           if (res && res.success === false) {
-            setError(safeUserMessage(new Error(res.error || "تعذّر تنفيذ الإجراء")));
+            setError(safeUserMessage(new Error(res.error || t("workflow.drawer.actionFailed")), t));
             return;
           }
-          toast({ title: SUCCESS_MSG[kind], tone: "success" });
+          toast({ title: successMsg[kind], tone: "success" });
           close();
           onActed();
         },
         onError: (e) => {
           if (e instanceof ApiError && e.isConflict) {
-            toast({ title: "تم تحديث المعاملة، أعد المحاولة", tone: "warning" });
+            toast({ title: t("workflow.drawer.conflictRetry"), tone: "warning" });
             refetchPerms();
             close();
             return;
           }
-          setError(safeUserMessage(e));
+          setError(safeUserMessage(e, t));
         },
       },
     );
@@ -441,7 +443,7 @@ function TxnActionBar({
   // Reject/Return share the mandatory-reason ConfirmDialog. Enforce ≥ 10 here.
   function confirmReason(kind: "reject" | "return", reason: string) {
     if (reason.trim().length < 10) {
-      setError("السبب مطلوب ولا يقل عن 10 أحرف.");
+      setError(t("workflow.drawer.reasonMin"));
       return;
     }
     run(kind, { note: reason.trim() });
@@ -453,37 +455,37 @@ function TxnActionBar({
     <div className="flex w-full items-center gap-2">
       {can.approve && (
         <Button className="flex-1 sm:flex-none" variant="primary" size="sm" onClick={() => openDialog("approve")}>
-          <CheckCircle2 className="h-4 w-4" aria-hidden="true" /> اعتماد
+          <CheckCircle2 className="h-4 w-4" aria-hidden="true" /> {t("workflow.drawer.act.approve")}
         </Button>
       )}
       {can.reject && (
         <Button className="hidden sm:inline-flex" variant="danger" size="sm" onClick={() => openDialog("reject")}>
-          <XCircle className="h-4 w-4" aria-hidden="true" /> رفض
+          <XCircle className="h-4 w-4" aria-hidden="true" /> {t("workflow.drawer.act.reject")}
         </Button>
       )}
       {can.return && (
         <Button className="hidden sm:inline-flex" variant="secondary" size="sm" onClick={() => openDialog("return")}>
-          <CornerUpLeft className="h-4 w-4" aria-hidden="true" /> إرجاع للتعديل
+          <CornerUpLeft className="h-4 w-4" aria-hidden="true" /> {t("workflow.drawer.act.return")}
         </Button>
       )}
       {can.forward && (
         <Button className="hidden sm:inline-flex" variant="secondary" size="sm" onClick={() => openDialog("forward")}>
-          <Share2 className="h-4 w-4" aria-hidden="true" /> إحالة
+          <Share2 className="h-4 w-4" aria-hidden="true" /> {t("workflow.drawer.act.forward")}
         </Button>
       )}
       {(can.reject || can.return || can.forward) && (
         <DropdownMenu
           className="sm:hidden"
-          aria-label="إجراءات أخرى"
+          aria-label={t("workflow.drawer.moreActionsAria")}
           trigger={
             <span className="inline-flex min-h-11 items-center justify-center gap-2 rounded-xl border border-slate-200 bg-white px-4 text-sm font-bold text-slate-700">
-              <MoreHorizontal className="h-4 w-4" aria-hidden="true" /> المزيد
+              <MoreHorizontal className="h-4 w-4" aria-hidden="true" /> {t("workflow.drawer.more")}
             </span>
           }
           items={[
-            ...(can.return ? [{ key: "return", label: "إرجاع للتعديل", icon: <CornerUpLeft className="h-4 w-4" />, onSelect: () => openDialog("return" as const) }] : []),
-            ...(can.forward ? [{ key: "forward", label: "إحالة", icon: <Share2 className="h-4 w-4" />, onSelect: () => openDialog("forward" as const) }] : []),
-            ...(can.reject ? [{ key: "reject", label: "رفض", tone: "danger" as const, icon: <XCircle className="h-4 w-4" />, onSelect: () => openDialog("reject" as const) }] : []),
+            ...(can.return ? [{ key: "return", label: t("workflow.drawer.act.return"), icon: <CornerUpLeft className="h-4 w-4" />, onSelect: () => openDialog("return" as const) }] : []),
+            ...(can.forward ? [{ key: "forward", label: t("workflow.drawer.act.forward"), icon: <Share2 className="h-4 w-4" />, onSelect: () => openDialog("forward" as const) }] : []),
+            ...(can.reject ? [{ key: "reject", label: t("workflow.drawer.act.reject"), tone: "danger" as const, icon: <XCircle className="h-4 w-4" />, onSelect: () => openDialog("reject" as const) }] : []),
           ]}
         />
       )}
@@ -492,25 +494,25 @@ function TxnActionBar({
       <Dialog
         open={dialog === "approve"}
         onClose={close}
-        title="اعتماد المعاملة"
-        description="سيتم تمرير المعاملة للخطوة التالية في المسار."
+        title={t("workflow.drawer.approveTitle")}
+        description={t("workflow.drawer.approveDesc")}
         dismissable={!action.isPending}
         footer={
           <>
             <Button variant="secondary" onClick={close} disabled={action.isPending}>
-              إلغاء
+              {t("common.cancel")}
             </Button>
             <Button variant="primary" loading={action.isPending} onClick={() => run("approve", { note: note.trim() || undefined })}>
-              اعتماد
+              {t("workflow.drawer.act.approve")}
             </Button>
           </>
         }
       >
         <label className="block">
-          <span className="text-xs font-bold text-slate-600">ملاحظة (اختياري)</span>
+          <span className="text-xs font-bold text-slate-600">{t("workflow.drawer.noteOptional")}</span>
           <textarea
             className="field mt-1 min-h-20 w-full resize-y py-2"
-            placeholder="أضف ملاحظة على الاعتماد…"
+            placeholder={t("workflow.drawer.approveNotePlaceholder")}
             value={note}
             disabled={action.isPending}
             onChange={(e) => setNote(e.target.value)}
@@ -526,13 +528,13 @@ function TxnActionBar({
       {/* Reject — mandatory reason ≥ 10 */}
       <ConfirmDialog
         open={dialog === "reject"}
-        title="رفض المعاملة"
-        description="سيتم إنهاء المعاملة كمرفوضة وإشعار المُرسِل. اذكر سبب الرفض."
+        title={t("workflow.drawer.rejectTitle")}
+        description={t("workflow.drawer.rejectDesc")}
         tone="danger"
-        confirmLabel="تأكيد الرفض"
+        confirmLabel={t("workflow.drawer.rejectConfirm")}
         requireReason
-        reasonLabel="سبب الرفض"
-        reasonPlaceholder="اكتب سبب الرفض (10 أحرف على الأقل)…"
+        reasonLabel={t("workflow.drawer.rejectReasonLabel")}
+        reasonPlaceholder={t("workflow.drawer.rejectReasonPlaceholder")}
         processing={action.isPending}
         error={error}
         onConfirm={(reason) => confirmReason("reject", reason)}
@@ -542,13 +544,13 @@ function TxnActionBar({
       {/* Return — mandatory reason ≥ 10 */}
       <ConfirmDialog
         open={dialog === "return"}
-        title="إرجاع المعاملة للتعديل"
-        description="ستعود المعاملة إلى المُرسِل لتعديلها. اذكر سبب الإرجاع."
+        title={t("workflow.drawer.returnTitle")}
+        description={t("workflow.drawer.returnDesc")}
         tone="primary"
-        confirmLabel="إرجاع للتعديل"
+        confirmLabel={t("workflow.drawer.returnConfirm")}
         requireReason
-        reasonLabel="سبب الإرجاع"
-        reasonPlaceholder="اكتب سبب الإرجاع (10 أحرف على الأقل)…"
+        reasonLabel={t("workflow.drawer.returnReasonLabel")}
+        reasonPlaceholder={t("workflow.drawer.returnReasonPlaceholder")}
         processing={action.isPending}
         error={error}
         onConfirm={(reason) => confirmReason("return", reason)}
@@ -559,13 +561,13 @@ function TxnActionBar({
       <Dialog
         open={dialog === "forward"}
         onClose={close}
-        title="إحالة المعاملة"
-        description="اختر المستخدم الذي ستُحال إليه المعاملة."
+        title={t("workflow.drawer.forwardTitle")}
+        description={t("workflow.drawer.forwardDesc")}
         dismissable={!action.isPending}
         footer={
           <>
             <Button variant="secondary" onClick={close} disabled={action.isPending}>
-              إلغاء
+              {t("common.cancel")}
             </Button>
             <Button
               variant="primary"
@@ -573,7 +575,7 @@ function TxnActionBar({
               disabled={!forwardTo}
               onClick={() => run("forward", { forwardTo, note: note.trim() || undefined })}
             >
-              إحالة
+              {t("workflow.drawer.act.forward")}
             </Button>
           </>
         }
@@ -581,7 +583,7 @@ function TxnActionBar({
         <div className="space-y-4">
           <label className="block">
             <span className="text-xs font-bold text-slate-600">
-              المستخدم <span className="text-rose-600">*</span>
+              {t("workflow.drawer.userLabel")} <span className="text-rose-600">*</span>
             </span>
             <Select
               className="mt-1"
@@ -591,7 +593,7 @@ function TxnActionBar({
               onChange={(e) => setForwardTo(e.target.value)}
             >
               <option value="">
-                {routable.isLoading ? "جارٍ تحميل المستخدمين…" : "— اختر مستخدمًا —"}
+                {routable.isLoading ? t("workflow.drawer.loadingUsers") : t("workflow.drawer.selectUser")}
               </option>
               {groups.map((g) => (
                 <optgroup key={g.key} label={g.label}>
@@ -606,10 +608,10 @@ function TxnActionBar({
             </Select>
           </label>
           <label className="block">
-            <span className="text-xs font-bold text-slate-600">ملاحظة (اختياري)</span>
+            <span className="text-xs font-bold text-slate-600">{t("workflow.drawer.noteOptional")}</span>
             <textarea
               className="field mt-1 min-h-20 w-full resize-y py-2"
-              placeholder="أضف ملاحظة للإحالة…"
+              placeholder={t("workflow.drawer.forwardNotePlaceholder")}
               value={note}
               disabled={action.isPending}
               onChange={(e) => setNote(e.target.value)}

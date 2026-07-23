@@ -1,0 +1,16 @@
+[
+  {
+    "id": "item.cost.view",
+    "label_ar": "عرض تكلفة/ربحية أصناف المخزون",
+    "label_en": "View inventory item cost / profit columns (D1 table)",
+    "is_sensitive": 0,
+    "roles": ["admin", "manager", "accountant"]
+  },
+  {
+    "id": "menu.cost.view",
+    "label_ar": "عرض تكلفة/ربحية أصناف المنيو",
+    "label_en": "View menu item cost / profit columns (D2 table)",
+    "is_sensitive": 0,
+    "roles": ["admin", "manager", "accountant"]
+  }
+]

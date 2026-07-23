@@ -67,6 +67,14 @@ async function _appliedVersions() {
   return new Set(rows.map(r => r.version));
 }
 
+// ─── 3b. Read the full applied-version -> stored-checksum map ────────
+async function _appliedChecksums() {
+  const [rows] = await db.query(`SELECT version, checksum FROM ${MIGRATIONS_TABLE}`);
+  const out = new Map();
+  for (const r of rows) out.set(r.version, r.checksum);
+  return out;
+}
+
 // ─── 4. Naive SQL splitter — top-level `;` only ──────────────────────
 // MySQL doesn't allow multi-statement queries via mysql2 by default, so
 // we split the file and execute statement by statement. The splitter is
@@ -172,9 +180,37 @@ async function runPendingMigrations(opts) {
       return !applied.has(version);
     });
 
+    // Tier A.2 corrective gate — this used to compute+store a checksum on
+    // every apply (_applyMigration below) but never read it back for
+    // comparison, despite a comment claiming drift would be caught. Real
+    // check now: for every ALREADY-APPLIED file still on disk, recompute
+    // its current checksum and compare against what was recorded at apply
+    // time. A mismatch means the file was edited after being applied
+    // somewhere — never silently ignored, but also never a hard failure
+    // (the DB is already in whatever state that migration left it in; a
+    // dead process wouldn't fix that) — logged as an explicit warning with
+    // both checksums, once, every run, until someone resolves it.
+    const appliedChecksums = await _appliedChecksums();
+    const driftedVersions = [];
+    for (const f of onDisk) {
+      const version = f.match(/^(\d{4})_/)[1];
+      const storedChecksum = appliedChecksums.get(version);
+      if (storedChecksum == null) continue; // not applied yet — nothing to compare
+      const onDiskChecksum = _checksum(fs.readFileSync(path.join(MIGRATIONS_DIR, f), 'utf8'));
+      if (onDiskChecksum !== storedChecksum) {
+        driftedVersions.push({ version, filename: f, storedChecksum, onDiskChecksum });
+      }
+    }
+    if (driftedVersions.length) {
+      logger.warn(
+        { event: 'migration_checksum_drift', count: driftedVersions.length, drifted: driftedVersions },
+        'checksum drift: ' + driftedVersions.length + ' already-applied migration file(s) were edited after being applied — the database was NOT re-run against the new content (already-applied migrations are never re-executed); review the diff manually.'
+      );
+    }
+
     if (pending.length === 0) {
       logger.info({ event: 'migrations_up_to_date', onDisk: onDisk.length }, 'no pending migrations');
-      return { applied: [], pending: [] };
+      return { applied: [], pending: [], drifted: driftedVersions };
     }
 
     logger.info({ event: 'migrations_pending', count: pending.length, files: pending },
@@ -186,7 +222,7 @@ async function runPendingMigrations(opts) {
       appliedNow.push(file);
     }
 
-    return { applied: appliedNow, pending: [] };
+    return { applied: appliedNow, pending: [], drifted: driftedVersions };
   } catch (e) {
     logger.error({ event: 'migrate_runner_error', error: e.message }, 'migration runner failed');
     throw e;

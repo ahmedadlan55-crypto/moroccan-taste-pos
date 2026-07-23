@@ -5,6 +5,7 @@ import { formatCurrency, formatQty } from "@/shared/lib";
 import { useProductionMutations } from "@/modules/inventory/lib/hooks/useProduction";
 import type { ProductionDetail } from "@/modules/inventory/lib/adapters/production.adapter";
 import { ApiError } from "@/shared/api";
+import { useT } from "@/i18n";
 
 // Partial output event: good qty enters the OUTPUT warehouse at
 // u = WIP / remainingExpected; waste is expensed in full (5122) and never
@@ -19,6 +20,7 @@ export function RecordOutputDialog({
   onClose: () => void;
   onDone: () => void;
 }) {
+  const t = useT();
   const { recordOutput } = useProductionMutations();
   const [goodQty, setGoodQty] = useState("");
   const [wasteQty, setWasteQty] = useState("");
@@ -71,17 +73,17 @@ export function RecordOutputDialog({
     <FullPageFlow
       open={open}
       onClose={onClose}
-      title={`تسجيل إنتاج — ${o.number}`}
-      description={`المنجز ${formatQty(o.qtyProduced)} + هدر ${formatQty(o.qtyWaste)} من مخطط ${formatQty(o.qtyPlanned, o.productUnit)} · WIP ${formatCurrency(o.wipBalance)}`}
-      eyebrow="أوامر الإنتاج"
+      title={t("production.output.title", { number: o.number })}
+      description={t("production.output.description", { produced: formatQty(o.qtyProduced), waste: formatQty(o.qtyWaste), planned: formatQty(o.qtyPlanned, o.productUnit), wip: formatCurrency(o.wipBalance) })}
+      eyebrow={t("production.list.title")}
       icon={PackagePlus}
       size="md"
       dismissable={!recordOutput.isPending}
       footer={
         <>
-          <Button variant="secondary" onClick={onClose} disabled={recordOutput.isPending}>إلغاء</Button>
+          <Button variant="secondary" onClick={onClose} disabled={recordOutput.isPending}>{t("common.cancel")}</Button>
           <Button variant="primary" disabled={recordOutput.isPending || invalid} onClick={() => void submit()}>
-            {recordOutput.isPending ? "جارٍ التسجيل…" : "تسجيل الإنتاج"}
+            {recordOutput.isPending ? t("production.output.submitting") : t("production.output.submit")}
           </Button>
         </>
       }
@@ -89,43 +91,43 @@ export function RecordOutputDialog({
       <section className="surface p-5 sm:p-6 lg:p-8">
             <div className="grid gap-5 sm:grid-cols-2">
               <label className="block text-xs font-bold text-slate-500">
-                الكمية الجيدة (تدخل {o.outputWarehouseName})
-                <input type="number" min="0" step="any" dir="ltr" className="field mt-1 w-full tabular-nums" value={goodQty} onChange={(e) => setGoodQty(e.target.value)} aria-label="الكمية الجيدة" />
+                {t("production.output.goodLabel", { warehouse: o.outputWarehouseName })}
+                <input type="number" min="0" step="any" dir="ltr" className="field mt-1 w-full tabular-nums" value={goodQty} onChange={(e) => setGoodQty(e.target.value)} aria-label={t("production.output.goodAria")} />
               </label>
               <label className="block text-xs font-bold text-slate-500">
-                كمية الهدر (تُصرف كمصروف — لا تدخل المخزون)
-                <input type="number" min="0" step="any" dir="ltr" className="field mt-1 w-full tabular-nums" value={wasteQty} onChange={(e) => setWasteQty(e.target.value)} aria-label="كمية الهدر" />
+                {t("production.output.wasteLabel")}
+                <input type="number" min="0" step="any" dir="ltr" className="field mt-1 w-full tabular-nums" value={wasteQty} onChange={(e) => setWasteQty(e.target.value)} aria-label={t("production.output.wasteAria")} />
               </label>
               {waste > 0 && (
                 <label className="block text-xs font-bold text-slate-500 sm:col-span-2">
-                  سبب الهدر (إلزامي)
-                  <input className="field mt-1 w-full" value={wasteReason} onChange={(e) => setWasteReason(e.target.value)} placeholder="مثال: كسر أثناء التعبئة" aria-label="سبب الهدر" />
+                  {t("production.output.wasteReasonLabel")}
+                  <input className="field mt-1 w-full" value={wasteReason} onChange={(e) => setWasteReason(e.target.value)} placeholder={t("production.output.wasteReasonPlaceholder")} aria-label={t("production.output.wasteReasonAria")} />
                   {o.allowedScrapPct > 0 && (
                     <span className="mt-1 block text-[11px] font-medium text-amber-600">
-                      السماحية {o.allowedScrapPct}% من المخطط — تجاوزها يتطلب مديرًا.
+                      {t("production.output.scrapAllowance", { pct: o.allowedScrapPct })}
                     </span>
                   )}
                 </label>
               )}
               {tracked && (
                 <label className="block text-xs font-bold text-slate-500">
-                  رقم دفعة المنتج (إلزامي)
-                  <input className="field mt-1 w-full" value={batchNumber} onChange={(e) => setBatchNumber(e.target.value)} aria-label="رقم الدفعة" />
+                  {t("production.output.batchLabel")}
+                  <input className="field mt-1 w-full" value={batchNumber} onChange={(e) => setBatchNumber(e.target.value)} aria-label={t("production.output.batchAria")} />
                 </label>
               )}
               {trackingMode === "expiry" && (
                 <label className="block text-xs font-bold text-slate-500">
-                  تاريخ الصلاحية (إلزامي)
-                  <input type="date" className="field mt-1 w-full" value={expiryDate} onChange={(e) => setExpiryDate(e.target.value)} aria-label="تاريخ الصلاحية" />
+                  {t("production.output.expiryLabel")}
+                  <input type="date" className="field mt-1 w-full" value={expiryDate} onChange={(e) => setExpiryDate(e.target.value)} aria-label={t("production.output.expiryAria")} />
                 </label>
               )}
             </div>
 
             {(good + waste) > 0 && (
               <div className="mt-4 grid grid-cols-3 gap-2 text-center">
-                <PreviewCell label="تكلفة الوحدة المتوقعة" value={formatCurrency(projectedUnit)} />
-                <PreviewCell label="قيمة الجيد" value={formatCurrency(good * projectedUnit)} />
-                <PreviewCell label="قيمة الهدر (مصروف)" value={formatCurrency(waste * projectedUnit)} tone={waste > 0 ? "rose" : undefined} />
+                <PreviewCell label={t("production.output.preview.unitCost")} value={formatCurrency(projectedUnit)} />
+                <PreviewCell label={t("production.output.preview.goodValue")} value={formatCurrency(good * projectedUnit)} />
+                <PreviewCell label={t("production.output.preview.wasteValue")} value={formatCurrency(waste * projectedUnit)} tone={waste > 0 ? "rose" : undefined} />
               </div>
             )}
 

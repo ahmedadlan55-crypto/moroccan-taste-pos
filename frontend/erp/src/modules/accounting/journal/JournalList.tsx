@@ -17,6 +17,7 @@ import {
 import { DataTable, type ColumnDef } from "@/shared/tables";
 import { formatDate } from "@/shared/lib";
 import { useCan } from "@/app/providers";
+import { useT } from "@/i18n";
 import {
   usePostJournal,
   useJournals,
@@ -25,9 +26,7 @@ import {
 } from "../api";
 import {
   MoneyText,
-  REFERENCE_TYPE_OPTIONS,
   STATUS_LABEL,
-  STATUS_OPTIONS,
   mapJournalError,
 } from "./journalModel";
 
@@ -75,8 +74,33 @@ function Kpi({ label, value, tone }: { label: string; value: number; tone: strin
 }
 
 export function JournalList({ onOpen }: JournalListProps) {
+  const t = useT();
   const canPost = useCan(POST_CAP);
   const { toast } = useToast();
+
+  const statusOptions = useMemo(
+    () => [
+      { value: "", label: t("accounting.journal.statusOption.all") },
+      { value: "draft", label: t("accounting.journal.statusOption.draft") },
+      { value: "approved", label: t("accounting.journal.statusOption.approved") },
+      { value: "posted", label: t("accounting.journal.statusOption.posted") },
+    ],
+    [t],
+  );
+  const refTypeOptions = useMemo(
+    () => [
+      { value: "", label: t("accounting.journal.refType.all") },
+      { value: "manual", label: t("accounting.journal.refType.manual") },
+      { value: "opening", label: t("accounting.journal.refType.opening") },
+      { value: "sale", label: t("accounting.journal.refType.sale") },
+      { value: "purchase", label: t("accounting.journal.refType.purchase") },
+      { value: "custody", label: t("accounting.journal.refType.custody") },
+      { value: "payroll", label: t("accounting.journal.refType.payroll") },
+      { value: "depreciation", label: t("accounting.journal.refType.depreciation") },
+      { value: "reversal", label: t("accounting.journal.refType.reversal") },
+    ],
+    [t],
+  );
 
   const [draft, setDraft] = useState<DraftFilters>(EMPTY_DRAFT);
   const [applied, setApplied] = useState<JournalFilters>({});
@@ -122,14 +146,14 @@ export function JournalList({ onOpen }: JournalListProps) {
         onSuccess: (res) => {
           setPostingId(null);
           if (res && res.success === false) {
-            toast({ tone: "error", title: mapJournalError(res.error) });
+            toast({ tone: "error", title: mapJournalError(t, res.error) });
             return;
           }
-          toast({ tone: "success", title: `تم ترحيل القيد ${journal.journalNumber}.` });
+          toast({ tone: "success", title: t("accounting.journal.toast.posted", { number: journal.journalNumber }) });
         },
         onError: (e) => {
           setPostingId(null);
-          toast({ tone: "error", title: mapJournalError(e instanceof Error ? e.message : "") });
+          toast({ tone: "error", title: mapJournalError(t, e instanceof Error ? e.message : "") });
         },
       },
     );
@@ -138,7 +162,7 @@ export function JournalList({ onOpen }: JournalListProps) {
   const columns: ColumnDef<Journal>[] = [
     {
       id: "journalNumber",
-      header: "رقم القيد",
+      header: t("accounting.journal.col.number"),
       accessor: (r) => r.journalNumber,
       sortable: true,
       cell: (r) => (
@@ -149,7 +173,7 @@ export function JournalList({ onOpen }: JournalListProps) {
     },
     {
       id: "journalDate",
-      header: "التاريخ",
+      header: t("accounting.common.date"),
       accessor: (r) => r.journalDate,
       sortable: true,
       cell: (r) => (
@@ -158,10 +182,10 @@ export function JournalList({ onOpen }: JournalListProps) {
         </span>
       ),
     },
-    { id: "description", header: "الوصف", accessor: (r) => r.description || "—" },
+    { id: "description", header: t("accounting.journal.col.description"), accessor: (r) => r.description || "—" },
     {
       id: "totalDebit",
-      header: "مدين",
+      header: t("accounting.common.debit"),
       numeric: true,
       accessor: (r) => r.totalDebit,
       sortable: true,
@@ -169,7 +193,7 @@ export function JournalList({ onOpen }: JournalListProps) {
     },
     {
       id: "totalCredit",
-      header: "دائن",
+      header: t("accounting.common.credit"),
       numeric: true,
       accessor: (r) => r.totalCredit,
       sortable: true,
@@ -177,7 +201,7 @@ export function JournalList({ onOpen }: JournalListProps) {
     },
     {
       id: "status",
-      header: "الحالة",
+      header: t("accounting.journal.col.status"),
       accessor: (r) => STATUS_LABEL[r.status],
       cell: (r) => (
         <span className="flex flex-wrap items-center gap-1">
@@ -193,51 +217,51 @@ export function JournalList({ onOpen }: JournalListProps) {
       {/* Filters */}
       <div className="surface flex flex-wrap items-end gap-3 p-4">
         <label className="flex min-w-40 flex-col gap-1">
-          <span className="text-xs font-bold text-slate-600">من تاريخ</span>
+          <span className="text-xs font-bold text-slate-600">{t("accounting.common.fromDate")}</span>
           <DatePicker value={draft.startDate} onChange={(startDate) => patch({ startDate })} />
         </label>
         <label className="flex min-w-40 flex-col gap-1">
-          <span className="text-xs font-bold text-slate-600">إلى تاريخ</span>
+          <span className="text-xs font-bold text-slate-600">{t("accounting.common.toDate")}</span>
           <DatePicker value={draft.endDate} onChange={(endDate) => patch({ endDate })} />
         </label>
         <label className="flex min-w-40 flex-col gap-1">
-          <span className="text-xs font-bold text-slate-600">الحالة</span>
+          <span className="text-xs font-bold text-slate-600">{t("accounting.journal.filter.status")}</span>
           <Select
             value={draft.status}
             onChange={(e) => patchAndApply({ status: e.target.value })}
-            options={STATUS_OPTIONS}
+            options={statusOptions}
           />
         </label>
         <label className="flex min-w-40 flex-col gap-1">
-          <span className="text-xs font-bold text-slate-600">النوع</span>
+          <span className="text-xs font-bold text-slate-600">{t("accounting.journal.filter.type")}</span>
           <Select
             value={draft.referenceType}
             onChange={(e) => patchAndApply({ referenceType: e.target.value })}
-            options={REFERENCE_TYPE_OPTIONS}
+            options={refTypeOptions}
           />
         </label>
         <label className="flex min-w-48 flex-1 flex-col gap-1">
-          <span className="text-xs font-bold text-slate-600">بحث</span>
+          <span className="text-xs font-bold text-slate-600">{t("common.search")}</span>
           <Input
             value={draft.q}
             onChange={(e) => patch({ q: e.target.value })}
             onKeyDown={(e) => {
               if (e.key === "Enter") applyFilters();
             }}
-            placeholder="رقم القيد أو الوصف…"
+            placeholder={t("accounting.journal.filter.searchPlaceholder")}
           />
         </label>
         <Button variant="primary" onClick={applyFilters} loading={query.isFetching}>
-          بحث
+          {t("common.search")}
         </Button>
       </div>
 
       {/* KPIs */}
       <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-        <Kpi label="إجمالي القيود" value={kpis.total} tone="text-slate-900" />
-        <Kpi label="مسودة" value={kpis.draftN} tone="text-slate-600" />
-        <Kpi label="معتمد" value={kpis.approved} tone="text-amber-600" />
-        <Kpi label="مُرحّل" value={kpis.posted} tone="text-emerald-600" />
+        <Kpi label={t("accounting.journal.kpi.total")} value={kpis.total} tone="text-slate-900" />
+        <Kpi label={t("accounting.journal.kpi.draft")} value={kpis.draftN} tone="text-slate-600" />
+        <Kpi label={t("accounting.journal.kpi.approved")} value={kpis.approved} tone="text-amber-600" />
+        <Kpi label={t("accounting.journal.kpi.posted")} value={kpis.posted} tone="text-emerald-600" />
       </div>
 
       {/* Table */}
@@ -249,13 +273,13 @@ export function JournalList({ onOpen }: JournalListProps) {
         error={query.error}
         onRetry={() => query.refetch()}
         onRowClick={(r) => onOpen(r)}
-        emptyTitle="لا توجد قيود"
-        emptyBody="لا توجد قيود مطابقة للتصفية الحالية."
+        emptyTitle={t("accounting.journal.empty.title")}
+        emptyBody={t("accounting.journal.empty.body")}
         rowActions={(r) => (
           <div className="flex items-center gap-1">
             {canPost && r.status !== "posted" && (
               <IconButton
-                aria-label="ترحيل"
+                aria-label={t("accounting.journal.action.post")}
                 size="sm"
                 onClick={() => quickPost(r)}
                 disabled={post.isPending && postingId === r.id}
@@ -263,7 +287,7 @@ export function JournalList({ onOpen }: JournalListProps) {
                 <Send className="h-4 w-4 text-teal-600" />
               </IconButton>
             )}
-            <IconButton aria-label="فتح" size="sm" onClick={() => onOpen(r)}>
+            <IconButton aria-label={t("accounting.journal.action.open")} size="sm" onClick={() => onOpen(r)}>
               <ArrowUpRight className="h-4 w-4" />
             </IconButton>
           </div>

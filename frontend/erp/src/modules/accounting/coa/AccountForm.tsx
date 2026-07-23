@@ -13,9 +13,10 @@ import {
   Toggle,
 } from "@/shared/ui";
 import { Field } from "@/shared/forms";
+import { useT, type TFunction } from "@/i18n";
 import {
   GL_ACCOUNT_TYPES,
-  GL_TYPE_LABEL,
+  glTypeLabel,
   useSaveGlAccount,
   type GlAccount,
   type GlAccountInput,
@@ -23,16 +24,17 @@ import {
 } from "../api";
 import { buildChildrenMap, descendantIds } from "./coaModel";
 
-// Server answers HTTP 200 with { success:false, error } — map the codes to Arabic.
-function mapError(raw: string | undefined): string {
+// Server answers HTTP 200 with { success:false, error } — map the codes to a
+// localized message via the caller-supplied `t`.
+function mapError(t: TFunction, raw: string | undefined): string {
   const s = raw ?? "";
-  if (/duplicate-code|code-exists|already/i.test(s)) return "الرمز مستخدم مسبقًا لحساب آخر.";
-  if (/code-required/i.test(s)) return "الرمز مطلوب.";
-  if (/name-required|name/i.test(s)) return "الاسم بالعربية مطلوب.";
-  if (/parent-not-found|invalid-parent/i.test(s)) return "الحساب الرئيسي غير موجود.";
-  if (/parent-is-leaf|parent-not-folder/i.test(s)) return "الحساب الرئيسي المختار ليس مجموعة.";
-  if (/not-found/i.test(s)) return "الحساب غير موجود.";
-  return s || "تعذّر حفظ الحساب. أعد المحاولة.";
+  if (/duplicate-code|code-exists|already/i.test(s)) return t("accounting.coa.form.errors.dupCode");
+  if (/code-required/i.test(s)) return t("accounting.coa.form.errors.codeRequired");
+  if (/name-required|name/i.test(s)) return t("accounting.coa.form.errors.nameRequired");
+  if (/parent-not-found|invalid-parent/i.test(s)) return t("accounting.coa.form.errors.parentNotFound");
+  if (/parent-is-leaf|parent-not-folder/i.test(s)) return t("accounting.coa.form.errors.parentNotFolder");
+  if (/not-found/i.test(s)) return t("accounting.coa.form.errors.notFound");
+  return s || t("accounting.coa.form.errors.generic");
 }
 
 interface FormState {
@@ -68,6 +70,7 @@ export interface AccountFormProps {
 }
 
 export function AccountForm({ open, account, accounts, onClose, onSaved }: AccountFormProps) {
+  const t = useT();
   const save = useSaveGlAccount();
   const [form, setForm] = useState<FormState | null>(null);
   const [errors, setErrors] = useState<{ code?: string; nameAr?: string; parent?: string }>({});
@@ -97,7 +100,7 @@ export function AccountForm({ open, account, accounts, onClose, onSaved }: Accou
   }, [accounts, byParent, form?.id]);
 
   if (!form) {
-    return <Dialog open={open} onClose={onClose} size="lg" title="حساب" />;
+    return <Dialog open={open} onClose={onClose} size="lg" title={t("accounting.coa.form.titleFallback")} />;
   }
 
   const parentAccount = accounts.find((a) => a.id === form.parentId) ?? null;
@@ -123,9 +126,9 @@ export function AccountForm({ open, account, accounts, onClose, onSaved }: Accou
   function submit() {
     if (!form) return;
     const next: typeof errors = {};
-    if (!form.code.trim()) next.code = "الرمز مطلوب.";
-    if (!form.nameAr.trim()) next.nameAr = "الاسم بالعربية مطلوب.";
-    if (!form.isFolder && !form.parentId) next.parent = "اختر حسابًا رئيسيًا للحساب النهائي.";
+    if (!form.code.trim()) next.code = t("accounting.coa.form.validation.codeRequired");
+    if (!form.nameAr.trim()) next.nameAr = t("accounting.coa.form.validation.nameArRequired");
+    if (!form.isFolder && !form.parentId) next.parent = t("accounting.coa.form.validation.parentRequired");
     setErrors(next);
     if (Object.keys(next).length > 0) return;
 
@@ -145,13 +148,13 @@ export function AccountForm({ open, account, accounts, onClose, onSaved }: Accou
     save.mutate(input, {
       onSuccess: (res) => {
         if (res && res.success === false) {
-          setFormError(mapError(res.error));
+          setFormError(mapError(t, res.error));
           return;
         }
         onSaved();
         onClose();
       },
-      onError: (e) => setFormError(mapError(e instanceof Error ? e.message : "")),
+      onError: (e) => setFormError(mapError(t, e instanceof Error ? e.message : "")),
     });
   }
 
@@ -159,41 +162,41 @@ export function AccountForm({ open, account, accounts, onClose, onSaved }: Accou
     <Dialog
       open={open}
       onClose={onClose}
-      title={isEdit ? "تعديل الحساب" : "حساب جديد"}
+      title={isEdit ? t("accounting.coa.form.editTitle") : t("accounting.coa.form.newTitle")}
       size="lg"
       footer={
         <>
           <Button variant="secondary" onClick={onClose} disabled={save.isPending}>
-            إلغاء
+            {t("common.cancel")}
           </Button>
           <Button variant="primary" onClick={submit} loading={save.isPending}>
-            حفظ
+            {t("common.save")}
           </Button>
         </>
       }
     >
       <div className="space-y-4">
-        <Field label="النوع">
+        <Field label={t("accounting.coa.form.kind")}>
           <SegmentedControl<"folder" | "leaf">
             value={form.isFolder ? "folder" : "leaf"}
             onChange={changeKind}
             options={[
-              { value: "folder", label: "مجموعة" },
-              { value: "leaf", label: "حساب نهائي" },
+              { value: "folder", label: t("accounting.coa.form.folderKind") },
+              { value: "leaf", label: t("accounting.coa.form.leafKind") },
             ]}
-            aria-label="نوع الحساب"
+            aria-label={t("accounting.coa.form.kindAria")}
           />
         </Field>
 
         <div className="grid gap-4 sm:grid-cols-2">
-          <Field label="الحساب الرئيسي" error={errors.parent}>
+          <Field label={t("accounting.coa.form.parent")} error={errors.parent}>
             <Select
               value={form.parentId ?? ""}
               invalid={!!errors.parent}
               onChange={(e) => changeParent(e.target.value)}
             >
               <option value="" disabled={!form.isFolder}>
-                — جذر —
+                {t("accounting.coa.form.root")}
               </option>
               {parentOptions.map((p) => (
                 <option key={p.id} value={p.id}>
@@ -203,20 +206,20 @@ export function AccountForm({ open, account, accounts, onClose, onSaved }: Accou
             </Select>
           </Field>
 
-          <Field label="التصنيف">
+          <Field label={t("accounting.coa.form.classification")}>
             <Select
               value={form.type}
               onChange={(e) => patch({ type: e.target.value as GlAccountType })}
             >
-              {GL_ACCOUNT_TYPES.map((t) => (
-                <option key={t} value={t}>
-                  {GL_TYPE_LABEL[t]}
+              {GL_ACCOUNT_TYPES.map((tp) => (
+                <option key={tp} value={tp}>
+                  {glTypeLabel(t, tp)}
                 </option>
               ))}
             </Select>
           </Field>
 
-          <Field label="الرمز" required error={errors.code}>
+          <Field label={t("accounting.coa.form.code")} required error={errors.code}>
             <Input
               value={form.code}
               readOnly={isEdit}
@@ -225,16 +228,16 @@ export function AccountForm({ open, account, accounts, onClose, onSaved }: Accou
                 setErrors((x) => ({ ...x, code: undefined }));
                 patch({ code: e.target.value });
               }}
-              placeholder="مثال: 1101"
+              placeholder={t("accounting.coa.form.codePlaceholder")}
               className={isEdit ? "bg-slate-50 text-slate-500" : undefined}
             />
           </Field>
 
-          <Field label="المستوى">
+          <Field label={t("accounting.coa.form.level")}>
             <Input value={String(level)} readOnly className="bg-slate-50 text-slate-500" />
           </Field>
 
-          <Field label="الاسم بالعربية" required error={errors.nameAr} className="sm:col-span-2">
+          <Field label={t("accounting.coa.form.nameAr")} required error={errors.nameAr} className="sm:col-span-2">
             <Input
               value={form.nameAr}
               invalid={!!errors.nameAr}
@@ -245,7 +248,7 @@ export function AccountForm({ open, account, accounts, onClose, onSaved }: Accou
             />
           </Field>
 
-          <Field label="الاسم بالإنجليزية" className="sm:col-span-2">
+          <Field label={t("accounting.coa.form.nameEn")} className="sm:col-span-2">
             <Input
               value={form.nameEn}
               dir="ltr"
@@ -257,7 +260,7 @@ export function AccountForm({ open, account, accounts, onClose, onSaved }: Accou
         {isEdit && (
           <label className="flex items-center gap-3">
             <Toggle checked={form.isActive} onChange={(v) => patch({ isActive: v })} />
-            <span className="text-sm font-bold text-slate-700">نشط</span>
+            <span className="text-sm font-bold text-slate-700">{t("accounting.coa.form.active")}</span>
           </label>
         )}
 

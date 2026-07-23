@@ -2,6 +2,7 @@ import { useState, type ReactNode } from "react";
 import { AlertTriangle, Download } from "lucide-react";
 import { Button, DatePicker, Select } from "@/shared/ui";
 import { formatDate } from "@/shared/lib";
+import { useT } from "@/i18n";
 import {
   useSalesAnalytics,
   useBrands,
@@ -38,11 +39,11 @@ function startOfMonthISO(): string {
   return `${todayISO().slice(0, 7)}-01`;
 }
 
-const PRESETS: Array<{ key: string; label: string; range: () => { from: string; to: string } }> = [
-  { key: "today", label: "اليوم", range: () => ({ from: todayISO(), to: todayISO() }) },
-  { key: "yesterday", label: "أمس", range: () => ({ from: isoDaysAgo(1), to: isoDaysAgo(1) }) },
-  { key: "week", label: "الأسبوع", range: () => ({ from: isoDaysAgo(6), to: todayISO() }) },
-  { key: "month", label: "الشهر", range: () => ({ from: startOfMonthISO(), to: todayISO() }) },
+const PRESETS: Array<{ key: string; range: () => { from: string; to: string } }> = [
+  { key: "today", range: () => ({ from: todayISO(), to: todayISO() }) },
+  { key: "yesterday", range: () => ({ from: isoDaysAgo(1), to: isoDaysAgo(1) }) },
+  { key: "week", range: () => ({ from: isoDaysAgo(6), to: todayISO() }) },
+  { key: "month", range: () => ({ from: startOfMonthISO(), to: todayISO() }) },
 ];
 
 function Kpi({ label, value, tone = "plain" }: { label: string; value: number; tone?: "plain" | "signed" }) {
@@ -132,6 +133,7 @@ export function SalesAnalyticsPage() {
     setApplied(next);
   };
 
+  const t = useT();
   const query = useSalesAnalytics(applied);
   const brands = useBrands();
   const branches = useBranches();
@@ -141,30 +143,30 @@ export function SalesAnalyticsPage() {
   return (
     <div>
       <ReportHeader
-        title="تحليلات المبيعات"
-        subtitle="إجماليات وتفصيلات المبيعات: حسب المنتج واليوم وطريقة الدفع والكاشير والساعة — كل الأرقام من الخادم كما هي."
+        title={t("accounting.salesAnalytics.title")}
+        subtitle={t("accounting.salesAnalytics.subtitle")}
         onPrint={printReport}
       />
 
       <div className="no-print surface mb-5 p-4">
         <div className="mb-3 flex flex-wrap items-center gap-2">
-          <span className="text-xs font-bold text-slate-500">فترات سريعة:</span>
+          <span className="text-xs font-bold text-slate-500">{t("accounting.salesAnalytics.quickRanges")}</span>
           {PRESETS.map((p) => (
             <Button key={p.key} variant="secondary" size="sm" onClick={() => applyPreset(p.range())}>
-              {p.label}
+              {t(`accounting.salesAnalytics.preset.${p.key}`)}
             </Button>
           ))}
         </div>
         <div className="flex flex-wrap items-end gap-3">
-          <FilterField label="من تاريخ">
+          <FilterField label={t("accounting.common.fromDate")}>
             <DatePicker value={draft.from} onChange={(from) => patch({ from })} />
           </FilterField>
-          <FilterField label="إلى تاريخ">
+          <FilterField label={t("accounting.common.toDate")}>
             <DatePicker value={draft.to} onChange={(to) => patch({ to })} />
           </FilterField>
-          <FilterField label="العلامة التجارية">
+          <FilterField label={t("accounting.salesAnalytics.brand")}>
             <Select value={draft.brandId} onChange={(e) => patch({ brandId: e.target.value })}>
-              <option value="">كل العلامات</option>
+              <option value="">{t("accounting.salesAnalytics.allBrands")}</option>
               {(brands.data ?? []).map((b) => (
                 <option key={b.id} value={b.id}>
                   {b.name}
@@ -172,9 +174,9 @@ export function SalesAnalyticsPage() {
               ))}
             </Select>
           </FilterField>
-          <FilterField label="الفرع">
+          <FilterField label={t("accounting.salesAnalytics.branch")}>
             <Select value={draft.branchId} onChange={(e) => patch({ branchId: e.target.value })}>
-              <option value="">كل الفروع</option>
+              <option value="">{t("accounting.salesAnalytics.allBranches")}</option>
               {(branches.data ?? []).map((b) => (
                 <option key={b.id} value={b.id}>
                   {b.name}
@@ -183,7 +185,7 @@ export function SalesAnalyticsPage() {
             </Select>
           </FilterField>
           <Button variant="primary" onClick={() => setApplied(draft)} loading={query.isFetching}>
-            عرض التقرير
+            {t("accounting.common.viewReport")}
           </Button>
         </div>
       </div>
@@ -193,7 +195,7 @@ export function SalesAnalyticsPage() {
         error={query.error}
         isEmpty={!!data && data.headline.invoiceCount === 0}
         onRetry={() => query.refetch()}
-        emptyBody="لا توجد فواتير مبيعات في الفترة المحددة."
+        emptyBody={t("accounting.salesAnalytics.empty")}
       >
         {data && <Results data={data} applied={applied} period={period} />}
       </ReportState>
@@ -210,54 +212,64 @@ function Results({
   applied: SalesAnalyticsFilter;
   period: string;
 }) {
+  const t = useT();
   const rev = data.revenue;
   const topProducts = data.byProduct.slice(0, TOP_PRODUCTS);
 
   return (
     <PrintArea>
       <div className="surface mb-5 p-4">
-        <PrintBanner title="تحليلات المبيعات" period={period} />
+        <PrintBanner title={t("accounting.salesAnalytics.title")} period={period} />
         <div className="flex flex-wrap gap-x-6 gap-y-1 text-xs font-bold text-slate-600">
           <span>
-            عدد الفواتير: <span dir="ltr" className="tabular-nums">{data.headline.invoiceCount.toLocaleString("en-US")}</span>
+            {t("accounting.salesAnalytics.invoiceCount")} <span dir="ltr" className="tabular-nums">{data.headline.invoiceCount.toLocaleString("en-US")}</span>
           </span>
           <span>
-            متوسط الفاتورة: <Num value={data.headline.avgTicket} strong />
+            {t("accounting.salesAnalytics.avgTicket")} <Num value={data.headline.avgTicket} strong />
           </span>
         </div>
         <div className="mt-3 space-y-2">
           <UnknownWarning
             count={rev.netUnknownCount}
-            text="فاتورة بلا تفصيل ضريبي — مستثناة من الصافي."
+            text={t("accounting.salesAnalytics.netUnknown")}
           />
           <UnknownWarning
             count={rev.costUnknownCount}
-            text="فاتورة بلا تكلفة معروفة — مستثناة من التكلفة والربح."
+            text={t("accounting.salesAnalytics.costUnknown")}
           />
         </div>
       </div>
 
       {/* The six headline money figures — rendered exactly as the server sent them. */}
       <div className="mb-5 grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
-        <Kpi label="الإجمالي شامل الضريبة" value={rev.grossInclVat} />
-        <Kpi label="الصافي قبل الضريبة" value={rev.net} />
-        <Kpi label="ضريبة القيمة المضافة" value={rev.vat} />
-        <Kpi label="الخصومات" value={rev.discounts} />
-        <Kpi label="التكلفة" value={rev.cost} />
-        <Kpi label="الربح" value={rev.profit} tone="signed" />
+        <Kpi label={t("accounting.salesAnalytics.grossInclVat")} value={rev.grossInclVat} />
+        <Kpi label={t("accounting.salesAnalytics.net")} value={rev.net} />
+        <Kpi label={t("accounting.salesAnalytics.vat")} value={rev.vat} />
+        <Kpi label={t("accounting.salesAnalytics.discounts")} value={rev.discounts} />
+        <Kpi label={t("accounting.salesAnalytics.cost")} value={rev.cost} />
+        <Kpi label={t("accounting.salesAnalytics.profit")} value={rev.profit} tone="signed" />
       </div>
 
       <Section
-        title={`أعلى ${TOP_PRODUCTS} منتجًا`}
+        title={t("accounting.salesAnalytics.topProducts", { count: TOP_PRODUCTS })}
         note={
           data.byProduct.length > TOP_PRODUCTS
-            ? `من أصل ${data.byProduct.length} منتجًا — التصدير يشمل الكل`
+            ? t("accounting.salesAnalytics.topProductsNote", { count: data.byProduct.length })
             : undefined
         }
         onExport={() =>
           exportRowsCsv(
             `sales-by-product-${csvSuffix(applied)}.csv`,
-            ["المنتج", "الكمية", "الإجمالي", "الصافي", "الضريبة", "التكلفة", "الربح", "الهامش %"],
+            [
+              t("accounting.salesAnalytics.col.product"),
+              t("accounting.salesAnalytics.col.qty"),
+              t("accounting.salesAnalytics.col.total"),
+              t("accounting.salesAnalytics.col.net"),
+              t("accounting.salesAnalytics.col.vat"),
+              t("accounting.salesAnalytics.col.cost"),
+              t("accounting.salesAnalytics.col.profit"),
+              t("accounting.salesAnalytics.col.margin"),
+            ],
             data.byProduct.map((p) => [p.name, p.qty, p.gross, p.net, p.vat, p.cost, p.profit, p.margin]),
           )
         }
@@ -265,14 +277,14 @@ function Results({
         <table className="w-full min-w-[52rem] text-sm">
           <thead>
             <tr className="border-b border-slate-200">
-              <th className={`${TH} text-right`}>المنتج</th>
-              <th className={`${TH} text-left`}>الكمية</th>
-              <th className={`${TH} text-left`}>الإجمالي</th>
-              <th className={`${TH} text-left`}>الصافي</th>
-              <th className={`${TH} text-left`}>الضريبة</th>
-              <th className={`${TH} text-left`}>التكلفة</th>
-              <th className={`${TH} text-left`}>الربح</th>
-              <th className={`${TH} text-left`}>الهامش %</th>
+              <th className={`${TH} text-right`}>{t("accounting.salesAnalytics.col.product")}</th>
+              <th className={`${TH} text-left`}>{t("accounting.salesAnalytics.col.qty")}</th>
+              <th className={`${TH} text-left`}>{t("accounting.salesAnalytics.col.total")}</th>
+              <th className={`${TH} text-left`}>{t("accounting.salesAnalytics.col.net")}</th>
+              <th className={`${TH} text-left`}>{t("accounting.salesAnalytics.col.vat")}</th>
+              <th className={`${TH} text-left`}>{t("accounting.salesAnalytics.col.cost")}</th>
+              <th className={`${TH} text-left`}>{t("accounting.salesAnalytics.col.profit")}</th>
+              <th className={`${TH} text-left`}>{t("accounting.salesAnalytics.col.margin")}</th>
             </tr>
           </thead>
           <tbody>
@@ -295,11 +307,11 @@ function Results({
       </Section>
 
       <Section
-        title="المبيعات اليومية"
+        title={t("accounting.salesAnalytics.dailySales")}
         onExport={() =>
           exportRowsCsv(
             `sales-daily-${csvSuffix(applied)}.csv`,
-            ["التاريخ", "عدد الفواتير", "الإجمالي"],
+            [t("accounting.common.date"), t("accounting.salesAnalytics.col.invoiceCount"), t("accounting.salesAnalytics.col.total")],
             data.daily.map((d) => [d.date, d.count, d.total]),
           )
         }
@@ -307,9 +319,9 @@ function Results({
         <table className="w-full min-w-[28rem] text-sm">
           <thead>
             <tr className="border-b border-slate-200">
-              <th className={`${TH} text-right`}>التاريخ</th>
-              <th className={`${TH} text-left`}>عدد الفواتير</th>
-              <th className={`${TH} text-left`}>الإجمالي</th>
+              <th className={`${TH} text-right`}>{t("accounting.common.date")}</th>
+              <th className={`${TH} text-left`}>{t("accounting.salesAnalytics.col.invoiceCount")}</th>
+              <th className={`${TH} text-left`}>{t("accounting.salesAnalytics.col.total")}</th>
             </tr>
           </thead>
           <tbody>
@@ -326,11 +338,11 @@ function Results({
 
       <div className="grid gap-5 xl:grid-cols-2">
         <Section
-          title="حسب طريقة الدفع"
+          title={t("accounting.salesAnalytics.byPayment")}
           onExport={() =>
             exportRowsCsv(
               `sales-by-payment-${csvSuffix(applied)}.csv`,
-              ["طريقة الدفع", "عدد الفواتير", "الإجمالي"],
+              [t("accounting.salesAnalytics.col.paymentMethod"), t("accounting.salesAnalytics.col.invoiceCount"), t("accounting.salesAnalytics.col.total")],
               data.byPayment.map((p) => [p.method, p.count, p.total]),
             )
           }
@@ -338,9 +350,9 @@ function Results({
           <table className="w-full min-w-[24rem] text-sm">
             <thead>
               <tr className="border-b border-slate-200">
-                <th className={`${TH} text-right`}>طريقة الدفع</th>
-                <th className={`${TH} text-left`}>عدد الفواتير</th>
-                <th className={`${TH} text-left`}>الإجمالي</th>
+                <th className={`${TH} text-right`}>{t("accounting.salesAnalytics.col.paymentMethod")}</th>
+                <th className={`${TH} text-left`}>{t("accounting.salesAnalytics.col.invoiceCount")}</th>
+                <th className={`${TH} text-left`}>{t("accounting.salesAnalytics.col.total")}</th>
               </tr>
             </thead>
             <tbody>
@@ -356,11 +368,11 @@ function Results({
         </Section>
 
         <Section
-          title="حسب الكاشير"
+          title={t("accounting.salesAnalytics.byCashier")}
           onExport={() =>
             exportRowsCsv(
               `sales-by-cashier-${csvSuffix(applied)}.csv`,
-              ["الكاشير", "عدد الفواتير", "الإجمالي", "متوسط الفاتورة"],
+              [t("accounting.salesAnalytics.col.cashier"), t("accounting.salesAnalytics.col.invoiceCount"), t("accounting.salesAnalytics.col.total"), t("accounting.salesAnalytics.col.avgTicket")],
               data.byCashier.map((c) => [c.cashier, c.count, c.total, c.avgTicket]),
             )
           }
@@ -368,10 +380,10 @@ function Results({
           <table className="w-full min-w-[28rem] text-sm">
             <thead>
               <tr className="border-b border-slate-200">
-                <th className={`${TH} text-right`}>الكاشير</th>
-                <th className={`${TH} text-left`}>عدد الفواتير</th>
-                <th className={`${TH} text-left`}>الإجمالي</th>
-                <th className={`${TH} text-left`}>متوسط الفاتورة</th>
+                <th className={`${TH} text-right`}>{t("accounting.salesAnalytics.col.cashier")}</th>
+                <th className={`${TH} text-left`}>{t("accounting.salesAnalytics.col.invoiceCount")}</th>
+                <th className={`${TH} text-left`}>{t("accounting.salesAnalytics.col.total")}</th>
+                <th className={`${TH} text-left`}>{t("accounting.salesAnalytics.col.avgTicket")}</th>
               </tr>
             </thead>
             <tbody>
@@ -389,11 +401,11 @@ function Results({
       </div>
 
       <Section
-        title="حسب الساعة"
+        title={t("accounting.salesAnalytics.byHour")}
         onExport={() =>
           exportRowsCsv(
             `sales-by-hour-${csvSuffix(applied)}.csv`,
-            ["الساعة", "عدد الفواتير", "الإجمالي"],
+            [t("accounting.salesAnalytics.col.hour"), t("accounting.salesAnalytics.col.invoiceCount"), t("accounting.salesAnalytics.col.total")],
             data.byHour.map((h) => [hourLabel(h.hour), h.count, h.total]),
           )
         }
@@ -401,9 +413,9 @@ function Results({
         <table className="w-full min-w-[24rem] text-sm">
           <thead>
             <tr className="border-b border-slate-200">
-              <th className={`${TH} text-right`}>الساعة</th>
-              <th className={`${TH} text-left`}>عدد الفواتير</th>
-              <th className={`${TH} text-left`}>الإجمالي</th>
+              <th className={`${TH} text-right`}>{t("accounting.salesAnalytics.col.hour")}</th>
+              <th className={`${TH} text-left`}>{t("accounting.salesAnalytics.col.invoiceCount")}</th>
+              <th className={`${TH} text-left`}>{t("accounting.salesAnalytics.col.total")}</th>
             </tr>
           </thead>
           <tbody>

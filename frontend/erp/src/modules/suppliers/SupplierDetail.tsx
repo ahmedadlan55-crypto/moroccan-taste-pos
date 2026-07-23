@@ -9,6 +9,7 @@ import { MetricCard } from "@/modules/inventory/lib/MetricCard";
 import { Button } from "@/shared/ui";
 import { LoadingState, ErrorState, EmptyState } from "@/shared/ui";
 import { formatCurrency, formatDate } from "@/shared/lib";
+import { useT, useLang } from "@/i18n";
 import { useSupplier, useSupplierStatement, useSupplierAging } from "@/modules/inventory/lib/hooks/useProcurement";
 import { BackLink, DetailHeader, Section, KV } from "@/modules/purchasing/features/procurement/detail-shared";
 import { SupplierForm } from "./SupplierForm";
@@ -22,6 +23,8 @@ function Table({ head, children }: { head: ReactNode; children: ReactNode }) {
 }
 
 export function SupplierDetail() {
+  const t = useT();
+  const lang = useLang();
   const [sp] = useSearchParams();
   const id = sp.get("doc") ?? "";
   const { data, isLoading, isError, error, refetch } = useSupplier(id);
@@ -33,35 +36,36 @@ export function SupplierDetail() {
   const d = data as Record<string, unknown>;
   const rows = (statement.data?.data ?? []) as Array<{ date: string; type: string; ref: string; debit: number; credit: number; balance: number }>;
   const b = aging.data?.buckets ?? { current: 0, d30: 0, d60: 0, d90: 0, d90plus: 0 };
+  const displayName = lang === "en" && d.name_en ? String(d.name_en) : s(d.name);
   return (
     <div className="grid gap-6 print:gap-4">
-      <BackLink to="/purchasing/suppliers" label="الموردون" />
+      <BackLink to="/purchasing/suppliers" label={t("purchasing.tabs.suppliers")} />
       <DetailHeader
-        eyebrow="مورد"
-        title={s(d.name)}
+        eyebrow={t("purchasing.suppliers.detail.eyebrow")}
+        title={displayName}
         subtitle={s(d.vat_number, "")}
         status={Number(d.is_active) ? "" : "cancelled"}
-        actions={<Button variant="secondary" onClick={() => setEditing(true)}><Pencil className="h-4 w-4" /> تعديل</Button>}
+        actions={<Button variant="secondary" onClick={() => setEditing(true)}><Pencil className="h-4 w-4" /> {t("common.edit")}</Button>}
       />
       <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
-        <MetricCard label="الرصيد المستحق" value={formatCurrency(n(d.apBalance))} icon={Wallet} tone="violet" />
-        <MetricCard label="إجمالي الفواتير" value={formatCurrency(n(d.invoicedTotal))} icon={FileText} tone="teal" />
-        <MetricCard label="المسدد" value={formatCurrency(n(d.paidTotal))} icon={PackageCheck} tone="blue" />
-        <MetricCard label="متأخر 90+" value={formatCurrency(n(b.d90plus))} icon={Receipt} tone="rose" />
+        <MetricCard label={t("purchasing.suppliers.field.apBalance")} value={formatCurrency(n(d.apBalance))} icon={Wallet} tone="violet" />
+        <MetricCard label={t("purchasing.suppliers.detail.invoicedTotal")} value={formatCurrency(n(d.invoicedTotal))} icon={FileText} tone="teal" />
+        <MetricCard label={t("purchasing.suppliers.detail.paidTotal")} value={formatCurrency(n(d.paidTotal))} icon={PackageCheck} tone="blue" />
+        <MetricCard label={t("purchasing.suppliers.detail.overdue90")} value={formatCurrency(n(b.d90plus))} icon={Receipt} tone="rose" />
       </div>
-      <Section icon={Users} title="البيانات الأساسية">
+      <Section icon={Users} title={t("purchasing.suppliers.detail.basicInfo")}>
         <KV items={[
-          { label: "الاسم (EN)", value: s(d.name_en) }, { label: "الرقم الضريبي", value: s(d.vat_number) },
-          { label: "الهاتف", value: s(d.phone) }, { label: "البريد", value: s(d.email) },
-          { label: "المدينة", value: s(d.city) }, { label: "الحي", value: s(d.district) },
-          { label: "الشارع", value: s(d.street) }, { label: "رقم المبنى", value: s(d.building_number) },
-          { label: "الرمز البريدي", value: s(d.postal_code) }, { label: "شروط الدفع", value: s(d.payment_terms) },
-          { label: "أوامر", value: s((d.counts as Record<string, unknown>)?.orders) }, { label: "فواتير", value: s((d.counts as Record<string, unknown>)?.invoices) },
+          { label: t("purchasing.suppliers.detail.nameEn"), value: s(d.name_en) }, { label: t("purchasing.suppliers.field.vatNumber"), value: s(d.vat_number) },
+          { label: t("purchasing.suppliers.field.phone"), value: s(d.phone) }, { label: t("purchasing.suppliers.detail.email"), value: s(d.email) },
+          { label: t("purchasing.suppliers.field.city"), value: s(d.city) }, { label: t("purchasing.suppliers.field.district"), value: s(d.district) },
+          { label: t("purchasing.suppliers.field.street"), value: s(d.street) }, { label: t("purchasing.suppliers.field.buildingNumber"), value: s(d.building_number) },
+          { label: t("purchasing.suppliers.field.postalCode"), value: s(d.postal_code) }, { label: t("purchasing.suppliers.field.paymentTerms"), value: s(d.payment_terms) },
+          { label: t("purchasing.suppliers.detail.ordersCount"), value: s((d.counts as Record<string, unknown>)?.orders) }, { label: t("purchasing.suppliers.detail.invoicesCount"), value: s((d.counts as Record<string, unknown>)?.invoices) },
         ]} />
       </Section>
-      <Section title="أعمار الذمم">
+      <Section title={t("purchasing.suppliers.detail.aging")}>
         <div className="grid grid-cols-5 gap-2 p-5 text-center">
-          {[["جاري", b.current], ["1-30", b.d30], ["31-60", b.d60], ["61-90", b.d90], ["90+", b.d90plus]].map(([lbl, v]) => (
+          {[[t("purchasing.suppliers.detail.agingCurrent"), b.current], ["1-30", b.d30], ["31-60", b.d60], ["61-90", b.d90], ["90+", b.d90plus]].map(([lbl, v]) => (
             <div key={lbl as string} className="rounded-xl border border-slate-100 bg-slate-50 py-3">
               <div className="text-[10px] font-bold text-slate-400">{lbl}</div>
               <div className="mt-1 text-sm font-extrabold tabular-nums text-slate-800">{formatCurrency(n(v))}</div>
@@ -69,11 +73,11 @@ export function SupplierDetail() {
           ))}
         </div>
       </Section>
-      <Section title="كشف الحساب" subtitle={`الرصيد الختامي: ${formatCurrency(statement.data?.closingBalance ?? 0)}`}>
-        {rows.length === 0 ? <div className="p-5"><EmptyState title="لا حركات" /></div> : (
-          <Table head={<><Th>التاريخ</Th><Th>النوع</Th><Th>المرجع</Th><Th left>مدين</Th><Th left>دائن</Th><Th left>الرصيد</Th></>}>
+      <Section title={t("purchasing.suppliers.detail.statement")} subtitle={`${t("purchasing.suppliers.detail.closingBalance")}: ${formatCurrency(statement.data?.closingBalance ?? 0)}`}>
+        {rows.length === 0 ? <div className="p-5"><EmptyState title={t("purchasing.suppliers.detail.noTransactions")} /></div> : (
+          <Table head={<><Th>{t("purchasing.col.date")}</Th><Th>{t("purchasing.suppliers.detail.type")}</Th><Th>{t("purchasing.suppliers.detail.reference")}</Th><Th left>{t("purchasing.detail.debit")}</Th><Th left>{t("purchasing.detail.credit")}</Th><Th left>{t("purchasing.suppliers.detail.balance")}</Th></>}>
             {rows.map((r, i) => (
-              <tr key={i}><Td>{formatDate(r.date)}</Td><Td>{r.type === "invoice" ? "فاتورة" : "سداد"}</Td><Td>{r.ref}</Td>
+              <tr key={i}><Td>{formatDate(r.date)}</Td><Td>{r.type === "invoice" ? t("purchasing.suppliers.detail.typeInvoice") : t("purchasing.suppliers.detail.typePayment")}</Td><Td>{r.ref}</Td>
                 <Td left>{r.debit ? formatCurrency(r.debit) : "—"}</Td><Td left>{r.credit ? formatCurrency(r.credit) : "—"}</Td><Td left bold>{formatCurrency(r.balance)}</Td></tr>
             ))}
           </Table>

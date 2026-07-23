@@ -6,6 +6,7 @@
 // Seller identity is the FROZEN TLV seller (name + VAT number) decoded from the
 // credit note's persisted QR — same frozen-at-post-time truth the sale side
 // uses, never a live settings re-read (which would drift after a rename).
+import type { TFunction } from "@/i18n";
 import type { SalesReturn } from "@/modules/sales/lib";
 import type { CreditNoteOptions, DocumentIdentity } from "../../../../../shared/invoiceTemplate";
 
@@ -46,7 +47,7 @@ function toIdentity(seller: { sellerName?: string; vatNumber?: string } | null |
   };
 }
 
-export function toCreditNoteOptions(r: SalesReturn): CreditNoteOptions {
+export function toCreditNoteOptions(r: SalesReturn, t: TFunction): CreditNoteOptions {
   const cn = r.creditNote ?? null;
 
   // Inclusive rebuild (the shared renderer is tax-inclusive) from the recorded
@@ -83,7 +84,7 @@ export function toCreditNoteOptions(r: SalesReturn): CreditNoteOptions {
     invoiceNumber: cn?.document_number ?? r.return_number ?? null,
     originalInvoiceNumber: cn?.original_document_number ?? null,
     returnReason: reasonOf(r),
-    fallbackSellerName: cn?.seller?.sellerName || "إشعار دائن ضريبي",
+    fallbackSellerName: cn?.seller?.sellerName || t("sales.print.creditNoteFallbackSeller"),
     vatRate: DEFAULT_VAT_RATE,
     paperWidth: "A4",
     identity: toIdentity(cn?.seller),

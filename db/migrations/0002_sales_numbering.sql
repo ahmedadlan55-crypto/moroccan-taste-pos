@@ -31,23 +31,99 @@
 --     displaying the legacy `id` field.
 --   • The new sales counter is independent of txn_daily_counter so the
 --     two domains don't fight over the same keys.
--- ════════════════════════════════════════════════════════════════════
+--
+-- Tier A.2 corrective gate, Section 6 — REWRITTEN for real idempotency.
+-- The original version of this file claimed "MySQL 8+ supports IF NOT
+-- EXISTS on ALTER TABLE ADD COLUMN" and relied on that for safety — FALSE
+-- (verified against this repo's actual MySQL 8.4.9: `ADD COLUMN IF NOT
+-- EXISTS` / `DROP INDEX IF EXISTS` are MariaDB-only syntax, not real MySQL).
+-- The plain `ALTER TABLE ... ADD COLUMN` statements below were NOT
+-- idempotent at all: verified directly against this repo's real dev DB
+-- that `sales.invoice_number` already exists (added via server.js's
+-- legacy runMigrations()#addColumnIfMissing boot-time path, a completely
+-- separate mechanism from this versioned runner) while this file was
+-- NEVER recorded in `_migrations` — meaning `node db/migrate.js` would
+-- hit this file as "pending" on its very next real run and fail outright
+-- with "Duplicate column name 'invoice_number'". Safe to fix directly
+-- (never pushed/applied through this runner as an approved version — see
+-- docs/adr/0002-chart-of-accounts-trial-balance.md §7 for why that makes
+-- an in-place edit acceptable rather than a follow-up migration).
+--
+-- Every ALTER/CREATE INDEX below is now guarded by a real
+-- INFORMATION_SCHEMA check via PREPARE/EXECUTE dynamic SQL — genuinely
+-- idempotent (safe to re-run against a DB that already has some or all of
+-- these columns/indexes from any source), and resumable after a partial
+-- failure (each guard re-checks the CURRENT schema state at execution
+-- time, not a cached assumption). PREPARE/EXECUTE/DEALLOCATE are flat,
+-- standalone statements — no stored-procedure/DELIMITER wrapper needed,
+-- so db/migrate.js's existing top-level `;` statement splitter handles
+-- this file exactly like any other.
 
--- MySQL 8+ supports IF NOT EXISTS on ALTER TABLE ADD COLUMN. Older
--- versions ignore the clause syntax — we wrap each ADD in its own
--- statement so a single failure doesn't abort the rest of the migration.
+SET @col_exists = (
+  SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS
+  WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'sales' AND COLUMN_NAME = 'invoice_number'
+);
+SET @stmt = IF(@col_exists = 0,
+  'ALTER TABLE sales ADD COLUMN invoice_number VARCHAR(40) NULL AFTER id',
+  'SELECT 1');
+PREPARE stmt FROM @stmt;
+EXECUTE stmt;
+DEALLOCATE PREPARE stmt;
 
-ALTER TABLE sales ADD COLUMN invoice_number VARCHAR(40) NULL AFTER id;
+SET @col_exists = (
+  SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS
+  WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'sales' AND COLUMN_NAME = 'void_serial'
+);
+SET @stmt = IF(@col_exists = 0,
+  'ALTER TABLE sales ADD COLUMN void_serial VARCHAR(40) NULL AFTER invoice_number',
+  'SELECT 1');
+PREPARE stmt FROM @stmt;
+EXECUTE stmt;
+DEALLOCATE PREPARE stmt;
 
-ALTER TABLE sales ADD COLUMN void_serial VARCHAR(40) NULL AFTER invoice_number;
+SET @col_exists = (
+  SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS
+  WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'sales' AND COLUMN_NAME = 'return_serial'
+);
+SET @stmt = IF(@col_exists = 0,
+  'ALTER TABLE sales ADD COLUMN return_serial VARCHAR(40) NULL AFTER void_serial',
+  'SELECT 1');
+PREPARE stmt FROM @stmt;
+EXECUTE stmt;
+DEALLOCATE PREPARE stmt;
 
-ALTER TABLE sales ADD COLUMN return_serial VARCHAR(40) NULL AFTER void_serial;
+SET @idx_exists = (
+  SELECT COUNT(*) FROM INFORMATION_SCHEMA.STATISTICS
+  WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'sales' AND INDEX_NAME = 'idx_sales_invoice_number'
+);
+SET @stmt = IF(@idx_exists = 0,
+  'CREATE INDEX idx_sales_invoice_number ON sales (invoice_number)',
+  'SELECT 1');
+PREPARE stmt FROM @stmt;
+EXECUTE stmt;
+DEALLOCATE PREPARE stmt;
 
-CREATE INDEX idx_sales_invoice_number ON sales (invoice_number);
+SET @idx_exists = (
+  SELECT COUNT(*) FROM INFORMATION_SCHEMA.STATISTICS
+  WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'sales' AND INDEX_NAME = 'idx_sales_void_serial'
+);
+SET @stmt = IF(@idx_exists = 0,
+  'CREATE INDEX idx_sales_void_serial ON sales (void_serial)',
+  'SELECT 1');
+PREPARE stmt FROM @stmt;
+EXECUTE stmt;
+DEALLOCATE PREPARE stmt;
 
-CREATE INDEX idx_sales_void_serial ON sales (void_serial);
-
-CREATE INDEX idx_sales_return_serial ON sales (return_serial);
+SET @idx_exists = (
+  SELECT COUNT(*) FROM INFORMATION_SCHEMA.STATISTICS
+  WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'sales' AND INDEX_NAME = 'idx_sales_return_serial'
+);
+SET @stmt = IF(@idx_exists = 0,
+  'CREATE INDEX idx_sales_return_serial ON sales (return_serial)',
+  'SELECT 1');
+PREPARE stmt FROM @stmt;
+EXECUTE stmt;
+DEALLOCATE PREPARE stmt;
 
 CREATE TABLE IF NOT EXISTS sales_daily_counter (
   counter_key VARCHAR(80) NOT NULL PRIMARY KEY,

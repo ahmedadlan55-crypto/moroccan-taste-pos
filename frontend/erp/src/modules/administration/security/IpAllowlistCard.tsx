@@ -3,10 +3,12 @@ import { Network, Plus, Trash2 } from "lucide-react";
 import { Button, Input, PanelTitle, StatusBadge, Toggle, useToast } from "@/shared/ui";
 import { Field } from "@/shared/forms";
 import { Can } from "@/shared/permissions";
+import { useT } from "@/i18n";
 import { useSaveSecurityPolicies, type IpAllowlist } from "./api";
 
 /** Editable CIDR allowlist + enable switch, wired to PUT /security-policies. */
 export function IpAllowlistCard({ initial, canManage }: { initial: IpAllowlist; canManage: boolean }) {
+  const t = useT();
   const { toast } = useToast();
   const save = useSaveSecurityPolicies();
   const [enabled, setEnabled] = useState(initial.enabled);
@@ -25,8 +27,8 @@ export function IpAllowlistCard({ initial, canManage }: { initial: IpAllowlist; 
     save.mutate(
       { ipAllowlist: { enabled, cidrs } },
       {
-        onSuccess: () => toast({ title: "تم حفظ قائمة العناوين المسموح بها", tone: "success" }),
-        onError: (e: Error) => toast({ title: "تعذّر الحفظ", description: e.message, tone: "error" }),
+        onSuccess: () => toast({ title: t("administration.security.ip.toastSuccess"), tone: "success" }),
+        onError: (e: Error) => toast({ title: t("administration.security.ip.saveFailed"), description: e.message, tone: "error" }),
       },
     );
 
@@ -34,29 +36,29 @@ export function IpAllowlistCard({ initial, canManage }: { initial: IpAllowlist; 
     <section className="surface">
       <PanelTitle
         icon={Network}
-        title="قائمة عناوين IP المسموح بها"
-        subtitle="حصر الوصول على نطاقات CIDR محددة."
-        action={<StatusBadge tone={enabled ? "success" : "neutral"}>{enabled ? "مُفعّلة" : "معطّلة"}</StatusBadge>}
+        title={t("administration.security.ip.panelTitle")}
+        subtitle={t("administration.security.ip.panelSubtitle")}
+        action={<StatusBadge tone={enabled ? "success" : "neutral"}>{enabled ? t("administration.security.ip.badgeEnabled") : t("administration.security.ip.badgeDisabled")}</StatusBadge>}
       />
       <div className="space-y-4 p-5">
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div className="min-w-0">
-            <div className="text-sm font-extrabold text-slate-900">تفعيل القائمة</div>
+            <div className="text-sm font-extrabold text-slate-900">{t("administration.security.ip.enableTitle")}</div>
             <p className="mt-0.5 text-xs font-medium text-slate-500">
-              عند التفعيل يُسمح فقط للعناوين ضمن النطاقات أدناه.
+              {t("administration.security.ip.enableBody")}
             </p>
           </div>
           <Toggle
             checked={enabled}
             disabled={!canManage}
             onChange={setEnabled}
-            aria-label="تفعيل قائمة العناوين المسموح بها"
+            aria-label={t("administration.security.ip.enableAria")}
           />
         </div>
 
         {canManage && (
           <div className="flex items-end gap-2">
-            <Field className="flex-1" label="إضافة نطاق CIDR أو عنوان" hint="مثال: 192.168.1.0/24 أو 10.0.0.5">
+            <Field className="flex-1" label={t("administration.security.ip.addLabel")} hint={t("administration.security.ip.addHint")}>
               {({ id }) => (
                 <Input
                   id={id}
@@ -74,14 +76,14 @@ export function IpAllowlistCard({ initial, canManage }: { initial: IpAllowlist; 
               )}
             </Field>
             <Button variant="secondary" onClick={addCidr}>
-              <Plus className="h-4 w-4" /> إضافة
+              <Plus className="h-4 w-4" /> {t("administration.security.ip.addBtn")}
             </Button>
           </div>
         )}
 
         {cidrs.length === 0 ? (
           <p className="rounded-xl bg-slate-50 px-3 py-3 text-xs font-medium text-slate-500">
-            لا توجد عناوين مضافة بعد.
+            {t("administration.security.ip.empty")}
           </p>
         ) : (
           <ul className="space-y-2">
@@ -97,7 +99,7 @@ export function IpAllowlistCard({ initial, canManage }: { initial: IpAllowlist; 
                   <button
                     type="button"
                     onClick={() => removeCidr(c)}
-                    aria-label={`حذف ${c}`}
+                    aria-label={t("administration.security.ip.removeAria", { cidr: c })}
                     className="grid h-8 w-8 place-items-center rounded-lg text-slate-400 transition hover:bg-rose-50 hover:text-rose-600"
                   >
                     <Trash2 className="h-4 w-4" />
@@ -111,7 +113,7 @@ export function IpAllowlistCard({ initial, canManage }: { initial: IpAllowlist; 
         <Can cap="administration.security.manage">
           <div className="flex justify-end">
             <Button onClick={submit} loading={save.isPending}>
-              حفظ القائمة
+              {t("administration.security.ip.saveBtn")}
             </Button>
           </div>
         </Can>

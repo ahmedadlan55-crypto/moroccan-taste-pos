@@ -10,7 +10,8 @@ import { useWarehouses } from "@/modules/inventory/lib/hooks/useWarehouses";
 import { useWarehouseScope } from "@/modules/inventory/lib/warehouse-scope-provider";
 import { useCan } from "@/modules/inventory/lib/permission-provider";
 import { formatCurrency, formatNumber, formatDate } from "@/shared/lib";
-import { invTxStatusToLabel, INVTX_STATUS_OPTIONS } from "@/modules/inventory/lib/status-labels";
+import { useT } from "@/i18n";
+import { invTxStatusToLabel } from "@/modules/inventory/lib/status-labels";
 import { useInvTxList } from "@/modules/inventory/lib/hooks/useInventoryTx";
 import type { InvTxConfig } from "./invtxConfig";
 import { InvTxDetailDrawer } from "./InvTxDetailDrawer";
@@ -20,10 +21,20 @@ const NUMBER_SORT: Record<string, string> = { receipt: "receipt_number", issue: 
 const DATE_SORT: Record<string, string> = { receipt: "receipt_date", issue: "issue_date", adjustment: "adjustment_date" };
 
 export function InvTxListPage({ config }: { config: InvTxConfig }) {
+  const t = useT();
   const [params, setParams] = useSearchParams();
   const navigate = useNavigate();
   const { accessibleWarehouses, allWarehousesAccess } = useWarehouseScope();
   const canCreate = useCan(config.perms.create);
+  const statusOptions = [
+    { value: "", label: t("inventoryRest.invtx.statusFilter.all") },
+    { value: "draft", label: t("status.draft") },
+    { value: "approved", label: t("status.approved") },
+    { value: "posted", label: t("status.posted") },
+    { value: "cancelled", label: t("status.cancelled") },
+    { value: "reversed", label: t("status.reversed") },
+  ];
+  const newLabel = t(config.newLabel);
 
   const q = params.get("q") ?? "";
   const status = params.get("status") ?? "";
@@ -65,34 +76,34 @@ export function InvTxListPage({ config }: { config: InvTxConfig }) {
   return (
     <div>
       <PageHeader
-        eyebrow="العمليات"
-        title={config.title}
-        subtitle={config.subtitle}
-        action={canCreate ? (<Button variant="primary" onClick={() => navigate(`${config.routeBase}?new=1`)}><Plus className="h-4 w-4" /> {config.newLabel}</Button>) : null}
+        eyebrow={t("inventoryRest.invtx.eyebrow")}
+        title={t(config.title)}
+        subtitle={t(config.subtitle)}
+        action={canCreate ? (<Button variant="primary" onClick={() => navigate(`${config.routeBase}?new=1`)}><Plus className="h-4 w-4" /> {newLabel}</Button>) : null}
       />
 
       <section className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-        <MetricCard label="مُرحّلة" value={formatNumber(k?.posted ?? 0)} note="أثّرت في المخزون والقيود" icon={Send} tone="teal" />
-        <MetricCard label="بانتظار الإجراء" value={formatNumber((k?.draft ?? 0) + (k?.approved ?? 0))} note="مسودة أو معتمدة" icon={ClipboardList} tone="amber" />
-        <MetricCard label="القيمة المرحّلة" value={formatCurrency(k?.postedValue ?? 0)} note="إجمالي قيمة المرحّل" icon={Wallet} tone="blue" />
-        <MetricCard label="معكوسة" value={formatNumber(k?.reversed ?? 0)} note="أُلغي أثرها بقيد عكسي" icon={Undo2} tone="rose" />
+        <MetricCard label={t("inventoryRest.invtx.list.kpiPosted")} value={formatNumber(k?.posted ?? 0)} note={t("inventoryRest.invtx.list.kpiPostedNote")} icon={Send} tone="teal" />
+        <MetricCard label={t("inventoryRest.invtx.list.kpiPending")} value={formatNumber((k?.draft ?? 0) + (k?.approved ?? 0))} note={t("inventoryRest.invtx.list.kpiPendingNote")} icon={ClipboardList} tone="amber" />
+        <MetricCard label={t("inventoryRest.invtx.list.kpiPostedValue")} value={formatCurrency(k?.postedValue ?? 0)} note={t("inventoryRest.invtx.list.kpiPostedValueNote")} icon={Wallet} tone="blue" />
+        <MetricCard label={t("inventoryRest.invtx.list.kpiReversed")} value={formatNumber(k?.reversed ?? 0)} note={t("inventoryRest.invtx.list.kpiReversedNote")} icon={Undo2} tone="rose" />
       </section>
 
       <section className="surface mt-4 flex flex-col gap-3 p-4">
         <div className="flex flex-col gap-3 lg:flex-row lg:items-center">
           <label className="relative flex-1">
             <Search className="pointer-events-none absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
-            <input className="field w-full pr-10" placeholder="بحث برقم المستند…" defaultValue={q} onChange={(e) => patch({ q: e.target.value })} aria-label="بحث" />
+            <input className="field w-full pr-10" placeholder={t("inventoryRest.invtx.list.searchPlaceholder")} defaultValue={q} onChange={(e) => patch({ q: e.target.value })} aria-label={t("inventoryRest.invtx.list.searchAria")} />
           </label>
-          <select className="field lg:w-52" value={warehouseId} onChange={(e) => patch({ wh: e.target.value })} aria-label="المستودع">
-            <option value="">كل المستودعات</option>
+          <select className="field lg:w-52" value={warehouseId} onChange={(e) => patch({ wh: e.target.value })} aria-label={t("inventoryRest.invtx.list.warehouseAria")}>
+            <option value="">{t("inventoryRest.filter.allWarehouses")}</option>
             {whOptions.map((w) => <option key={w.id} value={w.id}>{w.name}</option>)}
           </select>
-          <input type="date" className="field lg:w-40" value={dateFrom} onChange={(e) => patch({ dateFrom: e.target.value })} aria-label="من تاريخ" />
-          <input type="date" className="field lg:w-40" value={dateTo} onChange={(e) => patch({ dateTo: e.target.value })} aria-label="إلى تاريخ" />
+          <input type="date" className="field lg:w-40" value={dateFrom} onChange={(e) => patch({ dateFrom: e.target.value })} aria-label={t("inventoryRest.invtx.list.dateFromAria")} />
+          <input type="date" className="field lg:w-40" value={dateTo} onChange={(e) => patch({ dateTo: e.target.value })} aria-label={t("inventoryRest.invtx.list.dateToAria")} />
         </div>
         <div className="flex flex-wrap gap-1">
-          {INVTX_STATUS_OPTIONS.map((o) => (
+          {statusOptions.map((o) => (
             <button key={o.value} type="button" onClick={() => patch({ status: o.value })}
               className={`min-h-10 rounded-xl border px-3 text-xs font-extrabold transition ${status === o.value ? "border-teal-600 bg-teal-600 text-white" : "border-slate-200 bg-white text-slate-600 hover:bg-slate-50"}`}>
               {o.label}
@@ -107,18 +118,18 @@ export function InvTxListPage({ config }: { config: InvTxConfig }) {
         ) : isError ? (
           <ErrorState error={error} onRetry={() => refetch()} />
         ) : !data || data.rows.length === 0 ? (
-          <EmptyState title="لا توجد مستندات مطابقة" body={q || status || warehouseId ? "جرّب تعديل عوامل التصفية." : `ابدأ بإنشاء ${config.newLabel}.`} action={canCreate ? <Button onClick={() => navigate(`${config.routeBase}?new=1`)}><Plus className="h-4 w-4" /> {config.newLabel}</Button> : undefined} />
+          <EmptyState title={t("inventoryRest.invtx.list.emptyTitle")} body={q || status || warehouseId ? t("inventoryRest.ui.fixFilters") : t("inventoryRest.invtx.list.emptyBodyStart", { label: newLabel })} action={canCreate ? <Button onClick={() => navigate(`${config.routeBase}?new=1`)}><Plus className="h-4 w-4" /> {newLabel}</Button> : undefined} />
         ) : (
           <>
             <div className="surface hidden overflow-hidden md:block">
               <table className="w-full text-sm">
                 <thead className="bg-slate-50 text-xs font-bold text-slate-500">
                   <tr>
-                    <th className="px-4 py-3 text-right"><SortBtn label="رقم المستند" col={NUMBER_SORT[config.docType]} sort={sort} dir={dir} onSort={toggleSort} /></th>
-                    <th className="px-4 py-3 text-right">المستودع</th>
-                    <th className="px-4 py-3 text-right"><SortBtn label="الحالة" col="status" sort={sort} dir={dir} onSort={toggleSort} /></th>
-                    <th className="px-4 py-3 text-right"><SortBtn label="التاريخ" col={DATE_SORT[config.docType]} sort={sort} dir={dir} onSort={toggleSort} /></th>
-                    <th className="px-4 py-3 text-left"><SortBtn label="القيمة" col="total_value" sort={sort} dir={dir} onSort={toggleSort} /></th>
+                    <th className="px-4 py-3 text-right"><SortBtn label={t("inventoryRest.invtx.list.colNumber")} col={NUMBER_SORT[config.docType]} sort={sort} dir={dir} onSort={toggleSort} /></th>
+                    <th className="px-4 py-3 text-right">{t("inventoryRest.invtx.list.colWarehouse")}</th>
+                    <th className="px-4 py-3 text-right"><SortBtn label={t("inventoryRest.invtx.list.colStatus")} col="status" sort={sort} dir={dir} onSort={toggleSort} /></th>
+                    <th className="px-4 py-3 text-right"><SortBtn label={t("inventoryRest.invtx.list.colDate")} col={DATE_SORT[config.docType]} sort={sort} dir={dir} onSort={toggleSort} /></th>
+                    <th className="px-4 py-3 text-left"><SortBtn label={t("inventoryRest.invtx.list.colValue")} col="total_value" sort={sort} dir={dir} onSort={toggleSort} /></th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100">
@@ -146,14 +157,14 @@ export function InvTxListPage({ config }: { config: InvTxConfig }) {
 
             <div className="mt-4 flex flex-col items-center justify-between gap-3 sm:flex-row">
               <div className="flex items-center gap-3 text-xs font-medium text-slate-500">
-                <span>عرض {formatNumber(from)}–{formatNumber(to)} من {formatNumber(pg?.total ?? 0)}</span>
-                <select className="field min-h-9 py-1 text-xs" value={pageSize} onChange={(e) => patch({ pageSize: e.target.value })} aria-label="حجم الصفحة">{PAGE_SIZES.map((s) => <option key={s} value={s}>{s} / صفحة</option>)}</select>
-                {isFetching && <span className="text-teal-600">تحديث…</span>}
+                <span>{t("inventoryRest.ui.showingRange", { from: formatNumber(from), to: formatNumber(to), total: formatNumber(pg?.total ?? 0) })}</span>
+                <select className="field min-h-9 py-1 text-xs" value={pageSize} onChange={(e) => patch({ pageSize: e.target.value })} aria-label={t("table.rowsPerPage")}>{PAGE_SIZES.map((s) => <option key={s} value={s}>{t("inventoryRest.ui.perPage", { count: s })}</option>)}</select>
+                {isFetching && <span className="text-teal-600">{t("inventoryRest.ui.updatingShort")}</span>}
               </div>
               <div className="flex items-center gap-2">
-                <Button variant="ghost" size="icon" aria-label="السابق" disabled={page <= 1} onClick={() => patch({ page: page - 1 }, false)}><ChevronRight className="h-4 w-4" /></Button>
+                <Button variant="ghost" size="icon" aria-label={t("inventoryRest.ui.prev")} disabled={page <= 1} onClick={() => patch({ page: page - 1 }, false)}><ChevronRight className="h-4 w-4" /></Button>
                 <span className="text-xs font-bold text-slate-600">{formatNumber(page)} / {formatNumber(totalPages)}</span>
-                <Button variant="ghost" size="icon" aria-label="التالي" disabled={page >= totalPages} onClick={() => patch({ page: page + 1 }, false)}><ChevronLeft className="h-4 w-4" /></Button>
+                <Button variant="ghost" size="icon" aria-label={t("inventoryRest.ui.next")} disabled={page >= totalPages} onClick={() => patch({ page: page + 1 }, false)}><ChevronLeft className="h-4 w-4" /></Button>
               </div>
             </div>
           </>

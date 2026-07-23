@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { AnimatePresence, motion } from "framer-motion";
 import { Button } from "@/shared/ui";
+import { useT } from "@/i18n";
 
 // A small confirmation modal that REQUIRES a reason — used for cancel and reverse
 // (§9: "Confirmation وسبب إلزامي للإلغاء والعكس"). Prevents double-submit while
@@ -26,6 +27,7 @@ export function ReasonDialog({
   onConfirm: (reason: string) => void;
   onClose: () => void;
 }) {
+  const t = useT();
   const [reason, setReason] = useState("");
   const ref = useRef<HTMLTextAreaElement>(null);
   useEffect(() => {
@@ -49,21 +51,21 @@ export function ReasonDialog({
             <h3 className="text-lg font-extrabold text-slate-900">{title}</h3>
             {description && <p className="mt-1 text-sm text-slate-500">{description}</p>}
             <label className="mt-4 block text-xs font-bold text-slate-500">
-              السبب (إلزامي)
+              {t("inventoryRest.reasonDialog.reasonLabel")}
               <textarea
                 ref={ref}
                 className="field mt-1 min-h-24 w-full"
                 value={reason}
                 onChange={(e) => setReason(e.target.value)}
-                placeholder="اكتب سبب الإجراء…"
-                aria-label="السبب"
+                placeholder={t("inventoryRest.reasonDialog.placeholder")}
+                aria-label={t("inventoryRest.reasonDialog.reasonAria")}
               />
             </label>
             {error && <p className="mt-2 rounded-lg bg-rose-50 px-3 py-2 text-xs font-bold text-rose-700">{error}</p>}
             <div className="mt-4 flex justify-end gap-2">
-              <Button variant="ghost" onClick={onClose} disabled={pending}>إلغاء</Button>
+              <Button variant="ghost" onClick={onClose} disabled={pending}>{t("inventoryRest.reasonDialog.cancel")}</Button>
               <Button variant={tone === "danger" ? "danger" : "primary"} disabled={pending || tooShort} onClick={() => onConfirm(reason.trim())}>
-                {pending ? "جارٍ…" : confirmLabel}
+                {pending ? t("inventoryRest.reasonDialog.pending") : confirmLabel}
               </Button>
             </div>
           </motion.div>

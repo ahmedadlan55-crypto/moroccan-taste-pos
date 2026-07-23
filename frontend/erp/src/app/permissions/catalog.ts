@@ -154,6 +154,13 @@ export const ALL_CAPS = [
   "accounting.periods.view",
   "accounting.periods.manage",
   "accounting.reports.view",
+  // Tier A.1 corrective gate — trial-balance's route (routes/erp-core.js)
+  // is gated server-side by requireCapability('finance.reports.view')
+  // specifically, not 'accounting.reports.view' (which no backend route
+  // currently enforces under that exact name — see ADR 0002). Added as its
+  // own key rather than renaming 'accounting.reports.view' everywhere,
+  // per this file's own stated policy of never renaming existing keys.
+  "finance.reports.view",
   // ── Accounting write caps (E1 — UI-only gating; backend stays authoritative) ──
   "accounting.accounts.manage",
   "accounting.journals.create",
@@ -224,6 +231,13 @@ export const ALL_CAPS = [
   "menu.catalog.manage",
   "menu.pricing.manage",
   "menu.recipes.manage",
+  // Cost & margin visibility on the menu screens (Sprint 3 · D2). Gates the
+  // recipe/actual-cost + profit-margin columns on the list and the cost
+  // breakdown on the product page via ColumnDef.requireCap. Sibling of the
+  // inventory-side `item.cost.view` (D1); backend mirror for BOTH keys:
+  // db/migrations/capability-seeds/g-cost-visibility.json (admin/manager/
+  // accountant — NOT sales, which browses the catalog without cost).
+  "menu.cost.view",
   // Bulk product-image management (bilingual-i18n-images) — backend
   // routes/product-images.js gates on requireCapability('menu.image.manage')
   // (MGR role-gate + this capability layered on top), seeded to admin+manager
@@ -231,6 +245,13 @@ export const ALL_CAPS = [
   // (not reused menu.catalog.manage) so a future non-manager role can be
   // granted/revoked image access independently, matching the backend's intent.
   "menu.image.manage",
+  // ── Inventory-item cost / profit column visibility (Sprint 3 D3) ──
+  // Gate the cost & margin columns in the inventory-items (D1) table via
+  // ColumnDef.requireCap. Its menu-side sibling `menu.cost.view` is defined in
+  // the menu group above (D2). Backend mirror for BOTH keys:
+  // db/migrations/capability-seeds/g-cost-visibility.json (admin/manager/
+  // accountant — NOT sales).
+  "item.cost.view",
   // ── Purchasing requisitions (Closure Sprint v2 — new subsystem) ──
   "purchasing.requisitions.manage",
   "purchasing.requisitions.approve",

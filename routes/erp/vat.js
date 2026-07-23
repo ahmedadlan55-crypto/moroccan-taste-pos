@@ -16,6 +16,7 @@
 // ═══════════════════════════════════════════════════════════════════
 const router = require('express').Router();
 const db = require('../../db/connection');
+const { nextFlatJournalNumber } = require('../../lib/glPosting'); // FC-B1 atomic JV numbering
 
 router.get('/vat/transactions', async (req, res) => {
   try {
@@ -118,14 +119,8 @@ router.post('/vat/post', async (req, res) => {
 
     let journalNumber = '';
     if (outputVatAccId || inputVatAccId) {
-      const jrnId = 'JRN-VAT-' + Date.now();
-      const [lastJ] = await db.query('SELECT journal_number FROM gl_journals ORDER BY created_at DESC LIMIT 1');
-      let jrnNum = 1;
-      if (lastJ.length && lastJ[0].journal_number) {
-        const m = lastJ[0].journal_number.match(/(\d+)/);
-        if (m) jrnNum = parseInt(m[1]) + 1;
-      }
-      journalNumber = 'JV-' + String(jrnNum).padStart(6, '0');
+      const jrnId = 'JRN-VAT-' + Date.now() + '-' + Math.random().toString(36).slice(2, 6); // FC-B1 unique under concurrency
+      journalNumber = await nextFlatJournalNumber(); // FC-B1 atomic (was created_at DESC race)
       const desc = 'تسوية ضريبة القيمة المضافة — ' + periodStart + ' إلى ' + periodEnd;
       const now = new Date();
 

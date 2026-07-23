@@ -1,6 +1,6 @@
 const router = require('express').Router();
 const db = require('../db/connection');
-const { ensureCoreAccounts } = require('../lib/glPosting');
+const { ensureCoreAccounts, nextFlatJournalNumber } = require('../lib/glPosting');
 // v5.11.1 — official 150-account COA template (mirrored from the Excel
 // the user attached). Loaded once at boot, used by /gl/seed-from-template
 // to seed or refresh the chart of accounts in one click.
@@ -2329,7 +2329,7 @@ router.post('/gl/journals', requireCapability('finance.gl.create'), async (req, 
     const actor = _actor(req);
     void username;
     const actualRefType = isOpening ? 'opening' : (referenceType || 'manual');
-    const journalId = 'JRN-' + Date.now();
+    const journalId = 'JRN-' + Date.now() + '-' + Math.random().toString(36).slice(2, 8); // FC-B1 unique under concurrency (Date.now() alone collided same-ms)
 
     let totalDebit = 0, totalCredit = 0;
     if (entries && entries.length) {
@@ -2361,16 +2361,12 @@ router.post('/gl/journals', requireCapability('finance.gl.create'), async (req, 
 
     // FC-P1 — header + entries written atomically (no partial-write window); the
     // journal number is derived inside the txn and guarded by uq_journal_number.
-    let journalNumber = '';
+    // FC-B1 — atomic global journal number (replaces `ORDER BY created_at DESC`
+    // + parse + 1, which raced on the 1s-resolution created_at and mis-parsed
+    // the coexisting dated form). Allocated in its own committed seq txn;
+    // uq_journal_number is the absolute guard.
+    const journalNumber = await nextFlatJournalNumber();
     await db.withTransaction(async (conn) => {
-      const [lastJ] = await conn.query('SELECT journal_number FROM gl_journals ORDER BY created_at DESC LIMIT 1 FOR UPDATE');
-      let nextNum = 1;
-      if (lastJ.length && lastJ[0].journal_number) {
-        const match = lastJ[0].journal_number.match(/(\d+)/);
-        if (match) nextNum = parseInt(match[1]) + 1;
-      }
-      journalNumber = 'JV-' + String(nextNum).padStart(6, '0');
-
       await conn.query(
         `INSERT INTO gl_journals
            (id, journal_number, journal_date, reference_type, reference_id,
@@ -3196,14 +3192,8 @@ router.post('/gl/repair-topups', requireCapability('finance.gl.post'), async (re
 
       if (!custAccId) continue;
 
-      const jrnId = 'JRN-REPAIR-' + Date.now() + '-' + created;
-      const [lastJrn] = await db.query('SELECT journal_number FROM gl_journals ORDER BY created_at DESC LIMIT 1');
-      let jrnNum = 1;
-      if (lastJrn.length && lastJrn[0].journal_number) {
-        const m = lastJrn[0].journal_number.match(/(\d+)/);
-        if (m) jrnNum = parseInt(m[1]) + 1;
-      }
-      const journalNumber = 'JV-' + String(jrnNum).padStart(6, '0');
+      const jrnId = 'JRN-REPAIR-' + Date.now() + '-' + created + '-' + Math.random().toString(36).slice(2, 6);
+      const journalNumber = await nextFlatJournalNumber(); // FC-B1 atomic (was created_at DESC in a loop → guaranteed same-second ties)
       const desc = 'تغذية عهدة ' + (t.custody_number||'') + ' — ' + (t.user_name||'');
 
       await db.query(

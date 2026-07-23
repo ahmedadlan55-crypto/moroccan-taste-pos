@@ -16,6 +16,7 @@
  */
 const router = require('express').Router();
 const db = require('../db/connection');
+const { nextFlatJournalNumber } = require('../lib/glPosting'); // FC-B1 atomic JV numbering
 
 function _id(p){ return p+'-'+Date.now()+'-'+Math.random().toString(36).slice(2,7); }
 function _user(req,b){ return (req.user && req.user.username) || 'system'; }
@@ -358,13 +359,8 @@ router.post('/assets/post-depreciation', async (req,res)=>{
     if (preview) return res.json({ success:true, preview:true, total, lines: lines.length });
 
     // Build a balanced journal — one DR + one CR per asset.
-    const jrnId = 'JRN-DEP-' + Date.now();
-    const [lastJ] = await db.query('SELECT journal_number FROM gl_journals ORDER BY created_at DESC LIMIT 1');
-    let jrnNum = 1;
-    if (lastJ.length && lastJ[0].journal_number) {
-      const m = String(lastJ[0].journal_number).match(/(\d+)/); if (m) jrnNum = parseInt(m[1])+1;
-    }
-    const journalNumber = 'JV-' + String(jrnNum).padStart(6,'0');
+    const jrnId = 'JRN-DEP-' + Date.now() + '-' + Math.random().toString(36).slice(2, 6); // FC-B1 unique under concurrency
+    const journalNumber = await nextFlatJournalNumber(); // FC-B1 atomic (was created_at DESC race)
     await db.query(
       `INSERT INTO gl_journals
         (id, journal_number, journal_date, description, total_debit, total_credit, status, reference_type, reference_id, created_by, created_at)

@@ -93,6 +93,7 @@ export type ReceiptShowFields = DocumentShowFields;
 export interface ComboFixedComponent {
   menuId: string;
   name: string;
+  nameEn?: string | null;
   qty: number;
 }
 
@@ -101,6 +102,7 @@ export interface ComboFixedComponent {
 export interface ComboOption {
   menuId: string;
   name: string;
+  nameEn?: string | null;
   priceDelta: number;
 }
 

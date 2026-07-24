@@ -245,13 +245,14 @@ async function _loadComboDefs(q, comboIds) {
   }
   if (byGroup.size) {
     const [iRows] = await q.query(
-      'SELECT cgi.group_id, cgi.menu_item_id, cgi.qty, mi.name AS item_name, COALESCE(mi.active,1) AS item_active ' +
+      'SELECT cgi.group_id, cgi.menu_item_id, cgi.qty, mi.name AS item_name, mi.name_en AS item_name_en, COALESCE(mi.active,1) AS item_active ' +
       'FROM combo_group_items cgi LEFT JOIN menu mi ON mi.id = cgi.menu_item_id ' +
       'WHERE cgi.group_id IN (?) ORDER BY cgi.sort_order, cgi.id', [[...byGroup.keys()]]);
     for (const it of iRows) {
       const grp = byGroup.get(String(it.group_id));
       if (grp) grp.options.set(String(it.menu_item_id), {
         name: it.item_name || String(it.menu_item_id),
+        nameEn: it.item_name_en || null,
         qty: Number(it.qty) || 1,
         active: !(it.item_active === 0 || it.item_active === false),
       });
@@ -793,11 +794,11 @@ router.get('/catalog', POS, async (req, res) => {
           for (const g of def.groups) {
             const opts = [...g.options.entries()];
             if (g.type === 'fixed') {
-              for (const [mid, o] of opts) fixedComponents.push({ menuId: mid, name: o.name, qty: o.qty });
+              for (const [mid, o] of opts) fixedComponents.push({ menuId: mid, name: o.name, nameEn: o.nameEn || null, qty: o.qty });
             } else {
               groups.push({
                 id: g.id, name: g.name, min: g.min, max: g.max,
-                options: opts.map(([mid, o]) => ({ menuId: mid, name: o.name, qty: o.qty, priceDelta: 0, active: o.active })),
+                options: opts.map(([mid, o]) => ({ menuId: mid, name: o.name, nameEn: o.nameEn || null, qty: o.qty, priceDelta: 0, active: o.active })),
               });
             }
           }

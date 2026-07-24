@@ -166,7 +166,7 @@ export function ComboDialog({ open, combo, basePrice, onClose, onConfirm }: Comb
               {t("comboDialog.fixed.alwaysIncludes")}{" "}
               <span className="font-extrabold text-ink">
                 {combo.fixedComponents
-                  .map((f) => (Number(f.qty) > 1 ? `${f.name} ×${f.qty}` : f.name))
+                  .map((f) => (Number(f.qty) > 1 ? `${tn(f.name, f.nameEn)} ×${f.qty}` : tn(f.name, f.nameEn)))
                   .join(t("comboDialog.fixed.separator"))}
               </span>
             </p>
@@ -220,7 +220,7 @@ export function ComboDialog({ open, combo, basePrice, onClose, onConfirm }: Comb
                           ) : (
                             <Circle className="h-4 w-4 shrink-0 text-slate-300" aria-hidden />
                           )}
-                          <span className="min-w-0 flex-1 truncate">{o.name}</span>
+                          <span className="min-w-0 flex-1 truncate">{tn(o.name, o.nameEn)}</span>
                           {Number(o.priceDelta) ? (
                             <span dir="ltr" className="num shrink-0 text-[11px] font-extrabold text-saffron-600">
                               {o.priceDelta > 0 ? "+" : ""}

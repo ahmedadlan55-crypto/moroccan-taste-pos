@@ -1165,6 +1165,14 @@ async function runMigrations() {
     console.log('[DB] Migration warning (o2c schema):', e.message.substring(0, 160));
   }
 
+  // Analytics fact/rollup schema — additive only; ALTERs ar_document_lines, so it
+  // must run after the o2c apply above. Failure degrades analytics reads only.
+  try {
+    await require('./db/migrations/analytics/schema').apply(db, (m) => console.log('[analytics-schema]', m));
+  } catch (e) {
+    console.error('[DB] analytics schema FAILED (analytics reads may 500):', e.message.substring(0, 160));
+  }
+
   // Closure-stream capability declarations (db/migrations/capability-seeds/*.json)
   // moved to right after the o2c.* capabilities seed below — it INSERT
   // IGNOREs into permissions_v3 + role_permissions, which don't exist yet

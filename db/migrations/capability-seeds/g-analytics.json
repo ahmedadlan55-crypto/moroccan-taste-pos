@@ -1,0 +1,72 @@
+[
+  {
+    "id": "analytics.view",
+    "label_ar": "عرض تحليلات المبيعات",
+    "label_en": "View sales analytics",
+    "is_sensitive": 0,
+    "roles": ["admin", "manager", "accountant", "finance", "auditor"]
+  },
+  {
+    "id": "analytics.cost.view",
+    "label_ar": "عرض التكلفة والربحية في التحليلات",
+    "label_en": "View cost and profit analytics",
+    "is_sensitive": 1,
+    "roles": ["admin", "accountant", "finance"]
+  },
+  {
+    "id": "analytics.customers.view",
+    "label_ar": "عرض بيانات العملاء في التحليلات",
+    "label_en": "View customer analytics",
+    "is_sensitive": 1,
+    "roles": ["admin", "manager"]
+  },
+  {
+    "id": "analytics.employees.view",
+    "label_ar": "عرض أداء الموظفين في التحليلات",
+    "label_en": "View employee analytics",
+    "is_sensitive": 1,
+    "roles": ["admin", "manager"]
+  },
+  {
+    "id": "analytics.export",
+    "label_ar": "تصدير تقارير التحليلات",
+    "label_en": "Export analytics reports",
+    "is_sensitive": 0,
+    "roles": ["admin", "manager", "accountant", "finance"]
+  },
+  {
+    "id": "analytics.share",
+    "label_ar": "مشاركة تقارير التحليلات",
+    "label_en": "Share analytics reports",
+    "is_sensitive": 0,
+    "roles": ["admin", "manager"]
+  },
+  {
+    "id": "analytics.schedule",
+    "label_ar": "جدولة تقارير التحليلات",
+    "label_en": "Schedule analytics reports",
+    "is_sensitive": 0,
+    "roles": ["admin", "manager"]
+  },
+  {
+    "id": "analytics.budget.manage",
+    "label_ar": "إدارة موازنات المبيعات",
+    "label_en": "Manage sales budgets",
+    "is_sensitive": 0,
+    "roles": ["admin", "accountant"]
+  },
+  {
+    "id": "analytics.reconciliation.view",
+    "label_ar": "عرض تسويات المدفوعات والصندوق",
+    "label_en": "View payment and till reconciliation",
+    "is_sensitive": 0,
+    "roles": ["admin", "accountant", "finance"]
+  },
+  {
+    "id": "analytics.anomaly.manage",
+    "label_ar": "إدارة تنبيهات الشذوذ",
+    "label_en": "Manage anomaly alerts",
+    "is_sensitive": 0,
+    "roles": ["admin", "accountant"]
+  }
+]

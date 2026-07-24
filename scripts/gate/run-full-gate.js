@@ -43,8 +43,13 @@ const NPX = process.platform === 'win32' ? 'npx.cmd' : 'npx';
  *   5. E2E last — slowest, and meaningless if the build is broken.
  */
 const STEPS = [
-  { id: 'erp:tsc',            cmd: NPM, args: ['--prefix', 'frontend/erp', 'exec', '--', 'tsc', '--noEmit'] },
-  { id: 'pos:tsc',            cmd: NPM, args: ['--prefix', 'frontend/pos', 'exec', '--', 'tsc', '--noEmit'] },
+  // `run typecheck` (each frontend's own `tsc --noEmit` script), NOT
+  // `exec -- tsc --noEmit`: `npm --prefix X exec` does NOT change the working
+  // directory, so tsc ran in the repo root, found no project, printed its help
+  // and exited 1. `npm --prefix X run <script>` executes with cwd = X, so tsc
+  // sees frontend/<app>/tsconfig.json.
+  { id: 'erp:tsc',            cmd: NPM, args: ['--prefix', 'frontend/erp', 'run', 'typecheck'] },
+  { id: 'pos:tsc',            cmd: NPM, args: ['--prefix', 'frontend/pos', 'run', 'typecheck'] },
   { id: 'erp:vitest',         cmd: NPM, args: ['--prefix', 'frontend/erp', 'run', 'test'] },
   { id: 'pos:vitest',         cmd: NPM, args: ['--prefix', 'frontend/pos', 'run', 'test'] },
   { id: 'root:tests',         cmd: NPM, args: ['test'] },
@@ -73,7 +78,15 @@ const STEPS = [
 function run(step) {
   const started = Date.now();
   process.stdout.write(`\n━━━ ${step.id} ━━━\n`);
-  const r = spawnSync(step.cmd, step.args, { cwd: ROOT, stdio: 'inherit', shell: false, env: process.env });
+  // Windows + Node's CVE-2024-27980 patch (>=18.20.2/20.12.2/21.7.3) refuses to
+  // spawnSync a .cmd/.bat with shell:false — it throws EINVAL before the process
+  // even starts (surfacing here as "exit null" at 0.0s). npm.cmd / npx.cmd steps
+  // therefore need shell:true; the node-script steps (process.execPath, an .exe
+  // whose full path may contain spaces) must stay shell:false so the path is not
+  // re-parsed by cmd.exe. All step args are simple flags/paths with no shell
+  // metacharacters, so shell:true is safe for the .cmd steps.
+  const needsShell = process.platform === 'win32' && /\.(cmd|bat)$/i.test(step.cmd);
+  const r = spawnSync(step.cmd, step.args, { cwd: ROOT, stdio: 'inherit', shell: needsShell, env: process.env });
   const ms = Date.now() - started;
   const ok = r.status === 0;
   if (r.error) console.error(`  (spawn error: ${r.error.message})`);

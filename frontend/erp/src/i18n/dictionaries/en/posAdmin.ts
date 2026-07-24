@@ -103,28 +103,8 @@ export const posAdmin = {
     emptyTitle: "No shifts",
     emptyBody: "No shifts match the selected filters.",
   },
-  // ── Cashier shift-close reports screen ────────────────────────────────────
-  reports: {
-    subtitle: "Cashier shift-close summary with export — expected, actual and the differences.",
-    emptyTitle: "No data",
-    stat: {
-      totalShifts: "Total shifts",
-      totalExpected: "Total expected",
-      totalActual: "Total actual",
-      totalDiff: "Total difference",
-    },
-    // CSV export column headers (mirrors the legacy shift-close admin sheet).
-    export: {
-      displayName: "Display name",
-      username: "Username",
-      opening: "Opening",
-      cashActual: "Actual - cash",
-      cardActual: "Actual - card",
-      otherActual: "Actual - other",
-      totalActual: "Actual - total",
-      sessionId: "Session ID",
-    },
-  },
+  // (The cashier shift-close reports screen was retired → /reports/sales/shifts;
+  //  its reports.* keys went with it.)
   // ── Shift filter bar (date range / cashier / status) ──────────────────────
   filters: {
     from: "From",

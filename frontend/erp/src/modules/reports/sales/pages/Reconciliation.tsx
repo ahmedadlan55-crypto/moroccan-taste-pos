@@ -1,176 +1,142 @@
-// Sales Analytics Hub — "reconciliation" page (v1: client-side three-way).
+// Sales Analytics Hub — "reconciliation" page (server-side three-way).
 //
-// Three PARALLEL analytics queries per day — sales (invoice_total/orders),
-// collections (payments_in/refunds_out) and till (expected/counted) — merged
-// client-side into one row per day with two deltas:
-//   collectDelta = net collections − invoice total   (money in vs billed)
-//   tillDelta    = counted − expected                 (drawer over/short)
-// Any |delta| > EPS marks an exception day (negative tone). Loading waits for
-// all three; ANY error fails the page (a partial reconciliation would lie).
+// v2: the client-composed three-query merge was replaced by the dedicated
+// GET /api/analytics/reconciliation contract (ReconciliationService.threeWay):
+// one row per business day × branch carrying sales vs payments vs till plus
+// the two deltas AND the exception drills (payments-without-order /
+// orders-without-payment, id lists capped server-side at 200 with true
+// totals). The page renders that contract verbatim — no client re-merge.
 //
-// TODO(sales-hub): a server-side three-way reconciliation endpoint with an
-// exception drill (day → the offending documents) lands next wave; this page
-// then swaps its merge for that contract.
-import { useMemo } from "react";
-import { Bar, BarChart, CartesianGrid, Legend, Tooltip as RechartsTooltip, XAxis, YAxis } from "recharts";
+// Capability: analytics.reconciliation.view (the backend 403s without it; the
+// page renders PermissionDenied up front instead of a doomed fetch).
+import { Fragment } from "react";
+import { Link } from "react-router-dom";
+import { useQuery } from "@tanstack/react-query";
 import { AlertTriangle, Scale, Wallet, type LucideIcon } from "lucide-react";
-import { Badge, EmptyState, ErrorState, ExplainNumber, LoadingState, MetricCard, type MetricTone } from "@/shared/ui";
-import { ChartCard, useChartPalette, useChartsRtl } from "@/shared/charts";
+import {
+  Badge,
+  EmptyState,
+  ErrorState,
+  ExplainNumber,
+  LoadingState,
+  MetricCard,
+  PermissionDenied,
+  type MetricTone,
+} from "@/shared/ui";
 import { DataTable, type ColumnDef } from "@/shared/tables";
 import { formatCurrency, formatNumber } from "@/shared/lib";
 import { useT } from "@/i18n";
+import { useCan } from "@/shared/permissions";
 import { useUrlFilters } from "@/shared/hooks/useUrlFilters";
 import { analyticsFilterCodec } from "../lib/filters";
-import { buildFiltersBody, displayMetric, type AnalyticsQueryBody, type AnalyticsResultRow } from "../lib/api";
-import { useAnalyticsQuery } from "../lib/useAnalyticsQuery";
+import { fetchReconciliation, type ReconciliationRow } from "../lib/api";
 
 /** |delta| above this is an exception (money is exact to the halala). */
 const EPS = 0.01;
 
-interface DayRow {
-  key: string;
-  label: string;
-  sales: number | null;
-  orders: number | null;
-  collections: number | null;
-  tillExpected: number | null;
-  tillCounted: number | null;
-  collectDelta: number | null;
-  tillDelta: number | null;
-}
+/** How many drill ids render inline before the "+N more" tail. */
+const ID_RENDER_CAP = 10;
 
-/** a − b, null-safe: null when BOTH inputs are null (never a fake 0). */
-function sub(a: number | null, b: number | null): number | null {
-  if (a == null && b == null) return null;
-  return (a ?? 0) - (b ?? 0);
-}
-
-function upsert(map: Map<string, DayRow>, r: AnalyticsResultRow): DayRow {
-  const key = String(r.keys[0] ?? "");
-  const found = map.get(key);
-  if (found) return found;
-  const fresh: DayRow = {
-    key,
-    label: r.labels[0] ?? key,
-    sales: null,
-    orders: null,
-    collections: null,
-    tillExpected: null,
-    tillCounted: null,
-    collectDelta: null,
-    tillDelta: null,
-  };
-  map.set(key, fresh);
-  return fresh;
-}
+const isException = (v: number | null) => v != null && Math.abs(v) > EPS;
 
 export default function Reconciliation() {
   const t = useT();
+  const canView = useCan("analytics.reconciliation.view");
   const { filters } = useUrlFilters(analyticsFilterCodec);
-  const palette = useChartPalette();
-  const rtl = useChartsRtl();
-  const base = useMemo(() => buildFiltersBody(filters), [filters]);
-  const dayDim = filters.businessDay ? "business_day" : "calendar_day";
 
-  const ordersBody = useMemo<AnalyticsQueryBody>(
-    () => ({ metrics: ["invoice_total", "orders"], dimensions: [dayDim], sort: [{ by: dayDim, dir: "asc" }], ...base }),
-    [base, dayDim],
-  );
-  const paymentsBody = useMemo<AnalyticsQueryBody>(
-    () => ({ metrics: ["payments_in", "refunds_out"], dimensions: [dayDim], sort: [{ by: dayDim, dir: "asc" }], ...base }),
-    [base, dayDim],
-  );
-  const tillBody = useMemo<AnalyticsQueryBody>(
-    () => ({ metrics: ["till_expected_cash", "till_counted"], dimensions: [dayDim], sort: [{ by: dayDim, dir: "asc" }], ...base }),
-    [base, dayDim],
-  );
+  const query = useQuery({
+    queryKey: ["analytics", "reconciliation", filters.from, filters.to, filters.branchId],
+    enabled: canView,
+    queryFn: ({ signal }) =>
+      fetchReconciliation(
+        { from: filters.from, to: filters.to, branchIds: filters.branchId },
+        signal,
+      ),
+  });
 
-  const qOrders = useAnalyticsQuery("reconciliation-orders", ordersBody);
-  const qPayments = useAnalyticsQuery("reconciliation-payments", paymentsBody);
-  const qTill = useAnalyticsQuery("reconciliation-till", tillBody);
+  if (!canView) return <PermissionDenied />;
+  if (query.isPending) return <LoadingState />;
+  if (query.isError) return <ErrorState error={query.error} onRetry={() => query.refetch()} />;
 
-  // Loading = ALL three; error = ANY (a partial three-way merge would mislead).
-  if (qOrders.isPending || qPayments.isPending || qTill.isPending) return <LoadingState />;
-  const failed = [qOrders, qPayments, qTill].find((q) => q.isError);
-  if (failed) return <ErrorState error={failed.error} onRetry={() => [qOrders, qPayments, qTill].forEach((q) => q.refetch())} />;
-
-  // ── merge into one row per day ──
-  const byDay = new Map<string, DayRow>();
-  for (const r of qOrders.data?.rows ?? []) {
-    const row = upsert(byDay, r);
-    row.sales = displayMetric(r, "invoice_total");
-    row.orders = displayMetric(r, "orders");
-  }
-  for (const r of qPayments.data?.rows ?? []) {
-    const row = upsert(byDay, r);
-    const paymentsIn = displayMetric(r, "payments_in");
-    const refundsOut = displayMetric(r, "refunds_out");
-    row.collections = sub(paymentsIn, refundsOut);
-  }
-  for (const r of qTill.data?.rows ?? []) {
-    const row = upsert(byDay, r);
-    row.tillExpected = displayMetric(r, "till_expected_cash");
-    row.tillCounted = displayMetric(r, "till_counted");
-  }
-  const rows = [...byDay.values()]
-    .map((r) => ({
-      ...r,
-      collectDelta: sub(r.collections, r.sales),
-      tillDelta: sub(r.tillCounted, r.tillExpected),
-    }))
-    .sort((a, b) => a.key.localeCompare(b.key));
-
+  const data = query.data;
+  const rows = data?.rows ?? [];
   if (rows.length === 0) return <EmptyState title={t("salesReports.states.empty")} />;
 
-  const isException = (v: number | null) => v != null && Math.abs(v) > EPS;
-  const exceptionDays = rows.filter((r) => isException(r.collectDelta) || isException(r.tillDelta)).length;
-  const totalCollectDelta = rows.reduce<number | null>((acc, r) => (r.collectDelta == null ? acc : (acc ?? 0) + r.collectDelta), null);
-  const totalTillDelta = rows.reduce<number | null>((acc, r) => (r.tillDelta == null ? acc : (acc ?? 0) + r.tillDelta), null);
-
-  const incomplete = [qOrders, qPayments, qTill].some((q) => q.data?.meta?.completeness?.complete === false);
+  const totals = data?.totals;
+  const exceptionDays = rows.filter(
+    (r) =>
+      isException(r.deltas.salesVsPayments) ||
+      isException(r.deltas.cashExpectedVsCounted) ||
+      r.exceptions.paymentsWithoutOrder.count > 0 ||
+      r.exceptions.ordersWithoutPayment.count > 0,
+  ).length;
+  const exceptionRows = rows.filter(
+    (r) => r.exceptions.paymentsWithoutOrder.count > 0 || r.exceptions.ordersWithoutPayment.count > 0,
+  );
 
   const kpiCards: Array<{ id: string; label: string; value: number | null; fmt: (v: number) => string; eq: string; icon: LucideIcon; tone: MetricTone }> = [
-    { id: "collect-delta", label: `${t("salesReports.metrics.net_collections")} − ${t("salesReports.metrics.invoice_total")}`, value: totalCollectDelta, fmt: formatCurrency, eq: "netCollections", icon: Wallet, tone: "teal" },
-    { id: "till-delta", label: t("salesReports.metrics.till_variance"), value: totalTillDelta, fmt: formatCurrency, eq: "tillVariance", icon: Scale, tone: "blue" },
-    // No exception-days key exists yet (wanted: salesReports.reconciliation.exceptionDays);
-    // composed from the day dimension label + Δ until it lands.
-    { id: "exception-days", label: `${t(`salesReports.dims.${dayDim}`)} (Δ > ${EPS})`, value: exceptionDays, fmt: formatNumber, eq: "count", icon: AlertTriangle, tone: exceptionDays > 0 ? "rose" : "teal" },
+    { id: "salesVsPayments", label: t("salesReports.reconciliation.salesVsPayments"), value: totals?.salesVsPayments ?? null, fmt: formatCurrency, eq: "netCollections", icon: Wallet, tone: isException(totals?.salesVsPayments ?? null) ? "rose" : "teal" },
+    { id: "cashExpectedVsCounted", label: t("salesReports.reconciliation.cashExpectedVsCounted"), value: totals?.cashExpectedVsCounted ?? null, fmt: formatCurrency, eq: "tillVariance", icon: Scale, tone: isException(totals?.cashExpectedVsCounted ?? null) ? "rose" : "blue" },
+    { id: "exception-days", label: t("salesReports.reconciliation.exceptionDays"), value: exceptionDays, fmt: formatNumber, eq: "count", icon: AlertTriangle, tone: exceptionDays > 0 ? "rose" : "teal" },
   ];
 
-  const money = (v: number | null) => (v == null ? "—" : formatCurrency(v));
-  const columns: ColumnDef<DayRow>[] = [
-    { id: "day", header: t(`salesReports.dims.${dayDim}`), accessor: (r) => r.label, pinStart: true, width: 140 },
-    { id: "sales", header: t("salesReports.metrics.invoice_total"), accessor: (r) => r.sales, cell: (r) => money(r.sales), numeric: true, sortable: true },
-    { id: "orders", header: t("salesReports.metrics.orders"), accessor: (r) => r.orders, cell: (r) => (r.orders == null ? "—" : formatNumber(r.orders)), numeric: true, sortable: true },
-    { id: "collections", header: t("salesReports.metrics.net_collections"), accessor: (r) => r.collections, cell: (r) => money(r.collections), numeric: true, sortable: true },
+  const money = (v: number | null | undefined) => (v == null ? "—" : formatCurrency(v));
+  const columns: ColumnDef<ReconciliationRow>[] = [
+    { id: "day", header: t("salesReports.dims.business_day"), accessor: (r) => r.business_day, pinStart: true, width: 120, sortable: true },
+    { id: "branch", header: t("salesReports.dims.branch"), accessor: (r) => r.branch_id, sortable: true },
+    { id: "sales", header: t("salesReports.metrics.invoice_total"), accessor: (r) => r.sales.invoice_total, cell: (r) => money(r.sales.invoice_total), numeric: true, sortable: true },
+    { id: "orders", header: t("salesReports.metrics.orders"), accessor: (r) => r.sales.orders, cell: (r) => formatNumber(r.sales.orders), numeric: true, sortable: true },
+    { id: "paymentsIn", header: t("salesReports.metrics.payments_in"), accessor: (r) => r.payments.in, cell: (r) => money(r.payments.in), numeric: true, sortable: true },
+    { id: "paymentsOut", header: t("salesReports.metrics.refunds_out"), accessor: (r) => r.payments.out, cell: (r) => money(r.payments.out), numeric: true, sortable: true },
+    { id: "paymentsNet", header: t("salesReports.metrics.net_collections"), accessor: (r) => r.payments.net, cell: (r) => money(r.payments.net), numeric: true, sortable: true },
     {
-      id: "collectDelta",
-      header: `Δ ${t("salesReports.metrics.net_collections")}`,
-      accessor: (r) => r.collectDelta,
-      cell: (r) => money(r.collectDelta),
+      id: "salesVsPayments",
+      header: `Δ ${t("salesReports.reconciliation.salesVsPayments")}`,
+      accessor: (r) => r.deltas.salesVsPayments,
+      cell: (r) => money(r.deltas.salesVsPayments),
       numeric: true,
       sortable: true,
-      cellTone: (r) => (isException(r.collectDelta) ? "negative" : undefined),
+      cellTone: (r) => (isException(r.deltas.salesVsPayments) ? "negative" : undefined),
     },
-    { id: "tillExpected", header: t("salesReports.metrics.till_expected_cash"), accessor: (r) => r.tillExpected, cell: (r) => money(r.tillExpected), numeric: true, sortable: true },
-    { id: "tillCounted", header: t("salesReports.metrics.till_counted"), accessor: (r) => r.tillCounted, cell: (r) => money(r.tillCounted), numeric: true, sortable: true },
+    { id: "tillExpected", header: t("salesReports.metrics.till_expected_cash"), accessor: (r) => r.till.expected_cash, cell: (r) => money(r.till.expected_cash), numeric: true, sortable: true },
+    { id: "tillCounted", header: t("salesReports.metrics.till_counted"), accessor: (r) => r.till.counted, cell: (r) => money(r.till.counted), numeric: true, sortable: true },
     {
-      id: "tillDelta",
-      header: `Δ ${t("salesReports.metrics.till_variance")}`,
-      accessor: (r) => r.tillDelta,
-      cell: (r) => money(r.tillDelta),
+      id: "cashExpectedVsCounted",
+      header: `Δ ${t("salesReports.reconciliation.cashExpectedVsCounted")}`,
+      accessor: (r) => r.deltas.cashExpectedVsCounted,
+      cell: (r) => money(r.deltas.cashExpectedVsCounted),
       numeric: true,
       sortable: true,
-      cellTone: (r) => (isException(r.tillDelta) ? "negative" : undefined),
+      cellTone: (r) => (isException(r.deltas.cashExpectedVsCounted) ? "negative" : undefined),
     },
   ];
 
-  const chartRows = rows.map((r) => ({
-    label: r.label,
-    sales: r.sales,
-    collections: r.collections,
-    tillCounted: r.tillCounted,
-  }));
+  /** Capped inline id list; order ids link into the operational invoices screen. */
+  const idList = (ids: Array<string | number>, total: number, linkOrders: boolean) => (
+    <span className="inline-flex flex-wrap items-center gap-1.5">
+      {ids.slice(0, ID_RENDER_CAP).map((id) =>
+        linkOrders ? (
+          <Link
+            key={String(id)}
+            to={`/sales/invoices?doc=${encodeURIComponent(String(id))}`}
+            className="rounded-lg bg-slate-100 px-2 py-0.5 text-xs font-bold text-teal-700 hover:bg-teal-50"
+            dir="ltr"
+          >
+            {String(id)}
+          </Link>
+        ) : (
+          <span key={String(id)} className="rounded-lg bg-slate-100 px-2 py-0.5 text-xs font-bold text-slate-600" dir="ltr">
+            {String(id)}
+          </span>
+        ),
+      )}
+      {total > Math.min(ids.length, ID_RENDER_CAP) && (
+        <span className="text-xs font-bold text-slate-400">
+          {t("salesReports.reconciliation.moreIds", { count: total - Math.min(ids.length, ID_RENDER_CAP) })}
+        </span>
+      )}
+    </span>
+  );
 
   return (
     <section aria-labelledby="sales-hub-page-reconciliation" className="space-y-4">
@@ -180,12 +146,6 @@ export default function Reconciliation() {
         </h2>
         <p className="mt-0.5 text-sm font-medium text-slate-500">{t("salesReports.pages.reconciliation.subtitle")}</p>
       </div>
-
-      {incomplete && (
-        <div data-testid="completeness-notice">
-          <Badge tone="warning">{t("salesReports.states.notAvailableHistorically")}</Badge>
-        </div>
-      )}
 
       <div className="grid gap-4 sm:grid-cols-3">
         {kpiCards.map((k) => (
@@ -203,43 +163,52 @@ export default function Reconciliation() {
         ))}
       </div>
 
-      <ChartCard
-        title={t("salesReports.pages.reconciliation.title")}
-        tableLabel={t(`salesReports.dims.${dayDim}`)}
-        tableColumns={[
-          { key: "label", label: t(`salesReports.dims.${dayDim}`) },
-          { key: "sales", label: t("salesReports.metrics.invoice_total") },
-          { key: "collections", label: t("salesReports.metrics.net_collections") },
-          { key: "tillCounted", label: t("salesReports.metrics.till_counted") },
-        ]}
-        tableRows={chartRows.map((r) => ({
-          label: r.label,
-          sales: r.sales == null ? "—" : formatCurrency(r.sales),
-          collections: r.collections == null ? "—" : formatCurrency(r.collections),
-          tillCounted: r.tillCounted == null ? "—" : formatCurrency(r.tillCounted),
-        }))}
-      >
-        <BarChart data={chartRows}>
-          <CartesianGrid stroke={palette.grid} vertical={false} />
-          <XAxis dataKey="label" reversed={rtl.xAxisReversed} stroke={palette.axis} tick={{ fontSize: 11 }} />
-          <YAxis orientation={rtl.dir === "rtl" ? "right" : "left"} stroke={palette.axis} tickFormatter={rtl.tickFormatterNumber} tick={{ fontSize: 11 }} />
-          <RechartsTooltip contentStyle={rtl.tooltipStyle} formatter={(v) => rtl.tickFormatterCurrency(v)} />
-          <Legend />
-          <Bar dataKey="sales" name={t("salesReports.metrics.invoice_total")} fill={palette.series[0]} radius={[4, 4, 0, 0]} />
-          <Bar dataKey="collections" name={t("salesReports.metrics.net_collections")} fill={palette.series[1]} radius={[4, 4, 0, 0]} />
-          <Bar dataKey="tillCounted" name={t("salesReports.metrics.till_counted")} fill={palette.series[2]} radius={[4, 4, 0, 0]} />
-        </BarChart>
-      </ChartCard>
-
-      <DataTable<DayRow>
+      <DataTable<ReconciliationRow>
         columns={columns}
         rows={rows}
-        getRowId={(r) => r.key || r.label}
+        getRowId={(r) => `${r.business_day}:${r.branch_id}`}
         paginate={false}
         columnMenu={false}
         emptyTitle={t("salesReports.states.empty")}
-        mobileTitle={(r) => r.label}
+        mobileTitle={(r) => r.business_day}
       />
+
+      {/* ── exception drill: the offending documents/facts per day ── */}
+      {exceptionRows.length > 0 && (
+        <div className="surface space-y-3 p-4" data-testid="reconciliation-exceptions">
+          <h3 className="text-sm font-extrabold text-slate-900">
+            {t("salesReports.reconciliation.exceptionsTitle")}
+          </h3>
+          <dl className="space-y-2">
+            {exceptionRows.map((r) => (
+              <Fragment key={`${r.business_day}:${r.branch_id}`}>
+                {r.exceptions.ordersWithoutPayment.count > 0 && (
+                  <div className="flex flex-wrap items-center gap-2" data-testid="exception-orders-without-payment">
+                    <dt className="flex items-center gap-2 text-xs font-bold text-slate-500">
+                      <span dir="ltr" className="tabular-nums">{r.business_day}</span>
+                      <Badge tone="danger">
+                        {t("salesReports.reconciliation.ordersWithoutPayment")}: {formatNumber(r.exceptions.ordersWithoutPayment.count)}
+                      </Badge>
+                    </dt>
+                    <dd>{idList(r.exceptions.ordersWithoutPayment.documentIds, r.exceptions.ordersWithoutPayment.count, true)}</dd>
+                  </div>
+                )}
+                {r.exceptions.paymentsWithoutOrder.count > 0 && (
+                  <div className="flex flex-wrap items-center gap-2" data-testid="exception-payments-without-order">
+                    <dt className="flex items-center gap-2 text-xs font-bold text-slate-500">
+                      <span dir="ltr" className="tabular-nums">{r.business_day}</span>
+                      <Badge tone="warning">
+                        {t("salesReports.reconciliation.paymentsWithoutOrder")}: {formatNumber(r.exceptions.paymentsWithoutOrder.count)}
+                      </Badge>
+                    </dt>
+                    <dd>{idList(r.exceptions.paymentsWithoutOrder.factIds, r.exceptions.paymentsWithoutOrder.count, false)}</dd>
+                  </div>
+                )}
+              </Fragment>
+            ))}
+          </dl>
+        </div>
+      )}
     </section>
   );
 }

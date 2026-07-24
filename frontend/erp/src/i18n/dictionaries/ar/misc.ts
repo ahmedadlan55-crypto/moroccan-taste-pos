@@ -11,11 +11,8 @@ export const misc = {
     // Shown when a hub section has no destination links yet.
     emptyTitle: "لا توجد تقارير في هذا القسم بعد",
     // Section headings — one per /reports/* manifest path (see reportLinks.tsx).
+    // (No `sales` section: /reports/sales/* is the Sales Analytics Hub.)
     sections: {
-      sales: {
-        title: "تقارير المبيعات",
-        subtitle: "الأداء البيعي عبر الطلبات والفواتير والمرتجعات والمدفوعات.",
-      },
       inventory: {
         title: "تقارير المخزون",
         subtitle: "الأرصدة والحركات والجرد والصلاحية.",
@@ -39,12 +36,6 @@ export const misc = {
     },
     // Card links inside the hub sections — each maps to a canonical report route.
     links: {
-      salesOrders: { label: "الطلبات", description: "حجم الطلبات وحالتها." },
-      salesInvoices: { label: "الفواتير", description: "الفواتير الصادرة والمحصّلة." },
-      salesReturns: { label: "المرتجعات", description: "مرتجعات المبيعات وأسبابها." },
-      salesPayments: { label: "المدفوعات", description: "التحصيل عبر طرق الدفع." },
-      salesPricing: { label: "الأسعار والخصومات", description: "أثر قوائم الأسعار والخصومات." },
-      posReports: { label: "تقارير الكاشير", description: "مبيعات نقاط البيع والورديات." },
       invBalances: { label: "الأرصدة", description: "أرصدة الأصناف في المستودعات." },
       invTransfers: { label: "التحويلات", description: "حركة الأصناف بين المستودعات." },
       invStocktakes: { label: "الجرد", description: "فروقات الجرد وتسوياتها." },
@@ -67,7 +58,7 @@ export const misc = {
       pplPayroll: { label: "الرواتب", description: "مسيّرات الرواتب." },
       pplLeaves: { label: "الإجازات", description: "أرصدة وطلبات الإجازات." },
       opsShifts: { label: "الورديات", description: "إغلاق الورديات والفروقات." },
-      opsPosReports: { label: "تقارير نقاط البيع", description: "أداء نقاط البيع." },
+      opsPosReports: { label: "تحليلات الورديات", description: "إجماليات الورديات وفروقاتها في هَب تقارير المبيعات." },
       opsActionLog: { label: "سجل الإجراءات", description: "سجل إجراءات المعاملات." },
       opsInventoryOverview: { label: "نظرة المخزون", description: "مؤشرات المخزون التشغيلية." },
     },

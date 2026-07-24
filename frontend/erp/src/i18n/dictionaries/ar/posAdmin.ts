@@ -112,28 +112,8 @@ export const posAdmin = {
     emptyTitle: "لا توجد ورديات",
     emptyBody: "لا توجد ورديات مطابقة لعوامل التصفية المحددة.",
   },
-  // ── Cashier shift-close reports screen ────────────────────────────────────
-  reports: {
-    subtitle: "ملخّص إغلاق ورديات الكاشير مع إمكانية التصدير — المتوقّع، الفعلي، والفروقات.",
-    emptyTitle: "لا توجد بيانات",
-    stat: {
-      totalShifts: "إجمالي الورديات",
-      totalExpected: "إجمالي المتوقّع",
-      totalActual: "إجمالي الفعلي",
-      totalDiff: "إجمالي الفرق",
-    },
-    // CSV export column headers (mirrors the legacy shift-close admin sheet).
-    export: {
-      displayName: "اسم العرض",
-      username: "اسم المستخدم",
-      opening: "الافتتاح",
-      cashActual: "الفعلي - كاش",
-      cardActual: "الفعلي - بطاقة",
-      otherActual: "الفعلي - أخرى",
-      totalActual: "الفعلي - إجمالي",
-      sessionId: "رقم الجلسة",
-    },
-  },
+  // (شاشة تقارير إغلاق ورديات الكاشير أُخرجت → /reports/sales/shifts؛
+  //  ومفاتيح reports.* الخاصة بها رحلت معها.)
   // ── Shift filter bar (date range / cashier / status) ──────────────────────
   filters: {
     from: "من",

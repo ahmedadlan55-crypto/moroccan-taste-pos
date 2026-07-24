@@ -1,5 +1,5 @@
 import { lazy, type ComponentType, type LazyExoticComponent } from "react";
-import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
+import { BrowserRouter, Routes, Route, Navigate, useLocation } from "react-router-dom";
 import { RequireAuth } from "./providers";
 import { AppShell } from "./shell/AppShell";
 import { CapGuard } from "./shell/CapGuard";
@@ -56,6 +56,49 @@ export const ROUTE_PATHS: ReadonlySet<string> = new Set<string>(
 export const SUBROUTE_BASE_PATHS: ReadonlySet<string> = new Set<string>(
   NAV_ITEMS.filter((i) => i.subRoutes).map((i) => i.path),
 );
+// ── Retired-surface redirects (Sales Analytics Hub rationalization) ─────────
+// The ONE allow-listed place old report paths may live forever: each retired
+// screen keeps its deep links working by redirecting into the hub, carrying its
+// query params along. `params` maps old param name → new param name; any param
+// NOT in the map passes through unchanged (so foreign params like ?doc= survive).
+// NOTE (release note, mandated by the rationalization doc §7): the old
+// /accounting/sales-analytics page SENT brandId/branchId but the old backend
+// read `brand`/`branch` — the filters never worked. The redirect carries the
+// values into the hub where they filter FOR REAL for the first time; that is a
+// correction, not a regression.
+export interface RedirectSpec {
+  from: string;
+  to: string;
+  /** old param name → new param name. Unmapped params pass through unchanged. */
+  params?: Record<string, string>;
+}
+
+export const REDIRECTS: readonly RedirectSpec[] = [
+  {
+    from: "/accounting/sales-analytics",
+    to: "/reports/sales/executive",
+    params: { from: "from", to: "to", brandId: "brandId", branchId: "branchId" },
+  },
+  {
+    from: "/pos-admin/reports",
+    to: "/reports/sales/shifts",
+    params: { from: "from", to: "to" },
+  },
+];
+
+/** Query-preserving redirect: maps params per the spec, passes the rest through.
+ *  Exported for the data-driven redirect test (app/__tests__/redirects.test.tsx). */
+export function RedirectWithParams({ spec }: { spec: RedirectSpec }) {
+  const { search } = useLocation();
+  const incoming = new URLSearchParams(search);
+  const next = new URLSearchParams();
+  for (const [key, value] of incoming.entries()) {
+    next.append(spec.params?.[key] ?? key, value);
+  }
+  const qs = next.toString();
+  return <Navigate to={{ pathname: spec.to, search: qs ? `?${qs}` : "" }} replace />;
+}
+
 /** Non-nav paths that are allowed to exist as routes (redirects + login + not-found). */
 export const REDIRECT_PATHS: ReadonlySet<string> = new Set<string>([
   "/",
@@ -64,6 +107,9 @@ export const REDIRECT_PATHS: ReadonlySet<string> = new Set<string>([
   // the standalone destination is a redirect, not a screen. Kept as an allowlisted
   // route so old deep links resolve instead of 404-ing.
   "/inventory/units-barcodes",
+  // Retired report surfaces — derived from the ONE redirect table above so the
+  // architecture test keeps covering them without a second source of truth.
+  ...REDIRECTS.map((r) => r.from),
 ]);
 /** The index route redirects to this path. */
 export const INDEX_REDIRECT = "/overview";
@@ -90,6 +136,15 @@ export function AppRouter() {
 
           {/* Units & barcodes moved into the item card — redirect the old path. */}
           <Route path="inventory/units-barcodes" element={<Navigate to="/inventory/items" replace />} />
+
+          {/* Retired report surfaces → the Sales Analytics Hub, query preserved. */}
+          {REDIRECTS.map((spec) => (
+            <Route
+              key={spec.from}
+              path={spec.from.replace(/^\//, "")}
+              element={<RedirectWithParams spec={spec} />}
+            />
+          ))}
 
           {/* One lazy, capability-gated route per manifest item. Items that OWN
               their subtree (subRoutes) additionally register a `<path>/*` splat,

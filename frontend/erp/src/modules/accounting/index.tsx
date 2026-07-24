@@ -25,7 +25,6 @@ import { JournalsPage } from "./pages/Journals";
 import { EquityChangesPage } from "./pages/EquityChanges";
 import { ProfitabilityPage } from "./pages/Profitability";
 import { InventoryValuationPage } from "./pages/InventoryValuation";
-import { SalesAnalyticsPage } from "./pages/SalesAnalytics";
 
 const ROUTES: Record<string, () => JSX.Element> = {
   "/accounting/chart-of-accounts": ChartOfAccountsPage,
@@ -42,7 +41,7 @@ const ROUTES: Record<string, () => JSX.Element> = {
   "/accounting/equity-changes": EquityChangesPage,
   "/accounting/profitability": ProfitabilityPage,
   "/accounting/inventory-valuation": InventoryValuationPage,
-  "/accounting/sales-analytics": SalesAnalyticsPage,
+  // (The sales-analytics accounting page was retired → /reports/sales/executive; router redirect.)
   "/accounting/royalties": RoyaltiesPage,
   "/accounting/cost-centers": CostCentersPage,
   "/accounting/dimensions": DimensionsPage,

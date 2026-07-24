@@ -178,9 +178,7 @@ export default function Discounts() {
           a later wave). TODO(sales-hub): when the reason dimension is projected,
           add a third ChartCard/table here grouped by discount_reason. */}
       <div data-testid="discounts-reason-gap">
-        <Badge tone="warning">
-          {t("salesReports.dims.discount_reason")}: {t("salesReports.states.notAvailableHistorically")}
-        </Badge>
+        <Badge tone="warning">{t("salesReports.discounts.reasonGap")}</Badge>
       </div>
       {incomplete && (
         <div data-testid="completeness-notice">

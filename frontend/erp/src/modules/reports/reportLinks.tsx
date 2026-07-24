@@ -21,11 +21,8 @@ import {
   Scale,
   ScrollText,
   ShoppingBag,
-  ShoppingCart,
-  Tags,
   TrendingUp,
   Truck,
-  Undo2,
   Users,
   Wallet,
   Building2,
@@ -50,19 +47,9 @@ export interface ReportSection {
 }
 
 export const REPORT_SECTIONS: Record<string, ReportSection> = {
-  "/reports/sales": {
-    path: "/reports/sales",
-    title: "misc.reports.sections.sales.title",
-    subtitle: "misc.reports.sections.sales.subtitle",
-    links: [
-      { to: "/sales/orders", label: "misc.reports.links.salesOrders.label", description: "misc.reports.links.salesOrders.description", icon: ShoppingCart },
-      { to: "/sales/invoices", label: "misc.reports.links.salesInvoices.label", description: "misc.reports.links.salesInvoices.description", icon: FileText },
-      { to: "/sales/returns", label: "misc.reports.links.salesReturns.label", description: "misc.reports.links.salesReturns.description", icon: Undo2 },
-      { to: "/sales/payments", label: "misc.reports.links.salesPayments.label", description: "misc.reports.links.salesPayments.description", icon: Banknote },
-      { to: "/sales/pricing", label: "misc.reports.links.salesPricing.label", description: "misc.reports.links.salesPricing.description", icon: Tags },
-      { to: "/pos-admin/reports", label: "misc.reports.links.posReports.label", description: "misc.reports.links.posReports.description", icon: Receipt },
-    ],
-  },
+  // "/reports/sales" carries NO link section: the Sales Analytics Hub owns that
+  // whole subtree (modules/reports/index.tsx routes it to SalesAnalyticsHub
+  // before this table is ever consulted).
   "/reports/inventory": {
     path: "/reports/inventory",
     title: "misc.reports.sections.inventory.title",
@@ -118,7 +105,8 @@ export const REPORT_SECTIONS: Record<string, ReportSection> = {
     subtitle: "misc.reports.sections.operations.subtitle",
     links: [
       { to: "/pos-admin/shifts", label: "misc.reports.links.opsShifts.label", description: "misc.reports.links.opsShifts.description", icon: Clock },
-      { to: "/pos-admin/reports", label: "misc.reports.links.opsPosReports.label", description: "misc.reports.links.opsPosReports.description", icon: Receipt },
+      // Re-pointed from the retired pos-admin cashier-reports page to the hub's shift analytics.
+      { to: "/reports/sales/shifts", label: "misc.reports.links.opsPosReports.label", description: "misc.reports.links.opsPosReports.description", icon: Receipt },
       { to: "/workflow/action-log", label: "misc.reports.links.opsActionLog.label", description: "misc.reports.links.opsActionLog.description", icon: ScrollText },
       { to: "/inventory", label: "misc.reports.links.opsInventoryOverview.label", description: "misc.reports.links.opsInventoryOverview.description", icon: BarChart3 },
     ],

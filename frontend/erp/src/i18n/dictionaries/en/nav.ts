@@ -47,7 +47,6 @@ export const nav = {
     "pa-shifts": "Shifts",
     "pa-parked": "Parked Orders",
     "pa-devices": "Device Sync",
-    "pa-reports": "Register Reports",
     // inventory
     "inv-overview": "Overview",
     "inv-items": "Items",
@@ -85,7 +84,6 @@ export const nav = {
     "ac-equity-changes": "Changes in Equity",
     "ac-profitability": "Profitability by Dimension",
     "ac-inventory-valuation": "Inventory Valuation",
-    "ac-sales-analytics": "Sales Analytics",
     "ac-royalties": "Brand Royalties",
     "ac-periods": "Accounting Periods",
     "ac-cost-centers": "Cost Centers",

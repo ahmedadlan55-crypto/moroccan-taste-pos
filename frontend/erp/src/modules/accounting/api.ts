@@ -980,91 +980,10 @@ export function useInventoryValuation(filter: InventoryValuationFilter | null) {
   });
 }
 
-// ── Sales analytics — GET /api/erp/reports/sales-analytics ──────────────────
-export interface SalesHeadline {
-  invoiceCount: number;
-  total: number;
-  avgTicket: number;
-}
-export interface SalesRevenueSummary {
-  invoiceCount: number;
-  grossInclVat: number;
-  net: number;
-  vat: number;
-  discounts: number;
-  cost: number;
-  profit: number;
-  /** Invoices excluded from `net` because they carry no VAT breakdown. */
-  netUnknownCount: number;
-  /** Invoices excluded from `cost`/`profit` because their cost is unknown. */
-  costUnknownCount: number;
-}
-export interface SalesByProductRow {
-  name: string;
-  qty: number;
-  gross: number;
-  net: number;
-  vat: number;
-  cost: number;
-  profit: number;
-  margin: number;
-}
-export interface SalesDailyRow {
-  date: string;
-  count: number;
-  total: number;
-}
-export interface SalesByPaymentRow {
-  method: string;
-  count: number;
-  total: number;
-}
-export interface SalesByCashierRow {
-  cashier: string;
-  count: number;
-  total: number;
-  avgTicket: number;
-}
-export interface SalesByHourRow {
-  hour: number;
-  count: number;
-  total: number;
-}
-export interface SalesAnalyticsResponse {
-  success?: boolean;
-  error?: string;
-  headline: SalesHeadline;
-  revenue: SalesRevenueSummary;
-  byProduct: SalesByProductRow[];
-  daily: SalesDailyRow[];
-  byPayment: SalesByPaymentRow[];
-  byCashier: SalesByCashierRow[];
-  byHour: SalesByHourRow[];
-  channels: string[];
-}
-export interface SalesAnalyticsFilter extends DateRange {
-  /** Empty string = all brands. */
-  brandId: string;
-  /** Empty string = all branches. */
-  branchId: string;
-}
-export function useSalesAnalytics(filter: SalesAnalyticsFilter | null) {
-  return useQuery({
-    queryKey: ["acc", "sales-analytics", filter?.from, filter?.to, filter?.brandId, filter?.branchId],
-    enabled: !!filter,
-    queryFn: async () =>
-      unwrap(
-        await apiClient.get<SalesAnalyticsResponse>("/erp/reports/sales-analytics", {
-          params: {
-            from: filter!.from,
-            to: filter!.to,
-            brandId: filter!.brandId || undefined,
-            branchId: filter!.branchId || undefined,
-          },
-        }),
-      ),
-  });
-}
+// ── Sales analytics ─────────────────────────────────────────────────────────
+// The accounting sales-analytics page and its hook/DTOs were RETIRED with the
+// Unified Sales Analytics Hub (/reports/sales/*) — the hub's engine
+// (POST /api/analytics/query, modules/reports/sales/lib/api.ts) replaces them.
 
 // ── Accounting periods (v4) ─────────────────────────────────────────────────
 // Converted from the legacy-only `erpLoadPeriods` screen (public/js/erp.js).

@@ -1,6 +1,9 @@
-// Shift computation helpers + a react-query hook, shared by the Shifts and the
-// Cashier-reports screens. The arithmetic mirrors the legacy renderShiftsTable /
-// _v3RenderShiftClose exactly (actual = cash + card + kita; diff = actual − theo).
+// Shift computation helpers + a react-query hook for the operational Shifts
+// screen (+ its detail drawer). The arithmetic mirrors the legacy
+// renderShiftsTable / _v3RenderShiftClose exactly (actual = cash + card + kita;
+// diff = actual − theo). The retired Cashier-reports screen's client-side
+// summarizeShifts aggregate was deleted with it — shift ANALYTICS now live in
+// /reports/sales/shifts with server-computed totals.
 import { useQuery } from "@tanstack/react-query";
 import { posAdminApi } from "./api";
 import type { Shift, ShiftFilters } from "./types";
@@ -30,30 +33,6 @@ export function shiftDiff(s: Shift): number {
 
 export function isShiftOpen(s: Shift): boolean {
   return (s.status || "").toUpperCase() === "OPEN" || !s.endTime;
-}
-
-export interface ShiftSummary {
-  total: number;
-  open: number;
-  closed: number;
-  expected: number;
-  actual: number;
-  variance: number;
-}
-
-export function summarizeShifts(rows: Shift[]): ShiftSummary {
-  return rows.reduce<ShiftSummary>(
-    (acc, s) => {
-      acc.total += 1;
-      if (isShiftOpen(s)) acc.open += 1;
-      else acc.closed += 1;
-      acc.expected += shiftTheoretical(s);
-      acc.actual += shiftActual(s);
-      acc.variance += shiftDiff(s);
-      return acc;
-    },
-    { total: 0, open: 0, closed: 0, expected: 0, actual: 0, variance: 0 },
-  );
 }
 
 /** Distinct cashier usernames present in the loaded rows (for the filter). */

@@ -5,11 +5,8 @@ export const misc = {
   reports: {
     eyebrow: "Reports",
     emptyTitle: "No reports in this section yet",
+    // (No `sales` section: /reports/sales/* is the Sales Analytics Hub.)
     sections: {
-      sales: {
-        title: "Sales Reports",
-        subtitle: "Sales performance across orders, invoices, returns, and payments.",
-      },
       inventory: {
         title: "Inventory Reports",
         subtitle: "Balances, movements, stocktakes, and expiry.",
@@ -32,12 +29,6 @@ export const misc = {
       },
     },
     links: {
-      salesOrders: { label: "Orders", description: "Order volume and status." },
-      salesInvoices: { label: "Invoices", description: "Issued and collected invoices." },
-      salesReturns: { label: "Returns", description: "Sales returns and their reasons." },
-      salesPayments: { label: "Payments", description: "Collection by payment method." },
-      salesPricing: { label: "Prices & Discounts", description: "Impact of price lists and discounts." },
-      posReports: { label: "Cashier Reports", description: "Point-of-sale sales and shifts." },
       invBalances: { label: "Balances", description: "Item balances across warehouses." },
       invTransfers: { label: "Transfers", description: "Item movement between warehouses." },
       invStocktakes: { label: "Stocktakes", description: "Stocktake variances and adjustments." },
@@ -60,7 +51,7 @@ export const misc = {
       pplPayroll: { label: "Payroll", description: "Payroll runs." },
       pplLeaves: { label: "Leaves", description: "Leave balances and requests." },
       opsShifts: { label: "Shifts", description: "Shift closing and variances." },
-      opsPosReports: { label: "POS Reports", description: "Point-of-sale performance." },
+      opsPosReports: { label: "Shift Analytics", description: "Shift totals and variances in the sales analytics hub." },
       opsActionLog: { label: "Action Log", description: "Transaction action log." },
       opsInventoryOverview: { label: "Inventory Overview", description: "Operational inventory indicators." },
     },

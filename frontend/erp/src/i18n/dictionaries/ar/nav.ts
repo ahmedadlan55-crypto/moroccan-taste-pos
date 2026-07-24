@@ -54,7 +54,6 @@ export const nav = {
     "pa-shifts": "الورديات",
     "pa-parked": "الطلبات المعلقة",
     "pa-devices": "مزامنة الأجهزة",
-    "pa-reports": "تقارير الكاشير",
     // inventory
     "inv-overview": "نظرة عامة",
     "inv-items": "الأصناف",
@@ -92,7 +91,6 @@ export const nav = {
     "ac-equity-changes": "التغيرات في حقوق الملكية",
     "ac-profitability": "الربحية حسب البعد",
     "ac-inventory-valuation": "تقييم المخزون",
-    "ac-sales-analytics": "تحليلات المبيعات",
     "ac-royalties": "امتياز العلامات",
     "ac-periods": "الفترات المحاسبية",
     "ac-cost-centers": "مراكز التكلفة",

@@ -221,8 +221,8 @@ export default function Branches() {
               title={t("salesReports.metrics.net_ex_vat")}
               subtitle={t("salesReports.dims.branch")}
               isEmpty={branchBars.length === 0}
-              emptyLabel={t("inventoryRest.analytics.chartEmpty")}
-              tableLabel={t("inventoryRest.analytics.showTable")}
+              emptyLabel={t("salesReports.charts.empty")}
+              tableLabel={t("salesReports.charts.showTable")}
               tableCaption={`${t("salesReports.metrics.net_ex_vat")} — ${t("salesReports.dims.branch")}`}
               tableColumns={[
                 { key: "label", label: t("salesReports.dims.branch") },

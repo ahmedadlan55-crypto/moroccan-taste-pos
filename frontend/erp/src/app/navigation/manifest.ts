@@ -98,7 +98,8 @@ export const NAV: NavGroup[] = [
       { id: "pa-shifts", path: "/pos-admin/shifts", label: "nav.items.pa-shifts", icon: "Clock", cap: "pos.shifts.view", module: "pos-admin" },
       { id: "pa-parked", path: "/pos-admin/parked-orders", label: "nav.items.pa-parked", icon: "PauseCircle", cap: "pos.parked.view", module: "pos-admin" },
       { id: "pa-devices", path: "/pos-admin/devices", label: "nav.items.pa-devices", icon: "RefreshCw", cap: "pos.devices.view", module: "pos-admin" },
-      { id: "pa-reports", path: "/pos-admin/reports", label: "nav.items.pa-reports", icon: "Receipt", cap: "pos.reports.view", module: "pos-admin" },
+      // The pos-admin cashier-reports leaf was retired → /reports/sales/shifts
+      // (analytics) + the shifts leaf above (operational drill). Redirect in app/router.tsx.
     ],
   },
   {
@@ -162,7 +163,8 @@ export const NAV: NavGroup[] = [
       { id: "ac-equity-changes", path: "/accounting/equity-changes", label: "nav.items.ac-equity-changes", icon: "Landmark", cap: "accounting.reports.view", module: "accounting" },
       { id: "ac-profitability", path: "/accounting/profitability", label: "nav.items.ac-profitability", icon: "TrendingUp", cap: "accounting.reports.view", module: "accounting" },
       { id: "ac-inventory-valuation", path: "/accounting/inventory-valuation", label: "nav.items.ac-inventory-valuation", icon: "Boxes", cap: "accounting.reports.view", module: "accounting" },
-      { id: "ac-sales-analytics", path: "/accounting/sales-analytics", label: "nav.items.ac-sales-analytics", icon: "BarChart3", cap: "sales.reports.advanced", module: "accounting" },
+      // The accounting sales-analytics leaf was retired → the Sales Analytics Hub
+      // (/reports/sales/executive). Redirect lives in app/router.tsx.
       { id: "ac-royalties", path: "/accounting/royalties", label: "nav.items.ac-royalties", icon: "Crown", cap: "royalty.view", module: "accounting" },
       { id: "ac-periods", path: "/accounting/periods", label: "nav.items.ac-periods", icon: "CalendarRange", cap: "accounting.periods.view", module: "accounting" },
       { id: "ac-cost-centers", path: "/accounting/cost-centers", label: "nav.items.ac-cost-centers", icon: "Target", cap: "accounting.view", module: "accounting" },

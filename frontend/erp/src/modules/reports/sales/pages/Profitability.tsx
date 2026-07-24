@@ -3,9 +3,8 @@
 //
 // Per-item cost/profit/margin plus the menu-engineering quadrant: a scatter of
 // qty_sold × margin_pct with ReferenceLines at the MEDIANS, classifying items
-// as Stars / Plowhorses / Puzzles / Dogs. No salesReports keys exist for the
-// quadrant names yet (wanted: salesReports.profitability.quadrants.*), so the
-// labels are inlined per-language via useLang.
+// as Stars / Plowhorses / Puzzles / Dogs (labels from
+// salesReports.profitability.quadrants.*).
 import { useMemo } from "react";
 import {
   CartesianGrid,
@@ -21,7 +20,7 @@ import { Badge, EmptyState, ErrorState, ExplainNumber, LoadingState, MetricCard,
 import { ChartCard, useChartPalette, useChartsRtl } from "@/shared/charts";
 import { DataTable, type ColumnDef } from "@/shared/tables";
 import { formatCurrency, formatNumber } from "@/shared/lib";
-import { useLang, useT } from "@/i18n";
+import { useT } from "@/i18n";
 import { useUrlFilters } from "@/shared/hooks/useUrlFilters";
 import { analyticsFilterCodec } from "../lib/filters";
 import { buildFiltersBody, displayMetric, type AnalyticsQueryBody, type AnalyticsResult } from "../lib/api";
@@ -81,17 +80,17 @@ const QUADRANT_BADGE: Record<QuadrantClass, "success" | "warning" | "info" | "da
 
 export default function Profitability() {
   const t = useT();
-  const lang = useLang();
   const { filters } = useUrlFilters(analyticsFilterCodec);
   const palette = useChartPalette();
   const rtl = useChartsRtl();
   const base = useMemo(() => buildFiltersBody(filters), [filters]);
 
-  // Wanted i18n keys: salesReports.profitability.quadrants.{stars,plowhorses,puzzles,dogs}
-  const QUADRANT_LABEL: Record<QuadrantClass, string> =
-    lang === "ar"
-      ? { star: "نجوم", plowhorse: "أحصنة عمل", puzzle: "ألغاز", dog: "خاسرة" }
-      : { star: "Stars", plowhorse: "Plowhorses", puzzle: "Puzzles", dog: "Dogs" };
+  const QUADRANT_LABEL: Record<QuadrantClass, string> = {
+    star: t("salesReports.profitability.quadrants.stars"),
+    plowhorse: t("salesReports.profitability.quadrants.plowhorses"),
+    puzzle: t("salesReports.profitability.quadrants.puzzles"),
+    dog: t("salesReports.profitability.quadrants.dogs"),
+  };
 
   const kpiBody = useMemo<AnalyticsQueryBody>(
     () => ({ metrics: ["net_ex_vat", "cogs", "gross_profit", "margin_pct"], dimensions: [], ...base }),

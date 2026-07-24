@@ -48,6 +48,9 @@ const STEPS = [
   // them) — a query using SHA1() passes every local test yet 500s in production
   // (this took down the menu/POS/product-images reads). Cheapest signal, so first.
   { id: 'static:sql-removed-fns', cmd: process.execPath, args: ['scripts/audit/sql-removed-functions.js'] },
+  // Static sub-second: no hardcoded 1.15/0.15 VAT constants in the analytics
+  // read path (rates live in the recorded lines, never in code).
+  { id: 'audit:analytics-vat',    cmd: process.execPath, args: ['scripts/audit/analytics-no-vat-constant.js'] },
   // `run typecheck` (each frontend's own `tsc --noEmit` script), NOT
   // `exec -- tsc --noEmit`: `npm --prefix X exec` does NOT change the working
   // directory, so tsc ran in the repo root, found no project, printed its help
@@ -72,10 +75,26 @@ const STEPS = [
   { id: 'backend:item-image', cmd: NPM, args: ['run', 'test:item-image'] },
   { id: 'backend:product-images', cmd: NPM, args: ['run', 'test:product-images-upload'] },
   { id: 'backend:item-assignments', cmd: NPM, args: ['run', 'test:item-assignments'] },
+  // ── Unified Sales Analytics Hub (retirement commit) ─────────────────────
+  // Core engine (query + no-double-count + timezone + rollup parity), then the
+  // security surface (scope clamp + exports), then the money paths (payments /
+  // three-way reconciliation / budgets / anomalies / forecast API), then the
+  // sales fixes incl. the retired-surfaces negative suite (every deleted
+  // endpoint 404s; the unshadowed aging routes answer the page contract).
+  { id: 'backend:analytics-core',     cmd: NPM, args: ['run', 'test:analytics-core'] },
+  { id: 'backend:analytics-security', cmd: NPM, args: ['run', 'test:analytics-security'] },
+  { id: 'backend:analytics-money',    cmd: NPM, args: ['run', 'test:analytics-money'] },
+  { id: 'backend:sales-fixes',        cmd: NPM, args: ['run', 'test:sales-fixes'] },
+  // Mutation harness (W5a): each seeded math mutant must be KILLED by the
+  // analytics unit suites — proves the equations tests bite, not just pass.
+  { id: 'audit:mutation-sales-math',  cmd: process.execPath, args: ['scripts/audit/mutation-sales-math.js'] },
   { id: 'schema:release-chain', cmd: NPM, args: ['run', 'test:release-chain'] },
   { id: 'schema:release-sequence', cmd: NPM, args: ['run', 'test:release-sequence'] },
   { id: 'schema:migration-concurrency', cmd: NPM, args: ['run', 'test:migration-concurrency'] },
   { id: 'hygiene:test-residue', cmd: process.execPath, args: ['scripts/audit/test-residue-report.js'] },
+  // Retired sales-report surfaces stay dead: greps the live trees for every
+  // retired route/component/endpoint marker; any resurrected reference fails.
+  { id: 'audit:retired-surfaces', cmd: process.execPath, args: ['scripts/audit/retired-surfaces-report.js'] },
   { id: 'build:erp',          cmd: NPM, args: ['run', 'build:erp'] },
   { id: 'build:pos',          cmd: NPM, args: ['run', 'build:pos'] },
   { id: 'e2e:erp',            cmd: NPX, args: ['playwright', 'test', '--config=playwright.erp.config.ts', '--reporter=line'] },

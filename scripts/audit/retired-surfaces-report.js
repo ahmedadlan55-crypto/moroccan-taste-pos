@@ -11,25 +11,32 @@
  *   node scripts/audit/retired-surfaces-report.js          → scan mode
  *   node scripts/audit/retired-surfaces-report.js --list   → print the matrix, exit 0
  *
- * EXIT SEMANTICS (deliberate — read before wiring into any gate):
+ * EXIT SEMANTICS (deliberate):
  *   · --list        → always exit 0. Prints the marker matrix only.
  *   · scan, hits    → exit 1, listing every file:line still referencing an
  *                     APPROVED retired marker.
  *   · scan, clean   → exit 0.
- *   · markers with `pending: true` (dispositions CONTRADICTED during Phase-1
- *     verification — merge owner must decide) are scanned and REPORTED but
- *     NEVER affect the exit code.
  *
- * ⚠ THIS SCRIPT IS EXPECTED TO FAIL (exit 1) TODAY: the surfaces have not
- * been deleted yet — Phase 1 only documents them. The gate step
- * (`node scripts/audit/retired-surfaces-report.js` in the release gate) is to
- * be added ONLY in the retirement commit, where it must pass. Until then it is
- * a standing report, not a gate.
+ * RETIREMENT COMMIT STATUS: the surfaces ARE deleted now — scan mode passes
+ * and the script is wired into scripts/gate/run-full-gate.js as the
+ * `audit:retired-surfaces` step (right after hygiene:test-residue), so a
+ * resurrected reference fails the release gate.
+ *
+ * The two Phase-1 `pending` contradictions were RESOLVED in the retirement
+ * commit and their markers removed from the matrix:
+ *   · aging (§2.2, INVERTED): erp-core's legacy /reports/{ar,ap}-aging
+ *     handlers were deleted; routes/erp/reports/{ar,ap}-aging.js — whose shape
+ *     is what the live pages expect — are now the REACHABLE handlers, so
+ *     references to them are legitimate live code, not residue.
+ *   · balance-sheet (§2.1, KEEP): erp-core's /reports/balance-sheet stays —
+ *     FinancialRatios.tsx consumes it live. Not a retired surface.
+ * Both outcomes are pinned by tests/integration/retiredSurfaces.api.test.js.
  *
  * Scan scope: frontend/erp/src, frontend/pos/src, routes, services, lib,
  * e2e, tests, public — excluding node_modules/**, **\/dist/**, docs/status/**,
  * *-snapshots/** and the ALLOWED_FILES below (the router redirect table
- * legitimately keeps old path strings alive as redirects).
+ * legitimately keeps old path strings alive as redirects, and its data-driven
+ * test asserts over that same table).
  *
  * Engine: ripgrep (`rg`) via child_process when available (fast path),
  * otherwise a pure-fs recursive walk over text files. No npm dependencies.
@@ -54,10 +61,14 @@ const SCAN_DIRS = [
 ];
 
 // Files that are ALLOWED to keep mentioning retired route strings forever:
-// the router's redirect table (old deep links must resolve, not 404) and its
-// architecture test which asserts over that same table.
+// the router's redirect table (old deep links must resolve, not 404) and the
+// data-driven redirect test that asserts over that same table.
 const ALLOWED_FILES = [
   'frontend/erp/src/app/router.tsx',
+  'frontend/erp/src/app/__tests__/redirects.test.tsx',
+  // The negative-assertion suite MUST name every retired endpoint to prove it
+  // answers 404 — the one backend file allowed to hold the dead path strings.
+  'tests/integration/retiredSurfaces.api.test.js',
 ];
 
 const EXCLUDE_DIR_NAMES = new Set(['node_modules', 'dist', '.git']);
@@ -69,10 +80,10 @@ const TEXT_EXT = new Set([
 
 /**
  * The retirement matrix. `marker` is a FIXED string (no regex).
- * `excludeLineContaining` drops false-positive lines (e.g. balance-sheet-ifrs
- * when hunting the plain balance-sheet endpoint).
- * `pending: true` = Phase-1 verification CONTRADICTED the approved disposition
- * (see the doc, section «تعارضات مع المصفوفة المعتمدة») — informational only.
+ * `excludeLineContaining` drops false-positive lines.
+ * `pending: true` (informational-only, never affects exit code) is kept as a
+ * mechanism for future waves; the Phase-1 pending entries were resolved in the
+ * retirement commit and removed (see the header).
  */
 const MARKERS = [
   // ── /accounting/sales-analytics → /reports/sales/executive ──────────────
@@ -111,22 +122,17 @@ const MARKERS = [
   { marker: '/reports/royalty-reconciliation', kind: 'endpoint',
     surface: 'GET /api/erp/reports/royalty-reconciliation — routes/erp-core.js:3268 (الدالة _royaltyBase ليست منه — تبقى، مشتركة مع صفحة الرويالتي الحية)', replacement: 'شاشة /accounting/royalties الحية' },
 
-  // ── endpoint التحليلات نفسه — يُحذف في كوميت الإخراج فقط، بعد إعادة توجيه
-  //    tests/integration/reportsEquations.api.test.js إلى المحرك الجديد ──
+  // ── endpoint التحليلات نفسه — حُذف في كوميت الإخراج بعد إعادة توجيه
+  //    tests/integration/reportsEquations.api.test.js إلى POST /api/analytics/query ──
   { marker: '/reports/sales-analytics', kind: 'endpoint',
-    surface: 'GET /api/erp/reports/sales-analytics — routes/erp-core.js:2792 (يبقى خلال السبرنت)', replacement: 'محرك تقارير الهَب' },
+    surface: 'GET /api/erp/reports/sales-analytics — كان في routes/erp-core.js (محذوف)', replacement: 'محرك تقارير الهَب (POST /api/analytics/query)' },
 
-  // ── قرارات نقضها التحقق — pending، لا تؤثر على exit code ────────────────
-  { marker: 'erp/reports/ar-aging', kind: 'file', pending: true,
-    surface: 'routes/erp/reports/ar-aging.js (مظلَّل بترتيب mount — لكن عقده هو ما تتوقعه الواجهة، انظر الوثيقة §2.2)',
-    replacement: 'قرار مالك الدمج: نقل الشكل إلى erp-core أو عكس الترتيب' },
-  { marker: 'erp/reports/ap-aging', kind: 'file', pending: true,
-    surface: 'routes/erp/reports/ap-aging.js (نفس تعارض ar-aging)',
-    replacement: 'قرار مالك الدمج' },
-  { marker: '/reports/balance-sheet', kind: 'endpoint', pending: true,
-    excludeLineContaining: 'balance-sheet-ifrs',
-    surface: 'GET /api/erp/reports/balance-sheet — erp-core.js:2359 — ليس يتيمًا: FinancialRatios.tsx:28 يستهلكه (الوثيقة §2.1)',
-    replacement: 'قرار مالك الدمج: تحويل FinancialRatios إلى ifrs أولًا' },
+  // ── قرارا §2 المعلّقان حُسما في كوميت الإخراج وأُزيلت علاماتهما ──────────
+  //   · aging: قرار معكوس مُنفَّذ — حُذف معالجا erp-core وبقي الملفان النمطيان
+  //     (routes/erp/reports/{ar,ap}-aging.js) وهما الآن الكود الحي المطابق لعقد
+  //     الواجهة؛ الإشارة إليهما مشروعة فلا علامة لهما.
+  //   · balance-sheet: قرار إبقاء مُنفَّذ — FinancialRatios.tsx يستهلكه حيًّا.
+  //   كلاهما مثبَّت بـ tests/integration/retiredSurfaces.api.test.js.
 ];
 
 // ── helpers ─────────────────────────────────────────────────────────────────
@@ -232,7 +238,7 @@ function printMatrix() {
   }
   console.log('');
   console.log(`الإجمالي: ${MARKERS.length} علامة (${MARKERS.filter((m) => !m.pending).length} معتمدة + ${MARKERS.filter((m) => m.pending).length} معلّقة).`);
-  console.log('وضع الفحص: node scripts/audit/retired-surfaces-report.js (يفشل الآن عمدًا — الأسطح لم تُحذف بعد).');
+  console.log('وضع الفحص: node scripts/audit/retired-surfaces-report.js — خطوة بوابة (audit:retired-surfaces) ويجب أن يمر PASS.');
 }
 
 function runScan() {
@@ -273,7 +279,7 @@ function runScan() {
   console.log('');
   console.log(`الخلاصة: ${activeHits} إشارة معتمدة متبقية، ${pendingHits} إشارة معلّقة (معلوماتية).`);
   if (activeHits > 0) {
-    console.log('النتيجة: FAIL (exit 1) — أسطح مُخرَجة ما زالت مُشارًا إليها. متوقَّع قبل كوميت الإخراج.');
+    console.log('النتيجة: FAIL (exit 1) — أسطح مُخرَجة ما زالت مُشارًا إليها.');
     process.exit(1);
   }
   console.log('النتيجة: PASS (exit 0) — لا إشارات متبقية لأي سطح مُخرَج معتمد.');

@@ -317,8 +317,8 @@ export default function Executive() {
                 title={t("salesReports.metrics.net_ex_vat")}
                 subtitle={t("salesReports.dims.business_day")}
                 isEmpty={dayRows.every((r) => r.net == null)}
-                emptyLabel={t("inventoryRest.analytics.chartEmpty")}
-                tableLabel={t("inventoryRest.analytics.showTable")}
+                emptyLabel={t("salesReports.charts.empty")}
+                tableLabel={t("salesReports.charts.showTable")}
                 tableCaption={`${t("salesReports.metrics.net_ex_vat")} — ${t("salesReports.dims.business_day")}`}
                 tableColumns={[
                   { key: "label", label: t("salesReports.dims.business_day") },
@@ -368,8 +368,8 @@ export default function Executive() {
                 title={t("salesReports.metrics.net_ex_vat")}
                 subtitle={t("salesReports.dims.channel")}
                 isEmpty={channelRows.length === 0 || channelRows.every((r) => r.net == null)}
-                emptyLabel={t("inventoryRest.analytics.chartEmpty")}
-                tableLabel={t("inventoryRest.analytics.showTable")}
+                emptyLabel={t("salesReports.charts.empty")}
+                tableLabel={t("salesReports.charts.showTable")}
                 tableCaption={`${t("salesReports.metrics.net_ex_vat")} — ${t("salesReports.dims.channel")}`}
                 tableColumns={[
                   { key: "label", label: t("salesReports.dims.channel") },

@@ -1,15 +1,20 @@
 'use strict';
 /* Integration — report equations (real server + DB, synthesized fixtures).
  *
- * Four endpoints, one doctrine: every figure is a sum over RECORDED data,
- * every unknown is COUNTED and surfaced, every DB fault is a 500.
+ * Four report surfaces, one doctrine: every figure is a sum over RECORDED
+ * data, every unknown is COUNTED and surfaced, every DB fault is a 500.
  *
- *  · /api/erp/reports/sales-analytics — net/vat come from each sale's
- *    tax_subtotals_json (never gross ÷ 1.15); voids excluded by zatca_type
- *    (deleted_at is written by nothing); a corrupt blob counts into
- *    netUnknownCount instead of being guessed; a product name with no menu
- *    row counts into costUnknownCount instead of ||0 minting a 100% margin.
- *  · /api/erp/reports/equity-changes — NEW statement of changes in equity.
+ *  · POST /api/analytics/query — the sales-analytics equations. The legacy
+ *    erp-core sales-analytics endpoint this section used to
+ *    exercise was RETIRED with the Unified Sales Analytics Hub (see
+ *    docs/status/SALES_REPORTS_RATIONALIZATION_AR.md §5.1 بند 7 — the
+ *    ported-scenario table); the same doctrine now holds on the engine:
+ *    net/vat are the RECORDED ar_document_lines sums (never gross ÷ 1.15),
+ *    voids never count (excluded_voided default), credit notes never
+ *    double-count (excluded_credit_note_docs default), and per-item
+ *    net/cogs are REAL per-line values (the old byProduct answered null).
+ *    Fixtures: tests/fixtures/salesHubSeed.js (hand-computed EXPECTED).
+ *  · /api/erp/reports/equity-changes — statement of changes in equity.
  *    The mandatory invariant: its closing total equity must EQUAL the
  *    balance sheet's totEq at ?to — asserted here against a live
  *    /reports/balance-sheet-ifrs call, with a capital journal, a revenue
@@ -17,9 +22,9 @@
  *  · /api/erp/reports/profitability — margin ≡ profit/revenue over GL sums.
  *  · /api/erp/reports/inventory-valuation — names its cost basis.
  *
- * Fixtures are ITEST-RQ-* prefixed, created in far-future periods
- * (2031-03 sales / 2031-07 GL) so nothing real is touched; cleanup runs
- * before AND in finally — zero residue.
+ * Fixtures are ITEST-RQ-* (GL, far-future 2031-07) + ITEST-RQSH-* (the
+ * salesHub seed, far-future 2032-03) so nothing real is touched; cleanup
+ * runs before AND in finally — zero residue.
  *
  * Run: node tests/integration/reportsEquations.api.test.js
  */
@@ -29,21 +34,21 @@ const http = require('http');
 const path = require('path');
 const bcrypt = require('bcryptjs');
 const db = require('../../db/connection');
+const seedMod = require('../fixtures/salesHubSeed');
 
 const PORT = 3996;
 const MANAGER = 'itest_rq_manager';
 const CASHIER = 'itest_rq_cashier';
+const ADMIN = 'itest_rq_admin';      // unscoped caller for the analytics engine
 const PW = 'Rq#Test!2026';
 const SFX = String(Date.now()).slice(-6);
 const P = (s) => `ITEST-RQ-${SFX}-${s}`;
 const CODE = (s) => `IT${SFX}${s}`;          // gl_accounts.code is varchar(20)
 const BRAND = P('BR');
-const SHIFT = P('SH');
-const BURGER = P('Burger');
-const MYSTERY = P('Mystery');                 // deliberately NOT in menu
-// Sales window (analytics) and GL window (equity/profitability) are disjoint
+// Sales-hub seed prefix (2032-03 window) and GL window (2031-07) are disjoint
 // far-future months so real data can never leak into the exact asserts.
-const ANA_FROM = '2031-03-01', ANA_TO = '2031-03-31';
+const SH_PREFIX = 'ITEST-RQSH';
+const SH = seedMod.EXPECTED;
 const EQ_FROM = '2031-07-01', EQ_TO = '2031-07-31';
 
 let pass = 0, fail = 0; const fails = [];
@@ -67,48 +72,24 @@ async function waitUp() { for (let i = 0; i < 120; i++) { const ok = await new P
 
 async function cleanup() {
   const del = async (sql, a) => { try { await db.query(sql, a || []); } catch (_) {} };
-  for (const u of [MANAGER, CASHIER]) await del('DELETE FROM users WHERE username=?', [u]);
-  await del("DELETE FROM sales_items WHERE order_id LIKE 'ITEST-RQ-%'");
-  await del("DELETE FROM sales WHERE id LIKE 'ITEST-RQ-%'");
-  await del("DELETE FROM menu WHERE id LIKE 'ITEST-RQ-%'");
-  await del("DELETE FROM shifts WHERE id LIKE 'ITEST-RQ-%'");
+  for (const u of [MANAGER, CASHIER, ADMIN]) await del('DELETE FROM users WHERE username=?', [u]);
   await del("DELETE FROM brands WHERE id LIKE 'ITEST-RQ-%'");
   await del("DELETE FROM gl_entries WHERE journal_id LIKE 'ITEST-RQ-%'");
   await del("DELETE FROM gl_journals WHERE id LIKE 'ITEST-RQ-%'");
   await del("DELETE FROM gl_accounts WHERE id LIKE 'ITEST-RQ-%'");
+  await seedMod.cleanup(db, SH_PREFIX);
 }
 
 async function fixtures() {
   const hash = await bcrypt.hash(PW, 12);
   await db.query('INSERT INTO users (username,password,role,active) VALUES (?,?,?,1)', [MANAGER, hash, 'manager']);
   await db.query('INSERT INTO users (username,password,role,active) VALUES (?,?,?,1)', [CASHIER, hash, 'cashier']);
-  await db.query("INSERT INTO shifts (id, username, status, start_time) VALUES (?,?,'OPEN',NOW())", [SHIFT, MANAGER]);
+  await db.query('INSERT INTO users (username,password,role,active) VALUES (?,?,?,1)', [ADMIN, hash, 'admin']);
   await db.query('INSERT INTO brands (id, name) VALUES (?,?)', [BRAND, 'ITEST reports brand']);
 
-  // ── sales-analytics fixtures ──────────────────────────────────────────
-  // Menu carries a cost for "Burger" only; "Mystery" has no menu row at all
-  // (the rename scenario that used to become a 100%-margin product).
-  await db.query('INSERT INTO menu (id, name, price, cost, active) VALUES (?,?,?,?,1)', [P('M1'), BURGER, 57.5, 10.0]);
-
-  const sale = (id, ymd, total, json, zatcaType) => db.query(
-    `INSERT INTO sales (id, order_date, total_final, payment_method, username, shift_id, brand_id, zatca_type, tax_subtotals_json)
-     VALUES (?, ?, ?, 'Cash', ?, ?, ?, ?, ?)`,
-    [id, ymd + ' 12:00:00', total, MANAGER, SHIFT, BRAND, zatcaType, json]);
-  // S1 — MIXED S+Z sale: 100 net @15% + 15 net @0% ⇒ gross 130, net 115, vat 15.
-  await sale(P('S1'), '2031-03-05', 130.00, '{"S":{"net":100.00,"vat":15.00,"rate":15},"Z":{"net":15.00,"vat":0.00,"rate":0}}', 'simplified');
-  // S2 — CORRUPT blob: gross counts (recorded), net/vat indeterminable.
-  await sale(P('S2'), '2031-03-20', 57.50, 'NOT-JSON{{{', 'simplified');
-  // SV — VOID: must not count anywhere (zatca_type, not deleted_at).
-  await sale(P('SV'), '2031-03-10', 115.00, '{"S":{"net":100.00,"vat":15.00,"rate":15}}', 'cancellation');
-
-  const item = (orderId, ymd, name, qty, total) => db.query(
-    `INSERT INTO sales_items (order_id, order_date, item_name, qty, price, total, payment_method, username, shift_id)
-     VALUES (?, ?, ?, ?, ?, ?, 'Cash', ?, ?)`,
-    [orderId, ymd + ' 12:00:00', name, qty, qty ? total / qty : 0, total, MANAGER, SHIFT]);
-  await item(P('S1'), '2031-03-05', BURGER, 2, 115.00);
-  await item(P('S1'), '2031-03-05', MYSTERY, 1, 15.00);
-  await item(P('S2'), '2031-03-20', BURGER, 1, 57.50);
-  await item(P('SV'), '2031-03-10', BURGER, 1, 115.00);   // rides a void — excluded
+  // ── sales-analytics fixtures: the shared salesHub seed (fact tables +
+  //    documents, window 2032-03, hand-computed EXPECTED constants) ──────
+  await seedMod.seed(db, SH_PREFIX);
 
   // ── GL fixtures (equity-changes + profitability) ──────────────────────
   // Leaf accounts: root-level (parent_id NULL), active, not folders — they
@@ -171,10 +152,9 @@ async function fixtures() {
     const cashier = await login(CASHIER);
     check('manager + cashier both got a JWT', !!manager && !!cashier);
 
-    // ── authn/authz — all four endpoints refuse anonymous callers ─────────
+    // ── authn/authz — all four surfaces refuse anonymous callers ──────────
     console.log('\n▶ auth');
     for (const p of [
-      `/api/erp/reports/sales-analytics?from=${ANA_FROM}&to=${ANA_TO}`,
       `/api/erp/reports/profitability?from=${EQ_FROM}&to=${EQ_TO}&dimension=brand`,
       '/api/erp/reports/inventory-valuation',
       `/api/erp/reports/equity-changes?from=${EQ_FROM}&to=${EQ_TO}`
@@ -182,34 +162,60 @@ async function fixtures() {
       const anon = await call('GET', p, null);
       check(`anonymous is 401 on ${p.split('?')[0].split('/').pop()}`, anon.status === 401, anon.status);
     }
+    const anonQ = await call('POST', '/api/analytics/query', null, { metrics: ['orders'], dimensions: [], range: SH.RANGE });
+    check('anonymous is 401 on analytics/query', anonQ.status === 401, anonQ.status);
     const denied = await call('GET', `/api/erp/reports/equity-changes?from=${EQ_FROM}&to=${EQ_TO}`, cashier);
     check('cashier is DENIED equity-changes (finance.reports.view)', denied.status === 403, denied.status);
     const badRange = await call('GET', '/api/erp/reports/equity-changes?from=2031-07-31&to=2031-07-01', manager);
     check('inverted period answers 400, not an empty statement', badRange.status === 400, badRange.status);
 
-    // ── sales-analytics — known-equation fixtures ──────────────────────────
-    console.log('\n▶ sales-analytics');
-    const sa = await call('GET', `/api/erp/reports/sales-analytics?from=${ANA_FROM}&to=${ANA_TO}&brand=${encodeURIComponent(BRAND)}&groupBy=all`, manager);
-    check('analytics answers 200 success', sa.status === 200 && sa.body?.success === true, sa.body);
-    const rev = sa.body?.revenue || {};
-    check('gross = 130 + 57.50 = 187.50 (the void NEVER counted — zatca_type, not deleted_at)', rev.grossInclVat === 187.5, rev.grossInclVat);
-    check('net = 115 from the RECORDED S+Z subtotals (not 187.50 ÷ 1.15 = 163.04)', rev.net === 115, rev.net);
-    check('vat = 15 from the recorded subtotals', rev.vat === 15, rev.vat);
-    check('the corrupt blob is COUNTED (netUnknownCount = 1), not guessed into the sums', rev.netUnknownCount === 1, rev.netUnknownCount);
-    check('invoiceCount = 2 (void excluded)', rev.invoiceCount === 2, rev.invoiceCount);
-    check('cost = 3 × 10 = 30 (Burger only)', rev.cost === 30, rev.cost);
-    check('the renamed product is COUNTED (costUnknownCount = 1), not priced at 0', rev.costUnknownCount === 1, rev.costUnknownCount);
-    check('profit = net − known cost = 115 − 30 = 85', rev.profit === 85, rev.profit);
-    check('headline.total matches gross', sa.body?.headline?.total === 187.5, sa.body?.headline);
-    const burger = (sa.body?.byProduct || []).find((x) => x.name === BURGER);
-    const mystery = (sa.body?.byProduct || []).find((x) => x.name === MYSTERY);
-    check('byProduct Burger: qty 3, gross 172.50, cost 30', !!burger && burger.qty === 3 && burger.gross === 172.5 && burger.cost === 30, burger);
-    check('byProduct Mystery: cost is null (unknown), NOT 0/100% margin', !!mystery && mystery.cost === null && mystery.margin === null, mystery);
-    check('byProduct net is null — the tax split is per sale, a per-line net would be invented', !!burger && burger.net === null, burger);
-    const daily = sa.body?.daily || [];
-    // (dates JSON-serialize as TZ-shifted ISO strings, so assert by count +
-    // sum: 2 days totalling 187.50 means the void's 115.00 day is absent.)
-    check('daily has 2 days summing to 187.50 (the void\'s day is absent)', daily.length === 2 && r2(daily.reduce((s, d) => s + (Number(d.total) || 0), 0)) === 187.5, daily);
+    // ── sales-analytics — the SAME equations, now on the hub engine ────────
+    // (The legacy erp-core sales-analytics endpoint is deleted; its 404 is
+    //  asserted in tests/integration/retiredSurfaces.api.test.js.)
+    console.log('\n▶ sales-analytics (POST /api/analytics/query)');
+    const I = seedMod.ids(SH_PREFIX);
+    // Admin caller: the engine scope-clamps non-admin roles to their assigned
+    // branches (fail-closed) — the equations need the unclamped totals.
+    const adminTok = await login(ADMIN);
+    check('admin got a JWT (analytics caller)', !!adminTok);
+    const Q = (body) => call('POST', '/api/analytics/query', adminTok, Object.assign({ noCache: true }, body));
+    const BR = [{ dimension: 'branch', op: 'in', values: [I.B1, I.B2] }];
+
+    const sa = await Q({
+      metrics: ['orders', 'invoice_total', 'net_ex_vat', 'vat_amount', 'discounts_total'],
+      dimensions: [], range: SH.RANGE, filters: BR,
+    });
+    check('analytics query answers 200 success', sa.status === 200 && sa.body?.success === true, sa.body);
+    const tot = sa.body?.data?.totals?.values || {};
+    check(`gross (invoice_total) = ${SH.TOTAL.invoice_total} — the VOID never counted (excluded_voided default)`,
+      tot.invoice_total === SH.TOTAL.invoice_total, tot.invoice_total);
+    check(`net = ${SH.TOTAL.net_ex_vat} from the RECORDED lines (NOT ${SH.TOTAL.invoice_total} ÷ 1.15 = ${r2(SH.TOTAL.invoice_total / 1.15)})`,
+      tot.net_ex_vat === SH.TOTAL.net_ex_vat, tot.net_ex_vat);
+    check(`vat = ${SH.TOTAL.vat_amount} from the recorded lines (stored, never derived)`,
+      tot.vat_amount === SH.TOTAL.vat_amount, tot.vat_amount);
+    check(`orders = ${SH.TOTAL.orders} (void excluded; credit notes NOT double-counted)`,
+      tot.orders === SH.TOTAL.orders, tot.orders);
+    check(`discounts_total = ${SH.TOTAL.discounts_total}`,
+      tot.discounts_total === SH.TOTAL.discounts_total, tot.discounts_total);
+    check('defaultsApplied names both exclusions (voided + credit-note docs)',
+      (sa.body?.meta?.defaultsApplied || []).includes('excluded_voided') &&
+      (sa.body?.meta?.defaultsApplied || []).includes('excluded_credit_note_docs'), sa.body?.meta);
+
+    // Per-item honesty UPGRADE: the old endpoint answered byProduct net=null by
+    // design (per-sale tax blob); the engine reads ar_document_lines, so
+    // per-item net/cogs are REAL recorded values now.
+    const byItem = await Q({
+      metrics: ['qty_sold', 'net_ex_vat', 'cogs'],
+      dimensions: ['menu_item'], range: SH.RANGE, filters: BR, limit: 100,
+    });
+    const burger = (byItem.body?.data?.rows || []).find((r) => String(r.keys.menu_item) === I.M1);
+    check('per-item row (Burger): qty 7 / net 550 / cogs 220 — REAL per-line values, not null',
+      !!burger && burger.values.qty_sold === 7 && burger.values.net_ex_vat === 550 && burger.values.cogs === 220,
+      burger && burger.values);
+    const itemNetSum = r2((byItem.body?.data?.rows || [])
+      .reduce((s, r) => s + (Number(r.values.net_ex_vat) || 0), 0));
+    check(`Σ per-item net === headline net (${SH.TOTAL.net_ex_vat}) — lines reconcile to the invoice total`,
+      itemNetSum === SH.TOTAL.net_ex_vat, itemNetSum);
 
     // ── equity-changes — the reconciliation invariant ──────────────────────
     console.log('\n▶ equity-changes');

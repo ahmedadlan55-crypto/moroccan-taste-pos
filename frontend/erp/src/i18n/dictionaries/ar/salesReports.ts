@@ -323,6 +323,12 @@ export const salesReports = {
 
   reconciliation: {
     exceptionDays: "أيام الاستثناء",
+    salesVsPayments: "المبيعات مقابل التحصيل",
+    cashExpectedVsCounted: "العهدة (المتوقّع − المعدود)",
+    exceptionsTitle: "الاستثناءات",
+    ordersWithoutPayment: "طلبات بلا دفعة",
+    paymentsWithoutOrder: "مدفوعات بلا طلب",
+    moreIds: "+{count} أخرى",
   },
 
   discounts: {

@@ -11,9 +11,10 @@
 
 ---
 
-## 2. ⚠️ تعارضان نقض فيهما التحقق المصفوفة المعتمدة — قرار مالك الدمج مطلوب
+## 2. ⚠️ تعارضان نقض فيهما التحقق المصفوفة المعتمدة — **حُسما ونُفِّذا في كوميت الإخراج (انظر §11.6)**
 
 ### 2.1 `GET /api/erp/reports/balance-sheet` ليس يتيمًا — لا يُحذف كما هو مخطط
+> **قرار منفَّذ (كوميت الإخراج):** إبقاء المعالج كما هو — `FinancialRatios.tsx` يستهلكه حيًّا. مثبَّت بفحص 200 في `tests/integration/retiredSurfaces.api.test.js` (balance-sheet + pnl)، وأُزيلت علامته المعلّقة من سكربت الفحص.
 
 المصفوفة المعتمدة اعتبرت معالج `erp-core` القديم للميزانية «غير مستخدم لأن الواجهة تستهلك `-ifrs`». التحقق:
 
@@ -26,6 +27,7 @@
 **الأثر:** حذف المعالج القديم كما هو الآن يكسر صفحة النسب المالية. الخيار السليم: تحويل `FinancialRatios.tsx` إلى `-ifrs` أولًا (مع مواءمة `lib/ratios.ts#extractInputs` لشكل الاستجابة المختلف)، **ثم** حذف المعالج القديم. مُعلَّم `pending` في سكربت الفحص — لا يؤثر على بوابة الإخراج حتى يُحسم.
 
 ### 2.2 ملفا aging «المظلَّلان» هما اللذان يطابقان عقد الواجهة — الصفحتان الحيّتان تتلقيان اليوم شكلًا لا تفهمانه
+> **قرار منفَّذ (كوميت الإخراج) — الخيار (ب) بعكس اتجاه الحذف المعتمد:** حُذف معالجا `erp-core` (‏`/reports/ar-aging` و`/reports/ap-aging`) وبقي الملفان النمطيان `routes/erp/reports/{ar,ap}-aging.js` — وهما الآن **المعالجان الفعليان** (mount في `server.js:761-762` لم يعد مظلَّلًا). إثبات حي في §11.6: `asOfDate` يُقرأ فعلًا، والاستجابة بشكل `AgingResponse` الذي بُنيت عليه الصفحتان (`grandBuckets` بمفاتيح `0-30…120+` + مصفوفة `customers`/`suppliers`)، والشكل القديم (`totals.current/1_30`) زال.
 
 المصفوفة اعتبرت `routes/erp/reports/ar-aging.js` + `ap-aging.js` «كودًا ميتًا مظلَّلًا» يُحذف. شقّ التظليل **صحيح ومثبَت**:
 
@@ -146,48 +148,53 @@ rg -n "order-to-cash/reports|ar_reports" frontend/erp/src frontend/pos/src e2e p
 
 1. **التصنيف والسبب:** Retire→redirect. الأصل: `modules/accounting/pages/SalesAnalytics.tsx` (المسار في manifest.ts:165) + hook ‏`useSalesAnalytics` ‏(`accounting/api.ts:1051-1067`). البديل: `/reports/sales/executive` في الهَب. السبب: توحيد؛ والصفحة تحمل عيبَين حيَّين موثقين (§6.1، §6.2).
 2. **البديل حي:** يُثبت قبل الحذف بأن `/reports/sales/executive` يعمل ببيانات حقيقية (لقطة + مسار e2e).
-3. **جدول تكافؤ المقاييس والفلاتر** (نفس `from/to`، بلا brand/branch — لأن القديم يتجاهلهما فعليًا، §6.1):
+3. **جدول تكافؤ المقاييس والفلاتر** — **مُلتقَط قبل الحذف مباشرة** (2026-07-24، بذرة `salesHubSeed` على نافذة 2032-03 مُنسوخة إلى مسار القراءة القديم أيضًا — نفس المستندات في الخطّين؛ التفاصيل والمستخرجات الكاملة في §11.3):
 
-| المقياس | مصدره القديم (erp-core.js) | القيمة القديمة | القيمة الجديدة | ملاحظة |
+| المقياس | مصدره القديم (erp-core.js) | القيمة القديمة | القيمة الجديدة (POST /api/analytics/query) | الحكم |
 |---|---|---|---|---|
-| invoiceCount | :2848 | «تُلتقط قبل الحذف» | «تُلتقط قبل الحذف» | استبعاد الملغي بـ`zatca_type` (:2807) |
-| grossInclVat | :2894 | «تُلتقط قبل الحذف» | «تُلتقط قبل الحذف» | Σ `total_final` |
-| net / vat | :2895-2896 | «تُلتقط قبل الحذف» | «تُلتقط قبل الحذف» | من `tax_subtotals_json` المسجَّل؛ يجب نقل `netUnknownCount` (:2897) لا إخفاؤه |
-| discounts | :2898 | «تُلتقط قبل الحذف» | «تُلتقط قبل الحذف» | |
-| cost / profit | :2899-2901 | «تُلتقط قبل الحذف» | «تُلتقط قبل الحذف» | القديم بالتكلفة الحالية بالاسم (§6.2) — فرقٌ هنا متوقَّع ويوثَّق لا يُسوَّى |
-| daily / byPayment / byCashier / byHour | :2904-2935 | «تُلتقط قبل الحذف» | «تُلتقط قبل الحذف» | صفوف كاملة |
+| invoiceCount / orders | :2848 | **8** | **8** | ✅ تطابق — الملغي (D5) مستبعد في الخطّين (`zatca_type` قديمًا، `excluded_voided` جديدًا) |
+| grossInclVat / invoice_total | :2894 | **1071.50** | **1071.50** | ✅ تطابق (و`net_incl_vat` = 1071.50 كذلك) |
+| net / net_ex_vat | :2895 | **950** | **950** | ✅ تطابق — القديم من `tax_subtotals_json`، الجديد من سطور `ar_document_lines` المسجَّلة |
+| vat / vat_amount | :2896 | **121.50** | **121.50** | ✅ تطابق |
+| netUnknownCount | :2897 | **0** | — (لا مكافئ رقمي) | 🔁 استُبدل بعقد أصدق: المحرك يقرأ سطورًا مُسقَطة لا blob لكل فاتورة، فالمجهول يظهر عبر `meta.completeness` + `maskedMetrics` (والواجهة تعرض «—» لا 0) |
+| avgTicket / avg_ticket | :2852 | **133.94** | **118.75** | 📖 فرق تعريف موثَّق: القديم شامل الضريبة (1071.5÷8)، الجديد صافٍ قبلها (950÷8). المصالحة: `net_incl_vat ÷ orders` = 133.94 بالضبط |
+| discounts / discounts_total | :2898 | **15.75** | **15.75** | ✅ تطابق |
+| cost / cogs | :2899 | **95** | **365** | 📖 الفرق **المتوقَّع والمقصود** (§6.2): القديم = التكلفة **الحالية** من `menu` مربوطة **بالاسم** (7×10 + 5×2 + 3×5)، الجديد = `cost_snapshot` المسجَّل على كل سطر لحظة البيع (البذرة تعمّدت المغايرة لإثبات المصدر). رقم الجديد هو الصحيح تاريخيًّا — تعديل تكلفة اليوم لم يعُد يعيد كتابة ربح الأمس |
+| profit / gross_profit | :2901 | **855** | **585** | 📖 نفس سبب سطر التكلفة (net − cost) |
+| daily | :2904 | 6 أيام: 204/1، 320/2، 57.5/1، 115/1، 230/1، 145/2 | `calendar_day`: **مطابقة يومًا بيوم** (§11.3) | ✅ تطابق كامل |
+| byPayment | :2911 | Mada ‏460/2، Cash ‏407.5/5، Split ‏204/1 | `payment_method` على وقائع الدفع: card ‏560، cash ‏511.5 (+out 57.5)، other out 205 | 📖 ترقية موثَّقة: القديم يصنّف **صف البيع** (فـSplit سلة مستقلة)، الجديد يوزّع أرجل الدفع الفعلية (104 كاش + 100 شبكة من D1) ويُظهر الاستردادات |
+| byCashier | :2918 | c1 ‏6/951.5 (avg 158.58)، c2 ‏2/120 (avg 60) | c1 ‏6/951.5 (avg_ticket 138.33)، c2 ‏2/120 (avg 60) | ✅ العدّ والإجمالي متطابقان؛ متوسط c1 يختلف بنفس فرق تعريف avgTicket أعلاه |
+| byHour | :2929 | 7 ساعات (1، 3، 4، 12، 13، 15، 21) | **مطابقة ساعة بساعة** (§11.3) | ✅ تطابق كامل |
+| byProduct | :2866 | net/vat/profit/margin = **null** بالتصميم؛ التكلفة الحالية بالاسم | قيم **حقيقية لكل صنف** من السطور: Burger ‏net 550 / vat 82.5 / cogs 220 / margin 60% … | 📖 الترقية الجوهرية: ما كان «غير قابل للاشتقاق» صار مسجَّلًا لكل سطر، وΣ net الأصناف = 950 = الصافي الكلي |
 
-4. **إثبات grep-zero بعد الحذف:** يُنفَّذ `node scripts/audit/retired-surfaces-report.js` (العلامات: `/accounting/sales-analytics`، `ac-sales-analytics`، `SalesAnalyticsPage`، `useSalesAnalytics`، `salesAnalytics`) وتُلصق نتيجته PASS. اليوم (قبل الحذف) يرصد الفحص المواضع المتوقعة: manifest.ts:165، ‏accounting/index.tsx:28 (الاستيراد) و:45 (تسجيل الصفحة)، api.ts:1051-1067، قاموسا nav ‏(ar:95، en:88) وaccounting.
+   وفلترا §6.1: استدعاء القديم بأسماء الواجهة `brandId/branchId` أعاد **نفس** الناتج غير المفلتر حرفيًّا (`identicalToUnfiltered: true` — العلّة حية حتى لحظة الحذف)، بينما استدعاؤه بالاسم الصحيح `branch=B1` أعطى 6/951.5/net 830، والمحرك الجديد بـ`branch in [B1]` أعطى **نفسها بالضبط** (orders 6، invoice 951.5، net 830، vat 121.5) — §11.3.
+
+4. **إثبات grep-zero بعد الحذف: ✅ نُفِّذ** — `node scripts/audit/retired-surfaces-report.js` يمر PASS ‏(exit 0) على كل العلامات (`/accounting/sales-analytics`، `ac-sales-analytics`، `SalesAnalyticsPage`، `useSalesAnalytics`، `salesAnalytics`) — الناتج الكامل في §11.4. المواضع التي كانت مرصودة صفرت كلها: manifest، ‏accounting/index.tsx، ‏api.ts (الـhook والـDTOs حُذفت)، قاموسا nav وaccounting (كلا اللغتين).
 5. **غياب manifest/i18n:** حذف البند من `manifest.ts:165` ومفاتيح `ac-sales-analytics` من `nav.ts` ‏(ar:95/en:88) وكتلة `salesAnalytics` من قاموسَي `accounting` — والفحص أعلاه يحرس ذلك.
 6. **redirect واختباره:** إضافة `/accounting/sales-analytics` إلى `REDIRECT_PATHS` (`app/router.tsx:60-67`) + `<Route ... element={<Navigate .../>}>` على نمط `router.tsx:92` مع تمرير query ‏(§7)، واختبار وحدة/e2e يفتح المسار القديم بكامل البارامترات ويتحقق من الوصول للجديد بها. (اختبار المعمارية `app/__tests__/architecture.test.ts:70` يعتمد `REDIRECT_PATHS` أصلًا فيبقى أخضر.)
-7. **نقل سيناريوهات الاختبار:**
+7. **نقل سيناريوهات الاختبار: ✅ نُفِّذ** — جدول النقل الكامل فحصًا-فحصًا في §11.5. الخلاصة: قسم sales-analytics في `reportsEquations.api.test.js` أُعيدت كتابته على `POST /api/analytics/query` (نفس عقيدة المعادلات، بذرة `salesHubSeed`) **قبل** حذف القديم، والسويت 34/34 أخضر قبل الحذف وبعده؛ لا اختبار FE/e2e كان يمس الصفحة القديمة أصلًا (تحقّق §11.5).
 
-| الاختبار الحالي | الموضع | الوجهة |
-|---|---|---|
-| معادلات sales-analytics (net/vat/unknown counts) | `tests/integration/reportsEquations.api.test.js:177,192` | تُعاد كتابتها على endpoint المحرك الجديد **قبل** حذف القديم |
-| e2e للصفحة القديمة | لا يوجد (`rg -n "sales-analytics" e2e` → لا نتائج) | سيناريو e2e جديد لصفحة executive |
-
-8. **قرار الـendpoint الخلفي:** `GET /api/erp/reports/sales-analytics` (erp-core.js:2792) يبقى خلال السبرنت ثم يُحذف في كوميت الإخراج بعد البند 7، مع **اختبار سلبي 404** على المسار المحذوف.
+8. **قرار الـendpoint الخلفي: ✅ نُفِّذ** — `GET /api/erp/reports/sales-analytics` حُذف من `erp-core.js` بعد البند 7، والاختبار السلبي 404 يمر في `tests/integration/retiredSurfaces.api.test.js` (§11.6).
 9. **لقطات visual baselines:** تحقَّقتُ من `e2e/erp/visual-baselines.spec.ts-snapshots` — الشاشات السبع المثبَّتة هي `admin-users / inventory-list / inventory-new / menu-list / menu-new / overview / trial-balance` فقط؛ **لا baseline لهذه الصفحة** → لا شيء يُحذف، ويُوثَّق ذلك في رسالة كوميت الإخراج.
 
 ### 5.2 بروتوكول إخراج `/pos-admin/reports`
 
 1. **التصنيف والسبب:** Retire (تقسيم). الأصل: `modules/pos-admin/pages/ReportsPage.tsx` (manifest.ts:101، التسجيل `pos-admin/index.tsx:46`). البديل التحليلي: `/reports/sales/shifts`؛ البديل التشغيلي قائم: `/pos-admin/shifts` (manifest.ts:98). السبب: الصفحة تكرر جدول الورديات وتحسب الإجماليات **في العميل** (`ReportsPage.tsx:80` → `summarizeShifts` في `shifts.ts:44-57`) على صفحة البيانات المحمَّلة فقط.
 2. **البديل حي:** صفحة shifts في الهَب بإجماليات خادم + بطاقة حفر إلى `/pos-admin/shifts`.
-3. **جدول تكافؤ المقاييس** (نفس نطاق التاريخ/الكاشير):
+3. **جدول تكافؤ المقاييس — توثيق فرقٍ بندًا بندًا** (المسار الذي تسمح به مقدمة §5: «أو توثيق سبب الفرق بندًا بندًا»). لا يوجد هنا «رقم قديم مقابل رقم جديد» قابل للمساواة، لأن **مصدر البيانات نفسه اختلف عمدًا**، والعلّة الأصلية (البند 1) هي أن القديم كان يَحسب في العميل على الصفحة المحمَّلة فقط:
 
-| المقياس (بطاقات `ReportsPage.tsx:137-144`) | القيمة القديمة | القيمة الجديدة | ملاحظة |
+| المقياس (بطاقات `ReportsPage` المحذوفة) | مصدره القديم | مكافئه في `/reports/sales/shifts` | الحكم |
 |---|---|---|---|
-| total / open / closed | «تُلتقط قبل الحذف» | «تُلتقط قبل الحذف» | القديم يعدّ الصفحة المحمَّلة فقط — فرق محتمل يوثَّق |
-| expected (Σ theoretical) | «تُلتقط قبل الحذف» | «تُلتقط قبل الحذف» | `shiftTheoretical` ‏(shifts.ts:12-19) |
-| actual (Σ cash+card+kita) | «تُلتقط قبل الحذف» | «تُلتقط قبل الحذف» | `shiftActual` ‏(shifts.ts:8-10) |
-| variance (Σ diff) | «تُلتقط قبل الحذف» | «تُلتقط قبل الحذف» | يفضّل diffs الخادم إن وُجدت (shifts.ts:21-29) |
-| أعمدة CSV الكامل | «تُلتقط قبل الحذف» | «تُلتقط قبل الحذف» | `makeExportColumns` ‏(ReportsPage.tsx:52-73) تُنقل كما هي |
+| total / open / closed | عدّ صفوف `GET /api/shifts/` **المحمَّلة في العميل فقط** | صفوف بُعد `shift` من وقائع till (خادم، كل النطاق) | 📖 القديم عدّاد صفحة لا مقياس؛ الجديد إجمالي خادم حقيقي |
+| expected (Σ theoretical) | `shiftTheoretical` من أعمدة الوردية (`theoretical_*`) عميلًا | `till_expected_cash` (open_float + cash_sale − pay_out − deposit − cash_refund) خادمًا | 📖 تعريف أدق مصدره وقائع الدرج المسجَّلة، وتثبته `analyticsReconciliation.api.test.js` (يوم 03-22: 100 مقابل 90) |
+| actual (Σ cash+card+kita) | `shiftActual` عميلًا | `till_counted` (Σ close_count) خادمًا — وnull بصدق حين لا عدّ | 📖 «لم يُعَدّ» لم يعُد يظهر صفرًا |
+| variance (Σ diff) | `shiftDiff` عميلًا | `till_variance` خادمًا | 📖 نفس المعادلة، محسوبة عند مصدر الحقيقة |
+| أعمدة CSV الكامل | `makeExportColumns` (حُذفت مع الصفحة) | تصدير الهَب الخلفي (CSV/XLSX عبر `POST /analytics/exports`) + الحفر التشغيلي للوردية الواحدة باقٍ كاملًا في `/pos-admin/shifts` (لم يُمس) | 📖 وظيفة التصدير انتقلت للخادم؛ تفصيلة الوردية الواحدة ما زالت في الشاشة التشغيلية |
 
-4. **grep-zero:** علامات السكربت `/pos-admin/reports`، `pa-reports`، `pages/ReportsPage`، `posAdmin.reports.`. المواضع المعروفة اليوم التي يجب أن تصفر: manifest.ts:101، ‏pos-admin/index.tsx:15,46، وبطاقتا `reportLinks.tsx` **الاثنتان** — تحقّقتُهما بالسطر: قسم `"/reports/sales"` سطر **:63** (بطاقة `posReports`) وقسم `"/reports/operations"` سطر **:121** (بطاقة `opsPosReports`). الأولى تُحذف (الهَب نفسه يحل محلها)، والثانية تُعاد وجهتها إلى `/reports/sales/shifts`، مع مفاتيح i18n المرافقة (`misc.ts` ‏ar:47,70 / en:40,63).
+4. **grep-zero: ✅ نُفِّذ** — علامات `/pos-admin/reports`، `pa-reports`، `pages/ReportsPage`، `posAdmin.reports.` كلها «نظيف» في فحص §11.4. ما نُفِّذ فعلًا: حُذف بند manifest، وخريطة `pos-admin/index.tsx`، وقسم `"/reports/sales"` **بأكمله** من `reportLinks.tsx` (الهَب يملك المسار فلا بطاقة تعوّضه)، وأُعيدت وجهة بطاقة `opsPosReports` في قسم `/reports/operations` إلى `/reports/sales/shifts` مع تحديث مفتاحيها في `misc.ts` (اللغتين)، وحُذفت مفاتيح `posReports` وبطاقات المبيعات الست ومفاتيح `sections.sales` اليتيمة معها.
 5. **غياب manifest/i18n:** حذف `pa-reports` من manifest.ts:101 ومن `nav.ts` (ar:57/en:50)، ومفاتيح `posAdmin.reports.*` من قاموسَي `posAdmin`.
 6. **redirect واختباره:** `/pos-admin/reports` → `/reports/sales/shifts` بنفس آلية §5.1-6، مع تمرير فلاتر الورديات المدعومة.
-7. **نقل سيناريوهات الاختبار:** لا اختبار integration/e2e يمس الصفحة (`rg -n "pos-admin/reports" e2e tests` → لا نتائج) — يُستحدث سيناريو للصفحة الجديدة.
+7. **نقل سيناريوهات الاختبار: ✅ نُفِّذ** — لا اختبار كان يمس الصفحة القديمة (تحقّق §11.5)؛ صفحة الهَب `/reports/sales/shifts` مغطاة أصلًا بمجموعة «Shifts page» في `pages2.test.tsx` (KPIs + ألوان الفروقات + الحفر إلى `/pos-admin/shifts`)، والـredirect مغطى بـ`redirects.test.tsx` (§11.2).
 8. **قرار الـendpoint الخلفي:** `GET /api/shifts/` (routes/shifts.js:1282) **يبقى** — تستهلكه `/pos-admin/shifts` وPOS؛ لا اختبار 404 هنا لأن لا endpoint يُحذف.
 9. **visual baselines:** لا baseline لهذه الصفحة (نفس قائمة §5.1-9) → لا شيء يُحذف.
 
@@ -210,7 +217,9 @@ rg -n "<MARKER>" frontend/erp/src frontend/pos/src e2e tests public -g '!**/dist
 --- royalty-reconciliation ---     (لا نتائج)
 ```
 
-أي: صفر مستهلك واجهة/اختبار/e2e/أصول عامة لكل الستة. (المستودع بعد إخراج legacy النهائي في `1426ad5` لم يعد يحوي شاشات `public/js` القديمة التي كانت تستهلك بعضها.) بروتوكول حذفها في كوميت الإخراج: حذف المعالج + اختبار سلبي 404 لكل مسار + بقاء `_royaltyBase` مثبتًا باختبار compute الحي (§3.3-تحذير) + تمرير `retired-surfaces-report.js`.
+أي: صفر مستهلك واجهة/اختبار/e2e/أصول عامة لكل الستة. (المستودع بعد إخراج legacy النهائي في `1426ad5` لم يعد يحوي شاشات `public/js` القديمة التي كانت تستهلك بعضها.)
+
+**✅ نُفِّذ في كوميت الإخراج:** حُذفت المعالجات الستة (+ `sales-analytics` سابعها بعد §5.1-7)، والاختبار السلبي 404 يمر لكل مسار (`tests/integration/retiredSurfaces.api.test.js` — §11.6)، و`_royaltyBase` باقية بلا مساس (المعالج المحذوف لم يكن يستدعيها أصلًا؛ اختبار compute الحي `test:royalty-runs` لم يُلمس)، و`retired-surfaces-report.js` يمر PASS ‏(§11.4).
 
 ---
 
@@ -284,9 +293,9 @@ rg -l "sale_payments" --glob '!node_modules' -g '!**/dist/**'
 ## 9. سكربت الفحص الدائم — `scripts/audit/retired-surfaces-report.js`
 
 - **الاستخدام:**
-  - `node scripts/audit/retired-surfaces-report.js --list` — يطبع مصفوفة العلامات (19 علامة: 16 معتمدة + 3 معلّقة) ويخرج 0 دائمًا. ✅ مُشغَّل ومتحقَّق منه على هذا الأساس.
-  - `node scripts/audit/retired-surfaces-report.js` — يفحص `frontend/erp/src, frontend/pos/src, routes, services, lib, e2e, tests, public` (مستبعدًا `node_modules`/`dist`/`docs/status`/لقطات `-snapshots`/ملف الـredirects المسموح `app/router.tsx`) عبر `rg` إن وُجد وإلا مشي ملفات خالص، ويخرج **1** مع قائمة `file:line` لأي إشارة متبقية لعلامة معتمدة، و**0** عند النظافة. العلامات المعلّقة (§2) تُفحص وتُطبع **معلوماتيًا فقط** ولا تمس exit code.
-- **الحالة الآن (مقصودة):** الفحص يفشل — 114 إشارة معتمدة متبقية (الأسطح لم تُحذف بعد؛ آخر تشغيل على `f494468`). هذا هو التصميم: السكربت تقريرٌ قائم اليوم، ولا يُضاف كخطوة بوابة (`gate`) **إلا في كوميت الإخراج نفسه** حيث يجب أن يمر PASS.
+  - `node scripts/audit/retired-surfaces-report.js --list` — يطبع مصفوفة العلامات (**16 علامة معتمدة؛ علامتا §2 المعلّقتان الثلاث أُزيلت بعد حسم القرارين** — انظر ترويسة السكربت) ويخرج 0 دائمًا.
+  - `node scripts/audit/retired-surfaces-report.js` — يفحص `frontend/erp/src, frontend/pos/src, routes, services, lib, e2e, tests, public` (مستبعدًا `node_modules`/`dist`/`docs/status`/لقطات `-snapshots`/قائمة الملفات المسموحة: `app/router.tsx` بجدول الـredirects، واختباره المعطياتي `app/__tests__/redirects.test.tsx`، وسويت النفي `tests/integration/retiredSurfaces.api.test.js` الذي **يجب** أن يسمّي المسارات الميتة ليثبت 404) ويخرج **1** مع قائمة `file:line` لأي إشارة متبقية، و**0** عند النظافة.
+- **الحالة بعد كوميت الإخراج: ✅ PASS ‏(exit 0)** — الناتج في §11.4 — والسكربت الآن **خطوة بوابة** `audit:retired-surfaces` في `scripts/gate/run-full-gate.js` مباشرة بعد `hygiene:test-residue`، فأي إحياء لإشارة مُخرَجة يُفشل بوابة الإصدار.
 
 ---
 
@@ -298,6 +307,157 @@ rg -l "sale_payments" --glob '!node_modules' -g '!**/dist/**'
 | **Fix-before-merge** | `/reports/saved` (دمج عروض الخادم `saved_views`) |
 | **Retire → redirect** | `/accounting/sales-analytics` → `/reports/sales/executive`؛ `/pos-admin/reports` → `/reports/sales/shifts` (تقسيم) |
 | **Delete (يتيمة، مثبتة)** | `sales.js /report/advanced` + خمسة `erp-core`: sales-by-channel، channel-settlements، discounts-given، waste-analytics، royalty-reconciliation (مع بقاء `_royaltyBase`) |
-| **Keep خلال السبرنت ثم حذف** | `GET /api/erp/reports/sales-analytics` (بعد إعادة توجيه `reportsEquations.api.test.js`) |
+| **Keep خلال السبرنت ثم حذف** | `GET /api/erp/reports/sales-analytics` — **✅ حُذف** بعد إعادة توجيه `reportsEquations.api.test.js` |
 | **Keep** | `/pos-admin/shifts`، حوار X/Z في POS، `/sales/*` السبعة، `/banking/{cashboxes,cash-closing,reconciliation}`، `/administration/tax`، `/overview` (+Fix §6.3/§6.7)، `/accounting/profitability`، O2C خامل |
-| **⚠ Pending — قرار مالك الدمج** | معالج `erp-core /reports/balance-sheet` (ليس يتيمًا — §2.1)؛ ملفا `erp/reports/{ar,ap}-aging.js` (المظلَّل هو المطابق لعقد الواجهة — §2.2) |
+| **✅ قرارا §2 — حُسما ونُفِّذا** | balance-sheet: **إبقاء** معالج `erp-core` (يستهلكه `FinancialRatios.tsx` حيًّا — مثبَّت 200)؛ aging: **عكس اتجاه الحذف المعتمد** — حُذف معالجا `erp-core` وأصبح الملفان النمطيان `erp/reports/{ar,ap}-aging.js` (المطابقان لعقد الواجهة) هما الحيَّين — مثبَّت بعقده الكامل في `retiredSurfaces.api.test.js` (§11.6) |
+
+---
+
+## 11. كوميت الإخراج — الأدلة المنفَّذة (2026-07-25، wt-sales-hub)
+
+> هذا القسم هو «كوميت الإخراج» الذي اشترطته §1: كل بند من بروتوكولات §5 التسعة نُفِّذ وأُلصق دليله هنا. كل ناتج أدناه مأخوذ كما خرج من التشغيل الفعلي على قاعدة MySQL الحية (3306).
+
+### 11.1 قائمة المحذوفات
+
+**واجهة (frontend/erp/src):**
+
+| الملف | ما حُذف |
+|---|---|
+| `modules/accounting/pages/SalesAnalytics.tsx` | الملف كاملًا (الصفحة المتقاعدة) |
+| `modules/accounting/index.tsx` | الاستيراد + تسجيل المسار في خريطة `ROUTES` |
+| `modules/accounting/api.ts` | ‏hook ‏`useSalesAnalytics` + كل DTOs التحليلات (`SalesHeadline`، `SalesRevenueSummary`، `SalesByProductRow`، `SalesDailyRow`، `SalesByPaymentRow`، `SalesByCashierRow`، `SalesByHourRow`، `SalesAnalyticsResponse`، `SalesAnalyticsFilter`) — تحقّقنا أن لا مستهلك آخر لها في الشجرة كلها |
+| `modules/pos-admin/pages/ReportsPage.tsx` | الملف كاملًا (صفحة تقارير الكاشير) |
+| `modules/pos-admin/index.tsx` | الاستيراد + تسجيل المسار |
+| `modules/pos-admin/lib/shifts.ts` | ‏`summarizeShifts` + ‏`ShiftSummary` (كانا لهذه الصفحة وحدها)؛ بقية الدوال (`shiftActual/Theoretical/Diff`، `isShiftOpen`، `cashierOptions`، `useShifts`) باقية — تستهلكها `ShiftsPage` و`ShiftDetailDrawer` |
+| `app/navigation/manifest.ts` | ورقتا `ac-sales-analytics` و`pa-reports` |
+| `modules/reports/reportLinks.tsx` | قسم `"/reports/sales"` بأكمله (الهَب يملك المسار)، وأُعيدت وجهة بطاقة `opsPosReports` إلى `/reports/sales/shifts` |
+| قواميس i18n (ar+en) | ‏`nav.items.{ac-sales-analytics,pa-reports}`؛ كتلة `accounting.salesAnalytics.*`؛ كتلة `posAdmin.reports.*`؛ ‏`misc.reports.sections.sales.*` + بطاقات `misc.reports.links.{salesOrders,salesInvoices,salesReturns,salesPayments,salesPricing,posReports}` (وتحديث `opsPosReports`) — اختبار تطابق القاموسين أخضر |
+
+**خلفية:**
+
+| الملف | ما حُذف |
+|---|---|
+| `routes/sales.js` | معالج «التقرير المتطور» بأكمله (كان :3006-3249، نحو 244 سطرًا) |
+| `routes/erp-core.js` | معالجا aging القديمان (كانا :2504-2634) + معالج sales-analytics (كان :2774-2955) + المعالجات الخمسة اليتيمة (كانت :2957-3320). الملف 3536 → 2880 سطرًا. `_royaltyBase` ‏(:1465) لم تُمس |
+
+### 11.2 الـredirects واختبارها
+
+| من | إلى | البارامترات |
+|---|---|---|
+| `/accounting/sales-analytics` | `/reports/sales/executive` | ‏`from/to/brandId/branchId` تُمرَّر بأسمائها (وهي أسماء codec الهَب القانونية)؛ أي بارامتر آخر يمرّ كما هو |
+| `/pos-admin/reports` | `/reports/sales/shifts` | ‏`from/to` + تمرير الباقي كما هو |
+
+- الآلية: جدول `REDIRECTS` المصدَّر في `app/router.tsx` + مكوّن `RedirectWithParams` (يبني الـsearch ثم `<Navigate replace>`)، و`REDIRECT_PATHS` **مشتق** من الجدول فلا مصدر حقيقة ثانٍ — اختبار المعمارية `architecture.test.ts` مرّ **بلا أي تعديل**.
+- الاختبار الجديد `app/__tests__/redirects.test.tsx` معطياتيّ فوق `REDIRECTS`: يفتح كل مسار قديم بـ`?from=2026-01-01&to=2026-01-31&brandId=2&unknown=x` ويثبت المسار النهائي + وصول **البارامترات الأربعة** كاملة (بما فيها `unknown` غير المُخطَّط)، + نظافة الرابط الخالي من query، + اشتقاق `REDIRECT_PATHS` — **6 اختبارات، كلها خضراء**.
+- ملاحظة الإصدار الإلزامية (§7) مثبتة في تعليق الجدول نفسه: قيم `brandId/branchId` المنقولة كانت **بلا أثر** تاريخيًّا (§6.1) — المستخدم سيرى فلترة حقيقية لأول مرة؛ تصحيحٌ لا انحراف، وقد أُثبت رقميًّا في §11.3 (سطر `identicalToUnfiltered`).
+
+### 11.3 التقاط التكافؤ — المستخرجات (قبل الحذف مباشرة)
+
+المنهج: بذرة `tests/fixtures/salesHubSeed.js` (نافذة 2032-03، قيم محسوبة يدويًّا) زُرعت ثم **نُسخت مستنداتها إلى مسار القراءة القديم** (‏`tax_subtotals_json` الحقيقية لكل بيعة + صفوف `sales_items` بمطابقة سطور `ar_document_lines` جرسًا بجرس، مع صف item لبيعة ملغاة للتحقق من الاستبعاد) — فالخطّان قرآ **نفس المستندات**. خادم حقيقي على منفذ 3947، مستخدم admin.
+
+**القديم (unfiltered + groupBy=all):**
+
+```json
+"headline": { "invoiceCount": 8, "total": 1071.5, "avgTicket": 133.94 },
+"revenue": { "invoiceCount": 8, "grossInclVat": 1071.5, "net": 950, "vat": 121.5,
+             "netUnknownCount": 0, "discounts": 15.75,
+             "cost": 95, "costUnknownCount": 0, "profit": 855 }
+```
+
+**الجديد (POST /api/analytics/query، بلا أبعاد):**
+
+```json
+"totals": { "orders": 8, "invoice_total": 1071.5, "avg_ticket": 118.75,
+            "net_ex_vat": 950, "vat_amount": 121.5, "net_incl_vat": 1071.5,
+            "discounts_total": 15.75, "cogs": 365, "gross_profit": 585 },
+"meta":   { "defaultsApplied": ["excluded_voided", "excluded_credit_note_docs"] }
+```
+
+**التفصيلات (كلاهما):**
+
+- **daily** — القديم (تواريخ متزحزحة TZ في JSON، القيم يومية محلية) والجديد (`calendar_day`) **متطابقان يومًا بيوم**: ‏03-10: 204/1 · 03-11: 320/2 · 03-13: 57.5/1 · 03-15: 115/1 · 03-16: 230/1 · 03-20: 145/2.
+- **byHour** — متطابقان ساعة بساعة: ‏1: 230 · 3: 30 · 4: 115 · 12: 230 · 13: 261.5 (2) · 15: 90 · 21: 115.
+- **byCashier** — متطابقان عدًّا وإجمالًا: ‏c1 ‏6/951.5، ‏c2 ‏2/120 (متوسط c1: ‏158.58 قديمًا [شامل] مقابل 138.33 جديدًا [صافٍ] — فرق تعريف avgTicket نفسه).
+- **byPayment** — القديم: ‏Mada ‏460/2 · Cash ‏407.5/5 · **Split ‏204/1** (سلة مستقلة). الجديد (وقائع الدفع): ‏card in ‏560 · cash in ‏511.5 / out ‏57.5 · other out ‏205 — أرجل Split ‏D1 (كاش 104 + شبكة 100) موزّعة على حقيقتها، والاستردادات ظاهرة لا مطموسة.
+- **byProduct** — القديم: ‏net/vat/profit/margin = null بالتصميم، والتكلفة **الحالية بالاسم** (Burger 70 / Combo 15 / Water 10 = 95). الجديد (`menu_item` بربط `menu_id` لا الاسم):
+
+```json
+Burger: { "qty_sold": 7, "gross_product_sales": 632.5, "net_ex_vat": 550,
+          "vat_amount": 82.5, "cogs": 220, "gross_profit": 330, "margin_pct": 60 }
+Water:  { "qty_sold": 5, "gross": 140, "net": 140, "vat": 0, "cogs": 30, "margin_pct": 78.57 }
+Combo:  { "qty_sold": 3, "gross": 299, "net": 260, "vat": 39, "cogs": 115, "margin_pct": 55.77 }
+```
+
+  ‏gross القديم = ‏gross_product_sales الجديد لكل صنف بالضبط (632.5 / 140 / 299)، وΣ net الأصناف = 950 = الصافي الكلي.
+
+- **علّة الفلاتر §6.1 مثبتة رقميًّا لحظة الحذف:** القديم بـ`brandId=…&branchId=…` (أسماء الواجهة) أعاد `"identicalToUnfiltered": true` حرفيًّا. القديم بـ`branch=B1` (اسم الخادم) أعاد ‏6 / 951.5 / net ‏830 / cost ‏87. الجديد بـ`branch in [B1]` أعاد ‏orders ‏6 / invoice ‏951.5 / net ‏830 / vat ‏121.5 — **تطابق تام مع القديم-حين-يعمل**.
+
+**الفروقات المشروحة (الرقم الجديد صحيح دفاعًا لا مجرد مختلف):**
+
+1. **avgTicket ‏133.94 → 118.75:** تعريفان — شامل الضريبة ÷ العدد مقابل صافٍ ÷ العدد. المصالحة الحسابية: `net_incl_vat ÷ orders = 1071.5 ÷ 8 = 133.94` بالضبط؛ لا رقم ضائع.
+2. **cost ‏95 → cogs ‏365 (وprofit ‏855 → gross_profit ‏585):** القديم يضرب الكمية في تكلفة `menu` **الحالية** المربوطة **بالاسم** (§6.2) — أي تعديل تكلفة اليوم يعيد كتابة ربح الماضي، وإعادة التسمية تُسقط الصنف. الجديد يجمع `cost_snapshot` المسجَّل على كل سطر لحظة البيع (البذرة تعمّدت جعل اللقطات مغايرة للتكلفة الحالية لإثبات مصدر الرقم). الرقم الجديد هو **الحقيقة التاريخية**.
+3. **netUnknownCount → عقد اكتمال:** القديم كان يعدّ الفواتير التي بلا `tax_subtotals_json` صالح ويستثنيها. المحرك يقرأ سطورًا مُسقَطة أصلًا فلا يوجد blob يُفسد؛ النقص إن وُجد يظهر عبر `meta.completeness`/`maskedMetrics` والواجهة تعرض «—» لا 0 — نفس عقيدة «يُحصى ولا يُخمَّن» بآلية أصدق.
+4. **مسألة «هل القديم يُدخل إشعار الدائن في شهر البيع الأصلي؟» — تحقّقنا:** القديم لا يُجري أي netting إطلاقًا: إشعارات الدائن في هذا النظام مستندات `ar_documents` لا صفوف `sales`، فالقديم **لا يراها أصلًا** ويُبقي فاتورة الأصل كاملة في شهرها (فـS3 تظهر 230 كاملة رغم مرتجع 115)؛ ولو وُجد إشعار قديم كصف `sales` بـ`zatca_type='credit_note'` لاستُبعد من شهر **إصداره** لا من شهر الأصل. الجديد يطابق هذا السلوك في `invoice_total` (يستبعد مستندات CN افتراضيًّا ولا يُنقص الأصل) ويكشف المرتجعات **صراحة** عبر مقاييسها (`returns_net` ‏240، `returns_value` ‏262.5، `refunds_out` ‏262.5 في نفس النافذة) — لا خسارة معلومة، بل إظهارها.
+
+### 11.4 إثبات grep-zero بعد الحذف (ناتج السكربت كما خرج)
+
+```
+$ node scripts/audit/retired-surfaces-report.js
+retired-surfaces-report — scan
+allow-list: app/router.tsx, app/__tests__/redirects.test.tsx, tests/integration/retiredSurfaces.api.test.js
+✓ نظيف  /accounting/sales-analytics     ✓ نظيف  ac-sales-analytics
+✓ نظيف  SalesAnalyticsPage              ✓ نظيف  useSalesAnalytics
+✓ نظيف  salesAnalytics                  ✓ نظيف  /pos-admin/reports
+✓ نظيف  pa-reports                      ✓ نظيف  pages/ReportsPage
+✓ نظيف  posAdmin.reports.               ✓ نظيف  /report/advanced
+✓ نظيف  /reports/sales-by-channel       ✓ نظيف  /reports/channel-settlements
+✓ نظيف  /reports/discounts-given        ✓ نظيف  /reports/waste-analytics
+✓ نظيف  /reports/royalty-reconciliation ✓ نظيف  /reports/sales-analytics
+الخلاصة: 0 إشارة معتمدة متبقية، 0 إشارة معلّقة (معلوماتية).
+النتيجة: PASS (exit 0)
+```
+
+(المسموح لها حمل المسارات القديمة ثلاثة ملفات فقط وبأسباب معلنة: جدول الـredirects، اختباره المعطياتي، وسويت النفي الذي يثبت 404. حتى تعليقات الشيفرة الإرشادية صيغت بلا العلامات الحرفية كي يبقى الفحص صارمًا.)
+
+### 11.5 جدول نقل سيناريوهات الاختبار (لا حذف بلا صف نقل)
+
+| السيناريو القديم (`reportsEquations` قسم sales-analytics) | وجهته |
+|---|---|
+| gross يستبعد الملغي بـ`zatca_type` لا `deleted_at` | `reportsEquations` الجديد: «gross (invoice_total) = 1071.5 — the VOID never counted (excluded_voided default)» + `analyticsQuery.api.test.js`: «defaultsApplied reports excluded_voided + excluded_credit_note_docs» |
+| net من التفصيل **المسجَّل** لا gross÷1.15 | `reportsEquations` الجديد: «net = 950 from the RECORDED lines (NOT 1071.5 ÷ 1.15 = 931.74)» + وحدات `tests/analyticsEquations.test.js` |
+| vat من المسجَّل | `reportsEquations` الجديد: «vat = 121.5 …» + `analyticsQuery`: «vat_amount 121.50 (stored column, never derived)» |
+| invoiceCount يستبعد الملغي | `reportsEquations` الجديد: «orders = 8 (void excluded; credit notes NOT double-counted)» + سويت `analyticsNoDoubleCount.api.test.js` كاملًا |
+| blob فاسد → ‏`netUnknownCount=1` يُحصى لا يُخمَّن | 🔁 **مستبدَل بالبناء** (لا مكافئ حرفيًّا): المحرك لا يقرأ blob لكل فاتورة أصلًا؛ عقيدة «يُحصى ولا يُخمَّن» محمولة على `meta.completeness`/`maskedMetrics` (يثبتها `analyticsQuery` + عقد «—» في واجهات الهَب في `pages1/pages2`) — موثَّق في §11.3-3 |
+| صنف بلا صف menu → ‏`costUnknownCount` لا هامش 100% | 🔁 **مستبدَل بالبناء**: الربط صار بـ`menu_id` + ‏`cost_snapshot` على السطر، فسيناريو «إعادة التسمية تُفقد التكلفة» لم يعُد ممكنًا بالتصميم؛ التكلفة المحجوبة قدرةً تظهر «—» (اختبار Profitability: «masks cogs as '—'») |
+| profit = net − cost المعلوم | `reportsEquations` الجديد (per-item cogs) + معادلة `grossProfit` في وحدات `analyticsEquations` |
+| byProduct ‏qty/gross بالاسم | `reportsEquations` الجديد: «per-item row (Burger): qty 7 / net 550 / cogs 220 — REAL per-line values, not null» |
+| byProduct ‏net=null (لا يُخترع تقسيم) | انقلب إلى إثبات موجب: «Σ per-item net === headline net (950)» — القيم صارت مسجَّلة فتُجمع ويُتحقق من مصالحتها |
+| daily يومان = 187.5 (يوم الملغي غائب) | `analyticsQuery` (حلقة `BD_B1` يومًا بيوم + سطر منتصف الليل) + سويت `analyticsTimezone.api.test.js` |
+| اختبارات FE للصفحتين المحذوفتين | **لا شيء يُنقل** — تحقّقنا أن `modules/accounting/__tests__` و`modules/pos-admin/__tests__` لم يكن فيهما أي اختبار للصفحتين. الجديد أضاف: ‏6 اختبارات redirects + ‏5 اختبارات Reconciliation المرقّاة (عقد الخادم + الاستثناءات + بوابة القدرة) |
+
+### 11.6 إثبات 404 + انقلاب aging + بقاء المُبقى (ناتج `retiredSurfaces.api.test.js` — منفذ 3994)
+
+```
+▶ retired endpoints → 404
+  ✅ 404 /api/sales/report/advanced            ✅ 404 /api/erp/reports/sales-by-channel
+  ✅ 404 /api/erp/reports/channel-settlements  ✅ 404 /api/erp/reports/discounts-given
+  ✅ 404 /api/erp/reports/waste-analytics      ✅ 404 /api/erp/reports/royalty-reconciliation
+  ✅ 404 /api/erp/reports/sales-analytics
+  ✅ anonymous on a retired path is 401 (global JWT gate first — the 404s are real routing 404s)
+▶ ar-aging answers the MODULAR contract (the live-page fix)
+  ✅ 200 success · ✅ asOfDate ECHOED · ✅ customers is an ARRAY
+  ✅ grandBuckets carries '0-30'…'120+' · ✅ grandTotal + overdue90PlusRatio
+  ✅ the LEGACY shape is GONE (no totals.current / totals.1_30)
+▶ ap-aging answers the MODULAR contract
+  ✅ 200 success · ✅ suppliers ARRAY + grandBuckets · ✅ asOfDate echoed
+▶ kept endpoints still answer 200
+  ✅ balance-sheet (FinancialRatios consumer) · ✅ pnl (the ratios page's second call)
+✅ retiredSurfaces: 20 passed, 0 failed
+```
+
+### 11.7 البوابة والسويتات واللقطات
+
+- **خطوات بوابة جديدة في `scripts/gate/run-full-gate.js`** (بترتيب الأرخص أولًا): ‏`audit:analytics-vat` (ستاتيكي، بعد `static:sql-removed-fns`)؛ ‏`backend:analytics-core` (query + no-double-count + timezone + rollup-parity)؛ ‏`backend:analytics-security` (scope + exports)؛ ‏`backend:analytics-money` (payments + reconciliation + budget + anomalies + forecast-api)؛ ‏`backend:sales-fixes` (split + dashboard + **retired-surfaces**)؛ ‏`audit:mutation-sales-math` (حاصدة الطفرات)؛ ‏`audit:retired-surfaces` (بعد `hygiene:test-residue` مباشرة). سكربتات `package.json` المجمِّعة أُضيفت (`test:analytics-core/-security/-money`، `test:sales-fixes`، `test:retired-surfaces`).
+- **السويتات بعد الإخراج:** ‏ERP vitest ‏**418/418** (66 ملفًا — كانت 410؛ الصافي +8: ‏redirects الجديدة + إعادة كتابة Reconciliation)؛ ‏`npm test` الجذري (41 سويت وحدات) أخضر؛ ‏`test:reports-equations` ‏**34/34** قبل الحذف وبعده؛ ‏`test:analytics-query` ‏**46/46** (انحدار)؛ ‏`retiredSurfaces` ‏**20/20**؛ ‏`tsc --noEmit` نظيف.
+- **اللقطات البصرية:** أُعيد التحقق — لقطات `e2e/erp/visual-baselines.spec.ts-snapshots` السبع هي `admin-users / inventory-list / inventory-new / menu-list / menu-new / overview / trial-balance`؛ **لا baseline لأي صفحة مُخرَجة → لا لقطة تُحذف**، كما توقّعت §5.1-9 و§5.2-9.
+- **إصلاحات مرافقة ضمن هذه الموجة:** ترقية صفحة `reconciliation` في الهَب إلى عقد الخادم `GET /api/analytics/reconciliation` (صفوف اليوم×الفرع + الدلتاوان + حفر الاستثناءات بروابط `/sales/invoices?doc=` + بوابة `analytics.reconciliation.view`)؛ إصلاح `shared/tables/SavedViews.tsx` (فكّ غلاف `{success,data}` + وقف التسلسل المزدوج للحقول JSON فصار مزامَن-الخادم يعمل فعلًا، مع بقاء fallback ‏localStorage وتوافق خلفي مع الصفوف المشوَّهة القديمة)؛ واستبدال مفاتيح i18n المستعارة مؤقتًا في Executive/Modifiers/Branches/Builder/Profitability/Discounts/Reconciliation بمفاتيحها الأصلية (`salesReports.charts.*`، `builder.sort/showChart/schedule`، `profitability.quadrants.*`، `discounts.reasonGap`، `reconciliation.exceptionDays`).

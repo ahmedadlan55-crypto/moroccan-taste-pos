@@ -305,6 +305,73 @@ export function buildExportRequest(segment: string, filters: AnalyticsFilters): 
   return buildPlannerRequest(filters, factory ? factory(filters) : DEFAULT_EXPORT_SPEC);
 }
 
+/* ── three-way reconciliation (routes/analytics/reconciliation.js) ─
+ * GET /api/analytics/reconciliation?from&to[&branchIds=a,b] — one row per
+ * business day × branch with the two deltas and the exception drills the
+ * server already computed (services/analytics/ReconciliationService). The
+ * Reconciliation page renders this contract verbatim — no client re-merge. */
+
+export interface ReconciliationRow {
+  business_day: string;
+  branch_id: string;
+  sales: { orders: number; invoice_total: number; documentIds: string[]; documentIdsTotal: number };
+  payments: { in: number; out: number; net: number; factIds: number[]; factIdsTotal: number };
+  till: {
+    open_float?: number;
+    cash_sale?: number;
+    cash_refund?: number;
+    pay_out?: number;
+    deposit?: number;
+    /** null = not measurable (no till facts that day). */
+    expected_cash: number | null;
+    /** null = drawer never counted that day (honest "not measured", never 0). */
+    counted: number | null;
+  };
+  deltas: {
+    salesVsPayments: number | null;
+    cashExpectedVsCounted: number | null;
+  };
+  exceptions: {
+    paymentsWithoutOrder: { count: number; factIds: number[] };
+    ordersWithoutPayment: { count: number; documentIds: string[] };
+  };
+}
+
+export interface ReconciliationTotals {
+  salesVsPayments: number | null;
+  cashExpectedVsCounted: number | null;
+  paymentsWithoutOrder: number;
+  ordersWithoutPayment: number;
+}
+
+export interface ReconciliationData {
+  rows: ReconciliationRow[];
+  totals: ReconciliationTotals;
+}
+
+const EMPTY_RECONCILIATION: ReconciliationData = {
+  rows: [],
+  totals: { salesVsPayments: null, cashExpectedVsCounted: null, paymentsWithoutOrder: 0, ordersWithoutPayment: 0 },
+};
+
+export function fetchReconciliation(
+  params: { from: string; to: string; branchIds?: string[] },
+  signal?: AbortSignal,
+): Promise<ReconciliationData> {
+  return apiClient
+    .get<unknown>("/analytics/reconciliation", {
+      params: {
+        from: params.from,
+        to: params.to,
+        ...(params.branchIds && params.branchIds.length > 0
+          ? { branchIds: params.branchIds.join(",") }
+          : {}),
+      },
+      signal,
+    })
+    .then((v) => unwrapData<ReconciliationData>(v, EMPTY_RECONCILIATION));
+}
+
 /* ── exports API (routes/analytics/exports.js) ───────────────────*/
 
 export type ExportJobStatus = "queued" | "running" | "done" | "failed";
@@ -405,11 +472,11 @@ export function deleteAnalyticsSchedule(id: string): Promise<void> {
 }
 
 /* ── saved views API (routes/saved-views.js) ─────────────────────
- * NOTE: the shared useSavedViewsSource (shared/tables/SavedViews.tsx) does not
- * unwrap the { success, data } envelope and re-parses filtersJson that the
- * server ALREADY parsed — so the hub talks to /saved-views through these
- * envelope-aware wrappers instead (deviation documented in the wave report).
- * filtersJson for analytics views is { filters: "<url search string>" }. */
+ * The shared useSavedViewsSource (shared/tables/SavedViews.tsx) now speaks the
+ * same envelope/opaque-value contract (fixed in the retirement wave); the hub
+ * keeps these thin wrappers because its views are URL-state blobs, not
+ * DataTable captures. filtersJson for analytics views is
+ * { filters: "<url search string>" }. */
 
 export interface AnalyticsSavedView {
   id: string;

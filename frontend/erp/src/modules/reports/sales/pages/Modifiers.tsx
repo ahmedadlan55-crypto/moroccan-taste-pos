@@ -220,8 +220,8 @@ export default function Modifiers() {
               title={t("salesReports.metrics.modifier_qty")}
               subtitle={t("salesReports.dims.modifier_kind")}
               isEmpty={kindRows.every((r) => r.qty == null)}
-              emptyLabel={t("inventoryRest.analytics.chartEmpty")}
-              tableLabel={t("inventoryRest.analytics.showTable")}
+              emptyLabel={t("salesReports.charts.empty")}
+              tableLabel={t("salesReports.charts.showTable")}
               tableCaption={`${t("salesReports.metrics.modifier_qty")} — ${t("salesReports.dims.modifier_kind")}`}
               tableColumns={[
                 { key: "label", label: t("salesReports.dims.modifier_kind") },

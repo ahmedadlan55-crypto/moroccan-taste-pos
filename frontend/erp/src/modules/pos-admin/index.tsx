@@ -12,7 +12,6 @@ import { useT } from "@/i18n";
 import { NotFound } from "@/app/shell/NotFound";
 import { RegisterPage } from "./pages/RegisterPage";
 import { ShiftsPage } from "./pages/ShiftsPage";
-import { ReportsPage } from "./pages/ReportsPage";
 import { DeferredNoticePage } from "./pages/DeferredNoticePage";
 
 function ParkedOrdersPage() {
@@ -38,12 +37,12 @@ function DeviceSyncPage() {
 }
 
 // Manifest path → page. Kept in sync with the 'pos-admin' group in the manifest.
+// (The cashier-reports page was retired → /reports/sales/shifts; redirect in app/router.tsx.)
 const PAGES: Record<string, ComponentType> = {
   "/pos-admin/register": RegisterPage,
   "/pos-admin/shifts": ShiftsPage,
   "/pos-admin/parked-orders": ParkedOrdersPage,
   "/pos-admin/devices": DeviceSyncPage,
-  "/pos-admin/reports": ReportsPage,
 };
 
 export function PosAdminModule() {

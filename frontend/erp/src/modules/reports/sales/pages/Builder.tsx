@@ -201,12 +201,11 @@ export default function Builder() {
             />,
           )}
           {field(
-            // Closest existing key for "sort" (wanted: salesReports.builder.sort).
-            t("administration.payments.col.sort"),
+            t("salesReports.builder.sort"),
             <div className="flex items-center gap-2">
               <SegmentedControl
                 size="sm"
-                aria-label={t("administration.payments.col.sort")}
+                aria-label={t("salesReports.builder.sort")}
                 value={direction}
                 onChange={setDirection}
                 options={[
@@ -215,7 +214,7 @@ export default function Builder() {
                 ]}
               />
               <Select
-                aria-label={t("administration.payments.col.sort")}
+                aria-label={t("salesReports.builder.sort")}
                 value={effectiveSort}
                 onChange={(e) => setSortMetric(e.target.value)}
                 options={metricIds.map((id) => ({ value: id, label: t(`salesReports.metrics.${id}`) }))}
@@ -236,22 +235,20 @@ export default function Builder() {
           </Tooltip>
           <Tooltip content={t("salesReports.builder.comingSoon")}>
             <Button variant="secondary" disabled data-testid="builder-schedule">
-              <CalendarClock className="h-4 w-4" /> {t("salesReports.topbar.saveView")}
+              <CalendarClock className="h-4 w-4" /> {t("salesReports.builder.schedule")}
             </Button>
           </Tooltip>
           {enabled && rows.length > 0 && chartMetric && (
             <div className="ms-auto">
-              {/* Optional bar chart of the sort metric by the primary dimension.
-                  No "show chart" key exists yet (wanted: salesReports.builder.showChart);
-                  the metric's own name labels the switch. */}
+              {/* Optional bar chart of the sort metric by the primary dimension. */}
               <Toggle
                 checked={showChart}
                 onChange={setShowChart}
-                aria-label={t(`salesReports.metrics.${chartMetric}`)}
+                aria-label={t("salesReports.builder.showChart")}
                 label={
                   <span className="inline-flex items-center gap-1.5">
                     <BarChart3 className="h-4 w-4 text-slate-500" aria-hidden="true" />
-                    {t(`salesReports.metrics.${chartMetric}`)}
+                    {t("salesReports.builder.showChart")}
                   </span>
                 }
               />

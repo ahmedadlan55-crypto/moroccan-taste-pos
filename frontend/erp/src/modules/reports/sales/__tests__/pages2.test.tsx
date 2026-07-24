@@ -19,7 +19,10 @@ import {
   type AnalyticsQueryBody,
   type AnalyticsResult,
   type AnalyticsResultRow,
+  type ReconciliationData,
+  type ReconciliationRow,
   fetchAnalyticsRegistry,
+  fetchReconciliation,
 } from "../lib/api";
 import OrdersPage from "../pages/Orders";
 import DiscountsPage from "../pages/Discounts";
@@ -32,15 +35,29 @@ import BuilderPage from "../pages/Builder";
 
 vi.mock("../lib/api", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../lib/api")>();
-  return { ...actual, runAnalyticsQuery: vi.fn(), fetchAnalyticsRegistry: vi.fn() };
+  return {
+    ...actual,
+    runAnalyticsQuery: vi.fn(),
+    fetchAnalyticsRegistry: vi.fn(),
+    fetchReconciliation: vi.fn(),
+  };
 });
 
 vi.mock("@/modules/sales/lib/api", () => ({
   o2cApi: { invoices: vi.fn() },
 }));
 
+// Page-level capability gate (Reconciliation caps on analytics.reconciliation.view).
+// Mutable map so individual tests can revoke a cap; reset in beforeEach.
+const caps: Record<string, boolean> = {};
+vi.mock("@/shared/permissions", () => ({
+  useCan: (cap: string) => caps[cap] ?? false,
+  usePermissions: () => ({ can: (cap: string) => caps[cap] ?? false }),
+}));
+
 const runMock = vi.mocked(runAnalyticsQuery);
 const registryMock = vi.mocked(fetchAnalyticsRegistry);
+const reconciliationMock = vi.mocked(fetchReconciliation);
 const invoicesMock = vi.mocked(o2cApi.invoices);
 
 /* ── fixtures ────────────────────────────────────────────────── */
@@ -123,8 +140,11 @@ function expectCellTone(text: string, toneClass: string) {
 beforeEach(() => {
   runMock.mockReset();
   registryMock.mockReset();
+  reconciliationMock.mockReset();
   invoicesMock.mockReset();
   runMock.mockResolvedValue(EMPTY);
+  for (const k of Object.keys(caps)) delete caps[k];
+  caps["analytics.reconciliation.view"] = true;
   window.localStorage.clear();
 });
 
@@ -364,11 +384,11 @@ describe("Profitability page", () => {
     renderPage(<ProfitabilityPage />, "/reports/sales/profitability");
 
     await within(await screen.findByTestId("kpi-gross_profit")).findByText("2,400.00 ر.س");
-    // one item per quadrant (ar labels — the default language)
-    expect(screen.getAllByText("نجوم").length).toBeGreaterThan(0);
-    expect(screen.getAllByText("أحصنة عمل").length).toBeGreaterThan(0);
-    expect(screen.getAllByText("ألغاز").length).toBeGreaterThan(0);
-    expect(screen.getAllByText("خاسرة").length).toBeGreaterThan(0);
+    // one item per quadrant (ar labels from salesReports.profitability.quadrants.*)
+    expect(screen.getAllByText("النجوم").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("الأحصنة العاملة").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("الألغاز").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("الأصناف الراكدة").length).toBeGreaterThan(0);
     // star margin cell → positive tone; dog margin cell → negative tone
     expectCellTone("60%", "bg-emerald-50");
     expectCellTone("10%", "bg-rose-50");
@@ -400,51 +420,105 @@ describe("Profitability page", () => {
 /* ── 15. Reconciliation ──────────────────────────────────────── */
 
 describe("Reconciliation page", () => {
-  function seed() {
-    dispatch({
-      "invoice_total,orders@business_day": result([
-        row(["2026-07-01"], ["1 يوليو"], { invoice_total: 100, orders: 5 }),
-        row(["2026-07-02"], ["2 يوليو"], { invoice_total: 200, orders: 8 }),
-      ]),
-      "payments_in,refunds_out@business_day": result([
-        row(["2026-07-01"], ["1 يوليو"], { payments_in: 100, refunds_out: 0 }),
-        row(["2026-07-02"], ["2 يوليو"], { payments_in: 150, refunds_out: 0 }),
-      ]),
-      "till_expected_cash,till_counted@business_day": result([
-        row(["2026-07-01"], ["1 يوليو"], { till_expected_cash: 50, till_counted: 50 }),
-        row(["2026-07-02"], ["2 يوليو"], { till_expected_cash: 80, till_counted: 70 }),
-      ]),
-    });
+  function recRow(overrides: Partial<ReconciliationRow> & { business_day: string }): ReconciliationRow {
+    return {
+      branch_id: "b1",
+      sales: { orders: 0, invoice_total: 0, documentIds: [], documentIdsTotal: 0 },
+      payments: { in: 0, out: 0, net: 0, factIds: [], factIdsTotal: 0 },
+      till: { expected_cash: null, counted: null },
+      deltas: { salesVsPayments: null, cashExpectedVsCounted: null },
+      exceptions: {
+        paymentsWithoutOrder: { count: 0, factIds: [] },
+        ordersWithoutPayment: { count: 0, documentIds: [] },
+      },
+      ...overrides,
+    };
   }
 
-  it("merges the three queries, computes the deltas, tones the mismatch day and counts one exception day", async () => {
+  /** One balanced day + one mismatch day (both deltas + both exception drills). */
+  function seed(): ReconciliationData {
+    const data: ReconciliationData = {
+      rows: [
+        recRow({
+          business_day: "2026-07-01",
+          sales: { orders: 5, invoice_total: 100, documentIds: ["ok1"], documentIdsTotal: 5 },
+          payments: { in: 100, out: 0, net: 100, factIds: [1], factIdsTotal: 1 },
+          till: { expected_cash: 50, counted: 50 },
+          deltas: { salesVsPayments: 0, cashExpectedVsCounted: 0 },
+        }),
+        recRow({
+          business_day: "2026-07-02",
+          sales: { orders: 8, invoice_total: 200, documentIds: ["doc9"], documentIdsTotal: 8 },
+          payments: { in: 150, out: 0, net: 150, factIds: [2], factIdsTotal: 1 },
+          till: { expected_cash: 80, counted: 70 },
+          deltas: { salesVsPayments: 50, cashExpectedVsCounted: 10 },
+          exceptions: {
+            paymentsWithoutOrder: { count: 1, factIds: [77] },
+            ordersWithoutPayment: { count: 1, documentIds: ["doc9"] },
+          },
+        }),
+      ],
+      totals: { salesVsPayments: 50, cashExpectedVsCounted: 10, paymentsWithoutOrder: 1, ordersWithoutPayment: 1 },
+    };
+    reconciliationMock.mockResolvedValue(data);
+    return data;
+  }
+
+  it("renders the server rows, tones the mismatch deltas, and counts one exception day", async () => {
     seed();
     renderPage(<ReconciliationPage />, "/reports/sales/reconciliation");
 
-    // mismatch day: collections 150 − sales 200 = −50; till 70 − 80 = −10
-    await waitFor(() => expect(screen.getAllByText("-50.00 ر.س").length).toBeGreaterThan(0));
-    expectCellTone("-50.00 ر.س", "bg-rose-50");
-    expectCellTone("-10.00 ر.س", "bg-rose-50");
-    // the balanced day's delta is NOT toned
+    // server-computed deltas: salesVsPayments 50, till 10 — both toned on the mismatch day
+    await waitFor(() => expect(screen.getAllByText("50.00 ر.س").length).toBeGreaterThan(0));
+    expectCellTone("50.00 ر.س", "bg-rose-50");
+    expectCellTone("10.00 ر.س", "bg-rose-50");
+    // the balanced day's zero delta is NOT toned
     const zeroCells = screen
       .getAllByText("0.00 ر.س")
       .map((el) => el.closest("td"))
       .filter((td): td is HTMLTableCellElement => !!td);
+    expect(zeroCells.length).toBeGreaterThan(0);
     expect(zeroCells.some((td) => td.className.includes("bg-rose-50"))).toBe(false);
-    // exactly ONE exception day (both deltas live on the same day)
+    // exactly ONE exception day (deltas + drills all live on 07-02)
     within(screen.getByTestId("kpi-exception-days")).getByText("1");
+    // and the fetch carried the URL range through
+    expect(reconciliationMock).toHaveBeenCalledWith(
+      expect.objectContaining({ from: expect.any(String), to: expect.any(String) }),
+      expect.anything(),
+    );
   });
 
-  it("fails the whole page when ANY of the three queries fails", async () => {
-    runMock.mockImplementation(async (body: AnalyticsQueryBody) => {
-      if (body.metrics.includes("till_expected_cash")) throw new Error("boom");
-      return EMPTY;
-    });
+  it("renders the exception drill: order ids link to /sales/invoices?doc=, payment fact ids listed", async () => {
+    seed();
+    renderPage(<ReconciliationPage />, "/reports/sales/reconciliation");
+
+    await screen.findByTestId("reconciliation-exceptions");
+    const orders = screen.getByTestId("exception-orders-without-payment");
+    const link = within(orders).getByRole("link", { name: "doc9" });
+    expect(link).toHaveAttribute("href", expect.stringContaining("/sales/invoices?doc=doc9"));
+    const pays = screen.getByTestId("exception-payments-without-order");
+    within(pays).getByText("77");
+  });
+
+  it("renders PermissionDenied without analytics.reconciliation.view and never fetches", async () => {
+    caps["analytics.reconciliation.view"] = false;
+    seed();
+    renderPage(<ReconciliationPage />, "/reports/sales/reconciliation");
+    expect(document.querySelector('[data-state="permission-denied"]')).toBeInTheDocument();
+    expect(reconciliationMock).not.toHaveBeenCalled();
+  });
+
+  it("shows the error state when the reconciliation call fails", async () => {
+    reconciliationMock.mockRejectedValue(new Error("boom"));
     renderPage(<ReconciliationPage />, "/reports/sales/reconciliation");
     await waitFor(() => expect(document.querySelector('[data-state="error"]')).toBeInTheDocument());
   });
 
-  it("shows the empty state when all three queries return no rows", async () => {
+  it("shows the empty state when the server returns no rows", async () => {
+    reconciliationMock.mockResolvedValue({
+      rows: [],
+      totals: { salesVsPayments: null, cashExpectedVsCounted: null, paymentsWithoutOrder: 0, ordersWithoutPayment: 0 },
+    });
     renderPage(<ReconciliationPage />, "/reports/sales/reconciliation");
     await waitFor(() => expect(document.querySelector('[data-state="empty"]')).toBeInTheDocument());
   });

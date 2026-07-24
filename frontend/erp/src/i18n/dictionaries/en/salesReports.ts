@@ -309,6 +309,12 @@ export const salesReports = {
 
   reconciliation: {
     exceptionDays: "Exception days",
+    salesVsPayments: "Sales vs collections",
+    cashExpectedVsCounted: "Till (expected − counted)",
+    exceptionsTitle: "Exceptions",
+    ordersWithoutPayment: "Orders without a payment",
+    paymentsWithoutOrder: "Payments without an order",
+    moreIds: "+{count} more",
   },
 
   discounts: {

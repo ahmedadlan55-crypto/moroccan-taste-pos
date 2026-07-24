@@ -2,10 +2,9 @@
 //
 // The peak map: a weekday × hour heatmap of net sales (hour, not half_hour, is
 // the v1 grain), an orders-by-hour line, and the hour table synced to the same
-// data. A heat cell click navigates to the orders segment preserving the
-// current filter params — the shared codec owns NO hour param yet (wanted
-// param listed in the wave report), so the hour itself cannot be pinned as a
-// filter.
+// data. Wave 4: a heat cell click drills to the orders segment with the
+// clicked hour pinned via the shared `hour` codec param (merged into the
+// CURRENT search so every other filter is preserved — one history push).
 //
 // TODO(next wave): forecast overlay on the orders-by-hour line (the forecast
 // series lands with the builder wave).
@@ -26,6 +25,7 @@ import { analyticsFilterCodec, type AnalyticsFilters } from "../lib/filters";
 import {
   buildFiltersBody,
   displayMetric,
+  setPageExportRequest,
   type AnalyticsCompareSpec,
   type AnalyticsQueryBody,
   type AnalyticsRegistry,
@@ -34,6 +34,13 @@ import {
 import { useAnalyticsQuery, useAnalyticsRegistry } from "../lib/useAnalyticsQuery";
 
 const SEGMENT = "hours";
+
+// The TopBar ExportMenu asks this page's registry entry for its export shape.
+setPageExportRequest(SEGMENT, () => ({
+  metrics: ["orders", "net_ex_vat"],
+  dimensions: ["hour"],
+  sort: [{ by: "hour", dir: "asc" }],
+}));
 
 /* ── deferred chart kit (page-local copy by design; see wave notes) ── */
 
@@ -65,7 +72,7 @@ function metricExplain(t: TFunction, registry: AnalyticsRegistry | undefined, co
     <ExplainNumber
       title={t(`salesReports.metrics.${code}`)}
       formula={equationKey ? t(`salesReports.explain.${equationKey}`) : undefined}
-      triggerLabel={t(`salesReports.metrics.${code}`)}
+      triggerLabel={`${t("salesReports.explain.trigger")} — ${t(`salesReports.metrics.${code}`)}`}
     />
   );
 }
@@ -229,9 +236,11 @@ export default function Hours() {
     return <EmptyState title={t("salesReports.states.empty")} />;
   }
 
-  // No hour filter param exists in the shared codec yet — the cell drill hands
-  // off to the orders segment with the CURRENT filters preserved.
-  const onCellClick = () => navigate(segmentHref(location.search, "orders", {}));
+  // Heat-cell drill: hand off to the orders segment with the CURRENT filters
+  // preserved AND the clicked hour pinned (`hour` codec param, wave 4). The
+  // param rides the composed URL so it is ONE history push (Back restores).
+  const onCellClick = (cell: HeatmapCell) =>
+    navigate(segmentHref(location.search, "orders", { hour: cell.col }));
 
   const kpis = [
     { id: "net_ex_vat", icon: Coins, tone: "teal" as const, format: formatCurrency },
@@ -267,7 +276,7 @@ export default function Hours() {
         </header>
         {heatCells.length === 0 ? (
           <div className="grid h-40 place-items-center text-sm font-bold text-slate-400">
-            {t("inventoryRest.analytics.chartEmpty")}
+            {t("salesReports.charts.empty")}
           </div>
         ) : (
           <Heatmap
@@ -276,7 +285,7 @@ export default function Hours() {
             cells={heatCells}
             onCellClick={onCellClick}
             ariaLabel={`${t("salesReports.metrics.net_ex_vat")} — ${t("salesReports.dims.weekday")} × ${t("salesReports.dims.hour")}`}
-            tableLabel={t("inventoryRest.analytics.showTable")}
+            tableLabel={t("salesReports.charts.showTable")}
             tableCaption={`${t("salesReports.metrics.net_ex_vat")} — ${t("salesReports.dims.weekday")} × ${t("salesReports.dims.hour")}`}
           />
         )}
@@ -289,8 +298,8 @@ export default function Hours() {
               title={t("salesReports.metrics.orders")}
               subtitle={t("salesReports.dims.hour")}
               isEmpty={hourRows.every((r) => r.orders == null)}
-              emptyLabel={t("inventoryRest.analytics.chartEmpty")}
-              tableLabel={t("inventoryRest.analytics.showTable")}
+              emptyLabel={t("salesReports.charts.empty")}
+              tableLabel={t("salesReports.charts.showTable")}
               tableCaption={`${t("salesReports.metrics.orders")} — ${t("salesReports.dims.hour")}`}
               tableColumns={[
                 { key: "label", label: t("salesReports.dims.hour") },

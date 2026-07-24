@@ -4,10 +4,11 @@
 // codec — the shared filters.ts codec is untouched), an optional second
 // dimension, a metric multi-pick (any registry metric), and a top/bottom-N
 // control. Renders the API rows + subtotals in PivotTable and a bar chart of
-// the top rows. Leaf row clicks drill: the clicked key becomes a filter (where
-// the shared codec owns a param for it) and `by` advances along the chain
-// branch → business_day → hour → cashier → the orders segment.
-import { lazy, Suspense, useMemo, useState, type ReactElement } from "react";
+// the top rows. Leaf row clicks drill: the clicked key becomes a shared-codec
+// filter (wave 4 covers payment_method / hour / menu_item / cashier too) and
+// `by` advances along the chain branch → business_day → hour → cashier → the
+// orders segment (the cashier hand-off pins `cashierId` on the composed URL).
+import { lazy, Suspense, useEffect, useMemo, useState, type ReactElement } from "react";
 import { ArrowDownWideNarrow, ArrowUpWideNarrow, Coins, ShoppingBag, type LucideIcon } from "lucide-react";
 import { useLocation, useNavigate } from "react-router-dom";
 import {
@@ -38,6 +39,7 @@ import {
 } from "../lib/filters";
 import {
   buildFiltersBody,
+  setPageExportRequest,
   type AnalyticsCompareSpec,
   type AnalyticsQueryBody,
   type AnalyticsRegistry,
@@ -111,7 +113,7 @@ function metricExplain(t: TFunction, registry: AnalyticsRegistry | undefined, co
     <ExplainNumber
       title={t(`salesReports.metrics.${code}`)}
       formula={equationKey ? t(`salesReports.explain.${equationKey}`) : undefined}
-      triggerLabel={t(`salesReports.metrics.${code}`)}
+      triggerLabel={`${t("salesReports.explain.trigger")} — ${t(`salesReports.metrics.${code}`)}`}
     />
   );
 }
@@ -195,6 +197,18 @@ export default function Explorer() {
   const catalogReady = registry.data != null && Array.isArray(registry.data.metrics);
   const query = useAnalyticsQuery(SEGMENT, body, { enabled: catalogReady });
 
+  // Export registration is DYNAMIC here (the shape follows the page-local URL
+  // state), so it re-registers whenever the picked metrics/dimensions change.
+  useEffect(() => {
+    setPageExportRequest(SEGMENT, () => ({
+      metrics: metricIds,
+      dimensions: dims,
+      sort: [{ by: sortMetric, dir: topBottom === "top" ? "desc" : "asc" }],
+      limit,
+    }));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [metricIds.join("|"), dims.join("|"), sortMetric, topBottom, limit]);
+
   const metricOptions = useMemo(() => {
     const ids = registry.data?.metrics?.map?.((m) => m.id) ?? [...METRIC_CODES];
     return ids.map((id) => ({ value: id, label: t(`salesReports.metrics.${id}`) }));
@@ -240,20 +254,24 @@ export default function Explorer() {
   const drillLeaf = (row: FlatPivotRow) => {
     const key = String(row.keys[0] ?? "");
     if (key === "") return;
-    // 1) apply the clicked key as a shared filter where the codec owns a param.
+    // Chain end (cashier): hand off to the orders segment with the cashier
+    // pinned — merged into the composed URL so it is ONE history push.
+    if (by === "cashier") {
+      navigate(segmentHref(location.search, "orders", { cashierId: key }));
+      return;
+    }
+    // 1) apply the clicked key as a shared filter (every curated dimension now
+    //    has a codec param — wave 4 added the last four).
     if (by === "branch") patch({ branchId: [key] }, { push: true });
     else if (by === "business_day") patch({ from: key, to: key, preset: "custom" }, { push: true });
     else if (by === "channel") patch({ channel: [key] }, { push: true });
     else if (by === "order_type") patch({ orderType: [key] }, { push: true });
-    // payment_method / cashier / menu_item / hour: no shared codec param yet —
-    // wanted params are listed in the wave report; the drill still advances.
-    // 2) advance `by` along the chain (or hand off to the orders segment).
+    else if (by === "payment_method") patch({ paymentMethod: [key] }, { push: true });
+    else if (by === "hour") patch({ hour: key }, { push: true });
+    else if (by === "menu_item") patch({ menuItemId: [key] }, { push: true });
+    // 2) advance `by` along the chain (dimensions outside the chain only pin).
     const at = DRILL_CHAIN.indexOf(by);
-    if (at === -1) return;
-    if (at === DRILL_CHAIN.length - 1) {
-      navigate(segmentHref(location.search, "orders", {}));
-      return;
-    }
+    if (at === -1 || at === DRILL_CHAIN.length - 1) return;
     page.patch({ by: DRILL_CHAIN[at + 1] });
   };
 
@@ -290,23 +308,23 @@ export default function Explorer() {
   const controls = (
     <div className="surface flex flex-wrap items-end gap-3 p-4" data-testid="explorer-controls">
       <label className="flex min-w-40 flex-col gap-1.5">
-        <span className="text-xs font-extrabold text-slate-500">{t("salesReports.builder.dimensions")}</span>
+        <span className="text-xs font-extrabold text-slate-500">{t("salesReports.explorer.primaryDim")}</span>
         <Select
           value={by}
           onChange={(e) =>
             page.patch({ by: e.target.value, second: page.filters.second === e.target.value ? "" : page.filters.second })
           }
           options={dimOptions}
-          aria-label={t("salesReports.builder.dimensions")}
+          aria-label={t("salesReports.explorer.primaryDim")}
         />
       </label>
       <label className="flex min-w-40 flex-col gap-1.5">
-        <span className="text-xs font-extrabold text-slate-500">{`${t("salesReports.builder.dimensions")} 2`}</span>
+        <span className="text-xs font-extrabold text-slate-500">{t("salesReports.explorer.secondaryDim")}</span>
         <Select
           value={second ?? ""}
           onChange={(e) => page.patch({ second: e.target.value })}
           options={secondOptions}
-          aria-label={`${t("salesReports.builder.dimensions")} 2`}
+          aria-label={t("salesReports.explorer.secondaryDim")}
         />
       </label>
       <div className="flex min-w-52 flex-col gap-1.5">
@@ -320,17 +338,33 @@ export default function Explorer() {
       </div>
       <SegmentedControl
         size="sm"
-        aria-label={t("common.filter")}
+        aria-label={`${t("salesReports.explorer.top")} / ${t("salesReports.explorer.bottom")}`}
         value={topBottom}
         onChange={(v) => page.patch({ dir: v })}
         options={[
-          { value: "top", label: <ArrowUpWideNarrow className="h-4 w-4" aria-hidden="true" /> },
-          { value: "bottom", label: <ArrowDownWideNarrow className="h-4 w-4" aria-hidden="true" /> },
+          {
+            value: "top",
+            label: (
+              <span className="inline-flex items-center">
+                <ArrowUpWideNarrow className="h-4 w-4" aria-hidden="true" />
+                <span className="sr-only">{t("salesReports.explorer.top")}</span>
+              </span>
+            ),
+          },
+          {
+            value: "bottom",
+            label: (
+              <span className="inline-flex items-center">
+                <ArrowDownWideNarrow className="h-4 w-4" aria-hidden="true" />
+                <span className="sr-only">{t("salesReports.explorer.bottom")}</span>
+              </span>
+            ),
+          },
         ]}
       />
       <SegmentedControl
         size="sm"
-        aria-label={t("common.filter")}
+        aria-label={t("salesReports.explorer.topN")}
         value={String(limit)}
         onChange={(v) => page.patch({ n: v })}
         options={N_OPTIONS.map((n) => ({ value: n, label: formatNumber(Number(n)) }))}
@@ -377,8 +411,8 @@ export default function Explorer() {
               title={t(`salesReports.metrics.${sortMetric}`)}
               subtitle={t(`salesReports.dims.${by}`)}
               isEmpty={chartRows.length === 0}
-              emptyLabel={t("inventoryRest.analytics.chartEmpty")}
-              tableLabel={t("inventoryRest.analytics.showTable")}
+              emptyLabel={t("salesReports.charts.empty")}
+              tableLabel={t("salesReports.charts.showTable")}
               tableCaption={`${t(`salesReports.metrics.${sortMetric}`)} — ${t(`salesReports.dims.${by}`)}`}
               tableColumns={[
                 { key: "label", label: t(`salesReports.dims.${by}`) },

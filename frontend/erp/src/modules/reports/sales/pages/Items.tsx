@@ -2,10 +2,11 @@
 //
 // Category → item pivot (expandable, API subtotals win) over qty / gross / net
 // / contribution, a KPI row from the query totals, and a top-20 bar of items
-// by net. Leaf clicks are a NO-OP this wave: the shared filter codec owns no
-// menu_item param yet (wanted param listed in the wave report) — group rows
+// by net. Wave 4: a leaf (menu_item) row drills to the orders segment with the
+// clicked item pinned via the shared `menuItemId` codec param; group rows
 // still toggle on click.
 import { lazy, Suspense, useMemo, useState, type ReactElement } from "react";
+import { useLocation, useNavigate } from "react-router-dom";
 import { Coins, Package, Receipt } from "lucide-react";
 import { Badge, EmptyState, ErrorState, ExplainNumber, LoadingState, MetricCard, Skeleton } from "@/shared/ui";
 import { useChartPalette } from "@/shared/charts/palette";
@@ -18,6 +19,7 @@ import { analyticsFilterCodec, type AnalyticsFilters } from "../lib/filters";
 import {
   buildFiltersBody,
   displayMetric,
+  setPageExportRequest,
   type AnalyticsCompareSpec,
   type AnalyticsQueryBody,
   type AnalyticsRegistry,
@@ -31,6 +33,13 @@ const SEGMENT = "items";
 const METRICS = ["qty_sold", "gross_product_sales", "net_ex_vat", "item_contribution_pct"] as const;
 const DIMS = ["category", "menu_item"] as const;
 const TOP_N = 20;
+
+// The TopBar ExportMenu asks this page's registry entry for its export shape.
+setPageExportRequest(SEGMENT, () => ({
+  metrics: [...METRICS],
+  dimensions: [...DIMS],
+  sort: [{ by: "net_ex_vat", dir: "desc" }],
+}));
 
 /* ── deferred chart kit (page-local copy by design; see wave notes) ── */
 
@@ -62,7 +71,7 @@ function metricExplain(t: TFunction, registry: AnalyticsRegistry | undefined, co
     <ExplainNumber
       title={t(`salesReports.metrics.${code}`)}
       formula={equationKey ? t(`salesReports.explain.${equationKey}`) : undefined}
-      triggerLabel={t(`salesReports.metrics.${code}`)}
+      triggerLabel={`${t("salesReports.explain.trigger")} — ${t(`salesReports.metrics.${code}`)}`}
     />
   );
 }
@@ -91,10 +100,20 @@ function totalValue(result: AnalyticsResult | undefined, id: string): number | n
 
 const fmtPercent = (v: number) => `${formatNumber(v)}%`;
 
+/** Merge extra params over the CURRENT search and render a hub segment URL. */
+function segmentHref(search: string, segment: string, extra: Record<string, string>): string {
+  const sp = new URLSearchParams(search);
+  for (const [k, v] of Object.entries(extra)) sp.set(k, v);
+  const qs = sp.toString();
+  return `/reports/sales/${segment}${qs ? `?${qs}` : ""}`;
+}
+
 export default function Items() {
   const t = useT();
   const palette = useChartPalette();
   const rtl = useChartsRtl();
+  const navigate = useNavigate();
+  const location = useLocation();
   const { filters } = useUrlFilters(analyticsFilterCodec);
   const registry = useAnalyticsRegistry();
   const [expanded, setExpanded] = useState<Set<string>>(() => new Set());
@@ -163,9 +182,16 @@ export default function Items() {
     });
 
   const onRowClick = (row: FlatPivotRow) => {
-    // Leaf (menu_item) click: the shared codec has no item filter param yet —
-    // deliberate no-op (wanted param in the wave report). Groups toggle.
-    if (row.isSubtotal) toggle(row.key);
+    // Groups toggle; a leaf (menu_item) row drills to the orders segment with
+    // the item pinned via the shared `menuItemId` codec param (wave 4) — the
+    // param rides the composed URL, so it is ONE history push.
+    if (row.isSubtotal) {
+      toggle(row.key);
+      return;
+    }
+    const itemId = String(row.keys[1] ?? "");
+    if (itemId === "") return;
+    navigate(segmentHref(location.search, "orders", { menuItemId: itemId }));
   };
 
   const kpis = [
@@ -201,8 +227,8 @@ export default function Items() {
               title={t("salesReports.metrics.net_ex_vat")}
               subtitle={t("salesReports.dims.menu_item")}
               isEmpty={topItems.length === 0}
-              emptyLabel={t("inventoryRest.analytics.chartEmpty")}
-              tableLabel={t("inventoryRest.analytics.showTable")}
+              emptyLabel={t("salesReports.charts.empty")}
+              tableLabel={t("salesReports.charts.showTable")}
               tableCaption={`${t("salesReports.metrics.net_ex_vat")} — ${t("salesReports.dims.menu_item")}`}
               tableColumns={[
                 { key: "label", label: t("salesReports.dims.menu_item") },

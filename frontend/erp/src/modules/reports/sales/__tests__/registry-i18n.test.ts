@@ -41,7 +41,10 @@ describe.each(Object.entries(DICTS))("salesReports dictionary coverage (%s)", (_
   });
 
   it("covers EXACTLY the fixture equation keys with formula prose", () => {
-    expect(Object.keys(leaves(sr.explain)).sort()).toEqual([...EQUATION_KEYS].sort());
+    // "trigger" is a UI-only key (the ExplainNumber trigger label — wave 4),
+    // NOT an equation key; it is carved out of the exact-set comparison.
+    const equationOnly = Object.keys(leaves(sr.explain)).filter((k) => k !== "trigger");
+    expect(equationOnly.sort()).toEqual([...EQUATION_KEYS].sort());
     for (const key of EQUATION_KEYS) {
       expect(sr.explain[key], `explain.${key}`).toBeTypeOf("string");
       expect(sr.explain[key].length, `explain.${key}`).toBeGreaterThan(0);

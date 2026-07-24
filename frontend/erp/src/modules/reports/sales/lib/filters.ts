@@ -44,6 +44,19 @@ export interface AnalyticsFilters {
   businessDay: boolean;
   /** true → tax-inclusive figures; false (default) → ex-VAT. */
   taxIncl: boolean;
+  // ── drill params (wave 4) — pinned by page drills, empty = not filtered.
+  //    Registry dimension per param: payment_method / hour / menu_item /
+  //    category / cashier (lib/analytics/registry/dimensions.js).
+  /** Payment-method codes (registry dim `payment_method`) — CSV param. */
+  paymentMethod: string[];
+  /** Single hour "0".."23" (registry dim `hour`) — '' = not filtered. */
+  hour: string;
+  /** Menu-item ids (registry dim `menu_item`) — CSV param. */
+  menuItemId: string[];
+  /** Category ids (registry dim `category`) — CSV param. */
+  categoryId: string[];
+  /** Cashier ids (registry dim `cashier`) — CSV param. */
+  cashierId: string[];
 }
 
 /** A ParamCodec constrained to a closed union; anything else → the default. */
@@ -89,6 +102,11 @@ export function createAnalyticsFilterCodec(
     orderType: csvParam(),
     businessDay: boolParam(d.businessDay),
     taxIncl: boolParam(d.taxIncl),
+    paymentMethod: csvParam(),
+    hour: stringParam(""),
+    menuItemId: csvParam(),
+    categoryId: csvParam(),
+    cashierId: csvParam(),
   });
   return { ...codec, defaults: d };
 }

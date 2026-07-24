@@ -1,21 +1,57 @@
-import { useCallback, useEffect, useState } from "react";
-import { Bookmark, RefreshCw, Trash2 } from "lucide-react";
-import { Badge, Button, IconButton, PageHeader, EmptyState } from "@/shared/ui";
+// "التقارير المحفوظة" (/reports/saved) — wave 4: two tabs.
+//
+//   1) التقارير المحفوظة — the union of the SERVER's saved views
+//      (GET /api/saved-views?module=… — one call per known module: the 16
+//      analytics:<segment> modules plus every module found in localStorage —
+//      the endpoint has no "all modules" listing) and the localStorage
+//      DataTable views (adlan.views.*). On a name+module collision the SERVER
+//      row wins; each row is badged جهاز (device) or خادم (server). Views of
+//      an analytics:* module get an "فتح" action deep-linking to
+//      /reports/sales/<segment>?<captured search>.
+//   2) الجداول الزمنية — scheduled exports (components/SchedulesPanel), shown
+//      only with the analytics.schedule capability.
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { useNavigate } from "react-router-dom";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { Bookmark, ExternalLink, RefreshCw, Trash2 } from "lucide-react";
+import { Badge, Button, IconButton, PageHeader, EmptyState, Tabs } from "@/shared/ui";
+import { useCan } from "@/shared/permissions";
 import { useT } from "@/i18n";
+import {
+  deleteSavedView,
+  fetchSavedViews,
+  savedViewSearchString,
+  type AnalyticsSavedView,
+} from "@/modules/reports/sales/lib/api";
+import { SchedulesPanel } from "@/modules/reports/sales/components/SchedulesPanel";
 
-// "التقارير المحفوظة" — a localStorage-backed list of the named table views the
-// user saved across the app (DataTable's SavedViews store under adlan.views.*).
-// This aggregates them into one place and lets the user prune them.
 const PREFIX = "adlan.views.";
+const ANALYTICS_PREFIX = "analytics:";
+
+/** The 16 hub segments (mirrors SALES_HUB_SEGMENTS without importing the hub). */
+const ANALYTICS_SEGMENTS = [
+  "executive", "explorer", "items", "modifiers", "payments", "cashiers",
+  "branches", "hours", "orders", "discounts", "voids", "shifts", "taxes",
+  "profitability", "reconciliation", "builder",
+] as const;
 
 interface SavedEntry {
-  storageKey: string;
-  tableId: string;
-  id: string;
+  /** Stable list key. */
+  key: string;
   name: string;
+  /** The saved-views module (localStorage tableId doubles as the module). */
+  module: string;
+  source: "local" | "server";
+  /** Captured URL search string (analytics views) — null when not a URL state. */
+  search: string | null;
+  /** local: the localStorage key + view id needed to prune it. */
+  storageKey?: string;
+  localId?: string;
+  /** server: the row id for DELETE /api/saved-views/:id. */
+  serverId?: string;
 }
 
-function readSaved(): SavedEntry[] {
+function readLocalEntries(): SavedEntry[] {
   if (typeof window === "undefined") return [];
   const out: SavedEntry[] = [];
   for (let i = 0; i < window.localStorage.length; i++) {
@@ -26,14 +62,23 @@ function readSaved(): SavedEntry[] {
       if (!Array.isArray(parsed)) continue;
       for (const v of parsed) {
         if (v && typeof v === "object" && v.id && v.name) {
-          out.push({ storageKey: key, tableId: key.slice(PREFIX.length), id: String(v.id), name: String(v.name) });
+          const module = key.slice(PREFIX.length);
+          out.push({
+            key: `local:${key}:${String(v.id)}`,
+            name: String(v.name),
+            module,
+            source: "local",
+            search: savedViewSearchString({ filtersJson: (v as { state?: { filters?: unknown } }).state?.filters }),
+            storageKey: key,
+            localId: String(v.id),
+          });
         }
       }
     } catch {
       /* ignore malformed entries */
     }
   }
-  return out.sort((a, b) => a.tableId.localeCompare(b.tableId));
+  return out;
 }
 
 // Known table ids that have a translated label (misc.reports.saved.tableLabels.*).
@@ -50,32 +95,148 @@ const KNOWN_TABLE_IDS = new Set([
 
 export default function SavedReportsPage() {
   const t = useT();
-  const [entries, setEntries] = useState<SavedEntry[]>([]);
-  const tableLabel = (tableId: string) =>
-    KNOWN_TABLE_IDS.has(tableId) ? t(`misc.reports.saved.tableLabels.${tableId}`) : tableId;
-  const refresh = useCallback(() => setEntries(readSaved()), []);
-  useEffect(() => {
-    refresh();
-  }, [refresh]);
+  const navigate = useNavigate();
+  const queryClient = useQueryClient();
+  const canSchedule = useCan("analytics.schedule");
+  const [tab, setTab] = useState<"views" | "schedules">("views");
+  const [localEntries, setLocalEntries] = useState<SavedEntry[]>([]);
 
-  const remove = (entry: SavedEntry) => {
-    try {
-      const arr = JSON.parse(window.localStorage.getItem(entry.storageKey) || "[]");
-      if (Array.isArray(arr)) {
-        const next = arr.filter((v: { id?: unknown }) => String(v?.id) !== entry.id);
-        window.localStorage.setItem(entry.storageKey, JSON.stringify(next));
-      }
-    } catch {
-      /* ignore */
-    }
-    refresh();
+  const refreshLocal = useCallback(() => setLocalEntries(readLocalEntries()), []);
+  useEffect(() => {
+    refreshLocal();
+  }, [refreshLocal]);
+
+  // Server views: one GET per known module (analytics segments ∪ local tableIds).
+  const localModules = useMemo(
+    () => [...new Set(localEntries.map((e) => e.module))],
+    [localEntries],
+  );
+  const serverViews = useQuery({
+    queryKey: ["saved-views", "all", localModules],
+    queryFn: async ({ signal }) => {
+      const modules = [
+        ...new Set([...ANALYTICS_SEGMENTS.map((s) => `${ANALYTICS_PREFIX}${s}`), ...localModules]),
+      ];
+      const lists = await Promise.all(
+        modules.map((m) => fetchSavedViews(m, signal).catch(() => [] as AnalyticsSavedView[])),
+      );
+      return lists.flat();
+    },
+  });
+
+  const refresh = () => {
+    refreshLocal();
+    void queryClient.invalidateQueries({ queryKey: ["saved-views", "all"] });
+    void queryClient.invalidateQueries({ queryKey: ["analytics", "schedules"] });
   };
+
+  // ── merge: server wins on a name+module collision ──
+  const entries = useMemo<SavedEntry[]>(() => {
+    const server = (serverViews.data ?? []).map<SavedEntry>((v) => ({
+      key: `server:${v.id}`,
+      name: v.name,
+      module: v.module,
+      source: "server",
+      search: savedViewSearchString(v),
+      serverId: v.id,
+    }));
+    const taken = new Set(server.map((e) => `${e.module}${e.name}`));
+    const locals = localEntries.filter((e) => !taken.has(`${e.module}${e.name}`));
+    return [...server, ...locals].sort(
+      (a, b) => a.module.localeCompare(b.module) || a.name.localeCompare(b.name),
+    );
+  }, [serverViews.data, localEntries]);
+
+  const moduleLabel = (module: string) => {
+    if (module.startsWith(ANALYTICS_PREFIX)) {
+      const segment = module.slice(ANALYTICS_PREFIX.length);
+      return (ANALYTICS_SEGMENTS as readonly string[]).includes(segment)
+        ? t(`salesReports.pages.${segment}.title`)
+        : `${t("salesReports.hub.title")} — ${segment}`;
+    }
+    return KNOWN_TABLE_IDS.has(module) ? t(`misc.reports.saved.tableLabels.${module}`) : module;
+  };
+
+  const openEntry = (entry: SavedEntry) => {
+    // Analytics views deep-link back into the hub segment with the captured
+    // search (an empty capture still opens the segment on its defaults).
+    const segment = entry.module.slice(ANALYTICS_PREFIX.length);
+    navigate(`/reports/sales/${segment}${entry.search ? `?${entry.search}` : ""}`);
+  };
+
+  const removeEntry = (entry: SavedEntry) => {
+    if (entry.source === "server" && entry.serverId) {
+      void deleteSavedView(entry.serverId)
+        .catch(() => undefined)
+        .then(() => queryClient.invalidateQueries({ queryKey: ["saved-views", "all"] }));
+      return;
+    }
+    if (entry.storageKey) {
+      try {
+        const arr = JSON.parse(window.localStorage.getItem(entry.storageKey) || "[]");
+        if (Array.isArray(arr)) {
+          const next = arr.filter((v: { id?: unknown }) => String(v?.id) !== entry.localId);
+          window.localStorage.setItem(entry.storageKey, JSON.stringify(next));
+        }
+      } catch {
+        /* ignore */
+      }
+    }
+    refreshLocal();
+  };
+
+  const viewsList =
+    entries.length === 0 ? (
+      <EmptyState
+        icon={<Bookmark className="h-6 w-6" />}
+        title={t("misc.reports.saved.emptyTitle")}
+        body={t("misc.reports.saved.emptyBody", { menu: t("table.savedViews.menu") })}
+      />
+    ) : (
+      <ul className="surface divide-y divide-slate-100">
+        {entries.map((entry) => (
+          <li key={entry.key} className="flex items-center justify-between gap-3 p-4">
+            <div className="flex min-w-0 items-center gap-3">
+              <span className="grid h-9 w-9 shrink-0 place-items-center rounded-xl bg-teal-50 text-teal-700">
+                <Bookmark className="h-4 w-4" />
+              </span>
+              <div className="min-w-0">
+                <div className="truncate text-sm font-extrabold text-slate-900">{entry.name}</div>
+                <div className="mt-0.5 text-xs font-medium text-slate-400">
+                  {t("misc.reports.saved.source")}: {moduleLabel(entry.module)}
+                </div>
+              </div>
+            </div>
+            <div className="flex shrink-0 items-center gap-2">
+              <Badge tone={entry.source === "server" ? "teal" : "neutral"}>
+                {entry.source === "server"
+                  ? t("salesReports.saved.sourceServer")
+                  : t("salesReports.saved.sourceLocal")}
+              </Badge>
+              {entry.module.startsWith(ANALYTICS_PREFIX) && (
+                <Button size="sm" variant="secondary" onClick={() => openEntry(entry)}>
+                  <ExternalLink className="h-4 w-4" /> {t("salesReports.saved.open")}
+                </Button>
+              )}
+              <IconButton
+                aria-label={t("misc.reports.saved.deleteView", { name: entry.name })}
+                size="sm"
+                variant="danger"
+                onClick={() => removeEntry(entry)}
+              >
+                <Trash2 className="h-4 w-4" />
+              </IconButton>
+            </div>
+          </li>
+        ))}
+      </ul>
+    );
 
   return (
     <div>
       <PageHeader
         eyebrow={t("misc.reports.eyebrow")}
-        title={t("misc.reports.saved.title")}
+        title={t("salesReports.saved.title")}
         subtitle={t("misc.reports.saved.subtitle")}
         action={
           <Button variant="secondary" onClick={refresh}>
@@ -83,37 +244,18 @@ export default function SavedReportsPage() {
           </Button>
         }
       />
-      {entries.length === 0 ? (
-        <EmptyState
-          icon={<Bookmark className="h-6 w-6" />}
-          title={t("misc.reports.saved.emptyTitle")}
-          body={t("misc.reports.saved.emptyBody", { menu: t("table.savedViews.menu") })}
-        />
-      ) : (
-        <ul className="surface divide-y divide-slate-100">
-          {entries.map((entry) => (
-            <li key={`${entry.storageKey}:${entry.id}`} className="flex items-center justify-between gap-3 p-4">
-              <div className="flex min-w-0 items-center gap-3">
-                <span className="grid h-9 w-9 shrink-0 place-items-center rounded-xl bg-teal-50 text-teal-700">
-                  <Bookmark className="h-4 w-4" />
-                </span>
-                <div className="min-w-0">
-                  <div className="truncate text-sm font-extrabold text-slate-900">{entry.name}</div>
-                  <div className="mt-0.5 text-xs font-medium text-slate-400">
-                    {t("misc.reports.saved.source")}: {tableLabel(entry.tableId)}
-                  </div>
-                </div>
-              </div>
-              <div className="flex shrink-0 items-center gap-2">
-                <Badge tone="neutral">{t("misc.reports.saved.badge")}</Badge>
-                <IconButton aria-label={t("misc.reports.saved.deleteView", { name: entry.name })} size="sm" variant="danger" onClick={() => remove(entry)}>
-                  <Trash2 className="h-4 w-4" />
-                </IconButton>
-              </div>
-            </li>
-          ))}
-        </ul>
-      )}
+      <Tabs
+        aria-label={t("salesReports.saved.title")}
+        className="mb-4"
+        items={[
+          { value: "views", label: t("salesReports.saved.tabViews") },
+          // The schedules tab exists ONLY with the analytics.schedule cap.
+          ...(canSchedule ? [{ value: "schedules", label: t("salesReports.saved.tabSchedules") }] : []),
+        ]}
+        value={canSchedule ? tab : "views"}
+        onChange={(next) => setTab(next === "schedules" ? "schedules" : "views")}
+      />
+      {tab === "schedules" && canSchedule ? <SchedulesPanel /> : viewsList}
     </div>
   );
 }

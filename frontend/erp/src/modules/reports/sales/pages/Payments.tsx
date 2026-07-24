@@ -3,9 +3,8 @@
 // Collections KPIs (payments in / refunds out / net collections / tips — tips
 // renders "—" when null), stacked payments-in bars by payment method by day,
 // and a per-method table with the in/out direction split (refunds cells carry
-// the negative cellTone). Method rows do NOT drill: the shared filter codec
-// owns no payment_method param yet — listed as a wanted param in the wave
-// report.
+// the negative cellTone). Wave 4: a method row (or its bar series) drills by
+// pinning the shared `paymentMethod` codec param (push:true — Back restores).
 import { lazy, Suspense, useMemo, type ReactElement } from "react";
 import { HandCoins, Undo2, Wallet, Coins } from "lucide-react";
 import { Badge, EmptyState, ErrorState, ExplainNumber, LoadingState, MetricCard, Skeleton } from "@/shared/ui";
@@ -20,6 +19,7 @@ import { analyticsFilterCodec, type AnalyticsFilters } from "../lib/filters";
 import {
   buildFiltersBody,
   displayMetric,
+  setPageExportRequest,
   type AnalyticsCompareSpec,
   type AnalyticsQueryBody,
   type AnalyticsRegistry,
@@ -30,6 +30,13 @@ import { useAnalyticsQuery, useAnalyticsRegistry } from "../lib/useAnalyticsQuer
 
 const SEGMENT = "payments";
 const KPI_METRICS = ["payments_in", "refunds_out", "net_collections", "tips_total"] as const;
+
+// The TopBar ExportMenu asks this page's registry entry for its export shape.
+setPageExportRequest(SEGMENT, () => ({
+  metrics: ["payments_in", "refunds_out", "net_collections"],
+  dimensions: ["payment_method"],
+  sort: [{ by: "payments_in", dir: "desc" }],
+}));
 
 /* ── deferred chart kit (page-local copy by design; see wave notes) ── */
 
@@ -61,7 +68,7 @@ function metricExplain(t: TFunction, registry: AnalyticsRegistry | undefined, co
     <ExplainNumber
       title={t(`salesReports.metrics.${code}`)}
       formula={equationKey ? t(`salesReports.explain.${equationKey}`) : undefined}
-      triggerLabel={t(`salesReports.metrics.${code}`)}
+      triggerLabel={`${t("salesReports.explain.trigger")} — ${t(`salesReports.metrics.${code}`)}`}
     />
   );
 }
@@ -111,8 +118,13 @@ export default function Payments() {
   const t = useT();
   const palette = useChartPalette();
   const rtl = useChartsRtl();
-  const { filters } = useUrlFilters(analyticsFilterCodec);
+  const { filters, patch } = useUrlFilters(analyticsFilterCodec);
   const registry = useAnalyticsRegistry();
+
+  // Wave-4 drill: pin the clicked method as the shared paymentMethod filter.
+  const drillMethod = (method: string) => {
+    if (method !== "") patch({ paymentMethod: [method] }, { push: true });
+  };
 
   const base = buildFiltersBody(filters);
   const compare = compareSpec(filters);
@@ -162,7 +174,7 @@ export default function Payments() {
     }
     return {
       stackedDays: [...byDay.values()].sort((a, b) => a.day.localeCompare(b.day)),
-      methodSeries: [...series.entries()].map(([key, label]) => ({ key: `m_${key}`, label })),
+      methodSeries: [...series.entries()].map(([key, label]) => ({ key: `m_${key}`, method: key, label })),
     };
   }, [byDayMethod.data]);
 
@@ -270,8 +282,8 @@ export default function Payments() {
               title={t("salesReports.metrics.payments_in")}
               subtitle={`${t("salesReports.dims.payment_method")} — ${t("salesReports.dims.business_day")}`}
               isEmpty={stackedDays.length === 0}
-              emptyLabel={t("inventoryRest.analytics.chartEmpty")}
-              tableLabel={t("inventoryRest.analytics.showTable")}
+              emptyLabel={t("salesReports.charts.empty")}
+              tableLabel={t("salesReports.charts.showTable")}
               tableCaption={`${t("salesReports.metrics.payments_in")} — ${t("salesReports.dims.payment_method")}`}
               tableColumns={[
                 { key: "day", label: t("salesReports.dims.business_day") },
@@ -305,6 +317,8 @@ export default function Payments() {
                     stackId="in"
                     fill={palette.series[i % palette.series.length]}
                     radius={i === methodSeries.length - 1 ? [6, 6, 0, 0] : undefined}
+                    cursor="pointer"
+                    onClick={() => drillMethod(s.method)}
                   />
                 ))}
               </R.BarChart>
@@ -318,6 +332,7 @@ export default function Payments() {
         rows={methodRows}
         getRowId={(r) => r.key}
         initialSort={{ columnId: "paymentsIn", dir: "desc" }}
+        onRowClick={(r) => drillMethod(r.key)}
         emptyTitle={t("salesReports.states.empty")}
       />
     </section>

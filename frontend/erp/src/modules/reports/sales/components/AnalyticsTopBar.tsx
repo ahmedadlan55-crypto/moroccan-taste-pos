@@ -4,9 +4,12 @@
 // parsed state, `patch`/`reset` mutate the URL. Active-filter chips derive
 // from the codec's own serialize() (non-null ⇔ non-default) so the chip row
 // can never drift from what the URL actually says.
-import type { ReactNode } from "react";
-import { RefreshCw, X } from "lucide-react";
-import { Badge, IconButton, SegmentedControl } from "@/shared/ui";
+import { useState, type ReactNode } from "react";
+import { useLocation, useNavigate } from "react-router-dom";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { Bookmark, Check, Plus, RefreshCw, X } from "lucide-react";
+import { Badge, Button, Dialog, DropdownMenu, IconButton, Input, SegmentedControl } from "@/shared/ui";
+import { useCan } from "@/shared/permissions";
 import {
   ComparePicker,
   DateRangePicker,
@@ -24,7 +27,15 @@ import {
   type AnalyticsCompareMode,
   type AnalyticsFilters,
 } from "../lib/filters";
-import { useBrandOptions, useBranchOptions, type AnalyticsResult } from "../lib/api";
+import {
+  createSavedView,
+  fetchSavedViews,
+  savedViewSearchString,
+  useBrandOptions,
+  useBranchOptions,
+  type AnalyticsResult,
+} from "../lib/api";
+import { ExportMenu } from "./ExportMenu";
 
 /** Static channel codes this wave (server-backed options arrive with explorer). */
 export const CHANNEL_CODES = ["pos", "online", "aggregator", "call_center"] as const;
@@ -64,11 +75,157 @@ function toOptions(rows: Array<{ id: string; name: string }> | undefined): Multi
   return (rows ?? []).map((r) => ({ value: r.id, label: r.name }));
 }
 
+/* ── save-view control (wave 4) ─────────────────────────────────
+ * Server-backed named URL states, one saved-views module per hub segment
+ * (module = "analytics:<segment>", segment derived from the pathname because
+ * the TopBar is rendered by the hub container, which owns no such prop).
+ * Save captures the CURRENT url search string as { filters: "<qs>" }; picking
+ * a view REPLACES the search with the stored one. A failed server save falls
+ * back to localStorage (adlan.views.analytics:<segment>, the SavedViews shape)
+ * so the capture is never lost offline. */
+
+const LOCAL_VIEWS_PREFIX = "adlan.views.";
+
+interface LocalSavedView {
+  id: string;
+  name: string;
+  state: { filters?: unknown };
+}
+
+function readLocalViews(module: string): LocalSavedView[] {
+  try {
+    const parsed = JSON.parse(window.localStorage.getItem(`${LOCAL_VIEWS_PREFIX}${module}`) ?? "[]");
+    return Array.isArray(parsed) ? (parsed as LocalSavedView[]) : [];
+  } catch {
+    return [];
+  }
+}
+
+function writeLocalView(module: string, name: string, search: string): void {
+  try {
+    const key = `${LOCAL_VIEWS_PREFIX}${module}`;
+    const list = readLocalViews(module).filter((v) => v?.name !== name);
+    list.push({ id: `${Date.now()}`, name, state: { filters: search } });
+    window.localStorage.setItem(key, JSON.stringify(list));
+  } catch {
+    /* best-effort offline fallback */
+  }
+}
+
+function SaveViewControl() {
+  const t = useT();
+  const location = useLocation();
+  const navigate = useNavigate();
+  const queryClient = useQueryClient();
+  const segment = location.pathname.split("/").filter(Boolean).pop() ?? "";
+  const module = `analytics:${segment}`;
+  const search = location.search.replace(/^\?/, "");
+
+  const views = useQuery({
+    queryKey: ["analytics", "saved-views", module],
+    queryFn: ({ signal }) => fetchSavedViews(module, signal),
+  });
+
+  const [dialogOpen, setDialogOpen] = useState(false);
+  const [name, setName] = useState("");
+  const [saving, setSaving] = useState(false);
+
+  const applySearch = (qs: string | null) => {
+    if (qs == null) return;
+    navigate({ pathname: location.pathname, search: qs ? `?${qs}` : "" }, { replace: true });
+  };
+
+  const save = async () => {
+    const trimmed = name.trim();
+    if (trimmed === "") return;
+    setSaving(true);
+    try {
+      await createSavedView({ module, name: trimmed, filtersJson: { filters: search } });
+      await queryClient.invalidateQueries({ queryKey: ["analytics", "saved-views", module] });
+    } catch {
+      // Server unreachable / endpoint down → keep the capture on this device.
+      writeLocalView(module, trimmed, search);
+    } finally {
+      setSaving(false);
+      setDialogOpen(false);
+    }
+  };
+
+  const serverViews = views.data ?? [];
+  const localViews = typeof window === "undefined" ? [] : readLocalViews(module);
+  const serverNames = new Set(serverViews.map((v) => v.name));
+  const items = [
+    ...serverViews.map((v) => ({
+      key: `sv-${v.id}`,
+      label: v.name,
+      icon: <Check className="h-4 w-4" />,
+      onSelect: () => applySearch(savedViewSearchString(v)),
+    })),
+    ...localViews
+      .filter((v) => !serverNames.has(v.name))
+      .map((v) => ({
+        key: `lv-${v.id}`,
+        label: v.name,
+        icon: <Check className="h-4 w-4" />,
+        onSelect: () => applySearch(savedViewSearchString({ filtersJson: v.state?.filters })),
+      })),
+    {
+      key: "__save__",
+      label: t("salesReports.saved.savePrompt"),
+      icon: <Plus className="h-4 w-4" />,
+      onSelect: () => {
+        setName("");
+        setDialogOpen(true);
+      },
+    },
+  ];
+
+  return (
+    <>
+      <DropdownMenu
+        aria-label={t("salesReports.topbar.saveView")}
+        trigger={
+          <span className="inline-flex min-h-9 items-center gap-2 rounded-xl border border-slate-200 bg-white px-3 text-sm font-bold text-slate-600 hover:bg-slate-50">
+            <Bookmark className="h-4 w-4" /> {t("salesReports.topbar.saveView")}
+          </span>
+        }
+        items={items}
+      />
+      <Dialog
+        open={dialogOpen}
+        onClose={() => setDialogOpen(false)}
+        title={t("salesReports.saved.savePrompt")}
+        size="sm"
+        presentation="compact"
+        footer={
+          <>
+            <Button variant="secondary" onClick={() => setDialogOpen(false)} disabled={saving}>
+              {t("common.cancel")}
+            </Button>
+            <Button disabled={name.trim().length === 0} loading={saving} onClick={() => void save()}>
+              {t("common.save")}
+            </Button>
+          </>
+        }
+      >
+        <label className="block">
+          <span className="text-xs font-bold text-slate-600">{t("salesReports.saved.saveName")}</span>
+          <Input className="mt-1" value={name} onChange={(e) => setName(e.target.value)} autoFocus />
+        </label>
+      </Dialog>
+    </>
+  );
+}
+
 export function AnalyticsTopBar({ filters, patch, reset, meta, onRefresh, pageActions }: AnalyticsTopBarProps) {
   const t = useT();
+  const location = useLocation();
   const defaults = analyticsFilterCodec.defaults;
   const brands = useBrandOptions();
   const branches = useBranchOptions();
+  // Segment = the last pathname piece (the hub owns /reports/sales/<segment>).
+  const segment = location.pathname.split("/").filter(Boolean).pop() ?? "";
+  const canExport = useCan("analytics.export");
 
   const presetLabels = Object.fromEntries(
     DATE_RANGE_PRESETS.map((p) => [p, t(`salesReports.topbar.presets.${p}`)]),
@@ -103,7 +260,10 @@ export function AnalyticsTopBar({ filters, patch, reset, meta, onRefresh, pageAc
       onRemove: () => patch({ compare: defaults.compare }),
     });
   }
-  const multiChip = (key: "brandId" | "branchId" | "channel" | "orderType", labelKey: string) => {
+  const multiChip = (
+    key: "brandId" | "branchId" | "channel" | "orderType" | "paymentMethod" | "menuItemId" | "categoryId" | "cashierId",
+    labelKey: string,
+  ) => {
     if (!activeKeys.has(key)) return;
     chips.push({
       id: key,
@@ -115,6 +275,18 @@ export function AnalyticsTopBar({ filters, patch, reset, meta, onRefresh, pageAc
   multiChip("branchId", "salesReports.topbar.branch");
   multiChip("channel", "salesReports.topbar.channel");
   multiChip("orderType", "salesReports.topbar.orderType");
+  // Wave-4 drill params — chips keep the URL and the chip row in lock-step.
+  multiChip("paymentMethod", "salesReports.dims.payment_method");
+  multiChip("menuItemId", "salesReports.dims.menu_item");
+  multiChip("categoryId", "salesReports.dims.category");
+  multiChip("cashierId", "salesReports.dims.cashier");
+  if (activeKeys.has("hour")) {
+    chips.push({
+      id: "hour",
+      label: `${t("salesReports.dims.hour")}: ${filters.hour}`,
+      onRemove: () => patch({ hour: "" }),
+    });
+  }
   if (activeKeys.has("businessDay")) {
     chips.push({
       id: "businessDay",
@@ -256,6 +428,8 @@ export function AnalyticsTopBar({ filters, patch, reset, meta, onRefresh, pageAc
               <RefreshCw className="h-4 w-4" />
             </IconButton>
           )}
+          <SaveViewControl />
+          {canExport && <ExportMenu segment={segment} filters={filters} />}
           {pageActions}
         </div>
       </div>

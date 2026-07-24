@@ -240,6 +240,9 @@ export const salesReports = {
   },
 
   explain: {
+    // UI-only key (NOT an equation key — carved out of the registry parity test):
+    // the accessible label of the "why is this number?" info trigger.
+    trigger: "لماذا هذا الرقم؟",
     sum: "مجموع القيم المخزّنة مباشرةً ضمن الفترة والفلاتر المحددة.",
     count: "عدد السجلات المطابقة ضمن الفترة والفلاتر المحددة.",
     grossProductSales: "مجموع مبالغ أسطر البيع قبل الخصومات والمرتجعات (دون الضريبة).",
@@ -277,6 +280,9 @@ export const salesReports = {
     runQuery: "تشغيل الاستعلام",
     saveReport: "حفظ التقرير",
     comingSoon: "منشئ التقارير المخصّصة يصل في الموجة القادمة",
+    sort: "الترتيب",
+    schedule: "جدولة التقرير",
+    showChart: "عرض الرسم البياني",
   },
 
   placeholder: {
@@ -287,5 +293,75 @@ export const salesReports = {
   pivot: {
     expand: "توسيع المجموعة",
     collapse: "طي المجموعة",
+  },
+
+  charts: {
+    showTable: "عرض الجدول",
+    empty: "لا توجد بيانات للرسم ضمن الفترة والفلاتر المحددة",
+  },
+
+  explorer: {
+    primaryDim: "البُعد الأساسي",
+    secondaryDim: "البُعد الثانوي",
+    top: "الأعلى",
+    bottom: "الأدنى",
+    topN: "عدد النتائج",
+  },
+
+  orders: {
+    colInvoice: "رقم الفاتورة",
+  },
+
+  profitability: {
+    quadrants: {
+      stars: "النجوم",
+      plowhorses: "الأحصنة العاملة",
+      puzzles: "الألغاز",
+      dogs: "الأصناف الراكدة",
+    },
+  },
+
+  reconciliation: {
+    exceptionDays: "أيام الاستثناء",
+  },
+
+  discounts: {
+    reasonGap: "سبب الخصم غير مسجَّل في مخزن الحقائق بعد",
+  },
+
+  saved: {
+    title: "التقارير المحفوظة",
+    tabViews: "التقارير المحفوظة",
+    tabSchedules: "الجداول الزمنية",
+    open: "فتح",
+    sourceLocal: "جهاز",
+    sourceServer: "خادم",
+    saveName: "اسم العرض",
+    savePrompt: "حفظ العرض الحالي",
+  },
+
+  exportMenu: {
+    csv: "تصدير CSV",
+    xlsx: "تصدير XLSX",
+    queued: "التصدير في قائمة الانتظار",
+    ready: "التصدير جاهز للتنزيل",
+    failed: "تعذّر إنشاء التصدير",
+    download: "تنزيل التصدير",
+  },
+
+  schedules: {
+    name: "اسم الجدولة",
+    freq: "التكرار",
+    daily: "يوميًا",
+    weekly: "أسبوعيًا",
+    monthly: "شهريًا",
+    atTime: "وقت التنفيذ",
+    weekday: "يوم الأسبوع",
+    monthDay: "يوم الشهر",
+    timezone: "المنطقة الزمنية",
+    active: "مفعّلة",
+    create: "جدولة جديدة",
+    edit: "تعديل الجدولة",
+    deleteConfirm: "هل تريد حذف هذه الجدولة؟",
   },
 } as const;

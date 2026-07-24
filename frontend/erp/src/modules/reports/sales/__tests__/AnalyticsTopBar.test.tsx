@@ -1,12 +1,23 @@
 // Sales Analytics Hub — AnalyticsTopBar behavior: segmented basis toggles,
 // codec-derived active-filter chips (add/remove/clear-all). The bar is a
 // controlled component: it never mutates state itself, it calls patch()/reset().
+//
+// WAVE-4 UPDATE: the bar now derives its segment from the URL (save-view /
+// export controls), so renders are wrapped in a MemoryRouter and the
+// permission hook is mocked (export stays hidden: cap not granted here).
 import { render, screen, fireEvent, cleanup } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { MemoryRouter } from "react-router-dom";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { I18nProvider } from "@/i18n";
 import { AnalyticsTopBar } from "../components/AnalyticsTopBar";
 import { analyticsFilterCodec, type AnalyticsFilters } from "../lib/filters";
+
+vi.mock("@/shared/permissions", () => ({
+  useCan: () => false,
+  usePermissions: () => ({ can: () => false }),
+  Can: ({ fallback = null }: { children?: React.ReactNode; fallback?: React.ReactNode }) => <>{fallback}</>,
+}));
 
 vi.mock("@/shared/api", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@/shared/api")>();
@@ -32,7 +43,9 @@ function renderBar(overrides: Partial<AnalyticsFilters> = {}) {
   render(
     <QueryClientProvider client={client}>
       <I18nProvider>
-        <AnalyticsTopBar filters={{ ...DEFAULTS, ...overrides }} patch={patch} reset={reset} />
+        <MemoryRouter initialEntries={["/reports/sales/executive"]}>
+          <AnalyticsTopBar filters={{ ...DEFAULTS, ...overrides }} patch={patch} reset={reset} />
+        </MemoryRouter>
       </I18nProvider>
     </QueryClientProvider>,
   );

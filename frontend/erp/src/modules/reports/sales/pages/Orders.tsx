@@ -24,8 +24,21 @@ import { o2cApi } from "@/modules/sales/lib/api";
 import { qk } from "@/modules/sales/lib/query-keys";
 import type { Invoice } from "@/modules/sales/lib/types";
 import { analyticsFilterCodec } from "../lib/filters";
-import { buildFiltersBody, displayMetric, type AnalyticsQueryBody, type AnalyticsResult } from "../lib/api";
+import {
+  buildFiltersBody,
+  displayMetric,
+  setPageExportRequest,
+  type AnalyticsQueryBody,
+  type AnalyticsResult,
+} from "../lib/api";
 import { useAnalyticsQuery } from "../lib/useAnalyticsQuery";
+
+// The TopBar ExportMenu asks this page's registry entry for its export shape.
+setPageExportRequest("orders", () => ({
+  metrics: ["orders", "invoice_total", "avg_ticket"],
+  dimensions: ["business_day"],
+  sort: [{ by: "business_day", dir: "asc" }],
+}));
 
 /** Optional enrichment columns the O2C list may grow later (today they read "—"). */
 type HubInvoiceRow = Invoice & {
@@ -69,6 +82,11 @@ export default function Orders() {
   const { filters } = useUrlFilters(analyticsFilterCodec);
 
   // ── KPI row (analytics API) ──
+  // buildFiltersBody carries the wave-4 drill params too (paymentMethod / hour
+  // / menuItemId / categoryId / cashierId), so a drill INTO this page scopes
+  // the KPIs. The operational invoice LIST below cannot filter by them —
+  // InvoiceService.list accepts none of these (reported gap), so the table
+  // shows the period's invoices unscoped by the drill params.
   const kpiBody = useMemo<AnalyticsQueryBody>(
     () => ({
       metrics: ["orders", "invoice_total", "avg_ticket"],
@@ -119,9 +137,7 @@ export default function Orders() {
     () => [
       {
         id: "document_number",
-        // Reuses the operational sales dictionary ("Invoice no.") — the hub
-        // namespace has no invoice-number key (wanted: salesReports.orders.colInvoice).
-        header: t("sales.invoices.col.number"),
+        header: t("salesReports.orders.colInvoice"),
         accessor: (r) => r.document_number,
         cell: (r) => <span className="font-bold text-teal-700">{r.document_number}</span>,
         sortable: true,

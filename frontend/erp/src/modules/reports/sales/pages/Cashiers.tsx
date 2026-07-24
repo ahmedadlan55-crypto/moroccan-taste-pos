@@ -3,8 +3,10 @@
 // One per-cashier query drives everything: the KPI row (orders / net / avg
 // ticket from the query totals), a per-cashier table whose discount/void/return
 // rate cells carry the warning cellTone above the CLIENT-SIDE P75 of the
-// column, and a top-cashiers-by-net bar chart.
+// column, and a top-cashiers-by-net bar chart. Wave 4: a cashier row drills to
+// the orders segment with the cashier pinned via the shared `cashierId` param.
 import { lazy, Suspense, useMemo, type ReactElement } from "react";
+import { useLocation, useNavigate } from "react-router-dom";
 import { Coins, ShoppingBag, Ticket } from "lucide-react";
 import { Badge, EmptyState, ErrorState, ExplainNumber, LoadingState, MetricCard, Skeleton } from "@/shared/ui";
 import { useChartPalette } from "@/shared/charts/palette";
@@ -18,6 +20,7 @@ import { analyticsFilterCodec, type AnalyticsFilters } from "../lib/filters";
 import {
   buildFiltersBody,
   displayMetric,
+  setPageExportRequest,
   type AnalyticsCompareSpec,
   type AnalyticsQueryBody,
   type AnalyticsRegistry,
@@ -35,6 +38,13 @@ const METRICS = [
   "return_rate_by_cashier",
 ] as const;
 const TOP_N = 10;
+
+// The TopBar ExportMenu asks this page's registry entry for its export shape.
+setPageExportRequest(SEGMENT, () => ({
+  metrics: [...METRICS],
+  dimensions: ["cashier"],
+  sort: [{ by: "net_ex_vat", dir: "desc" }],
+}));
 
 /* ── deferred chart kit (page-local copy by design; see wave notes) ── */
 
@@ -66,7 +76,7 @@ function metricExplain(t: TFunction, registry: AnalyticsRegistry | undefined, co
     <ExplainNumber
       title={t(`salesReports.metrics.${code}`)}
       formula={equationKey ? t(`salesReports.explain.${equationKey}`) : undefined}
-      triggerLabel={t(`salesReports.metrics.${code}`)}
+      triggerLabel={`${t("salesReports.explain.trigger")} — ${t(`salesReports.metrics.${code}`)}`}
     />
   );
 }
@@ -95,6 +105,14 @@ function totalValue(result: AnalyticsResult | undefined, id: string): number | n
 
 const fmtPercent = (v: number) => `${formatNumber(v)}%`;
 
+/** Merge extra params over the CURRENT search and render a hub segment URL. */
+function segmentHref(search: string, segment: string, extra: Record<string, string>): string {
+  const sp = new URLSearchParams(search);
+  for (const [k, v] of Object.entries(extra)) sp.set(k, v);
+  const qs = sp.toString();
+  return `/reports/sales/${segment}${qs ? `?${qs}` : ""}`;
+}
+
 /** Client-side P75 (linear index method) over the non-null values. */
 function p75(values: Array<number | null>): number | null {
   const nums = values.filter((v): v is number => typeof v === "number").sort((a, b) => a - b);
@@ -117,6 +135,8 @@ export default function Cashiers() {
   const t = useT();
   const palette = useChartPalette();
   const rtl = useChartsRtl();
+  const navigate = useNavigate();
+  const location = useLocation();
   const { filters } = useUrlFilters(analyticsFilterCodec);
   const registry = useAnalyticsRegistry();
 
@@ -288,8 +308,8 @@ export default function Cashiers() {
               title={t("salesReports.metrics.net_ex_vat")}
               subtitle={t("salesReports.dims.cashier")}
               isEmpty={topCashiers.length === 0}
-              emptyLabel={t("inventoryRest.analytics.chartEmpty")}
-              tableLabel={t("inventoryRest.analytics.showTable")}
+              emptyLabel={t("salesReports.charts.empty")}
+              tableLabel={t("salesReports.charts.showTable")}
               tableCaption={`${t("salesReports.metrics.net_ex_vat")} — ${t("salesReports.dims.cashier")}`}
               tableColumns={[
                 { key: "label", label: t("salesReports.dims.cashier") },
@@ -317,6 +337,11 @@ export default function Cashiers() {
         rows={cashierRows}
         getRowId={(r) => r.key}
         initialSort={{ columnId: "net", dir: "desc" }}
+        // Wave-4 drill: orders segment with the cashier pinned (`cashierId`
+        // codec param merged into the current search — one history push).
+        onRowClick={(r) =>
+          r.key !== "" && navigate(segmentHref(location.search, "orders", { cashierId: r.key }))
+        }
         emptyTitle={t("salesReports.states.empty")}
       />
     </section>

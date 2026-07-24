@@ -37,6 +37,8 @@ describe("analytics filter codec", () => {
 
   it("parses an empty URL to the full default state", () => {
     const f = codec.parse(new URLSearchParams());
+    // wave 4 added the five drill params (paymentMethod/hour/menuItemId/
+    // categoryId/cashierId) — the default state now carries their empties.
     expect(f).toEqual({
       from: "2026-06-25",
       to: "2026-07-24",
@@ -48,6 +50,11 @@ describe("analytics filter codec", () => {
       orderType: [],
       businessDay: true,
       taxIncl: false,
+      paymentMethod: [],
+      hour: "",
+      menuItemId: [],
+      categoryId: [],
+      cashierId: [],
     } satisfies AnalyticsFilters);
   });
 
@@ -70,6 +77,12 @@ describe("analytics filter codec", () => {
         "orderType",
         "businessDay",
         "taxIncl",
+        // wave-4 drill params
+        "paymentMethod",
+        "hour",
+        "menuItemId",
+        "categoryId",
+        "cashierId",
       ].sort(),
     );
   });
@@ -86,6 +99,11 @@ describe("analytics filter codec", () => {
       orderType: ["delivery"],
       businessDay: false,
       taxIncl: true,
+      paymentMethod: ["cash", "card"],
+      hour: "13",
+      menuItemId: ["M1"],
+      categoryId: ["C7"],
+      cashierId: ["U3"],
     };
     const serialized = codec.serialize(state);
     const sp = new URLSearchParams();
@@ -96,6 +114,8 @@ describe("analytics filter codec", () => {
     expect(sp.get("branchId")).toBe("BR9");
     expect(sp.get("from")).toBe("2026-01-01");
     expect(sp.get("to")).toBe("2026-01-31");
+    expect(sp.get("paymentMethod")).toBe("cash,card");
+    expect(sp.get("hour")).toBe("13");
   });
 
   it("falls back to defaults on malformed/unknown raw values", () => {

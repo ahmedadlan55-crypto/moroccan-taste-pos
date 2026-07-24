@@ -19,6 +19,16 @@ export interface AnalyticsQueryFilters {
   branchIds?: string[];
   channels?: string[];
   orderTypes?: string[];
+  // ── wave-4 drill filters. Each named key maps onto ONE registry dimension
+  //    (lib/analytics/registry/dimensions.js) server-side:
+  //    paymentMethods → payment_method · hours → hour · menuIds → menu_item ·
+  //    categoryIds → category · cashiers → cashier.
+  //    Sent ONLY when non-empty — the planner 422s on unknown ids actually sent.
+  paymentMethods?: string[];
+  hours?: number[];
+  menuIds?: string[];
+  categoryIds?: string[];
+  cashiers?: string[];
   /** Page-local extra dimension filters ({ dimensionId: values[] }). */
   extra?: Record<string, Array<string | number>>;
 }
@@ -132,6 +142,13 @@ export function buildFiltersBody(
       ...(filters.branchId.length > 0 ? { branchIds: filters.branchId } : {}),
       ...(filters.channel.length > 0 ? { channels: filters.channel } : {}),
       ...(filters.orderType.length > 0 ? { orderTypes: filters.orderType } : {}),
+      // Wave-4 drill filters (named key → registry dimension; see the
+      // AnalyticsQueryFilters comment). Only sent when non-empty.
+      ...(filters.paymentMethod.length > 0 ? { paymentMethods: filters.paymentMethod } : {}),
+      ...(filters.hour !== "" ? { hours: [Number(filters.hour)] } : {}),
+      ...(filters.menuItemId.length > 0 ? { menuIds: filters.menuItemId } : {}),
+      ...(filters.categoryId.length > 0 ? { categoryIds: filters.categoryId } : {}),
+      ...(filters.cashierId.length > 0 ? { cashiers: filters.cashierId } : {}),
     },
     dateBasis: filters.businessDay ? "business_day" : "calendar_day",
     taxMode: filters.taxIncl ? "incl" : "excl",
@@ -186,4 +203,259 @@ export function useBranchOptions() {
     queryFn: async ({ signal }) =>
       asOptionArray(await apiClient.get<unknown>("/erp/branches-full", { signal })),
   });
+}
+
+/* ── envelope unwrap ─────────────────────────────────────────────
+ * The saved-views / analytics-exports / analytics-schedules endpoints answer
+ * with { success, data } envelopes. Tolerant unwrap: {data} wins, a raw value
+ * passes through (test mocks often return the raw array). */
+
+function unwrapData<T>(v: unknown, fallback: T): T {
+  if (v && typeof v === "object" && "data" in (v as Record<string, unknown>)) {
+    const d = (v as { data: unknown }).data;
+    return (d as T) ?? fallback;
+  }
+  return (v as T) ?? fallback;
+}
+
+/* ── planner-shaped requests (exports + schedules) ───────────────
+ * POST /analytics/exports and the schedules' stored request_json are dry-run
+ * through lib/analytics/planner.plan() VERBATIM (ExportService.createJob), so
+ * they must carry the PLANNER contract — range/filters[{dimension,op,values}]
+ * — not the page-query body shape above. buildPlannerRequest is the one
+ * translation point from the shared URL filters. */
+
+export interface PlannerFilterSpec {
+  dimension: string;
+  op: "in";
+  values: Array<string | number>;
+}
+
+export interface AnalyticsPlannerRequest {
+  metrics: string[];
+  dimensions: string[];
+  range: { from: string; to: string };
+  dateBasis: DateBasis;
+  filters?: PlannerFilterSpec[];
+  sort?: AnalyticsSortSpec[];
+  limit?: number;
+}
+
+/** What a page contributes to its export: metrics/dimensions (+ sort/limit). */
+export interface PageExportSpec {
+  metrics: string[];
+  dimensions: string[];
+  sort?: AnalyticsSortSpec[];
+  limit?: number;
+}
+
+export function buildPlannerRequest(
+  filters: AnalyticsFilters,
+  spec: PageExportSpec,
+): AnalyticsPlannerRequest {
+  const dimFilters: PlannerFilterSpec[] = [];
+  const add = (dimension: string, values: Array<string | number>) => {
+    if (values.length > 0) dimFilters.push({ dimension, op: "in", values });
+  };
+  add("brand", filters.brandId);
+  add("branch", filters.branchId);
+  add("channel", filters.channel);
+  add("order_type", filters.orderType);
+  add("payment_method", filters.paymentMethod);
+  add("hour", filters.hour === "" ? [] : [Number(filters.hour)]);
+  add("menu_item", filters.menuItemId);
+  add("category", filters.categoryId);
+  add("cashier", filters.cashierId);
+  return {
+    metrics: spec.metrics,
+    dimensions: spec.dimensions,
+    range: { from: filters.from, to: filters.to },
+    dateBasis: filters.businessDay ? "business_day" : "calendar_day",
+    ...(dimFilters.length > 0 ? { filters: dimFilters } : {}),
+    ...(spec.sort ? { sort: spec.sort } : {}),
+    ...(spec.limit != null ? { limit: spec.limit } : {}),
+  };
+}
+
+/* ── per-page export request registry ────────────────────────────
+ * The TopBar's ExportMenu can't know a page's metrics; pages register a
+ * factory keyed by their hub segment. Pages that never register fall back to
+ * DEFAULT_EXPORT_SPEC (net + orders by business day). */
+
+export type PageExportSpecFactory = (filters: AnalyticsFilters) => PageExportSpec;
+
+export const DEFAULT_EXPORT_SPEC: PageExportSpec = {
+  metrics: ["net_ex_vat", "orders"],
+  dimensions: ["business_day"],
+};
+
+const pageExportRegistry = new Map<string, PageExportSpecFactory>();
+
+export function setPageExportRequest(segment: string, factory: PageExportSpecFactory): void {
+  pageExportRegistry.set(segment, factory);
+}
+
+export function getPageExportRequest(segment: string): PageExportSpecFactory | undefined {
+  return pageExportRegistry.get(segment);
+}
+
+/** The full planner request the ExportMenu posts for a segment. */
+export function buildExportRequest(segment: string, filters: AnalyticsFilters): AnalyticsPlannerRequest {
+  const factory = getPageExportRequest(segment);
+  return buildPlannerRequest(filters, factory ? factory(filters) : DEFAULT_EXPORT_SPEC);
+}
+
+/* ── exports API (routes/analytics/exports.js) ───────────────────*/
+
+export type ExportJobStatus = "queued" | "running" | "done" | "failed";
+export type ExportFormat = "csv" | "xlsx";
+
+export interface AnalyticsExportJob {
+  id: string;
+  status: ExportJobStatus;
+  format?: ExportFormat | string;
+  error?: string | null;
+  row_count?: number | null;
+  created_at?: string;
+  finished_at?: string | null;
+}
+
+export function createAnalyticsExport(
+  request: AnalyticsPlannerRequest,
+  format: ExportFormat,
+): Promise<AnalyticsExportJob> {
+  return apiClient
+    .post<unknown>("/analytics/exports", { request, format })
+    .then((v) => unwrapData<AnalyticsExportJob>(v, { id: "", status: "failed" }));
+}
+
+export function fetchAnalyticsExport(id: string, signal?: AbortSignal): Promise<AnalyticsExportJob> {
+  return apiClient
+    .get<unknown>(`/analytics/exports/${id}`, { signal })
+    .then((v) => unwrapData<AnalyticsExportJob>(v, { id, status: "failed" }));
+}
+
+export function fetchAnalyticsExports(signal?: AbortSignal): Promise<AnalyticsExportJob[]> {
+  return apiClient
+    .get<unknown>("/analytics/exports", { signal })
+    .then((v) => unwrapData<AnalyticsExportJob[]>(v, []));
+}
+
+/** GET /analytics/exports/:id/download — the streaming endpoint (JWT header). */
+export function analyticsExportDownloadPath(id: string): string {
+  return `/analytics/exports/${id}/download`;
+}
+
+/* ── schedules API (routes/analytics/schedules.js) ───────────────*/
+
+export type ScheduleFreq = "daily" | "weekly" | "monthly";
+
+export interface AnalyticsSchedule {
+  id: string;
+  name: string;
+  /** The stored planner request (request_json, parsed server-side). */
+  request?: AnalyticsPlannerRequest | null;
+  format: ExportFormat | string;
+  freq: ScheduleFreq | string;
+  at_time: string;
+  weekday?: number | null;
+  month_day?: number | null;
+  timezone: string;
+  is_active: number | boolean;
+  last_run_at?: string | null;
+  next_run_at?: string | null;
+  created_at?: string;
+}
+
+export interface AnalyticsSchedulePayload {
+  name: string;
+  request: AnalyticsPlannerRequest;
+  format: ExportFormat;
+  freq: ScheduleFreq;
+  at_time: string;
+  weekday?: number;
+  month_day?: number;
+  timezone: string;
+  is_active: boolean;
+}
+
+export function fetchAnalyticsSchedules(signal?: AbortSignal): Promise<AnalyticsSchedule[]> {
+  return apiClient
+    .get<unknown>("/analytics/schedules", { signal })
+    .then((v) => unwrapData<AnalyticsSchedule[]>(v, []));
+}
+
+export function createAnalyticsSchedule(payload: AnalyticsSchedulePayload): Promise<AnalyticsSchedule> {
+  return apiClient
+    .post<unknown>("/analytics/schedules", payload)
+    .then((v) => unwrapData<AnalyticsSchedule>(v, payload as unknown as AnalyticsSchedule));
+}
+
+export function updateAnalyticsSchedule(
+  id: string,
+  payload: Partial<AnalyticsSchedulePayload>,
+): Promise<AnalyticsSchedule> {
+  return apiClient
+    .put<unknown>(`/analytics/schedules/${id}`, payload)
+    .then((v) => unwrapData<AnalyticsSchedule>(v, { id } as AnalyticsSchedule));
+}
+
+export function deleteAnalyticsSchedule(id: string): Promise<void> {
+  return apiClient.delete<unknown>(`/analytics/schedules/${id}`).then(() => undefined);
+}
+
+/* ── saved views API (routes/saved-views.js) ─────────────────────
+ * NOTE: the shared useSavedViewsSource (shared/tables/SavedViews.tsx) does not
+ * unwrap the { success, data } envelope and re-parses filtersJson that the
+ * server ALREADY parsed — so the hub talks to /saved-views through these
+ * envelope-aware wrappers instead (deviation documented in the wave report).
+ * filtersJson for analytics views is { filters: "<url search string>" }. */
+
+export interface AnalyticsSavedView {
+  id: string;
+  name: string;
+  module: string;
+  isDefault?: boolean;
+  isShared?: boolean;
+  /** Opaque JSON VALUE (already parsed server-side). */
+  filtersJson?: unknown;
+  columnsJson?: unknown;
+  sortJson?: unknown;
+}
+
+export function fetchSavedViews(module: string, signal?: AbortSignal): Promise<AnalyticsSavedView[]> {
+  return apiClient
+    .get<unknown>("/saved-views", { params: { module }, signal })
+    .then((v) =>
+      unwrapData<AnalyticsSavedView[]>(v, []).map((row) => ({ ...row, module: row.module ?? module })),
+    );
+}
+
+export function createSavedView(input: {
+  module: string;
+  name: string;
+  filtersJson: unknown;
+}): Promise<AnalyticsSavedView> {
+  return apiClient
+    .post<unknown>("/saved-views", input)
+    .then((v) => unwrapData<AnalyticsSavedView>(v, { id: "", name: input.name, module: input.module }));
+}
+
+export function deleteSavedView(id: string): Promise<void> {
+  return apiClient.delete<unknown>(`/saved-views/${id}`).then(() => undefined);
+}
+
+/**
+ * Extract the saved URL search string from a view's filtersJson. Accepts the
+ * canonical { filters: "<qs>" } blob, a bare string, or null for anything
+ * else (e.g. a legacy DataTable capture — not a URL state).
+ */
+export function savedViewSearchString(view: Pick<AnalyticsSavedView, "filtersJson">): string | null {
+  const fj = view.filtersJson;
+  if (typeof fj === "string") return fj.replace(/^\?/, "");
+  if (fj && typeof fj === "object") {
+    const inner = (fj as { filters?: unknown }).filters;
+    if (typeof inner === "string") return inner.replace(/^\?/, "");
+  }
+  return null;
 }

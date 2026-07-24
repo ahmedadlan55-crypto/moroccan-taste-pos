@@ -226,6 +226,9 @@ export const salesReports = {
   },
 
   explain: {
+    // UI-only key (NOT an equation key — carved out of the registry parity test):
+    // the accessible label of the "why is this number?" info trigger.
+    trigger: "Why this number?",
     sum: "Sum of the stored values within the selected period and filters.",
     count: "Count of the matching records within the selected period and filters.",
     grossProductSales: "Sum of sale-line amounts before discounts and returns (ex. VAT).",
@@ -263,6 +266,9 @@ export const salesReports = {
     runQuery: "Run query",
     saveReport: "Save report",
     comingSoon: "The custom report builder arrives in the next wave",
+    sort: "Sort",
+    schedule: "Schedule report",
+    showChart: "Show chart",
   },
 
   placeholder: {
@@ -273,5 +279,75 @@ export const salesReports = {
   pivot: {
     expand: "Expand group",
     collapse: "Collapse group",
+  },
+
+  charts: {
+    showTable: "Show table",
+    empty: "No chart data within the selected period and filters",
+  },
+
+  explorer: {
+    primaryDim: "Primary dimension",
+    secondaryDim: "Secondary dimension",
+    top: "Top",
+    bottom: "Bottom",
+    topN: "Result count",
+  },
+
+  orders: {
+    colInvoice: "Invoice no.",
+  },
+
+  profitability: {
+    quadrants: {
+      stars: "Stars",
+      plowhorses: "Plowhorses",
+      puzzles: "Puzzles",
+      dogs: "Dogs",
+    },
+  },
+
+  reconciliation: {
+    exceptionDays: "Exception days",
+  },
+
+  discounts: {
+    reasonGap: "Discount reasons are not projected into the fact store yet",
+  },
+
+  saved: {
+    title: "Saved Reports",
+    tabViews: "Saved reports",
+    tabSchedules: "Schedules",
+    open: "Open",
+    sourceLocal: "Device",
+    sourceServer: "Server",
+    saveName: "View name",
+    savePrompt: "Save current view",
+  },
+
+  exportMenu: {
+    csv: "Export CSV",
+    xlsx: "Export XLSX",
+    queued: "Export queued",
+    ready: "Export ready to download",
+    failed: "Export failed",
+    download: "Download export",
+  },
+
+  schedules: {
+    name: "Schedule name",
+    freq: "Frequency",
+    daily: "Daily",
+    weekly: "Weekly",
+    monthly: "Monthly",
+    atTime: "Run time",
+    weekday: "Weekday",
+    monthDay: "Day of month",
+    timezone: "Timezone",
+    active: "Active",
+    create: "New schedule",
+    edit: "Edit schedule",
+    deleteConfirm: "Delete this schedule?",
   },
 } as const;

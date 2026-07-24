@@ -43,6 +43,24 @@ export interface ColumnDef<T> {
    * shown (backward-compatible).
    */
   requireCap?: string;
+  /**
+   * Pin the column to the table's inline-start edge while the table scrolls
+   * horizontally (sticky th+td with a subtle end-side border). Set a NUMERIC
+   * `width` (px) on EVERY pinned column — the cumulative insetInlineStart
+   * offsets for multiple pinned columns are summed from those widths; a pinned
+   * column without a numeric width falls back to 120px. Declare pinned columns
+   * FIRST (leading columns) so their sticky offsets line up with their natural
+   * position. CSV export and the mobile stacked-card layout ignore pinning.
+   * OPT-IN — absent means rendering is unchanged.
+   */
+  pinStart?: boolean;
+  /**
+   * Per-row semantic tone for this column's cells: a soft token background +
+   * strong text (the same emerald/rose/amber classes as StatusBadge/Badge).
+   * Return undefined for a plain cell. CSV export and the mobile stacked-card
+   * layout ignore it. OPT-IN — absent means rendering is unchanged.
+   */
+  cellTone?: (row: T) => "positive" | "negative" | "warning" | undefined;
   /** Fixed width (e.g. "8rem" or 120). */
   width?: string | number;
   /** Numeric cell → tabular-nums, LTR, end-aligned. */

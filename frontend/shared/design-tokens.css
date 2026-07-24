@@ -197,3 +197,30 @@ a:focus-visible,
     outline-offset: 2px;
   }
 }
+
+/* ══════════════════════════════════════════════════════════════
+ * Sales Analytics Hub (2026-07) — chart tokens (additive).
+ * Categorical series 1..8: anchored on the brand petrol + saffron,
+ * then ordered so ADJACENT series stay distinguishable under the
+ * common color-vision deficiencies (Okabe-Ito-inspired: hue AND
+ * lightness both step between neighbours; no red/green pair sits
+ * side by side). All chart color reads go through
+ * frontend/erp/src/shared/charts/palette.ts (useChartPalette) —
+ * never inline hex in erp files; hex lives HERE only.
+ * ══════════════════════════════════════════════════════════════ */
+:root {
+  --mt-chart-1:    #0E7490;             /* petrol — brand accent   */
+  --mt-chart-2:    #D97706;             /* saffron — brand warmth  */
+  --mt-chart-3:    #334155;             /* ink slate               */
+  --mt-chart-4:    #0284C7;             /* atlas sky blue          */
+  --mt-chart-5:    #BE185D;             /* berry magenta           */
+  --mt-chart-6:    #7C3AED;             /* violet                  */
+  --mt-chart-7:    #A16207;             /* dark gold / ochre       */
+  --mt-chart-8:    #64748B;             /* neutral slate — "other" */
+
+  --mt-chart-grid: #E2E8F0;             /* cartesian grid lines    */
+  --mt-chart-axis: #94A3B8;             /* axis ticks / labels     */
+  --mt-chart-pos:  #16A34A;             /* = --mt-success          */
+  --mt-chart-neg:  #DC2626;             /* = --mt-danger           */
+  --mt-chart-warn: #D97706;             /* = --mt-warning          */
+}

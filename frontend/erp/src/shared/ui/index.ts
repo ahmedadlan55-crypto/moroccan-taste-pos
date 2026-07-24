@@ -48,3 +48,9 @@ export * from "./stepper";
 // ── rich display ──
 export * from "./timeline";
 export * from "./file-uploader";
+
+// ── analytics kit (Sales Analytics Hub wave) ──
+export * from "./metric-card";
+export * from "./date-range-picker";
+export * from "./multi-select-combobox";
+export * from "./explain-number";

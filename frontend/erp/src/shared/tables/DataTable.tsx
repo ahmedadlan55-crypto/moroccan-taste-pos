@@ -136,6 +136,15 @@ const OVERSCAN = 6;
  *  `virtualize` prop (and regardless of client/server mode). */
 const VIRTUAL_ROW_THRESHOLD = 200;
 
+/** Fallback px width for a `pinStart` column that has no numeric `width`. */
+const DEFAULT_PIN_WIDTH = 120;
+/** `cellTone` → soft token background + strong text (StatusBadge families). */
+const CELL_TONE_CLASS: Record<"positive" | "negative" | "warning", string> = {
+  positive: "bg-emerald-50 text-emerald-700",
+  negative: "bg-rose-50 text-rose-700",
+  warning: "bg-amber-50 text-amber-700",
+};
+
 /**
  * The ONE generic data table. Column defs (header/accessor/cell/align/sortable/
  * hideable/width/numeric), client + server modes, global search, per-column sort,
@@ -265,6 +274,34 @@ export function DataTable<T>(props: DataTableProps<T>) {
     () => permittedColumns.filter((c) => !t.hiddenColumns.includes(c.id)),
     [permittedColumns, t.hiddenColumns],
   );
+
+  // ── pinStart offsets ──
+  // Cumulative insetInlineStart (logical: right in RTL, left in LTR) per pinned
+  // column, summed from the NUMERIC `width` of the pinned columns before it
+  // (DEFAULT_PIN_WIDTH when a pinned column has no numeric width). Empty map
+  // when nothing is pinned → the render below is byte-identical to before.
+  const pinOffsets = useMemo(() => {
+    const map = new Map<string, number>();
+    let acc = 0;
+    for (const col of visibleColumns) {
+      if (!col.pinStart) continue;
+      map.set(col.id, acc);
+      acc += typeof col.width === "number" ? col.width : DEFAULT_PIN_WIDTH;
+    }
+    return map;
+  }, [visibleColumns]);
+
+  /** Sticky positioning for a pinned cell. zIndex stays BELOW the sticky header
+   *  (thead is z-10): td=5 beats scrolled static cells, th=1 beats its static
+   *  siblings inside the thead stacking context. */
+  function applyPinStyle(style: CSSProperties, col: ColumnDef<T>, layer: "th" | "td"): void {
+    const offset = pinOffsets.get(col.id);
+    if (offset === undefined) return;
+    style.position = "sticky";
+    style.insetInlineStart = offset;
+    style.zIndex = layer === "td" ? 5 : 1;
+    if (typeof col.width !== "number") style.width = DEFAULT_PIN_WIDTH;
+  }
 
   // Mobile-card column order: keep declaration order, then float columns with an
   // explicit `priority` to the front in ascending order (stable for ties / undefined).
@@ -440,6 +477,9 @@ export function DataTable<T>(props: DataTableProps<T>) {
               if (col.width != null) style.width = col.width;
               // Ellipsis needs a cap to truncate against; fall back to ~18rem.
               if (col.ellipsis) style.maxWidth = col.width ?? "18rem";
+              applyPinStyle(style, col, "td");
+              const pinned = pinOffsets.has(col.id);
+              const tone = col.cellTone?.(row);
               const content = renderCell(col, row);
               return (
                 <td
@@ -449,6 +489,11 @@ export function DataTable<T>(props: DataTableProps<T>) {
                   className={cn(
                     "px-3 py-3.5 align-middle text-slate-700",
                     col.numeric ? "text-left font-semibold tabular-nums" : ALIGN[col.align ?? "start"],
+                    // Pinned cells need an OPAQUE background (rows underneath
+                    // scroll behind them) + a subtle end-side separator. A
+                    // cellTone background wins over the pin white (cn/twMerge).
+                    pinned && "border-e border-slate-200 bg-white",
+                    tone && CELL_TONE_CLASS[tone],
                   )}
                 >
                   {col.ellipsis ? (
@@ -492,12 +537,16 @@ export function DataTable<T>(props: DataTableProps<T>) {
         )}
         {visibleColumns.map((col) => {
           const sortable = col.sortable && !!col.accessor;
+          const thStyle: CSSProperties = {};
+          if (col.width != null) thStyle.width = col.width;
+          applyPinStyle(thStyle, col, "th");
           return (
             <Th
               key={col.id}
               align={col.align}
               numeric={col.numeric}
-              style={col.width != null ? { width: col.width } : undefined}
+              style={Object.keys(thStyle).length ? thStyle : undefined}
+              className={cn(pinOffsets.has(col.id) && "border-e border-slate-200 bg-slate-50")}
               aria-sort={
                 t.sort?.columnId === col.id ? (t.sort.dir === "asc" ? "ascending" : "descending") : undefined
               }

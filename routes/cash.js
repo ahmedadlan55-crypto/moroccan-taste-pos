@@ -5,6 +5,12 @@ const requireCapability = require('../middleware/requireCapability');
 const glPosting = require('../lib/glPosting');
 const { ymd: _toYmd } = require('../lib/expiryPolicy');
 function _actor(req) { return (req.user && (req.user.username || req.user.name)) || ''; }
+// Unified Sales Analytics — post-commit till-movement projection for branch-
+// scoped cash-box vouchers (non-fatal; treasury/bank vouchers are skipped
+// inside projectCashVoucher).
+let analyticsProjection;
+try { analyticsProjection = require('../services/analytics/ProjectionService'); }
+catch (_) { analyticsProjection = { safeProject: async () => {}, projectCashVoucher: async () => {} }; }
 
 // ═══════════════════════════════════════════════════════════════
 // HELPER: Auto-create GL accounts for cash/bank + post journals
@@ -563,6 +569,9 @@ router.post('/receipts/:id/approve', requireCapability('finance.cash.approve'), 
     return { journal };
     });
     if (out.error) return res.json({ success:false, error: out.error });
+    // Unified Sales Analytics — 'pay_in' till fact for a branch-scoped cash box.
+    // Post-commit, non-fatal (safeProject never throws), idempotent.
+    try { analyticsProjection.safeProject(db, 'cash_receipt', id, () => analyticsProjection.projectCashVoucher(db, 'cash_receipt', id)); } catch (_) {}
     res.json({ success:true, journalId: out.journal.id, journalNumber: out.journal.journalNumber });
   } catch(e) { res.json({ success:false, error: e.message }); }
 });
@@ -781,6 +790,9 @@ router.post('/payments/:id/approve', requireCapability('finance.cash.approve'), 
     return { journal };
     });
     if (out.error) return res.json({ success:false, error: out.error });
+    // Unified Sales Analytics — 'pay_out' till fact for a branch-scoped cash box.
+    // Post-commit, non-fatal (safeProject never throws), idempotent.
+    try { analyticsProjection.safeProject(db, 'cash_payment', id, () => analyticsProjection.projectCashVoucher(db, 'cash_payment', id)); } catch (_) {}
     res.json({ success:true, journalId: out.journal.id, journalNumber: out.journal.journalNumber });
   } catch(e) { res.json({ success:false, error: e.message }); }
 });

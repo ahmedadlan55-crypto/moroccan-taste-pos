@@ -7,6 +7,11 @@ const db = require('../db/connection');
 const requireCapability = require('../middleware/requireCapability');
 const { hasCapability } = require('../middleware/requireCapability');
 const jwt = require('jsonwebtoken');
+// Unified Sales Analytics — post-commit till-movement projection (non-fatal;
+// absence of the module never blocks a shift open/close).
+let analyticsProjection;
+try { analyticsProjection = require('../services/analytics/ProjectionService'); }
+catch (_) { analyticsProjection = { safeProject: async () => {}, projectTillMovement: async () => {} }; }
 
 // Resolve the authenticated user for routes that may be exempt from the global
 // JWT gate: prefer req.user (set by server.js), else verify the standard
@@ -363,6 +368,10 @@ router.post('/open', requireCapability('pos.use'), async (req, res) => {
       return { shiftId, openingFloat };
     });
 
+    // Unified Sales Analytics — 'open_float' till fact. Post-commit, non-fatal,
+    // idempotent (an idempotent re-open replays onto the same unique key).
+    try { analyticsProjection.safeProject(db, 'shift_open', out.shiftId, () => analyticsProjection.projectTillMovement(db, { type: 'open_float', shiftId: out.shiftId })); } catch (_) {}
+
     res.json({ success: true, shiftId: out.shiftId, openingFloat: out.openingFloat });
   } catch (e) {
     // G-SALES error honesty — was res.json({success:false}) with HTTP 200.
@@ -439,6 +448,10 @@ router.post('/close', requireCapability('pos.shift_close'), async (req, res) => 
          diffCash, diffCard, diffKita, shiftId]
       );
     });
+
+    // Unified Sales Analytics — 'close_count' till fact (counted cash at close).
+    // Post-commit, non-fatal, idempotent on (source_type,source_id,movement_type).
+    try { analyticsProjection.safeProject(db, 'shift_close', shiftId, () => analyticsProjection.projectTillMovement(db, { type: 'close_count', shiftId })); } catch (_) {}
 
     res.json({
       success: true,
@@ -656,6 +669,10 @@ router.post('/close-v3', requireCapability('pos.shift_close'), async (req, res) 
         orderCount: agg.orderCount, soldItems: agg.soldItems, methods: agg.methods,
       };
     });
+
+    // Unified Sales Analytics — 'close_count' till fact (counted cash at close).
+    // Post-commit, non-fatal, idempotent on (source_type,source_id,movement_type).
+    try { analyticsProjection.safeProject(db, 'shift_close', shiftId, () => analyticsProjection.projectTillMovement(db, { type: 'close_count', shiftId })); } catch (_) {}
 
     res.json({
       success: true,

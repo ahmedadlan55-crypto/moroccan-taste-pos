@@ -21,6 +21,12 @@ const { runTransition } = require('./TransitionExecutor');
 const Alloc = require('./PaymentAllocationService');
 const cfg = require('../../lib/order-to-cash/config');
 
+// Unified Sales Analytics — post-commit fact projection (non-fatal; absence of
+// the module never blocks a collection).
+let analyticsProjection;
+try { analyticsProjection = require('../analytics/ProjectionService'); }
+catch (_) { analyticsProjection = { safeProject: async () => {}, projectArReceipt: async () => {} }; }
+
 const money = calc.money;
 function genId() { return 'CR-' + Date.now() + '-' + Math.random().toString(36).slice(2, 8); }
 
@@ -74,7 +80,7 @@ async function approve(id, ctx) {
 
 /** Post an approved collection: apply allocations + GL, atomically. */
 async function post(id, ctx) {
-  return runTransition({
+  const out = await runTransition({
     docType: 'customer_payment', table: 'customer_payments', id, action: 'post',
     actor: ctx.actor, actorId: ctx.actorId, expectedVersion: ctx.expectedVersion, idempotencyKey: ctx.idempotencyKey, requestHash: ctx.requestHash,
     actorColumns: { by: 'posted_by', at: 'posted_at' },
@@ -106,6 +112,10 @@ async function post(id, ctx) {
       };
     },
   });
+  // Unified Sales Analytics — 'ar_receipt' payment fact. AFTER the transition's
+  // transaction committed; non-fatal (safeProject never throws) and idempotent.
+  try { analyticsProjection.safeProject(db, 'customer_payment', id, () => analyticsProjection.projectArReceipt(db, id)); } catch (_) {}
+  return out;
 }
 
 /** Apply a posted advance's unapplied balance to invoices: Dr Deposits / Cr AR. */

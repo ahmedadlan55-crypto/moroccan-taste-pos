@@ -29,6 +29,12 @@ let recomputeInvItemStock;
 try { recomputeInvItemStock = require('../../lib/stockRecompute').recomputeInvItemStock; }
 catch (_) { recomputeInvItemStock = async () => {}; }
 
+// Unified Sales Analytics — post-commit fact projection (non-fatal; absence of
+// the module never blocks a return).
+let analyticsProjection;
+try { analyticsProjection = require('../analytics/ProjectionService'); }
+catch (_) { analyticsProjection = { safeProject: async () => {}, projectReturn: async () => {} }; }
+
 const money = calc.money;
 const qty = calc.qty;
 function genId() { return 'SRET-' + Date.now() + '-' + Math.random().toString(36).slice(2, 8); }
@@ -295,7 +301,7 @@ async function approve(id, ctx) {
 
 /** Post an approved return: credit note + append-only GL + stock restoration. */
 async function post(id, ctx) {
-  return runTransition({
+  const out = await runTransition({
     docType: 'sales_return', table: 'sales_returns', id, action: 'post',
     actor: ctx.actor, actorId: ctx.actorId, expectedVersion: ctx.expectedVersion, idempotencyKey: ctx.idempotencyKey, requestHash: ctx.requestHash,
     actorColumns: { by: 'posted_by', at: 'posted_at' },
@@ -423,6 +429,11 @@ async function post(id, ctx) {
       };
     },
   });
+  // Unified Sales Analytics — refund facts attribute to the credit note's
+  // business day. AFTER the transition's transaction committed; non-fatal
+  // (safeProject never throws) and idempotent, so a replayed post is safe.
+  try { analyticsProjection.safeProject(db, 'sales_return', id, () => analyticsProjection.projectReturn(db, { returnId: id })); } catch (_) {}
+  return out;
 }
 
 /** Reverse a posted return: append-only reversal journal + stock re-deduction. */

@@ -40,6 +40,11 @@ const salesNumbering = require('../lib/salesNumbering');
 // v6.1.0 Wave E.6 — queue trigger for ZATCA submissions
 let zatcaWorker;
 try { zatcaWorker = require('../lib/zatca-worker'); } catch (_) { zatcaWorker = { enqueue: () => {} }; }
+// Unified Sales Analytics — post-commit fact projection. Same tolerance
+// pattern as the zatca worker above: absence of the module never blocks a sale.
+let analyticsProjection;
+try { analyticsProjection = require('../services/analytics/ProjectionService'); }
+catch (_) { analyticsProjection = { safeProject: async () => {}, projectPosSale: async () => {}, projectReturn: async () => {} }; }
 // v6.2.0 Wave F.3 — period-close guard
 let _periodsModule;
 try { _periodsModule = require('./erp/periods'); } catch (_) { _periodsModule = { assertPeriodOpen: async () => {} }; }
@@ -1974,6 +1979,11 @@ router.post('/', requireCapability('pos.use'), async (req, res) => {
     // is safe for every deploy.
     try { zatcaWorker.enqueue('sale', orderId); } catch (_) {}
 
+    // Unified Sales Analytics — project the committed sale into the fact tables.
+    // AFTER commit, on the POOL (never _conn), non-fatal: safeProject never
+    // throws; a failure is queued into analytics_projection_repair.
+    try { analyticsProjection.safeProject(_pool, 'sale', orderId, () => analyticsProjection.projectPosSale(_pool, orderId)); } catch (_) {}
+
     res.json({
       success: true,
       orderId,
@@ -2695,6 +2705,11 @@ router.post('/:orderId/void', requireCapability('pos.refund'), async (req, res) 
       });
     }
 
+    // Unified Sales Analytics — re-project so the sale's fact row flips to
+    // 'voided' (a deleted sale row is skipped inside projectPosSale).
+    // Post-commit, non-fatal (mirrors the zatca enqueue pattern).
+    try { analyticsProjection.safeProject(db, 'sale', orderId, () => analyticsProjection.projectPosSale(db, orderId)); } catch (_) {}
+
     res.json({
       success: true, orderId,
       ...result,
@@ -2864,6 +2879,11 @@ router.post('/:orderId/return', requireCapability('pos.refund'), async (req, res
 
     // v6.1.0 Wave E.6 — enqueue the new credit_note for ZATCA submission
     try { if (result && result.creditNoteId) zatcaWorker.enqueue('credit_note', result.creditNoteId); } catch (_) {}
+
+    // Unified Sales Analytics — project the credit note (refund facts attribute
+    // to the CN's business day; the original sale's fact flips to 'returned').
+    // Post-commit, non-fatal (mirrors the zatca enqueue above).
+    try { if (result && result.creditNoteId) analyticsProjection.safeProject(db, 'credit_note', result.creditNoteId, () => analyticsProjection.projectReturn(db, { creditNoteId: result.creditNoteId, saleId: orderId })); } catch (_) {}
 
     res.json({ success: true, orderId, reason, ...result });
   } catch (e) {

@@ -7585,6 +7585,13 @@ async function runMigrations() {
     } catch (e) {
       console.warn('[zatca-worker] failed to start:', e.message);
     }
+    // Sales Analytics — rollup refresh + projection-repair worker (same start
+    // discipline: after migrations, so the analytics tables exist).
+    try {
+      require('./lib/analytics/worker').start();
+    } catch (e) {
+      console.warn('[analytics-worker] failed to start:', e.message);
+    }
     // bilingual-i18n-images — Owner D: name_en backfill + image sourcing
     // workers, started the same way/place as the ZATCA worker above (after
     // migrations complete so their queue tables are guaranteed to exist).

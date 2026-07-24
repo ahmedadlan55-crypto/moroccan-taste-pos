@@ -36,18 +36,41 @@
  */
 'use strict';
 
+const crypto = require('crypto');
 const db = require('./connection');
 
 const LOCK_TIMEOUT_SECONDS = 600;
+// MySQL user-level lock names (GET_LOCK/RELEASE_LOCK) are capped at 64
+// characters since 5.7.5 — a longer name makes GET_LOCK THROW
+// ("...should not exceed 64 characters"), which in withMigrationLock() aborts
+// the whole run before a single migration is applied. `mt_pos_migrations:` is
+// 18 chars, so any target database name longer than 46 chars would blow the
+// cap. Real dev/prod names are short, but a long one (or a long throwaway test
+// DB) must NOT turn a length limit into a fail-closed migration crash.
+const MAX_LOCK_NAME = 64;
+const LOCK_PREFIX = 'mt_pos_migrations:';
 
-/** The lock name actually used for a given database. Exported for tests. */
+/**
+ * The lock name actually used for a given database. Exported for tests.
+ *
+ * Deterministic and stable for a given target (the release chain's step 1 and
+ * step 2 must derive the SAME name to serialize against each other). When the
+ * plain `prefix + target` would exceed MySQL's 64-char limit, keep as much of
+ * the readable target as fits and append a short, deterministic SHA-1 of the
+ * FULL target so distinct schemas still get distinct locks.
+ */
 function lockName(dbName) {
   const target = dbName
     || process.env.MYSQL_DATABASE
     || process.env.MYSQLDATABASE
     || process.env.DB_NAME
     || 'default';
-  return 'mt_pos_migrations:' + target;
+  const full = LOCK_PREFIX + target;
+  if (full.length <= MAX_LOCK_NAME) return full;
+  const hash = crypto.createHash('sha1').update(target).digest('hex').slice(0, 12);
+  // prefix(18) + head + ':'(1) + hash(12) must stay <= 64 → head <= 33.
+  const room = MAX_LOCK_NAME - LOCK_PREFIX.length - 1 - hash.length;
+  return LOCK_PREFIX + target.slice(0, Math.max(0, room)) + ':' + hash;
 }
 
 /**

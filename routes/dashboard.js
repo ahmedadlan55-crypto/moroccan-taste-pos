@@ -1,5 +1,10 @@
 const router = require('express').Router();
 const db = require('../db/connection');
+// Unified Sales Analytics — leg resolution + method fold for the payment-mix
+// fallback (un-backfilled DBs). Tolerant require: absence degrades the
+// fallback only, never the dashboard.
+let _projection = null;
+try { _projection = require('../services/analytics/ProjectionService'); } catch (_) { /* facts-only */ }
 
 // ═══════════════════════════════════════════════════════════════════
 // Enterprise Command Center — single-call aggregator
@@ -124,6 +129,8 @@ router.get('/overview', async (req, res) => {
     const sF = flt('s');  // sales
     const eF = flt('e');  // expenses
     const pF = flt('p');  // purchases
+    const fF = flt('f');  // analytics_payment_facts (has brand_id + branch_id)
+    const dF = flt('d');  // analytics_daily_branch rollups (brand_id + branch_id)
 
     // Runner: executes the per-period queries for a given date window
     async function periodQueries(f, t) {
@@ -164,7 +171,8 @@ router.get('/overview', async (req, res) => {
       lowStock, expiringSoon,
       openTxns, pendingPayments, overdueAR, overdueAP,
       openShifts, cashPosition, bankBalances,
-      suppliersCnt, customersCnt, brandsCnt, branchesCnt
+      suppliersCnt, customersCnt, brandsCnt, branchesCnt,
+      paymentMixQ, cogsAgg
     ] = await Promise.all([
       // Daily sales trend (for chart)
       db.query(
@@ -257,16 +265,22 @@ router.get('/overview', async (req, res) => {
         hasBrand ? [brandId] : []).catch(() => [[{c:0, v:0}]]),
       // Open shifts
       db.query(`SELECT COUNT(*) AS c FROM shifts WHERE status='OPEN'`),
-      // Cash position
+      // Cash position — the old query read a phantom sale-payments table that
+      // has NEVER existed in this schema; its .catch reported cash=0 forever.
+      // The REAL unified tender-leg store is analytics_payment_facts (one row
+      // per leg, split sales included): today's cash-in minus cash-out
+      // (refunds), minus today's cash expenses (same expenses clause as
+      // before). Kept pinned to "today" like the original — this is a cash
+      // POSITION, not a period metric.
       db.query(`SELECT
-          (SELECT COALESCE(SUM(amount),0) FROM sale_payments sp
-            JOIN sales s ON s.id = sp.sale_id
-            WHERE DATE(s.order_date) = CURDATE() AND sp.method = 'cash' ${sF.sql})
+          (SELECT COALESCE(SUM(CASE WHEN f.direction = 'in' THEN f.amount ELSE -f.amount END),0)
+            FROM analytics_payment_facts f
+            WHERE f.method_norm = 'cash' AND f.business_day = CURDATE() ${fF.sql})
           -
           (SELECT COALESCE(SUM(amount),0) FROM expenses e
             WHERE DATE(e.expense_date) = CURDATE() AND e.payment_method = 'cash' ${eF.sql})
           AS cash`,
-        [...sF.p, ...eF.p]).catch(() => [[{cash:0}]]),
+        [...fF.p, ...eF.p]).catch(e => { console.error('[dashboard.cashPosition]', e.message); return [[{cash:0}]]; }),
       // Bank balances
       db.query(
         `SELECT account_name, bank_name, current_balance FROM bank_accounts
@@ -275,7 +289,29 @@ router.get('/overview', async (req, res) => {
       db.query(`SELECT COUNT(*) AS c FROM suppliers WHERE is_active = 1 ${hasBrand?'AND brand_id = ?':''}`, hasBrand?[brandId]:[]),
       db.query(`SELECT COUNT(*) AS c FROM customers WHERE is_active = 1`),
       db.query(`SELECT COUNT(*) AS c FROM brands`).catch(() => [[{c:0}]]),
-      db.query(`SELECT COUNT(*) AS c FROM branches`).catch(() => [[{c:0}]])
+      db.query(`SELECT COUNT(*) AS c FROM branches`).catch(() => [[{c:0}]]),
+      // Payment mix over the SELECTED period — analytics_payment_facts is the
+      // unified store (split legs are separate rows, so a split sale counts
+      // once per tender, never once per sale). direction='in' only: refunds
+      // must not contaminate the mix. Same from/to window as the rest of the
+      // dashboard (business_day is the branch-local attribution).
+      db.query(
+        `SELECT COALESCE(f.method_norm,'other') AS method,
+                COALESCE(SUM(f.amount),0) AS amount, COUNT(*) AS cnt
+           FROM analytics_payment_facts f
+          WHERE f.direction = 'in' AND f.business_day BETWEEN ? AND ? ${fF.sql}
+          GROUP BY COALESCE(f.method_norm,'other')
+          ORDER BY amount DESC`,
+        [from, to, ...fF.p]).catch(e => { console.error('[dashboard.paymentMix]', e.message); return [[]]; }),
+      // Real COGS for the margin KPI — analytics_daily_branch rollups over the
+      // same period. When empty (un-backfilled / rollup not yet run) the
+      // response falls back to the historical (sales − purchases) proxy and
+      // SAYS SO via kpi.grossMargin.marginBasis.
+      db.query(
+        `SELECT COALESCE(SUM(d.cogs),0) AS cogs, COALESCE(SUM(d.net_ex_vat),0) AS net
+           FROM analytics_daily_branch d
+          WHERE d.business_day BETWEEN ? AND ? ${dF.sql}`,
+        [from, to, ...dF.p]).catch(e => { console.error('[dashboard.cogs]', e.message); return [[{cogs:0, net:0}]]; })
     ]);
 
     const salesV = currP.salesV;
@@ -286,6 +322,51 @@ router.get('/overview', async (req, res) => {
     const ordersCPrev = prevP.ordersC;
     const expVPrev    = prevP.expV;
     const purVPrev    = prevP.purV;
+
+    // ── Payment mix: facts first, honest fallback second ──────────────────
+    // On an un-backfilled DB the facts table has no rows for the window while
+    // sales exist. Rather than showing an empty (lying) mix, derive the legs
+    // from the sales rows themselves using the SAME resolution + method fold
+    // ProjectionService uses (split_details_json object/array, the
+    // "Cash:80/Mada:20" string, or the single label) — so the buckets are
+    // IDENTICAL to what backfill would project. basis says which path fed it.
+    let paymentMixRows = paymentMixQ[0] || [];
+    let paymentMixBasis = 'facts';
+    if (!paymentMixRows.length && _projection) {
+      try {
+        const [srows] = await db.query(
+          `SELECT s.id, s.total_final, s.payment_method, s.split_details_json
+             FROM sales s WHERE DATE(s.order_date) BETWEEN ? AND ? ${sF.sql}`,
+          [from, to, ...sF.p]);
+        if (srows.length) {
+          const agg = new Map();
+          for (const s of srows) {
+            // posOrder=null → no per-sale queries; a detail-less bare 'split'
+            // degrades to one 'other' leg (the projection's own last resort).
+            const { legs } = await _projection._resolvePaymentLegs(db, s, null);
+            for (const leg of legs) {
+              const m = _projection.normalizeMethod(leg.label);
+              const cur = agg.get(m) || { amount: 0, cnt: 0 };
+              cur.amount += Number(leg.amount) || 0;
+              cur.cnt += 1;
+              agg.set(m, cur);
+            }
+          }
+          paymentMixRows = [...agg.entries()]
+            .map(([method, v]) => ({ method, amount: Math.round(v.amount * 100) / 100, cnt: v.cnt }))
+            .sort((a, b) => b.amount - a.amount);
+          paymentMixBasis = 'derived';
+        }
+      } catch (e) { console.error('[dashboard.paymentMix.fallback]', e.message); }
+    }
+
+    // ── Margin: real COGS when the rollups have it, labeled proxy otherwise ──
+    const cogsV   = Number(cogsAgg[0][0].cogs || 0);
+    const cogsNet = Number(cogsAgg[0][0].net || 0);
+    const marginBasis = cogsV > 0 ? 'cogs' : 'proxy';
+    const grossMarginValue = marginBasis === 'cogs'
+      ? (cogsNet > 0 ? ((cogsNet - cogsV) / cogsNet) * 100 : 0)
+      : (salesV > 0 ? ((salesV - purV) / salesV) * 100 : 0);
 
     res.json({
       period: {
@@ -305,7 +386,11 @@ router.get('/overview', async (req, res) => {
         purchases:  { value: purV,      prev: purVPrev,    delta: _pctChange(purV, purVPrev) },
         netIncome:  { value: salesV - expV, prev: salesVPrev - expVPrev,
                       delta: _pctChange(salesV - expV, salesVPrev - expVPrev) },
-        grossMargin:{ value: salesV > 0 ? ((salesV - purV) / salesV) * 100 : 0 }
+        // marginBasis: 'cogs' → (net_ex_vat − COGS) / net_ex_vat from the
+        // analytics_daily_branch rollups; 'proxy' → the historical
+        // (sales − purchases) / sales approximation. The UI can label it;
+        // existing consumers read only .value (additive, non-breaking).
+        grossMargin:{ value: grossMarginValue, marginBasis }
       },
 
       // Operational pulse
@@ -326,6 +411,18 @@ router.get('/overview', async (req, res) => {
         customers: Number(customersCnt[0][0].c || 0),
         brands:    Number(brandsCnt[0][0].c || 0),
         branches:  Number(branchesCnt[0][0].c || 0)
+      },
+
+      // Payment mix (period-scoped, tender legs, direction 'in' only).
+      // basis: 'facts' = analytics_payment_facts; 'derived' = recomputed from
+      // sales.payment_method / split_details_json (un-backfilled DB fallback).
+      paymentMix: {
+        basis: paymentMixBasis,
+        methods: paymentMixRows.map(r => ({
+          method: r.method,
+          amount: Number(r.amount) || 0,
+          count: Number(r.cnt) || 0
+        }))
       },
 
       // Charts

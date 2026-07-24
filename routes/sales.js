@@ -227,6 +227,18 @@ function _parseSplitPayments(payStr, total) {
   return _parseSplitPaymentsV3(payStr, total, null);
 }
 
+// G-SPLIT — case-insensitive 'split' detector for WRITE-PATH BRANCH DECISIONS.
+// The React POS (lib/posOrderMachine.js legacyPaymentFields) sends lowercase
+// 'split'; the legacy UI sends 'Split'. The old `=== 'Split'` comparisons made
+// every React split sale skip split_details_json persistence, keep the literal
+// string 'split' as payment_method, and dump ALL payment GL legs into one
+// clearing account. Only the branch DECISIONS go through this helper — what
+// gets STORED in sales.payment_method for non-split flows is untouched (the
+// caller's casing is preserved verbatim, exactly as before).
+function _isSplitMethod(pm) {
+  return String(pm || '').trim().toLowerCase() === 'split';
+}
+
 // v7.2 (#8) — Route split-payment GL legs from the STRUCTURED splitDetails
 // object instead of re-parsing the lossy "Cash:80/Mada:20" string. A method
 // name containing '/' (e.g. "شبكة/مدى") corrupts the string parse and dumps
@@ -234,7 +246,11 @@ function _parseSplitPayments(payStr, total) {
 // method names the cashier picked, so we map each one through pmGlMap (with
 // the same normalization the map build uses) and fall back to the legacy
 // payToAccountCode heuristic only when a method isn't configured.
-//   splitDetails: { Cash: 80, Mada: 20, ... }  →  [{code, amount}, ...]
+// G-SPLIT — now also accepts the pos-v2 legacyPayload ARRAY shape (the form
+// the React POS actually posts; see lib/posOrderMachine.js legacyPaymentFields):
+//   splitDetails: { Cash: 80, Mada: 20, ... }            (legacy UI object)
+//   splitDetails: [{ method: 'كاش', amount: 80 }, ... ]  (pos-v2 array)
+// → [{code, amount}, ...]
 function _parseSplitFromDetails(splitDetails, pmGlMap) {
   const out = [];
   const lookup = (name) => {
@@ -242,6 +258,14 @@ function _parseSplitFromDetails(splitDetails, pmGlMap) {
     return (pmGlMap && pmGlMap[k]) || _payToAccountCode(name);
   };
   if (!splitDetails || typeof splitDetails !== 'object') return out;
+  if (Array.isArray(splitDetails)) {
+    splitDetails.forEach(leg => {
+      if (!leg || typeof leg !== 'object') return;
+      const amt = Math.round((Number(leg.amount) || 0) * 100) / 100;
+      if (amt > 0) out.push({ code: lookup(leg.method), amount: amt });
+    });
+    return out;
+  }
   Object.keys(splitDetails).forEach(name => {
     const amt = Math.round((Number(splitDetails[name]) || 0) * 100) / 100;
     if (amt > 0) out.push({ code: lookup(name), amount: amt });
@@ -550,9 +574,18 @@ router.post('/', requireCapability('pos.use'), async (req, res) => {
     }
 
     // Determine payment method string
+    // G-SPLIT — the branch decision is case-insensitive ('Split' from the
+    // legacy UI, 'split' from the React POS) and the legs are read from
+    // EITHER persisted shape: object {label: amount} (legacy) or array
+    // [{method, amount}] (pos-v2 legacyPayload). Before this, a lowercase
+    // 'split' sale stored the literal string 'split' as payment_method.
+    // Non-split sales still store paymentMethod verbatim (casing preserved).
     let payStr = paymentMethod;
-    if (paymentMethod === 'Split' && splitDetails) {
-      payStr = Object.entries(splitDetails).filter(([k,v]) => v > 0).map(([k,v]) => k+':'+Math.round(v)).join('/');
+    if (_isSplitMethod(paymentMethod) && splitDetails) {
+      const _legPairs = Array.isArray(splitDetails)
+        ? splitDetails.filter(l => l && Number(l.amount) > 0).map(l => [String(l.method), Number(l.amount)])
+        : Object.entries(splitDetails).filter(([k,v]) => v > 0);
+      payStr = _legPairs.map(([k,v]) => k+':'+Math.round(v)).join('/');
     }
 
     // ───── v6.20.0 — Tax computation rewrite ─────
@@ -1061,7 +1094,10 @@ router.post('/', requireCapability('pos.use'), async (req, res) => {
     // ─── v6.0.3 Wave C.4 — Persist structured split-payment JSON ───
     // The legacy payStr "Cash:80/Mada:20" string breaks when a method
     // name contains '/' (e.g. "شبكة/مدى"). The JSON form is unambiguous.
-    if (paymentMethod === 'Split' && splitDetails && typeof splitDetails === 'object') {
+    // G-SPLIT — case-insensitive guard; the ORIGINAL shape is stored verbatim
+    // (object for legacy, array for pos-v2 — ProjectionService._resolvePaymentLegs
+    // and GET /:orderId already read both).
+    if (_isSplitMethod(paymentMethod) && splitDetails && typeof splitDetails === 'object') {
       try {
         await db.query(
           'UPDATE sales SET split_details_json = ? WHERE id = ?',
@@ -1729,7 +1765,11 @@ router.post('/', requireCapability('pos.use'), async (req, res) => {
         const entries = [];
         if (invTotal > 0) {
           let paymentDebits;
-          if (paymentMethod === 'Split' && splitDetails && typeof splitDetails === 'object') {
+          // G-SPLIT — case-insensitive guard: a React 'split' sale now routes
+          // one GL debit PER LEG (via _parseSplitFromDetails, which reads both
+          // the object and the pos-v2 array shape) instead of collapsing the
+          // whole invoice into one clearing-account debit.
+          if (_isSplitMethod(paymentMethod) && splitDetails && typeof splitDetails === 'object') {
             paymentDebits = _parseSplitFromDetails(splitDetails, pmGlMap);
             if (!paymentDebits.length) {
               // Defensive: structured object had no positive legs — fall back

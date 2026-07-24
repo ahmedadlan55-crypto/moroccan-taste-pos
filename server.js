@@ -7579,6 +7579,18 @@ async function runMigrations() {
     // migrations complete so their queue tables are guaranteed to exist).
     try {
       require('./lib/name-en-backfill-worker').start();
+      // Seed the worker's queue on boot. The worker only ever drains
+      // name_en_backfill_queue; without a sweep the queue stays empty and no
+      // item is ever backfilled — which is exactly why menu.name_en stayed
+      // blank after the English POS shipped. The sweep is INSERT IGNORE over
+      // items missing name_en (it never touches `menu`), so running it on every
+      // boot is idempotent and picks up newly-added items automatically.
+      // Opt out with NAME_EN_BACKFILL_DISABLE_WORKER=1 (same flag as the worker).
+      if (process.env.NAME_EN_BACKFILL_DISABLE_WORKER !== '1') {
+        require('./scripts/name-en-backfill-sweep')
+          .main()
+          .catch((e) => console.warn('[name-en-backfill-sweep] boot sweep failed:', e.message));
+      }
     } catch (e) {
       console.warn('[name-en-backfill-worker] failed to start:', e.message);
     }

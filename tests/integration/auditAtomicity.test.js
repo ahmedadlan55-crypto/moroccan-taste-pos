@@ -68,6 +68,16 @@ async function restoreRealAuditLogs() {
   await cleanup();
   let swapped = false;
   let narrowedReversedByOuter = false;
+  // The reverse()-link-back test narrows gl_journals.reversed_by_journal_id to
+  // VARCHAR(1) to force a truncation. That ALTER validates EVERY existing row,
+  // and this harness DB (`..._test`) is shared — another suite (rc-gate-seed)
+  // leaves a real reversal link (e.g. RCGL-J-0003R) that a global narrow can't
+  // shrink past. So snapshot any other rows' values, NULL them for the duration
+  // of the narrow (J_ID's own is still NULL — it isn't reversed yet), and
+  // restore them VERBATIM afterward. Declared out here so both finally blocks
+  // can guarantee the restore even on a crash.
+  let preservedReversedBy = [];
+  let reversedByCleared = false;
   try {
     console.log('\n═══ Audit-write atomicity (logAuditTx rolls back the whole transition), isolated test DB ═══');
 
@@ -172,6 +182,16 @@ async function restoreRealAuditLogs() {
 
     let narrowedReversedBy = false;
     try {
+      // Set aside any OTHER suite's reversal links so narrowing can't fail on
+      // them (see the declaration comment above); restored in finally.
+      [preservedReversedBy] = await db.query(
+        'SELECT id, reversed_by_journal_id FROM gl_journals WHERE reversed_by_journal_id IS NOT NULL AND id <> ?',
+        [J_ID]
+      );
+      if (preservedReversedBy.length) {
+        await db.query('UPDATE gl_journals SET reversed_by_journal_id = NULL WHERE reversed_by_journal_id IS NOT NULL AND id <> ?', [J_ID]);
+        reversedByCleared = true;
+      }
       await db.query('ALTER TABLE gl_journals MODIFY COLUMN reversed_by_journal_id VARCHAR(1) NULL');
       narrowedReversedBy = true;
       narrowedReversedByOuter = true;
@@ -204,6 +224,14 @@ async function restoreRealAuditLogs() {
         await db.query('ALTER TABLE gl_journals MODIFY COLUMN reversed_by_journal_id VARCHAR(50) NULL');
         narrowedReversedBy = false;
         narrowedReversedByOuter = false;
+      }
+      // Restore the other suites' reversal links VERBATIM, only after the column
+      // is wide again so their real (multi-char) values fit.
+      if (reversedByCleared) {
+        for (const r of preservedReversedBy) {
+          await db.query('UPDATE gl_journals SET reversed_by_journal_id = ? WHERE id = ?', [r.reversed_by_journal_id, r.id]);
+        }
+        reversedByCleared = false;
       }
     }
 
@@ -244,6 +272,14 @@ async function restoreRealAuditLogs() {
     }
     if (narrowedReversedByOuter) {
       try { await db.query('ALTER TABLE gl_journals MODIFY COLUMN reversed_by_journal_id VARCHAR(50) NULL'); } catch (e) { console.error('CRITICAL: failed to restore gl_journals.reversed_by_journal_id width:', e.message); }
+    }
+    // Safety net — if a crash skipped the inner-finally restore, put the other
+    // suites' reversal links back now that the column is wide again.
+    if (reversedByCleared) {
+      for (const r of preservedReversedBy) {
+        try { await db.query('UPDATE gl_journals SET reversed_by_journal_id = ? WHERE id = ?', [r.reversed_by_journal_id, r.id]); } catch (e) { console.error('CRITICAL: failed to restore a preserved reversed_by_journal_id link:', e.message); }
+      }
+      reversedByCleared = false;
     }
     await cleanup();
     try { await db.end(); } catch (_) {}

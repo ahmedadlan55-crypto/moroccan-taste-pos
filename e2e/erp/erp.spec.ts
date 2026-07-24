@@ -71,8 +71,16 @@ const BANNED_PHRASES = [
 ];
 
 // Benign console noise that is NOT an app error.
+// "Blocked script execution in 'about:srcdoc' … 'allow-scripts' … not set" is
+// noise, not a defect: the InvoiceSettings receipt-preview <iframe srcDoc> is
+// deliberately sandboxed WITHOUT allow-scripts, and its HTML is script-free
+// (frontend/shared/invoiceTemplate.ts emits zero <script>). The message only
+// appears because Playwright's addInitScript (the token seed) is injected into
+// EVERY frame and correctly blocked in that one. A real browser injects nothing
+// there, so a real user sees no console error. Scoped to about:srcdoc so it can
+// never hide a real error from an app-origin frame.
 const BENIGN_CONSOLE =
-  /Failed to load resource|favicon|ResizeObserver|Download the React DevTools|React Router Future Flag/i;
+  /Failed to load resource|favicon|ResizeObserver|Download the React DevTools|React Router Future Flag|Blocked script execution in .?about:srcdoc/i;
 // NOTE: there is deliberately NO network whitelist. A 404 from an API is a defect
 // to fix, not an exception to hide.
 

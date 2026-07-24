@@ -37,11 +37,25 @@ const ARABIC = /[؀-ۿ]/;
 // Looks like an un-resolved i18n key: dotted lowerCamel path, no spaces.
 const I18N_KEY = /^[a-z][a-zA-Z0-9]*(\.[a-z][a-zA-Z0-9]*){1,}$/;
 const BENIGN_CONSOLE =
-  /Failed to load resource|favicon|ResizeObserver|Download the React DevTools|React Router Future Flag/i;
+  // + about:srcdoc sandbox-block (Playwright addInitScript into the script-free,
+  // deliberately-sandboxed InvoiceSettings receipt-preview iframe) — see erp.spec.ts.
+  /Failed to load resource|favicon|ResizeObserver|Download the React DevTools|React Router Future Flag|Blocked script execution in .?about:srcdoc/i;
 const CRASH_TEXT = "حدث خطأ غير متوقّع";
 const BAD_STATES = ["error", "offline", "session-expired", "permission-denied", "conflict", "feature-disabled", "not-found"];
 
-function login(page: Page, lang: "ar" | "en") {
+async function login(page: Page, lang: "ar" | "en") {
+  // Pin the server-persisted language. language-sync.tsx applies GET
+  // /api/user-preferences on mount and OVERWRITES the localStorage erp_lang seed
+  // below — so without this, the [en] pass renders in whatever the admin has
+  // stored server-side (the freshly-cloned dev DB has "ar"), and html.lang comes
+  // back "ar". This is not an app bug: the server preference is the source of
+  // truth and a real user's toggle persists to it; the test just has to state the
+  // precondition. Same technique as visual-baselines.spec.ts. Non-GET (a real
+  // toggle persisting) falls through to the actual endpoint.
+  await page.route("**/api/user-preferences", async (route) => {
+    if (route.request().method() !== "GET") return route.fallback();
+    await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ language: lang }) });
+  });
   return page.addInitScript(
     ([token, session, l]) => {
       localStorage.setItem("pos_token", token);

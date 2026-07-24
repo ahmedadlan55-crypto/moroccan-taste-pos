@@ -74,7 +74,9 @@ const BAD_STATES = [
 // Same benign-console allowlist as erp.spec.ts / trial-balance-rbac.spec.ts —
 // copied, not invented. Anything outside it is a real defect.
 const BENIGN_CONSOLE =
-  /Failed to load resource|favicon|ResizeObserver|Download the React DevTools|React Router Future Flag/i;
+  // + about:srcdoc sandbox-block (Playwright addInitScript into the script-free,
+  // deliberately-sandboxed InvoiceSettings receipt-preview iframe) — see erp.spec.ts.
+  /Failed to load resource|favicon|ResizeObserver|Download the React DevTools|React Router Future Flag|Blocked script execution in .?about:srcdoc/i;
 
 // The @font-face family declared in frontend/erp/src/styles/fonts.css and led
 // by --mt-font in frontend/shared/design-tokens.css.

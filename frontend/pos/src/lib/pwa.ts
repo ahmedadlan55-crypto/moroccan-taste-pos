@@ -26,9 +26,15 @@ export interface PwaStatus {
   canInstall: boolean;
   /** A new service worker version activated — a reload picks up the new bundle. */
   updateReady: boolean;
+  /**
+   * The deploy watcher's target entry bundle (hashed basename) when updateReady
+   * came from a detected redeploy — null for SW-triggered updates. Used to
+   * guard the idle auto-reload against loops (one attempt per target).
+   */
+  updateTarget: string | null;
 }
 
-let status: PwaStatus = { canInstall: false, updateReady: false };
+let status: PwaStatus = { canInstall: false, updateReady: false, updateTarget: null };
 let deferredPrompt: BeforeInstallPromptEvent | null = null;
 const listeners = new Set<() => void>();
 let initialized = false;
@@ -45,6 +51,93 @@ export function subscribePwa(fn: () => void): () => void {
 
 export function getPwaStatus(): PwaStatus {
   return status;
+}
+
+// ─── Deploy watcher ──────────────────────────────────────────────────────────
+// sw.js serves HTML/JS network-first, so any RELOAD picks up a new deploy —
+// but a cashier kiosk tab never navigates and never reloads, so nothing ever
+// told it a deploy happened: fixes shipped to production kept NOT reaching
+// long-lived devices (the SW only announces updates when sw.js ITSELF
+// changes, which app-code deploys don't touch). The watcher compares the
+// entry bundle this page is EXECUTING against the entry in the freshly
+// served asset-manifest.json; a mismatch raises the same updateReady signal
+// the Header's «نسخة جديدة — تحديث» button already renders, and App may
+// auto-reload when the register is idle.
+
+const MANIFEST_CHECK_INTERVAL_MS = 5 * 60_000;
+const AUTO_RELOAD_GUARD_KEY = "posv2-auto-reload-target";
+let swReg: ServiceWorkerRegistration | null = null;
+
+/** Hashed basename of the build's entry chunk from a Vite manifest, or null. */
+export function manifestEntryBasename(manifest: unknown): string | null {
+  if (!manifest || typeof manifest !== "object") return null;
+  for (const value of Object.values(manifest as Record<string, unknown>)) {
+    const entry = value as { file?: unknown; isEntry?: unknown };
+    if (entry && entry.isEntry === true && typeof entry.file === "string") {
+      return entry.file.split("/").pop() || null;
+    }
+  }
+  return null;
+}
+
+/**
+ * Hashed basename of the entry chunk THIS page is executing, read from the
+ * module <script> the served index.html carried. Comparing against the DOM
+ * (not a boot-time manifest snapshot) means a deploy landing between page
+ * load and first poll is still detected.
+ */
+export function runningEntryBasename(doc: Document = document): string | null {
+  const src = doc.querySelector('script[type="module"][src]')?.getAttribute("src");
+  if (!src) return null;
+  try {
+    return new URL(src, "http://local.invalid").pathname.split("/").pop() || null;
+  } catch {
+    return null;
+  }
+}
+
+export function updateAvailable(running: string | null, target: string | null): boolean {
+  return !!running && !!target && running !== target;
+}
+
+/** One auto-reload attempt per target: if the reload didn't converge (e.g. an
+ *  intermediary cached index.html), we must not spin — the manual button stays. */
+export function autoReloadAlreadyTried(target: string): boolean {
+  try {
+    return sessionStorage.getItem(AUTO_RELOAD_GUARD_KEY) === target;
+  } catch {
+    return true; // storage unavailable → never auto-reload, manual only
+  }
+}
+export function markAutoReloadTried(target: string): void {
+  try {
+    sessionStorage.setItem(AUTO_RELOAD_GUARD_KEY, target);
+  } catch {
+    /* storage unavailable — autoReloadAlreadyTried already reports true */
+  }
+}
+
+/**
+ * One poll: fetch the served manifest, compare with the running entry, raise
+ * updateReady on mismatch. Silent on any failure — offline or a mid-deploy
+ * 404 must never surface to the cashier. Returns whether an update was found.
+ */
+export async function checkForDeployedUpdate(
+  fetchImpl?: typeof fetch,
+  doc?: Document,
+): Promise<boolean> {
+  const doFetch = fetchImpl ?? ((...args: Parameters<typeof fetch>) => fetch(...args));
+  try {
+    const res = await doFetch(`${import.meta.env.BASE_URL}asset-manifest.json`, { cache: "no-store" });
+    if (!res.ok) return false;
+    const target = manifestEntryBasename(await res.json());
+    const running = runningEntryBasename(doc ?? document);
+    if (!updateAvailable(running, target)) return false;
+    setStatus({ updateReady: true, updateTarget: target });
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 /**
@@ -66,8 +159,22 @@ export function initPwa(): void {
     setStatus({ canInstall: false });
   });
 
-  // ── Service worker (production builds only) ────────────────────────────────
+  // ── Deploy watcher (production builds only — dev has no asset manifest) ────
   if (!import.meta.env.PROD) return;
+  const runCheck = () => {
+    if (!navigator.onLine) return; // pointless offline; 'online' re-arms below
+    void checkForDeployedUpdate();
+    // Nudge the SW update check too: browsers only re-fetch sw.js on
+    // navigation, and a kiosk tab never navigates.
+    swReg?.update().catch(() => {});
+  };
+  window.setInterval(runCheck, MANIFEST_CHECK_INTERVAL_MS);
+  window.addEventListener("online", runCheck);
+  document.addEventListener("visibilitychange", () => {
+    if (document.visibilityState === "visible") runCheck();
+  });
+
+  // ── Service worker ─────────────────────────────────────────────────────────
   if (!("serviceWorker" in navigator)) return;
 
   navigator.serviceWorker.addEventListener("message", (event: MessageEvent) => {
@@ -80,6 +187,7 @@ export function initPwa(): void {
   navigator.serviceWorker
     .register(swUrl) // scope defaults to BASE_URL — exactly what we want
     .then((reg) => {
+      swReg = reg;
       // Belt-and-braces: a worker already waiting (page loaded between install
       // and activate) is also an update signal.
       if (reg.waiting) setStatus({ updateReady: true });

@@ -4,12 +4,19 @@
  * 768–1023px two columns (categories as top chips), <768px single column
  * with a bottom cart sheet. Keyboard: F2 search, F4 pay, F9 hold, Esc close.
  */
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { ChefHat, PauseCircle, ShoppingBasket, Store, Tag } from "lucide-react";
 import { usePos } from "@/state/store";
 import { clearToken } from "@/lib/auth";
 import { listOrders } from "@/lib/api";
-import { initPwa } from "@/lib/pwa";
+import {
+  initPwa,
+  getPwaStatus,
+  subscribePwa,
+  applyUpdate,
+  autoReloadAlreadyTried,
+  markAutoReloadTried,
+} from "@/lib/pwa";
 import { clearImageCache } from "@/lib/offlineImages";
 import { runLegacyDrainOnce, getDrainStatus } from "@/lib/legacyDrain";
 import { fmt2, fmtInt } from "@/lib/format";
@@ -91,6 +98,33 @@ export default function App() {
   useEffect(() => {
     initPwa();
   }, []);
+
+  // ── Idle auto-update ─────────────────────────────────────────────────────
+  // A kiosk tab nobody touches must still converge to a new deploy on its
+  // own (the header button assumes a human is looking at it). Reload ONLY
+  // when nothing can be lost: empty cart, no dialog open, no busy action,
+  // sync queue fully drained, and online. The 3s delay + cleanup means any
+  // activity (scanning an item, opening a dialog) cancels the pending reload;
+  // autoReloadAlreadyTried caps it at one attempt per target so a stale
+  // intermediary cache cannot cause a reload loop — the manual button stays.
+  const pwa = useSyncExternalStore(subscribePwa, getPwaStatus);
+  useEffect(() => {
+    if (!pwa.updateReady || !pwa.updateTarget) return; // SW-triggered → manual only
+    const idle =
+      cart.lines.length === 0 && !overlayOpen && !holdBusy && !voidBusy &&
+      engineStatus.queueCount === 0 && engineStatus.online;
+    if (!idle) return;
+    const target = pwa.updateTarget;
+    if (autoReloadAlreadyTried(target)) return;
+    const timer = window.setTimeout(() => {
+      markAutoReloadTried(target);
+      applyUpdate();
+    }, 3000);
+    return () => window.clearTimeout(timer);
+  }, [
+    pwa.updateReady, pwa.updateTarget, cart.lines.length, overlayOpen,
+    holdBusy, voidBusy, engineStatus.queueCount, engineStatus.online,
+  ]);
   useEffect(() => {
     if (!user) return;
     void runLegacyDrainOnce().then((outcome) => {

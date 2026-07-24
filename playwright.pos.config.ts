@@ -20,8 +20,13 @@ export default defineConfig({
   workers: 1,
   retries: 0,
   reporter: [["list"]],
-  // Provisions the isolated E2E database clone before any spec runs.
-  globalSetup: "./e2e/e2e-db-global-setup.ts",
+  // No globalSetup: the DB clone is provisioned inside the webServer command
+  // (before `node server.js`), NOT here — Playwright starts the webServer before
+  // globalSetup, so provisioning in a globalSetup re-cloned the database out from
+  // under the already-booted server and wiped its boot migrations (see
+  // scripts/e2e/provision-and-serve.js). Each POS spec signs its own admin JWT in
+  // beforeAll (jwt.sign with JWT_SECRET → localStorage pos_token), so nothing here
+  // needs the database or a token file.
   outputDir: "./artifacts/e2e/pos/_output",
   use: {
     baseURL: "http://127.0.0.1:3028",
@@ -35,10 +40,14 @@ export default defineConfig({
     serviceWorkers: "allow",
   },
   webServer: {
-    command: "node server.js",
+    // Provision the isolated clone FIRST, then boot `node server.js` so its own
+    // boot migrations apply to the FINAL clone. See scripts/e2e/provision-and-serve.js.
+    command: "node scripts/e2e/provision-and-serve.js",
     port: 3028,
     reuseExistingServer: false,
-    timeout: 180_000,
+    // Covers clone + boot migrations + listen with headroom, and stays above
+    // provision-and-serve.js's 240s clone timeout (see playwright.erp.config.ts).
+    timeout: 300_000,
     env: {
       PORT: "3028",
       NODE_ENV: "development",

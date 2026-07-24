@@ -11,13 +11,22 @@ import { defineConfig } from "@playwright/test";
 export default defineConfig({
   testDir: "./e2e/erp",
   testMatch: "**/*.spec.ts",
+  // rc-inventory-menu.spec.ts asserts the synthetic rc-gate-seed dataset in
+  // `moroccan_taste_pos_test`, not the dev clone this config serves — it runs
+  // under playwright.rc-gate.config.ts instead. (Its visual baselines moved to
+  // visual-baselines.spec.ts, which DOES belong here.)
+  testIgnore: "rc-inventory-menu.spec.ts",
   timeout: 180_000,
   expect: { timeout: 20_000 },
   fullyParallel: false,
   workers: 1,
   retries: 0,
   reporter: [["list"]],
-  // Provisions the isolated E2E database clone, THEN signs the admin JWT.
+  // Signs the admin JWT. The DB clone is NO LONGER provisioned here: Playwright
+  // starts the webServer BEFORE globalSetup, so provisioning here re-cloned the
+  // database out from under the already-booted server, wiping its boot migrations
+  // (the whole-suite `warehouses` 422 — see scripts/e2e/provision-and-serve.js).
+  // Provisioning now runs inside the webServer command, before `node server.js`.
   globalSetup: "./e2e/erp-global-setup.ts",
   outputDir: "./artifacts/e2e/erp/_output",
   use: {
@@ -30,10 +39,16 @@ export default defineConfig({
     screenshot: "only-on-failure",
   },
   webServer: {
-    command: "node server.js",
+    // Provision the isolated clone FIRST, then boot `node server.js` so its own
+    // boot migrations apply to the FINAL clone (mirrors production: existing DB →
+    // node server.js migrates on boot). See scripts/e2e/provision-and-serve.js.
+    command: "node scripts/e2e/provision-and-serve.js",
     port: 3027,
     reuseExistingServer: false,
-    timeout: 180_000,
+    // Covers clone (~42s) + boot migrations + listen with headroom, and stays
+    // above provision-and-serve.js's 240s clone timeout so a slow clone fails as
+    // a clone error, not an opaque Playwright port timeout.
+    timeout: 300_000,
     env: {
       PORT: "3027",
       NODE_ENV: "development",

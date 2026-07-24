@@ -6,7 +6,7 @@
  */
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { memoryAtomicRunner, memoryStore } from "../idb";
-import { OfflineEngine, type EngineApi, type EngineEvent } from "../offline";
+import { OfflineEngine, type EngineApi, type EngineEvent, upsertPayloadFrom } from "../offline";
 import { ApiError } from "../api";
 import type { LocalOrder, QueueOp } from "../types";
 
@@ -34,6 +34,40 @@ function makeDoc(id: string, overrides: Partial<LocalOrder> = {}): LocalOrder {
     ...overrides,
   };
 }
+
+describe("upsertPayloadFrom — combo picks ride the sync payload", () => {
+  // Regression: the offline upsert builder dropped comboChoices, so EVERY combo
+  // synced with no picks and the server rejected it with
+  // "أكمل اختيارات … المطلوب N على الأقل" (routes/pos-v2.js _validateComboChoices).
+  it("includes comboChoices for a combo line, omits it for a plain line", () => {
+    const doc = makeDoc("OC1", {
+      lines: [
+        { menuId: "M1", name: "شاي مغربي", qty: 1, unitPrice: 23, lineDiscount: 0, vatCategory: "S", notes: null },
+        {
+          menuId: "COMBO1",
+          name: "ساندوتش + عصير",
+          qty: 1,
+          unitPrice: 35,
+          lineDiscount: 0,
+          vatCategory: "S",
+          notes: "شاورما + بيبسي",
+          comboChoices: { "G-SANDWICH": ["M-SHAWARMA"], "G-DRINK": ["M-PEPSI"] },
+        },
+      ],
+    });
+    const lines = upsertPayloadFrom(doc).lines as Array<Record<string, unknown>>;
+    expect("comboChoices" in lines[0]).toBe(false); // plain line never carries choices
+    expect(lines[1].comboChoices).toEqual({ "G-SANDWICH": ["M-SHAWARMA"], "G-DRINK": ["M-PEPSI"] });
+  });
+
+  it("omits comboChoices when the object is empty (groupless combo)", () => {
+    const doc = makeDoc("OC2", {
+      lines: [{ menuId: "COMBO0", name: "عرض بلا خيارات", qty: 1, unitPrice: 20, lineDiscount: 0, vatCategory: "S", notes: null, comboChoices: {} }],
+    });
+    const lines = upsertPayloadFrom(doc).lines as Array<Record<string, unknown>>;
+    expect("comboChoices" in lines[0]).toBe(false);
+  });
+});
 
 interface Harness {
   engine: OfflineEngine;

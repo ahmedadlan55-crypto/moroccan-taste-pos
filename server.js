@@ -743,6 +743,9 @@ app.use('/api/settings', require('./routes/settings'));
 // / IP allowlist), settings-backed. requireCapability lives inside the route file.
 try { app.use('/api/security-policies', require('./routes/security-policies')); } catch(e){ console.warn('[mod:security-policies]', e.message); }
 app.use('/api/sales-channels', require('./routes/sales-channels'));
+// Unified Sales Analytics (Wave 2 read path) — scope middleware + metadata/query.
+// Behind the global JWT gate above; capability gate lives in routes/analytics.
+try { app.use('/api/analytics', require('./routes/analytics')); } catch(e){ console.warn('[mod:analytics]', e.message); }
 // V5.7.13 — translation proxy (server-side Google Translate fetch, no CORS)
 try { app.use('/api/i18n', require('./routes/i18n')); } catch(e){ console.warn('[mod:i18n]', e.message); }
 // ERP v3 (erp-core) is mounted first so its newer, schema-aware reports

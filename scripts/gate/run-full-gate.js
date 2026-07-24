@@ -64,6 +64,9 @@ const STEPS = [
   { id: 'build:erp',          cmd: NPM, args: ['run', 'build:erp'] },
   { id: 'build:pos',          cmd: NPM, args: ['run', 'build:pos'] },
   { id: 'e2e:erp',            cmd: NPX, args: ['playwright', 'test', '--config=playwright.erp.config.ts', '--reporter=line'] },
+  // rc-inventory-menu functional spec against its own rc-gate-seeded DB (2000
+  // synthetic items). Separate config + port + database from e2e:erp.
+  { id: 'e2e:rc-gate',        cmd: NPX, args: ['playwright', 'test', '--config=playwright.rc-gate.config.ts', '--reporter=line'] },
   { id: 'e2e:pos',            cmd: NPX, args: ['playwright', 'test', '--config=playwright.pos.config.ts', '--reporter=line'] },
 ];
 

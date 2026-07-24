@@ -28,3 +28,6 @@ test-results/
 playwright-report/
 e2e/.token
 e2e/o2c/.token
+
+# Sales Analytics — background export artifacts (runtime output, never committed)
+uploads/exports/

@@ -143,6 +143,8 @@
     "test:analytics-timezone": "node tests/integration/analyticsTimezone.api.test.js",
     "test:analytics-payments": "node tests/integration/analyticsPayments.api.test.js",
     "test:analytics-rollup-parity": "node tests/integration/analyticsRollupParity.api.test.js",
+    "test:analytics-exports": "node tests/integration/analyticsExports.api.test.js",
+    "test:analytics-budget": "node tests/integration/analyticsBudget.api.test.js",
     "test:o2c-foundation": "node tests/o2cFoundation.test.js",
     "test:o2c-services": "node tests/o2cServices.integration.test.js",
     "test:o2c-gate": "node tests/o2cLegacyGate.integration.test.js",
@@ -162,11 +164,11 @@
     "jsonwebtoken": "^9.0.2",
     "mysql2": "^3.6.5",
     "qrcode": "^1.5.4",
-    "sharp": "^0.33.5"
+    "sharp": "^0.33.5",
+    "xlsx": "^0.18.5"
   },
   "devDependencies": {
     "@playwright/test": "^1.61.1",
-    "nodemon": "^3.0.2",
-    "xlsx": "^0.18.5"
+    "nodemon": "^3.0.2"
   }
 }

@@ -11,6 +11,7 @@
  * client-shown totals will diverge from what /submit freezes.
  */
 import type { CartLine, CartTotals, OrderDiscount, Payment, TaxCategory } from "./types";
+import type { TFunction } from "@/i18n/types";
 
 export const VAT_RATES: Record<TaxCategory, number> = { S: 0.15, Z: 0, E: 0, O: 0 };
 
@@ -73,19 +74,25 @@ export function cartTotals(
 }
 
 /**
- * Client-side mirror of M.validatePayments — returns an Arabic error message
- * or null when valid. The server re-validates; this only powers instant UI.
+ * Client-side mirror of M.validatePayments — returns an error message or null
+ * when valid. The server re-validates; this only powers instant UI.
+ *
+ * i18n: pass the live `t` (from useT) to get a localized message; called
+ * without `t` (e.g. pure-function unit tests) it returns the Arabic default,
+ * so those tests keep asserting the Arabic strings unchanged.
  */
-export function paymentsError(payments: ReadonlyArray<Payment>, total: number): string | null {
-  if (!payments.length) return "حدّد طريقة دفع واحدة على الأقل";
+export function paymentsError(payments: ReadonlyArray<Payment>, total: number, t?: TFunction): string | null {
+  if (!payments.length) return t ? t("cartMath.noPaymentMethod") : "حدّد طريقة دفع واحدة على الأقل";
   let sum = 0;
   for (const p of payments) {
     const a = Number(p.amount);
-    if (!Number.isFinite(a) || a <= 0) return "مبلغ دفع غير صالح";
+    if (!Number.isFinite(a) || a <= 0) return t ? t("cartMath.invalidAmount") : "مبلغ دفع غير صالح";
     sum += a;
   }
   if (round2(sum) !== round2(total)) {
-    return `مجموع الدفعات (${round2(sum)}) لا يساوي إجمالي الطلب (${round2(total)})`;
+    return t
+      ? t("cartMath.sumMismatch", { sum: round2(sum), total: round2(total) })
+      : `مجموع الدفعات (${round2(sum)}) لا يساوي إجمالي الطلب (${round2(total)})`;
   }
   return null;
 }

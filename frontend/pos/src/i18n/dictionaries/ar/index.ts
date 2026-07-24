@@ -27,6 +27,9 @@ import { unitPicker } from "./unitPicker";
 import { toasts } from "./toasts";
 import { dialog } from "./dialog";
 import { ui } from "./ui";
+import { cartMath } from "./cartMath";
+import { catalogCache } from "./catalogCache";
+import { legacyDrain } from "./legacyDrain";
 
 /**
  * Merged Arabic dictionary barrel — one namespace per screen/shared module.
@@ -66,4 +69,7 @@ export const ar = {
   toasts,
   dialog,
   ui,
+  cartMath,
+  catalogCache,
+  legacyDrain,
 } as const;

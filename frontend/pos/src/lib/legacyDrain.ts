@@ -44,7 +44,10 @@ export interface DrainOutcome {
   /** Entries found in the legacy queue when the drain started. */
   attempted: number;
   succeeded: Array<{ clientOrderId: string; orderId: string | null }>;
-  failed: Array<{ clientOrderId: string | null; error: string }>;
+  /** `error` is an i18n KEY for client-generated failures (the drain report
+   *  renders it via t(error, errorVars)); a server-returned error string is
+   *  passed through verbatim (t() leaves unknown paths unchanged). */
+  failed: Array<{ clientOrderId: string | null; error: string; errorVars?: Record<string, string | number> }>;
   /** Entries still in localStorage after the drain (failures + untried). */
   remaining: number;
 }
@@ -127,7 +130,7 @@ export async function drainLegacyQueue(deps: DrainDeps): Promise<DrainOutcome> {
     }
     if (!entry) {
       retained.push(raw);
-      outcome.failed.push({ clientOrderId: null, error: "سجل غير صالح — يتعذّر إرساله" });
+      outcome.failed.push({ clientOrderId: null, error: "legacyDrain.invalidRecord" });
       continue;
     }
 
@@ -162,12 +165,18 @@ export async function drainLegacyQueue(deps: DrainDeps): Promise<DrainOutcome> {
         });
       } else {
         // Domain rejection (closed shift, validation, 4xx/5xx…) — keep + surface.
-        const err =
-          (resBody && typeof resBody === "object" && typeof (resBody as Record<string, unknown>).error === "string"
+        // A server-provided error string is shown verbatim (dynamic data); the
+        // fallback is an i18n key + the HTTP status, localized at the display site.
+        const serverErr =
+          resBody && typeof resBody === "object" && typeof (resBody as Record<string, unknown>).error === "string"
             ? String((resBody as Record<string, unknown>).error)
-            : "") || `رفض الخادم (HTTP ${res.status})`;
+            : "";
         retained.push(raw);
-        outcome.failed.push({ clientOrderId: entry.order.clientOrderId, error: err });
+        outcome.failed.push(
+          serverErr
+            ? { clientOrderId: entry.order.clientOrderId, error: serverErr }
+            : { clientOrderId: entry.order.clientOrderId, error: "legacyDrain.serverRejected", errorVars: { status: res.status } },
+        );
       }
     } catch (e) {
       // Transport failure — connection died mid-drain. Keep this and the rest.
@@ -175,7 +184,7 @@ export async function drainLegacyQueue(deps: DrainDeps): Promise<DrainOutcome> {
       retained.push(raw);
       outcome.failed.push({
         clientOrderId: entry.order.clientOrderId,
-        error: "انقطع الاتصال أثناء المزامنة — سيُعاد لاحقًا",
+        error: "legacyDrain.connectionLost",
       });
     }
   }

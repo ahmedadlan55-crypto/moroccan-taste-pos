@@ -162,6 +162,7 @@ export function PaymentDialog({ open, onClose }: { open: boolean; onClose: () =>
             { method: "credit", amount: splitCreditNum },
           ] as Payment[]).filter((p) => p.amount > 0),
           total,
+          t,
         )
       : null;
 

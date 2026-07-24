@@ -358,7 +358,7 @@ export default function App() {
             />
           </div>
           {catalogError && !catalog ? (
-            <ErrorBanner message={catalogError} onRetry={refetchCatalog} />
+            <ErrorBanner message={t(catalogError)} onRetry={refetchCatalog} />
           ) : (
             <div ref={setGridScrollEl} className="scrollbar-thin min-h-0 flex-1 overflow-y-auto">
               <ProductGrid
@@ -458,7 +458,7 @@ export default function App() {
                   {failed.map((f, i) => (
                     <li key={`${f.clientOrderId ?? "invalid"}-${i}`} className="flex items-center justify-between gap-2 rounded-xl border border-red-100 bg-red-50/50 px-3 py-2 text-xs font-bold text-slate-600">
                       <span className="num" dir="ltr">{f.clientOrderId ?? t("appShell.drain.unknownId")}</span>
-                      <span className="text-red-600">{f.error}</span>
+                      <span className="text-red-600">{t(f.error, f.errorVars)}</span>
                     </li>
                   ))}
                 </ul>

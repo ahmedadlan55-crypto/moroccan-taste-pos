@@ -37,6 +37,11 @@ const CAT = 'ITEST-IMG';
 const PNG_B64 = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==';
 const PNG_DATA_URL = 'data:image/png;base64,' + PNG_B64;
 const sha1 = (s) => crypto.createHash('sha1').update(s).digest('hex');
+// The catalog imageVersion is now SUBSTRING(SHA2(image_data,256),1,8) on the SQL
+// side (prod MySQL 9.6 removed the SHA1() built-in). It mirrors this SHA-256 of
+// the same data-URL. The item-image ETag stays SHA1 (Node-side, pos-v2.js:974),
+// so BOTH helpers are needed — do not collapse them.
+const sha256 = (s) => crypto.createHash('sha256').update(s).digest('hex');
 
 let pass = 0, fail = 0; const fails = [];
 function check(n, c, extra) { if (c) { pass++; console.log('  ✅', n); } else { fail++; fails.push(n); console.log('  ❌', n, extra != null ? '→ ' + JSON.stringify(extra).slice(0, 220) : ''); } }
@@ -104,7 +109,7 @@ const itemBody = (extra = {}) => ({
     const seeded = cat1.body?.data?.items?.find((i) => i.id === ITEM_IMG);
     const plain = cat1.body?.data?.items?.find((i) => i.id === ITEM_PLAIN);
     check('seeded item is in the catalog', !!seeded);
-    check('imageVersion = first 8 of SHA1(stored data-URL)', seeded && seeded.imageVersion === sha1(PNG_DATA_URL).slice(0, 8), seeded && seeded.imageVersion);
+    check('imageVersion = first 8 of SHA2-256(stored data-URL)', seeded && seeded.imageVersion === sha256(PNG_DATA_URL).slice(0, 8), seeded && seeded.imageVersion);
     check('item without an image → imageVersion null', plain && plain.imageVersion === null, plain && plain.imageVersion);
 
     // ── bytes endpoint ──
@@ -162,7 +167,7 @@ const itemBody = (extra = {}) => ({
     check('valid webp write is accepted', validWrite.body?.success === true, validWrite.body);
     const cat2 = await call('GET', '/api/pos/v2/catalog', cashier);
     const seeded2 = cat2.body?.data?.items?.find((i) => i.id === ITEM_IMG);
-    check('imageVersion changed after the image edit', seeded2 && seeded2.imageVersion === sha1('data:image/webp;base64,' + PNG_B64).slice(0, 8) && seeded2.imageVersion !== seeded.imageVersion, seeded2 && seeded2.imageVersion);
+    check('imageVersion changed after the image edit', seeded2 && seeded2.imageVersion === sha256('data:image/webp;base64,' + PNG_B64).slice(0, 8) && seeded2.imageVersion !== seeded.imageVersion, seeded2 && seeded2.imageVersion);
     check('…and the catalog ETag changed (cached clients revalidate)', !!etagBefore && !!cat2.headers.etag && cat2.headers.etag !== etagBefore, { before: etagBefore, after: cat2.headers.etag });
     const webp = await callBytes('/api/pos/v2/item-image/' + ITEM_IMG, cashier);
     check('endpoint now serves image/webp', webp.status === 200 && webp.headers['content-type'] === 'image/webp', webp.headers['content-type']);

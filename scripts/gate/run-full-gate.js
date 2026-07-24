@@ -43,6 +43,11 @@ const NPX = process.platform === 'win32' ? 'npx.cmd' : 'npx';
  *   5. E2E last — slowest, and meaningless if the build is broken.
  */
 const STEPS = [
+  // Static, sub-second: fail if any backend SQL calls a MySQL-9-removed built-in
+  // (SHA1/MD5). The gate's MySQL is 8.4 (still has them) but prod is 9.6 (removed
+  // them) — a query using SHA1() passes every local test yet 500s in production
+  // (this took down the menu/POS/product-images reads). Cheapest signal, so first.
+  { id: 'static:sql-removed-fns', cmd: process.execPath, args: ['scripts/audit/sql-removed-functions.js'] },
   // `run typecheck` (each frontend's own `tsc --noEmit` script), NOT
   // `exec -- tsc --noEmit`: `npm --prefix X exec` does NOT change the working
   // directory, so tsc ran in the repo root, found no project, printed its help
@@ -61,6 +66,11 @@ const STEPS = [
   // enforced continuously, not just asserted once in the E2E.
   { id: 'backend:cost-source', cmd: NPM, args: ['run', 'test:cost-source'] },
   { id: 'backend:menu-list', cmd: NPM, args: ['run', 'test:menu-list'] },
+  // The image-version tests assert the exact SUBSTRING(SHA2(image_data,256),1,8)
+  // token value (Node recomputes the same SHA-256). They were NOT gate steps, so
+  // the SHA1→SHA2 regression they cover slipped straight to prod — now wired in.
+  { id: 'backend:item-image', cmd: NPM, args: ['run', 'test:item-image'] },
+  { id: 'backend:product-images', cmd: NPM, args: ['run', 'test:product-images-upload'] },
   { id: 'backend:item-assignments', cmd: NPM, args: ['run', 'test:item-assignments'] },
   { id: 'schema:release-chain', cmd: NPM, args: ['run', 'test:release-chain'] },
   { id: 'schema:release-sequence', cmd: NPM, args: ['run', 'test:release-sequence'] },

@@ -709,7 +709,7 @@ router.get('/catalog', POS, async (req, res) => {
     // Measured on the live 2,000-row / 68MB-of-blobs table: ~28ms → ~100ms.
     const [items] = await db.query(
       "SELECT id, name, name_en, price, category, active, tax_category, stock, COALESCE(is_combo,0) AS is_combo, " +
-      "CASE WHEN image_data IS NULL OR image_data='' THEN NULL ELSE SUBSTRING(SHA1(image_data),1,8) END AS image_ver " +
+      "CASE WHEN image_data IS NULL OR image_data='' THEN NULL ELSE SUBSTRING(SHA2(image_data,256),1,8) END AS image_ver " +
       "FROM menu WHERE COALESCE(is_deleted,0)=0" + brandCond + " ORDER BY category, name", brandParams);
 
     // Bilingual — AR→EN category overlay (menu_category_i18n). Additive and

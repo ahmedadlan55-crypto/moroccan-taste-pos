@@ -237,7 +237,7 @@ router.get('/list', verifyToken, async (req, res) => {
               m.price, m.cost, m.cost_source, m.computed_cost, m.tax_category, m.active,
               m.is_tax_inclusive, m.bom_id,
               CASE WHEN m.image_data IS NULL OR m.image_data='' THEN 0 ELSE 1 END AS has_image,
-              CASE WHEN m.image_data IS NULL OR m.image_data='' THEN NULL ELSE SUBSTRING(SHA1(m.image_data),1,8) END AS image_ver,
+              CASE WHEN m.image_data IS NULL OR m.image_data='' THEN NULL ELSE SUBSTRING(SHA2(m.image_data,256),1,8) END AS image_ver,
               (SELECT COUNT(DISTINCT cmi.channel_id) FROM channel_menu_items cmi WHERE cmi.menu_item_id = m.id AND cmi.is_available = 1) AS channel_count,
               (SELECT COUNT(DISTINCT cmi.branch_id) FROM channel_menu_items cmi WHERE cmi.menu_item_id = m.id AND cmi.is_available = 1) AS branch_count
          FROM menu m LEFT JOIN brands b ON b.id = m.brand_id

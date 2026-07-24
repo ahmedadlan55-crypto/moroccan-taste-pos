@@ -68,7 +68,7 @@ router.get('/', async (req, res) => {
 
     const [rows] = await db.query(
       `SELECT id, name, name_en, category, brand_id,
-              SUBSTRING(SHA1(image_data),1,8) AS image_ver,
+              SUBSTRING(SHA2(image_data,256),1,8) AS image_ver,
               LENGTH(image_data) AS image_bytes
          FROM menu ${where}
         ORDER BY category, name

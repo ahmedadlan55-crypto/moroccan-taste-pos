@@ -57,7 +57,7 @@
 // bookkeeping — so a failure in one must not mask the others. workers:1 +
 // fullyParallel:false in playwright.erp.config.ts already guarantees ordering.
 // ═══════════════════════════════════════════════════════════════════════════
-import { test, expect, type Page, type TestInfo } from "@playwright/test";
+import { test, expect, type Page } from "@playwright/test";
 import fs from "fs";
 import path from "path";
 
@@ -393,37 +393,24 @@ async function assertIsFullPageRoute(page: Page, appPath: string, headingText: s
 }
 
 /**
- * Click a submit control that may sit under the fixed MobileNav bottom bar.
- * ItemFormPage's save bar is `fixed inset-x-0 bottom-0` and MenuItemPage's
- * FormActions is `sticky bottom-0`; on the phone/tablet projects the fixed
- * MobileNav (z-40) can overlay them. Playwright's own actionability check is
- * the arbiter: if the control is genuinely unreachable that is a real finding,
- * recorded as a visible annotation (the same "log it, don't silently route
- * around it" pattern trial-balance-rbac.spec.ts uses for MobileNav), not a
- * silent skip and not a forced click.
+ * Click a full-page form's submit control with a real pointer tap — no keyboard
+ * fallback, no tolerance. ItemFormPage's save bar is `fixed inset-x-0` and
+ * MenuItemPage's FormActions is `sticky`; below `lg` the shell's fixed MobileNav
+ * dock (z-40, lg:hidden) floats at the bottom too. The product now lifts BOTH
+ * bars above the dock on the phone/tablet projects (the ItemFormPage save bar
+ * and the shared FormActions each add a MobileNav clearance below `lg`), so the
+ * button is a genuine tappable target at every viewport. This asserts exactly
+ * that: if the dock ever overlays the control again the click times out and the
+ * test fails — the regression signal we want, no longer softened to an
+ * annotation. (It used to catch that timeout and record a "submit-control-
+ * obstructed" annotation; that tolerance is deliberately gone.)
  */
-async function clickSubmitIfReachable(
-  page: Page,
-  name: string | RegExp,
-  testInfo: TestInfo,
-  label: string,
-): Promise<boolean> {
+async function clickSubmit(page: Page, name: string | RegExp, label: string): Promise<void> {
   // Substring (not exact) match: these buttons render an icon beside the label,
   // and no sibling control on either create screen shares the label text.
   const button = page.getByRole("button", { name, exact: false });
   await expect(button, `${label}: the submit control must exist`).toHaveCount(1);
-  try {
-    await button.click({ timeout: 8_000 });
-    return true;
-  } catch (e) {
-    const finding =
-      `${label}: the submit control is present but NOT clickable at this viewport ` +
-      `(likely obscured by the fixed MobileNav bottom bar). The validation path was not exercised here. ` +
-      `Underlying error: ${String(e).slice(0, 200)}`;
-    console.warn("[i18n-cairo-crud] " + finding);
-    testInfo.annotations.push({ type: "submit-control-obstructed", description: finding });
-    return false;
-  }
+  await button.click({ timeout: 8_000 });
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -779,13 +766,12 @@ test("inventory item CRUD surface — list, full-page new, detail, edit (no writ
   const code = page.locator(`input[aria-label="${AR.itemFieldCode}"]`);
   await expect(code, "the create form must expose its code field").toHaveCount(1);
   await expect(code, "a create form must start empty").toHaveValue("");
-  if (await clickSubmitIfReachable(page, AR.itemCreateBtn, testInfo, "items/new")) {
-    await expect(
-      page.locator("#main"),
-      "an empty create form must surface its validation banner",
-    ).toContainText(AR.itemFixBeforeSave);
-    expect(new URL(page.url()).pathname, "a refused create must not navigate").toBe("/app/inventory/items/new");
-  }
+  await clickSubmit(page, AR.itemCreateBtn, "items/new");
+  await expect(
+    page.locator("#main"),
+    "an empty create form must surface its validation banner",
+  ).toContainText(AR.itemFixBeforeSave);
+  expect(new URL(page.url()).pathname, "a refused create must not navigate").toBe("/app/inventory/items/new");
 
   // ── detail ──────────────────────────────────────────────────────────────
   await open(page, `/inventory/items/${itemId}`);
@@ -854,13 +840,12 @@ test("menu product CRUD surface — list, full-page new, detail, edit (no writes
   const nameAr = page.getByLabel(AR.menuNameArLabel).first();
   await expect(nameAr, "the create form must expose its Arabic-name field").toHaveCount(1);
   await expect(nameAr, "a create form must start empty").toHaveValue("");
-  if (await clickSubmitIfReachable(page, AR.menuCreateBtn, testInfo, "menu/brand/new")) {
-    await expect(
-      page.locator("#main"),
-      "an empty create form must surface its inline validation",
-    ).toContainText(AR.menuNameRequired);
-    expect(new URL(page.url()).pathname, "a refused create must not navigate").toBe("/app/menu/brand/new");
-  }
+  await clickSubmit(page, AR.menuCreateBtn, "menu/brand/new");
+  await expect(
+    page.locator("#main"),
+    "an empty create form must surface its inline validation",
+  ).toContainText(AR.menuNameRequired);
+  expect(new URL(page.url()).pathname, "a refused create must not navigate").toBe("/app/menu/brand/new");
 
   // ── detail (mode="view") ────────────────────────────────────────────────
   await open(page, `/menu/brand/${encodeURIComponent(menuId)}`);

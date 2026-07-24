@@ -403,8 +403,13 @@ export function ItemFormPage({ mode, itemId }: { mode: "create" | "edit"; itemId
         </Section>
       )}
 
-      {/* (e) Save bar */}
-      <div className="fixed inset-x-0 bottom-0 z-40 border-t border-slate-200 bg-white/95 px-4 py-3 backdrop-blur">
+      {/* (e) Save bar. Below `lg` the shell's MobileNav dock (AppShell → MobileNav:
+          fixed, z-40, lg:hidden) floats over the bottom of the viewport, so lift
+          the bar above it on phones/tablets — matching the clearance #main already
+          reserves for scroll content — and sit flush at bottom-0 on lg+ where the
+          dock is gone. Without this the dock overlays the Save button and a real
+          tap lands on the dock, not the button. */}
+      <div className="fixed inset-x-0 bottom-[calc(5.5rem+env(safe-area-inset-bottom))] z-40 border-t border-slate-200 bg-white/95 px-4 py-3 backdrop-blur lg:bottom-0">
         <div className="mx-auto flex max-w-6xl flex-wrap items-center justify-end gap-2">
           <Button variant="ghost" onClick={cancel} disabled={saving}>{t("items.form.cancel")}</Button>
           {mode === "create" && (

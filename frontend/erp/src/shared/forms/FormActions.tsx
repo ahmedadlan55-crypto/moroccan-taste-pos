@@ -20,8 +20,12 @@ export function FormActions({ children, sticky = false, start, className }: Form
       className={cn(
         "flex flex-wrap items-center justify-end gap-2 border-t border-slate-100 bg-white px-1 py-3",
         // Full-bleed to the page gutters (main uses px-4 / sm:px-6), so the sticky
-        // bar never overshoots the viewport on a phone.
-        sticky && "sticky bottom-0 z-10 -mx-4 mt-2 px-4 shadow-soft sm:-mx-6 sm:px-6",
+        // bar never overshoots the viewport on a phone. Below `lg` the shell's
+        // MobileNav dock (fixed, z-40, lg:hidden) floats over the bottom, so the
+        // sticky row must clear it — otherwise the dock overlays Save/Cancel and a
+        // real tap lands on the dock. Flush at bottom-0 on lg+ where the dock is gone.
+        sticky &&
+          "sticky bottom-[calc(5.5rem+env(safe-area-inset-bottom))] z-10 -mx-4 mt-2 px-4 shadow-soft sm:-mx-6 sm:px-6 lg:bottom-0",
         className,
       )}
     >

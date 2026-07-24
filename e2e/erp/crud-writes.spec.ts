@@ -57,25 +57,23 @@ async function login(page: Page, lang: "ar" | "en") {
 }
 
 /**
- * Activate a bottom-of-form action button. On mobile-390 the fixed "Quick
- * navigation" dock (`<nav>`, `z-40`, `lg:hidden`) is nearly full width and sits
- * over the bottom of the viewport; `#main` reserves `pb-[7.75rem]` for it, so a
- * real user reaches the button by scrolling to the bottom — but Playwright's
- * pointer click auto-scrolls the button back to the viewport edge, under the
- * dock ("nav subtree intercepts pointer events"), and the route's framer-motion
- * re-render defeats manual re-positioning.
+ * Activate a bottom-of-form action button with a REAL pointer tap — the way a
+ * user does.
  *
- * So activate it the way a KEYBOARD user does: focus the button and press Enter.
- * A native <button> fires its click handler on Enter, this exercises the real
- * accessible activation path, and it does not depend on the fixed dock's
- * stacking. It is NOT `force` (no actionability bypass — the element must still
- * be focusable/enabled), NOT a retry loop, and NOT a raised timeout.
+ * This used to focus the button and press Enter: on mobile-390 the fixed "Quick
+ * navigation" dock (`<nav>`, `z-40`, `lg:hidden`) floated over the bottom of the
+ * viewport and intercepted the pointer, so a genuine click reported "nav subtree
+ * intercepts pointer events". The product now lifts full-page form action bars
+ * above that dock below `lg` — ItemFormPage's fixed save bar and the shared
+ * sticky FormActions both add a MobileNav clearance — so the button is a real,
+ * actionable tap target at every viewport, and the keyboard workaround is no
+ * longer needed. Playwright still enforces full actionability (visible, enabled,
+ * stable, unobscured): NOT `force`, NOT a retry loop, NOT a raised timeout — so
+ * if the dock ever overlays the button again this click times out and fails.
  */
 async function clickClear(locator: Locator) {
   await expect(locator).toBeEnabled();
-  await locator.scrollIntoViewIfNeeded();
-  await locator.focus();
-  await locator.press("Enter");
+  await locator.click();
 }
 
 async function waitRendered(page: Page) {

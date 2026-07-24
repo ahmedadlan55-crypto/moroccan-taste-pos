@@ -8,7 +8,7 @@ import { Plus, Trash2 } from "lucide-react";
 import { apiClient } from "@/shared/api";
 import { PageHeader, PanelTitle } from "@/shared/ui";
 import { Button } from "@/shared/ui";
-import { SearchableEntityCombobox, type EntityPage } from "@/shared/ui";
+import { SearchableEntityCombobox, SearchableEntityMultiCombobox, type EntityPage } from "@/shared/ui";
 import { UnitQtyInput, baseFromValue, type ItemUnitLite, type UnitQtyValue } from "@/shared/ui";
 import { formatCurrency } from "@/shared/lib";
 import { useT, translateApiError } from "@/i18n";
@@ -54,6 +54,22 @@ export function OrderCreatePage() {
   const [expectedDate, setExpectedDate] = useState("");
   const [notes, setNotes] = useState("");
   const [lines, setLines] = useState<LineState[]>([newLine()]);
+  const [staged, setStaged] = useState<ItemHit[]>([]);
+
+  // Bulk add — one line per staged item (skipping items already on a line).
+  function addStaged() {
+    if (!staged.length) return;
+    const existing = new Set(lines.map((l) => l.item?.id).filter(Boolean) as string[]);
+    const additions = staged
+      .filter((it) => !existing.has(it.id))
+      .map((it) => ({ ...newLine(), item: it, qty: { unitCode: it.baseUnit.code, qty: 1 } }));
+    setLines((ls) => {
+      const kept = ls.filter((l) => l.item);
+      const next = [...kept, ...additions];
+      return next.length ? next : [newLine()];
+    });
+    setStaged([]);
+  }
 
   const preview = useMemo(() => {
     let net = 0, vat = 0;
@@ -118,6 +134,26 @@ export function OrderCreatePage() {
 
       <section className="surface overflow-hidden">
         <PanelTitle title={t("purchasing.lines.title")} action={<Button variant="secondary" size="sm" onClick={() => setLines((ls) => [...ls, newLine()])}><Plus className="h-4 w-4" /> {t("purchasing.lines.addLine")}</Button>} />
+        <div className="border-b border-slate-100 p-4">
+          <span className="mb-1.5 block text-[11px] font-bold text-slate-400">{t("purchasing.lines.bulkAdd")}</span>
+          <div className="flex flex-col gap-2 sm:flex-row sm:items-start">
+            <div className="flex-1">
+              <SearchableEntityMultiCombobox<ItemHit>
+                value={staged}
+                onChange={setStaged}
+                fetcher={itemFetcher}
+                queryKey={["procurement", "item-multi-picker"]}
+                getKey={(it) => it.id}
+                getLabel={(it) => it.name}
+                getSublabel={(it) => it.sku || undefined}
+                ariaLabel={t("purchasing.common.selectItemAria")}
+              />
+            </div>
+            <Button variant="secondary" size="sm" disabled={!staged.length} onClick={addStaged}>
+              <Plus className="h-4 w-4" /> {t("purchasing.lines.bulkAddAction")}
+            </Button>
+          </div>
+        </div>
         <div className="grid gap-4 p-4">
           {lines.map((l, idx) => {
             const units = l.item ? unitsOf(l.item) : [{ code: "", name: "", factor: 1, isBase: true }];

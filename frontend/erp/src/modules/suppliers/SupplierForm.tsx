@@ -1,10 +1,11 @@
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import { useForm, Controller, useFieldArray } from "react-hook-form";
 import { useQueryClient } from "@tanstack/react-query";
 import { Building2, Plus, Trash2 } from "lucide-react";
-import { Drawer, Button, Select, SegmentedControl, IconButton, safeUserMessage } from "@/shared/ui";
+import { Drawer, Button, Select, SegmentedControl, IconButton, safeUserMessage, CountryPicker, CityPicker } from "@/shared/ui";
 import { Field, zodResolver } from "@/shared/forms";
 import { useT, useLang } from "@/i18n";
+import { useCountryHit, cityHitFromName, type GeoHit } from "@/shared/lib/geo";
 import { useCoaAccounts, useCostCenterDims } from "@/modules/banking/api";
 import {
   useSupplier, useCreateSupplier, useUpdateSupplier,
@@ -34,9 +35,25 @@ export function SupplierForm({ open, onClose, supplierId }: { open: boolean; onC
   const { fields, append, remove } = useFieldArray({ control, name: "beneficiaries" });
   const vatRegistered = watch("vatRegistered");
 
+  // Country + city are searchable pickers, persisted as country = hit.code (ISO2)
+  // and city = hit.name. Seeded from the loaded record on edit (country label
+  // resolved "SA" → "المملكة العربية السعودية"; city seeded in the reset effect).
+  const editCountryCode = editing ? (detail.data as Record<string, unknown> | undefined)?.country : undefined;
+  const seededCountry = useCountryHit(typeof editCountryCode === "string" ? editCountryCode : undefined);
+  const [countryHit, setCountryHit] = useState<GeoHit | null>(null);
+  const [cityHit, setCityHit] = useState<GeoHit | null>(null);
+  useEffect(() => {
+    if (editing && seededCountry.data) setCountryHit(seededCountry.data);
+    if (!editing) setCountryHit(null);
+  }, [editing, seededCountry.data]);
+  function onCountryChange(v: GeoHit | null) {
+    setCountryHit(v);
+    setCityHit(null); // the chosen city belongs to the previous country — reset it
+  }
+
   useEffect(() => {
     if (!open) return;
-    if (!editing) { reset(EMPTY); return; }
+    if (!editing) { reset(EMPTY); setCityHit(null); return; }
     if (!detail.data) return;
     const d = detail.data as Record<string, unknown>;
     reset({
@@ -52,6 +69,7 @@ export function SupplierForm({ open, onClose, supplierId }: { open: boolean; onC
         serverId: b.id, bankName: b.bankName, accountName: b.accountName ?? "", accountNumber: b.accountNumber ?? "", iban: b.iban ?? "",
       })),
     });
+    setCityHit(cityHitFromName(d.country ? String(d.country) : null, d.city ? String(d.city) : null));
   }, [open, editing, detail.data, beneficiaries.data, reset]);
 
   const coa = useCoaAccounts(open);
@@ -72,7 +90,8 @@ export function SupplierForm({ open, onClose, supplierId }: { open: boolean; onC
   }
 
   async function onSubmit(values: SupplierInput) {
-    const { beneficiaries: rows, ...body } = values;
+    const { beneficiaries: rows, ...rest } = values;
+    const body = { ...rest, country: countryHit?.code ?? null, city: cityHit?.name ?? null };
     let targetId = supplierId ?? "";
     if (editing) {
       await updateSupplier.mutateAsync({ id: supplierId!, body });
@@ -164,7 +183,12 @@ export function SupplierForm({ open, onClose, supplierId }: { open: boolean; onC
         <div className="rounded-xl border border-slate-200 bg-slate-50/60 p-3">
           <div className="mb-2 text-xs font-extrabold text-slate-500">{t("purchasing.suppliers.form.addressSection")}</div>
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
-            <Field label={t("purchasing.suppliers.field.city")}><input className="field w-full" {...register("city")} /></Field>
+            <Field label={t("purchasing.suppliers.field.country")}>
+              <CountryPicker value={countryHit} onChange={onCountryChange} />
+            </Field>
+            <Field label={t("purchasing.suppliers.field.city")}>
+              <CityPicker countryCode={countryHit?.code ?? null} value={cityHit} onChange={setCityHit} />
+            </Field>
             <Field label={t("purchasing.suppliers.field.district")}><input className="field w-full" {...register("district")} /></Field>
             <Field label={t("purchasing.suppliers.field.postalCode")}><input dir="ltr" className="field w-full tabular-nums" {...register("postalCode")} /></Field>
             <Field label={t("purchasing.suppliers.field.street")} className="sm:col-span-2"><input className="field w-full" {...register("street")} /></Field>

@@ -105,6 +105,8 @@ export const purchasing = {
     unitCost: "Unit cost",
     lot: "Lot",
     expiry: "Expiry",
+    bulkAdd: "Add several items at once",
+    bulkAddAction: "Add as lines",
   },
   col: {
     number: "Number",
@@ -267,6 +269,7 @@ export const purchasing = {
     field: {
       vatNumber: "VAT number",
       city: "City",
+      country: "Country",
       paymentTerms: "Payment terms",
       apBalance: "Outstanding balance",
       phone: "Phone",

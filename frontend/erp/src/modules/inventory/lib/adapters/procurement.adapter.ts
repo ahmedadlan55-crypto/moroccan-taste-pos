@@ -27,6 +27,8 @@ export interface Supplier {
   phone: string;
   email: string;
   city: string;
+  /** ISO 3166-1 alpha-2 country code (e.g. "SA"). */
+  country: string;
   paymentTerms: string;
   isActive: boolean;
   apBalance: number;
@@ -40,6 +42,7 @@ export function toSupplier(r: Record<string, unknown>): Supplier {
     phone: str(r.phone),
     email: str(r.email),
     city: str(r.city),
+    country: str(r.country),
     paymentTerms: str(r.payment_terms, "Cash"),
     isActive: !!Number(r.is_active),
     apBalance: num(r.ap_balance),

@@ -50,6 +50,8 @@ export interface Customer {
   email?: string | null;
   address?: string | null;
   city?: string | null;
+  /** ISO 3166-1 alpha-2 country code (e.g. "SA"). */
+  country?: string | null;
   street?: string | null;
   buildingNumber?: string | null;
   district?: string | null;

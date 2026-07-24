@@ -1,6 +1,6 @@
 import { useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { X, Plus, Trash2 } from "lucide-react";
+import { X, Plus } from "lucide-react";
 import { PageHeader } from "@/shared/ui";
 import { Button } from "@/shared/ui";
 import { ApiError } from "@/shared/api";
@@ -9,7 +9,7 @@ import { useWarehouseScope } from "@/modules/inventory/lib/warehouse-scope-provi
 import { formatQty } from "@/shared/lib";
 import { useStocktakeMutations } from "@/modules/inventory/lib/hooks/useStocktakes";
 import { createStocktakeInput } from "@/modules/inventory/lib/schemas/stocktake.schema";
-import { SearchableEntityCombobox } from "@/shared/ui";
+import { SearchableEntityMultiCombobox } from "@/shared/ui";
 import { makeItemFetcher, type ItemHit } from "@/modules/inventory/lib/hooks/useEntitySearch";
 import { useT } from "@/i18n";
 
@@ -25,7 +25,7 @@ export function StocktakeWizard() {
   const [warehouseId, setWarehouseId] = useState("");
   const [scopeType, setScopeType] = useState<Scope>("full");
   const [categoryId, setCategoryId] = useState("");
-  const [chosenItems, setChosenItems] = useState<{ id: string; name: string }[]>([]);
+  const [chosenItems, setChosenItems] = useState<ItemHit[]>([]);
   const itemIds = useMemo(() => chosenItems.map((c) => c.id), [chosenItems]);
   const [includeZero, setIncludeZero] = useState(false);
   const [blindCount, setBlindCount] = useState(false);
@@ -118,33 +118,22 @@ export function StocktakeWizard() {
 
         {scopeType === "items" && (
           <div className="rounded-xl border border-slate-100 p-3">
-            <div className="mb-2 flex flex-col gap-1">
-              <span className="text-xs font-bold text-slate-500">{t("inventoryRest.stocktakes.wizard.selectedItems")}</span>
-              <div className="max-w-md">
-                <SearchableEntityCombobox<ItemHit>
-                  value={null}
-                  onChange={(hit) => { if (hit && !itemIds.includes(hit.id)) setChosenItems((s) => [...s, { id: hit.id, name: hit.name }]); }}
-                  fetcher={itemFetcher}
-                  queryKey={["item-search", warehouseId, "stocktake"]}
-                  getKey={(it) => it.id}
-                  getLabel={(it) => it.name}
-                  getSublabel={(it) => [it.sku, it.warehouseQty != null ? `${formatQty(it.warehouseQty)} ${it.baseUnit.name}` : null].filter(Boolean).join(" · ") || undefined}
-                  placeholder={t("inventoryRest.stocktakes.wizard.itemSearch")}
-                  ariaLabel={t("inventoryRest.stocktakes.wizard.addItemAria")}
-                  autoSelectExact
-                  emptyText={t("inventoryRest.stocktakes.wizard.itemsEmptyPicker")}
-                />
-              </div>
+            <span className="mb-2 block text-xs font-bold text-slate-500">{t("inventoryRest.stocktakes.wizard.selectedItems")}</span>
+            <div className="max-w-md">
+              <SearchableEntityMultiCombobox<ItemHit>
+                value={chosenItems}
+                onChange={setChosenItems}
+                fetcher={itemFetcher}
+                queryKey={["item-search", warehouseId, "stocktake"]}
+                getKey={(it) => it.id}
+                getLabel={(it) => it.name}
+                getSublabel={(it) => [it.sku, it.warehouseQty != null ? `${formatQty(it.warehouseQty)} ${it.baseUnit.name}` : null].filter(Boolean).join(" · ") || undefined}
+                placeholder={t("inventoryRest.stocktakes.wizard.itemSearch")}
+                ariaLabel={t("inventoryRest.stocktakes.wizard.addItemAria")}
+                emptyText={t("inventoryRest.stocktakes.wizard.itemsEmptyPicker")}
+              />
             </div>
-            {chosenItems.length === 0 ? <p className="text-xs text-slate-400">{t("inventoryRest.stocktakes.wizard.noItemsChosen")}</p> : (
-              <div className="flex flex-wrap gap-2">
-                {chosenItems.map((r) => (
-                  <span key={r.id} className="flex items-center gap-1 rounded-lg bg-slate-100 px-2 py-1 text-xs font-bold text-slate-700">{r.name}
-                    <button type="button" aria-label={t("inventoryRest.stocktakes.wizard.removeAria")} onClick={() => setChosenItems((s) => s.filter((x) => x.id !== r.id))}><Trash2 className="h-3.5 w-3.5 text-slate-400 hover:text-rose-600" /></button>
-                  </span>
-                ))}
-              </div>
-            )}
+            {chosenItems.length === 0 && <p className="mt-2 text-xs text-slate-400">{t("inventoryRest.stocktakes.wizard.noItemsChosen")}</p>}
           </div>
         )}
 

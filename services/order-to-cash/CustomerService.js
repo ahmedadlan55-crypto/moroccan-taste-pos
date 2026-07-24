@@ -38,6 +38,7 @@ function _shape(row) {
     email: row.email || null,
     address: row.address || null,
     city: row.city || null,
+    country: row.country || null,
     vatRegistered: row.vat_registered == null ? true : !!Number(row.vat_registered),
     street: row.street || null,
     buildingNumber: row.building_number || null,
@@ -157,13 +158,13 @@ async function create(conn, data, actor) {
   const id = data.id || genId();
   await conn.query(
     `INSERT INTO customers
-       (id, name, name_en, phone, vat_number, email, address, city, gender, customer_type,
+       (id, name, name_en, phone, vat_number, email, address, city, country, gender, customer_type,
         credit_limit, balance, payment_terms, credit_days, brand_id, is_active, created_by, updated_by,
         vat_registered, street, building_number, district, additional_no, postal_code,
         default_revenue_account_id, default_revenue_cost_center_id)
-     VALUES (?,?,?,?,?,?,?,?,?,?,?,0,?,?,?,1,?,?,?,?,?,?,?,?,?,?)`,
+     VALUES (?,?,?,?,?,?,?,?,?,?,?,?,0,?,?,?,1,?,?,?,?,?,?,?,?,?,?)`,
     [id, String(data.name).trim(), data.nameEn || null, data.phone || null, data.vatNumber || null,
-     data.email || null, data.address || null, data.city || null, data.gender || 'unknown',
+     data.email || null, data.address || null, data.city || null, data.country || null, data.gender || 'unknown',
      data.customerType || 'B2C', Number(data.creditLimit || 0),
      data.paymentTerms || 'Cash', Number(data.creditDays || 0), data.brandId || null, actor || '', actor || '',
      data.vatRegistered === false ? 0 : 1, data.street || null, data.buildingNumber || null,
@@ -178,7 +179,7 @@ async function update(conn, id, data, actor) {
   _validate(data, { partial: true });
   const map = {
     name: 'name', nameEn: 'name_en', phone: 'phone', vatNumber: 'vat_number', email: 'email',
-    address: 'address', city: 'city', gender: 'gender', customerType: 'customer_type',
+    address: 'address', city: 'city', country: 'country', gender: 'gender', customerType: 'customer_type',
     creditLimit: 'credit_limit', paymentTerms: 'payment_terms', creditDays: 'credit_days', brandId: 'brand_id',
     vatRegistered: 'vat_registered', street: 'street', buildingNumber: 'building_number',
     district: 'district', additionalNo: 'additional_no', postalCode: 'postal_code',

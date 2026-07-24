@@ -35,7 +35,7 @@ router.get('/', requireCapability('suppliers.view'), async (req, res) => {
     const order = H.orderBy(p.sort, p.dir, SORTABLE, 's.name');
 
     const [rows] = await db.query(
-      `SELECT s.id, s.name, s.name_en, s.vat_number, s.phone, s.email, s.city,
+      `SELECT s.id, s.name, s.name_en, s.vat_number, s.phone, s.email, s.city, s.country,
               s.payment_terms, s.is_active, s.created_at,
               COALESCE(ap.ap_balance, 0) AS ap_balance
          FROM suppliers s
@@ -89,12 +89,12 @@ router.post('/', requireCapability('suppliers.create'), async (req, res) => {
     const id = genId();
     await db.query(
       `INSERT INTO suppliers
-         (id, name, name_en, vat_number, phone, email, address, city, payment_terms, is_active, created_by, brand_id,
+         (id, name, name_en, vat_number, phone, email, address, city, country, payment_terms, is_active, created_by, brand_id,
           vat_registered, street, building_number, district, additional_no, postal_code,
           default_expense_account_id, default_expense_cost_center_id)
-       VALUES (?,?,?,?,?,?,?,?,?,1,?,?,?,?,?,?,?,?,?,?)`,
+       VALUES (?,?,?,?,?,?,?,?,?,?,1,?,?,?,?,?,?,?,?,?,?)`,
       [id, name, b.nameEn || null, b.vatNumber || null, b.phone || null, b.email || null,
-       b.address || null, b.city || null, b.paymentTerms || 'Cash', H.actorOf(req), b.brandId || null,
+       b.address || null, b.city || null, b.country || null, b.paymentTerms || 'Cash', H.actorOf(req), b.brandId || null,
        vatRegistered ? 1 : 0, b.street || null, b.buildingNumber || null, b.district || null,
        b.additionalNo || null, b.postalCode || null, b.defaultExpenseAccountId || null, b.defaultExpenseCostCenterId || null]);
     const [row] = await db.query('SELECT * FROM suppliers WHERE id = ?', [id]);
@@ -125,13 +125,13 @@ router.get('/:id', requireCapability('suppliers.view'), async (req, res) => {
 
 // ── PATCH /:id — edit (mass-assignment protected, no status/balance) ─────────
 const EDITABLE = [
-  'name', 'name_en', 'vat_number', 'phone', 'email', 'address', 'city', 'payment_terms', 'brand_id',
+  'name', 'name_en', 'vat_number', 'phone', 'email', 'address', 'city', 'country', 'payment_terms', 'brand_id',
   'vat_registered', 'street', 'building_number', 'district', 'additional_no', 'postal_code',
   'default_expense_account_id', 'default_expense_cost_center_id',
 ];
 const BODY_MAP = {
   name: 'name', nameEn: 'name_en', vatNumber: 'vat_number', phone: 'phone', email: 'email', address: 'address',
-  city: 'city', paymentTerms: 'payment_terms', brandId: 'brand_id',
+  city: 'city', country: 'country', paymentTerms: 'payment_terms', brandId: 'brand_id',
   vatRegistered: 'vat_registered', street: 'street', buildingNumber: 'building_number', district: 'district',
   additionalNo: 'additional_no', postalCode: 'postal_code',
   defaultExpenseAccountId: 'default_expense_account_id', defaultExpenseCostCenterId: 'default_expense_cost_center_id',

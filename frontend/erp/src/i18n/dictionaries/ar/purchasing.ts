@@ -126,6 +126,8 @@ export const purchasing = {
     unitCost: "تكلفة الوحدة",
     lot: "الدفعة",
     expiry: "الصلاحية",
+    bulkAdd: "إضافة عدة أصناف دفعة واحدة",
+    bulkAddAction: "إضافة كسطور",
   },
   // Cross-screen column headers.
   col: {
@@ -302,6 +304,7 @@ export const purchasing = {
     field: {
       vatNumber: "الرقم الضريبي",
       city: "المدينة",
+      country: "الدولة",
       paymentTerms: "شروط الدفع",
       apBalance: "الرصيد المستحق",
       phone: "الهاتف",

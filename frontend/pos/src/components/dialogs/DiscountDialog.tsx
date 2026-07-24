@@ -4,6 +4,7 @@
  * enforces the ceiling at /submit regardless — hidden buttons are not RBAC).
  */
 import { useEffect, useMemo, useState } from "react";
+import { useT } from "@/i18n/I18nProvider";
 import { BadgePercent, Tag } from "lucide-react";
 import { usePos } from "@/state/store";
 import { cartTotals, orderDiscountPct, round2 } from "@/lib/cartMath";
@@ -14,6 +15,7 @@ import { Dialog } from "../Dialog";
 import { Button, cn, Money } from "../ui";
 
 export function DiscountDialog({ open, onClose }: { open: boolean; onClose: () => void }) {
+  const t = useT();
   const { cart, setDiscount, catalog, supervisor, posCan } = usePos();
   const [type, setType] = useState<DiscountType>("PERCENT");
   const [value, setValue] = useState("");
@@ -44,10 +46,10 @@ export function DiscountDialog({ open, onClose }: { open: boolean; onClose: () =
   const presets = presetsForScope(useDiscountPresets(open), "invoice");
 
   return (
-    <Dialog open={open} onClose={onClose} title="خصم على الطلب" widthClass="max-w-md">
+    <Dialog open={open} onClose={onClose} title={t("discountDialog.title")} widthClass="max-w-md">
       {presets.length > 0 ? (
         <div className="mb-3">
-          <p className="mb-1.5 text-[11px] font-extrabold text-slate-500">خصومات جاهزة</p>
+          <p className="mb-1.5 text-[11px] font-extrabold text-slate-500">{t("discountDialog.presets.label")}</p>
           <div className="grid grid-cols-2 gap-1.5">
             {presets.map((p) => {
               const belowMin = p.minOrder != null && preview.subtotal < p.minOrder;
@@ -56,7 +58,7 @@ export function DiscountDialog({ open, onClose }: { open: boolean; onClose: () =
                   key={p.id}
                   type="button"
                   disabled={belowMin}
-                  title={belowMin ? `الحد الأدنى للطلب ${fmt2(p.minOrder!)} ر.س` : undefined}
+                  title={belowMin ? t("discountDialog.presets.minOrder", { amount: fmt2(p.minOrder!) }) : undefined}
                   onClick={() => {
                     setType(p.type);
                     setValue(String(p.value));
@@ -75,11 +77,11 @@ export function DiscountDialog({ open, onClose }: { open: boolean; onClose: () =
           </div>
         </div>
       ) : null}
-      <div className="mb-3 grid grid-cols-2 gap-1.5" role="radiogroup" aria-label="نوع الخصم">
+      <div className="mb-3 grid grid-cols-2 gap-1.5" role="radiogroup" aria-label={t("discountDialog.type.aria")}>
         {(
           [
-            { key: "PERCENT" as DiscountType, label: "نسبة %" },
-            { key: "FIXED" as DiscountType, label: "مبلغ ر.س" },
+            { key: "PERCENT" as DiscountType, label: t("discountDialog.type.percent") },
+            { key: "FIXED" as DiscountType, label: t("discountDialog.type.fixed") },
           ] as const
         ).map(({ key, label }) => (
           <button
@@ -100,7 +102,9 @@ export function DiscountDialog({ open, onClose }: { open: boolean; onClose: () =
 
       <label className="mb-3 block">
         <span className="mb-1 block text-[11px] font-extrabold text-slate-500">
-          {type === "PERCENT" ? "النسبة (0–100)" : `المبلغ (يُسقَف عند ${fmt2(preview.subtotal)})`}
+          {type === "PERCENT"
+            ? t("discountDialog.value.percentLabel")
+            : t("discountDialog.value.fixedLabel", { amount: fmt2(preview.subtotal) })}
         </span>
         <input
           type="number"
@@ -117,12 +121,12 @@ export function DiscountDialog({ open, onClose }: { open: boolean; onClose: () =
       </label>
 
       <label className="mb-3 block">
-        <span className="mb-1 block text-[11px] font-extrabold text-slate-500">اسم الخصم</span>
+        <span className="mb-1 block text-[11px] font-extrabold text-slate-500">{t("discountDialog.name.label")}</span>
         <input
           type="text"
           value={name}
           onChange={(e) => setName(e.target.value)}
-          placeholder="عرض الافتتاح، موظف…"
+          placeholder={t("discountDialog.name.placeholder")}
           className="field"
           maxLength={100}
         />
@@ -130,11 +134,11 @@ export function DiscountDialog({ open, onClose }: { open: boolean; onClose: () =
 
       <div className="rounded-xl bg-slate-50 px-3 py-2.5 text-sm">
         <div className="flex justify-between font-bold text-slate-500">
-          <span>قيمة الخصم</span>
+          <span>{t("discountDialog.summary.discountValue")}</span>
           <Money value={`-${fmt2(preview.discountAmount)}`} className="text-saffron-600" />
         </div>
         <div className="mt-1 flex justify-between font-extrabold text-ink">
-          <span>الإجمالي بعد الخصم</span>
+          <span>{t("discountDialog.summary.totalAfter")}</span>
           <Money value={fmt2(preview.total)} />
         </div>
       </div>
@@ -142,8 +146,9 @@ export function DiscountDialog({ open, onClose }: { open: boolean; onClose: () =
       {overCeiling ? (
         <p role="alert" className="mt-3 rounded-xl bg-amber-50 px-3 py-2 text-[11px] font-bold text-amber-800">
           <BadgePercent className="ms-1 inline h-3.5 w-3.5" aria-hidden />
-          الخصم <Money value={fmt2(round2(pct))} />% يتجاوز حد الكاشير (<Money value={fmt2(ceiling)} />%) — سيرفضه الخادم
-          عند الدفع بدون مدير
+          {t("discountDialog.overCeiling.before")} <Money value={fmt2(round2(pct))} />
+          {t("discountDialog.overCeiling.between")}<Money value={fmt2(ceiling)} />
+          {t("discountDialog.overCeiling.after")}
         </p>
       ) : null}
 
@@ -156,7 +161,7 @@ export function DiscountDialog({ open, onClose }: { open: boolean; onClose: () =
               onClose();
             }}
           >
-            إزالة الخصم
+            {t("discountDialog.actions.remove")}
           </Button>
         ) : null}
         <Button
@@ -168,7 +173,7 @@ export function DiscountDialog({ open, onClose }: { open: boolean; onClose: () =
             onClose();
           }}
         >
-          تطبيق الخصم
+          {t("discountDialog.actions.apply")}
         </Button>
       </div>
     </Dialog>

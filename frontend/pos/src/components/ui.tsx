@@ -7,6 +7,7 @@ import { cva, type VariantProps } from "class-variance-authority";
 import { clsx, type ClassValue } from "clsx";
 import { twMerge } from "tailwind-merge";
 import { AlertTriangle, Loader2, RefreshCw } from "lucide-react";
+import { useT } from "@/i18n/I18nProvider";
 
 export function cn(...inputs: ClassValue[]): string {
   return twMerge(clsx(inputs));
@@ -71,6 +72,7 @@ export function EmptyState({ icon, title, hint }: { icon?: ReactNode; title: str
 }
 
 export function ErrorBanner({ message, onRetry }: { message: string; onRetry?: () => void }) {
+  const t = useT();
   return (
     <div role="alert" className="flex items-center justify-between gap-3 rounded-2xl border border-red-200 bg-red-50 px-4 py-3">
       <div className="flex items-center gap-2 text-sm font-bold text-red-700">
@@ -80,7 +82,7 @@ export function ErrorBanner({ message, onRetry }: { message: string; onRetry?: (
       {onRetry ? (
         <Button variant="danger" size="sm" onClick={onRetry}>
           <RefreshCw className="h-3.5 w-3.5" aria-hidden />
-          إعادة المحاولة
+          {t("ui.errorBanner.retry")}
         </Button>
       ) : null}
     </div>

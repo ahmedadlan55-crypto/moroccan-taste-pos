@@ -44,6 +44,10 @@ export interface CatalogPaymentMethod {
 export interface CatalogItem {
   id: string;
   name: string;
+  /** English display name (menu.name_en, served by the catalog). Absent/empty →
+   *  the UI falls back to `name`. The receipt ALWAYS uses `name` (Arabic) for
+   *  ZATCA compliance. */
+  nameEn?: string | null;
   price: number; // base-unit price (tax-inclusive)
   category: string;
   active: boolean;
@@ -115,6 +119,8 @@ export interface ComboDef {
   id: string;
   menuId: string;
   name: string;
+  /** English combo name (served by the catalog); UI falls back to `name`. */
+  nameEn?: string | null;
   price: number;
   fixedComponents: ComboFixedComponent[];
   groups: ComboGroup[];
@@ -144,6 +150,10 @@ export interface Catalog {
 export interface CartLine {
   menuId: string;
   name: string;
+  /** English display name, snapshotted at add time. On-screen cart/UI shows this
+   *  when the locale is English; the RECEIPT + server payload always use `name`
+   *  (Arabic) for ZATCA. Absent → the UI falls back to `name`. */
+  nameEn?: string | null;
   qty: number; // = enteredQty (quantity in the chosen unit; base if none)
   unitPrice: number; // base-unit price
   lineDiscount: number;

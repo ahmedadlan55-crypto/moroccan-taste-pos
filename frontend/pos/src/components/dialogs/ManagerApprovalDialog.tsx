@@ -10,6 +10,7 @@
 import { useEffect, useRef, useState } from "react";
 import { ShieldCheck } from "lucide-react";
 import type { ApproverCredentials } from "@/lib/types";
+import { useT } from "@/i18n/I18nProvider";
 import { Dialog } from "../Dialog";
 import { Button, ErrorBanner } from "../ui";
 
@@ -33,6 +34,7 @@ export function ManagerApprovalDialog({
   onClose: () => void;
   onSubmit: (creds: ApproverCredentials, reason: string) => void;
 }) {
+  const t = useT();
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [reason, setReason] = useState(defaultReason ?? "");
@@ -72,13 +74,13 @@ export function ManagerApprovalDialog({
       >
         <div className="flex items-center gap-2 rounded-xl border border-amber-200 bg-amber-50 p-3 text-xs font-bold text-amber-800">
           <ShieldCheck className="h-4 w-4 shrink-0" aria-hidden />
-          هذا الإجراء يتطلب اعتماد مدير · Manager approval required
+          {t("managerApprovalDialog.banner")}
         </div>
 
         {error ? <ErrorBanner message={error} /> : null}
 
         <label className="flex flex-col gap-1">
-          <span className="text-xs font-bold text-slate-500">اسم المستخدم للمدير</span>
+          <span className="text-xs font-bold text-slate-500">{t("managerApprovalDialog.fields.usernameLabel")}</span>
           <input
             ref={userRef}
             type="text"
@@ -90,7 +92,7 @@ export function ManagerApprovalDialog({
         </label>
 
         <label className="flex flex-col gap-1">
-          <span className="text-xs font-bold text-slate-500">كلمة المرور</span>
+          <span className="text-xs font-bold text-slate-500">{t("managerApprovalDialog.fields.passwordLabel")}</span>
           <input
             type="password"
             value={password}
@@ -114,10 +116,10 @@ export function ManagerApprovalDialog({
 
         <div className="mt-1 grid grid-cols-2 gap-2">
           <Button type="button" variant="secondary" onClick={onClose} disabled={busy}>
-            إلغاء
+            {t("managerApprovalDialog.actions.cancel")}
           </Button>
           <Button type="submit" variant="danger" disabled={!canSubmit} loading={busy}>
-            اعتماد · Approve
+            {t("managerApprovalDialog.actions.approve")}
           </Button>
         </div>
       </form>

@@ -9,6 +9,7 @@
  * sum) recomputes exactly as if typed.
  */
 import { Delete } from "lucide-react";
+import { useT } from "@/i18n/I18nProvider";
 import { cn } from "./ui";
 
 export type NumpadKey = "0" | "1" | "2" | "3" | "4" | "5" | "6" | "7" | "8" | "9" | "." | "backspace" | "clear";
@@ -31,11 +32,6 @@ export function applyNumpadKey(value: string, key: NumpadKey): string {
   return value + key;
 }
 
-const DIGIT_LABELS: Record<string, string> = {
-  "0": "صفر", "1": "واحد", "2": "اثنان", "3": "ثلاثة", "4": "أربعة",
-  "5": "خمسة", "6": "ستة", "7": "سبعة", "8": "ثمانية", "9": "تسعة",
-};
-
 const keyBtn =
   "btn-press flex min-h-12 items-center justify-center rounded-xl border border-slate-200 bg-white text-lg font-extrabold text-ink shadow-sm transition hover:bg-slate-50 active:bg-slate-100";
 
@@ -47,32 +43,33 @@ export interface NumpadProps {
 
 /** 3×4 grid: 7 8 9 / 4 5 6 / 1 2 3 / . 0 ⌫ — plus a full-width clear row. */
 export function Numpad({ value, onChange, className }: NumpadProps) {
+  const t = useT();
   const press = (key: NumpadKey) => onChange(applyNumpadKey(value, key));
   return (
     <div data-testid="numpad" dir="ltr" className={cn("select-none", className)}>
       <div className="grid grid-cols-3 gap-1.5">
         {(["7", "8", "9", "4", "5", "6", "1", "2", "3"] as const).map((d) => (
-          <button key={d} type="button" aria-label={DIGIT_LABELS[d]} onClick={() => press(d)} className={cn(keyBtn, "num")}>
+          <button key={d} type="button" aria-label={t(`numpad.digits.${d}`)} onClick={() => press(d)} className={cn(keyBtn, "num")}>
             {d}
           </button>
         ))}
-        <button type="button" aria-label="فاصلة عشرية" onClick={() => press(".")} className={keyBtn}>
+        <button type="button" aria-label={t("numpad.decimalPoint")} onClick={() => press(".")} className={keyBtn}>
           .
         </button>
-        <button type="button" aria-label={DIGIT_LABELS["0"]} onClick={() => press("0")} className={cn(keyBtn, "num")}>
+        <button type="button" aria-label={t("numpad.digits.0")} onClick={() => press("0")} className={cn(keyBtn, "num")}>
           0
         </button>
-        <button type="button" aria-label="حذف آخر رقم" onClick={() => press("backspace")} className={cn(keyBtn, "text-slate-500 hover:text-red-600")}>
+        <button type="button" aria-label={t("numpad.deleteLast")} onClick={() => press("backspace")} className={cn(keyBtn, "text-slate-500 hover:text-red-600")}>
           <Delete className="h-5 w-5" aria-hidden />
         </button>
       </div>
       <button
         type="button"
-        aria-label="مسح المبلغ"
+        aria-label={t("numpad.clearAmount")}
         onClick={() => press("clear")}
         className={cn(keyBtn, "mt-1.5 w-full text-sm text-slate-500 hover:text-red-600")}
       >
-        مسح
+        {t("numpad.clear")}
       </button>
     </div>
   );

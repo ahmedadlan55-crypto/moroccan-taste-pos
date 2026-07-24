@@ -21,6 +21,7 @@ import { useEffect, useRef, useState } from "react";
 import { AlertTriangle, Search, UserPlus } from "lucide-react";
 import { ApiError, createErpCustomer, type NewCustomerInput } from "@/lib/api";
 import { currentUser } from "@/lib/auth";
+import { useT } from "@/i18n/I18nProvider";
 import { Dialog } from "../Dialog";
 import { Button } from "../ui";
 
@@ -39,16 +40,18 @@ export interface CustomerAddDialogProps {
   onRecallExisting?: (phone: string) => void;
 }
 
-/** Mirrors legacy doSave's guards (app.js:1820-1822). Returns the error text
- *  or null when valid — pure, unit-testable. */
+/** Mirrors legacy doSave's guards (app.js:1820-1822). Returns the i18n key
+ *  (dotted path under customerAddDialog.validation) of the error, or null when
+ *  valid — pure, unit-testable; the caller resolves the key via t(). */
 export function validateNewCustomer(name: string, phone: string): string | null {
-  if (!name.trim()) return "اسم العميل مطلوب";
-  if (!phone.trim()) return "رقم الهاتف مطلوب";
-  if (phone.trim().length < 5) return "رقم الهاتف قصير جداً (5 أرقام على الأقل)";
+  if (!name.trim()) return "customerAddDialog.validation.nameRequired";
+  if (!phone.trim()) return "customerAddDialog.validation.phoneRequired";
+  if (phone.trim().length < 5) return "customerAddDialog.validation.phoneTooShort";
   return null;
 }
 
 export function CustomerAddDialog({ open, onClose, onCreated, prefill, onRecallExisting }: CustomerAddDialogProps) {
+  const t = useT();
   const [name, setName] = useState("");
   const [phone, setPhone] = useState("");
   const [vatNumber, setVatNumber] = useState("");
@@ -75,7 +78,7 @@ export function CustomerAddDialog({ open, onClose, onCreated, prefill, onRecallE
     setDupPhone(null);
     const invalid = validateNewCustomer(name, phone);
     if (invalid) {
-      setError(invalid);
+      setError(t(invalid));
       return;
     }
     setSaving(true);
@@ -87,8 +90,11 @@ export function CustomerAddDialog({ open, onClose, onCreated, prefill, onRecallE
       onCreated({ id: res.id, name: name.trim(), phone: phone.trim() });
     } catch (e) {
       const err = e as ApiError;
-      setError(err.message || "فشل حفظ العميل");
+      // err.message is the SERVER's (Arabic) message — surfaced verbatim; only
+      // the client-side fallback is translated.
+      setError(err.message || t("customerAddDialog.errors.saveFailed"));
       // Duplicate phone (legacy :1883): offer to recall the existing customer.
+      // Regex matches the SERVER's Arabic error text — must stay Arabic.
       if (/duplicate|dup_entry|مسجل|موجود/i.test(err.message || "")) setDupPhone(phone.trim());
     } finally {
       setSaving(false);
@@ -96,7 +102,7 @@ export function CustomerAddDialog({ open, onClose, onCreated, prefill, onRecallE
   }
 
   return (
-    <Dialog open={open} onClose={onClose} title="إضافة عميل جديد" widthClass="max-w-md" locked={saving}>
+    <Dialog open={open} onClose={onClose} title={t("customerAddDialog.title")} widthClass="max-w-md" locked={saving}>
       <form
         onSubmit={(e) => {
           e.preventDefault();
@@ -104,7 +110,7 @@ export function CustomerAddDialog({ open, onClose, onCreated, prefill, onRecallE
         }}
       >
         <label className="mb-3 block">
-          <span className="mb-1 block text-[11px] font-extrabold text-slate-500">الاسم *</span>
+          <span className="mb-1 block text-[11px] font-extrabold text-slate-500">{t("customerAddDialog.fields.nameLabel")}</span>
           <input
             ref={nameRef}
             type="text"
@@ -113,11 +119,11 @@ export function CustomerAddDialog({ open, onClose, onCreated, prefill, onRecallE
             maxLength={200}
             autoComplete="off"
             className="field"
-            placeholder="محمد أحمد"
+            placeholder={t("customerAddDialog.fields.namePlaceholder")}
           />
         </label>
         <label className="mb-3 block">
-          <span className="mb-1 block text-[11px] font-extrabold text-slate-500">الهاتف *</span>
+          <span className="mb-1 block text-[11px] font-extrabold text-slate-500">{t("customerAddDialog.fields.phoneLabel")}</span>
           <input
             type="tel"
             inputMode="tel"
@@ -127,12 +133,12 @@ export function CustomerAddDialog({ open, onClose, onCreated, prefill, onRecallE
             autoComplete="off"
             className="field num"
             dir="ltr"
-            placeholder="05xxxxxxxx"
+            placeholder={t("customerAddDialog.fields.phonePlaceholder")}
           />
         </label>
         <div className="mb-3 grid grid-cols-2 gap-2">
           <label className="block">
-            <span className="mb-1 block text-[11px] font-extrabold text-slate-500">الرقم الضريبي (اختياري)</span>
+            <span className="mb-1 block text-[11px] font-extrabold text-slate-500">{t("customerAddDialog.fields.vatLabel")}</span>
             <input
               type="text"
               value={vatNumber}
@@ -144,15 +150,15 @@ export function CustomerAddDialog({ open, onClose, onCreated, prefill, onRecallE
             />
           </label>
           <label className="block">
-            <span className="mb-1 block text-[11px] font-extrabold text-slate-500">نوع العميل</span>
+            <span className="mb-1 block text-[11px] font-extrabold text-slate-500">{t("customerAddDialog.fields.typeLabel")}</span>
             <select
               value={customerType}
               onChange={(e) => setCustomerType(e.target.value as typeof customerType)}
               className="field"
             >
-              <option value="B2C">أفراد · B2C</option>
-              <option value="B2B">شركات · B2B</option>
-              <option value="B2G">حكومي · B2G</option>
+              <option value="B2C">{t("customerAddDialog.fields.typeB2C")}</option>
+              <option value="B2B">{t("customerAddDialog.fields.typeB2B")}</option>
+              <option value="B2G">{t("customerAddDialog.fields.typeB2G")}</option>
             </select>
           </label>
         </div>
@@ -168,7 +174,7 @@ export function CustomerAddDialog({ open, onClose, onCreated, prefill, onRecallE
                 className="mt-2 flex items-center gap-1 rounded-lg bg-white px-2.5 py-1.5 font-extrabold text-slate-700 hover:bg-slate-100"
               >
                 <Search className="h-3.5 w-3.5" aria-hidden />
-                استدعاء العميل الموجود
+                {t("customerAddDialog.actions.recallExisting")}
               </button>
             ) : null}
           </div>
@@ -176,11 +182,11 @@ export function CustomerAddDialog({ open, onClose, onCreated, prefill, onRecallE
 
         <div className="flex gap-2">
           <Button type="button" variant="secondary" className="flex-1" onClick={onClose} disabled={saving}>
-            إلغاء
+            {t("customerAddDialog.actions.cancel")}
           </Button>
           <Button type="submit" variant="primary" className="flex-[2]" loading={saving}>
             <UserPlus className="h-4 w-4" aria-hidden />
-            حفظ وربط
+            {t("customerAddDialog.actions.saveLink")}
           </Button>
         </div>
       </form>

@@ -50,7 +50,7 @@ function pickUnit(item: CatalogItem, unitCode?: string | null): CatalogUnit | nu
 function buildCartLine(item: CatalogItem, unit: CatalogUnit | null, enteredQty: number): CartLine {
   const factor = unit ? Number(unit.factor) || 1 : 1;
   return {
-    menuId: item.id, name: item.name, qty: enteredQty, unitPrice: item.basePrice ?? item.price,
+    menuId: item.id, name: item.name, nameEn: item.nameEn ?? null, qty: enteredQty, unitPrice: item.basePrice ?? item.price,
     lineDiscount: 0, vatCategory: item.taxCategory, notes: null,
     enteredUnitId: unit ? unit.unitId : null, enteredUnitCode: unit ? unit.unitCode : null,
     enteredUnitName: unit ? unit.unitName : item.baseUnitName || null,

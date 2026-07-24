@@ -10,6 +10,7 @@
 import { forwardRef, memo, useEffect, useMemo, useState } from "react";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { Minus, PackageSearch, Search, X } from "lucide-react";
+import { useLocalizedName, useT } from "@/i18n/I18nProvider";
 import type { Catalog, CatalogItem } from "@/lib/types";
 import { getToken } from "@/lib/auth";
 import { fmt2, fmtInt } from "@/lib/format";
@@ -83,7 +84,12 @@ export function filterItems(items: CatalogItem[], category: string | null, query
     if (!it.active) return false; // inactive items are unsellable → hidden
     if (category && it.category !== category) return false;
     if (!q) return true;
-    return it.id.toLowerCase() === q || it.name.toLowerCase().includes(q) || it.id.toLowerCase().includes(q);
+    return (
+      it.id.toLowerCase() === q ||
+      it.name.toLowerCase().includes(q) ||
+      (it.nameEn ? it.nameEn.toLowerCase().includes(q) : false) ||
+      it.id.toLowerCase().includes(q)
+    );
   });
 }
 
@@ -129,6 +135,8 @@ const ProductCard = memo(function ProductCard({
   /** Decrement one unit of this item (only offered while qty > 0). */
   onDec?: (item: CatalogItem) => void;
 }) {
+  const t = useT();
+  const tn = useLocalizedName();
   const imgSrc = useItemImage(item.id, item.imageVersion);
   const inCart = qty > 0;
   return (
@@ -167,9 +175,9 @@ const ProductCard = memo(function ProductCard({
             ) : null}
           </div>
         ) : null}
-        <p className="line-clamp-2 text-sm font-extrabold leading-snug text-ink group-hover:text-teal-700">{item.name}</p>
+        <p className="line-clamp-2 text-sm font-extrabold leading-snug text-ink group-hover:text-teal-700">{tn(item.name, item.nameEn)}</p>
         <p className="mt-2 text-sm font-extrabold text-teal-600">
-          <span className="num">{fmt2(item.price)}</span> <span className="text-[11px] font-bold text-slate-400">ر.س</span>
+          <span className="num">{fmt2(item.price)}</span> <span className="text-[11px] font-bold text-slate-400">{t("productGrid.currency")}</span>
         </p>
       </button>
       {/* العروض (close/w25-combos): tapping this card opens the combo chooser,
@@ -180,7 +188,7 @@ const ProductCard = memo(function ProductCard({
           data-testid="combo-badge"
           className="pointer-events-none absolute end-1.5 top-1.5 z-[1] rounded-md bg-amber-500 px-1.5 py-0.5 text-[10px] font-extrabold text-white shadow-sm"
         >
-          عرض
+          {t("productGrid.badge.combo")}
         </span>
       ) : null}
       {/* «مُخصَّص» — a channel price list drives this card's price (legacy badge
@@ -190,7 +198,7 @@ const ProductCard = memo(function ProductCard({
           aria-hidden
           className="pointer-events-none absolute start-1.5 top-1.5 rounded-md bg-saffron-500 px-1.5 py-0.5 text-[9px] font-extrabold text-white"
         >
-          مُخصَّص
+          {t("productGrid.badge.custom")}
         </span>
       ) : null}
       {inCart ? (
@@ -198,7 +206,7 @@ const ProductCard = memo(function ProductCard({
           {/* Live qty badge (legacy qty-display, app.js:449) */}
           <span
             data-testid="card-qty-badge"
-            aria-label={`في السلة ${item.name}: ${fmtInt(qty)}`}
+            aria-label={t("productGrid.card.inCartAria", { name: tn(item.name, item.nameEn), qty: fmtInt(qty) })}
             className="num absolute -top-1.5 end-1.5 min-w-6 rounded-full bg-teal-600 px-1.5 py-0.5 text-center text-[11px] font-extrabold text-white shadow-sm"
           >
             {fmtInt(qty)}
@@ -207,7 +215,7 @@ const ProductCard = memo(function ProductCard({
           <button
             type="button"
             onClick={() => onDec?.(item)}
-            aria-label={`إنقاص ${item.name}`}
+            aria-label={t("productGrid.card.decrementAria", { name: tn(item.name, item.nameEn) })}
             className="btn-press absolute bottom-1.5 end-1.5 flex min-h-11 min-w-11 items-center justify-center rounded-lg border border-slate-200 bg-white text-slate-500 shadow-sm hover:bg-slate-100 hover:text-red-600"
           >
             <Minus className="h-4 w-4" aria-hidden />
@@ -245,6 +253,7 @@ export interface ProductGridProps {
 
 export const SearchBox = forwardRef<HTMLInputElement, Pick<ProductGridProps, "query" | "onQueryChange" | "onScanSubmit">>(
   function SearchBox({ query, onQueryChange, onScanSubmit }, ref) {
+    const t = useT();
     return (
       <div className="relative">
         <Search className="pointer-events-none absolute end-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" aria-hidden />
@@ -260,15 +269,15 @@ export const SearchBox = forwardRef<HTMLInputElement, Pick<ProductGridProps, "qu
               onScanSubmit();
             }
           }}
-          placeholder="بحث أو مسح باركود… (F2)"
-          aria-label="بحث في الأصناف أو مسح باركود"
+          placeholder={t("productGrid.search.placeholder")}
+          aria-label={t("productGrid.search.aria")}
           className="field ps-9 pe-9"
         />
         {query ? (
           <button
             type="button"
             onClick={() => onQueryChange("")}
-            aria-label="مسح البحث"
+            aria-label={t("productGrid.search.clearAria")}
             className="absolute start-1.5 top-1/2 flex min-h-11 min-w-11 -translate-y-1/2 items-center justify-center rounded-lg text-slate-400 hover:bg-slate-100"
           >
             <X className="h-4 w-4" aria-hidden />
@@ -323,6 +332,7 @@ function useColumns(scrollElement: HTMLElement | null | undefined): number {
 }
 
 export function ProductGrid({ catalog, loading, category, query, onAdd, scrollElement, cartQty, onDecrement }: Omit<ProductGridProps, "onQueryChange" | "onScanSubmit">) {
+  const t = useT();
   const visible = useMemo(
     () => (catalog ? filterItems(catalog.items, category, query) : []),
     [catalog, category, query],
@@ -359,8 +369,8 @@ export function ProductGrid({ catalog, loading, category, query, onAdd, scrollEl
     return (
       <EmptyState
         icon={<PackageSearch className="h-10 w-10" aria-hidden />}
-        title="لا نتائج"
-        hint={query ? "جرّب كلمة أخرى أو امسح الباركود مرة أخرى" : "لا توجد أصناف نشطة في هذا التصنيف"}
+        title={t("productGrid.empty.title")}
+        hint={query ? t("productGrid.empty.hintQuery") : t("productGrid.empty.hintCategory")}
       />
     );
   }

@@ -5,6 +5,7 @@
  */
 import { useCallback, useEffect, useState } from "react";
 import { PauseCircle, PlayCircle, RefreshCw, XCircle } from "lucide-react";
+import { useT, useLocalizedName } from "@/i18n/I18nProvider";
 import { usePos } from "@/state/store";
 import { listOrders, transition } from "@/lib/api";
 import { fmt2, fmtDateTime, fmtInt, shortRef } from "@/lib/format";
@@ -59,6 +60,8 @@ export function HeldOrdersDialog({
   onClose: () => void;
   onCountChange: (n: number) => void;
 }) {
+  const t = useT();
+  const tn = useLocalizedName();
   const { engine, engineStatus, cart, loadOrderDoc, pushToast } = usePos();
   const [rows, setRows] = useState<HeldRow[] | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -103,7 +106,7 @@ export function HeldOrdersDialog({
 
   async function resume(row: HeldRow) {
     if (cart.lines.length > 0) {
-      pushToast("error", "علّق الطلب الحالي أو أفرغه قبل استعادة طلب آخر");
+      pushToast("error", t("heldOrdersDialog.toast.resumeBlocked"));
       return;
     }
     setBusyId(row.doc.id);
@@ -117,7 +120,7 @@ export function HeldOrdersDialog({
         const doc = await engine.resumeLocalOrder(row.doc);
         loadOrderDoc(doc);
       }
-      pushToast("success", "تمت استعادة الطلب إلى السلة");
+      pushToast("success", t("heldOrdersDialog.toast.resumed"));
       onClose();
     } catch (e) {
       pushToast("error", (e as Error).message);
@@ -137,7 +140,7 @@ export function HeldOrdersDialog({
       } else {
         await engine.voidOrder(row.doc, reason);
       }
-      pushToast("success", "أُلغي الطلب المعلق");
+      pushToast("success", t("heldOrdersDialog.toast.voided"));
       setVoidingId(null);
       setVoidReason("");
       await load();
@@ -149,21 +152,21 @@ export function HeldOrdersDialog({
   }
 
   return (
-    <Dialog open={open} onClose={onClose} title="الطلبات المعلقة" widthClass="max-w-2xl">
+    <Dialog open={open} onClose={onClose} title={t("heldOrdersDialog.title")} widthClass="max-w-2xl">
       <div className="mb-3 flex items-center justify-between">
         <p className="text-xs font-bold text-slate-400">
           {rows ? (
             <>
-              <span className="num">{fmtInt(rows.length)}</span> طلب معلق
-              {!engineStatus.online ? " (المحلية فقط — لا اتصال)" : ""}
+              <span className="num">{fmtInt(rows.length)}</span> {t("heldOrdersDialog.heldCount", { count: rows.length })}
+              {!engineStatus.online ? t("heldOrdersDialog.offlineSuffix") : ""}
             </>
           ) : (
-            "جارٍ التحميل…"
+            t("heldOrdersDialog.loading")
           )}
         </p>
         <Button size="sm" variant="ghost" onClick={() => void load()}>
           <RefreshCw className="h-3.5 w-3.5" aria-hidden />
-          تحديث
+          {t("heldOrdersDialog.refresh")}
         </Button>
       </div>
 
@@ -175,7 +178,11 @@ export function HeldOrdersDialog({
           <Skeleton className="h-20" />
         </div>
       ) : rows.length === 0 ? (
-        <EmptyState icon={<PauseCircle className="h-10 w-10" aria-hidden />} title="لا طلبات معلقة" hint="علّق طلبًا من السلة ليظهر هنا" />
+        <EmptyState
+          icon={<PauseCircle className="h-10 w-10" aria-hidden />}
+          title={t("heldOrdersDialog.empty.title")}
+          hint={t("heldOrdersDialog.empty.hint")}
+        />
       ) : (
         <ul className="space-y-2">
           {rows.map((row) => {
@@ -189,19 +196,19 @@ export function HeldOrdersDialog({
                       <Money value={shortRef(row.doc.id)} />
                       {row.doc.tableNo ? (
                         <span className="ms-2 text-xs font-bold text-slate-400">
-                          طاولة <Money value={row.doc.tableNo} />
+                          {t("heldOrdersDialog.row.table")} <Money value={row.doc.tableNo} />
                         </span>
                       ) : null}
                       {row.source === "local" ? (
-                        <span className="chip ms-2 border-amber-300 bg-amber-50 text-amber-800">محلي — غير مزامن</span>
+                        <span className="chip ms-2 border-amber-300 bg-amber-50 text-amber-800">{t("heldOrdersDialog.row.localBadge")}</span>
                       ) : null}
                     </p>
                     <p className="mt-0.5 text-[11px] font-bold text-slate-400">
-                      <span className="num">{fmtInt(row.doc.lines.length)}</span> صنف ·{" "}
-                      <Money value={fmt2(total)} /> ر.س · <span className="num">{fmtDateTime(row.doc.updatedAt)}</span>
+                      <span className="num">{fmtInt(row.doc.lines.length)}</span> {t("heldOrdersDialog.row.itemCount", { count: row.doc.lines.length })} ·{" "}
+                      <Money value={fmt2(total)} /> {t("heldOrdersDialog.row.currency")} · <span className="num">{fmtDateTime(row.doc.updatedAt)}</span>
                     </p>
                     <p className="mt-0.5 line-clamp-1 text-[11px] text-slate-400">
-                      {row.doc.lines.map((l) => `${l.name} ×${l.qty}`).join("، ")}
+                      {row.doc.lines.map((l) => `${tn(l.name, l.nameEn)} ×${l.qty}`).join("، ")}
                     </p>
                   </div>
                   <Button
@@ -209,24 +216,24 @@ export function HeldOrdersDialog({
                     variant="primary"
                     loading={busyId === row.doc.id}
                     disabled={row.source === "server" && !engineStatus.online}
-                    title={row.source === "server" && !engineStatus.online ? "استعادة طلب من الخادم تتطلب اتصالًا" : "استعادة إلى السلة"}
+                    title={row.source === "server" && !engineStatus.online ? t("heldOrdersDialog.resume.offlineTitle") : t("heldOrdersDialog.resume.title")}
                     onClick={() => void resume(row)}
                   >
                     <PlayCircle className="h-4 w-4" aria-hidden />
-                    استعادة
+                    {t("heldOrdersDialog.resume.label")}
                   </Button>
                   <Button
                     size="sm"
                     variant="danger"
                     disabled={busyId === row.doc.id || offlineVoidBlocked}
-                    title={offlineVoidBlocked ? "إلغاء طلب مزامَن غير متاح بلا اتصال" : "إلغاء الطلب"}
+                    title={offlineVoidBlocked ? t("heldOrdersDialog.void.offlineTitle") : t("heldOrdersDialog.void.title")}
                     onClick={() => {
                       setVoidingId(voidingId === row.doc.id ? null : row.doc.id);
                       setVoidReason("");
                     }}
                   >
                     <XCircle className="h-4 w-4" aria-hidden />
-                    إلغاء
+                    {t("heldOrdersDialog.void.label")}
                   </Button>
                 </div>
                 {voidingId === row.doc.id ? (
@@ -235,12 +242,12 @@ export function HeldOrdersDialog({
                       type="text"
                       value={voidReason}
                       onChange={(e) => setVoidReason(e.target.value)}
-                      placeholder="سبب الإلغاء (إلزامي)"
+                      placeholder={t("heldOrdersDialog.void.reasonPlaceholder")}
                       className="field flex-1"
                       maxLength={300}
                     />
                     <Button size="sm" variant="danger" disabled={!voidReason.trim() || busyId === row.doc.id} onClick={() => void confirmVoid(row)}>
-                      تأكيد الإلغاء
+                      {t("heldOrdersDialog.void.confirm")}
                     </Button>
                   </div>
                 ) : null}

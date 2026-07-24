@@ -1,5 +1,9 @@
 <!doctype html>
-<html lang="ar" dir="rtl">
+<!-- lang/dir default to English (owner default); lang-init.js re-applies the
+     persisted "pos_lang" pre-paint, and I18nProvider flips to ar/rtl on toggle.
+     The Arabic <title> is kept — receipt.ts uses it as the Arabic brand-name
+     fallback, and receipts stay Arabic for ZATCA. -->
+<html lang="en" dir="ltr">
   <head>
     <script src="%BASE_URL%lang-init.js"></script>
     <meta charset="UTF-8" />

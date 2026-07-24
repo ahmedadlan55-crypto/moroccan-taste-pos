@@ -9,6 +9,24 @@ import { paymentDialog } from "./paymentDialog";
 import { myInvoicesDialog } from "./myInvoicesDialog";
 import { stocktakeDialog } from "./stocktakeDialog";
 import { requisitionsDialog } from "./requisitionsDialog";
+import { appShell } from "./appShell";
+import { categoryRail } from "./categoryRail";
+import { productGrid } from "./productGrid";
+import { customerPicker } from "./customerPicker";
+import { comboDialog } from "./comboDialog";
+import { customerAddDialog } from "./customerAddDialog";
+import { customerHistoryDialog } from "./customerHistoryDialog";
+import { discountDialog } from "./discountDialog";
+import { heldOrdersDialog } from "./heldOrdersDialog";
+import { managerApprovalDialog } from "./managerApprovalDialog";
+import { returnRequestDialog } from "./returnRequestDialog";
+import { syncReportDialog } from "./syncReportDialog";
+import { voidDialog } from "./voidDialog";
+import { numpad } from "./numpad";
+import { unitPicker } from "./unitPicker";
+import { toasts } from "./toasts";
+import { dialog } from "./dialog";
+import { ui } from "./ui";
 
 /**
  * Merged English dictionary barrel — one namespace per screen/shared module.
@@ -30,4 +48,22 @@ export const en = {
   myInvoicesDialog,
   stocktakeDialog,
   requisitionsDialog,
+  appShell,
+  categoryRail,
+  productGrid,
+  customerPicker,
+  comboDialog,
+  customerAddDialog,
+  customerHistoryDialog,
+  discountDialog,
+  heldOrdersDialog,
+  managerApprovalDialog,
+  returnRequestDialog,
+  syncReportDialog,
+  voidDialog,
+  numpad,
+  unitPicker,
+  toasts,
+  dialog,
+  ui,
 } as const;

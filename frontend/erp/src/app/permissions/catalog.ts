@@ -257,6 +257,23 @@ export const ALL_CAPS = [
   "purchasing.requisitions.approve",
   // ── Administration: advanced security policies (Closure Sprint v2) ──
   "administration.security.manage",
+  // ── Sales Analytics Hub (sales-hub sprint) — EXACT mirror of the backend
+  //    seed db/migrations/capability-seeds/g-analytics.json. `analytics.view`
+  //    gates the whole /reports/sales hub; the narrower keys gate specific
+  //    tabs (cashiers → employees.view, profitability → cost.view) and
+  //    actions (export / share / schedule / budget / reconciliation /
+  //    anomaly). admin/developer bypass via can(); the grant arrays mirror
+  //    the seed's role lists verbatim. ──
+  "analytics.view",
+  "analytics.cost.view",
+  "analytics.customers.view",
+  "analytics.employees.view",
+  "analytics.export",
+  "analytics.share",
+  "analytics.schedule",
+  "analytics.budget.manage",
+  "analytics.reconciliation.view",
+  "analytics.anomaly.manage",
 ] as const;
 
 /** The one capability union — every gate in the app keys off this. */

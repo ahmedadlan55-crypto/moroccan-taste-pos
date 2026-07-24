@@ -271,6 +271,19 @@ export const ROLE_GRANTS: Record<Capability, readonly Role[]> = {
   "purchasing.requisitions.approve": MGR,
   // ── Administration: advanced security policies (Closure Sprint v2) ──
   "administration.security.manage": ADM,
+  // ── Sales Analytics Hub — EXACT mirror of the backend seed
+  //    db/migrations/capability-seeds/g-analytics.json (admin is in every seed
+  //    list; developer rides along via ADM + can()'s hard bypass). ──
+  "analytics.view": FIN_READ, // seed: admin,manager,accountant,finance,auditor
+  "analytics.cost.view": [...ADM, "accountant", "finance"],
+  "analytics.customers.view": MGR, // seed: admin,manager
+  "analytics.employees.view": MGR, // seed: admin,manager
+  "analytics.export": FIN, // seed: admin,manager,accountant,finance
+  "analytics.share": MGR,
+  "analytics.schedule": MGR,
+  "analytics.budget.manage": [...ADM, "accountant"],
+  "analytics.reconciliation.view": [...ADM, "accountant", "finance"],
+  "analytics.anomaly.manage": [...ADM, "accountant"],
 };
 
 /** admin/developer see everything; otherwise the role must be granted the cap. */

@@ -214,7 +214,7 @@ export const NAV: NavGroup[] = [
     id: "reports",
     label: "nav.groups.reports",
     items: [
-      { id: "rp-sales", path: "/reports/sales", label: "nav.items.rp-sales", icon: "BarChart3", cap: "reports.view", module: "reports" },
+      { id: "rp-sales", path: "/reports/sales", label: "nav.items.rp-sales", icon: "BarChart3", cap: "reports.view", module: "reports", subRoutes: true },
       { id: "rp-inventory", path: "/reports/inventory", label: "nav.items.rp-inventory", icon: "FileBarChart", cap: "reports.view", module: "reports" },
       { id: "rp-purchasing", path: "/reports/purchasing", label: "nav.items.rp-purchasing", icon: "FileBarChart", cap: "reports.view", module: "reports" },
       { id: "rp-financial", path: "/reports/financial", label: "nav.items.rp-financial", icon: "LineChart", cap: "reports.view", module: "reports" },

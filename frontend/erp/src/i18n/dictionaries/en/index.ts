@@ -17,6 +17,7 @@ import { posAdmin } from "./posAdmin";
 import { production } from "./production";
 import { purchasing } from "./purchasing";
 import { sales } from "./sales";
+import { salesReports } from "./salesReports";
 import { sharedUi } from "./sharedUi";
 import { shell } from "./shell";
 import { states } from "./states";
@@ -54,6 +55,7 @@ export const en = {
   production,
   purchasing,
   sales,
+  salesReports,
   sharedUi,
   shell,
   states,

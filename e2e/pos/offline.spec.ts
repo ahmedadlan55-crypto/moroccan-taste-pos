@@ -157,8 +157,13 @@ async function waitForApp(page: Page) {
 
 test("eight-step offline sale lifecycle — queue offline, shell from SW, replay to ONE MySQL row", async ({ page, context }) => {
   // ── (1) online boot + login + shift context ────────────────────────────────
+  // pos_lang pinned to Arabic: this spec's locators (المذاق المغربي, وردية…)
+  // are Arabic-authored, and since dfb613b a fresh profile defaults to English.
   await context.addInitScript((tok) => {
-    try { localStorage.setItem("pos_token", tok as string); } catch { /* ignore */ }
+    try {
+      localStorage.setItem("pos_token", tok as string);
+      localStorage.setItem("pos_lang", "ar");
+    } catch { /* ignore */ }
   }, token);
   await page.goto("/pos/");
   await waitForApp(page);
@@ -311,7 +316,10 @@ test("PWA installability signals — manifest, icons, SW controller on second lo
 
   // first load: registration completes (install + activate = precache done)
   await context.addInitScript((tok) => {
-    try { localStorage.setItem("pos_token", tok as string); } catch { /* ignore */ }
+    try {
+      localStorage.setItem("pos_token", tok as string);
+      localStorage.setItem("pos_lang", "ar"); // Arabic-authored spec — see step (1)
+    } catch { /* ignore */ }
   }, token);
   await page.goto("/pos/");
   await waitForApp(page);

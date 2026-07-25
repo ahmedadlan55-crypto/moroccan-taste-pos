@@ -4,12 +4,19 @@
  * 768–1023px two columns (categories as top chips), <768px single column
  * with a bottom cart sheet. Keyboard: F2 search, F4 pay, F9 hold, Esc close.
  */
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { ChefHat, PauseCircle, ShoppingBasket, Store, Tag } from "lucide-react";
 import { usePos } from "@/state/store";
 import { clearToken } from "@/lib/auth";
 import { listOrders } from "@/lib/api";
-import { initPwa } from "@/lib/pwa";
+import {
+  initPwa,
+  getPwaStatus,
+  subscribePwa,
+  applyUpdate,
+  autoReloadAlreadyTried,
+  markAutoReloadTried,
+} from "@/lib/pwa";
 import { clearImageCache } from "@/lib/offlineImages";
 import { runLegacyDrainOnce, getDrainStatus } from "@/lib/legacyDrain";
 import { fmt2, fmtInt } from "@/lib/format";
@@ -33,8 +40,10 @@ import { StocktakeDialog } from "@/components/dialogs/StocktakeDialog";
 import { RequisitionsDialog } from "@/components/dialogs/RequisitionsDialog";
 import { PosLogin } from "@/components/PosLogin";
 import { Button, ErrorBanner, Money } from "@/components/ui";
+import { useT } from "@/i18n/I18nProvider";
 
 export default function App() {
+  const t = useT();
   const {
     user,
     shiftId,
@@ -89,16 +98,43 @@ export default function App() {
   useEffect(() => {
     initPwa();
   }, []);
+
+  // ── Idle auto-update ─────────────────────────────────────────────────────
+  // A kiosk tab nobody touches must still converge to a new deploy on its
+  // own (the header button assumes a human is looking at it). Reload ONLY
+  // when nothing can be lost: empty cart, no dialog open, no busy action,
+  // sync queue fully drained, and online. The 3s delay + cleanup means any
+  // activity (scanning an item, opening a dialog) cancels the pending reload;
+  // autoReloadAlreadyTried caps it at one attempt per target so a stale
+  // intermediary cache cannot cause a reload loop — the manual button stays.
+  const pwa = useSyncExternalStore(subscribePwa, getPwaStatus);
+  useEffect(() => {
+    if (!pwa.updateReady || !pwa.updateTarget) return; // SW-triggered → manual only
+    const idle =
+      cart.lines.length === 0 && !overlayOpen && !holdBusy && !voidBusy &&
+      engineStatus.queueCount === 0 && engineStatus.online;
+    if (!idle) return;
+    const target = pwa.updateTarget;
+    if (autoReloadAlreadyTried(target)) return;
+    const timer = window.setTimeout(() => {
+      markAutoReloadTried(target);
+      applyUpdate();
+    }, 3000);
+    return () => window.clearTimeout(timer);
+  }, [
+    pwa.updateReady, pwa.updateTarget, cart.lines.length, overlayOpen,
+    holdBusy, voidBusy, engineStatus.queueCount, engineStatus.online,
+  ]);
   useEffect(() => {
     if (!user) return;
     void runLegacyDrainOnce().then((outcome) => {
       if (!outcome || outcome.attempted === 0) return;
       if (outcome.succeeded.length > 0) {
-        pushToast("success", `تمت مزامنة ${outcome.succeeded.length} عملية من النسخة القديمة`);
+        pushToast("success", t("appShell.toast.legacySynced", { count: outcome.succeeded.length }));
       }
       setDrainOpen(true); // small report: what synced, what stayed
     });
-  }, [user, pushToast]);
+  }, [user, pushToast, t]);
 
   // ── Held count (badge) ───────────────────────────────────────────────────
   const refreshHeldCount = useCallback(async () => {
@@ -162,9 +198,9 @@ export default function App() {
       addItem(hit.item, hit.unitCode);
       setQuery("");
     } else if (query.trim()) {
-      pushToast("error", `لا صنف يطابق «${query.trim()}»`);
+      pushToast("error", t("appShell.toast.noMatch", { query: query.trim() }));
     }
-  }, [catalog, query, addItem, pushToast]);
+  }, [catalog, query, addItem, pushToast, t]);
 
   async function holdCurrent() {
     if (!cart.lines.length) return;
@@ -174,7 +210,7 @@ export default function App() {
       await engine.holdOrder(snapshot);
       setLastHeld(snapshot);
       startNewOrder();
-      pushToast("success", "عُلّق الطلب — يمكنك استعادته من «الطلبات المعلقة»");
+      pushToast("success", t("appShell.toast.held"));
       void refreshHeldCount();
     } catch (e) {
       pushToast("error", (e as Error).message);
@@ -190,7 +226,7 @@ export default function App() {
       await engine.voidOrder(snapshot, reason);
       startNewOrder();
       setVoidOpen(false);
-      pushToast("success", "أُلغي الطلب");
+      pushToast("success", t("appShell.toast.voided"));
     } catch (e) {
       pushToast("error", (e as Error).message);
     } finally {
@@ -201,7 +237,7 @@ export default function App() {
   // Voiding an already-synced order while OFFLINE is forbidden (the server
   // copy would survive and complete elsewhere) — local unsynced voids are fine.
   const voidDisabledReason =
-    !engineStatus.online && cart.serverVersion != null ? "إلغاء طلب مزامَن غير متاح بلا اتصال" : null;
+    !engineStatus.online && cart.serverVersion != null ? t("appShell.voidAction.syncedOfflineDisabled") : null;
 
   const categoryCounts = useMemo(() => {
     const counts: Record<string, number> = {};
@@ -260,7 +296,7 @@ export default function App() {
     if (shiftId) {
       setPendingSwitch(true);
       setShiftOpen(true);
-      pushToast("info", "أغلق الوردية الحالية لإتمام تبديل الكاشير");
+      pushToast("info", t("appShell.toast.closeShiftFirst"));
     } else {
       performLogout();
     }
@@ -309,12 +345,12 @@ export default function App() {
 
       <main className="flex min-h-0 flex-1 gap-3 px-3 pb-[calc(5rem+env(safe-area-inset-bottom))] pt-3 md:pb-3">
         {/* Category rail — first column in RTL, ≥1024px only */}
-        <aside className="hidden w-44 shrink-0 lg:block" aria-label="التصنيفات">
+        <aside className="hidden w-44 shrink-0 lg:block" aria-label={t("appShell.aria.categories")}>
           <CategoryRail categories={catalog?.categories ?? []} counts={categoryCounts} active={category} onSelect={setCategory} />
         </aside>
 
         {/* Products */}
-        <section className="flex min-h-0 min-w-0 flex-1 flex-col gap-2.5" aria-label="الأصناف">
+        <section className="flex min-h-0 min-w-0 flex-1 flex-col gap-2.5" aria-label={t("appShell.aria.products")}>
           <div className="grid min-w-0 grid-cols-1 gap-2 sm:grid-cols-[minmax(12rem,1fr)_auto]">
             <div className="min-w-0">
               <SearchBox ref={searchRef} query={query} onQueryChange={setQuery} onScanSubmit={onScanSubmit} />
@@ -322,14 +358,14 @@ export default function App() {
             {showChannelPicker ? (
               <label className="flex min-w-0 items-center gap-1.5 sm:shrink-0">
                 <Store className="h-4 w-4 text-slate-400" aria-hidden />
-                <span className="sr-only">قناة البيع</span>
+                <span className="sr-only">{t("appShell.channel.label")}</span>
                 <select
                   value={activeChannelId ?? ""}
                   onChange={(e) => setChannel(e.target.value || null)}
-                  aria-label="قناة البيع"
+                  aria-label={t("appShell.channel.label")}
                   className="field min-h-11 min-w-0 flex-1 text-xs font-extrabold sm:w-auto sm:max-w-[11rem]"
                 >
-                  <option value="">الأساسي</option>
+                  <option value="">{t("appShell.channel.base")}</option>
                   {channels.map((c) => (
                     <option key={c.id} value={c.id}>
                       {c.name}
@@ -341,7 +377,7 @@ export default function App() {
             {priceListName ? (
               <span className="flex min-w-0 items-center gap-1.5 rounded-xl border border-teal-200 bg-teal-50 px-3 py-2 text-[11px] font-extrabold text-teal-700 sm:col-span-2 sm:justify-self-end">
                 <Tag className="h-3.5 w-3.5" aria-hidden />
-                <span className="truncate">أسعار من قائمة: <span className="rounded-md bg-white px-1.5">{priceListName}</span></span>
+                <span className="truncate">{t("appShell.priceList.prefix")} <span className="rounded-md bg-white px-1.5">{priceListName}</span></span>
               </span>
             ) : null}
           </div>
@@ -356,7 +392,7 @@ export default function App() {
             />
           </div>
           {catalogError && !catalog ? (
-            <ErrorBanner message={catalogError} onRetry={refetchCatalog} />
+            <ErrorBanner message={t(catalogError)} onRetry={refetchCatalog} />
           ) : (
             <div ref={setGridScrollEl} className="scrollbar-thin min-h-0 flex-1 overflow-y-auto">
               <ProductGrid
@@ -374,7 +410,7 @@ export default function App() {
         </section>
 
         {/* Cart — side panel from 768px up */}
-        <aside className="hidden w-[24rem] shrink-0 md:block xl:w-[26rem]" aria-label="السلة">
+        <aside className="hidden w-[24rem] shrink-0 md:block xl:w-[26rem]" aria-label={t("appShell.aria.cart")}>
           {cartPanel}
         </aside>
       </main>
@@ -383,7 +419,7 @@ export default function App() {
       <div className="fixed inset-x-0 bottom-0 z-40 border-t border-slate-200 bg-white/95 px-2.5 pb-[calc(0.625rem+env(safe-area-inset-bottom))] pt-2.5 shadow-lift backdrop-blur md:hidden">
         <Button variant="primary" size="lg" className="w-full" onClick={() => setCartSheetOpen(true)}>
           <ShoppingBasket className="h-5 w-5" aria-hidden />
-          السلة (<Money value={fmtInt(itemCount)} />) — <Money value={fmt2(totals.total)} /> ر.س
+          {t("appShell.mobileCart.label")} (<Money value={fmtInt(itemCount)} />) — <Money value={fmt2(totals.total)} /> {t("appShell.currency")}
         </Button>
       </div>
       {cartSheetOpen ? (
@@ -393,7 +429,7 @@ export default function App() {
               <button
                 type="button"
                 onClick={() => setCartSheetOpen(false)}
-                aria-label="إغلاق السلة"
+                aria-label={t("appShell.aria.closeCart")}
                 className="h-1.5 w-12 rounded-full bg-slate-300"
               />
             </div>
@@ -420,15 +456,15 @@ export default function App() {
       <RequisitionsDialog open={requisitionsOpen} onClose={() => setRequisitionsOpen(false)} />
 
       {/* Legacy-queue drain report (offline sales queued by the OLD cashier) */}
-      <Dialog open={drainOpen} onClose={() => setDrainOpen(false)} title="مزامنة النسخة القديمة" widthClass="max-w-md">
+      <Dialog open={drainOpen} onClose={() => setDrainOpen(false)} title={t("appShell.drain.title")} widthClass="max-w-md">
         {(() => {
           const st = getDrainStatus();
           if (!st.outcome) {
             return (
               <p className="py-4 text-center text-sm font-bold text-slate-500">
                 {st.pending > 0
-                  ? `${fmtInt(st.pending)} عملية من الكاشير القديم بانتظار المزامنة — تتم المحاولة عند توفر الاتصال`
-                  : "لا عمليات معلّقة من الكاشير القديم"}
+                  ? t("appShell.drain.pending", { count: fmtInt(st.pending) })
+                  : t("appShell.drain.noneQueued")}
               </p>
             );
           }
@@ -436,9 +472,9 @@ export default function App() {
           return (
             <div className="space-y-3">
               <p className="text-sm font-extrabold text-slate-600">
-                تمت مزامنة <span className="num">{fmtInt(succeeded.length)}</span> عملية من النسخة القديمة
+                {t("appShell.drain.syncedPrefix")} <span className="num">{fmtInt(succeeded.length)}</span> {t("appShell.drain.syncedSuffix")}
                 {failed.length > 0 ? (
-                  <span className="text-amber-700"> — {fmtInt(failed.length)} لم تُزامَن وبقيت محفوظة</span>
+                  <span className="text-amber-700">{t("appShell.drain.notSyncedSuffix", { count: fmtInt(failed.length) })}</span>
                 ) : null}
               </p>
               {succeeded.length > 0 ? (
@@ -446,7 +482,7 @@ export default function App() {
                   {succeeded.map((s) => (
                     <li key={s.clientOrderId} className="flex items-center justify-between rounded-xl border border-teal-100 bg-teal-50/50 px-3 py-2 text-xs font-bold text-slate-600">
                       <span className="num" dir="ltr">{s.clientOrderId}</span>
-                      <span className="text-teal-600">نجحت{s.orderId ? ` — فاتورة ${s.orderId}` : ""}</span>
+                      <span className="text-teal-600">{t("appShell.drain.rowSucceeded")}{s.orderId ? t("appShell.drain.invoiceRef", { id: s.orderId }) : ""}</span>
                     </li>
                   ))}
                 </ul>
@@ -455,8 +491,8 @@ export default function App() {
                 <ul className="space-y-1">
                   {failed.map((f, i) => (
                     <li key={`${f.clientOrderId ?? "invalid"}-${i}`} className="flex items-center justify-between gap-2 rounded-xl border border-red-100 bg-red-50/50 px-3 py-2 text-xs font-bold text-slate-600">
-                      <span className="num" dir="ltr">{f.clientOrderId ?? "؟"}</span>
-                      <span className="text-red-600">{f.error}</span>
+                      <span className="num" dir="ltr">{f.clientOrderId ?? t("appShell.drain.unknownId")}</span>
+                      <span className="text-red-600">{t(f.error, f.errorVars)}</span>
                     </li>
                   ))}
                 </ul>
@@ -467,25 +503,25 @@ export default function App() {
       </Dialog>
 
       {/* Post-hold kitchen ticket offer */}
-      <Dialog open={!!lastHeld} onClose={() => setLastHeld(null)} title="تم تعليق الطلب" widthClass="max-w-sm">
+      <Dialog open={!!lastHeld} onClose={() => setLastHeld(null)} title={t("appShell.kitchen.title")} widthClass="max-w-sm">
         <div className="flex flex-col items-center gap-3 py-2 text-center">
           <PauseCircle className="h-12 w-12 text-saffron-500" aria-hidden />
-          <p className="text-sm font-bold text-slate-500">هل تريد طباعة تذكرة للمطبخ الآن؟</p>
+          <p className="text-sm font-bold text-slate-500">{t("appShell.kitchen.prompt")}</p>
           <div className="grid w-full grid-cols-2 gap-2">
             <Button variant="secondary" onClick={() => setLastHeld(null)}>
-              لاحقًا
+              {t("appShell.kitchen.later")}
             </Button>
             <Button
               variant="primary"
               onClick={() => {
                 if (lastHeld && !printHtml(buildKitchenTicketHtml(lastHeld))) {
-                  pushToast("error", "المتصفح منع نافذة الطباعة");
+                  pushToast("error", t("appShell.toast.printBlocked"));
                 }
                 setLastHeld(null);
               }}
             >
               <ChefHat className="h-4 w-4" aria-hidden />
-              طباعة للمطبخ
+              {t("appShell.kitchen.print")}
             </Button>
           </div>
         </div>

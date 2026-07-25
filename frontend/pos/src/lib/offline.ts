@@ -168,6 +168,13 @@ export function upsertPayloadFrom(doc: LocalOrder, expectedVersion?: number | nu
         ? { unitFactor: l.conversionFactorSnapshot }
         : {}),
       ...(l.baseQty != null ? { baseQty: l.baseQty } : {}),
+      // Combo picks MUST ride the upsert: the server validates comboChoices at
+      // line-write time (routes/pos-v2.js _normalizeLines → _validateComboChoices)
+      // and rejects a combo whose required choice group has zero picks. Omitting
+      // the field — as this builder did before — made EVERY combo fail sync with
+      // "أكمل اختيارات … المطلوب N على الأقل". Sent only when non-empty so a plain
+      // line never smuggles choices (the server throws on that too).
+      ...(l.comboChoices && Object.keys(l.comboChoices).length ? { comboChoices: l.comboChoices } : {}),
     })),
     ...(expectedVersion != null ? { expectedVersion } : {}),
   };

@@ -4,7 +4,7 @@
  * discount, totals, actions (hold / held board / void / pay).
  */
 import { useState } from "react";
-import { useT } from "@/i18n/I18nProvider";
+import { useT, useLocalizedName } from "@/i18n/I18nProvider";
 import { CustomerPicker } from "./CustomerPicker";
 import {
   BadgePercent,
@@ -39,6 +39,8 @@ const ORDER_TYPES: Array<{ value: OrderType; labelKey: string; icon: typeof Uten
 
 function CartLineRow({ line, index }: { line: CartLine; index: number }) {
   const t = useT();
+  const tn = useLocalizedName();
+  const displayName = tn(line.name, line.nameEn);
   const { setQty, setLineUnit, removeLine, setLineNotes, setLineDiscount, catalog } = usePos();
   const [expanded, setExpanded] = useState(false);
   const lineTotal = lineTotals(line);
@@ -64,10 +66,10 @@ function CartLineRow({ line, index }: { line: CartLine; index: number }) {
           onClick={() => setExpanded((v) => !v)}
           className="flex min-h-11 min-w-0 items-center gap-1 text-start"
           aria-expanded={expanded}
-          aria-label={t("cartPanel.line.detailsAria", { name: line.name })}
+          aria-label={t("cartPanel.line.detailsAria", { name: displayName })}
         >
           <span className="min-w-0 flex-1">
-            <span className="line-clamp-2 block break-words text-sm font-extrabold leading-tight text-ink [overflow-wrap:anywhere]" title={line.name}>{line.name}</span>
+            <span className="line-clamp-2 block break-words text-sm font-extrabold leading-tight text-ink [overflow-wrap:anywhere]" title={displayName}>{displayName}</span>
             <span className="mt-0.5 block break-words text-[11px] font-bold text-slate-400">
               <Money value={fmt2(line.unitPrice)} /> {t("cartPanel.currency")}{isMajor && baseUnitName ? `/${baseUnitName}` : ""}
               {isMajor ? (
@@ -93,7 +95,7 @@ function CartLineRow({ line, index }: { line: CartLine; index: number }) {
         <button
           type="button"
           onClick={() => removeLine(index)}
-          aria-label={t("cartPanel.line.deleteAria", { name: line.name })}
+          aria-label={t("cartPanel.line.deleteAria", { name: displayName })}
           className="btn-press flex h-11 w-11 shrink-0 items-center justify-center rounded-xl text-red-400 hover:bg-red-50 hover:text-red-600"
         >
           <Trash2 className="h-4 w-4" aria-hidden />
@@ -105,7 +107,7 @@ function CartLineRow({ line, index }: { line: CartLine; index: number }) {
           <button
             type="button"
             onClick={() => setQty(index, line.qty + 1)}
-            aria-label={t("cartPanel.line.increaseAria", { name: line.name })}
+            aria-label={t("cartPanel.line.increaseAria", { name: displayName })}
             className="btn-press flex min-h-11 min-w-11 items-center justify-center rounded-lg bg-white text-teal-600 shadow-sm hover:bg-teal-50"
           >
             <Plus className="h-4 w-4" aria-hidden />
@@ -114,7 +116,7 @@ function CartLineRow({ line, index }: { line: CartLine; index: number }) {
           <button
             type="button"
             onClick={() => setQty(index, line.qty - 1)}
-            aria-label={t("cartPanel.line.decreaseAria", { name: line.name })}
+            aria-label={t("cartPanel.line.decreaseAria", { name: displayName })}
             className="btn-press flex min-h-11 min-w-11 items-center justify-center rounded-lg bg-white text-slate-500 shadow-sm hover:bg-slate-100"
           >
             <Minus className="h-4 w-4" aria-hidden />

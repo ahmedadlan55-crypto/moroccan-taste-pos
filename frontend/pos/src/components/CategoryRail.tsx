@@ -3,6 +3,7 @@
  * horizontal scroll strip on smaller screens. "الكل" + live categories.
  */
 import { LayoutGrid } from "lucide-react";
+import { useT } from "@/i18n/I18nProvider";
 import { cn } from "./ui";
 import { fmtInt } from "@/lib/format";
 
@@ -15,7 +16,16 @@ export interface CategoryRailProps {
 }
 
 export function CategoryRail({ categories, counts, active, onSelect, horizontal }: CategoryRailProps) {
+  const t = useT();
   const totalCount = Object.values(counts).reduce((s, n) => s + n, 0);
+  // Categories arrive from the DB as Arabic strings. Map known ones to the
+  // active language via the dictionary; unknown categories fall back to the
+  // raw Arabic value (t() returns the dotted path itself on a lookup miss).
+  const catLabel = (category: string) => {
+    const path = `categoryRail.categoryLabels.${category}`;
+    const label = t(path);
+    return label === path ? category : label;
+  };
   const item = (label: string, value: string | null, count: number) => {
     const isActive = active === value;
     return (
@@ -50,10 +60,10 @@ export function CategoryRail({ categories, counts, active, onSelect, horizontal 
         horizontal ? "flex gap-2 overflow-x-auto pb-1" : "flex max-h-full flex-col gap-2 overflow-y-auto pe-1",
       )}
       role="tablist"
-      aria-label="التصنيفات"
+      aria-label={t("categoryRail.aria.tablist")}
     >
-      {item("الكل", null, totalCount)}
-      {categories.map((c) => item(c, c, counts[c] ?? 0))}
+      {item(t("categoryRail.all"), null, totalCount)}
+      {categories.map((c) => item(catLabel(c), c, counts[c] ?? 0))}
     </div>
   );
 }

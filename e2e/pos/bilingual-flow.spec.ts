@@ -259,16 +259,18 @@ test.afterAll(async () => {
   }
 });
 
-// Numpad digit-word aria-labels — see GAP #2. Shared by shift-open and
-// payment amount entry below.
-const AR_DIGIT_WORDS: Record<string, string> = {
-  "0": "صفر", "1": "واحد", "2": "اثنان", "3": "ثلاثة", "4": "أربعة",
-  "5": "خمسة", "6": "ستة", "7": "سبعة", "8": "ثمانية", "9": "تسعة",
+// Numpad digit-word aria-labels. Formerly GAP #2's hardcoded-Arabic words —
+// dfb613b localized the Numpad (t("numpad.digits.N")), and EVERY numpad press
+// in this flow happens during the ENGLISH phase (steps 8–22, after the 4-5
+// header switch), so the English words are the correct accessible names here.
+const EN_DIGIT_WORDS: Record<string, string> = {
+  "0": "Zero", "1": "One", "2": "Two", "3": "Three", "4": "Four",
+  "5": "Five", "6": "Six", "7": "Seven", "8": "Eight", "9": "Nine",
 };
 
 async function pressNumpadDigits(dialog: ReturnType<Page["getByRole"]>, digits: string): Promise<void> {
   for (const ch of digits) {
-    await dialog.getByRole("button", { name: AR_DIGIT_WORDS[ch], exact: true }).click();
+    await dialog.getByRole("button", { name: EN_DIGIT_WORDS[ch], exact: true }).click();
   }
 }
 
@@ -278,27 +280,28 @@ test("full bilingual cashier flow — language toggle, sell, shift, back-office"
     if (msg.type() === "error") consoleErrors.push(msg.text());
   });
 
-  // ═══ Step 1 — open /pos/, clear stale session so PosLogin actually renders ═══
-  await test.step("1. open /pos/", async () => {
+  // ═══ Step 1 — open /pos/, clear stale session so PosLogin actually renders.
+  // A cleared profile boots the product DEFAULT language, which is ENGLISH
+  // since dfb613b — this step asserts that shipped default for real. ═══
+  await test.step("1. open /pos/ (default = English)", async () => {
     await page.goto("/pos/");
     await page.evaluate(() => localStorage.clear());
     await page.reload();
-    await expect(page.getByLabel("اسم المستخدم")).toBeVisible({ timeout: 30_000 });
+    await expect(page.getByLabel("Username")).toBeVisible({ timeout: 30_000 });
   });
 
-  // ═══ Step 2 — select English from the LOGIN SCREEN's language toggle ═══════
-  // GAP #1 — see file header. Written as the plan intends; soft-fails with a
-  // clear message rather than being silently skipped or weakened.
-  await test.step("2. select English from the login screen's language toggle [KNOWN GAP]", async () => {
+  // ═══ Step 2 — switch to ARABIC from the LOGIN SCREEN's language toggle ═════
+  // Formerly GAP #1 (PosLogin had no i18n/toggle at all) — dfb613b migrated it
+  // with the header.languageToggle.* convention: the accessible name is the
+  // aria-label, and the visible text always names the language you would
+  // SWITCH TO («عربي» while in English). The rest of this flow is authored
+  // Arabic-first, so the login toggle is exercised here in the EN→AR
+  // direction; steps 4-5 and 23 already cover the header toggle both ways.
+  await test.step("2. switch to Arabic from the login screen's language toggle", async () => {
     const loginToggle = page.getByRole("button", { name: /change interface language|تغيير لغة الواجهة/i });
-    const count = await loginToggle.count();
-    expect.soft(
-      count,
-      "GAP: PosLogin.tsx has no i18n at all (no useT/useLang/useSetLang, no " +
-      "toggle element) — confirmed by reading the component source. There is " +
-      "currently no way to choose a language before logging in. This step " +
-      "cannot pass until PosLogin.tsx is migrated.",
-    ).toBeGreaterThan(0);
+    await expect(loginToggle).toBeVisible({ timeout: 5_000 });
+    await loginToggle.click();
+    await expect(page.getByLabel("اسم المستخدم")).toBeVisible({ timeout: 10_000 });
   });
 
   // ═══ Step 3 — login with the REAL cashier fixture ══════════════════════════
@@ -333,16 +336,12 @@ test("full bilingual cashier flow — language toggle, sell, shift, back-office"
     await expect(page.getByRole("menu")).toBeHidden({ timeout: 5_000 }).catch(() => {});
   }
 
-  // Dialog.tsx's own X close button has a HARDCODED aria-label="إغلاق"
-  // regardless of language (confirmed by a real run + reading Dialog.tsx —
-  // an additional un-migrated spot beyond GAP #4's list). Several dialogs
-  // (MyInvoicesDialog, RequisitionsDialog, ShiftDialog's info screen) have no
-  // OTHER close affordance, so this is their only real close control in
-  // either language. StocktakeDialog is the one dialog with an explicit
-  // common.close-backed "Close"/"إغلاق" footer button on its done screen —
-  // that one really does translate, and is targeted directly where used.
+  // Dialog.tsx's X close button — formerly a hardcoded aria-label="إغلاق",
+  // localized by dfb613b (t("dialog.aria.close")). Every closeDialogViaX call
+  // in this flow happens during the ENGLISH phase, so "Close" is the correct
+  // accessible name here.
   async function closeDialogViaX(dialog: ReturnType<Page["getByRole"]>): Promise<void> {
-    await dialog.getByRole("button", { name: "إغلاق", exact: true }).click();
+    await dialog.getByRole("button", { name: "Close", exact: true }).click();
   }
 
   // StocktakeDialog/RequisitionsDialog render a Large-quantity INPUT only for
@@ -379,7 +378,9 @@ test("full bilingual cashier flow — language toggle, sell, shift, back-office"
   // interactions — the sheet is still open going into 14, and re-"opening"
   // it just tried to click straight through its own backdrop) — confirmed
   // by a real run.
-  const cartSheetCloseHandle = page.getByRole("button", { name: "إغلاق السلة", exact: true });
+  // appShell.aria.closeCart — localized by dfb613b (was hardcoded Arabic).
+  // All cart-sheet interaction below happens during the English phase.
+  const cartSheetCloseHandle = page.getByRole("button", { name: "Close cart", exact: true });
   /**
    * Bring the cart into an interactable state, whatever the viewport.
    *
@@ -418,7 +419,7 @@ test("full bilingual cashier flow — language toggle, sell, shift, back-office"
 
     if (await cartSheetCloseHandle.isVisible()) return; // already open
 
-    const trigger = page.getByRole("button", { name: /^السلة \(/ });
+    const trigger = page.getByRole("button", { name: /^Cart \(/ });
     // Auto-retrying, unlike the isVisible() probe this replaces: the trigger's
     // accessible name embeds the cart COUNT ("السلة (2)…"), so it re-renders on
     // the very action that precedes every call to this helper.
@@ -498,7 +499,9 @@ test("full bilingual cashier flow — language toggle, sell, shift, back-office"
   // ═══ Step 9 — product names/images render ══════════════════════════════════
   // App.tsx's own aside/section aria-labels are hardcoded Arabic (GAP #4) —
   // used here purely as a stable container selector, not an i18n assertion.
-  const catalogSection = page.locator('section[aria-label="الأصناف"]');
+  // appShell.aria.products — localized since dfb613b; the catalog steps below
+  // all run during the English phase, where the landmark is "Items".
+  const catalogSection = page.locator('section[aria-label="Items"]');
   // Product cards ONLY — NOT the horizontal CategoryRail duplicate that
   // App.tsx also renders inside this same section for <1024px layouts
   // (`lg:hidden`, so CSS-hidden but still in the DOM at wider viewports —
@@ -522,7 +525,7 @@ test("full bilingual cashier flow — language toggle, sell, shift, back-office"
   const catalogRes = await request.get("/api/pos/v2/catalog", { headers: { Authorization: `Bearer ${token}` } });
   expect(catalogRes.ok(), "catalog API reachable for search-assertion setup").toBe(true);
   const catalogJson = await catalogRes.json();
-  type CatalogItem = { id: string; name: string; active: boolean; barcode?: string | null; units?: Array<{ barcode?: string | null }> };
+  type CatalogItem = { id: string; name: string; name_en?: string | null; active: boolean; barcode?: string | null; units?: Array<{ barcode?: string | null }> };
   const items: CatalogItem[] = (catalogJson.items ?? catalogJson.data?.items ?? []) as CatalogItem[];
   const searchTarget = items.find((it) => it.active && it.name && it.id) ?? items[0];
   const barcodeTarget = items.find((it) => it.active && (it.barcode || it.units?.some((u) => u.barcode)));
@@ -551,12 +554,20 @@ test("full bilingual cashier flow — language toggle, sell, shift, back-office"
   expect(invRes.ok(), "inventory items API (/api/inventory/items) was not reachable").toBe(true);
   expect(materialTarget, "no active raw material to search for — check /api/inventory/items").toBeTruthy();
 
-  const searchInput = page.getByPlaceholder("بحث أو مسح باركود… (F2)");
+  // Regex on purpose: the productGrid.search.placeholder dictionary key exists
+  // in both languages, so this survives the SearchBox adopting it (today the
+  // component still renders the Arabic literal in both languages).
+  const searchInput = page.getByPlaceholder(/بحث أو مسح باركود|Search or scan barcode/);
 
   // ═══ Step 10 — search by Arabic text ═══════════════════════════════════════
   await test.step("10. search by Arabic text (real catalog item name)", async () => {
     await searchInput.fill(searchTarget!.name);
-    await expect(catalogSection.getByText(searchTarget!.name, { exact: false }).first()).toBeVisible({ timeout: 5_000 });
+    // dfb613b: during this ENGLISH phase each card renders its ENGLISH display
+    // name (name_en, falling back to the Arabic name when untranslated) — so
+    // the Arabic search must narrow the grid to the item's RENDERED label,
+    // which is not necessarily the Arabic string that was typed.
+    const displayName = searchTarget!.name_en || searchTarget!.name;
+    await expect(catalogSection.getByText(displayName, { exact: false }).first()).toBeVisible({ timeout: 5_000 });
     await searchInput.fill("");
   });
 
@@ -596,10 +607,10 @@ test("full bilingual cashier flow — language toggle, sell, shift, back-office"
   await test.step("13. apply a discount", async () => {
     await openCartSheetIfCollapsed();
     await page.getByRole("button", { name: "Add order discount", exact: true }).click();
-    const discountDialog = page.getByRole("dialog").filter({ hasText: "خصم على الطلب" });
+    const discountDialog = page.getByRole("dialog").filter({ hasText: "Order discount" });
     await expect(discountDialog).toBeVisible({ timeout: 5_000 });
-    await discountDialog.getByLabel("النسبة (0–100)").fill("10");
-    await discountDialog.getByRole("button", { name: "تطبيق الخصم", exact: true }).click();
+    await discountDialog.getByLabel("Percentage (0–100)").fill("10");
+    await discountDialog.getByRole("button", { name: "Apply discount", exact: true }).click();
     await expect(discountDialog).toBeHidden();
     // getByRole (not getByText/getByLabel) on purpose: App.tsx keeps BOTH a
     // desktop `<aside>` copy of CartPanel (css `hidden` at <768px — still in
@@ -728,7 +739,10 @@ test("full bilingual cashier flow — language toggle, sell, shift, back-office"
     await stDialog.getByRole("button", { name: /^Review & send/ }).click();
     await stDialog.getByRole("button", { name: "Send for approval", exact: true }).click();
     await expect(stDialog.getByText("Stocktake sheet sent for approval")).toBeVisible({ timeout: 15_000 });
-    await stDialog.getByRole("button", { name: "Close", exact: true }).click();
+    // TWO "Close" buttons exist in English since dfb613b localized Dialog.tsx's
+    // X (aria-label "Close") alongside Stocktake's own footer Close button —
+    // filter by VISIBLE TEXT to hit the footer one (the X renders only an icon).
+    await stDialog.getByRole("button", { name: "Close", exact: true }).filter({ hasText: "Close" }).click();
     await expect(stDialog).toBeHidden();
   });
 

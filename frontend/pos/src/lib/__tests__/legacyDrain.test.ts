@@ -147,7 +147,7 @@ describe("drainLegacyQueue", () => {
     const fetchFn = vi.fn().mockResolvedValue(jsonResponse({ success: true, orderId: "S1" }));
     const out = await drainLegacyQueue(deps(s, fetchFn));
     expect(fetchFn).toHaveBeenCalledTimes(1);
-    expect(out.failed).toEqual([{ clientOrderId: null, error: "سجل غير صالح — يتعذّر إرساله" }]);
+    expect(out.failed).toEqual([{ clientOrderId: null, error: "legacyDrain.invalidRecord" }]);
     expect(out.remaining).toBe(1);
     expect(JSON.parse(s.dump()!)).toEqual([{ broken: true }]);
   });
@@ -180,7 +180,7 @@ describe("drainLegacyQueue", () => {
       },
     } as unknown as Response);
     const out = await drainLegacyQueue(deps(s, fetchFn));
-    expect(out.failed).toEqual([{ clientOrderId: "a1", error: "رفض الخادم (HTTP 500)" }]);
+    expect(out.failed).toEqual([{ clientOrderId: "a1", error: "legacyDrain.serverRejected", errorVars: { status: 500 } }]);
     expect(out.remaining).toBe(1);
   });
 });

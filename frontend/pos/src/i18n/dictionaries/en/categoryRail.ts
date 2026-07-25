@@ -1,0 +1,40 @@
+export const categoryRail = {
+  all: "All",
+  aria: {
+    tablist: "Categories",
+  },
+  // Known DB category names (Arabic) → English. Unknown categories fall back
+  // to the raw Arabic string in the component.
+  categoryLabels: {
+    "الإضافات": "Add-ons",
+    "البرغر": "Burgers",
+    "الحلويات": "Desserts",
+    "السلطات": "Salads",
+    "السندويتشات": "Sandwiches",
+    "الشوربات": "Soups",
+    "الطواجن": "Tagines",
+    "العصائر": "Juices",
+    "الكسكس": "Couscous",
+    "المشاوي": "Grills",
+    "المشروبات الباردة": "Cold Drinks",
+    "المشروبات الساخنة": "Hot Drinks",
+    "المعجنات": "Pastries",
+    "المقبلات": "Appetizers",
+    "عام": "General",
+    // The categories this brand actually uses in production.
+    "قائمة الشاي": "Tea Menu",
+    "قائمة القهوة": "Coffee Menu",
+    "قائمة المشروبات الباردة": "Cold Drinks Menu",
+    "قائمة الفرابيه": "Frappé Menu",
+    "قائمة بوكسات التجمعات والترامس": "Gathering Boxes & Thermos",
+    "بروموشن": "Promotions",
+    "مخبوزات": "Bakery",
+    "اليجنت": "Elegant",
+    "علي الرف": "On The Shelf",
+    "شيكولاته": "Chocolate",
+    "حلا": "Desserts",
+    "ساندويتش": "Sandwiches",
+    "عروض": "Offers",
+    "مياه": "Water",
+  },
+} as const;

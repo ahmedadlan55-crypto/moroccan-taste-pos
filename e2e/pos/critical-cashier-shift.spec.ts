@@ -228,7 +228,12 @@ test("cashier creation + login + shift-open-with-float", async ({ page, request 
 
   // ── (1) fresh /pos/ — clear any stale session so PosLogin actually renders ──
   await page.goto("/pos/");
-  await page.evaluate(() => localStorage.clear());
+  // This flow is authored against the ARABIC experience end-to-end. Since
+  // dfb613b the product DEFAULT language is English, so a cleared profile
+  // boots EN — pin Arabic the way a real device persists it (pos_lang)
+  // instead of rewriting every Arabic assertion below. The default-language
+  // experience itself is bilingual-flow.spec.ts's job.
+  await page.evaluate(() => { localStorage.clear(); localStorage.setItem("pos_lang", "ar"); });
   await page.reload();
 
   await expect(page.getByLabel("اسم المستخدم")).toBeVisible({ timeout: 30_000 });

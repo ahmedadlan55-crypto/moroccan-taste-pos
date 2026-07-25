@@ -121,7 +121,9 @@ for (const lang of LANGS) {
       // Same technique as e2e/pos/bilingual-flow.spec.ts's `productCards`:
       // cards are the one button shape in this section with a <p> child
       // (name + price paragraphs); category-rail/filter chips have none.
-      const catalogSection = page.locator('section[aria-label="الأصناف"]');
+      // The products landmark is LOCALIZED (appShell.aria.products since
+      // dfb613b): "الأصناف" in Arabic, "Items" in English.
+      const catalogSection = page.locator(`section[aria-label="${lang === "ar" ? "الأصناف" : "Items"}"]`);
       const productCards = catalogSection.locator("button").filter({ has: page.locator("p") });
       await expect(productCards.first()).toBeVisible({ timeout: 15_000 });
       await expect(page).toHaveScreenshot(`pos-main-${lang}.png`, {
@@ -135,9 +137,13 @@ for (const lang of LANGS) {
       await gotoAsAdmin(page, lang);
       const header = page.getByTestId("pos-header");
       await header.getByRole("button", { name: /المزيد|More/ }).click();
-      await expect(page.getByRole("menu")).toBeVisible({ timeout: 5_000 });
-      await expect(page).toHaveScreenshot(`pos-header-more-${lang}.png`, {
-        fullPage: true,
+      const menu = page.getByRole("menu");
+      await expect(menu).toBeVisible({ timeout: 5_000 });
+      // Screenshot the MENU element, not the full page: this test exists to
+      // prove the More menu's chrome/direction/localization, and a full-page
+      // shot drags in the catalog grid behind it, whose lazily-loading item
+      // images vary run-to-run (a real 3%-diff flake on tablet-768).
+      await expect(menu).toHaveScreenshot(`pos-header-more-${lang}.png`, {
         animations: "disabled",
         maxDiffPixelRatio: 0.02,
       });

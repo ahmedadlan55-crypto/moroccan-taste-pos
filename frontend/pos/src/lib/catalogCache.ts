@@ -61,7 +61,8 @@ export async function loadCatalog(): Promise<LoadedCatalog> {
   const cached = await idbGet<CachedCatalog>("catalog", KEY).catch(() => undefined);
   if (typeof navigator !== "undefined" && !navigator.onLine) {
     if (cached) return fromCached(cached);
-    throw new Error("لا يوجد اتصال ولا نسخة محفوظة من القائمة — اتصل بالشبكة مرة واحدة أولًا");
+    // i18n key — the display site (App via ErrorBanner) resolves it with t().
+    throw new Error("catalogCache.noConnection");
   }
   try {
     const res = await fetchCatalog(cached?.etag ?? null);
@@ -79,7 +80,7 @@ export async function loadCatalog(): Promise<LoadedCatalog> {
       return fresh(res.data);
     }
     if (cached) return fromCached(cached);
-    throw new Error("تعذّر تحميل القائمة");
+    throw new Error("catalogCache.loadFailed");
   } catch (e) {
     if (cached) return fromCached(cached);
     throw e;

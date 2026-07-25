@@ -4,8 +4,11 @@
  *
  *   · An owner-set name_en (non-empty, name_en_source IS NULL) is NEVER
  *     overwritten — the queue row is marked 'skipped' and menu is untouched.
- *   · The transliteration fallback (no translation API key configured, by
- *     design) always sets name_en_source='transliteration' and
+ *   · Name resolution is fully OFFLINE (no translation API key is configured,
+ *     by design, and none is ever called): the curated menu dictionary
+ *     produces real English and labels the row 'machine_translation'; a name
+ *     the dictionary does not know falls back to deterministic
+ *     transliteration and is labeled 'transliteration'. Either way
  *     name_en_needs_review=1.
  *   · The worker's UPDATE never touches any column but name_en /
  *     name_en_source / name_en_needs_review — verified by asserting
@@ -131,7 +134,10 @@ async function enqueue(menuId) {
     const [q1] = await db.query('SELECT status FROM name_en_backfill_queue WHERE menu_id = ?', [OWNER_ID]);
     check('…and the queue row is marked skipped', q1[0] && q1[0].status === 'skipped', q1[0]);
 
-    // ═══ Fixture 2: missing name_en — transliteration fallback ═══
+    // ═══ Fixture 2: missing name_en — OFFLINE dictionary resolves it ═══
+    // "مندي لحم" is real menu vocabulary, so the curated offline dictionary
+    // (lib/menu-en-dictionary.js) produces real English and the row is labeled
+    // 'machine_translation'. Still no network: the dictionary is a local table.
     const MISSING_ID = PREFIX + 'MISSING';
     await db.query(
       'INSERT INTO menu (id, name, price, stock, category) VALUES (?,?,?,?,?)',
@@ -143,8 +149,9 @@ async function enqueue(menuId) {
     await worker._processBatch();
 
     const after2 = await menuRow(MISSING_ID);
-    check('transliteration fallback wrote a non-empty name_en', !!after2.name_en, after2.name_en);
-    check("…source is exactly 'transliteration' (never invents an API)", after2.name_en_source === 'transliteration');
+    check('dictionary fallback wrote a non-empty name_en', !!after2.name_en, after2.name_en);
+    check('…and it is real English, not a letter-by-letter transliteration', after2.name_en === 'Meat Mandi', after2.name_en);
+    check("…source is 'machine_translation' (offline dictionary, never an API)", after2.name_en_source === 'machine_translation', after2.name_en_source);
     check('…needs_review is ALWAYS 1 for a machine-derived name', after2.name_en_needs_review === 1);
     check('…and price/stock/name/category are untouched',
       after2.price === before2.price && after2.stock === before2.stock &&
@@ -154,8 +161,23 @@ async function enqueue(menuId) {
       "SELECT status, source_used, proposed_name_en FROM name_en_backfill_queue WHERE menu_id = ?",
       [MISSING_ID]
     );
-    check('…queue row is done with source_used=transliteration', q2[0] && q2[0].status === 'done' && q2[0].source_used === 'transliteration', q2[0]);
+    check('…queue row is done with source_used=machine_translation', q2[0] && q2[0].status === 'done' && q2[0].source_used === 'machine_translation', q2[0]);
     check('…queue proposed_name_en matches what was written to menu', q2[0] && q2[0].proposed_name_en === after2.name_en, { queue: q2[0], menu: after2.name_en });
+
+    // ═══ Fixture 2b: a name the dictionary does NOT know ═══
+    // Falls back to deterministic transliteration and is labeled honestly, so
+    // 'transliteration' never silently claims to be a real translation.
+    const UNKNOWN_ID = PREFIX + 'UNKNOWN';
+    await db.query(
+      'INSERT INTO menu (id, name, price, stock, category) VALUES (?,?,?,?,?)',
+      [UNKNOWN_ID, 'صنف مجهول تماما', 12.00, 3, 'ZZNEB-CAT']
+    );
+    await enqueue(UNKNOWN_ID);
+    await worker._processBatch();
+    const after2b = await menuRow(UNKNOWN_ID);
+    check('unknown name still gets a Latin-script name_en', !!after2b.name_en && /^[\x20-\x7E]*$/.test(after2b.name_en), after2b.name_en);
+    check("…labeled 'transliteration' (honest about what produced it)", after2b.name_en_source === 'transliteration', after2b.name_en_source);
+    check('…needs_review is 1', after2b.name_en_needs_review === 1);
 
     // ═══ Structural guarantee: the UPDATE statement text itself ═══
     const fs = require('fs');

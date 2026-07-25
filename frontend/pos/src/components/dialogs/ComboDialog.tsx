@@ -16,6 +16,8 @@ import { CheckCircle2, Circle, Gift, Pin, ShoppingCart } from "lucide-react";
 import { Dialog } from "@/components/Dialog";
 import { Button, cn } from "@/components/ui";
 import { fmt2 } from "@/lib/format";
+import { useLocalizedName, useT } from "@/i18n/I18nProvider";
+import type { TFunction } from "@/i18n/types";
 import type { ComboDef, ComboGroup } from "@/lib/types";
 
 /** { [groupId]: [picked menuId, …] } — same shape the cart line freezes. */
@@ -92,10 +94,10 @@ export function finalizeCombo(combo: ComboDef, selection: ComboSelection, basePr
 }
 
 /** Legacy rule line: "اختر حتى N / اختر واحداً · مطلوب / اختياري". */
-function groupRule(g: ComboGroup): string {
+function groupRule(g: ComboGroup, t: TFunction): string {
   const max = g.max || 1;
-  const pick = max > 1 ? `اختر حتى ${max}` : "اختر واحداً";
-  return `${pick} ${g.min > 0 ? "· مطلوب" : "· اختياري"}`;
+  const pick = max > 1 ? t("comboDialog.groupRule.chooseUpTo", { max }) : t("comboDialog.groupRule.chooseOne");
+  return `${pick} ${g.min > 0 ? t("comboDialog.groupRule.required") : t("comboDialog.groupRule.optional")}`;
 }
 
 export interface ComboDialogProps {
@@ -109,6 +111,8 @@ export interface ComboDialogProps {
 }
 
 export function ComboDialog({ open, combo, basePrice, onClose, onConfirm }: ComboDialogProps) {
+  const t = useT();
+  const tn = useLocalizedName();
   const [selection, setSelection] = useState<ComboSelection>(() => emptySelection(combo));
 
   // A new combo (or a re-open) always starts from a clean selection.
@@ -129,12 +133,12 @@ export function ComboDialog({ open, combo, basePrice, onClose, onConfirm }: Comb
     <Dialog
       open={open}
       onClose={onClose}
-      title={`${combo.name} — ${fmt2(price)} ر.س`}
+      title={`${tn(combo.name, combo.nameEn)} — ${fmt2(price)} ${t("comboDialog.currency")}`}
       widthClass="max-w-xl"
       footer={
         <div className="flex items-center justify-end gap-2">
           <Button variant="secondary" onClick={onClose}>
-            إلغاء
+            {t("comboDialog.actions.cancel")}
           </Button>
           <Button
             variant="primary"
@@ -146,7 +150,7 @@ export function ComboDialog({ open, combo, basePrice, onClose, onConfirm }: Comb
             }}
           >
             <ShoppingCart className="h-4 w-4" aria-hidden />
-            أضف للسلة
+            {t("comboDialog.actions.addToCart")}
           </Button>
         </div>
       }
@@ -159,11 +163,11 @@ export function ComboDialog({ open, combo, basePrice, onClose, onConfirm }: Comb
           >
             <Pin className="mt-0.5 h-4 w-4 shrink-0 text-slate-400" aria-hidden />
             <p>
-              يشمل دائماً:{" "}
+              {t("comboDialog.fixed.alwaysIncludes")}{" "}
               <span className="font-extrabold text-ink">
                 {combo.fixedComponents
-                  .map((f) => (Number(f.qty) > 1 ? `${f.name} ×${f.qty}` : f.name))
-                  .join("، ")}
+                  .map((f) => (Number(f.qty) > 1 ? `${tn(f.name, f.nameEn)} ×${f.qty}` : tn(f.name, f.nameEn)))
+                  .join(t("comboDialog.fixed.separator"))}
               </span>
             </p>
           </div>
@@ -172,7 +176,7 @@ export function ComboDialog({ open, combo, basePrice, onClose, onConfirm }: Comb
         {combo.groups.length === 0 ? (
           <p className="py-4 text-center text-sm font-bold text-slate-400">
             <Gift className="mx-auto mb-1 h-6 w-6 text-slate-300" aria-hidden />
-            هذا العرض بلا خيارات
+            {t("comboDialog.emptyCombo")}
           </p>
         ) : (
           combo.groups.map((g) => {
@@ -182,11 +186,11 @@ export function ComboDialog({ open, combo, basePrice, onClose, onConfirm }: Comb
               <fieldset key={g.id} data-testid={`combo-group-${g.id}`}>
                 <legend className="mb-1.5 flex items-baseline gap-1.5 text-sm font-extrabold text-ink">
                   {g.name}
-                  <span className="text-[11px] font-bold text-slate-400">({groupRule(g)})</span>
+                  <span className="text-[11px] font-bold text-slate-400">({groupRule(g, t)})</span>
                 </legend>
                 {g.options.length === 0 ? (
                   <p className="rounded-xl border border-dashed border-slate-200 px-3 py-2 text-xs font-bold text-slate-400">
-                    لا خيارات متاحة
+                    {t("comboDialog.group.noOptions")}
                   </p>
                 ) : (
                   <div className="grid grid-cols-1 gap-1.5 sm:grid-cols-2">
@@ -216,7 +220,7 @@ export function ComboDialog({ open, combo, basePrice, onClose, onConfirm }: Comb
                           ) : (
                             <Circle className="h-4 w-4 shrink-0 text-slate-300" aria-hidden />
                           )}
-                          <span className="min-w-0 flex-1 truncate">{o.name}</span>
+                          <span className="min-w-0 flex-1 truncate">{tn(o.name, o.nameEn)}</span>
                           {Number(o.priceDelta) ? (
                             <span dir="ltr" className="num shrink-0 text-[11px] font-extrabold text-saffron-600">
                               {o.priceDelta > 0 ? "+" : ""}

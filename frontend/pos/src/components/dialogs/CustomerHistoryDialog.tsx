@@ -15,6 +15,7 @@ import { useQuery } from "@tanstack/react-query";
 import { CalendarDays, Coins, Phone, ReceiptText, Tag } from "lucide-react";
 import { getCustomerSummary } from "@/lib/api";
 import { fmt2, fmtInt } from "@/lib/format";
+import { useT } from "@/i18n/I18nProvider";
 import { Dialog } from "../Dialog";
 import { EmptyState, ErrorBanner, Money, Skeleton, cn } from "../ui";
 
@@ -27,13 +28,19 @@ function dateOnly(iso: string | null): string {
   return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
 }
 
-/** Legacy badge logic (app.js:1444-1456), verbatim mapping. */
-export function invoiceBadge(r: { zatcaType: string; hasCreditNote: boolean }): { label: string; tone: string } {
-  if (r.zatcaType === "cancellation") return { label: "ملغاة", tone: "border-red-200 bg-red-50 text-red-700" };
-  if (r.zatcaType === "credit_note") return { label: "مرتجع", tone: "border-purple-200 bg-purple-50 text-purple-700" };
-  if (r.zatcaType === "debit_note") return { label: "تعديل", tone: "border-purple-200 bg-purple-50 text-purple-700" };
-  if (r.hasCreditNote) return { label: "مرتجع جزئياً", tone: "border-purple-200 bg-purple-50 text-purple-700" };
-  return { label: "مكتملة", tone: "border-teal-200 bg-teal-50 text-teal-700" };
+/**
+ * Legacy badge logic (app.js:1444-1456), verbatim mapping. `label` keeps the
+ * ORIGINAL Arabic string — customerDialogs.test.tsx asserts it verbatim and
+ * imports this pure function outside any I18nProvider, so it cannot translate.
+ * The dialog renders the translated `labelKey` (via useT()) instead, so the
+ * badge follows the active UI language.
+ */
+export function invoiceBadge(r: { zatcaType: string; hasCreditNote: boolean }): { label: string; labelKey: string; tone: string } {
+  if (r.zatcaType === "cancellation") return { label: "ملغاة", labelKey: "customerHistoryDialog.badge.cancelled", tone: "border-red-200 bg-red-50 text-red-700" };
+  if (r.zatcaType === "credit_note") return { label: "مرتجع", labelKey: "customerHistoryDialog.badge.returned", tone: "border-purple-200 bg-purple-50 text-purple-700" };
+  if (r.zatcaType === "debit_note") return { label: "تعديل", labelKey: "customerHistoryDialog.badge.adjusted", tone: "border-purple-200 bg-purple-50 text-purple-700" };
+  if (r.hasCreditNote) return { label: "مرتجع جزئياً", labelKey: "customerHistoryDialog.badge.partiallyReturned", tone: "border-purple-200 bg-purple-50 text-purple-700" };
+  return { label: "مكتملة", labelKey: "customerHistoryDialog.badge.completed", tone: "border-teal-200 bg-teal-50 text-teal-700" };
 }
 
 function Kpi({ icon, label, value, unit }: { icon: React.ReactNode; label: string; value: string; unit?: string }) {
@@ -56,6 +63,7 @@ export function CustomerHistoryDialog({
   onClose: () => void;
   customer: { id: string; name: string | null; phone: string | null } | null;
 }) {
+  const t = useT();
   const query = useQuery({
     queryKey: ["cust-summary", customer?.id],
     queryFn: () => getCustomerSummary(customer!.id),
@@ -65,7 +73,12 @@ export function CustomerHistoryDialog({
   const s = query.data;
 
   return (
-    <Dialog open={open} onClose={onClose} title={`سجل العميل${customer?.name ? ` — ${customer.name}` : ""}`} widthClass="max-w-3xl">
+    <Dialog
+      open={open}
+      onClose={onClose}
+      title={customer?.name ? t("customerHistoryDialog.titleWithName", { name: customer.name }) : t("customerHistoryDialog.title")}
+      widthClass="max-w-3xl"
+    >
       {query.isLoading ? (
         <div>
           <div className="mb-4 grid grid-cols-2 gap-3 sm:grid-cols-4">
@@ -76,15 +89,15 @@ export function CustomerHistoryDialog({
           <Skeleton className="h-40 w-full" />
         </div>
       ) : query.isError ? (
-        <ErrorBanner message={(query.error as Error).message || "فشل تحميل السجل"} onRetry={() => void query.refetch()} />
+        <ErrorBanner message={(query.error as Error).message || t("customerHistoryDialog.loadError")} onRetry={() => void query.refetch()} />
       ) : s ? (
         <div>
           {/* KPI strip — the legacy 4 cards (:1415-1421) */}
           <div className="mb-3 grid grid-cols-2 gap-3 sm:grid-cols-4">
-            <Kpi icon={<Coins className="h-4 w-4" aria-hidden />} label="إجمالي المشتريات" value={fmt2(s.kpi.totalSpent)} unit="ر.س" />
-            <Kpi icon={<ReceiptText className="h-4 w-4" aria-hidden />} label="عدد الفواتير" value={fmtInt(s.kpi.orderCount)} unit="فاتورة" />
-            <Kpi icon={<Coins className="h-4 w-4" aria-hidden />} label="متوسط الفاتورة" value={fmt2(s.kpi.avgInvoice)} unit="ر.س" />
-            <Kpi icon={<CalendarDays className="h-4 w-4" aria-hidden />} label="آخر زيارة" value={dateOnly(s.kpi.lastVisit)} />
+            <Kpi icon={<Coins className="h-4 w-4" aria-hidden />} label={t("customerHistoryDialog.kpi.totalSpentLabel")} value={fmt2(s.kpi.totalSpent)} unit={t("customerHistoryDialog.currency")} />
+            <Kpi icon={<ReceiptText className="h-4 w-4" aria-hidden />} label={t("customerHistoryDialog.kpi.orderCountLabel")} value={fmtInt(s.kpi.orderCount)} unit={t("customerHistoryDialog.kpi.orderCountUnit")} />
+            <Kpi icon={<Coins className="h-4 w-4" aria-hidden />} label={t("customerHistoryDialog.kpi.avgInvoiceLabel")} value={fmt2(s.kpi.avgInvoice)} unit={t("customerHistoryDialog.currency")} />
+            <Kpi icon={<CalendarDays className="h-4 w-4" aria-hidden />} label={t("customerHistoryDialog.kpi.lastVisitLabel")} value={dateOnly(s.kpi.lastVisit)} />
           </div>
 
           {/* Meta line (:1423-1430) */}
@@ -96,7 +109,7 @@ export function CustomerHistoryDialog({
             ) : null}
             {s.kpi.firstVisit ? (
               <span className="flex items-center gap-1">
-                <CalendarDays className="h-3 w-3" aria-hidden /> أول زيارة: <span className="num">{dateOnly(s.kpi.firstVisit)}</span>
+                <CalendarDays className="h-3 w-3" aria-hidden /> {t("customerHistoryDialog.meta.firstVisitLabel")} <span className="num">{dateOnly(s.kpi.firstVisit)}</span>
               </span>
             ) : null}
             {s.customer.customerType ? (
@@ -110,19 +123,19 @@ export function CustomerHistoryDialog({
           {s.recentInvoices.length === 0 ? (
             <EmptyState
               icon={<ReceiptText className="h-10 w-10" />}
-              title="لا توجد فواتير سابقة لهذا العميل"
-              hint="أكمل بيعاً الآن لتسجيل أول فاتورة."
+              title={t("customerHistoryDialog.empty.title")}
+              hint={t("customerHistoryDialog.empty.hint")}
             />
           ) : (
             <div className="scrollbar-thin max-h-[45vh] overflow-y-auto rounded-xl border border-slate-200">
               <table className="w-full text-xs">
                 <thead className="sticky top-0 bg-slate-50 text-[11px] font-extrabold text-slate-500">
                   <tr>
-                    <th className="p-2 text-start">التاريخ</th>
-                    <th className="p-2 text-start">رقم الفاتورة</th>
-                    <th className="p-2 text-start">الإجمالي</th>
-                    <th className="p-2 text-start">الدفع</th>
-                    <th className="p-2 text-start">الحالة</th>
+                    <th className="p-2 text-start">{t("customerHistoryDialog.table.date")}</th>
+                    <th className="p-2 text-start">{t("customerHistoryDialog.table.invoiceNumber")}</th>
+                    <th className="p-2 text-start">{t("customerHistoryDialog.table.total")}</th>
+                    <th className="p-2 text-start">{t("customerHistoryDialog.table.payment")}</th>
+                    <th className="p-2 text-start">{t("customerHistoryDialog.table.status")}</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -142,7 +155,7 @@ export function CustomerHistoryDialog({
                         </td>
                         <td className="p-2 font-bold text-slate-600">{r.payment || "—"}</td>
                         <td className="p-2">
-                          <span className={cn("chip px-2 py-0.5 text-[10px] font-extrabold", badge.tone)}>{badge.label}</span>
+                          <span className={cn("chip px-2 py-0.5 text-[10px] font-extrabold", badge.tone)}>{t(badge.labelKey)}</span>
                         </td>
                       </tr>
                     );

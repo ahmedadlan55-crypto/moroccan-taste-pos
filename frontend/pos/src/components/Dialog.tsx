@@ -4,6 +4,7 @@
  */
 import { useEffect, useRef, type ReactNode } from "react";
 import { X } from "lucide-react";
+import { useT } from "@/i18n/I18nProvider";
 import { cn } from "./ui";
 
 export interface DialogProps {
@@ -18,6 +19,7 @@ export interface DialogProps {
 }
 
 export function Dialog({ open, onClose, title, children, footer, widthClass = "max-w-lg", locked }: DialogProps) {
+  const t = useT();
   const panelRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -97,7 +99,7 @@ export function Dialog({ open, onClose, title, children, footer, widthClass = "m
             type="button"
             onClick={onClose}
             disabled={locked}
-            aria-label="إغلاق"
+            aria-label={t("dialog.aria.close")}
             className="btn-press flex h-11 w-11 items-center justify-center rounded-xl text-slate-400 hover:bg-slate-100 hover:text-slate-600 disabled:opacity-40"
           >
             <X className="h-5 w-5" aria-hidden />

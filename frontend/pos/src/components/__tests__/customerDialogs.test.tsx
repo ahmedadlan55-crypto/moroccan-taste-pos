@@ -26,10 +26,12 @@ function stubFetch(body: unknown, ok = true, status = 200) {
 }
 
 describe("validateNewCustomer — legacy doSave guards", () => {
+  // validateNewCustomer now returns an i18n KEY (or null); the dialog renders
+  // it via t(key). The guard LOGIC is unchanged — assert the keys it returns.
   it("requires name, phone, and ≥5 phone chars", () => {
-    expect(validateNewCustomer("", "0501234567")).toMatch(/اسم/);
-    expect(validateNewCustomer("محمد", "")).toMatch(/الهاتف/);
-    expect(validateNewCustomer("محمد", "123")).toMatch(/قصير/);
+    expect(validateNewCustomer("", "0501234567")).toBe("customerAddDialog.validation.nameRequired");
+    expect(validateNewCustomer("محمد", "")).toBe("customerAddDialog.validation.phoneRequired");
+    expect(validateNewCustomer("محمد", "123")).toBe("customerAddDialog.validation.phoneTooShort");
     expect(validateNewCustomer("محمد", "0501234567")).toBeNull();
   });
 });

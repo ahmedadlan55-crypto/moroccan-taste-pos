@@ -16,6 +16,10 @@ import { describe, it, expect, vi, afterEach } from "vitest";
 import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { ReturnRequestDialog, returnErrorMessage, returnStatusMessage } from "../dialogs/ReturnRequestDialog";
+// ReturnRequestDialog now resolves strings via useT(), which throws without an
+// ancestor I18nProvider (see i18n/I18nProvider.tsx). Default lang is "ar", so
+// the Arabic text these tests assert on is what renders.
+import { I18nProvider } from "@/i18n/I18nProvider";
 import { ApiError } from "@/lib/api";
 import type { SaleRow } from "@/lib/types";
 
@@ -106,9 +110,11 @@ function renderDialog(props: Partial<Parameters<typeof ReturnRequestDialog>[0]> 
     defaultOptions: { queries: { retry: false, gcTime: 0 }, mutations: { retry: false } },
   });
   return render(
-    <QueryClientProvider client={client}>
-      <ReturnRequestDialog open row={row()} onClose={vi.fn()} onCreated={vi.fn()} {...props} />
-    </QueryClientProvider>,
+    <I18nProvider>
+      <QueryClientProvider client={client}>
+        <ReturnRequestDialog open row={row()} onClose={vi.fn()} onCreated={vi.fn()} {...props} />
+      </QueryClientProvider>
+    </I18nProvider>,
   );
 }
 

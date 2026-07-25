@@ -11,6 +11,8 @@ import { useQuery } from "@tanstack/react-query";
 import { AlertTriangle, Coins, History, Loader2, Search, UserPlus, X } from "lucide-react";
 import { getCustomerSummary, searchCustomers, type PosCustomerHit } from "@/lib/api";
 import { fmt2 } from "@/lib/format";
+import { useT } from "@/i18n/I18nProvider";
+import type { TFunction } from "@/i18n/types";
 import { CustomerAddDialog } from "./dialogs/CustomerAddDialog";
 import { CustomerHistoryDialog } from "./dialogs/CustomerHistoryDialog";
 import { cn } from "./ui";
@@ -20,15 +22,18 @@ export interface CustomerPickerProps {
   onChange: (c: { id: string; name: string | null; phone: string | null } | null) => void;
 }
 
-function sublabel(c: PosCustomerHit): string {
+function sublabel(c: PosCustomerHit, t: TFunction): string {
   const bits: string[] = [];
   if (c.phone) bits.push(c.phone);
   const bal = c.derived?.arBalance ?? c.balance;
-  if (Number(c.creditLimit) > 0) bits.push(`المتاح ${fmt2(Number(c.creditLimit) - Number(bal || 0))}`);
+  if (Number(c.creditLimit) > 0) {
+    bits.push(t("customerPicker.available", { amount: fmt2(Number(c.creditLimit) - Number(bal || 0)) }));
+  }
   return bits.join(" · ");
 }
 
 export function CustomerPicker({ value, onChange }: CustomerPickerProps) {
+  const t = useT();
   const [q, setQ] = useState("");
   const [debounced, setDebounced] = useState("");
   const [active, setActive] = useState(0);
@@ -65,12 +70,12 @@ export function CustomerPicker({ value, onChange }: CustomerPickerProps) {
       <>
         <div className="flex items-center justify-between gap-2 rounded-xl border border-teal-200 bg-teal-50 px-3 py-2">
           <span className="flex min-w-0 flex-col">
-            <span className="truncate text-sm font-extrabold text-teal-800">{value.name || "عميل"}</span>
+            <span className="truncate text-sm font-extrabold text-teal-800">{value.name || t("customerPicker.fallbackName")}</span>
             {value.phone ? <span dir="ltr" className="truncate text-[11px] font-bold text-teal-600 num">{value.phone}</span> : null}
             {summaryQuery.data ? (
               <span className="flex items-center gap-1 text-[11px] font-extrabold text-teal-700">
                 <Coins className="h-3 w-3" aria-hidden />
-                <span className="num">{fmt2(summaryQuery.data.kpi.totalSpent)}</span> ر.س
+                <span className="num">{fmt2(summaryQuery.data.kpi.totalSpent)}</span> {t("customerPicker.currency")}
               </span>
             ) : null}
           </span>
@@ -79,8 +84,8 @@ export function CustomerPicker({ value, onChange }: CustomerPickerProps) {
               type="button"
               onClick={() => setHistOpen(true)}
               className="grid min-h-11 min-w-11 place-items-center rounded-lg text-teal-500 transition hover:bg-white hover:text-teal-700"
-              aria-label="سجل العميل"
-              title="سجل العميل"
+              aria-label={t("customerPicker.selected.historyAria")}
+              title={t("customerPicker.selected.historyAria")}
             >
               <History className="h-4 w-4" aria-hidden />
             </button>
@@ -88,7 +93,7 @@ export function CustomerPicker({ value, onChange }: CustomerPickerProps) {
               type="button"
               onClick={() => onChange(null)}
               className="grid min-h-11 min-w-11 place-items-center rounded-lg text-teal-500 transition hover:bg-white hover:text-rose-600"
-              aria-label="مسح العميل"
+              aria-label={t("customerPicker.selected.clearAria")}
             >
               <X className="h-4 w-4" aria-hidden />
             </button>
@@ -121,7 +126,7 @@ export function CustomerPicker({ value, onChange }: CustomerPickerProps) {
           value={q}
           onChange={(e) => setQ(e.target.value)}
           onKeyDown={onKeyDown}
-          placeholder="ابحث بالاسم أو الهاتف أو الرقم الضريبي…"
+          placeholder={t("customerPicker.search.placeholder")}
           className="field w-full ps-9"
           role="combobox"
           aria-expanded="true"
@@ -135,17 +140,17 @@ export function CustomerPicker({ value, onChange }: CustomerPickerProps) {
         {query.isError ? (
           <div className="flex flex-col items-center gap-2 px-3 py-5 text-center">
             <AlertTriangle className="h-5 w-5 text-amber-500" aria-hidden />
-            <span className="text-xs font-bold text-slate-500">تعذّر تحميل العملاء.</span>
+            <span className="text-xs font-bold text-slate-500">{t("customerPicker.search.loadError")}</span>
             <button type="button" onClick={() => query.refetch()} className="rounded-lg bg-slate-100 px-3 py-1 text-xs font-extrabold text-slate-700 hover:bg-slate-200">
-              إعادة المحاولة
+              {t("customerPicker.search.retry")}
             </button>
           </div>
         ) : query.isLoading ? (
           <div className="flex items-center justify-center gap-2 px-3 py-4 text-xs font-bold text-slate-400">
-            <Loader2 className="h-4 w-4 animate-spin" aria-hidden /> جارٍ البحث…
+            <Loader2 className="h-4 w-4 animate-spin" aria-hidden /> {t("customerPicker.search.loading")}
           </div>
         ) : rows.length === 0 ? (
-          <div className="px-3 py-4 text-center text-xs font-bold text-slate-400">لا عملاء مطابقون.</div>
+          <div className="px-3 py-4 text-center text-xs font-bold text-slate-400">{t("customerPicker.search.empty")}</div>
         ) : (
           rows.map((c, i) => (
             <button
@@ -162,7 +167,7 @@ export function CustomerPicker({ value, onChange }: CustomerPickerProps) {
             >
               <span className="flex min-w-0 flex-col">
                 <span className="truncate text-sm font-bold text-slate-700">{c.name}</span>
-                {sublabel(c) ? <span dir="ltr" className="truncate text-[11px] font-bold text-slate-400 num">{sublabel(c)}</span> : null}
+                {sublabel(c, t) ? <span dir="ltr" className="truncate text-[11px] font-bold text-slate-400 num">{sublabel(c, t)}</span> : null}
               </span>
             </button>
           ))
@@ -177,7 +182,7 @@ export function CustomerPicker({ value, onChange }: CustomerPickerProps) {
         className="btn-press mt-2 flex min-h-11 w-full items-center justify-center gap-1.5 rounded-xl border border-dashed border-teal-300 bg-teal-50/50 text-xs font-extrabold text-teal-700 transition hover:bg-teal-50"
       >
         <UserPlus className="h-4 w-4" aria-hidden />
-        عميل جديد
+        {t("customerPicker.search.newCustomer")}
       </button>
       {addOpen ? (
         <CustomerAddDialog

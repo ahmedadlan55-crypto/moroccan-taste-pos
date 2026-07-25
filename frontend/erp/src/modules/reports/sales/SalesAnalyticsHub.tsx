@@ -13,13 +13,14 @@
 import { Suspense } from "react";
 import { Compass } from "lucide-react";
 import { Navigate, useLocation, useNavigate } from "react-router-dom";
-import { LoadingState, PageHeader, PermissionDenied, StateShell, Tabs } from "@/shared/ui";
+import { LoadingState, PageHeader, PermissionDenied, StateShell } from "@/shared/ui";
 import { normalizeRoutePath } from "@/shared/lib";
 import { useUrlFilters } from "@/shared/hooks/useUrlFilters";
 import { useCan, usePermissions, type Capability } from "@/shared/permissions";
 import { useT } from "@/i18n";
 import { analyticsFilterCodec } from "./lib/filters";
 import { AnalyticsTopBar } from "./components/AnalyticsTopBar";
+import { SectionPicker } from "./components/SectionPicker";
 import { SEGMENT_PAGES } from "./pages/registry";
 
 const BASE = "/reports/sales";
@@ -29,26 +30,39 @@ export interface HubSegment {
   id: string;
   /** Extra capability on top of analytics.view (hidden + deep-link denied). */
   cap?: Capability;
+  /** Which picker group the section belongs to. */
+  group: SectionGroupKey;
 }
 
-/** The 16 hub segments, in tab order. Exported for tests + the pages wave. */
+type SectionGroupKey = "overview" | "products" | "money" | "operations" | "advanced";
+
+/** Picker group order — grouping is what makes 16 reports scannable. */
+const SECTION_GROUPS: readonly SectionGroupKey[] = [
+  "overview",
+  "products",
+  "money",
+  "operations",
+  "advanced",
+];
+
+/** The 16 hub segments, in menu order. Exported for tests + the pages. */
 export const SALES_HUB_SEGMENTS: readonly HubSegment[] = [
-  { id: "executive" },
-  { id: "explorer" },
-  { id: "items" },
-  { id: "modifiers" },
-  { id: "payments" },
-  { id: "cashiers", cap: "analytics.employees.view" },
-  { id: "branches" },
-  { id: "hours" },
-  { id: "orders" },
-  { id: "discounts" },
-  { id: "voids" },
-  { id: "shifts" },
-  { id: "taxes" },
-  { id: "profitability", cap: "analytics.cost.view" },
-  { id: "reconciliation" },
-  { id: "builder" },
+  { id: "executive", group: "overview" },
+  { id: "explorer", group: "overview" },
+  { id: "branches", group: "overview" },
+  { id: "items", group: "products" },
+  { id: "modifiers", group: "products" },
+  { id: "profitability", cap: "analytics.cost.view", group: "products" },
+  { id: "payments", group: "money" },
+  { id: "discounts", group: "money" },
+  { id: "taxes", group: "money" },
+  { id: "reconciliation", group: "money" },
+  { id: "orders", group: "operations" },
+  { id: "hours", group: "operations" },
+  { id: "cashiers", cap: "analytics.employees.view", group: "operations" },
+  { id: "shifts", group: "operations" },
+  { id: "voids", group: "operations" },
+  { id: "builder", group: "advanced" },
 ];
 
 export default function SalesAnalyticsHub() {
@@ -98,15 +112,23 @@ export default function SalesAnalyticsHub() {
   return (
     <>
       {header}
-      <Tabs
-        aria-label={t("salesReports.hub.tabsAria")}
+      <SectionPicker
         className="mb-4"
-        items={visibleSegments.map((s) => ({
-          value: s.id,
-          label: t(`salesReports.pages.${s.id}.title`),
-        }))}
+        label={t("salesReports.hub.pickerLabel")}
+        ariaLabel={t("salesReports.hub.tabsAria")}
         value={segment.id}
         onChange={(next) => navigate(`${BASE}/${next}`)}
+        groups={SECTION_GROUPS.map((g) => ({
+          key: g,
+          label: t(`salesReports.groups.${g}`),
+          options: visibleSegments
+            .filter((s) => s.group === g)
+            .map((s) => ({
+              id: s.id,
+              title: t(`salesReports.pages.${s.id}.title`),
+              subtitle: t(`salesReports.pages.${s.id}.subtitle`),
+            })),
+        })).filter((g) => g.options.length > 0)}
       />
       <AnalyticsTopBar filters={filters} patch={patch} reset={reset} />
       {segmentDenied ? (

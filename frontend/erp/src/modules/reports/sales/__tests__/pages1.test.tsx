@@ -341,13 +341,22 @@ beforeEach(() => {
 afterEach(cleanup);
 
 describe.each(PAGES)("$name page", ({ Comp, path, kpiProbes, chartProbe, maskMetric, maskedValue }) => {
+  // The per-test budget MUST exceed the inner findBy wait. vitest's default
+  // testTimeout is 5000ms, so `findByTestId(..., {timeout: 5000})` inside a
+  // default-budget test can never actually consume its 5s: the test-level
+  // timer starts first (it also covers renderPage + the lazy module imports),
+  // so the harness kills the test at 5000ms and reports "Test timed out"
+  // instead of the assertion. It bit the FIRST page in describe.each
+  // (Executive, 7.8s) whenever the machine was loaded — the sibling chart test
+  // below already carries an explicit 20000 for exactly this reason. Same
+  // 20000 here and on the masking test; no assertion or wait is relaxed.
   it("renders the KPI values from the fixture", async () => {
     renderPage(Comp, path);
     await screen.findByTestId("kpi-row", undefined, { timeout: 5000 });
     for (const probe of kpiProbes) {
       expect(screen.getAllByText(probe).length).toBeGreaterThan(0);
     }
-  });
+  }, 20000);
 
   it("renders the chart's accessible table alternative", async () => {
     renderPage(Comp, path);
@@ -375,5 +384,5 @@ describe.each(PAGES)("$name page", ({ Comp, path, kpiProbes, chartProbe, maskMet
     // The masked KPI reads "—" and its unmasked value never leaks anywhere.
     expect(screen.getAllByText("—").length).toBeGreaterThan(0);
     expect(screen.queryAllByText(maskedValue)).toHaveLength(0);
-  });
+  }, 20000);
 });

@@ -186,7 +186,7 @@ test("cashier: hub deep-link renders permission-denied; nav never offers the hub
   await expect(page.locator('[data-state="permission-denied"]')).toHaveCount(1, { timeout: 20_000 });
   // No analytics content leaked around the guard.
   await expect(page.locator('[data-testid="analytics-topbar"]')).toHaveCount(0);
-  await expect(page.locator('#main [role="tablist"]')).toHaveCount(0);
+  await expect(page.locator('#main button[aria-haspopup="listbox"]')).toHaveCount(0);
 
   // ── nav chrome (this viewport's real one) never offers the hub link ──
   await page.goto("/app/overview");
@@ -225,26 +225,29 @@ test("manager (no analytics.cost.view): profitability tab hidden + deep-link tab
   // ── the hub itself renders for a manager (analytics.view granted) ──
   const seedQs = `?from=${SEED_RANGE.from}&to=${SEED_RANGE.to}`;
   await page.goto(`${HUB_HREF}/executive${seedQs}`);
-  await expect(page.locator('#main [role="tablist"]')).toBeVisible({ timeout: 30_000 });
+  const picker = page.locator('#main button[aria-haspopup="listbox"]').first();
+  await expect(picker).toBeVisible({ timeout: 30_000 });
 
-  // Tab strip: 15 of 16 tabs — profitability (cost-gated) hidden; the
-  // cashiers tab STAYS (manager holds analytics.employees.view).
-  const tabs = page.locator('#main [role="tab"]');
-  await expect(tabs, "manager sees 15 tabs (profitability hidden)").toHaveCount(15);
+  // Picker: 15 of 16 sections — profitability (cost-gated) hidden; the
+  // cashiers section STAYS (manager holds analytics.employees.view).
+  await picker.click();
+  const options = page.locator('#main [role="listbox"] [role="option"]');
+  await expect(options, "manager sees 15 sections (profitability hidden)").toHaveCount(15);
   await expect(
-    page.locator('#main [role="tab"]', { hasText: "الربحية" }),
-    "the profitability tab must be hidden without analytics.cost.view",
+    options.filter({ hasText: "الربحية" }),
+    "the profitability section must be hidden without analytics.cost.view",
   ).toHaveCount(0);
   await expect(
-    page.locator('#main [role="tab"]', { hasText: "أداء الكاشير" }),
-    "the cashiers tab stays (manager holds analytics.employees.view)",
+    options.filter({ hasText: "أداء الكاشير" }),
+    "the cashiers section stays (manager holds analytics.employees.view)",
   ).toHaveCount(1);
+  await page.keyboard.press("Escape");
 
   // ── deep-link to the cost-gated segment → the tab-gate PermissionDenied ──
   await page.goto(`${HUB_HREF}/profitability${seedQs}`);
   await expect(page.locator('[data-state="permission-denied"]')).toHaveCount(1, { timeout: 20_000 });
-  // The tab strip stays (the hub is not blanked — only the segment is denied).
-  await expect(page.locator('#main [role="tablist"]')).toBeVisible();
+  // The picker stays (the hub is not blanked — only the segment is denied).
+  await expect(page.locator('#main button[aria-haspopup="listbox"]').first()).toBeVisible();
 
   // ── walk data-bearing segments so real query traffic flows ──
   for (const segment of ["executive", "items", "cashiers"]) {

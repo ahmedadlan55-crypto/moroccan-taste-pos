@@ -1,8 +1,9 @@
 // Sales Analytics Hub — container behavior through the REAL reports module
 // dispatch (/reports/sales/* → lazy hub): the /reports/sales → executive
-// redirect, the 16-tab strip with capability-hidden tabs, deep-link denial on
-// cap-gated segments, the analytics.view gate, and the unknown-segment state.
-import { render, screen, waitFor, cleanup } from "@testing-library/react";
+// redirect, the grouped report picker with capability-hidden sections,
+// deep-link denial on cap-gated segments, the analytics.view gate, and the
+// unknown-segment state.
+import { render, screen, waitFor, cleanup, fireEvent, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
@@ -62,12 +63,27 @@ beforeEach(() => {
 
 afterEach(cleanup);
 
+const PICKER = "أقسام تحليلات المبيعات";
+
+/**
+ * The picker is a closed menu — open it and return ITS listbox. Queries must be
+ * scoped: the filter bar's native <select>s contribute <option> elements too,
+ * so an unscoped getAllByRole("option") counts the period/compare choices.
+ */
+async function openPicker() {
+  const trigger = await screen.findByRole("button", { name: PICKER });
+  fireEvent.click(trigger);
+  const listbox = await screen.findByRole("listbox", { name: PICKER });
+  return within(listbox);
+}
+
 describe("SalesAnalyticsHub — routing", () => {
   it("redirects /reports/sales to the executive segment", async () => {
     renderAt("/reports/sales");
-    const tabs = await screen.findAllByRole("tab");
-    const selected = tabs.find((t) => t.getAttribute("aria-selected") === "true");
-    expect(selected).toHaveTextContent("اللوحة التنفيذية");
+    // the picker trigger names the report you are reading
+    expect(await screen.findByRole("button", { name: PICKER })).toHaveTextContent(
+      "اللوحة التنفيذية",
+    );
     // the placeholder page for the segment renders a healthy empty state
     await waitFor(() =>
       expect(document.querySelector('[data-state="empty"]')).toBeInTheDocument(),
@@ -89,34 +105,55 @@ describe("SalesAnalyticsHub — capability gates", () => {
     await waitFor(() =>
       expect(document.querySelector('[data-state="permission-denied"]')).toBeInTheDocument(),
     );
-    expect(screen.queryAllByRole("tab")).toHaveLength(0);
+    expect(screen.queryByRole("button", { name: PICKER })).not.toBeInTheDocument();
   });
 
-  it("hides the cashiers + profitability tabs without their caps (14 of 16)", async () => {
+  it("hides the cashiers + profitability sections without their caps (14 of 16)", async () => {
     renderAt("/reports/sales/executive");
-    const tabs = await screen.findAllByRole("tab");
+    const picker = await openPicker();
     expect(SALES_HUB_SEGMENTS).toHaveLength(16);
-    expect(tabs).toHaveLength(14);
-    expect(screen.queryByRole("tab", { name: "أداء الكاشير" })).not.toBeInTheDocument();
-    expect(screen.queryByRole("tab", { name: "الربحية" })).not.toBeInTheDocument();
+    expect(picker.getAllByRole("option")).toHaveLength(14);
+    expect(picker.queryByRole("option", { name: /أداء الكاشير/ })).not.toBeInTheDocument();
+    expect(picker.queryByRole("option", { name: /الربحية/ })).not.toBeInTheDocument();
   });
 
-  it("shows all 16 tabs when the employee + cost caps are granted", async () => {
+  it("shows all 16 sections when the employee + cost caps are granted", async () => {
     caps["analytics.employees.view"] = true;
     caps["analytics.cost.view"] = true;
     renderAt("/reports/sales/executive");
-    const tabs = await screen.findAllByRole("tab");
-    expect(tabs).toHaveLength(16);
-    expect(screen.getByRole("tab", { name: "أداء الكاشير" })).toBeInTheDocument();
-    expect(screen.getByRole("tab", { name: "الربحية" })).toBeInTheDocument();
+    const picker = await openPicker();
+    expect(picker.getAllByRole("option")).toHaveLength(16);
+    expect(picker.getByRole("option", { name: /أداء الكاشير/ })).toBeInTheDocument();
+    expect(picker.getByRole("option", { name: /الربحية/ })).toBeInTheDocument();
   });
 
-  it("a deep-link to a cap-gated segment renders PermissionDenied (tabs stay)", async () => {
+  it("groups the sections so sixteen reports stay scannable", async () => {
+    caps["analytics.employees.view"] = true;
+    caps["analytics.cost.view"] = true;
+    renderAt("/reports/sales/executive");
+    const picker = await openPicker();
+    const groups = picker.getAllByRole("group");
+    expect(groups.map((g) => g.getAttribute("aria-label"))).toEqual([
+      "نظرة عامة",
+      "المنتجات والربحية",
+      "المال والتحصيل",
+      "التشغيل والموظفون",
+      "متقدم",
+    ]);
+    // the open report is the selected option, so the menu reads "you are here"
+    const selected = picker
+      .getAllByRole("option")
+      .filter((o) => o.getAttribute("aria-selected") === "true");
+    expect(selected).toHaveLength(1);
+    expect(selected[0]).toHaveTextContent("اللوحة التنفيذية");
+  });
+
+  it("a deep-link to a cap-gated segment renders PermissionDenied (picker stays)", async () => {
     renderAt("/reports/sales/profitability");
     await waitFor(() =>
       expect(document.querySelector('[data-state="permission-denied"]')).toBeInTheDocument(),
     );
-    // the strip is still there so the user can navigate out
-    expect((await screen.findAllByRole("tab")).length).toBeGreaterThan(0);
+    // the picker is still there so the user can navigate out
+    expect(await screen.findByRole("button", { name: PICKER })).toBeInTheDocument();
   });
 });

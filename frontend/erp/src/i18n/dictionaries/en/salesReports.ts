@@ -8,6 +8,15 @@ export const salesReports = {
     title: "Sales Analytics",
     subtitle: "The unified sales analytics center — metrics and dimensions from the certified fact store",
     tabsAria: "Sales analytics sections",
+    pickerLabel: "Report",
+  },
+
+  groups: {
+    overview: "Overview",
+    products: "Products & profitability",
+    money: "Money & collections",
+    operations: "Operations & people",
+    advanced: "Advanced",
   },
 
   pages: {

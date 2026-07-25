@@ -22,6 +22,15 @@ export const salesReports = {
     title: "تحليلات المبيعات",
     subtitle: "مركز تحليلات المبيعات الموحّد — المقاييس والأبعاد من سجل الحقائق المعتمد",
     tabsAria: "أقسام تحليلات المبيعات",
+    pickerLabel: "التقرير",
+  },
+
+  groups: {
+    overview: "نظرة عامة",
+    products: "المنتجات والربحية",
+    money: "المال والتحصيل",
+    operations: "التشغيل والموظفون",
+    advanced: "متقدم",
   },
 
   pages: {

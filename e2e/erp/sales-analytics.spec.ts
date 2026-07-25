@@ -154,10 +154,18 @@ async function waitHealthy(page: Page, label: string) {
 }
 
 async function assertHubChrome(page: Page, label: string) {
-  // The 16-segment tab strip (admin holds every cap → all 16 tabs) + TopBar.
-  const tablist = page.locator('#main [role="tablist"]');
-  await expect(tablist, `${label}: hub tab strip must render`).toBeVisible();
-  await expect(tablist.locator('[role="tab"]'), `${label}: admin sees all 16 tabs`).toHaveCount(16);
+  // The grouped report picker (admin holds every cap → all 16 sections) + TopBar.
+  const trigger = page.locator('#main button[aria-haspopup="listbox"]').first();
+  await expect(trigger, `${label}: hub report picker must render`).toBeVisible();
+  await trigger.click();
+  const listbox = page.locator('#main [role="listbox"]');
+  await expect(listbox, `${label}: the picker must open`).toBeVisible();
+  await expect(
+    listbox.locator('[role="option"]'),
+    `${label}: admin sees all 16 sections`,
+  ).toHaveCount(16);
+  await page.keyboard.press("Escape");
+  await expect(listbox, `${label}: Escape must close the picker`).toHaveCount(0);
   await expect(
     page.locator('[data-testid="analytics-topbar"]'),
     `${label}: the shared analytics TopBar must render`,
@@ -188,11 +196,19 @@ test("all 16 hub segments render healthy on this viewport", async ({ page }) => 
       await waitHealthy(page, `/reports/sales/${segment}`);
       await assertHubChrome(page, segment);
       await assertNoHorizontalOverflow(page, segment);
-      // The active tab must be THIS segment (router ↔ tab strip identity).
-      await expect(
-        page.locator('#main [role="tab"][aria-selected="true"]'),
-        `${segment}: exactly one selected tab`,
-      ).toHaveCount(1);
+      // Router ↔ picker identity: exactly one option is selected, and the
+      // trigger names that same report (no title table needed — the two must
+      // simply agree, in whatever language the UI is running).
+      const trigger = page.locator('#main button[aria-haspopup="listbox"]').first();
+      const triggerText = ((await trigger.textContent()) || "").trim();
+      expect(triggerText, `${segment}: the picker must name the open report`).not.toBe("");
+      await trigger.click();
+      const selected = page.locator('#main [role="listbox"] [role="option"][aria-selected="true"]');
+      await expect(selected, `${segment}: exactly one selected section`).toHaveCount(1);
+      await expect(selected, `${segment}: picker label matches the selection`).toContainText(
+        triggerText,
+      );
+      await page.keyboard.press("Escape");
     });
   }
 
@@ -323,8 +339,10 @@ test.describe("focused flows (desktop)", () => {
             `EN ${segment}: "${text}" must render`,
           ).toBeVisible();
         }
-        // The selected tab carries the EN title too.
-        await expect(page.locator('#main [role="tab"][aria-selected="true"]')).toBeVisible();
+        // The picker carries the EN title too.
+        await expect(
+          page.locator('#main button[aria-haspopup="listbox"]').first(),
+        ).toBeVisible();
       });
     }
 

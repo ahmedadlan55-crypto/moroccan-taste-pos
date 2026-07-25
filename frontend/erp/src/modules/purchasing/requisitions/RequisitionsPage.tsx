@@ -17,6 +17,7 @@ import {
   ErrorState,
   PanelTitle,
   SearchableEntityCombobox,
+  SearchableEntityMultiCombobox,
 } from "@/shared/ui";
 import { DataTable, type ColumnDef } from "@/shared/tables";
 import { Can } from "@/shared/permissions";
@@ -183,6 +184,23 @@ function RequisitionFormDrawer({
   const [branchId, setBranchId] = useState(editing?.branch_id || "");
   const [notes, setNotes] = useState(editing?.notes || "");
   const [lines, setLines] = useState<LineDraft[]>(editing ? draftFromDetail(editing) : [newLine()]);
+  const [staged, setStaged] = useState<ItemHit[]>([]);
+
+  // Bulk add — append one line per staged item (skipping items already on a line);
+  // drops empty placeholder rows so the "add several at once" flow stays clean.
+  function addStaged() {
+    if (!staged.length) return;
+    const existing = new Set(lines.map((l) => l.item?.id).filter(Boolean) as string[]);
+    const additions = staged
+      .filter((it) => !existing.has(it.id))
+      .map((it) => ({ ...newLine(), item: it, unit: it.baseUnit?.code || "" }));
+    setLines((ls) => {
+      const kept = ls.filter((l) => l.item);
+      const next = [...kept, ...additions];
+      return next.length ? next : [newLine()];
+    });
+    setStaged([]);
+  }
 
   const estimatedTotal = useMemo(
     () => lines.reduce((s, l) => s + (Number(l.quantity) || 0) * (Number(l.estimatedPrice) || 0), 0),
@@ -265,6 +283,26 @@ function RequisitionFormDrawer({
               </Button>
             }
           />
+          <div className="border-b border-slate-100 p-3">
+            <span className="mb-1.5 block text-[11px] font-bold text-slate-400">{t("purchasing.lines.bulkAdd")}</span>
+            <div className="flex flex-col gap-2 sm:flex-row sm:items-start">
+              <div className="flex-1">
+                <SearchableEntityMultiCombobox<ItemHit>
+                  value={staged}
+                  onChange={setStaged}
+                  fetcher={itemFetcher}
+                  queryKey={["requisitions", "item-multi-picker"]}
+                  getKey={(it) => it.id}
+                  getLabel={(it) => it.name}
+                  getSublabel={(it) => it.sku || undefined}
+                  ariaLabel={t("purchasing.common.selectItemAria")}
+                />
+              </div>
+              <Button variant="secondary" size="sm" disabled={!staged.length} onClick={addStaged}>
+                <Plus className="h-4 w-4" /> {t("purchasing.lines.bulkAddAction")}
+              </Button>
+            </div>
+          </div>
           <div className="grid gap-3 p-3">
             {lines.map((l, idx) => (
               <div key={l.key} className="grid gap-2 rounded-xl border border-slate-100 bg-slate-50/50 p-3">

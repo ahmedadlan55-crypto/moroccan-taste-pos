@@ -189,6 +189,7 @@ export const misc = {
         vatRegistration: "التسجيل في ضريبة القيمة المضافة",
         vatNumber: "الرقم الضريبي",
         city: "المدينة",
+        country: "الدولة",
         district: "الحي",
         postalCode: "الرمز البريدي",
         street: "الشارع",

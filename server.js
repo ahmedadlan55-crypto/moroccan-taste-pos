@@ -681,6 +681,9 @@ if (ORDER_TO_CASH_ENABLE) {
 // API Routes
 app.use('/api/auth', require('./routes/auth'));
 app.use('/api/menu', require('./routes/menu'));
+// Geo reference data (countries/cities) for the searchable country/city pickers.
+// Read-only; behind the global JWT gate like every other /api route.
+app.use('/api/geo', require('./routes/geo'));
 app.use('/api/sales', require('./routes/sales'));
 app.use('/api/shifts', require('./routes/shifts'));
 // Cashier V2 — cart lifecycle ONLY (checkout money path stays /api/sales).
@@ -7512,6 +7515,11 @@ async function runMigrations() {
   await addColumnIfMissing('suppliers', 'postal_code', "VARCHAR(10) NULL");
   await addColumnIfMissing('suppliers', 'default_expense_account_id', "VARCHAR(50) NULL");
   await addColumnIfMissing('suppliers', 'default_expense_cost_center_id', "VARCHAR(50) NULL");
+
+  // Contact country (ISO 3166-1 alpha-2) for the searchable country/city pickers
+  // on the customer + supplier forms (paired with db/migrations/0023_contact_country.sql).
+  await addColumnIfMissing('customers', 'country', "VARCHAR(2) NULL");
+  await addColumnIfMissing('suppliers', 'country', "VARCHAR(2) NULL");
 
   await createTableIfMissing('supplier_beneficiaries', `CREATE TABLE IF NOT EXISTS supplier_beneficiaries (
     id             VARCHAR(50) NOT NULL PRIMARY KEY,

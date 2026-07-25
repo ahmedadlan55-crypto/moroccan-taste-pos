@@ -175,6 +175,7 @@ export const misc = {
         vatRegistration: "VAT registration",
         vatNumber: "VAT number",
         city: "City",
+        country: "Country",
         district: "District",
         postalCode: "Postal code",
         street: "Street",

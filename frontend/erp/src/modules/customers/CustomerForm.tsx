@@ -1,13 +1,14 @@
-import { useMemo } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useForm, Controller } from "react-hook-form";
 import { z } from "zod";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { UserPlus } from "lucide-react";
-import { Drawer, Button, Select, SegmentedControl, safeUserMessage } from "@/shared/ui";
+import { Drawer, Button, Select, SegmentedControl, safeUserMessage, CountryPicker, CityPicker } from "@/shared/ui";
 import { Field, zodResolver } from "@/shared/forms";
 import { useT, useLang, type TFunction } from "@/i18n";
 import { o2cApi, qk, type Customer } from "@/modules/sales/lib";
 import { useCoaAccounts, useCostCenterDims } from "@/modules/banking/api";
+import { useCountryHit, cityHitFromName, type GeoHit } from "@/shared/lib/geo";
 
 // Schema is built per-render from t() so validation messages follow the UI
 // language. The FormValues type is derived from the factory's return shape.
@@ -59,14 +60,36 @@ export function CustomerForm({ open, onClose, customer }: { open: boolean; onClo
   const costCenters = useCostCenterDims();
   const revenueAccounts = (coa.data ?? []).filter((a) => a.isLeaf && a.code.startsWith("4"));
 
+  // Country + city are searchable pickers (GeoHit), persisted as country = hit.code
+  // (ISO2) and city = hit.name. On edit, seed the country ONCE (resolving "SA" →
+  // "المملكة العربية السعودية") and the city from its stored name.
+  const seededCountry = useCountryHit(customer?.country);
+  const [countryHit, setCountryHit] = useState<GeoHit | null>(null);
+  const seededRef = useRef(false);
+  useEffect(() => {
+    if (!seededRef.current && customer?.country && seededCountry.data) {
+      seededRef.current = true;
+      setCountryHit(seededCountry.data);
+    }
+  }, [customer?.country, seededCountry.data]);
+  const [cityHit, setCityHit] = useState<GeoHit | null>(() => cityHitFromName(customer?.country, customer?.city));
+  function onCountryChange(v: GeoHit | null) {
+    setCountryHit(v);
+    setCityHit(null); // the chosen city belongs to the previous country — reset it
+  }
+
   const mutation = useMutation({
-    mutationFn: (values: FormValues) =>
+    mutationFn: (values: Record<string, unknown>) =>
       editing ? o2cApi.updateCustomer(customer!.id, values) : o2cApi.createCustomer(values),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: qk.all });
       onClose();
     },
   });
+
+  const submit = handleSubmit((v) =>
+    mutation.mutate({ ...v, country: countryHit?.code ?? null, city: cityHit?.name ?? null }),
+  );
 
   return (
     <Drawer
@@ -78,13 +101,13 @@ export function CustomerForm({ open, onClose, customer }: { open: boolean; onClo
       footer={
         <div className="flex w-full items-center justify-end gap-2">
           <Button variant="ghost" onClick={onClose}>{t("common.cancel")}</Button>
-          <Button loading={mutation.isPending} onClick={handleSubmit((v) => mutation.mutate(v))}>
+          <Button loading={mutation.isPending} onClick={submit}>
             {editing ? t("misc.customers.form.saveChanges") : t("misc.customers.form.saveCustomer")}
           </Button>
         </div>
       }
     >
-      <form className="grid grid-cols-1 gap-4" onSubmit={handleSubmit((v) => mutation.mutate(v))}>
+      <form className="grid grid-cols-1 gap-4" onSubmit={submit}>
         {mutation.isError && (
           <div className="rounded-xl border border-rose-200 bg-rose-50 px-3 py-2 text-sm font-bold text-rose-700">
             {safeUserMessage(mutation.error)}
@@ -127,7 +150,12 @@ export function CustomerForm({ open, onClose, customer }: { open: boolean; onClo
         <div className="rounded-xl border border-slate-200 bg-slate-50/60 p-3">
           <div className="mb-2 text-xs font-extrabold text-slate-500">{t("misc.customers.form.section.address")}</div>
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
-            <Field label={t("misc.customers.form.field.city")}><input className="field w-full" {...register("city")} /></Field>
+            <Field label={t("misc.customers.form.field.country")}>
+              <CountryPicker value={countryHit} onChange={onCountryChange} />
+            </Field>
+            <Field label={t("misc.customers.form.field.city")}>
+              <CityPicker countryCode={countryHit?.code ?? null} value={cityHit} onChange={setCityHit} />
+            </Field>
             <Field label={t("misc.customers.form.field.district")}><input className="field w-full" {...register("district")} /></Field>
             <Field label={t("misc.customers.form.field.postalCode")}><input dir="ltr" className="field w-full tabular-nums" {...register("postalCode")} /></Field>
             <Field label={t("misc.customers.form.field.street")} className="sm:col-span-2"><input className="field w-full" {...register("street")} /></Field>

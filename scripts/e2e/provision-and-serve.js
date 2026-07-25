@@ -74,6 +74,17 @@ if (process.env.E2E_SKIP_DB_PROVISION === '1') {
   });
 }
 
+// E2E determinism: the name_en backfill worker keeps MUTATING menu rows for
+// minutes after boot (batch of 20 per 60s poll — ~8 min for the 2,000-row dev
+// clone), so any screen that renders item names or missing-name counts
+// depends on how long the server has been up: visual baselines and count
+// assertions pass in an isolated spec run yet fail mid-gate (bit us on BOTH
+// menu-list--en and pos-main-en). The worker ships its own test off-switch —
+// use it, so the E2E database stays frozen at clone state for the whole
+// suite. The worker's own behavior is covered by its unit/integration tests,
+// not by these UI suites.
+process.env.NAME_EN_BACKFILL_DISABLE_WORKER = '1';
+
 // server.js has no `require.main === module` guard: requiring it runs the boot
 // IIFE (autoInitDB → runMigrations → app.listen) in THIS process. That is
 // deliberate — Playwright's port-wait and teardown then target the real server

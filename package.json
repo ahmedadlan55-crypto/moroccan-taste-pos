@@ -161,7 +161,8 @@
     "test:pos-o2c-payload": "node tests/posO2CPayload.test.js",
     "test:pos-o2c-projection": "node tests/integration/posO2cProjection.api.test.js",
     "tokens:check": "node scripts/check-design-tokens.mjs",
-    "check:rtl-literals": "node scripts/check-rtl-literals.mjs"
+    "check:rtl-literals": "node scripts/check-rtl-literals.mjs",
+    "test:vat-money-path": "node tests/integration/vatExclusiveMoneyPath.api.test.js"
   },
   "dependencies": {
     "bcryptjs": "^2.4.3",

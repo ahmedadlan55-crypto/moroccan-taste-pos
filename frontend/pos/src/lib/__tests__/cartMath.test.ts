@@ -1,9 +1,14 @@
 /**
  * cartMath must MIRROR lib/posOrderMachine.js (server) exactly —
  * these cases are the shared contract fixture set.
+ *
+ * The tax convention is PER ITEM (menu.is_tax_inclusive) and every fixture
+ * states it. It used to be a global "prices are tax-inclusive" assumption while
+ * the database said the opposite for every row — which is how the register came
+ * to display a NET price as the total and have the sale refused by the server.
  */
 import { describe, expect, it } from "vitest";
-import { cartTotals, lineTotals, paymentsError, round2 } from "../cartMath";
+import { cartTotals, lineTotals, paymentsError, rateFor, round2 } from "../cartMath";
 
 describe("round2", () => {
   it("rounds to 2dp", () => {
@@ -15,7 +20,7 @@ describe("round2", () => {
 
 describe("lineTotals", () => {
   it("2×23 S → gross 46, vat 6.00 (tax-inclusive 15%)", () => {
-    const t = lineTotals({ qty: 2, unitPrice: 23, lineDiscount: 0, vatCategory: "S" });
+    const t = lineTotals({ qty: 2, unitPrice: 23, lineDiscount: 0, vatCategory: "S", taxInclusive: true });
     expect(t.gross).toBe(46);
     expect(t.vat).toBe(6);
     expect(t.net).toBe(40);
@@ -23,23 +28,97 @@ describe("lineTotals", () => {
 
   it("Z/E/O categories carry zero VAT", () => {
     for (const cat of ["Z", "E", "O"] as const) {
-      const t = lineTotals({ qty: 1, unitPrice: 115, lineDiscount: 0, vatCategory: cat });
+      const t = lineTotals({ qty: 1, unitPrice: 115, lineDiscount: 0, vatCategory: cat, taxInclusive: true });
       expect(t.vat).toBe(0);
       expect(t.gross).toBe(115);
     }
   });
 
   it("line discount reduces gross before VAT and is clamped to qty×price", () => {
-    const t = lineTotals({ qty: 1, unitPrice: 100, lineDiscount: 250, vatCategory: "S" });
+    const t = lineTotals({ qty: 1, unitPrice: 100, lineDiscount: 250, vatCategory: "S", taxInclusive: true });
     expect(t.discount).toBe(100); // clamped
     expect(t.gross).toBe(0);
     expect(t.vat).toBe(0);
   });
 });
 
+// The state EVERY production menu row is actually in (server.js v7.1 set
+// is_tax_inclusive = 0 on all of them) — and the one the whole suite left
+// untested while asserting the opposite everywhere.
+describe("lineTotals — TAX-EXCLUSIVE items (VAT added on top)", () => {
+  it("the owner's case: 16.00 net → 2.40 VAT → customer pays 18.40", () => {
+    const t = lineTotals({ qty: 1, unitPrice: 16, lineDiscount: 0, vatCategory: "S", taxInclusive: false });
+    expect(t.net).toBe(16);
+    expect(t.vat).toBe(2.4);
+    expect(t.gross).toBe(18.4);
+    // The property the owner asked for, stated as arithmetic.
+    expect(round2(t.net + t.vat)).toBe(t.gross);
+  });
+
+  it("2×20 net → 40.00 + 6.00 = 46.00", () => {
+    const t = lineTotals({ qty: 2, unitPrice: 20, lineDiscount: 0, vatCategory: "S", taxInclusive: false });
+    expect(t.net).toBe(40);
+    expect(t.vat).toBe(6);
+    expect(t.gross).toBe(46);
+  });
+
+  it("a zero-rated exclusive line adds NO VAT", () => {
+    const t = lineTotals({ qty: 3, unitPrice: 10, lineDiscount: 0, vatCategory: "Z", taxInclusive: false });
+    expect(t.vat).toBe(0);
+    expect(t.gross).toBe(30);
+  });
+
+  it("a line discount reduces the NET before VAT is added", () => {
+    const t = lineTotals({ qty: 1, unitPrice: 50, lineDiscount: 10, vatCategory: "S", taxInclusive: false });
+    expect(t.net).toBe(40);
+    expect(t.vat).toBe(6);
+    expect(t.gross).toBe(46);
+  });
+
+  it("an ABSENT flag behaves like the database does today (exclusive)", () => {
+    const t = lineTotals({ qty: 1, unitPrice: 16, lineDiscount: 0, vatCategory: "S" });
+    expect(t.gross).toBe(18.4);
+  });
+
+  it("the flag actually changes the customer-facing amount", () => {
+    const inc = lineTotals({ qty: 1, unitPrice: 16, lineDiscount: 0, vatCategory: "S", taxInclusive: true });
+    const exc = lineTotals({ qty: 1, unitPrice: 16, lineDiscount: 0, vatCategory: "S", taxInclusive: false });
+    expect(inc.gross).toBe(16);
+    expect(exc.gross).toBe(18.4);
+  });
+});
+
+describe("the VAT rate comes from the server, not a constant", () => {
+  it("rateFor honours the shipped percentage and zero-rates non-S categories", () => {
+    expect(rateFor("S", 15)).toBeCloseTo(0.15, 10);
+    expect(rateFor("S", 5)).toBeCloseTo(0.05, 10);
+    expect(rateFor("S", 0)).toBe(0);
+    for (const cat of ["Z", "E", "O"] as const) expect(rateFor(cat, 15)).toBe(0);
+  });
+
+  it("a 5% rate flows through the line math (100 → 105.00)", () => {
+    const t = lineTotals({ qty: 1, unitPrice: 100, lineDiscount: 0, vatCategory: "S", taxInclusive: false }, 5);
+    expect(t.vat).toBe(5);
+    expect(t.gross).toBe(105);
+  });
+
+  it("an invalid rate falls back to 15% instead of producing NaN money", () => {
+    const t = lineTotals({ qty: 1, unitPrice: 100, lineDiscount: 0, vatCategory: "S", taxInclusive: false }, NaN);
+    expect(Number.isFinite(t.gross)).toBe(true);
+    expect(t.gross).toBe(115);
+  });
+
+  it("cartTotals threads the rate down to every line", () => {
+    const t = cartTotals([{ qty: 1, unitPrice: 100, lineDiscount: 0, vatCategory: "S", taxInclusive: false }], null, 5);
+    expect(t.subtotal).toBe(105);
+    expect(t.vatTotal).toBe(5);
+    expect(t.total).toBe(105);
+  });
+});
+
 describe("cartTotals", () => {
   it("2×23 S with no order discount → subtotal 46, vat 6.00, total 46", () => {
-    const t = cartTotals([{ qty: 2, unitPrice: 23, lineDiscount: 0, vatCategory: "S" }], null);
+    const t = cartTotals([{ qty: 2, unitPrice: 23, lineDiscount: 0, vatCategory: "S", taxInclusive: true }], null);
     expect(t.subtotal).toBe(46);
     expect(t.vatTotal).toBe(6);
     expect(t.total).toBe(46);
@@ -49,8 +128,8 @@ describe("cartTotals", () => {
   it("order 10% on subtotal 116 (S 86 + Z 30) → total 104.4, vat 10.1", () => {
     const t = cartTotals(
       [
-        { qty: 1, unitPrice: 86, lineDiscount: 0, vatCategory: "S" },
-        { qty: 1, unitPrice: 30, lineDiscount: 0, vatCategory: "Z" },
+        { qty: 1, unitPrice: 86, lineDiscount: 0, vatCategory: "S", taxInclusive: true },
+        { qty: 1, unitPrice: 30, lineDiscount: 0, vatCategory: "Z", taxInclusive: true },
       ],
       { type: "PERCENT", value: 10 },
     );
@@ -62,27 +141,27 @@ describe("cartTotals", () => {
   });
 
   it("order 10% on an all-S subtotal scales VAT by total/subtotal", () => {
-    const t = cartTotals([{ qty: 1, unitPrice: 116, lineDiscount: 0, vatCategory: "S" }], { type: "PERCENT", value: 10 });
+    const t = cartTotals([{ qty: 1, unitPrice: 116, lineDiscount: 0, vatCategory: "S", taxInclusive: true }], { type: "PERCENT", value: 10 });
     expect(t.total).toBe(104.4);
     expect(t.vatTotal).toBe(13.62); // 15.13 × 0.9 = 13.617 → 13.62 (server-identical)
   });
 
   it("FIXED order discount is capped at subtotal", () => {
-    const t = cartTotals([{ qty: 1, unitPrice: 50, lineDiscount: 0, vatCategory: "S" }], { type: "FIXED", value: 500 });
+    const t = cartTotals([{ qty: 1, unitPrice: 50, lineDiscount: 0, vatCategory: "S", taxInclusive: true }], { type: "FIXED", value: 500 });
     expect(t.discountAmount).toBe(50);
     expect(t.total).toBe(0);
     expect(t.vatTotal).toBe(0);
   });
 
   it("PERCENT is capped at 100", () => {
-    const t = cartTotals([{ qty: 1, unitPrice: 80, lineDiscount: 0, vatCategory: "S" }], { type: "PERCENT", value: 250 });
+    const t = cartTotals([{ qty: 1, unitPrice: 80, lineDiscount: 0, vatCategory: "S", taxInclusive: true }], { type: "PERCENT", value: 250 });
     expect(t.discountAmount).toBe(80);
     expect(t.total).toBe(0);
   });
 
   it("line discounts apply before the order discount", () => {
     const t = cartTotals(
-      [{ qty: 2, unitPrice: 25, lineDiscount: 10, vatCategory: "S" }], // gross 40
+      [{ qty: 2, unitPrice: 25, lineDiscount: 10, vatCategory: "S", taxInclusive: true }], // gross 40
       { type: "PERCENT", value: 50 },
     );
     expect(t.subtotal).toBe(40);

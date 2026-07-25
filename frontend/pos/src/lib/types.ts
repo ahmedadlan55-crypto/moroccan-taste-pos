@@ -48,10 +48,18 @@ export interface CatalogItem {
    *  the UI falls back to `name`. The receipt ALWAYS uses `name` (Arabic) for
    *  ZATCA compliance. */
   nameEn?: string | null;
-  price: number; // base-unit price (tax-inclusive)
+  /** Base-unit price AS STORED. Whether it already contains VAT is decided PER
+   *  ITEM by `taxInclusive` — it is not a global convention. Every current menu
+   *  row is tax-EXCLUSIVE, so the register adds VAT on top to show the
+   *  customer-facing price. */
+  price: number;
   category: string;
   active: boolean;
   taxCategory: TaxCategory;
+  /** menu.is_tax_inclusive — true = `price` already contains VAT; false = VAT is
+   *  added on top. Absent (older server that did not ship it) → exclusive,
+   *  which is what routes/sales.js computes for every current row. */
+  taxInclusive?: boolean;
   /** close/w25-combos — العروض. True on a combo menu item: tapping its card opens
    *  the chooser (ComboDialog) instead of adding directly. The full definition
    *  (fixed components + choice groups) lives in Catalog.combos, keyed by menuId. */
@@ -157,9 +165,14 @@ export interface CartLine {
    *  (Arabic) for ZATCA. Absent → the UI falls back to `name`. */
   nameEn?: string | null;
   qty: number; // = enteredQty (quantity in the chosen unit; base if none)
-  unitPrice: number; // base-unit price
+  unitPrice: number; // base-unit price, in the convention `taxInclusive` names
   lineDiscount: number;
   vatCategory: TaxCategory;
+  /** Whether `unitPrice` ALREADY contains VAT (menu.is_tax_inclusive),
+   *  snapshotted from the catalog at add time. Absent on carts persisted
+   *  before this field existed → treated as EXCLUSIVE, which is what the
+   *  server computes for every current menu row. See cartMath.lineTotals. */
+  taxInclusive?: boolean;
   notes: string | null;
   // Phase U — unit-of-measure. Money + stock use baseQty (= qty × factor). The
   // factor is FROZEN at add time. Legacy piece lines: unit = base, factor 1,

@@ -15,7 +15,7 @@ const CARTON: CatalogItem = {
 };
 
 function line(over: Partial<CartLine>): CartLine {
-  return { menuId: "P1", name: "شوكولاتة", qty: 1, unitPrice: 5, lineDiscount: 0, vatCategory: "S", notes: null, ...over };
+  return { menuId: "P1", name: "شوكولاتة", qty: 1, unitPrice: 5, lineDiscount: 0, vatCategory: "S", taxInclusive: true, notes: null, ...over };
 }
 
 describe("cartMath — money uses baseQty (price = factor × base)", () => {
@@ -36,7 +36,7 @@ describe("cartMath — money uses baseQty (price = factor × base)", () => {
   it("cartTotals sums base-qty line grosses", () => {
     const totals = cartTotals([
       line({ qty: 1, conversionFactorSnapshot: 12, baseQty: 12, unitPrice: 5 }), // 60
-      line({ menuId: "P2", qty: 3, unitPrice: 10, vatCategory: "Z" }), // 30
+      line({ menuId: "P2", qty: 3, unitPrice: 10, vatCategory: "Z", taxInclusive: true }), // 30
     ]);
     expect(totals.subtotal).toBe(90);
   });

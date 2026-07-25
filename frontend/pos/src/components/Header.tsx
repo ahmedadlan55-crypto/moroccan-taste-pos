@@ -7,6 +7,7 @@
 import { useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { AlertTriangle, ChefHat, ClipboardCheck, CloudOff, DownloadCloud, ExternalLink, FileText, Inbox, Languages, LogOut, Loader2, MapPin, MoreHorizontal, PackageSearch, RefreshCw, Repeat, UserRound, Wifi } from "lucide-react";
 import { usePos } from "@/state/store";
+import { isPosOnlyRole } from "@/lib/auth";
 import { fmtInt } from "@/lib/format";
 import { getPwaStatus, subscribePwa, promptInstall, applyUpdate } from "@/lib/pwa";
 import { getDrainStatus, subscribeDrain } from "@/lib/legacyDrain";
@@ -340,13 +341,20 @@ export function Header({
                 {t("header.more.switchCashier")}
               </button>
             ) : null}
-            <a
-              href="/app/"
-              className="btn-press flex min-h-11 items-center justify-center gap-1.5 rounded-xl border border-slate-200 bg-white px-3 text-xs font-bold text-slate-600 hover:bg-slate-50 hover:text-slate-800"
-            >
-              <ExternalLink className="h-3.5 w-3.5" aria-hidden />
-              {t("header.more.backToSystem")}
-            </a>
+            {/* PORTAL ISOLATION — the back office is off-limits to a cashier.
+                The link stays for admin/manager, who legitimately work in both
+                apps; for a cashier it now leads nowhere (the ERP redirects
+                them straight back and the API refuses back-office paths), so
+                showing it would only be a dead end. */}
+            {!isPosOnlyRole(user?.role) ? (
+              <a
+                href="/app/"
+                className="btn-press flex min-h-11 items-center justify-center gap-1.5 rounded-xl border border-slate-200 bg-white px-3 text-xs font-bold text-slate-600 hover:bg-slate-50 hover:text-slate-800"
+              >
+                <ExternalLink className="h-3.5 w-3.5" aria-hidden />
+                {t("header.more.backToSystem")}
+              </a>
+            ) : null}
             {onLogout ? (
               <button
                 type="button"

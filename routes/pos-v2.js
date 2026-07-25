@@ -171,6 +171,45 @@ function _orderForMath(o) {
     customerId: o.customer_id, discountType: o.discount_type, discountValue: Number(o.discount_value), discountName: o.discount_name,
   };
 }
+
+/**
+ * Stamp each line with menu.is_tax_inclusive, read from the DB — never from the
+ * client and never from pos_order_lines (which does not carry it). The tax
+ * convention decides the customer-facing amount, so it must come from the same
+ * source routes/sales.js reads when it recomputes the sale; anything else
+ * re-opens the mismatch that rejected every standard-rated checkout.
+ * Unknown/missing item → exclusive, matching the sale path's own behaviour for
+ * a row whose flag is 0.
+ */
+async function _applyTaxConvention(lines, conn) {
+  const ids = [...new Set(lines.map((l) => l.menuId).filter(Boolean))];
+  const flags = {};
+  if (ids.length) {
+    const q = conn || db;
+    const [rows] = await q.query(
+      'SELECT id, COALESCE(is_tax_inclusive,0) AS is_tax_inclusive FROM menu WHERE id IN (?)', [ids]);
+    for (const r of rows) flags[r.id] = Number(r.is_tax_inclusive) === 1;
+  }
+  for (const l of lines) l.taxInclusive = flags[l.menuId] === true;
+  return lines;
+}
+
+/** settings.VATRate in PERCENT. Single source of truth for the register, the
+ *  submit mirror and routes/sales.js alike — it used to be hardcoded 0.15 in
+ *  the cart math while the sale path read the setting. */
+async function _vatRatePct(conn) {
+  try {
+    const q = conn || db;
+    const [rows] = await q.query("SELECT setting_value FROM settings WHERE setting_key = 'VATRate' LIMIT 1");
+    if (rows.length) {
+      const n = Number(rows[0].setting_value);
+      if (Number.isFinite(n) && n >= 0) return n;
+    }
+  } catch (e) {
+    console.error('[pos-v2] VATRate read failed — falling back to 15:', e.message);
+  }
+  return 15;
+}
 function _publicOrder(o, lines, payments) {
   return {
     id: o.id, status: o.status, orderType: o.order_type, tableNo: o.table_no,
@@ -585,8 +624,9 @@ async function doSubmit(user, id, body) {
     if (!o.shift_id) throw _err('VALIDATION_ERROR', 'لا يمكن الدفع بلا وردية مفتوحة — افتح وردية أولًا');
     const lineRows = await _loadLines(id, conn);
     if (!lineRows.length) throw _err('VALIDATION_ERROR', 'السلة فارغة');
-    const lines = _linesForMath(lineRows);
-    const totals = M.cartTotals(lines, o.discount_type ? { type: o.discount_type, value: Number(o.discount_value) } : null);
+    const lines = await _applyTaxConvention(_linesForMath(lineRows), conn);
+    const vatRatePct = await _vatRatePct(conn);
+    const totals = M.cartTotals(lines, o.discount_type ? { type: o.discount_type, value: Number(o.discount_value) } : null, vatRatePct);
 
     // SERVER-SIDE discount ceiling: above the cashier limit needs a manager.
     if (totals.discountAmount > 0 && !_userIsSuper(user)) {
@@ -643,6 +683,7 @@ async function doSubmit(user, id, body) {
       cashTendered: Number(b.cashTendered) || 0, changeDue: Number(b.changeDue) || 0,
       paymentNotes: (b.paymentNotes || '').toString().slice(0, 300) || undefined,
       ownerMethods,
+      vatRatePct, // same setting routes/sales.js reads — see _vatRatePct
     });
     return { success: true, data: { id, legacyPayload, total: totals.total }, status: 'submitted', version: Number(o.version) + 1 };
   });
@@ -710,6 +751,11 @@ router.get('/catalog', POS, async (req, res) => {
     // Measured on the live 2,000-row / 68MB-of-blobs table: ~28ms → ~100ms.
     const [items] = await db.query(
       "SELECT id, name, name_en, price, category, active, tax_category, stock, COALESCE(is_combo,0) AS is_combo, " +
+      // is_tax_inclusive rides WITH the price: the register cannot compute the
+      // customer-facing amount without it. Omitting it is exactly what let the
+      // cashier display a NET price as the total while routes/sales.js added
+      // VAT on top and then rejected the sale as a total mismatch.
+      "COALESCE(is_tax_inclusive,0) AS is_tax_inclusive, " +
       "CASE WHEN image_data IS NULL OR image_data='' THEN NULL ELSE SUBSTRING(SHA2(image_data,256),1,8) END AS image_ver " +
       "FROM menu WHERE COALESCE(is_deleted,0)=0" + brandCond + " ORDER BY category, name", brandParams);
 
@@ -902,6 +948,11 @@ router.get('/catalog', POS, async (req, res) => {
           categoryEn: categoryEnMap[m.category || 'عام'] ?? null,
           active: !(m.active === 0 || m.active === false),
           taxCategory: ['S', 'Z', 'E', 'O'].includes(m.tax_category) ? m.tax_category : 'S',
+          // Whether `price` already contains VAT. The register needs this to
+          // show the customer-facing amount; without it the cashier showed the
+          // NET price as the total while routes/sales.js added VAT on top and
+          // then refused the sale for not matching.
+          taxInclusive: Number(m.is_tax_inclusive) === 1,
           basePrice: Number(m.price), warehouseQty: m.stock == null ? null : Number(m.stock),
           // Price provenance under a channel: null = base menu price;
           // 'override' = per-channel manual override; otherwise the NAME of the

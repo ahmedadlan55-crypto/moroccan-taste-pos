@@ -75,3 +75,13 @@ export function isSupervisor(user: AuthUser | null): boolean {
   const role = (user?.role ?? "").toLowerCase();
   return role === "admin" || role === "manager";
 }
+
+/** Roles whose only home is this app — they have no back office at all.
+ *  Mirrors POS_ONLY_ROLES in middleware/posPortalScope.js, which is the real
+ *  boundary (it 403s every back-office path for these roles). Used here only
+ *  to avoid rendering links that would dead-end. */
+export const POS_ONLY_ROLES = ["cashier"] as const;
+
+export function isPosOnlyRole(role: string | null | undefined): boolean {
+  return POS_ONLY_ROLES.includes(String(role ?? "").toLowerCase() as (typeof POS_ONLY_ROLES)[number]);
+}

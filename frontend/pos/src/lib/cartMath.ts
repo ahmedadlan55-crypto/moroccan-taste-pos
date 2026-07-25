@@ -1,19 +1,45 @@
 /**
  * Cart math — EXACT client mirror of lib/posOrderMachine.js (server).
- * Prices are TAX-INCLUSIVE (KSA retail convention).
  *
- *   lineGross = round2(qty*unitPrice − lineDiscount)
- *   vat(S)    = gross − gross/1.15 ; Z/E/O → 0
- *   order discount (PERCENT/FIXED) applies AFTER line discounts, capped at
- *   subtotal; VAT scales by total/subtotal factor.
+ * TAX CONVENTION IS PER ITEM, NOT GLOBAL (v8.1).
+ *   This file used to hardcode "prices are TAX-INCLUSIVE". The database says
+ *   otherwise: server.js's v7.1 boot migration set `menu.is_tax_inclusive = 0`
+ *   on EVERY row, and routes/sales.js honours that flag — so for a 16.00 item
+ *   the register showed 16.00 while the server computed 16 × 1.15 = 18.40 and
+ *   the reconciliation guard rejected the sale outright («الإجمالي المعروض
+ *   (16) لا يطابق الإجمالي المحسوب (18)»). Every standard-rated sale failed.
+ *   The flag now rides on the catalog item and on the cart line, and the two
+ *   conventions are computed explicitly:
  *
- * Any change here MUST be mirrored server-side (and vice-versa) or the
- * client-shown totals will diverge from what /submit freezes.
+ *     inclusive → gross = qty*unitPrice − lineDiscount ; vat = gross − gross/(1+r)
+ *     exclusive → net   = qty*unitPrice − lineDiscount ; vat = net*r ; gross = net + vat
+ *
+ *   Order discount (PERCENT/FIXED) applies AFTER line discounts in GROSS space,
+ *   capped at subtotal; VAT scales by total/subtotal factor. Unchanged.
+ *
+ * THE RATE COMES FROM THE SERVER (settings.VATRate, shipped as catalog.vatRate).
+ *   It used to be hardcoded 0.15 here while the server read the setting, so an
+ *   owner changing the rate desynced the register from the books silently.
+ *
+ * Any change here MUST be mirrored in lib/posOrderMachine.js (and vice-versa)
+ * or the client-shown totals diverge from what /submit freezes.
  */
 import type { CartLine, CartTotals, OrderDiscount, Payment, TaxCategory } from "./types";
 import type { TFunction } from "@/i18n/types";
 
-export const VAT_RATES: Record<TaxCategory, number> = { S: 0.15, Z: 0, E: 0, O: 0 };
+/** Which categories are taxed at all. S = standard; Z/E/O are always 0%. */
+export const TAXED_CATEGORIES: Record<TaxCategory, boolean> = { S: true, Z: false, E: false, O: false };
+
+/** Fallback when the catalog has not loaded yet (offline cold start). The
+ *  server is authoritative; this only keeps the UI sane for a moment. */
+export const DEFAULT_VAT_RATE_PCT = 15;
+
+/** Effective fraction (0.15) for a line, given the shipped rate in PERCENT. */
+export function rateFor(category: TaxCategory, vatRatePct: number = DEFAULT_VAT_RATE_PCT): number {
+  if (!TAXED_CATEGORIES[category]) return 0;
+  const pct = Number(vatRatePct);
+  return Number.isFinite(pct) && pct >= 0 ? pct / 100 : DEFAULT_VAT_RATE_PCT / 100;
+}
 
 export function round2(n: number): number {
   return Math.round((Number(n) || 0) * 100) / 100;
@@ -26,27 +52,41 @@ export interface LineTotals {
   discount: number;
 }
 
-export function lineTotals(line: Pick<CartLine, "qty" | "unitPrice" | "lineDiscount" | "vatCategory" | "baseQty">): LineTotals {
+type MoneyLine = Pick<CartLine, "qty" | "unitPrice" | "lineDiscount" | "vatCategory" | "baseQty" | "taxInclusive">;
+
+export function lineTotals(line: MoneyLine, vatRatePct: number = DEFAULT_VAT_RATE_PCT): LineTotals {
   // Phase U — money uses the BASE quantity (= enteredQty × factor), matching the
   // server (which stores qty as base). A single-unit line has baseQty == qty.
   const qty = Number(line.baseQty ?? line.qty) || 0;
   const unitPrice = Number(line.unitPrice) || 0;
   const discount = Math.min(Math.max(Number(line.lineDiscount) || 0, 0), qty * unitPrice);
-  const gross = round2(qty * unitPrice - discount);
-  const rate = VAT_RATES[line.vatCategory] ?? VAT_RATES.S;
-  const vat = rate > 0 ? round2(gross - gross / (1 + rate)) : 0;
-  return { gross, vat, net: round2(gross - vat), discount: round2(discount) };
+  const rate = rateFor(line.vatCategory, vatRatePct);
+  // Absent flag → EXCLUSIVE, matching what the server will compute: every
+  // menu row is is_tax_inclusive=0 (server.js v7.1 migration) and the server
+  // reads the flag from the DB per item, not from the cart doc. Only carts
+  // persisted before this field existed can reach here without it.
+  const inclusive = line.taxInclusive === true;
+
+  if (inclusive) {
+    const gross = round2(qty * unitPrice - discount);
+    const vat = rate > 0 ? round2(gross - gross / (1 + rate)) : 0;
+    return { gross, vat, net: round2(gross - vat), discount: round2(discount) };
+  }
+  const net = round2(qty * unitPrice - discount);
+  const vat = rate > 0 ? round2(net * rate) : 0;
+  return { gross: round2(net + vat), vat, net, discount: round2(discount) };
 }
 
 export function cartTotals(
-  lines: ReadonlyArray<Pick<CartLine, "qty" | "unitPrice" | "lineDiscount" | "vatCategory" | "baseQty">>,
+  lines: ReadonlyArray<MoneyLine>,
   orderDiscount?: Pick<OrderDiscount, "type" | "value"> | null,
+  vatRatePct: number = DEFAULT_VAT_RATE_PCT,
 ): CartTotals {
   let subtotal = 0;
   let lineDiscountTotal = 0;
   let vatBase = 0;
   for (const l of lines) {
-    const t = lineTotals(l);
+    const t = lineTotals(l, vatRatePct);
     subtotal += t.gross;
     lineDiscountTotal += t.discount;
     vatBase += t.vat;

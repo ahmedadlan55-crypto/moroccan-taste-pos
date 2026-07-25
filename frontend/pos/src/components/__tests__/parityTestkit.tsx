@@ -17,6 +17,13 @@ export function makeLine(overrides: Partial<CartLine> = {}): CartLine {
     unitPrice: 23,
     lineDiscount: 0,
     vatCategory: "S",
+    // STATED, not assumed. The tax convention is per item now
+    // (menu.is_tax_inclusive) and it changes the money: at 23.00 inclusive the
+    // line is 46.00, exclusive it is 52.90. The UI specs built on this fixture
+    // assert the 46.00 figures, so the fixture says which convention it means —
+    // pass `taxInclusive: false` to exercise the other one. cartMath's own unit
+    // tests cover both branches directly.
+    taxInclusive: true,
     notes: null,
     ...overrides,
   };

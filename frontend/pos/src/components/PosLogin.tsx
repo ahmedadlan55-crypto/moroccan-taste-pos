@@ -15,6 +15,7 @@ import { ChefHat, Languages, LogIn } from "lucide-react";
 import { decodeUser, isPosRole, setToken } from "@/lib/auth";
 import { useLang, useSetLang, useT } from "@/i18n";
 import { Button, ErrorBanner } from "./ui";
+import { PosChangePassword } from "./PosChangePassword";
 
 interface LoginResponse {
   success?: boolean;
@@ -62,6 +63,8 @@ export function PosLogin() {
   const [needs2fa, setNeeds2fa] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  // A forced-change account is signed in but NOT yet allowed into the till.
+  const [mustChangePassword, setMustChangePassword] = useState(false);
 
   async function submit(e: FormEvent) {
     e.preventDefault();
@@ -104,15 +107,13 @@ export function PosLogin() {
       setToken(data.token);
       // A forced-change account (P0 mandate: strong password + forced first-
       // login change) must never reach the POS shell on its temporary
-      // password. The ERP's own Login.tsx already honours this flag by
-      // sending the user to the one shared change-password screen — this POS
-      // login previously ignored it entirely, so a freshly-created cashier
-      // could sign straight in without ever being prompted. `/app` is a
-      // separate Vite app from `/pos`, so this is a real cross-app
-      // navigation; `redirect=/pos/` brings the cashier straight back here
-      // once the password is changed.
+      // password. This used to hop to `/app/change-password?redirect=/pos/` —
+      // a cross-app navigation into the ERP bundle. That hop is gone: the
+      // cashier portal is now isolated from the back office (a cashier is
+      // redirected out of /app and the API refuses back-office paths for
+      // their token), so the change happens right here instead.
       if (data.mustChangePassword) {
-        window.location.assign("/app/change-password?must=1&redirect=" + encodeURIComponent("/pos/"));
+        setMustChangePassword(true);
         return;
       }
       // Full reload so PosProvider re-reads the token at mount and renders the
@@ -123,6 +124,12 @@ export function PosLogin() {
     } finally {
       setBusy(false);
     }
+  }
+
+  // Signed in on a temporary password: the till stays out of reach until the
+  // change succeeds, then a reload boots the shell with the fresh token.
+  if (mustChangePassword) {
+    return <PosChangePassword onDone={() => window.location.reload()} />;
   }
 
   return (

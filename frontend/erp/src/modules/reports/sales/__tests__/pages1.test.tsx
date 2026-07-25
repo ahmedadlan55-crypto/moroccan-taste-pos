@@ -53,6 +53,21 @@ const { harness, fixtureFor, emptyResult, REGISTRY } = vi.hoisted(() => {
     discount_rate_by_cashier: 8,
     void_rate_by_cashier: 3,
     return_rate_by_cashier: 2,
+    // the administrative sales report's statement / tax / returns / profit lines
+    returns_net: 40,
+    vat_amount: 150,
+    fees_total: 10,
+    rounding_total: 0.25,
+    invoice_total: 1160.25,
+    avg_items_per_order: 3,
+    guests: 90,
+    returns_count: 4,
+    returns_value: 45,
+    voids_count: 2,
+    voids_value: 20,
+    cogs: 400,
+    gross_profit: 600,
+    margin_pct: 60,
   };
 
   function values(metrics: string[]): Record<string, number | null> {
@@ -119,6 +134,12 @@ const { harness, fixtureFor, emptyResult, REGISTRY } = vi.hoisted(() => {
       rows: [
         { keys: ["cash"], labels: ["Cash"] },
         { keys: ["card"], labels: ["Card"] },
+      ],
+    },
+    vat_category: {
+      rows: [
+        { keys: ["S"], labels: ["Standard"] },
+        { keys: ["Z"], labels: ["Zero-rated"] },
       ],
     },
     cashier: {
@@ -253,6 +274,11 @@ interface PageSpec {
   kpiProbes: string[];
   /** A label that must appear inside a chart's <details> table alternative. */
   chartProbe: string;
+  /**
+   * Chart-free pages (the executive report is deliberately one) prove the same
+   * thing through their own tables instead of a chart's <details> fallback.
+   */
+  chartless?: true;
   /** Metric to mask; its formatted UNMASKED value must then be absent. */
   maskMetric: string;
   maskedValue: string;
@@ -265,6 +291,7 @@ const PAGES: PageSpec[] = [
     path: "/reports/sales/executive",
     kpiProbes: ["1,000.00 ر.س", "1,500.00 ر.س", "40", "25.00 ر.س"],
     chartProbe: "2026-07-01",
+    chartless: true,
     maskMetric: "avg_ticket",
     maskedValue: "25.00 ر.س",
   },
@@ -340,7 +367,7 @@ beforeEach(() => {
 
 afterEach(cleanup);
 
-describe.each(PAGES)("$name page", ({ Comp, path, kpiProbes, chartProbe, maskMetric, maskedValue }) => {
+describe.each(PAGES)("$name page", ({ Comp, path, kpiProbes, chartProbe, chartless, maskMetric, maskedValue }) => {
   // The per-test budget MUST exceed the inner findBy wait. vitest's default
   // testTimeout is 5000ms, so `findByTestId(..., {timeout: 5000})` inside a
   // default-budget test can never actually consume its 5s: the test-level
@@ -358,12 +385,26 @@ describe.each(PAGES)("$name page", ({ Comp, path, kpiProbes, chartProbe, maskMet
     }
   }, 20000);
 
-  it("renders the chart's accessible table alternative", async () => {
-    renderPage(Comp, path);
-    await screen.findByTestId("kpi-row", undefined, { timeout: 5000 });
-    // The chart kit (recharts + ChartCard) loads lazily — allow it to arrive.
-    await waitFor(() => expect(probeInDetails(chartProbe)).toBe(true), { timeout: 15000 });
-  }, 20000);
+  it(
+    chartless
+      ? "renders the dimension label in its own report table"
+      : "renders the chart's accessible table alternative",
+    async () => {
+      renderPage(Comp, path);
+      await screen.findByTestId("kpi-row", undefined, { timeout: 5000 });
+      if (chartless) {
+        // No chart to fall back from — the report's daily table carries it.
+        await waitFor(() => expect(screen.getAllByText(chartProbe).length).toBeGreaterThan(0), {
+          timeout: 15000,
+        });
+        expect(document.querySelectorAll("details")).toHaveLength(0);
+        return;
+      }
+      // The chart kit (recharts + ChartCard) loads lazily — allow it to arrive.
+      await waitFor(() => expect(probeInDetails(chartProbe)).toBe(true), { timeout: 15000 });
+    },
+    20000,
+  );
 
   it("renders EmptyState when the query returns no rows", async () => {
     harness.mode = "empty";

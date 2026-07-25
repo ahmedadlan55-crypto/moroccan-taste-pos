@@ -1,34 +1,29 @@
-// Sales Analytics Hub — "executive" page.
+// Sales Analytics Hub — "executive": the administrative sales report.
 //
-// KPI row (net / gross / orders / avg ticket / discounts / refunds) fed by a
-// dimensionless query whose single row carries values + compare/delta, a net
-// line by business day (compare series overlaid when a compare mode is on), a
-// net-by-channel bar (the readable channel-totals variant), and the by-day
-// table synced to the same data. Chart clicks drill: a day point pins
-// from=to=that day (push), a channel bar adds the channel filter.
+// This screen is a REPORT, not a dashboard. Managers and accountants read it
+// top-to-bottom the way they read a statement: a header that pins down exactly
+// which numbers these are (period, basis, tax mode, filters), then a stepped
+// sales statement, the tax breakdown a VAT return needs, collections with a
+// sales-vs-collections reconciliation line, returns and voids, cost and margin,
+// and finally the day-by-day detail with a totals row.
 //
-// PERF: recharts (and ChartCard, which imports it) are loaded through the
-// page-local deferred ChartKit below, so this lazily-routed chunk mounts fast
-// — states (loading/empty/error) and the KPI row never wait on the chart
-// vendor bundle.
-import { lazy, Suspense, useMemo, type ReactElement } from "react";
-import { Coins, Percent, Receipt, ShoppingBag, Ticket, Undo2, type LucideIcon } from "lucide-react";
+// Deliberately CHART-FREE: charts crowd a report that exists to be read,
+// printed and reconciled. The visual analysis lives on the other sections
+// (explorer, hours, branches…) — this one carries the figures.
+import { useMemo, type ReactNode } from "react";
+import { Printer } from "lucide-react";
 import {
   Badge,
+  Button,
   EmptyState,
   ErrorState,
   ExplainNumber,
   LoadingState,
-  MetricCard,
-  Skeleton,
-  type MetricTone,
 } from "@/shared/ui";
-import { useChartPalette } from "@/shared/charts/palette";
-import { useChartsRtl } from "@/shared/charts/rtl";
 import { DataTable, type ColumnDef } from "@/shared/tables";
 import { useUrlFilters } from "@/shared/hooks/useUrlFilters";
 import { computeCompareRange } from "@/shared/ui/date-range-picker";
-import { formatCurrency, formatNumber } from "@/shared/lib";
+import { formatCurrency, formatDateTime, formatNumber } from "@/shared/lib";
 import { useT, type TFunction } from "@/i18n";
 import { analyticsFilterCodec, type AnalyticsFilters } from "../lib/filters";
 import {
@@ -44,47 +39,43 @@ import { useAnalyticsQuery, useAnalyticsRegistry } from "../lib/useAnalyticsQuer
 
 const SEGMENT = "executive";
 
-/** KPI metric codes in card order. */
-const KPI_METRICS = [
-  "net_ex_vat",
+/** Every figure the report needs, in ONE dimensionless query. */
+const SUMMARY_METRICS = [
   "gross_product_sales",
+  "discounts_total",
+  "returns_net",
+  "net_ex_vat",
+  "vat_amount",
+  "fees_total",
+  "rounding_total",
+  "invoice_total",
   "orders",
   "avg_ticket",
-  "discounts_total",
+  "qty_sold",
+  "avg_items_per_order",
+  "guests",
+  "returns_count",
+  "returns_value",
+  "voids_count",
+  "voids_value",
+  "payments_in",
   "refunds_out",
+  "net_collections",
+  "cogs",
+  "gross_profit",
+  "margin_pct",
 ] as const;
 
-const KPI_CARDS: Array<{ id: (typeof KPI_METRICS)[number]; icon: LucideIcon; tone: MetricTone; format: (v: number) => string }> = [
-  { id: "net_ex_vat", icon: Coins, tone: "teal", format: formatCurrency },
-  { id: "gross_product_sales", icon: Receipt, tone: "blue", format: formatCurrency },
-  { id: "orders", icon: ShoppingBag, tone: "violet", format: formatNumber },
-  { id: "avg_ticket", icon: Ticket, tone: "amber", format: formatCurrency },
-  { id: "discounts_total", icon: Percent, tone: "rose", format: formatCurrency },
-  { id: "refunds_out", icon: Undo2, tone: "rose", format: formatCurrency },
-];
+const MONEY_EPSILON = 0.01;
 
-/* ── deferred chart kit (page-local copy by design; see wave notes) ── */
-
-type Recharts = typeof import("recharts");
-interface ChartKitBag {
-  R: Recharts;
-  ChartCard: (typeof import("@/shared/charts/ChartCard"))["ChartCard"];
-}
-const ChartKit = lazy(async () => {
-  const [R, card] = await Promise.all([import("recharts"), import("@/shared/charts/ChartCard")]);
-  const bag: ChartKitBag = { R, ChartCard: card.ChartCard };
-  return {
-    default: function ChartKitHost({ children }: { children: (kit: ChartKitBag) => ReactElement }) {
-      return children(bag);
-    },
-  };
-});
-
-/* ── tiny local helpers (deliberately page-local; see wave notes) ── */
+/* ── local helpers ───────────────────────────────────────────────────────── */
 
 function compareSpec(filters: AnalyticsFilters): AnalyticsCompareSpec | undefined {
   if (filters.compare === "none") return undefined;
-  return { mode: filters.compare, ...computeCompareRange(filters.compare, { from: filters.from, to: filters.to }) };
+  return {
+    mode: filters.compare,
+    ...computeCompareRange(filters.compare, { from: filters.from, to: filters.to }),
+  };
 }
 
 function metricExplain(t: TFunction, registry: AnalyticsRegistry | undefined, code: string) {
@@ -98,124 +89,279 @@ function metricExplain(t: TFunction, registry: AnalyticsRegistry | undefined, co
   );
 }
 
-function CompletenessNotice({ meta }: { meta?: AnalyticsResult["meta"] }) {
-  const t = useT();
-  if (!meta?.completeness || meta.completeness.complete) return null;
+/** The masked/missing contract: a refused or absent metric is "—", never 0. */
+function pick(result: AnalyticsResult | undefined, row: AnalyticsResultRow | undefined, id: string): number | null {
+  if (!row || result?.meta.maskedMetrics.includes(id)) return null;
+  return displayMetric(row, id);
+}
+
+function money(v: number | null): string {
+  return v == null ? "—" : formatCurrency(v);
+}
+function count(v: number | null): string {
+  return v == null ? "—" : formatNumber(v);
+}
+function percent(v: number | null): string {
+  return v == null ? "—" : `${formatNumber(v)}%`;
+}
+
+/** Right-aligned, always LTR, tabular — the house rule for every figure. */
+function Figure({ children, strong }: { children: ReactNode; strong?: boolean }) {
   return (
-    <div
-      data-testid="completeness-notice"
-      className="flex flex-wrap items-center gap-2 rounded-xl border border-amber-200 bg-amber-50 p-3 text-xs font-bold text-amber-800"
+    <span
+      dir="ltr"
+      className={`block text-end tabular-nums ${strong ? "font-extrabold text-slate-900" : "font-bold text-slate-700"}`}
     >
-      <span>{t("salesReports.states.notAvailableHistorically")}</span>
-      {(meta.completeness.missingDays?.length ?? 0) > 0 && (
-        <Badge tone="warning">{formatNumber(meta.completeness.missingDays!.length)}</Badge>
-      )}
-    </div>
+      {children}
+    </span>
   );
 }
 
-/** The masked/missing contract for a single-row (dimensionless) KPI result. */
-function kpiValue(
-  result: AnalyticsResult | undefined,
-  row: AnalyticsResultRow | undefined,
-  id: string,
-  format: (v: number) => string,
-): string {
-  if (!row || result?.meta.maskedMetrics.includes(id)) return "—";
-  const v = displayMetric(row, id);
-  return v == null ? "—" : format(v);
+function Section({
+  title,
+  note,
+  action,
+  children,
+}: {
+  title: string;
+  note?: ReactNode;
+  action?: ReactNode;
+  children: ReactNode;
+}) {
+  return (
+    <section className="surface overflow-hidden">
+      <header className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-100 px-4 py-3">
+        <div className="min-w-0">
+          <h3 className="truncate text-sm font-extrabold text-slate-900">{title}</h3>
+          {note && <p className="mt-0.5 text-xs font-medium text-slate-500">{note}</p>}
+        </div>
+        {action}
+      </header>
+      <div className="overflow-x-auto">{children}</div>
+    </section>
+  );
 }
 
-const ISO_DAY_RE = /^\d{4}-\d{2}-\d{2}$/;
-
-function dayFromChartClick(state: unknown): string | null {
-  const label = (state as { activeLabel?: unknown } | null)?.activeLabel;
-  return typeof label === "string" && ISO_DAY_RE.test(label) ? label : null;
+interface StatementLine {
+  id: string;
+  label: string;
+  value: number | null;
+  /** "−" / "+" / "=" sign shown before the label, statement-style. */
+  op?: "add" | "sub" | "eq";
+  strong?: boolean;
+  explain?: ReactNode;
+  compare?: number | null;
 }
 
-function keyFromChartClick(state: unknown): string | null {
-  const payload = (state as { activePayload?: Array<{ payload?: { key?: unknown } }> } | null)?.activePayload;
-  const key = payload?.[0]?.payload?.key;
-  return typeof key === "string" && key !== "" ? key : null;
+function Statement({ lines, showCompare, compareLabel }: { lines: StatementLine[]; showCompare: boolean; compareLabel: string }) {
+  return (
+    <table className="w-full min-w-[22rem] text-sm">
+      <tbody>
+        {showCompare && (
+          <tr className="border-b border-slate-100 text-[11px] font-extrabold uppercase tracking-wide text-slate-400">
+            <th scope="col" className="px-4 py-2 text-start font-extrabold">
+              &nbsp;
+            </th>
+            <th scope="col" className="px-4 py-2 text-end font-extrabold">
+              &nbsp;
+            </th>
+            <th scope="col" className="px-4 py-2 text-end font-extrabold">
+              {compareLabel}
+            </th>
+          </tr>
+        )}
+        {lines.map((line) => (
+          <tr
+            key={line.id}
+            className={
+              line.op === "eq"
+                ? "border-y border-slate-200 bg-slate-50"
+                : "border-b border-slate-50"
+            }
+          >
+            <th scope="row" className="px-4 py-2.5 text-start font-bold text-slate-600">
+              <span className="inline-flex items-center gap-1.5">
+                {line.op === "sub" && <span aria-hidden="true" className="text-slate-400">−</span>}
+                {line.op === "add" && <span aria-hidden="true" className="text-slate-400">+</span>}
+                {line.op === "eq" && <span aria-hidden="true" className="text-slate-400">=</span>}
+                <span className={line.strong ? "font-extrabold text-slate-900" : undefined}>{line.label}</span>
+                {line.explain}
+              </span>
+            </th>
+            <td className="w-40 px-4 py-2.5">
+              <Figure strong={line.strong}>{money(line.value)}</Figure>
+            </td>
+            {showCompare && (
+              <td className="w-40 px-4 py-2.5">
+                <Figure>{money(line.compare ?? null)}</Figure>
+              </td>
+            )}
+          </tr>
+        ))}
+      </tbody>
+    </table>
+  );
+}
+
+/** Compact label/figure grid — the operational counters, no icons, no cards. */
+function Figures({ items, testId }: { items: Array<{ id: string; label: string; value: string }>; testId?: string }) {
+  return (
+    <dl
+      data-testid={testId}
+      className="grid grid-cols-2 divide-slate-100 sm:grid-cols-3 lg:grid-cols-5 lg:divide-x lg:rtl:divide-x-reverse"
+    >
+      {items.map((it) => (
+        <div key={it.id} className="border-b border-slate-100 px-4 py-3 lg:border-b-0">
+          <dt className="truncate text-xs font-bold text-slate-500">{it.label}</dt>
+          <dd dir="ltr" className="mt-1 text-lg font-extrabold tabular-nums text-slate-900 text-end lg:text-start">
+            {it.value}
+          </dd>
+        </div>
+      ))}
+    </dl>
+  );
+}
+
+interface BreakdownRow {
+  key: string;
+  label: string;
+  values: Array<{ id: string; text: string; strong?: boolean }>;
+}
+
+function Breakdown({
+  head,
+  rows,
+  total,
+  emptyLabel,
+}: {
+  head: string[];
+  rows: BreakdownRow[];
+  total?: BreakdownRow;
+  emptyLabel: string;
+}) {
+  if (rows.length === 0) {
+    return <p className="px-4 py-6 text-center text-xs font-bold text-slate-400">{emptyLabel}</p>;
+  }
+  return (
+    <table className="w-full min-w-[28rem] text-sm">
+      <thead>
+        <tr className="border-b border-slate-100 text-[11px] font-extrabold uppercase tracking-wide text-slate-400">
+          {head.map((h, i) => (
+            <th key={h} scope="col" className={`px-4 py-2 ${i === 0 ? "text-start" : "text-end"}`}>
+              {h}
+            </th>
+          ))}
+        </tr>
+      </thead>
+      <tbody>
+        {rows.map((r) => (
+          <tr key={r.key} className="border-b border-slate-50">
+            <th scope="row" className="px-4 py-2.5 text-start font-bold text-slate-700">
+              {r.label}
+            </th>
+            {r.values.map((v) => (
+              <td key={v.id} className="px-4 py-2.5">
+                <Figure strong={v.strong}>{v.text}</Figure>
+              </td>
+            ))}
+          </tr>
+        ))}
+        {total && (
+          <tr className="border-t border-slate-200 bg-slate-50">
+            <th scope="row" className="px-4 py-2.5 text-start font-extrabold text-slate-900">
+              {total.label}
+            </th>
+            {total.values.map((v) => (
+              <td key={v.id} className="px-4 py-2.5">
+                <Figure strong>{v.text}</Figure>
+              </td>
+            ))}
+          </tr>
+        )}
+      </tbody>
+    </table>
+  );
 }
 
 interface DayRow {
   day: string;
   label: string;
-  net: number | null;
-  compareNet: number | null;
   orders: number | null;
-  avgTicket: number | null;
+  gross: number | null;
   discounts: number | null;
+  net: number | null;
+  vat: number | null;
+  total: number | null;
+  avgTicket: number | null;
 }
+
+/* ── page ────────────────────────────────────────────────────────────────── */
 
 export default function Executive() {
   const t = useT();
-  const palette = useChartPalette();
-  const rtl = useChartsRtl();
   const { filters, patch } = useUrlFilters(analyticsFilterCodec);
   const registry = useAnalyticsRegistry();
 
   const base = buildFiltersBody(filters);
   const compare = compareSpec(filters);
-
-  // E2E-wave fix: the by-day grouping follows the date-basis toggle (the
-  // dayDim pattern Taxes/Shifts/Discounts already use). It was hardcoded to
-  // business_day, so switching to the calendar basis changed only the WHERE
-  // basis while rows stayed grouped by business day — F8-style midnight
-  // orders kept reporting under the wrong day for the selected basis.
   const dayDim = filters.businessDay ? "business_day" : "calendar_day";
 
-  const kpiBody: AnalyticsQueryBody = { ...base, metrics: [...KPI_METRICS], dimensions: [], ...(compare ? { compare } : {}) };
-  const byDayBody: AnalyticsQueryBody = {
+  const summaryBody: AnalyticsQueryBody = {
     ...base,
-    metrics: ["net_ex_vat", "orders", "avg_ticket", "discounts_total"],
-    dimensions: [dayDim],
-    sort: [{ by: dayDim, dir: "asc" }],
+    metrics: [...SUMMARY_METRICS],
+    dimensions: [],
     ...(compare ? { compare } : {}),
   };
-  const byChannelBody: AnalyticsQueryBody = {
+  const byDayBody: AnalyticsQueryBody = {
     ...base,
-    metrics: ["net_ex_vat"],
-    dimensions: ["channel"],
-    sort: [{ by: "net_ex_vat", dir: "desc" }],
+    metrics: ["orders", "gross_product_sales", "discounts_total", "net_ex_vat", "vat_amount", "invoice_total", "avg_ticket"],
+    dimensions: [dayDim],
+    sort: [{ by: dayDim, dir: "asc" }],
+  };
+  const byTaxBody: AnalyticsQueryBody = {
+    ...base,
+    metrics: ["net_ex_vat", "vat_amount"],
+    dimensions: ["vat_category"],
+  };
+  const byPaymentBody: AnalyticsQueryBody = {
+    ...base,
+    metrics: ["payments_in", "refunds_out", "net_collections"],
+    dimensions: ["payment_method"],
+    sort: [{ by: "payments_in", dir: "desc" }],
   };
 
-  // Data queries wait for a VALID metric catalog: without one there is nothing
-  // to label or explain, and a disabled query never fires a doomed request.
   const catalogReady = registry.data != null && Array.isArray(registry.data.metrics);
-  const kpis = useAnalyticsQuery(SEGMENT, kpiBody, { enabled: catalogReady });
+  const summary = useAnalyticsQuery(SEGMENT, summaryBody, { enabled: catalogReady });
   const byDay = useAnalyticsQuery(SEGMENT, byDayBody, { enabled: catalogReady });
-  const byChannel = useAnalyticsQuery(SEGMENT, byChannelBody, { enabled: catalogReady });
+  const byTax = useAnalyticsQuery(SEGMENT, byTaxBody, { enabled: catalogReady });
+  const byPayment = useAnalyticsQuery(SEGMENT, byPaymentBody, { enabled: catalogReady });
 
   const hasCompare = filters.compare !== "none";
-  const kpiRow = kpis.data?.rows[0];
+  const row = summary.data?.rows[0];
+  const f = (id: string) => pick(summary.data, row, id);
+  const c = (id: string): number | null => {
+    if (!hasCompare) return null;
+    const v = row?.compare?.[id];
+    return typeof v === "number" ? v : null;
+  };
 
   const dayRows = useMemo<DayRow[]>(
     () =>
-      (byDay.data?.rows ?? []).map((row) => ({
-        day: String(row.keys[0] ?? ""),
-        label: row.labels[0] ?? String(row.keys[0] ?? ""),
-        net: displayMetric(row, "net_ex_vat"),
-        compareNet: typeof row.compare?.net_ex_vat === "number" ? row.compare.net_ex_vat : null,
-        orders: displayMetric(row, "orders"),
-        avgTicket: displayMetric(row, "avg_ticket"),
-        discounts: displayMetric(row, "discounts_total"),
+      (byDay.data?.rows ?? []).map((r) => ({
+        day: String(r.keys[0] ?? ""),
+        label: r.labels[0] ?? String(r.keys[0] ?? ""),
+        orders: displayMetric(r, "orders"),
+        gross: displayMetric(r, "gross_product_sales"),
+        discounts: displayMetric(r, "discounts_total"),
+        net: displayMetric(r, "net_ex_vat"),
+        vat: displayMetric(r, "vat_amount"),
+        total: displayMetric(r, "invoice_total"),
+        avgTicket: displayMetric(r, "avg_ticket"),
       })),
     [byDay.data],
   );
 
-  const channelRows = useMemo(
-    () =>
-      (byChannel.data?.rows ?? []).map((row) => ({
-        key: String(row.keys[0] ?? ""),
-        label: row.labels[0] ?? String(row.keys[0] ?? ""),
-        net: displayMetric(row, "net_ex_vat"),
-      })),
-    [byChannel.data],
-  );
-
-  const columns = useMemo<ColumnDef<DayRow>[]>(
+  const dayColumns = useMemo<ColumnDef<DayRow>[]>(
     () => [
       {
         id: "day",
@@ -226,44 +372,19 @@ export default function Executive() {
         width: 128,
         sortable: true,
       },
-      {
-        id: "orders",
-        header: t("salesReports.metrics.orders"),
-        accessor: (r) => r.orders,
-        cell: (r) => (r.orders == null ? "—" : formatNumber(r.orders)),
-        numeric: true,
-        sortable: true,
-      },
-      {
-        id: "net",
-        header: t("salesReports.metrics.net_ex_vat"),
-        accessor: (r) => r.net,
-        cell: (r) => (r.net == null ? "—" : formatCurrency(r.net)),
-        numeric: true,
-        sortable: true,
-      },
-      {
-        id: "avgTicket",
-        header: t("salesReports.metrics.avg_ticket"),
-        accessor: (r) => r.avgTicket,
-        cell: (r) => (r.avgTicket == null ? "—" : formatCurrency(r.avgTicket)),
-        numeric: true,
-        sortable: true,
-      },
-      {
-        id: "discounts",
-        header: t("salesReports.metrics.discounts_total"),
-        accessor: (r) => r.discounts,
-        cell: (r) => (r.discounts == null ? "—" : formatCurrency(r.discounts)),
-        numeric: true,
-        sortable: true,
-      },
+      { id: "orders", header: t("salesReports.metrics.orders"), accessor: (r) => r.orders, cell: (r) => count(r.orders), numeric: true, sortable: true },
+      { id: "gross", header: t("salesReports.metrics.gross_product_sales"), accessor: (r) => r.gross, cell: (r) => money(r.gross), numeric: true, sortable: true },
+      { id: "discounts", header: t("salesReports.metrics.discounts_total"), accessor: (r) => r.discounts, cell: (r) => money(r.discounts), numeric: true, sortable: true },
+      { id: "net", header: t("salesReports.metrics.net_ex_vat"), accessor: (r) => r.net, cell: (r) => money(r.net), numeric: true, sortable: true },
+      { id: "vat", header: t("salesReports.metrics.vat_amount"), accessor: (r) => r.vat, cell: (r) => money(r.vat), numeric: true, sortable: true },
+      { id: "total", header: t("salesReports.metrics.invoice_total"), accessor: (r) => r.total, cell: (r) => money(r.total), numeric: true, sortable: true },
+      { id: "avgTicket", header: t("salesReports.metrics.avg_ticket"), accessor: (r) => r.avgTicket, cell: (r) => money(r.avgTicket), numeric: true, sortable: true },
     ],
     [t, dayDim],
   );
 
-  const isLoading = registry.isLoading || kpis.isLoading || byDay.isLoading || byChannel.isLoading;
-  const error = registry.error ?? kpis.error ?? byDay.error ?? byChannel.error;
+  const isLoading = registry.isLoading || summary.isLoading || byDay.isLoading || byTax.isLoading || byPayment.isLoading;
+  const error = registry.error ?? summary.error ?? byDay.error ?? byTax.error ?? byPayment.error;
 
   if (isLoading) return <LoadingState rows={6} />;
   if (error) {
@@ -273,142 +394,254 @@ export default function Executive() {
         title={t("salesReports.states.loadFailed")}
         onRetry={() => {
           void registry.refetch();
-          void kpis.refetch();
+          void summary.refetch();
           void byDay.refetch();
-          void byChannel.refetch();
+          void byTax.refetch();
+          void byPayment.refetch();
         }}
       />
     );
   }
   if (dayRows.length === 0) return <EmptyState title={t("salesReports.states.empty")} />;
 
-  const drillToDay = (state: unknown) => {
-    const day = dayFromChartClick(state);
-    if (day) patch({ from: day, to: day, preset: "custom" }, { push: true });
-  };
-  const drillToChannel = (state: unknown) => {
-    const key = keyFromChartClick(state);
-    if (key) patch({ channel: [key] }, { push: true });
-  };
+  /* ── derived report figures ── */
 
-  const deltaFor = (id: string): string | undefined => {
-    if (!hasCompare) return undefined;
-    const d = kpiRow?.delta?.[id];
-    if (typeof d !== "number" || !Number.isFinite(d)) return undefined;
-    return `${d >= 0 ? "+" : ""}${formatNumber(d)}%`;
-  };
+  const invoiceTotal = f("invoice_total");
+  const netCollections = f("net_collections");
+  const settlementDiff =
+    invoiceTotal == null || netCollections == null ? null : invoiceTotal - netCollections;
+  const balanced = settlementDiff != null && Math.abs(settlementDiff) < MONEY_EPSILON;
+
+  const netExVat = f("net_ex_vat");
+  const voidsValue = f("voids_value");
+  const returnsValue = f("returns_value");
+  const share = (part: number | null): number | null =>
+    part == null || netExVat == null || netExVat === 0 ? null : (part / netExVat) * 100;
+
+  const statementLines: StatementLine[] = [
+    { id: "gross", label: t("salesReports.metrics.gross_product_sales"), value: f("gross_product_sales"), compare: c("gross_product_sales"), explain: metricExplain(t, registry.data, "gross_product_sales") },
+    { id: "discounts", label: t("salesReports.metrics.discounts_total"), value: f("discounts_total"), compare: c("discounts_total"), op: "sub" },
+    { id: "returns", label: t("salesReports.metrics.returns_net"), value: f("returns_net"), compare: c("returns_net"), op: "sub" },
+    { id: "net", label: t("salesReports.metrics.net_ex_vat"), value: netExVat, compare: c("net_ex_vat"), op: "eq", strong: true, explain: metricExplain(t, registry.data, "net_ex_vat") },
+    { id: "vat", label: t("salesReports.metrics.vat_amount"), value: f("vat_amount"), compare: c("vat_amount"), op: "add" },
+    { id: "fees", label: t("salesReports.metrics.fees_total"), value: f("fees_total"), compare: c("fees_total"), op: "add" },
+    { id: "rounding", label: t("salesReports.metrics.rounding_total"), value: f("rounding_total"), compare: c("rounding_total"), op: "add" },
+    { id: "total", label: t("salesReports.metrics.invoice_total"), value: invoiceTotal, compare: c("invoice_total"), op: "eq", strong: true, explain: metricExplain(t, registry.data, "invoice_total") },
+  ];
+
+  const taxRows: BreakdownRow[] = (byTax.data?.rows ?? []).map((r) => ({
+    key: String(r.keys[0] ?? ""),
+    label: r.labels[0] ?? String(r.keys[0] ?? "—"),
+    values: [
+      { id: "base", text: money(displayMetric(r, "net_ex_vat")) },
+      { id: "tax", text: money(displayMetric(r, "vat_amount")) },
+    ],
+  }));
+
+  const paymentRows: BreakdownRow[] = (byPayment.data?.rows ?? []).map((r) => {
+    const inAmt = displayMetric(r, "payments_in");
+    const pct =
+      inAmt == null || netCollections == null || netCollections === 0 ? null : (inAmt / netCollections) * 100;
+    return {
+      key: String(r.keys[0] ?? ""),
+      label: r.labels[0] ?? String(r.keys[0] ?? "—"),
+      values: [
+        { id: "in", text: money(inAmt) },
+        { id: "out", text: money(displayMetric(r, "refunds_out")) },
+        { id: "net", text: money(displayMetric(r, "net_collections")), strong: true },
+        { id: "share", text: percent(pct) },
+      ],
+    };
+  });
+
+  const cogs = f("cogs");
+  const grossProfit = f("gross_profit");
+  const showProfit = cogs != null || grossProfit != null;
+
+  const activeFilterChips = [
+    filters.brandId.length > 0 && `${t("salesReports.topbar.brand")} (${filters.brandId.length})`,
+    filters.branchId.length > 0 && `${t("salesReports.topbar.branch")} (${filters.branchId.length})`,
+    filters.channel.length > 0 && `${t("salesReports.topbar.channel")} (${filters.channel.length})`,
+    filters.orderType.length > 0 && `${t("salesReports.topbar.orderType")} (${filters.orderType.length})`,
+  ].filter(Boolean) as string[];
+
+  const freshness = summary.data?.meta.freshness?.watermark;
 
   return (
     <section className="space-y-4" data-testid="page-executive">
-      <CompletenessNotice meta={byDay.data?.meta} />
+      {/* ── report identity: exactly which numbers these are ── */}
+      <header className="surface flex flex-wrap items-start justify-between gap-3 px-4 py-3">
+        <div className="min-w-0 space-y-1">
+          <h2 className="text-base font-extrabold text-slate-900">{t("salesReports.report.title")}</h2>
+          <p dir="ltr" className="text-xs font-bold tabular-nums text-slate-600 text-start">
+            {filters.from} → {filters.to}
+          </p>
+          <div className="flex flex-wrap items-center gap-1.5 text-[11px] font-bold text-slate-500">
+            <Badge tone="neutral">
+              {filters.businessDay ? t("salesReports.topbar.businessDay") : t("salesReports.topbar.calendarDay")}
+            </Badge>
+            <Badge tone="neutral">
+              {filters.taxIncl ? t("salesReports.topbar.taxIncl") : t("salesReports.topbar.taxExcl")}
+            </Badge>
+            {activeFilterChips.map((chip) => (
+              <Badge key={chip} tone="info">
+                {chip}
+              </Badge>
+            ))}
+            {freshness && (
+              <span className="text-slate-400">
+                {t("salesReports.topbar.refreshedAt")}: {formatDateTime(freshness)}
+              </span>
+            )}
+          </div>
+        </div>
+        <Button variant="secondary" size="sm" onClick={() => window.print()} className="print:hidden">
+          <Printer className="h-4 w-4" aria-hidden="true" />
+          {t("salesReports.report.print")}
+        </Button>
+      </header>
 
-      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-6" data-testid="kpi-row">
-        {KPI_CARDS.map(({ id, icon, tone, format }) => (
-          <MetricCard
-            key={id}
-            label={t(`salesReports.metrics.${id}`)}
-            value={kpiValue(kpis.data, kpiRow, id, format)}
-            delta={deltaFor(id)}
-            icon={icon}
-            tone={tone}
-            explain={metricExplain(t, registry.data, id)}
-          />
-        ))}
+      {/* ── operational counters (the harness's kpi-row anchor) ── */}
+      <div className="surface overflow-hidden">
+        <Figures
+          testId="kpi-row"
+          items={[
+            { id: "orders", label: t("salesReports.metrics.orders"), value: count(f("orders")) },
+            { id: "avg_ticket", label: t("salesReports.metrics.avg_ticket"), value: money(f("avg_ticket")) },
+            { id: "qty_sold", label: t("salesReports.metrics.qty_sold"), value: count(f("qty_sold")) },
+            { id: "avg_items_per_order", label: t("salesReports.metrics.avg_items_per_order"), value: count(f("avg_items_per_order")) },
+            { id: "guests", label: t("salesReports.metrics.guests"), value: count(f("guests")) },
+          ]}
+        />
       </div>
 
-      <Suspense fallback={<Skeleton className="h-80" />}>
-        <ChartKit>
-          {({ R, ChartCard }) => (
-            <div className="grid gap-4 xl:grid-cols-2">
-              <ChartCard
-                title={t("salesReports.metrics.net_ex_vat")}
-                subtitle={t(`salesReports.dims.${dayDim}`)}
-                isEmpty={dayRows.every((r) => r.net == null)}
-                emptyLabel={t("salesReports.charts.empty")}
-                tableLabel={t("salesReports.charts.showTable")}
-                tableCaption={`${t("salesReports.metrics.net_ex_vat")} — ${t(`salesReports.dims.${dayDim}`)}`}
-                tableColumns={[
-                  { key: "label", label: t(`salesReports.dims.${dayDim}`) },
-                  { key: "netText", label: t("salesReports.metrics.net_ex_vat") },
-                  ...(hasCompare ? [{ key: "compareText", label: t("salesReports.topbar.compare") }] : []),
-                ]}
-                tableRows={dayRows.map((r) => ({
-                  label: r.label,
-                  netText: r.net == null ? "—" : formatCurrency(r.net),
-                  compareText: r.compareNet == null ? "—" : formatCurrency(r.compareNet),
-                }))}
-                onPointClick={drillToDay}
-              >
-                <R.LineChart data={dayRows} margin={{ top: 8, left: 8, right: 8 }}>
-                  <R.CartesianGrid stroke={palette.grid} vertical={false} />
-                  <R.XAxis
-                    dataKey="day"
-                    reversed={rtl.xAxisReversed}
-                    tick={{ fontSize: 11, fill: palette.axis }}
-                    tickFormatter={(v: string) => String(v).slice(5)}
-                  />
-                  <R.YAxis tick={{ fontSize: 11, fill: palette.axis }} tickFormatter={rtl.tickFormatterNumber} width={64} />
-                  <R.Tooltip contentStyle={rtl.tooltipStyle} formatter={(value) => rtl.tickFormatterCurrency(value)} />
-                  <R.Line
-                    type="monotone"
-                    dataKey="net"
-                    name={t("salesReports.metrics.net_ex_vat")}
-                    stroke={palette.series[0]}
-                    strokeWidth={2}
-                    dot={false}
-                  />
-                  {hasCompare && (
-                    <R.Line
-                      type="monotone"
-                      dataKey="compareNet"
-                      name={t("salesReports.topbar.compare")}
-                      stroke={palette.series[2]}
-                      strokeWidth={2}
-                      strokeDasharray="6 4"
-                      dot={false}
-                    />
-                  )}
-                </R.LineChart>
-              </ChartCard>
+      <div className="grid gap-4 xl:grid-cols-2">
+        <Section
+          title={t("salesReports.report.sectionSummary")}
+          note={t("salesReports.report.sectionSummaryNote")}
+        >
+          <Statement
+            lines={statementLines}
+            showCompare={hasCompare}
+            compareLabel={t("salesReports.topbar.compare")}
+          />
+        </Section>
 
-              <ChartCard
-                title={t("salesReports.metrics.net_ex_vat")}
-                subtitle={t("salesReports.dims.channel")}
-                isEmpty={channelRows.length === 0 || channelRows.every((r) => r.net == null)}
-                emptyLabel={t("salesReports.charts.empty")}
-                tableLabel={t("salesReports.charts.showTable")}
-                tableCaption={`${t("salesReports.metrics.net_ex_vat")} — ${t("salesReports.dims.channel")}`}
-                tableColumns={[
-                  { key: "label", label: t("salesReports.dims.channel") },
-                  { key: "netText", label: t("salesReports.metrics.net_ex_vat") },
-                ]}
-                tableRows={channelRows.map((r) => ({
-                  label: r.label,
-                  netText: r.net == null ? "—" : formatCurrency(r.net),
-                }))}
-                onPointClick={drillToChannel}
-              >
-                <R.BarChart data={channelRows} margin={{ top: 8, left: 8, right: 8 }}>
-                  <R.CartesianGrid stroke={palette.grid} vertical={false} />
-                  <R.XAxis dataKey="label" reversed={rtl.xAxisReversed} tick={{ fontSize: 11, fill: palette.axis }} />
-                  <R.YAxis tick={{ fontSize: 11, fill: palette.axis }} tickFormatter={rtl.tickFormatterNumber} width={64} />
-                  <R.Tooltip contentStyle={rtl.tooltipStyle} formatter={(value) => rtl.tickFormatterCurrency(value)} />
-                  <R.Bar dataKey="net" name={t("salesReports.metrics.net_ex_vat")} fill={palette.series[0]} radius={[6, 6, 0, 0]} />
-                </R.BarChart>
-              </ChartCard>
-            </div>
-          )}
-        </ChartKit>
-      </Suspense>
+        <Section title={t("salesReports.report.sectionTax")} note={t("salesReports.report.sectionTaxNote")}>
+          <Breakdown
+            head={[t("salesReports.dims.vat_category"), t("salesReports.report.taxableBase"), t("salesReports.metrics.vat_amount")]}
+            rows={taxRows}
+            total={{
+              key: "total",
+              label: t("salesReports.report.totalRow"),
+              values: [
+                { id: "base", text: money(netExVat) },
+                { id: "tax", text: money(f("vat_amount")) },
+              ],
+            }}
+            emptyLabel={t("salesReports.states.empty")}
+          />
+        </Section>
 
-      <DataTable<DayRow>
-        columns={columns}
-        rows={dayRows}
-        getRowId={(r) => r.day}
-        initialSort={{ columnId: "day", dir: "asc" }}
-        onRowClick={(r) => patch({ from: r.day, to: r.day, preset: "custom" }, { push: true })}
-        emptyTitle={t("salesReports.states.empty")}
-      />
+        <Section
+          title={t("salesReports.report.sectionCollections")}
+          note={t("salesReports.report.sectionCollectionsNote")}
+          action={
+            settlementDiff == null ? null : (
+              <Badge tone={balanced ? "success" : "warning"}>
+                {balanced
+                  ? t("salesReports.report.balanced")
+                  : `${t("salesReports.report.difference")}: ${formatCurrency(settlementDiff)}`}
+              </Badge>
+            )
+          }
+        >
+          <Breakdown
+            head={[
+              t("salesReports.dims.payment_method"),
+              t("salesReports.metrics.payments_in"),
+              t("salesReports.metrics.refunds_out"),
+              t("salesReports.metrics.net_collections"),
+              t("salesReports.report.share"),
+            ]}
+            rows={paymentRows}
+            total={{
+              key: "total",
+              label: t("salesReports.report.totalRow"),
+              values: [
+                { id: "in", text: money(f("payments_in")) },
+                { id: "out", text: money(f("refunds_out")) },
+                { id: "net", text: money(netCollections) },
+                { id: "share", text: netCollections == null ? "—" : percent(100) },
+              ],
+            }}
+            emptyLabel={t("salesReports.states.empty")}
+          />
+        </Section>
+
+        <Section title={t("salesReports.report.sectionReturns")} note={t("salesReports.report.sectionReturnsNote")}>
+          <Breakdown
+            head={[
+              t("salesReports.report.item"),
+              t("salesReports.report.countCol"),
+              t("salesReports.report.valueCol"),
+              t("salesReports.report.share"),
+            ]}
+            rows={[
+              {
+                key: "returns",
+                label: t("salesReports.metrics.returns_value"),
+                values: [
+                  { id: "n", text: count(f("returns_count")) },
+                  { id: "v", text: money(returnsValue) },
+                  { id: "s", text: percent(share(returnsValue)) },
+                ],
+              },
+              {
+                key: "voids",
+                label: t("salesReports.metrics.voids_value"),
+                values: [
+                  { id: "n", text: count(f("voids_count")) },
+                  { id: "v", text: money(voidsValue) },
+                  { id: "s", text: percent(share(voidsValue)) },
+                ],
+              },
+            ]}
+            emptyLabel={t("salesReports.states.empty")}
+          />
+        </Section>
+      </div>
+
+      {showProfit && (
+        <Section title={t("salesReports.report.sectionProfit")} note={t("salesReports.report.sectionProfitNote")}>
+          <Statement
+            showCompare={hasCompare}
+            compareLabel={t("salesReports.topbar.compare")}
+            lines={[
+              { id: "net", label: t("salesReports.metrics.net_ex_vat"), value: netExVat, compare: c("net_ex_vat") },
+              { id: "cogs", label: t("salesReports.metrics.cogs"), value: cogs, compare: c("cogs"), op: "sub", explain: metricExplain(t, registry.data, "cogs") },
+              { id: "profit", label: t("salesReports.metrics.gross_profit"), value: grossProfit, compare: c("gross_profit"), op: "eq", strong: true, explain: metricExplain(t, registry.data, "gross_profit") },
+            ]}
+          />
+          <div className="border-t border-slate-100 px-4 py-2.5 text-sm">
+            <span className="font-bold text-slate-600">{t("salesReports.metrics.margin_pct")}</span>
+            <span dir="ltr" className="ms-2 font-extrabold tabular-nums text-slate-900">
+              {percent(f("margin_pct"))}
+            </span>
+          </div>
+        </Section>
+      )}
+
+      <Section title={t("salesReports.report.sectionDaily")} note={t(`salesReports.dims.${dayDim}`)}>
+        <DataTable<DayRow>
+          columns={dayColumns}
+          rows={dayRows}
+          getRowId={(r) => r.day}
+          initialSort={{ columnId: "day", dir: "asc" }}
+          onRowClick={(r) => patch({ from: r.day, to: r.day, preset: "custom" }, { push: true })}
+          emptyTitle={t("salesReports.states.empty")}
+        />
+      </Section>
     </section>
   );
 }

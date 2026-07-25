@@ -72,6 +72,11 @@ const STEPS = [
   // The image-version tests assert the exact SUBSTRING(SHA2(image_data,256),1,8)
   // token value (Node recomputes the same SHA-256). They were NOT gate steps, so
   // the SHA1→SHA2 regression they cover slipped straight to prod — now wired in.
+  // The owner's requirement as arithmetic, end to end on a real DB: a 16.00
+  // NET item must be 16.00 + 2.40 = 18.40 on screen, in sales.total_final, in
+  // tax_subtotals_json and in the GL. Every OTHER test seeds is_tax_inclusive=1,
+  // a state no production row is in — which is how the mismatch shipped.
+  { id: 'backend:vat-money-path', cmd: NPM, args: ['run', 'test:vat-money-path'] },
   { id: 'backend:item-image', cmd: NPM, args: ['run', 'test:item-image'] },
   { id: 'backend:product-images', cmd: NPM, args: ['run', 'test:product-images-upload'] },
   { id: 'backend:item-assignments', cmd: NPM, args: ['run', 'test:item-assignments'] },

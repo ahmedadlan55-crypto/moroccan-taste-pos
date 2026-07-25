@@ -58,13 +58,16 @@ async function classify(conn) {
     out.creditNotes = { total: Number(cn[0].n) };
   }
   // duplicate customers by normalized phone / VAT (report only)
+  // `groups` is a reserved word from MySQL 8.0 on (window-frame GROUPS), so the
+  // alias must be quoted — unquoted it is a syntax error on the production
+  // server (9.6) and the whole backfill aborts before classifying anything.
   const [dupPhone] = await conn.query(
-    `SELECT COUNT(*) AS groups FROM (
+    `SELECT COUNT(*) AS \`groups\` FROM (
         SELECT REPLACE(REPLACE(REPLACE(phone,' ',''),'-',''),'+','') AS p, COUNT(*) c
           FROM customers WHERE phone IS NOT NULL AND phone<>'' AND deleted_at IS NULL
          GROUP BY p HAVING c > 1) t`);
   const [dupVat] = await conn.query(
-    `SELECT COUNT(*) AS groups FROM (
+    `SELECT COUNT(*) AS \`groups\` FROM (
         SELECT vat_number, COUNT(*) c FROM customers WHERE vat_number IS NOT NULL AND vat_number<>'' AND deleted_at IS NULL
          GROUP BY vat_number HAVING c > 1) t`);
   out.duplicateCustomers = { byPhone: Number(dupPhone[0].groups), byVat: Number(dupVat[0].groups) };

@@ -159,12 +159,19 @@ export default function Executive() {
   const base = buildFiltersBody(filters);
   const compare = compareSpec(filters);
 
+  // E2E-wave fix: the by-day grouping follows the date-basis toggle (the
+  // dayDim pattern Taxes/Shifts/Discounts already use). It was hardcoded to
+  // business_day, so switching to the calendar basis changed only the WHERE
+  // basis while rows stayed grouped by business day — F8-style midnight
+  // orders kept reporting under the wrong day for the selected basis.
+  const dayDim = filters.businessDay ? "business_day" : "calendar_day";
+
   const kpiBody: AnalyticsQueryBody = { ...base, metrics: [...KPI_METRICS], dimensions: [], ...(compare ? { compare } : {}) };
   const byDayBody: AnalyticsQueryBody = {
     ...base,
     metrics: ["net_ex_vat", "orders", "avg_ticket", "discounts_total"],
-    dimensions: ["business_day"],
-    sort: [{ by: "business_day", dir: "asc" }],
+    dimensions: [dayDim],
+    sort: [{ by: dayDim, dir: "asc" }],
     ...(compare ? { compare } : {}),
   };
   const byChannelBody: AnalyticsQueryBody = {
@@ -212,7 +219,7 @@ export default function Executive() {
     () => [
       {
         id: "day",
-        header: t("salesReports.dims.business_day"),
+        header: t(`salesReports.dims.${dayDim}`),
         accessor: (r) => r.day,
         cell: (r) => r.label,
         pinStart: true,
@@ -252,7 +259,7 @@ export default function Executive() {
         sortable: true,
       },
     ],
-    [t],
+    [t, dayDim],
   );
 
   const isLoading = registry.isLoading || kpis.isLoading || byDay.isLoading || byChannel.isLoading;
@@ -315,13 +322,13 @@ export default function Executive() {
             <div className="grid gap-4 xl:grid-cols-2">
               <ChartCard
                 title={t("salesReports.metrics.net_ex_vat")}
-                subtitle={t("salesReports.dims.business_day")}
+                subtitle={t(`salesReports.dims.${dayDim}`)}
                 isEmpty={dayRows.every((r) => r.net == null)}
                 emptyLabel={t("salesReports.charts.empty")}
                 tableLabel={t("salesReports.charts.showTable")}
-                tableCaption={`${t("salesReports.metrics.net_ex_vat")} — ${t("salesReports.dims.business_day")}`}
+                tableCaption={`${t("salesReports.metrics.net_ex_vat")} — ${t(`salesReports.dims.${dayDim}`)}`}
                 tableColumns={[
-                  { key: "label", label: t("salesReports.dims.business_day") },
+                  { key: "label", label: t(`salesReports.dims.${dayDim}`) },
                   { key: "netText", label: t("salesReports.metrics.net_ex_vat") },
                   ...(hasCompare ? [{ key: "compareText", label: t("salesReports.topbar.compare") }] : []),
                 ]}

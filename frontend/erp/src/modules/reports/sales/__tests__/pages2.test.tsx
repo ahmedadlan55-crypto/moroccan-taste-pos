@@ -242,8 +242,11 @@ describe("Discounts page", () => {
 
 describe("Voids page", () => {
   const KPI = "voids_count,voids_value,returns_count,returns_value,qty_returned";
-  const DETAIL = "returns_count,returns_value,qty_returned,return_rate_by_cashier,void_rate_by_cashier";
-  it("renders KPIs, the by-reason chart table and the reason→cashier table with a warning tone on a high rate", async () => {
+  // Plannable per-cashier detail (E2E-wave fix): ORDER-fact void measures by
+  // cashier — the old return-fact × [return_reason, cashier] grouping is
+  // impossible on the real planner (no fact carries both dimensions).
+  const DETAIL = "voids_count,voids_value,void_rate_by_cashier";
+  it("renders KPIs, the by-reason chart table and the per-cashier voids table with a warning tone on a high rate", async () => {
     dispatch({
       [`${KPI}@`]: result([], {
         totals: { voids_count: 4, voids_value: 180, returns_count: 6, returns_value: 240, qty_returned: 9 },
@@ -251,13 +254,16 @@ describe("Voids page", () => {
       "returns_count,returns_value,qty_returned@return_reason": result([
         row(["damaged"], ["تالف"], { returns_count: 4, returns_value: 160, qty_returned: 6 }),
       ]),
-      [`${DETAIL}@return_reason|cashier`]: result([
-        row(["damaged", "u1"], ["تالف", "سارة"], {
-          returns_count: 4,
-          returns_value: 160,
-          qty_returned: 6,
-          return_rate_by_cashier: 8,
-          void_rate_by_cashier: null,
+      [`${DETAIL}@cashier`]: result([
+        row(["u1"], ["سارة"], {
+          voids_count: 3,
+          voids_value: 120,
+          void_rate_by_cashier: 8,
+        }),
+        row(["u2"], ["أحمد"], {
+          voids_count: 1,
+          voids_value: 40,
+          void_rate_by_cashier: null, // masked/incomputable reads "—", never 0
         }),
       ]),
     });

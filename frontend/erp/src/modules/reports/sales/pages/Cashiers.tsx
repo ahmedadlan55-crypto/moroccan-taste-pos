@@ -29,13 +29,17 @@ import {
 import { useAnalyticsQuery, useAnalyticsRegistry } from "../lib/useAnalyticsQuery";
 
 const SEGMENT = "cashiers";
+// E2E-wave fix: return_rate_by_cashier is dropped — its returns_count input
+// lives on the RETURN fact, which does not carry the cashier dimension, so
+// the planner refuses the grouping (ANALYTICS_UNSUPPORTED_COMBINATION 422)
+// and this page errored on every load. Discount/void rates are order-fact
+// inputs and group by cashier fine.
 const METRICS = [
   "orders",
   "net_ex_vat",
   "avg_ticket",
   "discount_rate_by_cashier",
   "void_rate_by_cashier",
-  "return_rate_by_cashier",
 ] as const;
 const TOP_N = 10;
 
@@ -128,7 +132,6 @@ interface CashierRow {
   avgTicket: number | null;
   discountRate: number | null;
   voidRate: number | null;
-  returnRate: number | null;
 }
 
 export default function Cashiers() {
@@ -165,7 +168,6 @@ export default function Cashiers() {
         avgTicket: displayMetric(row, "avg_ticket"),
         discountRate: displayMetric(row, "discount_rate_by_cashier"),
         voidRate: displayMetric(row, "void_rate_by_cashier"),
-        returnRate: displayMetric(row, "return_rate_by_cashier"),
       })),
     [query.data],
   );
@@ -174,7 +176,6 @@ export default function Cashiers() {
     () => ({
       discountRate: p75(cashierRows.map((r) => r.discountRate)),
       voidRate: p75(cashierRows.map((r) => r.voidRate)),
-      returnRate: p75(cashierRows.map((r) => r.returnRate)),
     }),
     [cashierRows],
   );
@@ -237,15 +238,7 @@ export default function Cashiers() {
         numeric: true,
         sortable: true,
       },
-      {
-        id: "returnRate",
-        header: t("salesReports.metrics.return_rate_by_cashier"),
-        accessor: (r) => r.returnRate,
-        cell: (r) => (r.returnRate == null ? "—" : fmtPercent(r.returnRate)),
-        cellTone: warnTone((r) => r.returnRate, thresholds.returnRate),
-        numeric: true,
-        sortable: true,
-      },
+      // return_rate_by_cashier column removed — see the METRICS note above.
     ];
   }, [t, thresholds]);
 

@@ -167,7 +167,7 @@ export default function Explorer() {
   const rtl = useChartsRtl();
   const navigate = useNavigate();
   const location = useLocation();
-  const { filters, patch } = useUrlFilters(analyticsFilterCodec);
+  const { filters } = useUrlFilters(analyticsFilterCodec);
   const page = useUrlFilters(explorerCodec);
   const registry = useAnalyticsRegistry();
   const [expanded, setExpanded] = useState<Set<string>>(() => new Set());
@@ -260,19 +260,25 @@ export default function Explorer() {
       navigate(segmentHref(location.search, "orders", { cashierId: key }));
       return;
     }
-    // 1) apply the clicked key as a shared filter (every curated dimension now
-    //    has a codec param — wave 4 added the last four).
-    if (by === "branch") patch({ branchId: [key] }, { push: true });
-    else if (by === "business_day") patch({ from: key, to: key, preset: "custom" }, { push: true });
-    else if (by === "channel") patch({ channel: [key] }, { push: true });
-    else if (by === "order_type") patch({ orderType: [key] }, { push: true });
-    else if (by === "payment_method") patch({ paymentMethod: [key] }, { push: true });
-    else if (by === "hour") patch({ hour: key }, { push: true });
-    else if (by === "menu_item") patch({ menuItemId: [key] }, { push: true });
-    // 2) advance `by` along the chain (dimensions outside the chain only pin).
+    // ONE composed navigation (E2E-wave fix): this used to be two back-to-back
+    // patches — shared-codec patch({branchId...}) then page.patch({by...}) —
+    // and react-router's setSearchParams resolves each functional update from
+    // the location its own hook captured, so in one tick the SECOND call wrote
+    // over the first: the drill advanced `by` but silently DROPPED the filter
+    // it had just pinned. Merging both changes into one URL fixes the drill
+    // and keeps it a single history entry the user can Back out of.
+    const extra: Record<string, string> = {};
+    if (by === "branch") extra.branchId = key;
+    else if (by === "business_day") { extra.from = key; extra.to = key; extra.preset = "custom"; }
+    else if (by === "channel") extra.channel = key;
+    else if (by === "order_type") extra.orderType = key;
+    else if (by === "payment_method") extra.paymentMethod = key;
+    else if (by === "hour") extra.hour = key;
+    else if (by === "menu_item") extra.menuItemId = key;
+    // Advance `by` along the chain (dimensions outside the chain only pin).
     const at = DRILL_CHAIN.indexOf(by);
-    if (at === -1 || at === DRILL_CHAIN.length - 1) return;
-    page.patch({ by: DRILL_CHAIN[at + 1] });
+    if (at !== -1 && at < DRILL_CHAIN.length - 1) extra.by = DRILL_CHAIN[at + 1];
+    navigate(segmentHref(location.search, "explorer", extra));
   };
 
   const onRowClick = (row: FlatPivotRow) => {

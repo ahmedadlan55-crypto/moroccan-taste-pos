@@ -8,6 +8,12 @@ import { defineConfig } from "@playwright/test";
 //     npm --prefix frontend/erp run build
 // The admin JWT is signed by e2e/accounting-global-setup.ts into e2e/.token and
 // injected into localStorage (pos_token) by the spec's addInitScript.
+// E2E_PORT (optional): run the whole suite on a non-default port so parallel
+// agent sessions on one machine don't fight over :3027 (observed during the
+// sales-hub sprint: two sessions' webServers + DB clones stomping each other).
+// Defaults preserve the canonical 3027 exactly.
+const E2E_PORT = Number(process.env.E2E_PORT) || 3027;
+
 export default defineConfig({
   testDir: "./e2e/erp",
   testMatch: "**/*.spec.ts",
@@ -30,7 +36,7 @@ export default defineConfig({
   globalSetup: "./e2e/erp-global-setup.ts",
   outputDir: "./artifacts/e2e/erp/_output",
   use: {
-    baseURL: "http://127.0.0.1:3027",
+    baseURL: `http://127.0.0.1:${E2E_PORT}`,
     // Diagnostics kept ON for failures only: a trace + video + the failure
     // screenshot is the difference between "it went red again" and an actual
     // root cause. `retain-on-failure` costs nothing on a green run.
@@ -43,14 +49,14 @@ export default defineConfig({
     // boot migrations apply to the FINAL clone (mirrors production: existing DB →
     // node server.js migrates on boot). See scripts/e2e/provision-and-serve.js.
     command: "node scripts/e2e/provision-and-serve.js",
-    port: 3027,
+    port: E2E_PORT,
     reuseExistingServer: false,
     // Covers clone (~42s) + boot migrations + listen with headroom, and stays
     // above provision-and-serve.js's 240s clone timeout so a slow clone fails as
     // a clone error, not an opaque Playwright port timeout.
     timeout: 300_000,
     env: {
-      PORT: "3027",
+      PORT: String(E2E_PORT),
       NODE_ENV: "development",
       // ISOLATION — the server under test talks to a throwaway CLONE of the
       // development database, recreated by globalSetup before every run.

@@ -27,7 +27,15 @@ import {
 import { useAnalyticsQuery, useAnalyticsRegistry } from "../lib/useAnalyticsQuery";
 
 const SEGMENT = "modifiers";
-const METRICS = ["modifier_qty", "modifiers_per_item", "attach_rate"] as const;
+// TWO plannable queries (E2E-wave fix): attach_rate / modifiers_per_item are
+// CROSS-FACT derived metrics (modifier fact ÷ line fact `qty_sold`), and the
+// planner rightly refuses to group a line-fact statement by modifier_kind
+// (ANALYTICS_UNSUPPORTED_COMBINATION 422 — the original single query errored
+// on every load). So: the ratios render as OVERALL KPIs (dimensionless — both
+// facts can compute grand totals), and the per-kind breakdown carries the
+// modifier-fact-only measures (qty + lines).
+const KPI_METRICS = ["modifier_qty", "modifiers_per_item", "attach_rate"] as const;
+const KIND_METRICS = ["modifier_qty", "modifier_lines"] as const;
 /** The one modifier dimension in the registry: modifier_kind (m.kind). */
 const DIMS = ["modifier_kind"] as const;
 
@@ -94,8 +102,7 @@ interface KindRow {
   key: string;
   label: string;
   qty: number | null;
-  perItem: number | null;
-  attach: number | null;
+  lines: number | null;
 }
 
 export default function Modifiers() {
@@ -107,9 +114,15 @@ export default function Modifiers() {
 
   const base = buildFiltersBody(filters);
   const compare = compareSpec(filters);
-  const body: AnalyticsQueryBody = {
+  const kpiBody: AnalyticsQueryBody = {
     ...base,
-    metrics: [...METRICS],
+    metrics: [...KPI_METRICS],
+    dimensions: [],
+    ...(compare ? { compare } : {}),
+  };
+  const kindBody: AnalyticsQueryBody = {
+    ...base,
+    metrics: [...KIND_METRICS],
     dimensions: [...DIMS],
     sort: [{ by: "modifier_qty", dir: "desc" }],
     ...(compare ? { compare } : {}),
@@ -118,7 +131,8 @@ export default function Modifiers() {
   // Data queries wait for a VALID metric catalog: without one there is nothing
   // to label or explain, and a disabled query never fires a doomed request.
   const catalogReady = registry.data != null && Array.isArray(registry.data.metrics);
-  const query = useAnalyticsQuery(SEGMENT, body, { enabled: catalogReady });
+  const kpiQuery = useAnalyticsQuery(`${SEGMENT}-kpis`, kpiBody, { enabled: catalogReady });
+  const query = useAnalyticsQuery(SEGMENT, kindBody, { enabled: catalogReady });
 
   const kindRows = useMemo<KindRow[]>(
     () =>
@@ -126,8 +140,7 @@ export default function Modifiers() {
         key: String(row.keys[0] ?? ""),
         label: row.labels[0] ?? String(row.keys[0] ?? ""),
         qty: displayMetric(row, "modifier_qty"),
-        perItem: displayMetric(row, "modifiers_per_item"),
-        attach: displayMetric(row, "attach_rate"),
+        lines: displayMetric(row, "modifier_lines"),
       })),
     [query.data],
   );
@@ -151,18 +164,12 @@ export default function Modifiers() {
         sortable: true,
       },
       {
-        id: "perItem",
-        header: t("salesReports.metrics.modifiers_per_item"),
-        accessor: (r) => r.perItem,
-        cell: (r) => (r.perItem == null ? "—" : formatNumber(r.perItem)),
-        numeric: true,
-        sortable: true,
-      },
-      {
-        id: "attach",
-        header: t("salesReports.metrics.attach_rate"),
-        accessor: (r) => r.attach,
-        cell: (r) => (r.attach == null ? "—" : fmtPercent(r.attach)),
+        // Per-kind ratios are not computable (cross-fact — see KPI_METRICS
+        // note); the honest per-kind measures are qty + line count.
+        id: "lines",
+        header: t("salesReports.metrics.modifier_lines"),
+        accessor: (r) => r.lines,
+        cell: (r) => (r.lines == null ? "—" : formatNumber(r.lines)),
         numeric: true,
         sortable: true,
       },
@@ -170,8 +177,8 @@ export default function Modifiers() {
     [t],
   );
 
-  if (registry.isLoading || query.isLoading) return <LoadingState rows={6} />;
-  const loadError = registry.error ?? query.error;
+  if (registry.isLoading || kpiQuery.isLoading || query.isLoading) return <LoadingState rows={6} />;
+  const loadError = registry.error ?? kpiQuery.error ?? query.error;
   if (loadError) {
     return (
       <ErrorState
@@ -179,6 +186,7 @@ export default function Modifiers() {
         title={t("salesReports.states.loadFailed")}
         onRetry={() => {
           void registry.refetch();
+          void kpiQuery.refetch();
           void query.refetch();
         }}
       />
@@ -199,7 +207,7 @@ export default function Modifiers() {
 
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3" data-testid="kpi-row">
         {kpis.map(({ id, icon, tone, format }) => {
-          const v = totalValue(query.data, id);
+          const v = totalValue(kpiQuery.data, id);
           return (
             <MetricCard
               key={id}
@@ -226,12 +234,12 @@ export default function Modifiers() {
               tableColumns={[
                 { key: "label", label: t("salesReports.dims.modifier_kind") },
                 { key: "qtyText", label: t("salesReports.metrics.modifier_qty") },
-                { key: "attachText", label: t("salesReports.metrics.attach_rate") },
+                { key: "linesText", label: t("salesReports.metrics.modifier_lines") },
               ]}
               tableRows={kindRows.map((r) => ({
                 label: r.label,
                 qtyText: r.qty == null ? "—" : formatNumber(r.qty),
-                attachText: r.attach == null ? "—" : fmtPercent(r.attach),
+                linesText: r.lines == null ? "—" : formatNumber(r.lines),
               }))}
             >
               <R.BarChart data={kindRows} margin={{ top: 8, left: 8, right: 8 }}>

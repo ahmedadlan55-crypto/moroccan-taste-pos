@@ -87,6 +87,60 @@ const SCREENS = [
 // react-query intervals and transitions still run normally.
 const FROZEN_CLOCK = new Date("2026-06-15T09:00:00.000Z");
 
+// ── Sales Analytics Hub baselines (wave W5c) ─────────────────────────────────
+// Three hub screens — executive (KPIs + line/bar), hours (weekday×hour
+// heatmap), profitability (menu-engineering quadrant) — AR, desktop + mobile
+// only (6 pinned baselines, per the sprint contract; the 16×4 health sweep in
+// sales-analytics.spec.ts covers the other viewports functionally).
+//
+// DETERMINISM:
+//   * the URL pins from/to to the E2E-SH seed window (2032-03) — the data
+//     under every pixel is the hand-computed salesHubSeed fixture, immune to
+//     dev-clone drift;
+//   * the clock is frozen (same FROZEN_CLOCK as above) so the date-picker
+//     inputs and any today-relative chrome cannot drift;
+//   * freshness timestamps: the hub container passes no `meta` into the
+//     TopBar, so the "آخر تحديث" watermark row does not render on these
+//     screens — nothing to mask TODAY. The masks below still pin the
+//     watermark's future home ([data-freshness-watermark], plus the KPI-row
+//     fallback) so the baseline cannot silently start diffing the moment a
+//     later wave wires meta through — a mask that matches nothing is legal;
+//   * recharts animates with JS (not CSS), which `animations: "disabled"`
+//     cannot stop — the fixed post-networkidle settle lets the ~1.4s chart
+//     intro finish before the capture.
+const HUB_SHOT_SEGMENTS = ["executive", "hours", "profitability"] as const;
+const HUB_SEED_QS = "?from=2032-03-01&to=2032-03-31";
+
+test("sales hub visual baseline [ar]", async ({ page }, testInfo) => {
+  test.skip(
+    !["desktop", "mobile"].includes(testInfo.project.name),
+    "hub baselines are pinned on desktop + mobile (sprint contract: 6 snapshots)",
+  );
+  test.setTimeout(240_000);
+  fs.mkdirSync(SHOTS, { recursive: true });
+  await page.clock.setFixedTime(FROZEN_CLOCK);
+  await login(page, "ar");
+  for (const segment of HUB_SHOT_SEGMENTS) {
+    await page.goto(`/app/reports/sales/${segment}${HUB_SEED_QS}`);
+    await waitRendered(page);
+    await page.waitForLoadState("networkidle", { timeout: 20_000 }).catch(() => {});
+    await page.evaluate(() => (document as any).fonts?.ready);
+    await page.waitForTimeout(1800); // recharts JS intro animation settle
+    await expect(page.locator("#main")).toBeVisible();
+    await expect(page).toHaveScreenshot(`hub-${segment}--ar.png`, {
+      animations: "disabled",
+      caret: "hide",
+      maxDiffPixelRatio: 0.01,
+      timeout: 20_000,
+      mask: [page.locator("[data-freshness-watermark]")],
+    });
+    await page.screenshot({
+      path: path.join(SHOTS, `hub-${segment}--ar--${testInfo.project.name}.png`),
+      fullPage: false,
+    });
+  }
+});
+
 for (const lang of ["ar", "en"] as const) {
   test(`visual baseline [${lang}]`, async ({ page }, testInfo) => {
     test.setTimeout(180_000);

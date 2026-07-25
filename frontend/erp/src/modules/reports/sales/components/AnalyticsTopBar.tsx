@@ -419,7 +419,10 @@ export function AnalyticsTopBar({ filters, patch, reset, meta, onRefresh, pageAc
             <Badge tone="warning">{t("salesReports.topbar.lateTx", { count: pendingDays })}</Badge>
           )}
           {watermark && (
-            <span className="text-xs font-bold text-slate-400">
+            // data-freshness-watermark: the visual-baseline masks target this
+            // attribute — a SERVER timestamp can never be pixel-stable, so the
+            // baselines blank it instead of photographing it.
+            <span data-freshness-watermark className="text-xs font-bold text-slate-400">
               {t("salesReports.topbar.refreshedAt", { time: formatDateTime(watermark) })}
             </span>
           )}

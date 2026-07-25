@@ -38,6 +38,37 @@ const path = require('path');
 
 const ROOT = path.join(__dirname, '..', '..');
 
+/**
+ * Sales-hub E2E fixture prefix. The E2E sales-analytics specs
+ * (e2e/erp/sales-analytics.spec.ts and friends) assert against
+ * tests/fixtures/salesHubSeed.js EXPECTED values under THIS prefix, in the
+ * seed's far-future 2032-03 window — disjoint from anything the dev clone
+ * holds, so the numbers are exact and can never drift with dev data.
+ */
+const SALES_HUB_E2E_PREFIX = 'E2E-SH';
+
+async function seedSalesHub(dbName) {
+  const mysql = require(path.join(ROOT, 'node_modules', 'mysql2', 'promise'));
+  const salesHubSeed = require(path.join(ROOT, 'tests', 'fixtures', 'salesHubSeed'));
+  const conn = await mysql.createConnection({
+    host: process.env.DB_HOST || 'localhost',
+    port: Number(process.env.DB_PORT) || 3306,
+    user: process.env.DB_USER || 'root',
+    password: process.env.DB_PASSWORD || '',
+    database: dbName,
+    multipleStatements: false,
+  });
+  try {
+    // cleanup-first makes this idempotent for E2E_SKIP_DB_PROVISION=1 reruns
+    // against a surviving clone; on a fresh clone it deletes nothing.
+    await salesHubSeed.cleanup(conn, SALES_HUB_E2E_PREFIX);
+    await salesHubSeed.seed(conn, SALES_HUB_E2E_PREFIX);
+    console.log(`[e2e-db] sales-hub fixtures seeded into ${dbName} (prefix ${SALES_HUB_E2E_PREFIX}, window 2032-03)`);
+  } finally {
+    await conn.end();
+  }
+}
+
 if (process.env.E2E_SKIP_DB_PROVISION === '1') {
   console.log('[e2e-db] provisioning SKIPPED (E2E_SKIP_DB_PROVISION=1) — reusing the existing clone');
 } else {
@@ -61,7 +92,13 @@ if (process.env.E2E_SKIP_DB_PROVISION === '1') {
     console.error(`[e2e-db] REFUSING: server DB "${SERVER_DB}" is not an _e2e clone name — refusing to guess a provisioning source/target.`);
     process.exit(2);
   }
-  const SOURCE_DB = SERVER_DB.replace(/_e2e$/, '');
+  // E2E_SOURCE_DB (optional): explicit clone source. Lets a run use a
+  // NON-default clone name (e.g. E2E_DB_NAME=moroccan_taste_pos_w5c_e2e with
+  // E2E_SOURCE_DB=moroccan_taste_pos) so parallel agent sessions cannot drop
+  // and re-clone the SAME `_e2e` database out from under each other's running
+  // suite — the exact concurrent-session failure observed during the sales-hub
+  // sprint. Default behavior (derive source by stripping `_e2e`) is unchanged.
+  const SOURCE_DB = process.env.E2E_SOURCE_DB || SERVER_DB.replace(/_e2e$/, '');
   // Synchronous + fail-closed: if the clone can't be built, execFileSync throws,
   // this process exits non-zero, and Playwright reports the webServer as failed
   // instead of running the suite against a stale or missing database. The timeout
@@ -74,8 +111,42 @@ if (process.env.E2E_SKIP_DB_PROVISION === '1') {
   });
 }
 
-// server.js has no `require.main === module` guard: requiring it runs the boot
-// IIFE (autoInitDB → runMigrations → app.listen) in THIS process. That is
-// deliberate — Playwright's port-wait and teardown then target the real server
-// process directly, with no intermediate child to signal-forward to.
-require(path.join(ROOT, 'server.js'));
+// ── Sales-hub analytics fixtures (E2E wave) ─────────────────────────────────
+// Seeded AFTER the clone and BEFORE the server boots, in both the provision
+// and the skip path, so /app/reports/sales/* renders real deterministic
+// numbers in every run. salesHubSeed.seed applies the analytics schema itself
+// (idempotent), and server.js's own boot migrations run after — same order as
+// production (existing data, then migrate on boot).
+const SEED_DB = process.env.MYSQL_DATABASE || process.env.DB_NAME || '';
+if (!/_e2e$/.test(SEED_DB)) {
+  console.error(`[e2e-db] REFUSING to seed: "${SEED_DB}" is not an _e2e clone name.`);
+  process.exit(2);
+}
+
+// ── Analytics rollup worker: OFF for E2E ────────────────────────────────────
+// DECISION (documented for the delivery report): the worker's periodic tick
+// writes analytics_rollup_state's watermark, which (a) is a moving value baked
+// into QueryService's cache key and the freshness meta, and (b) would flip the
+// query source from 'live' to rollups MID-RUN the moment a rollup lands —
+// two independent nondeterminism sources for the visual baselines and the
+// exact-value assertions. Live-source queries with freshness watermark =
+// generatedAt are the deterministic configuration; rollup==live parity is
+// already proven by tests/integration/analyticsRollupParity.api.test.js, so
+// the gate loses no coverage by pinning the live path.
+process.env.ANALYTICS_DISABLE_WORKER = '1';
+
+seedSalesHub(SEED_DB)
+  .then(() => {
+    // server.js has no `require.main === module` guard: requiring it runs the
+    // boot IIFE (autoInitDB → runMigrations → app.listen) in THIS process. That
+    // is deliberate — Playwright's port-wait and teardown then target the real
+    // server process directly, with no intermediate child to signal-forward to.
+    require(path.join(ROOT, 'server.js'));
+  })
+  .catch((e) => {
+    // Fail-closed: a suite whose fixtures did not land must not start —
+    // sales-hub specs would render empty screens and fail with misleading
+    // "no data" symptoms instead of one clear provisioning error.
+    console.error('[e2e-db] sales-hub seeding FAILED:', e && e.message);
+    process.exit(1);
+  });

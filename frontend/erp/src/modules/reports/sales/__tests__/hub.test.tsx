@@ -26,6 +26,15 @@ vi.mock("@/shared/api", async (importOriginal) => {
     apiClient: {
       ...actual.apiClient,
       get: vi.fn(async () => []),
+      // POST /analytics/query — the REAL wire envelope with zero rows, so the
+      // executive segment settles into its healthy empty state. (The registry
+      // GET above yields an empty-but-valid catalog, which now enables the
+      // data queries — the adapter in lib/api.ts normalizes this envelope.)
+      post: vi.fn(async () => ({
+        success: true,
+        data: { columns: [], rows: [], subtotals: [], totals: { values: {} }, page: { limit: 50, offset: 0 } },
+        meta: { freshness: { watermark: null }, completeness: [], maskedMetrics: [] },
+      })),
     },
   };
 });

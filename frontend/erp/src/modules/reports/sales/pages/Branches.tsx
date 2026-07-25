@@ -110,7 +110,11 @@ export default function Branches() {
   const [expanded, setExpanded] = useState<Set<string>>(() => new Set());
 
   const hasCompare = filters.compare !== "none";
-  const metricIds = hasCompare ? ["net_ex_vat", "orders", "growth"] : ["net_ex_vat", "orders"];
+  // E2E-wave fix: `growth` is a PARAMETERIZED registry metric — requesting it
+  // plainly is a planner VALIDATION_ERROR (422), so with a compare mode on
+  // this page errored on load. The growth column now derives client-side from
+  // the compare envelope's per-row delta (see pivotRows below).
+  const metricIds = ["net_ex_vat", "orders"];
 
   const base = buildFiltersBody(filters);
   const compare = compareSpec(filters);
@@ -166,8 +170,19 @@ export default function Branches() {
     );
   }
 
-  const rows = query.data?.rows ?? [];
-  if (rows.length === 0) return <EmptyState title={t("salesReports.states.empty")} />;
+  const srcRows = query.data?.rows ?? [];
+  if (srcRows.length === 0) return <EmptyState title={t("salesReports.states.empty")} />;
+  // Client-derived growth column (see metricIds note): the compare envelope
+  // already carries the per-row growth % as delta.net_ex_vat.
+  const rows = hasCompare
+    ? srcRows.map((r) => ({
+        ...r,
+        values: {
+          ...r.values,
+          growth: typeof r.delta?.net_ex_vat === "number" ? r.delta.net_ex_vat : null,
+        },
+      }))
+    : srcRows;
 
   const toggle = (key: string) =>
     setExpanded((prev) => {

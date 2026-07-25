@@ -100,14 +100,242 @@ export interface AnalyticsRegistry {
   dimensions: Array<{ id: string; kind: string; groupable: boolean; requiresCap?: string }>;
 }
 
-/* ── calls ───────────────────────────────────────────────────── */
+/* ── wire adapter (E2E-wave integration fix) ─────────────────────
+ * The page-facing AnalyticsQueryBody / AnalyticsResult contracts above are
+ * what every hub page (and its unit tests) speak. The REAL backend speaks the
+ * PLANNER contract (lib/analytics/planner.js):
+ *   request  — { metrics, dimensions, range:{from,to}, dateBasis,
+ *               filters:[{dimension,op:'in',values}], compare:'prevPeriod'|
+ *               'prevYear', sort, limit, offset }   (NOT a filters OBJECT,
+ *               and `range` is REQUIRED — the old direct POST of the page
+ *               body 422'd on every single query)
+ *   response — { success, data:{ columns, rows:[{keys:{dim:v}, labels:{dim:l},
+ *               values, compare?, delta:{abs,pct}}], subtotals, totals:
+ *               {values,...}, page }, meta:{freshness, completeness:[],
+ *               maskedMetrics, defaultsApplied } }
+ * This section is the ONE translation point, both directions, so neither the
+ * pages nor the backend bend to the other.
+ *
+ * taxMode: the planner has no tax switch — the registry carries net_ex_vat
+ * AND net_incl_vat as separate metrics instead. "incl" therefore swaps
+ * net_ex_vat → net_incl_vat on the way out (metrics + sort) and maps the
+ * value back under the page's net_ex_vat slot on the way in, so the toggle
+ * changes the displayed figures honestly (the TopBar chip labels the basis).
+ */
 
-export function runAnalyticsQuery(body: AnalyticsQueryBody, signal?: AbortSignal): Promise<AnalyticsResult> {
-  return apiClient.post<AnalyticsResult>("/analytics/query", body, { signal });
+const TAX_INCL_SWAP: Record<string, string> = { net_ex_vat: "net_incl_vat" };
+
+/** filters-object key → registry dimension id (same table buildPlannerRequest uses). */
+const FILTER_DIMENSION_MAP: ReadonlyArray<[keyof AnalyticsQueryFilters, string]> = [
+  ["brandIds", "brand"],
+  ["branchIds", "branch"],
+  ["channels", "channel"],
+  ["orderTypes", "order_type"],
+  ["paymentMethods", "payment_method"],
+  ["hours", "hour"],
+  ["menuIds", "menu_item"],
+  ["categoryIds", "category"],
+  ["cashiers", "cashier"],
+];
+
+function metricSwapFor(body: AnalyticsQueryBody): Record<string, string> | null {
+  if (body.taxMode !== "incl") return null;
+  // Don't collide when a page legitimately requests net_incl_vat itself.
+  if (body.metrics.includes("net_incl_vat")) return null;
+  return TAX_INCL_SWAP;
 }
 
-export function fetchAnalyticsRegistry(signal?: AbortSignal): Promise<AnalyticsRegistry> {
-  return apiClient.get<AnalyticsRegistry>("/analytics/metadata", { signal });
+/** Page query body → the planner wire request the backend actually accepts. */
+export function queryBodyToWireRequest(body: AnalyticsQueryBody): AnalyticsPlannerRequest {
+  const swap = metricSwapFor(body);
+  const mapId = (id: string) => (swap && swap[id]) || id;
+  const f = body.filters;
+  const dimFilters: PlannerFilterSpec[] = [];
+  for (const [key, dimension] of FILTER_DIMENSION_MAP) {
+    const values = f[key];
+    if (Array.isArray(values) && values.length > 0) {
+      dimFilters.push({ dimension, op: "in", values: values as Array<string | number> });
+    }
+  }
+  for (const [dimension, values] of Object.entries(f.extra ?? {})) {
+    if (Array.isArray(values) && values.length > 0) dimFilters.push({ dimension, op: "in", values });
+  }
+  return {
+    metrics: body.metrics.map(mapId),
+    dimensions: body.dimensions,
+    range: { from: f.from, to: f.to },
+    dateBasis: body.dateBasis,
+    ...(dimFilters.length > 0 ? { filters: dimFilters } : {}),
+    ...(body.compare ? { compare: body.compare.mode } : {}),
+    ...(body.sort ? { sort: body.sort.map((s) => ({ ...s, by: mapId(s.by) })) } : {}),
+    ...(body.limit != null ? { limit: body.limit } : {}),
+    ...(body.offset != null ? { offset: body.offset } : {}),
+  };
+}
+
+type WireValues = Record<string, number | null | undefined>;
+interface WireRow {
+  keys?: Record<string, string | number | null>;
+  labels?: Record<string, string | null>;
+  values?: WireValues;
+  compare?: WireValues;
+  delta?: Record<string, number | { abs?: number | null; pct?: number | null } | null>;
+}
+
+function asNumberOrNull(v: unknown): number | null {
+  return typeof v === "number" && Number.isFinite(v) ? v : null;
+}
+
+/** Rename swapped metric keys back to the page ids (net_incl_vat → net_ex_vat). */
+function unswapValues(values: WireValues | undefined, swap: Record<string, string> | null): Record<string, number | null> {
+  const out: Record<string, number | null> = {};
+  if (!values) return out;
+  const back: Record<string, string> = {};
+  if (swap) for (const [pageId, wireId] of Object.entries(swap)) back[wireId] = pageId;
+  for (const [k, v] of Object.entries(values)) out[back[k] ?? k] = asNumberOrNull(v);
+  return out;
+}
+
+/** Server delta entries are {abs,pct}; the pages read one growth-% number. */
+function unswapDelta(
+  delta: WireRow["delta"],
+  swap: Record<string, string> | null,
+): Record<string, number | null> {
+  const out: Record<string, number | null> = {};
+  if (!delta) return out;
+  const back: Record<string, string> = {};
+  if (swap) for (const [pageId, wireId] of Object.entries(swap)) back[wireId] = pageId;
+  for (const [k, v] of Object.entries(delta)) {
+    const key = back[k] ?? k;
+    if (typeof v === "number") out[key] = Number.isFinite(v) ? v : null;
+    else if (v && typeof v === "object") out[key] = asNumberOrNull(v.pct);
+    else out[key] = null;
+  }
+  return out;
+}
+
+function wireRowToResultRow(row: WireRow, dims: string[], swap: Record<string, string> | null): AnalyticsResultRow {
+  const keys = dims.map((d) => (row.keys && row.keys[d] !== undefined ? row.keys[d] : null));
+  const labels = dims.map((d, i) => {
+    const label = row.labels ? row.labels[d] : null;
+    if (label != null && label !== "") return String(label);
+    return keys[i] == null ? "" : String(keys[i]);
+  });
+  const out: AnalyticsResultRow = { keys, labels, values: unswapValues(row.values, swap) };
+  if (row.compare) out.compare = unswapValues(row.compare, swap);
+  if (row.delta) out.delta = unswapDelta(row.delta, swap);
+  return out;
+}
+
+/** Backend envelope → the AnalyticsResult contract every hub page consumes. */
+export function normalizeAnalyticsResult(
+  raw: unknown,
+  dims: string[],
+  swap: Record<string, string> | null,
+): AnalyticsResult {
+  const env = (raw ?? {}) as { data?: unknown; meta?: unknown };
+  const data = (env.data && typeof env.data === "object" ? env.data : raw ?? {}) as {
+    columns?: unknown;
+    rows?: WireRow[];
+    subtotals?: WireRow[];
+    totals?: { values?: WireValues; compare?: WireValues; delta?: WireRow["delta"] } | WireValues;
+    page?: { limit?: number; offset?: number; total?: number };
+  };
+  const meta = (env.meta && typeof env.meta === "object" ? env.meta : {}) as {
+    freshness?: { watermark?: string | null; pendingDays?: number | null };
+    completeness?: unknown;
+    maskedMetrics?: string[];
+    defaultsApplied?: unknown;
+  };
+
+  const rows = (Array.isArray(data.rows) ? data.rows : []).map((r) => wireRowToResultRow(r, dims, swap));
+  const subtotals = (Array.isArray(data.subtotals) ? data.subtotals : []).map((r) =>
+    wireRowToResultRow(r, dims, swap),
+  );
+
+  // totals: {values:{...}} (wire) or an already-flat record (page-shape mocks).
+  const totalsSrc =
+    data.totals && typeof data.totals === "object" && "values" in data.totals
+      ? (data.totals as { values?: WireValues }).values
+      : (data.totals as WireValues | undefined);
+  const totals = unswapValues(totalsSrc, swap);
+  const totalsCompare =
+    data.totals && typeof data.totals === "object" && "compare" in data.totals
+      ? unswapValues((data.totals as { compare?: WireValues }).compare, swap)
+      : undefined;
+  const totalsDelta =
+    data.totals && typeof data.totals === "object" && "delta" in data.totals
+      ? unswapDelta((data.totals as { delta?: WireRow["delta"] }).delta, swap)
+      : undefined;
+
+  // Dimensionless queries: the server carries the single aggregate in totals
+  // and returns zero rows — synthesize the one row the KPI pages read.
+  if (dims.length === 0 && rows.length === 0 && Object.keys(totals).length > 0) {
+    const kpiRow: AnalyticsResultRow = { keys: [], labels: [], values: totals };
+    if (totalsCompare && Object.keys(totalsCompare).length > 0) kpiRow.compare = totalsCompare;
+    if (totalsDelta && Object.keys(totalsDelta).length > 0) kpiRow.delta = totalsDelta;
+    rows.push(kpiRow);
+  }
+
+  // completeness arrives as [] until the server computes it — that means
+  // "not measured", which must NOT render the historical-gap banner.
+  const completeness =
+    meta.completeness && !Array.isArray(meta.completeness) && typeof meta.completeness === "object"
+      ? (meta.completeness as AnalyticsResultMeta["completeness"])
+      : undefined;
+
+  const pendingDaysRaw = meta.freshness?.pendingDays;
+  const back: Record<string, string> = {};
+  if (swap) for (const [pageId, wireId] of Object.entries(swap)) back[wireId] = pageId;
+
+  return {
+    columns: Array.isArray(data.columns) ? (data.columns as AnalyticsColumn[]) : [],
+    rows,
+    ...(subtotals.length > 0 ? { subtotals } : {}),
+    totals,
+    ...(data.page
+      ? {
+          page: {
+            limit: Number(data.page.limit) || 0,
+            offset: Number(data.page.offset) || 0,
+            total: Number(data.page.total ?? rows.length) || rows.length,
+          },
+        }
+      : {}),
+    meta: {
+      freshness: {
+        watermark: meta.freshness?.watermark ?? null,
+        ...(typeof pendingDaysRaw === "number" && Number.isFinite(pendingDaysRaw)
+          ? { pendingDays: pendingDaysRaw }
+          : {}),
+      },
+      ...(completeness ? { completeness } : {}),
+      maskedMetrics: (Array.isArray(meta.maskedMetrics) ? meta.maskedMetrics : []).map(
+        (id) => back[id] ?? id,
+      ),
+      ...(meta.defaultsApplied !== undefined
+        ? { defaultsApplied: meta.defaultsApplied as Record<string, unknown> }
+        : {}),
+    },
+  };
+}
+
+/* ── calls ───────────────────────────────────────────────────── */
+
+export async function runAnalyticsQuery(body: AnalyticsQueryBody, signal?: AbortSignal): Promise<AnalyticsResult> {
+  const swap = metricSwapFor(body);
+  const raw = await apiClient.post<unknown>("/analytics/query", queryBodyToWireRequest(body), { signal });
+  return normalizeAnalyticsResult(raw, body.dimensions, swap);
+}
+
+export async function fetchAnalyticsRegistry(signal?: AbortSignal): Promise<AnalyticsRegistry> {
+  // GET /analytics/metadata answers {success, data:{metrics, dimensions, …}}.
+  const raw = await apiClient.get<unknown>("/analytics/metadata", { signal });
+  const data = unwrapData<AnalyticsRegistry>(raw, { metrics: [], dimensions: [] });
+  return {
+    metrics: Array.isArray(data.metrics) ? data.metrics : [],
+    dimensions: Array.isArray(data.dimensions) ? data.dimensions : [],
+  };
 }
 
 /* ── helpers ─────────────────────────────────────────────────── */
@@ -237,8 +465,11 @@ export interface AnalyticsPlannerRequest {
   range: { from: string; to: string };
   dateBasis: DateBasis;
   filters?: PlannerFilterSpec[];
+  /** Planner compare is a MODE string — the server derives the window itself. */
+  compare?: "prevPeriod" | "prevYear";
   sort?: AnalyticsSortSpec[];
   limit?: number;
+  offset?: number;
 }
 
 /** What a page contributes to its export: metrics/dimensions (+ sort/limit). */

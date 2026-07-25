@@ -2,8 +2,15 @@
 //
 // KPI row (voids_count/value, returns_count/value, qty_returned) + a bar of
 // returns value by return_reason (the reason dimension IS projected — see
-// lib/analytics/registry/dimensions.js) + a reason→cashier DataTable with
-// warning tones on high per-cashier return/void rates.
+// lib/analytics/registry/dimensions.js) + a per-CASHIER voids DataTable with
+// warning tones on high void rates.
+//
+// E2E-wave fix: the original detail table grouped RETURN-fact metrics by
+// [return_reason, cashier]. No fact carries both dimensions (return_reason is
+// return-fact-only, cashier is order/line-fact-only), so the planner refused
+// the combination (ANALYTICS_UNSUPPORTED_COMBINATION 422) and the table
+// errored on every load. The honest split: reasons stay on the return fact
+// (chart above), and the cashier table carries order-fact void measures.
 import { useMemo } from "react";
 import { Bar, BarChart, CartesianGrid, Tooltip as RechartsTooltip, XAxis, YAxis } from "recharts";
 import { Ban, PackageX, RotateCcw, Undo2, XCircle, type LucideIcon } from "lucide-react";
@@ -48,14 +55,11 @@ interface ReasonRow {
   qty_returned: number | null;
 }
 
-interface ReasonCashierRow {
+interface CashierVoidsRow {
   key: string;
-  reason: string;
   cashier: string;
-  returns_count: number | null;
-  returns_value: number | null;
-  qty_returned: number | null;
-  return_rate: number | null;
+  voids_count: number | null;
+  voids_value: number | null;
   void_rate: number | null;
 }
 
@@ -79,14 +83,13 @@ export default function Voids() {
     }),
     [base],
   );
-  // reason→cashier: the per-cashier rate metrics ride along where the server
-  // can compute them (void_rate is order-scoped, so it may arrive null on
-  // reason-grouped rows — rendered "—", never 0).
-  const reasonCashierBody = useMemo<AnalyticsQueryBody>(
+  // per-cashier voids (ORDER fact — the only fact carrying both the cashier
+  // dimension and the void measures; see the header note).
+  const cashierBody = useMemo<AnalyticsQueryBody>(
     () => ({
-      metrics: ["returns_count", "returns_value", "qty_returned", "return_rate_by_cashier", "void_rate_by_cashier"],
-      dimensions: ["return_reason", "cashier"],
-      sort: [{ by: "returns_value", dir: "desc" }],
+      metrics: ["voids_count", "voids_value", "void_rate_by_cashier"],
+      dimensions: ["cashier"],
+      sort: [{ by: "voids_value", dir: "desc" }],
       limit: 100,
       ...base,
     }),
@@ -95,7 +98,7 @@ export default function Voids() {
 
   const kpis = useAnalyticsQuery("voids-kpis", kpiBody);
   const byReason = useAnalyticsQuery("voids-reason", reasonBody);
-  const byReasonCashier = useAnalyticsQuery("voids-reason-cashier", reasonCashierBody);
+  const byCashier = useAnalyticsQuery("voids-cashier", cashierBody);
 
   if (byReason.isPending) return <LoadingState />;
   if (byReason.isError) return <ErrorState error={byReason.error} onRetry={() => byReason.refetch()} />;
@@ -113,52 +116,31 @@ export default function Voids() {
 
   const incomplete = byReason.data?.meta?.completeness?.complete === false;
 
-  const detailRows: ReasonCashierRow[] = (byReasonCashier.data?.rows ?? []).map((r, i) => ({
-    key: `${String(r.keys[0] ?? "")}|${String(r.keys[1] ?? "")}|${i}`,
-    reason: r.labels[0] ?? String(r.keys[0] ?? "—"),
-    cashier: r.labels[1] ?? String(r.keys[1] ?? "—"),
-    returns_count: displayMetric(r, "returns_count"),
-    returns_value: displayMetric(r, "returns_value"),
-    qty_returned: displayMetric(r, "qty_returned"),
-    return_rate: displayMetric(r, "return_rate_by_cashier"),
+  const detailRows: CashierVoidsRow[] = (byCashier.data?.rows ?? []).map((r, i) => ({
+    key: `${String(r.keys[0] ?? "")}|${i}`,
+    cashier: r.labels[0] ?? String(r.keys[0] ?? "—"),
+    voids_count: displayMetric(r, "voids_count"),
+    voids_value: displayMetric(r, "voids_value"),
     void_rate: displayMetric(r, "void_rate_by_cashier"),
   }));
 
-  const detailColumns: ColumnDef<ReasonCashierRow>[] = [
-    { id: "reason", header: t("salesReports.dims.return_reason"), accessor: (r) => r.reason, pinStart: true, width: 150 },
-    { id: "cashier", header: t("salesReports.dims.cashier"), accessor: (r) => r.cashier },
+  const detailColumns: ColumnDef<CashierVoidsRow>[] = [
+    { id: "cashier", header: t("salesReports.dims.cashier"), accessor: (r) => r.cashier, pinStart: true, width: 170 },
     {
-      id: "returns_count",
-      header: t("salesReports.metrics.returns_count"),
-      accessor: (r) => r.returns_count,
-      cell: (r) => (r.returns_count == null ? "—" : formatNumber(r.returns_count)),
+      id: "voids_count",
+      header: t("salesReports.metrics.voids_count"),
+      accessor: (r) => r.voids_count,
+      cell: (r) => (r.voids_count == null ? "—" : formatNumber(r.voids_count)),
       numeric: true,
       sortable: true,
     },
     {
-      id: "returns_value",
-      header: t("salesReports.metrics.returns_value"),
-      accessor: (r) => r.returns_value,
-      cell: (r) => (r.returns_value == null ? "—" : formatCurrency(r.returns_value)),
+      id: "voids_value",
+      header: t("salesReports.metrics.voids_value"),
+      accessor: (r) => r.voids_value,
+      cell: (r) => (r.voids_value == null ? "—" : formatCurrency(r.voids_value)),
       numeric: true,
       sortable: true,
-    },
-    {
-      id: "qty_returned",
-      header: t("salesReports.metrics.qty_returned"),
-      accessor: (r) => r.qty_returned,
-      cell: (r) => (r.qty_returned == null ? "—" : formatNumber(r.qty_returned)),
-      numeric: true,
-      sortable: true,
-    },
-    {
-      id: "return_rate",
-      header: t("salesReports.metrics.return_rate_by_cashier"),
-      accessor: (r) => r.return_rate,
-      cell: (r) => (r.return_rate == null ? "—" : fmtPct(r.return_rate)),
-      numeric: true,
-      sortable: true,
-      cellTone: (r) => (r.return_rate != null && r.return_rate >= HIGH_RATE_PCT ? "warning" : undefined),
     },
     {
       id: "void_rate",
@@ -231,18 +213,18 @@ export default function Voids() {
         </ChartCard>
       )}
 
-      {byReasonCashier.isError ? (
-        <ErrorState error={byReasonCashier.error} onRetry={() => byReasonCashier.refetch()} />
+      {byCashier.isError ? (
+        <ErrorState error={byCashier.error} onRetry={() => byCashier.refetch()} />
       ) : (
         detailRows.length > 0 && (
-          <DataTable<ReasonCashierRow>
+          <DataTable<CashierVoidsRow>
             columns={detailColumns}
             rows={detailRows}
             getRowId={(r) => r.key}
             paginate={false}
             columnMenu={false}
             emptyTitle={t("salesReports.states.empty")}
-            mobileTitle={(r) => `${r.reason} — ${r.cashier}`}
+            mobileTitle={(r) => r.cashier}
           />
         )
       )}

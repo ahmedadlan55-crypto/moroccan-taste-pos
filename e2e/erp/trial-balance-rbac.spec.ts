@@ -49,7 +49,9 @@ function readDotEnv(): Record<string, string> {
 }
 
 const ADMIN_TOKEN = fs.readFileSync(path.join(process.cwd(), "e2e", ".token"), "utf8").trim();
-const API_BASE = "http://127.0.0.1:3027";
+// Honors E2E_PORT (playwright.erp.config.ts) so a parallel-session run on a
+// non-default port still probes ITS OWN server, not another session's.
+const API_BASE = `http://127.0.0.1:${Number(process.env.E2E_PORT) || 3027}`;
 const TB_PATH = "/accounting/trial-balance";
 const TB_HREF = "/app" + TB_PATH;
 // Passes POST /api/auth/users' password policy: >=6 chars, a letter, a digit,

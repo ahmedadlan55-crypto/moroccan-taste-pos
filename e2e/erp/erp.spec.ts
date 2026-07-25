@@ -41,9 +41,14 @@ const MANIFEST_SRC = fs.readFileSync(
   path.join(process.cwd(), "frontend", "erp", "src", "app", "navigation", "manifest.ts"),
   "utf8",
 );
-type Leaf = { path: string; label: string };
-const LEAVES: Leaf[] = [...MANIFEST_SRC.matchAll(/\bpath:\s*"([^"]+)"[^}\n]*\blabel:\s*"([^"]+)"/g)]
-  .map((m) => ({ path: m[1], label: m[2] }))
+type Leaf = { path: string; label: string; subRoutes: boolean };
+// subRoutes:true items OWN their subtree (manifest.ts): the router may land a
+// base-path visit on a canonical child (the Sales Analytics Hub redirects
+// /reports/sales → /reports/sales/executive). The walk must accept that as a
+// correct landing for THOSE leaves only — an exact-path leaf drifting to a
+// different URL is still a hard failure.
+const LEAVES: Leaf[] = [...MANIFEST_SRC.matchAll(/\bpath:\s*"([^"]+)"[^\n]*\blabel:\s*"([^"]+)"[^\n]*/g)]
+  .map((m) => ({ path: m[1], label: m[2], subRoutes: /\bsubRoutes:\s*true\b/.test(m[0]) }))
   .filter((l, i, a) => a.findIndex((x) => x.path === l.path) === i);
 
 // One representative leaf per nav group — used for deep-link + hard-refresh.
@@ -150,7 +155,11 @@ async function spaNavigate(page: Page, routePath: string) {
     // finding, but fall back to a deep link so the leaf is still audited.
     await page.goto(href);
   }
-  await page.waitForURL(`**${href}`, { timeout: 15_000 }).catch(() => {});
+  // Tolerate a canonical child landing (subRoutes leaves — e.g. the hub's
+  // /reports/sales → /reports/sales/executive redirect). auditLeaf remains the
+  // strict judge of WHERE the router actually landed; this is only the settle.
+  const landed = new RegExp(`${href.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}(/[^?#]*)?([?#].*)?$`);
+  await page.waitForURL(landed, { timeout: 15_000 }).catch(() => {});
   await waitRendered(page, routePath);
 }
 
@@ -158,9 +167,15 @@ async function spaNavigate(page: Page, routePath: string) {
 async function auditLeaf(page: Page, leaf: Leaf, isMobile: boolean, issues: string[]) {
   const href = `/app${leaf.path}`;
 
-  // 1) The router actually landed on the requested route.
+  // 1) The router actually landed on the requested route. A subRoutes leaf may
+  //    canonically land on a child of its own subtree (the hub's
+  //    /reports/sales → /reports/sales/executive redirect); anything else is
+  //    still a wrong-screen failure.
   const url = new URL(page.url());
-  if (url.pathname.replace(/\/$/, "") !== href.replace(/\/$/, "")) {
+  const landedPath = url.pathname.replace(/\/$/, "");
+  const wantedPath = href.replace(/\/$/, "");
+  const landedInSubtree = leaf.subRoutes && landedPath.startsWith(`${wantedPath}/`);
+  if (landedPath !== wantedPath && !landedInSubtree) {
     issues.push(`${leaf.path}: router did not land here (url=${url.pathname})`);
     return; // everything below would describe the wrong screen
   }
@@ -201,7 +216,11 @@ async function auditLeaf(page: Page, leaf: Leaf, isMobile: boolean, issues: stri
   if (probe.badState) issues.push(`${leaf.path}: non-healthy state "${probe.badState}" («${leaf.label}»)`);
   if (probe.hit) issues.push(`${leaf.path}: placeholder/legacy phrase "${probe.hit}"`);
   if (probe.legacyLink) issues.push(`${leaf.path}: back-to-legacy link in #main`);
-  if (!probe.active) issues.push(`${leaf.path}: sidebar does not mark this route active (aria-current)`);
+  // Sidebar item NavLinks match with `end` (exact), so on a subtree child the
+  // exact-href link is legitimately not aria-current — same accepted behavior
+  // as /menu/brand/new and /inventory/items/new. Only exact landings owe the
+  // marker.
+  if (!probe.active && !landedInSubtree) issues.push(`${leaf.path}: sidebar does not mark this route active (aria-current)`);
   if (probe.bodyOverflow > 1) issues.push(`${leaf.path}: horizontal overflow (body) ${probe.bodyOverflow}px`);
   if (probe.mainOverflow > 1) issues.push(`${leaf.path}: horizontal overflow (#main) ${probe.mainOverflow}px`);
   if (isMobile && probe.navH > 0 && probe.mainPadBottom < probe.navH * 0.8) {

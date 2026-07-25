@@ -37,6 +37,34 @@ describe("buildTree", () => {
     expect(b1.values.qty).toBe(3); // uncovered measure → client-side sum
   });
 
+  // Mutation gap (PV-06): an API subtotal whose value is EXPLICITLY null means
+  // "not computable / masked" and must WIN over the client-side sum — only a
+  // measure the API left `undefined` may fall back. `!= null` instead of
+  // `!== undefined` would silently replace the server's honest null with a sum.
+  it("an explicit null API subtotal wins over the client-side sum (masked stays masked)", () => {
+    const subtotals: PivotSourceRow[] = [
+      { keys: ["b1", null], values: { net: null } }, // masked on the server
+    ];
+    const tree = buildTree(ROWS, ["branch", "menu_item"], ["net", "qty"], subtotals);
+    const b1 = tree[0];
+    expect(b1.values.net).toBeNull(); // NOT 150 — the API's null is authoritative
+    expect(b1.values.qty).toBe(3); // undefined on the API row → client sum
+  });
+
+  // Mutation gap (PV-11): rows without a `labels` array must fall back to
+  // String(key), and a null key must render the "—" placeholder — never leak
+  // undefined into the label path.
+  it("labels fall back to String(key) when the API sends no labels, and '—' for null keys", () => {
+    const unlabeled: PivotSourceRow[] = [
+      { keys: ["b1", "i1"], values: { net: 10 } },
+      { keys: ["b1", null], values: { net: 5 } },
+    ];
+    const tree = buildTree(unlabeled, ["branch", "menu_item"], ["net"]);
+    expect(tree[0].labels).toEqual(["b1"]); // group label = String(key)
+    expect(tree[0].children[0].labels).toEqual(["b1", "i1"]);
+    expect(tree[0].children[1].labels).toEqual(["b1", "—"]); // null key placeholder
+  });
+
   it("returns flat leaves for a single row dimension", () => {
     const tree = buildTree(ROWS, ["branch"], ["net"]);
     expect(tree.every((n) => n.isLeaf)).toBe(true);

@@ -47,7 +47,7 @@ function order(partial?: Partial<LocalOrder>): LocalOrder {
     status: "completed",
     orderType: "takeaway",
     lines: [
-      { menuId: "M1", name: "برجر", qty: 2, unitPrice: 20, vatCategory: "S", lineDiscount: 0, notes: "" } as unknown as LocalOrder["lines"][number],
+      { menuId: "M1", name: "برجر", qty: 2, unitPrice: 20, vatCategory: "S", taxInclusive: true, lineDiscount: 0, notes: "" } as unknown as LocalOrder["lines"][number],
     ],
     discountType: null,
     discountValue: 0,

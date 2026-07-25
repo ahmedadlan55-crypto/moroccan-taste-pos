@@ -22,7 +22,7 @@ import { idbPut } from "@/lib/idb";
 import { openShift as apiOpenShift, findOpenShift, getServerFlags } from "@/lib/api";
 import { getEngine, type EngineStatus, type OfflineEngine } from "@/lib/offline";
 import { useOptionalT } from "@/i18n/I18nProvider";
-import { cartTotals } from "@/lib/cartMath";
+import { cartTotals, DEFAULT_VAT_RATE_PCT } from "@/lib/cartMath";
 import { ulid } from "@/lib/ulid";
 import { ComboDialog, type ComboFinalizeResult } from "@/components/dialogs/ComboDialog";
 import type {
@@ -51,7 +51,12 @@ function buildCartLine(item: CatalogItem, unit: CatalogUnit | null, enteredQty: 
   const factor = unit ? Number(unit.factor) || 1 : 1;
   return {
     menuId: item.id, name: item.name, nameEn: item.nameEn ?? null, qty: enteredQty, unitPrice: item.basePrice ?? item.price,
-    lineDiscount: 0, vatCategory: item.taxCategory, notes: null,
+    lineDiscount: 0, vatCategory: item.taxCategory,
+    // Snapshot the tax convention WITH the price. Without it the register
+    // treated every price as VAT-inclusive while the server adds VAT on top
+    // for these rows, so the checkout was rejected as a total mismatch.
+    taxInclusive: item.taxInclusive === true,
+    notes: null,
     enteredUnitId: unit ? unit.unitId : null, enteredUnitCode: unit ? unit.unitCode : null,
     enteredUnitName: unit ? unit.unitName : item.baseUnitName || null,
     conversionFactorSnapshot: factor, baseQty: round6(enteredQty * factor),
@@ -573,9 +578,14 @@ export function PosProvider({ children }: { children: ReactNode }) {
     setCart(doc);
   }, []);
 
+  // The rate comes from the SERVER (settings.VATRate, shipped on the catalog).
+  // It used to be hardcoded 0.15 inside cartMath while /api/sales read the
+  // setting, so an owner changing the rate desynced the register from the books
+  // with no visible symptom until a sale was refused.
+  const vatRatePct = catalogQuery.data?.catalog?.vatRate ?? DEFAULT_VAT_RATE_PCT;
   const totals = useMemo(
-    () => cartTotals(cart.lines, cart.discountType ? { type: cart.discountType, value: cart.discountValue } : null),
-    [cart.lines, cart.discountType, cart.discountValue],
+    () => cartTotals(cart.lines, cart.discountType ? { type: cart.discountType, value: cart.discountValue } : null, vatRatePct),
+    [cart.lines, cart.discountType, cart.discountValue, vatRatePct],
   );
 
   // Order-to-Cash server flag (read once, cached). Drives the customer picker.

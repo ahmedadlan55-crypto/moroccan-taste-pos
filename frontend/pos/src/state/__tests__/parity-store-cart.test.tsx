@@ -47,8 +47,8 @@ vi.mock("@/lib/api", () => ({
 
 import { PosProvider, usePos, type PosContextValue } from "../store";
 
-const TEA: CatalogItem = { id: "M1", name: "شاي مغربي", price: 23, category: "مشروبات", active: true, taxCategory: "S" };
-const TAGINE: CatalogItem = { id: "M2", name: "طاجين لحم", price: 86, category: "أطباق", active: true, taxCategory: "S" };
+const TEA: CatalogItem = { id: "M1", name: "شاي مغربي", price: 23, category: "مشروبات", active: true, taxCategory: "S", taxInclusive: true };
+const TAGINE: CatalogItem = { id: "M2", name: "طاجين لحم", price: 86, category: "أطباق", active: true, taxCategory: "S", taxInclusive: true };
 const BOXED: CatalogItem = {
   id: "M9",
   name: "مياه",
@@ -56,6 +56,8 @@ const BOXED: CatalogItem = {
   category: "مشروبات",
   active: true,
   taxCategory: "S",
+
+  taxInclusive: true,
   baseUnitName: "حبة",
   units: [
     { unitId: "U1", unitCode: "PC", unitName: "حبة", isBase: true, factor: 1, barcode: null },

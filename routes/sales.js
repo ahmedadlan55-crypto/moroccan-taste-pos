@@ -720,11 +720,15 @@ router.post('/', requireCapability('pos.use'), async (req, res) => {
     const vatAfterDiscount = Math.round(grandVat * discountRatio * 100) / 100;
 
     const grossPrecise = Math.round((netAfterDiscount + vatAfterDiscount) * 100) / 100;
-    // The TOTAL stored on the sales row + shown to the customer is the
-    // WHOLE-SAR rounded amount.  The per-category breakdown above keeps
-    // its 2-decimal precision so the ZATCA QR / invoice XML validate.
-    const grossWhole = pricing.roundToWhole(grossPrecise);
-    const invTotal = grossWhole;
+    // v8.1 — the total is the EXACT 2-decimal amount. It used to be rounded to
+    // a whole SAR (pricing.roundToWhole), which broke the one property the
+    // owner asked for: "price before tax + tax = the number on the invoice".
+    // A 16.00 net item is 16.00 + 2.40 = 18.40; rounding that to 18 forces the
+    // delta onto the net side below, so the invoice would read net 15.65 —
+    // NOT the 16.00 the owner priced. Menu prices stay whole numbers; only the
+    // computed total carries halalas, which is what every POS and the ZATCA
+    // invoice expect.
+    const invTotal = grossPrecise;
 
     // ─── v7.2 CRITICAL (#1): derive net + vat PER-CATEGORY, not flat ───
     // The legacy line recomputed `net = invTotal / 1.15` and `vat = total
@@ -736,9 +740,10 @@ router.post('/', requireCapability('pos.use'), async (req, res) => {
     //   • vatAfterDiscount  = Σ (category vat × discount ratio)   — S only,
     //                         because Z/E/O categories were split at rate 0
     //                         so their vat contribution is already 0.
-    // Then we absorb the whole-SAR rounding delta (invTotal vs grossPrecise)
-    // so the journal invariant net + vat === invTotal holds EXACTLY and the
-    // 2210 Output-VAT credit + totals.vat returned to the POS are correct.
+    // The delta below is now structurally 0 (invTotal === grossPrecise since
+    // the whole-SAR rounding was removed); it is kept as an explicit safety
+    // net so the journal invariant net + vat === invTotal is enforced by
+    // construction rather than by assumption.
     const _roundDelta = Math.round((invTotal - grossPrecise) * 100) / 100;
     // Push the (tiny) rounding delta onto the NET side, then make VAT the
     // residual. This keeps Output-VAT tied to the actual taxable base and
@@ -754,20 +759,25 @@ router.post('/', requireCapability('pos.use'), async (req, res) => {
     }
 
     // ─── v7.3 CRITICAL: money-safety reconciliation guard ──────────────
-    // The recorded total MUST equal what the cashier displayed. Both sides
-    // now compute the customer-facing total in the SAME gross space with the
-    // SAME discounts and round to a whole SAR, so they can only differ by
-    // sub-riyal rounding. If the client total is present and off by MORE than
-    // 1 SAR, something is wrong (a dropped discount, a tampered price, a stale
-    // cart, a contract drift) — REJECT the sale inside the transaction
-    // (rollback: no sale, no GL, no ZATCA serial) rather than silently
-    // charging a different amount. We always record the SERVER figure
-    // (invTotal); within tolerance, displayed == recorded == charged.
-    // Skipped when the client omits totalFinal (legacy POS builds) so the
-    // server recompute still governs with no regression.
-    const clientTotalFinal = Math.round(Number(totalFinal) || 0);
+    // The recorded total MUST equal what the cashier displayed. If the client
+    // total is present and off by more than the tolerance, something is wrong
+    // (a dropped discount, a tampered price, a stale cart, a contract drift) —
+    // REJECT the sale inside the transaction (rollback: no sale, no GL, no
+    // ZATCA serial) rather than silently charging a different amount. We always
+    // record the SERVER figure (invTotal). Skipped when the client omits
+    // totalFinal (legacy POS builds) so the server recompute still governs.
+    //
+    // v8.1 — the client total is compared at 2 DECIMALS, not rounded to a whole
+    // SAR. Both sides now compute the same exact amount (same per-item tax
+    // convention, same settings.VATRate, no whole-SAR rounding), so the only
+    // legitimate difference is sub-halala float noise. Rounding the client
+    // figure to an integer here would have masked a real 0.40 divergence — and
+    // this guard exists precisely to refuse charging a number the customer was
+    // not shown.
+    const clientTotalFinal = Math.round((Number(totalFinal) || 0) * 100) / 100;
+    const TOTAL_TOLERANCE = 0.02; // two halalas — per-line rounding, nothing more
     if (Number.isFinite(clientTotalFinal) && clientTotalFinal > 0 &&
-        Math.abs(invTotal - clientTotalFinal) > 1) {
+        Math.abs(invTotal - clientTotalFinal) > TOTAL_TOLERANCE) {
       const mmErr = new Error(
         'تعذّر إتمام البيع: الإجمالي المعروض (' + clientTotalFinal +
         ') لا يطابق الإجمالي المحسوب (' + invTotal +
@@ -777,11 +787,13 @@ router.post('/', requireCapability('pos.use'), async (req, res) => {
       mmErr.code = 'total_mismatch';
       throw mmErr;
     }
-    // v7.5 — audit trail for sub-tolerance drift (0.5–1 SAR is accepted, but a
-    // recurring pattern means client/server math is drifting — catch it early).
+    // v7.5 — audit trail for sub-tolerance drift. Any non-zero delta now means
+    // client/server math is diverging (they compute the identical amount), so
+    // the window narrowed with the tolerance above: log everything that is not
+    // exactly equal but still accepted.
     if (Number.isFinite(clientTotalFinal) && clientTotalFinal > 0) {
       const _tfDelta = Math.abs(invTotal - clientTotalFinal);
-      if (_tfDelta >= 0.5 && _tfDelta <= 1) {
+      if (_tfDelta > 0 && _tfDelta <= TOTAL_TOLERANCE) {
         console.warn('[sale ' + orderId + '] total drift within tolerance: client=' +
           clientTotalFinal + ' server=' + invTotal + ' (delta ' + _tfDelta + ')');
       }

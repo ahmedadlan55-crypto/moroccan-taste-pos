@@ -58,6 +58,27 @@ test('roundMoney is the edge rounding, once', () => {
   eq(E.roundMoney(-2.005), -2.01);
   eq(E.roundMoney(0.1 + 0.2), 0.3);
 });
+test('round2 is the RATIO rounding: half away from zero on both signs', () => {
+  // Mutation gap (EQ-14): round2 must mirror negatives the way toMinor does.
+  // A bare Math.round(n * 100 + 1e-9) / 100 rounds -2.005 to -2.00 (toward
+  // zero) while +2.005 still goes to 2.01 — a percentage that is biased by a
+  // halala in one direction only, which is how a variance report stops adding
+  // up. The positive cases pass under BOTH implementations; the negative ones
+  // are what pin the contract.
+  eq(E.round2(2.005), 2.01);
+  eq(E.round2(-2.005), -2.01, 'negative .005 rounds AWAY from zero');
+  eq(E.round2(-0.005), -0.01);
+  eq(E.round2(0.1 + 0.2), 0.3, 'binary error is absorbed, not rounded up');
+});
+test('round2 on a non-finite ratio is null, never 0', () => {
+  // Mutation gap (EQ-15): 0 here would publish an UNDEFINED ratio (0/0, ∞) as
+  // a real "0%" — precisely the lie the module header forbids. Every caller
+  // guards its own denominator, so only a direct assertion pins this branch.
+  eq(E.round2(NaN), null);
+  eq(E.round2(Infinity), null);
+  eq(E.round2(-Infinity), null);
+  eq(E.round2('abc'), null);
+});
 test('sumMoney sums raw then rounds once — no per-item drift', () => {
   // 10 × 0.1: float summation gives 0.9999999999999999
   eq(E.sumMoney([0.1, 0.1, 0.1, 0.1, 0.1, 0.1, 0.1, 0.1, 0.1, 0.1]), 1);

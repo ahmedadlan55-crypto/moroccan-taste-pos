@@ -19,11 +19,20 @@
  *     1. verify `find` matches the target EXACTLY ONCE (drift check — if the
  *        source evolved, the run errors out instead of silently testing air);
  *     2. back the file up (in-memory + a copy in a scratch dir);
- *     3. apply the patch IN PLACE at the original path;
- *     4. run the killing suite — non-zero exit = KILLED;
+ *     3. apply the patch IN PLACE at the original path, then RE-READ the file
+ *        and confirm the mutated bytes really landed (never "test air");
+ *     4. run the killing suite — a non-zero EXIT STATUS = KILLED;
  *     5. restore the original in `finally`, byte-for-byte.
- *   After the run every target's SHA-256 is compared against its pre-run hash;
- *   a mismatch is a hard failure (never leave a mutant on disk).
+ *   After the run every target's SHA-256 is compared against its pre-run hash
+ *   and both hashes are PRINTED; a mismatch is a hard failure (never leave a
+ *   mutant on disk). Signal handlers restore the originals if the run is
+ *   interrupted.
+ *
+ * WHAT COUNTS AS A KILL (honesty rule)
+ *   Only a suite that RAN and exited non-zero. If the child process failed to
+ *   spawn or hit the timeout, spawnSync reports `error` and the exit status is
+ *   meaningless — that is a HARNESS FAILURE (exit 2), never a kill. Without
+ *   this distinction a broken node path would report a flawless 100%.
  *
  * EXIT CODES: 0 = 100% kill, 1 = at least one survivor (or restore mismatch),
  *             2 = catalog drift / harness failure.
@@ -32,6 +41,14 @@
  *   node scripts/audit/mutation-sales-math.js            # run everything
  *   node scripts/audit/mutation-sales-math.js --list     # print the catalog
  *   node scripts/audit/mutation-sales-math.js --only=EQ-01,BD-03
+ *
+ * The pivot suite is spawned as the erp package's own vitest binary with cwd
+ * = frontend/erp, so it runs under frontend/erp/vite.config.ts. The equivalent
+ * hand-typed command from the repo root is
+ *   npx --prefix frontend/erp vitest run \
+ *     src/modules/reports/sales/__tests__/pivot.test.ts --reporter=basic
+ * (verified to select the same spec and pass; it resolves the ROOT vitest
+ * config rather than the erp one, which is why the spawn below is used.)
  * ────────────────────────────────────────────────────────────────────────── */
 
 const fs = require('fs');
@@ -54,6 +71,7 @@ const TARGETS = Object.freeze({
 // only realistically die in the equations suite, but running both keeps the
 // contract simple and each takes <1s).
 const PIVOT_SPEC = 'src/modules/reports/sales/__tests__/pivot.test.ts';
+const VITEST_BIN = path.join(ERP_DIR, 'node_modules', 'vitest', 'vitest.mjs');
 const SUITES = Object.freeze({
   equations: [
     { name: 'node tests/analyticsEquations.test.js', cmd: process.execPath, args: ['tests/analyticsEquations.test.js'], cwd: ROOT },
@@ -67,7 +85,7 @@ const SUITES = Object.freeze({
     {
       name: `vitest run ${PIVOT_SPEC}`,
       cmd: process.execPath,
-      args: [path.join(ERP_DIR, 'node_modules', 'vitest', 'vitest.mjs'), 'run', PIVOT_SPEC, '--reporter=basic'],
+      args: [VITEST_BIN, 'run', PIVOT_SPEC, '--reporter=basic'],
       cwd: ERP_DIR,
     },
   ],
@@ -77,6 +95,7 @@ const SUITES = Object.freeze({
  * Every `find` is a verbatim snippet of the CURRENT target file and MUST match
  * exactly once. Keep descriptions honest about which assertion is expected to
  * kill the mutant — that is the documentation of WHY the suite is sufficient.
+ * Coverage rule: every exported money/ratio function owns at least one mutant.
  */
 const CATALOG = [
   // ── lib/analytics/equations.js ────────────────────────────────────────────
@@ -158,6 +177,84 @@ const CATALOG = [
     find: 'return round2(((Number(current) - prev) / Math.abs(prev)) * 100);',
     replace: 'return round2(((Number(current) - prev) / prev) * 100);',
   },
+  {
+    id: 'EQ-14', target: 'equations',
+    description: 'round2: lose half-AWAY-FROM-ZERO mirroring (a negative ratio at the exact .005 boundary rounds toward zero)',
+    find: '  return (sign * Math.round(Math.abs(n) * 100 + 1e-9)) / 100;',
+    replace: '  return Math.round(n * 100 + 1e-9) / 100;',
+  },
+  {
+    id: 'EQ-15', target: 'equations',
+    description: 'round2: non-finite input returns 0 instead of null (undefined ratio reported as a real 0)',
+    find: '  if (!Number.isFinite(n)) return null;',
+    replace: '  if (!Number.isFinite(n)) return 0;',
+  },
+  {
+    id: 'EQ-16', target: 'equations',
+    description: 'roundMoney: edge rounding removed entirely (raw float passthrough)',
+    find: 'function roundMoney(value) {\n  return fromMinor(toMinor(value));\n}',
+    replace: 'function roundMoney(value) {\n  return Number(value);\n}',
+  },
+  {
+    id: 'EQ-17', target: 'equations',
+    description: 'sumMoney: result returned in halalas — the single fromMinor at the edge is dropped (100× overstatement)',
+    find: '  return fromMinor(total);',
+    replace: '  return total;',
+  },
+  {
+    id: 'EQ-18', target: 'equations',
+    description: 'grossProductSales: array/scalar dispatch inverted (an array of line grosses collapses to 0)',
+    find: '  if (Array.isArray(lineGrossAmounts)) return sumMoney(lineGrossAmounts);',
+    replace: '  if (!Array.isArray(lineGrossAmounts)) return sumMoney(lineGrossAmounts);',
+  },
+  {
+    id: 'EQ-19', target: 'equations',
+    description: 'grossProfit: COGS ADDED instead of subtracted (a loss reads as a profit)',
+    find: '  return fromMinor(toMinor(netExVat) - toMinor(cogs));',
+    replace: '  return fromMinor(toMinor(netExVat) + toMinor(cogs));',
+  },
+  {
+    id: 'EQ-20', target: 'equations',
+    description: 'netCollections: refunds ADDED instead of subtracted (refunds inflate takings)',
+    find: '  return fromMinor(toMinor(settled) - toMinor(refunds));',
+    replace: '  return fromMinor(toMinor(settled) + toMinor(refunds));',
+  },
+  {
+    id: 'EQ-21', target: 'equations',
+    description: 'avgItemsPerOrder: divide by orders → multiply by orders',
+    find: '  return round2(Number(itemsQty) / n);',
+    replace: '  return round2(Number(itemsQty) * n);',
+  },
+  {
+    id: 'EQ-22', target: 'equations',
+    description: 'discountPct: numerator left in SAR while the denominator is halalas (unit mismatch, 100× understated)',
+    find: '  return round2((toMinor(discounts) / g) * 100);',
+    replace: '  return round2((Number(discounts) / g) * 100);',
+  },
+  {
+    id: 'EQ-23', target: 'equations',
+    description: 'attachRate: the per-100-items scale is dropped (×100 → ×1)',
+    find: '  return round2((Number(modifierCount) / items) * 100);',
+    replace: '  return round2((Number(modifierCount) / items) * 1);',
+  },
+  {
+    id: 'EQ-24', target: 'equations',
+    description: 'avgModifiersPerItem: ratio inverted (items per modifier instead of modifiers per item)',
+    find: '  return round2(Number(modifierQty) / items);',
+    replace: '  return round2(items / Number(modifierQty));',
+  },
+  {
+    id: 'EQ-25', target: 'equations',
+    description: 'contributionPct: part/whole swapped (a row\'s share of the total inverted)',
+    find: 'function contributionPct(part, whole) {\n  return ratePct(part, whole);\n}',
+    replace: 'function contributionPct(part, whole) {\n  return ratePct(whole, part);\n}',
+  },
+  {
+    id: 'EQ-26', target: 'equations',
+    description: 'netQuantity: returned units ADDED instead of subtracted',
+    find: '  return Number(sold || 0) - Number(returned || 0);',
+    replace: '  return Number(sold || 0) + Number(returned || 0);',
+  },
 
   // ── lib/analytics/businessDay.js ──────────────────────────────────────────
   {
@@ -232,6 +329,30 @@ const CATALOG = [
     find: 'return asUtc - instant.getTime();',
     replace: 'return instant.getTime() - asUtc;',
   },
+  {
+    id: 'BD-13', target: 'businessDay',
+    description: 'pad2: zero-padding becomes space-padding (occurredAtLocal stops being a valid DATETIME)',
+    find: "  return String(n).padStart(2, '0');",
+    replace: "  return String(n).padStart(2, ' ');",
+  },
+  {
+    id: 'BD-14', target: 'businessDay',
+    description: 'formatterFor: hourCycle h23 → h24 (local midnight renders as the "24:xx" ICU bug the header warns about)',
+    find: "      hourCycle: 'h23',",
+    replace: "      hourCycle: 'h24',",
+  },
+  {
+    id: 'BD-15', target: 'businessDay',
+    description: 'toInstant: Date.UTC month is not zero-based any more (every DB string lands a month late)',
+    find: '  const wallUtcMs = Date.UTC(+m[1], +m[2] - 1, +m[3], +m[4], +m[5], +(m[6] || 0));',
+    replace: '  const wallUtcMs = Date.UTC(+m[1], +m[2], +m[3], +m[4], +m[5], +(m[6] || 0));',
+  },
+  {
+    id: 'BD-16', target: 'businessDay',
+    description: 'nextRunAt: at_time minutes taken from the whole day-seconds (no % 3600 — the hour is counted twice)',
+    find: '  const h = Math.floor(atSec / 3600), mi = Math.floor((atSec % 3600) / 60), s = atSec % 60;',
+    replace: '  const h = Math.floor(atSec / 3600), mi = Math.floor(atSec / 60), s = atSec % 60;',
+  },
 
   // ── frontend pivot.ts ─────────────────────────────────────────────────────
   {
@@ -300,6 +421,24 @@ const CATALOG = [
     find: '  if (label != null && label !== "") return label;',
     replace: '  if (label != null || label !== "") return label;',
   },
+  {
+    id: 'PV-12', target: 'pivot',
+    description: 'pivotPathKey: a null key encoded as the literal "null" (a real "null" key collides with a masked one)',
+    find: '  return keys.map((k) => (k == null ? NULL_KEY : String(k))).join(SEP);',
+    replace: '  return keys.map((k) => (k == null ? "null" : String(k))).join(SEP);',
+  },
+  {
+    id: 'PV-13', target: 'pivot',
+    description: 'flattenTree: hasChildren > 0 → >= 0 (leaf rows claim children — phantom expand chevrons)',
+    find: '        hasChildren: node.children.length > 0,',
+    replace: '        hasChildren: node.children.length >= 0,',
+  },
+  {
+    id: 'PV-14', target: 'pivot',
+    description: 'indexSubtotals: depth taken from the NULL keys (every API subtotal row is misfiled and dropped)',
+    find: '      if (row.keys[i] != null) depth = i;',
+    replace: '      if (row.keys[i] == null) depth = i;',
+  },
 ];
 
 // ── helpers ──────────────────────────────────────────────────────────────────
@@ -318,6 +457,24 @@ function countOccurrences(haystack, needle) {
   }
 }
 
+/** Literal splice — never String.replace(), whose `$` sequences are magic. */
+function applyMutant(text, find, replace) {
+  const i = text.indexOf(find);
+  if (i === -1) return null;
+  return text.slice(0, i) + replace + text.slice(i + find.length);
+}
+
+function stripAnsi(s) {
+  return s.replace(/\[[0-9;]*m/g, '');
+}
+
+/**
+ * Run a killing suite.
+ *   ran=false  → the process could not be spawned or timed out. The exit
+ *                status is meaningless; the caller MUST treat this as a
+ *                harness failure, never as a kill.
+ *   ran=true   → status 0 = suite passed, non-zero = suite failed (a kill).
+ */
 function runSuite(suite) {
   const res = spawnSync(suite.cmd, suite.args, {
     cwd: suite.cwd,
@@ -325,11 +482,26 @@ function runSuite(suite) {
     timeout: 5 * 60 * 1000,
     shell: false,
   });
+  const output = stripAnsi((res.stdout || '') + (res.stderr || ''));
   return {
-    ok: res.status === 0 && !res.error,
+    ran: !res.error && res.status !== null,
+    error: res.error ? String(res.error.message || res.error) : null,
+    passed: res.status === 0,
     status: res.status,
-    tail: ((res.stdout || '') + (res.stderr || '')).slice(-2000),
+    output,
+    tail: output.slice(-2000),
   };
+}
+
+/** First failing test name in a suite's output — evidence of WHY it died. */
+function firstFailure(output) {
+  for (const raw of output.split(/\r?\n/)) {
+    const line = raw.trim();
+    if (line.startsWith('❌')) return line.slice(1).trim();
+    if (/^×\s/.test(line)) return line.replace(/^×\s*/, '').trim();
+    if (/^(AssertionError|Error):/.test(line)) return line;
+  }
+  return null;
 }
 
 function fail(msg) {
@@ -361,17 +533,43 @@ function fail(msg) {
     process.exit(0);
   }
 
+  const seen = new Set();
+  for (const m of CATALOG) {
+    if (seen.has(m.id)) fail(`duplicate mutant id ${m.id}`);
+    seen.add(m.id);
+  }
+
   const mutants = only ? CATALOG.filter((m) => only.has(m.id)) : CATALOG;
   if (!mutants.length) fail('--only matched no catalog ids');
 
+  if (!fs.existsSync(VITEST_BIN) && mutants.some((m) => m.target === 'pivot')) {
+    fail(`vitest binary missing at ${VITEST_BIN} (run npm ci in frontend/erp)`);
+  }
+
   // 1. Load originals + drift check ALL selected mutants up front.
-  const originals = {}; // target → { abs, buf, text, hash }
+  const originals = {}; // target → { abs, rel, buf, text, hash }
   for (const [key, rel] of Object.entries(TARGETS)) {
     const abs = path.join(ROOT, rel);
     if (!fs.existsSync(abs)) fail(`target file missing: ${rel}`);
     const buf = fs.readFileSync(abs);
     originals[key] = { abs, rel, buf, text: buf.toString('utf8'), hash: sha256(buf) };
   }
+
+  // Restore-on-interrupt: an aborted run must never leave a mutant on disk.
+  const restoreAll = () => {
+    for (const o of Object.values(originals)) {
+      try { fs.writeFileSync(o.abs, o.buf); } catch (_) { /* best effort */ }
+    }
+  };
+  for (const sig of ['SIGINT', 'SIGTERM', 'SIGHUP']) {
+    process.on(sig, () => { restoreAll(); process.exit(2); });
+  }
+  process.on('uncaughtException', (e) => {
+    restoreAll();
+    console.error('[mutation] uncaught: ' + (e && e.stack || e));
+    process.exit(2);
+  });
+
   const drift = [];
   for (const m of mutants) {
     const n = countOccurrences(originals[m.target].text, m.find);
@@ -390,15 +588,18 @@ function fail(msg) {
     fs.writeFileSync(path.join(scratch, path.basename(o.rel) + '.orig'), o.buf);
   }
   console.log('[mutation] scratch backups: ' + scratch);
+  console.log('[mutation] pre-run hashes:');
+  for (const o of Object.values(originals)) console.log(`    ${o.hash}  ${o.rel}`);
 
   // 3. Baseline: every killing suite must PASS on unmutated code — otherwise
   //    "killed" would be meaningless.
   const suiteKeys = [...new Set(mutants.map((m) => m.target))];
-  console.log('[mutation] baseline (unmutated) suite check…');
+  console.log('\n[mutation] baseline (unmutated) suite check…');
   for (const t of suiteKeys) {
     for (const suite of SUITES[t]) {
       const r = runSuite(suite);
-      if (!r.ok) {
+      if (!r.ran) fail(`baseline: ${suite.name} could not run (${r.error || 'no exit status'})`);
+      if (!r.passed) {
         console.error(`[mutation] baseline FAILED: ${suite.name} exited ${r.status} on UNMUTATED code`);
         console.error(r.tail);
         process.exit(2);
@@ -407,19 +608,29 @@ function fail(msg) {
   }
   console.log('[mutation] baseline green — all killing suites pass on the original code.\n');
 
-  // 4. Run each mutant: apply → test → restore (always, in finally).
+  // 4. Run each mutant: apply → verify on disk → test → restore (always).
   const results = [];
   for (const m of mutants) {
     const o = originals[m.target];
-    const mutatedText = o.text.replace(m.find, m.replace);
+    const mutatedText = applyMutant(o.text, m.find, m.replace);
+    if (mutatedText === null) fail(`${m.id}: find snippet vanished between the drift check and apply`);
     if (mutatedText === o.text) fail(`${m.id}: replace produced identical text`);
+    const mutatedHash = sha256(Buffer.from(mutatedText, 'utf8'));
     let killedBy = null;
+    let why = null;
+    let harnessError = null;
     process.stdout.write(`  ${m.id}  applying… `);
     try {
       fs.writeFileSync(o.abs, mutatedText, 'utf8');
-      for (const suite of SUITES[m.target]) {
-        const r = runSuite(suite);
-        if (!r.ok) { killedBy = suite.name; break; }
+      // Prove we are testing the MUTANT, not the original.
+      if (sha256(fs.readFileSync(o.abs)) !== mutatedHash) {
+        harnessError = 'mutated bytes did not land on disk';
+      } else {
+        for (const suite of SUITES[m.target]) {
+          const r = runSuite(suite);
+          if (!r.ran) { harnessError = `${suite.name} could not run (${r.error || 'no exit status'})`; break; }
+          if (!r.passed) { killedBy = suite.name; why = firstFailure(r.output); break; }
+        }
       }
     } finally {
       // ALWAYS restore the pristine bytes, even if a suite spawn threw.
@@ -427,15 +638,18 @@ function fail(msg) {
     }
     const restoredHash = sha256(fs.readFileSync(o.abs));
     if (restoredHash !== o.hash) fail(`${m.id}: restore mismatch on ${o.rel} — scratch copy at ${scratch}`);
+    if (harnessError) fail(`${m.id}: ${harnessError} (NOT counted as a kill)`);
     const killed = killedBy !== null;
-    results.push({ id: m.id, target: m.target, description: m.description, killed, killedBy });
-    console.log(killed ? `KILLED (${killedBy})` : 'SURVIVED ⚠');
+    results.push({ id: m.id, target: m.target, description: m.description, killed, killedBy, why });
+    console.log(killed ? `KILLED by ${killedBy}${why ? ` ← "${why}"` : ''}` : 'SURVIVED ⚠');
   }
 
   // 5. Final byte-identical verification of EVERY target vs pre-run hashes.
   let restoreOk = true;
+  const postHashes = [];
   for (const o of Object.values(originals)) {
     const now = sha256(fs.readFileSync(o.abs));
+    postHashes.push({ rel: o.rel, pre: o.hash, post: now, same: now === o.hash });
     if (now !== o.hash) {
       restoreOk = false;
       console.error(`[mutation] RESTORE MISMATCH: ${o.rel} hash ${now} != pre-run ${o.hash}`);
@@ -451,14 +665,22 @@ function fail(msg) {
   }
   const rate = ((results.length - survivors.length) / results.length * 100).toFixed(1);
   console.log('─────────────────────────────────────────────────────────────');
-  for (const [t, n] of Object.entries(perFile)) {
+  for (const [t] of Object.entries(perFile)) {
     const ran = results.filter((r) => r.target === t);
     if (!ran.length) continue;
     const k = ran.filter((r) => r.killed).length;
     console.log(`  ${TARGETS[t]}: ${k}/${ran.length} killed`);
   }
   console.log(`  kill rate: ${results.length - survivors.length}/${results.length} (${rate}%)`);
-  console.log(`  restores byte-identical: ${restoreOk ? 'YES' : 'NO'}`);
+
+  console.log('\n── restore verification (SHA-256, pre-run vs post-run) ──────');
+  for (const h of postHashes) {
+    console.log(`  ${h.same ? 'IDENTICAL' : 'MISMATCH '}  ${h.rel}`);
+    console.log(`      pre : ${h.pre}`);
+    console.log(`      post: ${h.post}`);
+  }
+  console.log(`  all targets byte-identical: ${restoreOk ? 'YES' : 'NO'}`);
+
   if (survivors.length) {
     console.log('\n  SURVIVORS (each one is a test-suite gap):');
     for (const s of survivors) console.log(`    ${s.id}: ${s.description}`);

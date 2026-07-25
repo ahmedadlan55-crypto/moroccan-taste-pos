@@ -65,6 +65,25 @@ describe("buildTree", () => {
     expect(tree[0].children[1].labels).toEqual(["b1", "—"]); // null key placeholder
   });
 
+  // Mutation gap (PV-12): a null key must encode to a placeholder no real key
+  // can produce. Encoding it as the literal "null" makes a masked group and a
+  // genuine "null"-keyed group share one path key — and the path key IS the
+  // expansion-set member, so expanding one would expand the other.
+  it("a null key never collides with the literal string 'null'", () => {
+    expect(pivotPathKey([null])).not.toBe(pivotPathKey(["null"]));
+
+    const tree = buildTree(
+      [
+        { keys: [null, "i1"], values: { net: 1 } },
+        { keys: ["null", "i2"], values: { net: 2 } },
+      ],
+      ["branch", "menu_item"],
+      ["net"],
+    );
+    expect(tree).toHaveLength(2);
+    expect(tree[0].key).not.toBe(tree[1].key);
+  });
+
   it("returns flat leaves for a single row dimension", () => {
     const tree = buildTree(ROWS, ["branch"], ["net"]);
     expect(tree.every((n) => n.isLeaf)).toBe(true);
@@ -98,6 +117,11 @@ describe("flattenTree", () => {
     ]);
     expect(flat[0].isExpanded).toBe(true);
     expect(flat[1].level).toBe(1);
+    // Mutation gap (PV-13): hasChildren drives the expand chevron. A `>= 0`
+    // length test makes every LEAF claim children, so each item row renders a
+    // chevron that expands into nothing.
+    expect(flat[1].hasChildren).toBe(false);
+    expect(flat[0].hasChildren).toBe(true);
   });
 
   it("subtotal math survives the flatten (group rows carry the sums)", () => {

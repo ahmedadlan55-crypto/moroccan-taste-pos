@@ -24,4 +24,17 @@ export const login = {
     roleNotAllowed: "هذا الحساب لا يملك صلاحية الدخول إلى الكاشير. تواصل مع الإدارة.",
     networkError: "تعذّر الاتصال بالخادم. حاول مجددًا.",
   },
+  // Forced first-login password change, IN the cashier app. It used to hop to
+  // /app/change-password — a cross-portal navigation that had to be removed
+  // when the cashier was isolated from the back office.
+  changePassword: {
+    title: "تغيير كلمة المرور",
+    mandatoryNote: "يجب تغيير كلمة المرور المؤقتة قبل بدء العمل على الكاشير.",
+    currentLabel: "كلمة المرور الحالية",
+    newLabel: "كلمة المرور الجديدة",
+    confirmLabel: "تأكيد كلمة المرور الجديدة",
+    mismatch: "الكلمتان غير متطابقتين",
+    submit: "حفظ ومتابعة",
+    genericError: "تعذّر تغيير كلمة المرور",
+  },
 } as const;

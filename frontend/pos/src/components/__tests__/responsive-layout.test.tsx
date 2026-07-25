@@ -65,7 +65,7 @@ describe("responsive cashier header", () => {
     expect(props.onOpenRequisitions).toHaveBeenCalledTimes(1);
   });
 
-  it("removes the obsolete cashier link and keeps system/status controls under المزيد", () => {
+  it("removes the obsolete cashier link and keeps status controls under المزيد", () => {
     currentCtx = makeCtx();
     render(
       <I18nProvider>
@@ -76,10 +76,39 @@ describe("responsive cashier header", () => {
     expect(screen.queryByText("الكاشير القديم")).not.toBeInTheDocument();
     const more = screen.getByRole("button", { name: "المزيد" });
     fireEvent.click(more);
-    expect(screen.getByRole("link", { name: "العودة للنظام الرئيسي" })).toHaveAttribute("href", "/app/");
     expect(screen.getByRole("button", { name: /متصل/ })).toBeInTheDocument();
     fireEvent.keyDown(document, { key: "Escape" });
-    expect(screen.queryByRole("link", { name: "العودة للنظام الرئيسي" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /متصل/ })).not.toBeInTheDocument();
+  });
+
+  // PORTAL ISOLATION. The «العودة للنظام» link is a hard href into the ERP
+  // bundle. A cashier is now redirected straight back out of /app and their
+  // token is refused on back-office API paths, so for them the link is a dead
+  // end — it must not render at all. A supervisor works in both apps, so it
+  // must still be there: this asserts BOTH directions, because a fix that
+  // simply deleted the link would look "secure" while breaking managers.
+  it("hides the back-to-back-office link for a cashier but keeps it for a supervisor", () => {
+    const linkName = "العودة للنظام الرئيسي";
+
+    currentCtx = makeCtx(); // default fixture user is role: "cashier"
+    render(
+      <I18nProvider>
+        <Header {...headerProps()} />
+      </I18nProvider>,
+    );
+    fireEvent.click(screen.getByRole("button", { name: "المزيد" }));
+    expect(screen.queryByRole("link", { name: linkName })).not.toBeInTheDocument();
+
+    cleanup();
+
+    currentCtx = makeCtx({ overrides: { user: { username: "mgr1", role: "manager" } } });
+    render(
+      <I18nProvider>
+        <Header {...headerProps()} />
+      </I18nProvider>,
+    );
+    fireEvent.click(screen.getByRole("button", { name: "المزيد" }));
+    expect(screen.getByRole("link", { name: linkName })).toHaveAttribute("href", "/app/");
   });
 });
 

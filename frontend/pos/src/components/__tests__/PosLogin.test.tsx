@@ -3,11 +3,17 @@
  *
  * Covers the mandatory-password-change gap this test was written to catch:
  * PosLogin stored the token and reloaded straight into the shell regardless
- * of `mustChangePassword`, while the ERP's own Login.tsx already redirected
- * to the shared /app/change-password screen. A cashier created with a
- * forced-change temp password could sign in through THIS screen and never
- * be prompted — the fix must redirect here too, before ever reloading into
- * the POS shell.
+ * of `mustChangePassword`, so a cashier created with a forced-change temp
+ * password could sign in and never be prompted.
+ *
+ * The REMEDY changed once the cashier portal was isolated from the back
+ * office. It used to hand off to the ERP's shared screen with a full
+ * navigation to `/app/change-password?must=1&redirect=/pos/`. A cashier is
+ * now redirected out of `/app` and their token is refused on back-office API
+ * paths, so that hop would dead-end: the change happens INSIDE the POS
+ * (PosChangePassword) and the shell is still unreachable until it succeeds.
+ * The invariant under test is unchanged — a forced-change account never
+ * reaches the till on its temporary password.
  */
 import { describe, expect, it, vi, beforeEach, afterEach } from "vitest";
 import { render, screen, fireEvent, waitFor, cleanup } from "@testing-library/react";
@@ -67,7 +73,7 @@ describe("PosLogin", () => {
     expect(assignMock).not.toHaveBeenCalled();
   });
 
-  it("mustChangePassword redirects to the shared change-password screen instead of entering the shell", async () => {
+  it("mustChangePassword shows the in-POS change-password screen instead of entering the shell", async () => {
     const token = fakeJwt({ username: "test.cashier", role: "cashier" });
     vi.stubGlobal(
       "fetch",
@@ -82,13 +88,16 @@ describe("PosLogin", () => {
     );
     fillAndSubmit("test.cashier", "TempPassw0rd!");
 
-    await waitFor(() => expect(assignMock).toHaveBeenCalled());
+    // The change screen renders in place — no navigation at all.
+    expect(await screen.findByLabelText("كلمة المرور الحالية")).toBeInTheDocument();
+    expect(screen.getByLabelText("كلمة المرور الجديدة")).toBeInTheDocument();
     // The token IS stored first — the change-password screen needs it to
     // make its own authenticated call.
     expect(localStorage.getItem(TOKEN_KEY)).toBe(token);
-    expect(assignMock).toHaveBeenCalledWith("/app/change-password?must=1&redirect=%2Fpos%2F");
-    // Never reloads straight into the POS shell on a forced-change account.
+    // Never reloads straight into the POS shell on a forced-change account…
     expect(reloadMock).not.toHaveBeenCalled();
+    // …and PORTAL ISOLATION: no navigation into /app (or anywhere else).
+    expect(assignMock).not.toHaveBeenCalled();
   });
 
   it("rejects a non-POS role locally and never stores its token", async () => {

@@ -24,6 +24,10 @@ const compression = require('compression');
 const helmet = require('helmet');
 const path = require('path');
 const jwt = require('jsonwebtoken');
+// The cashier-portal boundary applied by the global /api gate below. Required
+// at the top (not lazily inside the handler) so a missing/broken module is a
+// BOOT failure rather than a silently unguarded API at runtime.
+const posPortalScope = require('./middleware/posPortalScope');
 
 const app = express();
 // v7.x SECURITY — trust the single Railway/reverse-proxy hop so req.ip is the
@@ -237,7 +241,15 @@ app.use('/api/', async function(req, res, next) {
         return res.status(401).json({ success: false, code: 'SESSION_CHECK_FAILED', error: 'تعذّر التحقق من الجلسة — يرجى المحاولة مجددًا' });
       }
       req.user = decoded;
-      return next();
+      // v8.1 SECURITY — the cashier portal boundary. Everything above this
+      // line only AUTHENTICATES; each route file was trusted to authorize
+      // itself and ~80 ERP endpoints never did, so a cashier's token was a
+      // fully valid back-office token (company P&L, GL ledger, audit log —
+      // and even POST /erp/periods/:label/close and /erp/vat/close-quarter,
+      // all reachable with curl). This denies by default for POS-only roles
+      // and allows exactly what the cashier app calls, so a NEW ERP route is
+      // out of a cashier's reach the moment it is written.
+      return posPortalScope(req, res, next);
     } catch (err) {
       // Token invalid/expired — fall through to block
     }

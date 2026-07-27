@@ -189,9 +189,14 @@ describe("global keyboard shortcuts (F2 / F4 / F9) — exceed legacy's zero hotk
     renderApp();
     fireEvent.keyDown(window, { key: "F4" });
     expect(screen.getByRole("dialog", { name: "الدفع" })).toBeInTheDocument();
-    // onscreen-tender-keypad parity: quick amounts + decimal tender field
+    // onscreen-tender-keypad parity: quick amounts + decimal tender field.
+    // This fixture's cart is tax-EXCLUSIVE 2 × 23 → 52.90 payable, so the
+    // derived ladder (lib/tender.ts) is 52.90 / 55 / 60 / 100 / 200. The old
+    // hardcoded "50" button is gone on purpose: 50 cannot settle a 52.90 bill,
+    // which is the defect the ladder exists to remove.
     expect(screen.getByRole("button", { name: "المبلغ بالضبط" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "50" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "55" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "50" })).not.toBeInTheDocument();
     expect(screen.getByText("الباقي للعميل")).toBeInTheDocument();
   });
 

@@ -6,6 +6,7 @@ export const paymentDialog = {
 
   totalDue: "Total due",
   noShiftOpen: "Payment requires an open shift — open a shift first from the top bar",
+  openShiftButton: "Open a shift now",
 
   methodTablistLabel: "Payment method",
   methodCash: "Cash",
@@ -27,6 +28,26 @@ export const paymentDialog = {
   changeDueLabelColon: "Change due:",
 
   splitSumMatches: "Total matches",
+  // Fill-remainder: the cashier used to compute «total − the other legs» in
+  // their head and type it digit by digit while the banner flashed red.
+  splitRemaining: "Remaining: {amount}",
+  splitFillRemainderAria: "Fill the remaining amount into the highlighted field",
+
+  // Reference/approval number — the pad drives this on Card and on owner
+  // methods that come with a slip (bank/wallet/cheque…).
+  referenceLabel: "Terminal / approval number (optional)",
+  referencePlaceholder: "From the terminal slip",
+  referenceNotePrefix: "Ref: ",
+
+  // One-line hint under the ALWAYS-PRESENT keypad, saying what it types now.
+  padHint: {
+    cash: "The keypad types the amount received",
+    split: "The keypad types into the highlighted field",
+    reference: "The keypad types the reference number",
+    inertCredit: "A credit sale posts the full total to the customer's account — no number to enter",
+    inertNote: "This method needs the written note above — no numeric entry",
+    inertFixed: "The amount is fixed at the invoice total — no number to enter",
+  },
 
   cardCollectInfoPrefix: "Collect",
   cardCollectInfoSuffix: "via the card terminal, then confirm",

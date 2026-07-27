@@ -2,6 +2,15 @@
  * DiscountDialog — order-level discount: نسبة (PERCENT) or مبلغ (FIXED) with a
  * discount name. Warns client-side above maxCashierDiscountPct (the server
  * enforces the ceiling at /submit regardless — hidden buttons are not RBAC).
+ *
+ * Two money defects fixed here:
+ *   - The preview called cartTotals() with NO rate, so the whole "total after
+ *     discount" block was computed at cartMath's 15% default while the cart
+ *     footer used the server's settings.VATRate. On any tenant not on 15% the
+ *     dialog contradicted the very total it was previewing. It now threads
+ *     `vatRatePct` from the store, exactly like CartPanel does.
+ *   - It was the last money-entry screen with no on-screen keypad, so the OS
+ *     keyboard slid up over the live preview the cashier was reading.
  */
 import { useEffect, useMemo, useState } from "react";
 import { useT } from "@/i18n/I18nProvider";
@@ -12,11 +21,12 @@ import { presetsForScope, useDiscountPresets } from "@/lib/discountPresets";
 import { fmt2 } from "@/lib/format";
 import type { DiscountType } from "@/lib/types";
 import { Dialog } from "../Dialog";
+import { Numpad } from "../Numpad";
 import { Button, cn, Money } from "../ui";
 
 export function DiscountDialog({ open, onClose }: { open: boolean; onClose: () => void }) {
   const t = useT();
-  const { cart, setDiscount, catalog, supervisor, posCan } = usePos();
+  const { cart, setDiscount, catalog, supervisor, posCan, vatRatePct } = usePos();
   const [type, setType] = useState<DiscountType>("PERCENT");
   const [value, setValue] = useState("");
   const [name, setName] = useState("");
@@ -30,8 +40,9 @@ export function DiscountDialog({ open, onClose }: { open: boolean; onClose: () =
   }, [open, cart.discountType, cart.discountValue, cart.discountName]);
 
   const preview = useMemo(
-    () => cartTotals(cart.lines, Number(value) > 0 ? { type, value: Number(value) } : null),
-    [cart.lines, type, value],
+    // The SERVER's rate — not cartMath's 15% fallback. See the header note.
+    () => cartTotals(cart.lines, Number(value) > 0 ? { type, value: Number(value) } : null, vatRatePct),
+    [cart.lines, type, value, vatRatePct],
   );
   const pct = orderDiscountPct(preview);
   const ceiling = catalog?.maxCashierDiscountPct ?? 10;
@@ -142,6 +153,12 @@ export function DiscountDialog({ open, onClose }: { open: boolean; onClose: () =
           <Money value={fmt2(preview.total)} />
         </div>
       </div>
+
+      {/* On-screen keypad — edits the same `value` state the input above is
+          bound to, so the live preview updates as it is tapped and the OS
+          keyboard never has to cover it. */}
+      <p className="mt-3 text-[11px] font-bold text-slate-400">{t("discountDialog.value.keypadHint")}</p>
+      <Numpad value={value} onChange={setValue} className="mt-1" />
 
       {overCeiling ? (
         <p role="alert" className="mt-3 rounded-xl bg-amber-50 px-3 py-2 text-[11px] font-bold text-amber-800">

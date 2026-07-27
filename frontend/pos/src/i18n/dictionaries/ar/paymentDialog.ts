@@ -6,6 +6,7 @@ export const paymentDialog = {
 
   totalDue: "الإجمالي المستحق",
   noShiftOpen: "لا يمكن الدفع بلا وردية مفتوحة — افتح وردية أولًا من الشريط العلوي",
+  openShiftButton: "افتح وردية الآن",
 
   methodTablistLabel: "طريقة الدفع",
   methodCash: "كاش",
@@ -27,6 +28,26 @@ export const paymentDialog = {
   changeDueLabelColon: "الباقي للعميل:",
 
   splitSumMatches: "المجموع مطابق",
+  // Fill-remainder: the cashier used to compute «الإجمالي − بقية الخانات» in
+  // their head and type it digit by digit while the banner flashed red.
+  splitRemaining: "المتبقي: {amount}",
+  splitFillRemainderAria: "املأ المبلغ المتبقي في الخانة المحددة",
+
+  // Reference/approval number — the pad drives this on شبكة and on owner
+  // methods that come with a slip (بنك/محفظة/شيك…).
+  referenceLabel: "رقم العملية / الموافقة (اختياري)",
+  referencePlaceholder: "من إيصال الجهاز",
+  referenceNotePrefix: "مرجع: ",
+
+  // One-line hint under the ALWAYS-PRESENT keypad, saying what it types now.
+  padHint: {
+    cash: "لوحة الأرقام تكتب المبلغ المستلَم",
+    split: "لوحة الأرقام تكتب في الخانة المحددة",
+    reference: "لوحة الأرقام تكتب رقم العملية",
+    inertCredit: "البيع الآجل يُسجَّل بالكامل على حساب العميل — لا يوجد رقم لإدخاله",
+    inertNote: "هذه الطريقة تحتاج ملاحظة مكتوبة بالأعلى — لا يوجد إدخال رقمي",
+    inertFixed: "المبلغ مثبّت على إجمالي الفاتورة — لا يوجد رقم لإدخاله",
+  },
 
   cardCollectInfoPrefix: "حصّل",
   cardCollectInfoSuffix: "عبر جهاز الشبكة ثم أكّد",

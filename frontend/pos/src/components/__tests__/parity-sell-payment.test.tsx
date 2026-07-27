@@ -75,11 +75,16 @@ describe("pay-keypad-exact + pay-keypad-quick — quick tender amounts", () => {
     expect(screen.getByText("0.00")).toBeInTheDocument();
   });
 
-  it("quick 50/100/200 buttons exist and 100 yields change 54.00 on a 46.00 bill", () => {
+  // The quick amounts are DERIVED from the bill now (lib/tender.ts), not the
+  // old hardcoded 50/100/200. On a 46.00 bill the ladder is 46 / 50 / 100:
+  // 200 is dropped because no cashier reaches for a 200 note on a 46 bill,
+  // and every remaining button is a tender that actually settles it.
+  it("quick 50/100 buttons exist and 100 yields change 54.00 on a 46.00 bill", () => {
     openDialog(makeCtx());
-    for (const label of ["50", "100", "200"]) {
+    for (const label of ["50", "100"]) {
       expect(screen.getByRole("button", { name: label })).toBeInTheDocument();
     }
+    expect(screen.queryByRole("button", { name: "200" })).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "100" }));
     expect(screen.getByText("54.00")).toBeInTheDocument();
   });

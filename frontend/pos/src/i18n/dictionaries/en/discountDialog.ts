@@ -12,6 +12,7 @@ export const discountDialog = {
   value: {
     percentLabel: "Percentage (0–100)",
     fixedLabel: "Amount (capped at {amount})",
+    keypadHint: "The keypad types the discount value",
   },
   name: {
     label: "Discount name",

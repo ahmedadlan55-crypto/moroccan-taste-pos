@@ -110,7 +110,9 @@ describe("discount-legacy-apply + discount-invoice-apply-preset — invoice dial
     renderDialog(ctx);
     fireEvent.click(await screen.findByText("خصم موظف"));
     expect(screen.getByRole("radio", { name: "مبلغ ر.س" })).toHaveAttribute("aria-checked", "true");
-    expect(screen.getByLabelText(/المبلغ/)).toHaveValue(5);
+    // Anchored: the dialog now also carries the on-screen keypad, whose clear
+    // key is labelled «مسح المبلغ» — an unanchored /المبلغ/ matches both.
+    expect(screen.getByLabelText(/^المبلغ/)).toHaveValue(5);
     fireEvent.click(screen.getByRole("button", { name: "تطبيق الخصم" }));
     expect(ctx.setDiscount).toHaveBeenCalledWith("FIXED", 5, "خصم موظف");
   });

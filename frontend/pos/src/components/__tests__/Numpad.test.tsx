@@ -117,9 +117,16 @@ describe("PaymentDialog — keypad wired to the real amount states", () => {
     expect(screen.getByText("المجموع مطابق")).toBeInTheDocument();
   });
 
-  it("no keypad on fixed-amount tabs (شبكة tab has nothing to type)", () => {
+  // REVERSED DELIBERATELY. This used to assert «no keypad on fixed-amount
+  // tabs», which is exactly the behavior the owner asked to remove: the pad
+  // appearing on some tabs and not others made it move under the cashier's
+  // thumb. The pad is now permanent on every method — on شبكة it drives the
+  // approval-number field, and on آجل (nothing to type) it stays put and goes
+  // inert. Full coverage lives in payment-permanent-numpad.test.tsx.
+  it("the keypad survives a switch to a fixed-amount tab (شبكة) instead of unmounting", () => {
     openDialog();
     fireEvent.click(screen.getByRole("tab", { name: "شبكة" }));
-    expect(screen.queryByTestId("numpad")).not.toBeInTheDocument();
+    expect(screen.getByTestId("numpad")).toBeInTheDocument();
+    expect(screen.getByTestId("numpad")).not.toHaveAttribute("aria-disabled");
   });
 });

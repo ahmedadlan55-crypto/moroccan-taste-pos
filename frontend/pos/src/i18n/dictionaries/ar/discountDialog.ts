@@ -12,6 +12,7 @@ export const discountDialog = {
   value: {
     percentLabel: "النسبة (0–100)",
     fixedLabel: "المبلغ (يُسقَف عند {amount})",
+    keypadHint: "لوحة الأرقام تكتب قيمة الخصم",
   },
   name: {
     label: "اسم الخصم",

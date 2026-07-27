@@ -3,11 +3,41 @@
  * change math, mixed split with live validation, then the submit→sales→
  * complete chain with visible progress. Offline: CASH ONLY, queued for
  * replay ("سيُرحَّل عند عودة الاتصال") with a local reference.
+ *
+ * LAYOUT CONTRACT — THE KEYPAD NEVER MOVES.
+ *   The on-screen Numpad used to render only inside the cash tab and inside
+ *   the split block, so it appeared, vanished and jumped as the cashier moved
+ *   between methods; a thumb cannot learn a target that moves. There is now
+ *   exactly ONE <Numpad>, mounted once, always in the same slot (below the
+ *   method-specific fields, above Confirm), on every tab. What it drives
+ *   changes, its position does not:
+ *     cash   → the tendered amount
+ *     split  → the ACTIVE (ringed) leg
+ *     card   → the terminal/approval reference (reference grammar, not money)
+ *     owner  → the same reference, when the method's group carries a slip
+ *     credit → inert (dimmed, keys disabled) — the amount is fixed and there
+ *              is no slip; a one-line hint above the pad says why
+ *   The method-fields region carries a min-height so the pad's top edge is at
+ *   the same offset on every tab, not merely "somewhere below".
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Banknote, CheckCircle2, ChefHat, CreditCard, HandCoins, Loader2, Printer, SplitSquareHorizontal, Wallet } from "lucide-react";
+import {
+  ArrowDownToLine,
+  Banknote,
+  CheckCircle2,
+  ChefHat,
+  Clock,
+  CreditCard,
+  HandCoins,
+  Hash,
+  Loader2,
+  Printer,
+  SplitSquareHorizontal,
+  Wallet,
+} from "lucide-react";
 import { usePos } from "@/state/store";
 import { round2, paymentsError } from "@/lib/cartMath";
+import { tenderLadder } from "@/lib/tender";
 import { fmt2, shortRef } from "@/lib/format";
 import {
   buildKitchenTicketHtml,
@@ -21,7 +51,7 @@ import type { CatalogPaymentMethod, LocalOrder, Payment } from "@/lib/types";
 import { useLang, useT } from "@/i18n/I18nProvider";
 import { translateApiError } from "@/i18n/errorCodes";
 import { Dialog } from "../Dialog";
-import { Numpad } from "../Numpad";
+import { applyReferenceKey, Numpad, type NumpadKey } from "../Numpad";
 import { Button, cn, Money } from "../ui";
 
 /** Built-in tabs + `owner:<name>` for owner-configured methods (close/w25-sell-ui). */
@@ -37,6 +67,50 @@ function methodNeedsNote(m: CatalogPaymentMethod | null): boolean {
   if (!m) return false;
   return m.requiresNote === true || String(m.groupType ?? "").toLowerCase() === "other";
 }
+
+/** Owner-method groups that hand the cashier a slip with a number on it, so
+ *  the always-present keypad has something real to type. Derived from the
+ *  catalog's existing `groupType` — no new server field. */
+const REFERENCE_GROUPS = new Set(["card", "bank", "transfer", "wallet", "cheque", "check", "online"]);
+
+/** Does this owner method take a reference/approval number? ('other' does not:
+ *  its entry is the mandatory free-text note, not a number.) */
+function methodTakesReference(m: CatalogPaymentMethod | null): boolean {
+  if (!m || methodNeedsNote(m)) return false;
+  return REFERENCE_GROUPS.has(String(m.groupType ?? "").toLowerCase());
+}
+
+/** What the one permanent keypad is wired to right now. */
+interface PadSpec {
+  value: string;
+  onChange: (next: string) => void;
+  /** Absent → the money grammar (applyNumpadKey). */
+  apply?: (value: string, key: NumpadKey) => string;
+  /** Visible but inert — the pad must never disappear between tabs. */
+  disabled: boolean;
+  /** One line, always rendered, saying what the pad types (or why it can't). */
+  hint: string;
+}
+
+/** Ladder buttons read as tender notes: "50", not "50.00" — but a non-round
+ *  exact amount still needs its halalas. */
+function tenderLabel(value: number): string {
+  return Number.isInteger(value) ? String(value) : fmt2(value);
+}
+
+export interface PaymentDialogProps {
+  open: boolean;
+  onClose: () => void;
+  /**
+   * Hand off to the FULL ShiftDialog when the cashier has no open shift.
+   * Optional so the dialog still renders standalone (and in specs) — when it
+   * is absent the banner simply has no button, exactly as before.
+   *
+   * It must open the real dialog, NEVER an inline zero-float open: a shift
+   * opened without its counted float silently corrupts the Z-report.
+   */
+  onOpenShift?: () => void;
+}
 type Phase =
   | { name: "form" }
   | { name: "working"; stage: "submit" | "sale" | "complete" }
@@ -51,7 +125,7 @@ type Phase =
  *  handler, and the dialog would stay locked forever. */
 export const CHECKOUT_WATCHDOG_MS = 120_000;
 
-export function PaymentDialog({ open, onClose }: { open: boolean; onClose: () => void }) {
+export function PaymentDialog({ open, onClose, onOpenShift }: PaymentDialogProps) {
   const t = useT();
   const lang = useLang();
   const { cart, totals, engine, engineStatus, supervisor, posCan, user, catalog, startNewOrder, loadOrderDoc, pushToast, shiftId, o2cEnabled } = usePos();
@@ -71,6 +145,8 @@ export function PaymentDialog({ open, onClose }: { open: boolean; onClose: () =>
   const [splitCard, setSplitCard] = useState<string>("");
   const [splitCredit, setSplitCredit] = useState<string>("");
   const [payNote, setPayNote] = useState<string>("");
+  /** Terminal/approval number for card + slip-bearing owner methods. */
+  const [reference, setReference] = useState<string>("");
   const [phase, setPhase] = useState<Phase>({ name: "form" });
   const tenderedRef = useRef<HTMLInputElement>(null);
   // Which split leg the on-screen numpad edits (touch POS): the last-focused
@@ -135,6 +211,7 @@ export function PaymentDialog({ open, onClose }: { open: boolean; onClose: () =>
       setSplitCard("");
       setSplitCredit("");
       setPayNote("");
+      setReference("");
       setActiveSplitField("cash");
       setPhase({ name: "form" });
     } else {
@@ -192,6 +269,21 @@ export function PaymentDialog({ open, onClose }: { open: boolean; onClose: () =>
   const changeDue = round2(Math.max(0, tenderedNum - total));
   const cashShort = tab === "cash" && tendered !== "" && tenderedNum < total;
 
+  /** Quick-tender buttons, DERIVED from this bill (lib/tender.ts) instead of
+   *  the old hardcoded exact/50/100/200 — which offered notes below the total
+   *  and had no 500 at all. Slot 0 is always the exact amount. */
+  const ladder = useMemo(() => tenderLadder(total), [total]);
+
+  /** The split آجل leg is supervisor-gated: NOTHING may write a nonzero value
+   *  into it without the permission — not the input, not the keypad, not
+   *  fill-remainder. One guarded setter is the single write path. */
+  const setSplitCreditGuarded = useCallback(
+    (next: string) => {
+      if (canCredit) setSplitCredit(next);
+    },
+    [canCredit],
+  );
+
   const splitCashNum = Number(splitCash) || 0;
   const splitCardNum = Number(splitCard) || 0;
   const splitCreditNum = Number(splitCredit) || 0;
@@ -208,6 +300,22 @@ export function PaymentDialog({ open, onClose }: { open: boolean; onClose: () =>
           t,
         )
       : null;
+
+  // ── Split: the ACTIVE leg + fill-remainder ─────────────────────────────────
+  // The cashier used to compute 23.50 on a 73.50 bill with 50 already in cash
+  // and type it digit by digit while the error banner flashed red on every
+  // keystroke. One button now does it.
+  const activeLegValue = activeSplitField === "cash" ? splitCash : activeSplitField === "card" ? splitCard : splitCredit;
+  const setActiveLeg =
+    activeSplitField === "cash" ? setSplitCash : activeSplitField === "card" ? setSplitCard : setSplitCreditGuarded;
+  /** The active leg is unwritable exactly when it is the credit leg without
+   *  the credit permission — fill-remainder must then be a NO-OP. */
+  const activeLegLocked = activeSplitField === "credit" && !canCredit;
+  const splitRemainder = round2(Math.max(0, total - round2(splitSum - (Number(activeLegValue) || 0))));
+  const fillRemainder = useCallback(() => {
+    if (activeLegLocked) return; // credit-leg guard — never writes
+    setActiveLeg(String(splitRemainder));
+  }, [activeLegLocked, setActiveLeg, splitRemainder]);
 
   const payments: Payment[] = useMemo(() => {
     if (tab === "cash") return [{ method: "cash", amount: total }];
@@ -245,6 +353,78 @@ export function PaymentDialog({ open, onClose }: { open: boolean; onClose: () =>
     noteTooShort ||
     !effectiveShiftId;
 
+  // ── The one permanent keypad ───────────────────────────────────────────────
+  /** Tabs that show a reference/approval field (and so give the pad digits to
+   *  type). Card always does; an owner method does when its group carries a
+   *  slip. Never on cash/split (they type money) or credit (no slip exists). */
+  const showReference = tab === "card" || methodTakesReference(ownerMethod);
+  const referenceTrimmed = reference.trim();
+
+  const pad: PadSpec =
+    tab === "cash"
+      ? { value: tendered, onChange: setTendered, disabled: false, hint: t("paymentDialog.padHint.cash") }
+      : tab === "split"
+        ? {
+            value: activeLegValue,
+            onChange: setActiveLeg,
+            disabled: activeLegLocked,
+            hint: activeLegLocked ? t("paymentDialog.creditNeedsSupervisorTip") : t("paymentDialog.padHint.split"),
+          }
+        : showReference
+          ? {
+              value: reference,
+              onChange: setReference,
+              // NOT the money grammar: "0042" ≠ "42" on a terminal slip.
+              apply: applyReferenceKey,
+              disabled: false,
+              hint: t("paymentDialog.padHint.reference"),
+            }
+          : {
+              // Inert — still on screen, still the same size, still the same
+              // spot; only the keys are dead, with the reason spelled out.
+              value: "",
+              onChange: () => {},
+              disabled: true,
+              hint:
+                tab === "credit"
+                  ? t("paymentDialog.padHint.inertCredit")
+                  : noteRequired
+                    ? t("paymentDialog.padHint.inertNote")
+                    : t("paymentDialog.padHint.inertFixed"),
+            };
+
+  /** The free-text note the server stores: the mandatory 'other' note, the
+   *  typed reference, or both. Empty on every path that typed neither, so the
+   *  existing "no note ⇒ paymentNotes undefined" contract is unchanged. */
+  function paymentNotesPayload(): string | undefined {
+    const parts: string[] = [];
+    if (noteRequired && payNote.trim()) parts.push(payNote.trim());
+    if (showReference && referenceTrimmed) parts.push(`${t("paymentDialog.referenceNotePrefix")}${referenceTrimmed}`);
+    return parts.length ? parts.join(" — ") : undefined;
+  }
+
+  /** The reference/approval field — shared by the card tab and slip-bearing
+   *  owner methods, and the target of the keypad on both. */
+  function referenceField() {
+    return (
+      <label className="mt-3 block">
+        <span className="mb-1 flex items-center gap-1 text-[11px] font-extrabold text-slate-500">
+          <Hash className="h-3.5 w-3.5" aria-hidden /> {t("paymentDialog.referenceLabel")}
+        </span>
+        <input
+          type="text"
+          inputMode="numeric"
+          value={reference}
+          onChange={(e) => setReference(e.target.value)}
+          placeholder={t("paymentDialog.referencePlaceholder")}
+          maxLength={32}
+          dir="ltr" /* LTR forced: numeric/phone - do not remove, see i18n plan */
+          className="field num"
+        />
+      </label>
+    );
+  }
+
   async function confirm() {
     // 'timeout' allows a RETRY: safe — the sale dedupes on clientOrderId
     // (= the doc id) server-side, so a landed first attempt is replayed, not
@@ -265,8 +445,9 @@ export function PaymentDialog({ open, onClose }: { open: boolean; onClose: () =>
       const outcome = await engine.checkout(snapshot, payments, {
         cashTendered,
         changeDue: change,
-        // The 'other'-group note (already gated ≥3 chars by confirmDisabled).
-        paymentNotes: noteRequired && payNote.trim() ? payNote.trim() : undefined,
+        // The 'other'-group note (already gated ≥3 chars by confirmDisabled)
+        // and/or the typed terminal reference. Undefined when neither exists.
+        paymentNotes: paymentNotesPayload(),
       });
       if (outcome.state === "failed") {
         // The engine reopened the doc server-side + locally; reload the fresh
@@ -370,9 +551,21 @@ export function PaymentDialog({ open, onClose }: { open: boolean; onClose: () =>
             </div>
           ) : null}
 
+          {/* No open shift — a dead end until now: the banner said "open one
+              from the top bar", Confirm was disabled, and the cashier had to
+              close the dialog, hunt the header button and rebuild their route
+              back. The button hands off to the FULL ShiftDialog (the opening
+              float MUST be counted — an inline zero-float open corrupts the
+              Z-report), and App re-opens payment afterwards. */}
           {!effectiveShiftId ? (
             <div role="alert" className="mb-3 rounded-2xl border border-amber-300 bg-amber-50 px-4 py-3 text-sm font-bold text-amber-800">
-              {t("paymentDialog.noShiftOpen")}
+              <p>{t("paymentDialog.noShiftOpen")}</p>
+              {onOpenShift ? (
+                <Button variant="dark" size="sm" className="mt-2 w-full" onClick={onOpenShift}>
+                  <Clock className="h-4 w-4" aria-hidden />
+                  {t("paymentDialog.openShiftButton")}
+                </Button>
+              ) : null}
             </div>
           ) : null}
 
@@ -448,26 +641,37 @@ export function PaymentDialog({ open, onClose }: { open: boolean; onClose: () =>
             </p>
           ) : null}
 
+          {/* ── Method-specific fields ──────────────────────────────────────
+              The min-height is load-bearing, not decoration: it pins the
+              BOTTOM of this region so the single keypad below starts at the
+              same offset on cash / card / split / credit. Without it the pad
+              would still slide up and down as the taller cash and split
+              layouts gave way to the one-line card/credit ones. */}
+          <div className="min-h-[11rem]">
           {/* Cash */}
           {tab === "cash" ? (
             <div>
-              <div className="mb-2 grid grid-cols-4 gap-1.5">
-                {[
-                  { label: t("paymentDialog.exactAmount"), v: total },
-                  { label: "50", v: 50 },
-                  { label: "100", v: 100 },
-                  { label: "200", v: 200 },
-                ].map((b, i) => (
-                  <Button
-                    key={i}
-                    variant="secondary"
-                    onClick={() => setTendered(String(b.v))}
-                    className={cn(i === 0 ? "text-xs" : "num")}
-                  >
-                    {b.label}
-                  </Button>
-                ))}
-              </div>
+              {/* Derived tender ladder (lib/tender.ts): exact amount, the
+                  round-up reflexes, then the notes the customer is actually
+                  holding. One row, never wraps — the column count follows the
+                  ladder length instead of a fixed grid-cols-4. */}
+              {ladder.length > 0 ? (
+                <div
+                  className="mb-2 grid gap-1.5"
+                  style={{ gridTemplateColumns: `repeat(${ladder.length}, minmax(0, 1fr))` }}
+                >
+                  {ladder.map((v, i) => (
+                    <Button
+                      key={v}
+                      variant="secondary"
+                      onClick={() => setTendered(String(v))}
+                      className={cn("px-1", i === 0 ? "text-[11px] leading-tight" : "num")}
+                    >
+                      {i === 0 ? t("paymentDialog.exactAmount") : tenderLabel(v)}
+                    </Button>
+                  ))}
+                </div>
+              ) : null}
               <label className="block">
                 <span className="mb-1 block text-[11px] font-extrabold text-slate-500">{t("paymentDialog.tenderedLabel")}</span>
                 <input
@@ -494,9 +698,6 @@ export function PaymentDialog({ open, onClose }: { open: boolean; onClose: () =>
                 </span>
                 <Money value={fmt2(cashShort ? total - tenderedNum : changeDue)} className="text-lg font-extrabold" />
               </div>
-              {/* On-screen keypad (touch POS) — edits the same `tendered` state
-                  the input above is bound to; the system keyboard still works. */}
-              <Numpad value={tendered} onChange={setTendered} className="mt-2" />
             </div>
           ) : null}
 
@@ -541,8 +742,9 @@ export function PaymentDialog({ open, onClose }: { open: boolean; onClose: () =>
                     value={splitCredit}
                     // Guard (not just the `disabled` attribute): a user without
                     // credit permission must never get a nonzero splitCredit
-                    // into state, from any input path.
-                    onChange={(e) => { if (canCredit) setSplitCredit(e.target.value); }}
+                    // into state, from any input path — typing, the keypad, or
+                    // fill-remainder. They all go through setSplitCreditGuarded.
+                    onChange={(e) => setSplitCreditGuarded(e.target.value)}
                     onFocus={() => setActiveSplitField("credit")}
                     placeholder="0.00"
                     dir="ltr" /* LTR forced: numeric/phone - do not remove, see i18n plan */
@@ -555,6 +757,20 @@ export function PaymentDialog({ open, onClose }: { open: boolean; onClose: () =>
                   />
                 </label>
               </div>
+              {/* Fill-remainder — the whole point of the split screen is that
+                  the legs must sum to the total, and until now the cashier did
+                  that subtraction in their head and typed it digit by digit
+                  while the banner flashed red on every keystroke. */}
+              <Button
+                variant="secondary"
+                aria-label={t("paymentDialog.splitFillRemainderAria")}
+                onClick={fillRemainder}
+                disabled={activeLegLocked || splitRemainder <= 0}
+                className="mt-2 min-h-11 w-full text-xs"
+              >
+                <ArrowDownToLine className="h-4 w-4" aria-hidden />
+                {t("paymentDialog.splitRemaining", { amount: fmt2(splitRemainder) })}
+              </Button>
               <div
                 className={cn(
                   "mt-2 flex items-center justify-between rounded-xl px-4 py-3 text-sm font-extrabold",
@@ -565,22 +781,22 @@ export function PaymentDialog({ open, onClose }: { open: boolean; onClose: () =>
                 <span>{splitError ? splitError : t("paymentDialog.splitSumMatches")}</span>
                 <Money value={`${fmt2(splitSum)} / ${fmt2(total)}`} />
               </div>
-              {/* On-screen keypad — edits the ACTIVE (ringed) split leg. */}
-              <Numpad
-                value={activeSplitField === "cash" ? splitCash : activeSplitField === "card" ? splitCard : splitCredit}
-                onChange={activeSplitField === "cash" ? setSplitCash : activeSplitField === "card" ? setSplitCard : setSplitCredit}
-                className="mt-2"
-              />
             </div>
           ) : null}
 
-          {/* Card / credit info line */}
+          {/* Card — info line + the approval number the keypad now types */}
           {tab === "card" ? (
-            <p className="rounded-xl bg-slate-50 px-3 py-2.5 text-xs font-bold text-slate-500">
-              {t("paymentDialog.cardCollectInfoPrefix")} <Money value={fmt2(total)} /> {t("paymentDialog.currency")}{" "}
-              {t("paymentDialog.cardCollectInfoSuffix")}
-            </p>
+            <div>
+              <p className="rounded-xl bg-slate-50 px-3 py-2.5 text-xs font-bold text-slate-500">
+                {t("paymentDialog.cardCollectInfoPrefix")} <Money value={fmt2(total)} /> {t("paymentDialog.currency")}{" "}
+                {t("paymentDialog.cardCollectInfoSuffix")}
+              </p>
+              {referenceField()}
+            </div>
           ) : null}
+          {/* Credit — the amount is fixed at the total and there is no slip, so
+              this tab is the one with nothing to type: the pad stays put and
+              goes inert (see the PadSpec above). */}
           {tab === "credit" ? (
             <p className="rounded-xl bg-slate-50 px-3 py-2.5 text-xs font-bold text-slate-500">
               {t("paymentDialog.creditInfoPrefix")} <Money value={fmt2(total)} /> {t("paymentDialog.currency")}{" "}
@@ -631,15 +847,37 @@ export function PaymentDialog({ open, onClose }: { open: boolean; onClose: () =>
                   ) : null}
                 </div>
               ) : null}
+              {/* Owner methods whose group carries a slip get the same
+                  reference field — and therefore the same live keypad. */}
+              {showReference ? referenceField() : null}
             </div>
           ) : null}
 
-          {/* Order-to-Cash: a credit sale must be attached to a real customer. */}
+          {/* Order-to-Cash: a credit sale must be attached to a real customer.
+              Kept INSIDE the fields region so it eats the min-height slack
+              instead of pushing the keypad down. */}
           {creditBlocked ? (
             <p role="alert" className="mt-3 rounded-xl border border-amber-300 bg-amber-50 px-3 py-2.5 text-xs font-extrabold text-amber-800">
               {t("paymentDialog.creditBlockedWarning")}
             </p>
           ) : null}
+          </div>
+
+          {/* ── The keypad — SAME SLOT ON EVERY TAB ───────────────────────────
+              Mounted once, unconditionally. `pad` decides what it edits (and
+              whether it edits anything at all); the hint line above it is
+              always rendered, so even the wording changing cannot move the
+              keys. The system keyboard still works on every bound input. */}
+          <p className="mt-3 text-[11px] font-bold text-slate-400" data-testid="numpad-hint">
+            {pad.hint}
+          </p>
+          <Numpad
+            value={pad.value}
+            onChange={pad.onChange}
+            apply={pad.apply}
+            disabled={pad.disabled}
+            className="mt-1"
+          />
 
           <Button variant="primary" size="lg" className="mt-4 w-full" onClick={() => void confirm()} disabled={confirmDisabled}>
             {t("paymentDialog.confirmButtonPrefix")} <Money value={fmt2(total)} /> {t("paymentDialog.currency")}

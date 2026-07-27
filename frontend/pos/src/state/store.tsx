@@ -17,7 +17,7 @@ import {
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { currentUser, getToken, isSupervisor } from "@/lib/auth";
 import { fetchEffectiveCaps, posCan as posCanBase, type EffectiveCaps } from "@/lib/capabilities";
-import { loadCatalog, type LoadedCatalog } from "@/lib/catalogCache";
+import { CatalogError, loadCatalog, type LoadedCatalog } from "@/lib/catalogCache";
 import { idbPut } from "@/lib/idb";
 import { openShift as apiOpenShift, findOpenShift, getServerFlags } from "@/lib/api";
 import { getEngine, type EngineStatus, type OfflineEngine } from "@/lib/offline";
@@ -96,6 +96,60 @@ function getStoredChannelId(): string | null {
   }
 }
 
+// ── Last known open shift (offline cold-boot survival) ──────────────────────
+// The open-shift QUERY is gated on `engineStatus.online`, so an offline cold
+// boot leaves shiftId null forever — and startNewOrder() then stamps every new
+// cart with a null shiftId. The FIRST order of such a boot survived only by
+// accident (it is restored from IndexedDB with its own stored shiftId); from
+// the SECOND order on, payment died. Remembering the last shift the server
+// confirmed is open closes that hole.
+//
+// This is a CACHE, never authority: routes/sales.js re-validates the shift at
+// replay, so a stale id fails loudly at sync (shift_not_found / shift_closed /
+// shift_owner_mismatch) instead of silently booking into the wrong shift.
+const SHIFT_KEY = "pos_v2_last_open_shift_id";
+
+/** Shape-validated read: anything that is not a sane, non-empty id is ignored. */
+function getStoredShiftId(): string | null {
+  try {
+    const raw = localStorage.getItem(SHIFT_KEY);
+    if (typeof raw !== "string") return null;
+    const id = raw.trim();
+    // A shift id is a short opaque token. Bound it so a corrupted/oversized
+    // entry (or something else's key collision) can never ride into a payload.
+    if (!id || id.length > 64) return null;
+    return id;
+  } catch {
+    return null; // private mode / storage disabled — behave as if never seen
+  }
+}
+
+/** Persist (or clear) the last server-confirmed open shift. Never throws. */
+function rememberShiftId(id: string | null): void {
+  try {
+    if (id && typeof id === "string" && id.trim() && id.trim().length <= 64) {
+      localStorage.setItem(SHIFT_KEY, id.trim());
+    } else {
+      localStorage.removeItem(SHIFT_KEY);
+    }
+  } catch {
+    /* private mode — the id just won't survive a reload */
+  }
+}
+
+/**
+ * A catalog load that also says WHICH channel's prices it actually carries.
+ * `loadCatalogForChannel` degrades to the base/cached copy when a channel fetch
+ * fails; without these two fields that degradation was invisible — the selector
+ * kept showing the channel as active while the register sold at BASE prices.
+ */
+export interface ChannelLoadedCatalog extends LoadedCatalog {
+  /** The channel whose prices this copy actually carries. null = base prices. */
+  servedChannelId: string | null;
+  /** A channel WAS selected but its price list could not be served. */
+  channelPricesUnavailable: boolean;
+}
+
 /**
  * Channel-aware catalog load.
  *   base (null)      → the ETag+IndexedDB path in catalogCache, unchanged.
@@ -108,23 +162,47 @@ function getStoredChannelId(): string | null {
  *     channel's prices, surfaced by the existing stale/age machinery — because
  *     selling through an outage beats a blank grid). An old server simply
  *     ignores ?channelId= and returns the base catalog: same behavior as today.
+ *
+ * THE FALLBACK IS NOW VISIBLE (defect 5). It used to `catch { return
+ * loadCatalog() }` and hand back `fromCache:false, stale:false` — a clean bill
+ * of health for a copy that is NOT the channel's price list. The selector went
+ * on showing «هنقرستيشن» as the active channel while every line rang up at BASE
+ * price, and nothing anywhere said so. The result now states which channel's
+ * prices it actually carries, so the UI can stop claiming the channel is live.
+ *
+ * A 401 is deliberately NOT degraded: loadCatalog() rethrows SESSION_EXPIRED,
+ * which must reach the cashier as "sign in again", not as a pricing footnote.
  */
-async function loadCatalogForChannel(channelId: string | null): Promise<LoadedCatalog> {
-  if (!channelId) return loadCatalog();
+async function loadCatalogForChannel(channelId: string | null): Promise<ChannelLoadedCatalog> {
+  if (!channelId) {
+    const base = await loadCatalog();
+    return { ...base, servedChannelId: null, channelPricesUnavailable: false };
+  }
   try {
     const headers: Record<string, string> = { Accept: "application/json" };
     const token = getToken();
     if (token) headers.Authorization = `Bearer ${token}`;
     const res = await fetch(`/api/pos/v2/catalog?channelId=${encodeURIComponent(channelId)}`, { headers });
-    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    if (!res.ok) {
+      // Surfaced as a real, coded error so the 401 branch below can see it —
+      // an expired session must never masquerade as "channel prices missing".
+      throw new CatalogError(
+        res.status === 401 ? "SESSION_EXPIRED" : "CATALOG_LOAD_FAILED",
+        `HTTP ${res.status}`,
+      );
+    }
     const data = (await res.json()) as Catalog;
     const savedAt = Date.now();
     // Write-through (etag null: the next base load does a full 200 refetch
     // rather than trusting a channel-priced copy against the base ETag).
     await idbPut("catalog", "catalog", { data, etag: null, savedAt }).catch(() => undefined);
-    return { catalog: data, fromCache: false, savedAt, ageMs: 0, stale: false };
-  } catch {
-    return loadCatalog();
+    return { catalog: data, fromCache: false, savedAt, ageMs: 0, stale: false, servedChannelId: channelId, channelPricesUnavailable: false };
+  } catch (e) {
+    if (e instanceof CatalogError && e.code === "SESSION_EXPIRED") throw e;
+    // Keep the till alive on whatever we have — but say out loud that these are
+    // NOT the selected channel's prices.
+    const fallback = await loadCatalog();
+    return { ...fallback, servedChannelId: null, channelPricesUnavailable: true };
   }
 }
 
@@ -176,17 +254,37 @@ export interface PosContextValue {
 
   catalog: Catalog | null;
   catalogLoading: boolean;
+  /** A t()-able i18n PATH (`errors.SESSION_EXPIRED` / `errors.CATALOG_OFFLINE` /
+   *  `errors.CATALOG_LOAD_FAILED`) — NOT a raw `.message`. Always resolves in
+   *  both dictionaries, so `t(catalogError)` is a real actionable sentence. */
   catalogError: string | null;
+  /** The RAW thrown error (a `CatalogError` carrying `.code`) for call sites
+   *  that want `translateApiError(e, t)`. null when the load succeeded. */
+  catalogErrorObject: unknown;
   /** Serving a cached catalog we could not confirm is current — prices may be out of date. */
   catalogStale: boolean;
   /** Age of the served catalog copy in ms (null = fresh or unknown). */
   catalogAgeMs: number | null;
   refetchCatalog: () => void;
 
+  /** The VAT rate the SERVER shipped (settings.VATRate, percent — e.g. 15).
+   *  Falls back to DEFAULT_VAT_RATE_PCT only until the catalog resolves.
+   *  EVERY cartMath call outside this provider must pass it, or the figure the
+   *  cashier reads disagrees with the one the server charges. */
+  vatRatePct: number;
+
   /** Owner sales channels from the catalog ([] on an old server → no selector). */
   channels: SalesChannel[];
-  /** Selected channel id (persisted); null = the implicit base «الأساسي». */
+  /** Selected channel id (persisted); null = the implicit base «الأساسي».
+   *  This is the cashier's PREFERENCE — it is NOT proof those prices loaded. */
   channelId: string | null;
+  /** The channel whose prices the catalog on screen ACTUALLY carries (null =
+   *  base prices). Render the "active channel" affordance from THIS, not from
+   *  `channelId`: they differ exactly when a channel fetch failed. */
+  activeChannelId: string | null;
+  /** `channelId` is set but its price list could not be served — the grid is
+   *  showing base/cached prices. The UI must not present the channel as active. */
+  channelPricesUnavailable: boolean;
   /** Switch channel: refetches the catalog with ?channelId= WITHOUT touching the
    *  cart (legacy preserved the cart across switches — V5.7.11). */
   setChannel: (id: string | null) => void;
@@ -310,7 +408,25 @@ export function PosProvider({ children }: { children: ReactNode }) {
     enabled: !!user && engineStatus.online,
     refetchInterval: 2 * 60_000,
   });
-  const shiftId = shiftQuery.data ?? null;
+  const queryShiftId = shiftQuery.data ?? null;
+  const shiftResolved = shiftQuery.isSuccess;
+
+  // Last shift the SERVER confirmed open, mirrored to localStorage. Seeded from
+  // storage so an offline cold boot has an id before (in fact, without ever) the
+  // query runs — `enabled` is gated on engineStatus.online, so offline it never
+  // resolves at all and `queryShiftId` stays null forever.
+  const [persistedShiftId, setPersistedShiftId] = useState<string | null>(getStoredShiftId);
+  useEffect(() => {
+    if (!shiftResolved) return; // offline / still loading — keep what we remember
+    rememberShiftId(queryShiftId); // a resolved null means "no open shift" → clear
+    setPersistedShiftId(queryShiftId);
+  }, [shiftResolved, queryShiftId]);
+
+  // Once the server has spoken it is the ONLY authority — including when it says
+  // null (the shift was closed elsewhere), which must not be overridden by a
+  // stale remembered id. Before that (offline, or the very first paint) the
+  // remembered id is strictly better than null.
+  const shiftId = shiftResolved ? queryShiftId : (queryShiftId ?? persistedShiftId);
 
   const openShiftMutation = useMutation({
     mutationFn: apiOpenShift,
@@ -345,7 +461,6 @@ export function PosProvider({ children }: { children: ReactNode }) {
 
   // Keep the cart's shiftId aligned with the live shift — but only once the
   // shift query actually resolved (offline keeps whatever the doc stored).
-  const shiftResolved = shiftQuery.isSuccess;
   useEffect(() => {
     if (!shiftResolved) return;
     setCart((c) => (c.shiftId === shiftId ? c : { ...c, shiftId, updatedAt: Date.now() }));
@@ -568,10 +683,15 @@ export function PosProvider({ children }: { children: ReactNode }) {
   );
   const setNote = useCallback((note: string | null) => mutate((c) => ({ ...c, note })), [mutate]);
 
+  // Every new cart must carry a shift id or its checkout is dead on arrival.
+  // Three sources, best first: the live/remembered shift, then the doc we are
+  // replacing — offline that LAST fallback is what the first restored order of
+  // the boot was carrying, and it is the only reason order #1 ever worked.
+  // Reading `prev` inside the updater keeps the cart out of the dep list.
   const startNewOrder = useCallback(() => {
     skipNextSave.current = false; // the new empty doc still saves locally
-    setCart(newLocalOrder(shiftId, deviceId));
-  }, [shiftId, deviceId]);
+    setCart((prev) => newLocalOrder(shiftId ?? persistedShiftId ?? prev.shiftId, deviceId));
+  }, [shiftId, persistedShiftId, deviceId]);
 
   const loadOrderDoc = useCallback((doc: LocalOrder) => {
     skipNextSave.current = true;
@@ -582,11 +702,30 @@ export function PosProvider({ children }: { children: ReactNode }) {
   // It used to be hardcoded 0.15 inside cartMath while /api/sales read the
   // setting, so an owner changing the rate desynced the register from the books
   // with no visible symptom until a sale was refused.
+  // Exposed on the context (`vatRatePct`) because the footer was the ONLY place
+  // that had it: the per-line amounts and the discount dialog's preview each
+  // called cartMath with no rate and silently got the 15% default, so on a
+  // non-15% tenant every line and the whole preview disagreed with the total
+  // right beneath them — and with what the server actually charges.
   const vatRatePct = catalogQuery.data?.catalog?.vatRate ?? DEFAULT_VAT_RATE_PCT;
   const totals = useMemo(
     () => cartTotals(cart.lines, cart.discountType ? { type: cart.discountType, value: cart.discountValue } : null, vatRatePct),
     [cart.lines, cart.discountType, cart.discountValue, vatRatePct],
   );
+
+  // A channel is "active" only when its OWN price list is on screen. A failed
+  // channel fetch degrades to base/cached prices; `channelId` (the cashier's
+  // persisted preference) deliberately survives that, so the two disagree
+  // exactly when the UI must stop advertising the channel.
+  const channelPricesUnavailable = catalogQuery.data?.channelPricesUnavailable ?? false;
+  const activeChannelId = catalogQuery.data?.servedChannelId ?? null;
+
+  // A t()-able PATH, never a raw `.message`. CatalogError carries the code;
+  // anything else (a bare TypeError from fetch) resolves to the generic load
+  // failure, so this is always a key that exists in both dictionaries.
+  const catalogError = catalogQuery.isError
+    ? `errors.${catalogQuery.error instanceof CatalogError ? catalogQuery.error.code : "CATALOG_LOAD_FAILED"}`
+    : null;
 
   // Order-to-Cash server flag (read once, cached). Drives the customer picker.
   const flagsQuery = useQuery({
@@ -607,12 +746,16 @@ export function PosProvider({ children }: { children: ReactNode }) {
     engineStatus,
     catalog: catalogQuery.data?.catalog ?? null,
     catalogLoading: catalogQuery.isLoading,
-    catalogError: catalogQuery.isError ? (catalogQuery.error as Error).message : null,
+    catalogError,
+    catalogErrorObject: catalogQuery.isError ? catalogQuery.error : null,
     catalogStale: catalogQuery.data?.stale ?? false,
     catalogAgeMs: catalogQuery.data?.ageMs ?? null,
     refetchCatalog: () => void catalogQuery.refetch(),
+    vatRatePct,
     channels: catalogQuery.data?.catalog.channels ?? [],
     channelId,
+    activeChannelId,
+    channelPricesUnavailable,
     setChannel,
     shiftId,
     shiftLoading: shiftQuery.isLoading,

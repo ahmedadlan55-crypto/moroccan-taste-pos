@@ -7,7 +7,7 @@ import { vi } from "vitest";
 import type { OfflineEngine, EngineStatus, CheckoutOutcome } from "@/lib/offline";
 import type { PosContextValue } from "@/state/store";
 import type { Catalog, CartLine, CartTotals, LocalOrder, Payment } from "@/lib/types";
-import { cartTotals } from "@/lib/cartMath";
+import { cartTotals, DEFAULT_VAT_RATE_PCT } from "@/lib/cartMath";
 
 export function makeLine(overrides: Partial<CartLine> = {}): CartLine {
   return {
@@ -122,9 +122,16 @@ export interface MakeCtxOpts {
 /** Full fake PosContextValue; totals derive from the cart via the REAL cartMath. */
 export function makeCtx(opts: MakeCtxOpts = {}): PosContextValue {
   const cart = opts.cart ?? makeOrder();
+  const catalog = opts.catalog === undefined ? makeCatalog() : opts.catalog;
+  // Mirrors the real provider: the rate rides on the catalog, and every cartMath
+  // call goes through it. makeCatalog()'s 15 equals the old hardcoded default,
+  // so every existing fixture's arithmetic is unchanged — but a spec that passes
+  // a catalog with another rate now exercises the real threading.
+  const vatRatePct = catalog?.vatRate ?? DEFAULT_VAT_RATE_PCT;
   const totals: CartTotals = cartTotals(
     cart.lines,
     cart.discountType ? { type: cart.discountType, value: cart.discountValue } : null,
+    vatRatePct,
   );
   const engine = opts.engine ?? makeFakeEngine({ status: { online: opts.online ?? true } });
   const ctx: PosContextValue = {
@@ -138,14 +145,18 @@ export function makeCtx(opts: MakeCtxOpts = {}): PosContextValue {
     deviceId: "DEV-1",
     engine,
     engineStatus: { online: opts.online ?? true, syncing: false, queueCount: 0, lastReport: null },
-    catalog: opts.catalog === undefined ? makeCatalog() : opts.catalog,
+    catalog,
     catalogLoading: false,
     catalogError: null,
+    catalogErrorObject: null,
     catalogStale: false,
     catalogAgeMs: null,
     refetchCatalog: vi.fn(),
+    vatRatePct,
     channels: [],
     channelId: null,
+    activeChannelId: null,
+    channelPricesUnavailable: false,
     setChannel: vi.fn(),
     shiftId: opts.shiftId === undefined ? "SH-77" : opts.shiftId,
     shiftLoading: false,

@@ -34,9 +34,14 @@ vi.mock("@/lib/offline", async (importOriginal) => {
   const mod = await importOriginal<typeof import("@/lib/offline")>();
   return { ...mod, getEngine: () => engine };
 });
-vi.mock("@/lib/catalogCache", () => ({
-  loadCatalog: h.loadCatalog,
-}));
+// Partial mock: only loadCatalog is stubbed. The store also imports the REAL
+// CatalogError class (it rethrows SESSION_EXPIRED rather than degrading a 401
+// to "channel prices unavailable"), and a wholesale mock would drop that export
+// and blow up the provider on render.
+vi.mock("@/lib/catalogCache", async (importOriginal) => {
+  const mod = await importOriginal<typeof import("@/lib/catalogCache")>();
+  return { ...mod, loadCatalog: h.loadCatalog };
+});
 vi.mock("@/lib/idb", () => ({
   idbGet: vi.fn(async () => undefined),
   idbPut: h.idbPut,

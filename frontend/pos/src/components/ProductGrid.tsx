@@ -78,6 +78,27 @@ function useItemImage(id: string, version: string | null | undefined): string | 
   return version ? src : null;
 }
 
+/** Every barcode an item can be found by: the primary (base) one + every
+ *  per-unit one (a carton carries its own). Lower-cased, blanks dropped. */
+function barcodesOf(it: CatalogItem): string[] {
+  const out: string[] = [];
+  if (it.barcode) out.push(String(it.barcode).toLowerCase());
+  for (const u of it.units || []) if (u.barcode) out.push(String(u.barcode).toLowerCase());
+  return out;
+}
+
+/**
+ * Instant search. Matches id (exact or substring), Arabic/English name, AND
+ * every barcode the item carries.
+ *
+ * Barcodes were missing entirely: typing (or half-scanning) a code found
+ * nothing, even though resolveScan could resolve that exact same string — so
+ * the grid looked empty for a product that was right there. Substring, like the
+ * name/id arms, so a partially-typed or partially-read code still narrows.
+ *
+ * resolveScan's precedence is UNAFFECTED: it checks exact per-unit → exact
+ * primary → exact id BEFORE ever falling through to this function.
+ */
 export function filterItems(items: CatalogItem[], category: string | null, query: string): CatalogItem[] {
   const q = query.trim().toLowerCase();
   return items.filter((it) => {
@@ -88,9 +109,37 @@ export function filterItems(items: CatalogItem[], category: string | null, query
       it.id.toLowerCase() === q ||
       it.name.toLowerCase().includes(q) ||
       (it.nameEn ? it.nameEn.toLowerCase().includes(q) : false) ||
-      it.id.toLowerCase().includes(q)
+      it.id.toLowerCase().includes(q) ||
+      barcodesOf(it).some((b) => b.includes(q))
     );
   });
+}
+
+/** A quantity multiplier typed (or wedged by a scale/scanner) ahead of a code. */
+export interface QtyPrefix {
+  qty: number;
+  /** Everything after the separator — the code/name to actually resolve. */
+  rest: string;
+}
+
+/**
+ * Parse a `<qty><sep><code>` prefix: "12*7501" / "12x7501" / "12×7501" →
+ * { qty: 12, rest: "7501" }. Separators: `*`, `x`, `X`, `×`.
+ *
+ * PURE and total: returns null whenever there is no well-formed prefix, so the
+ * caller can hand the untouched query to the normal resolve path. A decimal qty
+ * is accepted (weighed goods); qty must be > 0 and `rest` non-empty, otherwise
+ * "12*" or "0x7501" would silently add nothing.
+ *
+ * Exported for the App's scan wiring (another stream owns that call site).
+ */
+export function parseQtyPrefix(query: string): QtyPrefix | null {
+  const m = /^\s*(\d+(?:\.\d+)?)\s*[*xX×]\s*(\S.*?)\s*$/.exec(query ?? "");
+  if (!m) return null;
+  const qty = Number(m[1]);
+  if (!Number.isFinite(qty) || qty <= 0) return null;
+  const rest = m[2];
+  return rest ? { qty, rest } : null;
 }
 
 /** A resolved scan: the item + the unit to add it in (null = base unit). */

@@ -41,9 +41,12 @@ function CartLineRow({ line, index }: { line: CartLine; index: number }) {
   const t = useT();
   const tn = useLocalizedName();
   const displayName = tn(line.name, line.nameEn);
-  const { setQty, setLineUnit, removeLine, setLineNotes, setLineDiscount, catalog } = usePos();
+  const { setQty, setLineUnit, removeLine, setLineNotes, setLineDiscount, catalog, vatRatePct } = usePos();
   const [expanded, setExpanded] = useState(false);
-  const lineTotal = lineTotals(line);
+  // The SERVER's rate, not cartMath's 15% default. Without it a tenant on any
+  // other rate saw per-line amounts that contradicted the footer total sitting
+  // directly beneath them — and the amount the server actually charges.
+  const lineTotal = lineTotals(line, vatRatePct);
   const item = catalog?.items.find((i) => i.id === line.menuId) || null;
   const units = item?.units || [];
   const baseUnitName = item?.baseUnitName || null;
@@ -174,18 +177,24 @@ function CartLineRow({ line, index }: { line: CartLine; index: number }) {
             />
           </label>
           <label className="block">
+            {/* lineGross (baseQty × unitPrice), NOT qty × unitPrice: the engine
+                clamps against the BASE quantity (cartMath.lineTotals), so on a
+                multi-unit line these differ by the conversion factor. A carton
+                line (qty 1 × factor 12 @ 5.00 = 60.00 real gross) advertised a
+                5.00 ceiling and truncated anything above it — the cashier could
+                not enter the discount the engine would happily have accepted. */}
             <span className="mb-1 block text-[11px] font-extrabold text-slate-500">
-              {t("cartPanel.line.discountCapLabel")} <Money value={fmt2(line.qty * line.unitPrice)} />
+              {t("cartPanel.line.discountCapLabel")} <Money value={fmt2(lineGross)} />
             </span>
             <input
               type="number"
               inputMode="decimal"
               min={0}
-              max={line.qty * line.unitPrice}
+              max={lineGross}
               step="0.01"
               value={line.lineDiscount || ""}
               onChange={(e) => {
-                const v = Math.min(Number(e.target.value) || 0, line.qty * line.unitPrice);
+                const v = Math.min(Number(e.target.value) || 0, lineGross);
                 setLineDiscount(index, v);
               }}
               placeholder={t("cartPanel.line.discountInputPlaceholder")}

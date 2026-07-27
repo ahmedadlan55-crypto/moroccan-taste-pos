@@ -7,10 +7,58 @@
  * had been offline for weeks sold from that old price list with no signal at all.
  * We do NOT refuse to sell on a stale cache — selling through a network outage is
  * a hard requirement — but the age is surfaced so the UI can say so out loud.
+ *
+ * AN EXPIRED SESSION IS NOT A STALE CACHE.
+ *   The catch below used to swallow EVERY fetch failure whenever any cached copy
+ *   existed — including a 401. The cashier then kept ringing up items off the
+ *   cached menu while every single write 401'd, and the only thing the UI said
+ *   was "قائمة قديمة". A 401 is not a network outage: there is nothing to sell
+ *   through, and the only fix is signing in again. It now surfaces as its own
+ *   SESSION_EXPIRED code, ahead of (and regardless of) the cache.
+ *
+ * ERRORS CARRY A CODE, NOT AN i18n KEY IN `.message`.
+ *   These used to `throw new Error("catalogCache.noConnection")` — a dotted i18n
+ *   path smuggled through Error.message, which only worked because exactly one
+ *   call site remembered to run it back through t(). translateApiError(e, t)
+ *   resolves `errors.<code>`, so the code is what makes an error translatable
+ *   anywhere; `.message` stays a plain human sentence for last-resort display.
  */
 import { fetchCatalog } from "./api";
 import { idbGet, idbPut } from "./idb";
 import type { Catalog } from "./types";
+
+/**
+ * Why the catalog could not be served.
+ *   CATALOG_OFFLINE     — no network AND no cached copy on this device.
+ *   CATALOG_LOAD_FAILED — the server was reachable-ish but gave us nothing usable.
+ *   SESSION_EXPIRED     — the token was rejected (401). Distinct on purpose: the
+ *                         cache is irrelevant, every write will fail too.
+ * Each has a matching `errors.<code>` entry in BOTH dictionaries.
+ */
+export type CatalogErrorCode = "CATALOG_OFFLINE" | "CATALOG_LOAD_FAILED" | "SESSION_EXPIRED";
+
+export class CatalogError extends Error {
+  readonly code: CatalogErrorCode;
+  constructor(code: CatalogErrorCode, message: string) {
+    super(message);
+    this.name = "CatalogError";
+    this.code = code;
+  }
+}
+
+/** A rejected token — the ONE failure a cached catalog must not paper over.
+ *
+ *  Structural, NOT `instanceof ApiError`: fetchCatalog throws
+ *  ApiError(res.status, 'SERVER_ERROR', …) for every non-2xx, so the STATUS is
+ *  what identifies auth (the code is 'SERVER_ERROR' even for a 401). Duck-typing
+ *  also keeps this module from depending on the ApiError CLASS identity, which
+ *  a test module-mock — or two copies of api.ts in one bundle — would break. */
+export function isAuthFailure(e: unknown): boolean {
+  if (typeof e !== "object" || e === null) return false;
+  const r = e as { status?: unknown; code?: unknown };
+  if (r.status === 401) return true;
+  return r.code === "UNAUTHORIZED" || r.code === "SESSION_EXPIRED";
+}
 
 interface CachedCatalog {
   data: Catalog;
@@ -61,8 +109,10 @@ export async function loadCatalog(): Promise<LoadedCatalog> {
   const cached = await idbGet<CachedCatalog>("catalog", KEY).catch(() => undefined);
   if (typeof navigator !== "undefined" && !navigator.onLine) {
     if (cached) return fromCached(cached);
-    // i18n key — the display site (App via ErrorBanner) resolves it with t().
-    throw new Error("catalogCache.noConnection");
+    throw new CatalogError(
+      "CATALOG_OFFLINE",
+      "No network connection and no saved menu on this device — connect once, then reopen the register.",
+    );
   }
   try {
     const res = await fetchCatalog(cached?.etag ?? null);
@@ -80,9 +130,18 @@ export async function loadCatalog(): Promise<LoadedCatalog> {
       return fresh(res.data);
     }
     if (cached) return fromCached(cached);
-    throw new Error("catalogCache.loadFailed");
+    throw new CatalogError("CATALOG_LOAD_FAILED", "The menu could not be loaded from the server.");
   } catch (e) {
+    // AUTH FIRST, ahead of the cache. Falling back here is what let a cashier
+    // ring up a whole queue of customers on an expired session while every
+    // write 401'd behind them — reported to their face as "stale menu".
+    if (isAuthFailure(e)) {
+      throw new CatalogError("SESSION_EXPIRED", "Your session has expired — sign in again to keep selling.");
+    }
+    // Everything else IS a network/server outage: keep the till alive on the
+    // cached copy, flagged with its true age by fromCached().
     if (cached) return fromCached(cached);
-    throw e;
+    if (e instanceof CatalogError) throw e;
+    throw new CatalogError("CATALOG_LOAD_FAILED", e instanceof Error && e.message ? e.message : "The menu could not be loaded.");
   }
 }

@@ -65,8 +65,15 @@ describe("responsive cashier header", () => {
     expect(props.onOpenRequisitions).toHaveBeenCalledTimes(1);
   });
 
-  it("removes the obsolete cashier link and keeps status controls under المزيد", () => {
-    currentCtx = makeCtx();
+  // UPDATED: connection state is no longer a «المزيد» item. It used to be the
+  // stand-in for "the menu opens and closes", but hiding online/offline + the
+  // queued-operation count behind a dropdown was itself the bug (a cashier who
+  // goes offline mid-sale must see it without hunting). The open/close contract
+  // this case really guards is now asserted against the stale-catalog chip,
+  // which legitimately still lives in the menu.
+  // See header-connection-visibility.test.tsx for the app-bar assertions.
+  it("removes the obsolete cashier link and keeps SECONDARY status controls under المزيد", () => {
+    currentCtx = makeCtx({ overrides: { catalogStale: true, catalogAgeMs: 7_200_000 } });
     render(
       <I18nProvider>
         <Header {...headerProps()} />
@@ -74,11 +81,15 @@ describe("responsive cashier header", () => {
     );
 
     expect(screen.queryByText("الكاشير القديم")).not.toBeInTheDocument();
+    // Connection is on the bar at all times now — never gated on the menu.
+    expect(screen.getByRole("button", { name: /متصل/ })).toBeInTheDocument();
+
     const more = screen.getByRole("button", { name: "المزيد" });
     fireEvent.click(more);
-    expect(screen.getByRole("button", { name: /متصل/ })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /قائمة قديمة/ })).toBeInTheDocument();
     fireEvent.keyDown(document, { key: "Escape" });
-    expect(screen.queryByRole("button", { name: /متصل/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /قائمة قديمة/ })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /متصل/ })).toBeInTheDocument();
   });
 
   // PORTAL ISOLATION. The «العودة للنظام» link is a hard href into the ERP

@@ -16,7 +16,7 @@
 import { cartTotals } from "./cartMath";
 import { fmt2, fmtDateTime, shortRef } from "./format";
 import type { LocalOrder, Payment, ReceiptIdentity, ReceiptShowFields } from "./types";
-import { baseCss, esc, buildSaleReceiptHtml } from "../../../shared/invoiceTemplate";
+import { baseCss, esc, buildSaleReceiptHtml, printHtml as printHtmlShared } from "../../../shared/invoiceTemplate";
 import type { PaperWidth } from "../../../shared/invoiceTemplate";
 import { receipt as receiptAr } from "../i18n/dictionaries/ar/receipt";
 import { receipt as receiptEn } from "../i18n/dictionaries/en/receipt";
@@ -29,7 +29,40 @@ export type ReceiptLanguage = "ar" | "en";
 // Re-exported so existing POS call sites keep their import paths unchanged:
 //   import { printHtml } from "./receipt"  /  from "@/lib/receipt"
 export { printHtml } from "../../../shared/invoiceTemplate";
-export type { PaperWidth } from "../../../shared/invoiceTemplate";
+export type { PaperWidth, DocumentLanguage } from "../../../shared/invoiceTemplate";
+
+/**
+ * Write a document into an ALREADY-OPEN print window and print it.
+ *
+ * Why this exists: `printHtml` calls `window.open` ITSELF, and a browser only
+ * honours that inside the task of a real user gesture. Auto-print necessarily
+ * fires AFTER `await engine.checkout(...)` — a different task — so a window
+ * opened there is popup-blocked and the receipt is silently lost. The payment
+ * screen therefore opens a blank window SYNCHRONOUSLY inside the confirm click,
+ * parks the handle in a ref, and hands it here once the sale lands.
+ *
+ * Returns false — WITHOUT ever opening a window of its own — when the handle is
+ * missing or already closed, so the caller can fall back to the manual print
+ * button + a toast instead of firing a second, certainly-blocked popup.
+ */
+export function printHtmlInto(html: string, win: Window | null | undefined): boolean {
+  // The guard is the whole point: printHtml(html, null) would fall back to
+  // opening a window, which is exactly the blocked-popup case we are avoiding,
+  // and a CLOSED handle would be written to and reported as a success.
+  if (!win || win.closed) return false;
+  try {
+    return printHtmlShared(html, win);
+  } catch {
+    // Dead/cross-origin handle: leave nothing dangling and report failure so
+    // the caller toasts instead of pretending the receipt printed.
+    try {
+      win.close();
+    } catch {
+      /* already gone */
+    }
+    return false;
+  }
+}
 
 /** Tab-title fallback ONLY for when no identity is cached (first run, resolver
  *  failure). A configured identity always wins. */

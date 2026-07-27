@@ -188,7 +188,15 @@ export function Header({
   onLogout?: () => void;
 }) {
   const t = useT();
-  const { user, shiftId, shiftLoading, engineStatus, catalog } = usePos();
+  const { user, shiftId, shiftLoading, engineStatus, catalog, catalogStale } = usePos();
+  // Everything that stays behind «المزيد» still has to be DISCOVERABLE: a new
+  // build, a stale price list or a stuck legacy queue used to be invisible
+  // until someone happened to open the menu. A dot on the trigger says "there
+  // is something in here" without spending app-bar width on all three chips.
+  const pwa = useSyncExternalStore(subscribePwa, getPwaStatus);
+  const drain = useSyncExternalStore(subscribeDrain, getDrainStatus);
+  const needsAttention =
+    catalogStale || pwa.updateReady || pwa.canInstall || drain.pending > 0 || (drain.outcome?.failed.length ?? 0) > 0;
   const branchName = catalog?.identity?.branchName || catalog?.identity?.branchCompanyName || "";
   // Real brand name comes from the owner-configured seller identity (rides in
   // the catalog payload, so it's available offline too — see ReceiptIdentity
@@ -244,8 +252,14 @@ export function Header({
           </div>
         </div>
 
-        {/* Shift status has a reserved cell, so it never competes with actions. */}
-        <div className="flex min-w-0 justify-end">
+        {/* Shift status has a reserved cell, so it never competes with actions.
+            Connection state shares it: online/offline + the pending-queue count
+            are the two facts a cashier must never have to open a menu to learn
+            (they used to render ONLY inside «المزيد», so going offline mid-sale
+            showed nothing at all). It sits in the EXISTING row, so the header
+            gains no height at any breakpoint. */}
+        <div className="flex min-w-0 items-center justify-end gap-1.5">
+        <ConnectionIndicator onOpenReport={onOpenSyncReport} />
         {shiftLoading ? (
           <span className="chip min-h-11 border-slate-200 bg-slate-50 px-2.5 text-xs text-slate-400 sm:px-3">
             <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden />
@@ -317,18 +331,36 @@ export function Header({
             aria-haspopup="menu"
             aria-expanded={moreOpen}
             onClick={() => setMoreOpen((open) => !open)}
-            className="btn-press flex min-h-11 w-full items-center justify-center gap-1.5 rounded-xl border border-slate-200 bg-white px-2 text-xs font-bold text-slate-700 shadow-sm hover:border-slate-300 hover:bg-slate-50"
+            // `title` and NOT an sr-only span: the accessible name must stay
+            // exactly «المزيد» / "More" (pinned by responsive.spec.ts and the
+            // unit specs).
+            title={needsAttention ? t("header.more.attentionTitle") : t("header.more.label")}
+            className="btn-press relative flex min-h-11 w-full items-center justify-center gap-1.5 rounded-xl border border-slate-200 bg-white px-2 text-xs font-bold text-slate-700 shadow-sm hover:border-slate-300 hover:bg-slate-50"
           >
             <MoreHorizontal className="h-4 w-4" aria-hidden />
             <span>{t("header.more.label")}</span>
+            {needsAttention ? (
+              <span
+                data-testid="more-attention-dot"
+                aria-hidden
+                className="absolute end-1.5 top-1.5 h-2 w-2 rounded-full bg-amber-500"
+              />
+            ) : null}
           </button>
           {moreOpen && <div role="menu" className="absolute end-0 top-full z-50 mt-2 grid w-[min(20rem,calc(100vw-1.5rem))] gap-2 rounded-2xl border border-slate-200 bg-white p-3 shadow-lift">
-            <p className="text-[11px] font-extrabold text-slate-400">{t("header.more.systemStatusHeading")}</p>
-            <ConnectionIndicator onOpenReport={onOpenSyncReport} />
-            <StaleCatalogChip />
-            <div className="grid gap-2 [&>button]:w-full">
-              <PwaControls onOpenDrainReport={onOpenDrainReport} />
-            </div>
+            {/* The heading labelled the connection chip, which now lives on the
+                bar. StaleCatalogChip and PwaControls both self-hide when there
+                is nothing to report, so the heading follows the SAME condition
+                as the attention dot rather than captioning an empty box. */}
+            {needsAttention ? (
+              <>
+                <p className="text-[11px] font-extrabold text-slate-400">{t("header.more.systemStatusHeading")}</p>
+                <StaleCatalogChip />
+                <div className="grid gap-2 [&>button]:w-full">
+                  <PwaControls onOpenDrainReport={onOpenDrainReport} />
+                </div>
+              </>
+            ) : null}
             <LanguageToggle />
             {onSwitchCashier ? (
               <button

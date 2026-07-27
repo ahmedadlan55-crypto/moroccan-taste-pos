@@ -4,14 +4,21 @@
  * complete chain with visible progress. Offline: CASH ONLY, queued for
  * replay ("سيُرحَّل عند عودة الاتصال") with a local reference.
  */
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Banknote, CheckCircle2, ChefHat, CreditCard, HandCoins, Loader2, Printer, SplitSquareHorizontal, Wallet } from "lucide-react";
 import { usePos } from "@/state/store";
 import { round2, paymentsError } from "@/lib/cartMath";
 import { fmt2, shortRef } from "@/lib/format";
-import { buildKitchenTicketHtml, buildReceiptHtml, printHtml } from "@/lib/receipt";
+import {
+  buildKitchenTicketHtml,
+  buildReceiptHtml,
+  printHtml,
+  printHtmlInto,
+  resolveAutoPrint,
+  resolvePaperWidth,
+} from "@/lib/receipt";
 import type { CatalogPaymentMethod, LocalOrder, Payment } from "@/lib/types";
-import { useT } from "@/i18n/I18nProvider";
+import { useLang, useT } from "@/i18n/I18nProvider";
 import { translateApiError } from "@/i18n/errorCodes";
 import { Dialog } from "../Dialog";
 import { Numpad } from "../Numpad";
@@ -46,6 +53,7 @@ export const CHECKOUT_WATCHDOG_MS = 120_000;
 
 export function PaymentDialog({ open, onClose }: { open: boolean; onClose: () => void }) {
   const t = useT();
+  const lang = useLang();
   const { cart, totals, engine, engineStatus, supervisor, posCan, user, catalog, startNewOrder, loadOrderDoc, pushToast, shiftId, o2cEnabled } = usePos();
   // Capability-aware: a non-supervisor with the granted capability also
   // unlocks البيع الآجل (broadening only — see lib/capabilities.ts). Every
@@ -68,6 +76,34 @@ export function PaymentDialog({ open, onClose }: { open: boolean; onClose: () =>
   // Which split leg the on-screen numpad edits (touch POS): the last-focused
   // amount field, highlighted with a ring. Cash tab always edits `tendered`.
   const [activeSplitField, setActiveSplitField] = useState<"cash" | "card" | "credit">("cash");
+
+  // ── Auto-print (owner setting ReceiptAutoPrint) ────────────────────────────
+  // resolveAutoPrint() was defined, exported and unit-tested but had ZERO
+  // non-test callers, so «طباعة تلقائية» silently did nothing on every till.
+  //
+  // It cannot be fired from an effect after the checkout await: printHtml opens
+  // a window and by then the user-gesture task is long gone, so the popup is
+  // blocked. The window is therefore opened SYNCHRONOUSLY inside the confirm
+  // CLICK handler and parked in a REF — never state: StrictMode double-invokes
+  // effects, and a state-driven print would run twice and print two receipts.
+  const autoPrintOn = resolveAutoPrint(catalog);
+  const autoPrintWinRef = useRef<Window | null>(null);
+
+  /** Discard an un-handed-over print window (failure / timeout / dialog close /
+   *  unmount). Once a receipt has been WRITTEN into the window the ref is
+   *  cleared first, so this can never close a window that is mid-print. */
+  const releaseAutoPrintWindow = useCallback(() => {
+    const w = autoPrintWinRef.current;
+    autoPrintWinRef.current = null;
+    try {
+      w?.close();
+    } catch {
+      /* already gone */
+    }
+  }, []);
+
+  // A blank print window must never outlive the component.
+  useEffect(() => releaseAutoPrintWindow, [releaseAutoPrintWindow]);
 
   // Owner-configured method tiles from the catalog (close/w25-sell-ui).
   // Absent on an old server → [] → the four built-in tabs only, as before.
@@ -101,8 +137,11 @@ export function PaymentDialog({ open, onClose }: { open: boolean; onClose: () =>
       setPayNote("");
       setActiveSplitField("cash");
       setPhase({ name: "form" });
+    } else {
+      // Closed without an outcome (Esc / backdrop): drop any parked window.
+      releaseAutoPrintWindow();
     }
-  }, [open]);
+  }, [open, releaseAutoPrintWindow]);
 
   // Offline forces cash.
   useEffect(() => {
@@ -141,9 +180,13 @@ export function PaymentDialog({ open, onClose }: { open: boolean; onClose: () =>
     if (phase.name !== "working") return;
     const t = setTimeout(() => {
       setPhase((p) => (p.name === "working" ? { name: "timeout" } : p));
+      // The effect is torn down the moment the phase leaves 'working', so
+      // reaching here means the sale never answered: the blank auto-print
+      // window would otherwise sit on the till forever.
+      releaseAutoPrintWindow();
     }, CHECKOUT_WATCHDOG_MS);
     return () => clearTimeout(t);
-  }, [phase.name]);
+  }, [phase.name, releaseAutoPrintWindow]);
 
   const tenderedNum = Number(tendered) || 0;
   const changeDue = round2(Math.max(0, tenderedNum - total));
@@ -207,6 +250,13 @@ export function PaymentDialog({ open, onClose }: { open: boolean; onClose: () =>
     // (= the doc id) server-side, so a landed first attempt is replayed, not
     // duplicated (same guarantee legacy leaned on, app.js:2756-2766).
     if (phase.name !== "form" && phase.name !== "timeout") return;
+    // A retry after the watchdog: never leak the previous attempt's window.
+    releaseAutoPrintWindow();
+    // SYNCHRONOUS, still inside the click task — the ONLY moment the browser
+    // will hand us a window (see the autoPrintOn block above). A blocked open
+    // returns null; that is detected at write time and toasted, and the manual
+    // «طباعة الإيصال» button below still works.
+    if (autoPrintOn) autoPrintWinRef.current = window.open("", "_blank", "width=420,height=640");
     const snapshot: LocalOrder = { ...cart, lines: cart.lines.map((l) => ({ ...l })) };
     const cashTendered = tab === "cash" ? (tendered === "" ? total : tenderedNum) : 0;
     const change = tab === "cash" ? round2(Math.max(0, cashTendered - total)) : 0;
@@ -221,12 +271,13 @@ export function PaymentDialog({ open, onClose }: { open: boolean; onClose: () =>
       if (outcome.state === "failed") {
         // The engine reopened the doc server-side + locally; reload the fresh
         // copy so the cart stays editable (status back to 'open').
+        releaseAutoPrintWindow();
         const fresh = await engine.getOrder(snapshot.id);
         if (fresh) loadOrderDoc(fresh);
         setPhase({ name: "failed", error: outcome.error || t("paymentDialog.failedDefault") });
         return;
       }
-      setPhase({
+      const success: Extract<Phase, { name: "success" }> = {
         name: "success",
         invoiceNumber: outcome.invoiceNumber,
         saleId: outcome.saleId,
@@ -236,8 +287,11 @@ export function PaymentDialog({ open, onClose }: { open: boolean; onClose: () =>
         cashTendered,
         changeDue: change,
         zatcaQrDataUrl: outcome.zatcaQrDataUrl ?? null,
-      });
+      };
+      setPhase(success);
+      autoPrintReceipt(success);
     } catch (e) {
+      releaseAutoPrintWindow();
       const fresh = await engine.getOrder(snapshot.id);
       if (fresh) loadOrderDoc(fresh);
       setPhase({ name: "failed", error: translateApiError(e, t) });
@@ -249,25 +303,45 @@ export function PaymentDialog({ open, onClose }: { open: boolean; onClose: () =>
     onClose();
   }
 
+  /** The sale receipt for a completed phase — ONE builder, shared by the manual
+   *  button and auto-print, so the two can never drift apart again. */
+  function receiptHtmlFor(p: Extract<Phase, { name: "success" }>): string {
+    return buildReceiptHtml({
+      order: { ...p.doc, invoiceNumber: p.invoiceNumber, saleId: p.saleId },
+      payments: p.payments,
+      invoiceNumber: p.invoiceNumber,
+      cashTendered: p.cashTendered,
+      changeDue: p.changeDue,
+      cashierName: user?.username ?? "",
+      vatRate: catalog?.vatRate ?? 15,
+      offlineRef: p.queued,
+      // Owner-configured seller block from the cached catalog (works offline)
+      // and the server-stamped QR from checkout (absent while queued).
+      identity: catalog?.identity ?? null,
+      showFields: catalog?.receiptShowFields ?? null,
+      zatcaQrDataUrl: p.zatcaQrDataUrl,
+      // The owner's ReceiptPaperWidth was NEVER passed on the sale path, so
+      // buildReceiptHtml fell back to 80mm: a 58mm shop got every fresh sale
+      // clipped while a REPRINT of the same sale (MyInvoicesDialog, which does
+      // pass it) came out right — which reads as a printer fault, not a bug.
+      paperWidth: resolvePaperWidth(catalog),
+    });
+  }
+
   function printReceipt(p: Extract<Phase, { name: "success" }>) {
-    const ok = printHtml(
-      buildReceiptHtml({
-        order: { ...p.doc, invoiceNumber: p.invoiceNumber, saleId: p.saleId },
-        payments: p.payments,
-        invoiceNumber: p.invoiceNumber,
-        cashTendered: p.cashTendered,
-        changeDue: p.changeDue,
-        cashierName: user?.username ?? "",
-        vatRate: catalog?.vatRate ?? 15,
-        offlineRef: p.queued,
-        // Owner-configured seller block from the cached catalog (works offline)
-        // and the server-stamped QR from checkout (absent while queued).
-        identity: catalog?.identity ?? null,
-        showFields: catalog?.receiptShowFields ?? null,
-        zatcaQrDataUrl: p.zatcaQrDataUrl,
-      }),
-    );
-    if (!ok) pushToast("error", t("paymentDialog.printBlockedFull"));
+    if (!printHtml(receiptHtmlFor(p))) pushToast("error", t("paymentDialog.printBlockedFull"));
+  }
+
+  /** Hand the completed sale to the window opened during the confirm click.
+   *  Blocked or already gone ⇒ toast and leave the manual button as the
+   *  fallback; a receipt is never silently dropped. */
+  function autoPrintReceipt(p: Extract<Phase, { name: "success" }>) {
+    if (!autoPrintOn) return;
+    const win = autoPrintWinRef.current;
+    autoPrintWinRef.current = null; // handed over — cleanup must NOT close it
+    if (!printHtmlInto(receiptHtmlFor(p), win)) {
+      pushToast("error", t("paymentDialog.printBlockedFull"));
+    }
   }
 
   const locked = phase.name === "working";
@@ -647,7 +721,12 @@ export function PaymentDialog({ open, onClose }: { open: boolean; onClose: () =>
             <Button
               variant="secondary"
               onClick={() => {
-                if (!printHtml(buildKitchenTicketHtml(phase.doc))) pushToast("error", t("paymentDialog.printBlockedShort"));
+                // Paper width AND language were both defaulted away here: the
+                // ticket printed 80mm Arabic on an English 58mm till, and the
+                // whole receipt.kitchen.* English namespace was unreachable.
+                if (!printHtml(buildKitchenTicketHtml(phase.doc, resolvePaperWidth(catalog), lang))) {
+                  pushToast("error", t("paymentDialog.printBlockedShort"));
+                }
               }}
             >
               <ChefHat className="h-4 w-4" aria-hidden />

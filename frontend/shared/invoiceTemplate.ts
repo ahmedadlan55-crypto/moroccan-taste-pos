@@ -611,9 +611,24 @@ export function buildCreditNoteHtml(opts: CreditNoteOptions): string {
 
 // ── Print ────────────────────────────────────────────────────────────────────
 
-/** Open a print window, write the HTML, print. Popup-blocked → returns false. */
-export function printHtml(html: string): boolean {
-  const w = window.open("", "_blank", "width=420,height=640");
+/**
+ * Write the HTML into a print window and print it. Returns false when there is
+ * no window to print into (popup-blocked).
+ *
+ * `win` — an ALREADY-OPEN window to render into. Omit it and the behavior is
+ * exactly as it always was: this function calls window.open itself.
+ *
+ * Why the parameter exists: a browser only honors window.open inside the user
+ * gesture that triggered it. AUTO-PRINT fires after an `await` (the checkout
+ * round-trip), by which time the gesture is spent and the self-opened popup is
+ * blocked — auto-print could never work. The caller now opens the window
+ * SYNCHRONOUSLY on the click, awaits its data, and hands the live window here.
+ * Passing null (the caller's own window.open was already blocked) falls back to
+ * opening one here, so the answer is still an honest true/false — never a
+ * silent no-op.
+ */
+export function printHtml(html: string, win?: Window | null): boolean {
+  const w = win ?? window.open("", "_blank", "width=420,height=640");
   if (!w) return false;
   w.document.open();
   w.document.write(html);

@@ -20,8 +20,8 @@ import {
 import { clearImageCache } from "@/lib/offlineImages";
 import { runLegacyDrainOnce, getDrainStatus } from "@/lib/legacyDrain";
 import { fmt2, fmtInt } from "@/lib/format";
-import { buildKitchenTicketHtml, printHtml } from "@/lib/receipt";
-import { resolveScan } from "@/components/ProductGrid";
+import { buildKitchenTicketHtml, printHtml, resolvePaperWidth } from "@/lib/receipt";
+import { parseQtyPrefix, resolveScan } from "@/components/ProductGrid";
 import type { LocalOrder } from "@/lib/types";
 import { Header } from "@/components/Header";
 import { CategoryRail } from "@/components/CategoryRail";
@@ -40,10 +40,37 @@ import { StocktakeDialog } from "@/components/dialogs/StocktakeDialog";
 import { RequisitionsDialog } from "@/components/dialogs/RequisitionsDialog";
 import { PosLogin } from "@/components/PosLogin";
 import { Button, ErrorBanner, Money } from "@/components/ui";
-import { useT } from "@/i18n/I18nProvider";
+import { useLang, useT } from "@/i18n/I18nProvider";
+
+/** Upper bound on a `N*CODE` repeat. `addItem` has no quantity argument, so a
+ *  prefix is applied by calling it N times; a mis-scan must not be able to push
+ *  hundreds of lines into the cart before anyone can react. */
+const SCAN_QTY_MAX = 99;
+
+// ── Document-level barcode capture tuning (see the effect below) ────────────
+/** Max gap between two keystrokes that can still belong to ONE scan. A hardware
+ *  scanner emits a whole code at 2–10ms per character; sustained sub-50ms
+ *  typing is not something a human hand produces for six characters running. */
+const SCAN_MAX_GAP_MS = 50;
+/** Shortest buffer that may be accepted as a barcode. EAN-8 is the shortest
+ *  real symbology in use, so nothing below this is ever eaten. */
+const SCAN_MIN_LEN = 6;
+/** Hard cap so a stuck key cannot grow the buffer without bound. */
+const SCAN_MAX_LEN = 64;
+/** Characters a scanner emits. Anything else (space, punctuation, dead keys)
+ *  aborts the buffer — a scan is a single uninterrupted alphanumeric run. */
+const SCAN_CHAR_RE = /^[0-9A-Za-z*×\-._]$/;
+/** Keys that carry no character and must neither extend nor abort a buffer. */
+const SCAN_PASSIVE_KEYS = new Set(["Shift", "CapsLock", "AltGraph", "Dead", "Unidentified", "Process"]);
+
+/** Monotonic-ish clock, guarded for environments without `performance`. */
+function nowMs(): number {
+  return typeof performance !== "undefined" && typeof performance.now === "function" ? performance.now() : Date.now();
+}
 
 export default function App() {
   const t = useT();
+  const lang = useLang();
   const {
     user,
     shiftId,
@@ -167,20 +194,23 @@ export default function App() {
   }, [refreshHeldCount]);
 
   // ── Keyboard shortcuts ───────────────────────────────────────────────────
+  // The handler used to bail out whenever focus sat in ANY input — but the
+  // barcode workflow deliberately parks focus in the SearchBox, so F4 (pay) and
+  // F9 (hold) were dead exactly where the cashier needs them. F2/F4/F9 can
+  // never be part of typing (they produce no character and we always
+  // preventDefault them), so editing state is irrelevant here; only an open
+  // overlay still suppresses them.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      const target = e.target instanceof HTMLElement ? e.target : null;
-      const isEditing = !!target?.closest("input, textarea, select, [contenteditable='true']");
-      if (overlayOpen || isEditing) return;
+      if (overlayOpen) return;
+      if (e.key !== "F2" && e.key !== "F4" && e.key !== "F9") return;
+      e.preventDefault();
       if (e.key === "F2") {
-        e.preventDefault();
         searchRef.current?.focus();
         searchRef.current?.select();
       } else if (e.key === "F4") {
-        e.preventDefault();
         if (cart.lines.length > 0 && !payOpen) setPayOpen(true);
       } else if (e.key === "F9") {
-        e.preventDefault();
         if (cart.lines.length > 0 && !holdBusy) void holdCurrent();
       }
     };
@@ -190,17 +220,112 @@ export default function App() {
   }, [cart.lines.length, holdBusy, overlayOpen, payOpen]);
 
   // ── Actions ──────────────────────────────────────────────────────────────
-  const onScanSubmit = useCallback(() => {
-    if (!catalog) return;
-    const hit = resolveScan(catalog.items, query);
-    if (hit) {
+  /**
+   * Resolve one scanned/typed code and add it to the cart. Honours ProductGrid's
+   * `N*CODE` quantity prefix (`12*7501` adds twelve), but ONLY when the
+   * REMAINDER actually resolves — otherwise the whole untouched string is
+   * retried, so an item whose own name or barcode contains a separator can never
+   * be misread as a quantity. Returns false when nothing matched, so both call
+   * sites report the same «لا صنف يطابق» toast.
+   */
+  const addScanned = useCallback(
+    (raw: string): boolean => {
+      if (!catalog) return false;
+      const code = raw.trim();
+      if (!code) return false;
+      const prefix = parseQtyPrefix(code);
+      // addItem has no quantity argument, so only a WHOLE repeat count can be
+      // honoured here; a decimal (weighed-goods) prefix falls through to the
+      // plain resolve rather than silently rounding the customer's money.
+      const repeat =
+        prefix && Number.isInteger(prefix.qty) && prefix.qty > 1 && prefix.qty <= SCAN_QTY_MAX ? prefix.qty : 1;
+      let hit = repeat > 1 && prefix ? resolveScan(catalog.items, prefix.rest) : null;
+      let times = repeat;
+      if (!hit) {
+        hit = resolveScan(catalog.items, code);
+        times = 1;
+      }
+      if (!hit) return false;
       // a per-unit (carton) barcode adds that unit; otherwise the base unit
-      addItem(hit.item, hit.unitCode);
+      for (let i = 0; i < times; i++) addItem(hit.item, hit.unitCode);
+      return true;
+    },
+    [catalog, addItem],
+  );
+
+  const onScanSubmit = useCallback(() => {
+    const raw = query;
+    if (addScanned(raw)) {
       setQuery("");
-    } else if (query.trim()) {
-      pushToast("error", t("appShell.toast.noMatch", { query: query.trim() }));
+      // The scan workflow REQUIRES focus in the SearchBox and nothing ever gave
+      // it back, so every shortcut stayed dead for the rest of the sale.
+      // Releasing focus after a SUCCESSFUL scan restores F4/F9; a failed lookup
+      // deliberately keeps focus so the cashier can correct the text in place.
+      searchRef.current?.blur();
+    } else if (raw.trim()) {
+      pushToast("error", t("appShell.toast.noMatch", { query: raw.trim() }));
     }
-  }, [catalog, query, addItem, pushToast, t]);
+  }, [query, addScanned, pushToast, t]);
+
+  // ── Document-level barcode capture ───────────────────────────────────────
+  // A scan must land wherever focus happens to be — on a product card, on the
+  // body after a blur, on the «المزيد» button — not only inside the SearchBox.
+  // Before this, every keystroke of a scan made outside the search field was
+  // silently swallowed by whatever had focus.
+  //
+  // Why this cannot eat a keystroke a human meant:
+  //   • it NEVER preventDefaults a printable key — only the terminating Enter
+  //     of an already-confirmed scan, so typing is never suppressed;
+  //   • it is completely inert while focus is in an input/textarea/select/
+  //     contenteditable (where a human's keystrokes are the whole point) and
+  //     while any overlay is open;
+  //   • acceptance needs ≥6 characters where EVERY inter-keystroke gap is
+  //     ≤50ms AND the Enter arrives ≤50ms after the last one — a sustained
+  //     >20 chars/second burst terminated by an instant Enter, which is a
+  //     hardware scanner, not a hand;
+  //   • any modifier, any non-barcode character, or any gap over the threshold
+  //     restarts the buffer from scratch.
+  const scanBufRef = useRef<{ chars: string; last: number }>({ chars: "", last: 0 });
+  useEffect(() => {
+    const reset = () => {
+      scanBufRef.current = { chars: "", last: 0 };
+    };
+    const onKey = (e: KeyboardEvent) => {
+      if (overlayOpen || e.ctrlKey || e.altKey || e.metaKey) {
+        reset();
+        return;
+      }
+      const target = e.target instanceof HTMLElement ? e.target : null;
+      if (target?.closest("input, textarea, select, [contenteditable='true']")) {
+        reset(); // the human is typing — and the SearchBox has its own Enter
+        return;
+      }
+      // A bare modifier press carries no character: a scanner emitting an
+      // UPPERCASE code (Code-128) interleaves Shift keydowns, and treating them
+      // as "not a barcode character" would break every alphanumeric symbology.
+      // Ignoring them can only PRESERVE a buffer, never accept one sooner.
+      if (SCAN_PASSIVE_KEYS.has(e.key)) return;
+      const now = nowMs();
+      const buf = scanBufRef.current;
+      if (e.key === "Enter") {
+        const fast = buf.last > 0 && now - buf.last <= SCAN_MAX_GAP_MS;
+        const code = buf.chars;
+        reset();
+        if (!fast || code.length < SCAN_MIN_LEN) return; // a human's Enter — leave it alone
+        e.preventDefault();
+        if (!addScanned(code)) pushToast("error", t("appShell.toast.noMatch", { query: code }));
+        return;
+      }
+      if (e.key.length === 1 && SCAN_CHAR_RE.test(e.key)) {
+        const continues = buf.chars.length > 0 && buf.chars.length < SCAN_MAX_LEN && now - buf.last <= SCAN_MAX_GAP_MS;
+        scanBufRef.current = { chars: continues ? buf.chars + e.key : e.key, last: now };
+        return;
+      }
+      reset();
+    };
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, [overlayOpen, addScanned, pushToast, t]);
 
   async function holdCurrent() {
     if (!cart.lines.length) return;
@@ -514,7 +639,10 @@ export default function App() {
             <Button
               variant="primary"
               onClick={() => {
-                if (lastHeld && !printHtml(buildKitchenTicketHtml(lastHeld))) {
+                // Both arguments were being defaulted away: a 58mm English till
+                // printed an 80mm ARABIC kitchen ticket, which also made the
+                // whole receipt.kitchen.* English namespace unreachable.
+                if (lastHeld && !printHtml(buildKitchenTicketHtml(lastHeld, resolvePaperWidth(catalog), lang))) {
                   pushToast("error", t("appShell.toast.printBlocked"));
                 }
                 setLastHeld(null);

@@ -18,10 +18,52 @@ import { Button, cn } from "@/components/ui";
 import { fmt2 } from "@/lib/format";
 import { useLocalizedName, useT } from "@/i18n/I18nProvider";
 import type { TFunction } from "@/i18n/types";
-import type { ComboDef, ComboGroup } from "@/lib/types";
+import type { ComboDef, ComboGroup, ComboOption } from "@/lib/types";
 
 /** { [groupId]: [picked menuId, …] } — same shape the cart line freezes. */
 export type ComboSelection = Record<string, string[]>;
+
+/**
+ * Is this option still sellable?
+ *
+ * The chooser used to render `g.options` verbatim. The server ships
+ * `active:false` for an option whose menu row was deactivated and then REFUSES
+ * the sale at sync with «الخيار "X" غير نشط» — so the cashier could build a cart
+ * that was guaranteed to fail, minutes later, after the customer had paid
+ * attention to the screen. Filtering here is display-only; the server stays the
+ * authority.
+ *
+ * DEFENSIVE by design: an older server (or a cached catalog written before the
+ * field existed) omits `active` entirely, and dropping every option in that case
+ * would empty every combo. So ABSENT means active — only an explicit falsy
+ * marker (false / 0 / "0" / "false") hides an option. The `active` property is
+ * read through a local widening because the shared ComboOption type does not
+ * declare it yet.
+ */
+export function isOptionActive(option: ComboOption): boolean {
+  const raw = (option as ComboOption & { active?: unknown }).active;
+  if (raw === undefined || raw === null) return true;
+  if (typeof raw === "boolean") return raw;
+  if (typeof raw === "number") return raw !== 0;
+  if (typeof raw === "string") {
+    const v = raw.trim().toLowerCase();
+    return v !== "0" && v !== "false" && v !== "";
+  }
+  return true;
+}
+
+/** The options a cashier may actually pick from a group. */
+export function activeOptions(group: ComboGroup): ComboOption[] {
+  return group.options.filter(isOptionActive);
+}
+
+/** Groups whose REMAINING (active) options can no longer reach their minimum.
+ *  Any such group makes the whole combo unsellable — «أضف للسلة» must stay
+ *  locked and say why, instead of letting the cashier build a cart the sync
+ *  will reject. */
+export function unsatisfiableGroups(combo: ComboDef | null): ComboGroup[] {
+  return (combo?.groups ?? []).filter((g) => activeOptions(g).length < (g.min || 0));
+}
 
 export interface ComboFinalizeResult {
   /** Frozen picks, exactly as the server validates them at submit. */
@@ -122,7 +164,11 @@ export function ComboDialog({ open, combo, basePrice, onClose, onConfirm }: Comb
 
   const base = basePrice ?? combo?.price ?? 0;
   const price = base + selectionPriceDelta(combo, selection);
-  const ok = useMemo(() => gateSatisfied(combo, selection), [combo, selection]);
+  // A group that can no longer reach its minimum from its ACTIVE options makes
+  // the combo unsellable: the confirm stays locked no matter what is picked.
+  const blockedGroups = useMemo(() => unsatisfiableGroups(combo), [combo]);
+  const sellable = blockedGroups.length === 0;
+  const ok = useMemo(() => gateSatisfied(combo, selection), [combo, selection]) && sellable;
 
   if (!combo) return null;
 
@@ -144,8 +190,10 @@ export function ComboDialog({ open, combo, basePrice, onClose, onConfirm }: Comb
             variant="primary"
             disabled={!ok}
             data-testid="combo-confirm"
+            title={sellable ? undefined : t("comboDialog.unsellable")}
             onClick={() => {
               if (!gateSatisfied(combo, selection)) return; // belt-and-braces
+              if (unsatisfiableGroups(combo).length > 0) return; // ditto
               onConfirm(finalizeCombo(combo, selection, base));
             }}
           >
@@ -156,6 +204,15 @@ export function ComboDialog({ open, combo, basePrice, onClose, onConfirm }: Comb
       }
     >
       <div className="space-y-4">
+        {!sellable ? (
+          <p
+            role="alert"
+            data-testid="combo-unsellable"
+            className="rounded-xl border border-amber-300 bg-amber-50 px-3 py-2.5 text-sm font-extrabold text-amber-800"
+          >
+            {t("comboDialog.unsellable")}
+          </p>
+        ) : null}
         {combo.fixedComponents.length > 0 ? (
           <div
             data-testid="combo-fixed"
@@ -182,6 +239,10 @@ export function ComboDialog({ open, combo, basePrice, onClose, onConfirm }: Comb
           combo.groups.map((g) => {
             const picked = selection[g.id] ?? [];
             const atMax = picked.length >= (g.max || 1);
+            // Inactive options are never rendered: they are unpickable server-
+            // side, so offering them only builds a cart that fails at sync.
+            const options = activeOptions(g);
+            const groupBlocked = options.length < (g.min || 0);
             return (
               <fieldset key={g.id} data-testid={`combo-group-${g.id}`}>
                 <legend className="mb-1.5 flex items-baseline gap-1.5 text-sm font-extrabold text-ink">
@@ -192,9 +253,26 @@ export function ComboDialog({ open, combo, basePrice, onClose, onConfirm }: Comb
                   <p className="rounded-xl border border-dashed border-slate-200 px-3 py-2 text-xs font-bold text-slate-400">
                     {t("comboDialog.group.noOptions")}
                   </p>
+                ) : options.length === 0 ? (
+                  <p
+                    role="alert"
+                    data-testid={`combo-group-inactive-${g.id}`}
+                    className="rounded-xl border border-amber-300 bg-amber-50 px-3 py-2 text-xs font-bold text-amber-800"
+                  >
+                    {t("comboDialog.group.allInactive")}
+                  </p>
                 ) : (
                   <div className="grid grid-cols-1 gap-1.5 sm:grid-cols-2">
-                    {g.options.map((o) => {
+                    {groupBlocked ? (
+                      <p
+                        role="alert"
+                        data-testid={`combo-group-short-${g.id}`}
+                        className="rounded-xl border border-amber-300 bg-amber-50 px-3 py-2 text-xs font-bold text-amber-800 sm:col-span-2"
+                      >
+                        {t("comboDialog.group.cannotMeetMinimum", { min: g.min })}
+                      </p>
+                    ) : null}
+                    {options.map((o) => {
                       const isPicked = picked.includes(o.menuId);
                       // Multi-select at max: unpicked options are disabled (the
                       // toggle itself refuses too). Single-select stays enabled —

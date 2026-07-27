@@ -83,6 +83,10 @@ export const header = {
 
   more: {
     label: "المزيد",
+    /** Tooltip when the menu hides something that wants attention (نسخة جديدة /
+     *  قائمة قديمة / عمليات قديمة عالقة). The BUTTON TEXT never changes — the
+     *  accessible name «المزيد» is pinned by the responsive e2e spec. */
+    attentionTitle: "المزيد — يوجد تنبيه بالداخل (تحديث أو قائمة قديمة أو عمليات معلّقة)",
     systemStatusHeading: "حالة الجهاز والنظام",
     switchCashier: "تبديل الكاشير",
     switchCashierTitle: "تبديل الكاشير — يتطلب إغلاق الوردية المفتوحة أولًا",

@@ -72,6 +72,10 @@ export const header = {
 
   more: {
     label: "More",
+    /** Tooltip when the menu hides something that wants attention (new build /
+     *  stale catalog / stuck legacy queue). The BUTTON TEXT never changes — the
+     *  accessible name "More" is pinned by the responsive e2e spec. */
+    attentionTitle: "More — something inside needs attention (update, stale catalog, or pending operations)",
     systemStatusHeading: "Device & system status",
     switchCashier: "Switch cashier",
     switchCashierTitle: "Switch cashier — requires closing the open shift first",

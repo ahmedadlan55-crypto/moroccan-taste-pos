@@ -24,7 +24,7 @@ import { Ban, FileText, Printer, RotateCcw, Search, Undo2 } from "lucide-react";
 import { getInvoice, listSales, returnSale, voidSale, ApiError, type InvoiceDetail } from "@/lib/api";
 import { round2 } from "@/lib/cartMath";
 import { fmt2, fmtInt } from "@/lib/format";
-import { buildReceiptHtml, printHtml, resolvePaperWidth } from "@/lib/receipt";
+import { buildReceiptHtml, printHtml, resolvePaperWidth, type DocumentLanguage } from "@/lib/receipt";
 import type { ApproverCredentials, LocalOrder, Payment, ReceiptIdentity, SaleRow } from "@/lib/types";
 import { usePos } from "@/state/store";
 import { translateApiError } from "@/i18n/errorCodes";
@@ -49,6 +49,33 @@ export function needsApprovalGate(action: "void" | "return", privileged: boolean
   if (privileged) return false;
   if (action === "void" && !requireVoidApproval) return false;
   return true;
+}
+
+/** 'ar' | 'en' | 'both' from an untrusted value; anything else → undefined
+ *  (= invoiceTemplate's own Arabic default, i.e. no behaviour change). */
+export function normalizeDocumentLanguage(value: unknown): DocumentLanguage | undefined {
+  const v = String(value ?? "").trim().toLowerCase();
+  return v === "ar" || v === "en" || v === "both" ? (v as DocumentLanguage) : undefined;
+}
+
+/**
+ * ReceiptLanguage for a REPRINT.
+ *
+ * invoiceTemplate derives the whole document language from
+ * `opts.identity?.language`, and the identity literal below — rebuilt from the
+ * invoice's FROZEN seller snapshot — never carried that field. So a shop
+ * configured English (or bilingual) printed bilingual originals and Arabic-only
+ * reprints of the very same sale. Preference order: the invoice's own value if
+ * the server ever ships one (read defensively — InvoiceDetail does not declare
+ * it), else the cached catalog identity's, else undefined.
+ */
+export function resolveReprintLanguage(inv: InvoiceDetail, catalogIdentity?: ReceiptIdentity | null): DocumentLanguage | undefined {
+  const loose = inv as InvoiceDetail & { receiptLanguage?: unknown; language?: unknown };
+  return (
+    normalizeDocumentLanguage(loose.receiptLanguage) ??
+    normalizeDocumentLanguage(loose.language) ??
+    normalizeDocumentLanguage(catalogIdentity?.language)
+  );
 }
 
 /**
@@ -115,8 +142,10 @@ export function reprintHtmlFromInvoice(
   // Identity: the invoice's frozen seller block wins (identitySource snapshot/
   // live is resolved server-side); the cached catalog identity is only a
   // fallback for sales that carry none.
+  const reprintLanguage = resolveReprintLanguage(inv, cat?.identity ?? null);
   const identity: ReceiptIdentity | null = inv.companyName
     ? {
+        language: reprintLanguage,
         sellerName: inv.companyName,
         legalName: "",
         taxNumber: inv.taxNumber || "",
@@ -136,7 +165,9 @@ export function reprintHtmlFromInvoice(
         branchCompanyName: inv.branchCompanyName || "",
         brandName: inv.brandName || "",
       }
-    : (cat?.identity ?? null);
+    : cat?.identity
+      ? { ...cat.identity, language: reprintLanguage ?? cat.identity.language }
+      : null;
 
   const stamp =
     inv.zatcaType === "cancellation"

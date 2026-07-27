@@ -104,3 +104,45 @@ describe("loadCatalog staleness", () => {
     await expect(loadCatalog()).rejects.toThrow();
   });
 });
+
+/**
+ * Repairing a cache slot poisoned by the channel path's envelope bug.
+ *
+ * state/store.tsx used to store whatever `res.json()` returned for a
+ * ?channelId= fetch, and routes/pos-v2.js:1027 answers
+ * `{ success: true, data: <catalog> }`. So any device that ever picked a sales
+ * channel has an entry with no `items` — and served it back on every reload and
+ * every OFFLINE boot, which is what made an empty register survive restarts.
+ *
+ * Fixing the writer only stops new poison. These pin the repair, so the tablets
+ * already carrying it recover on their own, with nobody clearing browser
+ * storage on a shop floor.
+ */
+const POISON = { success: true, data: { items: [{ id: "M1" }], categories: ["c"] } };
+
+describe("a cache entry holding the response envelope is repaired on read", () => {
+  it("serves the inner catalog offline instead of an itemless one", async () => {
+    idb.store.set("catalog", { data: POISON, etag: "W/\"v1\"", savedAt: Date.now() });
+    setOnline(false);
+    const res = await loadCatalog();
+    expect(Array.isArray(res.catalog.items)).toBe(true);
+    expect(res.catalog.items).toHaveLength(1);
+  });
+
+  it("drops the etag with it, so a 304 cannot re-bless the wrong payload", async () => {
+    idb.store.set("catalog", { data: POISON, etag: "W/\"stale\"", savedAt: Date.now() });
+    setOnline(true);
+    fetchCatalog.mockResolvedValue({ status: 200, data: CATALOG, etag: "W/\"v2\"" });
+    await loadCatalog();
+    // The repaired entry must not carry an etag that was never its own.
+    expect(fetchCatalog).toHaveBeenCalledWith(null);
+  });
+
+  it("leaves a healthy entry exactly as it is", async () => {
+    const healthy = { items: [{ id: "M9" }], categories: [] } as unknown as Catalog;
+    idb.store.set("catalog", { data: healthy, etag: "W/\"v1\"", savedAt: Date.now() });
+    setOnline(false);
+    const res = await loadCatalog();
+    expect(res.catalog).toEqual(healthy);
+  });
+});

@@ -105,8 +105,36 @@ const fresh = (catalog: Catalog): LoadedCatalog => ({
   stale: false,
 });
 
+/**
+ * Repair a cache entry that holds the RESPONSE ENVELOPE instead of the catalog.
+ *
+ * The channel-catalog path used to store `{ success, data }` verbatim in this
+ * very slot (state/store.tsx wrote whatever `res.json()` returned). A device
+ * that ever selected a sales channel therefore has a poisoned entry with no
+ * `items`, and served it back on every reload and every offline boot — an empty
+ * product grid that no amount of restarting fixed.
+ *
+ * Fixing the writer stops NEW poison; this repairs the tablets that already
+ * have it, without asking anyone to clear browser storage on a shop floor. It
+ * keys off `items` being an array rather than off `success`, so it recognises
+ * the damage by shape and cannot be fooled by a catalog that happens to carry
+ * a `data` field.
+ */
+function unpoison(cached: CachedCatalog | undefined): CachedCatalog | undefined {
+  if (!cached || !cached.data || typeof cached.data !== "object") return cached;
+  const d = cached.data as unknown as { items?: unknown; data?: unknown };
+  if (Array.isArray(d.items)) return cached; // healthy
+  const inner = d.data as { items?: unknown } | undefined;
+  if (inner && typeof inner === "object" && Array.isArray(inner.items)) {
+    // Drop the etag with it: it was never this payload's etag, and keeping it
+    // would let a 304 re-bless the repaired copy against the wrong validator.
+    return { ...cached, data: inner as unknown as Catalog, etag: null };
+  }
+  return cached;
+}
+
 export async function loadCatalog(): Promise<LoadedCatalog> {
-  const cached = await idbGet<CachedCatalog>("catalog", KEY).catch(() => undefined);
+  const cached = unpoison(await idbGet<CachedCatalog>("catalog", KEY).catch(() => undefined));
   if (typeof navigator !== "undefined" && !navigator.onLine) {
     if (cached) return fromCached(cached);
     throw new CatalogError(

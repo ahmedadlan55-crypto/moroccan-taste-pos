@@ -157,6 +157,26 @@ function rememberShiftId(id: string | null): void {
 }
 
 /**
+ * Accept BOTH shapes and return a real catalog, or null if it is neither.
+ *
+ * Tolerant on purpose, in both directions: the envelope is what the server
+ * sends today (routes/pos-v2.js:1027), while a bare catalog is what every test
+ * harness has always stubbed — and, more importantly, what a device may already
+ * be holding in its IndexedDB slot from before this fix. Recognising a catalog
+ * by `items` being an array (rather than trusting `success`) is what lets the
+ * same function REPAIR a poisoned cache instead of only preventing new ones.
+ */
+export function unwrapCatalog(payload: unknown): Catalog | null {
+  if (!payload || typeof payload !== "object") return null;
+  const p = payload as { items?: unknown; data?: unknown };
+  if (Array.isArray(p.items)) return payload as Catalog;
+  if (p.data && typeof p.data === "object" && Array.isArray((p.data as { items?: unknown }).items)) {
+    return p.data as Catalog;
+  }
+  return null;
+}
+
+/**
  * A catalog load that also says WHICH channel's prices it actually carries.
  * `loadCatalogForChannel` degrades to the base/cached copy when a channel fetch
  * fails; without these two fields that degradation was invisible — the selector
@@ -230,7 +250,21 @@ async function loadCatalogForChannel(channelId: string | null): Promise<ChannelL
       (err as CatalogError & { channelRejected?: boolean }).channelRejected = res.status === 422 || res.status === 404;
       throw err;
     }
-    const data = (await res.json()) as Catalog;
+    // UNWRAP THE ENVELOPE. routes/pos-v2.js:1027 answers
+    // `{ success: true, data: <catalog> }`. The base path has always unwrapped
+    // it (lib/api.ts:110 `body.data`); this path did not — it cast the envelope
+    // itself to Catalog, and the `as Catalog` silenced the very type error that
+    // would have caught it. Every SUCCESSFUL channel selection therefore
+    // produced a catalog whose `items`, `channels` and `paymentMethods` were
+    // all undefined: an empty product grid, no channel picker (App gates it on
+    // channels.length), and the payment dialog falling back to built-in tender
+    // types. That is the owner's «اخترت قناة فحدثت مشكلة لا تنحل» — and it did
+    // not resolve because the write-through below then stored the envelope in
+    // the shared catalog slot, so every reload and every offline boot served
+    // the poison back and re-poisoned it.
+    const parsed = (await res.json()) as unknown;
+    const data = unwrapCatalog(parsed);
+    if (!data) throw new CatalogError("CATALOG_LOAD_FAILED", "Malformed catalog payload");
     const savedAt = Date.now();
     // Write-through (etag null: the next base load does a full 200 refetch
     // rather than trusting a channel-priced copy against the base ETag).

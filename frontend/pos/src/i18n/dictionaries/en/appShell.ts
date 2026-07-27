@@ -30,6 +30,9 @@ export const appShell = {
 
   /** Suspense fallback while a lazily-loaded dialog's chunk arrives. */
   dialogLoading: "Opening…",
+  dialogLoadFailed: "Couldn't open that screen — check the connection and try again. Your cart is untouched.",
+  dialogRetry: "Reload the page",
+  dialogClose: "Close",
 
   /** Toast stack (components/Toasts.tsx) — the error-specific affordances. */
   toastStack: {

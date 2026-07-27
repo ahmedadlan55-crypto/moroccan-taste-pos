@@ -30,6 +30,9 @@ export const appShell = {
 
   /** Suspense fallback while a lazily-loaded dialog's chunk arrives. */
   dialogLoading: "جارٍ فتح النافذة…",
+  dialogLoadFailed: "تعذّر فتح النافذة — تحقق من الاتصال ثم أعد المحاولة. طلبك في السلة كما هو.",
+  dialogRetry: "إعادة تحميل الصفحة",
+  dialogClose: "إغلاق",
 
   /** Toast stack (components/Toasts.tsx) — the error-specific affordances. */
   toastStack: {

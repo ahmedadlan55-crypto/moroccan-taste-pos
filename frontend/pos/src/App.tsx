@@ -4,12 +4,13 @@
  * 768–1023px two columns (categories as top chips), <768px single column
  * with a bottom cart sheet. Keyboard: F2 search, F4 pay, F9 hold, Esc close.
  */
-import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore, type ReactNode } from "react";
+import { Component, lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore, type ReactNode } from "react";
 import { ChefHat, Loader2, PauseCircle, ShoppingBasket, Store, Tag } from "lucide-react";
 import { usePos } from "@/state/store";
 import { clearToken } from "@/lib/auth";
 import { listOrders } from "@/lib/api";
 import { recordFailure } from "@/lib/failureLog";
+import { retryImport } from "@/lib/lazyWithRetry";
 import {
   initPwa,
   getPwaStatus,
@@ -51,11 +52,11 @@ import { DiscountDialog } from "@/components/dialogs/DiscountDialog";
 //
 // The customer add/history dialogs are also rare, but they are mounted by
 // CartPanel/CustomerPicker, not here, so splitting them belongs to that owner.
-const ShiftDialog = lazy(() => import("@/components/dialogs/ShiftDialog").then((m) => ({ default: m.ShiftDialog })));
-const SyncReportDialog = lazy(() => import("@/components/dialogs/SyncReportDialog").then((m) => ({ default: m.SyncReportDialog })));
-const MyInvoicesDialog = lazy(() => import("@/components/dialogs/MyInvoicesDialog").then((m) => ({ default: m.MyInvoicesDialog })));
-const StocktakeDialog = lazy(() => import("@/components/dialogs/StocktakeDialog").then((m) => ({ default: m.StocktakeDialog })));
-const RequisitionsDialog = lazy(() => import("@/components/dialogs/RequisitionsDialog").then((m) => ({ default: m.RequisitionsDialog })));
+const ShiftDialog = lazy(() => retryImport(() => import("@/components/dialogs/ShiftDialog")).then((m) => ({ default: m.ShiftDialog })));
+const SyncReportDialog = lazy(() => retryImport(() => import("@/components/dialogs/SyncReportDialog")).then((m) => ({ default: m.SyncReportDialog })));
+const MyInvoicesDialog = lazy(() => retryImport(() => import("@/components/dialogs/MyInvoicesDialog")).then((m) => ({ default: m.MyInvoicesDialog })));
+const StocktakeDialog = lazy(() => retryImport(() => import("@/components/dialogs/StocktakeDialog")).then((m) => ({ default: m.StocktakeDialog })));
+const RequisitionsDialog = lazy(() => retryImport(() => import("@/components/dialogs/RequisitionsDialog")).then((m) => ({ default: m.RequisitionsDialog })));
 import { PosLogin } from "@/components/PosLogin";
 import { Button, ErrorBanner, Money } from "@/components/ui";
 import { useLang, useT } from "@/i18n/I18nProvider";
@@ -108,27 +109,120 @@ function useMountAfterFirstOpen(open: boolean): boolean {
 }
 
 /**
+ * A failed chunk fetch must never take the till down.
+ *
+ * React.lazy REJECTS when its import() fails — a dropped connection, a stale
+ * service-worker precache after a deploy, a proxy hiccup. Suspense does not
+ * catch that; it propagates to the nearest error boundary, and the nearest one
+ * is the app-level crash screen. So on a till with imperfect wifi, tapping a
+ * lazily-loaded dialog could blank the whole register mid-service — trading a
+ * missing dialog for a lost cart. This boundary keeps the failure local: the
+ * sell screen stays exactly where it was and the cashier is told the truth.
+ *
+ * The retry lives in the IMPORT, not here: `retryImport` re-attempts three
+ * times with backoff before React ever sees a rejection, which is what
+ * actually covers a deploy's restart window. Once React has a rejected lazy it
+ * caches it forever — remounting with a new key replays the same rejection —
+ * so an in-place "retry" button would be a lie. By the time this renders, the
+ * only honest recoveries are: carry on selling (the cart is untouched, and the
+ * sell-path dialogs are all eager), or reload.
+ */
+interface ChunkBoundaryProps {
+  open: boolean;
+  label: string;
+  failedLabel: string;
+  retryLabel: string;
+  onClose: () => void;
+  closeLabel: string;
+  children: ReactNode;
+}
+class LazyChunkBoundary extends Component<ChunkBoundaryProps, { failed: boolean; attempt: number }> {
+  state = { failed: false, attempt: 0 };
+  static getDerivedStateFromError() {
+    return { failed: true };
+  }
+  componentDidCatch(err: unknown) {
+    // Deliberately console-only: this is a load failure, not a data failure —
+    // there is nothing to record against an order and nothing to reconcile.
+    console.error("[pos] dialog chunk failed to load", err);
+  }
+  render() {
+    const { open, label, failedLabel, retryLabel, onClose, closeLabel, children } = this.props;
+    if (this.state.failed) {
+      if (!open) return null;
+      return (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-ink/45 p-4" role="alert">
+          <div className="flex max-w-sm flex-col gap-3 rounded-2xl bg-white p-5 text-center shadow-lift">
+            <p className="text-sm font-bold text-slate-700">{failedLabel}</p>
+            <div className="flex gap-2">
+              <button
+                type="button"
+                className="btn-press min-h-11 flex-1 rounded-xl bg-teal-600 px-4 text-sm font-bold text-white"
+                onClick={() => window.location.reload()}
+              >
+                {retryLabel}
+              </button>
+              <button
+                type="button"
+                className="btn-press min-h-11 flex-1 rounded-xl border border-slate-200 px-4 text-sm font-bold text-slate-700"
+                onClick={onClose}
+              >
+                {closeLabel}
+              </button>
+            </div>
+          </div>
+        </div>
+      );
+    }
+    return (
+      <Suspense
+        key={this.state.attempt}
+        fallback={
+          open ? (
+            <div className="fixed inset-0 z-50 flex items-center justify-center bg-ink/45 p-4" role="status" aria-live="polite">
+              <div className="flex items-center gap-2 rounded-2xl bg-white px-5 py-4 text-sm font-extrabold text-slate-600 shadow-lift">
+                <Loader2 className="h-4 w-4 animate-spin" aria-hidden />
+                {label}
+              </div>
+            </div>
+          ) : null
+        }
+      >
+        {children}
+      </Suspense>
+    );
+  }
+}
+
+/**
  * Suspense boundary for one lazily-loaded dialog. The fallback renders ONLY
  * while that dialog's own flag is true — which is also exactly when
  * `overlayOpen` is true, so the loading state can never be on screen while the
  * shortcut/auto-reload gate believes nothing is open.
  */
-function LazyDialogBoundary({ open, label, children }: { open: boolean; label: string; children: ReactNode }) {
+function LazyDialogBoundary({
+  open,
+  label,
+  onClose,
+  children,
+}: {
+  open: boolean;
+  label: string;
+  onClose: () => void;
+  children: ReactNode;
+}) {
+  const t = useT();
   return (
-    <Suspense
-      fallback={
-        open ? (
-          <div className="fixed inset-0 z-50 flex items-center justify-center bg-ink/45 p-4" role="status" aria-live="polite">
-            <div className="flex items-center gap-2 rounded-2xl bg-white px-5 py-4 text-sm font-extrabold text-slate-600 shadow-lift">
-              <Loader2 className="h-4 w-4 animate-spin" aria-hidden />
-              {label}
-            </div>
-          </div>
-        ) : null
-      }
+    <LazyChunkBoundary
+      open={open}
+      label={label}
+      failedLabel={t("appShell.dialogLoadFailed")}
+      retryLabel={t("appShell.dialogRetry")}
+      closeLabel={t("appShell.dialogClose")}
+      onClose={onClose}
     >
       {children}
-    </Suspense>
+    </LazyChunkBoundary>
   );
 }
 
@@ -737,27 +831,27 @@ export default function App() {
           `overlayOpen` above; splitting the code changed the chunk, not the
           gate. */}
       {shiftMounted ? (
-        <LazyDialogBoundary open={shiftOpen} label={t("appShell.dialogLoading")}>
+        <LazyDialogBoundary open={shiftOpen} label={t("appShell.dialogLoading")} onClose={() => setShiftOpen(false)}>
           <ShiftDialog open={shiftOpen} onClose={handleShiftDialogClose} />
         </LazyDialogBoundary>
       ) : null}
       {syncMounted ? (
-        <LazyDialogBoundary open={syncOpen} label={t("appShell.dialogLoading")}>
+        <LazyDialogBoundary open={syncOpen} label={t("appShell.dialogLoading")} onClose={() => setSyncOpen(false)}>
           <SyncReportDialog open={syncOpen} onClose={() => setSyncOpen(false)} />
         </LazyDialogBoundary>
       ) : null}
       {myInvoicesMounted ? (
-        <LazyDialogBoundary open={myInvoicesOpen} label={t("appShell.dialogLoading")}>
+        <LazyDialogBoundary open={myInvoicesOpen} label={t("appShell.dialogLoading")} onClose={() => setMyInvoicesOpen(false)}>
           <MyInvoicesDialog open={myInvoicesOpen} onClose={() => setMyInvoicesOpen(false)} />
         </LazyDialogBoundary>
       ) : null}
       {stocktakeMounted ? (
-        <LazyDialogBoundary open={stocktakeOpen} label={t("appShell.dialogLoading")}>
+        <LazyDialogBoundary open={stocktakeOpen} label={t("appShell.dialogLoading")} onClose={() => setStocktakeOpen(false)}>
           <StocktakeDialog open={stocktakeOpen} onClose={() => setStocktakeOpen(false)} />
         </LazyDialogBoundary>
       ) : null}
       {requisitionsMounted ? (
-        <LazyDialogBoundary open={requisitionsOpen} label={t("appShell.dialogLoading")}>
+        <LazyDialogBoundary open={requisitionsOpen} label={t("appShell.dialogLoading")} onClose={() => setRequisitionsOpen(false)}>
           <RequisitionsDialog open={requisitionsOpen} onClose={() => setRequisitionsOpen(false)} />
         </LazyDialogBoundary>
       ) : null}

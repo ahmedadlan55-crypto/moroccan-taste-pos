@@ -20,7 +20,14 @@ export const heldOrdersDialog = {
     label: "Resume",
     offlineTitle: "Resuming a server order requires a connection",
     title: "Resume to cart",
+    /** Cart is NOT empty: one tap holds what's in the cart, then resumes this
+     *  row. The label states both halves so nothing happens by surprise. */
+    holdAndResumeLabel: "Hold current & resume",
+    holdAndResumeTitle: "Holds the order currently in the cart, then resumes this one",
   },
+
+  /** Banner above the list while the cart has lines. */
+  cartBusyHint: "An order is in progress in the cart — “Hold current & resume” parks it automatically before resuming any order",
   void: {
     label: "Void",
     offlineTitle: "Voiding a synced order is unavailable offline",
@@ -29,8 +36,9 @@ export const heldOrdersDialog = {
     confirm: "Confirm void",
   },
   toast: {
-    resumeBlocked: "Hold or clear the current order before resuming another",
     resumed: "Order restored to the cart",
+    heldCurrentThenResumed: "Cart order held, then the selected order was resumed",
+    holdCurrentFailed: "Could not hold the current order — nothing was resumed",
     voided: "Held order voided",
   },
 } as const;

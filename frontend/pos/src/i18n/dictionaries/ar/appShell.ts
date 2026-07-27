@@ -28,6 +28,25 @@ export const appShell = {
     label: "السلة",
   },
 
+  /** Suspense fallback while a lazily-loaded dialog's chunk arrives. */
+  dialogLoading: "جارٍ فتح النافذة…",
+
+  /** Toast stack (components/Toasts.tsx) — the error-specific affordances. */
+  toastStack: {
+    region: "تنبيهات النظام",
+    errorPersists: "يبقى حتى الإغلاق",
+    showOlderErrors: "و {count} خطأ آخر — عرض",
+    hideOlderErrors: "إخفاء الأخطاء الأقدم",
+    dismissAllErrors: "إغلاق كل الأخطاء ({count})",
+  },
+
+  /** Fallback reasons written to the durable failure log (lib/failureLog.ts)
+   *  when the engine hands us no message of its own. */
+  failureLog: {
+    checkoutFailed: "تعذّر إتمام البيع",
+    legacyDrainFailed: "تعذّرت مزامنة عملية من الكاشير القديم",
+  },
+
   toast: {
     legacySynced: "تمت مزامنة {count} عملية من النسخة القديمة",
     noMatch: "لا صنف يطابق «{query}»",

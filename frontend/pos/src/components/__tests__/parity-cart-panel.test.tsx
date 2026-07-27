@@ -248,7 +248,11 @@ describe("toast-and-confirm-primitives — Toasts render and dismiss", () => {
     render(<Toasts />);
     expect(screen.getByText("تم الحفظ")).toBeInTheDocument();
     expect(screen.getByText("فشل الإرسال")).toBeInTheDocument();
-    fireEvent.click(screen.getAllByRole("button", { name: "إغلاق التنبيه" })[0]);
+    // Picked by IDENTITY, not by index: errors now render above the transient
+    // toasts (they persist until dismissed — see components/Toasts.tsx), so
+    // "the first × on screen" is no longer "the first toast in the array".
+    const successCard = screen.getByText("تم الحفظ").closest('[data-testid="pos-toast"]') as HTMLElement;
+    fireEvent.click(within(successCard).getByRole("button", { name: "إغلاق التنبيه" }));
     expect(dismissToast).toHaveBeenCalledWith(1);
   });
 });

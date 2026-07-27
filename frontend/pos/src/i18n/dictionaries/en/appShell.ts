@@ -28,6 +28,25 @@ export const appShell = {
     label: "Cart",
   },
 
+  /** Suspense fallback while a lazily-loaded dialog's chunk arrives. */
+  dialogLoading: "Opening…",
+
+  /** Toast stack (components/Toasts.tsx) — the error-specific affordances. */
+  toastStack: {
+    region: "System notifications",
+    errorPersists: "Stays until dismissed",
+    showOlderErrors: "and {count} more errors — show",
+    hideOlderErrors: "Hide older errors",
+    dismissAllErrors: "Dismiss all errors ({count})",
+  },
+
+  /** Fallback reasons written to the durable failure log (lib/failureLog.ts)
+   *  when the engine hands us no message of its own. */
+  failureLog: {
+    checkoutFailed: "The sale could not be completed",
+    legacyDrainFailed: "An operation from the legacy till could not be synced",
+  },
+
   toast: {
     legacySynced: "Synced {count} operations from the legacy version",
     noMatch: 'No item matches "{query}"',

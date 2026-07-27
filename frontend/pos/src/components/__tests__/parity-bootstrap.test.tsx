@@ -9,7 +9,7 @@
  *     with a recovery screen instead of a blank page
  */
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { fireEvent, render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, within } from "@testing-library/react";
 import type { PosContextValue } from "@/state/store";
 
 const fixture: { value: Partial<PosContextValue> } = { value: {} };
@@ -96,7 +96,11 @@ describe("loader-and-toast — Toasts", () => {
     render(<Toasts />);
     expect(screen.getByText("تم فتح الوردية")).toBeInTheDocument();
     expect(screen.getByText("المتصفح منع نافذة الطباعة")).toBeInTheDocument();
-    fireEvent.click(screen.getAllByRole("button", { name: "إغلاق التنبيه" })[0]);
+    // Picked by IDENTITY, not by index: errors now render above the transient
+    // toasts (they persist until dismissed — see components/Toasts.tsx), so
+    // "the first × on screen" is no longer "the first toast in the array".
+    const successCard = screen.getByText("تم فتح الوردية").closest('[data-testid="pos-toast"]') as HTMLElement;
+    fireEvent.click(within(successCard).getByRole("button", { name: "إغلاق التنبيه" }));
     expect(dismissToast).toHaveBeenCalledWith(1);
   });
 

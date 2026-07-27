@@ -4,11 +4,12 @@
  * 768–1023px two columns (categories as top chips), <768px single column
  * with a bottom cart sheet. Keyboard: F2 search, F4 pay, F9 hold, Esc close.
  */
-import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
-import { ChefHat, PauseCircle, ShoppingBasket, Store, Tag } from "lucide-react";
+import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore, type ReactNode } from "react";
+import { ChefHat, Loader2, PauseCircle, ShoppingBasket, Store, Tag } from "lucide-react";
 import { usePos } from "@/state/store";
 import { clearToken } from "@/lib/auth";
 import { listOrders } from "@/lib/api";
+import { recordFailure } from "@/lib/failureLog";
 import {
   initPwa,
   getPwaStatus,
@@ -29,15 +30,32 @@ import { ProductGrid, SearchBox } from "@/components/ProductGrid";
 import { CartPanel } from "@/components/CartPanel";
 import { Toasts } from "@/components/Toasts";
 import { Dialog } from "@/components/Dialog";
+// ── EAGER: the sell path ────────────────────────────────────────────────────
+// Everything a cashier touches to complete or park a sale stays in the entry
+// chunk. These must open with zero network on a till that just went offline
+// mid-transaction, and they are opened dozens of times an hour.
 import { PaymentDialog } from "@/components/dialogs/PaymentDialog";
 import { HeldOrdersDialog } from "@/components/dialogs/HeldOrdersDialog";
-import { ShiftDialog } from "@/components/dialogs/ShiftDialog";
 import { VoidDialog } from "@/components/dialogs/VoidDialog";
 import { DiscountDialog } from "@/components/dialogs/DiscountDialog";
-import { SyncReportDialog } from "@/components/dialogs/SyncReportDialog";
-import { MyInvoicesDialog } from "@/components/dialogs/MyInvoicesDialog";
-import { StocktakeDialog } from "@/components/dialogs/StocktakeDialog";
-import { RequisitionsDialog } from "@/components/dialogs/RequisitionsDialog";
+// ── LAZY: the rare dialogs ──────────────────────────────────────────────────
+// All fourteen dialogs used to sit in the entry chunk — 327 KB raw / 90 KB
+// gzip parsed on first paint on till hardware that is, on a good day, a cheap
+// Android tablet. These five are opened once a shift at most (stocktake,
+// requisitions, my-invoices, shift open/close, sync report), so they are split
+// into their own chunks and fetched on first open.
+//
+// OFFLINE IS UNAFFECTED: every emitted chunk lands in asset-manifest.json,
+// which public/sw.js precaches at install — the code is on the device before
+// the cashier ever needs it, it just isn't parsed at boot.
+//
+// The customer add/history dialogs are also rare, but they are mounted by
+// CartPanel/CustomerPicker, not here, so splitting them belongs to that owner.
+const ShiftDialog = lazy(() => import("@/components/dialogs/ShiftDialog").then((m) => ({ default: m.ShiftDialog })));
+const SyncReportDialog = lazy(() => import("@/components/dialogs/SyncReportDialog").then((m) => ({ default: m.SyncReportDialog })));
+const MyInvoicesDialog = lazy(() => import("@/components/dialogs/MyInvoicesDialog").then((m) => ({ default: m.MyInvoicesDialog })));
+const StocktakeDialog = lazy(() => import("@/components/dialogs/StocktakeDialog").then((m) => ({ default: m.StocktakeDialog })));
+const RequisitionsDialog = lazy(() => import("@/components/dialogs/RequisitionsDialog").then((m) => ({ default: m.RequisitionsDialog })));
 import { PosLogin } from "@/components/PosLogin";
 import { Button, ErrorBanner, Money } from "@/components/ui";
 import { useLang, useT } from "@/i18n/I18nProvider";
@@ -66,6 +84,52 @@ const SCAN_PASSIVE_KEYS = new Set(["Shift", "CapsLock", "AltGraph", "Dead", "Uni
 /** Monotonic-ish clock, guarded for environments without `performance`. */
 function nowMs(): number {
   return typeof performance !== "undefined" && typeof performance.now === "function" ? performance.now() : Date.now();
+}
+
+/**
+ * "Mount on first open, then stay mounted."
+ *
+ * Code-splitting a dialog must not also change its LIFECYCLE. Rendering
+ * `{open ? <StocktakeDialog/> : null}` would defer the chunk, but it would
+ * also unmount the dialog on close and throw away a half-counted stocktake —
+ * a behaviour change nobody asked for, dressed up as a bundle win. This defers
+ * the chunk and nothing else: before the first open the component is not
+ * rendered (so its chunk is never fetched); from the first open onward it stays
+ * mounted with `open` driving it, exactly as an eager import did.
+ */
+function useMountAfterFirstOpen(open: boolean): boolean {
+  const [mounted, setMounted] = useState(open);
+  // Derived-state-during-render (the documented React 18 pattern): React
+  // re-renders this component immediately, before committing, so the child
+  // mounts in the SAME paint the flag flipped in — an effect would cost a
+  // frame on every first open.
+  if (open && !mounted) setMounted(true);
+  return mounted;
+}
+
+/**
+ * Suspense boundary for one lazily-loaded dialog. The fallback renders ONLY
+ * while that dialog's own flag is true — which is also exactly when
+ * `overlayOpen` is true, so the loading state can never be on screen while the
+ * shortcut/auto-reload gate believes nothing is open.
+ */
+function LazyDialogBoundary({ open, label, children }: { open: boolean; label: string; children: ReactNode }) {
+  return (
+    <Suspense
+      fallback={
+        open ? (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-ink/45 p-4" role="status" aria-live="polite">
+            <div className="flex items-center gap-2 rounded-2xl bg-white px-5 py-4 text-sm font-extrabold text-slate-600 shadow-lift">
+              <Loader2 className="h-4 w-4 animate-spin" aria-hidden />
+              {label}
+            </div>
+          </div>
+        ) : null
+      }
+    >
+      {children}
+    </Suspense>
+  );
 }
 
 export default function App() {
@@ -118,8 +182,26 @@ export default function App() {
   // A cashier switch requested while a shift is open: we open the ShiftDialog so
   // they close/hand over the shift FIRST, then log out once it's closed.
   const [pendingSwitch, setPendingSwitch] = useState(false);
+  // Payment was interrupted to open a shift (PaymentDialog's onOpenShift) and
+  // must come back once one exists.
+  const [pendingPayAfterShift, setPendingPayAfterShift] = useState(false);
+  // EVERY overlay in this app must be a term of this union. It gates F2/F4/F9
+  // (so a shortcut cannot fire behind a modal) AND the idle PWA auto-reload
+  // (so a kiosk cannot reload underneath an open dialog and take the cashier's
+  // half-entered stocktake with it). Code-splitting changes nothing here: a
+  // lazy dialog's Suspense fallback is on screen exactly while its own flag is
+  // true, so the FLAG — never the chunk — is what belongs in this union.
   const overlayOpen = payOpen || heldOpen || shiftOpen || voidOpen || discountOpen
     || syncOpen || myInvoicesOpen || stocktakeOpen || requisitionsOpen || cartSheetOpen || drainOpen;
+
+  // Deferred mounts — see useMountAfterFirstOpen(). Each stays true once its
+  // dialog has been opened, so state survives close/reopen exactly as it did
+  // when these were eager imports.
+  const shiftMounted = useMountAfterFirstOpen(shiftOpen);
+  const syncMounted = useMountAfterFirstOpen(syncOpen);
+  const myInvoicesMounted = useMountAfterFirstOpen(myInvoicesOpen);
+  const stocktakeMounted = useMountAfterFirstOpen(stocktakeOpen);
+  const requisitionsMounted = useMountAfterFirstOpen(requisitionsOpen);
 
   // ── PWA (SW registration + install prompt) + legacy-queue drain ──────────
   useEffect(() => {
@@ -159,9 +241,59 @@ export default function App() {
       if (outcome.succeeded.length > 0) {
         pushToast("success", t("appShell.toast.legacySynced", { count: outcome.succeeded.length }));
       }
+      // A legacy sale that could not be migrated is money the books never saw.
+      // The drain dialog below shows it once; the durable log keeps it after
+      // the reload that this very dialog often precedes.
+      for (const f of outcome.failed) {
+        recordFailure({
+          id: f.clientOrderId ? `legacy:${f.clientOrderId}` : null,
+          kind: "legacy-drain",
+          reference: f.clientOrderId,
+          message: t(f.error, f.errorVars) || t("appShell.failureLog.legacyDrainFailed"),
+          cashier: user.username,
+        });
+      }
       setDrainOpen(true); // small report: what synced, what stayed
     });
   }, [user, pushToast, t]);
+
+  // ── Durable failure log ──────────────────────────────────────────────────
+  // A permanently-failed checkout used to leave exactly two traces, both
+  // ephemeral: one toast (gone in 5s — see components/Toasts.tsx) and
+  // `engineStatus.lastReport`, a field in memory on the engine singleton that
+  // the next flush overwrites and any reload erases. A shift manager arriving
+  // later had no way to learn a sale had been lost, which one, or why.
+  //
+  // `checkout-done{ok:false, queued:false}` is the engine's own "this sale is
+  // not coming back" signal (lib/offline.ts — both runCheckoutOp's fail() and
+  // failCheckoutAfterPrerequisite emit it). Keyed on `checkout:<orderId>` so a
+  // retry that fails again updates the row instead of duplicating it.
+  useEffect(() => {
+    return engine.onEvent((e) => {
+      if (e.type !== "checkout-done" || e.ok || e.queued) return;
+      const message = e.error || t("appShell.failureLog.checkoutFailed");
+      // Read the stored doc for the money figures: by the time a BACKGROUND
+      // flush fails, the cart on screen is usually a different order entirely.
+      void engine
+        .getOrder(e.orderId)
+        .then((doc) => {
+          recordFailure({
+            id: `checkout:${e.orderId}`,
+            kind: "checkout",
+            orderId: e.orderId,
+            reference: doc?.invoiceNumber ?? e.invoiceNumber ?? null,
+            message,
+            cashier: user?.username ?? null,
+            total: doc ? doc.lines.reduce((s, l) => s + l.qty * l.unitPrice - (l.lineDiscount || 0), 0) : null,
+          });
+        })
+        .catch(() => {
+          // IndexedDB unavailable — still record the failure, just without the
+          // amount. Losing the total is survivable; losing the record is not.
+          recordFailure({ id: `checkout:${e.orderId}`, kind: "checkout", orderId: e.orderId, message, cashier: user?.username ?? null });
+        });
+    });
+  }, [engine, t, user]);
 
   // ── Held count (badge) ───────────────────────────────────────────────────
   const refreshHeldCount = useCallback(async () => {
@@ -437,6 +569,31 @@ export default function App() {
     else setPendingSwitch(false);
   }
 
+  // ── Payment → open a shift → back to payment ─────────────────────────────
+  // The no-shift banner in PaymentDialog used to be a dead end: Confirm was
+  // disabled and the cashier had to close the dialog, find the header button,
+  // open a shift and rebuild their way back to the same total. `onOpenShift`
+  // hands off to the FULL ShiftDialog (the opening float MUST be counted — an
+  // inline zero-float open silently corrupts the Z-report) and this brings
+  // payment back afterwards.
+  //
+  // An EFFECT rather than a branch inside handleShiftDialogClose: `shiftId`
+  // arrives through a react-query cache write, so a callback closing over the
+  // render that OPENED the dialog can still be looking at the stale null. This
+  // reads whatever the latest render has.
+  function handleOpenShiftFromPayment() {
+    setPayOpen(false);
+    setPendingPayAfterShift(true);
+    setShiftOpen(true);
+  }
+  useEffect(() => {
+    if (!pendingPayAfterShift || shiftOpen) return; // still in the shift dialog
+    setPendingPayAfterShift(false);
+    // Reopen only if there is now a shift AND still something to charge for.
+    // Reopening onto the same dead-end banner would be a worse dead end.
+    if (shiftId && cart.lines.length > 0) setPayOpen(true);
+  }, [pendingPayAfterShift, shiftOpen, shiftId, cart.lines.length]);
+
   if (!user) return <PosLogin />;
 
   const itemCount = cart.lines.reduce((s, l) => s + l.qty, 0);
@@ -563,22 +720,47 @@ export default function App() {
         </div>
       ) : null}
 
-      {/* Dialogs */}
+      {/* Dialogs — eager (sell path) */}
       <PaymentDialog
         open={payOpen}
         onClose={() => {
           setPayOpen(false);
           setCartSheetOpen(false);
         }}
+        onOpenShift={handleOpenShiftFromPayment}
       />
       <HeldOrdersDialog open={heldOpen} onClose={() => setHeldOpen(false)} onCountChange={setHeldCount} />
-      <ShiftDialog open={shiftOpen} onClose={handleShiftDialogClose} />
       <VoidDialog open={voidOpen} onClose={() => setVoidOpen(false)} onConfirm={(r) => void voidCurrent(r)} busy={voidBusy} />
       <DiscountDialog open={discountOpen} onClose={() => setDiscountOpen(false)} />
-      <SyncReportDialog open={syncOpen} onClose={() => setSyncOpen(false)} />
-      <MyInvoicesDialog open={myInvoicesOpen} onClose={() => setMyInvoicesOpen(false)} />
-      <StocktakeDialog open={stocktakeOpen} onClose={() => setStocktakeOpen(false)} />
-      <RequisitionsDialog open={requisitionsOpen} onClose={() => setRequisitionsOpen(false)} />
+
+      {/* Dialogs — lazy (rare). Every flag below is already a term of
+          `overlayOpen` above; splitting the code changed the chunk, not the
+          gate. */}
+      {shiftMounted ? (
+        <LazyDialogBoundary open={shiftOpen} label={t("appShell.dialogLoading")}>
+          <ShiftDialog open={shiftOpen} onClose={handleShiftDialogClose} />
+        </LazyDialogBoundary>
+      ) : null}
+      {syncMounted ? (
+        <LazyDialogBoundary open={syncOpen} label={t("appShell.dialogLoading")}>
+          <SyncReportDialog open={syncOpen} onClose={() => setSyncOpen(false)} />
+        </LazyDialogBoundary>
+      ) : null}
+      {myInvoicesMounted ? (
+        <LazyDialogBoundary open={myInvoicesOpen} label={t("appShell.dialogLoading")}>
+          <MyInvoicesDialog open={myInvoicesOpen} onClose={() => setMyInvoicesOpen(false)} />
+        </LazyDialogBoundary>
+      ) : null}
+      {stocktakeMounted ? (
+        <LazyDialogBoundary open={stocktakeOpen} label={t("appShell.dialogLoading")}>
+          <StocktakeDialog open={stocktakeOpen} onClose={() => setStocktakeOpen(false)} />
+        </LazyDialogBoundary>
+      ) : null}
+      {requisitionsMounted ? (
+        <LazyDialogBoundary open={requisitionsOpen} label={t("appShell.dialogLoading")}>
+          <RequisitionsDialog open={requisitionsOpen} onClose={() => setRequisitionsOpen(false)} />
+        </LazyDialogBoundary>
+      ) : null}
 
       {/* Legacy-queue drain report (offline sales queued by the OLD cashier) */}
       <Dialog open={drainOpen} onClose={() => setDrainOpen(false)} title={t("appShell.drain.title")} widthClass="max-w-md">

@@ -20,7 +20,14 @@ export const heldOrdersDialog = {
     label: "استعادة",
     offlineTitle: "استعادة طلب من الخادم تتطلب اتصالًا",
     title: "استعادة إلى السلة",
+    /** Cart is NOT empty: one tap holds what's in the cart, then resumes this
+     *  row. The label states both halves so nothing happens by surprise. */
+    holdAndResumeLabel: "علّق الحالي واستعد",
+    holdAndResumeTitle: "يُعلَّق طلب السلة الحالي تلقائيًا، ثم يُستعاد هذا الطلب",
   },
+
+  /** Banner above the list while the cart has lines. */
+  cartBusyHint: "بالسلة طلب قيد التحضير — «علّق الحالي واستعد» يعلّقه تلقائيًا قبل استعادة أي طلب",
   void: {
     label: "إلغاء",
     offlineTitle: "إلغاء طلب مزامَن غير متاح بلا اتصال",
@@ -29,8 +36,9 @@ export const heldOrdersDialog = {
     confirm: "تأكيد الإلغاء",
   },
   toast: {
-    resumeBlocked: "علّق الطلب الحالي أو أفرغه قبل استعادة طلب آخر",
     resumed: "تمت استعادة الطلب إلى السلة",
+    heldCurrentThenResumed: "عُلّق طلب السلة، ثم استُعيد الطلب المختار",
+    holdCurrentFailed: "تعذّر تعليق الطلب الحالي — لم تُنفَّذ الاستعادة",
     voided: "أُلغي الطلب المعلق",
   },
 } as const;

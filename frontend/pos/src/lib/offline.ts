@@ -23,6 +23,7 @@
 import type { AtomicRunner, AtomicTxn, KVStore } from "./idb";
 import { idbAtomicRunner, idbStore } from "./idb";
 import * as realApi from "./api";
+import { recordFailure } from "./failureLog";
 import { ApiError } from "./api";
 import { ulid } from "./ulid";
 import { translateApiError } from "../i18n/errorCodes";
@@ -967,6 +968,19 @@ export class OfflineEngine {
         if (failedOrdersOut) failedOrdersOut.add(op.orderId);
         const opError = new ApiError(200, r.code || "SERVER_ERROR", r.error || "");
         this.emitEvent({ type: "toast", kind: "error", message: this.toastMessage(opError) });
+        // …and durably, because the toast is gone before the shift manager
+        // ever hears about it and a reload wipes lastReport. Namespaced
+        // `sync:` so it cannot collide with the `checkout:` / `legacy:` rows
+        // App records from checkout-done; a checkout op is NOT recorded here
+        // (it emits checkout-done, which App already logs) so nothing is
+        // counted twice.
+        recordFailure({
+          id: `sync:${op.opId}`,
+          kind: "sync",
+          orderId: op.orderId,
+          code: r.code || "SERVER_ERROR",
+          message: this.toastMessage(opError),
+        });
       }
     }
     return false;

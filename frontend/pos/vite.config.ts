@@ -31,11 +31,22 @@ export default defineConfig(({ command }) => ({
         // Vendor split so no emitted JS chunk exceeds Vite's 500 KB budget (the
         // cashier had grown to one ~518 KB bundle). The WHOLE react family
         // (react, react-dom, scheduler) stays in ONE chunk — splitting
-        // react-dom from react/scheduler breaks hook dispatch at runtime. App
-        // code (no route-level dynamic imports here) stays in the entry chunk,
-        // so behaviour is unchanged — only smaller, longer-lived cache units.
-        // OFFLINE-SAFE: every emitted chunk lands in asset-manifest.json, which
-        // public/sw.js precaches at install, so the offline boot is unaffected.
+        // react-dom from react/scheduler breaks hook dispatch at runtime.
+        //
+        // APP CODE: this function deliberately returns undefined for anything
+        // outside node_modules, which is what lets Rollup give each `React.lazy`
+        // dialog in App.tsx its OWN chunk (ShiftDialog, SyncReportDialog,
+        // MyInvoicesDialog, StocktakeDialog, RequisitionsDialog — the ones a
+        // cashier opens once a shift). Naming any of them here would pull them
+        // back into a static group and undo the split. The sell-path dialogs
+        // (payment, combo, discount, void, held) are statically imported and so
+        // stay in the entry chunk on purpose.
+        //
+        // OFFLINE-SAFE: every emitted chunk — including the lazy ones — lands in
+        // asset-manifest.json, which public/sw.js precaches at install. The code
+        // is on the device before it is ever needed; deferring the import only
+        // moves the PARSE cost off first paint, it does not make a first open
+        // depend on the network.
         manualChunks(id: string) {
           if (!id.includes("node_modules")) return;
           if (/[\\/]node_modules[\\/](react|react-dom|react-is|scheduler)[\\/]/.test(id)) return "vendor-react";

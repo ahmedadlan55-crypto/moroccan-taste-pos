@@ -1,12 +1,12 @@
 # تقرير بقايا بيانات الاختبار (قراءة فقط) — قاعدة التطوير المحلية
 
-**القاعدة:** `moroccan_taste_pos`@`DESKTOP-PG1F13S` — **تاريخ التوليد:** 2026-07-24T01:00:12.502Z
+**القاعدة:** `moroccan_taste_pos`@`DESKTOP-PG1F13S` — **تاريخ التوليد:** 2026-07-25T02:45:54.648Z
 
 > هذا التقرير **قراءة فقط بالكامل**. لا يحذف ولا يعدّل أي شيء. أي تنظيف فعلي لما يظهر هنا قرار منفصل يحتاج مراجعة بشرية صريحة.
 
 ## الفحص المعروف (جداول/أعمدة محددة سلفًا حسب أنماط fixtures الفعلية)
 
-- `users.username LIKE 'itest_%'` — **17** صفًا (عيّنة أدناه)
+- `users.username LIKE 'itest_%'` — **16** صفًا (عيّنة أدناه)
   ```json
   [
     {
@@ -190,36 +190,6 @@
       "custody_portal": 0
     },
     {
-      "id": 1234,
-      "username": "itest_pimg_admin",
-      "password": "disabled",
-      "role": "admin",
-      "active": 1,
-      "created_at": "2026-07-21T10:44:12.000Z",
-      "position_id": null,
-      "brand_id": null,
-      "branch_id": null,
-      "default_branch_id": null,
-      "can_change_branch": 0,
-      "failed_attempts": 0,
-      "locked_until": null,
-      "token_version": 1,
-      "must_change_password": 0,
-      "password_changed_at": null,
-      "employee_id": "emp-shell-itest_pimg_admin",
-      "totp_secret": null,
-      "totp_enabled": 0,
-      "email": null,
-      "default_warehouse_id": null,
-      "phone": null,
-      "full_name": null,
-      "iqama_number": null,
-      "iban": null,
-      "job_title_code": null,
-      "employee_portal": 0,
-      "custody_portal": 0
-    },
-    {
       "id": 1238,
       "username": "itest_waste_cashier",
       "password": "$2a$12$GxgzGAu7kigIsh1z.PPUUuyFcGXMYeBBiuh5faJxXAcBB/u369YA.",
@@ -297,6 +267,36 @@
       "must_change_password": 0,
       "password_changed_at": null,
       "employee_id": "emp-shell-itest_wf_manager",
+      "totp_secret": null,
+      "totp_enabled": 0,
+      "email": null,
+      "default_warehouse_id": null,
+      "phone": null,
+      "full_name": null,
+      "iqama_number": null,
+      "iban": null,
+      "job_title_code": null,
+      "employee_portal": 0,
+      "custody_portal": 0
+    },
+    {
+      "id": 1247,
+      "username": "itest_wfid_cashier",
+      "password": "$2a$12$PnVxDW8OmagoHu7jO8mB6OKp36Z.zFS3rF.dgWlHTALHzgw6fdPzi",
+      "role": "cashier",
+      "active": 1,
+      "created_at": "2026-07-21T10:44:15.000Z",
+      "position_id": null,
+      "brand_id": null,
+      "branch_id": null,
+      "default_branch_id": null,
+      "can_change_branch": 0,
+      "failed_attempts": 0,
+      "locked_until": null,
+      "token_version": 1,
+      "must_change_password": 0,
+      "password_changed_at": null,
+      "employee_id": "emp-shell-itest_wfid_cashier",
       "totp_secret": null,
       "totp_enabled": 0,
       "email": null,
@@ -436,7 +436,7 @@
   ]
   ```
 
-**إجمالي البقايا المعروفة:** 56 صفًا عبر الجداول المفحوصة أعلاه (باستثناء فحص settings الذي هو وجود لا عدّ).
+**إجمالي البقايا المعروفة:** 55 صفًا عبر الجداول المفحوصة أعلاه (باستثناء فحص settings الذي هو وجود لا عدّ).
 
 ## الفحص الشامل (كل عمود VARCHAR/TEXT في كل جدول، بحثًا عن ITEST-/itest_ خارج القائمة أعلاه)
 
@@ -446,4 +446,4 @@
 
 ## الخلاصة
 
-**56 صفًا من البقايا المحتملة مكتشفة.** هذا التقرير لا يحذفها — راجع القوائم أعلاه وقرر يدويًا.
+**55 صفًا من البقايا المحتملة مكتشفة.** هذا التقرير لا يحذفها — راجع القوائم أعلاه وقرر يدويًا.

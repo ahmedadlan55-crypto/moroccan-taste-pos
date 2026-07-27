@@ -351,7 +351,7 @@ test("auditor: real login, real navigation UI, healthy read-only Trial Balance v
   assertHealthSignals(consoleErrors, failedRequests);
 });
 
-test("cashier: real login redirects to POS; nav UI never offers the link; a direct deep link is blocked; the API itself refuses the cashier's own token with a real 403", async ({ page }, testInfo) => {
+test("cashier: real login redirects to POS; nav UI never offers the link; a direct deep link is blocked; the API itself refuses the cashier's own token with a real 403", async ({ page }) => {
   const { consoleErrors, failedRequests } = trackHealthSignals(page);
   await realLogin(page, IDENTITIES.cashier.username);
   // Login.tsx sends a cashier straight to /pos/, not /app/overview — their
@@ -373,28 +373,37 @@ test("cashier: real login redirects to POS; nav UI never offers the link; a dire
 
   // Now the direct-URL attempt in the browser: same token (still in
   // localStorage from the login above), navigated straight at the ERP route
-  // a cashier could guess or bookmark. This is CapGuard, the SECOND
-  // independent enforcement point.
+  // a cashier could guess or bookmark. This is the SECOND independent
+  // enforcement point.
+  //
+  // v8.1 — it used to be CapGuard's permission-denied panel. Portal isolation
+  // (frontend/erp/src/app/providers/require-auth.tsx, the UI half of
+  // middleware/posPortalScope.js) now stops the cashier one layer EARLIER and
+  // harder: a POS-only role is sent home to /pos/ before any back-office route
+  // renders, so the panel never appears because the shell never does. The
+  // assertion follows the stronger behaviour instead of pinning the weaker one.
   await page.goto(TB_HREF);
-  await expect(page.locator('[data-state="permission-denied"]')).toHaveCount(1, { timeout: 20_000 });
+  await page.waitForURL("**/pos/**", { timeout: 20_000 });
   await expect(page.getByText("الإجمالي")).toHaveCount(0);
 
-  // And on a screen a cashier CAN legitimately reach in the ERP shell, the
-  // REAL navigation UI for this viewport — sidebar on desktop, MobileNav on
-  // mobile — must never have offered the link either: a THIRD independent
-  // enforcement point.
+  // And a screen a cashier CAN legitimately reach in the ERP shell is ejected
+  // the same way — which is what makes the THIRD enforcement point absolute:
+  // neither navigation surface (sidebar on desktop, MobileNav on mobile) ever
+  // renders for this role, so there is nothing that could offer the link.
   await page.goto("/app/overview");
-  if (isMobileProject(testInfo)) {
-    const nav = page.locator('nav[aria-label="تنقل سريع"]');
-    await expect(nav).toBeVisible({ timeout: 20_000 });
-    await expect(nav.locator(`a[href="${TB_HREF}"]`), "cashier must NOT see ميزان المراجعة in MobileNav (no finance.reports.view)").toHaveCount(0);
-  } else {
-    const aside = page.locator('aside[aria-label="الشريط الجانبي"]');
-    await expect(aside).toBeVisible({ timeout: 20_000 });
-    const group = aside.locator('button[aria-controls="nav-group-accounting"]');
-    if (await group.isVisible().catch(() => false)) await group.click();
-    await expect(aside.locator(`a[href="${TB_HREF}"]`), "cashier must NOT see ميزان المراجعة in the sidebar (no finance.reports.view)").toHaveCount(0);
-  }
+  await page.waitForURL("**/pos/**", { timeout: 20_000 });
+  await expect(
+    page.locator('aside[aria-label="الشريط الجانبي"]'),
+    "the back-office sidebar must never render for a cashier",
+  ).toHaveCount(0);
+  await expect(
+    page.locator('nav[aria-label="تنقل سريع"]'),
+    "the back-office MobileNav must never render for a cashier",
+  ).toHaveCount(0);
+  await expect(
+    page.locator(`a[href="${TB_HREF}"]`),
+    "cashier must NOT see ميزان المراجعة on any navigation surface (no finance.reports.view)",
+  ).toHaveCount(0);
 
   // The permission-denied screen and the blocked API call are both EXPECTED
   // non-2xx/bad-state outcomes for this specific test — assert health

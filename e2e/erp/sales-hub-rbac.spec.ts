@@ -181,16 +181,29 @@ test("cashier: hub deep-link renders permission-denied; nav never offers the hub
   const metadata = await apiCall("GET", "/api/analytics/metadata", cashierToken);
   expect(metadata.status, "the registry endpoint must refuse a cashier too").toBe(403);
 
-  // ── client-side: a guessed/bookmarked deep link is blocked by the guard ──
+  // ── client-side: a guessed/bookmarked deep link is EJECTED from /app ──
+  // This used to assert the hub's own PermissionDenied panel. The v8.1 portal
+  // isolation (frontend/erp/src/app/providers/require-auth.tsx, the UI half of
+  // middleware/posPortalScope.js) is stronger than that: a POS-only role never
+  // gets the back-office shell at all — RequireAuth sends them home to /pos/
+  // before any route renders. So the assertion is now "no back-office screen
+  // ever painted", which subsumes "the hub was denied".
   await page.goto(HUB_HREF);
-  await expect(page.locator('[data-state="permission-denied"]')).toHaveCount(1, { timeout: 20_000 });
-  // No analytics content leaked around the guard.
+  await page.waitForURL("**/pos/**", { timeout: 20_000 });
+  // Nothing from the hub rendered anywhere on the way out (unscoped on
+  // purpose — #main belongs to the shell the cashier must never receive).
   await expect(page.locator('[data-testid="analytics-topbar"]')).toHaveCount(0);
-  await expect(page.locator('#main button[aria-haspopup="listbox"]')).toHaveCount(0);
+  await expect(page.locator('button[aria-haspopup="listbox"]')).toHaveCount(0);
 
-  // ── nav chrome (this viewport's real one) never offers the hub link ──
+  // ── and a screen a cashier could legitimately reach in the ERP is ejected
+  //    the same way, so no nav surface exists that could offer the hub link ──
   await page.goto("/app/overview");
+  await page.waitForURL("**/pos/**", { timeout: 20_000 });
   await page.waitForLoadState("networkidle", { timeout: 20_000 }).catch(() => {});
+  await expect(
+    page.locator('aside[aria-label="الشريط الجانبي"]'),
+    "the back-office shell must never render for a cashier",
+  ).toHaveCount(0);
   await expect(
     page.locator(`a[href="${HUB_HREF}"]`),
     "no nav surface may offer the sales-analytics hub to a cashier",

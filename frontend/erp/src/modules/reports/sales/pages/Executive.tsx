@@ -39,8 +39,22 @@ import { useAnalyticsQuery, useAnalyticsRegistry } from "../lib/useAnalyticsQuer
 
 const SEGMENT = "executive";
 
-/** Every figure the report needs, in ONE dimensionless query. */
-const SUMMARY_METRICS = [
+/**
+ * Every figure the report needs, dimensionless — in TWO requests, not one.
+ *
+ * lib/analytics/planner.js caps a request at MAX_METRICS = 12 and answers
+ * VALIDATION_ERROR / 422 above it. The report needs 23 figures, so asking for
+ * them in a single query made EVERY load of this page 422 — the screen was an
+ * ErrorState with no data at all. Split into two dimensionless requests over
+ * the identical filters/compare and merged by `f()` below.
+ *
+ * The split is NOT arbitrary: the three cost-gated metrics (cogs /
+ * gross_profit / margin_pct) sit in group B alongside eight ungated ones, so a
+ * viewer without analytics.cost.view gets them masked out of a still-valid
+ * response. Isolating them in a request of their own would be refused whole
+ * with 403 ANALYTICS_ALL_MASKED and break the page for managers.
+ */
+const SUMMARY_METRICS_A = [
   "gross_product_sales",
   "discounts_total",
   "returns_net",
@@ -53,6 +67,9 @@ const SUMMARY_METRICS = [
   "avg_ticket",
   "qty_sold",
   "avg_items_per_order",
+] as const;
+
+const SUMMARY_METRICS_B = [
   "guests",
   "returns_count",
   "returns_value",
@@ -65,6 +82,8 @@ const SUMMARY_METRICS = [
   "gross_profit",
   "margin_pct",
 ] as const;
+
+const IN_GROUP_A: ReadonlySet<string> = new Set<string>(SUMMARY_METRICS_A);
 
 const MONEY_EPSILON = 0.01;
 
@@ -122,14 +141,16 @@ function Section({
   note,
   action,
   children,
+  testId,
 }: {
   title: string;
   note?: ReactNode;
   action?: ReactNode;
   children: ReactNode;
+  testId?: string;
 }) {
   return (
-    <section className="surface overflow-hidden">
+    <section className="surface overflow-hidden" data-testid={testId}>
       <header className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-100 px-4 py-3">
         <div className="min-w-0">
           <h3 className="truncate text-sm font-extrabold text-slate-900">{title}</h3>
@@ -173,6 +194,11 @@ function Statement({ lines, showCompare, compareLabel }: { lines: StatementLine[
         {lines.map((line) => (
           <tr
             key={line.id}
+            // Stable per-line anchor: the statement is where the money figures
+            // live now that this page is chart-free, so the harness needs to
+            // read a NAMED line (net_ex_vat, invoice_total…) rather than
+            // "the first card in the KPI row" — which today is `orders`.
+            data-line={line.id}
             className={
               line.op === "eq"
                 ? "border-y border-slate-200 bg-slate-50"
@@ -306,9 +332,15 @@ export default function Executive() {
   const compare = compareSpec(filters);
   const dayDim = filters.businessDay ? "business_day" : "calendar_day";
 
-  const summaryBody: AnalyticsQueryBody = {
+  const summaryBodyA: AnalyticsQueryBody = {
     ...base,
-    metrics: [...SUMMARY_METRICS],
+    metrics: [...SUMMARY_METRICS_A],
+    dimensions: [],
+    ...(compare ? { compare } : {}),
+  };
+  const summaryBodyB: AnalyticsQueryBody = {
+    ...base,
+    metrics: [...SUMMARY_METRICS_B],
     dimensions: [],
     ...(compare ? { compare } : {}),
   };
@@ -331,17 +363,21 @@ export default function Executive() {
   };
 
   const catalogReady = registry.data != null && Array.isArray(registry.data.metrics);
-  const summary = useAnalyticsQuery(SEGMENT, summaryBody, { enabled: catalogReady });
+  const summaryA = useAnalyticsQuery(SEGMENT, summaryBodyA, { enabled: catalogReady });
+  const summaryB = useAnalyticsQuery(SEGMENT, summaryBodyB, { enabled: catalogReady });
   const byDay = useAnalyticsQuery(SEGMENT, byDayBody, { enabled: catalogReady });
   const byTax = useAnalyticsQuery(SEGMENT, byTaxBody, { enabled: catalogReady });
   const byPayment = useAnalyticsQuery(SEGMENT, byPaymentBody, { enabled: catalogReady });
 
   const hasCompare = filters.compare !== "none";
-  const row = summary.data?.rows[0];
-  const f = (id: string) => pick(summary.data, row, id);
+  const rowA = summaryA.data?.rows[0];
+  const rowB = summaryB.data?.rows[0];
+  /** Read a figure from whichever of the two summary requests carries it. */
+  const f = (id: string) =>
+    IN_GROUP_A.has(id) ? pick(summaryA.data, rowA, id) : pick(summaryB.data, rowB, id);
   const c = (id: string): number | null => {
     if (!hasCompare) return null;
-    const v = row?.compare?.[id];
+    const v = (IN_GROUP_A.has(id) ? rowA : rowB)?.compare?.[id];
     return typeof v === "number" ? v : null;
   };
 
@@ -383,8 +419,11 @@ export default function Executive() {
     [t, dayDim],
   );
 
-  const isLoading = registry.isLoading || summary.isLoading || byDay.isLoading || byTax.isLoading || byPayment.isLoading;
-  const error = registry.error ?? summary.error ?? byDay.error ?? byTax.error ?? byPayment.error;
+  const isLoading =
+    registry.isLoading || summaryA.isLoading || summaryB.isLoading ||
+    byDay.isLoading || byTax.isLoading || byPayment.isLoading;
+  const error =
+    registry.error ?? summaryA.error ?? summaryB.error ?? byDay.error ?? byTax.error ?? byPayment.error;
 
   if (isLoading) return <LoadingState rows={6} />;
   if (error) {
@@ -394,7 +433,8 @@ export default function Executive() {
         title={t("salesReports.states.loadFailed")}
         onRetry={() => {
           void registry.refetch();
-          void summary.refetch();
+          void summaryA.refetch();
+          void summaryB.refetch();
           void byDay.refetch();
           void byTax.refetch();
           void byPayment.refetch();
@@ -465,7 +505,7 @@ export default function Executive() {
     filters.orderType.length > 0 && `${t("salesReports.topbar.orderType")} (${filters.orderType.length})`,
   ].filter(Boolean) as string[];
 
-  const freshness = summary.data?.meta.freshness?.watermark;
+  const freshness = summaryA.data?.meta.freshness?.watermark;
 
   return (
     <section className="space-y-4" data-testid="page-executive">
@@ -489,7 +529,13 @@ export default function Executive() {
               </Badge>
             ))}
             {freshness && (
-              <span className="text-slate-400">
+              // data-freshness-watermark is the AGREED mask hook (see
+              // e2e/erp/visual-baselines.spec.ts): the watermark is the server's
+              // generatedAt when no rollup high-water mark exists, so it changes
+              // on every single render. Without the attribute this line diffs
+              // the pinned baseline on every run — the mask exists precisely for
+              // the moment a screen started showing it, which is now.
+              <span data-freshness-watermark className="text-slate-400">
                 {t("salesReports.topbar.refreshedAt")}: {formatDateTime(freshness)}
               </span>
             )}
@@ -517,6 +563,7 @@ export default function Executive() {
 
       <div className="grid gap-4 xl:grid-cols-2">
         <Section
+          testId="statement-sales"
           title={t("salesReports.report.sectionSummary")}
           note={t("salesReports.report.sectionSummaryNote")}
         >

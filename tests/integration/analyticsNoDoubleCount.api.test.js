@@ -4,15 +4,23 @@
  *
  *   items: Burger×2 @57.50 (S, incl) + Water×1 @20 (Z) + Combo×1 @69 (S)
  *          with TWO combo choices (cheese + fries) on the combo line,
- *   order discount 15.25 (gross space) → whole-SAR rounding kicks in,
- *   split payment Cash 100 + Mada 89.
+ *   order discount 15.25 (gross space),
+ *   split payment Cash 100 + Mada 88.75.
  *
- * Server math (hand-computed, mirrors routes/sales.js v6.20/v7.3 exactly):
+ * Server math (hand-computed, mirrors routes/sales.js v6.20/v7.3/v8.1 exactly):
  *   grandNet 180, grandVat 24, gross 204
  *   grossAfterDiscount = 204 − 15.25 = 188.75 ; ratio = 188.75/204
  *   netAfterDiscount = round2(180×ratio) = 166.54
- *   invTotal = roundToWhole(188.75) = 189 ; roundDelta +0.25 → net 166.79,
- *   vat = 189 − 166.79 = 22.21 ; appliedDiscount 15.25 ; qty 4.
+ *   vatAfterDiscount = round2(24×ratio)  =  22.21
+ *   invTotal = round2(166.54 + 22.21) = 188.75 ; appliedDiscount 15.25 ; qty 4.
+ *
+ * v8.1 NOTE — this fixture used to expect 189: routes/sales.js rounded the
+ * total to a whole SAR (pricing.roundToWhole) and pushed the +0.25 delta onto
+ * the net side (net 166.79). That rounding was REMOVED so the owner's property
+ * holds — "price before tax + tax = the number on the invoice" (a 16.00 net
+ * item must read 16.00 + 2.40 = 18.40, not 18). The exact 2-decimal total is
+ * now the product's behaviour, so the hand-computed constants below follow it;
+ * the split legs sum to the same 188.75 so payments_in still closes.
  *
  * The checkout writes ar_documents + ar_document_lines eagerly (O2C on) and
  * the post-commit hook projects order + payment + modifier facts. Then the
@@ -45,8 +53,8 @@ let I = null;
 
 // hand-computed expectation for the API-driven invoice
 const X = Object.freeze({
-  total: 189, net: 166.79, vat: 22.21, qty: 4, orders: 1,
-  cash: 100, card: 89, discount: 15.25, modifierQty: 2,
+  total: 188.75, net: 166.54, vat: 22.21, qty: 4, orders: 1,
+  cash: 100, card: 88.75, discount: 15.25, modifierQty: 2,
 });
 
 let pass = 0, fail = 0; const fails = [];
@@ -149,7 +157,7 @@ async function cleanupApiArtifacts() {
     });
     check('checkout succeeded', sale.status === 200 && sale.body?.success === true, sale.body);
     const orderId = sale.body?.orderId || null;
-    check('server total = 189 (whole-SAR rounding applied)', Number(sale.body?.totals?.total) === X.total, sale.body?.totals);
+    check('server total = 188.75 (exact 2-decimal total — no whole-SAR rounding)', Number(sale.body?.totals?.total) === X.total, sale.body?.totals);
 
     // wait for the post-commit projection (fire-and-forget on the pool)
     let fact = null;
@@ -167,7 +175,7 @@ async function cleanupApiArtifacts() {
       `SELECT COUNT(*) c, SUM(l.net_amount) net, SUM(l.vat_amount) vat, SUM(l.gross_amount) gross, SUM(l.base_qty) qty
          FROM ar_document_lines l JOIN ar_documents d ON d.id = l.document_id
         WHERE d.source_type='pos' AND d.source_id = ?`, [orderId]);
-    check('eager O2C lines: Σnet=166.79 Σvat=22.21 Σgross=189 qty=4 (allocation closes)',
+    check('eager O2C lines: Σnet=166.54 Σvat=22.21 Σgross=188.75 qty=4 (allocation closes)',
       lineRows.length && Number(lineRows[0].c) === 3 && r2(lineRows[0].net) === X.net &&
       r2(lineRows[0].vat) === X.vat && r2(lineRows[0].gross) === X.total && Number(lineRows[0].qty) === X.qty,
       lineRows[0]);
@@ -234,7 +242,7 @@ async function cleanupApiArtifacts() {
     const p5rows = p5.body?.data?.rows || [];
     const byMethod = {};
     for (const r of p5rows) byMethod[r.keys.payment_method] = r.values.payments_in;
-    check('p5: cash 100 + card 89 (split legs, normalized buckets)',
+    check('p5: cash 100 + card 88.75 (split legs, normalized buckets)',
       byMethod.cash === X.cash && byMethod.card === X.card, byMethod);
 
     console.log('\n▶ permutation 6 — [hour, cashier]');

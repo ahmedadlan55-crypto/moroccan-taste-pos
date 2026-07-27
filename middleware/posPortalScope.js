@@ -94,7 +94,14 @@ const ALLOW = [
   { method: ['GET'], path: /^\/inventory\/items$/ },
   { method: ['GET', 'POST'], path: /^\/inventory\/stocktakes$/ },
   { method: ['GET', 'POST'], path: /^\/inventory\/v2\/stocktakes$/ },
-  { method: ['POST'], path: /^\/inventory\/v2\/stocktakes\/[^/]+\/(start|counts|submit)$/ },
+  // /counts is a PUT, not a POST — frontend/pos/src/lib/api.ts
+  // saveStocktakeCountsV2() is the count AUTOSAVE and the route is deliberately
+  // not version-guarded. Listing it POST-only silently 403'd every autosave, so
+  // a cashier could count a whole sheet and submit nothing: the stocktake
+  // surface this middleware exists to KEEP working was broken by its own
+  // allow-list. Methods are per-verb here precisely so this stays explicit.
+  { method: ['POST'], path: /^\/inventory\/v2\/stocktakes\/[^/]+\/(start|submit)$/ },
+  { method: ['PUT'], path: /^\/inventory\/v2\/stocktakes\/[^/]+\/counts$/ },
 
   // ── نواقص — shortage requests + branch receiving ────────────────────────
   { method: ['GET', 'POST'], path: /^\/inventory\/shortage-requests$/ },
@@ -136,9 +143,21 @@ function posPortalScope(req, res, next) {
   // reason to widen the boundary — deliberately not honoured here.
   if (isAllowedForPosPortal(req.method, req.path)) return next();
 
+  // CODE vocabulary: an authorization refusal in this codebase is
+  // `code: 'PERMISSION_DENIED'` with HTTP 403 — that is the contract every
+  // client and every RBAC test already switches on (see
+  // tests/inventoryTxContract.js httpFor('PERMISSION_DENIED') === 403, and the
+  // cashier-denial assertions in trialBalance / analyticsScope / requisitions /
+  // e2e sales-hub-rbac). This boundary sits IN FRONT of the per-route guards,
+  // so it answers those same requests first; emitting a brand-new top-level
+  // code for the same class of refusal silently broke three of them. The portal
+  // discriminator is preserved as `reason`, so a client that wants to say "you
+  // are outside the cashier portal" (rather than "you lack a capability") still
+  // can, without every generic 403 handler needing to learn a second code.
   return res.status(403).json({
     success: false,
-    code: 'PORTAL_FORBIDDEN',
+    code: 'PERMISSION_DENIED',
+    reason: 'PORTAL_FORBIDDEN',
     error: 'هذه الوظيفة خارج صلاحيات بوابة الكاشير · Not available from the cashier portal',
   });
 }

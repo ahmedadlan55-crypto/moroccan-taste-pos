@@ -2,6 +2,7 @@ import { useEffect } from "react";
 import { useSetLang } from "@/i18n";
 import { apiClient } from "@/shared/api";
 import { useAuth } from "./auth-provider";
+import { isPosOnlyRole } from "./require-auth";
 
 /**
  * Per-user language hydration. On app boot, once a session exists, GET
@@ -17,11 +18,20 @@ import { useAuth } from "./auth-provider";
  * login / change-password screens never touch it.
  */
 export function LanguagePreferenceSync() {
-  const { isAuthenticated } = useAuth();
+  const { isAuthenticated, user } = useAuth();
   const setLang = useSetLang();
 
   useEffect(() => {
     if (!isAuthenticated) return;
+    // PORTAL ISOLATION. This provider sits ABOVE the router, so it mounts and
+    // fires before RequireAuth can eject a POS-only role out of /app. The
+    // server-side boundary (middleware/posPortalScope.js) correctly refuses
+    // /api/user-preferences for a cashier, so the call was a guaranteed 403 on
+    // every cashier who so much as touched an /app URL — a real 403 in the
+    // network log for a request the product should never have made. A role
+    // that is being sent back to the till has no back-office preferences to
+    // hydrate; don't ask for them.
+    if (isPosOnlyRole(user?.role)) return;
     let alive = true;
     apiClient
       .get<{ language?: unknown }>("/user-preferences")
@@ -36,7 +46,7 @@ export function LanguagePreferenceSync() {
     return () => {
       alive = false;
     };
-  }, [isAuthenticated, setLang]);
+  }, [isAuthenticated, user?.role, setLang]);
 
   return null;
 }

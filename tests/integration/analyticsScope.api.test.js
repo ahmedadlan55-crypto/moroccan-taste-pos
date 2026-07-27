@@ -10,8 +10,10 @@
  *   · a manager (no analytics.cost.view) requesting cost metrics gets them
  *     STRIPPED into meta.maskedMetrics, absent from every values payload;
  *   · a request of ONLY masked metrics → 403 ANALYTICS_ALL_MASKED;
- *   · a cashier (role without analytics.view) → 403 PERMISSION_DENIED from
- *     the scope middleware, on query AND metadata;
+ *   · a cashier (role without analytics.view) → 403 PERMISSION_DENIED on query
+ *     AND metadata (the cashier-portal boundary answers first), and — proving
+ *     the analytics gate itself, not just the portal — a MANAGER with
+ *     analytics.view revoked is refused the same way;
  *   · a capability-gated dimension (cashier) without analytics.employees.view
  *     → 403 PERMISSION_DENIED;
  *   · metadata is capability-filtered (no cogs for the manager).
@@ -191,6 +193,23 @@ async function cleanupUsers() {
       qCash.status === 403 && qCash.body?.code === 'PERMISSION_DENIED', qCash);
     const mdCash = await call('GET', '/api/analytics/metadata', cashier);
     check('cashier metadata → 403 too (gate covers the whole router)', mdCash.status === 403, mdCash.status);
+    // A cashier is now ALSO stopped by the outer cashier-portal boundary
+    // (middleware/posPortalScope.js), which answers before the analytics
+    // router's own gate — so the two checks above no longer prove
+    // middleware/analyticsScope on their own. Prove it directly with an
+    // identity the portal never constrains: revoke analytics.view from the
+    // MANAGER (same user-override pattern as the gated-dimension case above)
+    // and require the analytics gate itself to refuse.
+    await db.query(
+      "INSERT INTO user_permission_overrides (username, permission_id, grant_type) VALUES (?, 'analytics.view', 'revoke') ON DUPLICATE KEY UPDATE grant_type='revoke'",
+      [MGR_B1]);
+    const qNoView = await Q(mgr, BASE());
+    check('manager with analytics.view REVOKED → 403 PERMISSION_DENIED (analyticsScope itself, not the portal boundary)',
+      qNoView.status === 403 && qNoView.body?.code === 'PERMISSION_DENIED' && qNoView.body?.reason !== 'PORTAL_FORBIDDEN',
+      qNoView);
+    const mdNoView = await call('GET', '/api/analytics/metadata', mgr);
+    check('…and the metadata endpoint is gated by the same middleware', mdNoView.status === 403, mdNoView.status);
+    try { await db.query("DELETE FROM user_permission_overrides WHERE username = ? AND permission_id = 'analytics.view'", [MGR_B1]); } catch (_) {}
 
     // ── metadata is capability-filtered ───────────────────────────────────
     console.log('\n▶ metadata filtering');

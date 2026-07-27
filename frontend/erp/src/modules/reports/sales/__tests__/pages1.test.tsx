@@ -183,6 +183,22 @@ const { harness, fixtureFor, emptyResult, REGISTRY } = vi.hoisted(() => {
   });
 
   function fixtureFor(body: { metrics: string[]; dimensions: string[] }) {
+    // SERVER CONTRACT, enforced by the mock. lib/analytics/planner.js caps a
+    // request at MAX_METRICS = 12 / MAX_DIMENSIONS = 3 and answers 422 above
+    // either — the page then renders an ErrorState with no data at all. This
+    // harness used to answer ANY body, so a page could ask for 23 metrics and
+    // still look perfectly green here while being 100% broken in the product.
+    // That is exactly how the rebuilt Executive shipped: every load 422'd.
+    if (body.metrics.length > 12) {
+      throw new Error(
+        `pages1 harness: ${body.metrics.length} metrics requested — the server caps a query at 12 (planner MAX_METRICS) and answers 422 above it. Split the request.`,
+      );
+    }
+    if (body.dimensions.length > 3) {
+      throw new Error(
+        `pages1 harness: ${body.dimensions.length} dimensions requested — the server caps a query at 3 (planner MAX_DIMENSIONS).`,
+      );
+    }
     const sig = body.dimensions.join(",");
     const shape = TUPLES[sig];
     if (!shape) throw new Error(`pages1 harness: no fixture for dimensions [${sig}]`);

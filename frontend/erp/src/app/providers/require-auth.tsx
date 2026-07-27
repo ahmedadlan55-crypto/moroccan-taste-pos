@@ -6,7 +6,12 @@ import { useAuth } from "./auth-provider";
 // middleware/posPortalScope.js — that server module is the real boundary
 // (it 403s back-office paths for these roles); this is the UI half so a
 // cashier never sees a back-office shell at all.
-const POS_ONLY_ROLES = ["cashier"];
+export const POS_ONLY_ROLES = ["cashier"];
+
+/** True when this role's only home is the cashier app (see POS_ONLY_ROLES). */
+export function isPosOnlyRole(role: unknown): boolean {
+  return POS_ONLY_ROLES.includes(String(role || "").toLowerCase());
+}
 
 // Gate the whole app behind a valid session. The Back-Office shares the legacy
 // app's JWT (localStorage pos_token). In dev/preview we render the UI even
@@ -23,7 +28,7 @@ export function RequireAuth({ children }: { children: ReactNode }) {
   // it fires once, on the ERP login form, and a cashier normally signs in at
   // /pos and never touches it. Send them home instead — a full navigation,
   // because /pos is a different Vite bundle, not a route in this router.
-  if (isAuthenticated && POS_ONLY_ROLES.includes(String(user?.role || "").toLowerCase())) {
+  if (isAuthenticated && isPosOnlyRole(user?.role)) {
     if (typeof window !== "undefined") window.location.assign("/pos/");
     return null;
   }

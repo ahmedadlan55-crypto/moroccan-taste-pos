@@ -244,58 +244,46 @@ test("cashier creation + login + shift-open-with-float", async ({ page, request 
   await page.getByRole("button", { name: "تسجيل الدخول", exact: true }).click();
 
   // ── (3) forced redirect to the shared ERP change-password screen ───────────
-  await page.waitForURL(/\/app\/change-password/, { timeout: 20_000 });
-  const changePwUrl = new URL(page.url());
-  expect(changePwUrl.pathname).toBe("/app/change-password");
-  expect(changePwUrl.searchParams.get("must")).toBe("1");
-  expect(changePwUrl.searchParams.get("redirect")).toBe("/pos/");
+  // v8.1 PORTAL ISOLATION changed this step, and for the better. PosLogin.tsx
+  // used to hop to `/app/change-password?must=1&redirect=/pos/` — a real
+  // cross-app navigation into the ERP bundle — which is exactly the hole the
+  // cashier-portal isolation closed (a cashier is now bounced out of /app and
+  // the API refuses back-office paths for their token). The forced change now
+  // renders IN the cashier app (PosChangePassword.tsx), so the assertion is
+  // that the URL NEVER leaves /pos/ and the till stays unreachable until the
+  // change succeeds.
+  //
+  // This also retires the old cross-app-redirect bug from THIS flow: the hop
+  // whose basename-relative `navigate("/pos/")` landed on `/app/pos/` no
+  // longer happens at all. (ChangePassword.tsx in the ERP still has that
+  // defect for any OTHER role sent to it — out of scope here.)
+  const changePwForm = page.getByRole("heading", { name: "تغيير كلمة المرور" });
+  await expect(changePwForm).toBeVisible({ timeout: 20_000 });
+  expect(
+    new URL(page.url()).pathname,
+    "the forced change must happen inside the cashier portal, never in /app",
+  ).toBe("/pos/");
+  await expect(
+    page.getByTestId("pos-header"),
+    "the till must stay out of reach while the password is temporary",
+  ).toHaveCount(0);
 
   // ── (4) complete the mandatory change ───────────────────────────────────────
-  // NOTE: ChangePassword.tsx's <Field> renders its <label htmlFor> against an
-  // id that the plain (non-render-prop) <Input> children never receive — the
-  // labels are NOT programmatically associated with their inputs (a real a11y
-  // defect; see the report). getByLabel cannot find these fields, so the
-  // inputs are targeted by their (still-correct) autocomplete attributes.
-  const currentPwInput = page.locator('input[autocomplete="current-password"]');
-  const newPwInput = page.locator('input[autocomplete="new-password"]').first();
-  const confirmPwInput = page.locator('input[autocomplete="new-password"]').last();
-  await expect(currentPwInput).toBeVisible({ timeout: 20_000 });
-  await currentPwInput.fill(seedPassword);
-  await newPwInput.fill(NEW_PASSWORD);
-  await confirmPwInput.fill(NEW_PASSWORD);
-  await page.getByRole("button", { name: "حفظ كلمة المرور", exact: true }).click();
+  // PosChangePassword gives each field a real aria-label, so these are
+  // label-addressed (the ERP screen's unassociated <label htmlFor> defect,
+  // which forced autocomplete-attribute selectors here, is not in this path).
+  await page.getByLabel("كلمة المرور الحالية").fill(seedPassword);
+  await page.getByLabel("كلمة المرور الجديدة", { exact: true }).fill(NEW_PASSWORD);
+  await page.getByLabel("تأكيد كلمة المرور الجديدة").fill(NEW_PASSWORD);
+  await page.getByRole("button", { name: "حفظ ومتابعة", exact: true }).click();
 
-  // ── (5) must land back in the REAL POS till, not an ERP page ────────────────
-  // KNOWN REAL BUG (see report): ChangePassword.tsx calls react-router's
-  // `navigate(redirect)` inside a <BrowserRouter basename="/app">. React
-  // Router resolves an absolute-looking target ("/pos/") RELATIVE TO THAT
-  // BASENAME, so the browser actually lands on "/app/pos/" — a path with no
-  // matching ERP route, which falls through to the ERP's catch-all NotFound
-  // route. The cashier who was forced through the mandatory password change
-  // never actually gets back to the till. This assertion is left STRICT
-  // (soft, so the rest of the mandated flow below can still be exercised and
-  // reported honestly) — it is expected to FAIL until ChangePassword.tsx is
-  // fixed to `window.location.assign(redirect)` for cross-app targets, the
-  // same technique PosLogin.tsx already uses for the opposite hop.
-  // Wait for the app to actually finish navigating away from change-password
-  // (never race a fixed sleep against an async fetch + client-side navigate —
-  // the submit's POST can legitimately take longer than a guessed timeout).
-  await page.waitForURL((url) => !/\/change-password/.test(url.pathname), { timeout: 20_000 });
-  const landedPathname = new URL(page.url()).pathname;
-  expect.soft(
-    landedPathname,
-    "REAL BUG: ChangePassword.tsx's navigate(redirect) is basename-relative " +
-    "(BrowserRouter basename=\"/app\"), so redirect=/pos/ actually lands on " +
-    "/app/pos/ (ERP NotFound), not the real /pos/ POS till. Fix: use " +
-    "window.location.assign for a cross-app redirect target.",
-  ).toBe("/pos/");
-
-  // Recover from the documented bug so the REST of the mandated flow (the
-  // shift-open regression this task exists to prove) still gets real coverage
-  // in this same run, exactly like a cashier manually navigating back would.
-  if (landedPathname !== "/pos/") {
-    await page.goto("/pos/");
-  }
+  // ── (5) lands straight in the REAL POS till (no cross-app detour) ───────────
+  // onDone() reloads /pos/ with the FRESH token the change-password response
+  // returned (the old one was revoked by the token_version bump), so the shell
+  // boots authenticated. Waiting on the shell — not on a URL change — is the
+  // honest signal here: the URL never changes because the app never left.
+  await expect(page.getByTestId("pos-header")).toBeVisible({ timeout: 30_000 });
+  expect(new URL(page.url()).pathname).toBe("/pos/");
 
   // ── (6) POS shell renders, authenticated as the cashier, no open shift ──────
   const header = page.getByTestId("pos-header");

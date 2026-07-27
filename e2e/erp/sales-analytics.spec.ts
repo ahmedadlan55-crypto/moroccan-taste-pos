@@ -355,19 +355,22 @@ test.describe("focused flows (desktop)", () => {
     await loginAs(page);
 
     // ── tax basis: executive net = 950.00 ex-VAT, 1,071.50 incl-VAT ──
-    // The FIRST KPI card is the net card (KPI_CARDS order in Executive.tsx) —
-    // asserted on the card, not the whole row, because gross_product_sales
-    // happens to equal 1,071.50 on this seed too.
+    // The rebuilt executive report is chart-free: net_ex_vat is the `=` line of
+    // the stepped SALES STATEMENT, not a KPI card (the kpi-row now carries the
+    // operational counters — orders / avg ticket / qty / items-per-order /
+    // guests). Read the named statement line, scoped to the sales statement so
+    // the cost/profit statement's own net line cannot be picked up instead.
     await page.goto(seedUrl("executive"));
     await waitHealthy(page, "executive (tax excl)");
-    const netCard = page.locator('[data-testid="kpi-row"] > *').first();
-    await expect(netCard, "ex-VAT net must equal EXPECTED.TOTAL.net_ex_vat").toContainText(NET_EX_VAT_ALL);
+    const netLine = page.locator('[data-testid="statement-sales"] tr[data-line="net"]');
+    await expect(netLine, "the sales statement's net line must render").toHaveCount(1);
+    await expect(netLine, "ex-VAT net must equal EXPECTED.TOTAL.net_ex_vat").toContainText(NET_EX_VAT_ALL);
 
     await page.getByRole("radio", { name: "شامل الضريبة" }).click();
     await page.waitForURL(/taxIncl/, { timeout: 15_000 });
     await waitHealthy(page, "executive (tax incl)");
     await expect(
-      netCard,
+      netLine,
       "incl-VAT net must equal EXPECTED.TOTAL.net_incl_vat (950 + 121.5)",
     ).toContainText(NET_INCL_VAT_ALL);
 

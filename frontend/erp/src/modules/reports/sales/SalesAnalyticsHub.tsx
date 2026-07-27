@@ -67,7 +67,7 @@ export const SALES_HUB_SEGMENTS: readonly HubSegment[] = [
 
 export default function SalesAnalyticsHub() {
   const t = useT();
-  const { pathname } = useLocation();
+  const { pathname, search } = useLocation();
   const navigate = useNavigate();
   const canViewAnalytics = useCan("analytics.view");
   const { can } = usePermissions();
@@ -117,7 +117,12 @@ export default function SalesAnalyticsHub() {
         label={t("salesReports.hub.pickerLabel")}
         ariaLabel={t("salesReports.hub.tabsAria")}
         value={segment.id}
-        onChange={(next) => navigate(`${BASE}/${next}`)}
+        // Carry the query string across the section switch. The hub keeps ALL
+        // of its state in the URL (period, tax/date basis, brand/branch/channel
+        // scope, drill pins) — navigating to a bare path threw every one of
+        // them away, so picking a different report silently reset the analyst's
+        // filters back to the default last-30-days, whole-company view.
+        onChange={(next) => navigate({ pathname: `${BASE}/${next}`, search })}
         groups={SECTION_GROUPS.map((g) => ({
           key: g,
           label: t(`salesReports.groups.${g}`),

@@ -71,6 +71,16 @@ async function waitRendered(page: Page) {
     return !!m.querySelector("[data-state], h1, h2, table, header") || (m.innerText || "").trim().length > 40;
   }, CRASH_TEXT, { timeout: 30_000 });
   await page.waitForLoadState("networkidle", { timeout: 15_000 }).catch(() => {});
+  // …and the screen must be DONE fetching, not merely mounted. The predicate
+  // above is satisfied by page chrome (the breadcrumb <header>, an <h1>) that
+  // paints long before any data does, so a slow dashboard could be
+  // photographed empty — and one was: overview--en-tablet-768 was pinned as a
+  // COMPLETELY BLANK page, an "assertion" that could never catch anything.
+  // This is the same settle signal the hub specs use.
+  await expect(
+    page.locator('#main [data-state="loading"]'),
+    "the screen must finish loading before it is photographed",
+  ).toHaveCount(0, { timeout: 30_000 });
 }
 
 const SCREENS = [
@@ -164,6 +174,16 @@ for (const lang of ["ar", "en"] as const) {
 
       // Settle: fonts resolved (Cairo swaps in late and shifts metrics).
       await page.evaluate(() => (document as any).fonts?.ready);
+      // DETERMINISTIC SCROLL OFFSET. `search.fill()` above scrolls the search
+      // input into view (it sits below the fold on the narrow viewports), and
+      // the no-match result then shortens the document, so the browser clamps
+      // scrollTop to a height-dependent value. The SAME screen was therefore
+      // captured at two different offsets — inventory-list--ar-mobile is
+      // stored ~28px scrolled while inventory-list--en-mobile is stored at the
+      // top, and this run finally caught it (13,244 px of pure vertical shift,
+      // 0.05 ratio, on an otherwise identical page). toHaveScreenshot captures
+      // the VIEWPORT, so the offset is part of the assertion: pin it.
+      await page.evaluate(() => window.scrollTo(0, 0));
       await expect(page.locator("#main")).toBeVisible();
       // Playwright appends `-{project}-{platform}` itself, so the viewport must
       // NOT be repeated here or files become "…-desktop-desktop-win32.png".

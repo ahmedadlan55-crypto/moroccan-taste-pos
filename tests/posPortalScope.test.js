@@ -115,7 +115,11 @@ const MUST_ALLOW = [
   ['POST', '/inventory/stocktakes'],
   ['POST', '/inventory/v2/stocktakes'],
   ['POST', '/inventory/v2/stocktakes/ST-1/start'],
-  ['POST', '/inventory/v2/stocktakes/ST-1/counts'],
+  // PUT, not POST — this list must mirror the VERB frontend/pos actually sends
+  // (saveStocktakeCountsV2 issues PUT). Asserting POST here agreed with the
+  // allow-list and with nothing else, so both were wrong together and every
+  // real count autosave 403'd.
+  ['PUT', '/inventory/v2/stocktakes/ST-1/counts'],
   ['POST', '/inventory/v2/stocktakes/ST-1/submit'],
   // نواقص
   ['POST', '/inventory/shortage-requests'],
@@ -171,7 +175,10 @@ function runMw(user, method, path) {
 
 let r = runMw({ role: 'cashier' }, 'GET', '/dashboard/overview');
 check('middleware blocks a cashier with 403', r.status === 403 && r.nexted === false);
-check('the 403 carries a machine-readable code', r.body && r.body.code === 'PORTAL_FORBIDDEN');
+// The canonical authorization code (what every client/RBAC test switches on)
+// PLUS the portal discriminator — both are pinned so neither can drift away.
+check('the 403 carries the canonical authorization code', r.body && r.body.code === 'PERMISSION_DENIED');
+check('the 403 still names the portal boundary as the reason', r.body && r.body.reason === 'PORTAL_FORBIDDEN');
 
 r = runMw({ role: 'cashier' }, 'POST', '/sales');
 check('middleware lets a cashier check out', r.nexted === true && r.status === null);

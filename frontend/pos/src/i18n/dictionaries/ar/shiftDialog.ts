@@ -47,6 +47,11 @@ export const shiftDialog = {
     closeShiftTooltip: "بدء إغلاق الوردية",
     closeShiftOfflineTooltip: "إغلاق الوردية يتطلب اتصالًا بالخادم",
     closeOfflineNote: "إغلاق الوردية غير متاح بلا اتصال",
+    // W2-A — entry point to CashMovementDialog (حركات نقدية على الدرج).
+    cashMovementButton: "حركة نقدية (إيداع / سحب)",
+    cashMovementTooltip: "تسجيل إيداع أو سحب نقدي على الدرج باعتماد مدير",
+    cashMovementOfflineTooltip: "تسجيل حركة نقدية يتطلب اتصالًا بالخادم",
+    cashMovementNetLabel: "صافي حركات الدرج",
   },
 
   // Shared column headers — reused by both the counting table (closing) and
@@ -64,6 +69,10 @@ export const shiftDialog = {
     countInstructionsPrefix: "أدخل المبالغ المعدودة فعليًا لكل طريقة دفع —",
     invoiceCountSuffix: "فاتورة في الوردية",
     openingFloatInClosing: "الرصيد الافتتاحي (ضمن المتوقع نقدًا)",
+    // W2-A — the ± term the server folded into the cash «المتوقع». Shown so the
+    // cashier never sees the expected figure move without an explanation.
+    movementsInClosing: "صافي حركات الدرج (ضمن المتوقع نقدًا)",
+    movementsBreakdown: "إيداع {in} · سحب {out}",
     cashDenomHeading: "عدّ النقدية بالفئات (كاش)",
     denomNote: "ورقة",
     denomCoin: "عملة",

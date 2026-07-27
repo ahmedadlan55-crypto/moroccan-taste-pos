@@ -652,7 +652,23 @@ async function projectTillMovement(db, opts = {}) {
  * **with a branch dimension** become till movements; treasury/bank-side vouchers
  * (no branch_id, or destination/source is a bank account) are deliberately
  * skipped — they are ledger movements, not till movements.
- * cash_receipts/cash_payments carry NO shift linkage → shift_id is NULL.
+ *
+ * W2-A — SHIFT LINKAGE. cash_receipts/cash_payments now carry a nullable
+ * `shift_id` (server.js migration), written by POST /api/shifts/:shiftId/
+ * movements when a cashier records a drop to the safe / float top-up / petty
+ * cash and a manager approves it. The value is read OFF THE ROW rather than
+ * taken from a caller argument so every entry point gets it for free — the live
+ * post-commit projection, RollupService's repair drain, and
+ * scripts/analytics/backfill-facts.js all call this function with no shift in
+ * hand. `opts.shiftId` is accepted as an explicit override for a caller that
+ * has one. A treasury/back-office voucher still has shift_id NULL and projects
+ * EXACTLY as before.
+ *
+ * Branch fallback: a shift-linked voucher whose branch is unresolvable inherits
+ * the shift's branch, and finally 'UNASSIGNED' — the same bucket
+ * projectTillMovement puts that shift's open_float/close_count in. Without it a
+ * branchless shift's pay_in/pay_out would silently vanish while its float and
+ * counted cash were still reconciled, which is worse than no linkage at all.
  */
 async function projectCashVoucher(db, kind, voucherId, opts = {}) {
   const provenance = opts.provenance || 'live';
@@ -664,19 +680,28 @@ async function projectCashVoucher(db, kind, voucherId, opts = {}) {
   if (String(v.status) !== 'posted') return { skipped: 'voucher_not_posted' };
   const boxType = isReceipt ? v.destination_type : v.source_type;
   if (String(boxType) !== 'cash') return { skipped: 'not_a_cash_box_movement' };
-  if (!v.branch_id) return { skipped: 'no_branch_scope' }; // treasury-only op
+
+  // shift_id may be absent on a pre-migration database — never let a missing
+  // column turn into a projection failure.
+  const shiftId = opts.shiftId || (Object.prototype.hasOwnProperty.call(v, 'shift_id') ? v.shift_id : null) || null;
+  let branchId = v.branch_id || null;
+  if (!branchId && shiftId) {
+    const [sr] = await db.query('SELECT branch_id FROM shifts WHERE id = ? LIMIT 1', [shiftId]);
+    branchId = (sr.length && sr[0].branch_id) || 'UNASSIGNED';
+  }
+  if (!branchId) return { skipped: 'no_branch_scope' }; // treasury-only op
 
   const occurredAt = v.approved_at || _cnOccurredAt(isReceipt ? v.receipt_date : v.payment_date);
-  const loc = await _localize(db, v.branch_id, occurredAt);
+  const loc = await _localize(db, branchId, occurredAt);
   await _upsertTillFact(db, {
-    shiftId: null, branchId: v.branch_id,
+    shiftId, branchId,
     movementType: isReceipt ? 'pay_in' : 'pay_out', amount: v.amount,
     occurredAt, occurredAtLocal: loc.occurredAtLocal, businessDay: loc.businessDay,
     performedBy: v.created_by, approvedBy: v.approved_by,
     sourceType: kind, sourceId: voucherId, provenance,
   });
-  await _enqueueDirty(db, v.branch_id, loc.businessDay);
-  return { voucherId, businessDay: loc.businessDay };
+  await _enqueueDirty(db, branchId, loc.businessDay);
+  return { voucherId, shiftId, branchId, businessDay: loc.businessDay };
 }
 
 // ── non-fatal wrapper ───────────────────────────────────────────────────────

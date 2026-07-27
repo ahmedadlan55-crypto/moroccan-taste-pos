@@ -30,6 +30,7 @@
     "test:catalog-bilingual": "node tests/integration/catalogBilingual.api.test.js",
     "test:catalog-brand-scope": "node tests/integration/catalogBrandScope.api.test.js",
     "test:shifts-authz-scope": "node tests/integration/shiftsAuthzScope.api.test.js",
+    "test:cash-movements": "node tests/integration/cashMovements.api.test.js",
     "test:cashier-readiness": "node tests/integration/cashierReadiness.api.test.js",
     "test:user-preferences": "node tests/integration/userPreferences.api.test.js",
     "test:saved-views": "node tests/integration/savedViews.api.test.js",

@@ -232,6 +232,73 @@ export function shiftSummary(shiftId: string): Promise<{ success: boolean; data:
   return request(`/api/pos/v2/shift-summary/${encodeURIComponent(shiftId)}`);
 }
 
+// ── Till cash movements (حركات نقدية على الدرج) ──────────────────────────────
+/**
+ * A cash-in / cash-out recorded on an OPEN shift — a drop to the safe, a float
+ * top-up, petty cash. Before this existed the cashier had no way to record one
+ * from any client, and the expected-cash figure at close was wrong by exactly
+ * the amounts that moved.
+ *
+ * Server contract (routes/shifts.js):
+ *   GET  /api/shifts/:shiftId/movements  → { success, shiftId, movements, totals }
+ *   POST /api/shifts/:shiftId/movements  → { success, movement, totals }
+ *
+ * Only APPROVED movements are ever returned or counted: the POST records and
+ * approves in one atomic step, and every server-side reader filters on the
+ * posted voucher status.
+ */
+export interface ShiftMovement {
+  id: string;
+  kind: "pay_in" | "pay_out";
+  /** Voucher number in the ERP cash sequence (REC-xxxxx / PAY-xxxxx). */
+  number: string;
+  amount: number;
+  reason: string;
+  note: string;
+  createdBy: string;
+  /** The account that AUTHORIZED it — never the cashier, unless the cashier
+   *  holds the approval capability themselves. */
+  approvedBy: string;
+  approvedAt: string | null;
+  journalId: string | null;
+  date: string | null;
+}
+
+export interface ShiftMovementTotals {
+  payIn: number;
+  payOut: number;
+  /** payIn − payOut: the exact ± term now inside the cash «expected» figure. */
+  net: number;
+  count: number;
+}
+
+export function listShiftMovements(
+  shiftId: string,
+): Promise<{ success: boolean; shiftId: string; movements: ShiftMovement[]; totals: ShiftMovementTotals }> {
+  return request(`/api/shifts/${encodeURIComponent(shiftId)}/movements`);
+}
+
+/**
+ * Record + approve one movement. `approverUsername`/`approverPassword` are the
+ * MANAGER's, collected by CashMovementDialog and verified server-side with
+ * bcrypt — this client never decides whether an approval is valid, and a caller
+ * that holds the approval capability itself may omit them entirely.
+ */
+export function createShiftMovement(
+  shiftId: string,
+  body: {
+    kind: "pay_in" | "pay_out";
+    amount: number;
+    reason: string;
+    note?: string;
+  } & Partial<ApproverCredentials>,
+): Promise<{ success: boolean; movement: ShiftMovement & { shiftId: string }; totals: ShiftMovementTotals }> {
+  return request(`/api/shifts/${encodeURIComponent(shiftId)}/movements`, {
+    method: "POST",
+    body: body as unknown as Json,
+  });
+}
+
 // ── Order-to-Cash: customer search (for the POS customer picker) + flags ──────
 export interface PosCustomerHit {
   id: string;
@@ -555,8 +622,24 @@ export interface ShiftFullReport {
   branch: { name: string; address: string; companyName: string };
   company: { name: string; nameAr: string; taxNumber: string; currency: string; phone: string; email: string; logo: string };
   times: { start: string | null; end: string | null; durationMs: number | null };
-  financials: { openingFloat: number; expectedTotal: number; actualTotal: number; variance: number; unmatched: number };
+  financials: {
+    openingFloat: number;
+    expectedTotal: number;
+    actualTotal: number;
+    variance: number;
+    unmatched: number;
+    /** Till movements folded into expectedTotal. Optional: a server that
+     *  predates the movement feature omits them, and the report renders
+     *  exactly as it always did. */
+    payIn?: number;
+    payOut?: number;
+  };
   methods: ShiftReportMethod[];
+  /** Itemised drawer movements (approved only) — the X/Z report lists these so
+   *  the ± inside «expected» has a printed explanation. Optional for the same
+   *  back-compat reason as financials.payIn/payOut above. */
+  movements?: ShiftMovement[];
+  movementTotals?: ShiftMovementTotals;
   soldItems: Array<{ name: string; qty: number; price: number; total: number }>;
   denominations: Array<{ value: number; kind: string; count: number }>;
   orderCount: number;
@@ -1011,4 +1094,267 @@ export async function fetchMenuAvailabilityBulk(
     if (parsed) out[menuId] = parsed;
   }
   return out;
+}
+
+// ═════════════════════════════════════════════════════════════════════════════
+// APPEND-ONLY BLOCK — W2-B: the three Order-to-Cash reads/writes the cashier
+// already HOLDS the capability for but had no way to reach from the till.
+// New exports only; nothing above this line was modified.
+//
+// Contracts confirmed by reading the ROUTE + SERVICE files, not guessed:
+//   • GET  /api/order-to-cash/customers/:id/exposure  routes/order-to-cash/customers.js:52
+//       requireCapability('customers.view')  → cashier HOLDS it
+//       (db/migrations/order-to-cash/capabilities.js ROLE_GRANTS.cashier).
+//       Body: H.sendData → { success, data, generatedAt } where data is
+//       CreditLimitService.exposure() = { creditLimit, exposure, available,
+//       utilizationPct, paymentTerms, creditDays, isActive }.
+//   • POST /api/order-to-cash/payments               routes/order-to-cash/payments.js:41
+//       requireCapability('payments.create') → cashier HOLDS it.
+//       Body read by CustomerPaymentService.create: { customerId (required),
+//       customerName, amount (>0), paymentDate, paymentMethod, destinationType
+//       ('cash'|'bank'), destinationId, reference, notes, allocations[] }.
+//       Creates status 'draft' ONLY — approve/post are separate manager
+//       capabilities the cashier does not hold, and are never called here.
+//       Envelope: 201 { success, data, documentNumber (payment_number),
+//       status, version }. Idempotency-Key makes a retry replay the same draft
+//       (events.findPrior on scope customer_payment:create).
+//   • GET  /api/order-to-cash/returns                routes/order-to-cash/returns.js:24
+//       requireCapability('returns.view')    → cashier HOLDS it.
+//       list() selects id, return_number, original_ar_document_id, customer_id,
+//       customer_name, return_date, subtotal, vat_amount, total_amount,
+//       refund_method, status, credit_note_id, version — snake_case, NOT shaped.
+//       NOTE: list() has NO created_by filter, so "the returns I raised" is
+//       resolved CLIENT-side against the local ledger below.
+//
+// DEGRADATION — every one of these is behind ORDER_TO_CASH_ENABLE (server.js:664).
+// With the flag off the router is never mounted → 404. With the flag on but the
+// cashier-portal allow-list not yet widened (middleware/posPortalScope.js) →
+// 403 PERMISSION_DENIED / reason PORTAL_FORBIDDEN. Both are "this till cannot
+// do that", never "something broke": callers must route them through
+// `isFeatureUnavailable()` and HIDE the affordance rather than show an error.
+// ═════════════════════════════════════════════════════════════════════════════
+
+/**
+ * Is this failure "the feature is not reachable from this till" rather than a
+ * real error worth showing the cashier?
+ *   404 — ORDER_TO_CASH_ENABLE is off, so /api/order-to-cash is not mounted.
+ *   403 — the portal allow-list (or a capability) does not cover the path.
+ *   501 — an older server that stubs the route.
+ * Anything else (422 validation, 409 conflict, 500) is a REAL failure and must
+ * be surfaced verbatim.
+ */
+export function isFeatureUnavailable(e: unknown): boolean {
+  if (!(e instanceof ApiError)) return false;
+  return e.status === 403 || e.status === 404 || e.status === 501;
+}
+
+// ── 1. Credit exposure, BEFORE the tender ───────────────────────────────────
+
+export interface CustomerExposure {
+  creditLimit: number;
+  /** Live AR balance already outstanding. */
+  exposure: number;
+  /** creditLimit − exposure. Negative when the customer is already over. */
+  available: number;
+  /** null when the limit is 0 (nothing to divide by). */
+  utilizationPct: number | null;
+  paymentTerms: string | null;
+  creditDays: number;
+  isActive: boolean;
+}
+
+/**
+ * GET /api/order-to-cash/customers/:id/exposure — the credit limit against live
+ * AR. Read at ATTACH time so the cashier sees the ceiling while the customer is
+ * still choosing, instead of meeting CREDIT_LIMIT_EXCEEDED at the tender.
+ */
+export async function getCustomerExposure(customerId: string): Promise<CustomerExposure> {
+  const body = await request<{ data: Partial<CustomerExposure> }>(
+    `/api/order-to-cash/customers/${encodeURIComponent(customerId)}/exposure`,
+  );
+  const d = body?.data ?? {};
+  const utilization = Number(d.utilizationPct);
+  return {
+    creditLimit: Number(d.creditLimit) || 0,
+    exposure: Number(d.exposure) || 0,
+    available: Number(d.available) || 0,
+    utilizationPct: d.utilizationPct == null || !Number.isFinite(utilization) ? null : utilization,
+    paymentTerms: d.paymentTerms == null ? null : String(d.paymentTerms),
+    creditDays: Number(d.creditDays) || 0,
+    isActive: d.isActive !== false,
+  };
+}
+
+// ── 2. سند قبض — collect a payment on account (DRAFT only) ──────────────────
+
+export interface CustomerPaymentDraftInput {
+  customerId: string;
+  customerName?: string | null;
+  /** Must be > 0 — the service throws VALIDATION_ERROR otherwise. */
+  amount: number;
+  /** 'cash' | 'bank'. Anything else is coerced to 'cash' server-side. */
+  destinationType: "cash" | "bank";
+  reference?: string | null;
+  notes?: string | null;
+}
+
+export interface CustomerPaymentCreated {
+  success: boolean;
+  data: { id: string; status: string; version: number; payment_number?: string } & Record<string, unknown>;
+  documentNumber: string | null;
+  status: string | null;
+  version: number | null;
+}
+
+/**
+ * POST /api/order-to-cash/payments — record a collection on account as a DRAFT.
+ *
+ * The till never approves or posts: `payments.approve` / `payments.post` are
+ * sensitive capabilities held by manager/accountant/finance only
+ * (capabilities.js ROLE_GRANTS), and the money does not move until a manager
+ * posts it. No `allocations` are sent either — deciding WHICH invoices a
+ * collection settles is the accountant's call at post time; an empty
+ * allocations list makes the draft an advance (is_advance=1) which the manager
+ * can then allocate.
+ */
+export function createCustomerPayment(
+  input: CustomerPaymentDraftInput,
+  opts: { idempotencyKey: string },
+): Promise<CustomerPaymentCreated> {
+  return request<CustomerPaymentCreated>("/api/order-to-cash/payments", {
+    method: "POST",
+    headers: { "Idempotency-Key": opts.idempotencyKey },
+    body: {
+      customerId: input.customerId,
+      customerName: input.customerName ?? null,
+      amount: input.amount,
+      destinationType: input.destinationType,
+      paymentMethod: input.destinationType,
+      reference: input.reference || null,
+      notes: input.notes || null,
+    },
+  });
+}
+
+// ── 3. Return status + history ──────────────────────────────────────────────
+
+/** One row of GET /api/order-to-cash/returns — the raw snake_case SELECT. */
+export interface SalesReturnRow {
+  id: string;
+  returnNumber: string | null;
+  customerName: string | null;
+  returnDate: string | null;
+  totalAmount: number;
+  status: string;
+  creditNoteId: string | null;
+}
+
+interface RawSalesReturnRow {
+  id?: unknown;
+  return_number?: unknown;
+  customer_name?: unknown;
+  return_date?: unknown;
+  total_amount?: unknown;
+  status?: unknown;
+  credit_note_id?: unknown;
+}
+
+function toSalesReturnRow(raw: RawSalesReturnRow): SalesReturnRow {
+  return {
+    id: String(raw.id ?? ""),
+    returnNumber: raw.return_number == null ? null : String(raw.return_number),
+    customerName: raw.customer_name == null ? null : String(raw.customer_name),
+    returnDate: raw.return_date == null ? null : String(raw.return_date),
+    totalAmount: Number(raw.total_amount) || 0,
+    status: String(raw.status ?? ""),
+    creditNoteId: raw.credit_note_id == null ? null : String(raw.credit_note_id),
+  };
+}
+
+/**
+ * GET /api/order-to-cash/returns — the returns window, newest first.
+ * The route has no created_by filter, so this is the BRANCH's recent returns;
+ * the caller narrows to the ones this till raised via the ledger below.
+ */
+export async function listSalesReturns(params: { pageSize?: number } = {}): Promise<SalesReturnRow[]> {
+  const q = new URLSearchParams({
+    page: "1",
+    pageSize: String(params.pageSize ?? 100),
+    sort: "returnDate",
+    dir: "DESC",
+  });
+  const body = await request<{ data?: RawSalesReturnRow[] }>(`/api/order-to-cash/returns?${q.toString()}`);
+  const rows = Array.isArray(body?.data) ? body.data : [];
+  return rows.map(toSalesReturnRow);
+}
+
+// GET /api/order-to-cash/returns/:id exists too (returns.js:31) and is equally
+// within `returns.view`, but nothing here calls it: the list already carries
+// every field «مرتجعاتي» shows, and adding a per-row detail fetch would mean
+// asking the merge owner to widen the cashier-portal allow-list for a path the
+// app does not use. It stays unwired on purpose.
+
+// ── The local "returns I raised" ledger ─────────────────────────────────────
+// WHY IT EXISTS: SalesReturnService.list() filters by status / customerId / q —
+// there is NO created_by filter and the SELECT does not even project the
+// column, so the server cannot answer "the returns THIS cashier raised". The
+// till records its own creates (they are its own writes, no new trust needed)
+// and intersects them with the server list, which stays the authority on
+// STATUS. A ledger entry the server does not return is shown as unknown, never
+// as a stale local status.
+
+const RAISED_RETURNS_KEY = "pos_o2c_raised_returns";
+const RAISED_RETURNS_CAP = 50;
+
+export interface RaisedReturnRef {
+  id: string;
+  documentNumber: string | null;
+  /** The POS sale the return was raised against. */
+  originalSaleId: string;
+  /** epoch ms, for newest-first ordering. */
+  raisedAt: number;
+}
+
+export function listRaisedReturns(): RaisedReturnRef[] {
+  try {
+    const raw = localStorage.getItem(RAISED_RETURNS_KEY);
+    if (!raw) return [];
+    const parsed: unknown = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return [];
+    return parsed
+      .map((r) => r as Partial<RaisedReturnRef>)
+      .filter((r) => r && typeof r.id === "string" && r.id.length > 0)
+      .map((r) => ({
+        id: String(r.id),
+        documentNumber: r.documentNumber == null ? null : String(r.documentNumber),
+        originalSaleId: String(r.originalSaleId ?? ""),
+        raisedAt: Number(r.raisedAt) || 0,
+      }))
+      .sort((a, b) => b.raisedAt - a.raisedAt);
+  } catch {
+    return []; // private mode / quota / corrupt JSON — never break the dialog
+  }
+}
+
+/** Append (or refresh) one raised return. Newest first, capped, de-duplicated. */
+export function recordRaisedReturn(ref: Omit<RaisedReturnRef, "raisedAt"> & { raisedAt?: number }): void {
+  if (!ref?.id) return;
+  try {
+    const next = [
+      { ...ref, raisedAt: ref.raisedAt ?? Date.now() },
+      ...listRaisedReturns().filter((r) => r.id !== ref.id),
+    ].slice(0, RAISED_RETURNS_CAP);
+    localStorage.setItem(RAISED_RETURNS_KEY, JSON.stringify(next));
+  } catch {
+    /* storage unavailable — the feature degrades to "no history", not a crash */
+  }
+}
+
+/** Test hook — clears the ledger. */
+export function _resetRaisedReturns(): void {
+  try {
+    localStorage.removeItem(RAISED_RETURNS_KEY);
+  } catch {
+    /* ignore */
+  }
 }

@@ -41,6 +41,13 @@ export const receipt = {
     denomFace: "الفئة",
     count: "العدد",
     total: "الإجمالي",
+    // W2-A — till cash movements (pay-in / pay-out) on the X/Z report. Printed
+    // only when the shift has any, so an untouched drawer's report is unchanged.
+    tillMovements: "حركات نقدية على الدرج",
+    movementReason: "السبب",
+    movementIn: "إيداع",
+    movementOut: "سحب",
+    movementNet: "صافي الحركات",
     item: "الصنف",
     qty: "كمية",
     itemTotal: "إجمالي",

@@ -27,10 +27,10 @@
  * same literal Arabic back (default = ar dictionary) — the live dialog always
  * passes `t`. See i18n/dictionaries/{ar,en}/shiftDialog.ts.
  */
-import { useEffect, useMemo, useState } from "react";
-import { CheckCircle2, Clock3, Lock, MessageCircle, Printer } from "lucide-react";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { Banknote, CheckCircle2, Clock3, Lock, MessageCircle, Printer } from "lucide-react";
 import { usePos } from "@/state/store";
-import { closingDataV3, closeShiftV3, shiftFullReport, shiftSummary } from "@/lib/api";
+import { closingDataV3, closeShiftV3, listShiftMovements, shiftFullReport, shiftSummary, type ShiftMovementTotals } from "@/lib/api";
 import { round2 } from "@/lib/cartMath";
 import { fmt2, fmtInt } from "@/lib/format";
 import { buildShiftReportHtml, printHtml, resolvePaperWidth } from "@/lib/receipt";
@@ -41,6 +41,7 @@ import { shiftDialog as shiftDialogAr } from "@/i18n/dictionaries/ar/shiftDialog
 import { Dialog } from "../Dialog";
 import { Numpad } from "../Numpad";
 import { Button, cn, ErrorBanner, Money, Skeleton } from "../ui";
+import { CashMovementDialog } from "./CashMovementDialog";
 
 type Mode = "info" | "closing" | "closed";
 
@@ -166,6 +167,16 @@ export function ShiftDialog({ open, onClose }: { open: boolean; onClose: () => v
   /** The shift being/just closed — the context shiftId nulls after close, but
    *  the Z-report still needs the id. */
   const [closedShiftId, setClosedShiftId] = useState<string | null>(null);
+  /**
+   * W2-A — till cash movements. CashMovementDialog is opened from HERE rather
+   * than from App.tsx's `overlayOpen`: ShiftDialog is already an overlay, the
+   * movement only ever makes sense against the shift this dialog is showing,
+   * and nesting it here needs no new global flag (App.tsx is another owner's
+   * file). The dialog is rendered as a SIBLING of <Dialog>, not inside it, so
+   * only one focus trap is ever live.
+   */
+  const [movementOpen, setMovementOpen] = useState(false);
+  const [movementTotals, setMovementTotals] = useState<ShiftMovementTotals | null>(null);
 
   // Reset only fires when the dialog is freshly opened — NOT on every
   // shiftId/online change while it's already open. confirmClose() sets
@@ -185,7 +196,30 @@ export function ShiftDialog({ open, onClose }: { open: boolean; onClose: () => v
     setRevealed(false);
     setClosedShiftId(null);
     setSummary(null);
+    setMovementOpen(false);
+    setMovementTotals(null);
   }, [open]);
+
+  // W2-A — the shift's approved movements. Read separately from
+  // closing-data-v3 (which also returns them) so the «info» screen can show the
+  // net BEFORE the close flow starts, and so a movement recorded mid-dialog
+  // refreshes without re-running the whole closing-data fetch.
+  const reloadMovements = useCallback(async () => {
+    if (!shiftId || !online) return;
+    try {
+      const res = await listShiftMovements(shiftId);
+      setMovementTotals(res.totals ?? null);
+    } catch {
+      // Non-fatal: the figure is informational here — the SERVER is the
+      // authority on expected cash and already folded these in.
+      setMovementTotals(null);
+    }
+  }, [shiftId, online]);
+
+  useEffect(() => {
+    if (!open) return;
+    void reloadMovements();
+  }, [open, reloadMovements]);
 
   // Separate from the reset above: (re)fetch the shift summary whenever the
   // dialog is open and a real shiftId/online state is available. This must
@@ -314,7 +348,8 @@ export function ShiftDialog({ open, onClose }: { open: boolean; onClose: () => v
   }
 
   return (
-    <Dialog open={open} onClose={onClose} title={t("shiftDialog.dialogTitle")} widthClass="max-w-2xl" locked={busy}>
+    <>
+      <Dialog open={open} onClose={onClose} title={t("shiftDialog.dialogTitle")} widthClass="max-w-2xl" locked={busy}>
       {!shiftId && mode !== "closed" ? (
         <div className="flex flex-col items-center gap-3 py-6 text-center">
           <Clock3 className="h-12 w-12 text-slate-300" aria-hidden />
@@ -406,7 +441,30 @@ export function ShiftDialog({ open, onClose }: { open: boolean; onClose: () => v
             )
           ) : null}
 
+          {/* W2-A — the drawer's ± so far, shown on the shift screen itself so a
+              cashier can see the adjustment before ever starting the close. */}
+          {movementTotals && movementTotals.count > 0 ? (
+            <div className="mb-3 flex items-center justify-between rounded-xl border border-slate-200 bg-slate-50 px-3 py-2">
+              <span className="text-xs font-extrabold text-slate-500">{t("shiftDialog.info.cashMovementNetLabel")}</span>
+              <Money
+                value={`${movementTotals.net > 0 ? "+" : ""}${fmt2(movementTotals.net)} ${t("shiftDialog.currency")}`}
+                className="text-sm font-extrabold text-ink"
+              />
+            </div>
+          ) : null}
+
           {error ? <ErrorBanner message={error} /> : null}
+
+          <Button
+            variant="secondary"
+            className="mt-2 w-full"
+            onClick={() => setMovementOpen(true)}
+            disabled={!online}
+            title={online ? t("shiftDialog.info.cashMovementTooltip") : t("shiftDialog.info.cashMovementOfflineTooltip")}
+          >
+            <Banknote className="h-4 w-4" aria-hidden />
+            {t("shiftDialog.info.cashMovementButton")}
+          </Button>
 
           <Button
             variant="secondary"
@@ -454,6 +512,29 @@ export function ShiftDialog({ open, onClose }: { open: boolean; onClose: () => v
               <Money
                 value={`${fmt2(closing.openingFloat ?? 0)} ${t("shiftDialog.currency")}`}
                 className="text-sm font-extrabold text-ink"
+              />
+            </div>
+          ) : null}
+
+          {/* W2-A — the OTHER term inside the cash «المتوقع». Read-only for the
+              same reason the float is: the server recomputes it under the shift
+              row lock and any client number would be advisory at best. Shown so
+              the cashier can reconcile the expected figure line by line instead
+              of seeing it move for no visible reason. */}
+          {movementTotals && movementTotals.count > 0 ? (
+            <div className="mb-3 flex items-center justify-between rounded-xl border border-slate-200 bg-slate-50 px-3 py-2">
+              <span className="min-w-0">
+                <span className="block text-xs font-extrabold text-slate-500">{t("shiftDialog.closing.movementsInClosing")}</span>
+                <span className="block text-[10px] font-bold text-slate-400">
+                  {t("shiftDialog.closing.movementsBreakdown", {
+                    in: fmt2(movementTotals.payIn),
+                    out: fmt2(movementTotals.payOut),
+                  })}
+                </span>
+              </span>
+              <Money
+                value={`${movementTotals.net > 0 ? "+" : ""}${fmt2(movementTotals.net)} ${t("shiftDialog.currency")}`}
+                className="shrink-0 text-sm font-extrabold text-ink"
               />
             </div>
           ) : null}
@@ -715,6 +796,25 @@ export function ShiftDialog({ open, onClose }: { open: boolean; onClose: () => v
           </Button>
         </div>
       ) : null}
-    </Dialog>
+      </Dialog>
+
+      {/* W2-A — sibling of <Dialog>, never a child: two live <Dialog>s would
+          stack two focus traps and two body scroll locks. */}
+      <CashMovementDialog
+        open={movementOpen && !!shiftId}
+        shiftId={shiftId}
+        online={online}
+        onClose={() => setMovementOpen(false)}
+        onRecorded={(totals) => {
+          setMovementTotals(totals);
+          // A movement changes the expected cash the close screen is showing —
+          // re-fetch it rather than patching the number client-side, so the
+          // grid stays exactly what the server will reconcile against.
+          if (mode === "closing" && shiftId) {
+            void closingDataV3(shiftId).then((data) => { if (!data.error) setClosing(data); }).catch(() => {});
+          }
+        }}
+      />
+    </>
   );
 }

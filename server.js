@@ -984,6 +984,28 @@ async function addColumnIfMissing(table, column, definition) {
   }
 }
 
+// W2-A — index counterpart of addColumnIfMissing. MySQL has no
+// "CREATE INDEX IF NOT EXISTS", and a bare CREATE INDEX on an existing name is
+// a hard error (1061) that would abort the migration chain, so the existence
+// check is done against INFORMATION_SCHEMA.STATISTICS first. Same log-and-
+// continue contract as addColumnIfMissing: a migration warning must never take
+// the server down.
+async function addIndexIfMissing(table, indexName, columns) {
+  try {
+    const [idx] = await db.query(
+      `SELECT INDEX_NAME FROM INFORMATION_SCHEMA.STATISTICS
+       WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ? AND INDEX_NAME = ? LIMIT 1`,
+      [table, indexName]
+    );
+    if (!idx.length) {
+      console.log(`[DB] Migration: adding index ${table}.${indexName}`);
+      await db.query(`ALTER TABLE ${table} ADD INDEX ${indexName} (${columns})`);
+    }
+  } catch (e) {
+    console.log(`[DB] Migration warning (index ${table}.${indexName}):`, e.message.substring(0, 120));
+  }
+}
+
 // v6.18.8 — Reusable defensive helper for column DEFINITION changes
 // (extending an ENUM, widening a VARCHAR, changing a DEFAULT, etc.).
 // Unlike addColumnIfMissing (which only ADDs absent columns), this
@@ -2197,6 +2219,17 @@ async function runMigrations() {
       // enforced on the route.)
       ['royalty.view', 'finance', 'عرض احتسابات الإتاوات', 'View royalty runs', 0, 546],
       ['royalty.manage', 'finance', 'احتساب واعتماد الإتاوات', 'Compute and approve royalty runs', 1, 547],
+      // W2-A — the approver capability for a shift till movement (pay-in /
+      // pay-out recorded by a cashier at the register, POST
+      // /api/shifts/:shiftId/movements). Deliberately a NEW, narrow capability
+      // rather than reusing finance.cash.approve: that id is referenced by
+      // routes/cash.js but was never seeded into permissions_v3, so
+      // hasCapability() returns false for it for EVERY non-admin — seeding it
+      // here would silently widen the ERP voucher-approval surface as a side
+      // effect of this change. This one grants exactly one thing: authorizing a
+      // drawer movement. Cashier is NOT granted it (that is the whole point:
+      // the cashier records, a manager approves).
+      ['pos.cash_movement.approve', 'pos', 'اعتماد حركات نقدية على الدرج (إيداع/سحب)', 'Approve till cash movements (pay-in / pay-out)', 1, 150],
     ];
     for (const p of latePerms) {
       await db.query(
@@ -2235,6 +2268,13 @@ async function runMigrations() {
     for (const role of ['manager', 'finance']) {
       await db.query('INSERT IGNORE INTO role_permissions (role, permission_id) VALUES (?, ?)',
         [role, 'royalty.manage']);
+    }
+    // W2-A — approving a drawer movement is a branch-supervision act: manager
+    // (admin bypasses hasCapability entirely) plus the finance roles that
+    // already own the cash-voucher surface. `cashier` is deliberately absent.
+    for (const role of ['manager', 'finance', 'accountant']) {
+      await db.query('INSERT IGNORE INTO role_permissions (role, permission_id) VALUES (?, ?)',
+        [role, 'pos.cash_movement.approve']);
     }
   } catch(e) { console.error('seed late permissions failed:', e.message); }
 
@@ -3325,6 +3365,24 @@ async function runMigrations() {
   await addColumnIfMissing('cash_payments', 'branch_id',      "VARCHAR(50)");
   await addColumnIfMissing('cash_payments', 'cost_center_id', "VARCHAR(50)");
   await addColumnIfMissing('cash_payments', 'project_id',     "VARCHAR(50)");
+
+  // ─── W2-A — shift linkage on cash vouchers (till pay-in / pay-out) ───────
+  // THE GAP THIS CLOSES: a cashier could not record cash in/out during a shift
+  // from any client (/api/cash is mounted behind requireRole('admin','manager')),
+  // and neither voucher table carried a shift reference — so a drop to the safe,
+  // a float top-up or petty cash was invisible to the till and the expected-cash
+  // figure at close was wrong by exactly those amounts (a leading cause of
+  // unexplained shift variance). analytics_till_facts ALREADY has a shift_id
+  // column and pay_in/pay_out movement types, and equations.expectedCash already
+  // sums them — only this linkage was missing.
+  //
+  // NULLABLE + INDEXED and nothing else: every existing voucher keeps shift_id
+  // NULL and behaves exactly as before (ProjectionService still projects it as a
+  // shift-less branch till movement). Purely additive — never destructive.
+  await addColumnIfMissing('cash_receipts', 'shift_id', "VARCHAR(50) NULL");
+  await addColumnIfMissing('cash_payments', 'shift_id', "VARCHAR(50) NULL");
+  await addIndexIfMissing('cash_receipts', 'idx_cr_shift', 'shift_id');
+  await addIndexIfMissing('cash_payments', 'idx_cp_shift', 'shift_id');
 
   // v5.10.5 — Fixed Assets registry: GL linkage + depreciation tracking +
   // project + audit columns, moved to right after createTableIfMissing('assets',

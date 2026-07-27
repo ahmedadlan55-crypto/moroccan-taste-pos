@@ -14,6 +14,7 @@ import { categoryRail } from "./categoryRail";
 import { productGrid } from "./productGrid";
 import { customerPicker } from "./customerPicker";
 import { comboDialog } from "./comboDialog";
+import { cashMovementDialog } from "./cashMovementDialog";
 import { customerAddDialog } from "./customerAddDialog";
 import { customerHistoryDialog } from "./customerHistoryDialog";
 import { discountDialog } from "./discountDialog";
@@ -56,6 +57,7 @@ export const ar = {
   productGrid,
   customerPicker,
   comboDialog,
+  cashMovementDialog,
   customerAddDialog,
   customerHistoryDialog,
   discountDialog,

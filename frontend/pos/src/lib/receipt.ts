@@ -225,6 +225,10 @@ export interface ShiftReportData {
   times?: { start?: string | null; end?: string | null };
   financials?: { openingFloat?: number; expectedTotal?: number; actualTotal?: number; variance?: number; unmatched?: number };
   methods?: Array<{ name?: string; nameAr?: string | null; expected?: number; actual?: number; variance?: number }>;
+  /** W2-A — approved till cash movements (pay-in / pay-out) on this shift.
+   *  Optional: a server that predates the feature omits them and the report
+   *  renders exactly as it always did. */
+  movements?: Array<{ kind?: string; amount?: number; reason?: string; approvedBy?: string }>;
   soldItems?: Array<{ name?: string; qty?: number; price?: number; total?: number }>;
   denominations?: Array<{ value?: number; kind?: string; count?: number }>;
   orderCount?: number;
@@ -269,6 +273,28 @@ export function buildShiftReportHtml(
     .map((i) => `<tr><td>${esc(i.name || t.dash)}</td><td class="l num">${fmt2(i.qty ?? 0)}</td><td class="l num">${fmt2(i.total ?? 0)}</td></tr>`)
     .join("");
 
+  // W2-A — the drawer's pay-ins / pay-outs. They are already folded into
+  // `expectedTotal` server-side, so without this block the printed expected
+  // figure moves with nothing on the paper to explain it. Rendered on BOTH the
+  // X and the Z report (a mid-shift snapshot is exactly when a cashier needs to
+  // see what left the drawer), and omitted entirely when there are none.
+  const movements = rep.movements ?? [];
+  let movementNet = 0;
+  const movementRows = movements
+    .map((m) => {
+      const isIn = m.kind === "pay_in";
+      const amt = Number(m.amount) || 0;
+      movementNet += isIn ? amt : -amt;
+      return `<tr><td>${esc(m.reason || t.dash)}</td><td class="l">${isIn ? t.movementIn : t.movementOut}</td><td class="l num">${isIn ? "+" : "−"}${fmt2(amt)}</td></tr>`;
+    })
+    .join("");
+  const movementsBlock = movementRows
+    ? `<hr><div class="sub">${t.tillMovements}</div>
+  <table><thead><tr><th>${t.movementReason}</th><th class="l">${t.paymentMethod}</th><th class="l">${t.total}</th></tr></thead>
+  <tbody>${movementRows}</tbody></table>
+  <table class="tot"><tr class="grand"><td>${t.movementNet}</td><td class="l num">${movementNet > 0 ? "+" : ""}${fmt2(movementNet)}</td></tr></table>`
+    : "";
+
   const variance = f.variance ?? 0;
 
   return `<!doctype html><html lang="${language}" dir="${dir}"><head><meta charset="utf-8">
@@ -298,6 +324,7 @@ export function buildShiftReportHtml(
     <tr class="grand"><td>${t.difference}</td><td class="l num">${variance > 0 ? "+" : ""}${fmt2(variance)}</td></tr>` : ""}
     ${(f.unmatched ?? 0) > 0 ? `<tr><td>${t.unmatched}</td><td class="l num">${fmt2(f.unmatched ?? 0)}</td></tr>` : ""}
   </table>
+  ${movementsBlock}
   ${isZ && denomRows ? `<hr><table><thead><tr><th>${t.denomFace}</th><th class="l">${t.count}</th><th class="l">${t.total}</th></tr></thead><tbody>${denomRows}</tbody></table>` : ""}
   ${itemRows ? `<hr><table><thead><tr><th>${t.item}</th><th class="l">${t.qty}</th><th class="l">${t.itemTotal}</th></tr></thead><tbody>${itemRows}</tbody></table>` : ""}
   ${rep.notes ? `<hr><div class="sub">${esc(rep.notes)}</div>` : ""}

@@ -41,6 +41,11 @@ export const shiftDialog = {
     closeShiftTooltip: "Start closing the shift",
     closeShiftOfflineTooltip: "Closing the shift requires a server connection",
     closeOfflineNote: "Closing the shift is unavailable offline",
+    // W2-A — entry point to CashMovementDialog (till cash movements).
+    cashMovementButton: "Cash movement (in / out)",
+    cashMovementTooltip: "Record a cash in or out on the drawer, with manager approval",
+    cashMovementOfflineTooltip: "Recording a cash movement requires a server connection",
+    cashMovementNetLabel: "Net till movements",
   },
 
   table: {
@@ -56,6 +61,10 @@ export const shiftDialog = {
     countInstructionsPrefix: "Enter the actual counted amounts for each payment method —",
     invoiceCountSuffix: "invoices in this shift",
     openingFloatInClosing: "Opening float (included in the expected cash)",
+    // W2-A — the ± term the server folded into the cash «expected». Shown so the
+    // cashier never sees the expected figure move without an explanation.
+    movementsInClosing: "Net till movements (included in the expected cash)",
+    movementsBreakdown: "in {in} · out {out}",
     cashDenomHeading: "Cash count by denomination",
     denomNote: "note",
     denomCoin: "coin",

@@ -7,6 +7,11 @@ const db = require('../db/connection');
 const requireCapability = require('../middleware/requireCapability');
 const { hasCapability } = require('../middleware/requireCapability');
 const jwt = require('jsonwebtoken');
+// W2-A — till cash movements (pay-in / pay-out) need the approver-credential
+// check (bcrypt) and the shared GL poster, exactly like the cash-voucher
+// approval in routes/cash.js they reuse the storage of.
+const bcrypt = require('bcryptjs');
+const glPosting = require('../lib/glPosting');
 // Unified Sales Analytics — post-commit till-movement projection (non-fatal;
 // absence of the module never blocks a shift open/close).
 let analyticsProjection;
@@ -40,6 +45,33 @@ async function _ensureShiftsSchema() {
   if (!col.length) {
     await db.query('ALTER TABLE shifts ADD COLUMN branch_id VARCHAR(50) NULL');
     console.log('[shifts] added shifts.branch_id');
+  }
+  // W2-A — the shift↔voucher linkage this router's /movements endpoints write.
+  // The authoritative migration is in server.js (addColumnIfMissing +
+  // addIndexIfMissing next to the other cash-voucher columns); this mirrors it
+  // for the same reason shifts.branch_id is mirrored above — the router stays
+  // self-sufficient on a database that has not been through that boot path yet
+  // (an integration test that mounts the router, a partially migrated replica).
+  // Both are INFORMATION_SCHEMA-guarded and additive, so whichever runs first
+  // wins and the other is a no-op.
+  for (const [table, idx] of [['cash_receipts', 'idx_cr_shift'], ['cash_payments', 'idx_cp_shift']]) {
+    try {
+      const [c] = await db.query(
+        "SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS " +
+        "WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ? AND COLUMN_NAME = 'shift_id'", [table]);
+      if (!c.length) {
+        await db.query(`ALTER TABLE ${table} ADD COLUMN shift_id VARCHAR(50) NULL`);
+        console.log(`[shifts] added ${table}.shift_id`);
+      }
+      const [i] = await db.query(
+        'SELECT INDEX_NAME FROM INFORMATION_SCHEMA.STATISTICS ' +
+        'WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ? AND INDEX_NAME = ? LIMIT 1', [table, idx]);
+      if (!i.length) await db.query(`ALTER TABLE ${table} ADD INDEX ${idx} (shift_id)`);
+    } catch (e) {
+      // A missing cash_* table on a POS-only install must not stop shifts from
+      // working — the /movements routes answer a clear error instead.
+      console.warn(`[shifts] ${table}.shift_id ensure skipped:`, e.message);
+    }
   }
   _shiftsSchemaEnsured = true;
 }
@@ -267,20 +299,37 @@ async function aggregateShiftPayments(shiftId, openingFloat = 0) {
     }
   }
 
-  // 3b. Fold the opening float into the CASH method's EXPECTED figure. Done
-  //   AFTER sales aggregation and BEFORE the filter/map below so a float-only
-  //   (zero-sales) shift still surfaces a nonzero expected-cash row rather than
-  //   being dropped as an empty synthetic method. The float is real cash that
-  //   started in the drawer — the physical count already contains it, so this
-  //   is what makes a float-only shift reconcile to zero variance.
+  // 3b. Fold the opening float AND the approved till movements into the CASH
+  //   method's EXPECTED figure. Done AFTER sales aggregation and BEFORE the
+  //   filter/map below so a float-only (zero-sales) shift still surfaces a
+  //   nonzero expected-cash row rather than being dropped as an empty synthetic
+  //   method. The float is real cash that started in the drawer — the physical
+  //   count already contains it, so this is what makes a float-only shift
+  //   reconcile to zero variance.
+  //
+  //   W2-A — the same is true of a pay-in / pay-out. lib/analytics/equations.js
+  //   already defines the identity the analytics side uses:
+  //       expectedCash = openFloat + cashSales − cashReturns + payIns − payOuts
+  //   Until now the shift screens implemented only the first two terms, so a
+  //   drop to the safe or a float top-up made the drawer disagree with the
+  //   screen by exactly that amount, every time, with no adjustment path. The
+  //   net adjustment below is that missing ± term. When there are no movements
+  //   it collapses to the historical `openingFloat` fold, byte for byte.
   const _openingFloat = Number(openingFloat) || 0;
-  if (_openingFloat > 0) {
+  const mv = await _shiftMovementTotals(shiftId);
+  const _cashAdjustment = _r2(_openingFloat + mv.payIn - mv.payOut);
+  if (_cashAdjustment !== 0) {
     const cashMethod = methods.find(
       (m) => String(m.group_type || '').toLowerCase() === 'cash' || _normPM(m.name) === 'cash',
     );
     if (cashMethod) {
-      expectedById[cashMethod.id] = _r2((expectedById[cashMethod.id] || 0) + _openingFloat);
-      expectedTotal = _r2(expectedTotal + _openingFloat);
+      expectedById[cashMethod.id] = _r2((expectedById[cashMethod.id] || 0) + _cashAdjustment);
+      expectedTotal = _r2(expectedTotal + _cashAdjustment);
+    } else {
+      // No cash-group method at all — the adjustment has nowhere to land and
+      // the drawer WILL disagree. Never silent about money.
+      console.error('[aggregateShiftPayments] no cash-group payment method — opening float + till movements (' +
+        _cashAdjustment + ') could not be folded into expected cash for shift ' + shiftId);
     }
   }
 
@@ -324,9 +373,559 @@ async function aggregateShiftPayments(shiftId, openingFloat = 0) {
     unmatchedDetails,
     soldItems,
     orderCount: sales.length,
-    rawSales: sales
+    rawSales: sales,
+    // W2-A — the approved drawer movements folded into expectedTotal above, so
+    // every caller (close-v3, the X/Z report) can SHOW the adjustment instead of
+    // leaving the cashier to wonder why "expected" moved.
+    movements: mv.rows,
+    movementTotals: { payIn: mv.payIn, payOut: mv.payOut, net: _r2(mv.payIn - mv.payOut), count: mv.rows.length },
+    openingFloat: _openingFloat,
   };
 }
+
+// ═══════════════════════════════════════════════════════════════════
+// W2-A — TILL CASH MOVEMENTS (حركات نقدية على الدرج)
+//
+// THE GAP: a cashier could not record cash in or out during a shift from ANY
+// client. /api/cash is mounted behind requireRole('admin','manager')
+// (server.js), and neither cash_receipts nor cash_payments carried a shift
+// reference — so a drop to the safe, a float top-up or petty cash was invisible
+// to the till and the expected-cash figure at close was wrong by exactly those
+// amounts. The analytics side was already finished (analytics_till_facts has
+// pay_in/pay_out + a shift_id column, equations.expectedCash already sums them,
+// ReconciliationService and the till_variance anomaly rule already read them);
+// only the linkage was missing.
+//
+// OWNER DECISION: the cashier records the movement, a manager approves it.
+//
+// STORAGE — deliberately NOT a new table. A pay-in IS a cash receipt and a
+// pay-out IS a cash payment: same money, same GL treatment, same voucher the
+// bookkeeper already reviews and prints. They are written into cash_receipts /
+// cash_payments with the new nullable `shift_id` set, which means the ERP cash
+// module, the voucher print template, the cash-box balance and every existing
+// report pick them up with no further work — and ProjectionService reads
+// shift_id straight off the row, so the live projection, the repair drain and
+// the backfill script all carry the shift through without a signature change.
+//
+// APPROVAL — the pattern is routes/sales.js `_verifyApproverCredentials` /
+// `_assertRefundAuthority`, verbatim in shape: the actor proceeds on their own
+// authority if they hold the capability, otherwise THIS request must carry an
+// approver's credentials, verified server-side (constant-time bcrypt against a
+// dummy pad so a wrong username and a wrong password are indistinguishable by
+// timing), and that approver must hold the capability themselves. The approving
+// account is recorded on the voucher (approved_by/approved_at) and in an
+// audit_logs row. There is no client-trusted "approved" flag anywhere.
+//
+// COUNTED ONLY ONCE APPROVED — every read below filters `status = 'posted'`.
+// A draft or cancelled voucher (one created through the ERP module, or a future
+// deferred-approval path) can never move the expected-cash figure.
+// ═══════════════════════════════════════════════════════════════════
+
+/** The capability that authorizes a drawer movement. Seeded in server.js's
+ *  late-permissions block and granted to manager/finance/accountant — NOT to
+ *  cashier. admin/developer bypass inside hasCapability(). */
+const MOVEMENT_APPROVE_CAP = 'pos.cash_movement.approve';
+/** Hard ceiling per movement — the same order of magnitude as the opening-float
+ *  cap. A mistyped amount must never silently distort a whole shift. */
+const MOVEMENT_AMOUNT_CAP = 50000;
+const MOVEMENT_KINDS = ['pay_in', 'pay_out'];
+/** Computed once at module load: bcrypt.compare ALWAYS runs (against this pad
+ *  when the approver does not exist) so response timing cannot be used to
+ *  enumerate manager usernames. Mirrors routes/sales.js _APPROVAL_DUMMY_HASH. */
+const _MV_APPROVAL_DUMMY_HASH = bcrypt.hashSync('till-movement-approval-timing-pad', 12);
+
+function _mvErr(message, status, code) {
+  const e = new Error(message); e.status = status; e.code = code; return e;
+}
+
+/**
+ * The CREDENTIAL half of the approval gate — the same lookup, the same
+ * constant-time bcrypt against a dummy pad, and the same SINGLE generic error
+ * as routes/sales.js `_verifyApproverCredentials`. The one deliberate
+ * difference: authority is asserted by CAPABILITY (below), not by a hardcoded
+ * admin/manager role list, so a finance/accountant account that legitimately
+ * holds `pos.cash_movement.approve` can approve a drop to the safe. Resolves to
+ * { username, role } or throws a 403.
+ */
+async function _verifyMovementApprover(req) {
+  const approverUsername = req.body && req.body.approverUsername;
+  const approverPassword = req.body && req.body.approverPassword;
+  if (!approverUsername || !approverPassword) {
+    throw _mvErr('هذا الإجراء يتطلب اعتماد مدير · Manager approval required', 403, 'approval_required');
+  }
+  let rows;
+  try {
+    [rows] = await db.query('SELECT username, password, role FROM users WHERE username = ? LIMIT 1',
+      [String(approverUsername).trim()]);
+  } catch (e) {
+    throw _mvErr('تعذّر التحقق من بيانات المدير · Could not verify approver', 500, 'approval_check_failed');
+  }
+  const mgr = rows && rows[0];
+  let okPw = false;
+  try {
+    okPw = await bcrypt.compare(String(approverPassword), (mgr && mgr.password) || _MV_APPROVAL_DUMMY_HASH);
+  } catch (_) { okPw = false; }
+  if (!mgr || !okPw) {
+    throw _mvErr('بيانات اعتماد المدير غير صحيحة · Invalid manager approval credentials', 403, 'approval_invalid');
+  }
+  return { username: mgr.username, role: String(mgr.role || '').toLowerCase() };
+}
+
+/**
+ * Full authority assertion for a till movement. Returns the approving account's
+ * username (never null — a movement is ALWAYS attributable to an approver) plus
+ * whether that approval came from a second person.
+ */
+async function _assertMovementApproval(req) {
+  if (!req.user || !req.user.username) {
+    throw _mvErr('مطلوب تسجيل الدخول', 401, 'PERMISSION_DENIED');
+  }
+  let selfOk = false;
+  try { selfOk = await hasCapability(req.user, MOVEMENT_APPROVE_CAP); }
+  catch (_) { selfOk = false; } // fail closed, same as the middleware
+  if (selfOk) return { approvedBy: req.user.username, elevated: false };
+
+  const approver = await _verifyMovementApprover(req);
+  let approverOk = false;
+  try { approverOk = await hasCapability({ username: approver.username, role: approver.role }, MOVEMENT_APPROVE_CAP); }
+  catch (_) { approverOk = false; } // fail closed
+  if (!approverOk) {
+    throw _mvErr('المدير المعتمد لا يملك صلاحية اعتماد حركات الدرج · The approving account does not hold the till-movement approval capability',
+      403, 'approval_forbidden');
+  }
+  return { approvedBy: approver.username, elevated: true };
+}
+
+/** API shape for one movement row. */
+function _movementRow(r) {
+  return {
+    id: r.id,
+    kind: r.kind,                       // 'pay_in' | 'pay_out'
+    number: r.number || '',
+    amount: _r2(r.amount),
+    reason: r.reason || '',
+    note: r.note || '',
+    createdBy: r.created_by || '',
+    approvedBy: r.approved_by || '',
+    approvedAt: r.approved_at || null,
+    journalId: r.journal_id || null,
+    date: r.movement_date || null,
+  };
+}
+
+/**
+ * Every APPROVED (posted) movement on a shift, plus the pay-in / pay-out totals
+ * that lib/analytics/equations.expectedCash consumes.
+ *
+ * Degrades to zeros — loudly — when the cash voucher tables or the shift_id
+ * column are unavailable (a POS-only install, a database that has not run the
+ * migration): the shift close must never be blocked by this, and falling back
+ * to zeros reproduces exactly the pre-W2-A behaviour rather than inventing a
+ * number.
+ */
+async function _shiftMovementTotals(shiftId) {
+  const empty = { payIn: 0, payOut: 0, rows: [] };
+  if (!shiftId) return empty;
+  try {
+    const [rows] = await db.query(
+      "SELECT id, 'pay_in' AS kind, receipt_number AS number, amount, description AS reason, " +
+      "       reference AS note, created_by, approved_by, approved_at, journal_id, " +
+      "       receipt_date AS movement_date, created_at " +
+      "  FROM cash_receipts WHERE shift_id = ? AND status = 'posted' " +
+      "UNION ALL " +
+      "SELECT id, 'pay_out' AS kind, payment_number AS number, amount, description AS reason, " +
+      "       reference AS note, created_by, approved_by, approved_at, journal_id, " +
+      "       payment_date AS movement_date, created_at " +
+      "  FROM cash_payments WHERE shift_id = ? AND status = 'posted' " +
+      "ORDER BY created_at ASC, id ASC",
+      [shiftId, shiftId]);
+    // created_at is a TIMESTAMP — SECOND precision. Two movements recorded in
+    // the same second tie, and the SQL tiebreak (id ASC across a UNION of two
+    // tables) then orders them by the 'PAY-'/'REC-' PREFIX, i.e. by kind, not by
+    // time: a pay-out always jumped ahead of a pay-in taken before it. The ids
+    // this route mints embed Date.now() as their second segment, so re-sort on
+    // that in JS — millisecond-accurate, and it degrades to the SQL order for
+    // any row whose id does not carry one.
+    rows.sort((a, b) => {
+      const ta = new Date(a.created_at || 0).getTime() || 0;
+      const tb = new Date(b.created_at || 0).getTime() || 0;
+      if (ta !== tb) return ta - tb;
+      const ms = (id) => { const m = /^[A-Z]+-(\d{10,})/.exec(String(id || '')); return m ? Number(m[1]) : 0; };
+      const ma = ms(a.id), mb = ms(b.id);
+      if (ma !== mb) return ma - mb;
+      return String(a.id) < String(b.id) ? -1 : String(a.id) > String(b.id) ? 1 : 0;
+    });
+    let payIn = 0, payOut = 0;
+    for (const r of rows) {
+      if (r.kind === 'pay_in') payIn = _r2(payIn + _r2(r.amount));
+      else payOut = _r2(payOut + _r2(r.amount));
+    }
+    return { payIn, payOut, rows: rows.map(_movementRow) };
+  } catch (e) {
+    console.error('[shifts] till-movement read failed for ' + shiftId + ' (expected cash falls back to float-only):', e.message);
+    return empty;
+  }
+}
+
+/**
+ * The branch's cash box — the drawer the movement actually moves money into or
+ * out of. Resolved from the shift's branch snapshot; auto-created (idempotent,
+ * deterministic id) when the branch has none, exactly the way routes/cash.js
+ * auto-creates the GL account behind a box. Without a cash box there is nothing
+ * for ProjectionService to recognise as a TILL movement (it requires
+ * destination/source_type = 'cash'), so this is not optional.
+ */
+async function _ensureBranchCashBox(conn, branchId) {
+  const [existing] = await conn.query(
+    "SELECT id FROM cash_boxes WHERE branch_id = ? AND is_active = 1 " +
+    "ORDER BY (type = 'branch') DESC, id ASC LIMIT 1", [branchId]);
+  if (existing.length) return existing[0].id;
+  const id = ('CB-BR-' + String(branchId)).slice(0, 50);
+  let name = 'صندوق الفرع';
+  try {
+    const [b] = await conn.query('SELECT name FROM branches WHERE id = ? LIMIT 1', [branchId]);
+    if (b.length && b[0].name) name = 'صندوق ' + b[0].name;
+  } catch (_) { /* cosmetic label only */ }
+  await conn.query(
+    'INSERT IGNORE INTO cash_boxes (id, name, code, type, branch_id, currency, balance, is_active) ' +
+    'VALUES (?,?,?,?,?,?,0,1)',
+    [id, name.slice(0, 200), ('BR-' + String(branchId)).slice(0, 30), 'branch', branchId, 'SAR']);
+  return id;
+}
+
+/**
+ * A gl_accounts.code that FITS. The column is VARCHAR(20): the obvious
+ * `<parent>-<branch id>` overflowed it, MySQL truncated the value under
+ * INSERT IGNORE (which downgrades the truncation to a warning), and
+ * postJournal then refused the journal with "حساب غير موجود" for a code that
+ * had genuinely just been written — under a different name. Deterministic: the
+ * same seed always yields the same code, so re-running is idempotent and the
+ * account is found on the second movement instead of a second one being minted.
+ */
+function _glCodeFor(parentCode, seed) {
+  const MAX_CODE_LEN = 20;
+  const room = MAX_CODE_LEN - String(parentCode).length - 1;
+  const plain = String(seed).toUpperCase().replace(/[^A-Z0-9]/g, '');
+  if (room <= 0) return String(parentCode).slice(0, MAX_CODE_LEN);
+  if (plain.length && plain.length <= room) return parentCode + '-' + plain;
+  // Stable FNV-1a → base36, 6 chars. Short, collision-checked by the caller.
+  let h = 0x811c9dc5;
+  const s = String(seed);
+  for (let i = 0; i < s.length; i++) { h ^= s.charCodeAt(i); h = Math.imul(h, 0x01000193) >>> 0; }
+  const hash = h.toString(36).toUpperCase().padStart(6, '0').slice(0, 6);
+  return (parentCode + '-' + hash).slice(0, MAX_CODE_LEN);
+}
+
+/**
+ * The cash parent in whichever COA template this install actually has:
+ *   '1101' (النقدية — the routes/cash.js convention this storage belongs to)
+ * → '111'  (Cash and Bank — the v5.11.8 IFRS template in lib/glPosting)
+ * → '1110' (النقدية — the CORE account ensureCoreAccounts always seeds)
+ * → '11'   (last resort ancestor).
+ * ensureCoreAccounts runs first so the '1110' rung is guaranteed to exist even
+ * on a chart that has never been seeded — otherwise a fresh install would take
+ * the coa_not_seeded path and a cashier could not record a movement at all.
+ * Returns { id, code, level } or null.
+ */
+async function _cashParentAccount(conn) {
+  try { await glPosting.ensureCoreAccounts(conn); } catch (e) {
+    console.warn('[shifts] ensureCoreAccounts before till movement failed:', e.message);
+  }
+  for (const code of ['1101', '111', '1110', '11']) {
+    const [r] = await conn.query('SELECT id, code, level FROM gl_accounts WHERE code = ? LIMIT 1', [code]);
+    if (r.length) return { id: r[0].id, code: r[0].code, level: Number(r[0].level) || 3 };
+  }
+  return null;
+}
+
+/** The cash box's own GL account (auto-created under the cash parent when the
+ *  box has none) — mirrors routes/cash.js ensureCashAccount. Returns
+ *  { id, code } so glPosting.postJournal can resolve it by CODE. */
+async function _ensureCashBoxGl(conn, boxId) {
+  const [r] = await conn.query('SELECT id, name, code, gl_account_id FROM cash_boxes WHERE id = ? LIMIT 1', [boxId]);
+  if (!r.length) throw _mvErr('الصندوق غير موجود · Cash box not found', 500, 'cash_box_missing');
+  const box = r[0];
+  if (box.gl_account_id) {
+    const [g] = await conn.query('SELECT id, code FROM gl_accounts WHERE id = ? LIMIT 1', [box.gl_account_id]);
+    if (g.length) return { id: g[0].id, code: g[0].code };
+  }
+  const parent = await _cashParentAccount(conn);
+  if (!parent) throw _mvErr('شجرة الحسابات غير مهيأة · Chart of accounts not initialised', 500, 'coa_not_seeded');
+  const accId = ('GL-CB-' + String(boxId)).slice(0, 50);
+  let accCode = _glCodeFor(parent.code, String(box.code || boxId));
+  const [clash] = await conn.query('SELECT id, code FROM gl_accounts WHERE code = ? LIMIT 1', [accCode]);
+  if (clash.length) {
+    if (clash[0].id === accId) {
+      // Already minted for this box by an earlier movement — reuse it.
+      await conn.query('UPDATE cash_boxes SET gl_account_id = ? WHERE id = ?', [accId, boxId]);
+      return { id: accId, code: accCode };
+    }
+    accCode = _glCodeFor(parent.code, String(boxId) + '#' + accId);
+  }
+  await conn.query(
+    'INSERT IGNORE INTO gl_accounts (id, code, name_ar, type, parent_id, level, is_active) VALUES (?,?,?,?,?,?,1)',
+    [accId, accCode, String(box.name || accCode).slice(0, 200), 'asset', parent.id, parent.level + 1]);
+  // INSERT IGNORE downgrades EVERY error to a warning — including a value that
+  // does not fit the column. Read the row back and fail loudly if the code the
+  // journal is about to reference is not actually resolvable; a silent
+  // "حساب غير موجود" on a code we just wrote is the exact bug this guards.
+  const [written] = await conn.query('SELECT id, code FROM gl_accounts WHERE id = ? LIMIT 1', [accId]);
+  if (!written.length || written[0].code !== accCode) {
+    throw _mvErr('تعذّر إنشاء حساب الصندوق في شجرة الحسابات · Could not create the cash-box GL account',
+      500, 'cash_box_gl_failed');
+  }
+  await conn.query('UPDATE cash_boxes SET gl_account_id = ? WHERE id = ?', [accId, boxId]);
+  return { id: accId, code: accCode };
+}
+
+/**
+ * The contra account for a drawer movement: «نقدية بالطريق — حركات الدرج».
+ *
+ * Deliberately an ASSET, not revenue or expense. Cash moving between the drawer
+ * and the safe/treasury is a transfer between asset accounts; routing a float
+ * top-up to «إيرادات أخرى» (the cash module's default contra for source_type
+ * 'other') would fabricate revenue, and routing a petty-cash pay-out straight to
+ * an expense would guess at a classification the cashier never made. Parking it
+ * in cash-in-transit is the honest position: the money left/entered the drawer,
+ * and the bookkeeper reclassifies it from a balance that is visibly non-zero.
+ */
+async function _ensureTillContraAccount(conn) {
+  const parent = await _cashParentAccount(conn);
+  if (!parent) throw _mvErr('شجرة الحسابات غير مهيأة · Chart of accounts not initialised', 500, 'coa_not_seeded');
+  const code = _glCodeFor(parent.code, 'TILL');
+  const [r] = await conn.query('SELECT id, code FROM gl_accounts WHERE code = ? LIMIT 1', [code]);
+  if (r.length) return { id: r[0].id, code: r[0].code };
+  const id = 'GL-TILL-ADJ';
+  await conn.query(
+    'INSERT IGNORE INTO gl_accounts (id, code, name_ar, type, parent_id, level, is_active) VALUES (?,?,?,?,?,?,1)',
+    [id, code, 'نقدية بالطريق — حركات الدرج', 'asset', parent.id, parent.level + 1]);
+  const [written] = await conn.query('SELECT id, code FROM gl_accounts WHERE code = ? LIMIT 1', [code]);
+  if (!written.length) {
+    throw _mvErr('تعذّر إنشاء حساب حركات الدرج · Could not create the till-movement contra account',
+      500, 'till_contra_gl_failed');
+  }
+  return { id: written[0].id, code: written[0].code };
+}
+
+/** Voucher number in the SAME sequence the ERP cash module uses, so a movement
+ *  does not open a parallel numbering scheme the bookkeeper has to reconcile.
+ *  Same algorithm as routes/cash.js nextNumber, run on the caller's connection. */
+async function _nextVoucherNumber(conn, table, column, prefix) {
+  try {
+    const [last] = await conn.query(`SELECT ${column} FROM ${table} ORDER BY created_at DESC LIMIT 1`);
+    let num = 1;
+    if (last.length && last[0][column]) {
+      const m = String(last[0][column]).match(/(\d+)/);
+      if (m) num = parseInt(m[1], 10) + 1;
+    }
+    return prefix + String(num).padStart(5, '0');
+  } catch (_) {
+    return prefix + String(Date.now()).slice(-5);
+  }
+}
+
+/** Post-commit audit row naming who recorded the movement and who authorized
+ *  it. Never blocks (the money already moved) but a failure is LOUD. */
+async function _auditMovement(row, actor, approvedBy, req) {
+  try {
+    await db.query(
+      'INSERT INTO audit_logs (action, entity_type, entity_id, user_username, details, ip_address, created_at) ' +
+      'VALUES (?,?,?,?,?,?,NOW())',
+      ['shift_cash_movement_approved', 'shift_cash_movement', row.id, actor || 'system',
+       JSON.stringify({
+         shiftId: row.shiftId, kind: row.kind, amount: row.amount,
+         reason: row.reason, approvedBy, actor: actor || null, journalId: row.journalId || null,
+       }),
+       (req && req.ip) || '']);
+  } catch (e) {
+    console.error('[shifts] movement audit row failed for ' + row.id + ':', e.message);
+  }
+}
+
+/** Shift row + the caller's right to act on it. Owner always; a supervisor with
+ *  `sales.reports.view` for the read path. */
+async function _loadShiftForMovement(shiftId) {
+  const [rows] = await db.query('SELECT id, username, branch_id, status FROM shifts WHERE id = ? LIMIT 1', [shiftId]);
+  if (!rows.length) throw _mvErr('الوردية غير موجودة · Shift not found', 404, 'shift_not_found');
+  return rows[0];
+}
+
+// ── POST /api/shifts/:shiftId/movements — record + approve a drawer movement ──
+// Body: { kind: 'pay_in'|'pay_out', amount, reason, note?,
+//         approverUsername?, approverPassword? }
+// The whole thing is ONE transaction: shift lock → voucher insert → GL journal →
+// posted + approver stamp → cash-box balance. Nothing half-written: if the
+// journal is refused (closed period, unbalanced, missing COA) the movement does
+// not exist at all, which is the only safe direction for money.
+router.post('/:shiftId/movements', requireCapability('pos.use'), async (req, res) => {
+  try {
+    const shiftId = String(req.params.shiftId || '');
+    const actor = req.user.username;
+    const kind = String((req.body && req.body.kind) || '').toLowerCase();
+    if (MOVEMENT_KINDS.indexOf(kind) === -1) {
+      throw _mvErr('نوع الحركة غير صالح (pay_in أو pay_out) · Invalid movement kind', 400, 'invalid_kind');
+    }
+    const rawAmount = req.body && req.body.amount;
+    const amount = _r2(rawAmount);
+    if (!Number.isFinite(Number(rawAmount)) || amount <= 0) {
+      throw _mvErr('المبلغ يجب أن يكون رقمًا موجبًا · Amount must be a positive number', 400, 'invalid_amount');
+    }
+    if (amount > MOVEMENT_AMOUNT_CAP) {
+      throw _mvErr(`المبلغ يتجاوز الحد المسموح (${MOVEMENT_AMOUNT_CAP}) · Amount exceeds the allowed limit`, 400, 'amount_too_large');
+    }
+    const reason = String((req.body && req.body.reason) || '').trim();
+    if (reason.length < 2) {
+      throw _mvErr('سبب الحركة مطلوب · A reason is required', 400, 'reason_required');
+    }
+    const note = String((req.body && req.body.note) || '').trim().slice(0, 200);
+
+    const shift = await _loadShiftForMovement(shiftId);
+    // Identity comes ONLY from the verified token; a cashier records movements
+    // on their OWN drawer. A supervisor may act on any shift they can see.
+    if (shift.username !== actor && !_isSupervisor(req.user)) {
+      throw _mvErr('لا يمكن تسجيل حركة على وردية مستخدم آخر · Not your shift', 403, 'PERMISSION_DENIED');
+    }
+    if (String(shift.status).toUpperCase() !== 'OPEN') {
+      throw _mvErr('الوردية مغلقة — لا يمكن تسجيل حركة نقدية · Shift is closed', 400, 'shift_not_open');
+    }
+
+    // Manager approval BEFORE anything is written: an unapproved movement must
+    // not exist even as a draft (a stray draft pay-out is a drawer that is short
+    // with a paper trail that says otherwise).
+    const approval = await _assertMovementApproval(req);
+
+    const isReceipt = kind === 'pay_in';
+    const branchId = shift.branch_id || null;
+    const today = new Date().toISOString().slice(0, 10);
+
+    const out = await db.withTransaction(async (conn) => {
+      // Re-read the status UNDER the lock: the close is also transactional, so
+      // this is the serialization point that keeps a movement from landing on a
+      // shift that is closing right now (which would silently miss the
+      // expected-cash figure the cashier is looking at).
+      const [lock] = await conn.query('SELECT status, branch_id FROM shifts WHERE id = ? FOR UPDATE', [shiftId]);
+      if (!lock.length) throw _mvErr('الوردية غير موجودة · Shift not found', 404, 'shift_not_found');
+      if (String(lock[0].status).toUpperCase() !== 'OPEN') {
+        throw _mvErr('الوردية مغلقة — لا يمكن تسجيل حركة نقدية · Shift is closed', 400, 'shift_not_open');
+      }
+      const lockedBranch = lock[0].branch_id || branchId;
+      if (!lockedBranch) {
+        throw _mvErr('الوردية غير مرتبطة بفرع — لا يمكن تحديد صندوق النقدية · Shift has no branch, cannot resolve a cash box',
+          400, 'shift_has_no_branch');
+      }
+
+      const boxId = await _ensureBranchCashBox(conn, lockedBranch);
+      const boxGl = await _ensureCashBoxGl(conn, boxId);
+      const contra = await _ensureTillContraAccount(conn);
+
+      const table = isReceipt ? 'cash_receipts' : 'cash_payments';
+      const numberCol = isReceipt ? 'receipt_number' : 'payment_number';
+      const number = await _nextVoucherNumber(conn, table, numberCol, isReceipt ? 'REC-' : 'PAY-');
+      const id = (isReceipt ? 'REC-' : 'PAY-') + Date.now() + '-' + Math.random().toString(36).slice(2, 6);
+      const partyName = ('وردية ' + shiftId).slice(0, 200);
+
+      if (isReceipt) {
+        await conn.query(
+          'INSERT INTO cash_receipts (id, receipt_number, receipt_date, destination_type, destination_id, ' +
+          ' source_type, source_name, amount, reference, description, status, created_by, branch_id, shift_id) ' +
+          "VALUES (?,?,?,'cash',?,'other',?,?,?,?,'draft',?,?,?)",
+          [id, number, today, boxId, partyName, amount, note, reason, actor, lockedBranch, shiftId]);
+      } else {
+        await conn.query(
+          'INSERT INTO cash_payments (id, payment_number, payment_date, source_type, source_id, ' +
+          ' recipient_type, recipient_name, amount, reference, description, status, created_by, branch_id, shift_id) ' +
+          "VALUES (?,?,?,'cash',?,'other',?,?,?,?,'draft',?,?,?)",
+          [id, number, today, boxId, partyName, amount, note, reason, actor, lockedBranch, shiftId]);
+      }
+
+      // pay_in : Dr drawer / Cr cash-in-transit — money entered the drawer.
+      // pay_out: Dr cash-in-transit / Cr drawer — money left the drawer.
+      const entries = isReceipt
+        ? [{ accountCode: boxGl.code, debit: amount, credit: 0, branchId: lockedBranch },
+           { accountCode: contra.code, debit: 0, credit: amount, branchId: lockedBranch }]
+        : [{ accountCode: contra.code, debit: amount, credit: 0, branchId: lockedBranch },
+           { accountCode: boxGl.code, debit: 0, credit: amount, branchId: lockedBranch }];
+      const posted = await glPosting.postJournal(conn, {
+        journalDate: today,
+        description: (isReceipt ? 'إيداع نقدي على الدرج ' : 'سحب نقدي من الدرج ') + number + ' — ' + reason,
+        referenceType: 'shift_cash_movement',
+        referenceId: id,
+        postedBy: approval.approvedBy,
+        status: 'posted',
+        entries,
+        branchId: lockedBranch,
+      });
+      if (!posted || !posted.success) {
+        throw _mvErr('تعذّر ترحيل القيد: ' + ((posted && posted.error) || 'unknown') + ' · Could not post the journal',
+          400, 'gl_post_failed');
+      }
+
+      await conn.query(
+        `UPDATE ${table} SET status = 'posted', journal_id = ?, approved_by = ?, approved_at = NOW() WHERE id = ?`,
+        [posted.journalId, approval.approvedBy, id]);
+      await conn.query('UPDATE cash_boxes SET balance = balance ' + (isReceipt ? '+' : '-') + ' ? WHERE id = ?',
+        [amount, boxId]);
+
+      return {
+        id, number, journalId: posted.journalId, journalNumber: posted.journalNumber,
+        boxId, branchId: lockedBranch,
+      };
+    });
+
+    // ── Post-commit, non-fatal, idempotent (UNIQUE on source_type+source_id+
+    //    movement_type). ProjectionService reads shift_id off the row; the
+    //    explicit opts.shiftId makes the intent visible at the call site. This
+    //    is what puts the movement into analytics_till_facts, which is what
+    //    makes equations.expectedCash and the three-way reconciliation include
+    //    it without either of them changing at all. ──
+    const projKind = isReceipt ? 'cash_receipt' : 'cash_payment';
+    try {
+      analyticsProjection.safeProject(db, projKind, out.id,
+        () => analyticsProjection.projectCashVoucher(db, projKind, out.id, { shiftId }));
+    } catch (_) {}
+
+    const movement = {
+      id: out.id, shiftId, kind, number: out.number, amount, reason, note,
+      createdBy: actor, approvedBy: approval.approvedBy, approvedRemotely: approval.elevated,
+      journalId: out.journalId, journalNumber: out.journalNumber, branchId: out.branchId,
+    };
+    await _auditMovement(movement, actor, approval.approvedBy, req);
+
+    const totals = await _shiftMovementTotals(shiftId);
+    res.json({
+      success: true,
+      movement,
+      totals: { payIn: totals.payIn, payOut: totals.payOut, net: _r2(totals.payIn - totals.payOut), count: totals.rows.length },
+    });
+  } catch (e) {
+    if (!e.status || e.status >= 500) console.error('[POST /shifts/:shiftId/movements]', e.message);
+    res.status(e.status || 500).json({ success: false, error: e.message, code: e.code || undefined });
+  }
+});
+
+// ── GET /api/shifts/:shiftId/movements — the shift's approved movements ──────
+// Same reader the expected-cash fold uses, so what the cashier sees in the
+// dialog is exactly what the close will subtract/add. Financial data: shift
+// owner or `sales.reports.view` only, same rule as the shift report.
+router.get('/:shiftId/movements', async (req, res) => {
+  try {
+    const shiftId = String(req.params.shiftId || '');
+    const shift = await _loadShiftForMovement(shiftId);
+    if (!(await _canViewShiftReport(req.user, shift.username))) {
+      return res.status(403).json({ success: false, code: 'PERMISSION_DENIED', error: 'صلاحية غير كافية لعرض حركات هذه الوردية' });
+    }
+    const totals = await _shiftMovementTotals(shiftId);
+    res.json({
+      success: true,
+      shiftId,
+      movements: totals.rows,
+      totals: { payIn: totals.payIn, payOut: totals.payOut, net: _r2(totals.payIn - totals.payOut), count: totals.rows.length },
+    });
+  } catch (e) {
+    if (!e.status || e.status >= 500) console.error('[GET /shifts/:shiftId/movements]', e.message);
+    res.status(e.status || 500).json({ success: false, error: e.message, code: e.code || undefined });
+  }
+});
 
 // Open shift — a CASHIER action: `pos.use` (live for role=cashier).
 router.post('/open', requireCapability('pos.use'), async (req, res) => {
@@ -804,13 +1403,25 @@ router.get('/closing-data-v3/:shiftId', async (req, res) => {
     } catch (e) {
       console.error('[GET /shifts/closing-data-v3] opening_float read failed:', e.message);
     }
-    if (openingFloat > 0) {
+    // W2-A — approved till movements belong in the SAME cash EXPECTED figure as
+    // the float (see aggregateShiftPayments 3b for the full reasoning and the
+    // equations.expectedCash identity). This handler keeps its own aggregation
+    // rather than calling the shared helper, so the fold is replicated here —
+    // and it MUST stay identical, because this is the grid the cashier
+    // reconciles against and close-v3 recomputes independently. A drift between
+    // the two is a phantom variance on the cashier's drawer.
+    const mv = await _shiftMovementTotals(shiftId);
+    const cashAdjustment = _r2(openingFloat + mv.payIn - mv.payOut);
+    if (cashAdjustment !== 0) {
       const cashMethod = methods.find(
         (m) => String(m.group_type || '').toLowerCase() === 'cash' || norm(m.name) === 'cash',
       );
       if (cashMethod) {
-        expectedById[cashMethod.id] = _r2((expectedById[cashMethod.id] || 0) + openingFloat);
-        expectedTotal = _r2(expectedTotal + openingFloat);
+        expectedById[cashMethod.id] = _r2((expectedById[cashMethod.id] || 0) + cashAdjustment);
+        expectedTotal = _r2(expectedTotal + cashAdjustment);
+      } else {
+        console.error('[GET /shifts/closing-data-v3] no cash-group payment method — opening float + till movements (' +
+          cashAdjustment + ') could not be folded into expected cash for shift ' + shiftId);
       }
     }
 
@@ -824,7 +1435,11 @@ router.get('/closing-data-v3/:shiftId', async (req, res) => {
         groupType: m.group_type,
         expectedAmount: expectedById[m.id] || 0
       })),
-      expected, expectedTotal, orderCount, unmatchedTotal, openingFloat
+      expected, expectedTotal, orderCount, unmatchedTotal, openingFloat,
+      // W2-A — surfaced so the close screen can SHOW the ± adjustment instead of
+      // the cashier discovering an unexplained jump in «المتوقع».
+      movements: mv.rows,
+      movementTotals: { payIn: mv.payIn, payOut: mv.payOut, net: _r2(mv.payIn - mv.payOut), count: mv.rows.length }
     });
   } catch (e) {
     // G-SALES error honesty — was res.json({error}) with HTTP 200; the
@@ -996,9 +1611,18 @@ router.get('/:shiftId/full-report', async (req, res) => {
         expectedTotal: totalExpected,
         actualTotal:   totalActual,
         variance:      totalVariance,
-        unmatched:     agg.unmatchedTotal
+        unmatched:     agg.unmatchedTotal,
+        // W2-A — the ± term the X/Z report must show: without it the printed
+        // «المتوقع» silently differs from opening float + sales by exactly the
+        // movements, and there is nothing on the paper that explains it.
+        payIn:  agg.movementTotals.payIn,
+        payOut: agg.movementTotals.payOut
       },
       methods: methodsTable,
+      // Itemised drawer movements — the reason each one happened and who
+      // authorized it, printed on the X and Z reports.
+      movements: agg.movements,
+      movementTotals: agg.movementTotals,
       soldItems: agg.soldItems,
       denominations,
       orderCount: agg.orderCount,
@@ -1222,6 +1846,36 @@ router.get('/:shiftId/full-report-print', async (req, res) => {
         </div>`;
     }
 
+    // W2-A — drawer movements. Printed ONLY when the shift has any, so an
+    // untouched drawer's report is byte-identical to what it printed before.
+    // This is the paper trail for the ± term now inside «المتوقع»: without it
+    // the expected figure moves and nothing on the receipt says why.
+    let movementsHtml = '';
+    if (agg.movements && agg.movements.length) {
+      movementsHtml = `<div style="text-align:center;font-weight:800;font-size:11px;background:#000;color:#fff;padding:3px 6px;margin:8px 0 4px;">حركات نقدية على الدرج | TILL MOVEMENTS</div>
+        <table style="width:100%;border-collapse:collapse;font-size:10.5px;">
+          <thead><tr style="border-bottom:1px solid #000;">
+            <th style="text-align:right;padding:3px 0;font-size:9.5px;">السبب</th>
+            <th style="text-align:center;padding:3px 0;font-size:9.5px;">النوع</th>
+            <th style="text-align:center;padding:3px 0;font-size:9.5px;">اعتمده</th>
+            <th style="text-align:left;padding:3px 0;font-size:9.5px;">المبلغ</th>
+          </tr></thead><tbody>`;
+      agg.movements.forEach((mvr) => {
+        const isIn = mvr.kind === 'pay_in';
+        movementsHtml += `<tr>
+          <td style="padding:2px 0;font-weight:700;">${esc(mvr.reason) || '—'}</td>
+          <td style="text-align:center;padding:2px 0;">${isIn ? 'إيداع' : 'سحب'}</td>
+          <td style="text-align:center;padding:2px 0;font-size:9.5px;">${esc(mvr.approvedBy) || '—'}</td>
+          <td style="text-align:left;padding:2px 0;font-family:monospace;font-weight:800;">${isIn ? '+' : '−'}${fmt(mvr.amount)}</td>
+        </tr>`;
+      });
+      movementsHtml += `</tbody></table>
+        <div style="border-top:1px dashed #000;margin-top:4px;padding-top:4px;font-size:10.5px;font-weight:800;display:flex;justify-content:space-between;">
+          <span>صافي الحركات:</span>
+          <span style="font-family:monospace;">${agg.movementTotals.net > 0 ? '+' : ''}${fmt(agg.movementTotals.net)} ${currency}</span>
+        </div>`;
+    }
+
     let methodsHtml = `<div style="text-align:center;font-weight:800;font-size:11px;background:#000;color:#fff;padding:3px 6px;margin:8px 0 4px;">تسوية طرق الدفع | PAYMENT RECONCILIATION</div>
       <table style="width:100%;border-collapse:collapse;font-size:10.5px;">
         <thead><tr style="border-bottom:1px solid #000;">
@@ -1255,6 +1909,8 @@ router.get('/:shiftId/full-report-print', async (req, res) => {
     const summaryHtml = `<div style="text-align:center;font-weight:800;font-size:11px;background:#000;color:#fff;padding:3px 6px;margin:8px 0 4px;">ملخص الإغلاق | SUMMARY</div>
       <div style="border:1.5px solid #000;padding:6px 8px;margin:4px 0;">
         ${row('الرصيد الافتتاحي', `${fmt(s.opening_float)} ${currency}`)}
+        ${agg.movementTotals.payIn ? row('إيداعات على الدرج (+)', `${fmt(agg.movementTotals.payIn)} ${currency}`) : ''}
+        ${agg.movementTotals.payOut ? row('سحوبات من الدرج (−)', `${fmt(agg.movementTotals.payOut)} ${currency}`) : ''}
         ${row('إجمالي المبيعات (متوقع)', `${fmt(totalExpected)} ${currency}`, { bold: true })}
         ${row('إجمالي الجرد الفعلي', `${fmt(totalActual)} ${currency}`, { bold: true })}
         ${row(`الفرق (${varianceLabel})`, `${totalVariance > 0 ? '+' : ''}${fmt(totalVariance)} ${currency}`, { bold: true })}
@@ -1296,7 +1952,7 @@ router.get('/:shiftId/full-report-print', async (req, res) => {
       </style>
       <script src="/shared/dynamic-i18n.js?v=2"></script>
       </head><body>
-      ${headerHtml}${metaHtml}${itemsHtml}${denomsHtml}${methodsHtml}${summaryHtml}${notesHtml}${sigHtml}${footerHtml}
+      ${headerHtml}${metaHtml}${itemsHtml}${denomsHtml}${movementsHtml}${methodsHtml}${summaryHtml}${notesHtml}${sigHtml}${footerHtml}
       <script>(function(){
         try {
           // V5.7.21 — same lang-aware print-trigger as the POS-side window

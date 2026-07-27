@@ -70,6 +70,47 @@ export function ConnectionIndicator({ onOpenReport }: { onOpenReport: () => void
   );
 }
 
+/**
+ * Ops held back because they belong to a cashier who is no longer signed in.
+ *
+ * This is NOT a «more» menu item. It is on the bar for the same reason the
+ * connection chip is: on a shared till it can be an unsent SALE from the
+ * previous shift, and the only thing that releases it is a person — the cashier
+ * who made it signing back in, or a manager. Nobody can act on what they cannot
+ * see. Self-hides when the queue is clean, so it costs nothing the rest of the
+ * time.
+ */
+export function OrphanQueueChip({ onOpenReport }: { onOpenReport: () => void }) {
+  const t = useT();
+  const { engineStatus } = usePos();
+  // Defaulted, not destructured bare: this chip sits in the till's header, and
+  // a status object missing a field it expected must degrade to "nothing to
+  // report" rather than throw and take the whole header — shift chip, connection
+  // state, every quick action — down with it. The parity suites caught exactly
+  // that when they handed the header a status literal from before this feature.
+  const orphanCount = engineStatus.orphanCount ?? 0;
+  const orphanSaleCount = engineStatus.orphanSaleCount ?? 0;
+  if (orphanCount <= 0) return null;
+  const who = (engineStatus.orphanActors ?? []).join("، ");
+  return (
+    <button
+      type="button"
+      data-testid="orphan-queue-chip"
+      onClick={onOpenReport}
+      title={
+        orphanSaleCount > 0
+          ? t("header.orphanQueue.titleSales", { count: orphanSaleCount, who })
+          : t("header.orphanQueue.title", { who })
+      }
+      className="chip btn-press min-h-11 cursor-pointer border-amber-300 bg-amber-50 px-3 text-xs font-bold text-amber-800"
+    >
+      <UserRound className="h-3.5 w-3.5" aria-hidden />
+      {t("header.orphanQueue.label")}
+      <span className="num">({fmtInt(orphanCount)})</span>
+    </button>
+  );
+}
+
 /** ms → whole hours. Pure unit conversion only — the day-bucketing branch
  *  (1 يوم / يومان / N أيام) lives in the dictionary's header.staleAge()
  *  function, since it is inseparable from the chosen string per language. */
@@ -260,6 +301,7 @@ export function Header({
             gains no height at any breakpoint. */}
         <div className="flex min-w-0 items-center justify-end gap-1.5">
         <ConnectionIndicator onOpenReport={onOpenSyncReport} />
+        <OrphanQueueChip onOpenReport={onOpenSyncReport} />
         {shiftLoading ? (
           <span className="chip min-h-11 border-slate-200 bg-slate-50 px-2.5 text-xs text-slate-400 sm:px-3">
             <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden />

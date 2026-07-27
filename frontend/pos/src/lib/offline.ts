@@ -24,6 +24,7 @@ import type { AtomicRunner, AtomicTxn, KVStore } from "./idb";
 import { idbAtomicRunner, idbStore } from "./idb";
 import * as realApi from "./api";
 import { recordFailure } from "./failureLog";
+import { currentUser, isSupervisor } from "./auth";
 import { ApiError } from "./api";
 import { ulid } from "./ulid";
 import { translateApiError } from "../i18n/errorCodes";
@@ -51,6 +52,13 @@ import type {
 // until then — and in any test harness that never calls setTranslator() —
 // this safe default keeps every message meaningful (never a blank string).
 const IDENTITY_T: TFunction = (path) => path;
+
+/** Production identity source. Reads the same pos_token every request uses, so
+ *  the queue's notion of "who am I" can never drift from the server's. */
+const defaultActor = (): ActorIdentity | null => {
+  const u = currentUser();
+  return u ? { username: u.username, isSupervisor: isSupervisor(u) } : null;
+};
 
 // CO-1 — the stores the ordering critical section spans. 'orders' is in here
 // because checkout must mark the order submitted in the SAME transaction that
@@ -89,12 +97,39 @@ export interface EngineDeps {
    *  why this can't be required at construction time). Omit in tests that
    *  don't care about toast text; the engine falls back to IDENTITY_T. */
   t?: TFunction;
+  /**
+   * Who is signed in right now. Defaults to reading the shared pos_token, so
+   * production needs no wiring; tests inject a fake to drive the quarantine
+   * (see QueueOp.actor). Returning null disables quarantining entirely — an
+   * engine that cannot name the current user must not start withholding ops.
+   */
+  currentActor?: () => ActorIdentity | null;
+}
+
+/** The signed-in identity, as far as the queue is concerned. */
+export interface ActorIdentity {
+  username: string;
+  /** admin/manager — the server lets them act on any cashier's order. */
+  isSupervisor: boolean;
 }
 
 export interface EngineStatus {
   online: boolean;
   syncing: boolean;
+  /**
+   * Ops the CURRENT user can actually drain. Deliberately excludes quarantined
+   * ops (below): they are not "pending sync", they are waiting for a different
+   * person, and counting them here would leave the till reading «Online (2)»
+   * forever with no action that could ever clear it — and would jam the
+   * queue-empty gate App.tsx uses to allow a synced void.
+   */
   queueCount: number;
+  /** Ops authored by someone else, withheld rather than sent-and-destroyed. */
+  orphanCount: number;
+  /** How many of those are completed SALES (money), not drafts. */
+  orphanSaleCount: number;
+  /** Distinct usernames the orphaned ops belong to, for the notice. */
+  orphanActors: string[];
   lastReport: SyncReport | null;
 }
 
@@ -203,6 +238,8 @@ export class OfflineEngine {
    */
   private flushChain: Promise<void> = Promise.resolve();
   private queueCount = 0;
+  /** Quarantined ops — see splitByActor(). Never sent, never deleted. */
+  private orphans: QueueOp[] = [];
   private lastReport: SyncReport | null = null;
   private statusSnapshot: EngineStatus;
   private intervalId: ReturnType<typeof setInterval> | null = null;
@@ -211,9 +248,71 @@ export class OfflineEngine {
   constructor(deps: EngineDeps) {
     this.deps = deps;
     this.t = deps.t ?? IDENTITY_T;
-    this.statusSnapshot = { online: deps.isOnline(), syncing: false, queueCount: 0, lastReport: null };
+    this.statusSnapshot = {
+      online: deps.isOnline(),
+      syncing: false,
+      queueCount: 0,
+      orphanCount: 0,
+      orphanSaleCount: 0,
+      orphanActors: [],
+      lastReport: null,
+    };
     this.seqReady = this.initSeq();
     if (deps.autoStart) this.start();
+  }
+
+  /** The signed-in user, or null when unknown (see EngineDeps.currentActor). */
+  private actor(): ActorIdentity | null {
+    const read = this.deps.currentActor ?? defaultActor;
+    try {
+      return read();
+    } catch {
+      return null; // a broken token must not start withholding ops
+    }
+  }
+
+  /**
+   * Split the queue into what THIS user may drain and what belongs to someone
+   * else. See QueueOp.actor for why sending the latter is not merely futile but
+   * destructive.
+   *
+   * Three cases pass through as drainable, all on purpose:
+   *   • op.actor missing  — written by a build before this field existed, or by
+   *     the legacy till. Withholding those would strand real sales on upgrade.
+   *   • no current actor  — identity unknown (no token yet, or a malformed one);
+   *     behave exactly as before rather than quarantine everything.
+   *   • supervisor        — admin/manager are accepted by the server for any
+   *     cashier's order (_userIsSuper), so for them nothing is orphaned and a
+   *     manager signing in is the recovery path.
+   */
+  private splitByActor(ops: QueueOp[]): { mine: QueueOp[]; orphans: QueueOp[] } {
+    const me = this.actor();
+    if (!me || me.isSupervisor) return { mine: ops, orphans: [] };
+    const mine: QueueOp[] = [];
+    const orphans: QueueOp[] = [];
+    for (const op of ops) {
+      if (!op.actor || op.actor === me.username) mine.push(op);
+      else orphans.push(op);
+    }
+    return { mine, orphans };
+  }
+
+  /** Re-read the queue and republish both counters. */
+  private async recount(): Promise<void> {
+    const all = await this.deps.queue.getAll().catch(() => [] as QueueOp[]);
+    const { mine, orphans } = this.splitByActor(all);
+    this.queueCount = mine.length;
+    this.orphans = orphans;
+  }
+
+  /**
+   * Called by the provider when the signed-in user changes (cashier switch).
+   * The engine singleton outlives the login screen, so without this the split
+   * would keep using the identity that was current at boot.
+   */
+  async refreshActor(): Promise<void> {
+    await this.recount();
+    this.emitStatus();
   }
 
   /** Wire in the live i18n t() after construction — PosProvider calls this
@@ -261,7 +360,9 @@ export class OfflineEngine {
         { all: ["queue"] },
         (txn: AtomicTxn) => {
           const all = txn.getAll<QueueOp>("queue").sort((a, b) => a.seq - b.seq);
-          this.queueCount = all.length;
+          const split = this.splitByActor(all);
+          this.queueCount = split.mine.length;
+          this.orphans = split.orphans;
           if (!all.length) return;
 
           const byOrder = new Map<string, QueueOp[]>();
@@ -363,6 +464,9 @@ export class OfflineEngine {
       online: this.deps.isOnline(),
       syncing: this.syncing,
       queueCount: this.queueCount,
+      orphanCount: this.orphans.length,
+      orphanSaleCount: this.orphans.filter(op_isCheckout).length,
+      orphanActors: Array.from(new Set(this.orphans.map((o) => o.actor).filter((a): a is string => !!a))),
       lastReport: this.lastReport,
     };
     this.listeners.forEach((fn) => fn());
@@ -605,6 +709,10 @@ export class OfflineEngine {
 
         if (spec.setOrder) txn.put("orders", spec.orderId, spec.setOrder);
 
+        // Stamp the author at ENQUEUE, not at drain: by drain time the till may
+        // already be showing a different cashier, which is precisely the case
+        // this exists to survive (QueueOp.actor).
+        const author = this.actor()?.username;
         const appended: QueueOp[] = spec.append.map((a) => {
           const op: QueueOp = {
             opId: this.deps.newId(),
@@ -613,6 +721,7 @@ export class OfflineEngine {
             payload: a.payload,
             ts: this.deps.now(),
             seq: ++seq,
+            ...(author ? { actor: author } : {}),
           };
           txn.put("queue", op.opId, op);
           return op;
@@ -622,7 +731,11 @@ export class OfflineEngine {
       },
     );
 
-    this.queueCount = out.count;
+    // out.count is every row in the store; queueCount is only what this user can
+    // drain. A freshly appended op is always the current user's, and the orphan
+    // set cannot change on an enqueue, so the cached split stays correct without
+    // a second read of the queue in the debounce/checkout hot path.
+    this.queueCount = Math.max(0, out.count - this.orphans.length);
     this.emitStatus();
     return { appended: out.appended, rejected: out.rejected };
   }
@@ -835,7 +948,18 @@ export class OfflineEngine {
     const reports: SyncOpReport[] = [];
     try {
       await this.seqReady;
-      const ops = (await this.deps.queue.getAll()).sort((a, b) => a.seq - b.seq);
+      // Withhold another cashier's ops BEFORE anything is sent. Sending them is
+      // not a harmless no-op: the server answers PERMISSION_DENIED, which is a
+      // permanent domain failure, and the permanent branch DELETES the op —
+      // fail() even reverts the order to 'open'. A queued offline sale from the
+      // previous shift is money, and that path erases it with nothing recorded
+      // server-side. Filtering here (rather than skipping inside the walk) also
+      // keeps the FIFO invariants intact: an order has exactly one author, so
+      // removing an author removes whole orders and never splits one.
+      const { mine: ops, orphans } = this.splitByActor(
+        (await this.deps.queue.getAll()).sort((a, b) => a.seq - b.seq),
+      );
+      this.orphans = orphans;
       if (ops.length) {
         // Per-order expectedVersion cursor (see file header).
         const cursor = new Map<string, number | null>();
@@ -877,7 +1001,7 @@ export class OfflineEngine {
       }
     } finally {
       if (reports.length) this.lastReport = { at: this.deps.now(), results: reports };
-      this.queueCount = (await this.deps.queue.getAll().catch(() => [] as QueueOp[])).length;
+      await this.recount();
       this.syncing = false;
       this.emitStatus();
       if (reports.length) this.emitEvent({ type: "toast", kind: "info", message: syncSummaryText(reports) });

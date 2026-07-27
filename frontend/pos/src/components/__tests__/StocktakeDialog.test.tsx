@@ -4,6 +4,7 @@ import { StocktakeDialog, dualUnitTotal, normalizeArabic } from "../dialogs/Stoc
 // StocktakeDialog resolves strings via useT(), which throws without an
 // ancestor I18nProvider (see i18n/I18nProvider.tsx).
 import { I18nProvider } from "@/i18n/I18nProvider";
+import { IDLE_ENGINE_STATUS } from "./parityTestkit";
 
 // ── usePos mock (user + online flag + toasts only — the dialog needs no more) ─
 const mocks = vi.hoisted(() => ({
@@ -13,7 +14,7 @@ const mocks = vi.hoisted(() => ({
 vi.mock("@/state/store", () => ({
   usePos: () => ({
     user: { username: "cashier1", role: "cashier" },
-    engineStatus: { online: mocks.online.value, syncing: false, queueCount: 0 },
+    engineStatus: { ...IDLE_ENGINE_STATUS, online: mocks.online.value },
     pushToast: mocks.pushToast,
   }),
 }));

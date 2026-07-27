@@ -46,6 +46,16 @@ export const syncReportDialog = {
   queue: {
     heading: "Queue",
   },
+  /** The withheld-ops explanation. Deliberately says what will release them
+   *  instead of offering a button — no action available to this cashier can. */
+  orphans: {
+    heading: (p: { count: number; who: string }) =>
+      `${p.count} ${p.count === 1 ? "operation" : "operations"} held for ${p.who}`,
+    sales: (p: { count: number }) =>
+      `${p.count} of them ${p.count === 1 ? "is a completed sale that has" : "are completed sales that have"} not reached the server yet. They are stored on this device and will not be lost.`,
+    howTo: "They cannot be sent under your account — the server only accepts an order from the cashier who made it. Ask that cashier to sign in on this device, or sign in as a manager, and they will sync on their own.",
+    byTag: (p: { who: string }) => `· ${p.who}`,
+  },
   order: "Order",
   lastSync: "Last sync",
   empty: {

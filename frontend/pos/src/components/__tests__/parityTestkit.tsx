@@ -74,8 +74,20 @@ export interface FakeEngineOpts {
   status?: Partial<EngineStatus>;
 }
 
+/** A quiet, fully-synced till. One definition so a new EngineStatus field lands
+ *  in every fake at once instead of in five hand-written literals. */
+export const IDLE_ENGINE_STATUS: EngineStatus = {
+  online: true,
+  syncing: false,
+  queueCount: 0,
+  orphanCount: 0,
+  orphanSaleCount: 0,
+  orphanActors: [],
+  lastReport: null,
+};
+
 export function makeFakeEngine(opts: FakeEngineOpts = {}) {
-  const status: EngineStatus = { online: true, syncing: false, queueCount: 0, lastReport: null, ...opts.status };
+  const status: EngineStatus = { ...IDLE_ENGINE_STATUS, ...opts.status };
   const fake = {
     subscribe: vi.fn(() => () => {}),
     getStatus: vi.fn(() => status),
@@ -144,7 +156,7 @@ export function makeCtx(opts: MakeCtxOpts = {}): PosContextValue {
     posCan: vi.fn(() => false),
     deviceId: "DEV-1",
     engine,
-    engineStatus: { online: opts.online ?? true, syncing: false, queueCount: 0, lastReport: null },
+    engineStatus: { ...IDLE_ENGINE_STATUS, online: opts.online ?? true },
     catalog,
     catalogLoading: false,
     catalogError: null,

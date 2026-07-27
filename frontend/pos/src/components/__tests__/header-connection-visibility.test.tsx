@@ -14,7 +14,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import type { PosContextValue } from "@/state/store";
-import { makeCtx } from "./parityTestkit";
+import { IDLE_ENGINE_STATUS, makeCtx } from "./parityTestkit";
 
 let currentCtx: PosContextValue;
 vi.mock("@/state/store", () => ({ usePos: () => currentCtx }));
@@ -87,7 +87,7 @@ describe("connection state is on the app bar, not behind «المزيد»", () =
 
   it("shows the PENDING QUEUE COUNT next to the state, online and offline", () => {
     renderHeader(
-      makeCtx({ online: false, overrides: { engineStatus: { online: false, syncing: false, queueCount: 7, lastReport: null } } }),
+      makeCtx({ online: false, overrides: { engineStatus: { ...IDLE_ENGINE_STATUS, online: false, queueCount: 7 } } }),
     );
     expect(screen.getByRole("button", { name: /غير متصل/ })).toHaveTextContent("7");
   });

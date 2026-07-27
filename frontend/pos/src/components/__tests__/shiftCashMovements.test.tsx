@@ -23,6 +23,7 @@ import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 import { ShiftDialog } from "../dialogs/ShiftDialog";
 import { I18nProvider } from "@/i18n/I18nProvider";
 import { ar } from "@/i18n/dictionaries/ar";
+import { IDLE_ENGINE_STATUS } from "./parityTestkit";
 
 const h = vi.hoisted(() => ({ ctx: {} as Record<string, unknown> }));
 vi.mock("@/state/store", () => ({ usePos: () => h.ctx }));
@@ -34,7 +35,7 @@ function baseCtx(over: Record<string, unknown> = {}): Record<string, unknown> {
     user: { username: "c1", role: "cashier" },
     shiftId: SHIFT,
     shiftLoading: false,
-    engineStatus: { online: true, syncing: false, queueCount: 0 },
+    engineStatus: { ...IDLE_ENGINE_STATUS },
     openShiftNow: vi.fn(),
     openingShift: false,
     onShiftClosed: vi.fn(),
@@ -124,7 +125,7 @@ describe("the drawer-movement entry point on the shift screen", () => {
   });
 
   it("is disabled offline — a movement is a server write, never queued", async () => {
-    h.ctx = baseCtx({ engineStatus: { online: false, syncing: false, queueCount: 0 } });
+    h.ctx = baseCtx({ engineStatus: { ...IDLE_ENGINE_STATUS, online: false } });
     installFetch();
     renderShift();
     const btn = await screen.findByRole("button", { name: ar.shiftDialog.info.cashMovementButton });

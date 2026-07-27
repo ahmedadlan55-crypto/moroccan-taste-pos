@@ -290,6 +290,24 @@ export interface QueueOp {
   payload: Record<string, unknown>;
   ts: number;
   seq: number; // strict FIFO tiebreaker (same-ms ops)
+  /**
+   * The username that enqueued this op.
+   *
+   * The queue is DEVICE-scoped; authorization on the server is USER-scoped
+   * (routes/pos-v2.js refuses any order whose `username` is not the caller's).
+   * On a shared till those two scopes diverge the moment a cashier switches:
+   * the previous cashier's ops drain under the NEW cashier's token, the server
+   * answers PERMISSION_DENIED, and — because that is a permanent domain
+   * failure — the engine deletes the op. For a queued offline SALE that is
+   * money destroyed on the device with nothing recorded server-side.
+   *
+   * Stamping the author lets the drain skip what it can prove will be refused
+   * instead of sacrificing it. OPTIONAL because rows written by earlier builds
+   * are already sitting in IndexedDB on live devices: an op with no actor is
+   * treated as the current user's and drains exactly as it does today, so the
+   * upgrade strands nothing.
+   */
+  actor?: string;
 }
 
 export interface SyncOpReport {

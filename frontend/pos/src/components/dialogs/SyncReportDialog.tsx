@@ -42,8 +42,8 @@ const OP_LABEL_KEYS: Record<string, string> = {
 
 export function SyncReportDialog({ open, onClose }: { open: boolean; onClose: () => void }) {
   const t = useT();
-  const { engine, engineStatus, supervisor } = usePos();
-  const { online, syncing, queueCount, lastReport } = engineStatus;
+  const { engine, engineStatus, supervisor, user } = usePos();
+  const { online, syncing, queueCount, orphanCount, orphanSaleCount, orphanActors, lastReport } = engineStatus;
   const [pending, setPending] = useState<QueueOp[]>([]);
   const [tab, setTab] = useState<Tab>("sync");
   /** Inline two-step confirm rather than window.confirm — the same pattern the
@@ -119,21 +119,53 @@ export function SyncReportDialog({ open, onClose }: { open: boolean; onClose: ()
         </Button>
       </div>
 
+      {/* Withheld ops (lib/offline.ts splitByActor). Explained here in full,
+          because the header chip only has room for a count — and because the
+          resolution is a PERSON, not a button: nothing this cashier can tap
+          will release another cashier's work. Saying so plainly beats the raw
+          «هذا الطلب يخص كاشيرًا آخر» the server used to repeat once per op. */}
+      {orphanCount > 0 ? (
+        <div
+          data-testid="orphan-queue-note"
+          className="mb-4 rounded-2xl border border-amber-300 bg-amber-50 px-4 py-3 text-xs text-amber-900"
+        >
+          <p className="font-extrabold">
+            {t("syncReportDialog.orphans.heading", { count: orphanCount, who: orphanActors.join("، ") })}
+          </p>
+          {orphanSaleCount > 0 ? (
+            <p className="mt-1 font-bold">{t("syncReportDialog.orphans.sales", { count: orphanSaleCount })}</p>
+          ) : null}
+          <p className="mt-1 font-bold text-amber-800">{t("syncReportDialog.orphans.howTo")}</p>
+        </div>
+      ) : null}
+
       {pending.length > 0 ? (
         <div className="mb-4">
           <p className="mb-2 text-xs font-extrabold text-slate-500">{t("syncReportDialog.queue.heading")}</p>
           <ul className="space-y-1">
-            {pending.map((op) => (
-              <li key={op.opId} className="flex items-center justify-between rounded-xl border border-slate-100 px-3 py-2 text-xs">
+            {pending.map((op) => {
+              const foreign = !!op.actor && !!user && op.actor !== user.username;
+              return (
+              <li
+                key={op.opId}
+                className={cn(
+                  "flex items-center justify-between rounded-xl border px-3 py-2 text-xs",
+                  foreign ? "border-amber-200 bg-amber-50/60" : "border-slate-100",
+                )}
+              >
                 <span className="font-extrabold text-slate-600">
                   {opLabel(op.type)}
                   <span className="ms-2 font-bold text-slate-400">
                     {t("syncReportDialog.order")} <Money value={shortRef(op.orderId)} />
                   </span>
+                  {foreign ? (
+                    <span className="ms-2 font-bold text-amber-800">{t("syncReportDialog.orphans.byTag", { who: op.actor ?? "" })}</span>
+                  ) : null}
                 </span>
                 <Money value={fmtDateTime(op.ts)} className="font-bold text-slate-400" />
               </li>
-            ))}
+              );
+            })}
           </ul>
         </div>
       ) : null}

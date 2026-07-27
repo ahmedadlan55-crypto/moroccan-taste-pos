@@ -40,6 +40,7 @@ import { CustomerPicker } from "@/components/CustomerPicker";
 // CustomerPicker below don't use i18n themselves, so their standalone
 // render() calls are left unwrapped.
 import { I18nProvider } from "@/i18n/I18nProvider";
+import { IDLE_ENGINE_STATUS } from "./parityTestkit";
 
 const CATALOG: Catalog = {
   items: [{ id: "M1", name: "شاي مغربي", price: 23, category: "مشروبات", active: true, taxCategory: "S" }],
@@ -101,7 +102,7 @@ function makeFixture(overrides: Partial<PosContextValue> = {}): PosContextValue 
     posCan: () => false,
     deviceId: "DEV-1",
     engine: engine as unknown as PosContextValue["engine"],
-    engineStatus: { online: true, syncing: false, queueCount: 0, lastReport: null },
+    engineStatus: { ...IDLE_ENGINE_STATUS },
     catalog: CATALOG,
     catalogLoading: false,
     catalogError: null,

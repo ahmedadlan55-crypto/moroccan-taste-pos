@@ -24,6 +24,7 @@ import { ProductGrid } from "../ProductGrid";
 // StaleCatalogChip (from Header.tsx) resolves strings via useT(), which
 // throws without an ancestor I18nProvider (see i18n/I18nProvider.tsx).
 import { I18nProvider } from "@/i18n/I18nProvider";
+import { IDLE_ENGINE_STATUS } from "./parityTestkit";
 
 afterEach(() => {
   fixture.value = {};
@@ -36,7 +37,7 @@ describe("boot-manual-refresh-all — StaleCatalogChip", () => {
       catalogStale: false,
       catalogAgeMs: 0,
       refetchCatalog: vi.fn(),
-      engineStatus: { online: true, syncing: false, queueCount: 0, lastReport: null },
+      engineStatus: { ...IDLE_ENGINE_STATUS },
     };
     const { container } = render(
       <I18nProvider>
@@ -52,7 +53,7 @@ describe("boot-manual-refresh-all — StaleCatalogChip", () => {
       catalogStale: true,
       catalogAgeMs: 3 * 3_600_000,
       refetchCatalog,
-      engineStatus: { online: true, syncing: false, queueCount: 0, lastReport: null },
+      engineStatus: { ...IDLE_ENGINE_STATUS },
     };
     render(
       <I18nProvider>
@@ -70,7 +71,7 @@ describe("boot-manual-refresh-all — StaleCatalogChip", () => {
       catalogStale: true,
       catalogAgeMs: 2 * 24 * 3_600_000,
       refetchCatalog: vi.fn(),
-      engineStatus: { online: false, syncing: false, queueCount: 0, lastReport: null },
+      engineStatus: { ...IDLE_ENGINE_STATUS, online: false },
     };
     render(
       <I18nProvider>

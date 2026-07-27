@@ -24,6 +24,7 @@ import type { CartTotals, LocalOrder } from "@/lib/types";
 // every render() through it — harmless for the CustomerPicker/Dialog cases
 // that don't consume i18n context.
 import { I18nProvider } from "@/i18n/I18nProvider";
+import { IDLE_ENGINE_STATUS } from "./parityTestkit";
 
 // ── Mock the POS store hook (vi.mock is hoisted; state via vi.hoisted) ──────
 const h = vi.hoisted(() => ({ ctx: {} as Record<string, unknown> }));
@@ -75,7 +76,7 @@ function baseCtx(over: Record<string, unknown> = {}): Record<string, unknown> {
     removeLine: vi.fn(),
     setLineNotes: vi.fn(),
     setLineDiscount: vi.fn(),
-    engineStatus: { online: true, syncing: false, queueCount: 0 },
+    engineStatus: { ...IDLE_ENGINE_STATUS },
     pushToast: vi.fn(),
     ...over,
   };

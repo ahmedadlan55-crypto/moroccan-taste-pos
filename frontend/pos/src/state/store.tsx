@@ -464,6 +464,19 @@ export function PosProvider({ children }: { children: ReactNode }) {
     if (t) engine.setTranslator(t);
   }, [engine, t]);
 
+  // Same reason, different fact: the engine singleton outlives the login screen,
+  // so after a cashier switch its queue split would still be computed against
+  // whoever was signed in when it was constructed. Re-run on identity change so
+  // the previous cashier's ops are recognised as theirs — and withheld — from
+  // the first flush (lib/offline.ts splitByActor).
+  // Optional-called on purpose. This provider is the ROOT of the till: a stub
+  // engine (every parity suite injects one) that lacks a lifecycle hook must
+  // degrade to "no re-split" rather than throw during commit and blank the
+  // register — the same reasoning as the lazy-dialog boundary.
+  useEffect(() => {
+    void engine.refreshActor?.();
+  }, [engine, user?.username]);
+
   // This provider's OWN strings (undo, 86-board warning). useT() always resolves
   // — outside an I18nProvider it falls back to the base (ar) dictionary — so
   // unlike the engine's translator above it is never null. Held in refs so the
@@ -482,6 +495,8 @@ export function PosProvider({ children }: { children: ReactNode }) {
   // a message can never be painted by both surfaces.
   const [toasts, setToasts] = useState<Toast[]>([]);
   const [actionToasts, setActionToasts] = useState<Toast[]>([]);
+  /** `${kind} ${message}` for every plain toast currently live — the dedupe key. */
+  const liveToastKeys = useRef<Set<string>>(new Set());
   const pushToast = useCallback((kind: Toast["kind"], message: string, action?: ToastAction) => {
     const id = ++toastSeq;
     if (action) {
@@ -491,8 +506,23 @@ export function PosProvider({ children }: { children: ReactNode }) {
       setTimeout(() => setActionToasts((t) => t.filter((x) => x.id !== id)), ACTION_TOAST_TTL_MS);
       return;
     }
-    setToasts((t) => [...t.slice(-3), { id, kind, message }]);
-    setTimeout(() => setToasts((t) => t.filter((x) => x.id !== id)), TOAST_TTL_MS);
+    // Collapse a repeat of a message that is already on screen. A single drain
+    // can fail N ops for ONE underlying cause (a whole shift's queue refused
+    // for the same reason), and stacking N identical red cards taught the
+    // cashier nothing the first one hadn't — it just buried the sell screen.
+    // The survivor keeps its own id and TTL, so nothing extends indefinitely.
+    //
+    // Tracked in a ref rather than read out of the updater: a state updater
+    // must be pure (React may invoke it twice), and the decision has to be
+    // made before the timer below is armed either way.
+    const key = `${kind} ${message}`;
+    if (liveToastKeys.current.has(key)) return;
+    liveToastKeys.current.add(key);
+    setToasts((prev) => [...prev.slice(-3), { id, kind, message }]);
+    setTimeout(() => {
+      liveToastKeys.current.delete(key);
+      setToasts((t) => t.filter((x) => x.id !== id));
+    }, TOAST_TTL_MS);
   }, []);
   const dismissToast = useCallback((id: number) => {
     setToasts((t) => t.filter((x) => x.id !== id));

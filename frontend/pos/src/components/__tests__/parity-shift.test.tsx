@@ -17,6 +17,7 @@ import { ShiftDialog } from "../dialogs/ShiftDialog";
 // without an ancestor I18nProvider (see i18n/I18nProvider.tsx) — every render()
 // below needs the wrapper now that both components are i18n-migrated.
 import { I18nProvider } from "@/i18n/I18nProvider";
+import { IDLE_ENGINE_STATUS } from "./parityTestkit";
 
 const h = vi.hoisted(() => ({ ctx: {} as Record<string, unknown> }));
 vi.mock("@/state/store", () => ({ usePos: () => h.ctx }));
@@ -26,7 +27,7 @@ function baseCtx(over: Record<string, unknown> = {}): Record<string, unknown> {
     user: { username: "c1", role: "cashier" },
     shiftId: "SH-77",
     shiftLoading: false,
-    engineStatus: { online: true, syncing: false, queueCount: 0 },
+    engineStatus: { ...IDLE_ENGINE_STATUS },
     openShiftNow: vi.fn(),
     openingShift: false,
     onShiftClosed: vi.fn(),
@@ -176,7 +177,7 @@ describe("shift-open / shift-open-commit — فتح وردية", () => {
   });
 
   it("offline: the header فتح وردية button is disabled (open requires the server)", () => {
-    h.ctx = baseCtx({ shiftId: null, engineStatus: { online: false, syncing: false, queueCount: 0 } });
+    h.ctx = baseCtx({ shiftId: null, engineStatus: { ...IDLE_ENGINE_STATUS, online: false } });
     render(
       <I18nProvider>
         <Header {...HEADER_PROPS} />
@@ -186,7 +187,7 @@ describe("shift-open / shift-open-commit — فتح وردية", () => {
   });
 
   it("ShiftDialog with no shift offers فتح وردية and blocks it offline", () => {
-    h.ctx = baseCtx({ shiftId: null, engineStatus: { online: false, syncing: false, queueCount: 0 } });
+    h.ctx = baseCtx({ shiftId: null, engineStatus: { ...IDLE_ENGINE_STATUS, online: false } });
     stubShiftFetch();
     render(
       <I18nProvider>

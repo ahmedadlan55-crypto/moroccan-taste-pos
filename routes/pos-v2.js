@@ -584,7 +584,7 @@ async function doUpsert(user, body) {
       return { version: 1, created: true };
     }
     M.assertCanEdit(existing.status);
-    if (!_userIsSuper(user) && existing.username && existing.username !== actor) throw _err('PERMISSION_DENIED', 'هذا الطلب يخص كاشيرًا آخر');
+    if (!_userIsSuper(user) && existing.username && existing.username !== actor) throw _err('PERMISSION_DENIED', 'هذا الطلب يخص كاشيرًا آخر · This order belongs to another cashier — it can only be sent by the cashier who created it');
     if (!Number.isFinite(expected)) throw _err('VALIDATION_ERROR', 'expectedVersion مطلوب لتعديل طلب موجود');
     const [r] = await conn.query(
       `UPDATE pos_orders SET order_type=?, table_no=?, shift_id=?, warehouse_id=?, channel_id=?, channel_name=?, customer_id=?,
@@ -616,7 +616,7 @@ async function doTransition(user, id, action, body) {
   return db.withTransaction(async (conn) => {
     const o = await _loadOrder(id, conn); // FOR UPDATE
     if (!o) { const e = new Error('الطلب غير موجود'); e.status = 404; throw e; }
-    if (!_userIsSuper(user) && o.username && o.username !== actor) throw _err('PERMISSION_DENIED', 'هذا الطلب يخص كاشيرًا آخر');
+    if (!_userIsSuper(user) && o.username && o.username !== actor) throw _err('PERMISSION_DENIED', 'هذا الطلب يخص كاشيرًا آخر · This order belongs to another cashier — it can only be sent by the cashier who created it');
     if (Number.isFinite(expected) && Number(o.version) !== expected) throw _err('VERSION_CONFLICT', 'تغيّر الطلب — أعد التحميل');
     let sql, params, to;
     if (action === 'hold') {
@@ -652,7 +652,7 @@ async function doSubmit(user, id, body) {
   return db.withTransaction(async (conn) => {
     const o = await _loadOrder(id, conn); // FOR UPDATE
     if (!o) { const e = new Error('الطلب غير موجود'); e.status = 404; throw e; }
-    if (!_userIsSuper(user) && o.username && o.username !== actor) throw _err('PERMISSION_DENIED', 'هذا الطلب يخص كاشيرًا آخر');
+    if (!_userIsSuper(user) && o.username && o.username !== actor) throw _err('PERMISSION_DENIED', 'هذا الطلب يخص كاشيرًا آخر · This order belongs to another cashier — it can only be sent by the cashier who created it');
     M.assertCanSubmit(o.status);
     if (Number.isFinite(expected) && Number(o.version) !== expected) throw _err('VERSION_CONFLICT', 'تغيّر الطلب — أعد التحميل');
     if (!o.shift_id) throw _err('VALIDATION_ERROR', 'لا يمكن الدفع بلا وردية مفتوحة — افتح وردية أولًا');
@@ -1109,7 +1109,7 @@ router.get('/orders/:id', POS, async (req, res) => {
   try {
     const o = await _loadOrder(req.params.id);
     if (!o) { const e = new Error('الطلب غير موجود'); e.status = 404; throw e; }
-    if (!_userIsSuper(req.user) && o.username && o.username !== _userName(req.user)) return _fail(res, 'PERMISSION_DENIED', 'هذا الطلب يخص كاشيرًا آخر');
+    if (!_userIsSuper(req.user) && o.username && o.username !== _userName(req.user)) return _fail(res, 'PERMISSION_DENIED', 'هذا الطلب يخص كاشيرًا آخر · This order belongs to another cashier — it can only be sent by the cashier who created it');
     // Supervisors: same brand-scope as the list route, with the same
     // allBranches+capability bypass. Reuses PERMISSION_DENIED — no new code.
     if (_userIsSuper(req.user) && o.branch_id) {

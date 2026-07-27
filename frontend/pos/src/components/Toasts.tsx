@@ -72,7 +72,14 @@ export function Toasts() {
     if (!incoming.length) return;
     setSticky((prev) => {
       const known = new Set(prev.map((toast) => toast.id));
-      const added = incoming.filter((toast) => !known.has(toast.id));
+      // De-duplicated by MESSAGE as well as by id. The store already collapses
+      // repeats that overlap in time, but this mirror outlives a store toast's
+      // TTL by design, so the same cause recurring on the next 30s flush would
+      // otherwise stack a second identical card on top of the first — which is
+      // exactly what a failing drain looked like: one wall of red saying one
+      // thing. Id-dedup alone cannot see that; these are genuinely new toasts.
+      const knownText = new Set(prev.map((toast) => toast.message));
+      const added = incoming.filter((toast) => !known.has(toast.id) && !knownText.has(toast.message));
       if (!added.length) return prev; // nothing new — keep the array identity stable
       const next = [...prev, ...added];
       return next.length > MAX_STICKY_ERRORS ? next.slice(next.length - MAX_STICKY_ERRORS) : next;

@@ -165,6 +165,41 @@ describe("a stack of errors collapses instead of burying a 390px screen", () => 
   });
 });
 
+describe("one cause never paints as a wall of identical cards", () => {
+  // From a production screenshot: two red cards, same sentence, stacked, over a
+  // till whose cart was hidden behind them. One drain had failed several ops for
+  // ONE reason. The sticky mirror outlives a store toast's 5s TTL by design, so
+  // the recurrence arrives as a genuinely NEW id — id-dedup alone cannot see it.
+  it("collapses a repeat of a message already on screen", () => {
+    const msg = "هذا الطلب يخص كاشيرًا آخر";
+    setToasts([{ id: 1, kind: "error", message: msg }]);
+    const { rerender } = renderToasts();
+
+    setToasts([{ id: 2, kind: "error", message: msg }]);
+    rerender(
+      <I18nProvider>
+        <Toasts />
+      </I18nProvider>,
+    );
+
+    expect(screen.getAllByText(msg)).toHaveLength(1);
+  });
+
+  it("still shows a genuinely different failure alongside it", () => {
+    setToasts([{ id: 1, kind: "error", message: "خطأ أول" }]);
+    const { rerender } = renderToasts();
+    setToasts([{ id: 2, kind: "error", message: "خطأ ثانٍ" }]);
+    rerender(
+      <I18nProvider>
+        <Toasts />
+      </I18nProvider>,
+    );
+
+    expect(screen.getByText("خطأ أول")).toBeInTheDocument();
+    expect(screen.getByText("خطأ ثانٍ")).toBeInTheDocument();
+  });
+});
+
 describe("accessibility", () => {
   it("announces errors assertively and keeps a labelled close control on each", () => {
     setToasts([{ id: 1, kind: "error", message: "خطأ" }]);

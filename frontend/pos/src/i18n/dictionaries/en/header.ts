@@ -35,6 +35,16 @@ export const header = {
     return d === 1 ? "1 day" : `${d} days`;
   },
 
+  /** Ops held back for a cashier who is no longer signed in — see
+   *  lib/offline.ts splitByActor(). Label prefix only; the "(count)" renders
+   *  as its own node, same pattern as the queue-count chips. */
+  orphanQueue: {
+    label: "Another cashier",
+    title: (p: { who: string }) => `Unsynced operations belonging to ${p.who} — they will sync when that cashier signs in, or a manager can release them`,
+    titleSales: (p: { count: number; who: string }) =>
+      `${p.count} completed ${p.count === 1 ? "sale" : "sales"} by ${p.who} have not reached the server yet — that cashier signing back in, or a manager, will send them. Nothing is lost.`,
+  },
+
   staleCatalog: {
     unknownAge: "unknown",
     titleOnline: "Item list unconfirmed — tap to reload",

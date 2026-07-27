@@ -22,6 +22,7 @@ import type { SaleRow } from "@/lib/types";
 // ancestor I18nProvider (see i18n/I18nProvider.tsx). ManagerApprovalDialog
 // does not use i18n, so its direct render() below is left unwrapped.
 import { I18nProvider } from "@/i18n/I18nProvider";
+import { IDLE_ENGINE_STATUS } from "./parityTestkit";
 
 const h = vi.hoisted(() => ({ ctx: {} as Record<string, unknown> }));
 vi.mock("@/state/store", () => ({ usePos: () => h.ctx }));
@@ -31,7 +32,7 @@ function baseCtx(over: Record<string, unknown> = {}): Record<string, unknown> {
     user: { username: "c1", role: "cashier" },
     shiftId: "SH-1",
     pushToast: vi.fn(),
-    engineStatus: { online: true, syncing: false, queueCount: 0 },
+    engineStatus: { ...IDLE_ENGINE_STATUS },
     caps: null,
     posCan: () => false,
     ...over,

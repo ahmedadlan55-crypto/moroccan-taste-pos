@@ -28,6 +28,7 @@ import { fmt2, fmtInt } from "@/lib/format";
 import { lineTotals, orderDiscountPct, round2 } from "@/lib/cartMath";
 import { presetLineAmount, presetsForScope, useDiscountPresets } from "@/lib/discountPresets";
 import type { CartLine, OrderType } from "@/lib/types";
+import { QtyPad } from "./QtyPad";
 import { Button, cn, EmptyState, Money } from "./ui";
 import { UnitPicker } from "./UnitPicker";
 
@@ -115,7 +116,18 @@ function CartLineRow({ line, index }: { line: CartLine; index: number }) {
           >
             <Plus className="h-4 w-4" aria-hidden />
           </button>
-          <span className="num w-8 text-center text-sm font-extrabold text-ink">{fmtInt(line.qty)}</span>
+          {/* The quantity is TYPEABLE (close/w1b-qtypad): tapping it opens an
+              anchored numpad, so "12 bottles" is one entry instead of eleven
+              taps on «+». Committing 0 goes through the same setQty contract
+              the stepper uses, so it removes the line — and raises the undo
+              toast the store attaches to every removal. */}
+          <QtyPad
+            qty={line.qty}
+            itemName={displayName}
+            unitName={line.enteredUnitName ?? null}
+            onSubmit={(q) => setQty(index, q)}
+            className="w-11"
+          />
           <button
             type="button"
             onClick={() => setQty(index, line.qty - 1)}

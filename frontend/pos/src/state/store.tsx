@@ -15,14 +15,17 @@ import {
   type ReactNode,
 } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { Undo2, X } from "lucide-react";
 import { currentUser, getToken, isSupervisor } from "@/lib/auth";
 import { fetchEffectiveCaps, posCan as posCanBase, type EffectiveCaps } from "@/lib/capabilities";
 import { CatalogError, loadCatalog, type LoadedCatalog } from "@/lib/catalogCache";
 import { idbPut } from "@/lib/idb";
-import { openShift as apiOpenShift, findOpenShift, getServerFlags } from "@/lib/api";
+import { openShift as apiOpenShift, fetchMenuAvailabilityBulk, findOpenShift, getServerFlags } from "@/lib/api";
 import { getEngine, type EngineStatus, type OfflineEngine } from "@/lib/offline";
-import { useOptionalT } from "@/i18n/I18nProvider";
+import { useLocalizedName, useOptionalT, useT } from "@/i18n/I18nProvider";
 import { cartTotals, DEFAULT_VAT_RATE_PCT } from "@/lib/cartMath";
+import { pruneQuickPicks, recordPick } from "@/lib/quickPicks";
+import { getAvailabilitySnapshot, publishAvailability, resolveStockState } from "@/components/StockPip";
 import { ulid } from "@/lib/ulid";
 import { ComboDialog, type ComboFinalizeResult } from "@/components/dialogs/ComboDialog";
 import type {
@@ -35,6 +38,7 @@ import type {
   CartTotals,
   DiscountType,
   LocalOrder,
+  MenuAvailabilityMap,
   OrderType,
   SalesChannel,
 } from "@/lib/types";
@@ -231,10 +235,95 @@ function newLocalOrder(shiftId: string | null, deviceId: string): LocalOrder {
   };
 }
 
+/**
+ * An affordance carried BY a toast — "تراجع" on a removed cart line, and any
+ * future one-tap recovery. Passing one to pushToast() is the ONLY difference
+ * from a plain toast; every existing call site is untouched.
+ */
+export interface ToastAction {
+  label: string;
+  onClick: () => void;
+}
+
 export interface Toast {
   id: number;
   kind: "success" | "error" | "info";
   message: string;
+  /** Present ⇒ this toast is rendered by the provider's own action stack (see
+   *  ActionToastStack below), NOT by <Toasts/>. The two channels are kept
+   *  disjoint on purpose so no toast can ever be painted twice. */
+  action?: ToastAction;
+}
+
+/** Plain toasts auto-dismiss in 5s; an actionable one gets longer, because the
+ *  cashier has to READ it and then decide to undo. */
+const TOAST_TTL_MS = 5000;
+const ACTION_TOAST_TTL_MS = 8000;
+
+/**
+ * Bottom-centre snackbar for toasts that carry an action.
+ *
+ * WHY IT IS NOT IN <Toasts/>: components/Toasts.tsx is owned by a concurrent
+ * stream this change may not touch, and a message rendered by both surfaces
+ * would appear twice. Bottom-centre is also the conventional home for an undo
+ * snackbar, so it never fights the top toast stack for the same pixels. The
+ * offset clears the mobile cart bar (<768px) and drops to a plain inset from md.
+ */
+function ActionToastStack({ toasts, onDismiss }: { toasts: Toast[]; onDismiss: (id: number) => void }) {
+  const t = useT();
+  if (!toasts.length) return null;
+  return (
+    <div
+      data-testid="action-toasts"
+      className="pointer-events-none fixed inset-x-0 bottom-[calc(5.5rem+env(safe-area-inset-bottom))] z-[65] flex flex-col items-center gap-2 px-4 md:bottom-4"
+      aria-live="polite"
+      aria-label={t("toasts.aria.actionRegion")}
+    >
+      {toasts.map((toast) => (
+        <div
+          key={toast.id}
+          role="status"
+          className="toast-in pointer-events-auto flex w-full max-w-md items-center gap-2.5 rounded-2xl bg-ink px-4 py-3 text-white shadow-lift"
+        >
+          <p className="flex-1 text-sm font-bold leading-snug">{toast.message}</p>
+          {toast.action ? (
+            <button
+              type="button"
+              onClick={() => {
+                toast.action?.onClick();
+                onDismiss(toast.id);
+              }}
+              className="btn-press flex min-h-11 shrink-0 items-center gap-1.5 rounded-xl bg-white/15 px-3 text-sm font-extrabold text-white hover:bg-white/25"
+            >
+              <Undo2 className="h-4 w-4" aria-hidden />
+              {toast.action.label}
+            </button>
+          ) : null}
+          <button
+            type="button"
+            onClick={() => onDismiss(toast.id)}
+            aria-label={t("toasts.aria.dismiss")}
+            className="flex min-h-11 min-w-11 shrink-0 items-center justify-center rounded-lg opacity-60 hover:bg-white/10 hover:opacity-100"
+          >
+            <X className="h-4 w-4" aria-hidden />
+          </button>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+/**
+ * PURE. Put `line` back at `index`, clamped into range — the cart may have
+ * shrunk further (or grown) between the removal and the undo tap, and splicing
+ * past the end would silently move the line to the bottom of the order.
+ * Restores the WHOLE snapshot, so notes, lineDiscount and comboChoices come
+ * back exactly as they were.
+ */
+export function restoreLineAt(lines: CartLine[], line: CartLine, index: number): CartLine[] {
+  const next = lines.slice();
+  next.splice(Math.max(0, Math.min(index, next.length)), 0, line);
+  return next;
 }
 
 export interface PosContextValue {
@@ -325,9 +414,28 @@ export interface PosContextValue {
   startNewOrder: () => void;
   loadOrderDoc: (doc: LocalOrder) => void;
 
+  /** Plain toasts — what <Toasts/> renders. Never carries an action. */
   toasts: Toast[];
-  pushToast: (kind: Toast["kind"], message: string) => void;
+  /**
+   * Push a toast. The optional third argument attaches a ONE-TAP action
+   * ({label, onClick}); such a toast is routed to the provider's own bottom
+   * snackbar instead of the plain stack, so nothing is rendered twice.
+   * Every pre-existing two-argument call site behaves exactly as before.
+   */
+  pushToast: (kind: Toast["kind"], message: string, action?: ToastAction) => void;
   dismissToast: (id: number) => void;
+
+  /**
+   * Recipe/BOM-driven availability (the 86 board). null/absent = the endpoint is
+   * unavailable or not fetched yet; every consumer degrades to warehouseQty.
+   *
+   * OPTIONAL on purpose: the product grid does NOT read it from here (it is
+   * prop-driven and is rendered without a provider by several specs — it
+   * subscribes to the snapshot in components/StockPip instead). Keeping the
+   * field optional means the shared parity test-kit's makeCtx() needs no edit,
+   * which matters while other streams are editing that same file.
+   */
+  availability?: MenuAvailabilityMap | null;
 }
 
 const PosContext = createContext<PosContextValue | null>(null);
@@ -356,14 +464,40 @@ export function PosProvider({ children }: { children: ReactNode }) {
     if (t) engine.setTranslator(t);
   }, [engine, t]);
 
+  // This provider's OWN strings (undo, 86-board warning). useT() always resolves
+  // — outside an I18nProvider it falls back to the base (ar) dictionary — so
+  // unlike the engine's translator above it is never null. Held in refs so the
+  // cart callbacks below stay referentially stable across a language switch.
+  const tr = useT();
+  const tn = useLocalizedName();
+  const trRef = useRef(tr);
+  trRef.current = tr;
+  const tnRef = useRef(tn);
+  tnRef.current = tn;
+
   // ── Toasts ─────────────────────────────────────────────────────────────────
+  // TWO disjoint channels: plain toasts (rendered by <Toasts/>) and actionable
+  // ones (rendered by ActionToastStack, mounted at the bottom of this provider).
+  // Routing on `action` rather than filtering one shared list is what guarantees
+  // a message can never be painted by both surfaces.
   const [toasts, setToasts] = useState<Toast[]>([]);
-  const pushToast = useCallback((kind: Toast["kind"], message: string) => {
+  const [actionToasts, setActionToasts] = useState<Toast[]>([]);
+  const pushToast = useCallback((kind: Toast["kind"], message: string, action?: ToastAction) => {
     const id = ++toastSeq;
+    if (action) {
+      // Only ever two on screen: an undo the cashier can no longer place in time
+      // is worse than no undo at all.
+      setActionToasts((t) => [...t.slice(-1), { id, kind, message, action }]);
+      setTimeout(() => setActionToasts((t) => t.filter((x) => x.id !== id)), ACTION_TOAST_TTL_MS);
+      return;
+    }
     setToasts((t) => [...t.slice(-3), { id, kind, message }]);
-    setTimeout(() => setToasts((t) => t.filter((x) => x.id !== id)), 5000);
+    setTimeout(() => setToasts((t) => t.filter((x) => x.id !== id)), TOAST_TTL_MS);
   }, []);
-  const dismissToast = useCallback((id: number) => setToasts((t) => t.filter((x) => x.id !== id)), []);
+  const dismissToast = useCallback((id: number) => {
+    setToasts((t) => t.filter((x) => x.id !== id));
+    setActionToasts((t) => t.filter((x) => x.id !== id));
+  }, []);
 
   // ── Catalog (channel-aware) ────────────────────────────────────────────────
   const [channelId, setChannelId] = useState<string | null>(getStoredChannelId);
@@ -388,6 +522,44 @@ export function PosProvider({ children }: { children: ReactNode }) {
     // a switch must never blank the grid mid-shift.
     placeholderData: (prev) => prev,
   });
+
+  // ── لوحة النفاد / the 86 board ──────────────────────────────────────────────
+  // Recipe/BOM-driven availability, fetched ALONGSIDE the catalog (never as part
+  // of it: the catalog is ETag-cached for offline boot and must not be
+  // invalidated by a stock figure that changes every minute).
+  //
+  // IT DEGRADES SILENTLY, BY CONSTRUCTION. The queryFn swallows EVERY failure
+  // and resolves to null instead of rejecting: an old server with no such route
+  // answers 404, a hardened deployment could answer 403, and offline it throws
+  // outright. None of those are the cashier's problem — the grid simply falls
+  // back to CatalogItem.warehouseQty and nothing is shown as unavailable that we
+  // cannot prove. Because it never rejects there is also no retry storm, no
+  // error toast, and no unhandled rejection: the next refetchInterval tick just
+  // tries again in case the server came back.
+  const availabilityQuery = useQuery({
+    queryKey: ["menu-availability"],
+    queryFn: async (): Promise<MenuAvailabilityMap | null> => {
+      try {
+        return (await fetchMenuAvailabilityBulk()) ?? null;
+      } catch {
+        return null; // 404 / 403 / offline / malformed — no opinion, no noise
+      }
+    },
+    enabled: !!user && engineStatus.online,
+    // Stock moves on a different clock than the menu: often enough that a 86'd
+    // item greys out within a couple of orders, rarely enough that a busy till
+    // is not walking every recipe in the database on the cashier's behalf.
+    refetchInterval: 90_000,
+    staleTime: 60_000,
+    retry: false,
+  });
+  const availability: MenuAvailabilityMap | null = availabilityQuery.data ?? null;
+  // Publish to the module snapshot the product grid subscribes to. The grid is
+  // deliberately prop-driven (and rendered provider-less by several specs), so
+  // this is how it learns without every host having to thread a prop.
+  useEffect(() => {
+    publishAvailability(availability);
+  }, [availability]);
 
   // ── Effective capabilities (Owner J) ────────────────────────────────────────
   // Same gating pattern as catalogQuery above: no point fetching before there's
@@ -497,6 +669,49 @@ export function PosProvider({ children }: { children: ReactNode }) {
     setCart((c) => ({ ...fn(c), updatedAt: Date.now() }));
   }, []);
 
+  // Latest cart, readable from a callback WITHOUT putting `cart` in its dep list
+  // (these callbacks are handed to memoised children). Assigned during render
+  // from this render's own state, so it is never stale by a full commit.
+  const cartRef = useRef(cart);
+  cartRef.current = cart;
+
+  // ── Undo a removed line (close/w1b-undo) ───────────────────────────────────
+  // Removing a line was instant, silent and irreversible — while voiding a whole
+  // order demands a typed reason. Every removal path funnels through here, so
+  // the trash button, the stepper's qty→0, the card's inline − and the new
+  // QtyPad's "set 0" all get the SAME one-tap recovery.
+  //
+  // The snapshot is the whole CartLine, so notes, lineDiscount and comboChoices
+  // come back with it — a rebuilt-from-scratch line would silently drop the
+  // kitchen note the customer asked for.
+  const offerUndoRemoval = useCallback(
+    (line: CartLine, index: number) => {
+      const tt = trRef.current;
+      const name = tnRef.current(line.name, line.nameEn);
+      pushToast("info", tt("cartPanel.undo.removed", { name }), {
+        label: tt("cartPanel.undo.action"),
+        onClick: () => mutate((c) => ({ ...c, lines: restoreLineAt(c.lines, line, index) })),
+      });
+    },
+    [pushToast, mutate],
+  );
+
+  // ── 86-board warning (close/w1b-stock) ─────────────────────────────────────
+  // WARN, NEVER BLOCK: the add always happens. One toast per item per session
+  // (this Set) so a cashier ringing up ten of a low item is not buried in
+  // notifications. Living in the STORE rather than on the card means a barcode
+  // scan and the App-level scan handler warn too, for free.
+  const stockWarnedRef = useRef<Set<string>>(new Set());
+  const warnIfUnavailable = useCallback(
+    (item: CatalogItem) => {
+      if (stockWarnedRef.current.has(item.id)) return;
+      if (resolveStockState(item, getAvailabilitySnapshot()).level !== "out") return;
+      stockWarnedRef.current.add(item.id);
+      pushToast("info", trRef.current("productGrid.stock.addedOutOfStock", { name: tnRef.current(item.name, item.nameEn) }));
+    },
+    [pushToast],
+  );
+
   // ── Combos (العروض) — close/w25-combos ─────────────────────────────────────
   // Tapping a combo card must open the CHOOSER, not add directly (legacy
   // openComboChooser). The pending item + its definition (from the cached
@@ -518,6 +733,7 @@ export function PosProvider({ children }: { children: ReactNode }) {
       // Combo interception: open the chooser instead of adding. Missing
       // definition (stale cache from a pre-combos server) → say so, add nothing
       // — silently charging a combo without its picks is the one wrong answer.
+      warnIfUnavailable(item);
       if (item.isCombo) {
         if (!findComboDef(item)) {
           pushToast("error", "خيارات العرض غير متوفرة — حدّث القائمة عند الاتصال");
@@ -526,6 +742,10 @@ export function PosProvider({ children }: { children: ReactNode }) {
         setComboItem(item);
         return;
       }
+      // Popularity tally for «الأكثر مبيعًا» — recorded where a line is actually
+      // created, never on the combo INTERCEPT above (that only opens a chooser
+      // the cashier may still cancel). Local-only; see lib/quickPicks.ts.
+      recordPick(item.id);
       mutate((c) => {
         const unit = pickUnit(item, unitCode);
         const code = unit ? unit.unitCode : null;
@@ -550,7 +770,7 @@ export function PosProvider({ children }: { children: ReactNode }) {
         return { ...c, lines: [...c.lines, buildCartLine(item, unit, 1)] };
       });
     },
-    [mutate, findComboDef, pushToast],
+    [mutate, findComboDef, pushToast, warnIfUnavailable],
   );
 
   // Chooser confirm → ONE cart line with the frozen picks. comboChoices rides
@@ -563,6 +783,7 @@ export function PosProvider({ children }: { children: ReactNode }) {
       const item = comboItem;
       setComboItem(null);
       if (!item) return;
+      recordPick(item.id); // the combo really is being sold now
       mutate((c) => {
         const key = JSON.stringify(result.comboChoices);
         const existing = c.lines.find(
@@ -593,7 +814,23 @@ export function PosProvider({ children }: { children: ReactNode }) {
   // line: a clean line (no notes / no discount) of the item first, else the
   // LAST line of the item. qty 1 → the line goes away entirely.
   const decrementItem = useCallback(
-    (itemId: string) =>
+    (itemId: string) => {
+      // The SAME preference order the updater below uses, evaluated against the
+      // committed cart, purely to decide whether this decrement REMOVES a line
+      // (and to snapshot it for undo). The updater keeps its own self-contained
+      // lookup so the actual mutation logic is byte-for-byte unchanged.
+      const lines = cartRef.current.lines;
+      let removedIdx = lines.findIndex((l) => l.menuId === itemId && !l.notes && !l.lineDiscount);
+      if (removedIdx === -1) {
+        for (let i = lines.length - 1; i >= 0; i--) {
+          if (lines[i]!.menuId === itemId) {
+            removedIdx = i;
+            break;
+          }
+        }
+      }
+      const removed = removedIdx !== -1 && lines[removedIdx]!.qty <= 1 ? { ...lines[removedIdx]! } : null;
+
       mutate((c) => {
         let idx = c.lines.findIndex((l) => l.menuId === itemId && !l.notes && !l.lineDiscount);
         if (idx === -1) {
@@ -608,20 +845,27 @@ export function PosProvider({ children }: { children: ReactNode }) {
         const target = c.lines[idx]!;
         if (target.qty <= 1) return { ...c, lines: c.lines.filter((_, i) => i !== idx) };
         return { ...c, lines: c.lines.map((l, i) => (i === idx ? withBase(l, { qty: l.qty - 1 }) : l)) };
-      }),
-    [mutate],
+      });
+
+      if (removed) offerUndoRemoval(removed, removedIdx);
+    },
+    [mutate, offerUndoRemoval],
   );
 
   const setQty = useCallback(
-    (index: number, qty: number) =>
+    (index: number, qty: number) => {
+      // qty ≤ 0 removes the line (the QtyPad's "set 0" rides this exact path).
+      const removed = qty <= 0 ? cartRef.current.lines[index] : undefined;
       mutate((c) => ({
         ...c,
         lines:
           qty <= 0
             ? c.lines.filter((_, i) => i !== index)
             : c.lines.map((l, i) => (i === index ? withBase(l, { qty }) : l)),
-      })),
-    [mutate],
+      }));
+      if (removed) offerUndoRemoval({ ...removed }, index);
+    },
+    [mutate, offerUndoRemoval],
   );
 
   const setLineUnit = useCallback(
@@ -641,8 +885,12 @@ export function PosProvider({ children }: { children: ReactNode }) {
   );
 
   const removeLine = useCallback(
-    (index: number) => mutate((c) => ({ ...c, lines: c.lines.filter((_, i) => i !== index) })),
-    [mutate],
+    (index: number) => {
+      const removed = cartRef.current.lines[index];
+      mutate((c) => ({ ...c, lines: c.lines.filter((_, i) => i !== index) }));
+      if (removed) offerUndoRemoval({ ...removed }, index);
+    },
+    [mutate, offerUndoRemoval],
   );
 
   const setLineNotes = useCallback(
@@ -707,6 +955,16 @@ export function PosProvider({ children }: { children: ReactNode }) {
   // called cartMath with no rate and silently got the 15% default, so on a
   // non-15% tenant every line and the whole preview disagreed with the total
   // right beneath them — and with what the server actually charges.
+  // Keep the local top-sellers tally honest: an item the owner deleted or
+  // deactivated must not keep a slot on the pinned chip (or hand the grid a
+  // ghost id). Guarded on a NON-EMPTY catalog — pruning against the empty
+  // placeholder that exists while the catalog loads would wipe the whole tally.
+  const catalogItems = catalogQuery.data?.catalog?.items;
+  useEffect(() => {
+    if (!catalogItems || catalogItems.length === 0) return;
+    pruneQuickPicks(new Set(catalogItems.filter((i) => i.active).map((i) => i.id)));
+  }, [catalogItems]);
+
   const vatRatePct = catalogQuery.data?.catalog?.vatRate ?? DEFAULT_VAT_RATE_PCT;
   const totals = useMemo(
     () => cartTotals(cart.lines, cart.discountType ? { type: cart.discountType, value: cart.discountValue } : null, vatRatePct),
@@ -783,11 +1041,17 @@ export function PosProvider({ children }: { children: ReactNode }) {
     toasts,
     pushToast,
     dismissToast,
+    availability,
   };
 
   return (
     <PosContext.Provider value={value}>
       {children}
+      {/* Actionable toasts (undo). Mounted by the provider for the same reason
+          the combo chooser is: every host of the store gets the affordance with
+          zero wiring — including the mobile bottom sheet, where a cart-side
+          undo would otherwise be invisible. */}
+      <ActionToastStack toasts={actionToasts} onDismiss={dismissToast} />
       {/* Combo chooser — mounted by the provider (addItem owns the intercept),
           so every host of the store gets the flow with zero wiring. */}
       <ComboDialog

@@ -36,6 +36,18 @@ export const cartPanel = {
     presetsLabel: "Quick discounts",
     presetMinOrder: "Line minimum {amount} SAR",
   },
+  qtyPad: {
+    triggerAria: "Quantity {qty} — tap to type a quantity for {name}",
+    dialogAria: "Quantity pad — {name}",
+    title: "Type the quantity",
+    removeHint: "0 = remove the line",
+    set: "Set",
+    cancel: "Cancel quantity",
+  },
+  undo: {
+    removed: '"{name}" removed',
+    action: "Undo",
+  },
   empty: {
     title: "Cart is empty",
     hint: "Pick items from the menu or scan a barcode",

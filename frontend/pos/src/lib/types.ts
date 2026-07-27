@@ -82,6 +82,37 @@ export interface CatalogItem {
   imageVersion?: string | null;
 }
 
+// ── لوحة النفاد / the 86 board (GET /api/menu/availability/bulk) ────────────
+// The REAL answer for a kitchen: a dish is unavailable because an INGREDIENT ran
+// out, not because the dish itself carries stock. routes/menu.js:1070 walks each
+// active menu row's BOM (or the legacy `recipe` table) and reports how many the
+// branch can still make. `CatalogItem.warehouseQty` is the fallback for anything
+// this map does not cover.
+//
+// SHAPE PINNED TO THE BULK ROUTE, not to the single-item one: the bulk endpoint
+// projects `blockerCount` (a number), NOT the `blockerIngredients` array the
+// per-item GET /:id/availability returns. Do not "restore" the array here
+// without changing the route.
+//
+// WARN, NEVER BLOCK: `makeable` is 0 for a menu row with no recipe at all, which
+// is why the server leaves isOutOfStock/isLowStock FALSE in that case — and why
+// the client must read those flags rather than deriving 86 from `makeable`.
+export interface MenuAvailability {
+  /** 'mto' (made to order, recipe walked) | 'mto_no_recipe' | future modes. */
+  mode: string;
+  /** Units the branch can still make from stock on hand. */
+  makeable: number;
+  isOutOfStock: boolean;
+  isLowStock: boolean;
+  /** How many ingredients are at zero (0 when nothing blocks). */
+  blockerCount: number;
+  /** A modern BOM is attached. False also for the legacy `recipe` table path. */
+  hasRecipe: boolean;
+}
+
+/** menuId → availability. Absent key = the server said nothing about that item. */
+export type MenuAvailabilityMap = Record<string, MenuAvailability>;
+
 /** Owner-configured seller identity + the owner's print toggles. Both types now
  *  live in the SHARED invoice template (frontend/shared/invoiceTemplate.ts) so
  *  the POS and ERP apps render the identical document; POS keeps its historical

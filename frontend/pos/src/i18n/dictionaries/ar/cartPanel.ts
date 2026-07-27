@@ -36,6 +36,18 @@ export const cartPanel = {
     presetsLabel: "خصومات جاهزة",
     presetMinOrder: "الحد الأدنى للسطر {amount} ر.س",
   },
+  qtyPad: {
+    triggerAria: "الكمية {qty} — اضغط لكتابة كمية {name}",
+    dialogAria: "لوحة الكمية — {name}",
+    title: "اكتب الكمية",
+    removeHint: "0 = حذف السطر",
+    set: "تعيين",
+    cancel: "إلغاء الكمية",
+  },
+  undo: {
+    removed: "تم حذف «{name}»",
+    action: "تراجع",
+  },
   empty: {
     title: "سلة فارغة",
     hint: "اختر أصنافًا من القائمة أو امسح باركود",

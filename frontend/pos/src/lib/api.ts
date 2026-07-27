@@ -12,6 +12,8 @@ import type {
   ClosingDataV3,
   CloseV3Result,
   LegacySalePayload,
+  MenuAvailability,
+  MenuAvailabilityMap,
   SaleResult,
   SaleRow,
   ServerOrder,
@@ -951,4 +953,62 @@ export function submitStocktakeV2(id: string, expectedVersion: number): Promise<
     method: "POST",
     body: { expectedVersion },
   });
+}
+
+// ═════════════════════════════════════════════════════════════════════════════
+// APPEND-ONLY BLOCK — w1b/86-board. Recipe-driven availability for the grid.
+//   • GET /api/menu/availability/bulk  (routes/menu.js:1070)
+// New export only; nothing above this line was modified except the type import.
+//
+// CONTRACT, read off the route itself:
+//   - Response is a BARE MAP `{ [menuId]: {mode, makeable, isOutOfStock,
+//     isLowStock, blockerCount, hasRecipe} }` — NO {success,data} envelope, and
+//     NO array. request() passes a bare 2xx object straight through.
+//   - `LIMIT 500` server-side: a bigger menu is partially covered, which is
+//     exactly why an absent key means "no opinion", never "out of stock".
+//   - Reachable from the cashier portal: middleware/posPortalScope.js allows
+//     `GET /menu(/.*)?`, so this path needs no allow-list change.
+//   - An older server has no such route → 404 → ApiError. THAT IS EXPECTED, and
+//     the caller (state/store.tsx) swallows it and falls back to
+//     CatalogItem.warehouseQty. This function is deliberately NOT defensive
+//     about transport: it throws like every other call here, and the ONE
+//     degradation point lives with the query that owns the fallback.
+// ═════════════════════════════════════════════════════════════════════════════
+
+/** Coerce one server row into MenuAvailability, dropping anything malformed.
+ *  The map keys are menu ids typed by an owner, so nothing here is trusted. */
+function toMenuAvailability(raw: unknown): MenuAvailability | null {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return null;
+  const o = raw as Record<string, unknown>;
+  const makeable = Number(o.makeable);
+  return {
+    mode: typeof o.mode === "string" ? o.mode : "",
+    makeable: Number.isFinite(makeable) ? makeable : 0,
+    isOutOfStock: o.isOutOfStock === true,
+    isLowStock: o.isLowStock === true,
+    blockerCount: Number.isFinite(Number(o.blockerCount)) ? Number(o.blockerCount) : 0,
+    hasRecipe: o.hasRecipe === true,
+  };
+}
+
+/**
+ * GET /api/menu/availability/bulk — recipe/BOM-driven availability per menu item.
+ * `warehouseId` narrows ingredient stock to one branch store (the route falls
+ * back to global inv_items.stock for anything absent from warehouse_stock).
+ */
+export async function fetchMenuAvailabilityBulk(
+  params: { brandId?: string | null; warehouseId?: string | null } = {},
+): Promise<MenuAvailabilityMap> {
+  const q = new URLSearchParams();
+  if (params.brandId) q.set("brandId", params.brandId);
+  if (params.warehouseId) q.set("warehouseId", params.warehouseId);
+  const qs = q.toString();
+  const body = await request<unknown>(`/api/menu/availability/bulk${qs ? `?${qs}` : ""}`);
+  if (!body || typeof body !== "object" || Array.isArray(body)) return {};
+  const out: MenuAvailabilityMap = {};
+  for (const [menuId, row] of Object.entries(body as Record<string, unknown>)) {
+    const parsed = toMenuAvailability(row);
+    if (parsed) out[menuId] = parsed;
+  }
+  return out;
 }

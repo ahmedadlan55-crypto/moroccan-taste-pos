@@ -13,9 +13,19 @@ export const productGrid = {
     aria: "Search items or scan barcode",
     clearAria: "Clear search",
   },
+  // The 86 board — warn, never block: the server is the authority and the card
+  // stays tappable.
+  stock: {
+    out: "Out",
+    low: "Low",
+    outTitle: '"{name}" unavailable — an ingredient ran out',
+    lowTitle: "Can still make: {count}",
+    addedOutOfStock: '"{name}" looks unavailable — added anyway; the server is the authority',
+  },
   empty: {
     title: "No results",
     hintQuery: "Try another word or scan the barcode again",
     hintCategory: "No active items in this category",
+    hintQuick: "No repeat sales yet — sell a few items and they show up here",
   },
 } as const;

@@ -1,5 +1,7 @@
 export const categoryRail = {
   all: "الكل",
+  // Pinned first chip — this till's own top sellers (local tally, no server).
+  quickPicks: "الأكثر مبيعًا",
   aria: {
     tablist: "التصنيفات",
   },

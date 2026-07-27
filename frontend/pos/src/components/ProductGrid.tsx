@@ -11,9 +11,17 @@ import { forwardRef, memo, useEffect, useMemo, useState } from "react";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { Minus, PackageSearch, Search, X } from "lucide-react";
 import { useLocalizedName, useT } from "@/i18n/I18nProvider";
-import type { Catalog, CatalogItem } from "@/lib/types";
+import type { Catalog, CatalogItem, MenuAvailabilityMap } from "@/lib/types";
 import { getToken } from "@/lib/auth";
 import { fmt2, fmtInt } from "@/lib/format";
+import { getQuickPicks, QUICK_PICKS_CATEGORY, useQuickPicks } from "@/lib/quickPicks";
+import {
+  OUT_OF_STOCK_CARD_CLASS,
+  resolveStockState,
+  StockPip,
+  useAvailability,
+  type StockState,
+} from "./StockPip";
 import { cn, EmptyState, Skeleton } from "./ui";
 
 // ── Item images (close/d-images) ─────────────────────────────────────────────
@@ -98,20 +106,45 @@ function barcodesOf(it: CatalogItem): string[] {
  *
  * resolveScan's precedence is UNAFFECTED: it checks exact per-unit → exact
  * primary → exact id BEFORE ever falling through to this function.
+ *
+ * QUICK PICKS (close/w1b-quickpicks): `category` may be the QUICK_PICKS_CATEGORY
+ * sentinel instead of a real DB category. That branch keeps the tally's RANK
+ * (best seller first) rather than catalog order, which is the entire point of
+ * the chip — so it cannot be expressed as a plain `.filter()`. `quickPickIds` is
+ * injectable so the component can hand down the subscribed value (and specs can
+ * pin a ranking); omitted, it reads the live tally.
  */
-export function filterItems(items: CatalogItem[], category: string | null, query: string): CatalogItem[] {
+export function filterItems(
+  items: CatalogItem[],
+  category: string | null,
+  query: string,
+  quickPickIds?: string[],
+): CatalogItem[] {
   const q = query.trim().toLowerCase();
+  const matches = (it: CatalogItem) =>
+    !q ||
+    it.id.toLowerCase() === q ||
+    it.name.toLowerCase().includes(q) ||
+    (it.nameEn ? it.nameEn.toLowerCase().includes(q) : false) ||
+    it.id.toLowerCase().includes(q) ||
+    barcodesOf(it).some((b) => b.includes(q));
+
+  if (category === QUICK_PICKS_CATEGORY) {
+    const ranked = quickPickIds ?? getQuickPicks();
+    const byId = new Map<string, CatalogItem>();
+    for (const it of items) if (it.active) byId.set(it.id, it); // inactive stays unsellable
+    const out: CatalogItem[] = [];
+    for (const id of ranked) {
+      const it = byId.get(id);
+      if (it && matches(it)) out.push(it);
+    }
+    return out;
+  }
+
   return items.filter((it) => {
     if (!it.active) return false; // inactive items are unsellable → hidden
     if (category && it.category !== category) return false;
-    if (!q) return true;
-    return (
-      it.id.toLowerCase() === q ||
-      it.name.toLowerCase().includes(q) ||
-      (it.nameEn ? it.nameEn.toLowerCase().includes(q) : false) ||
-      it.id.toLowerCase().includes(q) ||
-      barcodesOf(it).some((b) => b.includes(q))
-    );
+    return matches(it);
   });
 }
 
@@ -176,6 +209,8 @@ const ProductCard = memo(function ProductCard({
   onAdd,
   qty = 0,
   onDec,
+  stockLevel = "ok",
+  stockCount = null,
 }: {
   item: CatalogItem;
   onAdd: (item: CatalogItem) => void;
@@ -183,11 +218,16 @@ const ProductCard = memo(function ProductCard({
   qty?: number;
   /** Decrement one unit of this item (only offered while qty > 0). */
   onDec?: (item: CatalogItem) => void;
+  /** 86-board verdict, resolved by the grid. PRIMITIVES, not an object: a fresh
+   *  object every render would defeat this component's memo() for every card. */
+  stockLevel?: StockState["level"];
+  stockCount?: number | null;
 }) {
   const t = useT();
   const tn = useLocalizedName();
   const imgSrc = useItemImage(item.id, item.imageVersion);
   const inCart = qty > 0;
+  const outOfStock = stockLevel === "out";
   return (
     // Wrapper: the qty badge + − button are SIBLINGS of the add button (a
     // button cannot nest a button). Absolute overlays never change the card's
@@ -195,11 +235,18 @@ const ProductCard = memo(function ProductCard({
     <div className="relative">
       <button
         type="button"
+        // WARN, NEVER BLOCK: an out-of-stock card is muted, not disabled. The
+        // server is the authority on stock and many rows legitimately have no
+        // figure at all; refusing the tap here would invent a rule the backend
+        // does not have. state/store.tsx raises one info toast per item instead.
         onClick={() => onAdd(item)}
         className={cn(
           "btn-press group flex h-full min-h-[5.5rem] w-full flex-col justify-between rounded-2xl border bg-white p-3 text-start shadow-sm transition hover:border-teal-200 hover:shadow-soft",
           // Selection ring while the item sits in the cart (legacy .selected).
           inCart ? "border-teal-300 ring-2 ring-teal-500/50" : "border-slate-200",
+          // Pure paint (opacity + filter) — no box-model property, so the card's
+          // measured height is byte-for-byte what it was before this landed.
+          outOfStock ? OUT_OF_STOCK_CARD_CLASS : null,
         )}
       >
         {item.imageVersion ? (
@@ -250,6 +297,10 @@ const ProductCard = memo(function ProductCard({
           {t("productGrid.badge.custom")}
         </span>
       ) : null}
+      {/* 86 board (close/w1b-stock): bottom-START, so it never collides with the
+          combo/«مُخصَّص» chips at the top or the inline − at bottom-END. A <span>,
+          never a button — the windowing spec pins the buttons-per-row count. */}
+      <StockPip level={stockLevel} count={stockCount} name={tn(item.name, item.nameEn)} />
       {inCart ? (
         <>
           {/* Live qty badge (legacy qty-display, app.js:449) */}
@@ -382,9 +433,15 @@ function useColumns(scrollElement: HTMLElement | null | undefined): number {
 
 export function ProductGrid({ catalog, loading, category, query, onAdd, scrollElement, cartQty, onDecrement }: Omit<ProductGridProps, "onQueryChange" | "onScanSubmit">) {
   const t = useT();
+  // Subscribed, so selling an item re-ranks the «الأكثر مبيعًا» chip live.
+  const quickPickIds = useQuickPicks();
+  // Published by the provider (see StockPip). `null` outside a PosProvider or
+  // whenever the availability endpoint is unreachable → every card silently
+  // degrades to CatalogItem.warehouseQty.
+  const availability: MenuAvailabilityMap | null = useAvailability();
   const visible = useMemo(
-    () => (catalog ? filterItems(catalog.items, category, query) : []),
-    [catalog, category, query],
+    () => (catalog ? filterItems(catalog.items, category, query, quickPickIds) : []),
+    [catalog, category, query, quickPickIds],
   );
   const cols = useColumns(scrollElement);
   const rowCount = Math.ceil(visible.length / cols);
@@ -419,22 +476,39 @@ export function ProductGrid({ catalog, loading, category, query, onAdd, scrollEl
       <EmptyState
         icon={<PackageSearch className="h-10 w-10" aria-hidden />}
         title={t("productGrid.empty.title")}
-        hint={query ? t("productGrid.empty.hintQuery") : t("productGrid.empty.hintCategory")}
+        hint={
+          query
+            ? t("productGrid.empty.hintQuery")
+            : category === QUICK_PICKS_CATEGORY
+              ? t("productGrid.empty.hintQuick")
+              : t("productGrid.empty.hintCategory")
+        }
       />
     );
   }
+
+  /** One card, with its 86-board verdict resolved. Shared by both render paths
+   *  so the windowed and unwindowed grids can never diverge. */
+  const card = (item: CatalogItem) => {
+    const stock = resolveStockState(item, availability);
+    return (
+      <ProductCard
+        key={item.id}
+        item={item}
+        onAdd={onAdd}
+        qty={cartQty?.[item.id] ?? 0}
+        onDec={onDecrement}
+        stockLevel={stock.level}
+        stockCount={stock.count}
+      />
+    );
+  };
 
   // The host opted out of windowing entirely (prop absent — distinct from null,
   // which means "attaching"). Render everything rather than window against
   // nothing and show a blank grid.
   if (scrollElement === undefined) {
-    return (
-      <div className={gridClassFor(cols)}>
-        {visible.map((item) => (
-          <ProductCard key={item.id} item={item} onAdd={onAdd} qty={cartQty?.[item.id] ?? 0} onDec={onDecrement} />
-        ))}
-      </div>
-    );
+    return <div className={gridClassFor(cols)}>{visible.map(card)}</div>;
   }
 
   return (
@@ -452,9 +526,7 @@ export function ProductGrid({ catalog, loading, category, query, onAdd, scrollEl
             style={{ position: "absolute", top: 0, left: 0, right: 0, transform: `translateY(${vRow.start}px)` }}
             className={cn(gridClassFor(cols), "pb-2.5")}
           >
-            {visible.slice(start, start + cols).map((item) => (
-              <ProductCard key={item.id} item={item} onAdd={onAdd} qty={cartQty?.[item.id] ?? 0} onDec={onDecrement} />
-            ))}
+            {visible.slice(start, start + cols).map(card)}
           </div>
         );
       })}

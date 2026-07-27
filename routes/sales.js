@@ -7,6 +7,11 @@ const invoiceIdentity = require('../lib/invoiceIdentity');
 // routes/order-to-cash/returns.js). Runs after the global JWT gate, so
 // req.user is the verified token. admin/developer bypass inside.
 const requireCapability = require('../middleware/requireCapability');
+// W0-A — the same effective-permission resolver the guard uses, called
+// DIRECTLY so the void/return routes can ask "does this account hold
+// pos.refund?" about the CALLER *and* about an approving manager, instead of
+// letting the middleware 403 before the approval credentials are ever read.
+const { hasCapability } = require('../middleware/requireCapability');
 const gl = require('../lib/glPosting');
 const zatca = require('../lib/zatca');
 // Renders the ZATCA TLV payload into a PNG data-URL SERVER-side. The clients
@@ -235,6 +240,16 @@ function _parseSplitPayments(payStr, total) {
 // clearing account. Only the branch DECISIONS go through this helper — what
 // gets STORED in sales.payment_method for non-split flows is untouched (the
 // caller's casing is preserved verbatim, exactly as before).
+// W0-A — HALALA-SAFE leg amount for the `sales.payment_method` split string.
+// It used to be `Math.round(v)`: 50.40 cash + 30.10 card was STORED as
+// "كاش:50/شبكة:30", so every shift parser reconstructed 80 against a
+// total_final of 80.50 and the cashier carried a 0.50 variance nobody could
+// explain. Two decimals, always — an amount is money, not a count. Old rows
+// that carry bare integers still parse identically (Number('50') === 50).
+function _fmtLegAmount(v) {
+  return (Math.round((Number(v) || 0) * 100) / 100).toFixed(2);
+}
+
 function _isSplitMethod(pm) {
   return String(pm || '').trim().toLowerCase() === 'split';
 }
@@ -585,7 +600,9 @@ router.post('/', requireCapability('pos.use'), async (req, res) => {
       const _legPairs = Array.isArray(splitDetails)
         ? splitDetails.filter(l => l && Number(l.amount) > 0).map(l => [String(l.method), Number(l.amount)])
         : Object.entries(splitDetails).filter(([k,v]) => v > 0);
-      payStr = _legPairs.map(([k,v]) => k+':'+Math.round(v)).join('/');
+      // W0-A — 2-decimal legs (was Math.round(v), which silently dropped the
+      // halalas and manufactured shift variance). See _fmtLegAmount.
+      payStr = _legPairs.map(([k,v]) => k+':'+_fmtLegAmount(v)).join('/');
     }
 
     // ───── v6.20.0 — Tax computation rewrite ─────
@@ -2628,23 +2645,14 @@ async function _reverseSaleEffects(conn, orderId, username, opts) {
 // (against this pad when the approver doesn't exist) so response timing can't
 // be used to enumerate manager usernames.
 const _APPROVAL_DUMMY_HASH = bcrypt.hashSync('approval-dummy-timing-pad', 12);
-async function _requireManagerApproval(req, action) {
-  // Optional opt-out (VOID only): owners can let cashiers cancel without a
-  // manager via settings.RequireManagerApprovalForVoid='0'. Returns stay gated
-  // (more sensitive — money out). Absent/'1' → enforce (preserves prior behavior).
-  if (action === 'void') {
-    try {
-      const [s] = await db.query(
-        "SELECT setting_value FROM settings WHERE setting_key = 'RequireManagerApprovalForVoid' LIMIT 1");
-      // Tolerant read: a === '0' comparison ignored the "false" the React admin
-      // wrote, so this failed CLOSED — approval stayed enforced after the owner
-      // switched it off. Absent/unparseable still enforces (safe default).
-      if (s.length && !isTruthy(s[0].setting_value)) return null; // approval disabled
-    } catch (_) { /* settings missing → fall through to enforce */ }
-  }
-  const PRIVILEGED = ['admin', 'manager'];
-  const actorRole = String((req.user && req.user.role) || '').toLowerCase();
-  if (PRIVILEGED.indexOf(actorRole) !== -1) return null; // already authorized
+const _APPROVAL_PRIVILEGED = ['admin', 'manager'];
+
+// W0-A — the CREDENTIAL half of the approval gate, factored out of
+// _requireManagerApproval unchanged (same lookup, same constant-time bcrypt
+// against the dummy pad, same single generic error) so the ELEVATION path
+// below can reuse the EXACT verification instead of a second copy of it.
+// Resolves to { username, role } or throws a 403.
+async function _verifyApproverCredentials(req) {
   const approverUsername = req.body && req.body.approverUsername;
   const approverPassword = req.body && req.body.approverPassword;
   if (!approverUsername || !approverPassword) {
@@ -2667,29 +2675,117 @@ async function _requireManagerApproval(req, action) {
   try {
     okPw = await bcrypt.compare(String(approverPassword), (mgr && mgr.password) || _APPROVAL_DUMMY_HASH);
   } catch (e) { okPw = false; }
-  if (!mgr || PRIVILEGED.indexOf(mgrRole) === -1 || !okPw) {
+  if (!mgr || _APPROVAL_PRIVILEGED.indexOf(mgrRole) === -1 || !okPw) {
     const err = new Error('بيانات اعتماد المدير غير صحيحة · Invalid manager approval credentials');
     err.status = 403; err.code = 'approval_invalid'; throw err;
   }
+  return { username: mgr.username, role: mgrRole };
+}
+
+async function _requireManagerApproval(req, action) {
+  // Optional opt-out (VOID only): owners can let cashiers cancel without a
+  // manager via settings.RequireManagerApprovalForVoid='0'. Returns stay gated
+  // (more sensitive — money out). Absent/'1' → enforce (preserves prior behavior).
+  if (action === 'void') {
+    try {
+      const [s] = await db.query(
+        "SELECT setting_value FROM settings WHERE setting_key = 'RequireManagerApprovalForVoid' LIMIT 1");
+      // Tolerant read: a === '0' comparison ignored the "false" the React admin
+      // wrote, so this failed CLOSED — approval stayed enforced after the owner
+      // switched it off. Absent/unparseable still enforces (safe default).
+      if (s.length && !isTruthy(s[0].setting_value)) return null; // approval disabled
+    } catch (_) { /* settings missing → fall through to enforce */ }
+  }
+  const actorRole = String((req.user && req.user.role) || '').toLowerCase();
+  if (_APPROVAL_PRIVILEGED.indexOf(actorRole) !== -1) return null; // already authorized
+  const mgr = await _verifyApproverCredentials(req);
   return mgr.username; // approved — return the approver for audit if needed
+}
+
+// ─── W0-A — refund authority for the legacy void / return paths ───────────
+// THE DEFECT: both routes were mounted `requireCapability('pos.refund')`, so
+// the middleware answered 403 BEFORE the handler could read approverUsername /
+// approverPassword. Role `cashier` is deliberately NOT granted pos.refund
+// (server.js cashier grant list), so the manager-approval dialog the POS shows
+// could never succeed — the cashier typed valid manager credentials and still
+// got PERMISSION_DENIED, forever.
+//
+// OWNER DECISION: the cashier KEEPS no pos.refund. The elevation is what has to
+// work. So authority is now asserted IN-HANDLER, in this order:
+//   1. caller holds pos.refund  → proceeds exactly as before (the historical
+//      _requireManagerApproval second factor still runs, privileged roles still
+//      short-circuit it, RequireManagerApprovalForVoid='0' still opts VOID out);
+//   2. caller does NOT hold it  → may proceed ONLY when THIS request carries
+//      manager credentials that verify server-side AND that manager holds
+//      pos.refund himself.
+// The RequireManagerApprovalForVoid opt-out is deliberately NOT honored on
+// path 2: it relaxes the SECOND factor for an account that is already
+// authorized — it can never hand the refund right to an account that is not.
+// Nothing else is relaxed: the ZATCA-submitted refusal, the period-close guard
+// and middleware/o2cLegacyGate all still run, untouched, after this.
+// Returns the approving manager's username (for the audit trail) or null when
+// the caller acted on their own authority.
+const REFUND_CAP = 'pos.refund';
+async function _assertRefundAuthority(req, action) {
+  if (!req.user || !req.user.username) {
+    const err = new Error('مطلوب تسجيل الدخول');
+    err.status = 401; err.code = 'PERMISSION_DENIED'; throw err;
+  }
+  let selfOk = false;
+  try { selfOk = await hasCapability(req.user, REFUND_CAP); }
+  catch (_) { selfOk = false; } // fail closed, same as the middleware
+  if (selfOk) return await _requireManagerApproval(req, action);
+
+  const approver = await _verifyApproverCredentials(req);
+  let approverOk = false;
+  try { approverOk = await hasCapability({ username: approver.username, role: approver.role }, REFUND_CAP); }
+  catch (_) { approverOk = false; } // fail closed
+  if (!approverOk) {
+    const err = new Error('المدير المعتمد لا يملك صلاحية الاسترداد · The approving manager does not hold the refund capability');
+    err.status = 403; err.code = 'approval_forbidden'; throw err;
+  }
+  return approver.username;
+}
+
+// Post-commit audit row naming the manager who authorized a reversal the actor
+// could not perform alone. Written to `audit_logs` (the entity_type/entity_id/
+// details table — NOT the login-oriented `audit_log`, whose columns are
+// user_id/table_name/record_id). Never blocks the operation (the money movement
+// is already committed) but a failure is LOUD, never silently swallowed.
+async function _auditApproval(action, orderId, actor, approvedBy, req) {
+  if (!approvedBy) return;
+  try {
+    await db.query(
+      'INSERT INTO audit_logs (action, entity_type, entity_id, user_username, details, ip_address, created_at) VALUES (?,?,?,?,?,?,NOW())',
+      ['sale_' + action + '_approved', 'sale', orderId, actor || 'system',
+       JSON.stringify({ action, approvedBy, actor: actor || null }), (req && req.ip) || '']);
+  } catch (e) {
+    console.error('[sales] approval audit row failed for ' + orderId + ':', e.message);
+  }
 }
 
 // POST /sales/:orderId/void — reverse stock + GL but KEEP the sale row.
 // This is the recommended path when you need an audit trail (the sale
 // remains visible in reports as voided). Use ?delete=1 to also drop the row.
-// G-SALES — explicit capability on the flag-off path (o2c saleReverseGate covers
-// flag-on): void reverses money + stock, so it needs `pos.refund` (manager-level;
-// cashier does NOT hold it). The in-handler manager-approval gate still applies.
-router.post('/:orderId/void', requireCapability('pos.refund'), async (req, res) => {
+// G-SALES — void reverses money + stock, so it needs `pos.refund`
+// (manager-level; cashier does NOT hold it).
+// W0-A — that capability is asserted IN-HANDLER by _assertRefundAuthority, NOT
+// by a `requireCapability('pos.refund')` middleware: the middleware answered
+// 403 before the handler could read the manager credentials, which made the
+// cashier's approval dialog unwinnable. Same authority, plus a working
+// manager-elevation path. o2c saleReverseGate still covers the flag-on path.
+router.post('/:orderId/void', async (req, res) => {
   try {
     const orderId = req.params.orderId;
-    // G-SALES — spoofable req.body.username fallback deleted; the capability
-    // guard guarantees req.user.
-    const username = req.user.username;
+    // G-SALES — spoofable req.body.username fallback deleted; the authority
+    // assertion below guarantees req.user.
+    const username = req.user && req.user.username;
     const wantDelete = req.query.delete === '1';
     // v7.3 — gate: cashiers (and any non-privileged role) need manager approval.
     // Honors settings.RequireManagerApprovalForVoid='0' to skip (void only).
-    await _requireManagerApproval(req, 'void');
+    // W0-A — returns the approving manager (null when the caller was already
+    // authorized on their own); recorded in the audit trail below.
+    const approvedBy = await _assertRefundAuthority(req, 'void');
 
     // v6.0.1 Wave A.4 — race-safe void: the lock + reversal happen inside
     // ONE transaction with SELECT … FOR UPDATE on the sale row.
@@ -2741,6 +2837,19 @@ router.post('/:orderId/void', requireCapability('pos.refund'), async (req, res) 
           try { await conn.query('UPDATE sales SET void_serial = ? WHERE id = ?', [voidSerial, orderId]); }
           catch (_) { voidSerial = null; /* column missing — non-fatal, UI falls back to orderId */ }
         }
+
+        // W0-A — the approving manager is part of the void's story: a voided
+        // sale that survives in reports must say WHO authorized it. Written on
+        // the surviving row, inside the same transaction as the reversal.
+        if (approvedBy) {
+          try {
+            await conn.query(
+              "UPDATE sales SET payment_notes = CONCAT(COALESCE(payment_notes,''), " +
+              "CASE WHEN payment_notes IS NULL OR payment_notes = '' THEN '' ELSE '\n' END, ?) " +
+              "WHERE id = ?",
+              ['VOID_APPROVED_BY ' + approvedBy, orderId]);
+          } catch (e) { console.warn('[POST /sales/:id/void] approval note failed:', e.message); }
+        }
       }
       return Object.assign({}, r, { voidSerial });
     };
@@ -2753,6 +2862,10 @@ router.post('/:orderId/void', requireCapability('pos.refund'), async (req, res) 
       const status = txErr.status || 500;
       return res.status(status).json({
         success: false, error: txErr.message,
+        // W0-A — surface the code here too (the OUTER catch always did). The
+        // POS has to tell 'invoice_immutable' apart from 'approval_invalid',
+        // or an approval dialog re-prompts for credentials that can never help.
+        code: txErr.code || undefined,
         zatcaType: txErr.zatcaType || undefined
       });
     }
@@ -2762,9 +2875,13 @@ router.post('/:orderId/void', requireCapability('pos.refund'), async (req, res) 
     // Post-commit, non-fatal (mirrors the zatca enqueue pattern).
     try { analyticsProjection.safeProject(db, 'sale', orderId, () => analyticsProjection.projectPosSale(db, orderId)); } catch (_) {}
 
+    // W0-A — name the approving manager in audit_log (post-commit, non-fatal).
+    await _auditApproval('void', orderId, username, approvedBy, req);
+
     res.json({
       success: true, orderId,
       ...result,
+      approvedBy: approvedBy || null,
       zatcaType: wantDelete ? null : 'cancellation'
     });
   } catch (e) {
@@ -2788,18 +2905,22 @@ router.post('/:orderId/void', requireCapability('pos.refund'), async (req, res) 
 // is NOT mutated (BR-KSA-08 immutability) — only `has_credit_note` flips
 // to 1 for UI hinting. Inventory + GL are reversed via the existing
 // _reverseSaleEffects helper. Cancellation tag on the original is removed.
-// G-SALES — returns are money-out: explicit `pos.refund` capability on the
-// flag-off path (manager approval below remains as the second factor).
-router.post('/:orderId/return', requireCapability('pos.refund'), async (req, res) => {
+// G-SALES — returns are money-out: they require the `pos.refund` capability.
+// W0-A — asserted IN-HANDLER for exactly the reason documented on /void above:
+// as a mounted middleware it 403'd the cashier before the manager credentials
+// could be read, so the approval path was unreachable. Returns are ALWAYS
+// gated (money out) — the void-only settings opt-out never applied here.
+router.post('/:orderId/return', async (req, res) => {
   try {
     const orderId = req.params.orderId;
     // G-SALES — spoofable req.body.username fallback deleted.
-    const username = req.user.username;
+    const username = req.user && req.user.username;
     const reason   = (req.body && String(req.body.reason || '').trim()) || 'customer return';
     const reasonCode = (req.body && String(req.body.reasonCode || '').trim()) || 'goods_returned';
     // v7.3 — gate: cashiers (and any non-privileged role) need manager approval.
-    // Returns are ALWAYS gated (money out) — no settings opt-out for them.
-    await _requireManagerApproval(req, 'return');
+    // W0-A — returns the approving manager (null when the caller was already
+    // authorized on their own); recorded in the audit trail below.
+    const approvedBy = await _assertRefundAuthority(req, 'return');
 
     const runner = async (conn) => {
       // 1. Lock the original sale row + load everything we need to clone
@@ -2893,12 +3014,16 @@ router.post('/:orderId/return', requireCapability('pos.refund'), async (req, res
       }
 
       // 7. Audit trail in payment_notes (non-critical)
+      // W0-A — when the actor could not refund alone, the approving manager's
+      // username rides on the SAME note, so the credit note's paper trail names
+      // who authorized the money going out.
       try {
         await conn.query(
           "UPDATE sales SET payment_notes = CONCAT(COALESCE(payment_notes,''), " +
           "CASE WHEN payment_notes IS NULL OR payment_notes = '' THEN '' ELSE '\n' END, ?) " +
           "WHERE id = ?",
-          ['CREDIT_NOTE ' + cnId + ': ' + reason, sale.id]
+          ['CREDIT_NOTE ' + cnId + ': ' + reason +
+           (approvedBy ? ' (RETURN_APPROVED_BY ' + approvedBy + ')' : ''), sale.id]
         );
       } catch(_) {}
 
@@ -2925,6 +3050,7 @@ router.post('/:orderId/return', requireCapability('pos.refund'), async (req, res
       const status = txErr.status || 500;
       return res.status(status).json({
         success: false, error: txErr.message,
+        code: txErr.code || undefined,   // W0-A — see the /void note above
         zatcaType: txErr.zatcaType || undefined
       });
     }
@@ -2937,7 +3063,10 @@ router.post('/:orderId/return', requireCapability('pos.refund'), async (req, res
     // Post-commit, non-fatal (mirrors the zatca enqueue above).
     try { if (result && result.creditNoteId) analyticsProjection.safeProject(db, 'credit_note', result.creditNoteId, () => analyticsProjection.projectReturn(db, { creditNoteId: result.creditNoteId, saleId: orderId })); } catch (_) {}
 
-    res.json({ success: true, orderId, reason, ...result });
+    // W0-A — name the approving manager in audit_log (post-commit, non-fatal).
+    await _auditApproval('return', orderId, username, approvedBy, req);
+
+    res.json({ success: true, orderId, reason, ...result, approvedBy: approvedBy || null });
   } catch (e) {
     // v7.3 — honor e.status (e.g. 403 from the manager-approval gate).
     res.status(e.status || 500).json({ success: false, error: e.message, code: e.code || undefined });

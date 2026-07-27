@@ -129,6 +129,39 @@ const _ELECTRONIC_ALIASES = ['mada','visa','master','mastercard','amex','network
 const _CASH_ALIASES = ['cash','نقد','كاش','نقدي'];
 const _KITA_ALIASES = ['kita','كيتا','آجل','ajl','اجل'];
 
+// ── W0-A — ONE halala-safe reader for the `sales.payment_method` split string ──
+// routes/sales.js writes split sales as "<method>:<amount>/<method>:<amount>"
+// and used to round each leg to a whole SAR, so 50.40 + 30.10 was stored as
+// "كاش:50/شبكة:30" and every shift screen reported an expected 80 against a
+// total_final of 80.50 — an unexplainable 0.50 variance on the cashier's
+// drawer. The writer now emits 2 decimals; this reader is the parsing half:
+//   • parseFloat, not an integer read, so 50.40 comes back as 50.40;
+//   • BARE-INTEGER TOLERANT — every row already in the database ("كاش:50")
+//     parses to exactly the same number it always did;
+//   • the method name is everything before the LAST ':' (a name may legally
+//     contain one; the amount never does);
+//   • requires BOTH '/' and ':' — the V5.7.14 rule that keeps a method NAMED
+//     "مدى/شبكة" from being misparsed as two legs.
+// Returns null when the string is not split-shaped (caller credits the single
+// method with total_final), else [{ method, amount }] with 2-decimal amounts.
+function _parseSplitLegs(raw) {
+  const s = String(raw == null ? '' : raw);
+  if (s.indexOf('/') < 0 || s.indexOf(':') < 0) return null;
+  const legs = [];
+  for (const part of s.split('/')) {
+    const i = part.lastIndexOf(':');
+    if (i < 0) continue;
+    legs.push({ method: part.slice(0, i), amount: _r2(part.slice(i + 1)) });
+  }
+  return legs.length ? legs : null;
+}
+// Halala rounding — kills the binary-float dust that accumulating decimal legs
+// leaves behind (50.4 + 30.1 must be 80.5, never 80.50000000000001).
+function _r2(n) {
+  const v = Number(n);
+  return Number.isFinite(v) ? Math.round(v * 100) / 100 : 0;
+}
+
 // openingFloat (default 0) is the REAL cash the drawer started with. It is
 // folded into the CASH method's expected figure below so the physical count
 // (which contains that same float) reconciles to zero. Callers MUST pass the
@@ -213,24 +246,22 @@ async function aggregateShiftPayments(shiftId, openingFloat = 0) {
     const key = _normPM(rawMethod);
     const m = exactLookup[key] || aliasLookup[key];
     if (m) {
-      expectedById[m.id] = (expectedById[m.id] || 0) + amount;
+      expectedById[m.id] = _r2((expectedById[m.id] || 0) + amount);
       countById[m.id]    = (countById[m.id]    || 0) + 1;
     } else {
-      unmatchedTotal += amount;
+      unmatchedTotal = _r2(unmatchedTotal + amount);
       unmatchedDetails.push({ raw: rawMethod, normalized: key, amount });
     }
-    expectedTotal += amount;
+    expectedTotal = _r2(expectedTotal + amount);
   }
   for (const sale of sales) {
-    const total = Number(sale.total_final) || 0;
+    const total = _r2(sale.total_final);
     const pmRaw = sale.payment_method || 'cash';
-    if (String(pmRaw).includes('/') && String(pmRaw).includes(':')) {
-      // Split-payment syntax requires BOTH '/' AND ':' (else "مدى/شبكة"
-      // would be misparsed as split — see V5.7.14 fix)
-      for (const part of String(pmRaw).split('/')) {
-        const [m, a] = part.split(':');
-        credit(m, Number(a) || 0);
-      }
+    // W0-A — decimal-safe leg read (see _parseSplitLegs). Old bare-integer
+    // rows parse exactly as before; a 50.40/30.10 split now sums to 80.50.
+    const legs = _parseSplitLegs(pmRaw);
+    if (legs) {
+      for (const leg of legs) credit(leg.method, leg.amount);
     } else {
       credit(pmRaw, total);
     }
@@ -248,8 +279,8 @@ async function aggregateShiftPayments(shiftId, openingFloat = 0) {
       (m) => String(m.group_type || '').toLowerCase() === 'cash' || _normPM(m.name) === 'cash',
     );
     if (cashMethod) {
-      expectedById[cashMethod.id] = (expectedById[cashMethod.id] || 0) + _openingFloat;
-      expectedTotal += _openingFloat;
+      expectedById[cashMethod.id] = _r2((expectedById[cashMethod.id] || 0) + _openingFloat);
+      expectedTotal = _r2(expectedTotal + _openingFloat);
     }
   }
 
@@ -399,32 +430,31 @@ router.post('/close', requireCapability('pos.shift_close'), async (req, res) => 
     let theoreticalKita = 0;
 
     for (const sale of sales) {
-      const total = Number(sale.total_final);
+      const total = _r2(sale.total_final);
       const pm = (sale.payment_method || '').toLowerCase();
 
-      if (pm.includes('/')) {
-        // Split payment
-        const parts = sale.payment_method.split('/');
-        for (const part of parts) {
-          const [method, amount] = part.split(':');
-          const val = Number(amount) || 0;
-          if (method.toLowerCase() === 'cash') theoreticalCash += val;
-          else if (method.toLowerCase() === 'card') theoreticalCard += val;
-          else if (method.toLowerCase() === 'kita') theoreticalKita += val;
+      // W0-A — same halala-safe leg read as every other shift aggregation.
+      const legs = _parseSplitLegs(sale.payment_method);
+      if (legs) {
+        for (const leg of legs) {
+          const method = String(leg.method).toLowerCase();
+          if (method === 'cash') theoreticalCash = _r2(theoreticalCash + leg.amount);
+          else if (method === 'card') theoreticalCard = _r2(theoreticalCard + leg.amount);
+          else if (method === 'kita') theoreticalKita = _r2(theoreticalKita + leg.amount);
         }
       } else if (pm === 'cash') {
-        theoreticalCash += total;
+        theoreticalCash = _r2(theoreticalCash + total);
       } else if (pm === 'card') {
-        theoreticalCard += total;
+        theoreticalCard = _r2(theoreticalCard + total);
       } else if (pm === 'kita') {
-        theoreticalKita += total;
+        theoreticalKita = _r2(theoreticalKita + total);
       }
     }
 
-    const totalTheoretical = theoreticalCash + theoreticalCard + theoreticalKita;
-    const diffCash = (Number(actualCash) || 0) - theoreticalCash;
-    const diffCard = (Number(actualCard) || 0) - theoreticalCard;
-    const diffKita = (Number(actualKita) || 0) - theoreticalKita;
+    const totalTheoretical = _r2(theoreticalCash + theoreticalCard + theoreticalKita);
+    const diffCash = _r2((Number(actualCash) || 0) - theoreticalCash);
+    const diffCard = _r2((Number(actualCard) || 0) - theoreticalCard);
+    const diffKita = _r2((Number(actualKita) || 0) - theoreticalKita);
 
     // v7.5 — atomic close: lock the row, refuse to close a non-OPEN shift
     // (a network-retry double-close used to silently overwrite the actuals).
@@ -744,18 +774,19 @@ router.get('/closing-data-v3/:shiftId', async (req, res) => {
     function credit(rawMethod, amount) {
       const key = norm(rawMethod);
       const m = exactLookup[key] || aliasLookup[key];
-      if (m) expectedById[m.id] = (expectedById[m.id] || 0) + amount;
-      else   unmatchedTotal += amount;
-      expectedTotal += amount;
+      if (m) expectedById[m.id] = _r2((expectedById[m.id] || 0) + amount);
+      else   unmatchedTotal = _r2(unmatchedTotal + amount);
+      expectedTotal = _r2(expectedTotal + amount);
     }
     for (const s of sales) {
-      const total = Number(s.total_final) || 0;
+      const total = _r2(s.total_final);
       const pmRaw = s.payment_method || 'cash';
-      if (String(pmRaw).includes('/') && String(pmRaw).includes(':')) {
-        for (const part of String(pmRaw).split('/')) {
-          const [m, a] = part.split(':');
-          credit(m, Number(a) || 0);
-        }
+      // W0-A — decimal-safe leg read (shared _parseSplitLegs). This grid is
+      // what the cashier reconciles against, so it must agree with
+      // aggregateShiftPayments to the halala.
+      const legs = _parseSplitLegs(pmRaw);
+      if (legs) {
+        for (const leg of legs) credit(leg.method, leg.amount);
       } else {
         credit(pmRaw, total);
       }
@@ -778,8 +809,8 @@ router.get('/closing-data-v3/:shiftId', async (req, res) => {
         (m) => String(m.group_type || '').toLowerCase() === 'cash' || norm(m.name) === 'cash',
       );
       if (cashMethod) {
-        expectedById[cashMethod.id] = (expectedById[cashMethod.id] || 0) + openingFloat;
-        expectedTotal += openingFloat;
+        expectedById[cashMethod.id] = _r2((expectedById[cashMethod.id] || 0) + openingFloat);
+        expectedTotal = _r2(expectedTotal + openingFloat);
       }
     }
 
@@ -1487,23 +1518,22 @@ router.get('/closing-data/:shiftId', async (req, res) => {
       const key = norm(rawMethod);
       const m = findMethod(key);
       if (m) {
-        expectedById[m.id] = (expectedById[m.id] || 0) + amount;
+        expectedById[m.id] = _r2((expectedById[m.id] || 0) + amount);
         countById[m.id]    = (countById[m.id]    || 0) + 1;
       } else {
-        unmatchedTotal += amount;
+        unmatchedTotal = _r2(unmatchedTotal + amount);
         unmatchedDetails.push({ raw: rawMethod, normalized: key, amount });
       }
-      expectedTotal += amount;
+      expectedTotal = _r2(expectedTotal + amount);
     }
     for (const sale of sales) {
-      const total = Number(sale.total_final) || 0;
+      const total = _r2(sale.total_final);
       const pmRaw = sale.payment_method || 'cash';
-      if (String(pmRaw).includes('/') && String(pmRaw).includes(':')) {
-        // Split-payment syntax: "cash:50/card:30"  (must contain BOTH / and :)
-        for (const part of String(pmRaw).split('/')) {
-          const [m, a] = part.split(':');
-          credit(m, Number(a) || 0);
-        }
+      // W0-A — decimal-safe leg read (shared _parseSplitLegs); "مدى/شبكة"
+      // (no ':') still falls through to the single-method branch.
+      const legs = _parseSplitLegs(pmRaw);
+      if (legs) {
+        for (const leg of legs) credit(leg.method, leg.amount);
       } else {
         // Single payment — handles names like "مدى/شبكة" that contain '/'
         credit(pmRaw, total);

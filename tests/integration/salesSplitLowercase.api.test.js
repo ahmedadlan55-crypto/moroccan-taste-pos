@@ -200,8 +200,16 @@ async function fixtures() {
 
     const [rowsA] = await db.query('SELECT payment_method, split_details_json, total_final FROM sales WHERE id=? LIMIT 1', [saleA]);
     check('sale row exists with total 115', rowsA.length === 1 && r2(rowsA[0].total_final) === 115, rowsA[0]);
+    // W0-A — leg amounts are now stored with HALALA precision (2 decimals).
+    // They used to be Math.round(v)'d, so a 50.40/30.10 split was written as
+    // ":50/:30" and every shift reader reconstructed a total that did not match
+    // total_final. See tests/integration/splitPaymentHalala.api.test.js.
     check('payment_method is the leg-joined string, NOT the literal \'split\'',
-      rowsA.length === 1 && rowsA[0].payment_method === `${CASH_AR}:80/${CARD_AR}:35`, rowsA[0]?.payment_method);
+      rowsA.length === 1 && rowsA[0].payment_method === `${CASH_AR}:80.00/${CARD_AR}:35.00`, rowsA[0]?.payment_method);
+    check('the stored legs sum EXACTLY to total_final (115)',
+      rowsA.length === 1 && r2(String(rowsA[0].payment_method).split('/')
+        .reduce((s, p) => s + Number(p.slice(p.lastIndexOf(':') + 1)), 0)) === r2(rowsA[0].total_final),
+      rowsA[0]?.payment_method);
     let sdA = null; try { sdA = JSON.parse(rowsA[0]?.split_details_json || 'null'); } catch (_) {}
     check('split_details_json persisted with BOTH legs (array shape kept verbatim)',
       Array.isArray(sdA) && sdA.length === 2
@@ -241,8 +249,8 @@ async function fixtures() {
     const saleB = resB.body?.orderId;
 
     const [rowsB] = await db.query('SELECT payment_method, split_details_json FROM sales WHERE id=? LIMIT 1', [saleB]);
-    check('legacy payment_method is the leg-joined string',
-      rowsB.length === 1 && rowsB[0].payment_method === `${CASH_AR}:60/${CARD_AR}:55`, rowsB[0]?.payment_method);
+    check('legacy payment_method is the leg-joined string (2-decimal legs — W0-A)',
+      rowsB.length === 1 && rowsB[0].payment_method === `${CASH_AR}:60.00/${CARD_AR}:55.00`, rowsB[0]?.payment_method);
     let sdB = null; try { sdB = JSON.parse(rowsB[0]?.split_details_json || 'null'); } catch (_) {}
     check('legacy split_details_json persisted as the OBJECT shape',
       sdB && !Array.isArray(sdB) && r2(sdB[CASH_AR]) === 60 && r2(sdB[CARD_AR]) === 55, sdB);

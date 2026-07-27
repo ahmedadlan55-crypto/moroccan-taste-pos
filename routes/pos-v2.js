@@ -128,9 +128,19 @@ async function _loadOrder(id, conn) {
   const [rows] = await q.query('SELECT * FROM pos_orders WHERE id=? LIMIT 1' + (conn ? ' FOR UPDATE' : ''), [id]);
   return rows[0] || null;
 }
+// W0-A — the line SELECT now carries the two menu-owned facts a RESUMED line
+// cannot be rebuilt without: the English name and the tax convention. Neither
+// lives on pos_order_lines (see _applyTaxConvention), and `menu` is the same
+// source routes/sales.js reads when it recomputes the sale — so the client
+// resumes a held order with the identical convention the checkout will apply.
+// LEFT JOIN: a line whose menu row was deleted still loads (nameEn null,
+// taxInclusive false) exactly as it did before.
+const _LINE_SELECT =
+  'SELECT pol.*, mi.name_en AS menu_name_en, COALESCE(mi.is_tax_inclusive,0) AS menu_is_tax_inclusive ' +
+  'FROM pos_order_lines pol LEFT JOIN menu mi ON mi.id = pol.menu_id ';
 async function _loadLines(id, conn) {
   const q = conn || db;
-  const [rows] = await q.query('SELECT * FROM pos_order_lines WHERE order_id=? ORDER BY sort, id', [id]);
+  const [rows] = await q.query(_LINE_SELECT + 'WHERE pol.order_id=? ORDER BY pol.sort, pol.id', [id]);
   return rows;
 }
 async function _loadPayments(id, conn) {
@@ -222,7 +232,31 @@ function _publicOrder(o, lines, payments) {
     version: Number(o.version), heldAt: o.held_at, submittedAt: o.submitted_at,
     completedAt: o.completed_at, voidedAt: o.voided_at, voidReason: o.void_reason,
     createdAt: o.created_at, updatedAt: o.updated_at,
-    lines: (lines || []).map((l) => ({ id: l.id, menuId: l.menu_id, name: l.name_snapshot, qty: Number(l.qty), unitPrice: Number(l.unit_price), lineDiscount: Number(l.line_discount), vatCategory: l.vat_category, notes: l.notes, sort: l.sort, comboChoices: _parseComboChoices(l.combo_choices_json, l.id) })),
+    // W0-A — RESUME CONTRACT. `qty` is the stored BASE quantity (it always
+    // was); everything after `sort` is PURELY ADDITIVE (an older client
+    // ignores unknown keys) and exists so a held order can be resumed into a
+    // cart that rebuilds to the SAME total:
+    //   nameEn                    — the English label the catalog ships;
+    //   enteredUnitCode/enteredQty/conversionFactorSnapshot — the unit the
+    //     cashier actually typed (qty = enteredQty × factor). Without them a
+    //     resumed carton line came back as loose base units;
+    //   taxInclusive              — menu.is_tax_inclusive, the convention the
+    //     cart must price with. Without it the client re-priced a tax-INCLUSIVE
+    //     line as exclusive and routes/sales.js rejected the whole checkout on
+    //     the `total_mismatch` guard.
+    lines: (lines || []).map((l) => ({
+      id: l.id, menuId: l.menu_id, name: l.name_snapshot, qty: Number(l.qty),
+      unitPrice: Number(l.unit_price), lineDiscount: Number(l.line_discount),
+      vatCategory: l.vat_category, notes: l.notes, sort: l.sort,
+      comboChoices: _parseComboChoices(l.combo_choices_json, l.id),
+      nameEn: l.menu_name_en ?? null,
+      baseQty: Number(l.qty),
+      enteredUnitId: l.entered_unit_id ?? null,
+      enteredUnitCode: l.entered_unit_code ?? null,
+      enteredQty: l.entered_qty != null ? Number(l.entered_qty) : null,
+      conversionFactorSnapshot: l.conversion_factor_snapshot != null ? Number(l.conversion_factor_snapshot) : null,
+      taxInclusive: Number(l.menu_is_tax_inclusive) === 1,
+    })),
     payments: (payments || []).map((p) => ({ id: p.id, method: p.method, amount: Number(p.amount), ref: p.ref })),
   };
 }
@@ -1063,7 +1097,10 @@ router.get('/orders', POS, async (req, res) => {
       'SELECT pos_orders.* FROM pos_orders' + join + ' WHERE ' + where.join(' AND ') + ' ORDER BY pos_orders.updated_at DESC LIMIT 200', params);
     const ids = rows.map((r) => r.id);
     let lines = [];
-    if (ids.length) { const [lr] = await db.query('SELECT * FROM pos_order_lines WHERE order_id IN (?) ORDER BY sort, id', [ids]); lines = lr; }
+    // W0-A — same _LINE_SELECT the single-order read uses, so the HELD-ORDERS
+    // LIST (the screen a resume actually starts from) ships the identical
+    // resume contract instead of a thinner line shape.
+    if (ids.length) { const [lr] = await db.query(_LINE_SELECT + 'WHERE pol.order_id IN (?) ORDER BY pol.sort, pol.id', [ids]); lines = lr; }
     res.json({ success: true, data: rows.map((o) => _publicOrder(o, lines.filter((l) => l.order_id === o.id), [])) });
   } catch (e) { _catch(res, e); }
 });

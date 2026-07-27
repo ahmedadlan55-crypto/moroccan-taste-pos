@@ -29,6 +29,7 @@ import { analyticsFilterCodec, type AnalyticsFilters } from "../lib/filters";
 import {
   buildFiltersBody,
   displayMetric,
+  setPageExportRequest,
   type AnalyticsCompareSpec,
   type AnalyticsQueryBody,
   type AnalyticsRegistry,
@@ -84,6 +85,31 @@ const SUMMARY_METRICS_B = [
 ] as const;
 
 const IN_GROUP_A: ReadonlySet<string> = new Set<string>(SUMMARY_METRICS_A);
+
+/** The day-by-day detail table — the one grid on this page that exports as rows. */
+const DAILY_METRICS = [
+  "orders",
+  "gross_product_sales",
+  "discounts_total",
+  "net_ex_vat",
+  "vat_amount",
+  "invoice_total",
+  "avg_ticket",
+] as const;
+
+// The TopBar ExportMenu asks this page's registry entry for its export shape.
+// Without it the export silently falls back to DEFAULT_EXPORT_SPEC (net +
+// orders), which is not this report. The statement/tax/collections figures are
+// dimensionless and can't be exported as rows, so the export mirrors the daily
+// detail table — including its date basis, so the file matches the screen.
+setPageExportRequest(SEGMENT, (filters) => {
+  const dim = filters.businessDay ? "business_day" : "calendar_day";
+  return {
+    metrics: [...DAILY_METRICS],
+    dimensions: [dim],
+    sort: [{ by: dim, dir: "asc" }],
+  };
+});
 
 const MONEY_EPSILON = 0.01;
 
@@ -346,7 +372,7 @@ export default function Executive() {
   };
   const byDayBody: AnalyticsQueryBody = {
     ...base,
-    metrics: ["orders", "gross_product_sales", "discounts_total", "net_ex_vat", "vat_amount", "invoice_total", "avg_ticket"],
+    metrics: [...DAILY_METRICS],
     dimensions: [dayDim],
     sort: [{ by: dayDim, dir: "asc" }],
   };

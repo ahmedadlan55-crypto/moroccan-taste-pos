@@ -184,7 +184,9 @@ export const salesReports = {
   metrics: {
     gross_product_sales: "إجمالي مبيعات المنتجات",
     discounts_total: "إجمالي الخصومات",
+    discounts_line: "الخصم (على مستوى الصنف)",
     returns_net: "صافي المرتجعات",
+    returns_cogs: "تكلفة المرتجعات",
     net_ex_vat: "صافي المبيعات دون الضريبة",
     vat_amount: "مبلغ ضريبة القيمة المضافة",
     invoice_total: "إجمالي الفواتير",

@@ -1,32 +1,37 @@
 // Sales Analytics Hub — "profitability" page (cap-gated by the hub on
 // analytics.cost.view; this file renders only when the cap is held).
 //
-// Per-item cost/profit/margin plus the menu-engineering quadrant: a scatter of
-// qty_sold × margin_pct with ReferenceLines at the MEDIANS, classifying items
-// as Stars / Plowhorses / Puzzles / Dogs (labels from
-// salesReports.profitability.quadrants.*).
+// Per-item cost/profit/margin plus the menu-engineering quadrant: every item is
+// classified against the MEDIAN qty_sold and margin_pct as a Star / Plowhorse /
+// Puzzle / Dog (labels from salesReports.profitability.quadrants.*) and that
+// class is carried as a table column. Reports are decision tables here — the
+// quadrant scatter that used to sit above the table belongs on the dashboard.
 import { useMemo } from "react";
-import {
-  CartesianGrid,
-  ReferenceLine,
-  Scatter,
-  ScatterChart,
-  Tooltip as RechartsTooltip,
-  XAxis,
-  YAxis,
-} from "recharts";
 import { Coins, Percent, TrendingUp, Wallet, type LucideIcon } from "lucide-react";
 import { Badge, EmptyState, ErrorState, ExplainNumber, LoadingState, MetricCard, type MetricTone } from "@/shared/ui";
-import { ChartCard, useChartPalette, useChartsRtl } from "@/shared/charts";
 import { DataTable, type ColumnDef } from "@/shared/tables";
 import { formatCurrency, formatNumber } from "@/shared/lib";
 import { useT } from "@/i18n";
 import { useUrlFilters } from "@/shared/hooks/useUrlFilters";
 import { analyticsFilterCodec } from "../lib/filters";
-import { buildFiltersBody, displayMetric, type AnalyticsQueryBody, type AnalyticsResult } from "../lib/api";
+import {
+  buildFiltersBody,
+  displayMetric,
+  setPageExportRequest,
+  type AnalyticsQueryBody,
+  type AnalyticsResult,
+} from "../lib/api";
 import { useAnalyticsQuery } from "../lib/useAnalyticsQuery";
 
+const SEGMENT = "profitability";
 const METRICS = ["qty_sold", "net_ex_vat", "cogs", "gross_profit", "margin_pct"] as const;
+
+// The TopBar ExportMenu asks this page's registry entry for its export shape.
+setPageExportRequest(SEGMENT, () => ({
+  metrics: [...METRICS],
+  dimensions: ["menu_item"],
+  sort: [{ by: "net_ex_vat", dir: "desc" }],
+}));
 
 const fmtPct = (v: number) => `${formatNumber(v)}%`;
 
@@ -81,8 +86,6 @@ const QUADRANT_BADGE: Record<QuadrantClass, "success" | "warning" | "info" | "da
 export default function Profitability() {
   const t = useT();
   const { filters } = useUrlFilters(analyticsFilterCodec);
-  const palette = useChartPalette();
-  const rtl = useChartsRtl();
   const base = useMemo(() => buildFiltersBody(filters), [filters]);
 
   const QUADRANT_LABEL: Record<QuadrantClass, string> = {
@@ -125,10 +128,10 @@ export default function Profitability() {
   }));
   if (raw.length === 0) return <EmptyState title={t("salesReports.states.empty")} />;
 
-  // ── quadrant classification at the medians (plottable points only) ──
-  const plottable = raw.filter((r) => r.qty != null && r.margin != null);
-  const medQty = plottable.length > 0 ? median(plottable.map((r) => r.qty as number)) : 0;
-  const medMargin = plottable.length > 0 ? median(plottable.map((r) => r.margin as number)) : 0;
+  // ── quadrant classification at the medians (rows with both inputs only) ──
+  const classifiable = raw.filter((r) => r.qty != null && r.margin != null);
+  const medQty = classifiable.length > 0 ? median(classifiable.map((r) => r.qty as number)) : 0;
+  const medMargin = classifiable.length > 0 ? median(classifiable.map((r) => r.margin as number)) : 0;
   const items: ItemRow[] = raw.map((r) => {
     if (r.qty == null || r.margin == null) return r;
     const highQty = r.qty >= medQty;
@@ -142,10 +145,6 @@ export default function Profitability() {
   // completeness flag) — margins over that window are not fully cost-backed.
   const costCaveat =
     meta?.completeness?.complete === false || (meta?.maskedMetrics ?? []).includes("cogs");
-
-  const scatterPoints = items
-    .filter((r) => r.qty != null && r.margin != null)
-    .map((r) => ({ x: r.qty as number, y: r.margin as number, name: r.label, cls: r.cls }));
 
   const columns: ColumnDef<ItemRow>[] = [
     { id: "item", header: t("salesReports.dims.menu_item"), accessor: (r) => r.label, pinStart: true, width: 180 },
@@ -234,58 +233,6 @@ export default function Profitability() {
           );
         })}
       </div>
-
-      {scatterPoints.length > 0 && (
-        <ChartCard
-          title={`${t("salesReports.metrics.margin_pct")} × ${t("salesReports.metrics.qty_sold")}`}
-          subtitle={`${QUADRANT_LABEL.star} / ${QUADRANT_LABEL.plowhorse} / ${QUADRANT_LABEL.puzzle} / ${QUADRANT_LABEL.dog}`}
-          height={320}
-          tableLabel={t("salesReports.dims.menu_item")}
-          tableColumns={[
-            { key: "name", label: t("salesReports.dims.menu_item") },
-            { key: "x", label: t("salesReports.metrics.qty_sold") },
-            { key: "y", label: t("salesReports.metrics.margin_pct") },
-            { key: "cls", label: t("salesReports.pages.profitability.title") },
-          ]}
-          tableRows={scatterPoints.map((p) => ({
-            name: p.name,
-            x: formatNumber(p.x),
-            y: fmtPct(p.y),
-            cls: p.cls ? QUADRANT_LABEL[p.cls] : "—",
-          }))}
-        >
-          <ScatterChart margin={{ top: 16, bottom: 8 }}>
-            <CartesianGrid stroke={palette.grid} />
-            <XAxis
-              type="number"
-              dataKey="x"
-              name={t("salesReports.metrics.qty_sold")}
-              reversed={rtl.xAxisReversed}
-              stroke={palette.axis}
-              tickFormatter={rtl.tickFormatterNumber}
-              tick={{ fontSize: 11 }}
-            />
-            <YAxis
-              type="number"
-              dataKey="y"
-              name={t("salesReports.metrics.margin_pct")}
-              orientation={rtl.dir === "rtl" ? "right" : "left"}
-              stroke={palette.axis}
-              tickFormatter={rtl.tickFormatterNumber}
-              tick={{ fontSize: 11 }}
-            />
-            <RechartsTooltip
-              contentStyle={rtl.tooltipStyle}
-              cursor={{ strokeDasharray: "3 3" }}
-              formatter={(v) => rtl.tickFormatterNumber(v)}
-            />
-            {/* Median cross-hairs: the quadrant boundaries. */}
-            <ReferenceLine x={medQty} stroke={palette.axis} strokeDasharray="4 4" />
-            <ReferenceLine y={medMargin} stroke={palette.axis} strokeDasharray="4 4" />
-            <Scatter data={scatterPoints} fill={palette.series[0]} />
-          </ScatterChart>
-        </ChartCard>
-      )}
 
       <DataTable<ItemRow>
         columns={columns}

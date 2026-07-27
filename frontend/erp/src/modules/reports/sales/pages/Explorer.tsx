@@ -3,12 +3,13 @@
 // Free exploration over a CURATED primary dimension (`by` URL param, page-local
 // codec — the shared filters.ts codec is untouched), an optional second
 // dimension, a metric multi-pick (any registry metric), and a top/bottom-N
-// control. Renders the API rows + subtotals in PivotTable and a bar chart of
-// the top rows. Leaf row clicks drill: the clicked key becomes a shared-codec
+// control. Renders the API rows + subtotals in PivotTable — reports are
+// decision tables, so the visual summary lives on the dashboard, not here.
+// Leaf row clicks drill: the clicked key becomes a shared-codec
 // filter (wave 4 covers payment_method / hour / menu_item / cashier too) and
 // `by` advances along the chain branch → business_day → hour → cashier → the
 // orders segment (the cashier hand-off pins `cashierId` on the composed URL).
-import { lazy, Suspense, useEffect, useMemo, useState, type ReactElement } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { ArrowDownWideNarrow, ArrowUpWideNarrow, Coins, ShoppingBag, type LucideIcon } from "lucide-react";
 import { useLocation, useNavigate } from "react-router-dom";
 import {
@@ -21,11 +22,8 @@ import {
   MultiSelectCombobox,
   SegmentedControl,
   Select,
-  Skeleton,
   type MetricTone,
 } from "@/shared/ui";
-import { useChartPalette } from "@/shared/charts/palette";
-import { useChartsRtl } from "@/shared/charts/rtl";
 import { useUrlFilters } from "@/shared/hooks/useUrlFilters";
 import { computeCompareRange } from "@/shared/ui/date-range-picker";
 import { formatCurrency, formatNumber } from "@/shared/lib";
@@ -82,23 +80,6 @@ const explorerCodec = makeCodec({
 function asDim(raw: string, fallback: ExplorerDim = "branch"): ExplorerDim {
   return (EXPLORER_DIMS as readonly string[]).includes(raw) ? (raw as ExplorerDim) : fallback;
 }
-
-/* ── deferred chart kit (page-local copy by design; see wave notes) ── */
-
-type Recharts = typeof import("recharts");
-interface ChartKitBag {
-  R: Recharts;
-  ChartCard: (typeof import("@/shared/charts/ChartCard"))["ChartCard"];
-}
-const ChartKit = lazy(async () => {
-  const [R, card] = await Promise.all([import("recharts"), import("@/shared/charts/ChartCard")]);
-  const bag: ChartKitBag = { R, ChartCard: card.ChartCard };
-  return {
-    default: function ChartKitHost({ children }: { children: (kit: ChartKitBag) => ReactElement }) {
-      return children(bag);
-    },
-  };
-});
 
 /* ── tiny local helpers (page-local copies by design) ── */
 
@@ -163,8 +144,6 @@ const KPI_TONES: MetricTone[] = ["teal", "violet", "blue", "amber"];
 
 export default function Explorer() {
   const t = useT();
-  const palette = useChartPalette();
-  const rtl = useChartsRtl();
   const navigate = useNavigate();
   const location = useLocation();
   const { filters } = useUrlFilters(analyticsFilterCodec);
@@ -223,27 +202,6 @@ export default function Explorer() {
       })),
     [metricIds, registry.data, t],
   );
-
-  // Bar chart of the top rows for the PRIMARY dimension: single-dim results use
-  // the rows directly; two-dim results prefer the API level-0 subtotals (a
-  // derived metric is not client-summable).
-  const chartRows = useMemo(() => {
-    const result = query.data;
-    if (!result) return [];
-    const source =
-      dims.length === 1
-        ? result.rows
-        : (result.subtotals ?? []).filter((r) => r.keys[0] != null && r.keys[1] == null);
-    return source
-      .map((row) => ({
-        key: String(row.keys[0] ?? ""),
-        label: row.labels[0] ?? String(row.keys[0] ?? ""),
-        value: typeof row.values[sortMetric] === "number" ? (row.values[sortMetric] as number) : null,
-      }))
-      .filter((r) => r.value != null)
-      .slice(0, limit);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [query.data, dims.join("|"), sortMetric, limit]);
 
   const dimOptions = EXPLORER_DIMS.map((d) => ({ value: d, label: t(`salesReports.dims.${d}`) }));
   const secondOptions = [
@@ -409,37 +367,6 @@ export default function Explorer() {
           );
         })}
       </div>
-
-      <Suspense fallback={<Skeleton className="h-80" />}>
-        <ChartKit>
-          {({ R, ChartCard }) => (
-            <ChartCard
-              title={t(`salesReports.metrics.${sortMetric}`)}
-              subtitle={t(`salesReports.dims.${by}`)}
-              isEmpty={chartRows.length === 0}
-              emptyLabel={t("salesReports.charts.empty")}
-              tableLabel={t("salesReports.charts.showTable")}
-              tableCaption={`${t(`salesReports.metrics.${sortMetric}`)} — ${t(`salesReports.dims.${by}`)}`}
-              tableColumns={[
-                { key: "label", label: t(`salesReports.dims.${by}`) },
-                { key: "valueText", label: t(`salesReports.metrics.${sortMetric}`) },
-              ]}
-              tableRows={chartRows.map((r) => ({
-                label: r.label,
-                valueText: r.value == null ? "—" : formatterFor(registry.data, sortMetric)(r.value),
-              }))}
-            >
-              <R.BarChart data={chartRows} margin={{ top: 8, left: 8, right: 8 }}>
-                <R.CartesianGrid stroke={palette.grid} vertical={false} />
-                <R.XAxis dataKey="label" reversed={rtl.xAxisReversed} tick={{ fontSize: 11, fill: palette.axis }} />
-                <R.YAxis tick={{ fontSize: 11, fill: palette.axis }} tickFormatter={rtl.tickFormatterNumber} width={64} />
-                <R.Tooltip contentStyle={rtl.tooltipStyle} formatter={(value) => rtl.tickFormatterNumber(value)} />
-                <R.Bar dataKey="value" name={t(`salesReports.metrics.${sortMetric}`)} fill={palette.series[0]} radius={[6, 6, 0, 0]} />
-              </R.BarChart>
-            </ChartCard>
-          )}
-        </ChartKit>
-      </Suspense>
 
       <PivotTable
         rows={rows}

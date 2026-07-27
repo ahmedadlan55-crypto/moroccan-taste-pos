@@ -1,30 +1,43 @@
 // Sales Analytics Hub — "voids" page (voids & returns).
 //
-// KPI row (voids_count/value, returns_count/value, qty_returned) + a bar of
-// returns value by return_reason (the reason dimension IS projected — see
-// lib/analytics/registry/dimensions.js) + a per-CASHIER voids DataTable with
-// warning tones on high void rates.
+// KPI row (voids_count/value, returns_count/value, qty_returned) + a per-CASHIER
+// voids DataTable with warning tones on high void rates.
+//
+// Reports are decision tables and charts live on the dashboard, so the former
+// returns-by-reason bar is gone. The reason query stays because it is what gates
+// this page's loading / error / empty / completeness states.
 //
 // E2E-wave fix: the original detail table grouped RETURN-fact metrics by
 // [return_reason, cashier]. No fact carries both dimensions (return_reason is
 // return-fact-only, cashier is order/line-fact-only), so the planner refused
 // the combination (ANALYTICS_UNSUPPORTED_COMBINATION 422) and the table
 // errored on every load. The honest split: reasons stay on the return fact
-// (chart above), and the cashier table carries order-fact void measures.
+// (their own query), and the cashier table carries order-fact void measures.
 import { useMemo } from "react";
-import { Bar, BarChart, CartesianGrid, Tooltip as RechartsTooltip, XAxis, YAxis } from "recharts";
 import { Ban, PackageX, RotateCcw, Undo2, XCircle, type LucideIcon } from "lucide-react";
 import { Badge, EmptyState, ErrorState, ExplainNumber, LoadingState, MetricCard, type MetricTone } from "@/shared/ui";
-import { ChartCard, useChartPalette, useChartsRtl } from "@/shared/charts";
 import { DataTable, type ColumnDef } from "@/shared/tables";
 import { formatCurrency, formatNumber } from "@/shared/lib";
 import { useT } from "@/i18n";
 import { useUrlFilters } from "@/shared/hooks/useUrlFilters";
 import { analyticsFilterCodec } from "../lib/filters";
-import { buildFiltersBody, displayMetric, type AnalyticsQueryBody, type AnalyticsResult } from "../lib/api";
+import {
+  buildFiltersBody,
+  displayMetric,
+  setPageExportRequest,
+  type AnalyticsQueryBody,
+  type AnalyticsResult,
+} from "../lib/api";
 import { useAnalyticsQuery } from "../lib/useAnalyticsQuery";
 
 const KPI_METRICS = ["voids_count", "voids_value", "returns_count", "returns_value", "qty_returned"] as const;
+
+// The TopBar ExportMenu asks this page's registry entry for its export shape.
+setPageExportRequest("voids", () => ({
+  metrics: ["voids_count", "voids_value", "void_rate_by_cashier"],
+  dimensions: ["cashier"],
+  sort: [{ by: "voids_value", dir: "desc" }],
+}));
 
 /** A per-cashier void/return rate at/above this (percent points) reads warning. */
 const HIGH_RATE_PCT = 5;
@@ -47,14 +60,6 @@ const KPIS: Array<{ id: string; eq: string; fmt: (v: number) => string; icon: Lu
   { id: "qty_returned", eq: "sum", fmt: formatNumber, icon: PackageX, tone: "violet" },
 ];
 
-interface ReasonRow {
-  key: string;
-  label: string;
-  returns_count: number | null;
-  returns_value: number | null;
-  qty_returned: number | null;
-}
-
 interface CashierVoidsRow {
   key: string;
   cashier: string;
@@ -66,8 +71,6 @@ interface CashierVoidsRow {
 export default function Voids() {
   const t = useT();
   const { filters } = useUrlFilters(analyticsFilterCodec);
-  const palette = useChartPalette();
-  const rtl = useChartsRtl();
   const base = useMemo(() => buildFiltersBody(filters), [filters]);
 
   const kpiBody = useMemo<AnalyticsQueryBody>(
@@ -103,16 +106,9 @@ export default function Voids() {
   if (byReason.isPending) return <LoadingState />;
   if (byReason.isError) return <ErrorState error={byReason.error} onRetry={() => byReason.refetch()} />;
 
-  const reasonRows: ReasonRow[] = (byReason.data?.rows ?? []).map((r) => ({
-    key: String(r.keys[0] ?? ""),
-    label: r.labels[0] ?? String(r.keys[0] ?? "—"),
-    returns_count: displayMetric(r, "returns_count"),
-    returns_value: displayMetric(r, "returns_value"),
-    qty_returned: displayMetric(r, "qty_returned"),
-  }));
-
+  const hasReasonRows = (byReason.data?.rows ?? []).length > 0;
   const hasKpiData = KPI_METRICS.some((id) => kpiValue(kpis.data, id) != null);
-  if (reasonRows.length === 0 && !hasKpiData) return <EmptyState title={t("salesReports.states.empty")} />;
+  if (!hasReasonRows && !hasKpiData) return <EmptyState title={t("salesReports.states.empty")} />;
 
   const incomplete = byReason.data?.meta?.completeness?.complete === false;
 
@@ -187,31 +183,6 @@ export default function Voids() {
           );
         })}
       </div>
-
-      {reasonRows.length > 0 && (
-        <ChartCard
-          title={`${t("salesReports.metrics.returns_value")} — ${t("salesReports.dims.return_reason")}`}
-          tableLabel={t("salesReports.dims.return_reason")}
-          tableColumns={[
-            { key: "label", label: t("salesReports.dims.return_reason") },
-            { key: "returns_value", label: t("salesReports.metrics.returns_value") },
-            { key: "returns_count", label: t("salesReports.metrics.returns_count") },
-          ]}
-          tableRows={reasonRows.map((r) => ({
-            label: r.label,
-            returns_value: r.returns_value == null ? "—" : formatCurrency(r.returns_value),
-            returns_count: r.returns_count == null ? "—" : formatNumber(r.returns_count),
-          }))}
-        >
-          <BarChart data={reasonRows}>
-            <CartesianGrid stroke={palette.grid} vertical={false} />
-            <XAxis dataKey="label" reversed={rtl.xAxisReversed} stroke={palette.axis} tick={{ fontSize: 11 }} />
-            <YAxis orientation={rtl.dir === "rtl" ? "right" : "left"} stroke={palette.axis} tickFormatter={rtl.tickFormatterNumber} tick={{ fontSize: 11 }} />
-            <RechartsTooltip contentStyle={rtl.tooltipStyle} formatter={(v) => rtl.tickFormatterCurrency(v)} />
-            <Bar dataKey="returns_value" name={t("salesReports.metrics.returns_value")} fill={palette.series[2]} radius={[4, 4, 0, 0]} />
-          </BarChart>
-        </ChartCard>
-      )}
 
       {byCashier.isError ? (
         <ErrorState error={byCashier.error} onRetry={() => byCashier.refetch()} />

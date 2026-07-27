@@ -2,19 +2,27 @@
 //
 // KPI row: vat_amount + the order-header extras (fees/rounding/tips — tips is
 // frequently not tracked historically and renders "—" with an explain note),
-// a stacked bar of VAT by category per day, and a by-rate table.
+// and the by-rate table. Reports are decision tables — the VAT-by-category
+// trend chart lives on the dashboard, not here.
 import { useMemo } from "react";
-import { Bar, BarChart, CartesianGrid, Legend, Tooltip as RechartsTooltip, XAxis, YAxis } from "recharts";
 import { Coins, HandCoins, Landmark, ReceiptText, type LucideIcon } from "lucide-react";
 import { Badge, EmptyState, ErrorState, ExplainNumber, LoadingState, MetricCard, type MetricTone } from "@/shared/ui";
-import { ChartCard, useChartPalette, useChartsRtl } from "@/shared/charts";
 import { DataTable, type ColumnDef } from "@/shared/tables";
 import { formatCurrency } from "@/shared/lib";
 import { useT } from "@/i18n";
 import { useUrlFilters } from "@/shared/hooks/useUrlFilters";
 import { analyticsFilterCodec } from "../lib/filters";
-import { buildFiltersBody, displayMetric, type AnalyticsQueryBody, type AnalyticsResult } from "../lib/api";
+import { buildFiltersBody, displayMetric, setPageExportRequest, type AnalyticsQueryBody, type AnalyticsResult } from "../lib/api";
 import { useAnalyticsQuery } from "../lib/useAnalyticsQuery";
+
+const SEGMENT = "taxes";
+
+// The TopBar ExportMenu asks this page's registry entry for its export shape.
+setPageExportRequest(SEGMENT, () => ({
+  metrics: ["vat_amount", "net_ex_vat"],
+  dimensions: ["vat_rate"],
+  sort: [{ by: "vat_amount", dir: "desc" }],
+}));
 
 function kpiValue(result: AnalyticsResult | undefined, id: string): number | null {
   if (!result) return null;
@@ -41,24 +49,11 @@ interface RateRow {
 export default function Taxes() {
   const t = useT();
   const { filters } = useUrlFilters(analyticsFilterCodec);
-  const palette = useChartPalette();
-  const rtl = useChartsRtl();
   const base = useMemo(() => buildFiltersBody(filters), [filters]);
-
-  const dayDim = filters.businessDay ? "business_day" : "calendar_day";
 
   const kpiBody = useMemo<AnalyticsQueryBody>(
     () => ({ metrics: ["vat_amount", "fees_total", "rounding_total", "tips_total"], dimensions: [], ...base }),
     [base],
-  );
-  const dayCategoryBody = useMemo<AnalyticsQueryBody>(
-    () => ({
-      metrics: ["vat_amount"],
-      dimensions: [dayDim, "vat_category"],
-      sort: [{ by: dayDim, dir: "asc" }],
-      ...base,
-    }),
-    [base, dayDim],
   );
   const rateBody = useMemo<AnalyticsQueryBody>(
     () => ({
@@ -71,7 +66,6 @@ export default function Taxes() {
   );
 
   const kpis = useAnalyticsQuery("taxes-kpis", kpiBody);
-  const byDayCategory = useAnalyticsQuery("taxes-day-category", dayCategoryBody);
   const byRate = useAnalyticsQuery("taxes-rate", rateBody);
 
   if (byRate.isPending) return <LoadingState />;
@@ -86,20 +80,6 @@ export default function Taxes() {
   if (rateRows.length === 0) return <EmptyState title={t("salesReports.states.empty")} />;
 
   const incomplete = byRate.data?.meta?.completeness?.complete === false;
-
-  // Pivot day×category rows into one chart row per day with a value per category.
-  const categories: Array<{ key: string; label: string }> = [];
-  const byDayMap = new Map<string, Record<string, unknown>>();
-  for (const r of byDayCategory.data?.rows ?? []) {
-    const dayLabel = r.labels[0] ?? String(r.keys[0] ?? "—");
-    const catKey = String(r.keys[1] ?? "—");
-    const catLabel = r.labels[1] ?? catKey;
-    if (!categories.some((c) => c.key === catKey)) categories.push({ key: catKey, label: catLabel });
-    const entry = byDayMap.get(dayLabel) ?? { label: dayLabel };
-    entry[catKey] = displayMetric(r, "vat_amount");
-    byDayMap.set(dayLabel, entry);
-  }
-  const dayChartRows = [...byDayMap.values()];
 
   const tipsMasked = kpiValue(kpis.data, "tips_total") == null;
 
@@ -164,42 +144,6 @@ export default function Taxes() {
           );
         })}
       </div>
-
-      {dayChartRows.length > 0 && (
-        <ChartCard
-          title={`${t("salesReports.metrics.vat_amount")} — ${t("salesReports.dims.vat_category")}`}
-          tableLabel={t("salesReports.dims.vat_category")}
-          tableColumns={[
-            { key: "label", label: t(`salesReports.dims.${dayDim}`) },
-            ...categories.map((c) => ({ key: c.key, label: c.label })),
-          ]}
-          tableRows={dayChartRows.map((row) => {
-            const out: Record<string, unknown> = { label: row.label };
-            for (const c of categories) {
-              const v = row[c.key];
-              out[c.key] = typeof v === "number" ? formatCurrency(v) : "—";
-            }
-            return out;
-          })}
-        >
-          <BarChart data={dayChartRows}>
-            <CartesianGrid stroke={palette.grid} vertical={false} />
-            <XAxis dataKey="label" reversed={rtl.xAxisReversed} stroke={palette.axis} tick={{ fontSize: 11 }} />
-            <YAxis orientation={rtl.dir === "rtl" ? "right" : "left"} stroke={palette.axis} tickFormatter={rtl.tickFormatterNumber} tick={{ fontSize: 11 }} />
-            <RechartsTooltip contentStyle={rtl.tooltipStyle} formatter={(v) => rtl.tickFormatterCurrency(v)} />
-            <Legend />
-            {categories.map((c, i) => (
-              <Bar
-                key={c.key}
-                dataKey={c.key}
-                name={c.label}
-                stackId="vat"
-                fill={palette.series[i % palette.series.length]}
-              />
-            ))}
-          </BarChart>
-        </ChartCard>
-      )}
 
       <DataTable<RateRow>
         columns={rateColumns}

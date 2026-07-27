@@ -170,7 +170,9 @@ export const salesReports = {
   metrics: {
     gross_product_sales: "Gross product sales",
     discounts_total: "Total discounts",
+    discounts_line: "Discount (per item)",
     returns_net: "Net returns",
+    returns_cogs: "Cost of returns",
     net_ex_vat: "Net sales (ex. VAT)",
     vat_amount: "VAT amount",
     invoice_total: "Invoice total",

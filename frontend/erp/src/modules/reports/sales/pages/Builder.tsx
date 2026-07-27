@@ -4,7 +4,7 @@
 // and optional secondary dimension, top/bottom-N + sort, then RUN — the query
 // fires only for the exact configuration that was run (editing anything
 // re-arms the Run button instead of auto-refetching). Results render in the
-// shared PivotTable with an optional bar-chart toggle.
+// shared PivotTable — reports are decision tables; charts live on the dashboard.
 //
 // The builder config persists in PAGE-LOCAL URL params (b_m CSV, b_d1, b_d2,
 // b_n) read/written directly via useSearchParams — the shared analytics codec
@@ -12,10 +12,9 @@
 //
 // TODO(sales-hub): save-view + schedule wiring lands next wave — the buttons
 // render disabled with a "coming soon" tooltip until then.
-import { useMemo, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { useSearchParams } from "react-router-dom";
-import { Bar, BarChart, CartesianGrid, Tooltip as RechartsTooltip, XAxis, YAxis } from "recharts";
-import { BarChart3, CalendarClock, Play, Save } from "lucide-react";
+import { CalendarClock, Play, Save } from "lucide-react";
 import {
   Badge,
   Button,
@@ -26,19 +25,23 @@ import {
   NumberInput,
   SegmentedControl,
   Select,
-  Toggle,
   Tooltip,
   type MultiSelectOption,
 } from "@/shared/ui";
-import { ChartCard, useChartPalette, useChartsRtl } from "@/shared/charts";
 import { formatCurrency, formatNumber } from "@/shared/lib";
 import { useT } from "@/i18n";
 import { useUrlFilters } from "@/shared/hooks/useUrlFilters";
 import { analyticsFilterCodec } from "../lib/filters";
-import { buildFiltersBody, stableStringify, type AnalyticsQueryBody } from "../lib/api";
+import {
+  buildFiltersBody,
+  setPageExportRequest,
+  stableStringify,
+  type AnalyticsQueryBody,
+} from "../lib/api";
 import { useAnalyticsQuery, useAnalyticsRegistry } from "../lib/useAnalyticsQuery";
 import { PivotTable, type PivotMeasure } from "../components/PivotTable";
-import { buildTree } from "../lib/pivot";
+
+const SEGMENT = "builder";
 
 /** Page-local URL params (NOT part of the shared analytics codec). */
 const P_METRICS = "b_m";
@@ -61,8 +64,6 @@ export default function Builder() {
   const t = useT();
   const { filters } = useUrlFilters(analyticsFilterCodec);
   const [searchParams, setSearchParams] = useSearchParams();
-  const palette = useChartPalette();
-  const rtl = useChartsRtl();
   const registry = useAnalyticsRegistry();
 
   // ── config (URL-backed) ──
@@ -121,9 +122,20 @@ export default function Builder() {
   const canRun = metricIds.length > 0 && dimensions.length > 0;
   const enabled = canRun && ranSig === configSig;
 
-  const result = useAnalyticsQuery("builder", body, { enabled });
+  const result = useAnalyticsQuery(SEGMENT, body, { enabled });
 
-  const [showChart, setShowChart] = useState(false);
+  // Export registration is DYNAMIC here (the shape follows the builder config),
+  // so it re-registers whenever the picked metrics/dimensions/sort change.
+  useEffect(() => {
+    setPageExportRequest(SEGMENT, () => ({
+      metrics: metricIds,
+      dimensions,
+      ...(effectiveSort ? { sort: [{ by: effectiveSort, dir: direction === "top" ? "desc" : "asc" }] } : {}),
+      limit: topN,
+    }));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [metricIds.join("|"), dimensions.join("|"), effectiveSort, direction, topN]);
+
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
 
   const measures: PivotMeasure[] = metricIds.map((id) => {
@@ -132,16 +144,6 @@ export default function Builder() {
   });
 
   const rows = result.data?.rows ?? [];
-  const chartMetric = effectiveSort || metricIds[0] || "";
-  // Top-level aggregation for the bar chart (level-0 subtotals when 2 dims).
-  const chartRows = useMemo(() => {
-    if (!chartMetric || rows.length === 0) return [];
-    return buildTree(rows, dimensions, [chartMetric], result.data?.subtotals).map((node) => ({
-      label: node.labels[0] ?? "—",
-      value: node.values[chartMetric] ?? null,
-    }));
-  }, [rows, dimensions, chartMetric, result.data?.subtotals]);
-  const chartFmt = formatterFor(knownMetrics.find((m) => m.id === chartMetric)?.format ?? "count");
 
   const field = (label: string, control: ReactNode) => (
     <div className="flex min-w-44 flex-col gap-1.5">
@@ -238,22 +240,6 @@ export default function Builder() {
               <CalendarClock className="h-4 w-4" /> {t("salesReports.builder.schedule")}
             </Button>
           </Tooltip>
-          {enabled && rows.length > 0 && chartMetric && (
-            <div className="ms-auto">
-              {/* Optional bar chart of the sort metric by the primary dimension. */}
-              <Toggle
-                checked={showChart}
-                onChange={setShowChart}
-                aria-label={t("salesReports.builder.showChart")}
-                label={
-                  <span className="inline-flex items-center gap-1.5">
-                    <BarChart3 className="h-4 w-4 text-slate-500" aria-hidden="true" />
-                    {t("salesReports.builder.showChart")}
-                  </span>
-                }
-              />
-            </div>
-          )}
         </div>
       </div>
 
@@ -272,28 +258,6 @@ export default function Builder() {
             <div data-testid="completeness-notice">
               <Badge tone="warning">{t("salesReports.states.notAvailableHistorically")}</Badge>
             </div>
-          )}
-          {showChart && chartRows.length > 0 && (
-            <ChartCard
-              title={t(`salesReports.metrics.${chartMetric}`)}
-              tableLabel={t(`salesReports.dims.${dim1}`)}
-              tableColumns={[
-                { key: "label", label: t(`salesReports.dims.${dim1}`) },
-                { key: "value", label: t(`salesReports.metrics.${chartMetric}`) },
-              ]}
-              tableRows={chartRows.map((r) => ({
-                label: r.label,
-                value: r.value == null ? "—" : chartFmt(r.value),
-              }))}
-            >
-              <BarChart data={chartRows}>
-                <CartesianGrid stroke={palette.grid} vertical={false} />
-                <XAxis dataKey="label" reversed={rtl.xAxisReversed} stroke={palette.axis} tick={{ fontSize: 11 }} />
-                <YAxis orientation={rtl.dir === "rtl" ? "right" : "left"} stroke={palette.axis} tickFormatter={rtl.tickFormatterNumber} tick={{ fontSize: 11 }} />
-                <RechartsTooltip contentStyle={rtl.tooltipStyle} formatter={(v) => rtl.tickFormatterNumber(v)} />
-                <Bar dataKey="value" name={t(`salesReports.metrics.${chartMetric}`)} fill={palette.series[0]} radius={[4, 4, 0, 0]} />
-              </BarChart>
-            </ChartCard>
           )}
           <PivotTable
             rows={rows}

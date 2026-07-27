@@ -11,6 +11,7 @@ export const METRIC_CODES = [
   // additive — product money (line fact)
   "gross_product_sales",
   "discounts_total",
+  "discounts_line",
   "returns_net",
   "net_ex_vat",
   "vat_amount",
@@ -29,6 +30,7 @@ export const METRIC_CODES = [
   "returns_value",
   // additive — cost (capability-gated: analytics.cost.view)
   "cogs",
+  "returns_cogs",
   // additive — payments
   "payments_in",
   "refunds_out",

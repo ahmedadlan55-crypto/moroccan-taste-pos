@@ -18,6 +18,11 @@ export const appShell = {
   channel: {
     label: "Sales channel",
     base: "Default",
+    /** Shown when base prices are being served while a channel is selected —
+     *  this flag was computed and rendered nowhere, so the cashier rang up
+     *  prices with no idea where they came from. */
+    pricesUnavailable: "The selected channel's prices aren't available right now — items are ringing up at default prices",
+    backToBase: "Back to default",
   },
 
   priceList: {
@@ -52,6 +57,9 @@ export const appShell = {
 
   toast: {
     legacySynced: "Synced {count} operations from the legacy version",
+    /** A stored channel the server no longer lists — dropped, back to base.
+     *  Said out loud because which price list rings up has just changed. */
+    channelGone: "The saved sales channel is no longer available — prices are back to the default",
     noMatch: 'No item matches "{query}"',
     held: 'Order held — you can restore it from "Held orders"',
     voided: "Order voided",

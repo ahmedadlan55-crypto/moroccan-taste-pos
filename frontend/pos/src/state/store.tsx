@@ -1008,6 +1008,37 @@ export function PosProvider({ children }: { children: ReactNode }) {
   const channelPricesUnavailable = catalogQuery.data?.channelPricesUnavailable ?? false;
   const activeChannelId = catalogQuery.data?.servedChannelId ?? null;
 
+  // ── Self-heal: a stored channel the server no longer lists ────────────────
+  // A live incident. The preference above is persisted and re-applied on EVERY
+  // boot with no validation, so a channel that is later deleted or deactivated
+  // leaves the till refetching ?channelId=<dead> forever, always failing, always
+  // degrading to cached prices. And the one control that could clear it hides
+  // the problem: App.tsx renders the picker on «الأساسي» whenever the stored id
+  // is not in channels[], and a <select> fires no change event when you re-pick
+  // the option it already shows. The cashier is told they are on the default,
+  // served prices that are not the default's, and has no action that changes
+  // anything — «مشكلة لا تنحل».
+  //
+  // channels[] is the only authority on what this device may sell through, and
+  // it is present on a cached copy as well as a fresh one — which matters,
+  // because in this exact failure EVERY load is the degraded fallback. If the
+  // stored id is not on that list, the channel is not sellable here; drop it.
+  //
+  // Deliberately NOT dropped when the channel IS listed and merely unreachable:
+  // an outage must not silently move a till from channel prices to base prices.
+  // That case keeps `channelPricesUnavailable`, which already says so.
+  const healedChannelRef = useRef<string | null>(null);
+  useEffect(() => {
+    const served = catalogQuery.data?.catalog;
+    if (!served || !channelId) return;
+    if ((served.channels ?? []).some((c) => c.id === channelId)) return;
+    if (healedChannelRef.current === channelId) return; // one message per id
+    healedChannelRef.current = channelId;
+    setChannel(null);
+    // Which price list rings up must never change in silence.
+    pushToast("info", trRef.current("appShell.toast.channelGone"));
+  }, [catalogQuery.data, channelId, setChannel, pushToast]);
+
   // A t()-able PATH, never a raw `.message`. CatalogError carries the code;
   // anything else (a bare TypeError from fetch) resolves to the generic load
   // failure, so this is always a key that exists in both dictionaries.

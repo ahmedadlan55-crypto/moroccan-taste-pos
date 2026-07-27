@@ -1,6 +1,33 @@
 export const myInvoicesDialog = {
   title: "My Invoices",
 
+  // View switch (O2C on only) — invoices vs the returns this till raised
+  views: {
+    aria: "View",
+    invoices: "Invoices",
+    returns: "My returns",
+  },
+  returns: {
+    tableStatus: "Status",
+    tableNumber: "Return number",
+    tableOriginal: "Original invoice",
+    tableTotal: "Total",
+    emptyTitle: "You haven't raised any return yet",
+    emptyHint: "Returns you raise from My Invoices appear here with their status.",
+    unavailableTitle: "Return tracking isn't available from this screen",
+    unavailableHint: "The Sales & Customers module is off, or outside the cashier portal's scope.",
+    loadError: "Couldn't load return statuses",
+    notInWindowHint: "This return is older than the current list window",
+    status: {
+      draft: "Awaiting manager approval",
+      approved: "Approved — awaiting posting",
+      posted: "Posted",
+      reversed: "Reversed",
+      cancelled: "Cancelled",
+      unknown: "Unknown",
+    },
+  },
+
   // Stat strip
   statTotal: "Total",
   statActive: "Active",

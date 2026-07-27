@@ -18,6 +18,27 @@ export const customerHistoryDialog = {
     firstVisitLabel: "أول زيارة:",
   },
 
+  // سند قبض — collection on account (draft only)
+  collect: {
+    open: "سند قبض",
+    title: "سند قبض من العميل",
+    amountLabel: "المبلغ (ر.س)",
+    destinationLabel: "جهة التحصيل",
+    destinationCash: "نقدًا",
+    destinationBank: "بنك",
+    referenceLabel: "المرجع",
+    referencePlaceholder: "رقم الإيصال أو التحويل",
+    notesLabel: "ملاحظات",
+    submit: "تسجيل السند",
+    cancel: "إلغاء",
+    another: "سند آخر",
+    doneTitle: "تم تسجيل السند كمسودة",
+    documentNumberLabel: "رقم السند:",
+    draftNote: "مسودة بانتظار اعتماد وترحيل المدير — لم تتحرك أي أرصدة بعد.",
+    unavailable: "تسجيل السندات غير متاح من هذه الشاشة.",
+    failed: "تعذّر تسجيل السند",
+  },
+
   // Empty state
   empty: {
     title: "لا توجد فواتير سابقة لهذا العميل",

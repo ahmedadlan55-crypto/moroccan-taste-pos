@@ -21,7 +21,19 @@
 import { useCallback, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Ban, FileText, Printer, RotateCcw, Search, Undo2 } from "lucide-react";
-import { getInvoice, listSales, returnSale, voidSale, ApiError, type InvoiceDetail } from "@/lib/api";
+import {
+  getInvoice,
+  isFeatureUnavailable,
+  listRaisedReturns,
+  listSales,
+  listSalesReturns,
+  returnSale,
+  voidSale,
+  ApiError,
+  type InvoiceDetail,
+  type RaisedReturnRef,
+  type SalesReturnRow,
+} from "@/lib/api";
 import { round2 } from "@/lib/cartMath";
 import { fmt2, fmtInt } from "@/lib/format";
 import { buildReceiptHtml, printHtml, resolvePaperWidth, type DocumentLanguage } from "@/lib/receipt";
@@ -35,6 +47,51 @@ import { ManagerApprovalDialog } from "./ManagerApprovalDialog";
 import { ReturnRequestDialog } from "./ReturnRequestDialog";
 
 type Filter = "all" | "active" | "cancelled" | "returned";
+/** «فواتيري» now has a second surface: the O2C returns this till raised. */
+type View = "invoices" | "returns";
+
+/**
+ * The i18n key for an O2C return status, so the cashier reads «بانتظار اعتماد
+ * المدير» rather than the raw `draft`. Statuses come from the sales_returns
+ * lifecycle (SalesReturnService: draft → approved → posted → reversed, plus
+ * cancelled). An unknown value renders verbatim — never silently as "done".
+ */
+export function returnStatusKey(status: string | null | undefined): string | null {
+  switch (String(status || "").toLowerCase()) {
+    case "draft":
+      return "myInvoicesDialog.returns.status.draft";
+    case "approved":
+      return "myInvoicesDialog.returns.status.approved";
+    case "posted":
+      return "myInvoicesDialog.returns.status.posted";
+    case "reversed":
+      return "myInvoicesDialog.returns.status.reversed";
+    case "cancelled":
+    case "canceled":
+      return "myInvoicesDialog.returns.status.cancelled";
+    default:
+      return null;
+  }
+}
+
+/** Badge tone per status — approved/posted read as progress, reversed/cancelled
+ *  as terminal-negative, draft as waiting. */
+export function returnStatusTone(status: string | null | undefined): string {
+  switch (String(status || "").toLowerCase()) {
+    case "posted":
+      return "border-teal-200 bg-teal-50 text-teal-700";
+    case "approved":
+      return "border-sky-200 bg-sky-50 text-sky-700";
+    case "reversed":
+    case "cancelled":
+    case "canceled":
+      return "border-red-200 bg-red-50 text-red-700";
+    case "draft":
+      return "border-amber-200 bg-amber-50 text-amber-800";
+    default:
+      return "border-slate-200 bg-slate-50 text-slate-600";
+  }
+}
 
 /**
  * Does this action need the manager-approval dialog?
@@ -250,6 +307,122 @@ function StatusBadge({ row }: { row: SaleRow }) {
   );
 }
 
+/**
+ * «مرتجعاتي» — the returns this till raised, with the status the SERVER says
+ * they are at. Before this, a cashier raised an O2C return draft and it
+ * vanished: nothing in the POS ever mentioned it again, so "did the manager
+ * approve my return?" had no answer short of asking the manager.
+ *
+ * Degradation, in order of what the cashier can act on:
+ *   offline                → the list is a server read; say so.
+ *   nothing raised yet     → empty state, no request at all.
+ *   403 / 404 (feature)    → "not available from this screen", NOT an error —
+ *                            the O2C flag is off or the cashier-portal
+ *                            allow-list does not cover GET .../returns yet.
+ *   any other failure      → the real message + retry.
+ */
+function RaisedReturnsPanel({
+  raised,
+  byId,
+  online,
+  loading,
+  error,
+  onRetry,
+}: {
+  raised: RaisedReturnRef[];
+  byId: Map<string, SalesReturnRow>;
+  online: boolean;
+  loading: boolean;
+  error: unknown;
+  onRetry: () => void;
+}) {
+  const t = useT();
+
+  if (!online) return <ErrorBanner message={t("myInvoicesDialog.offlineBanner")} />;
+  if (raised.length === 0) {
+    return (
+      <EmptyState
+        icon={<Undo2 className="h-10 w-10" />}
+        title={t("myInvoicesDialog.returns.emptyTitle")}
+        hint={t("myInvoicesDialog.returns.emptyHint")}
+      />
+    );
+  }
+  if (loading) {
+    return (
+      <div className="flex flex-col gap-2">
+        {[0, 1, 2].map((i) => (
+          <Skeleton key={i} className="h-12 w-full rounded-xl" />
+        ))}
+      </div>
+    );
+  }
+  if (error) {
+    return isFeatureUnavailable(error) ? (
+      <EmptyState
+        icon={<Undo2 className="h-10 w-10" />}
+        title={t("myInvoicesDialog.returns.unavailableTitle")}
+        hint={t("myInvoicesDialog.returns.unavailableHint")}
+      />
+    ) : (
+      <ErrorBanner message={(error as Error)?.message || t("myInvoicesDialog.returns.loadError")} onRetry={onRetry} />
+    );
+  }
+
+  return (
+    <div className="scrollbar-thin max-h-[55vh] overflow-y-auto rounded-xl border border-slate-200">
+      <table className="w-full text-start text-xs">
+        <thead className="sticky top-0 bg-slate-50 text-[11px] font-extrabold text-slate-500">
+          <tr>
+            <th className="p-2 text-start">{t("myInvoicesDialog.returns.tableStatus")}</th>
+            <th className="p-2 text-start">{t("myInvoicesDialog.returns.tableNumber")}</th>
+            <th className="p-2 text-start">{t("myInvoicesDialog.returns.tableOriginal")}</th>
+            <th className="p-2 text-start">{t("myInvoicesDialog.returns.tableTotal")}</th>
+          </tr>
+        </thead>
+        <tbody>
+          {raised.map((r) => {
+            const server = byId.get(r.id);
+            const statusKey = returnStatusKey(server?.status);
+            return (
+              <tr key={r.id} className="border-t border-slate-100 align-top">
+                <td className="p-2">
+                  {server ? (
+                    <span className={cn("chip px-2 py-0.5 text-[10px] font-extrabold", returnStatusTone(server.status))}>
+                      {statusKey ? t(statusKey) : server.status || "—"}
+                    </span>
+                  ) : (
+                    <span
+                      className="chip border-slate-200 bg-slate-50 px-2 py-0.5 text-[10px] font-extrabold text-slate-500"
+                      title={t("myInvoicesDialog.returns.notInWindowHint")}
+                    >
+                      {t("myInvoicesDialog.returns.status.unknown")}
+                    </span>
+                  )}
+                </td>
+                <td className="p-2">
+                  <div className="num font-extrabold text-ink">{server?.returnNumber ?? r.documentNumber ?? r.id}</div>
+                  {server?.customerName ? (
+                    <div className="text-[10px] font-bold text-slate-500">{server.customerName}</div>
+                  ) : null}
+                </td>
+                <td className="num p-2 text-slate-500">{r.originalSaleId || "—"}</td>
+                <td className="p-2">
+                  {server ? (
+                    <Money value={fmt2(server.totalAmount)} className="font-extrabold text-ink" />
+                  ) : (
+                    <span className="text-slate-400">—</span>
+                  )}
+                </td>
+              </tr>
+            );
+          })}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
 function Stat({ label, value, tone }: { label: string; value: string; tone: string }) {
   return (
     <span className={cn("chip px-2.5 py-1 text-[11px] font-extrabold", tone)}>
@@ -264,6 +437,7 @@ export function MyInvoicesDialog({ open, onClose }: { open: boolean; onClose: ()
   const queryClient = useQueryClient();
   const [query, setQuery] = useState("");
   const [filter, setFilter] = useState<Filter>("all");
+  const [view, setView] = useState<View>("invoices");
   const [pending, setPending] = useState<{ row: SaleRow; action: "void" | "return" } | null>(null);
   const [approvalError, setApprovalError] = useState<string | null>(null);
   const [printingId, setPrintingId] = useState<string | null>(null);
@@ -328,8 +502,29 @@ export function MyInvoicesDialog({ open, onClose }: { open: boolean; onClose: ()
     });
   }, [rows, query, filter]);
 
+  // ── «مرتجعاتي» — the O2C returns THIS till raised ─────────────────────────
+  // Two halves, deliberately: the LEDGER (local, identity only — which returns
+  // are mine) and the SERVER LIST (authority on status). SalesReturnService.list
+  // filters by status / customerId / return_number only; there is no created_by
+  // filter and the SELECT does not project the column, so the server cannot
+  // answer "mine" and the intersection has to happen here.
+  const raised = useMemo(() => (open && view === "returns" ? listRaisedReturns() : []), [open, view]);
+  const returnsQuery = useQuery({
+    queryKey: ["my-o2c-returns"],
+    queryFn: () => listSalesReturns({ pageSize: 100 }),
+    enabled: open && view === "returns" && o2cEnabled && engineStatus.online && raised.length > 0,
+    retry: false, // a 403/404 is a verdict, not a blip
+    staleTime: 10_000,
+  });
+  const returnsById = useMemo(() => {
+    const m = new Map<string, SalesReturnRow>();
+    for (const r of returnsQuery.data ?? []) m.set(r.id, r);
+    return m;
+  }, [returnsQuery.data]);
+
   const refresh = useCallback(() => {
     void queryClient.invalidateQueries({ queryKey: ["my-invoices"] });
+    void queryClient.invalidateQueries({ queryKey: ["my-o2c-returns"] });
   }, [queryClient]);
 
   const reverse = useMutation({
@@ -411,6 +606,45 @@ export function MyInvoicesDialog({ open, onClose }: { open: boolean; onClose: ()
     <>
       <Dialog open={open} onClose={onClose} title={t("myInvoicesDialog.title")} widthClass="max-w-5xl">
         <div className="flex flex-col gap-3">
+          {/* View switch. Only with O2C on — the returns namespace is not even
+              mounted otherwise (server.js:664), so offering the tab would be
+              offering a 404. */}
+          {o2cEnabled ? (
+            <div className="flex gap-1" role="tablist" aria-label={t("myInvoicesDialog.views.aria")}>
+              {(
+                [
+                  ["invoices", t("myInvoicesDialog.views.invoices")],
+                  ["returns", t("myInvoicesDialog.views.returns")],
+                ] as Array<[View, string]>
+              ).map(([v, label]) => (
+                <button
+                  key={v}
+                  type="button"
+                  role="tab"
+                  aria-selected={view === v}
+                  onClick={() => setView(v)}
+                  className={cn(
+                    "btn-press min-h-11 rounded-xl px-3 text-xs font-extrabold",
+                    view === v ? "bg-ink text-white" : "border border-slate-200 bg-white text-slate-600 hover:bg-slate-50",
+                  )}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
+          ) : null}
+
+          {view === "returns" ? (
+            <RaisedReturnsPanel
+              raised={raised}
+              byId={returnsById}
+              online={engineStatus.online}
+              loading={returnsQuery.isLoading && raised.length > 0}
+              error={returnsQuery.error}
+              onRetry={refresh}
+            />
+          ) : (
+          <>
           {/* Stat strip — parity with legacy #myInvStats */}
           <div className="flex flex-wrap items-center gap-1.5">
             <Stat label={t("myInvoicesDialog.statTotal")} value={fmtInt(stats.total)} tone="border-slate-200 bg-slate-50 text-slate-600" />
@@ -575,6 +809,8 @@ export function MyInvoicesDialog({ open, onClose }: { open: boolean; onClose: ()
                 </tbody>
               </table>
             </div>
+          )}
+          </>
           )}
         </div>
       </Dialog>

@@ -77,16 +77,40 @@ const ALLOW = [
   { method: ['GET'], path: /^\/sales$/ },
   { method: ['GET'], path: /^\/sales\/invoice\/[^/]+$/ },
   { method: ['POST'], path: /^\/sales\/[^/]+\/(void|return)$/ },
-  { method: ['POST'], path: /^\/order-to-cash\/returns$/ },
+  // GET as well as POST: the cashier raises a return draft and then loses all
+  // sight of it. `returns.view` is already granted — only this allow-list stood
+  // between the till and «مرتجعاتي». Same POST-only trap the /counts PUT below
+  // documents, so both verbs are spelled out.
+  { method: ['GET', 'POST'], path: /^\/order-to-cash\/returns$/ },
 
   // ── Shift open / close / X-Z report ─────────────────────────────────────
   { method: ['GET'], path: /^\/shifts$/ },
   { method: ['POST'], path: /^\/shifts\/(open|close-v3)$/ },
   { method: ['GET'], path: /^\/shifts\/closing-data-v3\/[^/]+$/ },
   { method: ['GET'], path: /^\/shifts\/[^/]+\/full-report$/ },
+  // W2-A — حركات نقدية على الدرج: the cashier RECORDS a pay-in / pay-out
+  // (POST) and READS the shift's movements so far (GET) from CashMovementDialog.
+  // Both verbs are listed explicitly, on purpose: this is the exact spot where
+  // a PUT-listed-as-POST once silently 403'd every stocktake autosave (see the
+  // /counts note above). The route itself still requires `pos.use`, still
+  // refuses a shift the caller does not own, and still demands a manager's
+  // verified credentials before anything is written — allowing the path here
+  // widens NOTHING beyond letting the cashier's request reach that gate.
+  // /api/cash stays fully denied: a cashier has no business in the ERP voucher
+  // module, only on their own drawer.
+  { method: ['GET', 'POST'], path: /^\/shifts\/[^/]+\/movements$/ },
 
   // ── Customers at the register (quick attach + history) ──────────────────
   { method: ['GET'], path: /^\/order-to-cash\/customers\/search$/ },
+  // Credit headroom BEFORE the tender. The server already refuses a credit sale
+  // over the limit (CreditLimitService) — but only after the cashier has built
+  // the whole cart with the customer standing there. `customers.view` is
+  // already granted; this is the read that lets the till warn in time.
+  { method: ['GET'], path: /^\/order-to-cash\/customers\/[^/]+\/exposure$/ },
+  // سند قبض — a regular settles their tab at the counter. The cashier records a
+  // DRAFT (`payments.create`, already granted); approving and posting stay with
+  // the accountant, so nothing here can move money on its own.
+  { method: ['POST'], path: /^\/order-to-cash\/payments$/ },
   { method: ['POST'], path: /^\/erp\/customers$/ },
   { method: ['GET'], path: /^\/erp\/customers\/[^/]+\/summary$/ },
 

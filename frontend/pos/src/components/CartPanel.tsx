@@ -2,16 +2,24 @@
  * Cart panel (left column in RTL) — lines with qty steppers + inline
  * notes/line-discount editor, order type, customer quick-attach, order
  * discount, totals, actions (hold / held board / void / pay).
+ *
+ * W2-B adds two things the register was missing:
+ *   • the linked customer's CREDIT HEADROOM, warned here — before the payment
+ *     dialog opens — instead of as a server 422 after the tender is chosen;
+ *   • honouring the discount-preset fields the owner configures and the client
+ *     used to discard (promo code, approval gate, per-invoice ceiling).
  */
-import { useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { useT, useLocalizedName } from "@/i18n/I18nProvider";
-import { CustomerPicker } from "./CustomerPicker";
+import { CustomerPicker, exceedsCreditLimit, useCreditExposure } from "./CustomerPicker";
 import {
   BadgePercent,
   Banknote,
   Bike,
   ChevronDown,
   ChevronUp,
+  KeyRound,
+  Lock,
   Minus,
   PauseCircle,
   Phone,
@@ -26,11 +34,34 @@ import {
 import { usePos } from "@/state/store";
 import { fmt2, fmtInt } from "@/lib/format";
 import { lineTotals, orderDiscountPct, round2 } from "@/lib/cartMath";
-import { presetLineAmount, presetsForScope, useDiscountPresets } from "@/lib/discountPresets";
+import {
+  presetCodeMatches,
+  presetLineAmount,
+  presetNeedsApproval,
+  presetsForScope,
+  useDiscountPresets,
+  type DiscountPreset,
+} from "@/lib/discountPresets";
 import type { CartLine, OrderType } from "@/lib/types";
 import { QtyPad } from "./QtyPad";
 import { Button, cn, EmptyState, Money } from "./ui";
 import { UnitPicker } from "./UnitPicker";
+
+/** presetId → (line index → ر.س taken by that preset on that line). Lets
+ *  `maxPerInvoice` cap the preset's INVOICE-WIDE total instead of each line in
+ *  isolation. Keyed by index, so a removed line leaves its budget consumed
+ *  until the cart is cleared — deliberately the RESTRICTIVE direction. */
+export type PresetUsage = Record<string, Record<number, number>>;
+
+/** What this preset has already taken off OTHER lines of the current cart. */
+export function presetUsedOnInvoice(usage: PresetUsage, presetId: string, exceptIndex: number): number {
+  const perLine = usage[presetId];
+  if (!perLine) return 0;
+  return Object.entries(perLine).reduce(
+    (sum, [idx, amt]) => (Number(idx) === exceptIndex ? sum : sum + (Number(amt) || 0)),
+    0,
+  );
+}
 
 const ORDER_TYPES: Array<{ value: OrderType; labelKey: string; icon: typeof Utensils }> = [
   { value: "dine_in", labelKey: "cartPanel.orderTypes.dineIn", icon: Utensils },
@@ -38,12 +69,27 @@ const ORDER_TYPES: Array<{ value: OrderType; labelKey: string; icon: typeof Uten
   { value: "delivery", labelKey: "cartPanel.orderTypes.delivery", icon: Bike },
 ];
 
-function CartLineRow({ line, index }: { line: CartLine; index: number }) {
+function CartLineRow({
+  line,
+  index,
+  presetUsage,
+  onPresetApplied,
+}: {
+  line: CartLine;
+  index: number;
+  presetUsage: PresetUsage;
+  onPresetApplied: (presetId: string, index: number, amount: number) => void;
+}) {
   const t = useT();
   const tn = useLocalizedName();
   const displayName = tn(line.name, line.nameEn);
-  const { setQty, setLineUnit, removeLine, setLineNotes, setLineDiscount, catalog, vatRatePct } = usePos();
+  const { setQty, setLineUnit, removeLine, setLineNotes, setLineDiscount, catalog, vatRatePct, supervisor, posCan, user } =
+    usePos();
   const [expanded, setExpanded] = useState(false);
+  /** The preset awaiting its promo code, plus the code typed so far. */
+  const [codeFor, setCodeFor] = useState<DiscountPreset | null>(null);
+  const [code, setCode] = useState("");
+  const [codeError, setCodeError] = useState(false);
   // The SERVER's rate, not cartMath's 15% default. Without it a tenant on any
   // other rate saw per-line amounts that contradicted the footer total sitting
   // directly beneath them — and the amount the server actually charges.
@@ -61,6 +107,21 @@ function CartLineRow({ line, index }: { line: CartLine; index: number }) {
   // True line gross (baseQty × unit price) — matches the cartMath clamp, so a
   // carton line discounts its real total, not the entered-qty figure.
   const lineGross = round2(baseQty * line.unitPrice);
+  // Same authority the discount CEILING already uses (lib/capabilities.ts).
+  const canOverrideDiscountCeiling = supervisor || posCan("pos.discount.override");
+  const actorRole = String(user?.role ?? "");
+
+  /** Apply a preset to this line, recording what it consumed of the preset's
+   *  invoice-wide budget so the NEXT line sees a smaller remainder. */
+  function applyPreset(p: DiscountPreset) {
+    const used = presetUsedOnInvoice(presetUsage, String(p.id), index);
+    const amount = presetLineAmount(p, lineGross, used);
+    setLineDiscount(index, amount);
+    onPresetApplied(String(p.id), index, amount);
+    setCodeFor(null);
+    setCode("");
+    setCodeError(false);
+  }
 
   return (
     <li className="rounded-xl border border-slate-100 bg-white shadow-sm">
@@ -220,22 +281,91 @@ function CartLineRow({ line, index }: { line: CartLine; index: number }) {
               <div className="flex flex-wrap gap-1.5">
                 {linePresets.map((p) => {
                   const belowMin = p.minOrder != null && lineGross < p.minOrder;
+                  // requireApproval / minRole — see presetNeedsApproval's note on
+                  // why this is an authority check and not a password prompt.
+                  const locked = presetNeedsApproval(p, actorRole) && !canOverrideDiscountCeiling;
+                  // maxPerInvoice already spent on other lines → nothing left.
+                  const exhausted =
+                    p.maxPerInvoice != null &&
+                    presetUsedOnInvoice(presetUsage, String(p.id), index) >= p.maxPerInvoice - 0.005;
+                  const disabled = belowMin || locked || exhausted;
+                  const title = belowMin
+                    ? t("cartPanel.line.presetMinOrder", { amount: fmt2(p.minOrder!) })
+                    : locked
+                      ? t("cartPanel.line.presetNeedsApproval")
+                      : exhausted
+                        ? t("cartPanel.line.presetInvoiceCapReached", { amount: fmt2(p.maxPerInvoice!) })
+                        : undefined;
                   return (
                     <button
                       key={p.id}
                       type="button"
-                      disabled={belowMin}
-                      title={belowMin ? t("cartPanel.line.presetMinOrder", { amount: fmt2(p.minOrder!) }) : undefined}
-                      onClick={() => setLineDiscount(index, presetLineAmount(p, lineGross))}
+                      disabled={disabled}
+                      title={title}
+                      onClick={() => {
+                        if (p.requireCode) {
+                          setCodeFor(p);
+                          setCode("");
+                          setCodeError(false);
+                          return;
+                        }
+                        applyPreset(p);
+                      }}
                       className="btn-press flex min-h-9 items-center gap-1 rounded-lg border border-slate-200 bg-white px-2.5 text-[11px] font-extrabold text-slate-600 transition hover:border-teal-200 hover:bg-teal-50 disabled:cursor-not-allowed disabled:opacity-40"
                     >
-                      <Tag className="h-3 w-3 text-teal-600" aria-hidden />
+                      {locked ? (
+                        <Lock className="h-3 w-3 text-amber-600" aria-hidden />
+                      ) : p.requireCode ? (
+                        <KeyRound className="h-3 w-3 text-violet-600" aria-hidden />
+                      ) : (
+                        <Tag className="h-3 w-3 text-teal-600" aria-hidden />
+                      )}
                       {p.name}
                       <Money value={p.type === "PERCENT" ? `${fmt2(p.value)}%` : fmt2(p.value)} className="text-teal-700" />
                     </button>
                   );
                 })}
               </div>
+              {/* Promo code — a requireCode preset never applies on the tap
+                  alone; the owner's code has to be typed first. */}
+              {codeFor ? (
+                <div className="mt-1.5 flex flex-wrap items-center gap-1.5 rounded-lg border border-violet-200 bg-violet-50 p-1.5">
+                  <label className="flex min-w-0 flex-1 flex-col gap-0.5">
+                    <span className="text-[10px] font-extrabold text-violet-700">
+                      {t("cartPanel.line.presetCodeLabel", { name: codeFor.name })}
+                    </span>
+                    <input
+                      type="text"
+                      value={code}
+                      autoFocus
+                      onChange={(e) => {
+                        setCode(e.target.value);
+                        setCodeError(false);
+                      }}
+                      aria-label={t("cartPanel.line.presetCodeLabel", { name: codeFor.name })}
+                      aria-invalid={codeError}
+                      placeholder={t("cartPanel.line.presetCodePlaceholder")}
+                      className={cn("field min-h-9 text-xs", codeError && "border-red-400 text-red-700")}
+                      maxLength={50}
+                    />
+                  </label>
+                  <Button
+                    size="sm"
+                    variant="primary"
+                    onClick={() => (presetCodeMatches(codeFor, code) ? applyPreset(codeFor) : setCodeError(true))}
+                  >
+                    {t("cartPanel.line.presetCodeApply")}
+                  </Button>
+                  <Button size="sm" variant="ghost" onClick={() => setCodeFor(null)}>
+                    {t("cartPanel.line.presetCodeCancel")}
+                  </Button>
+                  {codeError ? (
+                    <p role="alert" className="w-full text-[10px] font-bold text-red-600">
+                      {t("cartPanel.line.presetCodeWrong")}
+                    </p>
+                  ) : null}
+                </div>
+              ) : null}
             </div>
           ) : null}
         </div>
@@ -327,6 +457,38 @@ function CustomerAttach() {
   );
 }
 
+/**
+ * The pre-tender credit warning.
+ *
+ * The server refuses a credit sale with 422 CREDIT_LIMIT_EXCEEDED
+ * (CreditLimitService.assess) — after the cart is built and the tender is
+ * picked. This says the same thing while there is still time to take cash: it
+ * compares the CART TOTAL against the live headroom, because the whole total is
+ * what a plain «آجل» tender puts on the account.
+ *
+ * It is advisory: it never disables «دفع». The server is still the boundary,
+ * and an unreachable exposure endpoint (flag off / outside the cashier portal)
+ * renders nothing at all rather than blocking a sale on a read that failed.
+ */
+function CreditPreTenderWarning({ customerId, total }: { customerId: string; total: number }) {
+  const t = useT();
+  const state = useCreditExposure(customerId);
+  if (state.status !== "ready") return null;
+  if (!exceedsCreditLimit(state.data, total)) return null;
+  const noLimit = !(state.data.creditLimit > 0);
+  return (
+    <p role="alert" className="mb-2 rounded-xl bg-red-50 px-3 py-2 text-[11px] font-bold text-red-800">
+      <BadgePercent className="me-1 inline h-3.5 w-3.5" aria-hidden />
+      {noLimit
+        ? t("cartPanel.credit.noLimit")
+        : t("cartPanel.credit.wouldExceed", {
+            available: fmt2(state.data.available),
+            total: fmt2(total),
+          })}
+    </p>
+  );
+}
+
 export interface CartPanelProps {
   heldCount: number;
   onPay: () => void;
@@ -349,8 +511,17 @@ export function CartPanel({
   voidDisabledReason,
 }: CartPanelProps) {
   const t = useT();
-  const { cart, totals, catalog, setOrderType, setTableNo, supervisor, posCan } = usePos();
+  const { cart, totals, catalog, setOrderType, setTableNo, supervisor, posCan, o2cEnabled } = usePos();
   const empty = cart.lines.length === 0;
+  // Per-preset, per-line ledger backing `maxPerInvoice`. Reset with the cart —
+  // a new order starts every campaign budget fresh.
+  const [presetUsage, setPresetUsage] = useState<PresetUsage>({});
+  useEffect(() => {
+    setPresetUsage({});
+  }, [cart.id]);
+  const recordPresetUsage = useCallback((presetId: string, index: number, amount: number) => {
+    setPresetUsage((prev) => ({ ...prev, [presetId]: { ...(prev[presetId] ?? {}), [index]: amount } }));
+  }, []);
   const discPct = orderDiscountPct(totals);
   const ceiling = catalog?.maxCashierDiscountPct ?? 10;
   // Capability-aware: a non-supervisor with the granted capability also
@@ -415,7 +586,13 @@ export function CartPanel({
         ) : (
           <ul className="flex flex-col gap-1.5">
             {cart.lines.map((l, i) => (
-              <CartLineRow key={`${i}-${l.menuId}`} line={l} index={i} />
+              <CartLineRow
+                key={`${i}-${l.menuId}`}
+                line={l}
+                index={i}
+                presetUsage={presetUsage}
+                onPresetApplied={recordPresetUsage}
+              />
             ))}
           </ul>
         )}
@@ -450,6 +627,11 @@ export function CartPanel({
             {t("cartPanel.overCeiling.between")}<Money value={fmt2(ceiling)} />
             {t("cartPanel.overCeiling.after")}
           </p>
+        ) : null}
+        {/* Credit headroom — only with O2C on AND a REAL linked customer, which
+            is exactly the configuration in which a credit tender is possible. */}
+        {o2cEnabled && cart.customerId && !empty ? (
+          <CreditPreTenderWarning customerId={cart.customerId} total={totals.total} />
         ) : null}
 
         <dl className="space-y-1 text-sm">

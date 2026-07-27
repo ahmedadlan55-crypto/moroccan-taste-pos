@@ -1,6 +1,33 @@
 export const myInvoicesDialog = {
   title: "فواتيري",
 
+  // View switch (O2C on only) — invoices vs the returns this till raised
+  views: {
+    aria: "العرض",
+    invoices: "الفواتير",
+    returns: "مرتجعاتي",
+  },
+  returns: {
+    tableStatus: "الحالة",
+    tableNumber: "رقم المرتجع",
+    tableOriginal: "الفاتورة الأصلية",
+    tableTotal: "الإجمالي",
+    emptyTitle: "لم ترفع أي طلب مرتجع بعد",
+    emptyHint: "المرتجعات التي ترفعها من «فواتيري» ستظهر هنا مع حالتها.",
+    unavailableTitle: "متابعة المرتجعات غير متاحة من هذه الشاشة",
+    unavailableHint: "وحدة «المبيعات والعملاء» غير مفعّلة أو خارج صلاحيات بوابة الكاشير.",
+    loadError: "تعذّر تحميل حالات المرتجعات",
+    notInWindowHint: "المرتجع أقدم من نافذة القائمة الحالية",
+    status: {
+      draft: "بانتظار اعتماد المدير",
+      approved: "معتمد — بانتظار الترحيل",
+      posted: "مُرحَّل",
+      reversed: "معكوس",
+      cancelled: "ملغى",
+      unknown: "غير معروفة",
+    },
+  },
+
   // Stat strip
   statTotal: "الإجمالي",
   statActive: "سارية",

@@ -35,6 +35,17 @@ export const cartPanel = {
     discountInputPlaceholder: "0.00",
     presetsLabel: "خصومات جاهزة",
     presetMinOrder: "الحد الأدنى للسطر {amount} ر.س",
+    presetNeedsApproval: "هذا الخصم يتطلب صلاحية مدير",
+    presetInvoiceCapReached: "بلغ هذا الخصم حده للفاتورة ({amount} ر.س)",
+    presetCodeLabel: "رمز العرض — {name}",
+    presetCodePlaceholder: "اكتب الرمز",
+    presetCodeApply: "تأكيد",
+    presetCodeCancel: "إلغاء",
+    presetCodeWrong: "الرمز غير صحيح",
+  },
+  credit: {
+    wouldExceed: "المتاح من ائتمان العميل {available} ر.س والإجمالي {total} ر.س — البيع الآجل سيُرفض",
+    noLimit: "لا يوجد حد ائتمان لهذا العميل — البيع الآجل غير متاح",
   },
   qtyPad: {
     triggerAria: "الكمية {qty} — اضغط لكتابة كمية {name}",

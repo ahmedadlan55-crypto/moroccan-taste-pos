@@ -5,11 +5,25 @@
  * navigation + ARIA, and surfaces a loading / empty / error+retry state (never a
  * silent empty list). No native <select>. Selecting a row returns the REAL
  * customerId (+ name/phone + credit summary) to the caller.
+ *
+ * W2-B — CREDIT EXPOSURE AT ATTACH TIME. The credit ceiling used to reveal
+ * itself only at the tender, as a server 422 CREDIT_LIMIT_EXCEEDED, with the
+ * customer already standing at the counter and the whole cart built. The linked
+ * customer now carries the live limit / used / available strip the moment they
+ * are attached (GET /api/order-to-cash/customers/:id/exposure), and CartPanel
+ * warns BEFORE the payment dialog opens.
  */
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { AlertTriangle, Coins, History, Loader2, Search, UserPlus, X } from "lucide-react";
-import { getCustomerSummary, searchCustomers, type PosCustomerHit } from "@/lib/api";
+import { AlertTriangle, Coins, History, Loader2, Search, UserPlus, Wallet, X } from "lucide-react";
+import {
+  getCustomerExposure,
+  getCustomerSummary,
+  isFeatureUnavailable,
+  searchCustomers,
+  type CustomerExposure,
+  type PosCustomerHit,
+} from "@/lib/api";
 import { fmt2 } from "@/lib/format";
 import { useT } from "@/i18n/I18nProvider";
 import type { TFunction } from "@/i18n/types";
@@ -17,9 +31,129 @@ import { CustomerAddDialog } from "./dialogs/CustomerAddDialog";
 import { CustomerHistoryDialog } from "./dialogs/CustomerHistoryDialog";
 import { cn } from "./ui";
 
+// ── Credit exposure ─────────────────────────────────────────────────────────
+// Deliberately NOT react-query: CartPanel consumes the same reading to warn
+// before the tender, and CartPanel is mounted with no QueryClientProvider in
+// its spec harness (parity-cart-panel.test.tsx). A tiny TTL cache keeps the two
+// consumers to ONE request per customer per window.
+
+export type CreditExposureState =
+  | { status: "idle" | "loading" }
+  | { status: "ready"; data: CustomerExposure }
+  /** Flag off (404) or outside the cashier portal's allow-list (403). */
+  | { status: "unavailable" }
+  | { status: "error"; message: string };
+
+const EXPOSURE_TTL_MS = 30_000;
+const exposureCache = new Map<string, { at: number; promise: Promise<CustomerExposure> }>();
+
+/** Test hook — drops the TTL cache. */
+export function _resetCreditExposureCache(): void {
+  exposureCache.clear();
+}
+
+/**
+ * Live credit exposure for `customerId`. Every failure is NON-BLOCKING: an
+ * unreachable endpoint (flag off / portal-scoped away) resolves to
+ * `unavailable` and the UI simply omits the strip — selling is never gated on
+ * an advisory read. The SERVER remains the authority (CreditLimitService).
+ */
+export function useCreditExposure(customerId: string | null | undefined): CreditExposureState {
+  const [state, setState] = useState<CreditExposureState>({ status: "idle" });
+  useEffect(() => {
+    if (!customerId) {
+      setState({ status: "idle" });
+      return;
+    }
+    let alive = true;
+    setState({ status: "loading" });
+    const hit = exposureCache.get(customerId);
+    const fresh = hit && Date.now() - hit.at < EXPOSURE_TTL_MS ? hit.promise : null;
+    const promise = fresh ?? getCustomerExposure(customerId);
+    if (!fresh) exposureCache.set(customerId, { at: Date.now(), promise });
+    promise.then(
+      (data) => {
+        if (alive) setState({ status: "ready", data });
+      },
+      (e: unknown) => {
+        exposureCache.delete(customerId); // a failure must not stick for 30s
+        if (!alive) return;
+        setState(
+          isFeatureUnavailable(e)
+            ? { status: "unavailable" }
+            : { status: "error", message: (e as Error)?.message || "" },
+        );
+      },
+    );
+    return () => {
+      alive = false;
+    };
+  }, [customerId]);
+  return state;
+}
+
+/**
+ * Would putting `creditAmount` on this customer's account break their limit?
+ * Mirrors CreditLimitService.assess: over when exposure + amount exceeds the
+ * limit by more than a halala, and a zero limit means "no credit at all".
+ */
+export function exceedsCreditLimit(e: CustomerExposure, creditAmount: number): boolean {
+  const amount = Number(creditAmount) || 0;
+  if (amount <= 0) return false;
+  if (!(e.creditLimit > 0)) return true;
+  return e.exposure + amount - e.creditLimit > 0.01;
+}
+
 export interface CustomerPickerProps {
   value: { id: string; name: string | null; phone: string | null } | null;
   onChange: (c: { id: string; name: string | null; phone: string | null } | null) => void;
+}
+
+/**
+ * The limit / used / available strip under an attached customer.
+ *
+ * Rendered ONLY when the reading is live AND the customer actually has a credit
+ * relationship (a limit, or an outstanding balance). A cash-only walk-in gets
+ * nothing — the strip must not turn every attach into a credit conversation.
+ */
+export function CreditExposureStrip({ customerId }: { customerId: string }) {
+  const t = useT();
+  const state = useCreditExposure(customerId);
+
+  if (state.status === "error") {
+    return (
+      <p className="mt-1.5 text-[10px] font-bold text-slate-400">{t("customerPicker.credit.loadError")}</p>
+    );
+  }
+  if (state.status !== "ready") return null;
+  const e = state.data;
+  if (!(e.creditLimit > 0) && !(e.exposure > 0)) return null;
+
+  const over = e.available < 0;
+  return (
+    <dl
+      className={cn(
+        "mt-1.5 grid grid-cols-3 gap-1 rounded-xl border px-2.5 py-1.5 text-center",
+        over ? "border-red-200 bg-red-50" : "border-slate-200 bg-white",
+      )}
+      aria-label={t("customerPicker.credit.aria")}
+    >
+      <div>
+        <dt className="text-[10px] font-bold text-slate-400">{t("customerPicker.credit.limit")}</dt>
+        <dd className="num text-[11px] font-extrabold text-slate-600">{fmt2(e.creditLimit)}</dd>
+      </div>
+      <div>
+        <dt className="text-[10px] font-bold text-slate-400">{t("customerPicker.credit.used")}</dt>
+        <dd className="num text-[11px] font-extrabold text-slate-600">{fmt2(e.exposure)}</dd>
+      </div>
+      <div>
+        <dt className="text-[10px] font-bold text-slate-400">{t("customerPicker.credit.available")}</dt>
+        <dd className={cn("num text-[11px] font-extrabold", over ? "text-red-700" : "text-teal-700")}>
+          {fmt2(e.available)}
+        </dd>
+      </div>
+    </dl>
+  );
 }
 
 function sublabel(c: PosCustomerHit, t: TFunction): string {
@@ -39,6 +173,7 @@ export function CustomerPicker({ value, onChange }: CustomerPickerProps) {
   const [active, setActive] = useState(0);
   const [addOpen, setAddOpen] = useState(false);
   const [histOpen, setHistOpen] = useState(false);
+  const [collectOpen, setCollectOpen] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
@@ -62,6 +197,13 @@ export function CustomerPicker({ value, onChange }: CustomerPickerProps) {
     staleTime: 30_000,
   });
 
+  // Doubles as the reachability probe for /api/order-to-cash from this till:
+  // when the exposure read comes back `unavailable` (flag off → 404, or outside
+  // middleware/posPortalScope's allow-list → 403) the سند قبض affordance — which
+  // lives on the same namespace — is hidden instead of offered and then failing.
+  // The TTL cache in useCreditExposure keeps this to ONE request per customer.
+  const exposureState = useCreditExposure(value?.id ?? null);
+
   const rows = useMemo(() => query.data?.data ?? [], [query.data]);
   useEffect(() => { setActive(0); }, [debounced]);
 
@@ -72,7 +214,10 @@ export function CustomerPicker({ value, onChange }: CustomerPickerProps) {
           <span className="flex min-w-0 flex-col">
             <span className="truncate text-sm font-extrabold text-teal-800">{value.name || t("customerPicker.fallbackName")}</span>
             {value.phone ? <span dir="ltr" className="truncate text-[11px] font-bold text-teal-600 num">{value.phone}</span> : null}
-            {summaryQuery.data ? (
+            {/* `kpi` read defensively: /summary is a live endpoint and this
+                chip must never be the thing that white-screens the cart if a
+                deployment ships a thinner body. */}
+            {summaryQuery.data?.kpi ? (
               <span className="flex items-center gap-1 text-[11px] font-extrabold text-teal-700">
                 <Coins className="h-3 w-3" aria-hidden />
                 <span className="num">{fmt2(summaryQuery.data.kpi.totalSpent)}</span> {t("customerPicker.currency")}
@@ -80,9 +225,20 @@ export function CustomerPicker({ value, onChange }: CustomerPickerProps) {
             ) : null}
           </span>
           <span className="flex shrink-0 items-center gap-1">
+            {exposureState.status !== "unavailable" ? (
+              <button
+                type="button"
+                onClick={() => { setCollectOpen(true); setHistOpen(true); }}
+                className="grid min-h-11 min-w-11 place-items-center rounded-lg text-teal-500 transition hover:bg-white hover:text-teal-700"
+                aria-label={t("customerPicker.selected.collectAria")}
+                title={t("customerPicker.selected.collectAria")}
+              >
+                <Wallet className="h-4 w-4" aria-hidden />
+              </button>
+            ) : null}
             <button
               type="button"
-              onClick={() => setHistOpen(true)}
+              onClick={() => { setCollectOpen(false); setHistOpen(true); }}
               className="grid min-h-11 min-w-11 place-items-center rounded-lg text-teal-500 transition hover:bg-white hover:text-teal-700"
               aria-label={t("customerPicker.selected.historyAria")}
               title={t("customerPicker.selected.historyAria")}
@@ -99,7 +255,16 @@ export function CustomerPicker({ value, onChange }: CustomerPickerProps) {
             </button>
           </span>
         </div>
-        {histOpen ? <CustomerHistoryDialog open onClose={() => setHistOpen(false)} customer={value} /> : null}
+        <CreditExposureStrip customerId={value.id} />
+        {histOpen ? (
+          <CustomerHistoryDialog
+            open
+            onClose={() => setHistOpen(false)}
+            customer={value}
+            allowCollect={exposureState.status !== "unavailable"}
+            collectInitiallyOpen={collectOpen}
+          />
+        ) : null}
       </>
     );
   }

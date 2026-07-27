@@ -25,7 +25,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { CheckCircle2, FileText, Undo2 } from "lucide-react";
-import { ApiError, createSalesReturn, getInvoice, type InvoiceDetail } from "@/lib/api";
+import { ApiError, createSalesReturn, getInvoice, recordRaisedReturn, type InvoiceDetail } from "@/lib/api";
 import { fmt2 } from "@/lib/format";
 import { ulid } from "@/lib/ulid";
 import type { SaleRow } from "@/lib/types";
@@ -161,10 +161,15 @@ export function ReturnRequestDialog({
         { idempotencyKey: ulid(), expectedVersion },
       ),
     onSuccess: (res) => {
-      setResult({
-        status: res.status ?? res.data?.status ?? "draft",
-        documentNumber: res.documentNumber ?? res.data?.return_number ?? null,
-      });
+      const documentNumber = res.documentNumber ?? res.data?.return_number ?? null;
+      setResult({ status: res.status ?? res.data?.status ?? "draft", documentNumber });
+      // W2-B — remember what this till raised. SalesReturnService.list() has no
+      // created_by filter (it does not even project the column), so this local
+      // ledger is the ONLY way «مرتجعاتي» can answer "the ones I raised". The
+      // ledger holds identity, never status: the server stays the authority on
+      // where the return got to.
+      const id = String(res.data?.id ?? "");
+      if (id) recordRaisedReturn({ id, documentNumber, originalSaleId: orderId });
       onCreated?.();
     },
   });

@@ -35,6 +35,17 @@ export const cartPanel = {
     discountInputPlaceholder: "0.00",
     presetsLabel: "Quick discounts",
     presetMinOrder: "Line minimum {amount} SAR",
+    presetNeedsApproval: "This discount needs manager authority",
+    presetInvoiceCapReached: "This discount has reached its invoice cap ({amount} SAR)",
+    presetCodeLabel: "Promo code — {name}",
+    presetCodePlaceholder: "Type the code",
+    presetCodeApply: "Confirm",
+    presetCodeCancel: "Cancel",
+    presetCodeWrong: "Wrong code",
+  },
+  credit: {
+    wouldExceed: "Credit available {available} SAR against a {total} SAR total — a credit sale will be refused",
+    noLimit: "This customer has no credit limit — a credit sale is not available",
   },
   qtyPad: {
     triggerAria: "Quantity {qty} — tap to type a quantity for {name}",

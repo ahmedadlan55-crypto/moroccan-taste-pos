@@ -4,7 +4,15 @@ export const customerPicker = {
   available: "المتاح {amount}",
   selected: {
     historyAria: "سجل العميل",
+    collectAria: "سند قبض",
     clearAria: "مسح العميل",
+  },
+  credit: {
+    aria: "حد الائتمان",
+    limit: "حد الائتمان",
+    used: "المستخدم",
+    available: "المتاح",
+    loadError: "تعذّر قراءة حد الائتمان.",
   },
   search: {
     placeholder: "ابحث بالاسم أو الهاتف أو الرقم الضريبي…",

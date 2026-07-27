@@ -3,6 +3,13 @@ export const discountDialog = {
   presets: {
     label: "خصومات جاهزة",
     minOrder: "الحد الأدنى للطلب {amount} ر.س",
+    needsApproval: "هذا الخصم يتطلب صلاحية مدير",
+    codeLabel: "رمز العرض — {name}",
+    codePlaceholder: "اكتب الرمز",
+    codeApply: "تأكيد الرمز",
+    codeCancel: "إلغاء",
+    codeWrong: "الرمز غير صحيح",
+    cappedNote: "سُقِف الخصم عند {amount} ر.س حسب إعدادات العرض",
   },
   type: {
     aria: "نوع الخصم",

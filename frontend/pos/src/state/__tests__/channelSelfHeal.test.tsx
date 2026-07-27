@@ -25,7 +25,7 @@
  * — from state and from storage — so the next boot is genuinely default.
  */
 import { describe, expect, it, vi, beforeEach, afterEach } from "vitest";
-import { render, cleanup, waitFor } from "@testing-library/react";
+import { render, act, cleanup, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type { Catalog, CatalogItem } from "@/lib/types";
 import { makeFakeEngine } from "../../components/__tests__/parityTestkit";
@@ -112,9 +112,7 @@ describe("a stored channel the server no longer lists heals itself", () => {
     // The device as the owner left it: a channel id that no longer exists.
     localStorage.setItem(CHANNEL_KEY, "CH-DELETED");
     // Every attempt to serve that channel fails — the state that would not resolve.
-    vi.stubGlobal("fetch", vi.fn(async () => {
-      throw new Error("channel gone");
-    }) as unknown as typeof fetch);
+    vi.stubGlobal("fetch", vi.fn(async () => ({ ok: false, status: 422, json: async () => ({}) })) as unknown as typeof fetch);
 
     renderStore();
     await waitFor(() => expect(ctx.catalog).not.toBeNull());
@@ -123,9 +121,7 @@ describe("a stored channel the server no longer lists heals itself", () => {
 
   it("erases it from storage, so the NEXT boot is clean too", async () => {
     localStorage.setItem(CHANNEL_KEY, "CH-DELETED");
-    vi.stubGlobal("fetch", vi.fn(async () => {
-      throw new Error("channel gone");
-    }) as unknown as typeof fetch);
+    vi.stubGlobal("fetch", vi.fn(async () => ({ ok: false, status: 422, json: async () => ({}) })) as unknown as typeof fetch);
 
     renderStore();
     await waitFor(() => expect(localStorage.getItem(CHANNEL_KEY)).toBeNull());
@@ -135,9 +131,7 @@ describe("a stored channel the server no longer lists heals itself", () => {
     // The banner is honest while a REAL channel is unreachable, but for a channel
     // that no longer exists it is a permanent lie — there is nothing to come back.
     localStorage.setItem(CHANNEL_KEY, "CH-DELETED");
-    vi.stubGlobal("fetch", vi.fn(async () => {
-      throw new Error("channel gone");
-    }) as unknown as typeof fetch);
+    vi.stubGlobal("fetch", vi.fn(async () => ({ ok: false, status: 422, json: async () => ({}) })) as unknown as typeof fetch);
 
     renderStore();
     await waitFor(() => expect(ctx.channelId).toBeNull());
@@ -146,9 +140,7 @@ describe("a stored channel the server no longer lists heals itself", () => {
 
   it("says so out loud — silently changing which price list rings up is not acceptable", async () => {
     localStorage.setItem(CHANNEL_KEY, "CH-DELETED");
-    vi.stubGlobal("fetch", vi.fn(async () => {
-      throw new Error("channel gone");
-    }) as unknown as typeof fetch);
+    vi.stubGlobal("fetch", vi.fn(async () => ({ ok: false, status: 422, json: async () => ({}) })) as unknown as typeof fetch);
 
     renderStore();
     await waitFor(() => expect(ctx.channelId).toBeNull());
@@ -169,5 +161,76 @@ describe("a stored channel the server no longer lists heals itself", () => {
     await waitFor(() => expect(ctx.channelPricesUnavailable).toBe(true));
     expect(ctx.channelId).toBe("CH1");
     expect(localStorage.getItem(CHANNEL_KEY)).toBe("CH1");
+  });
+});
+
+/**
+ * The guard that matters more than the feature.
+ *
+ * The first cut of this fix tested "is the stored id in catalog.channels[]?" —
+ * which reads as obviously right and is fleet-fatal. routes/pos-v2.js:964-972
+ * ships `channels: []` on a plain 200 whenever the server's own channels query
+ * throws ("Loud fallback: the catalog still serves the grid; the switcher is
+ * empty"). One transient DB error would therefore have moved EVERY till with a
+ * channel selected off channel pricing and onto base pricing, simultaneously —
+ * manufacturing the exact pricing incident the fix exists to prevent.
+ *
+ * Only the server's explicit 422/404 verdict on THIS channel may drop it.
+ */
+describe("nothing but a server verdict may change which price list rings up", () => {
+  it("an empty channels[] from a degraded catalog does NOT drop the channel", async () => {
+    localStorage.setItem(CHANNEL_KEY, "CH1");
+    // The fail-soft server response: 200, real items, switcher list empty.
+    h.loadCatalog.mockImplementation(async () => ({
+      catalog: { ...BASE_CATALOG, channels: [] },
+      fromCache: false,
+      savedAt: Date.now(),
+      ageMs: 0,
+      stale: false,
+    }));
+    vi.stubGlobal("fetch", vi.fn(async () => ({
+      ok: true,
+      status: 200,
+      json: async () => ({ ...BASE_CATALOG, channels: [] }),
+    })) as unknown as typeof fetch);
+
+    renderStore();
+    await waitFor(() => expect(ctx.catalog).not.toBeNull());
+    expect(ctx.channelId).toBe("CH1");
+    expect(localStorage.getItem(CHANNEL_KEY)).toBe("CH1");
+  });
+
+  it("a 500 is an outage, not a verdict — the channel is kept", async () => {
+    localStorage.setItem(CHANNEL_KEY, "CH1");
+    vi.stubGlobal("fetch", vi.fn(async () => ({ ok: false, status: 500, json: async () => ({}) })) as unknown as typeof fetch);
+
+    renderStore();
+    await waitFor(() => expect(ctx.channelPricesUnavailable).toBe(true));
+    expect(ctx.channelId).toBe("CH1");
+    expect(localStorage.getItem(CHANNEL_KEY)).toBe("CH1");
+  });
+
+  it("a 422 clears storage even when the fallback load also fails", async () => {
+    // The worst case: no cached catalog either, so the query REJECTS and the
+    // picker never renders. Clearing inside the fetch — not in an effect — is
+    // what stops the device booting into the same dead channel forever.
+    localStorage.setItem(CHANNEL_KEY, "CH-DELETED");
+    h.loadCatalog.mockImplementation(async () => {
+      throw new Error("CATALOG_OFFLINE");
+    });
+    vi.stubGlobal("fetch", vi.fn(async () => ({ ok: false, status: 422, json: async () => ({}) })) as unknown as typeof fetch);
+
+    renderStore();
+    await waitFor(() => expect(localStorage.getItem(CHANNEL_KEY)).toBeNull());
+  });
+
+  it("raises a notice that STAYS — a price list change is not a 5-second toast", async () => {
+    localStorage.setItem(CHANNEL_KEY, "CH-DELETED");
+    vi.stubGlobal("fetch", vi.fn(async () => ({ ok: false, status: 422, json: async () => ({}) })) as unknown as typeof fetch);
+
+    renderStore();
+    await waitFor(() => expect(ctx.channelHealed).toBe(true));
+    act(() => ctx.dismissChannelHealed());
+    expect(ctx.channelHealed).toBe(false);
   });
 });

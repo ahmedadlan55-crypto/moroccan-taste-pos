@@ -92,6 +92,21 @@ function getDeviceId(): string {
 // The selected channel survives reloads (legacy kept pos_active_channel_id the
 // same way). null = the implicit base channel «الأساسي».
 const CHANNEL_KEY = "pos_v2_channel_id";
+/**
+ * Set by loadCatalogForChannel the moment the SERVER rejects a stored channel,
+ * so the heal survives a query that then fails outright. Module scope on
+ * purpose: the fetch runs outside React and must be able to clear storage
+ * before any component re-renders.
+ */
+let channelQuarantined: string | null = null;
+function quarantineChannel(id: string): void {
+  channelQuarantined = id;
+  try {
+    localStorage.removeItem(CHANNEL_KEY);
+  } catch {
+    /* private mode — React state below still returns the till to base */
+  }
+}
 function getStoredChannelId(): string | null {
   try {
     return localStorage.getItem(CHANNEL_KEY) || null;
@@ -152,6 +167,21 @@ export interface ChannelLoadedCatalog extends LoadedCatalog {
   servedChannelId: string | null;
   /** A channel WAS selected but its price list could not be served. */
   channelPricesUnavailable: boolean;
+  /**
+   * The SERVER's own verdict that this channel is gone or switched off — a 422
+   * from _loadActiveChannel (routes/pos-v2.js:352, «قناة البيع غير موجودة» /
+   * «غير نشطة»), or a 404.
+   *
+   * This is the ONLY trustworthy signal that a stored channel should be
+   * dropped, and the distinction is the whole safety story. "Absent from
+   * catalog.channels[]" is NOT trustworthy: the server ships `channels: []` on
+   * a plain 200 whenever its own channels query throws (pos-v2.js:964-972,
+   * "Loud fallback: the catalog still serves the grid; the switcher is empty").
+   * Healing off that empty list would move EVERY till on the fleet from channel
+   * prices to base prices on one transient DB error — a pricing incident
+   * manufactured by the thing meant to prevent one.
+   */
+  channelRejected: boolean;
 }
 
 /**
@@ -180,7 +210,7 @@ export interface ChannelLoadedCatalog extends LoadedCatalog {
 async function loadCatalogForChannel(channelId: string | null): Promise<ChannelLoadedCatalog> {
   if (!channelId) {
     const base = await loadCatalog();
-    return { ...base, servedChannelId: null, channelPricesUnavailable: false };
+    return { ...base, servedChannelId: null, channelPricesUnavailable: false, channelRejected: false };
   }
   try {
     const headers: Record<string, string> = { Accept: "application/json" };
@@ -190,23 +220,38 @@ async function loadCatalogForChannel(channelId: string | null): Promise<ChannelL
     if (!res.ok) {
       // Surfaced as a real, coded error so the 401 branch below can see it —
       // an expired session must never masquerade as "channel prices missing".
-      throw new CatalogError(
+      const err = new CatalogError(
         res.status === 401 ? "SESSION_EXPIRED" : "CATALOG_LOAD_FAILED",
         `HTTP ${res.status}`,
       );
+      // 422 is _loadActiveChannel refusing (deleted / deactivated); 404 is the
+      // route gone. Both are the SERVER stating this channel is not sellable —
+      // as opposed to a thrown fetch, which is only ever "not right now".
+      (err as CatalogError & { channelRejected?: boolean }).channelRejected = res.status === 422 || res.status === 404;
+      throw err;
     }
     const data = (await res.json()) as Catalog;
     const savedAt = Date.now();
     // Write-through (etag null: the next base load does a full 200 refetch
     // rather than trusting a channel-priced copy against the base ETag).
     await idbPut("catalog", "catalog", { data, etag: null, savedAt }).catch(() => undefined);
-    return { catalog: data, fromCache: false, savedAt, ageMs: 0, stale: false, servedChannelId: channelId, channelPricesUnavailable: false };
+    return { catalog: data, fromCache: false, savedAt, ageMs: 0, stale: false, servedChannelId: channelId, channelPricesUnavailable: false, channelRejected: false };
   } catch (e) {
     if (e instanceof CatalogError && e.code === "SESSION_EXPIRED") throw e;
+    const rejected = (e as { channelRejected?: boolean }).channelRejected === true;
+    // Clear storage HERE, before the fallback — `loadCatalog()` below can itself
+    // throw (CATALOG_OFFLINE with nothing cached), rejecting the query. In that
+    // state the picker is not even rendered (App gates it on channels.length),
+    // so an effect-based heal would never run and the device would boot into the
+    // same dead channel forever. This one line is what makes the fix survive the
+    // worst case.
+    if (rejected) quarantineChannel(channelId);
     // Keep the till alive on whatever we have — but say out loud that these are
-    // NOT the selected channel's prices.
+    // NOT the selected channel's prices. For a REJECTED channel that banner
+    // would be a permanent lie (nothing is coming back), so it is not raised;
+    // the heal below returns the till to base and says so instead.
     const fallback = await loadCatalog();
-    return { ...fallback, servedChannelId: null, channelPricesUnavailable: true };
+    return { ...fallback, servedChannelId: null, channelPricesUnavailable: !rejected, channelRejected: rejected };
   }
 }
 
@@ -374,6 +419,11 @@ export interface PosContextValue {
   /** `channelId` is set but its price list could not be served — the grid is
    *  showing base/cached prices. The UI must not present the channel as active. */
   channelPricesUnavailable: boolean;
+  /** The server rejected the stored channel and the till was returned to base
+   *  prices. Stays until the cashier acknowledges it: a price list changing
+   *  under the register is not something a 5-second toast may deliver. */
+  channelHealed: boolean;
+  dismissChannelHealed: () => void;
   /** Switch channel: refetches the catalog with ?channelId= WITHOUT touching the
    *  cart (legacy preserved the cart across switches — V5.7.11). */
   setChannel: (id: string | null) => void;
@@ -1019,23 +1069,38 @@ export function PosProvider({ children }: { children: ReactNode }) {
   // served prices that are not the default's, and has no action that changes
   // anything — «مشكلة لا تنحل».
   //
-  // channels[] is the only authority on what this device may sell through, and
-  // it is present on a cached copy as well as a fresh one — which matters,
-  // because in this exact failure EVERY load is the degraded fallback. If the
-  // stored id is not on that list, the channel is not sellable here; drop it.
+  // THE TRIGGER IS THE SERVER'S VERDICT, NOT AN EMPTY LIST.
   //
-  // Deliberately NOT dropped when the channel IS listed and merely unreachable:
-  // an outage must not silently move a till from channel prices to base prices.
-  // That case keeps `channelPricesUnavailable`, which already says so.
+  // The obvious test — "the stored id is not in catalog.channels[]" — is a trap,
+  // and a fleet-wide one. routes/pos-v2.js:964-972 ships `channels: []` on a
+  // plain 200 whenever its own channels query throws ("Loud fallback: the
+  // catalog still serves the grid; the switcher is empty"). Healing off that
+  // would take EVERY till with a channel selected off channel pricing and onto
+  // base pricing, simultaneously, from one transient DB error — inventing the
+  // exact pricing incident this code exists to prevent. `channelRejected` is a
+  // 422/404 from _loadActiveChannel: the server saying this specific channel is
+  // deleted or switched off. Nothing else is acted on.
+  //
+  // And a thrown fetch is NOT a verdict — an outage must never move a till from
+  // channel prices to base prices. That case keeps `channelPricesUnavailable`,
+  // which the header strip now renders, with a manual way back.
   const healedChannelRef = useRef<string | null>(null);
+  const [channelHealed, setChannelHealed] = useState(false);
+  const dismissChannelHealed = useCallback(() => setChannelHealed(false), []);
   useEffect(() => {
-    const served = catalogQuery.data?.catalog;
-    if (!served || !channelId) return;
-    if ((served.channels ?? []).some((c) => c.id === channelId)) return;
-    if (healedChannelRef.current === channelId) return; // one message per id
+    if (!channelId) return;
+    const rejected = channelQuarantined === channelId || catalogQuery.data?.channelRejected === true;
+    if (!rejected) return;
+    if (healedChannelRef.current === channelId) return; // one notice per id
     healedChannelRef.current = channelId;
+    channelQuarantined = null;
+    // null = the implicit base. Never auto-pick another channel on the cashier's
+    // behalf: choosing a price list for them is the same class of bug.
     setChannel(null);
-    // Which price list rings up must never change in silence.
+    // Which price list rings up must never change in silence — and a toast that
+    // self-destructs in five seconds is not "telling" anyone. The persistent
+    // strip is the real notice; the toast is only for a cashier who is looking.
+    setChannelHealed(true);
     pushToast("info", trRef.current("appShell.toast.channelGone"));
   }, [catalogQuery.data, channelId, setChannel, pushToast]);
 
@@ -1075,6 +1140,8 @@ export function PosProvider({ children }: { children: ReactNode }) {
     channelId,
     activeChannelId,
     channelPricesUnavailable,
+    channelHealed,
+    dismissChannelHealed,
     setChannel,
     shiftId,
     shiftLoading: shiftQuery.isLoading,

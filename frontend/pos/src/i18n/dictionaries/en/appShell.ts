@@ -23,6 +23,8 @@ export const appShell = {
      *  prices with no idea where they came from. */
     pricesUnavailable: "The selected channel's prices aren't available right now — items are ringing up at default prices",
     backToBase: "Back to default",
+    /** Acknowledging that prices returned to default — stays until tapped. */
+    acknowledge: "Got it",
   },
 
   priceList: {

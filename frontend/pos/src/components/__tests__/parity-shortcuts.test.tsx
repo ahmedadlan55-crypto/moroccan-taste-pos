@@ -115,6 +115,8 @@ function makeFixture(overrides: Partial<PosContextValue> = {}): PosContextValue 
     channelId: null,
     activeChannelId: null,
     channelPricesUnavailable: false,
+    channelHealed: false,
+    dismissChannelHealed: vi.fn(),
     setChannel: vi.fn(),
     shiftId: "SH-1",
     shiftLoading: false,

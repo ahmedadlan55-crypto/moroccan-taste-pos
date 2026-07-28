@@ -19,6 +19,7 @@
 const router = require('express').Router();
 const db = require('../../../db/connection');
 const requireCapability = require('../../../middleware/requireCapability');
+const coaTree = require('../../../lib/coa/tree');
 
 router.get('/reports/income', requireCapability('finance.reports.view'), async (req, res) => {
   try {
@@ -29,7 +30,7 @@ router.get('/reports/income', requireCapability('finance.reports.view'), async (
       "WHERE a.is_active = 1 " +
       "  AND COALESCE(a.is_folder, 0) = 0 " +
       "  AND a.id NOT IN (SELECT DISTINCT parent_id FROM gl_accounts WHERE parent_id IS NOT NULL) " +
-      "ORDER BY a.code"
+      "ORDER BY " + coaTree.ORDER_BY('a')
     );
 
     // Get period balances from gl_entries (not gl_accounts.balance)

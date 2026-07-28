@@ -50,6 +50,7 @@
 const router = require('express').Router();
 const db = require('../../../db/connection');
 const requireCapability = require('../../../middleware/requireCapability');
+const coaTree = require('../../../lib/coa/tree');
 const bs = require('./balance-sheet'); // router + shared helpers (exports)
 
 const r2 = (n) => Math.round((Number(n) || 0) * 100) / 100;
@@ -119,7 +120,7 @@ router.get('/reports/equity-changes', requireCapability('finance.reports.view'),
           AND a.type = 'equity'
           AND ${LEAF}
         GROUP BY a.id, a.code, a.name_ar, a.name_en, a.report_section
-        ORDER BY a.code`,
+        ORDER BY ${coaTree.ORDER_BY('a')}`,
       [from, from, from, from, to]
     );
 

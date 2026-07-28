@@ -230,22 +230,42 @@ const acc = (id, code, parent_id, extra = {}) => ({ id, code, parent_id, ...extr
   // GL ledger). A grep for the module PATH is not enough — a comment mentioning
   // lib/coa/tree satisfies it, which is precisely how the second one slipped
   // through. Match the require STATEMENT.
+  const scanAll = (dir) => {
+    const out = [];
+    for (const e of fs.readdirSync(path.join(ROOT, dir), { withFileTypes: true })) {
+      const rel = dir + '/' + e.name;
+      if (e.isDirectory()) { if (e.name !== 'node_modules') out.push(...scanAll(rel)); }
+      else if (e.name.endsWith('.js')) out.push(rel);
+    }
+    return out;
+  };
   {
-    const scan = (dir) => {
-      const out = [];
-      for (const e of fs.readdirSync(path.join(ROOT, dir), { withFileTypes: true })) {
-        const rel = dir + '/' + e.name;
-        if (e.isDirectory()) { if (e.name !== 'node_modules') out.push(...scan(rel)); }
-        else if (e.name.endsWith('.js')) out.push(rel);
-      }
-      return out;
-    };
-    const files = [...scan('lib'), ...scan('routes'), ...scan('services')];
+    const files = [...scanAll('lib'), ...scanAll('routes'), ...scanAll('services')];
     for (const f of files) {
       const src = read(f);
       if (!/\bcoaTree\s*\./.test(src)) continue;
       check(`${f} requires lib/coa/tree (it references coaTree.*)`,
         /require\(\s*['"][^'"]*coa\/tree['"]\s*\)/.test(src), f);
+    }
+  }
+
+  // (0b) The fragment must be SPLICED, not pasted as literal text.
+  //
+  // A template literal takes `${...}`; a quoted string takes `" + x + "`. Mix
+  // them up — put `" + coaTree.ORDER_BY('a') + "` inside backticks — and the
+  // file still parses, `node --check` passes, and the query ships with the
+  // literal characters `ORDER BY " + coaTree.ORDER_BY('a') + "` in the SQL.
+  // MySQL then errors at request time, inside a handler that catches and
+  // returns 200. Same silent-failure shape as a missing require. This caught
+  // exactly that in routes/erp-core.js.
+  {
+    const all = [...scanAll('lib'), ...scanAll('routes'), ...scanAll('services')];
+    for (const f of all) {
+      read(f).split('\n').forEach((l, i) => {
+        if (!l.includes('coaTree.ORDER_BY') && !l.includes('coaTree.POSTING_LEAF_SQL')) return;
+        check(`${f}:${i + 1} splices the fragment correctly (no quote-concat inside a template)`,
+          !(l.includes('`') && /"\s*\+\s*coaTree\./.test(l)), l.trim().slice(0, 120));
+      });
     }
   }
 

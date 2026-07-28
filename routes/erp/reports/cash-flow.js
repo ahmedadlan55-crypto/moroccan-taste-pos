@@ -21,6 +21,7 @@
 const router = require('express').Router();
 const db = require('../../../db/connection');
 const requireCapability = require('../../../middleware/requireCapability');
+const coaTree = require('../../../lib/coa/tree');
 
 router.get('/reports/cash-flow-ias7', requireCapability('finance.reports.view'), async (req, res) => {
   try {
@@ -48,7 +49,7 @@ router.get('/reports/cash-flow-ias7', requireCapability('finance.reports.view'),
       // Optional brand/branch filter on the entry itself (when columns exist).
       if (brandId)  { sql += ' AND (e.brand_id  IS NULL OR e.brand_id = ?)';  params.push(brandId); }
       if (branchId) { sql += ' AND (e.branch_id IS NULL OR e.branch_id = ?)'; params.push(branchId); }
-      sql += ' GROUP BY a.id, a.code, a.name_ar, a.type ORDER BY a.code';
+      sql += ' GROUP BY a.id, a.code, a.name_ar, a.type ORDER BY ' + coaTree.ORDER_BY('a');
       return [sql, params];
     }
 

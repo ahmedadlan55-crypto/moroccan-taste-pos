@@ -170,7 +170,9 @@
     "test:w0a-money-fixes": "npm run test:refund-approval-gate && npm run test:split-halala && npm run test:pos-v2-resume-contract",
     "test:analytics-truth": "node tests/analyticsSalesTruth.test.js",
     "test:financial-authz": "node tests/financialRoutesAuthz.test.js",
-    "test:coa-tree": "node tests/coaTree.test.js"
+    "test:coa-tree": "node tests/coaTree.test.js",
+    "audit:coa": "node scripts/audit/coa-trial-balance-audit.js",
+    "audit:coa:prod": "node scripts/audit/coa-trial-balance-audit.js --env production --assert-readonly"
   },
   "dependencies": {
     "bcryptjs": "^2.4.3",

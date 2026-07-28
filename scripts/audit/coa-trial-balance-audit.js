@@ -96,10 +96,46 @@ async function main() {
   const [[target]] = await db.query('SELECT DATABASE() AS db, @@hostname AS host, @@version AS version');
   report.target = target;
 
+  // ── --assert-readonly: refuse to run with a credential that can WRITE ──
+  //
+  // "Every statement is a SELECT" is a promise about THIS file. It is not a
+  // guarantee about the session: a typo, a future edit, or a mis-set env var
+  // pointed at production with the application's own credential turns a
+  // read-only audit into an unbounded risk against live books. The only
+  // durable guarantee is a credential that CANNOT write, so this flag makes
+  // the script prove it and exit rather than trust the promise.
+  //
+  // Ask the owner for a dedicated MySQL user with SELECT only. Do not point
+  // this at production with the app credential just because it happens to
+  // work.
+  if (args.includes('--assert-readonly')) {
+    const [grantRows] = await db.query('SHOW GRANTS FOR CURRENT_USER()');
+    const grants = grantRows.map((r) => String(Object.values(r)[0] || ''));
+    // A grant line is a write grant if it hands out ALL PRIVILEGES or names
+    // any mutating privilege. Checked with word boundaries so `SELECT` inside
+    // e.g. `SHOW VIEW` never trips it and `CREATE TEMPORARY TABLES` — which is
+    // harmless to real data — does not either.
+    const WRITE = /\b(ALL PRIVILEGES|INSERT|UPDATE|DELETE|DROP|ALTER|CREATE(?! TEMPORARY)|TRUNCATE|REPLACE|GRANT OPTION|SUPER|FILE)\b/i;
+    const offending = grants.filter((g) => WRITE.test(g));
+    if (offending.length) {
+      console.error('\n✗ REFUSING TO RUN — the current MySQL user can WRITE.');
+      console.error('  This audit must be run with a SELECT-only credential.');
+      console.error('  Offending grant(s):');
+      // Grants are printed because they are the actionable diagnostic, and a
+      // GRANT line never contains a password.
+      offending.forEach((g) => console.error('    ' + g));
+      console.error('\n  Create one, then re-run:');
+      console.error("    CREATE USER 'coa_audit'@'%' IDENTIFIED BY '<a strong password>';");
+      console.error("    GRANT SELECT ON <database>.* TO 'coa_audit'@'%';\n");
+      process.exit(1);
+    }
+    console.log('✓ read-only credential verified (' + grants.length + ' grant line(s), none of them write)');
+  }
+
   // ── 1. Raw counts ──
   const [accounts] = await db.query(
     'SELECT id, code, name_ar, name_en, type, parent_id, level, is_active, is_folder, ' +
-    'balance, account_class, report_section, tax_nature FROM gl_accounts'
+    'display_order, balance, account_class, report_section, tax_nature FROM gl_accounts'
   );
   report.sections.totals = {
     totalAccounts: accounts.length,
@@ -147,7 +183,91 @@ async function main() {
     selfParent: selfParent.map(a => ({ code: a.code, name: a.name_ar })),
     cycles,
     depthMismatch,
+    // The depth walk above is 1-based (`let depth = 1`), matching the
+    // canonical lib/coa/tree.js. A chart that was left 0-based by the old
+    // deep-repair shows up as `zeroLevelAccounts > 0` AND as a depthMismatch
+    // on essentially every row — that combination is the fingerprint of the
+    // bug, and it is what makes the trial balance render «غير سليم».
+    zeroLevelAccounts: accounts.filter(a => Number(a.level) === 0).length,
+    nullLevelAccounts: accounts.filter(a => a.level == null).length,
+    depthMismatchRatio: accounts.length
+      ? Number((depthMismatch.length / accounts.length).toFixed(3)) : 0,
   };
+
+  // ── 2b. display_order health ────────────────────────────────────────────
+  // display_order is a PER-PARENT ordinal (every writer restarts the counter
+  // at each parent). Duplicates WITHIN one parent are the real defect — they
+  // make the sibling order non-deterministic. Duplicates ACROSS parents are
+  // expected and are NOT reported, because reporting them would bury the one
+  // that matters.
+  {
+    const byParent = new Map();
+    for (const a of accounts) {
+      const k = String(a.parent_id || '__ROOT__');
+      if (!byParent.has(k)) byParent.set(k, []);
+      byParent.get(k).push(a);
+    }
+    const dupWithinParent = [];
+    for (const [k, kids] of byParent) {
+      const seen = new Map();
+      for (const kid of kids) {
+        if (kid.display_order == null) continue;
+        const o = Number(kid.display_order);
+        if (seen.has(o)) dupWithinParent.push({ parent: k, order: o, codes: [seen.get(o), kid.code] });
+        else seen.set(o, kid.code);
+      }
+    }
+    report.sections.ordering = {
+      nullDisplayOrder: accounts.filter(a => a.display_order == null).length,
+      duplicateWithinParent: dupWithinParent,
+      note: 'display_order is per-parent; duplicates across DIFFERENT parents are normal ' +
+            'and deliberately not listed. Only collisions inside one parent are defects.',
+    };
+  }
+
+  // ── 2c. Which code scheme is this chart actually on? ────────────────────
+  // The repo carries two: the live 1–5-digit family and db/coa-template.json's
+  // 6-digit GGMMPP. Every root guard in routes/erp.js hard-codes ['1'..'5'],
+  // and the prefix-based repair heuristics assume a parent's code is a strict
+  // prefix of its child's — which is FALSE for GGMMPP (100200 is not prefixed
+  // by 100000). Knowing which scheme production is on decides whether those
+  // guards are doing anything at all.
+  {
+    const sixDigit = accounts.filter(a => /^\d{6}$/.test(String(a.code || ''))).length;
+    const legacy = accounts.filter(a => /^\d{1,5}$/.test(String(a.code || ''))).length;
+    const legacyRoots = ['1', '2', '3', '4', '5'];
+    report.sections.codeScheme = {
+      sixDigitCodes: sixDigit,
+      legacyCodes: legacy,
+      other: accounts.length - sixDigit - legacy,
+      detected: sixDigit > legacy ? 'ggmmpp(6-digit)' : 'legacy(1-5 digit)',
+      legacyRootGuardsMatch: legacyRoots.filter(c => accounts.some(a => String(a.code) === c)),
+      legacyRootGuardsMissing: legacyRoots.filter(c => !accounts.some(a => String(a.code) === c)),
+      note: 'Any code in legacyRootGuardsMissing means the hard-coded root guards in ' +
+            'routes/erp.js silently match nothing for that root.',
+    };
+  }
+
+  // ── 2d. Four-way posting-leaf disagreement ──────────────────────────────
+  // The canonical rule is `is_active AND NOT is_folder AND NOT hasChildren`
+  // (lib/coa/tree.js). Before this audit's companion fix, three call sites
+  // checked children ONLY, so a CHILDLESS FOLDER was postable from the UI
+  // while the trial balance refused to count it — which is what produces
+  // `nonLeafPostingActivity` and flips `isClean` to false. This lists exactly
+  // the accounts the two rules disagree about, so the owner can see the
+  // blast radius rather than a count.
+  {
+    const parentSet = new Set(accounts.filter(a => a.parent_id).map(a => a.parent_id));
+    const disagree = accounts
+      .filter(a => a.is_active && !parentSet.has(a.id) && a.is_folder)
+      .map(a => ({ code: a.code, name: a.name_ar, type: a.type }));
+    report.sections.postingLeafDisagreement = {
+      childlessFolders: disagree,
+      note: 'Childless accounts flagged is_folder=1: the canonical rule says NOT postable, ' +
+            'a children-only rule says postable. Any with posted activity are the ones the ' +
+            'trial balance reports as nonLeafPostingActivity.',
+    };
+  }
 
   // ── 3. Non-aggregating parent: is a parent (has children) but not flagged is_folder ──
   const parentIds = new Set(accounts.filter(a => a.parent_id).map(a => a.parent_id));

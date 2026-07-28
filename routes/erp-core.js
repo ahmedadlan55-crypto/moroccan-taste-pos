@@ -29,6 +29,7 @@ const { nextDocNumber } = require('../lib/docNumber');
 // and deduct warehouse stock. Sibling modules right next to the mount are gated
 // with requireRole('admin','manager').
 const requireCapability = require('../middleware/requireCapability');
+const coaTree = require('../lib/coa/tree');
 const trialBalanceEngine = require('../lib/reports/trialBalance');
 const warehouseScopeLib = require('../lib/warehouseScope');
 
@@ -2317,8 +2318,9 @@ router.get('/reports/pnl', requireCapability('finance.reports.view'), async (req
     if (includeZero && (!groupBy || groupBy === 'account')) {
       const seen = new Set(mapped.map(r => r.accountId));
       const [allAcc] = await db.query(
-        `SELECT id, code, name_ar, type FROM gl_accounts
-         WHERE is_active = 1 AND type IN ('revenue','expense') ORDER BY code`
+        `SELECT id, code, name_ar, type FROM gl_accounts a
+          WHERE is_active = 1 AND type IN ('revenue','expense')
+          ORDER BY ${coaTree.ORDER_BY('a')}`
       );
       const stubs = allAcc
         .filter(a => !seen.has(a.id))

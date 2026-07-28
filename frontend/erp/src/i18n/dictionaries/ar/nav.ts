@@ -33,13 +33,10 @@ export const nav = {
     "ov-approvals": "الموافقات المطلوبة",
     "ov-kpis": "مؤشرات الأداء",
     // sales
-    "sl-orders": "الطلبات",
     "sl-invoices": "الفواتير",
     "sl-returns": "المرتجعات",
     "sl-payments": "المدفوعات",
     "sl-customers": "العملاء",
-    "sl-channels": "قنوات البيع",
-    "sl-pricing": "قوائم الأسعار والخصومات",
     // menu
     "mn-hub": "لوحة القوائم",
     "mn-brand": "قائمة العلامة التجارية",
@@ -54,6 +51,8 @@ export const nav = {
     "pa-shifts": "الورديات",
     "pa-parked": "الطلبات المعلقة",
     "pa-devices": "مزامنة الأجهزة",
+    "sl-channels": "قنوات البيع",
+    "sl-pricing": "قوائم الأسعار والخصومات",
     // inventory
     "inv-overview": "نظرة عامة",
     "inv-items": "الأصناف",

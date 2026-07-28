@@ -1,13 +1,11 @@
 // modules/sales — Sales / Order-to-Cash domain (SD3). ONE lazy module chunk backs
-// every sales-group manifest item (/sales/orders, /sales/invoices, /sales/returns,
+// every sales-group manifest item (/sales/invoices, /sales/returns,
 // /sales/payments, /sales/channels, /sales/pricing). The router registers one
 // exact route per path (no `/:id`), so this component branches on the pathname to
 // pick the section, and on the `?doc=<id>` query param to swap the list for a
 // full-page document detail (see lib/use-nav.ts). Create forms open via `?new=1`.
 import { useLocation } from "react-router-dom";
 import { useDocNav } from "@/modules/sales/lib";
-import { OrdersList } from "./orders/OrdersList";
-import { OrderDetail } from "./orders/OrderDetail";
 import { InvoicesList } from "./invoices/InvoicesList";
 import { InvoiceDetail } from "./invoices/InvoiceDetail";
 import { PaymentsList } from "./payments/PaymentsList";
@@ -17,18 +15,19 @@ import { ReturnDetail } from "./returns/ReturnDetail";
 import { ChannelsPage } from "./channels/ChannelsPage";
 import { PricingPage } from "./pricing/PricingPage";
 
-type Section = "orders" | "invoices" | "returns" | "payments" | "channels" | "pricing";
+type Section = "invoices" | "returns" | "payments" | "channels" | "pricing";
 
+// Invoices is the fallback: it is the sales group's first surviving leaf, so an
+// unrecognised /sales/* segment lands on the AR ledger rather than a blank screen.
 function sectionFromPath(pathname: string): Section {
   const seg = pathname.replace(/\/+$/, "").split("/").pop() ?? "";
   switch (seg) {
-    case "invoices": return "invoices";
     case "returns": return "returns";
     case "payments": return "payments";
     case "channels": return "channels";
     case "pricing": return "pricing";
-    case "orders":
-    default: return "orders";
+    case "invoices":
+    default: return "invoices";
   }
 }
 
@@ -38,8 +37,6 @@ export default function SalesModule() {
   const section = sectionFromPath(pathname);
 
   switch (section) {
-    case "orders":
-      return doc ? <OrderDetail id={doc} onBack={closeDoc} /> : <OrdersList />;
     case "invoices":
       return doc ? <InvoiceDetail id={doc} onBack={closeDoc} /> : <InvoicesList />;
     case "payments":

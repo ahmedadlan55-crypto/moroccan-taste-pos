@@ -404,7 +404,9 @@ if (_pwaFs.existsSync(path.join(_posDist, 'index.html'))) {
 
 // Standalone Order-to-Cash (sales) SPA retired (Closure Sprint v2) — its features
 // live in the unified ERP at /app (sales + customers). Redirect old links there.
-app.all(/^\/sales(?:\/.*)?$/, function (req, res) { res.redirect(302, '/app/sales/orders'); });
+// Lands on the invoices ledger: /app/sales/orders was retired with the manual
+// order surface, so the old target is no longer a registered route.
+app.all(/^\/sales(?:\/.*)?$/, function (req, res) { res.redirect(302, '/app/sales/invoices'); });
 
 // ── ADLAN Back-Office (unified React SPA) — served at /app ───────────────────
 // The unified Back-Office (frontend/erp) is served at /app behind
@@ -667,8 +669,9 @@ if (ORDER_TO_CASH_ENABLE) {
   app.use('/api/order-to-cash', require('./routes/order-to-cash'));
 
   // Single-writer AR — block the legacy duplicate AR/collection write paths (reads pass).
-  const { legacyArGate, customerReceiptGate, saleReverseGate, creditSaleGate } = require('./middleware/o2cLegacyGate');
-  app.use('/api/ar-invoices', legacyArGate('/sales/invoices'));         // second invoice source → gated
+  // /api/ar-invoices needed no gate once it was deleted outright: the second
+  // invoice source is gone, not merely blocked.
+  const { customerReceiptGate, saleReverseGate, creditSaleGate } = require('./middleware/o2cLegacyGate');
   app.use('/api/cash', customerReceiptGate('/sales/payments'));         // customer-directed receipts → gated
   app.use('/api/sales', creditSaleGate());                             // credit sales must pass the server credit gate
   app.use('/api/sales', saleReverseGate('/sales'));                     // legacy sale reverse/delete (GL-destroying) → gated; POS create passes
@@ -779,10 +782,8 @@ try { app.use('/api/erp', require('./routes/erp/periods'));            } catch(e
 const { requireRole } = require('./middleware/auth');
 // V5 Enterprise modules (Real-Estate / Contracts / WorkOrders / AP-AR / Approval Matrix)
 try { app.use('/api/properties', requireRole('admin','manager'), require('./routes/properties')); } catch(e){ console.warn('[mod:properties]', e.message); }
-try { app.use('/api/contracts', requireRole('admin','manager'), require('./routes/contracts')); } catch(e){ console.warn('[mod:contracts]', e.message); }
 try { app.use('/api/work-orders', requireRole('admin','manager'), require('./routes/work-orders')); } catch(e){ console.warn('[mod:work-orders]', e.message); }
 try { app.use('/api/ap-invoices', requireRole('admin','manager'), require('./routes/ap-invoices')); } catch(e){ console.warn('[mod:ap-inv]', e.message); }
-try { app.use('/api/ar-invoices', requireRole('admin','manager'), require('./routes/ar-invoices')); } catch(e){ console.warn('[mod:ar-inv]', e.message); }
 try { app.use('/api/approval-matrix', requireRole('admin','manager'), require('./routes/approval-matrix')); } catch(e){ console.warn('[mod:matrix]', e.message); }
 try { app.use('/api/budgets', requireRole('admin','manager'), require('./routes/budgets')); } catch(e){ console.warn('[mod:budgets]', e.message); }
 try { app.use('/api/anomalies', requireRole('admin','manager'), require('./routes/anomalies')); } catch(e){ console.warn('[mod:anomalies]', e.message); }
@@ -6443,28 +6444,9 @@ async function runMigrations() {
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
   `);
 
-  // 4) Contract Invoice Schedules (جدولة الفواتير الدورية)
-  await createTableIfMissing('contract_invoice_schedules', `
-    CREATE TABLE contract_invoice_schedules (
-      id VARCHAR(40) PRIMARY KEY,
-      contract_id VARCHAR(40) NOT NULL,
-      due_date DATE NOT NULL,
-      amount DECIMAL(14,4) NOT NULL,
-      vat_amount DECIMAL(14,4) DEFAULT 0,
-      total_amount DECIMAL(14,4) NOT NULL,
-      currency VARCHAR(8) DEFAULT 'SAR',
-      period_from DATE,
-      period_to DATE,
-      status ENUM('scheduled','generated','invoiced','paid','overdue','cancelled') DEFAULT 'scheduled',
-      invoice_id VARCHAR(40),
-      generated_at DATETIME,
-      paid_at DATETIME,
-      notes TEXT,
-      INDEX idx_contract (contract_id),
-      INDEX idx_due (due_date, status),
-      INDEX idx_status (status)
-    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
-  `);
+  // 4) was contract_invoice_schedules — recurring B2B billing, retired with the
+  //    contracts ROUTE. The `contracts` table above stays: routes/properties.js
+  //    still reads it for lease/unit linkage.
 
   // 5) Assets (الأصول الثابتة — معدات/مركبات/أجهزة للصيانة)
   await createTableIfMissing('assets', `
@@ -6638,60 +6620,10 @@ async function runMigrations() {
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
   `);
 
-  // 10) Customer Invoices (فواتير العملاء — للإيجار / خدمات / مبيعات)
-  await createTableIfMissing('customer_invoices', `
-    CREATE TABLE customer_invoices (
-      id VARCHAR(40) PRIMARY KEY,
-      code VARCHAR(40) UNIQUE,
-      customer_id VARCHAR(40),
-      customer_name VARCHAR(200),
-      vat_number VARCHAR(40),
-      invoice_type ENUM('rental','service','goods','recurring') DEFAULT 'rental',
-      contract_id VARCHAR(40),
-      schedule_id VARCHAR(40),
-      issue_date DATE NOT NULL,
-      due_date DATE,
-      brand_id VARCHAR(40),
-      branch_id VARCHAR(40),
-      cost_center_id VARCHAR(40),
-      property_id VARCHAR(40),
-      property_unit_id VARCHAR(40),
-      currency VARCHAR(8) DEFAULT 'SAR',
-      subtotal DECIMAL(14,4) DEFAULT 0,
-      vat_amount DECIMAL(14,4) DEFAULT 0,
-      total_amount DECIMAL(14,4) DEFAULT 0,
-      paid_amount DECIMAL(14,4) DEFAULT 0,
-      balance_amount DECIMAL(14,4) DEFAULT 0,
-      status ENUM('draft','issued','sent','partially_paid','paid','overdue','cancelled') DEFAULT 'draft',
-      zatca_status ENUM('pending','submitted','accepted','rejected') DEFAULT 'pending',
-      zatca_uuid VARCHAR(80),
-      gl_journal_id VARCHAR(60),
-      attachments LONGTEXT,
-      notes TEXT,
-      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-      created_by VARCHAR(80),
-      INDEX idx_customer (customer_id),
-      INDEX idx_contract (contract_id),
-      INDEX idx_brand (brand_id),
-      INDEX idx_due (due_date, status),
-      INDEX idx_status (status)
-    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
-  `);
-
-  await createTableIfMissing('customer_invoice_lines', `
-    CREATE TABLE customer_invoice_lines (
-      id VARCHAR(40) PRIMARY KEY,
-      invoice_id VARCHAR(40) NOT NULL,
-      description VARCHAR(400),
-      quantity DECIMAL(10,4) DEFAULT 1,
-      uom VARCHAR(20),
-      unit_price DECIMAL(12,4),
-      vat_pct DECIMAL(5,2) DEFAULT 15,
-      line_total DECIMAL(14,4),
-      account_id VARCHAR(40),
-      INDEX idx_invoice (invoice_id)
-    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
-  `);
+  // 10) was customer_invoices + customer_invoice_lines — the manual/rental AR
+  //     invoice pair behind the deleted /api/ar-invoices route. ar_documents is
+  //     the single AR source of truth; scripts/order-to-cash/backfill.js still
+  //     imports these tables where an existing database has them.
 
   // 11) Approval Policies (مصفوفة سياسات الموافقة المتقدمة)
   await createTableIfMissing('approval_policies', `

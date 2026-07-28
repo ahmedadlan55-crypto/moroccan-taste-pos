@@ -70,6 +70,10 @@ export const salesReports = {
       title: "الأصناف",
       subtitle: "مبيعات الأصناف والفئات: الكميات والصافي والمساهمة في الإجمالي",
     },
+    "item-sales": {
+      title: "مبيعات الأصناف",
+      subtitle: "تفصيل يومي لكل صنف في كل فرع: الكمية والإجمالي والخصم والمرتجع والصافي، والتكلفة والربح لمن يملك صلاحية عرض التكلفة",
+    },
     modifiers: {
       title: "الإضافات",
       subtitle: "أداء الإضافات: معدل الإرفاق والكميات حسب الصنف الأم",
@@ -144,10 +148,12 @@ export const salesReports = {
     clearAll: "مسح الكل",
     saveView: "حفظ العرض",
     export: "تصدير",
+    print: "طباعة التقرير",
     from: "من",
     to: "إلى",
     allBrands: "كل العلامات",
     allBranches: "كل الفروع",
+    allItems: "كل الأصناف",
     allChannels: "كل القنوات",
     allOrderTypes: "كل أنواع الطلب",
     removeFilter: "إزالة الفلتر: {name}",
@@ -320,11 +326,6 @@ export const salesReports = {
     showChart: "عرض الرسم البياني",
   },
 
-  placeholder: {
-    title: "قيد البناء",
-    body: "تصل هذه الصفحة مع موجة الصفحات القادمة — الفلاتر أعلاه جاهزة وستنطبق عليها فور وصولها.",
-  },
-
   pivot: {
     expand: "توسيع المجموعة",
     collapse: "طي المجموعة",
@@ -345,6 +346,14 @@ export const salesReports = {
 
   orders: {
     colInvoice: "رقم الفاتورة",
+  },
+
+  itemSales: {
+    costUndefined: "تكلفة غير مُعرَّفة",
+    costUndefinedHint:
+      "لا توجد وصفة ولا تكلفة يدوية لهذا الصنف، فلم تُسجَّل له تكلفة وقت البيع — عرض التكلفة صفرًا كان سيُظهر هامشًا 100%.",
+    costUndefinedCount: "{count} من الأسطر بلا تكلفة مُعرَّفة — حُجبت التكلفة والربح والهامش لها",
+    rowLimit: "يعرض هذا التقرير أول {count} سطر فقط — ضيّق الفترة أو الفلاتر لرؤية الباقي",
   },
 
   profitability: {
@@ -388,6 +397,9 @@ export const salesReports = {
     ready: "التصدير جاهز للتنزيل",
     failed: "تعذّر إنشاء التصدير",
     download: "تنزيل التصدير",
+    // Header of the display-name column the export adds next to a dimension's
+    // id column (menu_item → "الصنف", menu_item_label → "اسم الصنف").
+    nameColumn: "اسم {name}",
   },
 
   schedules: {

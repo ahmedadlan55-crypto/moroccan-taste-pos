@@ -81,6 +81,7 @@ router.use(require('./erp/projects'));
 router.use(require('./erp/audit-logs'));
 router.use(require('./erp/purchase-reports'));
 router.use(require('./erp/branches-full'));
+router.use(require('./erp/menu-options'));
 router.use(require('./erp/vat'));
 
 // v5.17.2 — Financial reports: each report in its own sub-file. Every

@@ -4,6 +4,7 @@
 // metrics arrive as meta.maskedMetrics and render as "—", never as 0).
 import { useQuery } from "@tanstack/react-query";
 import { apiClient } from "@/shared/api";
+import { useLang, type TFunction } from "@/i18n";
 import type { AnalyticsFilters } from "./filters";
 
 /* ── query body ──────────────────────────────────────────────── */
@@ -90,7 +91,12 @@ export interface AnalyticsResult {
   /** Server-computed subtotal rows (keys carry null at the free levels). */
   subtotals?: AnalyticsResultRow[];
   totals?: Record<string, number | null>;
-  page?: { limit: number; offset: number; total: number };
+  // `total` is NOT a server count: QueryService returns only {limit, offset,
+  // rowCountCapped}, so it degrades to rows.length. `rowCountCapped` is the
+  // authoritative "a fact hit MAX_LIMIT — you are NOT seeing the whole period"
+  // flag; prefer it over comparing rows.length to the requested limit, which
+  // cries truncation on a result that merely lands exactly on the cap.
+  page?: { limit: number; offset: number; total: number; rowCountCapped?: boolean };
   meta: AnalyticsResultMeta;
 }
 
@@ -239,7 +245,7 @@ export function normalizeAnalyticsResult(
     rows?: WireRow[];
     subtotals?: WireRow[];
     totals?: { values?: WireValues; compare?: WireValues; delta?: WireRow["delta"] } | WireValues;
-    page?: { limit?: number; offset?: number; total?: number };
+    page?: { limit?: number; offset?: number; total?: number; rowCountCapped?: boolean };
   };
   const meta = (env.meta && typeof env.meta === "object" ? env.meta : {}) as {
     freshness?: { watermark?: string | null; pendingDays?: number | null };
@@ -299,6 +305,9 @@ export function normalizeAnalyticsResult(
             limit: Number(data.page.limit) || 0,
             offset: Number(data.page.offset) || 0,
             total: Number(data.page.total ?? rows.length) || rows.length,
+            ...(data.page.rowCountCapped != null
+              ? { rowCountCapped: !!data.page.rowCountCapped }
+              : {}),
           },
         }
       : {}),
@@ -430,6 +439,46 @@ export function useBranchOptions() {
     queryKey: ["erp", "branches-full"],
     queryFn: async ({ signal }) =>
       asOptionArray(await apiClient.get<unknown>("/erp/branches-full", { signal })),
+  });
+}
+
+interface MenuOptionRow {
+  id: string;
+  name: string;
+  nameEn: string;
+}
+
+function asMenuOptionRows(v: unknown): MenuOptionRow[] {
+  const arr = Array.isArray(v)
+    ? v
+    : v && typeof v === "object" && Array.isArray((v as { data?: unknown }).data)
+      ? ((v as { data: unknown[] }).data)
+      : [];
+  return arr
+    .filter((row): row is Record<string, unknown> => !!row && typeof row === "object")
+    .map((row) => ({
+      id: String(row.id ?? ""),
+      name: String(row.name ?? row.id ?? ""),
+      nameEn: String(row.nameEn ?? ""),
+    }))
+    .filter((o) => o.id !== "");
+}
+
+/**
+ * Menu items for the top-bar item picker (GET /erp/menu-options — the cheap
+ * read-only sibling of /erp/branches-full: ids + both names, no images or
+ * prices). The CACHE is language-agnostic on purpose — both names are fetched
+ * once and `select` picks the one the current UI language wants, so toggling
+ * ar/en re-labels the picker without a refetch.
+ */
+export function useMenuItemOptions() {
+  const lang = useLang();
+  return useQuery({
+    queryKey: ["erp", "menu-options"],
+    queryFn: async ({ signal }) =>
+      asMenuOptionRows(await apiClient.get<unknown>("/erp/menu-options", { signal })),
+    select: (rows): ScopeOption[] =>
+      rows.map((r) => ({ id: r.id, name: (lang === "en" && r.nameEn) || r.name })),
   });
 }
 
@@ -618,12 +667,56 @@ export interface AnalyticsExportJob {
   finished_at?: string | null;
 }
 
+/** One export file header cell: the server column key + its display label. */
+export interface ExportColumnLabel {
+  key: string;
+  label: string;
+}
+
+/**
+ * The header labels for an export request. The backend registry stores ids
+ * only (net_ex_vat, business_day, menu_item) — the human names live in these
+ * dictionaries, and which language they resolve in is a CLIENT fact, so the
+ * requester ships its own resolved labels and the file header comes out in the
+ * reader's language. Keys the server never emits are simply ignored there.
+ */
+export function buildExportColumns(request: AnalyticsPlannerRequest, t: TFunction): ExportColumnLabel[] {
+  // A dictionary MISS returns the dotted path itself (the I18nProvider
+  // contract), and "salesReports.dims.foo" in a header cell is worse than the
+  // raw id the server falls back to — so an unresolved column is not sent.
+  const resolve = (path: string, vars?: Record<string, string | number>): string | null => {
+    const label = t(path, vars);
+    return label === path ? null : label;
+  };
+  const columns: ExportColumnLabel[] = [];
+  for (const dimension of request.dimensions) {
+    const label = resolve(`salesReports.dims.${dimension}`);
+    if (!label) continue;
+    columns.push({ key: dimension, label });
+    // A dimension that resolves display labels gets a second `<dim>_label`
+    // column server-side; naming it up front costs one array entry when the
+    // dimension turns out to carry no labels at all.
+    const nameLabel = resolve("salesReports.exportMenu.nameColumn", { name: label });
+    if (nameLabel) columns.push({ key: `${dimension}_label`, label: nameLabel });
+  }
+  for (const metric of request.metrics) {
+    const label = resolve(`salesReports.metrics.${metric}`);
+    if (label) columns.push({ key: metric, label });
+  }
+  return columns;
+}
+
 export function createAnalyticsExport(
   request: AnalyticsPlannerRequest,
   format: ExportFormat,
+  columns?: ExportColumnLabel[],
 ): Promise<AnalyticsExportJob> {
   return apiClient
-    .post<unknown>("/analytics/exports", { request, format })
+    .post<unknown>("/analytics/exports", {
+      request,
+      format,
+      ...(columns && columns.length > 0 ? { columns } : {}),
+    })
     .then((v) => unwrapData<AnalyticsExportJob>(v, { id: "", status: "failed" }));
 }
 

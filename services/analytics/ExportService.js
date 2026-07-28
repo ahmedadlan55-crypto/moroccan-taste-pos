@@ -8,6 +8,8 @@
  *                 at CREATE time with the same 422 codes the query route
  *                 uses, not hours later inside a worker), inserts a `queued`
  *                 export_jobs row and audits it. Nothing is executed here.
+ *                 Optionally stores the caller's `columns:[{key,label}]`
+ *                 header labels (columns_json) — see HEADER LABELS below.
  *   runPending  — claims queued jobs (status-guarded UPDATE, safe under
  *                 concurrent workers), RE-RESOLVES the owner's scope+caps at
  *                 run time (grants may have changed since create — a revoked
@@ -25,6 +27,15 @@
  *   trips), records `truncated` in the file's metadata block and keeps
  *   row_count at what was actually written. The spec's "10k chunks" is not
  *   achievable through QueryService today; this is the honest equivalent.
+ *
+ * HEADER LABELS
+ *   The metric/dimension registry stores ids, not display names, so the file
+ *   header used to read `net_ex_vat` / `menu_item_name` — unreadable for the
+ *   owner it is written for. The only human labels in the system live in the
+ *   frontend dictionaries, and WHICH language they resolve in is a client
+ *   fact, so the client sends its resolved labels with the request and they
+ *   are stored per job. Unknown/missing keys keep the raw id: a job created
+ *   before this existed, or by a caller that sends nothing, is unaffected.
  *
  * FILES
  *   uploads/exports/<jobId>.<csv|xlsx>, dir created on demand. The DB stores
@@ -51,6 +62,14 @@ const EXPORT_DIR_REL = path.join('uploads', 'exports');
 const ROOT = path.join(__dirname, '..', '..');
 const HARD_ROW_CAP = 100000;
 const FORMATS = new Set(['csv', 'xlsx']);
+
+// Client-supplied header labels (see normalizeColumnLabels). The ceiling is
+// what a planned request can physically emit — every metric, plus every
+// dimension and its `<dim>_label` twin — so it tracks the planner instead of
+// drifting from it. A header cell is a label, never a paragraph.
+const MAX_LABEL_COLUMNS = planner.MAX_METRICS + planner.MAX_DIMENSIONS * 2;
+const MAX_LABEL_KEY_LEN = 64;
+const MAX_LABEL_TEXT_LEN = 120;
 
 // ── small helpers ────────────────────────────────────────────────────────────
 
@@ -93,6 +112,81 @@ function isAdminScope(scope) {
   return !!(scope && scope.all);
 }
 
+// ── header labels ────────────────────────────────────────────────────────────
+
+/**
+ * Validate the optional `columns: [{key,label}]` the client sends with an
+ * export request. The registry has no display names — the only human-readable,
+ * language-correct labels in the system are the UI dictionaries — so the
+ * requester supplies them and the file header stops reading `net_ex_vat`.
+ *
+ * Strict on purpose: these strings are written verbatim into a file header
+ * that Excel will open. CR/LF would split the CSV header row (and the '# '
+ * metadata preamble) into fabricated lines, so they are rejected outright
+ * rather than silently stripped.
+ *
+ * @returns {Array<{key:string,label:string}>|null} null when nothing usable
+ *          was supplied — callers then keep the raw registry ids.
+ */
+function normalizeColumnLabels(columns) {
+  if (columns == null) return null;
+  if (!Array.isArray(columns)) {
+    throw err('VALIDATION_ERROR', 422, 'columns يجب أن يكون مصفوفة من {key,label}');
+  }
+  if (columns.length > MAX_LABEL_COLUMNS) {
+    throw err('VALIDATION_ERROR', 422, `columns: ${MAX_LABEL_COLUMNS} عنصرًا كحد أقصى`);
+  }
+  const out = [];
+  const seen = new Set();
+  for (const c of columns) {
+    if (!c || typeof c !== 'object' || Array.isArray(c)) {
+      throw err('VALIDATION_ERROR', 422, 'columns: كل عنصر يجب أن يكون {key,label}');
+    }
+    const key = typeof c.key === 'string' ? c.key.trim() : '';
+    const label = typeof c.label === 'string' ? c.label.trim() : '';
+    if (!key || !label) {
+      throw err('VALIDATION_ERROR', 422, 'columns: key و label نصّان مطلوبان في كل عنصر');
+    }
+    if (key.length > MAX_LABEL_KEY_LEN || label.length > MAX_LABEL_TEXT_LEN) {
+      throw err('VALIDATION_ERROR', 422,
+        `columns: key بحد أقصى ${MAX_LABEL_KEY_LEN} حرفًا و label بحد أقصى ${MAX_LABEL_TEXT_LEN}`);
+    }
+    if (/[\r\n]/.test(label)) {
+      throw err('VALIDATION_ERROR', 422, 'columns: label لا يقبل أسطرًا جديدة');
+    }
+    if (seen.has(key)) continue; // first label wins — a duplicate key is noise
+    seen.add(key);
+    out.push({ key, label });
+  }
+  return out.length ? out : null;
+}
+
+/** Stored columns_json → the {key: label} lookup, tolerant of legacy NULLs. */
+function parseColumnLabels(columnsJson) {
+  if (!columnsJson) return null;
+  let parsed;
+  try { parsed = JSON.parse(columnsJson); } catch (_) { return null; }
+  if (!Array.isArray(parsed)) return null;
+  const map = new Map();
+  for (const c of parsed) {
+    if (c && typeof c.key === 'string' && typeof c.label === 'string' && c.label) {
+      map.set(c.key, c.label);
+    }
+  }
+  return map.size ? map : null;
+}
+
+/**
+ * Re-label the collected columns for the file header. `key` is untouched — it
+ * is how every row is read — and any column the client did not name keeps the
+ * raw registry id, so a partial `columns` list degrades one header cell at a
+ * time instead of blanking the sheet.
+ */
+function applyColumnLabels(columns, labels) {
+  if (!labels) return columns;
+  return columns.map((c) => (labels.has(c.key) ? { key: c.key, label: labels.get(c.key) } : c));
+}
+
 function exportDirAbs() {
   return path.join(ROOT, EXPORT_DIR_REL);
 }
@@ -122,10 +216,12 @@ async function loadMealPeriods(db, request) {
 
 /**
  * @param {object} db
- * @param {object} p { user, scope, request, format, ip? }
+ * @param {object} p { user, scope, request, format, columns?, ip? }
+ *   columns — optional [{key,label}] header labels resolved by the CLIENT
+ *   (language is a client fact); absent → raw registry ids as today.
  * @returns {Promise<{id:string, status:'queued'}>}
  */
-async function createJob(db, { user, scope, request, format, ip }) {
+async function createJob(db, { user, scope, request, format, columns, ip }) {
   const fmt = String(format || 'csv').toLowerCase();
   if (!FORMATS.has(fmt)) {
     throw err('VALIDATION_ERROR', 422, 'format يجب أن يكون csv أو xlsx');
@@ -143,12 +239,19 @@ async function createJob(db, { user, scope, request, format, ip }) {
   // QueryService.run — passing null would 422 a perfectly valid request).
   planner.plan(request, scope, { mealPeriods: await loadMealPeriods(db, request) });
 
+  // AFTER the plan: the request is the thing to complain about first, so an
+  // over-wide request reports its real fault instead of the label-count cap
+  // it also trips.
+  const columnLabels = normalizeColumnLabels(columns);
+
   const id = genId();
   await db.query(
     `INSERT INTO export_jobs
-       (id, username, request_json, format, status, definitions_version, scope_hash, created_at)
-     VALUES (?, ?, ?, ?, 'queued', ?, ?, NOW())`,
-    [id, user.username, stableStringify(request), fmt, definitionsVersion(), scopeHashOf(scope)]
+       (id, username, request_json, columns_json, format, status, definitions_version, scope_hash, created_at)
+     VALUES (?, ?, ?, ?, ?, 'queued', ?, ?, NOW())`,
+    [id, user.username, stableStringify(request),
+      columnLabels ? JSON.stringify(columnLabels) : null,
+      fmt, definitionsVersion(), scopeHashOf(scope)]
   );
 
   await AuditService.record({
@@ -301,11 +404,13 @@ function writeXlsxFile(absPath, pairs, flatRows, columns) {
   // Lazy: xlsx is only loaded when an xlsx job actually runs.
   const XLSX = require('xlsx');
   const wb = XLSX.utils.book_new();
-  const header = columns.map((c) => c.label);
+  // same formula-injection stance as the CSV path: neutralize leading = + - @
+  const safe = (v) => (typeof v === 'string' && /^[=+\-@\t\r]/.test(v) ? "'" + v : v);
+  // The header row carries client-supplied labels, so it needs the guard the
+  // data cells already had — Excel evaluates a leading '=' wherever it sits.
+  const header = columns.map((c) => safe(c.label));
   const aoa = [header, ...flatRows.map((r) => columns.map((c) => {
-    const v = r[c.key];
-    // same formula-injection stance as the CSV path: neutralize leading = + - @
-    if (typeof v === 'string' && /^[=+\-@\t\r]/.test(v)) return "'" + v;
+    const v = safe(r[c.key]);
     return v == null ? '' : v;
   }))];
   XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(aoa), 'data');
@@ -357,13 +462,14 @@ async function runPendingExports(db, { limit = 2 } = {}) {
       const request = JSON.parse(job.request_json || '{}');
       const collected = await collectRows(db, request, scope);
       const pairs = metadataPairs(job, request, collected);
+      const columns = applyColumnLabels(collected.columns, parseColumnLabels(job.columns_json));
 
       ensureExportDir();
       const ext = job.format === 'xlsx' ? 'xlsx' : 'csv';
       const relPath = path.join(EXPORT_DIR_REL, `${job.id}.${ext}`);
       const absPath = path.join(ROOT, relPath);
-      if (ext === 'xlsx') writeXlsxFile(absPath, pairs, collected.flatRows, collected.columns);
-      else writeCsvFile(absPath, pairs, collected.flatRows, collected.columns);
+      if (ext === 'xlsx') writeXlsxFile(absPath, pairs, collected.flatRows, columns);
+      else writeCsvFile(absPath, pairs, collected.flatRows, columns);
 
       await db.query(
         `UPDATE export_jobs
@@ -461,6 +567,7 @@ module.exports = {
   // exported for schedules + tests
   definitionsVersion,
   stableStringify,
+  normalizeColumnLabels,
   loadUserRow,
   HARD_ROW_CAP,
   EXPORT_DIR_REL,

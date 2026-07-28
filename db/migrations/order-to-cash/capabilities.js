@@ -22,10 +22,7 @@ const CAPS = [
   ['customers.edit',        0, 22, 'تعديل عميل',                 'Edit customer'],
   ['customers.deactivate',  1, 23, 'تعطيل عميل',                 'Deactivate customer'],
   ['customers.merge',       1, 24, 'دمج عملاء مكررين',           'Merge customers'],
-  ['sales_orders.view',     0, 30, 'عرض أوامر البيع',            'View sales orders'],
-  ['sales_orders.create',   0, 31, 'إنشاء أمر بيع',              'Create sales order'],
-  ['sales_orders.confirm',  0, 32, 'تأكيد أمر بيع',              'Confirm sales order'],
-  ['sales_orders.fulfill',  1, 33, 'تنفيذ أمر بيع',              'Fulfill sales order'],
+  // sort_order 30–33 were the retired sales_orders.* capabilities.
   ['invoices.view',         0, 40, 'عرض فواتير العملاء',         'View customer invoices'],
   ['invoices.create',       0, 41, 'إنشاء فاتورة عميل',          'Create customer invoice'],
   ['invoices.issue',        1, 42, 'إصدار فاتورة عميل',          'Issue customer invoice'],
@@ -58,7 +55,6 @@ const ROLE_GRANTS = {
   cashier: [
     'o2c.view', 'o2c.dashboard.view',
     'customers.view', 'customers.create', 'customers.edit',
-    'sales_orders.view', 'sales_orders.create',
     'invoices.view', 'invoices.create',
     'payments.view', 'payments.create',
     'returns.view', 'returns.create',
@@ -66,7 +62,6 @@ const ROLE_GRANTS = {
   sales: [
     'o2c.view', 'o2c.dashboard.view', 'ar_reports.view',
     'customers.view', 'customers.create', 'customers.edit',
-    'sales_orders.view', 'sales_orders.create', 'sales_orders.confirm',
     'invoices.view', 'invoices.create',
     'payments.view', 'payments.create',
     'returns.view', 'returns.create',

@@ -17,7 +17,7 @@ const db = require(path.join(__dirname, '..', '..', 'db', 'connection'));
 
 const O2C_TABLES = [
   'ar_payment_allocations', 'sales_return_lines', 'sales_returns',
-  'ar_document_lines', 'ar_documents', 'sales_order_lines', 'sales_orders',
+  'ar_document_lines', 'ar_documents',
   'customer_payments', 'ar_events',
 ];
 

@@ -96,11 +96,9 @@ export const ALL_CAPS = [
   "customers.edit",
   "customers.deactivate",
   "customers.merge",
-  "sales_orders.view",
-  "sales_orders.create",
-  "sales_orders.confirm",
-  "sales_orders.fulfill",
   "invoices.view",
+  // Still in the catalog with the manual invoice form gone: it also guards
+  // POST /order-to-cash/invoices/:id/cancel, which the invoice DETAIL uses.
   "invoices.create",
   "invoices.issue",
   "credit.override",

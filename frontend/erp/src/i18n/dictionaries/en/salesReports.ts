@@ -56,6 +56,10 @@ export const salesReports = {
       title: "Items",
       subtitle: "Item and category sales: quantities, net and contribution to total",
     },
+    "item-sales": {
+      title: "Item Sales",
+      subtitle: "Daily breakdown per item per branch: quantity, gross, discount, returns and net — plus cost and profit for holders of the cost permission",
+    },
     modifiers: {
       title: "Modifiers",
       subtitle: "Modifier performance: attach rate and quantities by parent item",
@@ -130,10 +134,12 @@ export const salesReports = {
     clearAll: "Clear all",
     saveView: "Save view",
     export: "Export",
+    print: "Print report",
     from: "From",
     to: "To",
     allBrands: "All brands",
     allBranches: "All branches",
+    allItems: "All items",
     allChannels: "All channels",
     allOrderTypes: "All order types",
     removeFilter: "Remove filter: {name}",
@@ -306,11 +312,6 @@ export const salesReports = {
     showChart: "Show chart",
   },
 
-  placeholder: {
-    title: "Under construction",
-    body: "This page arrives with the upcoming pages wave — the filters above are live and will apply to it on arrival.",
-  },
-
   pivot: {
     expand: "Expand group",
     collapse: "Collapse group",
@@ -331,6 +332,14 @@ export const salesReports = {
 
   orders: {
     colInvoice: "Invoice no.",
+  },
+
+  itemSales: {
+    costUndefined: "Cost not defined",
+    costUndefinedHint:
+      "This item has neither a recipe nor a manual cost, so no cost was captured at sale time — showing the stored zero would have printed a 100% margin.",
+    costUndefinedCount: "{count} rows carry no defined cost — cost, profit and margin are withheld for them",
+    rowLimit: "This report shows the first {count} rows only — narrow the period or filters to see the rest",
   },
 
   profitability: {
@@ -374,6 +383,9 @@ export const salesReports = {
     ready: "Export ready to download",
     failed: "Export failed",
     download: "Download export",
+    // Header of the display-name column the export adds next to a dimension's
+    // id column (menu_item → "Item", menu_item_label → "Item name").
+    nameColumn: "{name} name",
   },
 
   schedules: {

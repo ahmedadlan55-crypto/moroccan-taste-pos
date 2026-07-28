@@ -74,7 +74,6 @@ export function CustomerDetail({ id, onBack }: { id: string; onBack: () => void 
           <div className="flex flex-wrap items-center gap-2 no-print">
             <Button variant="secondary" onClick={() => setStmtOpen(true)}><Printer className="h-4 w-4" /> {t("misc.customers.detail.statement")}</Button>
             <Button variant="secondary" onClick={() => nav(`/sales/payments?customerId=${c.id}&new=1`)}>{t("misc.customers.detail.recordCollection")}</Button>
-            <Button onClick={() => nav(`/sales/orders?new=1`)}>{t("misc.customers.detail.salesOrder")}</Button>
           </div>
         }
       />

@@ -1,7 +1,10 @@
 /**
  * routes/analytics/exports.js — /api/analytics/exports
  *
- *   POST /              create an export job (queued; a worker executes it)
+ *   POST /              create an export job (queued; a worker executes it).
+ *                       Body: { request, format, columns?:[{key,label}] } —
+ *                       `columns` carries the caller's resolved (localized)
+ *                       header labels; the registry only knows ids.
  *   GET  /              list MY jobs (all jobs for admin)
  *   GET  /:id           one job (owner-or-admin; foreign ids read as 404)
  *   GET  /:id/download  stream the finished file (ownership + caps re-check)
@@ -44,6 +47,8 @@ router.post('/', async (req, res) => {
       scope: req.analyticsScope,
       request: body.request,
       format: body.format,
+      // Optional [{key,label}] header labels — the service validates the shape.
+      columns: body.columns,
       ip: req.ip,
     });
     return res.status(201).json({ success: true, data: out, generatedAt: new Date().toISOString() });

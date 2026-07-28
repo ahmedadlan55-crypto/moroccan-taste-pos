@@ -26,13 +26,10 @@ export const nav = {
     "ov-approvals": "Pending Approvals",
     "ov-kpis": "Performance Indicators",
     // sales
-    "sl-orders": "Orders",
     "sl-invoices": "Invoices",
     "sl-returns": "Returns",
     "sl-payments": "Payments",
     "sl-customers": "Customers",
-    "sl-channels": "Sales Channels",
-    "sl-pricing": "Price Lists & Discounts",
     // menu
     "mn-hub": "Menu Dashboard",
     "mn-brand": "Brand Menu",
@@ -47,6 +44,8 @@ export const nav = {
     "pa-shifts": "Shifts",
     "pa-parked": "Parked Orders",
     "pa-devices": "Device Sync",
+    "sl-channels": "Sales Channels",
+    "sl-pricing": "Price Lists & Discounts",
     // inventory
     "inv-overview": "Overview",
     "inv-items": "Items",

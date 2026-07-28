@@ -143,21 +143,6 @@ export interface Allocation {
   reversed?: number;
 }
 
-export interface SalesOrder {
-  id: string;
-  order_number: string;
-  customer_id?: string | null;
-  customer_name?: string | null;
-  order_date: string;
-  total_amount: number;
-  is_credit_sale?: number;
-  status: string;
-  invoice_id?: string | null;
-  version: number;
-  lines?: unknown[];
-  timeline?: TimelineEvent[];
-}
-
 /** One inv_item the return puts back on the shelf. A POS line sells a menu item;
  *  these are the recipe components that actually left stock, snapshotted at
  *  checkout and scaled to the returned fraction. */

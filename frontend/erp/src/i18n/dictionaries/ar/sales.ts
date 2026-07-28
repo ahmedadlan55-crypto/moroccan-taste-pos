@@ -123,51 +123,11 @@ export const sales = {
     remaining: "المتبقّي {amount}",
   },
 
-  // ── Orders ──
-  orders: {
-    eyebrow: "أوامر البيع",
-    title: "أوامر البيع",
-    subtitle: "مسودة ← تأكيد ← تنفيذ ← تفويتر.",
-    newBtn: "أمر بيع",
-    searchPlaceholder: "ابحث برقم الأمر أو العميل…",
-    emptyTitle: "لا توجد أوامر بيع",
-    emptyBody: "أنشئ أمر بيع جديد.",
-    credit: "آجل",
-    cash: "نقدي",
-    col: {
-      number: "رقم الأمر",
-      credit: "آجل؟",
-    },
-    filter: {
-      draft: "مسودة",
-      confirmed: "مؤكَّد",
-      fulfilled: "مُنفَّذ",
-      invoiced: "مُفوتَر",
-      cancelled: "ملغى",
-    },
-    detail: {
-      back: "رجوع للأوامر",
-      creditOrder: "أمر بيع آجل",
-      cashOrder: "أمر بيع نقدي",
-      invoice: "الفاتورة",
-      timeline: "السجل الزمني",
-    },
-    form: {
-      eyebrow: "أمر بيع جديد",
-      title: "إنشاء أمر بيع",
-      creditHint: "البيع الآجل يتطلب عميلًا بحد ائتماني",
-      orderDate: "تاريخ الأمر",
-      creditSale: "بيع آجل",
-      serverCalcNote: "الإجماليات تُحتسب في الخادم. عند التأكيد للبيع الآجل تُطبَّق بوابة الائتمان.",
-    },
-  },
-
   // ── Invoices ──
   invoices: {
     eyebrow: "الفواتير",
     title: "فواتير العملاء",
     subtitle: "المصدر الموحّد للذمم — فاتورة صادرة غير قابلة للتعديل.",
-    newBtn: "فاتورة جديدة",
     searchPlaceholder: "ابحث برقم الفاتورة أو العميل…",
     emptyTitle: "لا توجد فواتير",
     emptyBody: "أنشئ فاتورة جديدة للبدء.",
@@ -193,16 +153,6 @@ export const sales = {
       paid: "المدفوع",
       accountingRef: "المرجع المحاسبي",
       zatcaUuid: "UUID زاتكا",
-    },
-    form: {
-      eyebrow: "فاتورة جديدة",
-      title: "إنشاء فاتورة عميل",
-      customerHint: "اختياري للفاتورة النقدية؛ مطلوب للبيع الآجل",
-      issueDate: "تاريخ الإصدار",
-      lineDescAria: "وصف السطر {n}",
-      lineQtyAria: "كمية السطر {n}",
-      linePriceAria: "سعر السطر {n}",
-      serverCalcNote: "الإجماليات والضريبة تُحتسب في الخادم عند الحفظ (لا يُوثَق بحساب المتصفح).",
     },
   },
 

@@ -108,26 +108,37 @@ describe("SalesAnalyticsHub — capability gates", () => {
     expect(screen.queryByRole("button", { name: PICKER })).not.toBeInTheDocument();
   });
 
-  it("hides the cashiers + profitability sections without their caps (14 of 16)", async () => {
+  it("hides the cashiers + profitability sections without their caps (15 of 17)", async () => {
     renderAt("/reports/sales/executive");
     const picker = await openPicker();
-    expect(SALES_HUB_SEGMENTS).toHaveLength(16);
-    expect(picker.getAllByRole("option")).toHaveLength(14);
+    expect(SALES_HUB_SEGMENTS).toHaveLength(17);
+    expect(picker.getAllByRole("option")).toHaveLength(15);
     expect(picker.queryByRole("option", { name: /أداء الكاشير/ })).not.toBeInTheDocument();
     expect(picker.queryByRole("option", { name: /الربحية/ })).not.toBeInTheDocument();
+    // item-sales carries cost COLUMNS, not a section cap: the section itself
+    // stays listed without analytics.cost.view (the columns gate themselves).
+    //
+    // Anchor on ^: an option's accessible name is "<title> <subtitle>", and the
+    // items report's SUBTITLE ("مبيعات الأصناف والفئات: …") contains the
+    // item-sales report's TITLE ("مبيعات الأصناف") as a substring. An unanchored
+    // /مبيعات الأصناف/ therefore matches both options. Anchoring pins each report
+    // by its own title, so this asserts the two are distinct entries — not that
+    // "something mentioning item sales exists".
+    expect(picker.getByRole("option", { name: /^مبيعات الأصناف/ })).toBeInTheDocument();
+    expect(picker.getByRole("option", { name: /^الأصناف/ })).toBeInTheDocument();
   });
 
-  it("shows all 16 sections when the employee + cost caps are granted", async () => {
+  it("shows all 17 sections when the employee + cost caps are granted", async () => {
     caps["analytics.employees.view"] = true;
     caps["analytics.cost.view"] = true;
     renderAt("/reports/sales/executive");
     const picker = await openPicker();
-    expect(picker.getAllByRole("option")).toHaveLength(16);
+    expect(picker.getAllByRole("option")).toHaveLength(17);
     expect(picker.getByRole("option", { name: /أداء الكاشير/ })).toBeInTheDocument();
     expect(picker.getByRole("option", { name: /الربحية/ })).toBeInTheDocument();
   });
 
-  it("groups the sections so sixteen reports stay scannable", async () => {
+  it("groups the sections so seventeen reports stay scannable", async () => {
     caps["analytics.employees.view"] = true;
     caps["analytics.cost.view"] = true;
     renderAt("/reports/sales/executive");

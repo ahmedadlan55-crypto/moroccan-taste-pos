@@ -310,6 +310,7 @@ async function apply(db, log = () => {}) {
       id ${ID} PRIMARY KEY,
       username ${ACTOR} NULL,
       request_json LONGTEXT NULL,
+      columns_json LONGTEXT NULL,
       format ENUM('csv','xlsx') NOT NULL DEFAULT 'csv',
       status ENUM('queued','running','done','failed') NOT NULL DEFAULT 'queued',
       file_path VARCHAR(300) NULL,
@@ -323,6 +324,11 @@ async function apply(db, log = () => {}) {
       finished_at DATETIME NULL,
       KEY ix_ej_status_created (status, created_at)
     ) ${TBL}`, log);
+  // Header labels are a CLIENT fact: the metric/dimension registry carries ids
+  // only, and the human names live in the UI dictionaries — which know the
+  // reader's language. The requester's resolved labels ride along with the job
+  // so the file header reads "صافي المبيعات", not "net_ex_vat".
+  await H.addColumn(db, 'export_jobs', 'columns_json', 'LONGTEXT NULL', log);
 
   await H.createTable(db, 'report_schedules', `
     CREATE TABLE report_schedules (

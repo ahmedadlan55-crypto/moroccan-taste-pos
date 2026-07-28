@@ -1,18 +1,17 @@
 import { useCallback, useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { Plus } from "lucide-react";
-import { Button, PageHeader } from "@/shared/ui";
+import { PageHeader } from "@/shared/ui";
 import { useTx } from "@/shared/ui/i18n";
 import { DataTable, type ColumnDef } from "@/shared/tables";
-import { Can } from "@/shared/permissions";
 import { o2cApi, qk, SalesStatus, Money, DateCell, useDocNav, type Invoice } from "@/modules/sales/lib";
-import { InvoiceForm } from "./InvoiceForm";
 
 interface TableState { page: number; pageSize: number; search: string }
 
+// Read-only AR ledger. This is a cash/card restaurant: invoices are PROJECTED
+// from POS checkouts, never keyed by hand, so there is no create flow here.
 export function InvoicesList() {
   const t = useTx();
-  const { isNew, openDoc, openNew, closeNew } = useDocNav();
+  const { openDoc } = useDocNav();
   const [status, setStatus] = useState("");
   const [ts, setTs] = useState<TableState>({ page: 1, pageSize: 25, search: "" });
 
@@ -50,7 +49,6 @@ export function InvoicesList() {
         eyebrow={t("sales.invoices.eyebrow")}
         title={t("sales.invoices.title")}
         subtitle={t("sales.invoices.subtitle")}
-        action={<Can cap="invoices.create"><Button onClick={openNew}><Plus className="h-4 w-4" /> {t("sales.invoices.newBtn")}</Button></Can>}
       />
       <DataTable<Invoice>
         mode="server"
@@ -79,7 +77,6 @@ export function InvoicesList() {
           </label>
         }
       />
-      {isNew && <InvoiceForm open onClose={closeNew} onCreated={openDoc} />}
     </div>
   );
 }

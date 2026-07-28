@@ -14,9 +14,6 @@ export const qk = {
   customerStatement: (id: string, from?: string, to?: string) => [...qk.all, "customers", "statement", id, from ?? "", to ?? ""] as const,
   customerExposure: (id: string) => [...qk.all, "customers", "exposure", id] as const,
 
-  orders: (params?: unknown) => [...qk.all, "orders", "list", params ?? {}] as const,
-  order: (id: string) => [...qk.all, "orders", "detail", id] as const,
-
   invoices: (params?: unknown) => [...qk.all, "invoices", "list", params ?? {}] as const,
   invoice: (id: string) => [...qk.all, "invoices", "detail", id] as const,
   invoiceSearch: (q?: string, customerId?: string) => [...qk.all, "invoices", "search", q ?? "", customerId ?? ""] as const,

@@ -3,6 +3,9 @@
  * ORDER_TO_CASH_ENABLE=1 and proves the single-writer AR contract over HTTP:
  *   • the O2C module is reachable + RBAC-gated (admin 200, employee 403, no-token 401)
  *   • every legacy duplicate-AR mutation is blocked (409) while reads pass
+ *   • /api/ar-invoices is GONE (404 on every method) — it used to be a gated 409
+ *     legacy route; the manual-invoicing cull deleted the router outright, so the
+ *     second invoice source no longer exists rather than merely being refused
  *   • the credit-sale gate rejects a credit sale without a customer (422)
  *   • a POS cash sale + non-customer treasury are NOT gated
  *   • ar_documents / customer_payments / gl_entries row counts don't change under
@@ -33,9 +36,6 @@ function env() {
 
 // [method, path, body, expectedStatus]
 const GATED = [
-  ['POST', '/api/ar-invoices', {}, 409],
-  ['PUT', '/api/ar-invoices/X-none', {}, 409],
-  ['DELETE', '/api/ar-invoices/X-none', null, 409],
   ['POST', '/api/cash/receipts', { source_type: 'customer', amount: 10 }, 409],
   ['POST', '/api/sales/X-none/void', {}, 409],
   ['POST', '/api/sales/X-none/return', {}, 409],
@@ -92,8 +92,17 @@ async function main() {
       ok(r.status === exp, `${method} ${p} → ${r.status} (expect ${exp})`);
     }
 
-    console.log('\n── reads + POS create + non-customer treasury NOT gated ──');
-    ok((await fetch(`${BASE}/api/ar-invoices`, { headers: AH })).status !== 409, 'GET /api/ar-invoices not 409');
+    console.log('\n── the legacy AR-invoice route is retired, not gated ──');
+    // It used to answer 409 on mutations and pass reads. Deleting the router
+    // makes every method a plain 404 — assert the route is really gone, so a
+    // future remount cannot quietly reopen a second AR writer.
+    for (const [method, body] of [['GET', null], ['POST', {}], ['PUT', {}], ['DELETE', null]]) {
+      const p = method === 'GET' || method === 'POST' ? '/api/ar-invoices' : '/api/ar-invoices/X-none';
+      const r = await fetch(BASE + p, { method, headers: AH, body: body ? JSON.stringify(body) : undefined });
+      ok(r.status === 404, `${method} ${p} → ${r.status} (expect 404, endpoint deleted)`);
+    }
+
+    console.log('\n── POS create + non-customer treasury NOT gated ──');
     {
       const r = await fetch(`${BASE}/api/sales`, { method: 'POST', headers: AH, body: JSON.stringify({ payment_method: 'cash', total_final: 100 }) });
       ok(r.status !== 409 && r.status !== 422, `POS cash sale → ${r.status} (passes credit+reverse gates)`);

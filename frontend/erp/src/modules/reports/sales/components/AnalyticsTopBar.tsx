@@ -7,7 +7,7 @@
 import { useState, type ReactNode } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { Bookmark, Check, Plus, RefreshCw, X } from "lucide-react";
+import { Bookmark, Check, Plus, Printer, RefreshCw, X } from "lucide-react";
 import { Badge, Button, Dialog, DropdownMenu, IconButton, Input, SegmentedControl } from "@/shared/ui";
 import { useCan } from "@/shared/permissions";
 import {
@@ -20,6 +20,10 @@ import {
 } from "@/shared/ui/date-range-picker";
 import { MultiSelectCombobox, type MultiSelectOption } from "@/shared/ui/multi-select-combobox";
 import { formatDate, formatDateTime, formatNumber } from "@/shared/lib";
+// The accounting reports own the print contract (printReport + PrintArea +
+// the .print-document rules in styles/index.css); the hub reuses it verbatim
+// rather than growing a second, drifting copy.
+import { printReport } from "@/modules/accounting/components";
 import { useT } from "@/i18n";
 import {
   analyticsFilterCodec,
@@ -33,6 +37,7 @@ import {
   savedViewSearchString,
   useBrandOptions,
   useBranchOptions,
+  useMenuItemOptions,
   type AnalyticsResult,
 } from "../lib/api";
 import { ExportMenu } from "./ExportMenu";
@@ -223,6 +228,7 @@ export function AnalyticsTopBar({ filters, patch, reset, meta, onRefresh, pageAc
   const defaults = analyticsFilterCodec.defaults;
   const brands = useBrandOptions();
   const branches = useBranchOptions();
+  const menuItems = useMenuItemOptions();
   // Segment = the last pathname piece (the hub owns /reports/sales/<segment>).
   const segment = location.pathname.split("/").filter(Boolean).pop() ?? "";
   const canExport = useCan("analytics.export");
@@ -368,6 +374,19 @@ export function AnalyticsTopBar({ filters, patch, reset, meta, onRefresh, pageAc
           />,
         )}
         {field(
+          // The owner's question is "how did THIS item sell in THAT branch" —
+          // menuItemId has always been a first-class URL filter, but until now
+          // the only way to set it was drilling into a row.
+          t("salesReports.dims.menu_item"),
+          <MultiSelectCombobox
+            options={toOptions(menuItems.data)}
+            values={filters.menuItemId}
+            onChange={(values) => patch({ menuItemId: values })}
+            ariaLabel={t("salesReports.dims.menu_item")}
+            labels={{ placeholder: t("salesReports.topbar.allItems") }}
+          />,
+        )}
+        {field(
           t("salesReports.topbar.channel"),
           <MultiSelectCombobox
             options={channelOptions}
@@ -432,6 +451,12 @@ export function AnalyticsTopBar({ filters, patch, reset, meta, onRefresh, pageAc
             </IconButton>
           )}
           <SaveViewControl />
+          {/* Print is NOT export-gated: it puts the report the user is already
+              reading on paper. The hub wraps the routed page in PrintArea, and
+              this bar is .no-print, so the printout is the report alone. */}
+          <IconButton size="sm" aria-label={t("salesReports.topbar.print")} onClick={printReport}>
+            <Printer className="h-4 w-4" />
+          </IconButton>
           {canExport && <ExportMenu segment={segment} filters={filters} />}
           {pageActions}
         </div>

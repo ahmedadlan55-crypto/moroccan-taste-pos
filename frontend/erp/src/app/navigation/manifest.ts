@@ -67,13 +67,10 @@ export const NAV: NavGroup[] = [
     id: "sales",
     label: "nav.groups.sales",
     items: [
-      { id: "sl-orders", path: "/sales/orders", label: "nav.items.sl-orders", icon: "ShoppingCart", cap: "sales_orders.view", module: "sales" },
       { id: "sl-invoices", path: "/sales/invoices", label: "nav.items.sl-invoices", icon: "FileText", cap: "invoices.view", module: "sales" },
       { id: "sl-returns", path: "/sales/returns", label: "nav.items.sl-returns", icon: "Undo2", cap: "returns.view", module: "sales" },
       { id: "sl-payments", path: "/sales/payments", label: "nav.items.sl-payments", icon: "Banknote", cap: "payments.view", module: "sales" },
       { id: "sl-customers", path: "/customers", label: "nav.items.sl-customers", icon: "Users", cap: "customers.view", module: "customers" },
-      { id: "sl-channels", path: "/sales/channels", label: "nav.items.sl-channels", icon: "Store", cap: "sales.channels.view", module: "sales" },
-      { id: "sl-pricing", path: "/sales/pricing", label: "nav.items.sl-pricing", icon: "Tags", cap: "sales.pricing.view", module: "sales" },
     ],
   },
   {
@@ -100,6 +97,12 @@ export const NAV: NavGroup[] = [
       { id: "pa-devices", path: "/pos-admin/devices", label: "nav.items.pa-devices", icon: "RefreshCw", cap: "pos.devices.view", module: "pos-admin" },
       // The pos-admin cashier-reports leaf was retired → /reports/sales/shifts
       // (analytics) + the shifts leaf above (operational drill). Redirect in app/router.tsx.
+      // Channels + pricing sat under "sales" but never described a sales DOCUMENT:
+      // they are the only UI for editing menu prices and channel commissions, which
+      // is register configuration. They keep module:"sales" (the code still lives
+      // in modules/sales) — only the nav home moved.
+      { id: "sl-channels", path: "/sales/channels", label: "nav.items.sl-channels", icon: "Store", cap: "sales.channels.view", module: "sales" },
+      { id: "sl-pricing", path: "/sales/pricing", label: "nav.items.sl-pricing", icon: "Tags", cap: "sales.pricing.view", module: "sales" },
     ],
   },
   {

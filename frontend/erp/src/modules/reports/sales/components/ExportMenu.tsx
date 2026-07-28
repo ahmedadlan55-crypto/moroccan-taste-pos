@@ -2,7 +2,8 @@
 //
 // Flow: pick a format → POST /analytics/exports with the CURRENT page's
 // planner request (per-page registry in lib/api — setPageExportRequest — with
-// the DEFAULT_EXPORT_SPEC fallback for pages that never registered) → toast
+// the DEFAULT_EXPORT_SPEC fallback for pages that never registered) plus the
+// t()-resolved header labels for that request (buildExportColumns) → toast
 // "queued" → poll GET /analytics/exports/:id every 3s (2min cap) → on done a
 // toast announces readiness and a download button appears next to the trigger
 // (the shared toast has no action slot, so the action lives inline); the
@@ -19,6 +20,7 @@ import { useT } from "@/i18n";
 import type { AnalyticsFilters } from "../lib/filters";
 import {
   analyticsExportDownloadPath,
+  buildExportColumns,
   buildExportRequest,
   createAnalyticsExport,
   fetchAnalyticsExport,
@@ -102,7 +104,9 @@ export function ExportMenu({
     setReady(null);
     try {
       const request = buildExportRequest(segment, filters);
-      const created = await createAnalyticsExport(request, format);
+      // Header labels travel with the job — the server only knows registry ids,
+      // and the reader's language is knowable only here.
+      const created = await createAnalyticsExport(request, format, buildExportColumns(request, t));
       if (!alive.current) return;
       toast({ title: t("salesReports.exportMenu.queued"), tone: "info" });
       poll(created.id, format, Date.now());

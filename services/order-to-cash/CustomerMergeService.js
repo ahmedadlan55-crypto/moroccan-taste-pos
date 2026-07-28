@@ -3,9 +3,9 @@
  * explicit, audited merge (spec §Customer Master). NEVER automatic: a human with
  * customers.merge previews the impact, then applies. Apply reassigns every child
  * record (sales, ar_documents, customer_payments, ar_payment_allocations,
- * sales_orders, sales_returns) from the source to the target inside one
- * transaction, stamps source.merged_into_id, and deactivates the source. No data
- * is deleted — the source row is preserved as a tombstone pointing at the target.
+ * sales_returns) from the source to the target inside one transaction, stamps
+ * source.merged_into_id, and deactivates the source. No data is deleted — the
+ * source row is preserved as a tombstone pointing at the target.
  */
 'use strict';
 
@@ -19,7 +19,6 @@ const CHILD_TABLES = [
   ['ar_documents', 'customer_id'],
   ['customer_payments', 'customer_id'],
   ['ar_payment_allocations', 'customer_id'],
-  ['sales_orders', 'customer_id'],
   ['sales_returns', 'customer_id'],
 ];
 

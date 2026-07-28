@@ -117,10 +117,41 @@ const acc = (id, code, parent_id, extra = {}) => ({ id, code, parent_id, ...extr
     order[order.length - 1] === '13', order);
 }
 
+// ── 5b. display_order is PER-PARENT and must never lead a FLAT sort ────────
+// The boot backfill (server.js `counters[parent_id]`) and the CoA import both
+// restart the counter at every parent, and normalizeDisplayOrder writes
+// 10/20/30 per parent — so EVERY parent has a child numbered 1. An earlier
+// revision of ORDER_BY led with display_order, which grouped every parent's
+// first child together and shattered the flat trial-balance / picker order.
+// This pins the SQL fragment as globally safe.
+{
+  const ob = t.ORDER_BY('a');
+  check('ORDER_BY does NOT contain display_order — it is a per-parent ordinal',
+    !ob.includes('display_order'), ob);
+
+  // Simulate the flat SQL sort over a realistic multi-parent chart where every
+  // parent's children are numbered 1..n independently.
+  const flatRows = [
+    { code: '100101', display_order: 1 }, { code: '100102', display_order: 2 },
+    { code: '100201', display_order: 1 }, { code: '100202', display_order: 2 },
+    { code: '100301', display_order: 1 },
+  ];
+  const bySqlFragment = [...flatRows].sort((x, y) =>
+    (x.code.length - y.code.length) || x.code.localeCompare(y.code)).map((r) => r.code);
+  check('a flat query keeps each parent block together',
+    JSON.stringify(bySqlFragment) ===
+      JSON.stringify(['100101', '100102', '100201', '100202', '100301']), bySqlFragment);
+
+  const byDisplayOrderFirst = [...flatRows].sort((x, y) =>
+    (x.display_order - y.display_order) || x.code.localeCompare(y.code)).map((r) => r.code);
+  check('leading with display_order would interleave the parents (the bug)',
+    byDisplayOrderFirst[1] === '100201' && byDisplayOrderFirst[2] === '100301',
+    byDisplayOrderFirst);
+}
+
 // ── 6. The SQL fragments say what the JS does ──────────────────────────────
 {
   const ob = t.ORDER_BY('a');
-  check('ORDER_BY leads with display_order', /^COALESCE\(a\.display_order/.test(ob), ob);
   check('ORDER_BY breaks the lexicographic trap with CHAR_LENGTH',
     ob.includes('CHAR_LENGTH(a.code)'), ob);
   check('ORDER_BY ends on code as a total tiebreak', /a\.code$/.test(ob), ob);
@@ -187,6 +218,36 @@ const acc = (id, code, parent_id, extra = {}) => ({ id, code, parent_id, ...extr
   const path = require('path');
   const ROOT = path.join(__dirname, '..');
   const read = (rel) => fs.readFileSync(path.join(ROOT, rel), 'utf8');
+
+  // (0) EVERY file that references `coaTree` must actually require it.
+  //
+  // This assertion exists because the same defect shipped TWICE. The reference
+  // sits inside a route handler, so `require()` at boot succeeds and
+  // `node --check` passes — the ReferenceError only fires on the first request,
+  // where the handler's own catch swallows it into an HTTP 200 with an empty
+  // body. The report renders "no data" instead of an error, so nothing looks
+  // broken. It reached production once in exactly that shape (the multi-account
+  // GL ledger). A grep for the module PATH is not enough — a comment mentioning
+  // lib/coa/tree satisfies it, which is precisely how the second one slipped
+  // through. Match the require STATEMENT.
+  {
+    const scan = (dir) => {
+      const out = [];
+      for (const e of fs.readdirSync(path.join(ROOT, dir), { withFileTypes: true })) {
+        const rel = dir + '/' + e.name;
+        if (e.isDirectory()) { if (e.name !== 'node_modules') out.push(...scan(rel)); }
+        else if (e.name.endsWith('.js')) out.push(rel);
+      }
+      return out;
+    };
+    const files = [...scan('lib'), ...scan('routes'), ...scan('services')];
+    for (const f of files) {
+      const src = read(f);
+      if (!/\bcoaTree\s*\./.test(src)) continue;
+      check(`${f} requires lib/coa/tree (it references coaTree.*)`,
+        /require\(\s*['"][^'"]*coa\/tree['"]\s*\)/.test(src), f);
+    }
+  }
 
   // (a) The 0-based depth helper must never come back.
   const erp = read('routes/erp.js');

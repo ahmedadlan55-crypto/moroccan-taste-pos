@@ -13,6 +13,7 @@
 const router = require('express').Router();
 const db = require('../../../db/connection');
 const requireCapability = require('../../../middleware/requireCapability');
+const coaTree = require('../../../lib/coa/tree');
 
 router.get('/reports/gl-ledger-multi', requireCapability('finance.reports.view'), async (req, res) => {
   try {

@@ -822,7 +822,13 @@ export default function App() {
           {catalogError && !catalog ? (
             <ErrorBanner message={t(catalogError)} onRetry={refetchCatalog} />
           ) : (
-            <div ref={setGridScrollEl} className="scrollbar-thin min-h-0 flex-1 overflow-y-auto">
+            // pt-2: the in-cart quantity badge is deliberately positioned
+            // OUTSIDE its card (-top-1.5) so it never changes a card's measured
+            // height and cannot disturb the virtualizer. That means the scroll
+            // container clips it on the FIRST ROW — the cashier saw the count
+            // sliced in half by the search bar above. A little headroom fixes it
+            // without touching the card geometry the windowing spec pins.
+            <div ref={setGridScrollEl} className="scrollbar-thin min-h-0 flex-1 overflow-y-auto pt-2">
               <ProductGrid
                 catalog={catalog}
                 loading={catalogLoading}

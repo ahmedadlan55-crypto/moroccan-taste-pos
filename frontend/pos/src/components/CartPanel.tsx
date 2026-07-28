@@ -542,14 +542,22 @@ export function CartPanel({
               aria-checked={cart.orderType === value}
               onClick={() => setOrderType(value)}
               className={cn(
-                "btn-press flex min-h-11 items-center justify-center gap-1.5 rounded-xl border text-xs font-extrabold transition",
+                // min-w-0 + px-1: three equal grid columns in a narrow cart
+                // panel are NOT wide enough for icon + label at some widths.
+                // Without a min-width override a flex item refuses to shrink
+                // below its content, so the row overflowed its cell and the
+                // icon was sliced down the middle — «الشريط العلوي ياكل».
+                "btn-press flex min-h-11 min-w-0 items-center justify-center gap-1.5 rounded-xl border px-1 text-xs font-extrabold transition",
                 cart.orderType === value
                   ? "border-ink bg-ink text-white shadow-sm"
                   : "border-slate-200 bg-white text-slate-500 hover:bg-slate-50",
               )}
             >
-              <Icon className="h-4 w-4" aria-hidden />
-              {t(labelKey)}
+              {/* shrink-0: the ICON is the fixed part. When something has to
+                  give it must be the label (which truncates), never a glyph
+                  squashed to an unreadable sliver. */}
+              <Icon className="h-4 w-4 shrink-0" aria-hidden />
+              <span className="truncate">{t(labelKey)}</span>
             </button>
           ))}
         </div>

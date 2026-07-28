@@ -19,19 +19,11 @@
  * calls the function with 0.
  */
 import React, { createContext, useCallback, useContext, useEffect, useMemo, useState } from "react";
-import { ar } from "./dictionaries/ar";
-import { en } from "./dictionaries/en";
-import { format } from "./interpolate";
-import type { Dictionary, DictionaryLeaf, TFunction } from "./types";
-
-export type Lang = "ar" | "en";
+import { makeT, type Lang } from "./makeT";
+export type { Lang };
+import type { TFunction } from "./types";
 
 const STORAGE_KEY = "pos_lang";
-
-const DICTS: Record<Lang, Dictionary> = {
-  ar: ar as unknown as Dictionary,
-  en: en as unknown as Dictionary,
-};
 
 /**
  * Baseline language when nothing is persisted. Owner default: ENGLISH (the
@@ -57,51 +49,6 @@ function readInitialLang(): Lang {
     /* localStorage unavailable (private mode, disabled storage) — use default */
   }
   return defaultLang();
-}
-
-function resolveLeaf(dict: Dictionary, path: string): DictionaryLeaf | undefined {
-  const parts = path.split(".");
-  let cur: Dictionary | DictionaryLeaf | undefined = dict;
-  for (const part of parts) {
-    if (cur == null || typeof cur !== "object") return undefined;
-    cur = (cur as Dictionary)[part];
-  }
-  return typeof cur === "string" || typeof cur === "function" ? cur : undefined;
-}
-
-/**
- * Build a translator for one language.
- *
- * Exported because the offline engine lives OUTSIDE the React tree and cannot
- * call useT(); anything that wants to check what the engine will actually SAY
- * (see lib/__tests__/engineMessages.test.ts) needs the same resolution the
- * provider uses, not a second copy of it. It also removes the duplicate that
- * FALLBACK_T used to carry.
- */
-export function makeT(lang: Lang): TFunction {
-  const dict = DICTS[lang];
-  return (path, vars) => {
-    const leaf = resolveLeaf(dict, path);
-    if (typeof leaf === "function") return leaf(resolvePluralArg(vars));
-    if (typeof leaf === "string") return format(leaf, vars);
-    // Missing key: return the dotted path itself (unchanged) — this is the
-    // contract translateApiError() relies on to detect a lookup miss.
-    return path;
-  };
-}
-
-/** vars.count first; else the first numeric-looking value in vars; else 0. */
-function resolvePluralArg(vars?: Record<string, string | number>): number {
-  if (!vars) return 0;
-  if (typeof vars.count === "number") return vars.count;
-  if (typeof vars.count === "string" && vars.count.trim() !== "" && !Number.isNaN(Number(vars.count))) {
-    return Number(vars.count);
-  }
-  for (const v of Object.values(vars)) {
-    if (typeof v === "number") return v;
-    if (typeof v === "string" && v.trim() !== "" && !Number.isNaN(Number(v))) return Number(v);
-  }
-  return 0;
 }
 
 /** Swaps the manifest link's filename in place, preserving whatever base

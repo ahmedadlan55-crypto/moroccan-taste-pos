@@ -28,7 +28,7 @@ import { currentUser, isSupervisor } from "./auth";
 import { ApiError } from "./api";
 import { ulid } from "./ulid";
 import { translateApiError } from "../i18n/errorCodes";
-import { makeT } from "../i18n/I18nProvider";
+import { makeT } from "../i18n/makeT";
 import type { TFunction } from "../i18n/types";
 import type {
   CartLine,
@@ -505,15 +505,39 @@ export class OfflineEngine {
   }
 
   /**
-   * serverVersion is ENGINE-OWNED: React state snapshots never carry it, so a
-   * raw put of a UI doc would clobber the acknowledged version and the next
-   * flush would send an upsert WITHOUT expectedVersion (server 422s updates of
-   * existing orders). Merge the stored value back before every UI-doc write.
+   * serverVersion is ENGINE-OWNED — and the STORE is the owner, not the caller.
+   *
+   * The previous version of this trusted a non-null value on the incoming doc
+   * and returned early. Its comment justified that with "React state snapshots
+   * never carry it", and that premise was simply false: store.tsx:743 restores
+   * a doc from latestOpenOrder() straight into React state — serverVersion
+   * included — and every later edit spreads it forward. There is no reverse
+   * channel; the drain's ack writes the new version to IndexedDB only.
+   *
+   * So after a page reload the sequence was:
+   *   edit #1 → saveCart writes React's v=N → upsert sent with expectedVersion N
+   *           → server bumps to N+1 → STORE is N+1, React is still N
+   *   edit #2 → saveCart(reactCart) → early-out → put() REGRESSES the store to N
+   *           → next flush seeds the cursor from N → expectedVersion N
+   *           → routes/pos-v2.js `WHERE ... AND version=?` matches 0 rows
+   *           → VERSION_CONFLICT
+   *
+   * Every second edit after a reload, on one device, with no concurrency at
+   * all — and the till auto-reloads itself on deploy. That is the whole
+   * incident. Worse, the same stale snapshot is what checkout submits, so a
+   * cart edited after a restore could be CHARGED AT THE OLD TOTAL.
+   *
+   * The store always wins now. React can never legitimately be ahead: the one
+   * caller that advances the version (HeldOrdersDialog.tsx:141) writes it to
+   * the store via putOrder at :142 BEFORE handing it to React at :143, so the
+   * stored value is already ≥ any snapshot. The null early-out is kept so a doc
+   * the store does not have (e.g. one just parked by parkConflictDraft) keeps
+   * whatever version it arrived with instead of losing it.
    */
   private async mergeServerVersion(doc: LocalOrder): Promise<LocalOrder> {
-    if (doc.serverVersion != null) return doc;
     const stored = await this.deps.orders.get(doc.id);
-    return stored?.serverVersion != null ? { ...doc, serverVersion: stored.serverVersion } : doc;
+    if (stored?.serverVersion == null) return doc;
+    return doc.serverVersion === stored.serverVersion ? doc : { ...doc, serverVersion: stored.serverVersion };
   }
   async allOrders(): Promise<LocalOrder[]> {
     return this.deps.orders.getAll();

@@ -23,7 +23,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { memoryAtomicRunner, memoryStore } from "../idb";
 import { OfflineEngine, type EngineApi, type EngineEvent } from "../offline";
 import type { LocalOrder, QueueOp } from "../types";
-import { makeT } from "../../i18n/I18nProvider";
+import { makeT } from "../../i18n/makeT";
 
 function makeDoc(id: string, overrides: Partial<LocalOrder> = {}): LocalOrder {
   return {

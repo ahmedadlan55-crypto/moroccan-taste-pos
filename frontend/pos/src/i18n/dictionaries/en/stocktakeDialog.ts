@@ -33,6 +33,12 @@ export const stocktakeDialog = {
     confirmDelete: "Delete this template?",
     itemCount: "{count} materials",
   },
+  /** The staging step: ticking does not add; the button is what drops the
+   *  materials into the sheet. */
+  picker: {
+    insert: "Insert selected ({count})",
+    inserted: "{count} materials added to the sheet",
+  },
   search: {
     placeholder: "Search for a raw material to add to the sheet…",
     ariaLabel: "Search for a material",

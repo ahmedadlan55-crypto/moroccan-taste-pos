@@ -731,6 +731,10 @@ test("full bilingual cashier flow — language toggle, sell, shift, back-office"
     const firstResult = stDialog.getByRole("listbox").getByRole("option").first().or(stDialog.getByRole("listbox").locator("li").first());
     await expect(firstResult).toBeVisible({ timeout: 10_000 });
     await firstResult.click();
+    // Ticking STAGES the material; «Insert selected» is what drops it into the
+    // sheet. Two steps on purpose — committing on every tick left every picked
+    // row on screen as a chip until the picker buried the sheet it fed.
+    await stDialog.getByTestId("stocktake-insert").click();
     await fillFirstQtyInput(stDialog, "1");
     // NOT exact — the button's accessible name is "Review & send (N)" (a
     // trailing `<span>{counted.length}</span>` sibling, confirmed via a real
@@ -758,6 +762,10 @@ test("full bilingual cashier flow — language toggle, sell, shift, back-office"
     const firstResult = reqDialog.getByRole("listbox").getByRole("option").first().or(reqDialog.getByRole("listbox").locator("li").first());
     await expect(firstResult).toBeVisible({ timeout: 10_000 });
     await firstResult.click();
+    // Same two-step as the count sheet: ticking stages, «Insert selected»
+    // commits. The control sits in the picker's action row, above the open
+    // list, so it stays clickable without closing the dropdown.
+    await reqDialog.getByTestId("requisition-insert").click();
     await fillFirstQtyInput(reqDialog, "1");
     // NOT exact — same "(N)" count-suffix accessible-name shape as
     // StocktakeDialog's "Review & send" above.

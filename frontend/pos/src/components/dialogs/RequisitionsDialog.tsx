@@ -161,6 +161,8 @@ export function RequisitionsDialog({ open, onClose }: { open: boolean; onClose: 
   const [items, setItems] = useState<InvItem[] | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [cart, setCart] = useState<ShrLine[]>(() => loadCart());
+  /** Ticked-but-not-yet-inserted ids — see insertStaged(). */
+  const [staged, setStaged] = useState<string[]>([]);
   const [notes, setNotes] = useState("");
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editingNumber, setEditingNumber] = useState<string>("");
@@ -283,6 +285,26 @@ export function RequisitionsDialog({ open, onClose }: { open: boolean; onClose: 
         return next;
       }),
     );
+  }
+
+  // ── The picker's staging area ────────────────────────────────────────────
+  // Transient by design: ticking a row must not commit it, and a committed row
+  // must LEAVE the picker rather than live on as a chip forever.
+  const inCart = useMemo(() => new Set(cart.map((c) => c.id)), [cart]);
+  const pickable = useMemo(() => (items ? items.filter((i) => !inCart.has(i.id)) : null), [items, inCart]);
+
+  function insertStaged(ids: string[] = staged) {
+    if (!items || ids.length === 0) return;
+    let added = 0;
+    for (const id of ids) {
+      if (inCart.has(id)) continue; // the request is the authority
+      const item = items.find((i) => i.id === id);
+      if (!item) continue;
+      addItem(item);
+      added++;
+    }
+    setStaged([]);
+    pushToast("success", t("requisitionsDialog.picker.inserted", { count: added }));
   }
 
   function removeLine(idx: number) {
@@ -526,21 +548,17 @@ export function RequisitionsDialog({ open, onClose }: { open: boolean; onClose: 
             `query.trim()`, so nothing appeared until you typed the name of a
             material you were trying to REMEMBER you were short of. The picker
             owns opening/filtering/keyboard; this dialog keeps owning the cart. */}
+        {/* STAGE, then INSERT — same fix as the count sheet. Ticking used to
+            commit immediately and every committed row stayed on screen as a
+            chip, so a large pick buried the request itself. The picker is fed
+            only what is NOT already in the request, so it shrinks as you work. */}
         <ItemMultiPicker
-          items={items}
-          selectedIds={cart.map((c) => c.id)}
-          onChange={(nextIds: string[]) => {
-            const next = new Set(nextIds);
-            // Diff, never rebuild: a rebuilt line would drop a quantity the
-            // cashier already typed.
-            for (const line of cart) if (!next.has(line.id)) removeLine(cart.findIndex((c) => c.id === line.id));
-            const have = new Set(cart.map((c) => c.id));
-            for (const id of nextIds) {
-              if (have.has(id)) continue;
-              const item = items?.find((i) => i.id === id);
-              if (item) addItem(item);
-            }
-          }}
+          items={pickable}
+          selectedIds={staged}
+          onChange={setStaged}
+          onCommit={insertStaged}
+          commitTestId="requisition-insert"
+          commitLabel={t("requisitionsDialog.picker.insert", { count: staged.length })}
           label={t("requisitionsDialog.search.ariaLabel")}
           placeholder={t("requisitionsDialog.search.placeholder")}
         />

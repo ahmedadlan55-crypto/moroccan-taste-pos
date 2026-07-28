@@ -17,6 +17,11 @@ export const requisitionsDialog = {
     label: "تعديل الطلب",
     cancel: "إلغاء التعديل",
   },
+  /** مرحلة الإدراج: التأشير لا يُضيف، والزر هو ما يُنزل المواد في الطلب. */
+  picker: {
+    insert: "إدراج المحدَّد ({count})",
+    inserted: "أُدرجت {count} مادة في الطلب",
+  },
   search: {
     placeholder: "ابحث عن مادة لإضافتها للطلب…",
     ariaLabel: "البحث عن مادة",

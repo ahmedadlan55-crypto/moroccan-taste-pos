@@ -115,6 +115,11 @@ async function addRiceToCart() {
   await waitFor(() => expect(search).not.toBeDisabled()); // items loaded
   fireEvent.change(search, { target: { value: "أرز" } });
   fireEvent.click(await screen.findByText("أرز بسمتي"));
+  // Ticking STAGES; «إدراج» is what puts it in the sheet. Two steps on purpose:
+  // committing on every tick meant the cashier could not change their mind, and
+  // every committed row stayed on screen as a chip until the picker buried the
+  // sheet it was feeding.
+  fireEvent.click(await screen.findByTestId("stocktake-insert"));
 }
 
 function keyOf(c: FetchCall): string {
@@ -282,10 +287,7 @@ describe("StocktakeDialog", () => {
     expect(stored[0]).toMatchObject({ id: "INV-1", actualQty: 5 });
   });
 
-  it("the picker opens on FOCUS with the whole list, and rows toggle in and out of the sheet", async () => {
-    // The box used to gate its results on `query.trim()`: nothing appeared
-    // until the cashier typed, so building a thirty-material sheet meant
-     '// recalling and typing thirty names. Now focus alone drops the full list.'.slice(0,0);
+  it("ticking STAGES; «إدراج» is what puts it in the sheet, and it then leaves the list", async () => {
     installFetch();
     render(
       <I18nProvider>
@@ -295,23 +297,30 @@ describe("StocktakeDialog", () => {
     const search = await screen.findByLabelText("البحث عن مادة");
     await waitFor(() => expect(search).not.toBeDisabled());
 
-    // NO typing — just focus.
-    fireEvent.focus(search);
+    fireEvent.focus(search); // NO typing — the whole list drops
     const listbox = await screen.findByRole("listbox");
     const row = within(listbox).getByText("أرز بسمتي").closest("[role='option']")!;
-    expect(row).toHaveAttribute("aria-selected", "false");
-
     fireEvent.click(row);
 
-    // Added to the sheet…
+    // Staged, NOT in the sheet yet.
+    expect(screen.queryByLabelText("الكمية الصغيرة — أرز بسمتي")).toBeNull();
+
+    fireEvent.click(screen.getByTestId("stocktake-insert"));
+
+    // Now it is in the sheet…
     expect(screen.getByLabelText("الكمية الصغيرة — أرز بسمتي")).toBeInTheDocument();
-    // …and the row stays in the open list, now ticked, ready for the next pick.
-    expect(within(listbox).getByText("أرز بسمتي")).toBeInTheDocument();
-    expect(row).toHaveAttribute("aria-selected", "true");
-
-    // Clicking it again un-picks it and drops the sheet line.
-    fireEvent.click(row);
-    expect(screen.queryByLabelText("الكمية الصغيرة — أرز بسمتي")).not.toBeInTheDocument();
+    // …and gone from the picker, so a long count shrinks the list instead of
+    // growing a wall of chips over the sheet.
+    fireEvent.focus(search);
+    await waitFor(() => {
+      const lb = screen.queryByRole("listbox");
+      expect(lb ? within(lb).queryByText("أرز بسمتي") : null).toBeNull();
+    });
+    // The control is PERMANENT in the picker's action row (above the list, so
+    // the open dropdown cannot intercept it) — disabled, not removed, once the
+    // staging is empty. A button that vanishes is a button the cashier has to
+    // rediscover.
+    expect(screen.getByTestId("stocktake-insert")).toBeDisabled();
   });
 
   it("notes are cleared after closing without submitting, then reopening", async () => {

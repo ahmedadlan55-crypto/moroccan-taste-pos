@@ -215,6 +215,8 @@ export function StocktakeDialog({ open, onClose }: { open: boolean; onClose: () 
   const [templates, setTemplates] = useState<StocktakeTemplate[]>([]);
   const [templateId, setTemplateId] = useState("");
   const [savingTemplate, setSavingTemplate] = useState(false);
+  /** Ticked-but-not-yet-inserted ids — see insertStaged(). */
+  const [staged, setStaged] = useState<string[]>([]);
   const [notes, setNotes] = useState("");
   const [step, setStep] = useState<Step>("entry");
   const [busy, setBusy] = useState(false);
@@ -384,6 +386,28 @@ export function StocktakeDialog({ open, onClose }: { open: boolean; onClose: () 
     }
   }
 
+  // ── The picker's staging area ────────────────────────────────────────────
+  // Selection is TRANSIENT and lives here, not in the sheet: ticking a row must
+  // not commit it, or the cashier cannot change their mind, and every committed
+  // row stays on screen as a chip forever.
+  const inSheet = useMemo(() => new Set(cart.map((c) => c.id)), [cart]);
+  /** What the picker may still offer — anything already counted is gone from it. */
+  const pickable = useMemo(() => (items ? items.filter((i) => !inSheet.has(i.id)) : null), [items, inSheet]);
+
+  function insertStaged(ids: string[] = staged) {
+    if (!items || ids.length === 0) return;
+    let added = 0;
+    for (const id of ids) {
+      if (inSheet.has(id)) continue; // defensive: the sheet is the authority
+      const item = items.find((i) => i.id === id);
+      if (!item) continue;
+      addItem(item);
+      added++;
+    }
+    setStaged([]);
+    pushToast("success", t("stocktakeDialog.picker.inserted", { count: added }));
+  }
+
   function clearCart() {
     try {
       localStorage.removeItem(CART_KEY);
@@ -526,21 +550,20 @@ export function StocktakeDialog({ open, onClose }: { open: boolean; onClose: () 
           filtering, keyboard and chips; this dialog keeps owning the CART, so
           the blind-count rules below are untouched. */}
       <div>
+        {/* STAGE, then INSERT. The picker used to commit on every tick, and it
+            listed everything already in the sheet as a selected chip — so after
+            picking 189 materials the chip strip filled the dialog and the sheet
+            those materials had gone into was pushed off the bottom, invisible.
+            Now: tick freely, press «إدراج», and they drop into the sheet AND
+            leave the list (the picker is fed only what is NOT in the sheet), so
+            it shrinks as the work progresses instead of growing. */}
         <ItemMultiPicker
-          items={items}
-          selectedIds={cart.map((c) => c.id)}
-          onChange={(nextIds: string[]) => {
-            const next = new Set(nextIds);
-            // Diff against the cart rather than rebuilding it: a rebuilt line
-            // would drop the quantity the cashier has already counted.
-            for (const line of cart) if (!next.has(line.id)) removeLine(cart.findIndex((c) => c.id === line.id));
-            const have = new Set(cart.map((c) => c.id));
-            for (const id of nextIds) {
-              if (have.has(id)) continue;
-              const item = items?.find((i) => i.id === id);
-              if (item) addItem(item);
-            }
-          }}
+          items={pickable}
+          selectedIds={staged}
+          onChange={setStaged}
+          onCommit={insertStaged}
+          commitTestId="stocktake-insert"
+          commitLabel={t("stocktakeDialog.picker.insert", { count: staged.length })}
           label={t("stocktakeDialog.search.ariaLabel")}
           placeholder={t("stocktakeDialog.search.placeholder")}
         />

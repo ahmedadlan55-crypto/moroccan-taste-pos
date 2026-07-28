@@ -32,6 +32,11 @@ export const stocktakeDialog = {
     confirmDelete: "حذف هذا النموذج؟",
     itemCount: "{count} مادة",
   },
+  /** مرحلة الإدراج: التأشير لا يُضيف، والزر هو ما يُنزل المواد في المحضر. */
+  picker: {
+    insert: "إدراج المحدَّد ({count})",
+    inserted: "أُدرجت {count} مادة في المحضر",
+  },
   search: {
     placeholder: "ابحث عن مادة خام لإضافتها للمحضر…",
     ariaLabel: "البحث عن مادة",

@@ -29,6 +29,8 @@ export const itemMultiPicker = {
   actions: {
     selectAllShown: "تحديد كل المعروض",
     clearAll: "إلغاء تحديد الكل",
+    /** نص الإدراج الافتراضي حين لا يمرّر المستدعي نصًّا خاصًّا. */
+    insert: "إدراج المحدَّد ({count})",
   },
 
   selectedCount: "المحدد: {count}",

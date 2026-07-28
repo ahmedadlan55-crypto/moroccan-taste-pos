@@ -28,6 +28,8 @@ export const itemMultiPicker = {
   actions: {
     selectAllShown: "Select all shown",
     clearAll: "Clear selection",
+    /** Default commit label when the caller supplies none. */
+    insert: "Insert selected ({count})",
   },
 
   selectedCount: "Selected: {count}",

@@ -129,6 +129,8 @@ describe("RequisitionsDialog — طلب نواقص", () => {
 
     fireEvent.change(search, { target: { value: "أرز" } });
     fireEvent.click(await screen.findByText("أرز بسمتي"));
+    // Ticking STAGES; «إدراج» is what puts it in the request.
+    fireEvent.click(await screen.findByTestId("requisition-insert"));
     fireEvent.change(screen.getByLabelText("الكمية الكبرى — أرز بسمتي"), { target: { value: "1" } });
     fireEvent.change(screen.getByLabelText("الكمية الصغرى — أرز بسمتي"), { target: { value: "5" } });
     fireEvent.click(screen.getByText(/إرسال الطلب/));
@@ -159,6 +161,7 @@ describe("RequisitionsDialog — طلب نواقص", () => {
     const search = await openDialog();
     fireEvent.change(search, { target: { value: "زيت" } });
     fireEvent.click(await screen.findByText("زيت زيتون"));
+    fireEvent.click(await screen.findByTestId("requisition-insert"));
     // No qty entered yet → the submit button is disabled.
     const submitBtn = screen.getByText(/إرسال الطلب/).closest("button")!;
     expect(submitBtn).toBeDisabled();
@@ -166,25 +169,29 @@ describe("RequisitionsDialog — طلب نواقص", () => {
     expect(submitBtn).not.toBeDisabled();
   });
 
-  it("the picker opens on FOCUS with the whole list, and rows toggle in and out of the request", async () => {
-    // Same defect the stocktake sheet had: the results were gated on
-    // , so nothing appeared until you typed the name of a
-    // material you were trying to remember you were short of.
+  it("ticking STAGES; «إدراج» commits, and the row then leaves the list", async () => {
     installFetch();
     const search = await openDialog();
 
-    fireEvent.focus(search); // NO typing
+    fireEvent.focus(search); // NO typing — the whole list drops
     const listbox = await screen.findByRole("listbox");
     const row = within(listbox).getByText("أرز بسمتي").closest("[role='option']")!;
     expect(row).toHaveAttribute("aria-selected", "false");
 
     fireEvent.click(row);
-    expect(screen.getByLabelText("الكمية الصغرى — أرز بسمتي")).toBeInTheDocument();
     expect(row).toHaveAttribute("aria-selected", "true");
-
-    fireEvent.click(row);
-    expect(row).toHaveAttribute("aria-selected", "false");
+    // Staged only — not in the request yet.
     expect(screen.queryByLabelText("الكمية الصغرى — أرز بسمتي")).toBeNull();
+
+    fireEvent.click(screen.getByTestId("requisition-insert"));
+    expect(screen.getByLabelText("الكمية الصغرى — أرز بسمتي")).toBeInTheDocument();
+
+    // …and it is gone from the picker, so the list shrinks as you work.
+    fireEvent.focus(search);
+    await waitFor(() => {
+      const lb = screen.queryByRole("listbox");
+      expect(lb ? within(lb).queryByText("أرز بسمتي") : null).toBeNull();
+    });
   });
 
   it("notes are cleared after closing without submitting, then reopening", async () => {

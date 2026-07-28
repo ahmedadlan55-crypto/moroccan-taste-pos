@@ -82,6 +82,15 @@ export interface ItemMultiPickerProps {
   includeInactive?: boolean;
   /** Rows rendered before the "showing N of M" notice. Default 300. */
   maxVisible?: number;
+  /**
+   * Present ⇒ the picker STAGES instead of committing. It renders a commit
+   * button in its ACTION ROW — above the input, so the open dropdown cannot
+   * intercept the click — and hands back the staged ids. The caller clears the
+   * staging by passing an empty `selectedIds`.
+   */
+  onCommit?: (ids: string[]) => void;
+  commitLabel?: string;
+  commitTestId?: string;
 }
 
 // ── Search normalisation ─────────────────────────────────────────────────────
@@ -187,6 +196,9 @@ export function ItemMultiPicker({
   disabled = false,
   includeInactive = false,
   maxVisible = DEFAULT_MAX_VISIBLE,
+  onCommit,
+  commitLabel,
+  commitTestId,
 }: ItemMultiPickerProps) {
   const tp = usePickerT();
   const localizedName = useLocalizedName();
@@ -322,8 +334,14 @@ export function ItemMultiPicker({
   return (
     <div ref={rootRef} className="flex flex-col gap-2">
       {/* Picked items — removable chips, in pick order (Backspace pops the last). */}
+      {/* HEIGHT-BOUNDED. A 189-item selection rendered every chip and pushed the
+          count sheet itself off the bottom of the dialog — the picker ate the
+          screen it was meant to serve. Its own scroller, never the dialog's. */}
       {selectedIds.length !== 0 ? (
-        <ul className="flex flex-wrap gap-1.5" aria-label={tp("chips.ariaLabel")}>
+        <ul
+          className="scrollbar-thin flex max-h-24 flex-wrap gap-1.5 overflow-y-auto"
+          aria-label={tp("chips.ariaLabel")}
+        >
           {selectedIds.map((sid) => {
             const it = byId.get(sid);
             const name = it ? localizedName(it.name, it.nameEn) : sid;
@@ -366,6 +384,23 @@ export function ItemMultiPicker({
           >
             {tp("actions.clearAll")}
           </Button>
+          {/* COMMIT lives HERE, above the input, not below the picker.
+              Placed under it, the open dropdown — absolutely positioned and
+              taller than the gap — covered it: the button was visible, enabled
+              and stable, and every click was still intercepted by the list.
+              Above the input it is reachable with the list open, which is the
+              whole point: tick several rows, then commit without closing. */}
+          {onCommit ? (
+            <Button
+              variant="primary"
+              size="sm"
+              data-testid={commitTestId}
+              onClick={() => onCommit(selectedIds.slice())}
+              disabled={disabled || selectedIds.length === 0}
+            >
+              {commitLabel ?? tp("actions.insert", { count: selectedIds.length })}
+            </Button>
+          ) : null}
         </div>
       </div>
 

@@ -1,7 +1,8 @@
-import { DatePicker, Select } from "@/shared/ui";
+import { useMemo, useState } from "react";
+import { DatePicker, Input, Select } from "@/shared/ui";
 import { formatDate } from "@/shared/lib";
 import { useT } from "@/i18n";
-import { useGlLedger, startOfYearISO, todayISO, type GlSection } from "../api";
+import { useGlLedger, startOfYearISO, todayISO, type GlAccountKind, type GlSection } from "../api";
 import {
   Num,
   ReportHeader,
@@ -18,6 +19,38 @@ interface GlFilter {
   from: string;
   to: string;
   scope: string;
+  /** main = root accounts · sub = accounts with a parent · both = everything. */
+  accType: GlAccountKind;
+}
+
+/**
+ * Account search. Deliberately CLIENT-side over the already-fetched sections
+ * rather than a server round-trip: the ledger response is one payload for the
+ * whole period, so filtering it in the browser is instant and — more
+ * importantly — searching must NEVER re-run the query and silently change the
+ * opening balances or the grand totals underneath the operator. The server
+ * decides WHICH accounts are in scope; the search box decides which of them
+ * are on screen, and the header says so.
+ *
+ * Matches on code or Arabic name, accent-insensitively for the alef/hamza and
+ * taa-marbuta variants an Arabic keyboard produces (بضاعه vs بضاعة, احمد vs
+ * أحمد), because an owner types what he hears, not what was stored.
+ */
+function normalizeAr(s: string): string {
+  return String(s || "")
+    .replace(/[ً-ْٰ]/g, "")   // harakat
+    .replace(/[آأإٱ]/g, "ا") // آ أ إ ٱ → ا
+    .replace(/ى/g, "ي")            // ى → ي
+    .replace(/ة/g, "ه")            // ة → ه
+    .replace(/ـ/g, "")                  // tatweel
+    .toLowerCase()
+    .trim();
+}
+
+function matchesSearch(s: GlSection, needle: string): boolean {
+  if (!needle) return true;
+  const q = normalizeAr(needle);
+  return normalizeAr(s.code).includes(q) || normalizeAr(s.nameAr).includes(q);
 }
 
 function AccountSection({ s }: { s: GlSection }) {
@@ -78,11 +111,23 @@ function AccountSection({ s }: { s: GlSection }) {
 
 export function GeneralLedgerPage() {
   const t = useT();
-  const filter = useAppliedFilter<GlFilter>({ from: startOfYearISO(), to: todayISO(), scope: "active" });
-  const query = useGlLedger(filter.applied, filter.applied.scope);
+  const filter = useAppliedFilter<GlFilter>({
+    from: startOfYearISO(), to: todayISO(), scope: "active", accType: "both",
+  });
+  const query = useGlLedger(filter.applied, filter.applied.scope, filter.applied.accType);
   const data = query.data;
   const period = `${formatDate(filter.applied.from)} — ${formatDate(filter.applied.to)}`;
-  const sections = data?.sections ?? [];
+  const allSections = data?.sections ?? [];
+
+  // Search applies to the fetched result, not the query — see matchesSearch.
+  // It is intentionally OUTSIDE useAppliedFilter (no "run" button): typing
+  // should narrow the list as you type, not require a round-trip.
+  const [search, setSearch] = useState("");
+  const sections = useMemo(
+    () => allSections.filter((s) => matchesSearch(s, search)),
+    [allSections, search],
+  );
+  const hidden = allSections.length - sections.length;
 
   return (
     <div>
@@ -109,12 +154,53 @@ export function GeneralLedgerPage() {
             ]}
           />
         </FilterField>
+        {/* Account category. The server has always honoured `accType`; the UI
+            simply never sent anything but "both". */}
+        <FilterField label={t("accounting.generalLedger.accType.label")}>
+          <Select
+            value={filter.draft.accType}
+            onChange={(e) => filter.patch({ accType: e.target.value as GlAccountKind })}
+            options={[
+              { value: "both", label: t("accounting.generalLedger.accType.both") },
+              { value: "main", label: t("accounting.generalLedger.accType.main") },
+              { value: "sub", label: t("accounting.generalLedger.accType.sub") },
+            ]}
+          />
+        </FilterField>
       </FilterCard>
+
+      {/* Search sits OUTSIDE the filter card on purpose: it narrows what is
+          already on screen and must never re-run the query, because a refetch
+          would move the opening balances and grand totals under the operator
+          mid-read. */}
+      {allSections.length > 0 && (
+        <div className="no-print mb-4 flex flex-wrap items-center gap-3">
+          <Input
+            className="w-full sm:w-80"
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            placeholder={t("accounting.generalLedger.searchPlaceholder")}
+            aria-label={t("accounting.generalLedger.searchPlaceholder")}
+          />
+          <span className="text-xs font-bold text-slate-500">
+            {t("accounting.generalLedger.shownOf", {
+              shown: String(sections.length),
+              total: String(allSections.length),
+            })}
+          </span>
+          {search && (
+            <button type="button" className="text-xs font-bold text-teal-700 underline"
+              onClick={() => setSearch("")}>
+              {t("accounting.generalLedger.clearSearch")}
+            </button>
+          )}
+        </div>
+      )}
 
       <ReportState
         isLoading={query.isLoading}
         error={query.error}
-        isEmpty={sections.length === 0}
+        isEmpty={allSections.length === 0}
         onRetry={() => query.refetch()}
         emptyBody={t("accounting.generalLedger.empty")}
       >
@@ -129,7 +215,22 @@ export function GeneralLedgerPage() {
                 <span>{t("accounting.generalLedger.totalCredit")} <Num value={data.grandTotals.credit} /></span>
               </div>
             )}
+            {/* The grand totals above are the SERVER's, for the full scope.
+                When a search is narrowing the view, say so on the page and on
+                the printout — a printed ledger whose sections do not add up to
+                its own header is worse than no header at all. */}
+            {hidden > 0 && (
+              <p className="mt-2 text-xs font-bold text-amber-700">
+                {t("accounting.generalLedger.filteredNotice", { hidden: String(hidden) })}
+              </p>
+            )}
           </div>
+
+          {sections.length === 0 && (
+            <div className="surface p-6 text-center text-sm font-bold text-slate-500">
+              {t("accounting.generalLedger.noSearchMatch")}
+            </div>
+          )}
           <div className="grid gap-5">
             {sections.map((s) => (
               <AccountSection key={s.accountId} s={s} />

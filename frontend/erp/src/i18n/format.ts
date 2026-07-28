@@ -23,9 +23,21 @@ const NUMBER_LOCALE: Record<Lang, string> = {
   ar: "ar-SA-u-nu-latn",
 };
 
+// DATE POLICY (owner's instruction): dates render in ENGLISH in BOTH UI
+// languages — English month names AND Latin digits. The Arabic entry used to
+// be `ar-SA-u-nu-latn-ca-gregory`, which produced Latin digits but ARABIC
+// month/era text, so the same date read differently on an Arabic screen than
+// on an English one, and looked wrong in a document a bank, an auditor or
+// ZATCA may read.
+//
+// `en-GB` over `en-US` deliberately: day-first ("28/07/2026", "28 Jul 2026")
+// is how dates are written in Saudi, and a day-first order cannot be misread
+// the way the US month-first order can.
+//
+// `-ca-gregory` stays pinned on both — a financial date is never Hijri.
 const DATE_LOCALE: Record<Lang, string> = {
-  en: "en-US",
-  ar: "ar-SA-u-nu-latn-ca-gregory",
+  en: "en-GB-u-ca-gregory",
+  ar: "en-GB-u-ca-gregory",
 };
 
 /** Plain number — grouped, up to 2 fraction digits. Latin digits in both

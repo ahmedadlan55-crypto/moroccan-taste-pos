@@ -31,6 +31,7 @@ export const METRIC_CODES = [
   // additive — cost (capability-gated: analytics.cost.view)
   "cogs",
   "returns_cogs",
+  "uncosted_net",
   // additive — payments
   "payments_in",
   "refunds_out",

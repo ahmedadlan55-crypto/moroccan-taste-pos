@@ -192,6 +192,7 @@ export const salesReports = {
     returns_count: "Returns count",
     returns_value: "Returns value",
     cogs: "Cost of goods sold",
+    uncosted_net: "Revenue with no defined cost",
     payments_in: "Payments in",
     refunds_out: "Refunds out",
     tips_total: "Total tips",
@@ -349,6 +350,8 @@ export const salesReports = {
       puzzles: "Puzzles",
       dogs: "Dogs",
     },
+    uncostedItems:
+      "{count} items have no defined cost — excluded from classification and from the medians, and the figures above overstate the business by their cost",
   },
 
   reconciliation: {

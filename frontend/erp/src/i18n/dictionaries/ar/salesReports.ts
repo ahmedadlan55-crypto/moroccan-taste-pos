@@ -206,6 +206,7 @@ export const salesReports = {
     returns_count: "عدد المرتجعات",
     returns_value: "قيمة المرتجعات",
     cogs: "تكلفة البضاعة المباعة",
+    uncosted_net: "إيراد بلا تكلفة مُعرَّفة",
     payments_in: "المقبوضات",
     refunds_out: "المبالغ المستردّة",
     tips_total: "إجمالي الإكراميات",
@@ -363,6 +364,8 @@ export const salesReports = {
       puzzles: "الألغاز",
       dogs: "الأصناف الراكدة",
     },
+    uncostedItems:
+      "{count} من الأصناف بلا تكلفة مُعرَّفة — استُثنيت من التصنيف ومن حساب الوسيط، والأرقام أعلاه تزيد عن الحقيقة بمقدار تكلفتها",
   },
 
   reconciliation: {

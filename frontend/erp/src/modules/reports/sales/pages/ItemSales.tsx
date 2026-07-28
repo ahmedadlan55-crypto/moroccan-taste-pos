@@ -25,6 +25,7 @@ import {
   type PageExportSpec,
 } from "../lib/api";
 import { useAnalyticsQuery } from "../lib/useAnalyticsQuery";
+import { isCostUndefined } from "../lib/cost";
 
 const SEGMENT = "item-sales";
 const CAP_COST = "analytics.cost.view";
@@ -95,20 +96,6 @@ const money = (v: number | null) => (v == null ? "—" : formatCurrency(v));
 const qty = (v: number | null) => (v == null ? "—" : formatNumber(v));
 const pct = (v: number | null) => (v == null ? "—" : `${formatNumber(v)}%`);
 
-/**
- * 31 of the 143 menu items have neither a recipe (menu.bom_id IS NULL) nor a
- * manual cost, so ar_document_lines.cost_snapshot is written as 0 for every
- * line they appear on. A zero cost is therefore INDISTINGUISHABLE from "nobody
- * ever costed this item" — and printing it would render gross_profit = net and
- * margin_pct = 100% on an item whose real margin is unknown. That is the most
- * expensive lie this report could tell, so a sold row with a zero cost shows an
- * em-dash plus a flag instead. The cost is not invented, not zero-filled, and
- * not carried into profit or margin.
- */
-function costUndefined(soldQty: number | null, cost: number | null): boolean {
-  return (soldQty ?? 0) > 0 && cost === 0;
-}
-
 export default function ItemSales() {
   const t = useT();
   const canCost = useCan(CAP_COST);
@@ -144,7 +131,7 @@ export default function ItemSales() {
       (query.data?.rows ?? []).map((r, i) => {
         const soldQty = displayMetric(r, "qty_sold");
         const cost = canCost ? displayMetric(r, "cogs") : null;
-        const unknownCost = canCost && costUndefined(soldQty, cost);
+        const unknownCost = canCost && isCostUndefined(soldQty, cost);
         return {
           key: `${String(r.keys[0] ?? "")}|${String(r.keys[1] ?? "")}|${String(r.keys[2] ?? "")}|${i}`,
           day: String(r.keys[0] ?? ""),

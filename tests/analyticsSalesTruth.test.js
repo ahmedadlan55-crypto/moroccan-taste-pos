@@ -90,7 +90,30 @@ const dim = (id) => DIMENSIONS.find((d) => d.id === id);
     rc && cogs && rc.requiresCap === cogs.requiresCap, rc && rc.requiresCap);
 }
 
-// ── 5. Registry hygiene these fixes must not break ─────────────────────────
+// ── 5. A zero cost must be MEASURABLE, not just invisible ──────────────────
+// cost_snapshot is 0.00 for any item with neither a recipe/BOM nor a manual
+// cost, and summing that into `cogs` inflates gross_profit and margin_pct by
+// exactly the uncosted revenue. A page grouped by menu_item can see a zero row
+// itself; at any coarser grain (the executive summary) the gap vanishes into a
+// non-zero group total. uncosted_net is the only server-side signal for it.
+{
+  const un = metric('uncosted_net');
+  check('uncosted_net exists', !!un);
+  check('uncosted_net is on the LINE fact (cost lives per line)',
+    un && un.fact === 'line', un && un.fact);
+  check('uncosted_net keys off a ZERO cost snapshot, not a null one',
+    un && /COALESCE\(d\.cost_snapshot, 0\) = 0/.test(un.sql), un && un.sql);
+  check('uncosted_net measures the NET revenue behind that zero cost',
+    un && /d\.net_amount/.test(un.sql), un && un.sql);
+  const cogsMetric = metric('cogs');
+  check('uncosted_net is capability-gated exactly like cogs',
+    un && cogsMetric && un.requiresCap === cogsMetric.requiresCap, un && un.requiresCap);
+  // It must be additive: a derived metric would need an equation and would not
+  // survive the ROLLUP total row the planner appends.
+  check('uncosted_net is additive', un && un.kind === 'additive', un && un.kind);
+}
+
+// ── 6. Registry hygiene these fixes must not break ─────────────────────────
 {
   const ids = METRICS.map((m) => m.id);
   check('metric ids remain unique', new Set(ids).size === ids.length);
@@ -102,6 +125,7 @@ const dim = (id) => DIMENSIONS.find((d) => d.id === id);
   if (typeof byId === 'function') {
     check('discounts_line is reachable through byId', !!byId('discounts_line'));
     check('returns_cogs is reachable through byId', !!byId('returns_cogs'));
+    check('uncosted_net is reachable through byId', !!byId('uncosted_net'));
   }
 }
 

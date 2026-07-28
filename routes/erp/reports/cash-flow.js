@@ -20,8 +20,9 @@
 // ═══════════════════════════════════════════════════════════════════
 const router = require('express').Router();
 const db = require('../../../db/connection');
+const requireCapability = require('../../../middleware/requireCapability');
 
-router.get('/reports/cash-flow-ias7', async (req, res) => {
+router.get('/reports/cash-flow-ias7', requireCapability('finance.reports.view'), async (req, res) => {
   try {
     const { from, to, brandId, branchId, showZero } = req.query;
     const includeZero = showZero === '1' || showZero === 'true';

@@ -25,6 +25,7 @@
 // ═══════════════════════════════════════════════════════════════════
 const router = require('express').Router();
 const db = require('../../../db/connection');
+const requireCapability = require('../../../middleware/requireCapability');
 const { todayYmd } = require('../../../lib/expiryPolicy');
 
 // v5.10.79 — Canonical IFRS-conventional ordering inside each Balance
@@ -537,7 +538,7 @@ function _buildCoaTree(allAccounts, balMap, includeZero, netIncome) {
   return result;
 }
 
-router.get('/reports/balance-sheet-ifrs', async (req, res) => {
+router.get('/reports/balance-sheet-ifrs', requireCapability('finance.reports.view'), async (req, res) => {
   try {
     const { asOfDate, compareDate, brandId, branchId, showZero } = req.query;
     const includeZero = showZero === '1' || showZero === 'true';

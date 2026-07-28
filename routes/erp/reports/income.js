@@ -18,8 +18,9 @@
 // ═══════════════════════════════════════════════════════════════════
 const router = require('express').Router();
 const db = require('../../../db/connection');
+const requireCapability = require('../../../middleware/requireCapability');
 
-router.get('/reports/income', async (req, res) => {
+router.get('/reports/income', requireCapability('finance.reports.view'), async (req, res) => {
   try {
     const { startDate, endDate } = req.query;
     // v5.11.18 — leaf accounts only.

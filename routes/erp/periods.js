@@ -25,6 +25,7 @@
 
 const router = require('express').Router();
 const db = require('../../db/connection');
+const requireCapability = require('../../middleware/requireCapability');
 
 function _monthBounds(year, month) {
   const start = new Date(year, month - 1, 1);
@@ -36,7 +37,8 @@ function _monthBounds(year, month) {
   };
 }
 
-router.get('/periods', async (req, res) => {
+// Shadowed by routes/erp.js:2450 (same path, mounted first, same capability).
+router.get('/periods', requireCapability('finance.gl.view'), async (req, res) => {
   try {
     const year = Number(req.query.year) || new Date().getFullYear();
     const [rows] = await db.query(
@@ -70,7 +72,9 @@ router.get('/periods', async (req, res) => {
   }
 });
 
-router.get('/periods/check', async (req, res) => {
+// No known caller (grep-verified across frontend/, public/, routes/, lib/) —
+// routes/sales.js:55 requires assertPeriodOpen as a MODULE, never over HTTP.
+router.get('/periods/check', requireCapability('finance.gl.view'), async (req, res) => {
   try {
     const date = req.query.date;
     if (!date) return res.json({ success: false, error: 'date is required' });
@@ -106,7 +110,10 @@ async function _statusAt(conn, date, brandId, branchId) {
   }
 }
 
-router.post('/periods', async (req, res) => {
+// Shadowed by routes/erp.js:2482 (same path, mounted first, same capability) —
+// guarded here too so mount order is not the only thing standing between an
+// arbitrary token and a new period row.
+router.post('/periods', requireCapability('finance.periods.manage'), async (req, res) => {
   try {
     const { periodLabel, startDate, endDate, brandId, branchId } = req.body || {};
     if (!periodLabel || !startDate || !endDate) {
@@ -160,10 +167,30 @@ async function _transitionStatus(req, res, target, fromStates) {
   }
 }
 
-router.post('/periods/:label/close',       (req, res) => _transitionStatus(req, res, 'closed', ['open', 'soft_close']));
-router.post('/periods/:label/soft-close',  (req, res) => _transitionStatus(req, res, 'soft_close', ['open']));
-router.post('/periods/:label/lock',        (req, res) => _transitionStatus(req, res, 'locked', ['closed']));
-router.post('/periods/:label/reopen',      (req, res) => _transitionStatus(req, res, 'open',   ['closed', 'soft_close']));
+// ── Authorization ───────────────────────────────────────────────────────────
+// These routes shipped with NO guard at all. Closing a period blocks every
+// subsequent sale in it (lib/glPosting.js isPeriodClosed fails CLOSED), and
+// re-opening one lets journals be posted into a period the books were already
+// signed off on. `finance.periods.manage` is the capability routes/erp.js:2523
+// already uses for the parallel lock endpoint, so this closes the bypass rather
+// than inventing a second, divergent gate.
+//
+// MOUNT ORDER MATTERS — server.js mounts routes/erp.js (:772) BEFORE this file
+// (:778), so `/periods` (GET+POST) and `/periods/:id/lock` are already served,
+// and already guarded, by routes/erp.js:2450/2482/2523. Only `close`,
+// `soft-close` and `reopen` are unique to this file — those were the live hole.
+// The rest are guarded here anyway: a shadowed route is one mount-order edit
+// away from being reachable, and an unguarded shadowed route is a trap.
+//
+// `posPortalScope` (middleware/posPortalScope.js) already blocked the CASHIER
+// role specifically. It is a deny-list for POS_ONLY_ROLES, so every other
+// non-admin role — waiter, inventory, purchasing, employee — still reached
+// these. That is what this closes.
+
+router.post('/periods/:label/close',       requireCapability('finance.periods.manage'), (req, res) => _transitionStatus(req, res, 'closed', ['open', 'soft_close']));
+router.post('/periods/:label/soft-close',  requireCapability('finance.periods.manage'), (req, res) => _transitionStatus(req, res, 'soft_close', ['open']));
+router.post('/periods/:label/lock',        requireCapability('finance.periods.manage'), (req, res) => _transitionStatus(req, res, 'locked', ['closed']));
+router.post('/periods/:label/reopen',      requireCapability('finance.periods.manage'), (req, res) => _transitionStatus(req, res, 'open',   ['closed', 'soft_close']));
 
 /**
  * Helper for other routes to enforce period locks inside their

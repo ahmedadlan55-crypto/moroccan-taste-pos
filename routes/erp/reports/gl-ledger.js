@@ -12,8 +12,9 @@
 // ═══════════════════════════════════════════════════════════════════
 const router = require('express').Router();
 const db = require('../../../db/connection');
+const requireCapability = require('../../../middleware/requireCapability');
 
-router.get('/reports/gl-ledger-multi', async (req, res) => {
+router.get('/reports/gl-ledger-multi', requireCapability('finance.reports.view'), async (req, res) => {
   try {
     const { from, to, parent, accounts, addedBy, scope, accType } = req.query;
 
@@ -159,7 +160,7 @@ router.get('/reports/gl-ledger-multi', async (req, res) => {
   }
 });
 
-router.get('/gl/account-ledger/:accountId', async (req, res) => {
+router.get('/gl/account-ledger/:accountId', requireCapability('finance.reports.view'), async (req, res) => {
   try {
     const accId = req.params.accountId;
     const { startDate, endDate, status, includeDraft } = req.query;

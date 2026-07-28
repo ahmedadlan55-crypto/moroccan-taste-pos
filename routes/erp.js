@@ -902,7 +902,7 @@ router.delete('/gl/accounts/:id', requireCapability('finance.accounts.manage'), 
 // flow (preview modal + replace-mode + cascade rename). 150 accounts,
 // 6 IFRS-aligned roots: Assets / Liabilities / Equity / Revenue /
 // COGS / Operating & Admin Expenses.
-router.get('/gl/coa-template', async (req, res) => {
+router.get('/gl/coa-template', requireCapability('finance.accounts.manage'), async (req, res) => {
   res.json({ success: true, accounts: COA_TEMPLATE });
 });
 
@@ -3255,7 +3255,7 @@ router.post('/gl/repair-topups', requireCapability('finance.gl.post'), async (re
 //   • unbalancedJournals: posted journals where SUM(debit) ≠ SUM(credit)
 //   • orphanEntries: entries pointing at deleted accounts
 //   • missingCoreAccounts: required core accounts (CASH/INVENTORY/COGS…) absent
-router.get('/gl/diagnose', async (req, res) => {
+router.get('/gl/diagnose', requireCapability('finance.accounts.manage'), async (req, res) => {
   try {
     const CORE_CODES = ['1110','1120','1150','1200','2100','2210','3100','4100','5100','5200','5300'];
 

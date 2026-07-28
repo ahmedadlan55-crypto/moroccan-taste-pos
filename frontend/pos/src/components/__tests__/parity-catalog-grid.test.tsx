@@ -89,7 +89,12 @@ describe("product-card-price + product-card-inline-add — the card sells", () =
     // No scrollElement prop → unwindowed render (every card mounts).
     render(<ProductGrid catalog={CATALOG} loading={false} category={null} query="" onAdd={onAdd} />);
     const card = screen.getByRole("button", { name: /شاي مغربي/ });
-    expect(card).toHaveTextContent("23.00");
+    // 23.00 NET × 15% = 26.45 GROSS. This assertion used to read "23.00" while
+    // its own title said "tax-inclusive" — the name was aspirational and the
+    // number was the stored, tax-EXCLUSIVE one. So the card advertised 23.00
+    // for an item the cart rang up at 26.45, and a green test said that was
+    // correct. It is the owner's complaint, encoded as a passing assertion.
+    expect(card).toHaveTextContent("26.45");
     fireEvent.click(card);
     expect(onAdd).toHaveBeenCalledTimes(1);
     expect(onAdd.mock.calls[0][0].id).toBe("M1");

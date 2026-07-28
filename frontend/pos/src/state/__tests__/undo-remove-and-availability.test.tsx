@@ -56,7 +56,7 @@ vi.mock("@/lib/api", () => ({
 
 import { PosProvider, restoreLineAt, usePos, type PosContextValue } from "../store";
 import { clearQuickPicks, getQuickPicks } from "@/lib/quickPicks";
-import { getAvailabilitySnapshot, publishAvailability } from "@/components/StockPip";
+import { publishAvailability } from "@/components/StockPip";
 
 const TEA: CatalogItem = { id: "M1", name: "شاي مغربي", price: 23, category: "مشروبات", active: true, taxCategory: "S", taxInclusive: true };
 const TAGINE: CatalogItem = { id: "M2", name: "طاجين لحم", price: 86, category: "أطباق", active: true, taxCategory: "S", taxInclusive: true };
@@ -227,55 +227,43 @@ describe("the toast action API (pushToast's third argument)", () => {
 });
 
 // ── 2. Availability + the local tally ───────────────────────────────────────
-describe("the 86 board", () => {
-  it("publishes the fetched map so the (provider-less) grid can read it", async () => {
+/**
+ * THE 86 BOARD IS OFF for this menu.
+ *
+ * What used to be pinned here — the map is fetched and published, and adding an
+ * unavailable item warns once — described a feature that was WRONG about almost
+ * every row on this owner's menu: the verdict comes from RAW STOCK and every
+ * sellable item here is built from a recipe. It marked the grid unavailable
+ * while all of it was sellable, so the owner asked for it to stop while he was
+ * running the register.
+ *
+ * The query is disabled and the warn is a no-op (state/store.tsx). The engine,
+ * the endpoint and resolveStockState all remain, tested in
+ * components/__tests__/stockPip.test.tsx, for a menu that sells shelf goods.
+ * What is pinned now is that the till neither calls it nor speaks about it.
+ */
+describe("the 86 board is not wired", () => {
+  it("never calls the availability endpoint — no per-catalog recipe walk", async () => {
     fetchMenuAvailabilityBulk.mockResolvedValue({
       M1: { mode: "mto", makeable: 0, isOutOfStock: true, isLowStock: false, blockerCount: 1, hasRecipe: true },
     });
     renderStore();
-    await waitFor(() => expect(getAvailabilitySnapshot()).not.toBeNull());
-    expect(ctx.availability).toMatchObject({ M1: { isOutOfStock: true } });
+    await waitFor(() => expect(ctx.cart).toBeTruthy());
+    expect(fetchMenuAvailabilityBulk).not.toHaveBeenCalled();
   });
 
-  it("DEGRADES SILENTLY when the endpoint 404s — null map, no error toast", async () => {
-    fetchMenuAvailabilityBulk.mockRejectedValue(
-      Object.assign(new Error("HTTP 404"), { status: 404, code: "SERVER_ERROR" }),
-    );
-    renderStore();
-    await waitFor(() => expect(fetchMenuAvailabilityBulk).toHaveBeenCalled());
-    // The failure never becomes the cashier's problem: no toast, no thrown
-    // rejection, and every card simply falls back to warehouseQty.
-    await waitFor(() => expect(ctx.availability ?? null).toBeNull());
-    expect(getAvailabilitySnapshot()).toBeNull();
-    expect(ctx.toasts).toHaveLength(0);
-    expect(screen.queryByRole("button", { name: /تراجع/ })).not.toBeInTheDocument();
-  });
-
-  it("warns ONCE per item per session when an unavailable item is added — and still adds it", async () => {
+  it("adds an item the board would call unavailable, and says nothing", async () => {
     fetchMenuAvailabilityBulk.mockResolvedValue({
       M1: { mode: "mto", makeable: 0, isOutOfStock: true, isLowStock: false, blockerCount: 2, hasRecipe: true },
     });
     renderStore();
-    await waitFor(() => expect(getAvailabilitySnapshot()).not.toBeNull());
-
-    act(() => ctx.addItem(TEA));
-    expect(ctx.cart.lines).toHaveLength(1); // WARN, NEVER BLOCK
-    expect(ctx.toasts.filter((t) => t.message.includes("غير متاح"))).toHaveLength(1);
+    await waitFor(() => expect(ctx.cart).toBeTruthy());
 
     act(() => ctx.addItem(TEA));
     act(() => ctx.addItem(TEA));
-    expect(ctx.cart.lines[0]!.qty).toBe(3);
-    expect(ctx.toasts.filter((t) => t.message.includes("غير متاح"))).toHaveLength(1); // still ONE
-  });
 
-  it("says nothing at all for an item the board reports as fine", async () => {
-    fetchMenuAvailabilityBulk.mockResolvedValue({
-      M1: { mode: "mto", makeable: 12, isOutOfStock: false, isLowStock: false, blockerCount: 0, hasRecipe: true },
-    });
-    renderStore();
-    await waitFor(() => expect(getAvailabilitySnapshot()).not.toBeNull());
-    act(() => ctx.addItem(TEA));
-    expect(ctx.toasts).toHaveLength(0);
+    expect(ctx.cart.lines[0]!.qty).toBe(2);
+    expect(ctx.toasts.filter((t) => t.message.includes("غير متاح"))).toHaveLength(0);
   });
 });
 

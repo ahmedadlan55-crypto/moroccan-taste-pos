@@ -11,17 +11,11 @@ import { forwardRef, memo, useEffect, useMemo, useState } from "react";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { Minus, PackageSearch, Search, X } from "lucide-react";
 import { useLocalizedName, useT } from "@/i18n/I18nProvider";
-import type { Catalog, CatalogItem, MenuAvailabilityMap } from "@/lib/types";
+import type { Catalog, CatalogItem } from "@/lib/types";
 import { getToken } from "@/lib/auth";
 import { fmt2, fmtInt } from "@/lib/format";
+import { displayUnitPrice, DEFAULT_VAT_RATE_PCT } from "@/lib/cartMath";
 import { getQuickPicks, QUICK_PICKS_CATEGORY, useQuickPicks } from "@/lib/quickPicks";
-import {
-  OUT_OF_STOCK_CARD_CLASS,
-  resolveStockState,
-  StockPip,
-  useAvailability,
-  type StockState,
-} from "./StockPip";
 import { cn, EmptyState, Skeleton } from "./ui";
 
 // ── Item images (close/d-images) ─────────────────────────────────────────────
@@ -209,8 +203,7 @@ const ProductCard = memo(function ProductCard({
   onAdd,
   qty = 0,
   onDec,
-  stockLevel = "ok",
-  stockCount = null,
+  vatRatePct,
 }: {
   item: CatalogItem;
   onAdd: (item: CatalogItem) => void;
@@ -218,16 +211,14 @@ const ProductCard = memo(function ProductCard({
   qty?: number;
   /** Decrement one unit of this item (only offered while qty > 0). */
   onDec?: (item: CatalogItem) => void;
-  /** 86-board verdict, resolved by the grid. PRIMITIVES, not an object: a fresh
-   *  object every render would defeat this component's memo() for every card. */
-  stockLevel?: StockState["level"];
-  stockCount?: number | null;
+  /** Server VAT rate, so the card can print the price the customer pays.
+   *  A PRIMITIVE on purpose — an object prop would defeat this card's memo(). */
+  vatRatePct: number;
 }) {
   const t = useT();
   const tn = useLocalizedName();
   const imgSrc = useItemImage(item.id, item.imageVersion);
   const inCart = qty > 0;
-  const outOfStock = stockLevel === "out";
   return (
     // Wrapper: the qty badge + − button are SIBLINGS of the add button (a
     // button cannot nest a button). Absolute overlays never change the card's
@@ -246,34 +237,44 @@ const ProductCard = memo(function ProductCard({
           inCart ? "border-teal-300 ring-2 ring-teal-500/50" : "border-slate-200",
           // Pure paint (opacity + filter) — no box-model property, so the card's
           // measured height is byte-for-byte what it was before this landed.
-          outOfStock ? OUT_OF_STOCK_CARD_CLASS : null,
         )}
       >
-        {item.imageVersion ? (
-          // FIXED height, reserved from first paint: the box exists before (and
-          // whether or not) the bytes arrive, so a finished download never changes
-          // the card's height — the virtualizer's measured rows stay put (no
-          // reflow, no scroll jump). Rendered ONLY when the item has an image.
-          <div data-testid="product-thumb" aria-hidden className="mb-2 h-16 w-full shrink-0 overflow-hidden rounded-xl bg-slate-100">
-            {imgSrc ? (
-              <img
-                key={imgSrc}
-                src={imgSrc}
-                alt=""
-                loading="lazy"
-                decoding="async"
-                draggable={false}
-                className="h-full w-full object-cover"
-                // Graceful: a corrupt blob hides ITSELF (the box keeps the row
-                // height stable); keyed by src so a later good image starts fresh.
-                onError={(e) => { e.currentTarget.style.display = "none"; }}
-              />
-            ) : null}
-          </div>
-        ) : null}
+        {/* ALWAYS rendered — image on top, name beneath, on every card.
+            It used to appear only for items that HAD an image, so a menu with
+            no photos uploaded fell back to a text-only card and the grid looked
+            like two different designs at once. A fixed height reserved from
+            first paint also keeps the virtualizer's measured rows put whether
+            or not the bytes ever arrive. With no image the slot carries the
+            item's first letter — quiet, but a shape the eye can aim at. */}
+        <div data-testid="product-thumb" aria-hidden className="mb-2 h-16 w-full shrink-0 overflow-hidden rounded-xl bg-slate-100">
+          {imgSrc ? (
+            <img
+              key={imgSrc}
+              src={imgSrc}
+              alt=""
+              loading="lazy"
+              decoding="async"
+              draggable={false}
+              className="h-full w-full object-cover"
+              // Graceful: a corrupt blob hides ITSELF (the box keeps the row
+              // height stable); keyed by src so a later good image starts fresh.
+              onError={(e) => { e.currentTarget.style.display = "none"; }}
+            />
+          ) : (
+            <span className="flex h-full w-full items-center justify-center text-xl font-extrabold text-slate-300">
+              {tn(item.name, item.nameEn).trim().charAt(0)}
+            </span>
+          )}
+        </div>
         <p className="line-clamp-2 text-sm font-extrabold leading-snug text-ink group-hover:text-teal-700">{tn(item.name, item.nameEn)}</p>
+        {/* THE PRICE THE CUSTOMER PAYS — VAT included. Menu rows are stored
+            tax-exclusive, so printing `item.price` raw showed 13.04 for an item
+            that rings up at 15.00: two numbers for one product on one screen.
+            displayUnitPrice routes through lineTotals, so this can never drift
+            from the cart. */}
         <p className="mt-2 text-sm font-extrabold text-teal-600">
-          <span className="num">{fmt2(item.price)}</span> <span className="text-[11px] font-bold text-slate-400">{t("productGrid.currency")}</span>
+          <span className="num">{fmt2(displayUnitPrice(item, vatRatePct))}</span>{" "}
+          <span className="text-[11px] font-bold text-slate-400">{t("productGrid.currency")}</span>
         </p>
       </button>
       {/* العروض (close/w25-combos): tapping this card opens the combo chooser,
@@ -300,7 +301,6 @@ const ProductCard = memo(function ProductCard({
       {/* 86 board (close/w1b-stock): bottom-START, so it never collides with the
           combo/«مُخصَّص» chips at the top or the inline − at bottom-END. A <span>,
           never a button — the windowing spec pins the buttons-per-row count. */}
-      <StockPip level={stockLevel} count={stockCount} name={tn(item.name, item.nameEn)} />
       {inCart ? (
         <>
           {/* Live qty badge (legacy qty-display, app.js:449) */}
@@ -435,10 +435,6 @@ export function ProductGrid({ catalog, loading, category, query, onAdd, scrollEl
   const t = useT();
   // Subscribed, so selling an item re-ranks the «الأكثر مبيعًا» chip live.
   const quickPickIds = useQuickPicks();
-  // Published by the provider (see StockPip). `null` outside a PosProvider or
-  // whenever the availability endpoint is unreachable → every card silently
-  // degrades to CatalogItem.warehouseQty.
-  const availability: MenuAvailabilityMap | null = useAvailability();
   const visible = useMemo(
     () => (catalog ? filterItems(catalog.items, category, query, quickPickIds) : []),
     [catalog, category, query, quickPickIds],
@@ -487,22 +483,27 @@ export function ProductGrid({ catalog, loading, category, query, onAdd, scrollEl
     );
   }
 
-  /** One card, with its 86-board verdict resolved. Shared by both render paths
-   *  so the windowed and unwindowed grids can never diverge. */
-  const card = (item: CatalogItem) => {
-    const stock = resolveStockState(item, availability);
-    return (
-      <ProductCard
-        key={item.id}
-        item={item}
-        onAdd={onAdd}
-        qty={cartQty?.[item.id] ?? 0}
-        onDec={onDecrement}
-        stockLevel={stock.level}
-        stockCount={stock.count}
-      />
-    );
-  };
+  /** One card. Shared by both render paths so the windowed and unwindowed grids
+   *  can never diverge.
+   *
+   *  NO 86-BOARD VERDICT. The availability signal is computed from RAW STOCK,
+   *  and on this menu every sellable row is built from a recipe rather than held
+   *  as a physical unit — so the badge marked almost the whole grid «Out» and
+   *  dimmed it, while every one of those items was perfectly sellable. A
+   *  warning that is wrong about most of the screen is worse than no warning:
+   *  the cashier learns to ignore the one case where it might be right.
+   *  The endpoint and StockPip stay in the tree, unwired, for a menu that
+   *  actually sells shelf goods. */
+  const card = (item: CatalogItem) => (
+    <ProductCard
+      key={item.id}
+      item={item}
+      onAdd={onAdd}
+      qty={cartQty?.[item.id] ?? 0}
+      onDec={onDecrement}
+      vatRatePct={catalog?.vatRate ?? DEFAULT_VAT_RATE_PCT}
+    />
+  );
 
   // The host opted out of windowing entirely (prop absent — distinct from null,
   // which means "attaching"). Render everything rather than window against

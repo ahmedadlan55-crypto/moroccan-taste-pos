@@ -55,8 +55,12 @@ describe("ProductCard image", () => {
       makeItem({ id: "ITM-LEGACY", name: "قهوة" }), // field absent entirely (old cached catalog)
     ]);
     await waitFor(() => expect(container.querySelectorAll("img").length).toBe(1));
-    // The reserved thumb box exists only where the image will land.
-    expect(container.querySelectorAll('[data-testid="product-thumb"]').length).toBe(1);
+    // The <img> is still only for items that HAVE one — but the reserved slot is
+    // now on EVERY card. It used to render only alongside an image, so a menu
+    // with no photos uploaded fell back to a text-only card and the grid looked
+    // like two different designs at once; the slot carries the item's initial
+    // when there is nothing to show.
+    expect(container.querySelectorAll('[data-testid="product-thumb"]').length).toBe(3);
     const img = container.querySelector("img")!;
     expect(img.getAttribute("src")).toBe("blob:itest-img");
     expect(img.getAttribute("loading")).toBe("lazy");

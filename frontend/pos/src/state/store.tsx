@@ -25,7 +25,7 @@ import { getEngine, type EngineStatus, type OfflineEngine } from "@/lib/offline"
 import { useLocalizedName, useOptionalT, useT } from "@/i18n/I18nProvider";
 import { cartTotals, DEFAULT_VAT_RATE_PCT } from "@/lib/cartMath";
 import { pruneQuickPicks, recordPick } from "@/lib/quickPicks";
-import { getAvailabilitySnapshot, publishAvailability, resolveStockState } from "@/components/StockPip";
+import { publishAvailability } from "@/components/StockPip";
 import { ulid } from "@/lib/ulid";
 import { ComboDialog, type ComboFinalizeResult } from "@/components/dialogs/ComboDialog";
 import type {
@@ -659,10 +659,12 @@ export function PosProvider({ children }: { children: ReactNode }) {
         return null; // 404 / 403 / offline / malformed — no opinion, no noise
       }
     },
-    enabled: !!user && engineStatus.online,
-    // Stock moves on a different clock than the menu: often enough that a 86'd
-    // item greys out within a couple of orders, rarely enough that a busy till
-    // is not walking every recipe in the database on the cashier's behalf.
+    // OFF. Nothing consumes this any more (the 86 board is unwired — see
+    // warnIfUnavailable below and ProductGrid's card()), so leaving it on would
+    // walk every recipe in the database every 90s on the cashier's behalf to
+    // produce a number nobody reads. Flip back to
+    // `!!user && engineStatus.online` the day the badge is wanted again.
+    enabled: false,
     refetchInterval: 90_000,
     staleTime: 60_000,
     retry: false,
@@ -816,15 +818,16 @@ export function PosProvider({ children }: { children: ReactNode }) {
   // notifications. Living in the STORE rather than on the card means a barcode
   // scan and the App-level scan handler warn too, for free.
   const stockWarnedRef = useRef<Set<string>>(new Set());
-  const warnIfUnavailable = useCallback(
-    (item: CatalogItem) => {
-      if (stockWarnedRef.current.has(item.id)) return;
-      if (resolveStockState(item, getAvailabilitySnapshot()).level !== "out") return;
-      stockWarnedRef.current.add(item.id);
-      pushToast("info", trRef.current("productGrid.stock.addedOutOfStock", { name: tnRef.current(item.name, item.nameEn) }));
-    },
-    [pushToast],
-  );
+  // DISABLED for this menu. The verdict behind it is computed from RAW STOCK,
+  // and every sellable row here is built from a recipe rather than held as a
+  // physical unit — so it fired on almost everything the cashier touched while
+  // each of those items was perfectly sellable. A warning that is wrong most of
+  // the time trains the person reading it to ignore the one time it is right.
+  // Left as a no-op rather than ripped out: the endpoint and StockPip stay in
+  // the tree for a menu that actually sells shelf goods.
+  const warnIfUnavailable = useCallback((_item: CatalogItem) => {
+    void stockWarnedRef;
+  }, []);
 
   // ── Combos (العروض) — close/w25-combos ─────────────────────────────────────
   // Tapping a combo card must open the CHOOSER, not add directly (legacy

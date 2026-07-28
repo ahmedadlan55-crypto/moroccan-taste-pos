@@ -24,7 +24,7 @@
  * Any change here MUST be mirrored in lib/posOrderMachine.js (and vice-versa)
  * or the client-shown totals diverge from what /submit freezes.
  */
-import type { CartLine, CartTotals, OrderDiscount, Payment, TaxCategory } from "./types";
+import type { CartLine, CartTotals, CatalogItem, OrderDiscount, Payment, TaxCategory } from "./types";
 import type { TFunction } from "@/i18n/types";
 
 /** Which categories are taxed at all. S = standard; Z/E/O are always 0%. */
@@ -75,6 +75,34 @@ export function lineTotals(line: MoneyLine, vatRatePct: number = DEFAULT_VAT_RAT
   const net = round2(qty * unitPrice - discount);
   const vat = rate > 0 ? round2(net * rate) : 0;
   return { gross: round2(net + vat), vat, net, discount: round2(discount) };
+}
+
+/**
+ * The customer-facing shelf price of ONE unit — what the cashier and the
+ * customer both read off the card.
+ *
+ * Every menu row is stored tax-EXCLUSIVE, so a card printing `price` raw showed
+ * 13.04 for an item that rings up at 15.00. Two numbers for one product, on the
+ * same screen, is how a queue argument starts.
+ *
+ * Routed through lineTotals so there is exactly ONE VAT rule in the app: a
+ * second formula here would drift from the cart the first time a rate or a
+ * category changed.
+ */
+export function displayUnitPrice(
+  item: Pick<CatalogItem, "price" | "taxCategory" | "taxInclusive">,
+  vatRatePct: number = DEFAULT_VAT_RATE_PCT,
+): number {
+  return lineTotals(
+    {
+      qty: 1,
+      unitPrice: Number(item.price) || 0,
+      lineDiscount: 0,
+      vatCategory: item.taxCategory,
+      taxInclusive: item.taxInclusive === true,
+    },
+    vatRatePct,
+  ).gross;
 }
 
 export function cartTotals(

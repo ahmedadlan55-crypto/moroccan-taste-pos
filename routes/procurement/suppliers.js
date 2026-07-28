@@ -176,38 +176,133 @@ router.post('/:id/deactivate', requireCapability('suppliers.deactivate'), async 
   } catch (e) { return H.sendErr(res, e); }
 });
 
-// ── GET /:id/statement — running AP balance (invoices + payments) ────────────
+// ── GET /:id/statement — running AP balance ─────────────────────────────────
+//
+// Sign convention, kept deliberately: `debit` raises what we owe (an invoice),
+// `credit` lowers it (a payment, a return). That is the same direction as
+// v_supplier_ap_balance (invoiced − paid, positive = we owe), so the statement,
+// the supplier list and the aging can never disagree about which way is up.
+//
+// Three defects this fixes, all of which made the statement quietly wrong:
+//
+//  1. NO OPENING BALANCE. Every movement was filtered by the date range but the
+//     running balance still started at zero, so a statement for "this month"
+//     opened at 0 and closed at the month's MOVEMENT — not at what the supplier
+//     is owed. Unfiltered it happened to be right, which is exactly why nobody
+//     caught it. `closingBalance` therefore CHANGES for a filtered range: it
+//     used to be the period movement, it is now the real balance as of `to`.
+//     For an unfiltered request the number is byte-identical to before.
+//
+//  2. RETURNS WERE INVISIBLE. purchase_returns (a credit note to the supplier)
+//     never appeared, so returning goods left the statement claiming we still
+//     owed for them. Only posted/settled count — a draft return is not a
+//     movement, matching how supplier_invoices excludes draft/cancelled.
+//
+//  3. THE REFERENCE WAS AN INTERNAL ID. Payment rows showed the raw
+//     `payment_allocations.payment_id` (`PAY-1769...`). A supplier reconciling
+//     against this needs the voucher number a human can find.
+//
+// Plus a stable sort: sorting on the date string alone left same-day rows in
+// whatever order MySQL returned them, so the running balance column could
+// differ between two identical requests. Ties break invoice → return → payment
+// (money owed before money paid on the same day), then by id.
 router.get('/:id/statement', requireCapability('suppliers.view'), async (req, res) => {
   try {
+    const supplierId = req.params.id;
     const from = req.query.dateFrom ? String(req.query.dateFrom) : null;
     const to = req.query.dateTo ? String(req.query.dateTo) : null;
-    const invWhere = ["supplier_id = ?", "status NOT IN ('cancelled','draft')"], invP = [req.params.id];
+
+    // ── opening balance: everything that happened strictly BEFORE `from` ──
+    // One round trip, three correlated subqueries — mirrors
+    // services/order-to-cash/CustomerStatementService.js:33-41 on the AR side.
+    let opening = 0;
+    if (from) {
+      const [[o]] = await db.query(
+        `SELECT
+           (SELECT COALESCE(SUM(total_amount), 0) FROM supplier_invoices
+             WHERE supplier_id = ? AND status NOT IN ('cancelled','draft') AND issue_date < ?)
+           -
+           (SELECT COALESCE(SUM(pa.allocated_amount), 0)
+              FROM payment_allocations pa
+              JOIN supplier_invoices si
+                ON si.id COLLATE utf8mb4_unicode_ci = pa.supplier_invoice_id COLLATE utf8mb4_unicode_ci
+             WHERE si.supplier_id = ? AND pa.reversed = 0 AND pa.allocation_date < ?)
+           -
+           (SELECT COALESCE(SUM(total), 0) FROM purchase_returns
+             WHERE supplier_id = ? AND status IN ('posted','settled') AND return_date < ?)
+           AS opening`,
+        [supplierId, from, supplierId, from, supplierId, from]);
+      opening = calc.money(o && o.opening);
+    }
+
+    const invWhere = ["supplier_id = ?", "status NOT IN ('cancelled','draft')"], invP = [supplierId];
     if (from) { invWhere.push('issue_date >= ?'); invP.push(from); }
     if (to) { invWhere.push('issue_date <= ?'); invP.push(to); }
     const [invoices] = await db.query(
       `SELECT id, code, invoice_no, issue_date AS date, total_amount FROM supplier_invoices WHERE ${invWhere.join(' AND ')}`, invP);
 
-    const payWhere = ['si.supplier_id = ?', 'pa.reversed = 0'], payP = [req.params.id];
+    // LEFT JOIN payment_records: the allocation is the money, the payment row
+    // only supplies its human-readable number, so a payment written by a path
+    // that does not create a payment_records row must still show its movement.
+    const payWhere = ['si.supplier_id = ?', 'pa.reversed = 0'], payP = [supplierId];
     if (from) { payWhere.push('pa.allocation_date >= ?'); payP.push(from); }
     if (to) { payWhere.push('pa.allocation_date <= ?'); payP.push(to); }
     const [payments] = await db.query(
-      `SELECT pa.id, pa.payment_id, pa.allocation_date AS date, pa.allocated_amount
-         FROM payment_allocations pa JOIN supplier_invoices si ON si.id = pa.supplier_invoice_id
+      `SELECT pa.id, pa.payment_id, pa.allocation_date AS date, pa.allocated_amount,
+              pr.payment_number
+         FROM payment_allocations pa
+         JOIN supplier_invoices si
+           ON si.id COLLATE utf8mb4_unicode_ci = pa.supplier_invoice_id COLLATE utf8mb4_unicode_ci
+         LEFT JOIN payment_records pr
+           ON pr.id COLLATE utf8mb4_unicode_ci = pa.payment_id COLLATE utf8mb4_unicode_ci
         WHERE ${payWhere.join(' AND ')}`, payP);
 
+    const retWhere = ['supplier_id = ?', "status IN ('posted','settled')"], retP = [supplierId];
+    if (from) { retWhere.push('return_date >= ?'); retP.push(from); }
+    if (to) { retWhere.push('return_date <= ?'); retP.push(to); }
+    const [returns] = await db.query(
+      `SELECT id, return_number, credit_note_no, return_date AS date, total
+         FROM purchase_returns WHERE ${retWhere.join(' AND ')}`, retP);
+
     const lines = [];
-    for (const i of invoices) lines.push({ date: i.date, type: 'invoice', ref: i.invoice_no || i.code, debit: calc.money(i.total_amount), credit: 0 });
-    for (const pmt of payments) lines.push({ date: pmt.date, type: 'payment', ref: pmt.payment_id, debit: 0, credit: calc.money(pmt.allocated_amount) });
-    lines.sort((a, b) => (String(a.date) < String(b.date) ? -1 : String(a.date) > String(b.date) ? 1 : 0));
-    let running = 0;
-    for (const l of lines) { running = calc.money(running + l.debit - l.credit); l.balance = running; }
+    for (const i of invoices) lines.push({ id: i.id, date: i.date, type: 'invoice', ref: i.invoice_no || i.code, debit: calc.money(i.total_amount), credit: 0 });
+    for (const r of returns) lines.push({ id: r.id, date: r.date, type: 'return', ref: r.credit_note_no || r.return_number || r.id, debit: 0, credit: calc.money(r.total) });
+    for (const pmt of payments) lines.push({ id: pmt.id, date: pmt.date, type: 'payment', ref: pmt.payment_number || pmt.payment_id, debit: 0, credit: calc.money(pmt.allocated_amount) });
+
+    const TYPE_ORDER = { invoice: 0, return: 1, payment: 2 };
+    lines.sort((a, b) =>
+      String(a.date).localeCompare(String(b.date))
+      || TYPE_ORDER[a.type] - TYPE_ORDER[b.type]
+      || String(a.id).localeCompare(String(b.id)));
+
+    let running = opening;
+    let totalDebit = 0, totalCredit = 0;
+    for (const l of lines) {
+      totalDebit += l.debit; totalCredit += l.credit;
+      running = calc.money(running + l.debit - l.credit);
+      l.balance = running;
+    }
 
     if (String(req.query.format).toLowerCase() === 'csv') {
-      return H.sendCsv(res, `supplier-statement-${req.params.id}.csv`, lines,
+      // The opening rides as a real first row so the exported column still adds
+      // up on its own — a CSV that omits it is a spreadsheet that disagrees
+      // with the screen.
+      const rows = from
+        ? [{ date: from, type: 'opening', ref: 'رصيد افتتاحي', debit: 0, credit: 0, balance: opening }, ...lines]
+        : lines;
+      return H.sendCsv(res, `supplier-statement-${supplierId}.csv`, rows,
         [{ key: 'date', label: 'التاريخ' }, { key: 'type', label: 'النوع' }, { key: 'ref', label: 'المرجع' },
          { key: 'debit', label: 'مدين' }, { key: 'credit', label: 'دائن' }, { key: 'balance', label: 'الرصيد' }]);
     }
-    return H.sendData(res, lines, { closingBalance: running });
+    // `data` + `closingBalance` keep their existing shape and names — the one
+    // consumer (frontend/erp/src/modules/suppliers/SupplierDetail.tsx) reads
+    // them positionally. Everything else is additive.
+    return H.sendData(res, lines, {
+      from, to,
+      opening,
+      closingBalance: running,
+      totals: { debit: calc.money(totalDebit), credit: calc.money(totalCredit) },
+    });
   } catch (e) { return H.sendErr(res, e); }
 });
 

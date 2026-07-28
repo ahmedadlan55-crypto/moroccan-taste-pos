@@ -4487,6 +4487,18 @@ async function runMigrations() {
     }
   }
 
+  // ─── gl_journals (reference_type, reference_id) — a scan on EVERY sale ───
+  // `reference_id` had no index at all, yet the checkout looks its own journal
+  // up by reference on every single sale: services/order-to-cash/InvoiceService.js
+  // does `SELECT id FROM gl_journals WHERE reference_type='Sale' AND reference_id=?`
+  // inside `linkPosSale`, which runs in the sale's own transaction. So a full
+  // table scan of a monotonically growing ledger sat on the hot path, getting
+  // slower with every journal ever posted. routes/sales.js's void/return path
+  // (:2605) and the journals list filter (routes/erp.js:2226) hit the same
+  // predicate. Not unique — a reference legitimately maps to several journals
+  // (an invoice posts its revenue and COGS legs as two).
+  await addIndexIfMissing('gl_journals', 'ix_glj_ref', 'reference_type, reference_id');
+
   // ─── v6.4.3 — De-duplicate menu items + UNIQUE (brand_id, name) ───
   // Older deployments accumulated duplicate menu rows when the same item
   // was imported twice (each import generates a fresh Date.now() id, so

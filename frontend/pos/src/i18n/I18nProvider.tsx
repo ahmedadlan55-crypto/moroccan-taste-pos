@@ -69,6 +69,27 @@ function resolveLeaf(dict: Dictionary, path: string): DictionaryLeaf | undefined
   return typeof cur === "string" || typeof cur === "function" ? cur : undefined;
 }
 
+/**
+ * Build a translator for one language.
+ *
+ * Exported because the offline engine lives OUTSIDE the React tree and cannot
+ * call useT(); anything that wants to check what the engine will actually SAY
+ * (see lib/__tests__/engineMessages.test.ts) needs the same resolution the
+ * provider uses, not a second copy of it. It also removes the duplicate that
+ * FALLBACK_T used to carry.
+ */
+export function makeT(lang: Lang): TFunction {
+  const dict = DICTS[lang];
+  return (path, vars) => {
+    const leaf = resolveLeaf(dict, path);
+    if (typeof leaf === "function") return leaf(resolvePluralArg(vars));
+    if (typeof leaf === "string") return format(leaf, vars);
+    // Missing key: return the dotted path itself (unchanged) — this is the
+    // contract translateApiError() relies on to detect a lookup miss.
+    return path;
+  };
+}
+
 /** vars.count first; else the first numeric-looking value in vars; else 0. */
 function resolvePluralArg(vars?: Record<string, string | number>): number {
   if (!vars) return 0;
@@ -122,17 +143,7 @@ export function I18nProvider({ children }: { children: React.ReactNode }) {
 
   const setLang = useCallback((next: Lang) => setLangState(next), []);
 
-  const t = useMemo<TFunction>(() => {
-    const dict = DICTS[lang];
-    return (path, vars) => {
-      const leaf = resolveLeaf(dict, path);
-      if (typeof leaf === "function") return leaf(resolvePluralArg(vars));
-      if (typeof leaf === "string") return format(leaf, vars);
-      // Missing key: return the dotted path itself (unchanged) — this is the
-      // contract translateApiError() relies on to detect a lookup miss.
-      return path;
-    };
-  }, [lang]);
+  const t = useMemo<TFunction>(() => makeT(lang), [lang]);
 
   const value = useMemo<I18nContextValue>(() => ({ lang, setLang, t }), [lang, setLang, t]);
 
@@ -149,12 +160,7 @@ export function I18nProvider({ children }: { children: React.ReactNode }) {
  * <I18nProvider> (main.tsx), so this fallback never triggers in production;
  * useOptionalT() still returns null for the out-of-tree singleton case.
  */
-const FALLBACK_T: TFunction = (path, vars) => {
-  const leaf = resolveLeaf(DICTS.ar, path);
-  if (typeof leaf === "function") return leaf(resolvePluralArg(vars));
-  if (typeof leaf === "string") return format(leaf, vars);
-  return path;
-};
+const FALLBACK_T: TFunction = makeT("ar");
 const FALLBACK_CTX: I18nContextValue = { lang: "ar", setLang: () => {}, t: FALLBACK_T };
 
 function useI18nContext(): I18nContextValue {

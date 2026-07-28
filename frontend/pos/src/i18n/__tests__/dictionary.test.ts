@@ -65,3 +65,51 @@ describe("i18n dictionary structural parity (ar vs en)", () => {
     expect(Object.keys(en).length).toBeGreaterThan(0);
   });
 });
+
+/**
+ * A function leaf is called with a plain NUMBER, never a params object.
+ *
+ * I18nProvider's makeT does `leaf(resolvePluralArg(vars))`. A leaf written as
+ * `(p: { count: number; who: string }) => ...` therefore receives `5`, and
+ * every field read off it is `undefined` — the cashier sees
+ * "undefined pending operations synced". TypeScript does not catch it: the
+ * DictionaryLeaf type is `(n: number, ...rest: unknown[]) => string`, which a
+ * one-object-parameter function structurally satisfies.
+ *
+ * Shipped exactly that way in three namespaces on 2026-07-27, so this is the
+ * guard rather than a note in a review checklist. Multi-variable strings must
+ * be TEMPLATES with {placeholders}, which format() interpolates; only a
+ * single-number plural may be a function.
+ */
+function collectFunctionLeaves(dict: AnyDict, path: string, out: Array<[string, (n: number) => string]>) {
+  for (const [k, v] of Object.entries(dict)) {
+    const p = path ? `${path}.${k}` : k;
+    if (typeof v === "function") out.push([p, v as (n: number) => string]);
+    else if (isPlainObject(v)) collectFunctionLeaves(v as AnyDict, p, out);
+  }
+}
+
+describe("function leaves take a number, not a params object", () => {
+  for (const [lang, dict] of [["ar", ar], ["en", en]] as const) {
+    it(`every ${lang} function leaf renders without 'undefined'`, () => {
+      const leaves: Array<[string, (n: number) => string]> = [];
+      collectFunctionLeaves(dict as unknown as AnyDict, "", leaves);
+      const broken: string[] = [];
+      for (const [p, fn] of leaves) {
+        for (const n of [0, 1, 2, 11]) {
+          let rendered: string;
+          try {
+            rendered = fn(n);
+          } catch (e) {
+            broken.push(`${p} threw for n=${n}: ${(e as Error).message}`);
+            continue;
+          }
+          if (typeof rendered !== "string" || rendered.includes("undefined")) {
+            broken.push(`${p} rendered "${rendered}" for n=${n}`);
+          }
+        }
+      }
+      expect(broken).toEqual([]);
+    });
+  }
+});

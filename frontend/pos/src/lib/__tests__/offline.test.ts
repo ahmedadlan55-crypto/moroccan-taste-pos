@@ -412,7 +412,14 @@ describe("Fix B — partial sync-batch failure toasts a real message, never a ra
     await h.engine.checkout(doc, [{ method: "cash", amount: 46 }], {});
 
     const toasts = errorToasts(h.events);
-    expect(toasts.some((t) => t.message === "تم تسجيل البيع لكن تعذّر إكمال الطلب: فشل تسجيل الإتمام")).toBe(true);
+    // The prefix now comes from the dictionary (syncEngine.checkout
+    // .saleRecordedNotCompleted) instead of a hardcoded literal, so this pins
+    // the two things that actually matter rather than one exact sentence: the
+    // SALE IS RECORDED is stated, and the server's own reason survives intact.
+    expect(toasts.some((t) => /تم تسجيل البيع/.test(t.message) && t.message.includes("فشل تسجيل الإتمام"))).toBe(true);
     for (const toast of toasts) expect(toast.message).not.toMatch(/HTTP \d+/);
+    // …and never a bare dictionary key, which is what a missing translator
+    // used to produce before the engine got its own base-language fallback.
+    for (const toast of toasts) expect(toast.message).not.toMatch(/^syncEngine\./);
   });
 });

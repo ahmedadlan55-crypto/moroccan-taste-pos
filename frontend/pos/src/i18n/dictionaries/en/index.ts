@@ -31,6 +31,7 @@ import { ui } from "./ui";
 import { cartMath } from "./cartMath";
 import { catalogCache } from "./catalogCache";
 import { legacyDrain } from "./legacyDrain";
+import { syncEngine } from "./syncEngine";
 
 /**
  * Merged English dictionary barrel — one namespace per screen/shared module.
@@ -74,4 +75,5 @@ export const en = {
   cartMath,
   catalogCache,
   legacyDrain,
+  syncEngine,
 } as const;

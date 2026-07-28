@@ -28,6 +28,7 @@ import { currentUser, isSupervisor } from "./auth";
 import { ApiError } from "./api";
 import { ulid } from "./ulid";
 import { translateApiError } from "../i18n/errorCodes";
+import { makeT } from "../i18n/I18nProvider";
 import type { TFunction } from "../i18n/types";
 import type {
   CartLine,
@@ -52,6 +53,9 @@ import type {
 // until then — and in any test harness that never calls setTranslator() —
 // this safe default keeps every message meaningful (never a blank string).
 const IDENTITY_T: TFunction = (path) => path;
+
+/** Base-language resolver for the engine's OWN strings — see tt(). */
+const baseT: TFunction = makeT("ar");
 
 /** Production identity source. Reads the same pos_token every request uses, so
  *  the queue's notion of "who am I" can never drift from the server's. */
@@ -330,6 +334,22 @@ export class OfflineEngine {
    *  rather than a raw HTTP-status string. */
   private toastMessage(e: unknown): string {
     return translateApiError(e, this.t);
+  }
+
+  /**
+   * The engine's OWN strings — NOT the same lookup as toastMessage().
+   *
+   * `this.t` is IDENTITY_T until setTranslator() runs, and IDENTITY_T returning
+   * the dotted path is load-bearing: translateApiError() uses exactly that to
+   * detect an `errors.<code>` miss and fall through to the server's message.
+   * But for a message the engine authors itself there is no server text behind
+   * it, so the same miss would put a literal `syncEngine.conflict.parked` in
+   * front of a cashier. Falling back to the BASE dictionary here mirrors
+   * I18nProvider's own FALLBACK_T and keeps both contracts intact.
+   */
+  private tt(path: string, vars?: Record<string, string | number>): string {
+    const s = this.t(path, vars);
+    return s === path ? baseT(path, vars) : s;
   }
 
   /**
@@ -891,7 +911,7 @@ export class OfflineEngine {
     this.emitEvent({
       type: "toast",
       kind: "error",
-      message: "تعارض نسخ — اعتُمدت نسخة الخادم وحُفظت تعديلاتك كمسودة جديدة (نسخة محلية متعارضة)",
+      message: this.tt("syncEngine.conflict.parked"),
     });
   }
 
@@ -1004,7 +1024,7 @@ export class OfflineEngine {
       await this.recount();
       this.syncing = false;
       this.emitStatus();
-      if (reports.length) this.emitEvent({ type: "toast", kind: "info", message: syncSummaryText(reports) });
+      if (reports.length) this.emitEvent({ type: "toast", kind: "info", message: syncSummaryText(reports, (p, v) => this.tt(p, v)) });
     }
   }
 
@@ -1076,7 +1096,7 @@ export class OfflineEngine {
         await this.deps.queue.delete(op.opId);
         await this.dropOpsFor(op.orderId, batch, reports);
         if (op.type === "upsert") await this.parkConflictDraft(op.orderId);
-        else this.emitEvent({ type: "toast", kind: "error", message: `تعارض نسخ في الطلب ${op.orderId.slice(-6)} — اعتُمدت نسخة الخادم` });
+        else this.emitEvent({ type: "toast", kind: "error", message: this.tt("syncEngine.conflict.serverWon", { ref: op.orderId.slice(-6) }) });
       } else {
         // Permanent domain failure (VALIDATION_ERROR / PERMISSION_DENIED /
         // IDEMPOTENCY_CONFLICT…) — drop so the queue never jams. Build an
@@ -1119,9 +1139,14 @@ export class OfflineEngine {
    * order, and tell the cashier the truth — the sale did not go through.
    */
   private async failCheckoutAfterPrerequisite(op: QueueOp, reports: SyncOpReport[]): Promise<void> {
+    // Two lookups, both real keys: the error dictionary first (it is the one a
+    // shared error surface would use), falling back to the engine's own
+    // namespace rather than to a hardcoded Arabic literal — the literal was the
+    // bug, because IDENTITY_T makes the first lookup miss in exactly the setup
+    // where no translator is wired.
     const error = this.t("errors.CHECKOUT_PREREQUISITE_FAILED");
     const message = error === "errors.CHECKOUT_PREREQUISITE_FAILED"
-      ? "تعذّر حفظ الطلب على الخادم، فلم تُنفَّذ عملية الدفع — أعد المحاولة"
+      ? this.tt("syncEngine.checkout.prerequisiteFailed")
       : error;
     reports.push({ opId: op.opId, type: op.type, orderId: op.orderId, ok: false, code: "CHECKOUT_PREREQUISITE_FAILED", error: message });
     await this.deps.queue.delete(op.opId);
@@ -1146,7 +1171,7 @@ export class OfflineEngine {
       // which is idempotent by opId anyway.
       if (o.type === "submit-and-sale") continue;
       await this.deps.queue.delete(o.opId);
-      reports.push({ opId: o.opId, type: o.type, orderId, ok: false, code: "VERSION_CONFLICT", error: "أُسقطت بعد تعارض النسخ" });
+      reports.push({ opId: o.opId, type: o.type, orderId, ok: false, code: "VERSION_CONFLICT", error: this.tt("syncEngine.conflict.dropped") });
     }
   }
 
@@ -1261,7 +1286,7 @@ export class OfflineEngine {
       const message = this.toastMessage(e);
       reports.push({ opId: op.opId, type: op.type, orderId, ok: false, code, error: message });
       await this.deps.queue.delete(op.opId);
-      this.emitEvent({ type: "toast", kind: "error", message: "تم تسجيل البيع لكن تعذّر إكمال الطلب: " + message });
+      this.emitEvent({ type: "toast", kind: "error", message: this.tt("syncEngine.checkout.saleRecordedNotCompleted", { reason: message }) });
       return false;
     }
 
@@ -1304,10 +1329,27 @@ function extractVersion(result: unknown): number | null {
   return null;
 }
 
-function syncSummaryText(reports: SyncOpReport[]): string {
+/**
+ * The end-of-drain summary.
+ *
+ * Two things were wrong with the old one-liner, and the owner saw both at once
+ * on his own till: «تمت مزامنة 1 عملية بنجاح» and «المزامنة: 0 نجحت، 1 فشلت»
+ * stacked on an ENGLISH screen.
+ *
+ *  • It was a hardcoded Arabic literal, so it ignored the till's language.
+ *  • It called a resolved VERSION_CONFLICT a FAILURE. It is not: the engine
+ *    handled it deliberately — the server copy became the record and the
+ *    cashier's edits were parked as their own draft. Reporting that as "failed"
+ *    tells a cashier something went wrong when the design worked exactly as
+ *    intended, and it is the difference between a shrug and a support call.
+ */
+function syncSummaryText(reports: SyncOpReport[], t: TFunction): string {
   const ok = reports.filter((r) => r.ok).length;
-  const bad = reports.length - ok;
-  return bad === 0 ? `تمت مزامنة ${ok} عملية بنجاح` : `المزامنة: ${ok} نجحت، ${bad} فشلت`;
+  const conflicts = reports.filter((r) => !r.ok && r.code === "VERSION_CONFLICT").length;
+  const failed = reports.length - ok - conflicts;
+  if (failed > 0) return t("syncEngine.summary.withFailures", { ok, failed });
+  if (conflicts > 0) return t("syncEngine.summary.withConflicts", { ok, conflicts });
+  return t("syncEngine.summary.allOk", { count: ok });
 }
 
 // ── Production singleton ─────────────────────────────────────────────────────

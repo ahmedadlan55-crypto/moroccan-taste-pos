@@ -49,12 +49,14 @@ export const syncReportDialog = {
   /** The withheld-ops explanation. Deliberately says what will release them
    *  instead of offering a button — no action available to this cashier can. */
   orphans: {
-    heading: (p: { count: number; who: string }) =>
-      `${p.count} ${p.count === 1 ? "operation" : "operations"} held for ${p.who}`,
-    sales: (p: { count: number }) =>
-      `${p.count} of them ${p.count === 1 ? "is a completed sale that has" : "are completed sales that have"} not reached the server yet. They are stored on this device and will not be lost.`,
+    // Templates, not arrow functions. t() calls a FUNCTION leaf with a plain
+    // NUMBER (I18nProvider makeT → leaf(resolvePluralArg(vars))), so a leaf
+    // declared `(p: { count, who })` receives 5, not the object — and renders
+    // "undefined". Only a single-number plural may be a function here.
+    heading: "Held for {who} — {count} pending",
+    sales: "Completed sales among them: {count}. They are stored on this device and will not be lost.",
     howTo: "They cannot be sent under your account — the server only accepts an order from the cashier who made it. Ask that cashier to sign in on this device, or sign in as a manager, and they will sync on their own.",
-    byTag: (p: { who: string }) => `· ${p.who}`,
+    byTag: "· {who}",
   },
   order: "Order",
   lastSync: "Last sync",

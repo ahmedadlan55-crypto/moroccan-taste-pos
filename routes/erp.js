@@ -1268,22 +1268,37 @@ router.post('/gl/seed', requireCapability('finance.accounts.manage'), async (req
 // whose parent_id chain is anchored at code 12 (الأصول الثابتة) instead of
 // 112 (المخزون). Idempotent. Also exported as a helper so server.js can
 // run it once at boot for self-healing on existing deployments.
+// THE CAUSE OF «لماذا هناك اثنان من المخزون في الشجرة».
+//
+// This helper used to resolve — and CREATE — `112 المخزون`, then drag every
+// inventory-named account under it. It runs at EVERY BOOT (server.js:3413).
+//
+// Later in the SAME boot, server.js:4893 (v5.11.14) runs with the opposite
+// belief. Its own comment states that `112` is «الذمم المدينة / AR in the new
+// chart» and it moves the inventory codes 1200/1210/1220/1230 to `113` and AR
+// `1150` to `112`.
+//
+// So one boot created an inventory group at `112` and then moved inventory to
+// `113`. Two groups named المخزون, re-created on every single restart. It was
+// never a historical accident to be cleaned up once — it was a standing
+// contradiction between two migrations.
+//
+// `113` wins, and not by preference: `lib/glPosting.js` is the authority that
+// actually WRITES journals — every sale, purchase, waste entry and till
+// movement — and its CORE_ACCOUNTS parents 1200/1210/1220/1230 under `113`
+// with the header map at :44-45 (112 = AR · 113 = Inventory · 115 = Custody).
+// server.js:4893 already agrees with it. This helper was the only dissenter.
+const INVENTORY_GROUP_CODE = '113';
+
 async function _repairInventoryClassification(db) {
   const repaired = [];
-  // Resolve target parent (112 المخزون). If missing, try to create it under 11.
-  let [p112] = await db.query("SELECT id FROM gl_accounts WHERE code = '112'");
-  let target112Id = p112.length ? p112[0].id : null;
-  if (!target112Id) {
-    const [p11] = await db.query("SELECT id FROM gl_accounts WHERE code = '11'");
-    if (p11.length) {
-      target112Id = 'GL-112';
-      await db.query(
-        "INSERT IGNORE INTO gl_accounts (id, code, name_ar, type, parent_id, level) VALUES (?,?,?,?,?,?)",
-        [target112Id, '112', 'المخزون', 'asset', p11[0].id, 3]
-      );
-    }
-  }
-  if (!target112Id) return { ok: false, reason: 'no-parent-112', repaired };
+  // Resolve the inventory group. It is NEVER created here: creating a group
+  // from a repair helper is exactly how the second one appeared. If the chart
+  // has no `113`, this reports that and does nothing — a missing group is a
+  // seeding problem, not something a classification pass should paper over.
+  const [pInv] = await db.query('SELECT id FROM gl_accounts WHERE code = ?', [INVENTORY_GROUP_CODE]);
+  const target112Id = pInv.length ? pInv[0].id : null;
+  if (!target112Id) return { ok: false, reason: 'no-inventory-group-' + INVENTORY_GROUP_CODE, repaired };
 
   // Find candidates: name contains inventory keywords AND parent chain leads to code 12
   const inventoryRegex = /(مخزون|منتجات تامة|منتجات تحت التشغيل|finished good|wip|raw material)/i;
@@ -1295,20 +1310,28 @@ async function _repairInventoryClassification(db) {
     if (depth > 10) return null;
     const a = byId[id]; if (!a) return null;
     if (a.code === '12') return '12';
-    if (a.code === '112') return '112';
+    if (a.code === INVENTORY_GROUP_CODE) return INVENTORY_GROUP_CODE;
     if (!a.parent_id) return a.code;
     return ancestorCode(a.parent_id, depth + 1);
   }
   for (const a of allAcc) {
     if (!inventoryRegex.test(a.name_ar || '')) continue;
-    if (a.code === '112') continue;            // skip the target parent itself
-    if (String(a.code).startsWith('112')) continue; // already correct
+    if (a.code === INVENTORY_GROUP_CODE) continue;            // the target itself
+    if (String(a.code).startsWith(INVENTORY_GROUP_CODE)) continue; // already correct
     const anc = ancestorCode(a.parent_id);
+    // Narrow by design: only rescues accounts stranded under `12` (fixed
+    // assets). It deliberately does NOT sweep the whole chart — an
+    // inventory-NAMED account can legitimately sit elsewhere (a provision, a
+    // clearing account), and a boot-time pass that re-parents on a name match
+    // alone is how accounts started migrating on their own.
     if (anc === '12') {
-      // Misclassified — re-parent to 112
       await db.query("UPDATE gl_accounts SET parent_id = ? WHERE id = ?", [target112Id, a.id]);
       repaired.push({ id: a.id, code: a.code, name: a.name_ar, oldParent: a.parent_id, newParent: target112Id });
     }
+  }
+  // Depth changed for anything that moved.
+  if (repaired.length) {
+    try { await coaTree.recomputeLevels(db); } catch (_) {}
   }
   return { ok: true, repaired };
 }

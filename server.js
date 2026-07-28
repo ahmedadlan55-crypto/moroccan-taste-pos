@@ -7439,6 +7439,85 @@ async function runMigrations() {
     }
   } catch (e) { console.error('[custody-fix]', e.message); }
 
+  // ── Merge the DUPLICATE inventory group ──────────────────────────────────
+  //
+  // The owner's report: «لماذا هناك اثنان من المخزون في الشجرة».
+  //
+  // CAUSE (fixed separately, in routes/erp.js): two boot migrations held
+  // opposite beliefs and both ran on every start. `_repairInventoryClassification`
+  // CREATED `112 المخزون` and dragged inventory-named accounts under it; then
+  // the v5.11.14 block above moved the real inventory codes 1200/1210/1220/1230
+  // to `113`. Two groups named المخزون, regenerated on every restart. That
+  // helper now targets `113`, so the duplicate stops being re-created — this
+  // block cleans up what previous boots already made.
+  //
+  // `113` is the survivor, and not by preference: lib/glPosting.js is the
+  // authority that WRITES every journal, and its CORE_ACCOUNTS parents the
+  // warehouses under `113` (header map at :44-45 — 112 = AR · 113 = Inventory).
+  //
+  // WHAT THIS DOES AND DELIBERATELY DOES NOT DO:
+  //   • moves inventory-named CHILDREN of `112` to `113` — re-parenting is one
+  //     of only two operations that cannot corrupt posted history.
+  //   • renames `112` to its true meaning ONLY IF it carries no posted entries.
+  //     `gl_entries.account_name` is a frozen snapshot, so old journals keep
+  //     their original label either way.
+  //   • NEVER renumbers a code. `gl_entries.account_code` is denormalised
+  //     across all posted history and the account statement matches on
+  //     `account_id OR account_code`, so a reused code drags foreign history
+  //     into a report.
+  //   • NEVER deactivates. An inactive account is silently dropped from the
+  //     income statement, balance sheet and cash flow — and excluded from the
+  //     year-end closing entry, which is idempotent by id and would misstate
+  //     retained earnings unrecoverably.
+  //   • NEVER deletes. Only three real FKs exist; ~18 columns reference
+  //     accounts as unconstrained strings and would dangle silently.
+  //
+  // If `112` holds posted entries, this REFUSES to rename it and logs the
+  // balance instead: reclassifying money that has already been posted is an
+  // accountant's journal entry, not a migration's UPDATE.
+  try {
+    const [done] = await db.query(
+      "SELECT setting_value FROM settings WHERE setting_key = 'InventoryDuplicateMerge_v1' LIMIT 1");
+    if (!done.length) {
+      const [a112] = await db.query("SELECT id, code, name_ar FROM gl_accounts WHERE code = '112' LIMIT 1");
+      const [a113] = await db.query("SELECT id, code, name_ar FROM gl_accounts WHERE code = '113' LIMIT 1");
+      if (a112.length && a113.length) {
+        const id112 = a112[0].id, id113 = a113[0].id;
+        const nm112 = String(a112[0].name_ar || '');
+        // Only act when 112 is actually mislabelled as inventory. On a chart
+        // where 112 is already AR there is nothing to merge and this is a no-op.
+        if (/مخزون/.test(nm112)) {
+          const [kids] = await db.query(
+            "SELECT id, code, name_ar FROM gl_accounts WHERE parent_id = ?", [id112]);
+          let moved = 0;
+          for (const k of kids) {
+            if (!/مخزون|منتجات تامة|منتجات تحت التشغيل|finished good|wip|raw material/i.test(k.name_ar || '')) continue;
+            await db.query(
+              "UPDATE gl_accounts SET parent_id = ?, report_section = 'inventory' WHERE id = ?", [id113, k.id]);
+            console.log('[inv-merge] ' + k.code + ' «' + (k.name_ar || '') + '» : 112 → 113 (' + (a113[0].name_ar || '') + ')');
+            moved++;
+          }
+          const [[cnt]] = await db.query(
+            "SELECT COUNT(*) AS n FROM gl_entries WHERE account_id = ?", [id112]);
+          if (Number(cnt.n) === 0) {
+            await db.query(
+              "UPDATE gl_accounts SET name_ar = 'ذمم العملاء', report_section = 'receivables' WHERE id = ?", [id112]);
+            console.log('[inv-merge] 112 renamed «' + nm112 + '» → «ذمم العملاء» (no posted entries — safe)');
+          } else {
+            console.warn('[inv-merge] 112 «' + nm112 + '» KEPT: it carries ' + cnt.n +
+              ' posted entries. Renaming it would relabel posted money. It needs a ' +
+              'reclassification journal entry approved by an accountant — not a migration.');
+          }
+          try { await require('./lib/coa/tree').recomputeLevels(db); } catch (_) {}
+          console.log('[inv-merge] moved ' + moved + ' inventory account(s) from 112 to 113');
+        }
+      }
+      await db.query(
+        "INSERT INTO settings (setting_key, setting_value) VALUES ('InventoryDuplicateMerge_v1','1') " +
+        "ON DUPLICATE KEY UPDATE setting_value = '1'");
+    }
+  } catch (e) { console.error('[inv-merge]', e.message); }
+
   // Per-item override for waste GL routing. NULL = use reason→account map.
   await addColumnIfMissing('inv_items', 'waste_gl_account_id', 'VARCHAR(50) NULL');
 

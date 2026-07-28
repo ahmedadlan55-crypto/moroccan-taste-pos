@@ -742,6 +742,15 @@ app.use('/api/inventory/v2', require('./routes/inventory-items'));
 app.use('/api/inventory/v2', require('./routes/inventory-lots'));
 app.use('/api/inventory/v2', require('./routes/inventory-transactions'));
 try { app.use('/api/accounting', require('./routes/accounting')); } catch (e) { console.warn('[mod:accounting]', e.message); }
+// نماذج الجرد المحفوظة — saved stocktake templates (a named, reusable item set
+// the owner counts periodically). Deliberately NOT under /api/inventory/v2:
+// that prefix is wrapped by the canary allow-list and by the V2 WRITE gate
+// above, which 503s every mutation whenever WAREHOUSE_V2_ENABLED is off — a
+// register must still be able to save and edit its own count sheet then.
+// Mounted BEFORE the /api/inventory catch-all router so this path is claimed
+// here; it still inherits loadWarehouseScope (req.guardWh / req.whScopeClause),
+// mounted on /api/inventory further up.
+app.use('/api/inventory/stocktake-templates', require('./routes/stocktake-templates'));
 app.use('/api/inventory', require('./routes/inventory'));
 // Phase 2B — read-only Analytics + Reports (inherits the warehouse-scope
 // middleware mounted on /api/inventory above; /analytics/* + /reports/* paths
@@ -5427,6 +5436,61 @@ async function runMigrations() {
   // reconciliation (existing-DB top-up; fresh DBs get them from the CREATE above).
   await addColumnIfMissing('inv_stocktakes', 'snapshot_seq', 'BIGINT DEFAULT 0');
   await addColumnIfMissing('inv_stocktake_items', 'counted_seq', 'BIGINT DEFAULT 0');
+
+  // ─── نماذج الجرد المحفوظة — saved stocktake templates (routes/stocktake-
+  // templates.js, mounted at /api/inventory/stocktake-templates) ────────────────
+  // The owner's ask: a NAMED, reusable set of the materials he counts
+  // periodically — create it, pick it, edit it, reuse it. Server-backed on
+  // purpose: a localStorage template dies with the tablet, and he swaps tills.
+  //
+  // A template is ONLY a name + an ORDERED list of inv_items ids + an optional
+  // warehouse scope. IT HOLDS NO QUANTITY OF ANY KIND — no counted qty, no
+  // "last counted", no system qty. BLIND COUNT is a hard contract on this
+  // surface (see routes/inventory-stocktakes.js's header and the blind-count
+  // spec in StocktakeDialog.test.tsx), so there is deliberately no column a
+  // future change could leak the previous count through.
+  //
+  // Scope MATCHES inv_stocktakes above (warehouse_id + brand/branch derived from
+  // the warehouse row) with ONE intentional difference: warehouse_id is NULLABLE
+  // = "usable from any warehouse". A count DOCUMENT must name its warehouse; a
+  // reusable CHECKLIST need not, and the POS never picks one by hand (it resolves
+  // one at submit time), so pinning every template would hide it on the next till.
+  //
+  // Additive and fully isolated — touches no existing table. createTableIfMissing
+  // no-ops once the table exists, so this is safe on every boot.
+  await createTableIfMissing('inv_stocktake_templates', `
+    CREATE TABLE IF NOT EXISTS inv_stocktake_templates (
+      id VARCHAR(60) PRIMARY KEY,
+      name VARCHAR(120) NOT NULL,
+      warehouse_id VARCHAR(50) NULL,
+      brand_id VARCHAR(50) NULL,
+      branch_id VARCHAR(50) NULL,
+      created_by VARCHAR(100),
+      updated_by VARCHAR(100),
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+      INDEX idx_stkt_wh (warehouse_id),
+      INDEX idx_stkt_creator (created_by),
+      INDEX idx_stkt_name (name)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+  `);
+  // item_name / unit are a SNAPSHOT used only as the fallback label when the
+  // inv_items row has been hard-deleted; the route prefers the LIVE name so a
+  // renamed material shows its current name. UNIQUE(template_id,item_id) makes a
+  // duplicated pick impossible at the storage layer, not just in the handler.
+  await createTableIfMissing('inv_stocktake_template_items', `
+    CREATE TABLE IF NOT EXISTS inv_stocktake_template_items (
+      id VARCHAR(60) PRIMARY KEY,
+      template_id VARCHAR(60) NOT NULL,
+      item_id VARCHAR(50) NOT NULL,
+      item_name VARCHAR(200),
+      unit VARCHAR(50),
+      sort_order INT NOT NULL DEFAULT 0,
+      UNIQUE KEY uq_stkt_item (template_id, item_id),
+      INDEX idx_stkti_tpl (template_id, sort_order),
+      INDEX idx_stkti_item (item_id)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+  `);
 
   // ─── Phase 4A — Item Master (ADDITIVE on inv_items; never drop/rename, sales/
   // purchases/production read it) + per-warehouse replenishment rules ───────────

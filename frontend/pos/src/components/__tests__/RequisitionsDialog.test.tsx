@@ -166,26 +166,24 @@ describe("RequisitionsDialog — طلب نواقص", () => {
     expect(submitBtn).not.toBeDisabled();
   });
 
-  it("picking a search result keeps it visible+toggleable in the list (not removed); a second click un-picks it", async () => {
+  it("the picker opens on FOCUS with the whole list, and rows toggle in and out of the request", async () => {
+    // Same defect the stocktake sheet had: the results were gated on
+    // , so nothing appeared until you typed the name of a
+    // material you were trying to remember you were short of.
     installFetch();
     const search = await openDialog();
-    fireEvent.change(search, { target: { value: "أرز" } });
+
+    fireEvent.focus(search); // NO typing
     const listbox = await screen.findByRole("listbox");
-    const row = within(listbox).getByText("أرز بسمتي").closest("button")!;
-    expect(row).toHaveAttribute("aria-pressed", "false");
+    const row = within(listbox).getByText("أرز بسمتي").closest("[role='option']")!;
+    expect(row).toHaveAttribute("aria-selected", "false");
 
     fireEvent.click(row);
-
-    // Added to the cart table…
     expect(screen.getByLabelText("الكمية الصغرى — أرز بسمتي")).toBeInTheDocument();
-    // …search text is NOT reset, and the row stays in the results, now checked.
-    expect(search).toHaveValue("أرز");
-    expect(within(listbox).getByText("أرز بسمتي")).toBeInTheDocument();
-    expect(row).toHaveAttribute("aria-pressed", "true");
+    expect(row).toHaveAttribute("aria-selected", "true");
 
-    // Clicking the same row again removes it (toggle-off), mirroring ComboDialog.
     fireEvent.click(row);
-    expect(row).toHaveAttribute("aria-pressed", "false");
+    expect(row).toHaveAttribute("aria-selected", "false");
     expect(screen.queryByLabelText("الكمية الصغرى — أرز بسمتي")).toBeNull();
   });
 

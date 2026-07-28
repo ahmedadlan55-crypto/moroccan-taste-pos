@@ -1358,3 +1358,93 @@ export function _resetRaisedReturns(): void {
     /* ignore */
   }
 }
+
+
+/**
+ * Unwrap the { success, data } envelope.
+ *
+ * `request()` returns the RAW body (`return body as T`), and this repo uses two
+ * response shapes: some routes answer a bare payload (GET /api/inventory/items),
+ * others the envelope (routes/stocktake-templates.js `_ok`). Forgetting which is
+ * which has already cost a production outage today — the channel catalog stored
+ * the envelope as if it were the catalog and emptied the register. So the
+ * unwrapping is EXPLICIT and shape-checked here rather than assumed at each call
+ * site, and a payload that is neither shape yields the fallback instead of a
+ * `.find is not a function` crash inside a dialog.
+ */
+function unwrapEnvelope<T>(body: unknown, isValid: (v: unknown) => boolean, fallback: T): T {
+  if (isValid(body)) return body as T;
+  const inner = (body as { data?: unknown } | null)?.data;
+  if (isValid(inner)) return inner as T;
+  return fallback;
+}
+
+// ── نماذج الجرد — saved stocktake templates ─────────────────────────────────
+// A named, reusable set of the materials the owner counts periodically. He
+// creates it once at the till, then picks it, edits it and reuses it instead of
+// re-finding thirty items by hand every cycle.
+// Server: routes/stocktake-templates.js, mounted at
+// /api/inventory/stocktake-templates (deliberately NOT under /inventory/v2 —
+// that prefix is 503'd by the V2 write gate whenever WAREHOUSE_V2_ENABLED is
+// off, and a register must still be able to save its own count sheet then).
+
+export interface StocktakeTemplateItem {
+  itemId: string;
+  name: string;
+  unit?: string | null;
+}
+
+export interface StocktakeTemplate {
+  id: string;
+  name: string;
+  warehouseId: string | null;
+  itemIds: string[];
+  items: StocktakeTemplateItem[];
+  itemCount: number;
+  createdBy: string;
+  createdAt: string;
+  /** Server-decided, never inferred client-side: yours, or you are a manager. */
+  canEdit: boolean;
+  canDelete: boolean;
+}
+
+/**
+ * "Is this the PAYLOAD, or the envelope around it?"
+ *
+ * `typeof v === "object"` is not enough — `{ success, data }` is an object too,
+ * so a loose check happily returns the envelope and the caller reads `undefined`
+ * off it. Every payload on these routes carries an `id`; the envelope does not.
+ */
+const isTemplateObject = (v: unknown): boolean =>
+  !!v && typeof v === "object" && !Array.isArray(v) && typeof (v as { id?: unknown }).id === "string";
+
+export async function listStocktakeTemplates(): Promise<StocktakeTemplate[]> {
+  const body = await request<unknown>("/api/inventory/stocktake-templates");
+  return unwrapEnvelope<StocktakeTemplate[]>(body, Array.isArray, []);
+}
+
+export async function createStocktakeTemplate(input: { name: string; itemIds: string[] }): Promise<StocktakeTemplate> {
+  const body = await request<unknown>("/api/inventory/stocktake-templates", {
+    method: "POST",
+    body: JSON.stringify(input),
+  });
+  return unwrapEnvelope<StocktakeTemplate>(body, isTemplateObject, {} as StocktakeTemplate);
+}
+
+export async function updateStocktakeTemplate(
+  id: string,
+  input: { name?: string; itemIds?: string[] },
+): Promise<StocktakeTemplate> {
+  const body = await request<unknown>(`/api/inventory/stocktake-templates/${encodeURIComponent(id)}`, {
+    method: "PUT",
+    body: JSON.stringify(input),
+  });
+  return unwrapEnvelope<StocktakeTemplate>(body, isTemplateObject, {} as StocktakeTemplate);
+}
+
+export async function deleteStocktakeTemplate(id: string): Promise<{ id: string }> {
+  const body = await request<unknown>(`/api/inventory/stocktake-templates/${encodeURIComponent(id)}`, {
+    method: "DELETE",
+  });
+  return unwrapEnvelope<{ id: string }>(body, isTemplateObject, { id });
+}

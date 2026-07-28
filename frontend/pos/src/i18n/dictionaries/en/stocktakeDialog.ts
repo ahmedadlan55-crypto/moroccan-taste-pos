@@ -10,6 +10,29 @@ export const stocktakeDialog = {
     hint: "Try again once the server connection is back — your draft sheet is saved on this device",
   },
 
+  /** Saved stocktake templates — a named set of the materials counted on a
+   *  cycle: built once, then picked and edited instead of re-finding thirty
+   *  items by hand every time. */
+  templates: {
+    label: "Saved count sheet",
+    placeholder: "Choose a template…",
+    none: "No template",
+    apply: "Load",
+    save: "Save as template",
+    update: "Update template",
+    remove: "Delete",
+    namePrompt: "Template name",
+    nameRequired: "Give the template a name",
+    emptyCart: "Add materials first, then save them as a template",
+    saved: "Saved template “{name}”",
+    updated: "Updated template “{name}”",
+    deleted: "Template deleted",
+    applied: "Loaded {count} materials from the template",
+    loadFailed: "Templates could not be loaded",
+    saveFailed: "The template could not be saved",
+    confirmDelete: "Delete this template?",
+    itemCount: "{count} materials",
+  },
   search: {
     placeholder: "Search for a raw material to add to the sheet…",
     ariaLabel: "Search for a material",

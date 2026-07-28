@@ -127,6 +127,32 @@ const ALLOW = [
   { method: ['POST'], path: /^\/inventory\/v2\/stocktakes\/[^/]+\/(start|submit)$/ },
   { method: ['PUT'], path: /^\/inventory\/v2\/stocktakes\/[^/]+\/counts$/ },
 
+  // ── نماذج الجرد — saved stocktake templates ─────────────────────────────
+  // A named, reusable set of the materials the owner counts periodically:
+  // he creates it at the till, picks it, edits it, reuses it
+  // (routes/stocktake-templates.js). Without these entries the whole feature
+  // 403s for the only role that uses it — deny-by-default is doing its job, so
+  // the allow-list is part of the same change that adds the routes.
+  //
+  // EVERY VERB IS SPELLED OUT, and the collection and the item paths are
+  // separate rules on purpose. This is the exact spot where listing the /counts
+  // PUT as a POST silently 403'd every count autosave (see the note above):
+  // the collection takes GET+POST, the single template takes GET+PUT+DELETE, and
+  // a verb that is not written here is denied. In particular the UPDATE is a
+  // PUT — routes/stocktake-templates.js exposes no PATCH — and DELETE must be
+  // listed or «حذف النموذج» dies at the boundary before its own owner-or-manager
+  // check ever runs.
+  //
+  // Widening beyond the boundary: none. Both handlers still require the
+  // capability `inventory.stocktake.create` (the same gate as v2 count entry),
+  // still run req.guardWh / req.whScopeClause for the warehouse ACL, and still
+  // refuse to edit or delete a template created by someone else unless the
+  // caller is admin|manager. Allowing the path only lets the request REACH those
+  // gates. Templates carry no quantities at all, so nothing here can leak a
+  // system quantity into a blind count.
+  { method: ['GET', 'POST'], path: /^\/inventory\/stocktake-templates$/ },
+  { method: ['GET', 'PUT', 'DELETE'], path: /^\/inventory\/stocktake-templates\/[^/]+$/ },
+
   // ── نواقص — shortage requests + branch receiving ────────────────────────
   { method: ['GET', 'POST'], path: /^\/inventory\/shortage-requests$/ },
   { method: ['GET', 'PUT', 'DELETE'], path: /^\/inventory\/shortage-requests\/[^/]+$/ },

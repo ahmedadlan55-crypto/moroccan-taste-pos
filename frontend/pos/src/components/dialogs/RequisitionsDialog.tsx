@@ -21,12 +21,9 @@ import {
   ArrowRight,
   Boxes,
   CalendarDays,
-  CheckCircle2,
-  Circle,
   PackageOpen,
   PackageSearch,
   Pencil,
-  Search,
   Trash2,
 } from "lucide-react";
 import { usePos } from "@/state/store";
@@ -49,7 +46,8 @@ import { translateApiError } from "@/i18n/errorCodes";
 import type { TFunction } from "@/i18n/types";
 import { Dialog } from "../Dialog";
 import { Button, EmptyState, ErrorBanner, Skeleton, cn } from "../ui";
-import { dualUnitTotal, hasBigUnit, normalizeArabic } from "./StocktakeDialog";
+import { ItemMultiPicker } from "../ItemMultiPicker";
+import { dualUnitTotal, hasBigUnit } from "./StocktakeDialog";
 
 // ── Status map — port of _shrLoadHistory (app.js:4526-4529) ──────────────────
 // Values are i18n dotted-paths under requisitionsDialog.status.*, not literal text.
@@ -162,7 +160,6 @@ export function RequisitionsDialog({ open, onClose }: { open: boolean; onClose: 
   const [tab, setTab] = useState<Tab>("new");
   const [items, setItems] = useState<InvItem[] | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
-  const [query, setQuery] = useState("");
   const [cart, setCart] = useState<ShrLine[]>(() => loadCart());
   const [notes, setNotes] = useState("");
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -224,7 +221,6 @@ export function RequisitionsDialog({ open, onClose }: { open: boolean; onClose: 
     if (!open) return;
     setTab("new");
     setRcv(null);
-    setQuery("");
     setEditingId(null);
     setEditingNumber("");
     setCart(loadCart()); // draft survives close/reopen (shortage-persistent-cart)
@@ -248,20 +244,6 @@ export function RequisitionsDialog({ open, onClose }: { open: boolean; onClose: 
   // Search results include items already in the cart (picked state is derived
   // from `inCartIds` below and rendered as a checkmark) so a row stays visible
   // and toggleable after being picked — mirrors ComboDialog's toggleOption UX.
-  const matches = useMemo(() => {
-    if (!items) return [];
-    const qn = normalizeArabic(query);
-    if (!qn) return items;
-    return items.filter(
-      (i) =>
-        normalizeArabic(i.name || "").includes(qn) ||
-        normalizeArabic(i.category || "").includes(qn) ||
-        normalizeArabic(i.id || "").includes(qn),
-    );
-  }, [items, query]);
-
-  const inCartIds = useMemo(() => new Set(cart.map((c) => c.id)), [cart]);
-
   function addItem(item: InvItem) {
     mutateCart((c) => {
       if (c.some((x) => x.id === item.id)) return c;
@@ -305,14 +287,6 @@ export function RequisitionsDialog({ open, onClose }: { open: boolean; onClose: 
 
   function removeLine(idx: number) {
     mutateCart((c) => c.filter((_, i) => i !== idx));
-  }
-
-  /** Search-result row toggle — ComboDialog's toggleOption semantics: already
-   *  in the cart → remove; otherwise → add. */
-  function toggleItem(item: InvItem) {
-    const idx = cart.findIndex((c) => c.id === item.id);
-    if (idx >= 0) removeLine(idx);
-    else addItem(item);
   }
 
   function clearCart() {
@@ -547,64 +521,34 @@ export function RequisitionsDialog({ open, onClose }: { open: boolean; onClose: 
       ) : null}
 
       <div>
-        <div className="relative">
-          <Search className="pointer-events-none absolute end-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" aria-hidden />
-          <input
-            type="text"
-            value={query}
-            onChange={(e) => setQuery(e.target.value)}
-            placeholder={t("requisitionsDialog.search.placeholder")}
-            aria-label={t("requisitionsDialog.search.ariaLabel")}
-            className="field min-h-11 w-full"
-            disabled={!items}
-          />
-        </div>
+        {/* ITEM PICKER — opens the FULL list on focus, multi-select.
+            Same defect as the stocktake sheet: the results were gated on
+            `query.trim()`, so nothing appeared until you typed the name of a
+            material you were trying to REMEMBER you were short of. The picker
+            owns opening/filtering/keyboard; this dialog keeps owning the cart. */}
+        <ItemMultiPicker
+          items={items}
+          selectedIds={cart.map((c) => c.id)}
+          onChange={(nextIds: string[]) => {
+            const next = new Set(nextIds);
+            // Diff, never rebuild: a rebuilt line would drop a quantity the
+            // cashier already typed.
+            for (const line of cart) if (!next.has(line.id)) removeLine(cart.findIndex((c) => c.id === line.id));
+            const have = new Set(cart.map((c) => c.id));
+            for (const id of nextIds) {
+              if (have.has(id)) continue;
+              const item = items?.find((i) => i.id === id);
+              if (item) addItem(item);
+            }
+          }}
+          label={t("requisitionsDialog.search.ariaLabel")}
+          placeholder={t("requisitionsDialog.search.placeholder")}
+        />
         {items === null && !loadError ? (
           <div className="mt-2 space-y-2">
             <Skeleton className="h-11" />
             <Skeleton className="h-11" />
           </div>
-        ) : null}
-        {items && query.trim() ? (
-          <ul className="scrollbar-thin mt-1 max-h-48 overflow-y-auto rounded-xl border border-slate-200 bg-white shadow-sm" role="listbox" aria-label={t("requisitionsDialog.search.resultsAriaLabel")}>
-            {matches.length === 0 ? (
-              <li className="px-4 py-3 text-center text-xs font-bold text-slate-400">{t("requisitionsDialog.search.noResults")}</li>
-            ) : (
-              matches.slice(0, 50).map((i) => {
-                const low = (Number(i.stock) || 0) <= (Number(i.minStock) || 0);
-                const isPicked = inCartIds.has(i.id);
-                return (
-                  <li key={i.id}>
-                    <button
-                      type="button"
-                      onClick={() => toggleItem(i)}
-                      aria-pressed={isPicked}
-                      className={cn(
-                        "btn-press flex min-h-11 w-full items-center gap-2 border-b px-4 py-2 text-start transition",
-                        isPicked
-                          ? "border-teal-500 bg-teal-50 text-teal-700"
-                          : "border-slate-100 hover:bg-slate-50",
-                      )}
-                    >
-                      {isPicked ? (
-                        <CheckCircle2 className="h-4 w-4 shrink-0 text-teal-600" aria-hidden />
-                      ) : (
-                        <Circle className="h-4 w-4 shrink-0 text-slate-300" aria-hidden />
-                      )}
-                      <span className="min-w-0 flex-1">
-                        <span className="block text-sm font-bold text-ink">{i.name}</span>
-                        {i.category ? <span className="block text-[11px] text-slate-400">{i.category}</span> : null}
-                      </span>
-                      <span className={cn("num shrink-0 text-xs font-extrabold", low ? "text-red-500" : "text-emerald-600")}>
-                        {Number(i.stock) || 0} {i.unit || ""}
-                        {low ? " ⚠" : ""}
-                      </span>
-                    </button>
-                  </li>
-                );
-              })
-            )}
-          </ul>
         ) : null}
       </div>
 

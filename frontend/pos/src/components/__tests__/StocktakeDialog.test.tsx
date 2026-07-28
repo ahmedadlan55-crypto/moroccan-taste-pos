@@ -282,7 +282,10 @@ describe("StocktakeDialog", () => {
     expect(stored[0]).toMatchObject({ id: "INV-1", actualQty: 5 });
   });
 
-  it("picking a search result keeps it visible+toggleable in the list (not removed); a second click un-picks it", async () => {
+  it("the picker opens on FOCUS with the whole list, and rows toggle in and out of the sheet", async () => {
+    // The box used to gate its results on `query.trim()`: nothing appeared
+    // until the cashier typed, so building a thirty-material sheet meant
+     '// recalling and typing thirty names. Now focus alone drops the full list.'.slice(0,0);
     installFetch();
     render(
       <I18nProvider>
@@ -291,25 +294,24 @@ describe("StocktakeDialog", () => {
     );
     const search = await screen.findByLabelText("البحث عن مادة");
     await waitFor(() => expect(search).not.toBeDisabled());
-    fireEvent.change(search, { target: { value: "أرز" } });
 
+    // NO typing — just focus.
+    fireEvent.focus(search);
     const listbox = await screen.findByRole("listbox");
-    const row = within(listbox).getByText("أرز بسمتي").closest("button")!;
-    expect(row).toHaveAttribute("aria-pressed", "false");
+    const row = within(listbox).getByText("أرز بسمتي").closest("[role='option']")!;
+    expect(row).toHaveAttribute("aria-selected", "false");
 
     fireEvent.click(row);
 
-    // Added to the cart table…
+    // Added to the sheet…
     expect(screen.getByLabelText("الكمية الصغيرة — أرز بسمتي")).toBeInTheDocument();
-    // …search text is NOT reset, and the row stays in the results, now checked.
-    expect(search).toHaveValue("أرز");
+    // …and the row stays in the open list, now ticked, ready for the next pick.
     expect(within(listbox).getByText("أرز بسمتي")).toBeInTheDocument();
-    expect(row).toHaveAttribute("aria-pressed", "true");
+    expect(row).toHaveAttribute("aria-selected", "true");
 
-    // Clicking the same row again removes it (toggle-off), mirroring ComboDialog.
+    // Clicking it again un-picks it and drops the sheet line.
     fireEvent.click(row);
-    expect(row).toHaveAttribute("aria-pressed", "false");
-    expect(screen.queryByLabelText("الكمية الصغيرة — أرز بسمتي")).toBeNull();
+    expect(screen.queryByLabelText("الكمية الصغيرة — أرز بسمتي")).not.toBeInTheDocument();
   });
 
   it("notes are cleared after closing without submitting, then reopening", async () => {

@@ -3120,25 +3120,14 @@ router.post('/gl/repair', requireCapability('finance.accounts.manage'), async (r
         const personName = entry.account_name.replace(/عهدة\s*/, '').trim();
         if (personName) {
           try {
-            // Ensure parent account exists
-            const parentCode = '1130';
-            const [parentRow] = await db.query('SELECT id FROM gl_accounts WHERE code = ?', [parentCode]);
-            let parentId = null;
-            if (!parentRow.length) {
-              const [p11] = await db.query("SELECT id FROM gl_accounts WHERE code = '11' OR code = '113' ORDER BY code DESC LIMIT 1");
-              parentId = p11.length ? p11[0].id : null;
-              await db.query('INSERT IGNORE INTO gl_accounts (id, code, name_ar, type, parent_id, level) VALUES (?,?,?,?,?,?)',
-                ['GL-1130', '1130', 'عهد الموظفين', 'asset', parentId, 3]);
-              parentId = 'GL-1130';
-            } else { parentId = parentRow[0].id; }
-            // Create child account
-            const [children] = await db.query("SELECT code FROM gl_accounts WHERE code LIKE '1130%' AND code != '1130' ORDER BY code DESC LIMIT 1");
-            let nextCode = '11301';
-            if (children.length) { nextCode = '1130' + String((parseInt(children[0].code.replace('1130',''))||0) + 1); }
-            const newId = 'GL-' + nextCode;
-            await db.query('INSERT IGNORE INTO gl_accounts (id, code, name_ar, type, parent_id, level) VALUES (?,?,?,?,?,?)',
-              [newId, nextCode, entry.account_name, 'asset', parentId, 4]);
-            accId = newId;
+            // A SECOND custody-account creator, a hand-copy of the one in
+            // routes/custody.js — and it carried the same defect: code `1130`
+            // parented under `113`, which is INVENTORY per the canonical map in
+            // lib/glPosting.js:44-45. That is why the owner saw «العهدة تحت
+            // بند المخزون». Both creators now go through ONE implementation
+            // (custody is `115`), so they cannot drift apart again.
+            const acc = await require('./custody').createCustodyUserGLAccount(personName);
+            accId = acc.id;
             created++;
           } catch(e) { /* Production: removed debug log */ }
         }

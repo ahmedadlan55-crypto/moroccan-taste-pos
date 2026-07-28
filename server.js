@@ -7369,6 +7369,76 @@ async function runMigrations() {
     if (totalRescued > 0) console.log('[v5.10.80] name-rescued report_section for ' + totalRescued + ' accounts');
   } catch (e) { console.error('[v5.10.80] name-rescue:', e.message); }
 
+  // ── Relocate custody accounts out of the INVENTORY subtree ───────────────
+  //
+  // The owner's report: «العهدة تحت بند المخزون». He was right.
+  //
+  // routes/custody.js and a hand-copy in routes/erp.js both created employee
+  // custody accounts as `1130x` parented under `113`. But `113` is INVENTORY —
+  // lib/glPosting.js:44-45 states the mapping (111 Cash · 112 AR · 113
+  // Inventory · 114 Prepayments · 115 Custody · 116 Input VAT) and
+  // CORE_ACCOUNTS parents 1200/1210/1220/1230 (the warehouses) under `113`.
+  // So عهدة sat as a sibling of the warehouses in the tree, and the balance
+  // sheet followed, because the prefix table above maps `113%` → inventory.
+  // The name-rescue then flipped report_section back to receivables every
+  // boot — which is the recurring "re-derived … 1 mis-tagged" log, and why
+  // the tree and the balance sheet disagreed with each other.
+  //
+  // Both creators are fixed (custody is `115`). This moves what already
+  // exists. It changes ONLY `parent_id` — no code is renumbered, so not a
+  // single gl_entries row, journal, or amount is touched; renumbering would
+  // rewrite account_code across posted history and is deliberately left to
+  // the explicit /gl/accounts/:id/move endpoint.
+  //
+  // Runs once, gated on a settings key, and is a no-op on a chart that never
+  // had the defect.
+  try {
+    const [done] = await db.query(
+      "SELECT setting_value FROM settings WHERE setting_key = 'CustodyOutOfInventory_v1' LIMIT 1");
+    if (!done.length) {
+      // Candidates: named like custody/advance, and currently reachable from
+      // the inventory group `113` (either directly under it or under `1130`).
+      const [cands] = await db.query(
+        `SELECT a.id, a.code, a.name_ar, a.parent_id, p.code AS parent_code
+           FROM gl_accounts a
+           LEFT JOIN gl_accounts p ON p.id = a.parent_id
+          WHERE (a.name_ar LIKE '%عهدة%' OR a.name_ar LIKE '%عهد %' OR a.name_ar LIKE '%سلفة%'
+                 OR a.name_ar LIKE '%سلف %' OR a.name_en LIKE '%custody%' OR a.name_en LIKE '%advance%')
+            AND (p.code = '113' OR p.code LIKE '113%')`);
+      if (cands.length) {
+        // Resolve (or create) the custody group 115 without importing the
+        // route module here — boot must not depend on router load order.
+        let groupId = null;
+        const [g] = await db.query("SELECT id FROM gl_accounts WHERE code = '115' LIMIT 1");
+        if (g.length) groupId = g[0].id;
+        else {
+          const [p11] = await db.query("SELECT id FROM gl_accounts WHERE code = '11' LIMIT 1");
+          groupId = 'GL-115';
+          await db.query(
+            `INSERT IGNORE INTO gl_accounts (id, code, name_ar, type, parent_id, level, is_folder, report_section)
+             VALUES (?,?,?,?,?,?,1,?)`,
+            [groupId, '115', 'العهد والسلف', 'asset', p11.length ? p11[0].id : null, p11.length ? 3 : 2, 'receivables']);
+        }
+        let moved = 0;
+        for (const c of cands) {
+          if (c.id === groupId) continue;       // never re-parent the group into itself
+          await db.query(
+            "UPDATE gl_accounts SET parent_id = ?, report_section = 'receivables' WHERE id = ?",
+            [groupId, c.id]);
+          console.log('[custody-fix] ' + c.code + ' «' + (c.name_ar || '') + '» : ' +
+                      (c.parent_code || '?') + ' (مخزون) → 115 العهد والسلف');
+          moved++;
+        }
+        // Depth changed for everything that moved.
+        try { await require('./lib/coa/tree').recomputeLevels(db); } catch (_) {}
+        console.log('[custody-fix] relocated ' + moved + ' custody account(s) out of the inventory subtree');
+      }
+      await db.query(
+        "INSERT INTO settings (setting_key, setting_value) VALUES ('CustodyOutOfInventory_v1','1') " +
+        "ON DUPLICATE KEY UPDATE setting_value = '1'");
+    }
+  } catch (e) { console.error('[custody-fix]', e.message); }
+
   // Per-item override for waste GL routing. NULL = use reason→account map.
   await addColumnIfMissing('inv_items', 'waste_gl_account_id', 'VARCHAR(50) NULL');
 

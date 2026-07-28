@@ -46,39 +46,73 @@ async function _ownsExpense(req, expId) {
 // GL ACCOUNT HELPERS — auto-create custody accounts in chart of accounts
 // ═══════════════════════════════════════
 
-// Ensure a parent "عهد الموظفين" group exists under assets (113xx)
+/**
+ * The custody group — «العهد والسلف».
+ *
+ * THIS IS THE DEFECT THE OWNER REPORTED AS «العهدة تحت بند المخزون».
+ *
+ * This used to create `1130 عهد الموظفين` and parent it under `113`.
+ * **`113` is INVENTORY.** The system's own canonical mapping says so, in
+ * lib/glPosting.js:44-45:
+ *
+ *     111 = Cash and Bank · 112 = AR · 113 = Inventory ·
+ *     114 = Prepayments · 115 = Custody · 116 = Input VAT
+ *
+ * and CORE_ACCOUNTS parents `1200 المخزون الرئيسي`, `1210 مخزون الفروع`,
+ * `1220 الإنتاج تحت التشغيل` and `1230 المنتجات التامة` under `113`. So every
+ * employee custody account was filed as a sibling of the warehouses: the chart
+ * tree showed عهدة under المخزون, and the balance sheet followed, because
+ * server.js's prefix table maps `113%` → `inventory`.
+ *
+ * **Custody is `115`.** server.js already maps `115` → `receivables`, and the
+ * comment on that very line reads «العهد والسلف» — the classification layer
+ * knew all along; only the creator did not.
+ *
+ * Child codes start at `1151`, not `1150`: `1150` is `AR ذمم العملاء`
+ * (CORE_ACCOUNTS parents it under `112`, but codes are globally unique).
+ */
+const CUSTODY_GROUP_CODE = '115';
+const CUSTODY_CHILD_PREFIX = '115';
+
 async function ensureCustodyParentAccount() {
-  const code = '1130';
-  const [existing] = await db.query('SELECT id FROM gl_accounts WHERE code = ?', [code]);
+  const [existing] = await db.query('SELECT id FROM gl_accounts WHERE code = ?', [CUSTODY_GROUP_CODE]);
   if (existing.length) return existing[0].id;
-  // Find parent 113 or 11
+
+  // Under current assets — NEVER under 113. Parking custody in the Inventory
+  // subtree is the whole defect; falling back to it "when 115 is missing"
+  // would just recreate the bug on a fresh chart.
   let parentId = null;
-  const [p113] = await db.query("SELECT id FROM gl_accounts WHERE code = '113'");
-  if (p113.length) parentId = p113[0].id;
-  else {
-    const [p11] = await db.query("SELECT id FROM gl_accounts WHERE code = '11'");
-    if (p11.length) parentId = p11[0].id;
-  }
-  const id = 'GL-' + code;
-  await db.query('INSERT IGNORE INTO gl_accounts (id, code, name_ar, type, parent_id, level) VALUES (?,?,?,?,?,?)',
-    [id, code, 'عهد الموظفين', 'asset', parentId, parentId ? 3 : 2]);
+  const [p11] = await db.query("SELECT id FROM gl_accounts WHERE code = '11'");
+  if (p11.length) parentId = p11[0].id;
+
+  const id = 'GL-' + CUSTODY_GROUP_CODE;
+  await db.query(
+    'INSERT IGNORE INTO gl_accounts (id, code, name_ar, type, parent_id, level, is_folder, report_section) ' +
+    'VALUES (?,?,?,?,?,?,1,?)',
+    [id, CUSTODY_GROUP_CODE, 'العهد والسلف', 'asset', parentId, parentId ? 3 : 2, 'receivables']);
   return id;
 }
 
-// Create a GL account for a specific custody user (e.g. 11301 — عهدة أحمد)
+// Create a GL account for a specific custody user (e.g. 1151 — عهدة أحمد)
 async function createCustodyUserGLAccount(custodyUserName) {
   const parentId = await ensureCustodyParentAccount();
-  // Find next code under 1130x
-  const [children] = await db.query("SELECT code FROM gl_accounts WHERE code LIKE '1130%' AND code != '1130' ORDER BY code DESC LIMIT 1");
-  let nextCode = '11301';
+  // Next free code in the custody family. `1150` is skipped — see above.
+  // ORDER BY CHAR_LENGTH first so `1159` cannot beat `11510` lexicographically
+  // and hand out a duplicate.
+  const [children] = await db.query(
+    "SELECT code FROM gl_accounts WHERE code LIKE ? AND code <> ? AND code <> '1150' " +
+    "ORDER BY CHAR_LENGTH(code) DESC, code DESC LIMIT 1",
+    [CUSTODY_CHILD_PREFIX + '%', CUSTODY_GROUP_CODE]);
+  let nextCode = CUSTODY_CHILD_PREFIX + '1';
   if (children.length) {
-    const lastNum = parseInt(children[0].code.replace('1130', '')) || 0;
-    nextCode = '1130' + String(lastNum + 1);
+    const lastNum = parseInt(String(children[0].code).replace(CUSTODY_CHILD_PREFIX, ''), 10) || 0;
+    nextCode = CUSTODY_CHILD_PREFIX + String(lastNum + 1);
   }
   const id = 'GL-' + nextCode;
   const name = 'عهدة ' + custodyUserName;
-  await db.query('INSERT IGNORE INTO gl_accounts (id, code, name_ar, type, parent_id, level) VALUES (?,?,?,?,?,?)',
-    [id, nextCode, name, 'asset', parentId, 4]);
+  await db.query(
+    'INSERT IGNORE INTO gl_accounts (id, code, name_ar, type, parent_id, level, report_section) VALUES (?,?,?,?,?,?,?)',
+    [id, nextCode, name, 'asset', parentId, 4, 'receivables']);
   return { id, code: nextCode, name };
 }
 
@@ -917,3 +951,9 @@ router.get('/approval/pending', async (req, res) => {
 });
 
 module.exports = router;
+// Exported so routes/erp.js's journal-import path creates custody accounts
+// through the SAME implementation instead of its own hand-copy — that copy is
+// how `1130` under `113` (Inventory) survived in two places at once.
+module.exports.createCustodyUserGLAccount = createCustodyUserGLAccount;
+module.exports.ensureCustodyParentAccount = ensureCustodyParentAccount;
+module.exports.CUSTODY_GROUP_CODE = CUSTODY_GROUP_CODE;

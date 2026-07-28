@@ -442,8 +442,20 @@ export interface ShiftSummary {
 }
 
 export interface AuthUser {
+  /** Login id — the value `sales.username` stores and every API scopes on. */
   username: string;
   role: string;
+  /** The person's real name, for anything a HUMAN reads — the receipt's
+   *  "served by" line above all. Sourced from the JWT's `displayName` claim
+   *  (routes/auth.js), which resolves users.full_name → settings.user_meta →
+   *  username server-side.
+   *
+   *  OPTIONAL in the type so existing AuthUser literals (tests, helpers) keep
+   *  compiling — but decodeUser() ALWAYS populates it, falling back to the
+   *  username when a token carries no claim (every token issued before this
+   *  shipped, i.e. every session live at deploy time). Callers that build an
+   *  AuthUser themselves should still write `user?.name || user?.username`. */
+  name?: string;
 }
 
 // ── فواتيري / My Invoices ────────────────────────────────────────────────────

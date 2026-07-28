@@ -13,6 +13,11 @@ const requireCapability = require('../middleware/requireCapability');
 // letting the middleware 403 before the approval credentials are ever read.
 const { hasCapability } = require('../middleware/requireCapability');
 const gl = require('../lib/glPosting');
+// The ONE authority for "what is this person called" — users.full_name →
+// settings.user_meta[u].name → username. The receipt's cashier line and the
+// JWT claim the till prints from (routes/auth.js) both go through it, so an
+// original and its reprint can never name the same cashier differently.
+const displayName = require('../lib/displayName');
 const zatca = require('../lib/zatca');
 // Renders the ZATCA TLV payload into a PNG data-URL SERVER-side. The clients
 // must not encode QRs themselves: the legacy receipt template lazy-loaded a QR
@@ -2290,22 +2295,26 @@ router.get('/invoice/:orderId', async (req, res) => {
       console.warn('[sales/invoice] ar_document_lines lookup failed for sale', req.params.orderId, '—', e.code || e.message);
     }
 
-    // ── Lookup cashier display name from settings.user_meta ──
-    // The receipt shows "You were served by : <FullName>, <empNo>".
-    // empNo is OPTIONAL — only printed when explicitly set in user_meta;
-    // falling back to username here would render "John Smith, j.smith" which
-    // looks redundant. So default empNo to '' and let the frontend hide it.
-    let cashierName = sale.username || '';
-    let cashierEmpNo = '';
-    try {
-      const [metaRows] = await db.query("SELECT setting_value FROM settings WHERE setting_key = 'user_meta'");
-      if (metaRows.length && metaRows[0].setting_value) {
-        const meta = JSON.parse(metaRows[0].setting_value) || {};
-        const me = meta[sale.username] || {};
-        if (me.name)  cashierName  = me.name;
-        if (me.empNo) cashierEmpNo = me.empNo;
-      }
-    } catch (_) { /* fall back to username for the name; empNo stays empty */ }
+    // ── Cashier display name — resolved from the SALE's OWN username ──
+    // The receipt shows "You were served by : <FullName>, <empNo>", so a
+    // reprint pulled up by a DIFFERENT cashier must still name the person who
+    // MADE the sale. `sales.username` (written at INSERT, ~:953/:956) is that
+    // person; the name is resolved here at READ time because the sales table
+    // has no name column (db/schema.sql:148-189).
+    //
+    // This used to read settings.user_meta ONLY, while the admin screen
+    // (routes/auth.js:660) and the developer guard (lib/transactionGuards.js:130)
+    // both read users.full_name FIRST. The moment the till started printing a
+    // name from users.full_name, that split would have made the SAME sale print
+    // two different names on its original and its reprint. lib/displayName.js
+    // is now the single rule for all of them.
+    //
+    // empNo is OPTIONAL — it exists only in user_meta and is only printed when
+    // explicitly set; falling back to username here would render "John Smith,
+    // j.smith", which looks redundant. It stays '' so the receipt can hide it.
+    const cashierIdentity = await displayName.resolveCashierIdentity(db, sale.username);
+    const cashierName = cashierIdentity.name;
+    const cashierEmpNo = cashierIdentity.empNo;
 
     // ── Lookup the branch: prefer the branch frozen on the sale, else the user's ──
     //

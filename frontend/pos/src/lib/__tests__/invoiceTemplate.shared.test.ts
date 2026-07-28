@@ -185,9 +185,285 @@ describe("buildSaleReceiptHtml — paper width, reprint, payments", () => {
     expect(html).toContain("STC Pay");
   });
 
-  it("a plain invoice with no cashier/orderType renders no cashier line", () => {
+  it("a plain invoice with no cashier renders no served-by band at all", () => {
     const html = buildSaleReceiptHtml(saleOpts({ cashierName: undefined, orderType: null }));
-    expect(html).not.toContain("الكاشير");
+    expect(html).not.toContain("تم خدمتكم عن طريق");
+    expect(html).not.toContain('class="served"');
+  });
+});
+
+// ═════════════════════════════════════════════════════════════════════════════
+// The owner's request (2026-07-28): «تم خدمتكم عن طريق» + a welcome message +
+// more detail — every one of them a field reaching PAPER, at 58mm as well as
+// 80mm.
+// ═════════════════════════════════════════════════════════════════════════════
+
+describe("«تم خدمتكم عن طريق» — the person, named, in a band of their own", () => {
+  it("prints the served-by band with the cashier's name", () => {
+    const html = buildSaleReceiptHtml(saleOpts({ cashierName: "أحمد عدلان" }));
+    expect(html).toContain('<div class="served">');
+    expect(html).toContain("تم خدمتكم عن طريق");
+    expect(html).toContain("أحمد عدلان");
+  });
+
+  it("is NOT buried in the order-type crumb — order type lives in the meta grid", () => {
+    const html = buildSaleReceiptHtml(saleOpts({ cashierName: "أحمد عدلان", orderType: "dine_in", tableNo: "7" }));
+    // the served band carries the name and nothing else
+    const band = html.slice(html.indexOf('<div class="served">'), html.indexOf('<hr class="rule">'));
+    expect(band).toContain("أحمد عدلان");
+    expect(band).not.toContain("محلي");
+    expect(band).not.toContain("طاولة");
+    // …and the service context is a labelled meta row instead
+    expect(html).toContain("الطلب");
+    expect(html).toContain("محلي");
+    expect(html).toContain("طاولة");
+  });
+
+  it("an empty name prints NO band rather than a credit line with nobody in it", () => {
+    const html = buildSaleReceiptHtml(saleOpts({ cashierName: "" }));
+    expect(html).not.toContain('class="served"');
+  });
+
+  it("the owner's cashier toggle still suppresses it", () => {
+    const html = buildSaleReceiptHtml(
+      saleOpts({
+        cashierName: "أحمد عدلان",
+        showFields: { logo: true, taxNumber: true, crNumber: true, nationalAddress: true, phone: true, email: true, cashier: false, customer: true, qr: true },
+      }),
+    );
+    expect(html).not.toContain("تم خدمتكم عن طريق");
+    expect(html).not.toContain("أحمد عدلان");
+  });
+});
+
+describe("رسالة ترحيبية — settings.ReceiptHeader, promoted to its own line", () => {
+  it("the owner's ReceiptHeader prints as the welcome line, not as another .sub crumb", () => {
+    const html = buildSaleReceiptHtml(saleOpts());
+    expect(html).toContain('<div class="welcome">فرع العليا — فاتورة ضريبية مبسطة</div>');
+  });
+
+  it("falls back to a default greeting on a thermal till receipt when unset", () => {
+    const html = buildSaleReceiptHtml(saleOpts({ identity: { ...IDENTITY, header: "" } }));
+    expect(html).toContain("أهلاً وسهلاً بكم");
+    const en = buildSaleReceiptHtml(saleOpts({ identity: { ...IDENTITY_EN, header: "" } }));
+    expect(en).toContain("Welcome");
+  });
+
+  it("does NOT greet an A4 document — that is a B2B tax invoice, not a till receipt", () => {
+    const html = buildSaleReceiptHtml(saleOpts({ identity: { ...IDENTITY, header: "" }, paperWidth: "A4" }));
+    expect(html).not.toContain("أهلاً وسهلاً بكم");
+  });
+
+  it("does NOT greet on a credit note even when the owner configured a header", () => {
+    const html = buildCreditNoteHtml({
+      lines: [{ name: "برجر", qty: 1, unitPrice: 23 }],
+      totals: { subtotal: 23, lineDiscountTotal: 0, discountAmount: 0, vatTotal: 3, total: 23 },
+      invoiceNumber: "CN-1",
+      originalInvoiceNumber: "INV-1",
+      fallbackSellerName: "x",
+      vatRate: 15,
+      identity: { ...IDENTITY, header: "" },
+    });
+    expect(html).not.toContain("أهلاً وسهلاً بكم");
+  });
+});
+
+describe("document type — the receipt finally says what it legally is", () => {
+  it("a thermal POS sale is titled a ZATCA simplified tax invoice", () => {
+    expect(buildSaleReceiptHtml(saleOpts())).toContain('<div class="doctype">فاتورة ضريبية مبسطة</div>');
+    expect(buildSaleReceiptHtml(saleOpts({ paperWidth: "58" }))).toContain("فاتورة ضريبية مبسطة");
+  });
+
+  // IDENTITY.header itself reads "…فاتورة ضريبية مبسطة", so the negative
+  // assertions below run against an identity with no owner header — otherwise
+  // they would be matching the welcome line, not the document-type band.
+  const NO_HEADER: DocumentIdentity = { ...IDENTITY, header: "" };
+
+  it("an A4 document is titled just فاتورة ضريبية (it may carry a registered buyer)", () => {
+    const html = buildSaleReceiptHtml(saleOpts({ identity: NO_HEADER, paperWidth: "A4" }));
+    expect(html).toContain('<div class="doctype">فاتورة ضريبية</div>');
+    expect(html).not.toContain("فاتورة ضريبية مبسطة");
+  });
+
+  it("an OFFLINE queued sale claims no tax-invoice title it has not earned", () => {
+    const html = buildSaleReceiptHtml(saleOpts({ identity: NO_HEADER, offlineRef: true, zatcaQrDataUrl: null }));
+    expect(html).toContain("إيصال مبدئي");
+    expect(html).not.toContain("فاتورة ضريبية مبسطة");
+    // and it still says so honestly in both of the existing places
+    expect(html).toContain("مرجع محلي");
+    expect(html).toContain("سيُرحَّل عند عودة الاتصال");
+    expect(html).toContain("رمز الفاتورة الضريبي يصدر بعد المزامنة");
+  });
+
+  it("a caller may override the band", () => {
+    expect(buildSaleReceiptHtml(saleOpts({ docTitle: "عرض سعر" }))).toContain('<div class="doctype">عرض سعر</div>');
+    expect(buildSaleReceiptHtml(saleOpts({ docTitle: "" }))).not.toContain('class="doctype"');
+  });
+});
+
+describe("ZATCA — every legally required field still reaches paper after the redesign", () => {
+  const html = buildSaleReceiptHtml(saleOpts({ printedAt: new Date("2026-07-15T14:05:00") }));
+
+  it("seller name", () => expect(html).toContain("<h1>مطاعم الأصالة</h1>"));
+  it("VAT registration number", () => expect(html).toContain("الرقم الضريبي:"));
+  it("VAT registration number value", () => expect(html).toContain("310122393500003"));
+  it("timestamp", () => expect(html).toContain("2026-07-15 14:05"));
+  it("VAT total", () => expect(html).toContain("الضريبة (15% مشمولة)"));
+  it("total with VAT", () => expect(html).toContain("40.00 ر.س"));
+  it("the server-stamped TLV QR at a scannable 120px", () =>
+    expect(html).toContain('<img src="data:image/png;base64,iVBORw0KGgoTEST" alt="ZATCA QR" width="120" height="120">'));
+});
+
+describe("more detail — the fields that were shipped to the client and never printed", () => {
+  it("prints the owner's logo when configured", () => {
+    const html = buildSaleReceiptHtml(saleOpts({ identity: { ...IDENTITY, logo: "data:image/png;base64,LOGOPNG" } }));
+    expect(html).toContain('<div class="logo"><img src="data:image/png;base64,LOGOPNG" alt=""></div>');
+  });
+
+  it("honours the logo toggle that used to be read by nothing", () => {
+    const html = buildSaleReceiptHtml(
+      saleOpts({
+        identity: { ...IDENTITY, logo: "data:image/png;base64,LOGOPNG" },
+        showFields: { logo: false, taxNumber: true, crNumber: true, nationalAddress: true, phone: true, email: true, cashier: true, customer: true, qr: true },
+      }),
+    );
+    expect(html).not.toContain("LOGOPNG");
+  });
+
+  it("refuses a logo value that is not an image URL", () => {
+    const html = buildSaleReceiptHtml(saleOpts({ identity: { ...IDENTITY, logo: "javascript:alert(1)" } }));
+    expect(html).not.toContain("javascript:");
+  });
+
+  it("prints the e-mail beside the phone (its toggle was read by nothing either)", () => {
+    const html = buildSaleReceiptHtml(saleOpts());
+    expect(html).toContain("info@example.com");
+    const off = buildSaleReceiptHtml(
+      saleOpts({
+        showFields: { logo: true, taxNumber: true, crNumber: true, nationalAddress: true, phone: true, email: false, cashier: true, customer: true, qr: true },
+      }),
+    );
+    expect(off).not.toContain("info@example.com");
+    expect(off).toContain("0112345678");
+  });
+
+  it("falls back to the branch street address when there is no national address", () => {
+    const html = buildSaleReceiptHtml(saleOpts({ identity: { ...IDENTITY, nationalAddress: "" } }));
+    expect(html).toContain("شارع التحلية");
+  });
+
+  it("never prints two competing addresses", () => {
+    const html = buildSaleReceiptHtml(saleOpts());
+    expect(html).toContain("RRRD2929 حي العليا، الرياض");
+    expect(html).not.toContain("شارع التحلية");
+  });
+
+  it("counts the items", () => {
+    const html = buildSaleReceiptHtml(
+      saleOpts({ lines: [{ name: "أ", qty: 1, unitPrice: 5 }, { name: "ب", qty: 2, unitPrice: 5 }] }),
+    );
+    expect(html).toContain("عدد الأصناف");
+    expect(html).toContain('<td class="money"><span class="n">2</span></td>');
+  });
+
+  it("tells the customer what they saved — and stays silent when they saved nothing", () => {
+    const saved = buildSaleReceiptHtml(
+      saleOpts({ totals: { subtotal: 45, lineDiscountTotal: 2, discountAmount: 3, vatTotal: 5.22, total: 40 } }),
+    );
+    expect(saved).toContain("وفّرت في هذه الفاتورة");
+    expect(saved).toContain('<span class="num">5.00 ر.س</span>');
+    expect(buildSaleReceiptHtml(saleOpts())).not.toContain("وفّرت");
+  });
+
+  it("labels the payment block", () => {
+    expect(buildSaleReceiptHtml(saleOpts())).toContain('<div class="sec">المدفوع</div>');
+  });
+
+  it("captions the QR", () => {
+    expect(buildSaleReceiptHtml(saleOpts())).toContain("امسح الرمز للتحقق من الفاتورة");
+    // …and never captions a QR that is not there
+    expect(buildSaleReceiptHtml(saleOpts({ zatcaQrDataUrl: null }))).not.toContain("امسح الرمز");
+  });
+
+  it("quantities print as counts, not as money", () => {
+    const html = buildSaleReceiptHtml(saleOpts({ lines: [{ name: "برجر", qty: 2, unitPrice: 20 }] }));
+    expect(html).toContain('<td class="money"><span class="n">2</span></td>');
+    expect(html).not.toContain('<span class="n">2.00</span>');
+  });
+});
+
+describe("orphan identity fields that used to print the wrong words", () => {
+  it("a non-SAR shop prints its own currency instead of ر.س", () => {
+    const html = buildSaleReceiptHtml(saleOpts({ identity: { ...IDENTITY, currency: "AED" } }));
+    expect(html).toContain("40.00 AED");
+    expect(html).not.toContain("ر.س");
+  });
+
+  it("SAR (and an unset currency) keeps the localized glyph", () => {
+    expect(buildSaleReceiptHtml(saleOpts())).toContain("40.00 ر.س");
+    expect(buildSaleReceiptHtml(saleOpts({ identity: { ...IDENTITY, currency: "" } }))).toContain("40.00 ر.س");
+  });
+
+  it("a custom sales-tax name replaces the hardcoded الضريبة", () => {
+    const html = buildSaleReceiptHtml(saleOpts({ identity: { ...IDENTITY, salesTaxName: "ضريبة القيمة المضافة" } }));
+    expect(html).toContain("ضريبة القيمة المضافة (15% مشمولة)");
+  });
+});
+
+describe("the money column — one decimal axis, both languages", () => {
+  it("every amount is a shrink-to-fit, tabular, trailing-edge cell", () => {
+    const html = buildSaleReceiptHtml(saleOpts());
+    expect(html).toContain("td.money, th.mh { text-align: right; width: 1%; white-space: nowrap;");
+    expect(html).toContain("padding-inline-start: 7px; }");
+    expect(html).toContain('<td class="money"><span class="n">40.00</span></td>');
+    // no money is rendered through the old ragged `.l num` cell any more
+    expect(html).not.toContain('class="l num"');
+  });
+
+  it("the LTR isolate is on the inner span, never on the cell", () => {
+    // direction:ltr on the CELL resolves padding-inline-start to its left, which
+    // in RTL is the paper edge — the money column then collides with the column
+    // beside it. Shipped in the first cut of this redesign; caught by rendering.
+    const html = buildSaleReceiptHtml(saleOpts());
+    expect(html).toContain(".num, .money .n, .line-calc .n { direction: ltr; unicode-bidi: isolate;");
+    expect(html).not.toContain("td.money, th.mh { direction: ltr");
+  });
+
+  it("a Latin handle inside Arabic owner text keeps its sigil on the right end", () => {
+    const html = buildSaleReceiptHtml(saleOpts({ identity: { ...IDENTITY, footer: "تابعنا @mathaq_sa" } }));
+    expect(html).toContain('تابعنا <span class="ltr">@mathaq_sa</span>');
+    expect(html).toContain(".ltr { direction: ltr; unicode-bidi: isolate; }");
+  });
+
+  it("owner text with no Latin token is byte-identical to plain escaping", () => {
+    const html = buildSaleReceiptHtml(saleOpts());
+    expect(html).toContain('<div class="policy">الاسترجاع خلال ٣ أيام بالفاتورة</div>');
+    expect(html).not.toContain('<span class="ltr">الاسترجاع');
+  });
+
+  it("the grand total is the only row with a double rule", () => {
+    const html = buildSaleReceiptHtml(saleOpts());
+    expect(html).toContain('<tr class="total">');
+    expect(html).toContain("border-bottom: 3px double currentColor;");
+  });
+
+  it("the English document aligns its column headers with its cells (start, not right)", () => {
+    const html = buildSaleReceiptHtml(saleOpts({ identity: IDENTITY_EN }));
+    expect(html).toContain("th { text-align: start;");
+  });
+
+  it("an English document actually LAYS OUT left-to-right", () => {
+    // baseCss used to hardcode `body { direction: rtl }`, which overrode the
+    // <html dir="ltr"> below it: an English shop printed English text in an RTL
+    // frame — ":Invoice" instead of "Invoice:", the money column on the wrong
+    // edge. Rendering the document in a browser is what exposed it.
+    const en = buildSaleReceiptHtml(saleOpts({ identity: IDENTITY_EN }));
+    expect(en).toContain('<html lang="en" dir="ltr">');
+    expect(en).not.toContain("direction: rtl");
+    // …and the Arabic default still inherits rtl from its own <html>
+    const ar = buildSaleReceiptHtml(saleOpts());
+    expect(ar).toContain('<html lang="ar" dir="rtl">');
+    expect(ar).not.toContain("direction: rtl;");
   });
 });
 
@@ -277,7 +553,7 @@ describe("buildSaleReceiptHtml — bilingual (identity.language)", () => {
     expect(html).not.toContain("المجموع");
   });
 
-  it("language: 'en' translates payment methods and the cashier/order-type line", () => {
+  it("language: 'en' translates payment methods, the order type and the served-by band", () => {
     const html = buildSaleReceiptHtml(
       saleOpts({
         identity: IDENTITY_EN,
@@ -288,7 +564,8 @@ describe("buildSaleReceiptHtml — bilingual (identity.language)", () => {
     expect(html).toContain("Cash");
     expect(html).toContain("Card");
     expect(html).toContain("Dine-in");
-    expect(html).toContain("Cashier:");
+    expect(html).toContain("Served by");
+    expect(html).toContain("Simplified Tax Invoice");
   });
 
   it("language: 'en' keeps owner-entered free text verbatim (never machine-translated)", () => {

@@ -53,6 +53,25 @@ function base64UrlDecode(part: string): string {
   return new TextDecoder("utf-8").decode(bytes);
 }
 
+/**
+ * Decode the session token into the user the app renders and PRINTS.
+ *
+ * `name` is the cashier's real name and is the ONLY place the till can learn
+ * it: the store re-derives its user from this token on every mount
+ * (state/store.tsx:530) and an OFFLINE sale cannot ask the server. The server
+ * puts it in the `displayName` claim (routes/auth.js), already resolved through
+ * users.full_name → settings.user_meta[u].name → username by lib/displayName.js.
+ *
+ * THE DEPLOY CASE, not a theory: every token sitting in localStorage the moment
+ * this ships was minted WITHOUT the claim and stays valid for up to 24h. Those
+ * sessions must keep working, so a missing/blank/whitespace-only claim falls
+ * back to the username — the same login id the receipt printed before. Nothing
+ * regresses; the name simply arrives on the next login or token refresh.
+ *
+ * The claim is read from `displayName`, deliberately NOT `name`: the username
+ * line below already treats a bare `name` claim as a username fallback, and
+ * reusing that key would let a display name masquerade as a login id.
+ */
 export function decodeUser(token: string | null): AuthUser | null {
   if (!token) return null;
   const parts = token.split(".");
@@ -61,10 +80,17 @@ export function decodeUser(token: string | null): AuthUser | null {
     const payload = JSON.parse(base64UrlDecode(parts[1])) as Record<string, unknown>;
     const username = String(payload.username ?? payload.name ?? "");
     if (!username) return null;
-    return { username, role: String(payload.role ?? "cashier") };
+    const claimed = typeof payload.displayName === "string" ? payload.displayName.trim() : "";
+    return { username, role: String(payload.role ?? "cashier"), name: claimed || username };
   } catch {
     return null;
   }
+}
+
+/** The name to show a HUMAN for this user — never a login id when a real name
+ *  is known, never blank. One helper so no screen re-invents the fallback. */
+export function displayNameOf(user: AuthUser | null | undefined): string {
+  return (user?.name ?? "").trim() || (user?.username ?? "").trim();
 }
 
 export function currentUser(): AuthUser | null {

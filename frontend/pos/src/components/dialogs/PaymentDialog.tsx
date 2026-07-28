@@ -47,6 +47,7 @@ import {
   resolveAutoPrint,
   resolvePaperWidth,
 } from "@/lib/receipt";
+import { displayNameOf } from "@/lib/auth";
 import type { CatalogPaymentMethod, LocalOrder, Payment } from "@/lib/types";
 import { useLang, useT } from "@/i18n/I18nProvider";
 import { translateApiError } from "@/i18n/errorCodes";
@@ -493,7 +494,13 @@ export function PaymentDialog({ open, onClose, onOpenShift }: PaymentDialogProps
       invoiceNumber: p.invoiceNumber,
       cashTendered: p.cashTendered,
       changeDue: p.changeDue,
-      cashierName: user?.username ?? "",
+      // The PERSON, not the login id. `user.name` is the JWT's displayName
+      // claim, already resolved server-side (users.full_name →
+      // settings.user_meta → username) and carried in the token so this works
+      // OFFLINE, where no lookup is possible. displayNameOf() degrades to the
+      // username for a token minted before the claim existed — the receipt then
+      // prints exactly what it printed yesterday, never a blank "served by".
+      cashierName: displayNameOf(user),
       vatRate: catalog?.vatRate ?? 15,
       offlineRef: p.queued,
       // Owner-configured seller block from the cached catalog (works offline)

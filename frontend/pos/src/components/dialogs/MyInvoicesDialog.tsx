@@ -36,6 +36,7 @@ import {
 } from "@/lib/api";
 import { round2 } from "@/lib/cartMath";
 import { fmt2, fmtInt } from "@/lib/format";
+import { displayNameOf } from "@/lib/auth";
 import { buildReceiptHtml, printHtml, resolvePaperWidth, type DocumentLanguage } from "@/lib/receipt";
 import type { ApproverCredentials, LocalOrder, Payment, ReceiptIdentity, SaleRow } from "@/lib/types";
 import { usePos } from "@/state/store";
@@ -211,7 +212,10 @@ export function reprintHtmlFromInvoice(
         nationalAddress: inv.nationalAddress || "",
         phone: inv.companyPhone || "",
         email: inv.companyEmail || "",
-        logo: "",
+        // The snapshot carries it (brand logo > company logo, resolved server
+        // side). Hardcoding "" here made a reprint print a DIFFERENT document
+        // from the original — same sale, one with the shop's mark, one without.
+        logo: inv.receiptLogo || "",
         currency: inv.currency || "SAR",
         vatRate,
         header: inv.receiptHeader || "",
@@ -578,6 +582,23 @@ export function MyInvoicesDialog({ open, onClose }: { open: boolean; onClose: ()
     setPending({ row, action });
   }
 
+  /** Who to NAME on a reprint when the server sent no cashierName.
+   *
+   *  A reprint must name whoever MADE the sale, never whoever is standing at
+   *  the till now — so the sale's own `row.username` always outranks the
+   *  current user. It is a login id, though, so when the sale is this cashier's
+   *  own we can upgrade it to the real name we already hold in our token. For
+   *  someone else's sale we cannot know their name client-side and print their
+   *  login id honestly rather than borrow ours.
+   *
+   *  This is the LAST resort: routes/sales.js resolves the name server-side
+   *  from the sale's own username and `inv.cashierName` normally wins. */
+  function fallbackCashierFor(row: SaleRow): string {
+    const seller = (row.username ?? "").trim();
+    if (!seller) return displayNameOf(user);
+    return seller === (user?.username ?? "").trim() ? displayNameOf(user) : seller;
+  }
+
   /** Reprint (فواتيري → طباعة): fetch the invoice (identity + STAMPED QR) and
    *  print it through the same window path as first prints. Works for reversed
    *  rows too — those print with their ملغاة/مرتجع stamp. */
@@ -587,7 +608,7 @@ export function MyInvoicesDialog({ open, onClose }: { open: boolean; onClose: ()
       const inv = await getInvoice(row.orderId);
       if (!inv) throw new Error(t("myInvoicesDialog.reprintLoadFailed"));
       const ok = printHtml(
-        reprintHtmlFromInvoice(inv, catalog, row.username || user?.username || "", {
+        reprintHtmlFromInvoice(inv, catalog, fallbackCashierFor(row), {
           voided: t("myInvoicesDialog.stampVoided"),
           returned: t("myInvoicesDialog.stampReturned"),
         }),

@@ -677,7 +677,19 @@ export interface InvoiceDetail {
   // ar_documents.version for this sale's O2C projection — required as
   // expectedVersion on a return create (null under the same conditions as lineId).
   version: number | null;
+  /** The PERSON who made this sale, resolved server-side from the sale's OWN
+   *  `sales.username` (routes/sales.js → lib/displayName.js: users.full_name →
+   *  settings.user_meta → username). A reprint pulled up by a different cashier
+   *  therefore still names the original seller. Worst case it IS the login id —
+   *  never blank, never fabricated. */
   cashierName: string;
+  /** Employee number, when the owner set one in settings.user_meta. Has no
+   *  users-table equivalent, so it is '' far more often than not — a consumer
+   *  must HIDE the field rather than print "أحمد عدلان, 2004". The server has
+   *  always returned it (routes/sales.js response block); it was simply never
+   *  declared here, so no screen could reach it. Optional to keep every
+   *  existing InvoiceDetail literal (tests, fixtures) compiling. */
+  cashierEmpNo?: string;
   branchName: string;
   branchAddress: string;
   branchCompanyName: string;
@@ -686,6 +698,11 @@ export interface InvoiceDetail {
   currency: string;
   companyPhone: string;
   companyEmail: string;
+  /** Brand logo when the sale has one, else the company logo — the server
+   *  already resolves that precedence (routes/sales.js:2495). Declared here
+   *  because the reprint was rebuilding identity with `logo: ""` and so the
+   *  ORIGINAL receipt printed the shop's logo while its own reprint did not. */
+  receiptLogo?: string;
   receiptFooter: string;
   crNumber: string;
   nationalAddress: string;

@@ -9,6 +9,7 @@ const COA_TEMPLATE = require('../db/coa-template.json');
 const { guardDeveloper } = require('../lib/transactionGuards');
 // FC-P1 — fine-grained GL capability guard (permissions_v3). Fails closed.
 const requireCapability = require('../middleware/requireCapability');
+const coaTree = require('../lib/coa/tree');
 // Phase 0 (Contracts & Safety) — managerial RBAC for warehouse master-data
 // mutations (a warehouse with movement may never be hard-deleted) and for the
 // legacy warehouse_transfers stock-moving endpoints.
@@ -444,18 +445,20 @@ router.post('/gl/accounts/import', requireCapability('finance.accounts.manage'),
         // parent group (every row gets a deterministic order, the file
         // sequence is preserved). Update mode does this too because the
         // user said: "I want the same order as the file."
-        const orderRaw = r['الترتيب'] != null ? r['الترتيب'] : (r.order != null ? r.order : r.displayOrder);
-        let displayOrder = (orderRaw === '' || orderRaw == null || isNaN(Number(orderRaw))) ? null : Number(orderRaw);
-        if (displayOrder == null) {
-          const parentKey = String(parentId || '__ROOT__');
-          positionByParent[parentKey] = (positionByParent[parentKey] || 0) + 1;
-          displayOrder = positionByParent[parentKey];
-        }
-
         // v5.10.50 — parent resolution: NAME first, code as fallback.
         // v5.10.53 — code lookup now consults fileCodeToTargetId first,
         // so a parent referenced by its NEW code (which is currently in
         // temp form thanks to Phase A) still resolves correctly.
+        //
+        // ORDER MATTERS — this block MUST stay above the display_order block
+        // below. It used to sit after it, while the display_order fallback
+        // read `parentId` to group rows by parent. `let` is not hoisted with a
+        // value, so that read hit the temporal dead zone and threw
+        // `ReferenceError: Cannot access 'parentId' before initialization` —
+        // caught by the outer handler and returned as a bare HTTP 500. It fired
+        // on exactly the case the comment below calls the EXPECTED one (an
+        // empty «الترتيب» cell), so the import endpoint was broken for the
+        // scenario it was written for.
         let parentId = null;
         function resolveParentByCode(pc){
           return fileCodeToTargetId[pc] || byCode[pc] || null;
@@ -468,9 +471,23 @@ router.post('/gl/accounts/import', requireCapability('finance.accounts.manage'),
           }
           else { parentMissing++; errors.push({ id, code, reason: 'parent-not-found:' + parentName }); }
         } else if (parentCode) {
-          const r = resolveParentByCode(parentCode);
-          if (r) { parentId = r; parentByCode++; }
+          const resolved = resolveParentByCode(parentCode);
+          if (resolved) { parentId = resolved; parentByCode++; }
           else { parentMissing++; errors.push({ id, code, reason: 'parent-code-not-found:' + parentCode }); }
+        }
+
+        // v5.10.51 — read the "الترتيب" cell. Empty/0/non-number → null
+        // (means: leave existing display_order alone OR fall back to bottom).
+        // v5.10.55 — when null, auto-derive from file row position within
+        // parent group (every row gets a deterministic order, the file
+        // sequence is preserved). Update mode does this too because the
+        // user said: "I want the same order as the file."
+        const orderRaw = r['الترتيب'] != null ? r['الترتيب'] : (r.order != null ? r.order : r.displayOrder);
+        let displayOrder = (orderRaw === '' || orderRaw == null || isNaN(Number(orderRaw))) ? null : Number(orderRaw);
+        if (displayOrder == null) {
+          const parentKey = String(parentId || '__ROOT__');
+          positionByParent[parentKey] = (positionByParent[parentKey] || 0) + 1;
+          displayOrder = positionByParent[parentKey];
         }
 
         // v5.10.54 — NEW priority: name+level → id → plain name → code.
@@ -797,15 +814,22 @@ router.post('/gl/accounts/:id/move', requireCapability('finance.accounts.manage'
       // Apply main update
       const [mainClash] = await conn.query('SELECT id FROM gl_accounts WHERE code = ? AND id != ?', [newCode, id]);
       if (mainClash.length) throw new Error('تعارض كود: ' + newCode + ' موجود مسبقًا');
-      const newLevel = newParent ? (Number(newParent.level) + 1) : 1;
       await conn.query(
-        'UPDATE gl_accounts SET code = ?, parent_id = ?, level = ? WHERE id = ?',
-        [newCode, parentId || null, newLevel, id]);
+        'UPDATE gl_accounts SET code = ?, parent_id = ? WHERE id = ?',
+        [newCode, parentId || null, id]);
       await conn.query('UPDATE gl_entries SET account_code = ? WHERE account_id = ?', [newCode, id]);
       renumbered.push({ id, oldCode: acc.code, newCode });
 
-      console.log('[gl/move] ' + acc.code + ' -> ' + newCode + ' under ' + (newParent ? newParent.code : 'root') + ' (renumbered ' + renumbered.length + ')');
-      return { renumbered, oldCode: acc.code, newCode, newParentId: parentId || null };
+      // Levels are DERIVED, and a move changes the depth of the whole subtree.
+      // This route used to set the moved node's own level and stop, so every
+      // descendant kept the depth it had under its old parent — the codes
+      // cascaded (above) but the levels did not. Re-deriving the subtree inside
+      // the same transaction is the only way a move can leave the chart
+      // self-consistent.
+      const levels = await coaTree.recomputeLevels(conn, { rootId: id });
+
+      console.log('[gl/move] ' + acc.code + ' -> ' + newCode + ' under ' + (newParent ? newParent.code : 'root') + ' (renumbered ' + renumbered.length + ', levels ' + levels.updated + ')');
+      return { renumbered, oldCode: acc.code, newCode, newParentId: parentId || null, levelsUpdated: levels.updated };
     });
     res.json({ success: true, ...result });
   } catch (e) {
@@ -830,35 +854,46 @@ router.post('/gl/accounts', requireCapability('finance.accounts.manage'), async 
 
     if (id) {
       const [existing] = await db.query('SELECT id FROM gl_accounts WHERE id = ?', [id]);
+      // `level` is DERIVED — the request body's value is deliberately ignored.
+      // It used to be written straight through as `level || 1`, so the client
+      // decided how deep an account was; a stale or hand-crafted payload could
+      // put a level-4 account at level 1 and the trial balance would report a
+      // mismatch nobody could explain. `recomputeLevels` below is the only
+      // writer, and it derives from the actual parent chain.
       if (existing.length) {
         if (hasFolderFlag) {
           await db.query(
-            'UPDATE gl_accounts SET code=?, name_ar=?, name_en=?, type=?, parent_id=?, level=?, is_folder=?, is_active=COALESCE(?, is_active) WHERE id=?',
-            [code, nameAr, nameEn || '', type, parentId || null, level || 1, folderInt, activeInt, id]
+            'UPDATE gl_accounts SET code=?, name_ar=?, name_en=?, type=?, parent_id=?, is_folder=?, is_active=COALESCE(?, is_active) WHERE id=?',
+            [code, nameAr, nameEn || '', type, parentId || null, folderInt, activeInt, id]
           );
         } else {
           await db.query(
-            'UPDATE gl_accounts SET code=?, name_ar=?, name_en=?, type=?, parent_id=?, level=?, is_active=COALESCE(?, is_active) WHERE id=?',
-            [code, nameAr, nameEn || '', type, parentId || null, level || 1, activeInt, id]
+            'UPDATE gl_accounts SET code=?, name_ar=?, name_en=?, type=?, parent_id=?, is_active=COALESCE(?, is_active) WHERE id=?',
+            [code, nameAr, nameEn || '', type, parentId || null, activeInt, id]
           );
         }
+        // The parent may have changed, which moves this node AND every
+        // descendant to a new depth.
+        await coaTree.recomputeLevels(db, { rootId: id });
         return res.json({ success: true, id });
       }
     }
 
     const newId = id || 'GL-' + Date.now();
     const newActive = hasActiveFlag ? activeInt : 1; // new accounts default active
+    // Insert at a placeholder depth, then derive — same reason as above.
     if (hasFolderFlag) {
       await db.query(
         'INSERT INTO gl_accounts (id, code, name_ar, name_en, type, parent_id, level, is_folder, is_active) VALUES (?,?,?,?,?,?,?,?,?)',
-        [newId, code, nameAr, nameEn || '', type, parentId || null, level || 1, folderInt, newActive]
+        [newId, code, nameAr, nameEn || '', type, parentId || null, coaTree.DEPTH_BASE, folderInt, newActive]
       );
     } else {
       await db.query(
         'INSERT INTO gl_accounts (id, code, name_ar, name_en, type, parent_id, level, is_active) VALUES (?,?,?,?,?,?,?,?)',
-        [newId, code, nameAr, nameEn || '', type, parentId || null, level || 1, newActive]
+        [newId, code, nameAr, nameEn || '', type, parentId || null, coaTree.DEPTH_BASE, newActive]
       );
     }
+    await coaTree.recomputeLevels(db, { rootId: newId });
 
     // v5.10.46 — auto-promote the parent to a folder when a child is
     // inserted under it at L3+ (parent.level >= 2 means new child is L3+).
@@ -1543,11 +1578,16 @@ async function _repairCoaByPrefix(db) {
     }
 
     const currentParentCode = acc.parent_id ? (byId[acc.parent_id] || {}).code || null : null;
-    const expectedLevel = preferredParent.code.length + 1
-                       || (Number(preferredParent.level) || 1) + 1;
-    // Use the preferred parent's level + 1 — more reliable than code.length
-    // for non-strict numeric codes.
-    const targetLevel = (Number(preferredParent.level) || 1) + 1;
+    // `expectedLevel` was computed here and never used — and `A || B` on two
+    // numbers only ever picks B when A is 0, so it was not even the fallback it
+    // looked like. Deleted.
+    //
+    // targetLevel is still written below so this helper's own before/after
+    // report stays truthful, but it is no longer the last word: every caller
+    // ends with coaTree.recomputeLevels(), which re-derives depth from the
+    // final tree. Writing a level here and deriving it there cannot disagree,
+    // because the derive always runs after the last re-parent.
+    const targetLevel = (Number(preferredParent.level) || coaTree.DEPTH_BASE) + 1;
 
     const parentChanged = (acc.parent_id !== preferredParent.id);
     const levelChanged  = (Number(acc.level) !== targetLevel);
@@ -1578,7 +1618,14 @@ async function _repairCoaByPrefix(db) {
     }
   }
 
-  return { repaired, skipped };
+  // Derive every level from the tree this helper just rewrote. Without this,
+  // an account re-parented above could leave its own DESCENDANTS at the depth
+  // they had under the old parent — the helper only ever touched the node it
+  // moved. Runs on the same `db` handle it was given, so inside a caller's
+  // transaction it is part of that transaction.
+  const levels = await coaTree.recomputeLevels(db);
+
+  return { repaired, skipped, levelsDerived: levels.updated };
 }
 // Export so server.js / boot scripts can run it idempotently if needed.
 router._repairCoaByPrefix = _repairCoaByPrefix;
@@ -1643,12 +1690,26 @@ const _COA_ROOT_TYPE_BY_CODE = {
   '1': 'asset', '2': 'liability', '3': 'equity', '4': 'revenue', '5': 'expense'
 };
 
-function _coaComputeDepth(byId, a, seen) {
-  if (!a || !a.parent_id) return 0;
-  if (seen.has(a.id)) return 0;
-  seen.add(a.id);
-  const p = byId[a.parent_id];
-  return p ? _coaComputeDepth(byId, p, seen) + 1 : 0;
+// THE BUG THE OWNER REPORTED AS "a problem with account levels".
+//
+// This returned **0** for a root, while every other level writer and reader in
+// the system says **1** (`_repairCoaByPrefix` :1513, `_coaFixRootsAndOrphans`
+// :1987, and lib/reports/trialBalance.js). `POST /gl/deep-repair` ran BOTH in
+// one transaction — an early step set roots to 1, then `_coaAutoFixLevels`
+// recomputed 0-based — so a single click shifted every account in the chart
+// down one level. The trial balance then flagged `levelMismatch` on EVERY
+// account, and because that feeds `isClean`, the whole report rendered
+// «غير سليم» even though the ledger arithmetic was perfect.
+//
+// Now a thin adapter over the one 1-based, cycle-safe implementation in
+// lib/coa/tree.js — the same one the trial balance uses, so the two can no
+// longer disagree. The old `seen` parameter is accepted and ignored: the
+// shared walk carries its own cycle protection.
+function _coaComputeDepth(byId, a) {
+  if (!a || !a.id) return coaTree.DEPTH_BASE;
+  const rows = Array.isArray(byId) ? byId : Object.values(byId || {});
+  const { depth } = coaTree.computeDepths(rows, new Map(rows.map((r) => [r.id, r])));
+  return depth.get(a.id) || coaTree.DEPTH_BASE;
 }
 
 // Snapshot of integrity issues. Used before/after deep-repair to
@@ -1691,17 +1752,15 @@ async function _coaDiagnoseSnapshot(db) {
   const [allAccs] = await db.query('SELECT id, parent_id, level FROM gl_accounts');
   const byId = {}; allAccs.forEach(a => { byId[a.id] = a; });
   let levelMismatch = 0, cycles = 0;
+  // One tree walk for the whole chart, not one per account: the shared
+  // computeDepths already memoizes across the entire set and reports cycle
+  // members itself, so the per-account ancestry crawl below is only kept for
+  // its 50-hop guard on data the walk would classify as a cycle anyway.
+  const { depth: depthMap, cycleMembers } = coaTree.computeDepths(
+    allAccs, new Map(allAccs.map((r) => [r.id, r])));
   for (const a of allAccs) {
-    const seen = new Set();
-    let walker = a, hops = 0, cycled = false;
-    while (walker && walker.parent_id) {
-      if (seen.has(walker.id)) { cycled = true; break; }
-      seen.add(walker.id);
-      walker = byId[walker.parent_id] || null;
-      if (++hops > 50) break;
-    }
-    if (cycled) { cycles++; continue; }
-    const d = _coaComputeDepth(byId, a, new Set());
+    if (cycleMembers.has(a.id)) { cycles++; continue; }
+    const d = depthMap.get(a.id) || coaTree.DEPTH_BASE;
     if (Number(a.level || 0) !== d) levelMismatch++;
   }
   out.levelMismatch = levelMismatch;
@@ -2017,26 +2076,25 @@ async function _coaFixRootsAndOrphansByPrefix(db) {
   return fixed;
 }
 
+// Promote dangling-parent orphans to roots, then re-derive every level from
+// the actual tree. Two behaviour changes, both deliberate:
+//
+//   • an orphan promoted to a root gets level **1**, not 0. It IS a root once
+//     its dangling parent_id is cleared, and a root is level 1 everywhere else
+//     in the system. Writing 0 here is what seeded the whole 0-vs-1 mess.
+//   • levels come from lib/coa/tree.js `recomputeLevels`, the same walk the
+//     trial balance uses, so `diagnostics.levelMismatches` can finally reach
+//     empty instead of listing the entire chart after every repair.
 async function _coaAutoFixLevels(db) {
-  let orphansPromoted = 0, levelsCorrected = 0;
   const [orphans] = await db.query(
     `SELECT a.id FROM gl_accounts a
       WHERE a.parent_id IS NOT NULL
         AND a.parent_id NOT IN (SELECT id FROM (SELECT id FROM gl_accounts) p)`);
   for (const o of orphans) {
-    await db.query('UPDATE gl_accounts SET parent_id = NULL, level = 0 WHERE id = ?', [o.id]);
-    orphansPromoted++;
+    await db.query('UPDATE gl_accounts SET parent_id = NULL WHERE id = ?', [o.id]);
   }
-  const [allAccs] = await db.query('SELECT id, parent_id, level FROM gl_accounts');
-  const byId = {}; allAccs.forEach(a => { byId[a.id] = a; });
-  for (const a of allAccs) {
-    const d = _coaComputeDepth(byId, a, new Set());
-    if (Number(a.level || 0) !== d) {
-      await db.query('UPDATE gl_accounts SET level = ? WHERE id = ?', [d, a.id]);
-      levelsCorrected++;
-    }
-  }
-  return { orphansPromoted, levelsCorrected };
+  const { updated } = await coaTree.recomputeLevels(db);
+  return { orphansPromoted: orphans.length, levelsCorrected: updated };
 }
 
 // v5.10.43 — defense in depth: even if the boot migration failed, this
@@ -2115,13 +2173,9 @@ router.post('/gl/deep-repair', requireCapability('finance.accounts.manage'), asy
       const typeFixes = await _coaAlignTypeWithParent(conn);
       console.log('[deep-repair] step 5: alignTypeWithParent → ' + (typeFixes ? typeFixes.length : 0) + ' types corrected');
 
-      lastStep = 'autoFixLevels';
-      const lvl = await _coaAutoFixLevels(conn);
-      console.log('[deep-repair] step 6: autoFixLevels → ' + lvl.orphansPromoted + ' orphans promoted, ' + lvl.levelsCorrected + ' levels corrected');
-
       lastStep = 'recomputeBalances';
       const balRecomp = await _coaRecomputeBalances(conn);
-      console.log('[deep-repair] step 7: recomputeBalances → ' + balRecomp + ' balances rebuilt from gl_entries');
+      console.log('[deep-repair] step 6: recomputeBalances → ' + balRecomp + ' balances rebuilt from gl_entries');
 
       // v5.10.44 — last-resort topology guarantee. If any account is still
       // in the wrong root subtree after the smart helpers, force-reparent
@@ -2129,11 +2183,22 @@ router.post('/gl/deep-repair', requireCapability('finance.accounts.manage'), asy
       // hierarchical-but-wrong.
       lastStep = 'bruteForceTopology';
       const brute = await _coaBruteForceRootTopology(conn);
-      console.log('[deep-repair] step 7.5: bruteForceTopology → ' + brute.moved.length + ' force-reparented, missingRoots=[' + (brute.missingRoots || []).join(',') + ']');
+      console.log('[deep-repair] step 7: bruteForceTopology → ' + brute.moved.length + ' force-reparented, missingRoots=[' + (brute.missingRoots || []).join(',') + ']');
 
       lastStep = 'forceFolderConsistency';
       const folderFixes = await _coaForceFolderConsistency(conn);
       console.log('[deep-repair] step 8: forceFolderConsistency → roots=' + folderFixes.roots + ' parents=' + folderFixes.parents);
+
+      // ── LEVELS LAST. This ordering is the fix, not a tidy-up. ──
+      // `autoFixLevels` used to run BEFORE `bruteForceTopology`, which
+      // re-parents accounts — so every level it had just computed was stale the
+      // moment the transaction committed. Combined with the old 0-based depth
+      // helper, one click on "deep repair" left the entire chart one level off
+      // and made the trial balance render «غير سليم». Derive depth only after
+      // the last step that can move a node.
+      lastStep = 'autoFixLevels';
+      const lvl = await _coaAutoFixLevels(conn);
+      console.log('[deep-repair] step 9: autoFixLevels → ' + lvl.orphansPromoted + ' orphans promoted, ' + lvl.levelsCorrected + ' levels corrected (1-based)');
 
       // v5.10.44 — final independent verification: walk every account's
       // parent chain and list any whose reachable root still doesn't
@@ -3311,22 +3376,18 @@ router.get('/gl/diagnose', requireCapability('finance.accounts.manage'), async (
     const missingCoreAccounts = CORE_CODES.filter(c => !presentSet.has(c));
 
     // Computed levels: walk parent chain and compare against stored level
+    // A THIRD private 0-based depth walk used to live here. It reported
+    // `levelMismatch` against a base of 0 while the stored levels are 1-based,
+    // so /gl/diagnose listed the entire chart as mismatched — the diagnostic
+    // itself was the thing that was wrong. One shared 1-based walk now.
     const [allAccs] = await db.query('SELECT id, code, name_ar, parent_id, level FROM gl_accounts');
-    const byId = {}; allAccs.forEach(a => { byId[a.id] = a; });
-    const computeDepth = function(a, seen) {
-      if (!a || !a.parent_id) return 0;
-      if (seen.has(a.id)) return -1; // cycle
-      seen.add(a.id);
-      const p = byId[a.parent_id];
-      if (!p) return 0;  // orphan; treat as root
-      const d = computeDepth(p, seen);
-      return d < 0 ? d : d + 1;
-    };
+    const { depth: _depthMap, cycleMembers: _cycleSet } = coaTree.computeDepths(
+      allAccs, new Map(allAccs.map((r) => [r.id, r])));
     const levelMismatch = [];
     const cycles = [];
     for (const a of allAccs) {
-      const d = computeDepth(a, new Set());
-      if (d < 0) { cycles.push({ id: a.id, code: a.code, name_ar: a.name_ar }); continue; }
+      if (_cycleSet.has(a.id)) { cycles.push({ id: a.id, code: a.code, name_ar: a.name_ar }); continue; }
+      const d = _depthMap.get(a.id) || coaTree.DEPTH_BASE;
       if (Number(a.level || 0) !== d) {
         levelMismatch.push({ id: a.id, code: a.code, name_ar: a.name_ar, storedLevel: a.level, computedLevel: d });
       }
@@ -3476,23 +3537,13 @@ router.post('/gl/auto-fix', requireCapability('finance.accounts.manage'), async 
       result.orphansPromoted++;
     }
 
-    // 2. Recompute levels for everyone
-    const [allAccs] = await db.query('SELECT id, parent_id, level FROM gl_accounts');
-    const byId = {}; allAccs.forEach(a => { byId[a.id] = a; });
-    const depth = function(a, seen) {
-      if (!a || !a.parent_id) return 0;
-      if (seen.has(a.id)) return 0;
-      seen.add(a.id);
-      const p = byId[a.parent_id];
-      return p ? depth(p, seen) + 1 : 0;
-    };
-    for (const a of allAccs) {
-      const d = depth(a, new Set());
-      if (Number(a.level || 0) !== d) {
-        await db.query('UPDATE gl_accounts SET level = ? WHERE id = ?', [d, a.id]);
-        result.levelsCorrected++;
-      }
-    }
+    // 2. Recompute levels for everyone.
+    // A FOURTH private 0-based depth walk used to live here — and unlike the
+    // diagnostic one, this endpoint WRITES. Every account it "corrected" was
+    // pushed one level too shallow, which is one of the ways the chart ended up
+    // 0-based in the first place. One shared 1-based derive now.
+    const levels = await coaTree.recomputeLevels(db);
+    result.levelsCorrected += levels.updated;
 
     res.json({ success: true, ...result });
   } catch(e) {

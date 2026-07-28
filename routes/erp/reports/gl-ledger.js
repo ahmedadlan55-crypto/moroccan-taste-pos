@@ -31,10 +31,14 @@ router.get('/reports/gl-ledger-multi', requireCapability('finance.reports.view')
     const statusClause = "j.status IN ('posted','approved')";
 
     // 1) Load all active accounts (with parent_id)
+    // `is_folder` is selected because the leaf test below needs it — checking
+    // children alone classified a childless folder as a postable leaf here
+    // while every other engine rolled it up. Canonical display order too, so
+    // the ledger and the chart-of-accounts screen list accounts identically.
     const [accts] = await db.query(
-      `SELECT id, code, name_ar, type, parent_id
-       FROM gl_accounts WHERE is_active = 1 OR is_active IS NULL
-       ORDER BY code`);
+      `SELECT id, code, name_ar, type, parent_id, is_folder, display_order
+       FROM gl_accounts a WHERE is_active = 1 OR is_active IS NULL
+       ORDER BY ${coaTree.ORDER_BY('a')}`);
 
     // 2) Compute opening balance for each account (entries before 'from')
     const openingMap = {};
@@ -88,7 +92,11 @@ router.get('/reports/gl-ledger-multi', requireCapability('finance.reports.view')
     const childrenSet = new Set();
     accts.forEach(a => { if (a.parent_id) childrenSet.add(a.parent_id); });
     const isMain = (a) => !a.parent_id;
-    const isLeaf = (a) => !childrenSet.has(a.id);
+    // AND-based, matching lib/coa/tree.js and the trial balance: a childless
+    // account someone flagged as a folder is NOT a posting leaf. Checking
+    // children alone made this report treat such an account as postable while
+    // every other engine rolled it up — two screens, two answers.
+    const isLeaf = (a) => !Number(a.is_folder) && !childrenSet.has(a.id);
 
     const sections = [];
     accts.forEach(a => {

@@ -3,13 +3,15 @@
  * routes/accounting.js — mounted at /api/accounting.
  * GET /accounts/search — searchable GL-account picker for every account field.
  * Server-side filter over code / name_ar / name_en / type. When postingOnly is
- * set (default for transaction contexts) it returns ONLY active, postable-LEAF
- * accounts (no children) — a header/parent account can never be selected. The
- * usage context applies an allow-list of account types on the SERVER, so the
- * client can never post to an arbitrary account code.
+ * set (default for transaction contexts) it returns ONLY active POSTING LEAVES
+ * — not a folder AND childless, the shared definition in lib/coa/tree.js — so
+ * a header/parent account can never be selected. The usage context applies an
+ * allow-list of account types on the SERVER, so the client can never post to
+ * an arbitrary account code.
  */
 const router = require('express').Router();
 const db = require('../db/connection');
+const coaTree = require('../lib/coa/tree');
 
 // context → allowed account types (mirrors inventory-transactions ACCOUNT_USAGE).
 const CONTEXT_TYPES = {
@@ -33,8 +35,19 @@ router.get('/accounts/search', async (req, res) => {
 
     const where = ['1=1']; const params = [];
     if (postingOnly) {
-      where.push('a.is_active=1');
-      where.push('NOT EXISTS (SELECT 1 FROM gl_accounts c WHERE c.parent_id=a.id)'); // leaf only
+      // THE PICKER EVERY TRANSACTION SCREEN USES. It checked "has no children"
+      // and nothing else, while the trial balance, the account-role registry
+      // and the P&L / balance-sheet / cash-flow engines all require
+      // `!is_folder AND !hasChildren`. So a CHILDLESS account someone marked as
+      // a folder was selectable here and postable — and then the trial balance
+      // refused to count it in the Grand Total, reported it as
+      // `nonLeafPostingActivity`, and flipped `isClean` to false. The report
+      // was right; this query was the one letting the bad posting in.
+      //
+      // One shared predicate now (lib/coa/tree.js POSTING_LEAF_SQL). Existing
+      // history is untouched — this stops NEW bad postings; the repair for
+      // rows already posted is /gl/accounts/:id/folder on the CoA health screen.
+      where.push(coaTree.POSTING_LEAF_SQL('a'));
     }
     const allow = CONTEXT_TYPES[context];
     if (allow && allow.length) { where.push('a.type IN (' + allow.map(() => '?').join(',') + ')'); params.push(...allow); }
@@ -42,7 +55,7 @@ router.get('/accounts/search', async (req, res) => {
     if (q) { where.push('(a.code LIKE ? OR a.name_ar LIKE ? OR a.name_en LIKE ?)'); params.push(q + '%', '%' + q + '%', '%' + q + '%'); }
 
     const [rows] = await db.query(
-      'SELECT a.id, a.code, a.name_ar, a.name_en, a.type, a.parent_id, a.is_active FROM gl_accounts a WHERE ' + where.join(' AND ') + ' ORDER BY a.code LIMIT ? OFFSET ?',
+      'SELECT a.id, a.code, a.name_ar, a.name_en, a.type, a.parent_id, a.is_active FROM gl_accounts a WHERE ' + where.join(' AND ') + ' ORDER BY ' + coaTree.ORDER_BY('a') + ' LIMIT ? OFFSET ?',
       params.concat([pageSize, offset]));
     const [cnt] = await db.query('SELECT COUNT(*) AS total FROM gl_accounts a WHERE ' + where.join(' AND '), params);
     res.json({

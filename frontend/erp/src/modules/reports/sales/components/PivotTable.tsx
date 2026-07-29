@@ -38,6 +38,17 @@ export interface PivotTableProps {
   expanded: Set<string>;
   onToggle: (key: string) => void;
   onRowClick?: (row: FlatPivotRow) => void;
+  /**
+   * Whole-period totals — the server's ROLLUP grand row, NOT the sum of the
+   * rows above. Those differ whenever a top/bottom-N or a page limit is in
+   * play, and the difference is the point: a "total" that only adds up what
+   * happens to be on screen is a number no one can reconcile to a ledger. Pass
+   * `result.totals` (QueryService computes it over the full GROUP BY,
+   * independent of limit/offset) and nothing else.
+   */
+  grandTotals?: Record<string, number | null>;
+  /** Row label for the grand-total row; required when grandTotals is given. */
+  grandTotalLabel?: string;
   className?: string;
 }
 
@@ -51,6 +62,12 @@ function cellValue(row: FlatPivotRow, measure: PivotMeasure): string {
   return typeof v === "number" && Number.isFinite(v) ? measure.format(v) : "—";
 }
 
+/** Same missing-value contract as cellValue, over a bare totals record. */
+function totalValue(totals: Record<string, number | null>, measure: PivotMeasure): string {
+  const v = totals[measure.id];
+  return typeof v === "number" && Number.isFinite(v) ? measure.format(v) : "—";
+}
+
 export function PivotTable({
   rows,
   subtotals,
@@ -60,6 +77,8 @@ export function PivotTable({
   expanded,
   onToggle,
   onRowClick,
+  grandTotals,
+  grandTotalLabel,
   className,
 }: PivotTableProps) {
   const t = useTx();
@@ -118,6 +137,27 @@ export function PivotTable({
   if (isMobile) {
     return (
       <div className={cn("space-y-2", className)} data-testid="pivot-cards">
+        {/* Leads on mobile rather than trailing: there is no sticky footer on a
+            card list, and a total placed after 500 cards is a total no one
+            reads. */}
+        {grandTotals && (
+          <article
+            data-testid="pivot-grand-total"
+            className="rounded-xl border-2 border-slate-300 bg-slate-100 p-3"
+          >
+            <span className="text-sm font-extrabold text-slate-900">{grandTotalLabel}</span>
+            <dl className="mt-2 grid grid-cols-2 gap-x-3 gap-y-1">
+              {measures.map((m) => (
+                <div key={m.id} className="flex items-baseline justify-between gap-2 text-xs">
+                  <dt className="shrink-0 font-bold text-slate-500">{m.label}</dt>
+                  <dd dir="ltr" className="min-w-0 truncate font-extrabold text-slate-900 tabular-nums">
+                    {totalValue(grandTotals, m)}
+                  </dd>
+                </div>
+              ))}
+            </dl>
+          </article>
+        )}
         {flat.map((row) => (
           <article
             key={row.key}
@@ -229,6 +269,25 @@ export function PivotTable({
               </tr>
             )}
           </tbody>
+          {/* Sticky to the BOTTOM of the same scroll container the body uses:
+              the total a reader wants to check a row against must not require
+              scrolling past a windowed list of 500 rows to reach. */}
+          {grandTotals && (
+            <tfoot className="sticky bottom-0 z-10">
+              <tr data-testid="pivot-grand-total" className="border-t-2 border-slate-300 bg-slate-100">
+                <td className="px-4 py-3 text-sm font-extrabold text-slate-900">{grandTotalLabel}</td>
+                {measures.map((m) => (
+                  <td
+                    key={m.id}
+                    dir="ltr"
+                    className="px-3 py-3 text-end text-sm font-extrabold tabular-nums text-slate-900"
+                  >
+                    {totalValue(grandTotals, m)}
+                  </td>
+                ))}
+              </tr>
+            </tfoot>
+          )}
         </table>
       </div>
     </div>

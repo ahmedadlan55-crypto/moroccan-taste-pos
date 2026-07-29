@@ -163,7 +163,11 @@ export function Combobox<T extends string>({
               <li className="px-3 py-3 text-xs font-medium text-slate-400">{emptyText ?? t("sharedUi.combobox.empty")}</li>
             ) : (
               filtered.map((o, i) => (
-                <li key={o.value} role="option" aria-selected={o.value === value}>
+                // aria-disabled belongs on the element carrying role="option":
+                // the `disabled` attribute sits on the inner <button>, which is
+                // not the node a screen reader announces, so an unavailable
+                // option was read out as selectable.
+                <li key={o.value} role="option" aria-selected={o.value === value} aria-disabled={o.disabled || undefined}>
                   <button
                     type="button"
                     disabled={o.disabled}

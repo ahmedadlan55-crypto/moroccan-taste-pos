@@ -352,6 +352,25 @@ export const salesReports = {
     topN: "Result count",
   },
 
+  groupBy: {
+    label: "Group by",
+    pickFirst: "Pick a grouping",
+    pickNext: "Add a grouping level",
+    kinds: {
+      time: "Time",
+      scope: "Scope",
+      attribute: "Attributes",
+      employee: "People",
+      constant: "Constant",
+    },
+    noSource: "No data source for this dimension yet",
+    blockedBy: "Unavailable with:",
+    alreadyUsed: "Used in another level",
+    droppedNotice: "Dropped grouping levels the chosen metrics cannot support: {dims}",
+    grandTotal: "Grand total",
+    grandTotalNote: "The grand total covers the whole period, not only the rows shown",
+  },
+
   orders: {
     colInvoice: "Invoice no.",
   },

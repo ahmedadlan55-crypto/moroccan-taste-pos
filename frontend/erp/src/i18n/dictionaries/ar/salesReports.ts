@@ -365,6 +365,25 @@ export const salesReports = {
     topN: "عدد النتائج",
   },
 
+  groupBy: {
+    label: "التجميع حسب",
+    pickFirst: "اختر بُعد التجميع",
+    pickNext: "أضف مستوى تجميع",
+    kinds: {
+      time: "الزمن",
+      scope: "النطاق",
+      attribute: "الخصائص",
+      employee: "الموظفون",
+      constant: "ثابت",
+    },
+    noSource: "لا يوجد مصدر بيانات لهذا البُعد بعد",
+    blockedBy: "غير متاح مع:",
+    alreadyUsed: "مستخدَم في مستوى آخر",
+    droppedNotice: "أُسقطت مستويات تجميع لا تدعمها المقاييس المختارة: {dims}",
+    grandTotal: "الإجمالي العام",
+    grandTotalNote: "الإجمالي العام محسوب على كامل الفترة، لا على الصفوف الظاهرة فقط",
+  },
+
   orders: {
     colInvoice: "رقم الفاتورة",
   },

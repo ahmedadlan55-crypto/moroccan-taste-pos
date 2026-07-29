@@ -102,8 +102,34 @@ export interface AnalyticsResult {
 
 /** Registry payload of GET /api/analytics/metadata (metric/dimension catalog). */
 export interface AnalyticsRegistry {
-  metrics: Array<{ id: string; kind: string; format: string; equationKey?: string; requiresCap?: string }>;
-  dimensions: Array<{ id: string; kind: string; groupable: boolean; requiresCap?: string }>;
+  metrics: Array<{
+    id: string;
+    kind: string;
+    format: string;
+    equationKey?: string;
+    requiresCap?: string;
+    /** Single fact id — null for every derived metric. Superseded by `facts`. */
+    fact?: string | null;
+    /**
+     * Every fact this metric needs: itself if additive, its inputs' facts if
+     * derived. Group By compares these against a dimension's `facts` to
+     * disable illegal pairs BEFORE the planner 422s the whole request — see
+     * lib/grouping.ts. Absent on an older server (degraded mode).
+     */
+    facts?: string[];
+  }>;
+  dimensions: Array<{
+    id: string;
+    kind: string;
+    groupable: boolean;
+    requiresCap?: string;
+    /**
+     * Fact ids this dimension can be expressed on, INCLUDING the derived-js
+     * path (meal_period has no SQL `facts` map and is planned from
+     * `sourceColumn`). Empty means no projector backs it yet.
+     */
+    facts?: string[];
+  }>;
 }
 
 /* ── wire adapter (E2E-wave integration fix) ─────────────────────

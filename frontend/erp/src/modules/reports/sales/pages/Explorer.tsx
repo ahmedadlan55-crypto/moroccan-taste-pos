@@ -21,7 +21,6 @@ import {
   MetricCard,
   MultiSelectCombobox,
   SegmentedControl,
-  Select,
   type MetricTone,
 } from "@/shared/ui";
 import { useUrlFilters } from "@/shared/hooks/useUrlFilters";
@@ -46,40 +45,49 @@ import {
 import { useAnalyticsQuery, useAnalyticsRegistry } from "../lib/useAnalyticsQuery";
 import { METRIC_CODES } from "../lib/registry-fixture";
 import { PivotTable, type PivotMeasure } from "../components/PivotTable";
+import { GroupByControl, MAX_GROUP_DIMS } from "../components/GroupByControl";
+import { metricConflicts, reconcile } from "../lib/grouping";
 import type { FlatPivotRow } from "../lib/pivot";
 
 const SEGMENT = "explorer";
 
-/** Curated primary/secondary dimensions this wave. */
-const EXPLORER_DIMS = [
-  "branch",
-  "business_day",
-  "channel",
-  "order_type",
-  "payment_method",
-  "cashier",
-  "menu_item",
-  "hour",
-] as const;
-type ExplorerDim = (typeof EXPLORER_DIMS)[number];
+/**
+ * Dimensions that PIN a shared filter when their row is clicked. This is the
+ * drill map, NOT the grouping menu — grouping is open to every groupable
+ * dimension the registry exposes (GroupByControl), and a dimension absent here
+ * simply groups without drilling.
+ */
+const DRILL_PARAM: Record<string, (key: string) => Record<string, string>> = {
+  branch: (k) => ({ branchId: k }),
+  business_day: (k) => ({ from: k, to: k, preset: "custom" }),
+  channel: (k) => ({ channel: k }),
+  order_type: (k) => ({ orderType: k }),
+  payment_method: (k) => ({ paymentMethod: k }),
+  hour: (k) => ({ hour: k }),
+  menu_item: (k) => ({ menuItemId: k }),
+};
 
 /** The drill chain; a leaf click on the LAST link navigates to orders. */
-const DRILL_CHAIN: ExplorerDim[] = ["branch", "business_day", "hour", "cashier"];
+const DRILL_CHAIN = ["branch", "business_day", "hour", "cashier"];
 
 const N_OPTIONS = ["10", "20", "50"] as const;
 
-/** Page-local URL codec — coexists with the shared codec on the same URL. */
+/**
+ * Page-local URL codec — coexists with the shared codec on the same URL.
+ *
+ * `g` is the grouping: up to MAX_GROUP_DIMS ids, outermost first. It REPLACES
+ * the old `by` + `second` pair, which are still read once (below) so that a
+ * bookmark, a saved view or a browser-history entry created before Group By
+ * still opens on the grouping its author meant.
+ */
 const explorerCodec = makeCodec({
-  by: stringParam("branch"),
+  g: csvParam(["branch"]),
+  by: stringParam(""),
   second: stringParam(""),
   m: csvParam(["net_ex_vat", "orders"]),
   n: stringParam("10"),
   dir: stringParam("top"),
 });
-
-function asDim(raw: string, fallback: ExplorerDim = "branch"): ExplorerDim {
-  return (EXPLORER_DIMS as readonly string[]).includes(raw) ? (raw as ExplorerDim) : fallback;
-}
 
 /* ── tiny local helpers (page-local copies by design) ── */
 
@@ -115,10 +123,18 @@ function CompletenessNotice({ meta }: { meta?: AnalyticsResult["meta"] }) {
   );
 }
 
-/** Merge extra params over the CURRENT search and render a hub segment URL. */
+/**
+ * Merge extra params over the CURRENT search and render a hub segment URL.
+ * An EMPTY value deletes the param rather than writing `k=` — the drill uses
+ * that to retire the legacy `by`/`second` pair, and a URL carrying empty keys
+ * is one a user cannot read.
+ */
 function segmentHref(search: string, segment: string, extra: Record<string, string>): string {
   const sp = new URLSearchParams(search);
-  for (const [k, v] of Object.entries(extra)) sp.set(k, v);
+  for (const [k, v] of Object.entries(extra)) {
+    if (v === "") sp.delete(k);
+    else sp.set(k, v);
+  }
   const qs = sp.toString();
   return `/reports/sales/${segment}${qs ? `?${qs}` : ""}`;
 }
@@ -151,13 +167,24 @@ export default function Explorer() {
   const registry = useAnalyticsRegistry();
   const [expanded, setExpanded] = useState<Set<string>>(() => new Set());
 
-  const by = asDim(page.filters.by);
-  const second = page.filters.second === "" ? null : asDim(page.filters.second, "business_day");
   const metricIds = page.filters.m.length > 0 ? page.filters.m : ["net_ex_vat"];
   const topBottom = page.filters.dir === "bottom" ? "bottom" : "top";
   const limit = (N_OPTIONS as readonly string[]).includes(page.filters.n) ? Number(page.filters.n) : 10;
 
-  const dims = second && second !== by ? [by, second] : [by];
+  // Legacy `by`/`second` win when present — an old link carries them and no
+  // `g`, and silently rewriting such a link to the default grouping would open
+  // a DIFFERENT report than the one its author shared.
+  const legacyDims = [page.filters.by, page.filters.second].filter(Boolean);
+  const requestedDims = (legacyDims.length ? legacyDims : page.filters.g).slice(0, MAX_GROUP_DIMS);
+
+  // A grouping can arrive that the CURRENT metric set cannot support (a saved
+  // view, a shared link, Back after changing metrics). Submitting it would 422
+  // the entire request, so the illegal levels are dropped and named instead.
+  const { dimensions: dims, dropped } = useMemo(
+    () => reconcile(registry.data, metricIds, requestedDims),
+    [registry.data, metricIds.join("|"), requestedDims.join("|")],
+  );
+  const by = dims[0] ?? "";
   const sortMetric = metricIds[0];
 
   const base = buildFiltersBody(filters);
@@ -188,10 +215,32 @@ export default function Explorer() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [metricIds.join("|"), dims.join("|"), sortMetric, topBottom, limit]);
 
+  // Legality runs in BOTH directions. GroupByControl disables the dimensions
+  // the chosen metrics cannot express; this disables the metrics the chosen
+  // GROUPING cannot express — otherwise adding `cogs` to a report grouped by
+  // payment method 422s the whole screen, and the user's most natural reading
+  // is that the cost data is missing rather than that the pair is impossible.
+  const conflicts = useMemo(
+    () => metricConflicts(registry.data, registry.data?.metrics?.map((m) => m.id) ?? [], dims),
+    [registry.data, dims.join("|")],
+  );
+
   const metricOptions = useMemo(() => {
     const ids = registry.data?.metrics?.map?.((m) => m.id) ?? [...METRIC_CODES];
-    return ids.map((id) => ({ value: id, label: t(`salesReports.metrics.${id}`) }));
-  }, [registry.data, t]);
+    return ids.map((id) => {
+      const blocking = conflicts[id];
+      return {
+        value: id,
+        label: t(`salesReports.metrics.${id}`),
+        // Never disable a metric the user has ALREADY chosen: it would be
+        // stuck in the report with no way to take it out.
+        disabled: !!blocking && !metricIds.includes(id),
+        sublabel: blocking
+          ? `${t("salesReports.groupBy.blockedBy")} ${blocking.map((d) => t(`salesReports.dims.${d}`)).join("، ")}`
+          : undefined,
+      };
+    });
+  }, [registry.data, conflicts, metricIds.join("|"), t]);
 
   const measures = useMemo<PivotMeasure[]>(
     () =>
@@ -202,12 +251,6 @@ export default function Explorer() {
       })),
     [metricIds, registry.data, t],
   );
-
-  const dimOptions = EXPLORER_DIMS.map((d) => ({ value: d, label: t(`salesReports.dims.${d}`) }));
-  const secondOptions = [
-    { value: "", label: t("common.none") },
-    ...dimOptions.filter((o) => o.value !== by),
-  ];
 
   const drillLeaf = (row: FlatPivotRow) => {
     const key = String(row.keys[0] ?? "");
@@ -225,17 +268,19 @@ export default function Explorer() {
     // over the first: the drill advanced `by` but silently DROPPED the filter
     // it had just pinned. Merging both changes into one URL fixes the drill
     // and keeps it a single history entry the user can Back out of.
-    const extra: Record<string, string> = {};
-    if (by === "branch") extra.branchId = key;
-    else if (by === "business_day") { extra.from = key; extra.to = key; extra.preset = "custom"; }
-    else if (by === "channel") extra.channel = key;
-    else if (by === "order_type") extra.orderType = key;
-    else if (by === "payment_method") extra.paymentMethod = key;
-    else if (by === "hour") extra.hour = key;
-    else if (by === "menu_item") extra.menuItemId = key;
-    // Advance `by` along the chain (dimensions outside the chain only pin).
+    const pin = DRILL_PARAM[by];
+    if (!pin) return; // groupable but not drillable — grouping still works
+    const extra: Record<string, string> = { ...pin(key) };
+    // Advance the OUTERMOST grouping level along the chain (levels below it are
+    // preserved). Dimensions outside the chain only pin their filter.
     const at = DRILL_CHAIN.indexOf(by);
-    if (at !== -1 && at < DRILL_CHAIN.length - 1) extra.by = DRILL_CHAIN[at + 1];
+    if (at !== -1 && at < DRILL_CHAIN.length - 1) {
+      extra.g = [DRILL_CHAIN[at + 1], ...dims.slice(1)].join(",");
+      // The legacy pair must not survive the drill: it is read in preference
+      // to `g`, so leaving it behind would pin the pre-drill grouping forever.
+      extra.by = "";
+      extra.second = "";
+    }
     navigate(segmentHref(location.search, "explorer", extra));
   };
 
@@ -269,28 +314,33 @@ export default function Explorer() {
 
   const rows = query.data?.rows ?? [];
 
+  // A level was dropped because the CURRENT metrics cannot express it. Naming
+  // both sides matters: "grouping removed" alone reads as a bug, while "removed
+  // X because Y asks for it" tells the user which one to change.
+  const droppedNotice = dropped.length > 0 && (
+    <div
+      data-testid="grouping-dropped-notice"
+      className="flex flex-wrap items-center gap-2 rounded-xl border border-amber-200 bg-amber-50 p-3 text-xs font-bold text-amber-800"
+    >
+      <span>
+        {t("salesReports.groupBy.droppedNotice", {
+          dims: dropped.map((d) => t(`salesReports.dims.${d}`)).join("، "),
+        })}
+      </span>
+    </div>
+  );
+
   const controls = (
     <div className="surface flex flex-wrap items-end gap-3 p-4" data-testid="explorer-controls">
-      <label className="flex min-w-40 flex-col gap-1.5">
-        <span className="text-xs font-extrabold text-slate-500">{t("salesReports.explorer.primaryDim")}</span>
-        <Select
-          value={by}
-          onChange={(e) =>
-            page.patch({ by: e.target.value, second: page.filters.second === e.target.value ? "" : page.filters.second })
-          }
-          options={dimOptions}
-          aria-label={t("salesReports.explorer.primaryDim")}
-        />
-      </label>
-      <label className="flex min-w-40 flex-col gap-1.5">
-        <span className="text-xs font-extrabold text-slate-500">{t("salesReports.explorer.secondaryDim")}</span>
-        <Select
-          value={second ?? ""}
-          onChange={(e) => page.patch({ second: e.target.value })}
-          options={secondOptions}
-          aria-label={t("salesReports.explorer.secondaryDim")}
-        />
-      </label>
+      <GroupByControl
+        registry={registry.data}
+        metricIds={metricIds}
+        value={dims}
+        // Writing `g` also RETIRES the legacy pair, which is read in preference
+        // to it — without the reset, every grouping change on a legacy URL
+        // would be silently ignored.
+        onChange={(next) => page.patch({ g: next.length ? next : ["branch"], by: "", second: "" })}
+      />
       <div className="flex min-w-52 flex-col gap-1.5">
         <span className="text-xs font-extrabold text-slate-500">{t("salesReports.builder.metrics")}</span>
         <MultiSelectCombobox
@@ -339,6 +389,7 @@ export default function Explorer() {
   if (rows.length === 0) {
     return (
       <section className="space-y-4" data-testid="page-explorer">
+        {droppedNotice}
         {controls}
         <EmptyState title={t("salesReports.states.empty")} />
       </section>
@@ -350,6 +401,7 @@ export default function Explorer() {
   return (
     <section className="space-y-4" data-testid="page-explorer">
       <CompletenessNotice meta={query.data?.meta} />
+      {droppedNotice}
       {controls}
 
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4" data-testid="kpi-row">
@@ -374,6 +426,11 @@ export default function Explorer() {
         rowDims={dims}
         rowDimLabels={dims.map((d) => t(`salesReports.dims.${d}`))}
         measures={measures}
+        // The server's ROLLUP grand row, not a sum of what is on screen: a
+        // top/bottom-N is almost always active here, so the two differ and only
+        // one of them reconciles to the period.
+        grandTotals={query.data?.totals}
+        grandTotalLabel={t("salesReports.groupBy.grandTotal")}
         expanded={expanded}
         onToggle={(key) =>
           setExpanded((prev) => {

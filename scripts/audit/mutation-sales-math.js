@@ -154,6 +154,12 @@ const CATALOG = [
     replace: 'return fromMinor(toMinor(invoicedInclVat) - toMinor(invoiceTotal));',
   },
   {
+    id: 'EQ-05e', target: 'equations',
+    description: 'netVat: returns VAT ADDED instead of credited back (− → +)',
+    find: 'return fromMinor(toMinor(vatOnSales) - toMinor(vatOnReturns));',
+    replace: 'return fromMinor(toMinor(vatOnSales) + toMinor(vatOnReturns));',
+  },
+  {
     id: 'EQ-06', target: 'equations',
     description: 'netInclVat: stored VAT subtracted instead of added (+ → −)',
     find: 'return fromMinor(toMinor(netExVat) + toMinor(vatAmount));',
@@ -471,21 +477,58 @@ function sha256(buf) {
   return crypto.createHash('sha256').update(buf).digest('hex');
 }
 
+/**
+ * LINE ENDINGS ARE NOT PART OF THE MUTANT.
+ *
+ * A dozen catalog entries are MULTI-LINE snippets written with "\n". The
+ * targets are checked out through git on Windows, where core.autocrlf hands
+ * back CRLF — so every one of those snippets matched ZERO times and the
+ * harness exited 2 with "catalog drift — the source has evolved past the
+ * catalog". It had not evolved at all; the bytes differed by a \r per line.
+ *
+ * That failure mode is worse than it looks, because this harness is what
+ * proves the money tests are real. Red on a fresh Windows clone, for a reason
+ * that reads like a genuine source/catalog divergence, is exactly the kind of
+ * gate failure people learn to wave through.
+ *
+ * So matching happens on a NORMALISED copy, and the patch is written back with
+ * the target file's OWN newline so the mutated file stays byte-plausible and
+ * the SHA restore check still means something.
+ */
+function normalizeNewlines(s) {
+  return s.replace(/\r\n/g, '\n');
+}
+
+/** The newline this file actually uses — CRLF if any CRLF is present. */
+function dominantNewline(text) {
+  return /\r\n/.test(text) ? '\r\n' : '\n';
+}
+
 function countOccurrences(haystack, needle) {
+  const h = normalizeNewlines(haystack);
+  const n = normalizeNewlines(needle);
   let count = 0, idx = 0;
   for (;;) {
-    idx = haystack.indexOf(needle, idx);
+    idx = h.indexOf(n, idx);
     if (idx === -1) return count;
     count++;
     idx += 1; // overlapping-safe; find snippets are code lines, overlap is drift anyway
   }
 }
 
-/** Literal splice — never String.replace(), whose `$` sequences are magic. */
+/**
+ * Literal splice — never String.replace(), whose `$` sequences are magic.
+ * Indices are computed on the normalised text, so the splice is done on the
+ * normalised text too and the result is re-encoded to the file's own newline.
+ */
 function applyMutant(text, find, replace) {
-  const i = text.indexOf(find);
+  const nl = dominantNewline(text);
+  const h = normalizeNewlines(text);
+  const f = normalizeNewlines(find);
+  const i = h.indexOf(f);
   if (i === -1) return null;
-  return text.slice(0, i) + replace + text.slice(i + find.length);
+  const spliced = h.slice(0, i) + normalizeNewlines(replace) + h.slice(i + f.length);
+  return nl === '\r\n' ? spliced.replace(/\n/g, '\r\n') : spliced;
 }
 
 function stripAnsi(s) {

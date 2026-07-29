@@ -225,6 +225,7 @@ export const salesReports = {
     sales_before_discount: "Sales before discount (incl. VAT)",
     net_product_sales: "Net sales after returns (incl. VAT)",
     net_product_sales_ex_vat: "Net sales after returns (ex. VAT)",
+    net_vat: "Net output VAT (sales − returns)",
     statement_variance: "Invoice headers vs lines",
     qty_net: "Net quantity",
     avg_ticket: "Average ticket",
@@ -301,6 +302,7 @@ export const salesReports = {
     salesBeforeDiscount: "Invoiced (incl. VAT) + discounts given — the discount is recorded VAT-inclusive only, so it is added back in the same space rather than divided by the tax rate.",
     netSalesInclVat: "Invoiced (incl. VAT) − returns (incl. VAT).",
     netSalesExVat: "Net sales (ex. VAT) − returns (ex. VAT).",
+    netVat: "VAT on sales less VAT credited back on returns; this is the figure a return carries, not VAT on sales alone.",
     statementVariance: "Invoice headers − the sum of their lines. Zero whenever the line projection ran; non-zero exposes a header with no lines.",
     netQuantity: "Quantity sold − quantity returned.",
     avgTicket: "Net sales (ex. VAT) ÷ orders.",
@@ -353,6 +355,11 @@ export const salesReports = {
     top: "Top",
     bottom: "Bottom",
     topN: "Result count",
+  },
+
+  filing: {
+    title: "VAT return detail",
+    note: "Base and tax on both the sales and returns sides, per category and rate. Net output VAT = VAT on sales less VAT credited back on returns; a return is credited in the period it was recorded, not the period of the original sale.",
   },
 
   basis: {

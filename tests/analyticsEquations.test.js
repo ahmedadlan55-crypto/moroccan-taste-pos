@@ -115,6 +115,15 @@ test('salesBeforeDiscount adds the discount back in the space it was recorded in
   // change this expectation, which is the whole reason it is asserted.
   eq(E.salesBeforeDiscount(0, 15.75), 15.75, 'a fully discounted period is all discount');
 });
+test('netVat = VAT on sales − VAT credited back on returns', () => {
+  eq(E.netVat(150, 0), 150, 'no returns ⇒ the filing figure is VAT on sales');
+  eq(E.netVat(150, 37.5), 112.5);
+  // The defect this metric exists to fix: reporting vat_amount alone as "the
+  // VAT" overstates the liability by exactly the returns VAT, so the gap must
+  // be real and must not be clamped away.
+  eq(E.netVat(150, 200), -50, 'a month where refunds exceed sales VAT goes negative, not to zero');
+  eq(E.netVat(0.1 + 0.2, 0.1), 0.2, 'halala math, not float math');
+});
 test('statementVariance = invoice headers − invoice lines (0 when the projection ran)', () => {
   eq(E.statementVariance(1071.5, 1071.5), 0);
   eq(E.statementVariance(1071.5, 1000), 71.5, 'a lineless backfilled header shows up here');

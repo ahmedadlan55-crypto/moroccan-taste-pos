@@ -54,6 +54,7 @@ export const METRIC_CODES = [
   // statement built from them cannot silently mix two (see metrics.js).
   "net_product_sales",
   "net_product_sales_ex_vat",
+  "net_vat",
   "sales_before_discount",
   "statement_variance",
   "qty_net",
@@ -142,6 +143,7 @@ export const EQUATION_KEYS = [
   "netInclVat",
   "netSalesInclVat",
   "netSalesExVat",
+  "netVat",
   "salesBeforeDiscount",
   "statementVariance",
   "netQuantity",

@@ -9,6 +9,7 @@
  * actor comes from the JWT. GL postings go through the safe lib/glPosting poster.
  */
 const router = require('express').Router();
+const acctDate = require('../lib/accountingDate');
 const db = require('../db/connection');
 const glPosting = require('../lib/glPosting');
 const requireCapability = require('../middleware/requireCapability');
@@ -186,7 +187,7 @@ router.post('/statements/:id/adjust', CAP.manage, async (req, res) => {
       : [{ accountCode: contraCode, debit: amt, credit: 0, description: description || 'رسوم بنكية' },
          { accountCode: bankCode, debit: 0, credit: amt, description: description || 'رسوم بنكية' }];
     const posted = await glPosting.postJournal(db, {
-      journalDate: new Date().toISOString().slice(0, 10),
+      journalDate: acctDate.journalDate(),
       description: 'تسوية بنكية — ' + (isInterest ? 'فائدة' : 'رسوم') + (description ? ' — ' + description : ''),
       referenceType: 'reconciliation', referenceId: req.params.id, postedBy: _actor(req), status: 'posted', entries,
     });

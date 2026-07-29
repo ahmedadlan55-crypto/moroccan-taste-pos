@@ -1,4 +1,5 @@
 const router = require('express').Router();
+const acctDate = require('../lib/accountingDate');
 const db = require('../db/connection');
 const bcrypt = require('bcryptjs');
 const { isTruthy } = require('../lib/settingsKeys');
@@ -1901,7 +1902,7 @@ router.post('/', requireCapability('pos.use'), async (req, res) => {
         // all carry zero cost): skip posting rather than fail on all-zero lines.
         if (entries.length) {
           const post = await gl.postJournal(db, {
-            journalDate: now.toISOString().slice(0, 10),
+            journalDate: acctDate.journalDate(now),
             description: (invTotal > 0 ? 'Sale ' : 'Sale (comp — zero total) ') + orderId + ' (' + (payStr || '—') + ')',
             referenceType: 'Sale',
             referenceId: orderId,
@@ -1929,7 +1930,7 @@ router.post('/', requireCapability('pos.use'), async (req, res) => {
             if (_amt > 0) {
               await gl.ensureCoreAccounts(db); // idempotent — seeds 5500 + 2320 if missing
               const cPost = await gl.postJournal(db, {
-                journalDate: now.toISOString().slice(0, 10),
+                journalDate: acctDate.journalDate(now),
                 description: 'عمولة قناة ' + (resolvedChannelName || '') + ' — ' + orderId,
                 referenceType: 'ChannelCommission',
                 referenceId: orderId,
@@ -2608,12 +2609,22 @@ async function _reverseSaleEffects(conn, orderId, username, opts) {
     try { await recomputeInvItemStock(c, id); } catch (_) {}
   }
 
-  // 4. Reverse the GL journal for this sale
+  // 4. Reverse the GL journals for this sale.
+  //
+  // BOTH reference types, and that is the fix: a sale on a delivery channel
+  // posts a SECOND journal — Dr 5500 commission / Cr 2320 payable to the
+  // platform — under referenceType 'ChannelCommission' (see the posting site
+  // in this file). This query used to name only 'Sale', so voiding an
+  // Uber/HungerStation order removed the revenue, VAT and COGS and left the
+  // commission journal standing: a permanent expense and a permanent payable
+  // for an order that no longer exists. Nothing pointed at it afterwards — the
+  // sale row could even be hard-deleted underneath it — so it was unreachable
+  // for anyone trying to clean it up by hand.
   let reversedGl = false;
   try {
     const [journals] = await c.query(
-      'SELECT id FROM gl_journals WHERE reference_type = ? AND reference_id = ?',
-      ['Sale', orderId]);
+      'SELECT id FROM gl_journals WHERE reference_type IN (?, ?) AND reference_id = ?',
+      ['Sale', 'ChannelCommission', orderId]);
     for (const j of journals) {
       const [entries] = await c.query('SELECT * FROM gl_entries WHERE journal_id = ?', [j.id]);
       for (const e of entries) {

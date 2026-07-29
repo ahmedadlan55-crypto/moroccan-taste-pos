@@ -1,4 +1,5 @@
 const router = require('express').Router();
+const acctDate = require('../lib/accountingDate');
 const db = require('../db/connection');
 const { recomputeInvItemStock } = require('../lib/stockRecompute');
 const POLICY = require('../lib/inventoryItemPolicy');
@@ -399,7 +400,7 @@ router.post('/receive/:id', BACKOFFICE, async (req, res) => {
         });
 
         const post = await gl.postJournal(db, {
-          journalDate: now.toISOString().slice(0, 10),
+          journalDate: acctDate.journalDate(now),
           description: 'استلام فاتورة شراء ' + id + (purchase.supplier_name ? ' — ' + purchase.supplier_name : ''),
           referenceType: 'PurchaseReceipt',
           referenceId: id,

@@ -17,6 +17,7 @@
  * journal-writing endpoints.
  */
 const router = require('express').Router();
+const acctDate = require('../lib/accountingDate');
 const db = require('../db/connection');
 const gl = require('../lib/glPosting');
 // v7.1 — waste must actually deduct warehouse stock + carry a document number.
@@ -1608,7 +1609,7 @@ router.post('/royalty-runs/:id/approve', requireCapability('royalty.manage'), as
           ? `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
           : String(d || '').slice(0, 10));
         const post = await gl.postJournal(conn, {
-          journalDate: ymd(run.run_date) || new Date().toISOString().slice(0, 10),
+          journalDate: ymd(run.run_date) || acctDate.journalDate(),
           description: 'Royalty accrual — ' + (run.period_start || '') + ' to ' + (run.period_end || ''),
           referenceType: 'RoyaltyRun',
           referenceId: req.params.id,
@@ -1983,7 +1984,7 @@ router.post('/waste-entries', requireCapability('waste.create'), async (req, res
 
     if (total > 0) {
       const post = await gl.postJournal(db, {
-        journalDate: wasteDate || new Date().toISOString().slice(0, 10),
+        journalDate: acctDate.toAccountingDate(wasteDate || undefined),
         description: 'Waste — ' + (reason || 'other'),
         referenceType: 'WasteEntry',
         referenceId: id,
@@ -2153,7 +2154,7 @@ router.post('/purchase-receipts', requireCapability('purchases.create'), async (
       brandId: brandId || null
     });
     const post = await gl.postJournal(db, {
-      journalDate: receiptDate || new Date().toISOString().slice(0, 10),
+      journalDate: acctDate.toAccountingDate(receiptDate || undefined),
       description: 'Purchase receipt ' + rcpNumber,
       referenceType: 'PurchaseReceipt',
       referenceId: id,

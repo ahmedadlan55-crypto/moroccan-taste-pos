@@ -24,6 +24,8 @@
  */
 
 const router = require('express').Router();
+const acctDate = require('../../lib/accountingDate');
+const glPosting = require('../../lib/glPosting');
 const db = require('../../db/connection');
 const requireCapability = require('../../middleware/requireCapability');
 
@@ -203,11 +205,30 @@ router.post('/periods/:label/reopen',      requireCapability('finance.periods.ma
  */
 async function assertPeriodOpen(conn, date, brandId, branchId) {
   const c = conn || db;
-  const d = (date instanceof Date)
-    ? (date.toISOString().slice(0, 10))
-    : String(date).slice(0, 10);
+  // Riyadh calendar date, not UTC. `toISOString()` here checked a 00:00–02:59
+  // sale against the PREVIOUS day's period — so a sale on the 1st was refused
+  // whenever the prior month was closed, and slipped into a month that was
+  // supposed to be finished whenever it was not. See lib/accountingDate.js.
+  const d = acctDate.toAccountingDate(date);
   const status = await _statusAt(c, d, brandId, branchId);
-  if (status === 'closed' || status === 'locked') {
+  // Same list glPosting blocks on — imported, not restated.
+  //
+  // These two guards used to disagree: this one blocked only {closed, locked}
+  // while lib/glPosting.js#isPeriodClosed also blocks {soft_close,
+  // soft_closed}. So a sale into a soft-closed period passed THIS check, ran
+  // the whole checkout, and then died inside postJournal with a generic
+  // «GL_POSTING_FAILED» that rolled everything back — the cashier saw an
+  // unexplained failure instead of «the period is closed».
+  //
+  // Aligning them cannot newly reject a sale that succeeds today: any sale
+  // that posts a journal already fails in that period. It only moves the
+  // refusal to the front, where it can say why.
+  //
+  // The FAIL DIRECTIONS stay deliberately opposite: _statusAt degrades to
+  // 'open' so a broken period table can never stop the register, while
+  // isPeriodClosed returns true so it can never let money into a closed book.
+  // Availability for the till, integrity for the ledger.
+  if (glPosting.PERIOD_CLOSED_STATUSES.includes(String(status || '').toLowerCase())) {
     const err = new Error('Accounting period for ' + d + ' is ' + status + ' — re-open or post to a later date');
     err.code = 'period_locked';
     err.status = 403;

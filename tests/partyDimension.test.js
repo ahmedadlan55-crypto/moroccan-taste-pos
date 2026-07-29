@@ -192,6 +192,46 @@ const code = (s) => s.split(/\r?\n/).filter((l) => !/^\s*(\/\/|\*|\/\*)/.test(l)
     /dim_required IS NULL OR dim_required = ''/.test(src));
 }
 
+// ── 11. AP ageing reads the LIVE ledger ──────────────────────────────────
+// It read the legacy `purchases` table, selected rows by matching free text in
+// payment_method, and looked for payments in `supplier_payments` — a table that
+// does not exist in this repository. That lookup sat in a bare catch, so every
+// supplier appeared 100% unpaid and the entire live V2 procurement ledger was
+// invisible to the report.
+{
+  const ap = code(read('routes', 'erp', 'reports', 'ap-aging.js'));
+  check('it no longer reads the legacy purchases table', !/FROM purchases/.test(ap));
+  check('it no longer looks for supplier_payments', !/supplier_payments/.test(ap));
+  check('it reads supplier_invoices', /FROM supplier_invoices/.test(ap));
+  check('…and nets allocations the way v_supplier_ap_balance does',
+    /payment_allocations pa/.test(ap) && /pa\.reversed = 0/.test(ap));
+  check('allocations are bounded by asOfDate (a back-dated report must not net future payments)',
+    /DATE\(pa\.created_at\) <= \?/.test(ap));
+
+  // "Overdue" is a statement about the agreed terms, not about the invoice date.
+  check('it ages by DUE date', /r\.due_date \|\| r\.issue_date/.test(ap));
+  check('…and declares that basis in the response', /agedBy: 'due_date'/.test(ap));
+  check('…and names the ledger that answered', /source: 'supplier_invoices'/.test(ap));
+
+  // An absent schema must never look like "you owe nobody anything".
+  check('a missing procurement schema is a 503, not an empty report',
+    /PROCUREMENT_SCHEMA_NOT_READY/.test(ap) && /status\(503\)/.test(ap));
+  check('no bare catch swallows the main query', !/catch \(_\) \{ \/\* table missing/.test(ap));
+  check('the date default is Riyadh-local, not UTC', !/toISOString/.test(ap));
+}
+
+// ── 12. The backfill targets tables that actually exist ──────────────────
+// The first version joined `ap_invoices` — which does not exist here. The
+// missing-table guard would have swallowed that as "this lane has nothing to
+// contribute", so the invoice lane would have backfilled nothing while
+// reporting success. Same wrong name that broke AP ageing.
+{
+  const src = code(read('lib', 'partyDimension', 'bootstrap.js'));
+  check('the invoice lane joins supplier_invoices', /JOIN supplier_invoices i/.test(src));
+  check('…and never ap_invoices', !/ap_invoices/.test(src));
+  check('there is a payment-allocation lane too', /JOIN payment_allocations pa/.test(src));
+}
+
 console.log(`\n${pass} passed, ${failures.length} failed`);
 if (failures.length) {
   console.error('\nFAILED:\n  ' + failures.join('\n  '));

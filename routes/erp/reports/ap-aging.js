@@ -1,22 +1,38 @@
 /**
- * routes/erp/reports/ap-aging.js — A/P (Accounts Payable) Aging report.
+ * routes/erp/reports/ap-aging.js — A/P (Accounts Payable) Aging.
  *
  * GET /api/erp/reports/ap-aging?asOfDate=YYYY-MM-DD&brandId=&branchId=
  *
- * Mirrors ar-aging.js but for `purchases` (supplier invoices). Buckets
- * any purchase with payment_method indicating credit/AR ('آجل', 'credit')
- * whose payments don't cover the total.
+ * ─── WHAT WAS WRONG ─────────────────────────────────────────────────────────
  *
- * Tolerant of:
- *   - Missing supplier_payments table → treats purchases as fully unpaid
- *   - Missing 'received' / 'paid' status columns → falls back to amount-only
+ * This report read the LEGACY `purchases` table, selected rows by matching
+ * free text in `payment_method` ('آجل' / 'credit'), and then looked for
+ * payments in a table called `supplier_payments` — which **does not exist in
+ * this repository at all**. That lookup sat in a bare `catch (_) {}`, so the
+ * paid amount silently resolved to zero for every row.
  *
- * v6.2.0 — Wave F.2
+ * The result: every supplier appeared 100% unpaid, and the entire live V2
+ * procurement ledger (`supplier_invoices` + `payment_allocations`) was
+ * invisible to the report. It was not approximately wrong; it was reporting on
+ * a subsystem the business had stopped using.
+ *
+ * ─── WHAT IT DOES NOW ───────────────────────────────────────────────────────
+ *
+ * Reads the same tables the procurement module and `v_supplier_ap_balance`
+ * read, so the aging report, the supplier list and the AP balance can no
+ * longer disagree — they are three views of one query shape.
+ *
+ * Ages by **DUE DATE**, not invoice date. "Overdue" is a statement about the
+ * agreed terms; ageing a 90-day-terms invoice from its issue date reports a
+ * supplier as 90 days late on the day the payment first becomes due.
+ * `issue_date` is the fallback only when no terms were recorded.
  */
 
 const router = require('express').Router();
 const db = require('../../../db/connection');
 const requireCapability = require('../../../middleware/requireCapability');
+
+const BUCKETS = ['0-30', '31-60', '61-90', '91-120', '120+'];
 
 function _bucket(days) {
   if (days <= 30)  return '0-30';
@@ -29,109 +45,127 @@ function _bucket(days) {
 function _daysBetween(a, b) {
   const aMs = (a instanceof Date) ? a.getTime() : new Date(a).getTime();
   const bMs = (b instanceof Date) ? b.getTime() : new Date(b).getTime();
+  if (isNaN(aMs) || isNaN(bMs)) return 0;
   return Math.max(0, Math.floor((bMs - aMs) / 86400000));
 }
 
+const emptyBuckets = () => BUCKETS.reduce((o, k) => { o[k] = 0; return o; }, {});
+const round2 = (n) => Math.round((Number(n) || 0) * 100) / 100;
+
 router.get('/reports/ap-aging', requireCapability('finance.reports.view'), async (req, res) => {
   try {
-    const asOfDate = req.query.asOfDate || new Date().toISOString().slice(0, 10);
+    // Riyadh calendar date, not UTC — see lib/accountingDate.js. `toISOString()`
+    // here reported yesterday's ageing for the first three hours of every day.
+    const asOfDate = req.query.asOfDate || require('../../../lib/accountingDate').journalDate();
 
-    // Detect optional columns on purchases
-    let hasStatus = false, hasSupplierId = false;
-    try { const [c] = await db.query("SHOW COLUMNS FROM purchases LIKE 'status'"); hasStatus = !!c.length; } catch(_) {}
-    try { const [c] = await db.query("SHOW COLUMNS FROM purchases LIKE 'supplier_id'"); hasSupplierId = !!c.length; } catch(_) {}
+    const where = ["si.status NOT IN ('cancelled', 'draft')", 'DATE(si.issue_date) <= ?'];
+    const args = [asOfDate];
+    if (req.query.brandId)  { where.push('si.brand_id = ?');  args.push(req.query.brandId); }
+    if (req.query.branchId) { where.push('si.branch_id = ?'); args.push(req.query.branchId); }
 
-    let purchQuery = `
-      SELECT p.id, p.purchase_date, p.total_price, p.payment_method, p.supplier_name,
-             ${hasStatus ? 'p.status' : "'received' AS status"},
-             ${hasSupplierId ? 'p.supplier_id' : 'NULL AS supplier_id'}
-      FROM purchases p
-      WHERE DATE(p.purchase_date) <= ?
-        AND (LOWER(p.payment_method) LIKE '%آجل%'
-             OR LOWER(p.payment_method) LIKE '%credit%'
-             OR LOWER(p.payment_method) LIKE '%ذمم%'
-             OR p.payment_method = 'Credit')`;
-    const params = [asOfDate];
-    purchQuery += ' ORDER BY p.purchase_date ASC';
-
-    const [purchases] = await db.query(purchQuery, params);
-
-    // Pull supplier_payments if present
-    let paymentMap = {};
-    if (purchases.length) {
-      const ids = purchases.map(p => p.id);
-      const ph = ids.map(() => '?').join(',');
-      try {
-        const [paid] = await db.query(
-          `SELECT purchase_id, SUM(amount) AS total_paid
-             FROM supplier_payments
-            WHERE purchase_id IN (${ph})
-              AND DATE(payment_date) <= ?
-            GROUP BY purchase_id`,
-          [...ids, asOfDate]
-        );
-        paid.forEach(p => { paymentMap[p.purchase_id] = Number(p.total_paid) || 0; });
-      } catch (_) { /* table missing */ }
+    // One query, mirroring v_supplier_ap_balance's allocation logic so the two
+    // can never disagree. Allocations are bounded by asOfDate as well —
+    // otherwise a back-dated report would net off payments that had not yet
+    // happened on that date.
+    //
+    // COLLATE on both sides: these tables were created by different
+    // migrations and do not reliably share a collation. Without it the JOIN
+    // raises "Illegal mix of collations" on MySQL 8 — or, worse on some
+    // configurations, matches nothing.
+    const C = 'COLLATE utf8mb4_unicode_ci';
+    let rows;
+    try {
+      [rows] = await db.query(
+        `SELECT si.id, si.invoice_no, si.supplier_id, si.supplier_name,
+                si.issue_date, si.due_date, si.total_amount,
+                COALESCE(al.allocated, 0) AS allocated
+           FROM supplier_invoices si
+           LEFT JOIN (
+             SELECT pa.supplier_invoice_id AS inv, SUM(pa.allocated_amount) AS allocated
+               FROM payment_allocations pa
+              WHERE pa.reversed = 0 AND DATE(pa.created_at) <= ?
+              GROUP BY pa.supplier_invoice_id
+           ) al ON al.inv ${C} = si.id ${C}
+          WHERE ${where.join(' AND ')}
+          ORDER BY si.issue_date ASC`,
+        [asOfDate, ...args]);
+    } catch (e) {
+      // A genuinely absent procurement schema is a 503, NOT an empty report.
+      // The previous version swallowed exactly this and answered 200 with a
+      // clean-looking zero — the most expensive possible response, because it
+      // is indistinguishable from "you owe nobody anything".
+      if (e && (e.code === 'ER_NO_SUCH_TABLE' || e.code === 'ER_BAD_FIELD_ERROR')) {
+        return res.status(503).json({
+          success: false, error: 'PROCUREMENT_SCHEMA_NOT_READY',
+          message: 'دورة المشتريات غير مُهيّأة على هذه النسخة — لا يمكن حساب أعمار الذمم الدائنة',
+        });
+      }
+      throw e;
     }
 
     const supplierMap = {};
+    const grandBuckets = emptyBuckets();
     let grandTotal = 0;
-    const grandBuckets = { '0-30': 0, '31-60': 0, '61-90': 0, '91-120': 0, '120+': 0 };
 
-    purchases.forEach(p => {
-      const paid = paymentMap[p.id] || 0;
-      const total = Number(p.total_price) || 0;
-      const outstanding = Math.max(0, total - paid);
-      if (outstanding <= 0.001) return;
-      const days = _daysBetween(p.purchase_date, asOfDate);
+    for (const r of rows) {
+      const outstanding = round2((Number(r.total_amount) || 0) - (Number(r.allocated) || 0));
+      if (outstanding <= 0.004) continue;
+
+      // Age from the DUE date. Falling back to issue_date only when no terms
+      // were recorded keeps a termless invoice visible rather than silently
+      // ageing at zero.
+      const ageFrom = r.due_date || r.issue_date;
+      const days = _daysBetween(ageFrom, asOfDate);
       const b = _bucket(days);
-      const key = p.supplier_id || ('SUPP-' + (p.supplier_name || 'UNKNOWN'));
+
+      const key = r.supplier_id || ('NAME:' + (r.supplier_name || 'UNKNOWN'));
       if (!supplierMap[key]) {
         supplierMap[key] = {
-          supplierId: p.supplier_id || null,
-          supplierName: p.supplier_name || '—',
+          supplierId: r.supplier_id || null,
+          supplierName: r.supplier_name || '—',
           total: 0,
-          buckets: { '0-30': 0, '31-60': 0, '61-90': 0, '91-120': 0, '120+': 0 },
-          invoices: []
+          buckets: emptyBuckets(),
+          invoices: [],
         };
       }
-      supplierMap[key].buckets[b] += outstanding;
-      supplierMap[key].total += outstanding;
-      supplierMap[key].invoices.push({
-        purchaseId: p.id,
-        purchaseDate: p.purchase_date,
-        ageDays: days,
-        bucket: b,
-        totalPrice: total,
-        paid,
+      const s = supplierMap[key];
+      s.total = round2(s.total + outstanding);
+      s.buckets[b] = round2(s.buckets[b] + outstanding);
+      s.invoices.push({
+        id: r.id,
+        invoiceNo: r.invoice_no || r.id,
+        issueDate: r.issue_date,
+        dueDate: r.due_date || null,
+        total: round2(r.total_amount),
+        paid: round2(r.allocated),
         outstanding,
-        paymentMethod: p.payment_method
+        daysOverdue: days,
+        bucket: b,
       });
-      grandBuckets[b] += outstanding;
-      grandTotal += outstanding;
-    });
+      grandBuckets[b] = round2(grandBuckets[b] + outstanding);
+      grandTotal = round2(grandTotal + outstanding);
+    }
 
     const suppliers = Object.values(supplierMap).sort((a, b) => b.total - a.total);
 
     res.json({
       success: true,
       asOfDate,
+      // Says which ledger answered. The old report silently reported on a
+      // retired subsystem; naming the source makes that impossible to repeat.
+      source: 'supplier_invoices',
+      agedBy: 'due_date',
       suppliers,
-      grandTotal: Math.round(grandTotal * 100) / 100,
-      grandBuckets: {
-        '0-30':   Math.round(grandBuckets['0-30']   * 100) / 100,
-        '31-60':  Math.round(grandBuckets['31-60']  * 100) / 100,
-        '61-90':  Math.round(grandBuckets['61-90']  * 100) / 100,
-        '91-120': Math.round(grandBuckets['91-120'] * 100) / 100,
-        '120+':   Math.round(grandBuckets['120+']   * 100) / 100
-      },
+      grandTotal,
+      grandBuckets,
       topCreditor: suppliers[0] || null,
       overdue90PlusRatio: grandTotal > 0
         ? Math.round(((grandBuckets['91-120'] + grandBuckets['120+']) / grandTotal) * 10000) / 100
-        : 0
+        : 0,
     });
   } catch (e) {
-    res.json({ success: false, error: e.message });
+    console.error('[ap-aging]', e && (e.code || e.message));
+    res.status(500).json({ success: false, error: 'ap_aging_failed' });
   }
 });
 

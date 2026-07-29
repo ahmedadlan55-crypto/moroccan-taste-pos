@@ -120,6 +120,59 @@ const glPosting = read('lib/glPosting.js');
   check('the merge is gated so it runs once', /InventoryDuplicateMerge_v1','1'/.test(block) || start > 0);
 }
 
+// ── 5. The /gl/seed template agrees with the posting authority ───────────
+//
+// The seed is the LAST source that could recreate the conflict. It only runs
+// on a chart with zero accounts (the COUNT guard at the top of the route), so
+// it can never rewrite a live chart — but a fresh install seeded the old way
+// was born with Inventory at 112 and Receivables at 113, i.e. the mirror image
+// of what every journal writer assumes, and grew a second inventory group the
+// first time the boot migrations ran.
+{
+  const start = erp.indexOf('const accounts = [');
+  const end = erp.indexOf('];', start);
+  check('the seed array is locatable', start > 0 && end > start);
+  const rows = [...erp.slice(start, end)
+    .matchAll(/\{code:'([^']+)',name:'([^']+)'[^}]*parent:(?:'([^']*)'|null)/g)]
+    .map((m) => ({ code: m[1], name: m[2], parent: m[3] ?? null }));
+  const byCode = new Map(rows.map((r) => [r.code, r]));
+  check('the seed parses to a non-trivial chart', rows.length > 50, rows.length);
+
+  // Structural hygiene — a seed that contradicts itself cannot be a baseline.
+  const dupes = [...new Set(rows.map((r) => r.code).filter((c, i, a) => a.indexOf(c) !== i))];
+  check('no duplicate codes in the seed', dupes.length === 0, dupes);
+  const dangling = rows.filter((r) => r.parent && !byCode.has(r.parent)).map((r) => r.code + '→' + r.parent);
+  check('every seeded parent exists in the seed', dangling.length === 0, dangling);
+
+  // The families the owner sees, in the order the posting engine assumes.
+  for (const [code, must] of [['112', 'ذمم'], ['113', 'المخزون'], ['114', 'مقدم'],
+                              ['115', 'العهد'], ['116', 'المدخلات']]) {
+    const a = byCode.get(code);
+    check(`seed ${code} is ${must}`, !!a && a.name.includes(must), a ? a.name : '(absent)');
+  }
+  check('the seed does NOT name 112 as inventory',
+    !(byCode.get('112') || {}).name?.includes('مخزون'), (byCode.get('112') || {}).name);
+
+  // 521/522/523 are owned by CORE_ACCOUNTS (waste, variance, PPV). Seeding
+  // them as payroll/rent/maintenance filed every waste posting in the business
+  // under «الرواتب والأجور».
+  check('seed 521 is the waste family, not payroll',
+    /هدر|توالف/.test((byCode.get('521') || {}).name || ''), (byCode.get('521') || {}).name);
+  check('payroll moved off 521 to its own family',
+    /الرواتب/.test((byCode.get('526') || {}).name || ''), (byCode.get('526') || {}).name);
+
+  // Every parent CORE_ACCOUNTS declares must exist, or ensureCoreAccounts
+  // walks up, finds nothing, and inserts the account as a PARENTLESS ROOT —
+  // which is how 5410, 5500 and 6100 became stray roots on the live chart
+  // (ADR 0002). 5500 is credited on every aggregator order.
+  const need = [...glPosting.matchAll(/code: '(\d+)'[^}]*parent: '(\d+)'/g)]
+    .map((m) => ({ code: m[1], parent: m[2] }));
+  check('CORE_ACCOUNTS declares parents at all', need.length > 10, need.length);
+  const stranded = need.filter((n) => !byCode.has(n.parent));
+  check('no CORE account would be stranded as a root by this seed',
+    stranded.length === 0, stranded.map((s) => s.code + '→' + s.parent));
+}
+
 console.log(`\n${pass} passed, ${failures.length} failed`);
 if (failures.length) {
   console.error('\nFAILED:\n  ' + failures.join('\n  '));

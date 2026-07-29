@@ -1152,21 +1152,41 @@ router.post('/gl/seed', requireCapability('finance.accounts.manage'), async (req
       {code:'111',name:'النقدية والبنوك',type:'asset',parent:'11',level:3},
       {code:'11101',name:'عهدة الكاشير / صناديق نقاط البيع (POS)',type:'asset',parent:'111',level:4},
       {code:'11102',name:'الحسابات البنكية الجارية',type:'asset',parent:'111',level:4},
-      {code:'112',name:'المخزون',type:'asset',parent:'11',level:3},
-      {code:'11201',name:'مخزون المواد الخام (البن، الحليب، المنكهات)',type:'asset',parent:'112',level:4},
-      {code:'11202',name:'مخزون المنتجات الجاهزة (المخبوزات، الحلويات)',type:'asset',parent:'112',level:4},
-      {code:'11203',name:'مخزون مواد التغليف والتعبئة (الأكواب، الأكياس)',type:'asset',parent:'112',level:4},
-      {code:'11204',name:'مخزون المنتجات تحت التشغيل (WIP)',type:'asset',parent:'112',level:4},
-      {code:'11205',name:'مخزون المنتجات التامة (Finished Goods)',type:'asset',parent:'112',level:4},
-      {code:'113',name:'الذمم المدينة والأرصدة',type:'asset',parent:'11',level:3},
-      {code:'11301',name:'ذمم تطبيقات التوصيل (جاهز، هنقرستيشن..)',type:'asset',parent:'113',level:4},
-      {code:'11302',name:'سلف ومقدمات الموظفين',type:'asset',parent:'113',level:4},
-      {code:'11303',name:'إيجارات مدفوعة مقدماً',type:'asset',parent:'113',level:4},
-      // v5.10.61 — مخصص الديون المشكوك في تحصيلها (contra-asset under 113).
-      // Recognized by name keyword "مخصص" + the contra-classification
-      // logic added in the Balance Sheet build below.
-      {code:'1131',name:'مخصص الديون المشكوك في تحصيلها',type:'asset',parent:'113',level:4},
-      {code:'114',name:'ضريبة المدخلات',type:'asset',parent:'11',level:3},
+      // ── CURRENT-ASSET FAMILIES — aligned to lib/glPosting.js:44-45 ──
+      //
+      // This block used to be the REVERSE of the posting engine, and that was
+      // the source of the owner's «اثنان من المخزون»: the seed put Inventory at
+      // 112 and Receivables at 113, while lib/glPosting.js — the module that
+      // actually WRITES every journal — parents the warehouses (1200/1210/
+      // 1220/1230) under 113 and AR (1150) under 112. Any chart touched by
+      // both ended up with an inventory group in each.
+      //
+      // The canonical map, from lib/glPosting.js:44-45:
+      //   111 Cash & Bank · 112 AR · 113 Inventory · 114 Prepayments ·
+      //   115 Custody · 116 Input VAT
+      //
+      // Safe to change: /gl/seed is a hard no-op once ANY account exists (the
+      // COUNT guard above), so this can never rewrite a live chart — it only
+      // decides what a FRESH install is born with.
+      {code:'112',name:'ذمم العملاء',type:'asset',parent:'11',level:3},
+      {code:'11201',name:'ذمم تطبيقات التوصيل (جاهز، هنقرستيشن..)',type:'asset',parent:'112',level:4},
+      // Contra-asset under AR. Recognised by the name keyword «مخصص» plus the
+      // contra-classification logic in the Balance Sheet build below.
+      {code:'1121',name:'مخصص الديون المشكوك في تحصيلها',type:'asset',parent:'112',level:4},
+      {code:'113',name:'المخزون',type:'asset',parent:'11',level:3},
+      {code:'11301',name:'مخزون المواد الخام (البن، الحليب، المنكهات)',type:'asset',parent:'113',level:4},
+      {code:'11302',name:'مخزون المنتجات الجاهزة (المخبوزات، الحلويات)',type:'asset',parent:'113',level:4},
+      {code:'11303',name:'مخزون مواد التغليف والتعبئة (الأكواب، الأكياس)',type:'asset',parent:'113',level:4},
+      {code:'11304',name:'مخزون المنتجات تحت التشغيل (WIP)',type:'asset',parent:'113',level:4},
+      {code:'11305',name:'مخزون المنتجات التامة (Finished Goods)',type:'asset',parent:'113',level:4},
+      {code:'114',name:'المصروفات المدفوعة مقدمًا',type:'asset',parent:'11',level:3},
+      {code:'11401',name:'إيجارات مدفوعة مقدماً',type:'asset',parent:'114',level:4},
+      // 115 = Custody. routes/custody.js creates employee custody accounts as
+      // 115x under this group — seeding it means the first custody entry finds
+      // a real home instead of minting one wherever it lands.
+      {code:'115',name:'العهد والسلف',type:'asset',parent:'11',level:3},
+      {code:'11501',name:'سلف ومقدمات الموظفين',type:'asset',parent:'115',level:4},
+      {code:'116',name:'ضريبة المدخلات',type:'asset',parent:'11',level:3},
       {code:'12',name:'الأصول الثابتة',type:'asset',parent:'1',level:2},
       {code:'121',name:'معدات وآلات الكافيه',type:'asset',parent:'12',level:3},
       {code:'122',name:'أجهزة نقاط البيع والأنظمة',type:'asset',parent:'12',level:3},
@@ -1184,6 +1204,14 @@ router.post('/gl/seed', requireCapability('finance.accounts.manage'), async (req
       {code:'21203',name:'فواتير منافع مستحقة',type:'liability',parent:'212',level:4},
       {code:'213',name:'الضرائب',type:'liability',parent:'21',level:3},
       {code:'21301',name:'ضريبة القيمة المضافة المستحقة (VAT)',type:'liability',parent:'213',level:4},
+      // 215 — the parent lib/glPosting.js CORE_ACCOUNTS declares for
+      // ROYALTY_PAYABLE (2310) and PLATFORM_PAYABLE (2320). It was absent from
+      // this seed, so `ensureCoreAccounts` — which walks UP looking for the
+      // declared parent and gives up when none of the prefixes exist — created
+      // both as parentless ROOTS. ADR 0002 recorded exactly this drift on the
+      // live chart. Every aggregator commission the register posts credits
+      // 2320, so this is not a hypothetical branch.
+      {code:'215',name:'مستحقات الامتياز والمنصات',type:'liability',parent:'21',level:3},
       // ═══ 3 حقوق الملكية ═══
       {code:'3',name:'حقوق الملكية',type:'equity',parent:null,level:1},
       {code:'31',name:'رأس المال',type:'equity',parent:'3',level:2},
@@ -1213,22 +1241,37 @@ router.post('/gl/seed', requireCapability('finance.accounts.manage'), async (req
       {code:'5113',name:'تكلفة مواد التعبئة والتغليف',type:'expense',parent:'511',level:4},
       {code:'512',name:'الهالك والتوالف',type:'expense',parent:'51',level:3},
       {code:'5121',name:'هالك المواد الغذائية والبن',type:'expense',parent:'512',level:4},
+      // ── 521/522/523 belong to the POSTING engine, not to opex ──
+      //
+      // The seed used to name 521 «الرواتب والأجور», 522 «الإيجارات والمنافع»
+      // and 523 «التشغيل والصيانة». But lib/glPosting.js CORE_ACCOUNTS parents
+      // its waste accounts under 521 (WASTE_EXPENSE 5200, WASTE_RAW 5121,
+      // WASTE_FINISHED 5122, WASTE_EXPIRED 5123, WASTE_SPILL 5124,
+      // WASTE_RETURNS 5125), stock/production variance under 522
+      // (STOCK_VARIANCE 5300, PRODUCTION_VARIANCE 5420) and purchase price
+      // variance under 523 (PPV 5350). Those parents are created automatically
+      // on the first posted journal — so on a chart seeded the old way, every
+      // waste entry in the business landed under «الرواتب والأجور».
+      //
+      // The families the posting engine owns keep their numbers; payroll, rent
+      // and maintenance move to 526/527/528, which nothing else claims.
       {code:'52',name:'المصروفات التشغيلية',type:'expense',parent:'5',level:2},
-      {code:'521',name:'الرواتب والأجور',type:'expense',parent:'52',level:3},
-      // v5.10.61 — sub-accounts under 521 so payroll postings can be
-      // segregated by role/function (matches the granularity of 522/523/524).
-      {code:'5211',name:'رواتب الإدارة والمحاسبة',type:'expense',parent:'521',level:4},
-      {code:'5212',name:'رواتب الكاشيرز والباريستا',type:'expense',parent:'521',level:4},
-      {code:'5213',name:'رواتب الإنتاج (الباستري)',type:'expense',parent:'521',level:4},
-      {code:'5214',name:'مكافآت وحوافز',type:'expense',parent:'521',level:4},
-      {code:'5215',name:'تأمينات اجتماعية (GOSI)',type:'expense',parent:'521',level:4},
-      {code:'522',name:'الإيجارات والمنافع',type:'expense',parent:'52',level:3},
-      {code:'5221',name:'إيجارات الفروع',type:'expense',parent:'522',level:4},
-      {code:'5222',name:'الكهرباء والماء',type:'expense',parent:'522',level:4},
-      {code:'5223',name:'اشتراكات الإنترنت والاتصالات',type:'expense',parent:'522',level:4},
-      {code:'523',name:'التشغيل والصيانة',type:'expense',parent:'52',level:3},
-      {code:'5231',name:'صيانة مكائن القهوة والمعدات',type:'expense',parent:'523',level:4},
-      {code:'5232',name:'أدوات النظافة والتعقيم',type:'expense',parent:'523',level:4},
+      {code:'521',name:'الهدر والتوالف',type:'expense',parent:'52',level:3},
+      {code:'522',name:'فروقات الجرد والإنتاج',type:'expense',parent:'52',level:3},
+      {code:'523',name:'فروق أسعار المشتريات',type:'expense',parent:'52',level:3},
+      {code:'526',name:'الرواتب والأجور',type:'expense',parent:'52',level:3},
+      {code:'5261',name:'رواتب الإدارة والمحاسبة',type:'expense',parent:'526',level:4},
+      {code:'5262',name:'رواتب الكاشيرز والباريستا',type:'expense',parent:'526',level:4},
+      {code:'5263',name:'رواتب الإنتاج (الباستري)',type:'expense',parent:'526',level:4},
+      {code:'5264',name:'مكافآت وحوافز',type:'expense',parent:'526',level:4},
+      {code:'5265',name:'تأمينات اجتماعية (GOSI)',type:'expense',parent:'526',level:4},
+      {code:'527',name:'الإيجارات والمنافع',type:'expense',parent:'52',level:3},
+      {code:'5271',name:'إيجارات الفروع',type:'expense',parent:'527',level:4},
+      {code:'5272',name:'الكهرباء والماء',type:'expense',parent:'527',level:4},
+      {code:'5273',name:'اشتراكات الإنترنت والاتصالات',type:'expense',parent:'527',level:4},
+      {code:'528',name:'التشغيل والصيانة',type:'expense',parent:'52',level:3},
+      {code:'5281',name:'صيانة مكائن القهوة والمعدات',type:'expense',parent:'528',level:4},
+      {code:'5282',name:'أدوات النظافة والتعقيم',type:'expense',parent:'528',level:4},
       {code:'524',name:'التسويق والعمولات',type:'expense',parent:'52',level:3},
       {code:'5241',name:'عمولات تطبيقات التوصيل',type:'expense',parent:'524',level:4},
       {code:'5242',name:'الحملات الإعلانية والتسويق',type:'expense',parent:'524',level:4},
@@ -1243,6 +1286,20 @@ router.post('/gl/seed', requireCapability('finance.accounts.manage'), async (req
       {code:'532',name:'الرسوم الحكومية والتراخيص',type:'expense',parent:'53',level:3},
       {code:'533',name:'العمولات البنكية ورسوم شبكات الدفع',type:'expense',parent:'53',level:3},
       {code:'534',name:'مصروفات الضيافة والنثريات',type:'expense',parent:'53',level:3},
+      // ═══ 6 مصروفات أخرى — the family CORE_ACCOUNTS points at ═══
+      //
+      // lib/glPosting.js declares parent '6' for OVERHEAD_APPLIED (5410) and
+      // PLATFORM_COMMISSION (5500), and parent '651' for FRANCHISE_FEE (6100).
+      // Neither existed in this seed, and `ensureCoreAccounts` walks UP the
+      // parent code looking for an ancestor — when none of '6' / (nothing) is
+      // found it gives up and inserts the account as a PARENTLESS ROOT.
+      //
+      // ADR 0002 recorded exactly this on the live chart: 5410, 5500 and 6100
+      // sitting as stray roots beside «الأصول» and «الإيرادات». 5500 is not
+      // theoretical — the register credits it on every aggregator order.
+      {code:'6',name:'مصروفات أخرى',type:'expense',parent:null,level:1},
+      {code:'65',name:'الامتياز والتحميلات',type:'expense',parent:'6',level:2},
+      {code:'651',name:'رسوم الامتياز',type:'expense',parent:'65',level:3},
     ];
 
     // Build a code→id map so parent references work

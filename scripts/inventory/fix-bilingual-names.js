@@ -124,24 +124,34 @@ const esc = (s) => '"' + String(s == null ? '' : s).replace(/"/g, '""') + '"';
       tokens: t.tokens,
       untranslated: t.untranslated,
       needsReview: t.matched === 0,
+      wordOrderRisk: !!t.wordOrderRisk,
     });
   }
 
   const review = plan.filter((p) => p.needsReview);
   const partial = plan.filter((p) => !p.needsReview && p.untranslated.length);
+  const ordering = plan.filter((p) => !p.needsReview && p.wordOrderRisk);
 
   console.log('─'.repeat(100));
   console.log('SKU'.padEnd(12) + 'ENGLISH (moves to name_en)'.padEnd(48) + 'ARABIC (new name)');
   console.log('─'.repeat(100));
   for (const p of plan) {
-    const flag = p.needsReview ? ' ⚠' : p.untranslated.length ? ' ~' : '  ';
+    const flag = p.needsReview ? ' ⚠' : p.wordOrderRisk ? ' ↔' : p.untranslated.length ? ' ~' : '  ';
     console.log(p.sku.padEnd(12) + p.newNameEn.slice(0, 46).padEnd(48) + p.newNameAr + flag);
   }
   console.log('─'.repeat(100));
   console.log(`\nplanned: ${plan.length}   new SKUs: ${plan.filter((p) => !p.hadSku).length}`);
-  console.log(`fully translated: ${plan.length - review.length - partial.length}`);
+  console.log(`fully translated: ${plan.length - review.length - partial.length - ordering.length}`);
   console.log(`~ partial (some English words kept): ${partial.length}`);
+  console.log(`↔ word order unverified (every word right, phrase may not be): ${ordering.length}`);
   console.log(`⚠ NOT translated — Arabic will equal the English: ${review.length}`);
+  if (ordering.length) {
+    console.log('\n  ↔ English puts the head noun LAST, Arabic puts it FIRST. These are');
+    console.log('  compounds the dictionary has no phrase for, so they came out in English');
+    console.log('  order. Read them, and send me any that are backwards:');
+    ordering.slice(0, 25).forEach((p) => console.log(`      ${p.newNameEn}  →  ${p.newNameAr}`));
+    if (ordering.length > 25) console.log(`      … and ${ordering.length - 25} more`);
+  }
   if (review.length) {
     console.log('\n  These need a human Arabic name. Send them to me and I will add the terms');
     console.log('  to lib/inventory-ar-dictionary.js so a re-run fixes them:');
@@ -155,8 +165,9 @@ const esc = (s) => '"' + String(s == null ? '' : s).replace(/"/g, '""') + '"';
   }
 
   if (CSV_OUT) {
-    const csv = ['﻿id,sku,name_en,name_ar,needs_review',
-      ...plan.map((p) => [p.id, p.sku, p.newNameEn, p.newNameAr, p.needsReview ? 'yes' : ''].map(esc).join(','))].join('\n');
+    const csv = ['﻿id,sku,name_en,name_ar,needs_review,word_order_unverified',
+      ...plan.map((p) => [p.id, p.sku, p.newNameEn, p.newNameAr,
+        p.needsReview ? 'yes' : '', p.wordOrderRisk ? 'yes' : ''].map(esc).join(','))].join('\n');
     fs.writeFileSync(CSV_OUT, csv, 'utf8');
     console.log(`\nCSV written: ${CSV_OUT}`);
   }

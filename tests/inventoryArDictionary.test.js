@@ -80,6 +80,26 @@ function check(name, cond, extra) {
   check('and keeps the rest in English', mixed.ar.includes('Widget'), mixed.ar);
 }
 
+// ── 3b. Compound word order — English head-final vs Arabic head-initial ──
+// Caught by running the real script against a fixture: «Napkin Pack» came out
+// «منديل عبوة» — both words right, phrase backwards — and nothing flagged it
+// because `matched` was full. Word order can't be fixed without parsing, so
+// known compounds became phrases and unknown ones are REPORTED.
+{
+  check('a known compound is emitted head-first', d.toArabic('Napkin Pack').ar === 'عبوة مناديل', d.toArabic('Napkin Pack').ar);
+  check('and is therefore NOT flagged', d.toArabic('Napkin Pack').wordOrderRisk === false);
+
+  // Two nouns, no phrase for the pair → order is unverified and must be said so.
+  const risky = d.toArabic('Tray Sleeve');
+  check('two word-path nouns raise wordOrderRisk', risky.wordOrderRisk === true, risky);
+  check('…while still translating both words', risky.matched === 2, risky);
+
+  // Noun + adjective is NOT a compound — Arabic already wants it in this order.
+  check('adjective-modified nouns are not flagged', d.toArabic('Paper Bag Large').wordOrderRisk === false);
+  check('single nouns are not flagged', d.toArabic('Wooden Stirrer').wordOrderRisk === false);
+  check('phrase-matched multiwords are not flagged', d.toArabic('Cup Holder 2').wordOrderRisk === false);
+}
+
 // ── 4. isLatinOnly decides who is a candidate ────────────────────────────
 {
   check('English text is a candidate', d.isLatinOnly('Cup Holder 2'));

@@ -91,13 +91,51 @@ function check(name, cond, extra) {
 
   // Two nouns, no phrase for the pair → order is unverified and must be said so.
   const risky = d.toArabic('Tray Sleeve');
-  check('two word-path nouns raise wordOrderRisk', risky.wordOrderRisk === true, risky);
+  check('a trailing word-path noun raises wordOrderRisk', risky.wordOrderRisk === true, risky);
   check('…while still translating both words', risky.matched === 2, risky);
+
+  // The case an earlier rule MISSED. It demanded two word-path nouns, but the
+  // phrase «aluminium foil» supplied the first, so only «roll» came through
+  // the word path and nothing was flagged — while the output «ورق ألومنيوم
+  // لفة» is backwards (Arabic wants «لفة ورق ألومنيوم»). Position, not count.
+  const foil = d.toArabic('Aluminium Foil Roll');
+  check('a noun trailing a PHRASE is flagged too', foil.wordOrderRisk === true, foil);
+  check('…and every word still translated', foil.untranslated.length === 0, foil);
 
   // Noun + adjective is NOT a compound — Arabic already wants it in this order.
   check('adjective-modified nouns are not flagged', d.toArabic('Paper Bag Large').wordOrderRisk === false);
+  check('a noun in FIRST position is not flagged', d.toArabic('Cup Large').wordOrderRisk === false);
   check('single nouns are not flagged', d.toArabic('Wooden Stirrer').wordOrderRisk === false);
   check('phrase-matched multiwords are not flagged', d.toArabic('Cup Holder 2').wordOrderRisk === false);
+
+  // Food compounds have the identical shape and got the identical treatment.
+  check('«Chicken Breast» leads with the cut', d.toArabic('Chicken Breast').ar === 'صدور دجاج', d.toArabic('Chicken Breast').ar);
+  check('…and is therefore not flagged', d.toArabic('Chicken Breast 1kg').wordOrderRisk === false);
+}
+
+// ── 3c. Word groups may not silently overwrite each other ────────────────
+// The groups began as arguments to Object.assign, where the last duplicate
+// quietly wins. `bean` was «فول» under grains and «حبة» under beverages, and
+// every bean in the catalogue would have become a coffee bean with nothing
+// reporting it. The guard caught a second one on its first run — `ground`,
+// «مفروم» for meat vs «مطحون» for coffee.
+{
+  let threw = null;
+  try { d.mergeWordGroups([{ bean: 'فول' }, { bean: 'حبة' }]); } catch (e) { threw = e; }
+  check('a CONFLICTING duplicate key throws at load', !!threw, threw && threw.message);
+  check('…and the message names the key and both values',
+    threw && /bean/.test(threw.message) && /فول/.test(threw.message) && /حبة/.test(threw.message),
+    threw && threw.message);
+
+  let ok = true;
+  try { d.mergeWordGroups([{ bean: 'فول' }, { bean: 'فول' }]); } catch (e) { ok = false; }
+  check('an IDENTICAL repeat is allowed (a word can belong to two domains)', ok);
+
+  check('the shipped groups merge cleanly', Object.keys(d.WORDS).length > 400, Object.keys(d.WORDS).length);
+  check('`ground` resolves to exactly one value', d.WORDS.ground === 'مطحون', d.WORDS.ground);
+  check('…and both senses survive via phrases',
+    d.toArabic('Ground Beef').ar === 'لحم بقري مفروم' && d.toArabic('Ground Coffee').ar === 'قهوة مطحونة',
+    [d.toArabic('Ground Beef').ar, d.toArabic('Ground Coffee').ar]);
 }
 
 // ── 4. isLatinOnly decides who is a candidate ────────────────────────────
@@ -148,7 +186,11 @@ const bilingual = require('../lib/inventory/bilingualNames');
 
   // The boot migration must be gated, and must not be able to stop the server.
   const srv = fs.readFileSync(path.join(__dirname, '..', 'server.js'), 'utf8');
-  const block = (srv.split("const INV_NAMES_KEY")[1] || '').slice(0, 3000);
+  // Bound the slice at the NEXT top-level migration comment rather than a
+  // character count — a count silently truncates the block as it grows, which
+  // is how this assertion first failed on code that was actually correct.
+  const after = srv.split('const INV_NAMES_KEY')[1] || '';
+  const block = after.split('\n  // Per-item override')[0];
   check('the boot migration is gated on a settings key', /SELECT setting_value FROM settings WHERE setting_key = \? LIMIT 1/.test(block));
   check('…and records the key when it finishes', /INSERT INTO settings \(setting_key, setting_value\) VALUES \(\?, \\?'1\\?'\)/.test(block), block.slice(0, 200));
   check('…and cannot abort startup', /catch \(e\) \{ console\.error\('\[inv-names\]'/.test(srv));
@@ -168,8 +210,50 @@ const bilingual = require('../lib/inventory/bilingualNames');
     C({ name: 'Widget XYZ', name_en: 'Widget XYZ' }));
   check('a DIFFERENT human-typed name_en → never a candidate',
     !C({ name: 'Dome Lid 90mm', name_en: 'Dome Lid 90 mm' }));
-  check('Arabic name → never a candidate, even with everything else empty',
+  check('fully Arabic → never a candidate, even with everything else empty',
     !C({ name: 'كوب ورقي', name_en: null, sku: null }));
+  check('fully Arabic with a source English → done, leave it',
+    !C({ name: 'صدور دجاج', name_en: 'Chicken Breast' }));
+
+  // The PARTIAL case. The first production run left 115 rows Arabic-plus-
+  // English-residue, which isLatinOnly can never see again — but name_en still
+  // holds the pristine English, so the row is repairable from it.
+  check('our own partial output IS a candidate',
+    C({ name: 'صدور دجاج Boneless', name_en: 'Chicken Breast Boneless' }));
+  check('…but not once a human added a word name_en does not have',
+    !C({ name: 'صدور دجاج Boneless Halal', name_en: 'Chicken Breast Boneless' }));
+  check('…and not without a source English to re-translate from',
+    !C({ name: 'صدور دجاج Boneless', name_en: null }));
+
+  // A repair must translate from the ORIGINAL English, never from our own
+  // half-finished output — re-translating the output compounds the loss.
+  check('sourceEnglish reads `name` when the row is untouched',
+    bilingual.sourceEnglish({ name: 'Cup Holder 2', name_en: null }) === 'Cup Holder 2');
+  check('sourceEnglish reads `name_en` when the row is partial',
+    bilingual.sourceEnglish({ name: 'صدور دجاج Boneless', name_en: 'Chicken Breast Boneless' }) === 'Chicken Breast Boneless');
+}
+
+// ── 7b. A repair run, end to end ─────────────────────────────────────────
+{
+  const rows = [
+    { id: 1, name: 'صدور دجاج Boneless', name_en: 'Chicken Breast Boneless', sku: 'INV-00001', sku_norm: 'INV-00001' },
+    { id: 2, name: 'صدور دجاج', name_en: 'Chicken Breast', sku: 'INV-00002', sku_norm: 'INV-00002' },
+  ];
+  const r = bilingual.planBilingualNames(rows);
+  check('only the row with residue is replanned', r.stats.planned === 1, r.stats);
+  check('it is marked as a repair', r.plan[0].repair === true, r.plan[0]);
+  check('the residue is translated away', r.plan[0].newNameAr === 'صدور دجاج بلا عظم', r.plan[0].newNameAr);
+  check('the English column is left exactly as it was', r.plan[0].newNameEn === 'Chicken Breast Boneless');
+  check('the existing SKU is reused, not reissued', r.plan[0].sku === 'INV-00001' && r.stats.newSkus === 0, r.stats);
+  check('stats count the repair', r.stats.repairs === 1, r.stats);
+
+  // A second run over the repaired data must plan nothing — otherwise every
+  // deploy rewrites the whole catalogue.
+  const after = rows.map((x, i) => i === 0
+    ? { ...x, name: r.plan[0].newNameAr, name_en: r.plan[0].newNameEn } : x);
+  check('re-running over repaired rows is a no-op',
+    bilingual.planBilingualNames(after).stats.planned === 0,
+    bilingual.planBilingualNames(after).stats);
 }
 
 // ── 8. Planning: SKU allocation and the skip buckets ─────────────────────

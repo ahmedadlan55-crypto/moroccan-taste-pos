@@ -7543,7 +7543,14 @@ async function runMigrations() {
   //
   // Failure here must never keep the restaurant from opening: the whole block
   // is caught, and a row that fails is skipped rather than aborting the rest.
-  const INV_NAMES_KEY = 'InventoryBilingualNames_v1';
+  //
+  // _v2: the first production run translated only 24 of 194 items fully —
+  // 115 partial, 48 untranslated — because the dictionary knew PACKAGING and
+  // the catalogue is a restaurant's. The food vocabulary was added and the
+  // version bumped so every row is reconsidered. The partial rows are reached
+  // through `name_en`, which still holds the pristine English; see the
+  // candidate rule in lib/inventory/bilingualNames.js.
+  const INV_NAMES_KEY = 'InventoryBilingualNames_v2';
   try {
     const [done] = await db.query(
       'SELECT setting_value FROM settings WHERE setting_key = ? LIMIT 1', [INV_NAMES_KEY]);
@@ -7555,10 +7562,26 @@ async function runMigrations() {
       if (r.plan.length) {
         const res = await bilingual.applyPlan(db, r.plan);
         console.log('[inv-names] ' + res.updated + '/' + s.planned + ' item(s) fixed — ' +
-          'English moved to name_en, Arabic written, ' + s.newSkus + ' SKU(s) issued');
+          'English moved to name_en, Arabic written, ' + s.newSkus + ' SKU(s) issued' +
+          (s.repairs ? ' (' + s.repairs + ' re-translated from a previous partial run)' : ''));
         console.log('[inv-names] fully translated ' + s.clean +
           ' · partial ' + s.partial + ' · word-order unverified ' + s.wordOrderRisk +
           ' · untranslated ' + s.needsReview);
+        // The vocabulary the dictionary still lacks. Logged, not just stored:
+        // a settings row nobody can read is not evidence, and this is the list
+        // that tells the next dictionary pass exactly what to add.
+        if (r.vocabulary.length) {
+          console.log('[inv-names] missing vocabulary (' + r.vocabulary.length + '): ' +
+            r.vocabulary.slice(0, 150).join(' '));
+        }
+        if (r.review.length) {
+          console.log('[inv-names] untranslated names: ' +
+            r.review.slice(0, 40).map((p) => p.newNameEn).join(' | '));
+        }
+        if (r.ordering.length) {
+          console.log('[inv-names] word order to check: ' +
+            r.ordering.slice(0, 25).map((p) => p.newNameEn + ' → ' + p.newNameAr).join(' | '));
+        }
         if (res.failures.length) {
           console.warn('[inv-names] ' + res.failures.length + ' row(s) failed: ' +
             res.failures.slice(0, 5).map((f) => f.name + ' (' + f.error + ')').join(', '));

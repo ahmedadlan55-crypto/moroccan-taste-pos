@@ -167,4 +167,34 @@ describe("SalesAnalyticsHub — capability gates", () => {
     // the picker is still there so the user can navigate out
     expect(await screen.findByRole("button", { name: PICKER })).toBeInTheDocument();
   });
+
+  it("the basis of preparation prints WITH the report, not with the filter bar", async () => {
+    // The filter bar states the same choices on screen and is `.no-print`, so a
+    // printed report carried none of them: two printouts of the same period can
+    // differ by a full day's takings (the business day runs past midnight) with
+    // nothing on either page to say which is which. Being inside
+    // `.print-document` is the whole point — a passing render test that did not
+    // check the ancestor would miss the only failure that matters.
+    renderAt("/reports/sales/executive");
+    const basis = await screen.findByTestId("basis-of-preparation");
+    expect(basis.closest(".print-document"), "basis block is outside the printable area").not.toBeNull();
+    // Control: `closest` must be capable of returning null here, or the
+    // assertion above proves nothing. The section picker is a sibling of the
+    // print area and is not printed.
+    const picker = screen.getByRole("button", { name: PICKER });
+    expect(picker.closest(".print-document")).toBeNull();
+  });
+
+  it("every segment carries it — the disclosure is not per-page and cannot be forgotten", async () => {
+    caps["analytics.employees.view"] = true;
+    caps["analytics.cost.view"] = true;
+    for (const segment of ["executive", "explorer", "taxes", "shifts", "profitability"]) {
+      renderAt(`/reports/sales/${segment}`);
+      expect(
+        await screen.findByTestId("basis-of-preparation"),
+        `${segment} has no basis of preparation`,
+      ).toBeInTheDocument();
+      cleanup();
+    }
+  });
 });

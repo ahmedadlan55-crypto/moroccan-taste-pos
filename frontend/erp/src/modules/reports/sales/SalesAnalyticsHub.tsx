@@ -21,6 +21,7 @@ import { PrintArea } from "@/modules/accounting/components";
 import { useT } from "@/i18n";
 import { analyticsFilterCodec } from "./lib/filters";
 import { AnalyticsTopBar } from "./components/AnalyticsTopBar";
+import { BasisOfPreparation } from "./components/BasisOfPreparation";
 import { SectionPicker } from "./components/SectionPicker";
 import { SEGMENT_PAGES } from "./pages/registry";
 
@@ -154,6 +155,15 @@ export default function SalesAnalyticsHub() {
               return <Page />;
             })()}
           </Suspense>
+          {/* INSIDE PrintArea, deliberately. The filter bar states the basis on
+              screen and is .no-print, so a printed report used to carry none of
+              it: two printouts of "sales, July" can differ by a full day's
+              takings — the business day runs past midnight — with nothing on
+              either page to say which is which. Placing it here gives all 16
+              reports the disclosure without touching 16 files. */}
+          <div className="mt-4">
+            <BasisOfPreparation filters={filters} />
+          </div>
         </PrintArea>
       )}
     </>

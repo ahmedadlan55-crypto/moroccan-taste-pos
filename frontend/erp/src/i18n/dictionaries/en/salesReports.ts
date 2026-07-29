@@ -158,8 +158,11 @@ export const salesReports = {
       last7: "Last 7 days",
       last30: "Last 30 days",
       mtd: "Month to date",
+      lastMonth: "Last month",
       qtd: "Quarter to date",
+      lastQuarter: "Last quarter",
       ytd: "Year to date",
+      lastYear: "Last year",
       custom: "Custom",
     },
     compareModes: {
@@ -350,6 +353,23 @@ export const salesReports = {
     top: "Top",
     bottom: "Bottom",
     topN: "Result count",
+  },
+
+  basis: {
+    title: "Basis of preparation",
+    period: "Period",
+    dateBasis: "Date basis",
+    dateBasisBusiness: "Business day (runs past midnight, per the branch setting)",
+    dateBasisCalendar: "Calendar day",
+    taxBasis: "Tax basis",
+    taxBasisIncl: "Including VAT",
+    taxBasisExcl: "Excluding VAT",
+    scope: "Scope",
+    scopeAll: "All brands, branches, channels and order types",
+    treatment: "Treatments",
+    treatmentBody:
+      "Voided orders are excluded from every count and value; returns are netted in the period they were recorded, not the period of the original sale; cost is the at-sale snapshot, never today's cost.",
+    dataAsOf: "Data as of",
   },
 
   groupBy: {

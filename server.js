@@ -7518,6 +7518,73 @@ async function runMigrations() {
     }
   } catch (e) { console.error('[inv-merge]', e.message); }
 
+  // ── Bilingual inventory names + SKUs ─────────────────────────────────────
+  //
+  // The owner's report, with a screenshot of /app/inventory/items: the Arabic
+  // name column holds ENGLISH text — «Cup Holder 2», «A-31 Cold Drinks 30oz
+  // 900ML Laser Logo Black» — the English column shows «الاسم الإنجليزي مفقود»,
+  // and the SKU column shows «–». The English name is right; it is in the
+  // wrong column, and the right column is empty.
+  //
+  // This runs the repair unattended so nobody has to execute a script against
+  // production. The repair itself lives in lib/inventory/bilingualNames.js —
+  // shared verbatim with the CLI, because two copies of a migration are two
+  // migrations that will disagree.
+  //
+  // Writes FOUR columns and no others: name, name_en, sku, sku_norm. Never
+  // touches a row that already has Arabic, never overwrites a human-typed
+  // name_en, never reissues an existing SKU. Row-by-row by primary key.
+  //
+  // A word the dictionary does not know stays ENGLISH rather than being
+  // transliterated — «كب هولدر» is not Arabic, it is noise nobody can search.
+  // Those rows keep name_en === name, which is exactly the fingerprint the
+  // candidate rule uses to pick them back up on a later run once the
+  // dictionary has grown. Bump the version suffix below to force that re-run.
+  //
+  // Failure here must never keep the restaurant from opening: the whole block
+  // is caught, and a row that fails is skipped rather than aborting the rest.
+  const INV_NAMES_KEY = 'InventoryBilingualNames_v1';
+  try {
+    const [done] = await db.query(
+      'SELECT setting_value FROM settings WHERE setting_key = ? LIMIT 1', [INV_NAMES_KEY]);
+    if (!done.length) {
+      const bilingual = require('./lib/inventory/bilingualNames');
+      const [rows] = await db.query(bilingual.SELECT_SQL);
+      const r = bilingual.planBilingualNames(rows);
+      const s = r.stats;
+      if (r.plan.length) {
+        const res = await bilingual.applyPlan(db, r.plan);
+        console.log('[inv-names] ' + res.updated + '/' + s.planned + ' item(s) fixed — ' +
+          'English moved to name_en, Arabic written, ' + s.newSkus + ' SKU(s) issued');
+        console.log('[inv-names] fully translated ' + s.clean +
+          ' · partial ' + s.partial + ' · word-order unverified ' + s.wordOrderRisk +
+          ' · untranslated ' + s.needsReview);
+        if (res.failures.length) {
+          console.warn('[inv-names] ' + res.failures.length + ' row(s) failed: ' +
+            res.failures.slice(0, 5).map((f) => f.name + ' (' + f.error + ')').join(', '));
+        }
+        // Persist what a human still needs to look at, so the health screen can
+        // show it instead of it living only in a boot log nobody reads.
+        if (r.review.length || r.ordering.length || r.vocabulary.length) {
+          await db.query(
+            'INSERT INTO settings (setting_key, setting_value) VALUES (?, ?) ' +
+            'ON DUPLICATE KEY UPDATE setting_value = VALUES(setting_value)',
+            [INV_NAMES_KEY + '_review', JSON.stringify({
+              untranslated: r.review.map((p) => p.newNameEn).slice(0, 200),
+              wordOrder: r.ordering.map((p) => ({ en: p.newNameEn, ar: p.newNameAr })).slice(0, 200),
+              vocabulary: r.vocabulary.slice(0, 400),
+            })]);
+        }
+      } else {
+        console.log('[inv-names] no items need bilingual repair (' +
+          s.alreadyArabic + ' already Arabic, ' + s.humanEnglish + ' have a typed English name)');
+      }
+      await db.query(
+        'INSERT INTO settings (setting_key, setting_value) VALUES (?, \'1\') ' +
+        'ON DUPLICATE KEY UPDATE setting_value = \'1\'', [INV_NAMES_KEY]);
+    }
+  } catch (e) { console.error('[inv-names]', e.message); }
+
   // Per-item override for waste GL routing. NULL = use reason→account map.
   await addColumnIfMissing('inv_items', 'waste_gl_account_id', 'VARCHAR(50) NULL');
 

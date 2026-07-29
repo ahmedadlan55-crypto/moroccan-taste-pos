@@ -785,6 +785,7 @@ try { app.use('/api/erp', require('./routes/erp/zatca')); } catch(e){ console.wa
 try { app.use('/api/erp', require('./routes/erp/reports/ar-aging')); } catch(e){ console.warn('[mod:ar-aging]', e.message); }
 try { app.use('/api/erp', require('./routes/erp/reports/ap-aging')); } catch(e){ console.warn('[mod:ap-aging]', e.message); }
 try { app.use('/api/erp', require('./routes/erp/periods'));            } catch(e){ console.warn('[mod:periods]', e.message); }
+try { app.use('/api/erp/sales-posting', require('./routes/erp/sales-posting')); } catch(e){ console.warn('[mod:sales-posting]', e.message); }
 // v7.x SECURITY (RBAC) — financial/admin modules are gated to an elevated role
 // at the mount point (default-deny for cashier/employee). requireRole fails
 // closed: an empty/unknown role normalizes to the least-privileged 'cashier'.

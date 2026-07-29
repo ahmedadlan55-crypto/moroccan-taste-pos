@@ -1,0 +1,220 @@
+#!/usr/bin/env node
+'use strict';
+/**
+ * tests/salesPostingService.test.js — the DB-touching half of «ترحيل المبيعات».
+ *
+ * The arithmetic is covered by salesPostingAggregate.test.js. What can only go
+ * wrong HERE is concurrency, atomicity, and the period-close guard — so that
+ * is what this pins, mostly by asserting the shape of the code, because these
+ * are properties a unit test with a fake connection would happily fake too.
+ *
+ * Run: node tests/salesPostingService.test.js   (pure, no DB)
+ */
+const fs = require('fs');
+const path = require('path');
+const ROOT = path.join(__dirname, '..');
+const post = require('../lib/salesPosting/post');
+
+let pass = 0;
+const failures = [];
+function check(name, cond, extra) {
+  if (cond) { pass++; return; }
+  failures.push(name + (extra !== undefined ? ' → ' + JSON.stringify(extra) : ''));
+  console.error('  ✗ ' + name);
+}
+const read = (...p) => fs.readFileSync(path.join(ROOT, ...p), 'utf8');
+
+/**
+ * Drop comment lines, WITHOUT a greedy block-comment regex.
+ *
+ * `s.replace(/\/\*[\s\S]*?\*\//g, '')` looks equivalent and is not: a lone
+ * `/*` inside a string literal or a regex makes it swallow everything up to
+ * the next `*\/` anywhere in the file. On routes/erp.js that ate the entire
+ * period-close guard, and six assertions failed against code that was present
+ * and correct.
+ *
+ * A line-based filter cannot over-reach. It also normalises CRLF, which these
+ * files use and the multi-line patterns below depend on.
+ */
+const code = (s) => s.split(/\r?\n/).filter((l) => !/^\s*(\/\/|\*|\/\*)/.test(l)).join('\n');
+
+// ── 1. The claim must be an explicit id list ─────────────────────────────
+// A range predicate (WHERE business_day = ?) takes gap locks over the range a
+// concurrent CHECKOUT is inserting into — so a contended posting run would
+// block the till. Any lock-contention path that reaches the register is
+// unacceptable.
+{
+  const src = code(read('lib', 'salesPosting', 'post.js'));
+  check('the claim names ids explicitly', /UPDATE sales_posting_queue\s*\n?\s*SET status = 'posting'\s*\n?\s*WHERE id IN \(/.test(src), src.match(/UPDATE sales_posting_queue[\s\S]{0,160}/));
+  check('…and is conditional on the row still being unposted',
+    /WHERE id IN \(\$\{ids\.map\(\(\) => '\?'\)\.join\(','\)\}\)\s*\n\s*AND status IN \('pending', 'failed'\)/.test(src));
+  check('…and affectedRows decides what was actually won',
+    /claim\.affectedRows !== ids\.length/.test(src));
+  check('a partial claim is a 409, not a silent partial post',
+    /code = 'claim_conflict'; e\.status = 409/.test(src));
+  check('the claim never uses a date range predicate',
+    !/SET status = 'posting'[\s\S]{0,200}business_day/.test(src));
+}
+
+// ── 2. Claim + post + record are ONE transaction ─────────────────────────
+// A crash between "the journal committed" and "the queue rows were marked
+// posted" would let a retry create a SECOND complete journal and apply
+// gl_accounts.balance twice — postJournal has no idempotency and ix_glj_ref is
+// deliberately non-unique, so nothing downstream would stop it.
+{
+  const src = code(read('lib', 'salesPosting', 'post.js'));
+  check('postBatch runs inside withTransaction', /return pool\.withTransaction\(async \(conn\) => \{/.test(src));
+  const tx = src.slice(src.indexOf('withTransaction'));
+  const claimAt = tx.indexOf("SET status = 'posting'");
+  const postAt = tx.indexOf('glPosting.postJournal');
+  const recordAt = tx.indexOf('INSERT INTO sales_posting_batches');
+  const markAt = tx.indexOf("SET status = 'posted'");
+  check('order is claim → post → record → mark',
+    claimAt > 0 && claimAt < postAt && postAt < recordAt && recordAt < markAt,
+    { claimAt, postAt, recordAt, markAt });
+  check('the journal is posted on the TRANSACTION connection',
+    /glPosting\.postJournal\(conn,/.test(src));
+  check('a GL failure aborts the whole unit', /code = 'gl_post_failed'; e\.status = 500; throw e/.test(src));
+}
+
+// ── 3. Three layers against double-posting ───────────────────────────────
+{
+  const src = code(read('lib', 'salesPosting', 'post.js'));
+  const schema = read('db', 'migrations', 'sales-posting', 'schema.js');
+  check('layer 1 — a unique idempotency key on the batch', /UNIQUE KEY uq_spb_idem/.test(schema));
+  check('…and postBatch always supplies one', /idempotencyKey = String\(opts\.idempotencyKey \|\|/.test(src));
+  check('…deterministic, so a double-click collapses even without a client key',
+    /granularity \+ ':' \+ bucketKey/.test(src));
+  check('layer 2 — the conditional claim', /AND status IN \('pending', 'failed'\)/.test(src));
+  check('layer 3 — one queue row per economic event', /UNIQUE KEY uq_spq_source/.test(schema));
+}
+
+// ── 4. created_by is the system, posted_by is the human ──────────────────
+// checkSelfApproval compares created_by to the acting user, so recording the
+// human as creator would forbid them from posting their own batch under
+// maker/checker. It is also simply true: the batch is generated by the system
+// from documents already filed — the stance _generateClosingEntries takes.
+{
+  const src = code(read('lib', 'salesPosting', 'post.js'));
+  check('the INSERT names created_by then posted_by',
+    /created_by, posted_by, posted_at\)/.test(src));
+  check("created_by is hard-coded to the system, posted_by is a parameter",
+    /'system:sales-posting', \?, NOW\(\)\)/.test(src));
+  check('…and that parameter is the acting user',
+    /idempotencyKey, actor \|\| ''\]\)/.test(src));
+}
+
+// ── 5. A reversal is dated in the ORIGINAL's period ──────────────────────
+// Reversing a month-end batch on the 3rd of the next month would move the
+// correction into a period the original never touched — and be refused once
+// that month is closed, leaving a wrong journal standing with no way to undo.
+{
+  const src = code(read('lib', 'salesPosting', 'post.js'));
+  check('reverseBatch passes the batch journal date', /journalDate: batch\.journal_date/.test(src));
+  check('…and reuses glTransitions.reverse rather than reimplementing it',
+    /glTransitions\.reverse\(batch\.journal_id/.test(src));
+
+  const gt = code(read('lib', 'glTransitions.js'));
+  check('reverse honours a caller-supplied date', /opts\.journalDate[\s\S]{0,120}toAccountingDate\(opts\.journalDate\)/.test(gt));
+  check('…and still defaults to today from MySQL', /: riyadhToday;/.test(gt));
+  check('reverse has a REAL require for accountingDate (not one in a comment)',
+    /const acctDate = require\('\.\/accountingDate'\)/.test(gt));
+
+  check('the queue rows go back to pending so they can be re-posted',
+    /SET status = 'pending', batch_id = NULL/.test(src));
+  check('…but batch_items are NOT deleted (history stays answerable)',
+    !/DELETE FROM sales_posting_batch_items/.test(src));
+}
+
+// ── 6. The period-close guard is on BOTH implementations ─────────────────
+// There are two close endpoints. Guarding one makes the bypass a matter of
+// knowing which URL to call.
+{
+  const periods = code(read('routes', 'erp', 'periods.js'));
+  const erp = code(read('routes', 'erp.js'));
+  for (const [label, src] of [['routes/erp/periods.js', periods], ['routes/erp.js', erp]]) {
+    check(label + ' calls the guard', /assertNoUnpostedSales\(db, \{/.test(src));
+    check(label + ' returns 409 UNPOSTED_SALES_IN_PERIOD',
+      /status\(409\)[\s\S]{0,200}UNPOSTED_SALES_IN_PERIOD/.test(src));
+    check(label + ' requires force AND capability AND a reason',
+      /wantsForce \|\| !mayOverride \|\| reason\.length < 10/.test(src));
+    check(label + ' strands rather than deletes on a forced close',
+      /strandUnposted\(db/.test(src));
+    check(label + ' deep-links to what is blocking',
+      /accounting\/sales-posting\?from=/.test(src));
+  }
+  // Only a real close. soft_close is a review state, and a reopen must never
+  // be blocked by unposted sales — that would trap the books shut.
+  check('periods.js guards only close/lock', /if \(target === 'closed' \|\| target === 'locked'\)/.test(periods));
+  check('erp.js guards only the open→closed transition',
+    /if \(status === 'closed' && period\.status !== 'closed'\)/.test(erp));
+}
+
+// ── 7. The guard degrades safely mid-rollout ─────────────────────────────
+{
+  const src = code(read('routes', 'erp', 'sales-posting.js'));
+  check('a missing queue table does not block a close',
+    /ER_NO_SUCH_TABLE'\) return;/.test(src));
+  check('the guard counts pending, failed AND in-flight rows',
+    /status IN \('pending', 'failed', 'posting'\)/.test(src));
+  check('it reports the day range so the screen can jump there',
+    /MIN\(business_day\) AS first_day, MAX\(business_day\) AS last_day/.test(src));
+}
+
+// ── 8. Reading and writing the ledger are different permissions ──────────
+{
+  const src = code(read('routes', 'erp', 'sales-posting.js'));
+  const routes = [...src.matchAll(/router\.(get|post)\('([^']+)',\s*requireCapability\('([^']+)'\)/g)]
+    .map((m) => ({ method: m[1], path: m[2], cap: m[3] }));
+  check('every route is gated', routes.length >= 7, routes.length);
+  check('no route is left ungated',
+    !/router\.(get|post)\('[^']+',\s*async/.test(src), src.match(/router\.(get|post)\('[^']+',\s*async/g));
+  const writes = routes.filter((r) => r.path === '/post' || /reverse/.test(r.path));
+  check('writing to the ledger needs finance.gl.post',
+    writes.length === 2 && writes.every((r) => r.cap === 'finance.gl.post'), writes);
+  const reads = routes.filter((r) => r.method === 'get');
+  check('reading needs only finance.reports.view',
+    reads.every((r) => r.cap === 'finance.reports.view'), reads);
+}
+
+// ── 9. Preview and post share ONE plan ───────────────────────────────────
+{
+  const src = code(read('lib', 'salesPosting', 'post.js'));
+  check('preview calls planBatches', /aggregate\.planBatches\(rows, granularity, accounts\)/.test(src));
+  check('postBatch calls the same planBatches',
+    (src.match(/aggregate\.planBatches\(/g) || []).length === 2, src.match(/aggregate\.planBatches\(/g));
+  check('post refuses a bucket the preview marked unpostable',
+    /if \(!bucket\.postable\)/.test(src));
+  check('…and an empty one', /code = 'empty_batch'/.test(src));
+  check('account resolution mirrors the sale path (settings, then core codes)',
+    /GL_SALES_REVENUE_CODE/.test(src) && /GL_OUTPUT_VAT_CODE/.test(src));
+}
+
+// ── 10. Errors never leak SQL to the browser ─────────────────────────────
+{
+  const src = code(read('routes', 'erp', 'sales-posting.js'));
+  check('a 5xx returns a code, not a message', /if \(status >= 500\) console\.error/.test(src));
+  check('only 4xx carries a human message', /if \(e && e\.status && e\.status < 500\) body\.message/.test(src));
+  check('a duplicate idempotency key is a friendly 409',
+    /ER_DUP_ENTRY[\s\S]{0,120}already_posted/.test(src));
+}
+
+// ── 11. The module surface ───────────────────────────────────────────────
+{
+  for (const fn of ['listPending', 'preview', 'postBatch', 'reverseBatch', 'resolveAccounts']) {
+    check('post.js exports ' + fn, typeof post[fn] === 'function');
+  }
+  check('the journal reference type is its own', post.REFERENCE_TYPE === 'SalesBatch');
+  const f = post.pendingFilter({ from: '2026-07-01', to: '2026-07-31', branchId: 'BR-1' });
+  check('the pending filter is parameterised, never interpolated',
+    f.args.length === 3 && !/2026-07-01/.test(f.sql), f);
+  check('…and always restricts to unposted rows',
+    /status IN \('pending', 'failed'\)/.test(f.sql), f.sql);
+}
+
+console.log(`\n${pass} passed, ${failures.length} failed`);
+if (failures.length) {
+  console.error('\nFAILED:\n  ' + failures.join('\n  '));
+  process.exit(1);
+}
+console.log('✅ posting service: explicit claim, one transaction, guard on both close paths');

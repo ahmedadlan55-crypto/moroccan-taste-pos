@@ -2679,6 +2679,45 @@ router.post('/periods/:id/lock', requireCapability('finance.periods.manage'), as
     const [p] = await db.query('SELECT * FROM accounting_periods WHERE id=?', [req.params.id]);
     if (!p.length) return res.json({ success:false, error:'الفترة غير موجودة' });
     const period = p[0];
+
+    // ── «ترحيل المبيعات» guard ────────────────────────────────────────────
+    // The SECOND close implementation. routes/erp/periods.js carries the same
+    // guard; putting it on only one makes the bypass a matter of knowing which
+    // URL to call.
+    //
+    // Sealing a period whose sales have not reached the ledger produces a
+    // trial balance that looks finished and is wrong. Only on a real close —
+    // `soft_closed` is a review state, and reopening must never be blocked.
+    if (status === 'closed' && period.status !== 'closed') {
+      try {
+        await require('./erp/sales-posting').assertNoUnpostedSales(db, {
+          from: period.start_date, to: period.end_date,
+          brandId: period.brand_id, branchId: period.branch_id });
+      } catch (guardErr) {
+        if (guardErr && guardErr.code === 'UNPOSTED_SALES_IN_PERIOD') {
+          const wantsForce = req.body && req.body.force === true;
+          const reason = String((req.body && req.body.reason) || '').trim();
+          const mayOverride = await requireCapability
+            .hasCapability(req.user, 'finance.periods.override_lock').catch(() => false);
+          if (!wantsForce || !mayOverride || reason.length < 10) {
+            return res.status(409).json({
+              success: false, error: 'UNPOSTED_SALES_IN_PERIOD',
+              message: guardErr.message,
+              unpostedCount: guardErr.unpostedCount,
+              firstDay: guardErr.firstDay, lastDay: guardErr.lastDay,
+              link: '/accounting/sales-posting?from=' + (guardErr.firstDay || '') +
+                    '&to=' + (guardErr.lastDay || ''),
+              overrideRequires: 'force=true + finance.periods.override_lock + reason (10+ chars)',
+            });
+          }
+          const stranded = await require('./erp/sales-posting').strandUnposted(db,
+            { from: period.start_date, to: period.end_date });
+          console.warn('[period.lock] FORCED close of ' + req.params.id + ' by ' + username +
+            ' — ' + stranded + ' sale(s) marked stranded · reason: ' + reason);
+        } else { throw guardErr; }
+      }
+    }
+
     if (period.status === 'closed' && status !== 'closed') {
       // Re-opening a hard-closed period requires a force flag (audit safety).
       if (!req.body || req.body.force !== true) {

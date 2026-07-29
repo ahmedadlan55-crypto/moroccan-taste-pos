@@ -159,6 +159,46 @@ async function _transitionStatus(req, res, target, fromStates) {
     if (fromStates && fromStates.length && fromStates.indexOf(cur[0].status) < 0) {
       return res.json({ success: false, error: 'illegal transition from ' + cur[0].status });
     }
+
+    // ── «ترحيل المبيعات» guard ──────────────────────────────────────────
+    // Sealing a period whose sales have not reached the ledger produces a
+    // trial balance that looks finished and is wrong, and leaves the queue
+    // rows with nowhere legal to go. Only on a real close — soft_close is a
+    // review state, and reopen must never be blocked.
+    if (target === 'closed' || target === 'locked') {
+      try {
+        await require('./sales-posting').assertNoUnpostedSales(db, {
+          from: bounds.start, to: bounds.end, brandId, branchId });
+      } catch (guardErr) {
+        if (guardErr && guardErr.code === 'UNPOSTED_SALES_IN_PERIOD') {
+          // Override needs force AND the capability AND a reason. What is left
+          // behind becomes `stranded` rather than being deleted, so a forced
+          // close never makes unposted revenue disappear quietly.
+          const wantsForce = req.body && req.body.force === true;
+          const reason = String((req.body && req.body.reason) || '').trim();
+          const mayOverride = await requireCapability
+            .hasCapability(req.user, 'finance.periods.override_lock').catch(() => false);
+          if (!wantsForce || !mayOverride || reason.length < 10) {
+            return res.status(409).json({
+              success: false,
+              error: 'UNPOSTED_SALES_IN_PERIOD',
+              message: guardErr.message,
+              unpostedCount: guardErr.unpostedCount,
+              firstDay: guardErr.firstDay,
+              lastDay: guardErr.lastDay,
+              // The screen deep-links straight to what is blocking the close.
+              link: '/accounting/sales-posting?from=' + (guardErr.firstDay || '') +
+                    '&to=' + (guardErr.lastDay || ''),
+              overrideRequires: 'force=true + finance.periods.override_lock + reason (10+ chars)',
+            });
+          }
+          const stranded = await require('./sales-posting').strandUnposted(db,
+            { from: bounds.start, to: bounds.end });
+          console.warn('[periods] FORCED close of ' + id + ' by ' + username +
+            ' — ' + stranded + ' sale(s) marked stranded · reason: ' + reason);
+        } else { throw guardErr; }
+      }
+    }
     await db.query(
       `UPDATE accounting_periods SET status = ?, closed_by = ?, closed_at = NOW(), closing_notes = ? WHERE id = ?`,
       [target, username, notes, id]

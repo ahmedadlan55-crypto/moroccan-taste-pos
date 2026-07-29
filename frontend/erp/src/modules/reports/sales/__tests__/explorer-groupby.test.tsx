@@ -33,6 +33,11 @@ const { lastBody, REGISTRY, resultFor } = vi.hoisted(() => {
       { id: "orders", kind: "additive", format: "count", equationKey: "count", fact: "order", facts: ["order"] },
       { id: "payments_in", kind: "additive", format: "money", equationKey: "sum", fact: "payment", facts: ["payment"] },
       { id: "avg_ticket", kind: "derived", format: "money", equationKey: "avgTicket", fact: null, facts: ["line", "order"] },
+      // liftsVoidExclusion mirrors what routes/analytics/metadata.js projects:
+      // TRUE for the metrics whose SQL tests status='voided', which is what makes
+      // the planner drop the exclusion for every OTHER metric on that fact.
+      { id: "voids_count", kind: "additive", format: "count", equationKey: "count", fact: "order", facts: ["order"], liftsVoidExclusion: true },
+      { id: "voids_value", kind: "additive", format: "money", equationKey: "sum", fact: "order", facts: ["order"], liftsVoidExclusion: true },
     ],
     dimensions: [
       { id: "branch", kind: "scope", groupable: true, facts: ["order", "line", "payment", "till", "modifier", "return", "budget"] },
@@ -225,5 +230,70 @@ describe("when reconciliation empties the grouping entirely", () => {
     await screen.findByTestId("grouping-dropped-notice");
     expect(await screen.findByTestId("page-explorer")).toBeInTheDocument();
     await waitFor(() => expect(lastBody.value?.dimensions).toEqual([]));
+  });
+});
+
+/* ── what the adversarial audit of the shipped Group By found ──────────────
+ * Three defects, none of which any test above could see, all confirmed by
+ * three independent refutation passes each.
+ */
+describe("regressions the audit caught", () => {
+  it("a legacy ?second=X link keeps its Branch primary level", async () => {
+    // The OLD codec was `by: stringParam("branch")` — a default, and a codec
+    // omits its default. So "Branch > Business day" serialised as
+    // `?second=business_day` with NO `by` at all. Reading a missing `by` as
+    // "no primary level" turned every pre-Group-By bookmark and saved view
+    // from a branch-grouped report into a flat by-day one, silently.
+    renderExplorer("/reports/sales/explorer?second=business_day");
+    await waitFor(() => expect(lastBody.value?.dimensions).toEqual(["branch", "business_day"]));
+  });
+
+  it("an explicit legacy ?by= still wins over the restored default", async () => {
+    renderExplorer("/reports/sales/explorer?by=business_day&second=branch");
+    await waitFor(() => expect(lastBody.value?.dimensions).toEqual(["business_day", "branch"]));
+  });
+
+  it("drilling never emits the same dimension twice", async () => {
+    // Grouped Branch > Business day — the drill chain's own first two links.
+    // Advancing the outer level to business_day, which the inner level already
+    // is, produced `g=business_day,business_day`: a pivot nested inside itself
+    // and one of only three grouping slots wasted. The old two-Select control
+    // could not express this at all, so opening the grouping created it.
+    renderExplorer("/reports/sales/explorer?g=branch,business_day");
+    const table = await screen.findByTestId("pivot-table");
+    const cell = within(table)
+      .getAllByRole("row")
+      .find((r) => (r.textContent ?? "").includes("الفرع الأول"))!;
+    fireEvent.click(cell);
+    await waitFor(() => {
+      const dims = lastBody.value?.dimensions ?? [];
+      expect(new Set(dims).size, `duplicated dimension in ${JSON.stringify(dims)}`).toBe(dims.length);
+    });
+  });
+});
+
+describe("the void-population trap, in the metric picker", () => {
+  it("blocks a void metric beside an order-population metric, and says why", async () => {
+    // planner.js:356 drops the void exclusion for the WHOLE fact statement as
+    // soon as one metric tests status='voided'. So voids_value beside orders
+    // makes the order count include voided orders — and avg_ticket becomes a
+    // void-excluded numerator over a void-included denominator. The Executive
+    // statement dodges this by hand; the Explorer lets the user pick freely.
+    renderExplorer("/reports/sales/explorer?m=orders");
+    const picker = await screen.findByLabelText(/المقاييس|Metrics/i);
+    fireEvent.click(picker);
+    const list = await waitFor(() => screen.getByRole("listbox"));
+    const opt = within(list)
+      .getAllByRole("option")
+      .find((o) => (o.textContent ?? "").includes("الطلبات الملغاة"))!;
+    expect(opt, "voids_count is not offered at all").toBeDefined();
+    expect(opt).toHaveAttribute("aria-disabled", "true");
+  });
+
+  it("warns instead of hiding when a URL already carries the bad pair", async () => {
+    // Silently dropping the user's own metric would be worse than showing it.
+    renderExplorer("/reports/sales/explorer?m=orders,voids_count");
+    const notice = await screen.findByTestId("void-population-notice");
+    expect(notice.textContent).toContain("الطلبات");
   });
 });

@@ -19,6 +19,8 @@ import {
   hasFactGraph,
   metricConflicts,
   reconcile,
+  voidPopulationConflicts,
+  wouldContaminate,
 } from "../lib/grouping";
 import type { AnalyticsRegistry } from "../lib/api";
 
@@ -140,5 +142,58 @@ describe("degraded mode — an older server that sends no fact graph", () => {
     expect(dimensionAvailability(OLD, ["net_ex_vat"], "menu_item")).toBeNull();
     expect(metricConflicts(OLD, ["net_ex_vat"], ["menu_item"])).toEqual({});
     expect(reconcile(OLD, ["net_ex_vat"], ["menu_item"]).dropped).toEqual([]);
+  });
+});
+
+/* ── the void-population rule ──────────────────────────────────────────────
+ * planner.js:356 lifts the void exclusion for an ENTIRE fact statement as soon
+ * as one of its metrics tests status='voided'. The server projects the verdict
+ * per metric (`liftsVoidExclusion`) rather than the client re-deriving it from
+ * a hardcoded list, because the condition is a substring test on SQL the
+ * client never sees — and a second copy of the rule is free to drift.
+ */
+const VOIDS: AnalyticsRegistry = {
+  metrics: [
+    { id: "orders", kind: "additive", format: "count", fact: "order", facts: ["order"] },
+    { id: "avg_ticket", kind: "derived", format: "money", fact: null, facts: ["line", "order"] },
+    { id: "net_ex_vat", kind: "additive", format: "money", fact: "line", facts: ["line"] },
+    { id: "voids_count", kind: "additive", format: "count", fact: "order", facts: ["order"], liftsVoidExclusion: true },
+  ],
+  dimensions: [{ id: "branch", kind: "scope", groupable: true, facts: ["order", "line"] }],
+};
+
+describe("void metrics contaminating a population", () => {
+  it("names which metrics a void metric contaminates, and which void metric did it", () => {
+    expect(voidPopulationConflicts(VOIDS, ["orders", "voids_count"])).toEqual({ orders: ["voids_count"] });
+  });
+
+  it("reaches a DERIVED metric through its inputs' facts", () => {
+    // avg_ticket spans line + order, so an order-fact void metric poisons its
+    // denominator while its numerator stays void-excluded.
+    expect(voidPopulationConflicts(VOIDS, ["avg_ticket", "voids_count"])).toEqual({
+      avg_ticket: ["voids_count"],
+    });
+  });
+
+  it("leaves a metric on a DIFFERENT fact alone", () => {
+    // The exclusion is dropped per fact STATEMENT, so a line-fact metric is
+    // untouched by an order-fact void metric. Over-blocking would be its own
+    // defect: it would grey out combinations that are perfectly sound.
+    expect(voidPopulationConflicts(VOIDS, ["net_ex_vat", "voids_count"])).toEqual({});
+  });
+
+  it("is empty when no void metric is requested", () => {
+    expect(voidPopulationConflicts(VOIDS, ["orders", "avg_ticket", "net_ex_vat"])).toEqual({});
+  });
+
+  it("predicts the block in BOTH directions for the picker", () => {
+    // adding the void metric to a population selection…
+    expect(wouldContaminate(VOIDS, ["orders"], "voids_count")).toEqual(["voids_count"]);
+    // …and adding a population metric to a void selection.
+    expect(wouldContaminate(VOIDS, ["voids_count"], "orders")).toEqual(["voids_count"]);
+    // a line-fact metric is fine either way
+    expect(wouldContaminate(VOIDS, ["voids_count"], "net_ex_vat")).toEqual([]);
+    // and an already-selected metric is never reported as blocked
+    expect(wouldContaminate(VOIDS, ["orders", "voids_count"], "orders")).toEqual([]);
   });
 });

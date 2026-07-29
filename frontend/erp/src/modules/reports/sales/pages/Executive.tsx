@@ -617,8 +617,14 @@ export default function Executive() {
         // is a proof of nothing. The ladder now opens on an independently
         // summed figure and the discount is a memo on both bases, exactly as
         // the ex-VAT ladder already treats it.
-        // …so this line is exactly the two above it, by construction.
-        { id: "net", label: t("salesReports.metrics.gross_product_sales"), value: invoicedInclVat, compare: c("gross_product_sales"), op: "eq", strong: true, explain: metricExplain(t, registry.data, "gross_product_sales") },
+        // NO `op` on the opening line. It carries no "=" because there is
+        // nothing above it to equal: it is the period's independently summed
+        // invoiced total, the ladder's starting point. It briefly rendered with
+        // op:"eq" — a leading "=" with no operands above it, styled exactly
+        // like the genuine subtotal at the foot — which invites a reader
+        // following the section note ("every '=' line is the exact result of
+        // the lines above it") to hunt for operands that do not exist.
+        { id: "net", label: t("salesReports.metrics.gross_product_sales"), value: invoicedInclVat, compare: c("gross_product_sales"), strong: true, explain: metricExplain(t, registry.data, "gross_product_sales") },
         { id: "returns", label: t("salesReports.metrics.returns_value"), value: returnsValue, compare: c("returns_value"), op: "sub" },
         // net_product_sales = gross_product_sales − returns_value
         { id: "net_sales", label: t("salesReports.metrics.net_product_sales"), value: f("net_product_sales"), compare: c("net_product_sales"), op: "eq", strong: true, explain: metricExplain(t, registry.data, "net_product_sales") },

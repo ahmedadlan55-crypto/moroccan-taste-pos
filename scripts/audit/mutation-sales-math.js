@@ -258,8 +258,14 @@ const CATALOG = [
   {
     id: 'EQ-22', target: 'equations',
     description: 'discountPct: numerator left in SAR while the denominator is halalas (unit mismatch, 100× understated)',
-    find: '  return round2((toMinor(discounts) / g) * 100);',
-    replace: '  return round2((Number(discounts) / g) * 100);',
+    find: '  return round2((toMinor(discounts) / before) * 100);',
+    replace: '  return round2((Number(discounts) / before) * 100);',
+  },
+  {
+    id: 'EQ-22b', target: 'equations',
+    description: 'discountPct: denominator back to the POST-discount invoiced figure (D/(S−D) — the shipped defect)',
+    find: '  const before = toMinor(invoicedInclVat) + toMinor(discounts);',
+    replace: '  const before = toMinor(invoicedInclVat);',
   },
   {
     id: 'EQ-23', target: 'equations',

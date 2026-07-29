@@ -21,20 +21,40 @@
 // It renders on screen too (collapsed to one line), because the same reader
 // checking a number on screen has the same question.
 import { useMemo } from "react";
-import { formatDateTime } from "@/shared/lib";
+import { formatDateTime, formatNumber } from "@/shared/lib";
 import { useT } from "@/i18n";
 import type { AnalyticsFilters } from "../lib/filters";
+import { useListSeparator } from "../lib/listSeparator";
 
 export interface BasisOfPreparationProps {
   filters: AnalyticsFilters;
   /** The active query's freshness watermark, when the page has data. */
   watermark?: string | null;
-  /** Scope labels already resolved by the caller (ids mean nothing on paper). */
-  scope?: { brands?: string[]; branches?: string[]; channels?: string[]; orderTypes?: string[] };
 }
 
-export function BasisOfPreparation({ filters, watermark, scope }: BasisOfPreparationProps) {
+/**
+ * Scope dimensions, in the order the filter bar presents them. Read from
+ * `filters` DIRECTLY — an earlier version took the scope as an optional prop,
+ * the hub never passed it, and the block confidently printed "All brands,
+ * branches, channels and order types" on a report filtered to one branch. A
+ * disclosure that can be wrong because a caller forgot a prop is a worse
+ * design than no disclosure: it converts an open question into a confident
+ * false answer, on a document someone files.
+ */
+const SCOPE_KEYS = [
+  { key: "brandId", label: "salesReports.topbar.brand" },
+  { key: "branchId", label: "salesReports.topbar.branch" },
+  { key: "channel", label: "salesReports.topbar.channel" },
+  { key: "orderType", label: "salesReports.topbar.orderType" },
+  { key: "paymentMethod", label: "salesReports.dims.payment_method" },
+  { key: "menuItemId", label: "salesReports.dims.menu_item" },
+  { key: "categoryId", label: "salesReports.dims.category" },
+  { key: "cashierId", label: "salesReports.dims.cashier" },
+] as const;
+
+export function BasisOfPreparation({ filters, watermark }: BasisOfPreparationProps) {
   const t = useT();
+  const listSeparator = useListSeparator();
 
   const lines = useMemo(() => {
     const out: Array<{ term: string; value: string }> = [
@@ -51,18 +71,21 @@ export function BasisOfPreparation({ filters, watermark, scope }: BasisOfPrepara
       },
     ];
 
-    // Scope reads as "the whole company" when nothing is pinned — an ABSENT
-    // line would leave the reader to assume it, and an assumption is exactly
-    // what this block exists to remove.
-    const named = [
-      ...(scope?.brands ?? []),
-      ...(scope?.branches ?? []),
-      ...(scope?.channels ?? []),
-      ...(scope?.orderTypes ?? []),
-    ];
+    // Scope reads as "the whole company" ONLY when nothing is pinned. Counts,
+    // not names: the filter values are ids, and the block must never resolve
+    // them with a second round-trip that could fail and silently turn a
+    // filtered report back into "all". "Branch: 1 selected" is less pleasant
+    // than "Branch: Riyadh" and it is never wrong.
+    const pinned = SCOPE_KEYS.map(({ key, label }) => {
+      const v = (filters as unknown as Record<string, unknown>)[key];
+      const n = Array.isArray(v) ? v.length : v ? 1 : 0;
+      return n > 0 ? `${t(label)}: ${formatNumber(n)}` : null;
+    }).filter(Boolean) as string[];
+    if (filters.hour) pinned.push(`${t("salesReports.dims.hour")}: ${filters.hour}`);
+
     out.push({
       term: t("salesReports.basis.scope"),
-      value: named.length ? named.join("، ") : t("salesReports.basis.scopeAll"),
+      value: pinned.length ? pinned.join(listSeparator) : t("salesReports.basis.scopeAll"),
     });
 
     out.push({ term: t("salesReports.basis.treatment"), value: t("salesReports.basis.treatmentBody") });
@@ -71,7 +94,7 @@ export function BasisOfPreparation({ filters, watermark, scope }: BasisOfPrepara
       out.push({ term: t("salesReports.basis.dataAsOf"), value: formatDateTime(watermark) });
     }
     return out;
-  }, [filters, watermark, scope, t]);
+  }, [filters, watermark, listSeparator, t]);
 
   return (
     <section

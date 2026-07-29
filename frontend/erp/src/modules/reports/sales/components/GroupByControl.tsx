@@ -28,6 +28,7 @@ import { Layers, X } from "lucide-react";
 import { Combobox, IconButton, type ComboboxOption } from "@/shared/ui";
 import { useT, type TFunction } from "@/i18n";
 import { dimensionAvailability, groupableDimensions, type DimensionKind } from "../lib/grouping";
+import { useListSeparator } from "../lib/listSeparator";
 import type { AnalyticsRegistry } from "../lib/api";
 
 /** The planner's own ceiling — lib/analytics/planner.js:56 MAX_DIMENSIONS. */
@@ -54,6 +55,7 @@ export interface GroupByControlProps {
 
 export function GroupByControl({ registry, value, onChange, metricIds, className }: GroupByControlProps) {
   const t = useT();
+  const listSeparator = useListSeparator();
 
   const dims = useMemo(() => groupableDimensions(registry), [registry]);
 
@@ -75,13 +77,13 @@ export function GroupByControl({ registry, value, onChange, metricIds, className
         } else if (blocked?.reason === "metric-conflict") {
           sublabel = `${t("salesReports.groupBy.blockedBy")} ${blocked.blockedBy
             .map((m) => t(`salesReports.metrics.${m}`))
-            .join("، ")}`;
+            .join(listSeparator)}`;
         } else if (takenElsewhere) {
           sublabel = t("salesReports.groupBy.alreadyUsed");
         }
         return { value: d.id, label: t(`salesReports.dims.${d.id}`), sublabel, disabled: !!blocked || takenElsewhere };
       });
-  }, [dims, registry, metricIds, value, t]);
+  }, [dims, registry, metricIds, value, listSeparator, t]);
 
   /**
    * Slots rendered = every chosen level, plus ONE empty slot to add the next.

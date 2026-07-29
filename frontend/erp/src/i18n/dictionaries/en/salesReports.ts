@@ -29,7 +29,7 @@ export const salesReports = {
     basisNoteExcl:
       "The discount is recorded VAT-inclusive with no tax split anywhere in the data, so it is already out of the lines below and is not a line of this statement — its value is under “Memo”.",
     basisNoteIncl:
-      "The discount is recorded in this same (VAT-inclusive) space, so it appears here as a subtracted line and the top line is reconstructed by adding it back to the invoiced amount.",
+      "The statement opens on what was actually invoiced — a figure summed independently, not reconstructed — and subtracts returns. The discount is recorded VAT-inclusive and is already out of the invoiced amount, so it sits under “Memo” rather than as a line here: an opening line rebuilt by adding the discount back, followed by subtracting that same discount, would close by construction and could never detect a wrong discount.",
     memoTitle: "Memo — outside the statement above",
     memoNote: "Shown for reference only; these do not enter the arithmetic above, and fees and rounding are not part of the invoice total",
     memoControl: "Control line: must read zero",
@@ -375,7 +375,7 @@ export const salesReports = {
     scopeAll: "All brands, branches, channels and order types",
     treatment: "Treatments",
     treatmentBody:
-      "Voided orders are excluded from every count and value; returns are netted in the period they were recorded, not the period of the original sale; cost is the at-sale snapshot, never today's cost.",
+      "Voided orders are excluded from counts and values, except in a report that measures voiding itself, where they are necessarily included; returns are netted in the period they were recorded, not the period of the original sale; cost is the at-sale snapshot, never today's cost.",
     dataAsOf: "Data as of",
   },
 
@@ -393,6 +393,8 @@ export const salesReports = {
     noSource: "No data source for this dimension yet",
     blockedBy: "Unavailable with:",
     alreadyUsed: "Used in another level",
+    voidPopulation: "Cannot sit beside a void metric: asking for it makes voided orders count in this one too",
+    voidPopulationNotice: "A void metric in the same request makes voided orders count in: {metrics} — the figures above cover two different populations.",
     droppedNotice: "Dropped grouping levels the chosen metrics cannot support: {dims}",
     grandTotal: "Grand total",
     grandTotalNote: "The grand total covers the whole period, not only the rows shown",

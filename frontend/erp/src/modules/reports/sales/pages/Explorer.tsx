@@ -46,7 +46,8 @@ import { useAnalyticsQuery, useAnalyticsRegistry } from "../lib/useAnalyticsQuer
 import { METRIC_CODES } from "../lib/registry-fixture";
 import { PivotTable, type PivotMeasure } from "../components/PivotTable";
 import { GroupByControl, MAX_GROUP_DIMS } from "../components/GroupByControl";
-import { metricConflicts, reconcile } from "../lib/grouping";
+import { metricConflicts, reconcile, voidPopulationConflicts, wouldContaminate } from "../lib/grouping";
+import { useListSeparator } from "../lib/listSeparator";
 import type { FlatPivotRow } from "../lib/pivot";
 
 const SEGMENT = "explorer";
@@ -160,6 +161,7 @@ const KPI_TONES: MetricTone[] = ["teal", "violet", "blue", "amber"];
 
 export default function Explorer() {
   const t = useT();
+  const listSeparator = useListSeparator();
   const navigate = useNavigate();
   const location = useLocation();
   const { filters } = useUrlFilters(analyticsFilterCodec);
@@ -174,7 +176,16 @@ export default function Explorer() {
   // Legacy `by`/`second` win when present — an old link carries them and no
   // `g`, and silently rewriting such a link to the default grouping would open
   // a DIFFERENT report than the one its author shared.
-  const legacyDims = [page.filters.by, page.filters.second].filter(Boolean);
+  //
+  // `by` DEFAULTED TO "branch" in the old codec, so a URL grouped Branch >
+  // Business day serialised as `?second=business_day` with NO `by` at all —
+  // writing the default is exactly what a codec omits. Reading a missing `by`
+  // as "no primary level" therefore dropped Branch from every pre-Group-By
+  // bookmark and saved view, turning "Branch > Business day" into a flat
+  // by-day report. So a `second` with no `by` restores the old default.
+  const legacySecond = page.filters.second;
+  const legacyBy = page.filters.by || (legacySecond ? "branch" : "");
+  const legacyDims = [legacyBy, legacySecond].filter(Boolean);
   const requestedDims = (legacyDims.length ? legacyDims : page.filters.g).slice(0, MAX_GROUP_DIMS);
 
   // A grouping can arrive that the CURRENT metric set cannot support (a saved
@@ -225,22 +236,40 @@ export default function Explorer() {
     [registry.data, dims.join("|")],
   );
 
+  // The void-population trap, enforced where the user actually picks metrics.
+  // The Executive statement avoids it by hand (its groups are pinned by
+  // voidPopulation.test.ts); the Explorer cannot, because the user picks any
+  // twelve metrics they like — and `voids_value` beside `orders` silently makes
+  // `avg_ticket` a void-excluded numerator over a void-included denominator.
+  const contaminated = useMemo(
+    () => voidPopulationConflicts(registry.data, metricIds),
+    [registry.data, metricIds.join("|")],
+  );
+
   const metricOptions = useMemo(() => {
     const ids = registry.data?.metrics?.map?.((m) => m.id) ?? [...METRIC_CODES];
     return ids.map((id) => {
       const blocking = conflicts[id];
+      const voidBlock = wouldContaminate(registry.data, metricIds, id);
+      const already = metricIds.includes(id);
+      let sublabel: string | undefined;
+      if (blocking) {
+        sublabel = `${t("salesReports.groupBy.blockedBy")} ${blocking
+          .map((d) => t(`salesReports.dims.${d}`))
+          .join(listSeparator)}`;
+      } else if (voidBlock.length) {
+        sublabel = t("salesReports.groupBy.voidPopulation");
+      }
       return {
         value: id,
         label: t(`salesReports.metrics.${id}`),
         // Never disable a metric the user has ALREADY chosen: it would be
         // stuck in the report with no way to take it out.
-        disabled: !!blocking && !metricIds.includes(id),
-        sublabel: blocking
-          ? `${t("salesReports.groupBy.blockedBy")} ${blocking.map((d) => t(`salesReports.dims.${d}`)).join("، ")}`
-          : undefined,
+        disabled: (!!blocking || voidBlock.length > 0) && !already,
+        sublabel,
       };
     });
-  }, [registry.data, conflicts, metricIds.join("|"), t]);
+  }, [registry.data, conflicts, metricIds.join("|"), listSeparator, t]);
 
   const measures = useMemo<PivotMeasure[]>(
     () =>
@@ -275,7 +304,16 @@ export default function Explorer() {
     // preserved). Dimensions outside the chain only pin their filter.
     const at = DRILL_CHAIN.indexOf(by);
     if (at !== -1 && at < DRILL_CHAIN.length - 1) {
-      extra.g = [DRILL_CHAIN[at + 1], ...dims.slice(1)].join(",");
+      const next = DRILL_CHAIN[at + 1];
+      // De-duplicate. Grouping Branch > Business day and drilling a branch
+      // advances the outer level to business_day — which the INNER level
+      // already is, so a naive [next, ...dims.slice(1)] emits
+      // `g=business_day,business_day`: a wasted GROUP BY level, a pivot nested
+      // inside itself, and one of the two slots gone from a hard limit of
+      // three. The old two-Select control could not express this at all (it
+      // filtered the chosen primary out of the secondary list); opening the
+      // grouping made it reachable, so the guard has to be explicit.
+      extra.g = [next, ...dims.slice(1).filter((d) => d !== next)].join(",");
       // The legacy pair must not survive the drill: it is read in preference
       // to `g`, so leaving it behind would pin the pre-drill grouping forever.
       extra.by = "";
@@ -317,6 +355,25 @@ export default function Explorer() {
   // A level was dropped because the CURRENT metrics cannot express it. Naming
   // both sides matters: "grouping removed" alone reads as a bug, while "removed
   // X because Y asks for it" tells the user which one to change.
+  // The picker blocks the pair going forward, but a URL — a saved view, a
+  // shared link, the Back button — can still arrive carrying it. Removing the
+  // user's metric silently would be worse than showing the number; naming
+  // exactly which figures are affected lets them decide.
+  const contaminatedNotice = Object.keys(contaminated).length > 0 && (
+    <div
+      data-testid="void-population-notice"
+      className="flex flex-wrap items-center gap-2 rounded-xl border border-amber-200 bg-amber-50 p-3 text-xs font-bold text-amber-800"
+    >
+      <span>
+        {t("salesReports.groupBy.voidPopulationNotice", {
+          metrics: Object.keys(contaminated)
+            .map((m) => t(`salesReports.metrics.${m}`))
+            .join(listSeparator),
+        })}
+      </span>
+    </div>
+  );
+
   const droppedNotice = dropped.length > 0 && (
     <div
       data-testid="grouping-dropped-notice"
@@ -324,7 +381,7 @@ export default function Explorer() {
     >
       <span>
         {t("salesReports.groupBy.droppedNotice", {
-          dims: dropped.map((d) => t(`salesReports.dims.${d}`)).join("، "),
+          dims: dropped.map((d) => t(`salesReports.dims.${d}`)).join(listSeparator),
         })}
       </span>
     </div>
@@ -389,7 +446,8 @@ export default function Explorer() {
   if (rows.length === 0) {
     return (
       <section className="space-y-4" data-testid="page-explorer">
-        {droppedNotice}
+        {contaminatedNotice}
+      {droppedNotice}
         {controls}
         <EmptyState title={t("salesReports.states.empty")} />
       </section>
@@ -401,6 +459,7 @@ export default function Explorer() {
   return (
     <section className="space-y-4" data-testid="page-explorer">
       <CompletenessNotice meta={query.data?.meta} />
+      {contaminatedNotice}
       {droppedNotice}
       {controls}
 

@@ -142,5 +142,51 @@ test('every OTHER groupable dimension has at least one metric that can group by 
   ok(dead.length === 0, `groupable dimensions no metric can group by: ${dead.join(', ')}`);
 });
 
+/* ── the void-exclusion flag must agree with the PLANNER, not with a list ──
+ *
+ * planner.js:350-356 lifts the void exclusion for an ENTIRE fact statement
+ * when any of its metrics mentions 'voided' in its SQL:
+ *
+ *     const hasVoidMetric = factMetrics.some((m) => String(m.sql).includes("'voided'"));
+ *     if (!hasStatusFilter && req.includeVoided !== true && !hasVoidMetric) {
+ *       whereParts.push("(f.status IS NULL OR f.status <> 'voided')");
+ *     }
+ *
+ * The client cannot see SQL, so `liftsVoidExclusion` is projected per metric
+ * through /api/analytics/metadata and drives which combinations the Explorer's
+ * metric picker disables. A hardcoded list of "the void metrics" on either
+ * side would drift the first time a metric is added — and drift silently, into
+ * numbers that mix two populations. So the flag is checked against the SQL the
+ * real planner actually emits, metric by metric.
+ */
+test('liftsVoidExclusion is true for exactly the metrics that drop the exclusion', () => {
+  const disagreements = [];
+  let checked = 0;
+  for (const m of ALL_METRICS) {
+    let sql;
+    try {
+      const p = planner.plan({ metrics: [m.id], dimensions: [], range: RANGE }, SCOPE, { mealPeriods: MEAL_PERIODS });
+      sql = p.statements.map((st) => st.rows.sql).join(' ');
+    } catch (e) {
+      continue; // masked / parameterized — never reaches a fact statement
+    }
+    checked++;
+    // The clause the planner adds ONLY when no void metric is present.
+    const exclusionPresent = /<>\s*'voided'/.test(sql);
+    const flag = grouping.liftsVoidExclusion(m.id);
+    // flag === true  ⇒ the exclusion must be ABSENT
+    // flag === false ⇒ the exclusion must be PRESENT (on a fact that has status)
+    if (flag && exclusionPresent) {
+      disagreements.push(`${m.id}: flagged as lifting the exclusion, but the SQL still carries it`);
+    }
+    if (!flag && !exclusionPresent && /analytics_order_facts/.test(sql)) {
+      disagreements.push(`${m.id}: not flagged, yet the order-fact SQL has no void exclusion`);
+    }
+  }
+  ok(checked > 30, `only ${checked} metrics planned — the probe broke`);
+  ok(disagreements.length === 0, `${disagreements.length} disagree:\n       ` + disagreements.join('\n       '));
+  console.log(`      (${checked} metrics planned and compared against emitted SQL)`);
+});
+
 console.log(`\nAnalytics grouping: ${_passed}/${_total} passed, ${_failed} failed`);
 process.exit(_failed ? 1 : 0);

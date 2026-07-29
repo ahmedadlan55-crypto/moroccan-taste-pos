@@ -117,6 +117,13 @@ export interface AnalyticsRegistry {
      * lib/grouping.ts. Absent on an older server (degraded mode).
      */
     facts?: string[];
+    /**
+     * TRUE when asking for this metric makes the planner drop the void
+     * exclusion for every OTHER metric on the same fact statement
+     * (planner.js:356). Projected by the server because the condition is a
+     * substring test on SQL the client never sees.
+     */
+    liftsVoidExclusion?: boolean;
   }>;
   dimensions: Array<{
     id: string;

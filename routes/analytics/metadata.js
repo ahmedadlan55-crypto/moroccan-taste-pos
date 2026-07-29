@@ -68,6 +68,12 @@ router.get('/', async (req, res) => {
           // without it the client cannot predict ANALYTICS_UNSUPPORTED_COMBINATION
           // and the user meets a raw 422 that names no culprit.
           facts: grouping.metricFacts(m.id),
+          // TRUE when this metric makes the planner drop the void exclusion for
+          // every OTHER metric on the same fact statement (planner.js:356).
+          // The condition is a substring test on SQL the client never sees, so
+          // the verdict is projected rather than re-derived — a hardcoded list
+          // of "void metrics" on the client would be a second copy of the rule.
+          liftsVoidExclusion: grouping.liftsVoidExclusion(m.id),
           format: m.format,
           equationKey: m.equationKey,
           version: m.version,

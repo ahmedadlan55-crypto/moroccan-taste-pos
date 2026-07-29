@@ -190,10 +190,21 @@ test('avgItemsPerOrder', () => {
   eq(E.avgItemsPerOrder(10, 3), 3.33);
   eq(E.avgItemsPerOrder(10, 0), null);
 });
-test('discountPct', () => {
-  eq(E.discountPct(50, 1000), 5);
-  eq(E.discountPct(1, 3), 33.33);
-  eq(E.discountPct(50, 0), null, 'no gross → undefined, not 0%');
+test('discountPct divides by sales BEFORE the discount, not by the invoiced figure', () => {
+  // The second operand is Σ d.gross_amount, which is POST-discount
+  // (calculations.js:131-138). Dividing by it computes D/(S−D): a day at
+  // exactly 10% policy printed 11.11% and tripped the amber ≥10 threshold on
+  // the discounts report, and the error is unbounded as the discount
+  // approaches the whole sale.
+  eq(E.discountPct(100, 900), 10, 'SAR 100 off SAR 1,000 of sales is 10%, not 11.11%');
+  eq(E.discountPct(500, 500), 50, 'a 50%-off promotion is 50%, not 100%');
+  eq(E.discountPct(50, 950), 5);
+  // A rate may not exceed 100%, and a fully comped period is exactly 100% —
+  // it used to return null (rendered "—", read as "no data") because the
+  // post-discount denominator was 0.
+  eq(E.discountPct(300, 0), 100, 'a fully comped period is 100%, not "no data"');
+  eq(E.discountPct(0, 1000), 0, 'no discount is 0%, not null');
+  eq(E.discountPct(0, 0), null, 'nothing sold and nothing discounted → undefined, not 0%');
 });
 test('attachRate: modifiers per 100 items', () => {
   eq(E.attachRate(30, 100), 30);

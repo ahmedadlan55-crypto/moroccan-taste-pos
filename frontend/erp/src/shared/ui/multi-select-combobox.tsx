@@ -245,7 +245,12 @@ export function MultiSelectCombobox({
               filtered.map((o, i) => {
                 const checked = selectedSet.has(o.value);
                 return (
-                  <li key={o.value} role="option" aria-selected={checked}>
+                  // aria-disabled belongs on the element carrying role="option":
+                  // the `disabled` attribute is on the inner <button>, which is
+                  // not the node a screen reader announces, so an unavailable
+                  // option was read out as merely "not selected" — identical to
+                  // one the user can pick. Same fix as combobox.tsx.
+                  <li key={o.value} role="option" aria-selected={checked} aria-disabled={o.disabled || undefined}>
                     <button
                       type="button"
                       disabled={o.disabled}

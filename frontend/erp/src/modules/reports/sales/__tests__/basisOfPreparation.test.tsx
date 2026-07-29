@@ -87,3 +87,33 @@ describe("what the block states", () => {
     expect(screen.getByTestId("basis-of-preparation").textContent).not.toContain("البيانات حتى");
   });
 });
+
+/* ── the scope line, after the audit ───────────────────────────────────────
+ * The block shipped taking its scope as an OPTIONAL prop that the hub never
+ * passed, so it printed "All brands, branches, channels and order types" on
+ * every report — including one filtered to a single branch and channel. On a
+ * printed accounting document that is not a missing disclosure, it is a false
+ * one. It now reads the filters it is already handed, and these pin that.
+ */
+describe("the scope line", () => {
+  it("says 'the whole company' only when nothing is actually pinned", () => {
+    renderBasis({});
+    expect(screen.getByTestId("basis-of-preparation").textContent).toContain("كل العلامات والفروع");
+  });
+
+  it("names each pinned dimension with its count, and drops the 'all' claim", () => {
+    renderBasis({ branchId: ["b7"], channel: ["c1", "c2"] } as Partial<AnalyticsFilters>);
+    const text = screen.getByTestId("basis-of-preparation").textContent ?? "";
+    expect(text, "still claiming the whole company on a filtered report").not.toContain("كل العلامات والفروع");
+    expect(text).toContain("الفرع");
+    expect(text).toContain("قناة البيع");
+    expect(text).toContain("2");
+  });
+
+  it("picks up a drill pin too — the hour a heat-map click left on the URL", () => {
+    renderBasis({ hour: "13" } as Partial<AnalyticsFilters>);
+    const text = screen.getByTestId("basis-of-preparation").textContent ?? "";
+    expect(text).not.toContain("كل العلامات والفروع");
+    expect(text).toContain("13");
+  });
+});

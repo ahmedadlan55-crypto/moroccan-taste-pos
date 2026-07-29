@@ -122,6 +122,59 @@ export function metricConflicts(
 }
 
 /**
+ * Which metrics have their POPULATION contaminated by a void metric in the
+ * same request?
+ *
+ * The planner drops the void exclusion for an ENTIRE fact statement as soon as
+ * one of its metrics tests `status = 'voided'` (planner.js:356, and the
+ * `liftsVoidExclusion` flag the server projects). So `voids_value` beside
+ * `orders` makes the order count start including voided orders, and
+ * `avg_ticket` — a line-fact numerator over that order-fact denominator —
+ * becomes void-excluded ÷ void-included. Two populations in one number, and
+ * nothing on screen says so.
+ *
+ * The Executive statement avoids this by hand, with its metric groups pinned
+ * by voidPopulation.test.ts. The Explorer cannot: the user picks any twelve
+ * metrics they like. So the same rule is enforced in the picker.
+ *
+ * Returns metric id → the void metric ids that contaminate it.
+ */
+export function voidPopulationConflicts(
+  registry: AnalyticsRegistry | undefined,
+  metricIds: string[],
+): Record<string, string[]> {
+  const out: Record<string, string[]> = {};
+  if (!hasFactGraph(registry)) return out;
+  const lifters = metricIds.filter((id) => registry?.metrics?.find((m) => m.id === id)?.liftsVoidExclusion);
+  if (!lifters.length) return out;
+  for (const id of metricIds) {
+    if (lifters.includes(id)) continue;
+    const mine = new Set(metricFacts(registry, id));
+    // Contaminated iff it SHARES a fact statement with a lifter — a line-fact
+    // metric is untouched by an order-fact void metric.
+    const by = lifters.filter((v) => metricFacts(registry, v).some((f) => mine.has(f)));
+    if (by.length) out[id] = by;
+  }
+  return out;
+}
+
+/** True when adding `candidate` to `metricIds` would contaminate a population. */
+export function wouldContaminate(
+  registry: AnalyticsRegistry | undefined,
+  metricIds: string[],
+  candidate: string,
+): string[] {
+  if (metricIds.includes(candidate)) return [];
+  const after = voidPopulationConflicts(registry, [...metricIds, candidate]);
+  const before = voidPopulationConflicts(registry, metricIds);
+  const newlyBroken = Object.keys(after).filter((k) => !before[k]);
+  // Either the candidate is the lifter that breaks others, or the candidate is
+  // itself broken by a lifter already selected.
+  if (after[candidate] && !before[candidate]) return after[candidate];
+  return newlyBroken.length ? [candidate] : [];
+}
+
+/**
  * Drop dimensions the current metrics cannot support. Used when a URL arrives
  * carrying a grouping saved against a different metric set — a saved view, a
  * shared link, or the Back button — so the page renders SOMETHING instead of

@@ -76,6 +76,9 @@ export interface AnalyticsFilterDefaults {
   taxIncl: boolean;
 }
 
+/** Same shape dateParam validates against — the URL is the only source here. */
+const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
+
 /** The concrete defaults for a given "today" (exported for tests + chips). */
 export function computeAnalyticsDefaults(today: string = todayISO()): AnalyticsFilterDefaults {
   const { from, to } = computePresetRange("last30", today);
@@ -91,7 +94,7 @@ export function createAnalyticsFilterCodec(
   today: string = todayISO(),
 ): FilterCodec<AnalyticsFilters> & { defaults: AnalyticsFilterDefaults } {
   const d = computeAnalyticsDefaults(today);
-  const codec = makeCodec({
+  const base = makeCodec({
     from: dateParam(d.from),
     to: dateParam(d.to),
     preset: enumParam<DateRangePreset>(DATE_RANGE_PRESETS, d.preset),
@@ -108,6 +111,48 @@ export function createAnalyticsFilterCodec(
     categoryId: csvParam(),
     cashierId: csvParam(),
   });
+
+  /*
+   * A RANGE IS EITHER FULLY EXPLICIT OR FULLY DERIVED — NEVER HALF.
+   *
+   * `to` on a to-date preset equals today, which is the codec's default, and a
+   * codec omits its default. So `?preset=mtd` shipped `from` frozen as a
+   * literal and `to` absent. Reopened a week later, `to` came back from the NEW
+   * default while `from` stayed put:
+   *
+   *     picked 2026-07-29:  ?from=2026-07-01&preset=mtd   → 07-01 … 07-29
+   *     opened 2026-08-05:  same URL                       → 07-01 … 08-05
+   *
+   * A 36-day window straddling two months, still labelled "Month to date" —
+   * neither the range its author saw nor a real month-to-date (08-01 … 08-05).
+   * `?preset=today` reopened as an eight-day window labelled "Today". And the
+   * basis-of-preparation block now prints that range as the report's
+   * authoritative period, on paper.
+   *
+   * The half is the defect, so the rule is about halves, not about presets:
+   *
+   *   BOTH dates in the URL  → honour them verbatim. A closed period
+   *     (lastMonth/lastQuarter/lastYear) and Custom always write both, so a
+   *     shared "June close" stays June for whoever opens it, whenever.
+   *   EITHER missing         → derive BOTH from the preset. A to-date link then
+   *     reopens as what its label says — month-to-date in August is August —
+   *     instead of a window that is neither.
+   *
+   * Deriving only the missing side is the one thing never done: that is exactly
+   * the mixed window this fixes.
+   */
+  const codec: FilterCodec<AnalyticsFilters> = {
+    parse(sp) {
+      const out = base.parse(sp);
+      if (out.preset === "custom") return out;
+      const bothPinned = ISO_DATE.test(sp.get("from") || "") && ISO_DATE.test(sp.get("to") || "");
+      if (bothPinned) return out;
+      const r = computePresetRange(out.preset, today);
+      return { ...out, from: r.from, to: r.to };
+    },
+    serialize: base.serialize,
+  };
+
   return { ...codec, defaults: d };
 }
 

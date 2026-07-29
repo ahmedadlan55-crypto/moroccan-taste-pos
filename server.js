@@ -1246,6 +1246,25 @@ async function runMigrations() {
         LEFT JOIN sales_posting_queue q ON q.source_type = 'sale' AND q.source_id = s.id
        WHERE q.id IS NULL`);
     if (Number(pre.n) > 0) {
+      // The `sales` table has grown by addColumnIfMissing over many releases,
+      // so which optional columns exist differs by deployment age. Ask the
+      // schema rather than guessing — a first attempt hard-coded `s.subtotal`
+      // and `s.tax`, which this table has never had, and the whole backfill
+      // was skipped with one swallowed error line.
+      const [cols] = await db.query(
+        `SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS
+          WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'sales'`);
+      const has = new Set(cols.map((c) => String(c.COLUMN_NAME)));
+      const col = (name, fallback) => (has.has(name) ? 's.' + name : fallback);
+
+      // Legacy rows carry only the invoice total. net/tax are left at 0
+      // deliberately: these rows are `posted_legacy`, their journals were
+      // written years ago by the old path, and nothing will ever re-post them
+      // — so a reconstructed split would be a guess dressed as a fact. The
+      // gross is recorded because it is the one number that is unambiguous.
+      const grossExpr = has.has('total_final') ? 's.total_final'
+        : (has.has('total') ? 's.total' : '0');
+
       let done = 0;
       for (let guard = 0; guard < 500; guard++) {     // 500 × 2000 = 1M sales ceiling
         const [r] = await db.query(
@@ -1255,9 +1274,9 @@ async function runMigrations() {
            SELECT 'sale', s.id,
                   DATE(s.order_date - INTERVAL 4 HOUR),   -- default day_close_time
                   DATE(s.order_date),
-                  s.brand_id, s.branch_id,
-                  COALESCE(s.subtotal, 0), COALESCE(s.tax, 0), COALESCE(s.total, 0), 0,
-                  'posted_legacy', s.invoice_number, s.order_date
+                  ${col('brand_id', 'NULL')}, ${col('branch_id', 'NULL')},
+                  0, 0, COALESCE(${grossExpr}, 0), 0,
+                  'posted_legacy', ${col('invoice_number', 'NULL')}, s.order_date
              FROM sales s
              LEFT JOIN sales_posting_queue q ON q.source_type = 'sale' AND q.source_id = s.id
             WHERE q.id IS NULL
@@ -1267,6 +1286,14 @@ async function runMigrations() {
       }
       console.log('[sales-posting] backfilled ' + done + ' historical sale(s) as posted_legacy');
     }
+    const [[gap]] = await db.query(
+      `SELECT COUNT(*) AS n FROM sales s
+        LEFT JOIN sales_posting_queue q ON q.source_type = 'sale' AND q.source_id = s.id
+       WHERE q.id IS NULL`);
+    // THE INVARIANT. Must be zero forever — a sale with no queue row is a sale
+    // no batch will ever pick up.
+    if (Number(gap.n) === 0) console.log('[sales-posting] invariant OK — every sale has a queue row');
+    else console.error('[sales-posting] *** ' + gap.n + ' SALE(S) HAVE NO QUEUE ROW ***');
   } catch (e) {
     console.error('[sales-posting] backfill skipped:', e.message.substring(0, 160));
   }
@@ -7672,15 +7699,28 @@ async function runMigrations() {
   // becomes unknowable without a DB session. This is two counts and a line:
   // it answers "is the catalogue bilingual yet" on any deploy, forever.
   try {
+    // The defect is a name with NO Arabic at all. A name that merely CONTAINS
+    // Latin is usually correct — «A-31», «30oz», «900ML» are supplier codes and
+    // measurements that must survive verbatim, and «Sante», «Davinci» are brand
+    // names. A first version counted any Latin character and reported 153 of
+    // 195 as broken, which was alarming and wrong.
+    // The Arabic class is written as an explicit code-point range, passed as a
+    // parameter. `[\p{Arabic}]` is accepted by MySQL's parser and then matches
+    // almost nothing — it reported 3 of 19 known-Arabic names as Arabic, and
+    // bare `\p{Arabic}` fails outright with an interval-syntax error. A regex
+    // that silently under-matches is worse than one that throws.
+    const AR = '[؀-ۿ]';
     const [[h]] = await db.query(
       `SELECT COUNT(*) AS total,
               SUM(CASE WHEN name_en IS NULL OR TRIM(name_en) = '' THEN 1 ELSE 0 END) AS no_en,
               SUM(CASE WHEN sku IS NULL OR TRIM(sku) = '' THEN 1 ELSE 0 END) AS no_sku,
-              SUM(CASE WHEN name REGEXP '[A-Za-z]' THEN 1 ELSE 0 END) AS latin_in_ar
-         FROM inv_items`);
+              SUM(CASE WHEN name NOT REGEXP ? THEN 1 ELSE 0 END) AS no_arabic,
+              SUM(CASE WHEN name REGEXP ? AND name REGEXP '[A-Za-z]' THEN 1 ELSE 0 END) AS mixed
+         FROM inv_items`, [AR, AR]);
     if (Number(h.total) > 0) {
-      console.log('[inv-health] ' + h.total + ' items · missing English ' + h.no_en +
-        ' · missing SKU ' + h.no_sku + ' · Latin text still in the Arabic name ' + h.latin_in_ar);
+      console.log('[inv-health] ' + h.total + ' items · no Arabic name ' + h.no_arabic +
+        ' · missing English ' + h.no_en + ' · missing SKU ' + h.no_sku +
+        ' · Arabic with Latin codes/brands ' + h.mixed + ' (expected — measurements and brands stay)');
     }
   } catch (e) { console.error('[inv-health]', e.message); }
 

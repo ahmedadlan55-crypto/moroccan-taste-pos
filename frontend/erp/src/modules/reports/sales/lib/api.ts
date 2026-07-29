@@ -653,6 +653,7 @@ export interface ReconciliationRow {
     open_float?: number;
     cash_sale?: number;
     cash_refund?: number;
+    pay_in?: number;
     pay_out?: number;
     deposit?: number;
     /** null = not measurable (no till facts that day). */
@@ -675,6 +676,22 @@ export interface ReconciliationTotals {
   cashExpectedVsCounted: number | null;
   paymentsWithoutOrder: number;
   ordersWithoutPayment: number;
+  // ── the cash chain, summed server-side ────────────────────────────────────
+  // Invoiced → collected → drawer → deposited, as period figures. Summed where
+  // the deltas are computed, not in the browser.
+  orders?: number;
+  invoice_total?: number;
+  payments_in?: number;
+  payments_out?: number;
+  open_float?: number;
+  cash_sale?: number;
+  cash_refund?: number;
+  pay_in?: number;
+  pay_out?: number;
+  deposit?: number;
+  /** null = no drawer was counted in the period — "—", never 0. */
+  expected_cash?: number | null;
+  counted?: number | null;
 }
 
 export interface ReconciliationData {

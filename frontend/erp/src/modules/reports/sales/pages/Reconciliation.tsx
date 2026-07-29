@@ -30,6 +30,7 @@ import { useCan } from "@/shared/permissions";
 import { useUrlFilters } from "@/shared/hooks/useUrlFilters";
 import { analyticsFilterCodec } from "../lib/filters";
 import { fetchReconciliation, type ReconciliationRow } from "../lib/api";
+import { CashChain } from "../components/CashChain";
 
 /** |delta| above this is an exception (money is exact to the halala). */
 const EPS = 0.01;
@@ -162,6 +163,13 @@ export default function Reconciliation() {
           </div>
         ))}
       </div>
+
+      {/* The chain reads the SAME period totals the grid below is built from,
+          summed server-side — so it can never disagree with the detail. It
+          leads because "I billed X, where did it end up?" is the question, and
+          the eleven-column grid is where you go once you know which link
+          leaked. */}
+      <CashChain totals={totals} />
 
       <DataTable<ReconciliationRow>
         columns={columns}

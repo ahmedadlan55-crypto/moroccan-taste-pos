@@ -1757,7 +1757,10 @@ router.get('/:shiftId/full-report-print', async (req, res) => {
     const esc = v => String(v == null ? '' : v).replace(/[&<>"']/g, c => (
       { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
     const fmt = v => Number(v || 0).toFixed(2);
-    const fmtDt = v => { try { return new Date(v).toLocaleString('ar-SA'); } catch(e) { return v || '—'; } };
+    // en-GB: 'ar-SA' printed the shift's open/close stamps in Arabic-Indic
+    // digits ("١‏/٧‏/٢٠٢٦، ١٢:٠٠:٠٠ ص") on a thermal report whose every other
+    // number is Latin. Day-first Gregorian, Latin digits, matching the app.
+    const fmtDt = v => { try { return new Date(v).toLocaleString('en-GB', { calendar:'gregory', numberingSystem:'latn' }); } catch(e) { return v || '—'; } };
     const fmtDur = ms => {
       if (!ms || ms < 0) return '—';
       const h = Math.floor(ms / 3600000), m = Math.floor((ms % 3600000) / 60000);

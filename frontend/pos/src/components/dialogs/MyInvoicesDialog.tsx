@@ -762,7 +762,7 @@ export function MyInvoicesDialog({ open, onClose }: { open: boolean; onClose: ()
                           <StatusBadge row={r} />
                         </td>
                         <td className="num p-2 text-slate-500">
-                          {new Date(r.date).toLocaleTimeString("ar-SA", { hour: "2-digit", minute: "2-digit" })}
+                          {new Date(r.date).toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" })}
                         </td>
                         <td className="p-2">
                           <div className="num font-extrabold text-ink">{r.invoiceNumber ?? r.orderId}</div>

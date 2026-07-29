@@ -20,7 +20,7 @@ import {
   Toggle,
 } from "@/shared/ui";
 import { DataTable, type ColumnDef } from "@/shared/tables";
-import { useLang, useT } from "@/i18n";
+import { useT } from "@/i18n";
 import { analyticsFilterCodec } from "../lib/filters";
 import {
   buildPlannerRequest,
@@ -50,6 +50,17 @@ const CURRENT_SOURCE = "__current__";
 
 /** Service contract: weekday 0 = Sunday … 6 = Saturday (ScheduleService). */
 const WEEKDAY_BASE_SUNDAY = new Date(Date.UTC(2023, 0, 1)); // 2023-01-01 = Sunday
+
+// English weekday names in BOTH UI languages, matching the date policy in
+// i18n/format.ts — "Sunday", never "الأحد". A schedule day is a date field, and
+// a date field reads the same on an Arabic screen as on an English one. Being
+// language-independent, these are computed once rather than per render.
+const WEEKDAY_LABELS: string[] = (() => {
+  const fmt = new Intl.DateTimeFormat("en-GB", { weekday: "long", timeZone: "UTC" });
+  return Array.from({ length: 7 }, (_, i) =>
+    fmt.format(new Date(WEEKDAY_BASE_SUNDAY.getTime() + i * 86400000)),
+  );
+})();
 
 interface ScheduleForm {
   name: string;
@@ -96,7 +107,6 @@ function formFrom(schedule: AnalyticsSchedule): ScheduleForm {
 
 export function SchedulesPanel() {
   const t = useT();
-  const lang = useLang();
   const queryClient = useQueryClient();
 
   const schedules = useQuery({
@@ -122,12 +132,7 @@ export function SchedulesPanel() {
   const [deleting, setDeleting] = useState<AnalyticsSchedule | null>(null);
   const [deleteBusy, setDeleteBusy] = useState(false);
 
-  const weekdayLabels = useMemo(() => {
-    const fmt = new Intl.DateTimeFormat(lang === "ar" ? "ar" : "en", { weekday: "long", timeZone: "UTC" });
-    return Array.from({ length: 7 }, (_, i) =>
-      fmt.format(new Date(WEEKDAY_BASE_SUNDAY.getTime() + i * 86400000)),
-    );
-  }, [lang]);
+  const weekdayLabels = WEEKDAY_LABELS;
 
   const freqLabel = (freq: string) =>
     freq === "daily" || freq === "weekly" || freq === "monthly"

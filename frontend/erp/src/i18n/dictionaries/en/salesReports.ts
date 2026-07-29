@@ -394,6 +394,7 @@ export const salesReports = {
     blockedBy: "Unavailable with:",
     alreadyUsed: "Used in another level",
     voidPopulation: "Cannot sit beside a void metric: asking for it makes voided orders count in this one too",
+    truncatedNotice: "This grouping is deeper than one query can bound, so the following columns were not measured on some rows and read “—” rather than zero: {metrics}. Use fewer grouping levels or a narrower period.",
     voidPopulationNotice: "A void metric in the same request makes voided orders count in: {metrics} — the figures above cover two different populations.",
     droppedNotice: "Dropped grouping levels the chosen metrics cannot support: {dims}",
     grandTotal: "Grand total",

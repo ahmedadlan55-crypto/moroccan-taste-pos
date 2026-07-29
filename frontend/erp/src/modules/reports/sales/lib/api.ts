@@ -96,7 +96,18 @@ export interface AnalyticsResult {
   // authoritative "a fact hit MAX_LIMIT — you are NOT seeing the whole period"
   // flag; prefer it over comparing rows.length to the requested limit, which
   // cries truncation on a result that merely lands exactly on the cap.
-  page?: { limit: number; offset: number; total: number; rowCountCapped?: boolean };
+  page?: {
+    limit: number;
+    offset: number;
+    total: number;
+    rowCountCapped?: boolean;
+    /**
+     * Metrics that came from a TRUNCATED fact statement. Their missing values
+     * are null ("—"), never 0 — the fact simply did not look at those keys.
+     * Name them so the reader distrusts a COLUMN, not the whole page.
+     */
+    truncatedMetrics?: string[];
+  };
   meta: AnalyticsResultMeta;
 }
 
@@ -278,7 +289,13 @@ export function normalizeAnalyticsResult(
     rows?: WireRow[];
     subtotals?: WireRow[];
     totals?: { values?: WireValues; compare?: WireValues; delta?: WireRow["delta"] } | WireValues;
-    page?: { limit?: number; offset?: number; total?: number; rowCountCapped?: boolean };
+    page?: {
+      limit?: number;
+      offset?: number;
+      total?: number;
+      rowCountCapped?: boolean;
+      truncatedMetrics?: unknown;
+    };
   };
   const meta = (env.meta && typeof env.meta === "object" ? env.meta : {}) as {
     freshness?: { watermark?: string | null; pendingDays?: number | null };
@@ -340,6 +357,9 @@ export function normalizeAnalyticsResult(
             total: Number(data.page.total ?? rows.length) || rows.length,
             ...(data.page.rowCountCapped != null
               ? { rowCountCapped: !!data.page.rowCountCapped }
+              : {}),
+            ...(Array.isArray(data.page.truncatedMetrics)
+              ? { truncatedMetrics: data.page.truncatedMetrics.map(String) }
               : {}),
           },
         }

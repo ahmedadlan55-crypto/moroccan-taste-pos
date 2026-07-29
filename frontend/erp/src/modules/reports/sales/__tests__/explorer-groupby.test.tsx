@@ -23,8 +23,10 @@ import { I18nProvider } from "@/i18n";
 import type { AnalyticsQueryBody, AnalyticsResult } from "../lib/api";
 import Explorer from "../pages/Explorer";
 
-const { lastBody, REGISTRY, resultFor } = vi.hoisted(() => {
+const { lastBody, REGISTRY, resultFor, truncated } = vi.hoisted(() => {
   const lastBody = { value: null as AnalyticsQueryBody | null };
+  /** Which metrics the engine reports as measured on only part of the page. */
+  const truncated = { value: [] as string[] };
 
   const REGISTRY = {
     metrics: [
@@ -59,11 +61,11 @@ const { lastBody, REGISTRY, resultFor } = vi.hoisted(() => {
       ],
       subtotals: [],
       totals: { net_ex_vat: 1000, orders: 40 },
-      page: { limit: Number(body.limit) || 10, offset: 0, total: 2 },
+      page: { limit: Number(body.limit) || 10, offset: 0, total: 2, truncatedMetrics: truncated.value },
       meta: { freshness: { watermark: null }, maskedMetrics: [] },
     }) as unknown as AnalyticsResult;
 
-  return { lastBody, REGISTRY, resultFor };
+  return { lastBody, REGISTRY, resultFor, truncated };
 });
 
 vi.mock("../lib/api", async (importOriginal) => {
@@ -295,5 +297,26 @@ describe("the void-population trap, in the metric picker", () => {
     renderExplorer("/reports/sales/explorer?m=orders,voids_count");
     const notice = await screen.findByTestId("void-population-notice");
     expect(notice.textContent).toContain("الطلبات");
+  });
+});
+
+describe("a column the engine could not measure on every row", () => {
+  it("names it, so the reader distrusts a column and not the page", async () => {
+    // Each fact statement fetches its own bounded slice; past that bound a fact
+    // simply did not look, and those cells now read "—" instead of a
+    // fabricated 0. A blank cell with no explanation is indistinguishable from
+    // a genuinely empty one, so the engine reports which metrics are affected.
+    truncated.value = ["orders"];
+    renderExplorer();
+    const notice = await screen.findByTestId("truncated-metrics-notice");
+    expect(notice.textContent).toContain("الطلبات");
+    truncated.value = [];
+  });
+
+  it("stays silent when nothing was truncated", async () => {
+    truncated.value = [];
+    renderExplorer();
+    await screen.findByTestId("group-by-slot-0");
+    expect(screen.queryByTestId("truncated-metrics-notice")).toBeNull();
   });
 });

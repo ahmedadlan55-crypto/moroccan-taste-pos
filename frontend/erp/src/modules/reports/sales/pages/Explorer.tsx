@@ -374,6 +374,25 @@ export default function Explorer() {
     </div>
   );
 
+  // The engine reports which COLUMNS it could not measure on every row: each
+  // fact statement fetches its own bounded slice, and past that bound a fact
+  // simply did not look. Those cells read "—" rather than a fabricated 0, and
+  // without this line the reader has no way to tell an unmeasured cell from a
+  // genuinely empty one.
+  const truncatedMetrics = query.data?.page?.truncatedMetrics ?? [];
+  const truncatedNotice = truncatedMetrics.length > 0 && (
+    <div
+      data-testid="truncated-metrics-notice"
+      className="flex flex-wrap items-center gap-2 rounded-xl border border-amber-200 bg-amber-50 p-3 text-xs font-bold text-amber-800"
+    >
+      <span>
+        {t("salesReports.groupBy.truncatedNotice", {
+          metrics: truncatedMetrics.map((m) => t(`salesReports.metrics.${m}`)).join(listSeparator),
+        })}
+      </span>
+    </div>
+  );
+
   const droppedNotice = dropped.length > 0 && (
     <div
       data-testid="grouping-dropped-notice"
@@ -446,7 +465,8 @@ export default function Explorer() {
   if (rows.length === 0) {
     return (
       <section className="space-y-4" data-testid="page-explorer">
-        {contaminatedNotice}
+        {truncatedNotice}
+      {contaminatedNotice}
       {droppedNotice}
         {controls}
         <EmptyState title={t("salesReports.states.empty")} />
@@ -459,6 +479,7 @@ export default function Explorer() {
   return (
     <section className="space-y-4" data-testid="page-explorer">
       <CompletenessNotice meta={query.data?.meta} />
+      {truncatedNotice}
       {contaminatedNotice}
       {droppedNotice}
       {controls}

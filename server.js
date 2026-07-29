@@ -1221,6 +1221,38 @@ async function runMigrations() {
     console.error('[DB] analytics schema FAILED (analytics reads may 500):', e.message.substring(0, 160));
   }
 
+  // The counterparty dimension on gl_entries — additive columns + indexes.
+  // A failure here leaves the party silently absent, which lib/glPosting.js
+  // then REFUSES to degrade past (it throws rather than dropping a party from
+  // a line that carries one), so a broken migration surfaces as a loud posting
+  // error instead of a quietly partyless ledger.
+  try {
+    await require('./db/migrations/party-dimension/schema').apply(db, (m) => console.log('[party-schema]', m));
+  } catch (e) {
+    console.error('[DB] party dimension FAILED:', e.message.substring(0, 160));
+  }
+
+  // Unify the two payables accounts and backfill the party. One-shot, gated,
+  // resumable — the owner runs nothing.
+  const PARTY_KEY = 'PartyDimensionBootstrap_v1';
+  try {
+    const [done] = await db.query(
+      'SELECT setting_value FROM settings WHERE setting_key = ? LIMIT 1', [PARTY_KEY]);
+    if (!done.length) {
+      const out = await require('./lib/partyDimension/bootstrap')
+        .bootstrap(db, require('./lib/glPosting'), (m) => console.log(m));
+      const r = out.reclassified || {};
+      console.log('[party] bootstrap done — reclassified ' + (r.moved || 0) + ' supplier(s)' +
+        (r.unallocated ? ', unallocated ' + r.unallocated : '') +
+        (r.journal ? ' (JE ' + r.journal + ')' : '') +
+        ' · backfilled ' + ((out.backfill && out.backfill.filled) || 0) + ' line(s)' +
+        ' · unattributed ' + ((out.backfill && out.backfill.unattributed) || 0));
+      await db.query(
+        "INSERT INTO settings (setting_key, setting_value) VALUES (?, '1') " +
+        "ON DUPLICATE KEY UPDATE setting_value = '1'", [PARTY_KEY]);
+    }
+  } catch (e) { console.error('[party] bootstrap skipped:', e.message.substring(0, 160)); }
+
   // «ترحيل المبيعات» — the deferred sales-posting queue. Purely additive: it
   // creates three new tables and touches nothing existing. A failure here
   // makes `capture()` a no-op (it swallows ER_NO_SUCH_TABLE by design) rather

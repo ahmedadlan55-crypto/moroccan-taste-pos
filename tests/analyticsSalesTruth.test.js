@@ -113,7 +113,71 @@ const dim = (id) => DIMENSIONS.find((d) => d.id === id);
   check('uncosted_net is additive', un && un.kind === 'additive', un && un.kind);
 }
 
-// ── 6. Registry hygiene these fixes must not break ─────────────────────────
+// ── 6. A statement may not add figures from different tax bases ────────────
+// The executive report printed
+//   gross_product_sales − discounts_total − returns_net = net_ex_vat
+// as if those were four points on one scale. They are not:
+//   • d.gross_amount is net + VAT AFTER the discount (lineAllocation.js:263,
+//     calculations.js:138) — tax-INCLUSIVE,
+//   • f.discount_total is routes/sales.js:736 appliedDiscountTotal, recorded in
+//     GROSS space and already removed from the line amounts,
+//   • rl.net_amount is EX-VAT (SalesReturnService.js:92).
+// The arithmetic is pinned in tests/analyticsStatementLadder.test.js; what is
+// pinned HERE is the registry shape that makes a single-basis ladder possible
+// at all — because a metric that does not exist cannot be put on a statement.
+{
+  const rv = metric('returns_vat');
+  check('returns_vat exists (the ex-VAT ↔ incl-VAT bridge for returns)', !!rv);
+  check('returns_vat is on the RETURN fact', rv && rv.fact === 'return', rv && rv.fact);
+  check('returns_vat reads the STORED return VAT column, never a rate',
+    rv && rv.sql === 'SUM(rl.vat_amount)', rv && rv.sql);
+
+  // returns_net (ex-VAT) and returns_value (incl-VAT) are the two legal
+  // subtrahends; which one is legal depends entirely on the minuend's basis.
+  const rn = metric('returns_net');
+  const rvl = metric('returns_value');
+  check('returns_net reads the ex-VAT return column', rn && rn.sql === 'SUM(rl.net_amount)', rn && rn.sql);
+  check('returns_value reads the incl-VAT return column', rvl && rvl.sql === 'SUM(rl.gross_amount)', rvl && rvl.sql);
+
+  const nps = metric('net_product_sales');
+  check('net_product_sales no longer subtracts the already-removed discount',
+    nps && !nps.inputs.includes('discounts_total'), nps && nps.inputs);
+  check('net_product_sales stays entirely on the INCL-VAT basis',
+    nps && nps.inputs.join(',') === 'gross_product_sales,returns_value', nps && nps.inputs);
+  check('net_product_sales is versioned as a REDEFINITION', nps && nps.version === 2, nps && nps.version);
+
+  const npsx = metric('net_product_sales_ex_vat');
+  check('net_product_sales_ex_vat exists (the ex-VAT bottom line)', !!npsx);
+  check('net_product_sales_ex_vat stays entirely on the EX-VAT basis',
+    npsx && npsx.inputs.join(',') === 'net_ex_vat,returns_net', npsx && npsx.inputs);
+
+  const sbd = metric('sales_before_discount');
+  check('sales_before_discount exists (the reconstructed top line)', !!sbd);
+  check('sales_before_discount ADDS the discount back rather than subtracting it',
+    sbd && sbd.equationKey === 'salesBeforeDiscount', sbd && sbd.equationKey);
+  check('sales_before_discount reconstructs in GROSS space (both inputs incl VAT)',
+    sbd && sbd.inputs.join(',') === 'gross_product_sales,discounts_total', sbd && sbd.inputs);
+
+  const sv = metric('statement_variance');
+  check('statement_variance exists (headers vs lines, shown not hidden)', !!sv);
+  check('statement_variance compares the two invoice totals and nothing else',
+    sv && sv.inputs.join(',') === 'invoice_total,gross_product_sales', sv && sv.inputs);
+
+  // fees_total is sales.kita_service_fee, persisted BESIDE total_final and never
+  // inside it (routes/sales.js:753 builds invTotal from the line buckets alone),
+  // and rounding_amount is written as a literal 0 (ProjectionService.js:284).
+  // Neither may become an input to any derived metric — that is how they got
+  // onto the ladder in the first place.
+  for (const m of METRICS) {
+    if (m.kind !== 'derived' || !Array.isArray(m.inputs)) continue;
+    check(`derived metric "${m.id}" does not treat fees as invoice money`,
+      !m.inputs.includes('fees_total'), m.inputs);
+    check(`derived metric "${m.id}" does not treat the rounding column as invoice money`,
+      !m.inputs.includes('rounding_total'), m.inputs);
+  }
+}
+
+// ── 7. Registry hygiene these fixes must not break ─────────────────────────
 {
   const ids = METRICS.map((m) => m.id);
   check('metric ids remain unique', new Set(ids).size === ids.length);

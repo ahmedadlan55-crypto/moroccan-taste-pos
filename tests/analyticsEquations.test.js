@@ -93,10 +93,37 @@ test('grossProductSales sums an array of line grosses', () => {
 test('grossProductSales passes a scalar through (already summed)', () => {
   eq(E.grossProductSales(200.1), 200.1);
 });
-test('netProductSales = gross − discounts − returnsNet', () => {
-  eq(E.netProductSales(1000, 50, 25.5), 924.5);
-  eq(E.netProductSales(100, 0, 0), 100);
-  eq(E.netProductSales(100, 120, 0), -20, 'over-discount goes negative, not clamped');
+// netProductSales (gross − discounts − returnsNet) is GONE, and its removal is
+// the point: `gross` was d.gross_amount (INCL VAT, already net of the
+// discount), `discounts` was f.discount_total (INCL VAT, the same money
+// removed a second time) and `returnsNet` was rl.net_amount (EX VAT). Three
+// bases, one subtraction, a result that reconciled to nothing. It is replaced
+// by two single-basis functions.
+test('netSalesInclVat = invoiced (incl VAT) − returns (incl VAT)', () => {
+  eq(E.netSalesInclVat(1071.5, 262.5), 809);
+  eq(E.netSalesInclVat(100, 0), 100);
+  eq(E.netSalesInclVat(100, 120), -20, 'returns beyond the period go negative, not clamped');
+});
+test('netSalesExVat = net (ex VAT) − returns (ex VAT)', () => {
+  eq(E.netSalesExVat(950, 240), 710);
+  eq(E.netSalesExVat(0.1 + 0.2, 0.1), 0.2, 'halala math, not float math');
+});
+test('salesBeforeDiscount adds the discount back in the space it was recorded in', () => {
+  eq(E.salesBeforeDiscount(1071.5, 15.75), 1087.25);
+  eq(E.salesBeforeDiscount(100, 0), 100, 'no discount ⇒ the ladder degenerates cleanly');
+  // The reconstruction must never touch VAT: a 1.15 divisor anywhere here would
+  // change this expectation, which is the whole reason it is asserted.
+  eq(E.salesBeforeDiscount(0, 15.75), 15.75, 'a fully discounted period is all discount');
+});
+test('statementVariance = invoice headers − invoice lines (0 when the projection ran)', () => {
+  eq(E.statementVariance(1071.5, 1071.5), 0);
+  eq(E.statementVariance(1071.5, 1000), 71.5, 'a lineless backfilled header shows up here');
+  eq(E.statementVariance(1000, 1071.5), -71.5, 'and so does the opposite drift');
+});
+test('the removed mixed-basis equation is not reachable under any name', () => {
+  if (typeof E.netProductSales === 'function') {
+    throw new Error('netProductSales is back — the mixed-basis subtraction must stay deleted');
+  }
 });
 test('netInclVat adds STORED vat — no rate anywhere', () => {
   eq(E.netInclVat(100, 15), 115);

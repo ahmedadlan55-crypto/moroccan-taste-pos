@@ -28,6 +28,7 @@ export const METRIC_CODES = [
   "voids_value",
   "returns_count",
   "returns_value",
+  "returns_vat",
   // additive — cost (capability-gated: analytics.cost.view)
   "cogs",
   "returns_cogs",
@@ -49,7 +50,12 @@ export const METRIC_CODES = [
   "budget_amount",
   // derived
   "net_incl_vat",
+  // the sales-statement ladder — each of these names its own tax basis, so a
+  // statement built from them cannot silently mix two (see metrics.js).
   "net_product_sales",
+  "net_product_sales_ex_vat",
+  "sales_before_discount",
+  "statement_variance",
   "qty_net",
   "avg_ticket",
   "avg_items_per_order",
@@ -134,7 +140,10 @@ export const EQUATION_KEYS = [
   "invoiceTotal",
   "expectedCash",
   "netInclVat",
-  "netProductSales",
+  "netSalesInclVat",
+  "netSalesExVat",
+  "salesBeforeDiscount",
+  "statementVariance",
   "netQuantity",
   "avgTicket",
   "avgItemsPerOrder",

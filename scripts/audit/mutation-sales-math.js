@@ -123,11 +123,35 @@ const CATALOG = [
     find: 'for (const v of values || []) total += toMinor(v);',
     replace: 'for (const v of values || []) total += Number(v);',
   },
+  // EQ-05 targeted netProductSales — now DELETED. That function mixed three
+  // tax bases in one subtraction (incl-VAT gross − incl-VAT discounts − ex-VAT
+  // returns) and was the exact defect the statement rewrite removed. A mutant
+  // whose `find` string no longer exists in the source is not a passing check:
+  // it is a permanently red gate. Replaced by one mutant per SURVIVING money
+  // function, so the coverage rule at the top of this catalog still holds.
   {
-    id: 'EQ-05', target: 'equations',
-    description: 'netProductSales: discounts ADDED instead of subtracted (− → +)',
-    find: 'return fromMinor(toMinor(gross) - toMinor(discounts) - toMinor(returnsNet));',
-    replace: 'return fromMinor(toMinor(gross) + toMinor(discounts) - toMinor(returnsNet));',
+    id: 'EQ-05a', target: 'equations',
+    description: 'netSalesInclVat: returns ADDED instead of subtracted (− → +)',
+    find: 'return fromMinor(toMinor(invoicedInclVat) - toMinor(returnsInclVat));',
+    replace: 'return fromMinor(toMinor(invoicedInclVat) + toMinor(returnsInclVat));',
+  },
+  {
+    id: 'EQ-05b', target: 'equations',
+    description: 'netSalesExVat: returns ADDED instead of subtracted (− → +)',
+    find: 'return fromMinor(toMinor(netExVat) - toMinor(returnsNet));',
+    replace: 'return fromMinor(toMinor(netExVat) + toMinor(returnsNet));',
+  },
+  {
+    id: 'EQ-05c', target: 'equations',
+    description: 'salesBeforeDiscount: discount SUBTRACTED instead of added (+ → −)',
+    find: 'return fromMinor(toMinor(invoicedInclVat) + toMinor(discounts));',
+    replace: 'return fromMinor(toMinor(invoicedInclVat) - toMinor(discounts));',
+  },
+  {
+    id: 'EQ-05d', target: 'equations',
+    description: 'statementVariance: operands swapped, so a real gap reports with the wrong sign',
+    find: 'return fromMinor(toMinor(invoiceTotal) - toMinor(invoicedInclVat));',
+    replace: 'return fromMinor(toMinor(invoicedInclVat) - toMinor(invoiceTotal));',
   },
   {
     id: 'EQ-06', target: 'equations',

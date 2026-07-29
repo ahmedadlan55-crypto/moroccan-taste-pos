@@ -40,25 +40,47 @@
 
 const H = require('../order-to-cash/ddlHelpers');
 
+/**
+ * Each step is INDEPENDENTLY guarded.
+ *
+ * The first production run proved why: a stray pair of parentheses in an index
+ * definition threw, and because the steps were a single `await` chain, the
+ * `dim_required` column after it never ran either. One typo in a
+ * nice-to-have index silently skipped a column the enforcement depends on.
+ *
+ * A migration is a set of independent facts, not a script — so one failing
+ * step reports itself and the rest still land.
+ */
+async function step(label, log, fn) {
+  try { await fn(); }
+  catch (e) { log('  ! ' + label + ' FAILED: ' + String(e.message || e).slice(0, 120)); }
+}
+
 async function apply(db, log = () => {}) {
   // 'vendor' rather than 'supplier': the three existing party tables in this
   // repo all use 'vendor', and one vocabulary beats a more accurate word that
   // needs translating at every join.
-  await H.addColumn(db, 'gl_entries', 'party_type',
-    "ENUM('customer','vendor','employee','partner') NULL", log);
-  await H.addColumn(db, 'gl_entries', 'party_id', 'VARCHAR(50) NULL', log);
+  await step('party_type', log, () => H.addColumn(db, 'gl_entries', 'party_type',
+    "ENUM('customer','vendor','employee','partner') NULL", log));
+  await step('party_id', log, () => H.addColumn(db, 'gl_entries', 'party_id', 'VARCHAR(50) NULL', log));
 
   // The supplier-statement query shape: "every line on this account for this
   // party, in date order". account_code leads because a statement is always
   // scoped to one control account first.
-  await H.addIndex(db, 'gl_entries', 'ix_gle_party', '(party_type, party_id)', {}, log);
-  await H.addIndex(db, 'gl_entries', 'ix_gle_acct_party', '(account_code, party_type, party_id)', {}, log);
+  //
+  // NO surrounding parentheses — addIndex wraps the list itself, so passing
+  // them here produced `ADD INDEX x ((party_type, party_id))`.
+  await step('ix_gle_party', log, () =>
+    H.addIndex(db, 'gl_entries', 'ix_gle_party', 'party_type, party_id', {}, log));
+  await step('ix_gle_acct_party', log, () =>
+    H.addIndex(db, 'gl_entries', 'ix_gle_acct_party', 'account_code, party_type, party_id', {}, log));
 
   // `dim_required` has existed since the accounts table was created and has
   // never been read by anything (one occurrence in the whole tree). It is the
   // natural home for "this account must carry a party", so it gets used rather
   // than a new column invented beside it.
-  await H.addColumn(db, 'gl_accounts', 'dim_required', 'VARCHAR(200) NULL', log);
+  await step('dim_required', log, () =>
+    H.addColumn(db, 'gl_accounts', 'dim_required', 'VARCHAR(200) NULL', log));
 
   log('party dimension ready');
 }

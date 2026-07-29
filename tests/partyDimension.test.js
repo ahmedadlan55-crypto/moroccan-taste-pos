@@ -46,6 +46,24 @@ const code = (s) => s.split(/\r?\n/).filter((l) => !/^\s*(\/\/|\*|\/\*)/.test(l)
   check('…and NOT on gl_journals', !/gl_journals/.test(schema));
 }
 
+// ── 1b. The migration survives its own mistakes ──────────────────────────
+// Production caught this: a stray pair of parentheses in an index definition
+// threw, and because the steps were one `await` chain, the `dim_required`
+// column AFTER it never ran either. One typo in a nice-to-have index silently
+// skipped the column the enforcement depends on.
+{
+  const schema = code(read('db', 'migrations', 'party-dimension', 'schema.js'));
+  check('every step is individually guarded', /await step\('/.test(schema));
+  check('…and there are five of them',
+    (schema.match(/await step\('/g) || []).length === 5, schema.match(/await step\('/g));
+  check('a failing step reports itself rather than vanishing', /FAILED: '/.test(schema));
+
+  // addIndex wraps the column list in parens itself.
+  const idx = schema.match(/addIndex\(db, '[^']+', '[^']+', '[^']+'/g) || [];
+  check('no index passes its own parentheses',
+    idx.length === 2 && idx.every((s) => !/'\(/.test(s)), idx);
+}
+
 // ── 2. A required party may never be silently dropped ────────────────────
 // glPosting's fallback drops EVERY dimension on a missing column and reports
 // success. Acceptable for an advisory dimension on an old schema; a silent

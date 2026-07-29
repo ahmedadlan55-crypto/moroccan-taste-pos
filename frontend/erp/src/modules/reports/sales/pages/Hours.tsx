@@ -113,6 +113,12 @@ export default function Hours() {
       { by: "weekday", dir: "asc" },
       { by: "hour", dir: "asc" },
     ],
+    // 7 weekdays × 24 hours = 168 rows. Omitting `limit` handed the request to
+    // the planner's DEFAULT_LIMIT of 50 (lib/analytics/planner.js:58) — and
+    // because the sort is weekday-then-hour, the cut fell mid-week: Thursday
+    // through Sunday, the busiest end of a restaurant week, were simply absent
+    // from the peak map with nothing on screen to say so.
+    limit: 200,
   };
   const byHourBody: AnalyticsQueryBody = {
     ...base,

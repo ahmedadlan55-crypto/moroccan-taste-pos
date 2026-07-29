@@ -375,6 +375,12 @@ export default function Executive() {
     metrics: [...DAILY_METRICS],
     dimensions: [dayDim],
     sort: [{ by: dayDim, dir: "asc" }],
+    // The daily detail sits directly under a statement that totals the WHOLE
+    // period, so the rows must be able to foot to it. Without an explicit limit
+    // the planner capped them at 50 (planner.js:58) while a range may legally
+    // run to 400 days — the reader saw 50 rows under a 90-day total and no
+    // explanation for the gap. 500 is the planner's own MAX_LIMIT.
+    limit: 500,
   };
   const byTaxBody: AnalyticsQueryBody = {
     ...base,

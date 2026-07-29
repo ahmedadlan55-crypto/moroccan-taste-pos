@@ -7550,7 +7550,13 @@ async function runMigrations() {
   // version bumped so every row is reconsidered. The partial rows are reached
   // through `name_en`, which still holds the pristine English; see the
   // candidate rule in lib/inventory/bilingualNames.js.
-  const INV_NAMES_KEY = 'InventoryBilingualNames_v2';
+  //
+  // _v3: the _v2 log showed `untranslated 0` but 58 partial and 23 with an
+  // unverified word order. The 23 were nearly all one shape — «Pistachio
+  // Sauce» → «فستق صلصة» — so the head-noun flip now performs that reorder
+  // instead of only reporting it, `Box` stopped being treated as a unit, and
+  // the vocabulary the log printed was added.
+  const INV_NAMES_KEY = 'InventoryBilingualNames_v3';
   try {
     const [done] = await db.query(
       'SELECT setting_value FROM settings WHERE setting_key = ? LIMIT 1', [INV_NAMES_KEY]);

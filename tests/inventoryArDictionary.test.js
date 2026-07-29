@@ -113,6 +113,53 @@ function check(name, cond, extra) {
   check('…and is therefore not flagged', d.toArabic('Chicken Breast 1kg').wordOrderRisk === false);
 }
 
+// ── 3b-bis. The head-noun flip ───────────────────────────────────────────
+// The _v2 production run flagged 23 rows in this exact shape: «Pistachio
+// Sauce» → «فستق صلصة», «Mango Juice» → «مانجو عصير». Flagging them was not
+// enough — for FORM nouns the flip is mechanical, so it is performed.
+{
+  const ar = (s) => d.toArabic(s).ar;
+  check('«Pistachio Sauce» leads with the form noun', ar('Pistachio Sauce') === 'صلصة فستق', ar('Pistachio Sauce'));
+  check('a phrase can supply the modifier too', ar('Aluminium Foil Roll') === 'لفة ورق ألومنيوم', ar('Aluminium Foil Roll'));
+  check('the flip is reported', d.toArabic('Pistachio Sauce').reordered === true);
+
+  // The brand must stay in front — hoisting past it reads as if the juice
+  // were the brand.
+  check('the head moves before the TRANSLATED run, not the whole name',
+    ar('Sante Mango Juice 300 ml') === 'Sante عصير مانجو 300 ml', ar('Sante Mango Juice 300 ml'));
+  check('measurements never move', ar('Pistachio Sauce 1kg') === 'صلصة فستق 1kg', ar('Pistachio Sauce 1kg'));
+
+  // Guard 1: a coordinator means two products, not one compound. «Pet Bottle
+  // & Cover» was turned into «Pet غطاء قارورة &» before this guard existed.
+  check('a coordinator blocks the flip', d.toArabic('Pet Bottle & Cover').reordered === false);
+  check('…and the name keeps its order', ar('Pet Bottle & Cover') === 'Pet قارورة & غطاء', ar('Pet Bottle & Cover'));
+  check('«and» blocks it too', d.toArabic('Coconut and Chocolate Roll').reordered === false);
+
+  // Guard 2: a standalone dash separates segments the same way.
+  check('a standalone dash blocks the flip',
+    d.toArabic('Gathering Box - Aluminum Refill Bags').reordered === false);
+  // …but a dash INSIDE a token is a supplier code and must be untouched.
+  check('a dash inside a code does not block anything',
+    ar('A-31 Cold Drinks 30oz 900ML Laser Logo Black').startsWith('A-31 مشروبات باردة'),
+    ar('A-31 Cold Drinks 30oz 900ML Laser Logo Black'));
+
+  // Guard 3: nothing to hoist past.
+  check('a lone head noun is not moved', d.toArabic('Sauce 1kg').reordered === false);
+  check('an adjective tail is not a head noun', d.toArabic('Paper Bag Large').reordered === false);
+  check('a phrase-resolved name is left alone', d.toArabic('Cup Holder 2').reordered === false);
+  check('a human-decided food compound is left alone', d.toArabic('Chicken Breast 1kg').reordered === false);
+}
+
+// ── 3b-ter. `Box` is a product noun, not a unit ──────────────────────────
+// It sat in the preserved-unit list, so «Gathering Box» kept an English Box
+// inside an otherwise Arabic name.
+{
+  check('a standalone Box translates', d.toArabic('Gathering Box').ar.includes('علبة'), d.toArabic('Gathering Box').ar);
+  check('real unit abbreviations are still preserved',
+    ['oz', 'ml', 'kg', 'gr', 'ltr', 'pkt', 'sch', 'ctn'].every((u) => d.isPreserved(u)));
+  check('…and product nouns are not', ['box', 'bag', 'can', 'cup'].every((w) => !d.isPreserved(w)));
+}
+
 // ── 3c. Word groups may not silently overwrite each other ────────────────
 // The groups began as arguments to Object.assign, where the last duplicate
 // quietly wins. `bean` was «فول» under grains and «حبة» under beverages, and

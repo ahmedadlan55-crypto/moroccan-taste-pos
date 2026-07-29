@@ -343,6 +343,7 @@ export const salesReports = {
 
   builder: {
     metrics: "المقاييس",
+    atCap: "بلغتَ الحد الأقصى {max} مقاييس للطلب الواحد — أزل واحدًا لإضافة آخر",
     dimensions: "الأبعاد",
     runQuery: "تشغيل الاستعلام",
     saveReport: "حفظ التقرير",
@@ -398,6 +399,10 @@ export const salesReports = {
     gapTill: "فرق الدرج",
     gapTillNote: "السطر الوحيد الذي يجب أن يكون صفرًا. كل هللة فيه غير مفسَّرة.",
   },
+  print: {
+    printedAt: "طُبع في: {time}",
+  },
+
   basis: {
     title: "أساس إعداد التقرير",
     period: "الفترة",

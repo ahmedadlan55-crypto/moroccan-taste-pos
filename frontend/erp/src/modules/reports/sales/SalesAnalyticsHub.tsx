@@ -22,6 +22,7 @@ import { useT } from "@/i18n";
 import { analyticsFilterCodec } from "./lib/filters";
 import { AnalyticsTopBar } from "./components/AnalyticsTopBar";
 import { BasisOfPreparation } from "./components/BasisOfPreparation";
+import { PrintMasthead } from "./components/PrintMasthead";
 import { SectionPicker } from "./components/SectionPicker";
 import { SEGMENT_PAGES } from "./pages/registry";
 
@@ -149,6 +150,10 @@ export default function SalesAnalyticsHub() {
         // styles/index.css @media print): printing the hub then puts the
         // report on paper, not the picker, the filter bar and the app shell.
         <PrintArea>
+          {/* First thing on paper, nothing on screen: a printed sheet has to
+              say which report it is and for which period. On screen the page
+              header and the filter bar already do. */}
+          <PrintMasthead segment={segment.id} filters={filters} />
           <Suspense fallback={<LoadingState />}>
             {(() => {
               const Page = SEGMENT_PAGES[segment.id];

@@ -330,6 +330,7 @@ export const salesReports = {
 
   builder: {
     metrics: "Metrics",
+    atCap: "At the ceiling of {max} metrics per request — remove one to add another",
     dimensions: "Dimensions",
     runQuery: "Run query",
     saveReport: "Save report",
@@ -385,6 +386,10 @@ export const salesReports = {
     gapTill: "Till variance",
     gapTillNote: "The one line that must read zero. Every halala of it is unexplained.",
   },
+  print: {
+    printedAt: "Printed: {time}",
+  },
+
   basis: {
     title: "Basis of preparation",
     period: "Period",

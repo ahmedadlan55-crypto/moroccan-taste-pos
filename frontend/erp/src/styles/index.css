@@ -162,10 +162,99 @@
   body:has(.print-document) .print-document * {
     visibility: visible;
   }
+  /* NOT position:absolute. An absolutely-positioned element is taken out of the
+     normal flow, and the print engine paginates the FLOW — so a report longer
+     than one page had everything past page 1 silently clipped. It printed a
+     plausible first page and lost the rest, which is the worst way to be wrong
+     on paper. Static flow paginates correctly. */
   .print-document {
-    position: absolute;
-    inset: 0;
+    position: static;
     margin: 0;
-    padding: 1.5rem;
+    padding: 0;
+    width: 100%;
   }
+
+  /* ── one house style for every printed report ─────────────────────────────
+     An in-system report is an accounting document: it has to look the same
+     whichever screen produced it, survive being read on paper without the
+     screen's affordances, and carry its identity on every sheet. */
+
+  /* Screen chrome that means nothing on paper. */
+  .print-document .surface {
+    border: 0 !important;
+    border-radius: 0 !important;
+    background: transparent !important;
+    padding: 0 !important;
+    margin-bottom: 6mm;
+  }
+
+  /* A table header must repeat on every sheet — a continuation page of bare
+     numbers with no column names is unreadable, and a reader cannot scroll
+     back up on paper. tfoot likewise carries the total onto each sheet. */
+  .print-document thead {
+    display: table-header-group;
+  }
+  .print-document tfoot {
+    display: table-footer-group;
+  }
+  .print-document table {
+    width: 100% !important;
+    min-width: 0 !important;
+    border-collapse: collapse;
+    font-size: 9pt;
+  }
+  .print-document th,
+  .print-document td {
+    padding: 1.5mm 2mm !important;
+    border-bottom: 0.2mm solid #d4d4d8;
+  }
+  .print-document thead th {
+    border-bottom: 0.4mm solid #71717a;
+    color: #18181b !important;
+    font-weight: 800;
+  }
+  .print-document tfoot td {
+    border-top: 0.4mm solid #71717a;
+    font-weight: 800;
+  }
+
+  /* A horizontal scroll container has no meaning on paper: whatever sat past
+     the visible edge simply vanished. Let it wrap into the sheet instead. */
+  .print-document .overflow-x-auto,
+  .print-document .overflow-auto,
+  .print-document .scrollbar-thin {
+    overflow: visible !important;
+    max-height: none !important;
+  }
+
+  /* Ink, not screen colour: tinted note/alert blocks turn into flat outlines so
+     a monochrome printer still shows them as distinct blocks. */
+  .print-document [class*="bg-amber"],
+  .print-document [class*="bg-rose"],
+  .print-document [class*="bg-blue"],
+  .print-document [class*="bg-slate"],
+  .print-document [class*="bg-teal"] {
+    background: transparent !important;
+    border: 0.2mm solid #a1a1aa !important;
+    color: #18181b !important;
+  }
+  .print-document {
+    color: #18181b;
+  }
+
+  /* The masthead repeats nothing — it is one block at the top of the document —
+     but it must not be split from the first rows it heads. */
+  .print-masthead {
+    break-after: avoid;
+    break-inside: avoid;
+  }
+  /* Hidden on screen; the ONLY thing that appears on paper. */
+  .print-only {
+    display: block !important;
+  }
+}
+
+/* The masthead exists solely for print. */
+.print-only {
+  display: none;
 }

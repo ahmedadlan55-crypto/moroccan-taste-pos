@@ -198,3 +198,40 @@ describe("SalesAnalyticsHub — capability gates", () => {
     }
   });
 });
+
+/* ── the printed sheet's identity ──────────────────────────────────────────
+ * A printed report used to begin with whatever the screen rendered first —
+ * usually a KPI card — with no title, no period and no printed-at stamp. Two
+ * sheets printed on two different days were indistinguishable, and a sheet
+ * handed to an accountant did not say what it was.
+ */
+describe("what a printed report says about itself", () => {
+  it("carries a masthead, inside the printable area", async () => {
+    renderAt("/reports/sales/executive");
+    const head = await screen.findByTestId("print-masthead");
+    expect(head.closest(".print-document"), "masthead is outside the printable area").not.toBeNull();
+  });
+
+  it("names the report and the period it covers", async () => {
+    renderAt("/reports/sales/taxes?from=2026-07-01&to=2026-07-31&preset=custom");
+    const head = await screen.findByTestId("print-masthead");
+    expect(head.textContent).toContain("الضرائب");
+    expect(head.textContent).toContain("2026-07-01");
+    expect(head.textContent).toContain("2026-07-31");
+  });
+
+  it("states the two bases the figures depend on", async () => {
+    renderAt("/reports/sales/executive?taxIncl=1");
+    const head = await screen.findByTestId("print-masthead");
+    expect(head.textContent).toContain("يوم العمل");
+    expect(head.textContent).toContain("شامل الضريبة");
+  });
+
+  it("is print-only — it must not clutter the screen", async () => {
+    renderAt("/reports/sales/executive");
+    const head = await screen.findByTestId("print-masthead");
+    // jsdom applies no stylesheet, so assert the CONTRACT (the class the print
+    // stylesheet keys off) rather than a computed style that would be a lie.
+    expect(head.className).toContain("print-only");
+  });
+});

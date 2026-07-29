@@ -157,6 +157,7 @@ export const NAV: NavGroup[] = [
       // this link, and that only holds while the nav cap matches the backend
       // gate. Nothing else in the block changed.
       { id: "ac-tb", path: "/accounting/trial-balance", label: "nav.items.ac-tb", icon: "Scale", cap: "finance.reports.view", module: "accounting" },
+      { id: "ac-sales-posting", path: "/accounting/sales-posting", label: "nav.items.ac-sales-posting", icon: "Send", cap: "finance.reports.view", module: "accounting" },
       { id: "ac-pnl", path: "/accounting/income-statement", label: "nav.items.ac-pnl", icon: "TrendingUp", cap: "accounting.reports.view", module: "accounting" },
       { id: "ac-bs", path: "/accounting/balance-sheet", label: "nav.items.ac-bs", icon: "Building2", cap: "accounting.reports.view", module: "accounting" },
       { id: "ac-cf", path: "/accounting/cash-flow", label: "nav.items.ac-cf", icon: "LineChart", cap: "accounting.reports.view", module: "accounting" },

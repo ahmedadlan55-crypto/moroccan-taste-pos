@@ -159,6 +159,10 @@ export const ALL_CAPS = [
   // own key rather than renaming 'accounting.reports.view' everywhere,
   // per this file's own stated policy of never renaming existing keys.
   "finance.reports.view",
+  // Posting a sales batch writes to the GENERAL LEDGER, which the backend
+  // gates on finance.gl.post — a different act from reading a report, and so
+  // a different capability. routes/erp/sales-posting.js enforces it.
+  "finance.gl.post",
   // ── Accounting write caps (E1 — UI-only gating; backend stays authoritative) ──
   "accounting.accounts.manage",
   "accounting.journals.create",

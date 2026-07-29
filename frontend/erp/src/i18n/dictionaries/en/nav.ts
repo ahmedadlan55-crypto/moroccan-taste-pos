@@ -74,6 +74,8 @@ export const nav = {
     "ac-journals": "Journal Entries",
     "ac-gl": "General Ledger",
     "ac-tb": "Trial Balance",
+
+    "ac-sales-posting": "Sales Posting",
     "ac-pnl": "Income Statement",
     "ac-bs": "Balance Sheet",
     "ac-cf": "Cash Flow",

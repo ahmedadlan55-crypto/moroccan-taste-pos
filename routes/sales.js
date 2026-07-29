@@ -1,5 +1,6 @@
 const router = require('express').Router();
 const acctDate = require('../lib/accountingDate');
+const salesPostingCapture = require('../lib/salesPosting/capture');
 const db = require('../db/connection');
 const bcrypt = require('bcryptjs');
 const { isTruthy } = require('../lib/settingsKeys');
@@ -564,6 +565,18 @@ router.post('/', requireCapability('pos.use'), async (req, res) => {
     let invoiceNumber = null;
     try { invoiceNumber = await salesNumbering.nextInvoiceNumber(db, _ymd); }
     catch (_) { /* tolerate — falls back to orderId in UI */ }
+
+    // ─── «ترحيل المبيعات» capture buffers ───
+    // Declared at handler scope because the splits are built deep inside the
+    // GL block (paymentDebits at ~:1802, totalCogs at ~:1661) while the queue
+    // row is written just before the commit. They hold the three things four
+    // totals cannot reconstruct: payment by method, revenue by account, and
+    // COGS by warehouse. Empty is a legitimate state — a comp sale whose
+    // components all cost zero posts no GL entries at all.
+    let _capturePayments = [];
+    let _captureRevenue = [];
+    let _captureCogsByWarehouse = [];
+    let _captureCogs = 0;
 
     // ─── v6.2.0 Wave F.3 — Period close guard ───
     // Reject the sale up-front if the date falls in a closed/locked
@@ -1844,6 +1857,15 @@ router.post('/', requireCapability('pos.use'), async (req, res) => {
             }
           }
 
+          // Snapshot the splits for the posting queue. Taken HERE, from the
+          // same values the journal is built from, so a batch can only ever
+          // reproduce what this sale actually posted. Reading the sale again
+          // at posting time would let a later edit change a number that was
+          // already reported.
+          _capturePayments = paymentDebits.map(pd => ({ code: pd.code, amount: pd.amount }));
+          _captureRevenue = [{ code: saleGl.revenue, amount: net }];
+          if (vat > 0) _captureRevenue.push({ code: saleGl.outputVat, amount: vat, tax: true });
+
           // Debit(s) — by payment method (one per split, GL routed dynamically)
           paymentDebits.forEach(pd => {
             entries.push({
@@ -1882,6 +1904,12 @@ router.post('/', requireCapability('pos.use'), async (req, res) => {
 
         // COGS leg (if any cost)
         if (totalCogs > 0) {
+          // Snapshot for the queue. Grouped by warehouse because that is the
+          // grain the inventory credit is posted at, and `ar_documents` has no
+          // warehouse_id to recover it from later.
+          _captureCogs = totalCogs;
+          _captureCogsByWarehouse = [{ warehouseId: warehouseId || null, amount: totalCogs,
+            cogsCode: saleGl.cogs, inventoryCode: saleGl.inventory }];
           entries.push({
             accountCode: saleGl.cogs,
             debit: totalCogs, credit: 0,
@@ -2032,6 +2060,43 @@ router.post('/', requireCapability('pos.use'), async (req, res) => {
         components: _projComponents,
       });
     }
+
+    // ═══ «ترحيل المبيعات» — capture this sale as a postable economic event ══
+    //
+    // INSIDE the transaction, and that placement is the whole point. The
+    // post-commit region below is NOT reached on the idempotent-replay path
+    // (a duplicate clientOrderId rolls back and returns 200 earlier in this
+    // handler) nor on any of the three rollbacks — so a capture placed there
+    // would miss exactly the cases where a sale exists without a posting
+    // record, which is the hole this queue exists to close.
+    //
+    // On `db`, which is the transaction connection (shadowed at the top of the
+    // handler). It must never open its own connection: that would deadlock
+    // against the row locks this transaction already holds.
+    //
+    // Cheap by construction — every value below is already in memory, and
+    // there is no account resolution and no balance check. Those move to
+    // posting time, which is the change the owner asked for.
+    //
+    // Non-fatal: a queue-write failure must not lose a sale the customer has
+    // already paid for. The compensating control is the standing health check
+    // (`countUnqueuedSales` must return zero), so a swallowed failure is
+    // visible rather than silent.
+    try {
+      await salesPostingCapture.capture(db, {
+        sourceType: 'sale',
+        sourceId: orderId,
+        occurredAt: now,
+        brandId: saleBrandId || brandId || null,
+        branchId: saleBranchId || branchId || null,
+        net, tax: vat, gross: invTotal, cogs: _captureCogs,
+        invoiceNumber: invoiceNumber || null,
+        channelId: channelId || null,
+        payments: _capturePayments,
+        revenue: _captureRevenue,
+        cogsByWarehouse: _captureCogsByWarehouse,
+      });
+    } catch (_) { /* capture is best-effort by contract — see lib/salesPosting/capture.js */ }
 
     // v6.0.1 Wave A — commit the transaction
     await _conn.commit();

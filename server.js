@@ -1220,6 +1220,57 @@ async function runMigrations() {
     console.error('[DB] analytics schema FAILED (analytics reads may 500):', e.message.substring(0, 160));
   }
 
+  // «ترحيل المبيعات» — the deferred sales-posting queue. Purely additive: it
+  // creates three new tables and touches nothing existing. A failure here
+  // makes `capture()` a no-op (it swallows ER_NO_SUCH_TABLE by design) rather
+  // than taking the register down.
+  try {
+    await require('./db/migrations/sales-posting/schema').apply(db, (m) => console.log('[sales-posting-schema]', m));
+  } catch (e) {
+    console.error('[DB] sales-posting schema FAILED (queue capture will no-op):', e.message.substring(0, 160));
+  }
+
+  // ── Backfill the queue for sales that predate it ─────────────────────────
+  //
+  // Every historical sale gets a `posted_legacy` row: it already has its own
+  // journal, posted the old way, and must never be re-posted. The point is
+  // not to change anything about them — it is to make the invariant "every
+  // sale has a queue row" true for ALL history, which is what turns the
+  // health check into evidence instead of a statement about recent sales only.
+  //
+  // Batched and resumable: it inserts only rows that are missing, so an
+  // interrupted run resumes on the next boot and a completed one is a no-op.
+  try {
+    const [[pre]] = await db.query(
+      `SELECT COUNT(*) AS n FROM sales s
+        LEFT JOIN sales_posting_queue q ON q.source_type = 'sale' AND q.source_id = s.id
+       WHERE q.id IS NULL`);
+    if (Number(pre.n) > 0) {
+      let done = 0;
+      for (let guard = 0; guard < 500; guard++) {     // 500 × 2000 = 1M sales ceiling
+        const [r] = await db.query(
+          `INSERT IGNORE INTO sales_posting_queue
+             (source_type, source_id, business_day, calendar_date, brand_id, branch_id,
+              net_amount, tax_amount, gross_amount, cogs_amount, status, invoice_number, posted_at)
+           SELECT 'sale', s.id,
+                  DATE(s.order_date - INTERVAL 4 HOUR),   -- default day_close_time
+                  DATE(s.order_date),
+                  s.brand_id, s.branch_id,
+                  COALESCE(s.subtotal, 0), COALESCE(s.tax, 0), COALESCE(s.total, 0), 0,
+                  'posted_legacy', s.invoice_number, s.order_date
+             FROM sales s
+             LEFT JOIN sales_posting_queue q ON q.source_type = 'sale' AND q.source_id = s.id
+            WHERE q.id IS NULL
+            LIMIT 2000`);
+        if (!r.affectedRows) break;
+        done += r.affectedRows;
+      }
+      console.log('[sales-posting] backfilled ' + done + ' historical sale(s) as posted_legacy');
+    }
+  } catch (e) {
+    console.error('[sales-posting] backfill skipped:', e.message.substring(0, 160));
+  }
+
   // Closure-stream capability declarations (db/migrations/capability-seeds/*.json)
   // moved to right after the o2c.* capabilities seed below — it INSERT
   // IGNOREs into permissions_v3 + role_permissions, which don't exist yet
@@ -7613,6 +7664,25 @@ async function runMigrations() {
         'ON DUPLICATE KEY UPDATE setting_value = \'1\'', [INV_NAMES_KEY]);
     }
   } catch (e) { console.error('[inv-names]', e.message); }
+
+  // Standing health line — runs every boot, migration or not.
+  //
+  // The one-shot above prints a rich report exactly once and then never again,
+  // so its output scrolls out of the log window and the catalogue's real state
+  // becomes unknowable without a DB session. This is two counts and a line:
+  // it answers "is the catalogue bilingual yet" on any deploy, forever.
+  try {
+    const [[h]] = await db.query(
+      `SELECT COUNT(*) AS total,
+              SUM(CASE WHEN name_en IS NULL OR TRIM(name_en) = '' THEN 1 ELSE 0 END) AS no_en,
+              SUM(CASE WHEN sku IS NULL OR TRIM(sku) = '' THEN 1 ELSE 0 END) AS no_sku,
+              SUM(CASE WHEN name REGEXP '[A-Za-z]' THEN 1 ELSE 0 END) AS latin_in_ar
+         FROM inv_items`);
+    if (Number(h.total) > 0) {
+      console.log('[inv-health] ' + h.total + ' items · missing English ' + h.no_en +
+        ' · missing SKU ' + h.no_sku + ' · Latin text still in the Arabic name ' + h.latin_in_ar);
+    }
+  } catch (e) { console.error('[inv-health]', e.message); }
 
   // Per-item override for waste GL routing. NULL = use reason→account map.
   await addColumnIfMissing('inv_items', 'waste_gl_account_id', 'VARCHAR(50) NULL');

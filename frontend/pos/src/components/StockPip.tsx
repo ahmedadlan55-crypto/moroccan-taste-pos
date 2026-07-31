@@ -40,7 +40,7 @@
  */
 import { useSyncExternalStore } from "react";
 import { useT } from "@/i18n/I18nProvider";
-import { fmtInt } from "@/lib/format";
+import { fmtQty } from "@/lib/format";
 import type { CatalogItem, MenuAvailabilityMap } from "@/lib/types";
 
 // ── Published availability snapshot ─────────────────────────────────────────
@@ -83,9 +83,14 @@ export interface StockState {
 
 const OK: StockState = { level: "ok", count: null, source: "none" };
 
-/** At or below this many base units, a plain warehouseQty item reads as low.
+/** Last-resort threshold when the item carries no `minStockAlert` of its own.
  *  Only the FALLBACK path uses it; the server's own isLowStock (menu
- *  min_stock_alert) wins whenever the availability map covers the item. */
+ *  min_stock_alert) wins whenever the availability map covers the item.
+ *
+ *  A hardcoded 3 was the ONLY threshold before minStockAlert shipped in the
+ *  catalog, which meant the owner's configured alert level — the number they
+ *  actually set per item — was ignored by the register. It survives purely for
+ *  rows where the owner set nothing (min_stock_alert defaults to 0). */
 export const LOW_WAREHOUSE_QTY = 3;
 
 /**
@@ -97,7 +102,7 @@ export const LOW_WAREHOUSE_QTY = 3;
  * false, and treating that as out-of-stock would grey out most of the menu.
  */
 export function resolveStockState(
-  item: Pick<CatalogItem, "id" | "warehouseQty">,
+  item: Pick<CatalogItem, "id" | "warehouseQty" | "minStockAlert">,
   map: MenuAvailabilityMap | null,
 ): StockState {
   const entry = map ? map[item.id] : undefined;
@@ -114,7 +119,12 @@ export function resolveStockState(
   if (qty == null || !Number.isFinite(Number(qty))) return OK; // no figure → never warn
   const n = Number(qty);
   if (n <= 0) return { level: "out", count: 0, source: "warehouseQty" };
-  if (n <= LOW_WAREHOUSE_QTY) return { level: "low", count: n, source: "warehouseQty" };
+  // The OWNER's own alert level (menu.min_stock_alert) when they set one — the
+  // register has no business second-guessing it with a constant. 0/absent is
+  // "not configured", not "warn at zero", so it falls back rather than muting.
+  const configured = Number(item.minStockAlert);
+  const threshold = Number.isFinite(configured) && configured > 0 ? configured : LOW_WAREHOUSE_QTY;
+  if (n <= threshold) return { level: "low", count: n, source: "warehouseQty" };
   return OK;
 }
 
@@ -128,6 +138,12 @@ export interface StockPipProps {
   count: number | null;
   /** Display name, for the tooltip only. */
   name: string;
+  /** Where the count came from — the two sources MEAN different things and must
+   *  not share one wording. See the tooltip branch below. */
+  source?: StockState["source"];
+  /** Base unit («كجم», «حبة») for the warehouse-balance tooltip. A bare number
+   *  is not a stock figure a cashier can act on. */
+  unitName?: string | null;
 }
 
 /**
@@ -135,7 +151,7 @@ export interface StockPipProps {
  * button sits bottom-END and the combo / «مُخصَّص» chips sit at the top, so the
  * four overlays never collide.
  */
-export function StockPip({ level, count, name }: StockPipProps) {
+export function StockPip({ level, count, name, source = "none", unitName = null }: StockPipProps) {
   const t = useT();
   if (level === "ok") return null;
   if (level === "out") {
@@ -150,14 +166,24 @@ export function StockPip({ level, count, name }: StockPipProps) {
       </span>
     );
   }
+  // TWO DIFFERENT NUMBERS, never one wording. `availability` counts how many
+  // PORTIONS the branch can still make by walking the dish's BOM; `warehouseQty`
+  // is the item's own stock balance. Both used to render as a bare amber number
+  // with the same «المتاح للصنع» tooltip, so the cashier had no way to tell a
+  // recipe verdict from a shelf count.
+  const title =
+    source === "warehouseQty"
+      ? t("productGrid.stock.lowTitleStock", { count: fmtQty(count ?? 0), unit: unitName || "" })
+      : t("productGrid.stock.lowTitle", { count: fmtQty(count ?? 0) });
   return (
     <span
       data-testid="stock-pip"
       data-stock="low"
-      title={t("productGrid.stock.lowTitle", { count: count ?? 0 })}
+      data-stock-source={source}
+      title={title}
       className="num pointer-events-none absolute bottom-1.5 start-1.5 z-[1] rounded-md bg-amber-100 px-1.5 py-0.5 text-[10px] font-extrabold text-amber-800 shadow-sm"
     >
-      {count == null ? t("productGrid.stock.low") : fmtInt(count)}
+      {count == null ? t("productGrid.stock.low") : fmtQty(count)}
     </span>
   );
 }

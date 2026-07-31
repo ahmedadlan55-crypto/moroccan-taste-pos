@@ -24,7 +24,7 @@
  * Any change here MUST be mirrored in lib/posOrderMachine.js (and vice-versa)
  * or the client-shown totals diverge from what /submit freezes.
  */
-import type { CartLine, CartTotals, OrderDiscount, Payment, TaxCategory } from "./types";
+import type { CartLine, CatalogItem, CartTotals, OrderDiscount, Payment, TaxCategory } from "./types";
 import type { TFunction } from "@/i18n/types";
 
 /** Which categories are taxed at all. S = standard; Z/E/O are always 0%. */
@@ -43,6 +43,54 @@ export function rateFor(category: TaxCategory, vatRatePct: number = DEFAULT_VAT_
 
 export function round2(n: number): number {
   return Math.round((Number(n) || 0) * 100) / 100;
+}
+
+/** Quantity precision. Lives here (not in the store) so the cart badge in App
+ *  and the store's own line math round base quantities identically. */
+export function round6(n: number): number {
+  return Math.round(((Number(n) || 0) + Number.EPSILON) * 1e6) / 1e6;
+}
+
+/**
+ * THE price to charge for one base unit of a catalog item.
+ *
+ * `price` is the CHANNEL-RESOLVED price (routes/pos-v2.js resolves
+ * override > channel price list > base menu price and ships the winner here).
+ * `basePrice` is the raw, UNRESOLVED menu price and is provenance only.
+ *
+ * This function exists because the store used to read `item.basePrice ?? item.price`.
+ * The server ALWAYS ships basePrice, so that `??` never fell through — every
+ * channel price list and every per-channel override was silently discarded, and
+ * the card advertised one price while the cart line charged another.
+ */
+export function effectiveUnitPrice(item: Pick<CatalogItem, "price" | "basePrice">): number {
+  return Number(item.price) || 0;
+}
+
+/** The shape both a catalog item and a cart line can be adapted to. A cart line
+ *  names the same two things `unitPrice` / `vatCategory`, so the caller maps. */
+export interface PricedForDisplay {
+  price: number;
+  taxCategory: TaxCategory;
+  taxInclusive?: boolean;
+}
+
+/**
+ * The CUSTOMER-FACING unit price — what one base unit actually costs, VAT included.
+ *
+ * The product card used to render the stored price raw. Every menu row is
+ * is_tax_inclusive=0 (server.js v7.1 migration), so a standard-rated item
+ * advertised its NET price while the customer paid 15% more — and a zero-rated
+ * item advertised correctly. Half the grid right, half wrong.
+ *
+ * The two branches mirror `lineTotals` EXACTLY (inclusive prices are already
+ * final; exclusive ones take VAT on top). Changing one without the other puts
+ * the card and the cart back out of step.
+ */
+export function displayUnitPrice(item: PricedForDisplay, vatRatePct: number = DEFAULT_VAT_RATE_PCT): number {
+  const price = Number(item.price) || 0;
+  if (item.taxInclusive === true) return round2(price);
+  return round2(price * (1 + rateFor(item.taxCategory, vatRatePct)));
 }
 
 export interface LineTotals {

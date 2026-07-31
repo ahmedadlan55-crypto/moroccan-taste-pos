@@ -67,10 +67,16 @@ describe("parseQtyInput — the commit guard", () => {
     expect(parseQtyInput("0.")).toBe(0);
   });
 
-  it("accepts decimals (weighed goods) and rejects nonsense/negatives", () => {
-    expect(parseQtyInput("1.5")).toBe(1.5);
+  it("REJECTS a decimal rather than rounding it, and rejects nonsense/negatives", () => {
+    // Was "accepts decimals (weighed goods)". A fractional quantity could not
+    // be shown honestly anywhere downstream — the card badge rounded 0.5 to "1"
+    // and 0.4 to "0". Rejecting keeps «تعيين» disabled so the cashier fixes the
+    // entry, rather than silently booking a quantity they never typed.
+    expect(parseQtyInput("1.5")).toBeNull();
+    expect(parseQtyInput("0.5")).toBeNull();
     expect(parseQtyInput("abc")).toBeNull();
     expect(parseQtyInput("-2")).toBeNull();
+    expect(parseQtyInput("3")).toBe(3);
   });
 
   it("clamps an extra-digit typo instead of booking it against the shift", () => {

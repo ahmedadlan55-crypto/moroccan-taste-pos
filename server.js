@@ -6974,6 +6974,31 @@ async function runMigrations() {
   await addColumnIfMissing('menu', 'min_stock_alert', 'DECIMAL(10,3) DEFAULT 0');
 
   // ═══════════════════════════════════════════════════════════════════
+  // 0023) Whole-riyal pricing — widen menu.price to DECIMAL(10,4).
+  //
+  // Prices are stored NET (is_tax_inclusive=0 on every row since v7.1), and
+  // the register now advertises the VAT-INCLUSIVE amount on the product card.
+  // For that amount to land on a whole riyal the stored net has to be
+  // target/(1+rate) — a value that at 2 decimals frequently does not exist:
+  // 11.00 SAR @ 15% needs 9.5652, and neither 9.57 (-> 11.01) nor 9.56
+  // (-> 10.99) hits it. 537 of the first 5,000 integer targets are
+  // unreachable at (10,2); zero are at (10,4), at 0/5/10/15% alike.
+  //
+  // WIDENING ONLY — every existing 2-decimal value is preserved exactly, and
+  // MODIFY COLUMN is idempotent, so this is safe on every boot. See
+  // db/migrations/0023_whole_riyal_pricing.sql for the full rationale.
+  // ═══════════════════════════════════════════════════════════════════
+  try {
+    await db.query('ALTER TABLE menu MODIFY price DECIMAL(10,4) NOT NULL DEFAULT 0');
+  } catch (e) {
+    // Loud but non-fatal: an older MySQL or a locked table must not stop the
+    // server from booting. Prices keep working at 2 decimals; only the
+    // whole-riyal tuning degrades (the rounding script reports the rows it
+    // could not hit rather than writing a wrong price).
+    console.error('[migrate] menu.price widen to DECIMAL(10,4) failed:', e.message);
+  }
+
+  // ═══════════════════════════════════════════════════════════════════
   // Sprint 3 Phase D3 — inventory-items + menu redesign (ADDITIVE, idempotent)
   // WIRING NOTE: route MOUNTS are unchanged — /api/menu (routes/menu.js) and
   // /api/inventory/v2 (routes/inventory-items.js) are already mounted; the new

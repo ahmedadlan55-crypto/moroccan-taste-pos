@@ -129,8 +129,13 @@ describe("parseQtyPrefix", () => {
     expect(parseQtyPrefix("  12 * 7501  ")).toEqual({ qty: 12, rest: "7501" });
   });
 
-  it("carries a decimal quantity through (weighed goods)", () => {
-    expect(parseQtyPrefix("1.5*7501")).toEqual({ qty: 1.5, rest: "7501" });
+  it("REFUSES a decimal quantity — the register sells whole units only", () => {
+    // Was "carries a decimal quantity through (weighed goods)". A fractional
+    // qty was the last route into a cart line past the QtyPad, and it could not
+    // be displayed honestly on the card badge. No prefix → the caller scans the
+    // raw query, which finds nothing, which is the correct outcome.
+    expect(parseQtyPrefix("1.5*7501")).toBeNull();
+    expect(parseQtyPrefix("0.5x7501")).toBeNull();
   });
 
   it("the rest can be a name, not just a code", () => {

@@ -28,8 +28,8 @@
  */
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { useT } from "@/i18n/I18nProvider";
-import { fmtInt } from "@/lib/format";
-import { Numpad } from "./Numpad";
+import { fmtQty } from "@/lib/format";
+import { applyIntegerKey, Numpad } from "./Numpad";
 import { Button, cn } from "./ui";
 
 /** Popover width in px. Narrower than the 390px viewport with both margins. */
@@ -45,14 +45,22 @@ export const QTY_MAX = 9999;
  * null = "not committable" — an empty draft or anything non-numeric, so Set
  * stays disabled rather than silently committing Number("") === 0 and deleting
  * the line the cashier only wanted to look at.
+ *
+ * WHOLE QUANTITIES ONLY. This used to round to 3 decimals for weighed goods.
+ * The register sells in whole units, and a fractional quantity was a lie the
+ * moment it reached the card badge (fmtInt turned 0.5 into "1" and 0.4 into
+ * "0"). A fraction is now REJECTED — Set stays disabled — rather than silently
+ * rounded, so the cashier corrects the entry instead of booking a quantity they
+ * never typed. `applyIntegerKey` already makes it unreachable from the pad
+ * itself; this covers a hardware keyboard and any programmatic caller.
  */
 export function parseQtyInput(raw: string): number | null {
   const s = String(raw ?? "").trim();
   if (!s) return null;
   const n = Number(s);
   if (!Number.isFinite(n) || n < 0) return null;
-  // 3 decimals covers weighed goods; the Numpad itself caps entry at 2.
-  return Math.round(Math.min(n, QTY_MAX) * 1000) / 1000;
+  if (!Number.isInteger(n)) return null;
+  return Math.min(n, QTY_MAX);
 }
 
 export interface QtyPadProps {
@@ -155,13 +163,13 @@ export function QtyPad({ qty, itemName, unitName, onSubmit, className }: QtyPadP
         }}
         aria-haspopup="dialog"
         aria-expanded={open}
-        aria-label={t("cartPanel.qtyPad.triggerAria", { name: itemName, qty: fmtInt(qty) })}
+        aria-label={t("cartPanel.qtyPad.triggerAria", { name: itemName, qty: fmtQty(qty) })}
         className={cn(
           "num btn-press flex min-h-11 min-w-11 items-center justify-center rounded-lg px-1 text-sm font-extrabold text-ink transition hover:bg-white hover:shadow-sm",
           className,
         )}
       >
-        {fmtInt(qty)}
+        {fmtQty(qty)}
       </button>
 
       {open ? (
@@ -190,9 +198,11 @@ export function QtyPad({ qty, itemName, unitName, onSubmit, className }: QtyPadP
               draft ? "text-ink" : "text-slate-400",
             )}
           >
-            {draft || fmtInt(qty)}
+            {draft || fmtQty(qty)}
           </div>
-          <Numpad value={draft} onChange={setDraft} />
+          {/* Whole quantities only — the «.» key is inert and the grammar drops
+              it, so a fractional quantity cannot be entered at all. */}
+          <Numpad value={draft} onChange={setDraft} apply={applyIntegerKey} allowDecimal={false} />
           <p className="mt-1.5 text-center text-[10px] font-bold text-slate-400">{t("cartPanel.qtyPad.removeHint")}</p>
           <div className="mt-2 grid grid-cols-2 gap-1.5">
             <Button size="sm" variant="secondary" onClick={close}>

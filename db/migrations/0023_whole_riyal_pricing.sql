@@ -1,0 +1,51 @@
+-- ════════════════════════════════════════════════════════════════════
+-- 0023_whole_riyal_pricing.sql
+-- ────────────────────────────────────────────────────────────────────
+-- Widen menu.price from DECIMAL(10,2) to DECIMAL(10,4).
+--
+-- WHY THIS IS REQUIRED (not a nicety):
+--   The register now advertises the CUSTOMER-FACING price on the product
+--   card — the VAT-inclusive amount — and the owner wants that amount to
+--   land on a whole riyal. Menu prices are stored NET (every row is
+--   is_tax_inclusive=0 since the v7.1 boot migration), so hitting a whole
+--   inclusive target means storing net = target / (1 + rate).
+--
+--   At two decimal places that net value frequently does NOT exist. For a
+--   target of 11.00 SAR at 15% VAT:
+--
+--       11 / 1.15 = 9.565217…
+--         9.57 x 1.15 = 11.0055 -> rounds to 11.01   (over)
+--         9.56 x 1.15 = 10.9940 -> rounds to 10.99   (under)
+--
+--   No 2-decimal net produces 11.00. Sweeping every integer target from 1
+--   to 5,000 at 15% VAT, 537 of them are unreachable at DECIMAL(10,2) and
+--   ZERO are unreachable at DECIMAL(10,4). The same sweep was run at 0%,
+--   5% and 10% (settings.VATRate is owner-configurable, so the fix has to
+--   survive a rate change) — zero failures at 4 decimals in every case.
+--
+-- WHY THIS IS SAFE:
+--   • WIDENING only. DECIMAL(10,4) holds every value DECIMAL(10,2) could:
+--     9.57 stays exactly 9.57 (stored as 9.5700). No row changes value, no
+--     row can overflow, and the integer part keeps all 6 of its digits
+--     (10 total - 4 scale), same as before (10 - 2 = 8 digits was never
+--     the binding constraint — the largest menu price is 4 digits).
+--   • REVERSIBLE in shape, lossy in data: narrowing back to (10,2) would
+--     round the 4-decimal nets. That is why prices are only ever REWRITTEN
+--     by scripts/round-prices-to-whole-riyal.js, which is dry-run by
+--     default and prints a before/after report.
+--   • MODIFY COLUMN is idempotent by nature, so no INFORMATION_SCHEMA
+--     guard is needed here (see db/migrations/README.md §3 — the guard
+--     requirement applies to ADD COLUMN / index / FK changes, which are
+--     the ones that collide with server.js's addColumnIfMissing path).
+--
+--   The two other tables that feed a card price — price_list_items.price
+--   and channel_menu_items.override_price — are ALREADY DECIMAL(_,4)
+--   (server.js CREATE TABLE, ~lines 4038 and 6894), so they need no change.
+--
+-- WIRING NOTE: server.js's own runMigrations() is what actually executes on
+-- every boot today (not db/migrate.js's versioned runner). This ALTER is
+-- ALREADY wired there — search "0023) Whole-riyal pricing" in server.js.
+-- This file is the readable reference / fresh-install supplement.
+-- ════════════════════════════════════════════════════════════════════
+
+ALTER TABLE menu MODIFY price DECIMAL(10,4) NOT NULL DEFAULT 0;

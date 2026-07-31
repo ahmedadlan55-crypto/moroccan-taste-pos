@@ -13,7 +13,8 @@ import { Minus, PackageSearch, Search, X } from "lucide-react";
 import { useLocalizedName, useT } from "@/i18n/I18nProvider";
 import type { Catalog, CatalogItem, MenuAvailabilityMap } from "@/lib/types";
 import { getToken } from "@/lib/auth";
-import { fmt2, fmtInt } from "@/lib/format";
+import { DEFAULT_VAT_RATE_PCT, displayUnitPrice } from "@/lib/cartMath";
+import { fmtPrice, fmtQty } from "@/lib/format";
 import { getQuickPicks, QUICK_PICKS_CATEGORY, useQuickPicks } from "@/lib/quickPicks";
 import {
   OUT_OF_STOCK_CARD_CLASS,
@@ -160,17 +161,24 @@ export interface QtyPrefix {
  * { qty: 12, rest: "7501" }. Separators: `*`, `x`, `X`, `×`.
  *
  * PURE and total: returns null whenever there is no well-formed prefix, so the
- * caller can hand the untouched query to the normal resolve path. A decimal qty
- * is accepted (weighed goods); qty must be > 0 and `rest` non-empty, otherwise
- * "12*" or "0x7501" would silently add nothing.
+ * caller can hand the untouched query to the normal resolve path. qty must be
+ * > 0 and `rest` non-empty, otherwise "12*" or "0x7501" would silently add
+ * nothing.
+ *
+ * WHOLE QUANTITIES ONLY. This used to accept a decimal for weighed goods
+ * ("2.5*7501"). The register sells in whole units, so a fraction here would be
+ * the one remaining way to smuggle one into a cart line — past the QtyPad,
+ * which now refuses it. "2.5*7501" no longer parses as a prefix; it falls
+ * through to the normal search path and finds nothing, which is the honest
+ * outcome for a quantity the register cannot sell.
  *
  * Exported for the App's scan wiring (another stream owns that call site).
  */
 export function parseQtyPrefix(query: string): QtyPrefix | null {
-  const m = /^\s*(\d+(?:\.\d+)?)\s*[*xX×]\s*(\S.*?)\s*$/.exec(query ?? "");
+  const m = /^\s*(\d+)\s*[*xX×]\s*(\S.*?)\s*$/.exec(query ?? "");
   if (!m) return null;
   const qty = Number(m[1]);
-  if (!Number.isFinite(qty) || qty <= 0) return null;
+  if (!Number.isInteger(qty) || qty <= 0) return null;
   const rest = m[2];
   return rest ? { qty, rest } : null;
 }
@@ -211,10 +219,12 @@ const ProductCard = memo(function ProductCard({
   onDec,
   stockLevel = "ok",
   stockCount = null,
+  stockSource = "none",
+  vatRatePct = DEFAULT_VAT_RATE_PCT,
 }: {
   item: CatalogItem;
   onAdd: (item: CatalogItem) => void;
-  /** Live quantity of this item in the cart (0 = not in the cart). */
+  /** Live quantity of this item in the cart (0 = not in the cart), in BASE units. */
   qty?: number;
   /** Decrement one unit of this item (only offered while qty > 0). */
   onDec?: (item: CatalogItem) => void;
@@ -222,6 +232,11 @@ const ProductCard = memo(function ProductCard({
    *  object every render would defeat this component's memo() for every card. */
   stockLevel?: StockState["level"];
   stockCount?: number | null;
+  stockSource?: StockState["source"];
+  /** Shipped by the catalog (settings.VATRate). A PRIMITIVE for the same memo()
+   *  reason as the stock fields — and the card cannot read it from a provider,
+   *  since several specs render this grid with no PosProvider at all. */
+  vatRatePct?: number;
 }) {
   const t = useT();
   const tn = useLocalizedName();
@@ -272,8 +287,16 @@ const ProductCard = memo(function ProductCard({
           </div>
         ) : null}
         <p className="line-clamp-2 text-sm font-extrabold leading-snug text-ink group-hover:text-teal-700">{tn(item.name, item.nameEn)}</p>
+        {/* CUSTOMER-FACING price: what one base unit actually costs, VAT
+            included. The raw stored price used to be shown here, which for a
+            standard-rated row (every menu row is is_tax_inclusive=0) advertised
+            the NET figure while the customer paid 15% more — and advertised a
+            zero-rated row correctly, so half the grid was right and half wrong.
+            Menu prices are tuned so this lands on a whole riyal; fmtPrice still
+            shows halalas for any row that was not, rather than hiding them. */}
         <p className="mt-2 text-sm font-extrabold text-teal-600">
-          <span className="num">{fmt2(item.price)}</span> <span className="text-[11px] font-bold text-slate-400">{t("productGrid.currency")}</span>
+          <span className="num">{fmtPrice(displayUnitPrice(item, vatRatePct))}</span>{" "}
+          <span className="text-[11px] font-bold text-slate-400">{t("productGrid.currency")}</span>
         </p>
       </button>
       {/* العروض (close/w25-combos): tapping this card opens the combo chooser,
@@ -300,16 +323,25 @@ const ProductCard = memo(function ProductCard({
       {/* 86 board (close/w1b-stock): bottom-START, so it never collides with the
           combo/«مُخصَّص» chips at the top or the inline − at bottom-END. A <span>,
           never a button — the windowing spec pins the buttons-per-row count. */}
-      <StockPip level={stockLevel} count={stockCount} name={tn(item.name, item.nameEn)} />
+      <StockPip
+        level={stockLevel}
+        count={stockCount}
+        source={stockSource}
+        unitName={item.baseUnitName}
+        name={tn(item.name, item.nameEn)}
+      />
       {inCart ? (
         <>
-          {/* Live qty badge (legacy qty-display, app.js:449) */}
+          {/* Live qty badge (legacy qty-display, app.js:449). fmtQty, never
+              fmtInt: the badge counts BASE units, and rounding them to an
+              integer here reported "1" for half a unit and "0" for an item that
+              was demonstrably in the cart. */}
           <span
             data-testid="card-qty-badge"
-            aria-label={t("productGrid.card.inCartAria", { name: tn(item.name, item.nameEn), qty: fmtInt(qty) })}
+            aria-label={t("productGrid.card.inCartAria", { name: tn(item.name, item.nameEn), qty: fmtQty(qty) })}
             className="num absolute -top-1.5 end-1.5 min-w-6 rounded-full bg-teal-600 px-1.5 py-0.5 text-center text-[11px] font-extrabold text-white shadow-sm"
           >
-            {fmtInt(qty)}
+            {fmtQty(qty)}
           </span>
           {/* Inline − (legacy decFromCart, app.js:448) — last unit removes the line */}
           <button
@@ -439,6 +471,10 @@ export function ProductGrid({ catalog, loading, category, query, onAdd, scrollEl
   // whenever the availability endpoint is unreachable → every card silently
   // degrades to CatalogItem.warehouseQty.
   const availability: MenuAvailabilityMap | null = useAvailability();
+  // settings.VATRate, shipped WITH the catalog. Falls back only for the moment
+  // before the catalog lands (and for provider-less spec renders) — the server
+  // remains authoritative for every figure that reaches a receipt.
+  const vatRatePct = catalog?.vatRate ?? DEFAULT_VAT_RATE_PCT;
   const visible = useMemo(
     () => (catalog ? filterItems(catalog.items, category, query, quickPickIds) : []),
     [catalog, category, query, quickPickIds],
@@ -500,6 +536,8 @@ export function ProductGrid({ catalog, loading, category, query, onAdd, scrollEl
         onDec={onDecrement}
         stockLevel={stock.level}
         stockCount={stock.count}
+        stockSource={stock.source}
+        vatRatePct={vatRatePct}
       />
     );
   };

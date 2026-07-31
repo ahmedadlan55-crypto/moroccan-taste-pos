@@ -23,7 +23,7 @@ import { idbPut } from "@/lib/idb";
 import { openShift as apiOpenShift, fetchMenuAvailabilityBulk, findOpenShift, getServerFlags } from "@/lib/api";
 import { getEngine, type EngineStatus, type OfflineEngine } from "@/lib/offline";
 import { useLocalizedName, useOptionalT, useT } from "@/i18n/I18nProvider";
-import { cartTotals, DEFAULT_VAT_RATE_PCT } from "@/lib/cartMath";
+import { cartTotals, DEFAULT_VAT_RATE_PCT, effectiveUnitPrice, round6 } from "@/lib/cartMath";
 import { pruneQuickPicks, recordPick } from "@/lib/quickPicks";
 import { getAvailabilitySnapshot, publishAvailability, resolveStockState } from "@/components/StockPip";
 import { ulid } from "@/lib/ulid";
@@ -44,7 +44,6 @@ import type {
 } from "@/lib/types";
 
 // ── Phase U — unit-of-measure helpers ───────────────────────────────────────
-const round6 = (n: number) => Math.round((n + Number.EPSILON) * 1e6) / 1e6;
 function pickUnit(item: CatalogItem, unitCode?: string | null): CatalogUnit | null {
   const units = item.units || [];
   if (!units.length) return null; // single-unit item → no unit metadata
@@ -54,7 +53,11 @@ function pickUnit(item: CatalogItem, unitCode?: string | null): CatalogUnit | nu
 function buildCartLine(item: CatalogItem, unit: CatalogUnit | null, enteredQty: number): CartLine {
   const factor = unit ? Number(unit.factor) || 1 : 1;
   return {
-    menuId: item.id, name: item.name, nameEn: item.nameEn ?? null, qty: enteredQty, unitPrice: item.basePrice ?? item.price,
+    // effectiveUnitPrice, NOT `basePrice ?? price`: the server always ships
+    // basePrice, so that fallback never fired and every channel price list /
+    // per-channel override was discarded — the card advertised the channel
+    // price while this line charged the base one.
+    menuId: item.id, name: item.name, nameEn: item.nameEn ?? null, qty: enteredQty, unitPrice: effectiveUnitPrice(item),
     lineDiscount: 0, vatCategory: item.taxCategory,
     // Snapshot the tax convention WITH the price. Without it the register
     // treated every price as VAT-inclusive while the server adds VAT on top
@@ -785,7 +788,7 @@ export function PosProvider({ children }: { children: ReactNode }) {
         // effective price + modifiers» (app.js:400), so after a channel switch
         // re-prices the catalog, a new add opens a NEW line at the new price
         // instead of silently selling more units at the old frozen price.
-        const effectivePrice = item.basePrice ?? item.price;
+        const effectivePrice = effectiveUnitPrice(item);
         const existing = c.lines.find(
           (l) =>
             l.menuId === item.id &&
@@ -1083,11 +1086,16 @@ export function PosProvider({ children }: { children: ReactNode }) {
           undo would otherwise be invisible. */}
       <ActionToastStack toasts={actionToasts} onDismiss={dismissToast} />
       {/* Combo chooser — mounted by the provider (addItem owns the intercept),
-          so every host of the store gets the flow with zero wiring. */}
+          so every host of the store gets the flow with zero wiring.
+
+          basePrice goes through effectiveUnitPrice for exactly the reason
+          buildCartLine does: a combo IS a normal menu row (is_combo=1) and is
+          channel-priced like any other, so `basePrice ?? price` charged the
+          base price under a card advertising the channel one. */}
       <ComboDialog
         open={comboItem != null && comboDef != null}
         combo={comboDef}
-        basePrice={comboItem ? (comboItem.basePrice ?? comboItem.price) : undefined}
+        basePrice={comboItem ? effectiveUnitPrice(comboItem) : undefined}
         onClose={() => setComboItem(null)}
         onConfirm={confirmCombo}
       />

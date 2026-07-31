@@ -32,8 +32,8 @@ import {
   XCircle,
 } from "lucide-react";
 import { usePos } from "@/state/store";
-import { fmt2, fmtInt } from "@/lib/format";
-import { lineTotals, orderDiscountPct, round2 } from "@/lib/cartMath";
+import { fmt2, fmtInt, fmtPrice, fmtQty } from "@/lib/format";
+import { displayUnitPrice, lineTotals, orderDiscountPct, round2 } from "@/lib/cartMath";
 import {
   presetCodeMatches,
   presetLineAmount,
@@ -106,7 +106,21 @@ function CartLineRow({
   const linePresets = presetsForScope(useDiscountPresets(expanded), "line");
   // True line gross (baseQty × unit price) — matches the cartMath clamp, so a
   // carton line discounts its real total, not the entered-qty figure.
+  //
+  // NET SPACE ON PURPOSE. `line.unitPrice` is the stored price in whatever
+  // convention `taxInclusive` names, and cartMath.lineTotals clamps
+  // lineDiscount against exactly this product. The unit price DISPLAYED below
+  // is the VAT-inclusive one, but this figure — and the discount cap built on
+  // it — must stay in the same space the math clamps in, or a cashier could
+  // enter a discount the engine then silently trims.
   const lineGross = round2(baseQty * line.unitPrice);
+  // What the customer pays for one base unit. Matches the product card exactly
+  // (both go through displayUnitPrice), so the price a cashier taps is the
+  // price the cart then shows back to them.
+  const displayPrice = displayUnitPrice(
+    { price: line.unitPrice, taxCategory: line.vatCategory, taxInclusive: line.taxInclusive },
+    vatRatePct,
+  );
   // Same authority the discount CEILING already uses (lib/capabilities.ts).
   const canOverrideDiscountCeiling = supervisor || posCan("pos.discount.override");
   const actorRole = String(user?.role ?? "");
@@ -136,10 +150,10 @@ function CartLineRow({
           <span className="min-w-0 flex-1">
             <span className="line-clamp-2 block break-words text-sm font-extrabold leading-tight text-ink [overflow-wrap:anywhere]" title={displayName}>{displayName}</span>
             <span className="mt-0.5 block break-words text-[11px] font-bold text-slate-400">
-              <Money value={fmt2(line.unitPrice)} /> {t("cartPanel.currency")}{isMajor && baseUnitName ? `/${baseUnitName}` : ""}
+              <Money value={fmtPrice(displayPrice)} /> {t("cartPanel.currency")}{isMajor && baseUnitName ? `/${baseUnitName}` : ""}
               {isMajor ? (
                 <span className="ms-1.5 text-teal-600">
-                  = <span className="num">{fmt2(baseQty)}</span> {baseUnitName || ""}
+                  = <span className="num">{fmtQty(baseQty)}</span> {baseUnitName || ""}
                 </span>
               ) : null}
               {line.lineDiscount > 0 ? (
@@ -226,7 +240,7 @@ function CartLineRow({
                 {isMajor && baseUnitName ? ` ${t("cartPanel.line.unitConversion", { unit: line.enteredUnitName ?? "" })} ` : ""}
                 {isMajor && baseUnitName ? (
                   <>
-                    <span className="num">{fmt2(factor)}</span> {baseUnitName}
+                    <span className="num">{fmtQty(factor)}</span> {baseUnitName}
                   </>
                 ) : null}
               </span>

@@ -89,7 +89,11 @@ describe("product-card-price + product-card-inline-add — the card sells", () =
     // No scrollElement prop → unwindowed render (every card mounts).
     render(<ProductGrid catalog={CATALOG} loading={false} category={null} query="" onAdd={onAdd} />);
     const card = screen.getByRole("button", { name: /شاي مغربي/ });
-    expect(card).toHaveTextContent("23.00");
+    // 23.00 stored NET + 15% = 26.45 paid. This assertion used to read "23.00"
+    // — the stored figure — despite the test's own name: the card advertised a
+    // price 15% below what the customer was charged.
+    expect(card).toHaveTextContent("26.45");
+    expect(card).not.toHaveTextContent("23.00");
     fireEvent.click(card);
     expect(onAdd).toHaveBeenCalledTimes(1);
     expect(onAdd.mock.calls[0][0].id).toBe("M1");

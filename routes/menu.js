@@ -19,6 +19,34 @@ const MGR = verifyToken.requireRole('admin', 'manager');
 // menu write (create/edit/delete/recipes/combos/categories) stays MGR.
 const PRICING = verifyToken.requireRole('admin', 'manager', 'accountant');
 
+// ── Whole-riyal pricing guard ───────────────────────────────────────────────
+// The register advertises the CUSTOMER-FACING (VAT-inclusive) price on the
+// product card, and the owner wants that number free of halalas. A one-time
+// sweep (scripts/round-prices-to-whole-riyal.js) tunes the existing rows — but
+// without a guard here that tuning decays at the very first price edit from the
+// ERP, and the grid drifts back to 18.40s one save at a time.
+//
+// Every price WRITE therefore snaps through lib/pricing.snapToWholeRiyal, which
+// verifies its own round-trip. If a price cannot be made exact (a column not
+// yet widened to DECIMAL(10,4), an exotic VAT rate) the ORIGINAL price is kept
+// rather than a near-miss written: a wrong price is worse than a fractional one.
+const { snapToWholeRiyal, getVatRateFromDb } = require('../lib/pricing');
+
+async function _vatRate() {
+  try { return await getVatRateFromDb(db, 15); } catch (_) { return 15; }
+}
+
+/**
+ * Snap one price for storage. Returns the price to write — the input untouched
+ * when it is already whole-riyal, or when the snap could not land exactly.
+ */
+function _snapPrice(price, taxCategory, isInclusive, ratePct) {
+  const p = Number(price) || 0;
+  if (p <= 0) return p; // free / not-yet-priced rows are left alone
+  const r = snapToWholeRiyal(p, { taxCategory: taxCategory, isInclusive: !!isInclusive, ratePct: ratePct });
+  return r.exact ? r.price : p;
+}
+
 // Sprint 3 D3 — query-flag parsers for the /list filters.
 function _isOn(v) { const s = String(v == null ? '' : v).toLowerCase(); return s === '1' || s === 'true' || s === 'yes' || s === 'on'; }
 function _triBool(v) {
@@ -386,13 +414,16 @@ router.post('/', verifyToken, MGR, async (req, res) => {
     // close/d-images — malformed/oversized product images are refused, not stored.
     const _imgErr = imageDataError(imageData);
     if (_imgErr) return res.status(400).json({ success: false, error: _imgErr });
+    // Whole-riyal guard — the stored price is tuned so the VAT-inclusive amount
+    // the cashier sees on the card lands on a whole riyal.
+    const _price = _snapPrice(price, taxCategory, taxInclusive, await _vatRate());
     await db.query(
       `INSERT INTO menu (id, name, name_en, price, is_tax_inclusive, tax_category, category, cost, stock, min_stock, active, pricing_mode, markup_pct, brand_id,
                          is_semi_finished, production_unit, consumes_semi_id, consumes_semi_qty,
                          production_warehouse_id, sales_warehouse_id,
                          unit, big_unit, conv_rate, yield_quantity, yield_unit, image_data, cost_source)
        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
-      [id, name, nameEn || null, price || 0, taxInclusive ? 1 : 0, taxCategory,
+      [id, name, nameEn || null, _price || 0, taxInclusive ? 1 : 0, taxCategory,
        category || 'عام', cost || 0, stock || 0, minStock || 0, active !== false,
        pricingMode || 'fixed', markupPct || 30, brandId || null,
        isSemiFinished ? 1 : 0, productionUnit || 'pcs', consumesSemiId || null, consumesSemiQty || 0,
@@ -456,10 +487,18 @@ router.put('/:id', verifyToken, MGR, async (req, res) => {
     // the first stamp of an unlabeled row) sets cost_source='manual'; an
     // UNCHANGED cost preserves the existing label — so re-saving other fields
     // (name, image, tax) never relabels or touches a recipe cost.
-    let _curCost = null, _curSource = null;
+    let _curCost = null, _curSource = null, _curTaxCat = 'S', _curTaxIncl = false;
     try {
-      const [_cr] = await db.query('SELECT cost AS c, cost_source AS s FROM menu WHERE id = ?', [req.params.id]);
-      if (_cr.length) { _curCost = _cr[0].c == null ? null : Number(_cr[0].c); _curSource = _cr[0].s || null; }
+      const [_cr] = await db.query(
+        'SELECT cost AS c, cost_source AS s, tax_category AS tc, is_tax_inclusive AS ti FROM menu WHERE id = ?', [req.params.id]);
+      if (_cr.length) {
+        _curCost = _cr[0].c == null ? null : Number(_cr[0].c); _curSource = _cr[0].s || null;
+        // Needed by the whole-riyal guard below: a PUT that edits only the name
+        // still rewrites `price`, so the snap must use the row's REAL tax
+        // treatment rather than assuming standard-rated and exclusive.
+        _curTaxCat = _cr[0].tc || 'S';
+        _curTaxIncl = Number(_cr[0].ti) === 1;
+      }
     } catch (_) { /* row lookup best-effort; INSERT fallback handles a missing row */ }
     const _newCost = Number(cost) || 0;
     const _costChanged = _curCost === null || Math.abs(_newCost - _curCost) > 0.0001;
@@ -474,6 +513,11 @@ router.put('/:id', verifyToken, MGR, async (req, res) => {
     let _costSource = _curSource;
     if (_costChanged) _costSource = 'manual';
     else if (!_curSource && _newCost) _costSource = 'manual';
+    // Whole-riyal guard. The tax treatment the price is snapped against is
+    // whatever this request SETS, falling back to what the row already carries.
+    const _effTaxCat = setTaxCat ? _taxCat : _curTaxCat;
+    const _effTaxIncl = setTaxIncl ? !!req.body.taxInclusive : _curTaxIncl;
+    const _price = _snapPrice(price, _effTaxCat, _effTaxIncl, await _vatRate());
     const sql =
       `UPDATE menu SET name=?, name_en=?, price=?, category=?, cost=?, stock=?, min_stock=?, active=?,
                        pricing_mode=COALESCE(?, pricing_mode), markup_pct=?, brand_id=?,
@@ -484,7 +528,7 @@ router.put('/:id', verifyToken, MGR, async (req, res) => {
       (setTaxIncl ? ', is_tax_inclusive=?' : '') +
       (setTaxCat ? ', tax_category=?' : '') +
       ` WHERE id=?`;
-    const params = [name, nameEn || null, price || 0, category, cost || 0, stock, minStock, active, pricingMode || null, markupPct || 0,
+    const params = [name, nameEn || null, _price || 0, category, cost || 0, stock, minStock, active, pricingMode || null, markupPct || 0,
        brandId || null,
        isSemiFinished ? 1 : 0, productionUnit || 'pcs', consumesSemiId || null, consumesSemiQty || 0,
        productionWarehouseId || null, salesWarehouseId || null,
@@ -502,7 +546,7 @@ router.put('/:id', verifyToken, MGR, async (req, res) => {
                            production_warehouse_id, sales_warehouse_id,
                            unit, big_unit, conv_rate, yield_quantity, yield_unit, image_data, cost_source)
          VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
-        [req.params.id, name, nameEn || null, price || 0, category || 'عام', cost || 0, stock || 0, minStock || 0, active !== false,
+        [req.params.id, name, nameEn || null, _price || 0, category || 'عام', cost || 0, stock || 0, minStock || 0, active !== false,
          pricingMode || 'fixed', markupPct || 30, brandId || null,
          isSemiFinished ? 1 : 0, productionUnit || 'pcs', consumesSemiId || null, consumesSemiQty || 0,
          productionWarehouseId || null, salesWarehouseId || null,
@@ -533,15 +577,22 @@ router.put('/:id', verifyToken, MGR, async (req, res) => {
 // V5.7.4: now records price history for traceability + returns the new price + cost margin.
 router.patch('/:id/price', verifyToken, PRICING, async (req, res) => {
   try {
-    const newPrice = Number(req.body.price);
+    const reqPrice = Number(req.body.price);
     const reason = (req.body.reason || '').toString().slice(0, 200);
     const username = (req.user && req.user.username) || req.body.username || 'system';
-    if (newPrice < 0 || isNaN(newPrice)) return res.status(400).json({ success: false, error: 'سعر غير صالح' });
-    // Read OLD price + cost for the audit trail and return payload
-    const [old] = await db.query('SELECT price AS old_price, cost FROM menu WHERE id = ?', [req.params.id]);
+    if (reqPrice < 0 || isNaN(reqPrice)) return res.status(400).json({ success: false, error: 'سعر غير صالح' });
+    // Read OLD price + cost for the audit trail and return payload. tax_category
+    // and is_tax_inclusive come along for the whole-riyal guard — the snap is
+    // meaningless without knowing whether VAT applies and whether it is already
+    // baked into the figure.
+    const [old] = await db.query(
+      'SELECT price AS old_price, cost, tax_category AS tc, is_tax_inclusive AS ti FROM menu WHERE id = ?', [req.params.id]);
     if (!old.length) return res.status(404).json({ success: false, error: 'منتج غير موجود' });
     const oldPrice = Number(old[0].old_price) || 0;
     const cost = Number(old[0].cost) || 0;
+    // Snapped BEFORE the no-op check, so re-saving an untuned price (e.g. 16.00)
+    // is treated as the real change it is rather than dismissed as a no-op.
+    const newPrice = _snapPrice(reqPrice, old[0].tc || 'S', Number(old[0].ti) === 1, await _vatRate());
     if (Math.abs(newPrice - oldPrice) < 0.001) {
       return res.json({ success: true, noop: true, oldPrice, newPrice, cost });
     }
@@ -596,9 +647,11 @@ router.post('/bulk-price-update', verifyToken, PRICING, async (req, res) => {
     }
 
     const where = conds.join(' AND ');
-    const [items] = await db.query(`SELECT id, name, price, cost FROM menu WHERE ${where}`, params);
+    const [items] = await db.query(
+      `SELECT id, name, price, cost, tax_category AS tc, is_tax_inclusive AS ti FROM menu WHERE ${where}`, params);
     if (!items.length) return res.json({ success: true, affected: 0, items: [] });
 
+    const ratePct = await _vatRate();
     let affected = 0;
     const beforeAfter = [];
     for (const it of items) {
@@ -608,6 +661,10 @@ router.post('/bulk-price-update', verifyToken, PRICING, async (req, res) => {
       else if (mode === 'fixed_set') newPrice = Math.round(value * 100) / 100;
       else newPrice = Math.round((oldPrice + value) * 100) / 100;
       if (newPrice < 0) newPrice = 0;
+      // Whole-riyal guard, applied AFTER the percentage/addition math: a +10%
+      // sweep is exactly the operation that would otherwise scatter halalas
+      // across the whole menu in one click.
+      newPrice = _snapPrice(newPrice, it.tc || 'S', Number(it.ti) === 1, ratePct);
       if (Math.abs(newPrice - oldPrice) < 0.001) continue;
       try {
         await db.query('UPDATE menu SET price = ? WHERE id = ?', [newPrice, it.id]);
@@ -765,6 +822,8 @@ router.post('/import', verifyToken, MGR, async (req, res) => {
     let imported = 0;
     let updated = 0;
     const invalid = [];
+    // Resolved ONCE for the whole sheet — an import can carry thousands of rows.
+    const _ratePct = await _vatRate();
 
     for (const item of items) {
       // v7.1 — skip rows with negative price/cost rather than importing bad data.
@@ -775,19 +834,22 @@ router.post('/import', verifyToken, MGR, async (req, res) => {
       const _incl = item.taxInclusive ? 1 : 0;
       let _cat = String(item.taxCategory || 'S').toUpperCase();
       if (['S','Z','E','O'].indexOf(_cat) < 0) _cat = 'S';
+      // Whole-riyal guard — a spreadsheet is the single most likely source of
+      // fractional prices, so the sheet is normalized on the way in.
+      const _price = _snapPrice(item.price, _cat, _incl === 1, _ratePct);
 
       if (existing.length) {
         // Sprint 3 D3 — a bulk import writes the cost straight from the sheet, so
         // its provenance is 'imported'.
         await db.query(
           `UPDATE menu SET name=?, price=?, category=?, cost=?, stock=?, min_stock=?, active=?, is_tax_inclusive=?, tax_category=?, cost_source='imported' WHERE id=?`,
-          [item.name, item.price || 0, item.category || 'عام', item.cost || 0, item.stock || 999, item.minStock || 5, item.active !== false, _incl, _cat, existing[0].id]
+          [item.name, _price || 0, item.category || 'عام', item.cost || 0, item.stock || 999, item.minStock || 5, item.active !== false, _incl, _cat, existing[0].id]
         );
         updated++;
       } else {
         await db.query(
           `INSERT INTO menu (id, name, price, category, cost, stock, min_stock, active, is_tax_inclusive, tax_category, cost_source) VALUES (?,?,?,?,?,?,?,?,?,?,?)`,
-          [id, item.name, item.price || 0, item.category || 'عام', item.cost || 0, item.stock || 999, item.minStock || 5, item.active !== false, _incl, _cat, 'imported']
+          [id, item.name, _price || 0, item.category || 'عام', item.cost || 0, item.stock || 999, item.minStock || 5, item.active !== false, _incl, _cat, 'imported']
         );
         imported++;
       }

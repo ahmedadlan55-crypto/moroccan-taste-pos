@@ -48,10 +48,14 @@ export interface CatalogItem {
    *  the UI falls back to `name`. The receipt ALWAYS uses `name` (Arabic) for
    *  ZATCA compliance. */
   nameEn?: string | null;
-  /** Base-unit price AS STORED. Whether it already contains VAT is decided PER
-   *  ITEM by `taxInclusive` — it is not a global convention. Every current menu
-   *  row is tax-EXCLUSIVE, so the register adds VAT on top to show the
-   *  customer-facing price. */
+  /** THE price to sell at: base-unit, CHANNEL-RESOLVED (the server picks
+   *  override > channel price list > base menu price and ships the winner).
+   *  Always go through `effectiveUnitPrice()` rather than reading a price field
+   *  directly — see the warning on `basePrice`.
+   *
+   *  Whether it already contains VAT is decided PER ITEM by `taxInclusive` — it
+   *  is not a global convention. Every current menu row is tax-EXCLUSIVE, so
+   *  `displayUnitPrice()` adds VAT on top for the customer-facing figure. */
   price: number;
   category: string;
   active: boolean;
@@ -69,9 +73,22 @@ export interface CatalogItem {
    *  = base price. Drives the «مُخصَّص» card chip + «أسعار من قائمة: X» strip chip. */
   priceSource?: string | null;
   // Phase U — multi-unit selling. `units` is [] for single-unit items (fully
-  // backward compatible). basePrice = price; warehouseQty = base availability.
+  // backward compatible). warehouseQty = base availability.
+  /** The raw, UNRESOLVED menu price — PROVENANCE ONLY, NEVER money.
+   *
+   *  This field used to be documented as "basePrice = price", which is false the
+   *  moment a sales channel carries a price list: the server ships the resolved
+   *  price in `price` and leaves this one at the base menu figure. The store
+   *  read `item.basePrice ?? item.price` on the strength of that comment, and
+   *  since the server ALWAYS ships basePrice the `??` never fell through — so
+   *  every channel price was discarded and the cart charged the base price
+   *  behind a card advertising the channel one. Use `effectiveUnitPrice()`. */
   basePrice?: number;
   warehouseQty?: number | null;
+  /** menu.min_stock_alert — the owner's own low-stock threshold in base units.
+   *  Absent/0 → StockPip falls back to LOW_WAREHOUSE_QTY. Only the warehouseQty
+   *  path uses it; the availability map carries the server's own isLowStock. */
+  minStockAlert?: number;
   barcode?: string | null; // primary (base) barcode
   baseUnitName?: string | null;
   units?: CatalogUnit[];

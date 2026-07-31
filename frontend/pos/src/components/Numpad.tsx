@@ -61,6 +61,30 @@ export function applyReferenceKey(value: string, key: NumpadKey): string {
   return value + key; // leading zeros are significant — no normalization
 }
 
+/** 4 digits — mirrors QTY_MAX (9999) in QtyPad. Not imported from there: QtyPad
+ *  imports this module, and the cycle would be worse than the duplication. */
+const QTY_MAX_LEN = 4;
+
+/**
+ * Whole-quantity grammar — digits only, no decimal point at ALL.
+ *
+ * The register sells in whole units, so "2.5" is not a quantity the cashier may
+ * enter. Enforcing it in the GRAMMAR (rather than validating after the fact)
+ * means the fractional value never exists to be mis-rounded downstream: the
+ * card badge, the line total and the stock deduction all agree by construction.
+ *
+ * Leading zeros ARE normalized (unlike a reference code): "0" then 5 is the
+ * quantity 5, never "05".
+ */
+export function applyIntegerKey(value: string, key: NumpadKey): string {
+  if (key === "clear") return "";
+  if (key === "backspace") return value.slice(0, -1);
+  if (key === ".") return value; // a quantity has no decimal part
+  if (value.length >= QTY_MAX_LEN) return value;
+  if (value === "0") return key; // "0" then 5 → "5", never "05"
+  return value + key;
+}
+
 const keyBtn =
   "btn-press flex min-h-12 items-center justify-center rounded-xl border border-slate-200 bg-white text-lg font-extrabold text-ink shadow-sm transition hover:bg-slate-50 active:bg-slate-100 disabled:cursor-not-allowed disabled:hover:bg-white";
 
@@ -70,9 +94,18 @@ export interface NumpadProps {
   className?: string;
   /**
    * Key grammar. Defaults to the money grammar (`applyNumpadKey`); pass
-   * `applyReferenceKey` when the pad is driving a reference/approval code.
+   * `applyReferenceKey` when the pad is driving a reference/approval code, or
+   * `applyIntegerKey` when it is driving a whole quantity.
    */
   apply?: (value: string, key: NumpadKey) => string;
+  /**
+   * Whether the «.» key is live. Set false alongside a grammar that ignores it
+   * (integer quantities, reference codes) so the cashier sees a dead key rather
+   * than tapping one that silently does nothing. The key is DISABLED, never
+   * removed — the 3×4 grid must keep its shape so «0» and «⌫» stay under the
+   * same thumb.
+   */
+  allowDecimal?: boolean;
   /**
    * Inert pad: every key is disabled and the grid dims, but the pad KEEPS its
    * place and its size. Used when the active payment method has nothing
@@ -82,7 +115,14 @@ export interface NumpadProps {
 }
 
 /** 3×4 grid: 7 8 9 / 4 5 6 / 1 2 3 / . 0 ⌫ — plus a full-width clear row. */
-export function Numpad({ value, onChange, className, apply = applyNumpadKey, disabled = false }: NumpadProps) {
+export function Numpad({
+  value,
+  onChange,
+  className,
+  apply = applyNumpadKey,
+  disabled = false,
+  allowDecimal = true,
+}: NumpadProps) {
   const t = useT();
   const press = (key: NumpadKey) => {
     if (disabled) return;
@@ -108,7 +148,14 @@ export function Numpad({ value, onChange, className, apply = applyNumpadKey, dis
             {d}
           </button>
         ))}
-        <button type="button" aria-label={t("numpad.decimalPoint")} disabled={disabled} onClick={() => press(".")} className={keyBtn}>
+        <button
+          type="button"
+          aria-label={t("numpad.decimalPoint")}
+          data-testid="numpad-decimal"
+          disabled={disabled || !allowDecimal}
+          onClick={() => press(".")}
+          className={cn(keyBtn, !allowDecimal && "opacity-40")}
+        >
           .
         </button>
         <button type="button" aria-label={t("numpad.digits.0")} disabled={disabled} onClick={() => press("0")} className={cn(keyBtn, "num")}>

@@ -410,6 +410,53 @@ async function apply(db, log = () => {}) {
     await H.addIndex(db, 'sales', 'ix_sales_branch_day', 'branch_id, order_date', {}, log);
   }
 
+  // ── 15. analytics read-path indexes, measured not guessed ─────────────────
+  //
+  // Every index below was proposed from EXPLAIN evidence on a 530k-order
+  // sandbox (docs/status/ANALYTICS_PERF_BASELINE.md carries the before/after
+  // plans) — not from reading the queries and imagining a plan.
+  //
+  // The first one is the important one. The planner puts TWO filters on nearly
+  // every order-fact query by default — the void exclusion (`status`) and the
+  // credit-note exclusion (`source`) — and neither was indexed. With only
+  // (business_day, branch_id) available the optimizer abandons the index once
+  // the day range exceeds roughly 5% of the table and full-scans instead, which
+  // is why 90-day reports were the slow ones.
+  //
+  // `settled_at` and `opened_at` are deliberately ABSENT: planner.DATE_BASES
+  // rejects them, so no request can reach those columns and an index on them
+  // would be write cost for a query that cannot be asked.
+  if (await H.tableExists(db, 'analytics_order_facts')) {
+    await H.addIndex(db, 'analytics_order_facts', 'ix_aof_day_branch_status_src',
+      'business_day, branch_id, status, source', {}, log);
+    // One per dateBasis the planner actually accepts.
+    await H.addIndex(db, 'analytics_order_facts', 'ix_aof_local_branch',
+      'occurred_at_local, branch_id', {}, log);
+    await H.addIndex(db, 'analytics_order_facts', 'ix_aof_paid_at',
+      'paid_at, branch_id', {}, log);
+    await H.addIndex(db, 'analytics_order_facts', 'ix_aof_closed_at',
+      'closed_at, branch_id', {}, log);
+  }
+  if (await H.tableExists(db, 'analytics_payment_facts')) {
+    await H.addIndex(db, 'analytics_payment_facts', 'ix_apf_day_branch_method_cov',
+      'business_day, branch_id, method_norm, direction, amount', {}, log);
+    await H.addIndex(db, 'analytics_payment_facts', 'ix_apf_local_branch_method',
+      'occurred_at_local, branch_id, method_norm', {}, log);
+  }
+  if (await H.tableExists(db, 'analytics_till_facts')) {
+    await H.addIndex(db, 'analytics_till_facts', 'ix_atf_local_branch',
+      'occurred_at_local, branch_id', {}, log);
+  }
+  // The returns fact filters status BEFORE the date window, so status leads.
+  if ((await H.tableExists(db, 'sales_returns')) && (await H.columnExists(db, 'sales_returns', 'branch_id'))) {
+    await H.addIndex(db, 'sales_returns', 'ix_ret_status_date_branch',
+      'status, return_date, branch_id', {}, log);
+  }
+  if (await H.tableExists(db, 'analytics_sales_budget')) {
+    await H.addIndex(db, 'analytics_sales_budget', 'ix_asb_month_branch',
+      'period_month, branch_id', {}, log);
+  }
+
   return true;
 }
 

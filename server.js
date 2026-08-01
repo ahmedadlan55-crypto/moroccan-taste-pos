@@ -893,6 +893,37 @@ async function flagDefaultPasswordUsers() {
 // actually completed runMigrations() + normalizeCollations().
 let __autoInitSucceeded = false;
 
+// Companion to the flag above, closing the hole it did NOT cover.
+//
+// __autoInitSucceeded proves runMigrations() RAN to completion. It cannot prove
+// the schema is COMPLETE, because every self-applying schema module below is
+// invoked inside its own try/catch that logs and continues. So a module could
+// fail outright, runMigrations() would still reach its success path, the
+// MIGRATE_ONLY probe would find its five baseline tables present, and
+// `scripts/release-start.js` — the Dockerfile CMD — would exit 0 and start the
+// server on a schema missing whole subsystems.
+//
+// That was demonstrated, not theorised: with the analytics module forced to
+// fail, the chain printed "[DB] analytics schema FAILED …" and then "schema
+// ready (5/5 probe tables present)" and exited 0, with 2 of 15 analytics tables
+// present. This release adds a column and nine indexes through that exact
+// module.
+//
+// Each module's catch records here, and the MIGRATE_ONLY probe refuses to
+// report a ready schema when it is non-empty. Deliberately NOT fatal on an
+// ordinary `npm start`: the existing behaviour of coming up degraded for
+// diagnostics is right for a running box, and release-start.js gates the deploy
+// on MIGRATE_ONLY *before* it ever starts the server.
+//
+// Only a module THROWING is recorded. Several modules log internal per-statement
+// warnings on a healthy empty-DB boot (party-dimension's payment_source, whose
+// table is created later by the procurement runner) and still return normally —
+// treating those as failures would make every clean first boot refuse to deploy.
+const __schemaModuleFailures = [];
+function __recordSchemaFailure(mod, e) {
+  __schemaModuleFailures.push(mod + ': ' + String((e && e.message) || e).substring(0, 200));
+}
+
 async function autoInitDB() {
   // Retry loop — Railway MySQL may not be ready immediately on cold start
   const MAX_RETRIES = 5;
@@ -1211,6 +1242,7 @@ async function runMigrations() {
     await require('./db/migrations/order-to-cash/schema').apply(db, (m) => console.log('[o2c-schema]', m));
   } catch (e) {
     console.log('[DB] Migration warning (o2c schema):', e.message.substring(0, 160));
+    __recordSchemaFailure('order-to-cash', e);
   }
 
   // Analytics fact/rollup schema — additive only; ALTERs ar_document_lines, so it
@@ -1219,6 +1251,7 @@ async function runMigrations() {
     await require('./db/migrations/analytics/schema').apply(db, (m) => console.log('[analytics-schema]', m));
   } catch (e) {
     console.error('[DB] analytics schema FAILED (analytics reads may 500):', e.message.substring(0, 160));
+    __recordSchemaFailure('analytics', e);
   }
 
   // The counterparty dimension on gl_entries — additive columns + indexes.
@@ -1230,6 +1263,7 @@ async function runMigrations() {
     await require('./db/migrations/party-dimension/schema').apply(db, (m) => console.log('[party-schema]', m));
   } catch (e) {
     console.error('[DB] party dimension FAILED:', e.message.substring(0, 160));
+    __recordSchemaFailure('party-dimension', e);
   }
 
   // Unify the two payables accounts and backfill the party. One-shot, gated,
@@ -1261,6 +1295,7 @@ async function runMigrations() {
     await require('./db/migrations/sales-posting/schema').apply(db, (m) => console.log('[sales-posting-schema]', m));
   } catch (e) {
     console.error('[DB] sales-posting schema FAILED (queue capture will no-op):', e.message.substring(0, 160));
+    __recordSchemaFailure('sales-posting', e);
   }
 
   // ── Backfill the queue for sales that predate it ─────────────────────────
@@ -8045,10 +8080,29 @@ async function runMigrations() {
     //      must all actually exist. A crash partway through runMigrations()
     //      leaves the later ones missing, which (1) alone would not reveal if
     //      the crash happened outside the retry loop's try block.
-    const REQUIRED_TABLES = ['users', 'hr_employees', 'pos_orders', 'permissions_v3', 'role_permissions'];
+    //   3. No self-applying schema module threw. Signals (1) and (2) both pass
+    //      while a module has failed outright — every one runs inside its own
+    //      try/catch, and none of them creates any of the five baseline tables
+    //      below, so neither signal can see it. Demonstrated: with the analytics
+    //      module forced to fail the chain printed the failure, then "schema
+    //      ready (5/5 probe tables present)", and exited 0.
+    //
+    // The probe list now also names one table per self-applying module, so a
+    // module that fails WITHOUT throwing (or that is skipped entirely) is caught
+    // by its absent table rather than by a stack trace it never produced.
+    const REQUIRED_TABLES = [
+      'users', 'hr_employees', 'pos_orders', 'permissions_v3', 'role_permissions',
+      'ar_documents',           // order-to-cash
+      'analytics_order_facts',  // analytics — this release ships a column + 9 indexes here
+      'sales_posting_queue',    // sales-posting
+    ];
     try {
       if (!__autoInitSucceeded) {
         throw new Error('autoInitDB() did not reach its success path — schema provisioning failed or the DB was unreachable (see the [DB] errors above)');
+      }
+      if (__schemaModuleFailures.length) {
+        throw new Error(
+          'schema module(s) failed — refusing to certify the schema: ' + __schemaModuleFailures.join(' | '));
       }
       const [present] = await db.query(
         `SELECT TABLE_NAME FROM INFORMATION_SCHEMA.TABLES

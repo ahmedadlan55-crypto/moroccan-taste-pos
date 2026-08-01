@@ -635,7 +635,36 @@ export function getPageExportRequest(segment: string): PageExportSpecFactory | u
 /** The full planner request the ExportMenu posts for a segment. */
 export function buildExportRequest(segment: string, filters: AnalyticsFilters): AnalyticsPlannerRequest {
   const factory = getPageExportRequest(segment);
-  return buildPlannerRequest(filters, factory ? factory(filters) : DEFAULT_EXPORT_SPEC);
+  const spec = factory ? factory(filters) : DEFAULT_EXPORT_SPEC;
+  const req = buildPlannerRequest(filters, spec);
+
+  /*
+   * THE EXPORT MUST BE ON THE SAME TAX BASIS AS THE SCREEN.
+   *
+   * The tax toggle is NOT a server flag — the backend planner has no `taxMode`
+   * at all. It is a CLIENT-SIDE metric swap (`net_ex_vat → net_incl_vat`,
+   * TAX_INCL_SWAP above) that `queryBodyToWireRequest` applies on the screen
+   * path. This function is the export path, and it never applied it.
+   *
+   * So exporting a report with the incl-VAT chip on produced a file of EX-VAT
+   * figures under the very column header the screen was rendering incl-VAT:
+   * two different numbers, one name, and nothing in the file to say which
+   * basis it was on. That file is the copy that gets emailed and filed, which
+   * makes it the worst place in the product for a silent disagreement.
+   *
+   * NOTE for anyone tempted to "simplify" this by sending `taxMode` instead:
+   * that was tried and is a no-op. The planner ignores unknown keys, so the
+   * export would still have exported ex-VAT while LOOKING fixed.
+   */
+  const swap =
+    filters.taxIncl && !spec.metrics.includes("net_incl_vat") ? TAX_INCL_SWAP : null;
+  if (!swap) return req;
+  const mapId = (id: string) => swap[id] || id;
+  return {
+    ...req,
+    metrics: req.metrics.map(mapId),
+    ...(req.sort ? { sort: req.sort.map((s) => ({ ...s, by: mapId(s.by) })) } : {}),
+  };
 }
 
 /* ── three-way reconciliation (routes/analytics/reconciliation.js) ─

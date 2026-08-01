@@ -1268,14 +1268,14 @@ router.post('/bom/:bomId/clone', MGR, requireCapability('inventory.edit'), async
       await conn.query(
         `INSERT INTO bom_lines (id, bom_id, component_item_id, quantity, unit, waste_pct, line_no,
                                 entered_unit_id, entered_unit_code, conversion_factor, base_quantity, notes)
-         SELECT CONCAT('BL-', ?, '-', SUBSTRING(MD5(CONCAT(id, ?)), 1, 10)), ?, component_item_id, quantity, unit,
+         SELECT CONCAT('BL-', ?, '-', SUBSTRING(SHA2(CONCAT(id, ?), 256), 1, 10)), ?, component_item_id, quantity, unit,
                 waste_pct, line_no, entered_unit_id, entered_unit_code, conversion_factor, base_quantity, notes
            FROM bom_lines WHERE bom_id=?`, [Date.now(), newId, newId, src0.id]);
       await conn.query(
         `INSERT INTO bom_outputs (id, bom_id, output_type, product_id, product_source, quantity, entered_unit_id,
                                   entered_unit_code, conversion_factor, base_quantity, warehouse_id, alloc_method,
                                   alloc_value, requires_lot, line_no, notes)
-         SELECT CONCAT('BOUT-', ?, '-', SUBSTRING(MD5(CONCAT(id, ?)), 1, 10)), ?, output_type, product_id,
+         SELECT CONCAT('BOUT-', ?, '-', SUBSTRING(SHA2(CONCAT(id, ?), 256), 1, 10)), ?, output_type, product_id,
                 product_source, quantity, entered_unit_id, entered_unit_code, conversion_factor, base_quantity,
                 warehouse_id, alloc_method, alloc_value, requires_lot, line_no, notes
            FROM bom_outputs WHERE bom_id=?`, [Date.now(), newId, newId, src0.id]);

@@ -181,6 +181,44 @@ async function _upsertPaymentFact(db, f) {
      f.provenance || 'live']);
 }
 
+/**
+ * Delete payment legs left behind by an EARLIER projection of the same source.
+ *
+ * WHY AN UPSERT ALONE IS NOT ENOUGH
+ *   Legs are keyed UNIQUE(source_type, source_id, line_no) and written in a
+ *   `for i < legs.length` loop, so a replay only ever writes line_no 0..N-1.
+ *   Nothing removed the rows above N. Two ways that broke the books:
+ *
+ *   a) A SPLIT THAT SHRANK. Three legs re-projected as two left leg #3 in
+ *      place, so SUM(legs) exceeded the invoice's paid amount.
+ *
+ *   b) WORSE — A SPLIT THAT BECAME SINGLE. `source_type` is itself part of the
+ *      key and flips between 'pos_single' and 'pos_split'. Re-projecting a
+ *      3-leg split sale as a single payment did not overwrite anything: it
+ *      ADDED a fourth row under the other type. The sale then reported four
+ *      legs summing to roughly double what was collected.
+ *
+ *   Replays are routine, not exotic: the repair queue drains, a return
+ *   re-projects its original sale, the backfill re-runs.
+ *
+ * INVARIANT RESTORED: SUM(payment legs for a source) = the amount collected.
+ *
+ * ATOMICITY, STATED HONESTLY: this runs on whatever handle the caller passed.
+ * Called inside a transaction it inherits that atomicity; called with the pool
+ * (routes/sales.js projects fire-and-forget) the upsert and this prune are two
+ * statements, so a crash between them can leave a stale leg — exactly today's
+ * state, and self-healing on the next replay. It never opens a window where
+ * the source has NO legs, which delete-then-insert would.
+ */
+async function _pruneStalePaymentLegs(db, { sourceTypes, sourceId, keepSourceType, keepCount }) {
+  const ph = sourceTypes.map(() => '?').join(',');
+  await db.query(
+    `DELETE FROM analytics_payment_facts
+      WHERE source_id = ? AND source_type IN (${ph})
+        AND NOT (source_type = ? AND line_no < ?)`,
+    [String(sourceId), ...sourceTypes, keepSourceType, keepCount]);
+}
+
 async function _upsertTillFact(db, f) {
   await db.query(
     `INSERT INTO analytics_till_facts
@@ -299,6 +337,11 @@ async function projectPosSale(db, saleId, opts = {}) {
       performedBy: sale.username, provenance,
     });
   }
+  // Both types, because a sale can cross between them on a replay.
+  await _pruneStalePaymentLegs(db, {
+    sourceTypes: ['pos_single', 'pos_split'],
+    sourceId: saleId, keepSourceType: sourceType, keepCount: legs.length,
+  });
 
   // ── modifier facts (combo choices) ──
   await _projectComboChoices(db, documentId, sale, loc, provenance);
@@ -587,6 +630,12 @@ async function _projectLegacyCreditNote(db, creditNoteId, saleId, provenance) {
       performedBy: cn.username, provenance,
     });
   }
+  // A credit note keeps one source_type, so only the shrink case applies here —
+  // but it mirrors the original sale's legs, and those can shrink.
+  await _pruneStalePaymentLegs(db, {
+    sourceTypes: ['cn_refund'],
+    sourceId: creditNoteId, keepSourceType: 'cn_refund', keepCount: legs.length,
+  });
   if (cashOut > 0) {
     await _upsertTillFact(db, {
       shiftId: cn.shift_id, branchId, movementType: 'cash_refund', amount: cashOut,
@@ -779,4 +828,6 @@ module.exports = {
   _resolvePaymentLegs,
   _enqueueDirty,
   _projectComboChoices,
+  _upsertPaymentFact,
+  _pruneStalePaymentLegs,
 };

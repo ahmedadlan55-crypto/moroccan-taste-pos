@@ -19,31 +19,28 @@ import { useT, type TFunction } from "@/i18n";
 import { analyticsFilterCodec, type AnalyticsFilters } from "../lib/filters";
 import {
   buildFiltersBody,
-  setPageExportRequest,
+  reportQuerySpec,
   type AnalyticsCompareSpec,
   type AnalyticsQueryBody,
   type AnalyticsRegistry,
   type AnalyticsResult,
 } from "../lib/api";
 import { useAnalyticsQuery, useAnalyticsRegistry } from "../lib/useAnalyticsQuery";
+import { hubHref } from "../lib/reportRegistry";
 import { DataTable } from "@/shared/tables";
 import { ReportTotals } from "../components/ReportTotals";
 import { buildResultColumns, toResultRows, type ResultTableRow } from "../lib/resultTable";
 
 const SEGMENT = "branches";
-// E2E-wave fix: `growth` is a PARAMETERIZED registry metric — requesting it
-// plainly is a planner VALIDATION_ERROR (422), so with a compare mode on this
-// page errored on load. The growth column now derives client-side from the
-// compare envelope's per-row delta (see the `rows` mapping below).
-const METRICS = ["net_ex_vat", "orders"] as const;
-const DIMS = ["brand", "branch"] as const;
-
-// The TopBar ExportMenu asks this page's registry entry for its export shape.
-setPageExportRequest(SEGMENT, () => ({
-  metrics: [...METRICS],
-  dimensions: [...DIMS],
-  sort: [{ by: "net_ex_vat", dir: "desc" }],
-}));
+// Metrics and dimensions come from lib/reportRegistry — the same declaration
+// the ExportMenu reads for this report's file and the cross-product test plans
+// against the real server planner. A page-local copy could drift from either.
+//
+// E2E-wave fix, still true: `growth` is a PARAMETERIZED registry metric —
+// requesting it plainly is a planner VALIDATION_ERROR (422), so with a compare
+// mode on this page errored on load. The growth column derives client-side from
+// the compare envelope's per-row delta (see the `rows` mapping below), which is
+// why it is added to the COLUMN list and never to the request.
 
 /* ── tiny local helpers (page-local copies by design) ── */
 
@@ -85,12 +82,10 @@ function totalValue(result: AnalyticsResult | undefined, id: string): number | n
   return typeof v === "number" && Number.isFinite(v) ? v : null;
 }
 
-/** Merge extra params over the CURRENT search and render a hub segment URL. */
+/** The canonical URL of another hub report — lib/reportRegistry owns the
+ *  centre a report lives in, so a drill never hand-builds a retired path. */
 function segmentHref(search: string, segment: string, extra: Record<string, string>): string {
-  const sp = new URLSearchParams(search);
-  for (const [k, v] of Object.entries(extra)) sp.set(k, v);
-  const qs = sp.toString();
-  return `/reports/sales/${segment}${qs ? `?${qs}` : ""}`;
+  return hubHref(segment, search, extra);
 }
 
 
@@ -104,18 +99,20 @@ export default function Branches() {
   const hasCompare = filters.compare !== "none";
 
   const base = buildFiltersBody(filters);
+  const spec = reportQuerySpec(SEGMENT, "byBranch", filters);
   const compare = compareSpec(filters);
   const body: AnalyticsQueryBody = {
     ...base,
-    metrics: [...METRICS],
-    dimensions: [...DIMS],
-    // Explicit, because DEFAULT_LIMIT is 50: a chain with more than fifty
-    // pairs was silently showing fifty rows with nothing to say so, and
-    // page.rowCountCapped stayed false because the FACT never hit its cap.
-    limit: 500,
+    // The registry carries the row limit too: DEFAULT_LIMIT is 50, and a chain
+    // with more than fifty pairs was silently showing fifty rows with nothing
+    // to say so (page.rowCountCapped stayed false because the FACT never hit
+    // its own cap).
+    ...spec,
     sort: [{ by: "net_ex_vat", dir: "desc" }],
     ...(compare ? { compare } : {}),
   };
+  const METRICS = spec.metrics;
+  const DIMS = spec.dimensions;
 
   // Data queries wait for a VALID metric catalog: without one there is nothing
   // to label or explain, and a disabled query never fires a doomed request.
@@ -128,8 +125,8 @@ export default function Branches() {
   const columns = useMemo(
     () =>
       buildResultColumns({
-        dimensions: [...DIMS],
-        metricIds: hasCompare ? [...METRICS, "growth"] : [...METRICS],
+        dimensions: DIMS,
+        metricIds: hasCompare ? [...METRICS, "growth"] : METRICS,
         t,
         registry: registry.data,
         maskedMetrics: query.data?.meta.maskedMetrics,
@@ -207,7 +204,7 @@ export default function Branches() {
           of the rows on screen. */}
       <ReportTotals
         totals={query.data?.totals}
-        metricIds={hasCompare ? [...METRICS, "growth"] : [...METRICS]}
+        metricIds={hasCompare ? [...METRICS, "growth"] : METRICS}
         registry={registry.data}
         maskedMetrics={query.data?.meta.maskedMetrics}
       />

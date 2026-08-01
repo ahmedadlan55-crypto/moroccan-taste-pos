@@ -1,11 +1,14 @@
 // Sales Analytics Hub — "discounts" page.
 //
-// KPI row (dimensionless analytics query) + two decision tables: discounts by
-// day (click-to-filter drill onto that day) and by cashier (drill → the
-// cashiers segment, preserving the current search params).
-// Honest limitation: the discount reason / promo dimension is NOT projected
-// into the fact store yet — a banner says so, and the reason table slots in
-// under the TODO below when the dimension lands.
+// KPI row (dimensionless analytics query) + three decision tables: discounts by
+// day (click-to-filter drill onto that day), by NAMED DISCOUNT, and by cashier
+// (drill → the cashiers report, preserving the current search params).
+//
+// The reason table used to be an apology:  was a reserved id
+// in the contract with no projector behind it, so this page carried a banner
+// saying the dimension did not exist. analytics_order_facts.discount_reason now
+// carries the snapshot ProjectionService writes from sales.discount_name, so
+// the question "which named discounts are costing us this" has a table instead.
 import { useMemo } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import { BadgePercent, Percent, ShoppingCart, TicketPercent, type LucideIcon } from "lucide-react";
@@ -18,26 +21,17 @@ import { analyticsFilterCodec } from "../lib/filters";
 import {
   buildFiltersBody,
   displayMetric,
-  setPageExportRequest,
+  reportQuerySpec,
   type AnalyticsQueryBody,
   type AnalyticsResult,
 } from "../lib/api";
 import { useAnalyticsQuery } from "../lib/useAnalyticsQuery";
 
 const SEGMENT = "discounts";
-const METRICS = ["discounts_total", "discount_pct", "discounted_orders", "orders"] as const;
-
-// The TopBar ExportMenu asks this page's registry entry for its export shape —
-// without it the export silently falls back to net + orders by business day.
-// The day dimension follows the date basis, exactly like the primary table.
-setPageExportRequest(SEGMENT, (filters) => {
-  const dayDim = filters.businessDay ? "business_day" : "calendar_day";
-  return {
-    metrics: [...METRICS],
-    dimensions: [dayDim],
-    sort: [{ by: dayDim, dir: "asc" }],
-  };
-});
+// Metrics, groupings and the export shape all come from lib/reportRegistry. The
+// day dimension there is the `"day"` placeholder, resolved against the active
+// date basis, so the table and the exported file group by the day they filter
+// on rather than by a hardcoded business_day.
 
 /** discount_pct at/above this (percent points) reads as a warning tone. */
 const HIGH_DISCOUNT_PCT = 10;
@@ -88,25 +82,37 @@ export default function Discounts() {
   const dayDim = filters.businessDay ? "business_day" : "calendar_day";
   const base = useMemo(() => buildFiltersBody(filters), [filters]);
 
-  const kpiBody = useMemo<AnalyticsQueryBody>(() => ({ metrics: [...METRICS], dimensions: [], ...base }), [base]);
+  const kpiBody = useMemo<AnalyticsQueryBody>(
+    () => ({ ...reportQuerySpec(SEGMENT, "kpis", filters), ...base }),
+    [base, filters],
+  );
   const dayBody = useMemo<AnalyticsQueryBody>(
-    () => ({ metrics: [...METRICS], dimensions: [dayDim], sort: [{ by: dayDim, dir: "asc" }], ...base }),
-    [base, dayDim],
+    () => ({ ...reportQuerySpec(SEGMENT, "byDay", filters), sort: [{ by: dayDim, dir: "asc" }], ...base }),
+    [base, dayDim, filters],
   );
   const cashierBody = useMemo<AnalyticsQueryBody>(
     () => ({
-      metrics: [...METRICS, "discount_rate_by_cashier"],
-      dimensions: ["cashier"],
+      ...reportQuerySpec(SEGMENT, "byCashier", filters),
       sort: [{ by: "discounts_total", dir: "desc" }],
       limit: 25,
       ...base,
     }),
-    [base],
+    [base, filters],
+  );
+
+  const reasonBody = useMemo<AnalyticsQueryBody>(
+    () => ({
+      ...reportQuerySpec(SEGMENT, "byReason", filters),
+      sort: [{ by: "discounts_total", dir: "desc" }],
+      ...base,
+    }),
+    [base, filters],
   );
 
   const kpis = useAnalyticsQuery("discounts-kpis", kpiBody);
   const byDay = useAnalyticsQuery("discounts-day", dayBody);
   const byCashier = useAnalyticsQuery("discounts-cashier", cashierBody);
+  const byReason = useAnalyticsQuery("discounts-reason", reasonBody);
 
   // Page-level states follow the PRIMARY (by-day) query.
   if (byDay.isPending) return <LoadingState />;
@@ -114,6 +120,11 @@ export default function Discounts() {
 
   const dayRows = toDimRows(byDay.data);
   const cashierRows = toDimRows(byCashier.data);
+  // A NULL reason is a real bucket (a sale with no named discount), so it is
+  // labelled rather than dropped — the reasons must add up to the period.
+  const reasonRows = toDimRows(byReason.data).map((r) =>
+    r.key === "" ? { ...r, label: t("salesReports.discounts.noReason") } : r,
+  );
   if (dayRows.length === 0) return <EmptyState title={t("salesReports.states.empty")} />;
 
   const incomplete = byDay.data?.meta?.completeness?.complete === false;
@@ -170,12 +181,6 @@ export default function Discounts() {
         <p className="mt-0.5 text-sm font-medium text-slate-500">{t("salesReports.pages.discounts.subtitle")}</p>
       </div>
 
-      {/* Honest limitation: no discount_reason/promo projection yet (queued for
-          a later wave). TODO(sales-hub): when the reason dimension is projected,
-          add a third table here grouped by discount_reason. */}
-      <div data-testid="discounts-reason-gap">
-        <Badge tone="warning">{t("salesReports.discounts.reasonGap")}</Badge>
-      </div>
       {incomplete && (
         <div data-testid="completeness-notice">
           <Badge tone="warning">{t("salesReports.states.notAvailableHistorically")}</Badge>
@@ -214,6 +219,34 @@ export default function Discounts() {
         mobileTitle={(r) => r.label}
         onRowClick={(r) => r.key && patch({ from: r.key, to: r.key, preset: "custom" }, { push: true })}
       />
+
+      {/* BY NAMED DISCOUNT. NULL is a real bucket — a sale that carried no
+          named discount — so it is labelled rather than dropped: hiding it
+          would make the reasons look like they add up to the period total when
+          they do not. */}
+      {byReason.isError ? (
+        <ErrorState error={byReason.error} onRetry={() => byReason.refetch()} />
+      ) : (
+        reasonRows.length > 0 && (
+          <DataTable<DimRow>
+            // No discount_pct column: the reason lives on the ORDER fact and
+            // the rate's denominator (gross_product_sales) lives on the LINE
+            // fact, so the figure is not computable at this grain. An em-dash
+            // column would read as "we could not measure it here", which is a
+            // weaker claim than "it does not exist at this grain".
+            columns={[
+              dimCol(t("salesReports.dims.discount_reason")),
+              ...metricCols.filter((c) => c.id !== "discount_pct"),
+            ]}
+            rows={reasonRows}
+            getRowId={(r) => r.key || r.label}
+            tableId="sales-hub-discounts-by-reason"
+            paginate={false}
+            emptyTitle={t("salesReports.states.empty")}
+            mobileTitle={(r) => r.label}
+          />
+        )
+      )}
 
       {byCashier.isError ? (
         <ErrorState error={byCashier.error} onRetry={() => byCashier.refetch()} />

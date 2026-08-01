@@ -28,6 +28,9 @@ export const salesReports = {
     settingsAria: "إعدادات التقرير",
     resultsAria: "نتائج التقرير",
     updating: "جارٍ تحديث النتائج — الأرقام المعروضة أدناه لا تعكس الفلاتر الجديدة بعد",
+    viewsAria: "تقارير {center}",
+    filtersDropped:
+      "أُزيلت فلاتر لا يستطيع هذا التقرير تطبيقها: {filters}. الأرقام أدناه تغطي النطاق الأوسع.",
   },
 
   report: {
@@ -65,12 +68,27 @@ export const salesReports = {
     sectionDaily: "التفصيل اليومي",
   },
 
-  groups: {
-    overview: "نظرة عامة",
-    products: "المنتجات والربحية",
-    money: "المال والتحصيل",
-    operations: "التشغيل والموظفون",
-    advanced: "متقدم",
+  centers: {
+    executive: {
+      title: "الملخّص التنفيذي",
+      subtitle: "صورة الفترة كاملةً في بيان واحد",
+    },
+    items: {
+      title: "الأصناف والربحية",
+      subtitle: "الأصناف والفئات والإضافات: الكميات والصافي والتكلفة والهامش",
+    },
+    payments: {
+      title: "التحصيل والمطابقة",
+      subtitle: "وسائل الدفع والضريبة والخصومات ومطابقة النقد",
+    },
+    operations: {
+      title: "التشغيل",
+      subtitle: "الفروع والقنوات والساعات والكاشيرات والورديات والإلغاءات",
+    },
+    explorer: {
+      title: "الاستكشاف الحر",
+      subtitle: "اختر المقاييس والأبعاد وابنِ التقرير الذي تريده",
+    },
   },
 
   pages: {
@@ -83,12 +101,12 @@ export const salesReports = {
       subtitle: "استكشاف حر: اختر المقاييس والأبعاد وابنِ الجدول المحوري الذي تحتاجه",
     },
     items: {
-      title: "الأصناف",
-      subtitle: "مبيعات الأصناف والفئات: الكميات والصافي والمساهمة في الإجمالي",
-    },
-    "item-sales": {
       title: "مبيعات الأصناف",
-      subtitle: "تفصيل يومي لكل صنف في كل فرع: الكمية والإجمالي والخصم والمرتجع والصافي، والتكلفة والربح لمن يملك صلاحية عرض التكلفة",
+      subtitle: "الأصناف والفئات والأيام: الكمية والإجمالي والخصم والمرتجع والصافي والمساهمة، والتكلفة والربح لمن يملك صلاحية عرض التكلفة",
+    },
+    channels: {
+      title: "قنوات البيع",
+      subtitle: "أداء كل قناة: الصافي والطلبات وإجمالي الفواتير ومتوسط الفاتورة",
     },
     modifiers: {
       title: "الإضافات",
@@ -180,6 +198,18 @@ export const salesReports = {
     allChannels: "كل القنوات",
     allOrderTypes: "كل أنواع الطلب",
     removeFilter: "إزالة الفلتر: {name}",
+    /** أسماء مقروءة لمفاتيح الفلاتر في الرابط — يستخدمها إشعار الإزالة التلقائية. */
+    filterNames: {
+      brandId: "العلامة التجارية",
+      branchId: "الفرع",
+      channel: "قناة البيع",
+      orderType: "نوع الطلب",
+      paymentMethod: "وسيلة الدفع",
+      hour: "الساعة",
+      menuItemId: "الصنف",
+      categoryId: "الفئة",
+      cashierId: "الكاشير",
+    },
     presets: {
       today: "اليوم",
       yesterday: "أمس",
@@ -465,6 +495,23 @@ export const salesReports = {
     colInvoice: "رقم الفاتورة",
   },
 
+  itemPicker: {
+    search: "بحث في الأصناف",
+    empty: "لا يوجد صنف مطابق لهذا البحث",
+    clear: "مسح الأصناف المختارة",
+    selectedCount: "{count} أصناف مختارة",
+    truncatedNote: "يعرض أول {count} صنف — ضيّق البحث للوصول إلى الباقي",
+  },
+
+  items: {
+    breakdownAria: "تفصيل تقرير الأصناف",
+    breakdowns: {
+      byCategory: "حسب الفئة",
+      byItem: "حسب الصنف",
+      byDay: "حسب اليوم والصنف والفرع",
+    },
+  },
+
   itemSales: {
     costUndefined: "تكلفة غير مُعرَّفة",
     costUndefinedHint:
@@ -495,7 +542,8 @@ export const salesReports = {
   },
 
   discounts: {
-    reasonGap: "سبب الخصم غير مسجَّل في مخزن الحقائق بعد",
+    /** مجموعة NULL في جدول الأسباب: بيع لم يحمل خصمًا مُسمّى. */
+    noReason: "بلا خصم مُسمّى",
   },
 
   saved: {

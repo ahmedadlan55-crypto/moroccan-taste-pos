@@ -14,6 +14,9 @@ export const salesReports = {
     pickerLabel: "Report",
     filtersTitle: "Filters & settings",
     filtersAria: "Report filters and settings",
+    viewsAria: "{center} reports",
+    filtersDropped:
+      "Filters this report cannot apply were removed: {filters}. The figures below cover the wider scope.",
   },
 
   report: {
@@ -51,12 +54,27 @@ export const salesReports = {
     sectionDaily: "Daily detail",
   },
 
-  groups: {
-    overview: "Overview",
-    products: "Products & profitability",
-    money: "Money & collections",
-    operations: "Operations & people",
-    advanced: "Advanced",
+  centers: {
+    executive: {
+      title: "Executive summary",
+      subtitle: "The whole period in one statement",
+    },
+    items: {
+      title: "Items & profitability",
+      subtitle: "Items, categories and modifiers: quantities, net, cost and margin",
+    },
+    payments: {
+      title: "Payments & reconciliation",
+      subtitle: "Payment methods, VAT, discounts and the cash reconciliation",
+    },
+    operations: {
+      title: "Operations",
+      subtitle: "Branches, channels, hours, cashiers, shifts, voids and returns",
+    },
+    explorer: {
+      title: "Custom explorer",
+      subtitle: "Pick metrics and dimensions and build the report you need",
+    },
   },
 
   pages: {
@@ -69,12 +87,12 @@ export const salesReports = {
       subtitle: "Free exploration: pick metrics and dimensions and build the pivot you need",
     },
     items: {
-      title: "Items",
-      subtitle: "Item and category sales: quantities, net and contribution to total",
+      title: "Item sales",
+      subtitle: "Items, categories and days: quantity, gross, discount, returns, net and contribution — plus cost and profit for holders of the cost permission",
     },
-    "item-sales": {
-      title: "Item Sales",
-      subtitle: "Daily breakdown per item per branch: quantity, gross, discount, returns and net — plus cost and profit for holders of the cost permission",
+    channels: {
+      title: "Sales channels",
+      subtitle: "Performance per channel: net, orders, invoiced total and average ticket",
     },
     modifiers: {
       title: "Modifiers",
@@ -166,6 +184,18 @@ export const salesReports = {
     allChannels: "All channels",
     allOrderTypes: "All order types",
     removeFilter: "Remove filter: {name}",
+    /** Human names for the URL filter keys — used by the auto-drop notice. */
+    filterNames: {
+      brandId: "Brand",
+      branchId: "Branch",
+      channel: "Channel",
+      orderType: "Order type",
+      paymentMethod: "Payment method",
+      hour: "Hour",
+      menuItemId: "Item",
+      categoryId: "Category",
+      cashierId: "Cashier",
+    },
     presets: {
       today: "Today",
       yesterday: "Yesterday",
@@ -452,6 +482,23 @@ export const salesReports = {
     colInvoice: "Invoice no.",
   },
 
+  itemPicker: {
+    search: "Search items",
+    empty: "No item matches this search",
+    clear: "Clear the selected items",
+    selectedCount: "{count} items selected",
+    truncatedNote: "Showing the first {count} items — narrow the search to reach the rest",
+  },
+
+  items: {
+    breakdownAria: "Item report breakdown",
+    breakdowns: {
+      byCategory: "By category",
+      byItem: "By item",
+      byDay: "By day, item and branch",
+    },
+  },
+
   itemSales: {
     costUndefined: "Cost not defined",
     costUndefinedHint:
@@ -482,7 +529,8 @@ export const salesReports = {
   },
 
   discounts: {
-    reasonGap: "Discount reasons are not projected into the fact store yet",
+    /** The NULL bucket in the reason table: a sale that carried no named discount. */
+    noReason: "No named discount",
   },
 
   saved: {

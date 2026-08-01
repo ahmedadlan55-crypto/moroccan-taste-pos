@@ -45,11 +45,46 @@ const NET_INCL_VAT_ALL = "1,071.5"; // EXPECTED.TOTAL.net_incl_vat (formatted)
 // BD_ALL['2032-03-19'] = 30 exists ONLY on the business-day basis; on the
 // calendar basis that order counts on 03-20 (CAL_B2).
 
-const SEGMENTS = [
-  "executive", "explorer", "items", "modifiers", "payments", "cashiers",
-  "branches", "hours", "orders", "discounts", "voids", "shifts", "taxes",
-  "profitability", "reconciliation", "builder",
+// ── the five centres and their reports (frontend lib/reportRegistry) ────────
+// The hub is /reports/sales/<centre>?view=<report>. Kept literal here on
+// purpose: if the registry changes, THIS list is the contract a bookmark and a
+// support answer depend on, and the sweep below must fail rather than follow.
+const REPORTS = [
+  { id: "executive", centre: "executive" },
+  { id: "items", centre: "items" },
+  { id: "profitability", centre: "items" },
+  { id: "modifiers", centre: "items" },
+  { id: "payments", centre: "payments" },
+  { id: "taxes", centre: "payments" },
+  { id: "discounts", centre: "payments" },
+  { id: "reconciliation", centre: "payments" },
+  { id: "branches", centre: "operations" },
+  { id: "channels", centre: "operations" },
+  { id: "hours", centre: "operations" },
+  { id: "cashiers", centre: "operations" },
+  { id: "shifts", centre: "operations" },
+  { id: "voids", centre: "operations" },
+  { id: "orders", centre: "operations" },
+  { id: "explorer", centre: "explorer" },
+  { id: "builder", centre: "explorer" },
 ] as const;
+
+/** Retired flat paths → the report they became. Every one is somebody's bookmark. */
+const RETIRED_PATHS: Record<string, { centre: string; view: string }> = {
+  "item-sales": { centre: "items", view: "items" },
+  modifiers: { centre: "items", view: "modifiers" },
+  profitability: { centre: "items", view: "profitability" },
+  taxes: { centre: "payments", view: "taxes" },
+  discounts: { centre: "payments", view: "discounts" },
+  reconciliation: { centre: "payments", view: "reconciliation" },
+  branches: { centre: "operations", view: "branches" },
+  cashiers: { centre: "operations", view: "cashiers" },
+  hours: { centre: "operations", view: "hours" },
+  shifts: { centre: "operations", view: "shifts" },
+  voids: { centre: "operations", view: "voids" },
+  orders: { centre: "operations", view: "orders" },
+  builder: { centre: "explorer", view: "builder" },
+};
 
 const BAD_STATES = [
   "error", "offline", "session-expired", "permission-denied", "conflict", "feature-disabled", "not-found",
@@ -64,8 +99,10 @@ const BENIGN_CONSOLE =
  *  data hooks), so ERR_ABORTED is expected traffic on any filter change. */
 const BENIGN_REQUEST_FAILURE = /ERR_ABORTED|net::ERR_ABORTED/i;
 
-function seedUrl(segment: string, extra = ""): string {
-  return `/app/reports/sales/${segment}?from=${SEED_FROM}&to=${SEED_TO}${extra}`;
+/** The canonical URL of a report, on the seed window. */
+function seedUrl(reportId: string, extra = ""): string {
+  const centre = REPORTS.find((r) => r.id === reportId)?.centre ?? reportId;
+  return `/app/reports/sales/${centre}?view=${reportId}&from=${SEED_FROM}&to=${SEED_TO}${extra}`;
 }
 
 interface HealthSignals {
@@ -178,7 +215,8 @@ async function setBasis(page: Page, radioName: string) {
 }
 
 async function assertHubChrome(page: Page, label: string) {
-  // The grouped report picker (admin holds every cap → all 16 sections) + TopBar.
+  // The grouped report picker (admin holds every cap → all 17 reports, grouped
+  // by the five centres) + TopBar.
   const trigger = page.locator('#main button[aria-haspopup="listbox"]').first();
   await expect(trigger, `${label}: hub report picker must render`).toBeVisible();
   await trigger.click();
@@ -186,8 +224,8 @@ async function assertHubChrome(page: Page, label: string) {
   await expect(listbox, `${label}: the picker must open`).toBeVisible();
   await expect(
     listbox.locator('[role="option"]'),
-    `${label}: admin sees all 16 sections`,
-  ).toHaveCount(16);
+    `${label}: admin sees all 17 reports`,
+  ).toHaveCount(17);
   await page.keyboard.press("Escape");
   await expect(listbox, `${label}: Escape must close the picker`).toHaveCount(0);
   await expect(
@@ -207,17 +245,17 @@ async function assertNoHorizontalOverflow(page: Page, label: string) {
 test.describe.configure({ mode: "serial" });
 
 // ─────────────────────────────────────────────────────────────────────────────
-// 1) All 16 segments, every viewport project (desktop/mobile/tablet/laptop).
+// 1) All 17 reports, every viewport project (desktop/mobile/tablet/laptop).
 // ─────────────────────────────────────────────────────────────────────────────
-test("all 16 hub segments render healthy on this viewport", async ({ page }) => {
+test("all 17 hub reports render healthy on this viewport", async ({ page }) => {
   test.setTimeout(420_000);
   const health = trackHealth(page);
   await loginAs(page);
 
-  for (const segment of SEGMENTS) {
-    await test.step(`segment ${segment}`, async () => {
+  for (const { id: segment, centre } of REPORTS) {
+    await test.step(`report ${segment}`, async () => {
       await page.goto(seedUrl(segment));
-      await waitHealthy(page, `/reports/sales/${segment}`);
+      await waitHealthy(page, `/reports/sales/${centre}?view=${segment}`);
       await assertHubChrome(page, segment);
       await assertNoHorizontalOverflow(page, segment);
       // Router ↔ picker identity: exactly one option is selected, and the
@@ -233,6 +271,45 @@ test("all 16 hub segments render healthy on this viewport", async ({ page }) => 
         triggerText,
       );
       await page.keyboard.press("Escape");
+    });
+  }
+
+  assertHealth(health);
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 1b) Every retired flat path still resolves — with its filter state.
+//
+// The seventeen flat report paths became five centres. A bookmark is a promise,
+// and a redirect that lands on the right centre while dropping the query string
+// is not a working link: it is a link to a DIFFERENT report over a different
+// period. So each retired path is opened with a real filter state on it.
+// ─────────────────────────────────────────────────────────────────────────────
+test("every retired report path lands on its report with the filter state intact", async ({ page }) => {
+  test.setTimeout(300_000);
+  test.skip(test.info().project.name !== "desktop", "one viewport is enough for routing");
+  const health = trackHealth(page);
+  await loginAs(page);
+
+  for (const [retired, target] of Object.entries(RETIRED_PATHS)) {
+    await test.step(`${retired} → ${target.centre}?view=${target.view}`, async () => {
+      const qs = `from=${SEED_FROM}&to=${SEED_TO}&branchId=${encodeURIComponent(B1)}&unknown=keep-me`;
+      await page.goto(`/app/reports/sales/${retired}?${qs}`);
+      await page.waitForURL(`**/app/reports/sales/${target.centre}**`, { timeout: 20_000 });
+
+      const url = new URL(page.url());
+      expect(url.pathname, `${retired}: redirect target`).toBe(`/app/reports/sales/${target.centre}`);
+      expect(url.searchParams.get("view"), `${retired}: opens the right report`).toBe(target.view);
+      // The whole filter state rides along — including a param the hub knows
+      // nothing about, because a real bookmark carries one.
+      expect(url.searchParams.get("from")).toBe(SEED_FROM);
+      expect(url.searchParams.get("to")).toBe(SEED_TO);
+      expect(url.searchParams.get("branchId")).toBe(B1);
+      expect(url.searchParams.get("unknown")).toBe("keep-me");
+
+      await waitHealthy(page, `${retired} → ${target.view}`);
+      // …and the carried scope is really APPLIED, not merely present in the URL.
+      await expect(page.locator('[data-testid="active-filter-chips"]')).toContainText("2032");
     });
   }
 
@@ -327,7 +404,10 @@ test.describe("focused flows (desktop)", () => {
 
     // Chain end: the cashier leaf hands off to the orders segment.
     await clickLeaf(CASHIER, "cashier leaf");
-    await page.waitForURL(/\/reports\/sales\/orders/, { timeout: 15_000 });
+    // The orders report lives in the OPERATIONS centre now, and the drill goes
+    // straight to its canonical URL rather than through the retired path.
+    await page.waitForURL(/\/reports\/sales\/operations/, { timeout: 15_000 });
+    expect(page.url(), "cashier hand-off targets the orders report").toContain("view=orders");
     expect(page.url(), "cashier hand-off pins cashierId on orders").toContain("cashierId=");
     await waitHealthy(page, "orders (drill terminus)");
 
@@ -342,15 +422,16 @@ test.describe("focused flows (desktop)", () => {
     assertHealth(health);
   });
 
-  test("English pass: four representative segments render the EN dictionary", async ({ page }) => {
+  test("English pass: four representative reports render the EN dictionary", async ({ page }) => {
     test.setTimeout(240_000);
     const health = trackHealth(page);
     await loginAs(page, "en");
 
-    const EN_CHECKS: Array<{ segment: (typeof SEGMENTS)[number]; texts: string[] }> = [
+    const EN_CHECKS: Array<{ segment: string; texts: string[] }> = [
       { segment: "executive", texts: ["Sales Analytics", "Reports · Sales", "Executive"] },
       { segment: "explorer", texts: ["Explorer", "Sales Analytics"] },
       { segment: "hours", texts: ["Hours", "Sales Analytics"] },
+      { segment: "channels", texts: ["Sales channels", "Sales Analytics"] },
       { segment: "reconciliation", texts: ["Reconciliation", "Sales Analytics"] },
     ];
     for (const { segment, texts } of EN_CHECKS) {

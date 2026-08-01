@@ -27,18 +27,14 @@ import { analyticsFilterCodec } from "../lib/filters";
 import {
   buildFiltersBody,
   displayMetric,
-  setPageExportRequest,
+  reportQuerySpec,
   type AnalyticsQueryBody,
   type AnalyticsResult,
 } from "../lib/api";
 import { useAnalyticsQuery } from "../lib/useAnalyticsQuery";
 
-// The TopBar ExportMenu asks this page's registry entry for its export shape.
-setPageExportRequest("orders", () => ({
-  metrics: ["orders", "invoice_total", "avg_ticket"],
-  dimensions: ["business_day"],
-  sort: [{ by: "business_day", dir: "asc" }],
-}));
+const SEGMENT = "orders";
+// The KPI query — and the ExportMenu's file — come from lib/reportRegistry.
 
 /** Optional enrichment columns the O2C list may grow later (today they read "—"). */
 type HubInvoiceRow = Invoice & {
@@ -89,8 +85,7 @@ export default function Orders() {
   // shows the period's invoices unscoped by the drill params.
   const kpiBody = useMemo<AnalyticsQueryBody>(
     () => ({
-      metrics: ["orders", "invoice_total", "avg_ticket"],
-      dimensions: [],
+      ...reportQuerySpec(SEGMENT, "kpis", filters),
       ...buildFiltersBody(filters),
     }),
     [filters],

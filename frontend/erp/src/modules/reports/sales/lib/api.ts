@@ -6,6 +6,16 @@ import { useQuery } from "@tanstack/react-query";
 import { apiClient } from "@/shared/api";
 import { useLang, type TFunction } from "@/i18n";
 import type { AnalyticsFilters } from "./filters";
+import {
+  REPORT_BY_ID,
+  groupingUsable,
+  queryMetrics,
+  reportQuery,
+  resolveDimensions,
+  resolveSort,
+  unsupportedFilterKeysForMetrics,
+  type FilterKey,
+} from "./reportRegistry";
 
 /* ── query body ──────────────────────────────────────────────── */
 
@@ -91,6 +101,19 @@ export interface AnalyticsResult {
   /** Server-computed subtotal rows (keys carry null at the free levels). */
   subtotals?: AnalyticsResultRow[];
   totals?: Record<string, number | null>;
+  /**
+   * The comparison window's grand totals, and the growth against them.
+   *
+   * Kept on a GROUPED result too, not only on the dimensionless one. A grouped
+   * request already computes the period total server-side, so a panel that
+   * wants a period figure the grouped request happens to carry does not need a
+   * second round-trip for it — which is how the executive report went from six
+   * requests to five. Dropping these (as the adapter used to, outside the
+   * dimensionless case) made that saving impossible without losing the
+   * vs-previous-period column.
+   */
+  totalsCompare?: Record<string, number | null>;
+  totalsDelta?: Record<string, number | null>;
   // `total` is NOT a server count: QueryService returns only {limit, offset,
   // rowCountCapped}, so it degrades to rows.length. `rowCountCapped` is the
   // authoritative "a fact hit MAX_LIMIT — you are NOT seeing the whole period"
@@ -175,17 +198,21 @@ export interface AnalyticsRegistry {
 
 const TAX_INCL_SWAP: Record<string, string> = { net_ex_vat: "net_incl_vat" };
 
-/** filters-object key → registry dimension id (same table buildPlannerRequest uses). */
-const FILTER_DIMENSION_MAP: ReadonlyArray<[keyof AnalyticsQueryFilters, string]> = [
-  ["brandIds", "brand"],
-  ["branchIds", "branch"],
-  ["channels", "channel"],
-  ["orderTypes", "order_type"],
-  ["paymentMethods", "payment_method"],
-  ["hours", "hour"],
-  ["menuIds", "menu_item"],
-  ["categoryIds", "category"],
-  ["cashiers", "cashier"],
+/**
+ * filters-object key → the URL filter key (lib/reportRegistry FILTER_DIMENSION)
+ * → the registry dimension id. The middle column is what lets ONE drop rule
+ * serve both the screen path and the export path.
+ */
+const FILTER_DIMENSION_MAP: ReadonlyArray<[keyof AnalyticsQueryFilters, FilterKey, string]> = [
+  ["brandIds", "brandId", "brand"],
+  ["branchIds", "branchId", "branch"],
+  ["channels", "channel", "channel"],
+  ["orderTypes", "orderType", "order_type"],
+  ["paymentMethods", "paymentMethod", "payment_method"],
+  ["hours", "hour", "hour"],
+  ["menuIds", "menuItemId", "menu_item"],
+  ["categoryIds", "categoryId", "category"],
+  ["cashiers", "cashierId", "cashier"],
 ];
 
 function metricSwapFor(body: AnalyticsQueryBody): Record<string, string> | null {
@@ -195,21 +222,54 @@ function metricSwapFor(body: AnalyticsQueryBody): Record<string, string> | null 
   return TAX_INCL_SWAP;
 }
 
+/**
+ * THE ONE PLACE A FILTER IS DROPPED ON THE SCREEN PATH.
+ *
+ * The planner partitions a request's metrics by fact and refuses a filter
+ * dimension ANY of those facts cannot express — the whole request 422s, naming
+ * a fact id the analyst never chose. Which filters a report may SHOW is the
+ * report registry's job; which filters a given REQUEST may carry is decided
+ * here, from that request's own metrics, so a page that asks for something the
+ * registry did not anticipate still cannot produce a 422.
+ *
+ * Dropping (rather than sending and failing) is correct because the registry
+ * has already hidden the control and cleared the URL param: anything reaching
+ * this point is a filter the screen is not claiming to apply.
+ */
+function plannerFilters(
+  f: AnalyticsQueryFilters,
+  metrics: readonly string[],
+): PlannerFilterSpec[] {
+  const active = FILTER_DIMENSION_MAP.filter(([key]) => {
+    const values = f[key];
+    return Array.isArray(values) && values.length > 0;
+  }).map(([, filterKey]) => filterKey as string);
+  const dropped = new Set<string>(unsupportedFilterKeysForMetrics(metrics, active));
+
+  const out: PlannerFilterSpec[] = [];
+  for (const [key, filterKey, dimension] of FILTER_DIMENSION_MAP) {
+    if (dropped.has(filterKey)) continue;
+    const values = f[key];
+    if (Array.isArray(values) && values.length > 0) {
+      out.push({ dimension, op: "in", values: values as Array<string | number> });
+    }
+  }
+  // `extra` is a page's OWN dimension filter — it names a registry dimension
+  // directly, so it is held to the same rule rather than trusted.
+  for (const [dimension, values] of Object.entries(f.extra ?? {})) {
+    if (!Array.isArray(values) || values.length === 0) continue;
+    if (!groupingUsable(metrics, dimension)) continue;
+    out.push({ dimension, op: "in", values });
+  }
+  return out;
+}
+
 /** Page query body → the planner wire request the backend actually accepts. */
 export function queryBodyToWireRequest(body: AnalyticsQueryBody): AnalyticsPlannerRequest {
   const swap = metricSwapFor(body);
   const mapId = (id: string) => (swap && swap[id]) || id;
   const f = body.filters;
-  const dimFilters: PlannerFilterSpec[] = [];
-  for (const [key, dimension] of FILTER_DIMENSION_MAP) {
-    const values = f[key];
-    if (Array.isArray(values) && values.length > 0) {
-      dimFilters.push({ dimension, op: "in", values: values as Array<string | number> });
-    }
-  }
-  for (const [dimension, values] of Object.entries(f.extra ?? {})) {
-    if (Array.isArray(values) && values.length > 0) dimFilters.push({ dimension, op: "in", values });
-  }
+  const dimFilters = plannerFilters(f, body.metrics.map(mapId));
   return {
     metrics: body.metrics.map(mapId),
     dimensions: body.dimensions,
@@ -349,6 +409,8 @@ export function normalizeAnalyticsResult(
     rows,
     ...(subtotals.length > 0 ? { subtotals } : {}),
     totals,
+    ...(totalsCompare && Object.keys(totalsCompare).length > 0 ? { totalsCompare } : {}),
+    ...(totalsDelta && Object.keys(totalsDelta).length > 0 ? { totalsDelta } : {}),
     ...(data.page
       ? {
           page: {
@@ -442,6 +504,31 @@ export function buildFiltersBody(
     },
     dateBasis: filters.businessDay ? "business_day" : "calendar_day",
     taxMode: filters.taxIncl ? "incl" : "excl",
+  };
+}
+
+/**
+ * The metrics + dimensions of ONE registry query, resolved for the current
+ * filters and viewer. Every hub page builds its request through this instead of
+ * declaring its own list, so "what this report asks the server" has exactly one
+ * definition — the one the registry test plans against the real planner.
+ */
+export function reportQuerySpec(
+  reportId: string,
+  queryId: string,
+  filters: AnalyticsFilters,
+  opts?: { hasOptionalCap?: boolean },
+): Pick<AnalyticsQueryBody, "metrics" | "dimensions"> & { limit?: number } {
+  const report = REPORT_BY_ID[reportId];
+  const q = report ? reportQuery(report, queryId) : undefined;
+  if (!q) {
+    throw new Error(`sales report registry: no query "${queryId}" on report "${reportId}"`);
+  }
+  const basis = filters.businessDay ? "business_day" : "calendar_day";
+  return {
+    metrics: queryMetrics(q, opts?.hasOptionalCap ?? false),
+    dimensions: resolveDimensions(q.dimensions, basis),
+    ...(q.limit != null ? { limit: q.limit } : {}),
   };
 }
 
@@ -586,19 +673,26 @@ export function buildPlannerRequest(
   filters: AnalyticsFilters,
   spec: PageExportSpec,
 ): AnalyticsPlannerRequest {
-  const dimFilters: PlannerFilterSpec[] = [];
-  const add = (dimension: string, values: Array<string | number>) => {
-    if (values.length > 0) dimFilters.push({ dimension, op: "in", values });
-  };
-  add("brand", filters.brandId);
-  add("branch", filters.branchId);
-  add("channel", filters.channel);
-  add("order_type", filters.orderType);
-  add("payment_method", filters.paymentMethod);
-  add("hour", filters.hour === "" ? [] : [Number(filters.hour)]);
-  add("menu_item", filters.menuItemId);
-  add("category", filters.categoryId);
-  add("cashier", filters.cashierId);
+  // SAME drop rule as the screen path, from the SAME function: the export is a
+  // planner request too, and a filter the planner cannot express 422s the
+  // export job exactly as it 422s the screen. Routing both through
+  // plannerFilters is what keeps the two from drifting.
+  const dimFilters = plannerFilters(
+    {
+      from: filters.from,
+      to: filters.to,
+      ...(filters.brandId.length > 0 ? { brandIds: filters.brandId } : {}),
+      ...(filters.branchId.length > 0 ? { branchIds: filters.branchId } : {}),
+      ...(filters.channel.length > 0 ? { channels: filters.channel } : {}),
+      ...(filters.orderType.length > 0 ? { orderTypes: filters.orderType } : {}),
+      ...(filters.paymentMethod.length > 0 ? { paymentMethods: filters.paymentMethod } : {}),
+      ...(filters.hour !== "" ? { hours: [Number(filters.hour)] } : {}),
+      ...(filters.menuItemId.length > 0 ? { menuIds: filters.menuItemId } : {}),
+      ...(filters.categoryId.length > 0 ? { categoryIds: filters.categoryId } : {}),
+      ...(filters.cashierId.length > 0 ? { cashiers: filters.cashierId } : {}),
+    },
+    spec.metrics,
+  );
   return {
     metrics: spec.metrics,
     dimensions: spec.dimensions,
@@ -632,10 +726,36 @@ export function getPageExportRequest(segment: string): PageExportSpecFactory | u
   return pageExportRegistry.get(segment);
 }
 
+/**
+ * The export spec the REPORT REGISTRY declares for a report — metrics,
+ * dimensions and sort read off its `exportQuery`, with the `"day"` placeholder
+ * resolved against the active date basis so the file groups by the day it was
+ * filtered on. A page only needs `setPageExportRequest` when its export depends
+ * on something the registry cannot know (a viewer's capability).
+ */
+export function registryExportSpec(
+  segment: string,
+  filters: AnalyticsFilters,
+): PageExportSpec | undefined {
+  const report = REPORT_BY_ID[segment];
+  if (!report || !report.exportQuery) return undefined;
+  const q = reportQuery(report, report.exportQuery);
+  if (!q) return undefined;
+  const basis = filters.businessDay ? "business_day" : "calendar_day";
+  return {
+    // `columns` when the query carries period-only extras — a file is the
+    // table, and a 13-metric export would 422 on the planner's ceiling.
+    metrics: q.columns ? [...q.columns] : queryMetrics(q, false),
+    dimensions: resolveDimensions(q.dimensions, basis),
+    ...(report.exportSort ? { sort: resolveSort(report.exportSort, basis) } : {}),
+    ...(q.limit != null ? { limit: q.limit } : {}),
+  };
+}
+
 /** The full planner request the ExportMenu posts for a segment. */
 export function buildExportRequest(segment: string, filters: AnalyticsFilters): AnalyticsPlannerRequest {
   const factory = getPageExportRequest(segment);
-  const spec = factory ? factory(filters) : DEFAULT_EXPORT_SPEC;
+  const spec = factory ? factory(filters) : registryExportSpec(segment, filters) ?? DEFAULT_EXPORT_SPEC;
   const req = buildPlannerRequest(filters, spec);
 
   /*

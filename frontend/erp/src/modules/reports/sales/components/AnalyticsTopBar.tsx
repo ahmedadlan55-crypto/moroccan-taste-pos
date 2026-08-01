@@ -70,6 +70,7 @@ import {
   type AnalyticsResult,
 } from "../lib/api";
 import { ExportMenu } from "./ExportMenu";
+import { ItemPicker } from "./ItemPicker";
 import { useChannels } from "@/modules/sales/channels/api";
 
 /** RETIRED. These four codes never existed in `sales_channels` — see the
@@ -86,6 +87,24 @@ export interface AnalyticsTopBarProps {
   filters: AnalyticsFilters;
   patch: (partial: Partial<AnalyticsFilters>) => void;
   reset: () => void;
+  /**
+   * The filter keys the ACTIVE REPORT can honour (lib/reportRegistry
+   * reportFilterKeys). A control outside this set is not rendered at all: the
+   * planner 422s a filter dimension the report's facts cannot express, and a
+   * control that can only break the screen — or worse, scope half of it — is
+   * not a control.
+   *
+   * UNDEFINED means "no report context" (a standalone render, a test, a future
+   * embed) and shows everything, which is the behaviour this bar has always
+   * had. The hub always passes it.
+   */
+  filterKeys?: readonly string[];
+  /** Comparison window (registry `compare`). */
+  showCompare?: boolean;
+  /** Business-day vs calendar-day toggle (registry dateBases). */
+  showDateBasis?: boolean;
+  /** Ex-VAT vs incl-VAT toggle (registry taxModes — a client-side metric swap). */
+  showTaxBasis?: boolean;
   /** The active query's meta (freshness / late count) when a page has data. */
   meta?: AnalyticsResult["meta"];
   /** Refetch handler for the refresh icon (hidden when absent). */
@@ -316,9 +335,23 @@ function SaveViewControl() {
   );
 }
 
-export function AnalyticsTopBar({ filters, patch, reset, meta, onRefresh, pageActions, children }: AnalyticsTopBarProps) {
+export function AnalyticsTopBar({
+  filters,
+  patch,
+  reset,
+  meta,
+  onRefresh,
+  pageActions,
+  children,
+  filterKeys,
+  showCompare = true,
+  showDateBasis = true,
+  showTaxBasis = true,
+}: AnalyticsTopBarProps) {
   const t = useT();
   const location = useLocation();
+  /** `undefined` filterKeys = no report context → every control, as before. */
+  const shows = (key: string) => !filterKeys || filterKeys.includes(key);
   const defaults = analyticsFilterCodec.defaults;
   const brands = useBrandOptions();
   const branches = useBranchOptions();
@@ -387,7 +420,17 @@ export function AnalyticsTopBar({ filters, patch, reset, meta, onRefresh, pageAc
    * Everything that is not period / branch / compare. It opens itself when the
    * URL already carries one of these, because a deep link whose scope is
    * hidden behind a collapsed toggle is a filter the reader cannot see. */
-  const MORE_KEYS = ["brandId", "menuItemId", "channel", "orderType", "businessDay", "taxIncl"] as const;
+  const MORE_KEYS = (
+    [
+      shows("brandId") ? "brandId" : null,
+      shows("menuItemId") ? "menuItemId" : null,
+      shows("channel") ? "channel" : null,
+      shows("orderType") ? "orderType" : null,
+      showDateBasis ? "businessDay" : null,
+      showTaxBasis ? "taxIncl" : null,
+    ] as const
+  ).filter((k): k is Exclude<typeof k, null> => k != null);
+  const hasMore = MORE_KEYS.length > 0;
   const moreActiveCount = MORE_KEYS.filter((k) =>
     new Set(nonDefaultFilterKeys(draft)).has(k),
   ).length;
@@ -408,7 +451,7 @@ export function AnalyticsTopBar({ filters, patch, reset, meta, onRefresh, pageAc
       onRemove: () => patch({ from: defaults.from, to: defaults.to, preset: defaults.preset }),
     });
   }
-  if (activeKeys.has("compare")) {
+  if (showCompare && activeKeys.has("compare")) {
     chips.push({
       id: "compare",
       label: `${t("salesReports.topbar.compare")}: ${t(`salesReports.topbar.compareModes.${filters.compare}`)}`,
@@ -419,7 +462,10 @@ export function AnalyticsTopBar({ filters, patch, reset, meta, onRefresh, pageAc
     key: "brandId" | "branchId" | "channel" | "orderType" | "paymentMethod" | "menuItemId" | "categoryId" | "cashierId",
     labelKey: string,
   ) => {
-    if (!activeKeys.has(key)) return;
+    // A chip is a claim that the report on screen is scoped this way. A key the
+    // report cannot honour is dropped from the URL by the hub, so it can only
+    // be active here transiently — never claim it.
+    if (!activeKeys.has(key) || !shows(key)) return;
     chips.push({
       id: key,
       label: `${t(labelKey)}: ${formatNumber(filters[key].length)}`,
@@ -435,21 +481,21 @@ export function AnalyticsTopBar({ filters, patch, reset, meta, onRefresh, pageAc
   multiChip("menuItemId", "salesReports.dims.menu_item");
   multiChip("categoryId", "salesReports.dims.category");
   multiChip("cashierId", "salesReports.dims.cashier");
-  if (activeKeys.has("hour")) {
+  if (activeKeys.has("hour") && shows("hour")) {
     chips.push({
       id: "hour",
-      label: `${t("salesReports.dims.hour")}: ${filters.hour}`,
+      label: `${t("salesReports.dims.hour")}: ${formatNumber(Number(filters.hour))}`,
       onRemove: () => patch({ hour: "" }),
     });
   }
-  if (activeKeys.has("businessDay")) {
+  if (showDateBasis && activeKeys.has("businessDay")) {
     chips.push({
       id: "businessDay",
       label: t("salesReports.topbar.calendarDay"),
       onRemove: () => patch({ businessDay: defaults.businessDay }),
     });
   }
-  if (activeKeys.has("taxIncl")) {
+  if (showTaxBasis && activeKeys.has("taxIncl")) {
     chips.push({
       id: "taxIncl",
       label: t("salesReports.topbar.taxIncl"),
@@ -547,7 +593,18 @@ export function AnalyticsTopBar({ filters, patch, reset, meta, onRefresh, pageAc
           ~688px, and four minmax() tracks whose minimums total 694px would
           push the page into horizontal overflow — which the e2e sweep fails
           on, at exactly that viewport. */}
-      <div className="grid grid-cols-2 gap-2 xl:grid-cols-[minmax(11rem,1.1fr)_minmax(9rem,1fr)_minmax(9rem,1fr)_auto]">
+      {/* Both templates are STATIC strings so Tailwind emits them; only which
+          one is applied is conditional. Dropping the compare track removes a
+          column, never a row, so the measured collapsed height is unchanged:
+          one 44px control row at xl, three stacked rows below it. */}
+      <div
+        className={cn(
+          "grid grid-cols-2 gap-2",
+          showCompare
+            ? "xl:grid-cols-[minmax(11rem,1.1fr)_minmax(9rem,1fr)_minmax(9rem,1fr)_auto]"
+            : "xl:grid-cols-[minmax(11rem,1.1fr)_minmax(9rem,1fr)_auto]",
+        )}
+      >
         <div className="col-span-2 min-w-0 xl:col-span-1">
           <DateRangePicker
             value={{ from: draft.from, to: draft.to, preset: draft.preset }}
@@ -574,23 +631,29 @@ export function AnalyticsTopBar({ filters, patch, reset, meta, onRefresh, pageAc
             />,
           )}
         </div>
-        <div className="min-w-0">
-          <ComparePicker
-            value={draft.compare}
-            onChange={(mode) => {
-              // The URL contract carries none|prevPeriod|prevYear this wave; a
-              // custom compare window ships with the builder wave.
-              if (mode === "custom") return;
-              edit({ compare: mode as AnalyticsCompareMode });
-            }}
-            labels={{
-              modes: compareLabels,
-              from: t("salesReports.topbar.from"),
-              to: t("salesReports.topbar.to"),
-              modeAriaLabel: t("salesReports.topbar.compare"),
-            }}
-          />
-        </div>
+        {/* NOT rendered — not hidden. A report with no comparison (the
+            reconciliation endpoint takes a window and nothing else) would
+            otherwise carry a control that changes no number on its screen, and
+            a tab stop to reach it. */}
+        {showCompare && (
+          <div className="min-w-0">
+            <ComparePicker
+              value={draft.compare}
+              onChange={(mode) => {
+                // The URL contract carries none|prevPeriod|prevYear this wave; a
+                // custom compare window ships with the builder wave.
+                if (mode === "custom") return;
+                edit({ compare: mode as AnalyticsCompareMode });
+              }}
+              labels={{
+                modes: compareLabels,
+                from: t("salesReports.topbar.from"),
+                to: t("salesReports.topbar.to"),
+                modeAriaLabel: t("salesReports.topbar.compare"),
+              }}
+            />
+          </div>
+        )}
         <div className="col-span-2 flex items-center gap-2 xl:col-span-1">
           {/* Enabled ONLY when the draft differs from the URL — the button is
               the answer to "does the report below me reflect this bar?". */}
@@ -601,6 +664,7 @@ export function AnalyticsTopBar({ filters, patch, reset, meta, onRefresh, pageAc
           >
             {t("salesReports.topbar.apply")}
           </Button>
+          {hasMore && (
           <button
             type="button"
             onClick={() => setShowMore((v) => !v)}
@@ -626,6 +690,7 @@ export function AnalyticsTopBar({ filters, patch, reset, meta, onRefresh, pageAc
               aria-hidden="true"
             />
           </button>
+          )}
         </div>
       </div>
 
@@ -634,103 +699,113 @@ export function AnalyticsTopBar({ filters, patch, reset, meta, onRefresh, pageAc
           says side panels do not come back; these controls therefore open in
           the page, under the bar that owns them, where the chips and the Apply
           button they feed are still visible. */}
-      {showMore && (
+      {hasMore && showMore && (
         <div
           id={MORE_FILTERS_ID}
           data-testid="more-filters"
           className="grid gap-3 border-t border-slate-100 pt-3 sm:grid-cols-2 xl:grid-cols-3"
         >
-          {field(
-            t("salesReports.topbar.brand"),
-            picker(
-              "brand",
+          {shows("brandId") &&
+            field(
               t("salesReports.topbar.brand"),
-              brands,
-              <MultiSelectCombobox
-                options={toOptions(brands.data)}
-                values={draft.brandId}
-                onChange={(values) => edit({ brandId: values })}
-                ariaLabel={t("salesReports.topbar.brand")}
-                labels={{ placeholder: t("salesReports.topbar.allBrands") }}
-              />,
-            ),
-          )}
-          {field(
-            // The owner's question is "how did THIS item sell in THAT branch" —
-            // menuItemId has always been a first-class URL filter, but until now
-            // the only way to set it was drilling into a row.
-            t("salesReports.dims.menu_item"),
-            picker(
-              "menuItem",
+              picker(
+                "brand",
+                t("salesReports.topbar.brand"),
+                brands,
+                <MultiSelectCombobox
+                  options={toOptions(brands.data)}
+                  values={draft.brandId}
+                  onChange={(values) => edit({ brandId: values })}
+                  ariaLabel={t("salesReports.topbar.brand")}
+                  labels={{ placeholder: t("salesReports.topbar.allBrands") }}
+                />,
+              ),
+            )}
+          {shows("menuItemId") &&
+            field(
+              // The owner's question is "how did THIS item sell in THAT branch" —
+              // menuItemId has always been a first-class URL filter, but until now
+              // the only way to set it was drilling into a row.
               t("salesReports.dims.menu_item"),
-              menuItems,
-              <MultiSelectCombobox
-                options={toOptions(menuItems.data)}
-                values={draft.menuItemId}
-                onChange={(values) => edit({ menuItemId: values })}
-                ariaLabel={t("salesReports.dims.menu_item")}
-                labels={{ placeholder: t("salesReports.topbar.allItems") }}
-              />,
-            ),
-          )}
-          {field(
-            t("salesReports.topbar.channel"),
-            picker(
-              "channel",
+              picker(
+                "menuItem",
+                t("salesReports.dims.menu_item"),
+                menuItems,
+                // ItemPicker, not MultiSelectCombobox: the menu is the one
+                // lookup here that runs to four figures, and this is the field
+                // people type into. Debounced + virtualized — see the header of
+                // components/ItemPicker.tsx.
+                <ItemPicker
+                  options={toOptions(menuItems.data)}
+                  values={draft.menuItemId}
+                  onChange={(values) => edit({ menuItemId: values })}
+                  ariaLabel={t("salesReports.dims.menu_item")}
+                  placeholder={t("salesReports.topbar.allItems")}
+                />,
+              ),
+            )}
+          {shows("channel") &&
+            field(
               t("salesReports.topbar.channel"),
-              channelsQuery,
+              picker(
+                "channel",
+                t("salesReports.topbar.channel"),
+                channelsQuery,
+                <MultiSelectCombobox
+                  options={channelOptions}
+                  values={draft.channel}
+                  onChange={(values) => edit({ channel: values })}
+                  searchable={false}
+                  ariaLabel={t("salesReports.topbar.channel")}
+                  labels={{ placeholder: t("salesReports.topbar.allChannels") }}
+                />,
+              ),
+            )}
+          {shows("orderType") &&
+            field(
+              t("salesReports.topbar.orderType"),
               <MultiSelectCombobox
-                options={channelOptions}
-                values={draft.channel}
-                onChange={(values) => edit({ channel: values })}
+                options={orderTypeOptions}
+                values={draft.orderType}
+                onChange={(values) => edit({ orderType: values })}
                 searchable={false}
-                ariaLabel={t("salesReports.topbar.channel")}
-                labels={{ placeholder: t("salesReports.topbar.allChannels") }}
+                ariaLabel={t("salesReports.topbar.orderType")}
+                labels={{ placeholder: t("salesReports.topbar.allOrderTypes") }}
               />,
-            ),
-          )}
-          {field(
-            t("salesReports.topbar.orderType"),
-            <MultiSelectCombobox
-              options={orderTypeOptions}
-              values={draft.orderType}
-              onChange={(values) => edit({ orderType: values })}
-              searchable={false}
-              ariaLabel={t("salesReports.topbar.orderType")}
-              labels={{ placeholder: t("salesReports.topbar.allOrderTypes") }}
-            />,
-          )}
+            )}
           {/* The SegmentedControl is inline-flex with non-flexing children, so
               a stretched one needs `[&>button]:flex-1` or it leaves trailing
               dead space. */}
-          {field(
-            t("salesReports.topbar.dateBasis"),
-            <SegmentedControl
-              size="sm"
-              className="w-full [&>button]:min-h-11 [&>button]:flex-1"
-              aria-label={t("salesReports.topbar.dateBasis")}
-              value={draft.businessDay ? "business" : "calendar"}
-              onChange={(v) => edit({ businessDay: v === "business" })}
-              options={[
-                { value: "business", label: t("salesReports.topbar.businessDay") },
-                { value: "calendar", label: t("salesReports.topbar.calendarDay") },
-              ]}
-            />,
-          )}
-          {field(
-            t("salesReports.topbar.taxBasis"),
-            <SegmentedControl
-              size="sm"
-              className="w-full [&>button]:min-h-11 [&>button]:flex-1"
-              aria-label={t("salesReports.topbar.taxBasis")}
-              value={draft.taxIncl ? "incl" : "excl"}
-              onChange={(v) => edit({ taxIncl: v === "incl" })}
-              options={[
-                { value: "excl", label: t("salesReports.topbar.taxExcl") },
-                { value: "incl", label: t("salesReports.topbar.taxIncl") },
-              ]}
-            />,
-          )}
+          {showDateBasis &&
+            field(
+              t("salesReports.topbar.dateBasis"),
+              <SegmentedControl
+                size="sm"
+                className="w-full [&>button]:min-h-11 [&>button]:flex-1"
+                aria-label={t("salesReports.topbar.dateBasis")}
+                value={draft.businessDay ? "business" : "calendar"}
+                onChange={(v) => edit({ businessDay: v === "business" })}
+                options={[
+                  { value: "business", label: t("salesReports.topbar.businessDay") },
+                  { value: "calendar", label: t("salesReports.topbar.calendarDay") },
+                ]}
+              />,
+            )}
+          {showTaxBasis &&
+            field(
+              t("salesReports.topbar.taxBasis"),
+              <SegmentedControl
+                size="sm"
+                className="w-full [&>button]:min-h-11 [&>button]:flex-1"
+                aria-label={t("salesReports.topbar.taxBasis")}
+                value={draft.taxIncl ? "incl" : "excl"}
+                onChange={(v) => edit({ taxIncl: v === "incl" })}
+                options={[
+                  { value: "excl", label: t("salesReports.topbar.taxExcl") },
+                  { value: "incl", label: t("salesReports.topbar.taxIncl") },
+                ]}
+              />,
+            )}
         </div>
       )}
 

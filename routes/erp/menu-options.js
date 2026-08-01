@@ -29,24 +29,79 @@ const SELLABLE = `m.active = 1
 // A restaurant menu runs to the low hundreds; the cap only exists so a
 // mis-seeded catalog can never turn a picker fetch into a full table dump.
 const MAX_ROWS = 2000;
+const DEFAULT_LIMIT = 50;
+
+// SERVER-SIDE SEARCH AND PAGING
+//   The picker used to fetch the whole catalog once and search it in the
+//   browser, which is fine at 200 items and is not what the cap is for: at the
+//   2,000-row ceiling the response silently truncated, so an item past the cut
+//   simply could not be found and the picker gave no sign that it had stopped
+//   looking.
+//
+//   `q` searches BOTH names — an English-speaking user typing "chicken" must
+//   match a row whose Arabic name is the primary one, and vice versa. `id` is
+//   matched too so a pasted item id resolves.
+//
+//   BACKWARD COMPATIBLE BY DESIGN: with no query parameters the response is the
+//   same JSON ARRAY it has always been, so any existing caller is unaffected.
+//   A caller that passes `limit` or `offset` is asking to page, and gets an
+//   envelope with `hasMore` — because a page without that flag cannot be told
+//   apart from the end of the list, which is the defect being fixed.
+function clampInt(v, dflt, max) {
+  const n = Number.parseInt(v, 10);
+  if (!Number.isFinite(n) || n < 0) return dflt;
+  return Math.min(n, max);
+}
 
 router.get('/menu-options', async (req, res) => {
   try {
+    const q = String(req.query.q || '').trim();
+    const paging = req.query.limit != null || req.query.offset != null;
+    const limit = clampInt(req.query.limit, DEFAULT_LIMIT, MAX_ROWS);
+    const offset = clampInt(req.query.offset, 0, 1_000_000);
+
+    const where = [SELLABLE];
+    const params = [];
+    if (q) {
+      where.push('(m.name LIKE ? OR m.name_en LIKE ? OR m.id = ?)');
+      const like = `%${q}%`;
+      params.push(like, like, q);
+    }
+    const whereSql = where.join(' AND ');
+
+    // Fetch ONE more than asked for: that extra row is the only honest way to
+    // answer "is there another page?" without a second COUNT over the same
+    // predicate.
+    const take = paging ? limit + 1 : MAX_ROWS;
     const [rows] = await db.query(
       `SELECT m.id, m.name, m.name_en
          FROM menu m
-        WHERE ${SELLABLE}
+        WHERE ${whereSql}
         ORDER BY m.name
-        LIMIT ${MAX_ROWS}`);
-    res.json(rows.map(m => ({
+        LIMIT ? OFFSET ?`,
+      [...params, take, offset]);
+
+    const hasMore = paging && rows.length > limit;
+    const page = hasMore ? rows.slice(0, limit) : rows;
+    const items = page.map(m => ({
       id: m.id,
       name: m.name || '',
       nameEn: m.name_en || '',
-    })));
+    }));
+
+    if (!paging) {
+      // Unpaged callers keep the historical shape. `truncated` cannot ride on a
+      // bare array, which is precisely why the paged form exists.
+      return res.json(items);
+    }
+    res.json({ items, hasMore, limit, offset });
   } catch (e) {
     // Same degradation as /brands and /branches-full: an empty picker beats a
-    // 500 that takes the whole filter bar down with it.
-    res.json([]);
+    // 500 that takes the whole filter bar down with it. The shape still has to
+    // match what the caller asked for, or the client's own parse throws and
+    // undoes the degradation.
+    const paging = req.query.limit != null || req.query.offset != null;
+    res.json(paging ? { items: [], hasMore: false, limit: 0, offset: 0 } : []);
   }
 });
 

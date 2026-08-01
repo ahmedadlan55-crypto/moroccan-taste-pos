@@ -13,7 +13,7 @@ import { Minus, PackageSearch, Search, X } from "lucide-react";
 import { useLocalizedName, useT } from "@/i18n/I18nProvider";
 import type { Catalog, CatalogItem } from "@/lib/types";
 import { getToken } from "@/lib/auth";
-import { fmt2, fmtInt } from "@/lib/format";
+import { fmtPrice, fmtQty } from "@/lib/format";
 import { displayUnitPrice, DEFAULT_VAT_RATE_PCT } from "@/lib/cartMath";
 import { getQuickPicks, QUICK_PICKS_CATEGORY, useQuickPicks } from "@/lib/quickPicks";
 import { cn, EmptyState, Skeleton } from "./ui";
@@ -154,17 +154,24 @@ export interface QtyPrefix {
  * { qty: 12, rest: "7501" }. Separators: `*`, `x`, `X`, `×`.
  *
  * PURE and total: returns null whenever there is no well-formed prefix, so the
- * caller can hand the untouched query to the normal resolve path. A decimal qty
- * is accepted (weighed goods); qty must be > 0 and `rest` non-empty, otherwise
- * "12*" or "0x7501" would silently add nothing.
+ * caller can hand the untouched query to the normal resolve path. qty must be
+ * > 0 and `rest` non-empty, otherwise "12*" or "0x7501" would silently add
+ * nothing.
+ *
+ * WHOLE QUANTITIES ONLY. This used to accept a decimal for weighed goods
+ * ("2.5*7501"). The register sells in whole units, so a fraction here would be
+ * the one remaining way to smuggle one into a cart line — past the QtyPad,
+ * which now refuses it. "2.5*7501" no longer parses as a prefix; it falls
+ * through to the normal search path and finds nothing, which is the honest
+ * outcome for a quantity the register cannot sell.
  *
  * Exported for the App's scan wiring (another stream owns that call site).
  */
 export function parseQtyPrefix(query: string): QtyPrefix | null {
-  const m = /^\s*(\d+(?:\.\d+)?)\s*[*xX×]\s*(\S.*?)\s*$/.exec(query ?? "");
+  const m = /^\s*(\d+)\s*[*xX×]\s*(\S.*?)\s*$/.exec(query ?? "");
   if (!m) return null;
   const qty = Number(m[1]);
-  if (!Number.isFinite(qty) || qty <= 0) return null;
+  if (!Number.isInteger(qty) || qty <= 0) return null;
   const rest = m[2];
   return rest ? { qty, rest } : null;
 }
@@ -273,7 +280,7 @@ const ProductCard = memo(function ProductCard({
             displayUnitPrice routes through lineTotals, so this can never drift
             from the cart. */}
         <p className="mt-2 text-sm font-extrabold text-teal-600">
-          <span className="num">{fmt2(displayUnitPrice(item, vatRatePct))}</span>{" "}
+          <span className="num">{fmtPrice(displayUnitPrice(item, vatRatePct))}</span>{" "}
           <span className="text-[11px] font-bold text-slate-400">{t("productGrid.currency")}</span>
         </p>
       </button>
@@ -306,10 +313,10 @@ const ProductCard = memo(function ProductCard({
           {/* Live qty badge (legacy qty-display, app.js:449) */}
           <span
             data-testid="card-qty-badge"
-            aria-label={t("productGrid.card.inCartAria", { name: tn(item.name, item.nameEn), qty: fmtInt(qty) })}
+            aria-label={t("productGrid.card.inCartAria", { name: tn(item.name, item.nameEn), qty: fmtQty(qty) })}
             className="num absolute -top-1.5 end-1.5 min-w-6 rounded-full bg-teal-600 px-1.5 py-0.5 text-center text-[11px] font-extrabold text-white shadow-sm"
           >
-            {fmtInt(qty)}
+            {fmtQty(qty)}
           </span>
           {/* Inline − (legacy decFromCart, app.js:448) — last unit removes the line */}
           <button

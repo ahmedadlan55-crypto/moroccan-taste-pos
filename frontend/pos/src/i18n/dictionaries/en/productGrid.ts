@@ -19,7 +19,10 @@ export const productGrid = {
     out: "Out",
     low: "Low",
     outTitle: '"{name}" unavailable — an ingredient ran out',
+    // Two numbers that mean different things: portions the recipe can still
+    // yield, versus the item's own stock balance. Never one shared wording.
     lowTitle: "Can still make: {count}",
+    lowTitleStock: "In stock: {count} {unit}",
     addedOutOfStock: '"{name}" looks unavailable — added anyway; the server is the authority',
   },
   empty: {

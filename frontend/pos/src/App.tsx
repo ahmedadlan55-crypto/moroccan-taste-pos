@@ -22,6 +22,7 @@ import {
 import { clearImageCache } from "@/lib/offlineImages";
 import { runLegacyDrainOnce, getDrainStatus } from "@/lib/legacyDrain";
 import { fmt2, fmtInt } from "@/lib/format";
+import { round6 } from "@/lib/cartMath";
 import { buildKitchenTicketHtml, printHtml, resolvePaperWidth } from "@/lib/receipt";
 import { parseQtyPrefix, resolveScan } from "@/components/ProductGrid";
 import type { LocalOrder } from "@/lib/types";
@@ -617,9 +618,15 @@ export default function App() {
   }, [catalog]);
 
   // Live per-item cart quantity → the card qty badge + selection ring + − button.
+  //
+  // BASE units, not entered qty. Summing `l.qty` added quantities expressed in
+  // DIFFERENT units as though they were the same one: a carton line (qty 1,
+  // factor 12) plus a two-piece line reported "3" for a cart holding 14 pieces.
+  // baseQty is the only figure the lines share a unit in — and the one the
+  // stock pip on the same card is already counting in.
   const cartQtyByItem = useMemo(() => {
     const m: Record<string, number> = {};
-    for (const l of cart.lines) m[l.menuId] = (m[l.menuId] ?? 0) + l.qty;
+    for (const l of cart.lines) m[l.menuId] = round6((m[l.menuId] ?? 0) + Number(l.baseQty ?? l.qty));
     return m;
   }, [cart.lines]);
 

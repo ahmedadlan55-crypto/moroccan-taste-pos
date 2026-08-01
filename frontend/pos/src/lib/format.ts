@@ -11,6 +11,12 @@ const num2 = new Intl.NumberFormat("en-US", {
 
 const numInt = new Intl.NumberFormat("en-US", { maximumFractionDigits: 0 });
 
+/** Quantities are whole (QtyPad/Numpad enforce it) but a cart persisted before
+ *  that rule — or resumed from an offline queue — can still hold a fraction.
+ *  3 decimals matches the DB columns, and minimumFractionDigits 0 keeps the
+ *  common case clean: "2", not "2.000". */
+const numQty = new Intl.NumberFormat("en-US", { maximumFractionDigits: 3 });
+
 /** 1234.5 → "1,234.50" */
 export function fmt2(n: number): string {
   return num2.format(Number.isFinite(n) ? n : 0);
@@ -19,6 +25,35 @@ export function fmt2(n: number): string {
 /** 1234 → "1,234" */
 export function fmtInt(n: number): string {
   return numInt.format(Number.isFinite(n) ? n : 0);
+}
+
+/**
+ * Quantity — NEVER rounds. 2 → "2", 0.5 → "0.5".
+ *
+ * fmtInt was wrong here: `maximumFractionDigits: 0` turned a 0.5 kg line into
+ * "1" and a 0.4 kg line into "0" — a card badge reading 0 for an item that IS
+ * in the cart. Whole quantities are now enforced at ENTRY (parseQtyInput +
+ * applyIntegerKey), so this is the honest display of anything that slipped
+ * through from an older cart rather than a licence to sell fractions.
+ */
+export function fmtQty(n: number): string {
+  return numQty.format(Number.isFinite(n) ? n : 0);
+}
+
+/**
+ * Money for the CUSTOMER-FACING price: a whole riyal renders bare ("18"), a
+ * fractional one keeps its halalas ("18.40").
+ *
+ * Menu prices are tuned so the VAT-inclusive amount lands on a whole riyal
+ * (scripts/round-prices-to-whole-riyal.js + the write guard in routes/menu.js),
+ * so this reads clean in practice. The fractional branch is deliberate and must
+ * NOT be "cleaned up" to always drop decimals: a row the tool could not fix has
+ * to SHOW its halalas. Hiding them behind a display-only round is exactly the
+ * screen-says-18 / invoice-says-18.40 bug this work exists to remove.
+ */
+export function fmtPrice(n: number): string {
+  const v = Number.isFinite(n) ? n : 0;
+  return Number.isInteger(v) ? numInt.format(v) : num2.format(v);
 }
 
 /** Money with the currency word — "1,234.50 ر.س" (digits stay English). */

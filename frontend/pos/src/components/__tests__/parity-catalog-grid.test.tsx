@@ -95,6 +95,9 @@ describe("product-card-price + product-card-inline-add — the card sells", () =
     // for an item the cart rang up at 26.45, and a green test said that was
     // correct. It is the owner's complaint, encoded as a passing assertion.
     expect(card).toHaveTextContent("26.45");
+    // And explicitly NOT the stored figure — the regression this pins is the
+    // net price reappearing, which "26.45 is present" alone would not catch.
+    expect(card).not.toHaveTextContent("23.00");
     fireEvent.click(card);
     expect(onAdd).toHaveBeenCalledTimes(1);
     expect(onAdd.mock.calls[0][0].id).toBe("M1");

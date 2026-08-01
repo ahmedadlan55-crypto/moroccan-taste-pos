@@ -58,26 +58,41 @@ function renderGrid(catalog: Catalog) {
   );
 }
 
+// The expected strings below lost their ".00" when the card moved from fmt2 to
+// fmtPrice. Menu prices are now tuned so the VAT-inclusive amount lands on a
+// whole riyal (scripts/round-prices-to-whole-riyal.js), and printing "15.00"
+// for an item that costs exactly fifteen riyals is halala noise on a till
+// screen. A price that is NOT whole still shows its halalas — see the last
+// case here, which is the guard against hiding a fraction behind a display
+// round (that would recreate the very screen-vs-invoice gap this file exists
+// to close).
 describe("the price on the card is the price the customer pays", () => {
-  it("adds VAT to a tax-exclusive row (13.04 → 15.00)", () => {
+  it("adds VAT to a tax-exclusive row (13.04 → 15)", () => {
     renderGrid(makeCatalog([TEA]));
-    expect(screen.getByText("15.00")).toBeInTheDocument();
+    expect(screen.getByText("15")).toBeInTheDocument();
     expect(screen.queryByText("13.04")).not.toBeInTheDocument();
   });
 
   it("leaves a tax-inclusive row alone — never grossed twice", () => {
     renderGrid(makeCatalog([INCLUSIVE]));
-    expect(screen.getByText("15.00")).toBeInTheDocument();
+    expect(screen.getByText("15")).toBeInTheDocument();
   });
 
   it("invents no VAT for a zero-rated item", () => {
     renderGrid(makeCatalog([ZERO]));
-    expect(screen.getByText("20.00")).toBeInTheDocument();
+    expect(screen.getByText("20")).toBeInTheDocument();
   });
 
   it("follows the SERVER's rate, not a hardcoded 15", () => {
     renderGrid(makeCatalog([{ ...TEA, price: 100 }], 5));
-    expect(screen.getByText("105.00")).toBeInTheDocument();
+    expect(screen.getByText("105")).toBeInTheDocument();
+  });
+
+  it("still shows the halalas of a price the rounding sweep has not tuned", () => {
+    // 16.00 NET → 18.40 gross. Untuned rows must read 18.40, never a rounded
+    // "18" the invoice would then contradict.
+    renderGrid(makeCatalog([{ ...TEA, price: 16 }]));
+    expect(screen.getByText("18.40")).toBeInTheDocument();
   });
 });
 

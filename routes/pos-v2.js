@@ -790,6 +790,10 @@ router.get('/catalog', POS, async (req, res) => {
       // cashier display a NET price as the total while routes/sales.js added
       // VAT on top and then rejected the sale as a total mismatch.
       "COALESCE(is_tax_inclusive,0) AS is_tax_inclusive, " +
+      // The owner's own low-stock threshold. Without it the register fell back
+      // to a hardcoded 3 base units for every row — so an item the owner wanted
+      // flagged at 50 stayed green until it was practically gone.
+      "COALESCE(min_stock_alert,0) AS min_stock_alert, " +
       "CASE WHEN image_data IS NULL OR image_data='' THEN NULL ELSE SUBSTRING(SHA2(image_data,256),1,8) END AS image_ver " +
       "FROM menu WHERE COALESCE(is_deleted,0)=0" + brandCond + " ORDER BY category, name", brandParams);
 
@@ -987,7 +991,11 @@ router.get('/catalog', POS, async (req, res) => {
           // NET price as the total while routes/sales.js added VAT on top and
           // then refused the sale for not matching.
           taxInclusive: Number(m.is_tax_inclusive) === 1,
+          // basePrice is the UNRESOLVED menu price — provenance only. `price`
+          // above is the one to sell at; the client must never fall back to
+          // this one for money (frontend/pos/src/lib/cartMath.ts).
           basePrice: Number(m.price), warehouseQty: m.stock == null ? null : Number(m.stock),
+          minStockAlert: Number(m.min_stock_alert) || 0,
           // Price provenance under a channel: null = base menu price;
           // 'override' = per-channel manual override; otherwise the NAME of the
           // channel's price list that supplied the price.

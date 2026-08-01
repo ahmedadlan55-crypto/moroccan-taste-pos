@@ -93,6 +93,33 @@ tables scroll themselves, which is the intended behaviour). Arabic renders
 `dir="rtl"`, English `dir="ltr"`; no untranslated i18n keys leak; zero console
 errors; every `/api/` request returned 200.
 
+### E2E — `e2e/erp/recipes-production-ops.spec.ts`
+
+**24/24**, across all four viewport projects (390 / 768 / 1024 / 1440) in both
+Arabic and English. It asserts the part a per-leaf sweep cannot: cold deep links
+render and SURVIVE A REFRESH (these were `?item=` / `?new=1` / `?view=` query
+params, which is exactly what a refresh discarded), a document opens as a full
+page carrying the `print-document` wrapper and never as a pinned side panel,
+`/menu/recipes-bom` still resolves with `?item=` mapped to `?productId=`, and a
+stock inbound stays distinguishable from a purchase receipt.
+
+Two real defects were found by this spec and are fixed:
+
+1. **Every product thumbnail 401'd.** The catalog pointed an `<img src>` at
+   `/api/recipes/product-image/…`, which is behind the JWT gate — and a browser
+   image request cannot carry an `Authorization: Bearer` header. A failed image
+   renders as an absent picture, not an error, so the grid merely looked
+   image-less and no unit test could see it. `AuthedImage` now fetches the bytes
+   with the token and hands the `<img>` an object URL, with a shared cache so N
+   rows issue one request. Exempting the endpoint from auth was rejected — it
+   would add a new unauthenticated surface.
+2. **The document id was lower-cased in the route.** `normalizeRoutePath`
+   lower-cases the whole pathname for matching, and the operations dispatch was
+   also reading the id from that copy, so `STK-0a71624b4013` was fetched as
+   `stk-…`. It resolved only because MySQL's default collation is
+   case-insensitive; a binary/`_bin` collation would turn every deep link into a
+   404 that looked like missing data.
+
 ### Full gate
 
 25/37 steps ran before it stopped at the first failure, and **every step this
@@ -100,6 +127,22 @@ work added or touched passed**: `static:design-tokens`, `static:rtl-literals`,
 `erp:tsc`, `erp:vitest`, `root:tests`, `backend:recipes-api`,
 `backend:production-integrity`, `backend:operations-api`,
 `audit:mutation-guards`, plus all three `schema:*` steps and both builds.
+
+The full ERP E2E suite (`e2e:erp`, 124 tests across four viewport projects) runs
+**88 passed / 4 skipped**, with five failing specs. EVERY ONE was reproduced on
+an untouched `origin/main` worktree — none is caused by this work:
+
+| Failing spec | Cause | Proof it is pre-existing |
+|---|---|---|
+| `erp.spec.ts` closure gate | `500 GET /api/erp/reports/equity-changes` | Same endpoint returns **500 on baseline and on this branch**, curled side by side (ports 3401 vs 3400) |
+| `rc-bilingual.spec.ts` | the same equity-changes 500 | as above |
+| `crud-writes.spec.ts` | "the price persisted: expected 25, received 25.2174" | **Identical failure, identical numbers**, running the same spec from a baseline worktree |
+| `sales-analytics.spec.ts` | expects 16 hub sections, finds 17 | the reports registry is untouched by this branch (`git diff --stat` over `modules/reports`, `routes/analytics`, `lib/analytics` = 0) |
+| `sales-hub-rbac.spec.ts` | expects 15, finds 16 — same extra section | as above |
+
+The last three sit in the sales-reports area, which is the work in flight on
+`release/sales-reports-final`; fixing them from this branch would collide with
+it. The equity-changes 500 is an accounting-report defect worth its own task.
 
 TWO GATE STEPS FAIL, and BOTH ARE PRE-EXISTING — verified, not assumed:
 

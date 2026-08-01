@@ -87,6 +87,23 @@ function keys(n) {
  * The fake applies the statement's own LIMIT, exactly as the server would, so
  * `fetchN` is under test rather than assumed.
  */
+/**
+ * Apply a totals statement's HAVING clause to candidate rows, as a server would.
+ *
+ * Handles the shape the planner emits — an OR chain of `g<i> = <0|1>` over the
+ * GROUPING flags — and no more than that. Anything it does not recognise is
+ * treated as NO filter, which is the safe direction here: an unrecognised
+ * clause makes the fake ship everything, so the "does not stream 900 rows"
+ * assertion FAILS rather than passing by accident.
+ */
+function applyHaving(sql, rows) {
+  const m = /\bHAVING\s+\(([^)]*)\)/i.exec(String(sql));
+  if (!m) return rows;
+  const terms = m[1].split(/\s+OR\s+/i).map((t) => /^\s*g(\d+)\s*=\s*(\d+)\s*$/.exec(t));
+  if (!terms.length || terms.some((t) => !t)) return rows; // unrecognised → no filter
+  return rows.filter((r) => terms.some(([, i, want]) => Number(r['g' + i]) === Number(want)));
+}
+
 function makeDb(universe) {
   const seen = [];
   let totalsRowsShipped = 0;
@@ -102,16 +119,27 @@ function makeDb(universe) {
       // computed over the WHOLE universe, never over the fetched page.
       const total = universe.reduce((a, r) => a + r.net, 0);
       const grand = { d0: null, g0: 1, m_net_ex_vat: total };
-      // A real server applies the statement's HAVING. WITHOUT one it streams
-      // every detail row back beside the super-aggregates — which is the third
-      // defect exactly: QueryService then dropped them one at a time
+      // A real server APPLIES the statement's HAVING. Without one it streams
+      // every detail row back beside the super-aggregates — the third defect
+      // exactly: QueryService then dropped them one at a time
       // (`if (rolled === 0) continue`), a whole second result set over the wire
-      // and through the driver to reach a single row at the end of it. The fake
-      // reproduces both behaviours so the assertion below is about what the
-      // SERVER sends, not about SQL spelling.
-      const shipped = /HAVING \(GROUPING\(/.test(s)
-        ? [grand]
-        : [...universe.map((r) => ({ d0: r.d0, g0: 0, m_net_ex_vat: r.net })), grand];
+      // and through the driver to reach a single row at the end of it.
+      //
+      // This used to decide by matching the literal `HAVING (GROUPING(`. That
+      // is a SPELLING, and it went stale the moment the clause had to reference
+      // the select alias instead — restating a wrapped dimension expression
+      // inside HAVING is an ER_BAD_FIELD_ERROR on a real server, so the spelling
+      // it was pinned to could never have run. The fake then reported 901 rows
+      // for a statement that ships 1.
+      //
+      // So it now EVALUATES the clause, the way the server does. That also makes
+      // it faithful in the other direction: a HAVING that keeps the wrong
+      // levels is reflected rather than waved through.
+      const candidates = [
+        ...universe.map((r) => ({ d0: r.d0, g0: 0, m_net_ex_vat: r.net })),
+        grand,
+      ];
+      const shipped = applyHaving(s, candidates);
       totalsRowsShipped += shipped.length;
       return [shipped];
     }

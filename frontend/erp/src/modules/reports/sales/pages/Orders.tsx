@@ -141,7 +141,7 @@ export default function Orders() {
         accessor: (r) => r.document_number,
         cell: (r) => <span className="font-bold text-teal-700">{r.document_number}</span>,
         sortable: true,
-        pinStart: true,
+        pinStart: true, hideable: false,
         width: 140,
       },
       {
@@ -227,7 +227,6 @@ export default function Orders() {
         onRowClick={(r) => navigate(`/sales/invoices?doc=${r.id}`)}
         initialPageSize={25}
         searchable
-        columnMenu={false}
         emptyTitle={t("salesReports.states.empty")}
         mobileTitle={(r) => r.document_number}
         tableId="sales-hub-orders"

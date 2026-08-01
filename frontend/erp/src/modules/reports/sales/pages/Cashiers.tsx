@@ -170,7 +170,7 @@ export default function Cashiers() {
         id: "cashier",
         header: t("salesReports.dims.cashier"),
         accessor: (r) => r.label,
-        pinStart: true,
+        pinStart: true, hideable: false,
         width: 160,
         sortable: true,
       },
@@ -268,6 +268,7 @@ export default function Cashiers() {
         columns={columns}
         rows={cashierRows}
         getRowId={(r) => r.key}
+        tableId="sales-hub-cashiers"
         initialSort={{ columnId: "net", dir: "desc" }}
         // Wave-4 drill: orders segment with the cashier pinned (`cashierId`
         // codec param merged into the current search — one history push).

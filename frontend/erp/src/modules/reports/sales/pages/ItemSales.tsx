@@ -159,7 +159,7 @@ export default function ItemSales() {
         header: t(`salesReports.dims.${dayDim}`),
         accessor: (r) => r.day,
         cell: (r) => r.dayLabel,
-        pinStart: true,
+        pinStart: true, hideable: false,
         width: 120,
         sortable: true,
       },
@@ -167,7 +167,7 @@ export default function ItemSales() {
         id: "item",
         header: t("salesReports.dims.menu_item"),
         accessor: (r) => r.item,
-        pinStart: true,
+        pinStart: true, hideable: false,
         width: 180,
         ellipsis: true,
         sortable: true,
@@ -309,9 +309,9 @@ export default function ItemSales() {
         columns={columns}
         rows={rows}
         getRowId={(r) => r.key}
+        tableId="sales-hub-item-sales"
         canColumn={(cap) => (cap === CAP_COST ? canCost : true)}
         initialPageSize={25}
-        columnMenu={false}
         searchable
         emptyTitle={t("salesReports.states.empty")}
         mobileTitle={(r) => r.item}

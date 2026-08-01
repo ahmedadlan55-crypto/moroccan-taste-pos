@@ -176,7 +176,7 @@ export default function Hours() {
         header: t("salesReports.dims.hour"),
         accessor: (r) => Number(r.key),
         cell: (r) => r.label,
-        pinStart: true,
+        pinStart: true, hideable: false,
         width: 112,
         sortable: true,
       },
@@ -280,6 +280,7 @@ export default function Hours() {
         columns={columns}
         rows={hourRows}
         getRowId={(r) => r.key}
+        tableId="sales-hub-hours"
         initialSort={{ columnId: "hour", dir: "asc" }}
         emptyTitle={t("salesReports.states.empty")}
       />

@@ -162,7 +162,7 @@ export default function Taxes() {
   const filingTotals = filing.data?.totals;
 
   const rateColumns: ColumnDef<RateRow>[] = [
-    { id: "rate", header: t("salesReports.dims.vat_rate"), accessor: (r) => r.label, pinStart: true, width: 140 },
+    { id: "rate", header: t("salesReports.dims.vat_rate"), accessor: (r) => r.label, pinStart: true, hideable: false, width: 140 },
     {
       id: "vat_amount",
       header: t("salesReports.metrics.vat_amount"),
@@ -227,8 +227,8 @@ export default function Taxes() {
         columns={rateColumns}
         rows={rateRows}
         getRowId={(r) => r.key || r.label}
+        tableId="sales-hub-taxes-by-rate"
         paginate={false}
-        columnMenu={false}
         emptyTitle={t("salesReports.states.empty")}
         mobileTitle={(r) => r.label}
       />

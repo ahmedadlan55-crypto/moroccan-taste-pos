@@ -95,7 +95,7 @@ export default function Shifts() {
   };
 
   const columns: ColumnDef<ShiftRow>[] = [
-    { id: "shift", header: t("salesReports.dims.shift"), accessor: (r) => r.label, pinStart: true, width: 150 },
+    { id: "shift", header: t("salesReports.dims.shift"), accessor: (r) => r.label, pinStart: true, hideable: false, width: 150 },
     {
       id: "expected",
       header: t("salesReports.metrics.till_expected_cash"),
@@ -162,8 +162,8 @@ export default function Shifts() {
         columns={columns}
         rows={shiftRows}
         getRowId={(r) => r.key || r.label}
+        tableId="sales-hub-shifts"
         paginate={false}
-        columnMenu={false}
         emptyTitle={t("salesReports.states.empty")}
         mobileTitle={(r) => r.label}
         // Operational drill: the pos-admin shifts screen (no URL param contract).

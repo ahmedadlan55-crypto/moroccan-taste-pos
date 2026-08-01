@@ -140,7 +140,7 @@ export default function Modifiers() {
         id: "kind",
         header: t("salesReports.dims.modifier_kind"),
         accessor: (r) => r.label,
-        pinStart: true,
+        pinStart: true, hideable: false,
         width: 160,
         sortable: true,
       },
@@ -215,6 +215,7 @@ export default function Modifiers() {
         columns={columns}
         rows={kindRows}
         getRowId={(r) => r.key}
+        tableId="sales-hub-modifiers"
         initialSort={{ columnId: "qty", dir: "desc" }}
         emptyTitle={t("salesReports.states.empty")}
       />

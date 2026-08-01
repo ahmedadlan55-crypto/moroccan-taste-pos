@@ -521,7 +521,7 @@ export default function Executive() {
         header: t(`salesReports.dims.${dayDim}`),
         accessor: (r) => r.day,
         cell: (r) => r.label,
-        pinStart: true,
+        pinStart: true, hideable: false,
         width: 128,
         sortable: true,
       },
@@ -909,6 +909,7 @@ export default function Executive() {
           columns={dayColumns}
           rows={dayRows}
           getRowId={(r) => r.day}
+          tableId="sales-hub-executive"
           initialSort={{ columnId: "day", dir: "asc" }}
           onRowClick={(r) => patch({ from: r.day, to: r.day, preset: "custom" }, { push: true })}
           emptyTitle={t("salesReports.states.empty")}

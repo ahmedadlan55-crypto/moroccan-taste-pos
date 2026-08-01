@@ -83,7 +83,7 @@ export default function Reconciliation() {
 
   const money = (v: number | null | undefined) => (v == null ? "—" : formatCurrency(v));
   const columns: ColumnDef<ReconciliationRow>[] = [
-    { id: "day", header: t("salesReports.dims.business_day"), accessor: (r) => r.business_day, pinStart: true, width: 120, sortable: true },
+    { id: "day", header: t("salesReports.dims.business_day"), accessor: (r) => r.business_day, pinStart: true, hideable: false, width: 120, sortable: true },
     { id: "branch", header: t("salesReports.dims.branch"), accessor: (r) => r.branch_id, sortable: true },
     { id: "sales", header: t("salesReports.metrics.invoice_total"), accessor: (r) => r.sales.invoice_total, cell: (r) => money(r.sales.invoice_total), numeric: true, sortable: true },
     { id: "orders", header: t("salesReports.metrics.orders"), accessor: (r) => r.sales.orders, cell: (r) => formatNumber(r.sales.orders), numeric: true, sortable: true },
@@ -175,8 +175,8 @@ export default function Reconciliation() {
         columns={columns}
         rows={rows}
         getRowId={(r) => `${r.business_day}:${r.branch_id}`}
+        tableId="sales-hub-reconciliation"
         paginate={false}
-        columnMenu={false}
         emptyTitle={t("salesReports.states.empty")}
         mobileTitle={(r) => r.business_day}
       />

@@ -122,7 +122,7 @@ export default function Discounts() {
     id: "label",
     header,
     accessor: (r) => r.label,
-    pinStart: true,
+    pinStart: true, hideable: false,
     width: 160,
   });
   const metricCols: ColumnDef<DimRow>[] = [
@@ -208,8 +208,8 @@ export default function Discounts() {
         columns={[dimCol(t(`salesReports.dims.${dayDim}`)), ...metricCols]}
         rows={dayRows}
         getRowId={(r) => r.key || r.label}
+        tableId="sales-hub-discounts-by-day"
         paginate={false}
-        columnMenu={false}
         emptyTitle={t("salesReports.states.empty")}
         mobileTitle={(r) => r.label}
         onRowClick={(r) => r.key && patch({ from: r.key, to: r.key, preset: "custom" }, { push: true })}
@@ -223,8 +223,8 @@ export default function Discounts() {
             columns={[dimCol(t("salesReports.dims.cashier")), ...metricCols]}
             rows={cashierRows}
             getRowId={(r) => r.key || r.label}
+            tableId="sales-hub-discounts-by-cashier"
             paginate={false}
-            columnMenu={false}
             emptyTitle={t("salesReports.states.empty")}
             mobileTitle={(r) => r.label}
             onRowClick={() => navigate(`/reports/sales/cashiers${search}`)}

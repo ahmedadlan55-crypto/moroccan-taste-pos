@@ -166,6 +166,10 @@ const CODEC = createAnalyticsFilterCodec("2026-07-24");
 const DEFAULTS: AnalyticsFilters = CODEC.parse(new URLSearchParams());
 
 beforeEach(() => {
+  // Tables now carry a stable `tableId`, so DataTable persists sort/pageSize/
+  // hidden columns to localStorage. Without this clear, one test's column or
+  // sort choice leaks into the next and the file fails depending on ORDER.
+  window.localStorage.clear();
   for (const k of Object.keys(caps)) delete caps[k];
   exportState.polls = 0;
   exportState.doneAfter = 1;

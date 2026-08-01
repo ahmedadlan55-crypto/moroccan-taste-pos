@@ -167,7 +167,7 @@ export default function Profitability() {
     meta?.completeness?.complete === false || (meta?.maskedMetrics ?? []).includes("cogs");
 
   const columns: ColumnDef<ItemRow>[] = [
-    { id: "item", header: t("salesReports.dims.menu_item"), accessor: (r) => r.label, pinStart: true, width: 180 },
+    { id: "item", header: t("salesReports.dims.menu_item"), accessor: (r) => r.label, pinStart: true, hideable: false, width: 180 },
     {
       id: "qty",
       header: t("salesReports.metrics.qty_sold"),
@@ -288,8 +288,8 @@ export default function Profitability() {
         columns={columns}
         rows={items}
         getRowId={(r) => r.key || r.label}
+        tableId="sales-hub-profitability"
         initialPageSize={25}
-        columnMenu={false}
         searchable
         emptyTitle={t("salesReports.states.empty")}
         mobileTitle={(r) => r.label}

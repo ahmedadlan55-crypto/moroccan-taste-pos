@@ -422,6 +422,11 @@ const PAGES: PageSpec[] = [
 beforeEach(() => {
   harness.mode = "data";
   harness.masked = [];
+  // Tables now carry a stable `tableId`, so DataTable persists sort/pageSize/
+  // hidden columns to localStorage. Without this clear, one test's column or
+  // sort choice leaks into the next and the file fails depending on ORDER —
+  // the worst kind of flake, because it passes when you run it alone.
+  window.localStorage.clear();
 });
 
 afterEach(cleanup);

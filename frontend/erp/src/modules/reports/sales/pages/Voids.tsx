@@ -121,7 +121,7 @@ export default function Voids() {
   }));
 
   const detailColumns: ColumnDef<CashierVoidsRow>[] = [
-    { id: "cashier", header: t("salesReports.dims.cashier"), accessor: (r) => r.cashier, pinStart: true, width: 170 },
+    { id: "cashier", header: t("salesReports.dims.cashier"), accessor: (r) => r.cashier, pinStart: true, hideable: false, width: 170 },
     {
       id: "voids_count",
       header: t("salesReports.metrics.voids_count"),
@@ -192,8 +192,8 @@ export default function Voids() {
             columns={detailColumns}
             rows={detailRows}
             getRowId={(r) => r.key}
+            tableId="sales-hub-voids-by-cashier"
             paginate={false}
-            columnMenu={false}
             emptyTitle={t("salesReports.states.empty")}
             mobileTitle={(r) => r.cashier}
           />

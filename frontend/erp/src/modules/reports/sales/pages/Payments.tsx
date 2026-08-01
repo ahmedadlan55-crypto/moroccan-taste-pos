@@ -142,7 +142,7 @@ export default function Payments() {
         id: "method",
         header: t("salesReports.dims.payment_method"),
         accessor: (r) => r.label,
-        pinStart: true,
+        pinStart: true, hideable: false,
         width: 160,
         sortable: true,
       },
@@ -225,6 +225,7 @@ export default function Payments() {
         columns={columns}
         rows={methodRows}
         getRowId={(r) => r.key}
+        tableId="sales-hub-payments"
         initialSort={{ columnId: "paymentsIn", dir: "desc" }}
         onRowClick={(r) => drillMethod(r.key)}
         emptyTitle={t("salesReports.states.empty")}

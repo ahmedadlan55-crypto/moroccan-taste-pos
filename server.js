@@ -618,6 +618,9 @@ const { loadWarehouseScope } = require('./middleware/warehouseScope');
 app.use('/api/inventory', loadWarehouseScope);
 app.use('/api/erp', loadWarehouseScope);
 app.use('/api/stocktake-pro', loadWarehouseScope);
+// The unified recipe domain reads warehouse stock for its availability view, so
+// it needs req.guardWh / req.whScopeClause like every other stock reader.
+app.use('/api/recipes', loadWarehouseScope);
 
 // ── Procurement / P2P unified module (flag-gated: PROCUREMENT_P2P_ENABLE) ─────
 // One namespace for suppliers + purchase orders + goods receipts + supplier
@@ -695,6 +698,12 @@ app.use('/api/cashier-readiness', require('./routes/cashier-readiness'));
 // bilingual-i18n-images — Owner C: bulk product image management. Same
 // /menu*-prefix-match caveat as above — mounted at its own top-level path.
 app.use('/api/product-images', require('./routes/product-images'));
+// THE unified recipe / BOM domain. Deliberately at its own top-level path and
+// NOT under /menu*: the global /api gate above prefix-matches '/menu' and would
+// make every recipe read — including costs — fully anonymous. The two older
+// surfaces (/api/menu/:id/recipe-bom and /api/erp/bom) stay mounted as a
+// compatibility layer that delegates its rules here.
+app.use('/api/recipes', require('./routes/recipes'));
 // Sprint 3 (A2) — per-user preferences (UI language persistence) + server-backed
 // saved table views. Both at clean top-level paths (not /menu*), each chains
 // its own verifyToken.

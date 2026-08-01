@@ -510,11 +510,25 @@ export default function Explorer() {
         maskedMetrics={query.data?.meta.maskedMetrics}
       />
 
+      {/* The server returned the top/bottom N by ITS sort metric. A header
+          click re-sorts only those N in memory — it does NOT fetch the true
+          top N by the clicked column, and without saying so the table reads
+          as "the top 10 by orders" when it is the top 10 by net, reordered. */}
+      {rows.length >= limit && (
+        <p data-testid="sliced-notice" className="text-xs font-bold text-amber-700">
+          {t("salesReports.report.slicedNotice", {
+            count: limit,
+            metric: t(`salesReports.metrics.${sortMetric}`),
+          })}
+        </p>
+      )}
+
       <DataTable<ResultTableRow>
         columns={columns}
         rows={tableRows}
         getRowId={(r) => r.id}
         tableId="sales-hub-explorer"
+        initialSort={{ columnId: sortMetric, dir: topBottom === "top" ? "desc" : "asc" }}
         initialPageSize={25}
         onRowClick={onRowClick}
         emptyTitle={t("salesReports.states.empty")}

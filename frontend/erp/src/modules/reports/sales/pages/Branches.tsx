@@ -109,6 +109,10 @@ export default function Branches() {
     ...base,
     metrics: [...METRICS],
     dimensions: [...DIMS],
+    // Explicit, because DEFAULT_LIMIT is 50: a chain with more than fifty
+    // pairs was silently showing fifty rows with nothing to say so, and
+    // page.rowCountCapped stayed false because the FACT never hit its cap.
+    limit: 500,
     sort: [{ by: "net_ex_vat", dir: "desc" }],
     ...(compare ? { compare } : {}),
   };

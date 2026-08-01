@@ -18,6 +18,7 @@ export const salesReports = {
     print: "Print",
     totalRow: "Total",
     periodColumn: "Period",
+    slicedNotice: "Showing the top {count} rows ordered by {metric} — sorting a column here reorders only these rows; it does not fetch rows from outside them.",
     taxableBase: "Taxable base",
     share: "Share",
     item: "Item",

@@ -32,6 +32,7 @@ export const salesReports = {
     print: "طباعة",
     totalRow: "الإجمالي",
     periodColumn: "الفترة",
+    slicedNotice: "يعرض الجدول أفضل {count} صفًا مرتّبةً حسب {metric} — الفرز من رؤوس الأعمدة يعيد ترتيب هذه الصفوف فقط ولا يجلب صفوفًا من خارجها.",
     taxableBase: "الوعاء الخاضع",
     share: "النسبة",
     item: "البند",
